@@ -115,7 +115,7 @@
     (rule proof-trace-input-build-apartness-nil-v1
       (head
         (ProofTraceInputBuildApartnessV1
-          ?assertion ?count ?count ProofAssertionListNilV1))
+          ?assertion ?count ?count (ProofAssertionListNilV1)))
       (body))
     (rule proof-trace-input-build-apartness-cons-v1
       (head

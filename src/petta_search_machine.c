@@ -1667,7 +1667,7 @@ static bool petta_clause_slot_aliases_normalized(
         return false;
     for (uint32_t index = first_entry;
          index < bindings->len; index++) {
-        const Binding *entry = &bindings->entries[index];
+        const Binding *entry = bindings_entry_at(bindings, index);
         bool entry_is_rule_local =
             var_epoch_suffix(entry->var_id) == epoch;
         bool value_is_rule_local =
@@ -3939,6 +3939,8 @@ static bool petta_copy_binding_atoms(
     AtomDeepCopySession *session) {
     if (!bindings || !destination || !session)
         return false;
+    if (!bindings_prepare_logical_write(bindings))
+        return false;
     bool ok = true;
     for (uint32_t i = 0u; i < bindings->len; i++) {
         bindings->entries[i].name_key = petta_copy_optional_atom(
@@ -4170,10 +4172,11 @@ static bool petta_binding_roots_add_bindings(
     if (!roots || !bindings)
         return roots != NULL;
     for (uint32_t i = 0u; i < bindings->len; i++) {
+        const Binding *entry = bindings_entry_at(bindings, i);
         if (!petta_binding_roots_add(
-                roots, bindings->entries[i].name_key) ||
+                roots, entry->name_key) ||
             !petta_binding_roots_add(
-                roots, bindings->entries[i].val)) {
+                roots, entry->val)) {
             return false;
         }
     }
@@ -5612,7 +5615,7 @@ static CettaContinuationStatus petta_continuation_trace(
         ok = petta_continuation_trace_u32(
             &writer, bindings->len);
     for (uint32_t i = 0u; ok && i < bindings->len; i++) {
-        const Binding *binding = &bindings->entries[i];
+        const Binding *binding = bindings_entry_at(bindings, i);
         ok = petta_continuation_trace_u64(
                 &writer, (uint64_t)binding->var_id) &&
             petta_continuation_trace_u32(
@@ -18933,6 +18936,20 @@ static bool petta_machine_unify_activation_source(
 /* Execute a pure grounded occurrence directly from frame-resolved argument
  * registers.  Declining any guard returns to the complete materializing
  * path; an admitted empty result is ordinary relational failure. */
+static bool petta_machine_type_pure_call_ready(
+        SymbolId head, CettaExprLen nargs, const PettaPlanNode *plan) {
+    (void)nargs;
+    if (!grounded_op_is_type_pure(head))
+        return false;
+    if (!plan)
+        return true;
+    if (plan->execution == PETTA_PLAN_EXEC_PURE_GROUNDED_SLOTS)
+        return true;
+    return plan->control == PETTA_PLAN_CONTROL_NONE &&
+        (plan->role == PETTA_PLAN_STATIC_CALL ||
+         plan->role == PETTA_PLAN_DATA);
+}
+
 static bool petta_machine_activation_pure_grounded_arguments(
         PettaMachineImpl *machine, const PettaGoal *goal,
         Atom **inline_arguments, uint32_t inline_capacity,
@@ -18942,13 +18959,18 @@ static bool petta_machine_activation_pure_grounded_arguments(
     if (argument_count_out)
         *argument_count_out = 0u;
     if (!machine || !goal || !inline_arguments || !arguments_out ||
-        !argument_count_out || !goal->plan ||
-        goal->plan->execution !=
-            PETTA_PLAN_EXEC_PURE_GROUNDED_SLOTS ||
-        !goal->first || goal->first->kind != ATOM_EXPR ||
+        !argument_count_out || !goal->first ||
+        goal->first->kind != ATOM_EXPR ||
         goal->first->expr.len == 0u ||
-        goal->first->expr.elems[0]->kind != ATOM_SYMBOL ||
-        goal->plan->child_count != goal->first->expr.len) {
+        goal->first->expr.elems[0]->kind != ATOM_SYMBOL) {
+        return false;
+    }
+    SymbolId head = goal->first->expr.elems[0]->sym_id;
+    if (goal->plan &&
+        goal->plan->child_count != goal->first->expr.len)
+        return false;
+    if (!petta_machine_type_pure_call_ready(
+            head, goal->first->expr.len - 1u, goal->plan)) {
         return false;
     }
     Bindings *bindings = NULL;
@@ -18972,12 +18994,14 @@ static bool petta_machine_activation_pure_grounded_arguments(
         Atom *source = goal->first->expr.elems[index + 1u];
         const PettaPlanNode *argument_plan =
             petta_plan_child(goal->plan, index + 1u);
-        if (!argument_plan || argument_plan->role != PETTA_PLAN_VALUE)
+        if (argument_plan && argument_plan->contains_call &&
+            source && atom_has_vars(source))
             return false;
         Atom *argument =
             petta_machine_resolve_activation_source_root(
                 machine, bindings, frame, source, argument_plan);
         ready = argument && !atom_has_vars(argument) &&
+            petta_machine_immediate_value(argument, argument_plan) &&
             !petta_semantics_value_contains_observable_open_cons(
                 argument);
         if (ready) {
@@ -20969,18 +20993,20 @@ static bool petta_machine_dispatch_solve(
         return true;
     }
 
-    /* Type-pure grounded operators with value-role operands are an exact
+    /* Type-pure grounded operators with ready operands are an exact
      * register instruction.  Resolve only their argument slots, require a
      * ground value in every slot, and preserve PeTTa currying by admitting
      * only an exact native arity.  A failed guard leaves the canonical call
      * path untouched. */
-    if (goal->kind == PETTA_GOAL_SOLVE && plan &&
-        plan->execution == PETTA_PLAN_EXEC_PURE_GROUNDED_SLOTS &&
+    if (goal->kind == PETTA_GOAL_SOLVE &&
         goal->first &&
         goal->first->kind == ATOM_EXPR &&
         goal->first->expr.len > 0u && goal->second &&
         goal->first->expr.elems[0]->kind == ATOM_SYMBOL &&
-        goal->first->expr.len - 1u <= UINT32_MAX) {
+        goal->first->expr.len - 1u <= UINT32_MAX &&
+        petta_machine_type_pure_call_ready(
+            goal->first->expr.elems[0]->sym_id,
+            goal->first->expr.len - 1u, plan)) {
         CettaExprLen nargs = goal->first->expr.len - 1u;
         PeTTaNamedArity arity = petta_machine_source_named_arity(
             machine, goal->first->expr.elems[0], nargs);
@@ -20996,12 +21022,19 @@ static bool petta_machine_dispatch_solve(
              ready && index < nargs; index++) {
             const PettaPlanNode *argument_plan =
                 petta_plan_child(plan, index + 1u);
+            Atom *source = goal->first->expr.elems[index + 1u];
+            if (argument_plan && argument_plan->contains_call &&
+                source && atom_has_vars(source)) {
+                ready = false;
+                break;
+            }
             Atom *argument = petta_machine_resolve_root(
-                environment,
-                goal->first->expr.elems[index + 1u]);
-            ready = argument_plan &&
-                argument_plan->role == PETTA_PLAN_VALUE &&
-                argument && !atom_has_vars(argument) &&
+                environment, source);
+            if (argument && atom_has_vars(argument))
+                argument = petta_machine_apply_bindings(
+                    machine, environment, &machine->heap, source);
+            ready = argument && !atom_has_vars(argument) &&
+                petta_machine_immediate_value(argument, argument_plan) &&
                 !petta_semantics_value_contains_observable_open_cons(
                     argument);
             if (ready)
@@ -24504,6 +24537,23 @@ static bool petta_machine_dispatch_goal(
                 }
                 return petta_machine_unify(
                     machine, direct, second);
+            }
+            /* A type-pure operator whose arguments are already values does
+             * not need a nested evaluator episode.  Empty is failure;
+             * anything else stays on the host so PeTTa-specific extensions
+             * remain reachable. */
+            if (grounded_op_is_type_pure(head_id) &&
+                !atom_has_vars(first)) {
+                bool immediate = true;
+                for (CettaExprIndex index = 1u;
+                     immediate && index < first->expr.len; index++) {
+                    Atom *argument = first->expr.elems[index];
+                    immediate = argument &&
+                        !atom_has_vars(argument) &&
+                        petta_machine_immediate_value(argument, NULL);
+                }
+                if (immediate)
+                    return false;
             }
         }
     }

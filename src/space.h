@@ -386,6 +386,10 @@ bool space_match_exists_ground_exact_expression_coordinates(
 /* O(1)-amortized alpha-aware membership over native spaces, including native
    overlays; *out_applicable is false for non-native backends. */
 bool space_contains_canonical(Space *s, Atom *atom, bool *out_applicable);
+/* Membership used by add-atom-nodup.  It preserves the active backend's
+ * structural identity, exact identity for ground atoms, and alpha identity
+ * for variable-bearing atoms. */
+bool space_contains_for_add_nodup(Space *s, Atom *atom);
 CettaIndex space_exact_match_indices64(Space *s, Atom *atom, CettaIndex **out);
 uint32_t space_exact_match_indices(Space *s, Atom *atom, uint32_t **out);
 bool space_contains_only_exact_atoms(Space *s);

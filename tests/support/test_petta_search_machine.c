@@ -6489,6 +6489,84 @@ static void test_choice_heap_instant_reclaiming(
     petta_machine_destroy(&machine);
 }
 
+static void test_bound_match_candidate_snapshot(
+    Space *space, Arena *persistent, Arena *answers) {
+    enum { ROW_COUNT = 512 };
+    Atom *head = atom_symbol(persistent, "bound-index-row");
+    assert(head);
+    for (int64_t index = 0; index < ROW_COUNT; index++) {
+        Atom *items[] = {
+            head,
+            atom_int(persistent, index),
+            atom_int(persistent, index * 10),
+        };
+        Atom *row = atom_expr(persistent, items, 3u);
+        assert(row);
+        space_add(space, row);
+    }
+    space_add(
+        space,
+        parse_one(persistent, "(bound-index-row 7 duplicate)"));
+    space_add(
+        space,
+        parse_one(persistent, "(bound-index-row $stored wildcard)"));
+    add_clause(
+        space, persistent,
+        "(= (bound-index-select $key)"
+        "   (match &self (bound-index-row $key $value) $value))");
+
+    Atom *query = parse_one(answers, "(bound-index-select 7)");
+    assert(query);
+    PettaMachine machine;
+    assert(petta_machine_init(
+        &machine, space, answers, query, NULL, NULL));
+    const char *expected[] = {"70", "duplicate", "wildcard"};
+    Atom *after_snapshot = NULL;
+    Atom *answer = NULL;
+    Bindings environment;
+    for (size_t index = 0u;
+         index < sizeof(expected) / sizeof(*expected); index++) {
+        assert(petta_machine_next(
+                   &machine, &answer, &environment) ==
+               PETTA_MACHINE_STEP_ANSWER);
+        assert(atom_alpha_eq(
+            answer, parse_one(answers, expected[index])));
+        bindings_free(&environment);
+        if (index == 0u) {
+            /* A match observes exactly the ordered occurrence snapshot at its
+             * start.  A later append belongs only to the next query. */
+            after_snapshot = parse_one(
+                persistent,
+                "(bound-index-row 7 after-snapshot)");
+            assert(after_snapshot);
+            space_add(space, after_snapshot);
+        }
+    }
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    PettaMachineStats stats;
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.match_candidates == 3u);
+    petta_machine_destroy(&machine);
+
+    const char *next_expected[] = {
+        "70", "duplicate", "wildcard", "after-snapshot",
+    };
+    expect_answers(
+        space, answers, "(bound-index-select 7)",
+        next_expected,
+        sizeof(next_expected) / sizeof(*next_expected));
+
+    /* A removal changes the next logical snapshot and its trie projection,
+     * without changing occurrence order among the surviving rows. */
+    assert(space_remove(space, after_snapshot));
+    expect_answers(
+        space, answers, "(bound-index-select 7)", expected,
+        sizeof(expected) / sizeof(*expected));
+}
+
 static void test_terminal_match_count_fold(
     Space *space, Arena *answers) {
     enum {
@@ -9931,6 +10009,8 @@ int main(void) {
     expect_answers(
         &space, &answers, "(f 1)", next_call, 4u);
     test_choice_heap_instant_reclaiming(
+        &space, &persistent, &answers);
+    test_bound_match_candidate_snapshot(
         &space, &persistent, &answers);
     test_terminal_match_count_fold(&space, &answers);
 

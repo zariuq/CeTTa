@@ -194,7 +194,7 @@ bool variant_instance_from_shape(VariantInstance *out, const VariantShape *shape
     }
     storage = next.storage;
     for (uint32_t i = 0; i < shape->slot_env.len; i++) {
-        const Binding *entry = &shape->slot_env.entries[i];
+        const Binding *entry = bindings_entry_at(&shape->slot_env, i);
         if (!variant_private_var_id(entry->var_id)) {
             variant_instance_free(&next);
             return false;

@@ -196,7 +196,13 @@ static inline bool match_closed_expression_decision_try(
 
 typedef struct BindingPoolBlock {
     struct BindingPoolBlock *next;
+    _Atomic uint32_t references;
+    uint32_t capacity;
 } BindingPoolBlock;
+
+static inline Binding *bindings_exclusive_slot(Bindings *b, uint32_t i);
+static bool bindings_flatten_unique(Bindings *b);
+static void bindings_release_truncated_suffix(Bindings *b);
 
 typedef struct {
     const Atom *src;
@@ -321,7 +327,7 @@ static void bindings_private_counts_slow(
         for (uint32_t i = 0u; i < bindings->len; i++)
             entry_count +=
                 binding_contains_private_variant_slot(
-                    &bindings->entries[i]) ? 1u : 0u;
+                    bindings_entry_at(bindings, i)) ? 1u : 0u;
         for (uint32_t i = 0u; i < bindings->eq_len; i++)
             constraint_count +=
                 constraint_contains_private_variant_slot(
@@ -338,7 +344,8 @@ static uint32_t bindings_legacy_fallback_count_slow(
     uint32_t count = 0u;
     if (bindings) {
         for (uint32_t i = 0u; i < bindings->len; i++)
-            count += bindings->entries[i].legacy_name_fallback ? 1u : 0u;
+            count += bindings_entry_at(bindings, i)->legacy_name_fallback
+                ? 1u : 0u;
     }
     return count;
 }
@@ -428,11 +435,47 @@ static int bindings_pool_class(uint32_t cap) {
     return -1;
 }
 
+static BindingPoolBlock *bindings_pool_block(void *items) {
+    return items ? ((BindingPoolBlock *)items) - 1 : NULL;
+}
+
+static bool bindings_pool_block_is_unique(
+        const void *items, uint32_t capacity) {
+    if (!items)
+        return capacity == 0u;
+    BindingPoolBlock *block = bindings_pool_block((void *)items);
+    assert(block->capacity == capacity);
+    return atomic_load_explicit(
+        &block->references, memory_order_acquire) == 1u;
+}
+
+/* A frozen flat image may be retained by any number of independently live
+ * continuations.  Refcount 1 remains exclusively writable; capture retains
+ * the block, and a later write detaches.  This is the C realization of
+ * BindingVersions.Version sharing, not the two-alias CowSnapshot model. */
+static bool bindings_pool_block_retain(
+        const void *items, uint32_t capacity) {
+    if (!items)
+        return capacity == 0u;
+    BindingPoolBlock *block = bindings_pool_block((void *)items);
+    assert(block->capacity == capacity);
+    uint32_t current = atomic_load_explicit(
+        &block->references, memory_order_acquire);
+    do {
+        if (current == 0u || current == UINT32_MAX)
+            return false;
+    } while (!atomic_compare_exchange_weak_explicit(
+        &block->references, &current, current + 1u,
+        memory_order_acq_rel, memory_order_acquire));
+    return true;
+}
+
 static Binding *bindings_entries_alloc(uint32_t cap) {
     int klass = bindings_pool_class(cap);
     size_t bytes = sizeof(Binding) * cap;
+    BindingPoolBlock *block;
     if (klass >= 0 && g_binding_entry_pools[klass]) {
-        BindingPoolBlock *block = g_binding_entry_pools[klass];
+        block = g_binding_entry_pools[klass];
         g_binding_entry_pools[klass] = block->next;
         if (g_binding_entry_pool_bytes >= bytes)
             g_binding_entry_pool_bytes -= bytes;
@@ -440,17 +483,32 @@ static Binding *bindings_entries_alloc(uint32_t cap) {
             g_binding_entry_pool_bytes = 0;
         g_binding_entry_active_bytes += bytes;
         bindings_note_entry_pool_metrics();
-        return (Binding *)block;
+        block->next = NULL;
+        block->capacity = cap;
+        atomic_store_explicit(
+            &block->references, 1u, memory_order_relaxed);
+        return (Binding *)(block + 1);
     }
     g_binding_entry_active_bytes += bytes;
     g_binding_entry_retained_bytes += bytes;
     bindings_note_entry_pool_metrics();
-    return cetta_malloc(bytes);
+    block = cetta_malloc(sizeof(*block) + bytes);
+    block->next = NULL;
+    block->capacity = cap;
+    atomic_init(&block->references, 1u);
+    return (Binding *)(block + 1);
 }
 
 static void bindings_entries_release(Binding *entries, uint32_t cap) {
     size_t bytes;
     if (!entries) return;
+    BindingPoolBlock *block = bindings_pool_block(entries);
+    assert(block->capacity == cap);
+    uint32_t previous = atomic_fetch_sub_explicit(
+        &block->references, 1u, memory_order_acq_rel);
+    assert(previous > 0u);
+    if (previous != 1u)
+        return;
     bytes = sizeof(Binding) * cap;
     int klass = bindings_pool_class(cap);
     if (klass < 0) {
@@ -463,7 +521,7 @@ static void bindings_entries_release(Binding *entries, uint32_t cap) {
         else
             g_binding_entry_retained_bytes = 0;
         bindings_note_entry_pool_metrics();
-        free(entries);
+        free(block);
         return;
     }
     if (g_binding_entry_active_bytes >= bytes)
@@ -471,7 +529,6 @@ static void bindings_entries_release(Binding *entries, uint32_t cap) {
     else
         g_binding_entry_active_bytes = 0;
     g_binding_entry_pool_bytes += bytes;
-    BindingPoolBlock *block = (BindingPoolBlock *)entries;
     block->next = g_binding_entry_pools[klass];
     g_binding_entry_pools[klass] = block;
     bindings_note_entry_pool_metrics();
@@ -480,8 +537,9 @@ static void bindings_entries_release(Binding *entries, uint32_t cap) {
 static BindingConstraint *bindings_constraints_alloc(uint32_t cap) {
     int klass = bindings_pool_class(cap);
     size_t bytes = sizeof(BindingConstraint) * cap;
+    BindingPoolBlock *block;
     if (klass >= 0 && g_binding_constraint_pools[klass]) {
-        BindingPoolBlock *block = g_binding_constraint_pools[klass];
+        block = g_binding_constraint_pools[klass];
         g_binding_constraint_pools[klass] = block->next;
         if (g_binding_constraint_pool_bytes >= bytes)
             g_binding_constraint_pool_bytes -= bytes;
@@ -489,17 +547,32 @@ static BindingConstraint *bindings_constraints_alloc(uint32_t cap) {
             g_binding_constraint_pool_bytes = 0;
         g_binding_constraint_active_bytes += bytes;
         bindings_note_constraint_pool_metrics();
-        return (BindingConstraint *)block;
+        block->next = NULL;
+        block->capacity = cap;
+        atomic_store_explicit(
+            &block->references, 1u, memory_order_relaxed);
+        return (BindingConstraint *)(block + 1);
     }
     g_binding_constraint_active_bytes += bytes;
     g_binding_constraint_retained_bytes += bytes;
     bindings_note_constraint_pool_metrics();
-    return cetta_malloc(bytes);
+    block = cetta_malloc(sizeof(*block) + bytes);
+    block->next = NULL;
+    block->capacity = cap;
+    atomic_init(&block->references, 1u);
+    return (BindingConstraint *)(block + 1);
 }
 
 static void bindings_constraints_release(BindingConstraint *constraints, uint32_t cap) {
     size_t bytes;
     if (!constraints) return;
+    BindingPoolBlock *block = bindings_pool_block(constraints);
+    assert(block->capacity == cap);
+    uint32_t previous = atomic_fetch_sub_explicit(
+        &block->references, 1u, memory_order_acq_rel);
+    assert(previous > 0u);
+    if (previous != 1u)
+        return;
     bytes = sizeof(BindingConstraint) * cap;
     int klass = bindings_pool_class(cap);
     if (klass < 0) {
@@ -512,7 +585,7 @@ static void bindings_constraints_release(BindingConstraint *constraints, uint32_
         else
             g_binding_constraint_retained_bytes = 0;
         bindings_note_constraint_pool_metrics();
-        free(constraints);
+        free(block);
         return;
     }
     if (g_binding_constraint_active_bytes >= bytes)
@@ -520,7 +593,6 @@ static void bindings_constraints_release(BindingConstraint *constraints, uint32_
     else
         g_binding_constraint_active_bytes = 0;
     g_binding_constraint_pool_bytes += bytes;
-    BindingPoolBlock *block = (BindingPoolBlock *)constraints;
     block->next = g_binding_constraint_pools[klass];
     g_binding_constraint_pools[klass] = block;
     bindings_note_constraint_pool_metrics();
@@ -830,7 +902,7 @@ static BindingsLookupIndex *bindings_lookup_index_build(
         bindings_lookup_index_alloc(capacity);
     for (uint32_t i = 0u; i < len; i++) {
         if (!bindings_lookup_index_insert_raw(
-                index, bindings->entries[i].var_id, i)) {
+                index, bindings_entry_at(bindings, i)->var_id, i)) {
             bindings_lookup_index_release(index);
             return NULL;
         }
@@ -948,7 +1020,7 @@ static void bindings_lookup_index_truncate(Bindings *bindings,
     }
 
     for (uint32_t i = index->synced_len; i > new_len; i--) {
-        VarId id = bindings->entries[i - 1u].var_id;
+        VarId id = bindings_entry_at(bindings, i - 1u)->var_id;
         uint32_t found = bindings_lookup_index_find(index, id);
         if (found == i)
             bindings_lookup_index_delete_unique(index, id);
@@ -992,7 +1064,7 @@ static BindingsLookupIndex *bindings_lookup_index_sync(Bindings *bindings) {
     }
     for (uint32_t i = index->synced_len; i < bindings->len; i++) {
         if (!bindings_lookup_index_insert_raw(
-                index, bindings->entries[i].var_id, i)) {
+                index, bindings_entry_at(bindings, i)->var_id, i)) {
             bindings_lookup_index_release(index);
             bindings->lookup_index = NULL;
             return NULL;
@@ -1020,7 +1092,8 @@ static inline BindingsLookupIndex *bindings_lookup_index_current(
         }
 #if !defined(CETTA_MUTATION_BINDINGS_LAZY_TAIL_SKIP_INSERT)
         if (!bindings_lookup_index_insert_raw(
-                index, bindings->entries[index->synced_len].var_id,
+                index,
+                bindings_entry_at(bindings, index->synced_len)->var_id,
                 index->synced_len)) {
             return bindings_lookup_index_sync(bindings);
         }
@@ -1072,7 +1145,7 @@ static int32_t bindings_lookup_index_slow(Bindings *b, VarId var_id) {
         if (index_plus_one > 0u) {
             uint32_t idx = index_plus_one - 1u;
             if (idx < b->len &&
-                binding_var_eq(b->entries[idx].var_id, var_id)) {
+                binding_var_eq(bindings_entry_at(b, idx)->var_id, var_id)) {
                 cetta_runtime_stats_inc(
                     CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_AUTHORITATIVE);
                 return (int32_t)idx;
@@ -1087,7 +1160,7 @@ static int32_t bindings_lookup_index_slow(Bindings *b, VarId var_id) {
     }
     for (uint32_t i = b->len; i > 0; i--) {
         uint32_t idx = i - 1;
-        if (binding_var_eq(b->entries[idx].var_id, var_id)) {
+        if (binding_var_eq(bindings_entry_at(b, idx)->var_id, var_id)) {
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_AUTHORITATIVE);
             return (int32_t)idx;
@@ -1116,7 +1189,7 @@ static inline int32_t bindings_lookup_index(Bindings *b, VarId var_id) {
         }
         uint32_t found = index_plus_one - 1u;
         if (found < b->len &&
-            binding_var_eq(b->entries[found].var_id, var_id)) {
+            binding_var_eq(bindings_entry_at(b, found)->var_id, var_id)) {
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_AUTHORITATIVE);
             return (int32_t)found;
@@ -1126,7 +1199,7 @@ static inline int32_t bindings_lookup_index(Bindings *b, VarId var_id) {
             index && index->synced_len < b->len, false) &&
         b->len - index->synced_len == 1u) {
         uint32_t tail = index->synced_len;
-        if (binding_var_eq(b->entries[tail].var_id, var_id)) {
+        if (binding_var_eq(bindings_entry_at(b, tail)->var_id, var_id)) {
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_LAZY_TAIL_HIT);
             return (int32_t)tail;
@@ -1203,13 +1276,101 @@ static bool constraint_pair_eq(const BindingConstraint *lhs, const BindingConstr
            (atom_eq(lhs->lhs, rhs->rhs) && atom_eq(lhs->rhs, rhs->lhs));
 }
 
+static inline Binding *bindings_exclusive_slot(Bindings *b, uint32_t i) {
+    return &b->entries[i - b->shared_len];
+}
+
+static void bindings_release_truncated_suffix(Bindings *b) {
+    if (!b)
+        return;
+    if (b->len < b->shared_len) {
+        b->shared_len = b->len;
+        if (b->shared_len == 0u) {
+            bindings_entries_release(b->shared_entries, b->shared_cap);
+            b->shared_entries = NULL;
+            b->shared_cap = 0u;
+        }
+        bindings_entries_release(b->entries, b->cap);
+        b->entries = NULL;
+        b->cap = 0u;
+        return;
+    }
+    if (b->len == b->shared_len) {
+        bindings_entries_release(b->entries, b->cap);
+        b->entries = NULL;
+        b->cap = 0u;
+    }
+}
+
+static bool bindings_flatten_unique(Bindings *b) {
+    uint32_t exclusive;
+    uint32_t next_cap;
+    Binding *next;
+    if (!b)
+        return false;
+    if (b->shared_len == 0u &&
+        bindings_pool_block_is_unique(b->entries, b->cap))
+        return true;
+    exclusive = b->len - b->shared_len;
+    next_cap = BINDINGS_MIN_CAPACITY;
+    while (next_cap <= b->len)
+        next_cap *= 2u;
+    next = bindings_entries_alloc(next_cap);
+    if (b->shared_len > 0u)
+        memcpy(next, b->shared_entries,
+               sizeof(Binding) * b->shared_len);
+    if (exclusive > 0u)
+        memcpy(next + b->shared_len, b->entries,
+               sizeof(Binding) * exclusive);
+    bindings_entries_release(b->entries, b->cap);
+    bindings_entries_release(b->shared_entries, b->shared_cap);
+    b->shared_entries = NULL;
+    b->shared_len = 0u;
+    b->shared_cap = 0u;
+    b->entries = next;
+    b->cap = next_cap;
+    return true;
+}
+
 static bool bindings_reserve_entries(Bindings *b, uint32_t needed) {
-    if (needed <= b->cap) return true;
-    uint32_t next_cap = b->cap ? b->cap : BINDINGS_MIN_CAPACITY;
-    while (next_cap < needed) next_cap *= 2;
-    Binding *next = bindings_entries_alloc(next_cap);
-    if (b->len > 0)
-        memcpy(next, b->entries, sizeof(Binding) * b->len);
+    bool exclusive_unique;
+    uint32_t exclusive_needed;
+    uint32_t exclusive_have;
+    uint32_t next_cap;
+    Binding *next;
+    if (!b)
+        return false;
+    if (needed < b->shared_len)
+        return false;
+    exclusive_unique = bindings_pool_block_is_unique(b->entries, b->cap);
+    if (b->shared_len == 0u) {
+        if (needed <= b->cap && exclusive_unique)
+            return true;
+        if (b->entries && !exclusive_unique) {
+            b->shared_entries = b->entries;
+            b->shared_len = b->len;
+            b->shared_cap = b->cap;
+            b->entries = NULL;
+            b->cap = 0u;
+            exclusive_unique = true;
+        }
+    }
+    exclusive_needed = needed - b->shared_len;
+    if (exclusive_needed == 0u)
+        return true;
+    if (exclusive_needed <= b->cap && exclusive_unique)
+        return true;
+    next_cap = b->cap ? b->cap : BINDINGS_MIN_CAPACITY;
+    while (next_cap < exclusive_needed)
+        next_cap *= 2u;
+    if (b->entries && !exclusive_unique) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_BINDINGS_VERSION_ENTRY_DETACH);
+    }
+    next = bindings_entries_alloc(next_cap);
+    exclusive_have = b->len - b->shared_len;
+    if (exclusive_have > 0u)
+        memcpy(next, b->entries, sizeof(Binding) * exclusive_have);
     bindings_entries_release(b->entries, b->cap);
     b->entries = next;
     b->cap = next_cap;
@@ -1217,9 +1378,16 @@ static bool bindings_reserve_entries(Bindings *b, uint32_t needed) {
 }
 
 static bool bindings_reserve_constraints(Bindings *b, uint32_t needed) {
-    if (needed <= b->eq_cap) return true;
+    bool unique = bindings_pool_block_is_unique(
+        b->constraints, b->eq_cap);
+    if (needed <= b->eq_cap && unique)
+        return true;
     uint32_t next_cap = b->eq_cap ? b->eq_cap : BINDINGS_MIN_CAPACITY;
     while (next_cap < needed) next_cap *= 2;
+    if (b->constraints && !unique) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_BINDINGS_VERSION_CONSTRAINT_DETACH);
+    }
     BindingConstraint *next = bindings_constraints_alloc(next_cap);
     if (b->eq_len > 0)
         memcpy(next, b->constraints, sizeof(BindingConstraint) * b->eq_len);
@@ -1364,7 +1532,8 @@ static BindingsReachability bindings_single_reach_cache_query(
             slot->index_plus_one > bindings->len) {
             goto decline;
         }
-        value = bindings->entries[slot->index_plus_one - 1u].val;
+        value = bindings_entry_at(
+            bindings, slot->index_plus_one - 1u)->val;
         if (!value)
             goto decline;
         if ((value->flags & ATOM_FLAG_HASH_STABLE) == 0u)
@@ -1451,7 +1620,7 @@ static void bindings_rhs_variable_bloom_rebuild(Bindings *bindings) {
            sizeof(bindings->rhs_variable_bloom));
     for (uint32_t index = 0u; index < bindings->len; index++)
         bindings_rhs_variable_bloom_add(
-            bindings, bindings->entries[index].val);
+            bindings, bindings_entry_at(bindings, index)->val);
 }
 
 static void bindings_cycle_note_edge(Bindings *bindings, VarId var_id,
@@ -1675,6 +1844,9 @@ void bindings_init(Bindings *b) {
     b->cycle_state = BINDINGS_CYCLE_ACYCLIC;
     memset(b->rhs_variable_bloom, 0, sizeof(b->rhs_variable_bloom));
     b->lookup_index = NULL;
+    b->shared_entries = NULL;
+    b->shared_len = 0u;
+    b->shared_cap = 0u;
     b->prime_ext = NULL;
 }
 
@@ -1690,6 +1862,7 @@ void bindings_free(Bindings *b) {
             CETTA_RUNTIME_COUNTER_BINDINGS_RELEASED_CONSTRAINT_CAPACITY,
             b->eq_cap);
     bindings_entries_release(b->entries, b->cap);
+    bindings_entries_release(b->shared_entries, b->shared_cap);
     bindings_constraints_release(b->constraints, b->eq_cap);
     bindings_lookup_index_release(b->lookup_index);
     b->lookup_index = NULL;
@@ -1700,22 +1873,80 @@ void bindings_free(Bindings *b) {
     bindings_init(b);
 }
 
+static bool bindings_fork_version(Bindings *dst, const Bindings *src);
+
 bool bindings_clone(Bindings *dst, const Bindings *src) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_CLONE);
+    return bindings_fork_version(dst, src);
+}
+
+/* Capture an independently writable continuation image by retaining a frozen
+ * prefix.  Any later in-place write detaches.  Lookup summaries have their
+ * own existing COW lifetime; Prime occurrence state remains independently
+ * owned. */
+static bool bindings_fork_version(Bindings *dst, const Bindings *src) {
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_BINDINGS_VERSION_FORK);
     bindings_init(dst);
-    if (src->len > 0) {
-        if (!bindings_reserve_entries(dst, src->len)) return false;
-        memcpy(dst->entries, src->entries, sizeof(Binding) * src->len);
-        dst->len = src->len;
-    }
-    if (src->eq_len > 0) {
-        if (!bindings_reserve_constraints(dst, src->eq_len)) {
-            bindings_free(dst);
+    if (src->shared_len > 0u) {
+        if (!bindings_pool_block_retain(
+                src->shared_entries, src->shared_cap))
             return false;
+        dst->shared_entries = src->shared_entries;
+        dst->shared_len = src->shared_len;
+        dst->shared_cap = src->shared_cap;
+        dst->len = src->shared_len;
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_BINDINGS_VERSION_ENTRY_SHARE);
+    }
+    {
+        uint32_t exclusive = src->len - src->shared_len;
+        if (exclusive > 0u) {
+            if (bindings_pool_block_retain(src->entries, src->cap)) {
+                dst->entries = src->entries;
+                dst->len = src->len;
+                dst->cap = src->cap;
+                cetta_runtime_stats_inc(
+                    CETTA_RUNTIME_COUNTER_BINDINGS_VERSION_ENTRY_SHARE);
+            } else {
+                if (!bindings_reserve_entries(dst, src->len))
+                    return false;
+                memcpy(dst->entries, src->entries,
+                       sizeof(Binding) * exclusive);
+                dst->len = src->len;
+            }
+        } else if (src->shared_len == 0u && src->len > 0u) {
+            if (bindings_pool_block_retain(src->entries, src->cap)) {
+                dst->entries = src->entries;
+                dst->len = src->len;
+                dst->cap = src->cap;
+                cetta_runtime_stats_inc(
+                    CETTA_RUNTIME_COUNTER_BINDINGS_VERSION_ENTRY_SHARE);
+            } else {
+                if (!bindings_reserve_entries(dst, src->len))
+                    return false;
+                memcpy(dst->entries, src->entries,
+                       sizeof(Binding) * src->len);
+                dst->len = src->len;
+            }
         }
-        memcpy(dst->constraints, src->constraints,
-               sizeof(BindingConstraint) * src->eq_len);
-        dst->eq_len = src->eq_len;
+    }
+    if (src->eq_len > 0u) {
+        if (bindings_pool_block_retain(src->constraints, src->eq_cap)) {
+            dst->constraints = src->constraints;
+            dst->eq_len = src->eq_len;
+            dst->eq_cap = src->eq_cap;
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_BINDINGS_VERSION_CONSTRAINT_SHARE);
+        } else {
+            if (!bindings_reserve_constraints(dst, src->eq_len)) {
+                bindings_free(dst);
+                return false;
+            }
+            memcpy(dst->constraints, src->constraints,
+                   sizeof(BindingConstraint) * src->eq_len);
+            dst->eq_len = src->eq_len;
+        }
     }
     if (src->lookup_index) {
         bindings_lookup_index_retain(src->lookup_index);
@@ -1729,6 +1960,14 @@ bool bindings_clone(Bindings *dst, const Bindings *src) {
            sizeof(dst->rhs_variable_bloom));
     bindings_prime_assign(dst, src);
     return true;
+}
+
+bool bindings_prepare_logical_write(Bindings *bindings) {
+    if (!bindings)
+        return false;
+    return bindings_flatten_unique(bindings) &&
+        bindings_reserve_entries(bindings, bindings->len) &&
+        bindings_reserve_constraints(bindings, bindings->eq_len);
 }
 
 bool bindings_transport_logical(Bindings *dst, const Bindings *src,
@@ -1749,7 +1988,7 @@ bool bindings_transport_logical(Bindings *dst, const Bindings *src,
     }
 
     for (uint32_t i = 0u; i < src->len; i++) {
-        const Binding *source = &src->entries[i];
+        const Binding *source = bindings_entry_at(src, i);
         Binding target = *source;
         if (source->name_key) {
             target.name_key = transport(context, source->name_key);
@@ -1821,7 +2060,7 @@ bool bindings_factor_prefix(Bindings *full, const Bindings *base,
     }
     for (uint32_t i = 0u; i < base->len; i++) {
         if (!binding_prefix_item_equal(
-                &full->entries[i], &base->entries[i])) {
+                bindings_entry_at(full, i), bindings_entry_at(base, i))) {
             return true;
         }
     }
@@ -1847,7 +2086,7 @@ bool bindings_factor_prefix(Bindings *full, const Bindings *base,
         return false;
     }
     for (uint32_t i = base->len; i < full->len; i++) {
-        Binding item = full->entries[i];
+        Binding item = *bindings_entry_at(full, i);
         suffix.entries[suffix.len++] = item;
         bindings_rhs_variable_bloom_add(&suffix, item.val);
         if (item.legacy_name_fallback)
@@ -1909,6 +2148,8 @@ bool bindings_promote_logical_atoms_with_session(
         return true;
     if (!session)
         return false;
+    if (!bindings_prepare_logical_write(bindings))
+        return false;
     for (uint32_t i = 0; i < bindings->len; i++) {
         Atom *promoted_name_key = bindings->entries[i].name_key
             ? atom_deep_copy_session_copy(
@@ -1948,7 +2189,7 @@ bool bindings_logical_atoms_closed_for_arena(
     if (!bindings || !arena)
         return bindings == NULL;
     for (uint32_t i = 0u; i < bindings->len; i++) {
-        const Binding *entry = &bindings->entries[i];
+        const Binding *entry = bindings_entry_at(bindings, i);
         if ((entry->name_key &&
              !atom_graph_is_closed_for_arena(arena, entry->name_key)) ||
             (entry->val &&
@@ -1972,7 +2213,7 @@ bool bindings_logical_has_registry_refs(const Bindings *bindings) {
     if (!bindings)
         return false;
     for (uint32_t i = 0u; i < bindings->len; i++) {
-        const Binding *entry = &bindings->entries[i];
+        const Binding *entry = bindings_entry_at(bindings, i);
         if (atom_has_registry_refs(entry->name_key) ||
             atom_has_registry_refs(entry->val)) {
             return true;
@@ -2032,6 +2273,9 @@ void bindings_replace(Bindings *dst, Bindings *src) {
 bool bindings_remove_entry_at(Bindings *bindings, uint32_t index) {
     if (!bindings || index >= bindings->len)
         return false;
+    if (!bindings_flatten_unique(bindings) ||
+        !bindings_reserve_entries(bindings, bindings->len))
+        return false;
     if (binding_contains_private_variant_slot(
             &bindings->entries[index])) {
         assert(bindings->private_entry_count > 0u);
@@ -2069,7 +2313,7 @@ void bindings_invalidate_after_key_rewrite(Bindings *bindings) {
 
 Atom *bindings_lookup_id(Bindings *b, VarId var_id) {
     int32_t idx = bindings_lookup_index(b, var_id);
-    return idx >= 0 ? b->entries[idx].val : NULL;
+    return idx >= 0 ? bindings_entry_at(b, (uint32_t)idx)->val : NULL;
 }
 
 Atom *bindings_lookup_var(Bindings *b, Atom *var) {
@@ -2125,10 +2369,11 @@ static Atom *bindings_lookup_spelling(Bindings *b, SymbolId spelling) {
             bindings_legacy_fallback_count_slow(b));
     }
     for (uint32_t i = 0; i < b->len; i++) {
-        if (!b->entries[i].legacy_name_fallback)
+        const Binding *entry = bindings_entry_at(b, i);
+        if (!entry->legacy_name_fallback)
             continue;
-        if (b->entries[i].spelling == spelling)
-            return b->entries[i].val;
+        if (entry->spelling == spelling)
+            return entry->val;
     }
     return NULL;
 }
@@ -2163,9 +2408,11 @@ static bool bindings_add_inplace_internal(Bindings *b, VarId var_id,
     }
     /* Check for existing binding */
     int32_t existing_idx = bindings_lookup_index(b, var_id);
-    Atom *existing = existing_idx >= 0 ? b->entries[existing_idx].val : NULL;
+    Atom *existing = existing_idx >= 0
+        ? bindings_entry_at(b, (uint32_t)existing_idx)->val : NULL;
     if (existing) {
-        Atom *existing_key = b->entries[existing_idx].name_key;
+        Atom *existing_key =
+            bindings_entry_at(b, (uint32_t)existing_idx)->name_key;
         if ((existing_key || name_key) &&
             (!existing_key || !name_key || !atom_eq(existing_key, name_key)))
             return false;
@@ -2188,8 +2435,15 @@ static bool bindings_add_inplace_internal(Bindings *b, VarId var_id,
             return false;
         }
         if (legacy_name_fallback && existing_idx >= 0 &&
-            !b->entries[existing_idx].legacy_name_fallback) {
-            b->entries[existing_idx].legacy_name_fallback = true;
+            !bindings_entry_at(b, (uint32_t)existing_idx)
+                 ->legacy_name_fallback) {
+            if ((uint32_t)existing_idx < b->shared_len) {
+                if (!bindings_flatten_unique(b))
+                    return false;
+            } else if (!bindings_reserve_entries(b, b->len))
+                return false;
+            bindings_exclusive_slot(b, (uint32_t)existing_idx)
+                ->legacy_name_fallback = true;
             b->legacy_fallback_count++;
             b->cycle_state = BINDINGS_CYCLE_UNKNOWN;
         }
@@ -2204,16 +2458,19 @@ static bool bindings_add_inplace_internal(Bindings *b, VarId var_id,
         b->cycle_state = BINDINGS_CYCLE_UNKNOWN;
     else
         bindings_cycle_note_edge(b, var_id, val);
-    b->entries[b->len].var_id = var_id;
-    b->entries[b->len].spelling = spelling;
-    b->entries[b->len].name_key = name_key;
-    b->entries[b->len].val = val;
-    bindings_rhs_variable_bloom_add(b, val);
-    b->entries[b->len].legacy_name_fallback = legacy_name_fallback;
-    if (legacy_name_fallback)
-        b->legacy_fallback_count++;
-    if (binding_contains_private_variant_slot(&b->entries[b->len]))
-        b->private_entry_count++;
+    {
+        Binding *slot = bindings_exclusive_slot(b, b->len);
+        slot->var_id = var_id;
+        slot->spelling = spelling;
+        slot->name_key = name_key;
+        slot->val = val;
+        bindings_rhs_variable_bloom_add(b, val);
+        slot->legacy_name_fallback = legacy_name_fallback;
+        if (legacy_name_fallback)
+            b->legacy_fallback_count++;
+        if (binding_contains_private_variant_slot(slot))
+            b->private_entry_count++;
+    }
     b->len++;
     if (normalize_constraints && !bindings_normalize_constraints(b))
         return false;
@@ -2390,12 +2647,13 @@ static bool bindings_try_merge_inplace(Bindings *dst, const Bindings *src) {
     dst->eq_len = 0;
     dst->private_constraint_count = 0u;
     for (uint32_t i = 0; i < src->len; i++) {
-        if (!bindings_add_inplace_internal(dst, src->entries[i].var_id,
-                                           src->entries[i].spelling,
-                                           src->entries[i].name_key,
-                                           src->entries[i].val,
+        const Binding *src_entry = bindings_entry_at(src, i);
+        if (!bindings_add_inplace_internal(dst, src_entry->var_id,
+                                           src_entry->spelling,
+                                           src_entry->name_key,
+                                           src_entry->val,
                                            false,
-                                           src->entries[i].legacy_name_fallback)) {
+                                           src_entry->legacy_name_fallback)) {
             bindings_temp_constraints_release(pending, pending_cap,
                                               pending_stack);
             return false;
@@ -2824,7 +3082,7 @@ static Atom *bindings_lookup_id_since(Bindings *b, VarId id,
 
     if (index < 0 || (uint32_t)index < first_entry)
         return NULL;
-    return b->entries[(uint32_t)index].val;
+    return bindings_entry_at(b, (uint32_t)index)->val;
 }
 
 void bindings_dense_epoch_frame_init(BindingsDenseEpochFrame *frame) {
@@ -2928,7 +3186,8 @@ static void bindings_dense_epoch_frame_scan(
             uint32_t entry_plus_one = bindings_lookup_index_find(index, id);
             if (entry_plus_one == 0u || entry_plus_one <= begin)
                 continue;
-            const Binding *entry = &bindings->entries[entry_plus_one - 1u];
+            const Binding *entry =
+                bindings_entry_at(bindings, entry_plus_one - 1u);
             frame->values[slot] = entry->val;
             frame->slot_stamps[slot] = frame->slot_generation;
         }
@@ -2938,7 +3197,7 @@ static void bindings_dense_epoch_frame_scan(
     if (frame->source_ids_contiguous) {
         for (uint32_t entry_index = begin;
              entry_index < bindings->len; entry_index++) {
-            const Binding *entry = &bindings->entries[entry_index];
+            const Binding *entry = bindings_entry_at(bindings, entry_index);
             if (var_epoch_suffix(entry->var_id) != frame->epoch)
                 continue;
             VarId source_id = (VarId)var_base_id(entry->var_id);
@@ -2955,7 +3214,7 @@ static void bindings_dense_epoch_frame_scan(
     }
     for (uint32_t entry_index = begin;
          entry_index < bindings->len; entry_index++) {
-        const Binding *entry = &bindings->entries[entry_index];
+        const Binding *entry = bindings_entry_at(bindings, entry_index);
         if (var_epoch_suffix(entry->var_id) != frame->epoch)
             continue;
         VarId source_id = (VarId)var_base_id(entry->var_id);
@@ -3192,8 +3451,9 @@ bool bindings_resolve_epoch_view_ground(
 static bool bindings_epoch_coordinate_is_authoritative(
         Bindings *bindings, VarId expected, uint32_t index) {
     if (!bindings || index >= bindings->len ||
-        bindings->entries[index].legacy_name_fallback ||
-        !binding_var_eq(bindings->entries[index].var_id, expected)) {
+        bindings_entry_at(bindings, index)->legacy_name_fallback ||
+        !binding_var_eq(bindings_entry_at(bindings, index)->var_id,
+                        expected)) {
         return false;
     }
     BindingsLookupIndex *lookup_index =
@@ -3204,7 +3464,8 @@ static bool bindings_epoch_coordinate_is_authoritative(
     }
     for (uint32_t cursor = bindings->len; cursor > index + 1u; cursor--) {
         if (binding_var_eq(
-                bindings->entries[cursor - 1u].var_id, expected)) {
+                bindings_entry_at(bindings, cursor - 1u)->var_id,
+                expected)) {
             return false;
         }
     }
@@ -3230,7 +3491,7 @@ bool bindings_resolve_epoch_view_ground_at(
     if (index >= bindings->len)
         return false;
     expected = var_epoch_id(source_variable->var_id, epoch);
-    entry = &bindings->entries[index];
+    entry = bindings_entry_at(bindings, index);
     if (!bindings_epoch_coordinate_is_authoritative(
             (Bindings *)bindings, expected, index))
         return false;
@@ -3295,7 +3556,7 @@ static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom,
                     uint32_t index = first_entry + offset;
                     if (bindings_epoch_coordinate_is_authoritative(
                             b, lookup_id, index)) {
-                        val = b->entries[index].val;
+                        val = bindings_entry_at(b, index)->val;
                         if (fast->coordinate_hits &&
                             *fast->coordinate_hits != UINT64_MAX)
                             (*fast->coordinate_hits)++;
@@ -3773,14 +4034,15 @@ Atom *bindings_to_atom(Arena *a, const Bindings *b) {
     if (b->len > 0) {
         assigns = arena_alloc(a, sizeof(Atom *) * b->len);
         for (uint32_t i = 0; i < b->len; i++) {
-            Atom *key = b->entries[i].legacy_name_fallback
-                ? atom_symbol_id(a, b->entries[i].spelling)
-                : binding_variable_atom(a, &b->entries[i]);
+            const Binding *entry = bindings_entry_at(b, i);
+            Atom *key = entry->legacy_name_fallback
+                ? atom_symbol_id(a, entry->spelling)
+                : binding_variable_atom(a, entry);
             if (!key)
                 return NULL;
             assigns[i] = atom_expr2(a,
                 key,
-                b->entries[i].val);
+                entry->val);
         }
     }
     Atom **equalities = NULL;
@@ -4137,8 +4399,12 @@ bool bindings_builder_clone(BindingsBuilder *dst,
             return false;
         }
     }
-    if (!bindings_builder_init(dst, &src->current))
+    if (!bindings_builder_init(dst, NULL))
         return false;
+    if (!bindings_fork_version(&dst->current, &src->current)) {
+        bindings_builder_free(dst);
+        return false;
+    }
     if (src->trail_len > 0u) {
         if ((size_t)src->trail_len >
             SIZE_MAX / sizeof(*dst->trail)) {
@@ -4310,8 +4576,10 @@ void bindings_builder_rollback(BindingsBuilder *bb, uint32_t mark) {
         if (bb->rollback_count != UINT64_MAX)
             bb->rollback_count++;
     }
-    if (bb->current.len < old_len)
+    if (bb->current.len < old_len) {
         bindings_lookup_index_truncate(&bb->current, bb->current.len);
+        bindings_release_truncated_suffix(&bb->current);
+    }
     if (bb->unobserved_write_region_active)
         bb->unobserved_write_region_has_checkpoint = false;
 }
@@ -4380,13 +4648,15 @@ static bool bindings_builder_add_id_internal_with_cycle_evidence(
 
     int32_t existing_idx = bindings_lookup_index(&bb->current, var_id);
     if (existing_idx >= 0) {
-        Atom *existing_key = bb->current.entries[existing_idx].name_key;
+        const Binding *existing_entry =
+            bindings_entry_at(&bb->current, (uint32_t)existing_idx);
+        Atom *existing_key = existing_entry->name_key;
         if ((existing_key || name_key) &&
             (!existing_key || !name_key || !atom_eq(existing_key, name_key)))
             return false;
-        Atom *existing = bb->current.entries[existing_idx].val;
+        Atom *existing = existing_entry->val;
         if (legacy_name_fallback &&
-            !bb->current.entries[existing_idx].legacy_name_fallback) {
+            !existing_entry->legacy_name_fallback) {
             return false;
         }
         if (existing == val || atom_eq(existing, val)) {
@@ -4420,17 +4690,18 @@ static bool bindings_builder_add_id_internal_with_cycle_evidence(
             &bb->current, cycle_evidence);
     else
         bindings_cycle_note_edge(&bb->current, var_id, val);
-    bb->current.entries[bb->current.len].var_id = var_id;
-    bb->current.entries[bb->current.len].spelling = spelling;
-    bb->current.entries[bb->current.len].name_key = name_key;
-    bb->current.entries[bb->current.len].val = val;
-    bindings_rhs_variable_bloom_add(&bb->current, val);
-    bb->current.entries[bb->current.len].legacy_name_fallback = legacy_name_fallback;
-    if (legacy_name_fallback)
-        bb->current.legacy_fallback_count++;
-    if (binding_contains_private_variant_slot(
-            &bb->current.entries[bb->current.len])) {
-        bb->current.private_entry_count++;
+    {
+        Binding *slot = bindings_exclusive_slot(&bb->current, bb->current.len);
+        slot->var_id = var_id;
+        slot->spelling = spelling;
+        slot->name_key = name_key;
+        slot->val = val;
+        bindings_rhs_variable_bloom_add(&bb->current, val);
+        slot->legacy_name_fallback = legacy_name_fallback;
+        if (legacy_name_fallback)
+            bb->current.legacy_fallback_count++;
+        if (binding_contains_private_variant_slot(slot))
+            bb->current.private_entry_count++;
     }
     bb->current.len++;
     if (bb->growth_count != UINT64_MAX)
@@ -4658,11 +4929,12 @@ bool bindings_builder_try_merge(BindingsBuilder *bb, const Bindings *src) {
     bb->current.eq_len = 0;
     bb->current.private_constraint_count = 0u;
     for (uint32_t i = 0; i < src->len; i++) {
-        if (!bindings_builder_add_id_internal(bb, src->entries[i].var_id,
-                                              src->entries[i].spelling,
-                                              src->entries[i].name_key,
-                                              src->entries[i].val,
-                                              src->entries[i].legacy_name_fallback)) {
+        const Binding *src_entry = bindings_entry_at(src, i);
+        if (!bindings_builder_add_id_internal(bb, src_entry->var_id,
+                                              src_entry->spelling,
+                                              src_entry->name_key,
+                                              src_entry->val,
+                                              src_entry->legacy_name_fallback)) {
             bindings_temp_constraints_release(pending, pending_cap,
                                               pending_stack);
             bindings_builder_rollback(bb, mark);
@@ -5231,7 +5503,7 @@ static BindingsReachability bindings_value_reaches_var(
         }
         if (dependency_prefix < (uint32_t)index + 1u)
             dependency_prefix = (uint32_t)index + 1u;
-        Atom *next = bindings->entries[(uint32_t)index].val;
+        Atom *next = bindings_entry_at(bindings, (uint32_t)index)->val;
         if (!next || (next->flags & ATOM_FLAG_HASH_STABLE) == 0u)
             closed_immutable = false;
         if (next && next->kind == ATOM_VAR &&
@@ -5545,7 +5817,7 @@ static bool bindings_reachable_index_build(
         cetta_malloc(cap * sizeof(*slots));
     memset(slots, 0, cap * sizeof(*slots));
     for (uint32_t i = 0u; i < src->len; i++) {
-        VarId id = src->entries[i].var_id;
+        VarId id = bindings_entry_at(src, i)->var_id;
         if (id == VAR_ID_NONE) {
             free(slots);
             return false;
@@ -5644,7 +5916,7 @@ static bool bindings_project_reachable_sparse(
         uint32_t entry_index = index_plus_one - 1u;
         if (entry_index >= src->len ||
             !binding_var_eq(
-                src->entries[entry_index].var_id, id)) {
+                bindings_entry_at(src, entry_index)->var_id, id)) {
             goto fail;
         }
         if (selected_len == selected_cap) {
@@ -5659,9 +5931,9 @@ static bool bindings_project_reachable_sparse(
         }
         selected[selected_len++] = entry_index;
         if (!bindings_reachable_vars_add_atom(
-                &live, src->entries[entry_index].name_key) ||
+                &live, bindings_entry_at(src, entry_index)->name_key) ||
             !bindings_reachable_vars_add_atom(
-                &live, src->entries[entry_index].val)) {
+                &live, bindings_entry_at(src, entry_index)->val)) {
             goto fail;
         }
     }
@@ -5679,7 +5951,7 @@ static bool bindings_project_reachable_sparse(
     }
     for (size_t i = 0u; i < selected_len; i++) {
         const Binding *binding =
-            &src->entries[selected[i]];
+            bindings_entry_at(src, selected[i]);
         dst->entries[dst->len++] = *binding;
         bindings_rhs_variable_bloom_add(dst, binding->val);
         if (binding_contains_private_variant_slot(binding))
@@ -5788,16 +6060,17 @@ static bool bindings_project_reachable_selected(
      * than silently changing that compatibility behavior.
      */
     for (uint32_t i = 0u; i < src->len; i++) {
-        if (!src->entries[i].legacy_name_fallback)
+        const Binding *src_entry = bindings_entry_at(src, i);
+        if (!src_entry->legacy_name_fallback)
             continue;
         has_legacy = true;
         keep_entries[i] = true;
         if (!bindings_reachable_vars_add(
-                &live, src->entries[i].var_id) ||
+                &live, src_entry->var_id) ||
             !bindings_reachable_vars_add_atom(
-                &live, src->entries[i].name_key) ||
+                &live, src_entry->name_key) ||
             !bindings_reachable_vars_add_atom(
-                &live, src->entries[i].val)) {
+                &live, src_entry->val)) {
             goto fail;
         }
     }
@@ -5816,9 +6089,9 @@ static bool bindings_project_reachable_selected(
                 continue;
             keep_entries[index] = true;
             if (!bindings_reachable_vars_add_atom(
-                    &live, src->entries[index].name_key) ||
+                    &live, bindings_entry_at(src, index)->name_key) ||
                 !bindings_reachable_vars_add_atom(
-                    &live, src->entries[index].val)) {
+                    &live, bindings_entry_at(src, index)->val)) {
                 goto fail;
             }
         }
@@ -5871,13 +6144,13 @@ static bool bindings_project_reachable_selected(
     }
     for (uint32_t i = 0u; i < src->len; i++) {
         if (keep_entries[i]) {
-            dst->entries[dst->len++] = src->entries[i];
+            const Binding *src_entry = bindings_entry_at(src, i);
+            dst->entries[dst->len++] = *src_entry;
             bindings_rhs_variable_bloom_add(
-                dst, src->entries[i].val);
-            if (src->entries[i].legacy_name_fallback)
+                dst, src_entry->val);
+            if (src_entry->legacy_name_fallback)
                 dst->legacy_fallback_count++;
-            if (binding_contains_private_variant_slot(
-                    &src->entries[i])) {
+            if (binding_contains_private_variant_slot(src_entry)) {
                 dst->private_entry_count++;
             }
         }
@@ -6106,16 +6379,16 @@ bool bindings_builder_compact_reachable_with_epoch_roots_and_entry_marks(
     private_entry_prefix[0] = 0u;
     for (uint32_t i = 0u; i < bb->current.len; i++) {
         bool keep = keep_entries[i];
+        const Binding *current_entry = bindings_entry_at(&bb->current, i);
         entry_prefix[i + 1u] =
             entry_prefix[i] + (keep ? 1u : 0u);
         legacy_prefix[i + 1u] =
             legacy_prefix[i] +
-            (keep && bb->current.entries[i].legacy_name_fallback
+            (keep && current_entry->legacy_name_fallback
                  ? 1u : 0u);
         private_entry_prefix[i + 1u] =
             private_entry_prefix[i] +
-            (keep && binding_contains_private_variant_slot(
-                         &bb->current.entries[i])
+            (keep && binding_contains_private_variant_slot(current_entry)
                  ? 1u : 0u);
     }
     constraint_prefix[0] = 0u;
@@ -6741,15 +7014,16 @@ static int32_t bindings_find_entry_index_for_loop(
         return -1;
     for (uint32_t i = b->len; i > 0; i--) {
         uint32_t idx = i - 1;
-        if (binding_var_eq(b->entries[idx].var_id, var->var_id))
+        if (binding_var_eq(bindings_entry_at(b, idx)->var_id, var->var_id))
             return (int32_t)idx;
     }
     if (b->legacy_fallback_count != 0u) {
         /* Keep the same precedence as bindings_lookup_spelling: legacy
          * serialized environments select the first spelling entry. */
         for (uint32_t i = 0u; i < b->len; i++) {
-            if (b->entries[i].legacy_name_fallback &&
-                b->entries[i].spelling == var->sym_id)
+            const Binding *entry = bindings_entry_at(b, i);
+            if (entry->legacy_name_fallback &&
+                entry->spelling == var->sym_id)
                 return (int32_t)i;
         }
     }
@@ -6793,12 +7067,13 @@ static bool bindings_loop_push(BindingsLoopStack *stack,
 }
 
 static bool bindings_entry_is_trivial_self(const Bindings *b, uint32_t idx) {
-    Atom *value = b->entries[idx].val;
+    const Binding *entry = bindings_entry_at(b, idx);
+    Atom *value = entry->val;
     return value->kind == ATOM_VAR &&
-           (value->var_id == b->entries[idx].var_id ||
-            (b->entries[idx].legacy_name_fallback &&
+           (value->var_id == entry->var_id ||
+            (entry->legacy_name_fallback &&
              !value->name_key &&
-             value->sym_id == b->entries[idx].spelling));
+             value->sym_id == entry->spelling));
 }
 
 bool bindings_has_loop(const Bindings *b) {
@@ -6830,7 +7105,7 @@ bool bindings_has_loop(const Bindings *b) {
                                              NULL, i}) ||
             !bindings_loop_push(
                 &stack, (BindingsLoopFrame){BINDINGS_LOOP_ATOM,
-                                             b->entries[i].val, 0}))
+                                             bindings_entry_at(b, i)->val, 0}))
             goto representation_failure;
 
         while (stack.len > 0) {
@@ -6863,7 +7138,7 @@ bool bindings_has_loop(const Bindings *b) {
                     !bindings_loop_push(
                         &stack,
                         (BindingsLoopFrame){BINDINGS_LOOP_ATOM,
-                                             b->entries[entry].val, 0}))
+                                             bindings_entry_at(b, entry)->val, 0}))
                     goto representation_failure;
                 continue;
             }
@@ -8729,8 +9004,9 @@ bool bindings_eq(Bindings *a, Bindings *b) {
     if (a->len != b->len) return false;
     if (a->eq_len != b->eq_len) return false;
     for (uint32_t i = 0; i < a->len; i++) {
-        Atom *other = bindings_lookup_id(b, a->entries[i].var_id);
-        if (!other || !atom_eq(other, a->entries[i].val))
+        const Binding *entry = bindings_entry_at(a, i);
+        Atom *other = bindings_lookup_id(b, entry->var_id);
+        if (!other || !atom_eq(other, entry->val))
             return false;
     }
     bool matched_stack[BINDINGS_TEMP_STACK_CAP];

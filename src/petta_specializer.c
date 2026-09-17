@@ -2418,7 +2418,7 @@ static bool petta_specializer_analyze_call(
         Atom *rhs = fresh->expr.elems[2];
         for (uint32_t index = 0u;
              ok && index < bindings.len; index++) {
-            Binding *binding = &bindings.entries[index];
+            const Binding *binding = bindings_entry_at(&bindings, index);
             Atom *specializable = petta_specializable_value(
                 context, &candidate_values, binding->val);
             if (!specializable) {

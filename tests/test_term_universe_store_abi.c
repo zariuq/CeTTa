@@ -1255,7 +1255,24 @@ static void test_source_arena_id_memo_contract(void) {
     arena_init(&other);
     term_universe_init(&universe);
     term_universe_set_persistent_arena(&universe, &persistent);
-    assert(setenv("CETTA_TERM_UNIVERSE_SOURCE_ID_MEMO", "1", 1) == 0);
+
+    /* A shallow expression has no reusable expression child.  Admission
+       must stay on the ordinary structural path without allocating or
+       probing the thread-local source memo. */
+    Atom *shallow = atom_expr3(
+        &source, atom_symbol(&source, "source-memo-shallow"),
+        atom_int(&source, 1), atom_int(&source, 2));
+    reset_test_counters();
+    AtomId shallow_id = term_universe_store_atom_id_from_source_arena(
+        &universe, &persistent, &source, shallow);
+    assert(shallow_id != CETTA_ATOM_ID_NONE);
+    assert(term_universe_atom_id_eq(&universe, shallow_id, shallow));
+    assert(test_counter(
+               CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_SOURCE_MEMO_LOOKUP) == 0u);
+    assert(test_counter(
+               CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_SOURCE_MEMO_HIT) == 0u);
+    assert(test_counter(
+               CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_SOURCE_MEMO_STORE) == 0u);
 
     Atom *tail = atom_symbol(&source, "source-memo-tail");
     for (uint32_t i = 0; i < 128u; i++)
@@ -1302,16 +1319,22 @@ static void test_source_arena_id_memo_contract(void) {
     /* Arena reset may reuse the same address for a different term.  The reset
        epoch must invalidate every pointer-derived entry before that reuse. */
     ArenaMark reuse_mark = arena_mark(&source);
+    Atom *before_reset_child = atom_expr2(
+        &source, atom_symbol(&source, "source-memo-child"),
+        atom_int(&source, 11));
     Atom *before_reset = atom_expr2(
         &source, atom_symbol(&source, "source-memo-before-reset"),
-        atom_int(&source, 11));
+        before_reset_child);
     AtomId before_reset_id = term_universe_store_atom_id_from_source_arena(
         &universe, &persistent, &source, before_reset);
     assert(before_reset_id != CETTA_ATOM_ID_NONE);
     arena_reset(&source, reuse_mark);
+    Atom *after_reset_child = atom_expr2(
+        &source, atom_symbol(&source, "source-memo-child"),
+        atom_int(&source, 13));
     Atom *after_reset = atom_expr2(
         &source, atom_symbol(&source, "source-memo-after-reset"),
-        atom_int(&source, 13));
+        after_reset_child);
     reset_test_counters();
     AtomId after_reset_id = term_universe_store_atom_id_from_source_arena(
         &universe, &persistent, &source, after_reset);
@@ -1357,10 +1380,66 @@ static void test_source_arena_id_memo_contract(void) {
     assert(test_counter(
                CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_SOURCE_MEMO_HIT) == 0u);
 
-    assert(unsetenv("CETTA_TERM_UNIVERSE_SOURCE_ID_MEMO") == 0);
     term_universe_free(&universe);
     arena_free(&other);
     arena_free(&source);
+    arena_free(&persistent);
+}
+
+static void test_shallow_ground_admit_shares_structure_keeps_occurrences(void) {
+    Arena persistent;
+    Arena scratch;
+    TermUniverse universe;
+    Space space;
+    ArenaMark reuse_mark;
+
+    arena_init(&persistent);
+    arena_init(&scratch);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    space_init_with_universe(&space, &universe);
+    space.kind = SPACE_KIND_HASH;
+
+    Atom *first = atom_expr3(
+        &scratch, atom_symbol(&scratch, "shallow-ground-row"),
+        atom_int(&scratch, 7), atom_int(&scratch, 70));
+    Atom *second = atom_expr3(
+        &scratch, atom_symbol(&scratch, "shallow-ground-row"),
+        atom_int(&scratch, 7), atom_int(&scratch, 70));
+    assert(first && second && first != second);
+    assert(space_admit_atom(&space, &persistent, first));
+    assert(space_admit_atom(&space, &persistent, second));
+    assert(space_length64(&space) == 2u);
+
+    AtomId first_id = space_get_atom_id_at64(&space, 0u);
+    AtomId second_id = space_get_atom_id_at64(&space, 1u);
+    assert(first_id != CETTA_ATOM_ID_NONE);
+    assert(first_id == second_id);
+    assert(term_universe_atom_id_eq(&universe, first_id, first));
+    assert(term_universe_atom_id_eq(&universe, second_id, second));
+    assert(space_get_at64(&space, 0u) != NULL);
+    assert(space_get_at64(&space, 1u) != NULL);
+
+    reuse_mark = arena_mark(&scratch);
+    Atom *before_reset = atom_expr3(
+        &scratch, atom_symbol(&scratch, "shallow-ground-reset"),
+        atom_int(&scratch, 1), atom_int(&scratch, 2));
+    AtomId before_reset_id = term_universe_store_atom_id_from_source_arena(
+        &universe, &persistent, &scratch, before_reset);
+    assert(before_reset_id != CETTA_ATOM_ID_NONE);
+    arena_reset(&scratch, reuse_mark);
+    Atom *after_reset = atom_expr3(
+        &scratch, atom_symbol(&scratch, "shallow-ground-reset-other"),
+        atom_int(&scratch, 3), atom_int(&scratch, 4));
+    AtomId after_reset_id = term_universe_store_atom_id_from_source_arena(
+        &universe, &persistent, &scratch, after_reset);
+    assert(after_reset_id != CETTA_ATOM_ID_NONE);
+    assert(after_reset_id != before_reset_id);
+    assert(term_universe_atom_id_eq(&universe, after_reset_id, after_reset));
+
+    space_free(&space);
+    term_universe_free(&universe);
+    arena_free(&scratch);
     arena_free(&persistent);
 }
 
@@ -1595,6 +1674,7 @@ int main(void) {
     test_structural_slot_hash_collision_family();
     test_hashcons_structural_slot_collision_family();
     test_source_arena_id_memo_contract();
+    test_shallow_ground_admit_shares_structure_keeps_occurrences();
     test_intrinsic_variable_support_contract();
     arena_init(&persistent);
     arena_init(&scratch);

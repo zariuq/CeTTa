@@ -9,4 +9,4 @@
     (ProofSequenceConsV1
       (ProofRelationalTokenV1
         RelationalProjectionCanaryProofV1 projection-canary-a-v1)
-      ProofSequenceNilV1)))
+      (ProofSequenceNilV1))))

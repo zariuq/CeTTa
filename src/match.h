@@ -59,6 +59,15 @@ typedef struct {
      * needs to extend the index; rollback truncates only the indexed prefix.
      */
     BindingsLookupIndex *lookup_index;
+    /*
+     * Frozen prefix of a captured image.  `entries`/`len`/`cap` remain the
+     * exclusive suffix: `len` is the live total, `shared_len` the immutable
+     * prefix length, and exclusive slots live at `entries[i - shared_len]`.
+     * A unique image keeps `shared_len` at zero.
+     */
+    Binding *shared_entries;
+    uint32_t shared_len;
+    uint32_t shared_cap;
     /* Prime per-occurrence state -- the Need world (orthogonal to logical
      * substitutions) plus causal support/branch-local effects -- lives behind
      * this lazily-materialized pointer.  It is NULL for pure-HE evaluation, so
@@ -67,6 +76,15 @@ typedef struct {
      * use.  Access via the bindings_need_* / bindings_receipt_* views below. */
     PrimeOccurrence *prime_ext;
 } Bindings;
+
+/* Logical index into the frozen prefix or the exclusive suffix.  `i` must
+ * be strictly less than `b->len`. */
+static inline const Binding *bindings_entry_at(const Bindings *b, uint32_t i)
+{
+    if (i < b->shared_len)
+        return &b->shared_entries[i];
+    return &b->entries[i - b->shared_len];
+}
 
 typedef struct {
     Bindings *items;
@@ -182,6 +200,9 @@ void      bindings_init(Bindings *b);
 void      bindings_free(Bindings *b);
 bool      bindings_clone(Bindings *dst, const Bindings *src);
 bool      bindings_copy(Bindings *dst, const Bindings *src);
+/* Capture retains a frozen image.  Ensure both flat logical arrays are
+ * exclusively writable before changing an entry or constraint. */
+bool      bindings_prepare_logical_write(Bindings *bindings);
 /* Transport the logical binding product through an identity-preserving Atom
  * representation map.  Entry order, VarIds, spelling fallback, constraints,
  * and exact multiplicity are retained; derived indexes are rebuilt lazily.
