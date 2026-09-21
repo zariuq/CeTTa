@@ -1,0 +1,251 @@
+#ifndef CETTA_TPTP_OFFICIAL_SNAPSHOT_V1_H
+#define CETTA_TPTP_OFFICIAL_SNAPSHOT_V1_H
+
+#include "experiments/gslt2parse_foundation/native/parser_pack_table_snapshot_v1.h"
+#include "native/tptp_official_records_v1.h"
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#define CETTA_TPTP_OFFICIAL_SNAPSHOT_PATH_V1 \
+    "runtime/tptp-official-reader/" CETTA_TPTP_OFFICIAL_SYNTAXBNF_DIGEST_V1 \
+    "/tables.tpp1"
+#define CETTA_TPTP_CORPUS_COMPATIBLE_SNAPSHOT_PATH_V1 \
+    "runtime/tptp-official-reader/" CETTA_TPTP_OFFICIAL_SYNTAXBNF_DIGEST_V1 \
+    "/corpus-compatible/tables.tpp1"
+
+/* The ordinary table interpreter remains the fast path.  If it reports no
+ * parse or exhausts its bounded GLR budget, the prepared reader retries the
+ * same token slice with packed GLL.  A zero limit requests the finite default:
+ * the greater of this floor and 96 descriptors per token plus 200,000.  An
+ * explicit nonzero limit remains available to callers and qualification.
+ * Only a constructed unique or ambiguous parse replaces the table result; a
+ * negative or bounded fallback preserves that original outcome. */
+#define CETTA_TPTP_GLL_DESCRIPTOR_LIMIT_V1 UINT64_C(4000000)
+#define CETTA_TPTP_GLL_DESCRIPTORS_PER_TOKEN_V1 UINT64_C(96)
+#define CETTA_TPTP_GLL_DESCRIPTOR_ALLOWANCE_V1 UINT64_C(200000)
+
+bool cetta_tptp_snapshot_construct_from_pack_v1(
+    const char *pack_path,
+    const char *out_path,
+    char *error,
+    size_t error_size);
+
+bool cetta_tptp_snapshot_load_v1(
+    PPTableSnapshotV1 *out,
+    const char *path,
+    const char *expected_digest,
+    char *error,
+    size_t error_size);
+
+bool cetta_tptp_snapshot_load_bound_v1(
+    PPTableSnapshotV1 *out,
+    const char *path,
+    const char *expected_syntax_digest,
+    const char *expected_profile,
+    const char *expected_artifact_digest,
+    char *error,
+    size_t error_size);
+
+typedef struct {
+    PPTableSnapshotV1 snapshot;
+    CettaLpNativeGrammar fallback_grammar;
+} CettaTptpPreparedReaderV1;
+
+void cetta_tptp_prepared_reader_init_v1(CettaTptpPreparedReaderV1 *reader);
+void cetta_tptp_prepared_reader_free_v1(CettaTptpPreparedReaderV1 *reader);
+
+bool cetta_tptp_prepared_reader_load_v1(
+    CettaTptpPreparedReaderV1 *reader,
+    const char *path,
+    const char *expected_digest,
+    char *error,
+    size_t error_size);
+
+bool cetta_tptp_prepared_reader_load_bound_v1(
+    CettaTptpPreparedReaderV1 *reader,
+    const char *path,
+    const char *expected_syntax_digest,
+    const char *expected_profile,
+    const char *expected_artifact_digest,
+    char *error,
+    size_t error_size);
+
+typedef struct {
+    uint32_t start_scalar;
+    uint32_t len;
+    uint16_t tag;
+} CettaTptpLexTokenV1;
+
+static inline uint32_t cetta_tptp_lex_end(const CettaTptpLexTokenV1 *tok) {
+    return tok->start_scalar + (uint32_t)tok->len;
+}
+
+/* Longest-match tokenize with skip tags omitted. ASCII TPTP/TSTP text. */
+bool cetta_tptp_snapshot_lex_text_v1(
+    const PPTableSnapshotV1 *snap,
+    const char *text,
+    size_t text_len,
+    CettaTptpLexTokenV1 *out,
+    uint32_t cap,
+    uint32_t *out_len,
+    char *error,
+    size_t error_size);
+
+typedef struct {
+    double lex_s;
+    double parse_s;
+    double project_s;
+    double combine_s;
+    uint64_t gll_descriptor_count;
+    uint32_t token_count;
+    uint32_t input_count;
+} CettaTptpReadCostV1;
+
+typedef enum {
+    CETTA_TPTP_READ_ERROR_V1 = 0,
+    CETTA_TPTP_READ_OK_V1 = 1,
+    CETTA_TPTP_READ_LEX_REJECT_V1 = 2,
+    CETTA_TPTP_READ_NO_PARSE_V1 = 3,
+    CETTA_TPTP_READ_AMBIGUOUS_V1 = 4,
+    CETTA_TPTP_READ_RESOURCE_LIMIT_V1 = 5
+} CettaTptpReadStatusV1;
+
+typedef struct {
+    CettaTptpReadStatusV1 status;
+    uint32_t byte_offset;
+    uint64_t work;
+    uint64_t limit;
+} CettaTptpReadOutcomeV1;
+
+bool cetta_tptp_snapshot_read_text_v1(
+    const PPTableSnapshotV1 *snap,
+    const char *text,
+    size_t text_len,
+    Arena *arena,
+    Atom **out_records,
+    char *error,
+    size_t error_size);
+
+bool cetta_tptp_snapshot_read_text_outcome_v1(
+    const PPTableSnapshotV1 *snap,
+    const char *text,
+    size_t text_len,
+    Arena *arena,
+    Atom **out_records,
+    CettaTptpReadOutcomeV1 *outcome,
+    char *error,
+    size_t error_size);
+
+bool cetta_tptp_snapshot_read_file_outcome_v1(
+    const PPTableSnapshotV1 *snap,
+    const char *path,
+    Arena *arena,
+    Atom **out_records,
+    CettaTptpReadOutcomeV1 *outcome,
+    char *error,
+    size_t error_size);
+
+bool cetta_tptp_prepared_reader_read_text_outcome_v1(
+    const CettaTptpPreparedReaderV1 *reader,
+    const char *text,
+    size_t text_len,
+    Arena *arena,
+    Atom **out_records,
+    CettaTptpReadOutcomeV1 *outcome,
+    char *error,
+    size_t error_size);
+
+bool cetta_tptp_prepared_reader_read_file_outcome_v1(
+    const CettaTptpPreparedReaderV1 *reader,
+    const char *path,
+    Arena *arena,
+    Atom **out_records,
+    CettaTptpReadOutcomeV1 *outcome,
+    char *error,
+    size_t error_size);
+
+bool cetta_tptp_snapshot_read_text_cost_v1(
+    const PPTableSnapshotV1 *snap,
+    const char *text,
+    size_t text_len,
+    Arena *arena,
+    Atom **out_records,
+    CettaTptpReadCostV1 *cost,
+    char *error,
+    size_t error_size);
+
+/* Visit each TPTP_input without retaining the file record. on_input must
+ * not keep Atom pointers after it returns; the arena is reset per input. */
+typedef bool (*CettaTptpInputVisitV1)(Atom *input, void *user);
+
+bool cetta_tptp_snapshot_read_text_each_v1(
+    const PPTableSnapshotV1 *snap,
+    const char *text,
+    size_t text_len,
+    Arena *arena,
+    CettaTptpInputVisitV1 on_input,
+    void *user,
+    CettaTptpReadCostV1 *cost,
+    char *error,
+    size_t error_size);
+
+/* As above, with an explicit parser-work budget for each TPTP_input.
+ * A zero budget selects the parser's default. */
+bool cetta_tptp_snapshot_read_text_each_with_work_limit_v1(
+    const PPTableSnapshotV1 *snap,
+    const char *text,
+    size_t text_len,
+    uint64_t work_limit,
+    Arena *arena,
+    CettaTptpInputVisitV1 on_input,
+    void *user,
+    CettaTptpReadCostV1 *cost,
+    char *error,
+    size_t error_size);
+
+bool cetta_tptp_prepared_reader_read_text_each_with_work_limit_v1(
+    const CettaTptpPreparedReaderV1 *reader,
+    const char *text,
+    size_t text_len,
+    uint64_t work_limit,
+    uint64_t gll_descriptor_limit,
+    Arena *arena,
+    CettaTptpInputVisitV1 on_input,
+    void *user,
+    CettaTptpReadCostV1 *cost,
+    char *error,
+    size_t error_size);
+
+bool cetta_tptp_read_text_frozen_v1(
+    const char *text,
+    Arena *arena,
+    Atom **out_records,
+    char *error,
+    size_t error_size);
+
+bool cetta_tptp_read_text_frozen_outcome_v1(
+    const char *text,
+    Arena *arena,
+    Atom **out_records,
+    CettaTptpReadOutcomeV1 *outcome,
+    char *error,
+    size_t error_size);
+
+bool cetta_tptp_read_file_frozen_v1(
+    const char *path,
+    Arena *arena,
+    Atom **out_records,
+    char *error,
+    size_t error_size);
+
+bool cetta_tptp_read_file_frozen_outcome_v1(
+    const char *path,
+    Arena *arena,
+    Atom **out_records,
+    CettaTptpReadOutcomeV1 *outcome,
+    char *error,
+    size_t error_size);
+
+#endif

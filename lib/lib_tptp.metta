@@ -1,9 +1,10 @@
 ; Public TPTP library.
 ;
-; The only active reader below parses the official Extended-BNF metalanguage
-; into structured MeTTa data.  A pure all-family TPTP problem reader does not
-; yet exist: it must be generated directly from that structured grammar into
-; the standard LanguageDef and ParserPack interfaces.
+; The default all-family reader loads a pinned ParserPack snapshot derived
+; from the official Extended-BNF source and projects its source-spanned CST to
+; compact, source-shaped MeTTa records.  The independently executable authored
+; presentation remains the reference oracle for the specialized native
+; projection.
 ;
 ; Every semantic transformation is executed from its declared LanguageDef
 ; through a generic LanguageDef runtime.  The resulting terms are admitted by
@@ -16,6 +17,606 @@
 
 !(import! &self langdef)
 !(import! &self fs)
+
+; Pinned official SyntaxBNF digest. A mismatch is a named fault, not a parse.
+(= (tptp:official-syntaxbnf-digest)
+   "f47940c43c23ed5ed8633a3b74a2847648d5ab794669430c8f0c38f138e61df6")
+(= (tptp:official-reader-cache-path)
+   "runtime/tptp-official-reader/f47940c43c23ed5ed8633a3b74a2847648d5ab794669430c8f0c38f138e61df6/pack.sexpr")
+(= (tptp:official-snapshot-path)
+   "runtime/tptp-official-reader/f47940c43c23ed5ed8633a3b74a2847648d5ab794669430c8f0c38f138e61df6/tables.tpp1")
+(= (tptp:corpus-compatible-snapshot-path)
+   "runtime/tptp-official-reader/f47940c43c23ed5ed8633a3b74a2847648d5ab794669430c8f0c38f138e61df6/corpus-compatible/tables.tpp1")
+(= (tptp:snapshot-construct $pack $out)
+   (function
+     (case (__cetta_lib_tptp_snapshot_construct_v1 $pack $out)
+       (((return $ok) (return $ok))
+        ($result (return $result))))))
+(= (tptp:snapshot-info $path)
+   (function
+     (case (__cetta_lib_tptp_snapshot_info_v1 $path)
+       (((return $ok) (return $ok))
+        ($result (return $result))))))
+(= (tptp:write-atom $path $atom)
+   (function
+     (case (__cetta_lib_tptp_write_atom_v1 $path $atom)
+       (((return $ok) (return $ok))
+        ($result (return $result))))))
+(= (tptp:read-atom $path)
+   (function
+     (case (__cetta_lib_tptp_read_atom_v1 $path)
+       (((return $atom) (return $atom))
+        ($result (return $result))))))
+(= (tptp:syntaxbnf-digest $path)
+   (function
+     (case (__cetta_lib_tptp_syntaxbnf_digest_v1 $path)
+       (((return $digest) (return $digest))
+        ($result (return $result))))))
+(= (tptp:records-from-cst $trees)
+   (function
+     (case (__cetta_lib_tptp_records_from_cst_v1 $trees)
+       (((return $records) (return $records))
+        ($result (return $result))))))
+(= (tptp:records-from-cst $source $trees)
+   (function
+     (case (__cetta_lib_tptp_records_from_cst_v1 $source $trees)
+       (((return $records) (return $records))
+        ($result (return $result))))))
+
+; A reusable reader owns one validated frozen snapshot selected by an explicit
+; profile. Its lifetime follows the arena that owns the handle; callers do not
+; need a matching close. The ordinary read operations below select strict.
+(= (tptp:open-reader $profile)
+   (function
+     (case (__cetta_lib_tptp_reader_open_v1 $profile)
+       (((return $reader) (return $reader))
+        ($result (return $result))))))
+(= (tptp:reader-info $reader)
+   (function
+     (case (__cetta_lib_tptp_reader_info_v1 $reader)
+       (((return $info) (return $info))
+        ($result (return $result))))))
+(= (tptp:reader-artifact-info $reader)
+   (function
+     (case (__cetta_lib_tptp_reader_artifact_info_v1 $reader)
+       (((return $info) (return $info))
+        ($result (return $result))))))
+
+; Default public read: frozen TPP1 snapshot, no lib_bnf and no grammar compile.
+(= (tptp:read-file $path)
+   (case (tptp:open-reader strict)
+     (((NativeHandle $kind $id)
+        (tptp:read-file (NativeHandle $kind $id) $path))
+      ($fault $fault))))
+(= (tptp:read-file $reader $path)
+   (function
+     (case (__cetta_lib_tptp_reader_read_file_v1 $reader $path)
+       (((return $records) (return $records))
+        ($result (return $result))))))
+(= (tptp:read-text $text)
+   (case (tptp:open-reader strict)
+     (((NativeHandle $kind $id)
+        (tptp:read-text (NativeHandle $kind $id) $text))
+      ($fault $fault))))
+(= (tptp:read-text $reader $text)
+   (function
+     (case (__cetta_lib_tptp_reader_read_text_v1 $reader $text)
+       (((return $records) (return $records))
+        ($result (return $result))))))
+(= (tptp:read-input $text)
+   (tptp:read-text $text))
+
+; A source document keeps the exact original text beside the structured value.
+; Spans remain attached to the records; canonical printing is a separate view.
+(= (tptp:read-text-document $text)
+   (tptp:attach-source-document (TPTP:TextSource) (sha256 $text) $text
+     (tptp:read-text $text)))
+(= (tptp:read-text-document $reader $text)
+   (tptp:attach-source-document (TPTP:TextSource) (sha256 $text) $text
+     (tptp:read-text $reader $text)))
+(= (tptp:read-file-document $path)
+   (case (fs:read-text $path)
+     (((Error $source $message) (Error $source $message))
+      ($text
+        (tptp:attach-source-document
+          (TPTP:FileSource $path) (sha256 $text) $text
+          (tptp:read-text $text))))))
+(= (tptp:read-file-document $reader $path)
+   (case (fs:read-text $path)
+     (((Error $source $message) (Error $source $message))
+      ($text
+        (tptp:attach-source-document
+          (TPTP:FileSource $path) (sha256 $text) $text
+          (tptp:read-text $reader $text))))))
+(= (tptp:attach-source-document $identity $digest $text $outcome)
+   (case $outcome
+     (((tptp-rec:file $_inputs $_span)
+        (TPTP:SourceDocument $identity $digest $text $outcome))
+      ($_ $outcome))))
+(= (tptp:source-document-identity
+      (TPTP:SourceDocument $identity $_digest $_text $_records))
+   $identity)
+(= (tptp:source-document-digest
+      (TPTP:SourceDocument $_identity $digest $_text $_records))
+   $digest)
+(= (tptp:source-document-text
+      (TPTP:SourceDocument $_identity $_digest $text $_records))
+   $text)
+(= (tptp:source-document-records
+      (TPTP:SourceDocument $_identity $_digest $_text $records))
+   $records)
+(= (tptp:print-source-document $document)
+   (case $document
+     (((TPTP:SourceDocument $_identity $_digest $text $_records) $text)
+      ($_ (TPTP:UnsupportedSourceDocument $document)))))
+
+; Parsed records retain exact lexical spellings.  This authored view exposes
+; the semantic string used by file lookup and name comparison.
+(= (tptp:open-compact-lexical-values)
+   (langdef:load-deterministic-equations
+     (LangDef:EquationSources
+       "langdef/bnf/plain_bnf_denotation_v1.metta"
+       "langdef/tptp/official_compact_lexical_value_v1.metta")))
+(= (tptp:compact-lexical-value-with $program $operation $value)
+   (langdef:run-deterministic-equations $program
+     (LangDef:DeterministicCall $operation $value)))
+(= (tptp:compact-lexical-value $operation $value)
+   (let $program (tptp:open-compact-lexical-values)
+     (case $program
+       (((NativeHandle $_kind $_id)
+          (let $answers
+               (collapse
+                 (tptp:compact-lexical-value-with
+                   $program $operation $value))
+            (let $_ (langdef:close-deterministic-equations $program)
+              (superpose $answers))))
+        ($fault (TPTP:LexicalProgramFailure $fault))))))
+(= (tptp:word-value $word)
+   (tptp:compact-lexical-value tptp-lex-v1:word-value $word))
+(= (tptp:name-value $name)
+   (tptp:compact-lexical-value tptp-lex-v1:name-value $name))
+
+; First-order consumers use an executed authored transformation over a source
+; document.  The transformation carries the real digest, ordered occurrence
+; index, source span, annotation tree, and include syntax into the established
+; tptp-fo and fo-cnf carriers.
+(= (tptp:open-compact-first-order-views)
+   (langdef:load-deterministic-equations
+     (LangDef:EquationSources
+       "langdef/bnf/plain_bnf_denotation_v1.metta"
+       "langdef/tptp/official_compact_lexical_value_v1.metta"
+       "langdef/tptp/compact_records_to_first_order_v1.metta")))
+(= (tptp:compact-first-order-view-with $program $operation $document)
+   (langdef:run-deterministic-equations $program
+     (LangDef:DeterministicCall $operation $document)))
+(= (tptp:compact-first-order-view
+      $stage $operation $carrier-path $carrier-type $document)
+   (case $document
+     (((TPTP:SourceDocument $_identity $_digest $_text $_records)
+        (tptp:run-compact-first-order-view
+          $stage $operation $carrier-path $carrier-type $document))
+      ((TPTP:LexReject $_byte) $document)
+      ((TPTP:NoParse $_byte $_rule) $document)
+      ((TPTP:Ambiguous $_rule) $document)
+      ((TPTP:ResourceLimit $_work $_limit $_rule) $document)
+      ((TPTP:DigestMismatch $_digest) $document)
+      ((TPTP:ReaderMismatch $_reader) $document)
+      ((Error $_source $_message) $document)
+      ($_ (TPTP:UnsupportedSourceDocument $document)))))
+(= (tptp:run-compact-first-order-view
+      $stage $operation $carrier-path $carrier-type $document)
+   (let $program (tptp:open-compact-first-order-views)
+     (case $program
+       (((NativeHandle $_kind $_id)
+          (let $answers
+               (collapse
+                 (tptp:compact-first-order-view-with
+                   $program $operation $document))
+            (let $_ (langdef:close-deterministic-equations $program)
+              (let $value (superpose $answers)
+                (tptp:admit-or-propagate
+                  $stage $carrier-path $carrier-type $value)))))
+        ($fault (TPTP:FirstOrderViewProgramFailureV1 $stage $fault))))))
+(= (tptp:source-document->first-order-document $document)
+   (tptp:compact-first-order-view
+     first-order-document tptp-view-v1:first-order-document
+     "langdef/logic/tptp_first_order_document_v1.metta"
+     "Document" $document))
+(= (tptp:source-document->clause-data $document)
+   (tptp:compact-first-order-view
+     clause-data tptp-view-v1:clause-data
+     "langdef/logic/first_order_clause_data_v1.metta"
+     "Problem" $document))
+(= (tptp:read-text-first-order-document $text)
+   (tptp:source-document->first-order-document
+     (tptp:read-text-document $text)))
+(= (tptp:read-file-first-order-document $path)
+   (tptp:source-document->first-order-document
+     (tptp:read-file-document $path)))
+(= (tptp:read-text-first-order-document $reader $text)
+   (tptp:source-document->first-order-document
+     (tptp:read-text-document $reader $text)))
+(= (tptp:read-file-first-order-document $reader $path)
+   (tptp:source-document->first-order-document
+     (tptp:read-file-document $reader $path)))
+(= (tptp:read-text-clause-data $text)
+   (tptp:source-document->clause-data
+     (tptp:read-text-document $text)))
+(= (tptp:read-file-clause-data $path)
+   (tptp:source-document->clause-data
+     (tptp:read-file-document $path)))
+(= (tptp:read-text-clause-data $reader $text)
+   (tptp:source-document->clause-data
+     (tptp:read-text-document $reader $text)))
+(= (tptp:read-file-clause-data $reader $path)
+   (tptp:source-document->clause-data
+     (tptp:read-file-document $reader $path)))
+
+; Include expansion is an authored transformation over the compact public
+; records.  Physical path lookup and file reading build the finite environment
+; separately; this operation is pure and exposes every edge and fault.
+(= (tptp:open-compact-include-resolution)
+   (langdef:load-deterministic-equations
+     (LangDef:EquationSources
+       "langdef/bnf/plain_bnf_denotation_v1.metta"
+       "langdef/tptp/official_compact_lexical_value_v1.metta"
+       "langdef/tptp/official_compact_include_resolution_v1.metta")))
+(= (tptp:resolve-compact-include-environment-with
+      $program $root-source $environment)
+   (langdef:run-deterministic-equations $program
+     (LangDef:DeterministicCall
+       tptp-ci-v1:resolve $root-source $environment)))
+(= (tptp:resolve-compact-include-environment $root-source $environment)
+   (let $program (tptp:open-compact-include-resolution)
+     (case $program
+       (((NativeHandle $_kind $_id)
+          (let $answers
+               (collapse
+                 (tptp:resolve-compact-include-environment-with
+                   $program $root-source $environment))
+            (let $_ (langdef:close-deterministic-equations $program)
+              (superpose $answers))))
+        ($fault (TPTP:IncludeResolutionProgramFailureV1 $fault))))))
+
+; Canonical printing is an executed authored transformation.  It normalizes
+; layout while retaining the compact record structure on reparsing.
+(= (tptp:print-records $records)
+   (let $program
+        (langdef:load-deterministic-equations
+          (LangDef:EquationSources
+            "langdef/bnf/plain_bnf_denotation_v1.metta"
+            "langdef/tptp/official_records_to_text_v1.metta"))
+     (case $program
+       (((NativeHandle $_kind $_id)
+          (let $answers
+               (collapse
+                 (langdef:run-deterministic-equations $program
+                   (LangDef:DeterministicCall
+                     tptp-print-v1:document $records)))
+            (let $_ (langdef:close-deterministic-equations $program)
+              (superpose $answers))))
+        ($fault (TPTP:PrintProgramFailure $fault))))))
+
+; Occurrence identity is the source digest plus the zero-based input index.
+; The view preserves source order and duplicates and reuses each record value.
+(= (tptp:record-occurrences $document)
+   (case $document
+     (((TPTP:SourceDocument $_identity $digest $_text
+          (tptp-rec:file $inputs $_span))
+        (tptp:record-occurrences-inputs $digest $inputs 0))
+      ($_ (TPTP:UnsupportedSourceDocument $document)))))
+(= (tptp:record-occurrences-inputs
+      $_digest (tptp-rec:inputs-nil) $_index)
+   LNil)
+(= (tptp:record-occurrences-inputs $digest
+      (tptp-rec:inputs-cons $head $tail) $index)
+   (LCons
+     (TPTP:RecordOccurrence
+       (TPTP:Occurrence $digest $index) (tptp:record-span $head) $head)
+     (tptp:record-occurrences-inputs $digest $tail (+ $index 1))))
+(= (tptp:official-reader $syntax-path)
+   (case (== (tptp:syntaxbnf-digest $syntax-path) (tptp:official-syntaxbnf-digest))
+     ((True (tptp:open-reader strict))
+      (False (TPTP:DigestMismatch (tptp:syntaxbnf-digest $syntax-path))))))
+
+; ------------------------------------------------------ record utilities --
+
+; The input carrier is already an ordered persistent sequence.  Returning it
+; directly avoids copying every record merely to change the list constructor.
+(= (tptp:records (tptp-rec:file $inputs $_span)) $inputs)
+(= (tptp:file-span (tptp-rec:file $_inputs $span)) $span)
+
+(= (tptp:record-family $record)
+   (case $record
+     (((tptp-rec:fof $_name $_role $_formula $_annotation $_span) fof)
+      ((tptp-rec:cnf $_name $_role $_formula $_annotation $_span) cnf)
+      ((tptp-rec:tff $_name $_role $_formula $_annotation $_span) tff)
+      ((tptp-rec:thf $_name $_role $_formula $_annotation $_span) thf)
+      ((tptp-rec:tcf $_name $_role $_formula $_annotation $_span) tcf)
+      ((tptp-rec:tpi $_name $_role $_formula $_annotation $_span) tpi)
+      ((tptp-rec:include $_file $_selection $_qualification $_span) include)
+      ($_ (TPTP:UnsupportedRecord $record)))))
+
+(= (tptp:record-name $record)
+   (case $record
+     (((tptp-rec:fof $name $_role $_formula $_annotation $_span)
+        (TPTP:RecordName $name))
+      ((tptp-rec:cnf $name $_role $_formula $_annotation $_span)
+        (TPTP:RecordName $name))
+      ((tptp-rec:tff $name $_role $_formula $_annotation $_span)
+        (TPTP:RecordName $name))
+      ((tptp-rec:thf $name $_role $_formula $_annotation $_span)
+        (TPTP:RecordName $name))
+      ((tptp-rec:tcf $name $_role $_formula $_annotation $_span)
+        (TPTP:RecordName $name))
+      ((tptp-rec:tpi $name $_role $_formula $_annotation $_span)
+        (TPTP:RecordName $name))
+      ((tptp-rec:include $_file $_selection $_qualification $_span)
+        (TPTP:NotApplicable record-name include))
+      ($_ (TPTP:UnsupportedRecord $record)))))
+
+(= (tptp:record-role $record)
+   (case $record
+     (((tptp-rec:fof $_name $role $_formula $_annotation $_span)
+        (TPTP:RecordRole $role))
+      ((tptp-rec:cnf $_name $role $_formula $_annotation $_span)
+        (TPTP:RecordRole $role))
+      ((tptp-rec:tff $_name $role $_formula $_annotation $_span)
+        (TPTP:RecordRole $role))
+      ((tptp-rec:thf $_name $role $_formula $_annotation $_span)
+        (TPTP:RecordRole $role))
+      ((tptp-rec:tcf $_name $role $_formula $_annotation $_span)
+        (TPTP:RecordRole $role))
+      ((tptp-rec:tpi $_name $role $_formula $_annotation $_span)
+        (TPTP:RecordRole $role))
+      ((tptp-rec:include $_file $_selection $_qualification $_span)
+        (TPTP:NotApplicable record-role include))
+      ($_ (TPTP:UnsupportedRecord $record)))))
+
+(= (tptp:record-formula $record)
+   (case $record
+     (((tptp-rec:fof $_name $_role $formula $_annotation $_span)
+        (TPTP:RecordFormula $formula))
+      ((tptp-rec:cnf $_name $_role $formula $_annotation $_span)
+        (TPTP:RecordFormula $formula))
+      ((tptp-rec:tff $_name $_role $formula $_annotation $_span)
+        (TPTP:RecordFormula $formula))
+      ((tptp-rec:thf $_name $_role $formula $_annotation $_span)
+        (TPTP:RecordFormula $formula))
+      ((tptp-rec:tcf $_name $_role $formula $_annotation $_span)
+        (TPTP:RecordFormula $formula))
+      ((tptp-rec:tpi $_name $_role $formula $_annotation $_span)
+        (TPTP:RecordFormula $formula))
+      ((tptp-rec:include $_file $_selection $_qualification $_span)
+        (TPTP:NotApplicable record-formula include))
+      ($_ (TPTP:UnsupportedRecord $record)))))
+
+(= (tptp:record-annotation $record)
+   (case $record
+     (((tptp-rec:fof $_name $_role $_formula $annotation $_span)
+        (TPTP:RecordAnnotation $annotation))
+      ((tptp-rec:cnf $_name $_role $_formula $annotation $_span)
+        (TPTP:RecordAnnotation $annotation))
+      ((tptp-rec:tff $_name $_role $_formula $annotation $_span)
+        (TPTP:RecordAnnotation $annotation))
+      ((tptp-rec:thf $_name $_role $_formula $annotation $_span)
+        (TPTP:RecordAnnotation $annotation))
+      ((tptp-rec:tcf $_name $_role $_formula $annotation $_span)
+        (TPTP:RecordAnnotation $annotation))
+      ((tptp-rec:tpi $_name $_role $_formula $annotation $_span)
+        (TPTP:RecordAnnotation $annotation))
+      ((tptp-rec:include $_file $_selection $_qualification $_span)
+        (TPTP:NotApplicable record-annotation include))
+      ($_ (TPTP:UnsupportedRecord $record)))))
+
+(= (tptp:record-span $record)
+   (case $record
+     (((tptp-rec:fof $_name $_role $_formula $_annotation $span) $span)
+      ((tptp-rec:cnf $_name $_role $_formula $_annotation $span) $span)
+      ((tptp-rec:tff $_name $_role $_formula $_annotation $span) $span)
+      ((tptp-rec:thf $_name $_role $_formula $_annotation $span) $span)
+      ((tptp-rec:tcf $_name $_role $_formula $_annotation $span) $span)
+      ((tptp-rec:tpi $_name $_role $_formula $_annotation $span) $span)
+      ((tptp-rec:include $_file $_selection $_qualification $span) $span)
+      ($_ (TPTP:UnsupportedRecord $record)))))
+
+(= (tptp:name-text $name)
+   (case $name
+     (((tptp-rec:name-word (tptp-rec:word-lower $text)) $text)
+      ((tptp-rec:name-word (tptp-rec:word-quoted $text)) $text)
+      ((tptp-rec:name-integer $text) $text)
+      ($_ (TPTP:UnsupportedName $name)))))
+(= (tptp:role-text (tptp-rec:role $text)) $text)
+
+(= (tptp:record-count (tptp-rec:file $inputs $_span))
+   (tptp:record-sequence-count $inputs 0))
+(= (tptp:record-sequence-count (tptp-rec:inputs-nil) $count) $count)
+(= (tptp:record-sequence-count
+      (tptp-rec:inputs-cons $_head $tail) $count)
+   (tptp:record-sequence-count $tail (+ $count 1)))
+
+(= (tptp:select-family $family (tptp-rec:file $inputs $span))
+   (tptp-rec:file (tptp:select-family-inputs $family $inputs) $span))
+(= (tptp:select-family-inputs $_family (tptp-rec:inputs-nil))
+   (tptp-rec:inputs-nil))
+(= (tptp:select-family-inputs $family
+      (tptp-rec:inputs-cons $head $tail))
+   (case (== $family (tptp:record-family $head))
+     ((True
+        (tptp-rec:inputs-cons $head
+          (tptp:select-family-inputs $family $tail)))
+      (False (tptp:select-family-inputs $family $tail)))))
+
+(= (tptp:record-has-name $name $record)
+   (case (tptp:record-name $record)
+     (((TPTP:RecordName $actual) (== $name $actual))
+      ($_ False))))
+(= (tptp:select-name $name (tptp-rec:file $inputs $span))
+   (tptp-rec:file (tptp:select-name-inputs $name $inputs) $span))
+(= (tptp:select-name-inputs $_name (tptp-rec:inputs-nil))
+   (tptp-rec:inputs-nil))
+(= (tptp:select-name-inputs $name
+      (tptp-rec:inputs-cons $head $tail))
+   (case (tptp:record-has-name $name $head)
+     ((True
+        (tptp-rec:inputs-cons $head
+          (tptp:select-name-inputs $name $tail)))
+      (False (tptp:select-name-inputs $name $tail)))))
+
+(= (tptp:record-has-role $role $record)
+   (case (tptp:record-role $record)
+     (((TPTP:RecordRole $actual) (== $role $actual))
+      ($_ False))))
+(= (tptp:select-role $role (tptp-rec:file $inputs $span))
+   (tptp-rec:file (tptp:select-role-inputs $role $inputs) $span))
+(= (tptp:select-role-inputs $_role (tptp-rec:inputs-nil))
+   (tptp-rec:inputs-nil))
+(= (tptp:select-role-inputs $role
+      (tptp-rec:inputs-cons $head $tail))
+   (case (tptp:record-has-role $role $head)
+     ((True
+        (tptp-rec:inputs-cons $head
+          (tptp:select-role-inputs $role $tail)))
+      (False (tptp:select-role-inputs $role $tail)))))
+
+(= (tptp:record-statistics (tptp-rec:file $inputs $_span))
+   (tptp:record-statistics-inputs $inputs 0 0 0 0 0 0 0 0))
+(= (tptp:record-statistics-inputs (tptp-rec:inputs-nil)
+      $total $fof $cnf $tff $thf $tcf $tpi $include)
+   (TPTP:RecordStatistics
+     $total $fof $cnf $tff $thf $tcf $tpi $include))
+(= (tptp:record-statistics-inputs
+      (tptp-rec:inputs-cons $head $tail)
+      $total $fof $cnf $tff $thf $tcf $tpi $include)
+   (case (tptp:record-family $head)
+     ((fof (tptp:record-statistics-inputs $tail
+             (+ $total 1) (+ $fof 1) $cnf $tff $thf $tcf $tpi $include))
+      (cnf (tptp:record-statistics-inputs $tail
+             (+ $total 1) $fof (+ $cnf 1) $tff $thf $tcf $tpi $include))
+      (tff (tptp:record-statistics-inputs $tail
+             (+ $total 1) $fof $cnf (+ $tff 1) $thf $tcf $tpi $include))
+      (thf (tptp:record-statistics-inputs $tail
+             (+ $total 1) $fof $cnf $tff (+ $thf 1) $tcf $tpi $include))
+      (tcf (tptp:record-statistics-inputs $tail
+             (+ $total 1) $fof $cnf $tff $thf (+ $tcf 1) $tpi $include))
+      (tpi (tptp:record-statistics-inputs $tail
+             (+ $total 1) $fof $cnf $tff $thf $tcf (+ $tpi 1) $include))
+      (include (tptp:record-statistics-inputs $tail
+                 (+ $total 1) $fof $cnf $tff $thf $tcf $tpi (+ $include 1)))
+      ($unsupported $unsupported))))
+
+; Formulae, terms, and types share the official record expression algebra.
+; These two total views let consumers traverse it without knowing parser labels.
+(= (tptp:expression-kind $expression)
+   (case $expression
+     (((tptp-rec:atom $_head $_arguments) atom)
+      ((tptp-rec:equals $_left $_right) equals)
+      ((tptp-rec:not-equals $_left $_right) not-equals)
+      ((tptp-rec:not $_body) not)
+      ((tptp-rec:and $_left $_right) and)
+      ((tptp-rec:or $_left $_right) or)
+      ((tptp-rec:iff $_left $_right) iff)
+      ((tptp-rec:implies $_left $_right) implies)
+      ((tptp-rec:reverse-implies $_left $_right) reverse-implies)
+      ((tptp-rec:xor $_left $_right) xor)
+      ((tptp-rec:nor $_left $_right) nor)
+      ((tptp-rec:nand $_left $_right) nand)
+      ((tptp-rec:forall $_variables $_body) forall)
+      ((tptp-rec:exists $_variables $_body) exists)
+      ((tptp-rec:apply $_function $_argument) apply)
+      ((tptp-rec:typing $_term $_type) typing)
+      ((tptp-rec:map-type $_domain $_codomain) map-type)
+      ((tptp-rec:xprod $_left $_right) product-type)
+      ((tptp-rec:fun $_head $_arguments) function)
+      ((tptp-rec:gen-fun $_head $_arguments) general-function)
+      ((tptp-rec:var $_name) variable)
+      ((tptp-rec:typed-var $_variable $_type) typed-variable)
+      ((tptp-rec:terms-nil) term-sequence)
+      ((tptp-rec:terms-cons $_head $_tail) term-sequence)
+      ((tptp-rec:vars-nil) variable-sequence)
+      ((tptp-rec:vars-cons $_head $_tail) variable-sequence)
+      ((tptp-rec:let $_definitions $_bindings $_body) let)
+      ((tptp-rec:long-connective $_name $_parameters) long-connective)
+      ((tptp-rec:prefix $_operator $_body) prefix)
+      ((tptp-rec:gen-list $_items) general-list)
+      ((tptp-rec:gen-colon $_left $_right) general-colon)
+      ((tptp-rec:type-defined $_name) defined-type)
+      ((tptp-rec:pi $_variables $_body) pi)
+      ((tptp-rec:sigma $_variables $_body) sigma)
+      ((tptp-rec:lambda $_variables $_body) lambda)
+      ((tptp-rec:choice $_variables $_body) choice)
+      ((tptp-rec:definite $_variables $_body) definite)
+      ((tptp-rec:word-lower $_text) lower-word)
+      ((tptp-rec:word-quoted $_text) quoted-word)
+      ((tptp-rec:word-back $_text) back-quoted-word)
+      ((tptp-rec:word-defined $_text) defined-word)
+      ((tptp-rec:word-system $_text) system-word)
+      ((tptp-rec:word-upper $_text) upper-word)
+      ((tptp-rec:number-integer $_text) integer)
+      ((tptp-rec:number-rational $_text) rational)
+      ((tptp-rec:number-real $_text) real)
+      ((tptp-rec:distinct-object $_text) distinct-object)
+      ($_ (TPTP:UnsupportedExpression $expression)))))
+
+(= (tptp:expression-children $expression)
+   (case $expression
+     (((tptp-rec:atom $head $arguments) (LCons $head (LCons $arguments LNil)))
+      ((tptp-rec:equals $left $right) (LCons $left (LCons $right LNil)))
+      ((tptp-rec:not-equals $left $right) (LCons $left (LCons $right LNil)))
+      ((tptp-rec:not $body) (LCons $body LNil))
+      ((tptp-rec:and $left $right) (LCons $left (LCons $right LNil)))
+      ((tptp-rec:or $left $right) (LCons $left (LCons $right LNil)))
+      ((tptp-rec:iff $left $right) (LCons $left (LCons $right LNil)))
+      ((tptp-rec:implies $left $right) (LCons $left (LCons $right LNil)))
+      ((tptp-rec:reverse-implies $left $right) (LCons $left (LCons $right LNil)))
+      ((tptp-rec:xor $left $right) (LCons $left (LCons $right LNil)))
+      ((tptp-rec:nor $left $right) (LCons $left (LCons $right LNil)))
+      ((tptp-rec:nand $left $right) (LCons $left (LCons $right LNil)))
+      ((tptp-rec:forall $variables $body)
+        (LCons $variables (LCons $body LNil)))
+      ((tptp-rec:exists $variables $body)
+        (LCons $variables (LCons $body LNil)))
+      ((tptp-rec:apply $function $argument)
+        (LCons $function (LCons $argument LNil)))
+      ((tptp-rec:typing $term $type) (LCons $term (LCons $type LNil)))
+      ((tptp-rec:map-type $domain $codomain)
+        (LCons $domain (LCons $codomain LNil)))
+      ((tptp-rec:xprod $left $right) (LCons $left (LCons $right LNil)))
+      ((tptp-rec:fun $head $arguments) (LCons $head (LCons $arguments LNil)))
+      ((tptp-rec:gen-fun $head $arguments)
+        (LCons $head (LCons $arguments LNil)))
+      ((tptp-rec:var $name) (LCons $name LNil))
+      ((tptp-rec:typed-var $variable $type)
+        (LCons $variable (LCons $type LNil)))
+      ((tptp-rec:terms-nil) LNil)
+      ((tptp-rec:terms-cons $head $tail) (LCons $head (LCons $tail LNil)))
+      ((tptp-rec:vars-nil) LNil)
+      ((tptp-rec:vars-cons $head $tail) (LCons $head (LCons $tail LNil)))
+      ((tptp-rec:let $definitions $bindings $body)
+        (LCons $definitions (LCons $bindings (LCons $body LNil))))
+      ((tptp-rec:long-connective $name $parameters)
+        (LCons $name (LCons $parameters LNil)))
+      ((tptp-rec:prefix $operator $body)
+        (LCons $operator (LCons $body LNil)))
+      ((tptp-rec:gen-list $items) (LCons $items LNil))
+      ((tptp-rec:gen-colon $left $right) (LCons $left (LCons $right LNil)))
+      ((tptp-rec:type-defined $name) (LCons $name LNil))
+      ((tptp-rec:pi $variables $body) (LCons $variables (LCons $body LNil)))
+      ((tptp-rec:sigma $variables $body) (LCons $variables (LCons $body LNil)))
+      ((tptp-rec:lambda $variables $body) (LCons $variables (LCons $body LNil)))
+      ((tptp-rec:choice $variables $body) (LCons $variables (LCons $body LNil)))
+      ((tptp-rec:definite $variables $body) (LCons $variables (LCons $body LNil)))
+      ((tptp-rec:word-lower $_text) LNil)
+      ((tptp-rec:word-quoted $_text) LNil)
+      ((tptp-rec:word-back $_text) LNil)
+      ((tptp-rec:word-defined $_text) LNil)
+      ((tptp-rec:word-system $_text) LNil)
+      ((tptp-rec:word-upper $_text) LNil)
+      ((tptp-rec:number-integer $_text) LNil)
+      ((tptp-rec:number-rational $_text) LNil)
+      ((tptp-rec:number-real $_text) LNil)
+      ((tptp-rec:distinct-object $_text) LNil)
+      ($_ (TPTP:UnsupportedExpression $expression)))))
 
 ; ------------------------------------------------------------- admission --
 
@@ -162,12 +763,246 @@
       (tptp-ebnf-v1:character-row $name $_rhs $_span))
    $name)
 
-; The all-family TPTP problem reader is intentionally absent until the
-; structured Extended-BNF AST is compiled directly to the standard syntax
-; LanguageDef, lexical profile, validation obligations, and ParserPack.
+; The prepared frozen reader above is the default problem-file path.  The
+; explicit construction and evidence interfaces remain available for checking
+; its connection to the authored official-grammar transformations.
 
 ; ------------------------------------------------------ include loading --
 
+; Build the compact resolver environment by parsing each canonical source at
+; most once.  Include occurrences remain in their source documents and are
+; expanded later, so repeated directives still produce repeated formula
+; occurrences even though their target file is read only once.
+
+(= (tptp:compact-include-load-member $needle $items)
+   (if (== $items ())
+       False
+       (let ($head $rest) (decons-atom $items)
+         (if (== $needle $head)
+             True
+             (tptp:compact-include-load-member $needle $rest)))))
+
+(= (tptp:compact-include-binding-member $from $requested $bindings)
+   (if (== $bindings ())
+       False
+       (let ($head $rest) (decons-atom $bindings)
+         (case $head
+           (((tptp-ci-v1:include-binding
+                $candidate-from $candidate-requested $_target $_mode)
+              (if (== $from $candidate-from)
+                  (if (== $requested $candidate-requested)
+                      True
+                      (tptp:compact-include-binding-member
+                        $from $requested $rest))
+                  (tptp:compact-include-binding-member
+                    $from $requested $rest)))
+            ($_
+              (tptp:compact-include-binding-member
+                $from $requested $rest)))))))
+
+(= (tptp:compact-include-load-reverse $items)
+   (tptp:compact-include-load-reverse-acc $items ()))
+(= (tptp:compact-include-load-reverse-acc $items $accumulator)
+   (if (== $items ())
+       $accumulator
+       (let ($head $rest) (decons-atom $items)
+         (tptp:compact-include-load-reverse-acc
+           $rest (cons-atom $head $accumulator)))))
+
+(= (tptp:compact-include-documents-carrier $documents)
+   (if (== $documents ())
+       (tptp-ci-v1:documents-nil)
+       (let ($head $rest) (decons-atom $documents)
+         (tptp-ci-v1:documents-cons $head
+           (tptp:compact-include-documents-carrier $rest)))))
+(= (tptp:compact-include-bindings-carrier $bindings)
+   (if (== $bindings ())
+       (tptp-ci-v1:bindings-nil)
+       (let ($head $rest) (decons-atom $bindings)
+         (tptp-ci-v1:bindings-cons $head
+           (tptp:compact-include-bindings-carrier $rest)))))
+
+(= (tptp:compact-include-load-state-environment
+      (TPTP:CompactIncludeLoadStateV1 $documents $bindings $_seen))
+   (tptp-ci-v1:environment
+     (tptp:compact-include-documents-carrier
+       (tptp:compact-include-load-reverse $documents))
+     (tptp:compact-include-bindings-carrier
+       (tptp:compact-include-load-reverse $bindings))))
+
+(= (tptp:load-compact-include-environment $root-path)
+   (tptp:load-compact-include-environment
+     $root-path TPTP:NoLibraryRoot))
+(= (tptp:load-compact-include-environment $root-path $library-root)
+   (case (tptp:open-reader strict)
+     (((NativeHandle $kind $id)
+        (tptp:load-compact-include-environment-with-reader
+          (NativeHandle $kind $id) $root-path $library-root))
+      ($fault
+        (TPTP:IncludeLoadFaultV1
+          (TPTP:IncludeReaderFaultV1 $fault))))))
+
+(= (tptp:load-compact-include-environment-with-reader
+      $reader $root-path $library-root)
+   (case (fs:try-canonical-path $root-path)
+     (((FS:CanonicalPath $root-source)
+        (tptp:load-compact-include-environment-canonical
+          $reader $root-source $library-root))
+      ((FS:CanonicalPathFault $message)
+        (TPTP:IncludeLoadFaultV1
+          (TPTP:IncludeRootUnavailableV1 $root-path $message)))
+      ($other
+        (TPTP:IncludeLoadFaultV1
+          (TPTP:IncludeCanonicalizationFaultV1 $root-path $other))))))
+
+(= (tptp:load-compact-include-environment-canonical
+      $reader $root-source $library-root)
+   (let $program (tptp:open-compact-lexical-values)
+     (case $program
+       (((NativeHandle $_kind $_id)
+          (let $answers
+               (collapse
+                 (tptp:compact-include-load-source
+                   $reader $program $root-source $library-root
+                   (TPTP:CompactIncludeLoadStateV1 () () ())))
+            (let $_ (langdef:close-deterministic-equations $program)
+              (tptp:compact-include-load-finish
+                $root-source $library-root $answers))))
+        ($fault
+          (TPTP:IncludeLoadFaultV1
+            (TPTP:IncludeLexicalProgramFaultV1 $fault)))))))
+
+(= (tptp:compact-include-load-finish
+      $root-source $library-root $answers)
+   (case $answers
+     ((((TPTP:CompactIncludeLoadStateV1 $documents $bindings $seen))
+        (TPTP:CompactIncludeEnvironmentV1
+          $root-source $library-root
+          (tptp:compact-include-load-state-environment
+            (TPTP:CompactIncludeLoadStateV1
+              $documents $bindings $seen))))
+      (((TPTP:IncludeLoadFaultV1 $fault))
+        (TPTP:IncludeLoadFaultV1 $fault))
+      ($other
+        (TPTP:IncludeLoadFaultV1
+          (TPTP:IncludeLoadCardinalityFaultV1
+            $root-source $library-root $other))))))
+
+(= (tptp:compact-include-load-source
+      $reader $program $source $library-root
+      (TPTP:CompactIncludeLoadStateV1 $documents $bindings $seen))
+   (if (tptp:compact-include-load-member $source $seen)
+       (TPTP:CompactIncludeLoadStateV1 $documents $bindings $seen)
+       (tptp:compact-include-load-document
+         $reader $program $source $library-root
+         (TPTP:CompactIncludeLoadStateV1
+           $documents $bindings (cons-atom $source $seen))
+         (tptp:read-file-document $reader $source))))
+
+(= (tptp:compact-include-load-document
+      $reader $program $source $library-root
+      (TPTP:CompactIncludeLoadStateV1 $documents $bindings $seen) $outcome)
+   (case $outcome
+     (((TPTP:SourceDocument $_identity $digest $text
+          (tptp-rec:file $inputs $span))
+        (let $document
+             (tptp-ci-v1:source-document $source $digest
+               (tptp-rec:file $inputs $span) $text)
+          (tptp:compact-include-load-inputs
+            $reader $program $source $inputs $library-root
+            (TPTP:CompactIncludeLoadStateV1
+              (cons-atom $document $documents) $bindings $seen))))
+      ($fault
+        (TPTP:IncludeLoadFaultV1
+          (TPTP:IncludeSourceReadFaultV1 $source $fault))))))
+
+(= (tptp:compact-include-load-inputs
+      $_reader $_program $_source (tptp-rec:inputs-nil) $_library-root $state)
+   $state)
+(= (tptp:compact-include-load-inputs
+      $reader $program $source (tptp-rec:inputs-cons $head $tail)
+      $library-root $state)
+   (case $head
+     (((tptp-rec:include $file $_selection $_qualification $_span)
+        (tptp:compact-include-load-file-value
+          $reader $program $source $tail $library-root $state
+          (tptp:compact-lexical-value-with
+            $program tptp-lex-v1:word-value $file)))
+      ($_
+        (tptp:compact-include-load-inputs
+          $reader $program $source $tail $library-root $state)))))
+
+(= (tptp:compact-include-load-file-value
+      $reader $program $source $tail $library-root $state $outcome)
+   (case $outcome
+     (((TPTP:LexicalValue $requested)
+        (tptp:compact-include-load-physical
+          $reader $program $source $requested $tail $library-root $state
+          (tptp:resolve-physical-include
+            $source $requested $library-root)))
+      ((TPTP:LexicalFault $kind $raw)
+        (TPTP:IncludeLoadFaultV1
+          (TPTP:IncludeLexicalFaultV1 include-file
+            (TPTP:LexicalFault $kind $raw))))
+      ($other
+        (TPTP:IncludeLoadFaultV1
+          (TPTP:IncludeLexicalExecutionFaultV1 $source $other))))))
+
+(= (tptp:compact-include-load-physical
+      $reader $program $source $requested $tail $library-root
+      (TPTP:CompactIncludeLoadStateV1 $documents $bindings $seen) $outcome)
+   (case $outcome
+     (((TPTP:PhysicalIncludeBoundV1 $mode $target)
+        (let $next-bindings
+             (if (tptp:compact-include-binding-member
+                   $source $requested $bindings)
+                 $bindings
+                 (cons-atom
+                   (tptp-ci-v1:include-binding
+                     $source $requested $target $mode)
+                   $bindings))
+          (tptp:compact-include-load-after-target
+            $reader $program $source $tail $library-root
+            (tptp:compact-include-load-source
+              $reader $program $target $library-root
+              (TPTP:CompactIncludeLoadStateV1
+                $documents $next-bindings $seen)))))
+      ($fault
+        (TPTP:IncludeLoadFaultV1
+          (TPTP:IncludePhysicalResolutionFaultV1
+            $source $requested $fault))))))
+
+(= (tptp:compact-include-load-after-target
+      $reader $program $source $tail $library-root
+      (TPTP:CompactIncludeLoadStateV1 $documents $bindings $seen))
+   (tptp:compact-include-load-inputs
+     $reader $program $source $tail $library-root
+     (TPTP:CompactIncludeLoadStateV1 $documents $bindings $seen)))
+(= (tptp:compact-include-load-after-target
+      $_reader $_program $_source $_tail $_library-root
+      (TPTP:IncludeLoadFaultV1 $fault))
+   (TPTP:IncludeLoadFaultV1 $fault))
+
+(= (tptp:resolve-loaded-compact-includes $loaded)
+   (case $loaded
+     (((TPTP:CompactIncludeEnvironmentV1
+          $root-source $_library-root $environment)
+        (tptp:resolve-compact-include-environment
+          $root-source $environment))
+      ($fault $fault))))
+
+(= (tptp:read-file-expanded $root-path)
+   (tptp:resolve-loaded-compact-includes
+     (tptp:load-compact-include-environment $root-path)))
+(= (tptp:read-file-expanded $root-path $library-root)
+   (tptp:resolve-loaded-compact-includes
+     (tptp:load-compact-include-environment
+       $root-path $library-root)))
+(= (tptp:read-file-expanded-with-reader
+      $reader $root-path $library-root)
+   (tptp:resolve-loaded-compact-includes
+     (tptp:load-compact-include-environment-with-reader
+       $reader $root-path $library-root)))
 ; Physical include loading is intentionally narrower than include
 ; resolution.  It chooses files by the documented TPTP lookup order, parses
 ; each distinct canonical source once, and records the choices as typed source

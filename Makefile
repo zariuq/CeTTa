@@ -8,7 +8,7 @@ LLVM_CLANG ?= clang
 # Pure grammar targets must select their configuration before Make reads
 # generated dependencies or queries optional foreign-runtime configuration.
 # Explicit settings still apply; unrelated and mixed goals keep their defaults.
-BNF_NATIVE_ONLY_V1 := $(if $(strip $(MAKECMDGOALS)),$(if $(filter-out test-plain-bnf-% test-ebnf-% test-tptp-extended-bnf-% test-bnf-native-entry-v1,$(MAKECMDGOALS)),,1),)
+BNF_NATIVE_ONLY_V1 := $(if $(strip $(MAKECMDGOALS)),$(if $(filter-out test-plain-bnf-% test-ebnf-% test-tptp-extended-bnf-% test-tptp-official-lexical-% test-tptp-official-syntax-% test-tptp-official-reader-% test-tptp-official-corpus-compatibility-% test-tptp-official-reusable-reader-v1 test-tptp-reader-artifact-reproducibility-v1 test-tptp-official-compact-% test-tptp-frozen-% test-lib-tptp-reader-v1 build-tptp-frozen-% benchmark-tptp-frozen-size-ladder-v1 benchmark-tptp-frozen-size-ladder-v1-body qualify-tptp-frozen-full-corpus-v1 qualify-tptp-frozen-full-corpus-v1-body qualify-tptp-frozen-corpus-compatible-v1 test-bnf-native-entry-v1,$(MAKECMDGOALS)),,1),)
 ifeq ($(BNF_NATIVE_ONLY_V1),1)
 BUILD ?= core
 ifneq ($(BUILD),core)
@@ -59,7 +59,7 @@ test-fail-atomic-build-v1:
 # A standalone Lean qualification does not consume runtime build metadata.
 # In particular, included configuration/dependency makefiles must not trigger
 # native artifact regeneration before that qualification runs.
-GSLT_SOURCE_LEAN_ONLY_GOALS_V1 := qualify-plain-bnf-authored-source-lean-v1 qualify-ebnf-authored-source-lean-v1 qualify-plain-bnf-selected-native-type-lean-v1
+GSLT_SOURCE_LEAN_ONLY_GOALS_V1 := qualify-plain-bnf-authored-source-lean-v1 qualify-ebnf-authored-source-lean-v1 qualify-plain-bnf-selected-native-type-lean-v1 qualify-tptp-reader-source-lean-v1
 GSLT_SOURCE_LEAN_ONLY_V1 := $(if $(filter $(GSLT_SOURCE_LEAN_ONLY_GOALS_V1),$(MAKECMDGOALS)),$(if $(filter-out $(GSLT_SOURCE_LEAN_ONLY_GOALS_V1),$(MAKECMDGOALS)),,1),)
 ifneq ($(GSLT_SOURCE_LEAN_ONLY_V1),1)
 include src/generated/cetta_execution_contracts.generated.mk
@@ -712,7 +712,10 @@ SRC += experiments/gslt2parse_foundation/native/parser_pack_abi_stream_v1.c \
 	native/structural_tree_relabel_v1.c \
 	native/gslt_composition_v1.c \
 	native/deterministic_equation_plan_v1.c \
-	native/ebnf_derivation_projection_native_v1.c
+	native/ebnf_derivation_projection_native_v1.c \
+	native/tptp_official_records_v1.c \
+	native/tptp_official_snapshot_v1.c \
+	experiments/gslt2parse_foundation/native/parser_pack_table_snapshot_v1.c
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).runtime-stats.o)
 PUBLIC_BIN = runtime/cetta-$(BUILD_CANON)-runtime-stats
@@ -977,6 +980,33 @@ LIB_PARSE_SLR_PREPARED_TEST_SRC = tests/support/test_lib_parse_slr_prepared.c
 LIB_PARSE_SLR_PREPARED_TEST_OBJ = runtime/bootstrap/test_lib_parse_slr_prepared.$(BUILD_OBJ_TAG).o
 LIB_PARSE_SLR_PREPARED_TEST_BIN = runtime/test_lib_parse_slr_prepared-$(BUILD_OBJ_TAG)
 LIB_PARSE_SLR_PREPARED_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PARSER_PACK_TABLE_SNAPSHOT_V1_TEST_SRC = tests/support/test_parser_pack_table_snapshot_v1.c
+PARSER_PACK_TABLE_SNAPSHOT_V1_TEST_OBJ = runtime/bootstrap/test_parser_pack_table_snapshot_v1.$(BUILD_OBJ_TAG).o
+PARSER_PACK_TABLE_SNAPSHOT_V1_TEST_BIN = runtime/test_parser_pack_table_snapshot_v1-$(BUILD_OBJ_TAG)
+PARSER_PACK_TABLE_SNAPSHOT_V1_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+TPTP_CORPUS_COMPATIBILITY_SNAPSHOT_V1_TEST_SRC = tests/support/test_tptp_corpus_compatibility_snapshot_v1.c
+TPTP_CORPUS_COMPATIBILITY_SNAPSHOT_V1_TEST_OBJ = runtime/bootstrap/test_tptp_corpus_compatibility_snapshot_v1.$(BUILD_OBJ_TAG).o
+TPTP_CORPUS_COMPATIBILITY_SNAPSHOT_V1_TEST_BIN = runtime/test_tptp_corpus_compatibility_snapshot_v1-$(BUILD_OBJ_TAG)
+TPTP_CORPUS_COMPATIBILITY_SNAPSHOT_V1_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+TPTP_FROZEN_LADDER_V1_SRC = tests/support/ladder_tptp_frozen_v1.c
+TPTP_FROZEN_LADDER_V1_OBJ = runtime/bootstrap/ladder_tptp_frozen_v1.$(BUILD_OBJ_TAG).o
+TPTP_FROZEN_LADDER_V1_BIN = runtime/ladder_tptp_frozen_v1-$(BUILD_OBJ_TAG)
+TPTP_FROZEN_LADDER_V1_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+TPTP_FROZEN_SIZE_LADDER_RUNNER_V1 = tests/support/run_tptp_size_ladder_v1.sh
+TPTP_FROZEN_SIZE_LADDER_OUTPUT_V1 ?= runtime/bootstrap/tptp_frozen_size_ladder_v1.tsv
+TPTP_FROZEN_CORPUS_QUALIFIER_V1_SRC = tests/support/qualify_tptp_frozen_corpus_v1.c
+TPTP_FROZEN_CORPUS_QUALIFIER_V1_OBJ = runtime/bootstrap/qualify_tptp_frozen_corpus_v1.$(BUILD_OBJ_TAG).o
+TPTP_FROZEN_CORPUS_QUALIFIER_V1_BIN = runtime/qualify_tptp_frozen_corpus_v1-$(BUILD_OBJ_TAG)
+TPTP_FROZEN_CORPUS_QUALIFIER_V1_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+TPTP_FROZEN_CORPUS_QUALIFICATION_OUTPUT_V1 ?= runtime/bootstrap/tptp_frozen_full_corpus_v1.tsv
+TPTP_FROZEN_CORPUS_QUALIFICATION_SUMMARY_V1 ?= runtime/bootstrap/tptp_frozen_full_corpus_v1.summary
+TPTP_FROZEN_CORPUS_COMPATIBILITY_QUALIFICATION_OUTPUT_V1 ?= runtime/bootstrap/tptp_frozen_corpus_compatible_v1.tsv
+TPTP_FROZEN_CORPUS_COMPATIBILITY_QUALIFICATION_SUMMARY_V1 ?= runtime/bootstrap/tptp_frozen_corpus_compatible_v1.summary
+TPTP_FROZEN_CORPUS_PROFILE_V1 ?= strict
+TPTP_FROZEN_CORPUS_SNAPSHOT_V1 ?= runtime/tptp-official-reader/f47940c43c23ed5ed8633a3b74a2847648d5ab794669430c8f0c38f138e61df6/tables.tpp1
+TPTP_FROZEN_CORPUS_EXPECTED_ACCEPTED_V1 ?= 28541
+TPTP_FROZEN_CORPUS_EXPECTED_REJECTED_V1 ?= 153
+TPTP_FROZEN_CORPUS_SNAPSHOT_GATE_V1 = $(if $(filter corpus-compatible,$(TPTP_FROZEN_CORPUS_PROFILE_V1)),test-tptp-official-corpus-compatibility-snapshot-v1-body,test-tptp-official-syntax-snapshot-v1-body)
 PARSER_PACK_GLL_V1_TEST_SRC = experiments/gslt2parse_foundation/native/test_parser_pack_gll_v1.c
 PARSER_PACK_GLL_V1_TEST_OBJ = runtime/bootstrap/test_parser_pack_gll_v1.$(BUILD_OBJ_TAG).o
 PARSER_PACK_GLL_V1_TEST_BIN = runtime/test_parser_pack_gll_v1-$(BUILD_OBJ_TAG)
@@ -1554,6 +1584,10 @@ GSLT2PARSE_AUX_OBJ = \
 	$(LIB_PARSE_GLL_UTF8_FOREST_TEST_OBJ) \
 	$(LIB_PARSE_GLR_UTF8_FOREST_TEST_OBJ) \
 	$(LIB_PARSE_SLR_PREPARED_TEST_OBJ) \
+	$(PARSER_PACK_TABLE_SNAPSHOT_V1_TEST_OBJ) \
+	$(TPTP_CORPUS_COMPATIBILITY_SNAPSHOT_V1_TEST_OBJ) \
+	$(TPTP_FROZEN_LADDER_V1_OBJ) \
+	$(TPTP_FROZEN_CORPUS_QUALIFIER_V1_OBJ) \
 	$(PARSER_PACK_GLL_V1_TEST_OBJ) \
 	$(PARSER_PACK_GLR_V1_TEST_OBJ) \
 	$(PARSER_PACK_LEXICAL_V1_TEST_OBJ) \
@@ -2285,6 +2319,41 @@ LIB_TPTP_CONTEXTUAL_STAGE_RECEIPT_TEST_V1 = \
 TPTP_OFFICIAL_SOURCE_KEYWORD_FIXTURE_V1 = tests/langdef/tptp/official_source_keyword_priority_v9200.p
 TPTP_OFFICIAL_INTERNAL_SOURCE_FIXTURE_V1 = tests/langdef/tptp/official_internal_source_compatibility_v9200.p
 TPTP_OFFICIAL_SYNTAX_BNF_V1 ?=
+TPTP_OFFICIAL_READER_PACK_V1 ?= runtime/tptp-official-reader/f47940c43c23ed5ed8633a3b74a2847648d5ab794669430c8f0c38f138e61df6/pack.sexpr
+TPTP_OFFICIAL_CORPUS_COMPATIBILITY_PACK_V1 ?= runtime/tptp-official-reader/f47940c43c23ed5ed8633a3b74a2847648d5ab794669430c8f0c38f138e61df6/corpus-compatible/pack.sexpr
+TPTP_OFFICIAL_CORPUS_COMPATIBILITY_SNAPSHOT_V1 ?= runtime/tptp-official-reader/f47940c43c23ed5ed8633a3b74a2847648d5ab794669430c8f0c38f138e61df6/corpus-compatible/tables.tpp1
+TPTP_OFFICIAL_TSTP_FIXTURES_V1 = \
+	tests/langdef/tptp/tstp/PUZ001-1.e.tstp \
+	tests/langdef/tptp/tstp/PUZ001+1.e.tstp \
+	tests/langdef/tptp/tstp/PUZ001-1.vampire.tstp \
+	tests/langdef/tptp/tstp/PUZ001+1.vampire.tstp
+TPTP_OFFICIAL_READER_MANIFEST_SOURCES_V1 = \
+	langdef/tptp/official_prepared_reader_v1.metta \
+	lib/lib_tptp.metta \
+	lib/lib_bnf.metta \
+	langdef/tptp/official_extended_bnf_source_v1.metta \
+	langdef/tptp/official_extended_bnf_parser_profile_v1.metta \
+	langdef/tptp/official_extended_bnf_ast_v1.metta \
+	langdef/tptp/official_extended_bnf_ast_projection_v1.metta \
+	langdef/tptp/official_lexical_to_ebnf_v1.metta \
+	langdef/tptp/official_syntax_to_ebnf_v1.metta \
+	langdef/bnf/ebnf_declaration_view_v1.metta \
+	langdef/bnf/ebnf_reachable_view_v1.metta \
+	langdef/bnf/ebnf_lowering_v1.metta \
+	langdef/bnf/plain_bnf_denotation_v1.metta \
+	langdef/tptp/official_syntax_records_v1.metta \
+	native/tptp_official_records_v1.c \
+	native/tptp_official_records_v1.h \
+	native/tptp_official_snapshot_v1.c \
+	native/tptp_official_snapshot_v1.h \
+	experiments/gslt2parse_foundation/native/parser_pack_table_snapshot_v1.c \
+	experiments/gslt2parse_foundation/native/parser_pack_table_snapshot_v1.h \
+	src/lib_parse_native_grammar.c \
+	src/lib_parse_native_grammar.h
+TPTP_OFFICIAL_CORPUS_COMPATIBILITY_MANIFEST_SOURCES_V1 = \
+	$(TPTP_OFFICIAL_READER_MANIFEST_SOURCES_V1) \
+	langdef/tptp/official_corpus_compatibility_native_types_v1.metta \
+	langdef/tptp/official_corpus_compatibility_v1.metta
 TPTP_OFFICIAL_CORPUS_ROOT_V1 ?=
 TPTP_LANGDEF_PARSER_SOURCES_V1 = \
 	experiments/gslt2parse_foundation/presentations/core/syntax_core_v1.metta \
@@ -5836,6 +5905,54 @@ $(LIB_PARSE_SLR_PREPARED_TEST_BIN): $(LIB_PARSE_SLR_PREPARED_TEST_OBJ) $(LIB_PAR
 	mv "$$tmp_out" $@
 
 $(LIB_PARSE_SLR_PREPARED_TEST_OBJ): $(LIB_PARSE_SLR_PREPARED_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_PACK_TABLE_SNAPSHOT_V1_TEST_BIN): $(PARSER_PACK_TABLE_SNAPSHOT_V1_TEST_OBJ) $(PARSER_PACK_TABLE_SNAPSHOT_V1_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-parser-pack-table-snapshot-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PARSER_PACK_TABLE_SNAPSHOT_V1_TEST_OBJ): $(PARSER_PACK_TABLE_SNAPSHOT_V1_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(TPTP_CORPUS_COMPATIBILITY_SNAPSHOT_V1_TEST_BIN): $(TPTP_CORPUS_COMPATIBILITY_SNAPSHOT_V1_TEST_OBJ) $(TPTP_CORPUS_COMPATIBILITY_SNAPSHOT_V1_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-tptp-corpus-compatibility-snapshot-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(TPTP_CORPUS_COMPATIBILITY_SNAPSHOT_V1_TEST_OBJ): $(TPTP_CORPUS_COMPATIBILITY_SNAPSHOT_V1_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(TPTP_FROZEN_LADDER_V1_BIN): $(TPTP_FROZEN_LADDER_V1_OBJ) $(TPTP_FROZEN_LADDER_V1_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/ladder-tptp-frozen-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(TPTP_FROZEN_LADDER_V1_OBJ): $(TPTP_FROZEN_LADDER_V1_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(TPTP_FROZEN_CORPUS_QUALIFIER_V1_BIN): $(TPTP_FROZEN_CORPUS_QUALIFIER_V1_OBJ) $(TPTP_FROZEN_CORPUS_QUALIFIER_V1_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/qualify-tptp-frozen-corpus-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(TPTP_FROZEN_CORPUS_QUALIFIER_V1_OBJ): $(TPTP_FROZEN_CORPUS_QUALIFIER_V1_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
@@ -18530,6 +18647,315 @@ test-lib-parse-glr-utf8-forest: $(LIB_PARSE_GLR_UTF8_FOREST_TEST_BIN)
 
 test-lib-parse-slr-prepared: $(LIB_PARSE_SLR_PREPARED_TEST_BIN)
 	@$(LIB_PARSE_SLR_PREPARED_TEST_BIN)
+
+test-parser-pack-table-snapshot-v1: \
+		$(TPTP_OFFICIAL_READER_PACK_V1) \
+		$(PARSER_PACK_TABLE_SNAPSHOT_V1_TEST_BIN)
+	@$(PARSER_PACK_TABLE_SNAPSHOT_V1_TEST_BIN)
+
+.PHONY: build-tptp-frozen-ladder-v1
+build-tptp-frozen-ladder-v1: $(TPTP_FROZEN_LADDER_V1_BIN)
+
+.PHONY: benchmark-tptp-frozen-size-ladder-v1-body
+benchmark-tptp-frozen-size-ladder-v1-body: \
+		$(TPTP_FROZEN_LADDER_V1_BIN) \
+		test-tptp-official-corpus-compatibility-snapshot-v1-body \
+		$(TPTP_FROZEN_SIZE_LADDER_RUNNER_V1)
+	@if [[ -z "$(strip $(TPTP_OFFICIAL_CORPUS_ROOT_V1))" || \
+		! -d "$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems" ]]; then \
+		echo 'set TPTP_OFFICIAL_CORPUS_ROOT_V1 to the pinned distribution' >&2; \
+		exit 2; \
+	fi
+	@bash "$(TPTP_FROZEN_SIZE_LADDER_RUNNER_V1)" \
+		"$(TPTP_FROZEN_LADDER_V1_BIN)" \
+		"$(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_SNAPSHOT_V1)" \
+		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)" \
+		"$(TPTP_FROZEN_SIZE_LADDER_OUTPUT_V1)"
+	@echo "TPTP frozen size ladder: $(TPTP_FROZEN_SIZE_LADDER_OUTPUT_V1)"
+
+.PHONY: benchmark-tptp-frozen-size-ladder-v1
+benchmark-tptp-frozen-size-ladder-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 \
+		JSON_BACKEND=gslt CETTA_PROVENANCE_ASSERT=0 \
+		RHOCOST_COMMIT_AUDIT=0 ENABLE_PRIME_NEED_HEAP_INDEX=0 \
+		ENABLE_PRIME_EVAL_STACK=0 \
+		TPTP_OFFICIAL_SYNTAX_BNF_V1="$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
+		TPTP_OFFICIAL_CORPUS_ROOT_V1="$(TPTP_OFFICIAL_CORPUS_ROOT_V1)" \
+		TPTP_FROZEN_SIZE_LADDER_OUTPUT_V1="$(TPTP_FROZEN_SIZE_LADDER_OUTPUT_V1)" \
+		benchmark-tptp-frozen-size-ladder-v1-body
+
+.PHONY: build-tptp-frozen-corpus-qualifier-v1
+build-tptp-frozen-corpus-qualifier-v1: $(TPTP_FROZEN_CORPUS_QUALIFIER_V1_BIN)
+
+.PHONY: test-tptp-frozen-corpus-qualifier-preflight-v1-body
+test-tptp-frozen-corpus-qualifier-preflight-v1-body: \
+		$(TPTP_FROZEN_CORPUS_QUALIFIER_V1_BIN)
+	@set -eu; \
+	probe_dir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/tptp-corpus-preflight-v1.XXXXXX"); \
+	trap 'rm -rf "$$probe_dir"' EXIT INT TERM; \
+	mkdir "$$probe_dir/problems" "$$probe_dir/axioms"; \
+	: > "$$probe_dir/snapshot.tpp1"; \
+	set +e; \
+	$(TPTP_FROZEN_CORPUS_QUALIFIER_V1_BIN) \
+		"$$probe_dir/snapshot.tpp1" "$$probe_dir/problems" \
+		"$$probe_dir/axioms" "$$probe_dir/missing.tstp" \
+		> "$$probe_dir/stdout" 2> "$$probe_dir/stderr"; \
+	status=$$?; \
+	set -e; \
+	test "$$status" -eq 2; \
+	test ! -s "$$probe_dir/stdout"; \
+	rg -q '^preflight failed: TSTP input is not a regular file:' \
+		"$$probe_dir/stderr"; \
+	echo 'TPTP corpus qualifier preflight: missing late input rejected before walk'
+
+.PHONY: test-tptp-frozen-corpus-qualifier-preflight-v1
+test-tptp-frozen-corpus-qualifier-preflight-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 \
+		JSON_BACKEND=gslt CETTA_PROVENANCE_ASSERT=0 \
+		RHOCOST_COMMIT_AUDIT=0 ENABLE_PRIME_NEED_HEAP_INDEX=0 \
+		ENABLE_PRIME_EVAL_STACK=0 \
+		test-tptp-frozen-corpus-qualifier-preflight-v1-body
+
+.PHONY: qualify-tptp-frozen-full-corpus-v1-body
+qualify-tptp-frozen-full-corpus-v1-body: \
+		$(TPTP_FROZEN_CORPUS_QUALIFIER_V1_BIN) \
+		$(TPTP_FROZEN_CORPUS_SNAPSHOT_GATE_V1) \
+		$(TPTP_OFFICIAL_TSTP_FIXTURES_V1)
+	@if [[ -z "$(strip $(TPTP_OFFICIAL_CORPUS_ROOT_V1))" || \
+		! -d "$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems" || \
+		! -d "$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Axioms" ]]; then \
+		echo 'set TPTP_OFFICIAL_CORPUS_ROOT_V1 to the pinned distribution' >&2; \
+		exit 2; \
+	fi
+	@set -euo pipefail; \
+	mkdir -p "$(dir $(TPTP_FROZEN_CORPUS_QUALIFICATION_OUTPUT_V1))" \
+		"$(dir $(TPTP_FROZEN_CORPUS_QUALIFICATION_SUMMARY_V1))"; \
+	tmp_tsv=$$(mktemp "$(dir $(TPTP_FROZEN_CORPUS_QUALIFICATION_OUTPUT_V1))/tptp-corpus-v1.XXXXXX"); \
+	tmp_summary=$$(mktemp "$(dir $(TPTP_FROZEN_CORPUS_QUALIFICATION_SUMMARY_V1))/tptp-corpus-summary-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_tsv" "$$tmp_summary"' EXIT INT TERM; \
+	$(TPTP_FROZEN_CORPUS_QUALIFIER_V1_BIN) \
+		"$(TPTP_FROZEN_CORPUS_SNAPSHOT_V1)" \
+		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems" \
+		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Axioms" \
+		$(TPTP_OFFICIAL_TSTP_FIXTURES_V1) \
+		> "$$tmp_tsv" 2> >(tee "$$tmp_summary" >&2); \
+	rows=$$(awk 'END { print NR - 1 }' "$$tmp_tsv"); \
+	non_accept=$$(awk -F '\t' 'NR > 1 && $$2 != "accept" { n++ } END { print n + 0 }' "$$tmp_tsv"); \
+	test "$$rows" -eq 28694; \
+	test "$$non_accept" -eq "$(TPTP_FROZEN_CORPUS_EXPECTED_REJECTED_V1)"; \
+	if [[ "$(TPTP_FROZEN_CORPUS_PROFILE_V1)" == strict ]]; then \
+		itp_rejects=$$(awk -F '\t' 'NR > 1 && $$2 == "reject" && $$1 ~ /\/Problems\/ITP\// { n++ } END { print n + 0 }' "$$tmp_tsv"); \
+		syn_rejects=$$(awk -F '\t' 'NR > 1 && $$2 == "reject" && $$1 ~ /\/Problems\/SYN\// { n++ } END { print n + 0 }' "$$tmp_tsv"); \
+		other_rejects=$$(awk -F '\t' 'NR > 1 && $$2 == "reject" && $$1 !~ /\/Problems\/(ITP|SYN)\// { n++ } END { print n + 0 }' "$$tmp_tsv"); \
+		bad_witnesses=$$(awk -F '\t' 'NR > 1 && $$2 == "reject" && $$5 !~ /^TPTP:NoParse byte=[0-9]+ rule=TPTP_file$$/ { n++ } END { print n + 0 }' "$$tmp_tsv"); \
+		test "$$itp_rejects" -eq 148; \
+		test "$$syn_rejects" -eq 5; \
+		test "$$other_rejects" -eq 0; \
+		test "$$bad_witnesses" -eq 0; \
+		for name in 'SYN000^7.p' 'SYN000_2.p' 'SYN000-3.p' 'SYN000-2.p' 'SYN000+2.p'; do \
+			suffix="/Problems/SYN/$$name"; \
+			count=$$(awk -F '\t' -v suffix="$$suffix" 'NR > 1 && $$2 == "reject" && substr($$1, length($$1) - length(suffix) + 1) == suffix { n++ } END { print n + 0 }' "$$tmp_tsv"); \
+			test "$$count" -eq 1; \
+		done; \
+	fi; \
+	expected='(TptpCorpusQualificationV1 accepted=$(TPTP_FROZEN_CORPUS_EXPECTED_ACCEPTED_V1) rejected=$(TPTP_FROZEN_CORPUS_EXPECTED_REJECTED_V1) unprojected=0 skipped=0 cnf=8478 fof=10604 tff=3936 thf=5671 tcf=1 tpi=0 ax=2426 tstp=4 other=4)'; \
+	grep -Fqx "$$expected" "$$tmp_summary"; \
+	mv "$$tmp_tsv" "$(TPTP_FROZEN_CORPUS_QUALIFICATION_OUTPUT_V1)"; \
+	mv "$$tmp_summary" "$(TPTP_FROZEN_CORPUS_QUALIFICATION_SUMMARY_V1)"; \
+	trap - EXIT INT TERM; \
+	echo "TPTP frozen corpus qualification ($(TPTP_FROZEN_CORPUS_PROFILE_V1)): $(TPTP_FROZEN_CORPUS_EXPECTED_ACCEPTED_V1) accepted, $(TPTP_FROZEN_CORPUS_EXPECTED_REJECTED_V1) rejected"
+
+.PHONY: qualify-tptp-frozen-full-corpus-v1
+qualify-tptp-frozen-full-corpus-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 \
+		JSON_BACKEND=gslt CETTA_PROVENANCE_ASSERT=0 \
+		RHOCOST_COMMIT_AUDIT=0 ENABLE_PRIME_NEED_HEAP_INDEX=0 \
+		ENABLE_PRIME_EVAL_STACK=0 \
+		TPTP_OFFICIAL_SYNTAX_BNF_V1="$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
+		TPTP_OFFICIAL_CORPUS_ROOT_V1="$(TPTP_OFFICIAL_CORPUS_ROOT_V1)" \
+		qualify-tptp-frozen-full-corpus-v1-body
+
+.PHONY: qualify-tptp-frozen-corpus-compatible-v1
+qualify-tptp-frozen-corpus-compatible-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 \
+		JSON_BACKEND=gslt CETTA_PROVENANCE_ASSERT=0 \
+		RHOCOST_COMMIT_AUDIT=0 ENABLE_PRIME_NEED_HEAP_INDEX=0 \
+		ENABLE_PRIME_EVAL_STACK=0 \
+		TPTP_OFFICIAL_SYNTAX_BNF_V1="$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
+		TPTP_OFFICIAL_CORPUS_ROOT_V1="$(TPTP_OFFICIAL_CORPUS_ROOT_V1)" \
+		TPTP_FROZEN_CORPUS_PROFILE_V1=corpus-compatible \
+		TPTP_FROZEN_CORPUS_SNAPSHOT_V1="$(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_SNAPSHOT_V1)" \
+		TPTP_FROZEN_CORPUS_EXPECTED_ACCEPTED_V1=28694 \
+		TPTP_FROZEN_CORPUS_EXPECTED_REJECTED_V1=0 \
+		TPTP_FROZEN_CORPUS_QUALIFICATION_OUTPUT_V1="$(TPTP_FROZEN_CORPUS_COMPATIBILITY_QUALIFICATION_OUTPUT_V1)" \
+		TPTP_FROZEN_CORPUS_QUALIFICATION_SUMMARY_V1="$(TPTP_FROZEN_CORPUS_COMPATIBILITY_QUALIFICATION_SUMMARY_V1)" \
+		qualify-tptp-frozen-full-corpus-v1-body
+
+.PHONY: test-tptp-official-syntax-snapshot-v1-body
+test-tptp-official-syntax-snapshot-v1-body: test-parser-pack-table-snapshot-v1 $(BIN) \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(PETTA_LIB_TPTP_V1) \
+		$(TPTP_OFFICIAL_READER_PACK_V1) \
+		tests/langdef/tptp/official_syntax_snapshot_construct_v1.metta \
+		tests/langdef/tptp/official_syntax_snapshot_v1.metta
+	@if [[ -z "$(strip $(TPTP_OFFICIAL_SYNTAX_BNF_V1))" || \
+		! -f "$(TPTP_OFFICIAL_READER_PACK_V1)" ]]; then \
+		echo 'need TPTP official pack and SyntaxBNF' >&2; \
+		exit 2; \
+	fi
+	@set -eu; \
+	out="$(TPTP_OFFICIAL_READER_PACK_V1)"; \
+	out=$${out%pack.sexpr}tables.tpp1; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		tests/langdef/tptp/official_syntax_snapshot_construct_v1.metta \
+		"$(TPTP_OFFICIAL_READER_PACK_V1)" "$$out"); \
+	printf '%s\n' "$$result"; \
+	printf '%s\n' "$$result" | rg -q 'TptpSnapshotConstructionV1'; \
+	info=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 2000000 \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		tests/langdef/tptp/official_syntax_snapshot_v1.metta "$$out"); \
+	printf '%s\n' "$$info"; \
+	printf '%s\n' "$$info" | rg -q 'TptpSnapshotInfoV1'
+
+.PHONY: test-tptp-official-syntax-snapshot-v1
+test-tptp-official-syntax-snapshot-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		test-tptp-official-syntax-snapshot-v1-body
+
+.PHONY: test-tptp-official-corpus-compatibility-snapshot-v1-body
+test-tptp-official-corpus-compatibility-snapshot-v1-body: \
+		test-parser-pack-table-snapshot-v1 \
+		$(TPTP_CORPUS_COMPATIBILITY_SNAPSHOT_V1_TEST_BIN) $(BIN) \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(PETTA_LIB_TPTP_V1) \
+		$(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_PACK_V1) \
+		tests/langdef/tptp/official_syntax_snapshot_construct_v1.metta \
+		tests/langdef/tptp/official_syntax_snapshot_v1.metta \
+		tests/langdef/tptp/official_syntax_parenthesized_cnf_v9200.p \
+		tests/langdef/tptp/official_syntax_parenthesized_cnf_malformed_v9200.p
+	@set -eu; \
+	mkdir -p "$(dir $(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_SNAPSHOT_V1))"; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		tests/langdef/tptp/official_syntax_snapshot_construct_v1.metta \
+		"$(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_PACK_V1)" \
+		"$(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_SNAPSHOT_V1)"); \
+	printf '%s\n' "$$result"; \
+	printf '%s\n' "$$result" | rg -q \
+		'TptpSnapshotConstructionV1 .* corpus-compatible '; \
+	info=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 2000000 \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		tests/langdef/tptp/official_syntax_snapshot_v1.metta \
+		"$(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_SNAPSHOT_V1)"); \
+	printf '%s\n' "$$info"; \
+	printf '%s\n' "$$info" | rg -q \
+		'TptpSnapshotInfoV1 .* corpus-compatible '; \
+	$(TPTP_CORPUS_COMPATIBILITY_SNAPSHOT_V1_TEST_BIN) \
+		"$(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_SNAPSHOT_V1)" \
+		tests/langdef/tptp/official_syntax_parenthesized_cnf_v9200.p \
+		tests/langdef/tptp/official_syntax_parenthesized_cnf_malformed_v9200.p
+
+.PHONY: test-tptp-official-corpus-compatibility-snapshot-v1
+test-tptp-official-corpus-compatibility-snapshot-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		test-tptp-official-corpus-compatibility-snapshot-v1-body
+
+.PHONY: test-tptp-reader-artifact-reproducibility-v1-body
+test-tptp-reader-artifact-reproducibility-v1-body: $(BIN) \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(TPTP_OFFICIAL_SYNTAX_PREPARE_TEST_V1) \
+		$(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_PREPARE_TEST_V1) \
+		tests/langdef/tptp/official_syntax_snapshot_construct_v1.metta \
+		$(TPTP_OFFICIAL_READER_MANIFEST_SOURCES_V1) \
+		$(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_MANIFEST_SOURCES_V1)
+	@if [[ -z "$(strip $(TPTP_OFFICIAL_SYNTAX_BNF_V1))" || \
+		! -f "$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" ]]; then \
+		echo 'set TPTP_OFFICIAL_SYNTAX_BNF_V1 to the pinned official SyntaxBNF file' >&2; \
+		exit 2; \
+	fi
+	@set -euo pipefail; \
+	evidence=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/tptp-reader-reproducibility-v1.XXXXXX"); \
+	trap 'rm -rf "$$evidence"' EXIT INT TERM; \
+	mkdir -p "$(dir $(TPTP_OFFICIAL_READER_PACK_V1))"; \
+	$(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(TPTP_OFFICIAL_SYNTAX_PREPARE_TEST_V1) \
+		"$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" > "$$evidence/strict-first.log"; \
+	rg -q 'TptpOfficialReaderPreparedV1' "$$evidence/strict-first.log"; \
+	cp "$(TPTP_OFFICIAL_READER_PACK_V1)" "$$evidence/strict-first.sexpr"; \
+	$(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(TPTP_OFFICIAL_SYNTAX_PREPARE_TEST_V1) \
+		"$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" > "$$evidence/strict-second.log"; \
+	rg -q 'TptpOfficialReaderPreparedV1' "$$evidence/strict-second.log"; \
+	cmp "$$evidence/strict-first.sexpr" "$(TPTP_OFFICIAL_READER_PACK_V1)"; \
+	$(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_PREPARE_TEST_V1) \
+		"$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
+		"$$evidence/compatible-first.sexpr" > "$$evidence/compatible-first.log"; \
+	rg -q 'TptpOfficialCorpusCompatibilityPreparedV1 True' \
+		"$$evidence/compatible-first.log"; \
+	$(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_PREPARE_TEST_V1) \
+		"$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
+		"$$evidence/compatible-second.sexpr" > "$$evidence/compatible-second.log"; \
+	rg -q 'TptpOfficialCorpusCompatibilityPreparedV1 True' \
+		"$$evidence/compatible-second.log"; \
+	cmp "$$evidence/compatible-first.sexpr" \
+		"$$evidence/compatible-second.sexpr"; \
+	for profile in strict compatible; do \
+		first="$$evidence/$$profile-first.sexpr"; \
+		second="$$evidence/$$profile-second.sexpr"; \
+		if [[ "$$profile" = strict ]]; then \
+			second="$(TPTP_OFFICIAL_READER_PACK_V1)"; \
+		fi; \
+		$(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+			$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+			tests/langdef/tptp/official_syntax_snapshot_construct_v1.metta \
+			"$$first" "$$evidence/$$profile-first.tpp1" \
+			> "$$evidence/$$profile-first-snapshot.log"; \
+		$(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+			$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+			tests/langdef/tptp/official_syntax_snapshot_construct_v1.metta \
+			"$$second" "$$evidence/$$profile-second.tpp1" \
+			> "$$evidence/$$profile-second-snapshot.log"; \
+		rg -q 'TptpSnapshotConstructionV1' \
+			"$$evidence/$$profile-first-snapshot.log"; \
+		rg -q 'TptpSnapshotConstructionV1' \
+			"$$evidence/$$profile-second-snapshot.log"; \
+		cmp "$$evidence/$$profile-first.tpp1" \
+			"$$evidence/$$profile-second.tpp1"; \
+	done; \
+	echo '(TptpReaderArtifactReproducibilityV1Summary 4 4 0)'
+
+.PHONY: test-tptp-reader-artifact-reproducibility-v1
+test-tptp-reader-artifact-reproducibility-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		TPTP_OFFICIAL_SYNTAX_BNF_V1="$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
+		test-tptp-reader-artifact-reproducibility-v1-body
 
 test-gslt2parse-parser-pack-gll-v1-native: \
 		test-gslt-dense-bitset-v1 $(PARSER_PACK_GLL_V1_TEST_BIN)
@@ -36511,6 +36937,995 @@ test-tptp-extended-bnf-full-reader-v1-body: \
 		$(TPTP_EXTENDED_BNF_FULL_READER_V1_TEST) \
 		"$(TPTP_OFFICIAL_SYNTAX_BNF_V1)"); \
 	test "$$result" = '(TptpOfficialExtendedBnfFullReaderV1Summary 2 2 0)'
+
+TPTP_OFFICIAL_LEXICAL_TEST_V1 ?= tests/langdef/tptp/official_lexical_to_ebnf_v1.metta
+TPTP_OFFICIAL_SYNTAX_COMPOSITION_TEST_V1 ?= tests/langdef/tptp/official_syntax_composition_v1.metta
+TPTP_OFFICIAL_CORPUS_COMPATIBILITY_TEST_V1 ?= tests/langdef/tptp/official_corpus_compatibility_v1.metta
+TPTP_OFFICIAL_CORPUS_COMPATIBILITY_INTEGRATION_TEST_V1 ?= tests/langdef/tptp/official_corpus_compatibility_integration_v1.metta
+TPTP_OFFICIAL_CORPUS_COMPATIBILITY_PREPARE_TEST_V1 ?= tests/langdef/tptp/official_corpus_compatibility_prepare_v1.metta
+TPTP_OFFICIAL_SYNTAX_OBSERVATION_TEST_V1 ?= tests/langdef/tptp/official_syntax_observation_v1.metta
+TPTP_OFFICIAL_SYNTAX_RECORDS_TEST_V1 ?= tests/langdef/tptp/official_syntax_records_v1.metta
+TPTP_OFFICIAL_SYNTAX_RECORDS_FAMILY_TEST_V1 ?= tests/langdef/tptp/official_syntax_records_family_v1.metta
+TPTP_OFFICIAL_SYNTAX_RECORDS_TSTP_TEST_V1 ?= tests/langdef/tptp/official_syntax_records_tstp_v1.metta
+TPTP_OFFICIAL_SYNTAX_FOF_CNF_VIEW_TEST_V1 ?= tests/langdef/tptp/official_syntax_fof_cnf_view_v1.metta
+TPTP_OFFICIAL_SYNTAX_DIFFERENTIAL_TEST_V1 ?= tests/langdef/tptp/official_syntax_records_differential_v1.metta
+TPTP_OFFICIAL_SYNTAX_EVIDENCE_TEST_V1 ?= tests/langdef/tptp/official_syntax_evidence_v1.metta
+TPTP_OFFICIAL_SYNTAX_PREPARE_TEST_V1 ?= tests/langdef/tptp/official_syntax_prepare_v1.metta
+TPTP_OFFICIAL_FROZEN_READER_CONTRACT_TEST_V1 ?= tests/langdef/tptp/official_frozen_reader_contract_v1.metta
+TPTP_OFFICIAL_FROZEN_READER_CONTRACT_EXPECTED_V1 ?= tests/langdef/tptp/official_frozen_reader_contract_v1.expected
+TPTP_OFFICIAL_REUSABLE_READER_TEST_V1 ?= tests/langdef/tptp/official_reusable_reader_v1.metta
+TPTP_OFFICIAL_REUSABLE_READER_EXPECTED_V1 ?= tests/langdef/tptp/official_reusable_reader_v1.expected
+TPTP_OFFICIAL_CORPUS_COMPATIBILITY_PUBLIC_READER_TEST_V1 ?= tests/langdef/tptp/official_corpus_compatibility_public_reader_v1.metta
+TPTP_OFFICIAL_READER_UTILITIES_TEST_V1 ?= tests/langdef/tptp/official_reader_utilities_v1.metta
+TPTP_OFFICIAL_READER_UTILITIES_EXPECTED_V1 ?= tests/langdef/tptp/official_reader_utilities_v1.expected
+TPTP_OFFICIAL_READER_UTILITIES_REAL_TEST_V1 ?= tests/langdef/tptp/official_reader_utilities_real_v1.metta
+TPTP_OFFICIAL_READER_UTILITIES_REAL_EXPECTED_V1 ?= tests/langdef/tptp/official_reader_utilities_real_v1.expected
+TPTP_OFFICIAL_READER_EXPRESSION_INSPECTION_TEST_V1 ?= tests/langdef/tptp/official_reader_expression_inspection_v1.metta
+TPTP_OFFICIAL_READER_EXPRESSION_INSPECTION_EXPECTED_V1 ?= tests/langdef/tptp/official_reader_expression_inspection_v1.expected
+TPTP_OFFICIAL_READER_SOURCE_DOCUMENT_TEST_V1 ?= tests/langdef/tptp/official_reader_source_document_v1.metta
+TPTP_OFFICIAL_READER_SOURCE_DOCUMENT_EXPECTED_V1 ?= tests/langdef/tptp/official_reader_source_document_v1.expected
+TPTP_OFFICIAL_READER_CANONICAL_PRINT_TEST_V1 ?= tests/langdef/tptp/official_reader_canonical_print_v1.metta
+TPTP_OFFICIAL_READER_CANONICAL_PRINT_EXPECTED_V1 ?= tests/langdef/tptp/official_reader_canonical_print_v1.expected
+TPTP_OFFICIAL_READER_CANONICAL_PRINT_REAL_TEST_V1 ?= tests/langdef/tptp/official_reader_canonical_print_real_v1.metta
+TPTP_OFFICIAL_READER_CANONICAL_PRINT_REAL_EXPECTED_V1 ?= tests/langdef/tptp/official_reader_canonical_print_real_v1.expected
+TPTP_OFFICIAL_RECORDS_TO_TEXT_V1 ?= langdef/tptp/official_records_to_text_v1.metta
+TPTP_OFFICIAL_COMPACT_LEXICAL_VALUE_V1 ?= langdef/tptp/official_compact_lexical_value_v1.metta
+TPTP_OFFICIAL_COMPACT_LEXICAL_VALUE_TEST_V1 ?= tests/langdef/tptp/official_compact_lexical_value_v1.metta
+TPTP_OFFICIAL_COMPACT_LEXICAL_VALUE_EXPECTED_V1 ?= tests/langdef/tptp/official_compact_lexical_value_v1.expected
+TPTP_OFFICIAL_COMPACT_INCLUDE_RESOLUTION_V1 ?= langdef/tptp/official_compact_include_resolution_v1.metta
+TPTP_OFFICIAL_COMPACT_INCLUDE_RESOLUTION_TEST_V1 ?= tests/langdef/tptp/official_compact_include_resolution_v1.metta
+TPTP_OFFICIAL_COMPACT_INCLUDE_RESOLUTION_EXPECTED_V1 ?= tests/langdef/tptp/official_compact_include_resolution_v1.expected
+TPTP_OFFICIAL_COMPACT_INCLUDE_RESOLUTION_REAL_TEST_V1 ?= tests/langdef/tptp/official_compact_include_resolution_real_v1.metta
+TPTP_OFFICIAL_COMPACT_INCLUDE_RESOLUTION_REAL_EXPECTED_V1 ?= tests/langdef/tptp/official_compact_include_resolution_real_v1.expected
+TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_V1 ?= langdef/tptp/compact_records_to_first_order_v1.metta
+TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_TEST_V1 ?= tests/langdef/tptp/official_compact_first_order_view_v1.metta
+TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_EXPECTED_V1 ?= tests/langdef/tptp/official_compact_first_order_view_v1.expected
+TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_MUTATION_TEST_V1 ?= tests/langdef/tptp/official_compact_first_order_view_mutation_v1.metta
+TPTP_OFFICIAL_COMPACT_RESOLUTION_CONSUMER_TEST_V1 ?= tests/langdef/tptp/official_compact_resolution_consumer_v1.metta
+TPTP_OFFICIAL_COMPACT_RESOLUTION_CONSUMER_EXPECTED_V1 ?= tests/langdef/tptp/official_compact_resolution_consumer_v1.expected
+TPTP_READER_SOURCE_QUALIFICATION_V1 ?= tests/langdef/tptp/tptp_reader_source_qualification_v1.lean
+TPTP_OFFICIAL_READER_PACK_V1 ?= runtime/tptp-official-reader/f47940c43c23ed5ed8633a3b74a2847648d5ab794669430c8f0c38f138e61df6/pack.sexpr
+TPTP_OFFICIAL_CORPUS_COMPATIBILITY_PACK_V1 ?= runtime/tptp-official-reader/f47940c43c23ed5ed8633a3b74a2847648d5ab794669430c8f0c38f138e61df6/corpus-compatible/pack.sexpr
+TPTP_OFFICIAL_CORPUS_COMPATIBILITY_SNAPSHOT_V1 ?= runtime/tptp-official-reader/f47940c43c23ed5ed8633a3b74a2847648d5ab794669430c8f0c38f138e61df6/corpus-compatible/tables.tpp1
+TPTP_OFFICIAL_SYNTAX_RECORDS_FAMILY_EXPECTED_V1 ?= tests/langdef/tptp/official_syntax_records_family_v1.expected
+
+.PHONY: qualify-tptp-reader-source-lean-v1
+qualify-tptp-reader-source-lean-v1:
+	@set -eu; \
+	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
+	if [ -z "$$lean_root" ] && [ -f "$(METTAPEDIA_LEAN_AUTO_ROOT)/lakefile.lean" ]; then \
+		lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; \
+	fi; \
+	test -n "$$lean_root" && test -f "$$lean_root/lakefile.lean" || { \
+		echo 'METTAPEDIA_LEAN_ROOT must name the Mettapedia Lean project' >&2; exit 2; \
+	}; \
+	client="$(abspath $(TPTP_READER_SOURCE_QUALIFICATION_V1))"; \
+	models='Mettapedia/GSLT/Parsing/TptpCorpusCompatibilitySource.lean Mettapedia/GSLT/Parsing/TptpOfficialCompositionSource.lean Mettapedia/GSLT/Parsing/TptpOfficialRecordProjectionSource.lean Mettapedia/GSLT/Parsing/TptpCompactFirstOrderProjectionSource.lean Mettapedia/GSLT/Parsing/TptpCanonicalPrintSource.lean'; \
+	if grep -En '\b(sorry|admit|axiom|native_decide|theorem_wanted)\b|_wanted' \
+		"$$client" $$(for model in $$models; do printf '%s/%s ' "$$lean_root" "$$model"; done); then \
+		echo 'TPTP reader source qualification contains a proof placeholder' >&2; exit 1; \
+	fi; \
+	if grep -En 'cetta-prime-nik|/home/|/shared/' \
+		"$$client" $$(for model in $$models; do printf '%s/%s ' "$$lean_root" "$$model"; done); then \
+		echo 'TPTP reader source qualification contains a checkout-specific path' >&2; exit 1; \
+	fi; \
+	(cd "$$lean_root" && LAKE_JOBS=3 nice -n 19 lake build \
+		Mettapedia.GSLT.Parsing.TptpCorpusCompatibilitySource \
+		Mettapedia.GSLT.Parsing.TptpOfficialCompositionSource \
+		Mettapedia.GSLT.Parsing.TptpOfficialRecordProjectionSource \
+		Mettapedia.GSLT.Parsing.TptpCompactFirstOrderProjectionSource \
+		Mettapedia.GSLT.Parsing.TptpCanonicalPrintSource && \
+		lake env lean -DwarningAsError=true "$$client")
+	@echo '(TptpReaderSourceLeanV1Summary 5 5 0)'
+
+.PHONY: test-tptp-official-lexical-to-ebnf-v1-body
+test-tptp-official-lexical-to-ebnf-v1-body: $(BIN) \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		langdef/tptp/official_lexical_to_ebnf_v1.metta \
+		langdef/bnf/ebnf_reachable_view_v1.metta \
+		tests/langdef/tptp/lexical_primitive_probe_v1.metta \
+		$(TPTP_OFFICIAL_LEXICAL_TEST_V1)
+	@if [[ -z "$(strip $(TPTP_OFFICIAL_SYNTAX_BNF_V1))" || \
+		! -f "$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" ]]; then \
+		echo 'set TPTP_OFFICIAL_SYNTAX_BNF_V1 to the pinned official SyntaxBNF file' >&2; \
+		exit 2; \
+	fi
+	@set -eu; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(TPTP_OFFICIAL_LEXICAL_TEST_V1) \
+		"$(TPTP_OFFICIAL_SYNTAX_BNF_V1)"); \
+	printf '%s\n' "$$result"; \
+	test "$$(printf '%s\n' "$$result" | sed '/^true$$/d')" = \
+		'(TptpOfficialLexicalToEbnfV1Summary 4 4 3 4 30 3)'
+
+.PHONY: test-tptp-official-lexical-to-ebnf-v1
+test-tptp-official-lexical-to-ebnf-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		test-tptp-official-lexical-to-ebnf-v1-body
+
+.PHONY: test-tptp-official-syntax-composition-v1-body
+test-tptp-official-syntax-composition-v1-body: $(BIN) \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		langdef/tptp/official_lexical_to_ebnf_v1.metta \
+		langdef/tptp/official_syntax_to_ebnf_v1.metta \
+		langdef/bnf/ebnf_reachable_view_v1.metta \
+		$(TPTP_OFFICIAL_SYNTAX_COMPOSITION_TEST_V1)
+	@if [[ -z "$(strip $(TPTP_OFFICIAL_SYNTAX_BNF_V1))" || \
+		! -f "$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" || \
+		-z "$(strip $(TPTP_OFFICIAL_CORPUS_ROOT_V1))" ]]; then \
+		echo 'set TPTP_OFFICIAL_SYNTAX_BNF_V1 and TPTP_OFFICIAL_CORPUS_ROOT_V1 to the pinned distribution' >&2; \
+		exit 2; \
+	fi
+	@set -eu; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(TPTP_OFFICIAL_SYNTAX_COMPOSITION_TEST_V1) \
+		"$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
+		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/PUZ/PUZ001-1.p" \
+		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/PUZ/PUZ001+1.p" \
+		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/PUZ/PUZ140^2.p"); \
+	printf '%s\n' "$$result"; \
+	test "$$(printf '%s\n' "$$result" | sed -e '/^true$$/d' \
+		-e '/^TptpSyntaxLexicalLoweredV1$$/d' \
+		-e '/^TptpSyntaxDeclarationsAcceptedV1$$/d' \
+		-e '/^TptpSyntaxParserPreparedV1$$/d')" = \
+		'(TptpOfficialSyntaxCompositionV1Summary 16 (CorpusFiles accepted accepted accepted))'
+
+.PHONY: test-tptp-official-syntax-composition-v1
+test-tptp-official-syntax-composition-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		test-tptp-official-syntax-composition-v1-body
+
+.PHONY: test-tptp-official-corpus-compatibility-v1-body
+test-tptp-official-corpus-compatibility-v1-body: $(BIN) \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		lib/lib_tptp.metta lib/lib_bnf.metta \
+		langdef/tptp/official_prepared_reader_v1.metta \
+		langdef/tptp/official_corpus_compatibility_native_types_v1.metta \
+		langdef/tptp/official_corpus_compatibility_v1.metta \
+		$(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_TEST_V1) \
+		$(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_INTEGRATION_TEST_V1)
+	@if [[ -z "$(strip $(TPTP_OFFICIAL_SYNTAX_BNF_V1))" || \
+		! -f "$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" ]]; then \
+		echo 'set TPTP_OFFICIAL_SYNTAX_BNF_V1 to the pinned official SyntaxBNF file' >&2; \
+		exit 2; \
+	fi
+	@set -eu; \
+	unit=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_TEST_V1)); \
+	integration=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_INTEGRATION_TEST_V1) \
+		"$(TPTP_OFFICIAL_SYNTAX_BNF_V1)"); \
+	printf '%s\n%s\n' "$$unit" "$$integration"; \
+	test "$$(printf '%s\n' "$$unit" | sed '/^true$$/d')" = \
+		'(TptpOfficialCorpusCompatibilityV1Summary true true true true)'; \
+	test "$$(printf '%s\n' "$$integration" | sed '/^true$$/d')" = \
+		'(TptpOfficialCorpusCompatibilityIntegrationV1Summary accepted accepted rejected accepted rejected accepted rejected accepted rejected accepted rejected rejected)'
+
+.PHONY: test-tptp-official-corpus-compatibility-v1
+test-tptp-official-corpus-compatibility-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		test-tptp-official-corpus-compatibility-v1-body
+
+.PHONY: test-tptp-official-syntax-observation-v1-body
+test-tptp-official-syntax-observation-v1-body: $(BIN) \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		langdef/tptp/official_lexical_to_ebnf_v1.metta \
+		langdef/tptp/official_syntax_to_ebnf_v1.metta \
+		langdef/tptp/official_syntax_observation_v1.metta \
+		langdef/bnf/ebnf_reachable_view_v1.metta \
+		$(TPTP_OFFICIAL_SYNTAX_OBSERVATION_TEST_V1)
+	@if [[ -z "$(strip $(TPTP_OFFICIAL_SYNTAX_BNF_V1))" || \
+		! -f "$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" || \
+		! -f "$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/PUZ/PUZ001-1.p" ]]; then \
+		echo 'set TPTP_OFFICIAL_SYNTAX_BNF_V1 and TPTP_OFFICIAL_CORPUS_ROOT_V1 to the pinned distribution' >&2; \
+		exit 2; \
+	fi
+	@set -eu; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(TPTP_OFFICIAL_SYNTAX_OBSERVATION_TEST_V1) \
+		"$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
+		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/PUZ/PUZ001-1.p"); \
+	printf '%s\n' "$$result"; \
+	test "$$(printf '%s\n' "$$result" | sed '/^true$$/d')" = \
+		'(TptpObservationChecks (TptpOfficialSyntaxObservationV1Summary 13 scalar-spans-preserved 3 binding-structure-preserved authored-agreement multiplicity-preserved) corpus-names-preserved)'
+
+.PHONY: test-tptp-official-syntax-observation-v1
+test-tptp-official-syntax-observation-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		test-tptp-official-syntax-observation-v1-body
+
+.PHONY: test-tptp-official-syntax-records-v1-body
+test-tptp-official-syntax-records-v1-body: $(BIN) \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		langdef/tptp/official_lexical_to_ebnf_v1.metta \
+		langdef/tptp/official_syntax_to_ebnf_v1.metta \
+		langdef/tptp/official_syntax_observation_v1.metta \
+		langdef/tptp/official_syntax_records_v1.metta \
+		langdef/bnf/ebnf_reachable_view_v1.metta \
+		$(TPTP_OFFICIAL_SYNTAX_RECORDS_TEST_V1)
+	@if [[ -z "$(strip $(TPTP_OFFICIAL_SYNTAX_BNF_V1))" || \
+		! -f "$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" || \
+		! -f "$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/PUZ/PUZ001-1.p" ]]; then \
+		echo 'set TPTP_OFFICIAL_SYNTAX_BNF_V1 and TPTP_OFFICIAL_CORPUS_ROOT_V1 to the pinned distribution' >&2; \
+		exit 2; \
+	fi
+	@set -eu; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(TPTP_OFFICIAL_SYNTAX_RECORDS_TEST_V1) \
+		"$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
+		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/PUZ/PUZ001-1.p"); \
+	printf '%s\n' "$$result"; \
+	test "$$(printf '%s\n' "$$result" | sed '/^true$$/d')" = \
+		'(TptpRecordChecks (TptpOfficialSyntaxRecordsV1Summary 4 quoted-variable-distinct cnf-or-not duplicates-preserved) corpus-cnf-names-preserved)'
+
+.PHONY: test-tptp-official-syntax-records-v1
+test-tptp-official-syntax-records-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		test-tptp-official-syntax-records-v1-body
+
+.PHONY: test-tptp-official-reader-prepare-v1-body
+test-tptp-official-reader-prepare-v1-body: $(BIN) \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		lib/lib_tptp.metta \
+		langdef/tptp/official_prepared_reader_v1.metta \
+		langdef/tptp/official_corpus_compatibility_native_types_v1.metta \
+		langdef/tptp/official_corpus_compatibility_v1.metta \
+		$(TPTP_OFFICIAL_SYNTAX_PREPARE_TEST_V1)
+	@if [[ -z "$(strip $(TPTP_OFFICIAL_SYNTAX_BNF_V1))" || \
+		! -f "$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" ]]; then \
+		echo 'set TPTP_OFFICIAL_SYNTAX_BNF_V1 to the pinned official SyntaxBNF file' >&2; \
+		exit 2; \
+	fi
+	@set -eu; \
+	mkdir -p "$(dir $(TPTP_OFFICIAL_READER_PACK_V1))"; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(TPTP_OFFICIAL_SYNTAX_PREPARE_TEST_V1) \
+		"$(TPTP_OFFICIAL_SYNTAX_BNF_V1)"); \
+	printf '%s\n' "$$result"; \
+	printf '%s\n' "$$result" | rg -q 'TptpOfficialReaderPreparedV1'; \
+	test -s "$(TPTP_OFFICIAL_READER_PACK_V1)"
+
+.PHONY: test-tptp-official-reader-prepare-v1
+test-tptp-official-reader-prepare-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		test-tptp-official-reader-prepare-v1-body
+
+$(TPTP_OFFICIAL_READER_PACK_V1): $(BIN) \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(TPTP_OFFICIAL_SYNTAX_PREPARE_TEST_V1) \
+		$(TPTP_OFFICIAL_READER_MANIFEST_SOURCES_V1) \
+		$(TPTP_OFFICIAL_SYNTAX_BNF_V1)
+	@$(MAKE) --no-print-directory \
+		TPTP_OFFICIAL_SYNTAX_BNF_V1="$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
+		TPTP_OFFICIAL_CORPUS_ROOT_V1="$(TPTP_OFFICIAL_CORPUS_ROOT_V1)" \
+		test-tptp-official-reader-prepare-v1-body
+
+.PHONY: test-tptp-official-corpus-compatibility-prepare-v1-body
+test-tptp-official-corpus-compatibility-prepare-v1-body: $(BIN) \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		lib/lib_tptp.metta lib/lib_bnf.metta \
+		langdef/tptp/official_prepared_reader_v1.metta \
+		langdef/tptp/official_corpus_compatibility_native_types_v1.metta \
+		langdef/tptp/official_corpus_compatibility_v1.metta \
+		$(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_PREPARE_TEST_V1)
+	@if [[ -z "$(strip $(TPTP_OFFICIAL_SYNTAX_BNF_V1))" || \
+		! -f "$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" ]]; then \
+		echo 'set TPTP_OFFICIAL_SYNTAX_BNF_V1 to the pinned official SyntaxBNF file' >&2; \
+		exit 2; \
+	fi
+	@set -eu; \
+	mkdir -p "$(dir $(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_PACK_V1))"; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_PREPARE_TEST_V1) \
+		"$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
+		"$(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_PACK_V1)"); \
+	printf '%s\n' "$$result"; \
+	printf '%s\n' "$$result" | rg -q \
+		'TptpOfficialCorpusCompatibilityPreparedV1 True'; \
+	test -s "$(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_PACK_V1)"
+
+.PHONY: test-tptp-official-corpus-compatibility-prepare-v1
+test-tptp-official-corpus-compatibility-prepare-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		test-tptp-official-corpus-compatibility-prepare-v1-body
+
+$(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_PACK_V1): $(BIN) \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_PREPARE_TEST_V1) \
+		$(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_MANIFEST_SOURCES_V1) \
+		$(TPTP_OFFICIAL_SYNTAX_BNF_V1)
+	@$(MAKE) --no-print-directory \
+		TPTP_OFFICIAL_SYNTAX_BNF_V1="$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
+		test-tptp-official-corpus-compatibility-prepare-v1-body
+
+.PHONY: test-tptp-official-syntax-records-family-v1-body
+test-tptp-official-syntax-records-family-v1-body: $(BIN) \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		lib/lib_tptp.metta \
+		$(TPTP_OFFICIAL_READER_PACK_V1) \
+		$(TPTP_OFFICIAL_SYNTAX_RECORDS_FAMILY_TEST_V1)
+	@if [[ -z "$(strip $(TPTP_OFFICIAL_SYNTAX_BNF_V1))" || \
+		! -f "$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" || \
+		! -f "$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/PUZ/PUZ001-1.p" ]]; then \
+		echo 'set TPTP_OFFICIAL_SYNTAX_BNF_V1 and TPTP_OFFICIAL_CORPUS_ROOT_V1 to the pinned distribution' >&2; \
+		exit 2; \
+	fi
+	@set -eu; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(TPTP_OFFICIAL_SYNTAX_RECORDS_FAMILY_TEST_V1) \
+		"$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
+		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/PUZ/PUZ001-1.p" \
+		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/PUZ/PUZ001+1.p" \
+		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/SYN/SYN000_1.p" \
+		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/PUZ/PUZ140^2.p" \
+		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/SYN/SYN000_4.p" \
+		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/SYN/SYN000-3.p" \
+		tests/langdef/tptp/official_syntax_families_v9200.p \
+		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/SYN/SYN000+2.p"); \
+	printf '%s\n' "$$result"; \
+	printf '%s\n' "$$result" | rg -q 'TPTP:Unprojected' && { echo 'unprojected production on a corpus row' >&2; exit 1; }; \
+	printf '%s\n' "$$result" | rg -q '\(tptp-rec:unknown' && { echo 'leftover tptp-rec:unknown on a corpus row' >&2; exit 1; }; \
+	printf '%s\n' "$$result" | rg 'word-lower "thf_formula"' | rg -q 'tptp-rec:implies' || { echo 'fixture thf_formula missing implies' >&2; exit 1; }; \
+	printf '%s\n' "$$result" | rg 'word-lower "fof_formula"' | rg -q 'tptp-rec:exists' || { echo 'fixture fof_formula missing exists' >&2; exit 1; }; \
+	printf '%s\n' "$$result" | rg 'word-lower "cnf_formula"' | rg -q 'tptp-rec:not' || { echo 'fixture cnf_formula missing not' >&2; exit 1; }; \
+	printf '%s\n' "$$result" | rg 'word-lower "tcf_formula"' | rg -q 'tptp-rec:not' || { echo 'fixture tcf_formula missing not' >&2; exit 1; }; \
+	printf '%s\n' "$$result" | rg -q 'Mismatch' && { echo 'family mismatch' >&2; exit 1; }; \
+	printf '%s\n' "$$result" | rg -q 'TPTP:DigestMismatch' && { echo 'digest mismatch' >&2; exit 1; }; \
+	got=$$(printf '%s\n' "$$result" | sed '/^true$$/d; /^(TptpFamilyRecords /d'); \
+	test "$$got" = "$$(cat $(TPTP_OFFICIAL_SYNTAX_RECORDS_FAMILY_EXPECTED_V1))"
+
+.PHONY: test-tptp-official-syntax-records-family-v1
+test-tptp-official-syntax-records-family-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		test-tptp-official-syntax-records-family-v1-body
+
+.PHONY: test-tptp-official-syntax-records-tstp-v1-body
+test-tptp-official-syntax-records-tstp-v1-body: $(BIN) \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		lib/lib_tptp.metta \
+		$(TPTP_OFFICIAL_SYNTAX_RECORDS_TSTP_TEST_V1) \
+		$(TPTP_OFFICIAL_TSTP_FIXTURES_V1)
+	@set -eu; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(TPTP_OFFICIAL_SYNTAX_RECORDS_TSTP_TEST_V1) \
+		$(TPTP_OFFICIAL_TSTP_FIXTURES_V1)); \
+	summary=$$(printf '%s\n' "$$result" | \
+		rg '^\(TptpOfficialSyntaxRecordsTstpV1Summary '); \
+	printf '%s\n' "$$result" | rg -q 'TptpTstpRowFault|TPTP:(LexReject|NoParse|Ambiguous|ResourceLimit|DigestMismatch|ReaderMismatch|Unprojected)' && { \
+		echo 'TSTP fixture produced a reader fault' >&2; exit 1; \
+	}; \
+	printf '%s\n' "$$result" | rg -q '\(tptp-rec:inference ' || { \
+		echo 'TSTP fixture lost structured inference annotations' >&2; exit 1; \
+	}; \
+	for tag in e-cnf e-fof vampire-cnf vampire-fof; do \
+		printf '%s\n' "$$summary" | rg -q "\\(TptpTstpRow $$tag .* true\\)" || { \
+			echo "TSTP fixture $$tag did not retain an inference" >&2; exit 1; \
+		}; \
+	done; \
+	echo '(TptpOfficialSyntaxRecordsTstpV1Summary 4 4 0)'
+
+.PHONY: test-tptp-official-syntax-records-tstp-v1
+test-tptp-official-syntax-records-tstp-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		test-tptp-official-syntax-records-tstp-v1-body
+
+.PHONY: test-tptp-official-syntax-frozen-reader-contract-v1-body
+test-tptp-official-syntax-frozen-reader-contract-v1-body: $(BIN) \
+		$(TPTP_OFFICIAL_FROZEN_READER_CONTRACT_TEST_V1) \
+		$(TPTP_OFFICIAL_FROZEN_READER_CONTRACT_EXPECTED_V1)
+	@set -eu; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 2000000 \
+		$(TPTP_OFFICIAL_FROZEN_READER_CONTRACT_TEST_V1)); \
+	printf '%s\n' "$$result"; \
+	got=$$(printf '%s\n' "$$result" | sed '/^true$$/d'); \
+	test "$$got" = "$$(cat $(TPTP_OFFICIAL_FROZEN_READER_CONTRACT_EXPECTED_V1))"
+
+.PHONY: test-tptp-official-syntax-frozen-reader-contract-v1
+test-tptp-official-syntax-frozen-reader-contract-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		test-tptp-official-syntax-frozen-reader-contract-v1-body
+
+.PHONY: test-tptp-official-reusable-reader-v1-body
+test-tptp-official-reusable-reader-v1-body: $(BIN) \
+		$(TPTP_OFFICIAL_SYNTAX_BNF_V1) \
+		$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/PUZ/PUZ001-1.p \
+		$(TPTP_OFFICIAL_REUSABLE_READER_TEST_V1) \
+		$(TPTP_OFFICIAL_REUSABLE_READER_EXPECTED_V1)
+	@set -eu; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+		$(TPTP_OFFICIAL_REUSABLE_READER_TEST_V1) \
+		"$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
+		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/PUZ/PUZ001-1.p"); \
+	printf '%s\n' "$$result"; \
+	got=$$(printf '%s\n' "$$result" | sed '/^true$$/d'); \
+	test "$$got" = "$$(cat $(TPTP_OFFICIAL_REUSABLE_READER_EXPECTED_V1))"
+
+.PHONY: test-tptp-official-reusable-reader-v1
+test-tptp-official-reusable-reader-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		TPTP_OFFICIAL_SYNTAX_BNF_V1="$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
+		TPTP_OFFICIAL_CORPUS_ROOT_V1="$(TPTP_OFFICIAL_CORPUS_ROOT_V1)" \
+		test-tptp-official-reusable-reader-v1-body
+
+.PHONY: test-tptp-official-corpus-compatibility-public-reader-v1-body
+test-tptp-official-corpus-compatibility-public-reader-v1-body: $(BIN) \
+		$(PETTA_LIB_TPTP_V1) \
+		$(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_SNAPSHOT_V1) \
+		$(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_PUBLIC_READER_TEST_V1) \
+		tests/langdef/tptp/include_loader_v1/corpus_compatibility_root_v1.p \
+		tests/langdef/tptp/include_loader_v1/corpus_compatibility_child_v1.p
+	@set -eu; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 2000000 \
+		$(TPTP_OFFICIAL_CORPUS_COMPATIBILITY_PUBLIC_READER_TEST_V1) \
+		tests/langdef/tptp/include_loader_v1/corpus_compatibility_root_v1.p \
+		tests/langdef/tptp/include_loader_v1); \
+	printf '%s\n' "$$result"; \
+	got=$$(printf '%s\n' "$$result" | sed '/^true$$/d'); \
+	test "$$got" = \
+		'(TptpCorpusCompatibilityPublicReaderV1Summary strict corpus-compatible accepted no-parse accepted no-parse no-parse include-load-fault expanded (TPTP:UnknownReaderProfile unsupported-profile))'
+
+.PHONY: test-tptp-official-corpus-compatibility-public-reader-v1
+test-tptp-official-corpus-compatibility-public-reader-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		test-tptp-official-corpus-compatibility-public-reader-v1-body
+
+.PHONY: test-tptp-official-reader-utilities-v1-body
+test-tptp-official-reader-utilities-v1-body: $(BIN) \
+		lib/lib_tptp.metta \
+		$(TPTP_OFFICIAL_READER_UTILITIES_TEST_V1) \
+		$(TPTP_OFFICIAL_READER_UTILITIES_EXPECTED_V1)
+	@set -eu; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 2000000 \
+		$(TPTP_OFFICIAL_READER_UTILITIES_TEST_V1)); \
+	printf '%s\n' "$$result"; \
+	got=$$(printf '%s\n' "$$result" | sed '/^true$$/d'); \
+	test "$$got" = "$$(cat $(TPTP_OFFICIAL_READER_UTILITIES_EXPECTED_V1))"
+
+.PHONY: test-tptp-official-reader-utilities-v1
+test-tptp-official-reader-utilities-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		test-tptp-official-reader-utilities-v1-body
+
+.PHONY: test-tptp-official-reader-utilities-real-v1-body
+test-tptp-official-reader-utilities-real-v1-body: $(BIN) \
+		lib/lib_tptp.metta \
+		$(TPTP_OFFICIAL_READER_UTILITIES_REAL_TEST_V1) \
+		$(TPTP_OFFICIAL_READER_UTILITIES_REAL_EXPECTED_V1)
+	@if [[ -z "$(strip $(TPTP_OFFICIAL_CORPUS_ROOT_V1))" || \
+		! -f "$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/ITP/ITP024+5.p" ]]; then \
+		echo 'set TPTP_OFFICIAL_CORPUS_ROOT_V1 to the pinned distribution' >&2; \
+		exit 2; \
+	fi
+	@set -eu; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+		$(TPTP_OFFICIAL_READER_UTILITIES_REAL_TEST_V1) \
+		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/ITP/ITP024+5.p"); \
+	printf '%s\n' "$$result"; \
+	got=$$(printf '%s\n' "$$result" | sed '/^true$$/d'); \
+	test "$$got" = "$$(cat $(TPTP_OFFICIAL_READER_UTILITIES_REAL_EXPECTED_V1))"
+
+.PHONY: test-tptp-official-reader-utilities-real-v1
+test-tptp-official-reader-utilities-real-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		TPTP_OFFICIAL_CORPUS_ROOT_V1="$(TPTP_OFFICIAL_CORPUS_ROOT_V1)" \
+		test-tptp-official-reader-utilities-real-v1-body
+
+.PHONY: test-tptp-official-reader-expression-inspection-v1-body
+test-tptp-official-reader-expression-inspection-v1-body: $(BIN) \
+		lib/lib_tptp.metta \
+		$(TPTP_OFFICIAL_READER_EXPRESSION_INSPECTION_TEST_V1) \
+		$(TPTP_OFFICIAL_READER_EXPRESSION_INSPECTION_EXPECTED_V1)
+	@set -eu; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 2000000 \
+		$(TPTP_OFFICIAL_READER_EXPRESSION_INSPECTION_TEST_V1)); \
+	printf '%s\n' "$$result"; \
+	got=$$(printf '%s\n' "$$result" | sed '/^true$$/d'); \
+	test "$$got" = "$$(cat $(TPTP_OFFICIAL_READER_EXPRESSION_INSPECTION_EXPECTED_V1))"
+
+.PHONY: test-tptp-official-reader-expression-inspection-v1
+test-tptp-official-reader-expression-inspection-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		test-tptp-official-reader-expression-inspection-v1-body
+
+.PHONY: test-tptp-official-reader-source-document-v1-body
+test-tptp-official-reader-source-document-v1-body: $(BIN) \
+		lib/lib_tptp.metta \
+		$(TPTP_OFFICIAL_READER_SOURCE_DOCUMENT_TEST_V1) \
+		$(TPTP_OFFICIAL_READER_SOURCE_DOCUMENT_EXPECTED_V1)
+	@set -eu; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 2000000 \
+		$(TPTP_OFFICIAL_READER_SOURCE_DOCUMENT_TEST_V1)); \
+	printf '%s\n' "$$result"; \
+	got=$$(printf '%s\n' "$$result" | sed '/^true$$/d'); \
+	test "$$got" = "$$(cat $(TPTP_OFFICIAL_READER_SOURCE_DOCUMENT_EXPECTED_V1))"
+
+.PHONY: test-tptp-official-reader-source-document-v1
+test-tptp-official-reader-source-document-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		test-tptp-official-reader-source-document-v1-body
+
+.PHONY: test-tptp-official-reader-canonical-print-v1-body
+test-tptp-official-reader-canonical-print-v1-body: $(BIN) \
+		lib/lib_tptp.metta \
+		$(TPTP_OFFICIAL_RECORDS_TO_TEXT_V1) \
+		langdef/bnf/plain_bnf_denotation_v1.metta \
+		$(TPTP_OFFICIAL_READER_CANONICAL_PRINT_TEST_V1) \
+		$(TPTP_OFFICIAL_READER_CANONICAL_PRINT_EXPECTED_V1) \
+		tests/langdef/tptp/official_syntax_families_v9200.p
+	@set -eu; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+		$(TPTP_OFFICIAL_READER_CANONICAL_PRINT_TEST_V1) \
+		tests/langdef/tptp/official_syntax_families_v9200.p \
+		tests/langdef/tptp/tstp/PUZ001-1.e.tstp \
+		tests/langdef/tptp/tstp/PUZ001-1.vampire.tstp \
+		tests/langdef/tptp/tstp/PUZ001+1.e.tstp \
+		tests/langdef/tptp/tstp/PUZ001+1.vampire.tstp); \
+	printf '%s\n' "$$result"; \
+	got=$$(printf '%s\n' "$$result" | sed '/^true$$/d'); \
+	test "$$got" = "$$(cat $(TPTP_OFFICIAL_READER_CANONICAL_PRINT_EXPECTED_V1))"
+
+.PHONY: test-tptp-official-reader-canonical-print-v1
+test-tptp-official-reader-canonical-print-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		test-tptp-official-reader-canonical-print-v1-body
+
+.PHONY: test-tptp-official-reader-canonical-print-real-v1-body
+test-tptp-official-reader-canonical-print-real-v1-body: $(BIN) \
+		lib/lib_tptp.metta \
+		$(TPTP_OFFICIAL_RECORDS_TO_TEXT_V1) \
+		langdef/bnf/plain_bnf_denotation_v1.metta \
+		$(TPTP_OFFICIAL_READER_CANONICAL_PRINT_REAL_TEST_V1) \
+		$(TPTP_OFFICIAL_READER_CANONICAL_PRINT_REAL_EXPECTED_V1)
+	@if [[ -z "$(strip $(TPTP_OFFICIAL_CORPUS_ROOT_V1))" || \
+		! -f "$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/SYN/SYN000_4.p" ]]; then \
+		echo 'set TPTP_OFFICIAL_CORPUS_ROOT_V1 to the pinned distribution' >&2; \
+		exit 2; \
+	fi
+	@set -eu; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+		$(TPTP_OFFICIAL_READER_CANONICAL_PRINT_REAL_TEST_V1) \
+		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/SYN/SYN000_4.p"); \
+	printf '%s\n' "$$result"; \
+	got=$$(printf '%s\n' "$$result" | sed '/^true$$/d'); \
+	test "$$got" = \
+		"$$(cat $(TPTP_OFFICIAL_READER_CANONICAL_PRINT_REAL_EXPECTED_V1))"
+
+.PHONY: test-tptp-official-reader-canonical-print-real-v1
+test-tptp-official-reader-canonical-print-real-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		TPTP_OFFICIAL_CORPUS_ROOT_V1="$(TPTP_OFFICIAL_CORPUS_ROOT_V1)" \
+		test-tptp-official-reader-canonical-print-real-v1-body
+
+.PHONY: test-tptp-official-compact-lexical-value-v1-body
+test-tptp-official-compact-lexical-value-v1-body: $(BIN) \
+		lib/lib_tptp.metta \
+		langdef/bnf/plain_bnf_denotation_v1.metta \
+		$(TPTP_OFFICIAL_COMPACT_LEXICAL_VALUE_V1) \
+		$(TPTP_OFFICIAL_COMPACT_LEXICAL_VALUE_TEST_V1) \
+		$(TPTP_OFFICIAL_COMPACT_LEXICAL_VALUE_EXPECTED_V1)
+	@set -eu; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+		$(TPTP_OFFICIAL_COMPACT_LEXICAL_VALUE_TEST_V1)); \
+	printf '%s\n' "$$result"; \
+	got=$$(printf '%s\n' "$$result" | sed '/^true$$/d'); \
+	test "$$got" = \
+		"$$(cat $(TPTP_OFFICIAL_COMPACT_LEXICAL_VALUE_EXPECTED_V1))"
+
+.PHONY: test-tptp-official-compact-lexical-value-v1
+test-tptp-official-compact-lexical-value-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		test-tptp-official-compact-lexical-value-v1-body
+
+.PHONY: test-tptp-official-compact-include-resolution-v1-body
+test-tptp-official-compact-include-resolution-v1-body: $(BIN) \
+		lib/lib_tptp.metta lib/fs.metta \
+		langdef/bnf/plain_bnf_denotation_v1.metta \
+		$(TPTP_OFFICIAL_COMPACT_LEXICAL_VALUE_V1) \
+		$(TPTP_OFFICIAL_COMPACT_INCLUDE_RESOLUTION_V1) \
+		$(TPTP_OFFICIAL_COMPACT_INCLUDE_RESOLUTION_TEST_V1) \
+		$(TPTP_OFFICIAL_COMPACT_INCLUDE_RESOLUTION_EXPECTED_V1) \
+		tests/langdef/tptp/include_loader_v1/root.p \
+		tests/langdef/tptp/include_loader_v1/duplicate.p \
+		tests/langdef/tptp/include_loader_v1/cycle_a.p \
+		tests/langdef/tptp/include_loader_v1/selection_root.p \
+		tests/langdef/tptp/include_loader_v1/missing_selection.p \
+		tests/langdef/tptp/include_loader_v1/duplicate_selection.p \
+		tests/langdef/tptp/include_loader_v1/ambiguous_selection.p
+	@set -eu; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 100000000 \
+		$(TPTP_OFFICIAL_COMPACT_INCLUDE_RESOLUTION_TEST_V1) \
+		tests/langdef/tptp/include_loader_v1/root.p \
+		tests/langdef/tptp/include_loader_v1/duplicate.p \
+		tests/langdef/tptp/include_loader_v1/cycle_a.p \
+		tests/langdef/tptp/include_loader_v1/selection_root.p \
+		tests/langdef/tptp/include_loader_v1/missing_selection.p \
+		tests/langdef/tptp/include_loader_v1/duplicate_selection.p \
+		tests/langdef/tptp/include_loader_v1/ambiguous_selection.p \
+		tests/langdef/tptp/include_loader_v1/library); \
+	printf '%s\n' "$$result"; \
+	got=$$(printf '%s\n' "$$result" | sed '/^true$$/d'); \
+	test "$$got" = \
+		"$$(cat $(TPTP_OFFICIAL_COMPACT_INCLUDE_RESOLUTION_EXPECTED_V1))"
+
+.PHONY: test-tptp-official-compact-include-resolution-v1
+test-tptp-official-compact-include-resolution-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		test-tptp-official-compact-include-resolution-v1-body
+
+.PHONY: test-tptp-official-compact-include-resolution-real-v1-body
+test-tptp-official-compact-include-resolution-real-v1-body: $(BIN) \
+		lib/lib_tptp.metta lib/fs.metta \
+		langdef/bnf/plain_bnf_denotation_v1.metta \
+		$(TPTP_OFFICIAL_COMPACT_LEXICAL_VALUE_V1) \
+		$(TPTP_OFFICIAL_COMPACT_INCLUDE_RESOLUTION_V1) \
+		$(TPTP_OFFICIAL_COMPACT_INCLUDE_RESOLUTION_REAL_TEST_V1) \
+		$(TPTP_OFFICIAL_COMPACT_INCLUDE_RESOLUTION_REAL_EXPECTED_V1)
+	@if [[ -z "$(strip $(TPTP_OFFICIAL_CORPUS_ROOT_V1))" || \
+		! -f "$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/PUZ/PUZ044-1.p" || \
+		! -f "$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/HWC/HWC004-2.p" || \
+		! -f "$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/SYN/SYN000^2.p" ]]; then \
+		echo 'set TPTP_OFFICIAL_CORPUS_ROOT_V1 to the pinned distribution' >&2; \
+		exit 2; \
+	fi
+	@set -eu; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 100000000 \
+		$(TPTP_OFFICIAL_COMPACT_INCLUDE_RESOLUTION_REAL_TEST_V1) \
+		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/PUZ/PUZ044-1.p" \
+		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/HWC/HWC004-2.p" \
+		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/SYN/SYN000^2.p" \
+		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)"); \
+	printf '%s\n' "$$result"; \
+	got=$$(printf '%s\n' "$$result" | sed '/^true$$/d'); \
+	test "$$got" = \
+		"$$(cat $(TPTP_OFFICIAL_COMPACT_INCLUDE_RESOLUTION_REAL_EXPECTED_V1))"
+
+.PHONY: test-tptp-official-compact-include-resolution-real-v1
+test-tptp-official-compact-include-resolution-real-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		TPTP_OFFICIAL_CORPUS_ROOT_V1="$(TPTP_OFFICIAL_CORPUS_ROOT_V1)" \
+		test-tptp-official-compact-include-resolution-real-v1-body
+
+.PHONY: test-tptp-official-syntax-fof-cnf-view-v1-body
+test-tptp-official-syntax-fof-cnf-view-v1-body: $(BIN) \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		lib/lib_tptp.metta \
+		$(TPTP_OFFICIAL_READER_PACK_V1) \
+		langdef/bnf/plain_bnf_denotation_v1.metta \
+		$(TPTP_OFFICIAL_COMPACT_LEXICAL_VALUE_V1) \
+		$(TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_V1) \
+		langdef/logic/first_order_clause_data_v1.metta \
+		langdef/logic/tptp_first_order_document_v1.metta \
+		$(TPTP_OFFICIAL_SYNTAX_FOF_CNF_VIEW_TEST_V1)
+	@if [[ -z "$(strip $(TPTP_OFFICIAL_CORPUS_ROOT_V1))" || \
+		! -f "$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/PUZ/PUZ001-1.p" || \
+		! -f "$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/PUZ/PUZ001+1.p" ]]; then \
+		echo 'set TPTP_OFFICIAL_CORPUS_ROOT_V1 to the pinned distribution' >&2; \
+		exit 2; \
+	fi
+	@set -eu; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(TPTP_OFFICIAL_SYNTAX_FOF_CNF_VIEW_TEST_V1) \
+		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/PUZ/PUZ001-1.p" \
+		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/PUZ/PUZ001+1.p"); \
+	printf '%s\n' "$$result"; \
+	got=$$(printf '%s\n' "$$result" | sed '/^true$$/d'); \
+	test "$$got" = '(TptpFofCnfViewAgreementV1 True True)' || \
+		test "$$got" = '(TptpFofCnfViewAgreementV1 true true)'
+
+.PHONY: test-tptp-official-syntax-fof-cnf-view-v1
+test-tptp-official-syntax-fof-cnf-view-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		test-tptp-official-syntax-fof-cnf-view-v1-body
+
+.PHONY: test-tptp-official-compact-first-order-view-v1-body
+test-tptp-official-compact-first-order-view-v1-body: $(BIN) \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		lib/lib_tptp.metta \
+		langdef/bnf/plain_bnf_denotation_v1.metta \
+		$(TPTP_OFFICIAL_COMPACT_LEXICAL_VALUE_V1) \
+		$(TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_V1) \
+		langdef/logic/first_order_clause_data_v1.metta \
+		langdef/logic/tptp_first_order_document_v1.metta \
+		$(TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_TEST_V1) \
+		$(TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_EXPECTED_V1)
+	@set -eu; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_TEST_V1)); \
+	printf '%s\n' "$$result"; \
+	got=$$(printf '%s\n' "$$result" | sed '/^true$$/d'); \
+	test "$$got" = \
+		"$$(cat $(TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_EXPECTED_V1))"
+
+.PHONY: test-tptp-official-compact-first-order-view-v1
+test-tptp-official-compact-first-order-view-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		test-tptp-official-compact-first-order-view-v1-body
+
+.PHONY: test-tptp-official-compact-first-order-view-mutation-v1-body
+test-tptp-official-compact-first-order-view-mutation-v1-body: $(BIN) \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		lib/lib_tptp.metta \
+		langdef/bnf/plain_bnf_denotation_v1.metta \
+		$(TPTP_OFFICIAL_COMPACT_LEXICAL_VALUE_V1) \
+		$(TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_V1) \
+		$(TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_MUTATION_TEST_V1)
+	@set -eu; \
+	mkdir -p "$(BOOTSTRAP_TMPDIR)"; \
+	evidence=$$(mktemp -d \
+		"$(BOOTSTRAP_TMPDIR)/tptp-first-order-view-mutation-v1.XXXXXX"); \
+	trap 'rm -rf "$$evidence"' EXIT INT TERM; \
+	reference="$$evidence/compact_records_to_first_order_reference_v1.gslt-source"; \
+	mutant="$$evidence/compact_records_to_first_order_mutant_v1.gslt-source"; \
+	cp "$(TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_V1)" "$$reference"; \
+	sed 's/(fo-cnf:literal-positive (tptp-view-v1:cnf-atom ?head ?arguments ?scope))/(fo-cnf:literal-negative (tptp-view-v1:cnf-atom ?head ?arguments ?scope))/' \
+		"$(TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_V1)" > "$$mutant"; \
+	! cmp -s "$$reference" "$$mutant"; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_MUTATION_TEST_V1) \
+		"$$reference" "$$mutant"); \
+	printf '%s\n' "$$result"; \
+	got=$$(printf '%s\n' "$$result" | sed '/^true$$/d'); \
+	test "$$got" = '(TptpCompactFirstOrderViewMutationV1 true)'
+
+.PHONY: test-tptp-official-compact-first-order-view-mutation-v1
+test-tptp-official-compact-first-order-view-mutation-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		test-tptp-official-compact-first-order-view-mutation-v1-body
+
+.PHONY: test-tptp-official-compact-resolution-consumer-v1-body
+test-tptp-official-compact-resolution-consumer-v1-body: $(BIN) \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		lib/lib_tptp.metta \
+		langdef/bnf/plain_bnf_denotation_v1.metta \
+		$(TPTP_OFFICIAL_COMPACT_LEXICAL_VALUE_V1) \
+		$(TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_V1) \
+		langdef/logic/first_order_clause_data_v1.metta \
+		langdef/logic/tptp_first_order_document_v1.metta \
+		langdef/logic/first_order_resolution_input_v1.metta \
+		langdef/logic/clause_data_to_resolution_input_v1.generated.metta \
+		examples/atp/tptp_resolution/pipeline.metta \
+		examples/atp/tptp_resolution/unification.metta \
+		examples/atp/tptp_resolution/search.metta \
+		examples/atp/tptp_resolution/trace_check.metta \
+		$(TPTP_OFFICIAL_COMPACT_RESOLUTION_CONSUMER_TEST_V1) \
+		$(TPTP_OFFICIAL_COMPACT_RESOLUTION_CONSUMER_EXPECTED_V1)
+	@if [[ -z "$(strip $(TPTP_OFFICIAL_CORPUS_ROOT_V1))" || \
+		! -f "$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/SYN/SYN048-1.p" ]]; then \
+		echo 'set TPTP_OFFICIAL_CORPUS_ROOT_V1 to the pinned distribution' >&2; \
+		exit 2; \
+	fi
+	@set -eu; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(TPTP_OFFICIAL_COMPACT_RESOLUTION_CONSUMER_TEST_V1) \
+		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/SYN/SYN048-1.p"); \
+	printf '%s\n' "$$result"; \
+	got=$$(printf '%s\n' "$$result" | sed '/^true$$/d'); \
+	test "$$got" = \
+		"$$(cat $(TPTP_OFFICIAL_COMPACT_RESOLUTION_CONSUMER_EXPECTED_V1))"
+
+.PHONY: test-tptp-official-compact-resolution-consumer-v1
+test-tptp-official-compact-resolution-consumer-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		TPTP_OFFICIAL_CORPUS_ROOT_V1="$(TPTP_OFFICIAL_CORPUS_ROOT_V1)" \
+		test-tptp-official-compact-resolution-consumer-v1-body
+
+.PHONY: test-tptp-official-syntax-records-differential-v1-body
+test-tptp-official-syntax-records-differential-v1-body: $(BIN) \
+		tests/support/check_tptp_records_native_equivalence_v1.sh \
+		tests/langdef/tptp/official_syntax_records_differential_v1.metta \
+		tests/langdef/tptp/official_syntax_records_differential_authored_v1.metta \
+		langdef/tptp/official_syntax_records_v1.metta
+	@set -eu; \
+	mkdir -p "$(BOOTSTRAP_TMPDIR)"; \
+	evidence=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/tptp-records-differential-v1.XXXXXX"); \
+	bash tests/support/check_tptp_records_native_equivalence_v1.sh \
+		"./$(BIN)" "$$evidence" \
+		"$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" "$(TPTP_OFFICIAL_CORPUS_ROOT_V1)"
+
+.PHONY: test-tptp-official-syntax-records-differential-v1
+test-tptp-official-syntax-records-differential-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		TPTP_OFFICIAL_SYNTAX_BNF_V1="$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
+		TPTP_OFFICIAL_CORPUS_ROOT_V1="$(TPTP_OFFICIAL_CORPUS_ROOT_V1)" \
+		test-tptp-official-syntax-records-differential-v1-body
+
+.PHONY: test-tptp-official-syntax-evidence-v1-body
+test-tptp-official-syntax-evidence-v1-body: $(BIN) \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(TPTP_OFFICIAL_READER_PACK_V1) \
+		$(TPTP_OFFICIAL_SYNTAX_EVIDENCE_TEST_V1)
+	@if [[ -z "$(strip $(TPTP_OFFICIAL_SYNTAX_BNF_V1))" || \
+		! -f "$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" ]]; then \
+		echo 'set TPTP_OFFICIAL_SYNTAX_BNF_V1 to the pinned official SyntaxBNF file' >&2; \
+		exit 2; \
+	fi
+	@set -eu; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(TPTP_OFFICIAL_SYNTAX_EVIDENCE_TEST_V1) \
+		"$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
+		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/PUZ/PUZ001-1.p"); \
+	printf '%s\n' "$$result"; \
+	printf '%s\n' "$$result" | rg -q 'TptpEvidenceDerivationV1 accepted'
+
+.PHONY: test-tptp-official-syntax-evidence-v1
+test-tptp-official-syntax-evidence-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		test-tptp-official-syntax-evidence-v1-body
+
+.PHONY: test-tptp-official-syntax-gate-failure-v1
+test-tptp-official-syntax-gate-failure-v1:
+	@set -eu; \
+	mkdir -p "$(BOOTSTRAP_TMPDIR)"; \
+	evidence=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/tptp-reader-gate-failure-v1.XXXXXX"); \
+	bash tests/support/check_tptp_reader_gate_failure_v1.sh "$$evidence" \
+		"$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" "$(TPTP_OFFICIAL_CORPUS_ROOT_V1)"
+
+.PHONY: test-lib-tptp-reader-v1
+test-lib-tptp-reader-v1:
+	@set -eu; \
+	for target in \
+		test-tptp-extended-bnf-meta-parser-v1 \
+		test-tptp-extended-bnf-reader-v1 \
+		test-tptp-extended-bnf-full-reader-v1 \
+		test-tptp-extended-bnf-meta-parser-no-python-build-dependency-v1 \
+		test-tptp-official-lexical-to-ebnf-v1 \
+		test-tptp-official-syntax-composition-v1 \
+		test-tptp-official-corpus-compatibility-v1 \
+		test-tptp-official-syntax-observation-v1 \
+		test-tptp-official-syntax-records-v1 \
+		test-tptp-official-reader-prepare-v1 \
+		test-tptp-official-corpus-compatibility-prepare-v1 \
+		test-tptp-official-syntax-snapshot-v1 \
+		test-tptp-official-corpus-compatibility-snapshot-v1 \
+		test-tptp-reader-artifact-reproducibility-v1 \
+		test-tptp-official-syntax-records-family-v1 \
+		test-tptp-official-syntax-records-tstp-v1 \
+		test-tptp-official-syntax-frozen-reader-contract-v1 \
+		test-tptp-official-reusable-reader-v1 \
+		test-tptp-official-corpus-compatibility-public-reader-v1 \
+		test-tptp-official-reader-utilities-v1 \
+		test-tptp-official-reader-utilities-real-v1 \
+		test-tptp-official-reader-expression-inspection-v1 \
+		test-tptp-official-reader-source-document-v1 \
+		test-tptp-official-reader-canonical-print-v1 \
+		test-tptp-official-reader-canonical-print-real-v1 \
+		test-tptp-official-compact-lexical-value-v1 \
+		test-tptp-official-compact-include-resolution-v1 \
+		test-tptp-official-compact-include-resolution-real-v1 \
+		test-tptp-official-syntax-fof-cnf-view-v1 \
+		test-tptp-official-compact-first-order-view-v1 \
+		test-tptp-official-compact-first-order-view-mutation-v1 \
+		test-tptp-official-compact-resolution-consumer-v1 \
+		test-tptp-official-syntax-records-differential-v1 \
+		test-tptp-official-syntax-evidence-v1 \
+		test-tptp-official-syntax-gate-failure-v1 \
+		test-tptp-frozen-corpus-qualifier-preflight-v1 \
+		qualify-tptp-reader-source-lean-v1; do \
+		$(MAKE) --no-print-directory "$$target"; \
+	done
 
 .PHONY: test-tptp-extended-bnf-full-reader-v1
 test-tptp-extended-bnf-full-reader-v1:

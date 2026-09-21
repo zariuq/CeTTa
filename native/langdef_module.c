@@ -15,6 +15,8 @@
 #include "native/language_def_pattern_atom_v1.h"
 #include "native/deterministic_equation_plan_v1.h"
 #include "native/ebnf_derivation_projection_native_v1.h"
+#include "native/tptp_official_records_v1.h"
+#include "native/tptp_official_snapshot_v1.h"
 #include "native/utf8_scalar_v1.h"
 #include "native/operational_language_def_v1.h"
 #include "native/structural_tree_relabel_v1.h"
@@ -60,6 +62,7 @@
     "cetta.structural-tree-relabel.v1"
 #define DETERMINISTIC_EQUATION_HANDLE_KIND \
     "cetta.deterministic-equations.v1"
+#define TPTP_READER_HANDLE_KIND "cetta.tptp-reader.v1"
 #define LANGDEF_MINIMUM_WORK_LIMIT UINT64_C(4000000)
 #define LANGDEF_WORK_PER_SOURCE_BYTE UINT64_C(64)
 #define LANGDEF_DEFAULT_REPLAY_DEPTH 4096u
@@ -177,6 +180,10 @@ typedef struct {
     CettaLanguageDefRelationRowV1 *rows;
     uint32_t len;
 } CettaLanguageDefRelationEnvV1;
+
+typedef struct {
+    CettaTptpPreparedReaderV1 reader;
+} CettaTptpReaderV1;
 #endif
 
 static bool langdef_set_error(char *buffer, size_t size,
@@ -210,6 +217,36 @@ static void authored_parser_resource_free(void *opaque) {
     cetta_language_def_core_v1_free(&resource->language);
     cetta_op_lang_v1_free(&resource->wire);
     free(resource);
+}
+
+static void tptp_reader_resource_free(void *opaque) {
+    CettaTptpReaderV1 *resource = opaque;
+
+    if (!resource)
+        return;
+    cetta_tptp_prepared_reader_free_v1(&resource->reader);
+    free(resource);
+}
+
+static CettaTptpReaderV1 *tptp_reader_resource_load_bound(
+    const char *snapshot_path, const char *profile,
+    char *error, size_t error_size) {
+    CettaTptpReaderV1 *resource = calloc(1u, sizeof(*resource));
+
+    if (!resource) {
+        if (error && error_size)
+            snprintf(error, error_size, "tptp reader allocation failed");
+        return NULL;
+    }
+    cetta_tptp_prepared_reader_init_v1(&resource->reader);
+    if (!cetta_tptp_prepared_reader_load_bound_v1(
+            &resource->reader, snapshot_path,
+            CETTA_TPTP_OFFICIAL_SYNTAXBNF_DIGEST_V1, profile, NULL,
+            error, error_size)) {
+        tptp_reader_resource_free(resource);
+        return NULL;
+    }
+    return resource;
 }
 
 static void language_def_relation_env_free(
@@ -5537,7 +5574,7 @@ langdef_deterministic_equation_primitive(
                                      : "LangDef:DifferentValue");
         return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
     }
-    if (strcmp(head, "+") == 0) {
+    if (strcmp(head, "+") == 0 || strcmp(head, "<") == 0) {
         int64_t left;
         int64_t right;
         if (argument_count != 2u || !arguments || !arguments[0] ||
@@ -5547,11 +5584,15 @@ langdef_deterministic_equation_primitive(
             arguments[1]->ground.gkind != GV_INT) {
             (void)langdef_set_error(
                 error, error_size,
-                "deterministic integer addition expects two integers");
+                "deterministic integer arithmetic expects two integers");
             return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
         }
         left = arguments[0]->ground.ival;
         right = arguments[1]->ground.ival;
+        if (strcmp(head, "<") == 0) {
+            *out = atom_symbol(arena, left < right ? "True" : "False");
+            return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
+        }
         if ((right > 0 && left > INT64_MAX - right) ||
             (right < 0 && left < INT64_MIN - right)) {
             (void)langdef_set_error(
@@ -5684,11 +5725,386 @@ static Atom *langdef_admit_transform_source(CettaLangDefV1 *resource,
     return atom_bool(arena, true);
 }
 
+static int64_t langdef_tptp_count(uint64_t value) {
+    return value > (uint64_t)INT64_MAX ? INT64_MAX : (int64_t)value;
+}
+
+static Atom *langdef_tptp_read_outcome(
+    Arena *arena, const CettaTptpReadOutcomeV1 *outcome) {
+    Atom *arguments[3];
+
+    if (!arena || !outcome)
+        return NULL;
+    switch (outcome->status) {
+    case CETTA_TPTP_READ_LEX_REJECT_V1:
+        arguments[0] = atom_int(arena, (int64_t)outcome->byte_offset);
+        return langdef_expr(arena, "TPTP:LexReject", arguments, 1u);
+    case CETTA_TPTP_READ_NO_PARSE_V1:
+        arguments[0] = atom_int(arena, (int64_t)outcome->byte_offset);
+        arguments[1] = atom_symbol(arena, "TPTP_file");
+        return langdef_expr(arena, "TPTP:NoParse", arguments, 2u);
+    case CETTA_TPTP_READ_AMBIGUOUS_V1:
+        arguments[0] = atom_symbol(arena, "TPTP_file");
+        return langdef_expr(arena, "TPTP:Ambiguous", arguments, 1u);
+    case CETTA_TPTP_READ_RESOURCE_LIMIT_V1:
+        arguments[0] = atom_int(arena, langdef_tptp_count(outcome->work));
+        arguments[1] = atom_int(arena, langdef_tptp_count(outcome->limit));
+        arguments[2] = atom_symbol(arena, "TPTP_file");
+        return langdef_expr(arena, "TPTP:ResourceLimit", arguments, 3u);
+    default:
+        return NULL;
+    }
+}
+
 Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
                                     Space *space, Arena *arena,
                                     Atom *head, Atom **args,
                                     uint32_t nargs) {
     char error[512] = {0};
+
+    if (atom_is_symbol(head, "__cetta_lib_tptp_records_from_cst_v1")) {
+        Atom *result = NULL;
+        const Atom *trees = NULL;
+        const char *source = NULL;
+        if (nargs == 1u)
+            trees = args[0];
+        else if (nargs == 2u && cetta_langdef_text_arg(args[0], &source))
+            trees = args[1];
+        else
+            return langdef_error(
+                arena, head,
+                "tptp records projection expects an optional source string and a CST tuple");
+        if (!cetta_tptp_records_from_cst_v1(
+                trees, source, arena, &result, error, sizeof(error)))
+            return langdef_error(
+                arena, head,
+                error[0] ? error : "tptp CST-to-record projection failed");
+        return langdef_return(arena, result);
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_tptp_syntaxbnf_digest_v1")) {
+        const char *path = NULL;
+        char digest[65];
+        if (nargs != 1u || !cetta_langdef_text_arg(args[0], &path))
+            return langdef_error(
+                arena, head, "tptp digest expects a SyntaxBNF path");
+        if (!cetta_tptp_file_sha256_hex_v1(path, digest, error, sizeof(error)))
+            return langdef_error(
+                arena, head,
+                error[0] ? error : "tptp SyntaxBNF digest failed");
+        return langdef_return(arena, atom_string(arena, digest));
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_tptp_write_atom_v1")) {
+        const char *path = NULL;
+        if (nargs != 2u || !cetta_langdef_text_arg(args[0], &path))
+            return langdef_error(
+                arena, head, "tptp write-atom expects a path and an atom");
+        if (!cetta_tptp_write_atom_v1(path, args[1], arena, error,
+                                      sizeof(error)))
+            return langdef_error(
+                arena, head, error[0] ? error : "tptp write-atom failed");
+        return langdef_return(arena, atom_symbol(arena, "True"));
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_tptp_read_atom_v1")) {
+        const char *path = NULL;
+        Atom *result = NULL;
+        if (nargs != 1u || !cetta_langdef_text_arg(args[0], &path))
+            return langdef_error(arena, head, "tptp read-atom expects a path");
+        if (!cetta_tptp_read_atom_v1(path, arena, &result, error,
+                                     sizeof(error)))
+            return langdef_error(
+                arena, head, error[0] ? error : "tptp read-atom failed");
+        return langdef_return(arena, result);
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_tptp_snapshot_construct_v1")) {
+        const char *pack_path = NULL;
+        const char *out_path = NULL;
+        PPTableSnapshotV1 loaded;
+        Atom *parts[7];
+        struct stat st;
+        if (nargs != 2u || !cetta_langdef_text_arg(args[0], &pack_path) ||
+            !cetta_langdef_text_arg(args[1], &out_path))
+            return langdef_error(
+                arena, head, "tptp snapshot construct expects pack and out paths");
+        if (!cetta_tptp_snapshot_construct_from_pack_v1(
+                pack_path, out_path, error, sizeof(error)))
+            return langdef_error(
+                arena, head,
+                error[0] ? error : "tptp snapshot construct failed");
+        pp_table_snapshot_v1_init(&loaded);
+        if (!cetta_tptp_snapshot_load_v1(
+                &loaded, out_path, CETTA_TPTP_OFFICIAL_SYNTAXBNF_DIGEST_V1,
+                error, sizeof(error))) {
+            pp_table_snapshot_v1_free(&loaded);
+            return langdef_error(
+                arena, head, error[0] ? error : "tptp snapshot reload failed");
+        }
+        memset(&st, 0, sizeof(st));
+        (void)stat(out_path, &st);
+        parts[0] = atom_symbol(arena, "TptpSnapshotConstructionV1");
+        parts[1] = atom_string(arena, loaded.syntax_digest);
+        parts[2] = atom_string(arena, loaded.artifact_digest);
+        parts[3] = atom_symbol(arena, loaded.profile);
+        parts[4] = atom_symbol(
+            arena,
+            loaded.kernel == PP_TABLE_SNAPSHOT_V1_KERNEL_SLR ? "slr" : "glr");
+        parts[5] = atom_int(arena, (int64_t)loaded.conflict_len);
+        parts[6] = atom_int(arena, (int64_t)st.st_size);
+        pp_table_snapshot_v1_free(&loaded);
+        return langdef_return(arena, atom_expr(arena, parts, 7u));
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_tptp_snapshot_info_v1")) {
+        const char *path = NULL;
+        PPTableSnapshotV1 loaded;
+        Atom *parts[7];
+        struct stat st;
+        if (nargs != 1u || !cetta_langdef_text_arg(args[0], &path))
+            return langdef_error(arena, head, "tptp snapshot info expects a path");
+        pp_table_snapshot_v1_init(&loaded);
+        if (!cetta_tptp_snapshot_load_v1(
+                &loaded, path, CETTA_TPTP_OFFICIAL_SYNTAXBNF_DIGEST_V1,
+                error, sizeof(error))) {
+            pp_table_snapshot_v1_free(&loaded);
+            if (error[0] && strstr(error, "DigestMismatch"))
+                return langdef_return(
+                    arena,
+                    atom_expr2(arena, atom_symbol(arena, "TPTP:DigestMismatch"),
+                               atom_string(arena, path)));
+            return langdef_error(
+                arena, head, error[0] ? error : "tptp snapshot info failed");
+        }
+        memset(&st, 0, sizeof(st));
+        (void)stat(path, &st);
+        parts[0] = atom_symbol(arena, "TptpSnapshotInfoV1");
+        parts[1] = atom_string(arena, loaded.syntax_digest);
+        parts[2] = atom_string(arena, loaded.artifact_digest);
+        parts[3] = atom_symbol(arena, loaded.profile);
+        parts[4] = atom_symbol(
+            arena,
+            loaded.kernel == PP_TABLE_SNAPSHOT_V1_KERNEL_SLR ? "slr" : "glr");
+        parts[5] = atom_int(arena, (int64_t)loaded.conflict_len);
+        parts[6] = atom_int(arena, (int64_t)st.st_size);
+        pp_table_snapshot_v1_free(&loaded);
+        return langdef_return(arena, atom_expr(arena, parts, 7u));
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_tptp_reader_open_v1")) {
+        CettaTptpReaderV1 *resource;
+        const char *snapshot_path;
+        const char *profile;
+        uint64_t id;
+
+        if (nargs != 1u)
+            return langdef_error(
+                arena, head, "tptp reader open expects one profile");
+        if (atom_is_symbol(args[0], "strict")) {
+            snapshot_path = CETTA_TPTP_OFFICIAL_SNAPSHOT_PATH_V1;
+            profile = "strict";
+        } else if (atom_is_symbol(args[0], "corpus-compatible")) {
+            snapshot_path = CETTA_TPTP_CORPUS_COMPATIBLE_SNAPSHOT_PATH_V1;
+            profile = "corpus-compatible";
+        } else {
+            Atom *unknown[1] = {args[0]};
+            return langdef_return(
+                arena, langdef_expr(
+                    arena, "TPTP:UnknownReaderProfile", unknown, 1u));
+        }
+        resource = tptp_reader_resource_load_bound(
+            snapshot_path, profile, error, sizeof(error));
+        if (!resource)
+            return langdef_error(
+                arena, head,
+                error[0] ? error : "tptp reader snapshot load failed");
+        if (!cetta_native_handle_alloc(
+                ctx, TPTP_READER_HANDLE_KIND, resource,
+                tptp_reader_resource_free, &id)) {
+            tptp_reader_resource_free(resource);
+            return langdef_error(
+                arena, head, "tptp reader handle allocation failed");
+        }
+        return langdef_return(
+            arena, cetta_native_handle_owned_atom(
+                ctx, arena, TPTP_READER_HANDLE_KIND, id));
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_tptp_reader_info_v1")) {
+        CettaTptpReaderV1 *resource;
+        uint64_t id;
+        Atom *parts[4];
+
+        if (nargs != 1u ||
+            !cetta_native_handle_arg(
+                args[0], TPTP_READER_HANDLE_KIND, &id) ||
+            !(resource = cetta_native_handle_get(
+                  ctx, TPTP_READER_HANDLE_KIND, id))) {
+            Atom *mismatch[1] = {nargs == 1u ? args[0]
+                                            : atom_symbol(arena, "NoReader")};
+            return langdef_return(
+                arena, langdef_expr(
+                    arena, "TPTP:ReaderMismatch", mismatch, 1u));
+        }
+        parts[0] = atom_string(
+            arena, resource->reader.snapshot.syntax_digest);
+        parts[1] = atom_symbol(
+            arena,
+            resource->reader.snapshot.kernel == PP_TABLE_SNAPSHOT_V1_KERNEL_SLR
+                ? "slr" : "glr");
+        parts[2] = atom_int(
+            arena, (int64_t)resource->reader.snapshot.conflict_len);
+        parts[3] = atom_int(
+            arena, (int64_t)resource->reader.snapshot.slr.production_len);
+        return langdef_return(
+            arena, langdef_expr(arena, "TptpReaderInfoV1", parts, 4u));
+    }
+
+    if (atom_is_symbol(
+            head, "__cetta_lib_tptp_reader_artifact_info_v1")) {
+        CettaTptpReaderV1 *resource;
+        uint64_t id;
+        Atom *parts[6];
+
+        if (nargs != 1u ||
+            !cetta_native_handle_arg(
+                args[0], TPTP_READER_HANDLE_KIND, &id) ||
+            !(resource = cetta_native_handle_get(
+                  ctx, TPTP_READER_HANDLE_KIND, id))) {
+            Atom *mismatch[1] = {nargs == 1u ? args[0]
+                                            : atom_symbol(arena, "NoReader")};
+            return langdef_return(
+                arena, langdef_expr(
+                    arena, "TPTP:ReaderMismatch", mismatch, 1u));
+        }
+        parts[0] = atom_string(
+            arena, resource->reader.snapshot.syntax_digest);
+        parts[1] = atom_string(
+            arena, resource->reader.snapshot.artifact_digest);
+        parts[2] = atom_symbol(
+            arena, resource->reader.snapshot.profile);
+        parts[3] = atom_symbol(
+            arena,
+            resource->reader.snapshot.kernel == PP_TABLE_SNAPSHOT_V1_KERNEL_SLR
+                ? "slr" : "glr");
+        parts[4] = atom_int(
+            arena, (int64_t)resource->reader.snapshot.conflict_len);
+        parts[5] = atom_int(
+            arena, (int64_t)resource->reader.snapshot.slr.production_len);
+        return langdef_return(
+            arena,
+            langdef_expr(
+                arena, "TptpReaderArtifactInfoV1", parts, 6u));
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_tptp_reader_read_file_v1")) {
+        CettaTptpReaderV1 *resource;
+        uint64_t id;
+        const char *path = NULL;
+        Atom *result = NULL;
+        CettaTptpReadOutcomeV1 outcome;
+
+        if (nargs != 2u ||
+            !cetta_native_handle_arg(
+                args[0], TPTP_READER_HANDLE_KIND, &id) ||
+            !(resource = cetta_native_handle_get(
+                  ctx, TPTP_READER_HANDLE_KIND, id))) {
+            Atom *mismatch[1] = {nargs > 0u ? args[0]
+                                           : atom_symbol(arena, "NoReader")};
+            return langdef_return(
+                arena, langdef_expr(
+                    arena, "TPTP:ReaderMismatch", mismatch, 1u));
+        }
+        if (!cetta_langdef_text_arg(args[1], &path))
+            return langdef_error(
+                arena, head, "tptp reader read-file expects a path");
+        if (!cetta_tptp_prepared_reader_read_file_outcome_v1(
+                &resource->reader, path, arena, &result, &outcome,
+                error, sizeof(error))) {
+            Atom *value = langdef_tptp_read_outcome(arena, &outcome);
+            if (value)
+                return langdef_return(arena, value);
+            return langdef_error(
+                arena, head,
+                error[0] ? error : "tptp reader read-file failed");
+        }
+        return langdef_return(arena, result);
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_tptp_reader_read_text_v1")) {
+        CettaTptpReaderV1 *resource;
+        uint64_t id;
+        const char *text = NULL;
+        Atom *result = NULL;
+        CettaTptpReadOutcomeV1 outcome;
+
+        if (nargs != 2u ||
+            !cetta_native_handle_arg(
+                args[0], TPTP_READER_HANDLE_KIND, &id) ||
+            !(resource = cetta_native_handle_get(
+                  ctx, TPTP_READER_HANDLE_KIND, id))) {
+            Atom *mismatch[1] = {nargs > 0u ? args[0]
+                                           : atom_symbol(arena, "NoReader")};
+            return langdef_return(
+                arena, langdef_expr(
+                    arena, "TPTP:ReaderMismatch", mismatch, 1u));
+        }
+        if (!cetta_langdef_text_arg(args[1], &text))
+            return langdef_error(
+                arena, head, "tptp reader read-text expects a string");
+        if (!cetta_tptp_prepared_reader_read_text_outcome_v1(
+                &resource->reader, text ? text : "",
+                text ? strlen(text) : 0u, arena, &result, &outcome,
+                error, sizeof(error))) {
+            Atom *value = langdef_tptp_read_outcome(arena, &outcome);
+            if (value)
+                return langdef_return(arena, value);
+            return langdef_error(
+                arena, head,
+                error[0] ? error : "tptp reader read-text failed");
+        }
+        return langdef_return(arena, result);
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_tptp_read_file_frozen_v1")) {
+        const char *path = NULL;
+        Atom *result = NULL;
+        CettaTptpReadOutcomeV1 outcome;
+        if (nargs != 1u || !cetta_langdef_text_arg(args[0], &path))
+            return langdef_error(
+                arena, head, "tptp frozen read-file expects a path");
+        if (!cetta_tptp_read_file_frozen_outcome_v1(
+                path, arena, &result, &outcome, error, sizeof(error))) {
+            Atom *value = langdef_tptp_read_outcome(arena, &outcome);
+            if (value)
+                return langdef_return(arena, value);
+            return langdef_error(
+                arena, head,
+                error[0] ? error : "tptp frozen read-file failed");
+        }
+        return langdef_return(arena, result);
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_tptp_read_text_frozen_v1")) {
+        const char *text = NULL;
+        Atom *result = NULL;
+        CettaTptpReadOutcomeV1 outcome;
+        if (nargs != 1u || !cetta_langdef_text_arg(args[0], &text))
+            return langdef_error(
+                arena, head, "tptp frozen read-text expects a string");
+        if (!cetta_tptp_read_text_frozen_outcome_v1(
+                text ? text : "", arena, &result, &outcome,
+                error, sizeof(error))) {
+            Atom *value = langdef_tptp_read_outcome(arena, &outcome);
+            if (value)
+                return langdef_return(arena, value);
+            return langdef_error(
+                arena, head,
+                error[0] ? error : "tptp frozen read-text failed");
+        }
+        return langdef_return(arena, result);
+    }
 
     if (atom_is_symbol(head, "__cetta_lib_bnf_ebnf_project_v1")) {
         Atom *result = NULL;

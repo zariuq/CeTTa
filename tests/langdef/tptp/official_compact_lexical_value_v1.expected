@@ -1,0 +1,7 @@
+(TPTP:LexicalValue "local")
+(TPTP:LexicalValue "Axioms/SET003+0.ax")
+(TPTP:LexicalValue "a'b\\c")
+(TPTP:LexicalValue "Upper")
+(TPTP:LexicalValue "17")
+(TPTP:LexicalFault invalid-escape "'bad\\q'")
+(TPTP:LexicalFault missing-closing-quote "'open")

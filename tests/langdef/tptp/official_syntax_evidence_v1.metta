@@ -1,0 +1,22 @@
+; Evidence derivation request: bnf:parse-ebnf-file on one TPTP specimen.
+!(import! &self ../../../lib/lib_tptp.metta)
+!(import! &self ../../../lib/lib_bnf.metta)
+!(import! &self ../../../langdef/tptp/official_prepared_reader_v1.metta)
+!(import! &self system)
+(= (evidence:kind $result)
+   (case $result
+     (((EBNF:Parse (EBNF:Accepted $_b $_s (EBNF:DerivationsCons $_h $_t)) $_r)
+        (TptpEvidenceDerivationV1 accepted-cons))
+      ((EBNF:Parse (EBNF:Accepted $_b $_s (EBNF:DerivationsNil)) $_r)
+        (TptpEvidenceDerivationV1 accepted-nil))
+      ((EBNF:Parse (EBNF:Rejected $_b $_s $offset $_e) $_r)
+        (TptpEvidenceDerivationV1 rejected $offset))
+      ($other (TptpEvidenceDerivationV1 $other)))))
+(= (gate:use $parser)
+   (case $parser
+     (((EBNF:Parser $handle $receipt)
+        (let $ev (bnf:parse-ebnf-file (EBNF:Parser $handle $receipt) (system:arg 1))
+          (let $_ (bnf:close-ebnf-parser (EBNF:Parser $handle $receipt))
+            (println! (evidence:kind $ev)))))
+      ($fault (println! (TptpEvidenceParserFailure $fault))))))
+!(gate:use (tptp:load-prepared-parser (tptp:official-reader-cache-path)))
