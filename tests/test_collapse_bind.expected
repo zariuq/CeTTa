@@ -1,2 +1,3 @@
-[()]
+[((a (Bindings () ())) (b (Bindings () ())))]
+[((b (Bindings (($x b)) ())))]
 [()]

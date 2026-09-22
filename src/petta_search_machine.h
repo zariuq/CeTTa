@@ -224,6 +224,13 @@ typedef struct {
         void *context, Space *space,
         SymbolId head, const CettaGsltTermCursorV1 *arguments,
         CettaExprLen arity, CettaGsltTermCursorObserverV1 observer);
+    /* The typed counterpart retains one lexical context per argument.
+     * It is used after strict argument evaluation has produced explicit
+     * closure values but before a whole call is materialized. */
+    PettaMachineSpaceQueryAdmission (*admit_space_query_values)(
+        void *context, Space *space,
+        SymbolId head, Bindings *environment,
+        const BindingValue *arguments, CettaExprLen arity);
     Space *(*resolve_space)(
         void *context, Space *root_space, Arena *arena,
         Atom *reference);
@@ -317,6 +324,16 @@ typedef struct {
         void *context, Space *space, Arena *arena, PeTTaForm form,
         Atom *name, Atom *value,
         const Bindings *environment, OutcomeSet *outcomes);
+    /*
+     * Ground `add-atom` after the space argument is a value and the payload
+     * has been substituted.  The host owns storage, typing, and program
+     * observation through the shared admit authority.  Returning false
+     * declines to ordinary host evaluation.  On true, `*result` is the
+     * language success value or an error atom.
+     */
+    bool (*admit_ground_atom)(
+        void *context, Space *space, Arena *arena,
+        Atom *call, Atom **result);
     PettaSpecializeResult (*prepare_call)(
         void *context, Space *space, Arena *result_arena,
         Atom *call, Atom **prepared_call);
@@ -528,6 +545,7 @@ typedef struct {
     uint64_t clause_branches_scheduled;
     uint64_t clause_match_allocated_bytes;
     uint64_t match_candidates;
+    uint64_t match_prefix_cursor_reuse;
     uint64_t match_candidate_epoch_views;
     uint64_t unification_calls;
     uint64_t unification_failures;
@@ -550,7 +568,7 @@ typedef struct {
     uint64_t binding_apply_allocated_bytes;
     uint64_t binding_apply_environment_entries;
     uint64_t binding_apply_epoch_calls;
-    uint64_t binding_apply_epoch_suffix_entries;
+    uint64_t binding_apply_frame_entries;
     uint64_t solve_expression_apply_calls;
     uint64_t solve_expression_apply_allocated_bytes;
     uint64_t solve_expression_open_template_admitted_calls;
@@ -620,6 +638,7 @@ typedef struct {
     uint64_t deterministic_visible_atom_bytes_promoted;
     uint64_t deterministic_type_atom_bytes_promoted;
     uint64_t deterministic_goal_atom_bytes_promoted;
+    uint64_t deterministic_goal_context_bytes_promoted;
     uint64_t deterministic_goal_first_bytes_promoted;
     uint64_t deterministic_goal_second_bytes_promoted;
     uint64_t deterministic_goal_third_bytes_promoted;
@@ -682,7 +701,7 @@ typedef struct {
     size_t maximum_heap_live_bytes;
     size_t maximum_binding_entries;
     size_t maximum_binding_apply_environment_entries;
-    size_t maximum_binding_apply_epoch_suffix_entries;
+    size_t maximum_binding_apply_frame_entries;
     size_t maximum_host_environment_entries_forwarded;
     uint64_t active_elapsed_ns;
     uint64_t time_to_first_answer_ns;

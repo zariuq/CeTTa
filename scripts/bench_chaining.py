@@ -71,7 +71,7 @@ MECHANISM_MACHINE_COUNTERS = (
     "binding_apply_allocated_bytes",
     "binding_apply_environment_entries",
     "binding_apply_epoch_calls",
-    "binding_apply_epoch_suffix_entries",
+    "binding_apply_frame_entries",
     "solve_expression_apply_calls",
     "solve_expression_apply_allocated_bytes",
     "solve_expression_open_template_admitted_calls",
@@ -120,7 +120,7 @@ MECHANISM_MACHINE_COUNTERS = (
     "max_choice_depth",
     "max_binding_entries",
     "max_binding_apply_environment_entries",
-    "max_binding_apply_epoch_suffix_entries",
+    "max_binding_apply_frame_entries",
 )
 SURVIVOR_ALLOCATION_ROLE_COUNTERS = (
     "survivor-alloc-role-other-bytes",

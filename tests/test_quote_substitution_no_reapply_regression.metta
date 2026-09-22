@@ -1,18 +1,19 @@
-; Regressions for body-visible substitution being re-applied during final
-; materialization. Once a let/chain body has been structurally rewritten with
-; the visible env, that same env must not be replayed over the emitted result.
-
-!(assertEqual
-  (let $x (quote (let $x 2 $x))
-    (quote (tag $x)))
-  (quote (tag (quote (let $x 2 $x)))))
-
-!(assertEqual
+; Logical let uses finite-tree unification. Quotation suspends evaluation;
+; it does not hide a free occurrence of the very variable being bound.
+!(assertEqualToResult
+  (let $x (quote (let $x 2 $x)) (quote (tag $x)))
+  ())
+!(assertEqualToResult
   (let $groups (quote (size-atom $groups))
     (quote (extracted-key-count $groups)))
-  (quote (extracted-key-count (quote (size-atom $groups)))))
+  ())
 
+; A distinct destination is a finite logical binding.
 !(assertEqual
-  (chain (quote (let $x 2 $x)) $x
-    (quote (tag $x)))
+  (let $piece (quote (let $x 2 $x)) (quote (tag $piece)))
+  (quote (tag (quote (let $x 2 $x)))))
+
+; chain performs one simultaneous insertion, including self-containing syntax.
+!(assertEqual
+  (chain (quote (let $x 2 $x)) $x (quote (tag $x)))
   (quote (tag (quote (let $x 2 $x)))))

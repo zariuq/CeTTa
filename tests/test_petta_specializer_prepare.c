@@ -266,6 +266,12 @@ int main(void) {
     CettaGsltTermCursorObserverV1 observer = {
         bindings_resolve_term_cursor_v1, &observation_context};
     SymbolId consumer = arity_call->expr.elems[0]->sym_id;
+    BindingValue value_argument = binding_value_from_atom(view_term);
+    CHECK(petta_specializer_query_value_execution_admission(
+              &space, consumer, &observation_bindings.current,
+              &value_argument, 1u) ==
+              PETTA_SPECIALIZER_RELATION_IRRELEVANT,
+          "explicit inert binding value has no specializable supplier");
     CHECK(petta_specializer_query_view_execution_admission(
               &space, consumer, &view_argument, 1u, observer) ==
               PETTA_SPECIALIZER_RELATION_IRRELEVANT,
@@ -284,11 +290,21 @@ int main(void) {
               &space, consumer, &view_argument, 1u, observer) ==
               PETTA_SPECIALIZER_RELATION_DEFER,
           "nested callable binding cannot be admitted as inert");
+    CHECK(petta_specializer_query_value_execution_admission(
+              &space, consumer, &observation_bindings.current,
+              &value_argument, 1u) ==
+              PETTA_SPECIALIZER_RELATION_DEFER,
+          "explicit binding value observes a nested callable binding");
     bindings_builder_rollback(&observation_bindings, observation_mark);
     CHECK(petta_specializer_query_view_execution_admission(
               &space, consumer, &view_argument, 1u, observer) ==
               PETTA_SPECIALIZER_RELATION_IRRELEVANT,
           "rollback changes the observed supplier");
+    CHECK(petta_specializer_query_value_execution_admission(
+              &space, consumer, &observation_bindings.current,
+              &value_argument, 1u) ==
+              PETTA_SPECIALIZER_RELATION_IRRELEVANT,
+          "explicit binding value observes rollback to an inert supplier");
     view_argument.scope = &observation_bindings;
     CHECK(petta_specializer_query_view_execution_admission(
               &space, consumer, &view_argument, 1u, observer) ==
@@ -319,6 +335,46 @@ int main(void) {
               PETTA_SPECIALIZER_RELATION_IRRELEVANT,
           "rollback removes the partial tuple observation");
     bindings_builder_free(&observation_bindings);
+    /* A shallow constructor stamp must not reuse a materialized-value fact
+     * after the same skeleton acquires a different lexical interpretation. */
+    BindingsBuilder contextual_builder;
+    Atom *context_source = atom_var(&result, "context-source");
+    Atom *context_key = atom_var_with_id(&result, "context-source",
+        var_epoch_id(context_source->var_id, 421u));
+    Atom *context_term = atom_expr2(&result, atom_symbol(&result, "context-inert"),
+                                   atom_var(&result, "context-hole"));
+    VarId context_ids[] = {context_source->var_id};
+    Atom *context_variables[] = {context_source};
+    CHECK(bindings_builder_init(&contextual_builder, NULL) &&
+          bindings_builder_register_contextual_frame(
+              &contextual_builder, context_ids, 1u, 421u) &&
+          bindings_builder_add_var_fresh(&contextual_builder, context_key, context_term),
+          "construct a materialized dense supplier");
+    BindingsActivationView context_frame;
+    bindings_activation_view_init(&context_frame);
+    CHECK(bindings_activation_view_prepare(&context_frame, &contextual_builder,
+              context_ids, context_variables, 1u, 421u, 0u), "prepare the supplier frame");
+    BindingsTermCursorContextV1 typed_context = {
+        .bindings = &contextual_builder.current, .frame = &context_frame};
+    CettaGsltTermCursorObserverV1 typed_observer = {
+        bindings_resolve_term_cursor_v1, &typed_context};
+    CettaGsltTermCursorV1 typed_argument = {context_source, &context_frame};
+    CHECK(petta_specializer_query_view_execution_admission(
+              &space, consumer, &typed_argument, 1u, typed_observer) ==
+              PETTA_SPECIALIZER_RELATION_IRRELEVANT,
+          "materialized inert supplier establishes the initial forest fact");
+    CHECK(bindings_rewrite_value_id(
+              &contextual_builder.current, context_key->var_id,
+              binding_value_from_context(context_term, 422u)),
+          "change the supplier slot's lexical interpretation");
+    CHECK(bindings_activation_view_prepare(&context_frame, &contextual_builder,
+              context_ids, context_variables, 1u, 421u, 0u) &&
+          petta_specializer_query_view_execution_admission(
+              &space, consumer, &typed_argument, 1u, typed_observer) ==
+              PETTA_SPECIALIZER_RELATION_DEFER,
+          "same constructor shape with contextual dependencies cannot reuse an inert forest fact");
+    bindings_activation_view_free(&context_frame);
+    bindings_builder_free(&contextual_builder);
 
     /* The supplier observation is independent of application saturation.
      * Exercise all named-arity authorities, including a type-only symbol
@@ -364,6 +420,71 @@ int main(void) {
               &space, consumer, &expression_head, 1u) ==
               PETTA_SPECIALIZER_RELATION_DEFER,
           "non-symbol head retains its recursive supplier observation");
+
+    /* Open constructor forests are a revision-and-shape fact of the
+     * authored roots and the live environment, not interned-closed
+     * identity.  The same implication tree is read repeatedly. */
+    Atom *open_phi = atom_var(&result, "open-phi");
+    Atom *open_psi = atom_var(&result, "open-psi");
+    Atom *open_impl = atom_expr3(
+        &result, atom_symbol(&result, "→"), open_phi,
+        atom_expr3(&result, atom_symbol(&result, "→"), open_psi, open_phi));
+    CettaGsltTermCursorV1 open_view = {.source = open_impl};
+    BindingsBuilder open_bindings;
+    CHECK(bindings_builder_init(&open_bindings, NULL),
+          "open-forest builder");
+    BindingsTermCursorContextV1 open_context = {
+        .bindings = bindings_builder_bindings(&open_bindings)};
+    CettaGsltTermCursorObserverV1 open_observer = {
+        bindings_resolve_term_cursor_v1, &open_context};
+    CHECK(petta_specializer_query_view_execution_admission(
+              &space, consumer, &open_view, 1u, open_observer) ==
+              PETTA_SPECIALIZER_RELATION_IRRELEVANT,
+          "open implication forest has no callable supplier");
+    for (unsigned repeat = 0u; repeat < 8u; repeat++) {
+        CHECK(petta_specializer_query_view_execution_admission(
+                  &space, consumer, &open_view, 1u, open_observer) ==
+                  PETTA_SPECIALIZER_RELATION_IRRELEVANT,
+              "open-forest admission is a revision-and-shape read");
+    }
+    uint32_t open_mark = bindings_builder_save(&open_bindings);
+    CHECK(bindings_builder_add_var_fresh(
+              &open_bindings, open_phi,
+              atom_symbol(&result, "late-arity")),
+          "bind open-forest variable to a callable");
+    CHECK(petta_specializer_query_view_execution_admission(
+              &space, consumer, &open_view, 1u, open_observer) ==
+              PETTA_SPECIALIZER_RELATION_DEFER,
+          "binding a callable into the forest is observed");
+    bindings_builder_rollback(&open_bindings, open_mark);
+    CHECK(petta_specializer_query_view_execution_admission(
+              &space, consumer, &open_view, 1u, open_observer) ==
+              PETTA_SPECIALIZER_RELATION_IRRELEVANT,
+          "rollback restores the inert open forest");
+    /* Distinct copies of the same constructor skeleton share the
+     * revision-and-shape fact: variables are holes, not interned
+     * identities. */
+    Atom *iso_a = atom_var(&result, "iso-a");
+    Atom *iso_b = atom_var(&result, "iso-b");
+    Atom *iso_one = atom_expr3(
+        &result, atom_symbol(&result, "→"), iso_a,
+        atom_expr3(&result, atom_symbol(&result, "→"), iso_b, iso_a));
+    Atom *iso_c = atom_var(&result, "iso-c");
+    Atom *iso_d = atom_var(&result, "iso-d");
+    Atom *iso_two = atom_expr3(
+        &result, atom_symbol(&result, "→"), iso_c,
+        atom_expr3(&result, atom_symbol(&result, "→"), iso_d, iso_c));
+    CettaGsltTermCursorV1 iso_view_one = {.source = iso_one};
+    CettaGsltTermCursorV1 iso_view_two = {.source = iso_two};
+    CHECK(petta_specializer_query_view_execution_admission(
+              &space, consumer, &iso_view_one, 1u, open_observer) ==
+              PETTA_SPECIALIZER_RELATION_IRRELEVANT,
+          "first isomorphic implication forest is inert");
+    CHECK(petta_specializer_query_view_execution_admission(
+              &space, consumer, &iso_view_two, 1u, open_observer) ==
+              PETTA_SPECIALIZER_RELATION_IRRELEVANT,
+          "isomorphic implication forest is a shape read");
+    bindings_builder_free(&open_bindings);
 
     if (failures == 0u)
         printf("PASS: specializer prepare boundary (%u checks)\n", checks);

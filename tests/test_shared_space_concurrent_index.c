@@ -81,7 +81,7 @@ static bool validate_snapshot(SubstMatchSet *matches,
 
         if (!match->exact)
             return false;
-        value = bindings_lookup_id(&match->bindings, QUERY_VALUE_ID);
+        value = bindings_lookup_value_id(&match->bindings, QUERY_VALUE_ID).skeleton;
         if (!value || value->kind != ATOM_GROUNDED ||
             value->ground.gkind != GV_INT) {
             return false;

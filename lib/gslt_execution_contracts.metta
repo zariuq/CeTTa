@@ -86,6 +86,7 @@
   (identity-bearing-grounded-kind state)
   (identity-bearing-grounded-kind capture)
   (identity-bearing-grounded-kind foreign)
+  (identity-bearing-grounded-kind bindings)
   (thread-local-resource-symbol capture)
   (transition initialize uninitialized (live $epoch))
   (transition cleanup (live $epoch) (freed $epoch))

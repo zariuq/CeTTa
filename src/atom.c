@@ -50,6 +50,11 @@ struct ArenaFinalizer {
     struct ArenaFinalizer *next;
 };
 
+struct ArenaRetainedOwner {
+    ArenaFinalizer finalizer;
+    struct ArenaRetainedOwner *next_owner;
+};
+
 typedef struct {
     Atom atom;
     void *owner;
@@ -83,6 +88,12 @@ struct AtomDeepCopySession {
     AtomDeepCopyResolver resolver;
     void *resolver_context;
 };
+
+bool atom_deep_copy_session_retain_frame(
+        AtomDeepCopySession *session, CettaFrameIdentity identity) {
+    return session && (identity == 0u ||
+        arena_retain_frame_identity(session->dst, identity));
+}
 
 /* ── Arena ──────────────────────────────────────────────────────────────── */
 
@@ -531,6 +542,7 @@ static void provenance_check_atom(Atom *root, Atom *atom, const char *site,
         case GV_SPACE:
         case GV_STATE:
         case GV_CAPTURE:
+        case GV_BINDINGS:
         case GV_FOREIGN:
             provenance_check_ptr(root, site, allowed_owner, "grounded handle",
                                  current->ground.ptr);
@@ -671,6 +683,7 @@ void arena_init(Arena *a) {
     a->identity = identity;
     a->reset_epoch = 1u;
     a->finalizers = NULL;
+    a->retained_owners = NULL;
 }
 
 void arena_init_detached(Arena *a) {
@@ -682,6 +695,8 @@ static void arena_run_finalizers_until(Arena *a, ArenaFinalizer *stop) {
     while (a->finalizers != stop) {
         ArenaFinalizer *node = a->finalizers;
         a->finalizers = node->next;
+        if (a->retained_owners && node == &a->retained_owners->finalizer)
+            a->retained_owners = a->retained_owners->next_owner;
         node->fn(node->ptr);
         free(node);
     }
@@ -694,6 +709,38 @@ static void arena_register_finalizer(Arena *a, void (*fn)(void *), void *ptr) {
     node->next = a->finalizers;
     a->finalizers = node;
     arena_account_external_bytes(a, sizeof(*node));
+}
+
+bool arena_retain_owner(Arena *a, void *owner,
+                        void (*retain)(void *), void (*release)(void *)) {
+    if (!a || !owner || !retain || !release)
+        return false;
+    for (ArenaRetainedOwner *held = a->retained_owners; held; held = held->next_owner) {
+        if (held->finalizer.ptr == owner && held->finalizer.fn == release)
+            return true;
+    }
+    ArenaRetainedOwner *held = cetta_malloc(sizeof(*held));
+    retain(owner);
+    *held = (ArenaRetainedOwner){
+        .finalizer = {.fn = release, .ptr = owner, .next = a->finalizers},
+        .next_owner = a->retained_owners,
+    };
+    a->finalizers = &held->finalizer;
+    a->retained_owners = held;
+    arena_account_external_bytes(a, sizeof(*held));
+    return true;
+}
+
+static void arena_release_frame_identity(void *identity) {
+    cetta_frame_identity_release((CettaFrameIdentity)(uintptr_t)identity);
+}
+
+bool arena_retain_frame_identity(Arena *a, CettaFrameIdentity identity) {
+    if (!a || !cetta_frame_identity_retain(identity))
+        return false;
+    arena_register_finalizer(a, arena_release_frame_identity,
+                             (void *)(uintptr_t)identity);
+    return true;
 }
 
 static void arena_invalidate_allocations(
@@ -857,6 +904,7 @@ static uint32_t atom_hash_compute(Atom *a) {
         case GV_SPACE:
         case GV_STATE:
         case GV_CAPTURE:
+        case GV_BINDINGS:
         case GV_FOREIGN:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
@@ -894,6 +942,7 @@ bool atom_eq_fast(Atom *a, Atom *b) {
 }
 
 void hashcons_init(HashConsTable *hc) {
+    hc->frame_identities = (CettaFrameIdentityScope){0};
     hc->size = HASHCONS_TABLE_SIZE;
     hc->used = 0;
     hc->symbol_cache = NULL;
@@ -929,6 +978,7 @@ void hashcons_free(HashConsTable *hc) {
     free(hc->table);
     free(hc->symbol_cache);
     free(hc->small_int_cache);
+    cetta_frame_identity_scope_clear(&hc->frame_identities);
     hc->table = NULL;
     hc->size = hc->used = 0;
     hc->symbol_cache = NULL;
@@ -1113,6 +1163,7 @@ static uint64_t hashcons_slot_hash(Atom *atom) {
         case GV_SPACE:
         case GV_STATE:
         case GV_CAPTURE:
+        case GV_BINDINGS:
         case GV_FOREIGN:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
@@ -1237,10 +1288,13 @@ static void hashcons_grow(HashConsTable *hc) {
 
 static Atom *hashcons_intern_admitted(HashConsTable *hc, Atom *atom);
 
-static Atom *hashcons_alloc_owned(const Atom *atom) {
+static Atom *hashcons_alloc_owned(HashConsTable *hc, const Atom *atom) {
     Atom *owned = cetta_malloc(sizeof(Atom));
     *owned = *atom;
     owned->arena_id = 0u;
+    if (atom->kind == ATOM_VAR)
+        (void)cetta_frame_identity_scope_retain(
+            &hc->frame_identities, var_epoch_suffix(atom->var_id));
     if (atom->kind == ATOM_GROUNDED &&
         atom->ground.gkind == GV_STRING) {
         owned->ground.sval = strdup(atom->ground.sval);
@@ -1285,7 +1339,7 @@ static Atom *hashcons_intern_admitted(HashConsTable *hc, Atom *atom) {
     }
     if (slot >= hc->size)
         return atom;
-    Atom *owned = hashcons_alloc_owned(atom);
+    Atom *owned = hashcons_alloc_owned(hc, atom);
     hc->table[slot] = owned;
     hc->used++;
     hashcons_leaf_cache_store(hc, owned);
@@ -2011,6 +2065,7 @@ bool atom_grounded_kind_is_term_stable(GroundedKind gkind) {
     case GV_SPACE:
     case GV_STATE:
     case GV_CAPTURE:
+    case GV_BINDINGS:
     case GV_FOREIGN:
     case GV_PRIME_NEED_CAPABILITY:
     case GV_PRIME_CONTEXT:
@@ -2254,6 +2309,7 @@ Atom *atom_var_with_spelling(Arena *a, SymbolId spelling, VarId id) {
     temp.structural_facts = ATOM_STRUCTURAL_FACTS_VALID;
     Atom *shared = atom_maybe_hashcons(a, &temp);
     if (shared) return shared;
+    (void)arena_retain_frame_identity(a, var_epoch_suffix(temp.var_id));
     Atom *at = arena_alloc(a, sizeof(Atom));
     *at = temp;
     return at;
@@ -2279,6 +2335,7 @@ static Atom *atom_var_with_spelling_and_name_key(
     temp.structural_facts = ATOM_STRUCTURAL_FACTS_VALID;
     Atom *shared = atom_maybe_hashcons(a, &temp);
     if (shared) return shared;
+    (void)arena_retain_frame_identity(a, var_epoch_suffix(temp.var_id));
     Atom *at = arena_alloc(a, sizeof(Atom));
     *at = temp;
     return at;
@@ -2702,6 +2759,22 @@ Atom *atom_foreign(Arena *a, CettaForeignValue *value) {
     at->ground.gkind = GV_FOREIGN;
     at->ground.ptr = value;
     return at;
+}
+
+Atom *atom_bindings_value(Arena *arena, CettaBindingsValue *value) {
+    if (!arena || !value || !value->retain || !value->release ||
+        !value->observe ||
+        !arena_retain_owner(arena, value, value->retain, value->release))
+        return NULL;
+    Atom *atom = arena_alloc(arena, sizeof(*atom));
+    *atom = (Atom){
+        .kind = ATOM_GROUNDED,
+        .flags = atom_flags_for_grounded_kind(GV_BINDINGS),
+        .arena_id = arena->identity,
+        .structural_facts = atom_structural_facts_for_grounded_kind(GV_BINDINGS),
+        .ground = {.gkind = GV_BINDINGS, .ptr = value},
+    };
+    return atom;
 }
 
 Atom *atom_internal_tag(Arena *a, CettaInternalTag tag) {
@@ -3242,7 +3315,7 @@ const char *atom_name_cstr(Atom *a) {
     return "";
 }
 
-SymbolId atom_head_symbol_id(Atom *a) {
+SymbolId atom_head_symbol_id(const Atom *a) {
     if (!a) return SYMBOL_ID_NONE;
     if (a->kind == ATOM_SYMBOL) return a->sym_id;
     if (a->kind == ATOM_EXPR && a->expr.len > 0 &&
@@ -3333,6 +3406,12 @@ bool atom_eq(Atom *a, Atom *b) {
                                                atom_rational_cstr(b)) == 0;
         case GV_SPACE:  return a->ground.ptr == b->ground.ptr;
         case GV_CAPTURE: return a->ground.ptr == b->ground.ptr;
+        case GV_BINDINGS: {
+            const CettaBindingsValue *left = a->ground.ptr;
+            const CettaBindingsValue *right = b->ground.ptr;
+            return left == right || (left && right && left->equal &&
+                                    left->equal(left, right));
+        }
         case GV_FOREIGN: return a->ground.ptr == b->ground.ptr;
         case GV_INTERNAL_TAG:
             return a->ground.ival == b->ground.ival;
@@ -3521,6 +3600,9 @@ static Atom *atom_deep_copy_leaf(Arena *dst, Atom *src, bool share) {
             break;
         case GV_CAPTURE:
             out = atom_capture(dst, (CaptureClosure *)src->ground.ptr);
+            break;
+        case GV_BINDINGS:
+            out = atom_bindings_value(dst, src->ground.ptr);
             break;
         case GV_FOREIGN:
             out = atom_foreign(dst, (CettaForeignValue *)src->ground.ptr);
@@ -3738,6 +3820,13 @@ Atom *atom_deep_copy_session_forwarded(
     if (!session || !src)
         return NULL;
     return atom_deep_copy_memo_lookup(&session->memo, src);
+}
+
+bool atom_deep_copy_session_settled(
+    const AtomDeepCopySession *session, const Atom *atom) {
+    return session && atom && !session->resolver &&
+           arena_owns_atom(session->dst, atom) &&
+           atom_graph_is_closed_for_arena(session->dst, atom);
 }
 
 void atom_deep_copy_session_free(AtomDeepCopySession *session) {
@@ -4202,6 +4291,16 @@ static void atom_print_mode(
         case GV_CAPTURE:
             fputs("capture", out);
             break;
+        case GV_BINDINGS: {
+            CettaBindingsValue *value = a->ground.ptr;
+            Arena observation;
+            arena_init_detached(&observation);
+            Atom *projection = value->observe(&observation, value);
+            if (projection)
+                atom_print_mode(projection, out, petta, variables);
+            arena_free(&observation);
+            break;
+        }
         case GV_FOREIGN:
             fprintf(out, "<foreign %p>", a->ground.ptr);
             break;

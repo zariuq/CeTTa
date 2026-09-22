@@ -2,7 +2,7 @@
 #define CETTA_EXECUTION_CONTRACTS_GENERATED_H
 
 /* Generated from lib/gslt_execution_contracts.metta.
- * Source SHA-256: 52e9092da88509cce68087a191bea80ae592af9c5fac84c493130bdadafce67e
+ * Source SHA-256: d6f2f04d7880c41a8e3688b57a7d097e6d9996e3face9100a494649c6246a812
  */
 
 #include <stdbool.h>
@@ -63,7 +63,8 @@ static inline bool cetta_gslt_query_effect_children_opaque(
 #define CETTA_GSLT_IDENTITY_BEARING_GROUNDED_KIND_ROWS(X)     X(GV_SPACE) \
     X(GV_STATE) \
     X(GV_CAPTURE) \
-    X(GV_FOREIGN)
+    X(GV_FOREIGN) \
+    X(GV_BINDINGS)
 
 static inline bool cetta_gslt_identity_bearing_grounded_kind(
     GroundedKind kind) {
@@ -75,6 +76,8 @@ static inline bool cetta_gslt_identity_bearing_grounded_kind(
     case GV_CAPTURE:
         return true;
     case GV_FOREIGN:
+        return true;
+    case GV_BINDINGS:
         return true;
     default:
         return false;

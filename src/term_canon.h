@@ -20,7 +20,7 @@ typedef struct {
     Atom *mapped_var;
 } CettaVarMapEntry;
 
-typedef struct {
+typedef struct CettaVarMap {
     CettaVarMapEntry *items;
     uint32_t len;
     uint32_t cap;
@@ -44,5 +44,22 @@ typedef Atom *(*CettaAtomRewriteVarFn)(Arena *dst, Atom *src_var, void *ctx);
 Atom *cetta_atom_rewrite_vars(Arena *dst, Atom *src,
                               CettaAtomRewriteVarFn rewrite_var, void *ctx,
                               bool share_immutable);
+
+/* Compile an authored variable inventory into frame-local execution syntax.
+ * The map is an import boundary: equal authored identities share one slot;
+ * distinct identities remain distinct even when their spellings agree.
+ * Reuse the map across all terms belonging to the same frame. */
+Atom *cetta_compile_frame_syntax(Arena *dst, Atom *src, CettaVarMap *inventory);
+/* Import a live term: allocate coordinates for authored variables and preserve
+ * identities that already belong to another activation. No substitution is applied. */
+Atom *cetta_import_frame_syntax(Arena *dst, Atom *src, CettaVarMap *inventory,
+                              CettaFrameIdentity identity);
+
+/* Instantiate authored terms together in a fresh frame. Sharing between the
+ * terms is preserved, while different source identities remain different even
+ * when their spellings or local slots agree. The returned syntax owns its
+ * identity. This creates variables; it does not reify an existing closure. */
+bool cetta_instantiate_frame_terms(Arena *dst, Atom **terms, size_t count);
+Atom *cetta_instantiate_frame_syntax(Arena *dst, Atom *source);
 
 #endif /* CETTA_TERM_CANON_H */

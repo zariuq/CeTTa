@@ -177,8 +177,12 @@ bool variant_shape_canonicalize_bindings(Arena *dst, const Bindings *src,
     bindings_init(out);
     if (!src)
         return true;
-    for (uint32_t i = 0; i < src->len; i++) {
-        const Binding *src_entry = bindings_entry_at(src, i);
+    if (src->owners)
+        bindings_inherit_owners(out, src);
+    BindingsIterator iterator = {.bindings = src};
+    Binding logical_binding;
+    while (bindings_iterator_next(&iterator, &logical_binding)) {
+        const Binding *src_entry = &logical_binding;
         Atom *binding_var = binding_variable_atom(dst, src_entry);
         if (!binding_var) {
             bindings_free(out);
@@ -188,7 +192,7 @@ bool variant_shape_canonicalize_bindings(Arena *dst, const Bindings *src,
             cetta_var_map_get_or_add(src_to_slot, dst, binding_var,
                                      variant_shape_create_slot_var,
                                      (void *)options);
-        Atom *slot_val = variant_shape_canonicalize_atom(dst, src_entry->val,
+        Atom *slot_val = variant_shape_canonicalize_atom(dst, binding_value_materialize(dst, src_entry->value),
                                                          src_to_slot, NULL,
                                                          options);
         if (!slot_var || !slot_val ||
@@ -196,20 +200,13 @@ bool variant_shape_canonicalize_bindings(Arena *dst, const Bindings *src,
             bindings_free(out);
             return false;
         }
-        if (src_entry->legacy_name_fallback) {
-            if (!bindings_prepare_logical_write(out)) {
-                bindings_free(out);
-                return false;
-            }
-            out->entries[out->len - 1].legacy_name_fallback = true;
-            out->legacy_fallback_count++;
-        }
+
     }
     for (uint32_t i = 0; i < src->eq_len; i++) {
-        Atom *lhs = variant_shape_canonicalize_atom(dst, src->constraints[i].lhs,
+        Atom *lhs = variant_shape_canonicalize_atom(dst, binding_value_materialize(dst, src->constraints[i].lhs),
                                                     src_to_slot, NULL,
                                                     options);
-        Atom *rhs = variant_shape_canonicalize_atom(dst, src->constraints[i].rhs,
+        Atom *rhs = variant_shape_canonicalize_atom(dst, binding_value_materialize(dst, src->constraints[i].rhs),
                                                     src_to_slot, NULL,
                                                     options);
         if (!lhs || !rhs || !bindings_add_constraint(out, lhs, rhs)) {
@@ -229,8 +226,12 @@ bool variant_shape_materialize_bindings(Arena *dst, const Bindings *src,
     bindings_init(out);
     if (!src)
         return true;
-    for (uint32_t i = 0; i < src->len; i++) {
-        const Binding *src_entry = bindings_entry_at(src, i);
+    if (src->owners)
+        bindings_inherit_owners(out, src);
+    BindingsIterator iterator = {.bindings = src};
+    Binding logical_binding;
+    while (bindings_iterator_next(&iterator, &logical_binding)) {
+        const Binding *src_entry = &logical_binding;
         Atom *binding_var = binding_variable_atom(dst, src_entry);
         if (!binding_var) {
             bindings_free(out);
@@ -244,7 +245,7 @@ bool variant_shape_materialize_bindings(Arena *dst, const Bindings *src,
                                                       local_slots);
         }
         Atom *materialized_val = variant_shape_materialize_atom(dst,
-                                                                src_entry->val,
+                                                                binding_value_materialize(dst, src_entry->value),
                                                                 goal_instantiation,
                                                                 local_slots);
         if (!goal_var || !materialized_val ||
@@ -252,20 +253,13 @@ bool variant_shape_materialize_bindings(Arena *dst, const Bindings *src,
             bindings_free(out);
             return false;
         }
-        if (src_entry->legacy_name_fallback) {
-            if (!bindings_prepare_logical_write(out)) {
-                bindings_free(out);
-                return false;
-            }
-            out->entries[out->len - 1].legacy_name_fallback = true;
-            out->legacy_fallback_count++;
-        }
+
     }
     for (uint32_t i = 0; i < src->eq_len; i++) {
-        Atom *lhs = variant_shape_materialize_atom(dst, src->constraints[i].lhs,
+        Atom *lhs = variant_shape_materialize_atom(dst, binding_value_materialize(dst, src->constraints[i].lhs),
                                                    goal_instantiation,
                                                    local_slots);
-        Atom *rhs = variant_shape_materialize_atom(dst, src->constraints[i].rhs,
+        Atom *rhs = variant_shape_materialize_atom(dst, binding_value_materialize(dst, src->constraints[i].rhs),
                                                    goal_instantiation,
                                                    local_slots);
         if (!lhs || !rhs || !bindings_add_constraint(out, lhs, rhs)) {

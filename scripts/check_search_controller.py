@@ -340,10 +340,23 @@ def main() -> int:
         fixture_root=PRIME, forced_gc=True,
     )
     require_run(prime_fifo, "Prime FIFO owned frontier under forced GC")
-    if prime_fifo.stdout != prime_expected:
+    prime_fifo_expected = expected(
+        "search_controller_frontier.fifo.expected", PRIME
+    )
+    if prime_fifo.stdout != prime_fifo_expected:
         raise AssertionError(
             "Prime FIFO changed the exact occurrence stream\n"
-            f"expected:\n{prime_expected}actual:\n{prime_fifo.stdout}"
+            f"expected:\n{prime_fifo_expected}actual:\n{prime_fifo.stdout}"
+        )
+    prime_inline_occurrences = metta_list_occurrences(
+        prime_inline.stdout.splitlines()[-1]
+    )
+    prime_fifo_occurrences = metta_list_occurrences(
+        prime_fifo.stdout.splitlines()[-1]
+    )
+    if Counter(prime_inline_occurrences) != Counter(prime_fifo_occurrences):
+        raise AssertionError(
+            "Prime FIFO changed the occurrence bag while reordering it"
         )
     prime_receipts = [
         line for line in prime_fifo.stderr.splitlines()
@@ -358,7 +371,7 @@ def main() -> int:
         "active": "fifo",
         "storage": "shared-terms-owned-state",
         "refusals": 0,
-        "answers": 2,
+        "answers": 3,
     }.items():
         if prime_receipt.get(field) != expected_value:
             raise AssertionError(

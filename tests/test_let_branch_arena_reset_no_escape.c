@@ -34,6 +34,22 @@ void space_match_backend_init(Space *s) {
     memset(&s->match_backend, 0, sizeof(s->match_backend));
     s->match_backend.kind = SPACE_ENGINE_NATIVE;
 }
+/* This standalone fixture does not provide native cursor execution. */
+void space_match_native_ensure_trie(Space *s) {
+    (void)s;
+    assert(false && "unexpected native cursor execution in standalone fixture");
+}
+
+void space_match_native_pin_trie(Space *s) {
+    (void)s;
+    assert(false && "unexpected native cursor pin in standalone fixture");
+}
+
+void space_match_native_unpin_trie(Space *s) {
+    (void)s;
+    assert(false && "unexpected native cursor release in standalone fixture");
+}
+
 void space_match_backend_free(Space *s) { (void)s; }
 bool space_match_backend_try_set(Space *s, SpaceEngine kind) {
     if (s)

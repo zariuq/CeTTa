@@ -5,6 +5,7 @@
 !(bind! &prime-controller:first (new-space queue))
 !(bind! &prime-controller:second (new-space queue))
 !(add-atom &prime-controller:first (answer first))
+!(add-atom &prime-controller:first (answer first))
 !(add-atom &prime-controller:second (answer second))
 
 (= (prime-controller:choice)

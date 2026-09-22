@@ -3753,20 +3753,20 @@ static bool pposlf_native_type_vm_v1_stage_builder_atoms(
         Atom *name_key = pposlf_native_type_vm_v1_evacuate_atom(
             source, session, entry->name_key);
         Atom *value = pposlf_native_type_vm_v1_evacuate_atom(
-            source, session, entry->val);
+            source, session, entry->value.skeleton);
 
         if ((entry->name_key && !name_key) ||
-            (entry->val && !value))
+            (entry->value.skeleton && !value))
             return false;
     }
     for (uint32_t index = 0u; index < bindings->eq_len; index++) {
         Atom *left = pposlf_native_type_vm_v1_evacuate_atom(
-            source, session, bindings->constraints[index].lhs);
+            source, session, bindings->constraints[index].lhs.skeleton);
         Atom *right = pposlf_native_type_vm_v1_evacuate_atom(
-            source, session, bindings->constraints[index].rhs);
+            source, session, bindings->constraints[index].rhs.skeleton);
 
-        if ((bindings->constraints[index].lhs && !left) ||
-            (bindings->constraints[index].rhs && !right))
+        if ((bindings->constraints[index].lhs.skeleton && !left) ||
+            (bindings->constraints[index].rhs.skeleton && !right))
             return false;
     }
     return true;
@@ -3787,21 +3787,21 @@ static bool pposlf_native_type_vm_v1_builder_atoms_forwarded(
              arena_owns_atom(source, entry->name_key) &&
              !atom_deep_copy_session_forwarded(
                  session, entry->name_key)) ||
-            (entry->val &&
-             arena_owns_atom(source, entry->val) &&
+            (entry->value.skeleton &&
+             arena_owns_atom(source, entry->value.skeleton) &&
              !atom_deep_copy_session_forwarded(
-                 session, entry->val)))
+                 session, entry->value.skeleton)))
             return false;
     }
     for (uint32_t index = 0u; index < bindings->eq_len; index++) {
-        if ((bindings->constraints[index].lhs &&
-             arena_owns_atom(source, bindings->constraints[index].lhs) &&
+        if ((bindings->constraints[index].lhs.skeleton &&
+             arena_owns_atom(source, bindings->constraints[index].lhs.skeleton) &&
              !atom_deep_copy_session_forwarded(
-                 session, bindings->constraints[index].lhs)) ||
-            (bindings->constraints[index].rhs &&
-             arena_owns_atom(source, bindings->constraints[index].rhs) &&
+                 session, bindings->constraints[index].lhs.skeleton)) ||
+            (bindings->constraints[index].rhs.skeleton &&
+             arena_owns_atom(source, bindings->constraints[index].rhs.skeleton) &&
              !atom_deep_copy_session_forwarded(
-                 session, bindings->constraints[index].rhs)))
+                 session, bindings->constraints[index].rhs.skeleton)))
             return false;
     }
     return true;
@@ -3822,25 +3822,25 @@ static void pposlf_native_type_vm_v1_commit_builder_atoms(
                 atom_deep_copy_session_forwarded(
                     session, bindings->entries[index].name_key);
         }
-        if (bindings->entries[index].val &&
-            arena_owns_atom(source, bindings->entries[index].val)) {
-            bindings->entries[index].val =
+        if (bindings->entries[index].value.skeleton &&
+            arena_owns_atom(source, bindings->entries[index].value.skeleton)) {
+            bindings->entries[index].value.skeleton =
                 atom_deep_copy_session_forwarded(
-                    session, bindings->entries[index].val);
+                    session, bindings->entries[index].value.skeleton);
         }
     }
     for (uint32_t index = 0u; index < bindings->eq_len; index++) {
-        if (bindings->constraints[index].lhs &&
-            arena_owns_atom(source, bindings->constraints[index].lhs)) {
-            bindings->constraints[index].lhs =
+        if (bindings->constraints[index].lhs.skeleton &&
+            arena_owns_atom(source, bindings->constraints[index].lhs.skeleton)) {
+            bindings->constraints[index].lhs.skeleton =
                 atom_deep_copy_session_forwarded(
-                    session, bindings->constraints[index].lhs);
+                    session, bindings->constraints[index].lhs.skeleton);
         }
-        if (bindings->constraints[index].rhs &&
-            arena_owns_atom(source, bindings->constraints[index].rhs)) {
-            bindings->constraints[index].rhs =
+        if (bindings->constraints[index].rhs.skeleton &&
+            arena_owns_atom(source, bindings->constraints[index].rhs.skeleton)) {
+            bindings->constraints[index].rhs.skeleton =
                 atom_deep_copy_session_forwarded(
-                    session, bindings->constraints[index].rhs);
+                    session, bindings->constraints[index].rhs.skeleton);
         }
     }
     bindings_invalidate_after_key_rewrite(bindings);
@@ -4900,7 +4900,8 @@ static PPOSLFNativeSearchOutcomeV1 pposlf_native_type_vm_v1_search(
             }
             if (!ground_pattern) {
                 bool matched = false;
-                if (!fresh_var_suffix_try(&epoch)) {
+                CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
+                if (!cetta_frame_identity_scope_try(&frame_identity_scope, &epoch)) {
                     pposlf_native_type_vm_v1_rollback_search_branch(
                         search, frame);
                     frame->saw_resource = true;

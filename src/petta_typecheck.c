@@ -1,3 +1,4 @@
+#include "term_canon.h"
 #include "petta_typecheck.h"
 
 #include "eval.h"
@@ -1504,18 +1505,23 @@ static void petta_block_note_residual_guard(
     }
 }
 
+/* Structural type judgments inspect qualified syntax in their own scratch
+ * arena. This observation neither evaluates the type nor forces a Need cell. */
+static Atom *petta_block_observe_type_binding(
+    PettaBlockCheck *check, Bindings *bindings, Atom *variable) {
+    if (!check || !bindings || !variable || variable->kind != ATOM_VAR)
+        return NULL;
+    BindingValue value = bindings_lookup_value_id(bindings, variable->var_id);
+    return binding_value_materialize(&check->scratch, value);
+}
+
 static Atom *petta_block_resolve_binding(
-    Bindings *bindings, Atom *atom) {
-    if (!bindings || !atom)
-        return atom;
-    size_t remaining = (size_t)bindings->len + 1u;
-    while (atom->kind == ATOM_VAR && remaining-- > 0u) {
-        Atom *next = bindings_lookup_var(bindings, atom);
-        if (!next || next == atom)
-            break;
-        atom = next;
-    }
-    return atom;
+    PettaBlockCheck *check, Bindings *bindings, Atom *atom) {
+    if (!atom)
+        return NULL;
+    BindingValue value;
+    return bindings_resolve_value_exact(bindings, binding_value_from_atom(atom), &value)
+        ? binding_value_materialize(&check->scratch, value) : NULL;
 }
 
 static uint32_t petta_block_declared_types(
@@ -1575,8 +1581,7 @@ static uint32_t petta_block_declared_types(
         return 0u;
     Atom **fresh = cetta_malloc(sizeof(*fresh) * memo->count);
     for (uint32_t index = 0u; index < memo->count; index++) {
-        fresh[index] = atom_freshen_epoch(
-            &check->scratch, memo->types[index], fresh_var_suffix());
+        fresh[index] = cetta_instantiate_frame_syntax(&check->scratch, memo->types[index]);
         if (!fresh[index]) {
             free(fresh);
             petta_block_fault(
@@ -1820,8 +1825,10 @@ static bool petta_block_type_may_overlap(
     Bindings *bindings, uint32_t depth) {
     if (!check || !actual || !ascribed || !bindings || depth > 2048u)
         return false;
-    actual = petta_block_resolve_binding(bindings, actual);
-    ascribed = petta_block_resolve_binding(bindings, ascribed);
+    actual = petta_block_resolve_binding(check, bindings, actual);
+    ascribed = petta_block_resolve_binding(check, bindings, ascribed);
+    if (!actual || !ascribed)
+        return false;
 
     /* `the` is an explicit run-time narrowing operation.  Alias transparency
      * must therefore be established before applying the ordinary directional
@@ -1952,8 +1959,10 @@ static bool petta_block_type_compatible_depth(
     Bindings *bindings, uint32_t depth) {
     if (!check || !actual || !required || !bindings || depth > 2048u)
         return false;
-    actual = petta_block_resolve_binding(bindings, actual);
-    required = petta_block_resolve_binding(bindings, required);
+    actual = petta_block_resolve_binding(check, bindings, actual);
+    required = petta_block_resolve_binding(check, bindings, required);
+    if (!actual || !required)
+        return false;
 
     /* A type variable is trivially a member of a required union that already
      * contains that very variable.  Attempting to encode this by binding
@@ -1965,7 +1974,7 @@ static bool petta_block_type_compatible_depth(
         for (CettaExprIndex index = 1u;
              index < required->expr.len; index++) {
             Atom *member = petta_block_resolve_binding(
-                bindings, required->expr.elems[index]);
+                check, bindings, required->expr.elems[index]);
             if (member && member->kind == ATOM_VAR &&
                 member->var_id == actual->var_id) {
                 CETTA_PETTA_TYPECHECK_CENSUS_HIT(
@@ -1986,7 +1995,7 @@ static bool petta_block_type_compatible_depth(
         for (CettaExprIndex index = 1u;
              index < actual->expr.len; index++) {
             Atom *member = petta_block_resolve_binding(
-                bindings, actual->expr.elems[index]);
+                check, bindings, actual->expr.elems[index]);
             if (member && member->kind == ATOM_VAR &&
                 member->var_id == required->var_id) {
                 CETTA_PETTA_TYPECHECK_CENSUS_HIT(
@@ -2179,7 +2188,6 @@ typedef struct {
 
 typedef struct {
     PettaBlockCheck *check;
-    const Bindings *base;
     PettaRationalTypeBinding *bindings;
     size_t binding_len;
     size_t binding_cap;
@@ -2199,19 +2207,12 @@ static Atom *petta_rational_type_lookup(
         if (replay->bindings[index - 1u].variable == variable)
             return replay->bindings[index - 1u].value;
     }
-    if (replay->base) {
-        for (uint32_t index = replay->base->len; index > 0u; index--) {
-            if (replay->base->entries[index - 1u].var_id == variable)
-                return replay->base->entries[index - 1u].val;
-        }
-    }
     return NULL;
 }
 
 static Atom *petta_rational_type_dereference(
     PettaRationalTypeReplay *replay, Atom *type) {
-    size_t remaining = replay->binding_len +
-        (replay->base ? replay->base->len : 0u) + 1u;
+    size_t remaining = replay->binding_len + 1u;
     while (type && type->kind == ATOM_VAR && remaining-- > 0u) {
         Atom *next = petta_rational_type_lookup(replay, type->var_id);
         if (!next || (next->kind == ATOM_VAR &&
@@ -2396,12 +2397,32 @@ static bool petta_block_rational_structural_cycle_compatible(
         (!atom_has_vars(actual) && !atom_has_vars(required))) {
         return false;
     }
-    PettaRationalTypeReplay replay = {
-        .check = check,
-        .base = base,
-    };
-    bool compatible = petta_rational_type_push_pair(
-        &replay, actual, required);
+    PettaRationalTypeReplay replay = {.check = check};
+    /* Rational replay observes each base value once. Stable observed roots
+     * preserve its pair-identity cycle guard while retaining lexical context. */
+    size_t binding_count = 0u;
+    bool compatible = !base || (bindings_current_binding_count(base, &binding_count) &&
+        petta_block_reserve((void **)&replay.bindings, &replay.binding_cap,
+            binding_count, sizeof(*replay.bindings)));
+    BindingsIterator iterator = {.bindings = base};
+    Binding logical_binding;
+    while (compatible && bindings_iterator_next(&iterator, &logical_binding)) {
+        const Binding *entry = &logical_binding;
+        Atom *value = binding_value_materialize(&check->scratch, entry->value);
+        compatible = value != NULL;
+        if (compatible) {
+            replay.bindings[replay.binding_len++] = (PettaRationalTypeBinding){
+                .variable = entry->var_id, .value = value,
+            };
+        }
+    }
+    if (!compatible) {
+        petta_block_fault(check, PETTA_TYPECHECK_FAULT_ALLOCATION,
+                          "could not observe rational type environment");
+        free(replay.bindings);
+        return false;
+    }
+    compatible = petta_rational_type_push_pair(&replay, actual, required);
     while (compatible && replay.pending_len > 0u) {
         PettaRationalTypePair pair =
             replay.pending[--replay.pending_len];
@@ -2516,7 +2537,7 @@ static Atom *petta_block_literal_type(
 
 static Atom *petta_block_apply_type_bindings(
     PettaBlockCheck *check, Bindings *bindings, Atom *type) {
-    return bindings && bindings->len > 0u
+    return bindings_has_bound_values(bindings)
         ? bindings_apply(bindings, &check->scratch, type) : type;
 }
 
@@ -2525,7 +2546,7 @@ static Atom *petta_block_apply_type_bindings(
  * candidate accumulation semantics. */
 static bool petta_block_env_note_fresh(
     Bindings *environment, Atom *variable, Atom *type) {
-    if (bindings_lookup_var(environment, variable))
+    if (bindings_lookup_value_id(environment, variable->var_id).skeleton)
         return false;
     return bindings_add_var_acyclic(environment, variable, type);
 }
@@ -2543,12 +2564,12 @@ static bool petta_block_env_note_fresh(
 static bool petta_block_env_note_pattern(
     PettaBlockCheck *check, Bindings *environment,
     Atom *variable, Atom *type) {
-    Atom *known = bindings_lookup_var(environment, variable);
+    Atom *known = petta_block_observe_type_binding(check, environment, variable);
     if (!known)
         return bindings_add_var_acyclic(environment, variable, type);
 
-    Atom *resolved_known = petta_block_resolve_binding(environment, known);
-    Atom *resolved_type = petta_block_resolve_binding(environment, type);
+    Atom *resolved_known = petta_block_resolve_binding(check, environment, known);
+    Atom *resolved_type = petta_block_resolve_binding(check, environment, type);
     if (resolved_known && resolved_type &&
         atom_alpha_eq(resolved_known, resolved_type)) {
         CETTA_PETTA_TYPECHECK_CENSUS_HIT(
@@ -2567,14 +2588,11 @@ static bool petta_block_env_note_pattern(
                 check, PETTA_TYPECHECK_FAULT_ALLOCATION,
                 "could not specialize an open pattern candidate");
         }
-        if (!bindings_has_loop(&specialization)) {
-            bindings_replace(environment, &specialization);
-            bindings_free(&specialization);
-            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
-                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_PATTERN_CANDIDATE_OPEN_SPECIALIZE);
-            return true;
-        }
+        bindings_replace(environment, &specialization);
         bindings_free(&specialization);
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_PATTERN_CANDIDATE_OPEN_SPECIALIZE);
+        return true;
     }
 
     Atom *unknown = atom_symbol(&check->scratch, "%Undefined%");
@@ -2584,16 +2602,12 @@ static bool petta_block_env_note_pattern(
             "could not represent multiple pattern candidates");
     }
 
-    for (uint32_t index = environment->len; index > 0u; index--) {
-        Binding *entry = &environment->entries[index - 1u];
-        if (!entry->legacy_name_fallback &&
-            entry->var_id == variable->var_id) {
-            entry->val = unknown;
-            bindings_invalidate_after_key_rewrite(environment);
-            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
-                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_PATTERN_CANDIDATE_AMBIGUOUS);
-            return true;
-        }
+    if (bindings_rewrite_value_id(
+            environment, variable->var_id,
+            binding_value_from_atom(unknown))) {
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_PATTERN_CANDIDATE_AMBIGUOUS);
+        return true;
     }
     return petta_block_fault(
         check, PETTA_TYPECHECK_FAULT_MALFORMED_TYPE,
@@ -2610,7 +2624,7 @@ static Atom *petta_block_pattern_type(
     if (!check || !pattern || !environment || depth > 2048u)
         return NULL;
     if (pattern->kind == ATOM_VAR) {
-        Atom *known = bindings_lookup_var(environment, pattern);
+        Atom *known = petta_block_observe_type_binding(check, environment, pattern);
         return known ? known : atom_var_with_id(
             &check->scratch, "type", fresh_var_id());
     }
@@ -2720,7 +2734,7 @@ static bool petta_block_note_dynamic_pattern_vars(
     if (!check || !pattern || depth > 2048u)
         return false;
     if (pattern->kind == ATOM_VAR) {
-        if ((environment && bindings_lookup_var(environment, pattern)) ||
+        if ((environment && bindings_lookup_value_id(environment, pattern->var_id).skeleton) ||
             petta_block_dynamic_pattern_var(check, pattern->var_id)) {
             return true;
         }
@@ -2921,8 +2935,7 @@ static bool petta_block_bind_pattern(
         if (petta_block_find_signature(
                 check, pattern->expr.elems[0],
                 pattern->expr.len - 1u, &signature)) {
-            Atom *fresh = atom_freshen_epoch(
-                &check->scratch, signature, (uint32_t)fresh_var_id());
+            Atom *fresh = cetta_instantiate_frame_syntax(&check->scratch, signature);
             if (!fresh)
                 return false;
             Bindings types;
@@ -3010,7 +3023,7 @@ static bool petta_block_bind_pattern(
              index < pattern->expr.len; index++) {
             Atom *field = pattern->expr.elems[index];
             if (field->kind == ATOM_VAR &&
-                !bindings_lookup_var(environment, field)) {
+                !bindings_lookup_value_id(environment, field->var_id).skeleton) {
                 Atom *unknown = atom_symbol(
                     &check->scratch, "%Undefined%");
                 if (!unknown ||
@@ -3467,8 +3480,7 @@ static bool petta_block_try_signature(
     if (applicable_out)
         *applicable_out = true;
     (void)mode;
-    Atom *fresh = atom_freshen_epoch(
-        &check->scratch, signature, (uint32_t)fresh_var_id());
+    Atom *fresh = cetta_instantiate_frame_syntax(&check->scratch, signature);
     if (!fresh)
         return false;
     Bindings trial;
@@ -3704,8 +3716,7 @@ static Atom *petta_block_find_relation_schema(
             pattern->expr.len - 1u, &signature)) {
         return NULL;
     }
-    Atom *fresh = atom_freshen_epoch(
-        &check->scratch, signature, (uint32_t)fresh_var_id());
+    Atom *fresh = cetta_instantiate_frame_syntax(&check->scratch, signature);
     if (!fresh || fresh->kind != ATOM_EXPR ||
         fresh->expr.len != pattern->expr.len + 1u)
         return NULL;
@@ -4101,7 +4112,7 @@ static Atom *petta_block_quoted_type(
     if (!check || !value || !environment || depth > 2048u)
         return NULL;
     if (value->kind == ATOM_VAR) {
-        Atom *known = bindings_lookup_var(environment, value);
+        Atom *known = petta_block_observe_type_binding(check, environment, value);
         return known ? known : atom_var_with_id(
             &check->scratch, "quoted-type", fresh_var_id());
     }
@@ -4208,7 +4219,7 @@ static Atom *petta_block_lower_equality_if_to_case(
         return NULL;
     Atom *variable = condition->expr.elems[1];
     Atom *pattern = condition->expr.elems[2];
-    Atom *known_type = bindings_lookup_var(environment, variable);
+    Atom *known_type = petta_block_observe_type_binding(check, environment, variable);
     if (!known_type ||
         !petta_block_equality_case_pattern(
             check, pattern, known_type, depth + 1u))
@@ -4253,7 +4264,7 @@ static bool petta_block_infer_expr(
             check->definite_mismatch = true;
             return false;
         }
-        Atom *known = bindings_lookup_var(environment, expression);
+        Atom *known = petta_block_observe_type_binding(check, environment, expression);
         if (!known && expected) {
             petta_block_note_residual_guard(check, expected, "unbound-variable");
             if (!petta_block_env_note_fresh(
@@ -4485,7 +4496,7 @@ static bool petta_block_infer_expr(
         if (petta_block_head_is(expected, "List") &&
             expected->expr.len == 2u) {
             Atom *first_type = expression->expr.elems[0]->kind == ATOM_VAR
-                ? bindings_lookup_var(
+                ? petta_block_observe_type_binding(check,
                       environment, expression->expr.elems[0])
                 : NULL;
             if (!first_type ||
@@ -4496,7 +4507,7 @@ static bool petta_block_infer_expr(
             }
         }
         if (expression->expr.elems[0]->kind == ATOM_VAR && environment) {
-            Atom *closure_type = bindings_lookup_var(
+            Atom *closure_type = petta_block_observe_type_binding(check,
                 environment, expression->expr.elems[0]);
             if (closure_type && petta_block_arrow_head(
                                     closure_type, NULL)) {
@@ -5543,7 +5554,7 @@ static bool petta_block_seed_pattern_variables(
     if (!check || !pattern || !environment || depth > 2048u)
         return false;
     if (pattern->kind == ATOM_VAR) {
-        if (bindings_lookup_var(environment, pattern))
+        if (bindings_lookup_value_id(environment, pattern->var_id).skeleton)
             return true;
         Atom *unknown = atom_var_with_id(
             &check->scratch, "inferred-type", fresh_var_id());
@@ -5571,7 +5582,7 @@ static Atom *petta_block_inferred_parameter_type(
         return atom_symbol(&check->scratch, "%Undefined%");
     Atom *type = NULL;
     if (pattern->kind == ATOM_VAR)
-        type = bindings_lookup_var(environment, pattern);
+        type = petta_block_observe_type_binding(check, environment, pattern);
     else
         type = petta_block_pattern_type(
             check, pattern, environment, 0u);
@@ -6054,7 +6065,7 @@ static bool petta_block_compound_head_is_data(
         return false;
     if (head->kind == ATOM_VAR) {
         Atom *known = environment
-            ? bindings_lookup_var(environment, head) : NULL;
+            ? petta_block_observe_type_binding(check, environment, head) : NULL;
         return petta_block_type_provably_nonfunction(known);
     }
     if (head->kind == ATOM_SYMBOL)
@@ -6091,7 +6102,7 @@ static bool petta_block_value_manifest_proper_list(
     if (!check || !value)
         return false;
     if (value->kind == ATOM_VAR && environment) {
-        Atom *type = bindings_lookup_var(environment, value);
+        Atom *type = petta_block_observe_type_binding(check, environment, value);
         if (petta_block_head_is(type, "List"))
             return !require_nonempty;
         if (type && type->kind == ATOM_EXPR && type->expr.len > 0u &&
@@ -6562,12 +6573,8 @@ static PettaBlockEffect petta_block_inferred_call_effect(
             source_selection_unknown = true;
             continue;
         }
-        uint32_t epoch = (uint32_t)fresh_var_id();
-        Atom *fresh_form = atom_freshen_epoch(
-            &check->scratch, form, epoch);
-        Atom *fresh_call = atom_freshen_epoch(
-            &check->scratch, call,
-            (uint32_t)fresh_var_id());
+        Atom *fresh_form = cetta_instantiate_frame_syntax(&check->scratch, form);
+        Atom *fresh_call = cetta_instantiate_frame_syntax(&check->scratch, call);
         if (!fresh_form || !fresh_call)
             goto done;
         Bindings bindings;
@@ -6641,7 +6648,7 @@ static PettaBlockEffect petta_block_inferred_call_effect(
             if (!atom_has_vars(actual))
                 continue;
             Atom *type = actual->kind == ATOM_VAR && environment
-                ? bindings_lookup_var(environment, actual) : NULL;
+                ? petta_block_observe_type_binding(check, environment, actual) : NULL;
             if (!type || !petta_block_position_proven_exhaustive(
                              check, call->expr.elems[0],
                              call->expr.len - 1u,
@@ -6679,7 +6686,7 @@ static PettaBlockEffect petta_block_closure_value_effect(
         required_closure->expr.len < 2u)
         return PETTA_BLOCK_EFFECT_UNKNOWN;
     if (value->kind == ATOM_VAR && environment) {
-        Atom *known = bindings_lookup_var(environment, value);
+        Atom *known = petta_block_observe_type_binding(check, environment, value);
         return known
             ? petta_block_signature_effect(known)
             : PETTA_BLOCK_EFFECT_UNKNOWN;
@@ -6861,11 +6868,8 @@ static PettaBlockEffect petta_block_call_selection_effect(
             source_selection_unknown = true;
             continue;
         }
-        Atom *fresh_equation = atom_freshen_epoch(
-            &check->scratch, equation, (uint32_t)fresh_var_id());
-        Atom *fresh_call = atom_freshen_epoch(
-            &check->scratch, call,
-            (uint32_t)fresh_var_id());
+        Atom *fresh_equation = cetta_instantiate_frame_syntax(&check->scratch, equation);
+        Atom *fresh_call = cetta_instantiate_frame_syntax(&check->scratch, call);
         if (!fresh_equation || !fresh_call) {
             free(matched_lhs);
             return PETTA_BLOCK_EFFECT_UNKNOWN;
@@ -6921,7 +6925,7 @@ static PettaBlockEffect petta_block_call_selection_effect(
         if (!atom_has_vars(actual))
             continue;
         Atom *type = actual->kind == ATOM_VAR && environment
-            ? bindings_lookup_var(environment, actual) : NULL;
+            ? petta_block_observe_type_binding(check, environment, actual) : NULL;
         if (!type || !petta_block_position_proven_exhaustive(
                          check, call->expr.elems[0], arity,
                          argument - 1u, type))
@@ -7164,7 +7168,7 @@ static PettaBlockEffect petta_block_expression_effect(
         return PETTA_BLOCK_EFFECT_DET;
     const char *head = petta_block_symbol_name(expression->expr.elems[0]);
     if (!head && expression->expr.elems[0]->kind == ATOM_VAR && environment) {
-        Atom *closure_type = bindings_lookup_var(
+        Atom *closure_type = petta_block_observe_type_binding(check,
             environment, expression->expr.elems[0]);
         if (!closure_type)
             return PETTA_BLOCK_EFFECT_UNKNOWN;
@@ -7341,7 +7345,7 @@ static PettaBlockEffect petta_block_expression_effect(
              expression->expr.len == 3u) {
         Atom *value = expression->expr.elems[2];
         Atom *value_type = value->kind == ATOM_VAR && environment
-            ? bindings_lookup_var(environment, value) : NULL;
+            ? petta_block_observe_type_binding(check, environment, value) : NULL;
         intrinsic = value->kind == ATOM_EXPR ||
                     petta_block_type_is_nominal(check, value_type) ||
                     petta_block_type_provably_nonfunction(value_type)
@@ -7455,8 +7459,8 @@ static PettaBlockEffect petta_block_expression_effect(
             petta_block_head_is(condition, "is-expr") &&
             condition->expr.len == 2u &&
             condition->expr.elems[1]->kind == ATOM_VAR &&
-            !bindings_lookup_var(
-                &then_environment, condition->expr.elems[1])) {
+            !bindings_lookup_value_id(
+                &then_environment, condition->expr.elems[1]->var_id).skeleton) {
             Atom *expression_type = atom_symbol(
                 &check->scratch, "Expression");
             then_cloned = expression_type &&
@@ -7527,7 +7531,7 @@ static PettaBlockEffect petta_block_expression_effect(
         }
         bool incomplete = !catch_all && scrutinee_ground && !literal_match;
         if (!catch_all && scrutinee->kind == ATOM_VAR && environment) {
-            Atom *type = bindings_lookup_var(environment, scrutinee);
+            Atom *type = petta_block_observe_type_binding(check, environment, scrutinee);
             const char *type_name = petta_block_symbol_name(type);
             if (type_name && (strcmp(type_name, "Number") == 0 ||
                               strcmp(type_name, "String") == 0))
@@ -7633,10 +7637,8 @@ static bool petta_block_clause_heads_overlap(
         left->kind != ATOM_EXPR || right->kind != ATOM_EXPR ||
         left->expr.len != right->expr.len)
         return false;
-    Atom *fresh_left = atom_freshen_epoch(
-        &check->scratch, left, (uint32_t)fresh_var_id());
-    Atom *fresh_right = atom_freshen_epoch(
-        &check->scratch, right, (uint32_t)fresh_var_id());
+    Atom *fresh_left = cetta_instantiate_frame_syntax(&check->scratch, left);
+    Atom *fresh_right = cetta_instantiate_frame_syntax(&check->scratch, right);
     if (!fresh_left || !fresh_right)
         return true;
     Bindings bindings;
@@ -8189,8 +8191,7 @@ static bool petta_block_clause_signature_survives(
         !signature || signature->kind != ATOM_EXPR ||
         signature->expr.len != lhs->expr.len + 1u)
         return false;
-    Atom *fresh = atom_freshen_epoch(
-        &check->scratch, signature, (uint32_t)fresh_var_id());
+    Atom *fresh = cetta_instantiate_frame_syntax(&check->scratch, signature);
     if (!fresh) {
         (void)petta_block_fault(
             check, PETTA_TYPECHECK_FAULT_ALLOCATION,
@@ -8421,8 +8422,7 @@ static bool petta_block_check_equation(
         check->result->equations_checked++;
         return true;
     }
-    Atom *fresh = atom_freshen_epoch(
-        &check->scratch, signature, (uint32_t)fresh_var_id());
+    Atom *fresh = cetta_instantiate_frame_syntax(&check->scratch, signature);
     if (!fresh)
         return petta_block_fault(
             check, PETTA_TYPECHECK_FAULT_ALLOCATION,
@@ -8470,7 +8470,7 @@ static bool petta_block_check_equation(
         Atom *variable = atom_var_with_id(
             &check->scratch, "head-type", input_variables[index]);
         Atom *resolved = variable
-            ? petta_block_resolve_binding(&environment, variable)
+            ? petta_block_resolve_binding(check, &environment, variable)
             : NULL;
         head_specialized[index] = resolved &&
             resolved->kind != ATOM_VAR &&
@@ -8536,7 +8536,7 @@ static bool petta_block_check_equation(
             &check->scratch, "promised-type",
             promised_variables[index]);
         Atom *resolved = variable
-            ? petta_block_resolve_binding(&environment, variable)
+            ? petta_block_resolve_binding(check, &environment, variable)
             : NULL;
         if (!resolved ||
             (resolved->kind != ATOM_VAR &&
@@ -8557,7 +8557,7 @@ static bool petta_block_check_equation(
     }
     if (valid && output_only_variable) {
         Atom *resolved = petta_block_resolve_binding(
-            &environment, declared_output);
+            check, &environment, declared_output);
         if (!resolved ||
             (resolved->kind != ATOM_VAR &&
              !petta_block_wildcard(resolved))) {
