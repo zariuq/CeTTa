@@ -131,6 +131,7 @@ typedef struct {
 } TermUniverseStoreFormatObserverEntry;
 
 struct TermUniverse {
+    CettaFrameIdentityScope frame_identities;
     /* Process-local identity plus a storage generation make derived pointer
        accelerators unable to revive AtomIds after object reuse or reset. */
     uint64_t instance_id;

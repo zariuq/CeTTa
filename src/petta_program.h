@@ -209,6 +209,16 @@ typedef struct {
     /* An invalid derived fact is unknown and requires exact recomputation. */
     bool lhs_contains_cons_constraint_valid;
     bool lhs_contains_cons_constraint;
+    /*
+     * MatchDecision coordinate compiled from the equation: the first
+     * rigid argument is `(: tag …)` with `tag` not a variable.
+     * `colon_tag_argument` is 0-based among call arguments (Maranget;
+     * Sekar, Ramakrishnan, Voronkov).  The ordinary matcher remains
+     * authority for every survivor.
+     */
+    bool has_colon_tag;
+    uint32_t colon_tag_argument;
+    Atom *colon_tag;
 } PettaEquationActivationLayout;
 
 typedef struct {
@@ -245,6 +255,25 @@ bool petta_equation_template_variable_inventory(
     const VarId **source_ids_out,
     Atom *const **source_variables_out,
     uint32_t *variable_count_out);
+
+/* Borrow the immutable schema; a binding activation retains its own reference. */
+BindingsFrameSchema *petta_equation_template_frame_schema(
+    const PettaEquationTemplate *template);
+
+/* Program-owned execution syntax uses dense frame-local variable slots.
+ * The candidate's equation separately retains authored occurrence identity. */
+Atom *petta_equation_template_syntax(const PettaEquationTemplate *template);
+
+/* True when the first rigid argument of `lhs` is `(: tag …)` with `tag`
+ * not a variable.  `tag_out` borrows that tag.  `argument_index_out` is
+ * 0-based among call arguments (argument 0 is `lhs->expr.elems[1]`). */
+bool petta_equation_lhs_colon_tag(
+    Atom *lhs, Atom **tag_out, uint32_t *argument_index_out);
+
+/* Fill the colon-tag coordinate on a layout from its `lhs`.  One helper
+ * for the planned compiler and the fallback clause snapshot. */
+void petta_equation_activation_layout_set_colon_tag(
+    PettaEquationActivationLayout *layout);
 
 /* Borrow the exact finite LHS occurrence plan compiled with this equation.
  * NULL means the source lay outside the admitted acyclic first-order tree

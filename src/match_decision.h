@@ -93,6 +93,7 @@ typedef bool (*CettaMatchDecisionVerifyCandidateFn)(
 typedef struct {
     uint64_t compilations;
     uint64_t runs;
+    uint64_t code_tree_node_visits;
     uint64_t clause_inputs;
     uint64_t clause_survivors;
     uint64_t linear_fallbacks;

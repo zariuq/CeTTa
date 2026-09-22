@@ -6,6 +6,7 @@
 #include "shared_transition.h"
 #include "stats.h"
 #include "symbol.h"
+#include "term_canon.h"
 
 #include <stdlib.h>
 #include <pthread.h>
@@ -13,10 +14,6 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-
-#ifndef CETTA_PETTA_CLAUSE_SNAPSHOT_APPEND_REUSE
-#define CETTA_PETTA_CLAUSE_SNAPSHOT_APPEND_REUSE 1
-#endif
 
 struct PettaClauseSnapshotStorage {
     atomic_size_t references;
@@ -254,10 +251,12 @@ struct PettaEquationTemplateC0 {
 };
 
 struct PettaEquationTemplate {
+    Atom *equation;
     Atom *lhs;
     Atom *rhs;
     const CettaOpenPatternPlan *lhs_match_plan;
-    VarId *source_ids;
+    BindingsFrameSchema *frame_schema;
+    struct PettaEquationTemplate *next_owned;
     Atom **source_variables;
     uint32_t variable_count;
 };
@@ -373,6 +372,7 @@ typedef struct {
 
 struct PettaProgram {
     Arena plans;
+    PettaEquationTemplate *equation_templates;
     PettaEquationTemplateC0 **equation_template_c0;
     size_t equation_template_c0_len;
     size_t equation_template_c0_cap;
@@ -793,71 +793,46 @@ static bool petta_program_variable_union_count(
 
 static const PettaEquationTemplate *petta_program_compile_equation_template(
         PettaProgram *program, Atom *lhs, Atom *rhs,
-        const PettaProgramVarSet *lhs_variables,
-        const PettaProgramVarSet *rhs_variables,
         uint32_t variable_count) {
-    if (!program || !lhs || !rhs || !lhs_variables || !rhs_variables)
+    if (!program || !lhs || !rhs)
         return NULL;
-    PettaEquationTemplate *template = arena_alloc(
-        &program->plans, sizeof(*template));
-    if (!template)
+    CettaVarMap inventory = {0};
+    Atom *compiled_lhs = cetta_compile_frame_syntax(&program->plans, lhs, &inventory);
+    Atom *compiled_rhs = compiled_lhs
+        ? cetta_compile_frame_syntax(&program->plans, rhs, &inventory) : NULL;
+    if (!compiled_rhs || inventory.len != variable_count) {
+        cetta_var_map_free(&inventory);
         return NULL;
-    *template = (PettaEquationTemplate){
-        .lhs = lhs,
-        .rhs = rhs,
-        .variable_count = variable_count,
+    }
+    PettaEquationTemplate *template = arena_alloc(&program->plans, sizeof(*template));
+    Atom *equation_items[] = {
+        atom_symbol(&program->plans, "="), compiled_lhs, compiled_rhs,
     };
-    if (variable_count == 0u) {
-        template->lhs_match_plan =
-            petta_program_compile_open_pattern_plan(
-                program, lhs, NULL, 0u);
-        return template;
+    *template = (PettaEquationTemplate){
+        .equation = atom_expr(&program->plans, equation_items, 3u),
+        .lhs = compiled_lhs,
+        .rhs = compiled_rhs,
+        .variable_count = variable_count,
+        .next_owned = program->equation_templates,
+    };
+    program->equation_templates = template;
+    template->source_variables = variable_count ? arena_alloc(
+        &program->plans, sizeof(*template->source_variables) * (size_t)variable_count) : NULL;
+    VarId *slots = variable_count
+        ? cetta_malloc(sizeof(*slots) * (size_t)variable_count) : NULL;
+    for (uint32_t slot = 0u; slot < variable_count; slot++) {
+        slots[slot] = (VarId)slot + 1u;
+        template->source_variables[slot] = inventory.items[slot].mapped_var;
     }
-    template->source_ids = arena_alloc(
-        &program->plans,
-        sizeof(*template->source_ids) * (size_t)variable_count);
-    template->source_variables = arena_alloc(
-        &program->plans,
-        sizeof(*template->source_variables) * (size_t)variable_count);
-    if (!template->source_ids || !template->source_variables)
+    template->frame_schema = bindings_frame_schema_new_presented(
+        slots, template->source_variables, variable_count);
+    free(slots);
+    cetta_var_map_free(&inventory);
+    if (!template->equation || !template->frame_schema)
         return NULL;
-
-    size_t lhs_index = 0u;
-    size_t rhs_index = 0u;
-    uint32_t write = 0u;
-    while (lhs_index < lhs_variables->len ||
-           rhs_index < rhs_variables->len) {
-        bool take_lhs = rhs_index >= rhs_variables->len ||
-            (lhs_index < lhs_variables->len &&
-             lhs_variables->items[lhs_index] <=
-                 rhs_variables->items[rhs_index]);
-        VarId id;
-        Atom *variable;
-        if (take_lhs) {
-            id = lhs_variables->items[lhs_index];
-            variable = lhs_variables->variables[lhs_index++];
-            if (rhs_index < rhs_variables->len &&
-                rhs_variables->items[rhs_index] == id) {
-                rhs_index++;
-            }
-        } else {
-            id = rhs_variables->items[rhs_index];
-            variable = rhs_variables->variables[rhs_index++];
-        }
-        if (write >= variable_count || !variable ||
-            variable->kind != ATOM_VAR || variable->var_id != id) {
-            return NULL;
-        }
-        template->source_ids[write] = id;
-        template->source_variables[write] = variable;
-        write++;
-    }
-    if (write != variable_count)
-        return NULL;
-    template->lhs_match_plan =
-        petta_program_compile_open_pattern_plan(
-            program, lhs, template->source_ids,
-            template->variable_count);
+    template->lhs_match_plan = petta_program_compile_open_pattern_plan(
+        program, compiled_lhs,
+        bindings_frame_schema_source_ids(template->frame_schema), variable_count);
     return template;
 }
 
@@ -870,7 +845,7 @@ static bool petta_equation_template_find_variable_slot(
         const PettaEquationTemplate *template, VarId id,
         uint32_t *slot_out) {
     return template && petta_program_variable_slot(
-        template->source_ids, template->variable_count,
+        bindings_frame_schema_source_ids(template->frame_schema), template->variable_count,
         id, slot_out);
 }
 
@@ -997,10 +972,9 @@ static PettaEquationTemplateC0 *petta_program_compile_equation_template_c0(
             union_span <= PETTA_EQUATION_TEMPLATE_C0_MAX_VARIABLE_SPAN;
     }
     *open_template_admitted_out = open_admitted;
-    if (open_admitted) {
+    if (variables_collected) {
         *equation_template_out = petta_program_compile_equation_template(
-            program, lhs, rhs, &lhs_variables, &rhs_variables,
-            *static_variable_count_out);
+            program, lhs, rhs, *static_variable_count_out);
     }
     bool admitted =
         open_admitted &&
@@ -1108,11 +1082,20 @@ bool petta_equation_template_variable_inventory(
         !variable_count_out) {
         return false;
     }
-    *source_ids_out = template->source_ids;
+    *source_ids_out = bindings_frame_schema_source_ids(template->frame_schema);
     *source_variables_out = template->source_variables;
     *variable_count_out = template->variable_count;
     return template->variable_count == 0u ||
-        (template->source_ids && template->source_variables);
+        (template->frame_schema && template->source_variables);
+}
+
+Atom *petta_equation_template_syntax(const PettaEquationTemplate *template) {
+    return template ? template->equation : NULL;
+}
+
+BindingsFrameSchema *petta_equation_template_frame_schema(
+        const PettaEquationTemplate *template) {
+    return template ? template->frame_schema : NULL;
 }
 
 const CettaOpenPatternPlan *petta_equation_template_lhs_match_plan(
@@ -1513,6 +1496,52 @@ static bool petta_equation_lhs_admits_any_named_head(
            lhs->expr.elems[0]->kind == ATOM_VAR;
 }
 
+bool petta_equation_lhs_colon_tag(
+        Atom *lhs, Atom **tag_out, uint32_t *argument_index_out) {
+    if (tag_out)
+        *tag_out = NULL;
+    if (argument_index_out)
+        *argument_index_out = 0u;
+    if (!lhs || lhs->kind != ATOM_EXPR || lhs->expr.len < 2u)
+        return false;
+    /* Arguments are elems[1..].  Skip variables; the first rigid
+     * argument is the coordinate only when it is `(: tag …)` with
+     * `tag` not a variable.  A rigid non-colon argument means this
+     * equation has no colon-tag coordinate (grid, scale). */
+    for (CettaExprIndex i = 1u; i < lhs->expr.len; i++) {
+        Atom *argument = lhs->expr.elems[i];
+        Atom *tag;
+        if (!argument || argument->kind == ATOM_VAR)
+            continue;
+        if (argument->kind != ATOM_EXPR ||
+            argument->expr.len < 2u ||
+            !atom_is_symbol_id(
+                argument->expr.elems[0], g_builtin_syms.colon)) {
+            return false;
+        }
+        tag = argument->expr.elems[1];
+        if (!tag || tag->kind == ATOM_VAR)
+            return false;
+        if (tag_out)
+            *tag_out = tag;
+        if (argument_index_out)
+            *argument_index_out = (uint32_t)(i - 1u);
+        return true;
+    }
+    return false;
+}
+
+void petta_equation_activation_layout_set_colon_tag(
+        PettaEquationActivationLayout *layout) {
+    uint32_t argument = 0u;
+    if (!layout) {
+        return;
+    }
+    layout->has_colon_tag = petta_equation_lhs_colon_tag(
+        layout->lhs, &layout->colon_tag, &argument);
+    layout->colon_tag_argument = layout->has_colon_tag ? argument : 0u;
+}
+
 static PettaEquationActivationLayout petta_equation_activation_layout(
     Atom *equation, uint32_t static_variable_count) {
     PettaEquationActivationLayout layout = {0};
@@ -1522,6 +1551,7 @@ static PettaEquationActivationLayout petta_equation_activation_layout(
         layout.lhs_contains_cons_constraint_valid = true;
         layout.lhs_contains_cons_constraint =
             petta_semantics_contains_cons_constraint(layout.lhs);
+        petta_equation_activation_layout_set_colon_tag(&layout);
     }
     return layout;
 }
@@ -2498,6 +2528,59 @@ static const PettaPlanNode *petta_plan_build(
     return plan;
 }
 
+/* Renaming variables does not change control or callability facts.  Rebuild
+ * positional code against the compiled syntax so no program retains a source
+ * pointer from the authored representation. */
+static const PettaPlanNode *petta_plan_rebind_frame_syntax(
+        PettaProgram *program, Atom *syntax, const PettaPlanNode *source) {
+    if (!program || !syntax || !source)
+        return NULL;
+    PettaPlanNode *root = arena_alloc(&program->plans, sizeof(*root));
+    *root = *source;
+    PettaPlanBuildItem *work = NULL;
+    size_t len = 0u, cap = 0u;
+    if (!petta_program_reserve((void **)&work, &cap, 1u, sizeof(*work)))
+        return NULL;
+    work[len++] = (PettaPlanBuildItem){.atom = syntax, .plan = root};
+    bool ok = true;
+    while (len && ok) {
+        PettaPlanBuildItem item = work[--len];
+        PettaPlanNode *node = item.plan;
+        node->deterministic_region = NULL;
+        node->region_hole_program = NULL;
+        node->has_equation_variable_slot = false;
+        if (item.atom->kind != ATOM_EXPR) {
+            ok = node->child_count == 0u;
+            node->children = NULL;
+            continue;
+        }
+        CettaExprLen count = item.atom->expr.len;
+        if (count != node->child_count ||
+            !cetta_expr_len_mul_fits_size(count, sizeof(*node->children)) ||
+            (size_t)count > SIZE_MAX - len ||
+            !petta_program_reserve((void **)&work, &cap,
+                                  len + (size_t)count, sizeof(*work))) {
+            ok = false;
+            break;
+        }
+        PettaPlanNode *children = count ? arena_alloc(
+            &program->plans, sizeof(*children) * (size_t)count) : NULL;
+        if (count)
+            memcpy(children, node->children, sizeof(*children) * (size_t)count);
+        node->children = children;
+        for (CettaExprIndex child = 0u; child < count; child++)
+            work[len++] = (PettaPlanBuildItem){
+                .atom = item.atom->expr.elems[child], .plan = &children[child],
+            };
+    }
+    free(work);
+    if (!ok)
+        return NULL;
+    petta_plan_compile_deterministic_regions(program, syntax, root);
+    petta_plan_compile_region_hole_programs(program, syntax, root);
+    return root;
+}
+
 static bool petta_program_collect_callability(
     const PettaProgram *program,
     PettaCallabilityDomain *callability) {
@@ -3071,6 +3154,9 @@ void petta_program_free(PettaProgram *program) {
     free(program->equation_template_c0);
     free(program->predeclared_callability.named_heads);
     free(program->spaces);
+    for (PettaEquationTemplate *template = program->equation_templates;
+         template; template = template->next_owned)
+        bindings_frame_schema_release(template->frame_schema);
     arena_free(&program->plans);
     free(program);
 }
@@ -3254,10 +3340,12 @@ bool petta_program_note_add(
             &static_variable_count,
             &open_template_admitted,
             &equation_template);
-    if (equation_template && plan &&
-        !petta_plan_assign_equation_variable_slots(
-            atom, plan, equation_template)) {
-        return false;
+    if (equation_template && plan) {
+        plan = petta_plan_rebind_frame_syntax(
+            program, equation_template->equation, plan);
+        if (!plan || !petta_plan_assign_equation_variable_slots(
+                equation_template->equation, plan, equation_template))
+            return false;
     }
     if (open_template_admitted &&
         !petta_plan_mark_open_template_admitted(
@@ -3872,51 +3960,6 @@ bool petta_program_clause_snapshot_lease_clone(
     return petta_program_clause_snapshot_lease_pin(out);
 }
 
-/* A data-only append changes the full read revision, so a cached occurrence
- * identifier cannot be handed out verbatim.  Selection currency plus the
- * unchanged prefix prove that rebasing its read evidence is valid.  The
- * rebase is deliberately copied into the caller-owned lease: the shared
- * cache remains immutable, and a failed provenance check simply declines to
- * the ordinary live reconstruction below. */
-static bool petta_program_clause_snapshot_lease_rebase(
-        const PettaProgramClauseSnapshot *snapshot, Space *space,
-        PettaClauseSnapshotLease *lease) {
-    if (!snapshot || !space || !lease ||
-        !petta_program_clause_snapshot_key_matches_live_space(
-            snapshot->key, space)) {
-        return false;
-    }
-    SpaceReadToken current = space_read_token(space);
-    if (!space_read_token_matches_live_space(current, space))
-        return false;
-    if (snapshot->len == 0u) {
-        lease->items = snapshot->candidates;
-        lease->len = 0u;
-        return true;
-    }
-    if (snapshot->len > SIZE_MAX / sizeof(*lease->owned_items))
-        return false;
-    PettaClauseCandidate *owned = cetta_malloc(
-        sizeof(*owned) * snapshot->len);
-    if (!owned)
-        return false;
-    memcpy(owned, snapshot->candidates, sizeof(*owned) * snapshot->len);
-    for (size_t index = 0u; index < snapshot->len; index++) {
-        owned[index].occurrence.read = current;
-        SpaceEquationOccurrence occurrence = {0};
-        if (!space_equation_occurrence_resolve(
-                owned[index].occurrence, &occurrence) ||
-            occurrence.equation != owned[index].equation) {
-            free(owned);
-            return false;
-        }
-    }
-    lease->items = owned;
-    lease->len = snapshot->len;
-    lease->owned_items = owned;
-    return true;
-}
-
 static bool petta_program_clause_snapshot_lease_from_entry(
     const PettaProgramSpace *entry,
     PettaProgramSpace *publication_authority,
@@ -3946,19 +3989,14 @@ static bool petta_program_clause_snapshot_lease_from_entry(
               publication_authority, head, space)
         : NULL;
     if (cached) {
-        if (space_read_token_matches_live_space(cached->source, space)) {
-            if (!petta_clause_storage_retain(cached->storage))
-                return false;
-            lease->items = cached->candidates;
-            lease->len = cached->len;
-            lease->storage = cached->storage;
-        } else if (!CETTA_PETTA_CLAUSE_SNAPSHOT_APPEND_REUSE ||
-                   !petta_program_clause_snapshot_lease_rebase(
-                       cached, space, lease)) {
-            cached = NULL;
-        }
-    }
-    if (cached) {
+        /* The snapshot key is the equation projection and prefix epoch.
+         * Data-only appends bump `revision` but leave that key intact, so
+         * the cached bag is the pin: do not copy it to restamp read tokens. */
+        if (!petta_clause_storage_retain(cached->storage))
+            return false;
+        lease->items = cached->candidates;
+        lease->len = cached->len;
+        lease->storage = cached->storage;
         if (stats) {
             stats->cache_hits = 1u;
             stats->candidates_emitted = cached->len;
@@ -4219,7 +4257,9 @@ static bool petta_program_clause_snapshot_lease_from_entry(
                     ? record->equation_template : NULL,
                 .activation_layout =
                     petta_equation_activation_layout(
-                        actual[matched].equation,
+                        admit_local_execution_payload && record->equation_template
+                            ? record->equation_template->equation
+                            : actual[matched].equation,
                         admit_local_execution_payload
                             ? record->static_variable_count : 0u),
                 .occurrence = actual[matched].occurrence,
@@ -4448,6 +4488,7 @@ static bool petta_program_inferred_signature_lookup_internal(
     const CettaNikDirectAuthorityStampV1 *authority,
     SymbolId head, CettaExprLen arity,
     Arena *arena, Atom **signature_out) {
+        CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
     if (signature_out)
         *signature_out = NULL;
     if (!signature_out || !arena || head == SYMBOL_ID_NONE ||
@@ -4468,7 +4509,7 @@ static bool petta_program_inferred_signature_lookup_internal(
     *signature_out = term_universe_copy_atom_epoch(
         space->native.universe, arena,
         entry->inferred_signatures[index].signature_id,
-        fresh_var_suffix());
+        cetta_frame_identity_scope_fresh(&frame_identity_scope));
     return *signature_out != NULL;
 }
 
@@ -4526,10 +4567,11 @@ static bool petta_program_inferred_signatures_lookup_internal(
         return false;
     Atom **copies = cetta_malloc(sizeof(*copies) * count);
     for (size_t index = 0u; index < count; index++) {
+        CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
         copies[index] = term_universe_copy_atom_epoch(
             space->native.universe, arena,
             entry->inferred_signatures[first + index].signature_id,
-            fresh_var_suffix());
+            cetta_frame_identity_scope_fresh(&frame_identity_scope));
         if (!copies[index]) {
             free(copies);
             return false;
@@ -4794,8 +4836,7 @@ uint32_t petta_program_declared_types(
                 free(types);
                 return 0u;
             }
-            Atom *fresh = atom_freshen_epoch(
-                arena, type, fresh_var_suffix());
+            Atom *fresh = cetta_instantiate_frame_syntax(arena, type);
             if (!fresh) {
                 free(types);
                 return 0u;

@@ -50,13 +50,27 @@ static inline bool space_engine_supports_exec(SpaceEngine engine) {
 }
 
 typedef struct {
+    CettaIndex index;
+    uint64_t generation;
+} SpaceOccurrenceTombstone;
+
+typedef struct {
     DiscNode *match_trie;
     bool match_trie_dirty;
     CettaCount match_trie_stale_occurrences;
+    uint32_t match_trie_pins;
+    uint64_t occurrence_generation;
+    SpaceOccurrenceTombstone *tombstones;
+    size_t tombstone_len;
+    size_t tombstone_cap;
     SubstTree *stree;
     bool stree_dirty;
     CettaCount stree_stale_occurrences;
 } SpaceMatchNativeState;
+
+void space_match_native_ensure_trie(Space *s);
+void space_match_native_pin_trie(Space *s);
+void space_match_native_unpin_trie(Space *s);
 
 typedef enum {
     IMPORTED_FLAT_SYMBOL = 0,
@@ -89,6 +103,7 @@ typedef struct {
 typedef struct {
     CettaIndex atom_idx;
     uint32_t epoch;
+    bool owns_identity;
     ImportedFlatToken *tokens;
     CettaIndex len;
 } ImportedFlatEntry;

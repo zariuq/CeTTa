@@ -149,9 +149,9 @@ BROAD_RUST_DRIFT_NOTES: dict[str, dict[str, Any]] = {
     },
     "tests/test_quote_substitution_no_reapply_regression.metta": {
         "note": (
-            "The official HE snapshot does not pin quote hygiene. CeTTa keeps the "
-            "hygienic no-reapply behavior; Rust HE re-applies and fails the "
-            "regression."
+            "Logical let rejects finite-tree self-binding through quotation. A "
+            "distinct destination permits construction; chain instantiates its "
+            "template once without adding a logical self-binding."
         ),
         "spec_refs": [
             "he_metta_official_specs.md:36 special-form recognizers do not cover every expression using a special atom",

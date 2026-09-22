@@ -150,6 +150,7 @@ IDENTITY_GROUNDED_KIND_C: dict[str, str] = {
     "state": "GV_STATE",
     "capture": "GV_CAPTURE",
     "foreign": "GV_FOREIGN",
+    "bindings": "GV_BINDINGS",
 }
 
 

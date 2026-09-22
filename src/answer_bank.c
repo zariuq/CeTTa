@@ -49,27 +49,8 @@ static bool answer_bank_reserve(AnswerBank *bank, CettaCount needed) {
 }
 
 static bool answer_bank_promote_bindings(Arena *dst, Bindings *bindings) {
-    if (!dst || !bindings)
-        return true;
-    if (!bindings_prepare_logical_write(bindings))
-        return false;
-    for (uint32_t i = 0; i < bindings->len; i++) {
-        Atom *promoted = atom_deep_copy(dst, bindings->entries[i].val);
-        if (bindings->entries[i].val && !promoted)
-            return false;
-        bindings->entries[i].val = promoted;
-    }
-    for (uint32_t i = 0; i < bindings->eq_len; i++) {
-        Atom *lhs = atom_deep_copy(dst, bindings->constraints[i].lhs);
-        Atom *rhs = atom_deep_copy(dst, bindings->constraints[i].rhs);
-        if ((bindings->constraints[i].lhs && !lhs) ||
-            (bindings->constraints[i].rhs && !rhs)) {
-            return false;
-        }
-        bindings->constraints[i].lhs = lhs;
-        bindings->constraints[i].rhs = rhs;
-    }
-    return true;
+    return !dst || !bindings ||
+        bindings_promote_logical_atoms_to_arena(bindings, dst);
 }
 
 static void answer_bank_assert_bindings_owned(const AnswerBank *bank,
@@ -77,15 +58,17 @@ static void answer_bank_assert_bindings_owned(const AnswerBank *bank,
                                               const char *site) {
     if (!bank || !bindings)
         return;
-    for (uint32_t i = 0; i < bindings->len; i++) {
-        cetta_provenance_assert_not_transient_except(
-            bindings_entry_at(bindings, i)->val, site, &bank->arena);
+    BindingsIterator iterator = {.bindings = bindings};
+    Binding binding;
+    while (bindings_iterator_next(&iterator, &binding)) {
+        cetta_provenance_assert_not_transient_except(binding.name_key, site, &bank->arena);
+        cetta_provenance_assert_not_transient_except(binding.value.skeleton, site, &bank->arena);
     }
     for (uint32_t i = 0; i < bindings->eq_len; i++) {
         cetta_provenance_assert_not_transient_except(
-            bindings->constraints[i].lhs, site, &bank->arena);
+            bindings->constraints[i].lhs.skeleton, site, &bank->arena);
         cetta_provenance_assert_not_transient_except(
-            bindings->constraints[i].rhs, site, &bank->arena);
+            bindings->constraints[i].rhs.skeleton, site, &bank->arena);
     }
 }
 

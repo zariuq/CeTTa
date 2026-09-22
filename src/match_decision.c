@@ -1,5 +1,6 @@
 #include "match_decision.h"
 #include "stats.h"
+#include "select/code_tree.h"
 #include "generated/match_decision_policy_v1.generated.h"
 
 #include <stdatomic.h>
@@ -12,7 +13,6 @@ enum {
     CETTA_MATCH_DECISION_MAX_PATHS = 4096u,
     CETTA_MATCH_DECISION_KEY_INDEX_MIN_KEYS = 8u,
     CETTA_MATCH_DECISION_KEY_INDEX_MIN_CAPACITY = 16u,
-    CETTA_MATCH_DECISION_CONJUNCTIVE_MAX_MASK_BYTES = 64u * 1024u * 1024u,
     CETTA_MATCH_DECISION_MAX_EQUALITIES = 4096u,
 };
 
@@ -54,7 +54,9 @@ typedef struct {
     uint32_t *wildcard_refs;
     uint32_t wildcard_count;
     uint32_t wildcard_capacity;
-    uint64_t *wildcard_bits;
+    uint32_t *observed_tags;
+    uint64_t observed_epoch;
+    CettaCodeTreeObservation observation;
 } CettaMatchDecisionPath;
 
 /* One immutable node in the union of every demanded path prefix.  Parent
@@ -107,9 +109,9 @@ struct CettaMatchDecision {
     size_t candidate_source_capacity;
     CettaMatchDecisionRefList *working_lists;
     size_t working_list_capacity;
-    uint64_t *candidate_bits;
-    uint64_t *path_bits;
-    size_t bit_word_count;
+    CettaCodeTree *code_tree;
+    CettaCodeTreeCursor *tree_cursor;
+    uint64_t tree_epoch;
     CettaMatchDecisionEquality *equalities;
     size_t equality_count;
     size_t equality_capacity;
@@ -718,7 +720,7 @@ static void match_decision_path_free(CettaMatchDecisionPath *path) {
     free(path->key_slots);
     free(path->keys);
     free(path->wildcard_refs);
-    free(path->wildcard_bits);
+    free(path->observed_tags);
     free(path->path);
     memset(path, 0, sizeof(*path));
 }
@@ -984,42 +986,64 @@ decline:
     return true;
 }
 
-static bool match_decision_build_conjunctive_masks(
-    CettaMatchDecision *decision) {
-    if (!decision || decision->clause_count == 0u)
+/* Each path partitions occurrences into disjoint key lists and a wildcard
+ * list. Transpose this inventory once into the code tree; selection never
+ * constructs or intersects per-path occurrence masks. */
+static bool match_decision_build_code_tree(CettaMatchDecision *decision) {
+    size_t paths = decision->path_count, clauses = decision->clause_count;
+    if (paths && clauses > SIZE_MAX / sizeof(uint32_t) / paths)
         return false;
-    size_t words = decision->clause_count / 64u +
-        (decision->clause_count % 64u != 0u ? 1u : 0u);
-    if (words == 0u || words > SIZE_MAX / sizeof(uint64_t) ||
-        decision->path_count > SIZE_MAX / words)
-        return false;
-    size_t path_words = decision->path_count * words;
-    if (path_words >
-        CETTA_MATCH_DECISION_CONJUNCTIVE_MAX_MASK_BYTES /
-            sizeof(uint64_t)) {
+    uint32_t *tags = paths ? malloc(paths * clauses * sizeof(*tags)) : NULL;
+    const uint32_t **patterns = malloc(clauses * sizeof(*patterns));
+    if ((paths && !tags) || !patterns) {
+        free(tags);
+        free(patterns);
         return false;
     }
-    decision->candidate_bits = calloc(words, sizeof(uint64_t));
-    decision->path_bits = calloc(words, sizeof(uint64_t));
-    if (!decision->candidate_bits || !decision->path_bits)
-        return false;
-    decision->bit_word_count = words;
-    for (size_t path_index = 0u;
-         path_index < decision->path_count; path_index++) {
-        CettaMatchDecisionPath *path = &decision->paths[path_index];
-        path->wildcard_bits = calloc(words, sizeof(uint64_t));
-        if (!path->wildcard_bits)
-            return false;
-        for (uint32_t index = 0u;
-             index < path->wildcard_count; index++) {
-            uint32_t clause = path->wildcard_refs[index];
-            if (clause >= decision->clause_count)
-                return false;
-            path->wildcard_bits[clause / 64u] |=
-                UINT64_C(1) << (clause % 64u);
+    for (size_t i = 0u; i < clauses; i++) {
+        patterns[i] = paths ? tags + i * paths : NULL;
+        for (size_t j = 0u; j < paths; j++)
+            tags[i * paths + j] = CETTA_CODE_TREE_UNKNOWN;
+    }
+    bool ok = true;
+    for (size_t i = 0u; i < paths && ok; i++) {
+        CettaMatchDecisionPath *path = &decision->paths[i];
+        path->observed_tags = malloc(path->key_count * sizeof(*path->observed_tags));
+        if (path->key_count && !path->observed_tags) {
+            ok = false;
+            break;
+        }
+        for (uint32_t k = 0u; k < path->key_count && ok; k++) {
+            const CettaMatchDecisionKey *key = &path->keys[k];
+            for (uint32_t r = 0u; r < key->clause_count; r++) {
+                uint32_t clause = key->clause_refs[r];
+                if (clause >= clauses) { ok = false; break; }
+                tags[clause * paths + i] = k;
+            }
         }
     }
-    return true;
+    if (ok) {
+        decision->code_tree = cetta_code_tree_build((uint32_t)paths,
+            patterns, (uint32_t)clauses);
+        decision->tree_cursor = cetta_code_tree_cursor_new(decision->code_tree);
+        ok = decision->code_tree && decision->tree_cursor;
+        if (ok) {
+            /* The tree now owns occurrence routing. Key dictionaries remain
+             * only to translate observations; posting lists have no reader. */
+            for (size_t i = 0u; i < paths; i++) {
+                CettaMatchDecisionPath *path = &decision->paths[i];
+                free(path->wildcard_refs);
+                path->wildcard_refs = NULL;
+                for (uint32_t k = 0u; k < path->key_count; k++) {
+                    free(path->keys[k].clause_refs);
+                    path->keys[k].clause_refs = NULL;
+                }
+            }
+        }
+    }
+    free(patterns);
+    free(tags);
+    return ok;
 }
 
 static CettaMatchDecision *cetta_match_decision_compile_with_dependency(
@@ -1091,20 +1115,9 @@ static CettaMatchDecision *cetta_match_decision_compile_with_dependency(
             return NULL;
         }
         if (mode == CETTA_MATCH_DECISION_CONJUNCTIVE &&
-            !match_decision_build_conjunctive_masks(decision)) {
-            /* Masks are an optional intersection plan. The completed deep
-             * index still supplies a conservative candidate set when their
-             * footprint or allocation cannot be supported. */
-            for (size_t path = 0u; path < decision->path_count; path++) {
-                free(decision->paths[path].wildcard_bits);
-                decision->paths[path].wildcard_bits = NULL;
-            }
-            free(decision->candidate_bits);
-            free(decision->path_bits);
-            decision->candidate_bits = NULL;
-            decision->path_bits = NULL;
-            decision->bit_word_count = 0u;
-            decision->mode = CETTA_MATCH_DECISION_DEEP;
+            !match_decision_build_code_tree(decision)) {
+            cetta_match_decision_free(decision);
+            return NULL;
         }
     }
     cetta_runtime_stats_inc(
@@ -1183,8 +1196,8 @@ void cetta_match_decision_free(CettaMatchDecision *decision) {
     free(decision->candidate_locals);
     free(decision->candidate_sources);
     free(decision->working_lists);
-    free(decision->candidate_bits);
-    free(decision->path_bits);
+    cetta_code_tree_cursor_free(decision->tree_cursor);
+    cetta_code_tree_free(decision->code_tree);
     free(decision->observation_nodes);
     free(decision->observation_states);
     free(decision->observation_values);
@@ -1435,6 +1448,11 @@ static void match_decision_prefix_observation_begin(
         decision->observation_selector_node_count;
     if (selector_node_count > decision->observation_node_count)
         selector_node_count = decision->observation_node_count;
+    if (decision->mode == CETTA_MATCH_DECISION_CONJUNCTIVE && !eager_reference) {
+        decision->observation_ready = true;
+        decision->stats.prefix_observation_runs++;
+        return;
+    }
     /* Selection consumes the complete selector graph, so stream that compact
      * region once in topological order.  UNKNOWN and ABSENT are absorbing:
      * the optimized realization propagates them without re-entering the
@@ -2032,17 +2050,60 @@ static bool match_decision_path_candidate_count(const CettaMatchDecisionQuery *q
               decision, path, value, value_absent, accepted_count);
 }
 
-static bool match_decision_bits_add_refs(
-    CettaMatchDecision *decision, uint64_t *bits,
-    const uint32_t *refs, uint32_t count) {
-    if (!decision || !bits || (count > 0u && !refs))
+typedef struct {
+    CettaMatchDecision *decision;
+    const CettaMatchDecisionQuery *query;
+    uint64_t ready_arguments;
+    bool observed_path;
+} CettaMatchDecisionTreeQuery;
+
+/* Observations are demanded only for reached tree nodes, and retained in
+ * query-local scratch so shared coordinates are resolved once per selection.
+ * Exact observations can admit both an arity key and a headed key. An open
+ * head uses the generated policy over all keys; it is never a missing tag. */
+static bool match_decision_tree_observe(void *context, uint32_t coordinate,
+                                       CettaCodeTreeObservation *observation) {
+    CettaMatchDecisionTreeQuery *selection = context;
+    CettaMatchDecision *decision = selection->decision;
+    if (coordinate >= decision->path_count)
         return false;
-    for (uint32_t index = 0u; index < count; index++) {
-        uint32_t clause = refs[index];
-        if (clause >= decision->clause_count)
-            return false;
-        bits[clause / 64u] |= UINT64_C(1) << (clause % 64u);
+    CettaMatchDecisionPath *path = &decision->paths[coordinate];
+    if (path->observed_epoch == decision->tree_epoch) {
+        *observation = path->observation;
+        return true;
     }
+    CettaGsltTermCursorV1 value = {0};
+    CettaMatchDecisionQueryState state = match_decision_query_at_compiled_path(
+        decision, selection->query, path, selection->ready_arguments, &value);
+    path->observation = (CettaCodeTreeObservation){
+        .tags = path->observed_tags, .include_free = true,
+    };
+    if (state == CETTA_MATCH_DECISION_QUERY_UNKNOWN) {
+        path->observation.all_tags = true;
+        decision->stats.unavailable_path_fallbacks++;
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MATCH_DECISION_UNAVAILABLE_PATH);
+    } else {
+        selection->observed_path = true;
+        path->observation.include_free = match_decision_policy(
+            selection->query, state, NULL, value) != CETTA_MD_POLICY_REFUTE;
+        if (match_decision_exact_key_available(selection->query, value)) {
+            const CettaMatchDecisionKey *keys[2] = {NULL, NULL};
+            uint32_t n = match_decision_path_exact_keys(selection->query,
+                decision, path, value, state == CETTA_MATCH_DECISION_QUERY_ABSENT, keys);
+            for (uint32_t k = 0u; k < n; k++)
+                path->observed_tags[path->observation.count++] =
+                    (uint32_t)(keys[k] - path->keys);
+        } else {
+            for (uint32_t k = 0u; k < path->key_count; k++) {
+                decision->stats.generic_key_policy_scans++;
+                if (match_decision_policy(selection->query, state, &path->keys[k], value)
+                    != CETTA_MD_POLICY_REFUTE)
+                    path->observed_tags[path->observation.count++] = k;
+            }
+        }
+    }
+    path->observed_epoch = decision->tree_epoch;
+    *observation = path->observation;
     return true;
 }
 
@@ -2050,108 +2111,25 @@ static bool match_decision_conjunctive_candidates(
     CettaMatchDecision *decision, const CettaMatchDecisionQuery *query,
     uint64_t ready_arguments, size_t *candidate_count,
     bool *observed_path) {
-    if (!decision || !query || !candidate_count || !observed_path ||
-        !decision->candidate_bits || !decision->path_bits ||
-        decision->bit_word_count == 0u) {
+    if (++decision->tree_epoch == 0u) {
+        for (size_t i = 0u; i < decision->path_count; i++)
+            decision->paths[i].observed_epoch = 0u;
+        decision->tree_epoch = 1u;
+    }
+    CettaMatchDecisionTreeQuery selection = {decision, query, ready_arguments, false};
+    const uint32_t *selected = NULL;
+    uint32_t count = 0u;
+    CettaCodeTreeStats stats = {0};
+    bool ok = cetta_code_tree_select_observed(decision->code_tree,
+        decision->tree_cursor, match_decision_tree_observe, &selection,
+        &selected, &count, &stats);
+    decision->stats.code_tree_node_visits += stats.node_visits;
+    if (!ok || !match_decision_reserve((void **)&decision->candidate_locals,
+            &decision->candidate_local_capacity, count, sizeof(*selected)))
         return false;
-    }
-    *candidate_count = 0u;
-    *observed_path = false;
-    for (size_t word = 0u; word < decision->bit_word_count; word++)
-        decision->candidate_bits[word] = UINT64_MAX;
-    size_t tail_bits = decision->clause_count % 64u;
-    if (tail_bits != 0u) {
-        decision->candidate_bits[decision->bit_word_count - 1u] =
-            (UINT64_C(1) << tail_bits) - 1u;
-    }
-
-    for (size_t path_index = 0u;
-         path_index < decision->path_count; path_index++) {
-        CettaMatchDecisionPath *path = &decision->paths[path_index];
-        CettaGsltTermCursorV1 value = {0};
-        CettaMatchDecisionQueryState query_state =
-            match_decision_query_at_compiled_path(
-                decision, query, path, ready_arguments, &value);
-        if (query_state == CETTA_MATCH_DECISION_QUERY_UNKNOWN) {
-            decision->stats.unavailable_path_fallbacks++;
-            cetta_runtime_stats_inc(
-                CETTA_RUNTIME_COUNTER_MATCH_DECISION_UNAVAILABLE_PATH);
-            continue;
-        }
-        *observed_path = true;
-        bool value_absent =
-            query_state == CETTA_MATCH_DECISION_QUERY_ABSENT;
-        memset(decision->path_bits, 0,
-               decision->bit_word_count * sizeof(uint64_t));
-        if (match_decision_policy(query, query_state, NULL, value) !=
-            CETTA_MD_POLICY_REFUTE) {
-            memcpy(decision->path_bits, path->wildcard_bits,
-                   decision->bit_word_count * sizeof(uint64_t));
-        }
-        if (match_decision_exact_key_available(query, value)) {
-            const CettaMatchDecisionKey *keys[2] = {NULL, NULL};
-            uint32_t key_count = match_decision_path_exact_keys(query,
-                decision, path, value, value_absent, keys);
-            for (uint32_t key = 0u; key < key_count; key++) {
-                if (!match_decision_bits_add_refs(
-                        decision, decision->path_bits,
-                        keys[key]->clause_refs,
-                        keys[key]->clause_count)) {
-                    return false;
-                }
-            }
-        } else {
-            for (uint32_t key = 0u; key < path->key_count; key++) {
-                decision->stats.generic_key_policy_scans++;
-                if (match_decision_policy(query,
-                        query_state, &path->keys[key], value) ==
-                    CETTA_MD_POLICY_REFUTE) {
-                    continue;
-                }
-                if (!match_decision_bits_add_refs(
-                        decision, decision->path_bits,
-                        path->keys[key].clause_refs,
-                        path->keys[key].clause_count)) {
-                    return false;
-                }
-            }
-        }
-        bool any = false;
-        for (size_t word = 0u;
-             word < decision->bit_word_count; word++) {
-            decision->candidate_bits[word] &= decision->path_bits[word];
-            any = any || decision->candidate_bits[word] != 0u;
-        }
-        if (!any)
-            break;
-    }
-
-    if (!*observed_path)
-        return true;
-    size_t count = 0u;
-    for (size_t word = 0u; word < decision->bit_word_count; word++) {
-        uint64_t remaining = decision->candidate_bits[word];
-        while (remaining != 0u) {
-            remaining &= remaining - 1u;
-            count++;
-        }
-    }
-    if (!match_decision_reserve(
-            (void **)&decision->candidate_locals,
-            &decision->candidate_local_capacity,
-            count, sizeof(*decision->candidate_locals))) {
-        return false;
-    }
-    size_t write = 0u;
-    for (size_t clause = 0u; clause < decision->clause_count; clause++) {
-        if ((decision->candidate_bits[clause / 64u] &
-             (UINT64_C(1) << (clause % 64u))) != 0u) {
-            decision->candidate_locals[write++] = (uint32_t)clause;
-        }
-    }
-    if (write != count)
-        return false;
+    if (count) memcpy(decision->candidate_locals, selected, count * sizeof(*selected));
     *candidate_count = count;
+    *observed_path = selection.observed_path;
     return true;
 }
 

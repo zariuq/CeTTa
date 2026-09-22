@@ -878,7 +878,7 @@ static void test_logical_cons_binding_views(Arena *arena) {
     assert(petta_semantics_match_lowered_head(arena, cell, flat, &builder));
     assert(!petta_semantics_match_lowered_head(
         arena, cell, lookalike, &builder));
-    assert(!bindings_lookup_var(&builder.current, x));
+    assert(!bindings_lookup_value_id(&builder.current, (x)->var_id).skeleton);
     assert(builder.current.len == 0u);
 
     /* A private carrier must retain its logical shape through aliases and
@@ -892,7 +892,7 @@ static void test_logical_cons_binding_views(Arena *arena) {
         arena, atom_expr2(arena, quote, v),
         atom_expr2(arena, quote, lookalike), &builder));
     assert(builder.current.len == 1u);
-    assert(!bindings_lookup_var(&builder.current, x));
+    assert(!bindings_lookup_value_id(&builder.current, (x)->var_id).skeleton);
     bindings_builder_rollback(&builder, empty_mark);
 
     Atom *aliased_head = atom_expr3(arena, head, a, nil);
@@ -930,8 +930,8 @@ static void test_logical_cons_binding_views(Arena *arena) {
         arena, atom_expr3(arena, f, x, x),
         atom_expr3(arena, f, y, b), &builder));
     assert(builder.current.len == 1u);
-    assert(!bindings_lookup_var(&builder.current, x));
-    assert(atom_eq(bindings_lookup_var(&builder.current, y), a));
+    assert(!bindings_lookup_value_id(&builder.current, (x)->var_id).skeleton);
+    assert(atom_eq(bindings_lookup_value_id(&builder.current, (y)->var_id).skeleton, a));
     bindings_builder_rollback(&builder, empty_mark);
 
     assert(petta_semantics_match_lowered_head(
@@ -951,8 +951,48 @@ static void test_logical_cons_binding_views(Arena *arena) {
          " correlation, occurs checks and rollback");
 }
 
+
+static void test_contextual_cons_values(Arena *arena) {
+    CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
+    Atom *p = atom_var_with_id(arena, "cons-context-p", fresh_var_id());
+    Atom *q = atom_var_with_id(arena, "cons-context-q", fresh_var_id());
+    Atom *x = atom_var_with_id(arena, "cons-context-x", fresh_var_id());
+    Atom *head = atom_var_with_id(arena, "cons-context-head", fresh_var_id());
+    Atom *a = atom_symbol(arena, "cons-context-a");
+    Atom *b = atom_symbol(arena, "cons-context-b");
+    Atom *nil = atom_unit(arena);
+    Atom *source = atom_expr3(arena, head, x, nil);
+    Atom *tag = petta_semantics_open_cons_value(arena, a, nil)->expr.elems[0];
+    uint32_t left_epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope), right_epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
+    for (unsigned agree = 0u; agree < 2u; agree++) {
+        Bindings seed;
+        bindings_init(&seed);
+        assert(bindings_add_var(&seed, p, a));
+        assert(bindings_add_var(&seed, q, a));
+        assert(bindings_add_id(&seed, var_epoch_id(x->var_id, left_epoch), x->sym_id, a));
+        assert(bindings_add_id(&seed, var_epoch_id(x->var_id, right_epoch), x->sym_id, agree ? a : b));
+        assert(bindings_add_id(&seed, var_epoch_id(head->var_id, left_epoch), head->sym_id, tag));
+        assert(bindings_add_id(&seed, var_epoch_id(head->var_id, right_epoch), head->sym_id, tag));
+        assert(bindings_prepare_logical_write(&seed));
+        seed.entries[0].value = binding_value_from_context(source, left_epoch);
+        seed.entries[1].value = binding_value_from_context(source, right_epoch);
+        bindings_invalidate_after_key_rewrite(&seed);
+        BindingsBuilder builder;
+        assert(bindings_builder_init(&builder, &seed));
+        assert(petta_semantics_match_lowered_head(arena, p, q, &builder) == (agree != 0u));
+        assert(bindings_eq(&seed, &builder.current));
+        Atom *flat = atom_expr(arena, &a, 1u);
+        assert(petta_semantics_match_lowered_head(arena, p, flat, &builder));
+        assert(bindings_eq(&seed, &builder.current));
+        bindings_builder_free(&builder);
+        bindings_free(&seed);
+    }
+    puts("PASS: contextual list heads and elements retain independent environments");
+}
+
 static void test_lowered_head_epoch_views(Arena *arena) {
-    uint32_t epoch = fresh_var_suffix();
+    CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
+    uint32_t epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
     Atom *a = atom_symbol(arena, "epoch-a");
     Atom *b = atom_symbol(arena, "epoch-b");
     Atom *f = atom_symbol(arena, "epoch-f");
@@ -1015,9 +1055,18 @@ static void test_lowered_head_epoch_views(Arena *arena) {
                        bindings_to_atom(arena, &viewed.current)));
         if (!actual)
             assert(viewed.current.len == mark);
-        if (cases[i].source == shared_root)
-            assert(bindings_lookup_var(&viewed.current, destination) ==
-                   bindings_lookup_var(&viewed.current, destination2));
+        if (cases[i].source == shared_root) {
+            BindingValue first = bindings_lookup_value_id(&viewed.current, destination->var_id);
+            BindingValue second = bindings_lookup_value_id(&viewed.current, destination2->var_id);
+            assert(binding_value_equal(first, second));
+            assert(first.skeleton == shared_child && second.skeleton == shared_child &&
+                   first.kind == BINDING_VALUE_CONTEXTUAL && first.epoch == epoch);
+        }
+        if (cases[i].value == destination && cases[i].source->kind == ATOM_EXPR) {
+            BindingValue retained = bindings_lookup_value_id(&viewed.current, destination->var_id);
+            assert(retained.skeleton == cases[i].source &&
+                   retained.kind == BINDING_VALUE_CONTEXTUAL && retained.epoch == epoch);
+        }
         bindings_builder_free(&viewed);
         bindings_builder_free(&reference);
     }
@@ -1334,8 +1383,8 @@ static void test_binding_prefix_factoring(Arena *arena) {
     assert(factored);
     assert(elided == 2u);
     assert(extended.len == 1u);
-    assert(!bindings_lookup_id(&extended, x->var_id));
-    assert(bindings_lookup_id(&extended, z->var_id) == three);
+    assert(!bindings_lookup_value_id(&extended, x->var_id).skeleton);
+    assert(bindings_lookup_value_id(&extended, z->var_id).skeleton == three);
     bindings_free(&extended);
 
     /* A reordered environment is not certified as an inherited prefix.
@@ -1351,14 +1400,15 @@ static void test_binding_prefix_factoring(Arena *arena) {
     assert(!factored);
     assert(elided == 0u);
     assert(extended.len == 3u);
-    assert(bindings_lookup_id(&extended, x->var_id) == one);
-    assert(bindings_lookup_id(&extended, z->var_id) == three);
+    assert(bindings_lookup_value_id(&extended, x->var_id).skeleton == one);
+    assert(bindings_lookup_value_id(&extended, z->var_id).skeleton == three);
 
     bindings_free(&extended);
     bindings_free(&base);
 }
 
 static void test_activation_epoch_suffix_application(Arena *arena) {
+    CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
     Atom *outer = atom_var_with_id(
         arena, "outer-slot", fresh_var_id());
     Atom *outer_link = atom_var_with_id(
@@ -1369,34 +1419,40 @@ static void test_activation_epoch_suffix_application(Arena *arena) {
         arena, "outer-value");
     assert(outer && outer_link && rule && outer_value);
 
-    Bindings bindings;
-    bindings_init(&bindings);
-    assert(bindings_add_var(&bindings, outer_link, outer_value));
-    assert(bindings_add_var(&bindings, outer, outer_link));
-    uint32_t activation_first = bindings.len;
-    uint32_t epoch = fresh_var_suffix();
+    BindingsBuilder builder;
+    assert(bindings_builder_init(&builder, NULL));
+    assert(bindings_builder_add_var_fresh(&builder, outer_link, outer_value));
+    assert(bindings_builder_add_var_fresh(&builder, outer, outer_link));
+    uint32_t activation_first = builder.current.len;
+    uint32_t epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
     Atom *rule_slot = atom_var_like(
         arena, rule, var_epoch_id(rule->var_id, epoch));
     assert(rule_slot);
-    assert(bindings_add_var(&bindings, rule_slot, outer));
+    BindingsActivationView frame;
+    bindings_activation_view_init(&frame);
+    VarId ids[] = {rule->var_id};
+    Atom *variables[] = {rule};
+    assert(bindings_activation_view_prepare(&frame, &builder, ids, variables,
+        1u, epoch, activation_first));
+    assert(bindings_builder_add_var_fresh(&builder, rule_slot, outer));
 
     /* The activation view substitutes its own slot but deliberately leaves
      * an outer reference for the live machine trail. */
     Atom *local = bindings_apply_epoch_since(
-        &bindings, arena, rule, epoch, activation_first);
+        &builder.current, arena, rule, epoch, activation_first);
     assert(local && local->kind == ATOM_VAR);
     assert(local->var_id == outer->var_id);
 
     /* The ordinary full-environment operation remains the materialization
      * boundary and therefore resolves the outer slot as well. */
     Atom *materialized = bindings_apply_epoch(
-        &bindings, arena, rule, epoch);
+        &builder.current, arena, rule, epoch);
     assert(materialized == outer_value);
     Atom *sequential = bindings_apply(
-        &bindings, arena, local);
+        &builder.current, arena, local);
     assert(sequential == materialized);
     Atom *fused = bindings_apply_epoch_then_all(
-        &bindings, arena, rule, epoch, activation_first);
+        &builder.current, arena, rule, epoch, activation_first);
     assert(fused == sequential);
 
     /* An unbound activation slot remains fresh rather than aliasing either the
@@ -1404,7 +1460,7 @@ static void test_activation_epoch_suffix_application(Arena *arena) {
     Atom *unbound = atom_var_with_id(
         arena, "rule-unbound", fresh_var_id());
     Atom *fresh_unbound = bindings_apply_epoch(
-        &bindings, arena, unbound, epoch);
+        &builder.current, arena, unbound, epoch);
     assert(fresh_unbound && fresh_unbound->kind == ATOM_VAR);
     assert(fresh_unbound->var_id ==
            var_epoch_id(unbound->var_id, epoch));
@@ -1414,11 +1470,11 @@ static void test_activation_epoch_suffix_application(Arena *arena) {
     Atom *source_children[] = {pair, rule, unbound};
     Atom *source = atom_expr(arena, source_children, 3u);
     Atom *local_pair = bindings_apply_epoch_since(
-        &bindings, arena, source, epoch, activation_first);
+        &builder.current, arena, source, epoch, activation_first);
     Atom *sequential_pair = bindings_apply(
-        &bindings, arena, local_pair);
+        &builder.current, arena, local_pair);
     Atom *fused_pair = bindings_apply_epoch_then_all(
-        &bindings, arena, source, epoch, activation_first);
+        &builder.current, arena, source, epoch, activation_first);
     assert(source && local_pair && sequential_pair && fused_pair);
     assert(atom_eq(fused_pair, sequential_pair));
     assert(fused_pair->kind == ATOM_EXPR &&
@@ -1430,8 +1486,9 @@ static void test_activation_epoch_suffix_application(Arena *arena) {
 
     /* A malformed suffix boundary must fail closed. */
     assert(!bindings_apply_epoch_since(
-        &bindings, arena, rule, epoch, bindings.len + 1u));
-    bindings_free(&bindings);
+        &builder.current, arena, rule, epoch, builder.current.len + 1u));
+    bindings_activation_view_free(&frame);
+    bindings_builder_free(&builder);
 }
 
 static void add_clause(Space *space, Arena *arena, const char *source) {
@@ -1458,6 +1515,38 @@ static PettaSpecializeResult decline_specialization_for_capacity(
         arena, "capacity-specializer-poison");
     assert(*prepared_call);
     return PETTA_SPECIALIZE_CAPACITY;
+}
+
+static void test_root_context_identity_import(
+        Space *space, Arena *persistent, Arena *answers) {
+    CETTA_FRAME_IDENTITY_SCOPE(identities);
+    CettaFrameIdentity identity = cetta_frame_identity_scope_fresh(&identities);
+    add_clause(space, persistent, "(= (root-context-identity $value) $value)");
+    Atom *foreign = atom_var_with_id(answers, "owned-root", var_epoch_id(1u, identity));
+    Atom *authored = atom_var(answers, "authored-root");
+    Atom *pair = atom_expr3(answers, atom_symbol(answers, "ImportedPair"), foreign, authored);
+    Atom *query = atom_expr2(answers, atom_symbol(answers, "root-context-identity"), pair);
+    Bindings base;
+    bindings_init(&base);
+    VarId slot = 1u;
+    assert(bindings_register_complete_contextual_frame(&base, &slot, 1u, identity));
+    assert(bindings_add_var(&base, foreign, atom_int(answers, 71)));
+    assert(bindings_add_var(&base, authored, atom_int(answers, 83)));
+    PettaMachine machine;
+    assert(petta_machine_init(&machine, space, answers, query, &base, NULL));
+    Atom *answer = NULL;
+    Bindings environment;
+    assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_eq(answer, parse_one(answers, "(ImportedPair 71 83)")));
+    assert(atom_eq(bindings_apply(&environment, answers, foreign), atom_int(answers, 71)));
+    assert(atom_eq(bindings_apply(&environment, answers, authored), atom_int(answers, 83)));
+    bindings_free(&environment);
+    assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+    assert(atom_eq(bindings_apply(&base, answers, foreign), atom_int(answers, 71)));
+    bindings_free(&base);
+    puts("PASS: root query import preserves owned identities and authored aliases independently");
 }
 
 static void test_specializer_capacity_fallback(
@@ -1954,6 +2043,68 @@ static bool test_program_equation_snapshot_lease(
         context, space, head, lease, stats);
 }
 
+static void test_elaborated_functional_pattern_plan(
+    TermUniverse *universe, Arena *persistent, Arena *answers) {
+    Space space;
+    memset(&space, 0xa5, sizeof space);
+    space_init_with_universe(&space, universe);
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    const char *clauses[] = {
+        "(: &self (SpaceOf Atom))",
+        "(: plan-alias (-[det]-> $a $b $a))",
+        "(= (plan-alias $value $pattern) (let $value $pattern $value))",
+        "(function-plan-row 1 one)",
+        "(function-plan-row 1 one)",
+        "(function-plan-row 2 two)",
+    };
+    for (size_t index = 0u; index < sizeof clauses / sizeof clauses[0]; index++)
+        add_compiled_program_clause(program, &space, persistent, clauses[index]);
+    PettaMachineHost host = {
+        .context = program,
+        .clause_snapshot_lease = test_program_equation_snapshot_lease,
+    };
+    const struct {
+        const char *query;
+        const char *answer;
+        size_t count;
+    } cases[] = {
+        {"(match &self (plan-alias $whole (function-plan-row 1 $label)) $whole)",
+         "(function-plan-row 1 one)", 2u},
+        {"(match &self (function-plan-row 1 (plan-alias $label one)) $label)",
+         "one", 2u},
+        {"(match &self (plan-alias $whole (function-plan-row 3 missing)) $whole)",
+         NULL, 0u},
+    };
+    for (size_t index = 0u; index < sizeof cases / sizeof cases[0]; index++) {
+        Atom *query = parse_one(answers, cases[index].query);
+        const PettaPlanNode *plan = petta_program_plan_current(program, query);
+        assert(query && plan);
+        Atom *expected = cases[index].answer
+            ? parse_one(answers, cases[index].answer) : NULL;
+        PettaMachine machine;
+        assert(petta_machine_init_with_plan(
+            &machine, &space, answers, query, plan, NULL, &host));
+        for (size_t result = 0u; result < cases[index].count; result++) {
+            Atom *answer = NULL;
+            Bindings environment;
+            assert(petta_machine_next(&machine, &answer, &environment) ==
+                   PETTA_MACHINE_STEP_ANSWER);
+            assert(atom_alpha_eq(answer, expected));
+            bindings_free(&environment);
+        }
+        Atom *answer = NULL;
+        Bindings environment;
+        assert(petta_machine_next(&machine, &answer, &environment) ==
+               PETTA_MACHINE_STEP_EXHAUSTED);
+        bindings_free(&environment);
+        petta_machine_destroy(&machine);
+    }
+    petta_program_free(program);
+    space_free(&space);
+    puts("PASS: elaborated functional patterns discard stale template plans and preserve duplicates and refusal");
+}
+
 typedef struct {
     PettaProgram *program;
     bool replaced_cons_fact_with_unknown;
@@ -1993,8 +2144,11 @@ static bool test_unknown_cons_fact_snapshot_lease(
         assert(items[index].equation &&
                items[index].equation->kind == ATOM_EXPR &&
                items[index].equation->expr.len == 3u);
-        assert(items[index].activation_layout.lhs ==
-               items[index].equation->expr.elems[1]);
+        Atom *execution = items[index].equation_template
+            ? petta_equation_template_syntax(items[index].equation_template)
+            : items[index].equation;
+        assert(items[index].activation_layout.lhs == execution->expr.elems[1]);
+        assert(atom_alpha_eq(execution, items[index].equation));
         items[index].activation_layout.
             lhs_contains_cons_constraint_valid = false;
         items[index].activation_layout.
@@ -2109,6 +2263,15 @@ static void test_alpha_reconciled_slot_authority(
         lease.items[0].equation_template,
         &template_source_ids, &template_source_variables,
         &template_variable_count));
+    Bindings schema_activation;
+    bindings_init(&schema_activation);
+    BindingsFrameSchema *equation_schema =
+        petta_equation_template_frame_schema(lease.items[0].equation_template);
+    assert(equation_schema && template_variable_count == 2u &&
+           bindings_frame_schema_source_ids(equation_schema) == template_source_ids);
+    assert(bindings_register_complete_frame_schema(
+        &schema_activation, equation_schema, 719u));
+    VarId retained_source_id = template_source_ids[0];
     const PettaPlanNode *live_rhs_first_plan =
         petta_plan_child(lease.items[0].rhs_plan, 1u);
     const PettaPlanNode *live_rhs_second_plan =
@@ -2164,6 +2327,15 @@ static void test_alpha_reconciled_slot_authority(
     petta_machine_destroy(&machine);
 
     petta_program_free(program);
+    /* An activation owns the equation inventory even after plan teardown. */
+    assert(bindings_frame_schema_len(equation_schema) == 2u &&
+           bindings_frame_schema_source_ids(equation_schema)[0] == retained_source_id);
+    assert(bindings_add_id(&schema_activation,
+        var_epoch_id(retained_source_id, 719u), SYMBOL_ID_NONE, atom_int(answers, 71)));
+    BindingValue retained = bindings_lookup_value_id(
+        &schema_activation, var_epoch_id(retained_source_id, 719u));
+    assert(retained.skeleton && atom_eq(retained.skeleton, atom_int(answers, 71)));
+    bindings_free(&schema_activation);
     space_free(&space);
 }
 
@@ -3153,6 +3325,7 @@ static void assert_open_pattern_linear_program(
 
 static void test_open_pattern_support_certificate(
     TermUniverse *universe, Arena *persistent) {
+        CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
     Space space;
     space_init_with_universe(&space, universe);
     PettaProgram *program = petta_program_new();
@@ -3192,7 +3365,7 @@ static void test_open_pattern_support_certificate(
     (void)source_variables;
 
     uint32_t support_epoch = 0u;
-    assert(fresh_var_suffix_try(&support_epoch));
+    assert(cetta_frame_identity_scope_try(&frame_identity_scope, &support_epoch));
     Atom *support_query = parse_one(persistent, "(support-plan $q)");
     BindingsBuilder support_bindings;
     assert(bindings_builder_init(&support_bindings, NULL));
@@ -3230,21 +3403,23 @@ static void test_open_pattern_support_certificate(
     assert(cycle_plan);
     assert_open_pattern_linear_program(cycle_plan);
     uint32_t cycle_epoch = 0u;
-    assert(fresh_var_suffix_try(&cycle_epoch));
+    assert(cetta_frame_identity_scope_try(&frame_identity_scope, &cycle_epoch));
     Atom *cycle_query =
         parse_one(persistent, "(support-cycle $q $q)");
     BindingsBuilder cycle_bindings;
     assert(bindings_builder_init(&cycle_bindings, NULL));
-    assert(match_atoms_epoch_builder_rule_local_planned(
+    /* The closing edge is refused at the bind by both matchers, and a
+     * refused match leaves the branch as it found it. */
+    assert(!match_atoms_epoch_builder_rule_local_planned(
         cycle_query, candidates[0].activation_layout.lhs,
         cycle_plan, &cycle_bindings, persistent, cycle_epoch));
-    assert(bindings_has_loop(&cycle_bindings.current));
+    assert(!bindings_has_loop(&cycle_bindings.current));
     BindingsBuilder cycle_linear;
     assert(bindings_builder_init(&cycle_linear, NULL));
-    assert(match_atoms_epoch_builder_rule_local_linear(
+    assert(!match_atoms_epoch_builder_rule_local_linear(
         cycle_query, candidates[0].activation_layout.lhs,
         cycle_plan, &cycle_linear, persistent, cycle_epoch));
-    assert(bindings_has_loop(&cycle_linear.current));
+    assert(!bindings_has_loop(&cycle_linear.current));
     assert(bindings_eq(
         &cycle_bindings.current, &cycle_linear.current));
     bindings_builder_free(&cycle_linear);
@@ -3298,7 +3473,7 @@ static void test_open_pattern_support_certificate(
     assert(!wide_plan->variable_ids);
     assert(wide_plan->variable_mask == 0u);
     uint32_t wide_epoch = 0u;
-    assert(fresh_var_suffix_try(&wide_epoch));
+    assert(cetta_frame_identity_scope_try(&frame_identity_scope, &wide_epoch));
     Atom *wide_query = parse_one(persistent, "(support-wide $q)");
     BindingsBuilder wide_bindings;
     assert(bindings_builder_init(&wide_bindings, NULL));
@@ -3358,6 +3533,7 @@ static void test_open_pattern_support_certificate(
     for (size_t case_index = 0u;
          case_index < sizeof transfer_cases /
              sizeof transfer_cases[0]; case_index++) {
+                 CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
         const struct OpenPatternTransferCase *test =
             &transfer_cases[case_index];
         add_indexed_program_clause(
@@ -3376,7 +3552,7 @@ static void test_open_pattern_support_certificate(
         assert_open_pattern_linear_program(plan);
         Atom *query = parse_one(persistent, test->query);
         uint32_t epoch = 0u;
-        assert(fresh_var_suffix_try(&epoch));
+        assert(cetta_frame_identity_scope_try(&frame_identity_scope, &epoch));
         BindingsBuilder tree_builder;
         BindingsBuilder linear_builder;
         assert(bindings_builder_init(&tree_builder, NULL));
@@ -5124,11 +5300,10 @@ static void test_machine_query_visible_projection(
            PETTA_MACHINE_STEP_ANSWER);
     assert(atom_alpha_eq(
         answer, parse_one(answers, "result")));
-    Atom *free_value = bindings_lookup_id(
-        &environment, free->var_id);
+    Atom *free_value = bindings_lookup_value_id(&environment, free->var_id).skeleton;
     assert(free_value && atom_alpha_eq(
         free_value, parse_one(answers, "bound")));
-    assert(!bindings_lookup_id(&environment, local->var_id));
+    assert(!bindings_lookup_value_id(&environment, local->var_id).skeleton);
     assert(environment.len == 1u);
     bindings_free(&environment);
     assert(petta_machine_next(
@@ -5136,6 +5311,43 @@ static void test_machine_query_visible_projection(
            PETTA_MACHINE_STEP_EXHAUSTED);
     bindings_free(&environment);
     petta_machine_destroy(&machine);
+
+    query = parse_one(answers, "(visible-source $authored)");
+    assert(query && query->kind == ATOM_EXPR &&
+           query->expr.len == 2u);
+    Atom *authored = query->expr.elems[1];
+    Atom *hidden_alias = atom_var_with_id(
+        answers, "hidden-visible-alias", fresh_var_id());
+    Atom *bound = atom_symbol(answers, "bound");
+    assert(authored && authored->kind == ATOM_VAR &&
+           hidden_alias && bound);
+    Bindings base;
+    bindings_init(&base);
+    assert(bindings_add_var(&base, authored, hidden_alias));
+    assert(bindings_add_var(&base, hidden_alias, bound));
+    assert(petta_machine_init(
+        &machine, space, answers, query, &base, NULL));
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(
+        answer, parse_one(answers, "result")));
+    BindingValue authored_value = bindings_lookup_value_id(
+        &environment, authored->var_id);
+    assert(authored_value.skeleton &&
+           atom_alpha_eq(authored_value.skeleton, bound));
+    assert(!bindings_lookup_value_id(
+        &environment, hidden_alias->var_id).skeleton);
+    assert(environment.len == 1u);
+    assert(bindings_entry_at(&environment, 0u)->spelling ==
+           authored->sym_id);
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+    bindings_free(&base);
 
     query = parse_one(
         answers,
@@ -5617,9 +5829,9 @@ static void test_reachable_binding_projection(Arena *arena) {
     assert(bindings_project_reachable(
         &full, roots, 1u, &projected));
     assert(projected.len == 2u);
-    assert(bindings_lookup_id(&projected, live->var_id));
-    assert(bindings_lookup_id(&projected, middle->var_id));
-    assert(!bindings_lookup_id(&projected, dead->var_id));
+    assert(bindings_lookup_value_id(&projected, live->var_id).skeleton);
+    assert(bindings_lookup_value_id(&projected, middle->var_id).skeleton);
+    assert(!bindings_lookup_value_id(&projected, dead->var_id).skeleton);
     bindings_free(&projected);
 
     Atom *ground_roots[] = {kept_value};
@@ -5664,10 +5876,8 @@ static void test_reachable_binding_projection(Arena *arena) {
            large_live->var_id);
     assert(projected.entries[1].var_id ==
            large_middle->var_id);
-    assert(bindings_lookup_id(
-        &projected, large_live->var_id) == large_middle);
-    assert(bindings_lookup_id(
-        &projected, large_middle->var_id) == kept_value);
+    assert(bindings_lookup_value_id(&projected, large_live->var_id).skeleton == large_middle);
+    assert(bindings_lookup_value_id(&projected, large_middle->var_id).skeleton == kept_value);
     bindings_free(&projected);
     bindings_free(&large);
 
@@ -5695,8 +5905,7 @@ static void test_reachable_binding_projection(Arena *arena) {
     assert(bindings_project_reachable(
         &constrained, constraint_roots, 1u, &projected));
     assert(projected.eq_len == 1u);
-    assert(bindings_lookup_id(
-        &projected, right_var->var_id));
+    assert(bindings_lookup_value_id(&projected, right_var->var_id).skeleton);
     bindings_free(&projected);
 
     assert(bindings_project_reachable(
@@ -6127,6 +6336,136 @@ static void test_nested_clause_shape_index(
     petta_machine_destroy(&machine);
 }
 
+static void test_colon_tag_coordinate_before_unification(
+    Space *space, Arena *persistent, Arena *answers) {
+    add_clause(
+        space, persistent,
+        "(= (colon-tag-gtz (: ax (A $x))) (ax-hit $x))");
+    add_clause(
+        space, persistent,
+        "(= (colon-tag-gtz (: by (B $x))) (by-hit $x))");
+    add_clause(
+        space, persistent,
+        "(= (colon-tag-gtz (: (mp $f $x) (A $b))) mp-hit)");
+
+    Atom *dummy = parse_one(
+        answers, "(colon-tag-gtz (: dummy (Z leaf)))");
+    assert(dummy);
+    PettaMachine machine;
+    assert(petta_machine_init(
+        &machine, space, answers, dummy, NULL, NULL));
+    Atom *answer = NULL;
+    Bindings environment;
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    PettaMachineStats stats;
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.clause_candidates_shape_pruned == 3u);
+    assert(stats.clause_match_attempts == 0u);
+    assert(stats.match_decision_runs == 0u);
+    petta_machine_destroy(&machine);
+
+    Atom *hit = parse_one(
+        answers, "(colon-tag-gtz (: ax (A leaf)))");
+    assert(hit);
+    assert(petta_machine_init(
+        &machine, space, answers, hit, NULL, NULL));
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(
+        answer, parse_one(answers, "(ax-hit leaf)")));
+    bindings_free(&environment);
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.clause_candidates_shape_pruned == 2u);
+    assert(stats.clause_match_attempts == 1u);
+    assert(stats.match_decision_runs == 0u);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+
+    Atom *ascription = parse_one(
+        answers, "(the RuntimeOnly colon-tag-value)");
+    assert(ascription);
+    add_clause(
+        space, persistent,
+        "(= (colon-tag-ascribe (the RuntimeOnly $v)) $v)");
+    Atom *ascribe_query = parse_one(
+        answers, "(colon-tag-ascribe (the RuntimeOnly colon-tag-value))");
+    assert(ascribe_query);
+    assert(petta_machine_init(
+        &machine, space, answers, ascribe_query, NULL, NULL));
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(
+        answer, atom_symbol(answers, "colon-tag-value")));
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+    (void)ascription;
+
+    /* First rigid argument is `(: tag …)` behind a variable budget
+     * (Loowoz's `obc-gtz $s (: ax₁ …)`).  Same conservative conflict. */
+    add_clause(
+        space, persistent,
+        "(= (budget-gtz $s (: ax (A $x))) (ax-hit $x))");
+    add_clause(
+        space, persistent,
+        "(= (budget-gtz $s (: by (B $x))) (by-hit $x))");
+    add_clause(
+        space, persistent,
+        "(= (budget-gtz $s (: (mp $f $x) (A $b))) mp-hit)");
+    add_clause(
+        space, persistent,
+        "(= (budget-gtz $s (: $p (A $x))) (open-hit $x))");
+
+    Atom *budget_dummy = parse_one(
+        answers, "(budget-gtz 5 (: dummy (Z leaf)))");
+    assert(budget_dummy);
+    assert(petta_machine_init(
+        &machine, space, answers, budget_dummy, NULL, NULL));
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.match_decision_runs == 0u);
+    petta_machine_destroy(&machine);
+
+    Atom *budget_hit = parse_one(
+        answers, "(budget-gtz 5 (: ax (A leaf)))");
+    assert(budget_hit);
+    assert(petta_machine_init(
+        &machine, space, answers, budget_hit, NULL, NULL));
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(
+        answer, parse_one(answers, "(ax-hit leaf)")));
+    bindings_free(&environment);
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.match_decision_runs == 0u);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(
+        answer, parse_one(answers, "(open-hit leaf)")));
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+}
+
 static void test_choice_continuation_trail(
     Space *space, Arena *persistent, Arena *answers) {
     add_clause(
@@ -6230,7 +6569,8 @@ static void test_deterministic_heap_collection(
             stats.deterministic_goal_atom_bytes_promoted);
     assert(
         stats.deterministic_goal_atom_bytes_promoted ==
-        stats.deterministic_goal_first_bytes_promoted +
+        stats.deterministic_goal_context_bytes_promoted +
+            stats.deterministic_goal_first_bytes_promoted +
             stats.deterministic_goal_second_bytes_promoted +
             stats.deterministic_goal_third_bytes_promoted +
             stats.deterministic_goal_fourth_bytes_promoted);
@@ -6489,6 +6829,74 @@ static void test_choice_heap_instant_reclaiming(
     petta_machine_destroy(&machine);
 }
 
+static PettaMachineHostMode test_admit_ground_atom_classify(
+    void *context, Space *space, Atom *expression) {
+    (void)context;
+    (void)space;
+    if (!expression || expression->kind != ATOM_EXPR ||
+        expression->expr.len != 3u ||
+        !expression->expr.elems[0] ||
+        expression->expr.elems[0]->kind != ATOM_SYMBOL ||
+        expression->expr.elems[0]->sym_id != g_builtin_syms.add_atom)
+        return PETTA_MACHINE_HOST_NONE;
+    return PETTA_MACHINE_HOST_STRICT_FIRST_APPLICATION;
+}
+
+static bool test_admit_ground_atom(
+    void *context, Space *space, Arena *arena,
+    Atom *call, Atom **result) {
+    (void)context;
+    if (result)
+        *result = NULL;
+    if (!space || !arena || !call || !result ||
+        call->kind != ATOM_EXPR || call->expr.len != 3u)
+        return false;
+    Atom *payload = call->expr.elems[2];
+    if (!payload || atom_has_vars(payload) ||
+        petta_program_atom_affects_metadata(payload))
+        return false;
+    if (!space_admit_atom(space, arena, payload))
+        return false;
+    *result = petta_semantics_success_value(arena);
+    return *result != NULL;
+}
+
+static void test_same_machine_add_atom_ground_fact(
+    Space *space, Arena *persistent, Arena *answers) {
+    CettaCount before = space_length64(space);
+    PettaMachineHost host = {
+        .classify = test_admit_ground_atom_classify,
+        .admit_ground_atom = test_admit_ground_atom,
+    };
+    Atom *query = parse_one(answers, "(add-atom &self (admit-row 7))");
+    assert(query);
+    PettaMachine machine;
+    assert(petta_machine_init(
+        &machine, space, answers, query, NULL, &host));
+    Atom *answer = NULL;
+    Bindings environment;
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(
+        answer, petta_semantics_success_value(answers)));
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+    assert(space_length64(space) == before + 1u);
+
+    add_clause(
+        space, persistent,
+        "(= (admit-row-present)"
+        "   (match &self (admit-row $x) $x))");
+    const char *present[] = {"7"};
+    expect_answers(
+        space, answers, "(admit-row-present)", present, 1u);
+}
+
 static void test_bound_match_candidate_snapshot(
     Space *space, Arena *persistent, Arena *answers) {
     enum { ROW_COUNT = 512 };
@@ -6565,6 +6973,109 @@ static void test_bound_match_candidate_snapshot(
     expect_answers(
         space, answers, "(bound-index-select 7)", expected,
         sizeof(expected) / sizeof(*expected));
+}
+
+static void test_match_prefix_cursor_reuse(
+    Space *space, Arena *persistent, Arena *answers) {
+    Atom *head = atom_symbol(persistent, "prefix-share-row");
+    assert(head);
+    enum { ROW_COUNT = 32 };
+    for (int64_t index = 0; index < ROW_COUNT; index++) {
+        Atom *items[] = { head, atom_int(persistent, index) };
+        Atom *row = atom_expr(persistent, items, 2u);
+        assert(row);
+        space_add(space, row);
+    }
+    add_clause(
+        space, persistent,
+        "(= (prefix-share $p)"
+        "   (match &self $p (match &self $p 1)))");
+    Atom *query = parse_one(
+        answers, "(prefix-share (prefix-share-row 1))");
+    assert(query);
+    PettaMachine machine;
+    assert(petta_machine_init(
+        &machine, space, answers, query, NULL, NULL));
+    Atom *answer = NULL;
+    Bindings environment;
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, atom_int(answers, 1)));
+    bindings_free(&environment);
+    PettaMachineStats stats;
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.match_prefix_cursor_reuse >= 1u);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+}
+
+static void test_bound_match_in_flight_remove_invalidates_pin(
+    Space *space, Arena *persistent, Arena *answers) {
+    Atom *head = atom_symbol(persistent, "in-flight-remove-row");
+    assert(head);
+    Atom *first_row_items[] = {
+        head, atom_int(persistent, 1), atom_symbol(persistent, "first"),
+    };
+    Atom *second_row_items[] = {
+        head, atom_int(persistent, 1), atom_symbol(persistent, "second"),
+    };
+    Atom *third_row_items[] = {
+        head, atom_int(persistent, 1), atom_symbol(persistent, "third"),
+    };
+    Atom *first_row = atom_expr(persistent, first_row_items, 3u);
+    Atom *second_row = atom_expr(persistent, second_row_items, 3u);
+    Atom *third_row = atom_expr(persistent, third_row_items, 3u);
+    assert(first_row && second_row && third_row);
+    space_add(space, first_row);
+    space_add(space, second_row);
+    space_add(space, third_row);
+    add_clause(
+        space, persistent,
+        "(= (in-flight-remove-select $key)"
+        "   (match &self (in-flight-remove-row $key $value) $value))");
+
+    Atom *query = parse_one(answers, "(in-flight-remove-select 1)");
+    assert(query);
+    PettaMachine machine;
+    assert(petta_machine_init(
+        &machine, space, answers, query, NULL, NULL));
+    Atom *answer = NULL;
+    Bindings environment;
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, parse_one(answers, "first")));
+    bindings_free(&environment);
+
+    /*
+     * Removal after capture is invisible to the in-flight cursor.  The next
+     * query sees the survivor order.
+     */
+    assert(space_remove(space, third_row));
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, parse_one(answers, "second")));
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, parse_one(answers, "third")));
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+
+    const char *survivors[] = {"first", "second"};
+    expect_answers(
+        space, answers, "(in-flight-remove-select 1)",
+        survivors, 2u);
 }
 
 static void test_terminal_match_count_fold(
@@ -7845,6 +8356,51 @@ static void test_continuation_hub_atomic_reclamation(void) {
     cetta_continuation_hub_destroy(&hub);
     assert(g_reclamation_probe_destroyed == 7u);
     puts("PASS: hub reclamation is atomic and preserves occurrence control state");
+}
+
+static void test_observation_frozen_environment(Arena *arena) {
+    Atom *key = atom_var(arena, "privacy-key");
+    Atom *reachable = atom_var(arena, "privacy-reachable");
+    Atom *local = atom_var(arena, "privacy-local");
+    Atom *absent = atom_var(arena, "privacy-absent");
+    BindingsBuilder builder;
+    Bindings captured;
+    assert(bindings_builder_init(&builder, NULL));
+    assert(bindings_builder_add_var_fresh(&builder, key, reachable));
+    assert(bindings_clone(&captured, &builder.current));
+    assert(bindings_builder_add_var_fresh(
+        &builder, local, atom_int(arena, 7)));
+    assert(builder.current.shared_len > 0u);
+    assert(!cetta_observation_environment_var_is_private(
+        &builder.current, key->var_id));
+    assert(!cetta_observation_environment_var_is_private(
+        &builder.current, reachable->var_id));
+    assert(!cetta_observation_environment_var_is_private(
+        &builder.current, local->var_id));
+    assert(cetta_observation_environment_var_is_private(
+        &builder.current, absent->var_id));
+    assert(cetta_observation_environment_var_is_private(
+        &captured, local->var_id));
+    Binding contextual_binding = {
+        .var_id = key->var_id,
+        .spelling = key->sym_id,
+        .value = binding_value_from_context(reachable, 401u),
+    };
+    Bindings contextual = {.entries = &contextual_binding, .len = 1u};
+    assert(!cetta_observation_environment_var_is_private(
+        &contextual, var_epoch_id(reachable->var_id, 401u)));
+    assert(cetta_observation_environment_var_is_private(
+        &contextual, reachable->var_id));
+    assert(cetta_observation_environment_var_is_private(
+        &contextual, var_epoch_id(reachable->var_id, 402u)));
+    Atom *serialized = bindings_to_atom(arena, &contextual);
+    Bindings roundtrip;
+    assert(serialized && bindings_from_atom(serialized, &roundtrip));
+    assert(bindings_eq(&contextual, &roundtrip));
+    bindings_free(&roundtrip);
+    bindings_free(&captured);
+    bindings_builder_free(&builder);
+    puts("PASS: observation privacy covers frozen bindings and private suffixes");
 }
 
 static void test_observation_indexed_control_plan(void) {
@@ -9437,6 +9993,7 @@ int main(void) {
         &space, &persistent, &answers);
     test_controller_batch_ranker();
     test_continuation_hub_atomic_reclamation();
+    test_observation_frozen_environment(&answers);
     test_observation_indexed_control_plan();
     test_branch_capture_algebra();
     test_owned_clause_continuation_roundtrip(
@@ -9455,6 +10012,7 @@ int main(void) {
 
     test_constructor_slot_frame_plans(
         &universe, &persistent, &answers);
+    test_elaborated_functional_pattern_plan(&universe, &persistent, &answers);
     test_unknown_cons_fact_falls_back(
         &universe, &persistent, &answers);
     test_alpha_reconciled_slot_authority(
@@ -9488,6 +10046,7 @@ int main(void) {
     test_deep_cons_semantics(&answers);
     test_logical_cons_binding_views(&answers);
     test_lowered_head_epoch_views(&answers);
+    test_contextual_cons_values(&answers);
     test_answer_materialization_boundaries(
         &space, &persistent, &answers);
     test_logical_list_cursor_boundaries(&answers);
@@ -9500,6 +10059,7 @@ int main(void) {
     test_quoted_result_override(&space, &answers);
     test_deep_callable_detection(
         &space, &persistent, &answers);
+    test_root_context_identity_import(&space, &persistent, &answers);
     test_specializer_capacity_fallback(
         &space, &persistent, &answers);
     test_deep_functional_match_pattern(
@@ -9513,6 +10073,8 @@ int main(void) {
     test_cons_shape_clause_index(
         &space, &persistent, &answers);
     test_nested_clause_shape_index(
+        &space, &persistent, &answers);
+    test_colon_tag_coordinate_before_unification(
         &space, &persistent, &answers);
     test_choice_continuation_trail(
         &space, &persistent, &answers);
@@ -10010,7 +10572,13 @@ int main(void) {
         &space, &answers, "(f 1)", next_call, 4u);
     test_choice_heap_instant_reclaiming(
         &space, &persistent, &answers);
+    test_same_machine_add_atom_ground_fact(
+        &space, &persistent, &answers);
     test_bound_match_candidate_snapshot(
+        &space, &persistent, &answers);
+    test_match_prefix_cursor_reuse(
+        &space, &persistent, &answers);
+    test_bound_match_in_flight_remove_invalidates_pin(
         &space, &persistent, &answers);
     test_terminal_match_count_fold(&space, &answers);
 

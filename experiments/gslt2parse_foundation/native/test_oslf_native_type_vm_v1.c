@@ -182,11 +182,9 @@ static bool exercise_positional_linear_builder_view(void) {
     ok = expect(match_atoms_epoch_positional_linear_builder(
                     ground_query, lhs, &builder, &arena, epoch),
                 "flat linear ground view did not match") &&
-         expect(bindings_lookup_id(
-                    &builder.current, var_epoch_id(x->var_id, epoch)) ==
+         expect(bindings_lookup_value_id(&builder.current, var_epoch_id(x->var_id, epoch)).skeleton ==
                     ground_query->expr.elems[1] &&
-                    bindings_lookup_id(
-                        &builder.current, var_epoch_id(y->var_id, epoch)) ==
+                    bindings_lookup_value_id(&builder.current, var_epoch_id(y->var_id, epoch)).skeleton ==
                     ground_query->expr.elems[2],
                 "positional view produced the wrong bindings");
     bindings_builder_rollback(&builder, binding_checkpoint);

@@ -4,12 +4,6 @@
 #include <string.h>
 #include <stdio.h>
 
-/* ── Epoch counter ─────────────────────────────────────────────────────── */
-
-static uint32_t g_stree_epoch = 1;
-
-uint32_t stree_next_epoch(void) { return g_stree_epoch++; }
-
 /* ── SubstNode lifecycle ───────────────────────────────────────────────── */
 
 SubstNode *snode_new(void) {
@@ -45,6 +39,9 @@ void snode_free(SubstNode *n) {
         for (uint32_t i = 0; i < n->nints; i++) snode_free(n->ints[i].child);
         free(n->ints);
     }
+    for (CettaIndex i = 0u; i < n->nleaves; i++)
+        if (n->leaves[i].owns_identity)
+            cetta_frame_identity_release(n->leaves[i].epoch);
     free(n->leaves);
     free(n);
 }
@@ -66,6 +63,8 @@ static CettaCount snode_transport_stable_coordinates(
         }
         CettaIndex target = source_to_target[source];
         if (target == UINT64_MAX) {
+            if (node->leaves[read].owns_identity)
+                cetta_frame_identity_release(node->leaves[read].epoch);
             removed++;
             continue;
         }
@@ -398,6 +397,7 @@ static void snode_add_leaf(SubstNode *n, CettaIndex idx, uint32_t epoch) {
     }
     n->leaves[n->nleaves].idx = idx;
     n->leaves[n->nleaves].epoch = epoch;
+    n->leaves[n->nleaves].owns_identity = cetta_frame_identity_retain(epoch);
     n->nleaves++;
 }
 
@@ -562,7 +562,8 @@ void stree_bucket_free(SubstBucket *bucket) {
 }
 
 void stree_bucket_insert(SubstBucket *bucket, Atom *atom, CettaIndex atom_idx) {
-    uint32_t epoch = stree_next_epoch();
+    CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
+    uint32_t epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
     if (!bucket->root) bucket->root = snode_new();
     SubstNode *leaf = snode_insert_atom(bucket->root, atom);
     snode_add_leaf(leaf, atom_idx, epoch);
@@ -571,9 +572,10 @@ void stree_bucket_insert(SubstBucket *bucket, Atom *atom, CettaIndex atom_idx) {
 
 bool stree_bucket_insert_id(SubstBucket *bucket, const TermUniverse *universe,
                             AtomId atom_id, CettaIndex atom_idx) {
+                                CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
     if (!bucket || !universe || atom_id == CETTA_ATOM_ID_NONE)
         return false;
-    uint32_t epoch = stree_next_epoch();
+    uint32_t epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
     if (!bucket->root)
         bucket->root = snode_new();
     SubstNode *leaf = snode_insert_atom_id(bucket->root, universe, atom_id);
@@ -613,8 +615,11 @@ void smset_init(SubstMatchSet *s) {
 }
 
 void smset_free(SubstMatchSet *s) {
-    for (CettaIndex i = 0; i < s->len; i++)
+    for (CettaIndex i = 0; i < s->len; i++) {
+        if (s->items[i].owns_identity)
+            cetta_frame_identity_release(s->items[i].epoch);
         bindings_free(&s->items[i].bindings);
+    }
     if (s->items != s->inline_items)
         free(s->items);
     memset(s->inline_items, 0, sizeof(s->inline_items));
@@ -643,6 +648,7 @@ static void smset_push_move(SubstMatchSet *s, CettaIndex atom_idx, uint32_t epoc
     }
     s->items[s->len].atom_idx = atom_idx;
     s->items[s->len].epoch = epoch;
+    s->items[s->len].owns_identity = cetta_frame_identity_retain(epoch);
     bindings_move(&s->items[s->len].bindings, b);
     s->items[s->len].exact = false;
     s->len++;
@@ -702,8 +708,8 @@ static void st_collect(SubstNode *node, BindingsBuilder *bb, Arena *a,
             tagged.entries[bi].var_id =
                 var_epoch_id(tagged.entries[bi].var_id, epoch);
         }
-        bindings_invalidate_after_key_rewrite(&tagged);
-        if (!bindings_has_loop(&tagged))
+        if (bindings_invalidate_after_key_rewrite(&tagged) &&
+            !bindings_has_loop(&tagged))
             smset_push_move(out, node->leaves[li].idx, epoch, &tagged);
         bindings_free(&tagged);
     }

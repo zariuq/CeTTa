@@ -14,7 +14,7 @@ scope_fixture=tests/langdef/bnf/plain_bnf_handle_scope_v1.metta
 test ! -e "$scope_evidence/inputs.sha256"
 sha256sum "$scope_runtime" "$scope_observer" "$scope_fixture" "$0" \
     tests/support/test_plain_bnf_typed_lifetime_v1.c \
-    src/atom.c src/atom.h src/native_handle.c src/native_handle.h \
+    src/atom.c src/binding/frame_identity.c src/atom.h src/native_handle.c src/native_handle.h \
     src/term_universe.c native/langdef_module.c lib/langdef.metta \
     langdef/bnf/plain_bnf_source_v1.metta \
     langdef/bnf/plain_bnf_parser_profile_v1.metta \

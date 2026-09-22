@@ -3,6 +3,7 @@
 
 #include "atom.h"
 #include "gslt_term_view_v1.h"
+#include "match.h"
 #include "petta_program.h"
 #include "space.h"
 
@@ -75,6 +76,14 @@ petta_specializer_query_view_execution_admission(
     Space *space, SymbolId source,
     const CettaGsltTermCursorV1 *arguments, CettaExprLen arity,
     CettaGsltTermCursorObserverV1 observer);
+
+/* The same necessary-condition proof over explicit contextual values.  Each
+ * argument retains its own lexical epoch; the observer follows root aliases
+ * through `environment` without reifying a complete call expression. */
+PettaSpecializerRelationAdmission
+petta_specializer_query_value_execution_admission(
+    Space *space, SymbolId source, Bindings *environment,
+    const BindingValue *arguments, CettaExprLen arity);
 
 /*
  * Equation and function-type mutations invalidate every specialization

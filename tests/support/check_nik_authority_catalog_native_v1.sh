@@ -17,7 +17,7 @@ nik_template=tests/support/nik_authority_catalog_native_v1.metta
 nik_scope_template=tests/support/nik_authority_catalog_scope_v1.metta
 nik_observer=tests/support/test_nik_authority_catalog_native_v1.c
 nik_sources=(src/nik_runtime.c src/inference_checker.c src/inference_side_condition_provider.c
-    src/abt.c src/gslt_provider_runtime.c src/parser.c src/atom.c src/symbol.c
+    src/abt.c src/gslt_provider_runtime.c src/parser.c src/atom.c src/binding/frame_identity.c src/symbol.c
     src/name_key.c src/native_sha256.c)
 sha256sum "$nik_tool" "$nik_script" "$nik_reference" "$nik_catalog" "$nik_template" "$nik_scope_template" \
     "$nik_observer" tools/nik_authority_catalog_v1.c tools/gslt_native_emission_v1.h \

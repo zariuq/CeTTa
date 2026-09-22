@@ -266,6 +266,11 @@ typedef struct {
     const Space *space;
     uint64_t instance_id;
     uint64_t revision;
+    /* Captured at issue.  Data-only appends leave this unchanged; a prefix
+     * rewrite issues a new epoch.  Occurrence resolve and equation cursors
+     * consult this rather than `revision` so an in-flight pin survives
+     * appends without copying the bag. */
+    uint64_t prefix_epoch;
 } SpaceReadToken;
 
 /* Lifetime-qualified identity of the ordered equation-occurrence projection.
@@ -311,6 +316,9 @@ typedef struct {
 
 SpaceReadToken space_read_token(const Space *s);
 bool space_read_token_is_current(SpaceReadToken token);
+/* Instance live and prefix not rewritten.  Data-only appends that bump
+ * `revision` remain intact. */
+bool space_read_token_prefix_intact(SpaceReadToken token);
 /* Validate a token against a Space whose lifetime is independently known to
  * be active.  Unlike the one-argument form, this never dereferences the raw
  * pointer retained by a stale token. */
@@ -345,6 +353,7 @@ bool space_equation_occurrence_resolve(SpaceEquationOccurrenceId id,
 typedef struct {
     SpaceReadToken read;
     SymbolId head;
+    CettaIndex ceiling;
     CettaIndex exact_position;
     CettaIndex wildcard_position;
     CettaIndex overlay_position;
@@ -361,6 +370,50 @@ bool space_equation_cursor_init(Space *s, SymbolId head,
                                 SpaceEquationCursor *cursor);
 SpaceEquationCursorStep space_equation_cursor_next(
     SpaceEquationCursor *cursor, SpaceEquationOccurrenceId *out);
+
+/*
+ * Revision-qualified zipper over matching discrimination-trie leaves.
+ * Pin a read token, prefix epoch, and occurrence ceiling at init; `next`
+ * yields logical indices in declaration order without copying the bag.
+ * Appends at or after the ceiling are invisible.  A prefix rewrite
+ * (prefix_epoch change) invalidates the pin.  Release exactly once.
+ */
+typedef struct {
+    SpaceReadToken read;
+    uint64_t prefix_epoch;
+    uint64_t pin_generation;
+    CettaIndex ceiling;
+    Space *space;
+    DiscNode **nodes;
+    CettaIndex *leaf_pos;
+    uint32_t node_len;
+    bool full_scan;
+    CettaIndex full_next;
+    bool pinned;
+} SpaceOccurrenceCursor;
+
+typedef enum {
+    SPACE_OCCURRENCE_CURSOR_END = 0,
+    SPACE_OCCURRENCE_CURSOR_ITEM,
+    SPACE_OCCURRENCE_CURSOR_INVALIDATED,
+} SpaceOccurrenceCursorStep;
+
+void space_occurrence_cursor_init_empty(SpaceOccurrenceCursor *cursor);
+bool space_occurrence_cursor_init(Space *s, Atom *pattern,
+                                  SpaceOccurrenceCursor *cursor);
+/* New attempt over the same pin and discrimination frontier: copy the
+ * borrowed trie nodes, reset the leaf cursor, and take one pin. */
+bool space_occurrence_cursor_clone_unstarted(
+    const SpaceOccurrenceCursor *src, SpaceOccurrenceCursor *dst);
+/* Clone the exact logical-update position of a live cursor.  The clone owns
+ * an independent pin and traversal arrays while observing the same prefix,
+ * ceiling, tombstone generation, and next occurrence as the source. */
+bool space_occurrence_cursor_clone(
+    const SpaceOccurrenceCursor *src, SpaceOccurrenceCursor *dst);
+void space_reclaim_pin_tombstones(Space *s);
+SpaceOccurrenceCursorStep space_occurrence_cursor_next(
+    SpaceOccurrenceCursor *cursor, CettaIndex *logical_index_out);
+void space_occurrence_cursor_release(SpaceOccurrenceCursor *cursor);
 
 bool space_contains_exact(Space *s, Atom *atom);
 /* Exact membership for `(head argument...)`, presented as a borrowed term
@@ -418,7 +471,22 @@ typedef bool (*QueryResultVisitor)(Atom *result, const Bindings *bindings,
  * an equation occurrence already proved unable to match.  The equation store
  * retains authority for candidate order, multiplicity, freshening, and exact
  * matching. */
-typedef bool (*QueryEquationCandidateFilter)(Atom *equation, void *ctx);
+/* A revision-qualified caller may reject an impossible equation or provide a
+ * derived exact-match pair.  A true result with every atom output NULL selects
+ * the authored left and right sides.  A complete derived plan also supplies a
+ * closed result for the case where the authored head matches but the refined
+ * pattern does not; this preserves the difference between an unknown call and
+ * a recognized equation whose guard produces zero answers.  The optional
+ * frame schema is the complete, sorted inventory of unqualified variable ids
+ * owned by this equation activation.  It remains useful with the authored
+ * atoms and is interpreted independently of a partial atom override.  The
+ * callback never establishes a match, and syntax must outlive the synchronous visit.
+ * A supplied frame schema is borrowed here and retained by each activation. */
+typedef bool (*QueryEquationCandidatePlan)(
+    Atom *equation, void *ctx,
+    Atom **match_pattern, Atom **result_template,
+    Atom **refinement_failure_template, Atom **refinement_fallback_pattern,
+    BindingsFrameSchema **frame_schema);
 
 void query_results_init(QueryResults *qr);
 bool query_results_push(QueryResults *qr, Atom *result, Bindings *b);
@@ -426,9 +494,9 @@ bool query_results_push_move(QueryResults *qr, Atom *result, Bindings *b);
 void query_results_diag_set_capacity_limit_override(CettaCount limit);
 CettaCount query_equations_visit(Space *s, Atom *query, Arena *a,
                                  QueryResultVisitor visitor, void *ctx);
-CettaCount query_equations_visit_filtered(
+CettaCount query_equations_visit_planned(
     Space *s, Atom *query, Arena *a,
-    QueryEquationCandidateFilter filter, void *filter_ctx,
+    QueryEquationCandidatePlan plan, void *plan_ctx,
     QueryResultVisitor visitor, void *visitor_ctx);
 /* Match exactly one admitted (= lhs rhs) atom against query.  This is the
    single-candidate form of query_equations_visit: it applies the same

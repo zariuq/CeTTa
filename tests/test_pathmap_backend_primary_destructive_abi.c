@@ -64,7 +64,7 @@ static bool count_decoded_row(const Bindings *row, void *raw_probe) {
 static bool inspect_opened_binder_shaped_payload(
     const Bindings *row, void *raw_probe) {
     OpeningCaptureProbe *probe = raw_probe;
-    Atom *payload = bindings_lookup_id((Bindings *)row, probe->query_var);
+    Atom *payload = bindings_lookup_value_id((Bindings *)row, probe->query_var).skeleton;
     assert(payload != NULL);
     assert(payload->kind == ATOM_EXPR && payload->expr.len == 3u);
     assert(atom_is_symbol_id(payload->expr.elems[0], probe->payload_sym));
@@ -154,8 +154,14 @@ static void test_streamed_row_disposition(Arena *arena) {
 
     bindings_init(&valid);
     bindings_init(&cyclic);
+    /* The bind path refuses a closing edge, so a cyclic row for the decode
+     * boundary is built the way a decoded row can arrive: by a wholesale
+     * value rewrite that bypasses admission. */
     assert(bindings_add_id(
-        &cyclic, query->var_id, query->sym_id, cyclic_value));
+        &cyclic, query->var_id, query->sym_id,
+        atom_symbol_id(arena, f_sym)));
+    assert(bindings_rewrite_value_id(
+        &cyclic, query->var_id, binding_value_from_atom(cyclic_value)));
     assert(bindings_has_loop(&cyclic));
 
     assert(space_match_backend_visit_decoded_row(

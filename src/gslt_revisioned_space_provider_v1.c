@@ -649,8 +649,9 @@ static bool revisioned_space_candidate_visit_v1(
         visitor->limited = true;
         return false;
     }
-    Atom *occurrence = bindings_lookup_var(
-        bindings, visitor->occurrence_variable);
+    BindingValue occurrence_value = bindings_lookup_value_id(
+        bindings, visitor->occurrence_variable->var_id);
+    Atom *occurrence = binding_value_materialize(visitor->answer_arena, occurrence_value);
     Atom *candidate = bindings_apply(
         bindings, visitor->answer_arena, visitor->candidate_pattern);
     Atom *arguments[] = {
