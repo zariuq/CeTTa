@@ -3485,6 +3485,19 @@ $(VARIANT_SHAPE_TEST_BIN): tests/test_variant_shape_roundtrip.c src/symbol.c src
 test-variant-shape-roundtrip: $(VARIANT_SHAPE_TEST_BIN)
 	@$(call cetta_exec,./$(VARIANT_SHAPE_TEST_BIN))
 
+# Arena ownership is a lifetime contract, not a representation detail: one hold
+# per distinct full identity for an arena's live region, exact on reset/free,
+# and never a cached membership for a refused retain.
+ARENA_FRAME_IDENTITY_OWNERSHIP_TEST_BIN = runtime/test_arena_frame_identity_ownership-$(BUILD_OBJ_TAG)
+
+$(ARENA_FRAME_IDENTITY_OWNERSHIP_TEST_BIN): tests/test_arena_frame_identity_ownership.c src/atom.c src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 -DCETTA_RUNTIME_STATS_NOOP=1 $(CFLAGS) -o $@ tests/test_arena_frame_identity_ownership.c src/symbol.c src/atom.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c $(LDFLAGS)
+
+.PHONY: test-arena-frame-identity-ownership
+test-arena-frame-identity-ownership: $(ARENA_FRAME_IDENTITY_OWNERSHIP_TEST_BIN)
+	@$(call cetta_exec,./$(ARENA_FRAME_IDENTITY_OWNERSHIP_TEST_BIN))
+
 $(BINDINGS_LOOKUP_INDEX_TEST_BIN): tests/test_bindings_lookup_index.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -o $@ tests/test_bindings_lookup_index.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
@@ -17632,7 +17645,7 @@ test: test-plain-bnf-semantic-generated-artifact-current-v1
 test: test-plain-bnf-reader-v1
 test: test-plain-bnf-denotation-v1
 
-test: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-vocabulary test-prime-public-judgment-vocabulary test-manifest-strict test-fail-atomic-build-v1 test-operational-language-def-v1 test-language-def-premise-free-rewriter-v1 test-walters-zantema-da-to-radix-digit-transform-v1 test-walters-zantema-da-to-radix-digit-emitted-c-v1 test-walters-zantema-da-radix-digit-nik-v1 test-exact-arithmetic-to-external-call-v1 test-language-def-core-v1 test-language-def-ground-term-v1 test-exact-integer-theory-v1 test-json-gslt test-io test-git-module test-symbolid-guard test-variant-shape-roundtrip test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-stable-occurrence-transport test-shared-space-concurrent-index test-parallel-executor-lifecycle test-stable-occurrence-realization-tournament test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-petta-typecheck-v3-core-langdef-v1 test-petta-typecheck-v3-file-runner-v1 test-petta-typecheck-v3-profile test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-core-v1 test-prime-authored-chaining-fixtures test-prime-relational-plan test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1
+test: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-vocabulary test-prime-public-judgment-vocabulary test-manifest-strict test-fail-atomic-build-v1 test-operational-language-def-v1 test-language-def-premise-free-rewriter-v1 test-walters-zantema-da-to-radix-digit-transform-v1 test-walters-zantema-da-to-radix-digit-emitted-c-v1 test-walters-zantema-da-radix-digit-nik-v1 test-exact-arithmetic-to-external-call-v1 test-language-def-core-v1 test-language-def-ground-term-v1 test-exact-integer-theory-v1 test-json-gslt test-io test-git-module test-symbolid-guard test-variant-shape-roundtrip test-arena-frame-identity-ownership test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-stable-occurrence-transport test-shared-space-concurrent-index test-parallel-executor-lifecycle test-stable-occurrence-realization-tournament test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-petta-typecheck-v3-core-langdef-v1 test-petta-typecheck-v3-file-runner-v1 test-petta-typecheck-v3-profile test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-core-v1 test-prime-authored-chaining-fixtures test-prime-relational-plan test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1
 
 .PHONY: test-main-corpus
 test: test-main-corpus
@@ -22926,7 +22939,7 @@ test-petta-prepared-register-loop: $(BIN)
 	echo "PASS: PeTTa prepared register loop preserves aliasing, ambiguity, table, and count boundaries"
 
 .PHONY: test-petta-specialized-pure-call
-test-petta-specialized-pure-call: $(BIN)
+test-petta-specialized-pure-call: $(BIN) test-petta-prepared-activation-call
 	@set -e; \
 	actual=$$(mktemp runtime/petta-specialized-pure-call.XXXXXX); \
 	trap 'rm -f "$$actual"' EXIT INT TERM; \
@@ -22936,6 +22949,26 @@ test-petta-specialized-pure-call: $(BIN)
 	diff -u tests/petta/search_machine_specialized_pure_call.expected \
 		"$$actual"; \
 	echo "PASS: PeTTa specialized recursion preserves opaque values and evaluates active constructor fields"
+
+.PHONY: test-petta-prepared-activation-call
+test-petta-prepared-activation-call: $(BIN)
+	@set -eu; \
+	actual=$$(./$(BIN) --lang petta tests/petta/search_machine_prepared_activation_call.metta); \
+	expected=$$(cat tests/petta/search_machine_prepared_activation_call.expected); \
+	test "$$actual" = "$$expected"; \
+	reference=$$(./$(BIN) --fuel 1000000 --lang petta tests/petta/search_machine_prepared_activation_call.metta); \
+	test "$$reference" = "$$expected"; \
+	echo 'PASS: prepared activation calls preserve aliases, alternatives, effects, and revisions'
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	stats=$$(./$(BIN) --emit-runtime-stats --lang petta tests/petta/search_machine_prepared_activation_call.metta 2>&1 >/dev/null); \
+	commits=$$(printf '%s\n' "$$stats" | awk '$$1 == "runtime-counter" && $$2 == "prepared-pure-call-commit" {print $$3}'); \
+	test "$${commits:-0}" -ge 4; \
+	reference=$$(./$(BIN) --fuel 1000000 --emit-runtime-stats --lang petta tests/petta/search_machine_prepared_activation_call.metta 2>&1 >/dev/null); \
+	commits=$$(printf '%s\n' "$$reference" | awk '$$1 == "runtime-counter" && $$2 == "prepared-pure-call-commit" {print $$3}'); \
+	test "$${commits:-missing}" = 0; \
+	echo 'PASS: nested activation calls reach the shared prepared executor'
+endif
 
 .PHONY: test-petta-specialized-pure-call-stats
 test-petta-specialized-pure-call-stats: $(BIN)

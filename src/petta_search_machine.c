@@ -21789,6 +21789,90 @@ petta_machine_push_activation_pure_data_segment(
     return PETTA_ACTIVATION_CALL_VIEW_READY;
 }
 
+/* Closed-call admission observes the current image without constructing a
+ * substituted term. Root resolution can change lexical context; descendants
+ * retain that returned context. Any unresolved variable leaves the call on
+ * the ordinary relational path. */
+static bool petta_machine_space_query_is_closed(
+        PettaMachineImpl *machine, const PettaSpaceQueryView *query) {
+    BindingValue inline_pending[32];
+    BindingValue *pending = inline_pending;
+    size_t capacity = 32u;
+    size_t length = 0u;
+    bool closed = false;
+    Bindings *bindings = (Bindings *)search_context_bindings(&machine->search);
+    for (CettaExprIndex argument = 0u; argument < query->arity; argument++) {
+        BindingValue value;
+        if (!petta_space_query_argument_value(query, argument, &value))
+            goto done;
+        pending[length++] = value;
+        while (length > 0u) {
+            value = pending[--length];
+            if (!value.skeleton)
+                goto done;
+            if (!atom_has_vars(value.skeleton))
+                continue;
+            if (!bindings_resolve_value_preview(bindings, value, &value) ||
+                !value.skeleton || value.skeleton->kind == ATOM_VAR)
+                goto done;
+            if (!atom_has_vars(value.skeleton))
+                continue;
+            if (value.skeleton->kind != ATOM_EXPR)
+                goto done;
+            CettaExprLen children = value.skeleton->expr.len;
+            if (children > SIZE_MAX - length)
+                goto done;
+            size_t needed = length + children;
+            if (needed > capacity) {
+                if (pending == inline_pending) {
+                    pending = NULL;
+                    capacity = 0u;
+                    if (!petta_machine_reserve((void **)&pending, &capacity,
+                            needed, sizeof(*pending)))
+                        goto done;
+                    memcpy(pending, inline_pending, length * sizeof(*pending));
+                } else if (!petta_machine_reserve((void **)&pending, &capacity,
+                               needed, sizeof(*pending))) {
+                    goto done;
+                }
+            }
+            for (CettaExprIndex child = children; child > 0u; child--)
+                pending[length++] = binding_value_from_context_kind(
+                    value.skeleton->expr.elems[child - 1u], value.epoch, value.kind);
+        }
+    }
+    closed = true;
+done:
+    if (pending != inline_pending)
+        free(pending);
+    return closed;
+}
+
+static Atom *petta_machine_execute_prepared_call(
+        PettaMachineImpl *machine, Atom *call) {
+    if (!machine->host.execute_prepared_pure_call ||
+        !machine->host.unlimited_transition_budget ||
+        machine->host.analysis || machine->host.externalize_clause_choices ||
+        machine->host.prepare_resolved_call || machine->host.begin_relation_call ||
+        machine->host.record_clause_use || !call ||
+        call->kind != ATOM_EXPR || call->expr.len == 0u ||
+        call->expr.elems[0]->kind != ATOM_SYMBOL)
+        return NULL;
+    SymbolId head = call->expr.elems[0]->sym_id;
+    if ((machine->host.translator_rule_contains &&
+         machine->host.translator_rule_contains(machine->host.context, head)) ||
+        (machine->host.tabled_relation_contains &&
+         machine->host.tabled_relation_contains(
+             machine->host.context, head, call->expr.len - 1u)))
+        return NULL;
+    Atom *result = machine->host.execute_prepared_pure_call(
+        machine->host.context, machine->space, &machine->heap, call);
+    /* A foreign registry can make a returned data head callable without a
+     * Space revision change. Such results still need ordinary dispatch. */
+    return result && !petta_machine_extension_callable(machine, result)
+        ? result : NULL;
+}
+
 /*
  * An equation activation is a source term plus an epoch-indexed environment.
  * Keep the dominant control constructors as views and materialize only the
@@ -22272,6 +22356,21 @@ activation_tail_segment:
             return false;
         }
         if (admission == PETTA_MACHINE_SPACE_QUERY_ADMITTED) {
+            /* A prepared source call and CALL_READY denote the same strict
+             * value boundary. Let the shared revision-qualified compiler
+             * consume closed determinate calls here too; declining leaves
+             * the original contextual query and its alternatives intact. */
+            if (machine->host.execute_prepared_pure_call &&
+                machine->host.unlimited_transition_budget &&
+                !machine->host.externalize_clause_choices &&
+                petta_machine_space_query_is_closed(
+                    machine, &activation_query.query)) {
+                Atom *call = petta_machine_materialize_space_query(
+                    machine, &activation_query.query);
+                Atom *result = petta_machine_execute_prepared_call(machine, call);
+                if (result)
+                    return petta_machine_unify(machine, result, goal->second);
+            }
             /* Retain the destination reference.  Its live BindingValue may
              * be an open contextual expression; reducing it to Atom here
              * would either erase that context or materialize before the
@@ -25879,31 +25978,10 @@ static bool petta_machine_dispatch_goal(
                     ? "<none>"
                     : symbol_bytes(g_symbols, prepared_head));
         }
-        if (!count_collection_result && !translated &&
-            !relation_declared_tabled &&
-            ordinary_ready_call &&
-            machine->host.unlimited_transition_budget &&
-            machine->host.execute_prepared_pure_call) {
-            Atom *pure_result =
-                machine->host.execute_prepared_pure_call(
-                    machine->host.context, machine->space,
-                    &machine->heap, first);
-            if (pure_result) {
-                /*
-                 * Foreign imports can make a previously inert symbol
-                 * callable without mutating the MeTTa space revision used
-                 * by the prepared program.  A prepared result headed by
-                 * such a symbol is therefore a suspended canonical call,
-                 * not the final value.  Decline this accelerator result and
-                 * let the ordinary clause machine execute it through the
-                 * live foreign registry.
-                 */
-                if (!petta_machine_extension_callable(
-                        machine, pure_result)) {
-                    return petta_machine_unify_resolved(
-                        machine, pure_result, second);
-                }
-            }
+        if (!count_collection_result && ordinary_ready_call) {
+            Atom *pure_result = petta_machine_execute_prepared_call(machine, first);
+            if (pure_result)
+                return petta_machine_unify_resolved(machine, pure_result, second);
         }
         if (!count_collection_result && !translated &&
             !relation_declared_tabled &&

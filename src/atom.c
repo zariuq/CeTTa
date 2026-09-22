@@ -684,6 +684,7 @@ void arena_init(Arena *a) {
     a->reset_epoch = 1u;
     a->finalizers = NULL;
     a->retained_owners = NULL;
+    a->frame_identities = NULL;
 }
 
 void arena_init_detached(Arena *a) {
@@ -731,16 +732,255 @@ bool arena_retain_owner(Arena *a, void *owner,
     return true;
 }
 
-static void arena_release_frame_identity(void *identity) {
-    cetta_frame_identity_release((CettaFrameIdentity)(uintptr_t)identity);
+/* ── Arena frame-identity ownership ─────────────────────────────────────── */
+/*
+ * One hold per distinct full generational identity reachable from this arena's
+ * live allocation region.  Syntax construction consults the set for every
+ * variable occurrence, so a term mentioning one activation's variable a
+ * thousand times performs one retain and keeps one record.
+ *
+ * Records are appended in acquisition order and never permuted, so a partial
+ * reset can drop exactly the suffix acquired after its mark.  The index is an
+ * Threading contract: an Arena is owned by one thread at a time, by the same
+ * lifetime confinement as the rest of its allocation fields.  Arena access is
+ * not synchronized internally — mutual exclusion is the caller's
+ * responsibility.  The retain/release it performs calls the global identity
+ * allocator, which keeps per-cell atomics; those atomics make the borrow
+ * correct across threads.  No GIL is read or held by the set.
+ */
+struct ArenaFrameIdentitySet {
+    CettaFrameIdentity *identities;   /* acquisition order                */
+    uint32_t *slots;                  /* index -> record position         */
+    uint32_t *index;                  /* record position -> its index slot */
+    uint32_t len;                     /* distinct live identities         */
+    uint32_t cap;                     /* capacity of `identities`         */
+    uint32_t slot_cap;                /* power of two, or zero            */
+    uint32_t slot_mask;
+};
+
+enum {
+    ARENA_FRAME_IDENTITY_SET_MIN_CAPACITY = 8u,
+    ARENA_FRAME_IDENTITY_SET_MAX_CAPACITY = UINT32_C(0x80000000),
+};
+
+static size_t arena_frame_identity_set_bytes(const ArenaFrameIdentitySet *set);
+
+static ArenaFrameIdentitySet *arena_frame_identity_set_alloc(void) {
+    ArenaFrameIdentitySet *set = cetta_malloc(sizeof(*set));
+    *set = (ArenaFrameIdentitySet){0};
+    return set;
+}
+
+static void arena_frame_identity_set_dispose(ArenaFrameIdentitySet *set) {
+    if (!set)
+        return;
+    for (uint32_t i = 0u; i < set->len; i++)
+        cetta_frame_identity_release(set->identities[i]);
+    free(set->identities);
+    free(set->slots);
+    free(set->index);
+    free(set);
+}
+
+/* Audit finalizer ordering: on reset, identity holds are released *before*
+ * per-arena object finalizers (BigInt, rational, etc.) run.  Those finalizers
+ * clear GMP payloads; they do not read frame identities.  This ordering is
+ * safe — and it is the only order available, because finalizer cleanup is
+ * the last stop before arena teardown.
+ */
+
+/* Storage retained by the set itself.  The arena must account for this
+ * wherever the set lives: allocation policies consult `external_bytes`
+ * and floors into `live_bytes`.  Capacity that survives a partial reset
+ * is still charged; only a full `arena_free` releases the object. */
+static size_t arena_frame_identity_set_bytes(const ArenaFrameIdentitySet *set) {
+    if (!set)
+        return 0u;
+    return sizeof(*set) + (size_t)set->cap * sizeof(*set->identities) +
+           (size_t)set->cap * sizeof(*set->index) +
+           (size_t)set->slot_cap * sizeof(*set->slots);
+}
+
+/* Charge the arena for identity-set storage.  The arena already accounts for
+ * the set as part of `external_bytes` when it is created and freed, recording
+ * the retained block so partial-reset capacity does not masquerade as free
+ * space.  This helper only handles shape changes after creation. */
+static void arena_frame_identity_set_account_growth(Arena *a,
+                                                    size_t previous_bytes) {
+    if (!a || !a->frame_identities)
+        return;
+    size_t now = arena_frame_identity_set_bytes(a->frame_identities);
+    if (now >= previous_bytes) {
+        if (now > previous_bytes)
+        arena_account_external_bytes(a, now - previous_bytes);
+    } else {
+        a->external_bytes -= (previous_bytes - now);
+    }
+}
+
+/* Index slots hold `position + 1` so that zero means "empty". */
+static uint32_t arena_frame_identity_index_slot(
+        const ArenaFrameIdentitySet *set, CettaFrameIdentity identity) {
+    uint64_t mixed = identity;
+    mixed ^= mixed >> 33u;
+    mixed *= UINT64_C(0xff51afd7ed558ccd);
+    mixed ^= mixed >> 29u;
+    return (uint32_t)mixed & set->slot_mask;
+}
+
+static bool arena_frame_identity_set_index_reserve(ArenaFrameIdentitySet *set,
+                                                   uint32_t needed) {
+    uint32_t wanted = ARENA_FRAME_IDENTITY_SET_MIN_CAPACITY;
+    while (wanted < needed * 2u) {
+        if (wanted > ARENA_FRAME_IDENTITY_SET_MAX_CAPACITY / 2u)
+            return false;
+        wanted *= 2u;
+    }
+    if (set->slot_cap >= wanted)
+        return true;
+    free(set->slots);
+    set->slots = cetta_malloc((size_t)wanted * sizeof(*set->slots));
+    memset(set->slots, 0, (size_t)wanted * sizeof(*set->slots));
+    set->slot_cap = wanted;
+    set->slot_mask = wanted - 1u;
+    for (uint32_t i = 0u; i < set->len; i++) {
+        uint32_t slot = arena_frame_identity_index_slot(set, set->identities[i]);
+        while (set->slots[slot])
+            slot = (slot + 1u) & set->slot_mask;
+        set->slots[slot] = i + 1u;
+        set->index[i] = slot;
+    }
+    return true;
+}
+
+static bool arena_frame_identity_set_records_reserve(ArenaFrameIdentitySet *set,
+                                                     uint32_t needed) {
+    if (needed <= set->cap)
+        return true;
+    uint32_t capacity = set->cap ? set->cap
+                                 : ARENA_FRAME_IDENTITY_SET_MIN_CAPACITY;
+    while (capacity < needed) {
+        if (capacity > ARENA_FRAME_IDENTITY_SET_MAX_CAPACITY / 2u) {
+            capacity = needed;
+            break;
+        }
+        capacity *= 2u;
+    }
+    if ((size_t)capacity > SIZE_MAX / sizeof(*set->identities) ||
+        (size_t)capacity > SIZE_MAX / sizeof(*set->index))
+        return false;
+    CettaFrameIdentity *identities = cetta_realloc(
+        set->identities, (size_t)capacity * sizeof(*identities));
+    uint32_t *index = cetta_realloc(
+        set->index, (size_t)capacity * sizeof(*index));
+    set->identities = identities;
+    set->index = index;
+    set->cap = capacity;
+    return true;
+}
+
+/* The most recently acquired identity is a likely repeat, so probe the tail
+ * before consulting the index.  Repeated occurrences of one variable, which
+ * is the common shape in generated activation syntax, are then found without
+ * touching the index at all. */
+static bool arena_frame_identity_set_find(const ArenaFrameIdentitySet *set,
+                                          CettaFrameIdentity identity,
+                                          uint32_t *position_out) {
+    if (!set || set->len == 0u)
+        return false;
+    if (set->identities[set->len - 1u] == identity) {
+        if (position_out)
+            *position_out = set->len - 1u;
+        return true;
+    }
+    if (!set->slot_cap)
+        return false;
+    uint32_t slot = arena_frame_identity_index_slot(set, identity);
+    for (;;) {
+        uint32_t entry = set->slots[slot];
+        if (!entry)
+            return false;
+        uint32_t position = entry - 1u;
+        if (set->identities[position] == identity) {
+            if (position_out)
+                *position_out = position;
+            return true;
+        }
+        slot = (slot + 1u) & set->slot_mask;
+    }
+}
+
+/* Claim one hold.  Failure to retain leaves the set untouched, so a stale
+ * identity can never become cached membership. */
+static bool arena_frame_identity_set_acquire(Arena *a,
+                                             CettaFrameIdentity identity) {
+    if (identity == 0u)
+        return true;
+    if (!a->frame_identities) {
+        a->frame_identities = arena_frame_identity_set_alloc();
+        /* The object itself is now charged; no identities yet to account. */
+        arena_account_external_bytes(
+            a, arena_frame_identity_set_bytes(a->frame_identities));
+    }
+    ArenaFrameIdentitySet *set = a->frame_identities;
+    if (arena_frame_identity_set_find(set, identity, NULL))
+        return true;
+    size_t before;
+    if (!a->frame_identities)
+        before = 0u;
+    else
+        before = arena_frame_identity_set_bytes(set);
+    if (set->len == UINT32_MAX ||
+        !arena_frame_identity_set_records_reserve(set, set->len + 1u) ||
+        !arena_frame_identity_set_index_reserve(set, set->len + 1u))
+        return false;
+    if (!cetta_frame_identity_retain(identity))
+        return false;
+    uint32_t position = set->len;
+    uint32_t slot = arena_frame_identity_index_slot(set, identity);
+    while (set->slots[slot])
+        slot = (slot + 1u) & set->slot_mask;
+    set->slots[slot] = position + 1u;
+    set->identities[position] = identity;
+    set->index[position] = slot;
+    set->len = position + 1u;
+    arena_frame_identity_set_account_growth(a, before);
+    return true;
+}
+
+static void arena_frame_identity_set_truncate(Arena *a, uint32_t length) {
+    ArenaFrameIdentitySet *set = a->frame_identities;
+    if (!set || length >= set->len)
+        return;
+    for (uint32_t i = length; i < set->len; i++) {
+        uint32_t slot = set->index[i];
+        set->slots[slot] = 0u;
+        cetta_frame_identity_release(set->identities[i]);
+    }
+    set->len = length;
+    /* Survivors keep their slots and `index` positions unchanged.  Their probe
+     * chains cannot have depended on any removed slot, because insertion
+     * appends records and `index_reserve` reinserts the entire prefix in
+     * acquisition order: every probe visited only slots inserted earlier.
+     * A removed record was inserted later than any record that survives,
+     * so no surviving chain skipped through it. */
+}
+
+static void arena_release_frame_identities(Arena *a) {
+    if (!a || !a->frame_identities)
+        return;
+    ArenaFrameIdentitySet *set = a->frame_identities;
+    size_t bytes = arena_frame_identity_set_bytes(set);
+    arena_frame_identity_set_dispose(a->frame_identities);
+    a->frame_identities = NULL;
+    if (a->external_bytes >= bytes)
+        a->external_bytes -= bytes;
+    else
+        a->external_bytes = 0u;
 }
 
 bool arena_retain_frame_identity(Arena *a, CettaFrameIdentity identity) {
-    if (!a || !cetta_frame_identity_retain(identity))
-        return false;
-    arena_register_finalizer(a, arena_release_frame_identity,
-                             (void *)(uintptr_t)identity);
-    return true;
+    return a && arena_frame_identity_set_acquire(a, identity);
 }
 
 static void arena_invalidate_allocations(
@@ -768,6 +1008,7 @@ void arena_free(Arena *a) {
     arena_free_block_list(a->head);
     arena_free_block_list(a->spare);
     arena_symbol_cache_free(a);
+    arena_release_frame_identities(a);
     a->head = NULL;
     a->spare = NULL;
     a->live_bytes = 0;
@@ -834,12 +1075,15 @@ ArenaMark arena_mark(const Arena *a) {
     mark.reserved_bytes = a->reserved_bytes;
     mark.block_count = a->block_count;
     mark.finalizers = a->finalizers;
+    mark.frame_identity_len = a->frame_identities
+        ? a->frame_identities->len : 0u;
     return mark;
 }
 
 void arena_reset(Arena *a, ArenaMark mark) {
     if (!a) return;
     arena_invalidate_allocations(a, CETTA_GSLT_LIFETIME_ARENA_RESET);
+    arena_frame_identity_set_truncate(a, mark.frame_identity_len);
     arena_run_finalizers_until(a, mark.finalizers);
     ArenaBlock *recycled = NULL;
     while (a->head && a->head != mark.head) {
@@ -1452,6 +1696,24 @@ void fresh_var_id_test_reset(uint64_t next_base) {
         &g_var_base_counter, next_base, memory_order_relaxed);
     g_var_base_block_cache.next = 0u;
     g_var_base_block_cache.remaining = 0u;
+}
+
+/* Observations for the arena frame-identity ownership tests.  The record
+ * count is the number of distinct full identities the arena currently holds,
+ * which is the quantity that must scale with distinct identities rather than
+ * with variable occurrences. */
+uint32_t arena_frame_identity_count_test(const Arena *a) {
+    return a && a->frame_identities ? a->frame_identities->len : 0u;
+}
+
+uint32_t arena_frame_identity_capacity_test(const Arena *a) {
+    return a && a->frame_identities ? a->frame_identities->cap : 0u;
+}
+
+bool arena_frame_identity_owned_test(const Arena *a,
+                                     CettaFrameIdentity identity) {
+    return arena_frame_identity_set_find(a ? a->frame_identities : NULL,
+                                         identity, NULL);
 }
 #endif
 
