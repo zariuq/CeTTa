@@ -246,6 +246,7 @@ typedef struct ArenaBlock {
 } ArenaBlock;
 
 typedef struct ArenaRetainedOwner ArenaRetainedOwner;
+typedef struct ArenaFrameIdentitySet ArenaFrameIdentitySet;
 
 typedef struct {
     ArenaBlock *head;
@@ -272,6 +273,12 @@ typedef struct {
     uint64_t reset_epoch;
     ArenaFinalizer *finalizers;
     ArenaRetainedOwner *retained_owners;
+    /* Frame-identity ownership for this arena's live allocation region.  The
+     * set holds one reference for each distinct full generational identity
+     * reachable from syntax allocated here, so allocating many variable
+     * occurrences of one identity costs one retain instead of one per atom.
+     * Membership is truncated on partial reset and cleared on free. */
+    ArenaFrameIdentitySet *frame_identities;
 } Arena;
 
 typedef struct {
@@ -283,6 +290,10 @@ typedef struct {
     size_t reserved_bytes;
     uint32_t block_count;
     ArenaFinalizer *finalizers;
+    /* Distinct frame identities this arena owned at the mark.  A reset keeps
+     * exactly this many holds, so ownership acquired after the mark is
+     * released and ownership acquired before it stays valid. */
+    uint32_t frame_identity_len;
 } ArenaMark;
 
 /* An immutable saved substitution. The binding layer owns its representation;
@@ -315,6 +326,13 @@ void  arena_set_runtime_kind(Arena *a, CettaArenaRuntimeKind kind);
 /* Keep a contextual identity alive until this arena's corresponding reset.
  * Ambient/external identifiers have no recyclable owner to retain. */
 bool arena_retain_frame_identity(Arena *a, CettaFrameIdentity identity);
+#ifdef CETTA_TEST_HOOKS
+/* Ownership observations for the arena frame-identity lifetime tests. */
+uint32_t arena_frame_identity_count_test(const Arena *a);
+uint32_t arena_frame_identity_capacity_test(const Arena *a);
+bool arena_frame_identity_owned_test(const Arena *a,
+                                     CettaFrameIdentity identity);
+#endif
 /* Retain an immutable external owner once per arena lifetime segment. A reset
  * releases owners first retained after its mark; earlier owners remain live.
  * Ordinary atom copies must still transport their payload into the destination. */
