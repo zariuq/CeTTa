@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "atom.h"
 #include "symbol.h"
@@ -78,6 +79,17 @@ int main(void) {
     arena_init(&destination);
     arena_set_runtime_kind(&source, CETTA_ARENA_RUNTIME_KIND_EVAL);
     arena_set_runtime_kind(&destination, CETTA_ARENA_RUNTIME_KIND_EVAL);
+
+    /* Symbol predicates read spelling, not the address of a reusable buffer. */
+    char spelling[32];
+    Atom *first_spelling = atom_symbol(&source, "mutable-spelling-first");
+    Atom *second_spelling = atom_symbol(&source, "mutable-spelling-next");
+    strcpy(spelling, "mutable-spelling-first");
+    assert(atom_is_symbol(first_spelling, spelling));
+    assert(!atom_is_symbol(second_spelling, spelling));
+    strcpy(spelling, "mutable-spelling-next");
+    assert(atom_is_symbol(second_spelling, spelling));
+    assert(!atom_is_symbol(first_spelling, spelling));
 
     /* Immutable symbols are canonical only within their owning arena. */
     Atom *source_symbol_first = atom_symbol(&source, "arena-symbol-cache");

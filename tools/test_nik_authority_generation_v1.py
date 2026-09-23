@@ -155,7 +155,7 @@ def main() -> int:
         mutations.append(("wrong-digest", (root[0], tuple(wrong_digest), *root[2:])))
 
         duplicate_depth_presentation: sx.SExpr = (
-            sx.Symbol("GPresentationV1"),
+            sx.Symbol("GInferenceLanguageV1"),
             1,
             sx.Symbol("LNil"),
             sx.Symbol("LNil"),

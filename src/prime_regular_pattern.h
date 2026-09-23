@@ -17,6 +17,9 @@
 typedef struct {
     const Atom *const *names; /* intrinsic index order: innermost first */
     size_t count;
+    size_t bound_count; /* already open de Bruijn binders, not free names */
+    const Atom *const *declaration_names; /* named constants, source symbols */
+    size_t declaration_count;
 } CettaPrimeRegularPatternEnvironmentV1;
 
 /* Authored free names supplied by an already admitted declaration context.
@@ -27,6 +30,10 @@ typedef struct {
 typedef struct {
     const Atom *const *names;
     size_t count;
+    /* Local aliases, innermost first. A matcher variable here names an
+     * already bound clause slot; it does not become a lexical binder. */
+    const Atom *const *local_names;
+    size_t local_count;
 } CettaPrimeRegularTermEnvironmentV1;
 
 /* Private declaration-elaboration marker for one already scoped universe

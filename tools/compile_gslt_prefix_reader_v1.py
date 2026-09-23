@@ -860,7 +860,7 @@ def generate(
         f"    .prefix_rule_len = UINT32_C({len(plan.prefix_rules)}),\n"
         f"    .token_rules = {token_rules_name},\n"
         f"    .token_rule_len = UINT32_C({len(plan.token_rules)}),\n"
-        "    .depth_limit = UINT32_C(4096),\n"
+        "    .depth_limit = UINT32_MAX,\n"
         "};\n\n"
         f"const char *{c_prefix}_program_digest(void) {{\n"
         f"    return {c_prefix}_plan.composition_digest;\n"

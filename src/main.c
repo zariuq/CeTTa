@@ -1709,7 +1709,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta -e '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
     fputs("       cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>\n", out);
     fputs("       cetta [--lang he --profile <he|he-compat|extended|he-prime>] <file.metta>\n", out);
-    fputs("       cetta --lang prime <file.metta>\n", out);
+    fputs("       cetta --lang prime [--profile <prime-default|identity-j|identity-scoped|identity-uip|identity-univalence>] <file.metta>\n", out);
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
     fputs("       cetta --lang petta --profile typecheck-v2 [--strict|--strict-det] <file.metta>\n", out);
     fputs("       cetta --lang petta --profile typecheck-v3 [--strict|--strict-det] <file.metta>\n", out);
@@ -1903,9 +1903,10 @@ static bool main_try_add_builtin_type_decls_direct(Space *space,
 /* he-prime typing ops: the declared types are what STAGE the term/type
  * arguments (Atom = arrives unreduced), so argument evaluation cannot run a
  * computation before the checker has ruled on its admissibility.  Space and
- * fuel arguments evaluate normally.  The rows double as the ops' visible
- * self-description; the chainer ignores them (arrow-typed declarations
- * without a chaining-rule marker are excluded from its index). */
+ * fuel arguments evaluate normally. Verdicts are DATA too: their proof and
+ * type fields must reach the consumer unchanged, not run as runtime calls.
+ * The rows double as the ops' visible self-description; no declaration here
+ * is marked as a chaining rule. */
 static void main_add_he_prime_typing_op_decls(Space *space, Arena *arena) {
     /* u = %Undefined% (evaluated), A = Atom (staged), N = Number */
     static const struct { const char *name; const char *sig; } ops[] = {
@@ -1932,7 +1933,7 @@ static void main_add_he_prime_typing_op_decls(Space *space, Arena *arena) {
                 : sig[k] == 'N' ? atom_symbol(arena, "Number")
                                 : atom_undefined_type(arena);
         }
-        elems[n + 1] = atom_undefined_type(arena);
+        elems[n + 1] = atom_atom_type(arena);
         Atom *decl = atom_expr3(arena,
             atom_symbol_id(arena, g_builtin_syms.colon),
             atom_symbol(arena, ops[i].name),
@@ -1957,6 +1958,31 @@ static void main_add_prime_semantic_op_decls(Space *space, Arena *arena) {
         {"type:prove", "AAA"},
         {"nik:check", "AAA"},
         {"nik:check", "AAAN"},
+        /* Draft scoped judgment bubbles; operands are data like `type:`. */
+        {"set:signature", "A"},
+        {"set:formed", "AA"},
+        {"set:of", "AA"},
+        {"set:check", "AAA"},
+        {"set:eq", "AAA"},
+        {"set:proves", "AAA"},
+        {"set:axiom", "AAA"},
+        {"set:define", "AAAAAAAAAA"},
+        {"set:inductive", "AAAAAAAAAA"},
+        {"captured", "AA"},
+        {"ctx:capture", "AA"},
+        {"set:theorem", "AAAA"},
+        {"set:recheck", "AA"},
+        {"set:known-proof", "AA"},
+        {"set:known-proposition", "AA"},
+        {"set:signature-digest", "A"},
+        {"try", "A"},
+        {"id:region", "A"},
+        {"id:policy", ""},
+        {"lang:languages", "A"},
+        {"lang:parse", "AA"},
+        {"lang:print", "AA"},
+        {"lang:native-type", "AAAA"},
+        {"lang:step", "AAA"},
     };
     for (size_t i = 0; i < sizeof ops / sizeof ops[0]; i++) {
         const char *sig = ops[i].sig;

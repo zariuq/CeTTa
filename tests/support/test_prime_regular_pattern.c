@@ -86,6 +86,24 @@ static void check_regular_term_pattern(
           result.pattern && expected && atom_eq(result.pattern, expected), name);
 }
 
+static void check_regular_term_elaboration(
+    Arena *arena, const char *syntax, const char *expected_text,
+    const char *name) {
+    CettaPrimeRegularTermElaborationV1 lowered = lower_syntax(
+        arena, syntax, UINT64_C(100000));
+    check(lowered.status == CETTA_PRIME_REGULAR_TERM_OK, name);
+    if (lowered.status != CETTA_PRIME_REGULAR_TERM_OK) return;
+    CettaPrimeRegularKernelBudget budget;
+    cetta_prime_regular_kernel_budget_init(&budget, true, UINT64_C(100000));
+    CettaPrimeRegularPatternElaborationV1 result =
+        cetta_prime_regular_pattern_elaborate_v1(
+            arena, (CettaPrimeRegularPatternEnvironmentV1){0},
+            lowered.pattern, &budget);
+    Atom *expected = parse_one(arena, expected_text);
+    check(result.status == CETTA_PRIME_REGULAR_PATTERN_OK && result.term &&
+          expected && atom_eq(result.term, expected), name);
+}
+
 int main(void) {
     Arena arena;
     SymbolTable symbols;
@@ -241,6 +259,71 @@ int main(void) {
               CETTA_PRIME_REGULAR_TERM_OUT_OF_CLASS &&
           atom_is_symbol(unresolved_declaration.unresolved_name, "missing"),
           "missing declaration is reported without semantic refutation");
+
+    Atom *clause = parse_one(&arena, "(scope $A $x (lam z $x))");
+    const Atom *clause_names[] = {clause->expr.elems[2], clause->expr.elems[1]};
+    CettaPrimeRegularTermEnvironmentV1 clause_environment = {
+        .local_names = clause_names, .local_count = 2u,
+    };
+    cetta_prime_regular_kernel_budget_init(&declaration_budget, true, UINT64_C(100000));
+    CettaPrimeRegularTermElaborationV1 clause_lowered =
+        cetta_prime_regular_term_to_pattern_in_environment_v1(
+            &arena, clause_environment, clause->expr.elems[3], &declaration_budget);
+    check(clause_lowered.status == CETTA_PRIME_REGULAR_TERM_OK && clause_lowered.pattern &&
+          atom_eq(clause_lowered.pattern, parse_one(&arena,
+              "(PApp \"Lam\" (LCons (PLam BNone (Var 1)) LNil))")),
+          "clause alias weakens under an actual lexical binder");
+    CettaPrimeRegularPatternEnvironmentV1 clause_pattern_environment = {.bound_count = 2u};
+    CettaPrimeRegularPatternElaborationV1 clause_intrinsic =
+        cetta_prime_regular_pattern_elaborate_v1(
+            &arena, clause_pattern_environment, clause_lowered.pattern, &declaration_budget);
+    check(clause_intrinsic.status == CETTA_PRIME_REGULAR_PATTERN_OK && clause_intrinsic.term &&
+          atom_eq(clause_intrinsic.term, parse_one(&arena, "(Lam (idx 1))")),
+          "open clause scope survives the shared Pattern elaborator");
+    check_syntax_error(&arena, "(Var 1)",
+                      CETTA_PRIME_REGULAR_PATTERN_DANGLING_BOUND_VARIABLE,
+                      "open-clause support does not admit dangling closed variables");
+
+    Atom *invalid_binder = parse_one(&arena, "(scope $x (lam $x $x))");
+    const Atom *invalid_names[] = {invalid_binder->expr.elems[1]};
+    cetta_prime_regular_kernel_budget_init(&declaration_budget, true, UINT64_C(100000));
+    CettaPrimeRegularTermElaborationV1 clause_matcher_binder =
+        cetta_prime_regular_term_to_pattern_in_environment_v1(
+            &arena, (CettaPrimeRegularTermEnvironmentV1){
+                .local_names = invalid_names, .local_count = 1u},
+            invalid_binder->expr.elems[2], &declaration_budget);
+    check(clause_matcher_binder.status != CETTA_PRIME_REGULAR_TERM_OK && !clause_matcher_binder.pattern,
+          "a clause alias still cannot be used as a lexical binder");
+    cetta_prime_regular_kernel_budget_init(&declaration_budget, true, UINT64_C(100000));
+    CettaPrimeRegularTermElaborationV1 dangling_matcher =
+        cetta_prime_regular_term_to_pattern_in_environment_v1(
+            &arena, clause_environment, parse_one(&arena, "$missing"), &declaration_budget);
+    check(dangling_matcher.status == CETTA_PRIME_REGULAR_TERM_OUT_OF_CLASS && !dangling_matcher.pattern,
+          "an unbound clause matcher remains unresolved");
+
+    const Atom *named_constants[] = {a_name};
+    CettaPrimeRegularPatternEnvironmentV1 constant_environment = {
+        .bound_count = 2u, .declaration_names = named_constants, .declaration_count = 1u,
+    };
+    CettaPrimeRegularPatternElaborationV1 named_constant = elaborate(
+        &arena, constant_environment,
+        "(PApp \"Lam\" (LCons (PLam BNone (FVar \"a\")) LNil))", UINT64_C(100000));
+    check(named_constant.status == CETTA_PRIME_REGULAR_PATTERN_OK && named_constant.term &&
+          atom_eq(named_constant.term, parse_one(&arena, "(Lam (DeclConst a))")),
+          "a named declaration is not captured by clause or lexical binders");
+    named_constant = elaborate(&arena, constant_environment, "(FVar \"missing\")", UINT64_C(100000));
+    check(named_constant.status == CETTA_PRIME_REGULAR_PATTERN_SYNTAX_ERROR && !named_constant.term,
+          "named-declaration support does not admit unknown constants");
+    named_constant = elaborate(&arena, constant_environment, "(FVar \"a\")", 0u);
+    check(named_constant.status == CETTA_PRIME_REGULAR_PATTERN_BUDGET_EXHAUSTED && !named_constant.term,
+          "declaration environment validation consumes the same budget");
+    const Atom *private_spelling[] = {atom_symbol(&arena, "__pk_0")};
+    named_constant = elaborate(&arena, (CettaPrimeRegularPatternEnvironmentV1){
+            .declaration_names = private_spelling, .declaration_count = 1u},
+        "(PApp \"Lam\" (LCons (PLam BNone (FVar \"__pk_0\")) LNil))", UINT64_C(100000));
+    check(named_constant.status == CETTA_PRIME_REGULAR_PATTERN_OK && named_constant.term &&
+          atom_eq(named_constant.term, parse_one(&arena, "(Lam (DeclConst __pk_0))")),
+          "a declaration's spelling cannot alias an internal generated binder");
 
     check_syntax_error(
         &arena, "(Var 0)",
@@ -570,6 +653,62 @@ int main(void) {
         " (PApp \"Lam\" (LCons (PLam BNone (Var 0)) LNil)) "
         " (LCons (PApp \"U0\" LNil) LNil)))",
         "ordinary MeTTa application lowers to regular App");
+
+    const char *shared_dependent_type =
+        "(Pi (Sort (LevelConst 0)) (Pi (idx 0) (Pi (idx 1) (idx 2))))";
+    check_regular_term_elaboration(
+        &arena, "(-> (A : (u 0)) (x y : A) A)", shared_dependent_type,
+        "shared dependent group weakens its second domain");
+    check_regular_term_elaboration(
+        &arena, "(-> (A : (u 0)) (x : A) (y : A) A)", shared_dependent_type,
+        "separate groups agree with correctly expanded shared domains");
+    check_regular_term_elaboration(
+        &arena, "(-> (A : (u 0)) (x y : (idx 0)) A)", shared_dependent_type,
+        "explicit old-context indices receive the same group weakening");
+    check_regular_term_elaboration(
+        &arena, "(-> (A : (u 0)) (x _ : A) A)", shared_dependent_type,
+        "anonymous siblings still occupy a telescope position");
+    check_regular_term_elaboration(
+        &arena, "(-> (A : (u 0)) (B : (u 0)) (x y : A B) A)",
+        "(Pi (Sort (LevelConst 0)) (Pi (Sort (LevelConst 0)) "
+        " (Pi (idx 1) (Pi (idx 1) (idx 3)))))",
+        "zipped annotations share the old context before placement");
+    check_regular_term_elaboration(
+        &arena, "(-> (A : (u 0)) (f g : (-> (z : A) (id A z z))) A)",
+        "(Pi (Sort (LevelConst 0)) "
+        " (Pi (Pi (idx 0) (Id (idx 1) (idx 0) (idx 0))) "
+        "  (Pi (Pi (idx 1) (Id (idx 2) (idx 0) (idx 0))) (idx 2))))",
+        "group weakening moves old variables but protects nested binders");
+    check_regular_term_elaboration(
+        &arena, "(sigma (A : (u 0)) (x y : A) A)",
+        "(Sigma (Sort (LevelConst 0)) (Sigma (idx 0) (Sigma (idx 1) (idx 2))))",
+        "dependent Sigma groups use the same placement action");
+    CettaPrimeRegularTermElaborationV1 sibling_dependency = lower_syntax(
+        &arena, "(-> (A : (u 0)) (x y : A (idx 1)) A)", UINT64_C(100000));
+    check(sibling_dependency.status == CETTA_PRIME_REGULAR_TERM_OUT_OF_CLASS,
+          "a group annotation cannot index its not-yet-introduced sibling");
+
+    Atom *grouped_syntax = parse_one(&arena,
+        "(-> (A : (u 0)) (f g : (-> (z : A) (id A z z))) A)");
+    CettaPrimeRegularKernelBudget group_budget;
+    cetta_prime_regular_kernel_budget_init(&group_budget, true, UINT64_C(100000));
+    CettaPrimeRegularTermElaborationV1 grouped_complete =
+        cetta_prime_regular_term_to_pattern_v1(&arena, grouped_syntax, &group_budget);
+    uint64_t group_spent = group_budget.spent;
+    check(grouped_complete.status == CETTA_PRIME_REGULAR_TERM_OK && group_spent > 0u,
+          "dependent group lowering retains an actual budget receipt");
+    cetta_prime_regular_kernel_budget_init(&group_budget, true, group_spent);
+    CettaPrimeRegularTermElaborationV1 grouped_exact =
+        cetta_prime_regular_term_to_pattern_v1(&arena, grouped_syntax, &group_budget);
+    check(grouped_exact.status == CETTA_PRIME_REGULAR_TERM_OK &&
+          group_budget.remaining == 0u &&
+          atom_eq(grouped_exact.pattern, grouped_complete.pattern),
+          "the exact recorded lowering budget reproduces the same scoped term");
+    cetta_prime_regular_kernel_budget_init(&group_budget, true, group_spent - 1u);
+    CettaPrimeRegularTermElaborationV1 grouped_short =
+        cetta_prime_regular_term_to_pattern_v1(&arena, grouped_syntax, &group_budget);
+    check(grouped_short.status == CETTA_PRIME_REGULAR_TERM_BUDGET_EXHAUSTED,
+          "one less lowering step is exhaustion rather than a malformed domain");
 
     CettaPrimeRegularTermElaborationV1 matcher_binder = lower_syntax(
         &arena, "(lam $x $x)", UINT64_C(100000));

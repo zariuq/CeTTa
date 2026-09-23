@@ -10,10 +10,23 @@
 #include <stdlib.h>
 #include <string.h>
 
+typedef enum {
+    PATTERN_ABT_ENCODE, PATTERN_ABT_ENCODE_LIST,
+    PATTERN_ABT_DECODE, PATTERN_ABT_DECODE_LIST,
+} PatternAbtMode;
+
+typedef struct {
+    Atom *source;
+    Atom *result; /* NULL while this node is on the active traversal path. */
+    PatternAbtMode mode;
+} PatternAbtMemoEntry;
+
 typedef struct {
     AbtSignature signature;
     Arena *arena;
     CettaInferencePatternAbtStatusV1 status;
+    PatternAbtMemoEntry *memo;
+    size_t memo_count, memo_capacity;
 } PatternAbtContextV1;
 
 static bool pattern_abt_tag(const Atom *atom, const char *tag, size_t len) {
@@ -112,6 +125,7 @@ static bool pattern_abt_context_init(PatternAbtContextV1 *context,
 
 static void pattern_abt_context_free(PatternAbtContextV1 *context) {
     abt_signature_free(&context->signature);
+    free(context->memo);
 }
 
 static Atom *pattern_abt_multi_head(PatternAbtContextV1 *context,
@@ -131,243 +145,266 @@ static Atom *pattern_abt_multi_head(PatternAbtContextV1 *context,
     return head;
 }
 
-static Atom *pattern_to_abt(PatternAbtContextV1 *context, Atom *pattern);
+/* Conversion is structural, independent of the ambient binder depth.  Cache
+ * both list and Pattern nodes, separately in each direction.  Entries live only
+ * for this operation: they neither survive arena resets nor certify admission. */
+static size_t pattern_abt_hash(Atom *source, PatternAbtMode mode) {
+    uint64_t h = (uint64_t)(uintptr_t)source ^
+        ((uint64_t)mode * UINT64_C(0x9e3779b97f4a7c15));
+    h ^= h >> 33;
+    h *= UINT64_C(0xff51afd7ed558ccd);
+    return (size_t)(h ^ (h >> 33));
+}
 
-static Atom *pattern_list_to_abt(PatternAbtContextV1 *context, Atom *list) {
-    if (atom_is_symbol(list, "LNil"))
-        return list;
-    if (!pattern_abt_tag(list, "LCons", 3u)) {
-        context->status = CETTA_INFERENCE_PATTERN_ABT_INVALID;
+static PatternAbtMemoEntry *pattern_abt_find(
+    PatternAbtContextV1 *context, Atom *source, PatternAbtMode mode) {
+    if (!context->memo_capacity)
         return NULL;
+    size_t slot = pattern_abt_hash(source, mode) & (context->memo_capacity - 1u);
+    while (context->memo[slot].source) {
+        if (context->memo[slot].source == source &&
+            context->memo[slot].mode == mode)
+            return &context->memo[slot];
+        slot = (slot + 1u) & (context->memo_capacity - 1u);
     }
-    Atom *head = pattern_to_abt(context, list->expr.elems[1]);
-    Atom *tail = pattern_list_to_abt(context, list->expr.elems[2]);
-    if (!head || !tail)
-        return NULL;
-    return atom_expr3(
-        context->arena, atom_symbol(context->arena, "LCons"), head, tail);
+    return NULL;
+}
+
+static bool pattern_abt_begin(
+    PatternAbtContextV1 *context, Atom *source, PatternAbtMode mode) {
+    if (!context->memo_capacity ||
+        context->memo_count >= context->memo_capacity / 2u) {
+        size_t next = context->memo_capacity ? context->memo_capacity * 2u : 64u;
+        if (next < context->memo_capacity ||
+            next > SIZE_MAX / sizeof(*context->memo)) {
+            context->status = CETTA_INFERENCE_PATTERN_ABT_RESOURCE_LIMIT;
+            return false;
+        }
+        PatternAbtMemoEntry *entries = cetta_malloc(next * sizeof(*entries));
+        memset(entries, 0, next * sizeof(*entries));
+        for (size_t i = 0u; i < context->memo_capacity; ++i) {
+            PatternAbtMemoEntry old = context->memo[i];
+            if (!old.source)
+                continue;
+            size_t slot = pattern_abt_hash(old.source, old.mode) & (next - 1u);
+            while (entries[slot].source)
+                slot = (slot + 1u) & (next - 1u);
+            entries[slot] = old;
+        }
+        free(context->memo);
+        context->memo = entries;
+        context->memo_capacity = next;
+    }
+    size_t slot = pattern_abt_hash(source, mode) & (context->memo_capacity - 1u);
+    while (context->memo[slot].source)
+        slot = (slot + 1u) & (context->memo_capacity - 1u);
+    context->memo[slot] = (PatternAbtMemoEntry){source, NULL, mode};
+    context->memo_count++;
+    return true;
+}
+
+typedef enum {
+    PATTERN_ABT_LEAF, PATTERN_ABT_EXPR, PATTERN_ABT_MULTI,
+} PatternAbtRecipe;
+
+typedef struct {
+    Atom *source;
+    PatternAbtMode mode;
+    PatternAbtRecipe recipe;
+    Atom *items[4];
+    Atom *children[2];
+    PatternAbtMode child_modes[2];
+    unsigned positions[2];
+    unsigned arity, child_count, next_child;
+    bool prepared;
+} PatternAbtFrame;
+
+static void pattern_abt_child(PatternAbtFrame *frame, unsigned position,
+                               Atom *child, PatternAbtMode mode) {
+    unsigned i = frame->child_count++;
+    frame->positions[i] = position;
+    frame->children[i] = child;
+    frame->child_modes[i] = mode;
+}
+
+static bool pattern_abt_prepare(PatternAbtContextV1 *context,
+                                 PatternAbtFrame *frame) {
+    Atom *source = frame->source;
+    bool decode = frame->mode >= PATTERN_ABT_DECODE;
+    bool list = frame->mode == PATTERN_ABT_ENCODE_LIST ||
+        frame->mode == PATTERN_ABT_DECODE_LIST;
+    PatternAbtMode term_mode = decode ? PATTERN_ABT_DECODE : PATTERN_ABT_ENCODE;
+    PatternAbtMode list_mode = decode ? PATTERN_ABT_DECODE_LIST : PATTERN_ABT_ENCODE_LIST;
+    uint64_t number;
+    frame->recipe = PATTERN_ABT_EXPR;
+    if (list) {
+        if (atom_is_symbol(source, "LNil")) {
+            frame->recipe = PATTERN_ABT_LEAF;
+            frame->items[0] = source;
+            return true;
+        }
+        if (!pattern_abt_tag(source, "LCons", 3u))
+            goto invalid;
+        frame->arity = 3u;
+        frame->items[0] = source->expr.elems[0];
+        pattern_abt_child(frame, 1u, source->expr.elems[1], term_mode);
+        pattern_abt_child(frame, 2u, source->expr.elems[2], list_mode);
+        return true;
+    }
+    if (pattern_abt_tag(source, decode ? "idx" : "Var", 2u)) {
+        context->status = pattern_abt_natural(source->expr.elems[1], &number);
+        if (context->status != CETTA_INFERENCE_PATTERN_ABT_OK)
+            return false;
+        if (number > (uint64_t)INT64_MAX)
+            goto resource;
+        frame->arity = 2u;
+        frame->items[0] = atom_symbol(context->arena, decode ? "Var" : "idx");
+        frame->items[1] = atom_int(context->arena, (int64_t)number);
+        return true;
+    }
+    if (pattern_abt_tag(source, "PApp", 3u)) {
+        frame->arity = 3u;
+        frame->items[0] = source->expr.elems[0];
+        frame->items[1] = source->expr.elems[1];
+        pattern_abt_child(frame, 2u, source->expr.elems[2], list_mode);
+        return true;
+    }
+    if (pattern_abt_tag(source, "PLam", 3u)) {
+        if (!atom_is_symbol(source->expr.elems[1], "BNone"))
+            goto invalid;
+        frame->arity = 3u;
+        frame->items[0] = source->expr.elems[0];
+        frame->items[1] = source->expr.elems[1];
+        pattern_abt_child(frame, 2u, source->expr.elems[2], term_mode);
+        return true;
+    }
+    if (pattern_abt_tag(source, decode ? "$nik-abt-multi-v1" : "PMultiLam",
+                        decode ? 3u : 4u)) {
+        if (!decode && !atom_is_symbol(source->expr.elems[2], "LNil"))
+            goto invalid;
+        context->status = pattern_abt_natural(source->expr.elems[1], &number);
+        if (context->status != CETTA_INFERENCE_PATTERN_ABT_OK)
+            return false;
+        if (number > UINT32_MAX)
+            goto resource;
+        Atom *head = pattern_abt_multi_head(context, (uint32_t)number);
+        if (!head)
+            return false;
+        frame->items[1] = source->expr.elems[1];
+        if (decode) {
+            Atom *bound = source->expr.elems[2];
+            if (!bound || bound->kind != ATOM_EXPR || bound->expr.len != 2u ||
+                !bound->expr.elems[0] || bound->expr.elems[0]->kind != ATOM_SYMBOL ||
+                bound->expr.elems[0]->sym_id != head->sym_id)
+                goto invalid;
+            frame->arity = 4u;
+            frame->items[0] = atom_symbol(context->arena, "PMultiLam");
+            frame->items[2] = atom_symbol(context->arena, "LNil");
+            pattern_abt_child(frame, 3u, bound->expr.elems[1], term_mode);
+        } else {
+            frame->recipe = PATTERN_ABT_MULTI;
+            frame->arity = 3u;
+            frame->items[0] = atom_symbol(context->arena, "$nik-abt-multi-v1");
+            frame->items[3] = head;
+            pattern_abt_child(frame, 2u, source->expr.elems[3], term_mode);
+        }
+        return true;
+    }
+    if (pattern_abt_tag(source, "PSubst", 3u)) {
+        frame->arity = 3u;
+        frame->items[0] = source->expr.elems[0];
+        pattern_abt_child(frame, 1u, source->expr.elems[1], term_mode);
+        pattern_abt_child(frame, 2u, source->expr.elems[2], term_mode);
+        return true;
+    }
+    if (pattern_abt_tag(source, "PCollection", 4u)) {
+        if (!cetta_inference_pattern_collection_type_valid_v1(source->expr.elems[1]) ||
+            !atom_is_symbol(source->expr.elems[3], "RNone"))
+            goto invalid;
+        frame->arity = 4u;
+        frame->items[0] = source->expr.elems[0];
+        frame->items[1] = source->expr.elems[1];
+        frame->items[3] = source->expr.elems[3];
+        pattern_abt_child(frame, 2u, source->expr.elems[2], list_mode);
+        return true;
+    }
+invalid:
+    context->status = CETTA_INFERENCE_PATTERN_ABT_INVALID;
+    return false;
+resource:
+    context->status = CETTA_INFERENCE_PATTERN_ABT_RESOURCE_LIMIT;
+    return false;
+}
+
+static Atom *pattern_abt_convert(PatternAbtContextV1 *context, Atom *source,
+                                 PatternAbtMode mode) {
+    size_t count = 1u, capacity = 32u;
+    PatternAbtFrame *frames = cetta_malloc(capacity * sizeof(*frames));
+    frames[0] = (PatternAbtFrame){.source = source, .mode = mode};
+    Atom *result = NULL;
+    if (context->status != CETTA_INFERENCE_PATTERN_ABT_OK)
+        goto done;
+    while (count) {
+        PatternAbtFrame *frame = &frames[count - 1u];
+        if (!frame->prepared) {
+            if (!frame->source) {
+                context->status = CETTA_INFERENCE_PATTERN_ABT_INVALID;
+                goto done;
+            }
+            PatternAbtMemoEntry *old = pattern_abt_find(
+                context, frame->source, frame->mode);
+            if (old) {
+                if (!old->result) { /* A back edge, not a reusable result. */
+                    context->status = CETTA_INFERENCE_PATTERN_ABT_INVALID;
+                    goto done;
+                }
+                count--;
+                continue;
+            }
+            if (!pattern_abt_begin(context, frame->source, frame->mode) ||
+                !pattern_abt_prepare(context, frame))
+                goto done;
+            frame->prepared = true;
+        }
+        if (frame->next_child < frame->child_count) {
+            unsigned i = frame->next_child++;
+            PatternAbtFrame child = {
+                .source = frame->children[i], .mode = frame->child_modes[i],
+            };
+            if (count == capacity) {
+                if (capacity > SIZE_MAX / 2u / sizeof(*frames)) {
+                    context->status = CETTA_INFERENCE_PATTERN_ABT_RESOURCE_LIMIT;
+                    goto done;
+                }
+                capacity *= 2u;
+                frames = cetta_realloc(frames, capacity * sizeof(*frames));
+            }
+            frames[count++] = child;
+            continue;
+        }
+        for (unsigned i = 0u; i < frame->child_count; ++i)
+            frame->items[frame->positions[i]] = pattern_abt_find(
+                context, frame->children[i], frame->child_modes[i])->result;
+        if (frame->recipe == PATTERN_ABT_MULTI)
+            frame->items[2] = atom_expr2(
+                context->arena, frame->items[3], frame->items[2]);
+        Atom *converted = frame->recipe == PATTERN_ABT_LEAF ? frame->items[0] :
+            atom_expr(context->arena, frame->items, frame->arity);
+        pattern_abt_find(context, frame->source, frame->mode)->result = converted;
+        count--;
+    }
+    result = pattern_abt_find(context, source, mode)->result;
+done:
+    free(frames);
+    return result;
 }
 
 static Atom *pattern_to_abt(PatternAbtContextV1 *context, Atom *pattern) {
-    uint64_t number;
-    if (pattern_abt_tag(pattern, "Var", 2u)) {
-        CettaInferencePatternAbtStatusV1 natural_status =
-            pattern_abt_natural(pattern->expr.elems[1], &number);
-        if (natural_status != CETTA_INFERENCE_PATTERN_ABT_OK) {
-            context->status = natural_status;
-            return NULL;
-        }
-        if (number > (uint64_t)INT64_MAX) {
-            context->status = CETTA_INFERENCE_PATTERN_ABT_RESOURCE_LIMIT;
-            return NULL;
-        }
-        return atom_expr2(
-            context->arena, atom_symbol(context->arena, "idx"),
-            atom_int(context->arena, (int64_t)number));
-    }
-    if (pattern_abt_tag(pattern, "FVar", 2u)) {
-        context->status = CETTA_INFERENCE_PATTERN_ABT_INVALID;
-        return NULL;
-    }
-    if (pattern_abt_tag(pattern, "PApp", 3u)) {
-        Atom *arguments = pattern_list_to_abt(
-            context, pattern->expr.elems[2]);
-        if (!arguments)
-            return NULL;
-        return atom_expr3(
-            context->arena, atom_symbol(context->arena, "PApp"),
-            pattern->expr.elems[1], arguments);
-    }
-    if (pattern_abt_tag(pattern, "PLam", 3u)) {
-        if (!atom_is_symbol(pattern->expr.elems[1], "BNone")) {
-            context->status = CETTA_INFERENCE_PATTERN_ABT_INVALID;
-            return NULL;
-        }
-        Atom *body = pattern_to_abt(context, pattern->expr.elems[2]);
-        if (!body)
-            return NULL;
-        return atom_expr3(
-            context->arena, atom_symbol(context->arena, "PLam"),
-            pattern->expr.elems[1], body);
-    }
-    if (pattern_abt_tag(pattern, "PMultiLam", 4u)) {
-        if (!atom_is_symbol(pattern->expr.elems[2], "LNil")) {
-            context->status = CETTA_INFERENCE_PATTERN_ABT_INVALID;
-            return NULL;
-        }
-        CettaInferencePatternAbtStatusV1 natural_status =
-            pattern_abt_natural(pattern->expr.elems[1], &number);
-        if (natural_status != CETTA_INFERENCE_PATTERN_ABT_OK) {
-            context->status = natural_status;
-            return NULL;
-        }
-        if (number > UINT32_MAX) {
-            context->status = CETTA_INFERENCE_PATTERN_ABT_RESOURCE_LIMIT;
-            return NULL;
-        }
-        Atom *dynamic_head = pattern_abt_multi_head(
-            context, (uint32_t)number);
-        Atom *body = pattern_to_abt(context, pattern->expr.elems[3]);
-        if (!dynamic_head || !body)
-            return NULL;
-        Atom *bound = atom_expr2(
-            context->arena, dynamic_head, body);
-        Atom *items[] = {
-            atom_symbol(context->arena, "$nik-abt-multi-v1"),
-            pattern->expr.elems[1],
-            bound,
-        };
-        return atom_expr(context->arena, items, 3u);
-    }
-    if (pattern_abt_tag(pattern, "PSubst", 3u)) {
-        Atom *body = pattern_to_abt(context, pattern->expr.elems[1]);
-        Atom *replacement = pattern_to_abt(context, pattern->expr.elems[2]);
-        if (!body || !replacement)
-            return NULL;
-        return atom_expr3(
-            context->arena, atom_symbol(context->arena, "PSubst"),
-            body, replacement);
-    }
-    if (pattern_abt_tag(pattern, "PCollection", 4u)) {
-        if (!cetta_inference_pattern_collection_type_valid_v1(
-                pattern->expr.elems[1]) ||
-            !atom_is_symbol(pattern->expr.elems[3], "RNone")) {
-            context->status = CETTA_INFERENCE_PATTERN_ABT_INVALID;
-            return NULL;
-        }
-        Atom *elements = pattern_list_to_abt(
-            context, pattern->expr.elems[2]);
-        if (!elements)
-            return NULL;
-        Atom *items[] = {
-            atom_symbol(context->arena, "PCollection"),
-            pattern->expr.elems[1],
-            elements,
-            pattern->expr.elems[3],
-        };
-        return atom_expr(context->arena, items, 4u);
-    }
-    context->status = CETTA_INFERENCE_PATTERN_ABT_INVALID;
-    return NULL;
-}
-
-static Atom *abt_to_pattern(PatternAbtContextV1 *context, Atom *term);
-
-static Atom *abt_list_to_pattern(PatternAbtContextV1 *context, Atom *list) {
-    if (atom_is_symbol(list, "LNil"))
-        return list;
-    if (!pattern_abt_tag(list, "LCons", 3u)) {
-        context->status = CETTA_INFERENCE_PATTERN_ABT_INVALID;
-        return NULL;
-    }
-    Atom *head = abt_to_pattern(context, list->expr.elems[1]);
-    Atom *tail = abt_list_to_pattern(context, list->expr.elems[2]);
-    if (!head || !tail)
-        return NULL;
-    return atom_expr3(
-        context->arena, atom_symbol(context->arena, "LCons"), head, tail);
+    return pattern_abt_convert(context, pattern, PATTERN_ABT_ENCODE);
 }
 
 static Atom *abt_to_pattern(PatternAbtContextV1 *context, Atom *term) {
-    uint64_t number;
-    if (pattern_abt_tag(term, "idx", 2u)) {
-        CettaInferencePatternAbtStatusV1 natural_status =
-            pattern_abt_natural(term->expr.elems[1], &number);
-        if (natural_status != CETTA_INFERENCE_PATTERN_ABT_OK) {
-            context->status = natural_status;
-            return NULL;
-        }
-        if (number > (uint64_t)INT64_MAX) {
-            context->status = CETTA_INFERENCE_PATTERN_ABT_RESOURCE_LIMIT;
-            return NULL;
-        }
-        return atom_expr2(
-            context->arena, atom_symbol(context->arena, "Var"),
-            atom_int(context->arena, (int64_t)number));
-    }
-    if (pattern_abt_tag(term, "PApp", 3u)) {
-        Atom *arguments = abt_list_to_pattern(
-            context, term->expr.elems[2]);
-        if (!arguments)
-            return NULL;
-        return atom_expr3(
-            context->arena, atom_symbol(context->arena, "PApp"),
-            term->expr.elems[1], arguments);
-    }
-    if (pattern_abt_tag(term, "PLam", 3u)) {
-        if (!atom_is_symbol(term->expr.elems[1], "BNone")) {
-            context->status = CETTA_INFERENCE_PATTERN_ABT_INVALID;
-            return NULL;
-        }
-        Atom *body = abt_to_pattern(context, term->expr.elems[2]);
-        if (!body)
-            return NULL;
-        return atom_expr3(
-            context->arena, atom_symbol(context->arena, "PLam"),
-            term->expr.elems[1], body);
-    }
-    if (pattern_abt_tag(term, "$nik-abt-multi-v1", 3u)) {
-        CettaInferencePatternAbtStatusV1 natural_status =
-            pattern_abt_natural(term->expr.elems[1], &number);
-        if (natural_status != CETTA_INFERENCE_PATTERN_ABT_OK) {
-            context->status = natural_status;
-            return NULL;
-        }
-        if (number > UINT32_MAX) {
-            context->status = CETTA_INFERENCE_PATTERN_ABT_RESOURCE_LIMIT;
-            return NULL;
-        }
-        Atom *expected_head = pattern_abt_multi_head(
-            context, (uint32_t)number);
-        Atom *bound = term->expr.elems[2];
-        if (!expected_head || !bound ||
-            bound->kind != ATOM_EXPR || bound->expr.len != 2u ||
-            bound->expr.elems[0]->kind != ATOM_SYMBOL ||
-            bound->expr.elems[0]->sym_id != expected_head->sym_id) {
-            context->status = CETTA_INFERENCE_PATTERN_ABT_INVALID;
-            return NULL;
-        }
-        Atom *body = abt_to_pattern(context, bound->expr.elems[1]);
-        if (!body)
-            return NULL;
-        Atom *items[] = {
-            atom_symbol(context->arena, "PMultiLam"),
-            term->expr.elems[1],
-            atom_symbol(context->arena, "LNil"),
-            body,
-        };
-        return atom_expr(context->arena, items, 4u);
-    }
-    if (pattern_abt_tag(term, "PSubst", 3u)) {
-        Atom *body = abt_to_pattern(context, term->expr.elems[1]);
-        Atom *replacement = abt_to_pattern(context, term->expr.elems[2]);
-        if (!body || !replacement)
-            return NULL;
-        return atom_expr3(
-            context->arena, atom_symbol(context->arena, "PSubst"),
-            body, replacement);
-    }
-    if (pattern_abt_tag(term, "PCollection", 4u)) {
-        if (!cetta_inference_pattern_collection_type_valid_v1(
-                term->expr.elems[1]) ||
-            !atom_is_symbol(term->expr.elems[3], "RNone")) {
-            context->status = CETTA_INFERENCE_PATTERN_ABT_INVALID;
-            return NULL;
-        }
-        Atom *elements = abt_list_to_pattern(
-            context, term->expr.elems[2]);
-        if (!elements)
-            return NULL;
-        Atom *items[] = {
-            atom_symbol(context->arena, "PCollection"),
-            term->expr.elems[1],
-            elements,
-            term->expr.elems[3],
-        };
-        return atom_expr(context->arena, items, 4u);
-    }
-    context->status = CETTA_INFERENCE_PATTERN_ABT_INVALID;
-    return NULL;
+    return pattern_abt_convert(context, term, PATTERN_ABT_DECODE);
 }
 
 CettaInferencePatternAbtStatusV1

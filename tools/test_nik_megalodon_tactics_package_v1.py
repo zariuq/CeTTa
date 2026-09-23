@@ -10,8 +10,9 @@ import subprocess
 import tempfile
 
 import gslt2parse_schema_v1 as sx
+import megalodon_proof_compile_v1 as proofs
 import nik_proof_dag_v1 as proof_dag
-import test_nik_megalodon_definition_conversion_v1 as definitions
+import megalodon_definition_conversion_v1 as definitions
 import test_nik_megalodon_polymorphic_v1 as poly
 
 
@@ -144,247 +145,6 @@ def retained_declarations(values: list[TermDecl]) -> list[definitions.TermDecl]:
     ]
 
 
-def full_environment(
-    declarations: list[definitions.TermDecl], known: list[tuple[str, poly.Tm]],
-) -> sx.SExpr:
-    return poly.mono.app(
-        "MFullEnvironment", poly.mono.app("MPrimNil"),
-        definitions.encode_declarations(declarations), poly.encode_known(known),
-    )
-
-
-def known_member_article(
-    known: list[tuple[str, poly.Tm]], identifier: str,
-) -> tuple[poly.Tm, sx.SExpr]:
-    for index, (candidate, proposition) in enumerate(known):
-        if candidate != identifier:
-            continue
-        tail = known[index + 1:]
-        article = poly.mono.proof_node(
-            "megalodon-env-known-here",
-            [poly.mono.app(identifier), poly.encode_tm(proposition),
-             poly.encode_known(tail)],
-            [],
-        )
-        selected_tail = known[index:]
-        for head_identifier, head_proposition in reversed(known[:index]):
-            article = poly.mono.proof_node(
-                "megalodon-env-known-there",
-                [poly.mono.app(head_identifier), poly.encode_tm(head_proposition),
-                 poly.encode_known(selected_tail), poly.mono.app(identifier),
-                 poly.encode_tm(proposition)],
-                [article],
-            )
-            selected_tail = [(head_identifier, head_proposition), *selected_tail]
-        return proposition, article
-    raise SystemExit(f"unknown checked Megalodon proposition {identifier}")
-
-
-def full_from_environment_article(
-    declarations: list[definitions.TermDecl], known: list[tuple[str, poly.Tm]],
-    type_depth: int, term_context: list[poly.Tp], proof_context: list[poly.Tm],
-    source: poly.Tm, target: poly.Tm, environment_article: sx.SExpr,
-) -> sx.SExpr:
-    signature = [(name, value_type) for name, value_type, _ in declarations]
-    _, conversion = definitions.conversion_article(
-        declarations, source, target
-    )
-    return poly.mono.proof_node(
-        "megalodon-def-proof",
-        [poly.mono.app("MPrimNil"),
-         definitions.encode_declarations(declarations),
-         poly.encode_signature(signature), poly.encode_known(known),
-         poly.mono.nat(type_depth), poly.encode_type_context(term_context),
-         poly.encode_proof_context(proof_context), poly.encode_tm(source),
-         poly.encode_tm(target)],
-        [definitions.project_signature(declarations), environment_article,
-         conversion],
-    )
-
-
-def compile_full_proof(
-    value: sx.SExpr, declarations: list[definitions.TermDecl],
-    known: list[tuple[str, poly.Tm]], type_depth: int,
-    term_context: list[poly.Tp], proof_context: list[poly.Tm],
-) -> tuple[poly.Tm, sx.SExpr]:
-    head, arguments = poly.tag(value, "Megalodon definition-aware proof")
-    signature = [(name, value_type) for name, value_type, _ in declarations]
-    encoded_environment = full_environment(declarations, known)
-    encoded_declarations = definitions.encode_declarations(declarations)
-
-    if head == "HYP" and len(arguments) == 1 and isinstance(arguments[0], int):
-        source, base_article = poly.hypothesis_proof(
-            arguments[0], signature, type_depth, term_context, proof_context
-        )
-        environment_article = poly.mono.proof_node(
-            "megalodon-env-proof-base",
-            [poly.mono.app("MPrimNil"), poly.encode_signature(signature),
-             poly.encode_known(known), poly.mono.nat(type_depth),
-             poly.encode_type_context(term_context),
-             poly.encode_proof_context(proof_context), poly.encode_tm(source)],
-            [base_article],
-        )
-        return source, full_from_environment_article(
-            declarations, known, type_depth, term_context, proof_context,
-            source, source, environment_article,
-        )
-
-    if head == "KNOWN" and len(arguments) == 1 and isinstance(
-        arguments[0], sx.StringLiteral
-    ):
-        identifier = arguments[0].text
-        source, member = known_member_article(known, identifier)
-        target, _ = definitions.normalize_with_article(declarations, source)
-        environment_article = poly.mono.proof_node(
-            "megalodon-env-proof-known",
-            [poly.mono.app("MPrimNil"), poly.encode_signature(signature),
-             poly.encode_known(known), poly.mono.nat(type_depth),
-             poly.encode_type_context(term_context),
-             poly.encode_proof_context(proof_context),
-             poly.mono.app(identifier), poly.encode_tm(source)],
-            [member],
-        )
-        return target, full_from_environment_article(
-            declarations, known, type_depth, term_context, proof_context,
-            source, target, environment_article,
-        )
-
-    if head == "PLAM" and len(arguments) == 2:
-        source_domain = poly.parse_tm(arguments[0])
-        domain, domain_path = definitions.normalize_with_article(
-            declarations, source_domain
-        )
-        domain_type, domain_type_article = poly.type_proof(
-            signature, type_depth, term_context, source_domain
-        )
-        if domain_type != ("prop",):
-            raise SystemExit("Megalodon proof abstraction domain is not Prop")
-        codomain, child = compile_full_proof(
-            arguments[1], declarations, known, type_depth, term_context,
-            [domain, *proof_context],
-        )
-        representative = poly.mono.proof_node(
-            "megalodon-def-proposition-plain",
-            [encoded_declarations, poly.encode_signature(signature),
-             poly.mono.nat(type_depth), poly.encode_type_context(term_context),
-             poly.encode_tm(source_domain), poly.encode_tm(domain)],
-            [definitions.project_signature(declarations), domain_type_article,
-             domain_path],
-        )
-        result: poly.Tm = ("imp", domain, codomain)
-        return result, poly.mono.proof_node(
-            "megalodon-def-proof-imp-intro",
-            [poly.mono.app("MPrimNil"), encoded_declarations,
-             poly.encode_signature(signature), poly.encode_known(known),
-             poly.mono.nat(type_depth), poly.encode_type_context(term_context),
-             poly.encode_proof_context(proof_context),
-             poly.encode_tm(source_domain), poly.encode_tm(domain),
-             poly.encode_tm(codomain)],
-            [representative, child],
-        )
-
-    if head == "PPFAP" and len(arguments) == 2:
-        function, function_article = compile_full_proof(
-            arguments[0], declarations, known, type_depth,
-            term_context, proof_context,
-        )
-        argument, argument_article = compile_full_proof(
-            arguments[1], declarations, known, type_depth,
-            term_context, proof_context,
-        )
-        if function[0] != "imp" or function[1] != argument:
-            raise SystemExit("Megalodon proof application has the wrong premise")
-        result = function[2]
-        return result, poly.mono.proof_node(
-            "megalodon-def-proof-imp-elim",
-            [encoded_environment, poly.mono.nat(type_depth),
-             poly.encode_type_context(term_context),
-             poly.encode_proof_context(proof_context),
-             poly.encode_tm(argument), poly.encode_tm(result)],
-            [function_article, argument_article],
-        )
-
-    if head == "TLAM" and len(arguments) == 2:
-        domain = poly.parse_tp(arguments[0])
-        shifted_context, shift_article = poly.shift_proof_context(
-            1, 0, proof_context
-        )
-        body, child = compile_full_proof(
-            arguments[1], declarations, known, type_depth,
-            [domain, *term_context], shifted_context,
-        )
-        result: poly.Tm = ("all", domain, body)
-        return result, poly.mono.proof_node(
-            "megalodon-def-proof-all-intro",
-            [encoded_environment, poly.mono.nat(type_depth),
-             poly.encode_type_context(term_context),
-             poly.encode_proof_context(proof_context),
-             poly.encode_proof_context(shifted_context), poly.encode_tp(domain),
-             poly.encode_tm(body)],
-            [poly.plain_type_proof(type_depth, domain), shift_article, child],
-        )
-
-    if head == "PTMAP" and len(arguments) == 2:
-        function, function_article = compile_full_proof(
-            arguments[0], declarations, known, type_depth,
-            term_context, proof_context,
-        )
-        if function[0] != "all":
-            raise SystemExit("Megalodon proof term application targets a non-quantifier")
-        argument = poly.parse_tm(arguments[1])
-        argument_type, argument_type_article = poly.type_proof(
-            signature, type_depth, term_context, argument
-        )
-        domain, body = function[1], function[2]
-        if argument_type != domain:
-            raise SystemExit("Megalodon proof term application has the wrong type")
-        argument_representative, argument_path = definitions.normalize_with_article(
-            declarations, argument
-        )
-        substituted, substitution = poly.substitute(
-            0, argument_representative, body
-        )
-        result, result_path = definitions.normalize_with_article(
-            declarations, substituted
-        )
-        return result, poly.mono.proof_node(
-            "megalodon-def-proof-all-elim",
-            [poly.mono.app("MPrimNil"), encoded_declarations,
-             poly.encode_signature(signature), poly.encode_known(known),
-             poly.mono.nat(type_depth), poly.encode_type_context(term_context),
-             poly.encode_proof_context(proof_context), poly.encode_tp(domain),
-             poly.encode_tm(body), poly.encode_tm(argument),
-             poly.encode_tm(argument_representative),
-             poly.encode_tm(substituted), poly.encode_tm(result)],
-            [function_article, definitions.project_signature(declarations),
-             argument_type_article, argument_path, substitution, result_path],
-        )
-
-    if head == "PTPAP" and len(arguments) == 2:
-        function, function_article = compile_full_proof(
-            arguments[0], declarations, known, type_depth,
-            term_context, proof_context,
-        )
-        if function[0] != "typeAll":
-            raise SystemExit("Megalodon proof type application targets a non-type-all")
-        type_value = poly.parse_tp(arguments[1])
-        result, substitution = poly.type_substitute_term(
-            0, type_value, function[1]
-        )
-        return result, poly.mono.proof_node(
-            "megalodon-def-proof-type-elim",
-            [encoded_environment, poly.mono.nat(type_depth),
-             poly.encode_type_context(term_context),
-             poly.encode_proof_context(proof_context),
-             poly.encode_tm(function[1]), poly.encode_tp(type_value),
-             poly.encode_tm(result)],
-            [function_article, poly.plain_type_proof(type_depth, type_value),
-             substitution],
-        )
-
-    raise SystemExit(
-        f"unsupported checked Megalodon definition-aware proof: {sx.render(value)}"
-    )
 
 
 def compile_theorem(
@@ -393,38 +153,13 @@ def compile_theorem(
 ) -> tuple[str, poly.Tm, sx.SExpr, sx.SExpr]:
     label, identifier, prefix_count, source_body, proof, _ = theorem
     declarations = retained_declarations(definitions_in_scope)
-    synthesized, article = compile_full_proof(
-        proof, declarations, known, prefix_count, [], []
-    )
-    for depth in range(prefix_count - 1, -1, -1):
-        synthesized = ("typeAll", synthesized)
-        article = poly.mono.proof_node(
-            "megalodon-def-proof-type-intro",
-            [full_environment(declarations, known), poly.mono.nat(depth),
-             poly.encode_tm(synthesized[1])],
-            [article],
-        )
     declared = source_body
     for _ in range(prefix_count):
         declared = ("typeAll", declared)
-    _, conversion = definitions.conversion_article(
-        declarations, synthesized, declared
-    )
-    article = poly.mono.proof_node(
-        "megalodon-def-proof-convert",
-        [poly.mono.app("MPrimNil"),
-         definitions.encode_declarations(declarations), poly.encode_known(known),
-         poly.mono.nat(0), poly.encode_type_context([]),
-         poly.encode_proof_context([]), poly.encode_tm(synthesized),
-         poly.encode_tm(declared)],
-        [article, conversion],
-    )
-    goal = poly.mono.app(
-        "MDefinitionProves", full_environment(declarations, known),
-        poly.mono.nat(0), poly.encode_type_context([]),
-        poly.encode_proof_context([]), poly.encode_tm(declared),
-    )
+    goal, article = proofs.compile_proposition(declarations, known, declared, proof)
     return label, declared, goal, article
+
+
 
 
 def require_differential(
@@ -465,9 +200,9 @@ def require_differential(
         )
 
 
-def check_both(
+def check_realizations(
     cetta: Path,
-    differential: Path,
+    differential: Path | None,
     totals: DAGTotals,
     goal: sx.SExpr,
     article: sx.SExpr,
@@ -481,10 +216,11 @@ def check_both(
     public_result = poly.run_cetta(cetta, goal, compilation.article)
     poly.require_public_result(public_result, accepted=accepted)
     totals.add(compilation, raw_bytes, shared_bytes)
-    require_differential(
-        differential, goal, article,
-        accepted=accepted, native_status=native_status,
-    )
+    if differential is not None:
+        require_differential(
+            differential, goal, article,
+            accepted=accepted, native_status=native_status,
+        )
 
 
 def forged_context_shift() -> tuple[sx.SExpr, sx.SExpr]:
@@ -536,7 +272,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--megalodon", type=Path, required=True)
     parser.add_argument("--cetta", type=Path, required=True)
-    parser.add_argument("--differential", type=Path, required=True)
+    parser.add_argument("--differential", type=Path,
+                        help="also qualify against the reference and compiled-worklist checkers")
     parser.add_argument("--positive", type=Path, required=True)
     args = parser.parse_args()
 
@@ -565,12 +302,12 @@ def main() -> int:
         type_goal = poly.mono.app(
             "MPolyType", poly.mono.nat(0), poly.encode_tp(value_type)
         )
-        check_both(
+        check_realizations(
             args.cetta, args.differential, dag_totals, type_goal,
             definitions.poly_type_article(0, value_type),
             accepted=True, native_status="ok",
         )
-        check_both(
+        check_realizations(
             args.cetta, args.differential, dag_totals,
             term_typing_goal(signature, [], body, value_type),
             body_article,
@@ -588,7 +325,7 @@ def main() -> int:
     )
     if local_type != ("all", proposition):
         raise SystemExit("type abstraction did not lift its local context")
-    check_both(
+    check_realizations(
         args.cetta, args.differential, dag_totals,
         term_typing_goal([], local_context, local_term, local_type),
         local_article,
@@ -597,7 +334,7 @@ def main() -> int:
     checks += 1
 
     forged_goal, forged_article = forged_context_shift()
-    check_both(
+    check_realizations(
         args.cetta, args.differential, dag_totals, forged_goal, forged_article,
         accepted=False, native_status="premise-mismatch",
     )
@@ -611,7 +348,7 @@ def main() -> int:
         label, declared, goal, article = compile_theorem(
             theorem, definitions_in_scope, known
         )
-        check_both(
+        check_realizations(
             args.cetta, args.differential, dag_totals, goal, article,
             accepted=True, native_status="ok",
         )
@@ -626,11 +363,11 @@ def main() -> int:
             prior_known = known[1:]
             wrong_goal = poly.mono.app(
                 "MDefinitionProves",
-                full_environment(declarations, prior_known),
+                proofs.full_environment(declarations, prior_known),
                 poly.mono.nat(0), poly.encode_type_context([]),
                 poly.encode_proof_context([]), poly.encode_tm(declared),
             )
-            check_both(
+            check_realizations(
                 args.cetta, args.differential, dag_totals, wrong_goal, article,
                 accepted=False, native_status="final-mismatch",
             )
@@ -661,7 +398,7 @@ def main() -> int:
         f"shared-bytes={dag_totals.shared_bytes} "
         f"dag-shared-checks={dag_totals.shared_checks} "
         "megalodon-checked=1 production-realizations=1 "
-        "qualification-realizations=3)"
+        f"qualification-realizations={3 if args.differential is not None else 1})"
     )
     return 0
 

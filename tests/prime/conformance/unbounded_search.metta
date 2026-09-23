@@ -1,7 +1,7 @@
 ; Omitting the resource argument requests unbounded search. An explicit
 ; positive resource argument requests a bounded producer prefix.
-(: PrimeUnboundedBase Type)
-(: PrimeUnboundedGoal Type)
+(: PrimeUnboundedBase (u 0))
+(: PrimeUnboundedGoal (u 0))
 (: prime-unbounded-base PrimeUnboundedBase)
 (: prime-unbounded-step (-> PrimeUnboundedBase PrimeUnboundedGoal))
 (chaining-rule prime-unbounded-step)

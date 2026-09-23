@@ -1030,7 +1030,9 @@ static bool atom_hashcons_graph_admitted(const Atom *atom) {
  * already immutable global hash-cons entries (enforced at publication) in
  * this table's ownership domain or an outliving one, so their pointers remain
  * stable canonical ids.  Mixing those ids gives O(arity) lookup without
- * recursively re-hashing a deep term.  Exact atom_eq remains authoritative.
+ * recursively re-hashing a deep term. Sharing preserves the represented
+ * syntax, including variable names; logical atom_eq intentionally observes
+ * only variable identity and is too coarse for this table.
  */
 static inline uint64_t hashcons_index_mix(uint64_t h, uint64_t value) {
     value += UINT64_C(0x9e3779b97f4a7c15);
@@ -1073,6 +1075,7 @@ static uint64_t hashcons_slot_hash(Atom *atom) {
         break;
     case ATOM_VAR:
         h = hashcons_index_mix(h, atom->var_id);
+        h = hashcons_index_mix(h, atom->sym_id);
         h = hashcons_index_mix(
             h, (uint64_t)(uintptr_t)atom->name_key);
         break;
@@ -1133,6 +1136,31 @@ static uint64_t hashcons_slot_hash(Atom *atom) {
     return hashcons_index_finalize(h);
 }
 
+static bool hashcons_entry_eq(Atom *left, Atom *right) {
+    if (left == right)
+        return true;
+    if (left->kind != right->kind)
+        return false;
+    switch (left->kind) {
+    case ATOM_VAR:
+        return left->var_id == right->var_id &&
+               left->sym_id == right->sym_id &&
+               left->name_key == right->name_key;
+    case ATOM_EXPR:
+        if (left->expr.len != right->expr.len)
+            return false;
+        /* Publication admits only immutable globally owned children. The
+         * same child identities used by the index hash preserve their names
+         * even when a hash collision meets a logically equal expression. */
+        for (CettaExprIndex i = 0u; i < left->expr.len; i++)
+            if (left->expr.elems[i] != right->expr.elems[i])
+                return false;
+        return true;
+    default:
+        return atom_eq(left, right);
+    }
+}
+
 static uint32_t hashcons_find_slot(HashConsTable *hc, Atom *atom, bool *found) {
     uint32_t h = (uint32_t)(hashcons_slot_hash(atom) % hc->size);
     hc->lookup_count++;
@@ -1145,7 +1173,7 @@ static uint32_t hashcons_find_slot(HashConsTable *hc, Atom *atom, bool *found) {
             *found = false;
             return idx;
         }
-        if (atom_eq(hc->table[idx], atom)) {
+        if (hashcons_entry_eq(hc->table[idx], atom)) {
             *found = true;
             return idx;
         }
@@ -1491,7 +1519,8 @@ static SymbolId symbol_cached_literal(const char *name) {
     if (entry->table == g_symbols &&
         entry->instance_id == symbol_table_instance_id(g_symbols) &&
         entry->literal == name &&
-        entry->id != SYMBOL_ID_NONE) {
+        entry->id != SYMBOL_ID_NONE &&
+        symbol_eq_cstr(g_symbols, entry->id, name)) {
         return entry->id;
     }
 
@@ -3363,6 +3392,143 @@ bool atom_eq(Atom *a, Atom *b) {
         return true;
     }
     return false;
+}
+
+typedef struct {
+    Atom *left, *right;
+    bool complete;
+} AtomDataEqualityEntry;
+
+typedef struct {
+    AtomDataEqualityEntry *entries;
+    size_t count, capacity;
+} AtomDataEqualityMemo;
+
+static size_t atom_data_equality_hash(Atom *left, Atom *right) {
+    uint64_t h = hashcons_index_mix((uint64_t)(uintptr_t)left,
+                                   (uint64_t)(uintptr_t)right);
+    return (size_t)hashcons_index_finalize(h);
+}
+
+static AtomDataEqualityEntry *atom_data_equality_find(
+    AtomDataEqualityMemo *memo, Atom *left, Atom *right) {
+    size_t slot = atom_data_equality_hash(left, right) & (memo->capacity - 1u);
+    while (memo->entries[slot].left &&
+           (memo->entries[slot].left != left || memo->entries[slot].right != right))
+        slot = (slot + 1u) & (memo->capacity - 1u);
+    return &memo->entries[slot];
+}
+
+static bool atom_data_equality_grow(AtomDataEqualityMemo *memo) {
+    if (memo->capacity > SIZE_MAX / 2u / sizeof(*memo->entries))
+        return false;
+    size_t next = memo->capacity * 2u;
+    AtomDataEqualityMemo grown = {.count = memo->count, .capacity = next};
+    grown.entries = cetta_malloc(next * sizeof(*grown.entries));
+    memset(grown.entries, 0, next * sizeof(*grown.entries));
+    for (size_t i = 0u; i < memo->capacity; ++i) {
+        AtomDataEqualityEntry entry = memo->entries[i];
+        if (entry.left)
+            *atom_data_equality_find(&grown, entry.left, entry.right) = entry;
+    }
+    free(memo->entries);
+    *memo = grown;
+    return true;
+}
+
+static bool atom_scalar_data(const Atom *atom) {
+    if (atom->kind == ATOM_SYMBOL || atom->kind == ATOM_VAR)
+        return true;
+    if (atom->kind != ATOM_GROUNDED)
+        return false;
+    switch (atom->ground.gkind) {
+    case GV_INT: case GV_FLOAT: case GV_BOOL: case GV_STRING:
+    case GV_BIGINT: case GV_RATIONAL:
+        return true;
+    default:
+        return false;
+    }
+}
+
+typedef struct {
+    Atom *left, *right;
+    CettaExprIndex next_child;
+    bool entered;
+} AtomDataEqualityFrame;
+
+static bool atom_data_equal_impl(Atom *left, Atom *right, bool validated) {
+    if (!left || !right)
+        return false;
+    if (validated && left == right)
+        return true;
+    AtomDataEqualityMemo memo = {.capacity = 64u};
+    memo.entries = cetta_malloc(memo.capacity * sizeof(*memo.entries));
+    memset(memo.entries, 0, memo.capacity * sizeof(*memo.entries));
+    size_t count = 1u, capacity = 32u;
+    AtomDataEqualityFrame *frames = cetta_malloc(capacity * sizeof(*frames));
+    frames[0] = (AtomDataEqualityFrame){.left = left, .right = right};
+    bool equal = false;
+    while (count) {
+        AtomDataEqualityFrame *frame = &frames[count - 1u];
+        Atom *a = frame->left, *b = frame->right;
+        if (validated && a == b) {
+            count--;
+            continue;
+        }
+        if (!a || !b || a->kind != b->kind)
+            goto done;
+        if (a->kind != ATOM_EXPR) {
+            if (!atom_scalar_data(a) || !atom_scalar_data(b) || !atom_eq(a, b))
+                goto done;
+            count--;
+            continue;
+        }
+        if (a->expr.len != b->expr.len)
+            goto done;
+        if (!frame->entered) {
+            if (memo.count >= memo.capacity / 2u && !atom_data_equality_grow(&memo))
+                goto done;
+            AtomDataEqualityEntry *entry = atom_data_equality_find(&memo, a, b);
+            if (entry->left) {
+                if (!entry->complete) /* Active pair: a cyclic comparison. */
+                    goto done;
+                count--;
+                continue;
+            }
+            *entry = (AtomDataEqualityEntry){.left = a, .right = b};
+            memo.count++;
+            frame->entered = true;
+        }
+        if (frame->next_child < a->expr.len) {
+            CettaExprIndex index = frame->next_child++;
+            AtomDataEqualityFrame child = {
+                .left = a->expr.elems[index], .right = b->expr.elems[index],
+            };
+            if (count == capacity) {
+                if (capacity > SIZE_MAX / 2u / sizeof(*frames))
+                    goto done;
+                capacity *= 2u;
+                frames = cetta_realloc(frames, capacity * sizeof(*frames));
+            }
+            frames[count++] = child;
+        } else {
+            atom_data_equality_find(&memo, a, b)->complete = true;
+            count--;
+        }
+    }
+    equal = true;
+done:
+    free(frames);
+    free(memo.entries);
+    return equal;
+}
+
+bool atom_data_equal(Atom *left, Atom *right) {
+    return atom_data_equal_impl(left, right, false);
+}
+
+bool atom_data_equal_validated(Atom *left, Atom *right) {
+    return atom_data_equal_impl(left, right, true);
 }
 
 /* ── Printing ───────────────────────────────────────────────────────────── */

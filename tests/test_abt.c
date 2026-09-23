@@ -15,7 +15,7 @@
 
 enum {
     ABT_DEEP_TERM_DEPTH = CETTA_ABT_MUTATION == 0 ? 100000 : 1000,
-    ABT_EXPECTED_CHECKS = 116,
+    ABT_EXPECTED_CHECKS = 124,
 };
 
 static unsigned failures = 0;
@@ -744,6 +744,40 @@ static bool deep_named_lam_has_depth(Atom *term) {
 
 static void test_deep_and_cyclic_inputs(Arena *arena,
                                         const AbtSignature *signature) {
+    Atom *shared = node1(arena, "Box", var(arena, 0));
+    for (size_t i = 0; i < 50; i++)
+        shared = node2(arena, "App", shared, shared);
+    CHECK(abt_scope_check(signature, 1u, shared),
+          "scope check visits a shared binary DAG without expanding its tree");
+    CHECK(!abt_scope_check(signature, 0u, shared),
+          "scope results do not escape their invocation");
+    Atom *shared_copy = node1(arena, "Box", var(arena, 0));
+    Atom *different_shared = node1(arena, "Box", var(arena, 1));
+    for (size_t i = 0; i < 50; i++) {
+        shared_copy = node2(arena, "App", shared_copy, shared_copy);
+        different_shared = node2(arena, "App", different_shared, different_shared);
+    }
+    CHECK(abt_alpha_eq(shared, shared_copy),
+          "alpha equality reuses completed pairs of independently allocated DAGs");
+    CHECK(!abt_alpha_eq(shared, different_shared),
+          "shared alpha equality still distinguishes different free indices");
+    Atom *mixed_left = node2(arena, "App", shared, shared);
+    Atom *mixed_right = node2(arena, "App", shared_copy, different_shared);
+    CHECK(!abt_alpha_eq(mixed_left, mixed_right),
+          "alpha equality memo is keyed by both terms");
+    Atom *shared_substituted = abt_subst(signature, arena, 0u, shared, var(arena, 0));
+    CHECK(shared_substituted && abt_alpha_eq(shared_substituted, shared_copy),
+          "substitution validates a shared replacement without unfolding its tree");
+    Atom *body = node1(arena, "Box", var(arena, 0));
+    Atom *mixed_depths = node2(arena, "App",
+        node2(arena, "Lam", atom_symbol(arena, "A"), body), body);
+    CHECK(!abt_scope_check(signature, 0u, mixed_depths),
+          "a subtree accepted beneath a binder is still checked outside it");
+    Atom *binding_cycle = node2(arena, "Lam", atom_symbol(arena, "A"), body);
+    binding_cycle->expr.elems[2] = binding_cycle;
+    CHECK(!abt_scope_check(signature, 0u, binding_cycle),
+          "scope memoization cannot hide a cycle with increasing binder depth");
+
     Atom *deep = make_deep_lam(arena, atom_symbol(arena, "A"));
     CHECK(abt_scope_check(signature, 0u, deep),
           "scope traversal is iterative at depth 100000");

@@ -353,6 +353,23 @@ static void test_epoch_identity_and_publication(Arena *ordinary_arena) {
     arena_set_hashcons(&peer_arena, &peer_hashcons);
 
     Atom *head = atom_symbol(&shared_arena, "IdentityProbe");
+    /* Matching compares variable identity, but a retained atom also carries
+     * its authored name. Interning must not turn that name into an alpha key. */
+    VarId shown_id = test_id(7989u);
+    Atom *unnamed = atom_var_with_spelling(
+        &shared_arena, SYMBOL_ID_NONE, shown_id);
+    Atom *named = atom_var_with_id(&shared_arena, "retained", shown_id);
+    CHECK(unnamed != named && atom_eq(unnamed, named) &&
+              named->sym_id == symbol_intern_cstr(g_symbols, "retained"),
+          "hash-consing preserves names without changing variable identity");
+    CHECK(atom_var_with_id(&shared_arena, "retained", shown_id) == named,
+          "hash-consing still shares an identical named variable");
+    Atom *unnamed_parent = atom_expr2(&shared_arena, head, unnamed);
+    Atom *named_parent = atom_expr2(&shared_arena, head, named);
+    CHECK(unnamed_parent != named_parent &&
+              atom_eq(unnamed_parent, named_parent) &&
+              named_parent->expr.elems[1] == named,
+          "hash-consing preserves variable names inside expressions");
     Atom *nan_left = hashcons_get(
         &hashcons, atom_float(&shared_arena, NAN));
     Atom *nan_right = hashcons_get(

@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 static unsigned checks;
 static unsigned failures;
@@ -202,11 +203,267 @@ done:
     return result;
 }
 
+/* Each level adds three nodes but doubles the unfolded tree. */
+static Atom *shared_pattern(Arena *arena, Atom *leaf, unsigned depth) {
+    Atom *nil = atom_symbol(arena, "LNil");
+    Atom *cons = atom_symbol(arena, "LCons");
+    Atom *app = atom_symbol(arena, "PApp");
+    Atom *pair = atom_string(arena, "Pair");
+    for (unsigned i = 0u; i < depth; ++i) {
+        Atom *tail = atom_expr3(arena, cons, leaf, nil);
+        Atom *args = atom_expr3(arena, cons, leaf, tail);
+        leaf = atom_expr3(arena, app, pair, args);
+    }
+    return leaf;
+}
+
+static int run_pattern_sharing_bench(const char *argument) {
+    char *end = NULL;
+    unsigned long depth = strtoul(argument, &end, 10);
+    if (!*argument || *end || *argument == '-' || depth > UINT32_MAX)
+        return 2;
+    SymbolTable symbols;
+    Arena arena;
+    symbol_table_init(&symbols);
+    symbol_table_init_builtins(&symbols, &g_builtin_syms);
+    g_symbols = &symbols;
+    g_hashcons = NULL;
+    arena_init(&arena);
+    Atom *pattern = shared_pattern(
+        &arena, parse_one(&arena, "(PApp \"K\" LNil)"), (unsigned)depth);
+    size_t before = arena_accounted_live_bytes(&arena);
+    clock_t start = clock();
+    CettaInferencePatternAbtStatusV1 status =
+        cetta_inference_pattern_supported_at_v1(&arena, 0u, pattern);
+    double seconds = (double)(clock() - start) / CLOCKS_PER_SEC;
+    printf("PatternSharing depth=%lu nodes=%lu status=%d seconds=%.6f "
+           "allocated_bytes=%zu\n", depth, 3ul * depth + 1ul, status,
+           seconds, arena_accounted_live_bytes(&arena) - before);
+    Atom *other = shared_pattern(
+        &arena, parse_one(&arena, "(PApp \"K\" LNil)"), (unsigned)depth);
+    start = clock();
+    bool equal = atom_data_equal(pattern, other);
+    printf("PatternSharingEquality depth=%lu equal=%d seconds=%.6f\n",
+           depth, equal, (double)(clock() - start) / CLOCKS_PER_SEC);
+    Atom *presentation = parse_one(&arena,
+        "(GInferenceLanguageV1 1 "
+        " (LCons (CDecl \"K\" 0) (LCons (CDecl \"Pair\" 2) LNil)) "
+        " (LCons (JDecl \"J\" 1) LNil) "
+        " (LCons (GRuleV1 \"argument-ax\" (LCons (Formal \"x\" 0) LNil) "
+        " LNil (PApp \"J\" (LCons (FVar \"x\") LNil)) LNil) LNil) "
+        " GNoConversion)");
+    CettaInferenceChecker *checker = NULL;
+    char error[256] = {0};
+    CettaInferenceStatus checked = cetta_inference_checker_create(
+        presentation, &checker, error, sizeof(error));
+    if (checked == CETTA_INFERENCE_OK) {
+        CettaInferenceTrace trace;
+        cetta_inference_trace_init(&trace, checker, &arena);
+        start = clock();
+        checked = cetta_inference_trace_apply(
+            &trace, cetta_inference_checker_find_rule(checker, "argument-ax"),
+            &pattern, 1u, error, sizeof(error));
+        seconds = (double)(clock() - start) / CLOCKS_PER_SEC;
+        printf("PatternSharingReplay depth=%lu status=%d seconds=%.6f\n",
+               depth, checked, seconds);
+        cetta_inference_trace_free(&trace);
+        cetta_inference_checker_destroy(checker);
+    }
+    arena_free(&arena);
+    symbol_table_free(&symbols);
+    g_symbols = NULL;
+    return equal && status == CETTA_INFERENCE_PATTERN_ABT_OK &&
+        checked == CETTA_INFERENCE_OK ? 0 : 1;
+}
+
+static Atom *shared_pattern_leaf(Atom *term, unsigned depth) {
+    for (unsigned i = 0u; i < depth; ++i) {
+        if (!term || term->kind != ATOM_EXPR || term->expr.len != 3u ||
+            !atom_is_symbol(term->expr.elems[0], "PApp"))
+            return NULL;
+        Atom *args = term->expr.elems[2];
+        if (!args || args->kind != ATOM_EXPR || args->expr.len != 3u)
+            return NULL;
+        Atom *tail = args->expr.elems[2];
+        if (!tail || tail->kind != ATOM_EXPR || tail->expr.len != 3u ||
+            args->expr.elems[1] != tail->expr.elems[1])
+            return NULL;
+        term = args->expr.elems[1];
+    }
+    return term;
+}
+
+static Atom *shared_pattern_article(Arena *arena, unsigned depth) {
+    Atom *nil = atom_symbol(arena, "LNil");
+    Atom *cons = atom_symbol(arena, "LCons");
+    Atom *key_head = atom_symbol(arena, "GPKApply");
+    Atom *node_head = atom_symbol(arena, "GPatternNode");
+    Atom *nodes = nil;
+    for (unsigned i = depth + 2u; i > 0u; --i) {
+        unsigned id = i - 1u;
+        Atom *children = nil;
+        const char *head = "K";
+        if (id == depth + 1u) {
+            head = "J";
+            children = atom_expr3(arena, cons, atom_int(arena, depth), nil);
+        } else if (id) {
+            head = "Pair";
+            Atom *ref = atom_int(arena, id - 1u);
+            children = atom_expr3(arena, cons, ref, atom_expr3(arena, cons, ref, nil));
+        }
+        Atom *key = atom_expr3(arena, key_head, atom_string(arena, head), children);
+        Atom *node = atom_expr3(arena, node_head, atom_int(arena, id), key);
+        nodes = atom_expr3(arena, cons, node, nodes);
+    }
+    Atom *instance = atom_expr3(arena, atom_symbol(arena, "GRuleRefs"),
+        atom_string(arena, "argument-ax"),
+        atom_expr3(arena, cons, atom_int(arena, depth), nil));
+    Atom *proof_items[] = {atom_symbol(arena, "GDNode"), atom_int(arena, 0), instance, nil};
+    Atom *proofs = atom_expr3(arena, cons, atom_expr(arena, proof_items, 4u), nil);
+    Atom *items[] = {atom_symbol(arena, "GProofDAG"), atom_int(arena, 2),
+        nodes, proofs, atom_int(arena, 0), atom_int(arena, depth + 1u)};
+    return atom_expr(arena, items, 6u);
+}
+
+static void test_pattern_sharing(void) {
+    Arena arena;
+    arena_init(&arena);
+    Atom *constant = parse_one(&arena, "(PApp \"K\" LNil)");
+    Atom *variable = parse_one(&arena, "(Var 0)");
+    Atom *closed = shared_pattern(&arena, constant, 40u);
+    CHECK(cetta_inference_pattern_supported_at_v1(&arena, 0u, closed) ==
+              CETTA_INFERENCE_PATTERN_ABT_OK,
+          "scope checking retains a deeply shared Pattern graph");
+    Atom *body = shared_pattern(&arena, variable, 40u);
+    Atom *result = NULL;
+    CHECK(cetta_inference_pattern_explicit_substitution_v1(
+              &arena, body, constant, &result) == CETTA_INFERENCE_PATTERN_ABT_OK &&
+              atom_data_equal(shared_pattern_leaf(result, 40u), constant),
+          "Pattern substitution preserves sharing in both encoding directions");
+    Atom *outer = shared_pattern(&arena, parse_one(&arena, "(Var 1)"), 40u);
+    CHECK(cetta_inference_pattern_unused_binder_elimination_v1(
+              &arena, outer, &result) == CETTA_INFERENCE_PATTERN_ABT_OK &&
+              atom_data_equal(shared_pattern_leaf(result, 40u), variable),
+          "unused-binder elimination preserves sharing and shifts the free index");
+    Atom *lambda = atom_expr3(&arena, atom_symbol(&arena, "PLam"),
+                             atom_symbol(&arena, "BNone"), outer);
+    CHECK(cetta_inference_pattern_explicit_substitution_v1(
+              &arena, lambda, constant, &result) == CETTA_INFERENCE_PATTERN_ABT_OK &&
+              result->kind == ATOM_EXPR && result->expr.len == 3u &&
+              atom_data_equal(shared_pattern_leaf(result->expr.elems[2], 40u), constant),
+          "shared substitution under a binder retains the intended free variable");
+    Atom *bound = atom_expr3(&arena, atom_symbol(&arena, "PLam"),
+                            atom_symbol(&arena, "BNone"), variable);
+    Atom *mixed = atom_expr3(&arena, atom_symbol(&arena, "PSubst"), bound, variable);
+    CHECK(cetta_inference_pattern_supported_at_v1(&arena, 0u, mixed) ==
+              CETTA_INFERENCE_PATTERN_ABT_INVALID,
+          "one shared variable cannot reuse scope success at another depth");
+    Atom *cycle = atom_expr3(&arena, atom_symbol(&arena, "PLam"),
+                            atom_symbol(&arena, "BNone"), variable);
+    cycle->expr.elems[2] = cycle;
+    CHECK(cetta_inference_pattern_supported_at_v1(&arena, 0u, cycle) ==
+              CETTA_INFERENCE_PATTERN_ABT_INVALID,
+          "Pattern conversion rejects binder cycles");
+    CHECK(cetta_inference_pattern_explicit_substitution_v1(
+              &arena, cycle, constant, &result) == CETTA_INFERENCE_PATTERN_ABT_INVALID &&
+              result == NULL,
+          "substitution cannot turn a cyclic Pattern into an accepted result");
+    Atom *list_cycle = atom_expr3(&arena, atom_symbol(&arena, "LCons"), constant,
+                                 atom_symbol(&arena, "LNil"));
+    list_cycle->expr.elems[2] = list_cycle;
+    Atom *cyclic_app = atom_expr3(&arena, atom_symbol(&arena, "PApp"),
+                                 atom_string(&arena, "Pair"), list_cycle);
+    CHECK(cetta_inference_pattern_supported_at_v1(&arena, 0u, cyclic_app) ==
+              CETTA_INFERENCE_PATTERN_ABT_INVALID,
+          "Pattern conversion rejects cyclic argument lists");
+    Atom *deep = variable;
+    for (unsigned i = 0u; i < 20000u; ++i)
+        deep = atom_expr3(&arena, atom_symbol(&arena, "PLam"),
+                          atom_symbol(&arena, "BNone"), deep);
+    CHECK(cetta_inference_pattern_supported_at_v1(&arena, 0u, deep) ==
+              CETTA_INFERENCE_PATTERN_ABT_OK,
+          "deep Pattern conversion does not consume the C call stack");
+    Atom *list = atom_symbol(&arena, "LNil");
+    for (unsigned i = 0u; i < 20000u; ++i)
+        list = atom_expr3(&arena, atom_symbol(&arena, "LCons"), variable, list);
+    Atom *collection_items[] = {atom_symbol(&arena, "PCollection"),
+        atom_string(&arena, "Mettapedia.OSLF.MeTTaIL.Syntax.CollType.vec"),
+        list, atom_symbol(&arena, "RNone")};
+    Atom *collection = atom_expr(&arena, collection_items, 4u);
+    bool collection_ok = cetta_inference_pattern_explicit_substitution_v1(
+        &arena, collection, constant, &result) == CETTA_INFERENCE_PATTERN_ABT_OK;
+    Atom *cursor = collection_ok ? result->expr.elems[2] : NULL;
+    for (unsigned i = 0u; collection_ok && i < 20000u; ++i) {
+        collection_ok = cursor && cursor->kind == ATOM_EXPR && cursor->expr.len == 3u &&
+            atom_eq(cursor->expr.elems[1], constant);
+        if (collection_ok)
+            cursor = cursor->expr.elems[2];
+    }
+    CHECK(collection_ok && atom_is_symbol(cursor, "LNil"),
+          "long Pattern lists round-trip iteratively through substitution");
+
+    CettaInferenceChecker *checker = NULL;
+    char error[256] = {0};
+    Atom *presentation = parse_one(&arena,
+        "(GInferenceLanguageV1 1 "
+        " (LCons (CDecl \"K\" 0) (LCons (CDecl \"Pair\" 2) LNil)) "
+        " (LCons (JDecl \"J\" 1) LNil) "
+        " (LCons (GRuleV1 \"argument-ax\" (LCons (Formal \"x\" 0) LNil) "
+        " LNil (PApp \"J\" (LCons (FVar \"x\") LNil)) LNil) LNil) "
+        " GNoConversion)");
+    CHECK(cetta_inference_checker_create(presentation, &checker, error, sizeof(error)) ==
+              CETTA_INFERENCE_OK, "shared-argument test presentation is admitted");
+    Atom *goal = atom_expr3(&arena, atom_symbol(&arena, "PApp"), atom_string(&arena, "J"),
+        atom_expr3(&arena, atom_symbol(&arena, "LCons"), closed, atom_symbol(&arena, "LNil")));
+    Atom *article = shared_pattern_article(&arena, 40u);
+    CettaInferenceReplayStats stats = {0};
+    CHECK(cetta_inference_check_dag_article(presentation, goal, article,
+              (CettaInferenceReplayLimits){0}, &stats, &arena, error, sizeof(error)) ==
+              CETTA_INFERENCE_OK && stats.nodes == 43u,
+          "shared wire materialization and exact final comparison preserve DAG costs");
+    Atom *wrong_value = shared_pattern(&arena, parse_one(&arena, "(PApp \"Other\" LNil)"), 40u);
+    Atom *wrong_goal = atom_expr3(&arena, atom_symbol(&arena, "PApp"), atom_string(&arena, "J"),
+        atom_expr3(&arena, atom_symbol(&arena, "LCons"), wrong_value, atom_symbol(&arena, "LNil")));
+    CHECK(cetta_inference_check_dag_article(presentation, wrong_goal, article,
+              (CettaInferenceReplayLimits){0}, NULL, &arena, error, sizeof(error)) ==
+              CETTA_INFERENCE_FINAL_MISMATCH,
+          "shared wire replay still rejects a changed leaf in the submitted goal");
+    if (checker) {
+        CettaInferenceTrace trace;
+        cetta_inference_trace_init(&trace, checker, &arena);
+        CettaInferenceRuleHandle rule = cetta_inference_checker_find_rule(checker, "argument-ax");
+        CHECK(cetta_inference_trace_apply(&trace, rule, &closed, 1u, error, sizeof(error)) ==
+                  CETTA_INFERENCE_OK,
+              "constructor checking visits shared arguments without tree expansion");
+        CHECK(cetta_inference_trace_apply(&trace, rule, &deep, 1u, error, sizeof(error)) ==
+                  CETTA_INFERENCE_OK,
+              "constructor checking of deep binders uses an explicit stack");
+        Atom *malformed = shared_pattern(&arena, parse_one(&arena, "(PApp \"Pair\" LNil)"), 40u);
+        CHECK(cetta_inference_trace_apply(&trace, rule, &malformed, 1u, error, sizeof(error)) ==
+                  CETTA_INFERENCE_INVALID_ARGUMENTS,
+              "sharing cannot hide an incorrect constructor arity");
+        Atom *opaque = parse_one(&arena, "(PApp \"Opaque\" LNil)");
+        CHECK(cetta_inference_trace_apply(&trace, rule, &opaque, 1u, error, sizeof(error)) ==
+                  CETTA_INFERENCE_OK, "undeclared nullary data remains opaque");
+        CHECK(cetta_inference_checker_add_constructor(checker, "Opaque", 1u, error, sizeof(error)) ==
+                  CETTA_INFERENCE_OK, "constructor extension is admitted independently");
+        CHECK(cetta_inference_trace_apply(&trace, rule, &opaque, 1u, error, sizeof(error)) ==
+                  CETTA_INFERENCE_INVALID_ARGUMENTS,
+              "public trace actions do not reuse validation across changed signatures");
+        cetta_inference_trace_free(&trace);
+        cetta_inference_checker_destroy(checker);
+    }
+    arena_free(&arena);
+}
+
 int main(int argc, char **argv) {
     if (argc == 3 && strcmp(argv[1], "--differential-file") == 0)
         return run_differential_file(argv[2]);
+    if (argc == 3 && strcmp(argv[1], "--pattern-sharing-bench") == 0)
+        return run_pattern_sharing_bench(argv[2]);
     if (argc != 1) {
-        fprintf(stderr, "usage: %s [--differential-file REQUEST]\n", argv[0]);
+        fprintf(stderr, "usage: %s [--differential-file REQUEST | "
+                        "--pattern-sharing-bench DEPTH]\n", argv[0]);
         return 2;
     }
 
@@ -222,6 +479,8 @@ int main(int argc, char **argv) {
     var_intern_init(&variable_names);
     g_var_intern = &variable_names;
     arena_init(&arena);
+
+    test_pattern_sharing();
 
     CHECK(cetta_prime_nik_authorities_v1_count >= 4u,
           "Prime begins with four checking authorities");
@@ -569,7 +828,7 @@ int main(int argc, char **argv) {
               receipt.compiled_accepted &&
               strcmp(receipt.system_id,
                      "megalodon.mathdata.definition-conversion") == 0 &&
-              strcmp(receipt.revision, "10") == 0,
+              strcmp(receipt.revision, "11") == 0,
           "primitive, axiom, and theorem admission share the revised authority");
 
     CHECK(check(&arena, "DTT", dtt_goal, hotg_proof,
@@ -752,13 +1011,16 @@ int main(int argc, char **argv) {
     char inference_error[512] = {0};
     Atom *binder_presentation = parse_one(
         &arena,
-        "(GPresentationV1 1 "
+        "(GInferenceLanguageV1 1 "
         "  (LCons (CDecl \"K\" 0) LNil) "
         "  (LCons (JDecl \"J\" 1) LNil) "
         "  (LCons (GRuleV1 \"under-lambda\" "
         "    (LCons (Formal \"body\" 1) LNil) LNil "
         "    (PApp \"J\" (LCons (PLam BNone (FVar \"body\")) LNil)) "
-        "    LNil) LNil) "
+        "    LNil) "
+        "    (LCons (GRuleV1 \"closed-body\" "
+        "      (LCons (Formal \"body\" 0) LNil) LNil "
+        "      (PApp \"J\" (LCons (FVar \"body\") LNil)) LNil) LNil)) "
         "  GNoConversion)");
     CettaInferenceChecker *binder_checker = NULL;
     CHECK(cetta_inference_checker_create(
@@ -789,11 +1051,40 @@ int main(int argc, char **argv) {
               CETTA_INFERENCE_INVALID_ARGUMENTS,
           "argument outside its declared support fails closed");
     cetta_inference_trace_free(&binder_trace);
+    Atom *shared_arguments = atom_expr3(&arena, atom_symbol(&arena, "LCons"),
+                                        open_body, atom_symbol(&arena, "LNil"));
+    Atom *first_node = parse_one(&arena,
+        "(GDNode 0 (GRuleInst \"under-lambda\" LNil) LNil)");
+    Atom *second_node = parse_one(&arena,
+        "(GDNode 1 (GRuleInst \"under-lambda\" LNil) LNil)");
+    first_node->expr.elems[2]->expr.elems[2] = shared_arguments;
+    second_node->expr.elems[2]->expr.elems[2] = shared_arguments;
+    Atom *shared_nodes = atom_expr3(&arena, atom_symbol(&arena, "LCons"), first_node,
+        atom_expr3(&arena, atom_symbol(&arena, "LCons"), second_node,
+                    atom_symbol(&arena, "LNil")));
+    Atom *shared_article = atom_expr(&arena,
+        (Atom *[]){atom_symbol(&arena, "GProofDAG"), atom_int(&arena, 1),
+                   shared_nodes, atom_int(&arena, 1), binder_goal}, 5u);
+    CHECK(cetta_inference_checker_check_dag_article(binder_checker, binder_goal,
+              shared_article, (CettaInferenceReplayLimits){0}, NULL, &arena,
+              inference_error, sizeof(inference_error)) == CETTA_INFERENCE_OK,
+          "DAG replay can reuse exact arguments at the same binder depth");
+    second_node->expr.elems[2]->expr.elems[1] = atom_string(&arena, "closed-body");
+    CHECK(cetta_inference_checker_check_dag_article(binder_checker, binder_goal,
+              shared_article, (CettaInferenceReplayLimits){0}, NULL, &arena,
+              inference_error, sizeof(inference_error)) == CETTA_INFERENCE_INVALID_ARGUMENTS,
+          "DAG support memo does not reuse depth-one acceptance at depth zero");
+    second_node->expr.elems[2]->expr.elems[1] = atom_string(&arena, "under-lambda");
+    open_body->expr.elems[1] = atom_int(&arena, 1);
+    CHECK(cetta_inference_checker_check_dag_article(binder_checker, binder_goal,
+              shared_article, (CettaInferenceReplayLimits){0}, NULL, &arena,
+              inference_error, sizeof(inference_error)) == CETTA_INFERENCE_INVALID_ARGUMENTS,
+          "DAG argument memo does not survive a replay invocation or changed input");
     cetta_inference_checker_destroy(binder_checker);
 
     Atom *guarded_presentation = parse_one(
         &arena,
-        "(GPresentationV1 1 "
+        "(GInferenceLanguageV1 1 "
         "  (LCons (CDecl \"K\" 0) LNil) "
         "  (LCons (JDecl \"J\" 2) LNil) "
         "  (LCons (GRuleV1 \"guarded\" "
@@ -841,7 +1132,7 @@ int main(int argc, char **argv) {
 
     Atom *ambient_beta_presentation = parse_one(
         &arena,
-        "(GPresentationV1 1 "
+        "(GInferenceLanguageV1 1 "
         "  (LCons (CDecl \"K\" 0) LNil) "
         "  (LCons (JDecl \"J3\" 3) LNil) "
         "  (LCons (GRuleV1 \"ambient-beta\" "
@@ -904,7 +1195,7 @@ int main(int argc, char **argv) {
 
     Atom *wrong_version_presentation = parse_one(
         &arena,
-        "(GPresentationV1 2 LNil LNil LNil GNoConversion)");
+        "(GInferenceLanguageV1 2 LNil LNil LNil GNoConversion)");
     CettaInferenceChecker *wrong_version_checker = NULL;
     CHECK(cetta_inference_checker_create(
               wrong_version_presentation, &wrong_version_checker,
@@ -915,7 +1206,7 @@ int main(int argc, char **argv) {
 
     Atom *shared_dag_presentation = parse_one(
         &arena,
-        "(GPresentationV1 1 "
+        "(GInferenceLanguageV1 1 "
         "  (LCons (CDecl \"K\" 0) (LCons (CDecl \"R\" 0) LNil)) "
         "  (LCons (JDecl \"J\" 1) LNil) "
         "  (LCons (GRuleV1 \"shared-ax\" LNil LNil "
@@ -994,7 +1285,7 @@ int main(int argc, char **argv) {
 
     Atom *shared_pattern_presentation = parse_one(
         &arena,
-        "(GPresentationV1 1 "
+        "(GInferenceLanguageV1 1 "
         "  (LCons (CDecl \"K\" 0) (LCons (CDecl \"Pair\" 2) LNil)) "
         "  (LCons (JDecl \"J\" 1) LNil) "
         "  (LCons (GRuleV1 \"argument-ax\" "

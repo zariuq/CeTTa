@@ -1416,9 +1416,6 @@ static bool gslt_direct_prefix_escape_target(
     return false;
 }
 
-static AtomId gslt_direct_prefix_parse_atom(
-    GSLTDirectPrefixStateV1 *state, uint32_t depth);
-
 static AtomId gslt_direct_prefix_parse_string(
     GSLTDirectPrefixStateV1 *state) {
     GSLTDirectBytesV1 decoded = {0};
@@ -1551,15 +1548,13 @@ static AtomId gslt_direct_prefix_parse_token(
     return CETTA_ATOM_ID_NONE;
 }
 
-static AtomId gslt_direct_prefix_parse_prefix(
-    GSLTDirectPrefixStateV1 *state, uint32_t depth) {
+static const GSLTDirectPrefixRuleV1 *gslt_direct_prefix_take_prefix(
+    GSLTDirectPrefixStateV1 *state) {
     for (uint32_t rule_index = 0u;
          rule_index < state->plan->prefix_rule_len; rule_index++) {
         const GSLTDirectPrefixRuleV1 *rule =
             &state->plan->prefix_rules[rule_index];
         GSLTDirectCursorV1 probe = state->cursor;
-        AtomId payload;
-        AtomId result;
         uint32_t codepoint;
         size_t width;
         if (!gslt_direct_reader_v1_match_literal(
@@ -1574,100 +1569,135 @@ static AtomId gslt_direct_prefix_parse_prefix(
         }
         state->cursor = probe;
         if (rule->skip_before_payload && !gslt_direct_prefix_skip(state))
-            return CETTA_ATOM_ID_NONE;
-        payload = gslt_direct_prefix_parse_atom(state, depth - 1u);
-        if (payload == CETTA_ATOM_ID_NONE) {
-            gslt_direct_reader_v1_error(
-                state->error_buf, state->error_buf_size,
-                "compiled prefix reader rejected a prefix payload");
-            return CETTA_ATOM_ID_NONE;
-        }
-        result = state->projection->prefix(
-            state->projection->context, rule->role, payload);
-        if (result == CETTA_ATOM_ID_NONE) {
-            gslt_direct_reader_v1_error(
-                state->error_buf, state->error_buf_size,
-                "language projection rejected a prefix payload");
-            return CETTA_ATOM_ID_NONE;
-        }
-        state->prefixes++;
-        return result;
+            return NULL;
+        return rule;
     }
-    return CETTA_ATOM_ID_NONE;
+    return NULL;
 }
 
-static AtomId gslt_direct_prefix_parse_expression(
+typedef struct {
+    const GSLTDirectPrefixRuleV1 *prefix;
+    AtomId *children;
+    uint32_t len;
+    uint32_t cap;
+} GSLTDirectPrefixFrameV1;
+
+/* A frame is precisely one pending expression or prefix projection. Each
+ * push consumes source bytes; the source size bounds the stack independently
+ * of C call-stack size. Explicit caller depth budgets remain enforced. */
+static AtomId gslt_direct_prefix_parse_atom(
     GSLTDirectPrefixStateV1 *state, uint32_t depth) {
-    AtomId *children = NULL;
-    uint32_t len = 0u;
-    uint32_t cap = 0u;
+    GSLTDirectPrefixFrameV1 *frames = NULL;
+    uint32_t frame_len = 0u;
+    uint32_t frame_cap = 0u;
     AtomId result = CETTA_ATOM_ID_NONE;
     uint32_t codepoint;
     size_t width;
-    if (depth == 0u || state->cursor.pos >= state->cursor.input_len)
-        goto done;
-    if (!gslt_direct_reader_v1_peek(
-            &state->cursor, &codepoint, &width) ||
-        codepoint != state->plan->expression_open)
-        goto done;
-    gslt_direct_reader_v1_consume_width(&state->cursor, width);
     for (;;) {
-        AtomId child;
-        if (!gslt_direct_prefix_skip(state))
+        const GSLTDirectPrefixRuleV1 *prefix = NULL;
+        bool expression = false;
+        result = CETTA_ATOM_ID_NONE;
+        if (frame_len >= depth) {
+            gslt_direct_reader_v1_error(
+                state->error_buf, state->error_buf_size,
+                "compiled prefix reader exceeded its nesting budget");
             goto done;
+        }
         if (state->cursor.pos >= state->cursor.input_len ||
             !gslt_direct_reader_v1_peek(
                 &state->cursor, &codepoint, &width))
             goto done;
-        if (codepoint == state->plan->expression_close) {
+        if (codepoint == state->plan->string_open) {
+            result = gslt_direct_prefix_parse_string(state);
+        } else if (codepoint == state->plan->expression_open) {
+            gslt_direct_reader_v1_consume_width(&state->cursor, width);
+            if (!gslt_direct_prefix_skip(state) ||
+                state->cursor.pos >= state->cursor.input_len ||
+                !gslt_direct_reader_v1_peek(
+                    &state->cursor, &codepoint, &width))
+                goto done;
+            if (codepoint == state->plan->expression_close) {
+                gslt_direct_reader_v1_consume_width(&state->cursor, width);
+                result = state->projection->expression(
+                    state->projection->context, NULL, 0u);
+            } else {
+                expression = true;
+            }
+        } else {
+            size_t before = state->cursor.pos;
+            prefix = gslt_direct_prefix_take_prefix(state);
+            if (!prefix) {
+                if (state->cursor.pos != before ||
+                    (state->error_buf && state->error_buf_size > 0u &&
+                     state->error_buf[0] != '\0'))
+                    goto done;
+                result = gslt_direct_prefix_parse_token(state);
+            }
+        }
+        if (prefix || expression) {
+            if (frame_len == frame_cap) {
+                uint32_t next = frame_cap ? frame_cap * 2u : 64u;
+                if (next < frame_cap || SIZE_MAX / (size_t)next < sizeof(*frames))
+                    goto done;
+                frames = cetta_realloc(frames, (size_t)next * sizeof(*frames));
+                frame_cap = next;
+            }
+            frames[frame_len++] = (GSLTDirectPrefixFrameV1){.prefix = prefix};
+            continue;
+        }
+        for (;;) {
+            GSLTDirectPrefixFrameV1 *frame;
+            if (result == CETTA_ATOM_ID_NONE)
+                goto done;
+            state->tokens++;
+            state->reductions++;
+            if (frame_len == 0u)
+                goto done;
+            frame = &frames[frame_len - 1u];
+            if (frame->prefix) {
+                result = state->projection->prefix(
+                    state->projection->context, frame->prefix->role, result);
+                if (result == CETTA_ATOM_ID_NONE) {
+                    gslt_direct_reader_v1_error(
+                        state->error_buf, state->error_buf_size,
+                        "language projection rejected a prefix payload");
+                    goto done;
+                }
+                state->prefixes++;
+                frame_len--;
+                continue;
+            }
+            if (frame->len == frame->cap) {
+                uint32_t next = frame->cap ? frame->cap * 2u : 16u;
+                if (next < frame->cap ||
+                    SIZE_MAX / (size_t)next < sizeof(*frame->children)) {
+                    result = CETTA_ATOM_ID_NONE;
+                    goto done;
+                }
+                frame->children = cetta_realloc(
+                    frame->children, (size_t)next * sizeof(*frame->children));
+                frame->cap = next;
+            }
+            frame->children[frame->len++] = result;
+            result = CETTA_ATOM_ID_NONE;
+            if (!gslt_direct_prefix_skip(state) ||
+                state->cursor.pos >= state->cursor.input_len ||
+                !gslt_direct_reader_v1_peek(
+                    &state->cursor, &codepoint, &width))
+                goto done;
+            if (codepoint != state->plan->expression_close)
+                break;
             gslt_direct_reader_v1_consume_width(&state->cursor, width);
             result = state->projection->expression(
-                state->projection->context, children, len);
-            goto done;
+                state->projection->context, frame->children, frame->len);
+            free(frame->children);
+            frame_len--;
         }
-        child = gslt_direct_prefix_parse_atom(state, depth - 1u);
-        if (child == CETTA_ATOM_ID_NONE)
-            goto done;
-        if (len == cap) {
-            uint32_t next = cap ? cap * 2u : 16u;
-            if (next < cap || SIZE_MAX / (size_t)next < sizeof(*children))
-                goto done;
-            children = cetta_realloc(
-                children, (size_t)next * sizeof(*children));
-            cap = next;
-        }
-        children[len++] = child;
     }
 done:
-    free(children);
-    return result;
-}
-
-static AtomId gslt_direct_prefix_parse_atom(
-    GSLTDirectPrefixStateV1 *state, uint32_t depth) {
-    AtomId result;
-    uint32_t codepoint;
-    size_t width;
-    if (depth == 0u || state->cursor.pos >= state->cursor.input_len ||
-        !gslt_direct_reader_v1_peek(
-            &state->cursor, &codepoint, &width))
-        return CETTA_ATOM_ID_NONE;
-    if (codepoint == state->plan->string_open)
-        result = gslt_direct_prefix_parse_string(state);
-    else if (codepoint == state->plan->expression_open)
-        result = gslt_direct_prefix_parse_expression(state, depth);
-    else {
-        result = gslt_direct_prefix_parse_prefix(state, depth);
-        if (result == CETTA_ATOM_ID_NONE &&
-            (!state->error_buf || state->error_buf_size == 0u ||
-             state->error_buf[0] == '\0')) {
-            result = gslt_direct_prefix_parse_token(state);
-        }
-    }
-    if (result != CETTA_ATOM_ID_NONE) {
-        state->tokens++;
-        state->reductions++;
-    }
+    for (uint32_t index = 0u; index < frame_len; index++)
+        free(frames[index].children);
+    free(frames);
     return result;
 }
 

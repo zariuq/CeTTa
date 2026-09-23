@@ -1,0 +1,7 @@
+[(("megalodon-imp-intro" 1) ("megalodon-imp-elim" 2))]
+[(("megalodon-hyp-zero" 0) ("megalodon-weaken" 1) ("megalodon-imp-elim" 2))]
+[(GStepsV1 LNil)]
+[False]
+[(Pair ("megalodon-imp-intro" "megalodon-hyp-zero") True)]
+[(Pair ("megalodon-imp-intro" "megalodon-hyp-zero") True)]
+[none]

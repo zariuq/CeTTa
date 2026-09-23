@@ -172,7 +172,7 @@ static bool authority_read(Arena *arena, Term *term, Authority *authority,
     if (!*authority->alias || !authority->system_id || !*authority->system_id ||
         !authority->revision || !*authority->revision || !digest_valid(authority->digest))
         return fail(error, size, "invalid authority identity fields");
-    if (!form(args[4], "GPresentationV1", 5) || !form(args[5], "positive", 2))
+    if (!form(args[4], "GInferenceLanguageV1", 5) || !form(args[5], "positive", 2))
         return fail(error, size, "expected version-one presentation and positive specimen");
     authority->presentation = render(args[4]);
     authority->goal = render(args[5]->as.application.arguments[0]);

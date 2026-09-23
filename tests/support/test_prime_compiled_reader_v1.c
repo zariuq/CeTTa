@@ -291,6 +291,60 @@ int main(void) {
                "Prime scalar boundary rejects malformed UTF-8");
     }
 
+    /* Large chronological proof tables are ordinary source expressions.
+     * Inspect the interned spine directly rather than recursively decoding it. */
+    {
+        const size_t depth = 16384u;
+        char *source = malloc(2u * depth + 2u);
+        AtomId *ids = NULL;
+        memset(source, '(', depth);
+        source[depth] = 'x';
+        memset(source + depth + 1u, ')', depth);
+        source[2u * depth + 1u] = '\0';
+        int len = prime_compiled_reader_v1_parse_text_ids(
+            reader, source, &compiled_universe, &ids,
+            &receipt, error, sizeof(error));
+        AtomId cursor = len == 1 && ids ? ids[0] : CETTA_ATOM_ID_NONE;
+        size_t walked = 0u;
+        while (walked < depth && cursor != CETTA_ATOM_ID_NONE &&
+               tu_kind(&compiled_universe, cursor) == ATOM_EXPR &&
+               tu_arity(&compiled_universe, cursor) == 1u) {
+            cursor = tu_child(&compiled_universe, cursor, 0u);
+            walked++;
+        }
+        expect(&counts, len == 1 && walked == depth &&
+                   tu_kind(&compiled_universe, cursor) == ATOM_SYMBOL &&
+                   receipt.token_len == depth + 1u &&
+                   receipt.reduce_len == depth + 1u,
+               "deep source retains every expression and receipt occurrence");
+        free(ids);
+        ids = NULL;
+        source[2u * depth] = '\0';
+        len = prime_compiled_reader_v1_parse_text_ids(
+            reader, source, &compiled_universe, &ids,
+            &receipt, error, sizeof(error));
+        expect(&counts, len < 0 && !ids,
+               "deep source with a missing close is rejected");
+        memset(source, '@', depth);
+        source[depth] = 'x';
+        source[depth + 1u] = '\0';
+        len = prime_compiled_reader_v1_parse_text_ids(
+            reader, source, &compiled_universe, &ids,
+            &receipt, error, sizeof(error));
+        expect(&counts, len == 1 && receipt.prefix_len == depth &&
+                   receipt.token_len == depth + 1u,
+               "deep prefix source retains every authored prefix");
+        free(ids);
+        ids = NULL;
+        source[depth] = '\0';
+        len = prime_compiled_reader_v1_parse_text_ids(
+            reader, source, &compiled_universe, &ids,
+            &receipt, error, sizeof(error));
+        expect(&counts, len < 0 && !ids,
+               "deep prefix source without a payload is rejected");
+        free(source);
+    }
+
     prime_compiled_reader_v1_free(reader);
     parser_set_universal_name_syntax_enabled(old_universal);
     term_universe_free(&legacy_universe);

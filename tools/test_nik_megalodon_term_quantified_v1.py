@@ -11,6 +11,7 @@ import tempfile
 from typing import TypeAlias
 
 import gslt2parse_schema_v1 as sx
+from nik_shared_evidence_v1 import app, list_term, nat, proof_list, proof_node
 
 
 Tp: TypeAlias = tuple[object, ...]
@@ -25,40 +26,6 @@ def check(megalodon: Path, source: Path, *options: str) -> subprocess.CompletedP
         capture_output=True,
         check=False,
     )
-
-
-def list_term(*values: sx.SExpr) -> sx.SExpr:
-    result: sx.SExpr = sx.Symbol("LNil")
-    for value in reversed(values):
-        result = (sx.Symbol("LCons"), value, result)
-    return result
-
-
-def proof_list(*values: sx.SExpr) -> sx.SExpr:
-    result: sx.SExpr = sx.Symbol("PrNil")
-    for value in reversed(values):
-        result = (sx.Symbol("PrCons"), value, result)
-    return result
-
-
-def app(head: str, *arguments: sx.SExpr) -> sx.SExpr:
-    return (sx.Symbol("PApp"), sx.StringLiteral(head), list_term(*arguments))
-
-
-def proof_node(name: str, arguments: list[sx.SExpr], children: list[sx.SExpr]) -> sx.SExpr:
-    instance = (
-        sx.Symbol("GRuleInst"),
-        sx.StringLiteral(name),
-        list_term(*arguments),
-    )
-    return (sx.Symbol("GProof"), instance, proof_list(*children))
-
-
-def nat(value: int) -> sx.SExpr:
-    result = app("MNZero")
-    for _ in range(value):
-        result = app("MNSucc", result)
-    return result
 
 
 def encode_tp(value: Tp) -> sx.SExpr:
@@ -641,7 +608,7 @@ def check_catalog(catalog: Path) -> None:
                 authority[2] != sx.StringLiteral(
                     "megalodon.mathdata.definition-conversion"
                 )
-                or authority[3] != sx.StringLiteral("10")
+                or authority[3] != sx.StringLiteral("11")
                 or "megalodon-term-proof-all-intro" not in sx.render(authority[5])
             ):
                 raise SystemExit("MEGALODON-TERM does not refine the term kernel")

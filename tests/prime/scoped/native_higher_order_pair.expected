@@ -1,0 +1,7 @@
+[pair-consumer-law]
+[(NativeHigherOrderPair pair-consumer-law True True False True True True True 0)]
+[Refuted]
+[(TypeFamilySpecialization (NativeHigherOrderPair pair-consumer-law True True False True True True True 0))]
+[(TypeFamilyRejection Refuted)]
+[(UniverseDomainPair pair-consumer-law True True True True True 0)]
+[(UniverseDomainRejection Refuted)]

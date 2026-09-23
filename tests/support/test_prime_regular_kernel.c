@@ -167,6 +167,76 @@ static void check_horn_negative(
     cetta_gslt_horn_result_free(&result);
 }
 
+static void check_computed_intrinsic_forms(Arena *arena) {
+    Atom *context = parse_one(arena, "(PrimeCtxCons U0 PrimeCtxNil)");
+    const char *sources[] = {
+        "(App (Lam U0 (Refl (idx 0))) (idx 0))",
+        "(App (Lam (Sigma U0 (Id U0 (idx 0) (idx 0))) (Snd (idx 0))) "
+          "(Pair (idx 0) (Refl (idx 0))))",
+        "(App (Lam U0 (Lam U0 (idx 1))) (idx 0))"
+    };
+    const char *expected[] = {
+        "(Refl (idx 0))", "(Refl (idx 0))", "(Lam U0 (idx 1))"
+    };
+    for (size_t i = 0u; i < sizeof sources / sizeof sources[0]; i++) {
+        Atom *term = parse_one(arena, sources[i]);
+        CettaPrimeRegularKernelBudget budget;
+        cetta_prime_regular_kernel_budget_init(&budget, true, UINT64_MAX);
+        CettaPrimeRegularKernelNormalFormV1 result =
+            cetta_prime_regular_kernel_normalize_intrinsic_v1(
+                arena, context, term, &budget);
+        if (result.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
+            fprintf(stderr, "normalization case %zu: status=%d reason=%s\n",
+                    i, result.status, result.reason ? result.reason : "none");
+        CHECK(result.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED &&
+                  result.term && atom_eq(result.term, parse_one(arena, expected[i])),
+              "normalization computes dependent beta/projection without capture");
+        uint64_t work = budget.spent;
+        CHECK(work > 0u && result.type && result.source_type,
+              "normalization retains its source type and accounts for work");
+        if (i == 1u) {
+            CHECK(result.source_type && result.type &&
+                      atom_eq(result.source_type, parse_one(arena,
+                      "(Id U0 (Fst (Pair (idx 0) (Refl (idx 0)))) "
+                        "(Fst (Pair (idx 0) (Refl (idx 0)))))")) &&
+                      atom_eq(result.type, parse_one(arena,
+                        "(Id U0 (idx 0) (idx 0))")),
+                  "dependent projection retains the displayed index and computes its type");
+        }
+        cetta_prime_regular_kernel_budget_init(&budget, false, 0u);
+        CettaPrimeRegularKernelResult independently_checked =
+            cetta_prime_regular_kernel_check_intrinsic(
+                arena, context, result.term, result.type, &budget);
+        CHECK(independently_checked.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED,
+              "computed dependent result independently checks at the computed type");
+        for (uint64_t limit = 0u; limit <= work; limit++) {
+            cetta_prime_regular_kernel_budget_init(&budget, true, limit);
+            CettaPrimeRegularKernelNormalFormV1 bounded =
+                cetta_prime_regular_kernel_normalize_intrinsic_v1(
+                    arena, context, term, &budget);
+            if (limit < work) {
+                CHECK(bounded.status == CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED &&
+                          !bounded.term && !bounded.type && !bounded.source_type,
+                      "every short normalization budget returns no certified partial value");
+            } else {
+                CHECK(bounded.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED &&
+                          bounded.term && bounded.type && bounded.source_type &&
+                          result.term && result.type && result.source_type &&
+                          atom_eq(bounded.term, result.term) && atom_eq(bounded.type, result.type) &&
+                          atom_eq(bounded.source_type, result.source_type),
+                      "the exact measured budget reproduces the computed result");
+            }
+        }
+    }
+    CettaPrimeRegularKernelBudget budget;
+    cetta_prime_regular_kernel_budget_init(&budget, false, 0u);
+    CettaPrimeRegularKernelNormalFormV1 bad =
+        cetta_prime_regular_kernel_normalize_intrinsic_v1(arena, context,
+            parse_one(arena, "(App (idx 0) (idx 0))"), &budget);
+    CHECK(bad.status == CETTA_PRIME_REGULAR_KERNEL_REFUTED && !bad.term && !bad.type,
+          "normalization does not execute an ill-typed source application");
+}
+
 int main(int argc, char **argv) {
     if (argc != 3) {
         fprintf(
@@ -195,6 +265,8 @@ int main(int argc, char **argv) {
     var_intern_init(&variables);
     g_symbols = &symbols;
     g_var_intern = &variables;
+
+    check_computed_intrinsic_forms(&arena);
 
     CHECK(CETTA_PRIME_REGULAR_KERNEL_NATIVE_ADMISSION_ACTIVE,
           "production build has native Prime admission permanently active");
@@ -375,6 +447,165 @@ int main(int argc, char **argv) {
     CHECK(result_type_is(
               &arena, &reflexivity, "(Id U0 (idx 0) (idx 0))"),
           "reflexivity synthesizes identity at the inferred carrier");
+
+    const char *raised_reflexivity_source =
+        "(PrimeScoped (PrimeCtxCons (Sort (LevelConst 0)) PrimeCtxNil) "
+        "  (Refl (idx 0)))";
+    const char *raised_reflexivity_type =
+        "(Id (Sort (LevelConst 1)) (idx 0) (idx 0))";
+    CettaPrimeRegularKernelResult raised_reflexivity = check_term(
+        &arena, raised_reflexivity_source, raised_reflexivity_type);
+    CHECK(raised_reflexivity.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED,
+          "reflexivity checks at the expected cumulatively raised carrier");
+    CettaPrimeRegularKernelResult raised_reflexive_pair = check_term(
+        &arena,
+        "(PrimeScoped (PrimeCtxCons (Sort (LevelConst 0)) PrimeCtxNil) "
+        "  (Pair (idx 0) (Refl (idx 0))))",
+        "(Sigma (Sort (LevelConst 1)) "
+        "  (Id (Sort (LevelConst 1)) (idx 0) (idx 0)))");
+    CHECK(raised_reflexive_pair.status ==
+              CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED,
+          "dependent pair checking supplies the raised reflexivity carrier");
+    CettaPrimeRegularKernelResult raised_reflexive_application = check_term(
+        &arena,
+        "(PrimeScoped (PrimeCtxCons (Sort (LevelConst 0)) PrimeCtxNil) "
+        "  (App (Lam (Pair (idx 0) (Refl (idx 0)))) (idx 0)))",
+        "(Sigma (Sort (LevelConst 1)) "
+        "  (Id (Sort (LevelConst 1)) (idx 0) (idx 0)))");
+    CHECK(raised_reflexive_application.status ==
+              CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED,
+          "an applied lambda returns a checked pair at the raised universe");
+    const char *annotated_pair_sources[] = {
+        "(PrimeScoped (PrimeCtxCons (Sort (LevelConst 0)) PrimeCtxNil) "
+        "  (App (Lam (Sort (LevelConst 0)) "
+        "    (Pair (idx 0) (Refl (idx 0)))) (idx 0)))",
+        "(PrimeScoped (PrimeCtxCons (Sort (LevelConst 0)) PrimeCtxNil) "
+        "  (App (Lam (Sort (LevelConst 1)) "
+        "    (Pair (idx 0) (Refl (idx 0)))) (idx 0)))",
+        "(PrimeScoped (PrimeCtxCons (Sort (LevelConst 0)) PrimeCtxNil) "
+        "  (App (Lam (App (Lam (Sort (LevelConst 2)) (idx 0)) "
+        "                  (Sort (LevelConst 1))) "
+        "    (Pair (idx 0) (Refl (idx 0)))) (idx 0)))"
+    };
+    for (size_t i = 0u; i < sizeof annotated_pair_sources /
+                                sizeof annotated_pair_sources[0]; ++i) {
+        CettaPrimeRegularKernelResult pair_application = check_term(
+            &arena, annotated_pair_sources[i],
+            "(Sigma (Sort (LevelConst 1)) "
+            "  (Id (Sort (LevelConst 1)) (idx 0) (idx 0)))");
+        if (pair_application.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
+            fprintf(stderr, "annotated pair case %zu: %s\n", i,
+                    pair_application.reason ? pair_application.reason : "no reason");
+        CHECK(pair_application.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED,
+              "direct pair-producing application retains its annotated domain");
+    }
+    CettaPrimeRegularKernelResult higher_order_pair_application = check_term(
+        &arena,
+        "(PrimeScoped PrimeCtxNil "
+        "  (App (Lam (Pi U0 U0) (Pair (idx 0) (Refl (idx 0)))) "
+        "       (Lam (idx 0))))",
+        "(Sigma (Pi U0 U0) (Id (Pi U0 U0) (idx 0) (idx 0)))");
+    CHECK(higher_order_pair_application.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED,
+          "annotated application checks both its lambda argument and pair result");
+    CettaPrimeRegularKernelResult lower_domain_pair_application = check_term(
+        &arena,
+        "(PrimeScoped PrimeCtxNil "
+        "  (App (Lam (Sort (LevelConst 0)) (Pair (idx 0) (Refl (idx 0)))) "
+        "       (Sort (LevelConst 0))))",
+        "(Sigma (Sort (LevelConst 1)) "
+        "  (Id (Sort (LevelConst 1)) (idx 0) (idx 0)))");
+    CHECK(lower_domain_pair_application.status == CETTA_PRIME_REGULAR_KERNEL_REFUTED,
+          "annotated application cannot raise its domain to admit a bad argument");
+    CettaPrimeRegularKernelResult ignored_bad_pair_argument = check_term(
+        &arena,
+        "(PrimeScoped (PrimeCtxCons U0 PrimeCtxNil) "
+        "  (App (Lam U1 (Pair U0 (Refl U0))) (idx 0)))",
+        "(Sigma U1 (Id U1 (idx 0) (idx 0)))");
+    CHECK(ignored_bad_pair_argument.status == CETTA_PRIME_REGULAR_KERNEL_REFUTED,
+          "pair-producing application checks even an unused argument at its domain");
+    CettaPrimeRegularKernelResult lambda_reflexivity = check_term(
+        &arena, "(PrimeScoped PrimeCtxNil (Refl (Lam (idx 0))))",
+        "(Id (Pi U0 U0) (Lam (idx 0)) (Lam (idx 0)))");
+    CHECK(lambda_reflexivity.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED,
+          "expected identity carrier checks an unsynthesizable lambda subject");
+    CettaPrimeRegularKernelResult converted_reflexivity = check_term(
+        &arena, "(PrimeScoped PrimeCtxNil (Refl U0))",
+        "(Id U1 (App (Lam U1 (idx 0)) U0) "
+        "       (App (Lam U1 (idx 0)) U0))");
+    CHECK(converted_reflexivity.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED,
+          "reflexivity compares its subject with both converted endpoints");
+    CettaPrimeRegularKernelResult reduced_identity_reflexivity = check_term(
+        &arena, "(PrimeScoped PrimeCtxNil (Refl U0))",
+        "(App (Lam U1 (Id U1 (idx 0) (idx 0))) U0)");
+    CHECK(reduced_identity_reflexivity.status ==
+              CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED,
+          "reflexivity exposes an identity type through expected-type conversion");
+
+    const char *reflexivity_negative_sources[] = {
+        "(PrimeScoped (PrimeCtxCons U1 (PrimeCtxCons U1 PrimeCtxNil)) "
+        "  (Refl (idx 0)))",
+        "(PrimeScoped (PrimeCtxCons U1 (PrimeCtxCons U1 PrimeCtxNil)) "
+        "  (Refl (idx 0)))",
+        "(PrimeScoped (PrimeCtxCons U0 PrimeCtxNil) (Refl (idx 0)))",
+        "(PrimeScoped (PrimeCtxCons (Sort (LevelConst 1)) PrimeCtxNil) "
+        "  (Refl (idx 0)))",
+        "(PrimeScoped PrimeCtxNil (Refl U0))",
+        "(PrimeScoped (PrimeCtxCons U0 PrimeCtxNil) "
+        "  (Refl (App (Lam U1 U0) (idx 0))))"
+    };
+    const char *reflexivity_negative_types[] = {
+        "(Id (Sort (LevelConst 1)) (idx 1) (idx 0))",
+        "(Id (Sort (LevelConst 1)) (idx 0) (idx 1))",
+        "(Id U1 U0 U0)",
+        "(Id U1 U0 U0)",
+        "(Sort (LevelConst 1))",
+        "(Id U1 U0 U0)"
+    };
+    const char *reflexivity_negative_labels[] = {
+        "reflexivity rejects a different left endpoint",
+        "reflexivity rejects a different right endpoint",
+        "reflexivity does not erase a ground inhabitant's carrier",
+        "reflexivity does not lower the subject's universe",
+        "reflexivity rejects a non-identity expected type",
+        "reflexivity checks an unused bad argument before conversion"
+    };
+    for (size_t i = 0u;
+         i < sizeof reflexivity_negative_sources /
+                 sizeof reflexivity_negative_sources[0]; ++i) {
+        CettaPrimeRegularKernelResult rejected = check_term(
+            &arena, reflexivity_negative_sources[i],
+            reflexivity_negative_types[i]);
+        CHECK(rejected.status == CETTA_PRIME_REGULAR_KERNEL_REFUTED,
+              reflexivity_negative_labels[i]);
+    }
+
+    Atom *raised_reflexivity_term = parse_one(&arena, raised_reflexivity_source);
+    Atom *raised_reflexivity_expected = parse_one(&arena, raised_reflexivity_type);
+    CettaPrimeRegularKernelBudget reflexivity_measure;
+    cetta_prime_regular_kernel_budget_init(
+        &reflexivity_measure, true, UINT64_MAX);
+    CettaPrimeRegularKernelResult measured_reflexivity =
+        cetta_prime_regular_kernel_check(
+            &arena, raised_reflexivity_term, raised_reflexivity_expected,
+            &reflexivity_measure);
+    uint64_t reflexivity_steps = reflexivity_measure.spent;
+    CHECK(measured_reflexivity.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED &&
+              reflexivity_steps > 0u,
+          "expected-carrier reflexivity reports its structural checking cost");
+    if (measured_reflexivity.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED &&
+        reflexivity_steps > 0u) {
+        for (uint64_t fuel = 0u; fuel <= reflexivity_steps; ++fuel) {
+            CettaPrimeRegularKernelBudget budget;
+            cetta_prime_regular_kernel_budget_init(&budget, true, fuel);
+            CettaPrimeRegularKernelResult result = cetta_prime_regular_kernel_check(
+                &arena, raised_reflexivity_term, raised_reflexivity_expected,
+                &budget);
+            CHECK(result.status == (fuel < reflexivity_steps
+                      ? CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED
+                      : CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED),
+                  "every shorter reflexivity budget exhausts without refutation");
+        }
+    }
 
     Atom *dependent_pair_scoped = parse_one(
         &arena,
@@ -1113,6 +1344,45 @@ int main(int argc, char **argv) {
               CETTA_PRIME_REGULAR_KERNEL_ADMISSION_NOT_FRAGMENT &&
               intrinsic_synthesis.synthesis == NULL,
           "unannotated lambda synthesis abstains instead of minting a refutation");
+
+    Atom *redex_context = parse_one(&arena,
+        "(PrimeCtxCons (idx 0) (PrimeCtxCons (Sort (LevelConst 0)) PrimeCtxNil))");
+    const struct {
+        const char *term;
+        const char *expected;
+        CettaPrimeRegularKernelStatus status;
+        const char *label;
+    } retained_redex_cases[] = {
+        {"(App (Lam (idx 0)) (idx 0))", "(idx 1)",
+         CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED,
+         "a retained beta-redex gets its domain from its argument"},
+        {"(App (Lam (Refl (idx 0))) (idx 0))", "(Id (idx 1) (idx 0) (idx 0))",
+         CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED,
+         "redex synthesis substitutes in the dependent identity result"},
+        {"(App (App (Lam (Lam (idx 1))) (idx 0)) (idx 0))", "(idx 1)",
+         CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED,
+         "expected types check a retained curried lambda spine"},
+        {"(App (Lam (idx 1)) (App (idx 0) (idx 0)))", "(idx 1)",
+         CETTA_PRIME_REGULAR_KERNEL_REFUTED,
+         "an unused ill-typed argument cannot hide behind beta conversion"},
+        {"(App (App (Lam (Lam (idx 1))) (idx 0)) (idx 42))", "(idx 1)",
+         CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS,
+         "scope admission declines a discarded loose argument"},
+        {"(App (Lam (idx 0)) (idx 0))", "(Sort (LevelConst 0))",
+         CETTA_PRIME_REGULAR_KERNEL_REFUTED,
+         "retained beta checking rejects the wrong result type"},
+    };
+    for (size_t i = 0u; i < sizeof retained_redex_cases / sizeof *retained_redex_cases; i++) {
+        CettaPrimeRegularKernelBudget redex_budget;
+        cetta_prime_regular_kernel_budget_init(&redex_budget, false, 0u);
+        CettaPrimeRegularKernelResult redex = cetta_prime_regular_kernel_check_intrinsic(
+            &arena, redex_context, parse_one(&arena, retained_redex_cases[i].term),
+            parse_one(&arena, retained_redex_cases[i].expected), &redex_budget);
+        if (redex.status != retained_redex_cases[i].status)
+            fprintf(stderr, "retained redex %zu: status=%d reason=%s\n", i,
+                    redex.status, redex.reason ? redex.reason : "none");
+        CHECK(redex.status == retained_redex_cases[i].status, retained_redex_cases[i].label);
+    }
 
     CettaPrimeRegularKernelBudget checking_budget;
     cetta_prime_regular_kernel_budget_init(&checking_budget, false, 0u);
@@ -2307,6 +2577,10 @@ int main(int argc, char **argv) {
               verdict_status(
                   declared_constructed_analyze_observed, "Established"),
           "formation, synthesis, and checking expose one declaration-aware route for constructed dependent evidence");
+    CHECK(declared_dependent_form_obs.authority.canonical_term &&
+              atom_eq(declared_dependent_form_obs.authority.canonical_term,
+                  parse_one(&arena, "(Id U0 declared-point declared-point)")),
+          "declared formation retains the checked value-indexed type with its actual constant identities");
 #if CETTA_BUILD_WITH_RUNTIME_STATS
     CettaRuntimeStats declared_constructed_stats;
     cetta_runtime_stats_snapshot(&declared_constructed_stats);
@@ -2768,6 +3042,53 @@ int main(int argc, char **argv) {
             CETTA_NIK_OUTCOME_INCOMPLETE;
     CHECK(formation_outcomes_match,
           "formation distinguishes derivation, obstruction, boundary, and budget");
+    CHECK(formation_observations[0].authority.canonical_term &&
+              atom_eq(formation_observations[0].authority.canonical_term,
+                  closed_identity_type) &&
+              !formation_observations[1].authority.canonical_term &&
+              !formation_observations[2].authority.canonical_term &&
+              !formation_observations[3].authority.canonical_term,
+          "only established native formation retains an intrinsic type, never an obstruction or exhausted candidate");
+    CettaPrimeTypingFormationCandidateV1 alpha_formation_candidates[] = {
+        {parse_one(&arena, "(-> (A : (u 0)) (x : A) A)"), false, 0u},
+        {parse_one(&arena, "(-> (B : (u 0)) (y : B) B)"), false, 0u},
+    };
+    CettaPrimeTypingFormationObservationV1 alpha_formation_observations[2] = {0};
+    bool alpha_formed = cetta_prime_typing_observe_formation_v1(
+              &arena, &space, &alpha_formation_candidates[0],
+              &alpha_formation_observations[0]) &&
+              cetta_prime_typing_observe_formation_v1(
+              &arena, &space, &alpha_formation_candidates[1],
+              &alpha_formation_observations[1]);
+    bool alpha_retained = alpha_formed &&
+              alpha_formation_observations[0].authority.result.value.outcome ==
+                  CETTA_NIK_OUTCOME_ESTABLISHED &&
+              alpha_formation_observations[1].authority.result.value.outcome ==
+                  CETTA_NIK_OUTCOME_ESTABLISHED &&
+              alpha_formation_observations[0].authority.canonical_term &&
+              alpha_formation_observations[1].authority.canonical_term &&
+              atom_eq(alpha_formation_observations[0].authority.canonical_term,
+                      parse_one(&arena, "(Pi (Sort (LevelConst 0)) (Pi (idx 0) (idx 1)))")) &&
+              atom_eq(alpha_formation_observations[0].authority.canonical_term,
+                      alpha_formation_observations[1].authority.canonical_term);
+    CHECK(alpha_retained,
+          "alpha variants of the dependent identity telescope retain the same scoped type without a second compiler");
+    if (!alpha_retained) {
+        fprintf(stderr, "dependent formation retained:");
+        for (size_t index = 0u; index < 2u; index++) {
+            fputc(' ', stderr);
+            if (alpha_formation_observations[index].authority.canonical_term)
+                atom_print(alpha_formation_observations[index].authority.canonical_term, stderr);
+            else
+                fprintf(stderr, "outcome=%d",
+                        alpha_formation_observations[index].authority.result.value.outcome);
+            if (alpha_formation_observations[index].authority.payload) {
+                fputc(' ', stderr);
+                atom_print(alpha_formation_observations[index].authority.payload, stderr);
+            }
+        }
+        fputc('\n', stderr);
+    }
     if (!formation_outcomes_match) {
         fprintf(stderr, "formation outcomes: %d %d %d %d\n",
                 formation_observations[0].authority.result.value.outcome,
@@ -2796,6 +3117,11 @@ int main(int argc, char **argv) {
               scoped_formation_observations[1].authority.result.value.outcome ==
                   CETTA_NIK_OUTCOME_OUTSIDE_FRAGMENT,
           "contextual formation distinguishes derivation from universe boundary without HE");
+    CHECK(scoped_formation_observations[0].authority.canonical_term &&
+              atom_eq(scoped_formation_observations[0].authority.canonical_term,
+                  scoped_formation_candidates[0].type) &&
+              !scoped_formation_observations[1].authority.canonical_term,
+          "a scoped formation receipt retains its context instead of exporting a loose de Bruijn index");
 
     Atom *nonfunction_application = parse_one(&arena, "(App U0 U0)");
     CettaPrimeTypingSynthesisCandidateV1 synthesis_candidates[] = {

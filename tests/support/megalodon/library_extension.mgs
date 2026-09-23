@@ -1,0 +1,2 @@
+Definition imported_family : prop -> prop :=
+  fun p => p -> imported_premise.

@@ -153,6 +153,27 @@ def check_provenance() -> None:
 
 
 def main() -> int:
+    # Theory inventories and proof DAGs use long canonical linked lists.
+    deep: schema.SExpr = schema.Symbol("Nil")
+    for index in range(4096):
+        deep = (schema.Symbol("Cons"), index, deep)
+    rendered_deep = schema.render(deep)
+    parsed_deep = schema.parse_sexprs(rendered_deep)
+    assert len(parsed_deep) == 1 and schema.render(parsed_deep[0]) == rendered_deep
+    for malformed in [rendered_deep[:-1], rendered_deep + ")"]:
+        try:
+            schema.parse_sexprs(malformed)
+        except schema.SchemaError:
+            pass
+        else:
+            raise SystemExit("malformed deep inventory accepted")
+    for invalid in [schema.Symbol("bad name"), schema.Variable("_"), ")"]:
+        try:
+            schema.render(invalid)
+        except schema.SchemaError:
+            pass
+        else:
+            raise SystemExit("invalid serialization input accepted")
     passed = 0
 
     admitted = schema.admit([CORE, TOY])

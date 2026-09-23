@@ -155,48 +155,57 @@ def parse_sexprs(text: str, *, source: str = "<text>") -> list[SExpr]:
         else:
             tokens.append(Symbol(spelling))
 
-    index = 0
-
-    def parse_one() -> SExpr:
-        nonlocal index
-        if index >= len(tokens):
-            raise SchemaError(f"{source}: unexpected end of input")
-        token = tokens[index]
-        index += 1
-        if token == "(":
-            values: list[SExpr] = []
-            while True:
-                if index >= len(tokens):
-                    raise SchemaError(f"{source}: unclosed '('")
-                if tokens[index] == ")":
-                    index += 1
-                    return tuple(values)
-                values.append(parse_one())
-        if token == ")":
-            raise SchemaError(f"{source}: unexpected ')'")
-        assert not isinstance(token, str)
-        return token
-
     forms: list[SExpr] = []
-    while index < len(tokens):
-        forms.append(parse_one())
+    stack: list[list[SExpr]] = []
+    for token in tokens:
+        if token == "(":
+            stack.append([])
+            continue
+        if token == ")":
+            if not stack:
+                raise SchemaError(f"{source}: unexpected ')'")
+            value: SExpr = tuple(stack.pop())
+        else:
+            assert not isinstance(token, str)
+            value = token
+        (stack[-1] if stack else forms).append(value)
+    if stack:
+        raise SchemaError(f"{source}: unclosed '('")
     return forms
 
 
 def render(term: SExpr) -> str:
-    if isinstance(term, Symbol):
-        if not _SAFE_SYMBOL.fullmatch(term.text):
-            raise SchemaError(f"symbol cannot be serialized canonically: {term.text!r}")
-        return term.text
-    if isinstance(term, Variable):
-        if not term.name or term.name == "_" or not _SAFE_SYMBOL.fullmatch(term.name):
-            raise SchemaError(f"invalid variable name: {term.name!r}")
-        return f"?{term.name}"
-    if isinstance(term, StringLiteral):
-        return json.dumps(term.text, ensure_ascii=False, separators=(",", ":"))
-    if isinstance(term, int):
-        return str(term)
-    return "(" + " ".join(render(item) for item in term) + ")"
+    """Canonical rendering without a Python call-stack bound on list length."""
+    output: list[str] = []
+    pending: list[tuple[bool, SExpr | str]] = [(False, term)]
+    while pending:
+        punctuation, current = pending.pop()
+        if punctuation:
+            assert isinstance(current, str)
+            output.append(current)
+            continue
+        if isinstance(current, Symbol):
+            if not _SAFE_SYMBOL.fullmatch(current.text):
+                raise SchemaError(f"symbol cannot be serialized canonically: {current.text!r}")
+            output.append(current.text)
+        elif isinstance(current, Variable):
+            if not current.name or current.name == "_" or not _SAFE_SYMBOL.fullmatch(current.name):
+                raise SchemaError(f"invalid variable name: {current.name!r}")
+            output.append(f"?{current.name}")
+        elif isinstance(current, StringLiteral):
+            output.append(json.dumps(current.text, ensure_ascii=False, separators=(",", ":")))
+        elif isinstance(current, int):
+            output.append(str(current))
+        elif isinstance(current, tuple):
+            output.append("(")
+            pending.append((True, ")"))
+            for index in range(len(current) - 1, -1, -1):
+                pending.append((False, current[index]))
+                if index:
+                    pending.append((True, " "))
+        else:
+            raise SchemaError("not a canonical S-expression")
+    return "".join(output)
 
 
 def parse_rule(form: SExpr, source: Path) -> RuleDecl:

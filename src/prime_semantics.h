@@ -8,6 +8,7 @@
 #include "atom.h"
 #include "nik_direct_authority.h"
 #include "prime_typing_authority.h"
+#include "prime_regular_kernel.h"
 #include "space.h"
 
 /* Certificate-free NIK face for Prime's native `type:` judgments, including
@@ -62,10 +63,11 @@ typedef struct {
     CettaNikResultV1 result;
     CettaPrimeTypingRouteV1 route;
     Atom *payload;
-    /* Exact intrinsic term consumed by an Established native Prime route.
-     * This is NULL for every non-established result and for legacy routes.
-     * It lets a raw boundary retain the checked object without elaborating or
-     * checking it a second time. */
+    /* Checked native object retained by an Established Prime route. Closed
+     * routes return intrinsic syntax, scoped routes keep their context, and
+     * declared routes quote named declarations from the checked context.
+     * This is NULL for non-established results and for legacy routes. A raw
+     * boundary can reuse it without repeating elaboration or checking. */
     Atom *canonical_term;
     CettaPrimeTypingResourceObservationV1 resources;
 } CettaPrimeTypingAuthorityObservationV1;
@@ -158,6 +160,36 @@ bool cetta_prime_typing_checking_candidate_bag_equal_v1(
 Atom *prime_semantics_judge_typing_direct(
     Arena *arena, Space *space, Atom *judgment,
     bool steps_limited, uint64_t steps);
+
+/* The same judgment authority with its actual resource account and retained
+ * native term returned to a composing caller. No judgment is replayed. The
+ * optional term output follows AuthorityObservation's established-only rule. */
+Atom *prime_semantics_judge_typing_accounted(
+    Arena *arena, Space *space, Atom *judgment,
+    bool steps_limited, uint64_t steps,
+    CettaPrimeTypingResourceObservationV1 *resources_out,
+    Atom **canonical_term_out);
+
+/* Check already lowered, closed syntax against the current declaration
+ * schemas. Uninstantiated DeclConst occurrences receive fresh universe
+ * arguments, exactly as in authored checking. Lambda annotations are kept.
+ * A caller may supply a private declaration overlay, without new equations. */
+CettaPrimeRegularKernelResult prime_semantics_check_declared_intrinsic_v1(
+    Arena *arena, Space *space, Atom *term, Atom *expected,
+    CettaPrimeRegularKernelBudget *budget);
+
+/* Collect the current logical view's type:rule atoms in kernel spelling.
+ * Overlay snapshots and local removals are respected. This reads declarations;
+ * it does not validate their typing or termination. NULL denotes no rules. */
+Atom *prime_semantics_kernel_rules(Arena *arena, Space *space);
+
+/* Reduce one saturated call by the space's admitted `type:rule` clauses,
+ * or project `fst`/`snd` of a pair, using the kernel normalizer. The call
+ * must already have passed telescope checking. NULL leaves the call as it
+ * is: the head has no computation, the budget ran out, or the normal form
+ * has no surface spelling. Exhaustion is not a value and not a refutation. */
+Atom *prime_semantics_reduce_covered_call(
+    Arena *arena, Space *space, Atom *call, int fuel);
 
 /* C-internal entry point for proof replay through a named NIK authority.
  * The judgment is exactly `(nik:check authority claim proof)`. */

@@ -14,8 +14,10 @@ MUTATIONS = {
         "atom_int(arena, (int64_t)i)",
     ),
     "binder-freshness": (
-        "if (freshness == PATTERN_SCAN_FOUND)",
-        "if (false)",
+        "if (freshness == PATTERN_SCAN_FOUND)\n"
+        "        return pattern_syntax_failure(",
+        "if (false)\n"
+        "        return pattern_syntax_failure(",
     ),
     "expected-formation-phase": (
         "result.phase = CETTA_PRIME_REGULAR_PATTERN_PHASE_EXPECTED_FORMATION;",
@@ -52,6 +54,14 @@ MUTATIONS = {
     "syntax-index-scope": (
         "if (!regular_term_binding_has_index(environment, direct_index))",
         "if (false && !regular_term_binding_has_index(environment, direct_index))",
+    ),
+    "syntax-group-domain-shift": (
+        "arena, domain.pattern, (uint64_t)i, 0u, budget);",
+        "arena, domain.pattern, 0u, 0u, budget);",
+    ),
+    "syntax-group-nested-cutoff": (
+        "arena, pattern->expr.elems[2], amount, cutoff + 1u, budget);",
+        "arena, pattern->expr.elems[2], amount, cutoff, budget);",
     ),
 }
 
