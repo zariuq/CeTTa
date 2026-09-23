@@ -36225,6 +36225,54 @@ test-ebnf-workbench-v1:
 		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
 		test-ebnf-workbench-v1-body
 
+EBNF_DEEP_DETERMINISTIC_REGRESSION_V1 = \
+	tests/langdef/bnf/ebnf_deep_deterministic_regression_v1.metta
+EBNF_DEEP_DETERMINISTIC_GENERATOR_V1 = \
+	tools/generate_ebnf_deep_deterministic_regression_v1.py
+EBNF_DEEP_DETERMINISTIC_DEPTH_V1 ?= 600
+
+.PHONY: test-ebnf-deep-deterministic-regression-v1-body
+test-ebnf-deep-deterministic-regression-v1-body: $(BIN) \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(EBNF_DEEP_DETERMINISTIC_REGRESSION_V1) \
+		$(EBNF_DEEP_DETERMINISTIC_GENERATOR_V1)
+	@mkdir -p "$(BOOTSTRAP_TMPDIR)"
+	@set -eu; \
+	evidence=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/ebnf-deep-deterministic.XXXXXX"); \
+	trap 'rm -rf "$$evidence"' EXIT; \
+	python3 $(EBNF_DEEP_DETERMINISTIC_GENERATOR_V1) \
+		--depth $(EBNF_DEEP_DETERMINISTIC_DEPTH_V1) \
+		--grammar "$$evidence/grammar.ebnf" \
+		--accepted "$$evidence/accepted.txt" \
+		--rejected "$$evidence/rejected.txt"; \
+	accepted=$$(tr -d '\n' < "$$evidence/accepted.txt"); \
+	rejected=$$(tr -d '\n' < "$$evidence/rejected.txt"); \
+	accepted_result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta \
+		--fuel 30000000 \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(EBNF_DEEP_DETERMINISTIC_REGRESSION_V1) \
+		"$$evidence/grammar.ebnf" "$$accepted"); \
+	rejected_result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta \
+		--fuel 30000000 \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(EBNF_DEEP_DETERMINISTIC_REGRESSION_V1) \
+		"$$evidence/grammar.ebnf" "$$rejected"); \
+	test "$$(printf '%s\n' "$$accepted_result" | sed '/^true$$/d')" = \
+		'EbnfDeepDeterministicAcceptedV1'; \
+	test "$$(printf '%s\n' "$$rejected_result" | sed '/^true$$/d')" = \
+		'EbnfDeepDeterministicRejectedV1'; \
+	echo '(EbnfDeepDeterministicRegressionV1Summary 2 0)'
+
+.PHONY: test-ebnf-deep-deterministic-regression-v1
+test-ebnf-deep-deterministic-regression-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 \
+		JSON_BACKEND=gslt CETTA_PROVENANCE_ASSERT=0 \
+		RHOCOST_COMMIT_AUDIT=0 ENABLE_PRIME_NEED_HEAP_INDEX=0 \
+		ENABLE_PRIME_EVAL_STACK=0 \
+		test-ebnf-deep-deterministic-regression-v1-body
+
 .PHONY: test-ebnf-projection-gate-reporting-v1
 test: test-ebnf-projection-gate-reporting-v1
 test-ebnf-projection-gate-reporting-v1:

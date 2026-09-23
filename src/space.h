@@ -39,6 +39,10 @@ void disc_lookup_expression_coordinates(
  * candidate vector.  The observation is admitted only when no stored-variable
  * edge can match at any traversed prefix.  A missing rigid edge is an exact
  * zero; unsupported grounded values and wildcard overlap decline. */
+/* Count ground rows of a flat expression whose free variables, if any,
+ * are a trailing run.  False means the trie cannot answer alone. */
+bool disc_count_flat_trailing_wildcards(
+    const DiscNode *root, const Atom *pattern, CettaIndex *out_count);
 bool disc_count_rigid_exact_path(
     const DiscNode *root, const Atom *query, CettaIndex *out_count);
 bool disc_count_rigid_exact_expression_coordinates(
@@ -375,7 +379,8 @@ SpaceEquationCursorStep space_equation_cursor_next(
  * Revision-qualified zipper over matching discrimination-trie leaves.
  * Pin a read token, prefix epoch, and occurrence ceiling at init; `next`
  * yields logical indices in declaration order without copying the bag.
- * Appends at or after the ceiling are invisible.  A removal while the pin
+ * Several matching trie nodes are merged once into that order; later steps
+ * read the next index. Appends at or after the ceiling are invisible.  A removal while the pin
  * is live leaves the cursor draining the rows it captured, while the Space
  * itself shows only the survivors; any other prefix rewrite invalidates the
  * pin.  Read a yielded index through space_occurrence_cursor_atom.  Release
@@ -392,6 +397,11 @@ typedef struct {
     DiscNode **nodes;
     CettaIndex *leaf_pos;
     uint32_t node_len;
+    /* Declaration order of a multi-node frontier, built once. */
+    CettaIndex *flat;
+    CettaIndex flat_len;
+    CettaIndex flat_next;
+    bool flat_mode;
     bool full_scan;
     CettaIndex full_next;
     bool pinned;
@@ -669,6 +679,24 @@ bool space_remove_occurrence_mask_stable(
 CettaIndex space_match_candidates64(Space *s, Atom *pattern, CettaIndex **out);
 uint32_t space_match_candidates(Space *s, Atom *pattern, uint32_t **out);
 Atom *space_match_candidate_at64(const Space *s, CettaIndex idx);
+/* Native flat-match aggregations; false leaves the caller on ordinary search.
+ * A visitor may see a prefix before a later row declines, so its state must
+ * be local and discarded on failure. Overlays and other backends decline
+ * before visiting any row. */
+bool space_native_flat_conjunction_count(
+    Space *space, Atom *const *patterns, size_t pattern_count,
+    uint64_t *count_out);
+
+bool space_native_flat_conjunction_int_moments(
+    Space *space, Atom *const *patterns, size_t pattern_count,
+    size_t column_pattern, size_t column,
+    uint64_t *count_out, __int128 *sum_out,
+    int64_t *product_out, bool *product_ok);
+
+bool space_native_flat_pattern_each_int(
+    Space *space, Atom *pattern, size_t column,
+    bool (*each)(int64_t value, void *ctx), void *ctx);
+
 /*
  * Try an exact multiplicity-preserving COUNT without constructing bindings
  * or result atoms.  The admitted fragment is backend-defined but must be a

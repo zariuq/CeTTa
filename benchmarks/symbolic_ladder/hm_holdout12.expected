@@ -1,0 +1,4 @@
+bool
+(prod bool int)
+twin
+(prod bool bool)

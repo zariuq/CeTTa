@@ -38,6 +38,10 @@
 #include <limits.h>
 #include <stdatomic.h>
 #include <stdlib.h>
+
+static bool eval_try_petta_fold_conjunctive_sum(
+    Space *space, Arena *arena, Atom *stream, Atom *init,
+    Atom *acc_var, Atom *item_var, Atom *step, OutcomeSet *outcomes);
 #include <string.h>
 #include <strings.h>
 #include <math.h>
@@ -41553,6 +41557,7 @@ static CettaPreparedPureAnswerCursor *petta_eval_machine_open_answer_cursor(
             .interrupt_poll_interval = 256u,
             .head_admission = head_admission,
             .head_admission_context = head_admission_context,
+            .allow_continuations = true,
         };
         cursor = cetta_prepared_pure_answer_cursor_open(program, &options);
     }
@@ -44385,6 +44390,14 @@ petta_lowered_to_shared_form:
                     bad_arg_type_error(s, a, atom, nargs == 5 ? 4 : 5,
                                        atom_variable_type(a), item_var),
                     &_empty);
+                return;
+            }
+
+            if (fuel < 0 &&
+                eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+                eval_try_petta_fold_conjunctive_sum(
+                    s, a, stream_expr, init, acc_var, item_var,
+                    step_expr, os)) {
                 return;
             }
 
@@ -48138,4 +48151,525 @@ void eval_set_library_context(CettaLibraryContext *ctx) {
     eval_swap_library_context(ctx);
     if (!ctx) return;
     ctx->session.options.fuel_limit = fallback_eval_session()->options.fuel_limit;
+}
+
+static bool eval_fold_same_var(const Atom *left, const Atom *right) {
+    return left && right && left->kind == ATOM_VAR &&
+        right->kind == ATOM_VAR && left->var_id == right->var_id;
+}
+
+static bool eval_fold_match_space(const Atom *reference, Space *space) {
+    if (!reference || !space)
+        return false;
+    if (reference->kind == ATOM_SYMBOL &&
+        reference->sym_id == g_builtin_syms.self)
+        return true;
+    return reference->kind == ATOM_GROUNDED &&
+        reference->ground.gkind == GV_SPACE &&
+        reference->ground.ptr == space;
+}
+
+/* Left fold of a recognized integer update over a flat match bag.
+ * Constant items use a closed form. A column of integers uses a sum or a
+ * product when the update commutes, and one ordered pass when it does not.
+ * One pure equation may name that update. Anything else returns false and
+ * the ordinary fold runs. CETTA_FOLD_ARITH_REFERENCE forces that fold. */
+static bool eval_fold_arith_reference_forced(void) {
+    const char *setting = getenv("CETTA_FOLD_ARITH_REFERENCE");
+    return setting && setting[0] != '\0' && strcmp(setting, "0") != 0;
+}
+
+typedef enum {
+    EVAL_FOLD_ADD = 1,
+    EVAL_FOLD_SUB,
+    EVAL_FOLD_MUL,
+    EVAL_FOLD_MOD
+} EvalFoldOp;
+
+typedef enum {
+    EVAL_FOLD_ARG_ACC = 1,
+    EVAL_FOLD_ARG_ITEM,
+    EVAL_FOLD_ARG_INT
+} EvalFoldArgKind;
+
+typedef struct {
+    EvalFoldOp op;
+    EvalFoldArgKind left_kind;
+    EvalFoldArgKind right_kind;
+    int64_t left_int;
+    int64_t right_int;
+} EvalFoldStep;
+
+typedef struct {
+    EvalFoldStep step;
+    int64_t accumulator;
+    bool ok;
+} EvalFoldOrder;
+
+static bool eval_fold_fit_i64(__int128 value, int64_t *out) {
+    if (value > (__int128)INT64_MAX || value < (__int128)INT64_MIN)
+        return false;
+    *out = (int64_t)value;
+    return true;
+}
+
+static bool eval_fold_mul_i64(int64_t left, int64_t right, int64_t *out) {
+    return eval_fold_fit_i64((__int128)left * (__int128)right, out);
+}
+
+static bool eval_fold_pow_i64(int64_t base, uint64_t exponent, int64_t *out) {
+    int64_t result = 1;
+    int64_t factor = base;
+    if (exponent == 0u) {
+        *out = 1;
+        return true;
+    }
+    while (exponent > 0u) {
+        if ((exponent & 1u) != 0u &&
+            !eval_fold_mul_i64(result, factor, &result))
+            return false;
+        exponent >>= 1u;
+        if (exponent > 0u && !eval_fold_mul_i64(factor, factor, &factor))
+            return false;
+    }
+    *out = result;
+    return true;
+}
+
+static bool eval_fold_mul_pow(
+    int64_t init, int64_t base, uint64_t times, int64_t *out) {
+    int64_t power = 1;
+    if (times == 0u) {
+        *out = init;
+        return true;
+    }
+    if (init == 0 || base == 0) {
+        *out = 0;
+        return true;
+    }
+    if (base == 1) {
+        *out = init;
+        return true;
+    }
+    if (base == -1) {
+        if ((times & 1u) != 0u && init == INT64_MIN)
+            return false;
+        *out = (times & 1u) != 0u ? -init : init;
+        return true;
+    }
+    if (!eval_fold_pow_i64(base, times, &power))
+        return false;
+    return eval_fold_mul_i64(init, power, out);
+}
+
+/* PeTTa % is floor modulo, matching grounded integer division. */
+static bool eval_fold_floor_mod(int64_t lhs, int64_t rhs, int64_t *out) {
+    int64_t remainder = 0;
+    if (rhs == 0)
+        return false;
+    if (lhs == INT64_MIN && rhs == -1) {
+        *out = 0;
+        return true;
+    }
+    remainder = lhs % rhs;
+    if (remainder != 0 && ((remainder < 0) != (rhs < 0)))
+        remainder += rhs;
+    *out = remainder;
+    return true;
+}
+
+static bool eval_fold_mod_by_accumulator(
+    int64_t init, int64_t numerator, uint64_t times, int64_t *out) {
+    int64_t accumulator = init;
+    uint64_t left = times;
+    unsigned guard = 0u;
+    while (left > 0u && guard < 64u) {
+        int64_t remainder = 0;
+        if (accumulator == 0 ||
+            !eval_fold_floor_mod(numerator, accumulator, &remainder))
+            return false;
+        accumulator = remainder;
+        left--;
+        guard++;
+        if (accumulator == 0 && left > 0u)
+            return false;
+    }
+    if (left > 0u)
+        return false;
+    *out = accumulator;
+    return true;
+}
+
+static bool eval_fold_arg(
+    const Atom *arg, VarId accumulator, VarId item,
+    EvalFoldArgKind *kind, int64_t *value) {
+    if (!arg || !kind)
+        return false;
+    if (arg->kind == ATOM_VAR) {
+        if (arg->var_id == accumulator) {
+            *kind = EVAL_FOLD_ARG_ACC;
+            return true;
+        }
+        if (arg->var_id == item) {
+            *kind = EVAL_FOLD_ARG_ITEM;
+            return true;
+        }
+        return false;
+    }
+    if (arg->kind == ATOM_GROUNDED && arg->ground.gkind == GV_INT) {
+        *kind = EVAL_FOLD_ARG_INT;
+        if (value)
+            *value = arg->ground.ival;
+        return true;
+    }
+    return false;
+}
+
+static bool eval_fold_parse_op(
+    const Atom *expr, VarId accumulator, VarId item, EvalFoldStep *out) {
+    SymbolId head = 0;
+    if (!expr || !out || expr->kind != ATOM_EXPR || expr->expr.len != 3u ||
+        !expr->expr.elems[0] || expr->expr.elems[0]->kind != ATOM_SYMBOL)
+        return false;
+    head = expr->expr.elems[0]->sym_id;
+    if (head == g_builtin_syms.op_plus)
+        out->op = EVAL_FOLD_ADD;
+    else if (head == g_builtin_syms.op_minus)
+        out->op = EVAL_FOLD_SUB;
+    else if (head == g_builtin_syms.op_mul)
+        out->op = EVAL_FOLD_MUL;
+    else if (head == g_builtin_syms.op_mod)
+        out->op = EVAL_FOLD_MOD;
+    else
+        return false;
+    return eval_fold_arg(
+               expr->expr.elems[1], accumulator, item,
+               &out->left_kind, &out->left_int) &&
+           eval_fold_arg(
+               expr->expr.elems[2], accumulator, item,
+               &out->right_kind, &out->right_int);
+}
+
+static bool eval_fold_one_equation(
+    Space *space, SymbolId head, Atom **body,
+    VarId *accumulator, VarId *item) {
+    size_t found = 0u;
+    if (!space || !body || !accumulator || !item)
+        return false;
+    for (CettaIndex row = 0u; row < space->native.len; row++) {
+        Atom *fact = space_get_at64(space, row);
+        Atom *lhs = NULL;
+        Atom *left = NULL;
+        Atom *right = NULL;
+        if (!fact || fact->kind != ATOM_EXPR || fact->expr.len != 3u ||
+            !atom_is_symbol_id(fact->expr.elems[0], g_builtin_syms.equals))
+            continue;
+        lhs = fact->expr.elems[1];
+        if (!lhs)
+            continue;
+        /* A variable head may supply another result for this call.  A named
+         * equation is counted before checking whether it can be inlined:
+         * literal and repeated-variable heads are still alternatives. */
+        if (lhs->kind == ATOM_VAR)
+            return false;
+        if (lhs->kind != ATOM_EXPR || lhs->expr.len == 0u)
+            continue;
+        if (!lhs->expr.elems[0] || lhs->expr.elems[0]->kind == ATOM_VAR)
+            return false;
+        if (!atom_is_symbol_id(lhs->expr.elems[0], head))
+            continue;
+        found++;
+        if (found > 1u || lhs->expr.len != 3u)
+            return false;
+        left = lhs->expr.elems[1];
+        right = lhs->expr.elems[2];
+        if (!left || !right || left->kind != ATOM_VAR ||
+            right->kind != ATOM_VAR || left->var_id == right->var_id)
+            return false;
+        *body = fact->expr.elems[2];
+        /* foldall applies (function item accumulator). */
+        *item = left->var_id;
+        *accumulator = right->var_id;
+    }
+    return found == 1u && *body;
+}
+
+static bool eval_fold_parse_step(
+    Space *space, Atom *step, Atom *acc_var, Atom *item_var,
+    EvalFoldStep *out) {
+    Atom *head = NULL;
+    Atom *body = NULL;
+    VarId param_acc = 0;
+    VarId param_item = 0;
+    if (!step || !acc_var || !item_var || !out ||
+        step->kind != ATOM_EXPR || step->expr.len != 3u ||
+        !eval_fold_same_var(step->expr.elems[1], item_var) ||
+        !eval_fold_same_var(step->expr.elems[2], acc_var))
+        return false;
+    head = step->expr.elems[0];
+    if (!head || head->kind != ATOM_SYMBOL)
+        return false;
+    if (eval_fold_parse_op(step, acc_var->var_id, item_var->var_id, out))
+        return true;
+    if (!eval_fold_one_equation(
+            space, head->sym_id, &body, &param_acc, &param_item))
+        return false;
+    return eval_fold_parse_op(body, param_acc, param_item, out);
+}
+
+static bool eval_fold_uses(
+    const EvalFoldStep *step, EvalFoldArgKind kind) {
+    return step && (step->left_kind == kind || step->right_kind == kind);
+}
+
+static bool eval_fold_repeat(
+    const EvalFoldStep *step, int64_t init, int64_t item, bool have_item,
+    uint64_t times, int64_t *out) {
+    int64_t term = 0;
+    if (!step || !out)
+        return false;
+    if (times == 0u) {
+        *out = init;
+        return true;
+    }
+    if (!eval_fold_uses(step, EVAL_FOLD_ARG_ACC))
+        return false;
+    if (have_item)
+        term = item;
+    else if (step->left_kind == EVAL_FOLD_ARG_INT)
+        term = step->left_int;
+    else if (step->right_kind == EVAL_FOLD_ARG_INT)
+        term = step->right_int;
+    else
+        return false;
+    if (step->op == EVAL_FOLD_ADD) {
+        if (step->left_kind == EVAL_FOLD_ARG_ACC &&
+            step->right_kind == EVAL_FOLD_ARG_ACC)
+            return false;
+        return eval_fold_fit_i64(
+            (__int128)init + term * (__int128)times, out);
+    }
+    if (step->op == EVAL_FOLD_SUB &&
+        step->left_kind == EVAL_FOLD_ARG_ACC) {
+        return eval_fold_fit_i64(
+            (__int128)init - term * (__int128)times, out);
+    }
+    if (step->op == EVAL_FOLD_SUB &&
+        step->right_kind == EVAL_FOLD_ARG_ACC) {
+        if ((times & 1u) == 0u) {
+            *out = init;
+            return true;
+        }
+        return eval_fold_fit_i64((__int128)term - (__int128)init, out);
+    }
+    if (step->op == EVAL_FOLD_MUL)
+        return eval_fold_mul_pow(init, term, times, out);
+    if (step->op == EVAL_FOLD_MOD &&
+        step->left_kind == EVAL_FOLD_ARG_ACC) {
+        if (term == 0)
+            return false;
+        return eval_fold_floor_mod(init, term, out);
+    }
+    if (step->op == EVAL_FOLD_MOD &&
+        step->right_kind == EVAL_FOLD_ARG_ACC)
+        return eval_fold_mod_by_accumulator(init, term, times, out);
+    return false;
+}
+
+static bool eval_fold_order_dependent(const EvalFoldStep *step) {
+    if (!step)
+        return false;
+    if (step->op == EVAL_FOLD_MOD &&
+        eval_fold_uses(step, EVAL_FOLD_ARG_ITEM))
+        return true;
+    return step->op == EVAL_FOLD_SUB &&
+           step->left_kind == EVAL_FOLD_ARG_ITEM &&
+           step->right_kind == EVAL_FOLD_ARG_ACC;
+}
+
+static bool eval_fold_order_visit(int64_t value, void *raw) {
+    EvalFoldOrder *state = raw;
+    int64_t next = 0;
+    if (!state || !state->ok ||
+        !eval_fold_repeat(&state->step, state->accumulator, value, true, 1u, &next)) {
+        if (state)
+            state->ok = false;
+        return false;
+    }
+    state->accumulator = next;
+    return true;
+}
+
+static bool eval_fold_column_of(
+    Atom *const *patterns, size_t pattern_count, VarId id,
+    size_t *pattern_index, size_t *column) {
+    bool found = false;
+    if (!patterns || !pattern_index || !column)
+        return false;
+    for (size_t pattern = 0u; pattern < pattern_count; pattern++) {
+        Atom *shape = patterns[pattern];
+        if (!shape || shape->kind != ATOM_EXPR)
+            return false;
+        for (CettaExprIndex index = 0u; index < shape->expr.len; index++) {
+            Atom *item = shape->expr.elems[index];
+            if (!item || item->kind != ATOM_VAR || item->var_id != id)
+                continue;
+            if (!found) {
+                *pattern_index = pattern;
+                *column = (size_t)index;
+                found = true;
+            }
+        }
+    }
+    return found;
+}
+
+static bool eval_fold_publish(
+    Arena *arena, OutcomeSet *outcomes, int64_t value) {
+    Atom *result = atom_int(arena, value);
+    Bindings empty;
+    if (!result)
+        return false;
+    bindings_init(&empty);
+    outcome_set_add(outcomes, result, &empty);
+    bindings_free(&empty);
+    return true;
+}
+
+static bool eval_try_petta_fold_conjunctive_sum(
+    Space *space, Arena *arena, Atom *stream, Atom *init,
+    Atom *acc_var, Atom *item_var, Atom *step, OutcomeSet *outcomes) {
+    EvalFoldStep fold_step;
+    bool uses_item = false;
+    bool item_constant = false;
+    int64_t item_value = 0;
+    size_t column_pattern = 0u;
+    size_t column = 0u;
+    memset(&fold_step, 0, sizeof(fold_step));
+    if (eval_fold_arith_reference_forced())
+        return false;
+    if (!space || !arena || !stream || !init || !acc_var || !item_var ||
+        !step || !outcomes ||
+        init->kind != ATOM_GROUNDED || init->ground.gkind != GV_INT ||
+        stream->kind != ATOM_EXPR || stream->expr.len != 4u ||
+        !atom_is_symbol_id(stream->expr.elems[0], g_builtin_syms.chain))
+        return false;
+    Atom *raw = stream->expr.elems[2];
+    Atom *demanded = stream->expr.elems[3];
+    Atom *generator = stream->expr.elems[1];
+    if (!eval_fold_same_var(raw, raw) ||
+        !demanded || demanded->kind != ATOM_EXPR ||
+        demanded->expr.len != 2u ||
+        !atom_is_symbol_id(demanded->expr.elems[0], g_builtin_syms.eval) ||
+        !eval_fold_same_var(demanded->expr.elems[1], raw) ||
+        !generator || generator->kind != ATOM_EXPR ||
+        generator->expr.len != 4u ||
+        !atom_is_symbol_id(generator->expr.elems[0], g_builtin_syms.match) ||
+        !eval_fold_match_space(generator->expr.elems[1], space))
+        return false;
+    Atom *pattern = generator->expr.elems[2];
+    Atom *templ = generator->expr.elems[3];
+    if (!pattern || !templ ||
+        !eval_fold_parse_step(space, step, acc_var, item_var, &fold_step))
+        return false;
+
+    Atom *patterns_buf[8];
+    Atom **patterns = NULL;
+    size_t pattern_count = 0u;
+    if (pattern->kind == ATOM_EXPR && pattern->expr.len >= 2u &&
+        atom_is_symbol_id(pattern->expr.elems[0], g_builtin_syms.comma)) {
+        pattern_count = (size_t)pattern->expr.len - 1u;
+        if (pattern_count == 0u || pattern_count > 8u)
+            return false;
+        for (size_t index = 0u; index < pattern_count; index++)
+            patterns_buf[index] = pattern->expr.elems[index + 1u];
+        patterns = patterns_buf;
+    } else {
+        patterns_buf[0] = pattern;
+        patterns = patterns_buf;
+        pattern_count = 1u;
+    }
+
+    uses_item = eval_fold_uses(&fold_step, EVAL_FOLD_ARG_ITEM);
+    if (uses_item) {
+        if (templ->kind == ATOM_GROUNDED && templ->ground.gkind == GV_INT) {
+            item_constant = true;
+            item_value = templ->ground.ival;
+        } else if (templ->kind != ATOM_VAR ||
+                   !eval_fold_column_of(
+                       patterns, pattern_count, templ->var_id,
+                       &column_pattern, &column)) {
+            return false;
+        }
+    } else if (templ->kind != ATOM_GROUNDED ||
+               templ->ground.gkind != GV_INT) {
+        /* The chain still evaluates the template.  A ground integer is the
+         * only template whose evaluation is the identity, so an update that
+         * ignores the item cannot skip any other template. */
+        return false;
+    }
+
+    if (!uses_item || item_constant) {
+        uint64_t matches = 0u;
+        int64_t reduced = 0;
+        if (!space_native_flat_conjunction_count(
+                space, patterns, pattern_count, &matches) ||
+            !eval_fold_repeat(
+                &fold_step, init->ground.ival, item_value, item_constant,
+                matches, &reduced))
+            return false;
+        return eval_fold_publish(arena, outcomes, reduced);
+    }
+
+    if (eval_fold_order_dependent(&fold_step)) {
+        EvalFoldOrder order_state;
+        if (pattern_count != 1u || column_pattern != 0u)
+            return false;
+        order_state.step = fold_step;
+        order_state.accumulator = init->ground.ival;
+        order_state.ok = true;
+        if (!space_native_flat_pattern_each_int(
+                space, patterns[0], column, eval_fold_order_visit,
+                &order_state) ||
+            !order_state.ok)
+            return false;
+        return eval_fold_publish(arena, outcomes, order_state.accumulator);
+    }
+
+    {
+        uint64_t matches = 0u;
+        __int128 column_sum = 0;
+        int64_t column_product = 1;
+        bool product_ok = true;
+        int64_t reduced = 0;
+        if (!space_native_flat_conjunction_int_moments(
+                space, patterns, pattern_count, column_pattern, column,
+                &matches, &column_sum, &column_product, &product_ok))
+            return false;
+        if (matches == 0u)
+            return eval_fold_publish(arena, outcomes, init->ground.ival);
+        if (fold_step.op == EVAL_FOLD_ADD &&
+            eval_fold_uses(&fold_step, EVAL_FOLD_ARG_ACC)) {
+            if (!eval_fold_fit_i64(
+                    (__int128)init->ground.ival + column_sum, &reduced))
+                return false;
+        } else if (fold_step.op == EVAL_FOLD_SUB &&
+                   fold_step.left_kind == EVAL_FOLD_ARG_ACC &&
+                   fold_step.right_kind == EVAL_FOLD_ARG_ITEM) {
+            if (!eval_fold_fit_i64(
+                    (__int128)init->ground.ival - column_sum, &reduced))
+                return false;
+        } else if (fold_step.op == EVAL_FOLD_MUL &&
+                   eval_fold_uses(&fold_step, EVAL_FOLD_ARG_ACC)) {
+            if (init->ground.ival == 0)
+                reduced = 0;
+            else if (!product_ok ||
+                     !eval_fold_mul_i64(
+                         init->ground.ival, column_product, &reduced))
+                return false;
+        } else {
+            return false;
+        }
+        return eval_fold_publish(arena, outcomes, reduced);
+    }
 }

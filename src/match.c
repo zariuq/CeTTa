@@ -9734,7 +9734,8 @@ bool simple_match(Atom *pattern, Atom *target, Bindings *b) {
         return pattern->sym_id == target->sym_id;
 
     case ATOM_GROUNDED:
-        if (pattern->ground.gkind != target->ground.gkind) return false;
+        if (pattern->ground.gkind != target->ground.gkind)
+            return cetta_he_promoted_numbers_equal(pattern, target);
         switch (pattern->ground.gkind) {
         case GV_INT:    return pattern->ground.ival == target->ground.ival;
         case GV_FLOAT:  return pattern->ground.fval == target->ground.fval;
@@ -9789,7 +9790,7 @@ static bool simple_match_builder_rec(Atom *pattern, Atom *target,
 
     case ATOM_GROUNDED:
         if (pattern->ground.gkind != target->ground.gkind)
-            return false;
+            return cetta_he_promoted_numbers_equal(pattern, target);
         switch (pattern->ground.gkind) {
         case GV_INT:    return pattern->ground.ival == target->ground.ival;
         case GV_FLOAT:  return pattern->ground.fval == target->ground.fval;
@@ -12829,6 +12830,18 @@ static bool stored_grounded_equal(Atom *left,
                                   AtomId right_id) {
     if (tu_kind(candidate_universe, right_id) != ATOM_GROUNDED)
         return false;
+    {
+        int right_kind = tu_ground_kind(candidate_universe, right_id);
+        if (left->ground.gkind != right_kind) {
+            int64_t right_int = right_kind == GV_INT
+                ? tu_int(candidate_universe, right_id) : 0;
+            double right_float = right_kind == GV_FLOAT
+                ? tu_float(candidate_universe, right_id) : 0.0;
+            return cetta_he_promoted_kind_equal(
+                left->ground.gkind, left->ground.ival, left->ground.fval,
+                right_kind, right_int, right_float);
+        }
+    }
     switch (left->ground.gkind) {
     case GV_INT:
         return tu_ground_kind(candidate_universe, right_id) == GV_INT &&

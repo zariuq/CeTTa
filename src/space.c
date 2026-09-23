@@ -1060,6 +1060,49 @@ static void disc_skip_term(DiscNode *node, DiscNodeSet *next) {
 
 /* Advance through one query atom, collecting all reachable next-nodes.
    Mirrors the depth-first structure of disc_insert_atom exactly. */
+/* Float facts sit on the variable branch.  Integer facts sit on integer
+ * branches.  An HE float query follows every integer key that promotes
+ * equal to it; below 2^53 that key is unique. */
+static void disc_push_he_float_ints(DiscNode *node, double value,
+                                   DiscNodeSet *next) {
+    int64_t exact = 0;
+    CettaHeFloatIntBranches mode =
+        cetta_he_float_int_branches(value, &exact);
+    if (!node || !next || mode == CETTA_HE_FLOAT_INTS_NONE)
+        return;
+    if (mode == CETTA_HE_FLOAT_INTS_ONE) {
+        dns_push(next, disc_find_integer_branch(node, exact));
+        return;
+    }
+    if (node->edges.kind == DISC_EDGE_INTEGER &&
+        cetta_he_promoted_kind_equal(
+            GV_FLOAT, 0, value, GV_INT,
+            node->edges.payload.one.key.integer, 0.0)) {
+        dns_push(next, node->edges.payload.one.child);
+        return;
+    }
+    const DiscBranchSet *branches = disc_many_branches(node);
+    if (!branches)
+        return;
+    if (branches->ints_hashed) {
+        uint32_t cap = branches->int_ht.mask + 1u;
+        for (uint32_t i = 0u; i < cap; i++) {
+            const DiscIntBranch *entry = &branches->int_ht.entries[i];
+            if (!entry->child)
+                continue;
+            if (cetta_he_promoted_kind_equal(
+                    GV_FLOAT, 0, value, GV_INT, entry->key, 0.0))
+                dns_push(next, entry->child);
+        }
+        return;
+    }
+    for (uint32_t i = 0u; i < branches->nints; i++) {
+        if (cetta_he_promoted_kind_equal(
+                GV_FLOAT, 0, value, GV_INT, branches->ints[i].key, 0.0))
+            dns_push(next, branches->ints[i].child);
+    }
+}
+
 static void disc_step(DiscNode *node, Atom *q, DiscNodeSet *next) {
     if (!node) return;
     switch (q->kind) {
@@ -1078,6 +1121,8 @@ static void disc_step(DiscNode *node, Atom *q, DiscNodeSet *next) {
         if (q->ground.gkind == GV_INT)
             dns_push(next, disc_find_integer_branch(
                 node, q->ground.ival));
+        else if (q->ground.gkind == GV_FLOAT)
+            disc_push_he_float_ints(node, q->ground.fval, next);
         /* A variable in the indexed LHS matches any grounded value */
         dns_push(next, disc_find_variable_branch(node));
         break;
@@ -1219,6 +1264,150 @@ void space_occurrence_cursor_init_empty(SpaceOccurrenceCursor *cursor) {
         memset(cursor, 0, sizeof(*cursor));
 }
 
+typedef struct {
+    uint32_t node;
+    CettaIndex leaf;
+} SpaceOccurrenceCursorHead;
+
+static bool space_occurrence_cursor_head_before(
+        SpaceOccurrenceCursorHead left, SpaceOccurrenceCursorHead right) {
+    return left.leaf < right.leaf;
+}
+
+static void space_occurrence_cursor_heap_push(
+        SpaceOccurrenceCursorHead *heap, uint32_t *len,
+        SpaceOccurrenceCursorHead item) {
+    uint32_t index = (*len)++;
+    while (index > 0u) {
+        uint32_t parent = (index - 1u) / 2u;
+        if (!space_occurrence_cursor_head_before(item, heap[parent]))
+            break;
+        heap[index] = heap[parent];
+        index = parent;
+    }
+    heap[index] = item;
+}
+
+static SpaceOccurrenceCursorHead space_occurrence_cursor_heap_pop(
+        SpaceOccurrenceCursorHead *heap, uint32_t *len) {
+    SpaceOccurrenceCursorHead top = heap[0];
+    uint32_t count = --(*len);
+    if (count == 0u)
+        return top;
+    SpaceOccurrenceCursorHead last = heap[count];
+    uint32_t index = 0u;
+    for (;;) {
+        uint32_t left = index * 2u + 1u;
+        uint32_t right;
+        uint32_t child;
+        if (left >= count)
+            break;
+        right = left + 1u;
+        child = (right < count &&
+                 space_occurrence_cursor_head_before(heap[right], heap[left]))
+            ? right : left;
+        if (!space_occurrence_cursor_head_before(heap[child], last))
+            break;
+        heap[index] = heap[child];
+        index = child;
+    }
+    heap[index] = last;
+    return top;
+}
+
+/* One declaration-order pass over a frontier that would otherwise be
+ * re-scanned at every answer. A single node is already a constant step.
+ * Allocation failure leaves the node scan in place. */
+static void space_occurrence_cursor_flatten(SpaceOccurrenceCursor *cursor) {
+    CettaCount total = 0u;
+    CettaCount view_len;
+    CettaIndex *flat = NULL;
+    SpaceOccurrenceCursorHead *heap = NULL;
+    SpaceOccurrenceCursorHead *deferred = NULL;
+    uint32_t heap_len = 0u;
+    CettaIndex written = 0u;
+    if (!cursor || cursor->full_scan || cursor->node_len <= 1u ||
+        !cursor->nodes || !cursor->leaf_pos || !cursor->occurrences)
+        return;
+    for (uint32_t index = 0u; index < cursor->node_len; index++) {
+        DiscNode *node = cursor->nodes[index];
+        if (!node)
+            continue;
+        if (node->leaves.count > UINT64_MAX - total)
+            return;
+        total += node->leaves.count;
+    }
+    if (total == 0u) {
+        cursor->flat_mode = true;
+        return;
+    }
+    if (total > SIZE_MAX / sizeof(*flat))
+        return;
+    flat = cetta_malloc(sizeof(*flat) * (size_t)total);
+    heap = cetta_malloc(sizeof(*heap) * cursor->node_len);
+    deferred = cetta_malloc(sizeof(*deferred) * cursor->node_len);
+    if (!flat || !heap || !deferred) {
+        free(flat);
+        free(heap);
+        free(deferred);
+        return;
+    }
+    view_len = space_pinned_occurrences_len(cursor->occurrences);
+    for (uint32_t index = 0u; index < cursor->node_len; index++) {
+        DiscNode *node = cursor->nodes[index];
+        CettaIndex leaf;
+        if (!node || node->leaves.count == 0u)
+            continue;
+        leaf = disc_leaf_at(node, 0u);
+        if (leaf >= cursor->ceiling) {
+            cursor->leaf_pos[index] = node->leaves.count;
+            continue;
+        }
+        space_occurrence_cursor_heap_push(
+            heap, &heap_len,
+            (SpaceOccurrenceCursorHead){.node = index, .leaf = leaf});
+    }
+    while (heap_len > 0u) {
+        CettaIndex best = heap[0].leaf;
+        uint32_t deferred_len = 0u;
+        while (heap_len > 0u && heap[0].leaf == best) {
+            SpaceOccurrenceCursorHead head =
+                space_occurrence_cursor_heap_pop(heap, &heap_len);
+            DiscNode *node = cursor->nodes[head.node];
+            CettaIndex position = ++cursor->leaf_pos[head.node];
+            CettaIndex next;
+            if (!node || position >= node->leaves.count)
+                continue;
+            next = disc_leaf_at(node, position);
+            if (next >= cursor->ceiling) {
+                cursor->leaf_pos[head.node] = node->leaves.count;
+                continue;
+            }
+            deferred[deferred_len++] = (SpaceOccurrenceCursorHead){
+                .node = head.node,
+                .leaf = next,
+            };
+        }
+        for (uint32_t index = 0u; index < deferred_len; index++)
+            space_occurrence_cursor_heap_push(
+                heap, &heap_len, deferred[index]);
+        if (best < view_len)
+            flat[written++] = best;
+    }
+    free(heap);
+    free(deferred);
+    memset(cursor->leaf_pos, 0,
+           sizeof(*cursor->leaf_pos) * cursor->node_len);
+    if (written == 0u) {
+        free(flat);
+        flat = NULL;
+    }
+    cursor->flat = flat;
+    cursor->flat_len = written;
+    cursor->flat_next = 0u;
+    cursor->flat_mode = true;
+}
+
 bool space_occurrence_cursor_init(Space *s, Atom *pattern,
                                   SpaceOccurrenceCursor *cursor) {
     CETTA_SCOPED_SHARED_TRANSITION(transition);
@@ -1274,6 +1463,7 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
     dns_free(&final);
     cursor->pinned = true;
     cursor->occurrences = space_pinned_occurrences_acquire(s);
+    space_occurrence_cursor_flatten(cursor);
     return true;
 }
 
@@ -1297,9 +1487,26 @@ bool space_occurrence_cursor_clone_unstarted(
     dst->full_scan = src->full_scan;
     dst->full_next = 0u;
     dst->node_len = src->node_len;
-    if (src->node_len > 0u) {
-        if (!src->nodes)
+    dst->flat_mode = src->flat_mode;
+    dst->flat_len = src->flat_len;
+    dst->flat_next = 0u;
+    if (src->flat_mode && src->flat_len > 0u) {
+        if (!src->flat)
             return false;
+        dst->flat = cetta_malloc(sizeof(*dst->flat) * (size_t)src->flat_len);
+        if (!dst->flat) {
+            space_occurrence_cursor_init_empty(dst);
+            return false;
+        }
+        memcpy(dst->flat, src->flat,
+               sizeof(*dst->flat) * (size_t)src->flat_len);
+    }
+    if (src->node_len > 0u) {
+        if (!src->nodes) {
+            free(dst->flat);
+            space_occurrence_cursor_init_empty(dst);
+            return false;
+        }
         dst->nodes = cetta_malloc(
             sizeof(*dst->nodes) * src->node_len);
         dst->leaf_pos = cetta_malloc(
@@ -1307,6 +1514,7 @@ bool space_occurrence_cursor_clone_unstarted(
         if (!dst->nodes || !dst->leaf_pos) {
             free(dst->nodes);
             free(dst->leaf_pos);
+            free(dst->flat);
             space_occurrence_cursor_init_empty(dst);
             return false;
         }
@@ -1332,7 +1540,8 @@ bool space_occurrence_cursor_clone(
          (src->read.instance_id != space_instance_id(s) ||
           src->prefix_epoch != s->prefix_epoch)) ||
         src->ceiling > space_pinned_occurrences_len(src->occurrences) ||
-        (src->node_len > 0u && (!src->nodes || !src->leaf_pos))) {
+        (src->node_len > 0u && (!src->nodes || !src->leaf_pos)) ||
+        (src->flat_mode && src->flat_len > 0u && !src->flat)) {
         return false;
     }
     dst->read = src->read;
@@ -1342,6 +1551,18 @@ bool space_occurrence_cursor_clone(
     dst->full_scan = src->full_scan;
     dst->full_next = src->full_next;
     dst->node_len = src->node_len;
+    dst->flat_mode = src->flat_mode;
+    dst->flat_len = src->flat_len;
+    dst->flat_next = src->flat_next;
+    if (src->flat_mode && src->flat_len > 0u) {
+        dst->flat = cetta_malloc(sizeof(*dst->flat) * (size_t)src->flat_len);
+        if (!dst->flat) {
+            space_occurrence_cursor_init_empty(dst);
+            return false;
+        }
+        memcpy(dst->flat, src->flat,
+               sizeof(*dst->flat) * (size_t)src->flat_len);
+    }
     if (src->node_len > 0u) {
         dst->nodes = cetta_malloc(
             sizeof(*dst->nodes) * src->node_len);
@@ -1350,6 +1571,7 @@ bool space_occurrence_cursor_clone(
         if (!dst->nodes || !dst->leaf_pos) {
             free(dst->nodes);
             free(dst->leaf_pos);
+            free(dst->flat);
             space_occurrence_cursor_init_empty(dst);
             return false;
         }
@@ -1381,6 +1603,15 @@ SpaceOccurrenceCursorStep space_occurrence_cursor_next(
         if (cursor->full_next < cursor->ceiling &&
             cursor->full_next < len) {
             CettaIndex index = cursor->full_next++;
+            if (logical_index_out)
+                *logical_index_out = index;
+            return SPACE_OCCURRENCE_CURSOR_ITEM;
+        }
+        return SPACE_OCCURRENCE_CURSOR_END;
+    }
+    if (cursor->flat_mode) {
+        if (cursor->flat_next < cursor->flat_len) {
+            CettaIndex index = cursor->flat[cursor->flat_next++];
             if (logical_index_out)
                 *logical_index_out = index;
             return SPACE_OCCURRENCE_CURSOR_ITEM;
@@ -1453,6 +1684,7 @@ void space_occurrence_cursor_release(SpaceOccurrenceCursor *cursor) {
         space_pinned_occurrences_release(cursor->occurrences);
     free(cursor->nodes);
     free(cursor->leaf_pos);
+    free(cursor->flat);
     space_occurrence_cursor_init_empty(cursor);
 }
 
@@ -1553,6 +1785,363 @@ bool disc_count_rigid_exact_expression_coordinates(
         return false;
     }
     *out_count = leaf ? leaf->leaves.count : 0u;
+    return true;
+}
+
+static bool disc_sum_wildcard_leaves(
+    const DiscNode *node, unsigned steps, uint64_t *sum) {
+    if (!node || !sum)
+        return false;
+    if (steps == 0u) {
+        if (*sum > UINT64_MAX - (uint64_t)node->leaves.count)
+            return false;
+        *sum += (uint64_t)node->leaves.count;
+        return true;
+    }
+    if (node->edges.kind == DISC_EDGE_EMPTY)
+        return true;
+    if (node->edges.kind == DISC_EDGE_EXPRESSION)
+        return false;
+    if (node->edges.kind != DISC_EDGE_MANY) {
+        return disc_sum_wildcard_leaves(
+            node->edges.payload.one.child, steps - 1u, sum);
+    }
+    const DiscBranchSet *branches = node->edges.payload.many;
+    if (!branches || branches->nexpr != 0u)
+        return false;
+    if (branches->sym_hashed) {
+        uint32_t cap = branches->sym_ht.mask + 1u;
+        for (uint32_t index = 0u; index < cap; index++) {
+            if (branches->sym_ht.entries[index].key == SYMBOL_ID_NONE)
+                continue;
+            if (!disc_sum_wildcard_leaves(
+                    branches->sym_ht.entries[index].child,
+                    steps - 1u, sum))
+                return false;
+        }
+    } else {
+        for (uint32_t index = 0u; index < branches->nsym; index++) {
+            if (!disc_sum_wildcard_leaves(
+                    branches->sym[index].child, steps - 1u, sum))
+                return false;
+        }
+    }
+    if (branches->var_child &&
+        !disc_sum_wildcard_leaves(
+            branches->var_child, steps - 1u, sum))
+        return false;
+    if (branches->ints_hashed) {
+        uint32_t cap = branches->int_ht.mask + 1u;
+        for (uint32_t index = 0u; index < cap; index++) {
+            if (!branches->int_ht.entries[index].child)
+                continue;
+            if (!disc_sum_wildcard_leaves(
+                    branches->int_ht.entries[index].child,
+                    steps - 1u, sum))
+                return false;
+        }
+    } else {
+        for (uint32_t index = 0u; index < branches->nints; index++) {
+            if (!disc_sum_wildcard_leaves(
+                    branches->ints[index].child, steps - 1u, sum))
+                return false;
+        }
+    }
+    return true;
+}
+
+/* A free tail is a run of distinct variables.  A repeated variable is an
+ * equality constraint, and summing every leaf under that tail would drop it. */
+static bool disc_tail_is_free_linear(
+    const Atom *pattern, CettaExprIndex index,
+    const VarId *bind_ids, size_t bind_len) {
+    for (CettaExprIndex rest = index; rest < pattern->expr.len; rest++) {
+        const Atom *later = pattern->expr.elems[rest];
+        if (!later || later->kind != ATOM_VAR)
+            return false;
+        for (size_t bind = 0u; bind < bind_len; bind++) {
+            if (bind_ids && bind_ids[bind] == later->var_id)
+                return false;
+        }
+        for (CettaExprIndex earlier = 0u; earlier < rest; earlier++) {
+            const Atom *previous = pattern->expr.elems[earlier];
+            if (previous && previous->kind == ATOM_VAR &&
+                previous->var_id == later->var_id)
+                return false;
+        }
+    }
+    return true;
+}
+
+static bool disc_i128_add(__int128 left, __int128 right, __int128 *out) {
+    const __int128 limit =
+        (((__int128)INT64_MAX) << 64) | (__int128)UINT64_MAX;
+    const __int128 floor = -limit - 1;
+    if (right > 0 && left > limit - right)
+        return false;
+    if (right < 0 && left < floor - right)
+        return false;
+    *out = left + right;
+    return true;
+}
+
+static bool disc_project_node_column(
+    Space *space, const DiscNode *node, size_t column,
+    uint64_t *count, __int128 *sum, int64_t *product, bool *product_ok) {
+    if (!node)
+        return true;
+    for (CettaIndex leaf = 0u; leaf < node->leaves.count; leaf++) {
+        Atom *fact = space_get_at64(space, disc_leaf_at(node, leaf));
+        if (!fact || fact->kind != ATOM_EXPR ||
+            column >= (size_t)fact->expr.len || atom_has_vars(fact))
+            return false;
+        Atom *cell = fact->expr.elems[column];
+        if (!cell || cell->kind != ATOM_GROUNDED ||
+            cell->ground.gkind != GV_INT)
+            return false;
+        __int128 next_sum = 0;
+        if (!disc_i128_add(*sum, (__int128)cell->ground.ival, &next_sum))
+            return false;
+        *sum = next_sum;
+        if (*count == UINT64_MAX)
+            return false;
+        (*count)++;
+        if (*product_ok) {
+            __int128 next = (__int128)(*product) * (__int128)cell->ground.ival;
+            if (next > (__int128)INT64_MAX || next < (__int128)INT64_MIN)
+                *product_ok = false;
+            else
+                *product = (int64_t)next;
+        }
+    }
+    return true;
+}
+
+static bool disc_project_depth_column(
+    Space *space, const DiscNode *node, unsigned steps, size_t column,
+    uint64_t *count, __int128 *sum, int64_t *product, bool *product_ok) {
+    if (!node)
+        return true;
+    if (steps == 0u)
+        return disc_project_node_column(
+            space, node, column, count, sum, product, product_ok);
+    if (node->edges.kind == DISC_EDGE_EMPTY)
+        return true;
+    if (node->edges.kind == DISC_EDGE_EXPRESSION)
+        return false;
+    if (node->edges.kind != DISC_EDGE_MANY) {
+        return disc_project_depth_column(
+            space, node->edges.payload.one.child, steps - 1u, column,
+            count, sum, product, product_ok);
+    }
+    const DiscBranchSet *branches = node->edges.payload.many;
+    if (!branches || branches->nexpr != 0u || branches->var_child)
+        return false;
+    if (branches->sym_hashed) {
+        uint32_t cap = branches->sym_ht.mask + 1u;
+        for (uint32_t index = 0u; index < cap; index++) {
+            if (branches->sym_ht.entries[index].key == SYMBOL_ID_NONE)
+                continue;
+            if (!disc_project_depth_column(
+                    space, branches->sym_ht.entries[index].child,
+                    steps - 1u, column, count, sum, product, product_ok))
+                return false;
+        }
+    } else {
+        for (uint32_t index = 0u; index < branches->nsym; index++) {
+            if (!disc_project_depth_column(
+                    space, branches->sym[index].child, steps - 1u, column,
+                    count, sum, product, product_ok))
+                return false;
+        }
+    }
+    if (branches->ints_hashed) {
+        uint32_t cap = branches->int_ht.mask + 1u;
+        for (uint32_t index = 0u; index < cap; index++) {
+            if (!branches->int_ht.entries[index].child)
+                continue;
+            if (!disc_project_depth_column(
+                    space, branches->int_ht.entries[index].child,
+                    steps - 1u, column, count, sum, product, product_ok))
+                return false;
+        }
+    } else {
+        for (uint32_t index = 0u; index < branches->nints; index++) {
+            if (!disc_project_depth_column(
+                    space, branches->ints[index].child, steps - 1u, column,
+                    count, sum, product, product_ok))
+                return false;
+        }
+    }
+    return true;
+}
+
+bool disc_project_flat_bound_column(
+    Space *space, const DiscNode *root, const Atom *pattern,
+    const VarId *bind_ids, Atom *const *bind_values, size_t bind_len,
+    size_t column, uint64_t *count_out, __int128 *sum_out,
+    int64_t *product_out, bool *product_ok) {
+    if (count_out)
+        *count_out = 0u;
+    if (sum_out)
+        *sum_out = 0;
+    if (product_out)
+        *product_out = 1;
+    if (product_ok)
+        *product_ok = true;
+    if (!space || !root || !pattern || !count_out || !sum_out ||
+        !product_out || !product_ok ||
+        pattern->kind != ATOM_EXPR || pattern->expr.len == 0u ||
+        column >= (size_t)pattern->expr.len ||
+        (bind_len > 0u && (!bind_ids || !bind_values)))
+        return false;
+    const DiscNode *node = disc_find_expression_branch(
+        root, pattern->expr.len);
+    if (!node)
+        return true;
+    for (CettaExprIndex index = 0u; index < pattern->expr.len; index++) {
+        const Atom *item = pattern->expr.elems[index];
+        const Atom *ground = item;
+        if (!item)
+            return false;
+        if (item->kind == ATOM_VAR) {
+            ground = NULL;
+            for (size_t bind = 0u; bind < bind_len; bind++) {
+                if (bind_ids[bind] == item->var_id) {
+                    ground = bind_values[bind];
+                    break;
+                }
+            }
+        }
+        if (!ground || ground->kind == ATOM_VAR) {
+            if (!disc_tail_is_free_linear(
+                    pattern, index, bind_ids, bind_len))
+                return false;
+            return disc_project_depth_column(
+                space, node, (unsigned)(pattern->expr.len - index), column,
+                count_out, sum_out, product_out, product_ok);
+        }
+        if (disc_find_variable_branch(node))
+            return false;
+        if (ground->kind == ATOM_SYMBOL)
+            node = disc_find_symbol_branch(node, ground->sym_id);
+        else if (ground->kind == ATOM_GROUNDED &&
+                 ground->ground.gkind == GV_INT)
+            node = disc_find_integer_branch(node, ground->ground.ival);
+        else
+            return false;
+        if (!node)
+            return true;
+    }
+    return disc_project_node_column(
+        space, node, column, count_out, sum_out, product_out, product_ok);
+}
+
+bool disc_count_flat_bound_vars(
+    const DiscNode *root, const Atom *pattern,
+    const VarId *bind_ids, Atom *const *bind_values, size_t bind_len,
+    CettaIndex *out_count) {
+    if (out_count)
+        *out_count = 0u;
+    if (!root || !pattern || !out_count ||
+        pattern->kind != ATOM_EXPR || pattern->expr.len == 0u ||
+        (bind_len > 0u && (!bind_ids || !bind_values)))
+        return false;
+    const DiscNode *node = disc_find_expression_branch(
+        root, pattern->expr.len);
+    if (!node)
+        return true;
+    for (CettaExprIndex index = 0u; index < pattern->expr.len; index++) {
+        const Atom *item = pattern->expr.elems[index];
+        const Atom *ground = item;
+        if (!item)
+            return false;
+        if (item->kind == ATOM_VAR) {
+            ground = NULL;
+            for (size_t bind = 0u; bind < bind_len; bind++) {
+                if (bind_ids[bind] == item->var_id) {
+                    ground = bind_values[bind];
+                    break;
+                }
+            }
+        }
+        if (!ground || ground->kind == ATOM_VAR) {
+            if (!disc_tail_is_free_linear(
+                    pattern, index, bind_ids, bind_len))
+                return false;
+            uint64_t sum = 0u;
+            if (!disc_sum_wildcard_leaves(
+                    node,
+                    (unsigned)(pattern->expr.len - index), &sum))
+                return false;
+            *out_count = (CettaIndex)sum;
+            return true;
+        }
+        if (disc_find_variable_branch(node))
+            return false;
+        if (ground->kind == ATOM_SYMBOL)
+            node = disc_find_symbol_branch(node, ground->sym_id);
+        else if (ground->kind == ATOM_GROUNDED &&
+                 ground->ground.gkind == GV_INT)
+            node = disc_find_integer_branch(node, ground->ground.ival);
+        else
+            return false;
+        if (!node)
+            return true;
+    }
+    *out_count = node->leaves.count;
+    return true;
+}
+
+bool disc_count_flat_trailing_wildcards(
+    const DiscNode *root, const Atom *pattern, CettaIndex *out_count) {
+    if (out_count)
+        *out_count = 0u;
+    if (!root || !pattern || !out_count ||
+        pattern->kind != ATOM_EXPR || pattern->expr.len == 0u)
+        return false;
+    CettaExprIndex first_var = pattern->expr.len;
+    for (CettaExprIndex index = 0u; index < pattern->expr.len; index++) {
+        const Atom *item = pattern->expr.elems[index];
+        if (!item)
+            return false;
+        if (item->kind == ATOM_VAR) {
+            first_var = index;
+            break;
+        }
+        if (item->kind == ATOM_SYMBOL)
+            continue;
+        if (item->kind == ATOM_GROUNDED &&
+            item->ground.gkind == GV_INT)
+            continue;
+        return false;
+    }
+    for (CettaExprIndex index = first_var;
+         index < pattern->expr.len; index++) {
+        if (!pattern->expr.elems[index] ||
+            pattern->expr.elems[index]->kind != ATOM_VAR)
+            return false;
+    }
+    const DiscNode *node = disc_find_expression_branch(
+        root, pattern->expr.len);
+    if (!node)
+        return true;
+    for (CettaExprIndex index = 0u; index < first_var; index++) {
+        if (disc_find_variable_branch(node))
+            return false;
+        const Atom *item = pattern->expr.elems[index];
+        if (item->kind == ATOM_SYMBOL)
+            node = disc_find_symbol_branch(node, item->sym_id);
+        else
+            node = disc_find_integer_branch(node, item->ground.ival);
+        if (!node)
+            return true;
+    }
+    uint64_t sum = 0u;
+    unsigned wildcards = (unsigned)(pattern->expr.len - first_var);
+    if (!disc_sum_wildcard_leaves(node, wildcards, &sum))
+        return false;
+    *out_count = (CettaIndex)sum;
     return true;
 }
 

@@ -1,0 +1,1 @@
+(Error (+ (Error (Error (Error (Error (Error (superpose 1 2) IncorrectNumberOfArguments) IncorrectNumberOfArguments) IncorrectNumberOfArguments) IncorrectNumberOfArguments) IncorrectNumberOfArguments) 1) (BadArgType 1 Number Expression))

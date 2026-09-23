@@ -3583,7 +3583,8 @@ static PreparedPureMatchState prepared_pure_match_same_value(
     Atom *bound, Atom *value) {
     if (!bound || !value || atom_has_vars(bound) || atom_has_vars(value))
         return PREPARED_PURE_MATCH_ERROR;
-    return atom_eq(bound, value)
+    return atom_eq(bound, value) ||
+            cetta_he_promoted_numbers_equal(bound, value)
         ? PREPARED_PURE_MATCH_MATCHED : PREPARED_PURE_MATCH_MISMATCH;
 }
 
@@ -3695,8 +3696,10 @@ static PreparedPureMatchState prepared_pure_match_equation(
                 break;
             }
             case PREPARED_PURE_MATCH_OP_ATOM:
-                equal = value->kind == op->literal->kind &&
-                        atom_eq(op->literal, value);
+                equal = value && op->literal &&
+                    ((value->kind == op->literal->kind &&
+                      atom_eq(op->literal, value)) ||
+                     cetta_he_promoted_numbers_equal(op->literal, value));
                 break;
             case PREPARED_PURE_MATCH_OP_EXPR:
                 equal = value->kind == ATOM_EXPR &&
@@ -4351,6 +4354,17 @@ static bool prepared_pure_is_false(Atom *atom) {
     return atom_is_symbol_id(atom, g_builtin_syms.false_text) ||
            (atom && atom->kind == ATOM_GROUNDED &&
             atom->ground.gkind == GV_BOOL && !atom->ground.bval);
+}
+
+/* PeTTa `if` takes the else branch for any other non-empty, non-error value.
+ * A variable still belongs to the general machine, which tries both branches. */
+static bool prepared_pure_petta_else_value(Atom *condition) {
+    return eval_current_language_id &&
+        eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+        condition &&
+        condition->kind != ATOM_VAR &&
+        !atom_is_error(condition) &&
+        !atom_is_empty(condition);
 }
 
 #if CETTA_BUILD_WITH_GMP
@@ -5064,7 +5078,9 @@ static PreparedPureTruth prepared_pure_inline_truth(
             ? PREPARED_PURE_TRUTH_TRUE : PREPARED_PURE_TRUTH_FALSE;
     if (condition.atom && prepared_pure_is_true(condition.atom))
         return PREPARED_PURE_TRUTH_TRUE;
-    if (condition.atom && prepared_pure_is_false(condition.atom))
+    if (condition.atom &&
+        (prepared_pure_is_false(condition.atom) ||
+         prepared_pure_petta_else_value(condition.atom)))
         return PREPARED_PURE_TRUTH_FALSE;
     return PREPARED_PURE_TRUTH_NOT_BOOLEAN;
 }
@@ -6704,7 +6720,9 @@ static PreparedPureRunResult prepared_pure_answer_cursor_run(
                 ? program->slots[step->slot] : NULL;
             if (condition && prepared_pure_is_true(condition))
                 pc++;
-            else if (condition && prepared_pure_is_false(condition))
+            else if (condition &&
+                     (prepared_pure_is_false(condition) ||
+                      prepared_pure_petta_else_value(condition)))
                 pc = step->target;
             else
                 goto unsupported;
@@ -7092,6 +7110,7 @@ bool cetta_prepared_pure_answer_cursor_frame(
         frame_out->next_equation = equation->equation;
         frame_out->next_logical_index = equation->logical_index;
     }
+    frame_out->resumes_continuation = frame->continuation != NULL;
     return true;
 }
 
@@ -7430,7 +7449,8 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
                 CettaExprIndex branch;
                 if (prepared_pure_is_true(condition))
                     branch = 2u;
-                else if (prepared_pure_is_false(condition))
+                else if (prepared_pure_is_false(condition) ||
+                         prepared_pure_petta_else_value(condition))
                     branch = 3u;
                 else
                     return prepared_pure_runtime_decline(
@@ -7707,7 +7727,8 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
                 Atom *condition = program->values[--program->value_len];
                 truth = prepared_pure_is_true(condition)
                     ? PREPARED_PURE_TRUTH_TRUE
-                    : prepared_pure_is_false(condition)
+                    : prepared_pure_is_false(condition) ||
+                        prepared_pure_petta_else_value(condition)
                         ? PREPARED_PURE_TRUTH_FALSE
                         : PREPARED_PURE_TRUTH_NOT_BOOLEAN;
             }

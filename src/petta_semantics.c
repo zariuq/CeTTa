@@ -1800,8 +1800,10 @@ static Atom *petta_foldall_lower(Arena *arena, Atom *form) {
     Atom *raw_item = atom_var_with_id(
         arena, "__petta_fold_raw_item", fresh_var_id());
     /* PeTTa's aggregate goal calls reduce/2 for every yielded occurrence.
-     * Express that value demand as an ordinary chain so an executable result
-     * is normalized before the fold algebra observes it. */
+     * SWI foldall/4 calls the closure as call(Op, State0, State) after the
+     * closure has already captured the yielded value, so the step is
+     * (function item accumulator).  The chain normalizes that value before
+     * the fold algebra observes it. */
     Atom *demanded_item = atom_expr2(
         arena,
         atom_symbol_id(arena, g_builtin_syms.eval),
@@ -1814,7 +1816,7 @@ static Atom *petta_foldall_lower(Arena *arena, Atom *form) {
     };
     Atom *stream = atom_expr(arena, stream_elems, 4u);
     Atom *step = atom_expr3(
-        arena, form->expr.elems[1], acc, item);
+        arena, form->expr.elems[1], item, acc);
     Atom *elems[6] = {
         atom_symbol_id(arena, g_builtin_syms.fold),
         stream,
