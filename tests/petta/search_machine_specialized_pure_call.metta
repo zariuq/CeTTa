@@ -1,6 +1,6 @@
 ; A ground partial is a PeTTa value, not syntax to execute.  The specialized
 ; recursive closure may carry it through the shared prepared machine without
-; repeatedly rediscovering the same clause and substitution plan.
+; repeatedly rediscovering the same equation and substitution plan.
 (= (prepared-specialized-loop $f $n)
    (if (== $n 0)
        0

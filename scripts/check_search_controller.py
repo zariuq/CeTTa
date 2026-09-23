@@ -495,7 +495,7 @@ def main() -> int:
 
     # The observation-derived default enters the continuation hub only for
     # unresolved bounded demand.  It runs deterministic stretches inside the
-    # provider and returns to the hub at exactly externalizable clause choices,
+    # provider and returns to the hub at exactly externalizable equation choices,
     # rather than scheduling every machine transition.
     auto_once = run(
         binary, "once_recursive_first.metta", controller="auto",

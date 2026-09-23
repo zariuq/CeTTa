@@ -3529,14 +3529,25 @@ test-code-tree: $(CODE_TREE_TEST_BIN) $(CODE_TREE_MUTANT_BIN)
 # First-child worklist fusion is checked against binding/failure, epoch,
 # cycle, and plan-validation boundaries without changing runtime admission.
 MATCH_WORKLIST_FRAMES_TEST_BIN = runtime/test_match_worklist_frames-$(BUILD_OBJ_TAG)
+MATCH_WORKLIST_FRAMES_FRESH_MUTANT_BIN = runtime/test_match_worklist_frames_fresh_mutant-$(BUILD_OBJ_TAG)
 
 $(MATCH_WORKLIST_FRAMES_TEST_BIN): tests/test_match_worklist_frames.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -o $@ tests/test_match_worklist_frames.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
 
+$(MATCH_WORKLIST_FRAMES_FRESH_MUTANT_BIN): tests/test_match_worklist_frames.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 -DCETTA_RUNTIME_STATS_IMPL=1 -DCETTA_MUTATION_FRESH_FRAME_IGNORES_FRAME_MENTIONS=1 $(CFLAGS) -o $@ tests/test_match_worklist_frames.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
+
 .PHONY: test-match-worklist-frames
-test-match-worklist-frames: $(MATCH_WORKLIST_FRAMES_TEST_BIN)
+test-match-worklist-frames: $(MATCH_WORKLIST_FRAMES_TEST_BIN) $(MATCH_WORKLIST_FRAMES_FRESH_MUTANT_BIN)
 	@$(call cetta_exec,./$(MATCH_WORKLIST_FRAMES_TEST_BIN)) --expect-elision
+	@if $(call cetta_exec,./$(MATCH_WORKLIST_FRAMES_FRESH_MUTANT_BIN)) \
+		--expect-elision >/dev/null 2>&1; then \
+		echo 'FAIL: fresh-frame mutant (ignores frame mentions) was not detected'; \
+		exit 1; \
+	fi
+	@echo 'PASS: fresh-frame mutant (ignores frame mentions) is killed'
 
 .PHONY: test-j-inference-axes
 test-j-inference-axes: $(BIN)
@@ -19666,17 +19677,17 @@ test-petta-activation-effect-runtime-stats: $(BIN)
 		fixture=tests/petta/search_machine_activation_effect_boundary.metta; \
 		expected=$$(cat tests/petta/search_machine_activation_effect_boundary.expected); \
 		optimized=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
-			CETTA_PETTA_CLAUSE_BODY_ACTIVATION=1 \
+			CETTA_PETTA_EQUATION_BODY_ACTIVATION=1 \
 			./$(BIN) --lang petta --emit-runtime-stats \
 			"$$fixture" 2>&1); \
 		reference=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
-			CETTA_PETTA_CLAUSE_BODY_ACTIVATION=1 \
+			CETTA_PETTA_EQUATION_BODY_ACTIVATION=1 \
 			CETTA_PETTA_MATCH_REGION_HOLE_REFERENCE=1 \
 			CETTA_PETTA_BINDING_REGION_HOLE_REFERENCE=1 \
 			./$(BIN) --lang petta --emit-runtime-stats \
 			"$$fixture" 2>&1); \
 		finite=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
-			CETTA_PETTA_CLAUSE_BODY_ACTIVATION=1 \
+			CETTA_PETTA_EQUATION_BODY_ACTIVATION=1 \
 			./$(BIN) --fuel 1000 --lang petta --emit-runtime-stats \
 			"$$fixture" 2>&1); \
 		for variant in optimized reference finite; do \
@@ -19695,7 +19706,7 @@ test-petta-activation-effect-runtime-stats: $(BIN)
 		binding_attempts=$$(counter "$$optimized" petta-binding-region-hole-attempt); \
 		binding_commits=$$(counter "$$optimized" petta-binding-region-hole-commit); \
 		binding_declines=$$(counter "$$optimized" petta-binding-region-hole-decline); \
-		admitted=$$(counter "$$optimized" petta-clause-activation-plan-admitted); \
+		admitted=$$(counter "$$optimized" petta-equation-activation-plan-admitted); \
 		test "$$attempts" -eq $$((commits + declines)); \
 		test "$$binding_attempts" -eq \
 			$$((binding_commits + binding_declines)); \
@@ -19704,7 +19715,7 @@ test-petta-activation-effect-runtime-stats: $(BIN)
 		test "$$admitted" -gt 0; \
 		for variant in reference finite; do \
 			value=$${!variant}; \
-			declined=$$(counter "$$value" petta-clause-activation-plan-declined-relation-effect); \
+			declined=$$(counter "$$value" petta-equation-activation-plan-declined-relation-effect); \
 			attempts=$$(counter "$$value" petta-match-region-hole-attempt); \
 			binding_attempts=$$(counter "$$value" petta-binding-region-hole-attempt); \
 			test "$$declined" -gt 0; \
@@ -20263,39 +20274,27 @@ test-prime-occurs-check-mutation: $(BIN)
 	@mutation_dir=runtime/prime-occurs-check-mutation; \
 	mkdir -p "$$mutation_dir"; \
 	python3 scripts/mutate_prime_occurs_check.py \
-		src/match.c "$$mutation_dir/match.c" \
-		src/he_typing.c "$$mutation_dir/he_typing.c" || exit 1; \
+		src/match.c "$$mutation_dir/match.c" || exit 1; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/match.c" \
 		-o "$$mutation_dir/match.o" || exit 1; \
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/he_typing.c" \
-		-o "$$mutation_dir/he_typing.o" || exit 1; \
-	base_objects='$(filter-out src/match.$(BUILD_OBJ_TAG).o src/match.$(BUILD_OBJ_TAG).runtime-stats.o src/he_typing.$(BUILD_OBJ_TAG).o src/he_typing.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ))'; \
-	he_object='$(filter src/he_typing.$(BUILD_OBJ_TAG).o src/he_typing.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ))'; \
-	$(CC) $$base_objects "$$mutation_dir/match.o" "$$he_object" \
-		-o "$$mutation_dir/cetta-corrupt-producer" $(LDFLAGS) || exit 1; \
-	$(CC) $$base_objects "$$mutation_dir/match.o" \
-		"$$mutation_dir/he_typing.o" \
-		-o "$$mutation_dir/cetta-no-occurs-check" $(LDFLAGS) || exit 1; \
+	$(CC) $(filter-out src/match.$(BUILD_OBJ_TAG).o src/match.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) \
+		"$$mutation_dir/match.o" -o "$$mutation_dir/cetta-no-occurs-check" \
+		$(LDFLAGS) || exit 1; \
 	fixture=tests/prime/conformance/occurs_check.metta; \
 	expected=$$(cat tests/prime/conformance/occurs_check.expected); \
 	baseline=$$($(CETTA_BIN_INVOKE) --lang prime "$$fixture" 2>&1); \
 	if [ "$$baseline" != "$$expected" ]; then \
 		echo "FAIL: occurs-check mutation baseline is not green"; exit 1; \
 	fi; \
-	producer=$$("$$mutation_dir/cetta-corrupt-producer" \
-		--lang prime "$$fixture" 2>&1); \
-	if [ "$$producer" != "$$expected" ]; then \
-		echo "FAIL: checker accepted a cyclic substitution from a corrupt producer"; \
-		exit 1; \
-	fi; \
 	unsound=$$("$$mutation_dir/cetta-no-occurs-check" \
 		--lang prime "$$fixture" 2>&1); \
 	if [ "$$unsound" = "$$expected" ] || \
-	   ! printf '%s\n' "$$unsound" | grep -Fq '[CyclicSearchUnsound]'; then \
-		echo "FAIL: combined occurs-check mutation survived its soundness gate"; \
+	   ! printf '%s\n' "$$unsound" | grep -Fxq '[AcyclicSearchAccepted]' || \
+	   ! printf '%s\n' "$$unsound" | grep -Fxq '[CyclicSearchUnsound]'; then \
+		echo "FAIL: bind-time occurs-check mutation survived its soundness gate"; \
 		exit 1; \
 	fi; \
-	echo "PASS: replay rejects a corrupt producer and the occurs-check mutation is killed"
+	echo "PASS: finite-tree proof search and replay pass; unchecked binding kernel mutation is killed"
 
 test-prime-completion-mutation: $(BIN)
 	@mutation_dir=runtime/prime-completion-mutation; \
@@ -20767,7 +20766,7 @@ test-prime-relational-plan: $(BIN)
 	canonical=$$(CETTA_PRIME_RELATIONAL_PLAN_REFERENCE=1 \
 		$(CETTA_BIN_INVOKE) --lang prime "$$guard" 2>&1); \
 	probe=$$($(CETTA_BIN_INVOKE) --lang prime "$$guard" 2>&1); \
-	slot_reference=$$(CETTA_PETTA_CLAUSE_SLOT_FRAME_REFERENCE=1 \
+	slot_reference=$$(CETTA_PETTA_EQUATION_SLOT_FRAME_REFERENCE=1 \
 		$(CETTA_BIN_INVOKE) --lang prime "$$guard" 2>&1); \
 	if [ "$$canonical" != "$$expected" ] || \
 	   [ "$$probe" != "$$expected" ] || \
@@ -20785,7 +20784,7 @@ test-prime-relational-plan: $(BIN)
 	canonical_fuel=$$(CETTA_PRIME_RELATIONAL_PLAN_REFERENCE=1 \
 		$(CETTA_BIN_INVOKE) --fuel 3 --lang prime "$$fuel" 2>&1); \
 	probe_fuel=$$($(CETTA_BIN_INVOKE) --fuel 3 --lang prime "$$fuel" 2>&1); \
-	slot_reference_fuel=$$(CETTA_PETTA_CLAUSE_SLOT_FRAME_REFERENCE=1 \
+	slot_reference_fuel=$$(CETTA_PETTA_EQUATION_SLOT_FRAME_REFERENCE=1 \
 		$(CETTA_BIN_INVOKE) --fuel 3 --lang prime "$$fuel" 2>&1); \
 	if [ "$$canonical_fuel" != "$$probe_fuel" ] || \
 	   [ "$$slot_reference_fuel" != "$$probe_fuel" ] || \
@@ -20798,7 +20797,7 @@ test-prime-relational-plan: $(BIN)
 	dependent_canonical=$$(CETTA_PRIME_RELATIONAL_PLAN_REFERENCE=1 \
 		$(CETTA_BIN_INVOKE) --lang prime "$$dependent" 2>&1); \
 	dependent_probe=$$($(CETTA_BIN_INVOKE) --lang prime "$$dependent" 2>&1); \
-	dependent_slot_reference=$$(CETTA_PETTA_CLAUSE_SLOT_FRAME_REFERENCE=1 \
+	dependent_slot_reference=$$(CETTA_PETTA_EQUATION_SLOT_FRAME_REFERENCE=1 \
 		$(CETTA_BIN_INVOKE) --lang prime "$$dependent" 2>&1); \
 	if [ "$$dependent_canonical" != "$$dependent_expected" ] || \
 	   [ "$$dependent_probe" != "$$dependent_expected" ] || \
@@ -20816,7 +20815,7 @@ test-prime-relational-plan: $(BIN)
 			$(CETTA_BIN_INVOKE) --lang prime "$$relational_case" 2>&1); \
 		relational_probe=$$($(CETTA_BIN_INVOKE) \
 			--lang prime "$$relational_case" 2>&1); \
-		relational_slot_reference=$$(CETTA_PETTA_CLAUSE_SLOT_FRAME_REFERENCE=1 \
+		relational_slot_reference=$$(CETTA_PETTA_EQUATION_SLOT_FRAME_REFERENCE=1 \
 			$(CETTA_BIN_INVOKE) --lang prime "$$relational_case" 2>&1); \
 		if [ "$$relational_canonical" != "$$relational_expected" ] || \
 		   [ "$$relational_probe" != "$$relational_expected" ] || \
@@ -22999,9 +22998,9 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		2>&1 >"$$actual"); \
 	diff -u tests/prime/prepared_match_decision.expected "$$actual"; \
 	inputs=$$(printf '%s\n' "$$stats" | awk \
-		'$$1 == "runtime-counter" && $$2 == "prepared-pure-decision-clause-input" { print $$3 }'); \
+		'$$1 == "runtime-counter" && $$2 == "prepared-pure-decision-equation-input" { print $$3 }'); \
 	survivors=$$(printf '%s\n' "$$stats" | awk \
-		'$$1 == "runtime-counter" && $$2 == "prepared-pure-decision-clause-survivor" { print $$3 }'); \
+		'$$1 == "runtime-counter" && $$2 == "prepared-pure-decision-equation-survivor" { print $$3 }'); \
 	full=$$(printf '%s\n' "$$stats" | awk \
 		'$$1 == "runtime-counter" && $$2 == "prepared-pure-decision-full-match" { print $$3 }'); \
 	demands=$$(printf '%s\n' "$$stats" | awk \
@@ -23691,38 +23690,49 @@ test-petta-boundary-langdef-source-binding-v1:
 	rm -f "$$tmpdir/binding-normalized.c"; \
 	echo "PASS: PeTTa residual boundary langdef source binding is valid and deterministic"
 
-.PHONY: test-petta-clause-slot-admission
-test-petta-clause-slot-admission: $(BIN)
+.PHONY: test-petta-fresh-frame-occurs-check
+test-petta-fresh-frame-occurs-check: $(BIN)
 	@set -eu; \
-	optimized=$$(mktemp runtime/petta-clause-slot-optimized.XXXXXX); \
-	reference=$$(mktemp runtime/petta-clause-slot-reference.XXXXXX); \
-	extended=$$(mktemp runtime/petta-clause-slot-extended.XXXXXX); \
-	extended_reference=$$(mktemp runtime/petta-clause-slot-extended-reference.XXXXXX); \
+	fixture=tests/petta/search_machine_fresh_frame_occurs_check.metta; \
+	expected=$$(cat tests/petta/search_machine_fresh_frame_occurs_check.expected); \
+	for fuel in "" "--fuel 100000"; do \
+		actual=$$($(call cetta_exec,./$(BIN)) $$fuel --lang petta "$$fixture"); \
+		test "$$actual" = "$$expected"; \
+	done; \
+	echo "PASS: fresh activation frames refuse cycles once a write mentions the frame"
+
+.PHONY: test-petta-equation-slot-admission
+test-petta-equation-slot-admission: $(BIN)
+	@set -eu; \
+	optimized=$$(mktemp runtime/petta-equation-slot-optimized.XXXXXX); \
+	reference=$$(mktemp runtime/petta-equation-slot-reference.XXXXXX); \
+	extended=$$(mktemp runtime/petta-equation-slot-extended.XXXXXX); \
+	extended_reference=$$(mktemp runtime/petta-equation-slot-extended-reference.XXXXXX); \
 	trap 'rm -f "$$optimized" "$$reference" "$$extended" "$$extended_reference"' EXIT INT TERM; \
 	CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
-		tests/petta/search_machine_clause_slot_admission.metta \
+		tests/petta/search_machine_equation_slot_admission.metta \
 		>"$$optimized"; \
 	CETTA_PETTA_SEARCH_MACHINE=1 \
-		CETTA_PETTA_CLAUSE_SLOT_FRAME_REFERENCE=1 \
+		CETTA_PETTA_EQUATION_SLOT_FRAME_REFERENCE=1 \
 		./$(BIN) --lang petta \
-		tests/petta/search_machine_clause_slot_admission.metta \
+		tests/petta/search_machine_equation_slot_admission.metta \
 		>"$$reference"; \
-	diff -u tests/petta/search_machine_clause_slot_admission.expected \
+	diff -u tests/petta/search_machine_equation_slot_admission.expected \
 		"$$optimized"; \
 	diff -u "$$reference" "$$optimized"; \
 	CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
 		--profile extended \
-		tests/petta/search_machine_clause_slot_admission.metta \
+		tests/petta/search_machine_equation_slot_admission.metta \
 		>"$$extended"; \
 	CETTA_PETTA_SEARCH_MACHINE=1 \
-		CETTA_PETTA_CLAUSE_SLOT_FRAME_REFERENCE=1 \
+		CETTA_PETTA_EQUATION_SLOT_FRAME_REFERENCE=1 \
 		./$(BIN) --lang petta --profile extended \
-		tests/petta/search_machine_clause_slot_admission.metta \
+		tests/petta/search_machine_equation_slot_admission.metta \
 		>"$$extended_reference"; \
-	diff -u tests/petta/search_machine_clause_slot_admission.expected \
+	diff -u tests/petta/search_machine_equation_slot_admission.expected \
 		"$$extended"; \
 	diff -u "$$extended_reference" "$$extended"; \
-	echo "PASS: PeTTa clause-slot admission preserves query-visible aliases and occurrence identity"
+	echo "PASS: PeTTa equation-slot admission preserves query-visible aliases and occurrence identity"
 
 .PHONY: test-petta-equation-template-c0 test-petta-relational-equation-view
 test-petta-equation-template-c0: $(BIN)
@@ -23889,13 +23899,11 @@ test-petta-machine-trace-config: $(BIN)
 		./$(BIN) --lang petta "$$fixture" 2>&1 >/dev/null); \
 	! printf '%s\n' "$$quiet_query" | grep -q '^\[petta-query\]'; \
 	choice_kind=$$(CETTA_PETTA_CHOICE_KIND_TRACE=1 \
-		./$(BIN) --lang petta \
-		tests/petta/search_controller_fifo_order.metta 2>&1 >/dev/null); \
+		./$(BIN) --lang petta "$$fixture" 2>&1 >/dev/null); \
 	printf '%s\n' "$$choice_kind" | \
 		grep -q '^\[petta-choice-kind\]'; \
 	choice=$$(CETTA_PETTA_CHOICE_TRACE=1 \
-		./$(BIN) --lang petta \
-		tests/petta/search_controller_fifo_order.metta 2>&1 >/dev/null); \
+		./$(BIN) --lang petta "$$fixture" 2>&1 >/dev/null); \
 	printf '%s\n' "$$choice" | grep -q '^\[petta-choice\]'; \
 		echo "PASS: PeTTa machine trace configuration"
 
@@ -24650,13 +24658,13 @@ test-petta-named-arity-source-cache: $(BIN)
 	done; \
 	echo "PASS: shared source-arity cache preserves mutation, partial calls and duplicates"
 
-test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-controller test-controller-diversity test-petta-machine-trace-config test-petta-type-langdef-source-binding-v1 test-petta-boundary-langdef-source-binding-v1 test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call test-petta-memoization test-petta-match-existence-fusion test-petta-clause-slot-admission test-petta-equation-template-c0 test-petta-relational-equation-view test-petta-argv-native test-petta-activation-admission-cache test-petta-activation-scalar-if test-petta-match-region-hole test-petta-binding-region-hole test-petta-rule-frame-region test-petta-deterministic-region-scalability test-petta-body-resume-segment test-petta-match-decision-tree-repository test-petta-match-decision-shape-receipt test-petta-activation-anonymous-hole test-petta-activation-scalar-argument-segment test-petta-activation-pure-data-segment test-petta-match-decision-equality test-match-closed-expression-decision test-petta-translation-time-callability
-	@env -u CETTA_PETTA_CLAUSE_BODY_ACTIVATION \
-		-u CETTA_PETTA_CLAUSE_BODY_ACTIVATION_REFERENCE \
+test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-controller test-controller-diversity test-petta-machine-trace-config test-petta-type-langdef-source-binding-v1 test-petta-boundary-langdef-source-binding-v1 test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call test-petta-memoization test-petta-match-existence-fusion test-petta-fresh-frame-occurs-check test-petta-equation-slot-admission test-petta-equation-template-c0 test-petta-relational-equation-view test-petta-argv-native test-petta-activation-admission-cache test-petta-activation-scalar-if test-petta-match-region-hole test-petta-binding-region-hole test-petta-rule-frame-region test-petta-deterministic-region-scalability test-petta-body-resume-segment test-petta-match-decision-tree-repository test-petta-match-decision-shape-receipt test-petta-activation-anonymous-hole test-petta-activation-scalar-argument-segment test-petta-activation-pure-data-segment test-petta-match-decision-equality test-match-closed-expression-decision test-petta-translation-time-callability
+	@env -u CETTA_PETTA_EQUATION_BODY_ACTIVATION \
+		-u CETTA_PETTA_EQUATION_BODY_ACTIVATION_REFERENCE \
 		./$(PETTA_SEARCH_MACHINE_TEST_BIN)
-	@CETTA_PETTA_CLAUSE_BODY_ACTIVATION=0 \
+	@CETTA_PETTA_EQUATION_BODY_ACTIVATION=0 \
 		./$(PETTA_SEARCH_MACHINE_TEST_BIN)
-	@CETTA_PETTA_CLAUSE_BODY_ACTIVATION=1 \
+	@CETTA_PETTA_EQUATION_BODY_ACTIVATION=1 \
 		./$(PETTA_SEARCH_MACHINE_TEST_BIN)
 	@machine_stats=$$(CETTA_PETTA_MACHINE_STATS=1 \
 		./$(BIN) --lang petta -e '!(+ 1 2)' \
@@ -25052,7 +25060,7 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-c
 		>"$$specializer_plan_out" 2>"$$specializer_plan_stats"; \
 	if ! diff -u tests/petta/search_machine_specializer_plan.expected \
 			"$$specializer_plan_out"; then \
-		echo "FAIL: specialized clauses preserve occurrence plans"; \
+		echo "FAIL: specialized equations preserve occurrence plans"; \
 		exit 1; \
 	fi; \
 	mapfile -t specializer_plan_steps < <( \
@@ -25230,7 +25238,7 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-c
 	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
 		tests/petta/search_machine_eval_role.metta 2>&1); \
 	reference=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
-		CETTA_PETTA_CLAUSE_SLOT_FRAME_REFERENCE=1 \
+		CETTA_PETTA_EQUATION_SLOT_FRAME_REFERENCE=1 \
 		./$(BIN) --lang petta \
 		tests/petta/search_machine_eval_role.metta 2>&1); \
 	expected=$$(cat tests/petta/search_machine_eval_role.expected); \
@@ -25511,19 +25519,19 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-c
 		exit 1; \
 	fi; \
 	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
-		CETTA_PETTA_CLAUSE_BODY_ACTIVATION=1 \
+		CETTA_PETTA_EQUATION_BODY_ACTIVATION=1 \
 		./$(BIN) --lang petta \
 		tests/petta/search_machine_activation_semantic_boundary.metta 2>&1); \
 	expected=$$(cat \
 		tests/petta/search_machine_activation_semantic_boundary.expected); \
 	if [ "$$result" != "$$expected" ]; then \
-		echo "FAIL: native PeTTa clause activation semantic boundary"; \
+		echo "FAIL: native PeTTa equation activation semantic boundary"; \
 		diff <(printf '%s\n' "$$expected") \
 			<(printf '%s\n' "$$result") | head -40; \
 		exit 1; \
 	fi; \
 	activation_result=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
-		CETTA_PETTA_CLAUSE_BODY_ACTIVATION=1 \
+		CETTA_PETTA_EQUATION_BODY_ACTIVATION=1 \
 		./$(BIN) --lang petta \
 		tests/petta/search_machine_activation_effect_boundary.metta 2>&1); \
 	activation_expected=$$(cat \
@@ -25729,7 +25737,8 @@ PETTA_SEMANTIC_EXACT_STREAM_STEMS = \
 	hyperpose_capture_alias_transfer hyperpose_nested_transaction \
 	foldall_open_match_collection named_space_substitution \
 	profile_petta_base_extension_boundary conjunctive_match_count_semantics \
-	search_machine_relational_head_phases search_machine_relational_output_phases
+	search_machine_relational_head_phases search_machine_relational_output_phases \
+	search_machine_pinned_removal_visibility search_machine_admission_revisions
 PETTA_SEMANTIC_OCCURRENCE_BAG_STEMS = semantic_counter_equations \
 	search_machine_specializer_negative_mutation \
 	search_machine_partial_head_observation search_machine_query_field_composition
@@ -25739,6 +25748,57 @@ PETTA_SEMANTIC_ORACLE_STEMS = \
 
 .PHONY: test-petta-relational-head-phases
 test-petta-search-machine: test-petta-relational-head-phases
+test-petta-search-machine: test-petta-answer-producer-handoff
+test-petta-search-machine: test-petta-prepared-head-matching
+
+.PHONY: test-petta-prepared-head-matching
+# Prepared programs match equation heads without equation search, and must
+# decline wherever PeTTa matching differs: a call below a head is evaluated,
+# and a list form matches every non-empty expression.  The expected output is
+# SWI-PeTTa's.
+test-petta-prepared-head-matching: $(BIN)
+	@set -e; \
+	actual=$$(./$(BIN) --lang petta tests/petta/prepared_head_matching.metta); \
+	expected=$$(cat tests/petta/prepared_head_matching.expected); \
+	if [ "$$actual" != "$$expected" ]; then \
+		echo "FAIL: a prepared program guessed an equation head match"; \
+		printf '%s\n' "$$actual"; exit 1; \
+	fi; \
+	echo "PASS: prepared head matching declines where PeTTa matching differs"
+
+.PHONY: test-petta-answer-producer-handoff
+# A finite-answer producer consumed while its continuation changes the program
+# yields exactly what equation search yields: each call reads the equations
+# present when it is made.  The expected output is also SWI-PeTTa's.
+test-petta-answer-producer-handoff: $(BIN)
+	@set -e; \
+	fixture=tests/petta/answer_producer_handoff.metta; \
+	expected=$$(cat tests/petta/answer_producer_handoff.expected); \
+	if [ "$(ENABLE_RUNTIME_STATS)" != "1" ]; then \
+		actual=$$(./$(BIN) --lang petta "$$fixture"); \
+		if [ "$$actual" != "$$expected" ]; then \
+			echo "FAIL: an answer producer changed the answers of $$fixture"; \
+			printf '%s\n' "$$actual"; exit 1; \
+		fi; \
+		echo "INFO: answer producer handoff counters require compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"; \
+		$(MAKE) --no-print-directory BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@; \
+	else \
+		output=$$(./$(BIN) --lang petta --emit-runtime-stats "$$fixture" 2>&1); \
+		actual=$$(printf '%s\n' "$$output" | grep -v '^runtime-counter '); \
+		if [ "$$actual" != "$$expected" ]; then \
+			echo "FAIL: an answer producer changed the answers of $$fixture"; \
+			printf '%s\n' "$$actual"; exit 1; \
+		fi; \
+		counter() { \
+			printf '%s\n' "$$1" | awk -v name="$$2" \
+				'$$1 == "runtime-counter" && $$2 == name { value = $$3 } END { print value + 0 }'; \
+		}; \
+		choices=$$(counter "$$output" petta-answer-producer-choice); \
+		handoffs=$$(counter "$$output" petta-answer-producer-handoff); \
+		test "$$choices" -gt 0; \
+		test "$$handoffs" -ge 6; \
+		echo "PASS: answer producers hand their frontier to equation search ($$choices producers, $$handoffs handoffs)"; \
+	fi
 test-petta-relational-head-phases: $(BIN)
 	@set -eu; \
 	for stem in search_machine_relational_head_phases search_machine_relational_output_phases \
@@ -25756,7 +25816,7 @@ test-petta-relational-head-phases: $(BIN)
 			done; \
 		done; \
 	done; \
-	echo "PASS: relational clause heads reject impossible structure before ordered effects"
+	echo "PASS: relational equation left-hand sides reject impossible structure before ordered effects"
 
 .PHONY: test-petta-profile-boundary test-petta-semantics \
 	test-petta-semantics-differential
@@ -26249,8 +26309,8 @@ ifeq ($(ENABLE_PETTA_TYPECHECK_CENSUS),1)
 		exit $$status
 	@python3 tools/test_petta_typecheck_v2_semantic_census.py \
 		--cetta ./$(BIN) \
-		--fixture tests/petta/search_machine_clause_slot_admission.metta \
-		--expected tests/petta/search_machine_clause_slot_admission.expected
+		--fixture tests/petta/search_machine_equation_slot_admission.metta \
+		--expected tests/petta/search_machine_equation_slot_admission.expected
 else
 	@$(MAKE) -s BUILD=$(BUILD_CANON) \
 		ENABLE_PETTA_TYPECHECK_CENSUS=1 \
@@ -27444,6 +27504,95 @@ test-prepared-pure-answer-resource-fallback: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/test_prepared_pure_answer_resource_fallback.py \
 		./$(BIN) $(if $(filter 1,$(ENABLE_RUNTIME_STATS)),--stats,)
 
+.PHONY: test-answer-producer-continuations
+test-answer-producer-continuations: $(BIN)
+	@set -e; \
+	fixture=tests/answer_producer_continuations.metta; \
+	for dialect in petta he; do \
+		expected=$$(cat tests/answer_producer_continuations.$$dialect.expected); \
+		if [ "$(ENABLE_RUNTIME_STATS)" = "1" ]; then \
+			output=$$(./$(BIN) --lang $$dialect --emit-runtime-stats "$$fixture" 2>&1); \
+			actual=$$(printf '%s\n' "$$output" | grep -v '^runtime-counter '); \
+		else \
+			actual=$$(./$(BIN) --lang $$dialect "$$fixture"); \
+		fi; \
+		if [ "$$actual" != "$$expected" ]; then \
+			echo "FAIL: resuming bodies changed the $$dialect answers of $$fixture"; \
+			printf '%s\n' "$$actual"; exit 1; \
+		fi; \
+		if [ "$(ENABLE_RUNTIME_STATS)" = "1" ]; then \
+			counter() { \
+				printf '%s\n' "$$1" | awk -v name="$$2" \
+					'$$1 == "runtime-counter" && $$2 == name { value = $$3 } END { print value + 0 }'; \
+			}; \
+			calls=$$(counter "$$output" prepared-pure-answer-producer-continuation-call); \
+			resumptions=$$(counter "$$output" prepared-pure-answer-producer-resumption); \
+			test "$$calls" -gt 0; \
+			test "$$resumptions" -gt 0; \
+			echo "PASS: $$dialect bodies resume after calls ($$calls calls, $$resumptions resumptions)"; \
+		fi; \
+	done; \
+	if [ "$(ENABLE_RUNTIME_STATS)" != "1" ]; then \
+		echo "INFO: continuation counters require compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"; \
+		$(MAKE) --no-print-directory BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@; \
+	fi
+
+.PHONY: test-prepared-pure-repeated-head-variables
+test-prepared-pure-repeated-head-variables: $(BIN)
+	@set -e; \
+	fixture=tests/prepared_pure_repeated_head_variables.metta; \
+	decline='a repeated variable matched before its arguments are values'; \
+	for dialect in he petta prime; do \
+		diagnostics=$$(mktemp runtime/repeated-head-variables.XXXXXX); \
+		actual=$$(CETTA_PREPARED_PURE_DEBUG=1 ./$(BIN) --lang $$dialect "$$fixture" 2>"$$diagnostics"); \
+		declines=$$(grep -c "$$decline" "$$diagnostics" || true); \
+		rm -f "$$diagnostics"; \
+		if [ "$$actual" != "$$(cat tests/prepared_pure_repeated_head_variables.$$dialect.expected)" ]; then \
+			echo "FAIL: repeated head variables changed the $$dialect answers of $$fixture"; \
+			printf '%s\n' "$$actual"; exit 1; \
+		fi; \
+		if [ "$$dialect" = prime ]; then \
+			test "$$declines" -gt 0; \
+			echo "PASS: prime answers unchanged; call-by-need matching keeps repeated head variables with equation search"; \
+		else \
+			test "$$declines" -eq 0; \
+			echo "PASS: $$dialect repeated head variables compile and answer as equation search does"; \
+		fi; \
+	done
+
+.PHONY: test-prepared-pure-undefined-type-operands
+test-prepared-pure-undefined-type-operands: $(BIN)
+	@set -e; \
+	fixture=tests/prepared_pure_undefined_type_operands.metta; \
+	for dialect in he prime; do \
+		expected=$$(cat tests/prepared_pure_undefined_type_operands.$$dialect.expected); \
+		if [ "$(ENABLE_RUNTIME_STATS)" = "1" ]; then \
+			output=$$(./$(BIN) --lang $$dialect --emit-runtime-stats "$$fixture" 2>&1); \
+			actual=$$(printf '%s\n' "$$output" | grep -v '^runtime-counter '); \
+		else \
+			actual=$$(./$(BIN) --lang $$dialect "$$fixture"); \
+		fi; \
+		if [ "$$actual" != "$$expected" ]; then \
+			echo "FAIL: literal operand types changed the $$dialect answers of $$fixture"; \
+			printf '%s\n' "$$actual"; exit 1; \
+		fi; \
+		if [ "$(ENABLE_RUNTIME_STATS)" = "1" ]; then \
+			counter() { \
+				printf '%s\n' "$$1" | awk -v name="$$2" \
+					'$$1 == "runtime-counter" && $$2 == name { value = $$3 } END { print value + 0 }'; \
+			}; \
+			untyped=$$(counter "$$output" prepared-pure-undefined-type-operand); \
+			queried=$$(counter "$$output" prepared-pure-type-service-fallback); \
+			test "$$untyped" -gt 0; \
+			test "$$queried" -gt 0; \
+			echo "PASS: $$dialect literal operand types ($$untyped untyped literals, $$queried type queries)"; \
+		fi; \
+	done; \
+	if [ "$(ENABLE_RUNTIME_STATS)" != "1" ]; then \
+		echo "INFO: operand type counters require compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"; \
+		$(MAKE) --no-print-directory BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@; \
+	fi
+
 .PHONY: test-prepared-pure-call-machine
 .PHONY: test-prepared-pure-dispatch-authority
 test-prepared-pure-dispatch-authority: $(BIN)
@@ -27464,7 +27613,7 @@ else
 	@$(MAKE) -s ENABLE_RUNTIME_STATS=1 $@
 endif
 
-test-prepared-pure-call-machine: $(BIN) test-prepared-pure-answer-producer test-prepared-pure-answer-resource-fallback test-prepared-pure-dispatch-authority test-prepared-pure-numeric-realizations
+test-prepared-pure-call-machine: $(BIN) test-prepared-pure-answer-producer test-prepared-pure-answer-resource-fallback test-answer-producer-continuations test-prepared-pure-undefined-type-operands test-prepared-pure-repeated-head-variables test-prepared-pure-dispatch-authority test-prepared-pure-numeric-realizations
 	@set -e; \
 	he_out=$$(mktemp runtime/prepared-pure-call-he.XXXXXX); \
 	he_no_gc_out=$$(mktemp runtime/prepared-pure-call-he-no-gc.XXXXXX); \

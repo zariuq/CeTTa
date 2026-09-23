@@ -2552,7 +2552,7 @@ static bool petta_block_env_note_fresh(
 }
 
 /* Roman's pattern attributes accumulate candidate evidence rather than
- * intersecting repeated occurrences.  This applies uniformly to clause-head,
+ * intersecting repeated occurrences.  This applies uniformly to equation-LHS,
  * let/case, and typed match patterns.  A second variant-equal candidate adds
  * nothing.  A singleton open candidate specializes in place when the next
  * occurrence supplies its witness.  Every other distinct second candidate
@@ -4289,10 +4289,10 @@ static bool petta_block_infer_expr(
             }
             bindings_free(&trial);
             if (!compatible) {
-                /* A disagreement between two uses of an undeclared clause
+                /* A disagreement between two uses of an undeclared equation
                  * parameter invalidates that inferred parameter type; it is
                  * not an author-written contract and cannot reject the
-                 * clause.  Keep checking the body so its result type can
+                 * equation.  Keep checking the body so its result type can
                  * still be learned, while the parameter is published as
                  * unknown and remains guarded at runtime. */
                 if (check->inferring_signature) {
@@ -5357,7 +5357,7 @@ static bool petta_block_current_signature_head(
 }
 
 static bool petta_block_pattern_fragment_supported(Atom *pattern) {
-    /* Clause heads are patterns, not evaluator calls.  Their complete Atom
+    /* Equation left-hand sides are patterns, not evaluator calls.  Their complete Atom
      * syntax is interpreted by petta_block_bind_pattern, including nested
      * products, constructors, lists, and as-patterns. */
     return pattern != NULL;
@@ -5876,10 +5876,10 @@ static size_t petta_block_equation_count(
         .arity = arity,
     };
 
-    PettaClauseCandidate *live = NULL;
+    PettaEquationCandidate *live = NULL;
     size_t live_len = 0u;
     if (check->program && !check->forms_include_live_equations &&
-        !petta_program_clause_snapshot(
+        !petta_program_candidate_snapshot(
             check->program, check->space, head->sym_id,
             &live, &live_len)) {
         petta_block_fault(
@@ -6239,8 +6239,8 @@ static bool petta_block_value_is_proven_proper_list(
     Atom *const *equations = petta_block_equations(
         check, value->expr.elems[0], arity,
         &equation_len);
-    bool saw_clause = equation_len > 0u;
-    bool proven = saw_clause;
+    bool saw_equation = equation_len > 0u;
+    bool proven = saw_equation;
     for (size_t index = 0u; index < equation_len; index++) {
         Atom *form = equations[index];
         if (!petta_block_value_is_proven_proper_list(
@@ -6307,7 +6307,7 @@ static bool petta_block_expression_produces_bound_bool(
     /* This direct judgment concerns the value a form finally produces, so it
      * passes through the binding and sequencing forms to the expression in
      * result position.  Without these cases the reasoning stops at the first
-     * `let*`, looks for clauses of a form that has none, and reports "not
+     * `let*`, looks for equations of a form that has none, and reports "not
      * provably a bound boolean" for bodies that plainly are one. */
     if (strcmp(head, "if") == 0 && expression->expr.len == 3u) {
         return petta_block_expression_produces_bound_bool(
@@ -6370,7 +6370,7 @@ static bool petta_block_expression_produces_bound_bool(
     size_t equation_len = 0u;
     Atom *const *equations = petta_block_equations(
         check, expression->expr.elems[0], arity, &equation_len);
-    bool saw_clause = equation_len > 0u;
+    bool saw_equation = equation_len > 0u;
     bool all_bound = true;
     for (size_t index = 0u; index < equation_len; index++) {
         Atom *form = equations[index];
@@ -6382,7 +6382,7 @@ static bool petta_block_expression_produces_bound_bool(
         }
     }
     check->bound_bool_stack_len--;
-    return saw_clause && all_bound;
+    return saw_equation && all_bound;
 }
 
 static bool petta_block_value_manifest_bool(
@@ -6406,14 +6406,14 @@ static bool petta_block_value_manifest_bool(
                PETTA_BLOCK_EFFECT_DET;
 }
 
-static bool petta_block_clause_heads_overlap(
+static bool petta_block_equation_lhs_overlap(
     PettaBlockCheck *check, Atom *left, Atom *right);
 static bool petta_block_position_proven_exhaustive(
     PettaBlockCheck *check, Atom *head, CettaExprLen arity,
     CettaExprIndex position, Atom *type);
 static bool petta_block_pattern_total_for_type(
     Atom *pattern, Atom *type, uint32_t depth);
-static bool petta_block_position_has_variable_clause(
+static bool petta_block_position_has_variable_equation(
     PettaBlockCheck *check, Atom *head,
     CettaExprLen arity, CettaExprIndex position);
 
@@ -6424,7 +6424,7 @@ typedef enum {
 } PettaBlockSelectionSourceShape;
 
 /*
- * Clause selection is a judgment about the value reaching the callee, not
+ * Equation selection is a judgment about the value reaching the callee, not
  * about arbitrary source syntax.  The v2 oracle exposes only the outer
  * empty/nonempty list shape of an ordinary data expression; compiler forms
  * and callable expressions publish no selector shape without a separate
@@ -6586,7 +6586,7 @@ static PettaBlockEffect petta_block_inferred_call_effect(
             continue;
         }
         for (size_t prior = 0u; prior < candidates; prior++) {
-            if (petta_block_clause_heads_overlap(
+            if (petta_block_equation_lhs_overlap(
                     check, matched_lhs[prior], lhs)) {
                 pairwise_disjoint = false;
                 break;
@@ -6773,7 +6773,7 @@ static PettaBlockEffect petta_block_call_selection_effect(
         for (size_t left = 0u; left < equation_len; left++) {
             for (size_t right = left + 1u;
                  right < equation_len; right++) {
-                if (petta_block_clause_heads_overlap(
+                if (petta_block_equation_lhs_overlap(
                         check, equations[left]->expr.elems[1],
                         equations[right]->expr.elems[1])) {
                     return PETTA_BLOCK_EFFECT_NONDET;
@@ -6789,7 +6789,7 @@ static PettaBlockEffect petta_block_call_selection_effect(
                 !petta_block_selection_requires_value_evidence(actual))
                 continue;
             Atom *required = signature->expr.elems[index];
-            if (petta_block_position_has_variable_clause(
+            if (petta_block_position_has_variable_equation(
                     check, call->expr.elems[0], arity, index - 1u))
                 continue;
             const char *required_name = petta_block_symbol_name(required);
@@ -6882,7 +6882,7 @@ static PettaBlockEffect petta_block_call_selection_effect(
         if (!matches)
             continue;
         for (size_t prior = 0u; prior < candidates; prior++) {
-            if (petta_block_clause_heads_overlap(
+            if (petta_block_equation_lhs_overlap(
                     check, matched_lhs[prior], lhs)) {
                 pairwise_disjoint = false;
                 break;
@@ -7003,15 +7003,15 @@ static bool petta_block_call_det_under_nonempty(
         if (!petta_block_pattern_can_match_nonempty_list(pattern))
             continue;
         saw_applicable = true;
-        Bindings clause_environment;
-        bindings_init(&clause_environment);
+        Bindings equation_environment;
+        bindings_init(&equation_environment);
         bool environment_ok = true;
         for (CettaExprIndex argument = 1u;
              argument < lhs->expr.len; argument++) {
             if (!petta_block_bind_pattern(
                     check, lhs->expr.elems[argument],
                     signature->expr.elems[argument],
-                    &clause_environment, 0u)) {
+                    &equation_environment, 0u)) {
                 environment_ok = false;
                 break;
             }
@@ -7019,9 +7019,9 @@ static bool petta_block_call_det_under_nonempty(
         PettaBlockEffect body_effect = environment_ok
             ? petta_block_expression_effect(
                   check, equation->expr.elems[2],
-                  &clause_environment, depth + 1u)
+                  &equation_environment, depth + 1u)
             : PETTA_BLOCK_EFFECT_UNKNOWN;
-        bindings_free(&clause_environment);
+        bindings_free(&equation_environment);
         if (body_effect != PETTA_BLOCK_EFFECT_DET)
             return false;
     }
@@ -7422,10 +7422,10 @@ static PettaBlockEffect petta_block_expression_effect(
             if (intrinsic == PETTA_BLOCK_EFFECT_UNKNOWN) {
                 if (petta_block_effect_arrow_name(signature))
                     return PETTA_BLOCK_EFFECT_UNKNOWN;
-                size_t clause_count = petta_block_equation_count(
+                size_t equation_count = petta_block_equation_count(
                     check, expression->expr.elems[0],
                     expression->expr.len - 1u);
-                if (clause_count == 0u)
+                if (equation_count == 0u)
                     intrinsic = PETTA_BLOCK_EFFECT_DET;
                 else
                     return petta_block_inferred_call_effect(
@@ -7435,7 +7435,7 @@ static PettaBlockEffect petta_block_expression_effect(
         } else if (petta_block_equation_count(
                        check, expression->expr.elems[0],
                        expression->expr.len - 1u) == 0u) {
-            /* An expression head with neither clauses nor a function
+            /* An expression head with neither equations nor a function
              * declaration is constructor data. */
             intrinsic = PETTA_BLOCK_EFFECT_DET;
         } else {
@@ -7631,7 +7631,7 @@ static bool petta_block_body_commits(Atom *body) {
     return false;
 }
 
-static bool petta_block_clause_heads_overlap(
+static bool petta_block_equation_lhs_overlap(
     PettaBlockCheck *check, Atom *left, Atom *right) {
     if (!check || !left || !right ||
         left->kind != ATOM_EXPR || right->kind != ATOM_EXPR ||
@@ -7684,7 +7684,7 @@ static bool petta_block_pattern_total_for_type(
     return true;
 }
 
-static bool petta_block_position_has_total_clause(
+static bool petta_block_position_has_total_equation(
     PettaBlockCheck *check, Atom *head, CettaExprLen arity,
     CettaExprIndex position, Atom *type) {
     size_t equation_len = 0u;
@@ -7699,7 +7699,7 @@ static bool petta_block_position_has_total_clause(
     return false;
 }
 
-static bool petta_block_position_has_variable_clause(
+static bool petta_block_position_has_variable_equation(
     PettaBlockCheck *check, Atom *head,
     CettaExprLen arity, CettaExprIndex position) {
     size_t equation_len = 0u;
@@ -7747,9 +7747,9 @@ static bool petta_block_position_covers_constructor(
 static bool petta_block_position_proven_exhaustive(
     PettaBlockCheck *check, Atom *head, CettaExprLen arity,
     CettaExprIndex position, Atom *type) {
-    if (petta_block_position_has_variable_clause(
+    if (petta_block_position_has_variable_equation(
             check, head, arity, position) ||
-        petta_block_position_has_total_clause(
+        petta_block_position_has_total_equation(
             check, head, arity, position, type))
         return true;
     const char *type_name = petta_block_symbol_name(type);
@@ -7810,9 +7810,9 @@ static bool petta_block_position_proven_exhaustive(
 static bool petta_block_position_provably_incomplete(
     PettaBlockCheck *check, Atom *head, CettaExprLen arity,
     CettaExprIndex position, Atom *type) {
-    if (petta_block_position_has_variable_clause(
+    if (petta_block_position_has_variable_equation(
             check, head, arity, position) ||
-        petta_block_position_has_total_clause(
+        petta_block_position_has_total_equation(
             check, head, arity, position, type))
         return false;
     if (petta_block_wildcard(type))
@@ -7877,7 +7877,7 @@ static bool petta_block_check_exhaustive(
         if (petta_block_position_provably_incomplete(
                 check, head, arity, position, type)) {
             return petta_block_fail(
-                check, "deterministic clauses are non-exhaustive for %s/%u",
+                check, "deterministic equations are non-exhaustive for %s/%u",
                 petta_block_symbol_name(head), (unsigned)arity);
         }
     }
@@ -8045,16 +8045,16 @@ static bool petta_block_check_determinism(
                 previous_lhs->expr.len != lhs->expr.len ||
                 !atom_eq(previous_lhs->expr.elems[0], lhs->expr.elems[0]))
                 continue;
-            if (petta_block_clause_heads_overlap(
+            if (petta_block_equation_lhs_overlap(
                     check, previous_lhs, lhs) &&
                 !petta_block_body_commits(previous->expr.elems[2])) {
                 return petta_block_fail(
-                    check, "committed clauses overlap for %s/%u",
+                    check, "committed equations overlap for %s/%u",
                     petta_block_symbol_name(lhs->expr.elems[0]),
                     (unsigned)arity);
             }
         }
-        bool first_clause = true;
+        bool first_equation = true;
         for (size_t prior = 0u; prior < index; prior++) {
             Atom *previous = check->forms[prior];
             if (!petta_block_head_is(previous, "=") ||
@@ -8064,11 +8064,11 @@ static bool petta_block_check_determinism(
             if (previous_lhs && previous_lhs->kind == ATOM_EXPR &&
                 previous_lhs->expr.len == lhs->expr.len &&
                 atom_eq(previous_lhs->expr.elems[0], lhs->expr.elems[0])) {
-                first_clause = false;
+                first_equation = false;
                 break;
             }
         }
-        if (first_clause && !petta_block_check_exhaustive(
+        if (first_equation && !petta_block_check_exhaustive(
                                 check, lhs->expr.elems[0],
                                 arity, signature))
             return false;
@@ -8163,12 +8163,12 @@ static bool petta_block_validate_effect_signature(
 
 
 
-/* Roman's overload rule is clause-local: head patterns filter all declarations
+/* Roman's overload rule is equation-local: head patterns filter all declarations
  * at the same arity.  Exactly one surviving declaration is checked; no
  * survivor is a type error; a genuinely ambiguous all-variable head remains
  * unchecked rather than being assigned whichever declaration happened to be
  * stored first. */
-static bool petta_block_clause_signature_add(
+static bool petta_block_equation_signature_add(
     Atom ***signatures, size_t *length, size_t *capacity,
     Atom *signature) {
     if (!signatures || !length || !capacity || !signature)
@@ -8185,7 +8185,7 @@ static bool petta_block_clause_signature_add(
     return true;
 }
 
-static bool petta_block_clause_signature_survives(
+static bool petta_block_equation_signature_survives(
     PettaBlockCheck *check, Atom *lhs, Atom *signature) {
     if (!check || !lhs || lhs->kind != ATOM_EXPR ||
         !signature || signature->kind != ATOM_EXPR ||
@@ -8215,7 +8215,7 @@ static bool petta_block_clause_signature_survives(
     return survives;
 }
 
-static bool petta_block_select_clause_signature(
+static bool petta_block_select_equation_signature(
     PettaBlockCheck *check, Atom *lhs,
     Atom **signature_out, size_t *declaration_count_out,
     size_t *survivor_count_out) {
@@ -8243,7 +8243,7 @@ static bool petta_block_select_clause_signature(
             !petta_block_arrow_head(decl->type, NULL) ||
             decl->type->expr.len != arity + 2u)
             continue;
-        if (!petta_block_clause_signature_add(
+        if (!petta_block_equation_signature_add(
                 &signatures, &signature_len,
                 &signature_cap, decl->type)) {
             free(signatures);
@@ -8261,7 +8261,7 @@ static bool petta_block_select_clause_signature(
         if (!petta_block_arrow_head(type, NULL) ||
             type->expr.len != arity + 2u)
             continue;
-        if (!petta_block_clause_signature_add(
+        if (!petta_block_equation_signature_add(
                 &signatures, &signature_len,
                 &signature_cap, type)) {
             free(published);
@@ -8286,7 +8286,7 @@ static bool petta_block_select_clause_signature(
                 "could not collect inferred overload declarations");
         }
         for (size_t index = 0u; index < inferred_count; index++) {
-            if (!petta_block_clause_signature_add(
+            if (!petta_block_equation_signature_add(
                     &signatures, &signature_len,
                     &signature_cap, inferred[index])) {
                 free(inferred);
@@ -8302,7 +8302,7 @@ static bool petta_block_select_clause_signature(
     size_t survivors = 0u;
     Atom *selected = NULL;
     for (size_t index = 0u; index < signature_len; index++) {
-        if (!petta_block_clause_signature_survives(
+        if (!petta_block_equation_signature_survives(
                 check, lhs, signatures[index])) {
             if (check->result->fault != PETTA_TYPECHECK_FAULT_NONE) {
                 free(signatures);
@@ -8343,7 +8343,7 @@ static bool petta_block_check_equation(
     Atom *signature = NULL;
     size_t declaration_count = 0u;
     size_t survivor_count = 0u;
-    if (!petta_block_select_clause_signature(
+    if (!petta_block_select_equation_signature(
             check, lhs, &signature,
             &declaration_count, &survivor_count)) {
         return false;
@@ -8366,7 +8366,7 @@ static bool petta_block_check_equation(
             (unsigned)arity);
     }
     if (survivor_count > 1u) {
-        /* Roman's authority leaves a genuinely ambiguous clause unchecked;
+        /* Roman's authority leaves a genuinely ambiguous equation unchecked;
          * no arbitrary declaration receives semantic authority. */
         check->result->equations_checked++;
         return true;
@@ -8790,7 +8790,7 @@ static bool petta_typecheck_declaration_block_internal(
         petta_block_inferred_signatures_current(
             program, space, authority);
     /* Revalidating live equations requires the live equations to be in the
-     * check.  A late clause is exactly the mutation that can withdraw an
+     * check.  A late equation is exactly the mutation that can withdraw an
      * earlier judgment, so skipping the rebuild here lets a stale result
      * survive the change that refutes it. */
     bool rebuild_inferred = program && (inference_needed || revalidate_live);
@@ -9373,16 +9373,16 @@ bool petta_typecheck_call_boundary_plan(
         arena_free(&scratch);
         return false;
     }
-    PettaClauseCandidate *clauses = NULL;
-    size_t clause_count = 0u;
-    if (!petta_program_clause_snapshot(
-            program, space, head, &clauses, &clause_count)) {
+    PettaEquationCandidate *equations = NULL;
+    size_t equation_count = 0u;
+    if (!petta_program_candidate_snapshot(
+            program, space, head, &equations, &equation_count)) {
         arena_free(&scratch);
         return false;
     }
-    for (size_t clause_index = 0u;
-         clause_index < clause_count; clause_index++) {
-        Atom *equation = clauses[clause_index].equation;
+    for (size_t equation_index = 0u;
+         equation_index < equation_count; equation_index++) {
+        Atom *equation = equations[equation_index].equation;
         Atom *lhs = petta_block_head_is(equation, "=") &&
                     equation->expr.len == 3u
             ? equation->expr.elems[1] : NULL;
@@ -9402,7 +9402,7 @@ bool petta_typecheck_call_boundary_plan(
                         rhs, parameter->var_id, 0u));
         }
     }
-    free(clauses);
+    free(equations);
     arena_free(&scratch);
 
     if (!committed) {

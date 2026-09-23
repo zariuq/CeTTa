@@ -1947,6 +1947,274 @@ static void contextual_root_preview(Arena *a) {
     bindings_free(&b);
 }
 
+/* A frame minted for one activation elides occurs checks at its own slots
+ * only while no stored value mentions the frame: until then a value built
+ * from older variables cannot reach a local slot.  An outer write over the
+ * frame's own variables places them in reach, so the check must return
+ * exactly then; an outer write that avoids the frame changes nothing. */
+static void exclusive_fresh_frame_occurs_check(Arena *a) {
+    Atom *slot = atom_var_with_id(a, "fresh-slot", UINT64_C(62001));
+    Atom *caller = atom_var_with_id(a, "fresh-caller", UINT64_C(62002));
+    Atom *f = atom_symbol(a, "fresh-f");
+    Atom *h = atom_symbol(a, "fresh-h");
+    Atom *leaf = atom_symbol(a, "fresh-leaf");
+    VarId source_ids[] = {slot->var_id};
+    Atom *source_variables[] = {slot};
+    BindingsFrameSchema *schema =
+        bindings_frame_schema_new_presented(
+            source_ids, source_variables, 1u);
+    BindingsExclusiveFrame *frame = bindings_exclusive_frame_new();
+    BindingsBuilder builder;
+    CHECK(schema && frame && bindings_builder_init(&builder, NULL),
+          "construct fresh exclusive frame fixture");
+    /* (fresh-f (fresh-h $x) $x): a repeated rule variable. */
+    Atom *pattern = atom_expr3(a, f, atom_expr2(a, h, slot), slot);
+
+    Atom *ground = atom_expr3(a, f, atom_expr2(a, h, leaf), leaf);
+    CHECK(bindings_exclusive_frame_begin_fresh(frame, schema, 621u) &&
+          match_atoms_epoch_builder_rule_local_in_exclusive_frame(
+              ground, pattern, BINDING_VALUE_CONTEXTUAL, NULL, &builder, a, 621u, frame, false) &&
+          !bindings_exclusive_frame_has_external_writes(frame) &&
+          bindings_exclusive_frame_publish_slots(frame, &builder) &&
+          bindings_lookup_value_id(
+              &builder.current,
+              var_epoch_id(slot->var_id, 621u)).skeleton == leaf,
+          "fresh frame binds a repeated variable and publishes it");
+    bindings_builder_rollback(&builder, 0u);
+
+    /* (fresh-f $q $q): the first argument writes the caller's variable to
+     * a term over the frame; the second then asks $x = (fresh-h $x). */
+    Atom *open = atom_expr3(a, f, caller, caller);
+    CHECK(bindings_exclusive_frame_begin_fresh(frame, schema, 622u) &&
+          !match_atoms_epoch_builder_rule_local_in_exclusive_frame(
+              open, pattern, BINDING_VALUE_CONTEXTUAL, NULL, &builder, a, 622u, frame, false) &&
+          builder.current.len == 0u &&
+          !bindings_lookup_value_id(&builder.current, caller->var_id).skeleton,
+          "fresh frame refuses a cycle once an outer write is in reach");
+    CHECK(!bindings_exclusive_frame_test_certified(frame),
+          "an outer write over the frame ends the freshness certificate");
+    CHECK(bindings_exclusive_frame_begin(frame, schema, 623u) &&
+          !match_atoms_epoch_builder_rule_local_in_exclusive_frame(
+              open, pattern, BINDING_VALUE_CONTEXTUAL, NULL, &builder, a, 623u, frame, false) &&
+          builder.current.len == 0u,
+          "a frame of unknown provenance refuses the same cycle");
+
+    /* (fresh-k fresh-leaf $x) against (fresh-k $q $q): the caller's variable
+     * is written to a ground value, which mentions no frame variable, so the
+     * later local write keeps its elision and the answer is unchanged. */
+    Atom *k = atom_symbol(a, "fresh-k");
+    Atom *avoiding_pattern = atom_expr3(a, k, leaf, slot);
+    Atom *avoiding_query = atom_expr3(a, k, caller, caller);
+    CHECK(bindings_exclusive_frame_begin_fresh(frame, schema, 624u) &&
+          match_atoms_epoch_builder_rule_local_in_exclusive_frame(
+              avoiding_query, avoiding_pattern, BINDING_VALUE_CONTEXTUAL, NULL, &builder, a, 624u,
+              frame, false) &&
+          bindings_exclusive_frame_has_external_writes(frame) &&
+          bindings_exclusive_frame_test_certified(frame),
+          "an outer write that avoids the frame keeps the certificate");
+    CHECK(bindings_exclusive_frame_freeze(frame, &builder),
+          "freeze a frame with a frame-avoiding outer write");
+    Atom *observed = bindings_apply(&builder.current, a, slot);
+    Atom *activated_slot = atom_var_with_id(
+        a, "fresh-slot", var_epoch_id(slot->var_id, 624u));
+    Atom *observed_slot = bindings_apply(&builder.current, a, activated_slot);
+    Atom *observed_caller = bindings_apply(&builder.current, a, caller);
+    CHECK(atom_eq(observed, slot) && atom_eq(observed_slot, leaf) &&
+          atom_eq(observed_caller, leaf),
+          "the frame-avoiding write and the elided local write both publish");
+    bindings_builder_rollback(&builder, 0u);
+
+    /* (fresh-m fresh-leaf (fresh-h $x) $x) against (fresh-m $r $q $q): an
+     * avoiding outer write first, then one over the frame, then the cycle
+     * $x = (fresh-h $x).  The certificate must end at the second write. */
+    Atom *m = atom_symbol(a, "fresh-m");
+    Atom *other = atom_var_with_id(a, "fresh-other", UINT64_C(62003));
+    Atom *mixed_pattern = atom_expr(a, (Atom *[]){
+        m, leaf, atom_expr2(a, h, slot), slot}, 4);
+    Atom *mixed_query = atom_expr(a, (Atom *[]){
+        m, other, caller, caller}, 4);
+    CHECK(bindings_exclusive_frame_begin_fresh(frame, schema, 625u) &&
+          !match_atoms_epoch_builder_rule_local_in_exclusive_frame(
+              mixed_query, mixed_pattern, BINDING_VALUE_CONTEXTUAL, NULL, &builder, a, 625u, frame,
+              false) &&
+          builder.current.len == 0u,
+          "an avoiding write does not mask a later write over the frame");
+    CHECK(!bindings_exclusive_frame_test_certified(frame),
+          "the write over the frame ends the certificate after an avoiding one");
+
+    /* (fresh-n (fresh-h $x) $x) against (fresh-n $r (fresh-g $r)): the
+     * outer write $r = (fresh-h $x) mentions the frame; the local value
+     * (fresh-g $r) does not, yet reaches $x through $r.  Only the ended
+     * certificate makes the store look. */
+    Atom *n = atom_symbol(a, "fresh-n");
+    Atom *g = atom_symbol(a, "fresh-g");
+    Atom *reach_pattern = atom_expr3(a, n, atom_expr2(a, h, slot), slot);
+    Atom *reach_query = atom_expr3(a, n, other, atom_expr2(a, g, other));
+    CHECK(bindings_exclusive_frame_begin_fresh(frame, schema, 626u) &&
+          !match_atoms_epoch_builder_rule_local_in_exclusive_frame(
+              reach_query, reach_pattern, BINDING_VALUE_CONTEXTUAL, NULL, &builder, a, 626u, frame,
+              false) &&
+          builder.current.len == 0u,
+          "fresh frame refuses a cycle reached through an outer binding");
+
+    /* (fresh-p $x) against (fresh-p (fresh-h $c)): publication leaves the
+     * slot holding a term over the caller's variable, so binding that
+     * variable to a term over the slot closes a cycle.  The store's summary
+     * of value variables must cover the published value; otherwise absence
+     * would follow from the new value's own variables alone. */
+    Atom *p = atom_symbol(a, "fresh-p");
+    Atom *w = atom_symbol(a, "fresh-w");
+    Atom *bare_pattern = atom_expr2(a, p, slot);
+    Atom *wrapped_query = atom_expr2(a, p, atom_expr2(a, h, caller));
+    VarId published_id = var_epoch_id(slot->var_id, 627u);
+    Atom *published_slot = atom_var_like(a, slot, published_id);
+    uint32_t caller_bits = atom_var_bloom_for_id(caller->var_id);
+    CHECK((atom_var_bloom_for_id(published_id) & caller_bits) != caller_bits,
+          "the slot variable's summary does not cover the caller variable");
+    BindingsBuilder summary;
+    CHECK(bindings_builder_init(&summary, NULL) &&
+          bindings_exclusive_frame_begin_fresh(frame, schema, 627u) &&
+          match_atoms_epoch_builder_rule_local_in_exclusive_frame(
+              wrapped_query, bare_pattern, BINDING_VALUE_CONTEXTUAL, NULL,
+              &summary, a, 627u, frame, false) &&
+          !bindings_exclusive_frame_has_external_writes(frame) &&
+          bindings_exclusive_frame_publish_slots(frame, &summary),
+          "publish a slot holding a term over the caller variable");
+    CHECK(!bindings_builder_add_var_fresh(
+              &summary, caller, atom_expr2(a, w, published_slot)) &&
+          !bindings_lookup_value_id(
+              &summary.current, caller->var_id).skeleton,
+          "a caller variable cannot be bound over a published slot that holds it");
+    bindings_builder_free(&summary);
+
+    /* A fresh frame's slots are written under one save.  Rolling back past
+     * the publication removes the frame with its values; rolling back to a
+     * later save keeps them. */
+    CHECK(bindings_builder_init(&summary, NULL),
+          "construct a builder for fresh-frame rollback");
+    uint32_t before_publication = bindings_builder_save(&summary);
+    CHECK(bindings_exclusive_frame_begin_fresh(frame, schema, 628u) &&
+          match_atoms_epoch_builder_rule_local_in_exclusive_frame(
+              ground, pattern, BINDING_VALUE_CONTEXTUAL, NULL,
+              &summary, a, 628u, frame, false) &&
+          bindings_exclusive_frame_publish_slots(frame, &summary) &&
+          bindings_lookup_value_id(
+              &summary.current,
+              var_epoch_id(slot->var_id, 628u)).skeleton == leaf &&
+          bindings_has_bound_values(&summary.current),
+          "fresh publication writes its slot");
+    uint32_t after_publication = bindings_builder_save(&summary);
+    CHECK(bindings_builder_add_var_fresh(&summary, other, leaf),
+          "a later binding follows the publication");
+    bindings_builder_rollback(&summary, after_publication);
+    CHECK(bindings_lookup_value_id(
+              &summary.current,
+              var_epoch_id(slot->var_id, 628u)).skeleton == leaf &&
+          !bindings_lookup_value_id(&summary.current, other->var_id).skeleton,
+          "rollback to a later save keeps the published slot");
+    bindings_builder_rollback(&summary, before_publication);
+    CHECK(!bindings_lookup_value_id(
+              &summary.current,
+              var_epoch_id(slot->var_id, 628u)).skeleton &&
+          !bindings_has_bound_values(&summary.current),
+          "rollback past the publication removes the frame and its value");
+
+    /* Freezing a fresh frame writes its own slots at once and its caller
+     * variables through the ordinary path; one rollback undoes both. */
+    CHECK(bindings_exclusive_frame_begin_fresh(frame, schema, 629u) &&
+          match_atoms_epoch_builder_rule_local_in_exclusive_frame(
+              avoiding_query, avoiding_pattern, BINDING_VALUE_CONTEXTUAL,
+              NULL, &summary, a, 629u, frame, false) &&
+          bindings_exclusive_frame_has_external_writes(frame) &&
+          bindings_exclusive_frame_freeze(frame, &summary) &&
+          atom_eq(bindings_apply(&summary.current, a, caller), leaf) &&
+          bindings_lookup_value_id(
+              &summary.current,
+              var_epoch_id(slot->var_id, 629u)).skeleton == leaf,
+          "freezing a fresh frame publishes local and caller writes");
+    bindings_builder_rollback(&summary, before_publication);
+    CHECK(!bindings_lookup_value_id(
+              &summary.current,
+              var_epoch_id(slot->var_id, 629u)).skeleton &&
+          !bindings_lookup_value_id(&summary.current, caller->var_id).skeleton &&
+          !bindings_has_bound_values(&summary.current),
+          "one rollback undoes a frozen fresh frame");
+    bindings_builder_free(&summary);
+
+    bindings_builder_free(&builder);
+    bindings_exclusive_frame_free(frame);
+    bindings_frame_schema_release(schema);
+}
+
+/* A binding of a caller variable to a subterm of the rule pattern either
+ * shares the pattern's syntax or carries its own copy, as the caller
+ * declares the pattern's owner.  Syntax whose owner outlives the execution
+ * is shared; syntax of unknown lifetime is copied into the binding arena. */
+static void exclusive_pattern_ownership(Arena *a) {
+    Arena owner;
+    arena_init(&owner);
+    Atom *slot = atom_var_with_id(&owner, "own-slot", UINT64_C(63001));
+    Atom *caller = atom_var_with_id(a, "own-caller", UINT64_C(63002));
+    Atom *inner = atom_expr2(&owner, atom_symbol(&owner, "own-g"), slot);
+    Atom *pattern = atom_expr2(&owner, atom_symbol(&owner, "own-f"), inner);
+    Atom *query = atom_expr2(a, atom_symbol(a, "own-f"), caller);
+    VarId source_ids[] = {slot->var_id};
+    Atom *source_variables[] = {slot};
+    BindingsFrameSchema *schema =
+        bindings_frame_schema_new_presented(source_ids, source_variables, 1u);
+    BindingsExclusiveFrame *frame = bindings_exclusive_frame_new();
+    BindingsBuilder builder;
+    CHECK(schema && frame && bindings_builder_init(&builder, NULL),
+          "construct pattern ownership fixture");
+
+    CHECK(bindings_exclusive_frame_begin_fresh(frame, schema, 631u) &&
+          match_atoms_epoch_builder_rule_local_in_exclusive_frame(
+              query, pattern, BINDING_VALUE_CONTEXTUAL_PERSISTENT, NULL,
+              &builder, a, 631u, frame, false) &&
+          bindings_exclusive_frame_freeze(frame, &builder),
+          "match against a pattern whose owner outlives the execution");
+    BindingValue shared = bindings_lookup_value_id(
+        &builder.current, caller->var_id);
+    CHECK(shared.skeleton == inner &&
+          shared.kind == BINDING_VALUE_CONTEXTUAL_PERSISTENT &&
+          shared.epoch == 631u,
+          "the caller's binding shares the persistent pattern syntax");
+    Atom *shared_view = bindings_apply(&builder.current, a, caller);
+    bindings_builder_rollback(&builder, 0u);
+
+    CHECK(bindings_exclusive_frame_begin_fresh(frame, schema, 632u) &&
+          match_atoms_epoch_builder_rule_local_in_exclusive_frame(
+              query, pattern, BINDING_VALUE_CONTEXTUAL, NULL,
+              &builder, a, 632u, frame, false) &&
+          bindings_exclusive_frame_freeze(frame, &builder),
+          "match against a pattern of unknown lifetime");
+    BindingValue copied = bindings_lookup_value_id(
+        &builder.current, caller->var_id);
+    CHECK(copied.skeleton && copied.skeleton != inner &&
+          copied.kind == BINDING_VALUE_CONTEXTUAL && copied.epoch == 632u &&
+          atom_graph_is_closed_for_arena(a, copied.skeleton) &&
+          atom_eq(copied.skeleton, inner),
+          "the caller's binding carries its own copy of foreign syntax");
+    Atom *copied_view = bindings_apply(&builder.current, a, caller);
+    CHECK(shared_view && copied_view &&
+          shared_view->kind == ATOM_EXPR && copied_view->kind == ATOM_EXPR &&
+          shared_view->expr.len == 2u && copied_view->expr.len == 2u &&
+          atom_eq(shared_view->expr.elems[0], copied_view->expr.elems[0]) &&
+          shared_view->expr.elems[1]->kind == ATOM_VAR &&
+          copied_view->expr.elems[1]->kind == ATOM_VAR &&
+          shared_view->expr.elems[1]->var_id ==
+              var_epoch_id(slot->var_id, 631u) &&
+          copied_view->expr.elems[1]->var_id ==
+              var_epoch_id(slot->var_id, 632u),
+          "shared and copied bindings denote the same activated term");
+    bindings_builder_rollback(&builder, 0u);
+
+    bindings_builder_free(&builder);
+    bindings_exclusive_frame_free(frame);
+    bindings_frame_schema_release(schema);
+    arena_free(&owner);
+}
+
 static void exclusive_candidate_frame(Arena *a) {
     Atom *slot = atom_var_with_id(
         a, "exclusive-slot", UINT64_C(61001));
@@ -1966,7 +2234,7 @@ static void exclusive_candidate_frame(Arena *a) {
 
     CHECK(bindings_exclusive_frame_begin(frame, schema, 601u) &&
           match_atoms_epoch_builder_rule_local_in_exclusive_frame(
-              seven, slot, NULL, &builder, a, 601u, frame, false),
+              seven, slot, BINDING_VALUE_CONTEXTUAL, NULL, &builder, a, 601u, frame, false),
           "candidate-local slot accepts a successful rule binding");
     CHECK(builder.current.len == 0u &&
           !bindings_exclusive_frame_has_external_writes(frame),
@@ -1985,13 +2253,13 @@ static void exclusive_candidate_frame(Arena *a) {
     bindings_builder_rollback(&builder, 0u);
     CHECK(bindings_exclusive_frame_begin(frame, schema, 602u) &&
           !match_atoms_epoch_builder_rule_local_in_exclusive_frame(
-              seven, eight, NULL, &builder, a, 602u, frame, false) &&
+              seven, eight, BINDING_VALUE_CONTEXTUAL, NULL, &builder, a, 602u, frame, false) &&
           builder.current.len == 0u,
           "failed candidate leaves the shared substitution untouched");
 
     CHECK(bindings_exclusive_frame_begin(frame, schema, 603u) &&
           match_atoms_epoch_builder_rule_local_in_exclusive_frame(
-              caller, seven, NULL, &builder, a, 603u, frame, false) &&
+              caller, seven, BINDING_VALUE_CONTEXTUAL, NULL, &builder, a, 603u, frame, false) &&
           bindings_exclusive_frame_has_external_writes(frame) &&
           builder.current.len == 0u,
           "caller-variable writes remain private until the candidate escapes");
@@ -2006,7 +2274,7 @@ static void exclusive_candidate_frame(Arena *a) {
         bindings_builder_frame_write_boundary(&builder);
     CHECK(bindings_exclusive_frame_begin(frame, schema, 604u) &&
           match_atoms_epoch_builder_rule_local_in_exclusive_frame(
-              seven, slot, NULL, &builder, a, 604u, frame, false) &&
+              seven, slot, BINDING_VALUE_CONTEXTUAL, NULL, &builder, a, 604u, frame, false) &&
           bindings_exclusive_frame_publish_slots(frame, &builder) &&
           builder.current.len == 0u &&
           bindings_lookup_value_id(
@@ -2058,7 +2326,7 @@ static void exclusive_candidate_frame(Arena *a) {
     uint32_t retained_mark = bindings_builder_save(&builder);
     CHECK(bindings_exclusive_frame_begin(frame, schema, 605u) &&
           match_atoms_epoch_builder_rule_local_in_exclusive_frame(
-              seven, slot, NULL, &builder, a, 605u, frame, false) &&
+              seven, slot, BINDING_VALUE_CONTEXTUAL, NULL, &builder, a, 605u, frame, false) &&
           bindings_exclusive_frame_publish_slots(frame, &builder),
           "publish a frame-only value before a schema-extension branch");
     uint32_t extension_mark = bindings_builder_save(&builder);
@@ -2123,7 +2391,7 @@ static void exclusive_candidate_frame(Arena *a) {
     CHECK(caller_608 &&
           bindings_exclusive_frame_begin(frame, schema, 609u) &&
           match_binding_value_epoch_builder_rule_local_in_exclusive_frame(
-              binding_value_from_atom(pair_query), pair_pattern, NULL,
+              binding_value_from_atom(pair_query), pair_pattern, BINDING_VALUE_CONTEXTUAL, NULL,
               &builder, a, 609u, frame, false) &&
           bindings_exclusive_frame_has_external_writes(frame) &&
           !bindings_lookup_value_id(
@@ -2147,7 +2415,7 @@ static void exclusive_candidate_frame(Arena *a) {
     CHECK(caller_610 &&
           bindings_exclusive_frame_begin(frame, schema, 611u) &&
           !match_binding_value_epoch_builder_rule_local_in_exclusive_frame(
-              binding_value_from_atom(triple_query), triple_pattern, NULL,
+              binding_value_from_atom(triple_query), triple_pattern, BINDING_VALUE_CONTEXTUAL, NULL,
               &builder, a, 611u, frame, false) &&
           bindings_exclusive_frame_has_external_writes(frame) &&
           !bindings_lookup_value_id(
@@ -2190,6 +2458,8 @@ int main(int argc, char **argv) {
     contextual_exact_root_policy(&arena);
     contextual_observation_without_binding(&arena);
     exclusive_candidate_frame(&arena);
+    exclusive_fresh_frame_occurs_check(&arena);
+    exclusive_pattern_ownership(&arena);
     attempt_profile(&arena);
     attempt_outcomes_cover_matchers(&arena);
     query_slot_nonoriginal();

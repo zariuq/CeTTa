@@ -1,5 +1,5 @@
 ; Depth-bounded proof search authored in ordinary MeTTa.  Declarations live in
-; an explicitly ordered Space; each clause matches the known conclusion before
+; an explicitly ordered Space; each equation matches the known conclusion before
 ; recursively deriving its premises.
 
 ; Prime quotation keeps synthesized proof syntax inert until it reaches the
@@ -89,7 +89,7 @@
                (proof:invalid-candidate-list $declarations))))))
 
 ; Uniform authored relation: facts and each supported Horn arity are separate
-; clauses.  This leaves indexing, freshening, and branch substitutions to the
+; equations.  This leaves indexing, freshening, and branch substitutions to the
 ; ordinary MeTTa relation engine instead of encoding an arity dispatcher in a
 ; proof-search primitive.
 (= (proof:derive $space $_ $goal)

@@ -158,23 +158,26 @@ static void test_generated_value_allocation(void) {
 static void test_generated_resource_classification(void) {
     unsigned grounded_rows = 0u;
     bool saw_space = false, saw_state = false;
-    bool saw_capture = false, saw_foreign = false;
+    bool saw_capture = false, saw_foreign = false, saw_bindings = false;
 #define COUNT_IDENTITY_GROUNDED(kind) do { \
     grounded_rows++; \
     if (strcmp(#kind, "GV_SPACE") == 0) saw_space = true; \
     if (strcmp(#kind, "GV_STATE") == 0) saw_state = true; \
     if (strcmp(#kind, "GV_CAPTURE") == 0) saw_capture = true; \
     if (strcmp(#kind, "GV_FOREIGN") == 0) saw_foreign = true; \
+    if (strcmp(#kind, "GV_BINDINGS") == 0) saw_bindings = true; \
 } while (0);
     CETTA_GSLT_IDENTITY_BEARING_GROUNDED_KIND_ROWS(
         COUNT_IDENTITY_GROUNDED)
 #undef COUNT_IDENTITY_GROUNDED
-    assert(grounded_rows == 4u);
-    assert(saw_space && saw_state && saw_capture && saw_foreign);
+    assert(grounded_rows == 5u);
+    assert(saw_space && saw_state && saw_capture && saw_foreign &&
+           saw_bindings);
     assert(cetta_gslt_identity_bearing_grounded_kind(GV_SPACE));
     assert(cetta_gslt_identity_bearing_grounded_kind(GV_STATE));
     assert(cetta_gslt_identity_bearing_grounded_kind(GV_CAPTURE));
     assert(cetta_gslt_identity_bearing_grounded_kind(GV_FOREIGN));
+    assert(cetta_gslt_identity_bearing_grounded_kind(GV_BINDINGS));
     assert(!cetta_gslt_identity_bearing_grounded_kind(GV_INT));
     assert(!cetta_gslt_identity_bearing_grounded_kind(GV_PRIME_CONTEXT));
 

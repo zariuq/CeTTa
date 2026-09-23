@@ -1,6 +1,6 @@
 ;; Row 03 — Nil Geisweiller: non-curried (n-ary) DTL backward chainer (synthesize).
 ;; Source: repos/ngeiswei-chaining-run/dtl/backward/no-curry.metta (+ utils.metta, inlined).
-;; n-ary rule clauses (nullary..quintenary) — fan-out contrast vs row 02 (curried).
+;; n-ary rule equations (nullary..quintenary) — fan-out contrast vs row 02 (curried).
 ;; Contract: depth-3 query (. g $f):(-> $in Bool) yields 5 proofs (upstream test).
 ;; Runs on CeTTa (--lang he) and PeTTa.
 

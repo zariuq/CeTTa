@@ -665,8 +665,6 @@ void space_match_native_unpin_trie(Space *s) {
     if (!s || s->match_backend.native.match_trie_pins == 0u)
         return;
     s->match_backend.native.match_trie_pins--;
-    if (s->match_backend.native.match_trie_pins == 0u)
-        space_reclaim_pin_tombstones(s);
 }
 
 static void native_ensure_stree(Space *s) {
@@ -700,16 +698,12 @@ static void native_ensure_stree(Space *s) {
 
 static void native_free(Space *s) {
     SpaceMatchNativeState *st = &s->match_backend.native;
+    space_pinned_occurrences_detach(s);
     disc_node_free(st->match_trie);
     st->match_trie = NULL;
     st->match_trie_dirty = false;
     st->match_trie_stale_occurrences = 0u;
     st->match_trie_pins = 0u;
-    free(st->tombstones);
-    st->tombstones = NULL;
-    st->tombstone_len = 0u;
-    st->tombstone_cap = 0u;
-    st->occurrence_generation = 0u;
     if (st->stree) {
         stree_free(st->stree);
         free(st->stree);

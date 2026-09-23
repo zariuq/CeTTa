@@ -279,6 +279,10 @@ typedef struct {
      * occurrences of one identity costs one retain instead of one per atom.
      * Membership is truncated on partial reset and cleared on free. */
     ArenaFrameIdentitySet *frame_identities;
+    /* Canonical scalar atoms: this arena returns one shared atom per symbol
+     * and per small integer until its next reset.  Opt-in, for arenas whose
+     * owner allocates such scalars at a high rate. */
+    bool scalar_cache;
 } Arena;
 
 typedef struct {
@@ -323,6 +327,10 @@ void  arena_free(Arena *a);
 void  arena_reserve(Arena *a, size_t size);
 void  arena_set_hashcons(Arena *a, HashConsTable *hc);
 void  arena_set_runtime_kind(Arena *a, CettaArenaRuntimeKind kind);
+/* Share one atom per symbol and per small integer within each reset epoch of
+ * this arena.  Atoms are immutable, so sharing is invisible to observers;
+ * a reset or free forgets every shared atom with the storage it lived in. */
+void  arena_set_scalar_cache(Arena *a, bool enabled);
 /* Keep a contextual identity alive until this arena's corresponding reset.
  * Ambient/external identifiers have no recyclable owner to retain. */
 bool arena_retain_frame_identity(Arena *a, CettaFrameIdentity identity);

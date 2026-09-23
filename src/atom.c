@@ -641,11 +641,23 @@ enum {
 _Static_assert(ARENA_SYMBOL_CACHE_CAPACITY <= 64u,
                "arena symbol cache occupancy fits one word");
 
+enum {
+    ARENA_INT_CACHE_MIN = -16,
+    ARENA_INT_CACHE_CAPACITY = 256,
+};
+
 struct ArenaSymbolCache {
     Atom *atoms[ARENA_SYMBOL_CACHE_CAPACITY];
     uint64_t epochs[ARENA_SYMBOL_CACHE_CAPACITY];
     uint64_t occupied;
     uint64_t symbol_table_instance;
+    /* An arena with a scalar cache keeps its canonical scalars here instead,
+     * in storage its own resets never reclaim: one atom per symbol slot and
+     * per small integer, so the owner stays bounded while the scalars
+     * outlive every per-call reset of the arena they are handed out by. */
+    Atom *ints[ARENA_INT_CACHE_CAPACITY];
+    Arena owner;
+    bool owner_ready;
 };
 
 static size_t arena_symbol_cache_storage_bytes(
@@ -656,6 +668,8 @@ static size_t arena_symbol_cache_storage_bytes(
 static void arena_symbol_cache_free(Arena *a) {
     if (!a || !a->symbol_cache)
         return;
+    if (a->symbol_cache->owner_ready)
+        arena_free(&a->symbol_cache->owner);
     free(a->symbol_cache);
     a->symbol_cache = NULL;
     a->symbol_cache_bytes = 0u;
@@ -685,6 +699,7 @@ void arena_init(Arena *a) {
     a->finalizers = NULL;
     a->retained_owners = NULL;
     a->frame_identities = NULL;
+    a->scalar_cache = false;
 }
 
 void arena_init_detached(Arena *a) {
@@ -1039,6 +1054,11 @@ void arena_reserve(Arena *a, size_t size) {
 void arena_set_hashcons(Arena *a, HashConsTable *hc) {
     if (!a) return;
     a->hashcons = hc;
+}
+
+void arena_set_scalar_cache(Arena *a, bool enabled) {
+    if (a)
+        a->scalar_cache = enabled;
 }
 
 void arena_set_runtime_kind(Arena *a, CettaArenaRuntimeKind kind) {
@@ -1566,6 +1586,20 @@ static Atom *hashcons_alloc_owned(HashConsTable *hc, const Atom *atom) {
     return owned;
 }
 
+/* The symbol atom a table published for `sym_id`, counted as the leaf-cache
+ * hit interning would record, or NULL. */
+static Atom *hashcons_published_symbol(HashConsTable *hc, SymbolId sym_id) {
+    if (!hc || sym_id >= hc->symbol_cache_size)
+        return NULL;
+    Atom *published = hc->symbol_cache[sym_id];
+    if (!published)
+        return NULL;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HASHCONS_ATTEMPT);
+    hc->lookup_count++;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HASHCONS_HIT);
+    return published;
+}
+
 static Atom *hashcons_intern_admitted(HashConsTable *hc, Atom *atom) {
     if (!hc || !atom)
         return atom;
@@ -1608,16 +1642,30 @@ VarInternTable *g_var_intern = NULL;
 #define VAR_INTERN_CHUNK_MASK (VAR_INTERN_CHUNK_SIZE - 1u)
 #define VAR_INTERN_CHUNK_COUNT (1u << (32u - VAR_INTERN_CHUNK_BITS))
 
-#define SYMBOL_LITERAL_CACHE_SIZE 64
+/* Symbol ids of C string literals, per thread, keyed by the literal's
+ * address.  A small direct-mapped level answers most lookups; the open
+ * addressing level behind it keeps every literal once interned, so two
+ * literals the linker happens to place in one direct-mapped slot cost a
+ * probe rather than repeated interning. */
+#define SYMBOL_LITERAL_DIRECT_SIZE 64u
 
 typedef struct {
-    const SymbolTable *table;
-    uint64_t instance_id;
     const char *literal;
     SymbolId id;
 } SymbolLiteralCacheEntry;
 
-static __thread SymbolLiteralCacheEntry g_symbol_literal_cache[SYMBOL_LITERAL_CACHE_SIZE];
+typedef struct {
+    const SymbolTable *table;
+    uint64_t instance_id;
+    SymbolLiteralCacheEntry direct[SYMBOL_LITERAL_DIRECT_SIZE];
+    SymbolLiteralCacheEntry *entries;
+    uint32_t cap;
+    uint32_t len;
+} SymbolLiteralCache;
+
+static __thread SymbolLiteralCache g_symbol_literal_cache;
+static pthread_key_t g_symbol_literal_cache_key;
+static pthread_once_t g_symbol_literal_cache_key_once = PTHREAD_ONCE_INIT;
 
 /* The packed VarId ABI has a 32-bit base.  Keep the reservation cursor one
  * bit wider so exhaustion remains distinguishable from wraparound. */
@@ -1797,25 +1845,102 @@ VarId var_intern(VarInternTable *t, SymbolId spelling) {
     return out;
 }
 
-static SymbolId symbol_cached_literal(const char *name) {
+static void symbol_literal_cache_release(void *entries) {
+    free(entries);
+}
+
+static void symbol_literal_cache_key_create(void) {
+    (void)pthread_key_create(
+        &g_symbol_literal_cache_key, symbol_literal_cache_release);
+}
+
+static uint32_t symbol_literal_cache_slot(const char *name, uint32_t mask) {
+    uint64_t key = (uint64_t)(uintptr_t)name * UINT64_C(0x9e3779b97f4a7c15);
+    return (uint32_t)(key >> 32) & mask;
+}
+
+static bool symbol_literal_cache_grow(SymbolLiteralCache *cache) {
+    uint32_t cap = cache->cap ? cache->cap * 2u : 256u;
+    if (cap < cache->cap)
+        return false;
+    SymbolLiteralCacheEntry *entries = calloc(cap, sizeof(*entries));
+    if (!entries)
+        return false;
+    for (uint32_t i = 0u; i < cache->cap; i++) {
+        const char *literal = cache->entries[i].literal;
+        if (!literal)
+            continue;
+        uint32_t slot = symbol_literal_cache_slot(literal, cap - 1u);
+        while (entries[slot].literal)
+            slot = (slot + 1u) & (cap - 1u);
+        entries[slot] = cache->entries[i];
+    }
+    if (!cache->entries) {
+        pthread_once(&g_symbol_literal_cache_key_once,
+                     symbol_literal_cache_key_create);
+    }
+    free(cache->entries);
+    cache->entries = entries;
+    cache->cap = cap;
+    (void)pthread_setspecific(g_symbol_literal_cache_key, entries);
+    return true;
+}
+
+static SymbolId symbol_cached_literal_slow(const char *name);
+
+static inline SymbolId symbol_cached_literal(const char *name) {
+    SymbolLiteralCache *cache = &g_symbol_literal_cache;
+    const SymbolLiteralCacheEntry *direct = &cache->direct[
+        ((uintptr_t)name >> 4) % SYMBOL_LITERAL_DIRECT_SIZE];
+    if (direct->literal == name && name && cache->table == g_symbols &&
+        g_symbols &&
+        cache->instance_id == symbol_table_instance_id(g_symbols))
+        return direct->id;
+    return symbol_cached_literal_slow(name);
+}
+
+static __attribute__((noinline)) SymbolId symbol_cached_literal_slow(
+        const char *name) {
     if (!g_symbols || !name || !*name) return SYMBOL_ID_NONE;
 
-    uintptr_t key = (((uintptr_t)g_symbols) >> 4) ^ (((uintptr_t)name) >> 4);
-    uint32_t idx = (uint32_t)(key % SYMBOL_LITERAL_CACHE_SIZE);
-    SymbolLiteralCacheEntry *entry = &g_symbol_literal_cache[idx];
-
-    if (entry->table == g_symbols &&
-        entry->instance_id == symbol_table_instance_id(g_symbols) &&
-        entry->literal == name &&
-        entry->id != SYMBOL_ID_NONE) {
-        return entry->id;
+    SymbolLiteralCache *cache = &g_symbol_literal_cache;
+    uint64_t instance_id = symbol_table_instance_id(g_symbols);
+    if (cache->table != g_symbols || cache->instance_id != instance_id) {
+        memset(cache->direct, 0, sizeof(cache->direct));
+        if (cache->entries)
+            memset(cache->entries, 0, cache->cap * sizeof(*cache->entries));
+        cache->len = 0u;
+        cache->table = g_symbols;
+        cache->instance_id = instance_id;
+    }
+    SymbolLiteralCacheEntry *direct = &cache->direct[
+        ((uintptr_t)name >> 4) % SYMBOL_LITERAL_DIRECT_SIZE];
+    if (direct->literal == name)
+        return direct->id;
+    if (cache->cap) {
+        uint32_t mask = cache->cap - 1u;
+        for (uint32_t slot = symbol_literal_cache_slot(name, mask);
+             cache->entries[slot].literal; slot = (slot + 1u) & mask) {
+            if (cache->entries[slot].literal == name) {
+                *direct = cache->entries[slot];
+                return direct->id;
+            }
+        }
     }
 
     SymbolId id = symbol_intern_cstr(g_symbols, name);
-    entry->table = g_symbols;
-    entry->instance_id = symbol_table_instance_id(g_symbols);
-    entry->literal = name;
-    entry->id = id;
+    if (id == SYMBOL_ID_NONE)
+        return id;
+    *direct = (SymbolLiteralCacheEntry){name, id};
+    if ((cache->len + 1u) * 2u > cache->cap &&
+        !symbol_literal_cache_grow(cache))
+        return id;
+    uint32_t mask = cache->cap - 1u;
+    uint32_t slot = symbol_literal_cache_slot(name, mask);
+    while (cache->entries[slot].literal)
+        slot = (slot + 1u) & mask;
+    cache->entries[slot] = (SymbolLiteralCacheEntry){name, id};
+    cache->len++;
     return id;
 }
 
@@ -2250,6 +2375,7 @@ static ArenaSymbolCache *arena_symbol_cache_ensure(Arena *a) {
         return NULL;
     if (!a->symbol_cache) {
         ArenaSymbolCache *cache = cetta_malloc(sizeof(*cache));
+        memset(cache, 0, sizeof(*cache));
         cache->occupied = 0u;
         cache->symbol_table_instance =
             symbol_table_instance_id(g_symbols);
@@ -2269,7 +2395,7 @@ static Atom *arena_symbol_cache_get(Arena *a, SymbolId sym_id) {
     uint32_t slot = arena_symbol_cache_slot(sym_id);
     uint64_t occupied = UINT64_C(1) << slot;
     if ((cache->occupied & occupied) == 0u ||
-        cache->epochs[slot] != a->reset_epoch)
+        (!a->scalar_cache && cache->epochs[slot] != a->reset_epoch))
         return NULL;
     Atom *atom = cache->atoms[slot];
     if (!atom || atom->kind != ATOM_SYMBOL || atom->sym_id != sym_id)
@@ -2287,7 +2413,8 @@ static bool arena_symbol_cache_is_active(const Arena *a) {
     }
     return enabled && a && !a->hashcons &&
         (a->runtime_kind == CETTA_ARENA_RUNTIME_KIND_EVAL ||
-         a->runtime_kind == CETTA_ARENA_RUNTIME_KIND_SURVIVOR);
+         a->runtime_kind == CETTA_ARENA_RUNTIME_KIND_SURVIVOR ||
+         a->scalar_cache);
 }
 
 static void arena_symbol_cache_store(
@@ -2528,7 +2655,31 @@ static VarId atom_single_variable_id_from_children(
     return single;
 }
 
+/* The never-reset storage of an arena's canonical scalars, or NULL. */
+static Arena *arena_scalar_owner(Arena *a) {
+    if (!a || !a->scalar_cache || a->hashcons)
+        return NULL;
+    ArenaSymbolCache *cache = arena_symbol_cache_ensure(a);
+    if (!cache)
+        return NULL;
+    if (!cache->owner_ready) {
+        arena_init(&cache->owner);
+        arena_set_hashcons(&cache->owner, NULL);
+        arena_set_runtime_kind(&cache->owner, a->runtime_kind);
+        cache->owner_ready = true;
+    }
+    return &cache->owner;
+}
+
 Atom *atom_symbol_id(Arena *a, SymbolId sym_id) {
+    /* A symbol's admission depends on its id alone, so the canonical atom a
+     * hash-cons table already published for the id is the one interning
+     * would return. */
+    if (a && a->hashcons) {
+        Atom *published = hashcons_published_symbol(a->hashcons, sym_id);
+        if (published)
+            return published;
+    }
     if (arena_symbol_cache_is_active(a)) {
         Atom *cached = arena_symbol_cache_get(a, sym_id);
         if (cached)
@@ -2544,9 +2695,21 @@ Atom *atom_symbol_id(Arena *a, SymbolId sym_id) {
     temp.structural_facts = ATOM_STRUCTURAL_FACTS_VALID;
     Atom *shared = atom_maybe_hashcons(a, &temp);
     if (shared) return shared;
-    Atom *at = arena_alloc(a, sizeof(Atom));
+    /* A canonical symbol goes to the scalar owner only into an empty slot,
+     * so a colliding symbol cannot grow the never-reset storage. */
+    Arena *owner = NULL;
+    if (a->scalar_cache && a->symbol_cache) {
+        uint32_t slot = arena_symbol_cache_slot(sym_id);
+        if ((a->symbol_cache->occupied & (UINT64_C(1) << slot)) == 0u)
+            owner = arena_scalar_owner(a);
+    } else if (a->scalar_cache && !a->symbol_cache) {
+        owner = arena_scalar_owner(a);
+    }
+    Arena *home = owner ? owner : a;
+    temp.arena_id = home->identity;
+    Atom *at = arena_alloc(home, sizeof(Atom));
     *at = temp;
-    if (arena_symbol_cache_is_active(a))
+    if (arena_symbol_cache_is_active(a) && (owner || !a->scalar_cache))
         arena_symbol_cache_store(a, sym_id, at);
     return at;
 }
@@ -2638,6 +2801,12 @@ Atom *atom_var(Arena *a, const char *name) {
 }
 
 Atom *atom_int(Arena *a, int64_t val) {
+    bool cached = a && a->scalar_cache && !a->hashcons &&
+        val >= ARENA_INT_CACHE_MIN &&
+        val < ARENA_INT_CACHE_MIN + ARENA_INT_CACHE_CAPACITY;
+    size_t int_slot = cached ? (size_t)(val - ARENA_INT_CACHE_MIN) : 0u;
+    if (cached && a->symbol_cache && a->symbol_cache->ints[int_slot])
+        return a->symbol_cache->ints[int_slot];
     Atom temp = {0};
     temp.kind = ATOM_GROUNDED;
     temp.flags = atom_flags_for_grounded_kind(GV_INT);
@@ -2650,8 +2819,13 @@ Atom *atom_int(Arena *a, int64_t val) {
     temp.ground.ival = val;
     Atom *shared = atom_maybe_hashcons(a, &temp);
     if (shared) return shared;
-    Atom *at = arena_alloc(a, sizeof(Atom));
+    Arena *owner = cached ? arena_scalar_owner(a) : NULL;
+    Arena *home = owner ? owner : a;
+    temp.arena_id = home->identity;
+    Atom *at = arena_alloc(home, sizeof(Atom));
     *at = temp;
+    if (owner)
+        a->symbol_cache->ints[int_slot] = at;
     return at;
 }
 

@@ -2,7 +2,7 @@
 """Run WILLIAM-ranked set.mm premises through Nil's authored MeTTa chainer.
 
 WILLIAM selects a fixed-size premise subset from a complete source family.
-The selected clauses are then inserted in canonical source order into an
+The selected premises are then inserted in canonical source order into an
 ordinary AtomSpace, and Nil's ordinary ``bc`` equations perform proof search.
 The generated programs therefore test premise selection without relying on
 AtomSpace declaration order.  Each program can be inspected and replayed

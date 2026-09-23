@@ -62,17 +62,58 @@ int main(void) {
                    atom_var(&persistent, "y")),
         atom_symbol(&persistent, "deep-ok")));
 
+    /* A variable carried into an equation-backed callee that applies it is a
+     * higher-order route; a recursive forward that never applies its
+     * argument is not, however often it recurs. */
+    Atom *route_f = atom_var(&persistent, "route_f");
+    Atom *route_v = atom_var(&persistent, "route_v");
+    space_add(&space, atom_expr3(
+        &persistent, atom_symbol_id(&persistent, g_builtin_syms.equals),
+        atom_expr3(&persistent, atom_symbol(&persistent, "relevance-apply"),
+                   route_f, route_v),
+        atom_expr2(&persistent, route_f, route_v)));
+    space_add(&space, atom_expr3(
+        &persistent, atom_symbol_id(&persistent, g_builtin_syms.equals),
+        atom_expr2(&persistent, atom_symbol(&persistent, "relevance-route"),
+                   var_x),
+        atom_expr3(&persistent, atom_symbol(&persistent, "relevance-apply"),
+                   var_x, atom_int(&persistent, 1))));
+    space_add(&space, atom_expr3(
+        &persistent, atom_symbol_id(&persistent, g_builtin_syms.equals),
+        atom_expr2(&persistent, atom_symbol(&persistent, "relevance-cycle-a"),
+                   var_x),
+        atom_expr2(&persistent, atom_symbol(&persistent, "relevance-cycle-b"),
+                   var_x)));
+    space_add(&space, atom_expr3(
+        &persistent, atom_symbol_id(&persistent, g_builtin_syms.equals),
+        atom_expr2(&persistent, atom_symbol(&persistent, "relevance-cycle-b"),
+                   var_x),
+        atom_expr2(&persistent, atom_symbol(&persistent, "relevance-cycle-a"),
+                   atom_expr3(&persistent, atom_symbol(&persistent, "+"),
+                              var_x, atom_int(&persistent, 1)))));
+
     Atom *plain_call = atom_expr2(
         &result, atom_symbol(&result, "relevance-plain"),
+        atom_int(&result, 41));
+    Atom *route_call = atom_expr2(
+        &result, atom_symbol(&result, "relevance-route"),
         atom_int(&result, 41));
     Atom *deep_call = atom_expr2(
         &result, atom_symbol(&result, "relevance-deep"),
         wide_first_order_value(&result));
 
     CHECK(petta_specializer_relation_execution_admission(
-              &space, plain_call->expr.elems[0]->sym_id) ==
+              &space, route_call->expr.elems[0]->sym_id) ==
               PETTA_SPECIALIZER_RELATION_DEFER,
-          "relation-wide admission preserves a possible higher-order route");
+          "relation-wide admission preserves a route through an applying callee");
+    CHECK(petta_specializer_relation_execution_admission(
+              &space, plain_call->expr.elems[0]->sym_id) ==
+              PETTA_SPECIALIZER_RELATION_IRRELEVANT,
+          "a variable reaching only a grounded operation has no route");
+    CHECK(petta_specializer_relation_execution_admission(
+              &space, atom_symbol(&result, "relevance-cycle-a")->sym_id) ==
+              PETTA_SPECIALIZER_RELATION_IRRELEVANT,
+          "a recursive forward without an application has no route");
     CHECK(petta_specializer_query_execution_admission(
               &space, plain_call->expr.elems[0]->sym_id,
               plain_call->expr.elems + 1u,
@@ -94,9 +135,16 @@ int main(void) {
     Atom *out = NULL;
     PettaSpecializeResult plain = petta_specializer_prepare_call(
         &space, NULL, &persistent, &result, plain_call, &out);
-    CHECK(plain == PETTA_SPECIALIZE_UNCHANGED_FILTERED,
+    CHECK(plain == PETTA_SPECIALIZE_UNCHANGED_RELATION_FILTERED,
+          "relation without a route is filtered before its query is read");
+    CHECK(out == plain_call, "relation-filtered plain call stays authoritative");
+
+    out = NULL;
+    PettaSpecializeResult route = petta_specializer_prepare_call(
+        &space, NULL, &persistent, &result, route_call, &out);
+    CHECK(route == PETTA_SPECIALIZE_UNCHANGED_FILTERED,
           "first-order call with no possible higher-order value is filtered");
-    CHECK(out == plain_call, "filtered call stays authoritative");
+    CHECK(out == route_call, "filtered call stays authoritative");
 
     out = NULL;
     PettaSpecializeResult deep = petta_specializer_prepare_call(

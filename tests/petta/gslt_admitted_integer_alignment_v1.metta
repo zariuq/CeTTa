@@ -1,4 +1,4 @@
-; Both guards succeed on [0,1]: the second clause maps its names to the
+; Both guards succeed on [0,1]: the second equation maps its names to the
 ; opposite input positions. A type-aware compiler must retain both answers.
 (gslt-presentation-v1 AdmittedIntegerAlignmentV1
   (signature

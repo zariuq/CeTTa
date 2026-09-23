@@ -158,6 +158,12 @@ uint32_t eval_get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
    are intentionally shorter-lived than the evaluation episode. */
 uint32_t eval_get_atom_types_profiled_transient(
     Space *s, Arena *a, Atom *atom, Atom ***out_types);
+/* Whether `atom` is a symbol whose types, as the transient judgment reports
+   them in `s`, are %Undefined% for as long as the declarations of `s` are
+   unchanged: no type annotation in `s` names it, it is not a registry token,
+   and its dialect gives it no intrinsic type.  An inference budget can only
+   truncate that answer to no types. */
+bool eval_symbol_type_undefined(Space *s, Atom *atom);
 uint32_t eval_get_atom_types_profiled_budgeted(
     Space *s, Arena *a, Atom *atom, Atom ***out_types,
     CettaTypeInferenceBudget *budget);

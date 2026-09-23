@@ -1121,19 +1121,97 @@ static int disc_node_ptr_compare(const void *left, const void *right) {
     return (a > b) - (a < b);
 }
 
-static bool space_occurrence_index_live_for_pin(
-        const Space *s, CettaIndex index, uint64_t pin_generation) {
-    const SpaceMatchNativeState *st;
-    size_t i;
-    if (!s)
-        return false;
-    st = &s->match_backend.native;
-    for (i = 0u; i < st->tombstone_len; i++) {
-        if (st->tombstones[i].index == index &&
-            st->tombstones[i].generation <= pin_generation)
-            return false;
+/* While current, a pinned view borrows its Space's rows and trie and
+ * `space` names that Space.  Detaching copies the rows into the view, takes
+ * the trie, and clears `space`: the view is then the only source of its
+ * cursors, and the Space is free to rewrite its own rows.  The shared
+ * transition domain protects references and the attached-to-detached
+ * transition together; atomic reference counts alone would not protect the
+ * borrowed rows and trie during mutation. */
+struct SpacePinnedOccurrences {
+    uint32_t references;
+    Space *space;
+    uint8_t *atom_ids;
+    uint8_t atom_id_width_bits;
+    CettaCount len;
+    DiscNode *match_trie;
+    TermUniverse *universe;
+};
+
+static SpacePinnedOccurrences *space_pinned_occurrences_acquire(Space *s) {
+    SpaceMatchNativeState *st = &s->match_backend.native;
+    if (!st->pinned) {
+        st->pinned = cetta_malloc(sizeof(*st->pinned));
+        *st->pinned = (SpacePinnedOccurrences){.space = s};
     }
-    return true;
+    st->pinned->references++;
+    space_match_native_pin_trie(s);
+    return st->pinned;
+}
+
+static SpacePinnedOccurrences *space_pinned_occurrences_share(
+        SpacePinnedOccurrences *view) {
+    view->references++;
+    if (view->space)
+        space_match_native_pin_trie(view->space);
+    return view;
+}
+
+static void space_pinned_occurrences_release(SpacePinnedOccurrences *view) {
+    if (!view)
+        return;
+    if (view->space)
+        space_match_native_unpin_trie(view->space);
+    if (--view->references != 0u)
+        return;
+    if (view->space) {
+        view->space->match_backend.native.pinned = NULL;
+    } else {
+        free(view->atom_ids);
+        disc_node_free(view->match_trie);
+    }
+    free(view);
+}
+
+void space_pinned_occurrences_detach(Space *s) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    SpaceMatchNativeState *st = s ? &s->match_backend.native : NULL;
+    SpacePinnedOccurrences *view = st ? st->pinned : NULL;
+    if (!view)
+        return;
+    size_t width = cetta_atom_id_storage_width_bytes_from_bits(
+        s->native.atom_id_width_bits);
+    size_t first = s->kind == SPACE_KIND_QUEUE ? (size_t)s->native.start : 0u;
+    if (width != 0u && (size_t)s->native.len > SIZE_MAX / width) {
+        fputs("CeTTa: pinned occurrence view too large to detach\n", stderr);
+        abort();
+    }
+    size_t bytes = (size_t)s->native.len * width;
+    view->atom_ids = bytes ? cetta_malloc(bytes) : NULL;
+    if (bytes)
+        memcpy(view->atom_ids, s->native.atom_ids + first * width, bytes);
+    view->atom_id_width_bits = s->native.atom_id_width_bits;
+    view->len = s->native.len;
+    view->universe = s->native.universe;
+    view->match_trie = st->match_trie;
+    view->space = NULL;
+    st->match_trie = NULL;
+    st->match_trie_dirty = false;
+    st->match_trie_stale_occurrences = 0u;
+    st->match_trie_pins = 0u;
+    st->pinned = NULL;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_SPACE_PINNED_OCCURRENCES_DETACH);
+    cetta_runtime_stats_add(
+        CETTA_RUNTIME_COUNTER_SPACE_PINNED_OCCURRENCES_DETACHED_ROW,
+        view->len);
+}
+
+/* The rows a cursor reads: its Space's while the view is current, the
+ * captured copy once detached. */
+static CettaCount space_pinned_occurrences_len(
+        const SpacePinnedOccurrences *view) {
+    return view->space ? view->space->native.len : view->len;
 }
 
 void space_occurrence_cursor_init_empty(SpaceOccurrenceCursor *cursor) {
@@ -1143,6 +1221,7 @@ void space_occurrence_cursor_init_empty(SpaceOccurrenceCursor *cursor) {
 
 bool space_occurrence_cursor_init(Space *s, Atom *pattern,
                                   SpaceOccurrenceCursor *cursor) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
     space_occurrence_cursor_init_empty(cursor);
     if (!s || !pattern || !cursor || s->overlay_base ||
         (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
@@ -1152,13 +1231,12 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
     cursor->space = s;
     cursor->read = space_read_token(s);
     cursor->prefix_epoch = s->prefix_epoch;
-    cursor->pin_generation = s->match_backend.native.occurrence_generation;
     cursor->ceiling = s->native.len;
     if (pattern->kind == ATOM_VAR ||
         s->native.len <= MATCH_TRIE_THRESHOLD) {
         cursor->full_scan = true;
         cursor->pinned = true;
-        space_match_native_pin_trie(s);
+        cursor->occurrences = space_pinned_occurrences_acquire(s);
         return space_read_token_prefix_intact(cursor->read);
     }
     space_match_native_ensure_trie(s);
@@ -1195,26 +1273,25 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
     }
     dns_free(&final);
     cursor->pinned = true;
-    space_match_native_pin_trie(s);
+    cursor->occurrences = space_pinned_occurrences_acquire(s);
     return true;
 }
 
 bool space_occurrence_cursor_clone_unstarted(
         const SpaceOccurrenceCursor *src, SpaceOccurrenceCursor *dst) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
     space_occurrence_cursor_init_empty(dst);
-    if (!src || !dst || !src->pinned || !src->space)
+    if (!src || !dst || !src->pinned || !src->space || !src->occurrences ||
+        !src->occurrences->space)
         return false;
     Space *s = src->space;
     if (src->read.instance_id != space_instance_id(s) ||
         src->prefix_epoch != s->prefix_epoch ||
-        src->pin_generation !=
-            s->match_backend.native.occurrence_generation ||
         src->ceiling != s->native.len) {
         return false;
     }
     dst->read = src->read;
     dst->prefix_epoch = src->prefix_epoch;
-    dst->pin_generation = src->pin_generation;
     dst->ceiling = src->ceiling;
     dst->space = s;
     dst->full_scan = src->full_scan;
@@ -1239,25 +1316,27 @@ bool space_occurrence_cursor_clone_unstarted(
                sizeof(*dst->leaf_pos) * src->node_len);
     }
     dst->pinned = true;
-    space_match_native_pin_trie(s);
+    dst->occurrences = space_pinned_occurrences_share(src->occurrences);
     return true;
 }
 
 bool space_occurrence_cursor_clone(
         const SpaceOccurrenceCursor *src, SpaceOccurrenceCursor *dst) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
     space_occurrence_cursor_init_empty(dst);
-    if (!src || !dst || src == dst || !src->pinned || !src->space)
+    if (!src || !dst || src == dst || !src->pinned || !src->space ||
+        !src->occurrences)
         return false;
     Space *s = src->space;
-    if (src->read.instance_id != space_instance_id(s) ||
-        src->prefix_epoch != s->prefix_epoch ||
-        src->ceiling > s->native.len ||
+    if ((src->occurrences->space &&
+         (src->read.instance_id != space_instance_id(s) ||
+          src->prefix_epoch != s->prefix_epoch)) ||
+        src->ceiling > space_pinned_occurrences_len(src->occurrences) ||
         (src->node_len > 0u && (!src->nodes || !src->leaf_pos))) {
         return false;
     }
     dst->read = src->read;
     dst->prefix_epoch = src->prefix_epoch;
-    dst->pin_generation = src->pin_generation;
     dst->ceiling = src->ceiling;
     dst->space = s;
     dst->full_scan = src->full_scan;
@@ -1280,27 +1359,28 @@ bool space_occurrence_cursor_clone(
                sizeof(*dst->leaf_pos) * src->node_len);
     }
     dst->pinned = true;
-    space_match_native_pin_trie(s);
+    dst->occurrences = space_pinned_occurrences_share(src->occurrences);
     return true;
 }
 
 SpaceOccurrenceCursorStep space_occurrence_cursor_next(
     SpaceOccurrenceCursor *cursor, CettaIndex *logical_index_out) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
     if (logical_index_out)
         *logical_index_out = 0u;
-    if (!cursor || !cursor->space || !cursor->pinned)
+    if (!cursor || !cursor->space || !cursor->pinned ||
+        !cursor->occurrences)
         return SPACE_OCCURRENCE_CURSOR_INVALIDATED;
-    Space *s = cursor->space;
-    if (cursor->read.instance_id != space_instance_id(s) ||
-        cursor->prefix_epoch != s->prefix_epoch)
+    const SpacePinnedOccurrences *occurrences = cursor->occurrences;
+    if (occurrences->space &&
+        (cursor->read.instance_id != space_instance_id(occurrences->space) ||
+         cursor->prefix_epoch != occurrences->space->prefix_epoch))
         return SPACE_OCCURRENCE_CURSOR_INVALIDATED;
+    CettaCount len = space_pinned_occurrences_len(occurrences);
     if (cursor->full_scan) {
-        while (cursor->full_next < cursor->ceiling &&
-               cursor->full_next < s->native.len) {
+        if (cursor->full_next < cursor->ceiling &&
+            cursor->full_next < len) {
             CettaIndex index = cursor->full_next++;
-            if (!space_occurrence_index_live_for_pin(
-                    s, index, cursor->pin_generation))
-                continue;
             if (logical_index_out)
                 *logical_index_out = index;
             return SPACE_OCCURRENCE_CURSOR_ITEM;
@@ -1336,10 +1416,7 @@ SpaceOccurrenceCursorStep space_occurrence_cursor_next(
             if (disc_leaf_at(node, cursor->leaf_pos[i]) == best)
                 cursor->leaf_pos[i]++;
         }
-        if (best >= s->native.len)
-            continue;
-        if (!space_occurrence_index_live_for_pin(
-                s, best, cursor->pin_generation))
+        if (best >= len)
             continue;
         if (logical_index_out)
             *logical_index_out = best;
@@ -1347,11 +1424,33 @@ SpaceOccurrenceCursorStep space_occurrence_cursor_next(
     }
 }
 
+Atom *space_occurrence_cursor_atom(const SpaceOccurrenceCursor *cursor,
+                                   CettaIndex index) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    const SpacePinnedOccurrences *occurrences =
+        cursor ? cursor->occurrences : NULL;
+    if (!occurrences)
+        return NULL;
+    if (occurrences->space)
+        return space_get_at64(occurrences->space, index);
+    size_t width = cetta_atom_id_storage_width_bytes_from_bits(
+        occurrences->atom_id_width_bits);
+    if (index >= occurrences->len || width == 0u)
+        return NULL;
+    AtomId atom_id = cetta_atom_id_storage_load_bits(
+        occurrences->atom_ids + (size_t)index * width,
+        occurrences->atom_id_width_bits);
+    return atom_id != CETTA_ATOM_ID_NONE
+        ? term_universe_get_atom(occurrences->universe, atom_id)
+        : NULL;
+}
+
 void space_occurrence_cursor_release(SpaceOccurrenceCursor *cursor) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
     if (!cursor)
         return;
-    if (cursor->pinned && cursor->space)
-        space_match_native_unpin_trie(cursor->space);
+    if (cursor->pinned)
+        space_pinned_occurrences_release(cursor->occurrences);
     free(cursor->nodes);
     free(cursor->leaf_pos);
     space_occurrence_cursor_init_empty(cursor);
@@ -2635,6 +2734,7 @@ static void space_mark_indexes_dirty(Space *s) {
 static void space_clear_native_logical_view(Space *s) {
     if (!s)
         return;
+    space_pinned_occurrences_detach(s);
     free(s->native.atom_ids);
     s->native.atom_ids = NULL;
     s->native.start = 0;
@@ -3130,6 +3230,7 @@ void space_free(Space *s) {
        still readable; cache lookup also validates against its live query
        Space before consulting a token. */
     space_execution_analysis_note_mutation(s);
+    space_pinned_occurrences_detach(s);
     space_detach_from_universe(s);
     free(s->native.atom_ids);
     s->native.atom_ids = NULL;
@@ -4310,103 +4411,6 @@ static void space_publish_mutation(
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_REVISION_BUMP);
 }
 
-static int space_tombstone_index_desc(const void *left, const void *right) {
-    CettaIndex a = ((const SpaceOccurrenceTombstone *)left)->index;
-    CettaIndex b = ((const SpaceOccurrenceTombstone *)right)->index;
-    return (a < b) - (a > b);
-}
-
-static bool space_reserve_occurrence_tombstones(
-        SpaceMatchNativeState *st, size_t additional) {
-    if (!st || additional > SIZE_MAX - st->tombstone_len)
-        return false;
-    size_t needed = st->tombstone_len + additional;
-    if (needed <= st->tombstone_cap)
-        return true;
-    size_t next_cap = st->tombstone_cap ? st->tombstone_cap : 4u;
-    while (next_cap < needed) {
-        if (next_cap > SIZE_MAX / 2u)
-            return false;
-        next_cap *= 2u;
-    }
-    if (next_cap > SIZE_MAX / sizeof(*st->tombstones))
-        return false;
-    SpaceOccurrenceTombstone *grown = cetta_realloc(
-        st->tombstones, next_cap * sizeof(*grown));
-    if (!grown)
-        return false;
-    st->tombstones = grown;
-    st->tombstone_cap = next_cap;
-    return true;
-}
-
-static bool space_remove_pinned_occurrence(
-        Space *s, CettaIndex remove_idx,
-        SpaceMutationEquationProjection equation_projection) {
-    if (!s ||
-        s->match_backend.native.match_trie_pins == 0u ||
-        !space_occurrence_index_live_for_pin(
-            s, remove_idx,
-            s->match_backend.native.occurrence_generation)) {
-        return false;
-    }
-    SpaceMatchNativeState *st = &s->match_backend.native;
-    if (!space_reserve_occurrence_tombstones(st, 1u))
-        return false;
-    if (st->occurrence_generation == UINT64_MAX) {
-        fputs("CeTTa: exhausted Space occurrence generation\n", stderr);
-        abort();
-    }
-    st->occurrence_generation++;
-    st->tombstones[st->tombstone_len++] = (SpaceOccurrenceTombstone){
-        .index = remove_idx,
-        .generation = st->occurrence_generation,
-    };
-    space_publish_mutation(
-        s, equation_projection, SPACE_MUTATION_PREFIX_APPEND_ONLY);
-    return true;
-}
-
-void space_reclaim_pin_tombstones(Space *s) {
-    SpaceMatchNativeState *st;
-    size_t i;
-    if (!s)
-        return;
-    st = &s->match_backend.native;
-    if (st->match_trie_pins > 0u || st->tombstone_len == 0u)
-        return;
-    qsort(st->tombstones, st->tombstone_len, sizeof(*st->tombstones),
-          space_tombstone_index_desc);
-    for (i = 0u; i < st->tombstone_len; i++) {
-        CettaIndex remove_idx = st->tombstones[i].index;
-        if (remove_idx >= s->native.len)
-            continue;
-        if (space_is_ordered(s)) {
-            size_t width =
-                space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
-            memmove(s->native.atom_ids + ((size_t)remove_idx * width),
-                    s->native.atom_ids +
-                        ((size_t)(remove_idx + 1u) * width),
-                    (size_t)(s->native.len - remove_idx - 1u) * width);
-            s->native.len--;
-        } else {
-            AtomId tail_id = space_atom_id_storage_load_at(
-                s->native.atom_ids, s->native.atom_id_width_bits,
-                s->native.len - 1u);
-            s->native.len--;
-            (void)space_atom_id_storage_store_at(
-                s->native.atom_ids, s->native.atom_id_width_bits,
-                remove_idx, tail_id);
-        }
-    }
-    st->tombstone_len = 0u;
-    space_mark_indexes_dirty(s);
-    space_match_backend_note_remove(s);
-    space_publish_mutation(
-        s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
-        SPACE_MUTATION_PREFIX_REWRITTEN);
-}
-
 void space_note_external_backend_mutation(Space *s) {
     if (!s)
         return;
@@ -5457,11 +5461,6 @@ bool space_remove(Space *s, Atom *atom) {
     bool found = false;
     CettaIndex remove_idx = 0;
     for (CettaIndex i = 0; i < s->native.len; i++) {
-        if (!space_occurrence_index_live_for_pin(
-                s, i,
-                s->match_backend.native.occurrence_generation)) {
-            continue;
-        }
         Atom *candidate = space_get_at64(s, i);
         if (!candidate)
             continue;
@@ -5475,11 +5474,6 @@ bool space_remove(Space *s, Atom *atom) {
         CettaIndex alpha_idx = 0;
         CettaCount alpha_count = 0;
         for (CettaIndex i = 0; i < s->native.len; i++) {
-            if (!space_occurrence_index_live_for_pin(
-                    s, i,
-                    s->match_backend.native.occurrence_generation)) {
-                continue;
-            }
             Atom *candidate = space_get_at64(s, i);
             if (!candidate)
                 continue;
@@ -5498,10 +5492,7 @@ bool space_remove(Space *s, Atom *atom) {
 
     SpaceMutationEquationProjection equation_projection =
         space_local_removal_equation_projection(s, remove_idx);
-
-    if (s->match_backend.native.match_trie_pins > 0u)
-        return space_remove_pinned_occurrence(
-            s, remove_idx, equation_projection);
+    space_pinned_occurrences_detach(s);
 
     if (space_is_ordered(s)) {
         size_t width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
@@ -5572,18 +5563,11 @@ bool space_remove_atom_id(Space *s, AtomId atom_id) {
     if (space_is_queue(s))
         space_linearize(s);
     for (CettaIndex i = 0; i < s->native.len; i++) {
-        if (!space_occurrence_index_live_for_pin(
-                s, i,
-                s->match_backend.native.occurrence_generation)) {
-            continue;
-        }
         if (space_get_atom_id_at64(s, i) != atom_id)
             continue;
         SpaceMutationEquationProjection equation_projection =
             space_local_removal_equation_projection(s, i);
-        if (s->match_backend.native.match_trie_pins > 0u)
-            return space_remove_pinned_occurrence(
-                s, i, equation_projection);
+        space_pinned_occurrences_detach(s);
         if (space_is_ordered(s)) {
             size_t width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
             memmove(s->native.atom_ids + ((size_t)i * width),
@@ -5672,15 +5656,10 @@ bool space_remove_occurrence_mask_stable(
         logical_len);
 
     CettaCount removed = 0u;
-    bool pinned = !space_has_overlay_base(s) &&
-        s->match_backend.native.match_trie_pins > 0u;
     SpaceMutationEquationProjection equation_projection =
         SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
     for (CettaIndex index = 0u; index < logical_len; index++) {
-        if (remove_mask[index] == 0u ||
-            (pinned && !space_occurrence_index_live_for_pin(
-                s, index,
-                s->match_backend.native.occurrence_generation)))
+        if (remove_mask[index] == 0u)
             continue;
         removed++;
         equation_projection = space_merge_equation_projection(
@@ -5695,33 +5674,8 @@ bool space_remove_occurrence_mask_stable(
         CETTA_RUNTIME_COUNTER_SPACE_STABLE_MASK_REMOVED_OCCURRENCE,
         removed);
 
-    if (pinned) {
-        SpaceMatchNativeState *st = &s->match_backend.native;
-        if ((CettaCount)(size_t)removed != removed ||
-            !space_reserve_occurrence_tombstones(
-                st, (size_t)removed) ||
-            (uint64_t)removed > UINT64_MAX - st->occurrence_generation) {
-            return false;
-        }
-        for (CettaIndex index = 0u; index < logical_len; index++) {
-            if (remove_mask[index] == 0u ||
-                !space_occurrence_index_live_for_pin(
-                    s, index, st->occurrence_generation)) {
-                continue;
-            }
-            st->occurrence_generation++;
-            st->tombstones[st->tombstone_len++] =
-                (SpaceOccurrenceTombstone){
-                    .index = index,
-                    .generation = st->occurrence_generation,
-                };
-        }
-        space_publish_mutation(
-            s, equation_projection, SPACE_MUTATION_PREFIX_APPEND_ONLY);
-        if (out_removed)
-            *out_removed = removed;
-        return true;
-    }
+    if (!space_has_overlay_base(s))
+        space_pinned_occurrences_detach(s);
 
     if (stable_occurrence_transport_enabled() && !space_has_overlay_base(s) &&
         logical_len <= SIZE_MAX / sizeof(CettaIndex) &&
@@ -8200,6 +8154,47 @@ bool space_head_has_arrow_signature(Space *s, SymbolId head,
         .valid = true,
     };
     return shadowed;
+}
+
+bool space_head_declares_type(Space *s, SymbolId head) {
+    if (!s || head == SYMBOL_ID_NONE)
+        return false;
+    if (space_has_overlay_base(s)) {
+        CettaCount logical_len = space_length64(s);
+        for (CettaIndex i = 0; i < logical_len; i++) {
+            Atom *annotation = space_get_at64(s, i);
+            if (annotation && annotation->kind == ATOM_EXPR &&
+                annotation->expr.len == 3u &&
+                atom_is_symbol_id(annotation->expr.elems[0],
+                                  g_builtin_syms.colon) &&
+                atom_is_symbol_id(annotation->expr.elems[1], head))
+                return true;
+        }
+        return false;
+    }
+    ensure_ty_ann_index(s);
+    TypeAnnBucket *bucket = &s->native.ty_idx.buckets[symbol_hash(head)];
+    for (CettaIndex i = 0; i < bucket->len; i++) {
+        AtomId annotation_id = space_indexed_occurrence_atom_id(
+            s, bucket->atom_indices, bucket->atom_ids, i);
+        AtomId subject_id = CETTA_ATOM_ID_NONE;
+        AtomId type_id = CETTA_ATOM_ID_NONE;
+        if (space_type_annotation_child_ids_at_id(
+                s, annotation_id, &subject_id, &type_id) &&
+            tu_hdr(s->native.universe, subject_id) &&
+            tu_kind(s->native.universe, subject_id) == ATOM_SYMBOL &&
+            tu_sym(s->native.universe, subject_id) == head)
+            return true;
+        Atom *annotation = space_indexed_occurrence_atom(
+            s, bucket->atom_indices, bucket->atom_ids, i);
+        if (annotation && annotation->kind == ATOM_EXPR &&
+            annotation->expr.len == 3u &&
+            atom_is_symbol_id(annotation->expr.elems[0],
+                              g_builtin_syms.colon) &&
+            atom_is_symbol_id(annotation->expr.elems[1], head))
+            return true;
+    }
+    return false;
 }
 
 static bool space_prepare_single_equation_uncached(

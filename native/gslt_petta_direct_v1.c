@@ -3476,11 +3476,11 @@ done:
  *
  * Large ground fact families repeat one constant context per fact
  * (identity envelopes), multiplying program text, parse time, and
- * clause size.  Factoring emits the shared context once, in a single
- * wrapper clause, and each fact as its varying residues under a
+ * equation size.  Factoring emits the shared context once, in a single
+ * wrapper equation, and each fact as its varying residues under a
  * private index relation.  The defined relation's extension is
  * unchanged by construction: the wrapper composed with the index
- * facts reproduces exactly the original clauses, in the original
+ * facts reproduces exactly the original equations, in the original
  * order, with the original multiplicity. */
 
 #define DIRECT_FACTOR_MIN_GROUP_V1 64u
@@ -3652,7 +3652,7 @@ static bool direct_factor_render_index_head_v1(
 }
 
 /* Renders the factored form of one (relation, mode) ground fact
- * group: one wrapper clause carrying the shared context, then one
+ * group: one wrapper equation carrying the shared context, then one
  * compact index fact per source fact.  Sets *factored on success;
  * leaves *factored false (without emitting) whenever the group is
  * ineligible, so the ordinary per-fact path still applies. */
@@ -3759,7 +3759,7 @@ static bool direct_render_factored_group_v1(
         }
     }
 
-    /* Wrapper clause: shared context once, residues bound by the
+    /* Wrapper equation: shared context once, residues bound by the
      * private index relation. */
     if (!direct_render_rule_realization_v1(
             program, group[0], "mode-factored", mode) ||
@@ -3879,7 +3879,7 @@ static bool direct_render_factored_group_v1(
     if (!direct_literal_v1(program, "))))\n\n"))
         goto done;
 
-    /* Index facts: one compact clause per source fact. */
+    /* Index facts: one compact equation per source fact. */
     for (size_t index = 0u; index < count; index++) {
         bool first = true;
         if (!direct_render_rule_realization_v1(

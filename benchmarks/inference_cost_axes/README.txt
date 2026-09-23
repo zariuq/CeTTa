@@ -9,13 +9,13 @@ An after-bind failure is not an equation-body failure. Candidate attempts and
 queries use the query/selection counters separately. Counts from binaries
 which omitted linear or encoded matching are not comparable denominators.
 
-A_single_clause
-            one-clause prepared counting loop: arithmetic/control floor
+A_single_equation
+            one-equation prepared counting loop: arithmetic/control floor
 A_head_disjoint
-            two clauses with distinguishable heads: generic clause selection without a
+            two equations with distinguishable heads: generic equation selection without a
             retained same-head fallback at every recursive level
-A_dispatch  two identical heads, one productive recursive clause, and one guarded-empty
-            fallback: clause selection plus a retained doomed alternative per level
+A_dispatch  two identical heads, one productive recursive equation, and one guarded-empty
+            fallback: equation selection plus a retained doomed alternative per level
 B_heads     150k ground calls selecting one of three deep axiom-shaped heads: head
             matching cost on top of the A baseline
 C_binding   150k calls of a 7-variable deep extraction: binding creation on top of A

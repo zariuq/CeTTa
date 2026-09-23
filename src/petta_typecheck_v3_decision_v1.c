@@ -2824,7 +2824,7 @@ static bool v3_decide_definition_internal_v1(
                    exhaustiveness are judgments over the whole relation. */
                 decision->outcome = CETTA_NIK_OUTCOME_ESTABLISHED;
                 decision->boundary = CETTA_PETTA_V3_BOUNDARY_NONE;
-                decision->relation = "v3-pattern-empty-clause";
+                decision->relation = "v3-pattern-unmatchable-equation";
                 decision->search_outcome = admission.search_outcome;
                 arena_free(&scratch);
                 return true;

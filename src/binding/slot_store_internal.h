@@ -125,6 +125,18 @@ bool bindings_frame_index_write_slot_ref(
         BindingValue value, uint64_t *version_out,
         bool *authority_moved_out);
 
+/* The entry named by `ref`, owned by this image and ready for writes. */
+BindingsFrameIndexEntry *bindings_frame_index_detach_entry_ref(
+        Bindings *bindings, BindingsFrameRef ref);
+
+/* Write an unbound slot of a detached entry with a fresh version.  Only for
+ * an entry registered after the caller's rollback mark: undoing that
+ * registration recycles the entry with its values, so the write keeps no
+ * inverse record of its own. */
+bool bindings_frame_index_fill_slot(
+        BindingsFrameIndex *index, BindingsFrameIndexEntry *frame,
+        uint32_t slot, BindingValue value);
+
 bool bindings_frame_index_record(
         Bindings *bindings, VarId id, BindingValue value);
 

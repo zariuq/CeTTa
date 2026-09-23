@@ -1,5 +1,5 @@
 ; A pure Prime relation uses the shared owned-frontier controller without
-; changing its occurrence bag or bypassing Prime's clause-use accounting.
+; changing its occurrence bag or bypassing Prime's equation-use accounting.
 ; Space reads keep this on the relational machine rather than the closed
 ; prepared-pure evaluator.
 !(bind! &prime-controller:first (new-space queue))

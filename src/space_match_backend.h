@@ -49,20 +49,18 @@ static inline bool space_engine_supports_exec(SpaceEngine engine) {
     return engine == SPACE_ENGINE_MORK;
 }
 
-typedef struct {
-    CettaIndex index;
-    uint64_t generation;
-} SpaceOccurrenceTombstone;
+/* The rows and match trie that live occurrence cursors drain.  While it is
+ * the Space's current pinned view it borrows the Space's own storage. */
+typedef struct SpacePinnedOccurrences SpacePinnedOccurrences;
 
 typedef struct {
     DiscNode *match_trie;
     bool match_trie_dirty;
     CettaCount match_trie_stale_occurrences;
+    /* Cursors on the current pinned view; its trie is not rebuilt or freed
+     * while any remain. */
     uint32_t match_trie_pins;
-    uint64_t occurrence_generation;
-    SpaceOccurrenceTombstone *tombstones;
-    size_t tombstone_len;
-    size_t tombstone_cap;
+    SpacePinnedOccurrences *pinned;
     SubstTree *stree;
     bool stree_dirty;
     CettaCount stree_stale_occurrences;
@@ -71,6 +69,10 @@ typedef struct {
 void space_match_native_ensure_trie(Space *s);
 void space_match_native_pin_trie(Space *s);
 void space_match_native_unpin_trie(Space *s);
+/* Before the Space rewrites its rows, hand the current pinned view the rows
+ * and trie its cursors captured.  The Space continues with its own rows and
+ * a trie rebuilt on demand; the cursors keep draining the captured bag. */
+void space_pinned_occurrences_detach(Space *s);
 
 typedef enum {
     IMPORTED_FLAT_SYMBOL = 0,

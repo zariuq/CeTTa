@@ -231,7 +231,7 @@ bool petta_semantics_value_contains_observable_open_cons(
     const Atom *value);
 bool petta_semantics_contains_cons_constraint(const Atom *atom);
 /*
- * Conservative clause-index discriminator for PeTTa list patterns.
+ * Conservative equation-index discriminator for PeTTa list patterns.
  *
  * `false` is a proof that `pattern` cannot match `value` because an aligned
  * `(cons Head Tail)` constraint faces a rigid empty or non-expression
