@@ -814,7 +814,7 @@ int main(int argc, char **argv) {
         "tests/petta/typecheck_v2_repros/60_repeated_head_variable_disjoint_slots.metta",
         CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
-        "v3 treats a contradictory repeated head variable as an empty clause");
+        "v3 treats a contradictory repeated head variable as an unmatchable equation");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/82_inferred_function_is_not_explicit_value_evidence.metta",

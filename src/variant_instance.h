@@ -47,6 +47,7 @@ bool variant_instance_sink_env(Arena *dst, VariantInstance *out,
                                const Bindings *env);
 Atom *variant_instance_materialize(Arena *dst, Atom *skeleton,
                                    const VariantInstance *instance);
+Atom *variant_instance_peek_private_id(const VariantInstance *instance, VarId id);
 Atom *variant_instance_peek_private_var(const VariantInstance *instance,
                                         Atom *var);
 

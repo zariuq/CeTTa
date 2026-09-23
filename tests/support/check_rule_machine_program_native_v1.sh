@@ -15,7 +15,7 @@ rule_reference=$(realpath "${3:-src/generated/rule_machine_program_v1.generated.
 rule_core=experiments/gslt2parse_foundation/presentations/core/rule_machine_core_v1.metta
 rule_program=experiments/gslt2parse_foundation/presentations/specializations/rule_machine_hilbert_bfc_program_v1.metta
 rule_observer=tests/support/test_rule_machine_program_generated_v1.c
-rule_sources=(src/atom.c src/symbol.c src/name_key.c src/match.c
+rule_sources=(src/atom.c src/binding/frame_identity.c src/symbol.c src/name_key.c src/match.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c
     src/prime_need.c src/variant_shape.c src/term_universe.c src/term_canon.c)
 sha256sum "$rule_tool" "$rule_script" "$rule_reference" "$rule_core" "$rule_program" \
     "$rule_observer" tools/rule_machine_program_v1.c tools/gslt_native_emission_v1.h \

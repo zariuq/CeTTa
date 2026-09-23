@@ -1,4 +1,4 @@
-; A computed constructor spine must expose the same overlapping-clause
+; A computed constructor spine must expose the same overlapping-equation
 ; alternatives as its literal normal form.  Prime previously retained only
 ; the first alternative after refining the suspended tail.
 (= (choice:list $n)

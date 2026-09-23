@@ -34,11 +34,16 @@ static bool cetta_observation_work_reserve(
     return true;
 }
 
-bool cetta_observation_atom_contains_var(
-        const Atom *root, VarId variable) {
+static bool cetta_observation_value_contains_var(
+        BindingValue value, VarId variable) {
+    const Atom *root = value.skeleton;
+    bool contextual = binding_value_is_contextual(value);
+    if (contextual && var_epoch_suffix(variable) != value.epoch)
+        return false;
     if (!root || variable == VAR_ID_NONE)
         return false;
-    if (!atom_variable_bloom_may_contain(root, variable))
+    if (!(contextual ? atom_has_vars(root)
+                     : atom_variable_bloom_may_contain(root, variable)))
         return false;
 
     CettaObservationUseWork *work = NULL;
@@ -51,12 +56,15 @@ bool cetta_observation_atom_contains_var(
     work[length++] = (CettaObservationUseWork){.atom = root};
     while (length > 0u) {
         const Atom *atom = work[--length].atom;
-        if (atom->kind == ATOM_VAR && atom->var_id == variable) {
+        if (atom->kind == ATOM_VAR &&
+            (contextual ? var_base_id(atom->var_id) == var_base_id(variable)
+                        : atom->var_id == variable)) {
             free(work);
             return true;
         }
         if (atom->kind != ATOM_EXPR ||
-            !atom_variable_bloom_may_contain(atom, variable)) {
+            !(contextual ? atom_has_vars(atom)
+                          : atom_variable_bloom_may_contain(atom, variable))) {
             continue;
         }
         if ((uint64_t)atom->expr.len >
@@ -70,7 +78,8 @@ bool cetta_observation_atom_contains_var(
         for (CettaExprIndex index = atom->expr.len;
              index > 0u; index--) {
             const Atom *child = atom->expr.elems[index - 1u];
-            if (atom_variable_bloom_may_contain(child, variable)) {
+            if (contextual ? atom_has_vars(child)
+                           : atom_variable_bloom_may_contain(child, variable)) {
                 work[length++] =
                     (CettaObservationUseWork){.atom = child};
             }
@@ -80,15 +89,21 @@ bool cetta_observation_atom_contains_var(
     return false;
 }
 
+bool cetta_observation_atom_contains_var(const Atom *root, VarId variable) {
+    return cetta_observation_value_contains_var(
+        binding_value_from_atom((Atom *)root), variable);
+}
+
 bool cetta_observation_environment_var_is_private(
         const Bindings *environment, VarId variable) {
     if (!environment || variable == VAR_ID_NONE)
         return false;
-    for (uint32_t index = 0u; index < environment->len; index++) {
-        const Binding *binding = &environment->entries[index];
+    BindingsIterator iterator = {.bindings = environment};
+    Binding logical_binding;
+    while (bindings_iterator_next(&iterator, &logical_binding)) {
+        const Binding *binding = &logical_binding;
         if (binding->var_id == variable ||
-            cetta_observation_atom_contains_var(
-                binding->val, variable)) {
+            cetta_observation_value_contains_var(binding->value, variable)) {
             return false;
         }
     }
@@ -96,9 +111,9 @@ bool cetta_observation_environment_var_is_private(
          index < environment->eq_len; index++) {
         const BindingConstraint *constraint =
             &environment->constraints[index];
-        if (cetta_observation_atom_contains_var(
+        if (cetta_observation_value_contains_var(
                 constraint->lhs, variable) ||
-            cetta_observation_atom_contains_var(
+            cetta_observation_value_contains_var(
                 constraint->rhs, variable)) {
             return false;
         }

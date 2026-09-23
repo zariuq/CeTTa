@@ -122,7 +122,7 @@
 (= (judgment-of $other) (empty))
 ; keep ONLY residuals that are neither a proof nor rho:nil -- i.e. stuck junk.
 ; The may-set must contain none (no dangling rho:recv/rho:send/rho:eval-payload).
-; `case` is first-match deterministic, unlike open-world `=` clauses which all fire.
+; `case` is first-match deterministic, unlike open-world `=` equations which all fire.
 (= (stuck-of $r)
    (case $r
      (((rho:val (: $p $c)) (empty))

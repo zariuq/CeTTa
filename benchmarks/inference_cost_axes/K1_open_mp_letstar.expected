@@ -1,0 +1,4 @@
+(Mk 1 ax)
+(Mk 3 (mp ax ax))
+(Mk 5 (mp ax (mp ax ax)))
+(Mk 5 (mp (mp ax ax) ax))

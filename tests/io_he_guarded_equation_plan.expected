@@ -1,0 +1,5 @@
+[(ctor-ok B)]
+[(ctor-ok $x)]
+[shared-ok]
+[(two-ok X)]
+[(retained-ok (A B) B)]

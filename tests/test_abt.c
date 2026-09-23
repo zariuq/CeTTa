@@ -15,7 +15,7 @@
 
 enum {
     ABT_DEEP_TERM_DEPTH = CETTA_ABT_MUTATION == 0 ? 100000 : 1000,
-    ABT_EXPECTED_CHECKS = 124,
+    ABT_EXPECTED_CHECKS = 125,
 };
 
 static unsigned failures = 0;
@@ -473,17 +473,21 @@ static void test_locally_nameless_seams(Arena *arena,
                   abt_open(signature, arena, mm_ph, closed), quoted_body);
 
     Atom *quoted_loose = node1(arena, "quote", var(arena, 99));
-    CHECK(abt_shift(signature, arena, 1, 0u, quoted_loose) == quoted_loose,
-          "shift is opaque beneath quotation");
-    CHECK(abt_subst(signature, arena, 0u, atom_symbol(arena, "z"),
-                    quoted_loose) == quoted_loose,
-          "substitution is opaque beneath quotation");
-    CHECK(abt_scope_check(signature, 0u, quoted_loose),
-          "quoted syntax is closed with respect to outer object binders");
+    check_atom_eq("shift traverses quotation without adding a binder",
+                  abt_shift(signature, arena, 1, 0u, quoted_loose),
+                  node1(arena, "quote", var(arena, 100)));
+    check_atom_eq("substitution traverses quoted templates",
+                  abt_subst(signature, arena, 0u, atom_symbol(arena, "z"),
+                            node1(arena, "quote", var(arena, 0))),
+                  node1(arena, "quote", atom_symbol(arena, "z")));
+    CHECK(!abt_scope_check(signature, 0u, quoted_loose),
+          "quotation cannot hide a loose object variable");
+    CHECK(abt_scope_check(signature, 100u, quoted_loose),
+          "a quoted variable can refer to its surrounding context");
     Atom *quoted_matcher_var = node1(arena, "quote", atom_var(arena, "x"));
     CHECK(abt_shift(signature, arena, 1, 0u, quoted_matcher_var) ==
               quoted_matcher_var,
-          "ordinary open quoted code is opaque to object-variable shifting");
+          "matcher metavariables are distinct from object indices during shifting");
     CHECK(abt_scope_check(signature, 0u, quoted_matcher_var),
           "matcher variables inside ordinary quoted code do not become object indices");
     CHECK(abt_alpha_eq(quoted_matcher_var, quoted_matcher_var),

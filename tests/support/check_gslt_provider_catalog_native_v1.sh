@@ -58,7 +58,7 @@ for catalog_index in "${catalog_indices[@]}"; do
         2) catalog_pinned+=("${catalog_semantics[@]:2}") ;;
     esac
 done
-catalog_native_sources=(src/gslt_provider_runtime.c src/parser.c src/atom.c
+catalog_native_sources=(src/gslt_provider_runtime.c src/parser.c src/atom.c src/binding/frame_identity.c
                         src/symbol.c src/name_key.c src/native_sha256.c)
 catalog_observer=tests/support/test_gslt_provider_catalog_descriptor_v1.c
 catalog_fixture_dir=tests/support/gslt_provider_catalog_native_v1

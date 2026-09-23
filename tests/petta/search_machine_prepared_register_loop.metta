@@ -1,5 +1,5 @@
 ; The prepared register loop is deliberately narrower than ordinary PeTTa
-; clause execution.  These cases pin its admitted aliasing shapes and the
+; equation execution.  These cases pin its admitted aliasing shapes and the
 ; boundaries that must retain the canonical search machinery.
 
 !(import! &self (library lib_tabling))
@@ -21,7 +21,7 @@
 !(register-repeat 2 5 99)
 
 ; A second equation excludes the head from singleton admission.  Both answers
-; and their declaration order remain visible through the ordinary clause path.
+; and their declaration order remain visible through the ordinary equation path.
 (= (register-ambiguous $n $a)
    (if (== $n 0)
        $a

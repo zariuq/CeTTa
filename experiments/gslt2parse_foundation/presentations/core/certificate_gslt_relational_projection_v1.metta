@@ -143,7 +143,7 @@
     (rule proof-relational-projection-sequence-nil-v1
       (head
         (ProofRelationalSequenceV1
-          ?owner ProofRelationalValueListNilV1 ProofSequenceNilV1))
+          ?owner ProofRelationalValueListNilV1 (ProofSequenceNilV1)))
       (body
         (proof-relational-projection-layer-valid-v1 ?owner ?base)))
     (rule proof-relational-projection-sequence-cons-v1

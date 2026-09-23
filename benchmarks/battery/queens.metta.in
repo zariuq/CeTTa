@@ -1,4 +1,4 @@
-; Battery 5: N-queens via clause nondeterminism — bag semantics in HE-family,
+; Battery 5: N-queens via equation nondeterminism — bag semantics in HE-family,
 ; backtracking in PeTTa, same program text.
 (= (pick (Cons $x $xs)) $x)
 (= (pick (Cons $x (Cons $y $ys))) (pick (Cons $y $ys)))

@@ -6,5 +6,5 @@
   (ProofTraceConsV1
     (ProofTracePushV1
       (ProofSequenceConsV1 input-wff-v1
-        (ProofSequenceConsV1 input-a-v1 ProofSequenceNilV1)))
+        (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1))))
     (ProofTraceConsV1 ProofTraceSaveV1 ProofTraceNilV1)))

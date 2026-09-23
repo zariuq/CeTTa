@@ -1603,8 +1603,8 @@ static void test_byte_backed_rematch_delay(TermUniverse *universe, Arena *scratc
         expr3(scratch, sym(scratch, "pair"), query_var, sym(scratch, "B")),
         &sm, &seed, scratch, &out));
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 0);
-    assert(bindings_lookup_var(&out, query_var) != NULL);
-    assert(atom_is_symbol_id(bindings_lookup_var(&out, query_var),
+    assert(bindings_lookup_value_id(&out, (query_var)->var_id).skeleton != NULL);
+    assert(atom_is_symbol_id(bindings_lookup_value_id(&out, (query_var)->var_id).skeleton,
                              symbol_intern_cstr(g_symbols, "A")));
     bindings_free(&out);
 
@@ -1640,7 +1640,7 @@ static void test_subst_tree_live_branch_builder_witness(Arena *scratch) {
     assert(matches.items[0].atom_idx == 0);
     assert(matches.items[0].bindings.len == 1);
     assert(test_counter(CETTA_RUNTIME_COUNTER_BINDINGS_CLONE) == 1);
-    assert(atom_is_symbol_id(matches.items[0].bindings.entries[0].val,
+    assert(atom_is_symbol_id(matches.items[0].bindings.entries[0].value.skeleton,
                              symbol_intern_cstr(g_symbols, "A")));
 
     smset_free(&matches);
@@ -2563,7 +2563,7 @@ static void test_leaf_patch_refusal_is_transactional(Arena *scratch) {
         query, lhs, &base, scratch, epoch));
     assert(base.len == 0u);
     assert(base.eq_len == 1u);
-    assert(bindings_lookup_id(&base, var_epoch_id(x->var_id, epoch)) == NULL);
+    assert(bindings_lookup_value_id(&base, var_epoch_id(x->var_id, epoch)).skeleton == NULL);
 
     bindings_free(&base);
 }

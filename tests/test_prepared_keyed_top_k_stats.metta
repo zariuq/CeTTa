@@ -20,7 +20,7 @@
     ((item 3 first) (item 3 second) (item 3 third)) 2)
   ((item 3 first) (item 3 second)))
 
-; Overlapping key clauses force the complete relational fallback.  Every
+; Overlapping key equations force the complete relational fallback.  Every
 ; ordinary key occurrence, including equal result occurrences, is retained.
 (= (prepared-top-k:choice-key (item $key $value))
    $key)

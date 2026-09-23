@@ -3418,7 +3418,7 @@
     {
       "arguments": [],
       "classification": {
-        "class": "overlapping-clauses",
+        "class": "overlapping-equations",
         "mutates": false,
         "phase": "static"
       },
@@ -5428,7 +5428,7 @@
         "--strict-det"
       ],
       "classification": {
-        "class": "overlapping-clauses",
+        "class": "overlapping-equations",
         "mutates": false,
         "phase": "static"
       },

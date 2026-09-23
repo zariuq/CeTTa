@@ -39,7 +39,7 @@
 
 ; The generated bind instruction must implement the canonical structural-let
 ; contract: fresh fields bind positionally, repeated fields co-refer, and a
-; variable already visible from the clause head is a rigid reference.
+; variable already visible from the equation LHS is a rigid reference.
 (= (prepared-unpack $pair)
    (let (Pair $x $y) $pair (Unpacked $x $y)))
 !(prepared-unpack (Pair a b))
@@ -64,7 +64,7 @@
    (Box (prepared-nested-leaf $x)))
 !(prepared-nested-constructor 41)
 
-; Eager call arguments and clause bindings are values after their producing
+; Eager call arguments and equation bindings are values after their producing
 ; child completes.  A flat expression value must remain data across recursive
 ; tail calls rather than being reinterpreted as a dynamic operator call.
 (= (prepared-flat-member $needle $items)

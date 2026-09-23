@@ -545,7 +545,7 @@ bool table_store_materialize_answer_ref(const AnswerBank *answer_bank,
         goto done;
 
     if (variant_instance_present(&stored->variant)) {
-        if (goal_bindings.len > 0 || goal_bindings.eq_len > 0) {
+        if (!bindings_logically_empty(&goal_bindings)) {
             if (!variant_instance_sink_env(out_arena, out_variant,
                                            &stored->variant,
                                            &goal_bindings)) {

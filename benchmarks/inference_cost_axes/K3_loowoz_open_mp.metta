@@ -1,0 +1,21 @@
+; K3: Loowoz s19 open dest against interned mp and three colon-tagged
+; axioms.  J1–J4 and K1 do not use this formula; last-green has three
+; size-19 proofs. A broken closure experiment lost all three answers.
+!(translatePredicate (set_prolog_flag occurs_check True))
+(= (k3-gtz $s (: ax₁ (→ $𝜑 (→ $𝜓 $𝜑))))
+   (MkSized 1 (: ax₁ (→ $𝜑 (→ $𝜓 $𝜑)))))
+(= (k3-gtz $s (: ax₂ (→ (→ $𝜑 (→ $𝜓 $𝜒)) (→ (→ $𝜑 $𝜓) (→ $𝜑 $𝜒)))))
+   (MkSized 1 (: ax₂ (→ (→ $𝜑 (→ $𝜓 $𝜒)) (→ (→ $𝜑 $𝜓) (→ $𝜑 $𝜒))))))
+(= (k3-gtz $s (: ax₃ (→ (→ (¬ $𝜑) (¬ $𝜓)) (→ $𝜓 $𝜑))))
+   (MkSized 1 (: ax₃ (→ (→ (¬ $𝜑) (¬ $𝜓)) (→ $𝜓 $𝜑)))))
+(= (k3-gtz $s (: (mp $f $x) $b))
+   (if (< 2 $s)
+       (let* (((MkSized $fs (: $f (→ $a $b))) (k3 (- $s 2) (: $f (→ $a $b))))
+              ((MkSized $xs (: $x $a)) (k3 (- (- $s 1) $fs) (: $x $a))))
+         (MkSized (+ (+ $fs $xs) 1) (: (mp $f $x) $b)))
+       (empty)))
+(= (k3 $s (: $x $a))
+   (if (< 0 $s)
+       (k3-gtz $s (: $x $a))
+       (empty)))
+!(k3 19 (: $x (→ (→ (→ 𝜑 𝜓) (→ 𝜑 𝜒)) (→ (→ 𝜓 𝜑) (→ 𝜓 𝜒)))))

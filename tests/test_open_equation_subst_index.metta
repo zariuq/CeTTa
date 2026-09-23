@@ -1,5 +1,5 @@
 ; Crossing the large-equation-bucket threshold must not change the meaning of
-; an open query.  The extra clauses are deliberately irrelevant to the query;
+; an open query.  The extra equations are deliberately irrelevant to the query;
 ; they only make the substitution-tree index eligible.
 
 (= (kb) (superpose ((: w1 fact) (: w2 (imp fact win)))))

@@ -1,6 +1,6 @@
 (= (identity-rel $x) $x)
 
-; Two identical clauses make each item yield two occurrences.  Mapping two
+; Two identical equations make each item yield two occurrences.  Mapping two
 ; items must therefore retain all four product branches.
 (= (duplicate-rel $x) $x)
 (= (duplicate-rel $x) $x)

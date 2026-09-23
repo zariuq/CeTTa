@@ -256,8 +256,14 @@ def _qualify(
         ):
             raise RuntimeError("order-sensitivity: occurrence bags differ")
     elif identifier == "prime-shared-frontier":
-        expected = _expected("tests/prime/search_controller_frontier.expected")
-        if inline["stdout"] != expected or fifo["stdout"] != expected:
+        inline_expected = _expected(
+            "tests/prime/search_controller_frontier.expected"
+        )
+        fifo_expected = _expected(
+            "tests/prime/search_controller_frontier.fifo.expected"
+        )
+        if (inline["stdout"] != inline_expected or
+                fifo["stdout"] != fifo_expected):
             raise RuntimeError("prime-shared-frontier: exact stream changed")
         if fifo["aggregate"]["controller_active_fifo"] < 1:
             raise RuntimeError("prime-shared-frontier: FIFO was not admitted")

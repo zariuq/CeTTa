@@ -1,5 +1,5 @@
 ; Boolean operators are finite relations.  Open arguments enumerate through
-; ordinary machine choice points in the same order as the PeTTa clauses.
+; ordinary machine choice points in the same order as the PeTTa equations.
 !(collapse (if (or $x true) $x))
 !(collapse (not $x))
 

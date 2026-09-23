@@ -550,7 +550,7 @@ static void test_semantic_form_facts(void) {
     puts("PASS: PeTTa semantic-form facts, growth, and reincarnation");
 }
 
-static void add_clause(
+static void add_equation(
     Space *space, Arena *arena, const char *source);
 
 static Atom *test_nest_unary(
@@ -878,7 +878,7 @@ static void test_logical_cons_binding_views(Arena *arena) {
     assert(petta_semantics_match_lowered_head(arena, cell, flat, &builder));
     assert(!petta_semantics_match_lowered_head(
         arena, cell, lookalike, &builder));
-    assert(!bindings_lookup_var(&builder.current, x));
+    assert(!bindings_lookup_value_id(&builder.current, (x)->var_id).skeleton);
     assert(builder.current.len == 0u);
 
     /* A private carrier must retain its logical shape through aliases and
@@ -892,7 +892,7 @@ static void test_logical_cons_binding_views(Arena *arena) {
         arena, atom_expr2(arena, quote, v),
         atom_expr2(arena, quote, lookalike), &builder));
     assert(builder.current.len == 1u);
-    assert(!bindings_lookup_var(&builder.current, x));
+    assert(!bindings_lookup_value_id(&builder.current, (x)->var_id).skeleton);
     bindings_builder_rollback(&builder, empty_mark);
 
     Atom *aliased_head = atom_expr3(arena, head, a, nil);
@@ -930,8 +930,8 @@ static void test_logical_cons_binding_views(Arena *arena) {
         arena, atom_expr3(arena, f, x, x),
         atom_expr3(arena, f, y, b), &builder));
     assert(builder.current.len == 1u);
-    assert(!bindings_lookup_var(&builder.current, x));
-    assert(atom_eq(bindings_lookup_var(&builder.current, y), a));
+    assert(!bindings_lookup_value_id(&builder.current, (x)->var_id).skeleton);
+    assert(atom_eq(bindings_lookup_value_id(&builder.current, (y)->var_id).skeleton, a));
     bindings_builder_rollback(&builder, empty_mark);
 
     assert(petta_semantics_match_lowered_head(
@@ -951,8 +951,48 @@ static void test_logical_cons_binding_views(Arena *arena) {
          " correlation, occurs checks and rollback");
 }
 
+
+static void test_contextual_cons_values(Arena *arena) {
+    CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
+    Atom *p = atom_var_with_id(arena, "cons-context-p", fresh_var_id());
+    Atom *q = atom_var_with_id(arena, "cons-context-q", fresh_var_id());
+    Atom *x = atom_var_with_id(arena, "cons-context-x", fresh_var_id());
+    Atom *head = atom_var_with_id(arena, "cons-context-head", fresh_var_id());
+    Atom *a = atom_symbol(arena, "cons-context-a");
+    Atom *b = atom_symbol(arena, "cons-context-b");
+    Atom *nil = atom_unit(arena);
+    Atom *source = atom_expr3(arena, head, x, nil);
+    Atom *tag = petta_semantics_open_cons_value(arena, a, nil)->expr.elems[0];
+    uint32_t left_epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope), right_epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
+    for (unsigned agree = 0u; agree < 2u; agree++) {
+        Bindings seed;
+        bindings_init(&seed);
+        assert(bindings_add_var(&seed, p, a));
+        assert(bindings_add_var(&seed, q, a));
+        assert(bindings_add_id(&seed, var_epoch_id(x->var_id, left_epoch), x->sym_id, a));
+        assert(bindings_add_id(&seed, var_epoch_id(x->var_id, right_epoch), x->sym_id, agree ? a : b));
+        assert(bindings_add_id(&seed, var_epoch_id(head->var_id, left_epoch), head->sym_id, tag));
+        assert(bindings_add_id(&seed, var_epoch_id(head->var_id, right_epoch), head->sym_id, tag));
+        assert(bindings_prepare_logical_write(&seed));
+        seed.entries[0].value = binding_value_from_context(source, left_epoch);
+        seed.entries[1].value = binding_value_from_context(source, right_epoch);
+        bindings_invalidate_after_key_rewrite(&seed);
+        BindingsBuilder builder;
+        assert(bindings_builder_init(&builder, &seed));
+        assert(petta_semantics_match_lowered_head(arena, p, q, &builder) == (agree != 0u));
+        assert(bindings_eq(&seed, &builder.current));
+        Atom *flat = atom_expr(arena, &a, 1u);
+        assert(petta_semantics_match_lowered_head(arena, p, flat, &builder));
+        assert(bindings_eq(&seed, &builder.current));
+        bindings_builder_free(&builder);
+        bindings_free(&seed);
+    }
+    puts("PASS: contextual list heads and elements retain independent environments");
+}
+
 static void test_lowered_head_epoch_views(Arena *arena) {
-    uint32_t epoch = fresh_var_suffix();
+    CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
+    uint32_t epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
     Atom *a = atom_symbol(arena, "epoch-a");
     Atom *b = atom_symbol(arena, "epoch-b");
     Atom *f = atom_symbol(arena, "epoch-f");
@@ -1015,9 +1055,18 @@ static void test_lowered_head_epoch_views(Arena *arena) {
                        bindings_to_atom(arena, &viewed.current)));
         if (!actual)
             assert(viewed.current.len == mark);
-        if (cases[i].source == shared_root)
-            assert(bindings_lookup_var(&viewed.current, destination) ==
-                   bindings_lookup_var(&viewed.current, destination2));
+        if (cases[i].source == shared_root) {
+            BindingValue first = bindings_lookup_value_id(&viewed.current, destination->var_id);
+            BindingValue second = bindings_lookup_value_id(&viewed.current, destination2->var_id);
+            assert(binding_value_equal(first, second));
+            assert(first.skeleton == shared_child && second.skeleton == shared_child &&
+                   first.kind == BINDING_VALUE_CONTEXTUAL && first.epoch == epoch);
+        }
+        if (cases[i].value == destination && cases[i].source->kind == ATOM_EXPR) {
+            BindingValue retained = bindings_lookup_value_id(&viewed.current, destination->var_id);
+            assert(retained.skeleton == cases[i].source &&
+                   retained.kind == BINDING_VALUE_CONTEXTUAL && retained.epoch == epoch);
+        }
         bindings_builder_free(&viewed);
         bindings_builder_free(&reference);
     }
@@ -1065,7 +1114,7 @@ static void test_answer_materialization_boundaries(
         DEEP_FINITE_DEPTH = 4096,
         SHARED_DAG_DEPTH = 128,
     };
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (answer-materialization-open) (cons a $tail))");
 
@@ -1334,8 +1383,8 @@ static void test_binding_prefix_factoring(Arena *arena) {
     assert(factored);
     assert(elided == 2u);
     assert(extended.len == 1u);
-    assert(!bindings_lookup_id(&extended, x->var_id));
-    assert(bindings_lookup_id(&extended, z->var_id) == three);
+    assert(!bindings_lookup_value_id(&extended, x->var_id).skeleton);
+    assert(bindings_lookup_value_id(&extended, z->var_id).skeleton == three);
     bindings_free(&extended);
 
     /* A reordered environment is not certified as an inherited prefix.
@@ -1351,14 +1400,15 @@ static void test_binding_prefix_factoring(Arena *arena) {
     assert(!factored);
     assert(elided == 0u);
     assert(extended.len == 3u);
-    assert(bindings_lookup_id(&extended, x->var_id) == one);
-    assert(bindings_lookup_id(&extended, z->var_id) == three);
+    assert(bindings_lookup_value_id(&extended, x->var_id).skeleton == one);
+    assert(bindings_lookup_value_id(&extended, z->var_id).skeleton == three);
 
     bindings_free(&extended);
     bindings_free(&base);
 }
 
 static void test_activation_epoch_suffix_application(Arena *arena) {
+    CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
     Atom *outer = atom_var_with_id(
         arena, "outer-slot", fresh_var_id());
     Atom *outer_link = atom_var_with_id(
@@ -1369,34 +1419,40 @@ static void test_activation_epoch_suffix_application(Arena *arena) {
         arena, "outer-value");
     assert(outer && outer_link && rule && outer_value);
 
-    Bindings bindings;
-    bindings_init(&bindings);
-    assert(bindings_add_var(&bindings, outer_link, outer_value));
-    assert(bindings_add_var(&bindings, outer, outer_link));
-    uint32_t activation_first = bindings.len;
-    uint32_t epoch = fresh_var_suffix();
+    BindingsBuilder builder;
+    assert(bindings_builder_init(&builder, NULL));
+    assert(bindings_builder_add_var_fresh(&builder, outer_link, outer_value));
+    assert(bindings_builder_add_var_fresh(&builder, outer, outer_link));
+    uint32_t activation_first = builder.current.len;
+    uint32_t epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
     Atom *rule_slot = atom_var_like(
         arena, rule, var_epoch_id(rule->var_id, epoch));
     assert(rule_slot);
-    assert(bindings_add_var(&bindings, rule_slot, outer));
+    BindingsActivationView frame;
+    bindings_activation_view_init(&frame);
+    VarId ids[] = {rule->var_id};
+    Atom *variables[] = {rule};
+    assert(bindings_activation_view_prepare(&frame, &builder, ids, variables,
+        1u, epoch, activation_first));
+    assert(bindings_builder_add_var_fresh(&builder, rule_slot, outer));
 
     /* The activation view substitutes its own slot but deliberately leaves
      * an outer reference for the live machine trail. */
     Atom *local = bindings_apply_epoch_since(
-        &bindings, arena, rule, epoch, activation_first);
+        &builder.current, arena, rule, epoch, activation_first);
     assert(local && local->kind == ATOM_VAR);
     assert(local->var_id == outer->var_id);
 
     /* The ordinary full-environment operation remains the materialization
      * boundary and therefore resolves the outer slot as well. */
     Atom *materialized = bindings_apply_epoch(
-        &bindings, arena, rule, epoch);
+        &builder.current, arena, rule, epoch);
     assert(materialized == outer_value);
     Atom *sequential = bindings_apply(
-        &bindings, arena, local);
+        &builder.current, arena, local);
     assert(sequential == materialized);
     Atom *fused = bindings_apply_epoch_then_all(
-        &bindings, arena, rule, epoch, activation_first);
+        &builder.current, arena, rule, epoch, activation_first);
     assert(fused == sequential);
 
     /* An unbound activation slot remains fresh rather than aliasing either the
@@ -1404,7 +1460,7 @@ static void test_activation_epoch_suffix_application(Arena *arena) {
     Atom *unbound = atom_var_with_id(
         arena, "rule-unbound", fresh_var_id());
     Atom *fresh_unbound = bindings_apply_epoch(
-        &bindings, arena, unbound, epoch);
+        &builder.current, arena, unbound, epoch);
     assert(fresh_unbound && fresh_unbound->kind == ATOM_VAR);
     assert(fresh_unbound->var_id ==
            var_epoch_id(unbound->var_id, epoch));
@@ -1414,11 +1470,11 @@ static void test_activation_epoch_suffix_application(Arena *arena) {
     Atom *source_children[] = {pair, rule, unbound};
     Atom *source = atom_expr(arena, source_children, 3u);
     Atom *local_pair = bindings_apply_epoch_since(
-        &bindings, arena, source, epoch, activation_first);
+        &builder.current, arena, source, epoch, activation_first);
     Atom *sequential_pair = bindings_apply(
-        &bindings, arena, local_pair);
+        &builder.current, arena, local_pair);
     Atom *fused_pair = bindings_apply_epoch_then_all(
-        &bindings, arena, source, epoch, activation_first);
+        &builder.current, arena, source, epoch, activation_first);
     assert(source && local_pair && sequential_pair && fused_pair);
     assert(atom_eq(fused_pair, sequential_pair));
     assert(fused_pair->kind == ATOM_EXPR &&
@@ -1430,14 +1486,15 @@ static void test_activation_epoch_suffix_application(Arena *arena) {
 
     /* A malformed suffix boundary must fail closed. */
     assert(!bindings_apply_epoch_since(
-        &bindings, arena, rule, epoch, bindings.len + 1u));
-    bindings_free(&bindings);
+        &builder.current, arena, rule, epoch, builder.current.len + 1u));
+    bindings_activation_view_free(&frame);
+    bindings_builder_free(&builder);
 }
 
-static void add_clause(Space *space, Arena *arena, const char *source) {
-    Atom *clause = parse_one(arena, source);
-    assert(clause);
-    space_add(space, clause);
+static void add_equation(Space *space, Arena *arena, const char *source) {
+    Atom *equation = parse_one(arena, source);
+    assert(equation);
+    space_add(space, equation);
 }
 
 typedef struct {
@@ -1460,9 +1517,41 @@ static PettaSpecializeResult decline_specialization_for_capacity(
     return PETTA_SPECIALIZE_CAPACITY;
 }
 
+static void test_root_context_identity_import(
+        Space *space, Arena *persistent, Arena *answers) {
+    CETTA_FRAME_IDENTITY_SCOPE(identities);
+    CettaFrameIdentity identity = cetta_frame_identity_scope_fresh(&identities);
+    add_equation(space, persistent, "(= (root-context-identity $value) $value)");
+    Atom *foreign = atom_var_with_id(answers, "owned-root", var_epoch_id(1u, identity));
+    Atom *authored = atom_var(answers, "authored-root");
+    Atom *pair = atom_expr3(answers, atom_symbol(answers, "ImportedPair"), foreign, authored);
+    Atom *query = atom_expr2(answers, atom_symbol(answers, "root-context-identity"), pair);
+    Bindings base;
+    bindings_init(&base);
+    VarId slot = 1u;
+    assert(bindings_register_complete_contextual_frame(&base, &slot, 1u, identity));
+    assert(bindings_add_var(&base, foreign, atom_int(answers, 71)));
+    assert(bindings_add_var(&base, authored, atom_int(answers, 83)));
+    PettaMachine machine;
+    assert(petta_machine_init(&machine, space, answers, query, &base, NULL));
+    Atom *answer = NULL;
+    Bindings environment;
+    assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_eq(answer, parse_one(answers, "(ImportedPair 71 83)")));
+    assert(atom_eq(bindings_apply(&environment, answers, foreign), atom_int(answers, 71)));
+    assert(atom_eq(bindings_apply(&environment, answers, authored), atom_int(answers, 83)));
+    bindings_free(&environment);
+    assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+    assert(atom_eq(bindings_apply(&base, answers, foreign), atom_int(answers, 71)));
+    bindings_free(&base);
+    puts("PASS: root query import preserves owned identities and authored aliases independently");
+}
+
 static void test_specializer_capacity_fallback(
     Space *space, Arena *persistent, Arena *answers) {
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (capacity-specializer-fallback $value) $value)");
     Atom *query = parse_one(
@@ -1540,13 +1629,13 @@ static void test_deep_callable_detection(
 static void test_deep_functional_match_pattern(
     Space *space, Arena *persistent, Arena *answers) {
     enum { DEEP_FINITE_DEPTH = 4096 };
-    add_clause(
+    add_equation(
         space, persistent,
         "(: &self (SpaceOf Atom))");
-    add_clause(
+    add_equation(
         space, persistent,
         "(: deep-pattern-id (-[det]-> Atom Atom))");
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (deep-pattern-id $value) $value)");
 
@@ -1669,22 +1758,22 @@ static PettaTypecheckCallable test_typecheck_callable(
 
 static void test_native_residual_typecheck(
     Space *space, Arena *persistent, Arena *scratch) {
-    add_clause(space, persistent, "(: ScoreAlias (Alias Number))");
-    add_clause(space, persistent,
+    add_equation(space, persistent, "(: ScoreAlias (Alias Number))");
+    add_equation(space, persistent,
                "(: NominalA (Newtype %Undefined%))");
-    add_clause(space, persistent,
+    add_equation(space, persistent,
                "(: NominalB (Newtype %Undefined%))");
-    add_clause(space, persistent,
+    add_equation(space, persistent,
                "(: ScoreBrand (Newtype Number))");
-    add_clause(space, persistent,
+    add_equation(space, persistent,
                "(: NominalCycle (Newtype NominalCycle))");
-    add_clause(space, persistent, "(: AliasCycleA (Alias AliasCycleB))");
-    add_clause(space, persistent, "(: AliasCycleB (Alias AliasCycleA))");
-    add_clause(space, persistent, "(: mixed-value (| Number String))");
-    add_clause(space, persistent, "(: numeric-value (| Number Number))");
-    add_clause(space, persistent,
+    add_equation(space, persistent, "(: AliasCycleA (Alias AliasCycleB))");
+    add_equation(space, persistent, "(: AliasCycleB (Alias AliasCycleA))");
+    add_equation(space, persistent, "(: mixed-value (| Number String))");
+    add_equation(space, persistent, "(: numeric-value (| Number Number))");
+    add_equation(space, persistent,
                "(: callable-value (-> Number Number))");
-    add_clause(space, persistent,
+    add_equation(space, persistent,
                "(: det-callable-value (-[det]-> Number Number))");
 
     expect_value_type(space, scratch, "1", "Number",
@@ -1825,13 +1914,13 @@ static void test_native_residual_typecheck(
     assert(malformed.verdict == PETTA_TYPECHECK_UNDETERMINED);
 }
 
-static Atom *add_indexed_program_clause(
+static Atom *add_indexed_program_equation(
     PettaProgram *program, Space *space,
     Arena *arena, const char *source) {
-    Atom *clause = parse_one(arena, source);
-    assert(clause);
+    Atom *equation = parse_one(arena, source);
+    assert(equation);
     CettaCount before = space_length64(space);
-    space_add(space, clause);
+    space_add(space, equation);
     assert(space_length64(space) == before + 1u);
     Atom *stored = space_get_at64(space, before);
     assert(stored);
@@ -1896,16 +1985,16 @@ static void test_program_callability_head_kinds(Arena *arena) {
     puts("PASS: callability distinguishes variable and structured heads");
 }
 
-static Atom *add_compiled_program_clause(
+static Atom *add_compiled_program_equation(
     PettaProgram *program, Space *space,
     Arena *arena, const char *source) {
-    Atom *clause = parse_one(arena, source);
-    assert(clause);
+    Atom *equation = parse_one(arena, source);
+    assert(equation);
     const PettaPlanNode *plan =
-        petta_program_plan_dynamic_add(program, clause);
+        petta_program_plan_dynamic_add(program, equation);
     assert(plan);
     CettaCount before = space_length64(space);
-    space_add(space, clause);
+    space_add(space, equation);
     assert(space_length64(space) == before + 1u);
     Atom *stored = space_get_at64(space, before);
     assert(stored);
@@ -1920,7 +2009,7 @@ static void test_program_case_safety_projection(
     assert(program);
     Space space;
     space_init_with_universe(&space, universe);
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &space, arena,
         "(= (case-pattern-data $value)"
         "   (case $value ((($head $tail) accepted)"
@@ -1931,7 +2020,7 @@ static void test_program_case_safety_projection(
                program, &space, pure_head, 1u) ==
            PETTA_RELATION_SAFETY_STATIC);
 
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &space, arena,
         "(= (case-effectful-result $value)"
         "   (case $value ((accepted"
@@ -1948,10 +2037,72 @@ static void test_program_case_safety_projection(
 
 static bool test_program_equation_snapshot_lease(
     void *context, Space *space, SymbolId head,
-    PettaClauseSnapshotLease *lease,
-    PettaClauseSnapshotStats *stats) {
-    return context && petta_program_clause_snapshot_lease_profiled(
+    PettaCandidateSnapshotLease *lease,
+    PettaCandidateSnapshotStats *stats) {
+    return context && petta_program_candidate_snapshot_lease_profiled(
         context, space, head, lease, stats);
+}
+
+static void test_elaborated_functional_pattern_plan(
+    TermUniverse *universe, Arena *persistent, Arena *answers) {
+    Space space;
+    memset(&space, 0xa5, sizeof space);
+    space_init_with_universe(&space, universe);
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    const char *equations[] = {
+        "(: &self (SpaceOf Atom))",
+        "(: plan-alias (-[det]-> $a $b $a))",
+        "(= (plan-alias $value $pattern) (let $value $pattern $value))",
+        "(function-plan-row 1 one)",
+        "(function-plan-row 1 one)",
+        "(function-plan-row 2 two)",
+    };
+    for (size_t index = 0u; index < sizeof equations / sizeof equations[0]; index++)
+        add_compiled_program_equation(program, &space, persistent, equations[index]);
+    PettaMachineHost host = {
+        .context = program,
+        .candidate_snapshot_lease = test_program_equation_snapshot_lease,
+    };
+    const struct {
+        const char *query;
+        const char *answer;
+        size_t count;
+    } cases[] = {
+        {"(match &self (plan-alias $whole (function-plan-row 1 $label)) $whole)",
+         "(function-plan-row 1 one)", 2u},
+        {"(match &self (function-plan-row 1 (plan-alias $label one)) $label)",
+         "one", 2u},
+        {"(match &self (plan-alias $whole (function-plan-row 3 missing)) $whole)",
+         NULL, 0u},
+    };
+    for (size_t index = 0u; index < sizeof cases / sizeof cases[0]; index++) {
+        Atom *query = parse_one(answers, cases[index].query);
+        const PettaPlanNode *plan = petta_program_plan_current(program, query);
+        assert(query && plan);
+        Atom *expected = cases[index].answer
+            ? parse_one(answers, cases[index].answer) : NULL;
+        PettaMachine machine;
+        assert(petta_machine_init_with_plan(
+            &machine, &space, answers, query, plan, NULL, &host));
+        for (size_t result = 0u; result < cases[index].count; result++) {
+            Atom *answer = NULL;
+            Bindings environment;
+            assert(petta_machine_next(&machine, &answer, &environment) ==
+                   PETTA_MACHINE_STEP_ANSWER);
+            assert(atom_alpha_eq(answer, expected));
+            bindings_free(&environment);
+        }
+        Atom *answer = NULL;
+        Bindings environment;
+        assert(petta_machine_next(&machine, &answer, &environment) ==
+               PETTA_MACHINE_STEP_EXHAUSTED);
+        bindings_free(&environment);
+        petta_machine_destroy(&machine);
+    }
+    petta_program_free(program);
+    space_free(&space);
+    puts("PASS: elaborated functional patterns discard stale template plans and preserve duplicates and refusal");
 }
 
 typedef struct {
@@ -1961,29 +2112,29 @@ typedef struct {
 
 static bool test_unknown_cons_fact_snapshot_lease(
     void *context, Space *space, SymbolId head,
-    PettaClauseSnapshotLease *lease,
-    PettaClauseSnapshotStats *stats) {
+    PettaCandidateSnapshotLease *lease,
+    PettaCandidateSnapshotStats *stats) {
     TestUnknownConsFactContext *test = context;
-    PettaClauseSnapshotLease source = {0};
+    PettaCandidateSnapshotLease source = {0};
     if (!test || !lease ||
-        !petta_program_clause_snapshot_lease_profiled(
+        !petta_program_candidate_snapshot_lease_profiled(
             test->program, space, head, &source, stats))
         return false;
     if (source.len > SIZE_MAX / sizeof(*source.items)) {
-        petta_program_clause_snapshot_lease_release(&source);
+        petta_program_candidate_snapshot_lease_release(&source);
         return false;
     }
-    PettaClauseCandidate *items = source.len
+    PettaEquationCandidate *items = source.len
         ? malloc(source.len * sizeof(*items))
         : NULL;
     if (source.len && !items) {
-        petta_program_clause_snapshot_lease_release(&source);
+        petta_program_candidate_snapshot_lease_release(&source);
         return false;
     }
     if (source.len)
         memcpy(items, source.items, source.len * sizeof(*items));
     size_t len = source.len;
-    petta_program_clause_snapshot_lease_release(&source);
+    petta_program_candidate_snapshot_lease_release(&source);
     for (size_t index = 0u; index < len; index++) {
         if (!items[index].activation_layout.
                 lhs_contains_cons_constraint_valid ||
@@ -1993,8 +2144,11 @@ static bool test_unknown_cons_fact_snapshot_lease(
         assert(items[index].equation &&
                items[index].equation->kind == ATOM_EXPR &&
                items[index].equation->expr.len == 3u);
-        assert(items[index].activation_layout.lhs ==
-               items[index].equation->expr.elems[1]);
+        Atom *execution = items[index].equation_template
+            ? petta_equation_template_syntax(items[index].equation_template)
+            : items[index].equation;
+        assert(items[index].activation_layout.lhs == execution->expr.elems[1]);
+        assert(atom_alpha_eq(execution, items[index].equation));
         items[index].activation_layout.
             lhs_contains_cons_constraint_valid = false;
         items[index].activation_layout.
@@ -2013,7 +2167,7 @@ static void test_unknown_cons_fact_falls_back(
     space_init_with_universe(&space, universe);
     PettaProgram *program = petta_program_new();
     assert(program);
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &space, persistent,
         "(= (unknown-cons-fact (cons $head $tail)) shape-nonempty)");
     Atom *query = parse_one(answers, "(unknown-cons-fact (item))");
@@ -2026,7 +2180,7 @@ static void test_unknown_cons_fact_falls_back(
     };
     PettaMachineHost host = {
         .context = &context,
-        .clause_snapshot_lease = test_unknown_cons_fact_snapshot_lease,
+        .candidate_snapshot_lease = test_unknown_cons_fact_snapshot_lease,
         .measure_stats = true,
     };
     PettaMachine machine;
@@ -2061,7 +2215,7 @@ static void test_alpha_reconciled_slot_authority(
     PettaProgram *program = petta_program_new();
     assert(program);
 
-    Atom *catalog_equation = add_compiled_program_clause(
+    Atom *catalog_equation = add_compiled_program_equation(
         program, &space, persistent,
         "(= (alpha-slot $x $y) (- $x $y))");
     assert(catalog_equation->kind == ATOM_EXPR &&
@@ -2091,9 +2245,9 @@ static void test_alpha_reconciled_slot_authority(
     assert(atom_alpha_eq(catalog_equation, live_equation));
 
     SymbolId head = symbol_intern_cstr(g_symbols, "alpha-slot");
-    PettaClauseSnapshotLease lease = {0};
-    PettaClauseSnapshotStats snapshot_stats;
-    assert(petta_program_clause_snapshot_lease_profiled(
+    PettaCandidateSnapshotLease lease = {0};
+    PettaCandidateSnapshotStats snapshot_stats;
+    assert(petta_program_candidate_snapshot_lease_profiled(
         program, &space, head, &lease, &snapshot_stats));
     assert(lease.len == 1u);
     assert(lease.items[0].equation == live_equation);
@@ -2109,6 +2263,15 @@ static void test_alpha_reconciled_slot_authority(
         lease.items[0].equation_template,
         &template_source_ids, &template_source_variables,
         &template_variable_count));
+    Bindings schema_activation;
+    bindings_init(&schema_activation);
+    BindingsFrameSchema *equation_schema =
+        petta_equation_template_frame_schema(lease.items[0].equation_template);
+    assert(equation_schema && template_variable_count == 2u &&
+           bindings_frame_schema_source_ids(equation_schema) == template_source_ids);
+    assert(bindings_register_complete_frame_schema(
+        &schema_activation, equation_schema, 719u));
+    VarId retained_source_id = template_source_ids[0];
     const PettaPlanNode *live_rhs_first_plan =
         petta_plan_child(lease.items[0].rhs_plan, 1u);
     const PettaPlanNode *live_rhs_second_plan =
@@ -2129,7 +2292,7 @@ static void test_alpha_reconciled_slot_authority(
            leased_rhs->expr.elems[2]->var_id);
     (void)template_source_variables;
     assert(snapshot_stats.alpha_equality_checks == 1u);
-    petta_program_clause_snapshot_lease_release(&lease);
+    petta_program_candidate_snapshot_lease_release(&lease);
 
     Atom *query = parse_one(persistent, "(alpha-slot 10 3)");
     const PettaPlanNode *query_plan =
@@ -2137,7 +2300,7 @@ static void test_alpha_reconciled_slot_authority(
     assert(query && query_plan);
     PettaMachineHost host = {
         .context = program,
-        .clause_snapshot_lease = test_program_equation_snapshot_lease,
+        .candidate_snapshot_lease = test_program_equation_snapshot_lease,
         .measure_stats = true,
     };
     PettaMachine machine;
@@ -2164,16 +2327,25 @@ static void test_alpha_reconciled_slot_authority(
     petta_machine_destroy(&machine);
 
     petta_program_free(program);
+    /* An activation owns the equation inventory even after plan teardown. */
+    assert(bindings_frame_schema_len(equation_schema) == 2u &&
+           bindings_frame_schema_source_ids(equation_schema)[0] == retained_source_id);
+    assert(bindings_add_id(&schema_activation,
+        var_epoch_id(retained_source_id, 719u), SYMBOL_ID_NONE, atom_int(answers, 71)));
+    BindingValue retained = bindings_lookup_value_id(
+        &schema_activation, var_epoch_id(retained_source_id, 719u));
+    assert(retained.skeleton && atom_eq(retained.skeleton, atom_int(answers, 71)));
+    bindings_free(&schema_activation);
     space_free(&space);
 }
 
-static bool admit_test_clause_activation_relation(
+static bool admit_test_equation_activation_relation(
         void *context, Space *space,
         SymbolId head, CettaExprLen arity) {
     return context && space && head != SYMBOL_ID_NONE && arity <= 8u;
 }
 
-static bool reject_test_clause_activation_relation(
+static bool reject_test_equation_activation_relation(
         void *context, Space *space,
         SymbolId head, CettaExprLen arity) {
     return context && space && head != SYMBOL_ID_NONE && arity > 8u;
@@ -2458,7 +2630,7 @@ static void test_constructor_slot_frame_plans(
 
     Space execution_space;
     space_init_with_universe(&execution_space, universe);
-    add_indexed_program_clause(
+    add_indexed_program_equation(
         program, &execution_space, persistent,
         "(= (slot-relation $value) $value)");
     Atom *relation_call = parse_one(
@@ -2498,7 +2670,7 @@ static void test_constructor_slot_frame_plans(
         nested_active_relation_plan->children[1u]
             .children[1u].role == PETTA_PLAN_STATIC_CALL);
 
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &execution_space, persistent,
         "(= (value-subtree-frame $payload) "
         "   (slot-relation (Box $payload)))");
@@ -2520,7 +2692,7 @@ static void test_constructor_slot_frame_plans(
         active_intrinsic_plan->execution ==
         PETTA_PLAN_EXEC_GENERIC);
 
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &execution_space, persistent,
         "(= (active-relation-frame $value) "
         "   (slot-relation (+ 1 2)))");
@@ -2532,15 +2704,15 @@ static void test_constructor_slot_frame_plans(
             program, activation_relation_query);
     assert(activation_relation_query_plan);
 
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &execution_space, persistent,
         "(= (scalar-segment-seed) 2)");
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &execution_space, persistent,
         "(= (nested-scalar-argument-frame $value)"
         "   (let* (($seed (scalar-segment-seed)))"
         "     (slot-relation (+ (- $value 1) (* $seed 1)))))");
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &execution_space, persistent,
         "(= (nested-scalar-argument-frame $value) (empty))");
     Atom *nested_scalar_argument_query = parse_one(
@@ -2550,12 +2722,12 @@ static void test_constructor_slot_frame_plans(
             program, nested_scalar_argument_query);
     assert(nested_scalar_argument_query_plan);
 
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &execution_space, persistent,
         "(= (division-scalar-argument-frame $value)"
         "   (let* (($denominator (scalar-segment-seed)))"
         "     (slot-relation (/ $value $denominator))))");
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &execution_space, persistent,
         "(= (division-scalar-argument-frame $value) (empty))");
     Atom *division_scalar_argument_query = parse_one(
@@ -2565,18 +2737,18 @@ static void test_constructor_slot_frame_plans(
             program, division_scalar_argument_query);
     assert(division_scalar_argument_query_plan);
 
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &execution_space, persistent,
         "(= (two-answer $value) $value)");
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &execution_space, persistent,
         "(= (two-answer $value) $value)");
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &execution_space, persistent,
         "(= (open-scalar-boundary $value)"
         "   (let* (($seed-value (scalar-segment-seed)))"
         "     (slot-relation (two-answer $seed-value))))");
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &execution_space, persistent,
         "(= (open-scalar-boundary $value) (empty))");
     Atom *open_scalar_boundary_query = parse_one(
@@ -2586,7 +2758,7 @@ static void test_constructor_slot_frame_plans(
             program, open_scalar_boundary_query);
     assert(open_scalar_boundary_query_plan);
 
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &execution_space, persistent,
         "(= (active-pure-frame $value) "
         "   (+ (+ 1 1) 2))");
@@ -2597,7 +2769,7 @@ static void test_constructor_slot_frame_plans(
         petta_program_plan_current(program, activation_pure_query);
     assert(activation_pure_query_plan);
 
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &execution_space, persistent,
         "(= (active-partial-frame $value) (+ (+ 1 1)))");
     Atom *activation_partial_query = parse_one(
@@ -2607,7 +2779,7 @@ static void test_constructor_slot_frame_plans(
         petta_program_plan_current(program, activation_partial_query);
     assert(activation_partial_query_plan);
 
-    Atom *stale_clause = add_compiled_program_clause(
+    Atom *stale_equation = add_compiled_program_equation(
         program, &execution_space, persistent,
         "(= (stale-machine-call $value) should-not-run)");
     Atom *stale_query = parse_one(
@@ -2616,16 +2788,16 @@ static void test_constructor_slot_frame_plans(
         petta_program_plan_current(program, stale_query);
     assert(stale_query_plan);
     assert(stale_query_plan->role == PETTA_PLAN_STATIC_CALL);
-    assert(space_remove(&execution_space, stale_clause));
+    assert(space_remove(&execution_space, stale_equation));
     petta_program_note_remove_one(
-        program, &execution_space, stale_clause);
+        program, &execution_space, stale_equation);
 
     PettaMachineHost activation_host = {
         .context = program,
-        .clause_snapshot_lease =
+        .candidate_snapshot_lease =
             test_program_equation_snapshot_lease,
-        .clause_activation_relation_admissible =
-            admit_test_clause_activation_relation,
+        .equation_activation_relation_admissible =
+            admit_test_equation_activation_relation,
         .measure_stats = true,
     };
     PettaMachine machine;
@@ -2695,7 +2867,7 @@ static void test_constructor_slot_frame_plans(
      * instead keeps a partial outer frame while its callable operand runs;
      * the resolved inner relation is the second frame. */
     const char *activation_setting = getenv(
-        "CETTA_PETTA_CLAUSE_BODY_ACTIVATION");
+        "CETTA_PETTA_EQUATION_BODY_ACTIVATION");
     bool activation_enabled = !activation_setting ||
         (activation_setting[0] != '\0' &&
          strcmp(activation_setting, "0") != 0 &&
@@ -2744,12 +2916,12 @@ static void test_constructor_slot_frame_plans(
 
     /* A scalar result resumed after an open producer uses the same operation
      * program as an argument region. Finite fuel retains intermediate goals. */
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &execution_space, persistent,
         "(= (whole-scalar-result $x)"
         "   (let* (($y (scalar-segment-seed)))"
         "     (+ (- $x 1) (* $y 2))))");
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &execution_space, persistent,
         "(= (whole-scalar-result $x) (empty))");
     Atom *whole_scalar_query = parse_one(answers, "(whole-scalar-result 4)");
@@ -2842,8 +3014,8 @@ static void test_constructor_slot_frame_plans(
     petta_machine_destroy(&machine);
 
     PettaMachineHost rejected_activation_host = activation_host;
-    rejected_activation_host.clause_activation_relation_admissible =
-        reject_test_clause_activation_relation;
+    rejected_activation_host.equation_activation_relation_admissible =
+        reject_test_equation_activation_relation;
     assert(petta_machine_init_with_plan(
         &machine, &execution_space, answers,
         activation_relation_query,
@@ -2917,7 +3089,7 @@ static void test_constructor_slot_frame_plans(
         answer, parse_one(answers, "(partial + (2))")));
     bindings_free(&environment);
     assert(petta_machine_stats(&machine, &stats));
-    /* Ordinary execution materializes the clause RHS before this metric's
+    /* Ordinary execution materializes the equation RHS before this metric's
      * boundary.  The optional activation path keeps the source paired with
      * its frame and performs one explicit fallback materialization here. */
     assert(stats.activation_materialization_calls ==
@@ -3051,17 +3223,17 @@ static void test_program_equation_template_c0(
     space_init_with_universe(&space, universe);
     PettaProgram *program = petta_program_new();
     assert(program);
-    add_indexed_program_clause(
+    add_indexed_program_equation(
         program, &space, persistent,
         "(= (equation-template-c0 pair $x $x) (answer $x))");
-    add_indexed_program_clause(
+    add_indexed_program_equation(
         program, &space, persistent,
         "(= (equation-template-c0-local $x) $rhs-local)");
 
     SymbolId head = symbol_intern_cstr(g_symbols, "equation-template-c0");
-    PettaClauseCandidate *candidates = NULL;
+    PettaEquationCandidate *candidates = NULL;
     size_t candidate_count = 0u;
-    assert(petta_program_clause_snapshot(
+    assert(petta_program_candidate_snapshot(
         program, &space, head, &candidates, &candidate_count));
     assert(candidate_count == 1u);
     assert(candidates[0].equation_template_c0);
@@ -3100,7 +3272,7 @@ static void test_program_equation_template_c0(
         symbol_intern_cstr(g_symbols, "equation-template-c0-local");
     candidates = NULL;
     candidate_count = 0u;
-    assert(petta_program_clause_snapshot(
+    assert(petta_program_candidate_snapshot(
         program, &space, local_head, &candidates, &candidate_count));
     assert(candidate_count == 1u);
     assert(!candidates[0].equation_template_c0);
@@ -3153,19 +3325,20 @@ static void assert_open_pattern_linear_program(
 
 static void test_open_pattern_support_certificate(
     TermUniverse *universe, Arena *persistent) {
+        CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
     Space space;
     space_init_with_universe(&space, universe);
     PettaProgram *program = petta_program_new();
     assert(program);
 
-    add_indexed_program_clause(
+    add_indexed_program_equation(
         program, &space, persistent,
         "(= (support-plan (SupportWrap $x $y $x)) support-ok)");
     SymbolId support_head =
         symbol_intern_cstr(g_symbols, "support-plan");
-    PettaClauseCandidate *candidates = NULL;
+    PettaEquationCandidate *candidates = NULL;
     size_t candidate_count = 0u;
-    assert(petta_program_clause_snapshot(
+    assert(petta_program_candidate_snapshot(
         program, &space, support_head,
         &candidates, &candidate_count));
     assert(candidate_count == 1u);
@@ -3192,7 +3365,7 @@ static void test_open_pattern_support_certificate(
     (void)source_variables;
 
     uint32_t support_epoch = 0u;
-    assert(fresh_var_suffix_try(&support_epoch));
+    assert(cetta_frame_identity_scope_try(&frame_identity_scope, &support_epoch));
     Atom *support_query = parse_one(persistent, "(support-plan $q)");
     BindingsBuilder support_bindings;
     assert(bindings_builder_init(&support_bindings, NULL));
@@ -3212,14 +3385,14 @@ static void test_open_pattern_support_certificate(
     bindings_builder_free(&support_bindings);
     free(candidates);
 
-    add_indexed_program_clause(
+    add_indexed_program_equation(
         program, &space, persistent,
         "(= (support-cycle $x (SupportWrap $x)) support-cycle-ok)");
     SymbolId cycle_head =
         symbol_intern_cstr(g_symbols, "support-cycle");
     candidates = NULL;
     candidate_count = 0u;
-    assert(petta_program_clause_snapshot(
+    assert(petta_program_candidate_snapshot(
         program, &space, cycle_head,
         &candidates, &candidate_count));
     assert(candidate_count == 1u);
@@ -3230,21 +3403,23 @@ static void test_open_pattern_support_certificate(
     assert(cycle_plan);
     assert_open_pattern_linear_program(cycle_plan);
     uint32_t cycle_epoch = 0u;
-    assert(fresh_var_suffix_try(&cycle_epoch));
+    assert(cetta_frame_identity_scope_try(&frame_identity_scope, &cycle_epoch));
     Atom *cycle_query =
         parse_one(persistent, "(support-cycle $q $q)");
     BindingsBuilder cycle_bindings;
     assert(bindings_builder_init(&cycle_bindings, NULL));
-    assert(match_atoms_epoch_builder_rule_local_planned(
+    /* The closing edge is refused at the bind by both matchers, and a
+     * refused match leaves the branch as it found it. */
+    assert(!match_atoms_epoch_builder_rule_local_planned(
         cycle_query, candidates[0].activation_layout.lhs,
         cycle_plan, &cycle_bindings, persistent, cycle_epoch));
-    assert(bindings_has_loop(&cycle_bindings.current));
+    assert(!bindings_has_loop(&cycle_bindings.current));
     BindingsBuilder cycle_linear;
     assert(bindings_builder_init(&cycle_linear, NULL));
-    assert(match_atoms_epoch_builder_rule_local_linear(
+    assert(!match_atoms_epoch_builder_rule_local_linear(
         cycle_query, candidates[0].activation_layout.lhs,
         cycle_plan, &cycle_linear, persistent, cycle_epoch));
-    assert(bindings_has_loop(&cycle_linear.current));
+    assert(!bindings_has_loop(&cycle_linear.current));
     assert(bindings_eq(
         &cycle_bindings.current, &cycle_linear.current));
     bindings_builder_free(&cycle_linear);
@@ -3271,14 +3446,14 @@ static void test_open_pattern_support_certificate(
         ")) support-wide-ok)");
     assert(part > 0 &&
            (size_t)part < sizeof(wide_source) - written);
-    add_indexed_program_clause(
+    add_indexed_program_equation(
         program, &space, persistent, wide_source);
 
     SymbolId wide_head =
         symbol_intern_cstr(g_symbols, "support-wide");
     candidates = NULL;
     candidate_count = 0u;
-    assert(petta_program_clause_snapshot(
+    assert(petta_program_candidate_snapshot(
         program, &space, wide_head,
         &candidates, &candidate_count));
     assert(candidate_count == 1u);
@@ -3298,7 +3473,7 @@ static void test_open_pattern_support_certificate(
     assert(!wide_plan->variable_ids);
     assert(wide_plan->variable_mask == 0u);
     uint32_t wide_epoch = 0u;
-    assert(fresh_var_suffix_try(&wide_epoch));
+    assert(cetta_frame_identity_scope_try(&frame_identity_scope, &wide_epoch));
     Atom *wide_query = parse_one(persistent, "(support-wide $q)");
     BindingsBuilder wide_bindings;
     assert(bindings_builder_init(&wide_bindings, NULL));
@@ -3358,14 +3533,15 @@ static void test_open_pattern_support_certificate(
     for (size_t case_index = 0u;
          case_index < sizeof transfer_cases /
              sizeof transfer_cases[0]; case_index++) {
+                 CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
         const struct OpenPatternTransferCase *test =
             &transfer_cases[case_index];
-        add_indexed_program_clause(
+        add_indexed_program_equation(
             program, &space, persistent, test->equation);
         SymbolId head = symbol_intern_cstr(g_symbols, test->head);
         candidates = NULL;
         candidate_count = 0u;
-        assert(petta_program_clause_snapshot(
+        assert(petta_program_candidate_snapshot(
             program, &space, head,
             &candidates, &candidate_count));
         assert(candidate_count == 1u);
@@ -3376,7 +3552,7 @@ static void test_open_pattern_support_certificate(
         assert_open_pattern_linear_program(plan);
         Atom *query = parse_one(persistent, test->query);
         uint32_t epoch = 0u;
-        assert(fresh_var_suffix_try(&epoch));
+        assert(cetta_frame_identity_scope_try(&frame_identity_scope, &epoch));
         BindingsBuilder tree_builder;
         BindingsBuilder linear_builder;
         assert(bindings_builder_init(&tree_builder, NULL));
@@ -3409,45 +3585,45 @@ static void test_open_pattern_support_certificate(
 typedef struct {
     PettaProgram *program;
     uint64_t relation_calls;
-    uint64_t clause_uses;
+    uint64_t equation_uses;
     bool override_empty;
     size_t empty_classifications;
     size_t empty_evaluations;
-} ClauseGuardObserverProbe;
+} EquationGuardObserverProbe;
 
-static bool test_clause_guard_snapshot_lease(
+static bool test_equation_guard_snapshot_lease(
     void *context, Space *space, SymbolId head,
-    PettaClauseSnapshotLease *lease,
-    PettaClauseSnapshotStats *stats) {
-    ClauseGuardObserverProbe *probe = context;
+    PettaCandidateSnapshotLease *lease,
+    PettaCandidateSnapshotStats *stats) {
+    EquationGuardObserverProbe *probe = context;
     return probe && probe->program &&
-        petta_program_clause_snapshot_lease_profiled(
+        petta_program_candidate_snapshot_lease_profiled(
             probe->program, space, head, lease, stats);
 }
 
-static uint64_t test_clause_guard_begin_relation_call(
+static uint64_t test_equation_guard_begin_relation_call(
     void *context, SpaceReadToken read, Atom *query) {
-    ClauseGuardObserverProbe *probe = context;
+    EquationGuardObserverProbe *probe = context;
     assert(probe && read.instance_id != 0u && query);
     probe->relation_calls++;
     return probe->relation_calls;
 }
 
-static bool test_clause_guard_record_clause_use(
+static bool test_equation_guard_record_equation_use(
     void *context, Arena *owner, uint64_t call_occurrence,
-    const PettaClauseCandidate *candidate, Atom *result,
+    const PettaEquationCandidate *candidate, Atom *result,
     const Bindings *environment, Bindings *evidence_delta) {
-    ClauseGuardObserverProbe *probe = context;
+    EquationGuardObserverProbe *probe = context;
     assert(probe && owner && call_occurrence != 0u && candidate &&
            result && environment && evidence_delta);
-    probe->clause_uses++;
+    probe->equation_uses++;
     return true;
 }
 
 static PettaMachineHostMode terminal_empty_classify(
     void *context, Space *space, Atom *expression) {
     (void)space;
-    ClauseGuardObserverProbe *probe = context;
+    EquationGuardObserverProbe *probe = context;
     if (expression->kind != ATOM_EXPR || expression->expr.len != 1u ||
         !atom_is_symbol_id(expression->expr.elems[0], g_builtin_syms.empty_form))
         return PETTA_MACHINE_HOST_NONE;
@@ -3461,7 +3637,7 @@ static bool terminal_empty_evaluate(
     const Bindings *environment, OutcomeSet *outcomes) {
     (void)space;
     (void)environment;
-    ClauseGuardObserverProbe *probe = context;
+    EquationGuardObserverProbe *probe = context;
     assert(expression->kind == ATOM_EXPR && expression->expr.len == 1u);
     assert(atom_is_symbol_id(expression->expr.elems[0], g_builtin_syms.empty_form));
     probe->empty_evaluations++;
@@ -3479,16 +3655,16 @@ static void test_activated_empty_authority(
     PettaProgram *program = petta_program_new();
     assert(program);
     for (size_t i = 0u; i < 2u; i++)
-        add_compiled_program_clause(program, &space, persistent,
+        add_compiled_program_equation(program, &space, persistent,
             "(= (terminal-empty-test $x) (empty))");
-    add_compiled_program_clause(program, &space, persistent,
+    add_compiled_program_equation(program, &space, persistent,
         "(= (terminal-empty-test $x) $x)");
-    add_compiled_program_clause(program, &space, persistent,
+    add_compiled_program_equation(program, &space, persistent,
         "(= (quoted-empty-test $x) (quote (empty)))");
-    ClauseGuardObserverProbe probe = {.program = program};
+    EquationGuardObserverProbe probe = {.program = program};
     PettaMachineHost host = {
         .context = &probe,
-        .clause_snapshot_lease = test_clause_guard_snapshot_lease,
+        .candidate_snapshot_lease = test_equation_guard_snapshot_lease,
         .classify = terminal_empty_classify,
         .evaluate = terminal_empty_evaluate,
         .measure_stats = true,
@@ -3546,27 +3722,27 @@ static void test_activated_empty_authority(
     puts("PASS: activated zero preserves host authority, quotation and duplicate alternatives");
 }
 
-static void test_compiled_clause_guard_pruning(
+static void test_compiled_equation_guard_pruning(
     TermUniverse *universe, Arena *persistent, Arena *answers) {
     Space space;
     space_init_with_universe(&space, universe);
     PettaProgram *program = petta_program_new();
     assert(program);
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &space, persistent,
         "(= (guard-prune $x)"
         "   (if (== $x 1) kept (empty)))");
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &space, persistent,
         "(= (guard-prune $x)"
         "   (if (== $x -1) wrong (empty)))");
 
-    ClauseGuardObserverProbe probe = {
+    EquationGuardObserverProbe probe = {
         .program = program,
     };
     PettaMachineHost host = {
         .context = &probe,
-        .clause_snapshot_lease = test_clause_guard_snapshot_lease,
+        .candidate_snapshot_lease = test_equation_guard_snapshot_lease,
         .measure_stats = true,
         .unlimited_transition_budget = true,
     };
@@ -3591,25 +3767,25 @@ static void test_compiled_clause_guard_pruning(
     bindings_free(&environment);
     PettaMachineStats stats;
     assert(petta_machine_stats(&machine, &stats));
-    assert(stats.clause_guard_prune_attempts == 2u);
-    assert(stats.clause_guard_pruned == 1u);
-    assert(stats.clause_guard_retained == 1u);
-    assert(stats.clause_match_attempts == 1u);
-    assert(stats.clause_branches_scheduled == 1u);
+    assert(stats.equation_guard_prune_attempts == 2u);
+    assert(stats.equation_guard_pruned == 1u);
+    assert(stats.equation_guard_retained == 1u);
+    assert(stats.equation_match_attempts == 1u);
+    assert(stats.equation_branches_scheduled == 1u);
     assert(stats.choice_continuation_snapshots == 0u);
     petta_machine_destroy(&machine);
 
     /* Equal surviving occurrences remain two answers in authored order;
      * only the independently certified empty occurrence disappears. */
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &space, persistent,
         "(= (guard-duplicates $x)"
         "   (if (== $x 1) duplicate (empty)))");
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &space, persistent,
         "(= (guard-duplicates $x)"
         "   (if (== $x 1) duplicate (empty)))");
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &space, persistent,
         "(= (guard-duplicates $x)"
         "   (if (== $x -1) wrong (empty)))");
@@ -3631,20 +3807,20 @@ static void test_compiled_clause_guard_pruning(
            PETTA_MACHINE_STEP_EXHAUSTED);
     bindings_free(&environment);
     assert(petta_machine_stats(&machine, &stats));
-    assert(stats.clause_guard_prune_attempts == 3u);
-    assert(stats.clause_guard_pruned == 1u);
-    assert(stats.clause_guard_retained == 2u);
-    assert(stats.clause_match_attempts == 2u);
-    assert(stats.clause_branches_scheduled == 2u);
+    assert(stats.equation_guard_prune_attempts == 3u);
+    assert(stats.equation_guard_pruned == 1u);
+    assert(stats.equation_guard_retained == 2u);
+    assert(stats.equation_match_attempts == 2u);
+    assert(stats.equation_branches_scheduled == 2u);
     petta_machine_destroy(&machine);
 
     /* An `if` with no authored empty branch is outside the erasure law.
      * Both ordinary occurrences remain observable. */
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &space, persistent,
         "(= (guard-no-empty $x)"
         "   (if (== $x 1) first other-first))");
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &space, persistent,
         "(= (guard-no-empty $x)"
         "   (if (== $x 1) second other-second))");
@@ -3668,19 +3844,19 @@ static void test_compiled_clause_guard_pruning(
            PETTA_MACHINE_STEP_EXHAUSTED);
     bindings_free(&environment);
     assert(petta_machine_stats(&machine, &stats));
-    assert(stats.clause_guard_prune_attempts == 0u);
-    assert(stats.clause_guard_pruned == 0u);
-    assert(stats.clause_guard_retained == 0u);
-    assert(stats.clause_branches_scheduled == 2u);
+    assert(stats.equation_guard_prune_attempts == 0u);
+    assert(stats.equation_guard_pruned == 0u);
+    assert(stats.equation_guard_retained == 0u);
+    assert(stats.equation_branches_scheduled == 2u);
     petta_machine_destroy(&machine);
 
     /* A nested LHS may acquire relational meaning after snapshot capture.
      * It is therefore deliberately outside the flat C0 discriminator. */
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &space, persistent,
         "(= (guard-nested (box $x))"
         "   (if (< $x 0) wrong (empty)))");
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &space, persistent,
         "(= (guard-nested $x) fallback)");
     query = parse_one(answers, "(guard-nested (box 1))");
@@ -3698,7 +3874,7 @@ static void test_compiled_clause_guard_pruning(
            PETTA_MACHINE_STEP_EXHAUSTED);
     bindings_free(&environment);
     assert(petta_machine_stats(&machine, &stats));
-    assert(stats.clause_guard_pruned == 0u);
+    assert(stats.equation_guard_pruned == 0u);
     petta_machine_destroy(&machine);
 
     /* Finite transition purses and occurrence observers retain the exact
@@ -3714,14 +3890,14 @@ static void test_compiled_clause_guard_pruning(
            PETTA_MACHINE_STEP_ANSWER);
     bindings_free(&environment);
     assert(petta_machine_stats(&machine, &stats));
-    assert(stats.clause_guard_prune_attempts == 0u);
+    assert(stats.equation_guard_prune_attempts == 0u);
     petta_machine_destroy(&machine);
 
     host.unlimited_transition_budget = true;
-    host.begin_relation_call = test_clause_guard_begin_relation_call;
-    host.record_clause_use = test_clause_guard_record_clause_use;
+    host.begin_relation_call = test_equation_guard_begin_relation_call;
+    host.record_equation_use = test_equation_guard_record_equation_use;
     probe.relation_calls = 0u;
-    probe.clause_uses = 0u;
+    probe.equation_uses = 0u;
     assert(petta_machine_init_with_plan(
         &machine, &space, answers, query, query_plan, NULL, &host));
     assert(petta_machine_next(
@@ -3733,14 +3909,14 @@ static void test_compiled_clause_guard_pruning(
            PETTA_MACHINE_STEP_EXHAUSTED);
     bindings_free(&environment);
     assert(probe.relation_calls == 1u);
-    assert(probe.clause_uses == 2u);
+    assert(probe.equation_uses == 2u);
     assert(petta_machine_stats(&machine, &stats));
-    assert(stats.clause_guard_prune_attempts == 0u);
+    assert(stats.equation_guard_prune_attempts == 0u);
     petta_machine_destroy(&machine);
 
     petta_program_free(program);
     space_free(&space);
-    puts("PASS: compiled clause guards prune only authored empty branches"
+    puts("PASS: compiled equation guards prune only authored empty branches"
          " while preserving duplicates, dynamic patterns, fuel, and"
          " occurrence receipts");
 }
@@ -3748,27 +3924,27 @@ static void test_compiled_clause_guard_pruning(
 /* A receipt may describe work, but must agree with the observable bag it
  * reports.  It deliberately does not prescribe scanning, indexing, cache, or
  * storage choices. */
-static void assert_clause_snapshot_receipt_conserves_candidates(
-        const PettaClauseSnapshotStats *stats, size_t candidate_count) {
+static void assert_candidate_snapshot_receipt_conserves_candidates(
+        const PettaCandidateSnapshotStats *stats, size_t candidate_count) {
     assert(stats);
     assert(stats->candidates_emitted == candidate_count);
 }
 
 typedef struct {
-    PettaClauseProjection *projection;
+    PettaEquationProjection *projection;
     Atom *equation;
 } ProjectionReader;
 
 static void *test_read_retained_projection(void *context) {
     ProjectionReader *reader = context;
     for (size_t i = 0u; i < 20000u; i++) {
-        assert(petta_program_clause_projection_retain(reader->projection));
+        assert(petta_program_equation_projection_retain(reader->projection));
         for (size_t index = 0u; index < 2u; index++) {
-            PettaClauseCandidate candidate = petta_program_clause_projection_get(
+            PettaEquationCandidate candidate = petta_program_equation_projection_get(
                 reader->projection, index);
             assert(atom_eq(candidate.equation, reader->equation));
         }
-        petta_program_clause_projection_release(reader->projection);
+        petta_program_equation_projection_release(reader->projection);
     }
     return NULL;
 }
@@ -3788,7 +3964,7 @@ static void test_program_head_occurrence_index(
     assert(leading_data);
     space_add(&indexed_space, leading_data);
 
-    Atom *first = add_indexed_program_clause(
+    Atom *first = add_indexed_program_equation(
         program, &indexed_space, persistent,
         "(= (indexed-hot first) first-result)");
     enum { UNRELATED_HEADS = 128 };
@@ -3799,26 +3975,26 @@ static void test_program_head_occurrence_index(
             "(= (indexed-cold-%zu value) cold-result-%zu)",
             index, index);
         assert(written > 0 && (size_t)written < sizeof(source));
-        add_indexed_program_clause(
+        add_indexed_program_equation(
             program, &indexed_space, persistent, source);
     }
-    Atom *wildcard = add_indexed_program_clause(
+    Atom *wildcard = add_indexed_program_equation(
         program, &indexed_space, persistent,
         "(= ($indexed-head wildcard) wildcard-result)");
-    Atom *duplicate = add_indexed_program_clause(
+    Atom *duplicate = add_indexed_program_equation(
         program, &indexed_space, persistent,
         "(= (indexed-hot duplicate) duplicate-result)");
-    add_indexed_program_clause(
+    add_indexed_program_equation(
         program, &indexed_space, persistent,
         "(= (indexed-hot duplicate) duplicate-result)");
 
     SymbolId hot = symbol_intern_cstr(g_symbols, "indexed-hot");
     SymbolId absent = symbol_intern_cstr(g_symbols, "indexed-absent");
     assert(hot != SYMBOL_ID_NONE && absent != SYMBOL_ID_NONE);
-    PettaClauseCandidate *candidates = NULL;
+    PettaEquationCandidate *candidates = NULL;
     size_t candidate_count = 0u;
-    PettaClauseSnapshotStats stats;
-    assert(petta_program_clause_snapshot_profiled(
+    PettaCandidateSnapshotStats stats;
+    assert(petta_program_candidate_snapshot_profiled(
         program, &indexed_space, hot,
         &candidates, &candidate_count, &stats));
     assert(candidate_count == 4u);
@@ -3826,72 +4002,72 @@ static void test_program_head_occurrence_index(
     assert(candidates[1].equation == wildcard);
     assert(candidates[2].equation == duplicate);
     assert(atom_eq(candidates[3].equation, duplicate));
-    assert_clause_snapshot_receipt_conserves_candidates(
+    assert_candidate_snapshot_receipt_conserves_candidates(
         &stats, candidate_count);
     candidates[0].equation = wildcard;
     free(candidates);
 
     /* Retained generations preserve declaration order and occurrence identity
      * through cache replacement. Independent leases release independently. */
-    PettaClauseSnapshotLease first_lease = {0};
-    PettaClauseSnapshotLease second_lease = {0};
-    assert(petta_program_clause_snapshot_lease_profiled(
+    PettaCandidateSnapshotLease first_lease = {0};
+    PettaCandidateSnapshotLease second_lease = {0};
+    assert(petta_program_candidate_snapshot_lease_profiled(
         program, &indexed_space, hot, &first_lease, &stats));
     assert(first_lease.len == 4u);
     assert(first_lease.items);
     assert(first_lease.items[0].equation == first);
     assert(first_lease.items[1].equation == wildcard);
     assert(first_lease.items[2].equation == duplicate);
-    assert_clause_snapshot_receipt_conserves_candidates(
+    assert_candidate_snapshot_receipt_conserves_candidates(
         &stats, first_lease.len);
-    assert(petta_program_clause_snapshot_lease_profiled(
+    assert(petta_program_candidate_snapshot_lease_profiled(
         program, &indexed_space, hot, &second_lease, &stats));
     assert(second_lease.len == first_lease.len);
     assert(second_lease.items[0].equation == first);
     assert(second_lease.items[1].equation == wildcard);
     assert(second_lease.items[2].equation == duplicate);
-    assert_clause_snapshot_receipt_conserves_candidates(
+    assert_candidate_snapshot_receipt_conserves_candidates(
         &stats, second_lease.len);
     assert(first_lease.items == second_lease.items);
-    PettaClauseSnapshotLease cloned_lease = {0};
-    assert(petta_program_clause_snapshot_lease_clone(&first_lease, &cloned_lease));
+    PettaCandidateSnapshotLease cloned_lease = {0};
+    assert(petta_program_candidate_snapshot_lease_clone(&first_lease, &cloned_lease));
     assert(cloned_lease.items == first_lease.items);
-    PettaClauseSnapshotLease projected_lease = {0};
-    assert(petta_program_clause_snapshot_lease_clone(&first_lease, &projected_lease));
-    PettaClauseProjection *projection = petta_program_clause_projection_take(
+    PettaCandidateSnapshotLease projected_lease = {0};
+    assert(petta_program_candidate_snapshot_lease_clone(&first_lease, &projected_lease));
+    PettaEquationProjection *projection = petta_program_equation_projection_take(
         &projected_lease, NULL, 2u, 2u);
     assert(projection && projected_lease.items == NULL);
-    size_t retained_before = petta_program_clause_projection_retained_bytes(projection);
+    size_t retained_before = petta_program_equation_projection_retained_bytes(projection);
     /* A borrowed host array has no cache retirement callback. Pinning and
      * projecting it must preserve values without retaining unused records. */
-    PettaClauseSnapshotLease private_lease = {
+    PettaCandidateSnapshotLease private_lease = {
         .items = first_lease.items, .len = first_lease.len,
     };
-    assert(petta_program_clause_snapshot_lease_pin(&private_lease));
-    PettaClauseProjection *private_projection = petta_program_clause_projection_take(
+    assert(petta_program_candidate_snapshot_lease_pin(&private_lease));
+    PettaEquationProjection *private_projection = petta_program_equation_projection_take(
         &private_lease, NULL, 2u, 2u);
     assert(private_projection);
-    assert(petta_program_clause_projection_retained_bytes(private_projection) ==
-           retained_before - 2u * sizeof(PettaClauseCandidate));
-    assert(atom_eq(petta_program_clause_projection_get(private_projection, 0u).equation, duplicate));
-    assert(atom_eq(petta_program_clause_projection_get(private_projection, 1u).equation, duplicate));
-    petta_program_clause_projection_release(private_projection);
+    assert(petta_program_equation_projection_retained_bytes(private_projection) ==
+           retained_before - 2u * sizeof(PettaEquationCandidate));
+    assert(atom_eq(petta_program_equation_projection_get(private_projection, 0u).equation, duplicate));
+    assert(atom_eq(petta_program_equation_projection_get(private_projection, 1u).equation, duplicate));
+    petta_program_equation_projection_release(private_projection);
     /* A second projection makes sharing initially cheaper than promotion.
      * Releasing it after retirement must re-evaluate that storage decision. */
-    assert(petta_program_clause_snapshot_lease_clone(&first_lease, &projected_lease));
-    PettaClauseSelectionEntry *repeated = malloc(2u * sizeof(*repeated));
+    assert(petta_program_candidate_snapshot_lease_clone(&first_lease, &projected_lease));
+    PettaEquationSelectionEntry *repeated = malloc(2u * sizeof(*repeated));
     assert(repeated);
-    repeated[0] = (PettaClauseSelectionEntry){2u, first_lease.items[2].rhs_plan};
+    repeated[0] = (PettaEquationSelectionEntry){2u, first_lease.items[2].rhs_plan};
     repeated[1] = repeated[0];
-    PettaClauseProjection *repeated_projection = petta_program_clause_projection_take(
+    PettaEquationProjection *repeated_projection = petta_program_equation_projection_take(
         &projected_lease, repeated, 0u, 2u);
     assert(repeated_projection);
     ProjectionReader reader = {projection, duplicate};
     pthread_t readers[2];
     assert(pthread_create(&readers[0], NULL, test_read_retained_projection, &reader) == 0);
     assert(pthread_create(&readers[1], NULL, test_read_retained_projection, &reader) == 0);
-    petta_program_clause_snapshot_lease_release(&second_lease);
-    petta_program_clause_snapshot_lease_release(&first_lease);
+    petta_program_candidate_snapshot_lease_release(&second_lease);
+    petta_program_candidate_snapshot_lease_release(&first_lease);
     assert(cloned_lease.items[0].equation == first);
 
     /* An ordinary caller receives the same selected occurrences in authored
@@ -3899,7 +4075,7 @@ static void test_program_head_occurrence_index(
      * a private representation. */
     candidates = NULL;
     candidate_count = 0u;
-    assert(petta_program_clause_snapshot_profiled(
+    assert(petta_program_candidate_snapshot_profiled(
         program, &indexed_space, hot,
         &candidates, &candidate_count, &stats));
     assert(candidate_count == 4u);
@@ -3907,7 +4083,7 @@ static void test_program_head_occurrence_index(
     assert(candidates[1].equation == wildcard);
     assert(candidates[2].equation == duplicate);
     assert(atom_eq(candidates[3].equation, duplicate));
-    assert_clause_snapshot_receipt_conserves_candidates(
+    assert_candidate_snapshot_receipt_conserves_candidates(
         &stats, candidate_count);
     free(candidates);
 
@@ -3920,14 +4096,14 @@ static void test_program_head_occurrence_index(
     space_add(&indexed_space, trailing_data);
     candidates = NULL;
     candidate_count = 0u;
-    assert(petta_program_clause_snapshot_profiled(
+    assert(petta_program_candidate_snapshot_profiled(
         program, &indexed_space, hot,
         &candidates, &candidate_count, &stats));
     assert(candidate_count == 4u);
     assert(candidates[0].equation == first);
     assert(candidates[1].equation == wildcard);
     assert(candidates[2].equation == duplicate);
-    assert_clause_snapshot_receipt_conserves_candidates(
+    assert_candidate_snapshot_receipt_conserves_candidates(
         &stats, candidate_count);
     for (size_t index = 0u; index < candidate_count; index++) {
         SpaceEquationOccurrence occurrence = {0};
@@ -3943,14 +4119,14 @@ static void test_program_head_occurrence_index(
     assert(space_remove(&indexed_space, leading_data));
     candidates = NULL;
     candidate_count = 0u;
-    assert(petta_program_clause_snapshot_profiled(
+    assert(petta_program_candidate_snapshot_profiled(
         program, &indexed_space, hot,
         &candidates, &candidate_count, &stats));
     assert(candidate_count == 4u);
     assert(candidates[0].equation == first);
     assert(candidates[1].equation == wildcard);
     assert(candidates[2].equation == duplicate);
-    assert_clause_snapshot_receipt_conserves_candidates(
+    assert_candidate_snapshot_receipt_conserves_candidates(
         &stats, candidate_count);
     for (size_t index = 0u; index < candidate_count; index++) {
         SpaceEquationOccurrence occurrence = {0};
@@ -3977,12 +4153,12 @@ static void test_program_head_occurrence_index(
     assert(unregistered);
     candidates = NULL;
     candidate_count = 0u;
-    assert(petta_program_clause_snapshot_profiled(
+    assert(petta_program_candidate_snapshot_profiled(
         program, &indexed_space, hot,
         &candidates, &candidate_count, &stats));
     assert(candidate_count == 5u);
     assert(candidates[4].equation == unregistered);
-    assert_clause_snapshot_receipt_conserves_candidates(
+    assert_candidate_snapshot_receipt_conserves_candidates(
         &stats, candidate_count);
     free(candidates);
 
@@ -3991,36 +4167,36 @@ static void test_program_head_occurrence_index(
     assert(cloned_lease.items[1].equation == wildcard);
     assert(cloned_lease.items[2].equation == duplicate);
     assert(atom_eq(cloned_lease.items[3].equation, duplicate));
-    petta_program_clause_snapshot_lease_release(&cloned_lease);
-    assert(atom_eq(petta_program_clause_projection_get(repeated_projection, 0u).equation, duplicate));
-    assert(atom_eq(petta_program_clause_projection_get(repeated_projection, 1u).equation, duplicate));
-    petta_program_clause_projection_release(repeated_projection);
-    assert(petta_program_clause_projection_retained_bytes(projection) < retained_before);
+    petta_program_candidate_snapshot_lease_release(&cloned_lease);
+    assert(atom_eq(petta_program_equation_projection_get(repeated_projection, 0u).equation, duplicate));
+    assert(atom_eq(petta_program_equation_projection_get(repeated_projection, 1u).equation, duplicate));
+    petta_program_equation_projection_release(repeated_projection);
+    assert(petta_program_equation_projection_retained_bytes(projection) < retained_before);
     assert(pthread_join(readers[0], NULL) == 0);
     assert(pthread_join(readers[1], NULL) == 0);
-    assert(atom_eq(petta_program_clause_projection_get(projection, 0u).equation, duplicate));
-    assert(atom_eq(petta_program_clause_projection_get(projection, 1u).equation, duplicate));
-    petta_program_clause_projection_release(projection);
+    assert(atom_eq(petta_program_equation_projection_get(projection, 0u).equation, duplicate));
+    assert(atom_eq(petta_program_equation_projection_get(projection, 1u).equation, duplicate));
+    petta_program_equation_projection_release(projection);
 
     assert(space_remove(&indexed_space, unregistered));
     candidates = NULL;
     candidate_count = 0u;
-    assert(petta_program_clause_snapshot_profiled(
+    assert(petta_program_candidate_snapshot_profiled(
         program, &indexed_space, hot,
         &candidates, &candidate_count, &stats));
     assert(candidate_count == 4u);
-    assert_clause_snapshot_receipt_conserves_candidates(
+    assert_candidate_snapshot_receipt_conserves_candidates(
         &stats, candidate_count);
     free(candidates);
 
     candidates = NULL;
     candidate_count = 0u;
-    assert(petta_program_clause_snapshot_profiled(
+    assert(petta_program_candidate_snapshot_profiled(
         program, &indexed_space, absent,
         &candidates, &candidate_count, &stats));
     assert(candidate_count == 1u);
     assert(candidates[0].equation == wildcard);
-    assert_clause_snapshot_receipt_conserves_candidates(
+    assert_candidate_snapshot_receipt_conserves_candidates(
         &stats, candidate_count);
     free(candidates);
 
@@ -4029,14 +4205,14 @@ static void test_program_head_occurrence_index(
         program, &indexed_space, first);
     candidates = NULL;
     candidate_count = 0u;
-    assert(petta_program_clause_snapshot_profiled(
+    assert(petta_program_candidate_snapshot_profiled(
         program, &indexed_space, hot,
         &candidates, &candidate_count, &stats));
     assert(candidate_count == 3u);
     assert(candidates[0].equation == wildcard);
     assert(candidates[1].equation == duplicate);
     assert(atom_eq(candidates[2].equation, duplicate));
-    assert_clause_snapshot_receipt_conserves_candidates(
+    assert_candidate_snapshot_receipt_conserves_candidates(
         &stats, candidate_count);
     free(candidates);
 
@@ -4048,35 +4224,35 @@ static void test_program_head_occurrence_index(
     Space *transient = malloc(sizeof(*transient));
     assert(transient);
     space_init_with_universe(transient, universe);
-    add_clause(
+    add_equation(
         transient, persistent,
         "(= (indexed-hot transient) transient-result)");
     candidates = NULL;
     candidate_count = 0u;
-    assert(petta_program_clause_snapshot_profiled(
+    assert(petta_program_candidate_snapshot_profiled(
         program, transient, hot,
         &candidates, &candidate_count, &stats));
     assert(candidate_count == 1u);
-    assert_clause_snapshot_receipt_conserves_candidates(
+    assert_candidate_snapshot_receipt_conserves_candidates(
         &stats, candidate_count);
     free(candidates);
     candidates = NULL;
     candidate_count = 0u;
-    assert(petta_program_clause_snapshot_profiled(
+    assert(petta_program_candidate_snapshot_profiled(
         program, transient, hot,
         &candidates, &candidate_count, &stats));
     assert(candidate_count == 1u);
-    assert_clause_snapshot_receipt_conserves_candidates(
+    assert_candidate_snapshot_receipt_conserves_candidates(
         &stats, candidate_count);
     free(candidates);
-    PettaClauseSnapshotLease transient_lease = {0};
-    assert(petta_program_clause_snapshot_lease_profiled(
+    PettaCandidateSnapshotLease transient_lease = {0};
+    assert(petta_program_candidate_snapshot_lease_profiled(
         program, transient, hot, &transient_lease, &stats));
     assert(transient_lease.len == 1u);
     assert(transient_lease.items);
-    assert_clause_snapshot_receipt_conserves_candidates(
+    assert_candidate_snapshot_receipt_conserves_candidates(
         &stats, transient_lease.len);
-    petta_program_clause_snapshot_lease_release(&transient_lease);
+    petta_program_candidate_snapshot_lease_release(&transient_lease);
     space_free(transient);
     free(transient);
 
@@ -4091,7 +4267,7 @@ static void test_program_head_occurrence_index(
 
 static void test_program_wide_occurrence_reconciliation(
     TermUniverse *universe, Arena *persistent) {
-    enum { WIDE_CLAUSES = 2048 };
+    enum { WIDE_EQUATIONS = 2048 };
     Space wide_space;
     space_init_with_universe(&wide_space, universe);
     PettaProgram *program = petta_program_new();
@@ -4099,56 +4275,56 @@ static void test_program_wide_occurrence_reconciliation(
     Atom *first = NULL;
     Atom *middle = NULL;
     Atom *last = NULL;
-    for (size_t index = 0u; index < WIDE_CLAUSES; index++) {
+    for (size_t index = 0u; index < WIDE_EQUATIONS; index++) {
         char source[160];
         int written = snprintf(
             source, sizeof(source),
             "(= (wide-reconcile key-%zu) value-%zu)",
             index, index);
         assert(written > 0 && (size_t)written < sizeof(source));
-        Atom *clause = add_indexed_program_clause(
+        Atom *equation = add_indexed_program_equation(
             program, &wide_space, persistent, source);
         if (index == 0u)
-            first = clause;
-        if (index == WIDE_CLAUSES / 2u)
-            middle = clause;
-        if (index + 1u == WIDE_CLAUSES)
-            last = clause;
+            first = equation;
+        if (index == WIDE_EQUATIONS / 2u)
+            middle = equation;
+        if (index + 1u == WIDE_EQUATIONS)
+            last = equation;
     }
-    Atom *duplicate = add_indexed_program_clause(
+    Atom *duplicate = add_indexed_program_equation(
         program, &wide_space, persistent,
         "(= (wide-reconcile key-1024) value-1024)");
     assert(first && middle && last && duplicate);
 
     SymbolId head =
         symbol_intern_cstr(g_symbols, "wide-reconcile");
-    PettaClauseCandidate *candidates = NULL;
+    PettaEquationCandidate *candidates = NULL;
     size_t candidate_count = 0u;
-    PettaClauseSnapshotStats stats;
-    assert(petta_program_clause_snapshot_profiled(
+    PettaCandidateSnapshotStats stats;
+    assert(petta_program_candidate_snapshot_profiled(
         program, &wide_space, head,
         &candidates, &candidate_count, &stats));
-    assert(candidate_count == WIDE_CLAUSES + 1u);
+    assert(candidate_count == WIDE_EQUATIONS + 1u);
     assert(candidates[0].equation == first);
-    assert(candidates[WIDE_CLAUSES / 2u].equation == middle);
-    assert(candidates[WIDE_CLAUSES - 1u].equation == last);
-    assert(candidates[WIDE_CLAUSES].equation == duplicate);
-    assert_clause_snapshot_receipt_conserves_candidates(
+    assert(candidates[WIDE_EQUATIONS / 2u].equation == middle);
+    assert(candidates[WIDE_EQUATIONS - 1u].equation == last);
+    assert(candidates[WIDE_EQUATIONS].equation == duplicate);
+    assert_candidate_snapshot_receipt_conserves_candidates(
         &stats, candidate_count);
     free(candidates);
 
-    PettaClauseSnapshotLease lease = {0};
-    assert(petta_program_clause_snapshot_lease_profiled(
+    PettaCandidateSnapshotLease lease = {0};
+    assert(petta_program_candidate_snapshot_lease_profiled(
         program, &wide_space, head, &lease, &stats));
-    assert(lease.len == WIDE_CLAUSES + 1u);
+    assert(lease.len == WIDE_EQUATIONS + 1u);
     assert(lease.items);
     assert(lease.items[0].equation == first);
-    assert(lease.items[WIDE_CLAUSES / 2u].equation == middle);
-    assert(lease.items[WIDE_CLAUSES - 1u].equation == last);
-    assert(lease.items[WIDE_CLAUSES].equation == duplicate);
-    assert_clause_snapshot_receipt_conserves_candidates(
+    assert(lease.items[WIDE_EQUATIONS / 2u].equation == middle);
+    assert(lease.items[WIDE_EQUATIONS - 1u].equation == last);
+    assert(lease.items[WIDE_EQUATIONS].equation == duplicate);
+    assert_candidate_snapshot_receipt_conserves_candidates(
         &stats, lease.len);
-    petta_program_clause_snapshot_lease_release(&lease);
+    petta_program_candidate_snapshot_lease_release(&lease);
 
     petta_program_free(program);
     space_free(&wide_space);
@@ -4170,7 +4346,7 @@ static Atom *add_unregistered_equation(
  * declaration-ordered bag of current occurrences, not whether a particular
  * realization borrowed, copied, or compiled those occurrences. */
 static void assert_equation_lease_observes(
-        const PettaClauseSnapshotLease *lease, Space *space,
+        const PettaCandidateSnapshotLease *lease, Space *space,
         Atom *const *expected, size_t expected_count) {
     assert(lease && space && expected);
     assert(lease->len == expected_count);
@@ -4205,7 +4381,7 @@ static void test_program_revision_view_transport(
     assert(program);
     Atom *source_equations[EQUATION_COUNT];
     for (size_t index = 0u; index < EQUATION_COUNT; index++) {
-        source_equations[index] = add_compiled_program_clause(
+        source_equations[index] = add_compiled_program_equation(
             program, &source, source_arena, equations[index]);
     }
 
@@ -4262,7 +4438,7 @@ static void test_program_revision_view_transport(
     SymbolId absent = symbol_intern_cstr(
         g_symbols, "view-absent");
     assert(hot != SYMBOL_ID_NONE && absent != SYMBOL_ID_NONE);
-    PettaClauseSnapshotLease lease = {0};
+    PettaCandidateSnapshotLease lease = {0};
     Atom *hot_target_equations[] = {
         target_equations[0], target_equations[1], target_equations[2],
         target_equations[3], target_equations[4],
@@ -4271,7 +4447,7 @@ static void test_program_revision_view_transport(
         &projection, &target, hot, &lease, NULL));
     assert_equation_lease_observes(
         &lease, &target, hot_target_equations, HOT_COUNT);
-    petta_program_clause_snapshot_lease_release(&lease);
+    petta_program_candidate_snapshot_lease_release(&lease);
 
     /* A variable-headed equation remains an authored occurrence and is the
        only candidate for an otherwise absent relation. */
@@ -4280,7 +4456,7 @@ static void test_program_revision_view_transport(
     Atom *absent_target_equations[] = {target_equations[1]};
     assert_equation_lease_observes(
         &lease, &target, absent_target_equations, 1u);
-    petta_program_clause_snapshot_lease_release(&lease);
+    petta_program_candidate_snapshot_lease_release(&lease);
 
     SpaceReadToken target_before_data = space_read_token(&target);
     SpaceEquationToken target_equations_before_data =
@@ -4296,11 +4472,11 @@ static void test_program_revision_view_transport(
         &projection, &target, hot, &lease, NULL));
     assert_equation_lease_observes(
         &lease, &target, hot_target_equations, HOT_COUNT);
-    petta_program_clause_snapshot_lease_release(&lease);
+    petta_program_candidate_snapshot_lease_release(&lease);
 
     /* The captured program is a logical-update view: a later source edit
        cannot retag the already transported private image. */
-    Atom *source_late = add_compiled_program_clause(
+    Atom *source_late = add_compiled_program_equation(
         program, &source, source_arena,
         "(= (view-hot source-late) result-source-late)");
     assert(petta_program_revision_projection_current(
@@ -4309,7 +4485,7 @@ static void test_program_revision_view_transport(
         &projection, &target, hot, &lease, NULL));
     assert_equation_lease_observes(
         &lease, &target, hot_target_equations, HOT_COUNT);
-    petta_program_clause_snapshot_lease_release(&lease);
+    petta_program_candidate_snapshot_lease_release(&lease);
 
     /* A source equation edit creates a later frozen selection, while the old
        projection continues to denote its original target selection. */
@@ -4329,7 +4505,7 @@ static void test_program_revision_view_transport(
     };
     assert_equation_lease_observes(
         &lease, &source, hot_source_equations, HOT_COUNT + 1u);
-    petta_program_clause_snapshot_lease_release(&lease);
+    petta_program_candidate_snapshot_lease_release(&lease);
 
     /* A target edit invalidates only optimization evidence.  The same API
        takes the complete live route, includes the new equation exactly once,
@@ -4347,7 +4523,7 @@ static void test_program_revision_view_transport(
     };
     assert_equation_lease_observes(
         &lease, &target, hot_target_late_equations, HOT_COUNT + 1u);
-    petta_program_clause_snapshot_lease_release(&lease);
+    petta_program_candidate_snapshot_lease_release(&lease);
 
     /* Missing, reordered, and unrelated equation occurrences cannot inherit
        a view merely because some payloads happen to compare equal. */
@@ -4394,7 +4570,7 @@ static void test_program_analysis_sidecar_interop(
     assert(program);
     assert(!petta_program_analysis_enabled(program));
 
-    Atom *ordinary_annotation = add_indexed_program_clause(
+    Atom *ordinary_annotation = add_indexed_program_equation(
         program, &shared_space, persistent,
         "(: ordinary-shared-value OrdinarySharedType)");
     assert(space_length64(&shared_space) == 1u);
@@ -4416,7 +4592,7 @@ static void test_program_analysis_sidecar_interop(
         types[0], parse_one(scratch, "OrdinarySharedType")));
     free(types);
 
-    Atom *typed_annotation = add_indexed_program_clause(
+    Atom *typed_annotation = add_indexed_program_equation(
         program, &shared_space, persistent,
         "(: typed-shared-value TypedSharedType)");
     assert(space_length64(&shared_space) == 2u);
@@ -4441,29 +4617,29 @@ static void test_typed_data_purity_boundary(
     PettaProgram *program = petta_program_new();
     assert(program);
 
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &typed_space, persistent,
         "(= (safe-typed-data $x) (: payload (id $x)))");
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &typed_space, persistent,
         "(= (effectful-typed-data $state $x)"
         "   (: payload (change-state! $state $x)))");
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &typed_space, persistent,
         "(= (effectful-arrow-data $state $x)"
         "   (-> (change-state! $state $x) result))");
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &typed_space, persistent,
         "(= (safe-let-star $x)"
         "   (let* (((pair $left $right) (pair $x payload)))"
         "     (id $left)))");
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &typed_space, persistent,
         "(= (let-star-pattern-is-data $x)"
         "   (let* (((change-state! $state $value)"
         "            (pair inert $x)))"
         "     ok))");
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &typed_space, persistent,
         "(= (effectful-let-star $state $x)"
         "   (let* (($value (change-state! $state $x)))"
@@ -4715,9 +4891,9 @@ static void test_match_decision_cache_entry_authority(
     for (unsigned change = 0u; change < 3u; change++) {
         Space cache_space;
         space_init_with_universe(&cache_space, universe);
-        add_clause(&cache_space, persistent,
+        add_equation(&cache_space, persistent,
                    "(= (cache-authority-lookup $x) first)");
-        add_clause(&cache_space, persistent,
+        add_equation(&cache_space, persistent,
                    "(= (cache-authority-lookup $x) second)");
         MatchDecisionCallabilityAuthorityProbe probe = {.revision = 1u};
         PettaMachineHost host = {
@@ -4773,12 +4949,17 @@ static void test_match_decision_callability_authority_receipt(
     TermUniverse *universe, Arena *persistent, Arena *answers) {
     Space authority_space;
     space_init_with_universe(&authority_space, universe);
-    add_clause(
+    add_equation(
         &authority_space, persistent,
         "(= (authority-receipt (authority-nested $x)) first)");
-    add_clause(
+    add_equation(
         &authority_space, persistent,
         "(= (authority-receipt $x) second)");
+    /* A third shape makes the argument a guaranteed discriminator, so a
+     * bound call is selected, and verified, rather than kept in order. */
+    add_equation(
+        &authority_space, persistent,
+        "(= (authority-receipt (authority-other $x)) third)");
 
     MatchDecisionCallabilityAuthorityProbe probe = {
         .nested_head = symbol_intern_cstr(
@@ -4852,12 +5033,17 @@ static void test_match_decision_verification_receipt_revision(
     TermUniverse *universe, Arena *persistent, Arena *answers) {
     Space receipt_space;
     space_init_with_universe(&receipt_space, universe);
-    add_clause(
+    add_equation(
         &receipt_space, persistent,
         "(= (receipt-revision (node $x)) receipt-first)");
-    add_clause(
+    add_equation(
         &receipt_space, persistent,
         "(= (receipt-revision (node $x)) receipt-second)");
+    /* A third shape makes the argument a guaranteed discriminator, so a
+     * bound call is selected, and verified, rather than kept in order. */
+    add_equation(
+        &receipt_space, persistent,
+        "(= (receipt-revision (leaf $x)) receipt-leaf)");
 
     Atom *query = parse_one(
         answers, "(receipt-revision (node payload))");
@@ -4887,7 +5073,7 @@ static void test_match_decision_verification_receipt_revision(
      * structural predicate may consult callability derived from Space
      * contents.  A real external mutation therefore invalidates only the
      * verifier receipt; the canonical candidate snapshot remains usable. */
-    add_clause(
+    add_equation(
         &receipt_space, persistent,
         "(= (receipt-unrelated) changed)");
     assert(petta_machine_next(
@@ -5101,7 +5287,7 @@ static void test_lexical_free_variable_projection(Arena *arena) {
 
 static void test_machine_query_visible_projection(
     Space *space, Arena *persistent, Arena *answers) {
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (visible-source bound) result)");
     Atom *query = parse_one(
@@ -5124,11 +5310,10 @@ static void test_machine_query_visible_projection(
            PETTA_MACHINE_STEP_ANSWER);
     assert(atom_alpha_eq(
         answer, parse_one(answers, "result")));
-    Atom *free_value = bindings_lookup_id(
-        &environment, free->var_id);
+    Atom *free_value = bindings_lookup_value_id(&environment, free->var_id).skeleton;
     assert(free_value && atom_alpha_eq(
         free_value, parse_one(answers, "bound")));
-    assert(!bindings_lookup_id(&environment, local->var_id));
+    assert(!bindings_lookup_value_id(&environment, local->var_id).skeleton);
     assert(environment.len == 1u);
     bindings_free(&environment);
     assert(petta_machine_next(
@@ -5136,6 +5321,43 @@ static void test_machine_query_visible_projection(
            PETTA_MACHINE_STEP_EXHAUSTED);
     bindings_free(&environment);
     petta_machine_destroy(&machine);
+
+    query = parse_one(answers, "(visible-source $authored)");
+    assert(query && query->kind == ATOM_EXPR &&
+           query->expr.len == 2u);
+    Atom *authored = query->expr.elems[1];
+    Atom *hidden_alias = atom_var_with_id(
+        answers, "hidden-visible-alias", fresh_var_id());
+    Atom *bound = atom_symbol(answers, "bound");
+    assert(authored && authored->kind == ATOM_VAR &&
+           hidden_alias && bound);
+    Bindings base;
+    bindings_init(&base);
+    assert(bindings_add_var(&base, authored, hidden_alias));
+    assert(bindings_add_var(&base, hidden_alias, bound));
+    assert(petta_machine_init(
+        &machine, space, answers, query, &base, NULL));
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(
+        answer, parse_one(answers, "result")));
+    BindingValue authored_value = bindings_lookup_value_id(
+        &environment, authored->var_id);
+    assert(authored_value.skeleton &&
+           atom_alpha_eq(authored_value.skeleton, bound));
+    assert(!bindings_lookup_value_id(
+        &environment, hidden_alias->var_id).skeleton);
+    assert(environment.len == 1u);
+    assert(bindings_entry_at(&environment, 0u)->spelling ==
+           authored->sym_id);
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+    bindings_free(&base);
 
     query = parse_one(
         answers,
@@ -5383,7 +5605,7 @@ static void test_ground_slg_tables(
     PettaMachine machine;
     assert(petta_machine_init(
         &machine, space, answers, query, NULL, &host));
-    /* Variant tables expose an answer set; duplicate untabled clauses still
+    /* Variant tables expose an answer set; duplicate untabled equations still
      * remain observable through the ordinary bag path tested below. */
     const char *expected[] = {"one", "uno"};
     for (size_t index = 0u; index < 2u; index++) {
@@ -5408,7 +5630,7 @@ static void test_ground_slg_tables(
     assert_table_receipts_consistent(&stats, 2u);
     petta_machine_destroy(&machine);
 
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (table-alpha-pair)"
         "   (superpose ((f $left) (f $right))))");
@@ -5458,7 +5680,7 @@ static void test_ground_slg_tables(
     petta_machine_destroy(&machine);
     probe.meter_transitions = false;
 
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (table-loop $x) (table-loop $x))");
     query = parse_one(answers, "(table-loop a)");
@@ -5474,10 +5696,10 @@ static void test_ground_slg_tables(
     assert_table_receipts_consistent(&stats, 0u);
     petta_machine_destroy(&machine);
 
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (table-left $x) (table-right $x))");
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (table-right $x) (table-left $x))");
     query = parse_one(answers, "(table-left a)");
@@ -5493,18 +5715,18 @@ static void test_ground_slg_tables(
     assert_table_receipts_consistent(&stats, 0u);
     petta_machine_destroy(&machine);
 
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (table-dag root)"
         "   (superpose ((table-dag left)"
         "               (table-dag right))))");
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (table-dag left) (table-dag leaf))");
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (table-dag right) (table-dag leaf))");
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (table-dag leaf) done)");
     query = parse_one(answers, "(table-dag root)");
@@ -5535,7 +5757,7 @@ static void test_ground_slg_tables(
                &machine, &answer, &environment) ==
            PETTA_MACHINE_STEP_ANSWER);
     bindings_free(&environment);
-    add_clause(
+    add_equation(
         space, persistent, "(= (unrelated) mutation)");
     assert(petta_machine_next(
                &machine, &answer, &environment) ==
@@ -5617,9 +5839,9 @@ static void test_reachable_binding_projection(Arena *arena) {
     assert(bindings_project_reachable(
         &full, roots, 1u, &projected));
     assert(projected.len == 2u);
-    assert(bindings_lookup_id(&projected, live->var_id));
-    assert(bindings_lookup_id(&projected, middle->var_id));
-    assert(!bindings_lookup_id(&projected, dead->var_id));
+    assert(bindings_lookup_value_id(&projected, live->var_id).skeleton);
+    assert(bindings_lookup_value_id(&projected, middle->var_id).skeleton);
+    assert(!bindings_lookup_value_id(&projected, dead->var_id).skeleton);
     bindings_free(&projected);
 
     Atom *ground_roots[] = {kept_value};
@@ -5664,10 +5886,8 @@ static void test_reachable_binding_projection(Arena *arena) {
            large_live->var_id);
     assert(projected.entries[1].var_id ==
            large_middle->var_id);
-    assert(bindings_lookup_id(
-        &projected, large_live->var_id) == large_middle);
-    assert(bindings_lookup_id(
-        &projected, large_middle->var_id) == kept_value);
+    assert(bindings_lookup_value_id(&projected, large_live->var_id).skeleton == large_middle);
+    assert(bindings_lookup_value_id(&projected, large_middle->var_id).skeleton == kept_value);
     bindings_free(&projected);
     bindings_free(&large);
 
@@ -5695,8 +5915,7 @@ static void test_reachable_binding_projection(Arena *arena) {
     assert(bindings_project_reachable(
         &constrained, constraint_roots, 1u, &projected));
     assert(projected.eq_len == 1u);
-    assert(bindings_lookup_id(
-        &projected, right_var->var_id));
+    assert(bindings_lookup_value_id(&projected, right_var->var_id).skeleton);
     bindings_free(&projected);
 
     assert(bindings_project_reachable(
@@ -5707,12 +5926,12 @@ static void test_reachable_binding_projection(Arena *arena) {
     bindings_free(&constrained);
 }
 
-static void test_deterministic_clause_elision(
+static void test_deterministic_equation_elision(
     Space *space, Arena *persistent, Arena *answers) {
-    add_clause(
+    add_equation(
         space, persistent,
-        "(= (only-clause $x) $x)");
-    Atom *query = parse_one(answers, "(only-clause token)");
+        "(= (only-equation $x) $x)");
+    Atom *query = parse_one(answers, "(only-equation token)");
     assert(query);
 
     PettaMachine machine;
@@ -5729,11 +5948,11 @@ static void test_deterministic_clause_elision(
 
     PettaMachineStats stats;
     assert(petta_machine_stats(&machine, &stats));
-    assert(stats.deterministic_clause_choices_elided == 1u);
-    assert(stats.clause_snapshot_candidates == 1u);
-    assert(stats.clause_snapshot_candidates_copied == 0u);
-    assert(stats.clause_match_attempts == 1u);
-    assert(stats.clause_branches_scheduled == 1u);
+    assert(stats.deterministic_equation_choices_elided == 1u);
+    assert(stats.candidate_snapshot_candidates == 1u);
+    assert(stats.candidate_snapshot_candidates_copied == 0u);
+    assert(stats.equation_match_attempts == 1u);
+    assert(stats.equation_branches_scheduled == 1u);
     assert(stats.match_decision_compilations == 0u);
     assert(stats.match_decision_runs == 0u);
     assert(stats.choice_continuation_snapshots == 0u);
@@ -5747,7 +5966,7 @@ static void test_deterministic_clause_elision(
     /* Identity selection must still delegate nonlinear rejection to the
      * authoritative matcher.  An alias mismatch is the negative witness for
      * skipping the redundant one-occurrence decision tree. */
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (only-alias (pair $x $x)) matched)");
     Atom *mismatch = parse_one(
@@ -5762,17 +5981,17 @@ static void test_deterministic_clause_elision(
     assert(petta_machine_stats(&machine, &stats));
     assert(stats.match_decision_compilations == 0u);
     assert(stats.match_decision_runs == 0u);
-    assert(stats.clause_match_attempts == 1u);
+    assert(stats.equation_match_attempts == 1u);
     petta_machine_destroy(&machine);
 }
 
-static void test_clause_slot_admission_boundary(
+static void test_equation_slot_admission_boundary(
     Space *space, Arena *persistent, Arena *answers) {
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (slot-admission $left $right)"
         "   (slot-result first $left $right))");
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (slot-admission $left $right)"
         "   (slot-result second $left $right))");
@@ -5879,18 +6098,18 @@ static void test_ground_boolean_choice_elision(
     petta_machine_destroy(&machine);
 }
 
-static void test_cons_shape_clause_index(
+static void test_cons_shape_equation_index(
     Space *space, Arena *persistent, Arena *answers) {
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (shape-class ()) shape-empty)");
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (shape-class (cons $head $tail)) shape-nonempty)");
 
     /*
-     * A rigid empty input proves that the cons clause is impossible.  It is
-     * removed before selection, so the base clause is a WAM `trust` case
+     * A rigid empty input proves that the cons equation is impossible.  It is
+     * removed before selection, so the base equation is a WAM `trust` case
      * and no continuation prefix is retained.
      */
     Atom *empty_query = parse_one(
@@ -5910,11 +6129,11 @@ static void test_cons_shape_clause_index(
     bindings_free(&environment);
     PettaMachineStats stats;
     assert(petta_machine_stats(&empty_machine, &stats));
-    assert(stats.clause_candidates_shape_pruned == 1u);
-    assert(stats.clause_snapshot_candidates == 2u);
-    assert(stats.clause_snapshot_candidates_copied == 0u);
-    assert(stats.clause_match_attempts == 1u);
-    assert(stats.clause_branches_scheduled == 1u);
+    assert(stats.equation_candidates_shape_pruned == 1u);
+    assert(stats.candidate_snapshot_candidates == 2u);
+    assert(stats.candidate_snapshot_candidates_copied == 0u);
+    assert(stats.equation_match_attempts == 1u);
+    assert(stats.equation_branches_scheduled == 1u);
     assert(stats.choice_continuation_snapshots == 0u);
     assert(stats.maximum_choice_continuation_trail == 0u);
     assert(petta_machine_next(
@@ -5925,8 +6144,8 @@ static void test_cons_shape_clause_index(
 
     /*
      * Conversely, a closed non-empty flat list cannot match the rigid empty
-     * argument.  Literal indexing removes the first clause, leaving the cons
-     * clause as a WAM `trust` case.
+     * argument.  Literal indexing removes the first equation, leaving the cons
+     * equation as a WAM `trust` case.
      */
     Atom *nonempty_query = parse_one(
         answers, "(shape-class (item))");
@@ -5942,11 +6161,11 @@ static void test_cons_shape_clause_index(
         answer, atom_symbol(answers, "shape-nonempty")));
     bindings_free(&environment);
     assert(petta_machine_stats(&nonempty_machine, &stats));
-    assert(stats.clause_candidates_shape_pruned == 1u);
-    assert(stats.clause_snapshot_candidates == 2u);
-    assert(stats.clause_snapshot_candidates_copied == 0u);
-    assert(stats.clause_match_attempts == 1u);
-    assert(stats.clause_branches_scheduled == 1u);
+    assert(stats.equation_candidates_shape_pruned == 1u);
+    assert(stats.candidate_snapshot_candidates == 2u);
+    assert(stats.candidate_snapshot_candidates_copied == 0u);
+    assert(stats.equation_match_attempts == 1u);
+    assert(stats.equation_branches_scheduled == 1u);
     assert(stats.choice_continuation_snapshots == 0u);
     assert(stats.maximum_choice_continuation_trail == 0u);
     assert(petta_machine_next(
@@ -5956,7 +6175,7 @@ static void test_cons_shape_clause_index(
     petta_machine_destroy(&nonempty_machine);
 
     /*
-     * An unbound input proves nothing.  Both declaration-ordered clauses
+     * An unbound input proves nothing.  Both declaration-ordered equations
      * must remain observable, demonstrating that the accelerator cannot
      * specialize a relational query from its first answer.
      */
@@ -5980,11 +6199,11 @@ static void test_cons_shape_clause_index(
         answer, atom_symbol(answers, "shape-nonempty")));
     bindings_free(&environment);
     assert(petta_machine_stats(&open_machine, &stats));
-    assert(stats.clause_candidates_shape_pruned == 0u);
-    assert(stats.clause_snapshot_candidates == 2u);
-    assert(stats.clause_snapshot_candidates_copied == 0u);
-    assert(stats.clause_match_attempts == 2u);
-    assert(stats.clause_branches_scheduled == 2u);
+    assert(stats.equation_candidates_shape_pruned == 0u);
+    assert(stats.candidate_snapshot_candidates == 2u);
+    assert(stats.candidate_snapshot_candidates_copied == 0u);
+    assert(stats.equation_match_attempts == 2u);
+    assert(stats.equation_branches_scheduled == 2u);
     assert(petta_machine_next(
                &open_machine, &answer, &environment) ==
            PETTA_MACHINE_STEP_EXHAUSTED);
@@ -5992,12 +6211,12 @@ static void test_cons_shape_clause_index(
     petta_machine_destroy(&open_machine);
 }
 
-static void test_nested_clause_shape_index(
+static void test_nested_equation_shape_index(
     Space *space, Arena *persistent, Arena *answers) {
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (nested-shape (tuple marker-a $x)) wrong)");
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (nested-shape (tuple marker-b $x)) right)");
 
@@ -6017,8 +6236,8 @@ static void test_nested_clause_shape_index(
     bindings_free(&environment);
     PettaMachineStats stats;
     assert(petta_machine_stats(&machine, &stats));
-    assert(stats.clause_candidates_shape_pruned == 1u);
-    assert(stats.clause_match_attempts == 1u);
+    assert(stats.equation_candidates_shape_pruned == 1u);
+    assert(stats.equation_match_attempts == 1u);
     assert(petta_machine_next(
                &machine, &answer, &environment) ==
            PETTA_MACHINE_STEP_EXHAUSTED);
@@ -6060,10 +6279,10 @@ static void test_nested_clause_shape_index(
      * shape is therefore not comparable to the scalar before the relation
      * has run.
      */
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (nested-value $x) $x)");
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (nested-scalar-shape (nested-value $x)) $x)");
     query = parse_one(
@@ -6078,7 +6297,7 @@ static void test_nested_clause_shape_index(
         answer, atom_symbol(answers, "scalar-value")));
     bindings_free(&environment);
     assert(petta_machine_stats(&machine, &stats));
-    assert(stats.clause_candidates_shape_pruned == 0u);
+    assert(stats.equation_candidates_shape_pruned == 0u);
     assert(petta_machine_next(
                &machine, &answer, &environment) ==
            PETTA_MACHINE_STEP_EXHAUSTED);
@@ -6089,12 +6308,12 @@ static void test_nested_clause_shape_index(
      * Candidate discovery precedes the first answer, but nested callability
      * is observed when each alternative is attempted.  A relation installed
      * between answers must therefore make the retained relational-head
-     * alternative viable without rebuilding the outer clause snapshot.
+     * alternative viable without rebuilding the outer candidate snapshot.
      */
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (late-shape $anything) first)");
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (late-shape (late-call a)) late-ok)");
     query = parse_one(
@@ -6109,7 +6328,7 @@ static void test_nested_clause_shape_index(
         answer, atom_symbol(answers, "first")));
     bindings_free(&environment);
 
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (late-call a) (tuple marker-b value))");
     assert(petta_machine_next(
@@ -6119,7 +6338,7 @@ static void test_nested_clause_shape_index(
         answer, atom_symbol(answers, "late-ok")));
     bindings_free(&environment);
     assert(petta_machine_stats(&machine, &stats));
-    assert(stats.clause_candidates_shape_pruned == 0u);
+    assert(stats.equation_candidates_shape_pruned == 0u);
     assert(petta_machine_next(
                &machine, &answer, &environment) ==
            PETTA_MACHINE_STEP_EXHAUSTED);
@@ -6127,12 +6346,159 @@ static void test_nested_clause_shape_index(
     petta_machine_destroy(&machine);
 }
 
+/* Run one call to exhaustion and return its machine counters.  The answers
+ * must be exactly `expected`, in order. */
+static PettaMachineStats run_indexed_call(
+    Space *space, Arena *answers, const char *call,
+    const PettaMachineHost *host,
+    const char *const *expected, size_t expected_len) {
+    Atom *query = parse_one(answers, call);
+    assert(query);
+    PettaMachine machine;
+    assert(petta_machine_init(
+        &machine, space, answers, query, NULL, host));
+    Atom *answer = NULL;
+    Bindings environment;
+    for (size_t index = 0u; index < expected_len; index++) {
+        assert(petta_machine_next(
+                   &machine, &answer, &environment) ==
+               PETTA_MACHINE_STEP_ANSWER);
+        assert(atom_alpha_eq(
+            answer, parse_one(answers, expected[index])));
+        bindings_free(&environment);
+    }
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    PettaMachineStats stats;
+    assert(petta_machine_stats(&machine, &stats));
+    petta_machine_destroy(&machine);
+    return stats;
+}
+
+/* Equation selection before LHS unification, in both realizations.
+ *
+ * Without an admitted relation the decision is linear: every candidate is
+ * checked structurally against the whole call, so a known coordinate prunes
+ * wherever it sits, including behind an open one.  With an admitted relation
+ * the decision is an index: it refutes at a discriminator before any
+ * unification, falls back to a weaker discriminator when the strongest is
+ * open, and a call open at every discriminator attempts each equation in
+ * source order, leaving the decision to the LHS matcher.  Every call returns
+ * the same answers either way. */
+static void test_argument_index_before_unification(
+    Space *space, Arena *persistent, Arena *answers) {
+    add_equation(
+        space, persistent,
+        "(= (budget-gtz $s (: ax (A $x))) (ax-hit $x))");
+    add_equation(
+        space, persistent,
+        "(= (budget-gtz $s (: by (B $x))) (by-hit $x))");
+    add_equation(
+        space, persistent,
+        "(= (budget-gtz $s (: (mp $f $x) (A $b))) mp-hit)");
+    add_equation(
+        space, persistent,
+        "(= (budget-gtz $s (: $p (A $x))) (open-hit $x))");
+
+    const char *hit_answers[] = {"(ax-hit leaf)", "(open-hit leaf)"};
+    const char *open_answers[] = {
+        "(ax-hit leaf)", "mp-hit", "(open-hit leaf)"};
+    PettaMachineHost indexed = {
+        .tabled_relation_admissible =
+            match_decision_receipt_relation_admissible,
+    };
+
+    /* Linear: the structural check refutes (B $x) behind the open tag. */
+    PettaMachineStats stats = run_indexed_call(
+        space, answers, "(budget-gtz 5 (: dummy (Z leaf)))", NULL, NULL, 0u);
+    assert(stats.match_decision_runs == 1u);
+    assert(stats.equation_match_attempts == 0u);
+    stats = run_indexed_call(
+        space, answers, "(budget-gtz 5 (: ax (A leaf)))", NULL,
+        hit_answers, 2u);
+    assert(stats.match_decision_runs == 1u);
+    assert(stats.equation_match_attempts == 2u);
+    stats = run_indexed_call(
+        space, answers, "(budget-gtz 5 (: $q (A leaf)))", NULL,
+        open_answers, 3u);
+    assert(stats.match_decision_runs == 1u);
+    assert(stats.equation_match_attempts == 3u);
+
+    /* Indexed: the tag refutes before unification; with the tag open, the
+     * type is the next guaranteed discriminator and still refutes by. */
+    stats = run_indexed_call(
+        space, answers, "(budget-gtz 5 (: dummy (Z leaf)))", &indexed,
+        NULL, 0u);
+    assert(stats.match_decision_runs == 1u);
+    assert(stats.equation_match_attempts == 0u);
+    stats = run_indexed_call(
+        space, answers, "(budget-gtz 5 (: ax (A leaf)))", &indexed,
+        hit_answers, 2u);
+    assert(stats.match_decision_runs == 1u);
+    assert(stats.equation_match_attempts == 2u);
+    stats = run_indexed_call(
+        space, answers, "(budget-gtz 5 (: $q (A leaf)))", &indexed,
+        open_answers, 3u);
+    assert(stats.match_decision_runs == 1u);
+    assert(stats.match_decision_discriminator_unbound_skips == 0u);
+    assert(stats.equation_match_attempts == 3u);
+
+    /* The first argument discriminates best, the second still guarantees
+     * pruning: a call open in the first is selected by the second. */
+    add_equation(space, persistent, "(= (two-keys a x) first)");
+    add_equation(space, persistent, "(= (two-keys b y) second)");
+    add_equation(space, persistent, "(= (two-keys c x) third)");
+    const char *second_only[] = {"second"};
+    stats = run_indexed_call(
+        space, answers, "(two-keys $q y)", &indexed, second_only, 1u);
+    assert(stats.match_decision_runs == 1u);
+    assert(stats.match_decision_discriminator_unbound_skips == 0u);
+    assert(stats.equation_match_attempts == 1u);
+    const char *all_three[] = {"first", "second", "third"};
+    stats = run_indexed_call(
+        space, answers, "(two-keys $q $r)", &indexed, all_three, 3u);
+    assert(stats.match_decision_runs == 0u);
+    assert(stats.match_decision_discriminator_unbound_skips == 1u);
+    assert(stats.equation_match_attempts +
+               stats.equation_candidates_shape_pruned == 3u);
+
+    /* A relation whose equations share one shape has no discriminator: the
+     * index is never consulted, whatever the call instantiates. */
+    add_equation(
+        space, persistent, "(= (same-shape (pair $x $y)) (left $x))");
+    add_equation(
+        space, persistent, "(= (same-shape (pair $x $y)) (right $y))");
+    const char *pair_answers[] = {"(left a)", "(right b)"};
+    stats = run_indexed_call(
+        space, answers, "(same-shape (pair a b))", &indexed,
+        pair_answers, 2u);
+    assert(stats.match_decision_runs == 0u);
+    assert(stats.match_decision_discriminator_unbound_skips == 1u);
+
+    Atom *ascription = parse_one(
+        answers, "(the RuntimeOnly index-value)");
+    assert(ascription);
+    add_equation(
+        space, persistent,
+        "(= (index-ascribe (the RuntimeOnly $v)) $v)");
+    const char *ascribed[] = {"index-value"};
+    stats = run_indexed_call(
+        space, answers, "(index-ascribe (the RuntimeOnly index-value))",
+        NULL, ascribed, 1u);
+    (void)stats;
+    (void)ascription;
+    puts("PASS: equation selection refutes at its discriminator and "
+         "keeps source order for an open call");
+}
+
 static void test_choice_continuation_trail(
     Space *space, Arena *persistent, Arena *answers) {
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (trail-pick) (superpose (trail-a trail-b)))");
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (trail-accept trail-b) trail-ok)");
     Atom *query = parse_one(
@@ -6167,10 +6533,10 @@ static void test_choice_continuation_trail(
 
 static void test_deterministic_heap_collection(
     Space *space, Arena *persistent, Arena *answers) {
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (drain ()) done)");
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (drain (cons $head $tail))"
         "   (drain $tail))");
@@ -6230,7 +6596,8 @@ static void test_deterministic_heap_collection(
             stats.deterministic_goal_atom_bytes_promoted);
     assert(
         stats.deterministic_goal_atom_bytes_promoted ==
-        stats.deterministic_goal_first_bytes_promoted +
+        stats.deterministic_goal_context_bytes_promoted +
+            stats.deterministic_goal_first_bytes_promoted +
             stats.deterministic_goal_second_bytes_promoted +
             stats.deterministic_goal_third_bytes_promoted +
             stats.deterministic_goal_fourth_bytes_promoted);
@@ -6239,7 +6606,7 @@ static void test_deterministic_heap_collection(
     assert(stats.maximum_nursery_live_bytes > 0u);
     assert(stats.maximum_tenured_live_bytes > 0u);
     /*
-     * The two-clause relation retains one semantically live choice point per
+     * The two-equation relation retains one semantically live choice point per
      * input cell until its first answer.  Binding storage may therefore grow
      * linearly with ITEM_COUNT, plus at most one bounded collection window,
      * but not with the quadratic total size of all list suffixes.
@@ -6258,10 +6625,10 @@ static void test_deterministic_heap_collection(
 
 static void test_choice_binding_compaction(
     Space *space, Arena *persistent, Arena *answers) {
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (choose-drain $items) (drain $items))");
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (choose-drain $items) fallback)");
 
@@ -6324,7 +6691,7 @@ static void test_choice_binding_compaction(
 
 static void test_marked_goal_trail_compaction(
     Space *space, Arena *persistent, Arena *answers) {
-    add_clause(space, persistent,
+    add_equation(space, persistent,
         "(= (marked-drain $items)"
         " (chain (superpose (outer-a outer-b)) $outer"
         "  (chain (superpose (inner-a inner-b)) $inner"
@@ -6415,7 +6782,7 @@ static void test_choice_heap_instant_reclaiming(
         assert(duplicate);
         space_add(space, duplicate);
     }
-    add_clause(
+    add_equation(
         space, persistent,
         "(not-heap-row ignored)");
 
@@ -6487,6 +6854,255 @@ static void test_choice_heap_instant_reclaiming(
         stats.match_candidate_epoch_views ==
         VARIABLE_ROW_COUNT);
     petta_machine_destroy(&machine);
+}
+
+static PettaMachineHostMode test_admit_ground_atom_classify(
+    void *context, Space *space, Atom *expression) {
+    (void)context;
+    (void)space;
+    if (!expression || expression->kind != ATOM_EXPR ||
+        expression->expr.len != 3u ||
+        !expression->expr.elems[0] ||
+        expression->expr.elems[0]->kind != ATOM_SYMBOL ||
+        expression->expr.elems[0]->sym_id != g_builtin_syms.add_atom)
+        return PETTA_MACHINE_HOST_NONE;
+    return PETTA_MACHINE_HOST_STRICT_FIRST_APPLICATION;
+}
+
+static bool test_admit_ground_atom(
+    void *context, Space *space, Arena *arena,
+    Atom *call, Atom **result) {
+    (void)context;
+    if (result)
+        *result = NULL;
+    if (!space || !arena || !call || !result ||
+        call->kind != ATOM_EXPR || call->expr.len != 3u)
+        return false;
+    Atom *payload = call->expr.elems[2];
+    if (!payload || atom_has_vars(payload) ||
+        petta_program_atom_affects_metadata(payload))
+        return false;
+    if (!space_admit_atom(space, arena, payload))
+        return false;
+    *result = petta_semantics_success_value(arena);
+    return *result != NULL;
+}
+
+static void test_same_machine_add_atom_ground_fact(
+    Space *space, Arena *persistent, Arena *answers) {
+    CettaCount before = space_length64(space);
+    PettaMachineHost host = {
+        .classify = test_admit_ground_atom_classify,
+        .admit_ground_atom = test_admit_ground_atom,
+    };
+    Atom *query = parse_one(answers, "(add-atom &self (admit-row 7))");
+    assert(query);
+    PettaMachine machine;
+    assert(petta_machine_init(
+        &machine, space, answers, query, NULL, &host));
+    Atom *answer = NULL;
+    Bindings environment;
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(
+        answer, petta_semantics_success_value(answers)));
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+    assert(space_length64(space) == before + 1u);
+
+    add_equation(
+        space, persistent,
+        "(= (admit-row-present)"
+        "   (match &self (admit-row $x) $x))");
+    const char *present[] = {"7"};
+    expect_answers(
+        space, answers, "(admit-row-present)", present, 1u);
+}
+
+static void test_bound_match_candidate_snapshot(
+    Space *space, Arena *persistent, Arena *answers) {
+    enum { ROW_COUNT = 512 };
+    Atom *head = atom_symbol(persistent, "bound-index-row");
+    assert(head);
+    for (int64_t index = 0; index < ROW_COUNT; index++) {
+        Atom *items[] = {
+            head,
+            atom_int(persistent, index),
+            atom_int(persistent, index * 10),
+        };
+        Atom *row = atom_expr(persistent, items, 3u);
+        assert(row);
+        space_add(space, row);
+    }
+    space_add(
+        space,
+        parse_one(persistent, "(bound-index-row 7 duplicate)"));
+    space_add(
+        space,
+        parse_one(persistent, "(bound-index-row $stored wildcard)"));
+    add_equation(
+        space, persistent,
+        "(= (bound-index-select $key)"
+        "   (match &self (bound-index-row $key $value) $value))");
+
+    Atom *query = parse_one(answers, "(bound-index-select 7)");
+    assert(query);
+    PettaMachine machine;
+    assert(petta_machine_init(
+        &machine, space, answers, query, NULL, NULL));
+    const char *expected[] = {"70", "duplicate", "wildcard"};
+    Atom *after_snapshot = NULL;
+    Atom *answer = NULL;
+    Bindings environment;
+    for (size_t index = 0u;
+         index < sizeof(expected) / sizeof(*expected); index++) {
+        assert(petta_machine_next(
+                   &machine, &answer, &environment) ==
+               PETTA_MACHINE_STEP_ANSWER);
+        assert(atom_alpha_eq(
+            answer, parse_one(answers, expected[index])));
+        bindings_free(&environment);
+        if (index == 0u) {
+            /* A match observes exactly the ordered occurrence snapshot at its
+             * start.  A later append belongs only to the next query. */
+            after_snapshot = parse_one(
+                persistent,
+                "(bound-index-row 7 after-snapshot)");
+            assert(after_snapshot);
+            space_add(space, after_snapshot);
+        }
+    }
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    PettaMachineStats stats;
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.match_candidates == 3u);
+    petta_machine_destroy(&machine);
+
+    const char *next_expected[] = {
+        "70", "duplicate", "wildcard", "after-snapshot",
+    };
+    expect_answers(
+        space, answers, "(bound-index-select 7)",
+        next_expected,
+        sizeof(next_expected) / sizeof(*next_expected));
+
+    /* A removal changes the next logical snapshot and its trie projection,
+     * without changing occurrence order among the surviving rows. */
+    assert(space_remove(space, after_snapshot));
+    expect_answers(
+        space, answers, "(bound-index-select 7)", expected,
+        sizeof(expected) / sizeof(*expected));
+}
+
+static void test_match_prefix_cursor_reuse(
+    Space *space, Arena *persistent, Arena *answers) {
+    Atom *head = atom_symbol(persistent, "prefix-share-row");
+    assert(head);
+    enum { ROW_COUNT = 32 };
+    for (int64_t index = 0; index < ROW_COUNT; index++) {
+        Atom *items[] = { head, atom_int(persistent, index) };
+        Atom *row = atom_expr(persistent, items, 2u);
+        assert(row);
+        space_add(space, row);
+    }
+    add_equation(
+        space, persistent,
+        "(= (prefix-share $p)"
+        "   (match &self $p (match &self $p 1)))");
+    Atom *query = parse_one(
+        answers, "(prefix-share (prefix-share-row 1))");
+    assert(query);
+    PettaMachine machine;
+    assert(petta_machine_init(
+        &machine, space, answers, query, NULL, NULL));
+    Atom *answer = NULL;
+    Bindings environment;
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, atom_int(answers, 1)));
+    bindings_free(&environment);
+    PettaMachineStats stats;
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.match_prefix_cursor_reuse >= 1u);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+}
+
+static void test_bound_match_in_flight_remove_invalidates_pin(
+    Space *space, Arena *persistent, Arena *answers) {
+    Atom *head = atom_symbol(persistent, "in-flight-remove-row");
+    assert(head);
+    Atom *first_row_items[] = {
+        head, atom_int(persistent, 1), atom_symbol(persistent, "first"),
+    };
+    Atom *second_row_items[] = {
+        head, atom_int(persistent, 1), atom_symbol(persistent, "second"),
+    };
+    Atom *third_row_items[] = {
+        head, atom_int(persistent, 1), atom_symbol(persistent, "third"),
+    };
+    Atom *first_row = atom_expr(persistent, first_row_items, 3u);
+    Atom *second_row = atom_expr(persistent, second_row_items, 3u);
+    Atom *third_row = atom_expr(persistent, third_row_items, 3u);
+    assert(first_row && second_row && third_row);
+    space_add(space, first_row);
+    space_add(space, second_row);
+    space_add(space, third_row);
+    add_equation(
+        space, persistent,
+        "(= (in-flight-remove-select $key)"
+        "   (match &self (in-flight-remove-row $key $value) $value))");
+
+    Atom *query = parse_one(answers, "(in-flight-remove-select 1)");
+    assert(query);
+    PettaMachine machine;
+    assert(petta_machine_init(
+        &machine, space, answers, query, NULL, NULL));
+    Atom *answer = NULL;
+    Bindings environment;
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, parse_one(answers, "first")));
+    bindings_free(&environment);
+
+    /*
+     * Removal after capture is invisible to the in-flight cursor.  The next
+     * query sees the survivor order.
+     */
+    assert(space_remove(space, third_row));
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, parse_one(answers, "second")));
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, parse_one(answers, "third")));
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+
+    const char *survivors[] = {"first", "second"};
+    expect_answers(
+        space, answers, "(in-flight-remove-select 1)",
+        survivors, 2u);
 }
 
 static void test_terminal_match_count_fold(
@@ -6571,10 +7187,10 @@ static void test_terminal_match_count_fold(
         stats.count_aggregate_match_folds);
     petta_machine_destroy(&machine);
 
-    add_clause(
+    add_equation(
         space, answers,
         "(error-data-row (Error source hidden))");
-    add_clause(
+    add_equation(
         space, answers,
         "(error-data-row ordinary)");
     match_children[3] = (PettaPlanNode){
@@ -6607,16 +7223,16 @@ static void test_terminal_match_count_fold(
     assert(stats.count_aggregate_match_view_folds == 1u);
     petta_machine_destroy(&machine);
 
-    add_clause(
+    add_equation(
         space, answers,
         "(dynamic-count-left unique-count-marker unique-count-tail)");
-    add_clause(
+    add_equation(
         space, answers,
         "(dynamic-count-left unique-count-marker unique-count-tail)");
-    add_clause(
+    add_equation(
         space, answers,
         "(dynamic-count-right unique-count-marker unique-count-tail)");
-    add_clause(
+    add_equation(
         space, answers,
         "(dynamic-count-right other-count-marker unique-count-tail)");
     match_children[3].role = PETTA_PLAN_DYNAMIC_CALL;
@@ -6964,7 +7580,7 @@ static void test_boundary_requirement_calculus(
     space_init_with_universe(&space, universe);
 
     add_boundary_signature(&space, arena, "boundary-list");
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &space, arena,
         "(= (boundary-list $items) (length $items))");
     assert(boundary_requirement_for(
@@ -6972,21 +7588,21 @@ static void test_boundary_requirement_calculus(
            PETTA_TYPECHECK_BOUNDARY_PROPER_LIST);
 
     add_boundary_signature(&space, arena, "boundary-bool");
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &space, arena,
         "(= (boundary-bool $value) (not $value))");
     assert(boundary_requirement_for(
                program, &space, "boundary-bool") ==
            PETTA_TYPECHECK_BOUNDARY_NONVAR);
 
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &space, arena,
         "(= (boundary-car-open $items) (car-atom $items))");
     assert(boundary_requirement_for(
                program, &space, "boundary-car-open") ==
            PETTA_TYPECHECK_BOUNDARY_NONEMPTY_EXPRESSION);
 
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &space, arena,
         "(= (boundary-list-open $items) (length $items))");
     assert(boundary_requirement_for(
@@ -6994,7 +7610,7 @@ static void test_boundary_requirement_calculus(
            PETTA_TYPECHECK_BOUNDARY_NONE);
 
     add_boundary_signature(&space, arena, "boundary-guarded-list");
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &space, arena,
         "(= (boundary-guarded-list $items)"
         "   (if (is-expr $items) (length $items) fallback))");
@@ -7003,7 +7619,7 @@ static void test_boundary_requirement_calculus(
            PETTA_TYPECHECK_BOUNDARY_NONE);
 
     add_boundary_signature(&space, arena, "boundary-guarded-car");
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &space, arena,
         "(= (boundary-guarded-car $items)"
         "   (if (== $items ()) fallback (car-atom $items)))");
@@ -7012,7 +7628,7 @@ static void test_boundary_requirement_calculus(
            PETTA_TYPECHECK_BOUNDARY_NONE);
 
     add_boundary_signature(&space, arena, "boundary-joined");
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &space, arena,
         "(= (boundary-joined $items)"
         "   (and $items (length $items)))");
@@ -7021,20 +7637,20 @@ static void test_boundary_requirement_calculus(
            PETTA_TYPECHECK_BOUNDARY_PROPER_LIST);
 
     add_boundary_signature(&space, arena, "boundary-mutation");
-    add_compiled_program_clause(
+    add_compiled_program_equation(
         program, &space, arena,
         "(= (boundary-mutation $items) unchanged)");
     assert(boundary_requirement_for(
                program, &space, "boundary-mutation") ==
            PETTA_TYPECHECK_BOUNDARY_NONE);
-    Atom *mutation_clause = add_compiled_program_clause(
+    Atom *mutation_equation = add_compiled_program_equation(
         program, &space, arena,
         "(= (boundary-mutation $items) (length $items))");
     assert(boundary_requirement_for(
                program, &space, "boundary-mutation") ==
            PETTA_TYPECHECK_BOUNDARY_PROPER_LIST);
-    assert(space_remove(&space, mutation_clause));
-    petta_program_note_remove_one(program, &space, mutation_clause);
+    assert(space_remove(&space, mutation_equation));
+    petta_program_note_remove_one(program, &space, mutation_equation);
     assert(boundary_requirement_for(
                program, &space, "boundary-mutation") ==
            PETTA_TYPECHECK_BOUNDARY_NONE);
@@ -7350,13 +7966,13 @@ static void test_analysis_authority_retry(
 
 static void test_relational_obligation_guard_gc(
     Space *space, Arena *persistent, Arena *answers) {
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (get-type foo) RuntimeOnly)");
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (guard-drain ()) done)");
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (guard-drain (cons $head $tail))"
         "   (guard-drain $tail))");
@@ -7769,6 +8385,51 @@ static void test_continuation_hub_atomic_reclamation(void) {
     puts("PASS: hub reclamation is atomic and preserves occurrence control state");
 }
 
+static void test_observation_frozen_environment(Arena *arena) {
+    Atom *key = atom_var(arena, "privacy-key");
+    Atom *reachable = atom_var(arena, "privacy-reachable");
+    Atom *local = atom_var(arena, "privacy-local");
+    Atom *absent = atom_var(arena, "privacy-absent");
+    BindingsBuilder builder;
+    Bindings captured;
+    assert(bindings_builder_init(&builder, NULL));
+    assert(bindings_builder_add_var_fresh(&builder, key, reachable));
+    assert(bindings_clone(&captured, &builder.current));
+    assert(bindings_builder_add_var_fresh(
+        &builder, local, atom_int(arena, 7)));
+    assert(builder.current.shared_len > 0u);
+    assert(!cetta_observation_environment_var_is_private(
+        &builder.current, key->var_id));
+    assert(!cetta_observation_environment_var_is_private(
+        &builder.current, reachable->var_id));
+    assert(!cetta_observation_environment_var_is_private(
+        &builder.current, local->var_id));
+    assert(cetta_observation_environment_var_is_private(
+        &builder.current, absent->var_id));
+    assert(cetta_observation_environment_var_is_private(
+        &captured, local->var_id));
+    Binding contextual_binding = {
+        .var_id = key->var_id,
+        .spelling = key->sym_id,
+        .value = binding_value_from_context(reachable, 401u),
+    };
+    Bindings contextual = {.entries = &contextual_binding, .len = 1u};
+    assert(!cetta_observation_environment_var_is_private(
+        &contextual, var_epoch_id(reachable->var_id, 401u)));
+    assert(cetta_observation_environment_var_is_private(
+        &contextual, reachable->var_id));
+    assert(cetta_observation_environment_var_is_private(
+        &contextual, var_epoch_id(reachable->var_id, 402u)));
+    Atom *serialized = bindings_to_atom(arena, &contextual);
+    Bindings roundtrip;
+    assert(serialized && bindings_from_atom(serialized, &roundtrip));
+    assert(bindings_eq(&contextual, &roundtrip));
+    bindings_free(&roundtrip);
+    bindings_free(&captured);
+    bindings_builder_free(&builder);
+    puts("PASS: observation privacy covers frozen bindings and private suffixes");
+}
+
 static void test_observation_indexed_control_plan(void) {
     CettaObservationContract count_contract = {
         .demand = {
@@ -8091,10 +8752,10 @@ static CettaContinuationStatus expand_relational_frontier(
 
 static void test_relational_frontier_expansion(
     Space *space, Arena *persistent, Arena *answers) {
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (frontier-split-answer) frontier-left)");
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (frontier-split-answer) frontier-right)");
     SymbolId left_id = symbol_intern_cstr(g_symbols, "frontier-left");
@@ -8424,10 +9085,10 @@ static bool test_fifo_controller_run(
 
 static void test_fifo_starvation_and_duplicate_canaries(
     Space *space, Arena *persistent, Arena *answers) {
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (fair-dig $n) (fair-dig (S $n)))");
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (fair-dig $n) (fair-found $n))");
     Atom *query = parse_one(answers, "(fair-dig Z)");
@@ -8480,10 +9141,10 @@ static void test_fifo_starvation_and_duplicate_canaries(
         parse_one(answers, "(fair-found (S (S Z)))")));
     petta_machine_destroy(&machine);
 
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (fifo-duplicate) fifo-same)");
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (fifo-duplicate) fifo-same)");
     Atom *duplicate_query = parse_one(answers, "(fifo-duplicate)");
@@ -8503,12 +9164,12 @@ static void test_fifo_starvation_and_duplicate_canaries(
     puts("PASS: FIFO reaches DFS-starved answers and preserves duplicate occurrences");
 }
 
-static void test_owned_clause_continuation_roundtrip(
+static void test_owned_equation_continuation_roundtrip(
     Space *space, Arena *persistent, Arena *answers) {
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (owned-continuation-answer) owned-first)");
-    add_clause(
+    add_equation(
         space, persistent,
         "(= (owned-continuation-answer) owned-second)");
     SymbolId first_id = symbol_intern_cstr(
@@ -8849,7 +9510,7 @@ static void test_owned_clause_continuation_roundtrip(
     cetta_owned_continuation_destroy(&stale_space);
     petta_machine_destroy(&machine);
 
-    puts("PASS: owned ordinary-clause continuations are multi-shot and authority-pinned");
+    puts("PASS: owned ordinary-equation continuations are multi-shot and authority-pinned");
 }
 
 static void test_selection_automaton_lane_recurrence(void) {
@@ -9359,9 +10020,10 @@ int main(void) {
         &space, &persistent, &answers);
     test_controller_batch_ranker();
     test_continuation_hub_atomic_reclamation();
+    test_observation_frozen_environment(&answers);
     test_observation_indexed_control_plan();
     test_branch_capture_algebra();
-    test_owned_clause_continuation_roundtrip(
+    test_owned_equation_continuation_roundtrip(
         &space, &persistent, &answers);
     test_relational_frontier_expansion(
         &space, &persistent, &answers);
@@ -9377,6 +10039,7 @@ int main(void) {
 
     test_constructor_slot_frame_plans(
         &universe, &persistent, &answers);
+    test_elaborated_functional_pattern_plan(&universe, &persistent, &answers);
     test_unknown_cons_fact_falls_back(
         &universe, &persistent, &answers);
     test_alpha_reconciled_slot_authority(
@@ -9387,7 +10050,7 @@ int main(void) {
         &universe, &persistent);
     test_open_pattern_support_certificate(
         &universe, &persistent);
-    test_compiled_clause_guard_pruning(
+    test_compiled_equation_guard_pruning(
         &universe, &persistent, &answers);
     test_activated_empty_authority(&universe, &persistent, &answers);
     test_program_wide_occurrence_reconciliation(
@@ -9410,6 +10073,7 @@ int main(void) {
     test_deep_cons_semantics(&answers);
     test_logical_cons_binding_views(&answers);
     test_lowered_head_epoch_views(&answers);
+    test_contextual_cons_values(&answers);
     test_answer_materialization_boundaries(
         &space, &persistent, &answers);
     test_logical_list_cursor_boundaries(&answers);
@@ -9422,19 +10086,22 @@ int main(void) {
     test_quoted_result_override(&space, &answers);
     test_deep_callable_detection(
         &space, &persistent, &answers);
+    test_root_context_identity_import(&space, &persistent, &answers);
     test_specializer_capacity_fallback(
         &space, &persistent, &answers);
     test_deep_functional_match_pattern(
         &space, &persistent, &answers);
-    test_deterministic_clause_elision(
+    test_deterministic_equation_elision(
         &space, &persistent, &answers);
-    test_clause_slot_admission_boundary(
+    test_equation_slot_admission_boundary(
         &space, &persistent, &answers);
     test_ground_boolean_choice_elision(
         &space, &answers);
-    test_cons_shape_clause_index(
+    test_cons_shape_equation_index(
         &space, &persistent, &answers);
-    test_nested_clause_shape_index(
+    test_nested_equation_shape_index(
+        &space, &persistent, &answers);
+    test_argument_index_before_unification(
         &space, &persistent, &answers);
     test_choice_continuation_trail(
         &space, &persistent, &answers);
@@ -9445,9 +10112,9 @@ int main(void) {
     test_marked_goal_trail_compaction(
         &space, &persistent, &answers);
 
-    add_clause(&space, &persistent, "(= (f 1) one)");
-    add_clause(&space, &persistent, "(= (f 1) uno)");
-    add_clause(&space, &persistent, "(= (f 1) uno)");
+    add_equation(&space, &persistent, "(= (f 1) one)");
+    add_equation(&space, &persistent, "(= (f 1) uno)");
+    add_equation(&space, &persistent, "(= (f 1) uno)");
     test_machine_query_visible_projection(
         &space, &persistent, &answers);
     test_ground_slg_tables(
@@ -9459,14 +10126,14 @@ int main(void) {
     test_choice_binding_checkpoint_receipt(&space, &answers);
 #endif
 
-    add_clause(
+    add_equation(
         &space, &persistent,
         "(= (second ($first $second $third)) $second)");
     const char *patterned[] = {"b"};
     expect_answers(
         &space, &answers, "(second (a b c))", patterned, 1u);
 
-    add_clause(
+    add_equation(
         &space, &persistent,
         "(= (cons-second (cons $first (cons $second $rest)))"
         "   $second)");
@@ -9476,7 +10143,7 @@ int main(void) {
     expect_answers(
         &space, &answers, "(cons-second ())", NULL, 0u);
 
-    add_clause(&space, &persistent, "(= (identity $x) $x)");
+    add_equation(&space, &persistent, "(= (identity $x) $x)");
     const char *inverse[] = {"a"};
     expect_answers(
         &space, &answers,
@@ -9567,7 +10234,7 @@ int main(void) {
     expect_answers(
         &space, &answers,
         "(-> (empty) Result)", NULL, 0u);
-    add_clause(
+    add_equation(
         &space, &persistent,
         "(= (list-product $tail)"
         "   (append (append (42) (10)) $tail))");
@@ -9577,7 +10244,7 @@ int main(void) {
         "((= (42 10 40) (list-product $tail)) $tail)",
         equal_inverse, 1u);
 
-    add_clause(
+    add_equation(
         &space, &persistent,
         "(= (pair2 $left $right) ($left $right))");
     const char *partial_pair[] = {"(partial pair2 (a))"};
@@ -9598,24 +10265,24 @@ int main(void) {
     expect_answers(
         &space, &answers,
         "(+ 1 2 3)", overapplied_intrinsic, 1u);
-    add_clause(
+    add_equation(
         &space, &persistent,
         "(= (overloaded one) exact)");
-    add_clause(
+    add_equation(
         &space, &persistent,
         "(= (overloaded one two) larger)");
     const char *exact_precedes_partial[] = {"exact"};
     expect_answers(
         &space, &answers,
         "(overloaded one)", exact_precedes_partial, 1u);
-    add_clause(
+    add_equation(
         &space, &persistent,
         "(= (returns-add) (#+))");
     const char *extended_callable[] = {"5"};
     expect_answers(
         &space, &answers,
         "(returns-add 2 3)", extended_callable, 1u);
-    add_clause(
+    add_equation(
         &space, &persistent,
         "(= (returns-data) 1)");
     const char *overapplied_data[] = {
@@ -9625,10 +10292,10 @@ int main(void) {
     expect_answers(
         &space, &answers,
         "(returns-data extra)", overapplied_data, 1u);
-    add_clause(
+    add_equation(
         &space, &persistent,
         "(= (mixed-arity $x) one)");
-    add_clause(
+    add_equation(
         &space, &persistent,
         "(= (mixed-arity $x $y $z) three)");
     const char *gap_stays_partial[] = {
@@ -9659,7 +10326,7 @@ int main(void) {
         wide_equation, sizeof wide_equation, "(= %s wide)", wide_lhs);
     assert(wide_equation_length >= 0 &&
            (size_t)wide_equation_length < sizeof wide_equation);
-    add_clause(&space, &persistent, wide_equation);
+    add_equation(&space, &persistent, wide_equation);
     format_nary_application(
         wide_exact_call, sizeof wide_exact_call,
         "wide-arity", "a", WIDE_ARITY);
@@ -9676,7 +10343,7 @@ int main(void) {
     expect_answers(
         &space, &answers, wide_overapplied_call,
         wide_overapplication, 1u);
-    add_clause(
+    add_equation(
         &space, &persistent,
         "(= (select-callable special) (#+ 1))");
     const char *selected_extension[] = {"3"};
@@ -9687,17 +10354,17 @@ int main(void) {
     expect_answers(
         &space, &answers,
         "(select-callable other 2)", NULL, 0u);
-    add_clause(
+    add_equation(
         &space, &persistent,
         "(: typed-map (-> Atom %Undefined%))");
-    add_clause(
+    add_equation(
         &space, &persistent,
         "(= (typed-map ($f ())) ())");
-    add_clause(
+    add_equation(
         &space, &persistent,
         "(= (typed-map ($f (cons $x $xs)))"
         "   (cons ($f $x) (typed-map ($f $xs))))");
-    add_clause(
+    add_equation(
         &space, &persistent,
         "(= (increment $x) (#+ $x 1))");
     const char *typed_relational_head[] = {"(2 3)"};
@@ -9713,12 +10380,12 @@ int main(void) {
         &space, &answers,
         "((1 2) 3)", computed_head_data, 1u);
 
-    add_clause(&space, &persistent, "(= (successor b a) True)");
-    add_clause(&space, &persistent, "(= (successor c b) True)");
-    add_clause(
+    add_equation(&space, &persistent, "(= (successor b a) True)");
+    add_equation(&space, &persistent, "(= (successor c b) True)");
+    add_equation(
         &space, &persistent,
         "(= (later $x $y) (successor $x $y))");
-    add_clause(
+    add_equation(
         &space, &persistent,
         "(= (later $x $y)"
         "   (and (successor $x $middle)"
@@ -9736,7 +10403,7 @@ int main(void) {
         &space, &answers,
         "((later c $answer) $answer)", recursive, 2u);
 
-    add_clause(
+    add_equation(
         &space, &persistent,
         "(= (choose) (superpose (first second)))");
     const char *committed[] = {"first"};
@@ -9746,14 +10413,14 @@ int main(void) {
         "  (let $_ (cut) $answer))",
         committed, 1u);
 
-    add_clause(&space, &persistent, "(a b)");
-    add_clause(&space, &persistent, "(a c)");
+    add_equation(&space, &persistent, "(a b)");
+    add_equation(&space, &persistent, "(a c)");
     const char *matched[] = {"(a b)", "(a c)"};
     expect_answers(
         &space, &answers,
         "(match &self (a $x) (a $x))",
         matched, 2u);
-    add_clause(
+    add_equation(
         &space, &persistent,
         "(= (first-a)"
         "   (let* (($answer (match &self (a $x) (a $x)))"
@@ -9906,7 +10573,7 @@ int main(void) {
     assert(atom_alpha_eq(
         first_answer, parse_one(&answers, "one")));
     bindings_free(&first_environment);
-    add_clause(&space, &persistent, "(= (f 1) after)");
+    add_equation(&space, &persistent, "(= (f 1) after)");
     const char *remaining[] = {"uno", "uno"};
     for (size_t index = 0u; index < 2u; index++) {
         Bindings remaining_environment;
@@ -9931,6 +10598,14 @@ int main(void) {
     expect_answers(
         &space, &answers, "(f 1)", next_call, 4u);
     test_choice_heap_instant_reclaiming(
+        &space, &persistent, &answers);
+    test_same_machine_add_atom_ground_fact(
+        &space, &persistent, &answers);
+    test_bound_match_candidate_snapshot(
+        &space, &persistent, &answers);
+    test_match_prefix_cursor_reuse(
+        &space, &persistent, &answers);
+    test_bound_match_in_flight_remove_invalidates_pin(
         &space, &persistent, &answers);
     test_terminal_match_count_fold(&space, &answers);
 

@@ -1,3 +1,4 @@
+#include "term_canon.h"
 #include "rule_machine.h"
 
 #include "match.h"
@@ -1196,8 +1197,7 @@ static void rm_solve_goal(RMRun *run, uint32_t depth, Atom *goal,
     for (uint32_t i = 0; i < run->block_count && !run->limit_reason; ++i) {
         ++run->block_attempts;
         uint32_t mark = bindings_builder_save(builder);
-        Atom *fresh = atom_freshen_epoch(
-            run->arena, run->blocks[i], fresh_var_suffix());
+        Atom *fresh = cetta_instantiate_frame_syntax(run->arena, run->blocks[i]);
         RMBytecodeBlock block;
         if (!fresh || !rm_parse_bytecode_block(fresh, &block)) {
             bindings_builder_rollback(builder, mark);
@@ -1418,8 +1418,6 @@ static bool rm_rule_program_unify_apply(Arena *scratch, Atom *left, Atom *right,
     if (!bindings_builder_init(&builder, NULL))
         return false;
     bool matched = match_atoms_builder(left, right, &builder);
-    if (matched && bindings_has_loop(bindings_builder_bindings(&builder)))
-        matched = false;
     if (matched) {
         *result = bindings_apply_if_vars(
             bindings_builder_bindings(&builder), scratch, body);
@@ -1434,8 +1432,6 @@ static bool rm_rule_program_unifies(Arena *scratch, Atom *left, Atom *right) {
     if (!bindings_builder_init(&builder, NULL))
         return false;
     bool matched = match_atoms_builder(left, right, &builder);
-    if (matched && bindings_has_loop(bindings_builder_bindings(&builder)))
-        matched = false;
     bindings_builder_free(&builder);
     (void)scratch;
     return matched;
@@ -1451,8 +1447,7 @@ static bool rm_rule_program_apply_rule_native(RMRuleProgramRun *run, RMRuleProgr
         return false;
     if (rule->kind == RM_RULE_PROGRAM_AXIOM) {
         Atom *schema = atom_deep_copy(&run->scratch, rule->schema);
-        schema = atom_freshen_epoch(
-            &run->scratch, schema, fresh_var_suffix());
+        schema = cetta_instantiate_frame_syntax(&run->scratch, schema);
         if (!schema ||
             !rm_rule_program_unify_apply(
                 &run->scratch, domain, schema, codomain, next_type))
@@ -1527,16 +1522,14 @@ static bool rm_rule_program_apply_rule_bytecode(
                 !rule->schema)
                 goto fail;
             regs[dst] = atom_deep_copy(&run->scratch, rule->schema);
-            regs[dst] = atom_freshen_epoch(
-                &run->scratch, regs[dst], fresh_var_suffix());
+            regs[dst] = cetta_instantiate_frame_syntax(&run->scratch, regs[dst]);
             if (!regs[dst])
                 goto fail;
         } else if (rm_is_expr_head(op, "rmbc-unify", 3)) {
             int a = rm_rule_program_reg_index(op->expr.elems[1]);
             int b = rm_rule_program_reg_index(op->expr.elems[2]);
             if (a < 0 || b < 0 || !regs[a] || !regs[b] ||
-                !match_atoms_builder(regs[a], regs[b], &builder) ||
-                bindings_has_loop(bindings_builder_bindings(&builder)))
+                !match_atoms_builder(regs[a], regs[b], &builder))
                 goto fail;
         } else if (rm_is_expr_head(op, "rmbc-set-type", 2)) {
             int src = rm_rule_program_reg_index(op->expr.elems[1]);

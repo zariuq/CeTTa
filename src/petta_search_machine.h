@@ -8,11 +8,12 @@
 #include "petta_program.h"
 #include "petta_semantics.h"
 #include "petta_specializer.h"
+#include "prepared_pure_machine.h"
 #include "search_machine.h"
 
 /*
  * The relational operational fragment is represented by an explicit heap
- * machine.  The machine owns clause choice, continuation order, rollback, and
+ * machine.  The machine owns equation choice, continuation order, rollback, and
  * answer projection; language-owned Need, effect, and observation semantics
  * enter only through the host callbacks below.  PeTTa and Prime therefore
  * share this mechanism without either dialect naming its admission boundary.
@@ -35,7 +36,7 @@ typedef enum {
     /*
      * The shared host owns the intrinsic cases, while explicit PeTTa
      * equations extend the same relation.  Host answers are enumerated
-     * first; ordinary backtracking then reaches explicit relation clauses.
+     * first; ordinary backtracking then reaches explicit relation equations.
      */
     PETTA_MACHINE_HOST_READY_RELATIONAL_EXTENSION,
 } PettaMachineHostMode;
@@ -176,7 +177,7 @@ typedef struct {
     /* Request suspension only at an exactly externalizable relational
      * choice.  Deterministic stretches remain inside the machine; this avoids
      * polling the continuation hub after every transition. */
-    bool externalize_clause_choices;
+    bool externalize_equation_choices;
     /* The host contributes one component to the shared branch-capture
      * capacity.  The relational backend combines it with its internal state
      * profile and accepts an owned continuation only at multi-shot capacity. */
@@ -191,7 +192,7 @@ typedef struct {
      * while Prime keeps the quoted expression as inert first-class data. */
     bool quote_is_inert_data;
     /* PeTTa's translation places exposed result structure before ordered
-     * clause effects. Other dialects require their own phase law. */
+     * equation effects. Other dialects require their own phase law. */
     bool source_output_constraints;
     /* Language-owned canonical answer-traversal materializer.  Runtime
      * dialects supply `reify`; a zero field retains the historical PeTTa
@@ -204,7 +205,7 @@ typedef struct {
      */
     bool (*permit_transition)(void *context);
     /* True only when compiled, bounded pure instructions do not consume a
-     * finite transition purse.  A metered host leaves this false so clause
+     * finite transition purse.  A metered host leaves this false so equation
      * selection retains the canonical transition boundary. */
     bool unlimited_transition_budget;
     PettaMachineHostMode (*classify)(
@@ -224,6 +225,13 @@ typedef struct {
         void *context, Space *space,
         SymbolId head, const CettaGsltTermCursorV1 *arguments,
         CettaExprLen arity, CettaGsltTermCursorObserverV1 observer);
+    /* The typed counterpart retains one lexical context per argument.
+     * It is used after strict argument evaluation has produced explicit
+     * closure values but before a whole call is materialized. */
+    PettaMachineSpaceQueryAdmission (*admit_space_query_values)(
+        void *context, Space *space,
+        SymbolId head, Bindings *environment,
+        const BindingValue *arguments, CettaExprLen arity);
     Space *(*resolve_space)(
         void *context, Space *root_space, Arena *arena,
         Atom *reference);
@@ -262,7 +270,7 @@ typedef struct {
      * relation after its subject has reached the ready-value boundary.
      * The returned pointer array is caller-owned; every Atom is owned by
      * `arena`.  Explicit user equations remain ordinary later relation
-     * clauses and are not included by this service. */
+     * equations and are not included by this service. */
     bool (*get_type)(
         void *context, Space *space, Arena *arena, Atom *value,
         Atom ***types, uint32_t *count);
@@ -317,14 +325,48 @@ typedef struct {
         void *context, Space *space, Arena *arena, PeTTaForm form,
         Atom *name, Atom *value,
         const Bindings *environment, OutcomeSet *outcomes);
+    /*
+     * Ground `add-atom` after the space argument is a value and the payload
+     * has been substituted.  The host owns storage, typing, and program
+     * observation through the shared admit authority.  Returning false
+     * declines to ordinary host evaluation.  On true, `*result` is the
+     * language success value or an error atom.
+     */
+    bool (*admit_ground_atom)(
+        void *context, Space *space, Arena *arena,
+        Atom *call, Atom **result);
     PettaSpecializeResult (*prepare_call)(
         void *context, Space *space, Arena *result_arena,
         Atom *call, Atom **prepared_call);
     /* Execute a closed, revision-pinned determinate pure call through the
-     * shared generated machine.  NULL declines to canonical clause search. */
+     * shared generated machine.  NULL declines to canonical equation search. */
     Atom *(*execute_prepared_pure_call)(
         void *context, Space *space, Arena *result_arena,
         Atom *prepared_call);
+    /* A revision-keyed program fact: the relation has already declined
+     * prepared compilation, so no closed call of it executes there.  Read
+     * before a call is proved closed or materialized; false means only
+     * that no decline is known. */
+    bool (*prepared_pure_call_declined)(
+        void *context, Space *space, SymbolId head, CettaExprLen arity);
+    /* Open a revision-pinned enumeration of the finite-answer fragment of a
+     * closed pure call, in equation-occurrence order.  NULL declines to
+     * canonical equation search.  `scratch` may hold admission temporaries;
+     * the machine admits each relation the enumeration enters. */
+    CettaPreparedPureAnswerCursor *(*open_answer_cursor)(
+        void *context, Space *space, Arena *scratch, Atom *prepared_call,
+        CettaPreparedPureHeadAdmissionFn head_admission,
+        void *head_admission_context);
+    /* A revision-keyed program fact: the relation has declined answer
+     * compilation.  False means only that no decline is known. */
+    bool (*answer_cursor_declined)(
+        void *context, Space *space, SymbolId head, CettaExprLen arity);
+    /* Every host authority an answer producer's enumeration depends on
+     * besides the Space program: callability, transaction state, and the
+     * relation-dispatch registrations.  Equal tokens at two times mean the
+     * producer's remaining answers are the ones equation search would find. */
+    bool (*answer_authority_token)(
+        void *context, PettaMachineAuthorityToken *token);
     /* Native opt-in capabilities whose names are not part of the core
      * PeTTa presentation.  Returning known=false leaves the occurrence
      * available to ordinary equations, data, or an optional foreign
@@ -346,31 +388,31 @@ typedef struct {
         Atom *expression, Atom *expected,
         const Bindings *environment, OutcomeSet *outcomes,
         bool *recognized);
-    bool (*clause_snapshot_lease)(
+    bool (*candidate_snapshot_lease)(
         void *context, Space *space, SymbolId head,
-        PettaClauseSnapshotLease *lease,
-        PettaClauseSnapshotStats *stats);
+        PettaCandidateSnapshotLease *lease,
+        PettaCandidateSnapshotStats *stats);
     /* Optional evidence interpretation for a relational call.  The first
      * callback creates one branch-independent call occurrence; the second
-     * appends evidence for a successfully matched clause to a branch-local
+     * appends evidence for a successfully matched equation to a branch-local
      * delta.  That delta joins the same rollback trail as substitutions.
-     * A NULL pair means that clause execution has no evidence side channel. */
+     * A NULL pair means that equation execution has no evidence side channel. */
     uint64_t (*begin_relation_call)(
         void *context, SpaceReadToken read, Atom *query);
-    bool (*record_clause_use)(
+    bool (*record_equation_use)(
         void *context, Arena *owner, uint64_t call_occurrence,
-        const PettaClauseCandidate *candidate, Atom *result,
+        const PettaEquationCandidate *candidate, Atom *result,
         const Bindings *environment, Bindings *evidence_delta);
-    /* True only when record_clause_use observes the structural result payload.
-     * A host that supplies record_clause_use but omits this callback is treated
+    /* True only when record_equation_use observes the structural result payload.
+     * A host that supplies record_equation_use but omits this callback is treated
      * conservatively as payload-observing.  When false, the machine may fuse
      * activation and outer-environment substitution before recording the
      * occurrence IDs; the callback must then ignore the result payload. */
-    bool (*clause_result_payload_observed)(void *context);
-    /* A delayed clause-body view may outlive the immediate match step.
+    bool (*equation_result_payload_observed)(void *context);
+    /* A delayed equation-body view may outlive the immediate match step.
      * The host must therefore prove the defining relation effect-free at
      * the pinned Space revision; absence or refusal selects materialization. */
-    bool (*clause_activation_relation_admissible)(
+    bool (*equation_activation_relation_admissible)(
         void *context, Space *space,
         SymbolId head, CettaExprLen arity);
     bool (*translator_rule_contains)(
@@ -495,48 +537,52 @@ typedef struct {
     uint64_t control_goal_transitions;
     uint64_t host_goal_transitions;
     uint64_t other_goal_transitions;
-    uint64_t clause_snapshot_calls;
-    uint64_t clause_snapshot_cache_hits;
-    uint64_t clause_snapshot_live_occurrences;
-    uint64_t clause_snapshot_records_examined;
-    uint64_t clause_snapshot_pointer_identity_hits;
-    uint64_t clause_snapshot_equality_checks;
-    uint64_t clause_snapshot_alpha_checks;
-    uint64_t clause_snapshot_candidates;
-    uint64_t clause_snapshot_candidates_copied;
-    uint64_t clause_candidates;
-    uint64_t clause_candidates_shape_pruned;
-    uint64_t clause_guard_prune_attempts;
-    uint64_t clause_guard_pruned;
-    uint64_t clause_guard_retained;
+    uint64_t candidate_snapshot_calls;
+    uint64_t candidate_snapshot_cache_hits;
+    uint64_t candidate_snapshot_live_occurrences;
+    uint64_t candidate_snapshot_records_examined;
+    uint64_t candidate_snapshot_pointer_identity_hits;
+    uint64_t candidate_snapshot_equality_checks;
+    uint64_t candidate_snapshot_alpha_checks;
+    uint64_t candidate_snapshot_candidates;
+    uint64_t candidate_snapshot_candidates_copied;
+    uint64_t equation_candidates;
+    uint64_t equation_candidates_shape_pruned;
+    uint64_t equation_guard_prune_attempts;
+    uint64_t equation_guard_pruned;
+    uint64_t equation_guard_retained;
     uint64_t match_decision_compilations;
     uint64_t match_decision_cache_hits;
     uint64_t match_decision_runs;
-    uint64_t match_decision_clause_inputs;
-    uint64_t match_decision_clause_survivors;
+    uint64_t match_decision_equation_inputs;
+    uint64_t match_decision_equation_survivors;
     uint64_t match_decision_key_index_build_probes;
     uint64_t match_decision_key_index_select_probes;
     uint64_t match_decision_generic_key_policy_scans;
     uint64_t match_decision_linear_fallbacks;
     uint64_t match_decision_unavailable_path_fallbacks;
+    uint64_t match_decision_discriminator_unbound_skips;
+    /* Closed calls built once as ground terms for ground-template equations. */
+    uint64_t closed_ground_queries;
     uint64_t match_decision_invalidations;
-    uint64_t clause_match_attempts;
+    uint64_t equation_match_attempts;
     /* Candidate occurrences whose branch goals were successfully installed.
      * This is a control event, not a claim that the branch later produced an
      * answer.  On a completed run, attempts minus scheduled branches is the
      * exact number rejected before entering the branch. */
-    uint64_t clause_branches_scheduled;
-    uint64_t clause_match_allocated_bytes;
+    uint64_t equation_branches_scheduled;
+    uint64_t equation_match_allocated_bytes;
     uint64_t match_candidates;
+    uint64_t match_prefix_cursor_reuse;
     uint64_t match_candidate_epoch_views;
     uint64_t unification_calls;
     uint64_t unification_failures;
     uint64_t unification_binding_writes;
     uint64_t unification_allocated_bytes;
-    uint64_t clause_binding_merge_calls;
-    uint64_t clause_binding_merge_source_items;
-    uint64_t clause_binding_merge_logical_writes;
-    uint64_t clause_binding_merge_failures;
+    uint64_t equation_binding_merge_calls;
+    uint64_t equation_binding_merge_source_items;
+    uint64_t equation_binding_merge_logical_writes;
+    uint64_t equation_binding_merge_failures;
     uint64_t outcome_binding_merge_calls;
     uint64_t outcome_binding_merge_source_items;
     uint64_t outcome_binding_merge_logical_writes;
@@ -550,7 +596,7 @@ typedef struct {
     uint64_t binding_apply_allocated_bytes;
     uint64_t binding_apply_environment_entries;
     uint64_t binding_apply_epoch_calls;
-    uint64_t binding_apply_epoch_suffix_entries;
+    uint64_t binding_apply_frame_entries;
     uint64_t solve_expression_apply_calls;
     uint64_t solve_expression_apply_allocated_bytes;
     uint64_t solve_expression_open_template_admitted_calls;
@@ -601,7 +647,7 @@ typedef struct {
     uint64_t choice_continuation_items_trailed;
     uint64_t choice_continuation_trail_compactions;
     uint64_t choice_continuation_trail_discarded;
-    uint64_t deterministic_clause_choices_elided;
+    uint64_t deterministic_equation_choices_elided;
     uint64_t singleton_outcome_choices_elided;
     uint64_t rollbacks;
     uint64_t answers;
@@ -620,6 +666,7 @@ typedef struct {
     uint64_t deterministic_visible_atom_bytes_promoted;
     uint64_t deterministic_type_atom_bytes_promoted;
     uint64_t deterministic_goal_atom_bytes_promoted;
+    uint64_t deterministic_goal_context_bytes_promoted;
     uint64_t deterministic_goal_first_bytes_promoted;
     uint64_t deterministic_goal_second_bytes_promoted;
     uint64_t deterministic_goal_third_bytes_promoted;
@@ -682,7 +729,7 @@ typedef struct {
     size_t maximum_heap_live_bytes;
     size_t maximum_binding_entries;
     size_t maximum_binding_apply_environment_entries;
-    size_t maximum_binding_apply_epoch_suffix_entries;
+    size_t maximum_binding_apply_frame_entries;
     size_t maximum_host_environment_entries_forwarded;
     uint64_t active_elapsed_ns;
     uint64_t time_to_first_answer_ns;

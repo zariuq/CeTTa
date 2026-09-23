@@ -363,8 +363,8 @@ int main(int argc, char **argv) {
     g_hashcons = NULL;
     g_var_intern = NULL;
 
-    ok = load_expected(argv[1], 254u, 647u, 25u, 14u) &&
-         load_expected(argv[2], 177u, 989u, 8u, 7u) &&
+    ok = load_expected(argv[1], 335u, 809u, 20u, 16u) &&
+         load_expected(argv[2], 178u, 1023u, 13u, 8u) &&
          validate_structural_canary(argv[3]) &&
          expect_rejected(argv[4]) &&
          expect_rejected(argv[5]) &&

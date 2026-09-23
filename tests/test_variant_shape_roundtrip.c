@@ -69,6 +69,8 @@ int main(void) {
     variant_instance_init(&pair_instance);
     assert(variant_instance_from_shape(&pair_instance, &pair_shape));
     assert(variant_instance_present(&pair_instance));
+    assert(variant_instance_peek_private_id(&pair_instance, pair_shape.slot_env.entries[0].var_id) == x);
+    assert(variant_instance_peek_private_id(&pair_instance, x->var_id) == NULL);
     Atom *pair_roundtrip = variant_shape_materialize(&out, &pair_shape);
     assert(pair_roundtrip != NULL);
     assert(atom_eq(pair_roundtrip, pair_term));
@@ -133,8 +135,8 @@ int main(void) {
     assert(variant_private_var_id(pair_shape_y.slot_env.entries[0].var_id));
     assert(pair_shape.slot_env.entries[0].var_id ==
            pair_shape_y.slot_env.entries[0].var_id);
-    assert(!atom_eq(pair_shape.slot_env.entries[0].val,
-                    pair_shape_y.slot_env.entries[0].val));
+    assert(!atom_eq(pair_shape.slot_env.entries[0].value.skeleton,
+                    pair_shape_y.slot_env.entries[0].value.skeleton));
     arena_reset(&out, out_mark);
     Atom *pair_roundtrip_y = variant_shape_materialize(&out, &pair_shape_y);
     assert(pair_roundtrip_y != NULL);

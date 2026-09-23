@@ -11,7 +11,7 @@
           codec-label-m-v1
           (ProofTracePushV1
             (ProofSequenceConsV1
-              codec-token-m-v1 ProofSequenceNilV1))))
+              codec-token-m-v1 (ProofSequenceNilV1)))))
       (body))
     (rule proof-trace-codec-canary-label-e-v1
       (head
@@ -19,7 +19,7 @@
           codec-label-e-v1
           (ProofTracePushV1
             (ProofSequenceConsV1
-              codec-token-e-v1 ProofSequenceNilV1))))
+              codec-token-e-v1 (ProofSequenceNilV1)))))
       (body))
     (rule proof-trace-codec-canary-label-r-v1
       (head
@@ -27,7 +27,7 @@
           codec-label-r-v1
           (ProofTracePushV1
             (ProofSequenceConsV1
-              codec-token-r-v1 ProofSequenceNilV1))))
+              codec-token-r-v1 (ProofSequenceNilV1)))))
       (body))
     (rule proof-trace-codec-canary-token-m-equal-v1
       (head

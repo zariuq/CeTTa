@@ -27,7 +27,7 @@ def run_case(
     environment["CETTA_PETTA_TYPECHECK_CENSUS"] = "1"
     environment["CETTA_PETTA_SEARCH_MACHINE"] = "1"
     if reference:
-        environment["CETTA_PETTA_CLAUSE_SLOT_FRAME_REFERENCE"] = "1"
+        environment["CETTA_PETTA_EQUATION_SLOT_FRAME_REFERENCE"] = "1"
     command = [str(cetta), "--lang", "petta"]
     if profile:
         command.extend(["--profile", profile])
@@ -61,7 +61,7 @@ def main() -> int:
     cetta = args.cetta.resolve()
     fixture = args.fixture.resolve()
     expected = args.expected.read_text(encoding="utf-8")
-    event = "clause-slot-alias-preserved"
+    event = "equation-slot-alias-preserved"
     expected_descriptor = {
         "scope": "mechanism",
         "kind": "mechanism",
@@ -77,16 +77,16 @@ def main() -> int:
         )
         if direct_out != expected or reference_out != expected:
             raise SystemExit(
-                f"{label} clause-slot direct/reference matcher drifted "
+                f"{label} equation-slot direct/reference matcher drifted "
                 "from the exact fixture"
             )
         if direct_out != reference_out or direct_err != reference_err:
             raise SystemExit(
-                f"{label} clause-slot direct/reference observations diverged"
+                f"{label} equation-slot direct/reference observations diverged"
             )
         if catalog.get(event) != expected_descriptor:
             raise SystemExit(
-                f"{label} clause-slot alias event lacks its mechanism mapping"
+                f"{label} equation-slot alias event lacks its mechanism mapping"
             )
         if (
             reference_catalog
@@ -97,7 +97,7 @@ def main() -> int:
             )
         if event not in direct_hits:
             raise SystemExit(
-                f"{label} direct clause-slot fixture did not exercise "
+                f"{label} direct equation-slot fixture did not exercise "
                 "alias preservation"
             )
         if event in reference_hits:
@@ -107,7 +107,7 @@ def main() -> int:
             )
 
     print(
-        "PASS: clause-slot alias preservation is exercised by the direct "
+        "PASS: equation-slot alias preservation is exercised by the direct "
         "matcher and agrees exactly with the isolated authority under the "
         "default and typecheck-v2 profiles"
     )

@@ -83,11 +83,11 @@ class SemanticCensusRecordTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertTrue(inventory)
         self.assertIn(
-            "clause-slot-alias-preserved",
+            "equation-slot-alias-preserved",
             inventory,
         )
         self.assertEqual(
-            inventory["clause-slot-alias-preserved"],
+            inventory["equation-slot-alias-preserved"],
             ["src/petta_search_machine.c"],
         )
 

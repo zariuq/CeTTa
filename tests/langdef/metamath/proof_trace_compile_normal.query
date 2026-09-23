@@ -3,8 +3,8 @@
     (ProofTraceLabelConsV1 codec-label-e-v1 ProofTraceLabelNilV1))
   (ProofTraceConsV1
     (ProofTracePushV1
-      (ProofSequenceConsV1 codec-token-m-v1 ProofSequenceNilV1))
+      (ProofSequenceConsV1 codec-token-m-v1 (ProofSequenceNilV1)))
     (ProofTraceConsV1
       (ProofTracePushV1
-        (ProofSequenceConsV1 codec-token-e-v1 ProofSequenceNilV1))
+        (ProofSequenceConsV1 codec-token-e-v1 (ProofSequenceNilV1)))
       ProofTraceNilV1)))

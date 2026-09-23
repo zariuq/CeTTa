@@ -11,7 +11,7 @@ guard_evidence=$(realpath "$1")
 test ! -e "$guard_evidence/inputs.sha256"
 cd "$guard_repo"
 guard_unit=tests/support/test_rule_program_native_guard_v1.c
-guard_sources=(src/atom.c src/symbol.c src/name_key.c src/match.c
+guard_sources=(src/atom.c src/binding/frame_identity.c src/symbol.c src/name_key.c src/match.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c
     src/prime_need.c src/variant_shape.c src/term_universe.c src/term_canon.c)
 # This unit consumes the retained generated instructions. Source regeneration
 # is a separate gate; this test does not claim to exercise its generator.

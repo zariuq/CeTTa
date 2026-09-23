@@ -1,0 +1,244 @@
+[
+  {
+    "name": "scale",
+    "lang": "petta",
+    "stdout_sha256": "fe5eee77a4951f5be0f7b75e09ad5aa34ef4cfdb447ded3d8cf66ca0453aa832",
+    "petta_example": "scale.metta",
+    "reference": {
+      "wall_seconds": 2.76
+    }
+  },
+  {
+    "name": "matespacefast",
+    "lang": "petta",
+    "stdout_sha256": "14cd447707306d9e473f9de41cf6060f72b3d1f801b2f1aa65c63b4aee5178c4",
+    "petta_example": "matespacefast.metta",
+    "reference": {
+      "wall_seconds": 5.89
+    }
+  },
+  {
+    "name": "matespace2",
+    "lang": "petta",
+    "stdout_sha256": "462589612cbf688cd8475caaa197251e38bffbc29e397977b5ab40577b5544bc",
+    "petta_example": "matespace2.metta"
+  },
+  {
+    "name": "grid",
+    "lang": "petta",
+    "stdout_sha256": "ef2fd3e711060cc711268cfb2342678e125eca4b39535382cc41a47e64328188",
+    "source": "benchmarks/inference_cost_axes/B_grid_n6.metta"
+  },
+  {
+    "name": "fib",
+    "lang": "petta",
+    "stdout_sha256": "73685f2a187a5acd2462feeeaead6edf3ad14165e9d580d3ce3de04ad84e5485",
+    "petta_example": "fib.metta"
+  },
+  {
+    "name": "hyperpose_primes",
+    "lang": "petta",
+    "stdout_sha256": "4c96ea1ae9f2c22692ad70e3349e141e6032881b222b2891efa65c1235a25421",
+    "petta_example": "hyperpose_primes.metta"
+  },
+  {
+    "name": "functionremoval",
+    "lang": "petta",
+    "stdout_sha256": "bd8918752483079a14b40b77782c77caa6cc9620cd4b9dcdd595cba33560301e",
+    "petta_example": "functionremoval.metta"
+  },
+  {
+    "name": "loowoz",
+    "lang": "petta",
+    "stdout_sha256": "1188f07c7c7fb54e2b82f5cc846869c01e7d4af6b2fc22be1e18e1c6f9bd4c7f",
+    "source": "benchmarks/chaining/loowoz_petta_s19.metta",
+    "repetitions": 2,
+    "reference": {
+      "wall_seconds": 13.0,
+      "instructions": 201500000000
+    }
+  },
+  {
+    "name": "letstar",
+    "lang": "petta",
+    "stdout_sha256": "6ea37a6e3ab73236ea9149efdb0cf53146ac79c22caf40c9e0e683b209ef28df",
+    "petta_example": "letstar.metta"
+  },
+  {
+    "name": "chain",
+    "lang": "petta",
+    "stdout_sha256": "e317f71a53f498dcd020c925e43333d660642c8e10c6e451894d7db021a50cd3",
+    "petta_example": "chain.metta"
+  },
+  {
+    "name": "matchsingle",
+    "lang": "petta",
+    "stdout_sha256": "10dedc4749b06b03dcdb2d9c63158646a2d909d78f7245085f64841c7c8601b5",
+    "petta_example": "matchsingle.metta"
+  },
+  {
+    "name": "matchnested",
+    "lang": "petta",
+    "stdout_sha256": "f154b1b988c6b5484a3edf55bfc23b3720d994aafdbb927d0e1023762a7d51b3",
+    "petta_example": "matchnested.metta",
+    "oracle": "SWI-PeTTa output; replaces an historical CeTTa error-output pin"
+  },
+  {
+    "name": "atomops",
+    "lang": "petta",
+    "stdout_sha256": "4c110f8ca8c8c7c6bd874a15b970be22a0aacc62ee43c213ddc018433800f68f",
+    "petta_example": "atomops.metta"
+  },
+  {
+    "name": "add_atom_fun_space",
+    "lang": "petta",
+    "stdout_sha256": "082b095c46d0996b52c5139b494a756f2ac5031e8d57112bfa4113a76f4b9fcb",
+    "petta_example": "add_atom_fun_space.metta"
+  },
+  {
+    "name": "spaces_removeallatoms",
+    "lang": "petta",
+    "stdout_sha256": "e38b480a254e895e329c8b3a87adb9f9f69050ffa6b18ca4b7af5485108eaa42",
+    "petta_example": "spaces_removeallatoms.metta",
+    "oracle": "SWI-PeTTa output; replaces an historical CeTTa error-output pin"
+  },
+  {
+    "name": "G1_else_empty_hit",
+    "lang": "petta",
+    "stdout_sha256": "74a02f560cc1d8e023280b5f08a1ee7266e4bec6cea61ca457dc1a758d080fc8",
+    "source": "benchmarks/inference_cost_axes/G1_else_empty_hit.metta"
+  },
+  {
+    "name": "G1_else_empty_miss",
+    "lang": "petta",
+    "stdout_sha256": "304b524de1a79904aaf8295a0986f8c03dd0d1d26d25902da057b47277147297",
+    "source": "benchmarks/inference_cost_axes/G1_else_empty_miss.metta"
+  },
+  {
+    "name": "G2_then_empty",
+    "lang": "petta",
+    "stdout_sha256": "74a02f560cc1d8e023280b5f08a1ee7266e4bec6cea61ca457dc1a758d080fc8",
+    "source": "benchmarks/inference_cost_axes/G2_then_empty.metta"
+  },
+  {
+    "name": "G2_then_empty_miss",
+    "lang": "petta",
+    "stdout_sha256": "304b524de1a79904aaf8295a0986f8c03dd0d1d26d25902da057b47277147297",
+    "source": "benchmarks/inference_cost_axes/G2_then_empty_miss.metta"
+  },
+  {
+    "name": "G3_neither_empty",
+    "lang": "petta",
+    "stdout_sha256": "ab0ec8cd752e82d8c63944b2ba4f98ffa2508258366b347b0bf433f6815e0f1e",
+    "source": "benchmarks/inference_cost_axes/G3_neither_empty.metta"
+  },
+  {
+    "name": "G4_second_arg_budget",
+    "lang": "petta",
+    "stdout_sha256": "74a02f560cc1d8e023280b5f08a1ee7266e4bec6cea61ca457dc1a758d080fc8",
+    "source": "benchmarks/inference_cost_axes/G4_second_arg_budget.metta"
+  },
+  {
+    "name": "G5_none_not_empty",
+    "lang": "petta",
+    "stdout_sha256": "fcf33dfbe13c2354bf0e1b063f9fb422747a46cee00b7420bceff2b81457b345",
+    "source": "benchmarks/inference_cost_axes/G5_none_not_empty.metta"
+  },
+  {
+    "name": "G6_mp_sibling",
+    "lang": "petta",
+    "stdout_sha256": "b90494b98d352cd11683ba6c3c37de920b75169d3bf1f806078d387f8ec29aa5",
+    "source": "benchmarks/inference_cost_axes/G6_mp_sibling.metta"
+  },
+  {
+    "name": "G7_repeated_lhs",
+    "lang": "petta",
+    "stdout_sha256": "74a02f560cc1d8e023280b5f08a1ee7266e4bec6cea61ca457dc1a758d080fc8",
+    "source": "benchmarks/inference_cost_axes/G7_repeated_lhs.metta"
+  },
+  {
+    "name": "G8_let_bound",
+    "lang": "petta",
+    "stdout_sha256": "74a02f560cc1d8e023280b5f08a1ee7266e4bec6cea61ca457dc1a758d080fc8",
+    "source": "benchmarks/inference_cost_axes/G8_let_bound.metta"
+  },
+  {
+    "name": "J1_open_nonlinear_head",
+    "lang": "petta",
+    "stdout_sha256": "dc51b8c96c2d745df3bd5590d990230a482fd247123599548e0632fdbf97fc22",
+    "source": "benchmarks/inference_cost_axes/J1_open_nonlinear_head.metta"
+  },
+  {
+    "name": "J2_growing_instantiation",
+    "lang": "petta",
+    "stdout_sha256": "dc51b8c96c2d745df3bd5590d990230a482fd247123599548e0632fdbf97fc22",
+    "source": "benchmarks/inference_cost_axes/J2_growing_instantiation.metta"
+  },
+  {
+    "name": "J3_budget_head_fail",
+    "lang": "petta",
+    "stdout_sha256": "bae0e1d11f8d9c82673dc7e84b12761992e2d002e8181ef6101c0bb5b505c361",
+    "source": "benchmarks/inference_cost_axes/J3_budget_head_fail.metta"
+  },
+  {
+    "name": "J4_modus_ponens_letstar",
+    "lang": "petta",
+    "stdout_sha256": "e68bf7c1437506c35b41c7a0618206ebf145c2ee591c8793612870ca8c4bca5c",
+    "source": "benchmarks/inference_cost_axes/J4_modus_ponens_letstar.metta"
+  },
+  {
+    "name": "K0_open_dest_interned_mp",
+    "lang": "petta",
+    "stdout_sha256": "c4b462c25694051fecc46a3402bf84f53002cac12165567a709d465f44d56c07",
+    "source": "benchmarks/inference_cost_axes/K0_open_dest_interned_mp.metta"
+  },
+  {
+    "name": "K1_open_mp_letstar",
+    "lang": "petta",
+    "stdout_sha256": "940dbc713f18bfe0a2e3a73d25832b163c8ee3d38fed8bb3f36fac3272f733e9",
+    "source": "benchmarks/inference_cost_axes/K1_open_mp_letstar.metta"
+  },
+  {
+    "name": "K2_open_colon_formula",
+    "lang": "petta",
+    "stdout_sha256": "be7c7d15c4faf953bb66dfe762b34941d0edf5ed2be5bf8aa5ee1a402eb15889",
+    "source": "benchmarks/inference_cost_axes/K2_open_colon_formula.metta"
+  },
+  {
+    "name": "K3_loowoz_open_mp",
+    "lang": "petta",
+    "stdout_sha256": "1188f07c7c7fb54e2b82f5cc846869c01e7d4af6b2fc22be1e18e1c6f9bd4c7f",
+    "source": "benchmarks/inference_cost_axes/K3_loowoz_open_mp.metta"
+  },
+  {
+    "name": "loowoz-he-s15",
+    "lang": "he",
+    "arguments": [
+      "--profile",
+      "extended"
+    ],
+    "source": "benchmarks/chaining/loowoz_he_s15.metta",
+    "stdout_sha256": "b163142c503af841ab0fdbdcd3df9551c1b5997d92d55e8a9cf14abe74373db2",
+    "reference": {
+      "wall_seconds": 4.4,
+      "rss_kib": 606208
+    }
+  },
+  {
+    "name": "he-guarded-equation-plan",
+    "lang": "he",
+    "arguments": [
+      "--pretty-vars",
+      "--profile",
+      "extended"
+    ],
+    "source": "tests/io_he_guarded_equation_plan.metta",
+    "expected": "tests/io_he_guarded_equation_plan.expected"
+  },
+  {
+    "name": "frame-owned-nested-mutation",
+    "lang": "petta",
+    "source": "tests/petta/frame_owned_nested_mutation.metta",
+    "expected": "tests/petta/frame_owned_nested_mutation.expected"
+  }
+]

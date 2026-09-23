@@ -1,9 +1,9 @@
 ; Dead-generations adversary: a long branching episode in which every step
 ; captures one large, immediately-dying sibling.
 ;
-; Shape: the spine walks N steps.  At each step the FIRST clause is a sibling
+; Shape: the spine walks N steps.  At each step the FIRST equation is a sibling
 ; that consumes the current accumulator blob and finishes with a tiny answer;
-; the SECOND clause drops the old blob and builds a fresh one.  So every
+; the SECOND equation drops the old blob and builds a fresh one.  So every
 ; generation's blob is dead moments after its sibling completes, and only one
 ; generation is semantically live at any time.
 ;

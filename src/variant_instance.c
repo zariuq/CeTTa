@@ -193,9 +193,12 @@ bool variant_instance_from_shape(VariantInstance *out, const VariantShape *shape
         return false;
     }
     storage = next.storage;
-    for (uint32_t i = 0; i < shape->slot_env.len; i++) {
-        const Binding *entry = &shape->slot_env.entries[i];
-        if (!variant_private_var_id(entry->var_id)) {
+    BindingsIterator iterator = {.bindings = &shape->slot_env};
+    Binding logical_binding;
+    while (bindings_iterator_next(&iterator, &logical_binding)) {
+        const Binding *entry = &logical_binding;
+        if (!variant_private_var_id(entry->var_id) ||
+            entry->value.kind != BINDING_VALUE_MATERIALIZED) {
             variant_instance_free(&next);
             return false;
         }
@@ -204,7 +207,7 @@ bool variant_instance_from_shape(VariantInstance *out, const VariantShape *shape
             variant_instance_free(&next);
             return false;
         }
-        storage->slot_vals[ordinal] = entry->val;
+        storage->slot_vals[ordinal] = entry->value.skeleton;
     }
     variant_instance_free(out);
     *out = next;
@@ -251,7 +254,7 @@ bool variant_instance_sink_env(Arena *dst, VariantInstance *out,
     if (!dst || !out || !src)
         return false;
     src_storage = variant_instance_storage(src);
-    if (!env || (env->len == 0 && env->eq_len == 0))
+    if (bindings_logically_empty(env))
         return variant_instance_clone(out, src);
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_SLOT_SINK);
 
@@ -299,15 +302,18 @@ Atom *variant_instance_materialize(Arena *dst, Atom *skeleton,
                                    &ctx, false);
 }
 
-Atom *variant_instance_peek_private_var(const VariantInstance *instance,
-                                        Atom *var) {
+Atom *variant_instance_peek_private_id(const VariantInstance *instance, VarId id) {
     VariantInstanceStorage *storage = variant_instance_storage(instance);
-    if (!storage || !var || var->kind != ATOM_VAR ||
-        !variant_private_var_id(var->var_id)) {
+    if (!storage || !variant_private_var_id(id)) {
         return NULL;
     }
-    uint32_t ordinal = variant_shape_slot_ordinal(var->var_id);
+    uint32_t ordinal = variant_shape_slot_ordinal(id);
     if (ordinal >= storage->slot_count)
         return NULL;
     return storage->slot_vals[ordinal];
+}
+
+Atom *variant_instance_peek_private_var(const VariantInstance *instance, Atom *var) {
+    return var && var->kind == ATOM_VAR
+        ? variant_instance_peek_private_id(instance, var->var_id) : NULL;
 }

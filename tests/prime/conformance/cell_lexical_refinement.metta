@@ -67,7 +67,7 @@
           ($_ False)))
        False))
 
-; Positive: validation forces and caches a clause containing $x before the
+; Positive: validation forces and caches an equation containing $x before the
 ; later unification refines $x to a.  The cached residual must be transported
 ; into that descendant world.
 !(cell-refine:check-after-validation

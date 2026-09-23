@@ -63,7 +63,10 @@
 
 !(bind! &decl-open (new-space))
 !(add-atom &decl-open (: poly (-> $t $t)))
-!(type:of &decl-open poly)
+; Fresh identities may change with allocation; sharing of the type variable
+; must not. Check the alpha-class, including its repeated-variable structure.
+!(let $inferred (type:of &decl-open poly)
+   (=alpha $inferred (-> $t $t)))
 
 ; An unknown constant remains with the ambient semantics.
 !(type:of &decl-exact missing)

@@ -25,7 +25,7 @@
 ; The belief is a PLN simple truth value (strength s, evidence count n) held
 ; as ordinary data; the graded weight s·c with c = n/(n+k) is COMPUTED per
 ; step from the belief atoms, never stored ("plasticity is free": edit the
-; belief atoms and every clause that reads them re-values with no update
+; belief atoms and every equation that reads them re-values with no update
 ; machinery).
 
 ; ---------------------------------------------------------------------------

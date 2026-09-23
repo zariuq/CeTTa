@@ -27,3 +27,34 @@
 !(force
    (force
      (prime-need:wrap-twice (superpose (A B)))))
+
+; Saved environments are opaque syntax but have exact logical support.
+; A delayed restore must still see later refinement of those same identities.
+!(chain (collapse-bind (unify $x A token Empty)) $saved
+   (let $promise (delay (superpose-bind $saved))
+     (unify $x B (force $promise) Empty)))
+!(chain (collapse-bind (unify $x A token Empty)) $saved
+   (let $promise (delay (superpose-bind $saved))
+     (unify $x A (force $promise) Empty)))
+
+; A saved range can introduce another variable which restoration refines.
+!(chain (collapse-bind (unify $x (pair $y) token Empty)) $saved
+   (let $promise (delay (chain (superpose-bind $saved) $_ $y))
+     (unify $x (pair B) (force $promise) Empty)))
+
+; Dependency summaries also include saved values inside another saved range.
+!(chain (collapse-bind (unify $x A token Empty)) $first
+   (chain (collapse-bind (unify $inner $first token Empty)) $second
+     (let $promise
+       (delay (chain (superpose-bind $second) $_ (superpose-bind $inner)))
+       (unify $x B (force $promise) Empty))))
+
+; A thunk stored as a saved binding value keeps its own lexical support.
+!(let $inner (delay (unify $x A token Empty))
+   (chain (collapse-bind (unify $v $inner saved Empty)) $saved
+     (let $outer (delay (chain (superpose-bind $saved) $_ (force $v)))
+       (unify $x B (force $outer) Empty))))
+!(let $inner (delay (unify $x A token Empty))
+   (chain (collapse-bind (unify $v $inner saved Empty)) $saved
+     (let $outer (delay (chain (superpose-bind $saved) $_ (force $v)))
+       (unify $x A (force $outer) Empty))))

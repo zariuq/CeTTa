@@ -3,6 +3,7 @@
  * See he_typing.h for the frame.  Comments here state constraints only. */
 
 #include "he_typing.h"
+#include "term_canon.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -359,14 +360,12 @@ static Atom *unquote(Atom *t) {
     return t;
 }
 
-/* Resolve a variable through the accumulated substitution. */
-static Atom *deref(Bindings *tb, Atom *t) {
-    while (t->kind == ATOM_VAR) {
-        Atom *b = bindings_lookup_id(tb, t->var_id);
-        if (!b || b == t) break;
-        t = b;
-    }
-    return t;
+/* Type judgments observe syntax with qualified variable identities. Root
+ * resolution retains the context until that observation, without evaluation. */
+static Atom *deref(Arena *arena, Bindings *tb, Atom *t) {
+    BindingValue value;
+    return bindings_resolve_value_exact(tb, binding_value_from_atom(t), &value)
+        ? binding_value_materialize(arena, value) : NULL;
 }
 
 /* A dependent binder (: $v T) in a domain names a value variable $v of type T.
@@ -946,11 +945,12 @@ CettaHeRefinementStatus he_typing_check_refinement_status_budgeted(
  * census fixes are about those symbols, which are orthogonal to variables.  Used
  * ONLY for dependent-codomain instantiation; the reject gate (`check-type`)
  * and `is-consistent` keep the binding-free `consistency`. */
-static HeEdge consistency_bind(Atom *actual, Atom *expected, uint64_t *fuel,
+static HeEdge consistency_bind(Arena *arena, Atom *actual, Atom *expected, uint64_t *fuel,
                                Bindings *tb) {
     if (!he_typing_step(fuel)) return HE_UNKNOWN;
-    actual = deref(tb, actual);
-    expected = deref(tb, expected);
+    actual = deref(arena, tb, actual);
+    expected = deref(arena, tb, expected);
+    if (!actual || !expected) return HE_UNKNOWN;
 
     if (is_undefined(actual) || is_undefined(expected)) return HE_DYNAMIC;
     if (is_atom_top(expected)) return HE_TOP;
@@ -983,7 +983,7 @@ static HeEdge consistency_bind(Atom *actual, Atom *expected, uint64_t *fuel,
         uint32_t start = (is_arrow(actual) && is_arrow(expected)) ? 1u : 0u;
         HeEdge worst = HE_EXACT;
         for (uint32_t i = start; i < actual->expr.len; i++) {
-            HeEdge c = consistency_bind(actual->expr.elems[i],
+            HeEdge c = consistency_bind(arena, actual->expr.elems[i],
                                         expected->expr.elems[i], fuel, tb);
             if (c == HE_UNKNOWN) return HE_UNKNOWN;
             if (c == HE_NONE) return HE_NONE;
@@ -1851,9 +1851,8 @@ static bool chain_collect_query_vars(ChainContext *ctx, Atom *atom) {
     return true;
 }
 
-static bool chain_scheme_var_add(ChainContext *ctx, Atom *var,
-                                 uint32_t epoch) {
-    VarId fresh_id = var_epoch_id(var->var_id, epoch);
+static bool chain_scheme_var_add(ChainContext *ctx, Atom *var) {
+    VarId fresh_id = var->var_id;
     for (uint32_t i = 0; i < ctx->scheme_var_count; i++)
         if (ctx->scheme_vars[i] == fresh_id) return true;
     if (ctx->scheme_var_count == ctx->scheme_var_cap) {
@@ -1870,8 +1869,7 @@ static bool chain_scheme_var_add(ChainContext *ctx, Atom *var,
     return true;
 }
 
-static bool chain_collect_scheme_vars(ChainContext *ctx, Atom *atom,
-                                      uint32_t epoch) {
+static bool chain_collect_scheme_vars(ChainContext *ctx, Atom *atom) {
     if (!atom) return false;
     ChainAtomStack stack;
     chain_atom_stack_init(&stack);
@@ -1882,7 +1880,7 @@ static bool chain_collect_scheme_vars(ChainContext *ctx, Atom *atom,
     while (stack.len > 0) {
         Atom *current = stack.items[--stack.len];
         if (current->kind == ATOM_VAR) {
-            if (!chain_scheme_var_add(ctx, current, epoch)) {
+            if (!chain_scheme_var_add(ctx, current)) {
                 chain_atom_stack_free(&stack);
                 return false;
             }
@@ -2057,15 +2055,18 @@ static Atom *answer_substitution_v2(ChainContext *ctx, const Bindings *env) {
     }
 
     uint32_t elaboration_count = 0;
-    for (uint32_t i = 0; i < env->len; i++)
-        if (chain_is_scheme_var(ctx, env->entries[i].var_id))
+    BindingsIterator iterator = {.bindings = env};
+    Binding logical_binding;
+    while (bindings_iterator_next(&iterator, &logical_binding))
+        if (chain_is_scheme_var(ctx, logical_binding.var_id))
             elaboration_count++;
     Atom **elaboration = arena_alloc(
         ctx->arena, sizeof(Atom *) * (elaboration_count + 1u));
     elaboration[0] = he_sym(ctx->arena, "elaboration-substitution-v1");
     uint32_t out = 1;
-    for (uint32_t i = 0; i < env->len; i++) {
-        const Binding *entry = &env->entries[i];
+    iterator = (BindingsIterator){.bindings = env};
+    while (bindings_iterator_next(&iterator, &logical_binding)) {
+        const Binding *entry = &logical_binding;
         if (!chain_is_scheme_var(ctx, entry->var_id)) continue;
         Atom *var = binding_variable_atom(ctx->arena, entry);
         Atom *value = bindings_apply_if_vars(env, ctx->arena, var);
@@ -2082,10 +2083,8 @@ static Atom *answer_substitution_v2(ChainContext *ctx, const Bindings *env) {
                                      sizeof(Atom *) * (env->eq_len + 1u));
     constraints[0] = he_sym(ctx->arena, "answer-constraints-v1");
     for (uint32_t i = 0; i < env->eq_len; i++) {
-        Atom *left = bindings_apply_if_vars(env, ctx->arena,
-                                            env->constraints[i].lhs);
-        Atom *right = bindings_apply_if_vars(env, ctx->arena,
-                                             env->constraints[i].rhs);
+        Atom *left = bindings_apply_value(env, ctx->arena, env->constraints[i].lhs);
+        Atom *right = bindings_apply_value(env, ctx->arena, env->constraints[i].rhs);
         if (!left || !right) {
             chain_mark_incomplete(ctx, "answer-substitution-failed");
             return NULL;
@@ -2103,7 +2102,6 @@ static Atom *answer_substitution_v2(ChainContext *ctx, const Bindings *env) {
 static bool answer_identity_v2_make(ChainContext *ctx, Atom *proof,
                                     Atom *type, const Bindings *env,
                                     AnswerIdentityV2 *out) {
-    if (bindings_has_loop(env)) return false;
     Atom *substituted_proof = bindings_apply_if_vars(env, ctx->arena, proof);
     Atom *substituted_type = bindings_apply_if_vars(env, ctx->arena, type);
     if (!substituted_proof || !substituted_type) {
@@ -2241,8 +2239,13 @@ static bool chain_unify_shape(ChainContext *ctx, Atom *left, Atom *right,
             chain_unify_stack_free(&stack);
             return false;
         }
-        left = deref(env, pair.left);
-        right = deref(env, pair.right);
+        left = deref(ctx->arena, env, pair.left);
+        right = deref(ctx->arena, env, pair.right);
+        if (!left || !right) {
+            chain_mark_incomplete(ctx, "type-root-observation-incomplete");
+            chain_unify_stack_free(&stack);
+            return false;
+        }
         if (atom_eq(left, right)) continue;
         if (left->kind == ATOM_VAR) {
             if (!bindings_add_var_acyclic(env, left, right)) {
@@ -2331,7 +2334,7 @@ static bool chain_unify_must(ChainContext *ctx, Atom *left, Atom *right,
         return false;
     }
     if (lv == HE_TYPE_INVALID || rv == HE_TYPE_INVALID) return false;
-    HeEdge e = consistency_bind(left, right, &ctx->fuel, env);
+    HeEdge e = consistency_bind(ctx->arena, left, right, &ctx->fuel, env);
     if (e == HE_UNKNOWN) {
         chain_mark_incomplete(
             ctx, chain_fuel_exhausted(ctx) ? "fuel-exhausted"
@@ -2415,8 +2418,7 @@ static bool chain_proof_checked(ChainContext *ctx, Atom *proof, Atom *goal,
             return false;
         }
         Atom *resolved = NULL;
-        if (chain_unify_must(ctx, ts.items[i], goal, &trial, &resolved) &&
-            !bindings_has_loop(&trial)) {
+        if (chain_unify_must(ctx, ts.items[i], goal, &trial, &resolved)) {
             bindings_replace(env, &trial);
             if (checked_type) *checked_type = resolved;
             return true;
@@ -3117,19 +3119,20 @@ static bool chain_finish_continuation(ChainContext *ctx,
 static void chain_process_candidate(ChainContext *ctx, ChainWorkQueue *queue,
                                     ChainWorkItem *item) {
     const ChainDecl *decl = &ctx->index.decls[item->decl_index];
-    uint32_t epoch = fresh_var_suffix();
+    if (decl->is_rule && (item->depth == 0 || !chain_take_fuel(ctx, 1)))
+        return;
+    Atom *instance[2] = {decl->term, decl->type};
+    if ((decl->is_rule || decl->is_scheme) &&
+        (!cetta_instantiate_frame_terms(ctx->arena, instance, 2u) ||
+         !chain_collect_scheme_vars(ctx, instance[0]) ||
+         !chain_collect_scheme_vars(ctx, instance[1]))) {
+        chain_mark_incomplete(ctx, "answer-identity-allocation");
+        return;
+    }
     if (!decl->is_rule) {
         ctx->stats.fact_candidates++;
-        if (decl->is_scheme &&
-            (!chain_collect_scheme_vars(ctx, decl->term, epoch) ||
-             !chain_collect_scheme_vars(ctx, decl->type, epoch)))
-            return;
-        Atom *term = decl->is_scheme
-            ? atom_freshen_epoch(ctx->arena, decl->term, epoch)
-            : decl->term;
-        Atom *type = decl->is_scheme
-            ? atom_freshen_epoch(ctx->arena, decl->type, epoch)
-            : decl->type;
+        Atom *term = instance[0];
+        Atom *type = instance[1];
         Atom *resolved = NULL;
         if (!chain_unify_must(ctx, type, item->goal, &item->env, &resolved))
             return;
@@ -3140,13 +3143,9 @@ static void chain_process_candidate(ChainContext *ctx, ChainWorkQueue *queue,
         return;
     }
 
-    if (item->depth == 0 || !chain_take_fuel(ctx, 1)) return;
     ctx->stats.rule_candidates++;
-    if (!chain_collect_scheme_vars(ctx, decl->term, epoch) ||
-        !chain_collect_scheme_vars(ctx, decl->type, epoch))
-        return;
-    Atom *rule_term = atom_freshen_epoch(ctx->arena, decl->term, epoch);
-    Atom *rule_type = atom_freshen_epoch(ctx->arena, decl->type, epoch);
+    Atom *rule_term = instance[0];
+    Atom *rule_type = instance[1];
     uint32_t arity = rule_type->expr.len - 2u;
     Atom *conclusion = rule_type->expr.elems[rule_type->expr.len - 1u];
     if (!chain_unify_deferred(ctx, conclusion, item->goal, &item->env)) return;

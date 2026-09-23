@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Disable the producer and replay occurs checks for the Prime soundness gate."""
+"""Disable bind-time finite-tree checking for the Prime soundness gate."""
 
 from pathlib import Path
 import sys
@@ -14,53 +14,33 @@ def replace_exact(source: str, marker: str, replacement: str, count: int = 1) ->
 
 
 def main() -> int:
-    if len(sys.argv) != 5:
+    if len(sys.argv) != 3:
         print(
             "usage: mutate_prime_occurs_check.py "
-            "MATCH_INPUT MATCH_OUTPUT HE_INPUT HE_OUTPUT",
+            "MATCH_INPUT MATCH_OUTPUT",
             file=sys.stderr,
         )
         return 2
     try:
         match_source = Path(sys.argv[1]).read_text()
+        # Finite-tree checking now belongs to the shared binding kernel.
+        # Refuse no bind, while leaving the cycle memo unknown so application
+        # still uses its terminating traversal for malformed environments.
         match_source = replace_exact(
             match_source,
-            "    if (!bindings_add_inplace_internal(&next, var_id, spelling, NULL, val,\n"
-            "                                       true, false) ||\n"
-            "        bindings_has_loop(&next)) {",
-            "    if (!bindings_add_inplace_internal(&next, var_id, spelling, NULL, val,\n"
-            "                                       true, false)) {",
-        )
-        match_source = replace_exact(
-            match_source,
-            "    if (!bindings_add_inplace_internal(\n"
-            "            &next, var->var_id, var->sym_id, var->name_key,\n"
-            "            val, true, false) ||\n"
-            "        bindings_has_loop(&next)) {",
-            "    if (!bindings_add_inplace_internal(\n"
-            "            &next, var->var_id, var->sym_id, var->name_key,\n"
-            "            val, true, false)) {",
+            "        BindingsReachability evidence) {\n"
+            "    if (bindings->cycle_state != BINDINGS_CYCLE_ACYCLIC)",
+            "        BindingsReachability evidence) {\n"
+            "    bindings->cycle_state = BINDINGS_CYCLE_UNKNOWN;\n"
+            "    return BINDINGS_BIND_ADMIT;\n"
+            "    if (bindings->cycle_state != BINDINGS_CYCLE_ACYCLIC)",
         )
 
-        he_source = Path(sys.argv[3]).read_text()
-        he_source = replace_exact(
-            he_source,
-            "    if (bindings_has_loop(env)) return false;\n",
-            "",
-            count=2,
-        )
-        he_source = replace_exact(
-            he_source,
-            "        if (chain_unify_must(ctx, ts.items[i], goal, &trial, &resolved) &&\n"
-            "            !bindings_has_loop(&trial)) {",
-            "        if (chain_unify_must(ctx, ts.items[i], goal, &trial, &resolved)) {",
-        )
     except ValueError as error:
         print(error, file=sys.stderr)
         return 2
 
     Path(sys.argv[2]).write_text(match_source)
-    Path(sys.argv[4]).write_text(he_source)
     return 0
 
 

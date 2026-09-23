@@ -134,7 +134,7 @@ int main(void) {
               simple_match(fresh_one, space, &reference_binding),
           "fresh anonymous variable matches a grounded space reference");
     CHECK(fresh_one &&
-              bindings_lookup_id(&reference_binding, fresh_one->var_id) == space,
+              bindings_lookup_value_id(&reference_binding, fresh_one->var_id).skeleton == space,
           "grounded reference is present in the internal match witness");
     bindings_free(&reference_binding);
 

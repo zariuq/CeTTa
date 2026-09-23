@@ -1,4 +1,4 @@
-; The same compiled clause bodies are observed before, during, and after a
+; The same compiled equation bodies are observed before, during, and after a
 ; mutable translator-registry change.  Cached activation admission must be
 ; reused while authority is stable and recomputed at both mutation edges.
 

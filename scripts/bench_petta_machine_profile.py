@@ -190,20 +190,20 @@ def write_summary_tsv(path: Path, results: dict[str, Any]) -> None:
         "machine_seconds",
         "invocations",
         "transitions",
-        "clause_snapshot_calls",
-        "clause_snapshot_cache_hits",
-        "clause_snapshot_equality_checks",
-        "clause_candidates",
-        "clause_match_attempts",
-        "clause_branches_scheduled",
-        "clause_match_allocated_bytes",
+        "candidate_snapshot_calls",
+        "candidate_snapshot_cache_hits",
+        "candidate_snapshot_equality_checks",
+        "equation_candidates",
+        "equation_match_attempts",
+        "equation_branches_scheduled",
+        "equation_match_allocated_bytes",
         "unification_calls",
         "unification_binding_writes",
         "binding_apply_rewrites",
         "binding_apply_allocated_bytes",
         "binding_apply_environment_entries",
         "binding_apply_epoch_calls",
-        "binding_apply_epoch_suffix_entries",
+        "binding_apply_frame_entries",
         "solve_expression_apply_calls",
         "solve_expression_apply_allocated_bytes",
         "solve_expression_open_template_admitted_calls",
@@ -238,7 +238,7 @@ def write_summary_tsv(path: Path, results: dict[str, Any]) -> None:
         "max_choice_depth",
         "max_binding_entries",
         "max_binding_apply_environment_entries",
-        "max_binding_apply_epoch_suffix_entries",
+        "max_binding_apply_frame_entries",
         "controller_records",
         "controller_admitted",
         "controller_active_fifo",
@@ -334,7 +334,7 @@ def main() -> int:
         default="0",
     )
     parser.add_argument(
-        "--clause-body-activation",
+        "--equation-body-activation",
         choices=("0", "1"),
         default="0",
     )
@@ -417,10 +417,10 @@ def main() -> int:
         "CETTA_TERM_UNIVERSE_SOURCE_ID_MEMO": (
             args.term_universe_source_id_memo
         ),
-        "CETTA_PETTA_CLAUSE_BODY_ACTIVATION": (
-            args.clause_body_activation
+        "CETTA_PETTA_EQUATION_BODY_ACTIVATION": (
+            args.equation_body_activation
         ),
-        "CETTA_PETTA_CLAUSE_BODY_ACTIVATION_REFERENCE": "0",
+        "CETTA_PETTA_EQUATION_BODY_ACTIVATION_REFERENCE": "0",
         "CETTA_SEARCH_CONTROLLER": args.search_controller,
     }
     baseline_environment = {
@@ -431,8 +431,8 @@ def main() -> int:
             args.specializer_route_cache
         ),
         "CETTA_TERM_UNIVERSE_SOURCE_ID_MEMO": "0",
-        "CETTA_PETTA_CLAUSE_BODY_ACTIVATION": "0",
-        "CETTA_PETTA_CLAUSE_BODY_ACTIVATION_REFERENCE": "1",
+        "CETTA_PETTA_EQUATION_BODY_ACTIVATION": "0",
+        "CETTA_PETTA_EQUATION_BODY_ACTIVATION_REFERENCE": "1",
         "CETTA_SEARCH_CONTROLLER": args.search_controller,
     }
 

@@ -93,7 +93,7 @@
                                 (ProofSequenceConsV1 compressed-ps-v1
                                   (ProofSequenceConsV1 compressed-right-v1
                                     (ProofSequenceConsV1 compressed-right-v1
-                                      ProofSequenceNilV1))))))))))))))))
+                                      (ProofSequenceNilV1)))))))))))))))))
       (body))
     (rule compressed-canary-context-count-v1
       (head
@@ -107,7 +107,7 @@
         (source-proof-trace-input-context-v1
           compressed-request-v1 ProofTraceNatZeroV1
           (ProofSequenceConsV1 compressed-wff-v1
-            (ProofSequenceConsV1 compressed-ph-v1 ProofSequenceNilV1))))
+            (ProofSequenceConsV1 compressed-ph-v1 (ProofSequenceNilV1)))))
       (body))
     (rule compressed-canary-context-right-v1
       (head
@@ -115,21 +115,21 @@
           compressed-request-v1
           (ProofTraceNatSuccV1 ProofTraceNatZeroV1)
           (ProofSequenceConsV1 compressed-wff-v1
-            (ProofSequenceConsV1 compressed-ps-v1 ProofSequenceNilV1))))
+            (ProofSequenceConsV1 compressed-ps-v1 (ProofSequenceNilV1)))))
       (body))
     (rule compressed-canary-push-left-v1
       (head
         (source-proof-trace-input-push-label-v1
           compressed-request-v1 compressed-wph-v1
           (ProofSequenceConsV1 compressed-wff-v1
-            (ProofSequenceConsV1 compressed-ph-v1 ProofSequenceNilV1))))
+            (ProofSequenceConsV1 compressed-ph-v1 (ProofSequenceNilV1)))))
       (body))
     (rule compressed-canary-push-right-v1
       (head
         (source-proof-trace-input-push-label-v1
           compressed-request-v1 compressed-wps-v1
           (ProofSequenceConsV1 compressed-wff-v1
-            (ProofSequenceConsV1 compressed-ps-v1 ProofSequenceNilV1))))
+            (ProofSequenceConsV1 compressed-ps-v1 (ProofSequenceNilV1)))))
       (body))
     (rule compressed-canary-wi-different-wph-v1
       (head
@@ -150,7 +150,7 @@
               (ProofSequenceConsV1 compressed-arrow-v1
                 (ProofSequenceConsV1 compressed-ps-v1
                   (ProofSequenceConsV1 compressed-right-v1
-                    ProofSequenceNilV1)))))))
+                    (ProofSequenceNilV1))))))))
       (body))
     (rule compressed-canary-frame-count-v1
       (head
