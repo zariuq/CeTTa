@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "atom.h"
+#include "lang.h"
 #include "petta_numeric.h"
 #include "stats.h"
 #include "generated/cetta_execution_contracts.generated.h"
@@ -3819,6 +3820,80 @@ bool atom_tree_any(const Atom *root, AtomTreePredicate predicate,
 
 /* ── Comparison ─────────────────────────────────────────────────────────── */
 
+CettaLanguageId eval_current_language_id(void) __attribute__((weak));
+
+static bool cetta_number_kind_as_float(int kind, int64_t ival, double fval,
+                                       double *out) {
+    if (!out)
+        return false;
+    if (kind == GV_INT) {
+        *out = (double)ival;
+        return true;
+    }
+    if (kind == GV_FLOAT) {
+        *out = fval;
+        return true;
+    }
+    return false;
+}
+
+bool cetta_he_promoted_kind_equal(int left_kind, int64_t left_int,
+                                  double left_float, int right_kind,
+                                  int64_t right_int, double right_float) {
+    double left, right;
+    if (!eval_current_language_id ||
+        eval_current_language_id() != CETTA_LANGUAGE_HE ||
+        left_kind == right_kind)
+        return false;
+    if (!cetta_number_kind_as_float(left_kind, left_int, left_float, &left) ||
+        !cetta_number_kind_as_float(right_kind, right_int, right_float, &right))
+        return false;
+    return left == right;
+}
+
+bool cetta_he_promoted_numbers_equal(const Atom *left, const Atom *right) {
+    if (!left || !right ||
+        left->kind != ATOM_GROUNDED || right->kind != ATOM_GROUNDED)
+        return false;
+    return cetta_he_promoted_kind_equal(
+        left->ground.gkind, left->ground.ival, left->ground.fval,
+        right->ground.gkind, right->ground.ival, right->ground.fval);
+}
+
+bool cetta_he_float_exact_int(double value, int64_t *out) {
+    if (!out || !eval_current_language_id ||
+        eval_current_language_id() != CETTA_LANGUAGE_HE ||
+        !isfinite(value) ||
+        value >= 0x1p63 || value < -0x1p63)
+        return false;
+    int64_t truncated = (int64_t)value;
+    if ((double)truncated != value)
+        return false;
+    *out = truncated;
+    return true;
+}
+
+CettaHeFloatIntBranches cetta_he_float_int_branches(double value,
+                                                    int64_t *out) {
+    int64_t exact = 0;
+    /* INT64_MAX rounds up to 2^63 as a double.  That query has integer
+     * candidates even though the query itself cannot be cast to int64. */
+    if (value == 0x1p63 && eval_current_language_id &&
+        eval_current_language_id() == CETTA_LANGUAGE_HE) {
+        if (out)
+            *out = INT64_MAX;
+        return CETTA_HE_FLOAT_INTS_SCAN;
+    }
+    if (!cetta_he_float_exact_int(value, &exact))
+        return CETTA_HE_FLOAT_INTS_NONE;
+    if (out)
+        *out = exact;
+    /* At and above 2^53 a finite float is shared by more than one int64. */
+    if (fabs(value) >= 0x1p53)
+        return CETTA_HE_FLOAT_INTS_SCAN;
+    return CETTA_HE_FLOAT_INTS_ONE;
+}
+
 bool atom_eq(Atom *a, Atom *b) {
     if (a == b) return true;
     if (a->kind != b->kind) return false;
@@ -3828,7 +3903,8 @@ bool atom_eq(Atom *a, Atom *b) {
     case ATOM_VAR:
         return a->var_id == b->var_id;
     case ATOM_GROUNDED:
-        if (a->ground.gkind != b->ground.gkind) return false;
+        if (a->ground.gkind != b->ground.gkind)
+            return cetta_he_promoted_numbers_equal(a, b);
         switch (a->ground.gkind) {
         case GV_INT:    return a->ground.ival == b->ground.ival;
         case GV_FLOAT:  return a->ground.fval == b->ground.fval;

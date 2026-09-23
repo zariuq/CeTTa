@@ -4027,7 +4027,12 @@ process_petta_document:
                         (size_t)eval_outcome_value_count(&detailed),
                         (size_t)eval_outcome_fault_count(&detailed),
                         detailed.steps_spent);
-            } else if (g_count_only) {
+            } else if (g_count_only ||
+                       (lang->id == CETTA_LANGUAGE_PETTA &&
+                        eval_get_default_fuel() >= 0)) {
+                /* Finite PeTTa fuel reaches the search machine through the
+                 * outcome tracker. Unlimited queries leave that tracker off
+                 * and keep the result-set entry below. */
                 eval_outcome_init(&detailed);
                 detailed_initialized = true;
                 results = &detailed.results;
@@ -4085,11 +4090,15 @@ process_petta_document:
                 prime_need_trace_printer_free(&trace);
                 goto cleanup;
             }
-            if (g_count_only && detailed_initialized &&
+            if (detailed_initialized && !emit_prime_need_trace &&
                 detailed.completion != CETTA_EVAL_COMPLETE) {
+                /* An incomplete observation is not a finished answer bag.
+                 * Logical failure stays a completed empty result. */
                 fprintf(
                     stderr,
-                    "error: count observation incomplete: %s\n",
+                    g_count_only
+                        ? "error: count observation incomplete: %s\n"
+                        : "error: observation incomplete: %s\n",
                     eval_completion_reason(detailed.completion));
                 eval_outcome_free(&detailed);
                 prime_need_trace_printer_free(&trace);

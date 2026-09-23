@@ -541,6 +541,10 @@ typedef struct {
             bool evaluate_result;
             bool translate_result;
             bool count_collection_result;
+            /* A closed call needs no deferred contextual substitution:
+             * matching instantiates its body eagerly and retires the
+             * activation frame at the equation boundary. */
+            bool query_closed;
             bool equation_template_c0_closed_query;
             /* The selector has already applied the complete structural
              * verifier to every retained occurrence under this exact
@@ -1161,6 +1165,54 @@ static bool petta_machine_try_plain_scalar_arithmetic(
     return petta_machine_builtin_allowed(machine, head) &&
         grounded_try_plain_scalar_arithmetic(
             &machine->heap, head, arguments, argument_count, value_out);
+}
+
+static bool petta_machine_type_pure_call_ready(
+        SymbolId head, CettaExprLen nargs, const PettaPlanNode *plan);
+static Atom *petta_machine_boolean_value(
+        PettaMachineImpl *machine, bool value);
+
+/* A ground type-pure tree has no caller-visible substitution, so it reduces
+ * on the heap without a contextual frame.  A nested call that is not
+ * type-pure declines the whole tree and ordinary search evaluates it. */
+static Atom *petta_machine_reduce_closed_scalar(
+        PettaMachineImpl *machine, Atom *term, unsigned depth, bool *nested) {
+    if (!machine || !term || depth > 32u || atom_has_vars(term))
+        return NULL;
+    if (term->kind != ATOM_EXPR)
+        return term;
+    if (term->expr.len < 2u || term->expr.len > 3u ||
+        !term->expr.elems[0] ||
+        term->expr.elems[0]->kind != ATOM_SYMBOL)
+        return NULL;
+    CettaExprLen nargs = term->expr.len - 1u;
+    if (!petta_machine_type_pure_call_ready(
+            term->expr.elems[0]->sym_id, nargs, NULL))
+        return NULL;
+    Atom *arguments[2] = {NULL, NULL};
+    for (CettaExprLen index = 0u; index < nargs; index++) {
+        Atom *argument = term->expr.elems[index + 1u];
+        bool argument_nested = false;
+        Atom *reduced = petta_machine_reduce_closed_scalar(
+            machine, argument, depth + 1u, &argument_nested);
+        if (!reduced || reduced->kind != ATOM_GROUNDED)
+            return NULL;
+        if (argument->kind == ATOM_EXPR && nested)
+            *nested = true;
+        arguments[index] = reduced;
+    }
+    Atom *value = NULL;
+    if (!petta_machine_try_plain_scalar_arithmetic(
+            machine, term->expr.elems[0], arguments,
+            (uint32_t)nargs, &value)) {
+        bool truth = false;
+        if (!petta_machine_try_plain_scalar_truth(
+                machine, term->expr.elems[0], arguments,
+                (uint32_t)nargs, &truth))
+            return NULL;
+        value = petta_machine_boolean_value(machine, truth);
+    }
+    return value;
 }
 
 static bool petta_machine_type_obligations_enabled(
@@ -7710,6 +7762,7 @@ static PettaEquationSlotMatch petta_machine_equation_slot_match(
     const PettaPlanNode *rhs_plan,
     uint32_t query_epoch, uint32_t query_first_entry,
     const PettaSpaceQueryView *query_fields,
+    bool query_closed,
     Atom **result_out, bool *result_fully_resolved_out,
     bool *result_is_activation_out,
     bool *activation_requires_region_hole_out,
@@ -7988,7 +8041,8 @@ static PettaEquationSlotMatch petta_machine_equation_slot_match(
              machine->host.context));
     bool activation_candidate =
         petta_equation_body_activation_enabled() &&
-        !payload_observed && term_universe_atom_is_stable(rhs);
+        !payload_observed && !query_closed &&
+        term_universe_atom_is_stable(rhs);
     PettaActivationPlanAdmission activation_admission =
         PETTA_ACTIVATION_PLAN_DECLINED_MALFORMED;
     if (activation_candidate) {
@@ -13786,7 +13840,12 @@ static bool petta_machine_advance_choice(
             };
             choice_fields = &owned_fields;
         }
-        bool slot_match = petta_equation_slot_frame_enabled();
+        /* Contextual slots pay when an open call must preserve bindings
+         * across a resumable body. A closed call has no caller-visible
+         * substitution, so the isolated matcher retires its frame at the
+         * equation boundary. */
+        bool slot_match = petta_equation_slot_frame_enabled() &&
+            !choice->as.equation.query_closed;
         bool shape_receipt_reusable = false;
         if (choice->as.equation.candidates_structurally_verified) {
             cetta_runtime_stats_inc(
@@ -14022,7 +14081,11 @@ static bool petta_machine_advance_choice(
              * is call-free: the instance is then the answer.  A right side
              * with calls runs as a compiled activation instead of being
              * instantiated and solved again from its syntax. */
-            if (choice->as.equation.equation_template_c0_closed_query &&
+            bool closed_ground_query =
+                choice->as.equation.equation_template_c0_closed_query ||
+                (choice->as.equation.query_closed && match_query &&
+                 !atom_has_vars(match_query));
+            if (closed_ground_query &&
                 machine->equation_template_c0_enabled &&
                 candidate.equation_template_c0 &&
                 !extends && !relational_head) {
@@ -14089,6 +14152,7 @@ static bool petta_machine_advance_choice(
                             ? 0u
                             : choice->as.equation.query_first_entry,
                         direct_field_match ? choice_fields : NULL,
+                        choice->as.equation.query_closed,
                         &slot_result,
                         &slot_result_fully_resolved,
                         &slot_result_is_activation,
@@ -16266,6 +16330,8 @@ static bool petta_machine_start_space_query(
             .translate_result = translate_result,
             .count_collection_result =
                 count_collection_result,
+            .query_closed =
+                petta_machine_space_query_closed(machine, query),
             .equation_template_c0_closed_query =
                 whole_query && !atom_has_vars(whole_query),
             .candidates_structurally_verified =
@@ -19904,10 +19970,19 @@ static bool petta_machine_start_ready_match(
     bool cursor_admitted = false;
     Atom *conjunction = petta_machine_lower_match_conjunction(
         machine, reference, pattern, template, &cursor_admitted);
-    if (cursor_admitted)
+    if (cursor_admitted) {
+        /* Each conjunct is a match choice.  Unification writes the leg's
+         * bindings into the caller's branch image, and the next conjunct
+         * snapshots occurrences when that leg begins.  A continuation can
+         * therefore read the matched variables, and an insertion it performs
+         * is visible to a later leg.  Materializing every hit before those
+         * continuations would publish substituted terms without either
+         * obligation.  Constant-integer foldall still counts the same
+         * fragment without constructing answers. */
         return petta_machine_start_match_conjunction_leg(
             machine, reference, pattern, template, expected, 1u,
             1u, barrier, template_plan, failure);
+    }
     if (conjunction)
         return petta_push_solve(
             machine, conjunction, expected, barrier);
@@ -22321,6 +22396,27 @@ static bool petta_answer_frame_catalog_index(
     return false;
 }
 
+/* A continuation frontier is not an equation choice.  Rebuilding it would
+ * replay a step body that already delivered answers or publish a callee
+ * where the continuation should resume.  The stop stays distinct from
+ * logical completion.  Already delivered answers are left where they are;
+ * this is not a transaction that discards its prefix and retries. */
+static PettaMachineStep petta_answer_continuation_handoff_failure(
+    CettaPreparedPureHandoffReason reason) {
+    switch (reason) {
+    case CETTA_PREPARED_PURE_HANDOFF_INTERRUPT:
+        return PETTA_MACHINE_STEP_SUSPENDED;
+    case CETTA_PREPARED_PURE_HANDOFF_STALE:
+        return PETTA_MACHINE_STEP_INVALIDATED;
+    case CETTA_PREPARED_PURE_HANDOFF_LIMIT:
+    case CETTA_PREPARED_PURE_HANDOFF_UNSUPPORTED:
+    case CETTA_PREPARED_PURE_HANDOFF_NO_MATCH:
+    case CETTA_PREPARED_PURE_HANDOFF_NONE:
+        return PETTA_MACHINE_STEP_CAPACITY;
+    }
+    return PETTA_MACHINE_STEP_CAPACITY;
+}
+
 /* Replace the answer choice on top of the stack by the equation choices of
  * its frontier and resume the innermost.  The machine state is the choice's
  * checkpoint.  Returns as a resumed choice does; on exhaustion the caller
@@ -22333,6 +22429,18 @@ static __attribute__((cold, noinline)) bool petta_machine_answer_handoff(
     PettaChoice *source = &machine->choices[position];
     CettaPreparedPureAnswerCursor *cursor = source->as.answers.cursor;
     size_t frame_count = cetta_prepared_pure_answer_cursor_frame_count(cursor);
+    for (size_t index = 0u; index < frame_count; index++) {
+        CettaPreparedPureAnswerFrame frame;
+        if (!cetta_prepared_pure_answer_cursor_frame(cursor, index, &frame)) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+        if (!frame.resumes_continuation)
+            continue;
+        *failure = petta_answer_continuation_handoff_failure(
+            cetta_prepared_pure_answer_cursor_handoff_reason(cursor));
+        return false;
+    }
     if (frame_count > SIZE_MAX / sizeof(PettaChoice)) {
         *failure = PETTA_MACHINE_STEP_CAPACITY;
         return false;
@@ -22399,6 +22507,7 @@ static __attribute__((cold, noinline)) bool petta_machine_answer_handoff(
                 .query = query,
                 .expected = source->as.answers.expected,
                 .evaluate_result = true,
+                .query_closed = true,
                 .equation_template_c0_closed_query = true,
             },
         };
@@ -22482,8 +22591,18 @@ static __attribute__((noinline)) bool petta_machine_resume_answer_choice(
     if (step == CETTA_PREPARED_PURE_CURSOR_ANSWER &&
         petta_machine_extension_callable(machine, answer)) {
         if (!cetta_prepared_pure_answer_cursor_unyield(cursor)) {
-            *failure = PETTA_MACHINE_STEP_CAPACITY;
-            return false;
+            /* A continuation already committed this answer.  Evaluating it
+             * leaves the cursor on the next answer, so the call is not
+             * restarted and the rest of the enumeration is not dropped. */
+            Atom *value = petta_semantics_materialize_value(
+                &machine->heap, answer);
+            if (!value || !petta_push_solve(
+                    machine, value, choice->as.answers.expected,
+                    choice->barrier)) {
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
+            return true;
         }
         step = CETTA_PREPARED_PURE_CURSOR_HANDOFF;
     }
@@ -23459,6 +23578,27 @@ static bool petta_machine_dispatch_solve(
             return false;
         }
         return true;
+    }
+
+    /* A closed nested type-pure tree reduces without a contextual frame.
+     * One dispatch covers the whole tree; a decline leaves ordinary search. */
+    if (goal->kind == PETTA_GOAL_SOLVE && goal->first && goal->second &&
+        !atom_has_vars(goal->first)) {
+        bool nested = false;
+        Atom *reduced = petta_machine_reduce_closed_scalar(
+            machine, goal->first, 0u, &nested);
+        if (reduced && nested) {
+            if (goal->first->kind == ATOM_EXPR &&
+                grounded_result_is_raised_numeric_error(
+                    goal->first->expr.elems[0],
+                    goal->first->expr.len - 1u, reduced)) {
+                return petta_machine_raise_error(machine, reduced);
+            }
+            if (!atom_is_empty(reduced)) {
+                machine->stats.pure_grounded_slot_frame_direct_dispatches++;
+                return petta_machine_unify(machine, reduced, goal->second);
+            }
+        }
     }
 
     /* Type-pure grounded operators with ready operands are an exact
