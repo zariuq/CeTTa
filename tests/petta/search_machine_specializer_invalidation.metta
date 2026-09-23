@@ -5,7 +5,7 @@
 
 !(collapse (apply-bag inc))
 
-; Removing a source clause must invalidate its derived specialized clause.
+; Removing a source equation must invalidate its derived specialized equation.
 !(remove-atom &self (= (apply-bag $f) ($f 10)))
 !(apply-bag inc)
 

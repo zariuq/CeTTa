@@ -59,7 +59,7 @@
         (source-proof-trace-input-request-v1
           input-request-v1
           (ProofSequenceConsV1 input-wff-v1
-            (ProofSequenceConsV1 input-a-v1 ProofSequenceNilV1))))
+            (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))))
       (body))
     (rule proof-trace-input-canary-context-count-v1
       (head
@@ -73,7 +73,7 @@
         (source-proof-trace-input-context-v1
           input-request-v1 ProofTraceNatZeroV1
           (ProofSequenceConsV1 input-wff-v1
-            (ProofSequenceConsV1 input-a-v1 ProofSequenceNilV1))))
+            (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))))
       (body))
     (rule proof-trace-input-canary-context-dummy-v1
       (head
@@ -81,7 +81,7 @@
           input-request-v1
           (ProofTraceNatSuccV1 ProofTraceNatZeroV1)
           (ProofSequenceConsV1 input-wff-v1
-            (ProofSequenceConsV1 input-dummy-v1 ProofSequenceNilV1))))
+            (ProofSequenceConsV1 input-dummy-v1 (ProofSequenceNilV1)))))
       (body))
 
     (rule proof-trace-input-canary-push-target-v1
@@ -89,14 +89,14 @@
         (source-proof-trace-input-push-label-v1
           input-request-v1 input-hx-v1
           (ProofSequenceConsV1 input-wff-v1
-            (ProofSequenceConsV1 input-a-v1 ProofSequenceNilV1))))
+            (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))))
       (body))
     (rule proof-trace-input-canary-push-dummy-v1
       (head
         (source-proof-trace-input-push-label-v1
           input-request-v1 input-hdummy-v1
           (ProofSequenceConsV1 input-wff-v1
-            (ProofSequenceConsV1 input-dummy-v1 ProofSequenceNilV1))))
+            (ProofSequenceConsV1 input-dummy-v1 (ProofSequenceNilV1)))))
       (body))
     (rule proof-trace-input-canary-identity-different-hx-v1
       (head
@@ -108,7 +108,7 @@
       (head
         (source-proof-trace-input-assertion-v1
           input-identity-v1 input-wff-v1
-          (ProofSequenceConsV1 input-x-v1 ProofSequenceNilV1)))
+          (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1))))
       (body))
     (rule proof-trace-input-canary-frame-count-v1
       (head

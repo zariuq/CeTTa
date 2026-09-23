@@ -292,6 +292,136 @@ static void test_repeated_churn_is_amortized(
     space_free(&space);
 }
 
+static void test_occurrence_cursor_exact_clone(
+        TermUniverse *universe, Arena *scratch) {
+    Space space;
+    space_init_with_universe(&space, universe);
+    space.kind = SPACE_KIND_STACK;
+    for (int64_t value = 0; value < 4; value++) {
+        space_add_atom_id(
+            &space, store_atom(universe, atom_int(scratch, value)));
+    }
+
+    Atom *query = atom_var_with_spelling(
+        scratch, symbol_intern_cstr(g_symbols, "cursor-clone-x"),
+        UINT64_C(81001));
+    SpaceOccurrenceCursor source;
+    SpaceOccurrenceCursor clone;
+    assert(space_occurrence_cursor_init(&space, query, &source));
+    CettaIndex index = UINT64_MAX;
+    assert(space_occurrence_cursor_next(&source, &index) ==
+           SPACE_OCCURRENCE_CURSOR_ITEM);
+    assert(index == 0u);
+
+    /* Later appends are outside both logical-update ceilings. */
+    space_add_atom_id(
+        &space, store_atom(universe, atom_int(scratch, 99)));
+    assert(space_occurrence_cursor_clone(&source, &clone));
+    for (CettaIndex expected = 1u; expected < 4u; expected++) {
+        CettaIndex source_index = UINT64_MAX;
+        CettaIndex clone_index = UINT64_MAX;
+        assert(space_occurrence_cursor_next(&source, &source_index) ==
+               SPACE_OCCURRENCE_CURSOR_ITEM);
+        assert(space_occurrence_cursor_next(&clone, &clone_index) ==
+               SPACE_OCCURRENCE_CURSOR_ITEM);
+        assert(source_index == expected);
+        assert(clone_index == expected);
+    }
+    assert(space_occurrence_cursor_next(&source, &index) ==
+           SPACE_OCCURRENCE_CURSOR_END);
+    assert(space_occurrence_cursor_next(&clone, &index) ==
+           SPACE_OCCURRENCE_CURSOR_END);
+    space_occurrence_cursor_release(&clone);
+
+    /* A cursor whose pinned prefix is no longer authoritative cannot be
+     * cloned into a continuation. */
+    uint64_t prefix_epoch = source.prefix_epoch;
+    source.prefix_epoch++;
+    assert(!space_occurrence_cursor_clone(&source, &clone));
+    source.prefix_epoch = prefix_epoch;
+    space_occurrence_cursor_release(&source);
+    space_free(&space);
+}
+
+static void test_atom_id_removal_preserves_pinned_view(
+        TermUniverse *universe, Arena *scratch) {
+    Space space;
+    AtomId rows[3];
+    space_init_with_universe(&space, universe);
+    space.kind = SPACE_KIND_STACK;
+    for (int64_t value = 0; value < 3; value++) {
+        rows[value] = store_atom(universe, atom_int(scratch, value));
+        space_add_atom_id(&space, rows[value]);
+    }
+
+    Atom *query = atom_var_with_spelling(
+        scratch, symbol_intern_cstr(g_symbols, "cursor-remove-x"),
+        UINT64_C(81002));
+    SpaceOccurrenceCursor before_remove;
+    SpaceOccurrenceCursor after_remove;
+    assert(space_occurrence_cursor_init(
+        &space, query, &before_remove));
+    CettaIndex index = UINT64_MAX;
+    assert(space_occurrence_cursor_next(&before_remove, &index) ==
+           SPACE_OCCURRENCE_CURSOR_ITEM);
+    assert(index == 0u);
+
+    uint64_t pinned_prefix = before_remove.prefix_epoch;
+    assert(space_remove_atom_id(&space, rows[1]));
+    assert(space.prefix_epoch != pinned_prefix);
+    assert(before_remove.prefix_epoch == pinned_prefix);
+    assert(!space_remove_atom_id(&space, rows[1]));
+
+    SpaceOccurrenceCursor detached_clone;
+    assert(space_occurrence_cursor_clone(&before_remove, &detached_clone));
+
+    /* The old cursor owns the pre-removal view.  A cursor opened afterward
+     * reads the compacted live rows, with coordinates local to that view. */
+    assert(space_occurrence_cursor_init(
+        &space, query, &after_remove));
+    assert(space_occurrence_cursor_next(&after_remove, &index) ==
+           SPACE_OCCURRENCE_CURSOR_ITEM);
+    assert(index == 0u);
+    assert(atom_eq(space_occurrence_cursor_atom(&after_remove, index),
+                   term_universe_get_atom(universe, rows[0])));
+    assert(space_occurrence_cursor_next(&after_remove, &index) ==
+           SPACE_OCCURRENCE_CURSOR_ITEM);
+    assert(index == 1u);
+    assert(atom_eq(space_occurrence_cursor_atom(&after_remove, index),
+                   term_universe_get_atom(universe, rows[2])));
+    assert(space_occurrence_cursor_next(&after_remove, &index) ==
+           SPACE_OCCURRENCE_CURSOR_END);
+
+    assert(space_occurrence_cursor_next(&before_remove, &index) ==
+           SPACE_OCCURRENCE_CURSOR_ITEM);
+    assert(index == 1u);
+    assert(atom_eq(space_occurrence_cursor_atom(&before_remove, index),
+                   term_universe_get_atom(universe, rows[1])));
+    assert(space_occurrence_cursor_next(&before_remove, &index) ==
+           SPACE_OCCURRENCE_CURSOR_ITEM);
+    assert(index == 2u);
+    assert(atom_eq(space_occurrence_cursor_atom(&before_remove, index),
+                   term_universe_get_atom(universe, rows[2])));
+    assert(space_occurrence_cursor_next(&before_remove, &index) ==
+           SPACE_OCCURRENCE_CURSOR_END);
+
+    space_occurrence_cursor_release(&after_remove);
+    space_occurrence_cursor_release(&before_remove);
+    for (CettaIndex expected = 1u; expected < 3u; expected++) {
+        assert(space_occurrence_cursor_next(&detached_clone, &index) ==
+               SPACE_OCCURRENCE_CURSOR_ITEM);
+        assert(index == expected);
+        assert(atom_eq(space_occurrence_cursor_atom(&detached_clone, index),
+                       term_universe_get_atom(universe, rows[expected])));
+    }
+    assert(space_occurrence_cursor_next(&detached_clone, &index) ==
+           SPACE_OCCURRENCE_CURSOR_END);
+    space_occurrence_cursor_release(&detached_clone);
+    AtomId expected[] = {rows[0], rows[2]};
+    assert_atom_ids(&space, expected, 2u);
+    space_free(&space);
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena persistent;
@@ -313,6 +443,8 @@ int main(void) {
     test_remove_all_releases_small_indexes(&universe, &scratch);
     test_queue_linearization(&universe, &scratch);
     test_repeated_churn_is_amortized(&universe, &scratch);
+    test_occurrence_cursor_exact_clone(&universe, &scratch);
+    test_atom_id_removal_preserves_pinned_view(&universe, &scratch);
 
 #if CETTA_BUILD_WITH_RUNTIME_STATS
     CettaRuntimeStats stats;

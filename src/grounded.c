@@ -294,6 +294,7 @@ static bool petta_repra_render(
             case GV_SPACE:
             case GV_STATE:
             case GV_CAPTURE:
+            case GV_BINDINGS:
             case GV_FOREIGN:
             case GV_PRIME_NEED_CAPABILITY:
             case GV_PRIME_CONTEXT:
@@ -2296,7 +2297,7 @@ static Atom *grounded_collapse_add_next(Arena *a, Atom *head, Atom **args, uint3
                                      "(Atom Bindings) pair is expected as a second argument");
 
     Bindings bindings;
-    if (!bindings_from_atom(pair->expr.elems[1], &bindings))
+    if (!bindings_from_atom_scoped(pair->expr.elems[1], pair->expr.elems[0], NULL, &bindings))
         return grounded_string_error(a, head, args, nargs,
                                      "(Atom Bindings) pair is expected as a second argument");
 
@@ -2336,6 +2337,7 @@ static Atom *grounded_space_revision(Arena *a, Atom *head,
 }
 
 static Atom *grounded_foldl_in_space(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
     if (nargs != 6)
         return grounded_incorrect_arity(a, head, args, nargs);
     if (args[0]->kind != ATOM_EXPR)
@@ -2371,7 +2373,7 @@ static Atom *grounded_foldl_in_space(Arena *a, Atom *head, Atom **args, uint32_t
 
 
     char tmp_name[256];
-    snprintf(tmp_name, sizeof(tmp_name), "$__foldl_step#%u", fresh_var_suffix());
+    snprintf(tmp_name, sizeof(tmp_name), "$__foldl_step#%u", cetta_frame_identity_scope_fresh(&frame_identity_scope));
     Atom *tmp = atom_var(a, tmp_name);
 
     Atom *metta_args[4] = {

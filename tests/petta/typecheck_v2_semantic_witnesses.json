@@ -261,12 +261,12 @@
       "origin": "petta_block_type_may_overlap",
       "scope": "oracle"
     },
-    "clause-slot-alias-preserved": {
+    "equation-slot-alias-preserved": {
       "axis": "source-evaluated-stage-evidence",
       "case": "examples/strictdet_lib_patrick.metta|--strict-det",
       "kind": "mechanism",
       "mapping": "caller-visible-substitution-preservation",
-      "origin": "petta_machine_clause_slot_match",
+      "origin": "petta_machine_equation_slot_match",
       "scope": "mechanism"
     },
     "collapse-element-conflict": {

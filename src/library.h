@@ -163,6 +163,10 @@ typedef struct CettaLibraryContext {
     uint32_t petta_translator_rule_cap;
     uint64_t petta_translator_symbol_table_instance;
     uint64_t petta_translator_rule_revision;
+    /* Advances whenever membership changes in the translator, tabled or memo
+     * relations, or in the imported memo controls: the facts that decide how
+     * a relation call is dispatched. */
+    uint64_t petta_admission_revision;
     CettaPettaRelationKey *petta_tabled_relations;
     uint32_t petta_tabled_relation_len;
     uint32_t petta_tabled_relation_cap;
@@ -295,6 +299,9 @@ bool cetta_library_petta_translator_rule_set(
     CettaLibraryContext *ctx, SymbolId head, bool enabled);
 uint64_t cetta_library_petta_translator_rule_revision(
     CettaLibraryContext *ctx);
+/* The revision of every relation-dispatch table above, after synchronizing
+ * them with the current symbol table. */
+uint64_t cetta_library_petta_admission_revision(CettaLibraryContext *ctx);
 bool cetta_library_petta_tabled_relation_contains(
     CettaLibraryContext *ctx, SymbolId head, CettaExprLen arity);
 bool cetta_library_petta_tabled_relation_set(

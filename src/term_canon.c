@@ -3,6 +3,87 @@
 #include <stdlib.h>
 #include <string.h>
 
+static Atom *frame_syntax_create_slot(
+        Arena *dst, Atom *source, uint32_t ordinal, void *context) {
+    (void)context;
+    return ordinal ? atom_var_like(dst, source, (VarId)ordinal) : NULL;
+}
+
+static Atom *frame_syntax_rewrite_variable(Arena *dst, Atom *source, void *context) {
+    CettaVarMap *inventory = context;
+    if (inventory->len == UINT32_MAX &&
+        !cetta_var_map_lookup(inventory, source->var_id))
+        return NULL;
+    return cetta_var_map_get_or_add(
+        inventory, dst, source, frame_syntax_create_slot, NULL);
+}
+
+Atom *cetta_compile_frame_syntax(Arena *dst, Atom *src, CettaVarMap *inventory) {
+    return inventory ? cetta_atom_rewrite_vars(
+        dst, src, frame_syntax_rewrite_variable, inventory, true) : NULL;
+}
+
+typedef struct {
+    CettaVarMap *inventory;
+    CettaFrameIdentity identity;
+} FrameSyntaxImport;
+
+static Atom *frame_syntax_import_variable(Arena *dst, Atom *source, void *context) {
+    FrameSyntaxImport *import = context;
+    if (var_epoch_suffix(source->var_id) != 0u)
+        return atom_deep_copy_shared(dst, source);
+    Atom *slot = frame_syntax_rewrite_variable(dst, source, import->inventory);
+    return slot ? atom_var_like(dst, source, var_epoch_id(slot->var_id, import->identity))
+                : NULL;
+}
+
+Atom *cetta_import_frame_syntax(Arena *dst, Atom *src, CettaVarMap *inventory,
+                              CettaFrameIdentity identity) {
+    FrameSyntaxImport import = {inventory, identity};
+    return inventory && identity ? cetta_atom_rewrite_vars(
+        dst, src, frame_syntax_import_variable, &import, true) : NULL;
+}
+
+static Atom *frame_instantiate_create_slot(
+        Arena *dst, Atom *source, uint32_t ordinal, void *context) {
+    (void)ordinal;
+    CettaFrameIdentity identity = *(CettaFrameIdentity *)context;
+    uint32_t slot;
+    return cetta_frame_identity_new_slot(identity, 0u, &slot)
+        ? atom_var_like(dst, source, var_epoch_id(slot, identity)) : NULL;
+}
+
+static Atom *frame_instantiate_variable(
+        Arena *dst, Atom *source, void *context) {
+    FrameSyntaxImport *instance = context;
+    return cetta_var_map_get_or_add(instance->inventory, dst, source,
+        frame_instantiate_create_slot, &instance->identity);
+}
+
+bool cetta_instantiate_frame_terms(Arena *dst, Atom **terms, size_t count) {
+    if (!dst || (count && !terms))
+        return false;
+    CETTA_FRAME_IDENTITY_SCOPE(owner);
+    CettaFrameIdentity identity;
+    if (!cetta_frame_identity_scope_try(&owner, &identity))
+        return false;
+    CettaVarMap inventory;
+    cetta_var_map_init(&inventory);
+    FrameSyntaxImport instance = {&inventory, identity};
+    bool ok = true;
+    for (size_t i = 0u; ok && i < count; i++) {
+        terms[i] = cetta_atom_rewrite_vars(
+            dst, terms[i], frame_instantiate_variable, &instance, true);
+        ok = terms[i] != NULL;
+    }
+    cetta_var_map_free(&inventory);
+    return ok;
+}
+
+Atom *cetta_instantiate_frame_syntax(Arena *dst, Atom *source) {
+    return cetta_instantiate_frame_terms(dst, &source, 1u) ? source : NULL;
+}
+
 void cetta_var_map_init(CettaVarMap *map) {
     if (!map)
         return;

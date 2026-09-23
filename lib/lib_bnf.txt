@@ -72,11 +72,11 @@ Mettapedia checkout. The NativeType packet is a compiler input, not a runtime
 rule table. No generated equations should be edited directly.
 
 Run qualify-plain-bnf-selected-native-type-lean-v1 to check the installed
-provider/scalar/caller clauses against the selected Lean refinements. It reads
+provider/scalar/caller equations against the selected Lean refinements. It reads
 today's authored sources and generated commands even with cached imports;
 altered provider polarity or an extra initialization command must fail.
 The whole generated program is not identified with the smaller proof
-specimen. Only the selected ordered clause families are compared, and the
+specimen. Only the selected ordered equation families are compared, and the
 initialization command is accounted for separately. This is not a proof of
 the initializer's effects, every imported equation, or the C evaluator.
 
@@ -332,7 +332,7 @@ EbnfHelperNameSource proves that the binary counter advances numerically,
 different allocation counts produce different structured names, and a prefix
 longer than a supplied name-width bound prevents capture. It also checks
 selected live counter, prefix, group-allocation and helper-installation
-clauses. EbnfWidthSource now proves that completed paths of the selected
+equations. EbnfWidthSource now proves that completed paths of the selected
 authored width scan bound every rule name, nested reference, start name and
 lexical name. This supplies the bound to the helper-name theorem. It also
 proves source executions for all text lengths, maxima and nested optional
@@ -392,7 +392,7 @@ Reachability now uses a two-list FIFO: newly discovered references are
 enqueued without copying all pending work. It preserves the prior visitation
 order and duplicate reference occurrences. PlainBnfReachableQueue proves
 the exact bounded-prefix queue refinement and checks the corresponding
-authored enqueue/rotation clauses; this is not a full PeTTa execution theorem.
+authored enqueue/rotation equations; this is not a full PeTTa execution theorem.
 The runtime also uses its existing constructor-derived absence of internal
 tags to skip closed-list normalization on tag-free subtrees. An open private
 list requires such a tag. Unknown metadata and tagged subtrees retain the

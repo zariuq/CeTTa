@@ -183,7 +183,7 @@ def main() -> int:
             )
             continue
         case_ok = True
-        for mode in ("deep",):
+        for mode in ("default",):
             try:
                 code, output = run_case(binary, case, mode, arguments.timeout)
             except subprocess.TimeoutExpired:
@@ -212,7 +212,7 @@ def main() -> int:
                     + "\n".join(receipt_oracle.splitlines()[-30:])
                 )
             else:
-                for mode in ("deep",):
+                for mode in ("default",):
                     code, output = run_receipt_oracle(
                         binary, mode, arguments.timeout)
                     if code != receipt_code or output != receipt_oracle:

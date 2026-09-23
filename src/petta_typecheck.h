@@ -170,7 +170,7 @@ bool petta_typecheck_program_mutation_selected(
 void petta_typecheck_inferred_signatures_rebase_selected(
     PettaProgram *program, Space *space, PettaTypecheckPolicy policy);
 
-/* Derive the strongest runtime proviso consumed by any live clause at one
+/* Derive the strongest runtime proviso consumed by any live equation at one
  * direct argument position.  The caller caches against the supplied Space's
  * instance and revision; false denotes an infrastructure failure, never a
  * semantic rejection. */
@@ -180,7 +180,7 @@ bool petta_typecheck_call_boundary_requirement(
     PettaTypecheckBoundaryRequirement *requirement);
 
 /* Derive every direct-argument proviso from one declared-type lookup and one
- * source-ordered clause snapshot.  This is the machine-facing form: callers
+ * source-ordered candidate snapshot.  This is the machine-facing form: callers
  * must supply exactly `arity` result slots (or NULL for arity zero). */
 bool petta_typecheck_call_boundary_plan(
     PettaProgram *program, Space *space,

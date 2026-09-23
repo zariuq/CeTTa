@@ -36,7 +36,7 @@
 (= (p c) found-c)
 (= (p d) found-d)
 
-; Variable and exact clauses both contribute to the result bag.  Equation
+; Variable and exact equations both contribute to the result bag.  Equation
 ; selection order is an execution detail, so compare these distinct results
 ; without imposing an order.  Duplicate preservation is tested separately.
 !(assertEqualToResult (p specific) ((got specific) found-specific))

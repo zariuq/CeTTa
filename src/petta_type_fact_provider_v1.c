@@ -702,7 +702,7 @@ static TypeFactMatchV1 type_fact_pattern_match_v1(
     return result;
 }
 
-static TypeFactMatchV1 type_fact_clause_match_v1(
+static TypeFactMatchV1 type_fact_equation_match_v1(
     const Atom *lhs, const Atom *call, uint32_t depth) {
     if (!lhs || !call || lhs->kind != ATOM_EXPR || call->kind != ATOM_EXPR ||
         lhs->expr.len != call->expr.len || lhs->expr.len == 0u ||
@@ -791,7 +791,7 @@ static PettaAnalysisCardinality type_fact_relation_effect_v1(
             continue;
         }
         Atom *lhs = equation->expr.elems[1];
-        TypeFactMatchV1 match = type_fact_clause_match_v1(
+        TypeFactMatchV1 match = type_fact_equation_match_v1(
             lhs, call, depth + 1u);
         if (match == TYPE_FACT_MATCH_YES_V1) {
             definite++;
@@ -890,7 +890,7 @@ static PettaAnalysisCardinality type_fact_effect_v1(
     if (effect == PETTA_ANALYSIS_CARDINALITY_UNDETERMINED) {
         /* Recursive and mutually recursive calls are checked against their
          * declared interface, just like ordinary typed recursion.  Rewalking
-         * their clause bodies here would re-prove the whole call graph at
+         * their equation bodies here would re-prove the whole call graph at
          * every occurrence and would not add evidence beyond the declaration
          * whose bodies the surrounding block is already validating. */
         PettaAnalysisCardinality declared = type_fact_declared_effect_v1(

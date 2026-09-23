@@ -1,6 +1,6 @@
 ; Intrinsic get-type answers precede authored relation extensions, while
 ; downstream failure may backtrack from the intrinsic Number answer to the
-; explicit EvenNumber clause.
+; explicit EvenNumber equation.
 (= (get-type 2) EvenNumber)
 (: accepts-even (-> EvenNumber Symbol))
 (= (accepts-even $value) accepted)

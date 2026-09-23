@@ -39,7 +39,7 @@ for depth in $DEPTHS; do
     /usr/bin/time -f '%e\t%M' -o "$timing" \
         timeout "$TIMEOUT_SECONDS" \
         env CETTA_PETTA_SEARCH_MACHINE=1 \
-            CETTA_PETTA_CLAUSE_BODY_ACTIVATION=0 \
+            CETTA_PETTA_EQUATION_BODY_ACTIVATION=0 \
             "$CETTA_BIN" --quiet --lang petta "$source" \
             >"$stdout" 2>"$stderr"
     rc=$?

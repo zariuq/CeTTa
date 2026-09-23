@@ -369,6 +369,7 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
     ctx->petta_translator_symbol_table_instance =
         symbol_table_instance_id(g_symbols);
     ctx->petta_translator_rule_revision = 1u;
+    ctx->petta_admission_revision = 1u;
     ctx->petta_tabled_relations = NULL;
     ctx->petta_tabled_relation_len = 0u;
     ctx->petta_tabled_relation_cap = 0u;
@@ -537,6 +538,15 @@ struct CettaNikRuntimeV1 *cetta_library_context_nik_runtime(
     return runtime;
 }
 
+static void cetta_library_petta_admission_advance(
+    CettaLibraryContext *ctx) {
+    if (!ctx)
+        return;
+    ctx->petta_admission_revision =
+        ctx->petta_admission_revision == UINT64_MAX
+            ? 1u : ctx->petta_admission_revision + 1u;
+}
+
 static void cetta_library_petta_translator_rule_advance(
     CettaLibraryContext *ctx) {
     if (!ctx)
@@ -544,6 +554,7 @@ static void cetta_library_petta_translator_rule_advance(
     ctx->petta_translator_rule_revision =
         ctx->petta_translator_rule_revision == UINT64_MAX
             ? 1u : ctx->petta_translator_rule_revision + 1u;
+    cetta_library_petta_admission_advance(ctx);
 }
 
 static void cetta_library_petta_translator_rule_sync(
@@ -639,6 +650,19 @@ uint64_t cetta_library_petta_translator_rule_revision(
 }
 
 static void cetta_library_petta_tabled_relation_sync(
+    CettaLibraryContext *ctx);
+static void cetta_library_petta_memo_sync(CettaLibraryContext *ctx);
+
+uint64_t cetta_library_petta_admission_revision(CettaLibraryContext *ctx) {
+    if (!ctx)
+        return 0u;
+    cetta_library_petta_translator_rule_sync(ctx);
+    cetta_library_petta_tabled_relation_sync(ctx);
+    cetta_library_petta_memo_sync(ctx);
+    return ctx->petta_admission_revision;
+}
+
+static void cetta_library_petta_tabled_relation_sync(
     CettaLibraryContext *ctx) {
     if (!ctx)
         return;
@@ -647,6 +671,7 @@ static void cetta_library_petta_tabled_relation_sync(
         return;
     ctx->petta_tabled_relation_len = 0u;
     ctx->petta_tabled_symbol_table_instance = instance;
+    cetta_library_petta_admission_advance(ctx);
 }
 
 static int cetta_library_petta_relation_key_compare(
@@ -708,6 +733,7 @@ bool cetta_library_petta_tabled_relation_set(
             ctx->petta_tabled_relations[index], key) == 0;
     if (present == enabled)
         return true;
+    cetta_library_petta_admission_advance(ctx);
     if (!enabled) {
         memmove(
             ctx->petta_tabled_relations + index,
@@ -752,6 +778,7 @@ static void cetta_library_petta_memo_sync(
     ctx->petta_memo.exact_arity_len = 0u;
     ctx->petta_memo.symbol_table_instance = instance;
     petta_machine_table_reset(ctx->petta_shared_table);
+    cetta_library_petta_admission_advance(ctx);
 }
 
 static uint32_t cetta_library_symbol_lower_bound(
@@ -889,7 +916,10 @@ bool cetta_library_petta_memo_control_import(
         !cetta_library_petta_memo_control_lookup(head, &control)) {
         return false;
     }
-    ctx->petta_memo.imported_controls[control] = true;
+    if (!ctx->petta_memo.imported_controls[control]) {
+        ctx->petta_memo.imported_controls[control] = true;
+        cetta_library_petta_admission_advance(ctx);
+    }
     return true;
 }
 
@@ -983,6 +1013,7 @@ bool cetta_library_petta_memo_enable(
         ctx->petta_memo.all_arities[index] = head;
         ctx->petta_memo.all_arity_len++;
         petta_machine_table_reset(ctx->petta_shared_table);
+        cetta_library_petta_admission_advance(ctx);
         return true;
     }
 
@@ -1021,6 +1052,7 @@ bool cetta_library_petta_memo_enable(
     ctx->petta_memo.exact_arities[index] = key;
     ctx->petta_memo.exact_arity_len++;
     petta_machine_table_reset(ctx->petta_shared_table);
+    cetta_library_petta_admission_advance(ctx);
     return true;
 }
 
@@ -3054,7 +3086,7 @@ static bool resolve_import_plan(CettaLibraryContext *ctx, const CettaModuleSpec 
          * explicit, separate syntax: `(library member)`.  Searching CeTTa's
          * stdlib or registered mounts for a bare PeTTa name would turn an
          * upstream failed import into a different program and can duplicate
-         * every clause when the same file was also imported by path.
+         * every equation when the same file was also imported by path.
          */
         bool plain_petta_import =
             ctx->session.language_id == CETTA_LANGUAGE_PETTA;

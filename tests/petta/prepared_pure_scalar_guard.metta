@@ -1,6 +1,6 @@
-; A source-authored scalar guard may refine overlapping clauses before the
-; deterministic prepared body runs.  The exact clause owns zero; the guarded
-; recursive clause owns every positive integer.
+; A source-authored scalar guard may refine overlapping equations before the
+; deterministic prepared body runs.  The exact equation owns zero; the guarded
+; recursive equation owns every positive integer.
 (= (guarded-count 0) done)
 (= (guarded-count $n)
    (if (> $n 0)
@@ -13,10 +13,10 @@
 (= (guarded-nonpositive $n)
    (if (> $n 0) (empty) nonpositive))
 !(guarded-nonpositive 0)
-; A refuted sole clause has no answer.  It must not turn choice zero into data.
+; A refuted sole equation has no answer.  It must not turn choice zero into data.
 !(guarded-nonpositive 1)
 
-; Two surviving guarded clauses remain nondeterministic.  Whole-program
+; Two surviving guarded equations remain nondeterministic.  Whole-program
 ; fallback preserves equal occurrence multiplicity rather than committing one.
 (= (guarded-duplicate $n) (if (> $n 0) same (empty)))
 (= (guarded-duplicate $n) (if (> $n 0) same (empty)))

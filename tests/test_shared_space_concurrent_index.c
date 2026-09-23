@@ -81,7 +81,7 @@ static bool validate_snapshot(SubstMatchSet *matches,
 
         if (!match->exact)
             return false;
-        value = bindings_lookup_id(&match->bindings, QUERY_VALUE_ID);
+        value = bindings_lookup_value_id(&match->bindings, QUERY_VALUE_ID).skeleton;
         if (!value || value->kind != ATOM_GROUNDED ||
             value->ground.gkind != GV_INT) {
             return false;
@@ -110,6 +110,58 @@ static bool validate_snapshot(SubstMatchSet *matches,
         return false;
     *optional_present_out = optional_present;
     return true;
+}
+
+/* Cursors belong to individual readers, but their pinned occurrence view is
+ * shared.  Keep two independently owned cursors alive across writer updates,
+ * then release them without an enclosing caller transition. */
+static bool validate_occurrence_cursors(Space *space, Atom *pattern) {
+    SpaceOccurrenceCursor cursor, clone;
+    space_occurrence_cursor_init_empty(&cursor);
+    space_occurrence_cursor_init_empty(&clone);
+    bool ok = space_occurrence_cursor_init(space, pattern, &cursor);
+    if (ok)
+        ok = space_occurrence_cursor_clone(&cursor, &clone);
+    sched_yield();
+    for (unsigned pass = 0u; pass < 2u && ok; pass++) {
+        SpaceOccurrenceCursor *current = pass ? &clone : &cursor;
+        CettaIndex index;
+        CettaCount count = 0u;
+        bool seen[BASE_ROW_COUNT + 1u] = {false};
+        SpaceOccurrenceCursorStep step;
+        while ((step = space_occurrence_cursor_next(current, &index)) ==
+               SPACE_OCCURRENCE_CURSOR_ITEM) {
+            Atom *atom = space_occurrence_cursor_atom(current, index);
+            if (!atom || atom->kind != ATOM_EXPR || atom->expr.len != 2u) {
+                ok = false;
+                break;
+            }
+            Atom *value = atom->expr.elems[1];
+            if (value->kind != ATOM_GROUNDED || value->ground.gkind != GV_INT) {
+                ok = false;
+                break;
+            }
+            int64_t number = value->ground.ival;
+            size_t slot = number == OPTIONAL_VALUE ? BASE_ROW_COUNT :
+                number >= 0 && number < BASE_ROW_COUNT ? (size_t)number :
+                BASE_ROW_COUNT + 1u;
+            if (slot > BASE_ROW_COUNT || seen[slot]) {
+                ok = false;
+                break;
+            }
+            seen[slot] = true;
+            count++;
+        }
+        ok = ok && step == SPACE_OCCURRENCE_CURSOR_END &&
+            count == current->ceiling;
+        for (size_t i = 0u; i < BASE_ROW_COUNT; i++)
+            ok = ok && seen[i];
+        space_occurrence_cursor_release(current);
+        sched_yield();
+    }
+    space_occurrence_cursor_release(&clone);
+    space_occurrence_cursor_release(&cursor);
+    return ok;
 }
 
 static void *reader_main(void *opaque) {
@@ -143,12 +195,17 @@ static void *reader_main(void *opaque) {
                            &found) &&
                        found;
         }
+        if (task->ok)
+            task->ok = validate_occurrence_cursors(
+                task->space, (round & 1u) ? task->query :
+                    task->query->expr.elems[1]);
         arena_reset(&scratch, mark);
         if ((round & 7u) == 0u)
             sched_yield();
     }
     cetta_shared_transition_scope_leave();
     arena_free(&scratch);
+    bindings_thread_cache_free();
     return NULL;
 }
 
@@ -309,6 +366,8 @@ int main(void) {
     assert(pthread_join(writer, NULL) == 0);
     assert(writer_task.ok);
     assert(pthread_barrier_destroy(&start) == 0);
+    assert(concurrent_space.match_backend.native.pinned == NULL);
+    assert(concurrent_space.match_backend.native.match_trie_pins == 0u);
     assert(space_length64(&concurrent_space) == BASE_ROW_COUNT + 1u);
     assert_concurrent_snapshot(
         &concurrent_space, &construction, query, true);
@@ -319,6 +378,7 @@ int main(void) {
     term_universe_free(&universe);
     arena_free(&construction);
     arena_free(&persistent);
+    bindings_thread_cache_free();
     g_symbols = NULL;
     symbol_table_free(&symbols);
     puts("PASS: shared Space concurrent index snapshots");

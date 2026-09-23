@@ -1,6 +1,6 @@
 ;; Row 02 — Nil Geisweiller: curried DTL backward chainer (syn).
 ;; Source: repos/ngeiswei-chaining-run/dtl/backward/curried.metta (+ utils.metta, inlined).
-;; Single generic recursive clause (curried rules) — contrast with row 03 (n-ary).
+;; Single generic recursive equation (curried rules) — contrast with row 03 (n-ary).
 ;; Contract: prove C at depth 4 yields 4 proofs (per the upstream test's
 ;; assertEqualToResult). Runs on CeTTa (--lang he) and PeTTa.
 

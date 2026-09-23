@@ -1,5 +1,5 @@
 true
-(clause-slot-rows-left 0)
+(equation-slot-rows-left 0)
 (slot-structured-binding true)
 (slot-variable-alias true)
 (slot-repeated-rule true true)

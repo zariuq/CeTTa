@@ -158,23 +158,26 @@ static void test_generated_value_allocation(void) {
 static void test_generated_resource_classification(void) {
     unsigned grounded_rows = 0u;
     bool saw_space = false, saw_state = false;
-    bool saw_capture = false, saw_foreign = false;
+    bool saw_capture = false, saw_foreign = false, saw_bindings = false;
 #define COUNT_IDENTITY_GROUNDED(kind) do { \
     grounded_rows++; \
     if (strcmp(#kind, "GV_SPACE") == 0) saw_space = true; \
     if (strcmp(#kind, "GV_STATE") == 0) saw_state = true; \
     if (strcmp(#kind, "GV_CAPTURE") == 0) saw_capture = true; \
     if (strcmp(#kind, "GV_FOREIGN") == 0) saw_foreign = true; \
+    if (strcmp(#kind, "GV_BINDINGS") == 0) saw_bindings = true; \
 } while (0);
     CETTA_GSLT_IDENTITY_BEARING_GROUNDED_KIND_ROWS(
         COUNT_IDENTITY_GROUNDED)
 #undef COUNT_IDENTITY_GROUNDED
-    assert(grounded_rows == 4u);
-    assert(saw_space && saw_state && saw_capture && saw_foreign);
+    assert(grounded_rows == 5u);
+    assert(saw_space && saw_state && saw_capture && saw_foreign &&
+           saw_bindings);
     assert(cetta_gslt_identity_bearing_grounded_kind(GV_SPACE));
     assert(cetta_gslt_identity_bearing_grounded_kind(GV_STATE));
     assert(cetta_gslt_identity_bearing_grounded_kind(GV_CAPTURE));
     assert(cetta_gslt_identity_bearing_grounded_kind(GV_FOREIGN));
+    assert(cetta_gslt_identity_bearing_grounded_kind(GV_BINDINGS));
     assert(!cetta_gslt_identity_bearing_grounded_kind(GV_INT));
     assert(!cetta_gslt_identity_bearing_grounded_kind(GV_PRIME_CONTEXT));
 
@@ -430,6 +433,7 @@ static void test_generated_prepared_intrinsic_program(void) {
     bool saw_division = false, saw_sort_numbers = false;
     bool saw_remove_all = false, saw_unkey = false;
     bool saw_retain_top_k = false, saw_cons = false, saw_union = false;
+    unsigned dual_numeric_heads = 0u;
 #define COUNT_PREPARED_INTRINSIC_HEAD(                                  \
     field, arity, discipline, instruction) do {                         \
     assert((discipline) ==                                              \
@@ -446,6 +450,19 @@ static void test_generated_prepared_intrinsic_program(void) {
         assert((arity) == 2u);                                          \
         assert((instruction) ==                                         \
                CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH);   \
+    }                                                                   \
+    if (strcmp(#field, "op_plus") == 0 ||                             \
+        strcmp(#field, "op_minus") == 0 ||                            \
+        strcmp(#field, "op_mul") == 0 ||                              \
+        strcmp(#field, "op_lt") == 0 ||                               \
+        strcmp(#field, "op_gt") == 0 ||                               \
+        strcmp(#field, "op_le") == 0 ||                               \
+        strcmp(#field, "op_ge") == 0 ||                               \
+        strcmp(#field, "numeric_eq") == 0) {                          \
+        assert((arity) == 2u);                                          \
+        assert((instruction) ==                                         \
+               CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH);   \
+        dual_numeric_heads++;                                           \
     }                                                                   \
     if (strcmp(#field, "remove_all_atom") == 0) saw_remove_all = true; \
     if (strcmp(#field, "retain_top_k_keyed_atom") == 0)                \
@@ -471,6 +488,7 @@ static void test_generated_prepared_intrinsic_program(void) {
     assert(saw_division && saw_sort_numbers && saw_remove_all);
     assert(saw_retain_top_k && saw_unkey);
     assert(saw_cons && saw_union);
+    assert(dual_numeric_heads == 8u);
 }
 
 static void test_generated_pure_call_modes(void) {
