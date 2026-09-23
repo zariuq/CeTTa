@@ -64,21 +64,21 @@
             (ProofTraceLabelConsV1
               input-identity-v1 ProofTraceLabelNilV1))
           (ProofSequenceConsV1 input-wff-v1
-            (ProofSequenceConsV1 input-a-v1 ProofSequenceNilV1))
+            (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))
           (ProofTraceConsV1
             (ProofTracePushV1
               (ProofSequenceConsV1 input-wff-v1
-                (ProofSequenceConsV1 input-a-v1 ProofSequenceNilV1)))
+                (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1))))
             (ProofTraceConsV1
               (ProofTraceApplyV1
                 (ProofAssertionV1
                   (ProofAssertionListConsV1
                     (ProofAssertionVariableV1 input-x-v1 input-wff-v1)
-                    ProofAssertionListNilV1)
-                  ProofAssertionListNilV1
+                    (ProofAssertionListNilV1))
+                  (ProofAssertionListNilV1)
                   input-wff-v1
-                  (ProofSequenceConsV1 input-x-v1 ProofSequenceNilV1)
-                  ProofAssertionListNilV1)
+                  (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1))
+                  (ProofAssertionListNilV1))
                 (ProofTraceFrameConsV1
                   (ProofTraceFrameVariableV1 input-x-v1 input-wff-v1)
                   ProofTraceFrameNilV1))
@@ -94,21 +94,21 @@
           (ProofTraceCodeConsV1 65
             (ProofTraceCodeConsV1 66 ProofTraceCodeNilV1))
           (ProofSequenceConsV1 input-wff-v1
-            (ProofSequenceConsV1 input-a-v1 ProofSequenceNilV1))
+            (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))
           (ProofTraceConsV1
             (ProofTracePushV1
               (ProofSequenceConsV1 input-wff-v1
-                (ProofSequenceConsV1 input-a-v1 ProofSequenceNilV1)))
+                (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1))))
             (ProofTraceConsV1
               (ProofTraceApplyV1
                 (ProofAssertionV1
                   (ProofAssertionListConsV1
                     (ProofAssertionVariableV1 input-x-v1 input-wff-v1)
-                    ProofAssertionListNilV1)
-                  ProofAssertionListNilV1
+                    (ProofAssertionListNilV1))
+                  (ProofAssertionListNilV1)
                   input-wff-v1
-                  (ProofSequenceConsV1 input-x-v1 ProofSequenceNilV1)
-                  ProofAssertionListNilV1)
+                  (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1))
+                  (ProofAssertionListNilV1))
                 (ProofTraceFrameConsV1
                   (ProofTraceFrameVariableV1 input-x-v1 input-wff-v1)
                   ProofTraceFrameNilV1))
@@ -122,12 +122,12 @@
           (ProofTraceLabelConsV1
             input-hdummy-v1 ProofTraceLabelNilV1)
           (ProofSequenceConsV1 input-wff-v1
-            (ProofSequenceConsV1 input-a-v1 ProofSequenceNilV1))
+            (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))
           (ProofTraceConsV1
             (ProofTracePushV1
               (ProofSequenceConsV1 input-wff-v1
                 (ProofSequenceConsV1
-                  input-dummy-v1 ProofSequenceNilV1)))
+                  input-dummy-v1 (ProofSequenceNilV1))))
             ProofTraceNilV1))))
 
     (rule proof-trace-canary-essentials-succeeded-v1
@@ -138,39 +138,39 @@
         (ProofTraceCheckEssentialsResultV1
           (ProofAssertionListConsV1
             (ProofAssertionEssentialV1
-              (ProofSequenceConsV1 input-x-v1 ProofSequenceNilV1))
-            ProofAssertionListNilV1)
+              (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1)))
+            (ProofAssertionListNilV1))
           (ProofAssertionListConsV1
-            (ProofSequenceConsV1 input-a-v1 ProofSequenceNilV1)
-            ProofAssertionListNilV1)
+            (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1))
+            (ProofAssertionListNilV1))
           (ProofEnvironmentConsV1
             input-x-v1
-            (ProofSequenceConsV1 input-a-v1 ProofSequenceNilV1)
-            ProofEnvironmentNilV1)
+            (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1))
+            (ProofEnvironmentNilV1))
           ProofTraceEssentialsSucceededV1)))
 
     (rule proof-trace-canary-essentials-refused-v1
       (head
         (ProofTraceCanaryEssentialsRefusedV1
           (ProofTraceRefusedEssentialMismatchV1
-            (ProofSequenceConsV1 input-x-v1 ProofSequenceNilV1)
-            (ProofSequenceConsV1 input-a-v1 ProofSequenceNilV1)
-            (ProofSequenceConsV1 input-dummy-v1 ProofSequenceNilV1))))
+            (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1))
+            (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1))
+            (ProofSequenceConsV1 input-dummy-v1 (ProofSequenceNilV1)))))
       (body
         (ProofTraceCheckEssentialsResultV1
           (ProofAssertionListConsV1
             (ProofAssertionEssentialV1
-              (ProofSequenceConsV1 input-x-v1 ProofSequenceNilV1))
-            ProofAssertionListNilV1)
+              (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1)))
+            (ProofAssertionListNilV1))
           (ProofAssertionListConsV1
-            (ProofSequenceConsV1 input-dummy-v1 ProofSequenceNilV1)
-            ProofAssertionListNilV1)
+            (ProofSequenceConsV1 input-dummy-v1 (ProofSequenceNilV1))
+            (ProofAssertionListNilV1))
           (ProofEnvironmentConsV1
             input-x-v1
-            (ProofSequenceConsV1 input-a-v1 ProofSequenceNilV1)
-            ProofEnvironmentNilV1)
+            (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1))
+            (ProofEnvironmentNilV1))
           (ProofTraceRefusedEssentialMismatchV1
-            (ProofSequenceConsV1 input-x-v1 ProofSequenceNilV1)
-            (ProofSequenceConsV1 input-a-v1 ProofSequenceNilV1)
-            (ProofSequenceConsV1 input-dummy-v1 ProofSequenceNilV1)))))
+            (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1))
+            (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1))
+            (ProofSequenceConsV1 input-dummy-v1 (ProofSequenceNilV1))))))
   ))

@@ -93,13 +93,13 @@ static CettaGsltTermViewStatusV1 observe_pivot_argument(
 static void test_pivot_observation_demand(
         Arena *arena, Space *space,
         CettaMatchDecisionSemanticIdentity semantics) {
-    CettaMatchDecisionClause clauses[] = {
+    CettaMatchDecisionEquation equations[] = {
         {parse_one(arena, "(pivot alpha $x)"), 10u},
         {NULL, 20u},
         {parse_one(arena, "(pivot alpha (nested red))"), 30u},
         {parse_one(arena, "(pivot beta (nested blue))"), 40u},
     };
-    clauses[1].pattern = clauses[0].pattern;
+    equations[1].pattern = equations[0].pattern;
     Atom *call = parse_one(arena, "(pivot alpha $deferred)");
     CettaGsltTermCursorV1 arguments[] = {
         {call->expr.elems[1], NULL}, {call->expr.elems[2], NULL}};
@@ -113,7 +113,7 @@ static void test_pivot_observation_demand(
     const uint32_t unknown[] = {10u, 20u, 30u};
     for (unsigned separated = 0u; separated < 2u; separated++) {
         CettaMatchDecision *decision = cetta_match_decision_compile(
-            space_read_token(space), semantics, clauses, 4u,
+            space_read_token(space), semantics, equations, 4u,
             CETTA_MATCH_DECISION_DEEP, 0u,
             (CettaMatchDecisionRealization){0}, NULL, NULL);
         assert(decision);
@@ -129,7 +129,7 @@ static void test_pivot_observation_demand(
                            separated ? 2u : 3u);
         observation.value = value;
         cetta_match_decision_free(decision);
-        clauses[2].pattern = parse_one(arena, "(pivot beta (nested red))");
+        equations[2].pattern = parse_one(arena, "(pivot beta (nested red))");
     }
 }
 
@@ -149,12 +149,12 @@ static void test_bounded_path_precision(
     fields[width] = b;
     Atom *different = atom_expr(arena, fields, width + 1u);
     free(fields);
-    CettaMatchDecisionClause clauses[] = {
+    CettaMatchDecisionEquation equations[] = {
         {query, 101u}, {different, 102u}, {query, 103u}};
     const uint32_t superset[] = {101u, 102u, 103u};
     for (size_t m = 0u; m < 2u; m++) {
         CettaMatchDecision *decision = cetta_match_decision_compile(
-            space_read_token(space), semantics, clauses, 3u,
+            space_read_token(space), semantics, equations, 3u,
             m == 0u ? CETTA_MATCH_DECISION_DEEP
                      : CETTA_MATCH_DECISION_CONJUNCTIVE,
             0u, (CettaMatchDecisionRealization){0}, NULL, NULL);
@@ -162,9 +162,9 @@ static void test_bounded_path_precision(
         expect_refs(decision, space, query, semantics,
                     UINT64_MAX, superset, 3u);
         Bindings bindings; bindings_init(&bindings);
-        assert(match_atoms(query, clauses[0].pattern, &bindings));
-        assert(!match_atoms(query, clauses[1].pattern, &bindings));
-        assert(match_atoms(query, clauses[2].pattern, &bindings));
+        assert(match_atoms(query, equations[0].pattern, &bindings));
+        assert(!match_atoms(query, equations[1].pattern, &bindings));
+        assert(match_atoms(query, equations[2].pattern, &bindings));
         bindings_free(&bindings);
         cetta_match_decision_free(decision);
     }
@@ -188,17 +188,18 @@ static void test_scoped_cursors(
     assert(bindings_builder_init(&builder, NULL));
     assert(bindings_builder_add_var_fresh(&builder, y, a));
     uint32_t first = builder.current.len;
+    BindingsActivationView frame;
+    bindings_activation_view_init(&frame);
+    VarId ids[] = {x->var_id};
+    Atom *variables[] = {x};
+    assert(bindings_activation_view_prepare(
+        &frame, &builder, ids, variables, 1u, epoch, first));
+    /* Preparation records the write boundary; activation writes follow it. */
     uint32_t mark = bindings_builder_save(&builder);
     assert(bindings_builder_add_id_fresh(&builder,
         var_epoch_id(x->var_id, epoch), x->sym_id, outer_value));
     assert(bindings_builder_add_id_fresh(&builder,
         var_epoch_id(y->var_id, epoch), y->sym_id, b));
-    BindingsDenseEpochFrame frame;
-    bindings_dense_epoch_frame_init(&frame);
-    VarId ids[] = {x->var_id};
-    Atom *variables[] = {x};
-    assert(bindings_dense_epoch_frame_prepare(
-        &frame, &builder, ids, variables, 1u, epoch, first));
     BindingsTermCursorContextV1 context = {&builder.current, &frame};
     CettaGsltTermCursorV1 argument = {x, &frame};
     CettaMatchDecisionQueryViewV1 query = {
@@ -206,7 +207,7 @@ static void test_scoped_cursors(
         .arguments = &argument, .arity = 1u,
         .observer = {bindings_resolve_term_cursor_v1, &context},
     };
-    CettaMatchDecisionClause clauses[] = {
+    CettaMatchDecisionEquation equations[] = {
         {parse_one(arena, shared_prefix
             ? "(scope (nest (nest (nest (box a)))))" : "(scope (box a))"), 10u},
         {parse_one(arena, shared_prefix
@@ -217,14 +218,14 @@ static void test_scoped_cursors(
     const uint32_t outer_refs[] = {10u, 30u};
     const uint32_t local_refs[] = {20u};
     const uint32_t open_refs[] = {10u, 20u, 30u};
-    Atom *forced = bindings_apply_dense_epoch_frame_then_all(
-        &builder, arena, source, &frame);
-    assert(forced && atom_eq(forced, clauses[0].pattern));
+    Atom *forced = bindings_apply_activation_view_then_all(
+        &builder.current, arena, source, &frame);
+    assert(forced && atom_eq(forced, equations[0].pattern));
     for (int mode = CETTA_MATCH_DECISION_DEEP;
          mode <= CETTA_MATCH_DECISION_CONJUNCTIVE; mode++) {
         for (unsigned realization = 0u; realization < 8u; realization++) {
             CettaMatchDecision *decision = cetta_match_decision_compile(
-                space_read_token(space), semantics, clauses, 3u,
+                space_read_token(space), semantics, equations, 3u,
                 (CettaMatchDecisionMode)mode, 0u,
                 (CettaMatchDecisionRealization){
                     .use_direct_prefix_observation = (realization & 1u) != 0u,
@@ -253,13 +254,67 @@ static void test_scoped_cursors(
                 var_epoch_id(x->var_id, epoch), x->sym_id, outer_value));
             assert(bindings_builder_add_id_fresh(&builder,
                 var_epoch_id(y->var_id, epoch), y->sym_id, b));
-            assert(bindings_dense_epoch_frame_prepare(
+            assert(bindings_activation_view_prepare(
                 &frame, &builder, ids, variables, 1u, epoch, first));
             expect_cursor_refs(decision, space, semantics, &query, outer_refs, 2u);
             cetta_match_decision_free(decision);
         }
     }
-    bindings_dense_epoch_frame_free(&frame);
+    bindings_activation_view_free(&frame);
+    bindings_builder_free(&builder);
+}
+
+static void test_bound_constructor_prefix(
+        Arena *arena, Space *space,
+        CettaMatchDecisionSemanticIdentity semantics) {
+    /* Discriminating constructor sits under a bound variable that is not
+     * itself a top-level argument.  Prefix observation must resolve the
+     * parent through the environment before taking that child. */
+    Atom *query = parse_one(arena, "(pick (hold $proof))");
+    assert(query && query->kind == ATOM_EXPR && query->expr.len == 2u &&
+           query->expr.elems[1] &&
+           query->expr.elems[1]->kind == ATOM_EXPR &&
+           query->expr.elems[1]->expr.len == 2u);
+    Atom *proof = query->expr.elems[1]->expr.elems[1];
+    assert(proof && proof->kind == ATOM_VAR);
+    Atom *mp = parse_one(arena, "(mp ax)");
+    assert(mp);
+    BindingsBuilder builder;
+    assert(bindings_builder_init(&builder, NULL));
+    assert(bindings_builder_add_var_fresh(&builder, proof, mp));
+    BindingsTermCursorContextV1 context = {&builder.current, NULL};
+    CettaGsltTermCursorV1 arguments[] = {
+        {query->expr.elems[1], NULL},
+    };
+    CettaMatchDecisionQueryViewV1 view = {
+        .head = {query->expr.elems[0], NULL},
+        .arguments = arguments, .arity = 1u,
+        .observer = {bindings_resolve_term_cursor_v1, &context},
+    };
+    CettaMatchDecisionEquation equations[] = {
+        {parse_one(arena, "(pick (hold ax1))"), 1u},
+        {parse_one(arena, "(pick (hold (mp $f)))"), 2u},
+        {parse_one(arena, "(pick (hold ax3))"), 3u},
+    };
+    const uint32_t mp_only[] = {2u};
+    for (int mode = CETTA_MATCH_DECISION_DEEP;
+         mode <= CETTA_MATCH_DECISION_CONJUNCTIVE; mode++) {
+        for (unsigned realization = 0u; realization < 4u; realization++) {
+            CettaMatchDecision *decision = cetta_match_decision_compile(
+                space_read_token(space), semantics, equations, 3u,
+                (CettaMatchDecisionMode)mode, 0u,
+                (CettaMatchDecisionRealization){
+                    .use_direct_prefix_observation =
+                        (realization & 1u) != 0u,
+                    .use_eager_prefix_observation =
+                        (realization & 2u) != 0u,
+                }, NULL, NULL);
+            assert(decision);
+            expect_cursor_refs(
+                decision, space, semantics, &view, mp_only, 1u);
+            cetta_match_decision_free(decision);
+        }
+    }
     bindings_builder_free(&builder);
 }
 
@@ -276,12 +331,12 @@ static void test_scoped_equality(
     Atom *b = atom_symbol(arena, "value-b");
     Atom *left = atom_expr2(arena, box, source);
     Atom *right = atom_expr2(arena, box, ordinary);
-    CettaMatchDecisionClause clauses[] = {
+    CettaMatchDecisionEquation equations[] = {
         {parse_one(arena, "(view-equality $x $x)"), 1u},
         {parse_one(arena, "(view-equality $x $y)"), 2u},
         {NULL, 3u},
     };
-    clauses[2].pattern = clauses[0].pattern;
+    equations[2].pattern = equations[0].pattern;
     const uint32_t all[] = {1u, 2u, 3u}, independent[] = {2u};
     for (int mode = CETTA_MATCH_DECISION_DEEP;
          mode <= CETTA_MATCH_DECISION_CONJUNCTIVE; mode++) {
@@ -291,16 +346,16 @@ static void test_scoped_equality(
         assert(bindings_builder_add_var_fresh(&builder, ordinary, b));
         assert(bindings_builder_add_var_fresh(&builder, source, b));
         uint32_t first = builder.current.len;
-        uint32_t mark = bindings_builder_save(&builder);
         const uint32_t epoch = 73u;
-        assert(bindings_builder_add_id_fresh(&builder,
-            var_epoch_id(source->var_id, epoch), source->sym_id, outer));
-        BindingsDenseEpochFrame frame;
-        bindings_dense_epoch_frame_init(&frame);
+        BindingsActivationView frame;
+        bindings_activation_view_init(&frame);
         VarId ids[] = {source->var_id};
         Atom *variables[] = {source};
-        assert(bindings_dense_epoch_frame_prepare(
+        assert(bindings_activation_view_prepare(
             &frame, &builder, ids, variables, 1u, epoch, first));
+        uint32_t mark = bindings_builder_save(&builder);
+        assert(bindings_builder_add_id_fresh(&builder,
+            var_epoch_id(source->var_id, epoch), source->sym_id, outer));
         BindingsTermCursorContextV1 context = {&builder.current, &frame};
         CettaGsltTermCursorV1 arguments[] = {{left, &frame}, {right, NULL}};
         CettaMatchDecisionQueryViewV1 query = {
@@ -308,7 +363,7 @@ static void test_scoped_equality(
             .observer = {bindings_resolve_term_cursor_v1, &context},
         };
         CettaMatchDecision *decision = cetta_match_decision_compile(
-            space_read_token(space), semantics, clauses, 3u,
+            space_read_token(space), semantics, equations, 3u,
             (CettaMatchDecisionMode)mode, 0u,
             (CettaMatchDecisionRealization){0}, NULL, NULL);
         assert(decision);
@@ -320,19 +375,19 @@ static void test_scoped_equality(
         /* One raw subtree in two environments must not be treated as equal. */
         arguments[1].source = left;
         expect_cursor_refs(decision, space, semantics, &query, independent, 1u);
-        /* Equal observations preserve both occurrences of the same clause. */
+        /* Equal observations preserve both occurrences of the same equation. */
         arguments[1] = arguments[0];
         expect_cursor_refs(decision, space, semantics, &query, all, 3u);
         arguments[1] = (CettaGsltTermCursorV1){right, NULL};
         bindings_builder_rollback(&builder, mark);
         expect_cursor_refs(decision, space, semantics, &query, all, 3u);
-        assert(bindings_dense_epoch_frame_prepare(
+        assert(bindings_activation_view_prepare(
             &frame, &builder, ids, variables, 1u, epoch, first));
         /* An unbound authored variable cannot borrow its ordinary namesake. */
         expect_cursor_refs(decision, space, semantics, &query, all, 3u);
         assert(bindings_builder_add_id_fresh(&builder,
             var_epoch_id(source->var_id, epoch), source->sym_id, b));
-        assert(bindings_dense_epoch_frame_refresh(&frame, &builder));
+        assert(bindings_activation_view_available(&frame, &builder.current));
         expect_cursor_refs(decision, space, semantics, &query, all, 3u);
         /* A bounded observation may be less precise than complete forcing.
          * It must leave the unknown suffix to the authoritative matcher. */
@@ -344,8 +399,8 @@ static void test_scoped_equality(
         arguments[0] = (CettaGsltTermCursorV1){deep_left, &frame};
         arguments[1] = (CettaGsltTermCursorV1){deep_right, NULL};
         expect_cursor_refs(decision, space, semantics, &query, all, 3u);
-        Atom *forced = bindings_apply_dense_epoch_frame_then_all(
-            &builder, arena, deep_left, &frame);
+        Atom *forced = bindings_apply_activation_view_then_all(
+            &builder.current, arena, deep_left, &frame);
         assert(forced);
         expect_refs(decision, space, atom_expr3(arena, head, forced, deep_right),
                     semantics, UINT64_MAX, independent, 1u);
@@ -361,13 +416,13 @@ static void test_scoped_equality(
         arguments[0] = (CettaGsltTermCursorV1){wide_left, &frame};
         arguments[1] = (CettaGsltTermCursorV1){wide_right, NULL};
         expect_cursor_refs(decision, space, semantics, &query, all, 3u);
-        forced = bindings_apply_dense_epoch_frame_then_all(
-            &builder, arena, wide_left, &frame);
+        forced = bindings_apply_activation_view_then_all(
+            &builder.current, arena, wide_left, &frame);
         assert(forced);
         expect_refs(decision, space, atom_expr3(arena, head, forced, wide_right),
                     semantics, UINT64_MAX, independent, 1u);
         cetta_match_decision_free(decision);
-        bindings_dense_epoch_frame_free(&frame);
+        bindings_activation_view_free(&frame);
         bindings_builder_free(&builder);
     }
 }
@@ -440,7 +495,7 @@ int main(void) {
     g_var_intern = &variables;
     space_init_with_universe(&space, &universe);
 
-    CettaMatchDecisionClause clauses[] = {
+    CettaMatchDecisionEquation equations[] = {
         {parse_one(&persistent,
              "(f (: $proof (-> (imp $p (imp $q $p)) $out)))"), 11u},
         {parse_one(&persistent,
@@ -455,8 +510,8 @@ int main(void) {
              "(f (: $proof2 (-> $domain2 $codomain2)))"), 45u},
     };
     for (size_t index = 0u;
-         index < sizeof(clauses) / sizeof(clauses[0]); index++) {
-        assert(clauses[index].pattern);
+         index < sizeof(equations) / sizeof(equations[0]); index++) {
+        assert(equations[index].pattern);
     }
     Atom *ax1_query = parse_one(
         &persistent,
@@ -481,21 +536,22 @@ int main(void) {
 
     test_scoped_cursors(&persistent, &space, semantic_identity, false);
     test_scoped_cursors(&persistent, &space, semantic_identity, true);
+    test_bound_constructor_prefix(&persistent, &space, semantic_identity);
     test_pivot_observation_demand(&persistent, &space, semantic_identity);
 
     CettaMatchDecision *linear = cetta_match_decision_compile(
-        space_read_token(&space), semantic_identity, clauses,
-        sizeof(clauses) / sizeof(clauses[0]),
+        space_read_token(&space), semantic_identity, equations,
+        sizeof(equations) / sizeof(equations[0]),
         CETTA_MATCH_DECISION_LINEAR, 0u,
         (CettaMatchDecisionRealization){0}, NULL, NULL);
     CettaMatchDecision *deep = cetta_match_decision_compile(
-        space_read_token(&space), semantic_identity, clauses,
-        sizeof(clauses) / sizeof(clauses[0]),
+        space_read_token(&space), semantic_identity, equations,
+        sizeof(equations) / sizeof(equations[0]),
         CETTA_MATCH_DECISION_DEEP, 0u,
         (CettaMatchDecisionRealization){0}, NULL, NULL);
     CettaMatchDecision *opaque = cetta_match_decision_compile(
-        space_read_token(&space), semantic_identity, clauses,
-        sizeof(clauses) / sizeof(clauses[0]),
+        space_read_token(&space), semantic_identity, equations,
+        sizeof(equations) / sizeof(equations[0]),
         CETTA_MATCH_DECISION_DEEP, 0u,
         (CettaMatchDecisionRealization){0}, opaque_argument, NULL);
     assert(linear && deep && opaque);
@@ -508,7 +564,7 @@ int main(void) {
 
     const uint32_t all[] = {11u, 22u, 33u, 44u, 45u};
     const uint32_t ax1[] = {11u, 44u, 45u};
-    /* Clause 11 is structurally compatible but its repeated `$p` observes
+    /* Equation 11 is structurally compatible but its repeated `$p` observes
      * different ground subterms.  The equality refuter removes precisely that
      * occurrence while preserving authored order for every survivor. */
     const uint32_t ax2[] = {22u, 44u, 45u};
@@ -538,8 +594,8 @@ int main(void) {
      * preserve the whole-call selector's positive, negative, and unavailable
      * observations exactly. */
     CettaMatchDecision *parts = cetta_match_decision_compile(
-        space_read_token(&space), semantic_identity, clauses,
-        sizeof(clauses) / sizeof(clauses[0]),
+        space_read_token(&space), semantic_identity, equations,
+        sizeof(equations) / sizeof(equations[0]),
         CETTA_MATCH_DECISION_DEEP, 0u,
         (CettaMatchDecisionRealization){0}, NULL, NULL);
     assert(parts);
@@ -554,7 +610,7 @@ int main(void) {
      * and child observations still refute, in both indexed and generic
      * policies and every prefix/equality realization. Five distinct lists
      * also exceed the complete-key shortcut's three-list bound. */
-    CettaMatchDecisionClause partial_clauses[] = {
+    CettaMatchDecisionEquation partial_equations[] = {
         {parse_one(&persistent, "(partial (a one))"), 1u},
         {parse_one(&persistent, "(partial (b one))"), 2u},
         {parse_one(&persistent, "(partial (c one))"), 3u},
@@ -574,7 +630,7 @@ int main(void) {
     for (size_t i = 0u; i < 7u; i++) {
         Bindings witness;
         bindings_init(&witness);
-        assert(match_atoms(partial_query, partial_clauses[i].pattern,
+        assert(match_atoms(partial_query, partial_equations[i].pattern,
                            &witness) == (i < 6u));
         bindings_free(&witness);
     }
@@ -583,7 +639,7 @@ int main(void) {
         for (unsigned realization = 0u; realization < 8u; realization++) {
             CettaMatchDecision *partial = cetta_match_decision_compile(
                 space_read_token(&space), semantic_identity,
-                partial_clauses, 7u, (CettaMatchDecisionMode)mode, 0u,
+                partial_equations, 7u, (CettaMatchDecisionMode)mode, 0u,
                 (CettaMatchDecisionRealization){
                     .use_direct_prefix_observation = (realization & 1u) != 0u,
                     .use_eager_prefix_observation = (realization & 2u) != 0u,
@@ -619,7 +675,7 @@ int main(void) {
     /* Availability is an information order: revealing another argument may
      * only remove refuted occurrences.  This property does not need the
      * linear backend as a referee. */
-    CettaMatchDecisionClause ladder_clauses[] = {
+    CettaMatchDecisionEquation ladder_equations[] = {
         {parse_one(&persistent, "(g A B)"), 101u},
         {parse_one(&persistent, "(g A $right)"), 102u},
         {parse_one(&persistent, "(g $left B)"), 103u},
@@ -629,8 +685,8 @@ int main(void) {
     Atom *ladder_query = parse_one(&persistent, "(g A B)");
     CettaMatchDecision *ladder = cetta_match_decision_compile(
         space_read_token(&space), semantic_identity,
-        ladder_clauses,
-        sizeof(ladder_clauses) / sizeof(ladder_clauses[0]),
+        ladder_equations,
+        sizeof(ladder_equations) / sizeof(ladder_equations[0]),
         CETTA_MATCH_DECISION_DEEP, 0u,
         (CettaMatchDecisionRealization){0}, NULL, NULL);
     assert(ladder && ladder_query);
@@ -657,10 +713,10 @@ int main(void) {
     cetta_match_decision_free(ladder);
 
     /* Distributed discrimination needs conjunction: every single board
-     * position leaves a different impossible clause alive, while intersecting
+     * position leaves a different impossible equation alive, while intersecting
      * all observable positions keeps exactly the structurally possible
      * occurrences.  The duplicate remains distinct and source ordered. */
-    CettaMatchDecisionClause grid_clauses[] = {
+    CettaMatchDecisionEquation grid_equations[] = {
         {parse_one(&persistent, "(grid (blank $a $b))"), 201u},
         {parse_one(&persistent, "(grid ($a blank $b))"), 202u},
         {parse_one(&persistent, "(grid ($a $b blank))"), 203u},
@@ -672,8 +728,8 @@ int main(void) {
     Atom *grid_open = parse_one(&persistent, "(grid $state)");
     CettaMatchDecision *conjunctive = cetta_match_decision_compile(
         space_read_token(&space), semantic_identity,
-        grid_clauses,
-        sizeof(grid_clauses) / sizeof(grid_clauses[0]),
+        grid_equations,
+        sizeof(grid_equations) / sizeof(grid_equations[0]),
         CETTA_MATCH_DECISION_CONJUNCTIVE, 0u,
         (CettaMatchDecisionRealization){0}, NULL, NULL);
     assert(conjunctive && grid_query && grid_open);
@@ -685,13 +741,16 @@ int main(void) {
                 0u, grid_all, 5u);
     expect_refs(conjunctive, &space, grid_open, semantic_identity,
                 UINT64_MAX, grid_all, 5u);
+    CettaMatchDecisionStats tree_stats;
+    cetta_match_decision_stats(conjunctive, &tree_stats);
+    assert(tree_stats.code_tree_node_visits > 0u);
     cetta_match_decision_free(conjunctive);
 
     /* Repeated source variables compile to cross-position equality
      * refuters.  A ground disagreement removes only nonlinear occurrences;
      * equal and unavailable observations retain authored order and duplicate
      * occurrences for the canonical matcher. */
-    CettaMatchDecisionClause equality_clauses[] = {
+    CettaMatchDecisionEquation equality_equations[] = {
         {parse_one(&persistent, "(equal $x $x)"), 301u},
         {parse_one(&persistent, "(equal $x $y)"), 302u},
         {parse_one(&persistent, "(equal $x $x)"), 303u},
@@ -704,8 +763,8 @@ int main(void) {
         parse_one(&persistent, "(equal $open right)");
     CettaMatchDecision *equality = cetta_match_decision_compile(
         space_read_token(&space), semantic_identity,
-        equality_clauses,
-        sizeof(equality_clauses) / sizeof(equality_clauses[0]),
+        equality_equations,
+        sizeof(equality_equations) / sizeof(equality_equations[0]),
         CETTA_MATCH_DECISION_DEEP, 0u,
         (CettaMatchDecisionRealization){0}, NULL, NULL);
     assert(equality && equality_disagrees && equality_agrees &&
@@ -724,7 +783,7 @@ int main(void) {
      * ordinary selection.  Their endpoint requests join the shared prefix
      * graph, while shallow disjoint equalities above remain on the direct
      * walker because the charged representation would not save work. */
-    CettaMatchDecisionClause deep_equality_clauses[] = {
+    CettaMatchDecisionEquation deep_equality_equations[] = {
         {parse_one(&persistent,
             "(equal-deep (nest (pair $x $x)))"), 311u},
         {parse_one(&persistent,
@@ -742,9 +801,9 @@ int main(void) {
         &persistent, "(equal-deep (nest (pair $open right)))");
     CettaMatchDecision *deep_equality = cetta_match_decision_compile(
         space_read_token(&space), semantic_identity,
-        deep_equality_clauses,
-        sizeof(deep_equality_clauses) /
-            sizeof(deep_equality_clauses[0]),
+        deep_equality_equations,
+        sizeof(deep_equality_equations) /
+            sizeof(deep_equality_equations[0]),
         CETTA_MATCH_DECISION_DEEP, 8u,
         (CettaMatchDecisionRealization){0}, NULL, NULL);
     assert(deep_equality && deep_equality_disagrees &&
@@ -766,7 +825,7 @@ int main(void) {
      * across literal, duplicate, and wildcard occurrences.  Present, unknown,
      * unavailable, absent, and split-register observations must retain the
      * same ordered candidate superset as independent path walking. */
-    CettaMatchDecisionClause prefix_clauses[] = {
+    CettaMatchDecisionEquation prefix_equations[] = {
         {parse_one(&persistent,
             "(prefix (nest (nest (nest (nest (row a))))))"), 401u},
         {parse_one(&persistent,
@@ -784,9 +843,9 @@ int main(void) {
         {parse_one(&persistent, "(prefix $open)"), 408u},
     };
     for (size_t index = 0u;
-         index < sizeof(prefix_clauses) / sizeof(prefix_clauses[0]);
+         index < sizeof(prefix_equations) / sizeof(prefix_equations[0]);
          index++) {
-        assert(prefix_clauses[index].pattern);
+        assert(prefix_equations[index].pattern);
     }
     Atom *prefix_hit = parse_one(
         &persistent,
@@ -795,8 +854,8 @@ int main(void) {
     Atom *prefix_absent = parse_one(&persistent, "(prefix)");
     CettaMatchDecision *prefix = cetta_match_decision_compile(
         space_read_token(&space), semantic_identity,
-        prefix_clauses,
-        sizeof(prefix_clauses) / sizeof(prefix_clauses[0]),
+        prefix_equations,
+        sizeof(prefix_equations) / sizeof(prefix_equations[0]),
         CETTA_MATCH_DECISION_DEEP, 12u,
         (CettaMatchDecisionRealization){0}, NULL, NULL);
     assert(prefix && prefix_hit && prefix_open && prefix_absent);
@@ -821,9 +880,9 @@ int main(void) {
      * and duplicate exact occurrences remain an ordered bag; the cost model
      * is measured by the benchmark, not prescribed by this semantic test. */
     const size_t wide_count = 10000u;
-    CettaMatchDecisionClause *wide_clauses =
-        calloc(wide_count, sizeof(*wide_clauses));
-    assert(wide_clauses);
+    CettaMatchDecisionEquation *wide_equations =
+        calloc(wide_count, sizeof(*wide_equations));
+    assert(wide_equations);
     char wide_source[96];
     for (size_t index = 0u; index < wide_count; index++) {
         if (index == 101u || index == 9001u) {
@@ -836,15 +895,15 @@ int main(void) {
             snprintf(wide_source, sizeof(wide_source),
                      "(wide key%zu $value)", index);
         }
-        wide_clauses[index] = (CettaMatchDecisionClause){
+        wide_equations[index] = (CettaMatchDecisionEquation){
             .pattern = parse_one(&persistent, wide_source),
             .source_ref = (uint32_t)(100000u + index),
         };
-        assert(wide_clauses[index].pattern);
+        assert(wide_equations[index].pattern);
     }
     CettaMatchDecision *wide = cetta_match_decision_compile(
         space_read_token(&space), semantic_identity,
-        wide_clauses, wide_count,
+        wide_equations, wide_count,
         CETTA_MATCH_DECISION_DEEP, 0u,
         (CettaMatchDecisionRealization){0}, NULL, NULL);
     Atom *wide_hit = parse_one(&persistent, "(wide target observed)");
@@ -867,9 +926,9 @@ int main(void) {
                     UINT64_MAX, wide_hit_refs, 4u);
     }
     cetta_match_decision_free(wide);
-    free(wide_clauses);
+    free(wide_equations);
 
-    /* Textually identical clauses under another matcher policy are another
+    /* Textually identical equations under another matcher policy are another
      * semantic world, not a cache hit. */
     CettaMatchDecisionSemanticIdentity changed_semantics =
         semantic_identity;
@@ -896,7 +955,7 @@ int main(void) {
            CETTA_MATCH_DECISION_SELECT_INVALIDATED);
     assert(!stale && stale_count == 0u);
 
-    /* A PeTTa clause selector is more narrowly derived: data is outside its
+    /* A PeTTa equation selector is more narrowly derived: data is outside its
        equation-pattern input, while a program edit still invalidates it. */
     Atom *equation_a = parse_one(
         &persistent, "(= (projection-case alpha) first)");
@@ -908,14 +967,14 @@ int main(void) {
     Atom *projection_query = parse_one(
         &persistent, "(projection-case alpha)");
     assert(projection_query);
-    CettaMatchDecisionClause projection_clauses[] = {
+    CettaMatchDecisionEquation projection_equations[] = {
         {equation_a->expr.elems[1], 0u},
         {equation_b->expr.elems[1], 1u},
     };
     CettaMatchDecision *projection =
         cetta_match_decision_compile_equation_projection(
             space_equation_token(&space), semantic_identity,
-            projection_clauses, 2u, CETTA_MATCH_DECISION_DEEP, 0u,
+            projection_equations, 2u, CETTA_MATCH_DECISION_DEEP, 0u,
             (CettaMatchDecisionRealization){0}, NULL, NULL);
     assert(projection);
     const uint32_t projection_refs[] = {0u};

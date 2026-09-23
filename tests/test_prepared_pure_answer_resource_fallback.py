@@ -77,9 +77,11 @@ def main():
     parser.add_argument("--stats", action="store_true")
     args = parser.parse_args()
     source = Path(__file__).with_name("prepared_pure_answer_resource_fallback.metta")
-    environment = dict(os.environ, CETTA_GC="0")
+    # The speculation purse is the collection budget; one mebibyte cannot
+    # hold the middle stream's published occurrences.
+    environment = dict(os.environ, CETTA_GC="1", CETTA_GC_BUDGET_MB="1")
     for language in ("he", "petta", "prime"):
-        streams = [["leaf"] * count for count in (2, 32768, 2)]
+        streams = [["(leaf)"] * count for count in (2, 32768, 2)]
         expected = "".join(
             ("\n".join(stream) if language == "petta"
              else "[" + ", ".join(stream) + "]") + "\n"

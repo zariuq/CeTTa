@@ -50,6 +50,11 @@ struct ArenaFinalizer {
     struct ArenaFinalizer *next;
 };
 
+struct ArenaRetainedOwner {
+    ArenaFinalizer finalizer;
+    struct ArenaRetainedOwner *next_owner;
+};
+
 typedef struct {
     Atom atom;
     void *owner;
@@ -83,6 +88,12 @@ struct AtomDeepCopySession {
     AtomDeepCopyResolver resolver;
     void *resolver_context;
 };
+
+bool atom_deep_copy_session_retain_frame(
+        AtomDeepCopySession *session, CettaFrameIdentity identity) {
+    return session && (identity == 0u ||
+        arena_retain_frame_identity(session->dst, identity));
+}
 
 /* ── Arena ──────────────────────────────────────────────────────────────── */
 
@@ -531,6 +542,7 @@ static void provenance_check_atom(Atom *root, Atom *atom, const char *site,
         case GV_SPACE:
         case GV_STATE:
         case GV_CAPTURE:
+        case GV_BINDINGS:
         case GV_FOREIGN:
             provenance_check_ptr(root, site, allowed_owner, "grounded handle",
                                  current->ground.ptr);
@@ -629,11 +641,23 @@ enum {
 _Static_assert(ARENA_SYMBOL_CACHE_CAPACITY <= 64u,
                "arena symbol cache occupancy fits one word");
 
+enum {
+    ARENA_INT_CACHE_MIN = -16,
+    ARENA_INT_CACHE_CAPACITY = 256,
+};
+
 struct ArenaSymbolCache {
     Atom *atoms[ARENA_SYMBOL_CACHE_CAPACITY];
     uint64_t epochs[ARENA_SYMBOL_CACHE_CAPACITY];
     uint64_t occupied;
     uint64_t symbol_table_instance;
+    /* An arena with a scalar cache keeps its canonical scalars here instead,
+     * in storage its own resets never reclaim: one atom per symbol slot and
+     * per small integer, so the owner stays bounded while the scalars
+     * outlive every per-call reset of the arena they are handed out by. */
+    Atom *ints[ARENA_INT_CACHE_CAPACITY];
+    Arena owner;
+    bool owner_ready;
 };
 
 static size_t arena_symbol_cache_storage_bytes(
@@ -644,6 +668,8 @@ static size_t arena_symbol_cache_storage_bytes(
 static void arena_symbol_cache_free(Arena *a) {
     if (!a || !a->symbol_cache)
         return;
+    if (a->symbol_cache->owner_ready)
+        arena_free(&a->symbol_cache->owner);
     free(a->symbol_cache);
     a->symbol_cache = NULL;
     a->symbol_cache_bytes = 0u;
@@ -671,6 +697,9 @@ void arena_init(Arena *a) {
     a->identity = identity;
     a->reset_epoch = 1u;
     a->finalizers = NULL;
+    a->retained_owners = NULL;
+    a->frame_identities = NULL;
+    a->scalar_cache = false;
 }
 
 void arena_init_detached(Arena *a) {
@@ -682,6 +711,8 @@ static void arena_run_finalizers_until(Arena *a, ArenaFinalizer *stop) {
     while (a->finalizers != stop) {
         ArenaFinalizer *node = a->finalizers;
         a->finalizers = node->next;
+        if (a->retained_owners && node == &a->retained_owners->finalizer)
+            a->retained_owners = a->retained_owners->next_owner;
         node->fn(node->ptr);
         free(node);
     }
@@ -694,6 +725,277 @@ static void arena_register_finalizer(Arena *a, void (*fn)(void *), void *ptr) {
     node->next = a->finalizers;
     a->finalizers = node;
     arena_account_external_bytes(a, sizeof(*node));
+}
+
+bool arena_retain_owner(Arena *a, void *owner,
+                        void (*retain)(void *), void (*release)(void *)) {
+    if (!a || !owner || !retain || !release)
+        return false;
+    for (ArenaRetainedOwner *held = a->retained_owners; held; held = held->next_owner) {
+        if (held->finalizer.ptr == owner && held->finalizer.fn == release)
+            return true;
+    }
+    ArenaRetainedOwner *held = cetta_malloc(sizeof(*held));
+    retain(owner);
+    *held = (ArenaRetainedOwner){
+        .finalizer = {.fn = release, .ptr = owner, .next = a->finalizers},
+        .next_owner = a->retained_owners,
+    };
+    a->finalizers = &held->finalizer;
+    a->retained_owners = held;
+    arena_account_external_bytes(a, sizeof(*held));
+    return true;
+}
+
+/* ── Arena frame-identity ownership ─────────────────────────────────────── */
+/*
+ * One hold per distinct full generational identity reachable from this arena's
+ * live allocation region.  Syntax construction consults the set for every
+ * variable occurrence, so a term mentioning one activation's variable a
+ * thousand times performs one retain and keeps one record.
+ *
+ * Records are appended in acquisition order and never permuted, so a partial
+ * reset can drop exactly the suffix acquired after its mark.  The index is an
+ * Threading contract: an Arena is owned by one thread at a time, by the same
+ * lifetime confinement as the rest of its allocation fields.  Arena access is
+ * not synchronized internally — mutual exclusion is the caller's
+ * responsibility.  The retain/release it performs calls the global identity
+ * allocator, which keeps per-cell atomics; those atomics make the borrow
+ * correct across threads.  No GIL is read or held by the set.
+ */
+struct ArenaFrameIdentitySet {
+    CettaFrameIdentity *identities;   /* acquisition order                */
+    uint32_t *slots;                  /* index -> record position         */
+    uint32_t *index;                  /* record position -> its index slot */
+    uint32_t len;                     /* distinct live identities         */
+    uint32_t cap;                     /* capacity of `identities`         */
+    uint32_t slot_cap;                /* power of two, or zero            */
+    uint32_t slot_mask;
+};
+
+enum {
+    ARENA_FRAME_IDENTITY_SET_MIN_CAPACITY = 8u,
+    ARENA_FRAME_IDENTITY_SET_MAX_CAPACITY = UINT32_C(0x80000000),
+};
+
+static size_t arena_frame_identity_set_bytes(const ArenaFrameIdentitySet *set);
+
+static ArenaFrameIdentitySet *arena_frame_identity_set_alloc(void) {
+    ArenaFrameIdentitySet *set = cetta_malloc(sizeof(*set));
+    *set = (ArenaFrameIdentitySet){0};
+    return set;
+}
+
+static void arena_frame_identity_set_dispose(ArenaFrameIdentitySet *set) {
+    if (!set)
+        return;
+    for (uint32_t i = 0u; i < set->len; i++)
+        cetta_frame_identity_release(set->identities[i]);
+    free(set->identities);
+    free(set->slots);
+    free(set->index);
+    free(set);
+}
+
+/* Audit finalizer ordering: on reset, identity holds are released *before*
+ * per-arena object finalizers (BigInt, rational, etc.) run.  Those finalizers
+ * clear GMP payloads; they do not read frame identities.  This ordering is
+ * safe — and it is the only order available, because finalizer cleanup is
+ * the last stop before arena teardown.
+ */
+
+/* Storage retained by the set itself.  The arena must account for this
+ * wherever the set lives: allocation policies consult `external_bytes`
+ * and floors into `live_bytes`.  Capacity that survives a partial reset
+ * is still charged; only a full `arena_free` releases the object. */
+static size_t arena_frame_identity_set_bytes(const ArenaFrameIdentitySet *set) {
+    if (!set)
+        return 0u;
+    return sizeof(*set) + (size_t)set->cap * sizeof(*set->identities) +
+           (size_t)set->cap * sizeof(*set->index) +
+           (size_t)set->slot_cap * sizeof(*set->slots);
+}
+
+/* Charge the arena for identity-set storage.  The arena already accounts for
+ * the set as part of `external_bytes` when it is created and freed, recording
+ * the retained block so partial-reset capacity does not masquerade as free
+ * space.  This helper only handles shape changes after creation. */
+static void arena_frame_identity_set_account_growth(Arena *a,
+                                                    size_t previous_bytes) {
+    if (!a || !a->frame_identities)
+        return;
+    size_t now = arena_frame_identity_set_bytes(a->frame_identities);
+    if (now >= previous_bytes) {
+        if (now > previous_bytes)
+        arena_account_external_bytes(a, now - previous_bytes);
+    } else {
+        a->external_bytes -= (previous_bytes - now);
+    }
+}
+
+/* Index slots hold `position + 1` so that zero means "empty". */
+static uint32_t arena_frame_identity_index_slot(
+        const ArenaFrameIdentitySet *set, CettaFrameIdentity identity) {
+    uint64_t mixed = identity;
+    mixed ^= mixed >> 33u;
+    mixed *= UINT64_C(0xff51afd7ed558ccd);
+    mixed ^= mixed >> 29u;
+    return (uint32_t)mixed & set->slot_mask;
+}
+
+static bool arena_frame_identity_set_index_reserve(ArenaFrameIdentitySet *set,
+                                                   uint32_t needed) {
+    uint32_t wanted = ARENA_FRAME_IDENTITY_SET_MIN_CAPACITY;
+    while (wanted < needed * 2u) {
+        if (wanted > ARENA_FRAME_IDENTITY_SET_MAX_CAPACITY / 2u)
+            return false;
+        wanted *= 2u;
+    }
+    if (set->slot_cap >= wanted)
+        return true;
+    free(set->slots);
+    set->slots = cetta_malloc((size_t)wanted * sizeof(*set->slots));
+    memset(set->slots, 0, (size_t)wanted * sizeof(*set->slots));
+    set->slot_cap = wanted;
+    set->slot_mask = wanted - 1u;
+    for (uint32_t i = 0u; i < set->len; i++) {
+        uint32_t slot = arena_frame_identity_index_slot(set, set->identities[i]);
+        while (set->slots[slot])
+            slot = (slot + 1u) & set->slot_mask;
+        set->slots[slot] = i + 1u;
+        set->index[i] = slot;
+    }
+    return true;
+}
+
+static bool arena_frame_identity_set_records_reserve(ArenaFrameIdentitySet *set,
+                                                     uint32_t needed) {
+    if (needed <= set->cap)
+        return true;
+    uint32_t capacity = set->cap ? set->cap
+                                 : ARENA_FRAME_IDENTITY_SET_MIN_CAPACITY;
+    while (capacity < needed) {
+        if (capacity > ARENA_FRAME_IDENTITY_SET_MAX_CAPACITY / 2u) {
+            capacity = needed;
+            break;
+        }
+        capacity *= 2u;
+    }
+    if ((size_t)capacity > SIZE_MAX / sizeof(*set->identities) ||
+        (size_t)capacity > SIZE_MAX / sizeof(*set->index))
+        return false;
+    CettaFrameIdentity *identities = cetta_realloc(
+        set->identities, (size_t)capacity * sizeof(*identities));
+    uint32_t *index = cetta_realloc(
+        set->index, (size_t)capacity * sizeof(*index));
+    set->identities = identities;
+    set->index = index;
+    set->cap = capacity;
+    return true;
+}
+
+/* The most recently acquired identity is a likely repeat, so probe the tail
+ * before consulting the index.  Repeated occurrences of one variable, which
+ * is the common shape in generated activation syntax, are then found without
+ * touching the index at all. */
+static bool arena_frame_identity_set_find(const ArenaFrameIdentitySet *set,
+                                          CettaFrameIdentity identity,
+                                          uint32_t *position_out) {
+    if (!set || set->len == 0u)
+        return false;
+    if (set->identities[set->len - 1u] == identity) {
+        if (position_out)
+            *position_out = set->len - 1u;
+        return true;
+    }
+    if (!set->slot_cap)
+        return false;
+    uint32_t slot = arena_frame_identity_index_slot(set, identity);
+    for (;;) {
+        uint32_t entry = set->slots[slot];
+        if (!entry)
+            return false;
+        uint32_t position = entry - 1u;
+        if (set->identities[position] == identity) {
+            if (position_out)
+                *position_out = position;
+            return true;
+        }
+        slot = (slot + 1u) & set->slot_mask;
+    }
+}
+
+/* Claim one hold.  Failure to retain leaves the set untouched, so a stale
+ * identity can never become cached membership. */
+static bool arena_frame_identity_set_acquire(Arena *a,
+                                             CettaFrameIdentity identity) {
+    if (identity == 0u)
+        return true;
+    if (!a->frame_identities) {
+        a->frame_identities = arena_frame_identity_set_alloc();
+        /* The object itself is now charged; no identities yet to account. */
+        arena_account_external_bytes(
+            a, arena_frame_identity_set_bytes(a->frame_identities));
+    }
+    ArenaFrameIdentitySet *set = a->frame_identities;
+    if (arena_frame_identity_set_find(set, identity, NULL))
+        return true;
+    size_t before;
+    if (!a->frame_identities)
+        before = 0u;
+    else
+        before = arena_frame_identity_set_bytes(set);
+    if (set->len == UINT32_MAX ||
+        !arena_frame_identity_set_records_reserve(set, set->len + 1u) ||
+        !arena_frame_identity_set_index_reserve(set, set->len + 1u))
+        return false;
+    if (!cetta_frame_identity_retain(identity))
+        return false;
+    uint32_t position = set->len;
+    uint32_t slot = arena_frame_identity_index_slot(set, identity);
+    while (set->slots[slot])
+        slot = (slot + 1u) & set->slot_mask;
+    set->slots[slot] = position + 1u;
+    set->identities[position] = identity;
+    set->index[position] = slot;
+    set->len = position + 1u;
+    arena_frame_identity_set_account_growth(a, before);
+    return true;
+}
+
+static void arena_frame_identity_set_truncate(Arena *a, uint32_t length) {
+    ArenaFrameIdentitySet *set = a->frame_identities;
+    if (!set || length >= set->len)
+        return;
+    for (uint32_t i = length; i < set->len; i++) {
+        uint32_t slot = set->index[i];
+        set->slots[slot] = 0u;
+        cetta_frame_identity_release(set->identities[i]);
+    }
+    set->len = length;
+    /* Survivors keep their slots and `index` positions unchanged.  Their probe
+     * chains cannot have depended on any removed slot, because insertion
+     * appends records and `index_reserve` reinserts the entire prefix in
+     * acquisition order: every probe visited only slots inserted earlier.
+     * A removed record was inserted later than any record that survives,
+     * so no surviving chain skipped through it. */
+}
+
+static void arena_release_frame_identities(Arena *a) {
+    if (!a || !a->frame_identities)
+        return;
+    ArenaFrameIdentitySet *set = a->frame_identities;
+    size_t bytes = arena_frame_identity_set_bytes(set);
+    arena_frame_identity_set_dispose(a->frame_identities);
+    a->frame_identities = NULL;
+    if (a->external_bytes >= bytes)
+        a->external_bytes -= bytes;
+    else
+        a->external_bytes = 0u;
+}
+
+bool arena_retain_frame_identity(Arena *a, CettaFrameIdentity identity) {
+    return a && arena_frame_identity_set_acquire(a, identity);
 }
 
 static void arena_invalidate_allocations(
@@ -721,6 +1023,7 @@ void arena_free(Arena *a) {
     arena_free_block_list(a->head);
     arena_free_block_list(a->spare);
     arena_symbol_cache_free(a);
+    arena_release_frame_identities(a);
     a->head = NULL;
     a->spare = NULL;
     a->live_bytes = 0;
@@ -751,6 +1054,11 @@ void arena_reserve(Arena *a, size_t size) {
 void arena_set_hashcons(Arena *a, HashConsTable *hc) {
     if (!a) return;
     a->hashcons = hc;
+}
+
+void arena_set_scalar_cache(Arena *a, bool enabled) {
+    if (a)
+        a->scalar_cache = enabled;
 }
 
 void arena_set_runtime_kind(Arena *a, CettaArenaRuntimeKind kind) {
@@ -787,12 +1095,15 @@ ArenaMark arena_mark(const Arena *a) {
     mark.reserved_bytes = a->reserved_bytes;
     mark.block_count = a->block_count;
     mark.finalizers = a->finalizers;
+    mark.frame_identity_len = a->frame_identities
+        ? a->frame_identities->len : 0u;
     return mark;
 }
 
 void arena_reset(Arena *a, ArenaMark mark) {
     if (!a) return;
     arena_invalidate_allocations(a, CETTA_GSLT_LIFETIME_ARENA_RESET);
+    arena_frame_identity_set_truncate(a, mark.frame_identity_len);
     arena_run_finalizers_until(a, mark.finalizers);
     ArenaBlock *recycled = NULL;
     while (a->head && a->head != mark.head) {
@@ -857,6 +1168,7 @@ static uint32_t atom_hash_compute(Atom *a) {
         case GV_SPACE:
         case GV_STATE:
         case GV_CAPTURE:
+        case GV_BINDINGS:
         case GV_FOREIGN:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
@@ -894,6 +1206,7 @@ bool atom_eq_fast(Atom *a, Atom *b) {
 }
 
 void hashcons_init(HashConsTable *hc) {
+    hc->frame_identities = (CettaFrameIdentityScope){0};
     hc->size = HASHCONS_TABLE_SIZE;
     hc->used = 0;
     hc->symbol_cache = NULL;
@@ -929,6 +1242,7 @@ void hashcons_free(HashConsTable *hc) {
     free(hc->table);
     free(hc->symbol_cache);
     free(hc->small_int_cache);
+    cetta_frame_identity_scope_clear(&hc->frame_identities);
     hc->table = NULL;
     hc->size = hc->used = 0;
     hc->symbol_cache = NULL;
@@ -1116,6 +1430,7 @@ static uint64_t hashcons_slot_hash(Atom *atom) {
         case GV_SPACE:
         case GV_STATE:
         case GV_CAPTURE:
+        case GV_BINDINGS:
         case GV_FOREIGN:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
@@ -1265,10 +1580,13 @@ static void hashcons_grow(HashConsTable *hc) {
 
 static Atom *hashcons_intern_admitted(HashConsTable *hc, Atom *atom);
 
-static Atom *hashcons_alloc_owned(const Atom *atom) {
+static Atom *hashcons_alloc_owned(HashConsTable *hc, const Atom *atom) {
     Atom *owned = cetta_malloc(sizeof(Atom));
     *owned = *atom;
     owned->arena_id = 0u;
+    if (atom->kind == ATOM_VAR)
+        (void)cetta_frame_identity_scope_retain(
+            &hc->frame_identities, var_epoch_suffix(atom->var_id));
     if (atom->kind == ATOM_GROUNDED &&
         atom->ground.gkind == GV_STRING) {
         owned->ground.sval = strdup(atom->ground.sval);
@@ -1296,6 +1614,20 @@ static Atom *hashcons_alloc_owned(const Atom *atom) {
     return owned;
 }
 
+/* The symbol atom a table published for `sym_id`, counted as the leaf-cache
+ * hit interning would record, or NULL. */
+static Atom *hashcons_published_symbol(HashConsTable *hc, SymbolId sym_id) {
+    if (!hc || sym_id >= hc->symbol_cache_size)
+        return NULL;
+    Atom *published = hc->symbol_cache[sym_id];
+    if (!published)
+        return NULL;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HASHCONS_ATTEMPT);
+    hc->lookup_count++;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HASHCONS_HIT);
+    return published;
+}
+
 static Atom *hashcons_intern_admitted(HashConsTable *hc, Atom *atom) {
     if (!hc || !atom)
         return atom;
@@ -1313,7 +1645,7 @@ static Atom *hashcons_intern_admitted(HashConsTable *hc, Atom *atom) {
     }
     if (slot >= hc->size)
         return atom;
-    Atom *owned = hashcons_alloc_owned(atom);
+    Atom *owned = hashcons_alloc_owned(hc, atom);
     hc->table[slot] = owned;
     hc->used++;
     hashcons_leaf_cache_store(hc, owned);
@@ -1338,16 +1670,30 @@ VarInternTable *g_var_intern = NULL;
 #define VAR_INTERN_CHUNK_MASK (VAR_INTERN_CHUNK_SIZE - 1u)
 #define VAR_INTERN_CHUNK_COUNT (1u << (32u - VAR_INTERN_CHUNK_BITS))
 
-#define SYMBOL_LITERAL_CACHE_SIZE 64
+/* Symbol ids of C string literals, per thread, keyed by the literal's
+ * address.  A small direct-mapped level answers most lookups; the open
+ * addressing level behind it keeps every literal once interned, so two
+ * literals the linker happens to place in one direct-mapped slot cost a
+ * probe rather than repeated interning. */
+#define SYMBOL_LITERAL_DIRECT_SIZE 64u
 
 typedef struct {
-    const SymbolTable *table;
-    uint64_t instance_id;
     const char *literal;
     SymbolId id;
 } SymbolLiteralCacheEntry;
 
-static __thread SymbolLiteralCacheEntry g_symbol_literal_cache[SYMBOL_LITERAL_CACHE_SIZE];
+typedef struct {
+    const SymbolTable *table;
+    uint64_t instance_id;
+    SymbolLiteralCacheEntry direct[SYMBOL_LITERAL_DIRECT_SIZE];
+    SymbolLiteralCacheEntry *entries;
+    uint32_t cap;
+    uint32_t len;
+} SymbolLiteralCache;
+
+static __thread SymbolLiteralCache g_symbol_literal_cache;
+static pthread_key_t g_symbol_literal_cache_key;
+static pthread_once_t g_symbol_literal_cache_key_once = PTHREAD_ONCE_INIT;
 
 /* The packed VarId ABI has a 32-bit base.  Keep the reservation cursor one
  * bit wider so exhaustion remains distinguishable from wraparound. */
@@ -1426,6 +1772,24 @@ void fresh_var_id_test_reset(uint64_t next_base) {
         &g_var_base_counter, next_base, memory_order_relaxed);
     g_var_base_block_cache.next = 0u;
     g_var_base_block_cache.remaining = 0u;
+}
+
+/* Observations for the arena frame-identity ownership tests.  The record
+ * count is the number of distinct full identities the arena currently holds,
+ * which is the quantity that must scale with distinct identities rather than
+ * with variable occurrences. */
+uint32_t arena_frame_identity_count_test(const Arena *a) {
+    return a && a->frame_identities ? a->frame_identities->len : 0u;
+}
+
+uint32_t arena_frame_identity_capacity_test(const Arena *a) {
+    return a && a->frame_identities ? a->frame_identities->cap : 0u;
+}
+
+bool arena_frame_identity_owned_test(const Arena *a,
+                                     CettaFrameIdentity identity) {
+    return arena_frame_identity_set_find(a ? a->frame_identities : NULL,
+                                         identity, NULL);
 }
 #endif
 
@@ -1509,26 +1873,102 @@ VarId var_intern(VarInternTable *t, SymbolId spelling) {
     return out;
 }
 
-static SymbolId symbol_cached_literal(const char *name) {
+static void symbol_literal_cache_release(void *entries) {
+    free(entries);
+}
+
+static void symbol_literal_cache_key_create(void) {
+    (void)pthread_key_create(
+        &g_symbol_literal_cache_key, symbol_literal_cache_release);
+}
+
+static uint32_t symbol_literal_cache_slot(const char *name, uint32_t mask) {
+    uint64_t key = (uint64_t)(uintptr_t)name * UINT64_C(0x9e3779b97f4a7c15);
+    return (uint32_t)(key >> 32) & mask;
+}
+
+static bool symbol_literal_cache_grow(SymbolLiteralCache *cache) {
+    uint32_t cap = cache->cap ? cache->cap * 2u : 256u;
+    if (cap < cache->cap)
+        return false;
+    SymbolLiteralCacheEntry *entries = calloc(cap, sizeof(*entries));
+    if (!entries)
+        return false;
+    for (uint32_t i = 0u; i < cache->cap; i++) {
+        const char *literal = cache->entries[i].literal;
+        if (!literal)
+            continue;
+        uint32_t slot = symbol_literal_cache_slot(literal, cap - 1u);
+        while (entries[slot].literal)
+            slot = (slot + 1u) & (cap - 1u);
+        entries[slot] = cache->entries[i];
+    }
+    if (!cache->entries) {
+        pthread_once(&g_symbol_literal_cache_key_once,
+                     symbol_literal_cache_key_create);
+    }
+    free(cache->entries);
+    cache->entries = entries;
+    cache->cap = cap;
+    (void)pthread_setspecific(g_symbol_literal_cache_key, entries);
+    return true;
+}
+
+static SymbolId symbol_cached_literal_slow(const char *name);
+
+static inline SymbolId symbol_cached_literal(const char *name) {
+    SymbolLiteralCache *cache = &g_symbol_literal_cache;
+    const SymbolLiteralCacheEntry *direct = &cache->direct[
+        ((uintptr_t)name >> 4) % SYMBOL_LITERAL_DIRECT_SIZE];
+    if (direct->literal == name && name && cache->table == g_symbols &&
+        g_symbols &&
+        cache->instance_id == symbol_table_instance_id(g_symbols))
+        return direct->id;
+    return symbol_cached_literal_slow(name);
+}
+
+static __attribute__((noinline)) SymbolId symbol_cached_literal_slow(
+        const char *name) {
     if (!g_symbols || !name || !*name) return SYMBOL_ID_NONE;
 
-    uintptr_t key = (((uintptr_t)g_symbols) >> 4) ^ (((uintptr_t)name) >> 4);
-    uint32_t idx = (uint32_t)(key % SYMBOL_LITERAL_CACHE_SIZE);
-    SymbolLiteralCacheEntry *entry = &g_symbol_literal_cache[idx];
-
-    if (entry->table == g_symbols &&
-        entry->instance_id == symbol_table_instance_id(g_symbols) &&
-        entry->literal == name &&
-        entry->id != SYMBOL_ID_NONE &&
-        symbol_eq_cstr(g_symbols, entry->id, name)) {
-        return entry->id;
+    SymbolLiteralCache *cache = &g_symbol_literal_cache;
+    uint64_t instance_id = symbol_table_instance_id(g_symbols);
+    if (cache->table != g_symbols || cache->instance_id != instance_id) {
+        memset(cache->direct, 0, sizeof(cache->direct));
+        if (cache->entries)
+            memset(cache->entries, 0, cache->cap * sizeof(*cache->entries));
+        cache->len = 0u;
+        cache->table = g_symbols;
+        cache->instance_id = instance_id;
+    }
+    SymbolLiteralCacheEntry *direct = &cache->direct[
+        ((uintptr_t)name >> 4) % SYMBOL_LITERAL_DIRECT_SIZE];
+    if (direct->literal == name)
+        return direct->id;
+    if (cache->cap) {
+        uint32_t mask = cache->cap - 1u;
+        for (uint32_t slot = symbol_literal_cache_slot(name, mask);
+             cache->entries[slot].literal; slot = (slot + 1u) & mask) {
+            if (cache->entries[slot].literal == name) {
+                *direct = cache->entries[slot];
+                return direct->id;
+            }
+        }
     }
 
     SymbolId id = symbol_intern_cstr(g_symbols, name);
-    entry->table = g_symbols;
-    entry->instance_id = symbol_table_instance_id(g_symbols);
-    entry->literal = name;
-    entry->id = id;
+    if (id == SYMBOL_ID_NONE)
+        return id;
+    *direct = (SymbolLiteralCacheEntry){name, id};
+    if ((cache->len + 1u) * 2u > cache->cap &&
+        !symbol_literal_cache_grow(cache))
+        return id;
+    uint32_t mask = cache->cap - 1u;
+    uint32_t slot = symbol_literal_cache_slot(name, mask);
+    while (cache->entries[slot].literal)
+        slot = (slot + 1u) & mask;
+    cache->entries[slot] = (SymbolLiteralCacheEntry){name, id};
+    cache->len++;
     return id;
 }
 
@@ -1963,6 +2403,7 @@ static ArenaSymbolCache *arena_symbol_cache_ensure(Arena *a) {
         return NULL;
     if (!a->symbol_cache) {
         ArenaSymbolCache *cache = cetta_malloc(sizeof(*cache));
+        memset(cache, 0, sizeof(*cache));
         cache->occupied = 0u;
         cache->symbol_table_instance =
             symbol_table_instance_id(g_symbols);
@@ -1982,7 +2423,7 @@ static Atom *arena_symbol_cache_get(Arena *a, SymbolId sym_id) {
     uint32_t slot = arena_symbol_cache_slot(sym_id);
     uint64_t occupied = UINT64_C(1) << slot;
     if ((cache->occupied & occupied) == 0u ||
-        cache->epochs[slot] != a->reset_epoch)
+        (!a->scalar_cache && cache->epochs[slot] != a->reset_epoch))
         return NULL;
     Atom *atom = cache->atoms[slot];
     if (!atom || atom->kind != ATOM_SYMBOL || atom->sym_id != sym_id)
@@ -2000,7 +2441,8 @@ static bool arena_symbol_cache_is_active(const Arena *a) {
     }
     return enabled && a && !a->hashcons &&
         (a->runtime_kind == CETTA_ARENA_RUNTIME_KIND_EVAL ||
-         a->runtime_kind == CETTA_ARENA_RUNTIME_KIND_SURVIVOR);
+         a->runtime_kind == CETTA_ARENA_RUNTIME_KIND_SURVIVOR ||
+         a->scalar_cache);
 }
 
 static void arena_symbol_cache_store(
@@ -2040,6 +2482,7 @@ bool atom_grounded_kind_is_term_stable(GroundedKind gkind) {
     case GV_SPACE:
     case GV_STATE:
     case GV_CAPTURE:
+    case GV_BINDINGS:
     case GV_FOREIGN:
     case GV_PRIME_NEED_CAPABILITY:
     case GV_PRIME_CONTEXT:
@@ -2240,7 +2683,31 @@ static VarId atom_single_variable_id_from_children(
     return single;
 }
 
+/* The never-reset storage of an arena's canonical scalars, or NULL. */
+static Arena *arena_scalar_owner(Arena *a) {
+    if (!a || !a->scalar_cache || a->hashcons)
+        return NULL;
+    ArenaSymbolCache *cache = arena_symbol_cache_ensure(a);
+    if (!cache)
+        return NULL;
+    if (!cache->owner_ready) {
+        arena_init(&cache->owner);
+        arena_set_hashcons(&cache->owner, NULL);
+        arena_set_runtime_kind(&cache->owner, a->runtime_kind);
+        cache->owner_ready = true;
+    }
+    return &cache->owner;
+}
+
 Atom *atom_symbol_id(Arena *a, SymbolId sym_id) {
+    /* A symbol's admission depends on its id alone, so the canonical atom a
+     * hash-cons table already published for the id is the one interning
+     * would return. */
+    if (a && a->hashcons) {
+        Atom *published = hashcons_published_symbol(a->hashcons, sym_id);
+        if (published)
+            return published;
+    }
     if (arena_symbol_cache_is_active(a)) {
         Atom *cached = arena_symbol_cache_get(a, sym_id);
         if (cached)
@@ -2256,9 +2723,21 @@ Atom *atom_symbol_id(Arena *a, SymbolId sym_id) {
     temp.structural_facts = ATOM_STRUCTURAL_FACTS_VALID;
     Atom *shared = atom_maybe_hashcons(a, &temp);
     if (shared) return shared;
-    Atom *at = arena_alloc(a, sizeof(Atom));
+    /* A canonical symbol goes to the scalar owner only into an empty slot,
+     * so a colliding symbol cannot grow the never-reset storage. */
+    Arena *owner = NULL;
+    if (a->scalar_cache && a->symbol_cache) {
+        uint32_t slot = arena_symbol_cache_slot(sym_id);
+        if ((a->symbol_cache->occupied & (UINT64_C(1) << slot)) == 0u)
+            owner = arena_scalar_owner(a);
+    } else if (a->scalar_cache && !a->symbol_cache) {
+        owner = arena_scalar_owner(a);
+    }
+    Arena *home = owner ? owner : a;
+    temp.arena_id = home->identity;
+    Atom *at = arena_alloc(home, sizeof(Atom));
     *at = temp;
-    if (arena_symbol_cache_is_active(a))
+    if (arena_symbol_cache_is_active(a) && (owner || !a->scalar_cache))
         arena_symbol_cache_store(a, sym_id, at);
     return at;
 }
@@ -2283,6 +2762,7 @@ Atom *atom_var_with_spelling(Arena *a, SymbolId spelling, VarId id) {
     temp.structural_facts = ATOM_STRUCTURAL_FACTS_VALID;
     Atom *shared = atom_maybe_hashcons(a, &temp);
     if (shared) return shared;
+    (void)arena_retain_frame_identity(a, var_epoch_suffix(temp.var_id));
     Atom *at = arena_alloc(a, sizeof(Atom));
     *at = temp;
     return at;
@@ -2308,6 +2788,7 @@ static Atom *atom_var_with_spelling_and_name_key(
     temp.structural_facts = ATOM_STRUCTURAL_FACTS_VALID;
     Atom *shared = atom_maybe_hashcons(a, &temp);
     if (shared) return shared;
+    (void)arena_retain_frame_identity(a, var_epoch_suffix(temp.var_id));
     Atom *at = arena_alloc(a, sizeof(Atom));
     *at = temp;
     return at;
@@ -2348,6 +2829,12 @@ Atom *atom_var(Arena *a, const char *name) {
 }
 
 Atom *atom_int(Arena *a, int64_t val) {
+    bool cached = a && a->scalar_cache && !a->hashcons &&
+        val >= ARENA_INT_CACHE_MIN &&
+        val < ARENA_INT_CACHE_MIN + ARENA_INT_CACHE_CAPACITY;
+    size_t int_slot = cached ? (size_t)(val - ARENA_INT_CACHE_MIN) : 0u;
+    if (cached && a->symbol_cache && a->symbol_cache->ints[int_slot])
+        return a->symbol_cache->ints[int_slot];
     Atom temp = {0};
     temp.kind = ATOM_GROUNDED;
     temp.flags = atom_flags_for_grounded_kind(GV_INT);
@@ -2360,8 +2847,13 @@ Atom *atom_int(Arena *a, int64_t val) {
     temp.ground.ival = val;
     Atom *shared = atom_maybe_hashcons(a, &temp);
     if (shared) return shared;
-    Atom *at = arena_alloc(a, sizeof(Atom));
+    Arena *owner = cached ? arena_scalar_owner(a) : NULL;
+    Arena *home = owner ? owner : a;
+    temp.arena_id = home->identity;
+    Atom *at = arena_alloc(home, sizeof(Atom));
     *at = temp;
+    if (owner)
+        a->symbol_cache->ints[int_slot] = at;
     return at;
 }
 
@@ -2731,6 +3223,22 @@ Atom *atom_foreign(Arena *a, CettaForeignValue *value) {
     at->ground.gkind = GV_FOREIGN;
     at->ground.ptr = value;
     return at;
+}
+
+Atom *atom_bindings_value(Arena *arena, CettaBindingsValue *value) {
+    if (!arena || !value || !value->retain || !value->release ||
+        !value->observe ||
+        !arena_retain_owner(arena, value, value->retain, value->release))
+        return NULL;
+    Atom *atom = arena_alloc(arena, sizeof(*atom));
+    *atom = (Atom){
+        .kind = ATOM_GROUNDED,
+        .flags = atom_flags_for_grounded_kind(GV_BINDINGS),
+        .arena_id = arena->identity,
+        .structural_facts = atom_structural_facts_for_grounded_kind(GV_BINDINGS),
+        .ground = {.gkind = GV_BINDINGS, .ptr = value},
+    };
+    return atom;
 }
 
 Atom *atom_internal_tag(Arena *a, CettaInternalTag tag) {
@@ -3271,7 +3779,7 @@ const char *atom_name_cstr(Atom *a) {
     return "";
 }
 
-SymbolId atom_head_symbol_id(Atom *a) {
+SymbolId atom_head_symbol_id(const Atom *a) {
     if (!a) return SYMBOL_ID_NONE;
     if (a->kind == ATOM_SYMBOL) return a->sym_id;
     if (a->kind == ATOM_EXPR && a->expr.len > 0 &&
@@ -3362,6 +3870,12 @@ bool atom_eq(Atom *a, Atom *b) {
                                                atom_rational_cstr(b)) == 0;
         case GV_SPACE:  return a->ground.ptr == b->ground.ptr;
         case GV_CAPTURE: return a->ground.ptr == b->ground.ptr;
+        case GV_BINDINGS: {
+            const CettaBindingsValue *left = a->ground.ptr;
+            const CettaBindingsValue *right = b->ground.ptr;
+            return left == right || (left && right && left->equal &&
+                                    left->equal(left, right));
+        }
         case GV_FOREIGN: return a->ground.ptr == b->ground.ptr;
         case GV_INTERNAL_TAG:
             return a->ground.ival == b->ground.ival;
@@ -3688,6 +4202,9 @@ static Atom *atom_deep_copy_leaf(Arena *dst, Atom *src, bool share) {
         case GV_CAPTURE:
             out = atom_capture(dst, (CaptureClosure *)src->ground.ptr);
             break;
+        case GV_BINDINGS:
+            out = atom_bindings_value(dst, src->ground.ptr);
+            break;
         case GV_FOREIGN:
             out = atom_foreign(dst, (CettaForeignValue *)src->ground.ptr);
             break;
@@ -3904,6 +4421,13 @@ Atom *atom_deep_copy_session_forwarded(
     if (!session || !src)
         return NULL;
     return atom_deep_copy_memo_lookup(&session->memo, src);
+}
+
+bool atom_deep_copy_session_settled(
+    const AtomDeepCopySession *session, const Atom *atom) {
+    return session && atom && !session->resolver &&
+           arena_owns_atom(session->dst, atom) &&
+           atom_graph_is_closed_for_arena(session->dst, atom);
 }
 
 void atom_deep_copy_session_free(AtomDeepCopySession *session) {
@@ -4368,6 +4892,16 @@ static void atom_print_mode(
         case GV_CAPTURE:
             fputs("capture", out);
             break;
+        case GV_BINDINGS: {
+            CettaBindingsValue *value = a->ground.ptr;
+            Arena observation;
+            arena_init_detached(&observation);
+            Atom *projection = value->observe(&observation, value);
+            if (projection)
+                atom_print_mode(projection, out, petta, variables);
+            arena_free(&observation);
+            break;
+        }
         case GV_FOREIGN:
             fprintf(out, "<foreign %p>", a->ground.ptr);
             break;

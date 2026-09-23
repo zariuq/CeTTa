@@ -640,7 +640,8 @@ static bool abt_key_admitted(const AbtSignature *signature, Atom *name) {
     int form = abt_idx_form(name, &ignored);
     if (form != 0) return false;
     if (abt_is_quote_form(name))
-        return abt_closed_stable_graph(name);
+        return abt_closed_stable_graph(name) &&
+               abt_scope_check(signature, 0u, name);
     return abt_scope_check(signature, 0u, name);
 }
 
@@ -787,19 +788,9 @@ static Atom *abt_transform_term(const AbtSignature *signature, Arena *arena,
             continue;
         }
 
-        /* Quoted syntax is inert under object-language transformations.  It
-           can be closed as one whole name by the equality case above, but an
-           unrelated outer binder/substitution never traverses its payload.
-           Ordinary quoted code may contain MeTTa matcher variables; only a
-           quote used as a persistent binder key must satisfy closedness. */
-        if (abt_is_quote_form(current)) {
-            *task.destination = current;
-            if (!abt_transform_memo_store(
-                    &memo, current, task.depth, current))
-                goto fail;
-            continue;
-        }
-
+        /* Quotation suspends evaluation, not lexical binding. Its field has
+           the same scope as its surroundings; only declared binders change
+           depth. Whole quoted names were handled by the equality case. */
         uint64_t variable = 0;
         int var_status = abt_idx_form(current, &variable);
         if (var_status < 0) goto fail;
@@ -1122,13 +1113,6 @@ Atom *abt_print(const AbtSignature *signature, Arena *arena, Atom *term) {
             &memo, current, task.depth);
         if (memoized) {
             *task.destination = memoized;
-            continue;
-        }
-        if (abt_is_quote_form(current)) {
-            if (!abt_transform_memo_store(
-                    &memo, current, task.depth, current))
-                goto fail;
-            *task.destination = current;
             continue;
         }
         uint64_t variable = 0u;
@@ -1478,8 +1462,7 @@ Atom *abt_parse(const AbtSignature *signature, Arena *arena, Atom *syntax) {
         if (abt_syntax_binder_name(current)) {
             AbtNameBinding *binding = abt_name_env_lookup(&env, current);
             if (!binding) {
-                if (current->kind == ATOM_SYMBOL ||
-                    abt_is_quote_form(current)) {
+                if (current->kind == ATOM_SYMBOL) {
                     *task.destination = current;
                     continue;
                 }
@@ -1492,10 +1475,6 @@ Atom *abt_parse(const AbtSignature *signature, Arena *arena, Atom *syntax) {
             }
         }
         if (current->kind != ATOM_EXPR) {
-            *task.destination = current;
-            continue;
-        }
-        if (abt_is_quote_form(current)) {
             *task.destination = current;
             continue;
         }
@@ -1618,9 +1597,6 @@ bool abt_scope_check(const AbtSignature *signature, uint64_t initial_depth,
         }
         if (abt_transform_memo_lookup(&checked, task.term, task.depth))
             continue;
-        if (abt_is_quote_form(task.term)) {
-            continue;
-        }
         uint64_t variable = 0;
         int var_status = abt_idx_index(task.term, &variable);
         if (var_status < 0 || (var_status > 0 && variable >= task.depth))

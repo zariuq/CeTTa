@@ -11,15 +11,15 @@
 !(need-ignore (== 1 "bad"))
 !(need-dup (superpose (A B)))
 
-; Each equation is its own Need branch.  The structural clause demands only
-; its first argument; the wildcard clause and both unused second arguments do
+; Each equation is its own Need branch.  The structural equation demands only
+; its first argument; the wildcard equation and both unused second arguments do
 ; not force their thunks.
 (= (need-classify A $unused) alpha)
 (= (need-classify $x $unused) other)
 !(need-classify (superpose (A B)) (== 1 "unused"))
 
 ; A nonlinear LHS must compare values, not the distinct identities of two
-; thunks.  The second, linear clause stays lazy.
+; thunks.  The second, linear equation stays lazy.
 (= (need-same $x $x) same)
 (= (need-same $x $y) any)
 !(need-same (superpose (A B)) A)

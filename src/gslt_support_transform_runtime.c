@@ -525,11 +525,12 @@ static bool select_directive(
 
 static bool support_match_atom(SupportSpaceV1 *space, Atom *pattern,
                                Atom *target, Bindings *bindings) {
+    CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
     /* MM2 rows are open relational terms, not ground database records.  Each
      * use receives a fresh variable scope, including two factors that reuse
      * the same support atom. */
     Atom *fresh_target = atom_has_vars(target)
-        ? rename_vars(space->arena, target, fresh_var_suffix())
+        ? rename_vars(space->arena, target, cetta_frame_identity_scope_fresh(&frame_identity_scope))
         : target;
     return fresh_target && match_atoms(pattern, fresh_target, bindings);
 }

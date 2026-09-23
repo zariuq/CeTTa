@@ -12,6 +12,7 @@
          (cons (map-nested $f $x) (map-nested $f $xs))
          (cons ($f $x) (map-nested $f $xs))))
 
+(: fold-flat (-[$e]-> (-[$e]-> $acc $item $acc) $acc (List $item) $acc))
 (= (fold-flat $f $init ()) $init)
 (= (fold-flat $f $init (cons $x $xs)) (fold-flat $f ($f $init $x) $xs))
 
@@ -70,6 +71,26 @@
 (= (&&& $f1 $f2 $arg) (($f1 $arg) ($f2 $arg)))
 
 (= (&^& $f1 $f2 $arg) (superpose (($f1 $arg) ($f2 $arg))))
+
+;Error handling
+
+(: if-error (-[det]-> $value $result $result $result))
+(= (if-error $value $then $else)
+   (if (= $value (cons Error $_)) $then $else))
+
+(: checked-number (-[det]-> %Undefined% Number))
+(= (checked-number $value) (the Number $value))
+
+(: checked-bool (-[det]-> %Undefined% Bool))
+(= (checked-bool $value) (the Bool $value))
+
+(: if-error-number (-[det]-> %Undefined% Number Number))
+(= (if-error-number $value $fallback)
+   (if (= $value (cons Error $_)) $fallback (checked-number $value)))
+
+(: if-error-bool (-[det]-> %Undefined% Bool Bool))
+(= (if-error-bool $value $fallback)
+   (if (= $value (cons Error $_)) $fallback (checked-bool $value)))
 
 ;Reverse Function Matching
 (= (@ $a $b) (let $a $b $a))

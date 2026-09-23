@@ -1146,6 +1146,10 @@ static bool rho_atom_text_key_direct_emit(
             case GV_CAPTURE:
                 ok = rho_atom_text_sink_append(sink, "capture");
                 break;
+            case GV_BINDINGS:
+                ok = rho_atom_text_sink_appendf(
+                    sink, "<bindings %p>", atom->ground.ptr);
+                break;
             case GV_FOREIGN:
                 ok = rho_atom_text_sink_appendf(
                     sink, "<foreign %p>", atom->ground.ptr);
@@ -1266,6 +1270,7 @@ static bool rho_atom_text_structural_hash_admitted(
         case GV_SPACE:
         case GV_STATE:
         case GV_CAPTURE:
+        case GV_BINDINGS:
         case GV_FOREIGN:
         case GV_RATIONAL:
         case GV_PRIME_NEED_CAPABILITY:

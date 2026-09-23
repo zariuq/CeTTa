@@ -21,7 +21,7 @@
        (+ (get-state body-resume-state) 1))
      7))
 
-; One variable query retains all authored clauses.  The bodies exercise
+; One variable query retains all authored equations.  The bodies exercise
 ; distinct continuation constructors around open, duplicate-producing, and
 ; empty holes; none is a benchmark-specific relation shape.
 (= (exercise let)

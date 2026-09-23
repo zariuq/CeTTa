@@ -1,3 +1,4 @@
+#include "term_canon.h"
 #include <time.h>
 #include "space.h"
 #include "shared_transition.h"
@@ -1114,6 +1115,347 @@ void disc_lookup(DiscNode *root, Atom *query, CettaIndex **out,
     dns_free(&final);
 }
 
+static int disc_node_ptr_compare(const void *left, const void *right) {
+    DiscNode *a = *(DiscNode *const *)left;
+    DiscNode *b = *(DiscNode *const *)right;
+    return (a > b) - (a < b);
+}
+
+/* While current, a pinned view borrows its Space's rows and trie and
+ * `space` names that Space.  Detaching copies the rows into the view, takes
+ * the trie, and clears `space`: the view is then the only source of its
+ * cursors, and the Space is free to rewrite its own rows.  The shared
+ * transition domain protects references and the attached-to-detached
+ * transition together; atomic reference counts alone would not protect the
+ * borrowed rows and trie during mutation. */
+struct SpacePinnedOccurrences {
+    uint32_t references;
+    Space *space;
+    uint8_t *atom_ids;
+    uint8_t atom_id_width_bits;
+    CettaCount len;
+    DiscNode *match_trie;
+    TermUniverse *universe;
+};
+
+static SpacePinnedOccurrences *space_pinned_occurrences_acquire(Space *s) {
+    SpaceMatchNativeState *st = &s->match_backend.native;
+    if (!st->pinned) {
+        st->pinned = cetta_malloc(sizeof(*st->pinned));
+        *st->pinned = (SpacePinnedOccurrences){.space = s};
+    }
+    st->pinned->references++;
+    space_match_native_pin_trie(s);
+    return st->pinned;
+}
+
+static SpacePinnedOccurrences *space_pinned_occurrences_share(
+        SpacePinnedOccurrences *view) {
+    view->references++;
+    if (view->space)
+        space_match_native_pin_trie(view->space);
+    return view;
+}
+
+static void space_pinned_occurrences_release(SpacePinnedOccurrences *view) {
+    if (!view)
+        return;
+    if (view->space)
+        space_match_native_unpin_trie(view->space);
+    if (--view->references != 0u)
+        return;
+    if (view->space) {
+        view->space->match_backend.native.pinned = NULL;
+    } else {
+        free(view->atom_ids);
+        disc_node_free(view->match_trie);
+    }
+    free(view);
+}
+
+void space_pinned_occurrences_detach(Space *s) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    SpaceMatchNativeState *st = s ? &s->match_backend.native : NULL;
+    SpacePinnedOccurrences *view = st ? st->pinned : NULL;
+    if (!view)
+        return;
+    size_t width = cetta_atom_id_storage_width_bytes_from_bits(
+        s->native.atom_id_width_bits);
+    size_t first = s->kind == SPACE_KIND_QUEUE ? (size_t)s->native.start : 0u;
+    if (width != 0u && (size_t)s->native.len > SIZE_MAX / width) {
+        fputs("CeTTa: pinned occurrence view too large to detach\n", stderr);
+        abort();
+    }
+    size_t bytes = (size_t)s->native.len * width;
+    view->atom_ids = bytes ? cetta_malloc(bytes) : NULL;
+    if (bytes)
+        memcpy(view->atom_ids, s->native.atom_ids + first * width, bytes);
+    view->atom_id_width_bits = s->native.atom_id_width_bits;
+    view->len = s->native.len;
+    view->universe = s->native.universe;
+    view->match_trie = st->match_trie;
+    view->space = NULL;
+    st->match_trie = NULL;
+    st->match_trie_dirty = false;
+    st->match_trie_stale_occurrences = 0u;
+    st->match_trie_pins = 0u;
+    st->pinned = NULL;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_SPACE_PINNED_OCCURRENCES_DETACH);
+    cetta_runtime_stats_add(
+        CETTA_RUNTIME_COUNTER_SPACE_PINNED_OCCURRENCES_DETACHED_ROW,
+        view->len);
+}
+
+/* The rows a cursor reads: its Space's while the view is current, the
+ * captured copy once detached. */
+static CettaCount space_pinned_occurrences_len(
+        const SpacePinnedOccurrences *view) {
+    return view->space ? view->space->native.len : view->len;
+}
+
+void space_occurrence_cursor_init_empty(SpaceOccurrenceCursor *cursor) {
+    if (cursor)
+        memset(cursor, 0, sizeof(*cursor));
+}
+
+bool space_occurrence_cursor_init(Space *s, Atom *pattern,
+                                  SpaceOccurrenceCursor *cursor) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    space_occurrence_cursor_init_empty(cursor);
+    if (!s || !pattern || !cursor || s->overlay_base ||
+        (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
+         s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
+        return false;
+    space_linearize(s);
+    cursor->space = s;
+    cursor->read = space_read_token(s);
+    cursor->prefix_epoch = s->prefix_epoch;
+    cursor->ceiling = s->native.len;
+    if (pattern->kind == ATOM_VAR ||
+        s->native.len <= MATCH_TRIE_THRESHOLD) {
+        cursor->full_scan = true;
+        cursor->pinned = true;
+        cursor->occurrences = space_pinned_occurrences_acquire(s);
+        return space_read_token_prefix_intact(cursor->read);
+    }
+    space_match_native_ensure_trie(s);
+    DiscNode *root = s->match_backend.native.match_trie;
+    if (!root)
+        return false;
+    DiscNodeSet final;
+    dns_init(&final);
+    disc_step(root, pattern, &final);
+    if (final.n > 1u)
+        qsort(final.nodes, final.n, sizeof(*final.nodes),
+              disc_node_ptr_compare);
+    uint32_t unique = 0u;
+    for (uint32_t i = 0u; i < final.n; i++) {
+        if (!final.nodes[i])
+            continue;
+        if (unique > 0u && final.nodes[unique - 1u] == final.nodes[i])
+            continue;
+        final.nodes[unique++] = final.nodes[i];
+    }
+    cursor->node_len = unique;
+    if (unique > 0u) {
+        cursor->nodes = cetta_malloc(sizeof(*cursor->nodes) * unique);
+        cursor->leaf_pos = cetta_malloc(sizeof(*cursor->leaf_pos) * unique);
+        if (!cursor->nodes || !cursor->leaf_pos) {
+            free(cursor->nodes);
+            free(cursor->leaf_pos);
+            dns_free(&final);
+            space_occurrence_cursor_init_empty(cursor);
+            return false;
+        }
+        memcpy(cursor->nodes, final.nodes, sizeof(*cursor->nodes) * unique);
+        memset(cursor->leaf_pos, 0, sizeof(*cursor->leaf_pos) * unique);
+    }
+    dns_free(&final);
+    cursor->pinned = true;
+    cursor->occurrences = space_pinned_occurrences_acquire(s);
+    return true;
+}
+
+bool space_occurrence_cursor_clone_unstarted(
+        const SpaceOccurrenceCursor *src, SpaceOccurrenceCursor *dst) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    space_occurrence_cursor_init_empty(dst);
+    if (!src || !dst || !src->pinned || !src->space || !src->occurrences ||
+        !src->occurrences->space)
+        return false;
+    Space *s = src->space;
+    if (src->read.instance_id != space_instance_id(s) ||
+        src->prefix_epoch != s->prefix_epoch ||
+        src->ceiling != s->native.len) {
+        return false;
+    }
+    dst->read = src->read;
+    dst->prefix_epoch = src->prefix_epoch;
+    dst->ceiling = src->ceiling;
+    dst->space = s;
+    dst->full_scan = src->full_scan;
+    dst->full_next = 0u;
+    dst->node_len = src->node_len;
+    if (src->node_len > 0u) {
+        if (!src->nodes)
+            return false;
+        dst->nodes = cetta_malloc(
+            sizeof(*dst->nodes) * src->node_len);
+        dst->leaf_pos = cetta_malloc(
+            sizeof(*dst->leaf_pos) * src->node_len);
+        if (!dst->nodes || !dst->leaf_pos) {
+            free(dst->nodes);
+            free(dst->leaf_pos);
+            space_occurrence_cursor_init_empty(dst);
+            return false;
+        }
+        memcpy(dst->nodes, src->nodes,
+               sizeof(*dst->nodes) * src->node_len);
+        memset(dst->leaf_pos, 0,
+               sizeof(*dst->leaf_pos) * src->node_len);
+    }
+    dst->pinned = true;
+    dst->occurrences = space_pinned_occurrences_share(src->occurrences);
+    return true;
+}
+
+bool space_occurrence_cursor_clone(
+        const SpaceOccurrenceCursor *src, SpaceOccurrenceCursor *dst) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    space_occurrence_cursor_init_empty(dst);
+    if (!src || !dst || src == dst || !src->pinned || !src->space ||
+        !src->occurrences)
+        return false;
+    Space *s = src->space;
+    if ((src->occurrences->space &&
+         (src->read.instance_id != space_instance_id(s) ||
+          src->prefix_epoch != s->prefix_epoch)) ||
+        src->ceiling > space_pinned_occurrences_len(src->occurrences) ||
+        (src->node_len > 0u && (!src->nodes || !src->leaf_pos))) {
+        return false;
+    }
+    dst->read = src->read;
+    dst->prefix_epoch = src->prefix_epoch;
+    dst->ceiling = src->ceiling;
+    dst->space = s;
+    dst->full_scan = src->full_scan;
+    dst->full_next = src->full_next;
+    dst->node_len = src->node_len;
+    if (src->node_len > 0u) {
+        dst->nodes = cetta_malloc(
+            sizeof(*dst->nodes) * src->node_len);
+        dst->leaf_pos = cetta_malloc(
+            sizeof(*dst->leaf_pos) * src->node_len);
+        if (!dst->nodes || !dst->leaf_pos) {
+            free(dst->nodes);
+            free(dst->leaf_pos);
+            space_occurrence_cursor_init_empty(dst);
+            return false;
+        }
+        memcpy(dst->nodes, src->nodes,
+               sizeof(*dst->nodes) * src->node_len);
+        memcpy(dst->leaf_pos, src->leaf_pos,
+               sizeof(*dst->leaf_pos) * src->node_len);
+    }
+    dst->pinned = true;
+    dst->occurrences = space_pinned_occurrences_share(src->occurrences);
+    return true;
+}
+
+SpaceOccurrenceCursorStep space_occurrence_cursor_next(
+    SpaceOccurrenceCursor *cursor, CettaIndex *logical_index_out) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    if (logical_index_out)
+        *logical_index_out = 0u;
+    if (!cursor || !cursor->space || !cursor->pinned ||
+        !cursor->occurrences)
+        return SPACE_OCCURRENCE_CURSOR_INVALIDATED;
+    const SpacePinnedOccurrences *occurrences = cursor->occurrences;
+    if (occurrences->space &&
+        (cursor->read.instance_id != space_instance_id(occurrences->space) ||
+         cursor->prefix_epoch != occurrences->space->prefix_epoch))
+        return SPACE_OCCURRENCE_CURSOR_INVALIDATED;
+    CettaCount len = space_pinned_occurrences_len(occurrences);
+    if (cursor->full_scan) {
+        if (cursor->full_next < cursor->ceiling &&
+            cursor->full_next < len) {
+            CettaIndex index = cursor->full_next++;
+            if (logical_index_out)
+                *logical_index_out = index;
+            return SPACE_OCCURRENCE_CURSOR_ITEM;
+        }
+        return SPACE_OCCURRENCE_CURSOR_END;
+    }
+    for (;;) {
+        CettaIndex best = UINT64_MAX;
+        bool found = false;
+        for (uint32_t i = 0u; i < cursor->node_len; i++) {
+            DiscNode *node = cursor->nodes[i];
+            if (!node)
+                continue;
+            while (cursor->leaf_pos[i] < node->leaves.count) {
+                CettaIndex index = disc_leaf_at(node, cursor->leaf_pos[i]);
+                if (index >= cursor->ceiling) {
+                    cursor->leaf_pos[i] = node->leaves.count;
+                    break;
+                }
+                if (!found || index < best) {
+                    best = index;
+                    found = true;
+                }
+                break;
+            }
+        }
+        if (!found)
+            return SPACE_OCCURRENCE_CURSOR_END;
+        for (uint32_t i = 0u; i < cursor->node_len; i++) {
+            DiscNode *node = cursor->nodes[i];
+            if (!node || cursor->leaf_pos[i] >= node->leaves.count)
+                continue;
+            if (disc_leaf_at(node, cursor->leaf_pos[i]) == best)
+                cursor->leaf_pos[i]++;
+        }
+        if (best >= len)
+            continue;
+        if (logical_index_out)
+            *logical_index_out = best;
+        return SPACE_OCCURRENCE_CURSOR_ITEM;
+    }
+}
+
+Atom *space_occurrence_cursor_atom(const SpaceOccurrenceCursor *cursor,
+                                   CettaIndex index) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    const SpacePinnedOccurrences *occurrences =
+        cursor ? cursor->occurrences : NULL;
+    if (!occurrences)
+        return NULL;
+    if (occurrences->space)
+        return space_get_at64(occurrences->space, index);
+    size_t width = cetta_atom_id_storage_width_bytes_from_bits(
+        occurrences->atom_id_width_bits);
+    if (index >= occurrences->len || width == 0u)
+        return NULL;
+    AtomId atom_id = cetta_atom_id_storage_load_bits(
+        occurrences->atom_ids + (size_t)index * width,
+        occurrences->atom_id_width_bits);
+    return atom_id != CETTA_ATOM_ID_NONE
+        ? term_universe_get_atom(occurrences->universe, atom_id)
+        : NULL;
+}
+
+void space_occurrence_cursor_release(SpaceOccurrenceCursor *cursor) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    if (!cursor)
+        return;
+    if (cursor->pinned)
+        space_pinned_occurrences_release(cursor->occurrences);
+    free(cursor->nodes);
+    free(cursor->leaf_pos);
+    space_occurrence_cursor_init_empty(cursor);
+}
+
 void disc_lookup_expression_coordinates(
         DiscNode *root, Atom *const *coordinates,
         CettaExprLen coordinate_count, CettaIndex **out,
@@ -1799,6 +2141,7 @@ static bool atom_is_exact_indexable(const Atom *atom) {
         case GV_SPACE:
         case GV_STATE:
         case GV_CAPTURE:
+        case GV_BINDINGS:
         case GV_FOREIGN:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
@@ -1843,6 +2186,7 @@ static bool atom_id_is_exact_indexable(const Space *s, AtomId atom_id) {
         case GV_SPACE:
         case GV_STATE:
         case GV_CAPTURE:
+        case GV_BINDINGS:
         case GV_FOREIGN:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
@@ -2390,6 +2734,7 @@ static void space_mark_indexes_dirty(Space *s) {
 static void space_clear_native_logical_view(Space *s) {
     if (!s)
         return;
+    space_pinned_occurrences_detach(s);
     free(s->native.atom_ids);
     s->native.atom_ids = NULL;
     s->native.start = 0;
@@ -2885,6 +3230,7 @@ void space_free(Space *s) {
        still readable; cache lookup also validates against its live query
        Space before consulting a token. */
     space_execution_analysis_note_mutation(s);
+    space_pinned_occurrences_detach(s);
     space_detach_from_universe(s);
     free(s->native.atom_ids);
     s->native.atom_ids = NULL;
@@ -2936,6 +3282,7 @@ SpaceReadToken space_read_token(const Space *s) {
         .space = s,
         .instance_id = space_instance_id(s),
         .revision = space_revision(s),
+        .prefix_epoch = s ? s->prefix_epoch : 0u,
     };
 }
 
@@ -2943,6 +3290,12 @@ bool space_read_token_is_current(SpaceReadToken token) {
     return token.space && token.instance_id != 0u &&
            token.instance_id == space_instance_id(token.space) &&
            token.revision == space_revision(token.space);
+}
+
+bool space_read_token_prefix_intact(SpaceReadToken token) {
+    return token.space && token.instance_id != 0u &&
+           token.instance_id == space_instance_id(token.space) &&
+           token.prefix_epoch == token.space->prefix_epoch;
 }
 
 bool space_read_token_matches_live_space(SpaceReadToken token,
@@ -3058,7 +3411,7 @@ bool space_equation_occurrence_resolve(SpaceEquationOccurrenceId id,
                                        SpaceEquationOccurrence *out) {
     if (out)
         memset(out, 0, sizeof(*out));
-    if (!out || !space_read_token_is_current(id.read)) {
+    if (!out || !space_read_token_prefix_intact(id.read)) {
         return false;
     }
     Atom *equation = id.has_equation_id
@@ -3070,7 +3423,7 @@ bool space_equation_occurrence_resolve(SpaceEquationOccurrenceId id,
     Atom *lhs = NULL;
     Atom *rhs = NULL;
     if (!equation || !is_equation_atom(equation, &lhs, &rhs) ||
-        !space_read_token_is_current(id.read)) {
+        !space_read_token_prefix_intact(id.read)) {
         return false;
     }
     out->id = id;
@@ -3120,6 +3473,10 @@ static bool space_equation_cursor_peek_bucket(
         return false;
     while (*position < bucket->len) {
         CettaIndex candidate = bucket->atom_indices[*position];
+        if (candidate >= cursor->ceiling) {
+            (*position)++;
+            continue;
+        }
         if (space_equation_cursor_index_matches(
                 cursor, bucket, *position, wildcard)) {
             *logical_index = candidate;
@@ -3143,20 +3500,23 @@ bool space_equation_cursor_init(Space *s, SymbolId head,
         ensure_eq_index(s);
     cursor->read = space_read_token(s);
     cursor->head = head;
+    cursor->ceiling = space_length64(s);
     cursor->overlay = space_has_overlay_base(s);
-    return space_read_token_is_current(cursor->read);
+    return space_read_token_prefix_intact(cursor->read);
 }
 
 SpaceEquationCursorStep space_equation_cursor_next(
     SpaceEquationCursor *cursor, SpaceEquationOccurrenceId *out) {
     if (out)
         memset(out, 0, sizeof(*out));
-    if (!cursor || !out || !space_read_token_is_current(cursor->read))
+    if (!cursor || !out || !space_read_token_prefix_intact(cursor->read))
         return SPACE_EQUATION_CURSOR_INVALIDATED;
 
     Space *s = (Space *)cursor->read.space;
     if (cursor->overlay) {
         CettaCount logical_len = space_length64(s);
+        if (logical_len > cursor->ceiling)
+            logical_len = cursor->ceiling;
         while (cursor->overlay_position < logical_len) {
             CettaIndex logical_index = cursor->overlay_position++;
             Atom *equation = space_get_at64(s, logical_index);
@@ -4342,8 +4702,6 @@ bool space_admit_atom(Space *s, Arena *fallback, Atom *atom) {
 
 bool space_admit_atom_from_source_arena(
     Space *s, Arena *fallback, const Arena *source_arena, Atom *atom) {
-    if (!term_universe_source_id_memo_enabled())
-        return space_admit_atom_impl(s, fallback, NULL, atom);
     return space_admit_atom_impl(s, fallback, source_arena, atom);
 }
 
@@ -4649,10 +5007,10 @@ static const QueryVisibleVar *query_visible_alias_for_var(
     if (!atom || atom->kind != ATOM_VAR || !visible || !full)
         return NULL;
     for (CettaExprIndex i = 0; i < visible->len; i++) {
-        Atom *exact = bindings_lookup_id((Bindings *)full, visible->items[i].var_id);
-        if (!exact || exact->kind != ATOM_VAR)
+        BindingValue exact = bindings_lookup_value_id((Bindings *)full, visible->items[i].var_id);
+        if (!exact.skeleton || exact.skeleton->kind != ATOM_VAR)
             continue;
-        if (exact->var_id != atom->var_id)
+        if (binding_value_variable_id(exact) != atom->var_id)
             continue;
         if (atom->var_id == visible->items[i].var_id)
             return NULL;
@@ -4694,35 +5052,11 @@ static Atom *rewrite_query_visible_aliases(Arena *a, Atom *atom,
     return rewritten ? atom_expr(a, rewritten, atom->expr.len) : atom;
 }
 
-static Atom *bindings_apply_without_self_id(Bindings *full, Arena *a,
-                                            VarId skip_id, Atom *value) {
-    if (!value || !atom_has_vars(value) || !full || full->len == 0)
-        return value;
-    Bindings reduced;
-    if (!bindings_clone(&reduced, full))
-        return bindings_apply_if_vars(full, a, value);
-    bool removed = false;
-    for (uint32_t i = 0; i < reduced.len; i++) {
-        if (reduced.entries[i].var_id != skip_id)
-            continue;
-        removed = bindings_remove_entry_at(&reduced, i);
-        break;
-    }
-    Atom *resolved = removed ? bindings_apply_if_vars(&reduced, a, value)
-                             : bindings_apply_if_vars(full, a, value);
-    bindings_free(&reduced);
-    return resolved;
-}
-
 static Atom *bindings_resolve_query_visible_var(Arena *a, const Bindings *full,
                                                 const QueryVisibleVar *wanted) {
-    Atom *exact = bindings_lookup_id((Bindings *)full, wanted->var_id);
-    if (exact) {
-        if (!atom_has_vars(exact))
-            return exact;
-        return bindings_apply_without_self_id((Bindings *)full, a,
-                                              wanted->var_id, exact);
-    }
+    BindingValue exact = bindings_lookup_value_id((Bindings *)full, wanted->var_id);
+    if (exact.skeleton)
+        return bindings_apply_value_without_id(full, a, wanted->var_id, exact);
 
     Atom *slot_var = atom_var_with_presentation(
         a, wanted->spelling, wanted->name_key, wanted->var_id);
@@ -4773,8 +5107,8 @@ static bool project_query_visible_bindings(Arena *a,
     }
 
     for (uint32_t i = 0; i < full->eq_len; i++) {
-        Atom *lhs = bindings_apply_if_vars(full, a, full->constraints[i].lhs);
-        Atom *rhs = bindings_apply_if_vars(full, a, full->constraints[i].rhs);
+        Atom *lhs = bindings_apply_value(full, a, full->constraints[i].lhs);
+        Atom *rhs = bindings_apply_value(full, a, full->constraints[i].rhs);
         lhs = rewrite_query_visible_aliases(a, lhs, visible, full);
         rhs = rewrite_query_visible_aliases(a, rhs, visible, full);
         if (!atom_refs_only_query_visible_vars(lhs, visible) ||
@@ -4786,6 +5120,7 @@ static bool project_query_visible_bindings(Arena *a,
             return false;
         }
     }
+
     return true;
 }
 
@@ -5157,6 +5492,7 @@ bool space_remove(Space *s, Atom *atom) {
 
     SpaceMutationEquationProjection equation_projection =
         space_local_removal_equation_projection(s, remove_idx);
+    space_pinned_occurrences_detach(s);
 
     if (space_is_ordered(s)) {
         size_t width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
@@ -5219,7 +5555,8 @@ bool space_remove_atom_id(Space *s, AtomId atom_id) {
         }
         return false;
     }
-    if (space_remove_via_backend_primary(s, atom_id))
+    if (s->match_backend.native.match_trie_pins == 0u &&
+        space_remove_via_backend_primary(s, atom_id))
         return true;
     if (!space_match_backend_materialize_native_storage(s, NULL))
         return false;
@@ -5230,6 +5567,7 @@ bool space_remove_atom_id(Space *s, AtomId atom_id) {
             continue;
         SpaceMutationEquationProjection equation_projection =
             space_local_removal_equation_projection(s, i);
+        space_pinned_occurrences_detach(s);
         if (space_is_ordered(s)) {
             size_t width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
             memmove(s->native.atom_ids + ((size_t)i * width),
@@ -5321,20 +5659,23 @@ bool space_remove_occurrence_mask_stable(
     SpaceMutationEquationProjection equation_projection =
         SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
     for (CettaIndex index = 0u; index < logical_len; index++) {
-        if (remove_mask[index] != 0u) {
-            removed++;
-            equation_projection = space_merge_equation_projection(
-                equation_projection,
-                space_atom_equation_projection(
-                    s, space_get_atom_id_at64(s, index),
-                    space_get_at64(s, index)));
-        }
+        if (remove_mask[index] == 0u)
+            continue;
+        removed++;
+        equation_projection = space_merge_equation_projection(
+            equation_projection,
+            space_atom_equation_projection(
+                s, space_get_atom_id_at64(s, index),
+                space_get_at64(s, index)));
     }
     if (removed == 0u)
         return true;
     cetta_runtime_stats_add(
         CETTA_RUNTIME_COUNTER_SPACE_STABLE_MASK_REMOVED_OCCURRENCE,
         removed);
+
+    if (!space_has_overlay_base(s))
+        space_pinned_occurrences_detach(s);
 
     if (stable_occurrence_transport_enabled() && !space_has_overlay_base(s) &&
         logical_len <= SIZE_MAX / sizeof(CettaIndex) &&
@@ -5956,6 +6297,36 @@ bool space_contains_canonical(Space *s, Atom *atom, bool *out_applicable) {
     return cid != CETTA_ATOM_ID_NONE && id_present_contains(&s->native, cid);
 }
 
+bool space_contains_for_add_nodup(Space *s, Atom *atom) {
+    if (!s || !atom)
+        return false;
+    bool found = false;
+    bool backend_checked =
+        space_match_backend_contains_atom_structural_direct(s, atom, &found);
+    if (!backend_checked)
+        found = space_contains_exact(s, atom);
+    if (found || backend_checked || space_atom_is_exact_indexable(atom))
+        return found;
+
+    bool canonical_applicable = false;
+    found = space_contains_canonical(s, atom, &canonical_applicable);
+    if (canonical_applicable)
+        return found;
+
+    bool alpha_fallback = atom_has_vars(atom);
+    CettaCount logical_len = space_length64(s);
+    for (CettaIndex index = 0u; index < logical_len; index++) {
+        Atom *candidate = space_get_at64(s, index);
+        if (!candidate)
+            continue;
+        if (alpha_fallback ? atom_alpha_eq(candidate, atom)
+                           : atom_eq(candidate, atom)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool space_contains_only_exact_atoms(Space *s) {
     if (!s)
         return false;
@@ -6112,6 +6483,8 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
         }
         return atom_expr2(a, atom_symbol(a, "Space"), atom_symbol(a, space_type));
     }
+    case GV_BINDINGS:
+        return atom_symbol(a, "Bindings");
     case GV_FOREIGN:
         return atom_symbol(a, "Foreign");
     case GV_CAPTURE:
@@ -6185,8 +6558,7 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
                 cap = cap ? cap * 2u : 4u;
                 types = cetta_realloc(types, sizeof(Atom *) * cap);
             }
-            types[count++] = atom_freshen_epoch(a, annotation->expr.elems[2],
-                                                fresh_var_suffix());
+            types[count++] = cetta_instantiate_frame_syntax(a, annotation->expr.elems[2]);
         }
         *out_types = types;
         return count;
@@ -6202,6 +6574,7 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
     Atom **types = NULL;
     uint32_t count = 0, cap = 0;
     for (CettaIndex i = 0; i < bucket->len; i++) {
+        CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
         if (cost)
             cost->indexed_rows_examined++;
         cetta_runtime_stats_inc(
@@ -6214,8 +6587,9 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
         if (space_type_annotation_child_ids_at_id(s, annotation_id,
                                                   &subject_id, &type_id)) {
             if (term_universe_atom_id_eq(s->native.universe, subject_id, atom)) {
+                CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
                 Atom *type_copy = term_universe_copy_atom_epoch(
-                    s->native.universe, a, type_id, fresh_var_suffix());
+                    s->native.universe, a, type_id, cetta_frame_identity_scope_fresh(&frame_identity_scope));
                 if (type_copy) {
                     if (!type_inference_can_add(budget, count)) break;
                     if (count >= cap) {
@@ -6240,8 +6614,7 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
             cap = cap ? cap * 2 : 4;
             types = cetta_realloc(types, sizeof(Atom *) * cap);
         }
-        types[count++] = atom_freshen_epoch(a, annotation->expr.elems[2],
-                                            fresh_var_suffix());
+        types[count++] = cetta_instantiate_frame_syntax(a, annotation->expr.elems[2]);
     }
     *out_types = types;
     return count;
@@ -6484,8 +6857,7 @@ static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
                     if (ft->expr.len - 2 != atom->expr.len - 1) continue;
                     /* Freshen type vars and try to unify args to get concrete ret type */
                     ArenaMark scratch_mark = arena_mark(&scratch);
-                    uint32_t tsuf = fresh_var_suffix();
-                    Atom *fresh_ft = atom_freshen_epoch(&scratch, ft, tsuf);
+                    Atom *fresh_ft = cetta_instantiate_frame_syntax(&scratch, ft);
                     Atom *fresh_ret = fresh_ft->expr.elems[fresh_ft->expr.len - 1];
                     Bindings tb;
                     bindings_init(&tb);
@@ -6618,8 +6990,8 @@ typedef struct QueryResultSink {
     QueryResults *results;
     QueryResultVisitor visitor;
     void *visitor_ctx;
-    QueryEquationCandidateFilter candidate_filter;
-    void *candidate_filter_ctx;
+    QueryEquationCandidatePlan candidate_plan;
+    void *candidate_plan_ctx;
     CettaCount emitted;
     bool stop;
 } QueryResultSink;
@@ -6628,6 +7000,7 @@ static bool query_equation_emit_stored(Space *s, AtomId lhs_id, AtomId rhs_id,
                                        Atom *query,
                                        const QueryVisibleVarSet *visible,
                                        Arena *a, uint32_t epoch,
+                                       BindingsFrameSchema *frame_schema,
                                        const Bindings *seed,
                                        QueryResultSink *sink);
 static bool query_equation_emit_decoded_epoch(Atom *lhs, Atom *rhs,
@@ -6636,14 +7009,28 @@ static bool query_equation_emit_decoded_epoch(Atom *lhs, Atom *rhs,
                                               Arena *a, uint32_t epoch,
                                               const Bindings *seed,
                                               QueryResultSink *sink);
+static bool query_equation_emit_decoded_plan_epoch(
+    Atom *lhs, Atom *rhs,
+    Atom *refinement_fallback_lhs, Atom *refinement_failure_rhs,
+    BindingsFrameSchema *frame_schema,
+    Atom *query, const QueryVisibleVarSet *visible,
+    Arena *a, uint32_t epoch, const Bindings *seed,
+    QueryResultSink *sink);
+static bool query_equation_emit_candidate_plan_epoch(
+    Atom *equation, Atom *match_pattern, Atom *result_template,
+    Atom *refinement_failure_template, Atom *refinement_fallback_pattern,
+    BindingsFrameSchema *frame_schema,
+    Atom *query, const QueryVisibleVarSet *visible,
+    Arena *a, uint32_t epoch, const Bindings *seed,
+    QueryResultSink *sink);
 
 static void query_result_sink_init_collect(QueryResultSink *sink,
                                            QueryResults *results) {
     sink->results = results;
     sink->visitor = NULL;
     sink->visitor_ctx = NULL;
-    sink->candidate_filter = NULL;
-    sink->candidate_filter_ctx = NULL;
+    sink->candidate_plan = NULL;
+    sink->candidate_plan_ctx = NULL;
     sink->emitted = 0;
     sink->stop = false;
 }
@@ -6654,17 +7041,55 @@ static void query_result_sink_init_visit(QueryResultSink *sink,
     sink->results = NULL;
     sink->visitor = visitor;
     sink->visitor_ctx = ctx;
-    sink->candidate_filter = NULL;
-    sink->candidate_filter_ctx = NULL;
+    sink->candidate_plan = NULL;
+    sink->candidate_plan_ctx = NULL;
     sink->emitted = 0;
     sink->stop = false;
 }
 
-static bool query_result_sink_candidate_allowed(
-    const QueryResultSink *sink, Atom *equation) {
-    return !sink || !sink->candidate_filter || !equation ||
-           sink->candidate_filter(
-               equation, sink->candidate_filter_ctx);
+static bool query_result_sink_candidate_plan(
+    const QueryResultSink *sink, Atom *equation,
+    Atom **match_pattern, Atom **result_template,
+    Atom **refinement_failure_template, Atom **refinement_fallback_pattern,
+    BindingsFrameSchema **frame_schema) {
+    if (match_pattern)
+        *match_pattern = NULL;
+    if (result_template)
+        *result_template = NULL;
+    if (refinement_failure_template)
+        *refinement_failure_template = NULL;
+    if (refinement_fallback_pattern)
+        *refinement_fallback_pattern = NULL;
+    if (frame_schema)
+        *frame_schema = NULL;
+    if (!sink || !sink->candidate_plan || !equation)
+        return true;
+    Atom *planned_pattern = NULL;
+    Atom *planned_template = NULL;
+    Atom *planned_failure = NULL;
+    Atom *planned_fallback = NULL;
+    BindingsFrameSchema *planned_schema = NULL;
+    if (!sink->candidate_plan(
+            equation, sink->candidate_plan_ctx,
+            &planned_pattern, &planned_template, &planned_failure, &planned_fallback,
+            &planned_schema)) {
+        return false;
+    }
+    if (frame_schema)
+        *frame_schema = planned_schema;
+    /* A partial override cannot be interpreted safely.  Retain the authored
+     * equation rather than turning an optimization artifact into authority. */
+    if (!planned_pattern || !planned_template)
+        return true;
+    if (match_pattern)
+        *match_pattern = planned_pattern;
+    if (result_template)
+        *result_template = planned_template;
+    if (refinement_failure_template)
+        *refinement_failure_template = planned_failure;
+    if (refinement_fallback_pattern)
+        *refinement_fallback_pattern = planned_fallback;
+    return true;
 }
 
 static bool query_result_sink_emit(QueryResultSink *sink, Atom *result,
@@ -6716,18 +7141,48 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
         (void)considered;
         disc_lookup(bucket->trie, query, &candidates, &ncand, &ccand);
         for (CettaIndex ci = 0; ci < ncand; ci++) {
+            CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
             CettaIndex i = candidates[ci];
             if (i >= bucket->len) continue;
-            if (sink->candidate_filter) {
-                Atom *equation = query_bucket_equation_at(s, bucket, i);
-                if (!query_result_sink_candidate_allowed(sink, equation))
+            Atom *planned_lhs = NULL;
+            Atom *planned_rhs = NULL;
+            Atom *planned_failure = NULL;
+    Atom *planned_fallback = NULL;
+            BindingsFrameSchema *planned_schema = NULL;
+            Atom *equation = NULL;
+            if (sink->candidate_plan) {
+                equation = query_bucket_equation_at(s, bucket, i);
+                if (!query_result_sink_candidate_plan(
+                        sink, equation, &planned_lhs, &planned_rhs,
+                        &planned_failure, &planned_fallback, &planned_schema)) {
                     continue;
+                }
             }
             AtomId equation_id = space_indexed_occurrence_atom_id(
                 s, bucket->atom_indices, bucket->atom_ids, i);
+            if (planned_lhs && planned_rhs) {
+                CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
+                SymbolId lhs_head = eq_head_symbol(planned_lhs);
+                if (query_head != SYMBOL_ID_NONE &&
+                    lhs_head != SYMBOL_ID_NONE &&
+                    lhs_head != query_head) {
+                    continue;
+                }
+                considered++;
+                cetta_runtime_stats_inc(
+                    CETTA_RUNTIME_COUNTER_MATCH_DECISION_EXACT_ATTEMPT);
+                (void)query_equation_emit_candidate_plan_epoch(
+                    equation, planned_lhs, planned_rhs, planned_failure, planned_fallback,
+                    planned_schema,
+                    query, visible, a, cetta_frame_identity_scope_fresh(&frame_identity_scope), NULL, sink);
+                if (sink->stop)
+                    break;
+                continue;
+            }
             AtomId lhs_id = CETTA_ATOM_ID_NONE;
             AtomId rhs_id = CETTA_ATOM_ID_NONE;
             if (space_equation_child_ids_at_id(s, equation_id, &lhs_id, &rhs_id)) {
+                CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
                 SymbolId lhs_head = eq_head_symbol_id(s, lhs_id);
                 if (query_head != SYMBOL_ID_NONE && lhs_head != SYMBOL_ID_NONE &&
                     lhs_head != query_head) {
@@ -6737,8 +7192,8 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
                 cetta_runtime_stats_inc(
                     CETTA_RUNTIME_COUNTER_MATCH_DECISION_EXACT_ATTEMPT);
                 (void)query_equation_emit_stored(
-                    s, lhs_id, rhs_id, query, visible, a, fresh_var_suffix(),
-                    NULL, sink);
+                    s, lhs_id, rhs_id, query, visible, a, cetta_frame_identity_scope_fresh(&frame_identity_scope),
+                    planned_schema, NULL, sink);
                 if (sink->stop)
                     break;
                 continue;
@@ -6754,8 +7209,10 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
             considered++;
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_MATCH_DECISION_EXACT_ATTEMPT);
-            (void)query_equation_emit_decoded_epoch(
-                lhs, rhs, query, visible, a, fresh_var_suffix(), NULL, sink);
+            (void)query_equation_emit_decoded_plan_epoch(
+                lhs, rhs, NULL, NULL,
+                planned_schema,
+                query, visible, a, cetta_frame_identity_scope_fresh(&frame_identity_scope), NULL, sink);
             if (sink->stop)
                 break;
         }
@@ -6770,16 +7227,46 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
     uint32_t considered = 0;
     (void)considered;
     for (CettaIndex i = 0; i < bucket->len; i++) {
-        if (sink->candidate_filter) {
-            Atom *equation = query_bucket_equation_at(s, bucket, i);
-            if (!query_result_sink_candidate_allowed(sink, equation))
+        CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
+        Atom *planned_lhs = NULL;
+        Atom *planned_rhs = NULL;
+        Atom *planned_failure = NULL;
+    Atom *planned_fallback = NULL;
+        BindingsFrameSchema *planned_schema = NULL;
+        Atom *equation = NULL;
+        if (sink->candidate_plan) {
+            equation = query_bucket_equation_at(s, bucket, i);
+            if (!query_result_sink_candidate_plan(
+                    sink, equation, &planned_lhs, &planned_rhs,
+                    &planned_failure, &planned_fallback, &planned_schema)) {
                 continue;
+            }
         }
         AtomId equation_id = space_indexed_occurrence_atom_id(
             s, bucket->atom_indices, bucket->atom_ids, i);
+        if (planned_lhs && planned_rhs) {
+            CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
+            SymbolId lhs_head = eq_head_symbol(planned_lhs);
+            if (query_head != SYMBOL_ID_NONE &&
+                lhs_head != SYMBOL_ID_NONE &&
+                lhs_head != query_head) {
+                continue;
+            }
+            considered++;
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_MATCH_DECISION_EXACT_ATTEMPT);
+            (void)query_equation_emit_candidate_plan_epoch(
+                equation, planned_lhs, planned_rhs, planned_failure, planned_fallback,
+                planned_schema,
+                query, visible, a, cetta_frame_identity_scope_fresh(&frame_identity_scope), NULL, sink);
+            if (sink->stop)
+                break;
+            continue;
+        }
         AtomId lhs_id = CETTA_ATOM_ID_NONE;
         AtomId rhs_id = CETTA_ATOM_ID_NONE;
         if (space_equation_child_ids_at_id(s, equation_id, &lhs_id, &rhs_id)) {
+            CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
             SymbolId lhs_head = eq_head_symbol_id(s, lhs_id);
             if (query_head != SYMBOL_ID_NONE && lhs_head != SYMBOL_ID_NONE &&
                 lhs_head != query_head) {
@@ -6789,8 +7276,8 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_MATCH_DECISION_EXACT_ATTEMPT);
             (void)query_equation_emit_stored(
-                s, lhs_id, rhs_id, query, visible, a, fresh_var_suffix(),
-                NULL, sink);
+                s, lhs_id, rhs_id, query, visible, a, cetta_frame_identity_scope_fresh(&frame_identity_scope),
+                planned_schema, NULL, sink);
             if (sink->stop)
                 break;
             continue;
@@ -6806,8 +7293,10 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
         considered++;
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_MATCH_DECISION_EXACT_ATTEMPT);
-        (void)query_equation_emit_decoded_epoch(
-            lhs, rhs, query, visible, a, fresh_var_suffix(), NULL, sink);
+        (void)query_equation_emit_decoded_plan_epoch(
+            lhs, rhs, NULL, NULL,
+            planned_schema,
+            query, visible, a, cetta_frame_identity_scope_fresh(&frame_identity_scope), NULL, sink);
         if (sink->stop)
             break;
     }
@@ -6821,6 +7310,7 @@ static bool query_equation_emit_stored(Space *s, AtomId lhs_id, AtomId rhs_id,
                                        Atom *query,
                                        const QueryVisibleVarSet *visible,
                                        Arena *a, uint32_t epoch,
+                                       BindingsFrameSchema *frame_schema,
                                        const Bindings *seed,
                                        QueryResultSink *sink) {
     if (!s || !s->native.universe || lhs_id == CETTA_ATOM_ID_NONE ||
@@ -6834,10 +7324,15 @@ static bool query_equation_emit_stored(Space *s, AtomId lhs_id, AtomId rhs_id,
         bindings_free(&merged);
         return false;
     }
+    if (frame_schema &&
+        !bindings_register_complete_frame_schema(
+            &merged, frame_schema, epoch)) {
+        bindings_free(&merged);
+        return false;
+    }
     bool emitted = false;
     if (match_atoms_atom_id_epoch(query, s->native.universe, lhs_id,
-                                  &merged, a, epoch) &&
-        !bindings_has_loop(&merged)) {
+                                  &merged, a, epoch)) {
         CettaSurvivorAllocationScope allocation_scope =
             cetta_survivor_allocation_scope_enter(
                 CETTA_SURVIVOR_ALLOC_ROLE_EQUATION_RESULT_INSTANTIATION);
@@ -6851,10 +7346,98 @@ static bool query_equation_emit_stored(Space *s, AtomId lhs_id, AtomId rhs_id,
         cetta_survivor_allocation_scope_leave(allocation_scope);
         if (result) {
             Bindings projected;
-            if (project_query_visible_bindings(a, visible, &merged, &projected)) {
+            if (project_query_visible_bindings(
+                    a, visible, &merged, &projected)) {
                 emitted = query_result_sink_emit(sink, result, &projected);
                 bindings_free(&projected);
             }
+        }
+    }
+    bindings_free(&merged);
+    return emitted;
+}
+
+static bool query_equation_match_decoded_epoch(
+    Atom *lhs, Atom *query, Arena *a, uint32_t epoch,
+    Bindings *merged) {
+    if (!lhs || !query || !a || !merged)
+        return false;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOP_CALL_EQ_DECODED);
+    /* Leaf-patch view (OFF by default): for a flat linear pattern with
+     * non-variable query args, the positional bind reproduces the matcher's
+     * bindings without the worklist; it pre-checks and refuses anything else,
+     * falling back to the general matcher on clean state.  OFF-vs-ON is proven
+     * byte-identical before any default flip. */
+    bool leaf_matched = match_leaf_patch_view_enabled() &&
+                        match_atoms_epoch_positional_linear(query, lhs, merged,
+                                                            a, epoch);
+    if (leaf_matched)
+        return true;
+    BindingsBuilder match_builder;
+    bindings_builder_init_owned(&match_builder, merged);
+    bool matched = match_atoms_epoch_builder(
+        query, lhs, &match_builder, a, epoch);
+    bindings_builder_take(&match_builder, merged);
+    return matched;
+}
+
+static bool query_equation_emit_decoded_plan_epoch(
+    Atom *lhs, Atom *rhs,
+    Atom *refinement_fallback_lhs, Atom *refinement_failure_rhs,
+    BindingsFrameSchema *frame_schema,
+    Atom *query, const QueryVisibleVarSet *visible,
+    Arena *a, uint32_t epoch, const Bindings *seed,
+    QueryResultSink *sink) {
+    if (!lhs || !rhs || !query || !a || !sink)
+        return false;
+    Bindings merged;
+    bindings_init(&merged);
+    if (seed && !bindings_try_merge_live(&merged, seed)) {
+        bindings_free(&merged);
+        return false;
+    }
+    if (frame_schema &&
+        !bindings_register_complete_frame_schema(
+            &merged, frame_schema, epoch)) {
+        bindings_free(&merged);
+        return false;
+    }
+    bool emitted = false;
+    bool matched = query_equation_match_decoded_epoch(
+        lhs, query, a, epoch, &merged);
+    Atom *selected_rhs = rhs;
+    if (!matched && refinement_fallback_lhs && refinement_failure_rhs) {
+        /* A refined guard mismatch is not the same as an absent equation.
+         * Retry the authored head on clean bindings.  If it matches, the
+         * closed failure template preserves the authored zero-answer result. */
+        bindings_free(&merged);
+        bindings_init(&merged);
+        if (seed && !bindings_try_merge_live(&merged, seed)) {
+            bindings_free(&merged);
+            return false;
+        }
+        if (frame_schema &&
+            !bindings_register_complete_frame_schema(
+                &merged, frame_schema, epoch)) {
+            bindings_free(&merged);
+            return false;
+        }
+        matched = query_equation_match_decoded_epoch(
+            refinement_fallback_lhs, query, a, epoch, &merged);
+        selected_rhs = refinement_failure_rhs;
+    }
+    if (matched) {
+        CettaSurvivorAllocationScope allocation_scope =
+            cetta_survivor_allocation_scope_enter(
+                CETTA_SURVIVOR_ALLOC_ROLE_EQUATION_RESULT_INSTANTIATION);
+        Atom *result = bindings_apply_epoch(&merged, a, selected_rhs, epoch);
+        result = rewrite_query_visible_aliases(a, result, visible, &merged);
+        cetta_survivor_allocation_scope_leave(allocation_scope);
+        Bindings projected;
+        if (project_query_visible_bindings(
+                a, visible, &merged, &projected)) {
+            emitted = query_result_sink_emit(sink, result, &projected);
+            bindings_free(&projected);
         }
     }
     bindings_free(&merged);
@@ -6867,47 +7450,27 @@ static bool query_equation_emit_decoded_epoch(Atom *lhs, Atom *rhs,
                                               Arena *a, uint32_t epoch,
                                               const Bindings *seed,
                                               QueryResultSink *sink) {
-    if (!lhs || !rhs || !query || !a || !sink)
+    return query_equation_emit_decoded_plan_epoch(
+        lhs, rhs, NULL, NULL, NULL,
+        query, visible, a, epoch, seed, sink);
+}
+
+static bool query_equation_emit_candidate_plan_epoch(
+    Atom *equation, Atom *match_pattern, Atom *result_template,
+    Atom *refinement_failure_template, Atom *refinement_fallback_pattern,
+    BindingsFrameSchema *frame_schema,
+    Atom *query, const QueryVisibleVarSet *visible,
+    Arena *a, uint32_t epoch, const Bindings *seed,
+    QueryResultSink *sink) {
+    if (!equation || !match_pattern || !result_template)
         return false;
-    Bindings merged;
-    bindings_init(&merged);
-    if (seed && !bindings_try_merge_live(&merged, seed)) {
-        bindings_free(&merged);
-        return false;
-    }
-    bool emitted = false;
-    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOP_CALL_EQ_DECODED);
-    /* Leaf-patch view (OFF by default): for a flat linear pattern with
-     * non-variable query args, the positional bind reproduces the matcher's
-     * bindings without the worklist; it pre-checks and refuses anything else,
-     * falling back to the general matcher on clean state.  OFF-vs-ON is proven
-     * byte-identical before any default flip. */
-    bool leaf_matched = match_leaf_patch_view_enabled() &&
-                        match_atoms_epoch_positional_linear(query, lhs, &merged,
-                                                            a, epoch);
-    bool matched = leaf_matched;
-    if (!matched) {
-        BindingsBuilder match_builder;
-        bindings_builder_init_owned(&match_builder, &merged);
-        matched = match_atoms_epoch_builder(
-            query, lhs, &match_builder, a, epoch);
-        bindings_builder_take(&match_builder, &merged);
-    }
-    if (matched && !bindings_has_loop(&merged)) {
-        CettaSurvivorAllocationScope allocation_scope =
-            cetta_survivor_allocation_scope_enter(
-                CETTA_SURVIVOR_ALLOC_ROLE_EQUATION_RESULT_INSTANTIATION);
-        Atom *result = bindings_apply_epoch(&merged, a, rhs, epoch);
-        result = rewrite_query_visible_aliases(a, result, visible, &merged);
-        cetta_survivor_allocation_scope_leave(allocation_scope);
-        Bindings projected;
-        if (project_query_visible_bindings(a, visible, &merged, &projected)) {
-            emitted = query_result_sink_emit(sink, result, &projected);
-            bindings_free(&projected);
-        }
-    }
-    bindings_free(&merged);
-    return emitted;
+    bool is_failure_branch = match_pattern == refinement_fallback_pattern &&
+        result_template == refinement_failure_template;
+    return query_equation_emit_decoded_plan_epoch(
+        match_pattern, result_template,
+        is_failure_branch ? NULL : refinement_fallback_pattern,
+        is_failure_branch ? NULL : refinement_failure_template,
+        frame_schema, query, visible, a, epoch, seed, sink);
 }
 
 /* Try matching equations from a bucket against a query.
@@ -6938,20 +7501,52 @@ static void query_bucket(Space *s, EqBucket *bucket, Atom *query,
     smset_init(&matches);
     stree_query_bucket(&bucket->subst, a, query, NULL, &matches);
     for (CettaIndex mi = 0; mi < matches.len; mi++) {
+        CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
         const SubstMatch *sm = &matches.items[mi];
         if (sm->atom_idx >= bucket->len)
             continue;
-        if (sink->candidate_filter) {
-            Atom *equation = query_bucket_equation_at(
-                s, bucket, sm->atom_idx);
-            if (!query_result_sink_candidate_allowed(sink, equation))
+        Atom *planned_lhs = NULL;
+        Atom *planned_rhs = NULL;
+        Atom *planned_failure = NULL;
+    Atom *planned_fallback = NULL;
+        BindingsFrameSchema *planned_schema = NULL;
+        Atom *equation = NULL;
+        if (sink->candidate_plan) {
+            equation = query_bucket_equation_at(s, bucket, sm->atom_idx);
+            if (!query_result_sink_candidate_plan(
+                    sink, equation, &planned_lhs, &planned_rhs,
+                    &planned_failure, &planned_fallback, &planned_schema)) {
                 continue;
+            }
         }
         AtomId equation_id = space_indexed_occurrence_atom_id(
             s, bucket->atom_indices, bucket->atom_ids, sm->atom_idx);
+        if (planned_lhs && planned_rhs) {
+            CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
+            SymbolId lhs_head = eq_head_symbol(planned_lhs);
+            if (query_head != SYMBOL_ID_NONE &&
+                lhs_head != SYMBOL_ID_NONE &&
+                lhs_head != query_head) {
+                continue;
+            }
+            considered++;
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_MATCH_DECISION_EXACT_ATTEMPT);
+            if (query_equation_emit_candidate_plan_epoch(
+                    equation, planned_lhs, planned_rhs, planned_failure, planned_fallback,
+                    planned_schema,
+                    query, visible, a, cetta_frame_identity_scope_fresh(&frame_identity_scope), NULL, sink)) {
+                cetta_runtime_stats_inc(
+                    CETTA_RUNTIME_COUNTER_QUERY_EQUATION_SUBST_EMITTED);
+            }
+            if (sink->stop)
+                break;
+            continue;
+        }
         AtomId lhs_id = CETTA_ATOM_ID_NONE;
         AtomId rhs_id = CETTA_ATOM_ID_NONE;
         if (space_equation_child_ids_at_id(s, equation_id, &lhs_id, &rhs_id)) {
+            CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
             SymbolId lhs_head = eq_head_symbol_id(s, lhs_id);
             if (query_head != SYMBOL_ID_NONE && lhs_head != SYMBOL_ID_NONE &&
                 lhs_head != query_head) {
@@ -6961,7 +7556,8 @@ static void query_bucket(Space *s, EqBucket *bucket, Atom *query,
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_MATCH_DECISION_EXACT_ATTEMPT);
             if (query_equation_emit_stored(s, lhs_id, rhs_id, query, visible, a,
-                                           fresh_var_suffix(), NULL, sink)) {
+                                           cetta_frame_identity_scope_fresh(&frame_identity_scope),
+                                           planned_schema, NULL, sink)) {
                 cetta_runtime_stats_inc(
                     CETTA_RUNTIME_COUNTER_QUERY_EQUATION_SUBST_EMITTED);
             }
@@ -6980,19 +7576,24 @@ static void query_bucket(Space *s, EqBucket *bucket, Atom *query,
         considered++;
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_MATCH_DECISION_EXACT_ATTEMPT);
-        bool emitted = query_equation_emit_decoded_epoch(
-            lhs, rhs, query, visible, a, fresh_var_suffix(), NULL, sink);
+        bool emitted = query_equation_emit_decoded_plan_epoch(
+            lhs, rhs, NULL, NULL,
+            planned_schema,
+            query, visible, a, cetta_frame_identity_scope_fresh(&frame_identity_scope), NULL, sink);
         if (emitted) {
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_QUERY_EQUATION_SUBST_EMITTED);
         }
         if (!emitted) {
+            CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_QUERY_EQUATION_SUBST_CANDIDATE_FALLBACK);
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_MATCH_DECISION_EXACT_ATTEMPT);
-            (void)query_equation_emit_decoded_epoch(
-                lhs, rhs, query, visible, a, fresh_var_suffix(), NULL, sink);
+            (void)query_equation_emit_decoded_plan_epoch(
+                lhs, rhs, NULL, NULL,
+                planned_schema,
+                query, visible, a, cetta_frame_identity_scope_fresh(&frame_identity_scope), NULL, sink);
         }
         if (sink->stop)
             break;
@@ -7031,8 +7632,20 @@ static CettaCount query_equations_core_overlay(Space *s, Atom *query, Arena *a,
         SymbolId lhs_head;
         if (!equation || !is_equation_atom(equation, &lhs, &rhs))
             continue;
-        if (!query_result_sink_candidate_allowed(sink, equation))
+        Atom *planned_lhs = NULL;
+        Atom *planned_rhs = NULL;
+        Atom *planned_failure = NULL;
+    Atom *planned_fallback = NULL;
+        BindingsFrameSchema *planned_schema = NULL;
+        if (!query_result_sink_candidate_plan(
+                sink, equation, &planned_lhs, &planned_rhs,
+                &planned_failure, &planned_fallback, &planned_schema)) {
             continue;
+        }
+        if (planned_lhs && planned_rhs) {
+            lhs = planned_lhs;
+            rhs = planned_rhs;
+        }
         lhs_head = eq_head_symbol(lhs);
         if (query_head != SYMBOL_ID_NONE && lhs_head != SYMBOL_ID_NONE &&
             lhs_head != query_head) {
@@ -7041,8 +7654,19 @@ static CettaCount query_equations_core_overlay(Space *s, Atom *query, Arena *a,
         considered++;
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_MATCH_DECISION_EXACT_ATTEMPT);
-        (void)query_equation_emit_decoded_epoch(
-            lhs, rhs, query, &visible, a, fresh_var_suffix(), NULL, sink);
+        if (planned_lhs && planned_rhs) {
+            CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
+            (void)query_equation_emit_candidate_plan_epoch(
+                equation, planned_lhs, planned_rhs, planned_failure, planned_fallback,
+                planned_schema,
+                query, &visible, a, cetta_frame_identity_scope_fresh(&frame_identity_scope), NULL, sink);
+        } else {
+            CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
+            (void)query_equation_emit_decoded_plan_epoch(
+                lhs, rhs, NULL, NULL,
+                planned_schema,
+                query, &visible, a, cetta_frame_identity_scope_fresh(&frame_identity_scope), NULL, sink);
+        }
     }
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_QUERY_EQUATION_CANDIDATES,
                             considered);
@@ -7089,14 +7713,14 @@ CettaCount query_equations_visit(Space *s, Atom *query, Arena *a,
     return query_equations_core(s, query, a, &sink);
 }
 
-CettaCount query_equations_visit_filtered(
+CettaCount query_equations_visit_planned(
     Space *s, Atom *query, Arena *a,
-    QueryEquationCandidateFilter filter, void *filter_ctx,
+    QueryEquationCandidatePlan plan, void *plan_ctx,
     QueryResultVisitor visitor, void *visitor_ctx) {
     QueryResultSink sink;
     query_result_sink_init_visit(&sink, visitor, visitor_ctx);
-    sink.candidate_filter = filter;
-    sink.candidate_filter_ctx = filter_ctx;
+    sink.candidate_plan = plan;
+    sink.candidate_plan_ctx = plan_ctx;
     return query_equations_core(s, query, a, &sink);
 }
 
@@ -7530,6 +8154,47 @@ bool space_head_has_arrow_signature(Space *s, SymbolId head,
         .valid = true,
     };
     return shadowed;
+}
+
+bool space_head_declares_type(Space *s, SymbolId head) {
+    if (!s || head == SYMBOL_ID_NONE)
+        return false;
+    if (space_has_overlay_base(s)) {
+        CettaCount logical_len = space_length64(s);
+        for (CettaIndex i = 0; i < logical_len; i++) {
+            Atom *annotation = space_get_at64(s, i);
+            if (annotation && annotation->kind == ATOM_EXPR &&
+                annotation->expr.len == 3u &&
+                atom_is_symbol_id(annotation->expr.elems[0],
+                                  g_builtin_syms.colon) &&
+                atom_is_symbol_id(annotation->expr.elems[1], head))
+                return true;
+        }
+        return false;
+    }
+    ensure_ty_ann_index(s);
+    TypeAnnBucket *bucket = &s->native.ty_idx.buckets[symbol_hash(head)];
+    for (CettaIndex i = 0; i < bucket->len; i++) {
+        AtomId annotation_id = space_indexed_occurrence_atom_id(
+            s, bucket->atom_indices, bucket->atom_ids, i);
+        AtomId subject_id = CETTA_ATOM_ID_NONE;
+        AtomId type_id = CETTA_ATOM_ID_NONE;
+        if (space_type_annotation_child_ids_at_id(
+                s, annotation_id, &subject_id, &type_id) &&
+            tu_hdr(s->native.universe, subject_id) &&
+            tu_kind(s->native.universe, subject_id) == ATOM_SYMBOL &&
+            tu_sym(s->native.universe, subject_id) == head)
+            return true;
+        Atom *annotation = space_indexed_occurrence_atom(
+            s, bucket->atom_indices, bucket->atom_ids, i);
+        if (annotation && annotation->kind == ATOM_EXPR &&
+            annotation->expr.len == 3u &&
+            atom_is_symbol_id(annotation->expr.elems[0],
+                              g_builtin_syms.colon) &&
+            atom_is_symbol_id(annotation->expr.elems[1], head))
+            return true;
+    }
+    return false;
 }
 
 static bool space_prepare_single_equation_uncached(
@@ -8648,6 +9313,7 @@ SpacePreparedRegisterStep space_prepared_equation_run_register_recursion(
 
 CettaCount query_equation_visit(Atom *equation, Atom *query, Arena *a,
                                 QueryResultVisitor visitor, void *ctx) {
+                                    CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
     QueryResultSink sink;
     QueryVisibleVarSet visible;
     Atom *lhs = NULL;
@@ -8663,7 +9329,7 @@ CettaCount query_equation_visit(Atom *equation, Atom *query, Arena *a,
     }
     query_result_sink_init_visit(&sink, visitor, ctx);
     (void)query_equation_emit_decoded_epoch(
-        lhs, rhs, query, &visible, a, fresh_var_suffix(), NULL, &sink);
+        lhs, rhs, query, &visible, a, cetta_frame_identity_scope_fresh(&frame_identity_scope), NULL, &sink);
     query_visible_var_set_free(&visible);
     return sink.emitted;
 }

@@ -273,7 +273,7 @@ static void v3_remember_coverage_conflict(
         result->subject, position + 1u, missing ? missing : "a known value");
 }
 
-/* Whole-relation negative coverage: refute only when every clause in one
+/* Whole-relation negative coverage: refute only when every equation in one
  * argument column has a known top-level key and a definitely inhabiting key
  * remains uncovered.  This runs once over the mutually visible block; the
  * evaluator never replays it. */
@@ -321,7 +321,7 @@ static bool v3_relation_coverage_conflict(
         for (size_t position = 0u; position < arity; position++) {
             const Atom *domain = signature->expr.elems[position + 1u];
             bool open = false;
-            size_t clause_count = 0u;
+            size_t equation_count = 0u;
             if (v3_symbol_is(domain, "Number") ||
                 v3_symbol_is(domain, "String")) {
                 for (size_t index = 0u; index < form_count; index++) {
@@ -330,7 +330,7 @@ static bool v3_relation_coverage_conflict(
                             forms[index], subject, arity, &group_lhs)) {
                         continue;
                     }
-                    clause_count++;
+                    equation_count++;
                     const Atom *pattern = group_lhs->expr.elems[position + 1u];
                     bool literal = v3_symbol_is(domain, "Number")
                         ? v3_numeric_literal(pattern)
@@ -340,7 +340,7 @@ static bool v3_relation_coverage_conflict(
                         break;
                     }
                 }
-                if (clause_count > 0u && !open) {
+                if (equation_count > 0u && !open) {
                     char missing[96];
                     (void)snprintf(
                         missing, sizeof missing, "a %s outside the matched literals",
@@ -363,7 +363,7 @@ static bool v3_relation_coverage_conflict(
                             forms[index], subject, arity, &group_lhs)) {
                         continue;
                     }
-                    clause_count++;
+                    equation_count++;
                     int value = v3_bool_pattern(
                         group_lhs->expr.elems[position + 1u]);
                     if (value < 0) {
@@ -372,7 +372,7 @@ static bool v3_relation_coverage_conflict(
                     }
                     covered[(size_t)value] = true;
                 }
-                if (clause_count > 0u && !open &&
+                if (equation_count > 0u && !open &&
                     (!covered[0] || !covered[1])) {
                     v3_remember_coverage_conflict(
                         result, subject, position,
@@ -395,7 +395,7 @@ static bool v3_relation_coverage_conflict(
                 const Atom *group_lhs = NULL;
                 if (!v3_lhs_group(forms[index], subject, arity, &group_lhs))
                     continue;
-                clause_count++;
+                equation_count++;
                 size_t candidate_index = 0u;
                 if (!v3_nominal_pattern_key(
                         group_lhs->expr.elems[position + 1u],
@@ -405,7 +405,7 @@ static bool v3_relation_coverage_conflict(
                 }
                 covered[candidate_index] = true;
             }
-            if (!open && clause_count > 0u) {
+            if (!open && equation_count > 0u) {
                 for (size_t index = 0u; index < candidate_count; index++) {
                     if (covered[index])
                         continue;

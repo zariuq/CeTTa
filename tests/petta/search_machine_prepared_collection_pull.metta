@@ -24,7 +24,7 @@
 !(let $items (pull-map (+ 1) (pull-range 4))
       (pair (length $items) $items))
 
-; Overlapping clauses make the mapper nondeterminate.  The prepared producer
+; Overlapping equations make the mapper nondeterminate.  The prepared producer
 ; must decline, preserving canonical multiplicity and authored answer order.
 (= (pull-choice $x) $x)
 (= (pull-choice $x) (+ $x 10))

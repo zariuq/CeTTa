@@ -705,6 +705,8 @@ static Atom *display_atom_copy(Arena *dst, Atom *src, const CettaDisplayVarMap *
             return atom_space(dst, src->ground.ptr);
         case GV_CAPTURE:
             return atom_capture(dst, (CaptureClosure *)src->ground.ptr);
+        case GV_BINDINGS:
+            return atom_bindings_value(dst, src->ground.ptr);
         case GV_FOREIGN:
             return atom_foreign(dst, (CettaForeignValue *)src->ground.ptr);
         case GV_PRIME_NEED_CAPABILITY: {
@@ -3747,7 +3749,7 @@ int main(int argc, char **argv) {
 
     /*
      * PeTTa owns its library equations.  Loading HE's definitions into
-     * &self changes clause choice, specialization, and reflection even when
+     * &self changes equation choice, specialization, and reflection even when
      * individual helpers look similar.  The fallback is diagnostic only;
      * shared native primitives remain available through the evaluator.
      */
@@ -3769,7 +3771,23 @@ int main(int argc, char **argv) {
     bool stop_document_sequence = false;
     FILE *output_spool = NULL;
     if (!compile_mode) {
-        output_spool = tmpfile();
+        const char *tmpdir = getenv("TMPDIR");
+        if (tmpdir && tmpdir[0] != '\0') {
+            char spool_path[512];
+            int n = snprintf(spool_path, sizeof spool_path,
+                             "%s/cetta-output-spool-XXXXXX", tmpdir);
+            if (n > 0 && (size_t)n < sizeof spool_path) {
+                int fd = mkstemp(spool_path);
+                if (fd >= 0) {
+                    output_spool = fdopen(fd, "w+");
+                    unlink(spool_path);
+                    if (!output_spool)
+                        close(fd);
+                }
+            }
+        }
+        if (!output_spool)
+            output_spool = tmpfile();
         if (!output_spool) {
             fprintf(stderr, "error: could not create output spool\n");
             rc = 1;

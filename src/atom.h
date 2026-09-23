@@ -8,6 +8,7 @@
 
 #include "session.h"
 #include "symbol.h"
+#include "binding/frame_identity.h"
 
 #ifndef CETTA_PROVENANCE_ASSERT
 #define CETTA_PROVENANCE_ASSERT 0
@@ -59,7 +60,8 @@ typedef enum {
     GV_RATIONAL,
     GV_PRIME_NEED_CAPABILITY,
     GV_PRIME_CONTEXT,
-    GV_INTERNAL_TAG
+    GV_INTERNAL_TAG,
+    GV_BINDINGS
 } GroundedKind;
 
 typedef enum {
@@ -243,6 +245,9 @@ typedef struct ArenaBlock {
     char data[ARENA_BLOCK_SIZE];
 } ArenaBlock;
 
+typedef struct ArenaRetainedOwner ArenaRetainedOwner;
+typedef struct ArenaFrameIdentitySet ArenaFrameIdentitySet;
+
 typedef struct {
     ArenaBlock *head;
     ArenaBlock *spare;
@@ -267,6 +272,17 @@ typedef struct {
      */
     uint64_t reset_epoch;
     ArenaFinalizer *finalizers;
+    ArenaRetainedOwner *retained_owners;
+    /* Frame-identity ownership for this arena's live allocation region.  The
+     * set holds one reference for each distinct full generational identity
+     * reachable from syntax allocated here, so allocating many variable
+     * occurrences of one identity costs one retain instead of one per atom.
+     * Membership is truncated on partial reset and cleared on free. */
+    ArenaFrameIdentitySet *frame_identities;
+    /* Canonical scalar atoms: this arena returns one shared atom per symbol
+     * and per small integer until its next reset.  Opt-in, for arenas whose
+     * owner allocates such scalars at a high rate. */
+    bool scalar_cache;
 } Arena;
 
 typedef struct {
@@ -278,7 +294,26 @@ typedef struct {
     size_t reserved_bytes;
     uint32_t block_count;
     ArenaFinalizer *finalizers;
+    /* Distinct frame identities this arena owned at the mark.  A reset keeps
+     * exactly this many holds, so ownership acquired after the mark is
+     * released and ownership acquired before it stays valid. */
+    uint32_t frame_identity_len;
 } ArenaMark;
+
+/* An immutable saved substitution. The binding layer owns its representation;
+ * atom copying only retains the owner, and printing asks for a projection.
+ * Ordinary syntax substitution cannot traverse or rewrite its domain. */
+typedef struct CettaBindingsValue {
+    void (*retain)(void *);
+    void (*release)(void *);
+    Atom *(*observe)(Arena *, const struct CettaBindingsValue *);
+    bool (*equal)(const struct CettaBindingsValue *,
+                  const struct CettaBindingsValue *);
+    const VarId *support;
+    size_t support_count;
+} CettaBindingsValue;
+
+Atom *atom_bindings_value(Arena *arena, CettaBindingsValue *value);
 
 void *cetta_malloc(size_t size);
 void *cetta_realloc(void *ptr, size_t size);
@@ -292,6 +327,25 @@ void  arena_free(Arena *a);
 void  arena_reserve(Arena *a, size_t size);
 void  arena_set_hashcons(Arena *a, HashConsTable *hc);
 void  arena_set_runtime_kind(Arena *a, CettaArenaRuntimeKind kind);
+/* Share one atom per symbol and per small integer within each reset epoch of
+ * this arena.  Atoms are immutable, so sharing is invisible to observers;
+ * a reset or free forgets every shared atom with the storage it lived in. */
+void  arena_set_scalar_cache(Arena *a, bool enabled);
+/* Keep a contextual identity alive until this arena's corresponding reset.
+ * Ambient/external identifiers have no recyclable owner to retain. */
+bool arena_retain_frame_identity(Arena *a, CettaFrameIdentity identity);
+#ifdef CETTA_TEST_HOOKS
+/* Ownership observations for the arena frame-identity lifetime tests. */
+uint32_t arena_frame_identity_count_test(const Arena *a);
+uint32_t arena_frame_identity_capacity_test(const Arena *a);
+bool arena_frame_identity_owned_test(const Arena *a,
+                                     CettaFrameIdentity identity);
+#endif
+/* Retain an immutable external owner once per arena lifetime segment. A reset
+ * releases owners first retained after its mark; earlier owners remain live.
+ * Ordinary atom copies must still transport their payload into the destination. */
+bool arena_retain_owner(Arena *a, void *owner,
+                        void (*retain)(void *), void (*release)(void *));
 
 /* Allocation policy consults these aggregates at every machine transition.
  * Keep the overflow behavior visible to the compiler while atom.c retains
@@ -358,6 +412,7 @@ int   cetta_format_float(char *buf, size_t size, double value);
 #define HASHCONS_TABLE_SIZE 65536
 
 struct HashConsTable {
+    CettaFrameIdentityScope frame_identities;
     Atom **table;
     uint32_t size, used;
     Atom **symbol_cache;
@@ -613,7 +668,7 @@ bool atom_is_var(Atom *a);
 bool atom_is_expr(Atom *a);
 bool atom_is_symbol_id(Atom *a, SymbolId id);
 const char *atom_name_cstr(Atom *a);
-SymbolId atom_head_symbol_id(Atom *a);
+SymbolId atom_head_symbol_id(const Atom *a);
 static inline bool atom_has_identity_grounded(const Atom *atom) {
     return atom &&
            (atom->flags & ATOM_FLAG_HAS_IDENTITY_GROUNDED) != 0u;
@@ -671,6 +726,8 @@ typedef Atom *(*AtomDeepCopyResolver)(void *context, Atom *src);
    resolver, installed before copying, redirects every encountered node before
    traversal; update-cell collectors use it to collapse evaluated thunks. */
 AtomDeepCopySession *atom_deep_copy_session_new(Arena *dst);
+bool atom_deep_copy_session_retain_frame(
+    AtomDeepCopySession *session, CettaFrameIdentity identity);
 void atom_deep_copy_session_set_resolver(
     AtomDeepCopySession *session, AtomDeepCopyResolver resolver,
     void *context);
@@ -681,6 +738,10 @@ Atom *atom_deep_copy_session_copy(AtomDeepCopySession *session, Atom *src);
    their values. */
 Atom *atom_deep_copy_session_forwarded(
     const AtomDeepCopySession *session, const Atom *src);
+/* True when copying `atom` in this session would return `atom` itself:
+ * it is owned by the destination arena and closed for it. */
+bool atom_deep_copy_session_settled(
+    const AtomDeepCopySession *session, const Atom *atom);
 void atom_deep_copy_session_free(AtomDeepCopySession *session);
 /* Deep-copy with structural sharing for immutable atoms, also preserving source
    pointer sharing within one copy episode.

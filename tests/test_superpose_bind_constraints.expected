@@ -1,3 +1,3 @@
-[()]
-[()]
+[((token (Bindings () (((pair $x) (pair a))))))]
+[((token (Bindings (($x a)) (((pair $y) (pair b))))))]
 [()]

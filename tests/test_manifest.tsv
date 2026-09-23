@@ -61,6 +61,7 @@ tests/prime/conformance/regular_binders.metta	prime	metta		any	native	test-prime
 tests/prime/conformance/regular_declarations.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/regular_kernel_constructors.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/resource_policy.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/conformance/saved_bindings.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/scoped_regular_authority_routing.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/syntax_algebra.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/type_judgments.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression

@@ -42,14 +42,14 @@
           (ProofAssertionV1
             (ProofAssertionListConsV1
               (ProofAssertionVariableV1 trace-x trace-wff)
-              ProofAssertionListNilV1)
+              (ProofAssertionListNilV1))
             (ProofAssertionListConsV1
               (ProofAssertionEssentialV1
                 (ProofSequenceConsV1 trace-turnstile
-                  (ProofSequenceConsV1 trace-x ProofSequenceNilV1)))
-              ProofAssertionListNilV1)
+                  (ProofSequenceConsV1 trace-x (ProofSequenceNilV1))))
+              (ProofAssertionListNilV1))
             trace-turnstile
-            (ProofSequenceConsV1 trace-x ProofSequenceNilV1)
-            ProofAssertionListNilV1)))
+            (ProofSequenceConsV1 trace-x (ProofSequenceNilV1))
+            (ProofAssertionListNilV1))))
       (body))
   ))

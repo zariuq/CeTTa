@@ -11,10 +11,34 @@
 (: ax-mp (-> (a b : (u 0)) (h : a) (f : (impl a b)) b))
 (chaining-rule ax-mp)
 
-!(search-first-inhabitant
-   &self ch 3 100000
-   (search-policy atp-guided-inhabitation))
-!(search-first-inhabitant &self ch 3 100000)
+; Elaboration is a substitution, not an ordered sequence of allocations.
+; Preserve the exact checked proof, four distinct local keys, empty query
+; substitution and residual constraints, and the complete bag of values.
+(= (inhabitation-observation
+     (he-accept
+       (typed-answer-v2 (: $proof ch)
+         (answer-substitution-v2
+           (query-substitution-v1)
+           (elaboration-substitution-v1
+             (elaboration-binding-v1 $k1 $v1)
+             (elaboration-binding-v1 $k2 $v2)
+             (elaboration-binding-v1 $k3 $v3)
+             (elaboration-binding-v1 $k4 $v4))
+           (answer-constraints-v1)))))
+   (checked
+     (=alpha $proof (ax-mp h2 (ax-mp h1 h3)))
+     (=alpha (keys $k1 $k2 $k3 $k4) (keys $a $b $c $d))
+     (superpose ($v1 $v2 $v3 $v4))))
+!(assertEqualToResult
+   (inhabitation-observation
+     (search-first-inhabitant
+       &self ch 3 100000 (search-policy atp-guided-inhabitation)))
+   ((checked True True ch) (checked True True (impl ps ch))
+    (checked True True ph) (checked True True ps)))
+!(assertEqualToResult
+   (inhabitation-observation (search-first-inhabitant &self ch 3 100000))
+   ((checked True True ch) (checked True True (impl ps ch))
+    (checked True True ph) (checked True True ps)))
 
 ; Retain and consume the actual tree; search acceptance is not a substitute
 ; for checking the same term through the public native judgment.

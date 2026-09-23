@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a same-head PeTTa clause-selection scaling witness."""
+"""Generate a same-head PeTTa equation-selection scaling witness."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pathlib import Path
 def render(width: int, repetitions: int) -> str:
     target = width // 2
     lines = [
-        "; Generated wide-clause selection probe.",
+        "; Generated wide-equation selection probe.",
         f"; width={width} repetitions={repetitions} target=key-{target}",
         "(wide:marker marker)",
     ]

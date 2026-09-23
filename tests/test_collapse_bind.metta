@@ -1,13 +1,11 @@
-; Spec-driven: collapse-bind is deterministic and returns ONE packed
-; expression whose items are (<atom> (Bindings ...)) pairs.
+; One collection contains every result with its saved environment. The
+; printer exposes a structural view of the otherwise opaque grounded value.
 (= (multi) a)
 (= (multi) b)
-!(assertEqualToResult
-  (collapse-bind (multi))
-  (((a (Bindings () ())) (b (Bindings () ())))))
+!(collapse-bind (multi))
 
-; Empty branches are internal no-result sentinels and must not be serialized
-; into the packed collapse-bind payload.
-!(assertEqualToResult
-  (collapse-bind (let $x (superpose (a b)) (if (== $x a) (empty) $x)))
-  (((b (Bindings (($x b)) ())))))
+; Empty branches contribute no occurrences to the saved answer bag.
+!(collapse-bind (let $x (superpose (a b)) (if (== $x a) (empty) $x)))
+
+; Independent snapshots of the same environment compare as values.
+!(assertEqual (collapse-bind 1) (collapse-bind 1))

@@ -52,7 +52,7 @@ typedef enum {
 
 /* Abstract output shape for a source occurrence. Opaque results are connected
  * by runtime goals; constructors and transparent children can constrain an
- * enclosing clause before effects run. */
+ * enclosing equation before effects run. */
 typedef enum {
     PETTA_PLAN_OUTPUT_OPAQUE = 0,
     PETTA_PLAN_OUTPUT_VALUE,
@@ -228,7 +228,7 @@ typedef struct {
      * this as evidence provenance, never as a replacement for the equation
      * or its authoritative matcher. */
     SpaceEquationOccurrenceId occurrence;
-} PettaClauseCandidate;
+} PettaEquationCandidate;
 
 typedef enum {
     PETTA_EQUATION_TEMPLATE_C0_NOT_APPLICABLE = 0,
@@ -245,6 +245,14 @@ bool petta_equation_template_variable_inventory(
     const VarId **source_ids_out,
     Atom *const **source_variables_out,
     uint32_t *variable_count_out);
+
+/* Borrow the immutable schema; a binding activation retains its own reference. */
+BindingsFrameSchema *petta_equation_template_frame_schema(
+    const PettaEquationTemplate *template);
+
+/* Program-owned execution syntax uses dense frame-local variable slots.
+ * The candidate's equation separately retains authored occurrence identity. */
+Atom *petta_equation_template_syntax(const PettaEquationTemplate *template);
 
 /* Borrow the exact finite LHS occurrence plan compiled with this equation.
  * NULL means the source lay outside the admitted acyclic first-order tree
@@ -266,34 +274,34 @@ PettaEquationTemplateC0Status petta_equation_template_c0_apply(
  * those owners must outlive execution and any captured continuation.
  * Host-produced leases may instead own an independent array, or borrow an
  * array until pin() establishes ownership. Release exactly once per lease. */
-typedef struct PettaClauseSnapshotStorage PettaClauseSnapshotStorage;
+typedef struct PettaCandidateSnapshotStorage PettaCandidateSnapshotStorage;
 typedef struct {
-    const PettaClauseCandidate *items;
+    const PettaEquationCandidate *items;
     size_t len;
-    PettaClauseCandidate *owned_items;
-    PettaClauseSnapshotStorage *storage;
-} PettaClauseSnapshotLease;
+    PettaEquationCandidate *owned_items;
+    PettaCandidateSnapshotStorage *storage;
+} PettaCandidateSnapshotLease;
 
 /* Index selections may complete a plan locally without altering the catalog. */
 typedef struct {
     uint32_t index;
     const PettaPlanNode *rhs_plan;
-} PettaClauseSelectionEntry;
-typedef struct PettaClauseProjection PettaClauseProjection;
+} PettaEquationSelectionEntry;
+typedef struct PettaEquationProjection PettaEquationProjection;
 
 /* Transfer a pinned lease and optional index vector into an immutable selected
  * observation. NULL entries denote the contiguous range [first, first+len).
  * On catalog retirement, sparse observations promote only their live records
  * when that retains less storage than sharing the retired generation. */
-PettaClauseProjection *petta_program_clause_projection_take(
-    PettaClauseSnapshotLease *catalog, PettaClauseSelectionEntry *entries,
+PettaEquationProjection *petta_program_equation_projection_take(
+    PettaCandidateSnapshotLease *catalog, PettaEquationSelectionEntry *entries,
     size_t first, size_t len);
-bool petta_program_clause_projection_retain(PettaClauseProjection *projection);
-void petta_program_clause_projection_release(PettaClauseProjection *projection);
-PettaClauseCandidate petta_program_clause_projection_get(
-    const PettaClauseProjection *projection, size_t index);
-size_t petta_program_clause_projection_retained_bytes(
-    const PettaClauseProjection *projection);
+bool petta_program_equation_projection_retain(PettaEquationProjection *projection);
+void petta_program_equation_projection_release(PettaEquationProjection *projection);
+PettaEquationCandidate petta_program_equation_projection_get(
+    const PettaEquationProjection *projection, size_t index);
+size_t petta_program_equation_projection_retained_bytes(
+    const PettaEquationProjection *projection);
 
 /*
  * Physical work performed while reconciling the declaration-ordered PeTTa
@@ -309,7 +317,7 @@ typedef struct {
     uint64_t structural_equality_checks;
     uint64_t alpha_equality_checks;
     uint64_t candidates_emitted;
-} PettaClauseSnapshotStats;
+} PettaCandidateSnapshotStats;
 
 typedef struct PettaProgram PettaProgram;
 typedef struct PettaDeclarationBlock PettaDeclarationBlock;
@@ -379,7 +387,7 @@ bool petta_program_head_is_intrinsic(SymbolId head);
 /*
  * PeTTa parses a document before executing its directives.  Registering the
  * heads of its top-level equation forms here makes those names callable from
- * earlier imports without installing any clause before source order reaches
+ * earlier imports without installing any equation before source order reaches
  * it.  Equations constructed later by effects are deliberately absent.
  */
 bool petta_program_predeclare_equation(
@@ -458,28 +466,28 @@ void petta_program_forget_space(
  * Unregistered equations are retained with a NULL plan, preserving the live
  * Space as the differential oracle.
  */
-bool petta_program_clause_snapshot(
+bool petta_program_candidate_snapshot(
     PettaProgram *program, Space *space, SymbolId head,
-    PettaClauseCandidate **candidates, size_t *candidate_count);
+    PettaEquationCandidate **candidates, size_t *candidate_count);
 
 /* Return a candidate lease selected from the live Space. A cache generation is
  * retained when its complete read revision is current; a data-only append
  * can instead return an owned lease with refreshed occurrence provenance.
- * Ordinary callers should continue to use `petta_program_clause_snapshot`
+ * Ordinary callers should continue to use `petta_program_candidate_snapshot`
  * when they need an independent array.
  */
-bool petta_program_clause_snapshot_lease_profiled(
+bool petta_program_candidate_snapshot_lease_profiled(
     PettaProgram *program, Space *space, SymbolId head,
-    PettaClauseSnapshotLease *lease,
-    PettaClauseSnapshotStats *stats);
-void petta_program_clause_snapshot_lease_release(
-    PettaClauseSnapshotLease *lease);
+    PettaCandidateSnapshotLease *lease,
+    PettaCandidateSnapshotStats *stats);
+void petta_program_candidate_snapshot_lease_release(
+    PettaCandidateSnapshotLease *lease);
 /* Pin a host lease before retaining it across a callback or suspension.
  * Existing retained/owned records are not copied. Borrowed host records are
  * copied once. Clone creates an independent release obligation. */
-bool petta_program_clause_snapshot_lease_pin(PettaClauseSnapshotLease *lease);
-bool petta_program_clause_snapshot_lease_clone(
-    const PettaClauseSnapshotLease *source, PettaClauseSnapshotLease *out);
+bool petta_program_candidate_snapshot_lease_pin(PettaCandidateSnapshotLease *lease);
+bool petta_program_candidate_snapshot_lease_clone(
+    const PettaCandidateSnapshotLease *source, PettaCandidateSnapshotLease *out);
 
 /*
  * An immutable, revision-bound selection view of the authored equation
@@ -515,17 +523,17 @@ bool petta_program_revision_projection_current(
 bool petta_program_revision_view_equation_lease(
     const PettaProgramRevisionProjection *projection,
     Space *space, SymbolId head,
-    PettaClauseSnapshotLease *lease,
-    PettaClauseSnapshotStats *stats);
+    PettaCandidateSnapshotLease *lease,
+    PettaCandidateSnapshotStats *stats);
 
 /* Borrow translation payloads only when a captured projection still names
  * the identical source Space.  An alpha-equivalent target preserves equation
  * selection but supplies no representation map for source-owned plans. */
-bool petta_program_revision_view_source_clause_lease(
+bool petta_program_revision_view_source_candidate_lease(
     const PettaProgramRevisionProjection *projection,
     Space *space, SymbolId head,
-    PettaClauseSnapshotLease *lease,
-    PettaClauseSnapshotStats *stats);
+    PettaCandidateSnapshotLease *lease,
+    PettaCandidateSnapshotStats *stats);
 
 /* Return the declaration-ordered live equation catalog for one Space.  The
  * caller owns only the pointer array; equation atoms remain Space-owned. */
@@ -601,13 +609,13 @@ uint32_t petta_program_declared_types(
 bool petta_program_type_annotation_snapshot(
     PettaProgram *program, Atom ***annotations_out, size_t *count_out);
 
-bool petta_program_clause_snapshot_profiled(
+bool petta_program_candidate_snapshot_profiled(
     PettaProgram *program, Space *space, SymbolId head,
-    PettaClauseCandidate **candidates, size_t *candidate_count,
-    PettaClauseSnapshotStats *stats);
+    PettaEquationCandidate **candidates, size_t *candidate_count,
+    PettaCandidateSnapshotStats *stats);
 
 /*
- * Prove that every currently reachable clause body for a named relation is
+ * Prove that every currently reachable equation body for a named relation is
  * free of effects and dynamically selected calls.  The proof is
  * conservative: false means "run through ordinary relational search", not
  * that the relation is invalid.  Results are cached against the exact Space

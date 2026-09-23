@@ -47,8 +47,8 @@ static Atom *make_typed_query(Arena *a) {
 }
 
 static void assert_typed_match_shape(const Bindings *bindings, SymbolId arrow_sym) {
-    Atom *x_val = bindings_lookup_id((Bindings *)bindings, 2001);
-    Atom *t_val = bindings_lookup_id((Bindings *)bindings, 2002);
+    Atom *x_val = bindings_lookup_value_id((Bindings *)bindings, 2001).skeleton;
+    Atom *t_val = bindings_lookup_value_id((Bindings *)bindings, 2002).skeleton;
     assert(x_val != NULL);
     assert(t_val != NULL);
     assert(x_val->kind == ATOM_SYMBOL);

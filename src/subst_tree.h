@@ -83,7 +83,7 @@ typedef struct SubstNode {
     bool int_hashed;
 
     /* Leaves: (space atom index, epoch for standardization apart) */
-    struct { CettaIndex idx; uint32_t epoch; } *leaves;
+    struct { CettaIndex idx; uint32_t epoch; bool owns_identity; } *leaves;
     CettaIndex nleaves, cleaves;
 } SubstNode;
 
@@ -106,6 +106,7 @@ typedef struct {
 typedef struct {
     CettaIndex atom_idx;    /* index into the logical space atom sequence */
     uint32_t epoch;         /* standardization-apart epoch for this indexed atom */
+    bool owns_identity;
     Bindings bindings;      /* epoch-tagged, ready for bindings_apply */
     bool exact;             /* backend already proved this match exactly */
 } SubstMatch;
@@ -149,8 +150,5 @@ uint32_t stree_head_hash(SymbolId id);
 
 void smset_init(SubstMatchSet *s);
 void smset_free(SubstMatchSet *s);
-
-/* Global epoch counter for standardization apart */
-uint32_t stree_next_epoch(void);
 
 #endif /* CETTA_SUBST_TREE_H */

@@ -1,5 +1,5 @@
 ; A direct slot can hold a structured value whose children acquire bindings
-; after clause entry. Reusing the slot must retain that outer substitution.
+; after equation entry. Reusing the slot must retain that outer substitution.
 (= (field-bind a) ready)
 (= (field-pair (box a) (box a)) equal)
 (= (field-pair (box b) (box b)) wrong)

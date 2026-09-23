@@ -738,6 +738,7 @@ static void horn_solve(GsltHornRun *run, Atom *const *goals,
     }
 
     while (stack.count > 0u && !run->stopped) {
+        CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
         GsltHornFrame *frame = &stack.items[stack.count - 1u];
 
         if (frame->phase == GSLT_HORN_FRAME_ENTER) {
@@ -883,7 +884,7 @@ static void horn_solve(GsltHornRun *run, Atom *const *goals,
         const GsltHornRule *rule = &run->program->rules[
             frame->bucket->rules[candidate]];
         Atom *fresh_clause = rename_vars(
-            &run->scratch, rule->clause, fresh_var_suffix());
+            &run->scratch, rule->clause, cetta_frame_identity_scope_fresh(&frame_identity_scope));
         if (!fresh_clause || fresh_clause->kind != ATOM_EXPR ||
             fresh_clause->expr.len < 2u) {
             frame->phase = GSLT_HORN_FRAME_AFTER_RULE_CHILD;

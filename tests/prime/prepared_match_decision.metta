@@ -30,7 +30,7 @@
 !(decision-arity (node 1 2))
 
 ; An unready callable argument must be demanded once by the decision program,
-; not rediscovered by a full scan of every strict clause.
+; not rediscovered by a full scan of every strict equation.
 (= (decision-producer) (right 9))
 !(decision-head (decision-producer))
 
@@ -43,9 +43,9 @@
 !(decision-head (decision-effect-producer))
 !(get-state &decision-counter)
 
-; A wildcard clause can make an argument semantically irrelevant.  The
+; A wildcard equation can make an argument semantically irrelevant.  The
 ; decision program must fall back to the exact matcher instead of forcing an
-; effect merely because other clauses discriminate that position.
+; effect merely because other equations discriminate that position.
 !(bind! &decision-wild-counter (new-state 0))
 (= (decision-wild A $x) wildcard-a)
 (= (decision-wild B b) literal-b)

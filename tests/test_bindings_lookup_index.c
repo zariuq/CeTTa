@@ -1,5 +1,6 @@
 #include "atom.h"
 #include "match.h"
+#include "term_canon.h"
 #include "stats.h"
 #include "term_universe.h"
 #include "variant_shape.h"
@@ -26,7 +27,7 @@ static unsigned failed;
     } while (0)
 
 static VarId test_id(uint32_t ordinal) {
-    return UINT64_C(0x9e3779b900000000) + (VarId)ordinal * UINT64_C(0x10001);
+    return UINT64_C(0x10000000) + (VarId)ordinal * UINT64_C(0x10001);
 }
 
 static bool build_bindings(Arena *arena, uint32_t count, Bindings *out) {
@@ -46,10 +47,70 @@ static bool build_bindings(Arena *arena, uint32_t count, Bindings *out) {
 }
 
 static bool binding_is_int(Bindings *bindings, VarId id, int64_t expected) {
-    Atom *value = bindings_lookup_id(bindings, id);
+    Atom *value = bindings_lookup_value_id(bindings, id).skeleton;
     return value && value->kind == ATOM_GROUNDED &&
            value->ground.gkind == GV_INT &&
            value->ground.ival == expected;
+}
+
+static void test_owner_retain(void *owner) {
+    (*(unsigned *)owner)++;
+}
+
+static void test_owner_release(void *owner) {
+    (*(unsigned *)owner)--;
+}
+
+static void test_arena_retained_owners(void) {
+    Arena owner;
+    arena_init(&owner);
+    unsigned outer = 0u, inner = 0u;
+    CHECK(arena_retain_owner(&owner, &outer, test_owner_retain, test_owner_release) &&
+              arena_retain_owner(&owner, &outer, test_owner_retain, test_owner_release) &&
+              outer == 1u,
+          "repeated syntax-owner borrows retain one owner per arena");
+    ArenaMark mark = arena_mark(&owner);
+    CHECK(arena_retain_owner(&owner, &inner, test_owner_retain, test_owner_release) &&
+              arena_retain_owner(&owner, &outer, test_owner_retain, test_owner_release) &&
+              outer == 1u && inner == 1u,
+          "nested ownership retains a new plan without multiplying the existing owner");
+    arena_reset(&owner, mark);
+    CHECK(outer == 1u && inner == 0u &&
+              arena_retain_owner(&owner, &inner, test_owner_retain, test_owner_release) &&
+              inner == 1u,
+          "reset releases only later owners and permits reacquisition");
+    arena_free(&owner);
+    CHECK(outer == 0u && inner == 0u,
+          "arena teardown releases every remaining syntax owner exactly once");
+}
+
+static void test_sparse_frame_write_context_growth(Arena *arena) {
+    CETTA_FRAME_IDENTITY_SCOPE(identities);
+    CettaFrameIdentity epoch = cetta_frame_identity_scope_fresh(&identities);
+    Atom *low = atom_var_with_id(arena, "sparse-low", var_epoch_id(100u, epoch));
+    Atom *high = atom_var_with_id(arena, "sparse-high", var_epoch_id(200u, epoch));
+    Atom *value = atom_expr2(arena, atom_symbol(arena, "SparseValue"), low);
+    BindingsBuilder builder;
+    if (!bindings_builder_init(&builder, NULL)) {
+        CHECK(false, "sparse frame context fixture initializes");
+        return;
+    }
+    uint32_t mark = bindings_builder_save(&builder);
+    bool added = bindings_builder_add_var_fresh(&builder, high, value);
+    CHECK(added && bindings_lookup_value_id(&builder.current, high->var_id).skeleton == value &&
+              !bindings_lookup_value_id(&builder.current, low->var_id).skeleton,
+          "RHS context growth preserves the target variable of a sparse frame write");
+    bool resolved = added && bindings_builder_add_var_fresh(&builder, low, atom_int(arena, 7));
+    Atom *expected = atom_expr2(arena, atom_symbol(arena, "SparseValue"), atom_int(arena, 7));
+    CHECK(resolved && atom_eq(bindings_apply(&builder.current, arena, high), expected),
+          "a sparse frame write follows the subsequently bound RHS variable");
+    bindings_builder_rollback(&builder, mark);
+    CHECK(!bindings_lookup_value_id(&builder.current, high->var_id).skeleton &&
+              !bindings_lookup_value_id(&builder.current, low->var_id).skeleton &&
+              bindings_builder_add_var_fresh(&builder, high, atom_int(arena, 9)) &&
+              binding_is_int(&builder.current, high->var_id, 9),
+          "rollback restores the sparse schema and permits an independent sibling write");
+    bindings_builder_free(&builder);
 }
 
 static void test_borrowed_root_identity(Arena *arena) {
@@ -92,9 +153,11 @@ static void test_borrowed_root_identity(Arena *arena) {
           "a borrowed root observes the current branch after rollback");
     /* Simulate an invalid externally rewritten store. Normal binding
      * insertion may already reject or normalize this alias cycle. */
+    CHECK(bindings_prepare_logical_write(&builder.current),
+          "cycle canary flattens before rewriting the store");
     for (uint32_t index = 0u; index < builder.current.len; index++) {
         if (builder.current.entries[index].var_id == second->var_id)
-            builder.current.entries[index].val = first;
+            builder.current.entries[index].value.skeleton = first;
     }
     bindings_invalidate_after_key_rewrite(&builder.current);
     CHECK(bindings_has_loop(&builder.current),
@@ -106,20 +169,21 @@ static void test_borrowed_root_identity(Arena *arena) {
     bindings_builder_free(&builder);
 }
 
-static bool dense_frame_matches_suffix_scan(
-        const BindingsDenseEpochFrame *frame, const Bindings *bindings) {
-    for (uint32_t slot = 0u; slot < frame->len; slot++) {
-        Atom *expected = NULL;
-        VarId id = var_epoch_id(frame->source_ids[slot], frame->epoch);
-        for (uint32_t entry = frame->first_entry; entry < bindings->len; entry++)
-            if (bindings->entries[entry].var_id == id)
-                expected = bindings->entries[entry].val;
-        bool present = frame->slot_stamps[slot] == frame->slot_generation;
-        if (present != (expected != NULL) ||
-            (present && frame->values[slot] != expected))
-            return false;
-    }
-    return frame->scanned_len == bindings->len;
+static bool dense_slot_is(const Bindings *bindings, const BindingsActivationView *frame, uint32_t slot,
+                          Atom *expected) {
+    BindingValue value = binding_value_from_atom(NULL);
+    bool present = false;
+    return bindings_activation_view_read_slot(bindings, frame, slot, &value, &present) &&
+        present == (expected != NULL) && value.skeleton == expected;
+}
+
+static bool lookup_frame_value(const Bindings *bindings, VarId id, BindingValue *value) {
+    bool known = false;
+    uint32_t row = 0u;
+    if (!bindings_frame_index_test_lookup(bindings, id, &known, &row) || !known)
+        return false;
+    *value = bindings_lookup_value_id((Bindings *)bindings, id);
+    return true;
 }
 
 static void test_dense_frame_indexed_suffix(Arena *arena) {
@@ -136,77 +200,1288 @@ static void test_dense_frame_indexed_suffix(Arena *arena) {
     ready = ready && bindings_builder_init(&builder, &base);
     if (!ready) { CHECK(false, "indexed frame fixture allocation"); return; }
     bindings_free(&base);
-    ready = bindings_builder_add_id_fresh(&builder, var_epoch_id(ids[0], epoch),
-        SYMBOL_ID_NONE, atom_int(arena, 11));
+    Atom *before = atom_int(arena, 11);
+    Atom *after = atom_int(arena, 22);
+    Atom *later = atom_int(arena, 33);
+    ready = bindings_builder_register_contextual_frame(&builder, ids, 3u, epoch) &&
+        bindings_builder_add_id_fresh(&builder, var_epoch_id(ids[0], epoch),
+            SYMBOL_ID_NONE, before);
     uint32_t begin = builder.current.len;
-    ready = ready && bindings_builder_add_id_fresh(&builder, var_epoch_id(ids[1], epoch),
-        SYMBOL_ID_NONE, atom_int(arena, 22));
-    for (uint32_t i = 0u; i < 256u && ready; i++)
-        ready = bindings_builder_add_id_fresh(&builder, test_id(300u + i),
-            SYMBOL_ID_NONE, atom_int(arena, i));
-    ready = ready && bindings_builder_add_id_fresh(&builder, var_epoch_id(ids[1], epoch + 1u),
-        SYMBOL_ID_NONE, atom_int(arena, 99));
+    BindingsActivationView frame;
+    bindings_activation_view_init(&frame);
+    ready = ready && bindings_activation_view_prepare(
+        &frame, &builder, ids, variables, 3u, epoch, begin) &&
+        bindings_builder_add_id_fresh(&builder, var_epoch_id(ids[1], epoch),
+            SYMBOL_ID_NONE, after);
+    CHECK(ready && dense_slot_is(&builder.current, &frame, 0u, NULL) &&
+              dense_slot_is(&builder.current, &frame, 1u, after) && dense_slot_is(&builder.current, &frame, 2u, NULL),
+          "activation observation excludes earlier writes and retains unbound slots");
+    Bindings snapshot;
+    bool cloned = ready && bindings_clone(&snapshot, &builder.current);
+    uint32_t mark = bindings_builder_save(&builder);
+    ready = cloned && bindings_builder_add_id_fresh(
+        &builder, var_epoch_id(ids[2], epoch), SYMBOL_ID_NONE, later);
+    bindings_lookup_index_test_clear(&builder.current);
+    CHECK(ready && dense_slot_is(&builder.current, &frame, 2u, later) &&
+              !bindings_lookup_value_id(&snapshot, var_epoch_id(ids[2], epoch)).skeleton,
+          "an identity view observes copy-on-write slots without pointer refresh");
+    bindings_builder_rollback(&builder, mark);
+    CHECK(ready && dense_slot_is(&builder.current, &frame, 1u, after) && dense_slot_is(&builder.current, &frame, 2u, NULL),
+          "rollback is immediately visible through the same activation identity");
+    ready = ready && bindings_rewrite_value_id(&builder.current,
+        var_epoch_id(ids[1], epoch), binding_value_from_atom(later));
+    CHECK(ready && dense_slot_is(&builder.current, &frame, 1u, later) &&
+              bindings_lookup_value_id(&snapshot, var_epoch_id(ids[1], epoch)).skeleton == after,
+          "a rewritten slot changes the current image without altering a sibling");
+    if (cloned)
+        bindings_free(&snapshot);
+    bindings_activation_view_free(&frame);
+    CHECK(!bindings_activation_view_available(&frame, &builder.current),
+          "a released activation view cannot resolve a slot");
+    bindings_builder_free(&builder);
+}
 
-    BindingsDenseEpochFrame frame;
-    bindings_dense_epoch_frame_init(&frame);
-    bool prepared = ready && bindings_dense_epoch_frame_prepare(
-        &frame, &builder, ids, variables, 3u, epoch, begin);
-    CHECK(prepared && dense_frame_matches_suffix_scan(&frame, &builder.current) &&
-          frame.slot_stamps[0] != frame.slot_generation &&
-          frame.slot_stamps[1] == frame.slot_generation &&
-          frame.slot_stamps[2] != frame.slot_generation,
-          "indexed frame excludes prefix and other epochs, retaining missing slots");
+static void test_generation_checked_frame_handles(Arena *arena) {
+    VarId source_id = UINT64_C(88001);
+    VarId unrelated_source_id = UINT64_C(88002);
+    Atom *source = atom_var_with_id(
+        arena, "stable-frame-source", source_id);
+    Atom *variables[] = {source};
+    BindingsBuilder builder;
+    bool ready = source && bindings_builder_init(&builder, NULL) &&
+        bindings_builder_register_contextual_frame(
+            &builder, &source_id, 1u, 300u);
+    BindingsFrameRef frame_300 = {0};
+    ready = ready && bindings_frame_ref_test_for_epoch(
+        &builder.current, 300u, &frame_300);
+    BindingsActivationView dense;
+    bindings_activation_view_init(&dense);
+    ready = ready && bindings_activation_view_prepare(
+        &dense, &builder, &source_id, variables, 1u, 300u, 0u);
+
+    CHECK(ready && bindings_frame_ref_is_valid(frame_300) &&
+              dense.authority_ref.identity ==
+                  frame_300.identity &&
+              dense.authority_ref.identity == 300u,
+          "prepared activation carries its stable generation-checked frame handle");
+
+    ready = ready && bindings_builder_register_contextual_frame(
+        &builder, &unrelated_source_id, 1u, 250u);
+    uint32_t mark = bindings_builder_save(&builder);
+    ready = ready && bindings_builder_register_contextual_frame(
+        &builder, &source_id, 1u, 200u);
+    BindingsFrameRef frame_200 = {0};
+    uint32_t resolved_epoch = 0u;
+    CHECK(ready && bindings_frame_ref_test_for_epoch(
+              &builder.current, 200u, &frame_200) &&
+              bindings_frame_ref_test_resolves(
+                  &builder.current, frame_300, &resolved_epoch) &&
+              resolved_epoch == 300u &&
+              bindings_activation_view_available(&dense, &builder.current),
+          "inserting another frame preserves a live direct reference");
+
+    BindingValue context_300 = binding_value_from_context(source, 300u);
+    BindingValue context_200 = binding_value_from_context(source, 200u);
+    ready = ready && match_binding_values_builder(
+        context_300, context_200, &builder);
+    BindingValue stored_context = ready
+        ? bindings_lookup_value_id(
+              &builder.current, var_epoch_id(source_id, 300u))
+        : binding_value_from_atom(NULL);
+    BindingsFrameRef stored_ref = binding_value_frame_ref(stored_context);
+    BindingValue resolved_context = binding_value_from_atom(NULL);
+    test_runtime_stats_reset_counters();
+    bool resolved_direct = ready && bindings_resolve_value_exact(
+        &builder.current, stored_context, &resolved_context);
+    CHECK(resolved_direct &&
+              stored_ref.identity ==
+                  frame_200.identity &&
+              stored_ref.identity == 200u &&
+              resolved_context.skeleton == source &&
+              resolved_context.epoch == 200u &&
+              test_runtime_stats_counter(
+                  CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_DIRECTORY_LOOKUP) == 0u,
+          "stored contextual aliases dereference by stable frame handle without directory recovery");
+
+    Bindings projected;
+    bindings_init(&projected);
+    BindingsEpochRoot projected_root = {
+        .atom = source,
+        .epoch = 300u,
+        .variable_support = NULL,
+    };
+    bool projected_ok = ready &&
+        bindings_project_reachable_with_epoch_roots(
+            &builder.current, NULL, 0u,
+            &projected_root, 1u, &projected);
+    BindingValue projected_context = projected_ok
+        ? bindings_lookup_value_id(
+              &projected, var_epoch_id(source_id, 300u))
+        : binding_value_from_atom(NULL);
+    BindingsFrameRef projected_ref =
+        binding_value_frame_ref(projected_context);
+    resolved_epoch = 0u;
+    CHECK(projected_ok &&
+              bindings_frame_ref_is_valid(projected_ref) &&
+              projected_ref.identity ==
+                  stored_ref.identity &&
+              bindings_frame_ref_test_resolves(
+                  &projected, projected_ref, &resolved_epoch) &&
+              resolved_epoch == 200u,
+          "projection preserves a contextual identity in the destination frame table");
+    bindings_free(&projected);
+
+    Bindings cloned;
+    bindings_init(&cloned);
+    resolved_epoch = 0u;
+    bool cloned_ok = ready && bindings_clone(&cloned, &builder.current);
+    CHECK(cloned_ok && bindings_frame_ref_test_resolves(
+              &cloned, frame_300, &resolved_epoch) &&
+              resolved_epoch == 300u,
+          "copy-on-write clone preserves the frame-handle namespace");
+    bindings_free(&cloned);
+
+    bindings_builder_rollback(&builder, mark);
+    resolved_epoch = 0u;
+    CHECK(bindings_frame_ref_test_resolves(
+              &builder.current, frame_300, &resolved_epoch) &&
+              resolved_epoch == 300u &&
+              !bindings_frame_ref_test_resolves(
+                  &builder.current, frame_200, &resolved_epoch) &&
+              bindings_activation_view_available(&dense, &builder.current),
+          "rollback retires the removed activation handle and preserves its older sibling");
+
+    ready = bindings_builder_register_contextual_frame(
+        &builder, &source_id, 1u, 400u);
+    BindingsFrameRef frame_400 = {0};
+    resolved_epoch = 0u;
+    CHECK(ready && bindings_frame_ref_test_for_epoch(
+              &builder.current, 400u, &frame_400) &&
+              frame_400.identity !=
+                  frame_200.identity &&
+              frame_400.identity != frame_200.identity &&
+              !bindings_frame_ref_test_resolves(
+                  &builder.current, frame_200, &resolved_epoch) &&
+              bindings_frame_ref_test_resolves(
+                  &builder.current, frame_400, &resolved_epoch) &&
+              resolved_epoch == 400u,
+          "removed frame identity remains invalid after another activation is installed");
+
+    bindings_activation_view_free(&dense);
+    bindings_builder_free(&builder);
+}
+
+static void test_persistent_frame_index_partition(Arena *arena) {
+    const uint32_t epoch = 701u;
+    VarId ids[] = {UINT64_C(87001), UINT64_C(87003)};
+    Atom *variables[] = {
+        atom_var_with_id(arena, "persistent-frame-a", ids[0]),
+        atom_var_with_id(arena, "persistent-frame-b", ids[1]),
+    };
+    VarId framed_a = var_epoch_id(ids[0], epoch);
+    VarId framed_b = var_epoch_id(ids[1], epoch);
+    VarId unframed = UINT64_C(990001);
+    Bindings empty;
+    bindings_init(&empty);
+    BindingsBuilder parent;
+    bool ready = bindings_builder_init(&parent, &empty);
+    bindings_free(&empty);
+    BindingsActivationView frame;
+    bindings_activation_view_init(&frame);
+    ready = ready && bindings_activation_view_prepare(
+        &frame, &parent, ids, variables, 2u, epoch, 0u);
+    ready = ready && bindings_builder_add_id_fresh(
+        &parent, framed_a, SYMBOL_ID_NONE, atom_int(arena, 11));
+    ready = ready && bindings_builder_add_id_fresh(
+        &parent, unframed, SYMBOL_ID_NONE, atom_int(arena, 44));
+    for (uint32_t i = 0u; i < 64u && ready; i++) {
+        ready = bindings_builder_add_id_fresh(
+            &parent, unframed + 1u + i, SYMBOL_ID_NONE,
+            atom_int(arena, i));
+    }
+
+    bool known_a = false;
+    bool known_b = false;
+    bool generic_a = true;
+    bool generic_unframed = false;
+    uint32_t entry_a = UINT32_MAX;
+    uint32_t entry_b = 0u;
+    const char *index_setting = getenv("CETTA_BINDINGS_LOOKUP_INDEX");
+    bool generic_enabled =
+        !(index_setting && index_setting[0] == '0');
+    bool partition_ok = ready &&
+        bindings_frame_index_test_lookup(
+            &parent.current, framed_a, &known_a, &entry_a) &&
+        bindings_frame_index_test_lookup(
+            &parent.current, framed_b, &known_b, &entry_b) &&
+        (!generic_enabled ||
+         (bindings_lookup_index_test_generic_contains(
+              &parent.current, framed_a, &generic_a) &&
+          bindings_lookup_index_test_generic_contains(
+              &parent.current, unframed, &generic_unframed)));
+    CHECK(partition_ok && known_a && entry_a == UINT32_MAX &&
+              known_b && entry_b == UINT32_MAX &&
+              (!generic_enabled || (!generic_a && generic_unframed)),
+          "registered frame slots and generic variables occupy disjoint lookup domains");
+
+    Atom *framed_root = atom_var_with_id(
+        arena, "persistent-frame-root", framed_a);
+    Atom *projection_roots[] = {framed_root};
+    Bindings projected;
+    bool projected_ok = ready && bindings_project_reachable(
+        &parent.current, projection_roots, 1u, &projected);
+    BindingValue projected_value = projected_ok
+        ? bindings_lookup_value_id(&projected, framed_a)
+        : binding_value_from_atom(NULL);
+    CHECK(projected_ok && projected_value.skeleton &&
+              binding_value_equal(
+                  projected_value,
+                  bindings_lookup_value_id(
+                      &parent.current, framed_a)),
+          "reachable projection retains a frame-owned binding through the partitioned index");
+    if (projected_ok)
+        bindings_free(&projected);
+
+    Bindings merged;
+    bindings_init(&merged);
+    bool merged_ok = ready && bindings_try_merge(
+        &merged, &parent.current);
+    bool merged_known_a = false;
+    bool merged_known_b = false;
+    bool merged_generic_a = true;
+    uint32_t merged_entry_a = UINT32_MAX;
+    uint32_t merged_entry_b = 0u;
+    CHECK(merged_ok &&
+              bindings_frame_index_test_lookup(
+                  &merged, framed_a, &merged_known_a,
+                  &merged_entry_a) &&
+              bindings_frame_index_test_lookup(
+                  &merged, framed_b, &merged_known_b,
+                  &merged_entry_b) &&
+              (!generic_enabled ||
+               (bindings_lookup_index_test_generic_contains(
+                    &merged, framed_a, &merged_generic_a) &&
+                !merged_generic_a)) &&
+              merged_known_a && merged_entry_a == UINT32_MAX &&
+              merged_known_b && merged_entry_b == UINT32_MAX,
+          "substitution merge carries bound and unbound contextual frame coordinates");
+    bindings_free(&merged);
+
+    Bindings empty_merge;
+    bindings_init(&empty_merge);
+    BindingsBuilder merged_builder;
+    bool merged_builder_ready = bindings_builder_init(
+        &merged_builder, &empty_merge);
+    bindings_free(&empty_merge);
+    merged_known_a = false;
+    merged_entry_a = UINT32_MAX;
+    CHECK(merged_builder_ready &&
+              bindings_builder_try_merge(
+                  &merged_builder, &parent.current) &&
+              bindings_frame_index_test_lookup(
+                  &merged_builder.current, framed_a,
+                  &merged_known_a, &merged_entry_a) &&
+              merged_known_a &&
+              merged_entry_a == UINT32_MAX,
+          "rollback-capable merge carries contextual frame coordinates");
+    if (merged_builder_ready)
+        bindings_builder_free(&merged_builder);
+
+    Bindings factored;
+    bool factored_initialized = bindings_clone(
+        &factored, &parent.current);
+    bool factored_ready = factored_initialized &&
+        bindings_add_id(&factored, framed_b, SYMBOL_ID_NONE,
+                        atom_int(arena, 22));
+    bool did_factor = false;
+    uint64_t factored_items = 0u;
+    bool factored_known_a = false;
+    bool factored_known_b = false;
+    uint32_t factored_entry_a = 0u;
+    uint32_t factored_entry_b = UINT32_MAX;
+    bool factor_ok = factored_ready && bindings_factor_prefix(
+        &factored, &parent.current, &did_factor, &factored_items);
+    size_t factored_binding_count = 0u;
+    CHECK(factor_ok && did_factor &&
+              bindings_current_binding_count_test(
+                  &factored, &factored_binding_count) &&
+              factored_binding_count == 1u &&
+              bindings_frame_index_test_lookup(
+                  &factored, framed_a, &factored_known_a,
+                  &factored_entry_a) &&
+              bindings_frame_index_test_lookup(
+                  &factored, framed_b, &factored_known_b,
+                  &factored_entry_b) &&
+              factored_known_a && factored_entry_a == UINT32_MAX &&
+              factored_known_b && factored_entry_b == UINT32_MAX &&
+              binding_is_int(&factored, framed_b, 22),
+          "prefix factoring carries the contextual frame schema into its residual substitution");
+    if (factored_initialized)
+        bindings_free(&factored);
+
+    BindingsBuilder child;
+    bool child_initialized = ready && bindings_builder_clone(&child, &parent);
+    bool child_ready = child_initialized;
+    uint32_t child_mark = child_initialized
+        ? bindings_builder_save(&child) : 0u;
+    child_ready = child_ready && bindings_builder_add_id_fresh(
+        &child, framed_b, SYMBOL_ID_NONE, atom_int(arena, 22));
+    bool child_known = false;
+    bool parent_known = false;
+    uint32_t child_entry = UINT32_MAX;
+    uint32_t parent_entry = 0u;
+    bool cow_ok = child_ready &&
+        bindings_frame_index_test_lookup(
+            &child.current, framed_b, &child_known, &child_entry) &&
+        bindings_frame_index_test_lookup(
+            &parent.current, framed_b, &parent_known, &parent_entry);
+    CHECK(cow_ok && child_known && child_entry == UINT32_MAX &&
+              parent_known && parent_entry == UINT32_MAX,
+          "a captured binding image detaches its frame coordinate on write");
+    const void *parent_schema = NULL, *child_schema = NULL;
+    const void *parent_slots = NULL, *child_slots = NULL;
+    CHECK(cow_ok && bindings_frame_storage_test_identity(
+              &parent.current, epoch, &parent_schema, &parent_slots) &&
+          bindings_frame_storage_test_identity(
+              &child.current, epoch, &child_schema, &child_slots) &&
+          parent_schema == child_schema && parent_slots != child_slots,
+          "a branch write shares the immutable schema while detaching only slot state");
+
+    if (child_initialized)
+        bindings_builder_rollback(&child, child_mark);
+    child_known = false;
+    child_entry = 0u;
+    CHECK(child_ready && bindings_frame_index_test_lookup(
+              &child.current, framed_b, &child_known, &child_entry) &&
+              child_known && child_entry == UINT32_MAX,
+          "rollback restores an unbound contextual frame slot");
+
+    if (child_initialized)
+        bindings_builder_free(&child);
+    bindings_activation_view_free(&frame);
+    bindings_builder_free(&parent);
+}
+
+static void test_frame_slot_is_value_authority(Arena *arena) {
+    const uint32_t epoch = 717u;
+    VarId source_id = UINT64_C(88941);
+    VarId framed_id = var_epoch_id(source_id, epoch);
+    Atom *authoritative = atom_int(arena, 41);
+    Atom *history_decoy = atom_int(arena, 99);
+    Bindings bindings;
+    bindings_init(&bindings);
+    bool ready = bindings_register_complete_contextual_frame(
+        &bindings, &source_id, 1u, epoch);
+    CHECK(ready && !bindings_has_bound_values(&bindings),
+          "an unbound frame reports no authoritative values");
+    ready = ready && bindings_add_id(
+        &bindings, framed_id, SYMBOL_ID_NONE, authoritative);
+    BindingValue observed = ready
+        ? bindings_lookup_value_id(&bindings, framed_id)
+        : binding_value_from_atom(NULL);
+    CHECK(ready && observed.skeleton == authoritative &&
+              bindings.len == 0u && bindings_has_bound_values(&bindings),
+          "a framed lookup reads its authoritative slot without a chronological row");
+    Atom *rewritten = atom_int(arena, 42);
+    CHECK(ready && bindings_rewrite_value_id(
+              &bindings, framed_id,
+              binding_value_from_atom(rewritten)) &&
+              bindings_lookup_value_id(
+                  &bindings, framed_id).skeleton == rewritten,
+          "logical value replacement addresses an authoritative frame slot");
+    CHECK(!bindings_rewrite_value_id(
+              &bindings, var_epoch_id(source_id + 1u, epoch),
+              binding_value_from_atom(rewritten)),
+          "logical value replacement refuses a missing frame coordinate");
+    bindings_free(&bindings);
+
+    Bindings late;
+    bindings_init(&late);
+    CHECK(bindings_add_id(
+              &late, framed_id, SYMBOL_ID_NONE, history_decoy) &&
+          late.len == 0u && bindings_register_complete_contextual_frame(
+              &late, &source_id, 1u, epoch) &&
+          bindings_lookup_value_id(&late, framed_id).skeleton == history_decoy,
+          "a framed write establishes slot ownership before schema completion");
+    bindings_free(&late);
+
+    BindingsBuilder builder;
+    CHECK(bindings_builder_init(&builder, NULL) &&
+              bindings_register_complete_contextual_frame(
+                  &builder.current, &source_id, 1u, epoch),
+          "initialize an authoritative frame slot for rollback");
+    uint32_t mark = bindings_builder_save(&builder);
+    CHECK(bindings_builder_add_id_fresh(
+              &builder, framed_id, SYMBOL_ID_NONE, authoritative) &&
+              builder.frame_undo_len == 1u &&
+              bindings_lookup_value_id(
+                  &builder.current, framed_id).skeleton == authoritative,
+          "a frame write publishes its slot value and one inverse update");
+    bindings_builder_rollback(&builder, mark);
+    CHECK(bindings_lookup_value_id(
+              &builder.current, framed_id).skeleton == NULL &&
+              builder.frame_undo_len == 0u &&
+              !bindings_has_bound_values(&builder.current),
+          "rollback applies the inverse slot update without row reconstruction");
+    bindings_builder_free(&builder);
+}
+
+static void test_frame_slot_promotion_lifetime(void) {
+    Arena source;
+    Arena owner;
+    arena_init(&source);
+    arena_init(&owner);
+    const uint32_t epoch = 718u;
+    VarId source_id = UINT64_C(88951);
+    VarId framed_id = var_epoch_id(source_id, epoch);
+    Atom *head = atom_symbol(&source, "promoted-frame-head");
+    Atom *payload = atom_expr2(&source, head, atom_int(&source, 73));
+    BindingsBuilder builder;
+    bool ready = bindings_builder_init(&builder, NULL) &&
+        bindings_register_complete_contextual_frame(
+            &builder.current, &source_id, 1u, epoch);
+    uint32_t mark = ready ? bindings_builder_save(&builder) : 0u;
+    ready = ready && bindings_builder_add_id_fresh(
+        &builder, framed_id, SYMBOL_ID_NONE, payload);
+    CHECK(ready && bindings_builder_promote_atoms_to_arena(
+              &builder, &owner),
+          "promotion moves authoritative frame-slot values to their owner");
+    arena_free(&source);
+    BindingValue observed = ready
+        ? bindings_lookup_value_id(&builder.current, framed_id)
+        : binding_value_from_atom(NULL);
+    CHECK(observed.skeleton && observed.skeleton->kind == ATOM_EXPR &&
+              observed.skeleton->expr.len == 2u &&
+              observed.skeleton->expr.elems[1]->kind == ATOM_GROUNDED &&
+              observed.skeleton->expr.elems[1]->ground.gkind == GV_INT &&
+              observed.skeleton->expr.elems[1]->ground.ival == 73,
+          "the frame slot survives release of the syntax source arena");
+    bindings_builder_rollback(&builder, mark);
+    CHECK(!bindings_lookup_value_id(
+              &builder.current, framed_id).skeleton,
+          "promoted slot state remains rollback-capable");
+    bindings_builder_free(&builder);
+    arena_free(&owner);
+}
+
+static void test_manufactured_slot_lifecycle(void) {
+    CETTA_FRAME_IDENTITY_SCOPE(identities);
+    Arena source, survivor;
+    arena_init(&source);
+    arena_init(&survivor);
+    CettaFrameIdentity identity = cetta_frame_identity_scope_fresh(&identities);
+    BindingsBuilder parent, sibling;
+    Bindings projected;
+    bindings_init(&projected);
+    bool ready = bindings_builder_init(&parent, NULL);
+    Atom *x = ready ? bindings_builder_new_variable(&parent, &source, identity) : NULL;
+    Atom *y = x ? bindings_builder_new_variable(&parent, &source, identity) : NULL;
+    uint32_t mark = bindings_builder_save(&parent);
+    Atom *last = y;
+    for (uint32_t i = 0u; last && i < 40u; i++)
+        last = bindings_builder_new_variable(&parent, &source, identity);
+    Atom *payload = last ? atom_expr3(&source,
+        atom_symbol(&source, "ManufacturedPair"), y, last) : NULL;
+    ready = payload && bindings_builder_add_var_fresh(&parent, x, payload) &&
+        bindings_builder_add_var_fresh(&parent, y, atom_int(&source, 73)) &&
+        bindings_builder_add_var_fresh(&parent, last, atom_int(&source, 91));
+    bool sibling_ready = ready && bindings_builder_init(&sibling, &parent.current);
+    CHECK(sibling_ready && parent.current.len == 0u &&
+              var_base_id(last->var_id) == 42u,
+          "manufactured variables extend one dense frame without binding rows");
+    uint32_t seal_mark = bindings_builder_save(&parent);
+    VarId first_slot = 1u;
+    BindingsFrameSchema *sealed_schema = bindings_frame_schema_new(&first_slot, 1u);
+    bool sealed = ready && sealed_schema && bindings_builder_register_complete_frame_schema(
+        &parent, sealed_schema, identity);
+    bindings_frame_schema_release(sealed_schema);
+    bindings_builder_rollback(&parent, seal_mark);
+    size_t after_seal_count = 0u;
+    CHECK(sealed && bindings_current_binding_count(&parent.current, &after_seal_count) &&
+              after_seal_count == 3u && binding_is_int(&parent.current, last->var_id, 91),
+          "undoing inventory completion preserves every manufactured slot and its value count");
+    VarId root_id = x ? x->var_id : VAR_ID_NONE;
+    VarId last_id = last ? last->var_id : VAR_ID_NONE;
+    bool projected_ok = sibling_ready && bindings_project_reachable(
+        &sibling.current, &x, 1u, &projected) &&
+        bindings_promote_logical_atoms_to_arena(&projected, &survivor);
+    bindings_builder_rollback(&parent, mark);
+    Atom *next = ready ? bindings_builder_new_variable(&parent, &source, identity) : NULL;
+    CHECK(next && next->var_id != last_id && var_base_id(next->var_id) > 42u &&
+              !bindings_has_bound_values(&parent.current) && sibling_ready &&
+              binding_is_int(&sibling.current, last_id, 91),
+          "rollback restores values without recycling identities held by a sibling");
+    Atom *sibling_next = sibling_ready
+        ? bindings_builder_new_variable(&sibling, &source, identity) : NULL;
+    CHECK(next && sibling_next && sibling_next->var_id != next->var_id &&
+              bindings_builder_add_var_fresh(&parent, next, atom_int(&source, 101)) &&
+              !bindings_lookup_value_id(&sibling.current, next->var_id).skeleton,
+          "branch-local slot growth cannot alias a sibling's manufactured variable");
+    if (sibling_ready)
+        bindings_builder_free(&sibling);
+    bindings_builder_free(&parent);
+    arena_free(&source);
+    Atom *root = projected_ok
+        ? atom_var_with_id(&survivor, "result", root_id) : NULL;
+    Atom *observed = root ? bindings_apply(&projected, &survivor, root) : NULL;
+    CHECK(observed && observed->kind == ATOM_EXPR && observed->expr.len == 3u &&
+              observed->expr.elems[1]->kind == ATOM_GROUNDED &&
+              observed->expr.elems[1]->ground.ival == 73 &&
+              observed->expr.elems[2]->kind == ATOM_GROUNDED &&
+              observed->expr.elems[2]->ground.ival == 91,
+          "projected dynamic slots retain aliases and syntax after source release");
+    bindings_free(&projected);
+    arena_free(&survivor);
+}
+
+static void test_frame_index_cycle_bridge(Arena *arena) {
+    const uint32_t epoch = 702u;
+    VarId source_id = UINT64_C(88001);
+    VarId framed_id = var_epoch_id(source_id, epoch);
+    Atom *source = atom_var_with_id(arena, "cycle-frame-source", source_id);
+    VarId ids[] = {source_id};
+    Atom *variables[] = {source};
+    Atom *framed = atom_var_with_id(
+        arena, "cycle-frame-coordinate", framed_id);
+    Atom *x = atom_var_with_id(arena, "cycle-generic-x", UINT64_C(88101));
+    Atom *y = atom_var_with_id(arena, "cycle-generic-y", UINT64_C(88102));
+    Bindings empty;
+    bindings_init(&empty);
+    BindingsBuilder builder;
+    bool ready = bindings_builder_init(&builder, &empty);
+    bindings_free(&empty);
+    BindingsActivationView frame;
+    bindings_activation_view_init(&frame);
+    ready = ready && bindings_activation_view_prepare(
+        &frame, &builder, ids, variables, 1u, epoch, 0u);
+    ready = ready && bindings_builder_add_id_fresh(
+        &builder, framed_id, SYMBOL_ID_NONE, y);
+    ready = ready && bindings_builder_add_id_fresh(
+        &builder, x->var_id, SYMBOL_ID_NONE, framed);
+    for (uint32_t i = 0u; i < 64u && ready; i++) {
+        ready = bindings_builder_add_id_fresh(
+            &builder, UINT64_C(88200) + i, SYMBOL_ID_NONE,
+            atom_int(arena, i));
+    }
+    uint32_t before = builder.current.len;
+    bool accepted = ready && bindings_builder_add_id_fresh(
+        &builder, y->var_id, SYMBOL_ID_NONE, x);
+    Arena observed;
+    arena_init(&observed);
+    Atom *residual = accepted
+        ? bindings_apply(&builder.current, &observed, x) : NULL;
+    CHECK(!accepted && builder.current.len == before &&
+              !bindings_has_loop(&builder.current) && !residual,
+          "generic reachability follows a frame coordinate and refuses the closing edge");
+    arena_free(&observed);
+    bindings_activation_view_free(&frame);
+    bindings_builder_free(&builder);
+}
+
+static void test_frame_only_merge_occurs_check(Arena *arena) {
+    const uint32_t left_epoch = 721u;
+    const uint32_t right_epoch = 722u;
+    VarId left_source = UINT64_C(88961);
+    VarId right_source = UINT64_C(88963);
+    VarId left_id = var_epoch_id(left_source, left_epoch);
+    VarId right_id = var_epoch_id(right_source, right_epoch);
+    Atom *left_var = atom_var_with_id(
+        arena, "merge-cycle-left", left_id);
+    Atom *right_var = atom_var_with_id(
+        arena, "merge-cycle-right", right_id);
+    Atom *left_tail = atom_var_with_id(
+        arena, "merge-cycle-left-tail", UINT64_C(88965));
+    Atom *right_tail = atom_var_with_id(
+        arena, "merge-cycle-right-tail", UINT64_C(88967));
+    Atom *node = atom_symbol(arena, "MergeCycleNode");
+    Atom *left_value = atom_expr3(
+        arena, node, right_var, left_tail);
+    Atom *right_value = atom_expr3(
+        arena, node, left_var, right_tail);
+
+    Bindings left;
+    Bindings right;
+    bindings_init(&left);
+    bindings_init(&right);
+    bool ready =
+        bindings_register_complete_contextual_frame(
+            &left, &left_source, 1u, left_epoch) &&
+        bindings_register_complete_contextual_frame(
+            &right, &right_source, 1u, right_epoch) &&
+        bindings_add_id(
+            &left, left_id, SYMBOL_ID_NONE, left_value) &&
+        bindings_add_id(
+            &right, right_id, SYMBOL_ID_NONE, right_value);
+    CHECK(ready && !bindings_has_loop(&left) &&
+              !bindings_has_loop(&right),
+          "separate frame-only substitutions are independently acyclic");
+
+    Bindings refused;
+    bool refused_ready = bindings_clone(&refused, &left);
+    CHECK(refused_ready && !bindings_try_merge_live(&refused, &right) &&
+              binding_value_equal(
+                  bindings_lookup_value_id(&refused, left_id),
+                  binding_value_from_atom(left_value)) &&
+              !bindings_lookup_value_id(&refused, right_id).skeleton &&
+              !bindings_has_loop(&refused),
+          "merging frame-only substitutions rejects a cross-context cycle transactionally");
+    if (refused_ready)
+        bindings_free(&refused);
+
+    Bindings grounded_right;
+    bindings_init(&grounded_right);
+    bool grounded_ready =
+        bindings_register_complete_contextual_frame(
+            &grounded_right, &right_source, 1u, right_epoch) &&
+        bindings_add_id(
+            &grounded_right, right_id, SYMBOL_ID_NONE,
+            atom_int(arena, 79));
+    Bindings accepted;
+    bool accepted_ready = bindings_clone(&accepted, &left);
+    CHECK(grounded_ready && accepted_ready &&
+              bindings_try_merge_live(&accepted, &grounded_right) &&
+              binding_is_int(&accepted, right_id, 79) &&
+              !bindings_has_loop(&accepted),
+          "merging compatible frame-only substitutions preserves both slot authorities");
+    if (accepted_ready)
+        bindings_free(&accepted);
+    bindings_free(&grounded_right);
+    bindings_free(&right);
+    bindings_free(&left);
+}
+
+static void test_frame_schema_branch_lifetime(Arena *arena) {
+    const uint32_t epoch = 709u;
+    VarId ids[] = {UINT64_C(88901), UINT64_C(88903)};
+    Bindings parent, child;
+    bindings_init(&parent);
+    CHECK(bindings_register_contextual_frame(&parent, ids, 1u, epoch) &&
+          bindings_add_id(&parent, var_epoch_id(ids[0], epoch), SYMBOL_ID_NONE,
+                          atom_int(arena, 19)),
+          "publish a partial frame inventory before capture");
+    CHECK(bindings_clone(&child, &parent), "capture a frame inventory");
+    const void *old_schema = NULL, *old_slots = NULL;
+    const void *new_schema = NULL, *new_slots = NULL;
+    CHECK(bindings_frame_storage_test_identity(&parent, epoch, &old_schema, &old_slots) &&
+          bindings_register_contextual_frame(&child, ids, 2u, epoch) &&
+          bindings_frame_storage_test_identity(&child, epoch, &new_schema, &new_slots) &&
+          old_schema != new_schema,
+          "extending an inventory publishes a new schema without changing a captured schema");
+    bool known = true;
+    uint32_t entry = 0u;
+    CHECK(bindings_frame_index_test_lookup(&parent, var_epoch_id(ids[1], epoch),
+                                          &known, &entry) && !known &&
+          binding_is_int(&parent, var_epoch_id(ids[0], epoch), 19),
+          "the captured parent retains its original inventory and values");
+    bindings_free(&parent);
+    CHECK(bindings_add_id(&child, var_epoch_id(ids[1], epoch), SYMBOL_ID_NONE,
+                         atom_int(arena, 23)) &&
+          binding_is_int(&child, var_epoch_id(ids[0], epoch), 19) &&
+          binding_is_int(&child, var_epoch_id(ids[1], epoch), 23),
+          "the child owns its expanded schema after the parent is released");
+    bindings_free(&child);
+
+    bindings_init(&parent);
+    CHECK(bindings_register_contextual_frame(&parent, ids, 2u, epoch),
+          "publish an unbound inventory shared with a future branch");
+    BindingsBuilder branch;
+    CHECK(bindings_builder_init(&branch, &parent), "capture an unbound frame in a builder");
+    uint32_t mark = bindings_builder_save(&branch);
+    CHECK(bindings_builder_add_id_fresh(&branch, var_epoch_id(ids[0], epoch),
+                                       SYMBOL_ID_NONE, atom_int(arena, 29)),
+          "branch write detaches shared slot storage");
+    bindings_builder_rollback(&branch, mark);
+    VarId replacement[] = {UINT64_C(88921), UINT64_C(88923)};
+    CHECK(bindings_register_contextual_frame(&branch.current, replacement, 2u, epoch + 1u),
+          "reuse retired slot storage for another activation");
+    known = false;
+    CHECK(bindings_frame_index_test_lookup(&parent, var_epoch_id(ids[1], epoch),
+                                          &known, &entry) && known && entry == UINT32_MAX,
+          "recycling child storage does not rewrite the parent's shared schema");
+    bindings_builder_free(&branch);
+    bindings_free(&parent);
+}
+
+static void test_builder_frame_registration_rollback(Arena *arena) {
+    const uint32_t epoch = 710u;
+    VarId ids[] = {UINT64_C(88911), UINT64_C(88913)};
+    VarId third = UINT64_C(88915);
+    VarId first_id = var_epoch_id(ids[0], epoch);
+    VarId second_id = var_epoch_id(ids[1], epoch);
+    BindingsBuilder builder;
+    bool ready = bindings_builder_init(&builder, NULL);
+    uint32_t origin = ready ? bindings_builder_save(&builder) : 0u;
+    ready = ready && bindings_builder_register_contextual_frame(
+        &builder, &ids[0], 1u, epoch);
+    uint32_t registered = ready ? bindings_builder_save(&builder) : 0u;
+    bool first_known = false;
+    uint32_t first_entry = 0u;
+    bindings_builder_rollback(&builder, registered);
+    CHECK(ready && registered > origin &&
+              bindings_frame_index_test_lookup(
+                  &builder.current, first_id,
+                  &first_known, &first_entry) &&
+              first_known && first_entry == UINT32_MAX,
+          "a save after frame manufacture preserves that activation on rollback");
+
+    ready = ready && bindings_builder_add_id_fresh(
+        &builder, first_id, SYMBOL_ID_NONE, atom_int(arena, 43));
+    uint32_t valued = ready ? bindings_builder_save(&builder) : 0u;
+    BindingsFrameSchema *complete_schema =
+        bindings_frame_schema_new(ids, 2u);
+    ready = ready && complete_schema &&
+        bindings_builder_register_complete_frame_schema(
+            &builder, complete_schema, epoch) &&
+        bindings_builder_add_id_fresh(
+            &builder, second_id, SYMBOL_ID_NONE, atom_int(arena, 47));
+    CHECK(ready && binding_is_int(&builder.current, first_id, 43) &&
+              binding_is_int(&builder.current, second_id, 47),
+          "a branch may extend and complete an activation frame with slot values");
+    bindings_builder_rollback(&builder, valued);
+    bool second_known = true;
+    uint32_t second_entry = 0u;
+    CHECK(ready && binding_is_int(&builder.current, first_id, 43) &&
+              bindings_frame_index_test_lookup(
+                  &builder.current, second_id,
+                  &second_known, &second_entry) &&
+              !second_known,
+          "rollback removes a branch-local schema extension and preserves older slots");
+
+    bool third_registered = ready &&
+        bindings_builder_register_contextual_frame(
+            &builder, &third, 1u, epoch);
+    bool third_known = false;
+    uint32_t third_entry = 0u;
+    CHECK(third_registered &&
+              bindings_frame_index_test_lookup(
+                  &builder.current, var_epoch_id(third, epoch),
+                  &third_known, &third_entry) &&
+              third_known && third_entry == UINT32_MAX,
+          "rollback restores an incomplete frame rather than retaining branch-local closure");
+    bindings_builder_rollback(&builder, valued);
+
+    bindings_builder_rollback(&builder, registered);
+    first_known = false;
+    first_entry = 0u;
+    CHECK(bindings_frame_index_test_lookup(
+              &builder.current, first_id, &first_known, &first_entry) &&
+              first_known && first_entry == UINT32_MAX &&
+              !bindings_lookup_value_id(
+                  &builder.current, first_id).skeleton,
+          "rolling back slot writes keeps the activation inventory alive");
+    bindings_builder_rollback(&builder, origin);
+    const void *schema_identity = NULL;
+    const void *slot_identity = NULL;
+    first_known = true;
+    CHECK(bindings_frame_index_test_lookup(
+              &builder.current, first_id, &first_known, &first_entry) &&
+              !first_known &&
+              !bindings_frame_storage_test_identity(
+                  &builder.current, epoch,
+                  &schema_identity, &slot_identity),
+          "rolling back before frame manufacture removes the activation itself");
+    bindings_frame_schema_release(complete_schema);
+    bindings_builder_free(&builder);
+}
+
+static void test_frame_registration_compaction_rebase(Arena *arena) {
+    const uint32_t epoch = 712u;
+    VarId ids[] = {UINT64_C(88931), UINT64_C(88933)};
+    VarId extension = UINT64_C(88935);
+    VarId first_id = var_epoch_id(ids[0], epoch);
+    VarId second_id = var_epoch_id(ids[1], epoch);
+    VarId extension_id = var_epoch_id(extension, epoch);
+    BindingsBuilder builder;
+    bool ready = bindings_builder_init(&builder, NULL);
+    uint32_t origin = ready ? bindings_builder_save(&builder) : 0u;
+    ready = ready && bindings_builder_register_contextual_frame(
+        &builder, &ids[0], 1u, epoch);
+    uint32_t registered = ready ? bindings_builder_save(&builder) : 0u;
+    ready = ready && bindings_builder_add_id_fresh(
+        &builder, first_id, SYMBOL_ID_NONE, atom_int(arena, 53));
+    uint32_t first_bound = ready ? bindings_builder_save(&builder) : 0u;
+    ready = ready && bindings_builder_register_contextual_frame(
+        &builder, &ids[1], 1u, epoch) &&
+        bindings_builder_add_id_fresh(
+            &builder, second_id, SYMBOL_ID_NONE, atom_int(arena, 59));
+
+    Atom *first_root = atom_var_with_id(arena, "compact-frame-first", first_id);
+    Atom *second_root = atom_var_with_id(arena, "compact-frame-second", second_id);
+    Atom *roots[] = {first_root, second_root};
+    uint32_t marks[] = {origin, registered, first_bound};
+    uint32_t old_registration_undo_len =
+        builder.frame_registration_undo_len;
+    bool compacted = ready && old_registration_undo_len > 0u &&
+        bindings_builder_compact_reachable(
+            &builder, roots, 2u, marks, 3u, NULL, NULL);
+    CHECK(compacted && builder.frame_registration_undo_len == 0u &&
+              !builder.frame_registration_save_barrier &&
+              binding_is_int(&builder.current, first_id, 53) &&
+              binding_is_int(&builder.current, second_id, 59),
+          "compaction rebases frame registration history onto its projected directory");
+
+    if (compacted)
+        bindings_builder_rollback(&builder, marks[2]);
+    bool second_known = false;
+    uint32_t second_entry = 0u;
+    CHECK(compacted && binding_is_int(&builder.current, first_id, 53) &&
+              !bindings_lookup_value_id(
+                  &builder.current, second_id).skeleton &&
+              bindings_frame_index_test_lookup(
+                  &builder.current, second_id,
+                  &second_known, &second_entry) && second_known,
+          "rollback after compaction restores values within the projected frame base");
+
+    if (compacted)
+        bindings_builder_rollback(&builder, marks[1]);
+    uint32_t projected_base = bindings_builder_save(&builder);
+    bool extended = compacted &&
+        !bindings_lookup_value_id(&builder.current, first_id).skeleton &&
+        bindings_builder_register_contextual_frame(
+            &builder, &extension, 1u, epoch);
+    bool extension_known = false;
+    uint32_t extension_entry = 0u;
+    CHECK(extended && builder.frame_registration_undo_len == 1u &&
+              bindings_frame_index_test_lookup(
+                  &builder.current, extension_id,
+                  &extension_known, &extension_entry) && extension_known,
+          "frame manufacture after compaction records history against the projected base");
+    if (extended)
+        bindings_builder_rollback(&builder, projected_base);
+    extension_known = true;
+    bool first_known = false;
+    uint32_t first_entry = 0u;
+    CHECK(extended && builder.frame_registration_undo_len == 0u &&
+              bindings_frame_index_test_lookup(
+                  &builder.current, first_id,
+                  &first_known, &first_entry) && first_known &&
+              bindings_frame_index_test_lookup(
+                  &builder.current, extension_id,
+                  &extension_known, &extension_entry) && !extension_known,
+          "rollback removes post-compaction frame extensions without erasing the projected base");
+    bindings_builder_free(&builder);
+}
+
+static void test_frame_registration_undo_promotion(void) {
+    Arena source;
+    Arena owner;
+    arena_init(&source);
+    arena_init(&owner);
+    const uint32_t epoch = 714u;
+    VarId ids[] = {UINT64_C(88925), UINT64_C(88927)};
+    Atom *first_key = atom_expr2(
+        &source, atom_symbol(&source, "RegistrationName"),
+        atom_int(&source, 1));
+    Atom *second_key = atom_expr2(
+        &source, atom_symbol(&source, "RegistrationName"),
+        atom_int(&source, 2));
+    Atom *variables[] = {
+        atom_var_with_name_key(&source, first_key, ids[0]),
+        atom_var_with_name_key(&source, second_key, ids[1]),
+    };
+    BindingsFrameSchema *first_schema =
+        bindings_frame_schema_new_presented(ids, variables, 1u);
+    BindingsFrameSchema *full_schema =
+        bindings_frame_schema_new_presented(ids, variables, 2u);
+    BindingsBuilder builder;
+    bool ready = first_schema && full_schema &&
+        bindings_builder_init(&builder, NULL) &&
+        bindings_builder_register_frame_schema(
+            &builder, first_schema, epoch);
+    uint32_t first_mark = ready ? bindings_builder_save(&builder) : 0u;
+    ready = ready && bindings_builder_register_frame_schema(
+        &builder, full_schema, epoch) &&
+        bindings_builder_promote_atoms_to_arena(&builder, &owner);
+    CHECK(ready,
+          "promotion owns both the live frame and its rollback inventory");
+    bindings_frame_schema_release(first_schema);
+    bindings_frame_schema_release(full_schema);
+    arena_free(&source);
+    if (ready)
+        bindings_builder_rollback(&builder, first_mark);
+    bool first_known = false;
+    bool second_known = true;
+    uint32_t entry = 0u;
+    bool first_lookup = ready && bindings_frame_index_test_lookup(
+        &builder.current, var_epoch_id(ids[0], epoch),
+        &first_known, &entry);
+    bool second_lookup = ready && bindings_frame_index_test_lookup(
+        &builder.current, var_epoch_id(ids[1], epoch),
+        &second_known, &entry);
+    bool owner_closed = ready && bindings_logical_atoms_closed_for_arena(
+        &builder.current, &owner);
+    CHECK(ready && first_lookup && first_known && second_lookup &&
+              !second_known && owner_closed,
+          "a restored frame remains valid after releasing its syntax source arena");
+    if (ready)
+        bindings_builder_free(&builder);
+    arena_free(&owner);
+}
+
+static void test_prepared_frame_schema_lifetime(Arena *arena) {
+    VarId ids[] = {UINT64_C(88931), UINT64_C(88933)};
+    VarId first = ids[0], second = ids[1];
+    BindingsFrameSchema *schema = bindings_frame_schema_new(ids, 2u);
+    CHECK(schema && bindings_frame_schema_len(schema) == 2u,
+          "prepare an owned equation inventory");
+    ids[0] = UINT64_C(99999);
+    CHECK(schema && bindings_frame_schema_source_ids(schema)[0] == first,
+          "a prepared schema owns its ids independently of the input buffer");
+    Bindings bindings;
+    bindings_init(&bindings);
+    CHECK(bindings_register_complete_frame_schema(&bindings, schema, 711u) &&
+          bindings_register_complete_frame_schema(&bindings, schema, 712u),
+          "two activations retain one prepared equation schema");
+    const void *first_schema = NULL, *first_slots = NULL;
+    const void *second_schema = NULL, *second_slots = NULL;
+    CHECK(bindings_frame_storage_test_identity(&bindings, 711u, &first_schema, &first_slots) &&
+          bindings_frame_storage_test_identity(&bindings, 712u, &second_schema, &second_slots) &&
+          first_schema == schema && second_schema == schema && first_slots != second_slots,
+          "equation identities are shared while activation slot storage is independent");
+
+    Atom *source_variables[] = {
+        atom_var_with_id(arena, "prepared-frame-first", first),
+        atom_var_with_id(arena, "prepared-frame-second", second),
+    };
+    BindingsBuilder prepared_builder;
+    bool prepared_ready = bindings_builder_init(
+        &prepared_builder, &bindings);
+    BindingsActivationView prepared_frame;
+    bindings_activation_view_init(&prepared_frame);
+    test_runtime_stats_reset_counters();
+    CHECK(prepared_ready && bindings_activation_view_prepare_schema(
+              &prepared_frame, &prepared_builder, schema,
+              source_variables, 711u, 0u) &&
+          prepared_frame.source_ids == bindings_frame_schema_source_ids(schema) &&
+          test_runtime_stats_counter(
+              CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_REGISTRATION) == 0u,
+          "a prepared equation borrows its published frame without registering it again");
+    VarId manufactured_id = UINT64_C(88937);
+    Atom *manufactured_var = atom_var_with_id(
+        arena, "prepared-frame-manufactured", manufactured_id);
+    BindingsFrameSchema *manufactured_schema =
+        bindings_frame_schema_new_presented(
+            &manufactured_id, &manufactured_var, 1u);
+    CHECK(manufactured_schema &&
+          bindings_builder_register_frame_schema(
+              &prepared_builder, manufactured_schema, 713u) &&
+          bindings_activation_view_available(&prepared_frame, &prepared_builder.current) &&
+          prepared_frame.source_ids == bindings_frame_schema_source_ids(schema),
+          "another activation cannot invalidate an identity-based frame view");
+    bindings_frame_schema_release(manufactured_schema);
+    test_runtime_stats_reset_counters();
+    CHECK(!bindings_activation_view_prepare_schema(
+              &prepared_frame, &prepared_builder, schema,
+              NULL, 711u, 0u),
+          "a nonempty prepared equation refuses a missing source-variable inventory");
+    CHECK(bindings_activation_view_prepare_schema(
+              &prepared_frame, &prepared_builder, schema,
+              source_variables, 714u, 0u) &&
+          prepared_frame.source_ids == bindings_frame_schema_source_ids(schema) &&
+          test_runtime_stats_counter(
+              CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_REGISTRATION) == 1u &&
+          test_runtime_stats_counter(
+              CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_REGISTRATION_NEW) == 1u,
+          "a missing prepared frame is published exactly once before borrowing");
+    VarId different_ids[] = {first, second + UINT64_C(2)};
+    BindingsFrameSchema *different_schema =
+        bindings_frame_schema_new(different_ids, 2u);
+    CHECK(different_schema &&
+          !bindings_activation_view_prepare_schema(
+              &prepared_frame, &prepared_builder, different_schema,
+              source_variables, 711u, 0u),
+          "a published complete frame refuses a different schema for the same activation");
+    bindings_frame_schema_release(different_schema);
+    bindings_activation_view_free(&prepared_frame);
+    if (prepared_ready)
+        bindings_builder_free(&prepared_builder);
+
+    bindings_frame_schema_release(schema);
+    CHECK(bindings_add_id(&bindings, var_epoch_id(first, 711u), SYMBOL_ID_NONE,
+                          atom_int(arena, 31)) &&
+          bindings_add_id(&bindings, var_epoch_id(first, 712u), SYMBOL_ID_NONE,
+                          atom_int(arena, 33)) &&
+          binding_is_int(&bindings, var_epoch_id(first, 711u), 31) &&
+          binding_is_int(&bindings, var_epoch_id(first, 712u), 33),
+          "activations retain their schema after the preparing owner is released");
+    Atom *full_frame_value = bindings_apply_epoch(
+        &bindings, arena, source_variables[0], 711u);
+    Atom *unbound_frame_value = bindings_apply_epoch(
+        &bindings, arena, source_variables[1], 711u);
+    CHECK(full_frame_value && full_frame_value->kind == ATOM_GROUNDED &&
+          full_frame_value->ground.gkind == GV_INT &&
+          full_frame_value->ground.ival == 31 &&
+          unbound_frame_value && unbound_frame_value->kind == ATOM_VAR &&
+          unbound_frame_value->var_id == var_epoch_id(second, 711u),
+          "a full epoch view observes a frame-only value and preserves an unbound slot");
+    bool known = false;
+    uint32_t entry = 0u;
+    CHECK(bindings_frame_index_test_lookup(&bindings, var_epoch_id(second, 711u),
+                                          &known, &entry) && known && entry == UINT32_MAX,
+          "an unbound slot survives release of its preparing owner");
+    bindings_free(&bindings);
+
+    VarId duplicate[] = {first, first};
+    VarId qualified[] = {var_epoch_id(first, 711u)};
+    CHECK(bindings_frame_schema_new(duplicate, 2u) == NULL &&
+          bindings_frame_schema_new(qualified, 1u) == NULL &&
+          bindings_frame_schema_new(ids, 2u) == NULL &&
+          bindings_frame_schema_new(NULL, 1u) == NULL,
+          "schema preparation refuses duplicate, qualified, unsorted and missing ids");
+    schema = bindings_frame_schema_new(NULL, 0u);
+    bindings_init(&bindings);
+    CHECK(schema && bindings_frame_schema_len(schema) == 0u &&
+          bindings_register_complete_frame_schema(&bindings, schema, 713u),
+          "a ground equation has a valid empty schema");
+    bindings_frame_schema_release(schema);
+    bindings_free(&bindings);
+}
+
+static void test_presented_manufacture_frame_grows_until_closed(
+        Arena *arena) {
+    const uint32_t epoch = 715u;
+    VarId ids[] = {UINT64_C(88941), UINT64_C(88943), UINT64_C(88945)};
+    Atom *first_variable = atom_var_with_id(
+        arena, "manufactured-first", ids[0]);
+    Atom *second_variable = atom_var_with_id(
+        arena, "manufactured-second", ids[1]);
+    Atom *third_variable = atom_var_with_id(
+        arena, "manufactured-third", ids[2]);
+    BindingsFrameSchema *first_schema =
+        bindings_frame_schema_new_presented(
+            &ids[0], &first_variable, 1u);
+    BindingsFrameSchema *second_schema =
+        bindings_frame_schema_new_presented(
+            &ids[1], &second_variable, 1u);
+    BindingsFrameSchema *third_schema =
+        bindings_frame_schema_new_presented(
+            &ids[2], &third_variable, 1u);
+    Bindings empty;
+    bindings_init(&empty);
+    BindingsBuilder builder;
+    bool ready = bindings_builder_init(&builder, &empty);
+    bindings_free(&empty);
+    CHECK(ready && first_schema && second_schema && third_schema &&
+          bindings_builder_register_frame_schema(
+              &builder, first_schema, epoch) &&
+          bindings_builder_register_frame_schema(
+              &builder, second_schema, epoch) &&
+          bindings_builder_add_id_fresh(
+              &builder, var_epoch_id(ids[0], epoch), SYMBOL_ID_NONE,
+              atom_int(arena, 37)) &&
+          bindings_builder_add_id_fresh(
+              &builder, var_epoch_id(ids[1], epoch), SYMBOL_ID_NONE,
+              atom_int(arena, 41)) &&
+          binding_is_int(
+              &builder.current, var_epoch_id(ids[0], epoch), 37) &&
+          binding_is_int(
+              &builder.current, var_epoch_id(ids[1], epoch), 41),
+          "a dynamic activation merges presented manufactured slots into one frame");
+    CHECK(ready &&
+          bindings_register_complete_contextual_frame(
+              &builder.current, ids, 2u, epoch) &&
+          !bindings_builder_register_frame_schema(
+              &builder, third_schema, epoch),
+          "closing a manufactured frame rejects a later undeclared slot");
+    bindings_frame_schema_release(first_schema);
+    bindings_frame_schema_release(second_schema);
+    bindings_frame_schema_release(third_schema);
+    if (ready)
+        bindings_builder_free(&builder);
+}
+
+static void test_complete_contextual_frame_is_closed(Arena *arena) {
+    const uint32_t epoch = 703u;
+    VarId source_ids[] = {UINT64_C(89001), UINT64_C(89003)};
+    VarId extra_source_id = UINT64_C(89005);
+    VarId first = var_epoch_id(source_ids[0], epoch);
+    VarId second = var_epoch_id(source_ids[1], epoch);
+    Bindings empty;
+    bindings_init(&empty);
+    BindingsBuilder builder;
+    bool ready = bindings_builder_init(&builder, &empty);
+    bindings_free(&empty);
+    bool admitted = ready &&
+        bindings_register_complete_contextual_frame(
+            &builder.current, source_ids, 2u, epoch);
+    bool first_known = false;
+    bool second_known = false;
+    uint32_t first_entry = 0u;
+    uint32_t second_entry = 0u;
+    CHECK(admitted &&
+              bindings_frame_index_test_lookup(
+                  &builder.current, first, &first_known,
+                  &first_entry) &&
+              bindings_frame_index_test_lookup(
+                  &builder.current, second, &second_known,
+                  &second_entry) &&
+              first_known && second_known &&
+              first_entry == UINT32_MAX &&
+              second_entry == UINT32_MAX &&
+              bindings_builder_add_id_fresh(
+                  &builder, first, SYMBOL_ID_NONE,
+                  atom_int(arena, 703)) &&
+              binding_is_int(&builder.current, first, 703),
+          "a complete contextual frame owns every declared slot before binding");
+    CHECK(!bindings_register_contextual_frame(
+              &builder.current, &extra_source_id, 1u, epoch) &&
+              bindings_lookup_value_id(
+                  &builder.current,
+                  var_epoch_id(extra_source_id, epoch)).skeleton == NULL &&
+              binding_is_int(&builder.current, first, 703),
+          "a complete contextual frame refuses undeclared coordinates without mutation");
+    if (ready)
+        bindings_builder_free(&builder);
+}
+
+static void test_lookup_domain_accounting(Arena *arena) {
+    const uint32_t epoch = 703u;
+    const VarId source_ids[] = {UINT64_C(88301), UINT64_C(88302)};
+    const VarId framed_hit = var_epoch_id(source_ids[0], epoch);
+    const VarId framed_miss = var_epoch_id(source_ids[1], epoch);
+    const VarId generic_hit = UINT64_C(88311);
+    const VarId generic_miss = UINT64_C(88312);
+    const VarId unowned_contextual_miss =
+        var_epoch_id(UINT64_C(88313), epoch + 1u);
+    BindingsBuilder builder;
+    bool ready = bindings_builder_init(&builder, NULL);
+    test_runtime_stats_reset_counters();
+    ready = ready && bindings_register_contextual_frame(
+        &builder.current, source_ids, 1u, epoch);
+    ready = ready && bindings_register_contextual_frame(
+        &builder.current, source_ids, 1u, epoch);
+    ready = ready && bindings_register_contextual_frame(
+        &builder.current, source_ids, 2u, epoch);
+    CHECK(ready && test_runtime_stats_counter(
+              CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_REGISTRATION) == 3u &&
+              test_runtime_stats_counter(
+              CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_REGISTRATION_NEW) == 1u &&
+              test_runtime_stats_counter(
+              CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_REGISTRATION_KNOWN) == 1u &&
+              test_runtime_stats_counter(
+              CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_REGISTRATION_EXTENDED) == 1u,
+          "frame registration accounts new, known, and extended schemas");
+    ready = ready && bindings_builder_add_id_fresh(
+        &builder, framed_hit, SYMBOL_ID_NONE, atom_int(arena, 31));
+    ready = ready && bindings_builder_add_id_fresh(
+        &builder, generic_hit, SYMBOL_ID_NONE, atom_int(arena, 37));
+
+    test_runtime_stats_reset_counters();
+    BindingValue framed_value = ready
+        ? bindings_lookup_value_id(&builder.current, framed_hit)
+        : binding_value_from_atom(NULL);
+    BindingValue absent_frame_value = ready
+        ? bindings_lookup_value_id(&builder.current, framed_miss)
+        : binding_value_from_atom(NULL);
+    BindingValue generic_value = ready
+        ? bindings_lookup_value_id(&builder.current, generic_hit)
+        : binding_value_from_atom(NULL);
+    BindingValue absent_generic_value = ready
+        ? bindings_lookup_value_id(&builder.current, generic_miss)
+        : binding_value_from_atom(NULL);
+    BindingValue absent_unowned_contextual_value = ready
+        ? bindings_lookup_value_id(
+            &builder.current, unowned_contextual_miss)
+        : binding_value_from_atom(NULL);
+
+    CHECK(ready && framed_value.skeleton &&
+              !absent_frame_value.skeleton && generic_value.skeleton &&
+              !absent_generic_value.skeleton &&
+              !absent_unowned_contextual_value.skeleton,
+          "lookup-domain fixture distinguishes present and absent coordinates");
+    CHECK(test_runtime_stats_counter(
+              CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_FRAME_COORDINATE) == 3u &&
+              test_runtime_stats_counter(
+              CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_GENERIC_MAP) == 2u &&
+              test_runtime_stats_counter(
+              CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_PLAIN_IDENTITY) == 2u &&
+              test_runtime_stats_counter(
+              CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_UNOWNED_CONTEXTUAL) == 0u &&
+              test_runtime_stats_counter(
+              CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP) == 5u,
+          "every lookup is accounted to exactly one coordinate domain");
+    bindings_builder_free(&builder);
+}
+
+static void test_dense_inventory_is_slot_read(Arena *arena) {
+    VarId ids[] = {UINT64_C(91001), UINT64_C(91002), UINT64_C(91003)};
+    Atom *variables[] = {
+        atom_var_with_id(arena, "inv-a", ids[0]),
+        atom_var_with_id(arena, "inv-b", ids[1]),
+        atom_var_with_id(arena, "inv-c", ids[2])
+    };
+    const uint32_t epoch = 19u;
+    BindingsBuilder builder;
+    CHECK(bindings_builder_init(&builder, NULL),
+          "slot-read builder");
+    Atom *one = atom_int(arena, 1);
+    Atom *two = atom_int(arena, 2);
+    CHECK(bindings_builder_add_id_fresh(
+              &builder, var_epoch_id(ids[0], epoch - 1u),
+              SYMBOL_ID_NONE, two),
+          "outer-epoch prefix stays a trail binding");
+    uint32_t first = builder.current.len;
+    BindingsActivationView frame;
+    bindings_activation_view_init(&frame);
+    CHECK(bindings_activation_view_prepare(
+              &frame, &builder, ids, variables, 3u, epoch, first),
+          "prepare the activation inventory");
+
+    CHECK(bindings_activation_view_available(&frame, &builder.current),
+          "prepared view resolves its activation");
 
     bindings_lookup_index_test_clear(&builder.current);
-    prepared = bindings_dense_epoch_frame_prepare(
-        &frame, &builder, ids, variables, 3u, epoch, begin);
-    CHECK(prepared && dense_frame_matches_suffix_scan(&frame, &builder.current),
-          "frame construction without a retained index equals the suffix scan");
+    VarId local_a = var_epoch_id(ids[0], epoch);
+    VarId local_b = var_epoch_id(ids[1], epoch);
+    uint32_t synced = 0u;
+    BindingValue slot = binding_value_from_atom(NULL);
+    CHECK(lookup_frame_value(
+              &builder.current, local_a, &slot) && slot.skeleton == NULL &&
+              !bindings_lookup_index_test_synced_len(
+                  &builder.current, &synced),
+          "unbound inventory slot is empty without rebuilding the index");
+    CHECK(bindings_lookup_value_id(&builder.current, var_epoch_id(ids[0], epoch - 1u)).skeleton == two,
+          "a different epoch of the same source still uses the trail");
+
+    CHECK(bindings_builder_add_id_fresh(
+              &builder, local_a, SYMBOL_ID_NONE, one),
+          "bind an inventory variable");
+    bindings_lookup_index_test_clear(&builder.current);
+    slot = binding_value_from_atom(NULL);
+    CHECK(lookup_frame_value(
+              &builder.current, local_a, &slot) && slot.skeleton == one &&
+              !bindings_lookup_index_test_synced_len(
+                  &builder.current, &synced),
+          "bound inventory lookup is the slot, not a search");
 
     uint32_t mark = bindings_builder_save(&builder);
-    for (uint32_t i = 0u; i < 128u && ready; i++)
-        ready = bindings_builder_add_id_fresh(&builder, test_id(700u + i),
-            SYMBOL_ID_NONE, atom_int(arena, i));
-    ready = ready && bindings_builder_add_id_fresh(&builder, var_epoch_id(ids[2], epoch),
-        SYMBOL_ID_NONE, atom_int(arena, 33));
-    CHECK(ready && bindings_dense_epoch_frame_refresh(&frame, &builder) &&
-          dense_frame_matches_suffix_scan(&frame, &builder.current) &&
-          frame.slot_stamps[2] == frame.slot_generation,
-          "frame refresh observes the pending index suffix without losing prior slots");
+    CHECK(bindings_builder_add_id_fresh(
+              &builder, local_b, SYMBOL_ID_NONE, two),
+          "bind a second inventory variable");
+    slot = binding_value_from_atom(NULL);
+    CHECK(lookup_frame_value(
+              &builder.current, local_b, &slot) && slot.skeleton == two,
+          "second slot is live during the attempt");
     bindings_builder_rollback(&builder, mark);
-    CHECK(!bindings_dense_epoch_frame_refresh(&frame, &builder) &&
-          bindings_dense_epoch_frame_prepare(&frame, &builder, ids, variables, 3u, epoch, begin) &&
-          dense_frame_matches_suffix_scan(&frame, &builder.current) &&
-          frame.slot_stamps[2] != frame.slot_generation,
-          "rollback rejects stale frames and rebuilding removes rolled-back values");
+    BindingValue after_b = binding_value_from_atom(NULL);
+    BindingValue after_a = binding_value_from_atom(NULL);
+    CHECK(lookup_frame_value(
+              &builder.current, local_b, &after_b) && after_b.skeleton == NULL &&
+              lookup_frame_value(
+                  &builder.current, local_a, &after_a) && after_a.skeleton == one,
+          "rollback restores slots; the prior suffix survives");
 
-    frame.slot_generation = UINT32_MAX;
-    CHECK(bindings_dense_epoch_frame_prepare(&frame, &builder, ids, variables, 3u, epoch, begin) &&
-          dense_frame_matches_suffix_scan(&frame, &builder.current) &&
-          frame.slot_stamps[2] != frame.slot_generation,
-          "generation wrap preserves absence instead of reviving stale slots");
-    CHECK(bindings_dense_epoch_frame_prepare(&frame, &builder, NULL, NULL, 0u, epoch, 0u) &&
-          frame.len == 0u && frame.scanned_len == builder.current.len,
-          "empty variable inventory observes no bindings");
-    bindings_dense_epoch_frame_free(&frame);
-    bindings_builder_free(&builder);
+    Atom *head = atom_symbol(arena, "Pair");
+    Atom *pat_x = atom_var_with_id(arena, "inv-b", local_b);
+    Atom *pattern = atom_expr3(arena, head, pat_x, pat_x);
+    Atom *query = atom_expr3(arena, head, one, one);
+    CHECK(match_atoms_builder(query, pattern, &builder) &&
+              bindings_lookup_value_id(&builder.current, local_b).skeleton == one,
+          "repeated inventory variable unifies with the display live");
 
-    /* The raw binding ABI permits duplicate keys. Its derived index and the
-     * forward frame scan must both retain the newest occurrence. */
-    ready = build_bindings(arena, 256u, &base);
-    if (!ready) { CHECK(false, "duplicate frame fixture allocation"); return; }
-    base.entries[0].var_id = var_epoch_id(ids[1], epoch);
-    base.entries[255].var_id = var_epoch_id(ids[1], epoch);
-    bindings_lookup_index_test_clear(&base);
-    ready = bindings_builder_init(&builder, &base);
-    bindings_free(&base);
-    bindings_dense_epoch_frame_init(&frame);
-    prepared = ready && bindings_dense_epoch_frame_prepare(
-        &frame, &builder, ids, variables, 3u, epoch, 128u);
-    CHECK(prepared && dense_frame_matches_suffix_scan(&frame, &builder.current) &&
-          frame.values[1] == builder.current.entries[255].val,
-          "indexed frame retains the last duplicate occurrence within the suffix");
-    bindings_dense_epoch_frame_free(&frame);
+    bindings_activation_view_free(&frame);
+    CHECK(!bindings_activation_view_available(&frame, &builder.current),
+          "free invalidates the activation view");
     bindings_builder_free(&builder);
 }
 
@@ -547,15 +1822,16 @@ static void test_epoch_identity_and_publication(Arena *ordinary_arena) {
         match_atoms_epoch_view_builder(
             epoch_term, 17u, 0u, epoch_term,
             &epochs, &shared_arena, 19u);
-    Atom *epoch_value = epochs_match
-        ? bindings_lookup_id(
-              &epochs.current,
-              var_epoch_id(epoch_var->var_id, 17u))
-        : NULL;
+    BindingValue epoch_value = epochs_match
+        ? bindings_lookup_value_id(
+              &epochs.current, var_epoch_id(epoch_var->var_id, 17u))
+        : binding_value_from_atom(NULL);
     CHECK(epochs_match &&
-              epochs.current.len == 1u &&
-              epoch_value && epoch_value->kind == ATOM_VAR &&
-              epoch_value->var_id == var_epoch_id(epoch_var->var_id, 19u),
+              bindings_has_bound_values(&epochs.current) &&
+              epoch_value.skeleton &&
+              epoch_value.skeleton->kind == ATOM_VAR &&
+              binding_value_variable_id(epoch_value) ==
+                  var_epoch_id(epoch_var->var_id, 19u),
           "shared variable-bearing terms preserve distinct activation epochs");
     if (epochs_ready)
         bindings_builder_free(&epochs);
@@ -607,21 +1883,27 @@ static void test_incremental_occurs_large_frontier(Arena *arena) {
         ready = next && bindings_builder_add_var_fresh(
             &builder, variables[index], next);
     }
-    CHECK(ready && builder.current.len == frontier_length &&
+    size_t frontier_binding_count = 0u;
+    CHECK(ready && bindings_current_binding_count_test(
+                       &builder.current, &frontier_binding_count) &&
+              frontier_binding_count == frontier_length &&
               !bindings_has_loop(&builder.current),
           "large incremental occurs frontier remains acyclic");
 
     uint32_t cycle_mark = ready
         ? bindings_builder_save(&builder) : 0u;
-    bool closing_cycle = ready &&
-        bindings_builder_add_var_fresh(
+    bool closing_refused = ready &&
+        !bindings_builder_add_var_fresh(
             &builder, variables[frontier_length], variables[0]) &&
-        bindings_has_loop(&builder.current);
-    CHECK(closing_cycle,
-          "large incremental occurs frontier detects its closing cycle");
+        !bindings_has_loop(&builder.current);
+    CHECK(closing_refused,
+          "large incremental occurs frontier refuses its closing edge");
     if (ready) {
         bindings_builder_rollback(&builder, cycle_mark);
-        CHECK(builder.current.len == frontier_length &&
+        frontier_binding_count = 0u;
+        CHECK(bindings_current_binding_count_test(
+                  &builder.current, &frontier_binding_count) &&
+                  frontier_binding_count == frontier_length &&
                   !bindings_has_loop(&builder.current),
               "large occurs-check rollback restores the acyclic frontier");
     }
@@ -658,31 +1940,6 @@ static void test_single_variable_support_summary(Arena *arena) {
     }
     CHECK(draft && atom_single_variable_id(draft) == left->var_id,
           "expression builders derive the same singleton support summary");
-}
-
-typedef struct {
-    VarId variable;
-    uint32_t offset;
-} TestEpochCoordinate;
-
-static bool test_epoch_coordinate(
-        void *context, VarId source_variable, uint32_t *offset_out) {
-    const TestEpochCoordinate *coordinate = context;
-
-    if (!coordinate || !offset_out ||
-        source_variable != coordinate->variable)
-        return false;
-    *offset_out = coordinate->offset;
-    return true;
-}
-
-static bool test_epoch_zero_coordinate(
-        void *context, VarId source_variable, uint32_t *offset_out) {
-    (void)context;
-    if (source_variable == VAR_ID_NONE || !offset_out)
-        return false;
-    *offset_out = 0u;
-    return true;
 }
 
 static void test_arena_symbol_cache_is_bounded(void) {
@@ -770,21 +2027,73 @@ static void test_logical_binding_transport(void) {
             &transported, &source, logical_transport_test_atom, &context);
     CHECK(transported_ready && transported.len == source.len &&
               transported.eq_len == source.eq_len &&
-              transported.entries[0].var_id == first_id &&
-              transported.entries[0].val != source.entries[0].val &&
+              bindings_entry_at(&transported, 0)->var_id == first_id &&
+              bindings_entry_at(&transported, 0)->value.skeleton !=
+                  bindings_entry_at(&source, 0)->value.skeleton &&
               arena_owns_ptr(
-                  &destination_arena, transported.entries[0].val) &&
+                  &destination_arena,
+                  bindings_entry_at(&transported, 0)->value.skeleton) &&
               arena_owns_ptr(
-                  &destination_arena, transported.constraints[0].lhs) &&
+                  &destination_arena, transported.constraints[0].lhs.skeleton) &&
               arena_owns_ptr(
-                  &destination_arena, transported.constraints[0].rhs) &&
-              atom_eq(transported.entries[0].val,
-                      source.entries[0].val) &&
-              atom_eq(transported.constraints[0].lhs,
-                      source.constraints[0].lhs) &&
-              atom_eq(transported.constraints[0].rhs,
-                      source.constraints[0].rhs),
+                  &destination_arena, transported.constraints[0].rhs.skeleton) &&
+              atom_eq(bindings_entry_at(&transported, 0)->value.skeleton,
+                      bindings_entry_at(&source, 0)->value.skeleton) &&
+              atom_eq(transported.constraints[0].lhs.skeleton,
+                      source.constraints[0].lhs.skeleton) &&
+              atom_eq(transported.constraints[0].rhs.skeleton,
+                      source.constraints[0].rhs.skeleton),
           "logical transport preserves ordered bindings and constraints in a new owner");
+
+    const uint32_t frame_epoch = 733u;
+    VarId frame_source_id = UINT64_C(7100);
+    VarId framed_id = var_epoch_id(frame_source_id, frame_epoch);
+    Atom *frame_variable = atom_var_with_id(
+        &source_arena, "transport-frame-variable", frame_source_id);
+    VarId frame_ids[] = {frame_source_id};
+    Atom *frame_variables[] = {frame_variable};
+    Bindings empty;
+    bindings_init(&empty);
+    BindingsBuilder frame_builder;
+    bool frame_builder_initialized = bindings_builder_init(
+        &frame_builder, &empty);
+    bindings_free(&empty);
+    bool frame_builder_ready = frame_builder_initialized;
+    BindingsActivationView frame;
+    bindings_activation_view_init(&frame);
+    frame_builder_ready = frame_builder_ready &&
+        bindings_activation_view_prepare(
+            &frame, &frame_builder, frame_ids, frame_variables,
+            1u, frame_epoch, 0u) &&
+        bindings_builder_add_id_fresh(
+            &frame_builder, framed_id, SYMBOL_ID_NONE,
+            atom_expr2(&source_arena,
+                atom_symbol(&source_arena, "framed-transported"),
+                atom_int(&source_arena, 73)));
+    Bindings transported_frame;
+    bool transported_frame_ready = frame_builder_ready &&
+        bindings_transport_logical(
+            &transported_frame, &frame_builder.current,
+            logical_transport_test_atom, &context);
+    bool transported_frame_known = false;
+    uint32_t transported_frame_entry = UINT32_MAX;
+    CHECK(transported_frame_ready &&
+              bindings_frame_index_test_lookup(
+                  &transported_frame, framed_id,
+                  &transported_frame_known,
+                  &transported_frame_entry) &&
+              transported_frame_known &&
+              transported_frame_entry == UINT32_MAX &&
+              arena_owns_ptr(
+                  &destination_arena,
+                  bindings_lookup_value_id(
+                      &transported_frame, framed_id).skeleton),
+          "logical transport preserves contextual frame identity and its direct coordinate");
+    if (transported_frame_ready)
+        bindings_free(&transported_frame);
+    bindings_activation_view_free(&frame);
+    if (frame_builder_initialized)
+        bindings_builder_free(&frame_builder);
 
     Bindings prime_source;
     Bindings refused;
@@ -860,8 +2169,8 @@ static void test_closed_component_cache(void) {
     bindings_builder_rollback(&parent, closed_mark);
     CHECK(!bindings_has_loop(&parent.current) &&
           !ground_test_loop_oracle(&parent.current) &&
-          bindings_lookup_id(&parent.current, x->var_id) == leaf &&
-          bindings_lookup_id(&parent.current, y->var_id) == leaf,
+          bindings_lookup_value_id(&parent.current, x->var_id).skeleton == leaf &&
+          bindings_lookup_value_id(&parent.current, y->var_id).skeleton == leaf,
           "rollback of unrelated suffix preserves the closed component and its bindings");
     bool reused_suffix = true;
     for (uint32_t round = 0u; reused_suffix && round < 64u; round++) {
@@ -876,16 +2185,16 @@ static void test_closed_component_cache(void) {
     }
     CHECK(reused_suffix && !ground_test_loop_oracle(&parent.current),
           "repeated distinct suffixes preserve closedness through index-cluster relocation");
-    bool sibling_cycle = sibling_ready && bindings_builder_add_var_fresh(&sibling, x, p);
-    CHECK(sibling_cycle && bindings_has_loop(&sibling.current) && ground_test_loop_oracle(&sibling.current) &&
+    bool sibling_refused = sibling_ready && !bindings_builder_add_var_fresh(&sibling, x, p);
+    CHECK(sibling_refused && !bindings_has_loop(&sibling.current) && !ground_test_loop_oracle(&sibling.current) &&
           !bindings_has_loop(&parent.current),
-          "closedness established in one branch cannot erase a sibling's open cycle");
+          "closedness established in one branch does not admit a sibling's closing edge");
     bindings_builder_rollback(&parent, mark);
     CHECK(!bindings_has_loop(&parent.current) && !ground_test_loop_oracle(&parent.current),
           "rollback restores the original open acyclic component");
-    bool after_rollback = bindings_builder_add_var_fresh(&parent, x, p);
-    CHECK(after_rollback && bindings_has_loop(&parent.current) && ground_test_loop_oracle(&parent.current),
-          "rollback invalidates closedness before the old open frontier closes a cycle");
+    bool after_rollback_refused = !bindings_builder_add_var_fresh(&parent, x, p);
+    CHECK(after_rollback_refused && !bindings_has_loop(&parent.current) && !ground_test_loop_oracle(&parent.current),
+          "rollback invalidates closedness, and the old open frontier's closing edge is refused");
     if (sibling_ready) bindings_builder_free(&sibling);
     bindings_builder_free(&parent);
 
@@ -913,17 +2222,280 @@ static void test_closed_component_cache(void) {
     mutable->expr.elems[2] = q;
     mutable = atom_expr_builder_finish(&scratch, mutable);
     mutable->flags &= ~ATOM_FLAG_HASH_STABLE;
-    bool changed_cycle = ready && mutable &&
-        bindings_builder_add_var_fresh(&parent, q, atom_expr3(&arena, node, p, x));
-    CHECK(changed_cycle && bindings_has_loop(&parent.current) && ground_test_loop_oracle(&parent.current),
-          "changed uncertified component is traversed before accepting a new edge");
+    bool changed_cycle_refused = ready && mutable &&
+        !bindings_builder_add_var_fresh(&parent, q, atom_expr3(&arena, node, p, x));
+    CHECK(changed_cycle_refused && !bindings_has_loop(&parent.current) &&
+              !ground_test_loop_oracle(&parent.current),
+          "changed uncertified component is traversed before accepting a new edge, and the edge is refused");
     bindings_builder_free(&parent);
     arena_free(&scratch);
     arena_free(&arena);
     hashcons_free(&hc);
 }
 
+static void test_unframed_context_import(Arena *arena) {
+    const uint32_t epoch = 1701u;
+    Atom *left = atom_var_with_id(
+        arena, "context-import-left", test_id(14000u));
+    Atom *right = atom_var_with_id(
+        arena, "context-import-right", test_id(14001u));
+    Atom *leaf = atom_int(arena, 1701);
+    Atom *constraint_left_variable = atom_var_with_id(
+        arena, "context-import-constraint-left", test_id(14002u));
+    Atom *constraint_right_variable = atom_var_with_id(
+        arena, "context-import-constraint-right", test_id(14003u));
+    Atom *constraint_left = atom_expr2(
+        arena, atom_symbol(arena, "ContextImportLeft"),
+        constraint_left_variable);
+    Atom *constraint_right = atom_expr2(
+        arena, atom_symbol(arena, "ContextImportRight"),
+        constraint_right_variable);
+    Bindings imported;
+    bindings_init(&imported);
+    bool ready = left && right && leaf &&
+        constraint_left && constraint_right &&
+        bindings_add_var(&imported, left, right) &&
+        bindings_add_var(&imported, right, leaf) &&
+        bindings_add_constraint(
+            &imported, constraint_left, constraint_right);
+    size_t assignment_count = 0u;
+    BindingValue left_value = binding_value_from_atom(NULL);
+    BindingValue right_value = binding_value_from_atom(NULL);
+    bool left_known = false;
+    bool right_known = false;
+    uint32_t left_entry = 0u;
+    uint32_t right_entry = 0u;
+    CettaVarMap inventory = {0};
+    VarId contextual_left = var_epoch_id(1u, epoch);
+    VarId contextual_right = var_epoch_id(2u, epoch);
+    bool imported_ok = ready &&
+        bindings_contextualize_unframed(&imported, arena, &inventory, epoch) &&
+        bindings_current_binding_count(
+            &imported, &assignment_count) &&
+        bindings_frame_index_test_lookup(
+            &imported, contextual_left, &left_known, &left_entry) &&
+        bindings_frame_index_test_lookup(
+            &imported, contextual_right, &right_known, &right_entry);
+    if (imported_ok) {
+        left_value = bindings_lookup_value_id(
+            &imported, contextual_left);
+        right_value = bindings_lookup_value_id(
+            &imported, contextual_right);
+    }
+    CHECK(imported_ok && imported.len == 0u &&
+              assignment_count == 2u &&
+              left_known && left_entry == UINT32_MAX &&
+              right_known && right_entry == UINT32_MAX &&
+              binding_value_variable_id(left_value) == contextual_right &&
+              right_value.skeleton == leaf &&
+              !bindings_lookup_value_id(
+                  &imported, left->var_id).skeleton,
+          "context import replaces unframed rows with authoritative frame slots");
+    Atom *resolved = imported_ok
+        ? bindings_apply_value(
+              &imported, arena,
+              binding_value_from_context(
+                  cetta_var_map_lookup(&inventory, left->var_id), epoch))
+        : NULL;
+    Atom *observed_constraint_left = imported_ok &&
+            imported.eq_len == 1u
+        ? bindings_apply_value(
+              &imported, arena, imported.constraints[0].lhs)
+        : NULL;
+    CHECK(resolved == leaf && imported.eq_len == 1u &&
+              observed_constraint_left &&
+              observed_constraint_left->kind == ATOM_EXPR &&
+              observed_constraint_left->expr.len == 2u &&
+              observed_constraint_left->expr.elems[1]->kind == ATOM_VAR &&
+              observed_constraint_left->expr.elems[1]->var_id ==
+                  var_epoch_id(
+                      cetta_var_map_lookup(&inventory,
+                          constraint_left_variable->var_id)->var_id, epoch),
+          "context import preserves aliases and qualifies connected constraints");
+    CHECK(inventory.len == 4u &&
+              cetta_var_map_lookup(&inventory, left->var_id)->var_id == 1u &&
+              cetta_var_map_lookup(&inventory, right->var_id)->var_id == 2u,
+          "context import compiles sparse authored identities into dense slots");
+    cetta_var_map_free(&inventory);
+    bindings_free(&imported);
+
+    Atom *foreign = atom_var_with_id(
+        arena, "context-import-foreign", var_epoch_id(1u, epoch + 1u));
+    Atom *open = atom_expr3(arena, atom_symbol(arena, "ContextImportOpen"), foreign, right);
+    Bindings mixed;
+    bindings_init(&mixed);
+    VarId foreign_slot = 1u;
+    ready = bindings_register_contextual_frame(&mixed, &foreign_slot, 1u, epoch + 1u) &&
+        bindings_add_var(&mixed, foreign, atom_int(arena, 71)) &&
+        bindings_add_var(&mixed, left, open) && bindings_add_var(&mixed, right, atom_int(arena, 83));
+    Atom *query = ready ? cetta_import_frame_syntax(arena,
+        atom_expr3(arena, atom_symbol(arena, "ImportedQuery"), left, foreign),
+        &inventory, epoch) : NULL;
+    bool mixed_ok = query && bindings_contextualize_unframed(&mixed, arena, &inventory, epoch);
+    Atom *answer = mixed_ok ? bindings_apply(&mixed, arena, query) : NULL;
+    CHECK(answer && answer->kind == ATOM_EXPR && answer->expr.len == 3u &&
+              answer->expr.elems[1]->kind == ATOM_EXPR &&
+              answer->expr.elems[1]->expr.elems[1]->ground.ival == 71 &&
+              answer->expr.elems[1]->expr.elems[2]->ground.ival == 83 &&
+              answer->expr.elems[2]->ground.ival == 71 && inventory.len == 2u,
+          "root and substitution import preserve existing frames while translating authored aliases");
+    CHECK(mixed_ok && query->expr.elems[1]->var_id != query->expr.elems[2]->var_id &&
+              query->expr.elems[2]->var_id == foreign->var_id,
+          "equal slot numbers in different imported frames cannot capture one another");
+    cetta_var_map_free(&inventory);
+    bindings_free(&mixed);
+}
+
+static void test_dense_term_instantiation(Arena *arena) {
+    CETTA_FRAME_IDENTITY_SCOPE(source_owners);
+    CettaFrameIdentity first = cetta_frame_identity_scope_fresh(&source_owners);
+    CettaFrameIdentity second = cetta_frame_identity_scope_fresh(&source_owners);
+    Atom *x = atom_var_with_id(arena, "same", var_epoch_id(71u, first));
+    Atom *y = atom_var_with_id(arena, "same", var_epoch_id(71u, second));
+    Atom *z = atom_var_with_id(arena, "last", UINT64_C(900003));
+    Atom *terms[2] = {atom_expr3(arena, x, y, z), atom_expr2(arena, z, x)};
+    CHECK(cetta_instantiate_frame_terms(arena, terms, 2u),
+          "instantiate related terms in one owned frame");
+    Atom *a = terms[0]->expr.elems[0];
+    Atom *b = terms[0]->expr.elems[1];
+    Atom *c = terms[0]->expr.elems[2];
+    CettaFrameIdentity identity = var_epoch_suffix(a->var_id);
+    uint32_t extent = 0u;
+    CHECK(identity != first && identity != second &&
+          cetta_frame_identity_slot_count(identity, &extent) && extent == 3u &&
+          var_base_id(a->var_id) == 1u && var_base_id(b->var_id) == 2u &&
+          var_base_id(c->var_id) == 3u &&
+          var_epoch_suffix(b->var_id) == identity &&
+          var_epoch_suffix(c->var_id) == identity,
+          "fresh frame has dense slots even for sparse and previously qualified sources");
+    CHECK(a->var_id != b->var_id &&
+          terms[1]->expr.elems[0]->var_id == c->var_id &&
+          terms[1]->expr.elems[1]->var_id == a->var_id,
+          "shared variables remain shared without capturing equal slots in distinct source frames");
+    Atom *other = cetta_instantiate_frame_syntax(arena, terms[0]);
+    CHECK(other && other->expr.elems[0]->var_id != a->var_id &&
+          other->expr.elems[0]->var_id != other->expr.elems[1]->var_id,
+          "independent instantiation creates independent identities");
+    BindingsBuilder builder;
+    CHECK(bindings_builder_init(&builder, NULL), "initialize dense instance bindings");
+    Atom *eleven = atom_int(arena, 11);
+    Atom *thirty = atom_int(arena, 30);
+    CHECK(bindings_builder_add_var_fresh(&builder, c, thirty) &&
+          bindings_builder_add_var_fresh(&builder, a, eleven) && builder.current.len == 0u &&
+          bindings_lookup_value_id(&builder.current, c->var_id).skeleton == thirty &&
+          bindings_lookup_value_id(&builder.current, a->var_id).skeleton == eleven,
+          "out-of-order writes to instantiated slots have only slot authority");
+    uint32_t mark = bindings_builder_save(&builder);
+    CHECK(bindings_builder_add_var_fresh(&builder, b, eleven), "write remaining instance slot");
+    bindings_builder_rollback(&builder, mark);
+    Atom *hole = bindings_builder_new_variable(&builder, arena, identity);
+    CHECK(!bindings_lookup_value_id(&builder.current, b->var_id).skeleton &&
+          bindings_lookup_value_id(&builder.current, c->var_id).skeleton == thirty &&
+          hole && var_base_id(hole->var_id) == 4u,
+          "rollback restores slots while new variables stay beyond the shared inventory");
+    bindings_builder_free(&builder);
+}
+
+static Atom *retain_transport_atom(void *context, Atom *atom) {
+    (void)context;
+    return atom;
+}
+
+static void test_saved_binding_value_lifetime(void) {
+    Arena source, captured_arena, survivor;
+    arena_init_detached(&source);
+    arena_init_detached(&captured_arena);
+    arena_init_detached(&survivor);
+    Bindings env, later, restored;
+    bindings_init(&env);
+    bindings_init(&later);
+    Atom *x = cetta_instantiate_frame_syntax(&source,
+        atom_var_with_id(&source, "saved-x", test_id(9200u)));
+    VarId saved_id = x->var_id;
+    CHECK(bindings_add_var(&env, x, atom_int(&source, 17)),
+          "saved substitution source binds its variable");
+    Atom *saved = bindings_capture_value(&captured_arena, &env);
+    CHECK(saved && saved->kind == ATOM_GROUNDED &&
+              saved->ground.gkind == GV_BINDINGS &&
+              atom_has_identity_grounded(saved),
+          "saved substitutions are owned contextual values");
+    CHECK(bindings_add_var(&later, x, atom_int(&source, 23)) &&
+              bindings_apply(&later, &source, saved) == saved,
+          "substitution cannot rewrite a saved binding domain");
+    Atom *independent = bindings_capture_value(&survivor, &env);
+    Atom *different = bindings_capture_value(&survivor, &later);
+    CHECK(independent && atom_eq(saved, independent) &&
+              different && !atom_eq(saved, different),
+          "saved substitution equality compares environments, not allocation");
+    Atom *copy = atom_deep_copy(&survivor, saved);
+    CHECK(copy && atom_eq(copy, saved),
+          "copying a saved substitution retains its identity");
+    bindings_free(&later);
+    bindings_free(&env);
+    arena_free(&captured_arena);
+    arena_free(&source);
+    CHECK(bindings_from_atom(copy, &restored) &&
+              binding_is_int(&restored, saved_id, 17),
+          "saved substitution survives both source and first owner arenas");
+    arena_free(&survivor);
+    CHECK(binding_is_int(&restored, saved_id, 17),
+          "restored version owns syntax after the final capsule arena is released");
+    Arena observation;
+    arena_init_detached(&observation);
+    Atom *root = atom_var_with_id(&observation, "saved-x", saved_id);
+    Bindings projected, merged, transported;
+    CHECK(bindings_project_reachable(&restored, &root, 1u, &projected),
+          "projection retains captured syntax ownership");
+    bindings_init(&merged);
+    CHECK(bindings_add_id(&merged, test_id(9201u), SYMBOL_ID_NONE,
+                          atom_int(&observation, 18)) &&
+          bindings_try_merge(&merged, &restored),
+          "merging a saved version retains its owners");
+    BindingsBuilder branch;
+    CHECK(bindings_builder_init(&branch, NULL), "initialize owned-version rollback branch");
+    uint32_t mark = bindings_builder_save(&branch);
+    CHECK(bindings_builder_try_merge(&branch, &restored), "merge snapshot into speculative branch");
+    BindingsBuilder fork;
+    CHECK(bindings_builder_clone(&fork, &branch), "fork retains current and checkpoint owners");
+    Atom *recaptured = bindings_capture_value(&observation, &restored);
+    Bindings recaptured_version;
+    CHECK(recaptured && bindings_from_atom(recaptured, &recaptured_version),
+          "recapture closes a new image over its own syntax owner");
+    CHECK(bindings_transport_logical(&transported, &restored, retain_transport_atom, NULL),
+          "identity transport preserves syntax ownership without copying atoms");
+    bindings_free(&restored);
+    CHECK(binding_is_int(&transported, saved_id, 17) &&
+          binding_is_int(&projected, saved_id, 17) &&
+          binding_is_int(&merged, saved_id, 17) &&
+          binding_is_int(&branch.current, saved_id, 17),
+          "projection, merge and branch survive release of the restored source");
+    bindings_builder_rollback(&branch, mark);
+    CHECK(!bindings_lookup_value_id(&branch.current, saved_id).skeleton &&
+          branch.current.owners == NULL &&
+          binding_is_int(&fork.current, saved_id, 17),
+          "rollback drops speculative ownership without invalidating a sibling version");
+    uint32_t marks[] = {mark};
+    CHECK(bindings_builder_compact_reachable(&fork, &root, 1u, marks, 1u, NULL, NULL) &&
+          binding_is_int(&fork.current, saved_id, 17),
+          "checkpoint compaction keeps the owned version's denotation");
+    bindings_builder_rollback(&fork, marks[0]);
+    CHECK(!bindings_lookup_value_id(&fork.current, saved_id).skeleton &&
+          fork.current.owners == NULL,
+          "rebased rollback releases the captured owner at its original boundary");
+    bindings_builder_commit(&fork);
+    bindings_builder_free(&branch);
+    bindings_builder_free(&fork);
+    bindings_free(&projected);
+    bindings_free(&merged);
+    bindings_free(&transported);
+    arena_free(&observation);
+    CHECK(binding_is_int(&recaptured_version, saved_id, 17),
+          "recaptured image survives release of every ancestor and capsule arena");
+    bindings_free(&recaptured_version);
+}
+
 int main(void) {
+    CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
     SymbolTable symbols;
     symbol_table_init(&symbols);
     symbol_table_init_builtins(&symbols, &g_builtin_syms);
@@ -936,9 +2508,31 @@ int main(void) {
     Arena arena;
     arena_init(&arena);
 
+    test_dense_term_instantiation(&arena);
+    test_arena_retained_owners();
+    test_saved_binding_value_lifetime();
+    test_sparse_frame_write_context_growth(&arena);
+
     test_borrowed_root_identity(&arena);
     test_term_stability_summary(&arena);
     test_dense_frame_indexed_suffix(&arena);
+    test_generation_checked_frame_handles(&arena);
+    test_persistent_frame_index_partition(&arena);
+    test_frame_slot_is_value_authority(&arena);
+    test_frame_slot_promotion_lifetime();
+    test_manufactured_slot_lifecycle();
+    test_frame_index_cycle_bridge(&arena);
+    test_frame_only_merge_occurs_check(&arena);
+    test_frame_schema_branch_lifetime(&arena);
+    test_builder_frame_registration_rollback(&arena);
+    test_frame_registration_compaction_rebase(&arena);
+    test_unframed_context_import(&arena);
+    test_frame_registration_undo_promotion();
+    test_prepared_frame_schema_lifetime(&arena);
+    test_presented_manufacture_frame_grows_until_closed(&arena);
+    test_complete_contextual_frame_is_closed(&arena);
+    test_lookup_domain_accounting(&arena);
+    test_dense_inventory_is_slot_read(&arena);
     test_closed_component_cache();
     test_internal_tag_structural_summary(&arena);
     test_epoch_identity_and_publication(&arena);
@@ -979,91 +2573,50 @@ int main(void) {
     Atom *modern_result = NULL;
     CHECK(bindings_add_var(
               &modern, modern_bound, atom_int(&arena, 5000)) &&
-              modern.legacy_fallback_count == 0u &&
               (modern_result =
                    bindings_apply(&modern, &arena, modern_unbound)) ==
                   modern_unbound &&
               modern_result->sym_id == modern_spelling,
           "modern bindings never capture a different VarId by spelling");
 
-    SymbolId legacy_spelling =
-        symbol_intern_cstr(g_symbols, "legacy-spelling");
-    Atom *legacy_pair = atom_expr2(
-        &arena, atom_symbol_id(&arena, legacy_spelling),
-        atom_int(&arena, 6000));
-    Atom *legacy_assigns_items[1] = {legacy_pair};
-    Atom *legacy_encoded = atom_expr3(
-        &arena, atom_symbol_id(&arena, g_builtin_syms.bindings),
-        atom_expr(&arena, legacy_assigns_items, 1u),
+    Atom *scoped_x = atom_var_with_id(&arena, "scoped-x", test_id(6001u));
+    Atom *foreign_x = atom_var_with_id(&arena, "scoped-x", test_id(6002u));
+    Atom *encoded = atom_expr3(&arena,
+        atom_symbol_id(&arena, g_builtin_syms.bindings),
+        atom_expr(&arena, (Atom *[]){atom_expr2(&arena, atom_symbol(&arena, "scoped-x"),
+                                     atom_int(&arena, 6000))}, 1u),
         atom_expr(&arena, NULL, 0u));
-    Bindings legacy;
-    Atom *legacy_result = NULL;
-    Atom *legacy_probe = atom_var_with_id(
-        &arena, "legacy-spelling", test_id(6001u));
-    CHECK(bindings_from_atom(legacy_encoded, &legacy) &&
-              legacy.legacy_fallback_count == 1u &&
-              (legacy_result =
-                   bindings_apply(&legacy, &arena, legacy_probe)) &&
-              legacy_result->kind == ATOM_GROUNDED &&
-              legacy_result->ground.gkind == GV_INT &&
-              legacy_result->ground.ival == 6000,
-          "legacy serialized bindings retain spelling-keyed fallback");
-
-    SymbolId legacy_cycle_x =
-        symbol_intern_cstr(g_symbols, "legacy-cycle-x");
-    SymbolId legacy_cycle_y =
-        symbol_intern_cstr(g_symbols, "legacy-cycle-y");
-    Atom *legacy_cycle_x_var = atom_var_with_id(
-        &arena, "legacy-cycle-x", test_id(6100u));
-    Atom *legacy_cycle_y_var = atom_var_with_id(
-        &arena, "legacy-cycle-y", test_id(6101u));
-    Atom *legacy_cycle_pairs[2] = {
-        atom_expr2(
-            &arena, atom_symbol_id(&arena, legacy_cycle_x),
-            legacy_cycle_y_var),
-        atom_expr2(
-            &arena, atom_symbol_id(&arena, legacy_cycle_y),
-            legacy_cycle_x_var),
-    };
-    Atom *legacy_cycle_encoded = atom_expr3(
-        &arena, atom_symbol_id(&arena, g_builtin_syms.bindings),
-        atom_expr(&arena, legacy_cycle_pairs, 2u),
+    Bindings scoped, missing, ambiguous, conflicting;
+    CHECK(bindings_from_atom_scoped(encoded, scoped_x, NULL, &scoped) &&
+          binding_is_int(&scoped, scoped_x->var_id, 6000) &&
+          bindings_apply(&scoped, &arena, foreign_x) == foreign_x,
+          "textual restoration resolves once without capturing another identity");
+    CHECK(!bindings_from_atom(encoded, &missing),
+          "textual restoration without a receiving scope fails");
+    CHECK(!bindings_from_atom_scoped(encoded, atom_expr2(&arena, scoped_x, foreign_x),
+                                      NULL, &ambiguous),
+          "two distinct same-spelling identities make textual restoration ambiguous");
+    bindings_init(&conflicting);
+    CHECK(bindings_add_var(&conflicting, scoped_x, atom_int(&arena, 9)) &&
+          !bindings_try_merge(&conflicting, &scoped) &&
+          binding_is_int(&conflicting, scoped_x->var_id, 9),
+          "incompatible restoration fails without overriding the receiving binding");
+    Bindings received;
+    CHECK(bindings_from_atom_scoped(encoded, NULL, &conflicting, &received) &&
+          binding_is_int(&received, scoped_x->var_id, 6000),
+          "receiving environment supplies an explicit name inventory independent of values");
+    bindings_free(&received);
+    Atom *cyclic = atom_expr3(&arena, atom_symbol_id(&arena, g_builtin_syms.bindings),
+        atom_expr(&arena, (Atom *[]){atom_expr2(&arena, atom_symbol(&arena, "scoped-x"),
+                                    atom_expr2(&arena, atom_symbol(&arena, "f"), scoped_x))}, 1u),
         atom_expr(&arena, NULL, 0u));
-    Bindings legacy_cycle;
-    CHECK(!bindings_from_atom(legacy_cycle_encoded, &legacy_cycle),
-          "legacy spelling-keyed cycle is rejected fail-closed");
-
-    BindingsBuilder legacy_branch;
-    CHECK(bindings_builder_init(&legacy_branch, &legacy),
-          "legacy rollback branch clones its derived lookup state");
-    uint32_t legacy_mark = bindings_builder_save(&legacy_branch);
-    VarId legacy_dead_id = test_id(6002u);
-    uint32_t legacy_marks[1] = {legacy_mark};
-    bool legacy_compact_rollback =
-        bindings_builder_add_id_fresh(
-            &legacy_branch, legacy_dead_id, SYMBOL_ID_NONE,
-            atom_int(&arena, 6002)) &&
-        legacy_branch.current.legacy_fallback_count == 1u &&
-        bindings_builder_compact_reachable(
-            &legacy_branch, NULL, 0u, legacy_marks, 1u,
-            NULL, NULL) &&
-        legacy_marks[0] == 0u;
-    bindings_builder_rollback(&legacy_branch, legacy_marks[0]);
-    legacy_result = bindings_apply(
-        &legacy_branch.current, &arena, legacy_probe);
-    legacy_compact_rollback = legacy_compact_rollback &&
-        legacy_branch.current.legacy_fallback_count == 1u &&
-        bindings_lookup_id(
-            &legacy_branch.current, legacy_dead_id) == NULL &&
-        legacy_result && legacy_result->kind == ATOM_GROUNDED &&
-        legacy_result->ground.gkind == GV_INT &&
-        legacy_result->ground.ival == 6000;
-    CHECK(legacy_compact_rollback,
-          "compacted rollback rebuilds nonzero legacy metadata exactly");
-    bindings_builder_free(&legacy_branch);
+    CHECK(!bindings_from_atom_scoped(cyclic, scoped_x, NULL, &received),
+          "scoped decoding enforces finite-tree occurs checking");
+    bindings_free(&scoped);
+    bindings_free(&conflicting);
 
     VarId late_id = test_id(1000u);
-    CHECK(bindings_lookup_id(&base, late_id) == NULL,
+    CHECK(bindings_lookup_value_id(&base, late_id).skeleton == NULL,
           "a genuinely absent variable remains absent");
     BindingsBuilder appended;
     bindings_builder_init_owned(&appended, &base);
@@ -1139,18 +2692,17 @@ int main(void) {
     bindings_builder_rollback(&branch, branch_mark);
     bool inner_rolled_back =
         binding_is_int(&branch.current, branch_a, 2000) &&
-        bindings_lookup_id(&branch.current, branch_b) == NULL &&
+        bindings_lookup_value_id(&branch.current, branch_b).skeleton == NULL &&
         branch.rollback_count == rollback_before + 1u;
     bindings_builder_rollback(&branch, root_mark);
     uint64_t rollback_after_restore = branch.rollback_count;
     bindings_builder_rollback(&branch, root_mark);
     bool root_rolled_back =
-        bindings_lookup_id(&branch.current, branch_a) == NULL &&
-        bindings_lookup_id(&branch.current, branch_b) == NULL &&
-        bindings_lookup_id(&base, branch_a) == NULL &&
-        bindings_lookup_id(&base, branch_b) == NULL &&
+        bindings_lookup_value_id(&branch.current, branch_a).skeleton == NULL &&
+        bindings_lookup_value_id(&branch.current, branch_b).skeleton == NULL &&
+        bindings_lookup_value_id(&base, branch_a).skeleton == NULL &&
+        bindings_lookup_value_id(&base, branch_b).skeleton == NULL &&
         binding_is_int(&branch.current, late_id, 1000) &&
-        branch.current.legacy_fallback_count == 0u &&
         branch.current.private_entry_count == 0u &&
         branch.current.private_constraint_count == 0u &&
         branch.growth_count == growth_after_first + 1u &&
@@ -1207,8 +2759,8 @@ int main(void) {
     CHECK(binding_is_int(&coalesced.current, coalesced_a, 2100) &&
               binding_is_int(&coalesced.current, coalesced_b, 2101) &&
               binding_is_int(&coalesced.current, coalesced_c, 2102) &&
-              bindings_lookup_id(&coalesced.current, coalesced_d) == NULL &&
-              bindings_lookup_id(&coalesced.current, coalesced_e) == NULL,
+              bindings_lookup_value_id(&coalesced.current, coalesced_d).skeleton == NULL &&
+              bindings_lookup_value_id(&coalesced.current, coalesced_e).skeleton == NULL,
           "observed middle rollback preserves only the earlier segment");
     CHECK(bindings_builder_add_id_fresh(
               &coalesced, coalesced_f, SYMBOL_ID_NONE,
@@ -1219,23 +2771,50 @@ int main(void) {
     BindingsBuilder coalesced_clone;
     bool coalesced_clone_ready =
         bindings_builder_clone(&coalesced_clone, &coalesced);
+    Binding *coalesced_shared_entries = coalesced.current.entries;
     CHECK(coalesced_clone_ready &&
+              coalesced_clone.current.entries ==
+                  coalesced_shared_entries &&
               !coalesced_clone.unobserved_write_region_active &&
               !coalesced_clone.unobserved_write_region_has_checkpoint &&
               coalesced_clone.unobserved_write_region_entry_mark == 0u &&
               binding_is_int(
                   &coalesced_clone.current, coalesced_f, 2105),
           "a fork publishes the current meaning outside the private region");
+    BindingsBuilder coalesced_clone2;
+    bool coalesced_clone2_ready =
+        bindings_builder_clone(&coalesced_clone2, &coalesced);
+    CHECK(coalesced_clone2_ready &&
+              coalesced_clone2.current.entries == coalesced_shared_entries &&
+              coalesced_clone.current.entries == coalesced_shared_entries,
+          "a later capture retains the same frozen image");
+    bool coalesced_clone_detached = coalesced_clone_ready &&
+        bindings_builder_add_id_fresh(
+            &coalesced_clone, test_id(2199u), SYMBOL_ID_NONE,
+            atom_int(&arena, 2199)) &&
+        coalesced_clone.current.entries != coalesced_shared_entries &&
+        coalesced_clone.current.shared_entries == coalesced_shared_entries &&
+        coalesced.current.entries == coalesced_shared_entries &&
+        coalesced_clone2_ready &&
+        coalesced_clone2.current.entries == coalesced_shared_entries &&
+        binding_is_int(
+            &coalesced_clone.current, test_id(2199u), 2199) &&
+        bindings_lookup_value_id(&coalesced.current, test_id(2199u)).skeleton == NULL &&
+        bindings_lookup_value_id(&coalesced_clone2.current, test_id(2199u)).skeleton == NULL;
+    CHECK(coalesced_clone_detached,
+          "a write detaches one fork and preserves every shared sibling");
+    if (coalesced_clone2_ready)
+        bindings_builder_free(&coalesced_clone2);
     if (coalesced_clone_ready)
         bindings_builder_free(&coalesced_clone);
 
     bindings_builder_end_unobserved_write_region(&coalesced, true);
     bindings_builder_rollback(&coalesced, coalesced_root);
     CHECK(coalesced.trail_len == coalesced_root &&
-              bindings_lookup_id(&coalesced.current, coalesced_a) == NULL &&
-              bindings_lookup_id(&coalesced.current, coalesced_b) == NULL &&
-              bindings_lookup_id(&coalesced.current, coalesced_c) == NULL &&
-              bindings_lookup_id(&coalesced.current, coalesced_f) == NULL,
+              bindings_lookup_value_id(&coalesced.current, coalesced_a).skeleton == NULL &&
+              bindings_lookup_value_id(&coalesced.current, coalesced_b).skeleton == NULL &&
+              bindings_lookup_value_id(&coalesced.current, coalesced_c).skeleton == NULL &&
+              bindings_lookup_value_id(&coalesced.current, coalesced_f).skeleton == NULL,
           "the entrance checkpoint restores the complete region exactly");
     bool rejected_region = coalesced_ready &&
         bindings_builder_begin_unobserved_write_region(&coalesced);
@@ -1252,8 +2831,8 @@ int main(void) {
               !coalesced.unobserved_write_region_active &&
               coalesced.unobserved_write_region_entry_mark == 0u &&
               coalesced.trail_len == coalesced_root &&
-              bindings_lookup_id(&coalesced.current, coalesced_a) == NULL &&
-              bindings_lookup_id(&coalesced.current, coalesced_b) == NULL,
+              bindings_lookup_value_id(&coalesced.current, coalesced_a).skeleton == NULL &&
+              bindings_lookup_value_id(&coalesced.current, coalesced_b).skeleton == NULL,
           "a rejected unobserved region restores its captured entrance before exit");
     if (coalesced_ready)
         bindings_builder_free(&coalesced);
@@ -1284,8 +2863,7 @@ int main(void) {
         bindings_lookup_index_test_synced_len(
             &lazy_index_branch.current, &lazy_synced_len) &&
         lazy_synced_len == lazy_index_branch.current.len &&
-        bindings_lookup_id(
-            &lazy_index_branch.current, lazy_index_id) == NULL;
+        bindings_lookup_value_id(&lazy_index_branch.current, lazy_index_id).skeleton == NULL;
     CHECK(!lookup_index_expected ||
               (lazy_initially_synced && lazy_append_lags &&
                unobserved_rollback_restores),
@@ -1337,7 +2915,7 @@ int main(void) {
         bindings_lookup_index_test_synced_len(
             &shared_index_base, &lazy_synced_len) &&
         lazy_synced_len == shared_index_base.len &&
-        bindings_lookup_id(&shared_index_base, lazy_index_id) == NULL;
+        bindings_lookup_value_id(&shared_index_base, lazy_index_id).skeleton == NULL;
     bindings_builder_rollback(
         &shared_index_branch, shared_index_mark);
     CHECK(!lookup_index_expected || shared_append_stays_lazy,
@@ -1657,23 +3235,15 @@ int main(void) {
               binding_is_int(
                   &compacted_branch.current,
                   old_live->var_id, 11) &&
-              bindings_lookup_id(
-                  &compacted_branch.current,
-                  old_dead->var_id) == NULL &&
-              bindings_lookup_id(
-                  &compacted_branch.current,
-                  post_live->var_id) == mid_live,
+              bindings_lookup_value_id(&compacted_branch.current, old_dead->var_id).skeleton == NULL &&
+              bindings_lookup_value_id(&compacted_branch.current, post_live->var_id).skeleton == mid_live,
           "compaction retains the transitive live closure and remaps marks");
     bindings_builder_rollback(
         &compacted_branch, compact_marks[1]);
     bool compact_mid_rollback =
         compacted_branch.current.len == 2u &&
-        bindings_lookup_id(
-            &compacted_branch.current,
-            post_live->var_id) == NULL &&
-        bindings_lookup_id(
-            &compacted_branch.current,
-            mid_live->var_id) == old_live;
+        bindings_lookup_value_id(&compacted_branch.current, post_live->var_id).skeleton == NULL &&
+        bindings_lookup_value_id(&compacted_branch.current, mid_live->var_id).skeleton == old_live;
     bindings_builder_rollback(
         &compacted_branch, compact_marks[0]);
     CHECK(compact_mid_rollback &&
@@ -1681,9 +3251,7 @@ int main(void) {
               binding_is_int(
                   &compacted_branch.current,
                   old_live->var_id, 11) &&
-              bindings_lookup_id(
-                  &compacted_branch.current,
-                  mid_live->var_id) == NULL,
+              bindings_lookup_value_id(&compacted_branch.current, mid_live->var_id).skeleton == NULL,
           "compacted nested marks preserve exact rollback states");
     bindings_builder_free(&compacted_branch);
 
@@ -1907,23 +3475,21 @@ int main(void) {
         .atom = epoch_local,
         .epoch = 17u,
     };
-    uint32_t epoch_projection_marks[3] = {1u, 2u, 4u};
+    uint32_t epoch_projection_marks[3] = {1u, 2u, 3u};
     Bindings epoch_projected;
     CHECK(epoch_fixture &&
               bindings_project_reachable_with_epoch_roots_and_entry_marks(
                   &epoch_environment, NULL, 0u,
                   &epoch_root, 1u,
                   epoch_projection_marks, 3u, &epoch_projected) &&
-              epoch_projected.len == 2u &&
+              epoch_projected.len == 1u &&
               epoch_projection_marks[0] == 0u &&
               epoch_projection_marks[1] == 1u &&
-              epoch_projection_marks[2] == 2u &&
-              bindings_lookup_id(
-                  &epoch_projected, epoch_local_id) == epoch_outer &&
+              epoch_projection_marks[2] == 1u &&
+              bindings_lookup_value_id(&epoch_projected, epoch_local_id).skeleton == epoch_outer &&
               binding_is_int(
                   &epoch_projected, epoch_outer->var_id, 77) &&
-              bindings_lookup_id(
-                  &epoch_projected, test_id(7199u)) == NULL,
+              bindings_lookup_value_id(&epoch_projected, test_id(7199u)).skeleton == NULL,
           "epoch roots retain a lazy activation namespace and its transitive closure");
     bindings_free(&epoch_projected);
 
@@ -1974,8 +3540,8 @@ int main(void) {
         bindings_add_id(
             &canonical_epoch_environment, test_id(7202u),
             SYMBOL_ID_NONE, atom_int(&arena, -2));
-    uint32_t traversed_epoch_marks[3] = {1u, 2u, 4u};
-    uint32_t summarized_epoch_marks[3] = {1u, 2u, 4u};
+    uint32_t traversed_epoch_marks[3] = {1u, 2u, 3u};
+    uint32_t summarized_epoch_marks[3] = {1u, 2u, 3u};
     Bindings traversed_epoch_projected;
     Bindings summarized_epoch_projected;
     bindings_init(&traversed_epoch_projected);
@@ -2015,11 +3581,10 @@ int main(void) {
                   &epoch_root, 1u, NULL, 0u,
                   &epoch_entry_mark, 1u,
                   &epoch_discarded, NULL) &&
-              epoch_branch.current.len == 2u &&
+              epoch_branch.current.len == 1u &&
               epoch_entry_mark == 1u &&
               epoch_discarded == 2u &&
-              bindings_lookup_id(
-                  &epoch_branch.current, epoch_local_id) == epoch_outer &&
+              bindings_lookup_value_id(&epoch_branch.current, epoch_local_id).skeleton == epoch_outer &&
               binding_is_int(
                   &epoch_branch.current, epoch_outer->var_id, 77),
           "epoch-root compaction preserves lazy activation meaning");
@@ -2037,7 +3602,7 @@ int main(void) {
               &invalid_epoch_root, 1u,
               &invalid_epoch_mark, 1u, &epoch_projected) &&
               invalid_epoch_mark == 4u &&
-              epoch_environment.len == 4u,
+              epoch_environment.len == 3u,
           "an invalid epoch root fails without changing its source environment");
     bindings_free(&epoch_projected);
     Atom *epoch_apply_result = bindings_apply_epoch(
@@ -2049,213 +3614,96 @@ int main(void) {
           "acyclic epoch application consumes the cached graph summary");
     bindings_free(&epoch_environment);
 
-    Atom *activation_outer = atom_var_with_id(
-        &arena, "activation-outer", test_id(7300u));
-    Atom *activation_outer_link = atom_var_with_id(
-        &arena, "activation-outer-link", test_id(7301u));
-    Atom *activation_source = atom_var_with_id(
-        &arena, "activation-source", test_id(7302u));
-    Atom *activation_prefix_source = atom_var_with_id(
-        &arena, "activation-prefix-source", test_id(7305u));
-    Atom *activation_value = atom_int(&arena, 7303);
-    VarId activation_local_id =
-        var_epoch_id(activation_source->var_id, 29u);
-    Bindings activation_environment;
-    bindings_init(&activation_environment);
-    bool activation_fixture =
-        bindings_add_var(
-            &activation_environment,
-            activation_outer_link, activation_value) &&
-        bindings_add_var(
-            &activation_environment,
-            activation_outer, activation_outer_link);
-    for (uint32_t filler = 0u;
-         activation_fixture && filler < 40u; filler++) {
-        activation_fixture = bindings_add_id(
-            &activation_environment, test_id(8000u + filler),
-            SYMBOL_ID_NONE, atom_int(&arena, (int64_t)filler));
+    {
+        Atom *outer = atom_var_with_id(&arena, "activation-outer", test_id(7300u));
+        Atom *source = atom_var_with_id(&arena, "activation-source", test_id(7302u));
+        Atom *prefix = atom_var_with_id(&arena, "activation-prefix", test_id(7305u));
+        Atom *value = atom_int(&arena, 7303);
+        BindingsBuilder activation;
+        CHECK(bindings_builder_init(&activation, NULL) &&
+              bindings_builder_add_var_fresh(&activation, outer, value) &&
+              bindings_builder_add_id_fresh(&activation, var_epoch_id(prefix->var_id, 29u),
+                  prefix->sym_id, value), "activation prefix fixture");
+        VarId ids[] = {source->var_id, prefix->var_id};
+        Atom *variables[] = {source, prefix};
+        BindingsActivationView view;
+        bindings_activation_view_init(&view);
+        CHECK(bindings_activation_view_prepare(&view, &activation, ids, variables, 2u, 29u, 1u) &&
+              bindings_builder_add_id_fresh(&activation, var_epoch_id(source->var_id, 29u),
+                  source->sym_id, outer), "activation writes use versioned slots");
+        Atom *local = bindings_apply_epoch_since(&activation.current, &arena, source, 29u, 1u);
+        Atom *full = bindings_apply_activation_view_then_all(&activation.current, &arena, source, &view);
+        CHECK(local == outer && full == value,
+              "activation substitution and outer alias resolution compose exactly");
+        Atom *closed = NULL;
+        CHECK(bindings_resolve_epoch_view_ground(&activation.current, source, 29u, 1u, &closed) &&
+              closed == value, "direct activation observation follows a slot alias");
+        CHECK(bindings_resolve_epoch_view_ground(&activation.current, prefix, 29u, 1u, &closed) &&
+              !closed, "activation observation excludes the preceding slot version");
+        CHECK(!bindings_apply_epoch_since(&activation.current, &arena, source, 29u, 2u) &&
+              !bindings_resolve_epoch_view_ground(&activation.current, source, 29u, 2u, &closed),
+              "an invalid activation boundary fails closed");
+        Bindings retained;
+        CHECK(bindings_clone(&retained, &activation.current) &&
+              bindings_rewrite_value_id(&activation.current, var_epoch_id(source->var_id, 29u),
+                  binding_value_from_atom(atom_int(&arena, 7305))),
+              "a slot rewrite retains an independent branch image");
+        Atom *rewritten = bindings_apply_activation_view_then_all(&activation.current, &arena, source, &view);
+        CHECK(rewritten && atom_eq(rewritten, atom_int(&arena, 7305)) &&
+              bindings_apply_epoch_then_all(&retained, &arena, source, 29u, 1u) == value,
+              "a stable frame view observes the current slot without changing its retained version");
+        CHECK(bindings_apply_activation_view_then_all(&retained, &arena, source, &view) == value,
+              "the same activation view reads the explicitly supplied captured image");
+        bindings_builder_free(&activation);
+        CHECK(bindings_apply_activation_view_then_all(&retained, &arena, source, &view) == value,
+              "captured activation observation survives its original builder");
+        Bindings absent;
+        bindings_init(&absent);
+        CHECK(!bindings_activation_view_available(&view, &absent) &&
+              !bindings_apply_activation_view_then_all(&absent, &arena, source, &view),
+              "a descriptor cannot read an image that does not hold its frame");
+        bindings_free(&absent);
+        bindings_free(&retained);
+        bindings_activation_view_free(&view);
     }
-    activation_fixture = activation_fixture &&
-        bindings_add_id(
-            &activation_environment,
-            var_epoch_id(activation_prefix_source->var_id, 29u),
-            activation_prefix_source->sym_id, activation_value);
-    uint32_t activation_first_entry = activation_environment.len;
-    activation_fixture = activation_fixture &&
-        bindings_add_id(
-            &activation_environment, activation_local_id,
-            activation_source->sym_id, activation_outer);
-    Atom *activation_local = activation_fixture
-        ? bindings_apply_epoch_since(
-              &activation_environment, &arena, activation_source,
-              29u, activation_first_entry)
-        : NULL;
-    Atom *activation_fused = activation_fixture
-        ? bindings_apply_epoch_then_all(
-              &activation_environment, &arena, activation_source,
-              29u, activation_first_entry)
-        : NULL;
-    CHECK(activation_local == activation_outer &&
-              activation_fused == activation_value &&
-              bindings_apply(
-                  &activation_environment, &arena,
-                  activation_local) == activation_fused,
-          "activation suffix and fused outer resolution compose exactly");
-    CHECK(!bindings_apply_epoch_since(
-              &activation_environment, &arena, activation_source,
-              29u, activation_environment.len + 1u) &&
-              activation_environment.len == activation_first_entry + 1u,
-          "invalid activation boundary fails without changing bindings");
-    Atom *activation_ground_source = atom_var_with_id(
-        &arena, "activation-ground-source", test_id(7304u));
-    uint32_t activation_ground_first_entry = activation_environment.len;
-    bool activation_ground_fixture = bindings_add_id(
-        &activation_environment,
-        var_epoch_id(activation_ground_source->var_id, 31u),
-        activation_ground_source->sym_id, activation_value);
-    Atom *activation_ground_resolved = NULL;
-    CHECK(activation_ground_fixture &&
-              bindings_resolve_epoch_view_ground(
-                  &activation_environment, activation_ground_source,
-                  31u, activation_ground_first_entry,
-                  &activation_ground_resolved) &&
-              activation_ground_resolved == activation_value,
-          "activation view exposes a directly closed suffix value");
-    Atom *activation_chained_resolved = activation_value;
-    CHECK(bindings_resolve_epoch_view_ground(
-              &activation_environment, activation_source, 29u,
-              activation_first_entry, &activation_chained_resolved) &&
-              activation_chained_resolved == activation_value,
-          "an activation view follows outer variable links to a closed value");
-    activation_chained_resolved = NULL;
-    CHECK(bindings_resolve_epoch_view_ground_at(
-              &activation_environment, activation_source, 29u,
-              activation_first_entry, 0u,
-              &activation_chained_resolved) &&
-              activation_chained_resolved == activation_value,
-          "a certified suffix coordinate resolves the same chained value");
-    activation_chained_resolved = activation_value;
-    CHECK(!bindings_resolve_epoch_view_ground_at(
-              &activation_environment, activation_source, 29u,
-              activation_first_entry, 1u,
-              &activation_chained_resolved) &&
-              activation_chained_resolved == NULL,
-          "a mismatched suffix coordinate fails closed for ordinary lookup");
-    TestEpochCoordinate activation_coordinate = {
-        .variable = activation_source->var_id,
-        .offset = 0u,
-    };
-    uint64_t activation_coordinate_hits = 0u;
-    uint64_t activation_coordinate_fallbacks = 0u;
-    Atom *activation_coordinate_result =
-        bindings_apply_epoch_then_all_coordinates(
-            &activation_environment, &arena, activation_source, 29u,
-            activation_first_entry, test_epoch_coordinate,
-            &activation_coordinate, &activation_coordinate_hits,
-            &activation_coordinate_fallbacks);
-    CHECK(activation_coordinate_result == activation_fused &&
-              activation_coordinate_hits == 1u &&
-              activation_coordinate_fallbacks == 0u,
-          "an exact epoch coordinate preserves whole-term materialization");
-    Atom *activation_coordinate_second = atom_var_with_id(
-        &arena, "activation-coordinate-second", test_id(7306u));
-    Atom *activation_coordinate_second_value = atom_int(&arena, 7306);
-    bool activation_coordinate_nested_fixture = bindings_add_id(
-        &activation_environment,
-        var_epoch_id(activation_coordinate_second->var_id, 29u),
-        activation_coordinate_second->sym_id,
-        activation_coordinate_second_value);
-    Atom *activation_coordinate_nested = atom_expr3(
-        &arena, atom_symbol(&arena, "CoordinatePair"),
-        activation_source, activation_coordinate_second);
-    Atom *activation_coordinate_nested_reference =
-        activation_coordinate_nested_fixture
-        ? bindings_apply_epoch_then_all(
-              &activation_environment, &arena,
-              activation_coordinate_nested, 29u,
-              activation_first_entry)
-        : NULL;
-    activation_coordinate_hits = 0u;
-    activation_coordinate_fallbacks = 0u;
-    Atom *activation_coordinate_nested_result =
-        activation_coordinate_nested_fixture
-        ? bindings_apply_epoch_then_all_coordinates(
-              &activation_environment, &arena,
-              activation_coordinate_nested, 29u,
-              activation_first_entry, test_epoch_zero_coordinate,
-              NULL, &activation_coordinate_hits,
-              &activation_coordinate_fallbacks)
-        : NULL;
-    CHECK(activation_coordinate_nested_reference &&
-              activation_coordinate_nested_result &&
-              atom_eq(activation_coordinate_nested_reference,
-                      activation_coordinate_nested_result) &&
-              activation_coordinate_hits == 1u &&
-              activation_coordinate_fallbacks == 1u,
-          "nested coordinate application mixes exact hits with fallback");
-    activation_coordinate.offset = 1u;
-    activation_coordinate_hits = 0u;
-    activation_coordinate_fallbacks = 0u;
-    activation_coordinate_result =
-        bindings_apply_epoch_then_all_coordinates(
-            &activation_environment, &arena, activation_source, 29u,
-            activation_first_entry, test_epoch_coordinate,
-            &activation_coordinate, &activation_coordinate_hits,
-            &activation_coordinate_fallbacks);
-    CHECK(activation_coordinate_result == activation_fused &&
-              activation_coordinate_hits == 0u &&
-              activation_coordinate_fallbacks == 1u,
-          "a stale epoch coordinate falls back to authoritative lookup");
-    Atom *activation_newest = atom_int(&arena, 7305);
-    /* Exercise the defensive duplicate-key semantics through the documented
-     * external-key-rewrite invalidation boundary.  Ordinary add APIs unify an
-     * existing key and therefore cannot construct this representation. */
-    bool activation_duplicate =
-        activation_environment.len < activation_environment.cap;
-    if (activation_duplicate) {
-        Binding duplicate =
-            activation_environment.entries[activation_first_entry];
-        duplicate.val = activation_newest;
-        activation_environment.entries[activation_environment.len++] =
-            duplicate;
-        bindings_invalidate_after_key_rewrite(
-            &activation_environment);
+
+    {
+        CettaFrameIdentity first_identity = 0u;
+        CettaFrameIdentity next_identity = 0u;
+        VarId id = UINT64_C(1);
+        Atom *variable = atom_var_with_id(&arena, "recycled-view", id);
+        Atom *variables[] = {variable};
+        BindingsBuilder owner;
+        BindingsActivationView old_view, next_view;
+        bindings_activation_view_init(&old_view);
+        bindings_activation_view_init(&next_view);
+        CHECK(cetta_frame_identity_acquire(&first_identity) &&
+              bindings_builder_init(&owner, NULL) &&
+              bindings_activation_view_prepare(&old_view, &owner, &id, variables,
+                                               1u, first_identity, 0u),
+              "a view names an owned allocator identity");
+        bindings_builder_free(&owner);
+        cetta_frame_identity_release(first_identity);
+        CHECK(cetta_frame_identity_acquire(&next_identity) &&
+              cetta_frame_handle(first_identity) == cetta_frame_handle(next_identity) &&
+              next_identity != first_identity &&
+              bindings_builder_init(&owner, NULL) &&
+              bindings_activation_view_prepare(&next_view, &owner, &id, variables,
+                                               1u, next_identity, 0u),
+              "released activation storage recycles with a new generation");
+        BindingValue value;
+        bool present = false;
+        CHECK(!bindings_activation_view_available(&old_view, &owner.current) &&
+              !bindings_activation_view_read_slot(&owner.current, &old_view, 0u,
+                                                  &value, &present) &&
+              bindings_activation_view_read_slot(&owner.current, &next_view, 0u,
+                                                 &value, &present) && !present,
+              "a recycled handle rejects an old view and accepts its new unbound slot");
+        bindings_activation_view_free(&old_view);
+        bindings_activation_view_free(&next_view);
+        bindings_builder_free(&owner);
+        cetta_frame_identity_release(next_identity);
     }
-    Atom *activation_older_coordinate = activation_value;
-    activation_coordinate.offset = 0u;
-    activation_coordinate_hits = 0u;
-    activation_coordinate_fallbacks = 0u;
-    activation_coordinate_result =
-        bindings_apply_epoch_then_all_coordinates(
-            &activation_environment, &arena, activation_source, 29u,
-            activation_first_entry, test_epoch_coordinate,
-            &activation_coordinate, &activation_coordinate_hits,
-            &activation_coordinate_fallbacks);
-    bool activation_older_declined =
-        !bindings_resolve_epoch_view_ground_at(
-            &activation_environment, activation_source, 29u,
-            activation_first_entry, 0u,
-            &activation_older_coordinate);
-    CHECK(activation_duplicate && activation_older_declined &&
-              activation_older_coordinate == NULL &&
-              activation_coordinate_result == activation_newest &&
-              activation_coordinate_hits == 0u &&
-              activation_coordinate_fallbacks == 1u,
-          "an older duplicate coordinate defers to the newest binding");
-    Atom *activation_prefix_resolved = activation_value;
-    CHECK(bindings_resolve_epoch_view_ground(
-              &activation_environment, activation_prefix_source, 29u,
-              activation_first_entry, &activation_prefix_resolved) &&
-              activation_prefix_resolved == NULL,
-          "indexed activation lookup excludes an older prefix binding");
-    activation_ground_resolved = activation_value;
-    CHECK(!bindings_resolve_epoch_view_ground(
-              &activation_environment, activation_ground_source, 31u,
-              activation_environment.len + 1u,
-              &activation_ground_resolved) &&
-              activation_ground_resolved == NULL,
-          "an invalid direct-view boundary fails closed");
-    bindings_free(&activation_environment);
 
     Atom *dense_left = atom_var(&arena, "dense-left");
     Atom *dense_right = atom_var(&arena, "dense-right");
@@ -2310,33 +3758,50 @@ int main(void) {
         bindings_add_var(
             &dense_environment, dense_outer, dense_value);
     uint32_t dense_first_entry = dense_environment.len;
-    dense_fixture = dense_fixture &&
-        bindings_add_id(
-            &dense_environment,
-            var_epoch_id(dense_left->var_id, 67u),
-            dense_left->sym_id, dense_outer) &&
-        bindings_add_id(
-            &dense_environment,
-            var_epoch_id(dense_right->var_id, 67u),
-            dense_right->sym_id, dense_value);
     BindingsBuilder dense_frame_builder;
     bool dense_frame_ready = dense_fixture && bindings_builder_init(
         &dense_frame_builder, &dense_environment);
-    BindingsDenseEpochFrame dense_frame;
-    bindings_dense_epoch_frame_init(&dense_frame);
+    BindingsActivationView dense_frame;
+    bindings_activation_view_init(&dense_frame);
     bool dense_prepared = dense_frame_ready &&
-        bindings_dense_epoch_frame_prepare(
+        bindings_activation_view_prepare(
             &dense_frame, &dense_frame_builder,
             dense_ids, dense_variables, 3u, 67u,
             dense_first_entry);
+    dense_frame_ready = dense_prepared &&
+        bindings_builder_add_id_fresh(
+            &dense_frame_builder,
+            var_epoch_id(dense_left->var_id, 67u),
+            dense_left->sym_id, dense_outer) &&
+        bindings_builder_add_id_fresh(
+            &dense_frame_builder,
+            var_epoch_id(dense_right->var_id, 67u),
+            dense_right->sym_id, dense_value);
+    dense_prepared = dense_frame_ready &&
+        bindings_activation_view_prepare(
+            &dense_frame, &dense_frame_builder,
+            dense_ids, dense_variables, 3u, 67u,
+            dense_first_entry);
+    if (dense_prepared) {
+        Bindings framed_environment;
+        bindings_init(&framed_environment);
+        dense_prepared = bindings_clone(
+            &framed_environment, &dense_frame_builder.current);
+        if (dense_prepared) {
+            bindings_free(&dense_environment);
+            bindings_move(&dense_environment, &framed_environment);
+        } else {
+            bindings_free(&framed_environment);
+        }
+    }
     Atom *dense_reference = dense_prepared
         ? bindings_apply_epoch_then_all(
               &dense_frame_builder.current, &arena, dense_source,
               67u, dense_first_entry)
         : NULL;
     Atom *dense_compiled = dense_prepared
-        ? bindings_apply_dense_epoch_frame_then_all(
-              &dense_frame_builder, &arena, dense_source,
+        ? bindings_apply_activation_view_then_all(
+              &dense_frame_builder.current, &arena, dense_source,
               &dense_frame)
         : NULL;
     CHECK(dense_reference && dense_compiled &&
@@ -2364,10 +3829,10 @@ int main(void) {
     Atom *dense_sparse_variables[2] = {
         dense_coord_a, dense_coord_c,
     };
-    BindingsDenseEpochFrame dense_coordinate_frame;
-    bindings_dense_epoch_frame_init(&dense_coordinate_frame);
+    BindingsActivationView dense_coordinate_frame;
+    bindings_activation_view_init(&dense_coordinate_frame);
     bool dense_contiguous_prepared = dense_frame_ready &&
-        bindings_dense_epoch_frame_prepare(
+        bindings_activation_view_prepare(
             &dense_coordinate_frame, &dense_frame_builder,
             dense_contiguous_ids, dense_contiguous_variables,
             3u, 67u, dense_first_entry);
@@ -2378,8 +3843,8 @@ int main(void) {
         &arena, atom_symbol(&arena, "DenseCoordinates"),
         dense_coord_a, dense_coord_c);
     Atom *dense_contiguous_value = dense_contiguous_recognized
-        ? bindings_apply_dense_epoch_frame_then_all(
-              &dense_frame_builder, &arena,
+        ? bindings_apply_activation_view_then_all(
+              &dense_frame_builder.current, &arena,
               dense_coordinate_source, &dense_coordinate_frame)
         : NULL;
     Atom *dense_contiguous_reference = dense_contiguous_recognized
@@ -2388,7 +3853,7 @@ int main(void) {
               dense_coordinate_source, 67u, dense_first_entry)
         : NULL;
     bool dense_sparse_prepared = dense_frame_ready &&
-        bindings_dense_epoch_frame_prepare(
+        bindings_activation_view_prepare(
             &dense_coordinate_frame, &dense_frame_builder,
             dense_sparse_ids, dense_sparse_variables,
             2u, 67u, dense_first_entry);
@@ -2405,8 +3870,8 @@ int main(void) {
             &arena, atom_symbol(&arena, "DenseSparseBounds"),
             dense_below, dense_above));
     Atom *dense_sparse_value = dense_sparse_prepared
-        ? bindings_apply_dense_epoch_frame_then_all(
-              &dense_frame_builder, &arena,
+        ? bindings_apply_activation_view_then_all(
+              &dense_frame_builder.current, &arena,
               dense_sparse_source, &dense_coordinate_frame)
         : NULL;
     Atom *dense_sparse_reference = dense_sparse_prepared
@@ -2422,25 +3887,25 @@ int main(void) {
               dense_sparse_value && dense_sparse_reference &&
               atom_eq(dense_sparse_value, dense_sparse_reference),
           "dense frames recognize contiguous coordinates and retain sparse fallback");
-    bindings_dense_epoch_frame_free(&dense_coordinate_frame);
+    bindings_activation_view_free(&dense_coordinate_frame);
     Atom *dense_slot_value = dense_prepared &&
             dense_left_slot != UINT32_MAX
-        ? bindings_apply_dense_epoch_frame_slot_then_all(
-              &dense_frame_builder, &arena, &dense_frame,
+        ? bindings_apply_activation_view_slot_then_all(
+              &dense_frame_builder.current, &arena, &dense_frame,
               dense_left,
               dense_left_slot)
         : NULL;
     Atom *dense_slot_open = dense_prepared &&
             dense_open_slot != UINT32_MAX
-        ? bindings_apply_dense_epoch_frame_slot_then_all(
-              &dense_frame_builder, &arena, &dense_frame,
+        ? bindings_apply_activation_view_slot_then_all(
+              &dense_frame_builder.current, &arena, &dense_frame,
               dense_open,
               dense_open_slot)
         : NULL;
     Atom *dense_slot_root = dense_prepared &&
             dense_left_slot != UINT32_MAX
-        ? bindings_resolve_dense_epoch_frame_slot_root(
-              &dense_frame_builder, &arena, &dense_frame,
+        ? bindings_resolve_activation_view_slot_root(
+              &dense_frame_builder.current, &arena, &dense_frame,
               dense_left,
               dense_left_slot)
         : NULL;
@@ -2453,8 +3918,8 @@ int main(void) {
 
     Atom *dense_mismatched_slot = dense_prepared &&
             dense_left_slot != UINT32_MAX
-        ? bindings_resolve_dense_epoch_frame_slot_root(
-              &dense_frame_builder, &arena, &dense_frame,
+        ? bindings_resolve_activation_view_slot_root(
+              &dense_frame_builder.current, &arena, &dense_frame,
               dense_right, dense_left_slot)
         : NULL;
     CHECK(!dense_mismatched_slot,
@@ -2470,10 +3935,10 @@ int main(void) {
     Arena dense_compiled_arena;
     arena_init(&dense_reference_arena);
     arena_init(&dense_compiled_arena);
-    BindingsDenseEpochFrame dense_match_frame;
-    bindings_dense_epoch_frame_init(&dense_match_frame);
+    BindingsActivationView dense_match_frame;
+    bindings_activation_view_init(&dense_match_frame);
     bool dense_match_prepared = dense_compiled_ready &&
-        bindings_dense_epoch_frame_prepare(
+        bindings_activation_view_prepare(
             &dense_match_frame, &dense_compiled_builder,
             dense_ids, dense_variables, 3u, 67u,
             dense_first_entry);
@@ -2488,7 +3953,7 @@ int main(void) {
             dense_materialized, dense_query,
             &dense_reference_builder, &dense_reference_arena, 71u);
     bool dense_compiled_match = dense_match_prepared &&
-        match_atoms_dense_epoch_view_builder(
+        match_atoms_activation_view_builder(
             dense_source, &dense_match_frame, dense_query,
             &dense_compiled_builder, &dense_compiled_arena, 71u);
     CHECK(dense_reference_match && dense_compiled_match &&
@@ -2505,19 +3970,17 @@ int main(void) {
             &dense_frame_builder,
             var_epoch_id(dense_open->var_id, 67u),
             dense_open->sym_id, dense_open_value) &&
-        bindings_dense_epoch_frame_refresh(
-            &dense_frame, &dense_frame_builder);
+        bindings_activation_view_available(
+            &dense_frame, &dense_frame_builder.current);
     Atom *dense_refreshed_slot = dense_refreshed &&
             dense_open_slot != UINT32_MAX
-        ? bindings_apply_dense_epoch_frame_slot_then_all(
-              &dense_frame_builder, &arena,
+        ? bindings_apply_activation_view_slot_then_all(
+              &dense_frame_builder.current, &arena,
               &dense_frame, dense_open, dense_open_slot)
         : NULL;
     CHECK(dense_refreshed &&
-              dense_frame.scanned_len ==
-                  dense_frame_builder.current.len &&
               dense_refreshed_slot == dense_open_value,
-          "dense activation refresh scans only an appended binding suffix");
+          "dense activation reads the current slot after an appended write");
 
     uint64_t dense_refresh_rollbacks = dense_frame_ready
         ? dense_frame_builder.rollback_count : 0u;
@@ -2531,96 +3994,100 @@ int main(void) {
             &dense_frame_builder,
             var_epoch_id(dense_open->var_id, 67u),
             dense_open->sym_id, dense_replacement_value) &&
-        dense_frame_builder.current.len == dense_frame.scanned_len;
+        bindings_activation_view_available(&dense_frame, &dense_frame_builder.current);
     Atom *dense_stale_consumer = dense_replaced_same_length
-        ? bindings_resolve_dense_epoch_frame_slot_root(
-              &dense_frame_builder, &arena, &dense_frame,
+        ? bindings_resolve_activation_view_slot_root(
+              &dense_frame_builder.current, &arena, &dense_frame,
               dense_open, dense_open_slot)
         : NULL;
     bool dense_aba_rejected = dense_replaced_same_length &&
-        !dense_stale_consumer &&
+        dense_stale_consumer == dense_replacement_value &&
         dense_frame_builder.rollback_count ==
             dense_refresh_rollbacks + 1u &&
-        !bindings_dense_epoch_frame_refresh(
-            &dense_frame, &dense_frame_builder);
+        bindings_activation_view_available(
+            &dense_frame, &dense_frame_builder.current);
     bool dense_replacement_rebuilt = dense_aba_rejected &&
-        bindings_dense_epoch_frame_prepare(
+        bindings_activation_view_prepare(
             &dense_frame, &dense_frame_builder,
             dense_ids, dense_variables, 3u, 67u,
             dense_first_entry);
     Atom *dense_replacement_slot = dense_replacement_rebuilt &&
             dense_open_slot != UINT32_MAX
-        ? bindings_apply_dense_epoch_frame_slot_then_all(
-              &dense_frame_builder, &arena,
+        ? bindings_apply_activation_view_slot_then_all(
+              &dense_frame_builder.current, &arena,
               &dense_frame, dense_open, dense_open_slot)
         : NULL;
     CHECK(dense_replacement_slot == dense_replacement_value,
-          "equal-length rollback and reappend rejects a stale dense frame");
+          "equal-length rollback and reappend reads the new slot through the same identity");
 
     if (dense_frame_ready) {
         bindings_builder_rollback(
             &dense_frame_builder, dense_refresh_mark);
     }
     bool dense_shrink_rejected = dense_frame_ready &&
-        !bindings_dense_epoch_frame_refresh(
-            &dense_frame, &dense_frame_builder);
+        bindings_activation_view_available(
+            &dense_frame, &dense_frame_builder.current);
     bool dense_rebuilt = dense_shrink_rejected &&
-        bindings_dense_epoch_frame_prepare(
+        bindings_activation_view_prepare(
             &dense_frame, &dense_frame_builder,
             dense_ids, dense_variables, 3u, 67u,
             dense_first_entry);
     Atom *dense_rebuilt_open = dense_rebuilt &&
             dense_open_slot != UINT32_MAX
-        ? bindings_apply_dense_epoch_frame_slot_then_all(
-              &dense_frame_builder, &arena,
+        ? bindings_apply_activation_view_slot_then_all(
+              &dense_frame_builder.current, &arena,
               &dense_frame, dense_open, dense_open_slot)
         : NULL;
     CHECK(dense_rebuilt && dense_rebuilt_open &&
               dense_rebuilt_open->kind == ATOM_VAR &&
               dense_rebuilt_open->var_id ==
                   var_epoch_id(dense_open->var_id, 67u),
-          "rollback rejects append refresh and a rebuild clears stale slots");
+          "rollback exposes the restored unbound slot through its identity");
 
-    dense_frame.slot_generation = UINT32_MAX;
-    bool dense_generation_wrapped = dense_frame_ready &&
-        bindings_dense_epoch_frame_prepare(
+    const void *dense_schema_identity = NULL;
+    const void *dense_slot_identity = NULL;
+    bool dense_authority_reborrowed = dense_frame_ready &&
+        bindings_activation_view_prepare(
             &dense_frame, &dense_frame_builder,
             dense_ids, dense_variables, 3u, 67u,
-            dense_first_entry);
-    Atom *dense_wrapped_open = dense_generation_wrapped &&
+            dense_first_entry) &&
+        bindings_frame_storage_test_identity(
+            &dense_frame_builder.current, 67u,
+            &dense_schema_identity, &dense_slot_identity) &&
+        dense_slot_identity != NULL;
+    Atom *dense_reborrowed_open = dense_authority_reborrowed &&
             dense_open_slot != UINT32_MAX
-        ? bindings_apply_dense_epoch_frame_slot_then_all(
-              &dense_frame_builder, &arena,
+        ? bindings_apply_activation_view_slot_then_all(
+              &dense_frame_builder.current, &arena,
               &dense_frame, dense_open, dense_open_slot)
         : NULL;
-    CHECK(dense_generation_wrapped &&
-              dense_frame.slot_generation == 1u &&
-              dense_wrapped_open &&
-              dense_wrapped_open->kind == ATOM_VAR &&
-              dense_wrapped_open->var_id ==
+    CHECK(dense_authority_reborrowed &&
+              dense_reborrowed_open &&
+              dense_reborrowed_open->kind == ATOM_VAR &&
+              dense_reborrowed_open->var_id ==
                   var_epoch_id(dense_open->var_id, 67u),
-          "dense slot generation wrap clears every stale presence stamp");
+          "dense frame resolves authoritative slots without cached presence state");
 
-    BindingsDenseEpochFrame dense_saturated_frame;
-    bindings_dense_epoch_frame_init(&dense_saturated_frame);
+    BindingsActivationView dense_saturated_frame;
+    bindings_activation_view_init(&dense_saturated_frame);
     uint64_t dense_saved_growth = dense_frame_builder.growth_count;
     uint64_t dense_saved_rollbacks = dense_frame_builder.rollback_count;
     dense_frame_builder.growth_count = UINT64_MAX;
     dense_frame_builder.rollback_count = UINT64_MAX;
-    bool dense_saturation_declined =
-        !bindings_dense_epoch_frame_prepare(
+    bool dense_saturation_independent =
+        bindings_activation_view_prepare(
             &dense_saturated_frame, &dense_frame_builder,
             dense_ids, dense_variables, 3u, 67u,
             dense_first_entry);
     Atom *dense_saturation_reference = bindings_apply_epoch_then_all(
         &dense_frame_builder.current, &arena, dense_source,
         67u, dense_first_entry);
-    CHECK(dense_saturation_declined && dense_saturation_reference &&
+    CHECK(dense_saturation_independent && dense_saturation_reference &&
               atom_eq(dense_saturation_reference, dense_reference),
-          "saturated frame revisions decline to authoritative application");
+          "identity views do not depend on saturated growth counters");
     dense_frame_builder.growth_count = dense_saved_growth;
     dense_frame_builder.rollback_count = dense_saved_rollbacks;
-    bindings_dense_epoch_frame_free(&dense_saturated_frame);
+    bindings_activation_view_free(&dense_saturated_frame);
 
     VarId dense_unsorted_ids[2] = {
         dense_ids[1], dense_ids[0],
@@ -2628,26 +4095,25 @@ int main(void) {
     Atom *dense_unsorted_variables[2] = {
         dense_variables[1], dense_variables[0],
     };
-    BindingsDenseEpochFrame dense_invalid_frame;
-    bindings_dense_epoch_frame_init(&dense_invalid_frame);
+    BindingsActivationView dense_invalid_frame;
+    bindings_activation_view_init(&dense_invalid_frame);
     CHECK(dense_frame_ready &&
-              !bindings_dense_epoch_frame_prepare(
+              !bindings_activation_view_prepare(
                   &dense_invalid_frame, &dense_frame_builder,
                   dense_unsorted_ids, dense_unsorted_variables,
                   2u, 67u, dense_first_entry),
           "dense activation admission rejects an unsorted variable inventory");
-    bindings_dense_epoch_frame_free(&dense_invalid_frame);
+    bindings_activation_view_free(&dense_invalid_frame);
 
-    /* A frame is tied to one builder incarnation, not merely its stack
-     * address.  Reinitializing the same object with matching counts must not
-     * revive cached values from the former environment. */
+    /* Reusing a builder address is irrelevant: the supplied captured image
+     * still owns this frame. No descriptor stores values from the old builder. */
     BindingsBuilder dense_reinit_builder;
-    BindingsDenseEpochFrame dense_reinit_frame;
-    bindings_dense_epoch_frame_init(&dense_reinit_frame);
+    BindingsActivationView dense_reinit_frame;
+    bindings_activation_view_init(&dense_reinit_frame);
     bool dense_reinit_ready = bindings_builder_init(
         &dense_reinit_builder, &dense_environment);
     bool dense_reinit_prepared = dense_reinit_ready &&
-        bindings_dense_epoch_frame_prepare(
+        bindings_activation_view_prepare(
             &dense_reinit_frame, &dense_reinit_builder,
             dense_ids, dense_variables, 3u, 67u,
             dense_first_entry);
@@ -2659,29 +4125,29 @@ int main(void) {
     Atom *dense_reinit_stale_slot =
         dense_reinit_prepared && dense_same_address_reinit &&
         dense_left_slot != UINT32_MAX
-        ? bindings_resolve_dense_epoch_frame_slot_root(
-              &dense_reinit_builder, &arena, &dense_reinit_frame,
+        ? bindings_resolve_activation_view_slot_root(
+              &dense_reinit_builder.current, &arena, &dense_reinit_frame,
               dense_left, dense_left_slot)
         : NULL;
     CHECK(dense_reinit_prepared && dense_same_address_reinit &&
               dense_reinit_builder.instance_id != 0u &&
               dense_reinit_builder.instance_id != dense_old_instance &&
-              !bindings_dense_epoch_frame_refresh(
-                  &dense_reinit_frame, &dense_reinit_builder) &&
-              !dense_reinit_stale_slot,
-          "dense frames reject a same-address builder reincarnation");
-    bindings_dense_epoch_frame_free(&dense_reinit_frame);
+              bindings_activation_view_available(
+                  &dense_reinit_frame, &dense_reinit_builder.current) &&
+              dense_reinit_stale_slot == dense_value,
+          "a retained frame image remains readable after builder reincarnation");
+    bindings_activation_view_free(&dense_reinit_frame);
     if (dense_same_address_reinit)
         bindings_builder_free(&dense_reinit_builder);
 
-    bindings_dense_epoch_frame_free(&dense_match_frame);
+    bindings_activation_view_free(&dense_match_frame);
     arena_free(&dense_compiled_arena);
     arena_free(&dense_reference_arena);
     if (dense_compiled_ready)
         bindings_builder_free(&dense_compiled_builder);
     if (dense_reference_ready)
         bindings_builder_free(&dense_reference_builder);
-    bindings_dense_epoch_frame_free(&dense_frame);
+    bindings_activation_view_free(&dense_frame);
     if (dense_frame_ready)
         bindings_builder_free(&dense_frame_builder);
     bindings_free(&dense_environment);
@@ -2711,12 +4177,26 @@ int main(void) {
         view_candidate, view_right_tail);
     Bindings view_base;
     bindings_init(&view_base);
-    bool view_fixture = bindings_add_var(
-        &view_base, view_outer, view_value);
-    uint32_t view_first_entry = view_base.len;
-    view_fixture = view_fixture && bindings_add_id(
-        &view_base, var_epoch_id(view_local->var_id, 37u),
+    BindingsBuilder view_seed_builder;
+    bool view_fixture = bindings_builder_init(&view_seed_builder, NULL) &&
+        bindings_builder_add_var_fresh(
+            &view_seed_builder, view_outer, view_value);
+    uint32_t view_first_entry = view_seed_builder.current.len;
+    VarId view_source_ids[] = {view_local->var_id};
+    Atom *view_source_variables[] = {view_local};
+    BindingsActivationView view_seed_frame;
+    bindings_activation_view_init(&view_seed_frame);
+    view_fixture = view_fixture && bindings_activation_view_prepare(
+        &view_seed_frame, &view_seed_builder,
+        view_source_ids, view_source_variables, 1u, 37u,
+        view_first_entry);
+    view_fixture = view_fixture && bindings_builder_add_id_fresh(
+        &view_seed_builder, var_epoch_id(view_local->var_id, 37u),
         view_local->sym_id, view_outer);
+    view_fixture = view_fixture && bindings_clone(
+        &view_base, &view_seed_builder.current);
+    bindings_activation_view_free(&view_seed_frame);
+    bindings_builder_free(&view_seed_builder);
     BindingsBuilder view_reference;
     BindingsBuilder view_compiled;
     bool view_reference_ready = bindings_builder_init(
@@ -2793,10 +4273,24 @@ int main(void) {
     BindingsBuilder view_open_compiled;
     Bindings view_open_base;
     bindings_init(&view_open_base);
-    bool view_open_fixture = bindings_add_id(
-        &view_open_base, var_epoch_id(view_local->var_id, 43u),
-        view_local->sym_id, view_outer);
+    BindingsBuilder view_open_seed;
+    bool view_open_fixture = bindings_builder_init(
+        &view_open_seed, NULL);
     uint32_t view_open_first_entry = 0u;
+    BindingsActivationView view_open_seed_frame;
+    bindings_activation_view_init(&view_open_seed_frame);
+    view_open_fixture = view_open_fixture &&
+        bindings_activation_view_prepare(
+            &view_open_seed_frame, &view_open_seed,
+            view_source_ids, view_source_variables, 1u, 43u,
+            view_open_first_entry) &&
+        bindings_builder_add_id_fresh(
+            &view_open_seed,
+            var_epoch_id(view_local->var_id, 43u),
+            view_local->sym_id, view_outer) &&
+        bindings_clone(&view_open_base, &view_open_seed.current);
+    bindings_activation_view_free(&view_open_seed_frame);
+    bindings_builder_free(&view_open_seed);
     bool view_open_reference_ready = bindings_builder_init(
         &view_open_reference, &view_open_base);
     bool view_open_compiled_ready = bindings_builder_init(
@@ -2857,11 +4351,26 @@ int main(void) {
         match_atoms_epoch_view_builder(
             view_left, 37u, view_first_entry, view_candidate,
             &view_whole_compiled, &view_whole_compiled_arena, 53u);
+    Atom *view_whole_key = atom_var_like(
+        &arena, view_candidate,
+        var_epoch_id(view_candidate->var_id, 53u));
+    Atom *view_whole_reference_value = view_whole_key
+        ? bindings_apply(
+              &view_whole_reference.current,
+              &view_whole_reference_arena, view_whole_key)
+        : NULL;
+    Atom *view_whole_compiled_value = view_whole_key
+        ? bindings_apply(
+              &view_whole_compiled.current,
+              &view_whole_compiled_arena, view_whole_key)
+        : NULL;
     CHECK(view_whole_reference_match && view_whole_compiled_match &&
-              bindings_eq(
-                  &view_whole_reference.current,
-                  &view_whole_compiled.current),
-          "activation view materializes only a demanded whole-term variable image");
+              view_whole_reference_value &&
+              view_whole_compiled_value &&
+              atom_eq(
+                  view_whole_reference_value,
+                  view_whole_compiled_value),
+          "activation view retains a demanded whole-term closure with the same observation");
     uint32_t invalid_view_mark = view_compiled_ready
         ? bindings_builder_save(&view_compiled) : 0u;
     CHECK(view_compiled_ready &&
@@ -3039,13 +4548,13 @@ int main(void) {
     if (view_cycle_compiled_ready)
         bindings_builder_rollback(
             &view_cycle_compiled, view_cycle_compiled_mark);
-    CHECK(view_cycle_reference_match && view_cycle_compiled_match &&
-              view_cycle_reference_loop && view_cycle_compiled_loop &&
+    CHECK(!view_cycle_reference_match && !view_cycle_compiled_match &&
+              !view_cycle_reference_loop && !view_cycle_compiled_loop &&
               bindings_eq(
                   &view_cycle_reference.current,
                   &view_cycle_compiled.current) &&
               view_cycle_reference.current.len == 0u,
-          "open activation cycle is detected and rolled back before publication");
+          "open activation cycle is refused at the bind by both matchers, leaving nothing to publish");
 
     arena_free(&view_cycle_compiled_arena);
     arena_free(&view_cycle_reference_arena);
@@ -3093,7 +4602,7 @@ int main(void) {
         bindings_builder_free(&view_reference);
     bindings_free(&view_base);
 
-    /* A direct clause frame gives standardized rule variables ownership of
+    /* A direct equation activation frame gives standardized rule variables ownership of
      * otherwise unconstrained aliases.  This is the query-visible normal
      * form used by the isolated equation matcher, obtained without building
      * and projecting a temporary environment. */
@@ -3108,13 +4617,10 @@ int main(void) {
         match_atoms_epoch_builder_rule_local(
             slot_outer, slot_rule, &slot_alias, &arena, slot_epoch);
     CHECK(slot_alias_matched &&
-              bindings_lookup_id(
-                  &slot_alias.current,
-                  var_epoch_id(slot_rule->var_id, slot_epoch)) ==
+              bindings_lookup_value_id(&slot_alias.current, var_epoch_id(slot_rule->var_id, slot_epoch)).skeleton ==
                   slot_outer &&
-              bindings_lookup_id(
-                  &slot_alias.current, slot_outer->var_id) == NULL,
-          "clause-frame variable aliases point from rule slots to caller variables");
+              bindings_lookup_value_id(&slot_alias.current, slot_outer->var_id).skeleton == NULL,
+          "equation-activation-frame variable aliases point from rule slots to caller variables");
     if (slot_alias_ready)
         bindings_builder_free(&slot_alias);
 
@@ -3132,20 +4638,22 @@ int main(void) {
         match_atoms_epoch_builder_rule_local(
             slot_outer, slot_rule_pair, &slot_structured,
             &arena, slot_epoch);
-    Atom *slot_structured_value = slot_structured_matched
-        ? bindings_lookup_id(
+    BindingValue slot_structured_value = slot_structured_matched
+        ? bindings_lookup_value_id(
               &slot_structured.current, slot_outer->var_id)
-        : NULL;
-    CHECK(slot_structured_value &&
-              slot_structured_value->kind == ATOM_EXPR &&
-              slot_structured_value->expr.len == 3u &&
+        : binding_value_from_atom(NULL);
+    Atom *slot_structured_observed = binding_value_materialize(
+        &arena, slot_structured_value);
+    CHECK(slot_structured_observed &&
+              slot_structured_observed->kind == ATOM_EXPR &&
+              slot_structured_observed->expr.len == 3u &&
               var_epoch_suffix(
-                  slot_structured_value->expr.elems[1]->var_id) ==
+                  slot_structured_observed->expr.elems[1]->var_id) ==
                   slot_epoch &&
               var_epoch_suffix(
-                  slot_structured_value->expr.elems[2]->var_id) ==
+                  slot_structured_observed->expr.elems[2]->var_id) ==
                   slot_epoch,
-          "clause-frame matching retains a caller's structured rule value");
+          "equation-activation-frame matching retains a caller's structured rule value");
     if (slot_structured_ready)
         bindings_builder_free(&slot_structured);
 
@@ -3193,36 +4701,41 @@ int main(void) {
     BindingsBuilder slot_cycle;
     bool slot_cycle_ready = bindings_builder_init(&slot_cycle, NULL);
     CHECK(slot_cycle_ready &&
-              match_atoms_epoch_builder_rule_local(
+              !match_atoms_epoch_builder_rule_local(
                   slot_cycle_call, slot_cycle_rule,
                   &slot_cycle, &arena, slot_epoch) &&
-              bindings_has_loop(&slot_cycle.current),
-          "clause-frame orientation leaves cyclic substitutions visible to the occurs check");
+              !bindings_has_loop(&slot_cycle.current),
+          "equation-activation-frame orientation refuses a cyclic substitution at the bind");
     if (slot_cycle_ready)
         bindings_builder_free(&slot_cycle);
 
     uint32_t fresh_before_null = 0u;
     uint32_t fresh_after_null = 0u;
-    CHECK(fresh_var_suffix_try(&fresh_before_null) &&
+    CHECK(cetta_frame_identity_scope_try(&frame_identity_scope, &fresh_before_null) &&
               fresh_before_null != 0u &&
-              !fresh_var_suffix_try(NULL) &&
-              fresh_var_suffix_try(&fresh_after_null) &&
-              fresh_after_null == fresh_before_null + 1u,
-          "fresh suffix refusal does not consume or alias an identity");
-#ifdef CETTA_TEST_HOOKS
-    uint32_t penultimate_suffix = 0u;
-    uint32_t final_suffix = 0u;
-    uint32_t exhausted_sentinel = 7304u;
-    fresh_var_suffix_test_reset((uint64_t)UINT32_MAX - 1u);
-    CHECK(fresh_var_suffix_try(&penultimate_suffix) &&
-              penultimate_suffix == UINT32_MAX - 1u &&
-              fresh_var_suffix_try(&final_suffix) &&
-              final_suffix == UINT32_MAX &&
-              !fresh_var_suffix_try(&exhausted_sentinel) &&
-              exhausted_sentinel == 7304u,
-          "fresh suffix allocation reaches the boundary then fails closed");
-    fresh_var_suffix_test_reset(1u);
-#endif
+              !cetta_frame_identity_scope_try(&frame_identity_scope, NULL) &&
+              cetta_frame_identity_scope_try(&frame_identity_scope, &fresh_after_null) &&
+              fresh_after_null != fresh_before_null,
+          "frame identity refusal does not consume or alias an identity");
+    CettaFrameIdentity retired_identity = 0u;
+    bool identity_reuse_ok = cetta_frame_identity_acquire(&retired_identity);
+    uint32_t retired_handle = cetta_frame_handle(retired_identity);
+    cetta_frame_identity_release(retired_identity);
+    bool handle_retired = false;
+    for (uint32_t generation = 0u;
+         identity_reuse_ok && generation <= CETTA_FRAME_GENERATION_MAX;
+         generation++) {
+        CettaFrameIdentity next_identity = 0u;
+        identity_reuse_ok = cetta_frame_identity_acquire(&next_identity) &&
+            next_identity != retired_identity &&
+            !cetta_frame_identity_retain(retired_identity);
+        handle_retired = cetta_frame_handle(next_identity) != retired_handle;
+        cetta_frame_identity_release(next_identity);
+        if (handle_retired)
+            break;
+    }
+    CHECK(identity_reuse_ok && handle_retired,
+          "frame reuse rejects stale generations and retires before wrapping");
 
     Atom *epoch_cycle_source = atom_var_with_id(
         &arena, "epoch-cycle-source", test_id(7210u));
@@ -3235,19 +4748,21 @@ int main(void) {
         &arena, atom_symbol(&arena, "EpochCycle"), epoch_cycle_bound);
     Bindings epoch_cycle;
     bindings_init(&epoch_cycle);
+    Atom *epoch_applied = NULL;
     CHECK(bindings_add_var(&epoch_cycle, epoch_cycle_bound,
                            epoch_cycle_tail) &&
-              bindings_add_var(&epoch_cycle, epoch_cycle_tail,
-                               epoch_cycle_payload) &&
-              bindings_has_loop(&epoch_cycle) &&
-              bindings_apply_epoch(
-                  &epoch_cycle, &arena, epoch_cycle_source, 23u) ==
-                  epoch_cycle_payload,
-          "cyclic epoch application retains its active-path guard");
+              !bindings_add_var(&epoch_cycle, epoch_cycle_tail,
+                                epoch_cycle_payload) &&
+              !bindings_has_loop(&epoch_cycle) &&
+              (epoch_applied = bindings_apply_epoch(
+                   &epoch_cycle, &arena, epoch_cycle_source, 23u)) != NULL &&
+              epoch_applied->kind == ATOM_VAR &&
+              epoch_applied->var_id == epoch_cycle_tail->var_id,
+          "a closing epoch bind is refused and epoch application stops at the open tail");
     bindings_free(&epoch_cycle);
 
     bool original_unchanged =
-        bindings_lookup_id(&base, branch_a) == NULL &&
+        bindings_lookup_value_id(&base, branch_a).skeleton == NULL &&
         binding_is_int(&base, late_id, 1000);
     CHECK(original_unchanged,
           "copy-on-write index mutation leaves the source clone unchanged");
@@ -3257,7 +4772,7 @@ int main(void) {
     VarId removed_id = test_id(31u);
     removed_ok = removed_ok &&
                  bindings_remove_entry_at(&removed, 31u) &&
-                 bindings_lookup_id(&removed, removed_id) == NULL &&
+                 bindings_lookup_value_id(&removed, removed_id).skeleton == NULL &&
                  binding_is_int(&removed, test_id(30u), 30) &&
                  binding_is_int(&removed, test_id(32u), 32) &&
                  binding_is_int(&base, removed_id, 31);
@@ -3273,15 +4788,15 @@ int main(void) {
     CHECK(bindings_add_var(&cycle, cycle_x, cycle_y) &&
               !bindings_has_loop(&cycle),
           "incremental occurs summary accepts an acyclic edge");
-    CHECK(bindings_add_var(&cycle, cycle_y, cycle_payload) &&
-              bindings_has_loop(&cycle),
-          "incremental occurs summary detects a transitive cycle");
-    Atom *cyclic_result = bindings_apply(&cycle, &arena, cycle_x);
-    CHECK(cyclic_result == cycle_payload,
-          "witnessed cycles retain the terminating active-path guard");
-    CHECK(bindings_remove_entry_at(&cycle, 1u) &&
+    CHECK(!bindings_add_var(&cycle, cycle_y, cycle_payload) &&
               !bindings_has_loop(&cycle),
-          "removing the witnessed edge falls back to the full oracle");
+          "incremental occurs summary refuses a transitive cycle at the bind");
+    Atom *cyclic_result = bindings_apply(&cycle, &arena, cycle_x);
+    CHECK(cyclic_result && cyclic_result->kind == ATOM_VAR &&
+              cyclic_result->var_id == cycle_y->var_id,
+          "application after a refused bind stops at the open variable");
+    CHECK(cycle.len == 1u && !bindings_has_loop(&cycle),
+          "the refused edge leaves the single acyclic edge in place");
 
     Atom *acyclic_tail = atom_var(&arena, "apply-summary-tail");
     Atom *acyclic_head = atom_var(&arena, "apply-summary-head");
@@ -3339,15 +4854,16 @@ int main(void) {
     }
     Atom *indexed_cycle_tail = atom_expr2(
         &arena, atom_symbol(&arena, "IndexedCycle"), memo_vars[0]);
-    indexed_cycle_built = indexed_cycle_built &&
-        bindings_add_var(
+    bool indexed_cycle_refused = indexed_cycle_built &&
+        !bindings_add_var(
             &indexed_memo_cycle, memo_vars[95u], indexed_cycle_tail);
-    Atom *indexed_cycle_result = indexed_cycle_built
+    Atom *indexed_cycle_result = indexed_cycle_refused
         ? bindings_apply(&indexed_memo_cycle, &arena, memo_vars[0])
         : NULL;
-    CHECK(indexed_cycle_result == indexed_cycle_tail &&
-              bindings_has_loop(&indexed_memo_cycle),
-          "indexed substitution memo preserves long-cycle termination");
+    CHECK(indexed_cycle_result && indexed_cycle_result->kind == ATOM_VAR &&
+              indexed_cycle_result->var_id == memo_vars[95u]->var_id &&
+              !bindings_has_loop(&indexed_memo_cycle),
+          "indexed substitution memo refuses the long closing edge and applies to the open tail");
     bindings_free(&indexed_memo_cycle);
 
     Atom *reach_rollback_predecessor = atom_var(
@@ -3390,17 +4906,17 @@ int main(void) {
              &reach_rollback.current, &reach_cache_support,
              &reach_cache_capacity) &&
          reach_cache_support == 0u);
-    bool replacement_suffix_cyclic = first_suffix_acyclic &&
+    bool replacement_suffix_refused = first_suffix_acyclic &&
         bindings_builder_add_var_fresh(
             &reach_rollback, memo_vars[23u],
             reach_rollback_terminal) &&
-        bindings_builder_add_var_fresh(
+        !bindings_builder_add_var_fresh(
             &reach_rollback, reach_rollback_terminal,
             memo_vars[0u]) &&
-        bindings_has_loop(&reach_rollback.current);
+        !bindings_has_loop(&reach_rollback.current);
     CHECK(reach_cache_support_recorded &&
               reach_cache_support_cleared &&
-              replacement_suffix_cyclic,
+              replacement_suffix_refused,
           "rollback invalidates exactly recorded single-support roots before suffix reuse");
     if (reach_rollback_initialized)
         bindings_builder_free(&reach_rollback);
@@ -3422,8 +4938,7 @@ int main(void) {
             shared_reach_vars[i], shared_reach_vars[i + 1u]);
     }
     shared_reach_ready = shared_reach_ready &&
-        bindings_lookup_id(
-            &shared_reach_base, shared_reach_vars[0]->var_id) != NULL;
+        bindings_lookup_value_id(&shared_reach_base, shared_reach_vars[0]->var_id).skeleton != NULL;
     Bindings shared_reach_cycle;
     Bindings shared_reach_safe;
     bindings_init(&shared_reach_cycle);
@@ -3432,8 +4947,8 @@ int main(void) {
         bindings_clone(&shared_reach_cycle, &shared_reach_base);
     bool shared_safe_ready = shared_reach_ready &&
         bindings_clone(&shared_reach_safe, &shared_reach_base);
-    shared_cycle_ready = shared_cycle_ready &&
-        bindings_add_var(
+    bool shared_cycle_refused = shared_cycle_ready &&
+        !bindings_add_var(
             &shared_reach_cycle,
             shared_reach_vars[17u], shared_reach_vars[0u]);
     Atom *shared_reach_outside = atom_var(
@@ -3442,9 +4957,9 @@ int main(void) {
         bindings_add_var(
             &shared_reach_safe,
             shared_reach_vars[17u], shared_reach_outside);
-    CHECK(shared_cycle_ready &&
-              bindings_has_loop(&shared_reach_cycle),
-          "a read-only shared reachability index still detects a closing cycle");
+    CHECK(shared_cycle_refused &&
+              !bindings_has_loop(&shared_reach_cycle),
+          "a read-only shared reachability index still refuses a closing cycle at the bind");
     CHECK(shared_safe_ready &&
               !bindings_has_loop(&shared_reach_safe) &&
               !bindings_has_loop(&shared_reach_base),
@@ -3457,28 +4972,30 @@ int main(void) {
     CHECK(bindings_builder_init(&cycle_branch, &cycle),
           "cycle rollback branch starts from the acyclic summary");
     uint32_t cycle_mark = bindings_builder_save(&cycle_branch);
-    CHECK(bindings_builder_add_var_fresh(
+    CHECK(!bindings_builder_add_var_fresh(
               &cycle_branch, cycle_y, cycle_payload) &&
-              bindings_has_loop(&cycle_branch.current),
-          "speculative insertion records a witnessed cycle");
+              !bindings_has_loop(&cycle_branch.current),
+          "speculative insertion of a closing edge is refused");
     bindings_builder_rollback(&cycle_branch, cycle_mark);
     CHECK(!bindings_has_loop(&cycle_branch.current) &&
-              bindings_lookup_id(
-                  &cycle_branch.current, cycle_y->var_id) == NULL,
+              bindings_lookup_value_id(&cycle_branch.current, cycle_y->var_id).skeleton == NULL,
           "rollback restores the prior acyclicity summary");
     bindings_builder_free(&cycle_branch);
     bindings_free(&cycle);
 
     Bindings rewritten;
-    bool rewrite_ok = bindings_clone(&rewritten, &base);
-    VarId rewritten_old = rewritten.entries[12u].var_id;
+    bool rewrite_ok = bindings_clone(&rewritten, &base) &&
+                      bindings_prepare_logical_write(&rewritten);
+    VarId rewritten_old = rewrite_ok
+        ? rewritten.entries[12u].var_id : VAR_ID_NONE;
     VarId rewritten_new = test_id(4000u);
     rewrite_ok = rewrite_ok &&
-                 bindings_lookup_id(&rewritten, rewritten_old) != NULL;
-    rewritten.entries[12u].var_id = rewritten_new;
+                 bindings_lookup_value_id(&rewritten, rewritten_old).skeleton != NULL;
+    if (rewrite_ok)
+        rewritten.entries[12u].var_id = rewritten_new;
     bindings_invalidate_after_key_rewrite(&rewritten);
     rewrite_ok = rewrite_ok &&
-                 bindings_lookup_id(&rewritten, rewritten_old) == NULL &&
+                 bindings_lookup_value_id(&rewritten, rewritten_old).skeleton == NULL &&
                  binding_is_int(&rewritten, rewritten_new, 12);
     CHECK(rewrite_ok,
           "key rewrites invalidate every derived lookup summary");
@@ -3522,6 +5039,45 @@ int main(void) {
           "entry removal decrements private-slot metadata");
     bindings_free(&private_value);
 
+    {
+        CETTA_FRAME_IDENTITY_SCOPE(identities);
+        CettaFrameIdentity identity = cetta_frame_identity_scope_fresh(&identities);
+        VarId key = var_epoch_id(1u, identity);
+        BindingsBuilder slots;
+        Bindings retained;
+        CHECK(bindings_builder_init(&slots, NULL), "private slot fixture initialization");
+        uint32_t mark = bindings_builder_save(&slots);
+        CHECK(bindings_builder_add_id_fresh(&slots, key, SYMBOL_ID_NONE, nested_private) &&
+              slots.current.len == 0u && bindings_contains_private_variant_slots(&slots.current) &&
+              bindings_clone(&retained, &slots.current),
+              "private payloads live in framed slots and survive branch retention");
+        bindings_builder_rollback(&slots, mark);
+        CHECK(!bindings_has_bound_values(&slots.current) &&
+              !bindings_contains_private_variant_slots(&slots.current) &&
+              bindings_contains_private_variant_slots(&retained),
+              "rollback removes private slot state without altering a retained branch");
+        CHECK(bindings_rewrite_value_id(&retained, key, binding_value_from_atom(atom_int(&arena, 9))) &&
+              !bindings_contains_private_variant_slots(&retained),
+              "rewriting the last private payload clears its slot summary");
+        bindings_free(&retained);
+        bindings_builder_free(&slots);
+
+        Bindings imported;
+        bindings_init(&imported);
+        CHECK(bindings_add_id(&imported, test_id(4120u), SYMBOL_ID_NONE, atom_int(&arena, 1)) &&
+              bindings_add_id(&imported, test_id(4121u), SYMBOL_ID_NONE, atom_int(&arena, 2)) &&
+              bindings_prepare_logical_write(&imported), "prepare external key translation");
+        imported.entries[0].var_id = key;
+        imported.entries[1].var_id = key;
+        CHECK(bindings_invalidate_after_key_rewrite(&imported) && imported.len == 0u &&
+              binding_is_int(&imported, key, 2),
+              "external key translation consumes framed rows into one newest slot value");
+        CHECK(!bindings_add_id(&imported, key, SYMBOL_ID_NONE, atom_int(&arena, 3)) &&
+              binding_is_int(&imported, key, 2),
+              "ordinary framed insertion rejects an inconsistent duplicate");
+        bindings_free(&imported);
+    }
+
     Bindings private_constraint;
     bindings_init(&private_constraint);
     Atom *ordinary_var = atom_var(&arena, "ordinary-constraint-var");
@@ -3551,6 +5107,32 @@ int main(void) {
               bindings_contains_private_variant_slots(
                   &private_constraint_branch.current),
           "rollback rebuilds nonzero private-constraint metadata exactly");
+    BindingsBuilder private_constraint_clone;
+    BindingConstraint *shared_constraints =
+        private_constraint_branch.current.constraints;
+    Atom *source_constraint_lhs =
+        private_constraint_branch.current.constraints[0].lhs.skeleton;
+    Arena constraint_clone_owner;
+    arena_init(&constraint_clone_owner);
+    bool private_constraint_clone_ready = bindings_builder_clone(
+        &private_constraint_clone, &private_constraint_branch);
+    bool private_constraint_detached =
+        private_constraint_clone_ready &&
+        private_constraint_clone.current.constraints == shared_constraints &&
+        bindings_builder_promote_atoms_to_arena(
+            &private_constraint_clone, &constraint_clone_owner) &&
+        private_constraint_clone.current.constraints != shared_constraints &&
+        private_constraint_branch.current.constraints == shared_constraints &&
+        private_constraint_branch.current.constraints[0].lhs.skeleton ==
+            source_constraint_lhs &&
+        arena_owns_ptr(
+            &constraint_clone_owner,
+            private_constraint_clone.current.constraints[0].lhs.skeleton);
+    CHECK(private_constraint_detached,
+          "constraint promotion detaches one fork and preserves its sibling");
+    if (private_constraint_clone_ready)
+        bindings_builder_free(&private_constraint_clone);
+    arena_free(&constraint_clone_owner);
     bindings_builder_free(&private_constraint_branch);
     bindings_free(&private_constraint);
 
@@ -3571,14 +5153,16 @@ int main(void) {
     CHECK(shared_built &&
               bindings_promote_logical_atoms_to_arena(
                   &shared, &promoted_arena) &&
-              shared.entries[0].val == shared.entries[1].val &&
-              arena_owns_ptr(&promoted_arena, shared.entries[0].val),
+              bindings_entry_at(&shared, 0)->value.skeleton ==
+                  bindings_entry_at(&shared, 1)->value.skeleton &&
+              arena_owns_ptr(&promoted_arena,
+                             bindings_entry_at(&shared, 0)->value.skeleton),
           "one promotion session preserves shared DAG identity");
-    Atom *promoted_once = shared.entries[0].val;
+    Atom *promoted_once = bindings_entry_at(&shared, 0)->value.skeleton;
     CHECK(bindings_promote_logical_atoms_to_arena(
               &shared, &promoted_arena) &&
-              shared.entries[0].val == promoted_once &&
-              shared.entries[1].val == promoted_once,
+              bindings_entry_at(&shared, 0)->value.skeleton == promoted_once &&
+              bindings_entry_at(&shared, 1)->value.skeleton == promoted_once,
           "promotion reuses a destination-owned graph");
 
     Bindings occurrence_left;
@@ -3664,7 +5248,6 @@ int main(void) {
            passed + failed, passed, failed);
 
     bindings_free(&shared);
-    bindings_free(&legacy);
     bindings_free(&modern);
     arena_free(&promoted_arena);
     bindings_free(&removed);

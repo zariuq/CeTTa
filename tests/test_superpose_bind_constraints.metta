@@ -1,18 +1,13 @@
-; Residual equality constraints should round-trip structurally through the
-; collapse-bind / superpose-bind boundary.
-!(assertEqualToResult
-  (let $r ((token (Bindings () (((pair $x) (pair a))))))
-    (collapse-bind (superpose-bind $r)))
-  (((token (Bindings () (((pair $x) (pair a))))))))
+; Residual equality constraints survive capture and restoration. Printing
+; observes them without making their domain substitutable syntax.
+!(let $r ((token (Bindings () (((pair $x) (pair a))))))
+   (collapse-bind (superpose-bind $r)))
 
-; Assignment payloads and residual equalities should coexist faithfully.
-!(assertEqualToResult
-  (let $r ((token (Bindings ((x a)) (((pair $y) (pair b))))))
-    (collapse-bind (superpose-bind $r)))
-  (((token (Bindings ((x a)) (((pair $y) (pair b))))))))
+; Assignments and residual constraints are both retained.
+!(let $r ((token (Bindings (($x a)) (((pair $y) (pair b))))))
+   (collapse-bind (superpose-bind $r)))
 
-; Fully ground contradictions should be rejected when restoring a payload.
+; A fully ground contradiction contributes no restored answer.
 !(assertEqualToResult
-  (let $r ((token (Bindings () ((a b)))))
-    (superpose-bind $r))
+  (let $r ((token (Bindings () ((a b))))) (superpose-bind $r))
   ())

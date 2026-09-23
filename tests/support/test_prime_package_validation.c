@@ -1068,9 +1068,10 @@ int main(int argc, char **argv) {
             goto cleanup;
         }
     }
-    Atom *deep_binding_resolved = bindings_resolve_atom_preview(
-        &deep_binding_chain, deep_binding_vars[0]);
-    if (deep_binding_resolved != deep_binding_leaf ||
+    BindingValue deep_binding_resolved;
+    if (!bindings_resolve_value_preview(
+            &deep_binding_chain, binding_value_from_atom(deep_binding_vars[0]), &deep_binding_resolved) ||
+        deep_binding_resolved.skeleton != deep_binding_leaf ||
         bindings_has_loop(&deep_binding_chain)) {
         fprintf(stderr, "acyclic binding traversal failed above depth 512\n");
         bindings_free(&deep_binding_chain);
@@ -1085,7 +1086,18 @@ int main(int argc, char **argv) {
     Atom *cycle_expr = atom_expr2(
         &arena, atom_symbol(&arena, "Cycle"), cycle_left);
     if (!bindings_add_var(&cyclic_bindings, cycle_left, cycle_right) ||
-        !bindings_add_var(&cyclic_bindings, cycle_right, cycle_expr) ||
+        bindings_add_var(&cyclic_bindings, cycle_right, cycle_expr) ||
+        bindings_has_loop(&cyclic_bindings)) {
+        fprintf(stderr, "closing bind was not refused\n");
+        bindings_free(&cyclic_bindings);
+        goto cleanup;
+    }
+    /* A cyclic environment can still arrive from outside the bind paths; the
+     * matchers' guard against it is exercised on one built by rewrite. */
+    if (!bindings_add_var(&cyclic_bindings, cycle_right, deep_binding_leaf) ||
+        !bindings_rewrite_value_id(
+            &cyclic_bindings, cycle_right->var_id,
+            binding_value_from_atom(cycle_expr)) ||
         !bindings_has_loop(&cyclic_bindings)) {
         fprintf(stderr, "binding cycle was not detected\n");
         bindings_free(&cyclic_bindings);
@@ -1138,7 +1150,7 @@ int main(int argc, char **argv) {
         bindings_add_id_acyclic(
             &guarded_bindings, cycle_right->var_id,
             cycle_right->sym_id, cycle_expr) ||
-        bindings_lookup_id(&guarded_bindings, cycle_right->var_id) != NULL ||
+        bindings_lookup_value_id(&guarded_bindings, cycle_right->var_id).skeleton != NULL ||
         bindings_has_loop(&guarded_bindings)) {
         fprintf(stderr, "indirect occurs check was not atomic\n");
         bindings_free(&guarded_bindings);
@@ -1147,8 +1159,9 @@ int main(int argc, char **argv) {
     if (!bindings_add_id_acyclic(
             &guarded_bindings, cycle_right->var_id,
             cycle_right->sym_id, deep_binding_leaf) ||
-        bindings_resolve_atom_preview(
-            &guarded_bindings, cycle_left) != deep_binding_leaf ||
+        !bindings_resolve_value_preview(
+            &guarded_bindings, binding_value_from_atom(cycle_left), &deep_binding_resolved) ||
+        deep_binding_resolved.skeleton != deep_binding_leaf ||
         bindings_has_loop(&guarded_bindings)) {
         fprintf(stderr, "acyclic guarded binding was rejected\n");
         bindings_free(&guarded_bindings);

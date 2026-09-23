@@ -1,4 +1,4 @@
-; Clause-body activation is an experimental derived Bindings view.  These
+; Equation-body activation is an experimental derived Bindings view.  These
 ; cases protect the authoritative materialized path at contextual binders,
 ; authored translator rules, and recursive chains.  The separate
 ; recursive_chain_division example and benchmark own the depth ladder.

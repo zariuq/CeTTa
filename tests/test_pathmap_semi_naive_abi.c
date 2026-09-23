@@ -58,9 +58,9 @@ typedef struct {
 
 static bool check_join_row(const Bindings *bindings, void *ctx_ptr) {
     RowWitness *ctx = ctx_ptr;
-    Atom *x = bindings_lookup_id((Bindings *)bindings, ctx->x);
-    Atom *y = bindings_lookup_id((Bindings *)bindings, ctx->y);
-    Atom *z = bindings_lookup_id((Bindings *)bindings, ctx->z);
+    Atom *x = bindings_lookup_value_id((Bindings *)bindings, ctx->x).skeleton;
+    Atom *y = bindings_lookup_value_id((Bindings *)bindings, ctx->y).skeleton;
+    Atom *z = bindings_lookup_value_id((Bindings *)bindings, ctx->z).skeleton;
     assert(x && x->kind == ATOM_SYMBOL && x->sym_id == ctx->a);
     assert(y && y->kind == ATOM_SYMBOL && y->sym_id == ctx->b);
     assert(z && z->kind == ATOM_SYMBOL && z->sym_id == ctx->c);
@@ -91,8 +91,8 @@ static CettaIndex closure_node_index(const ClosureWitness *ctx,
 
 static bool collect_closure_row(const Bindings *bindings, void *ctx_ptr) {
     ClosureWitness *ctx = ctx_ptr;
-    Atom *from = bindings_lookup_id((Bindings *)bindings, ctx->from);
-    Atom *to = bindings_lookup_id((Bindings *)bindings, ctx->to);
+    Atom *from = bindings_lookup_value_id((Bindings *)bindings, ctx->from).skeleton;
+    Atom *to = bindings_lookup_value_id((Bindings *)bindings, ctx->to).skeleton;
     CettaIndex from_idx;
     CettaIndex to_idx;
 

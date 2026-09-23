@@ -13,6 +13,22 @@ void space_match_backend_init(Space *s) {
     s->match_backend.kind = SPACE_ENGINE_NATIVE;
 }
 
+/* This standalone fixture does not provide native cursor execution. */
+void space_match_native_ensure_trie(Space *s) {
+    (void)s;
+    assert(false && "unexpected native cursor execution in standalone fixture");
+}
+
+void space_match_native_pin_trie(Space *s) {
+    (void)s;
+    assert(false && "unexpected native cursor pin in standalone fixture");
+}
+
+void space_match_native_unpin_trie(Space *s) {
+    (void)s;
+    assert(false && "unexpected native cursor release in standalone fixture");
+}
+
 void space_match_backend_free(Space *s) {
     (void)s;
 }
@@ -999,6 +1015,13 @@ int main(void) {
             &equation_space, source_head, &invalidated_cursor));
         space_add(&equation_space,
                   atom_symbol(&equation_scratch, "cursor-mutation"));
+        /* Appending preserves the captured prefix and its occurrence ceiling. */
+        assert(space_equation_cursor_next(
+                   &invalidated_cursor, &cursor_id) ==
+               SPACE_EQUATION_CURSOR_ITEM);
+        assert(cursor_id.logical_index == 0u);
+        assert(space_remove(&equation_space,
+                            atom_symbol(&equation_scratch, "cursor-mutation")));
         assert(space_equation_cursor_next(
                    &invalidated_cursor, &cursor_id) ==
                SPACE_EQUATION_CURSOR_INVALIDATED);
@@ -1065,9 +1088,9 @@ int main(void) {
         assert(!space_read_token_is_current(occurrence_read));
         assert(!space_read_token_matches_live_space(
             occurrence_read, &occurrence_space));
-        assert(!space_equation_occurrence_resolve(first_id,
-                                                  &first_occurrence));
-        assert(first_occurrence.equation == NULL);
+        assert(space_equation_occurrence_resolve(first_id,
+                                                 &first_occurrence));
+        assert(atom_eq(first_occurrence.equation, source_equation));
         SpaceReadToken current_read = space_read_token(&occurrence_space);
         SpaceEquationOccurrenceId non_equation_id = {
             .read = current_read,
@@ -1081,6 +1104,10 @@ int main(void) {
         };
         assert(!space_equation_occurrence_resolve(out_of_range_id,
                                                   &first_occurrence));
+        assert(space_remove(&occurrence_space, source_equation));
+        assert(!space_equation_occurrence_resolve(first_id,
+                                                  &first_occurrence));
+        assert(first_occurrence.equation == NULL);
         space_free(&occurrence_space);
         space_init_with_universe(&occurrence_space, &equation_universe);
         assert(space_instance_id(&occurrence_space) != occurrence_instance);

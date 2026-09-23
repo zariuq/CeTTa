@@ -1,4 +1,4 @@
-; SWI-PeTTa-derived conformance observations, including root and clause-body
+; SWI-PeTTa-derived conformance observations, including root and equation-body
 ; placement. These formerly pending cases run in the constructor gate.
 (= (list-value:absent present) unused)
 (= (list-value:zero-call) (LCons (list-value:absent missing) LNil))

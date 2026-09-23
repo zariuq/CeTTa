@@ -985,6 +985,8 @@ static PyObject *python_from_atom(Arena *a, Atom *atom, bool unwrap) {
             return PyLong_FromString((char *)atom_bigint_cstr(atom), NULL, 10);
         case GV_RATIONAL:
             return python_fraction_from_atom(atom);
+        case GV_BINDINGS:
+            return python_wrap_atom(atom, a);
         case GV_FOREIGN: {
             CettaForeignValue *value = (CettaForeignValue *)atom->ground.ptr;
             if (value && value->backend == CETTA_FOREIGN_BACKEND_PYTHON) {
