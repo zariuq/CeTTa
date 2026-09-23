@@ -1,6 +1,6 @@
-; A relation call retains the clause occurrences visible when the call begins.
-; Its first clause removes the second occurrence and adds a third; the active
-; call still completes the removed clause and cannot see the new one.
+; A relation call retains the equation occurrences visible when the call begins.
+; Its first equation removes the second occurrence and adds a third; the active
+; call still completes the removed equation and cannot see the new one.
 (= (logical-update-call)
    (let* (($removed
              (remove-atom &self

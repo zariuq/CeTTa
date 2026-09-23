@@ -4585,7 +4585,7 @@ int main(void) {
         bindings_builder_free(&view_reference);
     bindings_free(&view_base);
 
-    /* A direct clause frame gives standardized rule variables ownership of
+    /* A direct equation activation frame gives standardized rule variables ownership of
      * otherwise unconstrained aliases.  This is the query-visible normal
      * form used by the isolated equation matcher, obtained without building
      * and projecting a temporary environment. */
@@ -4603,7 +4603,7 @@ int main(void) {
               bindings_lookup_value_id(&slot_alias.current, var_epoch_id(slot_rule->var_id, slot_epoch)).skeleton ==
                   slot_outer &&
               bindings_lookup_value_id(&slot_alias.current, slot_outer->var_id).skeleton == NULL,
-          "clause-frame variable aliases point from rule slots to caller variables");
+          "equation-activation-frame variable aliases point from rule slots to caller variables");
     if (slot_alias_ready)
         bindings_builder_free(&slot_alias);
 
@@ -4636,7 +4636,7 @@ int main(void) {
               var_epoch_suffix(
                   slot_structured_observed->expr.elems[2]->var_id) ==
                   slot_epoch,
-          "clause-frame matching retains a caller's structured rule value");
+          "equation-activation-frame matching retains a caller's structured rule value");
     if (slot_structured_ready)
         bindings_builder_free(&slot_structured);
 
@@ -4688,7 +4688,7 @@ int main(void) {
                   slot_cycle_call, slot_cycle_rule,
                   &slot_cycle, &arena, slot_epoch) &&
               !bindings_has_loop(&slot_cycle.current),
-          "clause-frame orientation refuses a cyclic substitution at the bind");
+          "equation-activation-frame orientation refuses a cyclic substitution at the bind");
     if (slot_cycle_ready)
         bindings_builder_free(&slot_cycle);
 

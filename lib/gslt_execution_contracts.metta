@@ -312,7 +312,7 @@
   (pattern-kind atom)
   (pattern-kind expression)
   (selection-judgment whnf-disjoint)
-  (state (call-frame $head $arguments select-clause))
+  (state (call-frame $head $arguments select-equation))
   (state (call-frame $head $arguments demand-argument))
   (state (call-frame $head $arguments execute-body))
   (state (call-frame $head $arguments return-value))
@@ -325,7 +325,7 @@
   (rule demand-from-pattern
     (implies
       (= (call-mode $composition) call-by-need)
-      (= (next-call-phase $call) select-clause)))
+      (= (next-call-phase $call) select-equation)))
   (rule eager-constructor-congruence
     (implies
       (= (call-mode $composition) eager)
@@ -336,7 +336,7 @@
       (= (call-mode $composition) call-by-need)
       (= (constructor-children $value)
          (map suspend (constructor-children $value)))))
-  (rule unique-clause
+  (rule unique-equation
     (implies
       (all-evidence revision-current ground-call
                     pure-head unique-match)

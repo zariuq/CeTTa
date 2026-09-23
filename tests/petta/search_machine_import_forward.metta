@@ -1,4 +1,4 @@
-; Parsing predeclares authored equation heads without installing their clauses.
+; Parsing predeclares authored equation heads without installing their equations.
 ; This imported body can therefore call a relation declared later in this
 ; document, matching PeTTa's two-pass source semantics.
 !(import! &self fixtures/import_forward)

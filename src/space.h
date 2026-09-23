@@ -347,7 +347,7 @@ bool space_equation_occurrence_resolve(SpaceEquationOccurrenceId id,
  * Revision-pinned, declaration-order cursor over equations whose left-hand
  * side may match a known call head.  Native spaces merge the exact-head and
  * wildcard index streams by logical occurrence index, preserving duplicate
- * clauses and source order without scanning unrelated heads.  Overlay spaces
+ * equations and source order without scanning unrelated heads.  Overlay spaces
  * use the complete logical view as the correctness fallback.
  */
 typedef struct {
@@ -375,15 +375,20 @@ SpaceEquationCursorStep space_equation_cursor_next(
  * Revision-qualified zipper over matching discrimination-trie leaves.
  * Pin a read token, prefix epoch, and occurrence ceiling at init; `next`
  * yields logical indices in declaration order without copying the bag.
- * Appends at or after the ceiling are invisible.  A prefix rewrite
- * (prefix_epoch change) invalidates the pin.  Release exactly once.
+ * Appends at or after the ceiling are invisible.  A removal while the pin
+ * is live leaves the cursor draining the rows it captured, while the Space
+ * itself shows only the survivors; any other prefix rewrite invalidates the
+ * pin.  Read a yielded index through space_occurrence_cursor_atom.  Release
+ * exactly once.  Each cursor is confined to its reader.  Operations on its
+ * shared occurrence view use the shared transition domain in concurrent
+ * evaluation scopes, including clone and release outside a caller guard.
  */
 typedef struct {
     SpaceReadToken read;
     uint64_t prefix_epoch;
-    uint64_t pin_generation;
     CettaIndex ceiling;
     Space *space;
+    SpacePinnedOccurrences *occurrences;
     DiscNode **nodes;
     CettaIndex *leaf_pos;
     uint32_t node_len;
@@ -406,13 +411,15 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
 bool space_occurrence_cursor_clone_unstarted(
     const SpaceOccurrenceCursor *src, SpaceOccurrenceCursor *dst);
 /* Clone the exact logical-update position of a live cursor.  The clone owns
- * an independent pin and traversal arrays while observing the same prefix,
- * ceiling, tombstone generation, and next occurrence as the source. */
+ * an independent pin and traversal arrays while observing the same captured
+ * rows, ceiling, and next occurrence as the source. */
 bool space_occurrence_cursor_clone(
     const SpaceOccurrenceCursor *src, SpaceOccurrenceCursor *dst);
-void space_reclaim_pin_tombstones(Space *s);
 SpaceOccurrenceCursorStep space_occurrence_cursor_next(
     SpaceOccurrenceCursor *cursor, CettaIndex *logical_index_out);
+/* The atom at an index the cursor yielded, from the rows it captured. */
+Atom *space_occurrence_cursor_atom(const SpaceOccurrenceCursor *cursor,
+                                   CettaIndex index);
 void space_occurrence_cursor_release(SpaceOccurrenceCursor *cursor);
 
 bool space_contains_exact(Space *s, Atom *atom);
@@ -581,6 +588,10 @@ typedef enum {
 
 bool space_head_has_arrow_signature(Space *s, SymbolId head,
                                     CettaExprLen arity);
+/* Whether any type annotation names the head, whatever its type or arity.
+ * A dialect that type-checks calls does so for such a head even at an arity
+ * no signature covers. */
+bool space_head_declares_type(Space *s, SymbolId head);
 bool space_prepare_single_equation(Space *s, SymbolId head,
                                    SpacePreparedEquation *out);
 Atom *space_prepared_equation_instantiate_ground(

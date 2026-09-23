@@ -18,7 +18,7 @@
 
 !(forward-left)
 
-; Removing the final live clause unregisters the callable.  A source
+; Removing the final live equation unregisters the callable.  A source
 ; occurrence compiled from the document's predeclared head must then return
 ; to inert-data behavior rather than becoming search failure.
 (= (removed-head) present)

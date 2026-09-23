@@ -76,21 +76,10 @@ typedef struct {
     size_t cap;
 } PettaVarVector;
 
-typedef struct {
-    Atom *atom;
-    bool under_callable_argument;
-} PettaRelationRelevanceItem;
-
-typedef struct {
-    PettaRelationRelevanceItem *items;
-    size_t len;
-    size_t cap;
-} PettaRelationRelevanceStack;
-
 typedef enum {
     PETTA_RELATION_RELEVANCE_UNKNOWN = 0,
     PETTA_RELATION_RELEVANCE_IRRELEVANT,
-    PETTA_RELATION_RELEVANCE_POSSIBLE,
+    PETTA_RELATION_RELEVANCE_CERTAIN,
 } PettaRelationRelevance;
 
 typedef struct {
@@ -204,10 +193,11 @@ struct PettaSpecializerSemanticCache {
         named_arity[PETTA_NAMED_ARITY_CACHE_SLOTS];
 };
 
+/* Relevance reads equations and callable declarations only, so the program
+ * token, not every data mutation, qualifies a stored fact. */
 typedef struct {
-    Space *space;
-    uint64_t space_instance;
-    uint64_t revision;
+    SpaceProgramToken program;
+    uint64_t symbol_table_instance;
     SymbolId source;
     PettaRelationRelevance relevance;
     bool used;
@@ -1036,12 +1026,13 @@ static PeTTaNamedArity petta_specializer_named_arity(
 }
 
 static size_t petta_relation_relevance_cache_index(
-    Space *space, uint64_t instance, uint64_t revision,
-    SymbolId source) {
+    SpaceProgramToken program, SymbolId source) {
     uint64_t mixed =
-        ((uint64_t)(uintptr_t)space >> 4u) ^
-        (instance * UINT64_C(0x9e3779b97f4a7c15)) ^
-        (revision * UINT64_C(0xbf58476d1ce4e5b9)) ^
+        ((uint64_t)(uintptr_t)program.space >> 4u) ^
+        (program.instance_id * UINT64_C(0x9e3779b97f4a7c15)) ^
+        (program.equation_revision * UINT64_C(0xbf58476d1ce4e5b9)) ^
+        (program.declaration_revision * UINT64_C(0xd6e8feb86659fd93)) ^
+        (program.base_dependency_epoch * UINT64_C(0xa0761d6478bd642f)) ^
         ((uint64_t)source * UINT64_C(0x94d049bb133111eb));
     mixed ^= mixed >> 30u;
     mixed *= UINT64_C(0xbf58476d1ce4e5b9);
@@ -1051,19 +1042,20 @@ static size_t petta_relation_relevance_cache_index(
 }
 
 static bool petta_relation_relevance_cache_lookup(
-    Space *space, uint64_t instance, uint64_t revision,
-    SymbolId source, PettaRelationRelevance *relevance) {
+    SpaceProgramToken program, SymbolId source,
+    PettaRelationRelevance *relevance) {
     if (relevance)
         *relevance = PETTA_RELATION_RELEVANCE_UNKNOWN;
-    if (!space || source == SYMBOL_ID_NONE || !relevance)
+    if (!program.space || source == SYMBOL_ID_NONE || !relevance ||
+        !g_symbols)
         return false;
     PettaRelationRelevanceCacheSlot *slot =
         &g_petta_relation_relevance_cache[
-            petta_relation_relevance_cache_index(
-                space, instance, revision, source)];
-    if (!slot->used || slot->space != space ||
-        slot->space_instance != instance ||
-        slot->revision != revision ||
+            petta_relation_relevance_cache_index(program, source)];
+    if (!slot->used ||
+        !space_program_token_eq(slot->program, program) ||
+        slot->symbol_table_instance !=
+            symbol_table_instance_id(g_symbols) ||
         slot->source != source) {
         return false;
     }
@@ -1072,21 +1064,19 @@ static bool petta_relation_relevance_cache_lookup(
 }
 
 static void petta_relation_relevance_cache_store(
-    Space *space, uint64_t instance, uint64_t revision,
-    SymbolId source, PettaRelationRelevance relevance) {
-    if (!space || source == SYMBOL_ID_NONE ||
+    SpaceProgramToken program, SymbolId source,
+    PettaRelationRelevance relevance) {
+    if (!program.space || source == SYMBOL_ID_NONE || !g_symbols ||
         (relevance != PETTA_RELATION_RELEVANCE_IRRELEVANT &&
-         relevance != PETTA_RELATION_RELEVANCE_POSSIBLE)) {
+         relevance != PETTA_RELATION_RELEVANCE_CERTAIN)) {
         return;
     }
     PettaRelationRelevanceCacheSlot *slot =
         &g_petta_relation_relevance_cache[
-            petta_relation_relevance_cache_index(
-                space, instance, revision, source)];
+            petta_relation_relevance_cache_index(program, source)];
     *slot = (PettaRelationRelevanceCacheSlot){
-        .space = space,
-        .space_instance = instance,
-        .revision = revision,
+        .program = program,
+        .symbol_table_instance = symbol_table_instance_id(g_symbols),
         .source = source,
         .relevance = relevance,
         .used = true,
@@ -1423,85 +1413,195 @@ static bool petta_collect_pattern_variables(
     return ok;
 }
 
-static PettaRelationRelevance
-petta_relation_body_relevance(
-    PettaSpecializerContext *context, Atom *root,
-    const PettaVarVector *pattern_variables) {
-    if (!context || !root || !pattern_variables)
-        return PETTA_RELATION_RELEVANCE_UNKNOWN;
-    PettaRelationRelevanceStack stack = {0};
-    if (!petta_reserve(
-            (void **)&stack.items, &stack.cap, 1u,
-            sizeof(*stack.items))) {
-        return PETTA_RELATION_RELEVANCE_UNKNOWN;
-    }
-    stack.items[stack.len++] = (PettaRelationRelevanceItem){
-        .atom = root,
-    };
+static bool petta_atom_contains_any_variable(
+    Atom *root, const PettaVarVector *variables, bool *contains) {
+    *contains = false;
+    PettaAtomVector stack = {0};
+    if (!petta_atom_vector_push(&stack, root))
+        return false;
     while (stack.len > 0u) {
-        PettaRelationRelevanceItem item =
-            stack.items[--stack.len];
-        Atom *atom = item.atom;
-        if (!atom) {
-            free(stack.items);
-            return PETTA_RELATION_RELEVANCE_UNKNOWN;
-        }
+        Atom *atom = stack.items[--stack.len];
         if (atom->kind == ATOM_VAR) {
-            if (item.under_callable_argument &&
-                petta_var_vector_contains(
-                    pattern_variables, atom->var_id)) {
-                free(stack.items);
-                return PETTA_RELATION_RELEVANCE_POSSIBLE;
+            if (petta_var_vector_contains(variables, atom->var_id)) {
+                *contains = true;
+                break;
             }
             continue;
         }
+        if (atom->kind != ATOM_EXPR)
+            continue;
+        for (CettaExprIndex index = 0u;
+             index < atom->expr.len; index++) {
+            if (!petta_atom_vector_push(
+                    &stack, atom->expr.elems[index])) {
+                free(stack.items);
+                return false;
+            }
+        }
+    }
+    free(stack.items);
+    return true;
+}
+
+/*
+ * One equation body, read the way the derivation reads it.  A candidate
+ * becomes productive only through a pattern variable applied as a dynamic
+ * head (`direct`), or through a pattern variable carried into an argument
+ * of a callable form whose head has source equations, when that callee is
+ * itself productive (`forwards`).  Carrying a variable into a callable
+ * without source equations, such as a grounded operation, can mark a
+ * candidate but never makes it productive: the derivation analyzes children
+ * only through `space_equations_may_match_known_head`.
+ */
+static bool petta_relation_body_facts(
+    PettaSpecializerContext *context, Atom *root,
+    const PettaVarVector *pattern_variables,
+    bool *direct, PettaSymbolVector *forwards) {
+    *direct = false;
+    PettaAtomVector stack = {0};
+    if (!petta_atom_vector_push(&stack, root))
+        return false;
+    bool ok = true;
+    while (ok && stack.len > 0u) {
+        Atom *atom = stack.items[--stack.len];
+        if (!atom) {
+            ok = false;
+            break;
+        }
         if (atom->kind != ATOM_EXPR || atom->expr.len == 0u)
             continue;
-
         Atom *head = atom->expr.elems[0];
         if (head && head->kind == ATOM_VAR &&
             petta_var_vector_contains(
                 pattern_variables, head->var_id)) {
-            free(stack.items);
-            return PETTA_RELATION_RELEVANCE_POSSIBLE;
+            *direct = true;
+            break;
         }
-        bool callable =
-            atom->expr.len > 1u && head &&
+        if (atom->expr.len > 1u && head &&
             head->kind == ATOM_SYMBOL &&
-            petta_symbol_is_callable(
-                context, head->sym_id);
-        if ((size_t)atom->expr.len >
-                SIZE_MAX - stack.len ||
-            !petta_reserve(
-                (void **)&stack.items, &stack.cap,
-                stack.len + (size_t)atom->expr.len,
-                sizeof(*stack.items))) {
-            free(stack.items);
-            return PETTA_RELATION_RELEVANCE_UNKNOWN;
+            petta_symbol_is_callable(context, head->sym_id) &&
+            space_equations_may_match_known_head(
+                context->space, head->sym_id)) {
+            bool carries = false;
+            for (CettaExprIndex index = 1u;
+                 ok && !carries && index < atom->expr.len; index++) {
+                ok = petta_atom_contains_any_variable(
+                    atom->expr.elems[index], pattern_variables,
+                    &carries);
+            }
+            if (ok && carries)
+                ok = petta_symbol_vector_push_unique(
+                    forwards, head->sym_id);
         }
-        for (CettaExprIndex index = atom->expr.len;
-             index > 0u; index--) {
-            CettaExprIndex child = index - 1u;
-            stack.items[stack.len++] =
-                (PettaRelationRelevanceItem){
-                    .atom = atom->expr.elems[child],
-                    .under_callable_argument =
-                        item.under_callable_argument ||
-                        (callable && child > 0u),
-                };
+        for (CettaExprIndex index = 0u;
+             ok && index < atom->expr.len; index++) {
+            ok = petta_atom_vector_push(
+                &stack, atom->expr.elems[index]);
         }
     }
     free(stack.items);
-    return PETTA_RELATION_RELEVANCE_IRRELEVANT;
+    return ok;
+}
+
+typedef struct {
+    SymbolId symbol;
+    bool direct;
+    bool unknown;
+    bool cached;
+    bool possible;
+    bool certain;
+    PettaSymbolVector forwards;
+} PettaRelationRelevanceNode;
+
+enum { PETTA_RELATION_RELEVANCE_NODE_LIMIT = 4096 };
+
+static size_t petta_relation_relevance_node_find(
+    const PettaRelationRelevanceNode *nodes, size_t len,
+    SymbolId symbol) {
+    for (size_t index = 0u; index < len; index++) {
+        if (nodes[index].symbol == symbol)
+            return index;
+    }
+    return SIZE_MAX;
+}
+
+/* Read every source equation of one relation into its node. */
+static bool petta_relation_relevance_node_scan(
+    PettaSpecializerContext *context,
+    PettaRelationRelevanceNode *node, bool *saw_equation) {
+    *saw_equation = false;
+    SpaceEquationCursor cursor;
+    if (!space_equation_cursor_init(
+            context->space, node->symbol, &cursor)) {
+        node->unknown = true;
+        return true;
+    }
+    for (;;) {
+        SpaceEquationOccurrenceId id;
+        SpaceEquationCursorStep step =
+            space_equation_cursor_next(&cursor, &id);
+        if (step == SPACE_EQUATION_CURSOR_END)
+            return true;
+        if (step == SPACE_EQUATION_CURSOR_INVALIDATED) {
+            context->invalidated = true;
+            return false;
+        }
+        SpaceEquationOccurrence occurrence;
+        if (!space_equation_occurrence_resolve(id, &occurrence)) {
+            context->invalidated = true;
+            return false;
+        }
+        if (!occurrence.lhs || !occurrence.rhs ||
+            occurrence.lhs->kind != ATOM_EXPR ||
+            occurrence.lhs->expr.len == 0u ||
+            !atom_is_symbol_id(
+                occurrence.lhs->expr.elems[0], node->symbol)) {
+            continue;
+        }
+        *saw_equation = true;
+        PettaVarVector variables = {0};
+        bool direct = false;
+        bool scanned =
+            petta_collect_pattern_variables(
+                occurrence.lhs, &variables) &&
+            petta_relation_body_facts(
+                context, occurrence.rhs, &variables,
+                &direct, &node->forwards);
+        free(variables.items);
+        if (!scanned) {
+            node->unknown = true;
+            return true;
+        }
+        if (direct) {
+            node->direct = true;
+            return true;
+        }
+    }
 }
 
 /*
- * A relation whose source-pattern variables never occur as a dynamic head
- * and never flow into an argument of any callable form cannot select a
- * higher-order specialization for any concrete call.  This is a one-way
- * proof: uncertainty and every positive occurrence retain the ordinary
- * per-call analysis.  The exact Space revision is part of the cache key so a
- * new equation or callable type declaration invalidates the conclusion.
+ * A relation is relevant to specialization when some ready call could make
+ * a derivation productive.  The derivation is productive exactly when a
+ * chain of forwards through equation-backed callees ends at a dynamic-head
+ * application; recursion back into a relation already under analysis adds
+ * nothing.  So relevance is the least fixed point of
+ *
+ *     relevant(R) <=> direct(R) or exists S in forwards(R). relevant(S)
+ *
+ * over the relations reachable from `source`.  A non-productive candidate
+ * leaves only a negative record, which changes no execution, so the
+ * relations outside the fixed point are irrelevant.  A body that could not
+ * be read may hide a dynamic-head application, so two fixed points are
+ * computed.  `possible` is seeded also by unreadable bodies; on the explored
+ * relations it holds exactly when some chain ends at a dynamic-head
+ * application or an unreadable body, whichever source the exploration
+ * started from, so a relation outside it is certified irrelevant.  `certain`
+ * is seeded only by applications seen: reading stops at the first
+ * application or unreadable body, so an application behind an unreadable
+ * body goes unseen, and a relation in `possible` but not in `certain` is
+ * reported unknown and never stored.  A stored class stands in for its
+ * relation's subgraph and is keyed by the program token, so a new equation
+ * or callable declaration invalidates it.
  */
 static PettaRelationRelevance
 petta_relation_specialization_relevance(
@@ -1510,71 +1610,143 @@ petta_relation_specialization_relevance(
         source == SYMBOL_ID_NONE) {
         return PETTA_RELATION_RELEVANCE_UNKNOWN;
     }
-    uint64_t instance = space_instance_id(context->space);
-    uint64_t revision = space_revision(context->space);
+    SpaceProgramToken program = space_program_token(context->space);
     PettaRelationRelevance cached =
         PETTA_RELATION_RELEVANCE_UNKNOWN;
-    if (petta_relation_relevance_cache_lookup(
-            context->space, instance, revision, source,
-            &cached))
+    if (petta_relation_relevance_cache_lookup(program, source, &cached))
         return cached;
 
-    SpaceEquationCursor cursor;
-    if (!space_equation_cursor_init(
-            context->space, source, &cursor)) {
-        return PETTA_RELATION_RELEVANCE_UNKNOWN;
-    }
-    bool saw_equation = false;
-    for (;;) {
-        SpaceEquationOccurrenceId id;
-        SpaceEquationCursorStep step =
-            space_equation_cursor_next(&cursor, &id);
-        if (step == SPACE_EQUATION_CURSOR_END)
-            break;
-        if (step == SPACE_EQUATION_CURSOR_INVALIDATED) {
-            context->invalidated = true;
-            return PETTA_RELATION_RELEVANCE_UNKNOWN;
-        }
-        SpaceEquationOccurrence occurrence;
-        if (!space_equation_occurrence_resolve(
-                id, &occurrence)) {
-            context->invalidated = true;
-            return PETTA_RELATION_RELEVANCE_UNKNOWN;
-        }
-        if (!occurrence.lhs || !occurrence.rhs ||
-            occurrence.lhs->kind != ATOM_EXPR ||
-            occurrence.lhs->expr.len == 0u ||
-            !atom_is_symbol_id(
-                occurrence.lhs->expr.elems[0], source)) {
+    PettaRelationRelevanceNode *nodes = NULL;
+    size_t len = 0u;
+    size_t cap = 0u;
+    PettaRelationRelevance result = PETTA_RELATION_RELEVANCE_UNKNOWN;
+    bool ok = petta_reserve(
+        (void **)&nodes, &cap, 1u, sizeof(*nodes));
+    bool source_has_equation = false;
+    if (ok)
+        nodes[len++] = (PettaRelationRelevanceNode){.symbol = source};
+    for (size_t next = 0u; ok && next < len; next++) {
+        /* A stored callee fact is already this fixed point's answer. */
+        if (nodes[next].cached)
             continue;
+        bool saw_equation = false;
+        if (!petta_relation_relevance_node_scan(
+                context, &nodes[next], &saw_equation)) {
+            ok = false;
+            break;
         }
-        saw_equation = true;
-        PettaVarVector variables = {0};
-        bool collected = petta_collect_pattern_variables(
-            occurrence.lhs, &variables);
-        PettaRelationRelevance relevance = collected
-            ? petta_relation_body_relevance(
-                  context, occurrence.rhs, &variables)
-            : PETTA_RELATION_RELEVANCE_UNKNOWN;
-        free(variables.items);
-        if (relevance != PETTA_RELATION_RELEVANCE_IRRELEVANT) {
-            if (relevance == PETTA_RELATION_RELEVANCE_POSSIBLE &&
-                space_revision(context->space) == revision) {
-                petta_relation_relevance_cache_store(
-                    context->space, instance, revision,
-                    source, relevance);
+        if (next == 0u)
+            source_has_equation = saw_equation;
+        if (nodes[next].direct || nodes[next].unknown)
+            continue;
+        for (size_t index = 0u;
+             ok && index < nodes[next].forwards.len; index++) {
+            SymbolId callee = nodes[next].forwards.items[index];
+            if (petta_relation_relevance_node_find(
+                    nodes, len, callee) != SIZE_MAX)
+                continue;
+            PettaRelationRelevance known =
+                PETTA_RELATION_RELEVANCE_UNKNOWN;
+            if (len >= PETTA_RELATION_RELEVANCE_NODE_LIMIT ||
+                !petta_reserve(
+                    (void **)&nodes, &cap, len + 1u,
+                    sizeof(*nodes))) {
+                ok = false;
+                break;
             }
-            return relevance;
+            nodes[len] = (PettaRelationRelevanceNode){.symbol = callee};
+            if (petta_relation_relevance_cache_lookup(
+                    program, callee, &known)) {
+                nodes[len].direct =
+                    known == PETTA_RELATION_RELEVANCE_CERTAIN;
+                nodes[len].cached = true;
+            }
+            len++;
         }
     }
-    if (!saw_equation ||
-        space_revision(context->space) != revision) {
-        return PETTA_RELATION_RELEVANCE_UNKNOWN;
+
+    if (ok && source_has_equation &&
+        space_program_token_eq(
+            space_program_token(context->space), program)) {
+        /* Two least fixed points: `possible` treats unreadable bodies as
+         * relevant; `certain` asks whether relevance holds without them. */
+        for (size_t index = 0u; index < len; index++) {
+            nodes[index].possible =
+                nodes[index].direct || nodes[index].unknown;
+            nodes[index].certain = nodes[index].direct;
+        }
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            for (size_t index = 0u; index < len; index++) {
+                PettaRelationRelevanceNode *node = &nodes[index];
+                for (size_t edge = 0u;
+                     edge < node->forwards.len; edge++) {
+                    size_t target = petta_relation_relevance_node_find(
+                        nodes, len, node->forwards.items[edge]);
+                    if (target == SIZE_MAX)
+                        continue;
+                    if (!node->possible && nodes[target].possible) {
+                        node->possible = true;
+                        changed = true;
+                    }
+                    if (!node->certain && nodes[target].certain) {
+                        node->certain = true;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        for (size_t index = 0u; index < len; index++) {
+            PettaRelationRelevance relevance =
+                nodes[index].certain
+                    ? PETTA_RELATION_RELEVANCE_CERTAIN
+                    : nodes[index].possible
+                        ? PETTA_RELATION_RELEVANCE_UNKNOWN
+                        : PETTA_RELATION_RELEVANCE_IRRELEVANT;
+            if (index == 0u)
+                result = relevance;
+            if (!nodes[index].cached)
+                petta_relation_relevance_cache_store(
+                    program, nodes[index].symbol, relevance);
+        }
     }
-    petta_relation_relevance_cache_store(
-        context->space, instance, revision, source,
-        PETTA_RELATION_RELEVANCE_IRRELEVANT);
-    return PETTA_RELATION_RELEVANCE_IRRELEVANT;
+    for (size_t index = 0u; index < len; index++)
+        free(nodes[index].forwards.items);
+    free(nodes);
+    return result;
+}
+
+/*
+ * The relation-side factor of the admission conjunction.  It is a program
+ * fact, so it is read before any query inspection: after its first
+ * computation for a program token, every call of the relation is answered
+ * from the cache without a scratch arena or an argument walk.  A cursor
+ * invalidated during the computation is reported, never cached.
+ */
+static bool petta_specializer_relation_factor(
+        Space *space, SymbolId source,
+        PettaRelationRelevance *relevance) {
+    *relevance = PETTA_RELATION_RELEVANCE_UNKNOWN;
+    if (petta_relation_relevance_cache_lookup(
+            space_program_token(space), source, relevance))
+        return true;
+    PettaSpecializerContext context = {
+        .space = space,
+        .semantic_cache = petta_semantic_cache_prepare(space),
+    };
+    arena_init(&context.scratch);
+    arena_set_runtime_kind(
+        &context.scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+    arena_set_hashcons(&context.scratch, NULL);
+    *relevance = petta_relation_specialization_relevance(
+        &context, source);
+    arena_free(&context.scratch);
+    if (context.invalidated) {
+        *relevance = PETTA_RELATION_RELEVANCE_UNKNOWN;
+        return false;
+    }
+    return true;
 }
 
 PettaSpecializerRelationAdmission
@@ -1906,17 +2078,19 @@ petta_specializer_query_execution_admission_core(
         return PETTA_SPECIALIZER_RELATION_DEFER;
     }
     uint64_t instance = space_instance_id(space);
-    uint64_t revision = space_revision(space);
     PettaRelationRelevance cached_relation =
         PETTA_RELATION_RELEVANCE_UNKNOWN;
-    bool relation_cached =
-        petta_specializer_relation_prefilter_enabled() &&
-        petta_relation_relevance_cache_lookup(
-            space, instance, revision, source,
-            &cached_relation);
+    bool relation_cached = false;
+    if (petta_specializer_relation_prefilter_enabled()) {
+        if (!petta_specializer_relation_factor(
+                space, source, &cached_relation))
+            return PETTA_SPECIALIZER_RELATION_INVALIDATED;
+        relation_cached =
+            cached_relation != PETTA_RELATION_RELEVANCE_UNKNOWN;
+    }
     /*
      * Specialization requires both a relation-side consumer and a
-     * query-side supplier.  A revision-pinned proof that the first factor is
+     * query-side supplier.  A program-pinned proof that the first factor is
      * absent refutes the conjunction for every concrete query, so inspecting
      * that query cannot add information.  Unknown and positive certificates
      * retain the ordinary bounded query analysis below.
@@ -2046,14 +2220,16 @@ petta_specializer_query_value_execution_admission(
         return PETTA_SPECIALIZER_RELATION_DEFER;
     }
     uint64_t instance = space_instance_id(space);
-    uint64_t revision = space_revision(space);
     PettaRelationRelevance relation_relevance =
         PETTA_RELATION_RELEVANCE_UNKNOWN;
-    bool relation_cached =
-        petta_specializer_relation_prefilter_enabled() &&
-        petta_relation_relevance_cache_lookup(
-            space, instance, revision, source,
-            &relation_relevance);
+    bool relation_cached = false;
+    if (petta_specializer_relation_prefilter_enabled()) {
+        if (!petta_specializer_relation_factor(
+                space, source, &relation_relevance))
+            return PETTA_SPECIALIZER_RELATION_INVALIDATED;
+        relation_cached =
+            relation_relevance != PETTA_RELATION_RELEVANCE_UNKNOWN;
+    }
     if (relation_cached &&
         relation_relevance == PETTA_RELATION_RELEVANCE_IRRELEVANT) {
         return PETTA_SPECIALIZER_RELATION_IRRELEVANT;
@@ -2935,13 +3111,11 @@ static bool petta_specializer_analyze_call(
         return true;
     }
     if (petta_specializer_relevance_filter_enabled()) {
-        uint64_t instance = space_instance_id(context->space);
-        uint64_t revision = space_revision(context->space);
         PettaRelationRelevance relation_relevance =
             PETTA_RELATION_RELEVANCE_UNKNOWN;
         bool relation_cached =
             petta_relation_relevance_cache_lookup(
-                context->space, instance, revision, source,
+                space_program_token(context->space), source,
                 &relation_relevance);
         if (relation_cached &&
             relation_relevance ==
@@ -3277,8 +3451,8 @@ void petta_specializer_note_mutation(
         return;
     /* Any equation or type mutation can make a nested symbol callable, so the
      * relation-level negative cache is discarded wholesale.  Ordinary data
-     * additions never reach this path, and the revision key independently
-     * prevents stale reuse. */
+     * additions never reach this path, and the program-token key
+     * independently prevents stale reuse. */
     petta_relation_relevance_cache_clear();
     uint64_t instance = space_instance_id(space);
     /* A failed derivation can depend on callees absent from the productive

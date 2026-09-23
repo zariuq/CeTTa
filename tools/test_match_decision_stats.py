@@ -14,8 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 COUNTERS = (
     "compile",
     "run",
-    "clause-input",
-    "clause-survivor",
+    "equation-input",
+    "equation-survivor",
     "linear-fallback",
     "unavailable-path",
     "invalidation",
@@ -69,22 +69,22 @@ def check_lane(lane: str, linear: dict[str, int],
 
     require(linear["compile"] > 0, "linear compiled no artifact")
     require(linear["run"] > 0, "linear selected no candidates")
-    require(linear["clause-input"] > 0, "linear saw no clauses")
-    require(linear["clause-survivor"] == linear["clause-input"],
-            "linear oracle pruned a clause")
+    require(linear["equation-input"] > 0, "linear saw no equations")
+    require(linear["equation-survivor"] == linear["equation-input"],
+            "linear oracle pruned an equation")
     require(linear["linear-fallback"] == linear["run"],
             "linear oracle did not report one fallback per run")
     require(linear["unavailable-path"] == 0,
             "linear oracle inspected an unavailable deep path")
     require(linear["invalidation"] == 0 and deep["invalidation"] == 0,
             "stable fixture invalidated an artifact")
-    require(deep["clause-input"] == linear["clause-input"],
-            "deep and linear executions saw different clause inputs")
-    require(deep["clause-survivor"] <= linear["clause-survivor"],
+    require(deep["equation-input"] == linear["equation-input"],
+            "deep and linear executions saw different equation inputs")
+    require(deep["equation-survivor"] <= linear["equation-survivor"],
             "deep selection enlarged the linear candidate family")
-    require(deep["clause-survivor"] < linear["clause-survivor"],
+    require(deep["equation-survivor"] < linear["equation-survivor"],
             "fixture did not witness deep refutation")
-    require(deep["exact-attempt"] <= deep["clause-survivor"],
+    require(deep["exact-attempt"] <= deep["equation-survivor"],
             "exact attempts exceeded conservative survivors")
     require(deep["exact-attempt"] <= linear["exact-attempt"],
             "deep selection increased authoritative matching")

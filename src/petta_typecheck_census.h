@@ -32,7 +32,6 @@
     X(ASCRIPTION_REQUIRED_UNION_ACCEPT, "ascription-required-union-accept", "oracle", "rule", "overlap-union-right", "shape-compatibility") \
     X(ASCRIPTION_REQUIRED_UNION_REJECT, "ascription-required-union-reject", "oracle", "mechanism", "overlap-union-right-exhausted", "shape-compatibility") \
     X(ASCRIPTION_REVERSE_ACCEPT, "ascription-reverse-accept", "oracle", "rule", "overlap-reverse", "shape-compatibility") \
-    X(CLAUSE_SLOT_ALIAS_PRESERVED, "clause-slot-alias-preserved", "mechanism", "mechanism", "caller-visible-substitution-preservation", "source-evaluated-stage-evidence") \
     X(COLLAPSE_ELEMENT_CONFLICT, "collapse-element-conflict", "oracle", "mechanism", "collapse-proved-element-conflict", "shape-compatibility") \
     X(COLLAPSE_RESULT_LIST_SHAPE, "collapse-result-list-shape", "oracle", "rule", "expression-result-type-collapse", "shape-compatibility") \
     X(COLLAPSE_UNKNOWN_ELEMENT, "collapse-unknown-element", "oracle", "mechanism", "collapse-retains-list-shape-with-unknown-element", "open-world-unknown-approximation") \
@@ -42,6 +41,7 @@
     X(CONTEXTUAL_LAMBDA_COMMITMENT_ACCEPT, "contextual-lambda-commitment-accept", "oracle", "mechanism", "committed-lambda-determinism-preservation", "result-cardinality-grading") \
     X(CONTEXTUAL_LAMBDA_COMMITMENT_REJECT, "contextual-lambda-commitment-reject", "oracle", "mechanism", "committed-lambda-nondeterminism-rejection", "result-cardinality-grading") \
     X(CONTEXTUAL_LET_CUT_COMMIT_ACCEPT, "contextual-let-cut-commit-accept", "oracle", "mechanism", "committed-let-cut-overlap", "result-cardinality-grading") \
+    X(EQUATION_SLOT_ALIAS_PRESERVED, "equation-slot-alias-preserved", "mechanism", "mechanism", "caller-visible-substitution-preservation", "source-evaluated-stage-evidence") \
     X(EVAL_DYNAMIC_EFFECT_UNKNOWN, "eval-dynamic-effect-unknown", "oracle", "mechanism", "evaluation-withholds-cardinality-evidence", "source-evaluated-stage-evidence") \
     X(EXPRESSION_EFFECT_COLLAPSE, "expression-effect-collapse", "oracle", "rule", "expression-effect-collapse", "result-cardinality-grading") \
     X(EXPRESSION_EFFECT_FOLDALL, "expression-effect-foldall", "oracle", "rule", "expression-effect-foldall", "result-cardinality-grading") \

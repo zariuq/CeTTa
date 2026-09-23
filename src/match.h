@@ -559,13 +559,19 @@ bool bindings_builder_register_complete_frame_schema(
 Atom *bindings_builder_new_variable(BindingsBuilder *builder, Arena *arena,
                                     CettaFrameIdentity frame);
 /* One continuation-owned activation frame.  Writes remain private while a
- * clause candidate is being tested.  A failed candidate discards the region;
+ * equation candidate is being tested.  A failed candidate discards the region;
  * a surviving candidate publishes its ordered slot writes into the shared
  * substitution exactly once.  Only writes to an outer frame retain an
  * explicit payload until that boundary. */
 BindingsExclusiveFrame *bindings_exclusive_frame_new(void);
 void bindings_exclusive_frame_free(BindingsExclusiveFrame *frame);
 bool bindings_exclusive_frame_begin(
+    BindingsExclusiveFrame *frame, BindingsFrameSchema *schema,
+    uint32_t epoch);
+/* As begin, for an identity minted for this activation: no binding outside
+ * the frame may mention it.  The frame then elides occurs checks that the
+ * freshness proves vacuous, until a value it stores mentions the frame. */
+bool bindings_exclusive_frame_begin_fresh(
     BindingsExclusiveFrame *frame, BindingsFrameSchema *schema,
     uint32_t epoch);
 bool bindings_exclusive_frame_freeze(
@@ -852,6 +858,9 @@ bool bindings_lookup_index_test_single_cache_support(
 bool bindings_frame_index_test_lookup(
     const Bindings *bindings, VarId id, bool *known_out,
     uint32_t *entry_index_out);
+/* Whether the frame still certifies that no binding mentions it. */
+bool bindings_exclusive_frame_test_certified(
+    const BindingsExclusiveFrame *frame);
 bool bindings_frame_storage_test_identity(
     const Bindings *bindings, uint32_t epoch,
     const void **schema_out, const void **slots_out);
@@ -901,8 +910,13 @@ bool match_binding_value_epoch_builder_rule_local_planned(
          BindingValue left, Atom *right,
          const CettaOpenPatternPlan *right_plan,
          BindingsBuilder *bb, Arena *a, uint32_t right_epoch);
+/* The exclusive-frame forms take the rule pattern's ownership as
+ * `right_kind`: BINDING_VALUE_CONTEXTUAL_PERSISTENT when its syntax owner
+ * outlives the execution, as program-owned equation syntax does, so a
+ * binding shares the pattern's subterms; BINDING_VALUE_CONTEXTUAL when a
+ * binding must carry its own copy into `a`. */
 bool match_binding_value_epoch_builder_rule_local_in_exclusive_frame(
-         BindingValue left, Atom *right,
+         BindingValue left, Atom *right, BindingValueKind right_kind,
          const CettaOpenPatternPlan *right_plan,
          BindingsBuilder *bb, Arena *a, uint32_t right_epoch,
          BindingsExclusiveFrame *exclusive, bool linear);
@@ -920,14 +934,14 @@ bool match_atoms_epoch(Atom *left, Atom *right, Bindings *b, Arena *a, uint32_t 
 bool match_atoms_epoch_builder(Atom *left, Atom *right,
                                BindingsBuilder *bb, Arena *a,
                                uint32_t epoch);
-/* Clause-frame orientation of the same relation.  When two otherwise unbound
+/* Equation-activation-frame orientation of the same relation.  When two otherwise unbound
  * variables meet, bind the standardized-apart right rule slot to the live
  * left call variable.  This keeps a successful frame local when possible;
  * callers must still audit the appended keys and roll back on escape. */
 bool match_atoms_epoch_builder_rule_local(
          Atom *left, Atom *right, BindingsBuilder *bb,
          Arena *a, uint32_t epoch);
-/* The same clause-frame matcher with a source-derived finite plan for the
+/* The same equation-activation-frame matcher with a source-derived finite plan for the
  * right rule pattern.  The plan may remove repeated source classification
  * and source-side cycle bookkeeping, but never supplies query facts or
  * binding authority.  A mismatched plan fails without changing the caller's
@@ -942,7 +956,8 @@ bool match_atoms_epoch_builder_rule_local_linear(
          Atom *left, Atom *right, const CettaOpenPatternPlan *right_plan,
          BindingsBuilder *bb, Arena *a, uint32_t epoch);
 bool match_atoms_epoch_builder_rule_local_in_exclusive_frame(
-         Atom *left, Atom *right, const CettaOpenPatternPlan *right_plan,
+         Atom *left, Atom *right, BindingValueKind right_kind,
+         const CettaOpenPatternPlan *right_plan,
          BindingsBuilder *bb, Arena *a, uint32_t epoch,
          BindingsExclusiveFrame *exclusive, bool linear);
 /* Match an activation-local source term without first materializing the
@@ -973,7 +988,7 @@ bool match_atoms_epoch_view_builder_current(
          Atom *left_original, uint32_t left_epoch,
          uint32_t left_first_entry, Atom *right,
          BindingsBuilder *bb, Arena *a);
-/* Clause-frame orientation of the activation view: unify a persistent open
+/* Equation-activation-frame orientation of the activation view: unify a persistent open
  * head against the goal's skeleton and environment without first forcing a
  * substituted instance (SubstitutionAlgebra; Abadi, Cardelli, Curien, Lévy).
  * Materialise at observation.  Same save/rollback contract as
@@ -995,6 +1010,7 @@ bool match_atoms_epoch_view_builder_rule_local_linear(
 bool match_atoms_epoch_view_builder_rule_local_in_exclusive_frame(
          Atom *left_original, uint32_t left_epoch,
          uint32_t left_first_entry, Atom *right_original,
+         BindingValueKind right_kind,
          const CettaOpenPatternPlan *right_plan,
          BindingsBuilder *bb, Arena *a, uint32_t right_epoch,
          BindingsExclusiveFrame *exclusive, bool linear);
@@ -1026,7 +1042,8 @@ bool match_atoms_activation_view_builder_rule_local_linear(
          BindingsBuilder *bb, Arena *a, uint32_t right_epoch);
 bool match_atoms_activation_view_builder_rule_local_in_exclusive_frame(
          Atom *left_original, const BindingsActivationView *left_frame,
-         Atom *right_original, const CettaOpenPatternPlan *right_plan,
+         Atom *right_original, BindingValueKind right_kind,
+         const CettaOpenPatternPlan *right_plan,
          BindingsBuilder *bb, Arena *a, uint32_t right_epoch,
          BindingsExclusiveFrame *exclusive, bool linear);
 /* Leaf-patch view (env CETTA_LEAF_PATCH_VIEW=1, OFF by default). */

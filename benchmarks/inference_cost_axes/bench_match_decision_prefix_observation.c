@@ -8,7 +8,7 @@
 #include <string.h>
 
 enum {
-    PREFIX_BENCH_CLAUSES = 64u,
+    PREFIX_BENCH_EQUATIONS = 64u,
     PREFIX_BENCH_LEAVES = 16u,
     PREFIX_BENCH_MAX_LEAVES = 256u,
     PREFIX_BENCH_QUERY = 42u,
@@ -100,19 +100,19 @@ int main(int argc, char **argv) {
     Atom *row_head = atom_symbol(&persistent, "row");
     Atom *zero = atom_symbol(&persistent, "zero");
     Atom *one = atom_symbol(&persistent, "one");
-    CettaMatchDecisionClause clauses[PREFIX_BENCH_CLAUSES] = {0};
+    CettaMatchDecisionEquation equations[PREFIX_BENCH_EQUATIONS] = {0};
     bool valid = select_head && nest_head && row_head && zero && one;
-    for (uint32_t clause = 0u;
-         valid && clause < PREFIX_BENCH_CLAUSES; clause++) {
+    for (uint32_t equation = 0u;
+         valid && equation < PREFIX_BENCH_EQUATIONS; equation++) {
         Atom *body = make_pattern(
             &persistent, select_head,
             row_head, zero, one,
-            clause == PREFIX_BENCH_CLAUSES - 1u
-                ? PREFIX_BENCH_QUERY : clause, leaves);
+            equation == PREFIX_BENCH_EQUATIONS - 1u
+                ? PREFIX_BENCH_QUERY : equation, leaves);
         for (uint32_t level = 0u; body && level < depth; level++)
             body = atom_expr2(&persistent, nest_head, body);
-        clauses[clause] = (CettaMatchDecisionClause){body, clause};
-        valid = clauses[clause].pattern != NULL;
+        equations[equation] = (CettaMatchDecisionEquation){body, equation};
+        valid = equations[equation].pattern != NULL;
     }
 
     const CettaMatchDecisionSemanticIdentity semantic_identity = {
@@ -126,13 +126,13 @@ int main(int argc, char **argv) {
     CettaMatchDecision *decision = valid
         ? cetta_match_decision_compile(
               space_read_token(&space), semantic_identity,
-              clauses, PREFIX_BENCH_CLAUSES,
+              equations, PREFIX_BENCH_EQUATIONS,
               mode,
               depth + 3u,
               cetta_match_decision_realization_from_process(),
               NULL, NULL)
         : NULL;
-    Atom *query = clauses[PREFIX_BENCH_QUERY].pattern;
+    Atom *query = equations[PREFIX_BENCH_QUERY].pattern;
     Atom *open_query = make_open_query(
         &persistent, nest_head, "open-prefix", 1u);
     uint32_t middle_depth = depth > 1u ? depth / 2u : 1u;
@@ -150,8 +150,8 @@ int main(int argc, char **argv) {
         open_deep_query, query, absent_query, query};
     uint64_t expected[7] = {0};
     for (unsigned g = 0u; g < 7u; g++) {
-        for (unsigned c = 0u; c < PREFIX_BENCH_CLAUSES; c++) {
-            const unsigned code = c == PREFIX_BENCH_CLAUSES - 1u
+        for (unsigned c = 0u; c < PREFIX_BENCH_EQUATIONS; c++) {
+            const unsigned code = c == PREFIX_BENCH_EQUATIONS - 1u
                 ? PREFIX_BENCH_QUERY : c;
             /* The closed conjunctive intersection is {42, 63}. In deep
              * mode, the first minimum is bit 1: 32 occurrences. Bit 0
@@ -180,10 +180,10 @@ int main(int argc, char **argv) {
                     g == 4u ? 0u : UINT64_MAX, NULL, NULL,
                     &selected, &selected_count);
             valid = state == CETTA_MATCH_DECISION_SELECT_READY &&
-                selected_count <= PREFIX_BENCH_CLAUSES;
+                selected_count <= PREFIX_BENCH_EQUATIONS;
             uint64_t actual = 0u;
             for (size_t c = 0u; valid && c < selected_count; c++) {
-                valid = selected && selected[c] < PREFIX_BENCH_CLAUSES &&
+                valid = selected && selected[c] < PREFIX_BENCH_EQUATIONS &&
                     (c == 0u || selected[c - 1u] < selected[c]);
                 if (valid) actual |= UINT64_C(1) << selected[c];
             }
@@ -208,7 +208,7 @@ int main(int argc, char **argv) {
     printf("(MatchDecisionPrefixObservationBench %u %u %u %u %s "
            "%" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64
            " %" PRIu64 " %s %s)\n",
-           PREFIX_BENCH_CLAUSES, leaves, depth, iterations,
+           PREFIX_BENCH_EQUATIONS, leaves, depth, iterations,
            valid ? "pass" : "fail",
            stats.prefix_observation_direct_edges,
            stats.prefix_observation_trie_edges,

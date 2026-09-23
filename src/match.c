@@ -114,6 +114,14 @@ struct BindingsExclusiveFrame {
     uint32_t epoch;
     bool owns_identity;
     bool active;
+    /* The identity was minted for this activation, so no binding outside the
+     * frame mentions its variables.  While no stored value mentions them
+     * either, a value that avoids the frame cannot reach a local slot: the
+     * occurs check at such a local write, and again at publication, has
+     * nothing to find.  The first stored value that mentions the frame, at
+     * a local slot or an outer one, ends the certificate. */
+    bool fresh;
+    bool frame_mentioned;
 };
 
 static __thread int g_bindings_lookup_index_enabled = -1;
@@ -1063,14 +1071,35 @@ bool bindings_exclusive_frame_begin(
         memset(frame->values, 0, (size_t)len * sizeof(*frame->values));
     frame->schema = schema;
     frame->write_len = 0u;
+    /* The frame keeps its identity until the next begin, beyond the attempt
+     * that minted it: an accepted activation's epoch outlives the minting
+     * scope until the goal that runs it takes its own reference. */
     bool owns_identity = cetta_frame_identity_retain(epoch);
     if (frame->owns_identity)
         cetta_frame_identity_release(frame->epoch);
     frame->epoch = epoch;
     frame->owns_identity = owns_identity;
     frame->active = true;
+    frame->fresh = false;
+    frame->frame_mentioned = false;
     return true;
 }
+
+bool bindings_exclusive_frame_begin_fresh(
+        BindingsExclusiveFrame *frame, BindingsFrameSchema *schema,
+        uint32_t epoch) {
+    if (!bindings_exclusive_frame_begin(frame, schema, epoch))
+        return false;
+    frame->fresh = true;
+    return true;
+}
+
+#ifdef CETTA_TEST_HOOKS
+bool bindings_exclusive_frame_test_certified(
+        const BindingsExclusiveFrame *frame) {
+    return frame && frame->fresh && !frame->frame_mentioned;
+}
+#endif
 
 static bool bindings_exclusive_frame_source_slot(
         const BindingsExclusiveFrame *frame, VarId id,
@@ -7799,6 +7828,88 @@ static bool bindings_exclusive_frame_prepare_value(
     return true;
 }
 
+/* A contextual value whose variables all resolve, in the current image, to
+ * ground syntax denotes that ground term, and keeps denoting it while the
+ * binding being made survives: each binding it resolves through is older,
+ * so rollback removes the new binding first.  Build the term once, sharing
+ * the resolved children, so later observations read one atom instead of
+ * re-resolving a closure chain.  Only the value's own template is walked;
+ * a root that is not already ground syntax declines, so the cost stays
+ * bounded by the template rather than by the chain behind it. */
+enum { BINDINGS_GROUND_BIND_NODE_LIMIT = 64 };
+
+static Atom *binding_value_instantiate_ground_node(
+        Bindings *bindings, Arena *arena, Atom *skeleton, uint32_t epoch,
+        BindingValueKind kind, uint32_t *remaining) {
+    if (!atom_has_vars(skeleton))
+        return skeleton;
+    if ((*remaining)-- == 0u)
+        return NULL;
+    if (skeleton->kind == ATOM_VAR) {
+        BindingValue root;
+        if (!bindings_resolve_value_root(
+                bindings, binding_value_from_context_kind(
+                    skeleton, epoch, kind), &root) ||
+            !root.skeleton || atom_has_vars(root.skeleton))
+            return NULL;
+        return root.skeleton;
+    }
+    if (skeleton->kind != ATOM_EXPR ||
+        !cetta_expr_len_fits_size(skeleton->expr.len))
+        return NULL;
+    Atom *draft = atom_expr_builder_begin(arena, skeleton->expr.len);
+    if (!draft)
+        return NULL;
+    for (CettaExprIndex index = 0u; index < skeleton->expr.len; index++) {
+        Atom *child = binding_value_instantiate_ground_node(
+            bindings, arena, skeleton->expr.elems[index], epoch, kind,
+            remaining);
+        if (!child)
+            return NULL;
+        draft->expr.elems[index] = child;
+    }
+    return atom_expr_builder_finish(arena, draft);
+}
+
+static BindingValue binding_value_ground_or_self(
+        Bindings *bindings, Arena *arena, BindingValue value) {
+    if (!binding_value_is_contextual(value) || !value.skeleton ||
+        value.skeleton->kind != ATOM_EXPR || !atom_has_vars(value.skeleton))
+        return value;
+    ArenaMark mark = arena_mark(arena);
+    uint32_t remaining = BINDINGS_GROUND_BIND_NODE_LIMIT;
+    Atom *ground = binding_value_instantiate_ground_node(
+        bindings, arena, value.skeleton, value.epoch, value.kind, &remaining);
+    if (!ground) {
+        arena_reset(arena, mark);
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_MATCH_GROUND_BIND_DECLINE);
+        return value;
+    }
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MATCH_GROUND_BIND_COMMIT);
+    return binding_value_from_atom(ground);
+}
+
+/* Whether a value mentions no variable of the frame's identity.  A
+ * contextual value's variables all take the value's context; a materialized
+ * value carries its own qualified identities. */
+static bool bindings_exclusive_frame_value_avoids(
+        const BindingsExclusiveFrame *frame, BindingValue value) {
+    if (!atom_has_vars(value.skeleton))
+        return true;
+    if (frame->epoch == 0u)
+        return false;
+    if (binding_value_is_contextual(value))
+        return value.epoch != frame->epoch;
+    VarIdSet support;
+    var_id_set_init(&support);
+    bool avoids = collect_value_var_ids(value, &support);
+    for (uint32_t index = 0u; avoids && index < support.len; index++)
+        avoids = var_epoch_suffix(support.items[index]) != frame->epoch;
+    var_id_set_free(&support);
+    return avoids;
+}
+
 static bool bindings_exclusive_frame_store(
         BindingsExclusiveFrame *frame, BindingsBuilder *builder,
         Arena *arena, AtomDeepCopySession **transport,
@@ -7839,13 +7950,22 @@ static bool bindings_exclusive_frame_store(
             return true;
         }
     }
-    BindingsReachability reaches =
-        bindings_exclusive_frame_value_reaches(
-            frame, &builder->current, value, id);
-    if (reaches != BINDINGS_REACHABILITY_ABSENT)
-        return false;
     uint32_t slot = 0u;
     bool local = bindings_exclusive_frame_source_slot(frame, id, &slot);
+    bool certified = frame->fresh && !frame->frame_mentioned;
+    bool avoids = certified &&
+        bindings_exclusive_frame_value_avoids(frame, value);
+    BindingsReachability reaches =
+        local && avoids
+            ? BINDINGS_REACHABILITY_ABSENT
+            : bindings_exclusive_frame_value_reaches(
+                  frame, &builder->current, value, id);
+    if (reaches != BINDINGS_REACHABILITY_ABSENT)
+        return false;
+    /* A slot of this frame is new, so a ground value can take its ground
+     * form here without changing what any existing binding denotes. */
+    if (local)
+        value = binding_value_ground_or_self(&builder->current, arena, value);
     if (frame->write_len == UINT32_MAX ||
         !bindings_exclusive_frame_reserve_writes(
             frame, frame->write_len + 1u)) {
@@ -7860,11 +7980,82 @@ static bool bindings_exclusive_frame_store(
         .external_value = local
             ? binding_value_from_atom(NULL) : value,
     };
+#ifndef CETTA_MUTATION_FRESH_FRAME_IGNORES_FRAME_MENTIONS
+    if (certified && !avoids)
+        frame->frame_mentioned = true;
+#endif
     if (local)
         frame->values[slot] = value;
     if (authoritative_value_out)
         *authoritative_value_out = value;
     return true;
+}
+
+/* Whether the registration just made through `registrations` created the
+ * frame's entry, under the schema its slots are numbered by.  Rolling back
+ * past such a registration recycles the entry with every value in it, so its
+ * local slots can be written at once.  Every stored write passed the occurs
+ * check at store time against this same store; `certified` additionally asks
+ * for the freshness certificate, for a caller that would otherwise re-derive
+ * the verdict. */
+static bool bindings_exclusive_frame_fresh_registration(
+        const BindingsExclusiveFrame *frame, const BindingsBuilder *builder,
+        uint32_t registrations, BindingsFrameRef ref, bool certified) {
+    if ((certified && (!frame->fresh || frame->frame_mentioned)) ||
+        builder->frame_registration_undo_len != registrations + 1u ||
+        builder->frame_registration_undo[registrations].frame_existed)
+        return false;
+    const BindingsFrameIndexEntry *entry =
+        bindings_frame_index_find_ref_const(
+            builder->current.frame_index, ref);
+    return entry && entry->schema == frame->schema;
+}
+
+/* Write every local slot of a freshly registered frame under one save.  An
+ * AUDIT verdict at any slot is the whole-store audit, and a cycle once closed
+ * stays closed, so one audit after the last write decides the same.  Failure
+ * rolls back to `mark`. */
+static bool bindings_exclusive_frame_fill_fresh_slots(
+        BindingsExclusiveFrame *frame, BindingsBuilder *builder,
+        BindingsFrameRef ref, uint32_t mark) {
+    uint32_t filled = 0u;
+    for (uint32_t index = 0u; index < frame->write_len; index++) {
+        uint32_t slot = frame->writes[index].local_slot;
+        if (slot == UINT32_MAX)
+            continue;
+        if (slot >= frame->schema->len ||
+            !bindings_frame_index_prepare_value_context(
+                &builder->current, builder, &frame->values[slot], true))
+            goto fail;
+    }
+    if (!bindings_builder_snapshot(builder, NULL))
+        goto fail;
+    BindingsFrameIndexEntry *entry =
+        bindings_frame_index_detach_entry_ref(&builder->current, ref);
+    if (!entry)
+        goto fail;
+    for (uint32_t index = 0u; index < frame->write_len; index++) {
+        uint32_t slot = frame->writes[index].local_slot;
+        if (slot == UINT32_MAX)
+            continue;
+        BindingValue value = frame->values[slot];
+        if (!bindings_frame_index_fill_slot(
+                builder->current.frame_index, entry, slot, value))
+            goto fail;
+        bindings_rhs_variable_bloom_add(&builder->current, value);
+        filled++;
+    }
+    builder->growth_count =
+        builder->growth_count > UINT64_MAX - filled
+            ? UINT64_MAX : builder->growth_count + filled;
+    if (builder->current.cycle_state != BINDINGS_CYCLE_ACYCLIC &&
+        !bindings_trial_is_acyclic(&builder->current))
+        goto fail;
+    return true;
+
+fail:
+    bindings_builder_rollback(builder, mark);
+    return false;
 }
 
 bool bindings_exclusive_frame_freeze(
@@ -7876,11 +8067,20 @@ bool bindings_exclusive_frame_freeze(
             builder, frame->write_len))
         return false;
     uint32_t mark = builder->trail_len;
-    if (!bindings_builder_register_complete_frame_schema(
-            builder, frame->schema, frame->epoch))
+    uint32_t registrations = builder->frame_registration_undo_len;
+    BindingsFrameRef authority_ref = {0};
+    if (!bindings_builder_register_complete_frame_schema_ref(
+            builder, frame->schema, frame->epoch, &authority_ref))
+        return false;
+    bool filled = bindings_exclusive_frame_fresh_registration(
+        frame, builder, registrations, authority_ref, false);
+    if (filled && !bindings_exclusive_frame_fill_fresh_slots(
+            frame, builder, authority_ref, mark))
         return false;
     for (uint32_t index = 0u; index < frame->write_len; index++) {
         const BindingsExclusiveWrite *write = &frame->writes[index];
+        if (filled && write->local_slot != UINT32_MAX)
+            continue;
         VarId id = write->local_slot == UINT32_MAX
             ? write->external_id
             : var_epoch_id(
@@ -7927,6 +8127,7 @@ bool bindings_exclusive_frame_publish_slots(
         return false;
     }
     uint32_t mark = builder->trail_len;
+    uint32_t registrations = builder->frame_registration_undo_len;
     BindingsFrameRef authority_ref = {0};
     if (!bindings_builder_register_complete_frame_schema_ref(
             builder, frame->schema, frame->epoch, &authority_ref)) {
@@ -7941,6 +8142,14 @@ bool bindings_exclusive_frame_publish_slots(
     if (!bindings_frame_index_mark_activation_boundary_ref(
             &builder->current, authority_ref, activation_boundary)) {
         return false;
+    }
+    if (bindings_exclusive_frame_fresh_registration(
+            frame, builder, registrations, authority_ref, true)) {
+        if (!bindings_exclusive_frame_fill_fresh_slots(
+                frame, builder, authority_ref, mark))
+            return false;
+        frame->active = false;
+        return true;
     }
     for (uint32_t index = 0u; index < frame->write_len; index++) {
         const BindingsExclusiveWrite *write = &frame->writes[index];
@@ -7970,9 +8179,13 @@ bool bindings_exclusive_frame_publish_slots(
             bindings_builder_rollback(builder, mark);
             return false;
         }
+        /* Every slot value avoided the frame while the certificate held, so
+         * the store-time verdict carries over unchanged. */
+        bool fresh_evidence = frame->fresh && !frame->frame_mentioned;
         BindingsBindVerdict verdict = bindings_bind_verdict(
-            &builder->current, id, value, false,
-            BINDINGS_REACHABILITY_UNKNOWN);
+            &builder->current, id, value, fresh_evidence,
+            fresh_evidence ? BINDINGS_REACHABILITY_ABSENT
+                           : BINDINGS_REACHABILITY_UNKNOWN);
         if (verdict == BINDINGS_BIND_REFUSE ||
             !bindings_frame_index_prepare_value_context(
                 &builder->current, builder, &value, true)) {
@@ -7982,9 +8195,13 @@ bool bindings_exclusive_frame_publish_slots(
         bool authority_moved = false;
         if (!bindings_builder_record_frame_slot_value(
                 builder, authority_ref, slot, id, value,
-                &authority_moved) ||
-            (verdict == BINDINGS_BIND_AUDIT &&
-             !bindings_trial_is_acyclic(&builder->current))) {
+                &authority_moved)) {
+            bindings_builder_rollback(builder, mark);
+            return false;
+        }
+        bindings_rhs_variable_bloom_add(&builder->current, value);
+        if (verdict == BINDINGS_BIND_AUDIT &&
+            !bindings_trial_is_acyclic(&builder->current)) {
             bindings_builder_rollback(builder, mark);
             return false;
         }
@@ -8036,7 +8253,7 @@ static bool bindings_match_store_value_in_rule_region(
  * Logical-environment projection
  * --------------------------------
  *
- * A long-lived explicit machine cannot retain every fresh clause variable
+ * A long-lived explicit machine cannot retain every fresh equation variable
  * ever encountered.  At a semantic safe point it needs the transitive closure
  * of the variables still named by its continuation.  This is deliberately a
  * property of Bindings rather than of any one evaluator.
@@ -8299,11 +8516,14 @@ static bool bindings_projection_append_entry(
         return false;
     }
     if (bindings_frame_index_owns_id(dst, binding->var_id)) {
-        return bindings_frame_index_ensure_presentation(
-                   dst, binding->var_id, binding->spelling,
-                   binding->name_key) &&
-            bindings_frame_index_record(
-                dst, binding->var_id, value);
+        if (!bindings_frame_index_ensure_presentation(
+                dst, binding->var_id, binding->spelling,
+                binding->name_key) ||
+            !bindings_frame_index_record(
+                dst, binding->var_id, value))
+            return false;
+        bindings_rhs_variable_bloom_add(dst, value);
+        return true;
     }
     dst->entries[dst->len++] = *binding;
     dst->entries[dst->len - 1u].value = value;
@@ -8381,6 +8601,7 @@ static bool bindings_projection_copy_live_frame_values(
                 dst->frame_index, target, target_slot, value)) {
             return false;
         }
+        bindings_rhs_variable_bloom_add(dst, value);
         target->write_version[target_slot] =
             source->write_version[source_slot];
         target->activation_write_boundary =
@@ -9964,6 +10185,10 @@ static bool match_path_grow_buckets(MatchPathSet *path) {
     return true;
 }
 
+/* Expression pairs a matcher decomposes over a certified-acyclic
+ * environment before it starts recording its active path. */
+enum { MATCH_UNTRACKED_PAIR_LIMIT = 4096u };
+
 /* Enter and leave are strictly nested by both structural matcher worklists.
  * Store exactly that active ancestry.  Shallow paths use the inline entries
  * directly, avoiding a bucket table that most matches never need.  Deeper
@@ -10278,6 +10503,12 @@ static bool match_decoded_atoms_worklist(BindingValue left_value, BindingValue r
     MatchWriteStamp attempt_start = match_write_stamp(initial, 0u);
     bool attempt_repeated_var = false;
     bool attempt_resolving_bound = false;
+    /* As in the epoch-view matcher: record the active path from the start
+     * only when the environment is not certified acyclic, and otherwise once
+     * the walk outgrows a finite match of ordinary size. */
+    bool track_path = !initial ||
+        initial->cycle_state != BINDINGS_CYCLE_ACYCLIC;
+    uint32_t untracked_pairs = 0u;
     decoded_match_worklist_init(&work);
     match_path_init(&path);
     if (!decoded_match_push(&work, (MatchTerm){.value = left_value},
@@ -10418,10 +10649,14 @@ retry_pair:
                 attempt_repeated_var = true;
             goto fail;
         }
-        if (!match_path_enter(&path, (MatchTerm){.value = left_value},
-                              (MatchTerm){.value = right_value}) ||
-            !decoded_match_push_exit(&work, (MatchTerm){.value = left_value},
-                                     (MatchTerm){.value = right_value}))
+        if (!track_path &&
+            ++untracked_pairs > MATCH_UNTRACKED_PAIR_LIMIT)
+            track_path = true;
+        if (track_path &&
+            (!match_path_enter(&path, (MatchTerm){.value = left_value},
+                               (MatchTerm){.value = right_value}) ||
+             !decoded_match_push_exit(&work, (MatchTerm){.value = left_value},
+                                      (MatchTerm){.value = right_value})))
             goto fail;
         /* Push in reverse so binding effects retain the recursive
            implementation's left-to-right traversal order. */
@@ -10941,11 +11176,17 @@ bool atom_alpha_eq(Atom *left, Atom *right) {
     return ok;
 }
 
+/* One pending comparison.  An entry with child_count > 0 stands for the
+ * children [next_child, child_count) of the expression pair it holds, which
+ * are produced one at a time in order rather than copied onto the stack
+ * individually.  An exit entry closes the pair's path after its children. */
 typedef struct {
     bool exit;
     MatchTerm left;
     MatchTerm right;
     const CettaOpenPatternPlan *right_plan;
+    CettaExprIndex next_child;
+    CettaExprIndex child_count;
 } EpochMatchPair;
 
 typedef struct {
@@ -10954,6 +11195,7 @@ typedef struct {
     size_t cap;
     EpochMatchPair inline_items[16];
 } EpochMatchWorklist;
+
 
 /* Exclusive borrow of one rule frame's authoritative slots.  The plan's
  * singleton support bit is the slot, while `values` is the branch-local
@@ -11212,7 +11454,19 @@ static bool epoch_match_push(EpochMatchWorklist *work,
         work->cap = next_cap;
     }
     work->items[work->len++] =
-        (EpochMatchPair){false, left, right, right_plan};
+        (EpochMatchPair){false, left, right, right_plan, 0u, 0u};
+    return true;
+}
+
+static bool epoch_match_push_children(EpochMatchWorklist *work,
+                                      MatchTerm left, MatchTerm right,
+                                      const CettaOpenPatternPlan *right_plan,
+                                      CettaExprIndex first,
+                                      CettaExprIndex count) {
+    if (!epoch_match_push(work, left, right, right_plan))
+        return false;
+    work->items[work->len - 1u].next_child = first;
+    work->items[work->len - 1u].child_count = count;
     return true;
 }
 
@@ -11430,6 +11684,14 @@ static bool match_atoms_epoch_views_worklist(
         initial, rule_frame_region_staged_len(right_frame_region));
     bool attempt_repeated_var = false;
     bool attempt_resolving_bound = false;
+    /* A pair recurs on its own active path only through a cycle, in the
+     * substitution or in a corrupted atom graph.  Every bind refuses a
+     * substitution cycle, so for an environment certified acyclic the path
+     * set starts only once the walk has decomposed more pairs than a finite
+     * match of ordinary size needs; a cycle repeats without end, so its pair
+     * recurs on the recorded path after at most one period. */
+    bool track_path = initial->cycle_state != BINDINGS_CYCLE_ACYCLIC;
+    uint32_t untracked_pairs = 0u;
     work.items = work.inline_items;
     work.len = 0;
     work.cap = sizeof work.inline_items / sizeof work.inline_items[0];
@@ -11444,7 +11706,25 @@ static bool match_atoms_epoch_views_worklist(
         goto fail;
 
     while (work.len > 0) {
-        EpochMatchPair pair = work.items[--work.len];
+        EpochMatchPair pair;
+        EpochMatchPair *top = &work.items[work.len - 1u];
+        if (top->child_count != 0u) {
+            CettaExprIndex child = top->next_child++;
+            pair = (EpochMatchPair){
+                .left = top->left,
+                .right = top->right,
+                .right_plan = top->right_plan
+                    ? &top->right_plan->children[child] : NULL,
+            };
+            pair.left.value.skeleton =
+                top->left.value.skeleton->expr.elems[child];
+            pair.right.value.skeleton =
+                top->right.value.skeleton->expr.elems[child];
+            if (top->next_child == top->child_count)
+                work.len--;
+        } else {
+            pair = work.items[--work.len];
+        }
         if (pair.exit) {
             match_path_leave(&path, pair.left, pair.right);
             continue;
@@ -11745,7 +12025,10 @@ retry_pair:
                 attempt_repeated_var = true;
             goto fail;
         }
-        if (!right_plan &&
+        if (!track_path &&
+            ++untracked_pairs > MATCH_UNTRACKED_PAIR_LIMIT)
+            track_path = true;
+        if (!right_plan && track_path &&
             (!match_path_enter(
                  &path,
                  (MatchTerm){
@@ -11773,21 +12056,20 @@ retry_pair:
                     attempt_repeated_var = true;
                 goto fail;
             }
-            for (CettaExprIndex i = nch; i > 1u; i--) {
-                CettaExprIndex child = i - 1u;
-                BindingValue left_child_value = left_value;
-                BindingValue right_child_value = right_value;
-                left_child_value.skeleton = left->expr.elems[child];
-                right_child_value.skeleton = right->expr.elems[child];
-                MatchTerm left_child = {
-                    .value = left_child_value,
-                    .frame = left_frame,
-                    .first_entry = left_first_entry,
-                };
-                MatchTerm right_child = {.value = right_child_value};
-                if (!epoch_match_push(
-                        &work, left_child, right_child,
-                        right_plan ? &right_plan->children[child] : NULL))
+            if (nch > 1u) {
+                BindingValue left_parent_value = left_value;
+                BindingValue right_parent_value = right_value;
+                left_parent_value.skeleton = left;
+                right_parent_value.skeleton = right;
+                if (!epoch_match_push_children(
+                        &work,
+                        (MatchTerm){
+                            .value = left_parent_value,
+                            .frame = left_frame,
+                            .first_entry = left_first_entry,
+                        },
+                        (MatchTerm){.value = right_parent_value},
+                        right_plan, 1u, nch))
                     goto fail;
             }
         /* Preserve activation flags and validate the child plan normally.
@@ -12055,7 +12337,8 @@ retry_pair:
                         goto fail;
                     continue;
                 }
-                BindingValue value = binding_value_from_context(right, right_epoch);
+                BindingValue value = binding_value_from_context_kind(
+                    right, right_epoch, right_kind);
                 bool added = bindings_match_store_value_in_rule_region(
                     &frame_region,
                     bindings, builder, a, &transport,
@@ -12083,7 +12366,8 @@ retry_pair:
                         right_epoch, left_id,
                         &frame_region);
             }
-            BindingValue value = binding_value_from_context(right, right_epoch);
+            BindingValue value = binding_value_from_context_kind(
+                right, right_epoch, right_kind);
             bool added = false;
             if (builder &&
                 cycle_evidence != BINDINGS_REACHABILITY_UNKNOWN) {
@@ -12351,20 +12635,70 @@ bool match_binding_value_epoch_builder_rule_local_planned(
             right_plan ? &frame_region : NULL);
 }
 
-bool match_binding_value_epoch_builder_rule_local_in_exclusive_frame(
+/* A rule pattern that is a bare variable, meeting a query value that is not
+ * itself a variable, binds its slot on the first occurrence and does nothing
+ * else: there is no subterm to walk and no path to record.  This is the
+ * worklist's own step for that pair; a slot already bound, or a query
+ * variable, takes the full walk. */
+typedef enum {
+    MATCH_BARE_VARIABLE_DECLINE = 0,
+    MATCH_BARE_VARIABLE_BOUND,
+    MATCH_BARE_VARIABLE_FAIL,
+} MatchBareVariableStep;
+
+static MatchBareVariableStep match_exclusive_bare_variable(
         BindingValue left, Atom *right,
+        const CettaOpenPatternPlan *right_plan,
+        BindingsBuilder *bb, Arena *a, uint32_t right_epoch,
+        BindingsExclusiveFrame *exclusive) {
+    if (right->kind != ATOM_VAR || !left.skeleton ||
+        left.skeleton->kind == ATOM_VAR ||
+        (right_plan && right_plan->source != right))
+        return MATCH_BARE_VARIABLE_DECLINE;
+    RuleFrameRegion region;
+    rule_frame_region_init_exclusive(&region, right_plan, exclusive);
+    if (!rule_frame_region_admit_source(&region, bb, right, right_epoch))
+        return MATCH_BARE_VARIABLE_DECLINE;
+    bool local = false;
+    BindingValue existing = bindings_exclusive_frame_lookup(
+        exclusive, NULL, var_epoch_id(right->var_id, right_epoch), &local);
+    if (!local || existing.skeleton)
+        return MATCH_BARE_VARIABLE_DECLINE;
+    AtomDeepCopySession *transport = NULL;
+    MatchWriteStamp start = match_write_stamp(
+        &bb->current, rule_frame_region_staged_len(&region));
+    bool bound = bindings_builder_add_rule_epoch_key_fresh(
+        bb, right, right_epoch, left, a, &transport, &region, NULL);
+    atom_deep_copy_session_free(transport);
+    match_note_unification_attempt(
+        bound,
+        match_write_stamp_changed(
+            start,
+            match_write_stamp(
+                &bb->current, rule_frame_region_staged_len(&region))),
+        false);
+    return bound ? MATCH_BARE_VARIABLE_BOUND : MATCH_BARE_VARIABLE_FAIL;
+}
+
+bool match_binding_value_epoch_builder_rule_local_in_exclusive_frame(
+        BindingValue left, Atom *right, BindingValueKind right_kind,
         const CettaOpenPatternPlan *right_plan,
         BindingsBuilder *bb, Arena *a, uint32_t right_epoch,
         BindingsExclusiveFrame *exclusive, bool linear) {
     if (!left.skeleton || !right || !bb || !a || right_epoch == 0u ||
+        !binding_value_kind_is_contextual(right_kind) ||
         !exclusive || !exclusive->active ||
         exclusive->epoch != right_epoch)
         return false;
+    MatchBareVariableStep bare = match_exclusive_bare_variable(
+        left, right, right_plan, bb, a, right_epoch, exclusive);
+    if (bare != MATCH_BARE_VARIABLE_DECLINE)
+        return bare == MATCH_BARE_VARIABLE_BOUND;
     if (linear && right_plan) {
         return match_atoms_epoch_views_linear(
             left.skeleton, left.kind, left.epoch, 0u,
             right, NULL, bb, a, right_epoch,
-            BINDING_VALUE_CONTEXTUAL, true, NULL,
+            right_kind, true, NULL,
             right_plan, exclusive);
     }
     RuleFrameRegion frame_region;
@@ -12373,35 +12707,43 @@ bool match_binding_value_epoch_builder_rule_local_in_exclusive_frame(
     return match_atoms_epoch_views_worklist(
         left.skeleton, left.kind, left.epoch, 0u,
         right, NULL, bb, a, right_epoch,
-        BINDING_VALUE_CONTEXTUAL, true, NULL, right_plan,
+        right_kind, true, NULL, right_plan,
         &frame_region);
 }
 
 bool match_atoms_epoch_builder_rule_local_in_exclusive_frame(
-        Atom *left, Atom *right,
+        Atom *left, Atom *right, BindingValueKind right_kind,
         const CettaOpenPatternPlan *right_plan,
         BindingsBuilder *bb, Arena *a, uint32_t epoch,
         BindingsExclusiveFrame *exclusive, bool linear) {
     return match_binding_value_epoch_builder_rule_local_in_exclusive_frame(
-        binding_value_from_atom(left), right, right_plan,
+        binding_value_from_atom(left), right, right_kind, right_plan,
         bb, a, epoch, exclusive, linear);
 }
 
 bool match_atoms_epoch_view_builder_rule_local_in_exclusive_frame(
         Atom *left, uint32_t left_epoch, uint32_t left_first_entry,
-        Atom *right, const CettaOpenPatternPlan *right_plan,
+        Atom *right, BindingValueKind right_kind,
+        const CettaOpenPatternPlan *right_plan,
         BindingsBuilder *bb, Arena *a, uint32_t right_epoch,
         BindingsExclusiveFrame *exclusive, bool linear) {
     if (!left || !right || !bb || !a || right_epoch == 0u ||
+        !binding_value_kind_is_contextual(right_kind) ||
         !exclusive || !exclusive->active ||
         exclusive->epoch != right_epoch)
         return false;
+    MatchBareVariableStep bare = match_exclusive_bare_variable(
+        binding_value_from_context_kind(
+            left, left_epoch, BINDING_VALUE_CONTEXTUAL),
+        right, right_plan, bb, a, right_epoch, exclusive);
+    if (bare != MATCH_BARE_VARIABLE_DECLINE)
+        return bare == MATCH_BARE_VARIABLE_BOUND;
     if (linear && right_plan) {
         return match_atoms_epoch_views_linear(
             left, BINDING_VALUE_CONTEXTUAL,
             left_epoch, left_first_entry,
             right, NULL, bb, a, right_epoch,
-            BINDING_VALUE_CONTEXTUAL, true, NULL,
+            right_kind, true, NULL,
             right_plan, exclusive);
     }
     RuleFrameRegion frame_region;
@@ -12411,26 +12753,34 @@ bool match_atoms_epoch_view_builder_rule_local_in_exclusive_frame(
         left, BINDING_VALUE_CONTEXTUAL,
         left_epoch, left_first_entry,
         right, NULL, bb, a, right_epoch,
-        BINDING_VALUE_CONTEXTUAL, true, NULL, right_plan,
+        right_kind, true, NULL, right_plan,
         &frame_region);
 }
 
 bool match_atoms_activation_view_builder_rule_local_in_exclusive_frame(
         Atom *left, const BindingsActivationView *left_frame,
-        Atom *right, const CettaOpenPatternPlan *right_plan,
+        Atom *right, BindingValueKind right_kind,
+        const CettaOpenPatternPlan *right_plan,
         BindingsBuilder *bb, Arena *a, uint32_t right_epoch,
         BindingsExclusiveFrame *exclusive, bool linear) {
     if (!left || !left_frame || !right || !bb || !a ||
+        !binding_value_kind_is_contextual(right_kind) ||
         !exclusive || !exclusive->active ||
         exclusive->epoch != right_epoch ||
         !bindings_activation_view_available(left_frame, &bb->current))
         return false;
+    MatchBareVariableStep bare = match_exclusive_bare_variable(
+        match_term_at(left, left_frame->source_kind, left_frame->epoch,
+                      left_frame->first_entry, left_frame).value,
+        right, right_plan, bb, a, right_epoch, exclusive);
+    if (bare != MATCH_BARE_VARIABLE_DECLINE)
+        return bare == MATCH_BARE_VARIABLE_BOUND;
     if (linear && right_plan) {
         return match_atoms_epoch_views_linear(
             left, left_frame->source_kind,
             left_frame->epoch, left_frame->first_entry,
             right, NULL, bb, a, right_epoch,
-            BINDING_VALUE_CONTEXTUAL, true, left_frame,
+            right_kind, true, left_frame,
             right_plan, exclusive);
     }
     RuleFrameRegion frame_region;
@@ -12440,7 +12790,7 @@ bool match_atoms_activation_view_builder_rule_local_in_exclusive_frame(
         left, left_frame->source_kind,
         left_frame->epoch, left_frame->first_entry,
         right, NULL, bb, a, right_epoch,
-        BINDING_VALUE_CONTEXTUAL, true, left_frame, right_plan,
+        right_kind, true, left_frame, right_plan,
         &frame_region);
 }
 

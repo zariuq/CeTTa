@@ -1,4 +1,4 @@
-; Output constraints belong to the translated clause head.  Opaque control
+; Output constraints belong to the translated equation LHS.  Opaque control
 ; results acquire their connection only when their runtime boundary is entered.
 !(progn (translatePredicate (set_prolog_flag occurs_check True)) true)
 (= (output-mark $label) (progn (println! $label) fixed-result))

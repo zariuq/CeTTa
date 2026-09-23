@@ -634,6 +634,29 @@ bool bindings_frame_index_write_slot_ref(
     return true;
 }
 
+BindingsFrameIndexEntry *bindings_frame_index_detach_entry_ref(
+        Bindings *bindings, BindingsFrameRef ref) {
+    if (!bindings || !bindings->frame_index ||
+        !bindings_frame_ref_is_valid(ref) ||
+        !bindings_frame_index_detach(bindings))
+        return NULL;
+    BindingsFrameIndexEntry *frame =
+        bindings_frame_index_find_ref(bindings->frame_index, ref);
+    return frame && bindings_frame_index_entry_detach(frame) ? frame : NULL;
+}
+
+bool bindings_frame_index_fill_slot(
+        BindingsFrameIndex *index, BindingsFrameIndexEntry *frame,
+        uint32_t slot, BindingValue value) {
+    if (!index || !frame || slot >= frame->slot_len || !value.skeleton ||
+        frame->values[slot].skeleton ||
+        index->write_clock == UINT64_MAX ||
+        !bindings_frame_index_replace_slot_value(index, frame, slot, value))
+        return false;
+    frame->write_version[slot] = ++index->write_clock;
+    return true;
+}
+
 static bool bindings_frame_index_write_slot(
         Bindings *bindings, uint32_t epoch, uint32_t slot,
         BindingValue value, uint64_t *version_out,

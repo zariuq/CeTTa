@@ -1157,7 +1157,7 @@ static bool petta_semantics_match_cons_constraint_mode(
          * A cons constraint against a closed flat list is the one boundary
          * where the observable tuple carrier enters relational traversal.
          * Reify the flat side as a shared spine once.  Binding a tail
-         * variable then retains a suffix pointer, so recursive clauses do
+         * variable then retains a suffix pointer, so recursive equations do
          * not allocate and retain N, N-1, ... element arrays.
          */
         if (left_cons && !right_cons &&

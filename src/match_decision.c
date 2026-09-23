@@ -37,9 +37,9 @@ typedef struct {
     CettaMatchDecisionKeyKind kind;
     CettaExprLen expression_length;
     Atom *atom;
-    uint32_t *clause_refs;
-    uint32_t clause_count;
-    uint32_t clause_capacity;
+    uint32_t *equation_refs;
+    uint32_t equation_count;
+    uint32_t equation_capacity;
 } CettaMatchDecisionKey;
 
 typedef struct {
@@ -92,14 +92,14 @@ typedef struct {
 struct CettaMatchDecision {
     _Atomic size_t owner_count;
     SpaceReadToken read;
-    SpaceEquationToken equations;
+    SpaceEquationToken equation_token;
     bool equation_projection_pinned;
     CettaMatchDecisionSemanticIdentity semantic_identity;
     CettaMatchDecisionMode mode;
     uint32_t max_depth;
     CettaMatchDecisionRealization realization;
-    CettaMatchDecisionClause *clauses;
-    size_t clause_count;
+    CettaMatchDecisionEquation *equations;
+    size_t equation_count;
     CettaMatchDecisionPath *paths;
     size_t path_count;
     size_t path_capacity;
@@ -112,6 +112,13 @@ struct CettaMatchDecision {
     CettaCodeTree *code_tree;
     CettaCodeTreeCursor *tree_cursor;
     uint64_t tree_epoch;
+    /* Guaranteed discriminators, strongest first: the paths at which every
+     * bound observation leaves fewer equations than the relation has, ranked
+     * by that worst-case survivor count and then by depth, because a
+     * shallower observation is cheaper.  Empty when no path guarantees
+     * pruning. */
+    uint32_t *discriminators;
+    uint32_t discriminator_count;
     CettaMatchDecisionEquality *equalities;
     size_t equality_count;
     size_t equality_capacity;
@@ -261,9 +268,9 @@ static bool match_decision_gather_paths(
     if (!decision)
         return false;
     CettaExprIndex path[CETTA_MATCH_DECISION_HARD_MAX_DEPTH] = {0};
-    for (size_t clause = 0u; clause < decision->clause_count &&
-         decision->path_count < CETTA_MATCH_DECISION_MAX_PATHS; clause++) {
-        Atom *pattern = decision->clauses[clause].pattern;
+    for (size_t equation = 0u; equation < decision->equation_count &&
+         decision->path_count < CETTA_MATCH_DECISION_MAX_PATHS; equation++) {
+        Atom *pattern = decision->equations[equation].pattern;
         if (!pattern || pattern->kind != ATOM_EXPR)
             continue;
         /* The relation head is already selected by the owning snapshot.
@@ -275,7 +282,7 @@ static bool match_decision_gather_paths(
             path[0] = child;
             if (!match_decision_gather_node_paths(
                     decision, classify, classify_context,
-                    decision->clauses[clause].source_ref,
+                    decision->equations[equation].source_ref,
                     pattern->expr.elems[child], path, 1u)) {
                 return false;
             }
@@ -397,22 +404,22 @@ static bool match_decision_compile_equalities(
     CettaMatchDecision *decision,
     CettaMatchDecisionClassifyPatternFn classify,
     void *classify_context) {
-    if (!decision || decision->clause_count == 0u)
+    if (!decision || decision->equation_count == 0u)
         return false;
-    if (decision->clause_count == SIZE_MAX ||
-        decision->clause_count + 1u >
+    if (decision->equation_count == SIZE_MAX ||
+        decision->equation_count + 1u >
             SIZE_MAX / sizeof(*decision->equality_offsets)) {
         return false;
     }
     decision->equality_offsets = calloc(
-        decision->clause_count + 1u,
+        decision->equation_count + 1u,
         sizeof(*decision->equality_offsets));
     if (!decision->equality_offsets)
         return false;
     CettaExprIndex path[CETTA_MATCH_DECISION_HARD_MAX_DEPTH] = {0};
-    for (size_t clause = 0u; clause < decision->clause_count; clause++) {
-        decision->equality_offsets[clause] = decision->equality_count;
-        Atom *pattern = decision->clauses[clause].pattern;
+    for (size_t equation = 0u; equation < decision->equation_count; equation++) {
+        decision->equality_offsets[equation] = decision->equality_count;
+        Atom *pattern = decision->equations[equation].pattern;
         if (!pattern || pattern->kind != ATOM_EXPR)
             continue;
         CettaMatchDecisionFirstVariable *variables = NULL;
@@ -424,7 +431,7 @@ static bool match_decision_compile_equalities(
             path[0] = child;
             ok = match_decision_collect_equalities_node(
                 decision, classify, classify_context,
-                decision->clauses[clause].source_ref,
+                decision->equations[equation].source_ref,
                 pattern->expr.elems[child], path, 1u,
                 &variables, &variable_count, &variable_capacity);
         }
@@ -432,7 +439,7 @@ static bool match_decision_compile_equalities(
         if (!ok)
             return false;
     }
-    decision->equality_offsets[decision->clause_count] =
+    decision->equality_offsets[decision->equation_count] =
         decision->equality_count;
     return true;
 }
@@ -677,8 +684,8 @@ static bool match_decision_compile_path(
     void *classify_context) {
     if (!decision || !descriptor)
         return false;
-    for (size_t clause = 0u; clause < decision->clause_count; clause++) {
-        const CettaMatchDecisionClause *source = &decision->clauses[clause];
+    for (size_t equation = 0u; equation < decision->equation_count; equation++) {
+        const CettaMatchDecisionEquation *source = &decision->equations[equation];
         Atom *node = match_decision_pattern_at_path(
             source->pattern, descriptor->path, descriptor->path_len);
         CettaMatchDecisionKeyKind kind = 0;
@@ -696,7 +703,7 @@ static bool match_decision_compile_path(
                     &descriptor->wildcard_refs,
                     &descriptor->wildcard_count,
                     &descriptor->wildcard_capacity,
-                    (uint32_t)clause)) {
+                    (uint32_t)equation)) {
                 return false;
             }
             continue;
@@ -704,8 +711,8 @@ static bool match_decision_compile_path(
         CettaMatchDecisionKey *key = match_decision_path_key(
             decision, descriptor, kind, expression_length, key_atom);
         if (!key || !match_decision_u32_push(
-                &key->clause_refs, &key->clause_count,
-                &key->clause_capacity, (uint32_t)clause)) {
+                &key->equation_refs, &key->equation_count,
+                &key->equation_capacity, (uint32_t)equation)) {
             return false;
         }
     }
@@ -716,7 +723,7 @@ static void match_decision_path_free(CettaMatchDecisionPath *path) {
     if (!path)
         return;
     for (uint32_t key = 0u; key < path->key_count; key++)
-        free(path->keys[key].clause_refs);
+        free(path->keys[key].equation_refs);
     free(path->key_slots);
     free(path->keys);
     free(path->wildcard_refs);
@@ -733,7 +740,7 @@ static void match_decision_remove_empty_paths(
     for (size_t read = 0u; read < decision->path_count; read++) {
         CettaMatchDecisionPath *path = &decision->paths[read];
         if (path->key_count == 0u ||
-            path->wildcard_count == decision->clause_count) {
+            path->wildcard_count == decision->equation_count) {
             match_decision_path_free(path);
             continue;
         }
@@ -989,18 +996,70 @@ decline:
 /* Each path partitions occurrences into disjoint key lists and a wildcard
  * list. Transpose this inventory once into the code tree; selection never
  * constructs or intersects per-path occurrence masks. */
-static bool match_decision_build_code_tree(CettaMatchDecision *decision) {
-    size_t paths = decision->path_count, clauses = decision->clause_count;
-    if (paths && clauses > SIZE_MAX / sizeof(uint32_t) / paths)
+/* Rank the guaranteed discriminators once per compiled decision.  A bound
+ * observation at a path keeps its wildcard equations and at most one key's
+ * equations, so its worst-case survivor count is `wildcard_count + largest
+ * key`.  A path guarantees pruning when that count is below the number of
+ * equations; every other path can leave all of them, so observing it never
+ * pays for itself in the worst case. */
+static bool match_decision_rank_discriminators(CettaMatchDecision *decision) {
+    decision->discriminators = NULL;
+    decision->discriminator_count = 0u;
+    if (decision->path_count == 0u)
+        return true;
+    uint32_t *ranked = malloc(sizeof(*ranked) * decision->path_count);
+    size_t *worst = malloc(sizeof(*worst) * decision->path_count);
+    if (!ranked || !worst) {
+        free(ranked);
+        free(worst);
         return false;
-    uint32_t *tags = paths ? malloc(paths * clauses * sizeof(*tags)) : NULL;
-    const uint32_t **patterns = malloc(clauses * sizeof(*patterns));
+    }
+    uint32_t count = 0u;
+    for (size_t index = 0u; index < decision->path_count; index++) {
+        const CettaMatchDecisionPath *path = &decision->paths[index];
+        size_t largest = 0u;
+        for (uint32_t key = 0u; key < path->key_count; key++) {
+            if (path->keys[key].equation_count > largest)
+                largest = path->keys[key].equation_count;
+        }
+        size_t survivors = (size_t)path->wildcard_count + largest;
+        if (survivors >= decision->equation_count)
+            continue;
+        worst[index] = survivors;
+        uint32_t at = count++;
+        while (at > 0u) {
+            uint32_t previous = ranked[at - 1u];
+            if (worst[previous] < survivors ||
+                (worst[previous] == survivors &&
+                 decision->paths[previous].path_len <= path->path_len))
+                break;
+            ranked[at] = previous;
+            at--;
+        }
+        ranked[at] = (uint32_t)index;
+    }
+    free(worst);
+    if (count == 0u) {
+        free(ranked);
+        return true;
+    }
+    decision->discriminators = ranked;
+    decision->discriminator_count = count;
+    return true;
+}
+
+static bool match_decision_build_code_tree(CettaMatchDecision *decision) {
+    size_t paths = decision->path_count, equations = decision->equation_count;
+    if (paths && equations > SIZE_MAX / sizeof(uint32_t) / paths)
+        return false;
+    uint32_t *tags = paths ? malloc(paths * equations * sizeof(*tags)) : NULL;
+    const uint32_t **patterns = malloc(equations * sizeof(*patterns));
     if ((paths && !tags) || !patterns) {
         free(tags);
         free(patterns);
         return false;
     }
-    for (size_t i = 0u; i < clauses; i++) {
+    for (size_t i = 0u; i < equations; i++) {
         patterns[i] = paths ? tags + i * paths : NULL;
         for (size_t j = 0u; j < paths; j++)
             tags[i * paths + j] = CETTA_CODE_TREE_UNKNOWN;
@@ -1015,16 +1074,16 @@ static bool match_decision_build_code_tree(CettaMatchDecision *decision) {
         }
         for (uint32_t k = 0u; k < path->key_count && ok; k++) {
             const CettaMatchDecisionKey *key = &path->keys[k];
-            for (uint32_t r = 0u; r < key->clause_count; r++) {
-                uint32_t clause = key->clause_refs[r];
-                if (clause >= clauses) { ok = false; break; }
-                tags[clause * paths + i] = k;
+            for (uint32_t r = 0u; r < key->equation_count; r++) {
+                uint32_t equation = key->equation_refs[r];
+                if (equation >= equations) { ok = false; break; }
+                tags[equation * paths + i] = k;
             }
         }
     }
     if (ok) {
         decision->code_tree = cetta_code_tree_build((uint32_t)paths,
-            patterns, (uint32_t)clauses);
+            patterns, (uint32_t)equations);
         decision->tree_cursor = cetta_code_tree_cursor_new(decision->code_tree);
         ok = decision->code_tree && decision->tree_cursor;
         if (ok) {
@@ -1035,8 +1094,8 @@ static bool match_decision_build_code_tree(CettaMatchDecision *decision) {
                 free(path->wildcard_refs);
                 path->wildcard_refs = NULL;
                 for (uint32_t k = 0u; k < path->key_count; k++) {
-                    free(path->keys[k].clause_refs);
-                    path->keys[k].clause_refs = NULL;
+                    free(path->keys[k].equation_refs);
+                    path->keys[k].equation_refs = NULL;
                 }
             }
         }
@@ -1047,19 +1106,19 @@ static bool match_decision_build_code_tree(CettaMatchDecision *decision) {
 }
 
 static CettaMatchDecision *cetta_match_decision_compile_with_dependency(
-    SpaceReadToken read, SpaceEquationToken equations,
+    SpaceReadToken read, SpaceEquationToken equation_token,
     bool equation_projection_pinned,
     CettaMatchDecisionSemanticIdentity semantic_identity,
-    const CettaMatchDecisionClause *clauses,
-    size_t clause_count,
+    const CettaMatchDecisionEquation *equations,
+    size_t equation_count,
     CettaMatchDecisionMode mode,
     uint32_t max_depth,
     CettaMatchDecisionRealization realization,
     CettaMatchDecisionClassifyPatternFn classify,
     void *classify_context) {
-    if (!clauses || clause_count == 0u || clause_count > UINT32_MAX ||
+    if (!equations || equation_count == 0u || equation_count > UINT32_MAX ||
         (equation_projection_pinned
-             ? !space_equation_token_is_current(equations)
+             ? !space_equation_token_is_current(equation_token)
              : !space_read_token_is_current(read)) ||
         (mode != CETTA_MATCH_DECISION_LINEAR &&
          mode != CETTA_MATCH_DECISION_DEEP &&
@@ -1076,20 +1135,20 @@ static CettaMatchDecision *cetta_match_decision_compile_with_dependency(
         return NULL;
     atomic_init(&decision->owner_count, 1u);
     decision->read = read;
-    decision->equations = equations;
+    decision->equation_token = equation_token;
     decision->equation_projection_pinned = equation_projection_pinned;
     decision->semantic_identity = semantic_identity;
     decision->mode = mode;
     decision->max_depth = max_depth;
     decision->realization = realization;
-    decision->clauses = malloc(sizeof(*decision->clauses) * clause_count);
-    if (!decision->clauses) {
+    decision->equations = malloc(sizeof(*decision->equations) * equation_count);
+    if (!decision->equations) {
         cetta_match_decision_free(decision);
         return NULL;
     }
-    memcpy(decision->clauses, clauses,
-           sizeof(*decision->clauses) * clause_count);
-    decision->clause_count = clause_count;
+    memcpy(decision->equations, equations,
+           sizeof(*decision->equations) * equation_count);
+    decision->equation_count = equation_count;
     decision->stats.compilations = 1u;
 
     if (mode == CETTA_MATCH_DECISION_DEEP ||
@@ -1119,6 +1178,10 @@ static CettaMatchDecision *cetta_match_decision_compile_with_dependency(
             cetta_match_decision_free(decision);
             return NULL;
         }
+        if (!match_decision_rank_discriminators(decision)) {
+            cetta_match_decision_free(decision);
+            return NULL;
+        }
     }
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_MATCH_DECISION_COMPILE);
@@ -1128,8 +1191,8 @@ static CettaMatchDecision *cetta_match_decision_compile_with_dependency(
 CettaMatchDecision *cetta_match_decision_compile(
     SpaceReadToken read,
     CettaMatchDecisionSemanticIdentity semantic_identity,
-    const CettaMatchDecisionClause *clauses,
-    size_t clause_count,
+    const CettaMatchDecisionEquation *equations,
+    size_t equation_count,
     CettaMatchDecisionMode mode,
     uint32_t max_depth,
     CettaMatchDecisionRealization realization,
@@ -1137,23 +1200,23 @@ CettaMatchDecision *cetta_match_decision_compile(
     void *classify_context) {
     return cetta_match_decision_compile_with_dependency(
         read, (SpaceEquationToken){0}, false, semantic_identity,
-        clauses, clause_count, mode, max_depth, realization,
+        equations, equation_count, mode, max_depth, realization,
         classify, classify_context);
 }
 
 CettaMatchDecision *cetta_match_decision_compile_equation_projection(
-    SpaceEquationToken equations,
+    SpaceEquationToken equation_token,
     CettaMatchDecisionSemanticIdentity semantic_identity,
-    const CettaMatchDecisionClause *clauses,
-    size_t clause_count,
+    const CettaMatchDecisionEquation *equations,
+    size_t equation_count,
     CettaMatchDecisionMode mode,
     uint32_t max_depth,
     CettaMatchDecisionRealization realization,
     CettaMatchDecisionClassifyPatternFn classify,
     void *classify_context) {
     return cetta_match_decision_compile_with_dependency(
-        (SpaceReadToken){0}, equations, true, semantic_identity,
-        clauses, clause_count, mode, max_depth, realization,
+        (SpaceReadToken){0}, equation_token, true, semantic_identity,
+        equations, equation_count, mode, max_depth, realization,
         classify, classify_context);
 }
 
@@ -1192,7 +1255,8 @@ void cetta_match_decision_free(CettaMatchDecision *decision) {
     for (size_t path = 0u; path < decision->path_count; path++)
         match_decision_path_free(&decision->paths[path]);
     free(decision->paths);
-    free(decision->clauses);
+    free(decision->discriminators);
+    free(decision->equations);
     free(decision->candidate_locals);
     free(decision->candidate_sources);
     free(decision->working_lists);
@@ -1228,7 +1292,7 @@ bool cetta_match_decision_is_current(
     return decision && live_space &&
            (decision->equation_projection_pinned
                 ? space_equation_token_matches_live_space(
-                      decision->equations, live_space)
+                      decision->equation_token, live_space)
                 : space_read_token_matches_live_space(
                       decision->read, live_space)) &&
            match_decision_semantic_identity_equal(
@@ -1457,7 +1521,7 @@ static void match_decision_prefix_observation_begin(
      * region once in topological order.  UNKNOWN and ABSENT are absorbing:
      * the optimized realization propagates them without re-entering the
      * structural observer.  Repeated-variable equality endpoints remain
-     * demand-driven because selection may remove their clauses first. */
+     * demand-driven because selection may remove their equations first. */
     uint32_t absorbed_edges = 0u;
     for (size_t node = 1u; node < selector_node_count; node++) {
         const CettaMatchDecisionObservationNode *entry =
@@ -1734,12 +1798,12 @@ static MatchDecisionEqualityObservation match_decision_observe_equality(
 static bool match_decision_equality_refutes(
     CettaMatchDecision *decision,
     const CettaMatchDecisionQuery *query,
-    uint64_t ready_arguments, uint32_t local_clause) {
+    uint64_t ready_arguments, uint32_t local_equation) {
     if (!decision || !query || !decision->equality_offsets ||
-        local_clause >= decision->clause_count)
+        local_equation >= decision->equation_count)
         return false;
-    size_t begin = decision->equality_offsets[local_clause];
-    size_t end = decision->equality_offsets[local_clause + 1u];
+    size_t begin = decision->equality_offsets[local_equation];
+    size_t end = decision->equality_offsets[local_equation + 1u];
     if (begin > end || end > decision->equality_count)
         return false;
     for (size_t index = begin; index < end; index++) {
@@ -1926,7 +1990,7 @@ static bool match_decision_path_exact_lists(const CettaMatchDecisionQuery *query
     for (uint32_t index = 0u; index < key_count; index++) {
         if (!match_decision_add_ref_list(
                 lists, list_capacity, list_count, accepted_count,
-                keys[index]->clause_refs, keys[index]->clause_count)) {
+                keys[index]->equation_refs, keys[index]->equation_count)) {
             return false;
         }
     }
@@ -1964,8 +2028,8 @@ static bool match_decision_path_generic_lists(const CettaMatchDecisionQuery *que
             continue;
         if (!match_decision_add_ref_list(
                 lists, list_capacity, list_count, accepted_count,
-                path->keys[key].clause_refs,
-                path->keys[key].clause_count)) {
+                path->keys[key].equation_refs,
+                path->keys[key].equation_count)) {
             return false;
         }
     }
@@ -2005,7 +2069,7 @@ static bool match_decision_path_exact_candidate_count(const CettaMatchDecisionQu
     uint32_t key_count = match_decision_path_exact_keys(query,
         decision, path, value, value_absent, keys);
     for (uint32_t index = 0u; index < key_count; index++)
-        accepted += keys[index]->clause_count;
+        accepted += keys[index]->equation_count;
     if (accepted > UINT32_MAX)
         return false;
     *accepted_count = (uint32_t)accepted;
@@ -2031,9 +2095,9 @@ static bool match_decision_path_generic_candidate_count(const CettaMatchDecision
                 query_state, &path->keys[key], value) ==
             CETTA_MD_POLICY_REFUTE)
             continue;
-        if (accepted > UINT32_MAX - path->keys[key].clause_count)
+        if (accepted > UINT32_MAX - path->keys[key].equation_count)
             return false;
-        accepted += path->keys[key].clause_count;
+        accepted += path->keys[key].equation_count;
     }
     *accepted_count = accepted;
     return true;
@@ -2176,13 +2240,13 @@ static bool match_decision_linear_candidates(
         !match_decision_reserve(
             (void **)&decision->candidate_locals,
             &decision->candidate_local_capacity,
-            decision->clause_count,
+            decision->equation_count,
             sizeof(*decision->candidate_locals))) {
         return false;
     }
-    for (size_t clause = 0u; clause < decision->clause_count; clause++)
-        decision->candidate_locals[clause] = (uint32_t)clause;
-    *candidate_count = decision->clause_count;
+    for (size_t equation = 0u; equation < decision->equation_count; equation++)
+        decision->candidate_locals[equation] = (uint32_t)equation;
+    *candidate_count = decision->equation_count;
     return true;
 }
 
@@ -2209,17 +2273,17 @@ static CettaMatchDecisionSelectState match_decision_select_query(
     }
 
     decision->stats.runs++;
-    decision->stats.clause_inputs += decision->clause_count;
+    decision->stats.equation_inputs += decision->equation_count;
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_MATCH_DECISION_RUN);
     cetta_runtime_stats_add(
-        CETTA_RUNTIME_COUNTER_MATCH_DECISION_CLAUSE_INPUT,
-        decision->clause_count);
+        CETTA_RUNTIME_COUNTER_MATCH_DECISION_EQUATION_INPUT,
+        decision->equation_count);
     match_decision_prefix_observation_begin(
         decision, query, ready_arguments);
     size_t local_count = 0u;
     bool selected_pivot = false;
-    uint32_t best_count = (uint32_t)decision->clause_count;
+    uint32_t best_count = (uint32_t)decision->equation_count;
     size_t best_path = SIZE_MAX;
 
     if (decision->mode == CETTA_MATCH_DECISION_DEEP &&
@@ -2330,29 +2394,29 @@ static CettaMatchDecisionSelectState match_decision_select_query(
     size_t write = 0u;
     for (size_t index = 0u; index < local_count; index++) {
         uint32_t local = decision->candidate_locals[index];
-        if (local >= decision->clause_count)
+        if (local >= decision->equation_count)
             return CETTA_MATCH_DECISION_SELECT_ERROR;
-        const CettaMatchDecisionClause *clause =
-            &decision->clauses[local];
+        const CettaMatchDecisionEquation *equation =
+            &decision->equations[local];
         if (match_decision_equality_refutes(
                 decision, query, ready_arguments, local)) {
             continue;
         }
         if (verify && !verify(
-                verify_context, clause->source_ref,
-                clause->pattern, query->whole)) {
+                verify_context, equation->source_ref,
+                equation->pattern, query->whole)) {
             continue;
         }
         if (query->verify_view && !query->verify_view(
-                verify_context, clause->source_ref,
-                clause->pattern, query->cursor_view)) {
+                verify_context, equation->source_ref,
+                equation->pattern, query->cursor_view)) {
             continue;
         }
-        decision->candidate_sources[write++] = clause->source_ref;
+        decision->candidate_sources[write++] = equation->source_ref;
     }
-    decision->stats.clause_survivors += write;
+    decision->stats.equation_survivors += write;
     cetta_runtime_stats_add(
-        CETTA_RUNTIME_COUNTER_MATCH_DECISION_CLAUSE_SURVIVOR, write);
+        CETTA_RUNTIME_COUNTER_MATCH_DECISION_EQUATION_SURVIVOR, write);
     *source_refs = decision->candidate_sources;
     *source_ref_count = write;
     return CETTA_MATCH_DECISION_SELECT_READY;
@@ -2406,6 +2470,39 @@ CettaMatchDecisionSelectState cetta_match_decision_select_view_v1(
     return match_decision_select_query(
         decision, live_space, semantic_identity, &view, ready_arguments,
         NULL, verify_context, source_refs, source_ref_count);
+}
+
+bool cetta_match_decision_discriminator_bound_view_v1(
+    CettaMatchDecision *decision,
+    const CettaMatchDecisionQueryViewV1 *query, uint64_t ready_arguments) {
+    if (!decision || !query ||
+        decision->mode != CETTA_MATCH_DECISION_CONJUNCTIVE)
+        return true;
+    if (decision->discriminator_count > 0u) {
+        CettaMatchDecisionQuery view = {
+            .head = query->head.source,
+            .arity = query->arity,
+            .cursor_view = query,
+        };
+        /* A fresh observation epoch: nothing cached for an earlier query
+         * may be read back for this one. */
+        match_decision_prefix_observation_begin(
+            decision, &view, ready_arguments);
+        for (uint32_t index = 0u;
+             index < decision->discriminator_count; index++) {
+            CettaGsltTermCursorV1 value = {0};
+            if (match_decision_query_at_compiled_path(
+                    decision, &view,
+                    &decision->paths[decision->discriminators[index]],
+                    ready_arguments, &value) !=
+                CETTA_MATCH_DECISION_QUERY_UNKNOWN)
+                return true;
+        }
+    }
+    decision->stats.discriminator_unbound_skips++;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_MATCH_DECISION_DISCRIMINATOR_UNBOUND_SKIP);
+    return false;
 }
 
 void cetta_match_decision_stats(

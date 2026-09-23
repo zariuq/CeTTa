@@ -3,8 +3,8 @@
 
 (: mixed (-> Atom Atom Atom %Undefined%))
 
-; This general clause admits the higher-order parameter for specialization
-; without contributing an answer.  The specific clause below then checks that
+; This general equation admits the higher-order parameter for specialization
+; without contributing an answer.  The specific equation below then checks that
 ; the one derived pattern can carry both structural and relational roles.
 (= (mixed $f $a $b)
    (if False ($f 0) (empty)))

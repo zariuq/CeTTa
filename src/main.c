@@ -3723,7 +3723,7 @@ int main(int argc, char **argv) {
 
     /*
      * PeTTa owns its library equations.  Loading HE's definitions into
-     * &self changes clause choice, specialization, and reflection even when
+     * &self changes equation choice, specialization, and reflection even when
      * individual helpers look similar.  The fallback is diagnostic only;
      * shared native primitives remain available through the evaluator.
      */

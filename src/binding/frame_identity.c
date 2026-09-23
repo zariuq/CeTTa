@@ -20,18 +20,71 @@ static pthread_mutex_t g_frame_identity_mutex = PTHREAD_MUTEX_INITIALIZER;
 static uint32_t g_frame_identity_next_handle = 1u;
 static uint32_t g_frame_identity_free_handle;
 
+/* Free handles kept by the thread that released them, so minting and the
+ * last release of an activation's identity take no lock.  A handle here has
+ * no references; its next mint advances the generation exactly as a handle
+ * from the shared list does.  A thread returns its handles when it exits. */
+enum { FRAME_IDENTITY_LOCAL_HANDLES = 64u };
+
+typedef struct {
+    uint32_t len;
+    uint32_t handles[FRAME_IDENTITY_LOCAL_HANDLES];
+} FrameIdentityLocalHandles;
+
+static _Thread_local FrameIdentityLocalHandles g_local_handles;
+static _Thread_local bool g_local_handles_registered;
+static pthread_key_t g_local_handles_key;
+static pthread_once_t g_local_handles_once = PTHREAD_ONCE_INIT;
+
+static void frame_identity_return_local_handles(void *raw) {
+    FrameIdentityLocalHandles *local = raw;
+    if (!local || local->len == 0u)
+        return;
+    pthread_mutex_lock(&g_frame_identity_mutex);
+    while (local->len > 0u) {
+        uint32_t handle = local->handles[--local->len];
+        g_frame_identities[handle].next_free = g_frame_identity_free_handle;
+        g_frame_identity_free_handle = handle;
+    }
+    pthread_mutex_unlock(&g_frame_identity_mutex);
+}
+
+static void frame_identity_local_key_create(void) {
+    if (pthread_key_create(&g_local_handles_key,
+                           frame_identity_return_local_handles) != 0)
+        abort();
+}
+
+static FrameIdentityLocalHandles *frame_identity_local_handles(void) {
+    if (!g_local_handles_registered) {
+        pthread_once(&g_local_handles_once, frame_identity_local_key_create);
+        if (pthread_setspecific(g_local_handles_key, &g_local_handles) != 0)
+            return NULL;
+        g_local_handles_registered = true;
+    }
+    return &g_local_handles;
+}
+
 bool cetta_frame_identity_acquire(CettaFrameIdentity *identity_out) {
     if (!identity_out)
         return false;
-    pthread_mutex_lock(&g_frame_identity_mutex);
-    uint32_t handle = g_frame_identity_free_handle;
-    if (handle) {
-        g_frame_identity_free_handle = g_frame_identities[handle].next_free;
-    } else if (g_frame_identity_next_handle <= CETTA_FRAME_HANDLE_MASK) {
-        handle = g_frame_identity_next_handle++;
+    FrameIdentityLocalHandles *local = frame_identity_local_handles();
+    uint32_t handle = 0u;
+    if (local && local->len > 0u) {
+        handle = local->handles[--local->len];
     } else {
+        pthread_mutex_lock(&g_frame_identity_mutex);
+        handle = g_frame_identity_free_handle;
+        if (handle) {
+            g_frame_identity_free_handle =
+                g_frame_identities[handle].next_free;
+        } else if (g_frame_identity_next_handle <= CETTA_FRAME_HANDLE_MASK) {
+            handle = g_frame_identity_next_handle++;
+        } else {
+            pthread_mutex_unlock(&g_frame_identity_mutex);
+            return false;
+        }
         pthread_mutex_unlock(&g_frame_identity_mutex);
-        return false;
     }
     FrameIdentityCell *cell = &g_frame_identities[handle];
     uint64_t previous = atomic_load_explicit(&cell->state, memory_order_relaxed);
@@ -41,7 +94,6 @@ bool cetta_frame_identity_acquire(CettaFrameIdentity *identity_out) {
     atomic_store_explicit(&cell->next_slot, 0u, memory_order_relaxed);
     atomic_store_explicit(&cell->state,
         ((uint64_t)generation << 32u) | UINT64_C(1), memory_order_release);
-    pthread_mutex_unlock(&g_frame_identity_mutex);
     *identity_out = (generation << CETTA_FRAME_HANDLE_BITS) | handle;
     return true;
 }
@@ -119,6 +171,11 @@ void cetta_frame_identity_release(CettaFrameIdentity identity) {
     }
     if ((uint32_t)state != 1u || generation == CETTA_FRAME_GENERATION_MAX)
         return;
+    FrameIdentityLocalHandles *local = frame_identity_local_handles();
+    if (local && local->len < FRAME_IDENTITY_LOCAL_HANDLES) {
+        local->handles[local->len++] = handle;
+        return;
+    }
     pthread_mutex_lock(&g_frame_identity_mutex);
     cell->next_free = g_frame_identity_free_handle;
     g_frame_identity_free_handle = handle;

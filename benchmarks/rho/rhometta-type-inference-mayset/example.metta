@@ -180,7 +180,7 @@
 ; plus (2) x overloaded one (2) x one (2) is an 8-way fork pruned at the join to
 ; the 2 consistent typings (Int, Float).  That multi-premise multiplicity is then
 ; boxed and fanned into the parent (box _) join through the SAME rho:patterns:!recv.
-; The independent bc oracle below has a 3-premise rule clause, so this case is
+; The independent bc oracle below has a 3-premise rule equation, so this case is
 ; cross-checked by real backward chaining rather than by expected-output constants.
 ; ---------------------------------------------------------------------------
 !(add-atom &kb (: pplus-i (HasType plus (Fn2 Int   Int   Int))))

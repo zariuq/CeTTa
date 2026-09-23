@@ -8,7 +8,7 @@
 /*
  * MatchDecision is a derived, revision-pinned candidate selector.  It never
  * binds variables and never establishes a match: its only soundness claim is
- * that every omitted clause is structurally impossible under the lane-owned
+ * that every omitted equation is structurally impossible under the lane-owned
  * observation policy.  The ordinary matcher remains semantic authority.
  */
 typedef struct CettaMatchDecision CettaMatchDecision;
@@ -21,7 +21,7 @@ typedef enum {
     CETTA_MATCH_DECISION_LINEAR = 0,
     CETTA_MATCH_DECISION_DEEP = 1,
     /* Intersect every observable structural path.  This is useful for
-     * finite clause families whose discrimination is distributed across
+     * finite equation families whose discrimination is distributed across
      * several positions; the exact matcher still verifies every survivor. */
     CETTA_MATCH_DECISION_CONJUNCTIVE = 2,
 } CettaMatchDecisionMode;
@@ -60,7 +60,7 @@ cetta_match_decision_realization_from_process(void);
 typedef struct {
     Atom *pattern;
     uint32_t source_ref;
-} CettaMatchDecisionClause;
+} CettaMatchDecisionEquation;
 
 /* Runtime artifacts are pinned to meaning as well as storage.  A caller may
  * choose its own stable identifiers, but every field participates in exact
@@ -75,7 +75,7 @@ typedef struct {
     uint64_t compiler_identity;
 } CettaMatchDecisionSemanticIdentity;
 
-/* Paths are expression-child indices from the complete clause head.  The
+/* Paths are expression-child indices from the complete equation LHS.  The
  * empty path denotes that head.  Classification is consulted only while the
  * immutable artifact is compiled. */
 typedef CettaMatchDecisionPatternClass
@@ -94,10 +94,11 @@ typedef struct {
     uint64_t compilations;
     uint64_t runs;
     uint64_t code_tree_node_visits;
-    uint64_t clause_inputs;
-    uint64_t clause_survivors;
+    uint64_t equation_inputs;
+    uint64_t equation_survivors;
     uint64_t linear_fallbacks;
     uint64_t unavailable_path_fallbacks;
+    uint64_t discriminator_unbound_skips;
     uint64_t key_index_build_probes;
     uint64_t key_index_select_probes;
     uint64_t generic_key_policy_scans;
@@ -118,31 +119,31 @@ typedef struct {
     uint64_t prefix_observation_trie_edges;
 } CettaMatchDecisionStats;
 
-/* Compile an ordered clause family against a complete Space read.  `max_depth`
+/* Compile an ordered equation family against a complete Space read.  `max_depth`
  * counts expression edges; zero requests the implementation default.  Pattern
  * pointers remain owned by the pinned Space revision. */
 CettaMatchDecision *cetta_match_decision_compile(
     SpaceReadToken read,
     CettaMatchDecisionSemanticIdentity semantic_identity,
-    const CettaMatchDecisionClause *clauses,
-    size_t clause_count,
+    const CettaMatchDecisionEquation *equations,
+    size_t equation_count,
     CettaMatchDecisionMode mode,
     uint32_t max_depth,
     CettaMatchDecisionRealization realization,
     CettaMatchDecisionClassifyPatternFn classify,
     void *classify_context);
 
-/* Compile an ordered clause family whose complete construction depends only
+/* Compile an ordered equation family whose complete construction depends only
  * on the Space's ordered equation projection and the supplied semantic
  * identity.  This is narrower than `cetta_match_decision_compile`: callers
  * must not use it for a selector that reads ordinary data atoms.  It remains
  * current across data-only mutations and is rejected by every equation or
  * opaque mutation. */
 CettaMatchDecision *cetta_match_decision_compile_equation_projection(
-    SpaceEquationToken equations,
+    SpaceEquationToken equation_token,
     CettaMatchDecisionSemanticIdentity semantic_identity,
-    const CettaMatchDecisionClause *clauses,
-    size_t clause_count,
+    const CettaMatchDecisionEquation *equations,
+    size_t equation_count,
     CettaMatchDecisionMode mode,
     uint32_t max_depth,
     CettaMatchDecisionRealization realization,
@@ -209,6 +210,19 @@ CettaMatchDecisionSelectState cetta_match_decision_select_view_v1(
     const CettaMatchDecisionQueryViewV1 *query, uint64_t ready_arguments,
     CettaMatchDecisionVerifyViewCandidateFnV1 verify, void *verify_context,
     const uint32_t **source_refs, size_t *source_ref_count);
+
+/* A conjunctive decision indexes equation left-hand sides.  Like any index
+ * it discriminates only calls instantiated at a discriminator: a compiled
+ * path at which every bound observation leaves fewer equations than the
+ * relation has.  Discriminators are tried strongest first, so an open first
+ * argument does not disable a later one.  False means the query is open at
+ * every discriminator, or the relation has none; selection could then prune
+ * nothing in the worst case, so the caller keeps source order and lets the
+ * authoritative LHS matcher decide.  Both answers are sound, because
+ * selection may only drop equations proved not to match. */
+bool cetta_match_decision_discriminator_bound_view_v1(
+    CettaMatchDecision *decision,
+    const CettaMatchDecisionQueryViewV1 *query, uint64_t ready_arguments);
 
 void cetta_match_decision_stats(
     const CettaMatchDecision *decision,

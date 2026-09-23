@@ -1,4 +1,4 @@
-; Direct clause slots may use the live trail only for an admitted query shape.
+; Direct equation slots may use the live trail only for an admitted query shape.
 ; This open row shares variables across traversal and removal.  The optimized
 ; and isolated matchers must both remove its exact occurrence.
 (= (collect-vars $term $acc)
@@ -26,24 +26,24 @@
 (= (slot-repeat-rule $same $same) (same $same))
 (= (slot-repeat-caller $left $right) (pair $left $right))
 
-; Multiplicity is occurrence-based even when two clauses are identical.
+; Multiplicity is occurrence-based even when two equations are identical.
 (= (slot-duplicate $value) (duplicate $value))
 (= (slot-duplicate $value) (duplicate $value))
 
-!(add-atom &clause-slot-admission-space
+!(add-atom &equation-slot-admission-space
    (stored-row 0 (shared-form $left $right)))
 
 !(let*
    (((stored-row $score $form)
-       (once (match &clause-slot-admission-space
+       (once (match &equation-slot-admission-space
           (stored-row $candidate-score $candidate-form)
           (stored-row $candidate-score $candidate-form))))
     ($_capture (once (collect-vars $form ())))
-    ($_remove (remove-atom &clause-slot-admission-space
+    ($_remove (remove-atom &equation-slot-admission-space
        (stored-row $score $form))))
-   (clause-slot-rows-left
+   (equation-slot-rows-left
       (size-atom (collapse
-         (match &clause-slot-admission-space $row $row)))))
+         (match &equation-slot-admission-space $row $row)))))
 
 !(let* (((bound $left $right)
           (slot-bind-structure $shape)))

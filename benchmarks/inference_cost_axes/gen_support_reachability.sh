@@ -41,8 +41,8 @@ done
 
 printf '%s\n' \
     "; Finite-support reachability axis generated at width $width." \
-    "; The live and empty clauses both survive an open-variable query." \
-    "; Only the live clause recurs; its next argument is one unbound" \
+    "; The live and empty equations both survive an open-variable query." \
+    "; Only the live equation recurs; its next argument is one unbound" \
     "; member of the previous rule frame." \
     "(= (support-walk \$n (live (node$support)))" \
     "   (if (== \$n 0) done" \

@@ -15,7 +15,7 @@
 ; An RHS-local variable is outside C0 and must retain reference semantics.
 (= (c0-local $value) (local $fresh))
 
-; An open caller-visible alias is outside C0 even when its clause has a
+; An open caller-visible alias is outside C0 even when its equation has a
 ; compiled representation.
 (= (c0-open $value) $value)
 

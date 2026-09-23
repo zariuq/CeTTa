@@ -69,12 +69,12 @@ def from_cetta_machine(
 
     if published_answers < 0:
         raise ValueError("published answer count is negative")
-    considered = _required_integer(machine, "clause_snapshot_candidates")
+    considered = _required_integer(machine, "candidate_snapshot_candidates")
     rejected = (
-        _required_integer(machine, "clause_candidates_shape_pruned")
-        + _required_integer(machine, "clause_attempts_rejected_before_body")
+        _required_integer(machine, "equation_candidates_shape_pruned")
+        + _required_integer(machine, "equation_attempts_rejected_before_body")
     )
-    succeeded = _required_integer(machine, "clause_bodies_scheduled")
+    succeeded = _required_integer(machine, "equation_bodies_scheduled")
     counters = {
         "rule-candidates-considered": considered,
         "rule-candidates-rejected": rejected,
@@ -82,7 +82,7 @@ def from_cetta_machine(
         "unifications-succeeded": succeeded,
         "rule-bodies-entered": succeeded,
         "result-occurrences": _required_integer(
-            machine, "clause_result_occurrences"
+            machine, "equation_result_occurrences"
         ),
         "answers-produced": published_answers,
         "ordered-occurrences-published": published_answers,

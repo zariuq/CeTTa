@@ -2,7 +2,7 @@
 #define CETTA_EXECUTION_CONTRACTS_GENERATED_H
 
 /* Generated from lib/gslt_execution_contracts.metta.
- * Source SHA-256: d6f2f04d7880c41a8e3688b57a7d097e6d9996e3face9100a494649c6246a812
+ * Source SHA-256: f6424c631f00a517bc511e606de159880afb45cbe3006254676bc25c2dba5296
  */
 
 #include <stdbool.h>

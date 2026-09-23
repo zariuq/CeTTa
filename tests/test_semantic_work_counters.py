@@ -21,13 +21,13 @@ from petta_machine_stats import (  # noqa: E402
 class SemanticWorkCountersTest(unittest.TestCase):
     def test_cetta_projection_ignores_internal_retry_counts(self) -> None:
         machine = {
-            "clause_snapshot_candidates": 3,
-            "clause_candidates_shape_pruned": 1,
-            "clause_attempts_rejected_before_body": 0,
-            "clause_bodies_scheduled": 2,
-            "clause_result_occurrences": 2,
+            "candidate_snapshot_candidates": 3,
+            "equation_candidates_shape_pruned": 1,
+            "equation_attempts_rejected_before_body": 0,
+            "equation_bodies_scheduled": 2,
+            "equation_result_occurrences": 2,
             "answers": 2,
-            "match_decision_clause_inputs": 17,
+            "match_decision_equation_inputs": 17,
             "unification_calls": 29,
         }
         self.assertEqual(
@@ -64,11 +64,11 @@ class SemanticWorkCountersTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "candidate partition"):
             from_cetta_machine(
                 {
-                    "clause_snapshot_candidates": 3,
-                    "clause_candidates_shape_pruned": 0,
-                    "clause_attempts_rejected_before_body": 0,
-                    "clause_bodies_scheduled": 2,
-                    "clause_result_occurrences": 2,
+                    "candidate_snapshot_candidates": 3,
+                    "equation_candidates_shape_pruned": 0,
+                    "equation_attempts_rejected_before_body": 0,
+                    "equation_bodies_scheduled": 2,
+                    "equation_result_occurrences": 2,
                     "answers": 2,
                 },
                 2,
