@@ -1172,6 +1172,14 @@ int main(int argc, char **argv) {
     Atom *deep_search_query = atom_var(&arena, "deep-search-value");
     Atom *deep_search_fact_type = atom_symbol(&arena, "DeepSearchLeaf");
     Atom *deep_search_head = atom_symbol(&arena, "DeepSearchBox");
+    /* Prime search replays native formation: a deep nominal expression alone
+     * is not a formed type, even if HE inference finds its declaration. */
+    Atom *deep_search_sort = parse_one(&scratch, "(u 0)");
+    Atom *deep_search_family_type = parse_one(&scratch, "(-> (u 0) (u 0))");
+    space_add(&space, atom_expr3(&arena, atom_symbol(&arena, ":"),
+                                deep_search_fact_type, deep_search_sort));
+    space_add(&space, atom_expr3(&arena, atom_symbol(&arena, ":"),
+                                deep_search_head, deep_search_family_type));
     for (uint32_t i = 0; i < 520u; i++) {
         deep_search_query = atom_expr2(
             &arena, deep_search_head, deep_search_query);

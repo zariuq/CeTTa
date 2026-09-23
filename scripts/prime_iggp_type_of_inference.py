@@ -2,7 +2,7 @@
 
 The lowering has two consumers generated from the same rule inventory:
 
-* ``GPresentationV1`` is replayed by CeTTa's generic inference checker; and
+* ``GInferenceLanguageV1`` is replayed by CeTTa's generic inference checker; and
 * ``rm-package`` is searched relationally by RuleMachine to propose proofs.
 
 The source presentation remains ordinary data.  It contributes exact node,
@@ -1010,7 +1010,7 @@ def render_gdl_type_of_inference_program(
         "LCons",
     )
     presentation = (
-        f"(GPresentationV1 1 {constructors} {judgments} LNil "
+        f"(GInferenceLanguageV1 1 {constructors} {judgments} LNil "
         "GNoConversion)"
     )
     rules = "(rules\n    " + "\n    ".join(

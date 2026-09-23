@@ -35,8 +35,32 @@ typedef enum {
     CETTA_PROFILE_ZERO_EMIT = 11,
     CETTA_PROFILE_ZERO_INTERACT = 12,
     CETTA_PROFILE_PETTA_TYPECHECK_V3 = 13,
-    CETTA_PROFILE_RHOCALC_RHOMETTA = 14
+    CETTA_PROFILE_RHOCALC_RHOMETTA = 14,
+    CETTA_PROFILE_PRIME_IDENTITY_J = 15,
+    CETTA_PROFILE_PRIME_IDENTITY_SCOPED = 16,
+    CETTA_PROFILE_PRIME_IDENTITY_UIP = 17,
+    CETTA_PROFILE_PRIME_IDENTITY_UNIVALENCE = 18,
+    CETTA_PROFILE_PRIME_CONTEXT_SELF_HOME = 19,
+    CETTA_PROFILE_PRIME_CONTEXT_SELF_HERE = 20
 } CettaProfileId;
+
+/* What the short spelling `&self` denotes inside code evaluated in another
+ * space: the program's default space, the space the code was captured in,
+ * or the space the evaluation is currently in. */
+typedef enum {
+    CETTA_CONTEXT_SELF_PROGRAM = 0,
+    CETTA_CONTEXT_SELF_HOME = 1,
+    CETTA_CONTEXT_SELF_HERE = 2
+} CettaContextSelf;
+
+/* Identity policy of a Prime profile; the values mirror the kernel's own
+ * constants in prime_regular_kernel.h. */
+typedef enum {
+    CETTA_IDENTITY_POLICY_J = 0,
+    CETTA_IDENTITY_POLICY_SCOPED = 1,
+    CETTA_IDENTITY_POLICY_UIP = 2,
+    CETTA_IDENTITY_POLICY_UNIVALENCE = 3
+} CettaIdentityPolicy;
 
 typedef enum {
     CETTA_PROFILE_MASK_HE_FORMAL = 1u << 0,
@@ -79,6 +103,8 @@ typedef struct {
     bool enable_cetta_extensions;
     bool enable_dependent_telescope;
     bool rust_he_compat_semantics;
+    CettaIdentityPolicy identity_policy;
+    CettaContextSelf context_self;
 } CettaProfile;
 
 typedef enum {

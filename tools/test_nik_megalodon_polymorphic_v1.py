@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 import argparse
+from functools import cache
 from pathlib import Path
 import subprocess
 import tempfile
 from typing import TypeAlias
 
 import gslt2parse_schema_v1 as sx
+from nik_pattern_list_v1 import SharedPatternListEncoder
+from nik_proof_dag_v1 import replay_node_budget
 import test_nik_megalodon_term_quantified_v1 as mono
 
 
@@ -28,13 +31,13 @@ def tag(value: sx.SExpr, context: str) -> tuple[str, tuple[sx.SExpr, ...]]:
 
 def parse_tp(value: sx.SExpr) -> Tp:
     head, arguments = tag(value, "Megalodon type")
-    if head == "TPVAR" and len(arguments) == 1 and isinstance(arguments[0], int):
+    if head == "TPVAR" and len(arguments) == 1 and type(arguments[0]) is int and arguments[0] >= 0:
         return ("var", arguments[0])
     if head == "PROP" and not arguments:
         return ("prop",)
     if head == "SET" and not arguments:
         return ("base", 0)
-    if head == "BASE" and len(arguments) == 1 and isinstance(arguments[0], int):
+    if head == "BASE" and len(arguments) == 1 and type(arguments[0]) is int and arguments[0] >= 0:
         return ("base", arguments[0])
     if head == "AR" and len(arguments) == 2:
         return ("arr", parse_tp(arguments[0]), parse_tp(arguments[1]))
@@ -45,7 +48,7 @@ def parse_tp(value: sx.SExpr) -> Tp:
 
 def parse_tm(value: sx.SExpr) -> Tm:
     head, arguments = tag(value, "Megalodon term")
-    if head == "DB" and len(arguments) == 1 and isinstance(arguments[0], int):
+    if head == "DB" and len(arguments) == 1 and type(arguments[0]) is int and arguments[0] >= 0:
         return ("var", arguments[0])
     if head == "NAME" and len(arguments) == 1 and isinstance(
         arguments[0], sx.StringLiteral
@@ -55,7 +58,7 @@ def parse_tm(value: sx.SExpr) -> Tm:
         arguments[0], sx.StringLiteral
     ):
         return ("named", arguments[0].text)
-    if head == "PRIM" and len(arguments) == 1 and isinstance(arguments[0], int):
+    if head == "PRIM" and len(arguments) == 1 and type(arguments[0]) is int and arguments[0] >= 0:
         return ("prim", arguments[0])
     if head == "AP" and len(arguments) == 2:
         return ("app", parse_tm(arguments[0]), parse_tm(arguments[1]))
@@ -74,6 +77,7 @@ def parse_tm(value: sx.SExpr) -> Tm:
     raise SystemExit(f"unsupported checked Megalodon term: {sx.render(value)}")
 
 
+@cache
 def encode_tp(value: Tp) -> sx.SExpr:
     match value:
         case ("var", index):
@@ -90,6 +94,7 @@ def encode_tp(value: Tp) -> sx.SExpr:
             raise SystemExit(f"cannot encode Megalodon type {value!r}")
 
 
+@cache
 def encode_tm(value: Tm) -> sx.SExpr:
     match value:
         case ("var", index):
@@ -130,21 +135,24 @@ def encode_proof_context(context: list[Tm]) -> sx.SExpr:
     return result
 
 
+_signature_encoder = SharedPatternListEncoder(
+    "MSigNil", lambda row: ("MSigCons", (mono.app(row[0]), encode_tp(row[1]))))
+_known_encoder = SharedPatternListEncoder(
+    "MKnownNil", lambda row: ("MKnownCons", (mono.app(row[0]), encode_tm(row[1]))))
+
+
 def encode_signature(signature: list[tuple[str, Tp]]) -> sx.SExpr:
-    result = mono.app("MSigNil")
-    for name, value_type in reversed(signature):
-        result = mono.app(
-            "MSigCons", mono.app(name), encode_tp(value_type), result
-        )
-    return result
+    return _signature_encoder.encode(signature)
 
 
 def encode_known(known: list[tuple[str, Tm]]) -> sx.SExpr:
-    result = mono.app("MKnownNil")
-    for identifier, proposition in reversed(known):
-        result = mono.app(
-            "MKnownCons", mono.app(identifier), encode_tm(proposition), result
-        )
+    return _known_encoder.encode(known)
+
+
+def encode_primitives(primitives: list[Tp]) -> sx.SExpr:
+    result = mono.app("MPrimNil")
+    for value_type in reversed(primitives):
+        result = mono.app("MPrimCons", encode_tp(value_type), result)
     return result
 
 
@@ -679,14 +687,58 @@ def shift_type_context(
 def type_proof(
     signature: list[tuple[str, Tp]], type_depth: int,
     context: list[Tp], term: Tm,
+    primitives: list[Tp] | None = None,
 ) -> tuple[Tp, sx.SExpr]:
+    return _type_proof(tuple(signature), type_depth, tuple(context), term,
+                       None if primitives is None else tuple(primitives))
+
+
+@cache
+def _type_proof(
+    signature: tuple[tuple[str, Tp], ...], type_depth: int,
+    context: tuple[Tp, ...], term: Tm,
+    primitives: tuple[Tp, ...] | None,
+) -> tuple[Tp, sx.SExpr]:
+    # Cache only exact judgments, including the ordered signature and both
+    # contexts. Reusing a tree is not source admission; NIK checks its replay.
+    # The same recursion emits either the signature-only judgment or the
+    # primitive-aware theory judgment. The admitted checker remains authority.
+    def node(rule: str, arguments: list[sx.SExpr], children: list[sx.SExpr]) -> sx.SExpr:
+        if primitives is not None:
+            rule = rule.replace("megalodon-poly-term-", "megalodon-theory-term-")
+            rule = rule.replace("megalodon-def-term-", "megalodon-theory-term-")
+            arguments = [encode_primitives(primitives), *arguments]
+        return mono.proof_node(rule, arguments, children)
+
     match term:
+        case ("prim", index_object):
+            index = int(index_object)
+            if primitives is None or not 0 <= index < len(primitives):
+                raise SystemExit(f"undeclared Megalodon primitive {index}")
+            value_type = primitives[index]
+            member = mono.proof_node(
+                "megalodon-theory-primitive-type-zero",
+                [encode_tp(value_type), encode_primitives(primitives[index + 1:])], [],
+            )
+            for position in range(index - 1, -1, -1):
+                member = mono.proof_node(
+                    "megalodon-theory-primitive-type-succ",
+                    [encode_tp(primitives[position]),
+                     encode_primitives(primitives[position + 1:]),
+                     mono.nat(index - position - 1), encode_tp(value_type)], [member],
+                )
+            return value_type, node(
+                "megalodon-theory-term-primitive",
+                [encode_signature(signature), mono.nat(type_depth),
+                 encode_type_context(context), mono.nat(index), encode_tp(value_type)],
+                [member],
+            )
         case ("var", index_object):
             index = int(index_object)
-            if index >= len(context):
+            if not 0 <= index < len(context):
                 raise SystemExit(f"unbound Megalodon term variable {index}")
             value_type = context[index]
-            article = mono.proof_node(
+            article = node(
                 "megalodon-poly-term-var-zero",
                 [
                     encode_signature(signature), mono.nat(type_depth),
@@ -696,7 +748,7 @@ def type_proof(
                 [],
             )
             for head_index in range(index - 1, -1, -1):
-                article = mono.proof_node(
+                article = node(
                     "megalodon-poly-term-var-succ",
                     [
                         encode_signature(signature), mono.nat(type_depth),
@@ -712,7 +764,7 @@ def type_proof(
                 if candidate != name:
                     continue
                 tail = signature[index + 1:]
-                article = mono.proof_node(
+                article = node(
                     "megalodon-poly-term-named-zero",
                     [mono.app(name), encode_tp(value_type),
                      encode_signature(tail), mono.nat(type_depth),
@@ -721,7 +773,7 @@ def type_proof(
                 )
                 tail = signature[index:]
                 for head_name, head_type in reversed(signature[:index]):
-                    article = mono.proof_node(
+                    article = node(
                         "megalodon-poly-term-named-succ",
                         [mono.app(head_name), encode_tp(head_type),
                          encode_signature(tail), mono.nat(type_depth),
@@ -734,15 +786,15 @@ def type_proof(
             raise SystemExit(f"unknown Megalodon term name {name}")
         case ("app", function, argument):
             function_type, function_article = type_proof(
-                signature, type_depth, context, function
+                signature, type_depth, context, function, primitives
             )
             argument_type, argument_article = type_proof(
-                signature, type_depth, context, argument
+                signature, type_depth, context, argument, primitives
             )
             if function_type[0] != "arr" or function_type[1] != argument_type:
                 raise SystemExit("Megalodon term application type mismatch")
             domain, codomain = function_type[1], function_type[2]
-            return codomain, mono.proof_node(
+            return codomain, node(
                 "megalodon-poly-term-app",
                 [
                     encode_signature(signature), mono.nat(type_depth),
@@ -753,9 +805,9 @@ def type_proof(
             )
         case ("lam", domain, body):
             codomain, body_article = type_proof(
-                signature, type_depth, [domain, *context], body
+                signature, type_depth, [domain, *context], body, primitives
             )
-            return ("arr", domain, codomain), mono.proof_node(
+            return ("arr", domain, codomain), node(
                 "megalodon-poly-term-lam",
                 [
                     encode_signature(signature), mono.nat(type_depth),
@@ -766,14 +818,14 @@ def type_proof(
             )
         case ("imp", domain, codomain):
             domain_type, domain_article = type_proof(
-                signature, type_depth, context, domain
+                signature, type_depth, context, domain, primitives
             )
             codomain_type, codomain_article = type_proof(
-                signature, type_depth, context, codomain
+                signature, type_depth, context, codomain, primitives
             )
             if domain_type != ("prop",) or codomain_type != ("prop",):
                 raise SystemExit("Megalodon implication operands are not propositions")
-            return ("prop",), mono.proof_node(
+            return ("prop",), node(
                 "megalodon-poly-term-imp",
                 [
                     encode_signature(signature), mono.nat(type_depth),
@@ -784,11 +836,11 @@ def type_proof(
             )
         case ("all", domain, body):
             body_type, body_article = type_proof(
-                signature, type_depth, [domain, *context], body
+                signature, type_depth, [domain, *context], body, primitives
             )
             if body_type != ("prop",):
                 raise SystemExit("Megalodon quantified body is not a proposition")
-            return ("prop",), mono.proof_node(
+            return ("prop",), node(
                 "megalodon-poly-term-all",
                 [
                     encode_signature(signature), mono.nat(type_depth),
@@ -799,7 +851,7 @@ def type_proof(
             )
         case ("typeApp", function, type_value):
             function_type, function_article = type_proof(
-                signature, type_depth, context, function
+                signature, type_depth, context, function, primitives
             )
             if function_type[0] != "all":
                 raise SystemExit(
@@ -809,7 +861,7 @@ def type_proof(
             result, substitution_article = substitute_type(
                 0, type_value, body_type
             )
-            return result, mono.proof_node(
+            return result, node(
                 "megalodon-def-term-type-app",
                 [encode_signature(signature), mono.nat(type_depth),
                  encode_type_context(context), encode_tm(function),
@@ -823,9 +875,9 @@ def type_proof(
                 1, 0, context
             )
             body_type, body_article = type_proof(
-                signature, type_depth + 1, shifted_context, body
+                signature, type_depth + 1, shifted_context, body, primitives
             )
-            return ("all", body_type), mono.proof_node(
+            return ("all", body_type), node(
                 "megalodon-def-term-type-lam",
                 [encode_signature(signature), mono.nat(type_depth),
                  encode_type_context(context),
@@ -1162,7 +1214,7 @@ def check_catalog(path: Path, _goal: sx.SExpr, _article: sx.SExpr) -> None:
                 authority[2] != sx.StringLiteral(
                     "megalodon.mathdata.definition-conversion"
                 )
-                or authority[3] != sx.StringLiteral("10")
+                or authority[3] != sx.StringLiteral("11")
             ):
                 raise SystemExit("Megalodon authority identity was not revised")
             rendered = sx.render(authority[5])
@@ -1181,11 +1233,13 @@ def check_catalog(path: Path, _goal: sx.SExpr, _article: sx.SExpr) -> None:
 
 def run_cetta(cetta: Path, goal: sx.SExpr, article: sx.SExpr) -> str:
     cetta = cetta.resolve()
+    budget = replay_node_budget(article)
     expression = (
         "!(nik:check MEGALODON-TERM "
         + sx.render(goal)
         + " "
         + sx.render(article)
+        + (f" {budget}" if budget is not None else "")
         + ")"
     )
     with tempfile.TemporaryDirectory(prefix="cetta-nik-") as directory:

@@ -91,6 +91,30 @@ def _list_values(term: sx.SExpr, context: str) -> list[sx.SExpr]:
     return values
 
 
+def replay_node_budget(article: sx.SExpr) -> int | None:
+    """Count encoded DAG nodes for an explicit replay allowance, not acceptance.
+
+    Version 2 charges both Pattern nodes and proof nodes. Count the actual list
+    spines, not submitted identifiers or the expanded proof tree. Unknown or
+    malformed carriers return None and remain the checker's responsibility.
+    """
+    if _tagged(article, "GProofDAG", 5) and article[1] == 1:
+        lists = (article[2],)
+    elif _tagged(article, "GProofDAG", 6) and article[1] == 2:
+        lists = (article[2], article[3])
+    else:
+        return None
+    count = 0
+    for cursor in lists:
+        while cursor != sx.Symbol("LNil"):
+            if not _tagged(cursor, "LCons", 3):
+                return None
+            count += 1
+            cursor = cursor[2]
+    # The public interface takes a positive allowance, even for empty input.
+    return max(1, count)
+
+
 def _nonnegative(value: sx.SExpr, context: str) -> int:
     if not isinstance(value, int) or value < 0:
         raise ProofDAGError(f"{context} is not a nonnegative integer")
@@ -192,6 +216,10 @@ def compile_shared_article(
     known_proofs: dict[tuple[sx.StringLiteral, tuple[int, ...], tuple[int, ...]], int] = {}
     raw_pattern_occurrences = 0
     raw_proof_nodes = 0
+    # Retain source objects so identity memoization cannot confuse reused ids.
+    # Expanded occurrence counts include every reuse; physical traversal does not.
+    pattern_cache: dict[int, tuple[sx.SExpr, int, int]] = {}
+    proof_cache: dict[int, tuple[sx.SExpr, int, int, int]] = {}
 
     def intern_key(key: sx.SExpr) -> int:
         existing = known_patterns.get(key)
@@ -202,9 +230,10 @@ def compile_shared_article(
         known_patterns[key] = node_id
         return node_id
 
-    def intern_pattern(pattern: sx.SExpr) -> int:
-        nonlocal raw_pattern_occurrences
-        raw_pattern_occurrences += 1
+    def pattern_id(pattern: sx.SExpr) -> int:
+        return pattern_cache[id(pattern)][1]
+
+    def finish_pattern(pattern: sx.SExpr) -> int:
         if _tagged(pattern, "Var", 2):
             assert isinstance(pattern, tuple)
             return intern_key(
@@ -219,7 +248,7 @@ def compile_shared_article(
             assert isinstance(pattern, tuple)
             head = _string(pattern[1], "pattern application head")
             children = [
-                intern_pattern(child)
+                pattern_id(child)
                 for child in _list_values(pattern[2], "pattern arguments")
             ]
             return intern_key(
@@ -228,7 +257,7 @@ def compile_shared_article(
             )
         if _tagged(pattern, "PLam", 3):
             assert isinstance(pattern, tuple)
-            body = intern_pattern(pattern[2])
+            body = pattern_id(pattern[2])
             return intern_key(
                 (sx.Symbol("GPKLambda"), _binder(pattern[1]), body)
             )
@@ -238,14 +267,14 @@ def compile_shared_article(
             binders = _list_values(pattern[2], "multi-lambda binders")
             for binder in binders:
                 _string(binder, "multi-lambda binder")
-            body = intern_pattern(pattern[3])
+            body = pattern_id(pattern[3])
             return intern_key(
                 (sx.Symbol("GPKMultiLambda"), arity, pattern[2], body)
             )
         if _tagged(pattern, "PSubst", 3):
             assert isinstance(pattern, tuple)
-            body = intern_pattern(pattern[1])
-            replacement = intern_pattern(pattern[2])
+            body = pattern_id(pattern[1])
+            replacement = pattern_id(pattern[2])
             return intern_key(
                 (sx.Symbol("GPKSubst"), body, replacement)
             )
@@ -264,7 +293,7 @@ def compile_shared_article(
             }:
                 raise ProofDAGError("unknown collection type")
             elements = [
-                intern_pattern(element)
+                pattern_id(element)
                 for element in _list_values(pattern[2], "collection elements")
             ]
             return intern_key(
@@ -274,54 +303,105 @@ def compile_shared_article(
             )
         raise ProofDAGError("rule argument or target is not a canonical Pattern")
 
-    target_id = intern_pattern(goal)
+    def pattern_children(pattern: sx.SExpr) -> list[sx.SExpr]:
+        if _tagged(pattern, "PApp", 3) or _tagged(pattern, "PCollection", 4):
+            return _list_values(pattern[2], "pattern children")
+        if _tagged(pattern, "PLam", 3):
+            return [pattern[2]]
+        if _tagged(pattern, "PMultiLam", 4):
+            return [pattern[3]]
+        if _tagged(pattern, "PSubst", 3):
+            return [pattern[1], pattern[2]]
+        return []
 
-    def visit(current: sx.SExpr) -> int:
-        nonlocal raw_proof_nodes
-        raw_proof_nodes += 1
-        if not _tagged(current, "GProof", 3):
-            raise ProofDAGError(
-                "proof node is not (GProof rule-instance children)"
-            )
-        assert isinstance(current, tuple)
-        rule_instance = current[1]
-        if not _tagged(rule_instance, "GRuleInst", 3):
-            raise ProofDAGError(
-                "proof node rule is not (GRuleInst rule-id arguments)"
-            )
-        assert isinstance(rule_instance, tuple)
-        rule_id = _string(rule_instance[1], "rule identifier")
-        argument_ids = tuple(
-            intern_pattern(argument)
-            for argument in _list_values(rule_instance[2], "rule arguments")
-        )
-        child_ids = tuple(
-            visit(child) for child in _proof_children(current[2])
-        )
-        key = (rule_id, argument_ids, child_ids)
-        existing = known_proofs.get(key)
-        if existing is not None:
-            return existing
-        node_id = len(proof_nodes)
-        rule_references: sx.SExpr = (
-            sx.Symbol("GRuleRefs"),
-            rule_id,
-            _canonical_list(
-                list(argument_ids), nil="LNil", cons="LCons"
-            ),
-        )
-        child_references = _canonical_list(
-            [(sx.Symbol("GRNode"), child_id) for child_id in child_ids],
-            nil="LNil",
-            cons="LCons",
-        )
-        proof_nodes.append(
-            (sx.Symbol("GDNode"), node_id, rule_references, child_references)
-        )
-        known_proofs[key] = node_id
+    def intern_pattern(pattern: sx.SExpr) -> int:
+        nonlocal raw_pattern_occurrences
+        pending = [(pattern, False)]
+        while pending:
+            current, finish = pending.pop()
+            if id(current) in pattern_cache:
+                continue
+            children = pattern_children(current)
+            if not finish:
+                pending.append((current, True))
+                pending.extend((child, False) for child in reversed(children))
+            else:
+                node_id = finish_pattern(current)
+                occurrences = 1 + sum(pattern_cache[id(child)][2] for child in children)
+                pattern_cache[id(current)] = (current, node_id, occurrences)
+        _, node_id, occurrences = pattern_cache[id(pattern)]
+        raw_pattern_occurrences += occurrences
         return node_id
 
-    root_id = visit(proof)
+    target_id = intern_pattern(goal)
+
+    # Enter arguments before children, and emit each node after its ordered
+    # premises. This preserves the recursive compiler's canonical chronology
+    # without making proof depth a Python call-stack limit.
+    pending = [(proof, None)]
+    completed: list[int] = []
+    while pending:
+        current, finishing = pending.pop()
+        if finishing is None:
+            cached = proof_cache.get(id(current))
+            if cached is not None:
+                _, node_id, proof_occurrences, pattern_occurrences = cached
+                raw_proof_nodes += proof_occurrences
+                raw_pattern_occurrences += pattern_occurrences
+                completed.append(node_id)
+                continue
+            proof_start, pattern_start = raw_proof_nodes, raw_pattern_occurrences
+            raw_proof_nodes += 1
+            if not _tagged(current, "GProof", 3):
+                raise ProofDAGError(
+                    "proof node is not (GProof rule-instance children)"
+                )
+            assert isinstance(current, tuple)
+            rule_instance = current[1]
+            if not _tagged(rule_instance, "GRuleInst", 3):
+                raise ProofDAGError(
+                    "proof node rule is not (GRuleInst rule-id arguments)"
+                )
+            assert isinstance(rule_instance, tuple)
+            rule_id = _string(rule_instance[1], "rule identifier")
+            argument_ids = tuple(
+                intern_pattern(argument)
+                for argument in _list_values(rule_instance[2], "rule arguments")
+            )
+            children = _proof_children(current[2])
+            pending.append((current, (rule_id, argument_ids, len(children),
+                                      proof_start, pattern_start)))
+            pending.extend((child, None) for child in reversed(children))
+            continue
+
+        rule_id, argument_ids, child_count, proof_start, pattern_start = finishing
+        child_ids = tuple(completed[-child_count:]) if child_count else ()
+        if child_count:
+            del completed[-child_count:]
+        key = (rule_id, argument_ids, child_ids)
+        node_id = known_proofs.get(key)
+        if node_id is None:
+            node_id = len(proof_nodes)
+            rule_references: sx.SExpr = (
+                sx.Symbol("GRuleRefs"),
+                rule_id,
+                _canonical_list(list(argument_ids), nil="LNil", cons="LCons"),
+            )
+            child_references = _canonical_list(
+                [(sx.Symbol("GRNode"), child_id) for child_id in child_ids],
+                nil="LNil", cons="LCons",
+            )
+            proof_nodes.append(
+                (sx.Symbol("GDNode"), node_id, rule_references, child_references)
+            )
+            known_proofs[key] = node_id
+        # Preserve expanded occurrence counts without revisiting an identical
+        # immutable input tree. Retaining the object prevents recycled-id hits.
+        proof_cache[id(current)] = (current, node_id,
+            raw_proof_nodes - proof_start, raw_pattern_occurrences - pattern_start)
+        completed.append(node_id)
+
+    root_id = completed[0]
     article: sx.SExpr = (
         sx.Symbol("GProofDAG"),
         2,

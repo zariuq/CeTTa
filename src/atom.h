@@ -634,6 +634,20 @@ bool atom_tree_any(const Atom *root, AtomTreePredicate predicate,
 
 bool atom_eq(Atom *a, Atom *b);
 
+/* Exact atom_eq comparison on finite, acyclic expression DAGs of symbols,
+ * variables and scalar literals (integer, float, Boolean, string, bigint,
+ * rational). Runtime handles and recursive grounded objects are not data
+ * in this interface. Inputs must remain immutable for the call. Expression
+ * sharing is not compared; scalar leaves use atom_eq (including its NaN
+ * pointer-identity behavior). Cycles, unsupported leaves and traversal-size
+ * overflow fail closed. No persistent cache. */
+bool atom_data_equal(Atom *left, Atom *right);
+
+/* Same comparison after both inputs have already been established as acyclic
+ * scalar-data DAGs. Identical subgraphs can then be skipped without repeating
+ * validation. This is not a validator for untrusted or mutable graph inputs. */
+bool atom_data_equal_validated(Atom *left, Atom *right);
+
 /* ── Printing ───────────────────────────────────────────────────────────── */
 
 void atom_print(Atom *a, FILE *out);

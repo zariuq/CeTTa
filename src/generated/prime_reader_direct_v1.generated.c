@@ -291,7 +291,7 @@ const GSLTDirectPrefixReaderV1Plan prime_reader_direct_v1_plan = {
     .syntax_digest = "df29d196accd24c1dd6cb85285022679e650ca406bc43a730d6b048e9455667c",
     .class_digest = "cc628e9be13d11ff06351e56a284bec781a2b4e3416a6200ca6f138a98ecb35e",
     .projection_digest = "894eb8b6a3fd0d115712f2cb4909d38df3563e4ab3378c2f596d502b6989eebc",
-    .compiler_digest = "120d08b930dfbd2019c6c96f9b7268f4ddf5dd59975986c1a7278a61142dcf25",
+    .compiler_digest = "49de117d19790aa089a209ae887cde8f6fec40678fa4015e62a36e113cd83980",
     .composition_digest = "c5e6deebeafd9a139ebd852d683b37687d23367f7db1685ae66860a073ee66bf",
     .profile = "cetta-prime-v1",
     .whitespace = &prime_reader_direct_v1_class_8_cetta_prime_whitespace_scalar,
@@ -313,7 +313,7 @@ const GSLTDirectPrefixReaderV1Plan prime_reader_direct_v1_plan = {
     .prefix_rule_len = UINT32_C(4),
     .token_rules = prime_reader_direct_v1_token_rules,
     .token_rule_len = UINT32_C(6),
-    .depth_limit = UINT32_C(4096),
+    .depth_limit = UINT32_MAX,
 };
 
 const char *prime_reader_direct_v1_program_digest(void) {

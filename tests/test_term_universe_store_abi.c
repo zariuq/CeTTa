@@ -1567,6 +1567,43 @@ static void test_native_handle_id_retention(void) {
     assert(holders == 0);
 }
 
+static void test_deep_term_universe_copy(void) {
+    Arena persistent, result;
+    TermUniverse universe;
+    arena_init_detached(&persistent);
+    arena_init_detached(&result);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    SymbolId name = symbol_intern_cstr(g_symbols, "deep-copy-variable");
+    AtomId leaf = tu_intern_var(&universe, name, 42u);
+    AtomId root = leaf;
+    const size_t depth = 50000u;
+    for (size_t i = 0; i < depth; ++i) {
+        AtomId children[2] = {root, root};
+        root = tu_expr_from_ids(&universe, children, 2u);
+        assert(root != CETTA_ATOM_ID_NONE);
+    }
+    Atom *plain = term_universe_copy_atom(&universe, &result, root);
+    Atom *fresh = term_universe_copy_atom_epoch(&universe, &result, root, 99u);
+    assert(plain && fresh && plain != fresh);
+    for (size_t i = 0; i < depth; ++i) {
+        assert(plain->kind == ATOM_EXPR && plain->expr.len == 2u);
+        assert(fresh->kind == ATOM_EXPR && fresh->expr.len == 2u);
+        assert(plain->expr.elems[0] == plain->expr.elems[1]);
+        assert(fresh->expr.elems[0] == fresh->expr.elems[1]);
+        plain = plain->expr.elems[0];
+        fresh = fresh->expr.elems[0];
+    }
+    assert(plain->kind == ATOM_VAR && fresh->kind == ATOM_VAR);
+    assert(plain->var_id == tu_var_id(&universe, leaf));
+    assert(fresh->var_id == var_epoch_id(plain->var_id, 99u));
+    assert(tu_var_id(&universe, leaf) == plain->var_id);
+    assert(term_universe_copy_atom(&universe, &result, CETTA_ATOM_ID_NONE) == NULL);
+    term_universe_free(&universe);
+    arena_free(&result);
+    arena_free(&persistent);
+}
+
 int main(void) {
     SymbolTable symbols;
     VarInternTable var_intern;
@@ -1577,6 +1614,7 @@ int main(void) {
     init_test_symbols(&symbols);
     var_intern_init(&var_intern);
     g_var_intern = &var_intern;
+    test_deep_term_universe_copy();
     test_native_handle_id_retention();
     test_arena_accounting_saturation_contract();
     test_store_format_contract();

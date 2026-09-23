@@ -22,6 +22,7 @@
 #include "space.h"
 #include "stats.h"
 #include "symbol.h"
+#include "parser.h"
 
 #define PRIME_DEF_SCHEMA_VERSION 3
 #define PRIME_DIALECT_MAJOR 0
@@ -1506,7 +1507,7 @@ static Atom *prime_synth(Space *space, Arena *a, Atom *judgment, Atom *term,
 
 static PrimeFormStatus prime_form_scoped_regular_type(
     Arena *arena, Atom *type, PrimeResourceLedger *ledger,
-    Atom **detail, bool *owned) {
+    Atom **detail, bool *owned, Atom **canonical_term_out) {
     if (owned) *owned = false;
     if (!arena || !type || !ledger || !detail || !owned ||
         !cetta_prime_regular_kernel_unwrap_scoped(type, NULL, NULL)) {
@@ -1555,13 +1556,14 @@ static PrimeFormStatus prime_form_scoped_regular_type(
         return PRIME_FORM_UNDETERMINED;
     }
     *detail = prime_expr2(arena, "PrimeRegularTypeFormation", type);
+    if (canonical_term_out) *canonical_term_out = type;
     return PRIME_FORM_ESTABLISHED;
 }
 
 static PrimeFormStatus prime_form_closed_regular_type(
     Space *space, Arena *a, Atom *expected,
     PrimeResourceLedger *ledger, Atom **detail, bool *owned,
-    bool allow_top_sort) {
+    bool allow_top_sort, Atom **canonical_term_out) {
     if (owned) *owned = false;
     if (!space || !expected || !detail || !owned ||
         !cetta_prime_regular_kernel_term_maybe_syntax(expected) ||
@@ -1571,6 +1573,7 @@ static PrimeFormStatus prime_form_closed_regular_type(
     if (allow_top_sort && is_symbol_named(expected, "U1")) {
         *owned = true;
         *detail = prime_expr2(a, "PrimeRegularTypeFormation", expected);
+        if (canonical_term_out) *canonical_term_out = expected;
         return PRIME_FORM_ESTABLISHED;
     }
 
@@ -1623,6 +1626,7 @@ static PrimeFormStatus prime_form_closed_regular_type(
         return PRIME_FORM_REFUTED;
     }
     *detail = prime_expr2(a, "PrimeRegularTypeFormation", expected);
+    if (canonical_term_out) *canonical_term_out = expected;
     return PRIME_FORM_ESTABLISHED;
 }
 
@@ -1809,7 +1813,7 @@ prime_elaborate_authored_regular(
 
 static PrimeFormStatus prime_form_regular_term_type(
     Space *space, Arena *arena, Atom *expected, PrimeResourceLedger *ledger,
-    Atom **detail, bool *owned) {
+    Atom **detail, bool *owned, Atom **canonical_term_out) {
     PrimeAuthoredRegularElaboration elaborated =
         prime_elaborate_authored_regular(
             arena, expected, ledger, PRIME_RESOURCE_FORMATION,
@@ -1836,7 +1840,8 @@ static PrimeFormStatus prime_form_regular_term_type(
     }
     bool intrinsic_owned = false;
     PrimeFormStatus status = prime_form_closed_regular_type(
-        space, arena, elaborated.term, ledger, detail, &intrinsic_owned, true);
+        space, arena, elaborated.term, ledger, detail, &intrinsic_owned, true,
+        canonical_term_out);
     if (!intrinsic_owned) {
         *detail = prime_expr1(
             arena, "authored-formation-admission-declined");
@@ -2523,6 +2528,65 @@ prime_elaborate_declared_regular_term_with_trail(
     CettaPrimeRegularKernelBudget *budget,
     const PrimeRegularDeclarationTrail *trail);
 
+/* Language-owned declarations.  The identity eliminator is fixed-left-endpoint
+ * elimination in Paulin-Mohring form with two universe parameters, the
+ * carrier's level and the motive's level; it is present under every policy.
+ * The univalence guest adds an abstract equivalence former and the univalence
+ * axiom as declarations without computation; they exist only under that
+ * policy, so that the cost of an axiom without a computation rule can be
+ * observed rather than argued. */
+typedef struct {
+    const char *name;
+    const char *type;
+    int policy;   /* -1: every policy */
+} PrimeLanguageDeclaration;
+
+static const PrimeLanguageDeclaration PRIME_LANGUAGE_DECLARATIONS[] = {
+    {"id:eliminate",
+     "(-> (A : (u $carrier-level))"
+     "    (x : A)"
+     "    (P : (-> (y : A) (-> (id A x y) (u $motive-level))))"
+     "    (d : (P x (refl x)))"
+     "    (y : A)"
+     "    (e : (id A x y))"
+     "    (P y e))",
+     -1},
+    {"id:assumed-unique",
+     "(-> (A : (u $level))"
+     "    (a : A)"
+     "    (b : A)"
+     "    (p : (id A a b))"
+     "    (q : (id A a b))"
+     "    (id (id A a b) p q))",
+     CETTA_PRIME_IDENTITY_UIP},
+    {"equiv",
+     "(-> (A : (u $level)) (-> (B : (u $level)) (u $level)))",
+     CETTA_PRIME_IDENTITY_UNIVALENCE},
+    {"ua",
+     "(-> (A : (u $level))"
+     "    (-> (B : (u $level))"
+     "        (-> (equiv A B) (id (u $level) A B))))",
+     CETTA_PRIME_IDENTITY_UNIVALENCE},
+};
+
+static Atom *prime_language_owned_declaration(Arena *arena, Atom *name) {
+    for (size_t i = 0; i < sizeof PRIME_LANGUAGE_DECLARATIONS /
+                           sizeof PRIME_LANGUAGE_DECLARATIONS[0]; i++) {
+        const PrimeLanguageDeclaration *declaration =
+            &PRIME_LANGUAGE_DECLARATIONS[i];
+        if (!is_symbol_named(name, declaration->name)) continue;
+        if (declaration->policy >= 0 &&
+            cetta_prime_identity_policy() != declaration->policy)
+            return NULL;
+        Atom **atoms = NULL;
+        int count = parse_metta_text(declaration->type, arena, &atoms);
+        Atom *type = count == 1 && atoms ? atoms[0] : NULL;
+        free(atoms);
+        return type;
+    }
+    return NULL;
+}
+
 static PrimeRegularDeclaredElaboration
 prime_resolve_declared_regular_name(
     Space *space, Arena *arena, Atom *name,
@@ -2543,6 +2607,22 @@ prime_resolve_declared_regular_name(
     SpaceDeclaredTypeLookupCost cost = {0};
     uint32_t declared_count = space_get_declared_types_costed(
         space, arena, name, &declared_types, &cost);
+    Atom *builtin = prime_language_owned_declaration(arena, name);
+    if (builtin) {
+        /* A language-owned constant is declared by the language, not by the
+         * space: its type is fixed so that the kernel's rules compute on a
+         * constant of exactly this type. */
+        free(declared_types);
+        declared_types = NULL;
+        declared_count = 0u;
+        if (builtin) {
+            declared_types = malloc(sizeof(Atom *));
+            if (declared_types) {
+                declared_types[0] = builtin;
+                declared_count = 1u;
+            }
+        }
+    }
     bool charged = prime_regular_declaration_charge(
         budget, prime_regular_declaration_lookup_work(&cost));
     if (!charged) {
@@ -2841,6 +2921,99 @@ prime_elaborate_declared_regular_term(
         space, arena, term, declarations, budget, NULL);
 }
 
+/* Intrinsic clients have already resolved lexical scope. Only global
+ * occurrences need the same schema lookup and fresh level instantiation as
+ * authored FVars; typed binders and explicit level arguments stay intact. */
+static PrimeRegularDeclarationOccurrenceResult
+prime_instantiate_declared_intrinsic_rec(
+    Space *space, Arena *arena, Atom *term,
+    PrimeRegularDeclarationContext *declarations,
+    CettaPrimeRegularKernelBudget *budget) {
+    if (!term || !prime_regular_declaration_charge(budget, 1u))
+        return prime_regular_declaration_occurrence_result(
+            CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED, NULL,
+            "declaration-instantiation-budget");
+    if (term->kind != ATOM_EXPR)
+        return prime_regular_declaration_occurrence_result(
+            CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED, term, NULL);
+    if (term->expr.len >= 2u &&
+        atom_is_symbol(term->expr.elems[0], "DeclConst")) {
+        Atom *name = term->expr.elems[1];
+        PrimeRegularDeclaredElaboration resolved =
+            prime_resolve_declared_regular_name(
+                space, arena, name, declarations, budget, NULL);
+        if (resolved.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED ||
+            !resolved.owned)
+            return prime_regular_declaration_occurrence_result(
+                resolved.owned ? resolved.status
+                               : CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS,
+                NULL, "unresolved-intrinsic-declaration");
+        if (term->expr.len > 2u)
+            return prime_regular_declaration_occurrence_result(
+                CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED, term, NULL);
+        return prime_regular_declaration_instantiate_fvar(
+            arena, declarations,
+            atom_expr2(arena, atom_symbol(arena, "FVar"),
+                       atom_string(arena, atom_name_cstr(name))), budget);
+    }
+    if (!cetta_expr_len_mul_fits_size(term->expr.len, sizeof(Atom *)))
+        return prime_regular_declaration_occurrence_result(
+            CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE, NULL,
+            "declaration-instance-term-resource");
+    Atom **items = arena_alloc(arena, sizeof(*items) * (size_t)term->expr.len);
+    for (CettaExprIndex i = 0u; i < term->expr.len; i++) {
+        PrimeRegularDeclarationOccurrenceResult child =
+            prime_instantiate_declared_intrinsic_rec(
+                space, arena, term->expr.elems[i], declarations, budget);
+        if (child.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
+            return child;
+        items[i] = child.pattern;
+    }
+    return prime_regular_declaration_occurrence_result(
+        CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED,
+        atom_expr(arena, items, term->expr.len), NULL);
+}
+
+CettaPrimeRegularKernelResult prime_semantics_check_declared_intrinsic_v1(
+    Arena *arena, Space *space, Atom *term, Atom *expected,
+    CettaPrimeRegularKernelBudget *budget) {
+    CettaPrimeRegularKernelResult result = {
+        .status = CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS,
+        .reason = "intrinsic-declaration-authority-unavailable",
+    };
+    CettaNikDirectAuthorityTokenV1 token;
+    if (!arena || !space || !term || !expected || !budget ||
+        !cetta_prime_typing_direct_authority_token_v1(
+            space, UINT32_C(0x4445434c), &token))
+        return result;
+    cetta_prime_regular_kernel_rules_set(prime_semantics_kernel_rules(arena, space));
+    PrimeRegularDeclarationContext declarations = {0};
+    PrimeRegularDeclarationOccurrenceResult type =
+        prime_instantiate_declared_intrinsic_rec(
+            space, arena, expected, &declarations, budget);
+    PrimeRegularDeclarationOccurrenceResult body = type;
+    if (type.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
+        body = prime_instantiate_declared_intrinsic_rec(
+            space, arena, term, &declarations, budget);
+    if (body.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
+        result = cetta_prime_regular_kernel_check_intrinsic_instantiating_levels_v1(
+            arena, prime_regular_declaration_context_atom(arena, &declarations),
+            body.pattern, type.pattern, declarations.level_parameters,
+            declarations.level_parameter_count, budget);
+    } else {
+        result.status = body.status;
+        result.reason = body.reason;
+    }
+    prime_regular_declaration_context_free(&declarations);
+    cetta_prime_regular_kernel_rules_set(NULL);
+    if (!cetta_prime_typing_direct_authority_token_v1_is_current(
+            &token, space, UINT32_C(0x4445434c))) {
+        result.status = CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE;
+        result.reason = "declaration-revision-changed";
+    }
+    return result;
+}
+
 /* Resolve the exact acyclic declaration class whose types are already formed
  * by the sealed regular calculus.  Value-indexed evidence such as
  * `p : u0; h : Id u0 p p` is included; variables-as-types remain outside the
@@ -3068,7 +3241,7 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
 
 static PrimeFormStatus prime_form_declared_regular_type(
     Space *space, Arena *arena, Atom *type, PrimeResourceLedger *ledger,
-    Atom **detail, bool *owned) {
+    Atom **detail, bool *owned, Atom **canonical_term_out) {
     if (owned) *owned = false;
     if (!space || !arena || !type || !ledger || !detail || !owned)
         return PRIME_FORM_UNDETERMINED;
@@ -3152,13 +3325,18 @@ static PrimeFormStatus prime_form_declared_regular_type(
 
     Atom *context = prime_regular_declaration_context_atom(
         arena, &declarations);
-    CettaPrimeRegularKernelResult formed =
-        cetta_prime_regular_kernel_form_intrinsic_instantiating_levels_v1(
+    CettaPrimeRegularKernelFormedSchemaV1 formed =
+        cetta_prime_regular_kernel_form_intrinsic_level_schema_v1(
             arena, context, elaborated.term,
             declarations.level_parameters,
             declarations.level_parameter_count, &budget);
     bool current = cetta_prime_typing_direct_authority_token_v1_is_current(
         &authority_token, space, UINT32_C(0x4445464d));
+    Atom *canonical = current &&
+            formed.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED
+        ? prime_regular_declaration_quote_intrinsic(
+              arena, &declarations, formed.term)
+        : NULL;
     prime_regular_declaration_context_free(&declarations);
     prime_account_regular_kernel(
         ledger, PRIME_RESOURCE_FORMATION, &budget);
@@ -3168,11 +3346,20 @@ static PrimeFormStatus prime_form_declared_regular_type(
         return PRIME_FORM_FAULT;
     }
     if (formed.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
+        if (!canonical) {
+            *detail = prime_expr1(arena, "declaration-formation-quote-failed");
+            return PRIME_FORM_FAULT;
+        }
         *detail = type;
+        if (canonical_term_out) *canonical_term_out = canonical;
         return PRIME_FORM_ESTABLISHED;
     }
+    CettaPrimeRegularKernelResult failure = {
+        .status = formed.status,
+        .reason = formed.reason,
+    };
     *detail = prime_regular_kernel_reason(
-        arena, &formed, "declared-regular-formation");
+        arena, &failure, "declared-regular-formation");
     if (formed.status == CETTA_PRIME_REGULAR_KERNEL_REFUTED)
         return PRIME_FORM_REFUTED;
     if (formed.status == CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED)
@@ -3544,36 +3731,40 @@ static Atom *prime_check_or_analyze(
 static Atom *prime_form_judgment(
     Space *space, Arena *arena, Atom *judgment, Atom *type,
     PrimeResourceLedger *ledger, CettaPrimeTypingRouteV1 *route_out,
-    bool *engine_fault_out) {
+    bool *engine_fault_out, Atom **canonical_term_out) {
     if (route_out) *route_out = CETTA_PRIME_TYPING_ROUTE_NONE;
     if (engine_fault_out) *engine_fault_out = false;
+    if (canonical_term_out) *canonical_term_out = NULL;
 
     Atom *detail = NULL;
     bool native_owned = false;
     PrimeFormStatus status = PRIME_FORM_UNDETERMINED;
     if (CETTA_PRIME_REGULAR_KERNEL_NATIVE_ADMISSION_ACTIVE) {
         status = prime_form_scoped_regular_type(
-            arena, type, ledger, &detail, &native_owned);
+            arena, type, ledger, &detail, &native_owned, canonical_term_out);
         if (native_owned && route_out)
             *route_out = CETTA_PRIME_TYPING_ROUTE_SCOPED_REGULAR;
         /* A type may mention value declarations even when its outer syntax
          * is an ordinary authored `id`/Pi/Sigma form. */
         if (!native_owned)
             status = prime_form_declared_regular_type(
-                space, arena, type, ledger, &detail, &native_owned);
+                space, arena, type, ledger, &detail, &native_owned,
+                canonical_term_out);
         if (native_owned && route_out &&
             *route_out == CETTA_PRIME_TYPING_ROUTE_NONE)
             *route_out = CETTA_PRIME_TYPING_ROUTE_DECLARED_REGULAR;
         if (!native_owned)
             status = prime_form_regular_term_type(
-                space, arena, type, ledger, &detail, &native_owned);
+                space, arena, type, ledger, &detail, &native_owned,
+                canonical_term_out);
         if (native_owned && route_out &&
             *route_out == CETTA_PRIME_TYPING_ROUTE_NONE)
             *route_out = CETTA_PRIME_TYPING_ROUTE_AUTHORED_REGULAR;
         if (!native_owned &&
             cetta_prime_regular_kernel_term_maybe_syntax(type)) {
             status = prime_form_closed_regular_type(
-                space, arena, type, ledger, &detail, &native_owned, false);
+                space, arena, type, ledger, &detail, &native_owned, false,
+                canonical_term_out);
             if (native_owned && route_out)
                 *route_out = CETTA_PRIME_TYPING_ROUTE_CLOSED_REGULAR;
         }
@@ -3584,6 +3775,7 @@ static Atom *prime_form_judgment(
     } else {
         if (route_out)
             *route_out = CETTA_PRIME_TYPING_ROUTE_AMBIENT_FORMATION;
+        if (canonical_term_out) *canonical_term_out = NULL;
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PRIME_LEGACY_FORMATION);
         status = prime_form_type(
@@ -3591,6 +3783,7 @@ static Atom *prime_form_judgment(
     }
     if (status == PRIME_FORM_ESTABLISHED)
         return prime_established(arena, judgment, detail);
+    if (canonical_term_out) *canonical_term_out = NULL;
     if (status == PRIME_FORM_REFUTED)
         return prime_refuted(arena, judgment, detail);
     if (status == PRIME_FORM_INCOMPLETE)
@@ -3721,9 +3914,10 @@ bool cetta_prime_typing_observe_formation_v1(
     CettaPrimeTypingRouteV1 route = CETTA_PRIME_TYPING_ROUTE_NONE;
     bool engine_fault = false;
     Atom *judgment = prime_expr2(arena, "type:formed", candidate->type);
+    Atom *canonical_term = NULL;
     Atom *verdict = prime_form_judgment(
         space, arena, judgment, candidate->type, &ledger,
-        &route, &engine_fault);
+        &route, &engine_fault, &canonical_term);
     CettaNikResultV1 result;
     if (!prime_authority_result_from_verdict(
             verdict, engine_fault, &result) ||
@@ -3736,6 +3930,7 @@ bool cetta_prime_typing_observe_formation_v1(
             .result = result,
             .route = route,
             .payload = verdict->expr.elems[3],
+            .canonical_term = canonical_term,
             .resources = prime_resource_observation(&ledger),
         },
     };
@@ -3959,11 +4154,35 @@ bool prime_semantics_replay_conversion_certificate(
         a, space, certificate, &budget, equal_out);
 }
 
+/* Authored Prime binder syntax (`lam` forms and `(x : A)` telescopes) is not
+ * interpreted by the HE normalizer.  When the native routes have declined
+ * such an operand, the legacy service must decline too rather than report
+ * two uninterpreted spellings as a checked distinction. */
+static bool prime_operand_uses_authored_binder(Atom *atom) {
+    if (!atom || atom->kind != ATOM_EXPR || atom->expr.len == 0u) return false;
+    Atom *head = atom->expr.elems[0];
+    if (head && head->kind == ATOM_SYMBOL) {
+        const char *name = atom_name_cstr(head);
+        if (name && strcmp(name, "lam") == 0) return true;
+    }
+    if (atom->expr.len == 3u &&
+        atom_is_symbol_id(atom->expr.elems[1], g_builtin_syms.colon))
+        return true;
+    for (CettaExprIndex i = 0u; i < atom->expr.len; i++)
+        if (prime_operand_uses_authored_binder(atom->expr.elems[i])) return true;
+    return false;
+}
+
 static __attribute__((noinline)) Atom *prime_convert_legacy_he(
     Space *space, Arena *a, Atom *judgment, Atom *left, Atom *right,
     PrimeResourceLedger *ledger) {
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PRIME_LEGACY_HE_CONVERSION);
+    if (prime_operand_uses_authored_binder(left) ||
+        prime_operand_uses_authored_binder(right)) {
+        return prime_undetermined(
+            a, judgment, prime_expr1(a, "conversion-outside-legacy-fragment"));
+    }
     Atom *left_nf = left;
     Atom *right_nf = right;
     uint64_t phase_before = prime_resource_phase_begin(ledger);
@@ -4351,16 +4570,16 @@ static Atom *prime_refine(Space *space, Arena *a, Atom *judgment,
     if (CETTA_PRIME_REGULAR_KERNEL_NATIVE_ADMISSION_ACTIVE) {
         formation = prime_form_declared_regular_type(
             space, a, type, ledger, &formation_detail,
-            &native_formation_owned);
+            &native_formation_owned, NULL);
         if (!native_formation_owned)
             formation = prime_form_regular_term_type(
                 space, a, type, ledger, &formation_detail,
-                &native_formation_owned);
+                &native_formation_owned, NULL);
         if (!native_formation_owned &&
             cetta_prime_regular_kernel_term_maybe_syntax(type)) {
             formation = prime_form_closed_regular_type(
                 space, a, type, ledger, &formation_detail,
-                &native_formation_owned, false);
+                &native_formation_owned, false, NULL);
         }
     }
     if (native_formation_owned) {
@@ -4554,16 +4773,16 @@ static Atom *prime_may_or_must(Space *space, Arena *a, Atom *judgment,
     if (CETTA_PRIME_REGULAR_KERNEL_NATIVE_ADMISSION_ACTIVE) {
         formation = prime_form_declared_regular_type(
             space, a, expected, ledger, &formation_detail,
-            &native_formation_owned);
+            &native_formation_owned, NULL);
         if (!native_formation_owned)
             formation = prime_form_regular_term_type(
                 space, a, expected, ledger, &formation_detail,
-                &native_formation_owned);
+                &native_formation_owned, NULL);
         if (!native_formation_owned &&
             cetta_prime_regular_kernel_term_maybe_syntax(expected)) {
             formation = prime_form_closed_regular_type(
                 space, a, expected, ledger, &formation_detail,
-                &native_formation_owned, true);
+                &native_formation_owned, true, NULL);
         }
     }
     if (!native_formation_owned) {
@@ -4804,7 +5023,8 @@ static Atom *prime_nik_check(
 }
 
 static Atom *prime_judge_raw(Arena *a, Space *space, Atom *judgment,
-                             PrimeResourceLedger *ledger) {
+                             PrimeResourceLedger *ledger,
+                             Atom **canonical_term_out) {
     judgment = unquote_data(judgment);
     if (!judgment || judgment->kind != ATOM_EXPR || judgment->expr.len == 0 ||
         judgment->expr.elems[0]->kind != ATOM_SYMBOL) {
@@ -4822,7 +5042,7 @@ static Atom *prime_judge_raw(Arena *a, Space *space, Atom *judgment,
                                  prime_expr1(a, "type:formed-arity"));
         return prime_form_judgment(
             space, a, judgment, judgment->expr.elems[1], ledger,
-            NULL, NULL);
+            NULL, NULL, canonical_term_out);
     }
 
     if (strcmp(name, "type:of") == 0) {
@@ -4831,7 +5051,7 @@ static Atom *prime_judge_raw(Arena *a, Space *space, Atom *judgment,
                                  prime_expr1(a, "type:of-arity"));
         return prime_synth(
             space, a, judgment, judgment->expr.elems[1], ledger,
-            NULL, NULL, NULL);
+            NULL, NULL, canonical_term_out);
     }
 
     if (strcmp(name, "nik:check") == 0) {
@@ -4849,7 +5069,8 @@ static Atom *prime_judge_raw(Arena *a, Space *space, Atom *judgment,
                 a, judgment, prime_expr1(a, "type:check-arity"));
         return prime_check_or_analyze(
             space, a, judgment, judgment->expr.elems[1],
-            judgment->expr.elems[2], ledger, true, false, NULL, NULL, NULL);
+            judgment->expr.elems[2], ledger, true, false, NULL, NULL,
+            canonical_term_out);
     }
 
     if (strcmp(name, "type:analyze") == 0) {
@@ -4858,7 +5079,8 @@ static Atom *prime_judge_raw(Arena *a, Space *space, Atom *judgment,
                 a, judgment, prime_expr1(a, "type:analyze-arity"));
         return prime_check_or_analyze(
             space, a, judgment, judgment->expr.elems[1],
-            judgment->expr.elems[2], ledger, false, false, NULL, NULL, NULL);
+            judgment->expr.elems[2], ledger, false, false, NULL, NULL,
+            canonical_term_out);
     }
 
     if (strcmp(name, "type:eq") == 0) {
@@ -4896,12 +5118,313 @@ static Atom *prime_judge_raw(Arena *a, Space *space, Atom *judgment,
                                           judgment->expr.elems[0]));
 }
 
-static Atom *prime_judge(Arena *a, Space *space, Atom *judgment,
-                         bool steps_limited, uint64_t steps) {
+static Atom *prime_kernel_rule_cons(Arena *a, Atom *atom, Atom *list) {
+    if (!atom || atom->kind != ATOM_EXPR || atom->expr.len != 5u ||
+        !is_symbol_named(atom->expr.elems[0], "type:rule"))
+        return list;
+    Atom *rule_items[5] = {atom_symbol(a, "PrimeRule"), atom->expr.elems[1], atom->expr.elems[2],
+                           atom->expr.elems[3], atom->expr.elems[4]};
+    Atom *rule = atom_expr(a, rule_items, 5u);
+    Atom *cons_items[3] = {atom_symbol(a, "LCons"), rule, list ? list : atom_symbol(a, "LNil")};
+    return atom_expr(a, cons_items, 3u);
+}
+
+/* Physical candidate coordinates belong to the indexed store, not to an
+ * overlay's logical view. Read overlays through their snapshot-aware accessor
+ * so inherited rules, removed rows and local additions have the same meaning
+ * during declaration admission and ordinary checking. Preserve the source
+ * rule atoms rather than instantiating their internal pattern variables. */
+Atom *prime_semantics_kernel_rules(Arena *a, Space *space) {
+    if (!space) return NULL;
+    Atom *list = NULL;
+    if (space->overlay_base) {
+        CettaCount count = space_length64(space);
+        for (CettaIndex i = 0u; i < count; i++)
+            list = prime_kernel_rule_cons(a, space_get_at64(space, i), list);
+        return list;
+    }
+    Atom *items[5] = {atom_symbol(a, "type:rule"), atom_var(a, "h"), atom_var(a, "n"),
+                      atom_var(a, "p"), atom_var(a, "r")};
+    Atom *pattern = atom_expr(a, items, 5u);
+    CettaIndex *candidates = NULL;
+    CettaIndex count = space_match_candidates64(space, pattern, &candidates);
+    for (CettaIndex i = 0u; i < count; i++) {
+        Atom *atom = space_match_candidate_at64(space, candidates[i]);
+        list = prime_kernel_rule_cons(a, atom, list);
+    }
+    free(candidates);
+    return list;
+}
+
+/* Surface spelling of a kernel normal form. An unquoted binder or wire
+ * constructor declines the whole term, so ordinary evaluation never prints
+ * an internal spelling in place of the source call. */
+static Atom *prime_quote_runtime_term(Arena *arena, Atom *term) {
+    if (!arena || !term) return NULL;
+    if (term->kind == ATOM_SYMBOL)
+        return cetta_prime_regular_term_authored_symbol_v1(arena, term);
+    if (term->kind != ATOM_EXPR) return term;
+    if (term->expr.len == 2u &&
+        is_symbol_named(term->expr.elems[0], "DeclConst") &&
+        term->expr.elems[1] && term->expr.elems[1]->kind == ATOM_SYMBOL)
+        return term->expr.elems[1];
+    if (term->expr.len == 3u && is_symbol_named(term->expr.elems[0], "App")) {
+        Atom *args[16];
+        size_t argc = 0u;
+        Atom *cursor = term;
+        while (cursor && cursor->kind == ATOM_EXPR && cursor->expr.len == 3u &&
+               is_symbol_named(cursor->expr.elems[0], "App")) {
+            if (argc >= 16u) return NULL;
+            args[argc++] = cursor->expr.elems[2];
+            cursor = cursor->expr.elems[1];
+        }
+        Atom *head = prime_quote_runtime_term(arena, cursor);
+        if (!head) return NULL;
+        Atom **items = arena_alloc(arena, sizeof(Atom *) * (argc + 1u));
+        if (!items) return NULL;
+        items[0] = head;
+        for (size_t i = 0u; i < argc; i++) {
+            Atom *arg = prime_quote_runtime_term(arena, args[argc - 1u - i]);
+            if (!arg) return NULL;
+            items[i + 1u] = arg;
+        }
+        return atom_expr(arena, items, (CettaExprLen)(argc + 1u));
+    }
+    if (term->expr.len == 3u && is_symbol_named(term->expr.elems[0], "Pair")) {
+        Atom *first = prime_quote_runtime_term(arena, term->expr.elems[1]);
+        Atom *second = prime_quote_runtime_term(arena, term->expr.elems[2]);
+        if (!first || !second) return NULL;
+        Atom *items[3] = {atom_symbol(arena, "pair"), first, second};
+        return atom_expr(arena, items, 3u);
+    }
+    if (term->expr.len == 2u &&
+        (is_symbol_named(term->expr.elems[0], "Fst") ||
+         is_symbol_named(term->expr.elems[0], "Snd") ||
+         is_symbol_named(term->expr.elems[0], "Refl"))) {
+        const char *surface = is_symbol_named(term->expr.elems[0], "Fst") ? "fst"
+                            : is_symbol_named(term->expr.elems[0], "Snd") ? "snd"
+                            : "refl";
+        Atom *arg = prime_quote_runtime_term(arena, term->expr.elems[1]);
+        if (!arg) return NULL;
+        Atom *items[2] = {atom_symbol(arena, surface), arg};
+        return atom_expr(arena, items, 2u);
+    }
+    if (term->expr.len == 4u && is_symbol_named(term->expr.elems[0], "Id")) {
+        Atom *carrier = prime_quote_runtime_term(arena, term->expr.elems[1]);
+        Atom *left = prime_quote_runtime_term(arena, term->expr.elems[2]);
+        Atom *right = prime_quote_runtime_term(arena, term->expr.elems[3]);
+        if (!carrier || !left || !right) return NULL;
+        Atom *items[4] = {atom_symbol(arena, "id"), carrier, left, right};
+        return atom_expr(arena, items, 4u);
+    }
+    Atom *quoted = cetta_prime_regular_term_quote_intrinsic_v1(arena, term);
+    if (!quoted || quoted->kind != ATOM_EXPR || quoted->expr.len == 0u ||
+        quoted->expr.elems[0]->kind != ATOM_SYMBOL)
+        return quoted && quoted->kind != ATOM_EXPR ? quoted : NULL;
+    if (is_symbol_named(quoted->expr.elems[0], "Lam") ||
+        is_symbol_named(quoted->expr.elems[0], "Pi") ||
+        is_symbol_named(quoted->expr.elems[0], "Sigma") ||
+        is_symbol_named(quoted->expr.elems[0], "DeclConst") ||
+        is_symbol_named(quoted->expr.elems[0], "App") ||
+        is_symbol_named(quoted->expr.elems[0], "PVar") ||
+        is_symbol_named(quoted->expr.elems[0], "FVar"))
+        return NULL;
+    return quoted;
+}
+
+static Atom *prime_quote_open(Arena *arena, Atom *term, uint64_t depth,
+                              Atom *binder) {
+    if (!term) return NULL;
+    if (term->kind != ATOM_EXPR) return prime_quote_runtime_term(arena, term);
+    if (term->expr.len == 2u && is_symbol_named(term->expr.elems[0], "idx") &&
+        term->expr.elems[1] && term->expr.elems[1]->kind == ATOM_GROUNDED &&
+        term->expr.elems[1]->ground.gkind == GV_INT &&
+        term->expr.elems[1]->ground.ival >= 0) {
+        uint64_t index = (uint64_t)term->expr.elems[1]->ground.ival;
+        if (binder && index == depth) return binder;
+        Atom *items[2] = {atom_symbol(arena, "idx"), term->expr.elems[1]};
+        return atom_expr(arena, items, 2u);
+    }
+    if (term->expr.len == 2u && is_symbol_named(term->expr.elems[0], "DeclConst"))
+        return prime_quote_runtime_term(arena, term);
+    if (is_symbol_named(term->expr.elems[0], "Lam")) {
+        Atom *body_term = term->expr.len == 2u ? term->expr.elems[1]
+                                               : term->expr.elems[2];
+        Atom *body = prime_quote_open(arena, body_term, depth + 1u, binder);
+        if (!body) return NULL;
+        Atom *items[3] = {atom_symbol(arena, "lam"), atom_var(arena, "x"), body};
+        return atom_expr(arena, items, 3u);
+    }
+    if (term->expr.len == 2u &&
+        (is_symbol_named(term->expr.elems[0], "Fst") ||
+         is_symbol_named(term->expr.elems[0], "Snd") ||
+         is_symbol_named(term->expr.elems[0], "Refl"))) {
+        const char *surface = is_symbol_named(term->expr.elems[0], "Fst") ? "fst"
+                            : is_symbol_named(term->expr.elems[0], "Snd") ? "snd"
+                            : "refl";
+        Atom *arg = prime_quote_open(arena, term->expr.elems[1], depth, binder);
+        if (!arg) return NULL;
+        Atom *items[2] = {atom_symbol(arena, surface), arg};
+        return atom_expr(arena, items, 2u);
+    }
+    if (term->expr.len == 3u && is_symbol_named(term->expr.elems[0], "Pair")) {
+        Atom *first = prime_quote_open(arena, term->expr.elems[1], depth, binder);
+        Atom *second = prime_quote_open(arena, term->expr.elems[2], depth, binder);
+        if (!first || !second) return NULL;
+        Atom *items[3] = {atom_symbol(arena, "pair"), first, second};
+        return atom_expr(arena, items, 3u);
+    }
+    if (term->expr.len == 4u && is_symbol_named(term->expr.elems[0], "Id")) {
+        Atom *carrier = prime_quote_open(arena, term->expr.elems[1], depth, binder);
+        Atom *left = prime_quote_open(arena, term->expr.elems[2], depth, binder);
+        Atom *right = prime_quote_open(arena, term->expr.elems[3], depth, binder);
+        if (!carrier || !left || !right) return NULL;
+        Atom *items[4] = {atom_symbol(arena, "id"), carrier, left, right};
+        return atom_expr(arena, items, 4u);
+    }
+    if (term->expr.len == 3u && is_symbol_named(term->expr.elems[0], "App")) {
+        Atom *args[16];
+        size_t argc = 0u;
+        Atom *cursor = term;
+        while (cursor && cursor->kind == ATOM_EXPR && cursor->expr.len == 3u &&
+               is_symbol_named(cursor->expr.elems[0], "App")) {
+            if (argc >= 16u) return NULL;
+            args[argc++] = cursor->expr.elems[2];
+            cursor = cursor->expr.elems[1];
+        }
+        Atom *head = prime_quote_open(arena, cursor, depth, binder);
+        if (!head) return NULL;
+        Atom **items = arena_alloc(arena, sizeof(Atom *) * (argc + 1u));
+        if (!items) return NULL;
+        items[0] = head;
+        for (size_t i = 0u; i < argc; i++) {
+            Atom *arg = prime_quote_open(arena, args[argc - 1u - i], depth, binder);
+            if (!arg) return NULL;
+            items[i + 1u] = arg;
+        }
+        return atom_expr(arena, items, (CettaExprLen)(argc + 1u));
+    }
+    return NULL;
+}
+
+static Atom *prime_quote_shared_redex(Arena *arena, Atom *term) {
+    if (!term || term->kind != ATOM_EXPR || term->expr.len != 3u ||
+        !is_symbol_named(term->expr.elems[0], "App"))
+        return NULL;
+    Atom *function = term->expr.elems[1];
+    if (!function || function->kind != ATOM_EXPR ||
+        !is_symbol_named(function->expr.elems[0], "Lam"))
+        return NULL;
+    Atom *body = function->expr.len == 2u ? function->expr.elems[1]
+                                          : function->expr.elems[2];
+    Atom *binder = atom_var(arena, "pack");
+    Atom *argument = prime_quote_runtime_term(arena, term->expr.elems[2]);
+    Atom *quoted_body = prime_quote_open(arena, body, 0u, binder);
+    if (!argument || !quoted_body) return NULL;
+    Atom *items[4] = {atom_symbol(arena, "let"), binder, argument, quoted_body};
+    return atom_expr(arena, items, 4u);
+}
+
+static Atom *prime_surface_projection(Arena *arena, Atom *call) {
+    (void)arena;
+    if (!call || call->kind != ATOM_EXPR || call->expr.len != 2u) return NULL;
+    Atom *head = call->expr.elems[0];
+    Atom *argument = call->expr.elems[1];
+    if (!head || !argument || argument->kind != ATOM_EXPR ||
+        argument->expr.len != 3u ||
+        !is_symbol_named(argument->expr.elems[0], "pair"))
+        return NULL;
+    if (is_symbol_named(head, "fst")) return argument->expr.elems[1];
+    if (is_symbol_named(head, "snd")) return argument->expr.elems[2];
+    return NULL;
+}
+
+static bool prime_head_has_type_rule(Arena *arena, Space *space, Atom *head) {
+    Atom *items[5] = {
+        atom_symbol(arena, "type:rule"), head, atom_var(arena, "n"),
+        atom_var(arena, "p"), atom_var(arena, "r")};
+    Atom *pattern = atom_expr(arena, items, 5u);
+    CettaIndex *candidates = NULL;
+    CettaIndex count = space_match_candidates64(space, pattern, &candidates);
+    free(candidates);
+    return count > 0u;
+}
+
+Atom *prime_semantics_reduce_covered_call(
+    Arena *arena, Space *space, Atom *call, int fuel) {
+    if (!arena || !space || !call || fuel == 0 ||
+        call->kind != ATOM_EXPR || call->expr.len < 2u)
+        return NULL;
+    Atom *projected = prime_surface_projection(arena, call);
+    if (projected) return projected;
+    Atom *head = call->expr.elems[0];
+    if (!head || head->kind != ATOM_SYMBOL) return NULL;
+    if (!prime_head_has_type_rule(arena, space, head))
+        return NULL;
+
+    /* A negative evaluator fuel is unlimited. One covered call still has a
+     * finite kernel budget. Running that budget out leaves the call in place. */
+    uint64_t steps = fuel < 0 || (uint64_t)fuel > 100000u
+        ? 100000u : (uint64_t)fuel;
+    CettaPrimeRegularKernelBudget budget;
+    cetta_prime_regular_kernel_budget_init(&budget, true, steps);
+    PrimeRegularDeclarationContext declarations = {0};
+    PrimeRegularDeclaredElaboration elaborated =
+        prime_elaborate_declared_regular_term(
+            space, arena, call, &declarations, &budget);
+    if (elaborated.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED ||
+        declarations.count == 0u || !elaborated.lowered.pattern) {
+        prime_regular_declaration_context_free(&declarations);
+        return NULL;
+    }
+    PrimeRegularDeclarationOccurrenceResult instantiated =
+        prime_regular_declaration_instantiate_occurrences_rec(
+            arena, &declarations, elaborated.lowered.pattern, &budget);
+    if (instantiated.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED ||
+        !instantiated.pattern) {
+        prime_regular_declaration_context_free(&declarations);
+        return NULL;
+    }
+    CettaPrimeRegularPatternEnvironmentV1 pattern_environment = {0};
+    CettaPrimeRegularPatternElaborationV1 intrinsic =
+        cetta_prime_regular_pattern_elaborate_v1(
+            arena, pattern_environment, instantiated.pattern, &budget);
+    if (intrinsic.status != CETTA_PRIME_REGULAR_PATTERN_OK || !intrinsic.term) {
+        prime_regular_declaration_context_free(&declarations);
+        return NULL;
+    }
+    Atom *rules = prime_semantics_kernel_rules(arena, space);
+    cetta_prime_regular_kernel_rules_set(rules);
+    Atom *contractum = cetta_prime_regular_kernel_rule_contractum_v1(
+        arena, intrinsic.term, &budget);
+    cetta_prime_regular_kernel_rules_set(NULL);
+    prime_regular_declaration_context_free(&declarations);
+    if (!contractum) return NULL;
+    Atom *shared = prime_quote_shared_redex(arena, contractum);
+    Atom *quoted = shared ? shared : prime_quote_runtime_term(arena, contractum);
+    if (!quoted || atom_eq(quoted, call)) return NULL;
+    return quoted;
+}
+
+static Atom *prime_judge_accounted(
+    Arena *a, Space *space, Atom *judgment, bool steps_limited,
+    uint64_t steps, CettaPrimeTypingResourceObservationV1 *resources_out,
+    Atom **canonical_term_out) {
+    if (canonical_term_out) *canonical_term_out = NULL;
     PrimeResourceLedger ledger;
     prime_resource_init(&ledger, steps_limited, steps);
-    Atom *verdict = prime_judge_raw(a, space, judgment, &ledger);
+    cetta_prime_regular_kernel_rules_set(prime_semantics_kernel_rules(a, space));
+    Atom *verdict = prime_judge_raw(
+        a, space, judgment, &ledger, canonical_term_out);
+    cetta_prime_regular_kernel_rules_set(NULL);
+    if (resources_out) *resources_out = prime_resource_observation(&ledger);
     return steps_limited ? prime_attach_ledger(a, verdict, &ledger) : verdict;
+}
+
+static Atom *prime_judge(Arena *a, Space *space, Atom *judgment,
+                         bool steps_limited, uint64_t steps) {
+    return prime_judge_accounted(
+        a, space, judgment, steps_limited, steps, NULL, NULL);
 }
 
 static bool prime_is_native_typing_judgment(Atom *judgment) {
@@ -4928,11 +5451,25 @@ static bool prime_is_native_typing_judgment(Atom *judgment) {
 Atom *prime_semantics_judge_typing_direct(
     Arena *a, Space *space, Atom *judgment,
     bool steps_limited, uint64_t steps) {
+    return prime_semantics_judge_typing_accounted(
+        a, space, judgment, steps_limited, steps, NULL, NULL);
+}
+
+Atom *prime_semantics_judge_typing_accounted(
+    Arena *a, Space *space, Atom *judgment,
+    bool steps_limited, uint64_t steps,
+    CettaPrimeTypingResourceObservationV1 *resources_out,
+    Atom **canonical_term_out) {
+    if (resources_out)
+        *resources_out = (CettaPrimeTypingResourceObservationV1){0};
+    if (canonical_term_out) *canonical_term_out = NULL;
     if (!a || !space || (steps_limited && steps == 0) ||
         !prime_is_native_typing_judgment(judgment)) {
         return NULL;
     }
-    return prime_judge(a, space, judgment, steps_limited, steps);
+    return prime_judge_accounted(
+        a, space, judgment, steps_limited, steps, resources_out,
+        canonical_term_out);
 }
 
 Atom *prime_semantics_check_nik_direct(

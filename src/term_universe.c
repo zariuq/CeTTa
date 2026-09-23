@@ -3475,11 +3475,12 @@ static size_t term_universe_copy_estimated_arena_bytes(
     return bytes;
 }
 
-static Atom *term_universe_copy_atom_impl(const TermUniverse *universe,
+static Atom *term_universe_copy_atom_finish(const TermUniverse *universe,
                                           Arena *dst, AtomId id,
                                           uint32_t epoch,
                                           bool rename_epoch_vars,
-                                          TermUniverseCopyMemo *memo) {
+                                          TermUniverseCopyMemo *memo,
+                                          Atom **children) {
     Atom *out = NULL;
     if (!universe || !dst || id == CETTA_ATOM_ID_NONE)
         return NULL;
@@ -3508,9 +3509,7 @@ static Atom *term_universe_copy_atom_impl(const TermUniverse *universe,
         if (rename_epoch_vars)
             var_id = var_epoch_id(var_id, epoch);
         if (hdr->subtag == CETTA_VAR_SPELLING_NAME_KEY) {
-            Atom *key = term_universe_copy_atom_impl(
-                universe, dst, tu_var_name_key_id(universe, id), epoch, false,
-                memo);
+            Atom *key = children ? children[0] : NULL;
             out = key ? atom_var_with_name_key(dst, key, var_id) : NULL;
         } else {
             out = atom_var_with_spelling(dst, hdr->sym_or_head, var_id);
@@ -3549,20 +3548,7 @@ static Atom *term_universe_copy_atom_impl(const TermUniverse *universe,
         break;
     case ATOM_EXPR: {
         CettaExprLen len = tu_arity(universe, id);
-        Atom **elems = NULL;
-        if (len > 0) {
-            if (!cetta_expr_len_mul_fits_size(len, sizeof(Atom *)))
-                return NULL;
-            elems = arena_alloc(dst, sizeof(Atom *) * (size_t)len);
-        }
-        for (CettaExprIndex i = 0; i < len; i++) {
-            elems[i] = term_universe_copy_atom_impl(
-                universe, dst, tu_child(universe, id, i), epoch,
-                rename_epoch_vars, memo);
-            if (!elems[i])
-                return NULL;
-        }
-        out = atom_expr_shared(dst, elems, len);
+        out = atom_expr_shared(dst, children, len);
         break;
     }
     }
@@ -3580,6 +3566,88 @@ done:
     if (!term_universe_copy_memo_store(memo, id, out))
         return NULL;
     return out;
+}
+
+typedef struct {
+    AtomId id;
+    Atom **target;
+    Atom **children;
+    bool rename_epoch_vars;
+    bool finish;
+} TermUniverseCopyFrame;
+
+static bool term_universe_copy_frame_push(TermUniverseCopyFrame **frames,
+                                          size_t *len, size_t *cap,
+                                          TermUniverseCopyFrame frame) {
+    if (*len == *cap) {
+        size_t next = *cap ? *cap * 2u : 64u;
+        if (next < *cap || next > SIZE_MAX / sizeof(**frames))
+            return false;
+        *frames = cetta_realloc(*frames, next * sizeof(**frames));
+        *cap = next;
+    }
+    (*frames)[(*len)++] = frame;
+    return true;
+}
+
+/* Postorder copying uses a heap work stack, so a deep closed proof article
+ * does not consume the C call stack. The existing memo still preserves DAG
+ * sharing, and structural variable name keys remain outside epoch renaming. */
+static Atom *term_universe_copy_atom_impl(const TermUniverse *universe,
+                                          Arena *dst, AtomId id,
+                                          uint32_t epoch,
+                                          bool rename_epoch_vars,
+                                          TermUniverseCopyMemo *memo) {
+    if (!universe || !dst || id == CETTA_ATOM_ID_NONE)
+        return NULL;
+    TermUniverseCopyFrame *frames = NULL;
+    size_t len = 0, cap = 0;
+    Atom *out = NULL;
+    if (!term_universe_copy_frame_push(&frames, &len, &cap,
+            (TermUniverseCopyFrame){id, &out, NULL, rename_epoch_vars, false}))
+        return NULL;
+    while (len) {
+        TermUniverseCopyFrame frame = frames[--len];
+        if (frame.id == CETTA_ATOM_ID_NONE)
+            goto failed;
+        Atom *cached = term_universe_copy_memo_lookup(memo, frame.id);
+        if (cached) {
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_COPY_MEMO_HIT);
+            *frame.target = cached;
+            continue;
+        }
+        const CettaTermHdr *hdr = tu_hdr(universe, frame.id);
+        bool name_key = hdr && hdr->tag == ATOM_VAR &&
+            hdr->subtag == CETTA_VAR_SPELLING_NAME_KEY;
+        CettaExprLen count = name_key ? 1u :
+            (hdr && hdr->tag == ATOM_EXPR ? tu_arity(universe, frame.id) : 0u);
+        if (!frame.finish && count) {
+            if (!cetta_expr_len_mul_fits_size(count, sizeof(Atom *)))
+                goto failed;
+            frame.children = arena_alloc(dst, (size_t)count * sizeof(Atom *));
+            frame.finish = true;
+            if (!term_universe_copy_frame_push(&frames, &len, &cap, frame))
+                goto failed;
+            for (CettaExprLen i = count; i > 0u; --i) {
+                AtomId child = name_key ? tu_var_name_key_id(universe, frame.id) :
+                    tu_child(universe, frame.id, i - 1u);
+                if (!term_universe_copy_frame_push(&frames, &len, &cap,
+                        (TermUniverseCopyFrame){child, &frame.children[i - 1u], NULL,
+                            !name_key && frame.rename_epoch_vars, false}))
+                    goto failed;
+            }
+            continue;
+        }
+        *frame.target = term_universe_copy_atom_finish(universe, dst, frame.id,
+            epoch, frame.rename_epoch_vars, memo, frame.children);
+        if (!*frame.target)
+            goto failed;
+    }
+    free(frames);
+    return out;
+failed:
+    free(frames);
+    return NULL;
 }
 
 Atom *term_universe_copy_atom(const TermUniverse *universe, Arena *dst,

@@ -43,7 +43,7 @@ cmp "$nik_header" "$nik_evidence/expected.h"
 cmp "$nik_source" "$nik_evidence/expected.c"
 
 # A real admission failure must not publish either staged output.
-sed 's/GPresentationV1/GUnsupportedPresentationV1/g' \
+sed 's/GInferenceLanguageV1/GUnsupportedPresentationV1/g' \
     langdef/prime/nik_authority_catalog_v1.metta > "$nik_evidence/invalid.metta"
 if "$nik_make" "${nik_make_args[@]}" \
     "PRIME_NIK_AUTHORITY_CATALOG_V1=$nik_evidence/invalid.metta" \

@@ -54,10 +54,14 @@ def main() -> int:
     }
     return true;
 }"""
-    if text.count(needle) != 1:
-        print("recognizer mutation anchor is absent or ambiguous", file=sys.stderr)
-        return 1
-    output.write_text(text.replace(needle, replacement, 1))
+    for checker in ("regular_scope_check", "regular_intrinsic_scope_check"):
+        anchor = needle.replace("regular_scope_check", checker)
+        mutation = replacement.replace("regular_scope_check", checker)
+        if text.count(anchor) != 1:
+            print(f"{checker} mutation anchor is absent or ambiguous", file=sys.stderr)
+            return 1
+        text = text.replace(anchor, mutation, 1)
+    output.write_text(text)
     return 0
 
 

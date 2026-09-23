@@ -338,6 +338,10 @@ typedef enum {
 } PettaResolvedCallClass;
 
 PettaProgram *petta_program_new(void);
+/* A fixed language-owned host vocabulary, installed before any plans exist.
+ * Such occurrences are calls, not inert data or user relation slots. */
+PettaProgram *petta_program_new_with_host_intrinsics(
+    bool (*is_host_intrinsic)(SymbolId head));
 void petta_program_free(PettaProgram *program);
 /* Optional language-owned catalog for analyses.  Ordinary PeTTa leaves this
  * disabled and therefore allocates no annotation or inferred-fact state. */

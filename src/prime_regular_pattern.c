@@ -308,6 +308,75 @@ static Atom *regular_term_pattern_pi(
     return regular_term_pattern_application(arena, constructor, arguments, 2u);
 }
 
+/* Structural weakening of the regular Pattern output. Only loose indices
+ * move: PLam increases the cutoff, while declaration and level metadata are
+ * literal leaves. This operation changes scope, not typing authority. */
+static CettaPrimeRegularTermElaborationV1 regular_term_weaken_pattern(
+    Arena *arena, Atom *pattern, uint64_t amount, uint64_t cutoff,
+    CettaPrimeRegularKernelBudget *budget) {
+    if (amount == 0u) return regular_term_success(pattern);
+    if (!pattern_spend(budget))
+        return regular_term_failure(
+            CETTA_PRIME_REGULAR_TERM_BUDGET_EXHAUSTED,
+            "regular-pattern-weakening-budget-exhausted");
+    if (pattern_tag(pattern, "Var", 2u)) {
+        uint64_t index = 0u;
+        if (!pattern_natural(pattern->expr.elems[1], &index))
+            return regular_term_failure(
+                CETTA_PRIME_REGULAR_TERM_OUT_OF_CLASS,
+                "invalid-regular-pattern-weakening-index");
+        if (index < cutoff) return regular_term_success(pattern);
+        if (amount > (uint64_t)INT64_MAX - index)
+            return regular_term_failure(
+                CETTA_PRIME_REGULAR_TERM_RESOURCE_LIMIT,
+                "regular-pattern-weakening-index-overflow");
+        return regular_term_success(regular_term_pattern_var(arena, index + amount));
+    }
+    if (pattern_tag(pattern, "PLam", 3u)) {
+        if (cutoff == UINT64_MAX)
+            return regular_term_failure(
+                CETTA_PRIME_REGULAR_TERM_RESOURCE_LIMIT,
+                "regular-pattern-weakening-depth-overflow");
+        CettaPrimeRegularTermElaborationV1 body = regular_term_weaken_pattern(
+            arena, pattern->expr.elems[2], amount, cutoff + 1u, budget);
+        if (body.status != CETTA_PRIME_REGULAR_TERM_OK) return body;
+        return regular_term_success(atom_expr3(
+            arena, pattern->expr.elems[0], pattern->expr.elems[1], body.pattern));
+    }
+    if (pattern_tag(pattern, "PApp", 3u)) {
+        Atom *nil = atom_symbol(arena, "LNil");
+        Atom *list = nil;
+        Atom **tail = &list;
+        Atom *cursor = pattern->expr.elems[2];
+        while (!atom_is_symbol(cursor, "LNil")) {
+            if (!pattern_spend(budget))
+                return regular_term_failure(
+                    CETTA_PRIME_REGULAR_TERM_BUDGET_EXHAUSTED,
+                    "regular-pattern-weakening-budget-exhausted");
+            if (!pattern_tag(cursor, "LCons", 3u))
+                return regular_term_failure(
+                    CETTA_PRIME_REGULAR_TERM_OUT_OF_CLASS,
+                    "invalid-regular-pattern-weakening-list");
+            CettaPrimeRegularTermElaborationV1 element = regular_term_weaken_pattern(
+                arena, cursor->expr.elems[1], amount, cutoff, budget);
+            if (element.status != CETTA_PRIME_REGULAR_TERM_OK) return element;
+            Atom *node = atom_expr3(
+                arena, cursor->expr.elems[0], element.pattern, nil);
+            *tail = node;
+            tail = &node->expr.elems[2];
+            cursor = cursor->expr.elems[2];
+        }
+        return regular_term_success(atom_expr3(
+            arena, pattern->expr.elems[0], pattern->expr.elems[1], list));
+    }
+    if (pattern_tag(pattern, "FVar", 2u) ||
+        pattern_head_named(pattern, "DeclConst") || pattern_natural(pattern, NULL))
+        return regular_term_success(pattern);
+    return regular_term_failure(
+        CETTA_PRIME_REGULAR_TERM_OUT_OF_CLASS,
+        "unsupported-regular-pattern-weakening-constructor");
+}
+
 /* Numeric universe notation is syntax sugar for the ordinary inductive
  * level language.  Keeping this as Pattern structure avoids adding a
  * grounded-literal escape hatch to the shared inference carrier. */
@@ -625,7 +694,9 @@ static CettaPrimeRegularTermElaborationV1 regular_term_lower_telescope_rec(
         arena, sizeof(*bindings) * group->names_count);
 
     /* Every type in one group is read in the preceding telescope context.
-     * Later groups, but not sibling names in this group, see these binders. */
+     * Its eventual slot also crosses all earlier siblings, so weaken that
+     * already scoped type before introducing the next binder. Later groups,
+     * but not sibling annotations in this group, see these names. */
     for (size_t i = 0u; i < group->names_count; i++) {
         size_t type_offset = group->types_count == 1u ? 0u : i;
         CettaPrimeRegularTermElaborationV1 domain = regular_term_lower_rec(
@@ -633,7 +704,10 @@ static CettaPrimeRegularTermElaborationV1 regular_term_lower_telescope_rec(
             group->syntax->expr.elems[group->types_start + type_offset],
             environment, budget);
         if (domain.status != CETTA_PRIME_REGULAR_TERM_OK) return domain;
-        domains[i] = domain.pattern;
+        CettaPrimeRegularTermElaborationV1 placed = regular_term_weaken_pattern(
+            arena, domain.pattern, (uint64_t)i, 0u, budget);
+        if (placed.status != CETTA_PRIME_REGULAR_TERM_OK) return placed;
+        domains[i] = placed.pattern;
     }
     for (size_t i = 0u; i < group->names_count; i++) {
         Atom *key = NULL;
@@ -707,7 +781,10 @@ static CettaPrimeRegularTermElaborationV1 regular_term_lower_rec(
     RegularTermNameStatus name_status = regular_term_name_key(
         syntax, false, &name_key, &explicit_quote);
     uint64_t index = 0u;
-    const RegularTermBinding *binding = name_status == REGULAR_TERM_NAME_OK
+    if (name_status == REGULAR_TERM_NAME_MATCHER) name_key = syntax;
+    const RegularTermBinding *binding =
+        (name_status == REGULAR_TERM_NAME_OK ||
+         name_status == REGULAR_TERM_NAME_MATCHER)
         ? regular_term_binding_find(
               environment, name_key, explicit_quote, &index)
         : NULL;
@@ -875,7 +952,9 @@ cetta_prime_regular_term_to_pattern_in_environment_v1(
     Atom *syntax, CettaPrimeRegularKernelBudget *budget) {
     if (!arena || !syntax || !budget ||
         (environment.count > 0u && !environment.names) ||
-        environment.count > SIZE_MAX / sizeof(RegularTermBinding))
+        (environment.local_count > 0u && !environment.local_names) ||
+        environment.count > SIZE_MAX / sizeof(RegularTermBinding) ||
+        environment.local_count > SIZE_MAX / sizeof(RegularTermBinding))
         return regular_term_failure(
             CETTA_PRIME_REGULAR_TERM_OUT_OF_CLASS,
             "invalid-regular-term-environment");
@@ -899,6 +978,23 @@ cetta_prime_regular_term_to_pattern_in_environment_v1(
             .outer = outer,
         };
         outer = &bindings[index];
+    }
+    RegularTermBinding *locals = environment.local_count > 0u
+        ? arena_alloc(arena, sizeof(*locals) * environment.local_count) : NULL;
+    for (size_t offset = environment.local_count; offset > 0u; offset--) {
+        size_t index = offset - 1u;
+        Atom *name = (Atom *)environment.local_names[index];
+        Atom *key = NULL;
+        bool quoted = false;
+        RegularTermNameStatus status = regular_term_name_key(name, false, &key, &quoted);
+        if (status == REGULAR_TERM_NAME_MATCHER) key = name;
+        else if (status != REGULAR_TERM_NAME_OK)
+            return regular_term_failure(CETTA_PRIME_REGULAR_TERM_OUT_OF_CLASS,
+                                        "invalid-local-binding-name");
+        locals[index] = (RegularTermBinding){
+            .key = key, .referencable = true, .outer = outer,
+        };
+        outer = &locals[index];
     }
     CettaPrimeRegularTermElaborationV1 result = regular_term_lower_rec(
         arena, syntax, outer, budget);
@@ -1117,7 +1213,9 @@ static bool pattern_generated_binder_name(const char *name) {
 static CettaPrimeRegularPatternStatusV1 pattern_validate_environment(
     CettaPrimeRegularPatternEnvironmentV1 environment,
     CettaPrimeRegularKernelBudget *budget) {
-    if (environment.count > 0u && !environment.names)
+    if ((environment.count > 0u && !environment.names) ||
+        (environment.declaration_count > 0u && !environment.declaration_names) ||
+        environment.bound_count > (uint64_t)INT64_MAX)
         return CETTA_PRIME_REGULAR_PATTERN_INVALID_ENVIRONMENT;
     for (size_t i = 0u; i < environment.count; i++) {
         if (!pattern_spend(budget))
@@ -1132,6 +1230,16 @@ static CettaPrimeRegularPatternStatusV1 pattern_validate_environment(
                 strcmp(name, preceding) == 0)
                 return CETTA_PRIME_REGULAR_PATTERN_INVALID_ENVIRONMENT;
         }
+    }
+    for (size_t i = 0u; i < environment.declaration_count; i++) {
+        if (!pattern_spend(budget))
+            return CETTA_PRIME_REGULAR_PATTERN_BUDGET_EXHAUSTED;
+        const Atom *name = environment.declaration_names[i];
+        if (!name || name->kind != ATOM_SYMBOL)
+            return CETTA_PRIME_REGULAR_PATTERN_INVALID_ENVIRONMENT;
+        for (size_t j = 0u; j < i; j++)
+            if (atom_eq((Atom *)name, (Atom *)environment.declaration_names[j]))
+                return CETTA_PRIME_REGULAR_PATTERN_INVALID_ENVIRONMENT;
     }
     return CETTA_PRIME_REGULAR_PATTERN_OK;
 }
@@ -1234,6 +1342,13 @@ static CettaPrimeRegularPatternElaborationV1 pattern_elaborate_binder(
             CETTA_PRIME_REGULAR_PATTERN_RESOURCE_LIMIT,
             "regular-pattern-binder-name");
     PatternScanStatus freshness = pattern_contains_fvar(body, buffer, budget);
+    /* A declared constant cannot refer to the generated binder. */
+    if (freshness == PATTERN_SCAN_FOUND)
+        for (size_t i = 0u; i < environment.declaration_count; i++)
+            if (atom_is_symbol((Atom *)environment.declaration_names[i], buffer)) {
+                freshness = PATTERN_SCAN_OK;
+                break;
+            }
     if (freshness == PATTERN_SCAN_FOUND)
         return pattern_syntax_failure(
             CETTA_PRIME_REGULAR_PATTERN_BINDER_NAME_COLLISION, 0u,
@@ -1311,6 +1426,12 @@ static CettaPrimeRegularPatternElaborationV1 pattern_elaborate_rec(
             return pattern_success(atom_expr2(
                 arena, atom_symbol(arena, "idx"),
                 atom_int(arena, (int64_t)(binder_depth + (uint64_t)i))));
+        }
+        for (size_t i = 0u; i < environment.declaration_count; i++) {
+            Atom *declaration = (Atom *)environment.declaration_names[i];
+            if (atom_is_symbol(declaration, name))
+                return pattern_success(atom_expr2(
+                    arena, atom_symbol(arena, "DeclConst"), declaration));
         }
         return pattern_syntax_failure(
             CETTA_PRIME_REGULAR_PATTERN_UNKNOWN_FREE_VARIABLE,
@@ -1471,7 +1592,7 @@ static CettaPrimeRegularPatternElaborationV1 pattern_elaborate_validated(
             CETTA_PRIME_REGULAR_PATTERN_INVALID_WIRE,
             "invalid-pattern-elaboration-input");
     return pattern_elaborate_rec(
-        arena, environment, 0u, 0u, pattern, budget);
+        arena, environment, (uint64_t)environment.bound_count, 0u, pattern, budget);
 }
 
 CettaPrimeRegularPatternElaborationV1

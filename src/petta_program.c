@@ -373,6 +373,7 @@ typedef struct {
 
 struct PettaProgram {
     Arena plans;
+    bool (*is_host_intrinsic)(SymbolId head);
     PettaEquationTemplateC0 **equation_template_c0;
     size_t equation_template_c0_len;
     size_t equation_template_c0_cap;
@@ -2390,9 +2391,11 @@ static const PettaPlanNode *petta_plan_build(
                  head == g_builtin_syms.arrow);
             node->relation_head_admitted =
                 petta_callability_admits(callability, head);
+            bool host_intrinsic = program->is_host_intrinsic &&
+                program->is_host_intrinsic(head);
             node->role = constructor_slot_frame
                 ? PETTA_PLAN_DATA
-                : petta_program_head_is_intrinsic(head) ||
+                : host_intrinsic || petta_program_head_is_intrinsic(head) ||
                   node->relation_head_admitted ||
                   cetta_petta_source_head_resolves_in_engine(
                       head, atom->expr.len - 1u)
@@ -2400,6 +2403,8 @@ static const PettaPlanNode *petta_plan_build(
                       : PETTA_PLAN_DATA;
             node->execution = constructor_slot_frame
                 ? PETTA_PLAN_EXEC_CONSTRUCTOR_SLOTS
+                : host_intrinsic
+                    ? PETTA_PLAN_EXEC_GENERIC
                 : grounded_op_is_type_pure(head)
                     ? PETTA_PLAN_EXEC_PURE_GROUNDED_SLOTS
                     : node->role == PETTA_PLAN_STATIC_CALL &&
@@ -2989,8 +2994,14 @@ static PettaProgramAnalysisSpace *petta_program_ensure_analysis_space(
 }
 
 PettaProgram *petta_program_new(void) {
+    return petta_program_new_with_host_intrinsics(NULL);
+}
+
+PettaProgram *petta_program_new_with_host_intrinsics(
+    bool (*is_host_intrinsic)(SymbolId head)) {
     PettaProgram *program = cetta_malloc(sizeof(*program));
     memset(program, 0, sizeof(*program));
+    program->is_host_intrinsic = is_host_intrinsic;
     arena_init(&program->plans);
     arena_set_runtime_kind(
         &program->plans, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);

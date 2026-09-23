@@ -9,6 +9,7 @@ import re
 import subprocess
 
 import gslt2parse_schema_v1 as sx
+from nik_shared_evidence_v1 import app, list_term, proof_list, proof_node, rule
 
 
 def check(
@@ -19,38 +20,6 @@ def check(
         text=True,
         capture_output=True,
         check=False,
-    )
-
-
-def list_term(*values: sx.SExpr) -> sx.SExpr:
-    result: sx.SExpr = sx.Symbol("LNil")
-    for value in reversed(values):
-        result = (sx.Symbol("LCons"), value, result)
-    return result
-
-
-def proof_list(*values: sx.SExpr) -> sx.SExpr:
-    result: sx.SExpr = sx.Symbol("PrNil")
-    for value in reversed(values):
-        result = (sx.Symbol("PrCons"), value, result)
-    return result
-
-
-def app(head: str, *arguments: sx.SExpr) -> sx.SExpr:
-    return (sx.Symbol("PApp"), sx.StringLiteral(head), list_term(*arguments))
-
-
-def rule(name: str, *arguments: sx.SExpr) -> sx.SExpr:
-    return (sx.Symbol("GRuleInst"), sx.StringLiteral(name), list_term(*arguments))
-
-
-def proof_node(
-    name: str, arguments: list[sx.SExpr], children: list[sx.SExpr]
-) -> sx.SExpr:
-    return (
-        sx.Symbol("GProof"),
-        rule(name, *arguments),
-        proof_list(*children),
     )
 
 

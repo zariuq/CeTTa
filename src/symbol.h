@@ -168,6 +168,12 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(superpose_bind, "superpose-bind") \
     X(metta, "metta") \
     X(evalc, "evalc") \
+    X(amp_here, "&here") \
+    X(amp_home, "&home") \
+    X(ctx_colon_capture, "ctx:capture") \
+    X(captured, "captured") \
+    X(run, "run") \
+    X(context_colon_self, "context:self") \
     X(new_state, "new-state") \
     X(get_state, "get-state") \
     X(change_state_bang, "change-state!") \
@@ -479,10 +485,35 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(type_colon_must, "type:must") \
     X(type_colon_theorem, "type:theorem") \
     X(type_colon_prove, "type:prove") \
+    X(set_colon_signature, "set:signature") \
+    X(set_colon_formed, "set:formed") \
+    X(set_colon_of, "set:of") \
+    X(set_colon_check, "set:check") \
+    X(set_colon_eq, "set:eq") \
+    X(set_colon_proves, "set:proves") \
+    X(set_colon_axiom, "set:axiom") \
+    X(set_colon_define, "set:define") \
+    X(set_colon_inductive, "set:inductive") \
+    X(set_colon_theorem, "set:theorem") \
+    X(set_colon_recheck, "set:recheck") \
+    X(set_colon_known_proof, "set:known-proof") \
+    X(set_colon_known_proposition, "set:known-proposition") \
+    X(set_colon_signature_digest, "set:signature-digest") \
+    X(lang_colon_languages, "lang:languages") \
+    X(lang_colon_parse, "lang:parse") \
+    X(lang_colon_print, "lang:print") \
+    X(lang_colon_native_type, "lang:native-type") \
+    X(lang_colon_step, "lang:step") \
+    X(try_judgment, "try") \
+    X(id_colon_region, "id:region") \
+    X(id_colon_policy, "id:policy") \
     X(compile_link_package, "compile:link-package") \
     X(unquote, "unquote") \
     X(remove_all_atom, "remove-all-atom") \
-    X(sort_numbers_atom, "sort-numbers-atom")
+    X(sort_numbers_atom, "sort-numbers-atom") \
+    X(set_colon_native_proof, "set:native-proof") \
+    X(set_colon_native_use, "set:native-use") \
+    X(set_colon_native_normalize, "set:native-normalize")
 
 /* Builtins whose grounded-operation capability is independent of language
    and profile.  symbol_table_init_builtins compiles this declaration into

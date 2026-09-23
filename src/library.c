@@ -11,6 +11,7 @@
 #include "petta_runtime.h"
 #include "petta_typecheck.h"
 #include "petta_typecheck_v3.h"
+#include "prime_scoped_judgments.h"
 #include "rhocalc_core.h"
 #include "rhocalc_syntax.h"
 #include "rule_machine.h"
@@ -416,7 +417,10 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
         ctx->prime_relational_plan_enabled ||
         portable_relational_control_requested;
     ctx->petta_program = needs_occurrence_program
-        ? petta_program_new() : NULL;
+        ? petta_program_new_with_host_intrinsics(
+            language_id == CETTA_LANGUAGE_PRIME
+                ? prime_scoped_judgment_is_head_id : NULL)
+        : NULL;
     if (ctx->petta_program && cetta_profile_uses_petta_typing(profile)) {
         (void)petta_program_enable_analysis(ctx->petta_program);
     }

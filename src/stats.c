@@ -850,6 +850,13 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "prepared-pure-precheck-admitted",
     "petta-clause-projection-promoted-records",
     "petta-clause-projection-promoted-bytes",
+    "scoped-judgment-execution",
+    "scoped-proof-check",
+    "scoped-publication",
+    "scoped-record-lookup",
+    "scoped-dependency-visit",
+    "scoped-try",
+    "scoped-environment-rebuild",
 };
 
 static int64_t clamp_counter(uint64_t value) {

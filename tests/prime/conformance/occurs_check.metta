@@ -2,11 +2,11 @@
 ; substitution.  This rule set used to fabricate an inhabitant of any target
 ; by solving a type variable as its own negation.
 
-(: Target Type)
-(: Good Type)
+(: Target (u 0))
+(: Good (u 0))
 (: good Good)
-(: neg (-> Type Type))
-(: impl (-> Type Type Type))
+(: neg (-> (u 0) (u 0)))
+(: impl (-> (u 0) (u 0) (u 0)))
 
 (: pm2.24ii (-> $ph (neg $ph) $ps))
 (chaining-rule pm2.24ii)

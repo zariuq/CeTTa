@@ -1,0 +1,8 @@
+[()]
+[(3 . (5 . ()))]
+[(3 . (5 . ()))]
+[(3 . (5 . ()))]
+[((logged dbl 1) (logged dbl 2) (logged inc 2) (logged inc 4))]
+[done]
+[(3 . (5 . ()))]
+[((logged dbl 1) (logged inc 2) (logged dbl 2) (logged inc 4))]

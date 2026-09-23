@@ -182,3 +182,21 @@
 !(add-atom &decl-level-poly
   (: poly-id (-> (B : (u $other-level)) (-> B B))))
 !(type:of &decl-level-poly (poly-id u1))
+
+; Named definition admission shares the declaration-aware checker. Two uses
+; of one schema in a single body must choose independent universe instances.
+!(bind! &admission-poly (new-space))
+!(add-atom &admission-poly (: Nat (u 0)))
+!(add-atom &admission-poly (: z Nat))
+!(add-atom &admission-poly
+  (: choose (-> (A : (u $level)) (value : A) A)))
+!(set:define &admission-poly mixed (sigma (_ : Nat) (u 0))
+  (= mixed (pair (choose Nat z) (choose (u 0) Nat))))
+!(type:check &admission-poly (fst mixed) Nat)
+!(type:check &admission-poly (snd mixed) (u 0))
+; The second component is a type, not a natural. Rejection must not publish
+; the requested name or any equation: a later valid definition can use it.
+!(set:define &admission-poly rejected (sigma (_ : Nat) Nat)
+  (= rejected (pair (choose Nat z) (choose (u 0) Nat))))
+!(set:define &admission-poly rejected Nat (= rejected z))
+!(type:eq &admission-poly rejected z)

@@ -13,11 +13,11 @@ def main() -> None:
     text = args.source.read_text(encoding="utf-8")
     old = (
         "        status = prime_form_scoped_regular_type(\n"
-        "            arena, type, ledger, &detail, &native_owned);"
+        "            arena, type, ledger, &detail, &native_owned, canonical_term_out);"
     )
     new = (
         "        status = prime_form_scoped_regular_type(\n"
-        "            arena, type, ledger, &detail, &native_owned);\n"
+        "            arena, type, ledger, &detail, &native_owned, canonical_term_out);\n"
         "        native_owned = false;\n"
         "        status = PRIME_FORM_UNDETERMINED;"
     )

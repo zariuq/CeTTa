@@ -182,6 +182,8 @@ typedef struct {
     uint32_t prefix_rule_len;
     const GSLTDirectTokenRuleV1 *token_rules;
     uint32_t token_rule_len;
+    /* Explicit nesting budget, not a C recursion bound. Generated readers
+     * use the representable source-size bound; callers may choose less. */
     uint32_t depth_limit;
 } GSLTDirectPrefixReaderV1Plan;
 

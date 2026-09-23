@@ -33,6 +33,14 @@ typedef struct {
     const char *reason;
 } CettaPrimeRegularKernelFormedSchemaV1;
 
+typedef struct {
+    CettaPrimeRegularKernelStatus status;
+    Atom *term;
+    Atom *type;
+    Atom *source_type;
+    const char *reason;
+} CettaPrimeRegularKernelNormalFormV1;
+
 /* A conversion decision distinguishes a judgment inside the native fragment
  * from an input term the native kernel declines.  In particular, unequal
  * well-typed operands are admitted and refuted; they are not a fallback. */
@@ -136,6 +144,19 @@ CettaPrimeRegularKernelResult cetta_prime_regular_kernel_synth_intrinsic_v1(
     Arena *arena, Atom *context, Atom *term,
     CettaPrimeRegularKernelBudget *budget);
 
+/* Compute a pure intrinsic term using the same beta/eta, projection and
+ * declared-rule engine as conversion. Synthesize the source first, then
+ * normalize both the term and its synthesized dependent type, then check the
+ * output at the computed type. Retain the original displayed type separately:
+ * substitution can place checking-only introductions inside its indices.
+ * All phases share one budget. This is explicit strong normalization, not
+ * the ordinary evaluator, and no termination claim is made for arbitrary
+ * supplied declaration rules. Non-success never returns a partial value. */
+CettaPrimeRegularKernelNormalFormV1
+cetta_prime_regular_kernel_normalize_intrinsic_v1(
+    Arena *arena, Atom *context, Atom *term,
+    CettaPrimeRegularKernelBudget *budget);
+
 /* Instantiate the named universe parameters while checking one
  * declaration-bound judgment.  Parameters are local elaboration
  * metavariables, not object-language terms: constraints select a closed
@@ -205,5 +226,31 @@ cetta_prime_regular_kernel_decide_intrinsic_conversion_instantiating_levels_v1(
     Arena *arena, Atom *context, Atom *left, Atom *right,
     const uint64_t *parameters, size_t parameter_count,
     CettaPrimeRegularKernelBudget *budget);
+
+/* Identity policy of the active profile, mirrored from the session layer.
+ * The kernel itself is the same under every policy: elimination with one
+ * iota rule and every route retained.  A policy only decides which
+ * uniqueness or guest declarations the language makes available, as
+ * explicit assumptions used through elimination, never as conversion rules:
+ * 0 = none; 1 = a per-carrier uniqueness axiom on request; 2 = a global
+ * uniqueness axiom; 3 = as 1, plus the univalence guest declarations. */
+enum {
+    CETTA_PRIME_IDENTITY_J = 0,
+    CETTA_PRIME_IDENTITY_SCOPED = 1,
+    CETTA_PRIME_IDENTITY_UIP = 2,
+    CETTA_PRIME_IDENTITY_UNIVALENCE = 3
+};
+void cetta_prime_identity_policy_set(int policy);
+int cetta_prime_identity_policy(void);
+
+/* Computation rules as data for the duration of a kernel call: a list
+ * (LCons (PrimeRule head arity (pattern ...) rhs) ...) or NULL. */
+void cetta_prime_regular_kernel_rules_set(Atom *rules);
+
+/* One admitted `type:rule` step at the root of an intrinsic application.
+ * Subterms are not normalized and the term is not rechecked. NULL means no
+ * clause matched. A budget failure is also NULL; the caller keeps the call. */
+Atom *cetta_prime_regular_kernel_rule_contractum_v1(
+    Arena *arena, Atom *term, CettaPrimeRegularKernelBudget *budget);
 
 #endif /* CETTA_PRIME_REGULAR_KERNEL_H */

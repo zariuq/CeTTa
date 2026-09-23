@@ -1598,8 +1598,10 @@ bool abt_scope_check(const AbtSignature *signature, uint64_t initial_depth,
     if (!signature || !term) return false;
     AbtTaskStack stack;
     AbtActiveSet active;
+    AbtTransformMemo checked;
     abt_tasks_init(&stack);
     abt_active_init(&active);
+    abt_transform_memo_init(&checked);
     if (!abt_task_push(&stack, (AbtTask){
             ABT_TASK_VISIT, term, initial_depth, NULL, NULL}))
         goto fail;
@@ -1607,8 +1609,15 @@ bool abt_scope_check(const AbtSignature *signature, uint64_t initial_depth,
         AbtTask task = stack.tasks[--stack.len];
         if (task.kind == ABT_TASK_BUILD) {
             abt_active_leave(&active, task.term);
+            /* Only completed subtrees may be reused. An active recurrence
+               remains an invalid cycle, including beneath a binder. */
+            if (!abt_transform_memo_store(
+                    &checked, task.term, task.depth, task.term))
+                goto fail;
             continue;
         }
+        if (abt_transform_memo_lookup(&checked, task.term, task.depth))
+            continue;
         if (abt_is_quote_form(task.term)) {
             continue;
         }
@@ -1648,11 +1657,13 @@ bool abt_scope_check(const AbtSignature *signature, uint64_t initial_depth,
                 NULL, NULL}))
             goto fail;
     }
+    abt_transform_memo_free(&checked);
     abt_active_free(&active);
     abt_tasks_free(&stack);
     return true;
 
 fail:
+    abt_transform_memo_free(&checked);
     abt_active_free(&active);
     abt_tasks_free(&stack);
     return false;
@@ -1679,15 +1690,23 @@ bool abt_alpha_eq(Atom *left, Atom *right) {
     AbtActiveSet right_active;
     abt_active_init(&left_active);
     abt_active_init(&right_active);
+    /* Equality has a pair key, not a binder-depth key.  Reuse the local
+       pointer/word table with the right pointer as its second coordinate. */
+    AbtTransformMemo completed;
+    abt_transform_memo_init(&completed);
     tasks[0] = (AbtPairTask){ABT_PAIR_VISIT, left, right};
     while (len > 0) {
         AbtPairTask task = tasks[--len];
         if (task.kind == ABT_PAIR_LEAVE) {
             abt_active_leave(&left_active, task.left);
             abt_active_leave(&right_active, task.right);
+            if (!abt_transform_memo_store(&completed, task.left,
+                    (uint64_t)(uintptr_t)task.right, task.left))
+                goto unequal;
             continue;
         }
 
+        if (!task.left || !task.right) goto unequal;
         if (task.left->kind != task.right->kind) goto unequal;
         if (task.left->kind != ATOM_EXPR) {
             if (!atom_eq(task.left, task.right)) goto unequal;
@@ -1706,6 +1725,9 @@ bool abt_alpha_eq(Atom *left, Atom *right) {
             abt_idx_index(task.right, &right_index) < 0)
             goto unequal;
         if (task.left->expr.len != task.right->expr.len) goto unequal;
+        if (abt_transform_memo_lookup(&completed, task.left,
+                (uint64_t)(uintptr_t)task.right))
+            continue;
 
         /* Canonical ABTs are acyclic.  Reject recurrence on either active
            structural path so equality itself cannot become a cycle-driven
@@ -1746,12 +1768,14 @@ bool abt_alpha_eq(Atom *left, Atom *right) {
     }
     abt_active_free(&left_active);
     abt_active_free(&right_active);
+    abt_transform_memo_free(&completed);
     if (tasks != inline_tasks) free(tasks);
     return true;
 
 unequal:
     abt_active_free(&left_active);
     abt_active_free(&right_active);
+    abt_transform_memo_free(&completed);
     if (tasks != inline_tasks) free(tasks);
     return false;
 }

@@ -663,6 +663,7 @@ SRC += \
 	src/prime_typed_relation.c \
 	src/prime_regular_pattern.c \
 	src/prime_typing_publication.c \
+	src/prime_scoped_judgments.c \
 	src/generated/prime_typing_elaborated_dependent_formation_core_source_binding_v1.generated.c \
 	src/generated/prime_typing_open_lambda_pi_core_source_binding_v1.generated.c \
 	src/generated/prime_typing_open_regular_kernel_source_binding_v1.generated.c \
@@ -851,6 +852,9 @@ PRIME_REGULAR_KERNEL_TEST_SRC = tests/support/test_prime_regular_kernel.c
 PRIME_REGULAR_KERNEL_TEST_OBJ = runtime/bootstrap/test_prime_regular_kernel.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 PRIME_REGULAR_KERNEL_TEST_BIN = runtime/test_prime_regular_kernel-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 PRIME_REGULAR_KERNEL_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PRIME_SCOPED_CONVERSION_TEST_SRC = tests/support/test_prime_scoped_conversion.c
+PRIME_SCOPED_CONVERSION_TEST_OBJ = runtime/bootstrap/test_prime_scoped_conversion.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PRIME_SCOPED_CONVERSION_TEST_BIN = runtime/test_prime_scoped_conversion-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 PRIME_LEVEL_TEST_SRC = tests/support/test_prime_level.c
 PRIME_LEVEL_TEST_OBJ = runtime/bootstrap/test_prime_level.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 PRIME_LEVEL_TEST_BIN = runtime/test_prime_level-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
@@ -1601,6 +1605,7 @@ STAGE0_BIN = runtime/cetta-stage0-$(BUILD_OBJ_TAG)
 VARIANT_SHAPE_TEST_BIN = runtime/test_variant_shape_roundtrip-$(BUILD_OBJ_TAG)
 BINDINGS_LOOKUP_INDEX_TEST_BIN = runtime/test_bindings_lookup_index-$(BUILD_OBJ_TAG)
 ATOM_DEEP_COPY_TEST_BIN = runtime/test_atom_deep_copy_iterative-$(BUILD_OBJ_TAG)
+ATOM_DATA_EQUALITY_TEST_BIN = runtime/test_atom_data_equality-$(BUILD_OBJ_TAG)
 ABT_TEST_BIN = runtime/test_abt-$(BUILD_OBJ_TAG)
 ABT_MM2_BOUNDARY_TEST_BIN = runtime/test_abt_mm2_boundary-$(BUILD_OBJ_TAG)
 ABT_BENCH_BIN = runtime/bench_abt-$(BUILD_OBJ_TAG)
@@ -1726,6 +1731,8 @@ PRIME_NIK_MEGALODON_TACTICS_POSITIVE_V1 = tests/support/megalodon/positive_tacti
 PRIME_NIK_PROOF_DAG_COMPILER_V1 = tools/nik_proof_dag_v1.py
 PRIME_NIK_PROOF_DAG_TEST_V1 = tools/test_nik_proof_dag_v1.py
 MEGALODON_AUTO_BIN ?= $(abspath ../../Mettapedia/megalodon/bin/megalodon)
+MEGALODON_HOTG_PREAMBLE ?= $(abspath ../../Mettapedia/megalodon/ramsey36/preamble.mgs)
+MEGALODON_HOTG_FAMILY_SOURCE ?= $(abspath ../../Mettapedia/megalodon/theory/foundations/family_enclosing_universe.mg)
 METTAPEDIA_LEAN_ROOT ?=
 METTAPEDIA_LEAN_AUTO_ROOT ?= $(abspath ../../Mettapedia/lean/mettapedia)
 GSLT_IL_LANGDEF_V1 = langdef/gslt-il/langdef.metta
@@ -2947,7 +2954,66 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/conformance/closed_lambda_pi_refine_boundary.metta \
 	tests/prime/conformance/syntax_algebra.metta \
 	tests/prime/conformance/typed_equality.metta \
-	tests/prime/conformance/unbounded_search.metta
+	tests/prime/conformance/unbounded_search.metta \
+	tests/prime/scoped/set_judgments.metta \
+	tests/prime/scoped/lang_judgments.metta \
+	tests/prime/scoped/live_propositions.metta \
+	tests/prime/scoped/judgment_continuations.metta \
+	tests/prime/scoped/identity_eliminator.metta \
+	tests/prime/scoped/try.metta \
+	tests/prime/scoped/conversion_authority.metta \
+	tests/prime/scoped/retained_presentations.metta \
+	tests/prime/scoped/authority.metta \
+	tests/prime/scoped/hol_map_fusion.metta \
+	tests/prime/scoped/list_reversal.metta \
+	tests/prime/scoped/map_fusion_verbs.metta \
+	tests/prime/scoped/try_effects.metta \
+	tests/prime/scoped/list_reversal_defined.metta \
+	tests/prime/scoped/map_fusion_defined.metta \
+	tests/prime/scoped/nat_arithmetic.metta \
+	tests/prime/scoped/tree_mirror.metta \
+	tests/prime/scoped/bool_and_negation.metta \
+	tests/prime/scoped/propositions_defined.metta \
+	tests/prime/scoped/curriculum_lean.metta \
+	tests/prime/scoped/curriculum_coq.metta \
+	tests/prime/scoped/curriculum_hol.metta \
+	tests/prime/scoped/curriculum_megalodon.metta \
+	tests/prime/scoped/contexts_live_reads.metta \
+	tests/prime/scoped/contexts_conflicts.metta \
+	tests/prime/scoped/contexts_first_answer.metta \
+	tests/prime/scoped/four_faces.metta \
+	tests/prime/scoped/effectful_fusion.metta \
+	tests/prime/scoped/lang_step.metta \
+	tests/prime/scoped/fusion_reuse.metta \
+	tests/prime/scoped/map_fusion_dtt.metta \
+	tests/prime/scoped/native_proof_package.metta \
+	tests/prime/scoped/native_proof_normalization.metta \
+	tests/prime/scoped/native_higher_order_pair.metta \
+	tests/prime/scoped/native_dependency_revisions.metta \
+	tests/prime/scoped/hotg_universe_native_use.metta \
+	tests/prime/scoped/hotg_proof_carrying_pipeline.metta \
+	tests/prime/scoped/inductive_formation.metta \
+	tests/prime/scoped/definition_admission.metta \
+	tests/prime/scoped/evidence_return_loop.metta \
+	tests/prime/scoped/searched_evidence_consumption.metta \
+	tests/prime/scoped/native_dependent_search.metta \
+	tests/prime/scoped/controlled_proof_candidates.metta \
+	tests/prime/scoped/proof_obligation_reconstruction.metta \
+	tests/prime/scoped/structural_evidence_pack.metta \
+	tests/prime/scoped/grouped_dependent_telescope.metta \
+	tests/prime/scoped/certified_family_shortcut.metta \
+	tests/prime/scoped/certified_transform_library.metta \
+	tests/prime/scoped/certified_transform_hol.metta \
+	tests/prime/scoped/certified_transform_itp.metta \
+	tests/prime/scoped/certified_transform_revision.metta \
+	tests/prime/scoped/certified_transform_correspondence.metta \
+	tests/prime/scoped/native_function_domain_boundary.metta \
+	tests/prime/scoped/forks/observation.metta \
+	tests/prime/scoped/forks/identity.metta \
+	tests/prime/scoped/forks/admission.metta \
+	tests/prime/scoped/forks/evaluation.metta \
+	tests/prime/scoped/forks/host.metta \
+	tests/prime/scoped/forks/reasoning.metta
 PRIME_EXAMPLE_TESTS = \
 	examples/prime/exact_gradual.metta \
 	examples/prime/dependent_telescope.metta \
@@ -3493,7 +3559,7 @@ test-bindings-lookup-index: $(BINDINGS_LOOKUP_INDEX_TEST_BIN) test-match-worklis
 	audited=$$(CETTA_BINDINGS_DERIVED_AUDIT=1 $(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
 	reference=$$(CETTA_BINDINGS_SINGLE_REACH_CAPACITY_SCAN_REFERENCE=1 \
 		$(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
-	expected='(BindingsLookupIndexSummary 183 183 0)'; \
+	expected='(BindingsLookupIndexSummary 186 186 0)'; \
 	printf '%s\n' "$$enabled"; \
 	test "$$enabled" = "$$expected" && test "$$disabled" = "$$expected" && \
 		test "$$audited" = "$$expected" && test "$$reference" = "$$expected"
@@ -3546,6 +3612,14 @@ $(ATOM_DEEP_COPY_TEST_BIN): tests/test_atom_deep_copy_iterative.c src/symbol.c s
 
 test-atom-deep-copy-iterative: $(ATOM_DEEP_COPY_TEST_BIN)
 	@$(call cetta_exec,./$(ATOM_DEEP_COPY_TEST_BIN))
+
+$(ATOM_DATA_EQUALITY_TEST_BIN): tests/test_atom_data_equality.c src/symbol.c src/atom.c src/atom.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_atom_data_equality.c src/symbol.c src/atom.c $(LDFLAGS)
+
+.PHONY: test-atom-data-equality
+test-atom-data-equality: $(ATOM_DATA_EQUALITY_TEST_BIN)
+	@$(call cetta_exec,./$(ATOM_DATA_EQUALITY_TEST_BIN))
 
 runtime/test_native_handle_ownership-$(BUILD_OBJ_TAG): tests/test_native_handle_ownership.c src/native_handle.c src/native_handle.h src/atom.c src/atom.h src/library.h src/symbol.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
@@ -4650,7 +4724,7 @@ test-abt-scope-construction-candidates: $(BIN)
 test-abt: $(ABT_TEST_BIN) test-abt-mm2-boundary test-rhocalc-abt-substitution test-abt-mutations test-abt-default-signatures test-abt-differential test-lib-parse-abt-bridge test-abt-integration-ledger
 	@result=$$(./$(ABT_TEST_BIN) 2>&1); \
 	printf '%s\n' "$$result"; \
-	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(ABTCoreSummary 116 116 0)')" -ne 1 ] || \
+	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(ABTCoreSummary 124 124 0)')" -ne 1 ] || \
 	   [ "$$(printf '%s\n' "$$result" | grep -Fxc 'PASS: iterative capture-avoiding ABT core')" -ne 1 ]; then \
 		echo "FAIL: ABT core exact summary absent or duplicated"; \
 		exit 1; \
@@ -5468,6 +5542,24 @@ $(PRIME_REGULAR_KERNEL_TEST_BIN): $(PRIME_REGULAR_KERNEL_TEST_OBJ) $(PRIME_REGUL
 $(PRIME_REGULAR_KERNEL_TEST_OBJ): $(PRIME_REGULAR_KERNEL_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PRIME_SCOPED_CONVERSION_TEST_BIN): $(PRIME_SCOPED_CONVERSION_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-scoped-conversion.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PRIME_SCOPED_CONVERSION_TEST_OBJ): $(PRIME_SCOPED_CONVERSION_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+.PHONY: test-prime-scoped-conversion
+test-prime-scoped-conversion: $(PRIME_SCOPED_CONVERSION_TEST_BIN)
+	@"$(PRIME_SCOPED_CONVERSION_TEST_BIN)"
+
+test-prime: test-prime-scoped-conversion
 
 $(PRIME_LEVEL_TEST_BIN): $(PRIME_LEVEL_TEST_OBJ) $(PRIME_LEVEL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6635,7 +6727,11 @@ $(GSLT_PROVIDER_CATALOG_NATIVE_V1_BIN): $(GSLT_PROVIDER_CATALOG_NATIVE_V1_OBJ) $
 	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ $(LDFLAGS)
 
 $(GSLT_LANGUAGE_NATIVE_V1_BIN): $(GSLT_LANGUAGE_NATIVE_V1_OBJ) $(GSLT_METADATA_STATS_V1_OBJ)
-	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ $(LDFLAGS)
+	@set -eu; \
+	linked=$$(mktemp -d "$@.link.XXXXXX"); \
+	trap 'rm -f "$$linked/program"; rmdir "$$linked"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o "$$linked/program" $^ $(LDFLAGS); \
+	mv -f "$$linked/program" "$@"
 
 $(GSLT_LANGUAGE_SOURCE_CODEC_TEST_V1_BIN): $(GSLT_LANGUAGE_SOURCE_CODEC_TEST_V1_OBJ) \
 		$(filter-out %/tools/gslt_language_embed_v1.$(BUILD_OBJ_TAG).o,$(GSLT_LANGUAGE_NATIVE_V1_OBJ))
@@ -20067,7 +20163,7 @@ test-prime-public-judgment-vocabulary:
 		echo 'FAIL: retired Prime judgment language remains behind the public boundary'; \
 		exit 1; \
 	fi
-	@echo 'PASS: type: is the sole executable Prime judgment vocabulary'
+	@echo 'PASS: no retired Prime judgment vocabulary remains'
 
 test-he-prime-search-mutation: $(BIN)
 	@mutation_dir=runtime/he-prime-search-mutation; \
@@ -20679,6 +20775,7 @@ test-prime-relational-plan: $(BIN)
 	fi; \
 	for relational_case in \
 		tests/prime/relational_first_demand.metta \
+		tests/prime/scoped/judgment_continuations.metta \
 		tests/prime/authored_frontier_chaining.metta; do \
 		relational_expected=$$(cat "$${relational_case%.metta}.expected"); \
 		relational_canonical=$$(CETTA_PRIME_RELATIONAL_PLAN_REFERENCE=1 \
@@ -20769,12 +20866,12 @@ test-prime-regular-kernel-conversion-flip: $(BIN) $(PRIME_REGULAR_KERNEL_LEGACY_
 	test "$$(sed -n '3p;4p' "$$native_out")" = \
 	     "$$(printf '%s\n' '[True]' '[True]')"; \
 	test "$$(sed -n '3p;4p' "$$reference_out")" = \
-	     "$$(printf '%s\n' '[False]' '[False]')"; \
+	     "$$(printf '%s\n' '[(type:eq (-> (x : u0) u0) (-> (y : u0) u0))]' '[(type:eq (sigma (x : u0) u0) (sigma (y : u0) u0))]')"; \
 	test "$$(sed -n '5p;8p;9p' "$$native_out")" = \
 	     "$$(printf '%s\n' '[(type:eq u0 (lam x x))]' '[(type:eq (idx 0) (idx 0))]' '[(type:eq (u0 u0) (u0 u0))]')"; \
 	test "$$(sed -n '5p;8p;9p' "$$reference_out")" = \
-	     "$$(printf '%s\n' '[False]' '[True]' '[True]')"; \
-	echo 'PASS: six agreements, two alpha-equivalence repairs, and three authority-boundary deltas are pinned'
+	     "$$(printf '%s\n' '[(type:eq u0 (lam x x))]' '[True]' '[True]')"; \
+	echo 'PASS: six agreements, two alpha-equivalence decisions the legacy service declines, and two authority-boundary deltas are pinned'
 
 .PHONY: test-prime-regular-kernel-admission-mutations
 test-prime-regular-kernel-admission-mutations: $(PRIME_REGULAR_KERNEL_TEST_BIN)
@@ -20916,11 +21013,53 @@ test-prime-scoped-formation-route-mutation: $(PRIME_REGULAR_KERNEL_TEST_BIN)
 		"$$mutation_dir/err"; \
 	echo 'PASS: contextual formation cannot fall back from its native route'
 
+.PHONY: test-prime-native-proof-search-mutations
+test-prime: test-prime-native-proof-search-mutations
+test-prime-native-proof-search-mutations: $(BIN)
+	@set -eu; \
+	mutation_dir=$$(mktemp -d runtime/prime-native-proof-search-mutations.XXXXXX); \
+	for fixture in native_dependent_search atp_guided_inhabitation; do \
+		case "$$fixture" in \
+			native_dependent_search) directory=tests/prime/scoped;; \
+			*) directory=tests/prime/practical;; \
+		esac; \
+		$(CETTA_BIN_INVOKE) --lang prime "$$directory/$$fixture.metta" \
+			>"$$mutation_dir/baseline-$$fixture.out" 2>&1; \
+		diff -u "$$directory/$$fixture.expected" "$$mutation_dir/baseline-$$fixture.out"; \
+	done; \
+	for mutation in native-check-disabled undetermined-accepted solved-slot-disabled result-executed; do \
+		case "$$mutation" in \
+			result-executed) source=src/main.c; \
+				objects="$(filter-out $(filter src/main.%,$(OBJ)),$(OBJ))";; \
+			*) source=src/he_typing.c; \
+				objects="$(filter-out $(filter src/he_typing.%,$(OBJ)),$(OBJ))";; \
+		esac; \
+		python3 scripts/mutate_prime_native_proof_search.py --mutation "$$mutation" \
+			"$$source" "$$mutation_dir/$$mutation.c"; \
+		$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/$$mutation.c" \
+			-o "$$mutation_dir/$$mutation.o"; \
+		$(CC) $(CFLAGS) -o "$$mutation_dir/$$mutation" \
+			"$$mutation_dir/$$mutation.o" $$objects $(LDFLAGS); \
+		case "$$mutation" in \
+			solved-slot-disabled) fixture=tests/prime/practical/atp_guided_inhabitation;; \
+			*) fixture=tests/prime/scoped/native_dependent_search;; \
+		esac; \
+		status=0; \
+		$(call cetta_exec,./$$mutation_dir/$$mutation) --lang prime "$$fixture.metta" \
+			>"$$mutation_dir/$$mutation.out" 2>&1 || status=$$?; \
+		if [ $$status -ne 0 ]; then \
+			echo "FAIL: $$mutation failed to execute (status $$status)"; exit 1; \
+		fi; \
+		if cmp -s "$$fixture.expected" "$$mutation_dir/$$mutation.out"; then \
+			echo "FAIL: $$mutation survived proof-search controls"; exit 1; \
+		fi; \
+		echo "PASS: $$mutation is detected by retained proof-search controls"; \
+	done
+
 .PHONY: test-prime-declared-conversion-route-mutation
 test-prime-declared-conversion-route-mutation: $(BIN) $(PRIME_REGULAR_KERNEL_TEST_BIN)
 	@set -e; \
-	mutation_dir=runtime/prime-declared-conversion-route-mutation; \
-	mkdir -p "$$mutation_dir"; \
+	mutation_dir=$$(mktemp -d runtime/prime-declared-conversion-route-mutation.XXXXXX); \
 	for mutation in route-disabled budget-coupled-recognizer dependent-graphs-disabled constructed-terms-disabled; do \
 		python3 scripts/mutate_prime_declared_conversion_route.py \
 			--mutation "$$mutation" src/prime_semantics.c \
@@ -21100,7 +21239,7 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		src/prime_regular_kernel_admission.c \
 		src/prime_regular_kernel_admission.h \
 		src/prime_semantics.c; then \
-		echo 'FAIL: production Prime admission still has a runtime bypass'; \
+		echo 'FAIL: production Prime admission still exposes a runtime feature-toggle bypass'; \
 		exit 1; \
 	fi; \
 	conversion_out=runtime/prime-regular-kernel-production-conversion.out; \
@@ -21137,7 +21276,7 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	}; \
 	check_admission "$$conversion_err" conversion; \
 	check_admission "$$synthesis_err" synthesis; \
-	echo 'PASS: production native authority has no runtime bypass and its admission receipts partition'
+	echo 'PASS: production admission has no runtime feature-toggle bypass; tested conversion/synthesis receipts partition'
 else
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
 endif
@@ -21366,7 +21505,7 @@ test-prime-regular-pattern-mutations: $(PRIME_REGULAR_PATTERN_TEST_BIN)
 	@set -e; \
 	mutation_dir=runtime/prime-regular-pattern-mutations; \
 	mkdir -p "$$mutation_dir"; \
-	for mutation in dangling-bound-variable context-index-shift binder-freshness expected-formation-phase malformed-list-as-budget syntax-lexical-resolution syntax-matcher-binder syntax-multibinder-nesting syntax-telescope-arity syntax-expected-phase syntax-index-scope; do \
+	for mutation in dangling-bound-variable context-index-shift binder-freshness expected-formation-phase malformed-list-as-budget syntax-lexical-resolution syntax-matcher-binder syntax-multibinder-nesting syntax-telescope-arity syntax-expected-phase syntax-index-scope syntax-group-domain-shift syntax-group-nested-cutoff; do \
 		python3 scripts/mutate_prime_regular_pattern.py \
 			src/prime_regular_pattern.c "$$mutation_dir/$$mutation.c" "$$mutation"; \
 		$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/$$mutation.c" \
@@ -21704,10 +21843,57 @@ test-prime-native-typed-flow: $(PRIME_LEVEL_TEST_BIN) $(PRIME_REGULAR_KERNEL_TES
 	@"$(PRIME_HOPPER_FOLD_NATIVE_TEST_BIN)"
 	@"$(PRIME_HOPPER_BRANCHING_NATIVE_TEST_BIN)"
 
-test-prime: $(BIN) $(PRIME_REGULAR_KERNEL_TEST_BIN) test-prime-public-judgment-vocabulary test-prime-regular-pattern test-prime-regular-pattern-mutations test-prime-open-lambda-pi-langdef-source-binding-v1 test-prime-open-lambda-pi-langdef-mutations test-prime-open-regular-kernel-source-binding-v1 test-prime-open-regular-kernel-mutations test-prime-coverage test-prime-budget-monotonicity test-prime-package-validation test-prime-internal-graduality test-prime-nik-core-v1 test-prime-nik-typed-applicability-pruning test-prime-regular-kernel-conversion-flip test-prime-regular-kernel-synthesis-flip test-prime-regular-kernel-checking-flip test-prime-regular-kernel-checking-stats test-prime-regular-kernel-formation-flip test-prime-regular-kernel-formation-stats test-prime-regular-kernel-refinement-boundary test-prime-regular-kernel-production-authority test-prime-regular-kernel-resource-honesty test-prime-regular-kernel-recognizer-mutation test-prime-regular-kernel-admission-mutations test-prime-regular-kernel-verdict-polarity-mutations test-prime-producer-bound-native-checking-mutations test-prime-scoped-formation-route-mutation test-prime-declared-conversion-route-mutation test-prime-declared-formation-route-mutation test-prime-typing-engine-fault-separation-mutation test-prime-regular-kernel-constructors test-prime-native-typed-flow test-prime-mil-benchmark-accounting test-prime-mil-native-workloads test-prime-mil-native-claim-guard test-prime-mil-zero-he-applicability-guard test-prime-popper-synthesis-manifest test-prime-hopper-table1-manifest test-prime-chaining-readiness-manifest test-prime-iggp-manifest test-prime-iggp-type-of-inference test-prime-gdl-positive-horn-native test-prime-authored-chaining-fixtures
+PRIME_IDENTITY_PROFILES = identity-j identity-scoped identity-uip identity-univalence
+PRIME_IDENTITY_MATRIX = tests/prime/identity_profiles/identity_matrix.metta
+
+.PHONY: test-prime-identity-profiles test-prime-context-profiles
+test-prime-identity-profiles: $(BIN)
+	@pass=0; fail=0; \
+	for f in tests/prime/identity_profiles/*.metta; do \
+	for p in $(PRIME_IDENTITY_PROFILES); do \
+		exp="$${f%.metta}.$$p.expected"; \
+		[ -f "$$exp" ] || continue; \
+		result=$$(timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime --profile "$$p" "$$f" 2>&1); \
+		if [ "$$result" = "$$(cat "$$exp")" ]; then \
+			echo "PASS: $$f under $$p"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: $$f under $$p"; \
+			diff <(cat "$$exp") <(echo "$$result") | head -20; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; done; \
+	echo "Prime identity profiles: $$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
+
+PRIME_CONTEXT_PROFILES := prime-default context-self-home context-self-here
+
+test-prime-context-profiles: $(BIN)
+	@pass=0; fail=0; \
+	for f in tests/prime/context_profiles/*.metta; do \
+	for p in $(PRIME_CONTEXT_PROFILES); do \
+		exp="$${f%.metta}.$$p.expected"; \
+		[ -f "$$exp" ] || continue; \
+		result=$$(timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime --profile "$$p" "$$f" 2>&1); \
+		if [ "$$result" = "$$(cat "$$exp")" ]; then \
+			echo "PASS: $$f under $$p"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: $$f under $$p"; \
+			diff <(cat "$$exp") <(echo "$$result") | head -20; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; done; \
+	echo "Prime context profiles: $$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
+
+test-prime: $(BIN) $(PRIME_REGULAR_KERNEL_TEST_BIN) test-prime-identity-profiles test-prime-context-profiles test-prime-public-judgment-vocabulary test-prime-regular-pattern test-prime-regular-pattern-mutations test-prime-open-lambda-pi-langdef-source-binding-v1 test-prime-open-lambda-pi-langdef-mutations test-prime-open-regular-kernel-source-binding-v1 test-prime-open-regular-kernel-mutations test-prime-coverage test-prime-budget-monotonicity test-prime-package-validation test-prime-internal-graduality test-prime-nik-core-v1 test-prime-nik-typed-applicability-pruning test-prime-regular-kernel-conversion-flip test-prime-regular-kernel-synthesis-flip test-prime-regular-kernel-checking-flip test-prime-regular-kernel-checking-stats test-prime-regular-kernel-formation-flip test-prime-regular-kernel-formation-stats test-prime-regular-kernel-refinement-boundary test-prime-regular-kernel-production-authority test-prime-regular-kernel-resource-honesty test-prime-regular-kernel-recognizer-mutation test-prime-regular-kernel-admission-mutations test-prime-regular-kernel-verdict-polarity-mutations test-prime-producer-bound-native-checking-mutations test-prime-scoped-formation-route-mutation test-prime-declared-conversion-route-mutation test-prime-declared-formation-route-mutation test-prime-typing-engine-fault-separation-mutation test-prime-regular-kernel-constructors test-prime-native-typed-flow test-prime-mil-benchmark-accounting test-prime-mil-native-workloads test-prime-mil-native-claim-guard test-prime-mil-zero-he-applicability-guard test-prime-popper-synthesis-manifest test-prime-hopper-table1-manifest test-prime-chaining-readiness-manifest test-prime-iggp-manifest test-prime-iggp-type-of-inference test-prime-gdl-positive-horn-native test-prime-authored-chaining-fixtures
 	@"$(PRIME_REGULAR_KERNEL_TEST_BIN)" \
 		langdef/prime/generated/open_lambda_pi_core_v1.metta \
 		langdef/prime/generated/open_regular_kernel_v1.metta
+
+test-prime: test-prime-fast-fixtures
+
+.PHONY: test-prime-fast-fixtures
+test-prime-fast-fixtures: $(BIN)
 	@pass=0; fail=0; \
 	for f in $(PRIME_FAST_TESTS); do \
 		exp="$${f%.metta}.expected"; \
@@ -21715,8 +21901,9 @@ test-prime: $(BIN) $(PRIME_REGULAR_KERNEL_TEST_BIN) test-prime-public-judgment-v
 			echo "FAIL: $$f (missing $$exp)"; fail=$$((fail + 1)); continue; \
 		fi; \
 		result=$$(timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime "$$f" 2>&1); \
-		if [ $$? -eq 124 ]; then \
-			echo "FAIL: $$f (exceeded PRIME_COMPLETION_TIMEOUT=$(PRIME_COMPLETION_TIMEOUT)s)"; \
+		status=$$?; \
+		if [ $$status -ne 0 ]; then \
+			echo "FAIL: $$f (exit $$status; timeout limit $(PRIME_COMPLETION_TIMEOUT)s)"; \
 			fail=$$((fail + 1)); continue; \
 		fi; \
 		if [ "$$result" = "$$(cat "$$exp")" ]; then \
@@ -26546,11 +26733,11 @@ test-petta-native-core-no-libpl:
 		test-petta-argv-native test-petta-native-host-runtime
 
 .PHONY: test-prime-compiled-reader-v1
-test-prime-compiled-reader-v1: test-prime-compiled-reader-direct-generated-v1 test-gslt-prefix-reader-compiler-v1 $(PRIME_COMPILED_READER_TEST_BIN) $(BIN)
+test-prime-compiled-reader-v1: test-prime-compiled-reader-direct-generated-v1 test-gslt-prefix-reader-compiler-v1 test-gslt-prefix-reader-stack-v1 $(PRIME_COMPILED_READER_TEST_BIN) $(BIN)
 	@result=$$(./$(PRIME_COMPILED_READER_TEST_BIN) 2>&1); \
 	printf '%s\n' "$$result"; \
 	if [ "$$(printf '%s\n' "$$result" | \
-		grep -Fxc '(PrimeCompiledReaderV1Summary 89 89 0 cases 39)')" -ne 1 ]; then \
+		grep -Fxc '(PrimeCompiledReaderV1Summary 93 93 0 cases 39)')" -ne 1 ]; then \
 		echo "FAIL: compiled Prime reader exact differential summary absent or duplicated"; \
 		exit 1; \
 	fi; \
@@ -26587,12 +26774,25 @@ test-prime-compiled-reader-v1: test-prime-compiled-reader-direct-generated-v1 te
 		echo "FAIL: Prime was silently treated as extended"; \
 		exit 1; \
 	fi; \
-	if ! grep -Fq "language 'prime' has no named profiles" \
+	if ! grep -Fq "unknown source profile 'extended' for language 'prime'" \
 			runtime/test-prime-compiled-reader-profile.err; then \
 		echo "FAIL: Prime/HE profile boundary diagnostic changed"; \
 		exit 1; \
 	fi; \
 	echo "PASS: --lang prime owns its compiled reader and remains distinct from HE profiles"
+
+GSLT_PREFIX_STACK_TEST_BIN = runtime/test_gslt_prefix_reader_stack_v1$(if $(filter 1,$(ENABLE_SANITIZERS)),-sanitize,)
+$(GSLT_PREFIX_STACK_TEST_BIN): tests/support/test_gslt_prefix_reader_stack_v1.c \
+		src/gslt_direct_reader_v1.c src/generated/prime_reader_direct_v1.generated.c \
+		src/gslt_direct_reader_v1.h src/generated/prime_reader_direct_v1.generated.h Makefile
+	@mkdir -p runtime
+	$(CC) -Isrc -I. -std=c11 -Wall -Werror -O1 -g \
+		$(if $(filter 1,$(ENABLE_SANITIZERS)),-fsanitize=address -fsanitize=undefined -fno-sanitize-recover=all,) \
+		$(filter %.c,$^) -o $@
+
+.PHONY: test-gslt-prefix-reader-stack-v1
+test-gslt-prefix-reader-stack-v1: $(GSLT_PREFIX_STACK_TEST_BIN)
+	./$(GSLT_PREFIX_STACK_TEST_BIN)
 
 test-rhometta-payload-map-capacity-c: $(PAYLOAD_MAP_CAPACITY_TEST_BIN)
 	@./$(PAYLOAD_MAP_CAPACITY_TEST_BIN)
@@ -31859,6 +32059,7 @@ test-prime-nik-megalodon-known-implication-v1: \
 .PHONY: test-prime-nik-megalodon-definition-v1
 test-prime-nik-megalodon-definition-v1: \
 		$(BIN) \
+		tools/megalodon_definition_conversion_v1.py tools/nik_pattern_list_v1.py \
 		$(NIK_RUNTIME_TEST_BIN) \
 		$(PRIME_NIK_MEGALODON_DEFINITION_TEST_V1) \
 		$(PRIME_NIK_MEGALODON_DEFINITION_POSITIVE_V1) \
@@ -31898,12 +32099,28 @@ test-prime-nik-megalodon-definition-v1: \
 .PHONY: test-prime-nik-proof-dag-v1
 test-prime-nik-proof-dag-v1: \
 		$(PRIME_NIK_PROOF_DAG_COMPILER_V1) \
-		$(PRIME_NIK_PROOF_DAG_TEST_V1)
+		$(PRIME_NIK_PROOF_DAG_TEST_V1) tools/nik_shared_evidence_v1.py tools/test_nik_shared_evidence_v1.py
 	python3 $(PRIME_NIK_PROOF_DAG_TEST_V1)
+	python3 tools/test_nik_shared_evidence_v1.py
+
+.PHONY: test-prime-nik-megalodon-native-use-v1
+test-prime-nik-megalodon-native-use-v1: $(BIN) tools/megalodon_native_projection_v1.py tools/test_megalodon_native_projection_v1.py \
+		tools/megalodon_definition_conversion_v1.py tools/nik_pattern_list_v1.py tools/nik_shared_evidence_v1.py
+	@test -x "$(MEGALODON_AUTO_BIN)" || { echo "Megalodon executable is required for source-to-native qualification"; exit 1; }
+	python3 tools/test_megalodon_native_projection_v1.py --cetta "$(abspath $(BIN))" --megalodon "$(MEGALODON_AUTO_BIN)" --hotg-preamble "$(MEGALODON_HOTG_PREAMBLE)"
 
 .PHONY: test-prime-nik-megalodon-tactics-package-v1
+.PHONY: test-prime-nik-hotg-family-library-v1
+test-prime-nik-hotg-family-library-v1: $(BIN) tools/test_megalodon_native_projection_v1.py \
+		tools/megalodon_native_projection_v1.py tools/megalodon_definition_conversion_v1.py \
+		tools/nik_pattern_list_v1.py tools/nik_shared_evidence_v1.py tests/support/megalodon/family_library_consumer.metta
+	python3 tools/test_megalodon_native_projection_v1.py --cetta "$(abspath $(BIN))" \
+		--megalodon "$(MEGALODON_AUTO_BIN)" --hotg-preamble "$(MEGALODON_HOTG_PREAMBLE)" \
+		--family-source "$(MEGALODON_HOTG_FAMILY_SOURCE)"
+
 test-prime-nik-megalodon-tactics-package-v1: \
 		$(BIN) \
+		tools/megalodon_definition_conversion_v1.py tools/nik_pattern_list_v1.py \
 		$(NIK_RUNTIME_TEST_BIN) \
 		$(PRIME_NIK_PROOF_DAG_COMPILER_V1) \
 		$(PRIME_NIK_MEGALODON_TACTICS_TEST_V1) \
@@ -31921,10 +32138,19 @@ test-prime-nik-megalodon-tactics-package-v1: \
 		--positive $(PRIME_NIK_MEGALODON_TACTICS_POSITIVE_V1)
 
 .PHONY: test-prime-nik-core-v1
-test-prime-nik-core-v1: test-nik-runtime-v1 \
+test-prime-nik-core-v1: test-nik-runtime-v1 test-atom-data-equality \
 		test-nik-hosted-calculus \
 		test-nik-licensed-implementation-selection test-prime-nik-generation-v1 \
 		test-prime-nik-proof-dag-v1
+
+.PHONY: test-prime-nik-megalodon-declarations-v1
+test-prime-nik-megalodon-declarations-v1: $(BIN) \
+		tools/megalodon_definition_conversion_v1.py tools/nik_pattern_list_v1.py \
+		tools/megalodon_declaration_import_v1.py \
+		tools/megalodon_proof_compile_v1.py \
+		tools/test_megalodon_declaration_import_v1.py
+	python3 tools/test_megalodon_declaration_import_v1.py --cetta "$(abspath $(BIN))" \
+		$(if $(wildcard $(MEGALODON_AUTO_BIN)),--megalodon "$(MEGALODON_AUTO_BIN)",)
 
 .PHONY: test-prime-nik-qualification-v1
 test-prime-nik-qualification-v1: \
@@ -31932,7 +32158,9 @@ test-prime-nik-qualification-v1: \
 		test-prime-nik-megalodon-polymorphic-v1 \
 		test-prime-nik-megalodon-known-implication-v1 \
 		test-prime-nik-megalodon-definition-v1 \
-		test-prime-nik-megalodon-tactics-package-v1
+		test-prime-nik-megalodon-tactics-package-v1 \
+		test-prime-nik-megalodon-declarations-v1 \
+		test-prime-nik-megalodon-native-use-v1
 	@set -eu; \
 	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
 	if [ -z "$$lean_root" ] && \

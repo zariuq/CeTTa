@@ -1,0 +1,6 @@
+[native-fact]
+[theorem]
+[True]
+[True]
+[(nik:check DTT (PApp "T" (LCons (PApp "C" LNil) (LCons (PApp "Z" LNil) (LCons (PApp "N" LNil) LNil)))) (GProof (GRuleInst "z" LNil) BrokenChildren))]
+[(nik:check UnknownAuthority (PApp "T" (LCons (PApp "C" LNil) (LCons (PApp "Z" LNil) (LCons (PApp "N" LNil) LNil)))) (GProof (GRuleInst "z" LNil) PrNil))]

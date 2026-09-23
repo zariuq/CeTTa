@@ -14,7 +14,7 @@
  * GPresentation/GRule/GRuleInst vocabulary used by the executable generic
  * inference checker.  A presentation is admitted once, then proof actions are
  * consumed incrementally without retaining an action list or proof tree.
- * GPresentationV1 carries side-condition and conversion fields exactly.
+ * GInferenceLanguageV1 carries side-condition and conversion fields exactly.
  * Its admitted generic side conditions execute through the registered ABT
  * providers; malformed or unknown conditions fail closed and are never
  * erased.
@@ -63,7 +63,7 @@ typedef struct {
 const char *cetta_inference_status_name(CettaInferenceStatus status);
 
 /*
- * Validate and index a canonical GPresentationV1 value.  Legacy
+ * Validate and index a canonical GInferenceLanguageV1 value.  Legacy
  * GPresentation remains accepted only as the explicitly side-condition-free
  * version-zero carrier.  The checker borrows immutable pattern atoms from
  * presentation, so presentation must outlive it.

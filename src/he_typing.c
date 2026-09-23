@@ -13,6 +13,8 @@
 #include "eval.h"
 #include "grounded.h"
 #include "match.h"
+#include "prime_semantics.h"
+#include "prime_regular_pattern.h"
 #include "space.h"
 #include "stats.h"
 #include "symbol.h"
@@ -1407,6 +1409,7 @@ typedef struct {
     VarId *scheme_vars;
     uint32_t scheme_var_count;
     uint32_t scheme_var_cap;
+    bool prime;
 } ChainContext;
 
 static bool chain_fuel_exhausted(const ChainContext *ctx) {
@@ -1417,6 +1420,107 @@ static void chain_mark_incomplete(ChainContext *ctx, const char *reason) {
     if (ctx->incomplete) return;
     ctx->incomplete = true;
     ctx->incomplete_reason = reason;
+}
+
+/* Search slots are proposals, not object-language binders or proof evidence.
+ * Open only the outer telescope of the native authority's retained type.
+ * Indices under a local Pi/Sigma/lambda stay local; an outer index is replaced
+ * by the corresponding fresh search slot. The final application is checked
+ * in the original space by the same authority as `type:check`. */
+static Atom *chain_prime_open_slots(ChainContext *ctx, Atom *type,
+                                    Atom **slots, size_t count,
+                                    uint64_t local) {
+    if (!type || type->kind != ATOM_EXPR) return type;
+    if (type->expr.len == 2u && atom_is_symbol(type->expr.elems[0], "idx")) {
+        Atom *index = type->expr.elems[1];
+        if (index->kind != ATOM_GROUNDED || index->ground.gkind != GV_INT ||
+            index->ground.ival < 0) return NULL;
+        uint64_t value = (uint64_t)index->ground.ival;
+        if (value < local) return type;
+        if (value - local >= count) return NULL;
+        return slots[count - 1u - (size_t)(value - local)];
+    }
+    if (type->expr.len == 2u &&
+        atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.quote))
+        return type;
+    if (type->expr.len == 3u && atom_is_symbol(type->expr.elems[0], "app")) {
+        Atom *function = chain_prime_open_slots(ctx, type->expr.elems[1], slots, count, local);
+        Atom *argument = chain_prime_open_slots(ctx, type->expr.elems[2], slots, count, local);
+        if (!function || !argument) return NULL;
+        Atom *prior = type->expr.elems[1];
+        if (prior->kind != ATOM_EXPR || prior->expr.len != 3u ||
+            !atom_is_symbol(prior->expr.elems[0], "app"))
+            return atom_expr2(ctx->arena, function, argument);
+        size_t length = (size_t)function->expr.len;
+        Atom **application = arena_alloc(ctx->arena, sizeof(*application) * (length + 1u));
+        memcpy(application, function->expr.elems, sizeof(*application) * length);
+        application[length] = argument;
+        return atom_expr(ctx->arena, application, length + 1u);
+    }
+    if (type->expr.len == 2u && atom_is_symbol(type->expr.elems[0], "lam")) {
+        Atom *body = chain_prime_open_slots(ctx, type->expr.elems[1], slots, count, local + 1u);
+        return body ? atom_expr3(ctx->arena, he_sym(ctx->arena, "lam"),
+                                 he_sym(ctx->arena, "_"), body) : NULL;
+    }
+    Atom **items = arena_alloc(ctx->arena,
+                               sizeof(*items) * (size_t)type->expr.len);
+    bool telescope = type->expr.len >= 3u &&
+        (is_arrow(type) || atom_is_symbol(type->expr.elems[0], "sigma"));
+    bool lambda = type->expr.len == 3u &&
+                  atom_is_symbol(type->expr.elems[0], "lam");
+    for (CettaExprIndex i = 0; i < type->expr.len; i++) {
+        uint64_t nested = local;
+        if (telescope && i > 0u) nested += i - 1u;
+        if (lambda && i == 2u) nested++;
+        items[i] = chain_prime_open_slots(ctx, type->expr.elems[i],
+                                          slots, count, nested);
+        if (!items[i]) return NULL;
+    }
+    return atom_expr(ctx->arena, items, type->expr.len);
+}
+
+static Atom *chain_prime_formed_type(ChainContext *ctx, Atom *type) {
+    if (chain_fuel_exhausted(ctx)) return NULL;
+    CettaPrimeTypingFormationCandidateV1 candidate = {
+        .type = type, .steps_limited = ctx->fuel_limited, .steps = ctx->fuel};
+    CettaPrimeTypingFormationObservationV1 observation;
+    if (!cetta_prime_typing_observe_formation_v1(
+            ctx->arena, ctx->space, &candidate, &observation)) return NULL;
+    if (ctx->fuel_limited)
+        ctx->fuel = observation.authority.resources.remaining;
+    if (observation.authority.result.kind != CETTA_NIK_RESULT_OUTCOME ||
+        observation.authority.result.value.outcome != CETTA_NIK_OUTCOME_ESTABLISHED ||
+        !observation.authority.canonical_term)
+        return NULL;
+    return cetta_prime_regular_term_quote_intrinsic_v1(ctx->arena,
+                                                       observation.authority.canonical_term);
+}
+
+static Atom *chain_prime_rule_plan(ChainContext *ctx, Atom *canonical) {
+    size_t arity = 0u;
+    for (Atom *body = canonical; is_arrow(body) && body->expr.len == 3u;
+         body = body->expr.elems[2]) arity++;
+    if (!arity || arity > UINT32_MAX - 2u ||
+        arity > SIZE_MAX / sizeof(Atom *) - 2u) return NULL;
+    Atom **slots = arena_alloc(ctx->arena, sizeof(*slots) * arity);
+    Atom **items = arena_alloc(ctx->arena, sizeof(*items) * (arity + 2u));
+    items[0] = he_sym(ctx->arena, "->");
+    for (size_t i = 0u; i < arity; i++) {
+        VarId identity;
+        if (!fresh_var_id_try(&identity)) {
+            chain_mark_incomplete(ctx, "search-slot-identity-exhausted");
+            return NULL;
+        }
+        slots[i] = atom_var_with_id(ctx->arena, "search-slot", identity);
+        Atom *domain = chain_prime_open_slots(ctx, canonical->expr.elems[1],
+                                              slots, i, 0u);
+        if (!domain) return NULL;
+        items[i + 1u] = atom_expr3(ctx->arena, he_sym(ctx->arena, ":"),
+                                   slots[i], domain);
+        canonical = canonical->expr.elems[2];
+    }
+    items[arity + 1u] = chain_prime_open_slots(ctx, canonical, slots, arity, 0u);
+    return items[arity + 1u] ? atom_expr(ctx->arena, items, arity + 2u) : NULL;
 }
 
 static void chain_mark_normalization_incomplete(ChainContext *ctx,
@@ -1640,7 +1744,15 @@ static bool chain_index_build(ChainContext *ctx) {
         bool rule = is_arrow(type) &&
                     space_has_unary_marker(
                         ctx->space, g_builtin_syms.chaining_rule, term);
-        if (is_arrow(type) && !rule) continue;
+        if (is_arrow(type) && !rule && !ctx->prime) continue;
+        if (ctx->prime) {
+            Atom *canonical = chain_prime_formed_type(ctx, type);
+            if (canonical) {
+                Atom *plan = rule ? chain_prime_rule_plan(ctx, canonical)
+                                  : chain_prime_open_slots(ctx, canonical, NULL, 0u, 0u);
+                if (plan) type = plan;
+            }
+        }
         bool scheme = rule ||
                       space_has_unary_marker(
                           ctx->space, g_builtin_syms.type_scheme, term);
@@ -2249,6 +2361,41 @@ static bool chain_proof_checked(ChainContext *ctx, Atom *proof, Atom *goal,
                                 Bindings *env, Atom **checked_type) {
     ctx->stats.proof_checks++;
     if (bindings_has_loop(env)) return false;
+    if (ctx->prime) {
+        proof = bindings_apply_if_vars(env, ctx->arena, proof);
+        goal = bindings_apply_if_vars(env, ctx->arena, goal);
+        if (!proof || !goal) {
+            chain_mark_incomplete(ctx, "proof-substitution-failed");
+            return false;
+        }
+        CettaPrimeTypingCheckingCandidateV1 candidate = {
+            .term = proof, .expected_type = goal,
+            .steps_limited = ctx->fuel_limited, .steps = ctx->fuel};
+        if (chain_fuel_exhausted(ctx)) {
+            chain_mark_incomplete(ctx, "fuel-exhausted");
+            return false;
+        }
+        CettaPrimeTypingCheckingObservationV1 observation;
+        if (!cetta_prime_typing_observe_checking_v1(
+                ctx->arena, ctx->space, &candidate, &observation) ||
+            observation.authority.result.kind != CETTA_NIK_RESULT_OUTCOME) {
+            chain_mark_incomplete(ctx, "native-proof-check-unavailable");
+            return false;
+        }
+        if (ctx->fuel_limited)
+            ctx->fuel = observation.authority.resources.remaining;
+        CettaNikOutcomeV1 outcome = observation.authority.result.value.outcome;
+        if (outcome == CETTA_NIK_OUTCOME_REFUTED) return false;
+        if (outcome != CETTA_NIK_OUTCOME_ESTABLISHED ||
+            !observation.authority.canonical_term) {
+            chain_mark_incomplete(ctx,
+                outcome == CETTA_NIK_OUTCOME_INCOMPLETE ? "native-proof-check-incomplete"
+                                                       : "native-proof-check-undetermined");
+            return false;
+        }
+        if (checked_type) *checked_type = goal;
+        return true;
+    }
     HeTypeSet ts;
     set_init(&ts, ctx->arena);
     if (!infer_shared_types(ctx->arena, ctx->space, proof, &ctx->fuel, &ts)) {
@@ -2787,14 +2934,18 @@ static bool chain_schedule_goal(ChainContext *ctx, ChainWorkQueue *queue,
     /* Variant ancestor regularity is producer-side pruning, not authority.
      * A branch that asks for the same instantiated goal already active on
      * that branch can only repeat the intervening derivation.  Restrict the
-     * check to alpha variants: mere unifiability or subsumption would be a
-     * stronger—and potentially incomplete—cut. */
-    if (ctx->policy == CHAIN_POLICY_ATP_GUIDED_INHABITATION) {
+     * check to closed alpha variants: free search slots still carry
+     * constraints from other premises, so renaming them does not establish
+     * repetition of the same obligation. Mere unifiability or subsumption
+     * would also be a stronger—and potentially incomplete—cut. */
+    if (ctx->policy == CHAIN_POLICY_ATP_GUIDED_INHABITATION &&
+        !atom_has_vars(goal)) {
         for (ChainContinuation *ancestor = continuation;
              ancestor; ancestor = ancestor->parent) {
             Atom *ancestor_goal = bindings_apply_if_vars(
                 env, ctx->arena, ancestor->goal);
-            if (atom_alpha_eq(goal, ancestor_goal)) {
+            if (!atom_has_vars(ancestor_goal) &&
+                atom_alpha_eq(goal, ancestor_goal)) {
                 ctx->stats.ancestor_pruned++;
                 return true;
             }
@@ -2877,6 +3028,16 @@ static uint32_t chain_pick_premise(ChainContext *ctx,
     int best = -2147483647;
     for (uint32_t i = 0; i < continuation->arity; i++) {
         if (continuation->done[i]) continue;
+        if (ctx->prime && continuation->premise_binders[i]) {
+            Atom *argument = bindings_apply_if_vars(
+                env, ctx->arena, continuation->premise_binders[i]);
+            /* A compound assignment still containing search slots needs
+             * its dependencies solved, not an unrelated inhabitant of the
+             * domain. Other premises may determine those dependencies. */
+            if (argument && argument->kind == ATOM_EXPR &&
+                atom_has_vars(argument))
+                continue;
+        }
         int score = chain_premise_score(ctx, continuation->premises[i], env);
         if (score > best) {
             best = score;
@@ -2891,8 +3052,40 @@ static bool chain_schedule_next_premise(ChainContext *ctx,
                                         ChainContinuation *continuation,
                                         const Bindings *env) {
     uint32_t pick = chain_pick_premise(ctx, continuation, env);
-    if (pick == UINT32_MAX) return false;
+    if (pick == UINT32_MAX) {
+        if (ctx->prime)
+            chain_mark_incomplete(ctx, "dependent-argument-constraints");
+        return false;
+    }
     continuation->pick = pick;
+    if (ctx->prime && continuation->premise_binders[pick]) {
+        Atom *argument = bindings_apply_if_vars(
+            env, ctx->arena, continuation->premise_binders[pick]);
+        Atom *domain = bindings_apply_if_vars(
+            env, ctx->arena, continuation->premises[pick]);
+        /* A solved slot may name a computed object, not an indexed fact.
+         * Check that actual argument at the instantiated domain; searching
+         * the domain again would replace the assignment already earned by
+         * another premise. Unresolved slots still use the same agenda. */
+        if (argument && domain && !atom_has_vars(argument) &&
+            !atom_has_vars(domain)) {
+            Bindings trial;
+            bindings_init(&trial);
+            if (!bindings_clone(&trial, env)) {
+                chain_mark_incomplete(ctx, "search-binding-allocation");
+                return false;
+            }
+            Atom *checked_type = NULL;
+            if (!chain_proof_checked(ctx, argument, domain, &trial,
+                                     &checked_type)) {
+                bindings_free(&trial);
+                return false;
+            }
+            return chain_schedule_result(
+                ctx, queue, argument, checked_type, &trial, continuation,
+                continuation->rank, continuation->guidance);
+        }
+    }
     return chain_schedule_goal(ctx, queue, continuation->premises[pick],
                                continuation->depth, env, continuation,
                                continuation->rank, continuation->guidance,
@@ -3070,6 +3263,13 @@ static void chain_process_result(ChainContext *ctx, ChainWorkQueue *queue,
 static void chain_run_search(ChainContext *ctx, Atom *goal, uint32_t depth,
                              uint32_t limit, bool root_rules_only,
                              ChainProofVec *answers) {
+    if (ctx->prime) {
+        Atom *canonical = chain_prime_formed_type(ctx, goal);
+        if (canonical) {
+            Atom *hint = chain_prime_open_slots(ctx, canonical, NULL, 0u, 0u);
+            if (hint) goal = hint;
+        }
+    }
     ctx->root_goal = goal;
     if (!chain_collect_query_vars(ctx, goal)) return;
     ChainWorkQueue queue;
@@ -3207,6 +3407,7 @@ static Atom *chain_inhabit_dispatch(Arena *a, Space *space, Atom *goal,
     ChainContext ctx = {0};
     ctx.arena = a;
     ctx.space = space;
+    ctx.prime = eval_current_language_id() == CETTA_LANGUAGE_PRIME;
     ctx.fuel = fuel;
     ctx.fuel_limited = fuel_limited;
     ctx.policy = policy;
@@ -3274,6 +3475,7 @@ static Atom *chain_forward_step(Arena *a, Space *space, uint64_t *fuel,
     ChainContext ctx = {0};
     ctx.arena = a;
     ctx.space = space;
+    ctx.prime = eval_current_language_id() == CETTA_LANGUAGE_PRIME;
     ctx.fuel = *fuel;
     ctx.fuel_limited = true;
     if (!chain_index_build(&ctx)) {

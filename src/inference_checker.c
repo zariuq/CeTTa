@@ -949,7 +949,7 @@ CettaInferenceStatus cetta_inference_checker_create(
         return inference_error(CETTA_INFERENCE_INVALID_PRESENTATION,
                                error_buf, error_buf_size,
                                "checker output or symbol table is unavailable");
-    if (atom_expr_tag(presentation, "GPresentationV1", 6)) {
+    if (atom_expr_tag(presentation, "GInferenceLanguageV1", 6)) {
         IntegerResult version_result = atom_nonnegative_u64(
             presentation->expr.elems[1], &wire_version);
         if (version_result == INTEGER_RESOURCE_LIMIT)
@@ -967,7 +967,7 @@ CettaInferenceStatus cetta_inference_checker_create(
     } else if (!atom_expr_tag(presentation, "GPresentation", 4)) {
         return inference_error(CETTA_INFERENCE_INVALID_PRESENTATION,
                                error_buf, error_buf_size,
-                               "expected GPresentationV1");
+                               "expected GInferenceLanguageV1");
     }
 
     checker = cetta_malloc(sizeof(*checker));
@@ -1288,43 +1288,84 @@ CettaInferenceRuleHandle cetta_inference_checker_find_rule(
     return (CettaInferenceRuleHandle)value;
 }
 
-static CettaInferenceStatus inference_validate_ground_pattern(
-    const CettaInferenceChecker *checker,
-    Atom *pattern,
-    uint64_t depth,
-    char *error_buf,
-    size_t error_buf_size);
+typedef struct {
+    Atom *pattern;
+    uint64_t depth;
+} InferenceArgumentSlot;
 
-static CettaInferenceStatus inference_validate_ground_list(
-    const CettaInferenceChecker *checker,
-    Atom *list,
-    uint64_t depth,
-    char *error_buf,
-    size_t error_buf_size) {
-    Atom *cursor = list;
+typedef struct {
+    InferenceArgumentSlot *slots;
+    size_t count, capacity;
+} InferenceArgumentMemo;
 
-    while (!atom_is_symbol(cursor, "LNil")) {
-        CettaInferenceStatus status;
-        if (!atom_expr_tag(cursor, "LCons", 3))
-            return inference_error(CETTA_INFERENCE_INVALID_ARGUMENTS,
-                                   error_buf, error_buf_size,
-                                   "argument pattern list is malformed");
-        status = inference_validate_ground_pattern(
-            checker, cursor->expr.elems[1], depth,
-            error_buf, error_buf_size);
-        if (status != CETTA_INFERENCE_OK)
-            return status;
-        cursor = cursor->expr.elems[2];
-    }
-    return CETTA_INFERENCE_OK;
+static size_t inference_argument_hash(Atom *pattern, uint64_t depth) {
+    uint64_t h = (uint64_t)(uintptr_t)pattern ^ (depth * UINT64_C(0x9e3779b97f4a7c15));
+    h ^= h >> 33;
+    h *= UINT64_C(0xff51afd7ed558ccd);
+    return (size_t)(h ^ (h >> 33));
 }
 
-static CettaInferenceStatus inference_validate_ground_pattern(
+static bool inference_argument_seen(InferenceArgumentMemo *memo, Atom *pattern,
+                                     uint64_t depth) {
+    if (!memo || !memo->capacity)
+        return false;
+    size_t slot = inference_argument_hash(pattern, depth) & (memo->capacity - 1u);
+    while (memo->slots[slot].pattern) {
+        if (memo->slots[slot].pattern == pattern && memo->slots[slot].depth == depth)
+            return true;
+        slot = (slot + 1u) & (memo->capacity - 1u);
+    }
+    return false;
+}
+
+static bool inference_argument_remember(InferenceArgumentMemo *memo, Atom *pattern,
+                                         uint64_t depth) {
+    if (!memo)
+        return true;
+    if (!memo->capacity || memo->count >= memo->capacity / 2u) {
+        size_t next = memo->capacity ? memo->capacity * 2u : 1024u;
+        if (next < memo->capacity || next > SIZE_MAX / sizeof(*memo->slots))
+            return false;
+        InferenceArgumentSlot *slots = cetta_malloc(next * sizeof(*slots));
+        memset(slots, 0, next * sizeof(*slots));
+        for (size_t i = 0; i < memo->capacity; ++i) {
+            InferenceArgumentSlot old = memo->slots[i];
+            if (!old.pattern)
+                continue;
+            size_t slot = inference_argument_hash(old.pattern, old.depth) & (next - 1u);
+            while (slots[slot].pattern)
+                slot = (slot + 1u) & (next - 1u);
+            slots[slot] = old;
+        }
+        free(memo->slots);
+        memo->slots = slots;
+        memo->capacity = next;
+    }
+    size_t slot = inference_argument_hash(pattern, depth) & (memo->capacity - 1u);
+    while (memo->slots[slot].pattern)
+        slot = (slot + 1u) & (memo->capacity - 1u);
+    memo->slots[slot] = (InferenceArgumentSlot){pattern, depth};
+    memo->count++;
+    return true;
+}
+
+typedef struct {
+    Atom *pattern;
+    uint64_t depth;
+    Atom *remaining;
+    Atom *children[2];
+    uint64_t depths[2];
+    unsigned child_count, next_child;
+    bool prepared;
+} InferenceGroundFrame;
+
+static CettaInferenceStatus inference_prepare_ground_pattern(
     const CettaInferenceChecker *checker,
-    Atom *pattern,
-    uint64_t depth,
+    InferenceGroundFrame *frame,
     char *error_buf,
     size_t error_buf_size) {
+    Atom *pattern = frame->pattern;
+    uint64_t depth = frame->depth;
     uint64_t number;
     uint64_t nested_depth;
     IntegerResult integer_result;
@@ -1377,9 +1418,8 @@ static CettaInferenceStatus inference_validate_ground_pattern(
          * authoritative. */
         if (actual_arity == 0u)
             return CETTA_INFERENCE_OK;
-        return inference_validate_ground_list(
-            checker, pattern->expr.elems[2], depth,
-            error_buf, error_buf_size);
+        frame->remaining = pattern->expr.elems[2];
+        return CETTA_INFERENCE_OK;
     }
     if (atom_expr_tag(pattern, "PLam", 3)) {
         if (!atom_is_symbol(pattern->expr.elems[1], "BNone") ||
@@ -1387,9 +1427,10 @@ static CettaInferenceStatus inference_validate_ground_pattern(
             return inference_error(CETTA_INFERENCE_INVALID_ARGUMENTS,
                                    error_buf, error_buf_size,
                                    "argument lambda is not canonical");
-        return inference_validate_ground_pattern(
-            checker, pattern->expr.elems[2], nested_depth,
-            error_buf, error_buf_size);
+        frame->children[0] = pattern->expr.elems[2];
+        frame->depths[0] = nested_depth;
+        frame->child_count = 1u;
+        return CETTA_INFERENCE_OK;
     }
     if (atom_expr_tag(pattern, "PMultiLam", 4)) {
         if (!atom_is_symbol(pattern->expr.elems[2], "LNil"))
@@ -1407,24 +1448,22 @@ static CettaInferenceStatus inference_validate_ground_pattern(
             return inference_error(CETTA_INFERENCE_INVALID_ARGUMENTS,
                                    error_buf, error_buf_size,
                                    "argument multi-binder arity is invalid");
-        return inference_validate_ground_pattern(
-            checker, pattern->expr.elems[3], nested_depth,
-            error_buf, error_buf_size);
+        frame->children[0] = pattern->expr.elems[3];
+        frame->depths[0] = nested_depth;
+        frame->child_count = 1u;
+        return CETTA_INFERENCE_OK;
     }
     if (atom_expr_tag(pattern, "PSubst", 3)) {
-        CettaInferenceStatus status;
         if (!checked_depth_add(depth, 1, &nested_depth))
             return inference_error(CETTA_INFERENCE_RESOURCE_LIMIT,
                                    error_buf, error_buf_size,
                                    "argument substitution depth exceeds native range");
-        status = inference_validate_ground_pattern(
-            checker, pattern->expr.elems[1], nested_depth,
-            error_buf, error_buf_size);
-        if (status != CETTA_INFERENCE_OK)
-            return status;
-        return inference_validate_ground_pattern(
-            checker, pattern->expr.elems[2], depth,
-            error_buf, error_buf_size);
+        frame->children[0] = pattern->expr.elems[1];
+        frame->depths[0] = nested_depth;
+        frame->children[1] = pattern->expr.elems[2];
+        frame->depths[1] = depth;
+        frame->child_count = 2u;
+        return CETTA_INFERENCE_OK;
     }
     if (atom_expr_tag(pattern, "PCollection", 4)) {
         if (!cetta_inference_pattern_collection_type_valid_v1(
@@ -1433,13 +1472,82 @@ static CettaInferenceStatus inference_validate_ground_pattern(
             return inference_error(CETTA_INFERENCE_INVALID_ARGUMENTS,
                                    error_buf, error_buf_size,
                                    "argument collection metadata is not canonical");
-        return inference_validate_ground_list(
-            checker, pattern->expr.elems[2], depth,
-            error_buf, error_buf_size);
+        frame->remaining = pattern->expr.elems[2];
+        return CETTA_INFERENCE_OK;
     }
     return inference_error(CETTA_INFERENCE_INVALID_ARGUMENTS,
                            error_buf, error_buf_size,
                            "argument is not a canonical pattern");
+}
+
+/* Called only after ABT support checking has established an acyclic,
+ * well-scoped graph.  Memoize completed subpatterns at their actual depth,
+ * not just whole rule arguments.  A public trace action owns a fresh memo;
+ * closed DAG replay may reuse it only with its fixed immutable presentation. */
+static CettaInferenceStatus inference_validate_ground_pattern(
+    const CettaInferenceChecker *checker, Atom *pattern, uint64_t depth,
+    InferenceArgumentMemo *shared_memo, char *error_buf, size_t error_buf_size) {
+    InferenceArgumentMemo local_memo = {0};
+    InferenceArgumentMemo *memo = shared_memo ? shared_memo : &local_memo;
+    size_t count = 1u, capacity = 32u;
+    InferenceGroundFrame *frames = cetta_malloc(capacity * sizeof(*frames));
+    frames[0] = (InferenceGroundFrame){.pattern = pattern, .depth = depth};
+    CettaInferenceStatus status = CETTA_INFERENCE_OK;
+    while (count) {
+        InferenceGroundFrame *frame = &frames[count - 1u];
+        if (!frame->prepared) {
+            if (inference_argument_seen(memo, frame->pattern, frame->depth)) {
+                count--;
+                continue;
+            }
+            status = inference_prepare_ground_pattern(
+                checker, frame, error_buf, error_buf_size);
+            if (status != CETTA_INFERENCE_OK)
+                break;
+            frame->prepared = true;
+        }
+        InferenceGroundFrame child = {0};
+        bool has_child = false;
+        if (frame->next_child < frame->child_count) {
+            unsigned i = frame->next_child++;
+            child.pattern = frame->children[i];
+            child.depth = frame->depths[i];
+            has_child = true;
+        } else if (frame->remaining &&
+                   !atom_is_symbol(frame->remaining, "LNil")) {
+            Atom *list = frame->remaining;
+            if (!atom_expr_tag(list, "LCons", 3u)) {
+                status = inference_error(CETTA_INFERENCE_INVALID_ARGUMENTS,
+                    error_buf, error_buf_size, "argument pattern list is malformed");
+                break;
+            }
+            child.pattern = list->expr.elems[1];
+            child.depth = frame->depth;
+            frame->remaining = list->expr.elems[2];
+            has_child = true;
+        }
+        if (has_child) {
+            if (count == capacity) {
+                if (capacity > SIZE_MAX / 2u / sizeof(*frames))
+                    goto resource;
+                capacity *= 2u;
+                frames = cetta_realloc(frames, capacity * sizeof(*frames));
+            }
+            frames[count++] = child;
+        } else {
+            if (!inference_argument_remember(memo, frame->pattern, frame->depth))
+                goto resource;
+            count--;
+        }
+    }
+    goto done;
+resource:
+    status = inference_error(CETTA_INFERENCE_RESOURCE_LIMIT,
+        error_buf, error_buf_size, "argument validation storage exceeds native range");
+done:
+    free(frames);
+    free(local_memo.slots);
+    return status;
 }
 
 static Atom *inference_instantiate_pattern(
@@ -1692,8 +1800,10 @@ static CettaInferenceStatus inference_side_conditions_hold(
                     arguments[condition->body_argument],
                     &computed);
         }
+        /* Arguments have passed support/signature validation; successful ABT
+         * lowering constructs another finite canonical Pattern. */
         bool holds = abt_status == CETTA_INFERENCE_PATTERN_ABT_OK &&
-            atom_eq_fast(computed, arguments[condition->result_argument]);
+            atom_data_equal_validated(computed, arguments[condition->result_argument]);
         arena_reset(arena, mark);
         if (abt_status == CETTA_INFERENCE_PATTERN_ABT_RESOURCE_LIMIT)
             return inference_error(
@@ -1714,11 +1824,13 @@ static CettaInferenceStatus inference_side_conditions_hold(
     return CETTA_INFERENCE_OK;
 }
 
-CettaInferenceStatus cetta_inference_trace_apply(
+
+static CettaInferenceStatus inference_trace_apply(
     CettaInferenceTrace *trace,
     CettaInferenceRuleHandle rule_handle,
     Atom *const *arguments,
     size_t argument_count,
+    InferenceArgumentMemo *argument_memo,
     char *error_buf,
     size_t error_buf_size) {
     const InferenceRule *rule;
@@ -1742,6 +1854,8 @@ CettaInferenceStatus cetta_inference_trace_apply(
                                error_buf, error_buf_size,
                                "rule argument count mismatch");
     for (index = 0; index < argument_count; index++) {
+        if (inference_argument_seen(argument_memo, arguments[index], rule->formals[index].depth))
+            continue;
         ArenaMark support_mark = arena_mark(trace->arena);
         CettaInferencePatternAbtStatusV1 support_status =
             cetta_inference_pattern_supported_at_v1(
@@ -1759,7 +1873,7 @@ CettaInferenceStatus cetta_inference_trace_apply(
                 "argument is outside its declared binder support");
         status = inference_validate_ground_pattern(
             trace->checker, arguments[index], rule->formals[index].depth,
-            error_buf, error_buf_size);
+            argument_memo, error_buf, error_buf_size);
         if (status != CETTA_INFERENCE_OK)
             return status;
     }
@@ -1798,7 +1912,13 @@ CettaInferenceStatus cetta_inference_trace_apply(
     }
     for (index = 0; index < rule->premise_count; index++) {
         size_t stack_index = trace->stack_len - rule->premise_count + index;
-        if (!atom_eq_fast(trace->stack[stack_index], premises[index])) {
+        /* Closed replay owns immutable instances of admitted schemas with
+         * checked arguments. Public incremental traces still check structure
+         * afresh, because the caller controls their retained input atoms. */
+        bool equal = argument_memo
+            ? atom_data_equal_validated(trace->stack[stack_index], premises[index])
+            : atom_data_equal(trace->stack[stack_index], premises[index]);
+        if (!equal) {
             free(premises);
             return inference_error(CETTA_INFERENCE_PREMISE_MISMATCH,
                                    error_buf, error_buf_size,
@@ -1814,6 +1934,16 @@ CettaInferenceStatus cetta_inference_trace_apply(
     trace->stack_len -= rule->premise_count;
     trace->stack[trace->stack_len++] = conclusion;
     return CETTA_INFERENCE_OK;
+}
+
+CettaInferenceStatus cetta_inference_trace_apply(
+    CettaInferenceTrace *trace, CettaInferenceRuleHandle rule_handle,
+    Atom *const *arguments, size_t argument_count,
+    char *error_buf, size_t error_buf_size) {
+    /* Public incremental traces may receive new arena allocations or changed
+     * input between calls. Only closed article replay uses identity caching. */
+    return inference_trace_apply(trace, rule_handle, arguments, argument_count,
+                                 NULL, error_buf, error_buf_size);
 }
 
 CettaInferenceStatus cetta_inference_trace_apply_named(
@@ -1883,7 +2013,7 @@ CettaInferenceStatus cetta_inference_trace_finish(
     size_t error_buf_size) {
     inference_error_clear(error_buf, error_buf_size);
     if (!trace || !goal || trace->stack_len != 1 ||
-        !atom_eq_fast(trace->stack[0], goal))
+        !atom_data_equal(trace->stack[0], goal))
         return inference_error(CETTA_INFERENCE_FINAL_MISMATCH,
                                error_buf, error_buf_size,
                                "proof stack does not contain exactly the goal");
@@ -2256,6 +2386,7 @@ static CettaInferenceStatus inference_dag_parse_u64(
 
 static CettaInferenceStatus inference_dag_apply_instance(
     CettaInferenceTrace *trace, Atom *instance,
+    InferenceArgumentMemo *argument_memo,
     char *error_buf, size_t error_buf_size) {
     const char *rule_id;
     size_t argument_count;
@@ -2284,8 +2415,9 @@ static CettaInferenceStatus inference_dag_apply_instance(
                 "DAG rule arguments changed during decoding");
         }
     }
-    status = cetta_inference_trace_apply_named(
-        trace, rule_id, arguments, argument_count,
+    status = inference_trace_apply(
+        trace, cetta_inference_checker_find_rule(trace->checker, rule_id),
+        arguments, argument_count, argument_memo,
         error_buf, error_buf_size);
     free(arguments);
     return status;
@@ -2304,6 +2436,10 @@ static CettaInferenceStatus inference_checker_check_dag_article_v1(
     const size_t default_max_depth = 4096u;
     CettaInferenceTrace trace;
     InferenceDAGIndex index = {0};
+    /* This article's arguments remain immutable and alive throughout replay.
+     * The memo is local to this checker, and includes the exact binder depth.
+     * It records successful support/signature checks, never accepted proofs. */
+    InferenceArgumentMemo argument_memo = {0};
     Atom *nodes;
     Atom *target;
     uint64_t version;
@@ -2342,7 +2478,7 @@ static CettaInferenceStatus inference_checker_check_dag_article_v1(
     if (status != CETTA_INFERENCE_OK)
         return status;
     target = article->expr.elems[4];
-    if (!atom_eq_fast(target, goal))
+    if (!atom_data_equal(target, goal))
         return inference_error(CETTA_INFERENCE_FINAL_MISMATCH,
                                error_buf, error_buf_size,
                                "DAG article target differs from submitted goal");
@@ -2456,7 +2592,7 @@ static CettaInferenceStatus inference_checker_check_dag_article_v1(
             goto done;
         }
         status = inference_dag_apply_instance(
-            &trace, node->expr.elems[2], error_buf, error_buf_size);
+            &trace, node->expr.elems[2], &argument_memo, error_buf, error_buf_size);
         if (status != CETTA_INFERENCE_OK)
             goto done;
         if (trace.stack_len != 1u) {
@@ -2507,6 +2643,7 @@ static CettaInferenceStatus inference_checker_check_dag_article_v1(
 
 done:
     free(index.entries);
+    free(argument_memo.slots);
     cetta_inference_trace_free(&trace);
     return status;
 }

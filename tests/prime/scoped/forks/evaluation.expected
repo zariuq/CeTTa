@@ -1,0 +1,4 @@
+[(Pair H H), (Pair T T)]
+[(Pair H H), (Pair H T), (Pair T H), (Pair T T)]
+[(Pair H H), (Pair T T)]
+[(Pair H H), (Pair T T)]
