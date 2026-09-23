@@ -135,12 +135,53 @@
     (LangDef:DeterministicCall langdef:expression->list (tag 7 (nested "雪") 7))))
 !(EbnfEmptyExpressionV1 (ebnf-projection-test:primitive
     (LangDef:DeterministicCall langdef:expression->list ())))
+!(EbnfExpressionOrSingleV1
+   (ebnf-projection-test:primitive
+     (LangDef:DeterministicCall langdef:expression-or-single->list (f x)))
+   (ebnf-projection-test:primitive
+     (LangDef:DeterministicCall langdef:expression-or-single->list f)))
+!(EbnfListExpressionV1 (ebnf-projection-test:primitive
+    (LangDef:DeterministicCall langdef:list->expression
+      (LCons tag (LCons 7 (LCons (nested "雪") (LCons 7 LNil)))))))
+!(EbnfEmptyListExpressionV1 (ebnf-projection-test:primitive
+    (LangDef:DeterministicCall langdef:list->expression LNil)))
+!(EbnfSymbolCodepointRoundTripV1
+   (ebnf-projection-test:primitive
+     (LangDef:DeterministicCall langdef:codepoints->symbol
+       (cons (cp 167) (cons (cp 105) nil))))
+   (ebnf-projection-test:primitive
+     (LangDef:DeterministicCall langdef:symbol->codepoints §i)))
+!(EbnfExactDecimalIntegerV1
+   (ebnf-projection-test:primitive
+     (LangDef:DeterministicCall langdef:decimal-integer->number
+       "123456789012345678901234567890"))
+   (ebnf-projection-test:primitive
+     (LangDef:DeterministicCall langdef:decimal-integer->number "-17")))
+!(EbnfExactDecimalRationalPartsV1
+   (ebnf-projection-test:primitive
+     (LangDef:DeterministicCall langdef:decimal-rational->parts
+       "123456789012345678901234567890/37"))
+   (ebnf-projection-test:primitive
+     (LangDef:DeterministicCall langdef:decimal-rational->parts "-22/7")))
 !(EbnfGroundEqualityV1
    (ebnf-projection-test:primitive (LangDef:DeterministicCall langdef:ground-equal (a 1) (a 1)))
    (ebnf-projection-test:primitive (LangDef:DeterministicCall langdef:ground-equal (a 1) (a "1")))
    (ebnf-projection-test:primitive (LangDef:DeterministicCall langdef:ground-equal (a 1) (a 1 1))))
 !(ebnf-projection-test:reject (ebnf-projection-test:primitive
     (LangDef:DeterministicCall langdef:expression->list 7)))
+!(ebnf-projection-test:reject (ebnf-projection-test:primitive
+    (LangDef:DeterministicCall langdef:list->expression
+      (LCons tag malformed-tail))))
+!(ebnf-projection-test:reject (ebnf-projection-test:primitive
+    (LangDef:DeterministicCall langdef:codepoints->symbol nil)))
+!(ebnf-projection-test:reject (ebnf-projection-test:primitive
+    (LangDef:DeterministicCall langdef:symbol->codepoints "not a symbol")))
+!(ebnf-projection-test:reject (ebnf-projection-test:primitive
+    (LangDef:DeterministicCall langdef:decimal-integer->number "12x")))
+!(ebnf-projection-test:reject (ebnf-projection-test:primitive
+    (LangDef:DeterministicCall langdef:decimal-rational->parts "1/0")))
+!(ebnf-projection-test:reject (ebnf-projection-test:primitive
+    (LangDef:DeterministicCall langdef:decimal-rational->parts "1//3")))
 !(ebnf-projection-test:reject (ebnf-projection-test:primitive
     (LangDef:DeterministicCall langdef:ground-equal $open 7)))
 

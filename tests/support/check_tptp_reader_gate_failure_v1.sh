@@ -81,20 +81,19 @@ fi
 rg -q 'TptpRecordMismatch' "$reader_evidence/records.log"
 
 awk '
-  { count += sub(/\(TptpFamilyText empty\)/,
-                 "(TptpFamilyText empty-wrong)"); print }
+  { count += sub(/\(thf mix_type type/,
+                 "(thf mix_type-wrong type"); print }
   END { if (count != 1) exit 1 }
-' tests/langdef/tptp/official_syntax_records_family_v1.expected \
-  > "$reader_evidence/tests/langdef/tptp/family.expected"
+' tests/langdef/tptp/official_syntax_compact_v1.expected \
+  > "$reader_evidence/tests/langdef/tptp/compact.expected"
 if make --no-print-directory \
     TPTP_OFFICIAL_SYNTAX_BNF_V1="$reader_syntax" \
     TPTP_OFFICIAL_CORPUS_ROOT_V1="$reader_corpus" \
-    TPTP_OFFICIAL_SYNTAX_RECORDS_FAMILY_EXPECTED_V1="$reader_evidence/tests/langdef/tptp/family.expected" \
-    test-tptp-official-syntax-records-family-v1 > "$reader_evidence/family.log" 2>&1; then
-    echo 'family gate accepted an intentionally wrong expectation' >&2
+    TPTP_OFFICIAL_SYNTAX_COMPACT_EXPECTED_V1="$reader_evidence/tests/langdef/tptp/compact.expected" \
+    test-tptp-official-syntax-compact-v1 > "$reader_evidence/compact.log" 2>&1; then
+    echo 'compact gate accepted an intentionally wrong expectation' >&2
     exit 1
 fi
-rg -q 'family mismatch|test \$.*got' "$reader_evidence/family.log" \
-  || rg -q 'Error' "$reader_evidence/family.log" \
-  || test "$(tail -n 1 "$reader_evidence/family.log")" != ''
+rg -q '\(thf mix_type type \(: mix \(⇒ beverage beverage\)\)\)' \
+  "$reader_evidence/compact.log"
 echo '(TptpReaderGateFailureV1Summary 5 0)'

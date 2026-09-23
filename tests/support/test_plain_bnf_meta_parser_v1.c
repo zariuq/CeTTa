@@ -764,6 +764,51 @@ static void source_loader_gate(TestCounts *counts) {
                 NULL, NULL, &arena, 128u, 10000u, &out, &status,
                 error, sizeof(error)) && atom_eq(out, expected),
             "same-spelled variables bind per rule while strings remain literal");
+
+        Atom *payload = atom_expr2(&arena, atom_symbol(&arena, "duplicate"), value);
+        Atom *data_call = atom_expr2(&arena, atom_symbol(&arena, "duplicate"), payload);
+        expected = atom_expr3(&arena, atom_symbol(&arena, "pair"), payload, payload);
+        (void)expect(counts,
+            cetta_deterministic_equation_plan_v1_apply(
+                plan, data_call, NULL, NULL, &arena, 128u, 10000u,
+                &out, &status, error, sizeof(error)) && atom_eq(out, expected),
+            "data application preserves even an argument naming an authored equation");
+        (void)expect(counts,
+            cetta_deterministic_equation_plan_v1_run(
+                plan, data_call, NULL, NULL, &arena, 128u, 10000u,
+                &out, &status, error, sizeof(error)) && !atom_eq(out, expected) &&
+                atom_eq(out, atom_expr3(&arena, atom_symbol(&arena, "pair"), pair, pair)),
+            "ordinary execution still evaluates its nested authored call");
+        Atom *literal_let = atom_expr(&arena, (Atom *[]){
+            atom_symbol(&arena, "let"), atom_symbol(&arena, "X"), value, value}, 4u);
+        data_call = atom_expr2(&arena, atom_symbol(&arena, "via"), literal_let);
+        Atom *literal_pair = atom_expr3(&arena, atom_symbol(&arena, "pair"),
+                                       literal_let, literal_let);
+        expected = atom_expr3(&arena, atom_symbol(&arena, "pair"),
+                             literal_pair, literal_let);
+        (void)expect(counts,
+            cetta_deterministic_equation_plan_v1_apply(
+                plan, data_call, NULL, NULL, &arena, 128u, 10000u,
+                &out, &status, error, sizeof(error)) && atom_eq(out, expected),
+            "authored let executes while a let-shaped input remains literal data");
+        (void)expect(counts,
+            !cetta_deterministic_equation_plan_v1_run(
+                plan, data_call, NULL, NULL, &arena, 128u, 10000u,
+                &out, &status, error, sizeof(error)) && out == NULL &&
+                status == CETTA_DETERMINISTIC_EQUATION_V1_UNSUPPORTED_RULE,
+            "the same let-shaped input is invalid when explicitly executed");
+        (void)expect(counts,
+            !cetta_deterministic_equation_plan_v1_apply(
+                plan, value, NULL, NULL, &arena, 128u, 10000u,
+                &out, &status, error, sizeof(error)) && out == NULL &&
+                status == CETTA_DETERMINISTIC_EQUATION_V1_BAD_ARGUMENT,
+            "data application rejects a non-call entry");
+        (void)expect(counts,
+            !cetta_deterministic_equation_plan_v1_apply(
+                plan, data_call, NULL, NULL, &arena, 128u, 1u,
+                &out, &status, error, sizeof(error)) && out == NULL &&
+                status == CETTA_DETERMINISTIC_EQUATION_V1_RESOURCE_LIMIT,
+            "data application reports exhausted work without an answer");
     } else if (error[0]) fprintf(stderr, "source loader: %s\n", error);
     cetta_deterministic_equation_plan_v1_free(plan);
     plan = NULL;

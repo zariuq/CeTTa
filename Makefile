@@ -36734,12 +36734,12 @@ qualify-plain-bnf-denotation-lean-native-v1-body: \
 	packet_root="$(abspath $(BOOTSTRAP_TMPDIR))"; \
 	mkdir -p "$$packet_root"; \
 	evidence=$$(mktemp -d "$$packet_root/plain-bnf-lean-denotation.XXXXXX"); \
-	(cd "$$lean_root" && LAKE_JOBS=3 nice -n 19 lake build \
+	(cd "$$lean_root" && lake build \
 		Mettapedia.GSLT.Tools.ExportPlainBnfDenotationCases) \
 		> "$$evidence/lean-build.log" 2>&1 || { \
 		tail -n 40 "$$evidence/lean-build.log" >&2; exit 1; \
 	}; \
-	(cd "$$lean_root" && nice -n 19 lake env lean --run \
+	(cd "$$lean_root" && lake env lean --run \
 		Mettapedia/GSLT/Tools/ExportPlainBnfDenotationCases.lean \
 		"$$evidence/cases.metta" "$$evidence/expected.txt" \
 		"$$evidence/mutated-cases.metta"); \
@@ -36946,6 +36946,8 @@ TPTP_OFFICIAL_CORPUS_COMPATIBILITY_PREPARE_TEST_V1 ?= tests/langdef/tptp/officia
 TPTP_OFFICIAL_SYNTAX_OBSERVATION_TEST_V1 ?= tests/langdef/tptp/official_syntax_observation_v1.metta
 TPTP_OFFICIAL_SYNTAX_RECORDS_TEST_V1 ?= tests/langdef/tptp/official_syntax_records_v1.metta
 TPTP_OFFICIAL_SYNTAX_RECORDS_FAMILY_TEST_V1 ?= tests/langdef/tptp/official_syntax_records_family_v1.metta
+TPTP_OFFICIAL_SYNTAX_COMPACT_TEST_V1 ?= tests/langdef/tptp/official_syntax_compact_v1.metta
+TPTP_OFFICIAL_SYNTAX_COMPACT_EXPECTED_V1 ?= tests/langdef/tptp/official_syntax_compact_v1.expected
 TPTP_OFFICIAL_SYNTAX_RECORDS_TSTP_TEST_V1 ?= tests/langdef/tptp/official_syntax_records_tstp_v1.metta
 TPTP_OFFICIAL_SYNTAX_FOF_CNF_VIEW_TEST_V1 ?= tests/langdef/tptp/official_syntax_fof_cnf_view_v1.metta
 TPTP_OFFICIAL_SYNTAX_DIFFERENTIAL_TEST_V1 ?= tests/langdef/tptp/official_syntax_records_differential_v1.metta
@@ -37320,6 +37322,41 @@ test-tptp-official-syntax-records-family-v1:
 		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
 		test-tptp-official-syntax-records-family-v1-body
 
+.PHONY: test-tptp-official-syntax-compact-v1-body
+test-tptp-official-syntax-compact-v1-body: $(BIN) \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		lib/lib_tptp.metta lib/lib_bnf.metta lib/langdef.metta \
+		langdef/tptp/official_lexical_to_ebnf_v1.metta \
+		langdef/tptp/official_syntax_to_ebnf_v1.metta \
+		langdef/tptp/official_syntax_observation_v1.metta \
+		langdef/tptp/official_syntax_records_v1.metta \
+		$(TPTP_OFFICIAL_SYNTAX_COMPACT_TEST_V1) \
+		$(TPTP_OFFICIAL_SYNTAX_COMPACT_EXPECTED_V1) \
+		tests/langdef/tptp/official_syntax_families_v9200.p
+	@if [[ -z "$(strip $(TPTP_OFFICIAL_SYNTAX_BNF_V1))" || \
+		! -f "$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" ]]; then \
+		echo 'set TPTP_OFFICIAL_SYNTAX_BNF_V1 to the pinned official SyntaxBNF file' >&2; \
+		exit 2; \
+	fi
+	@set -eu; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 30000000 \
+		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
+		$(TPTP_OFFICIAL_SYNTAX_COMPACT_TEST_V1) \
+		"$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" \
+		tests/langdef/tptp/official_syntax_families_v9200.p); \
+	printf '%s\n' "$$result"; \
+	test "$$(printf '%s\n' "$$result" | sed '/^true$$/d')" = \
+		"$$(cat $(TPTP_OFFICIAL_SYNTAX_COMPACT_EXPECTED_V1))"
+
+.PHONY: test-tptp-official-syntax-compact-v1
+test-tptp-official-syntax-compact-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		test-tptp-official-syntax-compact-v1-body
+
 .PHONY: test-tptp-official-syntax-records-tstp-v1-body
 test-tptp-official-syntax-records-tstp-v1-body: $(BIN) \
 		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
@@ -37546,6 +37583,28 @@ test-tptp-official-reader-canonical-print-v1:
 		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
 		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
 		test-tptp-official-reader-canonical-print-v1-body
+
+test-tptp-official-compact-data-boundary-v1-body: $(BIN) \
+		lib/lib_tptp.metta lib/langdef.metta \
+		$(TPTP_OFFICIAL_RECORDS_TO_TEXT_V1) \
+		langdef/bnf/plain_bnf_denotation_v1.metta \
+		tests/langdef/tptp/official_compact_data_boundary_v1.metta \
+		tests/langdef/tptp/official_compact_data_boundary_v1.expected
+	@set -eu; \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --fuel 20000000 \
+		tests/langdef/tptp/official_compact_data_boundary_v1.metta); \
+	printf '%s\n' "$$result"; \
+	got=$$(printf '%s\n' "$$result" | sed '/^true$$/d'); \
+	test "$$got" = "$$(cat tests/langdef/tptp/official_compact_data_boundary_v1.expected)"
+
+.PHONY: test-tptp-official-compact-data-boundary-v1-body test-tptp-official-compact-data-boundary-v1
+test-tptp-official-compact-data-boundary-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		test-tptp-official-compact-data-boundary-v1-body
 
 .PHONY: test-tptp-official-reader-canonical-print-real-v1-body
 test-tptp-official-reader-canonical-print-real-v1-body: $(BIN) \
@@ -37883,6 +37942,117 @@ test-tptp-official-syntax-gate-failure-v1:
 	bash tests/support/check_tptp_reader_gate_failure_v1.sh "$$evidence" \
 		"$(TPTP_OFFICIAL_SYNTAX_BNF_V1)" "$(TPTP_OFFICIAL_CORPUS_ROOT_V1)"
 
+GRAMMAR_CONSTRUCTOR_ACTIONS_V1_OBJ = runtime/bootstrap/test_grammar_constructor_actions_v1.$(BUILD_OBJ_TAG).o
+GRAMMAR_CONSTRUCTOR_ACTIONS_V1_BIN = runtime/test_grammar_constructor_actions_v1-$(BUILD_OBJ_TAG)
+GRAMMAR_CONSTRUCTOR_ACTIONS_V1_FIXTURES = tests/langdef/grammar_constructor_actions_v1.metta
+
+$(GRAMMAR_CONSTRUCTOR_ACTIONS_V1_OBJ): tests/support/test_grammar_constructor_actions_v1.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(GRAMMAR_CONSTRUCTOR_ACTIONS_V1_BIN): $(GRAMMAR_CONSTRUCTOR_ACTIONS_V1_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-grammar-constructor-actions-v1-body test-grammar-constructor-actions-v1
+test-grammar-constructor-actions-v1-body: $(GRAMMAR_CONSTRUCTOR_ACTIONS_V1_BIN) $(GRAMMAR_CONSTRUCTOR_ACTIONS_V1_FIXTURES)
+	@$(GRAMMAR_CONSTRUCTOR_ACTIONS_V1_BIN) $(GRAMMAR_CONSTRUCTOR_ACTIONS_V1_FIXTURES)
+
+test-grammar-constructor-actions-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		test-grammar-constructor-actions-v1-body
+
+.PHONY: qualify-grammar-constructor-actions-lean-native-v1
+qualify-grammar-constructor-actions-lean-native-v1: test-grammar-constructor-actions-v1
+	@set -eu; \
+	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
+	if [ -z "$$lean_root" ]; then lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; fi; \
+	test -f "$$lean_root/lakefile.lean" || { \
+		echo 'METTAPEDIA_LEAN_ROOT must name the Mettapedia Lean project' >&2; exit 2; \
+	}; \
+	mkdir -p "$(BOOTSTRAP_TMPDIR)"; \
+	evidence=$$(mktemp -d "$(abspath $(BOOTSTRAP_TMPDIR))/grammar-constructor-actions.XXXXXX"); \
+	(cd "$$lean_root" && LAKE_JOBS=3 nice -n 19 lake build \
+		Mettapedia.GSLT.Tools.ExportGrammarConstructorActions) \
+		> "$$evidence/lean-build.log" 2>&1 || { \
+		tail -n 35 "$$evidence/lean-build.log" >&2; exit 1; \
+	}; \
+	(cd "$$lean_root" && nice -n 19 lake env lean --run \
+		Mettapedia/GSLT/Tools/ExportGrammarConstructorActions.lean) \
+		> "$$evidence/cases.metta"; \
+	cmp "$$evidence/cases.metta" "$(GRAMMAR_CONSTRUCTOR_ACTIONS_V1_FIXTURES)"; \
+	printf '%s\n' 'Typed action export matches the checked-in native fixtures.'
+
+METTA_ATOM_ACTIONS_V1_FIXTURES = tests/langdef/metta_atom_actions_v1.metta
+
+.PHONY: test-metta-atom-actions-v1-body test-metta-atom-actions-v1
+test-metta-atom-actions-v1-body: $(GRAMMAR_CONSTRUCTOR_ACTIONS_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN) $(METTA_ATOM_ACTIONS_V1_FIXTURES)
+	@python3 tools/test_metta_atom_action_compiler_v1.py \
+		--chart-binary $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--fixtures $(METTA_ATOM_ACTIONS_V1_FIXTURES)
+	@$(GRAMMAR_CONSTRUCTOR_ACTIONS_V1_BIN) $(METTA_ATOM_ACTIONS_V1_FIXTURES)
+
+test-metta-atom-actions-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		test-metta-atom-actions-v1-body
+
+.PHONY: qualify-metta-atom-actions-lean-native-v1
+qualify-metta-atom-actions-lean-native-v1: test-metta-atom-actions-v1
+	@set -eu; \
+	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
+	if [ -z "$$lean_root" ]; then lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; fi; \
+	test -f "$$lean_root/lakefile.lean" || { \
+		echo 'METTAPEDIA_LEAN_ROOT must name the Mettapedia Lean project' >&2; exit 2; \
+	}; \
+	mkdir -p "$(BOOTSTRAP_TMPDIR)"; \
+	evidence=$$(mktemp -d "$(abspath $(BOOTSTRAP_TMPDIR))/metta-atom-actions.XXXXXX"); \
+	(cd "$$lean_root" && LAKE_JOBS=3 nice -n 19 lake build \
+		Mettapedia.GSLT.Tools.ExportMeTTaAtomActions) \
+		> "$$evidence/lean-build.log" 2>&1 || { \
+		tail -n 35 "$$evidence/lean-build.log" >&2; exit 1; \
+	}; \
+	(cd "$$lean_root" && nice -n 19 lake env lean --run \
+		Mettapedia/GSLT/Tools/ExportMeTTaAtomActions.lean) \
+		> "$$evidence/cases.metta"; \
+	cmp "$$evidence/cases.metta" "$(METTA_ATOM_ACTIONS_V1_FIXTURES)"; \
+	printf '%s\n' 'Typed atom-action export matches the native fixtures.'
+
+TPTP_REGISTERED_ACTIONS_PARTIAL_V1_FIXTURES = tests/langdef/tptp_registered_actions_partial_v1.metta
+
+.PHONY: test-tptp-registered-actions-partial-v1-body test-tptp-registered-actions-partial-v1
+test-tptp-registered-actions-partial-v1-body: $(GRAMMAR_CONSTRUCTOR_ACTIONS_V1_BIN) $(TPTP_REGISTERED_ACTIONS_PARTIAL_V1_FIXTURES)
+	@$(GRAMMAR_CONSTRUCTOR_ACTIONS_V1_BIN) $(TPTP_REGISTERED_ACTIONS_PARTIAL_V1_FIXTURES)
+
+test-tptp-registered-actions-partial-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
+		test-tptp-registered-actions-partial-v1-body
+
+.PHONY: qualify-tptp-registered-actions-partial-v1
+qualify-tptp-registered-actions-partial-v1: test-tptp-registered-actions-partial-v1
+	@set -eu; \
+	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
+	if [ -z "$$lean_root" ]; then lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; fi; \
+	test -f "$$lean_root/lakefile.lean" || { \
+		echo 'METTAPEDIA_LEAN_ROOT must name the Mettapedia Lean project' >&2; exit 2; \
+	}; \
+	(cd "$$lean_root" && LAKE_JOBS=3 nice -n 19 lake build \
+		Mettapedia.GSLT.Tools.ExportTptpRegisteredActionControls); \
+	(cd "$$lean_root" && nice -n 19 lake env lean --run \
+		Mettapedia/GSLT/Tools/ExportTptpRegisteredActionControls.lean) | \
+		cmp - "$(TPTP_REGISTERED_ACTIONS_PARTIAL_V1_FIXTURES)"; \
+	printf '%s\n' 'Source-registered partial TPTP action export matches native controls.'
+
 .PHONY: test-lib-tptp-reader-v1
 test-lib-tptp-reader-v1:
 	@set -eu; \
@@ -37901,7 +38071,7 @@ test-lib-tptp-reader-v1:
 		test-tptp-official-syntax-snapshot-v1 \
 		test-tptp-official-corpus-compatibility-snapshot-v1 \
 		test-tptp-reader-artifact-reproducibility-v1 \
-		test-tptp-official-syntax-records-family-v1 \
+		test-tptp-official-syntax-compact-v1 \
 		test-tptp-official-syntax-records-tstp-v1 \
 		test-tptp-official-syntax-frozen-reader-contract-v1 \
 		test-tptp-official-reusable-reader-v1 \
@@ -37911,6 +38081,7 @@ test-lib-tptp-reader-v1:
 		test-tptp-official-reader-expression-inspection-v1 \
 		test-tptp-official-reader-source-document-v1 \
 		test-tptp-official-reader-canonical-print-v1 \
+		test-tptp-official-compact-data-boundary-v1 \
 		test-tptp-official-reader-canonical-print-real-v1 \
 		test-tptp-official-compact-lexical-value-v1 \
 		test-tptp-official-compact-include-resolution-v1 \

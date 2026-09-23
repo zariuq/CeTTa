@@ -2,13 +2,13 @@
 ;
 ; The default all-family reader loads a pinned ParserPack snapshot derived
 ; from the official Extended-BNF source and projects its source-spanned CST to
-; compact, source-shaped MeTTa records.  The independently executable authored
-; presentation remains the reference oracle for the specialized native
-; projection.
+; compact, source-shaped MeTTa records by interpreting the authored compact
+; projection. A generated total compact projector is not installed yet.
 ;
-; Every semantic transformation is executed from its declared LanguageDef
-; through a generic LanguageDef runtime.  The resulting terms are admitted by
-; their own LanguageDefs before they cross a public stage boundary.
+; Semantic stage operations below use the generic LanguageDef runtime.
+; Compact projection currently has no exhaustive grammar-domain admission or
+; concrete NTT/OSLF correspondence certificate. Grammar-production coverage
+; is tested separately and is not a substitute for those obligations.
 ;
 ; TPTP specifies logic and interchange formats, not a proof-search strategy.
 ; Accordingly this library contains no prover.  ATP examples may consume the
@@ -17,6 +17,7 @@
 
 !(import! &self langdef)
 !(import! &self fs)
+!(import! &self list)
 
 ; Pinned official SyntaxBNF digest. A mismatch is a named fault, not a parse.
 (= (tptp:official-syntaxbnf-digest)
@@ -129,10 +130,7 @@
           (TPTP:FileSource $path) (sha256 $text) $text
           (tptp:read-text $reader $text))))))
 (= (tptp:attach-source-document $identity $digest $text $outcome)
-   (case $outcome
-     (((tptp-rec:file $_inputs $_span)
-        (TPTP:SourceDocument $identity $digest $text $outcome))
-      ($_ $outcome))))
+   (TPTP:SourceDocument $identity $digest $text $outcome))
 (= (tptp:source-document-identity
       (TPTP:SourceDocument $identity $_digest $_text $_records))
    $identity)
@@ -263,9 +261,15 @@
        "langdef/tptp/official_compact_include_resolution_v1.metta")))
 (= (tptp:resolve-compact-include-environment-with
       $program $root-source $environment)
-   (langdef:run-deterministic-equations $program
+   (langdef:run-deterministic-equations-data $program
      (LangDef:DeterministicCall
        tptp-ci-v1:resolve $root-source $environment)))
+(= (tptp:compact-include-return $answers)
+   (function
+     (case (quote $answers)
+       ((($result) (return $result))
+        ($_ (return
+              (TPTP:IncludeResolutionCardinalityFaultV1 $answers)))))))
 (= (tptp:resolve-compact-include-environment $root-source $environment)
    (let $program (tptp:open-compact-include-resolution)
      (case $program
@@ -275,7 +279,7 @@
                  (tptp:resolve-compact-include-environment-with
                    $program $root-source $environment))
             (let $_ (langdef:close-deterministic-equations $program)
-              (superpose $answers))))
+              (tptp:compact-include-return $answers))))
         ($fault (TPTP:IncludeResolutionProgramFailureV1 $fault))))))
 
 ; Canonical printing is an executed authored transformation.  It normalizes
@@ -290,7 +294,7 @@
        (((NativeHandle $_kind $_id)
           (let $answers
                (collapse
-                 (langdef:run-deterministic-equations $program
+                 (langdef:run-deterministic-equations-data $program
                    (LangDef:DeterministicCall
                      tptp-print-v1:document $records)))
             (let $_ (langdef:close-deterministic-equations $program)
@@ -301,19 +305,17 @@
 ; The view preserves source order and duplicates and reuses each record value.
 (= (tptp:record-occurrences $document)
    (case $document
-     (((TPTP:SourceDocument $_identity $digest $_text
-          (tptp-rec:file $inputs $_span))
-        (tptp:record-occurrences-inputs $digest $inputs 0))
+     (((TPTP:SourceDocument $_identity $digest $_text $records)
+        (tptp:record-occurrences-records $digest $records 0))
       ($_ (TPTP:UnsupportedSourceDocument $document)))))
-(= (tptp:record-occurrences-inputs
-      $_digest (tptp-rec:inputs-nil) $_index)
-   LNil)
-(= (tptp:record-occurrences-inputs $digest
-      (tptp-rec:inputs-cons $head $tail) $index)
-   (LCons
-     (TPTP:RecordOccurrence
-       (TPTP:Occurrence $digest $index) (tptp:record-span $head) $head)
-     (tptp:record-occurrences-inputs $digest $tail (+ $index 1))))
+(= (tptp:record-occurrences-records $_digest () $_index) ())
+(= (tptp:record-occurrences-records $digest $records $index)
+   (let ($head $tail) (decons-atom $records)
+     (let $rest
+          (tptp:record-occurrences-records $digest $tail (+ $index 1))
+       (cons-atom
+         (TPTP:RecordOccurrence (TPTP:Occurrence $digest $index) $head)
+         $rest))))
 (= (tptp:official-reader $syntax-path)
    (case (== (tptp:syntaxbnf-digest $syntax-path) (tptp:official-syntaxbnf-digest))
      ((True (tptp:open-reader strict))
@@ -321,302 +323,225 @@
 
 ; ------------------------------------------------------ record utilities --
 
-; The input carrier is already an ordered persistent sequence.  Returning it
-; directly avoids copying every record merely to change the list constructor.
-(= (tptp:records (tptp-rec:file $inputs $_span)) $inputs)
-(= (tptp:file-span (tptp-rec:file $_inputs $span)) $span)
+; A parsed file is the ordinary expression of its records.  No second list or
+; file carrier is introduced at the public boundary.
+(= (tptp:records $records) $records)
+(= (tptp:file-span $_records) (TPTP:SpanUnavailable compact-value))
 
 (= (tptp:record-family $record)
    (case $record
-     (((tptp-rec:fof $_name $_role $_formula $_annotation $_span) fof)
-      ((tptp-rec:cnf $_name $_role $_formula $_annotation $_span) cnf)
-      ((tptp-rec:tff $_name $_role $_formula $_annotation $_span) tff)
-      ((tptp-rec:thf $_name $_role $_formula $_annotation $_span) thf)
-      ((tptp-rec:tcf $_name $_role $_formula $_annotation $_span) tcf)
-      ((tptp-rec:tpi $_name $_role $_formula $_annotation $_span) tpi)
-      ((tptp-rec:include $_file $_selection $_qualification $_span) include)
+     (((fof $_name $_role $_formula) fof)
+      ((fof $_name $_role $_formula $_annotation) fof)
+      ((cnf $_name $_role $_formula) cnf)
+      ((cnf $_name $_role $_formula $_annotation) cnf)
+      ((tff $_name $_role $_formula) tff)
+      ((tff $_name $_role $_formula $_annotation) tff)
+      ((thf $_name $_role $_formula) thf)
+      ((thf $_name $_role $_formula $_annotation) thf)
+      ((tcf $_name $_role $_formula) tcf)
+      ((tcf $_name $_role $_formula $_annotation) tcf)
+      ((tpi $_name $_role $_formula) tpi)
+      ((tpi $_name $_role $_formula $_annotation) tpi)
+      ((incl $_file) include)
+      ((incl $_file $_selection) include)
+      ((incl $_file $_selection $_qualification) include)
       ($_ (TPTP:UnsupportedRecord $record)))))
 
 (= (tptp:record-name $record)
    (case $record
-     (((tptp-rec:fof $name $_role $_formula $_annotation $_span)
-        (TPTP:RecordName $name))
-      ((tptp-rec:cnf $name $_role $_formula $_annotation $_span)
-        (TPTP:RecordName $name))
-      ((tptp-rec:tff $name $_role $_formula $_annotation $_span)
-        (TPTP:RecordName $name))
-      ((tptp-rec:thf $name $_role $_formula $_annotation $_span)
-        (TPTP:RecordName $name))
-      ((tptp-rec:tcf $name $_role $_formula $_annotation $_span)
-        (TPTP:RecordName $name))
-      ((tptp-rec:tpi $name $_role $_formula $_annotation $_span)
-        (TPTP:RecordName $name))
-      ((tptp-rec:include $_file $_selection $_qualification $_span)
+     (((fof $name $_role $_formula) (TPTP:RecordName $name))
+      ((fof $name $_role $_formula $_annotation) (TPTP:RecordName $name))
+      ((cnf $name $_role $_formula) (TPTP:RecordName $name))
+      ((cnf $name $_role $_formula $_annotation) (TPTP:RecordName $name))
+      ((tff $name $_role $_formula) (TPTP:RecordName $name))
+      ((tff $name $_role $_formula $_annotation) (TPTP:RecordName $name))
+      ((thf $name $_role $_formula) (TPTP:RecordName $name))
+      ((thf $name $_role $_formula $_annotation) (TPTP:RecordName $name))
+      ((tcf $name $_role $_formula) (TPTP:RecordName $name))
+      ((tcf $name $_role $_formula $_annotation) (TPTP:RecordName $name))
+      ((tpi $name $_role $_formula) (TPTP:RecordName $name))
+      ((tpi $name $_role $_formula $_annotation) (TPTP:RecordName $name))
+      ((incl $_file) (TPTP:NotApplicable record-name include))
+      ((incl $_file $_selection) (TPTP:NotApplicable record-name include))
+      ((incl $_file $_selection $_qualification)
         (TPTP:NotApplicable record-name include))
       ($_ (TPTP:UnsupportedRecord $record)))))
 
 (= (tptp:record-role $record)
    (case $record
-     (((tptp-rec:fof $_name $role $_formula $_annotation $_span)
-        (TPTP:RecordRole $role))
-      ((tptp-rec:cnf $_name $role $_formula $_annotation $_span)
-        (TPTP:RecordRole $role))
-      ((tptp-rec:tff $_name $role $_formula $_annotation $_span)
-        (TPTP:RecordRole $role))
-      ((tptp-rec:thf $_name $role $_formula $_annotation $_span)
-        (TPTP:RecordRole $role))
-      ((tptp-rec:tcf $_name $role $_formula $_annotation $_span)
-        (TPTP:RecordRole $role))
-      ((tptp-rec:tpi $_name $role $_formula $_annotation $_span)
-        (TPTP:RecordRole $role))
-      ((tptp-rec:include $_file $_selection $_qualification $_span)
+     (((fof $_name $role $_formula) (TPTP:RecordRole $role))
+      ((fof $_name $role $_formula $_annotation) (TPTP:RecordRole $role))
+      ((cnf $_name $role $_formula) (TPTP:RecordRole $role))
+      ((cnf $_name $role $_formula $_annotation) (TPTP:RecordRole $role))
+      ((tff $_name $role $_formula) (TPTP:RecordRole $role))
+      ((tff $_name $role $_formula $_annotation) (TPTP:RecordRole $role))
+      ((thf $_name $role $_formula) (TPTP:RecordRole $role))
+      ((thf $_name $role $_formula $_annotation) (TPTP:RecordRole $role))
+      ((tcf $_name $role $_formula) (TPTP:RecordRole $role))
+      ((tcf $_name $role $_formula $_annotation) (TPTP:RecordRole $role))
+      ((tpi $_name $role $_formula) (TPTP:RecordRole $role))
+      ((tpi $_name $role $_formula $_annotation) (TPTP:RecordRole $role))
+      ((incl $_file) (TPTP:NotApplicable record-role include))
+      ((incl $_file $_selection) (TPTP:NotApplicable record-role include))
+      ((incl $_file $_selection $_qualification)
         (TPTP:NotApplicable record-role include))
       ($_ (TPTP:UnsupportedRecord $record)))))
 
 (= (tptp:record-formula $record)
    (case $record
-     (((tptp-rec:fof $_name $_role $formula $_annotation $_span)
-        (TPTP:RecordFormula $formula))
-      ((tptp-rec:cnf $_name $_role $formula $_annotation $_span)
-        (TPTP:RecordFormula $formula))
-      ((tptp-rec:tff $_name $_role $formula $_annotation $_span)
-        (TPTP:RecordFormula $formula))
-      ((tptp-rec:thf $_name $_role $formula $_annotation $_span)
-        (TPTP:RecordFormula $formula))
-      ((tptp-rec:tcf $_name $_role $formula $_annotation $_span)
-        (TPTP:RecordFormula $formula))
-      ((tptp-rec:tpi $_name $_role $formula $_annotation $_span)
-        (TPTP:RecordFormula $formula))
-      ((tptp-rec:include $_file $_selection $_qualification $_span)
+     (((fof $_name $_role $formula) (TPTP:RecordFormula $formula))
+      ((fof $_name $_role $formula $_annotation) (TPTP:RecordFormula $formula))
+      ((cnf $_name $_role $formula) (TPTP:RecordFormula $formula))
+      ((cnf $_name $_role $formula $_annotation) (TPTP:RecordFormula $formula))
+      ((tff $_name $_role $formula) (TPTP:RecordFormula $formula))
+      ((tff $_name $_role $formula $_annotation) (TPTP:RecordFormula $formula))
+      ((thf $_name $_role $formula) (TPTP:RecordFormula $formula))
+      ((thf $_name $_role $formula $_annotation) (TPTP:RecordFormula $formula))
+      ((tcf $_name $_role $formula) (TPTP:RecordFormula $formula))
+      ((tcf $_name $_role $formula $_annotation) (TPTP:RecordFormula $formula))
+      ((tpi $_name $_role $formula) (TPTP:RecordFormula $formula))
+      ((tpi $_name $_role $formula $_annotation) (TPTP:RecordFormula $formula))
+      ((incl $_file) (TPTP:NotApplicable record-formula include))
+      ((incl $_file $_selection) (TPTP:NotApplicable record-formula include))
+      ((incl $_file $_selection $_qualification)
         (TPTP:NotApplicable record-formula include))
       ($_ (TPTP:UnsupportedRecord $record)))))
 
 (= (tptp:record-annotation $record)
    (case $record
-     (((tptp-rec:fof $_name $_role $_formula $annotation $_span)
+     (((fof $_name $_role $_formula) (TPTP:NoAnnotation))
+      ((fof $_name $_role $_formula $annotation)
         (TPTP:RecordAnnotation $annotation))
-      ((tptp-rec:cnf $_name $_role $_formula $annotation $_span)
+      ((cnf $_name $_role $_formula) (TPTP:NoAnnotation))
+      ((cnf $_name $_role $_formula $annotation)
         (TPTP:RecordAnnotation $annotation))
-      ((tptp-rec:tff $_name $_role $_formula $annotation $_span)
+      ((tff $_name $_role $_formula) (TPTP:NoAnnotation))
+      ((tff $_name $_role $_formula $annotation)
         (TPTP:RecordAnnotation $annotation))
-      ((tptp-rec:thf $_name $_role $_formula $annotation $_span)
+      ((thf $_name $_role $_formula) (TPTP:NoAnnotation))
+      ((thf $_name $_role $_formula $annotation)
         (TPTP:RecordAnnotation $annotation))
-      ((tptp-rec:tcf $_name $_role $_formula $annotation $_span)
+      ((tcf $_name $_role $_formula) (TPTP:NoAnnotation))
+      ((tcf $_name $_role $_formula $annotation)
         (TPTP:RecordAnnotation $annotation))
-      ((tptp-rec:tpi $_name $_role $_formula $annotation $_span)
+      ((tpi $_name $_role $_formula) (TPTP:NoAnnotation))
+      ((tpi $_name $_role $_formula $annotation)
         (TPTP:RecordAnnotation $annotation))
-      ((tptp-rec:include $_file $_selection $_qualification $_span)
+      ((incl $_file) (TPTP:NotApplicable record-annotation include))
+      ((incl $_file $_selection) (TPTP:NotApplicable record-annotation include))
+      ((incl $_file $_selection $_qualification)
         (TPTP:NotApplicable record-annotation include))
       ($_ (TPTP:UnsupportedRecord $record)))))
 
-(= (tptp:record-span $record)
-   (case $record
-     (((tptp-rec:fof $_name $_role $_formula $_annotation $span) $span)
-      ((tptp-rec:cnf $_name $_role $_formula $_annotation $span) $span)
-      ((tptp-rec:tff $_name $_role $_formula $_annotation $span) $span)
-      ((tptp-rec:thf $_name $_role $_formula $_annotation $span) $span)
-      ((tptp-rec:tcf $_name $_role $_formula $_annotation $span) $span)
-      ((tptp-rec:tpi $_name $_role $_formula $_annotation $span) $span)
-      ((tptp-rec:include $_file $_selection $_qualification $span) $span)
-      ($_ (TPTP:UnsupportedRecord $record)))))
+(= (tptp:record-span $_record) (TPTP:SpanUnavailable compact-value))
+(= (tptp:name-text $name) $name)
+(= (tptp:role-text $role) $role)
 
-(= (tptp:name-text $name)
-   (case $name
-     (((tptp-rec:name-word (tptp-rec:word-lower $text)) $text)
-      ((tptp-rec:name-word (tptp-rec:word-quoted $text)) $text)
-      ((tptp-rec:name-integer $text) $text)
-      ($_ (TPTP:UnsupportedName $name)))))
-(= (tptp:role-text (tptp-rec:role $text)) $text)
+(= (tptp:record-count $records)
+   (let $count (size-atom $records) $count))
 
-(= (tptp:record-count (tptp-rec:file $inputs $_span))
-   (tptp:record-sequence-count $inputs 0))
-(= (tptp:record-sequence-count (tptp-rec:inputs-nil) $count) $count)
-(= (tptp:record-sequence-count
-      (tptp-rec:inputs-cons $_head $tail) $count)
-   (tptp:record-sequence-count $tail (+ $count 1)))
-
-(= (tptp:select-family $family (tptp-rec:file $inputs $span))
-   (tptp-rec:file (tptp:select-family-inputs $family $inputs) $span))
-(= (tptp:select-family-inputs $_family (tptp-rec:inputs-nil))
-   (tptp-rec:inputs-nil))
-(= (tptp:select-family-inputs $family
-      (tptp-rec:inputs-cons $head $tail))
-   (case (== $family (tptp:record-family $head))
-     ((True
-        (tptp-rec:inputs-cons $head
-          (tptp:select-family-inputs $family $tail)))
-      (False (tptp:select-family-inputs $family $tail)))))
+(= (tptp:select-family $_family ()) ())
+(= (tptp:select-family $family $records)
+   (let ($head $tail) (decons-atom $records)
+     (let $selected-tail (tptp:select-family $family $tail)
+       (if (== $family (tptp:record-family $head))
+           (let $selected
+                (cons-atom $head $selected-tail)
+             $selected)
+           $selected-tail))))
 
 (= (tptp:record-has-name $name $record)
    (case (tptp:record-name $record)
      (((TPTP:RecordName $actual) (== $name $actual))
       ($_ False))))
-(= (tptp:select-name $name (tptp-rec:file $inputs $span))
-   (tptp-rec:file (tptp:select-name-inputs $name $inputs) $span))
-(= (tptp:select-name-inputs $_name (tptp-rec:inputs-nil))
-   (tptp-rec:inputs-nil))
-(= (tptp:select-name-inputs $name
-      (tptp-rec:inputs-cons $head $tail))
-   (case (tptp:record-has-name $name $head)
-     ((True
-        (tptp-rec:inputs-cons $head
-          (tptp:select-name-inputs $name $tail)))
-      (False (tptp:select-name-inputs $name $tail)))))
+(= (tptp:select-name $_name ()) ())
+(= (tptp:select-name $name $records)
+   (let ($head $tail) (decons-atom $records)
+     (let $selected-tail (tptp:select-name $name $tail)
+       (if (tptp:record-has-name $name $head)
+           (let $selected
+                (cons-atom $head $selected-tail)
+             $selected)
+           $selected-tail))))
 
 (= (tptp:record-has-role $role $record)
    (case (tptp:record-role $record)
      (((TPTP:RecordRole $actual) (== $role $actual))
       ($_ False))))
-(= (tptp:select-role $role (tptp-rec:file $inputs $span))
-   (tptp-rec:file (tptp:select-role-inputs $role $inputs) $span))
-(= (tptp:select-role-inputs $_role (tptp-rec:inputs-nil))
-   (tptp-rec:inputs-nil))
-(= (tptp:select-role-inputs $role
-      (tptp-rec:inputs-cons $head $tail))
-   (case (tptp:record-has-role $role $head)
-     ((True
-        (tptp-rec:inputs-cons $head
-          (tptp:select-role-inputs $role $tail)))
-      (False (tptp:select-role-inputs $role $tail)))))
+(= (tptp:select-role $_role ()) ())
+(= (tptp:select-role $role $records)
+   (let ($head $tail) (decons-atom $records)
+     (let $selected-tail (tptp:select-role $role $tail)
+       (if (tptp:record-has-role $role $head)
+           (let $selected
+                (cons-atom $head $selected-tail)
+             $selected)
+           $selected-tail))))
 
-(= (tptp:record-statistics (tptp-rec:file $inputs $_span))
-   (tptp:record-statistics-inputs $inputs 0 0 0 0 0 0 0 0))
-(= (tptp:record-statistics-inputs (tptp-rec:inputs-nil)
+(= (tptp:record-statistics $records)
+   (tptp:record-statistics-inputs $records 0 0 0 0 0 0 0 0))
+(= (tptp:record-statistics-inputs ()
       $total $fof $cnf $tff $thf $tcf $tpi $include)
    (TPTP:RecordStatistics
      $total $fof $cnf $tff $thf $tcf $tpi $include))
-(= (tptp:record-statistics-inputs
-      (tptp-rec:inputs-cons $head $tail)
+(= (tptp:record-statistics-inputs $records
       $total $fof $cnf $tff $thf $tcf $tpi $include)
-   (case (tptp:record-family $head)
-     ((fof (tptp:record-statistics-inputs $tail
-             (+ $total 1) (+ $fof 1) $cnf $tff $thf $tcf $tpi $include))
-      (cnf (tptp:record-statistics-inputs $tail
-             (+ $total 1) $fof (+ $cnf 1) $tff $thf $tcf $tpi $include))
-      (tff (tptp:record-statistics-inputs $tail
-             (+ $total 1) $fof $cnf (+ $tff 1) $thf $tcf $tpi $include))
-      (thf (tptp:record-statistics-inputs $tail
-             (+ $total 1) $fof $cnf $tff (+ $thf 1) $tcf $tpi $include))
-      (tcf (tptp:record-statistics-inputs $tail
-             (+ $total 1) $fof $cnf $tff $thf (+ $tcf 1) $tpi $include))
-      (tpi (tptp:record-statistics-inputs $tail
-             (+ $total 1) $fof $cnf $tff $thf $tcf (+ $tpi 1) $include))
-      (include (tptp:record-statistics-inputs $tail
-                 (+ $total 1) $fof $cnf $tff $thf $tcf $tpi (+ $include 1)))
-      ($unsupported $unsupported))))
+   (let ($head $tail) (decons-atom $records)
+     (case (tptp:record-family $head)
+       ((fof (tptp:record-statistics-inputs $tail
+               (+ $total 1) (+ $fof 1) $cnf $tff $thf $tcf $tpi $include))
+        (cnf (tptp:record-statistics-inputs $tail
+               (+ $total 1) $fof (+ $cnf 1) $tff $thf $tcf $tpi $include))
+        (tff (tptp:record-statistics-inputs $tail
+               (+ $total 1) $fof $cnf (+ $tff 1) $thf $tcf $tpi $include))
+        (thf (tptp:record-statistics-inputs $tail
+               (+ $total 1) $fof $cnf $tff (+ $thf 1) $tcf $tpi $include))
+        (tcf (tptp:record-statistics-inputs $tail
+               (+ $total 1) $fof $cnf $tff $thf (+ $tcf 1) $tpi $include))
+        (tpi (tptp:record-statistics-inputs $tail
+               (+ $total 1) $fof $cnf $tff $thf $tcf (+ $tpi 1) $include))
+        (include (tptp:record-statistics-inputs $tail
+                   (+ $total 1) $fof $cnf $tff $thf $tcf $tpi (+ $include 1)))
+        ($unsupported $unsupported)))))
 
-; Formulae, terms, and types share the official record expression algebra.
-; These two total views let consumers traverse it without knowing parser labels.
+; Formulae, terms, and types are ordinary MeTTa atoms.  Named logical heads
+; receive precise kinds; every other expression is an application/sequence.
 (= (tptp:expression-kind $expression)
    (case $expression
-     (((tptp-rec:atom $_head $_arguments) atom)
-      ((tptp-rec:equals $_left $_right) equals)
-      ((tptp-rec:not-equals $_left $_right) not-equals)
-      ((tptp-rec:not $_body) not)
-      ((tptp-rec:and $_left $_right) and)
-      ((tptp-rec:or $_left $_right) or)
-      ((tptp-rec:iff $_left $_right) iff)
-      ((tptp-rec:implies $_left $_right) implies)
-      ((tptp-rec:reverse-implies $_left $_right) reverse-implies)
-      ((tptp-rec:xor $_left $_right) xor)
-      ((tptp-rec:nor $_left $_right) nor)
-      ((tptp-rec:nand $_left $_right) nand)
-      ((tptp-rec:forall $_variables $_body) forall)
-      ((tptp-rec:exists $_variables $_body) exists)
-      ((tptp-rec:apply $_function $_argument) apply)
-      ((tptp-rec:typing $_term $_type) typing)
-      ((tptp-rec:map-type $_domain $_codomain) map-type)
-      ((tptp-rec:xprod $_left $_right) product-type)
-      ((tptp-rec:fun $_head $_arguments) function)
-      ((tptp-rec:gen-fun $_head $_arguments) general-function)
-      ((tptp-rec:var $_name) variable)
-      ((tptp-rec:typed-var $_variable $_type) typed-variable)
-      ((tptp-rec:terms-nil) term-sequence)
-      ((tptp-rec:terms-cons $_head $_tail) term-sequence)
-      ((tptp-rec:vars-nil) variable-sequence)
-      ((tptp-rec:vars-cons $_head $_tail) variable-sequence)
-      ((tptp-rec:let $_definitions $_bindings $_body) let)
-      ((tptp-rec:long-connective $_name $_parameters) long-connective)
-      ((tptp-rec:prefix $_operator $_body) prefix)
-      ((tptp-rec:gen-list $_items) general-list)
-      ((tptp-rec:gen-colon $_left $_right) general-colon)
-      ((tptp-rec:type-defined $_name) defined-type)
-      ((tptp-rec:pi $_variables $_body) pi)
-      ((tptp-rec:sigma $_variables $_body) sigma)
-      ((tptp-rec:lambda $_variables $_body) lambda)
-      ((tptp-rec:choice $_variables $_body) choice)
-      ((tptp-rec:definite $_variables $_body) definite)
-      ((tptp-rec:word-lower $_text) lower-word)
-      ((tptp-rec:word-quoted $_text) quoted-word)
-      ((tptp-rec:word-back $_text) back-quoted-word)
-      ((tptp-rec:word-defined $_text) defined-word)
-      ((tptp-rec:word-system $_text) system-word)
-      ((tptp-rec:word-upper $_text) upper-word)
-      ((tptp-rec:number-integer $_text) integer)
-      ((tptp-rec:number-rational $_text) rational)
-      ((tptp-rec:number-real $_text) real)
-      ((tptp-rec:distinct-object $_text) distinct-object)
-      ($_ (TPTP:UnsupportedExpression $expression)))))
+     (((¬ $_body) not)
+      ((∧ $_left $_right) and)
+      ((∨ $_left $_right) or)
+      ((→ $_left $_right) implies)
+      ((← $_left $_right) reverse-implies)
+      ((↔ $_left $_right) iff)
+      ((⊕ $_left $_right) xor)
+      ((⊼ $_left $_right) nand)
+      ((⊽ $_left $_right) nor)
+      ((≈ $_left $_right) equals)
+      ((≉ $_left $_right) not-equals)
+      ((∀ $_variables $_body) forall)
+      ((∃ $_variables $_body) exists)
+      ((λ $_variables $_body) lambda)
+      ((: $_term $_type) typing)
+      ((⇒ $_domain $_codomain) map-type)
+      ((× $_left $_right) product-type)
+      ((⊎ $_left $_right) sum-type)
+      ((§let $_types $_definitions $_body) let)
+      ((ℚ $_numerator $_denominator) rational)
+      ((ℝ $_lexeme) real)
+      ((◊ $_text) distinct-object)
+      ((⌜ $_text) back-quoted-word)
+      ($_ (tptp:expression-kind-metatype
+            (get-metatype $expression))))))
+(= (tptp:expression-kind-metatype Expression) application)
+(= (tptp:expression-kind-metatype Symbol) symbol)
+(= (tptp:expression-kind-metatype Grounded) literal)
+(= (tptp:expression-kind-metatype Variable) host-variable)
 
 (= (tptp:expression-children $expression)
-   (case $expression
-     (((tptp-rec:atom $head $arguments) (LCons $head (LCons $arguments LNil)))
-      ((tptp-rec:equals $left $right) (LCons $left (LCons $right LNil)))
-      ((tptp-rec:not-equals $left $right) (LCons $left (LCons $right LNil)))
-      ((tptp-rec:not $body) (LCons $body LNil))
-      ((tptp-rec:and $left $right) (LCons $left (LCons $right LNil)))
-      ((tptp-rec:or $left $right) (LCons $left (LCons $right LNil)))
-      ((tptp-rec:iff $left $right) (LCons $left (LCons $right LNil)))
-      ((tptp-rec:implies $left $right) (LCons $left (LCons $right LNil)))
-      ((tptp-rec:reverse-implies $left $right) (LCons $left (LCons $right LNil)))
-      ((tptp-rec:xor $left $right) (LCons $left (LCons $right LNil)))
-      ((tptp-rec:nor $left $right) (LCons $left (LCons $right LNil)))
-      ((tptp-rec:nand $left $right) (LCons $left (LCons $right LNil)))
-      ((tptp-rec:forall $variables $body)
-        (LCons $variables (LCons $body LNil)))
-      ((tptp-rec:exists $variables $body)
-        (LCons $variables (LCons $body LNil)))
-      ((tptp-rec:apply $function $argument)
-        (LCons $function (LCons $argument LNil)))
-      ((tptp-rec:typing $term $type) (LCons $term (LCons $type LNil)))
-      ((tptp-rec:map-type $domain $codomain)
-        (LCons $domain (LCons $codomain LNil)))
-      ((tptp-rec:xprod $left $right) (LCons $left (LCons $right LNil)))
-      ((tptp-rec:fun $head $arguments) (LCons $head (LCons $arguments LNil)))
-      ((tptp-rec:gen-fun $head $arguments)
-        (LCons $head (LCons $arguments LNil)))
-      ((tptp-rec:var $name) (LCons $name LNil))
-      ((tptp-rec:typed-var $variable $type)
-        (LCons $variable (LCons $type LNil)))
-      ((tptp-rec:terms-nil) LNil)
-      ((tptp-rec:terms-cons $head $tail) (LCons $head (LCons $tail LNil)))
-      ((tptp-rec:vars-nil) LNil)
-      ((tptp-rec:vars-cons $head $tail) (LCons $head (LCons $tail LNil)))
-      ((tptp-rec:let $definitions $bindings $body)
-        (LCons $definitions (LCons $bindings (LCons $body LNil))))
-      ((tptp-rec:long-connective $name $parameters)
-        (LCons $name (LCons $parameters LNil)))
-      ((tptp-rec:prefix $operator $body)
-        (LCons $operator (LCons $body LNil)))
-      ((tptp-rec:gen-list $items) (LCons $items LNil))
-      ((tptp-rec:gen-colon $left $right) (LCons $left (LCons $right LNil)))
-      ((tptp-rec:type-defined $name) (LCons $name LNil))
-      ((tptp-rec:pi $variables $body) (LCons $variables (LCons $body LNil)))
-      ((tptp-rec:sigma $variables $body) (LCons $variables (LCons $body LNil)))
-      ((tptp-rec:lambda $variables $body) (LCons $variables (LCons $body LNil)))
-      ((tptp-rec:choice $variables $body) (LCons $variables (LCons $body LNil)))
-      ((tptp-rec:definite $variables $body) (LCons $variables (LCons $body LNil)))
-      ((tptp-rec:word-lower $_text) LNil)
-      ((tptp-rec:word-quoted $_text) LNil)
-      ((tptp-rec:word-back $_text) LNil)
-      ((tptp-rec:word-defined $_text) LNil)
-      ((tptp-rec:word-system $_text) LNil)
-      ((tptp-rec:word-upper $_text) LNil)
-      ((tptp-rec:number-integer $_text) LNil)
-      ((tptp-rec:number-rational $_text) LNil)
-      ((tptp-rec:number-real $_text) LNil)
-      ((tptp-rec:distinct-object $_text) LNil)
-      ($_ (TPTP:UnsupportedExpression $expression)))))
+   (case (get-metatype $expression)
+     ((Expression (cdr-atom $expression))
+      ($_ ()))))
 
 ; ------------------------------------------------------------- admission --
 
@@ -904,10 +829,10 @@
       (TPTP:CompactIncludeLoadStateV1 $documents $bindings $seen) $outcome)
    (case $outcome
      (((TPTP:SourceDocument $_identity $digest $text
-          (tptp-rec:file $inputs $span))
+          $inputs)
         (let $document
              (tptp-ci-v1:source-document $source $digest
-               (tptp-rec:file $inputs $span) $text)
+               $inputs $text)
           (tptp:compact-include-load-inputs
             $reader $program $source $inputs $library-root
             (TPTP:CompactIncludeLoadStateV1
@@ -917,36 +842,31 @@
           (TPTP:IncludeSourceReadFaultV1 $source $fault))))))
 
 (= (tptp:compact-include-load-inputs
-      $_reader $_program $_source (tptp-rec:inputs-nil) $_library-root $state)
+      $_reader $_program $_source () $_library-root $state)
    $state)
 (= (tptp:compact-include-load-inputs
-      $reader $program $source (tptp-rec:inputs-cons $head $tail)
+      $reader $program $source $inputs
       $library-root $state)
-   (case $head
-     (((tptp-rec:include $file $_selection $_qualification $_span)
-        (tptp:compact-include-load-file-value
-          $reader $program $source $tail $library-root $state
-          (tptp:compact-lexical-value-with
-            $program tptp-lex-v1:word-value $file)))
-      ($_
-        (tptp:compact-include-load-inputs
-          $reader $program $source $tail $library-root $state)))))
-
-(= (tptp:compact-include-load-file-value
-      $reader $program $source $tail $library-root $state $outcome)
-   (case $outcome
-     (((TPTP:LexicalValue $requested)
-        (tptp:compact-include-load-physical
-          $reader $program $source $requested $tail $library-root $state
-          (tptp:resolve-physical-include
-            $source $requested $library-root)))
-      ((TPTP:LexicalFault $kind $raw)
-        (TPTP:IncludeLoadFaultV1
-          (TPTP:IncludeLexicalFaultV1 include-file
-            (TPTP:LexicalFault $kind $raw))))
-      ($other
-        (TPTP:IncludeLoadFaultV1
-          (TPTP:IncludeLexicalExecutionFaultV1 $source $other))))))
+   (let ($head $tail) (decons-atom $inputs)
+     (case $head
+       (((incl $requested)
+          (tptp:compact-include-load-physical
+            $reader $program $source $requested $tail $library-root $state
+            (tptp:resolve-physical-include
+              $source $requested $library-root)))
+        ((incl $requested $_selection)
+          (tptp:compact-include-load-physical
+            $reader $program $source $requested $tail $library-root $state
+            (tptp:resolve-physical-include
+              $source $requested $library-root)))
+        ((incl $requested $_selection $_qualification)
+          (tptp:compact-include-load-physical
+            $reader $program $source $requested $tail $library-root $state
+            (tptp:resolve-physical-include
+              $source $requested $library-root)))
+        ($_
+          (tptp:compact-include-load-inputs
+            $reader $program $source $tail $library-root $state))))))
 
 (= (tptp:compact-include-load-physical
       $reader $program $source $requested $tail $library-root

@@ -3105,6 +3105,17 @@ static bool add_atoms_source_shape(Atom *items, Atom **out_source_ref,
                                    SpaceTransferEndpointKind *out_source_kind);
 static bool add_atoms_public_syntax_has_only_default(Space *s);
 
+static bool grounded_dispatch_is_deterministic_equations_run_data(
+    Atom *head) {
+    if (!head || head->kind != ATOM_SYMBOL)
+        return false;
+    SymbolId head_id = head->sym_id;
+    const char *name =
+        head_id == SYMBOL_ID_NONE ? NULL : symbol_bytes(g_symbols, head_id);
+    return name &&
+           strcmp(name, "__cetta_lib_deterministic_equations_run_data") == 0;
+}
+
 static bool grounded_dispatch_accepts_data_arg(Atom *head, uint32_t arg_index) {
     if (!head || head->kind != ATOM_SYMBOL)
         return false;
@@ -3147,6 +3158,11 @@ static bool grounded_dispatch_accepts_data_arg(Atom *head, uint32_t arg_index) {
     if (head->sym_id == g_builtin_syms.compile_rule_program_run_native)
         return arg_index == 4u;
     SymbolId head_id = head->sym_id;
+    /* Data application passes a literal call with already computed arguments
+     * to the authored transformation.  Its handle remains strict; ordinary
+     * run and run-allowance retain their expression-evaluation contract. */
+    if (grounded_dispatch_is_deterministic_equations_run_data(head))
+        return arg_index == 1u;
     if (arg_index == 1 &&
         (head_id == g_builtin_syms.add_atom ||
          head_id == g_builtin_syms.remove_atom))
@@ -36583,6 +36599,14 @@ static bool petta_eval_machine_all_grounded_args_are_data(
     return true;
 }
 
+static bool petta_eval_machine_preserves_mixed_data_call(
+    Atom *expression) {
+    return expression && expression->kind == ATOM_EXPR &&
+           expression->expr.len > 0u &&
+           grounded_dispatch_is_deterministic_equations_run_data(
+               expression->expr.elems[0]);
+}
+
 static PettaMachineHostMode petta_eval_machine_classify_host(
     void *context, Space *space, Atom *expression) {
     (void)context;
@@ -36728,12 +36752,14 @@ static PettaMachineHostMode petta_eval_machine_classify_host(
     }
     /*
      * A grounded operation whose complete argument contract is data-owned
-     * must receive its source arguments without PeTTa evaluating nested
-     * expressions first.  The shared evaluator remains the single authority
-     * for that contract; this classifier only preserves it across the
-     * relational-machine boundary.
+     * must reach the shared evaluator before uniform strict evaluation can
+     * erase those arguments.  The deterministic-equation data runner is the
+     * one mixed contract admitted here: its handle is strict while its call
+     * payload is data.  Other mixed operations retain their established
+     * control-form routing.
      */
-    if (petta_eval_machine_all_grounded_args_are_data(expression)) {
+    if (petta_eval_machine_all_grounded_args_are_data(expression) ||
+        petta_eval_machine_preserves_mixed_data_call(expression)) {
         return PETTA_MACHINE_HOST_READY_APPLICATION;
     }
     if (form == PETTA_FORM_IS_SPACE)
@@ -40848,12 +40874,14 @@ tail_call: ;
     /*
      * Nested PeTTa control delimiters deliberately avoid recursively
      * entering the relational machine.  Preserve the same grounded
-     * argument contract on that legacy path: an operation whose complete
-     * input is declared as data dispatches before tuple interpretation can
-     * evaluate any expression-shaped payload.
+     * argument contract on that legacy path.  Preserve the explicitly
+     * admitted deterministic-equation mixed call as well; the direct
+     * dispatcher checks its strict handle while leaving the call payload
+     * untouched.
      */
     if (language_id == CETTA_LANGUAGE_PETTA &&
-        petta_eval_machine_all_grounded_args_are_data(atom)) {
+        (petta_eval_machine_all_grounded_args_are_data(atom) ||
+         petta_eval_machine_preserves_mixed_data_call(atom))) {
         Atom *direct = eval_direct_grounded_application(
             s, a, atom, CURRENT_ENV, fuel);
         if (direct)

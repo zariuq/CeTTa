@@ -11,7 +11,8 @@
 typedef enum {
     PP_ACTION_BYTECODE_V1_PUSH_SLOT = 0,
     PP_ACTION_BYTECODE_V1_PUSH_CONST = 1,
-    PP_ACTION_BYTECODE_V1_APPLY = 2
+    PP_ACTION_BYTECODE_V1_APPLY = 2,
+    PP_ACTION_BYTECODE_V1_PRIMITIVE = 3
 } PPActionBytecodeV1InstructionKind;
 
 typedef struct {
@@ -29,7 +30,7 @@ typedef struct {
 
 /*
  * Flat postfix semantic-action IR produced by the action-compiler GSLT.
- * Constant terms and application heads are owned by arena.  Production
+ * Constant terms, application heads and primitive names are owned by arena.  Production
  * indexes are the dense ParserPack production indexes, so recognition tables
  * and actions share one dispatch identity without carrying language policy.
  */
@@ -91,9 +92,11 @@ bool pp_action_bytecode_v1_program_validate_guard_extended(
     size_t error_buf_size);
 
 /*
- * Slot values are borrowed.  Constants and application nodes are allocated
- * in result_arena.  Consequently a result that is exactly a slot remains
- * borrowed, while every constructed result is owned by result_arena.
+ * Slot values are borrowed. Constants and constructed nodes are allocated
+ * in result_arena; their child atoms may still be borrowed slots. Thus the
+ * source slot arena must outlive the result's use. Primitives construct data,
+ * never host calls, and accept only their declared operand shapes. String
+ * primitives use the current Atom carrier's NUL-free string domain.
  */
 bool pp_action_bytecode_v1_execute_prevalidated(
     const PPActionBytecodeV1Program *program,

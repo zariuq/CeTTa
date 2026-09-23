@@ -6,6 +6,14 @@
   (signature
     (operator metta-equation 2) (operator let 3)
     (operator langdef:ground-equal 2)
+    (operator langdef:string->codepoints 1)
+    (operator langdef:codepoints->string 1)
+    (operator langdef:codepoints->symbol 1)
+    (operator langdef:decimal-integer->number 1)
+    (operator langdef:decimal-rational->parts 1)
+    (operator langdef:list->expression 1)
+    (operator langdef:expression-or-single->list 1)
+    (operator cp 1) (operator cons 2)
     (operator LNil 0) (operator LCons 2)
     (operator tptp-cst:spanned-node 4) (operator tptp-cst:production 2)
     (operator tptp-cst:token 4) (operator tptp-cst:literal 3)
@@ -87,7 +95,93 @@
     (operator tptp-rec:pi 2) (operator tptp-rec:sigma 2)
     (operator tptp-rec:lambda 2) (operator tptp-rec:choice 2)
     (operator tptp-rec:definite 2)
-    (operator tptp-rec-v1:general-term-of 1))
+    (operator tptp-rec-v1:general-term-of 1)
+
+    ; Direct compact-value entry.  These operators are projector control,
+    ; not public TPTP data constructors.
+    (operator tptp-v1:node 1) (operator tptp-v1:named 5)
+    (operator tptp-v1:is-unwrap 1)
+    (operator tptp-v1:is-unwrap-next 2)
+    (operator tptp-v1:after-unwrap 6) (operator tptp-v1:unwrap-choice 6)
+    (operator tptp-v1:unwrap-lexical 1) (operator tptp-v1:build 5)
+    (operator tptp-v1:inputs 1) (operator tptp-v1:word 1)
+    (operator tptp-v1:word-kind 2) (operator tptp-v1:terms 1)
+    (operator tptp-v1:variables 1) (operator tptp-v1:plain-term 1)
+    (operator tptp-v1:variable-seq 1)
+    (operator tptp-v1:append-one 2) (operator tptp-v1:append 2)
+    (operator tptp-v1:arguments 1) (operator tptp-v1:flat-items 1)
+    (operator tptp-v1:nested-items 1)
+    (operator tptp-v1:type-seq 1)
+    (operator tptp-v1:tuple-value 1)
+    (operator tptp-v1:unbracket 1)
+    (operator tptp-v1:atom 1)
+    (operator tptp-v1:record 5) (operator tptp-v1:record-next 6)
+    (operator tptp-v1:binary 3)
+    (operator tptp-v1:quantified 3) (operator tptp-v1:quantified-of 2)
+    (operator tptp-v1:pair 3)
+    (operator tptp-v1:unary-form 1) (operator tptp-v1:call 2)
+    (operator tptp-v1:disjunction 1) (operator tptp-v1:negated 2)
+    (operator tptp-v1:defined-name 1) (operator tptp-v1:system-name 1)
+    (operator tptp-v1:single-quoted-text 1)
+    (operator tptp-v1:distinct-object-text 1)
+    (operator tptp-v1:back-quoted-text 1)
+    (operator tptp-v1:single-quoted-tail 1)
+    (operator tptp-v1:distinct-object-tail 1)
+    (operator tptp-v1:back-quoted-tail 1)
+    (operator tptp-v1:quoted-body 2)
+    (operator tptp-v1:quoted-body-step 4)
+    (operator tptp-v1:quoted-body-close 4)
+    (operator tptp-v1:quoted-body-escaped 2)
+    (operator tptp-v1:rational-parts 1)
+    (operator tptp-v1:annotation 1) (operator tptp-v1:optional 1)
+    (operator tptp-v1:optional-name 1)
+    (operator tptp-v1:annotation-parts 2)
+    (operator tptp-v1:annotation-parts-next 3)
+    (operator tptp-v1:file-source 2)
+    (operator tptp-v1:file-source-next 3)
+    (operator tptp-v1:theory-source 2)
+    (operator tptp-v1:theory-source-next 3)
+    (operator tptp-v1:include-options 1)
+    (operator tptp-v1:include-options-value 2)
+    (operator tptp-v1:include-with-options 2)
+    (operator tptp-v1:include-result 3)
+    (operator tptp-v1:include-result-selection-next 4)
+    (operator tptp-v1:include-result-qualification-next 4)
+    ; TXF tuples are the sole compact escape that cannot be represented as a
+    ; bare expression without colliding with ordinary function application.
+    (operator ⟨⟩ 1)
+    (operator ≡ 2)
+    (operator tptp-v1:name-seq 1) (operator tptp-v1:general-term-of 1)
+    (operator tptp-v1:general-terms 1)
+    (operator tptp-v1:bracketed-sequence 1)
+    (operator tptp-v1:head-name 1) (operator tptp-v1:defined-plain 2)
+    (operator tptp-v1:defined-plain-next 3)
+    (operator tptp-v1:defined-plain-nxf 2)
+    (operator tptp-v1:none 0)
+    (operator fof 3) (operator cnf 3) (operator tff 3)
+    (operator thf 3) (operator tcf 3) (operator tpi 3)
+    (operator inference 3)
+    (operator annotation 2)
+    (operator file 1) (operator file 2)
+    (operator introduced 3) (operator creator 3)
+    (operator theory 1) (operator theory 2) (operator unknown 0)
+    (operator long-connective 2)
+    (operator : 2) (operator ⇒ 2) (operator × 2)
+    (operator ¬ 1) (operator ∧ 2) (operator ∨ 2)
+    (operator → 2) (operator ← 2) (operator ↔ 2)
+    (operator ⊕ 2) (operator ⊼ 2) (operator ⊽ 2)
+    (operator ≈ 2) (operator ≉ 2)
+    (operator ∀ 2) (operator ∃ 2) (operator λ 2)
+    (operator choice 2) (operator definite 2)
+    (operator Π 2) (operator Σ 2)
+    (operator §let 3) (operator ≔ 2)
+    (operator tptp:quoted-atom 1) (operator tptp:back-quoted 1)
+    (operator tptp:defined-word 1) (operator tptp:system-word 1)
+    (operator tptp:integer 1) (operator tptp:rational 1)
+    (operator tptp:real 1) (operator tptp:distinct-object 1)
+    (operator tptp:identical 2)
+    (operator ◊ 1) (operator ⌜ 1)
+    (operator ℚ 2) (operator ℝ 1))
   (equations)
   (rewrites
     (rule node (head (metta-equation
@@ -963,4 +1057,1055 @@
       (let ?pair (tptp-rec-v1:operands (tptp-rec-v1:nodes ?kids))
         (tptp-rec:equals
           (tptp-rec-v1:node (tptp-rec-v1:head ?pair))
-          (tptp-rec-v1:node (tptp-rec-v1:second ?pair)))))) (body))))
+          (tptp-rec-v1:node (tptp-rec-v1:second ?pair)))))) (body))
+
+    ; Authored compact projection. Grammar-derived production coverage is a
+    ; separate gate; this program is not yet a total grammar algebra.
+    ; Dynamic source heads are constructed as data by
+    ; langdef:list->expression and therefore are not interpreted by the runner.
+    (rule compact-node (head (metta-equation
+      (tptp-v1:node
+        (tptp-cst:spanned-node
+          (tptp-cst:production ?name ?alt) ?start ?stop ?kids))
+      (tptp-v1:named ?name ?alt ?start ?stop ?kids))) (body))
+    (rule compact-named (head (metta-equation
+      (tptp-v1:named ?name ?alt ?start ?stop ?kids)
+      (tptp-v1:after-unwrap
+        (tptp-v1:is-unwrap ?name)
+        ?name ?alt ?start ?stop ?kids))) (body))
+    (rule compact-is-unwrap (head (metta-equation
+      (tptp-v1:is-unwrap ?name)
+      (tptp-v1:is-unwrap-next
+        (langdef:ground-equal ?name "txf_tuple_type") ?name))) (body))
+    (rule compact-is-unwrap-tuple-type (head (metta-equation
+      (tptp-v1:is-unwrap-next LangDef:SameValue ?name)
+      (tptp-rec-v1:no))) (body))
+    (rule compact-is-unwrap-other (head (metta-equation
+      (tptp-v1:is-unwrap-next LangDef:DifferentValue ?name)
+      (tptp-rec-v1:member ?name (tptp-rec-v1:unwraps)))) (body))
+    (rule compact-after-unwrap-yes (head (metta-equation
+      (tptp-v1:after-unwrap
+        (tptp-rec-v1:yes) ?name ?alt ?start ?stop ?kids)
+      (tptp-v1:unwrap-choice
+        (tptp-rec-v1:nodes ?kids) ?name ?alt ?start ?stop ?kids))) (body))
+    (rule compact-after-unwrap-no (head (metta-equation
+      (tptp-v1:after-unwrap
+        (tptp-rec-v1:no) ?name ?alt ?start ?stop ?kids)
+      (tptp-v1:build ?name ?alt ?start ?stop ?kids))) (body))
+    (rule compact-unwrap-one (head (metta-equation
+      (tptp-v1:unwrap-choice
+        (LCons ?only LNil) ?name ?alt ?start ?stop ?kids)
+      (tptp-v1:node ?only))) (body))
+    (rule compact-unwrap-empty (head (metta-equation
+      (tptp-v1:unwrap-choice LNil ?name ?alt ?start ?stop ?kids)
+      (tptp-v1:unwrap-lexical ?kids))) (body))
+    (rule compact-unwrap-many (head (metta-equation
+      (tptp-v1:unwrap-choice
+        (LCons ?a (LCons ?b ?rest)) ?name ?alt ?start ?stop ?kids)
+      (tptp-v1:build ?name ?alt ?start ?stop ?kids))) (body))
+    (rule compact-unwrap-lexical-empty (head (metta-equation
+      (tptp-v1:unwrap-lexical LNil) (tptp-v1:none))) (body))
+    (rule compact-unwrap-lexical-token (head (metta-equation
+      (tptp-v1:unwrap-lexical
+        (LCons (tptp-cst:token ?kind ?start ?stop ?text) ?rest))
+      (tptp-v1:word-kind ?kind ?text))) (body))
+    (rule compact-unwrap-lexical-literal (head (metta-equation
+      (tptp-v1:unwrap-lexical
+        (LCons (tptp-cst:literal ?start ?stop ?text) ?rest))
+      (tptp-v1:unwrap-lexical ?rest))) (body))
+
+    (rule compact-word-token (head (metta-equation
+      (tptp-v1:word (tptp-cst:token ?kind ?start ?stop ?text))
+      (tptp-v1:word-kind ?kind ?text))) (body))
+    (rule compact-word-node (head (metta-equation
+      (tptp-v1:word
+        (tptp-cst:spanned-node ?prod ?start ?stop ?kids))
+      (tptp-v1:word (tptp-rec-v1:first ?kids)))) (body))
+    (rule compact-word-lower (head (metta-equation
+      (tptp-v1:word-kind "lower_word" ?text)
+      (langdef:codepoints->symbol
+        (langdef:string->codepoints ?text)))) (body))
+    (rule compact-word-upper (head (metta-equation
+      (tptp-v1:word-kind "upper_word" ?text)
+      (langdef:codepoints->symbol
+        (langdef:string->codepoints ?text)))) (body))
+    (rule compact-word-quoted (head (metta-equation
+      (tptp-v1:word-kind "single_quoted" ?text)
+      (tptp-v1:single-quoted-text ?text))) (body))
+    (rule compact-word-back (head (metta-equation
+      (tptp-v1:word-kind "back_quoted" ?text)
+      (⌜ (tptp-v1:back-quoted-text ?text)))) (body))
+    (rule compact-word-defined (head (metta-equation
+      (tptp-v1:word-kind "dollar_word" ?text)
+      (tptp-v1:defined-name
+        (langdef:string->codepoints ?text)))) (body))
+    (rule compact-word-system (head (metta-equation
+      (tptp-v1:word-kind "dollar_dollar_word" ?text)
+      (tptp-v1:system-name
+        (langdef:string->codepoints ?text)))) (body))
+    (rule compact-defined-name (head (metta-equation
+      (tptp-v1:defined-name (cons (cp 36) ?rest))
+      (langdef:codepoints->symbol (cons (cp 167) ?rest)))) (body))
+    (rule compact-system-name (head (metta-equation
+      (tptp-v1:system-name (cons (cp 36) (cons (cp 36) ?rest)))
+      (langdef:codepoints->symbol
+        (cons (cp 167) (cons (cp 167) ?rest))))) (body))
+    (rule compact-single-quoted-text (head (metta-equation
+      (tptp-v1:single-quoted-text ?text)
+      (langdef:codepoints->string
+        (tptp-v1:quoted-body (cp 39)
+          (tptp-v1:single-quoted-tail
+            (langdef:string->codepoints ?text)))))) (body))
+    (rule compact-single-quoted-tail (head (metta-equation
+      (tptp-v1:single-quoted-tail (cons (cp 39) ?rest)) ?rest)) (body))
+    (rule compact-distinct-object-text (head (metta-equation
+      (tptp-v1:distinct-object-text ?text)
+      (langdef:codepoints->string
+        (tptp-v1:quoted-body (cp 34)
+          (tptp-v1:distinct-object-tail
+            (langdef:string->codepoints ?text)))))) (body))
+    (rule compact-distinct-object-tail (head (metta-equation
+      (tptp-v1:distinct-object-tail (cons (cp 34) ?rest)) ?rest)) (body))
+    (rule compact-back-quoted-text (head (metta-equation
+      (tptp-v1:back-quoted-text ?text)
+      (langdef:codepoints->string
+        (tptp-v1:back-quoted-tail
+          (langdef:string->codepoints ?text))))) (body))
+    (rule compact-back-quoted-tail (head (metta-equation
+      (tptp-v1:back-quoted-tail (cons (cp 96) ?rest)) ?rest)) (body))
+    (rule compact-quoted-body (head (metta-equation
+      (tptp-v1:quoted-body ?delimiter (cons ?head ?tail))
+      (tptp-v1:quoted-body-step
+        (langdef:ground-equal ?head (cp 92)) ?delimiter ?head ?tail))) (body))
+    (rule compact-quoted-body-escape (head (metta-equation
+      (tptp-v1:quoted-body-step
+        LangDef:SameValue ?delimiter ?head ?tail)
+      (tptp-v1:quoted-body-escaped ?delimiter ?tail))) (body))
+    (rule compact-quoted-body-not-escape (head (metta-equation
+      (tptp-v1:quoted-body-step
+        LangDef:DifferentValue ?delimiter ?head ?tail)
+      (tptp-v1:quoted-body-close
+        (langdef:ground-equal ?head ?delimiter) ?delimiter ?head ?tail))) (body))
+    (rule compact-quoted-body-done (head (metta-equation
+      (tptp-v1:quoted-body-close
+        LangDef:SameValue ?delimiter ?head ?tail)
+      nil)) (body))
+    (rule compact-quoted-body-character (head (metta-equation
+      (tptp-v1:quoted-body-close
+        LangDef:DifferentValue ?delimiter ?head ?tail)
+      (cons ?head (tptp-v1:quoted-body ?delimiter ?tail)))) (body))
+    (rule compact-quoted-body-escaped-character (head (metta-equation
+      (tptp-v1:quoted-body-escaped ?delimiter (cons ?head ?tail))
+      (cons ?head (tptp-v1:quoted-body ?delimiter ?tail)))) (body))
+    (rule compact-word-integer (head (metta-equation
+      (tptp-v1:word-kind "integer" ?text)
+      (langdef:decimal-integer->number ?text))) (body))
+    (rule compact-word-rational (head (metta-equation
+      (tptp-v1:word-kind "rational" ?text)
+      (tptp-v1:rational-parts
+        (langdef:decimal-rational->parts ?text)))) (body))
+    (rule compact-rational-parts (head (metta-equation
+      (tptp-v1:rational-parts (LCons ?numerator (LCons ?denominator LNil)))
+      (ℚ ?numerator ?denominator))) (body))
+    (rule compact-word-real (head (metta-equation
+      (tptp-v1:word-kind "real" ?text)
+      (ℝ ?text))) (body))
+    (rule compact-word-distinct (head (metta-equation
+      (tptp-v1:word-kind "distinct_object" ?text)
+      (◊ (tptp-v1:distinct-object-text ?text)))) (body))
+
+    (rule compact-inputs-empty (head (metta-equation
+      (tptp-v1:inputs LNil) LNil)) (body))
+    (rule compact-inputs-cons (head (metta-equation
+      (tptp-v1:inputs (LCons ?head ?rest))
+      (LCons (tptp-v1:node ?head) (tptp-v1:inputs ?rest)))) (body))
+    (rule compact-terms-empty (head (metta-equation
+      (tptp-v1:terms LNil) LNil)) (body))
+    (rule compact-terms-cons (head (metta-equation
+      (tptp-v1:terms (LCons ?head ?rest))
+      (LCons (tptp-v1:node ?head) (tptp-v1:terms ?rest)))) (body))
+    (rule compact-vars-empty (head (metta-equation
+      (tptp-v1:variables LNil) LNil)) (body))
+    (rule compact-vars-cons (head (metta-equation
+      (tptp-v1:variables (LCons ?head ?rest))
+      (LCons (tptp-v1:node ?head) (tptp-v1:variables ?rest)))) (body))
+    (rule compact-variable-seq-one (head (metta-equation
+      (tptp-v1:variable-seq (LCons ?only LNil))
+      (LCons (tptp-v1:node ?only) LNil))) (body))
+    (rule compact-variable-seq-rest (head (metta-equation
+      (tptp-v1:variable-seq (LCons ?first (LCons ?rest LNil)))
+      (LCons (tptp-v1:node ?first) (tptp-v1:node ?rest)))) (body))
+    (rule compact-append-one-empty (head (metta-equation
+      (tptp-v1:append-one LNil ?last) (LCons ?last LNil))) (body))
+    (rule compact-append-one-cons (head (metta-equation
+      (tptp-v1:append-one (LCons ?head ?tail) ?last)
+      (LCons ?head (tptp-v1:append-one ?tail ?last)))) (body))
+    (rule compact-append-empty (head (metta-equation
+      (tptp-v1:append LNil ?right) ?right)) (body))
+    (rule compact-append-cons (head (metta-equation
+      (tptp-v1:append (LCons ?head ?tail) ?right)
+      (LCons ?head (tptp-v1:append ?tail ?right)))) (body))
+    (rule compact-call (head (metta-equation
+      (tptp-v1:call ?head ?arguments)
+      (langdef:list->expression (LCons ?head ?arguments)))) (body))
+    (rule compact-plain-const (head (metta-equation
+      (tptp-v1:plain-term (LCons ?symbol LNil))
+      (tptp-v1:node ?symbol))) (body))
+    (rule compact-plain-app (head (metta-equation
+      (tptp-v1:plain-term (LCons ?symbol (LCons ?arguments LNil)))
+      (tptp-v1:call (tptp-v1:node ?symbol)
+        (tptp-v1:node ?arguments)))) (body))
+    (rule compact-arguments-one (head (metta-equation
+      (tptp-v1:arguments (LCons ?only LNil))
+      (LCons (tptp-v1:node ?only) LNil))) (body))
+    (rule compact-arguments-rest (head (metta-equation
+      (tptp-v1:arguments (LCons ?first (LCons ?rest LNil)))
+      (LCons (tptp-v1:node ?first) (tptp-v1:node ?rest)))) (body))
+    (rule compact-flat-items-empty (head (metta-equation
+      (tptp-v1:flat-items LNil) LNil)) (body))
+    (rule compact-flat-items-cons (head (metta-equation
+      (tptp-v1:flat-items (LCons ?head ?tail))
+      (LCons (tptp-v1:node ?head) (tptp-v1:flat-items ?tail)))) (body))
+    (rule compact-nested-items-one (head (metta-equation
+      (tptp-v1:nested-items (LCons ?only LNil))
+      (LCons (tptp-v1:node ?only) LNil))) (body))
+    (rule compact-nested-items-rest (head (metta-equation
+      (tptp-v1:nested-items (LCons ?first (LCons ?rest LNil)))
+      (LCons
+        (tptp-v1:node ?first)
+        (langdef:expression-or-single->list
+          (tptp-v1:node ?rest))))) (body))
+    (rule compact-tuple-value-empty (head (metta-equation
+      (tptp-v1:tuple-value LNil)
+      (⟨⟩ (langdef:list->expression LNil)))) (body))
+    (rule compact-tuple-value-items (head (metta-equation
+      (tptp-v1:tuple-value (LCons ?items LNil))
+      (⟨⟩
+        (langdef:list->expression (tptp-v1:node ?items))))) (body))
+    (rule compact-unbracket (head (metta-equation
+      (tptp-v1:unbracket (⟨⟩ ?items))
+      ?items)) (body))
+    (rule compact-atom (head (metta-equation
+      (tptp-v1:atom ?term) ?term)) (body))
+
+    (rule compact-binary-or (head (metta-equation
+      (tptp-v1:binary "|" ?left ?right) (∨ ?left ?right))) (body))
+    (rule compact-binary-and (head (metta-equation
+      (tptp-v1:binary "&" ?left ?right) (∧ ?left ?right))) (body))
+    (rule compact-binary-iff (head (metta-equation
+      (tptp-v1:binary "<=>" ?left ?right) (↔ ?left ?right))) (body))
+    (rule compact-binary-implies (head (metta-equation
+      (tptp-v1:binary "=>" ?left ?right) (→ ?left ?right))) (body))
+    (rule compact-binary-reverse (head (metta-equation
+      (tptp-v1:binary "<=" ?left ?right) (← ?left ?right))) (body))
+    (rule compact-binary-xor (head (metta-equation
+      (tptp-v1:binary "<~>" ?left ?right) (⊕ ?left ?right))) (body))
+    (rule compact-binary-nor (head (metta-equation
+      (tptp-v1:binary "~|" ?left ?right) (⊽ ?left ?right))) (body))
+    (rule compact-binary-nand (head (metta-equation
+      (tptp-v1:binary "~&" ?left ?right) (⊼ ?left ?right))) (body))
+    (rule compact-binary-eq (head (metta-equation
+      (tptp-v1:binary "=" ?left ?right) (≈ ?left ?right))) (body))
+    (rule compact-binary-identical (head (metta-equation
+      (tptp-v1:binary "==" ?left ?right) (≡ ?left ?right))) (body))
+    (rule compact-binary-neq (head (metta-equation
+      (tptp-v1:binary "!=" ?left ?right) (≉ ?left ?right))) (body))
+    (rule compact-binary-apply (head (metta-equation
+      (tptp-v1:binary "@" ?left ?right)
+      (langdef:list->expression (LCons ?left (LCons ?right LNil))))) (body))
+
+    (rule compact-quant-forall (head (metta-equation
+      (tptp-v1:quantified "!" ?vars ?body)
+      (∀ (langdef:list->expression ?vars) ?body))) (body))
+    (rule compact-quant-exists (head (metta-equation
+      (tptp-v1:quantified "?" ?vars ?body)
+      (∃ (langdef:list->expression ?vars) ?body))) (body))
+    (rule compact-quant-lambda (head (metta-equation
+      (tptp-v1:quantified "^" ?vars ?body)
+      (λ (langdef:list->expression ?vars) ?body))) (body))
+    (rule compact-quant-choice (head (metta-equation
+      (tptp-v1:quantified "@+" ?vars ?body)
+      (choice (langdef:list->expression ?vars) ?body))) (body))
+    (rule compact-quant-definite (head (metta-equation
+      (tptp-v1:quantified "@-" ?vars ?body)
+      (definite (langdef:list->expression ?vars) ?body))) (body))
+    (rule compact-quant-pi (head (metta-equation
+      (tptp-v1:quantified "!>" ?vars ?body)
+      (Π (langdef:list->expression ?vars) ?body))) (body))
+    (rule compact-quant-sigma (head (metta-equation
+      (tptp-v1:quantified "?*" ?vars ?body)
+      (Σ (langdef:list->expression ?vars) ?body))) (body))
+    (rule compact-quantified-of (head (metta-equation
+      (tptp-v1:quantified-of
+        (LCons ?operator (LCons ?variables LNil)) ?body)
+      (tptp-v1:quantified ?operator ?variables ?body))) (body))
+    (rule compact-pair-or (head (metta-equation
+      (tptp-v1:pair "or" ?left ?right)
+      (∨ (tptp-v1:node ?left) (tptp-v1:node ?right)))) (body))
+    (rule compact-pair-and (head (metta-equation
+      (tptp-v1:pair "and" ?left ?right)
+      (∧ (tptp-v1:node ?left) (tptp-v1:node ?right)))) (body))
+    (rule compact-unary-one (head (metta-equation
+      (tptp-v1:unary-form (LCons ?only LNil))
+      (tptp-v1:node ?only))) (body))
+    (rule compact-unary-not (head (metta-equation
+      (tptp-v1:unary-form (LCons ?connective (LCons ?body LNil)))
+      (¬ (tptp-v1:node ?body)))) (body))
+    (rule compact-disjunction-one (head (metta-equation
+      (tptp-v1:disjunction (LCons ?only LNil))
+      (tptp-v1:node ?only))) (body))
+    (rule compact-disjunction-two (head (metta-equation
+      (tptp-v1:disjunction (LCons ?left (LCons ?right LNil)))
+      (∨ (tptp-v1:node ?left) (tptp-v1:node ?right)))) (body))
+    (rule compact-negated-token (head (metta-equation
+      (tptp-v1:negated
+        (LCons (tptp-cst:token ?kind ?start ?stop "~") ?rest) ?body)
+      (¬ ?body))) (body))
+    (rule compact-negated-literal (head (metta-equation
+      (tptp-v1:negated
+        (LCons (tptp-cst:literal ?start ?stop "~") ?rest) ?body)
+      (¬ ?body))) (body))
+    (rule compact-negated-node (head (metta-equation
+      (tptp-v1:negated
+        (LCons (tptp-cst:spanned-node ?prod ?start ?stop ?kids) ?rest)
+        ?body)
+      (tptp-v1:negated ?rest ?body))) (body))
+    (rule compact-negated-done (head (metta-equation
+      (tptp-v1:negated LNil ?body) ?body)) (body))
+
+    (rule compact-record (head (metta-equation
+      (tptp-v1:record ?kind ?name ?role ?formula ?annotation)
+      (tptp-v1:record-next
+        (langdef:ground-equal ?annotation (tptp-v1:none))
+        ?kind ?name ?role ?formula ?annotation))) (body))
+    (rule compact-record-no-annotation (head (metta-equation
+      (tptp-v1:record-next LangDef:SameValue
+        ?kind ?name ?role ?formula ?annotation)
+      (langdef:list->expression
+        (LCons ?kind (LCons ?name (LCons ?role (LCons ?formula LNil))))))) (body))
+    (rule compact-record-annotation (head (metta-equation
+      (tptp-v1:record-next LangDef:DifferentValue
+        ?kind ?name ?role ?formula ?annotation)
+      (langdef:list->expression
+        (LCons ?kind
+          (LCons ?name
+            (LCons ?role
+              (LCons ?formula (LCons ?annotation LNil)))))))) (body))
+    (rule compact-build-file (head (metta-equation
+      (tptp-v1:build "TPTP_file" ?alt ?start ?stop ?kids)
+      (langdef:list->expression
+        (tptp-v1:inputs (tptp-rec-v1:nodes ?kids))))) (body))
+    (rule compact-build-fof (head (metta-equation
+      (tptp-v1:build "fof_annotated" ?alt ?start ?stop ?kids)
+      (tptp-v1:record fof
+        (tptp-v1:node
+          (tptp-rec-v1:child "name" (tptp-rec-v1:nodes ?kids)))
+        (tptp-v1:node
+          (tptp-rec-v1:child "formula_role" (tptp-rec-v1:nodes ?kids)))
+        (tptp-v1:node
+          (tptp-rec-v1:child "fof_formula" (tptp-rec-v1:nodes ?kids)))
+        (tptp-v1:node
+          (tptp-rec-v1:child "annotations" (tptp-rec-v1:nodes ?kids)))))) (body))
+    (rule compact-build-cnf (head (metta-equation
+      (tptp-v1:build "cnf_annotated" ?alt ?start ?stop ?kids)
+      (tptp-v1:record cnf
+        (tptp-v1:node
+          (tptp-rec-v1:child "name" (tptp-rec-v1:nodes ?kids)))
+        (tptp-v1:node
+          (tptp-rec-v1:child "formula_role" (tptp-rec-v1:nodes ?kids)))
+        (tptp-v1:node
+          (tptp-rec-v1:child "cnf_formula" (tptp-rec-v1:nodes ?kids)))
+        (tptp-v1:node
+          (tptp-rec-v1:child "annotations" (tptp-rec-v1:nodes ?kids)))))) (body))
+    (rule compact-build-tff (head (metta-equation
+      (tptp-v1:build "tff_annotated" ?alt ?start ?stop ?kids)
+      (tptp-v1:record tff
+        (tptp-v1:node
+          (tptp-rec-v1:child "name" (tptp-rec-v1:nodes ?kids)))
+        (tptp-v1:node
+          (tptp-rec-v1:child "formula_role" (tptp-rec-v1:nodes ?kids)))
+        (tptp-v1:node
+          (tptp-rec-v1:child "tff_formula" (tptp-rec-v1:nodes ?kids)))
+        (tptp-v1:node
+          (tptp-rec-v1:child "annotations" (tptp-rec-v1:nodes ?kids)))))) (body))
+    (rule compact-build-thf (head (metta-equation
+      (tptp-v1:build "thf_annotated" ?alt ?start ?stop ?kids)
+      (tptp-v1:record thf
+        (tptp-v1:node
+          (tptp-rec-v1:child "name" (tptp-rec-v1:nodes ?kids)))
+        (tptp-v1:node
+          (tptp-rec-v1:child "formula_role" (tptp-rec-v1:nodes ?kids)))
+        (tptp-v1:node
+          (tptp-rec-v1:child "thf_formula" (tptp-rec-v1:nodes ?kids)))
+        (tptp-v1:node
+          (tptp-rec-v1:child "annotations" (tptp-rec-v1:nodes ?kids)))))) (body))
+    (rule compact-build-tcf (head (metta-equation
+      (tptp-v1:build "tcf_annotated" ?alt ?start ?stop ?kids)
+      (tptp-v1:record tcf
+        (tptp-v1:node
+          (tptp-rec-v1:child "name" (tptp-rec-v1:nodes ?kids)))
+        (tptp-v1:node
+          (tptp-rec-v1:child "formula_role" (tptp-rec-v1:nodes ?kids)))
+        (tptp-v1:node
+          (tptp-rec-v1:child "tcf_formula" (tptp-rec-v1:nodes ?kids)))
+        (tptp-v1:node
+          (tptp-rec-v1:child "annotations" (tptp-rec-v1:nodes ?kids)))))) (body))
+    (rule compact-build-tpi (head (metta-equation
+      (tptp-v1:build "tpi_annotated" ?alt ?start ?stop ?kids)
+      (tptp-v1:record tpi
+        (tptp-v1:node
+          (tptp-rec-v1:child "name" (tptp-rec-v1:nodes ?kids)))
+        (tptp-v1:node
+          (tptp-rec-v1:child "formula_role" (tptp-rec-v1:nodes ?kids)))
+        (tptp-v1:node
+          (tptp-rec-v1:child "tpi_formula" (tptp-rec-v1:nodes ?kids)))
+        (tptp-v1:node
+          (tptp-rec-v1:child "annotations" (tptp-rec-v1:nodes ?kids)))))) (body))
+    (rule compact-build-name-atomic (head (metta-equation
+      (tptp-v1:build "name" 0 ?start ?stop ?kids)
+      (tptp-v1:word (tptp-rec-v1:first ?kids)))) (body))
+    (rule compact-build-name-integer (head (metta-equation
+      (tptp-v1:build "name" 1 ?start ?stop ?kids)
+      (langdef:decimal-integer->number
+        (tptp-rec-v1:token-text ?kids)))) (body))
+    (rule compact-build-atomic-word (head (metta-equation
+      (tptp-v1:build "atomic_word" ?alt ?start ?stop ?kids)
+      (tptp-v1:word (tptp-rec-v1:first ?kids)))) (body))
+    (rule compact-build-role (head (metta-equation
+      (tptp-v1:build "formula_role" ?alt ?start ?stop ?kids)
+      (langdef:codepoints->symbol
+        (langdef:string->codepoints
+          (tptp-rec-v1:token-text ?kids))))) (body))
+    (rule compact-build-variable (head (metta-equation
+      (tptp-v1:build "variable" ?alt ?start ?stop ?kids)
+      (tptp-v1:word (tptp-rec-v1:first ?kids)))) (body))
+    (rule compact-build-atomic-defined-word (head (metta-equation
+      (tptp-v1:build "atomic_defined_word" ?alt ?start ?stop ?kids)
+      (tptp-v1:word (tptp-rec-v1:first ?kids)))) (body))
+    (rule compact-build-atomic-system-word (head (metta-equation
+      (tptp-v1:build "atomic_system_word" ?alt ?start ?stop ?kids)
+      (tptp-v1:word (tptp-rec-v1:first ?kids)))) (body))
+    (rule compact-build-nothing (head (metta-equation
+      (tptp-v1:build "nothing" ?alt ?start ?stop ?kids)
+      (tptp-v1:none))) (body))
+    (rule compact-build-annotations (head (metta-equation
+      (tptp-v1:build "annotations" ?alt ?start ?stop ?kids)
+      (tptp-v1:annotation (tptp-rec-v1:nodes ?kids)))) (body))
+    (rule compact-annotation-none (head (metta-equation
+      (tptp-v1:annotation
+        (LCons (tptp-cst:spanned-node
+          (tptp-cst:production "nothing" ?alt) ?start ?stop ?kids) LNil))
+      (tptp-v1:none))) (body))
+    (rule compact-annotation-source (head (metta-equation
+      (tptp-v1:annotation (LCons ?source (LCons ?optional LNil)))
+      (tptp-v1:annotation-parts
+        (tptp-v1:node ?source) (tptp-v1:node ?optional)))) (body))
+    (rule compact-annotation-parts (head (metta-equation
+      (tptp-v1:annotation-parts ?source ?info)
+      (tptp-v1:annotation-parts-next
+        (langdef:ground-equal ?info (tptp-v1:none)) ?source ?info))) (body))
+    (rule compact-annotation-parts-none (head (metta-equation
+      (tptp-v1:annotation-parts-next LangDef:SameValue ?source ?info)
+      ?source)) (body))
+    (rule compact-annotation-parts-some (head (metta-equation
+      (tptp-v1:annotation-parts-next LangDef:DifferentValue ?source ?info)
+      (annotation ?source (tptp-v1:unbracket ?info)))) (body))
+    (rule compact-build-optional-info (head (metta-equation
+      (tptp-v1:build "optional_info" ?alt ?start ?stop ?kids)
+      (tptp-v1:optional (tptp-rec-v1:nodes ?kids)))) (body))
+    (rule compact-optional-none (head (metta-equation
+      (tptp-v1:optional
+        (LCons (tptp-cst:spanned-node
+          (tptp-cst:production "nothing" ?alt) ?start ?stop ?kids) LNil))
+      (tptp-v1:none))) (body))
+    (rule compact-optional-some (head (metta-equation
+      (tptp-v1:optional
+        (LCons (tptp-cst:spanned-node
+          (tptp-cst:production "useful_info" ?alt) ?start ?stop ?kids) LNil))
+      (tptp-v1:node
+        (tptp-cst:spanned-node
+          (tptp-cst:production "useful_info" ?alt) ?start ?stop ?kids)))) (body))
+    (rule compact-build-source (head (metta-equation
+      (tptp-v1:build "source" ?alt ?start ?stop ?kids)
+      (tptp-v1:node (tptp-rec-v1:one (tptp-rec-v1:nodes ?kids))))) (body))
+    (rule compact-build-file-source (head (metta-equation
+      (tptp-v1:build "file_source" ?alt ?start ?stop ?kids)
+      (tptp-v1:file-source
+        (tptp-v1:node
+          (tptp-rec-v1:child "file_name" (tptp-rec-v1:nodes ?kids)))
+        (tptp-v1:node
+          (tptp-rec-v1:child "file_info" (tptp-rec-v1:nodes ?kids)))))) (body))
+    (rule compact-build-file-info (head (metta-equation
+      (tptp-v1:build "file_info" ?alt ?start ?stop ?kids)
+      (tptp-v1:optional-name (tptp-rec-v1:nodes ?kids)))) (body))
+    (rule compact-optional-name-none (head (metta-equation
+      (tptp-v1:optional-name LNil)
+      (tptp-v1:none))) (body))
+    (rule compact-optional-name-one (head (metta-equation
+      (tptp-v1:optional-name (LCons ?name ?rest))
+      (tptp-v1:node ?name))) (body))
+    (rule compact-file-source (head (metta-equation
+      (tptp-v1:file-source ?path ?name)
+      (tptp-v1:file-source-next
+        (langdef:ground-equal ?name (tptp-v1:none)) ?path ?name))) (body))
+    (rule compact-file-source-path (head (metta-equation
+      (tptp-v1:file-source-next LangDef:SameValue ?path ?name)
+      (file ?path))) (body))
+    (rule compact-file-source-name (head (metta-equation
+      (tptp-v1:file-source-next LangDef:DifferentValue ?path ?name)
+      (file ?path ?name))) (body))
+    (rule compact-build-internal-source (head (metta-equation
+      (tptp-v1:build "internal_source" ?alt ?start ?stop ?kids)
+      (introduced
+        (tptp-v1:node
+          (tptp-rec-v1:child "intro_type" (tptp-rec-v1:nodes ?kids)))
+        (tptp-v1:unbracket
+          (tptp-v1:node
+            (tptp-rec-v1:child "useful_info" (tptp-rec-v1:nodes ?kids))))
+        (tptp-v1:node
+          (tptp-rec-v1:child "parents" (tptp-rec-v1:nodes ?kids)))))) (body))
+    (rule compact-build-creator-source (head (metta-equation
+      (tptp-v1:build "creator_source" ?alt ?start ?stop ?kids)
+      (creator
+        (tptp-v1:node
+          (tptp-rec-v1:child "creator_name" (tptp-rec-v1:nodes ?kids)))
+        (tptp-v1:unbracket
+          (tptp-v1:node
+            (tptp-rec-v1:child "useful_info" (tptp-rec-v1:nodes ?kids))))
+        (tptp-v1:node
+          (tptp-rec-v1:child "parents" (tptp-rec-v1:nodes ?kids)))))) (body))
+    (rule compact-build-theory-source (head (metta-equation
+      (tptp-v1:build "theory" ?alt ?start ?stop ?kids)
+      (tptp-v1:theory-source
+        (tptp-v1:node
+          (tptp-rec-v1:child "theory_name" (tptp-rec-v1:nodes ?kids)))
+        (tptp-v1:node
+          (tptp-rec-v1:child "optional_info" (tptp-rec-v1:nodes ?kids)))))) (body))
+    (rule compact-theory-source (head (metta-equation
+      (tptp-v1:theory-source ?name ?info)
+      (tptp-v1:theory-source-next
+        (langdef:ground-equal ?info (tptp-v1:none)) ?name ?info))) (body))
+    (rule compact-theory-source-name (head (metta-equation
+      (tptp-v1:theory-source-next LangDef:SameValue ?name ?info)
+      (theory ?name))) (body))
+    (rule compact-theory-source-info (head (metta-equation
+      (tptp-v1:theory-source-next LangDef:DifferentValue ?name ?info)
+      (theory ?name (tptp-v1:unbracket ?info)))) (body))
+    (rule compact-build-unknown-source (head (metta-equation
+      (tptp-v1:build "unknown" ?alt ?start ?stop ?kids)
+      unknown)) (body))
+    (rule compact-build-inference (head (metta-equation
+      (tptp-v1:build "inference_record" ?alt ?start ?stop ?kids)
+      (inference
+        (tptp-v1:node
+          (tptp-rec-v1:child "inference_rule" (tptp-rec-v1:nodes ?kids)))
+        (tptp-v1:unbracket
+          (tptp-v1:node
+            (tptp-rec-v1:child "useful_info" (tptp-rec-v1:nodes ?kids))))
+        (tptp-v1:node
+          (tptp-rec-v1:child "parents" (tptp-rec-v1:nodes ?kids)))))) (body))
+
+    (rule compact-build-include (head (metta-equation
+      (tptp-v1:build "include" ?alt ?start ?stop ?kids)
+      (tptp-v1:include-options
+        (tptp-rec-v1:nodes ?kids)))) (body))
+    (rule compact-include-skip-file (head (metta-equation
+      (tptp-v1:include-options
+        (LCons (tptp-cst:spanned-node
+          (tptp-cst:production "file_name" ?alt) ?start ?stop ?file-kids)
+          ?rest))
+      (tptp-v1:include-with-options
+        (tptp-v1:node
+          (tptp-cst:spanned-node
+            (tptp-cst:production "file_name" ?alt)
+            ?start ?stop ?file-kids))
+        (tptp-v1:include-options ?rest)))) (body))
+    (rule compact-include-optionals-wrapper (head (metta-equation
+      (tptp-v1:include-options
+        (LCons (tptp-cst:spanned-node
+          (tptp-cst:production "include_optionals" ?alt)
+          ?start ?stop ?kids) ?rest))
+      (tptp-v1:include-options (tptp-rec-v1:nodes ?kids)))) (body))
+    (rule compact-include-options-empty (head (metta-equation
+      (tptp-v1:include-options LNil)
+      (tptp-v1:include-options-value
+        (tptp-v1:none) (tptp-v1:none)))) (body))
+    (rule compact-include-options-none (head (metta-equation
+      (tptp-v1:include-options
+        (LCons (tptp-cst:spanned-node
+          (tptp-cst:production "nothing" ?alt) ?start ?stop ?kids) ?rest))
+      (tptp-v1:include-options-value
+        (tptp-v1:none) (tptp-v1:none)))) (body))
+    (rule compact-include-options-selection (head (metta-equation
+      (tptp-v1:include-options
+        (LCons (tptp-cst:spanned-node
+          (tptp-cst:production "formula_selection" ?alt)
+          ?start ?stop ?kids) LNil))
+      (tptp-v1:include-options-value
+        (tptp-v1:node
+          (tptp-cst:spanned-node
+            (tptp-cst:production "formula_selection" ?alt)
+            ?start ?stop ?kids))
+        (tptp-v1:none)))) (body))
+    (rule compact-include-options-qualified (head (metta-equation
+      (tptp-v1:include-options
+        (LCons (tptp-cst:spanned-node
+          (tptp-cst:production "formula_selection" ?fa)
+          ?fs ?fe ?fkids)
+          (LCons (tptp-cst:spanned-node
+            (tptp-cst:production "space_name" ?sa)
+            ?ss ?se ?skids) LNil)))
+      (tptp-v1:include-options-value
+        (tptp-v1:node
+          (tptp-cst:spanned-node
+            (tptp-cst:production "formula_selection" ?fa)
+            ?fs ?fe ?fkids))
+        (tptp-v1:node
+          (tptp-cst:spanned-node
+            (tptp-cst:production "space_name" ?sa)
+            ?ss ?se ?skids))))) (body))
+    (rule compact-include-with-options (head (metta-equation
+      (tptp-v1:include-with-options ?file
+        (tptp-v1:include-options-value ?selection ?qualification))
+      (tptp-v1:include-result ?file ?selection ?qualification))) (body))
+    (rule compact-include-result (head (metta-equation
+      (tptp-v1:include-result ?file ?selection ?qualification)
+      (tptp-v1:include-result-selection-next
+        (langdef:ground-equal ?selection (tptp-v1:none))
+        ?file ?selection ?qualification))) (body))
+    (rule compact-include-result-all (head (metta-equation
+      (tptp-v1:include-result-selection-next LangDef:SameValue
+        ?file ?selection ?qualification)
+      (langdef:list->expression (LCons incl (LCons ?file LNil))))) (body))
+    (rule compact-include-result-some (head (metta-equation
+      (tptp-v1:include-result-selection-next LangDef:DifferentValue
+        ?file ?selection ?qualification)
+      (tptp-v1:include-result-qualification-next
+        (langdef:ground-equal ?qualification (tptp-v1:none))
+        ?file ?selection ?qualification))) (body))
+    (rule compact-include-result-selection (head (metta-equation
+      (tptp-v1:include-result-qualification-next LangDef:SameValue
+        ?file ?selection ?qualification)
+      (langdef:list->expression
+        (LCons incl (LCons ?file (LCons ?selection LNil)))))) (body))
+    (rule compact-include-result-qualified (head (metta-equation
+      (tptp-v1:include-result-qualification-next LangDef:DifferentValue
+        ?file ?selection ?qualification)
+      (langdef:list->expression
+        (LCons incl
+          (LCons ?file
+            (LCons ?selection (LCons ?qualification LNil))))))) (body))
+    (rule compact-build-selection (head (metta-equation
+      (tptp-v1:build "formula_selection" ?alt ?start ?stop ?kids)
+      (langdef:list->expression
+        (tptp-v1:node
+          (tptp-rec-v1:one (tptp-rec-v1:nodes ?kids)))))) (body))
+    (rule compact-build-name-list (head (metta-equation
+      (tptp-v1:build "name_list" ?alt ?start ?stop ?kids)
+      (tptp-v1:name-seq (tptp-rec-v1:nodes ?kids)))) (body))
+    (rule compact-name-seq-one (head (metta-equation
+      (tptp-v1:name-seq (LCons ?only LNil))
+      (LCons (tptp-v1:node ?only) LNil))) (body))
+    (rule compact-name-seq-rest (head (metta-equation
+      (tptp-v1:name-seq (LCons ?first (LCons ?rest LNil)))
+      (LCons (tptp-v1:node ?first) (tptp-v1:node ?rest)))) (body))
+    (rule compact-build-space-name (head (metta-equation
+      (tptp-v1:build "space_name" ?alt ?start ?stop ?kids)
+      (tptp-v1:node (tptp-rec-v1:one (tptp-rec-v1:nodes ?kids))))) (body))
+
+    (rule compact-build-general-term (head (metta-equation
+      (tptp-v1:build "general_term" ?alt ?start ?stop ?kids)
+      (tptp-v1:general-term-of (tptp-rec-v1:nodes ?kids)))) (body))
+    (rule compact-general-term-one (head (metta-equation
+      (tptp-v1:general-term-of (LCons ?only LNil))
+      (tptp-v1:node ?only))) (body))
+    (rule compact-general-term-colon (head (metta-equation
+      (tptp-v1:general-term-of (LCons ?left (LCons ?right ?rest)))
+      (: (tptp-v1:node ?left) (tptp-v1:node ?right)))) (body))
+    (rule compact-build-general-function (head (metta-equation
+      (tptp-v1:build "general_function" ?alt ?start ?stop ?kids)
+      (tptp-v1:call
+        (tptp-v1:word (tptp-rec-v1:first ?kids))
+        (tptp-v1:node
+          (tptp-rec-v1:child "general_terms" (tptp-rec-v1:nodes ?kids)))))) (body))
+    (rule compact-build-general-list (head (metta-equation
+      (tptp-v1:build "general_list" ?alt ?start ?stop ?kids)
+      (⟨⟩
+        (tptp-v1:bracketed-sequence
+          (tptp-rec-v1:nodes ?kids))))) (body))
+    (rule compact-bracketed-sequence-empty (head (metta-equation
+      (tptp-v1:bracketed-sequence LNil)
+      (langdef:list->expression LNil))) (body))
+    (rule compact-bracketed-sequence-one (head (metta-equation
+      (tptp-v1:bracketed-sequence (LCons ?items LNil))
+      (langdef:list->expression (tptp-v1:node ?items)))) (body))
+    (rule compact-build-general-terms (head (metta-equation
+      (tptp-v1:build "general_terms" ?alt ?start ?stop ?kids)
+      (tptp-v1:general-terms (tptp-rec-v1:nodes ?kids)))) (body))
+    (rule compact-general-terms (head (metta-equation
+      (tptp-v1:general-terms ?nodes)
+      (tptp-v1:terms ?nodes))) (body))
+    (rule compact-build-comma-general (head (metta-equation
+      (tptp-v1:build "comma_general_term" ?alt ?start ?stop ?kids)
+      (tptp-v1:node (tptp-rec-v1:one (tptp-rec-v1:nodes ?kids))))) (body))
+    (rule compact-build-parents (head (metta-equation
+      (tptp-v1:build "parents" ?alt ?start ?stop ?kids)
+      (tptp-v1:bracketed-sequence
+        (tptp-rec-v1:nodes ?kids)))) (body))
+    (rule compact-build-parent-list (head (metta-equation
+      (tptp-v1:build "parent_list" ?alt ?start ?stop ?kids)
+      (tptp-v1:general-terms (tptp-rec-v1:nodes ?kids)))) (body))
+    (rule compact-build-comma-parent (head (metta-equation
+      (tptp-v1:build "comma_parent_info" ?alt ?start ?stop ?kids)
+      (tptp-v1:node (tptp-rec-v1:one (tptp-rec-v1:nodes ?kids))))) (body))
+    (rule compact-build-parent-info (head (metta-equation
+      (tptp-v1:build "parent_info" ?alt ?start ?stop ?kids)
+      (tptp-v1:node (tptp-rec-v1:head (tptp-rec-v1:nodes ?kids))))) (body))
+    (rule compact-build-parent-details (head (metta-equation
+      (tptp-v1:build "parent_details" ?alt ?start ?stop ?kids)
+      (tptp-v1:optional (tptp-rec-v1:nodes ?kids)))) (body))
+
+    (rule compact-build-plain-term (head (metta-equation
+      (tptp-v1:build "fof_plain_term" ?alt ?start ?stop ?kids)
+      (tptp-v1:plain-term (tptp-rec-v1:nodes ?kids)))) (body))
+    (rule compact-build-defined-plain-term (head (metta-equation
+      (tptp-v1:build "fof_defined_plain_term" ?alt ?start ?stop ?kids)
+      (tptp-v1:node (tptp-rec-v1:one (tptp-rec-v1:nodes ?kids))))) (body))
+    (rule compact-build-number (head (metta-equation
+      (tptp-v1:build "number" ?alt ?start ?stop ?kids)
+      (tptp-v1:word (tptp-rec-v1:first ?kids)))) (body))
+    (rule compact-build-arguments (head (metta-equation
+      (tptp-v1:build "fof_arguments" ?alt ?start ?stop ?kids)
+      (tptp-v1:arguments (tptp-rec-v1:nodes ?kids)))) (body))
+    (rule compact-build-comma-term (head (metta-equation
+      (tptp-v1:build "comma_fof_term" ?alt ?start ?stop ?kids)
+      (tptp-v1:node
+        (tptp-rec-v1:one (tptp-rec-v1:nodes ?kids))))) (body))
+    (rule compact-build-plain-atomic (head (metta-equation
+      (tptp-v1:build "fof_plain_atomic_formula" ?alt ?start ?stop ?kids)
+      (tptp-v1:atom
+        (tptp-v1:node
+          (tptp-rec-v1:one (tptp-rec-v1:nodes ?kids)))))) (body))
+    (rule compact-build-defined-plain (head (metta-equation
+      (tptp-v1:build "fof_defined_plain_formula" ?alt ?start ?stop ?kids)
+      (tptp-v1:atom
+        (tptp-v1:node
+          (tptp-rec-v1:one (tptp-rec-v1:nodes ?kids)))))) (body))
+    (rule compact-build-defined-infix (head (metta-equation
+      (tptp-v1:build "fof_defined_infix_formula" ?alt ?start ?stop ?kids)
+      (let ?pair (tptp-rec-v1:operands (tptp-rec-v1:nodes ?kids))
+        (tptp-v1:binary "="
+          (tptp-v1:node (tptp-rec-v1:head ?pair))
+          (tptp-v1:node (tptp-rec-v1:second ?pair)))))) (body))
+    (rule compact-build-infix-unary (head (metta-equation
+      (tptp-v1:build "fof_infix_unary" ?alt ?start ?stop ?kids)
+      (let ?pair (tptp-rec-v1:operands (tptp-rec-v1:nodes ?kids))
+        (tptp-v1:binary "!="
+          (tptp-v1:node (tptp-rec-v1:head ?pair))
+          (tptp-v1:node (tptp-rec-v1:second ?pair)))))) (body))
+    (rule compact-build-or (head (metta-equation
+      (tptp-v1:build "fof_or_formula" ?alt ?start ?stop ?kids)
+      (let ?pair (tptp-rec-v1:operands (tptp-rec-v1:nodes ?kids))
+        (tptp-v1:pair "or"
+          (tptp-rec-v1:head ?pair) (tptp-rec-v1:second ?pair))))) (body))
+    (rule compact-build-and (head (metta-equation
+      (tptp-v1:build "fof_and_formula" ?alt ?start ?stop ?kids)
+      (let ?pair (tptp-rec-v1:operands (tptp-rec-v1:nodes ?kids))
+        (tptp-v1:pair "and"
+          (tptp-rec-v1:head ?pair) (tptp-rec-v1:second ?pair))))) (body))
+    (rule compact-build-nonassoc (head (metta-equation
+      (tptp-v1:build "fof_binary_nonassoc" ?alt ?start ?stop ?kids)
+      (let ?nodes (tptp-rec-v1:nodes ?kids)
+        (tptp-v1:binary
+          (tptp-rec-v1:op (tptp-rec-v1:second ?nodes))
+          (tptp-v1:node (tptp-rec-v1:head ?nodes))
+          (tptp-v1:node (tptp-rec-v1:third ?nodes)))))) (body))
+    (rule compact-build-unary (head (metta-equation
+      (tptp-v1:build "fof_unary_formula" ?alt ?start ?stop ?kids)
+      (tptp-v1:unary-form (tptp-rec-v1:nodes ?kids)))) (body))
+    (rule compact-build-variable-list (head (metta-equation
+      (tptp-v1:build "fof_variable_list" ?alt ?start ?stop ?kids)
+      (tptp-v1:variable-seq (tptp-rec-v1:nodes ?kids)))) (body))
+    (rule compact-build-comma-variable (head (metta-equation
+      (tptp-v1:build "comma_variable" ?alt ?start ?stop ?kids)
+      (tptp-v1:node
+        (tptp-rec-v1:one (tptp-rec-v1:nodes ?kids))))) (body))
+    (rule compact-build-quantified (head (metta-equation
+      (tptp-v1:build "fof_quantified_formula" ?alt ?start ?stop ?kids)
+      (tptp-v1:quantified
+        (tptp-rec-v1:op
+          (tptp-rec-v1:child "fof_quantifier"
+            (tptp-rec-v1:nodes ?kids)))
+        (tptp-v1:node
+          (tptp-rec-v1:child "fof_variable_list"
+            (tptp-rec-v1:nodes ?kids)))
+        (tptp-v1:node
+          (tptp-rec-v1:child "fof_unit_formula"
+            (tptp-rec-v1:nodes ?kids)))))) (body))
+    (rule compact-build-cnf-disjunction (head (metta-equation
+      (tptp-v1:build "cnf_disjunction" ?alt ?start ?stop ?kids)
+      (tptp-v1:disjunction (tptp-rec-v1:nodes ?kids)))) (body))
+    (rule compact-build-cnf-literal (head (metta-equation
+      (tptp-v1:build "cnf_literal" ?alt ?start ?stop ?kids)
+      (tptp-v1:negated ?kids
+        (tptp-v1:node
+          (tptp-rec-v1:one (tptp-rec-v1:nodes ?kids)))))) (body))
+
+    (rule compact-build-tff-typing (head (metta-equation
+      (tptp-v1:build "tff_atom_typing" ?alt ?start ?stop ?kids)
+      (let ?pair (tptp-rec-v1:operands (tptp-rec-v1:nodes ?kids))
+        (:
+          (tptp-v1:node (tptp-rec-v1:head ?pair))
+          (tptp-v1:node (tptp-rec-v1:second ?pair)))))) (body))
+    (rule compact-build-tff-mapping (head (metta-equation
+      (tptp-v1:build "tff_mapping_type" ?alt ?start ?stop ?kids)
+      (let ?pair (tptp-rec-v1:operands (tptp-rec-v1:nodes ?kids))
+        (⇒
+          (tptp-v1:node (tptp-rec-v1:head ?pair))
+          (tptp-v1:node (tptp-rec-v1:second ?pair)))))) (body))
+    (rule compact-build-tff-xprod (head (metta-equation
+      (tptp-v1:build "tff_xprod_type" ?alt ?start ?stop ?kids)
+      (let ?pair (tptp-rec-v1:operands (tptp-rec-v1:nodes ?kids))
+        (×
+          (tptp-v1:node (tptp-rec-v1:head ?pair))
+          (tptp-v1:node (tptp-rec-v1:second ?pair)))))) (body))
+    (rule compact-build-tff-type-list (head (metta-equation
+      (tptp-v1:build "tff_type_list" ?alt ?start ?stop ?kids)
+      (tptp-v1:type-seq (tptp-rec-v1:nodes ?kids)))) (body))
+    (rule compact-type-seq-one (head (metta-equation
+      (tptp-v1:type-seq (LCons ?only LNil))
+      (LCons (tptp-v1:node ?only) LNil))) (body))
+    (rule compact-type-seq-rest (head (metta-equation
+      (tptp-v1:type-seq (LCons ?first (LCons ?rest LNil)))
+      (LCons (tptp-v1:node ?first) (tptp-v1:node ?rest)))) (body))
+    (rule compact-build-txf-tuple-type (head (metta-equation
+      (tptp-v1:build "txf_tuple_type" ?alt ?start ?stop ?kids)
+      (⟨⟩
+        (langdef:list->expression
+          (tptp-v1:node
+            (tptp-rec-v1:child "tff_type_list"
+              (tptp-rec-v1:nodes ?kids))))))) (body))
+    (rule compact-build-tff-atomic-type (head (metta-equation
+      (tptp-v1:build "tff_atomic_type" ?alt ?start ?stop ?kids)
+      (tptp-v1:plain-term (tptp-rec-v1:nodes ?kids)))) (body))
+    (rule compact-build-tff-plain-atomic (head (metta-equation
+      (tptp-v1:build "tff_plain_atomic" ?alt ?start ?stop ?kids)
+      (tptp-v1:atom
+        (tptp-v1:plain-term (tptp-rec-v1:nodes ?kids))))) (body))
+    (rule compact-build-tff-defined-plain (head (metta-equation
+      (tptp-v1:build "tff_defined_plain" ?alt ?start ?stop ?kids)
+      (tptp-v1:defined-plain
+        (tptp-v1:head-name (tptp-rec-v1:nodes ?kids))
+        (tptp-rec-v1:nodes ?kids)))) (body))
+    (rule compact-head-name (head (metta-equation
+      (tptp-v1:head-name
+        (LCons
+          (tptp-cst:spanned-node
+            (tptp-cst:production ?name ?alt) ?start ?stop ?kids)
+          ?rest))
+      ?name)) (body))
+    (rule compact-defined-plain (head (metta-equation
+      (tptp-v1:defined-plain ?name ?nodes)
+      (tptp-v1:defined-plain-next
+        (langdef:ground-equal ?name "txf_let") ?name ?nodes))) (body))
+    (rule compact-defined-plain-let (head (metta-equation
+      (tptp-v1:defined-plain-next LangDef:SameValue ?name ?nodes)
+      (tptp-v1:node (tptp-rec-v1:head ?nodes)))) (body))
+    (rule compact-defined-plain-not-let (head (metta-equation
+      (tptp-v1:defined-plain-next LangDef:DifferentValue ?name ?nodes)
+      (tptp-v1:defined-plain-nxf
+        (langdef:ground-equal ?name "nxf_atom") ?nodes))) (body))
+    (rule compact-defined-plain-nxf (head (metta-equation
+      (tptp-v1:defined-plain-nxf LangDef:SameValue ?nodes)
+      (tptp-v1:node (tptp-rec-v1:head ?nodes)))) (body))
+    (rule compact-defined-plain-ordinary (head (metta-equation
+      (tptp-v1:defined-plain-nxf LangDef:DifferentValue ?nodes)
+      (tptp-v1:atom (tptp-v1:plain-term ?nodes)))) (body))
+    (rule compact-build-tff-arguments (head (metta-equation
+      (tptp-v1:build "tff_arguments" ?alt ?start ?stop ?kids)
+      (tptp-v1:flat-items (tptp-rec-v1:nodes ?kids)))) (body))
+    (rule compact-build-comma-tff (head (metta-equation
+      (tptp-v1:build "comma_tff_term" ?alt ?start ?stop ?kids)
+      (tptp-v1:node
+        (tptp-rec-v1:one (tptp-rec-v1:nodes ?kids))))) (body))
+    (rule compact-build-tff-variable-list (head (metta-equation
+      (tptp-v1:build "tff_variable_list" ?alt ?start ?stop ?kids)
+      (tptp-v1:variable-seq (tptp-rec-v1:nodes ?kids)))) (body))
+    (rule compact-build-tff-variable (head (metta-equation
+      (tptp-v1:build "tff_variable" ?alt ?start ?stop ?kids)
+      (tptp-v1:node
+        (tptp-rec-v1:one (tptp-rec-v1:nodes ?kids))))) (body))
+    (rule compact-build-tff-typed-variable (head (metta-equation
+      (tptp-v1:build "tff_typed_variable" ?alt ?start ?stop ?kids)
+      (let ?pair (tptp-rec-v1:operands (tptp-rec-v1:nodes ?kids))
+        (:
+          (tptp-v1:node (tptp-rec-v1:head ?pair))
+          (tptp-v1:node (tptp-rec-v1:second ?pair)))))) (body))
+    (rule compact-build-tff-quantified (head (metta-equation
+      (tptp-v1:build "tff_quantified_formula" ?alt ?start ?stop ?kids)
+      (tptp-v1:quantified
+        (tptp-rec-v1:op
+          (tptp-rec-v1:child "tff_quantifier"
+            (tptp-rec-v1:nodes ?kids)))
+        (tptp-v1:node
+          (tptp-rec-v1:child "tff_variable_list"
+            (tptp-rec-v1:nodes ?kids)))
+        (tptp-v1:node
+          (tptp-rec-v1:child "tff_unit_formula"
+            (tptp-rec-v1:nodes ?kids)))))) (body))
+    (rule compact-build-tff-or (head (metta-equation
+      (tptp-v1:build "tff_or_formula" ?alt ?start ?stop ?kids)
+      (let ?pair (tptp-rec-v1:operands (tptp-rec-v1:nodes ?kids))
+        (tptp-v1:pair "or"
+          (tptp-rec-v1:head ?pair) (tptp-rec-v1:second ?pair))))) (body))
+    (rule compact-build-tff-and (head (metta-equation
+      (tptp-v1:build "tff_and_formula" ?alt ?start ?stop ?kids)
+      (let ?pair (tptp-rec-v1:operands (tptp-rec-v1:nodes ?kids))
+        (tptp-v1:pair "and"
+          (tptp-rec-v1:head ?pair) (tptp-rec-v1:second ?pair))))) (body))
+    (rule compact-build-tff-nonassoc (head (metta-equation
+      (tptp-v1:build "tff_binary_nonassoc" ?alt ?start ?stop ?kids)
+      (let ?nodes (tptp-rec-v1:nodes ?kids)
+        (tptp-v1:binary
+          (tptp-rec-v1:op (tptp-rec-v1:second ?nodes))
+          (tptp-v1:node (tptp-rec-v1:head ?nodes))
+          (tptp-v1:node (tptp-rec-v1:third ?nodes)))))) (body))
+    (rule compact-build-tff-prefix-unary (head (metta-equation
+      (tptp-v1:build "tff_prefix_unary" ?alt ?start ?stop ?kids)
+      (tptp-v1:unary-form (tptp-rec-v1:nodes ?kids)))) (body))
+    (rule compact-build-tff-infix-unary (head (metta-equation
+      (tptp-v1:build "tff_infix_unary" ?alt ?start ?stop ?kids)
+      (let ?pair (tptp-rec-v1:operands (tptp-rec-v1:nodes ?kids))
+        (≉
+          (tptp-v1:node (tptp-rec-v1:head ?pair))
+          (tptp-v1:node (tptp-rec-v1:second ?pair)))))) (body))
+    (rule compact-build-tff-defined-infix (head (metta-equation
+      (tptp-v1:build "tff_defined_infix" ?alt ?start ?stop ?kids)
+      (let ?pair (tptp-rec-v1:operands (tptp-rec-v1:nodes ?kids))
+        (≈
+          (tptp-v1:node (tptp-rec-v1:head ?pair))
+          (tptp-v1:node (tptp-rec-v1:second ?pair)))))) (body))
+    (rule compact-build-txf-tuple (head (metta-equation
+      (tptp-v1:build "txf_tuple" ?alt ?start ?stop ?kids)
+      (tptp-v1:tuple-value (tptp-rec-v1:nodes ?kids)))) (body))
+    (rule compact-build-tff-atom-typing-list (head (metta-equation
+      (tptp-v1:build "tff_atom_typing_list" ?alt ?start ?stop ?kids)
+      (langdef:list->expression
+        (tptp-v1:nested-items (tptp-rec-v1:nodes ?kids))))) (body))
+    (rule compact-build-txf-let-defn-list (head (metta-equation
+      (tptp-v1:build "txf_let_defn_list" ?alt ?start ?stop ?kids)
+      (langdef:list->expression
+        (tptp-v1:nested-items (tptp-rec-v1:nodes ?kids))))) (body))
+    (rule compact-build-txf-let-defn (head (metta-equation
+      (tptp-v1:build "txf_let_defn" ?alt ?start ?stop ?kids)
+      (let ?pair (tptp-rec-v1:operands (tptp-rec-v1:nodes ?kids))
+        (≔
+          (tptp-v1:node (tptp-rec-v1:head ?pair))
+          (tptp-v1:node (tptp-rec-v1:second ?pair)))))) (body))
+    (rule compact-build-txf-let (head (metta-equation
+      (tptp-v1:build "txf_let" ?alt ?start ?stop ?kids)
+      (let ?nodes (tptp-rec-v1:nodes ?kids)
+        (§let
+          (tptp-v1:node (tptp-rec-v1:head ?nodes))
+          (tptp-v1:node (tptp-rec-v1:second ?nodes))
+          (tptp-v1:node (tptp-rec-v1:third ?nodes)))))) (body))
+    (rule compact-build-tcf-quantified (head (metta-equation
+      (tptp-v1:build "tcf_quantified_formula" ?alt ?start ?stop ?kids)
+      (∀
+        (langdef:list->expression
+          (tptp-v1:node
+            (tptp-rec-v1:child "tff_variable_list"
+              (tptp-rec-v1:nodes ?kids))))
+        (tptp-v1:node
+          (tptp-rec-v1:child "tcf_logic_formula"
+            (tptp-rec-v1:nodes ?kids)))))) (body))
+
+    (rule compact-build-nxf-long (head (metta-equation
+      (tptp-v1:build "nxf_long_connective" ?alt ?start ?stop ?kids)
+      (tptp-v1:node
+        (tptp-rec-v1:one (tptp-rec-v1:nodes ?kids))))) (body))
+    (rule compact-build-nhf-long (head (metta-equation
+      (tptp-v1:build "nhf_long_connective" ?alt ?start ?stop ?kids)
+      (tptp-v1:node
+        (tptp-rec-v1:one (tptp-rec-v1:nodes ?kids))))) (body))
+    (rule compact-build-nxf-atom (head (metta-equation
+      (tptp-v1:build "nxf_atom" ?alt ?start ?stop ?kids)
+      (let ?pair (tptp-rec-v1:operands (tptp-rec-v1:nodes ?kids))
+        (langdef:list->expression
+          (tptp-v1:append
+            (langdef:expression-or-single->list
+              (tptp-v1:node (tptp-rec-v1:head ?pair)))
+            (tptp-v1:node (tptp-rec-v1:second ?pair))))))) (body))
+
+    (rule compact-build-defined-type (head (metta-equation
+      (tptp-v1:build "defined_type" ?alt ?start ?stop ?kids)
+      (tptp-v1:word (tptp-rec-v1:first ?kids)))) (body))
+    (rule compact-build-thf-typing (head (metta-equation
+      (tptp-v1:build "thf_atom_typing" ?alt ?start ?stop ?kids)
+      (let ?pair (tptp-rec-v1:operands (tptp-rec-v1:nodes ?kids))
+        (:
+          (tptp-v1:node (tptp-rec-v1:head ?pair))
+          (tptp-v1:node (tptp-rec-v1:second ?pair)))))) (body))
+    (rule compact-build-thf-mapping (head (metta-equation
+      (tptp-v1:build "thf_mapping_type" ?alt ?start ?stop ?kids)
+      (let ?pair (tptp-rec-v1:operands (tptp-rec-v1:nodes ?kids))
+        (⇒
+          (tptp-v1:node (tptp-rec-v1:head ?pair))
+          (tptp-v1:node (tptp-rec-v1:second ?pair)))))) (body))
+    (rule compact-build-thf-plain-atomic (head (metta-equation
+      (tptp-v1:build "thf_plain_atomic" ?alt ?start ?stop ?kids)
+      (tptp-v1:atom
+        (tptp-v1:plain-term (tptp-rec-v1:nodes ?kids))))) (body))
+    (rule compact-build-thf-apply (head (metta-equation
+      (tptp-v1:build "thf_apply_formula" ?alt ?start ?stop ?kids)
+      (let ?pair (tptp-rec-v1:operands (tptp-rec-v1:nodes ?kids))
+        (langdef:list->expression
+          (tptp-v1:append-one
+            (langdef:expression-or-single->list
+              (tptp-v1:node (tptp-rec-v1:head ?pair)))
+            (tptp-v1:node (tptp-rec-v1:second ?pair))))))) (body))
+    (rule compact-build-thf-quantification (head (metta-equation
+      (tptp-v1:build "thf_quantification" ?alt ?start ?stop ?kids)
+      (LCons
+        (tptp-rec-v1:op
+          (tptp-rec-v1:child "thf_quantifier" (tptp-rec-v1:nodes ?kids)))
+        (LCons
+          (tptp-v1:node
+            (tptp-rec-v1:child "thf_variable_list"
+              (tptp-rec-v1:nodes ?kids))) LNil)))) (body))
+    (rule compact-build-thf-quantified (head (metta-equation
+      (tptp-v1:build "thf_quantified_formula" ?alt ?start ?stop ?kids)
+      (tptp-v1:quantified-of
+        (tptp-v1:node
+          (tptp-rec-v1:child "thf_quantification"
+            (tptp-rec-v1:nodes ?kids)))
+        (tptp-v1:node
+          (tptp-rec-v1:child "thf_unit_formula"
+            (tptp-rec-v1:nodes ?kids)))))) (body))
+    (rule compact-build-thf-variable-list (head (metta-equation
+      (tptp-v1:build "thf_variable_list" ?alt ?start ?stop ?kids)
+      (tptp-v1:variable-seq (tptp-rec-v1:nodes ?kids)))) (body))
+    (rule compact-build-thf-typed-variable (head (metta-equation
+      (tptp-v1:build "thf_typed_variable" ?alt ?start ?stop ?kids)
+      (let ?pair (tptp-rec-v1:operands (tptp-rec-v1:nodes ?kids))
+        (:
+          (tptp-v1:node (tptp-rec-v1:head ?pair))
+          (tptp-v1:node (tptp-rec-v1:second ?pair)))))) (body))
+    (rule compact-build-thf-and (head (metta-equation
+      (tptp-v1:build "thf_and_formula" ?alt ?start ?stop ?kids)
+      (let ?pair (tptp-rec-v1:operands (tptp-rec-v1:nodes ?kids))
+        (tptp-v1:pair "and"
+          (tptp-rec-v1:head ?pair) (tptp-rec-v1:second ?pair))))) (body))
+    (rule compact-build-thf-defined-infix (head (metta-equation
+      (tptp-v1:build "thf_defined_infix" ?alt ?start ?stop ?kids)
+      (let ?pair (tptp-rec-v1:operands (tptp-rec-v1:nodes ?kids))
+        (≈
+          (tptp-v1:node (tptp-rec-v1:head ?pair))
+          (tptp-v1:node (tptp-rec-v1:second ?pair)))))) (body))
+    (rule compact-build-thf-nonassoc (head (metta-equation
+      (tptp-v1:build "thf_binary_nonassoc" ?alt ?start ?stop ?kids)
+      (let ?nodes (tptp-rec-v1:nodes ?kids)
+        (tptp-v1:binary
+          (tptp-rec-v1:op (tptp-rec-v1:second ?nodes))
+          (tptp-v1:node (tptp-rec-v1:head ?nodes))
+          (tptp-v1:node (tptp-rec-v1:third ?nodes)))))) (body))))

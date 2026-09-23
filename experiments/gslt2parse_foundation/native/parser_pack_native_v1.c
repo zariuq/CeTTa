@@ -1,6 +1,7 @@
 #include "parser_pack_native_v1.h"
 
 #include "finite_horn_ground_term_v1.h"
+#include "parser_action_primitive_v1.h"
 #include "native_sha256.h"
 
 #include <stdarg.h>
@@ -1725,6 +1726,31 @@ static Atom *ppnative_v1_apply_action(PPNativeV1ReplayContext *context,
     }
     if (ppnative_v1_expr_head(action, "pa-const", 1u))
         return ppnative_v1_copy(context->arena, action->expr.elems[1]);
+    if (ppnative_v1_expr_head(action, "pa-primitive", 2u)) {
+        PPNativeV1AtomVec arguments = {0};
+        Atom *result = NULL;
+        PPActionPrimitiveV1Status status;
+        if (!pp_action_primitive_v1_action_shape(
+                action->expr.elems[1], action->expr.elems[2])) {
+            context->status = PPNATIVE_V1_REPLAY_MALFORMED;
+            return NULL;
+        }
+        if (!ppnative_v1_apply_action_list(context, action->expr.elems[2],
+                values, value_len, depth + 1u, &arguments)) {
+            free(arguments.data);
+            return NULL;
+        }
+        status = pp_action_primitive_v1_execute(action->expr.elems[1],
+            arguments.data, arguments.len, context->arena, &result);
+        free(arguments.data);
+        if (status != PP_ACTION_PRIMITIVE_V1_OK) {
+            context->status = status == PP_ACTION_PRIMITIVE_V1_OVERFLOW ||
+                    status == PP_ACTION_PRIMITIVE_V1_ALLOCATION
+                ? PPNATIVE_V1_REPLAY_RESULT_HIT : PPNATIVE_V1_REPLAY_MALFORMED;
+            return NULL;
+        }
+        return result;
+    }
     if (ppnative_v1_expr_head(action, "pa-apply", 2u) &&
         action->expr.elems[1]->kind == ATOM_SYMBOL) {
         PPNativeV1AtomVec arguments = {0};
@@ -2417,6 +2443,12 @@ static bool ppnative_v1_extension_action_valid(
         bool valid = canonical != NULL;
         free(canonical);
         return valid;
+    }
+    if (ppnative_v1_expr_head(action, "pa-primitive", 2u)) {
+        return pp_action_primitive_v1_action_shape(
+                   action->expr.elems[1], action->expr.elems[2]) &&
+            ppnative_v1_extension_action_list_valid(
+                action->expr.elems[2], arity, depth + 1u);
     }
     return ppnative_v1_expr_head(action, "pa-apply", 2u) &&
         action->expr.elems[1]->kind == ATOM_SYMBOL &&

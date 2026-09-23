@@ -3,6 +3,7 @@
 #include "parser_pack_abi_v1.h"
 
 #include "finite_horn_ground_term_v1.h"
+#include "parser_action_primitive_v1.h"
 #include "native_sha256.h"
 
 #include <stdarg.h>
@@ -197,6 +198,12 @@ static bool ppabi_v1_action_valid(Atom *action,
     }
     if (ppabi_v1_expr_head(action, "pa-apply", 2u)) {
         return action->expr.elems[1]->kind == ATOM_SYMBOL &&
+               ppabi_v1_action_list_valid(action->expr.elems[2], arity,
+                                          depth + 1u);
+    }
+    if (ppabi_v1_expr_head(action, "pa-primitive", 2u)) {
+        return pp_action_primitive_v1_action_shape(
+                   action->expr.elems[1], action->expr.elems[2]) &&
                ppabi_v1_action_list_valid(action->expr.elems[2], arity,
                                           depth + 1u);
     }

@@ -44,40 +44,22 @@
    (TPTP:FamilyCountsV1 $fof $cnf $tff $thf $tcf $tpi))
 (= (test:family-counts-acc
       (tptp-ci-v1:expanded-inputs-cons
-        (TPTP:ExpandedInputV1 $_origin $_path $_namespace $_name
-          (tptp-rec:fof $_a $_b $_c $_d $_e)) $tail)
+        (TPTP:ExpandedInputV1 $_origin $_path $_namespace $_name $record)
+        $tail)
       $fof $cnf $tff $thf $tcf $tpi)
-   (test:family-counts-acc $tail (+ $fof 1) $cnf $tff $thf $tcf $tpi))
-(= (test:family-counts-acc
-      (tptp-ci-v1:expanded-inputs-cons
-        (TPTP:ExpandedInputV1 $_origin $_path $_namespace $_name
-          (tptp-rec:cnf $_a $_b $_c $_d $_e)) $tail)
-      $fof $cnf $tff $thf $tcf $tpi)
-   (test:family-counts-acc $tail $fof (+ $cnf 1) $tff $thf $tcf $tpi))
-(= (test:family-counts-acc
-      (tptp-ci-v1:expanded-inputs-cons
-        (TPTP:ExpandedInputV1 $_origin $_path $_namespace $_name
-          (tptp-rec:tff $_a $_b $_c $_d $_e)) $tail)
-      $fof $cnf $tff $thf $tcf $tpi)
-   (test:family-counts-acc $tail $fof $cnf (+ $tff 1) $thf $tcf $tpi))
-(= (test:family-counts-acc
-      (tptp-ci-v1:expanded-inputs-cons
-        (TPTP:ExpandedInputV1 $_origin $_path $_namespace $_name
-          (tptp-rec:thf $_a $_b $_c $_d $_e)) $tail)
-      $fof $cnf $tff $thf $tcf $tpi)
-   (test:family-counts-acc $tail $fof $cnf $tff (+ $thf 1) $tcf $tpi))
-(= (test:family-counts-acc
-      (tptp-ci-v1:expanded-inputs-cons
-        (TPTP:ExpandedInputV1 $_origin $_path $_namespace $_name
-          (tptp-rec:tcf $_a $_b $_c $_d $_e)) $tail)
-      $fof $cnf $tff $thf $tcf $tpi)
-   (test:family-counts-acc $tail $fof $cnf $tff $thf (+ $tcf 1) $tpi))
-(= (test:family-counts-acc
-      (tptp-ci-v1:expanded-inputs-cons
-        (TPTP:ExpandedInputV1 $_origin $_path $_namespace $_name
-          (tptp-rec:tpi $_a $_b $_c $_d $_e)) $tail)
-      $fof $cnf $tff $thf $tcf $tpi)
-   (test:family-counts-acc $tail $fof $cnf $tff $thf $tcf (+ $tpi 1)))
+   (case (tptp:record-family $record)
+     ((fof (test:family-counts-acc
+             $tail (+ $fof 1) $cnf $tff $thf $tcf $tpi))
+      (cnf (test:family-counts-acc
+             $tail $fof (+ $cnf 1) $tff $thf $tcf $tpi))
+      (tff (test:family-counts-acc
+             $tail $fof $cnf (+ $tff 1) $thf $tcf $tpi))
+      (thf (test:family-counts-acc
+             $tail $fof $cnf $tff (+ $thf 1) $tcf $tpi))
+      (tcf (test:family-counts-acc
+             $tail $fof $cnf $tff $thf (+ $tcf 1) $tpi))
+      (tpi (test:family-counts-acc
+             $tail $fof $cnf $tff $thf $tcf (+ $tpi 1))))))
 
 (= (test:edge-count (tptp-ci-v1:include-edges-nil)) 0)
 (= (test:edge-count

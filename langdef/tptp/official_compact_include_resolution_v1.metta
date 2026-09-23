@@ -7,31 +7,13 @@
     (operator metta-equation 2)
     (operator + 2)
     (operator langdef:ground-equal 2)
-    (operator tptp-lex-v1:word-value 1)
-    (operator tptp-lex-v1:name-value 1)
-    (operator TPTP:LexicalValue 1)
-    (operator TPTP:LexicalFault 2)
+    (operator langdef:value-view 1)
+    (operator langdef:list->expression 1)
     (operator LangDef:SameValue 0)
     (operator LangDef:DifferentValue 0)
-
-    (operator tptp-rec:file 2)
-    (operator tptp-rec:inputs-nil 0)
-    (operator tptp-rec:inputs-cons 2)
-    (operator tptp-rec:fof 5)
-    (operator tptp-rec:cnf 5)
-    (operator tptp-rec:tff 5)
-    (operator tptp-rec:thf 5)
-    (operator tptp-rec:tcf 5)
-    (operator tptp-rec:tpi 5)
-    (operator tptp-rec:include 4)
-    (operator tptp-rec:include-all 0)
-    (operator tptp-rec:include-names 1)
-    (operator tptp-rec:names-nil 0)
-    (operator tptp-rec:names-cons 2)
-    (operator tptp-rec:name-none 0)
-    (operator tptp-rec:word-lower 1)
-    (operator tptp-rec:word-quoted 1)
-    (operator tptp-rec:word-back 1)
+    (operator LangDef:ExpressionValue 1)
+    (operator LNil 0)
+    (operator LCons 2)
 
     (operator tptp-ci-v1:environment 2)
     (operator tptp-ci-v1:documents-nil 0)
@@ -50,10 +32,10 @@
     (operator tptp-ci-v1:expand-file 5)
     (operator tptp-ci-v1:expand-file-document 6)
     (operator tptp-ci-v1:expand-inputs 8)
+    (operator tptp-ci-v1:expand-inputs-view 8)
+    (operator tptp-ci-v1:expand-input 10)
     (operator tptp-ci-v1:emit-formula 10)
-    (operator tptp-ci-v1:emit-formula-name 11)
     (operator tptp-ci-v1:prepend-input 2)
-    (operator tptp-ci-v1:expand-include-file 12)
     (operator tptp-ci-v1:expand-include-selection 12)
     (operator tptp-ci-v1:expand-include-namespace 12)
     (operator tptp-ci-v1:expand-include-binding 13)
@@ -64,10 +46,9 @@
 
     (operator tptp-ci-v1:decode-selection 1)
     (operator tptp-ci-v1:decode-names 1)
-    (operator tptp-ci-v1:decode-name-head 2)
+    (operator tptp-ci-v1:decode-names-view 1)
     (operator tptp-ci-v1:prepend-string 2)
     (operator tptp-ci-v1:decode-namespace 2)
-    (operator tptp-ci-v1:decode-namespace-value 2)
     (operator tptp-ci-v1:selection-all 0)
     (operator tptp-ci-v1:selection-names 1)
     (operator tptp-ci-v1:namespace-value 1)
@@ -119,11 +100,11 @@
     (operator tptp-ci-v1:selected 1)
     (operator tptp-ci-v1:selection-validation 2)
     (operator tptp-ci-v1:duplicate 1)
-    (operator tptp-ci-v1:record-span 1)
 
     (operator TPTP:ExpandedDocumentV1 3)
     (operator TPTP:ExpandedInputV1 5)
     (operator TPTP:SourceOccurrenceV1 4)
+    (operator TPTP:SpanUnavailable 1)
     (operator TPTP:QualifiedFormulaNameV1 2)
     (operator TPTP:IncludePathRootV1 1)
     (operator TPTP:IncludePathStepV1 3)
@@ -167,7 +148,7 @@
         ?namespace
         (tptp-ci-v1:document-ok
           (tptp-ci-v1:source-document ?document-source ?digest
-            (tptp-rec:file ?inputs ?span) ?text)))
+            ?inputs ?text)))
       (tptp-ci-v1:expand-inputs ?source ?digest ?inputs ?environment ?active
         ?path ?namespace 0))) (body))
     (rule expand-file-fault (head (metta-equation
@@ -175,86 +156,78 @@
         ?namespace (TPTP:IncludeResolutionFaultV1 ?fault))
       (TPTP:IncludeResolutionFaultV1 ?fault))) (body))
 
-    (rule inputs-nil (head (metta-equation
-      (tptp-ci-v1:expand-inputs ?source ?digest (tptp-rec:inputs-nil)
+    (rule inputs (head (metta-equation
+      (tptp-ci-v1:expand-inputs ?source ?digest ?inputs
         ?environment ?active ?path ?namespace ?index)
+      (tptp-ci-v1:expand-inputs-view (langdef:value-view ?inputs)
+        ?source ?digest ?environment ?active ?path ?namespace ?index))) (body))
+    (rule inputs-nil (head (metta-equation
+      (tptp-ci-v1:expand-inputs-view (LangDef:ExpressionValue LNil)
+        ?source ?digest ?environment ?active ?path ?namespace ?index)
       (tptp-ci-v1:ok (tptp-ci-v1:expanded-inputs-nil)
         (tptp-ci-v1:include-edges-nil)))) (body))
+    (rule inputs-cons (head (metta-equation
+      (tptp-ci-v1:expand-inputs-view
+        (LangDef:ExpressionValue (LCons ?record ?tail))
+        ?source ?digest ?environment ?active ?path ?namespace ?index)
+      (tptp-ci-v1:expand-input (langdef:value-view ?record) ?record
+        ?source ?digest (langdef:list->expression ?tail)
+        ?environment ?active ?path ?namespace ?index))) (body))
 
-    (rule inputs-fof (head (metta-equation
-      (tptp-ci-v1:expand-inputs ?source ?digest
-        (tptp-rec:inputs-cons
-          (tptp-rec:fof ?name ?role ?formula ?annotation ?span) ?tail)
-        ?environment ?active ?path ?namespace ?index)
+    (rule input-fof (head (metta-equation
+      (tptp-ci-v1:expand-input
+        (LangDef:ExpressionValue
+          (LCons fof (LCons ?name (LCons ?role (LCons ?formula ?tail-fields)))))
+        ?record ?source ?digest ?tail ?environment ?active ?path ?namespace ?index)
       (tptp-ci-v1:emit-formula ?source ?digest ?index ?path ?namespace ?name
-        (tptp-rec:fof ?name ?role ?formula ?annotation ?span) ?tail
-        ?environment ?active))) (body))
-    (rule inputs-cnf (head (metta-equation
-      (tptp-ci-v1:expand-inputs ?source ?digest
-        (tptp-rec:inputs-cons
-          (tptp-rec:cnf ?name ?role ?formula ?annotation ?span) ?tail)
-        ?environment ?active ?path ?namespace ?index)
+        ?record ?tail ?environment ?active))) (body))
+    (rule input-cnf (head (metta-equation
+      (tptp-ci-v1:expand-input
+        (LangDef:ExpressionValue
+          (LCons cnf (LCons ?name (LCons ?role (LCons ?formula ?tail-fields)))))
+        ?record ?source ?digest ?tail ?environment ?active ?path ?namespace ?index)
       (tptp-ci-v1:emit-formula ?source ?digest ?index ?path ?namespace ?name
-        (tptp-rec:cnf ?name ?role ?formula ?annotation ?span) ?tail
-        ?environment ?active))) (body))
-    (rule inputs-tff (head (metta-equation
-      (tptp-ci-v1:expand-inputs ?source ?digest
-        (tptp-rec:inputs-cons
-          (tptp-rec:tff ?name ?role ?formula ?annotation ?span) ?tail)
-        ?environment ?active ?path ?namespace ?index)
+        ?record ?tail ?environment ?active))) (body))
+    (rule input-tff (head (metta-equation
+      (tptp-ci-v1:expand-input
+        (LangDef:ExpressionValue
+          (LCons tff (LCons ?name (LCons ?role (LCons ?formula ?tail-fields)))))
+        ?record ?source ?digest ?tail ?environment ?active ?path ?namespace ?index)
       (tptp-ci-v1:emit-formula ?source ?digest ?index ?path ?namespace ?name
-        (tptp-rec:tff ?name ?role ?formula ?annotation ?span) ?tail
-        ?environment ?active))) (body))
-    (rule inputs-thf (head (metta-equation
-      (tptp-ci-v1:expand-inputs ?source ?digest
-        (tptp-rec:inputs-cons
-          (tptp-rec:thf ?name ?role ?formula ?annotation ?span) ?tail)
-        ?environment ?active ?path ?namespace ?index)
+        ?record ?tail ?environment ?active))) (body))
+    (rule input-thf (head (metta-equation
+      (tptp-ci-v1:expand-input
+        (LangDef:ExpressionValue
+          (LCons thf (LCons ?name (LCons ?role (LCons ?formula ?tail-fields)))))
+        ?record ?source ?digest ?tail ?environment ?active ?path ?namespace ?index)
       (tptp-ci-v1:emit-formula ?source ?digest ?index ?path ?namespace ?name
-        (tptp-rec:thf ?name ?role ?formula ?annotation ?span) ?tail
-        ?environment ?active))) (body))
-    (rule inputs-tcf (head (metta-equation
-      (tptp-ci-v1:expand-inputs ?source ?digest
-        (tptp-rec:inputs-cons
-          (tptp-rec:tcf ?name ?role ?formula ?annotation ?span) ?tail)
-        ?environment ?active ?path ?namespace ?index)
+        ?record ?tail ?environment ?active))) (body))
+    (rule input-tcf (head (metta-equation
+      (tptp-ci-v1:expand-input
+        (LangDef:ExpressionValue
+          (LCons tcf (LCons ?name (LCons ?role (LCons ?formula ?tail-fields)))))
+        ?record ?source ?digest ?tail ?environment ?active ?path ?namespace ?index)
       (tptp-ci-v1:emit-formula ?source ?digest ?index ?path ?namespace ?name
-        (tptp-rec:tcf ?name ?role ?formula ?annotation ?span) ?tail
-        ?environment ?active))) (body))
-    (rule inputs-tpi (head (metta-equation
-      (tptp-ci-v1:expand-inputs ?source ?digest
-        (tptp-rec:inputs-cons
-          (tptp-rec:tpi ?name ?role ?formula ?annotation ?span) ?tail)
-        ?environment ?active ?path ?namespace ?index)
+        ?record ?tail ?environment ?active))) (body))
+    (rule input-tpi (head (metta-equation
+      (tptp-ci-v1:expand-input
+        (LangDef:ExpressionValue
+          (LCons tpi (LCons ?name (LCons ?role (LCons ?formula ?tail-fields)))))
+        ?record ?source ?digest ?tail ?environment ?active ?path ?namespace ?index)
       (tptp-ci-v1:emit-formula ?source ?digest ?index ?path ?namespace ?name
-        (tptp-rec:tpi ?name ?role ?formula ?annotation ?span) ?tail
-        ?environment ?active))) (body))
+        ?record ?tail ?environment ?active))) (body))
 
     (rule emit-formula (head (metta-equation
       (tptp-ci-v1:emit-formula ?source ?digest ?index ?path ?namespace ?name
         ?record ?tail ?environment ?active)
-      (tptp-ci-v1:emit-formula-name
-        (tptp-lex-v1:name-value ?name) ?source ?digest ?index ?path ?namespace
-        ?name ?record ?tail ?environment ?active))) (body))
-    (rule emit-formula-value (head (metta-equation
-      (tptp-ci-v1:emit-formula-name (TPTP:LexicalValue ?value)
-        ?source ?digest ?index ?path ?namespace ?name ?record ?tail
-        ?environment ?active)
       (tptp-ci-v1:prepend-input
         (TPTP:ExpandedInputV1
           (TPTP:SourceOccurrenceV1 ?source ?digest ?index
-            (tptp-ci-v1:record-span ?record))
-          ?path ?namespace (TPTP:QualifiedFormulaNameV1 ?namespace ?value)
+            (TPTP:SpanUnavailable compact-value))
+          ?path ?namespace (TPTP:QualifiedFormulaNameV1 ?namespace ?name)
           ?record)
         (tptp-ci-v1:expand-inputs ?source ?digest ?tail ?environment ?active
           ?path ?namespace (+ ?index 1))))) (body))
-    (rule emit-formula-fault (head (metta-equation
-      (tptp-ci-v1:emit-formula-name (TPTP:LexicalFault ?kind ?raw)
-        ?source ?digest ?index ?path ?namespace ?name ?record ?tail
-        ?environment ?active)
-      (TPTP:IncludeResolutionFaultV1
-        (TPTP:IncludeLexicalFaultV1 formula-name
-          (TPTP:LexicalFault ?kind ?raw))))) (body))
     (rule prepend-input-ok (head (metta-equation
       (tptp-ci-v1:prepend-input ?input (tptp-ci-v1:ok ?inputs ?edges))
       (tptp-ci-v1:ok
@@ -264,36 +237,41 @@
         (TPTP:IncludeResolutionFaultV1 ?fault))
       (TPTP:IncludeResolutionFaultV1 ?fault))) (body))
 
-    (rule inputs-include (head (metta-equation
-      (tptp-ci-v1:expand-inputs ?source ?digest
-        (tptp-rec:inputs-cons
-          (tptp-rec:include ?file ?selection ?qualification ?span) ?tail)
-        ?environment ?active ?path ?namespace ?index)
-      (tptp-ci-v1:expand-include-file
-        (tptp-lex-v1:word-value ?file) ?source ?digest ?index ?path ?namespace
-        ?selection ?qualification ?span ?tail ?environment ?active))) (body))
-    (rule include-file-value (head (metta-equation
-      (tptp-ci-v1:expand-include-file (TPTP:LexicalValue ?requested)
-        ?source ?digest ?index ?path ?namespace ?selection ?qualification
-        ?span ?tail ?environment ?active)
+    (rule input-include-all (head (metta-equation
+      (tptp-ci-v1:expand-input
+        (LangDef:ExpressionValue (LCons incl (LCons ?requested LNil)))
+        ?record ?source ?digest ?tail ?environment ?active ?path ?namespace ?index)
+      (tptp-ci-v1:expand-include-selection
+        (tptp-ci-v1:selection-all) ?requested ?source ?digest ?index ?path
+        ?namespace (tptp-ci-v1:namespace-value ?namespace)
+        (TPTP:SpanUnavailable compact-value) ?tail ?environment ?active))) (body))
+    (rule input-include-selected (head (metta-equation
+      (tptp-ci-v1:expand-input
+        (LangDef:ExpressionValue
+          (LCons incl (LCons ?requested (LCons ?selection LNil))))
+        ?record ?source ?digest ?tail ?environment ?active ?path ?namespace ?index)
       (tptp-ci-v1:expand-include-selection
         (tptp-ci-v1:decode-selection ?selection) ?requested ?source ?digest
-        ?index ?path ?namespace ?qualification ?span ?tail ?environment
-        ?active))) (body))
-    (rule include-file-fault (head (metta-equation
-      (tptp-ci-v1:expand-include-file (TPTP:LexicalFault ?kind ?raw)
-        ?source ?digest ?index ?path ?namespace ?selection ?qualification
-        ?span ?tail ?environment ?active)
-      (TPTP:IncludeResolutionFaultV1
-        (TPTP:IncludeLexicalFaultV1 include-file
-          (TPTP:LexicalFault ?kind ?raw))))) (body))
+        ?index ?path ?namespace (tptp-ci-v1:namespace-value ?namespace)
+        (TPTP:SpanUnavailable compact-value) ?tail ?environment ?active))) (body))
+    (rule input-include-qualified (head (metta-equation
+      (tptp-ci-v1:expand-input
+        (LangDef:ExpressionValue
+          (LCons incl
+            (LCons ?requested (LCons ?selection (LCons ?qualification LNil)))))
+        ?record ?source ?digest ?tail ?environment ?active ?path ?namespace ?index)
+      (tptp-ci-v1:expand-include-selection
+        (tptp-ci-v1:decode-selection ?selection) ?requested ?source ?digest
+        ?index ?path ?namespace
+        (tptp-ci-v1:decode-namespace ?namespace ?qualification)
+        (TPTP:SpanUnavailable compact-value) ?tail ?environment ?active))) (body))
     (rule include-selection-all-value (head (metta-equation
       (tptp-ci-v1:expand-include-selection
         (tptp-ci-v1:selection-all) ?requested ?source
         ?digest ?index ?path ?namespace ?qualification ?span ?tail
         ?environment ?active)
       (tptp-ci-v1:expand-include-namespace
-        (tptp-ci-v1:decode-namespace ?namespace ?qualification)
+        ?qualification
         (tptp-ci-v1:selection-all) ?requested ?source ?digest ?index ?path
         ?span ?tail
         ?environment ?active ?namespace))) (body))
@@ -303,7 +281,7 @@
         ?digest ?index ?path ?namespace ?qualification ?span ?tail
         ?environment ?active)
       (tptp-ci-v1:expand-include-namespace
-        (tptp-ci-v1:decode-namespace ?namespace ?qualification)
+        ?qualification
         (tptp-ci-v1:selection-names ?names) ?requested ?source ?digest
         ?index ?path ?span ?tail
         ?environment ?active ?namespace))) (body))
@@ -405,41 +383,21 @@
         (TPTP:IncludeResolutionFaultV1 ?fault))
       (TPTP:IncludeResolutionFaultV1 ?fault))) (body))
 
-    (rule record-span-fof (head (metta-equation
-      (tptp-ci-v1:record-span (tptp-rec:fof ?a ?b ?c ?d ?span)) ?span)) (body))
-    (rule record-span-cnf (head (metta-equation
-      (tptp-ci-v1:record-span (tptp-rec:cnf ?a ?b ?c ?d ?span)) ?span)) (body))
-    (rule record-span-tff (head (metta-equation
-      (tptp-ci-v1:record-span (tptp-rec:tff ?a ?b ?c ?d ?span)) ?span)) (body))
-    (rule record-span-thf (head (metta-equation
-      (tptp-ci-v1:record-span (tptp-rec:thf ?a ?b ?c ?d ?span)) ?span)) (body))
-    (rule record-span-tcf (head (metta-equation
-      (tptp-ci-v1:record-span (tptp-rec:tcf ?a ?b ?c ?d ?span)) ?span)) (body))
-    (rule record-span-tpi (head (metta-equation
-      (tptp-ci-v1:record-span (tptp-rec:tpi ?a ?b ?c ?d ?span)) ?span)) (body))
-
-    (rule selection-all (head (metta-equation
-      (tptp-ci-v1:decode-selection (tptp-rec:include-all))
-      (tptp-ci-v1:selection-all))) (body))
     (rule selection-names (head (metta-equation
-      (tptp-ci-v1:decode-selection (tptp-rec:include-names ?names))
+      (tptp-ci-v1:decode-selection ?names)
       (tptp-ci-v1:decode-names ?names))) (body))
+    (rule names (head (metta-equation
+      (tptp-ci-v1:decode-names ?names)
+      (tptp-ci-v1:decode-names-view (langdef:value-view ?names)))) (body))
     (rule names-nil (head (metta-equation
-      (tptp-ci-v1:decode-names (tptp-rec:names-nil))
+      (tptp-ci-v1:decode-names-view (LangDef:ExpressionValue LNil))
       (tptp-ci-v1:selection-names (tptp-ci-v1:strings-nil)))) (body))
     (rule names-cons (head (metta-equation
-      (tptp-ci-v1:decode-names (tptp-rec:names-cons ?head ?tail))
-      (tptp-ci-v1:decode-name-head
-        (tptp-lex-v1:name-value ?head) ?tail))) (body))
-    (rule name-head-value (head (metta-equation
-      (tptp-ci-v1:decode-name-head (TPTP:LexicalValue ?value) ?tail)
-      (tptp-ci-v1:prepend-string ?value
-        (tptp-ci-v1:decode-names ?tail)))) (body))
-    (rule name-head-fault (head (metta-equation
-      (tptp-ci-v1:decode-name-head (TPTP:LexicalFault ?kind ?raw) ?tail)
-      (TPTP:IncludeResolutionFaultV1
-        (TPTP:IncludeLexicalFaultV1 selection-name
-          (TPTP:LexicalFault ?kind ?raw))))) (body))
+      (tptp-ci-v1:decode-names-view
+        (LangDef:ExpressionValue (LCons ?head ?tail)))
+      (tptp-ci-v1:prepend-string ?head
+        (tptp-ci-v1:decode-names-view
+          (LangDef:ExpressionValue ?tail))))) (body))
     (rule prepend-string-ok (head (metta-equation
       (tptp-ci-v1:prepend-string ?head
         (tptp-ci-v1:selection-names ?tail))
@@ -449,50 +407,10 @@
       (tptp-ci-v1:prepend-string ?head
         (TPTP:IncludeResolutionFaultV1 ?fault))
       (TPTP:IncludeResolutionFaultV1 ?fault))) (body))
-    (rule namespace-none (head (metta-equation
-      (tptp-ci-v1:decode-namespace ?namespace (tptp-rec:name-none))
-      (tptp-ci-v1:namespace-value ?namespace))) (body))
-    (rule namespace-lower (head (metta-equation
-      (tptp-ci-v1:decode-namespace ?namespace
-        (tptp-rec:word-lower ?raw))
-      (tptp-ci-v1:decode-namespace-value
-        (tptp-lex-v1:word-value (tptp-rec:word-lower ?raw)) ?namespace))) (body))
-    (rule namespace-quoted (head (metta-equation
-      (tptp-ci-v1:decode-namespace ?namespace
-        (tptp-rec:word-quoted ?raw))
-      (tptp-ci-v1:decode-namespace-value
-        (tptp-lex-v1:word-value (tptp-rec:word-quoted ?raw)) ?namespace))) (body))
-    (rule namespace-back (head (metta-equation
-      (tptp-ci-v1:decode-namespace ?namespace
-        (tptp-rec:word-back ?raw))
-      (tptp-ci-v1:decode-namespace-value
-        (tptp-lex-v1:word-value (tptp-rec:word-back ?raw)) ?namespace))) (body))
-    (rule namespace-name-lower (head (metta-equation
-      (tptp-ci-v1:decode-namespace ?namespace
-        (tptp-rec:name-word (tptp-rec:word-lower ?raw)))
-      (tptp-ci-v1:decode-namespace-value
-        (tptp-lex-v1:word-value (tptp-rec:word-lower ?raw)) ?namespace))) (body))
-    (rule namespace-name-quoted (head (metta-equation
-      (tptp-ci-v1:decode-namespace ?namespace
-        (tptp-rec:name-word (tptp-rec:word-quoted ?raw)))
-      (tptp-ci-v1:decode-namespace-value
-        (tptp-lex-v1:word-value (tptp-rec:word-quoted ?raw)) ?namespace))) (body))
-    (rule namespace-name-back (head (metta-equation
-      (tptp-ci-v1:decode-namespace ?namespace
-        (tptp-rec:name-word (tptp-rec:word-back ?raw)))
-      (tptp-ci-v1:decode-namespace-value
-        (tptp-lex-v1:word-value (tptp-rec:word-back ?raw)) ?namespace))) (body))
     (rule namespace-value (head (metta-equation
-      (tptp-ci-v1:decode-namespace-value (TPTP:LexicalValue ?value)
-        ?namespace)
+      (tptp-ci-v1:decode-namespace ?namespace ?value)
       (tptp-ci-v1:namespace-value
         (TPTP:NamespaceChildV1 ?namespace ?value)))) (body))
-    (rule namespace-fault (head (metta-equation
-      (tptp-ci-v1:decode-namespace-value (TPTP:LexicalFault ?kind ?raw)
-        ?namespace)
-      (TPTP:IncludeResolutionFaultV1
-        (TPTP:IncludeLexicalFaultV1 namespace
-          (TPTP:LexicalFault ?kind ?raw))))) (body))
 
     (rule lookup-document (head (metta-equation
       (tptp-ci-v1:lookup-document ?source

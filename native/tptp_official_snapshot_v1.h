@@ -76,11 +76,22 @@ typedef struct {
     uint32_t start_scalar;
     uint32_t len;
     uint16_t tag;
+    size_t start_byte;
+    size_t end_byte;
 } CettaTptpLexTokenV1;
 
 static inline uint32_t cetta_tptp_lex_end(const CettaTptpLexTokenV1 *tok) {
     return tok->start_scalar + (uint32_t)tok->len;
 }
+
+/* The byte view is the exact UTF-8 slice accepted for this token by the
+ * prepared lexer. It borrows `text`; no decoding or interpretation occurs. */
+bool cetta_tptp_lex_token_bytes_v1(
+    const CettaTptpLexTokenV1 *token,
+    const char *text,
+    size_t text_len,
+    const char **bytes,
+    size_t *byte_len);
 
 /* Longest-match tokenize with skip tags omitted. ASCII TPTP/TSTP text. */
 bool cetta_tptp_snapshot_lex_text_v1(
@@ -118,6 +129,29 @@ typedef struct {
     uint64_t work;
     uint64_t limit;
 } CettaTptpReadOutcomeV1;
+
+/* Project one parsed TPTP_input CST into an ordinary expression whose
+ * elements are the source-level records contributed by that input.  The CST
+ * and scratch arena remain valid only for the duration of the callback; the
+ * returned expression must be owned by result_arena. */
+typedef bool (*CettaTptpCstProjectionV1)(
+    Atom *trees,
+    const char *source,
+    size_t source_len,
+    bool source_ascii,
+    Arena *scratch_arena,
+    Arena *result_arena,
+    Atom **out_records,
+    void *context,
+    char *error,
+    size_t error_size);
+
+/* The observation boundary used by the prepared reader, also available to
+ * build-time derivation qualification. The caller supplies a ParserPack
+ * NodeC tree and its token/source spans, not a second TPTP grammar. */
+Atom *cetta_tptp_observe_derivation_v1(
+    Arena *arena, Atom *tree, const CettaTptpLexTokenV1 *tokens,
+    uint32_t token_count, const char *source, size_t source_length);
 
 bool cetta_tptp_snapshot_read_text_v1(
     const PPTableSnapshotV1 *snap,
@@ -157,9 +191,32 @@ bool cetta_tptp_prepared_reader_read_text_outcome_v1(
     char *error,
     size_t error_size);
 
+bool cetta_tptp_prepared_reader_read_text_projected_outcome_v1(
+    const CettaTptpPreparedReaderV1 *reader,
+    const char *text,
+    size_t text_len,
+    CettaTptpCstProjectionV1 projection,
+    void *projection_context,
+    Arena *arena,
+    Atom **out_records,
+    CettaTptpReadOutcomeV1 *outcome,
+    char *error,
+    size_t error_size);
+
 bool cetta_tptp_prepared_reader_read_file_outcome_v1(
     const CettaTptpPreparedReaderV1 *reader,
     const char *path,
+    Arena *arena,
+    Atom **out_records,
+    CettaTptpReadOutcomeV1 *outcome,
+    char *error,
+    size_t error_size);
+
+bool cetta_tptp_prepared_reader_read_file_projected_outcome_v1(
+    const CettaTptpPreparedReaderV1 *reader,
+    const char *path,
+    CettaTptpCstProjectionV1 projection,
+    void *projection_context,
     Arena *arena,
     Atom **out_records,
     CettaTptpReadOutcomeV1 *outcome,

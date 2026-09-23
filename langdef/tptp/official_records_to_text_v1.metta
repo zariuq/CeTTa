@@ -1,75 +1,118 @@
-; Canonical TPTP/TSTP text from compact public records.
-; The output deliberately normalizes layout and redundant parentheses.
+; Canonical TPTP/TSTP text from the compact public value language.
+; Layout and redundant parentheses are normalized; source text is metadata.
 (gslt-presentation-v1 TptpOfficialRecordsToTextV1
   (signature
     (operator metta-equation 2)
+    (operator langdef:ground-equal 2)
+    (operator langdef:value-view 1)
+    (operator langdef:codepoints->string 1)
+    (operator langdef:codepoints->symbol 1)
+    (operator langdef:string->codepoints 1)
+    (operator langdef:list->expression 1)
     (operator bnf-v1:string->text 1) (operator bnf-v1:text->string 1)
     (operator bnf-v1:text-append 2) (operator bnf-v1:text-nil 0)
-    (operator tptp-print-v1:document 1) (operator tptp-print-v1:file 1)
-    (operator tptp-print-v1:inputs 1) (operator tptp-print-v1:input 1)
-    (operator tptp-print-v1:annotated 5)
-    (operator tptp-print-v1:annotated-cnf 4)
-    (operator tptp-print-v1:annotated-tcf 4)
-    (operator tptp-print-v1:cnf-clause 1)
-    (operator tptp-print-v1:tcf-formula 1)
-    (operator tptp-print-v1:name 1) (operator tptp-print-v1:word 1)
-    (operator tptp-print-v1:role 1) (operator tptp-print-v1:expr 1)
-    (operator tptp-print-v1:type-expr 1)
-    (operator tptp-print-v1:let-types 1)
-    (operator tptp-print-v1:let-definitions 1)
-    (operator tptp-print-v1:let-definition-items 1)
-    (operator tptp-print-v1:terms 1) (operator tptp-print-v1:vars 1)
-    (operator tptp-print-v1:names 1) (operator tptp-print-v1:annotation 1)
-    (operator tptp-print-v1:optional 1) (operator tptp-print-v1:selection 1)
-    (operator tptp-print-v1:qualification 1)
-    (operator tptp-print-v1:include-tail 2)
-    (operator tptp-print-v1:cat2 2) (operator tptp-print-v1:cat3 3)
-    (operator tptp-print-v1:cat4 4) (operator tptp-print-v1:cat5 5)
-    (operator tptp-print-v1:binary 3) (operator tptp-print-v1:quant 3)
-    (operator tptp-print-v1:call 2) (operator tptp-print-v1:brackets 1)
-    (operator tptp-rec:file 2) (operator tptp-rec:inputs-nil 0)
-    (operator tptp-rec:inputs-cons 2) (operator tptp-rec:span 2)
-    (operator tptp-rec:fof 5) (operator tptp-rec:cnf 5)
-    (operator tptp-rec:tff 5) (operator tptp-rec:thf 5)
-    (operator tptp-rec:tcf 5) (operator tptp-rec:tpi 5)
-    (operator tptp-rec:include 4)
-    (operator tptp-rec:name-word 1) (operator tptp-rec:name-integer 1)
-    (operator tptp-rec:name-none 0) (operator tptp-rec:role 1)
-    (operator tptp-rec:word-lower 1) (operator tptp-rec:word-quoted 1)
-    (operator tptp-rec:word-back 1) (operator tptp-rec:word-defined 1)
-    (operator tptp-rec:word-system 1) (operator tptp-rec:word-upper 1)
-    (operator tptp-rec:number-integer 1)
-    (operator tptp-rec:number-rational 1)
-    (operator tptp-rec:number-real 1)
-    (operator tptp-rec:distinct-object 1)
-    (operator tptp-rec:annotation-none 0) (operator tptp-rec:annotation 2)
-    (operator tptp-rec:optional-none 0) (operator tptp-rec:optional-info 1)
-    (operator tptp-rec:atom 2) (operator tptp-rec:equals 2)
-    (operator tptp-rec:not-equals 2) (operator tptp-rec:not 1)
-    (operator tptp-rec:and 2) (operator tptp-rec:or 2)
-    (operator tptp-rec:iff 2) (operator tptp-rec:implies 2)
-    (operator tptp-rec:reverse-implies 2) (operator tptp-rec:xor 2)
-    (operator tptp-rec:nor 2) (operator tptp-rec:nand 2)
-    (operator tptp-rec:forall 2) (operator tptp-rec:exists 2)
-    (operator tptp-rec:lambda 2) (operator tptp-rec:choice 2)
-    (operator tptp-rec:definite 2) (operator tptp-rec:pi 2)
-    (operator tptp-rec:sigma 2) (operator tptp-rec:apply 2)
-    (operator tptp-rec:typing 2) (operator tptp-rec:map-type 2)
-    (operator tptp-rec:xprod 2) (operator tptp-rec:fun 2)
-    (operator tptp-rec:var 1) (operator tptp-rec:typed-var 2)
-    (operator tptp-rec:terms-nil 0) (operator tptp-rec:terms-cons 2)
-    (operator tptp-rec:vars-nil 0) (operator tptp-rec:vars-cons 2)
-    (operator tptp-rec:let 3) (operator tptp-rec:long-connective 2)
-    (operator tptp-rec:prefix 2) (operator tptp-rec:gen-fun 2)
-    (operator tptp-rec:gen-list 1) (operator tptp-rec:gen-colon 2)
-    (operator tptp-rec:type-defined 1)
-    (operator tptp-rec:include-all 0) (operator tptp-rec:include-names 1)
-    (operator tptp-rec:include-star 0)
-    (operator tptp-rec:names-nil 0) (operator tptp-rec:names-cons 2)
-    (operator tptp-rec:inference 3) (operator tptp-rec:unknown 0)
-    (operator tptp-rec:source-unknown 0) (operator tptp-rec:file-source 2)
-    (operator tptp-rec:introduced 3) (operator tptp-rec:creator 3)
-    (operator tptp-rec:theory 2))
+    (operator LNil 0) (operator LCons 2)
+    (operator cons 2) (operator nil 0) (operator cp 1)
+    (operator LangDef:SameValue 0) (operator LangDef:DifferentValue 0)
+    (operator LangDef:ExpressionValue 1)
+    (operator LangDef:SymbolValue 1)
+    (operator LangDef:StringValue 1)
+    (operator LangDef:IntegerValue 1)
+
+    (operator fof 0) (operator cnf 0) (operator tff 0)
+    (operator thf 0) (operator tcf 0) (operator tpi 0)
+    (operator incl 0) (operator annotation 0)
+    (operator inference 0) (operator file 0)
+    (operator introduced 0) (operator creator 0) (operator theory 0)
+    (operator ∀ 0) (operator ∃ 0) (operator λ 0)
+    (operator Π 0) (operator Σ 0)
+    (operator choice 0) (operator definite 0)
+    (operator ¬ 0) (operator ∧ 0) (operator ∨ 0)
+    (operator → 0) (operator ← 0) (operator ↔ 0)
+    (operator ⊕ 0) (operator ⊼ 0) (operator ⊽ 0)
+    (operator ≈ 0) (operator ≉ 0) (operator ≡ 0)
+    (operator : 0) (operator ⇒ 0) (operator × 0) (operator ⊎ 0)
+    (operator ℚ 0) (operator ℝ 0) (operator ◊ 0) (operator ⌜ 0)
+    (operator §let 0) (operator ≔ 0) (operator ⟨⟩ 0)
+
+    (operator TptpPrint:FO 0) (operator TptpPrint:TF 0)
+    (operator TptpPrint:TH 0) (operator TptpPrint:Type 0)
+    (operator TptpPrint:General 0)
+    (operator TptpPrint:Special 0)
+    (operator TptpPrint:Application 0)
+
+    (operator tptp-print-v1:document 1)
+    (operator tptp-print-v1:document-view 1)
+    (operator tptp-print-v1:inputs 1)
+    (operator tptp-print-v1:input 1)
+    (operator tptp-print-v1:input-view 1)
+    (operator tptp-print-v1:input-list 1)
+    (operator tptp-print-v1:annotated 6)
+    (operator tptp-print-v1:annotation-tail 1)
+    (operator tptp-print-v1:annotation-tail-view 2)
+    (operator tptp-print-v1:annotation-tail-list 2)
+    (operator tptp-print-v1:annotation-tail-choice 3)
+    (operator tptp-print-v1:annotation-parts 1)
+    (operator tptp-print-v1:name 1)
+    (operator tptp-print-v1:role 1)
+
+    (operator tptp-print-v1:expr 2)
+    (operator tptp-print-v1:expr-view 2)
+    (operator tptp-print-v1:expr-list 2)
+    (operator tptp-print-v1:expr-head-view 4)
+    (operator tptp-print-v1:expr-head-class 4)
+    (operator tptp-print-v1:special-heads 0)
+    (operator tptp-print-v1:head-class 1)
+    (operator tptp-print-v1:head-member 2)
+    (operator tptp-print-v1:head-member-next 3)
+    (operator tptp-print-v1:special 3)
+    (operator tptp-print-v1:atom 1)
+    (operator tptp-print-v1:atom-view 1)
+    (operator tptp-print-v1:symbol-text 1)
+    (operator tptp-print-v1:symbol-first 3)
+    (operator tptp-print-v1:symbol-section 1)
+    (operator tptp-print-v1:symbol-section-next 3)
+    (operator tptp-print-v1:quoted 2)
+    (operator tptp-print-v1:escaped 2)
+    (operator tptp-print-v1:escape-backslash 4)
+    (operator tptp-print-v1:escape-delimiter 4)
+
+    (operator tptp-print-v1:call 3)
+    (operator tptp-print-v1:call-next 4)
+    (operator tptp-print-v1:ordinary-call 2)
+    (operator tptp-print-v1:th-call 2)
+    (operator tptp-print-v1:th-arguments 1)
+    (operator tptp-print-v1:items 2)
+    (operator tptp-print-v1:brackets 2)
+    (operator tptp-print-v1:brackets-view 2)
+    (operator tptp-print-v1:binary 4)
+    (operator tptp-print-v1:infix 4)
+    (operator tptp-print-v1:infix-operand 2)
+    (operator tptp-print-v1:infix-operand-view 3)
+    (operator tptp-print-v1:infix-operand-class 3)
+    (operator tptp-print-v1:grouped-heads 0)
+    (operator tptp-print-v1:binary-assoc 4)
+    (operator tptp-print-v1:binary-chain 4)
+    (operator tptp-print-v1:binary-left 4)
+    (operator tptp-print-v1:binary-left-view 5)
+    (operator tptp-print-v1:binary-left-next 7)
+    (operator tptp-print-v1:unary 3)
+    (operator tptp-print-v1:quantified 4)
+    (operator tptp-print-v1:variables 1)
+    (operator tptp-print-v1:variables-view 1)
+    (operator tptp-print-v1:type-binary 3)
+    (operator tptp-print-v1:tuple 2)
+    (operator tptp-print-v1:raw-string 1)
+    (operator tptp-print-v1:raw-string-view 1)
+    (operator tptp-print-v1:let-component 3)
+    (operator tptp-print-v1:let-component-view 4)
+    (operator tptp-print-v1:let-component-list 4)
+    (operator tptp-print-v1:let-component-head 5)
+
+    (operator tptp-print-v1:cat2 2)
+    (operator tptp-print-v1:cat3 3)
+    (operator tptp-print-v1:cat4 4)
+    (operator tptp-print-v1:cat5 5))
   (equations)
   (rewrites
     (rule cat2 (head (metta-equation
@@ -87,561 +130,891 @@
       (bnf-v1:text-append ?a
         (bnf-v1:text-append ?b
           (bnf-v1:text-append ?c (bnf-v1:text-append ?d ?e)))))) (body))
+
     (rule document (head (metta-equation
-      (tptp-print-v1:document ?file)
-      (bnf-v1:text->string (tptp-print-v1:file ?file)))) (body))
-    (rule file (head (metta-equation
-      (tptp-print-v1:file (tptp-rec:file ?inputs ?span))
-      (tptp-print-v1:inputs ?inputs))) (body))
+      (tptp-print-v1:document ?records)
+      (bnf-v1:text->string
+        (tptp-print-v1:document-view
+          (langdef:value-view ?records))))) (body))
+    (rule document-expression (head (metta-equation
+      (tptp-print-v1:document-view (LangDef:ExpressionValue ?records))
+      (tptp-print-v1:inputs ?records))) (body))
     (rule inputs-empty (head (metta-equation
-      (tptp-print-v1:inputs (tptp-rec:inputs-nil))
+      (tptp-print-v1:inputs LNil)
       (bnf-v1:text-nil))) (body))
     (rule inputs-cons (head (metta-equation
-      (tptp-print-v1:inputs (tptp-rec:inputs-cons ?head ?tail))
-      (tptp-print-v1:cat3 (tptp-print-v1:input ?head)
-        (bnf-v1:string->text "\n") (tptp-print-v1:inputs ?tail)))) (body))
+      (tptp-print-v1:inputs (LCons ?record ?rest))
+      (tptp-print-v1:cat3
+        (tptp-print-v1:input ?record)
+        (bnf-v1:string->text "\n")
+        (tptp-print-v1:inputs ?rest)))) (body))
+    (rule input (head (metta-equation
+      (tptp-print-v1:input ?record)
+      (tptp-print-v1:input-view
+        (langdef:value-view ?record)))) (body))
+    (rule input-expression (head (metta-equation
+      (tptp-print-v1:input-view (LangDef:ExpressionValue ?fields))
+      (tptp-print-v1:input-list ?fields))) (body))
 
     (rule input-fof (head (metta-equation
-      (tptp-print-v1:input (tptp-rec:fof ?name ?role ?formula ?ann ?span))
-      (tptp-print-v1:annotated "fof" ?name ?role ?formula ?ann))) (body))
+      (tptp-print-v1:input-list
+        (LCons fof (LCons ?name (LCons ?role (LCons ?formula LNil)))))
+      (tptp-print-v1:annotated
+        "fof" TptpPrint:FO ?name ?role ?formula (bnf-v1:text-nil)))) (body))
+    (rule input-fof-annotation (head (metta-equation
+      (tptp-print-v1:input-list
+        (LCons fof
+          (LCons ?name
+            (LCons ?role (LCons ?formula (LCons ?ann LNil))))))
+      (tptp-print-v1:annotated
+        "fof" TptpPrint:FO ?name ?role ?formula
+        (tptp-print-v1:annotation-tail ?ann)))) (body))
     (rule input-cnf (head (metta-equation
-      (tptp-print-v1:input (tptp-rec:cnf ?name ?role ?formula ?ann ?span))
-      (tptp-print-v1:annotated-cnf ?name ?role ?formula ?ann))) (body))
+      (tptp-print-v1:input-list
+        (LCons cnf (LCons ?name (LCons ?role (LCons ?formula LNil)))))
+      (tptp-print-v1:annotated
+        "cnf" TptpPrint:FO ?name ?role ?formula (bnf-v1:text-nil)))) (body))
+    (rule input-cnf-annotation (head (metta-equation
+      (tptp-print-v1:input-list
+        (LCons cnf
+          (LCons ?name
+            (LCons ?role (LCons ?formula (LCons ?ann LNil))))))
+      (tptp-print-v1:annotated
+        "cnf" TptpPrint:FO ?name ?role ?formula
+        (tptp-print-v1:annotation-tail ?ann)))) (body))
     (rule input-tff (head (metta-equation
-      (tptp-print-v1:input (tptp-rec:tff ?name ?role ?formula ?ann ?span))
-      (tptp-print-v1:annotated "tff" ?name ?role ?formula ?ann))) (body))
+      (tptp-print-v1:input-list
+        (LCons tff (LCons ?name (LCons ?role (LCons ?formula LNil)))))
+      (tptp-print-v1:annotated
+        "tff" TptpPrint:TF ?name ?role ?formula (bnf-v1:text-nil)))) (body))
+    (rule input-tff-annotation (head (metta-equation
+      (tptp-print-v1:input-list
+        (LCons tff
+          (LCons ?name
+            (LCons ?role (LCons ?formula (LCons ?ann LNil))))))
+      (tptp-print-v1:annotated
+        "tff" TptpPrint:TF ?name ?role ?formula
+        (tptp-print-v1:annotation-tail ?ann)))) (body))
     (rule input-thf (head (metta-equation
-      (tptp-print-v1:input (tptp-rec:thf ?name ?role ?formula ?ann ?span))
-      (tptp-print-v1:annotated "thf" ?name ?role ?formula ?ann))) (body))
+      (tptp-print-v1:input-list
+        (LCons thf (LCons ?name (LCons ?role (LCons ?formula LNil)))))
+      (tptp-print-v1:annotated
+        "thf" TptpPrint:TH ?name ?role ?formula (bnf-v1:text-nil)))) (body))
+    (rule input-thf-annotation (head (metta-equation
+      (tptp-print-v1:input-list
+        (LCons thf
+          (LCons ?name
+            (LCons ?role (LCons ?formula (LCons ?ann LNil))))))
+      (tptp-print-v1:annotated
+        "thf" TptpPrint:TH ?name ?role ?formula
+        (tptp-print-v1:annotation-tail ?ann)))) (body))
     (rule input-tcf (head (metta-equation
-      (tptp-print-v1:input (tptp-rec:tcf ?name ?role ?formula ?ann ?span))
-      (tptp-print-v1:annotated-tcf ?name ?role ?formula ?ann))) (body))
+      (tptp-print-v1:input-list
+        (LCons tcf (LCons ?name (LCons ?role (LCons ?formula LNil)))))
+      (tptp-print-v1:annotated
+        "tcf" TptpPrint:TF ?name ?role ?formula (bnf-v1:text-nil)))) (body))
+    (rule input-tcf-annotation (head (metta-equation
+      (tptp-print-v1:input-list
+        (LCons tcf
+          (LCons ?name
+            (LCons ?role (LCons ?formula (LCons ?ann LNil))))))
+      (tptp-print-v1:annotated
+        "tcf" TptpPrint:TF ?name ?role ?formula
+        (tptp-print-v1:annotation-tail ?ann)))) (body))
     (rule input-tpi (head (metta-equation
-      (tptp-print-v1:input (tptp-rec:tpi ?name ?role ?formula ?ann ?span))
-      (tptp-print-v1:annotated "tpi" ?name ?role ?formula ?ann))) (body))
-    (rule annotated (head (metta-equation
-      (tptp-print-v1:annotated ?tag ?name ?role ?formula ?ann)
-      (tptp-print-v1:cat5
-        (bnf-v1:string->text ?tag) (bnf-v1:string->text "(")
-        (tptp-print-v1:name ?name) (bnf-v1:string->text ",")
-        (tptp-print-v1:cat5
-          (tptp-print-v1:role ?role) (bnf-v1:string->text ",")
-          (tptp-print-v1:expr ?formula) (tptp-print-v1:annotation ?ann)
-          (bnf-v1:string->text ")."))))) (body))
-    (rule annotated-cnf (head (metta-equation
-      (tptp-print-v1:annotated-cnf ?name ?role ?formula ?ann)
-      (tptp-print-v1:cat5
-        (bnf-v1:string->text "cnf(") (tptp-print-v1:name ?name)
-        (bnf-v1:string->text ",") (tptp-print-v1:role ?role)
-        (tptp-print-v1:cat5
-          (bnf-v1:string->text ",")
-          (tptp-print-v1:cnf-clause ?formula)
-          (tptp-print-v1:annotation ?ann)
-          (bnf-v1:string->text ").") (bnf-v1:text-nil))))) (body))
-    (rule cnf-clause-or (head (metta-equation
-      (tptp-print-v1:cnf-clause (tptp-rec:or ?left ?right))
-      (tptp-print-v1:cat3 (tptp-print-v1:cnf-clause ?left)
-        (bnf-v1:string->text "|")
-        (tptp-print-v1:cnf-clause ?right)))) (body))
-    (rule cnf-clause-atom (head (metta-equation
-      (tptp-print-v1:cnf-clause (tptp-rec:atom ?head ?args))
-      (tptp-print-v1:expr (tptp-rec:atom ?head ?args)))) (body))
-    (rule cnf-clause-equals (head (metta-equation
-      (tptp-print-v1:cnf-clause (tptp-rec:equals ?left ?right))
-      (tptp-print-v1:cat3 (tptp-print-v1:expr ?left)
-        (bnf-v1:string->text "=") (tptp-print-v1:expr ?right)))) (body))
-    (rule cnf-clause-not-equals (head (metta-equation
-      (tptp-print-v1:cnf-clause (tptp-rec:not-equals ?left ?right))
-      (tptp-print-v1:cat3 (tptp-print-v1:expr ?left)
-        (bnf-v1:string->text "!=") (tptp-print-v1:expr ?right)))) (body))
-    (rule cnf-clause-not (head (metta-equation
-      (tptp-print-v1:cnf-clause (tptp-rec:not ?body))
-      (tptp-print-v1:cat2 (bnf-v1:string->text "~")
-        (tptp-print-v1:expr ?body)))) (body))
-    (rule annotated-tcf (head (metta-equation
-      (tptp-print-v1:annotated-tcf ?name ?role ?formula ?ann)
-      (tptp-print-v1:cat5
-        (bnf-v1:string->text "tcf(") (tptp-print-v1:name ?name)
-        (bnf-v1:string->text ",") (tptp-print-v1:role ?role)
-        (tptp-print-v1:cat5
-          (bnf-v1:string->text ",")
-          (tptp-print-v1:tcf-formula ?formula)
-          (tptp-print-v1:annotation ?ann)
-          (bnf-v1:string->text ").") (bnf-v1:text-nil))))) (body))
-    (rule tcf-forall (head (metta-equation
-      (tptp-print-v1:tcf-formula (tptp-rec:forall ?vars ?body))
-      (tptp-print-v1:cat5 (bnf-v1:string->text "![")
-        (tptp-print-v1:vars ?vars) (bnf-v1:string->text "]:(")
-        (tptp-print-v1:cnf-clause ?body)
-        (bnf-v1:string->text ")")))) (body))
-    (rule tcf-or (head (metta-equation
-      (tptp-print-v1:tcf-formula (tptp-rec:or ?left ?right))
-      (tptp-print-v1:cnf-clause (tptp-rec:or ?left ?right)))) (body))
-    (rule tcf-atom (head (metta-equation
-      (tptp-print-v1:tcf-formula (tptp-rec:atom ?head ?args))
-      (tptp-print-v1:cnf-clause (tptp-rec:atom ?head ?args)))) (body))
-    (rule tcf-equals (head (metta-equation
-      (tptp-print-v1:tcf-formula (tptp-rec:equals ?left ?right))
-      (tptp-print-v1:cnf-clause (tptp-rec:equals ?left ?right)))) (body))
-    (rule tcf-not-equals (head (metta-equation
-      (tptp-print-v1:tcf-formula (tptp-rec:not-equals ?left ?right))
-      (tptp-print-v1:cnf-clause (tptp-rec:not-equals ?left ?right)))) (body))
-    (rule tcf-not (head (metta-equation
-      (tptp-print-v1:tcf-formula (tptp-rec:not ?body))
-      (tptp-print-v1:cnf-clause (tptp-rec:not ?body)))) (body))
+      (tptp-print-v1:input-list
+        (LCons tpi (LCons ?name (LCons ?role (LCons ?formula LNil)))))
+      (tptp-print-v1:annotated
+        "tpi" TptpPrint:General ?name ?role ?formula
+        (bnf-v1:text-nil)))) (body))
+    (rule input-tpi-annotation (head (metta-equation
+      (tptp-print-v1:input-list
+        (LCons tpi
+          (LCons ?name
+            (LCons ?role (LCons ?formula (LCons ?ann LNil))))))
+      (tptp-print-v1:annotated
+        "tpi" TptpPrint:General ?name ?role ?formula
+        (tptp-print-v1:annotation-tail ?ann)))) (body))
     (rule input-include (head (metta-equation
-      (tptp-print-v1:input
-        (tptp-rec:include ?file ?selection ?qualification ?span))
-      (tptp-print-v1:cat4 (bnf-v1:string->text "include(")
-        (tptp-print-v1:word ?file)
-        (tptp-print-v1:include-tail ?selection ?qualification)
-        (bnf-v1:string->text ").")))) (body))
-    (rule include-tail (head (metta-equation
-      (tptp-print-v1:include-tail ?selection ?qualification)
-      (tptp-print-v1:cat2 (tptp-print-v1:selection ?selection)
-        (tptp-print-v1:qualification ?qualification)))) (body))
-    (rule selection-all (head (metta-equation
-      (tptp-print-v1:selection (tptp-rec:include-all))
-      (bnf-v1:text-nil))) (body))
-    (rule selection-star (head (metta-equation
-      (tptp-print-v1:selection (tptp-rec:include-star))
-      (bnf-v1:string->text ",*"))) (body))
-    (rule selection-names (head (metta-equation
-      (tptp-print-v1:selection (tptp-rec:include-names ?names))
-      (tptp-print-v1:cat3 (bnf-v1:string->text ",[" )
-        (tptp-print-v1:names ?names) (bnf-v1:string->text "]")))) (body))
-    (rule qualification-none (head (metta-equation
-      (tptp-print-v1:qualification (tptp-rec:name-none))
-      (bnf-v1:text-nil))) (body))
-    (rule qualification-word (head (metta-equation
-      (tptp-print-v1:qualification (tptp-rec:name-word ?word))
-      (tptp-print-v1:cat2 (bnf-v1:string->text ",")
-        (tptp-print-v1:name (tptp-rec:name-word ?word))))) (body))
-    (rule qualification-integer (head (metta-equation
-      (tptp-print-v1:qualification (tptp-rec:name-integer ?text))
-      (tptp-print-v1:cat2 (bnf-v1:string->text ",")
-        (tptp-print-v1:name (tptp-rec:name-integer ?text))))) (body))
-
-    (rule name-word (head (metta-equation
-      (tptp-print-v1:name (tptp-rec:name-word ?word))
-      (tptp-print-v1:word ?word))) (body))
-    (rule name-integer (head (metta-equation
-      (tptp-print-v1:name (tptp-rec:name-integer ?text))
-      (bnf-v1:string->text ?text))) (body))
-    (rule role (head (metta-equation
-      (tptp-print-v1:role (tptp-rec:role ?text))
-      (bnf-v1:string->text ?text))) (body))
-    (rule word-lower (head (metta-equation
-      (tptp-print-v1:word (tptp-rec:word-lower ?text))
-      (bnf-v1:string->text ?text))) (body))
-    (rule word-quoted (head (metta-equation
-      (tptp-print-v1:word (tptp-rec:word-quoted ?text))
-      (bnf-v1:string->text ?text))) (body))
-    (rule word-back (head (metta-equation
-      (tptp-print-v1:word (tptp-rec:word-back ?text))
-      (bnf-v1:string->text ?text))) (body))
-    (rule word-defined (head (metta-equation
-      (tptp-print-v1:word (tptp-rec:word-defined ?text))
-      (bnf-v1:string->text ?text))) (body))
-    (rule word-system (head (metta-equation
-      (tptp-print-v1:word (tptp-rec:word-system ?text))
-      (bnf-v1:string->text ?text))) (body))
-    (rule word-upper (head (metta-equation
-      (tptp-print-v1:word (tptp-rec:word-upper ?text))
-      (bnf-v1:string->text ?text))) (body))
-    (rule word-integer (head (metta-equation
-      (tptp-print-v1:word (tptp-rec:number-integer ?text))
-      (bnf-v1:string->text ?text))) (body))
-    (rule word-rational (head (metta-equation
-      (tptp-print-v1:word (tptp-rec:number-rational ?text))
-      (bnf-v1:string->text ?text))) (body))
-    (rule word-real (head (metta-equation
-      (tptp-print-v1:word (tptp-rec:number-real ?text))
-      (bnf-v1:string->text ?text))) (body))
-    (rule word-distinct (head (metta-equation
-      (tptp-print-v1:word (tptp-rec:distinct-object ?text))
-      (bnf-v1:string->text ?text))) (body))
-
-    (rule annotation-none (head (metta-equation
-      (tptp-print-v1:annotation (tptp-rec:annotation-none))
-      (bnf-v1:text-nil))) (body))
-    (rule annotation (head (metta-equation
-      (tptp-print-v1:annotation (tptp-rec:annotation ?source ?optional))
-      (tptp-print-v1:cat3 (bnf-v1:string->text ",")
-        (tptp-print-v1:expr ?source) (tptp-print-v1:optional ?optional)))) (body))
-    (rule optional-none (head (metta-equation
-      (tptp-print-v1:optional (tptp-rec:optional-none))
-      (bnf-v1:text-nil))) (body))
-    (rule optional-info (head (metta-equation
-      (tptp-print-v1:optional (tptp-rec:optional-info ?info))
-      (tptp-print-v1:cat2 (bnf-v1:string->text ",")
-        (tptp-print-v1:expr ?info)))) (body))
-
-    (rule terms-empty (head (metta-equation
-      (tptp-print-v1:terms (tptp-rec:terms-nil))
-      (bnf-v1:text-nil))) (body))
-    (rule terms-one (head (metta-equation
-      (tptp-print-v1:terms
-        (tptp-rec:terms-cons ?head (tptp-rec:terms-nil)))
-      (tptp-print-v1:expr ?head))) (body))
-    (rule terms-many (head (metta-equation
-      (tptp-print-v1:terms
-        (tptp-rec:terms-cons ?head
-          (tptp-rec:terms-cons ?next ?tail)))
-      (tptp-print-v1:cat3 (tptp-print-v1:expr ?head)
-        (bnf-v1:string->text ",")
-        (tptp-print-v1:terms (tptp-rec:terms-cons ?next ?tail))))) (body))
-    (rule vars-empty (head (metta-equation
-      (tptp-print-v1:vars (tptp-rec:vars-nil))
-      (bnf-v1:text-nil))) (body))
-    (rule vars-one (head (metta-equation
-      (tptp-print-v1:vars
-        (tptp-rec:vars-cons ?head (tptp-rec:vars-nil)))
-      (tptp-print-v1:expr ?head))) (body))
-    (rule vars-many (head (metta-equation
-      (tptp-print-v1:vars
-        (tptp-rec:vars-cons ?head (tptp-rec:vars-cons ?next ?tail)))
-      (tptp-print-v1:cat3 (tptp-print-v1:expr ?head)
-        (bnf-v1:string->text ",")
-        (tptp-print-v1:vars (tptp-rec:vars-cons ?next ?tail))))) (body))
-    (rule names-empty (head (metta-equation
-      (tptp-print-v1:names (tptp-rec:names-nil))
-      (bnf-v1:text-nil))) (body))
-    (rule names-one (head (metta-equation
-      (tptp-print-v1:names
-        (tptp-rec:names-cons ?head (tptp-rec:names-nil)))
-      (tptp-print-v1:name ?head))) (body))
-    (rule names-many (head (metta-equation
-      (tptp-print-v1:names
-        (tptp-rec:names-cons ?head (tptp-rec:names-cons ?next ?tail)))
-      (tptp-print-v1:cat3 (tptp-print-v1:name ?head)
-        (bnf-v1:string->text ",")
-        (tptp-print-v1:names (tptp-rec:names-cons ?next ?tail))))) (body))
-
-    (rule call-empty (head (metta-equation
-      (tptp-print-v1:call ?head (tptp-rec:terms-nil))
-      (tptp-print-v1:word ?head))) (body))
-    (rule call-args (head (metta-equation
-      (tptp-print-v1:call ?head (tptp-rec:terms-cons ?first ?rest))
-      (tptp-print-v1:cat4 (tptp-print-v1:word ?head)
-        (bnf-v1:string->text "(")
-        (tptp-print-v1:terms (tptp-rec:terms-cons ?first ?rest))
-        (bnf-v1:string->text ")")))) (body))
-    (rule brackets (head (metta-equation
-      (tptp-print-v1:brackets ?terms)
-      (tptp-print-v1:cat3 (bnf-v1:string->text "[")
-        (tptp-print-v1:terms ?terms) (bnf-v1:string->text "]")))) (body))
-    (rule binary (head (metta-equation
-      (tptp-print-v1:binary ?operator ?left ?right)
-      (tptp-print-v1:cat5 (bnf-v1:string->text "(")
-        (tptp-print-v1:expr ?left) (bnf-v1:string->text ?operator)
-        (tptp-print-v1:expr ?right) (bnf-v1:string->text ")")))) (body))
-    (rule quant (head (metta-equation
-      (tptp-print-v1:quant ?operator ?variables ?body)
-      (tptp-print-v1:cat5 (bnf-v1:string->text ?operator)
-        (bnf-v1:string->text "[") (tptp-print-v1:vars ?variables)
-        (bnf-v1:string->text "]:")
-        (tptp-print-v1:cat3 (bnf-v1:string->text "(")
-          (tptp-print-v1:expr ?body) (bnf-v1:string->text ")"))))) (body))
-
-    (rule type-defined (head (metta-equation
-      (tptp-print-v1:type-expr (tptp-rec:type-defined ?name))
-      (tptp-print-v1:word ?name))) (body))
-    (rule type-word-lower (head (metta-equation
-      (tptp-print-v1:type-expr (tptp-rec:word-lower ?text))
-      (bnf-v1:string->text ?text))) (body))
-    (rule type-word-upper (head (metta-equation
-      (tptp-print-v1:type-expr (tptp-rec:word-upper ?text))
-      (bnf-v1:string->text ?text))) (body))
-    (rule type-word-defined (head (metta-equation
-      (tptp-print-v1:type-expr (tptp-rec:word-defined ?text))
-      (bnf-v1:string->text ?text))) (body))
-    (rule type-word-system (head (metta-equation
-      (tptp-print-v1:type-expr (tptp-rec:word-system ?text))
-      (bnf-v1:string->text ?text))) (body))
-    (rule type-word-quoted (head (metta-equation
-      (tptp-print-v1:type-expr (tptp-rec:word-quoted ?text))
-      (bnf-v1:string->text ?text))) (body))
-    (rule type-word-back (head (metta-equation
-      (tptp-print-v1:type-expr (tptp-rec:word-back ?text))
-      (bnf-v1:string->text ?text))) (body))
-    (rule type-var (head (metta-equation
-      (tptp-print-v1:type-expr (tptp-rec:var ?name))
-      (tptp-print-v1:word ?name))) (body))
-    (rule type-atom (head (metta-equation
-      (tptp-print-v1:type-expr (tptp-rec:atom ?head ?args))
-      (tptp-print-v1:call ?head ?args))) (body))
-    (rule type-fun (head (metta-equation
-      (tptp-print-v1:type-expr (tptp-rec:fun ?head ?args))
-      (tptp-print-v1:call ?head ?args))) (body))
-    (rule type-tuple (head (metta-equation
-      (tptp-print-v1:type-expr (tptp-rec:terms-cons ?head ?tail))
-      (tptp-print-v1:brackets
-        (tptp-rec:terms-cons ?head ?tail)))) (body))
-    (rule type-map (head (metta-equation
-      (tptp-print-v1:type-expr (tptp-rec:map-type ?left ?right))
-      (tptp-print-v1:cat5 (bnf-v1:string->text "(")
-        (tptp-print-v1:type-expr ?left) (bnf-v1:string->text ">")
-        (tptp-print-v1:type-expr ?right) (bnf-v1:string->text ")")))) (body))
-    (rule type-xprod (head (metta-equation
-      (tptp-print-v1:type-expr (tptp-rec:xprod ?left ?right))
-      (tptp-print-v1:cat5 (bnf-v1:string->text "(")
-        (tptp-print-v1:type-expr ?left) (bnf-v1:string->text "*")
-        (tptp-print-v1:type-expr ?right) (bnf-v1:string->text ")")))) (body))
-
-    (rule let-types-one (head (metta-equation
-      (tptp-print-v1:let-types (tptp-rec:typing ?name ?type))
-      (tptp-print-v1:expr (tptp-rec:typing ?name ?type)))) (body))
-    (rule let-types-many (head (metta-equation
-      (tptp-print-v1:let-types (tptp-rec:terms-cons ?head ?tail))
-      (tptp-print-v1:brackets
-        (tptp-rec:terms-cons ?head ?tail)))) (body))
-    (rule let-definitions-one (head (metta-equation
-      (tptp-print-v1:let-definitions (tptp-rec:equals ?left ?right))
-      (tptp-print-v1:cat3 (tptp-print-v1:expr ?left)
-        (bnf-v1:string->text ":=") (tptp-print-v1:expr ?right)))) (body))
-    (rule let-definitions-many (head (metta-equation
-      (tptp-print-v1:let-definitions
-        (tptp-rec:terms-cons ?head ?tail))
-      (tptp-print-v1:cat3 (bnf-v1:string->text "[")
-        (tptp-print-v1:let-definition-items
-          (tptp-rec:terms-cons ?head ?tail))
-        (bnf-v1:string->text "]")))) (body))
-    (rule let-definition-items-one (head (metta-equation
-      (tptp-print-v1:let-definition-items
-        (tptp-rec:terms-cons
-          (tptp-rec:equals ?left ?right) (tptp-rec:terms-nil)))
-      (tptp-print-v1:cat3 (tptp-print-v1:expr ?left)
-        (bnf-v1:string->text ":=") (tptp-print-v1:expr ?right)))) (body))
-    (rule let-definition-items-many (head (metta-equation
-      (tptp-print-v1:let-definition-items
-        (tptp-rec:terms-cons (tptp-rec:equals ?left ?right)
-          (tptp-rec:terms-cons ?next ?tail)))
+      (tptp-print-v1:input-list
+        (LCons incl (LCons ?file LNil)))
       (tptp-print-v1:cat3
-        (tptp-print-v1:cat3 (tptp-print-v1:expr ?left)
-          (bnf-v1:string->text ":=") (tptp-print-v1:expr ?right))
+        (bnf-v1:string->text "include(")
+        (tptp-print-v1:name ?file)
+        (bnf-v1:string->text ").")))) (body))
+    (rule input-include-selection (head (metta-equation
+      (tptp-print-v1:input-list
+        (LCons incl (LCons ?file (LCons ?selection LNil))))
+      (tptp-print-v1:cat5
+        (bnf-v1:string->text "include(")
+        (tptp-print-v1:name ?file)
         (bnf-v1:string->text ",")
-        (tptp-print-v1:let-definition-items
-          (tptp-rec:terms-cons ?next ?tail))))) (body))
+        (tptp-print-v1:brackets TptpPrint:General ?selection)
+        (bnf-v1:string->text ").")))) (body))
+    (rule input-include-qualified (head (metta-equation
+      (tptp-print-v1:input-list
+        (LCons incl
+          (LCons ?file (LCons ?selection (LCons ?qualification LNil)))))
+      (tptp-print-v1:cat5
+        (bnf-v1:string->text "include(")
+        (tptp-print-v1:name ?file)
+        (bnf-v1:string->text ",")
+        (tptp-print-v1:brackets TptpPrint:General ?selection)
+        (tptp-print-v1:cat3
+          (bnf-v1:string->text ",")
+          (tptp-print-v1:name ?qualification)
+          (bnf-v1:string->text ")."))))) (body))
 
-    (rule expr-atom (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:atom ?head ?args))
-      (tptp-print-v1:call ?head ?args))) (body))
-    (rule expr-fun (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:fun ?head ?args))
-      (tptp-print-v1:call ?head ?args))) (body))
-    (rule expr-var (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:var ?name))
-      (tptp-print-v1:word ?name))) (body))
-    (rule expr-name-word (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:name-word ?word))
-      (tptp-print-v1:word ?word))) (body))
-    (rule expr-name-integer (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:name-integer ?text))
-      (bnf-v1:string->text ?text))) (body))
-    (rule expr-number-integer (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:number-integer ?text))
-      (bnf-v1:string->text ?text))) (body))
-    (rule expr-number-rational (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:number-rational ?text))
-      (bnf-v1:string->text ?text))) (body))
-    (rule expr-number-real (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:number-real ?text))
-      (bnf-v1:string->text ?text))) (body))
-    (rule expr-distinct-object (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:distinct-object ?text))
-      (bnf-v1:string->text ?text))) (body))
-    (rule expr-typed-var (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:typed-var ?variable ?type))
-      (tptp-print-v1:cat3 (tptp-print-v1:expr ?variable)
-        (bnf-v1:string->text ":") (tptp-print-v1:expr ?type)))) (body))
-    (rule expr-word-lower (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:word-lower ?text))
-      (bnf-v1:string->text ?text))) (body))
-    (rule expr-word-quoted (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:word-quoted ?text))
-      (bnf-v1:string->text ?text))) (body))
-    (rule expr-word-back (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:word-back ?text))
-      (bnf-v1:string->text ?text))) (body))
-    (rule expr-word-defined (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:word-defined ?text))
-      (bnf-v1:string->text ?text))) (body))
-    (rule expr-word-system (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:word-system ?text))
-      (bnf-v1:string->text ?text))) (body))
-    (rule expr-word-upper (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:word-upper ?text))
-      (bnf-v1:string->text ?text))) (body))
-    (rule expr-defined-type (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:type-defined ?name))
-      (tptp-print-v1:word ?name))) (body))
-    (rule expr-terms-empty (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:terms-nil))
-      (bnf-v1:string->text "()"))) (body))
-    (rule expr-terms-cons (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:terms-cons ?head ?tail))
-      (tptp-print-v1:cat3 (bnf-v1:string->text "(")
-        (tptp-print-v1:terms (tptp-rec:terms-cons ?head ?tail))
+    (rule annotated (head (metta-equation
+      (tptp-print-v1:annotated
+        ?tag ?mode ?name ?role ?formula ?tail)
+      (tptp-print-v1:cat5
+        (bnf-v1:string->text ?tag)
+        (bnf-v1:string->text "(")
+        (tptp-print-v1:name ?name)
+        (bnf-v1:string->text ",")
+        (tptp-print-v1:cat5
+          (tptp-print-v1:role ?role)
+          (bnf-v1:string->text ",")
+          (tptp-print-v1:expr ?mode ?formula)
+          ?tail
+          (bnf-v1:string->text ")."))))) (body))
+
+    (rule annotation-tail (head (metta-equation
+      (tptp-print-v1:annotation-tail ?ann)
+      (tptp-print-v1:annotation-tail-view
+        ?ann (langdef:value-view ?ann)))) (body))
+    (rule annotation-tail-expression (head (metta-equation
+      (tptp-print-v1:annotation-tail-view
+        ?ann (LangDef:ExpressionValue ?items))
+      (tptp-print-v1:annotation-tail-list ?ann ?items))) (body))
+    (rule annotation-tail-symbol (head (metta-equation
+      (tptp-print-v1:annotation-tail-view
+        ?ann (LangDef:SymbolValue ?text))
+      (tptp-print-v1:cat2
+        (bnf-v1:string->text ",")
+        (tptp-print-v1:expr TptpPrint:General ?ann)))) (body))
+    (rule annotation-tail-string (head (metta-equation
+      (tptp-print-v1:annotation-tail-view
+        ?ann (LangDef:StringValue ?text))
+      (tptp-print-v1:cat2
+        (bnf-v1:string->text ",")
+        (tptp-print-v1:expr TptpPrint:General ?ann)))) (body))
+    (rule annotation-tail-integer (head (metta-equation
+      (tptp-print-v1:annotation-tail-view
+        ?ann (LangDef:IntegerValue ?text))
+      (tptp-print-v1:cat2
+        (bnf-v1:string->text ",")
+        (tptp-print-v1:expr TptpPrint:General ?ann)))) (body))
+    (rule annotation-tail-empty (head (metta-equation
+      (tptp-print-v1:annotation-tail-list ?ann LNil)
+      (tptp-print-v1:cat2
+        (bnf-v1:string->text ",")
+        (tptp-print-v1:expr TptpPrint:General ?ann)))) (body))
+    (rule annotation-tail-cons (head (metta-equation
+      (tptp-print-v1:annotation-tail-list
+        ?ann (LCons ?head ?rest))
+      (tptp-print-v1:annotation-tail-choice
+        (langdef:ground-equal ?head annotation) ?ann ?rest))) (body))
+    (rule annotation-tail-wrapper (head (metta-equation
+      (tptp-print-v1:annotation-tail-choice
+        LangDef:SameValue ?ann ?rest)
+      (tptp-print-v1:annotation-parts ?rest))) (body))
+    (rule annotation-tail-direct (head (metta-equation
+      (tptp-print-v1:annotation-tail-choice
+        LangDef:DifferentValue ?ann ?rest)
+      (tptp-print-v1:cat2
+        (bnf-v1:string->text ",")
+        (tptp-print-v1:expr TptpPrint:General ?ann)))) (body))
+    (rule annotation-parts-two (head (metta-equation
+      (tptp-print-v1:annotation-parts
+        (LCons ?source (LCons ?info LNil)))
+      (tptp-print-v1:cat4
+        (bnf-v1:string->text ",")
+        (tptp-print-v1:expr TptpPrint:General ?source)
+        (bnf-v1:string->text ",")
+        (tptp-print-v1:brackets TptpPrint:General ?info)))) (body))
+
+    (rule name (head (metta-equation
+      (tptp-print-v1:name ?name)
+      (tptp-print-v1:atom ?name))) (body))
+    (rule role (head (metta-equation
+      (tptp-print-v1:role ?role)
+      (tptp-print-v1:atom ?role))) (body))
+    (rule atom (head (metta-equation
+      (tptp-print-v1:atom ?value)
+      (tptp-print-v1:atom-view
+        (langdef:value-view ?value)))) (body))
+    (rule atom-symbol (head (metta-equation
+      (tptp-print-v1:atom-view (LangDef:SymbolValue ?codepoints))
+      (tptp-print-v1:symbol-text ?codepoints))) (body))
+    (rule atom-string (head (metta-equation
+      (tptp-print-v1:atom-view (LangDef:StringValue ?string))
+      (tptp-print-v1:quoted (cp 39) ?string))) (body))
+    (rule atom-integer (head (metta-equation
+      (tptp-print-v1:atom-view (LangDef:IntegerValue ?string))
+      (bnf-v1:string->text ?string))) (body))
+
+    (rule symbol-text-empty (head (metta-equation
+      (tptp-print-v1:symbol-text nil)
+      (bnf-v1:text-nil))) (body))
+    (rule symbol-text-cons (head (metta-equation
+      (tptp-print-v1:symbol-text (cons ?first ?rest))
+      (tptp-print-v1:symbol-first
+        (langdef:ground-equal ?first (cp 167)) ?first ?rest))) (body))
+    (rule symbol-ordinary (head (metta-equation
+      (tptp-print-v1:symbol-first
+        LangDef:DifferentValue ?first ?rest)
+      (bnf-v1:string->text
+        (langdef:codepoints->string (cons ?first ?rest))))) (body))
+    (rule symbol-section (head (metta-equation
+      (tptp-print-v1:symbol-first
+        LangDef:SameValue ?first ?rest)
+      (tptp-print-v1:symbol-section ?rest))) (body))
+    (rule symbol-section-one (head (metta-equation
+      (tptp-print-v1:symbol-section nil)
+      (bnf-v1:string->text "$"))) (body))
+    (rule symbol-section-cons (head (metta-equation
+      (tptp-print-v1:symbol-section (cons ?next ?rest))
+      (tptp-print-v1:symbol-section-next
+        (langdef:ground-equal ?next (cp 167)) ?next ?rest))) (body))
+    (rule symbol-section-defined (head (metta-equation
+      (tptp-print-v1:symbol-section-next
+        LangDef:DifferentValue ?next ?rest)
+      (tptp-print-v1:cat2
+        (bnf-v1:string->text "$")
+        (bnf-v1:string->text
+          (langdef:codepoints->string (cons ?next ?rest)))))) (body))
+    (rule symbol-section-system (head (metta-equation
+      (tptp-print-v1:symbol-section-next
+        LangDef:SameValue ?next ?rest)
+      (tptp-print-v1:cat2
+        (bnf-v1:string->text "$$")
+        (bnf-v1:string->text
+          (langdef:codepoints->string ?rest))))) (body))
+
+    (rule quoted (head (metta-equation
+      (tptp-print-v1:quoted ?delimiter ?string)
+      (tptp-print-v1:cat3
+        (bnf-v1:string->text
+          (langdef:codepoints->string (cons ?delimiter nil)))
+        (bnf-v1:string->text
+          (langdef:codepoints->string
+            (tptp-print-v1:escaped
+              ?delimiter (langdef:string->codepoints ?string))))
+        (bnf-v1:string->text
+          (langdef:codepoints->string (cons ?delimiter nil)))))) (body))
+    (rule escaped-empty (head (metta-equation
+      (tptp-print-v1:escaped ?delimiter nil) nil)) (body))
+    (rule escaped-cons (head (metta-equation
+      (tptp-print-v1:escaped ?delimiter (cons ?head ?tail))
+      (tptp-print-v1:escape-backslash
+        (langdef:ground-equal ?head (cp 92))
+        ?delimiter ?head ?tail))) (body))
+    (rule escape-backslash-yes (head (metta-equation
+      (tptp-print-v1:escape-backslash
+        LangDef:SameValue ?delimiter ?head ?tail)
+      (cons (cp 92)
+        (cons (cp 92)
+          (tptp-print-v1:escaped ?delimiter ?tail))))) (body))
+    (rule escape-backslash-no (head (metta-equation
+      (tptp-print-v1:escape-backslash
+        LangDef:DifferentValue ?delimiter ?head ?tail)
+      (tptp-print-v1:escape-delimiter
+        (langdef:ground-equal ?head ?delimiter)
+        ?delimiter ?head ?tail))) (body))
+    (rule escape-delimiter-yes (head (metta-equation
+      (tptp-print-v1:escape-delimiter
+        LangDef:SameValue ?delimiter ?head ?tail)
+      (cons (cp 92)
+        (cons ?head
+          (tptp-print-v1:escaped ?delimiter ?tail))))) (body))
+    (rule escape-delimiter-no (head (metta-equation
+      (tptp-print-v1:escape-delimiter
+        LangDef:DifferentValue ?delimiter ?head ?tail)
+      (cons ?head
+        (tptp-print-v1:escaped ?delimiter ?tail)))) (body))
+
+    (rule expr (head (metta-equation
+      (tptp-print-v1:expr ?mode ?value)
+      (tptp-print-v1:expr-view
+        ?mode (langdef:value-view ?value)))) (body))
+    (rule expr-symbol (head (metta-equation
+      (tptp-print-v1:expr-view
+        ?mode (LangDef:SymbolValue ?codepoints))
+      (tptp-print-v1:symbol-text ?codepoints))) (body))
+    (rule expr-string (head (metta-equation
+      (tptp-print-v1:expr-view
+        ?mode (LangDef:StringValue ?string))
+      (tptp-print-v1:quoted (cp 39) ?string))) (body))
+    (rule expr-integer (head (metta-equation
+      (tptp-print-v1:expr-view
+        ?mode (LangDef:IntegerValue ?string))
+      (bnf-v1:string->text ?string))) (body))
+    (rule expr-expression (head (metta-equation
+      (tptp-print-v1:expr-view
+        ?mode (LangDef:ExpressionValue ?items))
+      (tptp-print-v1:expr-list ?mode ?items))) (body))
+    (rule expr-empty-list (head (metta-equation
+      (tptp-print-v1:expr-list ?mode LNil)
+      (bnf-v1:string->text "[]"))) (body))
+    (rule expr-cons (head (metta-equation
+      (tptp-print-v1:expr-list
+        ?mode (LCons ?head ?arguments))
+      (tptp-print-v1:expr-head-view
+        ?mode ?head ?arguments (langdef:value-view ?head)))) (body))
+    (rule expr-symbol-head (head (metta-equation
+      (tptp-print-v1:expr-head-view
+        ?mode ?head ?arguments (LangDef:SymbolValue ?codepoints))
+      (tptp-print-v1:expr-head-class
+        (tptp-print-v1:head-class ?head)
+        ?mode ?head ?arguments))) (body))
+    (rule expr-string-head (head (metta-equation
+      (tptp-print-v1:expr-head-view
+        ?mode ?head ?arguments (LangDef:StringValue ?string))
+      (tptp-print-v1:call ?mode ?head ?arguments))) (body))
+    (rule expr-integer-head (head (metta-equation
+      (tptp-print-v1:expr-head-view
+        ?mode ?head ?arguments (LangDef:IntegerValue ?string))
+      (tptp-print-v1:brackets
+        ?mode (langdef:list->expression (LCons ?head ?arguments))))) (body))
+    (rule expr-expression-head (head (metta-equation
+      (tptp-print-v1:expr-head-view
+        ?mode ?head ?arguments (LangDef:ExpressionValue ?items))
+      (tptp-print-v1:brackets
+        ?mode (langdef:list->expression (LCons ?head ?arguments))))) (body))
+    (rule expr-special-head (head (metta-equation
+      (tptp-print-v1:expr-head-class
+        TptpPrint:Special ?mode ?head ?arguments)
+      (tptp-print-v1:special ?mode ?head ?arguments))) (body))
+    (rule expr-application-head (head (metta-equation
+      (tptp-print-v1:expr-head-class
+        TptpPrint:Application ?mode ?head ?arguments)
+      (tptp-print-v1:call ?mode ?head ?arguments))) (body))
+
+    (rule head-class (head (metta-equation
+      (tptp-print-v1:head-class ?head)
+      (tptp-print-v1:head-member
+        ?head (tptp-print-v1:special-heads)))) (body))
+    (rule special-heads (head (metta-equation
+      (tptp-print-v1:special-heads)
+      (LCons ¬
+        (LCons ∧ (LCons ∨ (LCons → (LCons ← (LCons ↔
+        (LCons ⊕ (LCons ⊼ (LCons ⊽
+        (LCons ≈ (LCons ≉ (LCons ≡
+        (LCons ∀ (LCons ∃ (LCons λ (LCons Π (LCons Σ
+        (LCons choice (LCons definite
+        (LCons : (LCons ⇒ (LCons × (LCons ⊎
+        (LCons ℚ (LCons ℝ (LCons ◊ (LCons ⌜
+        (LCons §let (LCons ≔ (LCons ⟨⟩
+        (LCons inference (LCons file (LCons introduced
+        (LCons creator (LCons theory LNil))))))))))))))))))))))))))))))))))))) (body))
+    (rule head-member-empty (head (metta-equation
+      (tptp-print-v1:head-member ?head LNil)
+      TptpPrint:Application)) (body))
+    (rule head-member-cons (head (metta-equation
+      (tptp-print-v1:head-member
+        ?head (LCons ?candidate ?rest))
+      (tptp-print-v1:head-member-next
+        (langdef:ground-equal ?head ?candidate) ?head ?rest))) (body))
+    (rule head-member-found (head (metta-equation
+      (tptp-print-v1:head-member-next
+        LangDef:SameValue ?head ?rest)
+      TptpPrint:Special)) (body))
+    (rule head-member-more (head (metta-equation
+      (tptp-print-v1:head-member-next
+        LangDef:DifferentValue ?head ?rest)
+      (tptp-print-v1:head-member ?head ?rest))) (body))
+
+    (rule special-not (head (metta-equation
+      (tptp-print-v1:special
+        ?mode ¬ (LCons ?body LNil))
+      (tptp-print-v1:unary ?mode "~" ?body))) (body))
+    (rule special-and (head (metta-equation
+      (tptp-print-v1:special ?mode ∧ ?arguments)
+      (tptp-print-v1:binary-assoc ?mode "&" ∧ ?arguments))) (body))
+    (rule special-or (head (metta-equation
+      (tptp-print-v1:special ?mode ∨ ?arguments)
+      (tptp-print-v1:binary-assoc ?mode "|" ∨ ?arguments))) (body))
+    (rule special-implies (head (metta-equation
+      (tptp-print-v1:special ?mode → ?arguments)
+      (tptp-print-v1:binary ?mode "=>" → ?arguments))) (body))
+    (rule special-reverse (head (metta-equation
+      (tptp-print-v1:special ?mode ← ?arguments)
+      (tptp-print-v1:binary ?mode "<=" ← ?arguments))) (body))
+    (rule special-iff (head (metta-equation
+      (tptp-print-v1:special ?mode ↔ ?arguments)
+      (tptp-print-v1:binary ?mode "<=>" ↔ ?arguments))) (body))
+    (rule special-xor (head (metta-equation
+      (tptp-print-v1:special ?mode ⊕ ?arguments)
+      (tptp-print-v1:binary ?mode "<~>" ⊕ ?arguments))) (body))
+    (rule special-nand (head (metta-equation
+      (tptp-print-v1:special ?mode ⊼ ?arguments)
+      (tptp-print-v1:binary ?mode "~&" ⊼ ?arguments))) (body))
+    (rule special-nor (head (metta-equation
+      (tptp-print-v1:special ?mode ⊽ ?arguments)
+      (tptp-print-v1:binary ?mode "~|" ⊽ ?arguments))) (body))
+    (rule special-equals (head (metta-equation
+      (tptp-print-v1:special ?mode ≈ ?arguments)
+      (tptp-print-v1:infix ?mode "=" ≈ ?arguments))) (body))
+    (rule special-not-equals (head (metta-equation
+      (tptp-print-v1:special ?mode ≉ ?arguments)
+      (tptp-print-v1:infix ?mode "!=" ≉ ?arguments))) (body))
+    (rule special-identical (head (metta-equation
+      (tptp-print-v1:special ?mode ≡ ?arguments)
+      (tptp-print-v1:infix ?mode "==" ≡ ?arguments))) (body))
+    (rule special-forall (head (metta-equation
+      (tptp-print-v1:special
+        ?mode ∀ (LCons ?variables (LCons ?body LNil)))
+      (tptp-print-v1:quantified ?mode "!" ?variables ?body))) (body))
+    (rule special-exists (head (metta-equation
+      (tptp-print-v1:special
+        ?mode ∃ (LCons ?variables (LCons ?body LNil)))
+      (tptp-print-v1:quantified ?mode "?" ?variables ?body))) (body))
+    (rule special-lambda (head (metta-equation
+      (tptp-print-v1:special
+        ?mode λ (LCons ?variables (LCons ?body LNil)))
+      (tptp-print-v1:quantified ?mode "^" ?variables ?body))) (body))
+    (rule special-pi (head (metta-equation
+      (tptp-print-v1:special
+        ?mode Π (LCons ?variables (LCons ?body LNil)))
+      (tptp-print-v1:quantified ?mode "!>" ?variables ?body))) (body))
+    (rule special-sigma (head (metta-equation
+      (tptp-print-v1:special
+        ?mode Σ (LCons ?variables (LCons ?body LNil)))
+      (tptp-print-v1:quantified ?mode "?*" ?variables ?body))) (body))
+    (rule special-choice (head (metta-equation
+      (tptp-print-v1:special
+        ?mode choice (LCons ?variables (LCons ?body LNil)))
+      (tptp-print-v1:quantified ?mode "@+" ?variables ?body))) (body))
+    (rule special-definite (head (metta-equation
+      (tptp-print-v1:special
+        ?mode definite (LCons ?variables (LCons ?body LNil)))
+      (tptp-print-v1:quantified ?mode "@-" ?variables ?body))) (body))
+    (rule special-typing (head (metta-equation
+      (tptp-print-v1:special
+        ?mode : (LCons ?left (LCons ?right LNil)))
+      (tptp-print-v1:cat3
+        (tptp-print-v1:expr ?mode ?left)
+        (bnf-v1:string->text ":")
+        (tptp-print-v1:expr TptpPrint:Type ?right)))) (body))
+    (rule special-map-type (head (metta-equation
+      (tptp-print-v1:special
+        ?mode ⇒ (LCons ?left (LCons ?right LNil)))
+      (tptp-print-v1:type-binary ">" ?left ?right))) (body))
+    (rule special-product-type (head (metta-equation
+      (tptp-print-v1:special
+        ?mode × (LCons ?left (LCons ?right LNil)))
+      (tptp-print-v1:type-binary "*" ?left ?right))) (body))
+    (rule special-sum-type (head (metta-equation
+      (tptp-print-v1:special
+        ?mode ⊎ (LCons ?left (LCons ?right LNil)))
+      (tptp-print-v1:type-binary "+" ?left ?right))) (body))
+    (rule special-rational (head (metta-equation
+      (tptp-print-v1:special
+        ?mode ℚ (LCons ?numerator (LCons ?denominator LNil)))
+      (tptp-print-v1:cat3
+        (tptp-print-v1:atom ?numerator)
+        (bnf-v1:string->text "/")
+        (tptp-print-v1:atom ?denominator)))) (body))
+    (rule special-real (head (metta-equation
+      (tptp-print-v1:special
+        ?mode ℝ (LCons ?lexeme LNil))
+      (tptp-print-v1:raw-string ?lexeme))) (body))
+    (rule special-distinct (head (metta-equation
+      (tptp-print-v1:special
+        ?mode ◊ (LCons ?value LNil))
+      (tptp-print-v1:quoted (cp 34) ?value))) (body))
+    (rule special-backquoted (head (metta-equation
+      (tptp-print-v1:special
+        ?mode ⌜ (LCons ?value LNil))
+      (tptp-print-v1:quoted (cp 96) ?value))) (body))
+    (rule special-tuple (head (metta-equation
+      (tptp-print-v1:special
+        ?mode ⟨⟩ (LCons ?items LNil))
+      (tptp-print-v1:tuple ?mode ?items))) (body))
+    (rule special-let (head (metta-equation
+      (tptp-print-v1:special
+        ?mode §let
+        (LCons ?types (LCons ?definitions (LCons ?body LNil))))
+      (tptp-print-v1:cat5
+        (bnf-v1:string->text "$let(")
+        (tptp-print-v1:let-component : ?mode ?types)
+        (bnf-v1:string->text ",")
+        (tptp-print-v1:let-component ≔ ?mode ?definitions)
+        (tptp-print-v1:cat3
+          (bnf-v1:string->text ",")
+          (tptp-print-v1:expr ?mode ?body)
+          (bnf-v1:string->text ")"))))) (body))
+    (rule special-definition (head (metta-equation
+      (tptp-print-v1:special
+        ?mode ≔ (LCons ?left (LCons ?right LNil)))
+      (tptp-print-v1:cat3
+        (tptp-print-v1:expr ?mode ?left)
+        (bnf-v1:string->text ":=")
+        (tptp-print-v1:expr ?mode ?right)))) (body))
+    (rule special-inference (head (metta-equation
+      (tptp-print-v1:special
+        ?mode inference
+        (LCons ?rule (LCons ?info (LCons ?parents LNil))))
+      (tptp-print-v1:cat5
+        (bnf-v1:string->text "inference(")
+        (tptp-print-v1:expr TptpPrint:General ?rule)
+        (bnf-v1:string->text ",")
+        (tptp-print-v1:brackets TptpPrint:General ?info)
+        (tptp-print-v1:cat3
+          (bnf-v1:string->text ",")
+          (tptp-print-v1:brackets TptpPrint:General ?parents)
+          (bnf-v1:string->text ")"))))) (body))
+    (rule special-file-one (head (metta-equation
+      (tptp-print-v1:special
+        ?mode file (LCons ?path LNil))
+      (tptp-print-v1:cat3
+        (bnf-v1:string->text "file(")
+        (tptp-print-v1:name ?path)
         (bnf-v1:string->text ")")))) (body))
-    (rule expr-equals (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:equals ?left ?right))
-      (tptp-print-v1:binary "=" ?left ?right))) (body))
-    (rule expr-not-equals (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:not-equals ?left ?right))
-      (tptp-print-v1:binary "!=" ?left ?right))) (body))
-    (rule expr-and (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:and ?left ?right))
-      (tptp-print-v1:binary "&" ?left ?right))) (body))
-    (rule expr-or (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:or ?left ?right))
-      (tptp-print-v1:binary "|" ?left ?right))) (body))
-    (rule expr-iff (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:iff ?left ?right))
-      (tptp-print-v1:binary "<=>" ?left ?right))) (body))
-    (rule expr-implies (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:implies ?left ?right))
-      (tptp-print-v1:binary "=>" ?left ?right))) (body))
-    (rule expr-reverse-implies (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:reverse-implies ?left ?right))
-      (tptp-print-v1:binary "<=" ?left ?right))) (body))
-    (rule expr-xor (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:xor ?left ?right))
-      (tptp-print-v1:binary "<~>" ?left ?right))) (body))
-    (rule expr-nor (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:nor ?left ?right))
-      (tptp-print-v1:binary "~|" ?left ?right))) (body))
-    (rule expr-nand (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:nand ?left ?right))
-      (tptp-print-v1:binary "~&" ?left ?right))) (body))
-    (rule expr-apply (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:apply ?left ?right))
-      (tptp-print-v1:binary "@" ?left ?right))) (body))
-    (rule expr-typing (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:typing ?left ?right))
-      (tptp-print-v1:cat5 (bnf-v1:string->text "(")
-        (tptp-print-v1:expr ?left) (bnf-v1:string->text ":")
-        (tptp-print-v1:type-expr ?right)
+    (rule special-file-two (head (metta-equation
+      (tptp-print-v1:special
+        ?mode file (LCons ?path (LCons ?name LNil)))
+      (tptp-print-v1:cat5
+        (bnf-v1:string->text "file(")
+        (tptp-print-v1:name ?path)
+        (bnf-v1:string->text ",")
+        (tptp-print-v1:name ?name)
         (bnf-v1:string->text ")")))) (body))
-    (rule expr-map-type (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:map-type ?left ?right))
-      (tptp-print-v1:type-expr (tptp-rec:map-type ?left ?right)))) (body))
-    (rule expr-xprod (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:xprod ?left ?right))
-      (tptp-print-v1:type-expr (tptp-rec:xprod ?left ?right)))) (body))
-    (rule expr-not (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:not ?body))
-      (tptp-print-v1:cat3 (bnf-v1:string->text "(~")
-        (tptp-print-v1:expr ?body) (bnf-v1:string->text ")")))) (body))
-    (rule expr-forall (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:forall ?vars ?body))
-      (tptp-print-v1:quant "!" ?vars ?body))) (body))
-    (rule expr-exists (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:exists ?vars ?body))
-      (tptp-print-v1:quant "?" ?vars ?body))) (body))
-    (rule expr-lambda (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:lambda ?vars ?body))
-      (tptp-print-v1:quant "^" ?vars ?body))) (body))
-    (rule expr-choice (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:choice ?vars ?body))
-      (tptp-print-v1:quant "@+" ?vars ?body))) (body))
-    (rule expr-definite (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:definite ?vars ?body))
-      (tptp-print-v1:quant "@-" ?vars ?body))) (body))
-    (rule expr-pi (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:pi ?vars ?body))
-      (tptp-print-v1:quant "!>" ?vars ?body))) (body))
-    (rule expr-sigma (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:sigma ?vars ?body))
-      (tptp-print-v1:quant "?*" ?vars ?body))) (body))
-    (rule expr-let (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:let ?types ?definitions ?body))
-      (tptp-print-v1:cat5 (bnf-v1:string->text "$let(")
-        (tptp-print-v1:let-types ?types) (bnf-v1:string->text ",")
-        (tptp-print-v1:let-definitions ?definitions)
-        (tptp-print-v1:cat3 (bnf-v1:string->text ",")
-          (tptp-print-v1:expr ?body) (bnf-v1:string->text ")"))))) (body))
-    (rule expr-long-empty (head (metta-equation
-      (tptp-print-v1:expr
-        (tptp-rec:long-connective ?name (tptp-rec:terms-nil)))
-      (tptp-print-v1:cat3 (bnf-v1:string->text "{")
-        (tptp-print-v1:expr ?name) (bnf-v1:string->text "}")))) (body))
-    (rule expr-long-args (head (metta-equation
-      (tptp-print-v1:expr
-        (tptp-rec:long-connective ?name
-          (tptp-rec:terms-cons ?first ?rest)))
-      (tptp-print-v1:cat5 (bnf-v1:string->text "{")
-        (tptp-print-v1:expr ?name) (bnf-v1:string->text "(")
-        (tptp-print-v1:terms (tptp-rec:terms-cons ?first ?rest))
-        (bnf-v1:string->text ")}")))) (body))
-    (rule expr-prefix (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:prefix ?operator ?body))
-      (tptp-print-v1:cat4 (tptp-print-v1:expr ?operator)
-        (bnf-v1:string->text "(") (tptp-print-v1:expr ?body)
+    (rule special-introduced-two (head (metta-equation
+      (tptp-print-v1:special
+        ?mode introduced (LCons ?kind (LCons ?info LNil)))
+      (tptp-print-v1:cat5
+        (bnf-v1:string->text "introduced(")
+        (tptp-print-v1:expr TptpPrint:General ?kind)
+        (bnf-v1:string->text ",")
+        (tptp-print-v1:brackets TptpPrint:General ?info)
         (bnf-v1:string->text ")")))) (body))
-    (rule expr-gen-fun (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:gen-fun ?head ?args))
-      (tptp-print-v1:call ?head ?args))) (body))
-    (rule expr-gen-list (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:gen-list ?items))
-      (tptp-print-v1:brackets ?items))) (body))
-    (rule expr-gen-colon (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:gen-colon ?left ?right))
-      (tptp-print-v1:cat3 (tptp-print-v1:expr ?left)
-        (bnf-v1:string->text ":") (tptp-print-v1:expr ?right)))) (body))
-    (rule expr-inference (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:inference ?rule ?info ?parents))
-      (tptp-print-v1:cat5 (bnf-v1:string->text "inference(")
-        (tptp-print-v1:expr ?rule) (bnf-v1:string->text ",")
-        (tptp-print-v1:expr ?info)
-        (tptp-print-v1:cat3 (bnf-v1:string->text ",")
-          (tptp-print-v1:expr ?parents) (bnf-v1:string->text ")"))))) (body))
-    (rule expr-file-source-none (head (metta-equation
-      (tptp-print-v1:expr
-        (tptp-rec:file-source ?file (tptp-rec:name-none)))
-      (tptp-print-v1:cat3 (bnf-v1:string->text "file(")
-        (tptp-print-v1:word ?file) (bnf-v1:string->text ")")))) (body))
-    (rule expr-file-source-word (head (metta-equation
-      (tptp-print-v1:expr
-        (tptp-rec:file-source ?file (tptp-rec:name-word ?word)))
-      (tptp-print-v1:cat5 (bnf-v1:string->text "file(")
-        (tptp-print-v1:word ?file) (bnf-v1:string->text ",")
-        (tptp-print-v1:name (tptp-rec:name-word ?word))
+    (rule special-introduced-three (head (metta-equation
+      (tptp-print-v1:special
+        ?mode introduced
+        (LCons ?kind (LCons ?info (LCons ?parents LNil))))
+      (tptp-print-v1:cat5
+        (bnf-v1:string->text "introduced(")
+        (tptp-print-v1:expr TptpPrint:General ?kind)
+        (bnf-v1:string->text ",")
+        (tptp-print-v1:brackets TptpPrint:General ?info)
+        (tptp-print-v1:cat3
+          (bnf-v1:string->text ",")
+          (tptp-print-v1:brackets TptpPrint:General ?parents)
+          (bnf-v1:string->text ")"))))) (body))
+    (rule special-creator (head (metta-equation
+      (tptp-print-v1:special
+        ?mode creator
+        (LCons ?name (LCons ?info (LCons ?parents LNil))))
+      (tptp-print-v1:cat5
+        (bnf-v1:string->text "creator(")
+        (tptp-print-v1:expr TptpPrint:General ?name)
+        (bnf-v1:string->text ",")
+        (tptp-print-v1:brackets TptpPrint:General ?info)
+        (tptp-print-v1:cat3
+          (bnf-v1:string->text ",")
+          (tptp-print-v1:brackets TptpPrint:General ?parents)
+          (bnf-v1:string->text ")"))))) (body))
+    (rule special-theory-one (head (metta-equation
+      (tptp-print-v1:special
+        ?mode theory (LCons ?name LNil))
+      (tptp-print-v1:cat3
+        (bnf-v1:string->text "theory(")
+        (tptp-print-v1:expr TptpPrint:General ?name)
         (bnf-v1:string->text ")")))) (body))
-    (rule expr-file-source-integer (head (metta-equation
-      (tptp-print-v1:expr
-        (tptp-rec:file-source ?file (tptp-rec:name-integer ?text)))
-      (tptp-print-v1:cat5 (bnf-v1:string->text "file(")
-        (tptp-print-v1:word ?file) (bnf-v1:string->text ",")
-        (tptp-print-v1:name (tptp-rec:name-integer ?text))
+    (rule special-theory-two (head (metta-equation
+      (tptp-print-v1:special
+        ?mode theory (LCons ?name (LCons ?info LNil)))
+      (tptp-print-v1:cat5
+        (bnf-v1:string->text "theory(")
+        (tptp-print-v1:expr TptpPrint:General ?name)
+        (bnf-v1:string->text ",")
+        (tptp-print-v1:brackets TptpPrint:General ?info)
         (bnf-v1:string->text ")")))) (body))
-    (rule expr-introduced (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:introduced ?type ?info ?parents))
-      (tptp-print-v1:cat5 (bnf-v1:string->text "introduced(")
-        (tptp-print-v1:expr ?type) (bnf-v1:string->text ",")
-        (tptp-print-v1:expr ?info)
-        (tptp-print-v1:cat3 (bnf-v1:string->text ",")
-          (tptp-print-v1:expr ?parents) (bnf-v1:string->text ")"))))) (body))
-    (rule expr-creator (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:creator ?name ?info ?parents))
-      (tptp-print-v1:cat5 (bnf-v1:string->text "creator(")
-        (tptp-print-v1:expr ?name) (bnf-v1:string->text ",")
-        (tptp-print-v1:expr ?info)
-        (tptp-print-v1:cat3 (bnf-v1:string->text ",")
-          (tptp-print-v1:expr ?parents) (bnf-v1:string->text ")"))))) (body))
-    (rule expr-theory-none (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:theory ?name (tptp-rec:optional-none)))
-      (tptp-print-v1:cat3 (bnf-v1:string->text "theory(")
-        (tptp-print-v1:expr ?name) (bnf-v1:string->text ")")))) (body))
-    (rule expr-theory-info (head (metta-equation
-      (tptp-print-v1:expr
-        (tptp-rec:theory ?name (tptp-rec:optional-info ?info)))
-      (tptp-print-v1:cat5 (bnf-v1:string->text "theory(")
-        (tptp-print-v1:expr ?name) (bnf-v1:string->text ",")
-        (tptp-print-v1:expr ?info) (bnf-v1:string->text ")")))) (body))
-    (rule expr-unknown (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:unknown))
-      (bnf-v1:string->text "unknown"))) (body))
-    (rule expr-source-unknown (head (metta-equation
-      (tptp-print-v1:expr (tptp-rec:source-unknown))
-      (bnf-v1:string->text "unknown"))) (body))))
+
+    (rule raw-string (head (metta-equation
+      (tptp-print-v1:raw-string ?value)
+      (tptp-print-v1:raw-string-view
+        (langdef:value-view ?value)))) (body))
+    (rule raw-string-value (head (metta-equation
+      (tptp-print-v1:raw-string-view
+        (LangDef:StringValue ?string))
+      (bnf-v1:string->text ?string))) (body))
+
+    (rule unary (head (metta-equation
+      (tptp-print-v1:unary ?mode ?operator ?body)
+      (tptp-print-v1:cat2
+        (bnf-v1:string->text ?operator)
+        (tptp-print-v1:expr ?mode ?body)))) (body))
+    (rule binary-two (head (metta-equation
+      (tptp-print-v1:binary
+        ?mode ?operator ?head
+        (LCons ?left (LCons ?right LNil)))
+      (tptp-print-v1:cat5
+        (bnf-v1:string->text "(")
+        (tptp-print-v1:expr ?mode ?left)
+        (bnf-v1:string->text ?operator)
+        (tptp-print-v1:expr ?mode ?right)
+        (bnf-v1:string->text ")")))) (body))
+    (rule infix-two (head (metta-equation
+      (tptp-print-v1:infix
+        ?mode ?operator ?head
+        (LCons ?left (LCons ?right LNil)))
+      (tptp-print-v1:cat3
+        (tptp-print-v1:infix-operand ?mode ?left)
+        (bnf-v1:string->text ?operator)
+        (tptp-print-v1:infix-operand ?mode ?right)))) (body))
+    (rule infix-operand (head (metta-equation
+      (tptp-print-v1:infix-operand ?mode ?value)
+      (tptp-print-v1:infix-operand-view
+        ?mode ?value (langdef:value-view ?value)))) (body))
+    (rule infix-operand-expression (head (metta-equation
+      (tptp-print-v1:infix-operand-view
+        ?mode ?value
+        (LangDef:ExpressionValue (LCons ?head ?arguments)))
+      (tptp-print-v1:infix-operand-class
+        (tptp-print-v1:head-member
+          ?head (tptp-print-v1:grouped-heads))
+        ?mode ?value))) (body))
+    (rule infix-operand-empty-expression (head (metta-equation
+      (tptp-print-v1:infix-operand-view
+        ?mode ?value (LangDef:ExpressionValue LNil))
+      (tptp-print-v1:expr ?mode ?value))) (body))
+    (rule infix-operand-symbol (head (metta-equation
+      (tptp-print-v1:infix-operand-view
+        ?mode ?value (LangDef:SymbolValue ?codepoints))
+      (tptp-print-v1:expr ?mode ?value))) (body))
+    (rule infix-operand-string (head (metta-equation
+      (tptp-print-v1:infix-operand-view
+        ?mode ?value (LangDef:StringValue ?string))
+      (tptp-print-v1:expr ?mode ?value))) (body))
+    (rule infix-operand-integer (head (metta-equation
+      (tptp-print-v1:infix-operand-view
+        ?mode ?value (LangDef:IntegerValue ?string))
+      (tptp-print-v1:expr ?mode ?value))) (body))
+    (rule infix-operand-grouped (head (metta-equation
+      (tptp-print-v1:infix-operand-class
+        TptpPrint:Special ?mode ?value)
+      (tptp-print-v1:cat3
+        (bnf-v1:string->text "(")
+        (tptp-print-v1:expr ?mode ?value)
+        (bnf-v1:string->text ")")))) (body))
+    (rule infix-operand-plain (head (metta-equation
+      (tptp-print-v1:infix-operand-class
+        TptpPrint:Application ?mode ?value)
+      (tptp-print-v1:expr ?mode ?value))) (body))
+    (rule grouped-heads (head (metta-equation
+      (tptp-print-v1:grouped-heads)
+      (LCons ¬ (LCons ∧ (LCons ∨ (LCons → (LCons ← (LCons ↔
+      (LCons ⊕ (LCons ⊼ (LCons ⊽ (LCons ≈ (LCons ≉ (LCons ≡
+      (LCons ∀ (LCons ∃ (LCons λ (LCons Π (LCons Σ
+      (LCons choice (LCons definite LNil))))))))))))))))))))) (body))
+    (rule binary-assoc-two (head (metta-equation
+      (tptp-print-v1:binary-assoc
+        ?mode ?operator ?head
+        (LCons ?left (LCons ?right LNil)))
+      (tptp-print-v1:cat3
+        (bnf-v1:string->text "(")
+        (tptp-print-v1:binary-chain
+          ?mode ?operator ?head
+          (LCons ?left (LCons ?right LNil)))
+        (bnf-v1:string->text ")")))) (body))
+    (rule binary-chain-two (head (metta-equation
+      (tptp-print-v1:binary-chain
+        ?mode ?operator ?head
+        (LCons ?left (LCons ?right LNil)))
+      (tptp-print-v1:cat3
+        (tptp-print-v1:binary-left ?mode ?operator ?head ?left)
+        (bnf-v1:string->text ?operator)
+        (tptp-print-v1:expr ?mode ?right)))) (body))
+    (rule binary-left (head (metta-equation
+      (tptp-print-v1:binary-left ?mode ?operator ?head ?value)
+      (tptp-print-v1:binary-left-view
+        ?mode ?operator ?head ?value (langdef:value-view ?value)))) (body))
+    (rule binary-left-expression (head (metta-equation
+      (tptp-print-v1:binary-left-view
+        ?mode ?operator ?head ?value
+        (LangDef:ExpressionValue (LCons ?child-head ?child-arguments)))
+      (tptp-print-v1:binary-left-next
+        (langdef:ground-equal ?child-head ?head)
+        ?mode ?operator ?head ?value ?child-head ?child-arguments))) (body))
+    (rule binary-left-empty-expression (head (metta-equation
+      (tptp-print-v1:binary-left-view
+        ?mode ?operator ?head ?value (LangDef:ExpressionValue LNil))
+      (tptp-print-v1:expr ?mode ?value))) (body))
+    (rule binary-left-symbol (head (metta-equation
+      (tptp-print-v1:binary-left-view
+        ?mode ?operator ?head ?value (LangDef:SymbolValue ?codepoints))
+      (tptp-print-v1:expr ?mode ?value))) (body))
+    (rule binary-left-string (head (metta-equation
+      (tptp-print-v1:binary-left-view
+        ?mode ?operator ?head ?value (LangDef:StringValue ?string))
+      (tptp-print-v1:expr ?mode ?value))) (body))
+    (rule binary-left-integer (head (metta-equation
+      (tptp-print-v1:binary-left-view
+        ?mode ?operator ?head ?value (LangDef:IntegerValue ?string))
+      (tptp-print-v1:expr ?mode ?value))) (body))
+    (rule binary-left-same (head (metta-equation
+      (tptp-print-v1:binary-left-next
+        LangDef:SameValue
+        ?mode ?operator ?head ?value ?child-head ?child-arguments)
+      (tptp-print-v1:binary-chain
+        ?mode ?operator ?head ?child-arguments))) (body))
+    (rule binary-left-different (head (metta-equation
+      (tptp-print-v1:binary-left-next
+        LangDef:DifferentValue
+        ?mode ?operator ?head ?value ?child-head ?child-arguments)
+      (tptp-print-v1:expr ?mode ?value))) (body))
+    (rule quantified (head (metta-equation
+      (tptp-print-v1:quantified ?mode ?operator ?variables ?body)
+      (tptp-print-v1:cat5
+        (bnf-v1:string->text ?operator)
+        (bnf-v1:string->text "[")
+        (tptp-print-v1:variables ?variables)
+        (bnf-v1:string->text "]:(")
+        (tptp-print-v1:cat2
+          (tptp-print-v1:expr ?mode ?body)
+          (bnf-v1:string->text ")"))))) (body))
+    (rule variables (head (metta-equation
+      (tptp-print-v1:variables ?variables)
+      (tptp-print-v1:variables-view
+        (langdef:value-view ?variables)))) (body))
+    (rule variables-expression (head (metta-equation
+      (tptp-print-v1:variables-view
+        (LangDef:ExpressionValue ?items))
+      (tptp-print-v1:items TptpPrint:Type ?items))) (body))
+    (rule type-binary (head (metta-equation
+      (tptp-print-v1:type-binary ?operator ?left ?right)
+      (tptp-print-v1:cat5
+        (bnf-v1:string->text "(")
+        (tptp-print-v1:expr TptpPrint:Type ?left)
+        (bnf-v1:string->text ?operator)
+        (tptp-print-v1:expr TptpPrint:Type ?right)
+        (bnf-v1:string->text ")")))) (body))
+
+    (rule call (head (metta-equation
+      (tptp-print-v1:call ?mode ?head ?arguments)
+      (tptp-print-v1:call-next
+        (langdef:ground-equal ?mode TptpPrint:TH)
+        ?mode ?head ?arguments))) (body))
+    (rule call-th (head (metta-equation
+      (tptp-print-v1:call-next
+        LangDef:SameValue ?mode ?head ?arguments)
+      (tptp-print-v1:th-call ?head ?arguments))) (body))
+    (rule call-ordinary (head (metta-equation
+      (tptp-print-v1:call-next
+        LangDef:DifferentValue ?mode ?head ?arguments)
+      (tptp-print-v1:ordinary-call ?head ?arguments))) (body))
+    (rule ordinary-call-empty (head (metta-equation
+      (tptp-print-v1:ordinary-call ?head LNil)
+      (tptp-print-v1:atom ?head))) (body))
+    (rule ordinary-call-arguments (head (metta-equation
+      (tptp-print-v1:ordinary-call
+        ?head (LCons ?first ?rest))
+      (tptp-print-v1:cat4
+        (tptp-print-v1:atom ?head)
+        (bnf-v1:string->text "(")
+        (tptp-print-v1:items
+          TptpPrint:General (LCons ?first ?rest))
+        (bnf-v1:string->text ")")))) (body))
+    (rule th-call-empty (head (metta-equation
+      (tptp-print-v1:th-call ?head LNil)
+      (tptp-print-v1:atom ?head))) (body))
+    (rule th-call-arguments (head (metta-equation
+      (tptp-print-v1:th-call
+        ?head (LCons ?first ?rest))
+      (tptp-print-v1:cat3
+        (bnf-v1:string->text "(")
+        (tptp-print-v1:cat2
+          (tptp-print-v1:atom ?head)
+          (tptp-print-v1:th-arguments
+            (LCons ?first ?rest)))
+        (bnf-v1:string->text ")")))) (body))
+    (rule th-arguments-empty (head (metta-equation
+      (tptp-print-v1:th-arguments LNil)
+      (bnf-v1:text-nil))) (body))
+    (rule th-arguments-cons (head (metta-equation
+      (tptp-print-v1:th-arguments
+        (LCons ?argument ?rest))
+      (tptp-print-v1:cat4
+        (bnf-v1:string->text " @ (")
+        (tptp-print-v1:expr TptpPrint:TH ?argument)
+        (bnf-v1:string->text ")")
+        (tptp-print-v1:th-arguments ?rest)))) (body))
+
+    (rule items-empty (head (metta-equation
+      (tptp-print-v1:items ?mode LNil)
+      (bnf-v1:text-nil))) (body))
+    (rule items-one (head (metta-equation
+      (tptp-print-v1:items ?mode (LCons ?item LNil))
+      (tptp-print-v1:expr ?mode ?item))) (body))
+    (rule items-many (head (metta-equation
+      (tptp-print-v1:items
+        ?mode (LCons ?item (LCons ?next ?rest)))
+      (tptp-print-v1:cat3
+        (tptp-print-v1:expr ?mode ?item)
+        (bnf-v1:string->text ",")
+        (tptp-print-v1:items
+          ?mode (LCons ?next ?rest))))) (body))
+    (rule brackets (head (metta-equation
+      (tptp-print-v1:brackets ?mode ?value)
+      (tptp-print-v1:brackets-view
+        ?mode (langdef:value-view ?value)))) (body))
+    (rule brackets-expression (head (metta-equation
+      (tptp-print-v1:brackets-view
+        ?mode (LangDef:ExpressionValue ?items))
+      (tptp-print-v1:cat3
+        (bnf-v1:string->text "[")
+        (tptp-print-v1:items ?mode ?items)
+        (bnf-v1:string->text "]")))) (body))
+    (rule tuple (head (metta-equation
+      (tptp-print-v1:tuple ?mode ?items)
+      (tptp-print-v1:brackets ?mode ?items))) (body))
+
+    (rule let-component (head (metta-equation
+      (tptp-print-v1:let-component ?marker ?mode ?value)
+      (tptp-print-v1:let-component-view
+        ?marker ?mode ?value (langdef:value-view ?value)))) (body))
+    (rule let-component-expression (head (metta-equation
+      (tptp-print-v1:let-component-view
+        ?marker ?mode ?value (LangDef:ExpressionValue ?items))
+      (tptp-print-v1:let-component-list
+        ?marker ?mode ?value ?items))) (body))
+    (rule let-component-list-empty (head (metta-equation
+      (tptp-print-v1:let-component-list
+        ?marker ?mode ?value LNil)
+      (tptp-print-v1:brackets ?mode ?value))) (body))
+    (rule let-component-list-cons (head (metta-equation
+      (tptp-print-v1:let-component-list
+        ?marker ?mode ?value (LCons ?head ?rest))
+      (tptp-print-v1:let-component-head
+        ?marker ?mode ?value ?rest (langdef:value-view ?head)))) (body))
+    (rule let-component-symbol-head (head (metta-equation
+      (tptp-print-v1:let-component-head
+        ?marker ?mode ?value ?rest (LangDef:SymbolValue ?codepoints))
+      (tptp-print-v1:let-component-view
+        ?marker ?mode ?value
+        (langdef:ground-equal
+          (langdef:codepoints->symbol ?codepoints) ?marker)))) (body))
+    (rule let-component-expression-head (head (metta-equation
+      (tptp-print-v1:let-component-head
+        ?marker ?mode ?value ?rest (LangDef:ExpressionValue ?items))
+      (tptp-print-v1:brackets ?mode ?value))) (body))
+    (rule let-component-string-head (head (metta-equation
+      (tptp-print-v1:let-component-head
+        ?marker ?mode ?value ?rest (LangDef:StringValue ?text))
+      (tptp-print-v1:brackets ?mode ?value))) (body))
+    (rule let-component-integer-head (head (metta-equation
+      (tptp-print-v1:let-component-head
+        ?marker ?mode ?value ?rest (LangDef:IntegerValue ?text))
+      (tptp-print-v1:brackets ?mode ?value))) (body))
+    (rule let-component-single (head (metta-equation
+      (tptp-print-v1:let-component-view
+        ?marker ?mode ?value LangDef:SameValue)
+      (tptp-print-v1:expr ?mode ?value))) (body))
+    (rule let-component-many (head (metta-equation
+      (tptp-print-v1:let-component-view
+        ?marker ?mode ?value LangDef:DifferentValue)
+      (tptp-print-v1:brackets ?mode ?value))) (body))))

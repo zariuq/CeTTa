@@ -17,22 +17,6 @@
 #define TPTP_DFA_STATE_LIMIT 8192u
 #define TPTP_DFA_TRANS_LIMIT 131072u
 
-static const char *const kTokenNames[] = {
-    "single_quoted", "back_quoted", "distinct_object", "dollar_word",
-    "dollar_dollar_word", "upper_word", "lower_word", "real", "rational",
-    "integer", "slash", "slosh", "plus", "arrow", "less_sign", "hash",
-    "comment", "comment_line", "vline", "star", NULL};
-
-static const char *const kClassNames[] = {
-    "signed_real", "unsigned_real", "decimal_exponent", "decimal_fraction",
-    "exp_integer", "signed_exp_integer", "signed_rational", "unsigned_rational",
-    "signed_integer", "unsigned_integer", "positive_integer", "integer_digits",
-    "comment_block", "not_star_slash", "percentage_sign", "double_quote",
-    "do_char", "single_quote", "back_quote", "sq_char", "sign", "dot",
-    "exponent", "slash_char", "slosh_char", "zero_numeric", "non_zero_numeric",
-    "numeric", "lower_alpha", "upper_alpha", "underscore", "alpha",
-    "alpha_numeric", "dollar", "printable_char", NULL};
-
 static const char *const kClassTokenTags[] = {
     "lower_word", "upper_word", "dollar_word", "dollar_dollar_word",
     "single_quoted", "back_quoted", "distinct_object", "integer", "rational",
@@ -104,18 +88,6 @@ static bool name_is_generated(const char *name) {
            strcmp(name, "#white") != 0;
 }
 
-static bool is_token_name(const char *name) {
-    return name_in(name, kTokenNames);
-}
-
-static bool is_class_name(const char *name) {
-    if (!name)
-        return false;
-    if (name[0] == '#' && !is_token_name(name))
-        return true;
-    return name_in(name, kClassNames);
-}
-
 static bool is_wrapper_name(const char *name) {
     return name && strncmp(name, "#token:", 7) == 0;
 }
@@ -123,12 +95,6 @@ static bool is_wrapper_name(const char *name) {
 static bool is_layout_name(const char *name) {
     return name && (strcmp(name, "#layout") == 0 ||
                     strcmp(name, "#entry") == 0 ||
-                    strcmp(name, "#white") == 0);
-}
-
-static bool is_skip_token_name(const char *name) {
-    return name && (strcmp(name, "comment") == 0 ||
-                    strcmp(name, "comment_line") == 0 ||
                     strcmp(name, "#white") == 0);
 }
 
@@ -223,6 +189,23 @@ typedef struct {
     uint32_t len;
     uint32_t cap;
 } LexIndex;
+
+typedef struct {
+    const PackIndex *pack;
+    const LexIndex *lex;
+    uint8_t *queued;
+    uint8_t *token_rules;
+    uint8_t *skip_rules;
+    uint8_t *token_classes;
+    uint8_t *skip_classes;
+    uint32_t *queue;
+    uint32_t queue_len;
+    bool in_layout;
+    bool in_entry;
+    uint32_t entry_layout_count;
+    uint32_t entry_payload_count;
+    char content_start[96];
+} PackTokenFrontier;
 
 static int cmp_u32(const void *a, const void *b) {
     uint32_t x = *(const uint32_t *)a;
@@ -416,6 +399,135 @@ static const LexClass *lex_find(const LexIndex *idx, const char *name) {
             return &idx->classes[i];
     }
     return NULL;
+}
+
+static int32_t pack_rule_index(const PackIndex *idx, const char *name) {
+    uint32_t i;
+    for (i = 0u; i < idx->rule_len; i++)
+        if (strcmp(idx->rules[i].name, name) == 0)
+            return (int32_t)i;
+    return -1;
+}
+
+static int32_t lex_class_index(const LexIndex *idx, const char *name) {
+    uint32_t i;
+    for (i = 0u; i < idx->len; i++)
+        if (strcmp(idx->classes[i].name, name) == 0)
+            return (int32_t)i;
+    return -1;
+}
+
+static void pack_token_frontier_free(PackTokenFrontier *frontier) {
+    free(frontier->queued);
+    free(frontier->token_rules);
+    free(frontier->skip_rules);
+    free(frontier->token_classes);
+    free(frontier->skip_classes);
+    free(frontier->queue);
+    memset(frontier, 0, sizeof(*frontier));
+}
+
+static bool pack_token_frontier_reference(PackTokenFrontier *frontier,
+                                          const char *name) {
+    const bool wrapper = is_wrapper_name(name);
+    const char *target = wrapper ? name + 7 : name;
+    int32_t rule = pack_rule_index(frontier->pack, target);
+    int32_t cls = lex_class_index(frontier->lex, target);
+    if (frontier->in_entry) {
+        if (strcmp(name, "#layout") == 0) {
+            frontier->entry_layout_count++;
+        } else if (!wrapper && rule >= 0) {
+            frontier->entry_payload_count++;
+            if (frontier->entry_payload_count == 1u)
+                snprintf(frontier->content_start,
+                         sizeof(frontier->content_start), "%s", name);
+        }
+    }
+    if (frontier->in_layout || wrapper || cls >= 0) {
+        if (rule >= 0) {
+            (frontier->in_layout ? frontier->skip_rules
+                                 : frontier->token_rules)[rule] = 1u;
+            return true;
+        }
+        if (cls >= 0) {
+            (frontier->in_layout ? frontier->skip_classes
+                                 : frontier->token_classes)[cls] = 1u;
+            return true;
+        }
+        return false;
+    }
+    if (rule < 0)
+        return false;
+    if (!frontier->queued[rule]) {
+        frontier->queued[rule] = 1u;
+        frontier->queue[frontier->queue_len++] = (uint32_t)rule;
+    }
+    return true;
+}
+
+static bool pack_token_frontier_references(Atom *node,
+                                           PackTokenFrontier *frontier,
+                                           uint32_t depth) {
+    uint32_t i;
+    char name[96];
+    if (!node || depth > 1024u)
+        return false;
+    if (is_app(node, "bnf-v1:reference", 2u)) {
+        return decode_text(node->expr.elems[1], name, sizeof(name)) &&
+               pack_token_frontier_reference(frontier, name);
+    }
+    if (is_app(node, "bnf-v1:literal", 2u) || node->kind != ATOM_EXPR)
+        return true;
+    for (i = 1u; i < node->expr.len; i++) {
+        if (!pack_token_frontier_references(node->expr.elems[i], frontier,
+                                            depth + 1u))
+            return false;
+    }
+    return true;
+}
+
+/* The source-composed grammar identifies scanner roots by reachable token
+ * wrappers. Its #layout rule identifies the roots that consume but do not
+ * produce parser terminals. No list of TPTP token spellings is consulted. */
+static bool pack_token_frontier_build(const PackIndex *pack,
+                                      const LexIndex *lex,
+                                      const char *start_name,
+                                      PackTokenFrontier *frontier) {
+    int32_t start;
+    uint32_t next;
+    memset(frontier, 0, sizeof(*frontier));
+    start = pack_rule_index(pack, start_name);
+    if (start < 0 || pack->rule_len > INT32_MAX || lex->len > INT32_MAX)
+        return false;
+    frontier->pack = pack;
+    frontier->lex = lex;
+    snprintf(frontier->content_start, sizeof(frontier->content_start),
+             "%s", start_name);
+    frontier->queued = calloc(pack->rule_len, 1u);
+    frontier->token_rules = calloc(pack->rule_len, 1u);
+    frontier->skip_rules = calloc(pack->rule_len, 1u);
+    frontier->token_classes = calloc(lex->len ? lex->len : 1u, 1u);
+    frontier->skip_classes = calloc(lex->len ? lex->len : 1u, 1u);
+    frontier->queue = calloc(pack->rule_len, sizeof(*frontier->queue));
+    if (!frontier->queued || !frontier->token_rules ||
+        !frontier->skip_rules || !frontier->token_classes ||
+        !frontier->skip_classes || !frontier->queue)
+        return false;
+    frontier->queued[start] = 1u;
+    frontier->queue[frontier->queue_len++] = (uint32_t)start;
+    for (next = 0u; next < frontier->queue_len; next++) {
+        uint32_t rule = frontier->queue[next];
+        frontier->in_entry = rule == (uint32_t)start;
+        frontier->in_layout =
+            strcmp(pack->rules[rule].name, "#layout") == 0;
+        if (!pack_token_frontier_references(pack->rules[rule].expr,
+                                            frontier, 0u))
+            return false;
+    }
+    if (frontier->entry_layout_count > 0u &&
+        frontier->entry_payload_count != 1u)
+        return false;
+    return true;
 }
 
 static void lex_free(LexIndex *idx) {
@@ -984,7 +1096,8 @@ static bool artifact_digest(Atom *manifest, Atom *lowered,
 
 static bool pack_parts(Atom *pack, char syntax_digest[65],
                        char pack_digest[65], char profile[32],
-                       Atom **orig_entries, Atom **lex_env) {
+                       char start_name[96], Atom **orig_entries,
+                       Atom **lex_env) {
     Atom *manifest;
     Atom *lg;
     Atom *doc;
@@ -1004,6 +1117,9 @@ static bool pack_parts(Atom *pack, char syntax_digest[65],
         return false;
     *orig_entries = doc->expr.elems[1];
     if (!is_app(auth, "bnf-v1:grammar-authority", 2u))
+        return false;
+    if (!is_app(auth->expr.elems[1], "bnf-v1:start", 1u) ||
+        !decode_text(auth->expr.elems[1]->expr.elems[1], start_name, 96u))
         return false;
     *lex_env = auth->expr.elems[2];
     if (!is_app(*lex_env, "bnf-v1:lexical-environment", 1u))
@@ -1105,30 +1221,43 @@ static void alt_label(char *buf, size_t bufsz, const char *name, uint32_t alt) {
     buf[n + 1u + alt] = '\0';
 }
 
-static bool slr_symbol_from_name(Arena *arena, const char *name,
+static bool slr_symbol_from_name(Arena *arena,
+                                 const PackTokenFrontier *frontier,
+                                 const char *name,
                                  CettaLpNativeSymbol *out, bool *omit) {
-    const char *tm = name;
+    const char *tm = is_wrapper_name(name) ? name + 7 : name;
+    int32_t rule;
+    int32_t cls;
     *omit = false;
-    if (is_layout_name(name) || is_skip_token_name(name)) {
+    if (is_layout_name(name) || name_is_generated(name)) {
         *omit = true;
         return true;
     }
-    if (is_wrapper_name(name))
-        tm = name + 7;
-    if (is_class_name(tm) && !is_token_name(tm)) {
+    rule = pack_rule_index(frontier->pack, tm);
+    cls = lex_class_index(frontier->lex, tm);
+    if ((rule >= 0 && frontier->skip_rules[rule]) ||
+        (cls >= 0 && frontier->skip_classes[cls])) {
         *omit = true;
+        return true;
+    }
+    if (rule >= 0 && frontier->token_rules[rule]) {
+        out->kind = CETTA_LP_NATIVE_SYMBOL_TM;
+        out->name = atom_symbol(arena, tm)->sym_id;
+        out->scope = 0;
+        return true;
+    }
+    if (cls >= 0 && frontier->token_classes[cls]) {
+        out->kind = CETTA_LP_NATIVE_SYMBOL_TM;
+        out->name = atom_symbol(arena, tm)->sym_id;
+        out->scope = 0;
         return true;
     }
     if (name_is_generated(tm)) {
         *omit = true;
         return true;
     }
-    if (is_token_name(tm) || is_wrapper_name(name)) {
-        out->kind = CETTA_LP_NATIVE_SYMBOL_TM;
-        out->name = atom_symbol(arena, tm)->sym_id;
-        out->scope = 0;
-        return true;
-    }
+    if (rule < 0 || !frontier->queued[rule])
+        return false;
     out->kind = CETTA_LP_NATIVE_SYMBOL_HL;
     out->name = atom_symbol(arena, tm)->sym_id;
     out->scope = 0;
@@ -1137,6 +1266,7 @@ static bool slr_symbol_from_name(Arena *arena, const char *name,
 
 static bool slr_fill_from_pack(CettaLpNativeGrammar *g, uint32_t *cap,
                                Arena *arena, const PackIndex *idx,
+                               const PackTokenFrontier *frontier,
                                char *error, size_t error_size) {
     uint32_t i;
     for (i = 0u; i < idx->rule_len; i++) {
@@ -1144,9 +1274,8 @@ static bool slr_fill_from_pack(CettaLpNativeGrammar *g, uint32_t *cap,
         Atom *expr = idx->rules[i].expr;
         Atom *alts;
         uint32_t alt_i = 0u;
-        if (name_is_generated(rname) || is_token_name(rname) ||
-            is_class_name(rname) || is_wrapper_name(rname) ||
-            is_layout_name(rname) || is_skip_token_name(rname))
+        if (!frontier->queued[i] || name_is_generated(rname) ||
+            is_wrapper_name(rname) || is_layout_name(rname))
             continue;
         if (!is_app(expr, "bnf-v1:expression", 2u))
             continue;
@@ -1206,7 +1335,7 @@ static bool slr_fill_from_pack(CettaLpNativeGrammar *g, uint32_t *cap,
                             if (is_app(ge, "bnf-v1:reference", 2u) &&
                                 decode_text(ge->expr.elems[1], gn,
                                             sizeof(gn))) {
-                                if (!slr_symbol_from_name(arena, gn, &gs,
+                                if (!slr_symbol_from_name(arena, frontier, gn, &gs,
                                                           &gomit))
                                     return false;
                                 if (!gomit)
@@ -1247,7 +1376,7 @@ static bool slr_fill_from_pack(CettaLpNativeGrammar *g, uint32_t *cap,
                 } else if (is_app(inner, "bnf-v1:reference", 2u) &&
                            decode_text(inner->expr.elems[1], name,
                                        sizeof(name))) {
-                    if (!slr_symbol_from_name(arena, name, &one, &omit))
+                    if (!slr_symbol_from_name(arena, frontier, name, &one, &omit))
                         return false;
                 } else if (is_app(inner, "bnf-v1:literal", 2u) &&
                            decode_text(inner->expr.elems[1], name,
@@ -1327,6 +1456,7 @@ bool cetta_tptp_snapshot_construct_from_pack_v1(
     Atom *lex_env = NULL;
     PackIndex idx;
     LexIndex lex;
+    PackTokenFrontier frontier;
     NfaBuild nfa;
     CettaLpNativeGrammar grammar;
     CettaLpNativeSlrPrepared prepared;
@@ -1355,12 +1485,14 @@ bool cetta_tptp_snapshot_construct_from_pack_v1(
     char syntax_digest[65] = {0};
     char pack_digest[65] = {0};
     char profile[32] = {0};
+    char start_name[96] = {0};
     uint32_t tag;
 
     if (error && error_size)
         error[0] = '\0';
     memset(&idx, 0, sizeof(idx));
     memset(&lex, 0, sizeof(lex));
+    memset(&frontier, 0, sizeof(frontier));
     memset(&nfa, 0, sizeof(nfa));
     arena_init(&arena);
     cetta_lp_native_grammar_init(&grammar);
@@ -1377,11 +1509,12 @@ bool cetta_tptp_snapshot_construct_from_pack_v1(
                      local[0] ? local : "pack read failed");
         goto done;
     }
-    if (!pack_parts(pack, syntax_digest, pack_digest, profile,
+    if (!pack_parts(pack, syntax_digest, pack_digest, profile, start_name,
                     &entries, &lex_env) ||
-        !walk_entries(entries, &idx) || !walk_lex(lex_env, &lex)) {
+        !walk_entries(entries, &idx) || !walk_lex(lex_env, &lex) ||
+        !pack_token_frontier_build(&idx, &lex, start_name, &frontier)) {
         snprintf(error ? error : local, error ? error_size : sizeof(local),
-                 "pack document walk failed");
+                 "pack document or lexical frontier failed");
         goto done;
     }
     nfa.pack = &idx;
@@ -1390,14 +1523,30 @@ bool cetta_tptp_snapshot_construct_from_pack_v1(
         goto done;
     (void)tag;
 
-    for (i = 0u; kTokenNames[i]; i++) {
-        if (!pack_find(&idx, kTokenNames[i]) &&
-            !lex_find(&lex, kTokenNames[i]))
+    for (i = 0u; i < idx.rule_len; i++) {
+        const char *name;
+        if (!frontier.token_rules[i] && !frontier.skip_rules[i])
             continue;
-        if (!tag_add(&tag_names, &tag_len, &tag_cap, kTokenNames[i], &tag) ||
-            !nfa_add_tagged(&nfa, kTokenNames[i], tag)) {
+        name = idx.rules[i].name;
+        if (!tag_add(&tag_names, &tag_len, &tag_cap, name, &tag) ||
+            !nfa_add_tagged(&nfa, name, tag)) {
             snprintf(error ? error : local, error ? error_size : sizeof(local),
-                     "token DFA %s: %s", kTokenNames[i],
+                     "token DFA %s: %s", name,
+                     nfa.error[0] ? nfa.error : "failed");
+            goto done;
+        }
+    }
+    for (i = 0u; i < lex.len; i++) {
+        const char *name;
+        if (!frontier.token_classes[i] && !frontier.skip_classes[i])
+            continue;
+        name = lex.classes[i].name;
+        if (!tag_add(&tag_names, &tag_len, &tag_cap, name, &tag) ||
+            !(frontier.skip_classes[i]
+                  ? nfa_add_plus_class(&nfa, name, tag)
+                  : nfa_add_tagged(&nfa, name, tag))) {
+            snprintf(error ? error : local, error ? error_size : sizeof(local),
+                     "lexical DFA %s: %s", name,
                      nfa.error[0] ? nfa.error : "failed");
             goto done;
         }
@@ -1426,13 +1575,6 @@ bool cetta_tptp_snapshot_construct_from_pack_v1(
         nfa.accepts[nfa.accept_len].tag = tag;
         nfa.accept_len++;
     }
-    if (!tag_add(&tag_names, &tag_len, &tag_cap, "#white", &tag) ||
-        !nfa_add_plus_class(&nfa, "#white", tag)) {
-        snprintf(error ? error : local, error ? error_size : sizeof(local),
-                 "whitespace DFA: %s", nfa.error[0] ? nfa.error : "failed");
-        goto done;
-    }
-
     live_edges = calloc(nfa.edge_len ? nfa.edge_len : 1u, sizeof(*live_edges));
     starts = malloc(sizeof(*starts));
     if (!live_edges || !starts)
@@ -1468,12 +1610,12 @@ bool cetta_tptp_snapshot_construct_from_pack_v1(
         goto done;
     }
 
-    start_sym = atom_symbol(&arena, "TPTP_file");
+    start_sym = atom_symbol(&arena, frontier.content_start);
     prod_cap = idx.rule_len * 8u + 64u;
     grammar.productions = calloc(prod_cap, sizeof(*grammar.productions));
     if (!grammar.productions)
         goto done;
-    if (!slr_fill_from_pack(&grammar, &prod_cap, &arena, &idx, local,
+    if (!slr_fill_from_pack(&grammar, &prod_cap, &arena, &idx, &frontier, local,
                             sizeof(local))) {
         if (error && error_size)
             snprintf(error, error_size, "SLR fill: %s", local);
@@ -1526,11 +1668,15 @@ bool cetta_tptp_snapshot_construct_from_pack_v1(
     snap.tag_name_len = tag_len;
     tag_names = NULL;
     tag_len = 0u;
-    skip = calloc(8u, sizeof(*skip));
+    skip = calloc(snap.tag_name_len ? snap.tag_name_len : 1u,
+                  sizeof(*skip));
     if (!skip)
         goto done;
     for (i = 0u; i < snap.tag_name_len; i++) {
-        if (is_skip_token_name(snap.tag_names[i])) {
+        const int32_t rule = pack_rule_index(&idx, snap.tag_names[i]);
+        const int32_t cls = lex_class_index(&lex, snap.tag_names[i]);
+        if ((rule >= 0 && frontier.skip_rules[rule]) ||
+            (cls >= 0 && frontier.skip_classes[cls])) {
             skip[skip_len++] = i;
         }
     }
@@ -1568,6 +1714,7 @@ done:
     rsdfa_v1_plan_free(&dfa_plan);
     rsdfa_v1_program_free(&dfa_prog);
     nfa_free(&nfa);
+    pack_token_frontier_free(&frontier);
     lex_free(&lex);
     free(idx.rules);
     free(live_edges);
@@ -1874,6 +2021,20 @@ bool cetta_tptp_snapshot_lex_text_v1(
             out[n].tag = (uint16_t)best_tag;
             out[n].start_scalar = pos;
             out[n].len = best_end - pos;
+            out[n].start_byte = cetta_lp_native_utf8_scalar_view_byte_offset(
+                &buf.view, pos);
+            out[n].end_byte = cetta_lp_native_utf8_scalar_view_byte_offset(
+                &buf.view, best_end);
+            if (out[n].end_byte < out[n].start_byte ||
+                out[n].end_byte > text_len) {
+                free(hits);
+                rsdfa_v1_ascii_transition_index_free(&ascii);
+                cetta_lp_native_utf8_scalar_buffer_free(&buf);
+                if (error && error_size)
+                    snprintf(error, error_size,
+                             "lex: invalid scalar-to-byte span");
+                return false;
+            }
         }
         n++;
         pos = best_end;
@@ -1901,16 +2062,111 @@ static void map_token_span(const CettaTptpLexTokenV1 *toks, uint32_t ntok,
         *start = (int64_t)toks[left].start_scalar;
     else
         *start = (int64_t)cetta_tptp_lex_end(&toks[ntok - 1u]);
-    if (right > 0 && (uint32_t)right <= ntok)
+    if (right > left && (uint32_t)right <= ntok)
         *stop = (int64_t)cetta_tptp_lex_end(&toks[right - 1u]);
     else
         *stop = *start;
 }
 
+static void split_cst_label(const char *label, char *name, size_t name_size,
+                            uint32_t *alternative) {
+    size_t length;
+    size_t suffix;
+
+    if (alternative)
+        *alternative = 0u;
+    if (!name || name_size == 0u)
+        return;
+    if (!label) {
+        name[0] = '\0';
+        return;
+    }
+    length = strlen(label);
+    suffix = length;
+    while (suffix > 0u && label[suffix - 1u] == 'x')
+        suffix--;
+    if (suffix > 0u && label[suffix - 1u] == '#') {
+        size_t base = suffix - 1u;
+        if (alternative)
+            *alternative = (uint32_t)(length - suffix);
+        if (base >= name_size)
+            base = name_size - 1u;
+        memcpy(name, label, base);
+        name[base] = '\0';
+        return;
+    }
+    snprintf(name, name_size, "%s", label);
+}
+
+bool cetta_tptp_lex_token_bytes_v1(
+    const CettaTptpLexTokenV1 *token,
+    const char *text,
+    size_t text_len,
+    const char **bytes,
+    size_t *byte_len) {
+    if (bytes)
+        *bytes = NULL;
+    if (byte_len)
+        *byte_len = 0u;
+    if (!token || !text || !bytes || !byte_len ||
+        token->start_byte > token->end_byte ||
+        token->end_byte > text_len)
+        return false;
+    *bytes = text + token->start_byte;
+    *byte_len = token->end_byte - token->start_byte;
+    return true;
+}
+
+static Atom *source_token_string(Arena *arena, const char *text,
+                                 size_t text_len,
+                                 const CettaTptpLexTokenV1 *token) {
+    const char *bytes;
+    size_t byte_len;
+    char *copy;
+    Atom *result;
+
+    if (!arena ||
+        !cetta_tptp_lex_token_bytes_v1(token, text, text_len,
+                                       &bytes, &byte_len) ||
+        byte_len == SIZE_MAX || memchr(bytes, '\0', byte_len))
+        return NULL;
+    copy = malloc(byte_len + 1u);
+    if (!copy)
+        return NULL;
+    memcpy(copy, bytes, byte_len);
+    copy[byte_len] = '\0';
+    result = atom_string(arena, copy);
+    free(copy);
+    return result;
+}
+
 static Atom *make_cst(Arena *arena, const char *name, int64_t start,
-                      int64_t stop, Atom **kids, uint32_t kid_len) {
+                      int64_t stop, Atom **kids, uint32_t kid_len,
+                      bool observation) {
     Atom **elems;
     uint32_t i;
+    if (observation) {
+        Atom *children = atom_symbol(arena, "LNil");
+        Atom *production_elements[3];
+        Atom *node_elements[5];
+        char base[192];
+        uint32_t alternative = 0u;
+
+        split_cst_label(name, base, sizeof(base), &alternative);
+        for (i = kid_len; i > 0u; i--)
+            children = atom_expr3(
+                arena, atom_symbol(arena, "LCons"), kids[i - 1u], children);
+        production_elements[0] =
+            atom_symbol(arena, "tptp-cst:production");
+        production_elements[1] = atom_string(arena, base);
+        production_elements[2] = atom_int(arena, (int64_t)alternative);
+        node_elements[0] = atom_symbol(arena, "tptp-cst:spanned-node");
+        node_elements[1] = atom_expr(arena, production_elements, 3u);
+        node_elements[2] = atom_int(arena, start);
+        node_elements[3] = atom_int(arena, stop);
+        node_elements[4] = children;
+        return atom_expr(arena, node_elements, 5u);
+    }
     elems = malloc(((size_t)kid_len + 4u) * sizeof(*elems));
     if (!elems)
         return NULL;
@@ -1928,7 +2184,9 @@ static Atom *make_cst(Arena *arena, const char *name, int64_t start,
 }
 
 static Atom *tokc_to_cst(Arena *arena, Atom *node,
-                         const CettaTptpLexTokenV1 *toks, uint32_t ntok) {
+                         const CettaTptpLexTokenV1 *toks, uint32_t ntok,
+                         const char *text, size_t text_len,
+                         bool observation) {
     const char *tname;
     char wrapped[128];
     int64_t pos;
@@ -1941,10 +2199,28 @@ static Atom *tokc_to_cst(Arena *arena, Atom *node,
               ? node->expr.elems[2]->ground.ival
               : 0;
     map_token_span(toks, ntok, pos, pos + 1, &start, &stop);
+    if (observation) {
+        Atom *lexeme = pos >= 0 && (uint64_t)pos < ntok
+                           ? source_token_string(
+                                 arena, text, text_len, &toks[pos])
+                           : NULL;
+        if (is_word_class_tag(tname)) {
+            Atom *elements[5] = {
+                atom_symbol(arena, "tptp-cst:token"),
+                atom_string(arena, tname), atom_int(arena, start),
+                atom_int(arena, stop), lexeme};
+            return lexeme ? atom_expr(arena, elements, 5u) : NULL;
+        } else {
+            Atom *elements[4] = {
+                atom_symbol(arena, "tptp-cst:literal"),
+                atom_int(arena, start), atom_int(arena, stop), lexeme};
+            return lexeme ? atom_expr(arena, elements, 4u) : NULL;
+        }
+    }
     if (!is_word_class_tag(tname))
         return NULL;
     snprintf(wrapped, sizeof(wrapped), "#token:%s", tname);
-    return make_cst(arena, wrapped, start, stop, NULL, 0u);
+    return make_cst(arena, wrapped, start, stop, NULL, 0u, false);
 }
 
 typedef struct {
@@ -1984,7 +2260,9 @@ static void nodec_frames_free(CettaTptpNodeCFrameVecV1 *frames) {
 }
 
 static Atom *nodec_to_cst(Arena *arena, Atom *node,
-                          const CettaTptpLexTokenV1 *toks, uint32_t ntok) {
+                          const CettaTptpLexTokenV1 *toks, uint32_t ntok,
+                          const char *text, size_t text_len,
+                          bool observation) {
     CettaTptpNodeCFrameVecV1 frames = {0};
     Atom *root = NULL;
 
@@ -1994,6 +2272,8 @@ static Atom *nodec_to_cst(Arena *arena, Atom *node,
     while (frames.len > 0u) {
         CettaTptpNodeCFrameV1 *frame = &frames.data[frames.len - 1u];
         Atom *completed = NULL;
+        Atom **spliced = NULL;
+        uint32_t spliced_len = 0u;
 
         if (!frame->expanded) {
             int64_t left = 0;
@@ -2002,11 +2282,15 @@ static Atom *nodec_to_cst(Arena *arena, Atom *node,
                    is_app(frame->node, "LeafC", 3u))
                 frame->node = frame->node->expr.elems[1];
             if (is_app(frame->node, "TokC", 2u)) {
-                completed = tokc_to_cst(arena, frame->node, toks, ntok);
+                completed = tokc_to_cst(
+                    arena, frame->node, toks, ntok, text, text_len,
+                    observation);
             } else if (is_app(frame->node, "EpsC", 0u) ||
                        (frame->node && frame->node->kind == ATOM_SYMBOL &&
                         atom_is_symbol(frame->node, "EpsC"))) {
-                completed = make_cst(arena, "#eps", 0, 0, NULL, 0u);
+                if (!observation)
+                    completed = make_cst(
+                        arena, "#eps", 0, 0, NULL, 0u, false);
             } else if (is_app(frame->node, "NodeC", 5u)) {
                 frame->label = atom_name_cstr(frame->node->expr.elems[1]);
                 left = frame->node->expr.elems[3] &&
@@ -2032,17 +2316,45 @@ static Atom *nodec_to_cst(Arena *arena, Atom *node,
             }
             continue;
         } else {
-            completed = make_cst(arena, frame->label ? frame->label : "",
-                                 frame->start, frame->stop,
-                                 frame->kids, frame->kid_len);
+            if (observation && frame->label && frame->label[0] == '#') {
+                spliced = frame->kids;
+                spliced_len = frame->kid_len;
+                frame->kids = NULL;
+                frame->kid_len = 0u;
+            } else {
+                completed = make_cst(
+                    arena, frame->label ? frame->label : "",
+                    frame->start, frame->stop,
+                    frame->kids, frame->kid_len, observation);
+            }
         }
 
         free(frame->kids);
         frame->kids = NULL;
         frames.len--;
         if (frames.len == 0u) {
-            root = completed;
+            if (completed)
+                root = completed;
+            else if (spliced_len == 1u)
+                root = spliced[0];
+            free(spliced);
             break;
+        }
+        if (spliced) {
+            CettaTptpNodeCFrameV1 *parent = &frames.data[frames.len - 1u];
+            uint32_t child_index;
+            for (child_index = 0u; child_index < spliced_len;
+                 child_index++) {
+                if (!grow((void **)&parent->kids, &parent->kid_len,
+                          &parent->kid_cap, sizeof(*parent->kids), 1u)) {
+                    free(spliced);
+                    nodec_frames_free(&frames);
+                    return NULL;
+                }
+                parent->kids[parent->kid_len++] = spliced[child_index];
+            }
+            free(spliced);
+            continue;
         }
         if (completed) {
             CettaTptpNodeCFrameV1 *parent = &frames.data[frames.len - 1u];
@@ -2056,6 +2368,15 @@ static Atom *nodec_to_cst(Arena *arena, Atom *node,
     }
     free(frames.data);
     return root;
+}
+
+Atom *cetta_tptp_observe_derivation_v1(
+    Arena *arena, Atom *tree, const CettaTptpLexTokenV1 *tokens,
+    uint32_t token_count, const char *source, size_t source_length) {
+    if (!arena || !tree || (!tokens && token_count) || !source)
+        return NULL;
+    return nodec_to_cst(arena, tree, tokens, token_count,
+                        source, source_length, true);
 }
 
 static double monotonic_s(void) {
@@ -2093,27 +2414,6 @@ static void read_outcome_init(CettaTptpReadOutcomeV1 *outcome) {
         return;
     memset(outcome, 0, sizeof(*outcome));
     outcome->status = CETTA_TPTP_READ_ERROR_V1;
-}
-
-static uint32_t text_scalar_to_byte(const char *text, size_t text_len,
-                                    uint32_t scalar) {
-    size_t byte = 0u;
-    uint32_t seen = 0u;
-    while (byte < text_len && seen < scalar) {
-        unsigned char c = (unsigned char)text[byte];
-        size_t width = 1u;
-        if ((c & 0xe0u) == 0xc0u)
-            width = 2u;
-        else if ((c & 0xf0u) == 0xe0u)
-            width = 3u;
-        else if ((c & 0xf8u) == 0xf0u)
-            width = 4u;
-        if (width > text_len - byte)
-            width = 1u;
-        byte += width;
-        seen++;
-    }
-    return byte > UINT32_MAX ? UINT32_MAX : (uint32_t)byte;
 }
 
 static bool text_is_ascii(const char *text, size_t text_len) {
@@ -2560,7 +2860,8 @@ static Atom *tptp_forest_to_cst(
                 continue;
             }
             if (child->kind == CETTA_LP_NATIVE_UTF8_FOREST_EPSILON) {
-                completed = make_cst(arena, "#eps", 0, 0, NULL, 0u);
+                completed = make_cst(
+                    arena, "#eps", 0, 0, NULL, 0u, false);
             } else if (child->kind == CETTA_LP_NATIVE_UTF8_FOREST_TERM) {
                 const char *name = symbol_bytes(g_symbols, child->symbol_id);
                 if (is_word_class_tag(name)) {
@@ -2572,7 +2873,7 @@ static Atom *tptp_forest_to_cst(
                                    &start, &stop);
                     snprintf(wrapped, sizeof(wrapped), "#token:%s", name);
                     completed = make_cst(
-                        arena, wrapped, start, stop, NULL, 0u);
+                        arena, wrapped, start, stop, NULL, 0u, false);
                 }
             } else {
                 goto malformed;
@@ -2581,9 +2882,10 @@ static Atom *tptp_forest_to_cst(
                 goto done;
             continue;
         }
-        completed = make_cst(arena, frame->label ? frame->label : "",
-                             frame->start, frame->stop,
-                             frame->kids, frame->kid_len);
+        completed = make_cst(
+            arena, frame->label ? frame->label : "",
+            frame->start, frame->stop, frame->kids, frame->kid_len,
+            false);
         free(frame->components.data);
         free(frame->kids);
         frame->components.data = NULL;
@@ -2704,6 +3006,8 @@ static bool parse_project_slice(const PPTableSnapshotV1 *snap,
                                 const CettaTptpLexTokenV1 *toks, uint32_t lo,
                                 uint32_t hi, const char *text, size_t text_len,
                                 bool source_ascii,
+                                CettaTptpCstProjectionV1 projection,
+                                void *projection_context,
                                 Arena *rec_arena, Atom **out_file,
                                 CettaTptpReadCostV1 *cost,
                                 CettaTptpReadOutcomeV1 *outcome,
@@ -2793,22 +3097,21 @@ static bool parse_project_slice(const PPTableSnapshotV1 *snap,
     if (!cst && parsed->kind == ATOM_SYMBOL &&
         atom_is_symbol(parsed, "NoParse")) {
         unsigned tok = 0u;
-        uint32_t scalar = 0u;
-        uint32_t byte = 0u;
+        size_t byte = 0u;
         if (local[0] && sscanf(local, "token=%u", &tok) == 1 &&
             tok < n)
-            scalar = toks[lo + tok].start_scalar;
+            byte = toks[lo + tok].start_byte;
         else if (hi > lo)
-            scalar = cetta_tptp_lex_end(&toks[hi - 1u]);
-        byte = text_scalar_to_byte(text, text_len, scalar);
+            byte = toks[hi - 1u].end_byte;
         if (outcome) {
             outcome->status = CETTA_TPTP_READ_NO_PARSE_V1;
-            outcome->byte_offset = byte;
+            outcome->byte_offset = byte > UINT32_MAX
+                                       ? UINT32_MAX : (uint32_t)byte;
         }
         arena_free(&parse);
         if (error && error_size)
             snprintf(error, error_size,
-                     "TPTP:NoParse byte=%u rule=TPTP_file", byte);
+                     "TPTP:NoParse byte=%zu rule=TPTP_file", byte);
         return false;
     }
     if (!cst && parsed->kind == ATOM_SYMBOL &&
@@ -2845,7 +3148,9 @@ static bool parse_project_slice(const PPTableSnapshotV1 *snap,
         return false;
     }
     if (!cst) {
-        cst = nodec_to_cst(&parse, parsed, toks + lo, n);
+        cst = nodec_to_cst(
+            &parse, parsed, toks + lo, n, text, text_len,
+            projection != NULL);
         if (!cst) {
             arena_free(&parse);
             if (error && error_size)
@@ -2855,9 +3160,16 @@ static bool parse_project_slice(const PPTableSnapshotV1 *snap,
     }
     trees = atom_expr(&parse, &cst, 1u);
     t0 = cost ? monotonic_s() : 0.0;
-    if (!cetta_tptp_records_from_cst_noreouch_ascii_v1(
-            trees, text, source_ascii, rec_arena, &file,
-            error, error_size)) {
+    if (projection) {
+        if (!projection(
+                trees, text, text_len, source_ascii, &parse, rec_arena,
+                &file, projection_context, error, error_size)) {
+            arena_free(&parse);
+            return false;
+        }
+    } else if (!cetta_tptp_records_from_cst_noreouch_ascii_v1(
+                   trees, text, source_ascii, rec_arena, &file,
+                   error, error_size)) {
         arena_free(&parse);
         return false;
     }
@@ -2882,6 +3194,8 @@ static bool snapshot_read_text_impl(
     CettaTptpReadCostV1 *cost,
     CettaTptpReadOutcomeV1 *outcome,
     uint64_t work_limit,
+    CettaTptpCstProjectionV1 projection,
+    void *projection_context,
     char *error,
     size_t error_size) {
     CettaTptpLexTokenV1 *toks = NULL;
@@ -2986,15 +3300,31 @@ static bool snapshot_read_text_impl(
             if (!parse_project_slice(snap, fallback_grammar,
                                      gll_descriptor_limit, toks, lo, hi,
                                      text, text_len, source_ascii,
+                                     projection, projection_context,
                                      arena, &slice_file,
                                      cost, outcome, work_limit,
                                      error, error_size))
                 goto done;
-            if (!collect_file_inputs(slice_file, &got, &ng, &cg)) {
+            if (projection && slice_file &&
+                slice_file->kind == ATOM_EXPR) {
+                for (CettaExprIndex k = 0u;
+                     k < slice_file->expr.len; k++) {
+                    if (!grow((void **)&got, &ng, &cg,
+                              sizeof(*got), 1u)) {
+                        free(got);
+                        goto done;
+                    }
+                    got[ng++] = slice_file->expr.elems[k];
+                }
+            } else if (!projection &&
+                       collect_file_inputs(slice_file, &got, &ng, &cg)) {
+                /* The native record projector retains its historical file
+                 * envelope; collect its ordered inputs here. */
+            } else {
                 free(got);
                 if (error && error_size)
                     snprintf(error, error_size,
-                             "tptp records: per-input file shape");
+                             "tptp projection: per-input sequence shape");
                 goto done;
             }
             if (cost)
@@ -3029,9 +3359,16 @@ static bool snapshot_read_text_impl(
     }
     t0 = cost ? monotonic_s() : 0.0;
     if (!on_input) {
-        if (!cetta_tptp_file_from_inputs_v1(arena, text, inputs, n_in,
-                                            out_records, error, error_size))
+        if (projection) {
+            *out_records = atom_expr(
+                arena, inputs, (CettaExprLen)n_in);
+            if (!*out_records)
+                goto done;
+        } else if (!cetta_tptp_file_from_inputs_v1(
+                       arena, text, inputs, n_in, out_records,
+                       error, error_size)) {
             goto done;
+        }
     } else if (out_records) {
         *out_records = NULL;
     }
@@ -3058,6 +3395,7 @@ bool cetta_tptp_snapshot_read_text_cost_v1(
     return snapshot_read_text_impl(snap, NULL, 0u, text, text_len,
                                    arena, out_records,
                                    NULL, NULL, cost, NULL, 0u,
+                                   NULL, NULL,
                                    error, error_size);
 }
 
@@ -3072,6 +3410,7 @@ bool cetta_tptp_snapshot_read_text_v1(
     return snapshot_read_text_impl(snap, NULL, 0u, text, text_len,
                                    arena, out_records,
                                    NULL, NULL, NULL, NULL, 0u,
+                                   NULL, NULL,
                                    error, error_size);
 }
 
@@ -3087,6 +3426,7 @@ bool cetta_tptp_snapshot_read_text_outcome_v1(
     return snapshot_read_text_impl(snap, NULL, 0u, text, text_len,
                                    arena, out_records,
                                    NULL, NULL, NULL, outcome, 0u,
+                                   NULL, NULL,
                                    error, error_size);
 }
 
@@ -3107,7 +3447,8 @@ bool cetta_tptp_snapshot_read_text_each_v1(
     }
     return snapshot_read_text_impl(snap, NULL, 0u, text, text_len,
                                    arena, NULL, on_input, user, cost,
-                                   NULL, 0u, error, error_size);
+                                   NULL, 0u, NULL, NULL,
+                                   error, error_size);
 }
 
 bool cetta_tptp_snapshot_read_text_each_with_work_limit_v1(
@@ -3129,6 +3470,7 @@ bool cetta_tptp_snapshot_read_text_each_with_work_limit_v1(
     return snapshot_read_text_impl(snap, NULL, 0u, text, text_len,
                                    arena, NULL, on_input, user, cost,
                                    NULL, work_limit,
+                                   NULL, NULL,
                                    error, error_size);
 }
 
@@ -3146,7 +3488,27 @@ bool cetta_tptp_prepared_reader_read_text_outcome_v1(
     return snapshot_read_text_impl(
         &reader->snapshot, &reader->fallback_grammar, 0u, text, text_len,
         arena, out_records, NULL, NULL, NULL, outcome, 0u,
+        NULL, NULL,
         error, error_size);
+}
+
+bool cetta_tptp_prepared_reader_read_text_projected_outcome_v1(
+    const CettaTptpPreparedReaderV1 *reader,
+    const char *text,
+    size_t text_len,
+    CettaTptpCstProjectionV1 projection,
+    void *projection_context,
+    Arena *arena,
+    Atom **out_records,
+    CettaTptpReadOutcomeV1 *outcome,
+    char *error,
+    size_t error_size) {
+    if (!reader || !projection)
+        return false;
+    return snapshot_read_text_impl(
+        &reader->snapshot, &reader->fallback_grammar, 0u, text, text_len,
+        arena, out_records, NULL, NULL, NULL, outcome, 0u,
+        projection, projection_context, error, error_size);
 }
 
 bool cetta_tptp_prepared_reader_read_text_each_with_work_limit_v1(
@@ -3169,7 +3531,8 @@ bool cetta_tptp_prepared_reader_read_text_each_with_work_limit_v1(
     return snapshot_read_text_impl(
         &reader->snapshot, &reader->fallback_grammar,
         gll_descriptor_limit, text, text_len, arena, NULL,
-        on_input, user, cost, NULL, work_limit, error, error_size);
+        on_input, user, cost, NULL, work_limit, NULL, NULL,
+        error, error_size);
 }
 
 static bool frozen_load(CettaTptpPreparedReaderV1 *reader, char *error,
@@ -3248,6 +3611,8 @@ static bool snapshot_read_file_impl(
     Arena *arena,
     Atom **out_records,
     CettaTptpReadOutcomeV1 *outcome,
+    CettaTptpCstProjectionV1 projection,
+    void *projection_context,
     char *error,
     size_t error_size) {
     FILE *file;
@@ -3280,6 +3645,7 @@ static bool snapshot_read_file_impl(
     ok = snapshot_read_text_impl(
         snap, fallback_grammar, gll_descriptor_limit,
         text, got, arena, out_records, NULL, NULL, NULL, outcome, 0u,
+        projection, projection_context,
         error, error_size);
     free(text);
     return ok;
@@ -3294,7 +3660,7 @@ bool cetta_tptp_snapshot_read_file_outcome_v1(
     char *error,
     size_t error_size) {
     return snapshot_read_file_impl(
-        snap, NULL, 0u, path, arena, out_records, outcome,
+        snap, NULL, 0u, path, arena, out_records, outcome, NULL, NULL,
         error, error_size);
 }
 
@@ -3310,5 +3676,24 @@ bool cetta_tptp_prepared_reader_read_file_outcome_v1(
         return false;
     return snapshot_read_file_impl(
         &reader->snapshot, &reader->fallback_grammar, 0u,
-        path, arena, out_records, outcome, error, error_size);
+        path, arena, out_records, outcome, NULL, NULL,
+        error, error_size);
+}
+
+bool cetta_tptp_prepared_reader_read_file_projected_outcome_v1(
+    const CettaTptpPreparedReaderV1 *reader,
+    const char *path,
+    CettaTptpCstProjectionV1 projection,
+    void *projection_context,
+    Arena *arena,
+    Atom **out_records,
+    CettaTptpReadOutcomeV1 *outcome,
+    char *error,
+    size_t error_size) {
+    if (!reader || !projection)
+        return false;
+    return snapshot_read_file_impl(
+        &reader->snapshot, &reader->fallback_grammar, 0u,
+        path, arena, out_records, outcome, projection, projection_context,
+        error, error_size);
 }

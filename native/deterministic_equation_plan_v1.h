@@ -76,6 +76,16 @@ bool cetta_deterministic_equation_plan_v1_run(
     Atom **out, CettaDeterministicEquationStatusV1 *status,
     char *error, size_t error_size);
 
+/* Apply a ground symbol-headed call to already computed argument values.
+ * Only the selected equation body is evaluated; argument subtrees are never
+ * interpreted as equations, binders or primitive calls on entry. */
+bool cetta_deterministic_equation_plan_v1_apply(
+    const CettaDeterministicEquationPlanV1 *plan, const Atom *call,
+    CettaDeterministicPrimitiveFnV1 primitive, void *primitive_context,
+    Arena *arena, uint32_t depth_limit, uint64_t work_limit,
+    Atom **out, CettaDeterministicEquationStatusV1 *status,
+    char *error, size_t error_size);
+
 /* The same execution with consumed evaluator/matcher work exposed on every
  * return, including failure.  work_used may be NULL.  These are the existing
  * budget units, not a measure of primitive running time or allocation. */

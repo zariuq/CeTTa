@@ -174,8 +174,10 @@
 ; Compile an exact deterministic first-order evaluator from one or more
 ; source equation LanguageDefs.  Sources are supplied in a
 ; (LangDef:EquationSources ...) envelope; execution uses a
-; (LangDef:DeterministicCall head argument ...) envelope so the call remains
-; data until the checked plan owns its evaluation.
+; (LangDef:DeterministicCall head argument ...) envelope. Ordinary run permits
+; argument computations; run-data applies the plan to existing values.
+(: __cetta_lib_deterministic_equations_run_data (-> Atom Atom Atom))
+
 (= (langdef:load-deterministic-equations $sources)
    (function
      (case (__cetta_lib_deterministic_equations_load $sources)
@@ -185,6 +187,14 @@
 (= (langdef:run-deterministic-equations $handle $call)
    (function
      (case (__cetta_lib_deterministic_equations_run $handle $call)
+       (((return $result) (return $result))
+        ($result (return $result))))))
+
+; Apply an authored transformation to already computed data arguments.
+; Neither argument subtrees nor the returned value are implicitly executed.
+(= (langdef:run-deterministic-equations-data $handle $call)
+   (function
+     (case (__cetta_lib_deterministic_equations_run_data $handle $call)
        (((return $result) (return $result))
         ($result (return $result))))))
 
@@ -328,5 +338,18 @@
 (= (langdef:codepoints->string $codepoints)
    (function
      (case (__cetta_lib_langdef_codepoints_string $codepoints)
+       (((return $result) (return $result))
+        ($result (return $result))))))
+
+; Inverse of codepoints->symbol for generic source-language algorithms.
+(= (langdef:symbol->codepoints $symbol)
+   (function
+     (case (__cetta_lib_langdef_symbol_codepoints $symbol)
+       (((return $result) (return $result))
+        ($result (return $result))))))
+
+(= (langdef:append-symbol $left $right)
+   (function
+     (case (__cetta_lib_langdef_symbol_append $left $right)
        (((return $result) (return $result))
         ($result (return $result))))))

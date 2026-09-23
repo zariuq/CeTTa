@@ -112,6 +112,29 @@ static bool count_tptp_input(Atom *input, void *user) {
     return true;
 }
 
+static void test_empty_observation_spans(TestCounts *counts, Arena *arena) {
+    const CettaTptpLexTokenV1 tokens[] = {
+        {0u, 1u, 0u, 0u, 1u}, {4u, 1u, 0u, 4u, 5u}};
+    for (uint32_t position = 0u; position <= 2u; ++position) {
+        Atom *fields[] = {atom_symbol(arena, "NodeC"),
+            atom_symbol(arena, "empty#"), atom_symbol(arena, "empty"),
+            atom_int(arena, position), atom_int(arena, position),
+            atom_symbol(arena, "Nil")};
+        Atom *observed = cetta_tptp_observe_derivation_v1(
+            arena, atom_expr(arena, fields, 6u), tokens, 2u, "a   b", 5u);
+        int64_t expected = position == 0u ? 0 : position == 1u ? 4 : 5;
+        expect(counts,
+            result_is_app(observed, "tptp-cst:spanned-node", 4u) &&
+            observed->expr.elems[2]->ground.ival == expected &&
+            observed->expr.elems[3]->ground.ival == expected,
+            "empty production has a zero-width span, including across layout");
+    }
+    expect(counts,
+        cetta_tptp_observe_derivation_v1(arena, NULL, tokens, 2u,
+                                       "a   b", 5u) == NULL,
+        "missing observation derivation is rejected");
+}
+
 static bool set_production(CettaLpNativeProduction *production,
                            SymbolId label,
                            SymbolId lhs,
@@ -271,6 +294,7 @@ int main(void) {
     g_hashcons = NULL;
     g_var_intern = NULL;
     arena_init(&arena);
+    test_empty_observation_spans(&counts, &arena);
     rsdfa_v1_plan_init(&plan);
     rsdfa_v1_program_init(&program);
     cetta_lp_native_slr_prepared_init(&prepared);
@@ -662,6 +686,38 @@ int main(void) {
             fprintf(stderr, "\n");
         }
         expect(&counts, ntok == 12u, "fof(a,axiom,p(X)). token count");
+        if (ntok == 12u) {
+            const char *bytes = NULL;
+            size_t byte_len = 0u;
+            CettaTptpLexTokenV1 invalid = toks[0];
+            Atom *token_node = atom_expr3(
+                &arena, atom_symbol(&arena, "TokC"),
+                atom_symbol(&arena, "lower_word"), atom_int(&arena, 2));
+            Atom *observed = cetta_tptp_observe_derivation_v1(
+                &arena, token_node, toks, ntok,
+                sample, sizeof(sample) - 1u);
+            expect(&counts,
+                   cetta_tptp_lex_token_bytes_v1(
+                       &toks[0], sample, sizeof(sample) - 1u,
+                       &bytes, &byte_len) &&
+                       byte_len == 3u && memcmp(bytes, "fof", 3u) == 0 &&
+                       toks[0].start_byte == 0u &&
+                       toks[0].end_byte == 3u,
+                   "lexer token keeps its exact source byte slice");
+            expect(&counts,
+                   result_is_app(observed, "tptp-cst:token", 4u) &&
+                       observed->expr.elems[4]->kind == ATOM_GROUNDED &&
+                       observed->expr.elems[4]->ground.gkind == GV_STRING &&
+                       strcmp(observed->expr.elems[4]->ground.sval, "a") == 0,
+                   "observed token payload uses the scanner's byte slice");
+            invalid.end_byte = sizeof(sample);
+            expect(&counts,
+                   !cetta_tptp_lex_token_bytes_v1(
+                       &invalid, sample, sizeof(sample) - 1u,
+                       &bytes, &byte_len) &&
+                       bytes == NULL && byte_len == 0u,
+                   "out-of-source token byte slice is rejected");
+        }
         if (ntok == 12u && official.tag_names) {
             expect(&counts,
                    strcmp(official.tag_names[toks[0].tag], "fof") == 0 &&
@@ -690,11 +746,20 @@ int main(void) {
                    error, sizeof(error)),
                error[0] ? error : "lex quoted+comment sample");
         if (ntok >= 3u && official.tag_names) {
+            const char *bytes = NULL;
+            size_t byte_len = 0u;
             expect(&counts,
                    strcmp(official.tag_names[toks[0].tag], "cnf") == 0 &&
                        strcmp(official.tag_names[toks[2].tag],
                               "single_quoted") == 0,
                    "comment skipped; quoted distinct from lower_word");
+            expect(&counts,
+                   cetta_tptp_lex_token_bytes_v1(
+                       &toks[2], quoted, sizeof(quoted) - 1u,
+                       &bytes, &byte_len) &&
+                       byte_len == 5u &&
+                       memcmp(bytes, "'cat'", 5u) == 0,
+                   "quoted token keeps delimiters in its source byte slice");
         }
         fprintf(stderr,
                 "official snapshot kernel=%s conflicts=%u tags=%u skip=%u "
@@ -714,6 +779,8 @@ int main(void) {
             CettaTptpPreparedReaderV1 reader;
             uint32_t input_count = 0u;
             static const char malformed_sample[] = "fof(a,axiom,).\n";
+            static const char skipped_prefix_malformed_sample[] =
+                "% hi\nfof(a,axiom,).\n";
             static const char contextual_word_sample[] =
                 "include('Axioms/example.ax').\n"
                 "fof(keyword_words,axiom,"
@@ -756,6 +823,18 @@ int main(void) {
                        input_count == 0u && strstr(error, "TPTP:NoParse") != NULL,
                    error[0] ? error
                             : "GLL NoParse preserves an exhaustive table rejection");
+            input_count = 0u;
+            error[0] = '\0';
+            expect(&counts,
+                   !cetta_tptp_prepared_reader_read_text_each_with_work_limit_v1(
+                       &reader, skipped_prefix_malformed_sample,
+                       sizeof(skipped_prefix_malformed_sample) - 1u,
+                       0u, 100000u, &arena, count_tptp_input, &input_count,
+                       NULL, error, sizeof(error)) &&
+                       input_count == 0u &&
+                       strstr(error, "TPTP:NoParse byte=17 ") != NULL,
+                   error[0] ? error
+                            : "parse rejection reports the token byte after skipped text");
             input_count = 0u;
             error[0] = '\0';
             expect(&counts,
