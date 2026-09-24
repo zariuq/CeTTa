@@ -4770,9 +4770,11 @@ static void atom_print_mode(
                 fputs(atom_rational_cstr(a), out);
             break;
         case GV_STRING: {
+            /* PeTTa's swrite escapes only quotes and backslashes; its
+             * strings keep their newlines, and its reader takes them back. */
             fputc('"', out);
             for (const char *p = a->ground.sval; *p; p++) {
-                if (*p == '\n') fputs("\\n", out);
+                if (*p == '\n' && !petta) fputs("\\n", out);
                 else if (*p == '"') fputs("\\\"", out);
                 else if (*p == '\\') fputs("\\\\", out);
                 else fputc(*p, out);
