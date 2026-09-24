@@ -19993,7 +19993,7 @@ ifeq ($(LIB_PROLOG_ENABLED),1)
 		exit 1; \
 	fi; \
 	if ! head -n 1 "$$host_out" | grep -Eq \
-		'^[-+]?[0-9]+([.][0-9]+)?e[+]09$$'; then \
+		'^[0-9]{10}[.][0-9]+$$'; then \
 		echo "FAIL: PeTTa current-time is not an epoch float"; \
 		head -n 1 "$$host_out"; \
 		exit 1; \
@@ -25744,7 +25744,7 @@ PETTA_SEMANTIC_EXACT_STREAM_STEMS = \
 	search_machine_relational_head_phases search_machine_relational_output_phases \
 	search_machine_pinned_removal_visibility search_machine_admission_revisions \
 	stream_alpha_unique root_builtin_argument_demand computed_value_arguments \
-	translate_predicate_prolog_goals
+	translate_predicate_prolog_goals float_layout
 PETTA_SEMANTIC_OCCURRENCE_BAG_STEMS = semantic_counter_equations \
 	search_machine_specializer_negative_mutation \
 	search_machine_partial_head_observation search_machine_query_field_composition
