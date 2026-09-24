@@ -19,8 +19,10 @@
 !(test (let $e (sread "((k (nothing)))") (or False (== $e ()))) false)
 !(test (let $e (sread "((k (nothing)))") (and True (== $e ()))) false)
 
-; Membership and length read the value as a list.
+; Membership and length read the value as a list; member recurses on
+; values, as Prolog's member/2 does.
 !(test (let $e (sread "(k (nothing))") (is-member $e (a $e))) true)
+!(test (let $e (sread "(k (nothing))") (member $e (a $e))) true)
 !(test (let $e (sread "((k (nothing)) b)") (length $e)) 2)
 
 ; eval is the one place a computed value runs.

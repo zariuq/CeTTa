@@ -14823,17 +14823,26 @@ static bool petta_machine_advance_choice(
                 return true;
             }
 
+            /* The second clause recurses on values, as Prolog's member/2
+             * does: solving the call again would evaluate the needle. */
             Atom *member = atom_symbol(&machine->heap, "member");
-            Atom *recursive = member
+            Atom *rest = petta_machine_apply_bindings(machine,
+                search_context_bindings(&machine->search),
+                &machine->heap, tail);
+            Atom *recursive = member && rest
                 ? atom_expr3(
                       &machine->heap, member,
-                      choice->as.relational_member.needle, tail)
+                      choice->as.relational_member.needle, rest)
                 : NULL;
             if (!recursive ||
-                !petta_push_solve(
-                    machine, recursive,
-                    choice->as.relational_member.expected,
-                    choice->barrier)) {
+                !petta_goal_push(
+                    machine,
+                    &(PettaGoal){
+                        .kind = PETTA_GOAL_RELATIONAL_MEMBER_READY,
+                        .barrier = choice->barrier,
+                        .first = recursive,
+                        .second = choice->as.relational_member.expected,
+                    })) {
                 *failure = PETTA_MACHINE_STEP_CAPACITY;
                 return false;
             }
