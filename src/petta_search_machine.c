@@ -24802,10 +24802,10 @@ static bool petta_machine_dispatch_solve(
     }
 
     if (head_id == g_builtin_syms.petta_member && nargs == 2u) {
-        if (!petta_push_evaluated_expression(
+        if (!petta_push_evaluated_expression_planned(
                 machine, expression, expected,
                 PETTA_GOAL_RELATIONAL_MEMBER_READY, 1u,
-                goal->barrier)) {
+                goal->barrier, plan)) {
             *failure = PETTA_MACHINE_STEP_CAPACITY;
             return false;
         }
@@ -24846,10 +24846,10 @@ static bool petta_machine_dispatch_solve(
                     petta_plan_child(plan, 1u), 1u),
                 false, failure);
         }
-        if (!petta_push_evaluated_expression(
+        if (!petta_push_evaluated_expression_planned(
                 machine, expression, expected,
                 PETTA_GOAL_LIST_SIZE_READY, 1u,
-                goal->barrier)) {
+                goal->barrier, plan)) {
             *failure = PETTA_MACHINE_STEP_CAPACITY;
             return false;
         }
@@ -25480,10 +25480,10 @@ static bool petta_machine_dispatch_solve(
                 expression->expr.elems[2], expected,
                 goal->barrier);
         }
-        if (!petta_push_evaluated_expression(
+        if (!petta_push_evaluated_expression_planned(
                 machine, expression, expected,
                 PETTA_GOAL_APPEND_READY, 1u,
-                goal->barrier)) {
+                goal->barrier, plan)) {
             *failure = PETTA_MACHINE_STEP_CAPACITY;
             return false;
         }
@@ -25578,10 +25578,10 @@ static bool petta_machine_dispatch_solve(
     }
 
     if (form == PETTA_FORM_IS_MEMBER && nargs == 2u) {
-        if (!petta_push_evaluated_expression(
+        if (!petta_push_evaluated_expression_planned(
                 machine, expression, expected,
                 PETTA_GOAL_MEMBER_READY, 1u,
-                goal->barrier)) {
+                goal->barrier, plan)) {
             *failure = PETTA_MACHINE_STEP_CAPACITY;
             return false;
         }
@@ -25902,10 +25902,10 @@ static bool petta_machine_dispatch_solve(
     if (petta_semantics_boolean_relation_arity(
             head_id, &boolean_arity) &&
         nargs == (CettaExprLen)boolean_arity) {
-        if (!petta_push_evaluated_expression(
+        if (!petta_push_evaluated_expression_planned(
                 machine, expression, expected,
                 PETTA_GOAL_BOOLEAN_READY, 1u,
-                goal->barrier)) {
+                goal->barrier, plan)) {
             *failure = PETTA_MACHINE_STEP_CAPACITY;
             return false;
         }
