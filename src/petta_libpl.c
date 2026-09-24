@@ -2459,6 +2459,45 @@ static bool petta_libpl_registered_call(
     return ok;
 }
 
+/*
+ * Run one goal in the embedded Prolog: every solution is an outcome carrying
+ * the success value and the bindings of the goal's free variables.  A goal
+ * is an opaque effect boundary; even one that later fails may already have
+ * changed the dynamic predicate database.
+ */
+static bool petta_libpl_call_goal(
+    CettaLibPrologRuntime *runtime, Arena *arena,
+    Atom *body, OutcomeSet *outcomes, bool *succeeded) {
+    if (succeeded)
+        *succeeded = false;
+    term_t goal = PL_new_term_ref();
+    PettaLibplVarMap variables = {0};
+    bool converted =
+        goal &&
+        petta_libpl_to_callable(
+            body, goal, &variables, 0u);
+    if (!converted) {
+        free(variables.items);
+        return false;
+    }
+    predicate_t call = PL_predicate(
+        "call", 1, runtime->module_name);
+    Atom *success =
+        petta_semantics_success_value(arena);
+    bool solved = false;
+    bool attempted = success != NULL;
+    bool ok = attempted && petta_libpl_run_query(
+        runtime, arena, call, goal, 0,
+        success, &variables, outcomes,
+        false, &solved);
+    if (attempted)
+        petta_libpl_advance_revision(runtime);
+    if (succeeded)
+        *succeeded = solved;
+    free(variables.items);
+    return ok;
+}
+
 static bool petta_libpl_call_predicate(
     CettaLibPrologRuntime *runtime, Arena *arena,
     Atom *wrapper, OutcomeSet *outcomes) {
@@ -2480,35 +2519,13 @@ static bool petta_libpl_call_predicate(
          !petta_libpl_plref_matches(runtime, &erased_handle))) {
         return true;
     }
-    term_t goal = PL_new_term_ref();
-    PettaLibplVarMap variables = {0};
-    bool converted =
-        goal &&
-        petta_libpl_to_callable(
-            body, goal, &variables, 0u);
-    if (!converted) {
-        free(variables.items);
-        return false;
-    }
-    predicate_t call = PL_predicate(
-        "call", 1, runtime->module_name);
-    Atom *success =
-        petta_semantics_success_value(arena);
     bool succeeded = false;
-    bool attempted = success != NULL;
-    bool ok = attempted && petta_libpl_run_query(
-        runtime, arena, call, goal, 0,
-        success, &variables, outcomes,
-        false, &succeeded);
-    /* callPredicate is an opaque effect boundary.  Even a goal that later
-     * fails may already have changed the dynamic predicate database. */
-    if (attempted)
-        petta_libpl_advance_revision(runtime);
+    bool ok = petta_libpl_call_goal(
+        runtime, arena, body, outcomes, &succeeded);
     if (ok && succeeded && releases_handle &&
         !petta_libpl_plref_release(runtime, &erased_handle)) {
         ok = false;
     }
-    free(variables.items);
     return ok;
 }
 
@@ -3318,6 +3335,7 @@ bool petta_libpl_call(
     PeTTaForm form = petta_semantics_form(head);
     bool adapter_form =
         form == PETTA_FORM_IMPORT_PROLOG_FUNCTION ||
+        form == PETTA_FORM_TRANSLATE_PREDICATE ||
         form == PETTA_FORM_CALL_PREDICATE ||
         form == PETTA_FORM_ASSERTA_PREDICATE ||
         form == PETTA_FORM_ASSERTZ_PREDICATE ||
@@ -3398,6 +3416,29 @@ bool petta_libpl_call(
                 outcome_set_add(outcomes, success, &empty);
             else
                 ok = false;
+        }
+    } else if (form == PETTA_FORM_TRANSLATE_PREDICATE &&
+               expression->expr.len == 2u) {
+        /* The machine hands over only goals it has no native view of.  A
+         * goal whose predicate Prolog defines is a Prolog call binding its
+         * free variables, as in PeTTa; any other goal stays unrecognized. */
+        Atom *goal = expression->expr.elems[1];
+        Atom *name = goal && goal->kind == ATOM_EXPR &&
+                     goal->expr.len > 0u
+            ? goal->expr.elems[0] : goal;
+        size_t arity = goal && goal->kind == ATOM_EXPR &&
+                       goal->expr.len > 0u
+            ? (size_t)(goal->expr.len - 1u) : 0u;
+        bool exists = false;
+        if (name && name->kind == ATOM_SYMBOL) {
+            ok = petta_libpl_predicate_exists(
+                runtime, symbol_bytes(g_symbols, name->sym_id),
+                symbol_len(g_symbols, name->sym_id), arity, &exists);
+        }
+        if (ok && exists) {
+            *recognized = true;
+            ok = petta_libpl_call_goal(
+                runtime, arena, goal, outcomes, NULL);
         }
     } else if (form == PETTA_FORM_CALL_PREDICATE &&
                expression->expr.len == 2u) {

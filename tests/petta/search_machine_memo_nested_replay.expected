@@ -1,5 +1,5 @@
 true
-(translatePredicate (set_prolog_flag occurs_check true))
+true
 true
 (MkSized 13 (: (mp (mp ax2 (mp ax1 (mp (mp ax2 ax2) (mp ax1 ax1)))) ax1) (imp (imp (imp phi psi) chi) (imp psi chi))))
 (MkSized 13 (: (mp (mp ax2 (mp (mp ax2 (mp ax1 ax2)) ax1)) (mp ax1 ax1)) (imp (imp (imp phi psi) chi) (imp psi chi))))

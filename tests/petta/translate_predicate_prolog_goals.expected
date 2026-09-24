@@ -1,0 +1,12 @@
+is "abc", should "abc". ✅ 
+is "1970", should "1970". ✅ 
+is 42, should 42. ✅ 
+is (), should (). ✅ 
+is hi, should hi. ✅ 
+is (1 2 3), should (1 2 3). ✅ 
+true
+true
+true
+true
+true
+true
