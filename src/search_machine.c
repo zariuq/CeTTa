@@ -398,7 +398,7 @@ static bool cetta_observation_algebra_valid(
     return algebra >=
                CETTA_OBSERVATION_ALGEBRA_EXACT_OCCURRENCES &&
         algebra <=
-               CETTA_OBSERVATION_ALGEBRA_PREFERRED_FALLBACK_COUNT;
+               CETTA_OBSERVATION_ALGEBRA_IDEMPOTENT_FOLD;
 }
 
 bool cetta_observation_contract_valid(
@@ -409,6 +409,17 @@ bool cetta_observation_contract_valid(
     }
     if (contract.algebra == CETTA_OBSERVATION_ALGEBRA_EXISTENCE)
         return cetta_observation_contract_is_existence(contract);
+    /* A fold consumes its whole stream: an affine fold in order, a
+     * commutative fold as a bag. */
+    if (contract.algebra == CETTA_OBSERVATION_ALGEBRA_AFFINE_FOLD)
+        return contract.demand.completion ==
+                   CETTA_OBSERVATION_ORDERED_STREAM &&
+            contract.demand.prefix_limit == 0u;
+    if (contract.algebra == CETTA_OBSERVATION_ALGEBRA_COMMUTATIVE_FOLD ||
+        contract.algebra == CETTA_OBSERVATION_ALGEBRA_IDEMPOTENT_FOLD)
+        return contract.demand.completion ==
+                   CETTA_OBSERVATION_COMPLETE_BAG &&
+            contract.demand.prefix_limit == 0u;
     /* Only complete preferred/fallback count has a physical weighted-answer
      * presentation today.  Do not admit unused combinations as latent API. */
     return contract.algebra !=

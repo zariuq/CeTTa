@@ -11579,8 +11579,20 @@ static int cetta_flat_row_match(
     if (!fact || !pattern || fact->kind != ATOM_EXPR ||
         fact->expr.len != pattern->expr.len)
         return 0;
-    if (atom_has_vars(fact))
+    if (atom_has_vars(fact)) {
+        /* Two ground terms unify only when equal, so a row that differs
+         * from the pattern at a position where both are ground has no
+         * unifier, whatever variables it holds elsewhere: an equation
+         * `(= lhs rhs)` never matches `(obs $k $v)`. */
+        for (CettaExprIndex column = 0u; column < fact->expr.len; column++) {
+            Atom *expected = pattern->expr.elems[column];
+            Atom *actual = fact->expr.elems[column];
+            if (expected && actual && expected->kind != ATOM_VAR &&
+                !atom_has_vars(actual) && !atom_eq(expected, actual))
+                return 0;
+        }
         return -1;
+    }
     *bind_len = 0u;
     for (CettaExprIndex column = 0u; column < fact->expr.len; column++) {
         int bound = cetta_flat_join_bind(
@@ -11642,6 +11654,339 @@ bool space_native_flat_pattern_each_int(
             !each(value, ctx))
             return false;
     }
+    return true;
+}
+
+/* A row against a pattern with nested structure: 1 matches, 0 cannot
+ * match, -1 undecided here.  Variables bind at their first occurrence and
+ * later occurrences compare.  A row holding variables is refuted by a
+ * position where it and the pattern are both ground and differ; otherwise it
+ * might unify, and the fragment declines. */
+static int cetta_pattern_row_refuted(const Atom *pattern, const Atom *fact,
+                                     uint32_t depth) {
+    if (!pattern || !fact || depth > 64u)
+        return 0;
+    if (pattern->kind == ATOM_VAR || fact->kind == ATOM_VAR)
+        return 0;
+    if (!atom_has_vars((Atom *)pattern) && !atom_has_vars((Atom *)fact))
+        return !atom_eq((Atom *)pattern, (Atom *)fact);
+    if (pattern->kind != ATOM_EXPR || fact->kind != ATOM_EXPR)
+        return pattern->kind != fact->kind;
+    if (pattern->expr.len != fact->expr.len)
+        return 1;
+    for (CettaExprIndex index = 0u; index < pattern->expr.len; index++) {
+        if (cetta_pattern_row_refuted(pattern->expr.elems[index],
+                                      fact->expr.elems[index], depth + 1u))
+            return 1;
+    }
+    return 0;
+}
+
+static int cetta_pattern_row_bind(Atom *pattern, Atom *fact,
+                                  CettaFlatJoinBind *binds, size_t *bind_len,
+                                  uint32_t depth) {
+    if (!pattern || !fact || depth > 64u)
+        return -1;
+    if (pattern->kind == ATOM_VAR)
+        return cetta_flat_join_bind(binds, bind_len, pattern, fact);
+    if (!atom_has_vars(pattern))
+        return atom_eq(pattern, fact) ? 1 : 0;
+    if (pattern->kind != ATOM_EXPR || fact->kind != ATOM_EXPR ||
+        pattern->expr.len != fact->expr.len)
+        return 0;
+    for (CettaExprIndex index = 0u; index < pattern->expr.len; index++) {
+        int bound = cetta_pattern_row_bind(pattern->expr.elems[index],
+                                           fact->expr.elems[index], binds,
+                                           bind_len, depth + 1u);
+        if (bound <= 0)
+            return bound;
+    }
+    return 1;
+}
+
+bool space_native_pattern_each_int(
+    Space *space, Atom *pattern, VarId variable,
+    bool (*each)(int64_t value, void *ctx), void *ctx) {
+    if (!space || !pattern || !each || space->overlay_base ||
+        (space->match_backend.kind != SPACE_ENGINE_NATIVE &&
+         space->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) ||
+        pattern->kind != ATOM_EXPR)
+        return false;
+    CettaFlatJoinBind binds[CETTA_FLAT_JOIN_MAX_BINDS];
+    CettaCount rows = space->native.len;
+    for (CettaIndex row = 0u; row < rows; row++) {
+        Atom *fact = space_get_at64(space, row);
+        if (!fact)
+            continue;
+        if (atom_has_vars(fact)) {
+            if (cetta_pattern_row_refuted(pattern, fact, 0u))
+                continue;
+            return false;
+        }
+        size_t bind_len = 0u;
+        int matched = cetta_pattern_row_bind(pattern, fact, binds,
+                                             &bind_len, 0u);
+        if (matched < 0)
+            return false;
+        if (matched == 0)
+            continue;
+        const Atom *value = NULL;
+        for (size_t bind = 0u; bind < bind_len; bind++) {
+            if (binds[bind].id == variable) {
+                value = binds[bind].value;
+                break;
+            }
+        }
+        if (!value || value->kind != ATOM_GROUNDED ||
+            value->ground.gkind != GV_INT ||
+            !each(value->ground.ival, ctx))
+            return false;
+    }
+    return true;
+}
+
+/* ---- chain joins by variable elimination ---------------------------------
+ * A conjunction P0, P1, ..., Pn-1 of flat patterns in which consecutive
+ * patterns share exactly one variable (the join key) and no variable is
+ * shared by any other pair is a path query.  Its occurrence bag of one
+ * integer column is summarized by the pair (count, sum), the dual numbers
+ * c + s.eps: every row weighs 1, or 1 + v.eps on the pattern that carries
+ * the column, and the bag's summary is the sum over joined rows of the
+ * product of weights.  Eliminating keys from one end, a message maps each
+ * key value to the summary of every partial join that ends in it, so the
+ * work is proportional to the rows of the patterns, not to the join. */
+
+typedef struct {
+    Atom *key;
+    uint32_t hash;
+    bool used;
+    __int128 count;
+    __int128 sum;
+} CettaChainEntry;
+
+typedef struct {
+    CettaChainEntry *slots;
+    size_t cap;
+    size_t len;
+} CettaChainMessage;
+
+static void cetta_chain_message_free(CettaChainMessage *message) {
+    free(message->slots);
+    message->slots = NULL;
+    message->cap = 0u;
+    message->len = 0u;
+}
+
+static CettaChainEntry *cetta_chain_message_find(
+    const CettaChainMessage *message, Atom *key, uint32_t hash) {
+    if (message->cap == 0u)
+        return NULL;
+    size_t mask = message->cap - 1u;
+    for (size_t probe = hash & mask;; probe = (probe + 1u) & mask) {
+        CettaChainEntry *entry = &message->slots[probe];
+        if (!entry->used)
+            return NULL;
+        if (entry->hash == hash && atom_eq(entry->key, key))
+            return entry;
+    }
+}
+
+static bool cetta_chain_message_add(
+    CettaChainMessage *message, Atom *key, uint32_t hash,
+    __int128 count, __int128 sum) {
+    if ((message->len + 1u) * 2u > message->cap) {
+        size_t cap = message->cap ? message->cap * 2u : 64u;
+        CettaChainEntry *slots = calloc(cap, sizeof(*slots));
+        if (!slots)
+            return false;
+        for (size_t index = 0u; index < message->cap; index++) {
+            CettaChainEntry *old = &message->slots[index];
+            if (!old->used)
+                continue;
+            for (size_t probe = old->hash & (cap - 1u);;
+                 probe = (probe + 1u) & (cap - 1u)) {
+                if (!slots[probe].used) {
+                    slots[probe] = *old;
+                    break;
+                }
+            }
+        }
+        free(message->slots);
+        message->slots = slots;
+        message->cap = cap;
+    }
+    size_t mask = message->cap - 1u;
+    for (size_t probe = hash & mask;; probe = (probe + 1u) & mask) {
+        CettaChainEntry *entry = &message->slots[probe];
+        if (!entry->used) {
+            *entry = (CettaChainEntry){
+                .key = key, .hash = hash, .used = true,
+                .count = count, .sum = sum,
+            };
+            message->len++;
+            return true;
+        }
+        if (entry->hash == hash && atom_eq(entry->key, key))
+            return !__builtin_add_overflow(entry->count, count,
+                                           &entry->count) &&
+                   !__builtin_add_overflow(entry->sum, sum, &entry->sum);
+    }
+}
+
+static bool cetta_flat_pattern_has_var(const Atom *pattern, VarId id) {
+    for (CettaExprIndex index = 0u; index < pattern->expr.len; index++) {
+        const Atom *item = pattern->expr.elems[index];
+        if (item->kind == ATOM_VAR && item->var_id == id)
+            return true;
+    }
+    return false;
+}
+
+/* The one variable consecutive patterns share, or false when they share
+ * none, several, or one that a third pattern also uses. */
+static bool cetta_chain_key(Atom *const *patterns, size_t pattern_count,
+                            size_t left, VarId *key_out) {
+    bool found = false;
+    const Atom *pattern = patterns[left];
+    for (CettaExprIndex index = 0u; index < pattern->expr.len; index++) {
+        const Atom *item = pattern->expr.elems[index];
+        if (item->kind != ATOM_VAR)
+            continue;
+        for (size_t other = 0u; other < pattern_count; other++) {
+            if (other == left ||
+                !cetta_flat_pattern_has_var(patterns[other], item->var_id))
+                continue;
+            if (other != left + 1u && other + 1u != left)
+                return false;
+            if (other == left + 1u) {
+                if (found && *key_out != item->var_id)
+                    return false;
+                *key_out = item->var_id;
+                found = true;
+            }
+        }
+    }
+    return found;
+}
+
+static Atom *cetta_flat_bind_value(const CettaFlatJoinBind *binds,
+                                   size_t bind_len, VarId id) {
+    for (size_t index = 0u; index < bind_len; index++) {
+        if (binds[index].id == id)
+            return binds[index].value;
+    }
+    return NULL;
+}
+
+bool space_native_flat_chain_aggregate(
+    Space *space, Atom *const *patterns, size_t pattern_count,
+    bool with_column, size_t column_pattern, size_t column,
+    __int128 *count_out, __int128 *sum_out) {
+    /* Elimination is proved for paths of at most three patterns
+     * (JoinAggregation); longer chains stay on the enumerating routes. */
+    if (!space || !patterns || !count_out || !sum_out ||
+        pattern_count == 0u || pattern_count > 3u ||
+        (with_column && column_pattern >= pattern_count) ||
+        space->overlay_base ||
+        (space->match_backend.kind != SPACE_ENGINE_NATIVE &&
+         space->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
+        return false;
+    VarId keys[CETTA_FLAT_JOIN_MAX_PATTERNS];
+    for (size_t index = 0u; index < pattern_count; index++) {
+        if (!cetta_flat_join_pattern_ok(patterns[index]) ||
+            (with_column && index == column_pattern &&
+             column >= (size_t)patterns[index]->expr.len))
+            return false;
+        if (index + 1u < pattern_count &&
+            !cetta_chain_key(patterns, pattern_count, index, &keys[index]))
+            return false;
+    }
+    /* A pattern may not share a variable with any non-neighbour. */
+    for (size_t left = 0u; left < pattern_count; left++) {
+        const Atom *pattern = patterns[left];
+        for (CettaExprIndex index = 0u; index < pattern->expr.len; index++) {
+            const Atom *item = pattern->expr.elems[index];
+            if (item->kind != ATOM_VAR)
+                continue;
+            for (size_t other = 0u; other < pattern_count; other++) {
+                if (other != left && other != left + 1u &&
+                    other + 1u != left &&
+                    cetta_flat_pattern_has_var(patterns[other],
+                                               item->var_id))
+                    return false;
+            }
+        }
+    }
+
+    CettaChainMessage previous = {0};
+    CettaChainMessage current = {0};
+    __int128 total_count = 0;
+    __int128 total_sum = 0;
+    bool ok = true;
+    CettaFlatJoinBind binds[CETTA_FLAT_JOIN_MAX_BINDS];
+    CettaCount rows = space->native.len;
+    for (size_t level = 0u; ok && level < pattern_count; level++) {
+        bool last = level + 1u == pattern_count;
+        for (CettaIndex row = 0u; ok && row < rows; row++) {
+            Atom *fact = space_get_at64(space, row);
+            size_t bind_len = 0u;
+            int matched = cetta_flat_row_match(fact, patterns[level], binds,
+                                               &bind_len);
+            if (matched < 0) {
+                ok = false;
+                break;
+            }
+            if (matched == 0)
+                continue;
+            __int128 count = 1;
+            __int128 sum = 0;
+            if (level > 0u) {
+                Atom *inbound = cetta_flat_bind_value(binds, bind_len,
+                                                      keys[level - 1u]);
+                CettaChainEntry *entry = inbound
+                    ? cetta_chain_message_find(&previous, inbound,
+                                               atom_hash(inbound))
+                    : NULL;
+                if (!entry)
+                    continue;
+                count = entry->count;
+                sum = entry->sum;
+            }
+            if (with_column && level == column_pattern) {
+                int64_t value = 0;
+                __int128 carried = 0;
+                if (!cetta_flat_fact_column_int(fact, column, &value) ||
+                    __builtin_mul_overflow(count, (__int128)value,
+                                           &carried) ||
+                    __builtin_add_overflow(sum, carried, &sum)) {
+                    ok = false;
+                    break;
+                }
+            }
+            if (last) {
+                if (__builtin_add_overflow(total_count, count,
+                                           &total_count) ||
+                    __builtin_add_overflow(total_sum, sum, &total_sum))
+                    ok = false;
+                continue;
+            }
+            Atom *outbound = cetta_flat_bind_value(binds, bind_len,
+                                                   keys[level]);
+            if (!outbound ||
+                !cetta_chain_message_add(&current, outbound,
+                                         atom_hash(outbound), count, sum))
+                ok = false;
+        }
+        cetta_chain_message_free(&previous);
+        previous = current;
+        current = (CettaChainMessage){0};
+    }
+    cetta_chain_message_free(&previous);
+    cetta_chain_message_free(&current);
+    if (!ok)
+        return false;
+    *count_out = total_count;
+    *sum_out = total_sum;
     return true;
 }
 

@@ -50,6 +50,8 @@ typedef struct {
     uint32_t requested_depth;
     const char *limit_reason;
     RMAtomVec answers;
+    /* The frame identity whose slots name every rule instantiation. */
+    CettaFrameIdentity fresh_identity;
 } RMRun;
 
 typedef void (*RMContinuation)(RMRun *run, BindingsBuilder *builder, void *ctx);
@@ -1197,10 +1199,27 @@ static void rm_solve_goal(RMRun *run, uint32_t depth, Atom *goal,
     for (uint32_t i = 0; i < run->block_count && !run->limit_reason; ++i) {
         ++run->block_attempts;
         uint32_t mark = bindings_builder_save(builder);
-        Atom *fresh = cetta_instantiate_frame_syntax(run->arena, run->blocks[i]);
-        RMBytecodeBlock block;
-        if (!fresh || !rm_parse_bytecode_block(fresh, &block)) {
+        /* An attempt that publishes no answer leaves nothing that refers to
+         * its instantiated rule once its bindings are rolled back, so its
+         * storage is returned: a search holds its current path and its
+         * answers, not every rule it tried. */
+        ArenaMark storage = arena_mark(run->arena);
+        uint32_t answers_before = run->answers.len;
+        /* Each attempt takes new variables in the run's one frame identity:
+         * attempts never share a variable, and the run holds one identity
+         * however many rules it tries. */
+        Atom *fresh = run->blocks[i];
+        if (!cetta_instantiate_frame_terms_within(run->arena, &fresh, 1u,
+                                                  run->fresh_identity)) {
             bindings_builder_rollback(builder, mark);
+            arena_reset(run->arena, storage);
+            run->limit_reason = "fresh-variable-capacity";
+            return;
+        }
+        RMBytecodeBlock block;
+        if (!rm_parse_bytecode_block(fresh, &block)) {
+            bindings_builder_rollback(builder, mark);
+            arena_reset(run->arena, storage);
             run->limit_reason = "malformed-bytecode";
             return;
         }
@@ -1215,6 +1234,8 @@ static void rm_solve_goal(RMRun *run, uint32_t depth, Atom *goal,
             }
         }
         bindings_builder_rollback(builder, mark);
+        if (run->answers.len == answers_before)
+            arena_reset(run->arena, storage);
     }
 }
 
@@ -1307,7 +1328,12 @@ static Atom *rm_run_artifact(Arena *arena, Atom *head, Atom **args,
         .requested_depth = (uint32_t)depth64,
     };
     BindingsBuilder builder;
+    if (!cetta_frame_identity_acquire(&run.fresh_identity)) {
+        rm_vec_free(&blocks);
+        return rm_error(arena, head, args, nargs, "AllocationFailure");
+    }
     if (!bindings_builder_init(&builder, NULL)) {
+        cetta_frame_identity_release(run.fresh_identity);
         rm_vec_free(&blocks);
         return rm_error(arena, head, args, nargs, "AllocationFailure");
     }
@@ -1316,6 +1342,9 @@ static Atom *rm_run_artifact(Arena *arena, Atom *head, Atom **args,
     rm_solve_goal(&run, (uint32_t)depth64, args[4], proof_var, &builder,
                   rm_collect_answer, &answer);
     bindings_builder_free(&builder);
+    /* Answers that mention instantiated variables keep the identity through
+     * the arena that holds them. */
+    cetta_frame_identity_release(run.fresh_identity);
 
     Atom *occurrences = rm_occurrences(arena, &run.answers);
     Atom *metrics = rm_metrics(arena, &run);

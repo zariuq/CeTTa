@@ -91,12 +91,26 @@ typedef struct {
 /* Completion demand and contraction algebra are independent coordinates.
  * The former governs how much of a producer must run; the latter records
  * which distinctions its consumer retains.  Keep the catalogue restricted
- * to realized contracts: exact occurrences, Boolean existence, and the count
- * used by collapse after language-owned preferred/fallback classification. */
+ * to realized contracts: exact occurrences, Boolean existence, the count
+ * used by collapse after language-owned preferred/fallback classification,
+ * and the fold algebras of the native fold (fold_algebra.h). */
 typedef enum {
     CETTA_OBSERVATION_ALGEBRA_EXACT_OCCURRENCES = 0,
     CETTA_OBSERVATION_ALGEBRA_EXISTENCE,
     CETTA_OBSERVATION_ALGEBRA_PREFERRED_FALLBACK_COUNT,
+    /* An ordered stream folded by steps that compose in a monoid (affine
+     * over the integers or modulo a literal).  Order is retained only
+     * through the product: contiguous runs may be regrouped and a run of one
+     * step taken as a power, but occurrences may not be permuted. */
+    CETTA_OBSERVATION_ALGEBRA_AFFINE_FOLD,
+    /* A complete bag folded by steps that commute with each other
+     * (translations, or scalings).  Only occurrences and multiplicities are
+     * retained, so an unordered producer such as a join may feed it. */
+    CETTA_OBSERVATION_ALGEBRA_COMMUTATIVE_FOLD,
+    /* A set folded by a semilattice step (the accumulator's min or max with
+     * an item's bound): which items occur is retained, not their order or
+     * multiplicity. */
+    CETTA_OBSERVATION_ALGEBRA_IDEMPOTENT_FOLD,
 } CettaObservationAlgebra;
 
 typedef struct {
