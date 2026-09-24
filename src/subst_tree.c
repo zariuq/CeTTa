@@ -770,6 +770,55 @@ static CettaIndex flatten_atom(Atom *a, FlatToken *buf, CettaIndex pos) {
     return pos;
 }
 
+/* Float facts sit on a variable branch.  An integer fact sits on its
+ * integer branch, so an HE float query also follows every integer key
+ * that promotes equal to it.  PeTTa stays on the variable branch only. */
+static void st_follow_he_float_ints(SubstNode *node, double fval,
+                                   FlatToken *flat, CettaIndex nflat,
+                                   CettaIndex idx, BindingsBuilder *bb,
+                                   Arena *a, Atom **atoms,
+                                   SubstMatchSet *out) {
+    int64_t exact = 0;
+    CettaHeFloatIntBranches mode = cetta_he_float_int_branches(fval, &exact);
+    if (!node || mode == CETTA_HE_FLOAT_INTS_NONE)
+        return;
+    if (mode == CETTA_HE_FLOAT_INTS_ONE) {
+        SubstNode *match = NULL;
+        if (node->int_hashed) {
+            match = int_ht_get(&node->int_ht, exact);
+        } else {
+            for (uint32_t i = 0; i < node->nints; i++) {
+                if (node->ints[i].val == exact) {
+                    match = node->ints[i].child;
+                    break;
+                }
+            }
+        }
+        if (match)
+            st_flat_walk(match, flat, nflat, idx + 1, bb, a, atoms, out);
+        return;
+    }
+    if (node->int_hashed) {
+        uint32_t cap = node->int_ht.mask + 1u;
+        for (uint32_t i = 0u; i < cap; i++) {
+            SubstNode *child = node->int_ht.entries[i].child;
+            if (!child)
+                continue;
+            if (cetta_he_promoted_kind_equal(
+                    GV_FLOAT, 0, fval, GV_INT,
+                    node->int_ht.entries[i].val, 0.0))
+                st_flat_walk(child, flat, nflat, idx + 1, bb, a, atoms, out);
+        }
+        return;
+    }
+    for (uint32_t i = 0u; i < node->nints; i++) {
+        if (cetta_he_promoted_kind_equal(
+                GV_FLOAT, 0, fval, GV_INT, node->ints[i].val, 0.0))
+            st_flat_walk(node->ints[i].child, flat, nflat, idx + 1,
+                         bb, a, atoms, out);
+    }
+}
+
 static bool st_bind_indexed_var(BindingsBuilder *bb, Arena *a,
                                 VarId var_id, SymbolId spelling,
                                 Atom *name_key, Atom *value) {
@@ -914,6 +963,12 @@ static void st_flat_walk(SubstNode *node, FlatToken *flat, CettaIndex nflat,
             }
             bindings_builder_rollback(bb, mark);
         }
+        if (tok->original &&
+            tok->original->kind == ATOM_GROUNDED &&
+            tok->original->ground.gkind == GV_FLOAT)
+            st_follow_he_float_ints(
+                node, tok->original->ground.fval, flat, nflat, idx,
+                bb, a, atoms, out);
         break;
     }
 }

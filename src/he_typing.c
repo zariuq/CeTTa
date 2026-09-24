@@ -1410,6 +1410,9 @@ typedef struct {
     uint32_t scheme_var_count;
     uint32_t scheme_var_cap;
     bool prime;
+    /* The frame identity whose slots name every rule and scheme instance
+     * of this search: one identity however many candidates it tries. */
+    CettaFrameIdentity fresh_identity;
 } ChainContext;
 
 static bool chain_fuel_exhausted(const ChainContext *ctx) {
@@ -3123,7 +3126,8 @@ static void chain_process_candidate(ChainContext *ctx, ChainWorkQueue *queue,
         return;
     Atom *instance[2] = {decl->term, decl->type};
     if ((decl->is_rule || decl->is_scheme) &&
-        (!cetta_instantiate_frame_terms(ctx->arena, instance, 2u) ||
+        (!cetta_instantiate_frame_terms_within(ctx->arena, instance, 2u,
+                                               ctx->fresh_identity) ||
          !chain_collect_scheme_vars(ctx, instance[0]) ||
          !chain_collect_scheme_vars(ctx, instance[1]))) {
         chain_mark_incomplete(ctx, "answer-identity-allocation");
@@ -3411,6 +3415,8 @@ static Atom *chain_inhabit_dispatch(Arena *a, Space *space, Atom *goal,
     ctx.fuel_limited = fuel_limited;
     ctx.policy = policy;
 
+    if (!cetta_frame_identity_acquire(&ctx.fresh_identity))
+        return he_unknown(a, he_reason(a, "answer-identity-allocation"));
     CettaHeTypingBudget unbounded_typing;
     CettaHeTypingBudget *parent_budget = g_active_typing_budget;
     if (!fuel_limited) {
@@ -3419,6 +3425,7 @@ static Atom *chain_inhabit_dispatch(Arena *a, Space *space, Atom *goal,
     }
     if (!chain_index_build(&ctx)) {
         chain_index_free(&ctx.index);
+        cetta_frame_identity_release(ctx.fresh_identity);
         g_active_typing_budget = parent_budget;
         return he_unknown(a, he_reason(a, "chaining-index-failed"));
     }
@@ -3450,6 +3457,7 @@ static Atom *chain_inhabit_dispatch(Arena *a, Space *space, Atom *goal,
     chain_index_free(&ctx.index);
     free(ctx.query_vars);
     free(ctx.scheme_vars);
+    cetta_frame_identity_release(ctx.fresh_identity);
     g_active_typing_budget = parent_budget;
     return result;
 }
@@ -3477,9 +3485,14 @@ static Atom *chain_forward_step(Arena *a, Space *space, uint64_t *fuel,
     ctx.prime = eval_current_language_id() == CETTA_LANGUAGE_PRIME;
     ctx.fuel = *fuel;
     ctx.fuel_limited = true;
+    if (!cetta_frame_identity_acquire(&ctx.fresh_identity)) {
+        if (incomplete_out) *incomplete_out = true;
+        return he_unknown(a, he_reason(a, "answer-identity-allocation"));
+    }
     if (!chain_index_build(&ctx)) {
         if (incomplete_out) *incomplete_out = true;
         chain_index_free(&ctx.index);
+        cetta_frame_identity_release(ctx.fresh_identity);
         return he_unknown(a, he_reason(a, "chaining-index-failed"));
     }
     ChainProofVec all;
@@ -3510,6 +3523,7 @@ static Atom *chain_forward_step(Arena *a, Space *space, uint64_t *fuel,
     chain_index_free(&ctx.index);
     free(ctx.query_vars);
     free(ctx.scheme_vars);
+    cetta_frame_identity_release(ctx.fresh_identity);
     return report;
 }
 

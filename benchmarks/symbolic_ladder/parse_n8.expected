@@ -1,0 +1,11 @@
+(more (more (more (more (more (more (more (more (stop end)))))))))
+(more (more (more (more (more (more (more (stop (d end)))))))))
+(more (more (more (more (more (more (stop (d (d end)))))))))
+(more (more (more (more (more (stop (d (d (d end)))))))))
+(more (more (more (more (stop (d (d (d (d end)))))))))
+(more (more (more (stop (d (d (d (d (d end)))))))))
+(more (more (stop (d (d (d (d (d (d end)))))))))
+(more (stop (d (d (d (d (d (d (d end)))))))))
+(stop (d (d (d (d (d (d (d (d end)))))))))
+bound
+(stop end)

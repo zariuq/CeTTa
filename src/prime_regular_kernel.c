@@ -2158,6 +2158,36 @@ static bool regular_is_sort(Atom *term) {
     return regular_symbol(term, "U1") || regular_expr(term, "Sort", 2u);
 }
 
+/* The type formers the normalization model discriminates in weak-head normal
+ * form (`Former` in TypedEquality/Normalization/Injectivity.lean): a universe
+ * or ground head, a dependent function type, a dependent pair type and an
+ * identity type. Anything else is REGULAR_FORMER_NONE. */
+typedef enum {
+    REGULAR_FORMER_NONE = 0,
+    REGULAR_FORMER_HEAD,
+    REGULAR_FORMER_PI,
+    REGULAR_FORMER_SIGMA,
+    REGULAR_FORMER_ID,
+} RegularFormer;
+
+static RegularFormer regular_former(Atom *whnf) {
+    if (regular_is_sort(whnf) || regular_symbol(whnf, "U0"))
+        return REGULAR_FORMER_HEAD;
+    if (regular_expr(whnf, "Pi", 3u)) return REGULAR_FORMER_PI;
+    if (regular_expr(whnf, "Sigma", 3u)) return REGULAR_FORMER_SIGMA;
+    if (regular_expr(whnf, "Id", 4u)) return REGULAR_FORMER_ID;
+    return REGULAR_FORMER_NONE;
+}
+
+/* Two types in weak-head normal form are distinct when one has a former and
+ * the other does not have its outer shape (`TypeEq.shape_of_whnf`). */
+static bool regular_formers_discriminate(Atom *left_whnf, Atom *right_whnf) {
+    RegularFormer left = regular_former(left_whnf);
+    RegularFormer right = regular_former(right_whnf);
+    return (left != REGULAR_FORMER_NONE || right != REGULAR_FORMER_NONE) &&
+           left != right;
+}
+
 static CettaPrimeRegularKernelStatus regular_conv_budget(
     CettaPrimeRegularKernelBudget *budget, const char **reason_out) {
     if (reason_out) *reason_out = "conversion-comparison-budget";
@@ -2787,10 +2817,23 @@ static CettaPrimeRegularKernelStatus regular_check_term_seen(
             &domains_equal, reason_out, instantiation);
         if (converted != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return converted;
         if (!domains_equal) {
-            /* The annotation disagrees with the expected domain.  The
-             * erased abstraction may still have the expected type, so this
-             * refutes nothing about it. */
+            /* A written domain is a contract: the lambda is typed at a
+             * dependent function type only if its written domain equals the
+             * domain (`ATyped.lamTyped_inv`). When one of the two domains in
+             * weak-head normal form is a type former the other does not have,
+             * they are unequal and the lambda is refuted
+             * (`ATyped.lamTyped_domain_mismatch`,
+             * TypedEquality/Normalization/WrittenDomains.lean). Any other
+             * mismatch needs completeness of conversion and stays open. */
             if (reason_out) *reason_out = "lambda-domain-mismatch";
+            PrimeRegularKernelNormal written = regular_whnf(
+                arena, term->expr.elems[1], budget);
+            PrimeRegularKernelNormal domain = regular_whnf(
+                arena, expected_normal.term->expr.elems[1], budget);
+            if (written.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED &&
+                domain.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED &&
+                regular_formers_discriminate(written.term, domain.term))
+                return CETTA_PRIME_REGULAR_KERNEL_REFUTED;
             return CETTA_PRIME_REGULAR_KERNEL_UNDECIDED;
         }
         Atom *extended = regular_context_extend(

@@ -1,0 +1,4 @@
+(h a (lbl p) b)
+(h a (lbl q) c)
+(h d (lbl r) b)
+(absent e)

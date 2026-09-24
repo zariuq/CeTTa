@@ -1,5 +1,5 @@
-[(he-accept (typed-answer-v2 (: (ax-mp ps ch h2 (ax-mp ph (impl ps ch) h1 h3)) ch) (answer-substitution-v2 (query-substitution-v1) (elaboration-substitution-v1 (elaboration-binding-v1 $answer-v0 ch) (elaboration-binding-v1 $answer-v1 (impl ps ch)) (elaboration-binding-v1 $answer-v2 ph) (elaboration-binding-v1 $answer-v3 h1) (elaboration-binding-v1 $answer-v4 ps) (elaboration-binding-v1 $answer-v5 h3) (elaboration-binding-v1 $answer-v6 (ax-mp ph (impl ps ch) h1 h3)) (elaboration-binding-v1 $answer-v7 h2)) (answer-constraints-v1))))]
-[(he-accept (typed-answer-v2 (: (ax-mp ps ch h2 (ax-mp ph (impl ps ch) h1 h3)) ch) (answer-substitution-v2 (query-substitution-v1) (elaboration-substitution-v1 (elaboration-binding-v1 $answer-v0 ch) (elaboration-binding-v1 $answer-v1 ps) (elaboration-binding-v1 $answer-v2 (impl ps ch)) (elaboration-binding-v1 $answer-v3 ph) (elaboration-binding-v1 $answer-v4 h3) (elaboration-binding-v1 $answer-v5 h1) (elaboration-binding-v1 $answer-v6 (ax-mp ph (impl ps ch) h1 h3)) (elaboration-binding-v1 $answer-v7 h2)) (answer-constraints-v1))))]
+[()]
+[()]
 [()]
 [()]
 [(he-reject (unsupported-typing-search-policy))]

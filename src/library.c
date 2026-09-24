@@ -7933,8 +7933,12 @@ static bool cetta_library_petta_execute_document_ids(
                 return false;
             cetta_petta_erase_typecheck_marks_document(
                 work_space->native.universe, atom_ids + index, 2);
-            ResultSet results;
-            result_set_init(&results);
+            /* A directive's answer list claims there are no further
+             * answers, so it is observed with a completion tracker.  An
+             * incomplete observation is a failure of the document, never a
+             * shorter answer list. */
+            EvalOutcome observed;
+            eval_outcome_init(&observed);
             const PettaPlanNode *source_plan = NULL;
             if (ctx->petta_program) {
                 Atom *source = term_universe_get_atom(
@@ -7945,7 +7949,7 @@ static bool cetta_library_petta_execute_document_ids(
                           ctx->petta_program, source)
                     : NULL;
                 if (!source_plan) {
-                    result_set_free(&results);
+                    eval_outcome_free(&observed);
                     if (failure_out)
                         *failure_out =
                             CETTA_PETTA_DOCUMENT_PLAN_FAILED;
@@ -7957,41 +7961,42 @@ static bool cetta_library_petta_execute_document_ids(
                 persistent_arena ? persistent_arena : eval_arena,
                 atom_ids[index + 1]);
             if (!eval_form) {
-                result_set_free(&results);
+                eval_outcome_free(&observed);
                 if (failure_out)
                     *failure_out =
                         CETTA_PETTA_DOCUMENT_COPY_FAILED;
                 return false;
             }
-            if (ctx->petta_program) {
-                eval_top_with_registry_petta_plan(
-                    work_space, eval_arena,
-                    persistent_arena, registry,
-                    eval_form, source_plan, &results);
-            } else {
-                eval_top_with_registry(
-                    work_space, eval_arena,
-                    persistent_arena, registry,
-                    eval_form, &results);
-            }
+            eval_top_with_registry_petta_plan_outcome(
+                work_space, eval_arena,
+                persistent_arena, registry,
+                eval_form, source_plan, &observed);
+            ResultSet *results = &observed.results;
 
             Atom *first_error =
-                result_set_first_error(eval_arena, &results);
+                observed.completion != CETTA_EVAL_COMPLETE
+                    ? atom_error(
+                          eval_arena, eval_form,
+                          atom_symbol(
+                              eval_arena,
+                              eval_completion_reason(
+                                  observed.completion)))
+                    : result_set_first_error(eval_arena, results);
             bool has_error =
                 first_error != NULL ||
-                result_set_has_error(&results);
+                result_set_has_error(results);
             if (!has_error && runnable_results) {
                 for (CettaCount result_index = 0u;
-                     result_index < results.len;
+                     result_index < results->len;
                      result_index++) {
                     CettaCount previous_len =
                         runnable_results->len;
                     result_set_add(
                         runnable_results,
-                        results.items[result_index]);
+                        results->items[result_index]);
                     if (runnable_results->len !=
                             previous_len + 1u) {
-                        result_set_free(&results);
+                        eval_outcome_free(&observed);
                         eval_release_temporary_spaces();
                         if (failure_out)
                             *failure_out =
@@ -8000,7 +8005,7 @@ static bool cetta_library_petta_execute_document_ids(
                     }
                 }
             }
-            result_set_free(&results);
+            eval_outcome_free(&observed);
             eval_release_temporary_spaces();
             if (has_error) {
                 if (failure_out)

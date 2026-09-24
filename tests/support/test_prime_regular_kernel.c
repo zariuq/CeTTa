@@ -1077,10 +1077,22 @@ int main(int argc, char **argv) {
         &arena,
         "(PrimeScoped PrimeCtxNil (Lam (Pi U0 U0) (idx 0)))",
         "(Pi U0 U0)");
-    CHECK(bad_lambda.status == CETTA_PRIME_REGULAR_KERNEL_UNDECIDED &&
+    CHECK(bad_lambda.status == CETTA_PRIME_REGULAR_KERNEL_REFUTED &&
               bad_lambda.reason &&
               strcmp(bad_lambda.reason, "lambda-domain-mismatch") == 0,
-          "a lambda annotation disagreeing with the expected domain refutes nothing about the erased abstraction");
+          "a written domain that is another type former than the expected domain is refuted");
+
+    /* Both domains are dependent function types: the mismatch lies inside
+     * one former, which only complete conversion could refute. */
+    CettaPrimeRegularKernelResult open_lambda_mismatch = check_term(
+        &arena,
+        "(PrimeScoped PrimeCtxNil (Lam (Pi U0 U0) (idx 0)))",
+        "(Pi (Pi U0 (Pi U0 U0)) (Pi U0 (Pi U0 U0)))");
+    CHECK(open_lambda_mismatch.status == CETTA_PRIME_REGULAR_KERNEL_UNDECIDED &&
+              open_lambda_mismatch.reason &&
+              strcmp(open_lambda_mismatch.reason,
+                     "lambda-domain-mismatch") == 0,
+          "a written domain differing inside the same former stays undecided");
 
     CettaPrimeRegularKernelResult unformed_annotation = check_term(
         &arena,

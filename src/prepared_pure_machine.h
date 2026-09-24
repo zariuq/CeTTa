@@ -309,8 +309,12 @@ typedef struct {
     CettaPreparedPureHeadAdmissionFn head_admission;
     void *head_admission_context;
     /* A program with a body that resumes after a call keeps continuations on
-     * its frontier.  Such a frontier has no equation-choice reading, so only
-     * a consumer that discards everything on a handoff may open it. */
+     * its frontier.  That frontier has no equation-choice reading.  A consumer
+     * may open it when the cursor runs those continuations itself.  On handoff
+     * the consumer must not rebuild a continuation frame as an equation
+     * choice: that either replays the call or publishes the callee in place of
+     * the continuation.  Cancellation and resource exhaustion are not logical
+     * completion, and answers already delivered stay delivered. */
     bool allow_continuations;
 } CettaPreparedPureAnswerCursorOptions;
 
@@ -366,6 +370,9 @@ typedef struct {
     uint32_t equation_count;
     const Atom *next_equation;
     CettaIndex next_logical_index;
+    /* This call's answers resume a caller's step program.  They are not
+     * themselves the consumer's answers. */
+    bool resumes_continuation;
 } CettaPreparedPureAnswerFrame;
 
 size_t cetta_prepared_pure_answer_cursor_frame_count(
@@ -373,6 +380,21 @@ size_t cetta_prepared_pure_answer_cursor_frame_count(
 bool cetta_prepared_pure_answer_cursor_frame(
     const CettaPreparedPureAnswerCursor *cursor, size_t index,
     CettaPreparedPureAnswerFrame *frame_out);
+
+/* Copy a value the cursor holds into the caller's arena. */
+typedef Atom *(*CettaPreparedPureImportValueFn)(void *context, Atom *value);
+
+/* The source computation a frame's answers still owe: its chain of pending
+ * callers decoded from their resume templates, innermost inside, with `hole`
+ * standing for the frame's answer.  Solving the result once per answer of the
+ * frame's call gives exactly the answers the cursor would have delivered for
+ * that call, in the same order; operands the callers had already evaluated
+ * appear as their values and are not evaluated again.  False when the frame
+ * resumes no continuation or a pending caller has no source reading. */
+bool cetta_prepared_pure_answer_cursor_frame_resumption(
+    const CettaPreparedPureAnswerCursor *cursor, size_t index, Arena *arena,
+    Atom *hole, CettaPreparedPureImportValueFn import_value,
+    void *import_context, Atom **term_out);
 
 uint64_t cetta_prepared_pure_answer_cursor_answer_count(
     const CettaPreparedPureAnswerCursor *cursor);

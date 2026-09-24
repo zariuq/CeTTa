@@ -17,7 +17,7 @@
 [k]
 [consumeEvidence]
 [()]
-[(he-accept (typed-answer-v2 (: (consumeEvidence (next a h) k) (id A b b)) (answer-substitution-v2 (query-substitution-v1) (elaboration-substitution-v1 (elaboration-binding-v1 $answer-v0 k) (elaboration-binding-v1 $answer-v1 a) (elaboration-binding-v1 $answer-v2 h) (elaboration-binding-v1 $answer-v3 (next a h))) (answer-constraints-v1))))]
+[()]
 [True]
 [True]
 [True]

@@ -4,6 +4,7 @@
 #include "eval.h"
 #include "match_decision.h"
 #include "nik_direct_authority.h"
+#include "open_equation_machine.h"
 #include "petta_analysis.h"
 #include "petta_program.h"
 #include "petta_semantics.h"
@@ -367,6 +368,19 @@ typedef struct {
      * producer's remaining answers are the ones equation search would find. */
     bool (*answer_authority_token)(
         void *context, PettaMachineAuthorityToken *token);
+    /* Open a revision-pinned enumeration of a call whose arguments may hold
+     * unbound variables, over the compiled open equation tier, with the
+     * consumer's `expected` value as its destination.  Each answer reports
+     * the call's value and the values of `query_vars` (every variable of the
+     * call and of `expected`), built in `answer_arena`.  NULL declines to
+     * canonical equation search. */
+    CettaOpenEquationCursor *(*open_relation_cursor)(
+        void *context, Space *space, Arena *answer_arena, Atom *call,
+        Atom *expected, Atom *const *query_vars, uint32_t query_var_count);
+    /* A revision-keyed program fact: the relation has declined open
+     * compilation.  False means only that no decline is known. */
+    bool (*open_relation_declined)(
+        void *context, Space *space, SymbolId head, CettaExprLen arity);
     /* Native opt-in capabilities whose names are not part of the core
      * PeTTa presentation.  Returning known=false leaves the occurrence
      * available to ordinary equations, data, or an optional foreign

@@ -31,7 +31,8 @@
      (car-atom $result)))
 
 ; Package-shaped syntax is not authority.  Changing even the compiled term
-; makes the package disagree with a fresh compilation and use abstains.
+; makes the package disagree with a fresh compilation of the admitted proof,
+; and the use is refuted.
 !(let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest)
       (set:native-proof native-id)
    (let $forged
