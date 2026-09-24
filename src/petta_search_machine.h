@@ -401,7 +401,7 @@ typedef struct {
         void *context, Arena *arena,
         Atom *expression, Atom *expected,
         const Bindings *environment, OutcomeSet *outcomes,
-        bool *recognized);
+        bool *recognized, Atom **raised);
     bool (*candidate_snapshot_lease)(
         void *context, Space *space, SymbolId head,
         PettaCandidateSnapshotLease *lease,

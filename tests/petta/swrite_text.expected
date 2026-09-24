@@ -1,0 +1,10 @@
+"\"a—b ř ⋄\""
+is 5, should 5. ✅ 
+"(x \"a
+b\" 1.5 sym)"
+is true, should true. ✅ 
+true
+true
+true
+true
+true
