@@ -25696,9 +25696,19 @@ static bool petta_machine_dispatch_solve(
             *failure = PETTA_MACHINE_STEP_CAPACITY;
             return false;
         }
-        return recognized ||
-               petta_machine_unify_resolved(
-                   machine, expression, expected);
+        if (recognized)
+            return true;
+
+        /* A goal with no native view is a Prolog call, as in PeTTa: the
+         * foreign adapter runs it and binds its free variables. */
+        bool foreign_recognized = false;
+        bool dispatched = petta_machine_try_extension_call(
+            machine, expression, expected, goal->barrier,
+            &foreign_recognized, failure);
+        if (foreign_recognized || !dispatched)
+            return dispatched;
+        return petta_machine_unify_resolved(
+            machine, expression, expected);
     }
 
     /*
