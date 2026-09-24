@@ -4749,12 +4749,19 @@ Space *space_heap_clone_shallow(Space *src) {
     return clone;
 }
 
+static SpaceContentsMovedHook g_space_contents_moved_hook;
+
+void space_set_contents_moved_hook(SpaceContentsMovedHook hook) {
+    g_space_contents_moved_hook = hook;
+}
+
 static void space_replace_contents_classified(
         Space *dst, Space *src,
         SpaceMutationEquationProjection equation_projection) {
     if (!dst || !src || dst == src)
         return;
     uint64_t dst_instance_id = dst->instance_id;
+    uint64_t src_instance_id = src->instance_id;
     uint64_t old_revision = dst->revision;
     uint64_t src_revision = src->revision;
     uint64_t old_equation_revision = dst->equation_revision;
@@ -4784,6 +4791,8 @@ static void space_replace_contents_classified(
     space_publish_mutation(
         dst, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
     space_reset_moved_from(src);
+    if (g_space_contents_moved_hook && src_instance_id != dst_instance_id)
+        g_space_contents_moved_hook(src_instance_id, dst_instance_id);
 }
 
 void space_replace_contents(Space *dst, Space *src) {

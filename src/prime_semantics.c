@@ -5,6 +5,7 @@
 #include "prime_semantics.h"
 
 #include <limits.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,6 +20,7 @@
 #include "prime_regular_kernel.h"
 #include "prime_regular_kernel_admission.h"
 #include "prime_regular_pattern.h"
+#include "prime_scoped_judgments.h"
 #include "space.h"
 #include "stats.h"
 #include "symbol.h"
@@ -424,10 +426,10 @@ Atom *prime_semantics_package_atom(Arena *a) {
         prime_sym(a, "Directional"), prime_sym(a, "Nondeterministic")};
     Atom *conversion_r_items[4] = {
         prime_sym(a, "ConversionR"),
-        prime_sym(a, "TypePureGroundedFragment"),
+        prime_sym(a, "BuiltinConstantFragment"),
         prime_expr2(a, "ReplaySchema",
                     prime_sym(a, "PrimeConversionCertificateV1")),
-        prime_sym(a, "MarkedUserFunctionsRemainProvisional")};
+        prime_sym(a, "UndeclaredHeadsUnresolved")};
     Atom *rewrite_items[3] = {
         prime_sym(a, "RewritesV1"), atom_expr(a, runtime_r_items, 4),
         atom_expr(a, conversion_r_items, 4)};
@@ -722,12 +724,12 @@ bool prime_semantics_validate_package(Atom *package) {
                                  runtime_rewrite_names, 3) ||
         !prime_schema_expr(rewrites->expr.elems[2], "ConversionR", 4) ||
         !is_symbol_named(rewrites->expr.elems[2]->expr.elems[1],
-                         "TypePureGroundedFragment") ||
+                         "BuiltinConstantFragment") ||
         !prime_symbol_field(rewrites->expr.elems[2]->expr.elems[2],
                             "ReplaySchema",
                             "PrimeConversionCertificateV1") ||
         !is_symbol_named(rewrites->expr.elems[2]->expr.elems[3],
-                         "MarkedUserFunctionsRemainProvisional")) {
+                         "UndeclaredHeadsUnresolved")) {
         return false;
     }
 
@@ -1339,6 +1341,14 @@ static Atom *prime_synth_closed_regular(
             prime_regular_kernel_reason(
                 a, &failure, "regular-kernel-synthesis-engine-failure"));
     }
+    if (decision.status == CETTA_PRIME_REGULAR_KERNEL_ADMISSION_UNDECIDED) {
+        prime_account_regular_kernel(
+            ledger, PRIME_RESOURCE_SYNTHESIS, &budget);
+        return prime_undetermined(
+            a, judgment,
+            prime_expr1(a, decision.reason ? decision.reason
+                                           : "regular-kernel-synthesis-undecided"));
+    }
     if (decision.status != CETTA_PRIME_REGULAR_KERNEL_ADMISSION_ADMITTED)
         return NULL;
 
@@ -1410,6 +1420,12 @@ static Atom *prime_synth(Space *space, Arena *a, Atom *judgment, Atom *term,
                 a, judgment,
                 prime_regular_kernel_reason(
                     a, &result, "regular-kernel-synthesis-engine-failure"));
+        }
+        if (result.status == CETTA_PRIME_REGULAR_KERNEL_UNDECIDED) {
+            return prime_undetermined(
+                a, judgment,
+                prime_regular_kernel_reason(
+                    a, &result, "regular-kernel-synthesis-undecided"));
         }
         if (result.status != CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS &&
             result.status != CETTA_PRIME_REGULAR_KERNEL_NOT_SCOPED) {
@@ -1588,6 +1604,14 @@ static PrimeFormStatus prime_form_closed_regular_type(
         return PRIME_FORM_UNDETERMINED;
     }
     *owned = true;
+    if (synthesis.status == CETTA_PRIME_REGULAR_KERNEL_ADMISSION_UNDECIDED) {
+        prime_account_regular_kernel(
+            ledger, PRIME_RESOURCE_FORMATION, &budget);
+        *detail = prime_expr1(
+            a, synthesis.reason ? synthesis.reason
+                                : "regular-kernel-formation-undecided");
+        return PRIME_FORM_UNDETERMINED;
+    }
     prime_account_regular_kernel(
         ledger, PRIME_RESOURCE_FORMATION, &budget);
     if (synthesis.status == CETTA_PRIME_REGULAR_KERNEL_ADMISSION_BUDGET_EXHAUSTED) {
@@ -2594,7 +2618,8 @@ prime_resolve_declared_regular_name(
     CettaPrimeRegularKernelBudget *budget,
     const PrimeRegularDeclarationTrail *trail) {
     if (!space || !arena || !name || !declarations || !budget ||
-        name->kind != ATOM_SYMBOL)
+        name->kind != ATOM_SYMBOL ||
+        prime_scoped_judgment_reserved_name(name))
         return (PrimeRegularDeclaredElaboration){0};
     if (prime_regular_declaration_context_contains(declarations, name))
         return prime_declared_elaboration(
@@ -2869,6 +2894,19 @@ prime_resolve_declared_regular_name(
         (CettaPrimeRegularTermElaborationV1){0}, NULL);
 }
 
+/* Type comparison may unfold an equation under a telescope binder. That binder
+ * is not a global declaration and admitting it here does not add one. */
+static _Thread_local bool g_prime_admit_open_parameters;
+static _Thread_local unsigned g_prime_open_parameter_budget;
+
+/* A telescope parameter has to inhabit a formed universe. A bare symbol is
+ * not a context domain, and a later constructor lookup would be rejected. */
+static Atom *prime_open_parameter_type(Arena *arena) {
+    Atom *level = atom_expr2(
+        arena, atom_symbol(arena, "LevelConst"), atom_int(arena, 0));
+    return level ? atom_expr2(arena, atom_symbol(arena, "Sort"), level) : NULL;
+}
+
 /* Extend one declaration context until `term` lowers to the regular Pattern
  * wire.  Declarations lower to named FVars and their schemas are installed
  * only after the acyclic declarations used by their types. */
@@ -2904,6 +2942,27 @@ prime_elaborate_declared_regular_term_with_trail(
         if (!name || name->kind != ATOM_SYMBOL)
             return (PrimeRegularDeclaredElaboration){0};
 
+        if (g_prime_admit_open_parameters && !trail &&
+            !prime_language_owned_declaration(arena, name)) {
+            Atom **declared = NULL;
+            uint32_t declared_count = space_get_declared_types(
+                space, arena, name, &declared);
+            free(declared);
+            if (declared_count == 0u) {
+                if (prime_regular_declaration_context_contains(
+                        declarations, name) ||
+                    g_prime_open_parameter_budget == 0u)
+                    return (PrimeRegularDeclaredElaboration){0};
+                g_prime_open_parameter_budget--;
+                Atom *parameter_type = prime_open_parameter_type(arena);
+                if (!parameter_type ||
+                    !prime_regular_declaration_context_prepend(
+                        arena, declarations, name, NULL, parameter_type, 0u))
+                    return (PrimeRegularDeclaredElaboration){0};
+                continue;
+            }
+        }
+
         PrimeRegularDeclaredElaboration resolved =
             prime_resolve_declared_regular_name(
                 space, arena, name, declarations, budget, trail);
@@ -2919,6 +2978,57 @@ prime_elaborate_declared_regular_term(
     CettaPrimeRegularKernelBudget *budget) {
     return prime_elaborate_declared_regular_term_with_trail(
         space, arena, term, declarations, budget, NULL);
+}
+
+/* The kernel compares terms at their types, so a context must declare every
+ * constant that computation can put into a term, not only the constants the
+ * checked term mentions.  Close the declarations under the patterns and
+ * right-hand sides of the space's rules at declared heads, until no new
+ * declaration appears.  A constant whose declaration does not resolve is left
+ * out; a comparison that needs its type then abstains. */
+static void prime_regular_declare_rule_constants(
+    Space *space, Arena *arena, Atom *term,
+    PrimeRegularDeclarationContext *declarations,
+    CettaPrimeRegularKernelBudget *budget) {
+    if (!term || term->kind != ATOM_EXPR) return;
+    if (term->expr.len >= 2u &&
+        atom_is_symbol(term->expr.elems[0], "DeclConst") &&
+        term->expr.elems[1] && term->expr.elems[1]->kind == ATOM_SYMBOL) {
+        if (!prime_regular_declaration_context_contains(
+                declarations, term->expr.elems[1]))
+            (void)prime_resolve_declared_regular_name(
+                space, arena, term->expr.elems[1], declarations, budget, NULL);
+        return;
+    }
+    for (CettaExprIndex i = 0u; i < term->expr.len; i++)
+        prime_regular_declare_rule_constants(
+            space, arena, term->expr.elems[i], declarations, budget);
+}
+
+static Atom *prime_regular_declaration_kernel_context(
+    Space *space, Arena *arena, PrimeRegularDeclarationContext *declarations,
+    CettaPrimeRegularKernelBudget *budget) {
+    Atom *rules = prime_semantics_kernel_rules(arena, space);
+    size_t previous;
+    do {
+        previous = declarations->count;
+        for (Atom *r = rules;
+             r && r->kind == ATOM_EXPR && r->expr.len == 3u &&
+             atom_is_symbol(r->expr.elems[0], "LCons");
+             r = r->expr.elems[2]) {
+            Atom *rule = r->expr.elems[1];
+            if (!rule || rule->kind != ATOM_EXPR || rule->expr.len != 5u ||
+                !atom_is_symbol(rule->expr.elems[0], "PrimeRule") ||
+                !prime_regular_declaration_context_contains(
+                    declarations, rule->expr.elems[1]))
+                continue;
+            prime_regular_declare_rule_constants(
+                space, arena, rule->expr.elems[3], declarations, budget);
+            prime_regular_declare_rule_constants(
+                space, arena, rule->expr.elems[4], declarations, budget);
+        }
+    } while (declarations->count != previous);
+    return prime_regular_declaration_context_atom(arena, declarations);
 }
 
 /* Intrinsic clients have already resolved lexical scope. Only global
@@ -2997,7 +3107,8 @@ CettaPrimeRegularKernelResult prime_semantics_check_declared_intrinsic_v1(
             space, arena, term, &declarations, budget);
     if (body.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
         result = cetta_prime_regular_kernel_check_intrinsic_instantiating_levels_v1(
-            arena, prime_regular_declaration_context_atom(arena, &declarations),
+            arena, prime_regular_declaration_kernel_context(
+                space, arena, &declarations, budget),
             body.pattern, type.pattern, declarations.level_parameters,
             declarations.level_parameter_count, budget);
     } else {
@@ -3019,6 +3130,49 @@ CettaPrimeRegularKernelResult prime_semantics_check_declared_intrinsic_v1(
  * `p : u0; h : Id u0 p p` is included; variables-as-types remain outside the
  * class because the regular context validator declines them.  Open `$`
  * schemes, conflicts, cycles, and malformed annotations remain ambient. */
+/* A kernel-query export runs an ordinary typing judgment with capture on.
+ * The scoped and declared routes then record the represented inputs they
+ * would hand to the kernel and decline instead of deciding.  Ordinary
+ * judgments never turn capture on. */
+typedef struct {
+    bool active;
+    bool captured;
+    const char *route;
+    Atom *context;
+    Atom *object_context;
+    Atom *subject;
+    Atom *object;
+    uint64_t *levels;
+    size_t level_count;
+} PrimeKernelQueryCapture;
+
+static PrimeKernelQueryCapture g_prime_kernel_query;
+
+static bool prime_kernel_query_capturing(void) {
+    return g_prime_kernel_query.active && !g_prime_kernel_query.captured;
+}
+
+static void prime_kernel_query_record(
+    const char *route, Atom *context, Atom *object_context, Atom *subject,
+    Atom *object, const uint64_t *levels, size_t level_count) {
+    PrimeKernelQueryCapture *capture = &g_prime_kernel_query;
+    capture->captured = true;
+    capture->route = route;
+    capture->context = context;
+    capture->object_context = object_context;
+    capture->subject = subject;
+    capture->object = object;
+    capture->levels = NULL;
+    capture->level_count = 0u;
+    if (level_count && levels) {
+        capture->levels = malloc(sizeof(uint64_t) * level_count);
+        if (capture->levels) {
+            memcpy(capture->levels, levels, sizeof(uint64_t) * level_count);
+            capture->level_count = level_count;
+        }
+    }
+}
+
 static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
     Space *space, Arena *arena, Atom *term, Atom *expected,
     PrimeResourceLedger *ledger, bool synthesize) {
@@ -3068,7 +3222,8 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
         expected_lowered = expected_elaboration.lowered;
     }
 
-    if (declarations.count == 0u) {
+    if (declarations.count == 0u &&
+        (synthesize || !prime_kernel_query_capturing())) {
         prime_regular_declaration_context_free(&declarations);
         return (PrimeRegularTermCheckingDecision){0};
     }
@@ -3179,8 +3334,21 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
         expected_intrinsic = elaborated_expected.term;
     }
 
-    Atom *context = prime_regular_declaration_context_atom(
-        arena, &declarations);
+    Atom *context = prime_regular_declaration_kernel_context(
+        space, arena, &declarations, &budget);
+
+    if (!synthesize && prime_kernel_query_capturing()) {
+        prime_kernel_query_record(
+            declarations.count > 0u ? "declared" : "closed", context, NULL,
+            elaborated.term, expected_intrinsic,
+            declarations.level_parameters, declarations.level_parameter_count);
+        prime_regular_declaration_context_free(&declarations);
+        prime_account_regular_kernel(
+            ledger, PRIME_RESOURCE_CHECKING, &budget);
+        return prime_declared_term_decision(
+            true, CETTA_PRIME_REGULAR_KERNEL_UNDECIDED,
+            prime_expr1(arena, "kernel-query-captured"), NULL);
+    }
 
     CettaPrimeRegularKernelResult result;
     if (synthesize) {
@@ -3323,8 +3491,8 @@ static PrimeFormStatus prime_form_declared_regular_type(
         return exhausted ? PRIME_FORM_INCOMPLETE : PRIME_FORM_FAULT;
     }
 
-    Atom *context = prime_regular_declaration_context_atom(
-        arena, &declarations);
+    Atom *context = prime_regular_declaration_kernel_context(
+        space, arena, &declarations, &budget);
     CettaPrimeRegularKernelFormedSchemaV1 formed =
         cetta_prime_regular_kernel_form_intrinsic_level_schema_v1(
             arena, context, elaborated.term,
@@ -3477,6 +3645,15 @@ prime_resolve_regular_term_check(
                            ? decision.reason
                            : "regular-kernel-checking-engine-failure"),
         };
+    if (decision.status == CETTA_PRIME_REGULAR_KERNEL_ADMISSION_UNDECIDED)
+        return (PrimeRegularTermCheckingDecision){
+            .owned = true,
+            .status = CETTA_PRIME_REGULAR_KERNEL_UNDECIDED,
+            .detail = prime_expr1(
+                arena, decision.reason
+                           ? decision.reason
+                           : "regular-kernel-checking-undecided"),
+        };
     return (PrimeRegularTermCheckingDecision){
         .owned = true,
         .status = CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS,
@@ -3503,6 +3680,19 @@ static Atom *prime_check_or_analyze(
     if (engine_fault_out) *engine_fault_out = false;
     if (canonical_term_out) *canonical_term_out = NULL;
     if (cetta_prime_regular_kernel_unwrap_scoped(term, NULL, NULL)) {
+        if (expected && prime_kernel_query_capturing()) {
+            Atom *context = NULL, *subject = NULL;
+            Atom *object_context = NULL, *object = expected;
+            cetta_prime_regular_kernel_unwrap_scoped(term, &context, &subject);
+            if (cetta_prime_regular_kernel_unwrap_scoped(
+                    expected, &object_context, &object) &&
+                atom_eq(object_context, context))
+                object_context = NULL;
+            prime_kernel_query_record(
+                "scoped", context, object_context, subject, object, NULL, 0u);
+            return prime_undetermined(
+                a, judgment, prime_expr1(a, "kernel-query-captured"));
+        }
         CettaPrimeRegularKernelBudget budget = prime_regular_kernel_budget(ledger);
         CettaPrimeRegularKernelResult result = cetta_prime_regular_kernel_check(
             a, term, expected, &budget);
@@ -3537,6 +3727,12 @@ static Atom *prime_check_or_analyze(
                 a, judgment,
                 prime_regular_kernel_reason(
                     a, &result, "regular-kernel-checking-engine-failure"));
+        }
+        if (result.status == CETTA_PRIME_REGULAR_KERNEL_UNDECIDED) {
+            return prime_undetermined(
+                a, judgment,
+                prime_regular_kernel_reason(
+                    a, &result, "regular-kernel-checking-undecided"));
         }
         if (result.status != CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS &&
             result.status != CETTA_PRIME_REGULAR_KERNEL_NOT_SCOPED) {
@@ -3640,6 +3836,16 @@ static Atom *prime_check_or_analyze(
             a, judgment,
             prime_regular_kernel_reason(
                 a, &result, "regular-kernel-checking-engine-failure"));
+    }
+    if (native.status == CETTA_PRIME_REGULAR_KERNEL_ADMISSION_UNDECIDED) {
+        prime_select_checking_route(
+            route_out,
+            CETTA_PRIME_TYPING_ROUTE_CLOSED_REGULAR,
+            CETTA_RUNTIME_COUNTER_PRIME_CHECKING_ROUTE_CLOSED_REGULAR);
+        return prime_undetermined(
+            a, judgment,
+            prime_expr1(a, native.reason ? native.reason
+                                         : "regular-kernel-checking-undecided"));
     }
     if (native.status == CETTA_PRIME_REGULAR_KERNEL_ADMISSION_ADMITTED) {
         prime_select_checking_route(
@@ -4069,18 +4275,56 @@ bool cetta_prime_typing_checking_candidate_bag_equal_v1(
     return true;
 }
 
-static const char *normalize_reason(CettaHeNormalizeStatus status) {
-    switch (status) {
-    case CETTA_HE_NORMALIZE_COMPLETE: return "complete";
-    case CETTA_HE_NORMALIZE_RESOURCE: return "normalization-resource-exhausted";
-    case CETTA_HE_NORMALIZE_DEPTH: return "normalization-depth-exhausted";
-    case CETTA_HE_NORMALIZE_AMBIGUOUS: return "normalization-ambiguous";
-    case CETTA_HE_NORMALIZE_NO_RESULT: return "normalization-no-result";
-    case CETTA_HE_NORMALIZE_INADMISSIBLE: return "normalization-inadmissible-effect";
-    case CETTA_HE_NORMALIZE_PROVISIONAL:
-        return "normalization-unadmitted-user-rule";
+typedef enum {
+    PRIME_BUILTIN_UNDECIDED = 0,
+    PRIME_BUILTIN_EQUAL,
+    PRIME_BUILTIN_DISTINCT,
+} PrimeBuiltinRelation;
+
+static bool prime_builtin_carrier(Atom *atom) {
+    return is_symbol_named(atom, "Number") ||
+           is_symbol_named(atom, "String") ||
+           is_symbol_named(atom, "Bool");
+}
+
+/* The built-in signature: the carriers Number, String and Bool, and the
+ * grounded literals of each.  Its constants are rigid: identical constants
+ * are equal by reflexivity, and distinct ones are equal at no type
+ * (`not_equal_of_distinct_rigid`).  NaN and the two zeros have no canonical
+ * spelling, big integers and rationals are compared only for identity, and
+ * whether literals of different kinds denote one constant is not
+ * specified. */
+static PrimeBuiltinRelation prime_builtin_constant_relation(Atom *left,
+                                                            Atom *right) {
+    if (prime_builtin_carrier(left) && prime_builtin_carrier(right))
+        return atom_eq(left, right) ? PRIME_BUILTIN_EQUAL
+                                    : PRIME_BUILTIN_DISTINCT;
+    if (!left || !right || left->kind != ATOM_GROUNDED ||
+        right->kind != ATOM_GROUNDED ||
+        left->ground.gkind != right->ground.gkind)
+        return PRIME_BUILTIN_UNDECIDED;
+    switch (left->ground.gkind) {
+    case GV_INT:
+    case GV_BOOL:
+    case GV_STRING:
+        return atom_eq(left, right) ? PRIME_BUILTIN_EQUAL
+                                    : PRIME_BUILTIN_DISTINCT;
+    case GV_FLOAT: {
+        double x = left->ground.fval;
+        double y = right->ground.fval;
+        if (isnan(x) || isnan(y) || (x == 0.0 && y == 0.0))
+            return signbit(x) == signbit(y) && !isnan(x) && !isnan(y)
+                ? PRIME_BUILTIN_EQUAL
+                : PRIME_BUILTIN_UNDECIDED;
+        return x == y ? PRIME_BUILTIN_EQUAL : PRIME_BUILTIN_DISTINCT;
     }
-    return "normalization-undetermined";
+    case GV_BIGINT:
+    case GV_RATIONAL:
+        return atom_eq(left, right) ? PRIME_BUILTIN_EQUAL
+                                    : PRIME_BUILTIN_UNDECIDED;
+    default:
+        return PRIME_BUILTIN_UNDECIDED;
+    }
 }
 
 static Atom *prime_conversion_certificate_atom(Arena *a, Atom *left,
@@ -4095,20 +4339,19 @@ static Atom *prime_conversion_certificate_atom(Arena *a, Atom *left,
         prime_expr2(a, "Relation",
                     prime_sym(a, equal ? "Equal" : "Distinct")),
         prime_expr2(a, "Fragment",
-                    prime_sym(a, "TypePureGroundedFragment"))};
+                    prime_sym(a, "BuiltinConstantFragment"))};
     return atom_expr(a, items, 5);
 }
 
-static bool prime_replay_conversion_certificate_budgeted(
-    Arena *a, Space *space, Atom *certificate, CettaHeTypingBudget *budget,
-    bool *equal_out) {
-    if (!a || !space || !budget ||
+static bool prime_replay_conversion_certificate_checked(
+    Atom *certificate, bool *equal_out) {
+    if (
         !prime_schema_expr(certificate, "PrimeConversionCertificateV1", 5) ||
         !prime_schema_expr(certificate->expr.elems[1], "Original", 3) ||
         !prime_schema_expr(certificate->expr.elems[2], "NormalForms", 3) ||
         !prime_schema_expr(certificate->expr.elems[3], "Relation", 2) ||
         !prime_symbol_field(certificate->expr.elems[4], "Fragment",
-                            "TypePureGroundedFragment")) {
+                            "BuiltinConstantFragment")) {
         return false;
     }
 
@@ -4118,28 +4361,13 @@ static bool prime_replay_conversion_certificate_budgeted(
 
     Atom *left = certificate->expr.elems[1]->expr.elems[1];
     Atom *right = certificate->expr.elems[1]->expr.elems[2];
-    Atom *claimed_left_nf = certificate->expr.elems[2]->expr.elems[1];
-    Atom *claimed_right_nf = certificate->expr.elems[2]->expr.elems[2];
-    Atom *left_nf = left;
-    Atom *right_nf = right;
-
-    bool prior_user_functions = budget->allow_marked_user_type_functions;
-    budget->allow_marked_user_type_functions = false;
-    CettaHeNormalizeStatus right_status =
-        he_typing_normalize_type_status_budgeted(
-            a, space, right, budget, &right_nf);
-    CettaHeNormalizeStatus left_status =
-        he_typing_normalize_type_status_budgeted(
-            a, space, left, budget, &left_nf);
-    budget->allow_marked_user_type_functions = prior_user_functions;
-
-    if (left_status != CETTA_HE_NORMALIZE_COMPLETE ||
-        right_status != CETTA_HE_NORMALIZE_COMPLETE ||
-        !atom_eq(left_nf, claimed_left_nf) ||
-        !atom_eq(right_nf, claimed_right_nf)) {
+    if (!atom_eq(certificate->expr.elems[2]->expr.elems[1], left) ||
+        !atom_eq(certificate->expr.elems[2]->expr.elems[2], right))
         return false;
-    }
-    bool equal = atom_eq(left_nf, right_nf);
+    PrimeBuiltinRelation relation_found =
+        prime_builtin_constant_relation(left, right);
+    if (relation_found == PRIME_BUILTIN_UNDECIDED) return false;
+    bool equal = relation_found == PRIME_BUILTIN_EQUAL;
     if (equal != claims_equal) return false;
     if (equal_out) *equal_out = equal;
     return true;
@@ -4147,85 +4375,29 @@ static bool prime_replay_conversion_certificate_budgeted(
 
 bool prime_semantics_replay_conversion_certificate(
     Arena *a, Space *space, Atom *certificate, bool *equal_out) {
-    CettaHeTypingBudget budget;
-    he_typing_budget_init_unbounded(&budget);
-    budget.allow_marked_user_type_functions = false;
-    return prime_replay_conversion_certificate_budgeted(
-        a, space, certificate, &budget, equal_out);
+    if (!a || !space) return false;
+    return prime_replay_conversion_certificate_checked(certificate, equal_out);
 }
 
-/* Authored Prime binder syntax (`lam` forms and `(x : A)` telescopes) is not
- * interpreted by the HE normalizer.  When the native routes have declined
- * such an operand, the legacy service must decline too rather than report
- * two uninterpreted spellings as a checked distinction. */
-static bool prime_operand_uses_authored_binder(Atom *atom) {
-    if (!atom || atom->kind != ATOM_EXPR || atom->expr.len == 0u) return false;
-    Atom *head = atom->expr.elems[0];
-    if (head && head->kind == ATOM_SYMBOL) {
-        const char *name = atom_name_cstr(head);
-        if (name && strcmp(name, "lam") == 0) return true;
-    }
-    if (atom->expr.len == 3u &&
-        atom_is_symbol_id(atom->expr.elems[1], g_builtin_syms.colon))
-        return true;
-    for (CettaExprIndex i = 0u; i < atom->expr.len; i++)
-        if (prime_operand_uses_authored_binder(atom->expr.elems[i])) return true;
-    return false;
-}
-
-static __attribute__((noinline)) Atom *prime_convert_legacy_he(
-    Space *space, Arena *a, Atom *judgment, Atom *left, Atom *right,
-    PrimeResourceLedger *ledger) {
+/* Conversion that no native route owns is decided only between constants of
+ * the built-in signature.  Any other operand has a head the declaration
+ * context does not type (`const_not_typed`) or one that runs only under
+ * ordinary equations, so its conversion is unresolved rather than compared
+ * by spelling. */
+static __attribute__((noinline)) Atom *prime_convert_builtin_constants(
+    Arena *a, Atom *judgment, Atom *left, Atom *right) {
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PRIME_LEGACY_HE_CONVERSION);
-    if (prime_operand_uses_authored_binder(left) ||
-        prime_operand_uses_authored_binder(right)) {
+    PrimeBuiltinRelation relation =
+        prime_builtin_constant_relation(left, right);
+    if (relation == PRIME_BUILTIN_UNDECIDED) {
         return prime_undetermined(
-            a, judgment, prime_expr1(a, "conversion-outside-legacy-fragment"));
+            a, judgment,
+            prime_expr1(a, "conversion-outside-builtin-constants"));
     }
-    Atom *left_nf = left;
-    Atom *right_nf = right;
-    uint64_t phase_before = prime_resource_phase_begin(ledger);
-    /* The expected/reference side is normalized first.  This leaves the
-       remaining aggregate budget to the candidate without splitting it into
-       opaque per-side allowances. */
-    CettaHeNormalizeStatus right_status =
-        he_typing_normalize_type_status_budgeted(
-            a, space, right, &ledger->typing, &right_nf);
-    CettaHeNormalizeStatus left_status =
-        he_typing_normalize_type_status_budgeted(
-            a, space, left, &ledger->typing, &left_nf);
-    prime_resource_phase_end(ledger, PRIME_RESOURCE_NORMALIZATION,
-                             phase_before);
-    if (left_status == CETTA_HE_NORMALIZE_INADMISSIBLE ||
-        right_status == CETTA_HE_NORMALIZE_INADMISSIBLE) {
-        Atom *reason_items[3] = {
-            prime_sym(a, "conversion-inadmissible"),
-            prime_sym(a, normalize_reason(left_status)),
-            prime_sym(a, normalize_reason(right_status))};
-        return prime_refuted(a, judgment, atom_expr(a, reason_items, 3));
-    }
-    if (left_status == CETTA_HE_NORMALIZE_RESOURCE ||
-        right_status == CETTA_HE_NORMALIZE_RESOURCE ||
-        left_status == CETTA_HE_NORMALIZE_DEPTH ||
-        right_status == CETTA_HE_NORMALIZE_DEPTH) {
-        Atom *reason_items[3] = {
-            prime_sym(a, "conversion-resource-incomplete"),
-            prime_sym(a, normalize_reason(left_status)),
-            prime_sym(a, normalize_reason(right_status))};
-        return prime_incomplete(a, judgment, atom_expr(a, reason_items, 3));
-    }
-    if (left_status != CETTA_HE_NORMALIZE_COMPLETE ||
-        right_status != CETTA_HE_NORMALIZE_COMPLETE) {
-        Atom *reason_items[3] = {
-            prime_sym(a, "conversion-incomplete"),
-            prime_sym(a, normalize_reason(left_status)),
-            prime_sym(a, normalize_reason(right_status))};
-        return prime_undetermined(a, judgment, atom_expr(a, reason_items, 3));
-    }
-    bool equal = atom_eq(left_nf, right_nf);
+    bool equal = relation == PRIME_BUILTIN_EQUAL;
     Atom *evidence = prime_conversion_certificate_atom(
-        a, left, right, left_nf, right_nf, equal);
+        a, left, right, left, right, equal);
     return equal
         ? prime_established(a, judgment, evidence)
         : prime_refuted(a, judgment, evidence);
@@ -4263,6 +4435,14 @@ static Atom *prime_convert_closed_regular(
             a, judgment,
             prime_regular_kernel_reason(
                 a, &failure, "regular-kernel-conversion-engine-failure"));
+    }
+    if (decision.status == CETTA_PRIME_REGULAR_KERNEL_ADMISSION_UNDECIDED) {
+        prime_account_regular_kernel(
+            ledger, PRIME_RESOURCE_NORMALIZATION, &budget);
+        return prime_undetermined(
+            a, judgment,
+            prime_expr1(a, decision.reason ? decision.reason
+                                           : "regular-kernel-conversion-undecided"));
     }
     if (decision.status != CETTA_PRIME_REGULAR_KERNEL_ADMISSION_ADMITTED)
         return NULL;
@@ -4370,7 +4550,7 @@ static Atom *prime_convert_declared_regular(
         return prime_undetermined(
             arena, judgment, right_elaboration.detail);
     }
-    if (declarations.count == 0u) {
+    if (declarations.count == 0u && !prime_kernel_query_capturing()) {
         prime_regular_declaration_context_free(&declarations);
         return NULL;
     }
@@ -4456,8 +4636,20 @@ static Atom *prime_convert_declared_regular(
                          : prime_undetermined(arena, judgment, detail);
     }
 
-    Atom *context = prime_regular_declaration_context_atom(
-        arena, &declarations);
+    Atom *context = prime_regular_declaration_kernel_context(
+        space, arena, &declarations, &budget);
+
+    if (prime_kernel_query_capturing()) {
+        prime_kernel_query_record(
+            declarations.count > 0u ? "declared" : "closed", context, NULL,
+            left_pattern.term, right_pattern.term,
+            declarations.level_parameters, declarations.level_parameter_count);
+        prime_regular_declaration_context_free(&declarations);
+        prime_account_regular_kernel(
+            ledger, PRIME_RESOURCE_NORMALIZATION, &budget);
+        return prime_undetermined(
+            arena, judgment, prime_expr1(arena, "kernel-query-captured"));
+    }
 
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PRIME_DECLARED_REGULAR_CONVERSION_EXECUTION);
@@ -4505,6 +4697,19 @@ static Atom *prime_convert(
                 a, judgment,
                 prime_expr1(a, "mixed-regular-presentation"));
         }
+        if (prime_kernel_query_capturing()) {
+            Atom *context = NULL, *subject = NULL;
+            Atom *object_context = NULL, *object = NULL;
+            cetta_prime_regular_kernel_unwrap_scoped(left, &context, &subject);
+            cetta_prime_regular_kernel_unwrap_scoped(
+                right, &object_context, &object);
+            prime_kernel_query_record(
+                "scoped", context,
+                atom_eq(context, object_context) ? NULL : object_context,
+                subject, object, NULL, 0u);
+            return prime_undetermined(
+                a, judgment, prime_expr1(a, "kernel-query-captured"));
+        }
         CettaPrimeRegularKernelBudget budget = prime_regular_kernel_budget(ledger);
         CettaPrimeRegularKernelResult result = cetta_prime_regular_kernel_convert(
             a, left, right, &budget);
@@ -4526,10 +4731,21 @@ static Atom *prime_convert(
                 prime_regular_kernel_reason(
                     a, &result, "regular-kernel-conversion-engine-failure"));
         }
+        /* Scoped operands the kernel declines are not compared by any other
+         * route: the legacy route would only test the two scoped atoms for
+         * identity, which refutes nothing. */
         if (result.status == CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS ||
             result.status == CETTA_PRIME_REGULAR_KERNEL_NOT_SCOPED) {
-            return prime_convert_legacy_he(
-                space, a, judgment, left, right, ledger);
+            return prime_undetermined(
+                a, judgment,
+                prime_regular_kernel_reason(
+                    a, &result, "regular-kernel-conversion-declined"));
+        }
+        if (result.status == CETTA_PRIME_REGULAR_KERNEL_UNDECIDED) {
+            return prime_undetermined(
+                a, judgment,
+                prime_regular_kernel_reason(
+                    a, &result, "regular-kernel-conversion-undecided"));
         }
         return prime_refuted(
             a, judgment,
@@ -4558,8 +4774,7 @@ static Atom *prime_convert(
             space, a, judgment, left, right, ledger);
         if (native) return native;
     }
-    return prime_convert_legacy_he(
-        space, a, judgment, left, right, ledger);
+    return prime_convert_builtin_constants(a, judgment, left, right);
 }
 
 static Atom *prime_refine(Space *space, Arena *a, Atom *judgment,
@@ -5118,9 +5333,17 @@ static Atom *prime_judge_raw(Arena *a, Space *space, Atom *judgment,
                                           judgment->expr.elems[0]));
 }
 
-static Atom *prime_kernel_rule_cons(Arena *a, Atom *atom, Atom *list) {
-    if (!atom || atom->kind != ATOM_EXPR || atom->expr.len != 5u ||
-        !is_symbol_named(atom->expr.elems[0], "type:rule"))
+static bool prime_kernel_rule_atom(Atom *atom) {
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len == 5u &&
+           is_symbol_named(atom->expr.elems[0], "type:rule");
+}
+
+/* Only rules that admission published compute.  A rule written or imported
+ * as a raw atom was never checked, so it confers nothing. */
+static Atom *prime_kernel_rule_cons(Arena *a, Space *space, Atom *atom,
+                                    Atom *list) {
+    if (!prime_kernel_rule_atom(atom) ||
+        !prime_scoped_judgment_admitted(a, space, atom))
         return list;
     Atom *rule_items[5] = {atom_symbol(a, "PrimeRule"), atom->expr.elems[1], atom->expr.elems[2],
                            atom->expr.elems[3], atom->expr.elems[4]};
@@ -5140,7 +5363,8 @@ Atom *prime_semantics_kernel_rules(Arena *a, Space *space) {
     if (space->overlay_base) {
         CettaCount count = space_length64(space);
         for (CettaIndex i = 0u; i < count; i++)
-            list = prime_kernel_rule_cons(a, space_get_at64(space, i), list);
+            list = prime_kernel_rule_cons(
+                a, space, space_get_at64(space, i), list);
         return list;
     }
     Atom *items[5] = {atom_symbol(a, "type:rule"), atom_var(a, "h"), atom_var(a, "n"),
@@ -5150,7 +5374,7 @@ Atom *prime_semantics_kernel_rules(Arena *a, Space *space) {
     CettaIndex count = space_match_candidates64(space, pattern, &candidates);
     for (CettaIndex i = 0u; i < count; i++) {
         Atom *atom = space_match_candidate_at64(space, candidates[i]);
-        list = prime_kernel_rule_cons(a, atom, list);
+        list = prime_kernel_rule_cons(a, space, atom, list);
     }
     free(candidates);
     return list;
@@ -5159,6 +5383,9 @@ Atom *prime_semantics_kernel_rules(Arena *a, Space *space) {
 /* Surface spelling of a kernel normal form. An unquoted binder or wire
  * constructor declines the whole term, so ordinary evaluation never prints
  * an internal spelling in place of the source call. */
+static Atom *prime_quote_open(Arena *arena, Atom *term, uint64_t depth,
+                              Atom *binder);
+
 static Atom *prime_quote_runtime_term(Arena *arena, Atom *term) {
     if (!arena || !term) return NULL;
     if (term->kind == ATOM_SYMBOL)
@@ -5201,12 +5428,12 @@ static Atom *prime_quote_runtime_term(Arena *arena, Atom *term) {
         (is_symbol_named(term->expr.elems[0], "Fst") ||
          is_symbol_named(term->expr.elems[0], "Snd") ||
          is_symbol_named(term->expr.elems[0], "Refl"))) {
-        const char *surface = is_symbol_named(term->expr.elems[0], "Fst") ? "fst"
+        const char *authored = is_symbol_named(term->expr.elems[0], "Fst") ? "fst"
                             : is_symbol_named(term->expr.elems[0], "Snd") ? "snd"
                             : "refl";
         Atom *arg = prime_quote_runtime_term(arena, term->expr.elems[1]);
         if (!arg) return NULL;
-        Atom *items[2] = {atom_symbol(arena, surface), arg};
+        Atom *items[2] = {atom_symbol(arena, authored), arg};
         return atom_expr(arena, items, 2u);
     }
     if (term->expr.len == 4u && is_symbol_named(term->expr.elems[0], "Id")) {
@@ -5217,6 +5444,10 @@ static Atom *prime_quote_runtime_term(Arena *arena, Atom *term) {
         Atom *items[4] = {atom_symbol(arena, "id"), carrier, left, right};
         return atom_expr(arena, items, 4u);
     }
+    if (is_symbol_named(term->expr.elems[0], "Lam") ||
+        is_symbol_named(term->expr.elems[0], "Pi") ||
+        is_symbol_named(term->expr.elems[0], "Sigma"))
+        return prime_quote_open(arena, term, 0u, NULL);
     Atom *quoted = cetta_prime_regular_term_quote_intrinsic_v1(arena, term);
     if (!quoted || quoted->kind != ATOM_EXPR || quoted->expr.len == 0u ||
         quoted->expr.elems[0]->kind != ATOM_SYMBOL)
@@ -5232,8 +5463,17 @@ static Atom *prime_quote_runtime_term(Arena *arena, Atom *term) {
     return quoted;
 }
 
-static Atom *prime_quote_open(Arena *arena, Atom *term, uint64_t depth,
-                              Atom *binder) {
+/* A matcher variable is not a lexical binder, so a quoted lambda uses a
+ * fresh symbol. Reusing one interned spelling would capture nested binders. */
+static Atom *prime_quote_fresh_binder(Arena *arena) {
+    char spelling[32];
+    snprintf(spelling, sizeof spelling, "b%llu",
+             (unsigned long long)fresh_var_id());
+    return atom_symbol(arena, spelling);
+}
+
+static Atom *prime_quote_level(Arena *arena, Atom *term,
+                               Atom **binders, uint64_t nbinders) {
     if (!term) return NULL;
     if (term->kind != ATOM_EXPR) return prime_quote_runtime_term(arena, term);
     if (term->expr.len == 2u && is_symbol_named(term->expr.elems[0], "idx") &&
@@ -5241,43 +5481,51 @@ static Atom *prime_quote_open(Arena *arena, Atom *term, uint64_t depth,
         term->expr.elems[1]->ground.gkind == GV_INT &&
         term->expr.elems[1]->ground.ival >= 0) {
         uint64_t index = (uint64_t)term->expr.elems[1]->ground.ival;
-        if (binder && index == depth) return binder;
+        /* idx 0 is the nearest binder. */
+        if (index < nbinders)
+            return binders[nbinders - 1u - index];
         Atom *items[2] = {atom_symbol(arena, "idx"), term->expr.elems[1]};
         return atom_expr(arena, items, 2u);
     }
     if (term->expr.len == 2u && is_symbol_named(term->expr.elems[0], "DeclConst"))
         return prime_quote_runtime_term(arena, term);
     if (is_symbol_named(term->expr.elems[0], "Lam")) {
+        if (nbinders >= 32u) return NULL;
+        Atom *fresh = prime_quote_fresh_binder(arena);
+        Atom *stacked[32];
+        for (uint64_t i = 0u; i < nbinders; i++)
+            stacked[i] = binders[i];
+        stacked[nbinders] = fresh;
         Atom *body_term = term->expr.len == 2u ? term->expr.elems[1]
                                                : term->expr.elems[2];
-        Atom *body = prime_quote_open(arena, body_term, depth + 1u, binder);
+        Atom *body = prime_quote_level(arena, body_term, stacked, nbinders + 1u);
         if (!body) return NULL;
-        Atom *items[3] = {atom_symbol(arena, "lam"), atom_var(arena, "x"), body};
+        Atom *items[3] = {atom_symbol(arena, "lam"), fresh, body};
         return atom_expr(arena, items, 3u);
     }
     if (term->expr.len == 2u &&
         (is_symbol_named(term->expr.elems[0], "Fst") ||
          is_symbol_named(term->expr.elems[0], "Snd") ||
          is_symbol_named(term->expr.elems[0], "Refl"))) {
-        const char *surface = is_symbol_named(term->expr.elems[0], "Fst") ? "fst"
+        const char *authored = is_symbol_named(term->expr.elems[0], "Fst") ? "fst"
                             : is_symbol_named(term->expr.elems[0], "Snd") ? "snd"
                             : "refl";
-        Atom *arg = prime_quote_open(arena, term->expr.elems[1], depth, binder);
+        Atom *arg = prime_quote_level(arena, term->expr.elems[1], binders, nbinders);
         if (!arg) return NULL;
-        Atom *items[2] = {atom_symbol(arena, surface), arg};
+        Atom *items[2] = {atom_symbol(arena, authored), arg};
         return atom_expr(arena, items, 2u);
     }
     if (term->expr.len == 3u && is_symbol_named(term->expr.elems[0], "Pair")) {
-        Atom *first = prime_quote_open(arena, term->expr.elems[1], depth, binder);
-        Atom *second = prime_quote_open(arena, term->expr.elems[2], depth, binder);
+        Atom *first = prime_quote_level(arena, term->expr.elems[1], binders, nbinders);
+        Atom *second = prime_quote_level(arena, term->expr.elems[2], binders, nbinders);
         if (!first || !second) return NULL;
         Atom *items[3] = {atom_symbol(arena, "pair"), first, second};
         return atom_expr(arena, items, 3u);
     }
     if (term->expr.len == 4u && is_symbol_named(term->expr.elems[0], "Id")) {
-        Atom *carrier = prime_quote_open(arena, term->expr.elems[1], depth, binder);
-        Atom *left = prime_quote_open(arena, term->expr.elems[2], depth, binder);
-        Atom *right = prime_quote_open(arena, term->expr.elems[3], depth, binder);
+        Atom *carrier = prime_quote_level(arena, term->expr.elems[1], binders, nbinders);
+        Atom *left = prime_quote_level(arena, term->expr.elems[2], binders, nbinders);
+        Atom *right = prime_quote_level(arena, term->expr.elems[3], binders, nbinders);
         if (!carrier || !left || !right) return NULL;
         Atom *items[4] = {atom_symbol(arena, "id"), carrier, left, right};
         return atom_expr(arena, items, 4u);
@@ -5292,19 +5540,31 @@ static Atom *prime_quote_open(Arena *arena, Atom *term, uint64_t depth,
             args[argc++] = cursor->expr.elems[2];
             cursor = cursor->expr.elems[1];
         }
-        Atom *head = prime_quote_open(arena, cursor, depth, binder);
+        Atom *head = prime_quote_level(arena, cursor, binders, nbinders);
         if (!head) return NULL;
         Atom **items = arena_alloc(arena, sizeof(Atom *) * (argc + 1u));
         if (!items) return NULL;
         items[0] = head;
         for (size_t i = 0u; i < argc; i++) {
-            Atom *arg = prime_quote_open(arena, args[argc - 1u - i], depth, binder);
+            Atom *arg = prime_quote_level(
+                arena, args[argc - 1u - i], binders, nbinders);
             if (!arg) return NULL;
             items[i + 1u] = arg;
         }
         return atom_expr(arena, items, (CettaExprLen)(argc + 1u));
     }
     return NULL;
+}
+
+static Atom *prime_quote_open(Arena *arena, Atom *term, uint64_t depth,
+                              Atom *binder) {
+    (void)depth;
+    Atom *stacked[1];
+    if (binder) {
+        stacked[0] = binder;
+        return prime_quote_level(arena, term, stacked, 1u);
+    }
+    return prime_quote_level(arena, term, NULL, 0u);
 }
 
 static Atom *prime_quote_shared_redex(Arena *arena, Atom *term) {
@@ -5317,7 +5577,7 @@ static Atom *prime_quote_shared_redex(Arena *arena, Atom *term) {
         return NULL;
     Atom *body = function->expr.len == 2u ? function->expr.elems[1]
                                           : function->expr.elems[2];
-    Atom *binder = atom_var(arena, "pack");
+    Atom *binder = atom_var_with_id(arena, "pack", fresh_var_id());
     Atom *argument = prime_quote_runtime_term(arena, term->expr.elems[2]);
     Atom *quoted_body = prime_quote_open(arena, body, 0u, binder);
     if (!argument || !quoted_body) return NULL;
@@ -5325,7 +5585,7 @@ static Atom *prime_quote_shared_redex(Arena *arena, Atom *term) {
     return atom_expr(arena, items, 4u);
 }
 
-static Atom *prime_surface_projection(Arena *arena, Atom *call) {
+static Atom *prime_authored_projection(Arena *arena, Atom *call) {
     (void)arena;
     if (!call || call->kind != ATOM_EXPR || call->expr.len != 2u) return NULL;
     Atom *head = call->expr.elems[0];
@@ -5339,6 +5599,157 @@ static Atom *prime_surface_projection(Arena *arena, Atom *call) {
     return NULL;
 }
 
+Atom *prime_semantics_project_pair(Atom *call) {
+    return prime_authored_projection(NULL, call);
+}
+
+/* Identity elimination on reflexivity returns the method. The six arguments
+ * are carrier, point, motive, method, target, and path, which is the order
+ * stored for `id:eliminate`. */
+static bool prime_same_binder(const Atom *binder, const Atom *term) {
+    if (!binder || !term || binder->kind != term->kind) return false;
+    if (binder->kind == ATOM_VAR) return binder->var_id == term->var_id;
+    if (binder->kind == ATOM_SYMBOL) return binder->sym_id == term->sym_id;
+    return false;
+}
+
+static bool prime_binder_occurs_free(const Atom *binder, const Atom *term) {
+    if (!binder || !term) return false;
+    if (prime_same_binder(binder, term)) return true;
+    if (term->kind != ATOM_EXPR) return false;
+    /* A quoted name is syntax, not a free binder occurrence. */
+    if (term->expr.len == 2u && is_symbol_named(term->expr.elems[0], "quote"))
+        return false;
+    if (term->expr.len == 3u && is_symbol_named(term->expr.elems[0], "lam") &&
+        prime_same_binder(binder, term->expr.elems[1]))
+        return false;
+    for (CettaExprIndex i = 0u; i < term->expr.len; i++) {
+        if (prime_binder_occurs_free(binder, term->expr.elems[i]))
+            return true;
+    }
+    return false;
+}
+
+static Atom *prime_subst_binder(Arena *arena, Atom *term, Atom *binder,
+                                Atom *value) {
+    if (!term || !binder) return NULL;
+    if (prime_same_binder(binder, term)) return value;
+    if (term->kind != ATOM_EXPR) return term;
+    /* Quote freezes the names under it. Substitution does not enter. */
+    if (term->expr.len == 2u && is_symbol_named(term->expr.elems[0], "quote"))
+        return term;
+    if (term->expr.len == 3u && is_symbol_named(term->expr.elems[0], "lam")) {
+        Atom *lam_binder = term->expr.elems[1];
+        if (prime_same_binder(binder, lam_binder))
+            return term;
+        /* The inner binder would capture a free name of the substitute.
+         * Rename it. Alpha-equivalent binders must not change the value. */
+        if (lam_binder && prime_binder_occurs_free(lam_binder, value)) {
+            Atom *fresh = atom_var_with_id(arena, "binder", fresh_var_id());
+            Atom *renamed = prime_subst_binder(
+                arena, term->expr.elems[2], lam_binder, fresh);
+            if (!fresh || !renamed) return NULL;
+            Atom *body = prime_subst_binder(arena, renamed, binder, value);
+            if (!body) return NULL;
+            Atom *items[3] = {term->expr.elems[0], fresh, body};
+            return atom_expr(arena, items, 3u);
+        }
+    }
+    Atom **items = arena_alloc(arena, sizeof(Atom *) * (size_t)term->expr.len);
+    if (!items) return NULL;
+    bool changed = false;
+    for (CettaExprIndex i = 0u; i < term->expr.len; i++) {
+        items[i] = prime_subst_binder(arena, term->expr.elems[i], binder, value);
+        if (!items[i]) return NULL;
+        if (items[i] != term->expr.elems[i]) changed = true;
+    }
+    if (!changed) return term;
+    return atom_expr(arena, items, term->expr.len);
+}
+
+/* One-argument beta of an authored lambda. Nested binders of the same variable
+ * stay bound. */
+static Atom *prime_authored_compute(Arena *arena, Atom *term, unsigned depth);
+
+Atom *prime_semantics_authored_compute(Arena *arena, Atom *term) {
+    return prime_authored_compute(arena, term, 64u);
+}
+
+static Atom *prime_authored_compute(Arena *arena, Atom *term, unsigned depth) {
+    if (!arena || !term || depth == 0u || term->kind != ATOM_EXPR)
+        return term;
+    Atom **items = arena_alloc(arena, sizeof(Atom *) * (size_t)term->expr.len);
+    if (!items) return term;
+    bool changed = false;
+    for (CettaExprIndex i = 0u; i < term->expr.len; i++) {
+        items[i] = prime_authored_compute(arena, term->expr.elems[i], depth - 1u);
+        if (!items[i]) return term;
+        if (items[i] != term->expr.elems[i]) changed = true;
+    }
+    Atom *current = term;
+    if (changed) {
+        current = atom_expr(arena, items, term->expr.len);
+        if (!current) return term;
+    }
+    Atom *next = prime_semantics_beta(arena, current);
+    if (!next) next = prime_semantics_project_pair(current);
+    if (!next) next = prime_semantics_identity_iota(current);
+    if (!next || next == current) return current;
+    return prime_authored_compute(arena, next, depth - 1u);
+}
+
+Atom *prime_semantics_beta(Arena *arena, Atom *call) {
+    if (!arena || !call || call->kind != ATOM_EXPR || call->expr.len != 2u)
+        return NULL;
+    Atom *function = call->expr.elems[0];
+    Atom *argument = call->expr.elems[1];
+    if (!function || !argument || function->kind != ATOM_EXPR ||
+        function->expr.len != 3u ||
+        !is_symbol_named(function->expr.elems[0], "lam") ||
+        !function->expr.elems[1] ||
+        (function->expr.elems[1]->kind != ATOM_VAR &&
+         function->expr.elems[1]->kind != ATOM_SYMBOL))
+        return NULL;
+    return prime_subst_binder(arena, function->expr.elems[2],
+                              function->expr.elems[1], argument);
+}
+
+Atom *prime_semantics_identity_iota(Atom *call) {
+    if (!call || call->kind != ATOM_EXPR || call->expr.len != 7u ||
+        !call->expr.elems[0] ||
+        !is_symbol_named(call->expr.elems[0], "id:eliminate"))
+        return NULL;
+    Atom *point = call->expr.elems[2];
+    Atom *method = call->expr.elems[4];
+    Atom *target = call->expr.elems[5];
+    Atom *path = call->expr.elems[6];
+    if (!point || !method || !target || !path ||
+        path->kind != ATOM_EXPR || path->expr.len != 2u ||
+        !is_symbol_named(path->expr.elems[0], "refl") ||
+        !atom_eq(path->expr.elems[1], point) ||
+        !atom_eq(target, point))
+        return NULL;
+    return method;
+}
+
+static bool prime_quote_has_kernel_residue(const Atom *term) {
+    if (!term || term->kind != ATOM_EXPR || term->expr.len == 0u ||
+        !term->expr.elems[0] || term->expr.elems[0]->kind != ATOM_SYMBOL)
+        return false;
+    const char *name = atom_name_cstr(term->expr.elems[0]);
+    if (name && (strcmp(name, "DeclConst") == 0 || strcmp(name, "App") == 0 ||
+                 strcmp(name, "Lam") == 0 || strcmp(name, "Pi") == 0 ||
+                 strcmp(name, "Sigma") == 0 || strcmp(name, "PVar") == 0 ||
+                 strcmp(name, "FVar") == 0 || strcmp(name, "Fst") == 0 ||
+                 strcmp(name, "Snd") == 0 || strcmp(name, "Pair") == 0 ||
+                 strcmp(name, "Id") == 0 || strcmp(name, "idx") == 0))
+        return true;
+    for (CettaExprIndex i = 0u; i < term->expr.len; i++)
+        if (prime_quote_has_kernel_residue(term->expr.elems[i]))
+            return true;
+    return false;
+}
+
 static bool prime_head_has_type_rule(Arena *arena, Space *space, Atom *head) {
     Atom *items[5] = {
         atom_symbol(arena, "type:rule"), head, atom_var(arena, "n"),
@@ -5346,16 +5757,23 @@ static bool prime_head_has_type_rule(Arena *arena, Space *space, Atom *head) {
     Atom *pattern = atom_expr(arena, items, 5u);
     CettaIndex *candidates = NULL;
     CettaIndex count = space_match_candidates64(space, pattern, &candidates);
+    bool admitted = false;
+    for (CettaIndex i = 0u; i < count && !admitted; i++) {
+        Atom *atom = space_match_candidate_at64(space, candidates[i]);
+        admitted = prime_kernel_rule_atom(atom) &&
+                   atom_eq(atom->expr.elems[1], head) &&
+                   prime_scoped_judgment_admitted(arena, space, atom);
+    }
     free(candidates);
-    return count > 0u;
+    return admitted;
 }
 
-Atom *prime_semantics_reduce_covered_call(
-    Arena *arena, Space *space, Atom *call, int fuel) {
+static Atom *prime_reduce_covered_call(
+    Arena *arena, Space *space, Atom *call, int fuel, bool admit_open) {
     if (!arena || !space || !call || fuel == 0 ||
         call->kind != ATOM_EXPR || call->expr.len < 2u)
         return NULL;
-    Atom *projected = prime_surface_projection(arena, call);
+    Atom *projected = prime_authored_projection(arena, call);
     if (projected) return projected;
     Atom *head = call->expr.elems[0];
     if (!head || head->kind != ATOM_SYMBOL) return NULL;
@@ -5369,9 +5787,16 @@ Atom *prime_semantics_reduce_covered_call(
     CettaPrimeRegularKernelBudget budget;
     cetta_prime_regular_kernel_budget_init(&budget, true, steps);
     PrimeRegularDeclarationContext declarations = {0};
+    bool saved_open = g_prime_admit_open_parameters;
+    unsigned saved_budget = g_prime_open_parameter_budget;
+    g_prime_admit_open_parameters = admit_open;
+    if (admit_open)
+        g_prime_open_parameter_budget = 8u;
     PrimeRegularDeclaredElaboration elaborated =
         prime_elaborate_declared_regular_term(
             space, arena, call, &declarations, &budget);
+    g_prime_admit_open_parameters = saved_open;
+    g_prime_open_parameter_budget = saved_budget;
     if (elaborated.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED ||
         declarations.count == 0u || !elaborated.lowered.pattern) {
         prime_regular_declaration_context_free(&declarations);
@@ -5402,8 +5827,22 @@ Atom *prime_semantics_reduce_covered_call(
     if (!contractum) return NULL;
     Atom *shared = prime_quote_shared_redex(arena, contractum);
     Atom *quoted = shared ? shared : prime_quote_runtime_term(arena, contractum);
-    if (!quoted || atom_eq(quoted, call)) return NULL;
+    if (!quoted || atom_eq(quoted, call) ||
+        prime_quote_has_kernel_residue(quoted))
+        return NULL;
     return quoted;
+}
+
+Atom *prime_semantics_reduce_covered_call(
+    Arena *arena, Space *space, Atom *call, int fuel) {
+    return prime_reduce_covered_call(arena, space, call, fuel, false);
+}
+
+/* Same one-equation step, but a symbol with no declaration is a parameter of
+ * the type being compared. Ordinary execution does not use this entry. */
+Atom *prime_semantics_reduce_open_covered_call(
+    Arena *arena, Space *space, Atom *call, int fuel) {
+    return prime_reduce_covered_call(arena, space, call, fuel, true);
 }
 
 static Atom *prime_judge_accounted(
@@ -5470,6 +5909,78 @@ Atom *prime_semantics_judge_typing_accounted(
     return prime_judge_accounted(
         a, space, judgment, steps_limited, steps, resources_out,
         canonical_term_out);
+}
+
+static Atom *prime_kernel_query_type(
+    Arena *a, const PrimeKernelQueryCapture *capture, Atom *context,
+    Atom *term) {
+    if (!context || !term)
+        return prime_expr1(a, "Unsynthesized");
+    CettaPrimeRegularKernelBudget budget;
+    cetta_prime_regular_kernel_budget_init(&budget, false, 0u);
+    CettaPrimeRegularKernelResult result =
+        cetta_prime_regular_kernel_synth_intrinsic_instantiating_levels_v1(
+            a, context, term, capture->levels, capture->level_count, &budget);
+    if (result.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED && result.type)
+        return result.type;
+    return prime_expr2(
+        a, "Unsynthesized",
+        prime_sym(a, result.reason ? result.reason : "synthesis-declined"));
+}
+
+/* The represented query a `type:eq` or `type:check` judgment poses to the
+ * kernel: context, level parameters, admitted rules, the two terms and
+ * their synthesized types.  The judgment runs with capture on, so the
+ * kernel decides nothing; no equality or checking answer is returned. */
+Atom *prime_semantics_kernel_query(
+    Arena *a, Space *space, Atom *judgment, bool steps_limited,
+    uint64_t steps) {
+    if (!a || !space || !judgment) return NULL;
+    free(g_prime_kernel_query.levels);
+    g_prime_kernel_query = (PrimeKernelQueryCapture){.active = true};
+    (void)prime_semantics_judge_typing_direct(
+        a, space, judgment, steps_limited, steps);
+    PrimeKernelQueryCapture capture = g_prime_kernel_query;
+    g_prime_kernel_query = (PrimeKernelQueryCapture){0};
+    if (!capture.captured) {
+        return atom_expr3(
+            a, prime_sym(a, "PrimeKernelQueryV1"),
+            prime_expr2(a, "Judgment", judgment),
+            prime_expr2(a, "Route", prime_sym(a, "outside")));
+    }
+    Atom *rules = prime_semantics_kernel_rules(a, space);
+    cetta_prime_regular_kernel_rules_set(rules);
+    Atom *subject_type = prime_kernel_query_type(
+        a, &capture, capture.context, capture.subject);
+    Atom *object_type = prime_kernel_query_type(
+        a, &capture,
+        capture.object_context ? capture.object_context : capture.context,
+        capture.object);
+    cetta_prime_regular_kernel_rules_set(NULL);
+    Atom **levels = arena_alloc(
+        a, sizeof(Atom *) * (capture.level_count + 1u));
+    levels[0] = prime_sym(a, "LevelParameters");
+    for (size_t i = 0u; i < capture.level_count; i++)
+        levels[i + 1u] = atom_int(a, (int64_t)capture.levels[i]);
+    free(capture.levels);
+    Atom *items[11];
+    size_t count = 0u;
+    items[count++] = prime_sym(a, "PrimeKernelQueryV1");
+    items[count++] = prime_expr2(a, "Judgment", judgment);
+    items[count++] = prime_expr2(a, "Route", prime_sym(a, capture.route));
+    items[count++] = prime_expr2(a, "Context", capture.context);
+    if (capture.object_context)
+        items[count++] = prime_expr2(
+            a, "ObjectContext", capture.object_context);
+    items[count++] = atom_expr(
+        a, levels, (CettaExprLen)(capture.level_count + 1u));
+    items[count++] = prime_expr2(
+        a, "Rules", rules ? rules : prime_sym(a, "LNil"));
+    items[count++] = prime_expr2(a, "Subject", capture.subject);
+    items[count++] = prime_expr2(a, "SubjectType", subject_type);
+    items[count++] = prime_expr2(a, "Object", capture.object);
+    items[count++] = prime_expr2(a, "ObjectType", object_type);
+    return atom_expr(a, items, (CettaExprLen)count);
 }
 
 Atom *prime_semantics_check_nik_direct(

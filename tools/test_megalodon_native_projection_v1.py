@@ -816,6 +816,33 @@ class NativeProjectionTests(unittest.TestCase):
         with self.assertRaises((ValueError, SystemExit)):
             open_type.replay(self.cetta)
 
+    def test_hosted_article_address_opens_the_stored_text(self):
+        projection = native.Projection([])
+        small = (sx.Symbol("conv"), sx.Symbol("a"), sx.StringLiteral("step"))
+        small_node = projection.host_article(small)
+        self.assertIsInstance(small_node, sx.StringLiteral)
+        self.assertEqual(projection.open_hosted_article(small_node), small)
+        large = sx.StringLiteral("article-body-" + ("x" * 70000))
+        large_node = projection.host_article(large)
+        self.assertEqual(large_node[0], sx.Symbol("sha256"))
+        digest = large_node[1].text
+        self.assertNotEqual(digest, sx.render(large))
+        self.assertEqual(projection.open_hosted_article(large_node), large)
+        projection.commands.append(native.expr(
+            "add-atom", sx.Symbol("&self"), native.expr(
+                "MegalodonHostedProofStepsV1", sx.Symbol("thm"),
+                sx.Symbol("THM"), sx.StringLiteral("named"),
+                (small_node, large_node))))
+        self.assertTrue(projection.proof_steps_match("thm", (small, large)))
+        saved = projection.hosted_articles[digest]
+        projection.hosted_articles[digest] = saved + " "
+        self.assertIsNone(projection.open_hosted_article(large_node))
+        self.assertFalse(projection.proof_steps_match("thm", (small, large)))
+        del projection.hosted_articles[digest]
+        self.assertIsNone(projection.open_hosted_article(large_node))
+        self.assertFalse(projection.proof_steps_match("thm", (small, large)))
+        projection.hosted_articles[digest] = saved
+
     def test_library_schema_does_not_accept_claimed_authority(self):
         data = {"format": "MegalodonSourceLibraryV1", "source_export": "",
                 "profile": "empty", "instances": [], "accepted": True}

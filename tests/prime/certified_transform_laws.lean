@@ -386,7 +386,7 @@ theorem shared_over_family_typed {Γ : Ctx Head n}
     Typing R Γ (inst0 package (sharedBody continuation)) (evidenceFamily A P) := by
   simpa [inst0_rename_wk] using body.instantiate packed
 
-/-- One successor clause of the iterator: share the package, then continue.
+/-- One successor step of the iterator: share the package, then continue.
 This is the candidate-syntax term of the authored `(lam pack (continuation (fst pack) (snd pack))) (step x e)`. -/
 theorem iter_successor_typed {Γ : Ctx Head n}
     {A x evidence step continuation : Tm Head n} {P : Tm Head (n + 1)} {u : Head}
@@ -743,6 +743,616 @@ theorem transported_evidence_is_not_reflexivity
   intro equal
   cases equal
 
+/-!
+Nonempty addition and identity elimination.
+
+The stored rules are data. A matched substitution instantiates a rule,
+and that instance is the root step. The consumer reads the contractum.
+These rules are outside `RootComputation.empty`: the empty-root negatives
+above do not apply to this package.
+
+A source forall-equality, its specialization at an index, the dependent
+identity type at that index, and the iterator's sigma package are four
+different terms. `supply` maps the specialized source term to evidence
+indexed by that same index. The evidence is not reflexivity. At the closed
+numeral `zero`, the zero equation fires and reflexivity inhabits the identity
+type the supply names.
+-/
+
+def zeroTm {k : Nat} : Tm Head k := .const `zero
+
+def numTm {k : Nat} : Tm Head k := .const `num
+
+def sucTm {k : Nat} (m : Tm Head k) : Tm Head k := .app (.const `suc) m
+
+def addTm {k : Nat} (a b : Tm Head k) : Tm Head k :=
+  .app (.app (.const `add) a) b
+
+def jApp {k : Nat} (A x P d y e : Tm Head k) : Tm Head k :=
+  .app (.app (.app (.app (.app (.app (.const `«id:eliminate») A) x) P) d) y) e
+
+/-- One stored rule after its pattern variables have been instantiated. -/
+inductive RuleInstance : {k : Nat} → Tm Head k → Tm Head k → Type where
+  | addZero {k : Nat} (arg : Tm Head k) :
+      RuleInstance (addTm arg zeroTm) arg
+  | addSuc {k : Nat} (arg m : Tm Head k) :
+      RuleInstance (addTm arg (sucTm m)) (sucTm (addTm arg m))
+  | identityIota {k : Nat} (A x P d : Tm Head k) :
+      RuleInstance (jApp A x P d x (.refl x)) d
+
+private theorem rename_addTm {k m : Nat} (rho : Ren k m) (a b : Tm Head k) :
+    Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename rho (addTm a b) =
+      addTm (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename rho a) (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename rho b) := by
+  simp [addTm, Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename]
+
+private theorem rename_sucTm {k m : Nat} (rho : Ren k m) (a : Tm Head k) :
+    Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename rho (sucTm a) = sucTm (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename rho a) := by
+  simp [sucTm, Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename]
+
+private theorem rename_zeroTm {k m : Nat} (rho : Ren k m) :
+    Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename rho (zeroTm : Tm Head k) = zeroTm := by
+  simp [zeroTm, Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename]
+
+private theorem rename_reflTm {k m : Nat} (rho : Ren k m) (a : Tm Head k) :
+    Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename rho (Tm.refl a) = Tm.refl (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename rho a) := by
+  simp [Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename]
+
+private theorem rename_jApp {k m : Nat} (rho : Ren k m)
+    (A x P d y e : Tm Head k) :
+    Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename rho (jApp A x P d y e) =
+      jApp (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename rho A) (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename rho x)
+        (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename rho P) (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename rho d)
+        (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename rho y) (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename rho e) := by
+  simp [jApp, Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename]
+
+private theorem subst_addTm {k m : Nat} (σ : Sub Head k m) (a b : Tm Head k) :
+    Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.subst σ (addTm a b) =
+      addTm (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.subst σ a) (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.subst σ b) := by
+  simp [addTm, Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.subst]
+
+private theorem subst_sucTm {k m : Nat} (σ : Sub Head k m) (a : Tm Head k) :
+    Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.subst σ (sucTm a) = sucTm (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.subst σ a) := by
+  simp [sucTm, Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.subst]
+
+private theorem subst_zeroTm {k m : Nat} (σ : Sub Head k m) :
+    Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.subst σ (zeroTm : Tm Head k) = zeroTm := by
+  simp [zeroTm, Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.subst]
+
+private theorem subst_reflTm {k m : Nat} (σ : Sub Head k m) (a : Tm Head k) :
+    Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.subst σ (Tm.refl a) = Tm.refl (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.subst σ a) := by
+  simp [Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.subst]
+
+private theorem subst_jApp {k m : Nat} (σ : Sub Head k m)
+    (A x P d y e : Tm Head k) :
+    Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.subst σ (jApp A x P d y e) =
+      jApp (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.subst σ A) (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.subst σ x)
+        (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.subst σ P) (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.subst σ d)
+        (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.subst σ y) (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.subst σ e) := by
+  simp [jApp, Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.subst]
+
+/-- Root computation of the addition equations and the identity-elimination rule. -/
+def additionJRoot : RootComputation Head where
+  step {_k} left right := Nonempty (RuleInstance left right)
+  rename := by
+    intro k m rho left right ⟨inst⟩
+    induction inst with
+    | addZero arg =>
+        rw [rename_addTm rho arg zeroTm, rename_zeroTm rho]
+        exact ⟨RuleInstance.addZero (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename rho arg)⟩
+    | addSuc arg motive =>
+        rw [rename_addTm rho arg (sucTm motive), rename_sucTm rho motive,
+          rename_sucTm rho (addTm arg motive), rename_addTm rho arg motive]
+        exact ⟨RuleInstance.addSuc (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename rho arg)
+          (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename rho motive)⟩
+    | identityIota A x P d =>
+        rw [rename_jApp rho A x P d x (.refl x), rename_reflTm rho x]
+        exact ⟨RuleInstance.identityIota (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename rho A)
+          (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename rho x) (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename rho P)
+          (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename rho d)⟩
+  substitute := by
+    intro k m sigma left right ⟨inst⟩
+    induction inst with
+    | addZero arg =>
+        rw [subst_addTm sigma arg zeroTm, subst_zeroTm sigma]
+        exact ⟨RuleInstance.addZero (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.subst sigma arg)⟩
+    | addSuc arg motive =>
+        rw [subst_addTm sigma arg (sucTm motive), subst_sucTm sigma motive,
+          subst_sucTm sigma (addTm arg motive), subst_addTm sigma arg motive]
+        exact ⟨RuleInstance.addSuc (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.subst sigma arg)
+          (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.subst sigma motive)⟩
+    | identityIota A x P d =>
+        rw [subst_jApp sigma A x P d x (.refl x), subst_reflTm sigma x]
+        exact ⟨RuleInstance.identityIota (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.subst sigma A)
+          (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.subst sigma x) (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.subst sigma P)
+          (Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.subst sigma d)⟩
+
+theorem addition_equation_outside_empty_root :
+    additionJRoot.step (addTm (zeroTm : Tm Head n) (zeroTm : Tm Head n))
+        (zeroTm : Tm Head n) ∧
+      ¬ (RootComputation.empty : RootComputation Head).step
+        (addTm (zeroTm : Tm Head n) (zeroTm : Tm Head n))
+        (zeroTm : Tm Head n) := by
+  exact ⟨⟨RuleInstance.addZero (zeroTm : Tm Head n)⟩,
+    fun impossible => impossible.elim⟩
+
+theorem additionJRoot_ne_empty (k : Nat) :
+    additionJRoot ≠ (RootComputation.empty : RootComputation Head) := by
+  intro equal
+  have occupied : additionJRoot.step
+      (addTm (zeroTm : Tm Head k) (zeroTm : Tm Head k))
+      (zeroTm : Tm Head k) :=
+    ⟨RuleInstance.addZero (zeroTm : Tm Head k)⟩
+  rw [equal] at occupied
+  exact occupied.elim
+
+/-- The stored zero equation, transported along an arbitrary substitution. -/
+theorem matched_zero_substitution {m : Nat} (σ : Sub Head n m)
+    (arg : Tm Head n) :
+    additionJRoot.step (subst σ (addTm arg zeroTm)) (subst σ arg) :=
+  additionJRoot.substitute σ ⟨.addZero arg⟩
+
+theorem substituted_addition_equation {m : Nat} (σ : Sub Head n m)
+    (arg : Tm Head n) :
+    subst σ (addTm arg zeroTm) = addTm (subst σ arg) zeroTm := by
+  simp [addTm, zeroTm, subst]
+
+/-- The consumer's computed index is the contractum of the matched rule.
+The argument may itself be a computed term. -/
+theorem consumer_reads_zero_contractum (arg : Tm Head n) :
+    additionJRoot.step (addTm arg zeroTm) arg :=
+  ⟨.addZero arg⟩
+
+theorem rule_shape {k : Nat} {left right : Tm Head k}
+    (inst : RuleInstance left right) :
+    (∃ arg, left = addTm arg zeroTm ∧ right = arg) ∨
+      (∃ arg m, left = addTm arg (sucTm m) ∧
+        right = sucTm (addTm arg m)) ∨
+      (∃ A x P d, left = jApp A x P d x (Tm.refl x) ∧ right = d) := by
+  match inst with
+  | .addZero arg => exact Or.inl ⟨arg, rfl, rfl⟩
+  | .addSuc arg m => exact Or.inr (Or.inl ⟨arg, m, rfl, rfl⟩)
+  | .identityIota A x P d => exact Or.inr (Or.inr ⟨A, x, P, d, rfl, rfl⟩)
+
+/-- Distinguish term constructors without using an impossible equality case. -/
+def shapeCode : {k : Nat} → Tm Head k → Nat
+  | _, .var _ => 0
+  | _, .const _ => 1
+  | _, .app _ _ => 2
+  | _, .head _ => 3
+  | _, .pi _ _ => 4
+  | _, .sigma _ _ => 5
+  | _, .id _ _ _ => 6
+  | _, .lam _ => 7
+  | _, .pair _ _ => 8
+  | _, .fst _ => 9
+  | _, .snd _ => 10
+  | _, .refl _ => 11
+
+def spineCode : {k : Nat} → Tm Head k → Nat
+  | _, .app f _ => spineCode f
+  | _, .const name =>
+      if name = `add then 0 else if name = `«id:eliminate» then 1 else 2
+  | _, _ => 3
+
+def rightArg : {k : Nat} → Tm Head k → Tm Head k
+  | _, .app _ argument => argument
+  | _, term => term
+
+/-- An open index is not the constant `zero`, so the addition equations do not
+rewrite `add zero k` to `k`. Reflexivity is not the evidence at that index. -/
+theorem open_index_not_definitional (k : Fin n) :
+    ¬ additionJRoot.step (addTm (zeroTm : Tm Head n) (Tm.var k)) (Tm.var k) := by
+  intro witnessed
+  rcases witnessed with ⟨inst⟩
+  cases rule_shape inst with
+  | inl shape =>
+      obtain ⟨_, leftEq, _⟩ := shape
+      have second := congrArg rightArg leftEq
+      simp only [addTm, zeroTm, rightArg] at second
+      have codes := congrArg shapeCode second
+      simp only [shapeCode] at codes
+      cases codes
+  | inr shape =>
+      cases shape with
+      | inl sucShape =>
+          obtain ⟨_, _, leftEq, _⟩ := sucShape
+          have second := congrArg rightArg leftEq
+          simp only [addTm, sucTm, zeroTm, rightArg] at second
+          have codes := congrArg shapeCode second
+          simp only [shapeCode] at codes
+          cases codes
+      | inr iotaShape =>
+          obtain ⟨_, _, _, _, leftEq, _⟩ := iotaShape
+          have codes := congrArg spineCode leftEq
+          simp only [addTm, jApp, zeroTm, spineCode] at codes
+          cases codes
+
+/-- Identity elimination returns the supplied method when the scrutinee is
+reflexivity at the same index. The method may be any accepted certificate. -/
+theorem iota_returns_method (A x P d : Tm Head n) :
+    additionJRoot.step (jApp A x P d x (.refl x)) d :=
+  ⟨.identityIota A x P d⟩
+
+def sourceEq {k : Nat} (a b : Tm Head k) : Tm Head k :=
+  .app (.app (.const `eq) a) b
+
+/-- Body of `∀ k. eq num (add zero k) k`, with `k` bound at index 0. -/
+def sourceBody : Tm Head (n + 1) :=
+  sourceEq (addTm zeroTm (.var 0)) (.var 0)
+
+def sourceForall : Tm Head n :=
+  .app (.const `all) (.lam sourceBody)
+
+def consumerIdentity (index : Tm Head n) : Tm Head n :=
+  .id numTm (addTm zeroTm index) index
+
+def iteratorSigma (index evidence : Tm Head n) : Tm Head n :=
+  .pair index evidence
+
+theorem specialize_source (index : Tm Head n) :
+    inst0 index sourceBody = sourceEq (addTm zeroTm index) index := by
+  simp only [inst0, subst0, sourceBody, sourceEq, addTm, zeroTm, subst]
+  rfl
+
+/-- Evidence recorded for one specialized source equation. It names the
+identity type the consumer requires and is not reflexivity or the iterator
+package. -/
+structure OpenIndexSupply (index : Tm Head n) where
+  specialized : Tm Head n
+  fromSource : specialized = inst0 index sourceBody
+  identityType : Tm Head n
+  identityType_eq : identityType = consumerIdentity index
+  evidence : Tm Head n
+  fromSpecialization : evidence = .app (.const `zeroAddEvidence) specialized
+  notReflexivity : evidence ≠ .refl index
+  notIterator : evidence ≠ iteratorSigma index (.refl index)
+  notIdentityType : evidence ≠ identityType
+
+def supply (index : Tm Head n) : OpenIndexSupply index where
+  specialized := inst0 index sourceBody
+  fromSource := rfl
+  identityType := consumerIdentity index
+  identityType_eq := rfl
+  evidence := .app (.const `zeroAddEvidence) (inst0 index sourceBody)
+  fromSpecialization := rfl
+  notReflexivity := by intro equal; cases equal
+  notIterator := by intro equal; cases equal
+  notIdentityType := by intro equal; cases equal
+
+theorem supply_specializes (index : Tm Head n) :
+    (supply index).specialized = sourceEq (addTm zeroTm index) index :=
+  (supply index).fromSource.trans (specialize_source index)
+
+theorem four_source_objects_differ (index : Tm Head n) :
+    sourceForall ≠ (supply index).specialized ∧
+      (supply index).specialized ≠ consumerIdentity index ∧
+      consumerIdentity index ≠ iteratorSigma index (.refl index) ∧
+      (supply index).evidence ≠ .refl index := by
+  refine ⟨?_, ?_, ?_, (supply index).notReflexivity⟩
+  · intro equal
+    have specialized :
+        (supply index).specialized = sourceEq (addTm zeroTm index) index :=
+      supply_specializes index
+    rw [specialized] at equal
+    simp only [sourceForall, sourceEq, addTm, zeroTm] at equal
+    cases equal
+  · intro equal
+    rw [supply_specializes index] at equal
+    simp only [sourceEq, consumerIdentity, addTm, zeroTm, numTm] at equal
+    cases equal
+  · intro equal
+    simp only [consumerIdentity, iteratorSigma] at equal
+    cases equal
+
+theorem closed_identity_converts {R : Rules Head}
+    (aligned : R.computation = additionJRoot) :
+    Conv R.headEq (consumerIdentity (zeroTm : Tm Head n))
+      (.id (numTm : Tm Head n) (zeroTm : Tm Head n) (zeroTm : Tm Head n))
+      R.computation := by
+  have stepR : R.computation.step
+      (addTm (zeroTm : Tm Head n) (zeroTm : Tm Head n))
+      (zeroTm : Tm Head n) := by
+    simpa [aligned] using consumer_reads_zero_contractum (zeroTm : Tm Head n)
+  exact Relation.EqvGen.rel _ _
+    (StepCore.congIdLeft (StepCore.root stepR))
+
+/-- At the closed numeral `zero`, the fired equation makes reflexivity evidence
+for the identity type named by the open-index supply. -/
+theorem closed_executable_instance {R : Rules Head} {Γ : Ctx Head n}
+    {u : Head}
+    (aligned : R.computation = additionJRoot)
+    (numTyped : Typing R Γ numTm (.head u))
+    (isUniv : R.isUniverse u)
+    (zeroTyped : Typing R Γ zeroTm numTm)
+    (addTyped : Typing R Γ (addTm zeroTm zeroTm) numTm) :
+    Typing R Γ (.refl zeroTm) (supply zeroTm).identityType := by
+  have reflTyped : Typing R Γ (.refl zeroTm) (.id numTm zeroTm zeroTm) :=
+    Typing.reflIntro zeroTyped
+  have target : Typing R Γ (consumerIdentity zeroTm) (.head u) :=
+    Typing.idForm numTyped isUniv addTyped zeroTyped
+  have convForward := closed_identity_converts (n := n) aligned
+  have backward :=
+    Relation.EqvGen.symm
+      (consumerIdentity (zeroTm : Tm Head n))
+      (.id (numTm : Tm Head n) (zeroTm : Tm Head n) (zeroTm : Tm Head n))
+      convForward
+  have typed := Typing.conv reflTyped target isUniv backward
+  simpa [supply] using typed
+
+/-- The source forall, specialized at an arbitrary index, supplies the
+identity type `eqAt` names and evidence for that specialized equation. -/
+theorem open_index_supply_names_consumer (index : Tm Head n) :
+    (supply index).identityType = consumerIdentity index ∧
+      (supply index).specialized =
+        sourceEq (addTm zeroTm index) index ∧
+      (supply index).evidence =
+        .app (.const `zeroAddEvidence)
+          (sourceEq (addTm zeroTm index) index) := by
+  refine ⟨(supply index).identityType_eq, supply_specializes index, ?_⟩
+  rw [(supply index).fromSpecialization, supply_specializes]
+
+private theorem conv_under_suc {R : Rules Head} {a b : Tm Head n}
+    (c : Conv R.headEq a b R.computation) :
+    Conv R.headEq (sucTm a) (sucTm b) R.computation := by
+  induction c with
+  | rel _ _ s =>
+      exact Relation.EqvGen.rel _ _ (StepCore.congAppArg s)
+  | refl _ => exact Relation.EqvGen.refl _
+  | symm _ _ _ ih => exact Relation.EqvGen.symm _ _ ih
+  | trans _ _ _ _ _ ih₁ ih₂ =>
+      exact Relation.EqvGen.trans _ _ _ ih₁ ih₂
+
+private theorem conv_under_id_left {R : Rules Head}
+    {A a a' b : Tm Head n}
+    (c : Conv R.headEq a a' R.computation) :
+    Conv R.headEq (.id A a b) (.id A a' b) R.computation := by
+  induction c with
+  | rel _ _ s =>
+      exact Relation.EqvGen.rel _ _ (StepCore.congIdLeft s)
+  | refl _ => exact Relation.EqvGen.refl _
+  | symm _ _ _ ih => exact Relation.EqvGen.symm _ _ ih
+  | trans _ _ _ _ _ ih₁ ih₂ =>
+      exact Relation.EqvGen.trans _ _ _ ih₁ ih₂
+
+private theorem root_conv {R : Rules Head} {a b : Tm Head n}
+    (aligned : R.computation = additionJRoot)
+    (stepped : additionJRoot.step a b) :
+    Conv R.headEq a b R.computation := by
+  exact Relation.EqvGen.rel _ _
+    (by simpa [aligned] using StepCore.root stepped)
+
+/-- Two successor steps of the nonempty zero-addition equations compute
+`eqAt (suc (suc zero))` to the identity the runtime prints. -/
+theorem runtime_family_index {R : Rules Head}
+    (aligned : R.computation = additionJRoot) :
+    Conv R.headEq
+      (consumerIdentity (sucTm (sucTm (zeroTm : Tm Head n))))
+      (.id (numTm : Tm Head n)
+        (sucTm (sucTm zeroTm)) (sucTm (sucTm zeroTm)))
+      R.computation := by
+  let z : Tm Head n := zeroTm
+  have toSucAdd : Conv R.headEq
+      (addTm z (sucTm (sucTm z))) (sucTm (addTm z (sucTm z)))
+      R.computation :=
+    root_conv aligned ⟨.addSuc z (sucTm z)⟩
+  have toSucSucAdd : Conv R.headEq
+      (sucTm (addTm z (sucTm z))) (sucTm (sucTm (addTm z z)))
+      R.computation :=
+    conv_under_suc (root_conv aligned ⟨.addSuc z z⟩)
+  have toTwo : Conv R.headEq
+      (sucTm (sucTm (addTm z z))) (sucTm (sucTm z))
+      R.computation :=
+    conv_under_suc (conv_under_suc
+      (root_conv aligned (consumer_reads_zero_contractum z)))
+  have left : Conv R.headEq (addTm z (sucTm (sucTm z))) (sucTm (sucTm z))
+      R.computation :=
+    Relation.EqvGen.trans _ _ _ toSucAdd
+      (Relation.EqvGen.trans _ _ _ toSucSucAdd toTwo)
+  simpa [consumerIdentity, z] using
+    conv_under_id_left (A := numTm) (b := sucTm (sucTm z)) left
+
+/-- MeTTa spelling of the closed identity index consumed by `eqAt`. -/
+def mettaTm : {k : Nat} → Tm Head k → String
+  | _, .const name =>
+      match name with
+      | .str .anonymous s => s
+      | other => other.toString
+  | _, .var i => "$" ++ toString i.val
+  | _, .app (.const `suc) m => "(suc " ++ mettaTm m ++ ")"
+  | _, .app (.app (.const `add) x) y =>
+      "(add " ++ mettaTm x ++ " " ++ mettaTm y ++ ")"
+  | _, .app (.app (.const `eq) x) y =>
+      "(eq " ++ mettaTm x ++ " " ++ mettaTm y ++ ")"
+  | _, .app f a => "(app " ++ mettaTm f ++ " " ++ mettaTm a ++ ")"
+  | _, .id a x y =>
+      "(id " ++ mettaTm a ++ " " ++ mettaTm x ++ " " ++ mettaTm y ++ ")"
+  | _, .refl a => "(refl " ++ mettaTm a ++ ")"
+  | _, .lam body => "(lam " ++ mettaTm body ++ ")"
+  | _, .pair a b => "(pair " ++ mettaTm a ++ " " ++ mettaTm b ++ ")"
+  | _, .fst a => "(fst " ++ mettaTm a ++ ")"
+  | _, .snd a => "(snd " ++ mettaTm a ++ ")"
+  | _, .pi _ _ => "(pi)"
+  | _, .sigma _ _ => "(sigma)"
+  | _, .head _ => "(head)"
+
+def runtimeClosedIndex : Tm Head n :=
+  .id numTm (sucTm (sucTm zeroTm)) (sucTm (sucTm zeroTm))
+
+/-- Hosted equality `eq@num`, the constant the native compiler emits. -/
+def hostedEq {k : Nat} (a b : Tm Head k) : Tm Head k :=
+  .app (.app (.const `«eq@num») a) b
+
+/-- Body of the hosted motive `λk. eq@num (add zero k) k`. -/
+def hostedEqMotive : Tm Head (n + 1) :=
+  hostedEq (addTm zeroTm (.var 0)) (.var 0)
+
+/-- The compiled zero-add article: `num-ind` applied to that motive,
+reflexivity at zero, and the successor step. `step` is the compiled
+substitution step; the runtime names the assumptions by their digests. -/
+def hostedZeroAddInduction (step : Tm Head n) : Tm Head n :=
+  .app (.app (.app (.const `«num-ind») (.lam hostedEqMotive))
+      (.app (.const `«refl@num») zeroTm))
+    step
+
+/-- Leibniz elimination, the type of the hosted `subst@num` assumption.
+Binders, outer to inner: motive, left endpoint, right endpoint, equality, premise. -/
+def leibnizAt (u : Head) : Tm Head n :=
+  .pi (.pi numTm (.head u)) <|
+    .pi numTm <|
+      .pi numTm <|
+        .pi (hostedEq (.var 1) (.var 0)) <|
+          .pi (.app (.var 3) (.var 2)) <|
+            .app (.var 4) (.var 2)
+
+/-- `λz. id num (add zero index) z`, the motive that reads the hosted equation
+as an identity at the open index. -/
+def endpointMotive (index : Tm Head n) : Tm Head n :=
+  .lam (.id numTm (addTm zeroTm (rename wk index)) (.var 0))
+
+def hostedAt (hosted index : Tm Head n) : Tm Head n :=
+  .app hosted index
+
+/-- `subst@num` at the identity motive `λz. id num (add zero i) z`.
+Applying it to an index, the hosted equation at that index, and
+`refl (add zero i)` yields `id num (add zero i) i`. -/
+def transportAt : Tm Head n :=
+  .pi numTm <|
+    .pi (hostedEq (addTm zeroTm (.var 0)) (.var 0)) <|
+      .pi (.id numTm (addTm zeroTm (.var (Fin.succ 0)))
+          (addTm zeroTm (.var (Fin.succ 0)))) <|
+        .id numTm (addTm zeroTm (.var (Fin.succ (Fin.succ 0))))
+          (.var (Fin.succ (Fin.succ 0)))
+
+/-- Instantiate the hosted induction at `index` and transport
+`refl (add zero index)` along that equation. The result is an identity
+derivation at `index`, not reflexivity at `index` and not a fresh evidence name. -/
+def identityFromHosted (hosted index : Tm Head n) : Tm Head n :=
+  .app (.app (.app (.const `«subst@num») index) (hostedAt hosted index))
+    (.refl (addTm zeroTm index))
+
+theorem identity_from_hosted_uses_induction (hosted index : Tm Head n) :
+    identityFromHosted hosted index =
+      .app (.app (.app (.const `«subst@num») index) (.app hosted index))
+        (.refl (addTm zeroTm index)) := rfl
+
+private theorem subst_lifted_one (index proof : Tm Head n) :
+    subst (subst0 proof)
+      (liftSub (subst0 index) (Fin.succ (0 : Fin (n + 1)))) = index := by
+  rw [liftSub_succ, subst0_zero]
+  simpa [inst0] using inst0_rename_wk proof index
+
+private theorem premise_type_reduces (index proof : Tm Head n) :
+    subst (subst0 proof)
+      (subst (liftSub (subst0 index))
+        (.id numTm (addTm zeroTm (.var (Fin.succ 0)))
+          (addTm zeroTm (.var (Fin.succ 0))))) =
+      .id numTm (addTm zeroTm index) (addTm zeroTm index) := by
+  simp only [subst, addTm, zeroTm, numTm]
+  congr 1
+  · exact congrArg (addTm zeroTm) (subst_lifted_one index proof)
+  · exact congrArg (addTm zeroTm) (subst_lifted_one index proof)
+
+private theorem subst_lifted_two (index proof premise : Tm Head n) :
+    subst (subst0 premise)
+      (subst (liftSub (subst0 proof))
+        (liftSub (liftSub (subst0 index))
+          (Fin.succ (Fin.succ (0 : Fin (n + 1)))))) = index := by
+  rw [liftSub_succ, liftSub_succ, subst0_zero, subst_liftSub_wk]
+  have inner : subst (subst0 proof) (rename wk index) = index := by
+    simpa [inst0] using inst0_rename_wk proof index
+  rw [inner]
+  simpa [inst0] using inst0_rename_wk premise index
+
+private theorem result_type_reduces (index proof premise : Tm Head n) :
+    subst (subst0 premise)
+      (subst (liftSub (subst0 proof))
+        (subst (liftSub (liftSub (subst0 index)))
+          (.id numTm (addTm zeroTm (.var (Fin.succ (Fin.succ 0))))
+            (.var (Fin.succ (Fin.succ 0)))))) =
+      .id numTm (addTm zeroTm index) index := by
+  simp only [subst, addTm, zeroTm, numTm]
+  congr 1
+  · exact congrArg (addTm zeroTm) (subst_lifted_two index proof premise)
+  · exact subst_lifted_two index proof premise
+
+private theorem result_type_inst (index proof premise : Tm Head n) :
+    inst0 premise
+      (subst (liftSub (subst0 proof))
+        (subst (liftSub (liftSub (subst0 index)))
+          (.id numTm (addTm zeroTm (.var (Fin.succ (Fin.succ 0))))
+            (.var (Fin.succ (Fin.succ 0)))))) =
+      .id numTm (addTm zeroTm index) index := by
+  simpa [inst0] using result_type_reduces index proof premise
+
+theorem identity_from_hosted_induction
+    {Γ : Ctx Head n} {index hosted : Tm Head n}
+    (substTyped : Typing R Γ (.const `«subst@num») transportAt)
+    (indexTyped : Typing R Γ index numTm)
+    (addIndexTyped : Typing R Γ (addTm zeroTm index) numTm)
+    (hostedTyped : Typing R Γ (hostedAt hosted index)
+      (hostedEq (addTm zeroTm index) index)) :
+    Typing R Γ (identityFromHosted hosted index) (consumerIdentity index) := by
+  have atIndex := Typing.appElim substTyped indexTyped
+  have atEquation := Typing.appElim atIndex hostedTyped
+  have premise : Typing R Γ (.refl (addTm zeroTm index))
+      (.id numTm (addTm zeroTm index) (addTm zeroTm index)) :=
+    Typing.reflIntro addIndexTyped
+  have domainEq := premise_type_reduces index (hostedAt hosted index)
+  rw [subst_comp] at domainEq
+  have premiseAtDomain := premise
+  rw [← domainEq] at premiseAtDomain
+  have transported := Typing.appElim atEquation premiseAtDomain
+  rw [result_type_inst index (hostedAt hosted index)
+    (.refl (addTm zeroTm index))] at transported
+  simpa [identityFromHosted, hostedAt, consumerIdentity] using transported
+
+def domainOf : {k : Nat} → Tm Head k → Tm Head k
+  | _, .pi domain _ => domain
+  | _, term => term
+
+def codomain : {k : Nat} → Tm Head k → Tm Head (k + 1)
+  | _, .pi _ body => body
+  | _, _ => .const `unused
+
+theorem domain_after_motive (u : Head) (motive : Tm Head n) :
+    domainOf (inst0 motive (codomain (leibnizAt u))) = numTm := by
+  simp [domainOf, codomain, leibnizAt, inst0, subst0, subst, liftSub, hostedEq, numTm]
+
+private theorem rename_num {k m : Nat} (ρ : Ren k m) :
+    Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename ρ
+      (numTm : Tm Head k) = numTm := by
+  simp [numTm, Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId.Presentation.rename]
+
+theorem instantiate_hosted_equation (index : Tm Head n) :
+    inst0 index (hostedEq (addTm zeroTm (.var 0)) (.var 0)) =
+      hostedEq (addTm zeroTm index) index := by
+  simp [inst0, subst0, subst, hostedEq, addTm, zeroTm]
+
+def kernelTm : {k : Nat} → Tm Head k → String
+  | _, .const name =>
+      let shown := match name with
+        | .str .anonymous s => s
+        | other => other.toString
+      "(DeclConst " ++ shown ++ ")"
+  | _, .var i => "(idx " ++ toString i.val ++ ")"
+  | _, .app f a => "(App " ++ kernelTm f ++ " " ++ kernelTm a ++ ")"
+  | _, .lam body => "(Lam " ++ kernelTm body ++ ")"
+  | _, .refl a => "(Refl " ++ kernelTm a ++ ")"
+  | _, .id a x y =>
+      "(id " ++ kernelTm a ++ " " ++ kernelTm x ++ " " ++ kernelTm y ++ ")"
+  | _, .pair a b => "(pair " ++ kernelTm a ++ " " ++ kernelTm b ++ ")"
+  | _, .fst a => "(fst " ++ kernelTm a ++ ")"
+  | _, .snd a => "(snd " ++ kernelTm a ++ ")"
+  | _, .pi _ _ => "(pi)"
+  | _, .sigma _ _ => "(sigma)"
+  | _, .head _ => "(head)"
+
+#eval kernelTm (hostedEqMotive : Tm Unit 1)
+#eval mettaTm (identityFromHosted (.const `«zero-add») (.var 0) : Tm Unit 1)
+#eval mettaTm (runtimeClosedIndex : Tm Unit 0)
+#eval mettaTm (consumerIdentity (zeroTm : Tm Unit 0))
+#eval mettaTm (sourceEq (addTm (zeroTm : Tm Unit 1) (.var 0)) (.var 0))
+
 #print axioms reflFamily_typed
 #print axioms reflSigma_typed
 #print axioms stepType_typed
@@ -768,5 +1378,22 @@ theorem transported_evidence_is_not_reflexivity
 #print axioms neutral_computed_identity_does_not_convert
 #print axioms neutral_refl_is_not_identity_evidence
 #print axioms transported_evidence_is_not_reflexivity
+#print axioms addition_equation_outside_empty_root
+#print axioms additionJRoot_ne_empty
+#print axioms matched_zero_substitution
+#print axioms substituted_addition_equation
+#print axioms consumer_reads_zero_contractum
+#print axioms open_index_not_definitional
+#print axioms iota_returns_method
+#print axioms specialize_source
+#print axioms supply_specializes
+#print axioms four_source_objects_differ
+#print axioms closed_identity_converts
+#print axioms closed_executable_instance
+#print axioms open_index_supply_names_consumer
+#print axioms runtime_family_index
+#print axioms identity_from_hosted_uses_induction
+#print axioms instantiate_hosted_equation
+#print axioms identity_from_hosted_induction
 
 end Cetta.Prime.CertifiedTransformLaws

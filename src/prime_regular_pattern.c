@@ -1345,7 +1345,7 @@ static CettaPrimeRegularPatternElaborationV1 pattern_elaborate_binder(
     /* A declared constant cannot refer to the generated binder. */
     if (freshness == PATTERN_SCAN_FOUND)
         for (size_t i = 0u; i < environment.declaration_count; i++)
-            if (atom_is_symbol((Atom *)environment.declaration_names[i], buffer)) {
+            if (atom_is_symbol_named((Atom *)environment.declaration_names[i], buffer)) {
                 freshness = PATTERN_SCAN_OK;
                 break;
             }
@@ -1429,7 +1429,7 @@ static CettaPrimeRegularPatternElaborationV1 pattern_elaborate_rec(
         }
         for (size_t i = 0u; i < environment.declaration_count; i++) {
             Atom *declaration = (Atom *)environment.declaration_names[i];
-            if (atom_is_symbol(declaration, name))
+            if (atom_is_symbol_named(declaration, name))
                 return pattern_success(atom_expr2(
                     arena, atom_symbol(arena, "DeclConst"), declaration));
         }

@@ -31,7 +31,8 @@
    (= (sucStep $x $e) (transportCert num eqAt suc sucMove $x $e)))
 !(set:define &thy composeCert
    (-> (A : (u 0)) (P : (-> A (u 0)))
-       (step1 step2 : (-> (x : A) (e : (P x)) (sigma (y : A) (P y))))
+       (step1 : (-> (x : A) (e : (P x)) (sigma (y : A) (P y))))
+       (step2 : (-> (x : A) (e : (P x)) (sigma (y : A) (P y))))
        (x : A) (e : (P x))
        (sigma (z : A) (P z)))
    (= (composeCert $A $P $step1 $step2 $x $e)

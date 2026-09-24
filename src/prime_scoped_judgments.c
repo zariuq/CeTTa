@@ -121,6 +121,8 @@ bool prime_scoped_judgment_is_head_id(SymbolId head) {
            head == g_builtin_syms.set_colon_native_proof ||
            head == g_builtin_syms.set_colon_native_use ||
            head == g_builtin_syms.set_colon_native_normalize ||
+           head == g_builtin_syms.set_colon_native_link ||
+           head == g_builtin_syms.set_colon_interpret ||
            head == g_builtin_syms.set_colon_recheck ||
            head == g_builtin_syms.set_colon_known_proof ||
            head == g_builtin_syms.set_colon_known_proposition ||
@@ -269,7 +271,29 @@ static void sj_admitted_insert(uint64_t instance, const char *digest) {
 
 void prime_scoped_judgment_admit(Arena *a, Space *space, Atom *record);
 
+/* A space that takes over another's contents, as an import commits its
+ * working copy, takes over what admission published there. */
+static void sj_admission_follows_contents(uint64_t from, uint64_t to) {
+    size_t count = 0u;
+    for (size_t i = 0u; i < g_admitted_cap; i++)
+        if (g_admitted[i].digest[0] != '\0' && g_admitted[i].instance == from)
+            count++;
+    if (count == 0u) return;
+    char (*digests)[65] = cetta_malloc(sizeof(*digests) * count);
+    size_t n = 0u;
+    for (size_t i = 0u; i < g_admitted_cap; i++)
+        if (g_admitted[i].digest[0] != '\0' && g_admitted[i].instance == from)
+            memcpy(digests[n++], g_admitted[i].digest, sizeof digests[0]);
+    for (size_t i = 0u; i < n; i++) sj_admitted_insert(to, digests[i]);
+    free(digests);
+}
+
 static void sj_admit(Arena *a, Space *space, Atom *record) {
+    static bool follows_contents = false;
+    if (!follows_contents) {
+        space_set_contents_moved_hook(sj_admission_follows_contents);
+        follows_contents = true;
+    }
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SCOPED_PUBLICATION);
     char digest[65];
     sj_record_digest(a, record, digest);
@@ -405,7 +429,8 @@ static void sj_env_load_definitions(SjSetEnv *env, Space *space) {
     for (CettaIndex i = 0u; i < count; i++) {
         Atom *atom = space_match_candidate_at64(space, candidates[i]);
         if (!sj_is_expr(atom, "set:known", SJ_KNOWN_LEN) ||
-            !atom_is_symbol(atom->expr.elems[SJ_KNOWN_ORIGIN], "definition"))
+            !atom_is_symbol(atom->expr.elems[SJ_KNOWN_ORIGIN], "definition") ||
+            !sj_record_admitted(a, space, atom))
             continue;
         Atom *compiled = atom->expr.elems[SJ_KNOWN_PROOF];
         if (!compiled || compiled->kind != ATOM_EXPR || compiled->expr.len < 2u ||
@@ -506,7 +531,9 @@ static bool sj_env_is_poly_head(SjSetEnv *env, Atom *name) {
 static Atom *sj_known_lookup(Arena *a, SjSetEnv *env, Space *space, Atom *name,
                              bool *ambiguous_out) {
     if (ambiguous_out) *ambiguous_out = false;
-    if (!name || name->kind != ATOM_SYMBOL) return NULL;
+    if (!name || name->kind != ATOM_SYMBOL ||
+        prime_scoped_judgment_reserved_name(name))
+        return NULL;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SCOPED_RECORD_LOOKUP);
     Atom *found = NULL;
     Atom *items[SJ_KNOWN_LEN] = {
@@ -834,7 +861,9 @@ static bool g_sj_no_delta = false;
 
 static SjDefinition *sj_definition_of(Atom *head) {
     if (sj_is_expr(head, "DeclConst", 2u)) head = head->expr.elems[1];
-    if (!head || head->kind != ATOM_SYMBOL || !g_set_env.overlay_ready) return NULL;
+    if (!head || head->kind != ATOM_SYMBOL || !g_set_env.overlay_ready ||
+        prime_scoped_judgment_reserved_name(head))
+        return NULL;
     for (size_t i = 0u; i < g_set_env.def_count; i++)
         if (atom_eq(g_set_env.defs[i].name, head)) return &g_set_env.defs[i];
     return NULL;
@@ -1126,6 +1155,7 @@ static void sj_note_dependency(SjProofState *st, Atom *name, Atom *prop) {
 static void sj_constant_cache_add(SjSetEnv *env, Atom *name, Atom *type);
 
 static Atom *sj_constant_type(SjProofState *st, Atom *name) {
+    if (prime_scoped_judgment_reserved_name(name)) return NULL;
     SjSetEnv *env = st->env;
     for (size_t i = 0u; i < env->constant_count; i++)
         if (atom_eq(env->constants[i].name, name)) return env->constants[i].type;
@@ -1663,7 +1693,7 @@ static Atom *sj_open_synth(SjProofState *st, Atom *w, Atom **type_out) {
             if (sj_is_expr(head, "lam", 3u) &&
                 head->expr.elems[1]->kind == ATOM_SYMBOL) {
                 /* Retain a source beta-redex. The argument supplies the
-                 * domain missing from the surface lambda; the ordinary
+                 * domain missing from the authored lambda; the ordinary
                  * native checker will check the resulting annotated term. */
                 Atom *domain = NULL;
                 Atom *argument = sj_open_synth(st, w->expr.elems[1], &domain);
@@ -2509,6 +2539,9 @@ typedef struct {
     size_t assumption_count;
     unsigned theorem_depth;
     Atom *family_name;
+    /* The named `identity` interpretation: the family at a represented
+     * equation `eq@A x y` computes to `Id A x y`. */
+    bool identity;
 } SjNativeCompiler;
 
 enum {
@@ -2656,7 +2689,8 @@ static Atom *sj_native_assumption(SjNativeCompiler *compiler, Atom *name,
     char digest[65];
     cetta_native_sha256_hex((const uint8_t *)identity, strlen(identity), digest);
     char internal[48];
-    snprintf(internal, sizeof internal, "__cetta_proof_%.24s", digest);
+    snprintf(internal, sizeof internal,
+             CETTA_PRIME_PROOF_IDENTITY_PREFIX "%.24s", digest);
     SjNativeAssumption *entry =
         &compiler->assumptions[compiler->assumption_count++];
     entry->source_name = name;
@@ -2924,6 +2958,28 @@ static Atom *sj_native_rules(SjNativeCompiler *compiler) {
         rules = sj_native_rule_cons(a, compiler->family_name, patterns, rhs,
                                     rules);
     }
+    if (!compiler->identity) return rules;
+    /* `Holds (eq@A x y) ↦ Id A x y`, for every equation instance in view. */
+    for (size_t i = 0u; i < st->instance_count; i++) {
+        const char *name = atom_name_cstr(st->instance_names[i]);
+        Atom *type = st->instance_types[i];
+        if (!name || strncmp(name, "eq@", 3u) != 0 ||
+            !sj_is_expr(type, "Pi", 3u) ||
+            !sj_is_expr(type->expr.elems[2], "Pi", 3u))
+            continue;
+        Atom *carrier = sj_to_kernel(a, type->expr.elems[1]);
+        if (!carrier) return NULL;
+        Atom *code = sj_expr3(
+            a, "App",
+            sj_expr3(a, "App", sj_expr2(a, "DeclConst", st->instance_names[i]),
+                     p0),
+            p1);
+        Atom *patterns = atom_expr(a, (Atom *[]){code}, 1u);
+        Atom *rhs = atom_expr(a, (Atom *[]){sj_sym(a, "Id"), carrier, p0, p1},
+                              4u);
+        rules = sj_native_rule_cons(a, compiler->family_name, patterns, rhs,
+                                    rules);
+    }
     return rules;
 }
 
@@ -2989,7 +3045,8 @@ static Atom *sj_set_native_proof_with_state(
                            : sj_undetermined(a, judgment, st->failure);
 
     char family_spelling[48];
-    snprintf(family_spelling, sizeof family_spelling, "__cetta_holds_%.24s",
+    snprintf(family_spelling, sizeof family_spelling,
+             CETTA_PRIME_HOLDS_IDENTITY_PREFIX "%.24s",
              sj_signature_digest());
     SjNativeCompiler compiler = {
         .proof = st,
@@ -3114,19 +3171,307 @@ static Atom *sj_set_native_proof(Arena *a, Space *space, Atom *judgment,
     return sj_set_native_proof_with_state(a, judgment, name, &st);
 }
 
-/* Apply a checked native proof to a dependent consumer. The proof package's
- * context is stable; the consumer may extend it with current formed declarations
- * and their reachable rules. The package is data supplied by the caller, so it is never
- * trusted by shape or digest alone: the retained source proof is compiled
- * and kernel-checked again in the current theory, and every package field
- * must agree before the consumer application is checked.  The accepted
- * result retains that application and its dependent type. It is a current-theory
- * observation, not a standalone admission certificate for the consumer. The explicit
- * normalization mode additionally computes the value and type using the
- * existing conversion engine and independently checks the result. */
-static Atom *sj_set_native_use(Arena *a, Space *space, Atom *judgment,
-                               Atom *package, Atom *consumer,
-                               bool normalize, bool limited, uint64_t steps) {
+/* ------------------------------------------------------------------------ */
+/* Linking under a named interpretation.                                      */
+/*                                                                            */
+/* A native package keeps the source's assumptions as declared constants.    */
+/* `(set:native-link identity package)` rechecks the package, replaces every  */
+/* assumption by a realization, and asks the regular kernel to check each     */
+/* realization at its assumption's type and the linked term at the package's */
+/* type, in the package context without the assumption declarations.  The    */
+/* interpretation is named and opt-in: under `identity` the family at a       */
+/* represented equation `eq@A x y` computes to `Id A x y`.  A package that is */
+/* not linked keeps the represented family unchanged.                         */
+/*                                                                            */
+/* The realization is chosen by the assumption's proposition:                 */
+/*   substitution  all@(A→prop) (λP. all@A (λx. all@A (λy.                    */
+/*                   eq@A x y ⇒ P x ⇒ P y)))             identity elimination */
+/*   the principle T-ind of an inductive type T          its recursor T-rec   */
+/*   an equation   all@A1 (λx1. … eq@B l r)              λx1 …. refl l        */
+/* An equation is realized by reflexivity exactly when the kernel accepts    */
+/* it, that is, when its two sides are definitionally equal: reflexivity     */
+/* itself, a defining equation, eta.  The kernel judges every realization.   */
+/* An assumption without one stays declared, and the result names it.        */
+/*                                                                            */
+/* A theory that declares the reading, `(set:interpret &self identity)`, has */
+/* its packages linked automatically wherever they are used.                  */
+/* ------------------------------------------------------------------------ */
+
+enum {
+    SJ_NATIVE_LINKED_LEN = 8,
+    SJ_NATIVE_LINKED_INTERPRETATION = 1,
+    SJ_NATIVE_LINKED_PACKAGE = 2,
+    SJ_NATIVE_LINKED_TERM = 3,
+    SJ_NATIVE_LINKED_TYPE = 4,
+    SJ_NATIVE_LINKED_CONTEXT = 5,
+    SJ_NATIVE_LINKED_RULES = 6,
+    SJ_NATIVE_LINKED_REALIZATIONS = 7
+};
+
+static Atom *sj_link_index(Arena *a, uint64_t index) {
+    return sj_expr2(a, "idx", atom_int(a, (int64_t)index));
+}
+
+static bool sj_link_is_index(Atom *t, uint64_t expected) {
+    uint64_t index = 0u;
+    return sj_intrinsic_index(t, &index) && index == expected;
+}
+
+/* No index of `t` escapes the binders around it. */
+static bool sj_link_closed(Atom *t, uint64_t depth) {
+    uint64_t index = 0u;
+    if (sj_intrinsic_index(t, &index)) return index < depth;
+    if (sj_is_leaf(t)) return true;
+    for (CettaExprIndex i = 1u; i < t->expr.len; i++)
+        if (!sj_link_closed(t->expr.elems[i],
+                            sj_binds_body(t, i) ? depth + 1u : depth))
+            return false;
+    return true;
+}
+
+/* A declared constant whose spelling starts with `prefix`, such as `eq@A`. */
+static bool sj_link_instance(Atom *t, const char *prefix) {
+    if (!sj_is_expr(t, "DeclConst", 2u) || !t->expr.elems[1] ||
+        t->expr.elems[1]->kind != ATOM_SYMBOL)
+        return false;
+    const char *spelling = atom_name_cstr(t->expr.elems[1]);
+    return spelling && strncmp(spelling, prefix, strlen(prefix)) == 0;
+}
+
+/* `all@A (λ x : A. body)`. */
+static bool sj_link_universal(Atom *t, Atom **carrier, Atom **body) {
+    if (!sj_is_expr(t, "App", 3u) || !sj_link_instance(t->expr.elems[1], "all@") ||
+        !sj_is_expr(t->expr.elems[2], "Lam", 3u))
+        return false;
+    *carrier = t->expr.elems[2]->expr.elems[1];
+    *body = t->expr.elems[2]->expr.elems[2];
+    return true;
+}
+
+/* `imp premise conclusion`. */
+static bool sj_link_implication(Atom *t, Atom **premise, Atom **conclusion) {
+    if (!sj_is_expr(t, "App", 3u) || !sj_is_expr(t->expr.elems[1], "App", 3u))
+        return false;
+    Atom *head = t->expr.elems[1]->expr.elems[1];
+    if (!sj_is_expr(head, "DeclConst", 2u) ||
+        !atom_is_symbol(head->expr.elems[1], "imp"))
+        return false;
+    *premise = t->expr.elems[1]->expr.elems[2];
+    *conclusion = t->expr.elems[2];
+    return true;
+}
+
+/* `eq@A (idx left) (idx right)`. */
+static bool sj_link_equation(Atom *t, uint64_t left, uint64_t right) {
+    return sj_is_expr(t, "App", 3u) && sj_is_expr(t->expr.elems[1], "App", 3u) &&
+           sj_link_instance(t->expr.elems[1]->expr.elems[1], "eq@") &&
+           sj_link_is_index(t->expr.elems[1]->expr.elems[2], left) &&
+           sj_link_is_index(t->expr.elems[2], right);
+}
+
+/* `(idx function) (idx argument)`. */
+static bool sj_link_applied(Atom *t, uint64_t function, uint64_t argument) {
+    return sj_is_expr(t, "App", 3u) &&
+           sj_link_is_index(t->expr.elems[1], function) &&
+           sj_link_is_index(t->expr.elems[2], argument);
+}
+
+/* all@A1 (λ x1. … all@An (λ xn. eq@B l r))  ↦  λ x1 … xn. refl l
+ * A candidate only: it realizes the equation when the kernel accepts it. */
+static Atom *sj_link_reflexivity(Arena *a, Atom *proposition) {
+    Atom *carriers[32];
+    size_t depth = 0u;
+    Atom *carrier = NULL, *body = NULL;
+    while (sj_link_universal(proposition, &carrier, &body)) {
+        if (depth == 32u) return NULL;
+        carriers[depth++] = carrier;
+        proposition = body;
+    }
+    if (!sj_is_expr(proposition, "App", 3u) ||
+        !sj_is_expr(proposition->expr.elems[1], "App", 3u) ||
+        !sj_link_instance(proposition->expr.elems[1]->expr.elems[1], "eq@"))
+        return NULL;
+    Atom *realization =
+        sj_expr2(a, "Refl", proposition->expr.elems[1]->expr.elems[2]);
+    for (size_t i = depth; i > 0u; i--)
+        realization = sj_expr3(a, "Lam", carriers[i - 1u], realization);
+    return realization;
+}
+
+/* all@(A→prop) (λ P. all@A (λ x. all@A (λ y. eq@A x y ⇒ P x ⇒ P y)))  ↦
+ *   λ P x y (e : Holds (eq@A x y)) (h : Holds (P x)).
+ *     id:eliminate A x (λ y' (p : Id A x y'). Holds (P y')) h y e */
+static Atom *sj_link_substitution(Arena *a, Atom *family, Atom *proposition) {
+    Atom *predicate = NULL, *outer = NULL, *carrier = NULL, *middle = NULL;
+    Atom *endpoint_carrier = NULL, *matrix = NULL;
+    if (!sj_link_universal(proposition, &predicate, &outer) ||
+        !sj_is_expr(predicate, "Pi", 3u) ||
+        !sj_link_universal(outer, &carrier, &middle) ||
+        !sj_link_universal(middle, &endpoint_carrier, &matrix) ||
+        !atom_eq(carrier, endpoint_carrier) ||
+        !atom_eq(predicate->expr.elems[1], carrier) ||
+        !sj_link_closed(carrier, 0u))
+        return NULL;
+    Atom *equation = NULL, *transport = NULL;
+    Atom *at_point = NULL, *at_endpoint = NULL;
+    if (!sj_link_implication(matrix, &equation, &transport) ||
+        !sj_link_equation(equation, 1u, 0u) ||
+        !sj_link_implication(transport, &at_point, &at_endpoint) ||
+        !sj_link_applied(at_point, 2u, 1u) ||
+        !sj_link_applied(at_endpoint, 2u, 0u))
+        return NULL;
+    Atom *holds = sj_expr2(a, "DeclConst", family);
+    Atom *path_type = atom_expr(
+        a, (Atom *[]){sj_sym(a, "Id"), carrier, sj_link_index(a, 4u),
+                      sj_link_index(a, 0u)}, 4u);
+    Atom *motive = sj_expr3(
+        a, "Lam", carrier,
+        sj_expr3(a, "Lam", path_type,
+                 sj_expr3(a, "App", holds,
+                          sj_expr3(a, "App", sj_link_index(a, 6u),
+                                   sj_link_index(a, 1u)))));
+    Atom *arguments[6] = {carrier, sj_link_index(a, 3u), motive,
+                          sj_link_index(a, 0u), sj_link_index(a, 2u),
+                          sj_link_index(a, 1u)};
+    Atom *elimination = sj_expr2(a, "DeclConst", sj_sym(a, "id:eliminate"));
+    for (size_t i = 0u; i < 6u; i++)
+        elimination = sj_expr3(a, "App", elimination, arguments[i]);
+    Atom *hypothesis = sj_expr3(
+        a, "App", holds,
+        sj_expr3(a, "App", sj_link_index(a, 3u), sj_link_index(a, 2u)));
+    return sj_expr3(a, "Lam", predicate,
+           sj_expr3(a, "Lam", carrier,
+           sj_expr3(a, "Lam", carrier,
+           sj_expr3(a, "Lam", sj_expr3(a, "App", holds, equation),
+           sj_expr3(a, "Lam", hypothesis, elimination)))));
+}
+
+/* The principle T-ind of an inductive type T,
+ *   all@(T→prop) (λ P. c1 ⇒ … ⇒ ck ⇒ all@T (λ x. P x))  ↦
+ *   λ P (m1 : Holds c1) … (mk : Holds ck) (x : T).
+ *     T-rec (λ m : T. Holds (P m)) m1 … mk x
+ * The principle's name and the recursor are the ones `set:inductive`
+ * generates for T. */
+static Atom *sj_link_induction(SjProofState *st, Atom *family,
+                               Atom *source_name, Atom *proposition) {
+    Arena *a = st->arena;
+    Atom *predicate = NULL, *body = NULL;
+    if (!sj_link_universal(proposition, &predicate, &body) ||
+        !sj_is_expr(predicate, "Pi", 3u) ||
+        !sj_is_expr(predicate->expr.elems[1], "DeclConst", 2u))
+        return NULL;
+    Atom *carrier = predicate->expr.elems[1];
+    const char *type_spelling = atom_name_cstr(carrier->expr.elems[1]);
+    if (!type_spelling) return NULL;
+    size_t capacity = strlen(type_spelling) + 5u;
+    char *spelling = arena_alloc(a, capacity);
+    snprintf(spelling, capacity, "%s-ind", type_spelling);
+    if (!atom_is_symbol_named(source_name, spelling)) return NULL;
+    snprintf(spelling, capacity, "%s-rec", type_spelling);
+    Atom *recursor = sj_sym(a, spelling);
+    if (!sj_constant_type(st, recursor)) return NULL;
+    Atom *cases[64];
+    size_t count = 0u;
+    Atom *premise = NULL, *rest = NULL;
+    while (sj_link_implication(body, &premise, &rest)) {
+        if (count == 64u) return NULL;
+        cases[count++] = premise;
+        body = rest;
+    }
+    Atom *final_carrier = NULL, *final_body = NULL;
+    if (!sj_link_universal(body, &final_carrier, &final_body) ||
+        !atom_eq(final_carrier, carrier) ||
+        !sj_link_applied(final_body, 1u, 0u))
+        return NULL;
+    Atom *holds = sj_expr2(a, "DeclConst", family);
+    Atom *motive = sj_expr3(
+        a, "Lam", carrier,
+        sj_expr3(a, "App", holds,
+                 sj_expr3(a, "App", sj_link_index(a, count + 2u),
+                          sj_link_index(a, 0u))));
+    Atom *call = sj_expr3(a, "App", sj_expr2(a, "DeclConst", recursor), motive);
+    for (size_t i = 1u; i <= count; i++)
+        call = sj_expr3(a, "App", call, sj_link_index(a, count + 1u - i));
+    call = sj_expr3(a, "App", call, sj_link_index(a, 0u));
+    Atom *realization = sj_expr3(a, "Lam", carrier, call);
+    for (size_t i = count; i > 0u; i--) {
+        /* The case sits under `P` in the principle and under `P m1 … m(i-1)`
+         * in the realization. */
+        Atom *domain = sj_shift(a, cases[i - 1u], 0u, (int64_t)(i - 1u));
+        if (!domain) return NULL;
+        realization = sj_expr3(a, "Lam", sj_expr3(a, "App", holds, domain),
+                               realization);
+    }
+    return sj_expr3(a, "Lam", predicate, realization);
+}
+
+/* The term with each assumption constant replaced by its closed realization. */
+static Atom *sj_link_replace(Arena *a, Atom *t, Atom **constants,
+                             Atom **realizations, size_t count) {
+    if (!t) return NULL;
+    if (sj_is_expr(t, "DeclConst", 2u)) {
+        for (size_t i = 0u; i < count; i++)
+            if (atom_eq(t->expr.elems[1], constants[i])) return realizations[i];
+        return t;
+    }
+    if (sj_is_leaf(t)) return t;
+    Atom *children[8] = {0};
+    for (CettaExprIndex i = 1u; i < t->expr.len; i++) {
+        children[i] = sj_link_replace(a, t->expr.elems[i], constants,
+                                      realizations, count);
+        if (!children[i]) return NULL;
+    }
+    return sj_rebuild(a, t, children);
+}
+
+/* The type a context declares for a constant. */
+static Atom *sj_link_declared(Atom *context, Atom *constant) {
+    for (Atom *entry = context; sj_is_expr(entry, "PrimeCtxDecl", 4u);
+         entry = entry->expr.elems[3]) {
+        Atom *key = entry->expr.elems[1];
+        if (sj_is_expr(key, "DeclConst", 2u) && atom_eq(key->expr.elems[1], constant))
+            return entry->expr.elems[2];
+    }
+    return NULL;
+}
+
+/* The context without the declarations of the given constants. */
+static Atom *sj_link_context(Arena *a, Atom *context, Atom **constants,
+                             size_t count) {
+    if (!sj_is_expr(context, "PrimeCtxDecl", 4u)) return context;
+    Atom *rest = sj_link_context(a, context->expr.elems[3], constants, count);
+    Atom *key = context->expr.elems[1];
+    for (size_t i = 0u; i < count; i++)
+        if (sj_is_expr(key, "DeclConst", 2u) &&
+            atom_eq(key->expr.elems[1], constants[i]))
+            return rest;
+    if (rest == context->expr.elems[3]) return context;
+    return atom_expr(a, (Atom *[]){context->expr.elems[0], key,
+                                   context->expr.elems[2], rest}, 4u);
+}
+
+/* A declined kernel check.  A realization the kernel does not accept leaves
+ * the link unestablished: another realization could still succeed. */
+static Atom *sj_link_declined(Arena *a, Atom *judgment,
+                              CettaPrimeRegularKernelResult result,
+                              Atom *evidence_head, Atom *subject) {
+    Atom *reason = sj_sym(a, result.reason ? result.reason
+                                           : "native-kernel-declined");
+    Atom *evidence = subject
+        ? atom_expr3(a, evidence_head, subject, reason)
+        : atom_expr2(a, evidence_head, reason);
+    if (result.status == CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED)
+        return sj_incomplete(a, judgment, evidence);
+    return sj_undetermined(a, judgment, evidence);
+}
+
+static Atom *sj_set_native_link_with_state(Arena *a, Atom *judgment,
+                                           Atom *interpretation,
+                                           Atom *package, SjProofState *st) {
+    if (!atom_is_symbol(interpretation, "identity"))
+        return sj_undetermined(a, judgment,
+                               sj_expr2(a, "set:native-link-interpretation",
+                                        interpretation));
     if (!sj_is_expr(package, "SetNativeProofV1", SJ_NATIVE_PACKAGE_LEN))
         return sj_refuted(a, judgment,
                           sj_expr1(a, "set:native-package-syntax"));
@@ -3140,16 +3485,8 @@ static Atom *sj_set_native_use(Arena *a, Space *space, Atom *judgment,
         strcmp(digest->ground.sval, sj_signature_digest()) != 0)
         return sj_undetermined(a, judgment,
                                sj_expr1(a, "set:native-package-signature"));
-
-    SjSetEnv *env = sj_env(space);
-    if (!env)
-        return sj_undetermined(a, judgment,
-                               sj_expr1(a, "set:signature-unavailable"));
-    SjProofState st;
-    sj_proof_state_init(&st, a, space, env, limited, steps, false, true);
-    Atom *proof_query = sj_expr2(a, "set:native-proof", name);
     Atom *proof_verdict = sj_set_native_proof_with_state(
-        a, proof_query, name, &st);
+        a, sj_expr2(a, "set:native-proof", name), name, st);
     Atom *proof_evidence = NULL;
     SjStatus proof_status = sj_verdict_status(proof_verdict, &proof_evidence);
     if (proof_status != SJ_STATUS_ESTABLISHED)
@@ -3160,11 +3497,272 @@ static Atom *sj_set_native_use(Arena *a, Space *space, Atom *judgment,
                                sj_expr1(a, "set:native-package-recheck"));
     Atom *current = proof_evidence->expr.elems[1];
     if (!atom_eq(package, current))
-        return sj_undetermined(a, judgment,
-                               sj_expr1(a, "set:native-package-changed"));
+        return sj_refuted(a, judgment,
+                          sj_expr1(a, "set:native-package-changed"));
 
     Atom *term = current->expr.elems[SJ_NATIVE_PACKAGE_TERM];
+    Atom *type = current->expr.elems[SJ_NATIVE_PACKAGE_TYPE];
     Atom *context = current->expr.elems[SJ_NATIVE_PACKAGE_CONTEXT];
+    Atom *assumptions = current->expr.elems[SJ_NATIVE_PACKAGE_ASSUMPTIONS];
+    if (!sj_is_expr(type, "App", 3u) ||
+        !sj_is_expr(type->expr.elems[1], "DeclConst", 2u) ||
+        !assumptions || assumptions->kind != ATOM_EXPR)
+        return sj_undetermined(a, judgment,
+                               sj_expr1(a, "set:native-link-package"));
+    Atom *family = type->expr.elems[1]->expr.elems[1];
+    size_t count = assumptions->expr.len;
+    size_t slots = count ? count : 1u;
+    Atom **constants = arena_alloc(a, sizeof(Atom *) * slots);
+    Atom **declared = arena_alloc(a, sizeof(Atom *) * slots);
+    Atom **realizations = arena_alloc(a, sizeof(Atom *) * slots);
+    Atom **rows = arena_alloc(a, sizeof(Atom *) * slots);
+    bool *candidate = arena_alloc(a, sizeof(bool) * slots);
+    for (size_t i = 0u; i < count; i++) {
+        Atom *row = assumptions->expr.elems[i];
+        if (!row || row->kind != ATOM_EXPR || row->expr.len != 3u)
+            return sj_undetermined(a, judgment,
+                                   sj_expr1(a, "set:native-link-package"));
+        Atom *source_name = row->expr.elems[0];
+        constants[i] = row->expr.elems[2];
+        declared[i] = sj_link_declared(context, constants[i]);
+        if (!sj_is_expr(declared[i], "App", 3u) ||
+            !atom_eq(declared[i]->expr.elems[1], type->expr.elems[1]))
+            return sj_undetermined(a, judgment,
+                                   sj_expr2(a, "set:native-link-assumption",
+                                            source_name));
+        Atom *proposition = declared[i]->expr.elems[2];
+        Atom *realization = sj_link_substitution(a, family, proposition);
+        if (!realization)
+            realization = sj_link_induction(st, family, source_name, proposition);
+        candidate[i] = false;
+        if (!realization) {
+            realization = sj_link_reflexivity(a, proposition);
+            candidate[i] = realization != NULL;
+        }
+        if (realization && !sj_link_closed(realization, 0u)) {
+            realization = NULL;
+            candidate[i] = false;
+        }
+        realizations[i] = realization;
+    }
+    size_t package_instances = st->instance_count;
+    for (size_t i = 0u; i < count; i++)
+        if (realizations[i]) sj_declare_kernel_mentioned(st, realizations[i], NULL);
+    if (!sj_declare_rule_dependencies(st, NULL))
+        return sj_undetermined(a, judgment,
+                               sj_expr1(a, "set:native-link-dependencies"));
+    for (size_t i = package_instances; i < st->instance_count; i++) {
+        Atom *declaration = sj_to_kernel(a, st->instance_types[i]);
+        if (!declaration)
+            return sj_undetermined(a, judgment,
+                                   sj_expr1(a, "set:native-link-declaration"));
+        context = atom_expr(
+            a, (Atom *[]){sj_sym(a, "PrimeCtxDecl"),
+                          sj_expr2(a, "DeclConst", st->instance_names[i]),
+                          declaration, context}, 4u);
+    }
+    SjNativeCompiler link_compiler = {
+        .proof = st,
+        .family_name = family,
+        .identity = true,
+    };
+    Atom *rules = sj_native_rules(&link_compiler);
+    if (!rules)
+        return sj_undetermined(a, judgment,
+                               sj_expr1(a, "set:native-decoder-rules"));
+    /* An equation is realized by reflexivity when its sides are
+     * definitionally equal; otherwise the assumption stays. */
+    cetta_prime_regular_kernel_rules_set(rules);
+    for (size_t i = 0u; i < count; i++) {
+        if (!candidate[i]) continue;
+        CettaPrimeRegularKernelResult tried =
+            cetta_prime_regular_kernel_check_intrinsic(
+                a, context, realizations[i], declared[i], &st->budget);
+        if (tried.status == CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED) {
+            cetta_prime_regular_kernel_rules_set(NULL);
+            return sj_link_declined(a, judgment, tried,
+                                    sj_sym(a, "set:native-link-realization"),
+                                    sj_expr2(a, "DeclConst", constants[i]));
+        }
+        if (tried.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
+            realizations[i] = NULL;
+    }
+    cetta_prime_regular_kernel_rules_set(NULL);
+    /* An assumption without a realization stays declared, and is named in
+     * the result: extensionality, choice, a theory's own axioms. */
+    for (size_t i = 0u; i < count; i++) {
+        Atom *source_name = assumptions->expr.elems[i]->expr.elems[0];
+        rows[i] = realizations[i]
+            ? atom_expr(a, (Atom *[]){sj_sym(a, "Realized"), source_name,
+                                      constants[i], realizations[i]}, 4u)
+            : atom_expr(a, (Atom *[]){sj_sym(a, "Assumed"), source_name,
+                                      constants[i]}, 3u);
+    }
+    /* The realized assumptions, in order. */
+    size_t realized = 0u;
+    for (size_t i = 0u; i < count; i++) {
+        if (!realizations[i]) continue;
+        constants[realized] = constants[i];
+        declared[realized] = declared[i];
+        realizations[realized] = realizations[i];
+        realized++;
+    }
+
+    /* The context without the realized assumptions. */
+    Atom *linked_context = sj_link_context(a, context, constants, realized);
+    Atom *linked = sj_link_replace(a, term, constants, realizations, realized);
+    if (!linked)
+        return sj_undetermined(a, judgment, sj_expr1(a, "set:native-link-term"));
+    cetta_prime_regular_kernel_rules_set(rules);
+    for (size_t i = 0u; i < realized; i++) {
+        CettaPrimeRegularKernelResult realization =
+            cetta_prime_regular_kernel_check_intrinsic(
+                a, linked_context, realizations[i], declared[i], &st->budget);
+        if (realization.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
+            cetta_prime_regular_kernel_rules_set(NULL);
+            return sj_link_declined(a, judgment, realization,
+                                    sj_sym(a, "set:native-link-realization"),
+                                    sj_expr2(a, "DeclConst", constants[i]));
+        }
+    }
+    CettaPrimeRegularKernelResult checked =
+        cetta_prime_regular_kernel_check_intrinsic(
+            a, linked_context, linked, type, &st->budget);
+    cetta_prime_regular_kernel_rules_set(NULL);
+    if (checked.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
+        return sj_link_declined(a, judgment, checked,
+                                sj_sym(a, "set:native-link-kernel"), NULL);
+    Atom *items[SJ_NATIVE_LINKED_LEN] = {
+        sj_sym(a, "SetNativeLinkedV1"), interpretation, current, linked, type,
+        linked_context, rules, atom_expr(a, rows, (CettaExprLen)count)};
+    return sj_established(
+        a, judgment,
+        sj_expr2(a, "PrimeScopedValue",
+                 atom_expr(a, items, SJ_NATIVE_LINKED_LEN)));
+}
+
+/* Whether the theory declares the named reading. */
+static bool sj_interpretation_declared(Arena *a, Space *space,
+                                       const char *interpretation) {
+    Atom *pattern = sj_expr2(a, "set:interpretation", sj_sym(a, interpretation));
+    CettaIndex *candidates = NULL;
+    CettaIndex count = space_match_candidates64(space, pattern, &candidates);
+    bool declared = false;
+    for (CettaIndex i = 0u; i < count && !declared; i++) {
+        Atom *atom = space_match_candidate_at64(space, candidates[i]);
+        declared = sj_is_expr(atom, "set:interpretation", 2u) &&
+                   atom_is_symbol(atom->expr.elems[1], interpretation);
+    }
+    free(candidates);
+    return declared;
+}
+
+static Atom *sj_set_native_link(Arena *a, Space *space, Atom *judgment,
+                                Atom *interpretation, Atom *package,
+                                bool limited, uint64_t steps) {
+    SjSetEnv *env = sj_env(space);
+    if (!env)
+        return sj_undetermined(a, judgment,
+                               sj_expr1(a, "set:signature-unavailable"));
+    SjProofState st;
+    sj_proof_state_init(&st, a, space, env, limited, steps, false, true);
+    return sj_set_native_link_with_state(a, judgment, interpretation, package,
+                                         &st);
+}
+
+/* Apply a checked native proof to a dependent consumer. The proof package's
+ * context is stable; the consumer may extend it with current formed declarations
+ * and their reachable rules. The package is data supplied by the caller, so it is never
+ * trusted by shape or digest alone: the retained source proof is compiled
+ * and kernel-checked again in the current theory, and every package field
+ * must agree before the consumer application is checked.  The accepted
+ * result retains that application and its dependent type. It is a current-theory
+ * observation, not a standalone admission certificate for the consumer. The explicit
+ * normalization mode additionally computes the value and type using the
+ * existing conversion engine and independently checks the result. */
+static Atom *sj_set_native_use(Arena *a, Space *space, Atom *judgment,
+                               Atom *package, Atom *consumer,
+                               bool normalize, bool limited, uint64_t steps) {
+    /* A linked package is used through its link: the link is recomputed from
+     * the package it names, and the consumer is checked under the link's
+     * interpretation.  In a theory that declares the identity reading, a
+     * package is linked under it automatically. */
+    bool linked = sj_is_expr(package, "SetNativeLinkedV1", SJ_NATIVE_LINKED_LEN);
+    bool automatic = !linked &&
+        sj_is_expr(package, "SetNativeProofV1", SJ_NATIVE_PACKAGE_LEN) &&
+        sj_interpretation_declared(a, space, "identity");
+    Atom *native = linked ? package->expr.elems[SJ_NATIVE_LINKED_PACKAGE] : package;
+    if (!sj_is_expr(native, "SetNativeProofV1", SJ_NATIVE_PACKAGE_LEN))
+        return sj_refuted(a, judgment,
+                          sj_expr1(a, "set:native-package-syntax"));
+    Atom *name = native->expr.elems[SJ_NATIVE_PACKAGE_NAME];
+    if (!name || name->kind != ATOM_SYMBOL)
+        return sj_refuted(a, judgment,
+                          sj_expr1(a, "set:native-package-name"));
+    Atom *digest = native->expr.elems[SJ_NATIVE_PACKAGE_SIGNATURE];
+    if (!digest || digest->kind != ATOM_GROUNDED ||
+        digest->ground.gkind != GV_STRING || !digest->ground.sval ||
+        strcmp(digest->ground.sval, sj_signature_digest()) != 0)
+        return sj_undetermined(a, judgment,
+                               sj_expr1(a, "set:native-package-signature"));
+
+    SjSetEnv *env = sj_env(space);
+    if (!env)
+        return sj_undetermined(a, judgment,
+                               sj_expr1(a, "set:signature-unavailable"));
+    SjProofState st;
+    sj_proof_state_init(&st, a, space, env, limited, steps, false, true);
+    Atom *current = NULL;
+    Atom *term = NULL;
+    Atom *context = NULL;
+    Atom *proof_type = NULL;
+    if (linked || automatic) {
+        Atom *interpretation = linked
+            ? package->expr.elems[SJ_NATIVE_LINKED_INTERPRETATION]
+            : sj_sym(a, "identity");
+        Atom *link_verdict = sj_set_native_link_with_state(
+            a, sj_expr3(a, "set:native-link", interpretation, native),
+            interpretation, native, &st);
+        Atom *link_evidence = NULL;
+        SjStatus link_status = sj_verdict_status(link_verdict, &link_evidence);
+        if (link_status != SJ_STATUS_ESTABLISHED)
+            return sj_verdict(a, sj_status_name(link_status), judgment,
+                              link_evidence);
+        if (!sj_is_expr(link_evidence, "PrimeScopedValue", 2u))
+            return sj_undetermined(a, judgment,
+                                   sj_expr1(a, "set:native-link-recheck"));
+        current = link_evidence->expr.elems[1];
+        /* The link rechecked the package it names; a supplied link must also
+         * agree with the one just computed. */
+        if (linked && !atom_eq(package, current))
+            return sj_refuted(a, judgment,
+                              sj_expr1(a, "set:native-link-changed"));
+        term = current->expr.elems[SJ_NATIVE_LINKED_TERM];
+        context = current->expr.elems[SJ_NATIVE_LINKED_CONTEXT];
+        proof_type = current->expr.elems[SJ_NATIVE_LINKED_TYPE];
+    } else {
+        Atom *proof_query = sj_expr2(a, "set:native-proof", name);
+        Atom *proof_verdict = sj_set_native_proof_with_state(
+            a, proof_query, name, &st);
+        Atom *proof_evidence = NULL;
+        SjStatus proof_status = sj_verdict_status(proof_verdict, &proof_evidence);
+        if (proof_status != SJ_STATUS_ESTABLISHED)
+            return sj_verdict(a, sj_status_name(proof_status), judgment,
+                              proof_evidence);
+        if (!sj_is_expr(proof_evidence, "PrimeScopedValue", 2u))
+            return sj_undetermined(a, judgment,
+                                   sj_expr1(a, "set:native-package-recheck"));
+        current = proof_evidence->expr.elems[1];
+        /* A package that disagrees with the proof just rechecked is not an
+         * open question. The use is rejected. */
+        if (!atom_eq(package, current))
+            return sj_refuted(a, judgment,
+                              sj_expr1(a, "set:native-package-changed"));
+        term = current->expr.elems[SJ_NATIVE_PACKAGE_TERM];
+        context = current->expr.elems[SJ_NATIVE_PACKAGE_CONTEXT];
+        proof_type = current->expr.elems[SJ_NATIVE_PACKAGE_TYPE];
+    }
+
     size_t proof_instances = st.instance_count;
     sj_declare_kernel_mentioned(&st, consumer, NULL);
     if (!sj_declare_rule_dependencies(&st, NULL))
@@ -3192,7 +3790,6 @@ static Atom *sj_set_native_use(Arena *a, Space *space, Atom *judgment,
     }
     /* Read the family from the freshly checked package, never from a caller's
      * invented name. Decoder rules must also cover new consumer type instances. */
-    Atom *proof_type = current->expr.elems[SJ_NATIVE_PACKAGE_TYPE];
     if (!sj_is_expr(proof_type, "App", 3u) ||
         !sj_is_expr(proof_type->expr.elems[1], "DeclConst", 2u))
         return sj_undetermined(a, judgment,
@@ -3200,6 +3797,7 @@ static Atom *sj_set_native_use(Arena *a, Space *space, Atom *judgment,
     SjNativeCompiler consumer_compiler = {
         .proof = &st,
         .family_name = proof_type->expr.elems[1]->expr.elems[1],
+        .identity = linked || automatic,
     };
     Atom *rules = sj_native_rules(&consumer_compiler);
     if (!rules)
@@ -3554,6 +4152,8 @@ static Atom *sj_set_inductive(Arena *a, Space *space, Atom *judgment,
     Atom *universe = judgment->expr.elems[2];
     if (!type || type->kind != ATOM_SYMBOL)
         return sj_refuted(a, judgment, sj_expr1(a, "set:inductive-name"));
+    if (prime_scoped_judgment_reserved_name(type))
+        return sj_refuted(a, judgment, sj_expr2(a, "set:reserved-name", type));
     if (!sj_is_expr(universe, "u", 2u))
         return sj_refuted(a, judgment, sj_expr2(a, "set:inductive-universe", universe));
     SjSetEnv *env = sj_env(space);
@@ -3573,6 +4173,8 @@ static Atom *sj_set_inductive(Arena *a, Space *space, Atom *judgment,
             return sj_refuted(a, judgment, sj_expr2(a, "set:inductive-constructor", c));
         Atom *name = c->expr.elems[1];
         Atom *ctype = c->expr.elems[2];
+        if (prime_scoped_judgment_reserved_name(name))
+            return sj_refuted(a, judgment, sj_expr2(a, "set:reserved-name", name));
         for (size_t j = 0u; j < i; j++)
             if (atom_eq(names[j], name))
                 return sj_refuted(a, judgment, sj_expr2(a, "set:inductive-duplicate", name));
@@ -3946,6 +4548,8 @@ static Atom *sj_set_define(Arena *a, Space *space, Atom *judgment,
     Atom *type = judgment->expr.elems[2];
     if (!name || name->kind != ATOM_SYMBOL)
         return sj_refuted(a, judgment, sj_expr1(a, "set:define-name"));
+    if (prime_scoped_judgment_reserved_name(name))
+        return sj_refuted(a, judgment, sj_expr2(a, "set:reserved-name", name));
     SjSetEnv *env = sj_env(space);
     if (!env)
         return sj_undetermined(a, judgment, sj_expr1(a, "set:signature-unavailable"));
@@ -4654,6 +5258,9 @@ static Atom *sj_judge(Arena *a, Space *space, Atom *judgment,
         Atom *axiom_name = judgment->expr.elems[1];
         if (!axiom_name || axiom_name->kind != ATOM_SYMBOL)
             return sj_refuted(a, judgment, sj_expr1(a, "set:axiom-name"));
+        if (prime_scoped_judgment_reserved_name(axiom_name))
+            return sj_refuted(a, judgment,
+                              sj_expr2(a, "set:reserved-name", axiom_name));
         Atom *check = sj_set_term_judgment(
             a, space,
             sj_expr3(a, "set:check", judgment->expr.elems[2], sj_sym(a, "prop")),
@@ -4672,6 +5279,9 @@ static Atom *sj_judge(Arena *a, Space *space, Atom *judgment,
         Atom *theorem_name = judgment->expr.elems[1];
         if (!theorem_name || theorem_name->kind != ATOM_SYMBOL)
             return sj_refuted(a, judgment, sj_expr1(a, "set:theorem-name"));
+        if (prime_scoped_judgment_reserved_name(theorem_name))
+            return sj_refuted(a, judgment,
+                              sj_expr2(a, "set:reserved-name", theorem_name));
         return sj_set_theorem(a, space, judgment, theorem_name,
                               judgment->expr.elems[2], judgment->expr.elems[3],
                               steps_limited, steps);
@@ -4698,6 +5308,26 @@ static Atom *sj_judge(Arena *a, Space *space, Atom *judgment,
                                  judgment->expr.elems[2],
                                  head == g_builtin_syms.set_colon_native_normalize,
                                  steps_limited, steps);
+    }
+    if (head == g_builtin_syms.set_colon_interpret) {
+        if (len != 2u)
+            return sj_refuted(a, judgment, sj_expr1(a, "set:interpret-arity"));
+        Atom *interpretation = judgment->expr.elems[1];
+        if (!atom_is_symbol(interpretation, "identity"))
+            return sj_undetermined(a, judgment,
+                                   sj_expr2(a, "set:interpret-unknown",
+                                            interpretation));
+        return sj_established(
+            a, judgment,
+            sj_expr2(a, "SetPublish",
+                     sj_expr2(a, "set:interpretation", interpretation)));
+    }
+    if (head == g_builtin_syms.set_colon_native_link) {
+        if (len != 3u)
+            return sj_refuted(a, judgment,
+                              sj_expr1(a, "set:native-link-arity"));
+        return sj_set_native_link(a, space, judgment, judgment->expr.elems[1],
+                                  judgment->expr.elems[2], steps_limited, steps);
     }
     if (head == g_builtin_syms.set_colon_recheck) {
         if (len != 2u) return sj_refuted(a, judgment, sj_expr1(a, "set:recheck-arity"));
@@ -4743,7 +5373,28 @@ static Atom *sj_judge(Arena *a, Space *space, Atom *judgment,
 
 /* Admission at the publication boundary: the evaluator calls this when a
  * published record has actually been added to its space. */
+bool prime_scoped_judgment_reserved_name(Atom *name) {
+    if (!name || name->kind != ATOM_SYMBOL) return false;
+    const char *spelling = atom_name_cstr(name);
+    return spelling &&
+           (strncmp(spelling, CETTA_PRIME_PROOF_IDENTITY_PREFIX,
+                    sizeof CETTA_PRIME_PROOF_IDENTITY_PREFIX - 1u) == 0 ||
+            strncmp(spelling, CETTA_PRIME_HOLDS_IDENTITY_PREFIX,
+                    sizeof CETTA_PRIME_HOLDS_IDENTITY_PREFIX - 1u) == 0);
+}
+
 void prime_scoped_judgment_admit(Arena *a, Space *space, Atom *record) {
-    if (!record || !sj_is_expr(record, "set:known", SJ_KNOWN_LEN)) return;
+    if (!record || (!sj_is_expr(record, "set:known", SJ_KNOWN_LEN) &&
+                    !sj_is_expr(record, "type:rule", 5u)))
+        return;
     sj_admit(a, space, record);
+}
+
+bool prime_scoped_judgment_admitted(Arena *a, Space *space, Atom *record) {
+    if (!a || !space || !record) return false;
+    const Space *root = space;
+    while (root->overlay_base) root = root->overlay_base;
+    char digest[65];
+    sj_record_digest(a, record, digest);
+    return sj_admitted_contains(space_instance_id(root), digest);
 }

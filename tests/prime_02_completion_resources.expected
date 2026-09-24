@@ -23,7 +23,7 @@
 [(RefineHigh True)]
 [(MayLow (type:may (only) Nat 1))]
 [(MayHigh True)]
-[(ConvertLow True)]
+[(ConvertLow (type:eq (-> (x : u0) u0) (-> (y : u0) u0) 1))]
 [(ConvertHigh True)]
 [(ConvertHigher True)]
 [(ProvisionalUserRule (type:eq (user-normal q) TagA 1000))]

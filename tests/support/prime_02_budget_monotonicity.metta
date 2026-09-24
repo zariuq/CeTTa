@@ -93,14 +93,14 @@
 !(let $result (type:must (choose) Nat 256)
    (BudgetObservation MustChoose 256 $result))
 
-!(let $result (type:eq (+ 1 1) 2 1)
-   (BudgetObservation ConvertArithmetic 1 $result))
-!(let $result (type:eq (+ 1 1) 2 8)
-   (BudgetObservation ConvertArithmetic 8 $result))
-!(let $result (type:eq (+ 1 1) 2 64)
-   (BudgetObservation ConvertArithmetic 64 $result))
-!(let $result (type:eq (+ 1 1) 2 256)
-   (BudgetObservation ConvertArithmetic 256 $result))
+!(let $result (type:eq (-> (x : u0) u0) (-> (y : u0) u0) 1)
+   (BudgetObservation ConvertBinders 1 $result))
+!(let $result (type:eq (-> (x : u0) u0) (-> (y : u0) u0) 8)
+   (BudgetObservation ConvertBinders 8 $result))
+!(let $result (type:eq (-> (x : u0) u0) (-> (y : u0) u0) 64)
+   (BudgetObservation ConvertBinders 64 $result))
+!(let $result (type:eq (-> (x : u0) u0) (-> (y : u0) u0) 256)
+   (BudgetObservation ConvertBinders 256 $result))
 
 ; This family refines from an inert resource-bound result to a witnessed
 ; counterexample as the explicit producer budget increases.

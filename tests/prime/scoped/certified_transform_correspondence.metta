@@ -1,8 +1,9 @@
 ; Correspondence between the executed iterator, the hosted zero-add
-; package, and the candidate-syntax shared step. The successor clause stored
+; package, and the candidate-syntax shared step. The successor equation stored
 ; by set:define is the shared application. The hosted proof term is the
 ; induction article of the forall equation. These are different terms.
-; Bare evaluation of the iterator is not the typing derivation.
+; Bare evaluation of the iterator is not the typing derivation. Conversion
+; does not compare a source term with a represented package term.
 !(import! &self pf)
 !(set:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
 !(pf:equality &self num refl@num subst@num)
@@ -30,10 +31,10 @@
 !(let $package (set:native-proof zero-add)
  (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest)
       $package
-  (ClauseAgainstArticle
-    (type:eq &self
+  (EquationAgainstArticle
+    (try (type:eq &self
        (snd (iterCert (suc (suc zero)) num eqAt sucStep zero (refl zero)))
-       $term)
+       $term))
     (type:check &self $term (eqAt (suc (suc zero))))
     (type:check &self
        (snd (iterCert (suc (suc zero)) num eqAt sucStep zero (refl zero)))
@@ -41,9 +42,9 @@
     (== $prop (all num (lam k (eq num (add zero k) k))))
     (== $prop (sigma (y : num) (eqAt y))))))
 !(match &self (type:rule iterCert 6 ($n $A $P $step $x $e) $rhs)
-   (IterClause $rhs))
+   (IterEquation $rhs))
 ; A covered call typechecks in ordinary evaluation and does not rewrite
-; `type:rule` clauses there. Reduction is the typing derivation.
+; `type:rule` equations there. Reduction is the typing derivation.
 !(fst (iterCert (suc zero) num eqAt sucStep zero (refl zero)))
 !(type:eq &self
    (fst (iterCert (suc zero) num eqAt sucStep zero (refl zero)))
@@ -66,7 +67,7 @@
        (type:check &self (refl (suc (suc zero)))
           (eqAt (suc (suc zero))))
        $ran $by (== $checked $package)
-       (type:eq &self (refl (suc (suc zero))) $term)))))))
+       (try (type:eq &self (refl (suc (suc zero))) $term))))))))
 !(let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest)
       (set:native-proof zero-add)
  (let $bad (SetNativeProofV1 $name $prop $proof (Refl $term) $type

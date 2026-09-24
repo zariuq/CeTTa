@@ -3751,6 +3751,14 @@ bool atom_is_symbol(Atom *a, const char *name) {
     return atom_is_symbol_id(a, symbol_cached_literal(name));
 }
 
+bool atom_is_symbol_named(Atom *a, const char *name) {
+    if (!a || a->kind != ATOM_SYMBOL || !name || !g_symbols) return false;
+    const char *spelling = symbol_bytes(g_symbols, a->sym_id);
+    uint32_t length = symbol_len(g_symbols, a->sym_id);
+    return spelling && strlen(name) == length &&
+           memcmp(spelling, name, length) == 0;
+}
+
 bool atom_is_empty(Atom *a) {
     return atom_is_symbol_id(a, g_builtin_syms.empty);
 }

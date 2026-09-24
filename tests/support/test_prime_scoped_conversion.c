@@ -322,29 +322,33 @@ static void check_overlay_rule_inventory(Arena *arena, TermUniverse *universe) {
     Atom *inherited = parse_one(arena,
         "(type:rule inherited 0 () (DeclConst carrier))");
     space_add(&base, inherited);
+    prime_scoped_judgment_admit(arena, &base, inherited);
+    /* A rule-shaped atom that admission never published. */
+    space_add(&base, parse_one(arena,
+        "(type:rule forged 0 () (DeclConst carrier))"));
     space_add(&base, parse_one(arena, "(: irrelevant (u 0))"));
     space_init_overlay(&view, &base);
-    space_add(&base, parse_one(arena,
-        "(type:rule late 0 () (DeclConst invisible))"));
+    Atom *late = parse_one(arena,
+        "(type:rule late 0 () (DeclConst invisible))");
+    space_add(&base, late);
+    prime_scoped_judgment_admit(arena, &base, late);
     space_add(&view, parse_one(arena,
         "(type:rule local 1 ((PVar 0)) (PVar 0))"));
     expect_rule_inventory(arena, &view,
-        "(LCons (PrimeRule local 1 ((PVar 0)) (PVar 0))"
-        " (LCons (PrimeRule inherited 0 () (DeclConst carrier)) LNil))",
-        "overlay includes inherited rules, excludes later base additions, preserves pattern code");
+        "(LCons (PrimeRule inherited 0 () (DeclConst carrier)) LNil)",
+        "an overlay views admitted inherited rules; later base additions, forged rules and its own rules stay out");
     space_init_overlay(&nested, &view);
     space_add(&nested, parse_one(arena,
         "(type:rule deepest 0 () (DeclConst local))"));
     expect_rule_inventory(arena, &nested,
-        "(LCons (PrimeRule deepest 0 () (DeclConst local))"
-        " (LCons (PrimeRule local 1 ((PVar 0)) (PVar 0))"
-        " (LCons (PrimeRule inherited 0 () (DeclConst carrier)) LNil)))",
-        "nested overlays collect the complete logical rule view");
+        "(LCons (PrimeRule inherited 0 () (DeclConst carrier)) LNil)",
+        "nested overlays view the same admitted rules");
     space_remove(&nested, inherited);
-    expect_rule_inventory(arena, &nested,
-        "(LCons (PrimeRule deepest 0 () (DeclConst local))"
-        " (LCons (PrimeRule local 1 ((PVar 0)) (PVar 0)) LNil))",
-        "nested overlay removal hides an inherited rule");
+    checks++;
+    if (prime_semantics_kernel_rules(arena, &nested) != NULL) {
+        failures++;
+        fprintf(stderr, "FAIL: nested overlay removal hides an inherited rule\n");
+    }
     expect_rule_inventory(arena, &base,
         "(LCons (PrimeRule late 0 () (DeclConst invisible))"
         " (LCons (PrimeRule inherited 0 () (DeclConst carrier)) LNil))",

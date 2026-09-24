@@ -1,5 +1,5 @@
 [u1]
 [True]
 [True]
-[True]
+[(type:eq Foo Foo)]
 [(type:of (idx 0))]

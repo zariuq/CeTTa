@@ -26,7 +26,7 @@ static bool atom_expr_head_is(Atom *atom, const char *name) {
     return atom &&
            atom->kind == ATOM_EXPR &&
            atom->expr.len > 0 &&
-           atom_is_symbol(atom->expr.elems[0], name);
+           atom_is_symbol_named(atom->expr.elems[0], name);
 }
 
 static bool atom_to_symbol_id(Atom *atom, SymbolId *out) {

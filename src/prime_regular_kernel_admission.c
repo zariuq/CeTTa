@@ -265,6 +265,10 @@ cetta_prime_regular_kernel_admit_closed_conversion_v1(
             CETTA_PRIME_REGULAR_KERNEL_ADMISSION_NOT_FRAGMENT, NULL,
             decision.reason ? decision.reason : "outside-regular-kernel-fragment");
     }
+    if (decision.status == CETTA_PRIME_REGULAR_KERNEL_UNDECIDED)
+        return admission_result(
+            CETTA_PRIME_REGULAR_KERNEL_ADMISSION_UNDECIDED, NULL,
+            decision.reason ? decision.reason : "regular-kernel-undecided");
     if (decision.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED &&
         decision.status != CETTA_PRIME_REGULAR_KERNEL_REFUTED) {
         cetta_runtime_stats_inc(
@@ -699,6 +703,10 @@ cetta_prime_regular_kernel_admit_closed_synthesis_v1(
             result.reason ? result.reason
                           : "outside-regular-kernel-synthesis");
     }
+    if (result.status == CETTA_PRIME_REGULAR_KERNEL_UNDECIDED)
+        return synthesis_admission_result(
+            CETTA_PRIME_REGULAR_KERNEL_ADMISSION_UNDECIDED, NULL,
+            result.reason ? result.reason : "regular-kernel-undecided");
     if (result.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED &&
         result.status != CETTA_PRIME_REGULAR_KERNEL_REFUTED) {
         cetta_runtime_stats_inc(
@@ -1134,6 +1142,10 @@ cetta_prime_regular_kernel_admit_closed_checking_v1(
             result.reason ? result.reason
                           : "outside-regular-kernel-checking");
     }
+    if (result.status == CETTA_PRIME_REGULAR_KERNEL_UNDECIDED)
+        return checking_admission_result(
+            CETTA_PRIME_REGULAR_KERNEL_ADMISSION_UNDECIDED, NULL,
+            result.reason ? result.reason : "regular-kernel-undecided");
     if (result.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED &&
         result.status != CETTA_PRIME_REGULAR_KERNEL_REFUTED) {
         cetta_runtime_stats_inc(
@@ -1351,6 +1363,7 @@ bool cetta_prime_regular_kernel_observe_closed_checking_bag_v1(
             break;
         }
         case CETTA_PRIME_REGULAR_KERNEL_ADMISSION_NOT_FRAGMENT:
+        case CETTA_PRIME_REGULAR_KERNEL_ADMISSION_UNDECIDED:
             occurrences[index].result = cetta_nik_result_v1_outcome(
                 CETTA_NIK_OUTCOME_OUTSIDE_FRAGMENT);
             bag_out->undetermined_count++;

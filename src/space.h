@@ -221,6 +221,12 @@ void space_discard_native_logical_view_preserving_dispatch(Space *s);
 void space_note_external_backend_mutation(Space *s);
 Space *space_heap_clone_shallow(Space *src);
 void space_replace_contents(Space *dst, Space *src);
+/* Notified after a space takes over the contents of a space with another
+ * lifetime identity, so that records keyed by the source's identity follow
+ * its contents.  There is one subscriber. */
+typedef void (*SpaceContentsMovedHook)(uint64_t from_instance,
+                                       uint64_t to_instance);
+void space_set_contents_moved_hook(SpaceContentsMovedHook hook);
 const char *space_kind_name(SpaceKind kind);
 bool space_kind_from_name(const char *name, SpaceKind *out);
 bool space_is_ordered(const Space *s);

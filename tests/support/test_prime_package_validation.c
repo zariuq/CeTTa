@@ -439,7 +439,10 @@ int main(int argc, char **argv) {
             "(type:check 7 $Expected)", "Undetermined") ||
         !expect_direct_typing_status(
             &scratch, &space, typing_service,
-            "(type:eq (+ 1 1) 2)", "Established") ||
+            "(type:eq (+ 1 1) 2)", "Undetermined") ||
+        !expect_direct_typing_status(
+            &scratch, &space, typing_service,
+            "(type:eq Number Number)", "Established") ||
         !expect_direct_typing_status(
             &scratch, &space, typing_service,
             "(type:eq Number String)", "Refuted") ||
@@ -1599,15 +1602,43 @@ int main(int argc, char **argv) {
     Atom *certificate = parse_one(
         &scratch,
         "(PrimeConversionCertificateV1 "
-        "  (Original (+ 1 1) 2) "
-        "  (NormalForms 2 2) "
+        "  (Original 7 7) "
+        "  (NormalForms 7 7) "
         "  (Relation Equal) "
-        "  (Fragment TypePureGroundedFragment))");
+        "  (Fragment BuiltinConstantFragment))");
     bool equal = false;
     if (!certificate ||
         !prime_semantics_replay_conversion_certificate(
             &scratch, &space, certificate, &equal) || !equal) {
         fprintf(stderr, "valid conversion certificate did not replay\n");
+        goto cleanup;
+    }
+
+    Atom *distinct_certificate = parse_one(
+        &scratch,
+        "(PrimeConversionCertificateV1 "
+        "  (Original 7 8) "
+        "  (NormalForms 7 8) "
+        "  (Relation Distinct) "
+        "  (Fragment BuiltinConstantFragment))");
+    if (!distinct_certificate ||
+        !prime_semantics_replay_conversion_certificate(
+            &scratch, &space, distinct_certificate, &equal) || equal) {
+        fprintf(stderr, "distinct literal certificate did not replay\n");
+        goto cleanup;
+    }
+
+    Atom *primitive_certificate = parse_one(
+        &scratch,
+        "(PrimeConversionCertificateV1 "
+        "  (Original (+ 1 1) 2) "
+        "  (NormalForms 2 2) "
+        "  (Relation Equal) "
+        "  (Fragment BuiltinConstantFragment))");
+    if (!primitive_certificate ||
+        prime_semantics_replay_conversion_certificate(
+            &scratch, &space, primitive_certificate, &equal)) {
+        fprintf(stderr, "grounded primitive computation entered conversion replay\n");
         goto cleanup;
     }
 
@@ -1638,7 +1669,7 @@ int main(int argc, char **argv) {
         "  (Original (user-normal q) TagA) "
         "  (NormalForms TagA TagA) "
         "  (Relation Equal) "
-        "  (Fragment TypePureGroundedFragment))");
+        "  (Fragment BuiltinConstantFragment))");
     if (!user_certificate ||
         prime_semantics_replay_conversion_certificate(
             &scratch, &space, user_certificate, &equal)) {

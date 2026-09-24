@@ -183,13 +183,34 @@ CettaPrimeRegularKernelResult prime_semantics_check_declared_intrinsic_v1(
  * it does not validate their typing or termination. NULL denotes no rules. */
 Atom *prime_semantics_kernel_rules(Arena *arena, Space *space);
 
-/* Reduce one saturated call by the space's admitted `type:rule` clauses,
+/* Reduce one saturated call by the space's admitted `type:rule` rules,
  * or project `fst`/`snd` of a pair, using the kernel normalizer. The call
  * must already have passed telescope checking. NULL leaves the call as it
  * is: the head has no computation, the budget ran out, or the normal form
- * has no surface spelling. Exhaustion is not a value and not a refutation. */
+ * has no authored spelling. Exhaustion is not a value and not a refutation. */
 Atom *prime_semantics_reduce_covered_call(
     Arena *arena, Space *space, Atom *call, int fuel);
+
+/* One admitted equation under telescope parameters. A symbol with no
+ * declaration stays a parameter of the type; it is not entered as a global.
+ * Ordinary execution keeps prime_semantics_reduce_covered_call. */
+Atom *prime_semantics_reduce_open_covered_call(
+    Arena *arena, Space *space, Atom *call, int fuel);
+
+/* `(fst (pair a b))` and `(snd (pair a b))` as values. NULL if the call
+ * is not that projection. */
+Atom *prime_semantics_project_pair(Atom *call);
+
+/* When `id:eliminate` is applied to reflexivity at the same point it
+ * eliminates, the method is the result. NULL otherwise. */
+Atom *prime_semantics_identity_iota(Atom *call);
+
+/* `((lam $x body) argument)` reduces to `body` with `$x` replaced. */
+Atom *prime_semantics_beta(Arena *arena, Atom *call);
+
+/* Beta, pair projection, and reflexivity elimination anywhere in an authored
+ * term. The same pointer means nothing changed. */
+Atom *prime_semantics_authored_compute(Arena *arena, Atom *term);
 
 /* C-internal entry point for proof replay through a named NIK authority.
  * The judgment is exactly `(nik:check authority claim proof)`. */
@@ -215,5 +236,11 @@ bool prime_semantics_validate_package(Atom *package);
 Atom *prime_semantics_canonicalize_type(Arena *a, Atom *type);
 bool prime_semantics_replay_conversion_certificate(
     Arena *a, Space *space, Atom *certificate, bool *equal_out);
+
+/* The represented query a `type:eq` or `type:check` judgment poses to the
+ * kernel, without the kernel deciding it. */
+Atom *prime_semantics_kernel_query(
+    Arena *a, Space *space, Atom *judgment, bool steps_limited,
+    uint64_t steps);
 
 #endif /* CETTA_PRIME_SEMANTICS_H */

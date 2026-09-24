@@ -45,10 +45,18 @@
          (let $verbs (pf:verbs) (pf:member $h $verbs))
          False)))
 
+(= (pf:expand-list $t)
+   (if (== $t ()) ()
+       (let $h (car-atom $t)
+         (let $rest (cdr-atom $t)
+           (let $eh (pf:expand $h)
+             (let $et (pf:expand-list $rest)
+               (cons-atom $eh $et)))))))
+
 (= (pf:expand $t)
    (if (== (get-metatype $t) Expression)
        (if (== $t ()) ()
-           (let $node (map-atom $t $e (pf:expand $e))
+           (let $node (pf:expand-list $t)
              (let $head (car-atom $node)
                (if (== $head pf:induction)
                    (let $P (index-atom $node 1)
@@ -104,12 +112,20 @@
              (let $rest (cdr-atom $rows) (pf:find-carrier $A $rest))))))
 
 ; substitute the symbol s by r in t, respecting lam binders of the same name
+(= (pf:subst-list $s $r $t)
+   (if (== $t ()) ()
+       (let $h (car-atom $t)
+         (let $rest (cdr-atom $t)
+           (let $sh (pf:subst $s $r $h)
+             (let $st (pf:subst-list $s $r $rest)
+               (cons-atom $sh $st)))))))
+
 (= (pf:subst $s $r $t)
    (if (== $t $s) $r
        (if (== (get-metatype $t) Expression)
            (if (unify $t (lam $s $_) True False)
                $t
-               (map-atom $t $e (pf:subst $s $r $e)))
+               (pf:subst-list $s $r $t))
            $t)))
 
 ; apply a context: a lambda is reduced, anything else is applied

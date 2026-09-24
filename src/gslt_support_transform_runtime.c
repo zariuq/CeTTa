@@ -329,7 +329,7 @@ static void support_remove(SupportSpaceV1 *space, Atom *atom) {
 
 static bool expr_has_head(Atom *atom, const char *symbol) {
     return atom && atom->kind == ATOM_EXPR && atom->expr.len > 0u &&
-        atom_is_symbol(atom->expr.elems[0], symbol);
+        atom_is_symbol_named(atom->expr.elems[0], symbol);
 }
 
 static const CettaGsltSupportOperatorDeclV1 *find_declaration_v1(
@@ -343,8 +343,8 @@ static const CettaGsltSupportOperatorDeclV1 *find_declaration_v1(
             &declarations[index];
         if (form->expr.len ==
                 (CettaExprLen)declaration->argument_count + 1u &&
-            atom_is_symbol(form->expr.elems[0],
-                           declaration->syntax_symbol))
+            atom_is_symbol_named(form->expr.elems[0],
+                                 declaration->syntax_symbol))
             return declaration;
     }
     return NULL;

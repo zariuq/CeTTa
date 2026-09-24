@@ -3,7 +3,7 @@
 [(NativeDependentNormal True True True True)]
 [(NativePairNormal True True True True True)]
 [Refuted]
-[Undetermined]
+[Refuted]
 [computed-premise]
 [(NativeAssumedNormal True 1)]
 [Undetermined]
