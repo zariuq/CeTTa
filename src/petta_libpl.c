@@ -281,11 +281,14 @@ static foreign_t petta_libpl_standard_swrite(
     free(unknown.items);
     if (!value)
         return false;
-    char *rendered = atom_to_parseable_string(
+    /* PeTTa's swrite is the repr text, and it is UTF-8: handing SWI the
+     * bytes as Latin-1 would turn every non-ASCII character into several. */
+    char *rendered = atom_to_parseable_string_petta(
         g_petta_libpl_active_arena, value);
     return rendered &&
-        PL_unify_string_nchars(
-            arguments + 1u, strlen(rendered), rendered);
+        PL_unify_chars(
+            arguments + 1u, PL_STRING | REP_UTF8,
+            strlen(rendered), rendered);
 }
 
 /*
@@ -2305,15 +2308,40 @@ static bool petta_libpl_emit_solution(
     return true;
 }
 
+/* error(Formal, Context) reads as (Error Formal Context); any other thrown
+ * term as (Error Term). */
+static Atom *petta_libpl_exception_value(Arena *arena, term_t exception) {
+    PettaLibplVarMap variables = {0};
+    PettaLibplBackVarMap unknown = {0};
+    Atom *thrown = petta_libpl_from_term(
+        arena, exception, &variables, &unknown, 0u);
+    free(variables.items);
+    free(unknown.items);
+    Atom *head = atom_symbol(arena, "Error");
+    if (!thrown || !head)
+        return NULL;
+    Atom *compound = NULL;
+    if (atom_petta_prolog_compound_body(thrown, &compound) && compound)
+        thrown = compound;
+    if (thrown->kind == ATOM_EXPR && thrown->expr.len == 3u &&
+        petta_libpl_atom_is_symbol(thrown->expr.elems[0], "error")) {
+        return atom_expr3(arena, head,
+                          thrown->expr.elems[1], thrown->expr.elems[2]);
+    }
+    return atom_expr2(arena, head, thrown);
+}
+
 static bool petta_libpl_run_query(
     CettaLibPrologRuntime *runtime, Arena *arena,
     predicate_t predicate, term_t arguments,
     term_t result_term, Atom *constant_result,
     PettaLibplVarMap *variables,
     OutcomeSet *outcomes, bool first_only,
-    bool *succeeded) {
+    bool *succeeded, Atom **raised) {
     if (succeeded)
         *succeeded = false;
+    if (raised)
+        *raised = NULL;
     if (!runtime || !arena || !predicate ||
         !arguments || !variables || !outcomes ||
         !succeeded) {
@@ -2335,8 +2363,16 @@ static bool petta_libpl_run_query(
         int status = PL_next_solution(query);
         if (status == PL_S_FALSE)
             break;
-        if (status == PL_S_EXCEPTION ||
-            status == PL_S_YIELD ||
+        if (status == PL_S_EXCEPTION) {
+            /* The raised error, read while the query still holds it; the
+             * caller decides whether it is a value or a failed call. */
+            term_t exception = PL_exception(query);
+            if (raised && exception)
+                *raised = petta_libpl_exception_value(arena, exception);
+            ok = false;
+            break;
+        }
+        if (status == PL_S_YIELD ||
             status == PL_S_YIELD_DEBUG ||
             (status != PL_S_TRUE &&
              status != PL_S_LAST)) {
@@ -2366,7 +2402,9 @@ static bool petta_libpl_registered_call(
     CettaLibPrologRuntime *runtime, Arena *arena,
     Atom *expression, Atom *expected,
     PettaLibplImport *entry,
-    OutcomeSet *outcomes) {
+    OutcomeSet *outcomes, Atom **raised) {
+    if (raised)
+        *raised = NULL;
     if (!runtime || !arena || !expression ||
         expression->kind != ATOM_EXPR ||
         expression->expr.len == 0u || !expected ||
@@ -2443,7 +2481,7 @@ static bool petta_libpl_registered_call(
     bool ok = petta_libpl_run_query(
         runtime, arena, call, callable,
         result, NULL,
-        &variables, outcomes, false, &succeeded);
+        &variables, outcomes, false, &succeeded, raised);
     if (ok && succeeded && releases_handle &&
         !petta_libpl_plref_release(runtime, &erased_handle)) {
         ok = false;
@@ -2467,7 +2505,7 @@ static bool petta_libpl_registered_call(
  */
 static bool petta_libpl_call_goal(
     CettaLibPrologRuntime *runtime, Arena *arena,
-    Atom *body, OutcomeSet *outcomes, bool *succeeded) {
+    Atom *body, OutcomeSet *outcomes, bool *succeeded, Atom **raised) {
     if (succeeded)
         *succeeded = false;
     term_t goal = PL_new_term_ref();
@@ -2489,7 +2527,11 @@ static bool petta_libpl_call_goal(
     bool ok = attempted && petta_libpl_run_query(
         runtime, arena, call, goal, 0,
         success, &variables, outcomes,
-        false, &solved);
+        false, &solved, raised);
+    /* The goal's predicate exists, so a raised error is reported to the
+     * caller, which propagates it as a MeTTa error. */
+    if (!ok && raised && *raised)
+        ok = true;
     if (attempted)
         petta_libpl_advance_revision(runtime);
     if (succeeded)
@@ -2500,7 +2542,7 @@ static bool petta_libpl_call_goal(
 
 static bool petta_libpl_call_predicate(
     CettaLibPrologRuntime *runtime, Arena *arena,
-    Atom *wrapper, OutcomeSet *outcomes) {
+    Atom *wrapper, OutcomeSet *outcomes, Atom **raised) {
     Atom *body = NULL;
     if (!runtime || !arena || !outcomes ||
         !petta_libpl_predicate_body(wrapper, &body)) {
@@ -2521,7 +2563,7 @@ static bool petta_libpl_call_predicate(
     }
     bool succeeded = false;
     bool ok = petta_libpl_call_goal(
-        runtime, arena, body, outcomes, &succeeded);
+        runtime, arena, body, outcomes, &succeeded, raised);
     if (ok && succeeded && releases_handle &&
         !petta_libpl_plref_release(runtime, &erased_handle)) {
         ok = false;
@@ -2829,7 +2871,7 @@ static bool petta_libpl_retract_predicate(
               petta_libpl_run_query(
                   runtime, arena, retract_predicate,
                   clause, 0, success, &variables,
-                  outcomes, true, &succeeded);
+                  outcomes, true, &succeeded, NULL);
     if (ok && succeeded) {
         petta_libpl_advance_revision(runtime);
     } else if (ok) {
@@ -3318,9 +3360,11 @@ bool petta_libpl_call(
     CettaLibPrologRuntime *runtime, Arena *arena,
     Atom *expression, Atom *expected,
     const Bindings *environment, OutcomeSet *outcomes,
-    bool *recognized) {
+    bool *recognized, Atom **raised) {
     if (recognized)
         *recognized = false;
+    if (raised)
+        *raised = NULL;
     if (!runtime || !arena ||
         !expression || !expected || !environment ||
         !outcomes || !recognized ||
@@ -3438,14 +3482,14 @@ bool petta_libpl_call(
         if (ok && exists) {
             *recognized = true;
             ok = petta_libpl_call_goal(
-                runtime, arena, goal, outcomes, NULL);
+                runtime, arena, goal, outcomes, NULL, raised);
         }
     } else if (form == PETTA_FORM_CALL_PREDICATE &&
                expression->expr.len == 2u) {
         *recognized = true;
         ok = petta_libpl_call_predicate(
             runtime, arena,
-            expression->expr.elems[1], outcomes);
+            expression->expr.elems[1], outcomes, raised);
     } else if (
         (form == PETTA_FORM_ASSERTA_PREDICATE ||
          form == PETTA_FORM_ASSERTZ_PREDICATE) &&
@@ -3497,9 +3541,15 @@ bool petta_libpl_call(
                     function_arity) {
                     arity_matched = true;
                     *recognized = true;
+                    Atom *thrown = NULL;
                     ok = petta_libpl_registered_call(
                         runtime, arena, expression,
-                        expected, entry, outcomes);
+                        expected, entry, outcomes, &thrown);
+                    if (!ok && thrown) {
+                        if (raised)
+                            *raised = thrown;
+                        ok = true;
+                    }
                     break;
                 }
             }
@@ -3507,9 +3557,10 @@ bool petta_libpl_call(
                 entry->arity_len == 0u &&
                 !entry->reference_stdlib) {
                 *recognized = true;
+                Atom *thrown = NULL;
                 ok = petta_libpl_registered_call(
                     runtime, arena, expression,
-                    expected, entry, outcomes);
+                    expected, entry, outcomes, &thrown);
                 if (!ok) {
                     /* An explicit import registers a PeTTa function name
                      * before SWI necessarily has a predicate for it.  A
@@ -3538,6 +3589,10 @@ bool petta_libpl_call(
                         }
                         ok = partial &&
                             outcomes->len == prior_len + 1u;
+                    } else if (thrown) {
+                        if (raised)
+                            *raised = thrown;
+                        ok = true;
                     }
                 }
                 if (ok && *recognized) {

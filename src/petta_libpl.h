@@ -35,12 +35,14 @@ PeTTaNamedArity petta_libpl_named_arity_resolving(
 /*
  * Execute one optional foreign-predicate boundary.  `recognized` separates
  * an unavailable/unregistered form from a predicate whose valid result bag
- * happens to be empty.  The caller initializes and owns `outcomes`.
+ * happens to be empty.  The caller initializes and owns `outcomes`.  A goal
+ * that raises a Prolog error sets `raised` to its Error term and adds no
+ * outcome; the caller propagates it.
  */
 bool petta_libpl_call(
     CettaLibPrologRuntime *runtime, Arena *arena,
     Atom *expression, Atom *expected,
     const Bindings *environment, OutcomeSet *outcomes,
-    bool *recognized);
+    bool *recognized, Atom **raised);
 
 #endif /* CETTA_PETTA_LIBPL_H */

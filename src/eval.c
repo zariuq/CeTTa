@@ -36973,10 +36973,12 @@ static bool petta_eval_machine_extension_call(
     void *context, Arena *arena,
     Atom *expression, Atom *expected,
     const Bindings *environment, OutcomeSet *outcomes,
-    bool *recognized) {
+    bool *recognized, Atom **raised) {
     PettaEvalMachineContext *eval_context = context;
     if (recognized)
         *recognized = false;
+    if (raised)
+        *raised = NULL;
     if (!eval_context || eval_context->transaction ||
         !eval_context->library_context || !arena ||
         !expression || !expected || !environment ||
@@ -37058,7 +37060,7 @@ static bool petta_eval_machine_extension_call(
     bool libpl_completed = petta_libpl_call(
         eval_context->library_context->lib_prolog,
         arena, expression, expected, environment,
-        outcomes, recognized);
+        outcomes, recognized, raised);
     if (libpl_completed && *recognized &&
         !petta_channel_library_path_effect(
             eval_context->library_context, arena,
