@@ -4542,77 +4542,65 @@ int cetta_petta_number_format_float(
     if (!petta_output_locale)
         return -1;
     locale_t previous = uselocale(petta_output_locale);
+    /* The shortest significant digits that read back to the same bits. */
     char scientific[64];
-    int scientific_length = snprintf(
-        scientific, sizeof(scientific), "%.17e", value);
-    if (scientific_length <= 0 ||
-        (size_t)scientific_length >= sizeof(scientific)) {
-        (void)uselocale(previous);
-        return -1;
-    }
-    const char *exponent_text = strchr(scientific, 'e');
-    if (!exponent_text) {
-        (void)uselocale(previous);
-        return -1;
-    }
-    int exponent = atoi(exponent_text + 1);
-    bool use_scientific = exponent < -4 || exponent >= 5;
-    char candidate[128];
-    int chosen = -1;
-
-    if (use_scientific) {
-        for (int fractional = 0; fractional <= 16; fractional++) {
-            int length = snprintf(
-                candidate, sizeof(candidate), "%.*e", fractional, value);
-            if (length <= 0 || (size_t)length >= sizeof(candidate))
-                continue;
-            char *end = NULL;
-            double parsed = strtod_l(candidate, &end, petta_output_locale);
-            if (end && *end == '\0' &&
-                petta_float_same_bits(parsed, value)) {
-                chosen = length;
-                break;
-            }
-        }
-    } else {
-        for (int fractional = 0; fractional <= 21; fractional++) {
-            int length = snprintf(
-                candidate, sizeof(candidate), "%.*f", fractional, value);
-            if (length <= 0 || (size_t)length >= sizeof(candidate))
-                continue;
-            char *end = NULL;
-            double parsed = strtod_l(candidate, &end, petta_output_locale);
-            if (end && *end == '\0' &&
-                petta_float_same_bits(parsed, value)) {
-                chosen = length;
-                break;
-            }
+    int scientific_length = -1;
+    for (int fractional = 0; fractional <= 16; fractional++) {
+        int length = snprintf(
+            scientific, sizeof(scientific), "%.*e", fractional, value);
+        if (length <= 0 || (size_t)length >= sizeof(scientific))
+            continue;
+        char *end = NULL;
+        double parsed = strtod_l(scientific, &end, petta_output_locale);
+        if (end && *end == '\0' && petta_float_same_bits(parsed, value)) {
+            scientific_length = length;
+            break;
         }
     }
-    if (chosen < 0) {
-        chosen = snprintf(candidate, sizeof(candidate), "%.17g", value);
-        if (chosen <= 0 || (size_t)chosen >= sizeof(candidate)) {
-            (void)uselocale(previous);
-            return -1;
-        }
-    }
-
-    char *exponent_marker = strchr(candidate, 'e');
-    size_t mantissa_length = exponent_marker
-        ? (size_t)(exponent_marker - candidate) : strlen(candidate);
-    bool has_decimal = memchr(candidate, '.', mantissa_length) != NULL;
-    int result;
-    if (has_decimal) {
-        result = snprintf(buffer, size, "%s", candidate);
-    } else if (exponent_marker) {
-        result = snprintf(
-            buffer, size, "%.*s.0%s",
-            (int)mantissa_length, candidate, exponent_marker);
-    } else {
-        result = snprintf(buffer, size, "%s.0", candidate);
-    }
+    if (scientific_length < 0)
+        scientific_length = snprintf(
+            scientific, sizeof(scientific), "%.16e", value);
     (void)uselocale(previous);
-    return result;
+    char *exponent_text = scientific_length > 0
+        ? strchr(scientific, 'e') : NULL;
+    if (!exponent_text)
+        return -1;
+
+    bool negative = scientific[0] == '-';
+    char digits[32];
+    size_t digit_count = 0u;
+    for (const char *cursor = scientific + (negative ? 1 : 0);
+         cursor < exponent_text; cursor++) {
+        if (*cursor >= '0' && *cursor <= '9' &&
+            digit_count + 1u < sizeof(digits))
+            digits[digit_count++] = *cursor;
+    }
+    while (digit_count > 1u && digits[digit_count - 1u] == '0')
+        digit_count--;
+    digits[digit_count] = '\0';
+    int point = atoi(exponent_text + 1) + 1;
+
+    /* SWI-Prolog's layout: positional unless it needs four or more zeros
+     * of padding between the digits and the decimal point. */
+    const char *sign = negative ? "-" : "";
+    int count = (int)digit_count;
+    if (point <= 0 && point >= -3) {
+        return snprintf(buffer, size, "%s0.%.*s%s",
+                        sign, -point, "000", digits);
+    }
+    if (point > 0 && count > point) {
+        return snprintf(buffer, size, "%s%.*s.%s",
+                        sign, point, digits, digits + point);
+    }
+    if (point > 0 && point - count <= 3) {
+        return snprintf(buffer, size, "%s%s%.*s.0",
+                        sign, digits, point - count, "000");
+    }
+    return snprintf(buffer, size, "%s%c.%se%c%02d",
+                    sign, digits[0],
+                    count > 1 ? digits + 1 : "0",
+                    point - 1 < 0 ? '-' : '+',
+                    abs(point - 1));
 }
 
 bool cetta_petta_number_format_fraction(
