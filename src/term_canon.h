@@ -61,5 +61,13 @@ Atom *cetta_import_frame_syntax(Arena *dst, Atom *src, CettaVarMap *inventory,
  * identity. This creates variables; it does not reify an existing closure. */
 bool cetta_instantiate_frame_terms(Arena *dst, Atom **terms, size_t count);
 Atom *cetta_instantiate_frame_syntax(Arena *dst, Atom *source);
+/* The same instantiation into new slots of a frame identity the caller owns
+ * and keeps alive while the terms are in use.  Every call allocates new
+ * slots, so terms instantiated by different calls share no variable; a
+ * search that instantiates many rules therefore holds one identity rather
+ * than one per instantiation. */
+bool cetta_instantiate_frame_terms_within(Arena *dst, Atom **terms,
+                                          size_t count,
+                                          CettaFrameIdentity identity);
 
 #endif /* CETTA_TERM_CANON_H */

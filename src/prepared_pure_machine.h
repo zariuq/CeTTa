@@ -381,6 +381,21 @@ bool cetta_prepared_pure_answer_cursor_frame(
     const CettaPreparedPureAnswerCursor *cursor, size_t index,
     CettaPreparedPureAnswerFrame *frame_out);
 
+/* Copy a value the cursor holds into the caller's arena. */
+typedef Atom *(*CettaPreparedPureImportValueFn)(void *context, Atom *value);
+
+/* The source computation a frame's answers still owe: its chain of pending
+ * callers decoded from their resume templates, innermost inside, with `hole`
+ * standing for the frame's answer.  Solving the result once per answer of the
+ * frame's call gives exactly the answers the cursor would have delivered for
+ * that call, in the same order; operands the callers had already evaluated
+ * appear as their values and are not evaluated again.  False when the frame
+ * resumes no continuation or a pending caller has no source reading. */
+bool cetta_prepared_pure_answer_cursor_frame_resumption(
+    const CettaPreparedPureAnswerCursor *cursor, size_t index, Arena *arena,
+    Atom *hole, CettaPreparedPureImportValueFn import_value,
+    void *import_context, Atom **term_out);
+
 uint64_t cetta_prepared_pure_answer_cursor_answer_count(
     const CettaPreparedPureAnswerCursor *cursor);
 uint64_t cetta_prepared_pure_answer_cursor_tail_call_count(

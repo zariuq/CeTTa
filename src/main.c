@@ -4028,11 +4028,12 @@ process_petta_document:
                         (size_t)eval_outcome_fault_count(&detailed),
                         detailed.steps_spent);
             } else if (g_count_only ||
-                       (lang->id == CETTA_LANGUAGE_PETTA &&
-                        eval_get_default_fuel() >= 0)) {
-                /* Finite PeTTa fuel reaches the search machine through the
-                 * outcome tracker. Unlimited queries leave that tracker off
-                 * and keep the result-set entry below. */
+                       lang->id == CETTA_LANGUAGE_PETTA) {
+                /* A PeTTa directive publishes its whole answer stream, which
+                 * claims there are no further answers, so it is always
+                 * observed with a completion tracker.  Finite fuel reaches
+                 * the search machine through the same tracker; unlimited
+                 * queries carry no fuel purse. */
                 eval_outcome_init(&detailed);
                 detailed_initialized = true;
                 results = &detailed.results;
@@ -4047,15 +4048,9 @@ process_petta_document:
                 }
             } else {
                 result_set_init(&rs);
-                if (lang->id == CETTA_LANGUAGE_PETTA) {
-                    eval_top_with_registry_petta_plan(
-                        &space, &eval_arena, &arena, &registry,
-                        expr, source_plan, &rs);
-                } else {
-                    eval_top_with_registry(
-                        &space, &eval_arena, &arena, &registry,
-                        expr, &rs);
-                }
+                eval_top_with_registry(
+                    &space, &eval_arena, &arena, &registry,
+                    expr, &rs);
             }
             if (cetta_eval_session_process_exit_requested(
                     &libraries.session)) {

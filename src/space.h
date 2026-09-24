@@ -697,6 +697,21 @@ bool space_native_flat_pattern_each_int(
     Space *space, Atom *pattern, size_t column,
     bool (*each)(int64_t value, void *ctx), void *ctx);
 
+/* Count, and the sum of one integer column, over the join of a chain of
+ * at most three flat patterns (consecutive patterns share exactly one
+ * variable), by variable elimination: work proportional to the patterns'
+ * rows, not to the join.  false declines. */
+bool space_native_flat_chain_aggregate(
+    Space *space, Atom *const *patterns, size_t pattern_count,
+    bool with_column, size_t column_pattern, size_t column,
+    __int128 *count_out, __int128 *sum_out);
+
+/* The same ordered walk for a pattern with nested structure: each matching
+ * ground row yields the integer bound to `variable`. */
+bool space_native_pattern_each_int(
+    Space *space, Atom *pattern, VarId variable,
+    bool (*each)(int64_t value, void *ctx), void *ctx);
+
 /*
  * Try an exact multiplicity-preserving COUNT without constructing bindings
  * or result atoms.  The admitted fragment is backend-defined but must be a

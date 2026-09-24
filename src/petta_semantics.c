@@ -45,6 +45,7 @@ typedef struct {
     SymbolId cons;
     SymbolId int_add;
     SymbolId stream_unique;
+    SymbolId stream_alpha_unique;
     SymbolId stream_union;
     SymbolId stream_intersection;
     SymbolId stream_subtraction;
@@ -148,6 +149,7 @@ static PeTTaForm petta_form_overflow_lookup(
     X(ids->cons, PETTA_FORM_CONS);                                       \
     X(ids->int_add, PETTA_FORM_INT_ADD);                                 \
     X(ids->stream_unique, PETTA_FORM_STREAM_UNIQUE);                     \
+    X(ids->stream_alpha_unique, PETTA_FORM_STREAM_ALPHA_UNIQUE);         \
     X(ids->stream_union, PETTA_FORM_STREAM_UNION);                       \
     X(ids->stream_intersection, PETTA_FORM_STREAM_INTERSECTION);         \
     X(ids->stream_subtraction, PETTA_FORM_STREAM_SUBTRACTION);           \
@@ -278,6 +280,8 @@ static const PeTTaSymbolIds *petta_symbol_ids_refresh(void) {
         ids.cons = symbol_intern_cstr(g_symbols, "cons");
         ids.int_add = symbol_intern_cstr(g_symbols, "#+");
         ids.stream_unique = symbol_intern_cstr(g_symbols, "unique");
+        ids.stream_alpha_unique =
+            symbol_intern_cstr(g_symbols, "alpha-unique");
         ids.stream_union = symbol_intern_cstr(g_symbols, "union");
         ids.stream_intersection =
             symbol_intern_cstr(g_symbols, "intersection");
@@ -1918,16 +1922,18 @@ static Atom *petta_stream_emit_value(
     return atom_expr(arena, let_elems, 4u);
 }
 
-static Atom *petta_stream_unique_lower(
-    Arena *arena, Atom *form, SymbolId reify_head) {
+/* `(unique X)` and `(alpha-unique X)` answer the collected answers of X
+ * with repeats removed, the first occurrence kept: by equality or by alpha
+ * equivalence. */
+static Atom *petta_stream_unary_lower(
+    Arena *arena, Atom *form, SymbolId aggregate, SymbolId reify_head) {
     if (form->expr.len != 2u)
         return NULL;
     Atom *reified = atom_expr2(
         arena, atom_symbol_id(arena, reify_head),
         form->expr.elems[1]);
     Atom *unique = atom_expr2(
-        arena, atom_symbol_id(arena, g_builtin_syms.unique_atom),
-        reified);
+        arena, atom_symbol_id(arena, aggregate), reified);
     return petta_stream_emit_value(arena, unique);
 }
 
@@ -2022,7 +2028,11 @@ Atom *petta_semantics_lower(
         return petta_eager_binary_lower(
             arena, form, g_builtin_syms.cons_atom);
     case PETTA_FORM_STREAM_UNIQUE:
-        return petta_stream_unique_lower(arena, form, reify_head);
+        return petta_stream_unary_lower(
+            arena, form, g_builtin_syms.unique_atom, reify_head);
+    case PETTA_FORM_STREAM_ALPHA_UNIQUE:
+        return petta_stream_unary_lower(
+            arena, form, petta_symbol_ids()->alpha_unique_atom, reify_head);
     case PETTA_FORM_STREAM_UNION:
         return petta_stream_binary_lower(
             arena, form, g_builtin_syms.union_atom, reify_head);

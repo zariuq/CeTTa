@@ -625,7 +625,7 @@ endif
 ifeq ($(ENABLE_PETTA_TYPECHECK_CENSUS),1)
 PETTA_TYPECHECK_CENSUS_SRC = src/petta_typecheck_census.c
 endif
-SRC = src/symbol.c src/atom.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/match_decision.c src/select/code_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/match_decision.c src/select/code_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/fold_algebra.c src/open_equation_machine.c src/eval.c src/grounded.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 SRC += src/shared_transition.c
 SRC += src/gslt_language_manifest_v1.c
 SRC += src/gslt_support_profile_v1.c
@@ -24141,6 +24141,8 @@ else
 endif
 
 .PHONY: test-petta-rule-frame-region
+# The counter block observes the canonical matcher's rule-frame regions, so it
+# runs equation search rather than the compiled open equation tier.
 test-petta-rule-frame-region: $(BIN)
 	@set -eu; \
 	generator=benchmarks/inference_cost_axes/gen_rule_slot_view_family.sh; \
@@ -24164,10 +24166,12 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	}; \
 	for mode in sibling nested braided evidence structural fanout; do \
 		optimized=$$(bash "$$generator" "$$mode" 40 | \
+			env CETTA_OPEN_EQUATIONS_REFERENCE=1 \
 			./$(BIN) --fuel -1 --emit-runtime-stats \
 			--lang petta /dev/stdin 2>&1); \
 		observation_reference=$$(bash "$$generator" "$$mode" 40 | \
-			env CETTA_MATCH_DECISION_EQUALITY_OBSERVATION_REFERENCE=1 \
+			env CETTA_OPEN_EQUATIONS_REFERENCE=1 \
+			CETTA_MATCH_DECISION_EQUALITY_OBSERVATION_REFERENCE=1 \
 			./$(BIN) --fuel -1 --emit-runtime-stats \
 			--lang petta /dev/stdin 2>&1); \
 		for value in "$$optimized" "$$observation_reference"; do \
@@ -25738,7 +25742,8 @@ PETTA_SEMANTIC_EXACT_STREAM_STEMS = \
 	foldall_open_match_collection named_space_substitution \
 	profile_petta_base_extension_boundary conjunctive_match_count_semantics \
 	search_machine_relational_head_phases search_machine_relational_output_phases \
-	search_machine_pinned_removal_visibility search_machine_admission_revisions
+	search_machine_pinned_removal_visibility search_machine_admission_revisions \
+	stream_alpha_unique root_builtin_argument_demand
 PETTA_SEMANTIC_OCCURRENCE_BAG_STEMS = semantic_counter_equations \
 	search_machine_specializer_negative_mutation \
 	search_machine_partial_head_observation search_machine_query_field_composition
@@ -27504,6 +27509,31 @@ test-prepared-pure-answer-resource-fallback: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/test_prepared_pure_answer_resource_fallback.py \
 		./$(BIN) $(if $(filter 1,$(ENABLE_RUNTIME_STATS)),--stats,)
 
+.PHONY: test-answer-producer-continuation-transfer
+test-answer-producer-continuation-transfer: $(BIN)
+	@set -e; \
+	fixture=tests/answer_producer_continuation_transfer.metta; \
+	expected=$$(cat tests/answer_producer_continuation_transfer.petta.expected); \
+	if [ "$(ENABLE_RUNTIME_STATS)" = "1" ]; then \
+		output=$$(./$(BIN) --lang petta --emit-runtime-stats "$$fixture" 2>&1); \
+		actual=$$(printf '%s\n' "$$output" | grep -v '^runtime-counter '); \
+	else \
+		actual=$$(./$(BIN) --lang petta "$$fixture"); \
+	fi; \
+	if [ "$$actual" != "$$expected" ]; then \
+		echo "FAIL: pending callers lost or replayed across the producer handoff"; \
+		printf '%s\n' "$$actual"; exit 1; \
+	fi; \
+	if [ "$(ENABLE_RUNTIME_STATS)" = "1" ]; then \
+		counter() { \
+			printf '%s\n' "$$1" | awk -v name="$$2" \
+				'$$1 == "runtime-counter" && $$2 == name { value = $$3 } END { print value + 0 }'; \
+		}; \
+		test "$$(counter "$$output" petta-answer-producer-handoff)" -gt 0; \
+		test "$$(counter "$$output" prepared-pure-answer-producer-continuation-call)" -gt 0; \
+	fi; \
+	echo "PASS: pending callers transfer exactly after the producer hands off"
+
 .PHONY: test-answer-producer-continuations
 test-answer-producer-continuations: $(BIN)
 	@set -e; \
@@ -27605,6 +27635,27 @@ test-prepared-pure-dispatch-authority: $(BIN)
 		fi; \
 	done
 
+.PHONY: test-native-fold
+# Native folds equal the ordinary fold on seeded random steps and shapes;
+# the runtime-stats build also shows that every native route was taken.
+test-native-fold: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_native_fold_differential.py \
+		./$(BIN) $(if $(filter 1,$(ENABLE_RUNTIME_STATS)),--stats,)
+ifneq ($(ENABLE_RUNTIME_STATS),1)
+	@$(MAKE) -s ENABLE_RUNTIME_STATS=1 $@
+endif
+
+.PHONY: test-open-equations
+# The compiled open equation tier equals canonical equation search on seeded
+# open queries and fixed relational programs; the runtime-stats build also
+# shows that the tier took calls and delivered answers.
+test-open-equations: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_open_equations_differential.py \
+		./$(BIN) $(if $(filter 1,$(ENABLE_RUNTIME_STATS)),--stats,)
+ifneq ($(ENABLE_RUNTIME_STATS),1)
+	@$(MAKE) -s ENABLE_RUNTIME_STATS=1 $@
+endif
+
 .PHONY: test-prepared-pure-numeric-realizations
 test-prepared-pure-numeric-realizations: $(BIN)
 ifeq ($(ENABLE_RUNTIME_STATS),1)
@@ -27613,7 +27664,7 @@ else
 	@$(MAKE) -s ENABLE_RUNTIME_STATS=1 $@
 endif
 
-test-prepared-pure-call-machine: $(BIN) test-prepared-pure-answer-producer test-prepared-pure-answer-resource-fallback test-answer-producer-continuations test-prepared-pure-undefined-type-operands test-prepared-pure-repeated-head-variables test-prepared-pure-dispatch-authority test-prepared-pure-numeric-realizations
+test-prepared-pure-call-machine: $(BIN) test-prepared-pure-answer-producer test-prepared-pure-answer-resource-fallback test-answer-producer-continuations test-answer-producer-continuation-transfer test-prepared-pure-undefined-type-operands test-prepared-pure-repeated-head-variables test-prepared-pure-dispatch-authority test-prepared-pure-numeric-realizations
 	@set -e; \
 	he_out=$$(mktemp runtime/prepared-pure-call-he.XXXXXX); \
 	he_no_gc_out=$$(mktemp runtime/prepared-pure-call-he-no-gc.XXXXXX); \
