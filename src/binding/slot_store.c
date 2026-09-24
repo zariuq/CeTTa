@@ -1124,6 +1124,31 @@ bool bindings_builder_merge_frame_schemas(
     return true;
 }
 
+/* A manufacture frame holds slots 1.. of one spelling.  Its one-slot
+ * inventory is immutable (presentation changes clone a schema), so one
+ * published copy serves every registration, including the re-registration
+ * after each rollback that undid the previous one. */
+static BindingsFrameSchema *bindings_manufacture_schema(SymbolId spelling) {
+    static _Atomic(BindingsFrameSchema *) published = NULL;
+    BindingsFrameSchema *schema =
+        atomic_load_explicit(&published, memory_order_acquire);
+    if (schema)
+        return schema->spellings[0] == spelling ? schema : NULL;
+    VarId first = 1u;
+    BindingsFrameSchema *fresh = bindings_frame_schema_new(&first, 1u);
+    if (!fresh)
+        return NULL;
+    fresh->spellings[0] = spelling;
+    BindingsFrameSchema *expected = NULL;
+    if (!atomic_compare_exchange_strong_explicit(
+            &published, &expected, fresh,
+            memory_order_acq_rel, memory_order_acquire)) {
+        bindings_frame_schema_release(fresh);
+        return expected->spellings[0] == spelling ? expected : NULL;
+    }
+    return fresh;
+}
+
 Atom *bindings_builder_new_variable(BindingsBuilder *builder, Arena *arena,
                                     CettaFrameIdentity identity) {
     if (!builder || !arena || identity == 0u)
@@ -1141,13 +1166,19 @@ Atom *bindings_builder_new_variable(BindingsBuilder *builder, Arena *arena,
         return NULL;
     if (!frame) {
         VarId first = 1u;
-        BindingsFrameSchema *schema = bindings_frame_schema_new(&first, 1u);
-        if (!schema)
-            return NULL;
-        schema->spellings[0] = variable->sym_id;
+        BindingsFrameSchema *shared = bindings_manufacture_schema(
+            variable->sym_id);
+        BindingsFrameSchema *schema = shared;
+        if (!schema) {
+            schema = bindings_frame_schema_new(&first, 1u);
+            if (!schema)
+                return NULL;
+            schema->spellings[0] = variable->sym_id;
+        }
         bool installed = bindings_builder_register_frame_kind(
             builder, &first, 1u, identity, false, schema, NULL);
-        bindings_frame_schema_release(schema);
+        if (!shared)
+            bindings_frame_schema_release(schema);
         if (!installed)
             return NULL;
     }

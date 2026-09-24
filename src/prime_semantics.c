@@ -5667,35 +5667,18 @@ static Atom *prime_subst_binder(Arena *arena, Atom *term, Atom *binder,
     return atom_expr(arena, items, term->expr.len);
 }
 
-/* One-argument beta of an authored lambda. Nested binders of the same variable
- * stay bound. */
-static Atom *prime_authored_compute(Arena *arena, Atom *term, unsigned depth);
-
-Atom *prime_semantics_authored_compute(Arena *arena, Atom *term) {
-    return prime_authored_compute(arena, term, 64u);
-}
-
-static Atom *prime_authored_compute(Arena *arena, Atom *term, unsigned depth) {
-    if (!arena || !term || depth == 0u || term->kind != ATOM_EXPR)
-        return term;
-    Atom **items = arena_alloc(arena, sizeof(Atom *) * (size_t)term->expr.len);
-    if (!items) return term;
-    bool changed = false;
-    for (CettaExprIndex i = 0u; i < term->expr.len; i++) {
-        items[i] = prime_authored_compute(arena, term->expr.elems[i], depth - 1u);
-        if (!items[i]) return term;
-        if (items[i] != term->expr.elems[i]) changed = true;
-    }
-    Atom *current = term;
-    if (changed) {
-        current = atom_expr(arena, items, term->expr.len);
-        if (!current) return term;
-    }
-    Atom *next = prime_semantics_beta(arena, current);
-    if (!next) next = prime_semantics_project_pair(current);
-    if (!next) next = prime_semantics_identity_iota(current);
-    if (!next || next == current) return current;
-    return prime_authored_compute(arena, next, depth - 1u);
+/* One contraction at the root of the atom being evaluated: one-argument beta
+ * of an authored lambda (nested binders of the same variable stay bound), a
+ * projection of a pair, or identity elimination at reflexivity. Subterms are
+ * never entered. An argument is contracted when the evaluator evaluates it,
+ * so a term that reaches the root only as data, such as the tail of a list
+ * or a quoted term, is not rewritten. */
+Atom *prime_semantics_authored_head_step(Arena *arena, Atom *term) {
+    if (!arena || !term || term->kind != ATOM_EXPR) return term;
+    Atom *next = prime_semantics_beta(arena, term);
+    if (!next) next = prime_semantics_project_pair(term);
+    if (!next) next = prime_semantics_identity_iota(term);
+    return next ? next : term;
 }
 
 Atom *prime_semantics_beta(Arena *arena, Atom *call) {

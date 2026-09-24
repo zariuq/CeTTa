@@ -86,6 +86,10 @@ typedef enum {
     CETTA_EVAL_INCOMPLETE_CANCELLED,
     CETTA_EVAL_INCOMPLETE_STACK,
     CETTA_EVAL_INCOMPLETE_CAPACITY,
+    /* The program changed under pending work that could not follow it. */
+    CETTA_EVAL_INCOMPLETE_INVALIDATED,
+    /* A host service the machine depends on failed. */
+    CETTA_EVAL_INCOMPLETE_HOST_FAILURE,
 } CettaEvalCompletion;
 
 typedef struct EvalOutcome {
@@ -128,9 +132,6 @@ uint64_t eval_current_c_stack_budget_bytes(void);
 void eval_top(Space *s, Arena *a, Atom *expr, ResultSet *rs);
 void eval_top_one_step(Space *s, Arena *a, Atom *expr, ResultSet *rs);
 void eval_top_with_registry(Space *s, Arena *a, Arena *persistent, Registry *r, Atom *expr, ResultSet *rs);
-void eval_top_with_registry_petta_plan(
-    Space *s, Arena *a, Arena *persistent, Registry *r, Atom *expr,
-    const struct PettaPlanNode *plan, ResultSet *rs);
 void eval_top_with_registry_petta_plan_outcome(
     Space *s, Arena *a, Arena *persistent, Registry *r, Atom *expr,
     const struct PettaPlanNode *plan, EvalOutcome *outcome);

@@ -208,9 +208,10 @@ Atom *prime_semantics_identity_iota(Atom *call);
 /* `((lam $x body) argument)` reduces to `body` with `$x` replaced. */
 Atom *prime_semantics_beta(Arena *arena, Atom *call);
 
-/* Beta, pair projection, and reflexivity elimination anywhere in an authored
- * term. The same pointer means nothing changed. */
-Atom *prime_semantics_authored_compute(Arena *arena, Atom *term);
+/* One beta, pair projection, or reflexivity elimination at the root of an
+ * authored term; subterms are not entered. The same pointer means nothing
+ * changed. */
+Atom *prime_semantics_authored_head_step(Arena *arena, Atom *term);
 
 /* C-internal entry point for proof replay through a named NIK authority.
  * The judgment is exactly `(nik:check authority claim proof)`. */

@@ -2,7 +2,7 @@
 [(NativeProof native-id (Lam (DeclConst prop) (Lam (App (DeclConst __cetta_holds_4af51ee31207779bb184b387) (idx 0)) (idx 0))) 0)]
 [(NativeUse True True True True)]
 [Refuted]
-[Undetermined]
+[Refuted]
 [Undetermined]
 [(NativeTryProof native-id (Lam (DeclConst prop) (Lam (App (DeclConst __cetta_holds_4af51ee31207779bb184b387) (idx 0)) (idx 0))) 0)]
 [native-mixed]

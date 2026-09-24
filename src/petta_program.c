@@ -382,6 +382,17 @@ struct PettaProgram {
     size_t space_cap;
     PettaProgramAnalysisState *analysis;
     PettaCallabilityDomain predeclared_callability;
+    uint64_t predeclared_generation;
+    /* Callability is program knowledge: it changes only with equation or
+       declaration occurrences (each space's SpaceProgramToken) and with
+       predeclared heads.  It is read once per program revision, not once
+       per planned expression. */
+    PettaCallabilityDomain callability_cache;
+    SpaceProgramToken *callability_cache_tokens;
+    size_t callability_cache_token_len;
+    size_t callability_cache_token_cap;
+    uint64_t callability_cache_predeclared_generation;
+    bool callability_cache_valid;
     PettaTableSafetyCacheEntry
         table_safety_cache[PETTA_TABLE_SAFETY_CACHE_CAP];
 };
@@ -1544,6 +1555,7 @@ bool petta_program_predeclare_equation(
     SymbolId head = SYMBOL_ID_NONE;
     if (!petta_equation_view(atom, &lhs, NULL, &head))
         return false;
+    program->predeclared_generation++;
     if (petta_equation_lhs_admits_any_named_head(lhs)) {
         program->predeclared_callability.admits_any_head = true;
     }
@@ -2539,11 +2551,58 @@ static const PettaPlanNode *petta_plan_rebind_frame_syntax(
     return root;
 }
 
-static bool petta_program_collect_callability(
+static bool petta_program_space_is_live(const PettaProgramSpace *space) {
+    return space->space &&
+           space->instance_id == space_instance_id(space->space);
+}
+
+/* The spaces read, their program tokens and the predeclared generation still
+   describe the cached domain. */
+static bool petta_program_callability_cache_current(
+    const PettaProgram *program) {
+    if (!program->callability_cache_valid ||
+        program->callability_cache_predeclared_generation !=
+            program->predeclared_generation ||
+        program->callability_cache_token_len != program->space_len) {
+        return false;
+    }
+    for (size_t index = 0u; index < program->space_len; index++) {
+        const PettaProgramSpace *space = &program->spaces[index];
+        SpaceProgramToken token =
+            program->callability_cache_tokens[index];
+        if (!petta_program_space_is_live(space)) {
+            if (token.space)
+                return false;
+            continue;
+        }
+        if (!space_program_token_matches_live_space(
+                token, space->space)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool petta_callability_copy(
+    PettaCallabilityDomain *out, const PettaCallabilityDomain *source) {
+    out->admits_any_head = source->admits_any_head;
+    out->named_len = 0u;
+    if (source->named_len == 0u)
+        return true;
+    if (!petta_program_reserve(
+            (void **)&out->named_heads, &out->named_cap,
+            source->named_len, sizeof(*out->named_heads))) {
+        return false;
+    }
+    memcpy(out->named_heads, source->named_heads,
+           sizeof(*out->named_heads) * source->named_len);
+    out->named_len = source->named_len;
+    return true;
+}
+
+static bool petta_program_scan_callability(
     const PettaProgram *program,
     PettaCallabilityDomain *callability) {
-    if (!program || !callability)
-        return false;
     callability->admits_any_head =
         program->predeclared_callability.admits_any_head;
     for (size_t index = 0u;
@@ -2560,11 +2619,8 @@ static bool petta_program_collect_callability(
          space_index < program->space_len; space_index++) {
         const PettaProgramSpace *space =
             &program->spaces[space_index];
-        if (!space->space ||
-            space->instance_id !=
-                space_instance_id(space->space)) {
+        if (!petta_program_space_is_live(space))
             continue;
-        }
         CettaCount length = space_length64(space->space);
         for (CettaIndex atom_index = 0u;
              atom_index < length; atom_index++) {
@@ -2583,6 +2639,42 @@ static bool petta_program_collect_callability(
             }
         }
     }
+    return true;
+}
+
+/* The caller owns the returned domain's storage.  The scan runs only when
+   the program revision it describes has changed. */
+static bool petta_program_collect_callability(
+    PettaProgram *program,
+    PettaCallabilityDomain *callability) {
+    if (!program || !callability)
+        return false;
+    if (petta_program_callability_cache_current(program))
+        return petta_callability_copy(
+            callability, &program->callability_cache);
+    if (!petta_program_scan_callability(program, callability))
+        return false;
+    program->callability_cache_valid = false;
+    if (!petta_program_reserve(
+            (void **)&program->callability_cache_tokens,
+            &program->callability_cache_token_cap,
+            program->space_len,
+            sizeof(*program->callability_cache_tokens)) ||
+        !petta_callability_copy(
+            &program->callability_cache, callability)) {
+        return true;
+    }
+    for (size_t index = 0u; index < program->space_len; index++) {
+        const PettaProgramSpace *space = &program->spaces[index];
+        SpaceProgramToken token = {0};
+        if (petta_program_space_is_live(space))
+            token = space_program_token(space->space);
+        program->callability_cache_tokens[index] = token;
+    }
+    program->callability_cache_token_len = program->space_len;
+    program->callability_cache_predeclared_generation =
+        program->predeclared_generation;
+    program->callability_cache_valid = true;
     return true;
 }
 
@@ -3117,6 +3209,8 @@ void petta_program_free(PettaProgram *program) {
     }
     free(program->equation_template_c0);
     free(program->predeclared_callability.named_heads);
+    free(program->callability_cache.named_heads);
+    free(program->callability_cache_tokens);
     free(program->spaces);
     for (PettaEquationTemplate *template = program->equation_templates;
          template; template = template->next_owned)
@@ -4983,6 +5077,7 @@ static bool petta_table_safety_form_is_pure(
     case PETTA_FORM_CONS:
     case PETTA_FORM_INT_ADD:
     case PETTA_FORM_STREAM_UNIQUE:
+    case PETTA_FORM_STREAM_ALPHA_UNIQUE:
     case PETTA_FORM_STREAM_UNION:
     case PETTA_FORM_STREAM_INTERSECTION:
     case PETTA_FORM_STREAM_SUBTRACTION:

@@ -29,7 +29,30 @@
    (-> (e : (P (f a))) (k : (-> (p : (P (f a))) (id A b b))) (id A b b))
    (= (consumeEvidence $e $k) ($k $e)))
 !(add-atom &thy (chaining-rule consumeEvidence))
-!(search-first-inhabitant &thy (quote (id A b b)) 3)
+; Elaboration is a substitution, not an ordered sequence of allocations:
+; observe the checked proof and type, four distinct local keys, and the bag
+; of values.
+(= (evidence-search-observation
+     (he-accept
+       (typed-answer-v2 (: $proof $type)
+         (answer-substitution-v2
+           (query-substitution-v1)
+           (elaboration-substitution-v1
+             (elaboration-binding-v1 $k1 $v1)
+             (elaboration-binding-v1 $k2 $v2)
+             (elaboration-binding-v1 $k3 $v3)
+             (elaboration-binding-v1 $k4 $v4))
+           (answer-constraints-v1)))))
+   (checked
+     (=alpha $proof (consumeEvidence (next a h) k))
+     (=alpha $type (id A b b))
+     (=alpha (keys $k1 $k2 $k3 $k4) (keys $w $x $y $z))
+     (superpose ($v1 $v2 $v3 $v4))))
+!(assertEqualToResult
+   (evidence-search-observation
+     (search-first-inhabitant &thy (quote (id A b b)) 3))
+   ((checked True True True k) (checked True True True a)
+    (checked True True True h) (checked True True True (next a h))))
 !(let (he-accept (typed-answer-v2 (: $proof $type) $substitution))
       (search-first-inhabitant &thy (id A b b) 3)
       (== $proof (consumeEvidence (next a h) k)))

@@ -60,12 +60,10 @@ static Atom *frame_instantiate_variable(
         frame_instantiate_create_slot, &instance->identity);
 }
 
-bool cetta_instantiate_frame_terms(Arena *dst, Atom **terms, size_t count) {
-    if (!dst || (count && !terms))
-        return false;
-    CETTA_FRAME_IDENTITY_SCOPE(owner);
-    CettaFrameIdentity identity;
-    if (!cetta_frame_identity_scope_try(&owner, &identity))
+bool cetta_instantiate_frame_terms_within(Arena *dst, Atom **terms,
+                                          size_t count,
+                                          CettaFrameIdentity identity) {
+    if (!dst || (count && !terms) || !identity)
         return false;
     CettaVarMap inventory;
     cetta_var_map_init(&inventory);
@@ -78,6 +76,16 @@ bool cetta_instantiate_frame_terms(Arena *dst, Atom **terms, size_t count) {
     }
     cetta_var_map_free(&inventory);
     return ok;
+}
+
+bool cetta_instantiate_frame_terms(Arena *dst, Atom **terms, size_t count) {
+    if (!dst || (count && !terms))
+        return false;
+    CETTA_FRAME_IDENTITY_SCOPE(owner);
+    CettaFrameIdentity identity;
+    if (!cetta_frame_identity_scope_try(&owner, &identity))
+        return false;
+    return cetta_instantiate_frame_terms_within(dst, terms, count, identity);
 }
 
 Atom *cetta_instantiate_frame_syntax(Arena *dst, Atom *source) {

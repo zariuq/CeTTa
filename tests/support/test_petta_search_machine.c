@@ -35,6 +35,34 @@ static Atom *parse_one(Arena *arena, const char *source) {
     return result;
 }
 
+static bool collect_flat_fold_int(int64_t value, void *context) {
+    int64_t *sum = context;
+    *sum += value;
+    return true;
+}
+
+static void test_flat_fold_overlay_admission(Arena *arena) {
+    Space base, overlay;
+    space_init(&base);
+    space_add(&base, parse_one(arena, "(fold-row 2)"));
+    Atom *pattern = parse_one(arena, "(fold-row $value)");
+    int64_t sum = 0;
+    assert(space_native_flat_pattern_each_int(
+        &base, pattern, 1u, collect_flat_fold_int, &sum));
+    assert(sum == 2);
+
+    space_init_overlay(&overlay, &base);
+    space_add(&overlay, parse_one(arena, "(fold-row 3)"));
+    assert(space_length64(&overlay) == 2u);
+    sum = 0;
+    assert(!space_native_flat_pattern_each_int(
+        &overlay, pattern, 1u, collect_flat_fold_int, &sum));
+    assert(sum == 0);
+    space_free(&overlay);
+    space_free(&base);
+    puts("PASS: native integer fold declines overlays before visiting rows");
+}
+
 static void test_search_context_checkpoint_capabilities(void) {
     Bindings empty;
     bindings_init(&empty);
@@ -2902,13 +2930,13 @@ static void test_constructor_slot_frame_plans(
            PETTA_MACHINE_STEP_EXHAUSTED);
     bindings_free(&environment);
     assert(petta_machine_stats(&machine, &stats));
-    assert(stats.activation_scalar_argument_segment_attempts ==
-           (activation_enabled ? 1u : 0u));
-    assert(stats.activation_scalar_argument_segment_commits ==
-           (activation_enabled ? 1u : 0u));
+    /* This query is closed, so it uses the isolated matcher and does not
+     * keep a contextual activation frame. */
+    (void)activation_enabled;
+    assert(stats.activation_scalar_argument_segment_attempts == 0u);
+    assert(stats.activation_scalar_argument_segment_commits == 0u);
     assert(stats.activation_scalar_argument_segment_declines == 0u);
-    assert(stats.activation_scalar_argument_segment_operations ==
-           (activation_enabled ? 3u : 0u));
+    assert(stats.activation_scalar_argument_segment_operations == 0u);
     petta_machine_destroy(&machine);
 
     PettaMachineHost finite_scalar_segment_host = scalar_segment_host;
@@ -2945,9 +2973,9 @@ static void test_constructor_slot_frame_plans(
         scalar_result_transitions[metered] = stats.transitions;
         petta_machine_destroy(&machine);
     }
-    assert(activation_enabled
-        ? scalar_result_transitions[0] < scalar_result_transitions[1]
-        : scalar_result_transitions[0] == scalar_result_transitions[1]);
+    /* Closed calls use the isolated matcher in both budgets, so the
+     * activation segment no longer removes transitions. */
+    assert(scalar_result_transitions[0] == scalar_result_transitions[1]);
 
     assert(petta_machine_init_with_plan(
         &machine, &execution_space, answers,
@@ -2961,11 +2989,9 @@ static void test_constructor_slot_frame_plans(
     assert(atom_alpha_eq(answer, parse_one(answers, "5")));
     bindings_free(&environment);
     assert(petta_machine_stats(&machine, &stats));
-    assert(stats.activation_scalar_argument_segment_attempts ==
-           (activation_enabled ? 1u : 0u));
+    assert(stats.activation_scalar_argument_segment_attempts == 0u);
     assert(stats.activation_scalar_argument_segment_commits == 0u);
-    assert(stats.activation_scalar_argument_segment_declines ==
-           (activation_enabled ? 1u : 0u));
+    assert(stats.activation_scalar_argument_segment_declines == 0u);
     petta_machine_destroy(&machine);
 
     assert(petta_machine_init_with_plan(
@@ -2980,11 +3006,9 @@ static void test_constructor_slot_frame_plans(
     assert(atom_alpha_eq(answer, parse_one(answers, "2")));
     bindings_free(&environment);
     assert(petta_machine_stats(&machine, &stats));
-    assert(stats.activation_scalar_argument_segment_attempts ==
-           (activation_enabled ? 1u : 0u));
+    assert(stats.activation_scalar_argument_segment_attempts == 0u);
     assert(stats.activation_scalar_argument_segment_commits == 0u);
-    assert(stats.activation_scalar_argument_segment_declines ==
-           (activation_enabled ? 1u : 0u));
+    assert(stats.activation_scalar_argument_segment_declines == 0u);
     petta_machine_destroy(&machine);
 
     assert(petta_machine_init_with_plan(
@@ -3006,11 +3030,11 @@ static void test_constructor_slot_frame_plans(
            PETTA_MACHINE_STEP_EXHAUSTED);
     bindings_free(&environment);
     assert(petta_machine_stats(&machine, &stats));
-    assert(stats.activation_scalar_argument_segment_attempts ==
-           (activation_enabled ? 1u : 0u));
+    /* The call arguments are ground. Branching inside the body does not
+     * make the call open, so the contextual segment stays unused. */
+    assert(stats.activation_scalar_argument_segment_attempts == 0u);
     assert(stats.activation_scalar_argument_segment_commits == 0u);
-    assert(stats.activation_scalar_argument_segment_declines ==
-           (activation_enabled ? 1u : 0u));
+    assert(stats.activation_scalar_argument_segment_declines == 0u);
     petta_machine_destroy(&machine);
 
     PettaMachineHost rejected_activation_host = activation_host;
@@ -5996,8 +6020,9 @@ static void test_equation_slot_admission_boundary(
         "(= (slot-admission $left $right)"
         "   (slot-result second $left $right))");
 
-    /* A closed call is the positive witness for the direct activation-slot
-     * frame: both occurrences use epoch views and preserve bag order. */
+    /* A closed call has no caller-visible substitution. It uses the
+     * isolated matcher, retires each candidate frame at the equation
+     * boundary, and preserves bag order. */
     Atom *closed_query = parse_one(
         answers, "(slot-admission left-value right-value)");
     assert(closed_query);
@@ -6026,7 +6051,7 @@ static void test_equation_slot_admission_boundary(
     bindings_free(&environment);
     PettaMachineStats stats;
     assert(petta_machine_stats(&machine, &stats));
-    assert(stats.match_candidate_epoch_views == 2u);
+    assert(stats.match_candidate_epoch_views == 0u);
     petta_machine_destroy(&machine);
 
     /* An authored open call may be closed by its surrounding environment,
@@ -6061,8 +6086,62 @@ static void test_equation_slot_admission_boundary(
                &machine, &answer, &environment) ==
            PETTA_MACHINE_STEP_EXHAUSTED);
     bindings_free(&environment);
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.match_candidate_epoch_views == 0u);
     petta_machine_destroy(&machine);
     bindings_free(&base);
+
+    /* A genuinely open relational call retains contextual slots, so its
+     * returned bindings and resumable alternatives share one logical frame. */
+    Atom *relational_query = parse_one(
+        answers, "(slot-admission $open-left $open-right)");
+    assert(relational_query);
+    assert(petta_machine_init(
+        &machine, space, answers, relational_query, NULL, NULL));
+    const char *relational_expected[] = {
+        "(slot-result first $left $right)",
+        "(slot-result second $left $right)",
+    };
+    for (size_t index = 0u; index < 2u; index++) {
+        answer = NULL;
+        assert(petta_machine_next(
+                   &machine, &answer, &environment) ==
+               PETTA_MACHINE_STEP_ANSWER);
+        assert(atom_alpha_eq(
+            answer, parse_one(answers, relational_expected[index])));
+        bindings_free(&environment);
+    }
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.match_candidate_epoch_views == 2u);
+    petta_machine_destroy(&machine);
+
+    /* A closed arithmetic tree reduces in one dispatch and keeps no
+     * candidate frame. */
+    add_equation(
+        space, persistent,
+        "(= (closed-sum $x) (+ (- $x 1) (* 2 3)))");
+    Atom *scalar_query = parse_one(answers, "(closed-sum 4)");
+    assert(scalar_query);
+    assert(petta_machine_init(
+        &machine, space, answers, scalar_query, NULL, NULL));
+    answer = NULL;
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, atom_int(answers, 9)));
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.match_candidate_epoch_views == 0u);
+    assert(stats.pure_grounded_slot_frame_direct_dispatches == 1u);
+    petta_machine_destroy(&machine);
 }
 
 static void test_ground_boolean_choice_elision(
@@ -9999,6 +10078,7 @@ int main(void) {
     assert_type_pure_symbol_facts();
     puts("PASS: type-pure grounded symbol facts");
     test_search_context_checkpoint_capabilities();
+    test_flat_fold_overlay_admission(&answers);
     test_native_runtime_named_arity();
     test_semantic_form_facts();
     test_program_metadata_projection(&answers);

@@ -12,8 +12,9 @@
 (chaining-rule ax-mp)
 
 ; Elaboration is a substitution, not an ordered sequence of allocations.
-; Preserve the exact checked proof, four distinct local keys, empty query
-; substitution and residual constraints, and the complete bag of values.
+; Preserve the exact checked proof, with the object types as real arguments,
+; eight distinct local keys, empty query substitution and residual
+; constraints, and the complete bag of values.
 (= (inhabitation-observation
      (he-accept
        (typed-answer-v2 (: $proof ch)
@@ -23,22 +24,31 @@
              (elaboration-binding-v1 $k1 $v1)
              (elaboration-binding-v1 $k2 $v2)
              (elaboration-binding-v1 $k3 $v3)
-             (elaboration-binding-v1 $k4 $v4))
+             (elaboration-binding-v1 $k4 $v4)
+             (elaboration-binding-v1 $k5 $v5)
+             (elaboration-binding-v1 $k6 $v6)
+             (elaboration-binding-v1 $k7 $v7)
+             (elaboration-binding-v1 $k8 $v8))
            (answer-constraints-v1)))))
    (checked
-     (=alpha $proof (ax-mp h2 (ax-mp h1 h3)))
-     (=alpha (keys $k1 $k2 $k3 $k4) (keys $a $b $c $d))
-     (superpose ($v1 $v2 $v3 $v4))))
+     (=alpha $proof (ax-mp ps ch h2 (ax-mp ph (impl ps ch) h1 h3)))
+     (=alpha (keys $k1 $k2 $k3 $k4 $k5 $k6 $k7 $k8)
+             (keys $a $b $c $d $e $f $g $h))
+     (superpose ($v1 $v2 $v3 $v4 $v5 $v6 $v7 $v8))))
 !(assertEqualToResult
    (inhabitation-observation
      (search-first-inhabitant
        &self ch 3 100000 (search-policy atp-guided-inhabitation)))
    ((checked True True ch) (checked True True (impl ps ch))
-    (checked True True ph) (checked True True ps)))
+    (checked True True ph) (checked True True ps)
+    (checked True True h1) (checked True True h2) (checked True True h3)
+    (checked True True (ax-mp ph (impl ps ch) h1 h3))))
 !(assertEqualToResult
    (inhabitation-observation (search-first-inhabitant &self ch 3 100000))
    ((checked True True ch) (checked True True (impl ps ch))
-    (checked True True ph) (checked True True ps)))
+    (checked True True ph) (checked True True ps)
+    (checked True True h1) (checked True True h2) (checked True True h3)
+    (checked True True (ax-mp ph (impl ps ch) h1 h3))))
 
 ; Retain and consume the actual tree; search acceptance is not a substitute
 ; for checking the same term through the public native judgment.

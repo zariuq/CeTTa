@@ -710,6 +710,30 @@ bool atom_data_equal(Atom *left, Atom *right);
  * validation. This is not a validator for untrusted or mutable graph inputs. */
 bool atom_data_equal_validated(Atom *left, Atom *right);
 
+/* Upstream HE Number::PartialEq promotes an integer/float pair to float
+ * and compares.  PeTTa and every other dialect stay kind-strict: 1 ≠ 1.0.
+ * Same-kind pairs are not decided here. */
+bool cetta_he_promoted_kind_equal(int left_kind, int64_t left_int,
+                                  double left_float, int right_kind,
+                                  int64_t right_int, double right_float);
+bool cetta_he_promoted_numbers_equal(const Atom *left, const Atom *right);
+/* When value is an HE float that is an exact int64, *out receives it.
+ * Candidate lookup uses this to visit the integer branch too. */
+bool cetta_he_float_exact_int(double value, int64_t *out);
+
+/* How an HE float query should read integer index branches.
+ * NONE: not HE, or no int64 promotes to this float.
+ * ONE: every promoting int64 is *out (magnitudes below 2^53).
+ * SCAN: several int64 values share this float; visit each promoting key. */
+typedef enum {
+    CETTA_HE_FLOAT_INTS_NONE = 0,
+    CETTA_HE_FLOAT_INTS_ONE,
+    CETTA_HE_FLOAT_INTS_SCAN,
+} CettaHeFloatIntBranches;
+
+CettaHeFloatIntBranches cetta_he_float_int_branches(double value,
+                                                    int64_t *out);
+
 /* ── Printing ───────────────────────────────────────────────────────────── */
 
 void atom_print(Atom *a, FILE *out);

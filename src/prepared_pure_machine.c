@@ -175,7 +175,15 @@ typedef struct {
     /* CALL and TAIL: argument slots step_arguments[first_argument, +arity). */
     uint32_t first_argument;
     uint32_t arity;
+    /* CALL: a node for the rest of the equation body once the call's answer
+     * is in `slot` -- operands already evaluated are slot reads, the rest is
+     * source structure.  It is deoptimization metadata: decoding it gives
+     * the source computation the continuation stands for.  NO_TEMPLATE when
+     * the lowering could not describe it. */
+    uint32_t resume_template;
 } PreparedPureStep;
+
+#define PREPARED_PURE_NO_TEMPLATE UINT32_MAX
 
 typedef enum {
     /* Slot `operand` takes register `source`. */
@@ -3583,7 +3591,8 @@ static PreparedPureMatchState prepared_pure_match_same_value(
     Atom *bound, Atom *value) {
     if (!bound || !value || atom_has_vars(bound) || atom_has_vars(value))
         return PREPARED_PURE_MATCH_ERROR;
-    return atom_eq(bound, value)
+    return atom_eq(bound, value) ||
+            cetta_he_promoted_numbers_equal(bound, value)
         ? PREPARED_PURE_MATCH_MATCHED : PREPARED_PURE_MATCH_MISMATCH;
 }
 
@@ -3695,8 +3704,10 @@ static PreparedPureMatchState prepared_pure_match_equation(
                 break;
             }
             case PREPARED_PURE_MATCH_OP_ATOM:
-                equal = value->kind == op->literal->kind &&
-                        atom_eq(op->literal, value);
+                equal = value && op->literal &&
+                    ((value->kind == op->literal->kind &&
+                      atom_eq(op->literal, value)) ||
+                     cetta_he_promoted_numbers_equal(op->literal, value));
                 break;
             case PREPARED_PURE_MATCH_OP_EXPR:
                 equal = value->kind == ATOM_EXPR &&
@@ -4351,6 +4362,17 @@ static bool prepared_pure_is_false(Atom *atom) {
     return atom_is_symbol_id(atom, g_builtin_syms.false_text) ||
            (atom && atom->kind == ATOM_GROUNDED &&
             atom->ground.gkind == GV_BOOL && !atom->ground.bval);
+}
+
+/* PeTTa `if` takes the else branch for any other non-empty, non-error value.
+ * A variable still belongs to the general machine, which tries both branches. */
+static bool prepared_pure_petta_else_value(Atom *condition) {
+    return eval_current_language_id &&
+        eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+        condition &&
+        condition->kind != ATOM_VAR &&
+        !atom_is_error(condition) &&
+        !atom_is_empty(condition);
 }
 
 #if CETTA_BUILD_WITH_GMP
@@ -5064,7 +5086,9 @@ static PreparedPureTruth prepared_pure_inline_truth(
             ? PREPARED_PURE_TRUTH_TRUE : PREPARED_PURE_TRUTH_FALSE;
     if (condition.atom && prepared_pure_is_true(condition.atom))
         return PREPARED_PURE_TRUTH_TRUE;
-    if (condition.atom && prepared_pure_is_false(condition.atom))
+    if (condition.atom &&
+        (prepared_pure_is_false(condition.atom) ||
+         prepared_pure_petta_else_value(condition.atom)))
         return PREPARED_PURE_TRUTH_FALSE;
     return PREPARED_PURE_TRUTH_NOT_BOOLEAN;
 }
@@ -5626,10 +5650,80 @@ static bool prepared_pure_value_tree(
     return true;
 }
 
+/* One enclosing construct of the node being lowered: its copy, the child
+ * position the node occupies, and the operands already lowered before it. */
+typedef struct {
+    PreparedPureNode node;
+    uint32_t hole;
+    const uint32_t *before;
+} PreparedPureZipperFrame;
+
 typedef struct {
     CettaPreparedPureProgram *program;
     uint32_t next_slot;
+    PreparedPureZipperFrame *zipper;
+    size_t zipper_len;
+    size_t zipper_cap;
 } PreparedPureLowering;
+
+static bool prepared_pure_zipper_push(
+    PreparedPureLowering *lowering, const PreparedPureNode *node,
+    uint32_t hole, const uint32_t *before) {
+    if (!prepared_pure_reserve(
+            (void **)&lowering->zipper, sizeof(*lowering->zipper),
+            &lowering->zipper_cap, lowering->zipper_len + 1u))
+        return false;
+    lowering->zipper[lowering->zipper_len++] = (PreparedPureZipperFrame){
+        .node = *node, .hole = hole, .before = before,
+    };
+    return true;
+}
+
+static void prepared_pure_zipper_pop(PreparedPureLowering *lowering) {
+    if (lowering->zipper_len > 0u)
+        lowering->zipper_len--;
+}
+
+/* The rest of the body once a call's answer is in `slot`: rebuild each
+ * enclosing construct around the hole, innermost first.  Operands lowered
+ * before the hole are the nodes that read their values; later children are
+ * the source nodes still to run. */
+static uint32_t prepared_pure_resume_template(
+    PreparedPureLowering *lowering, uint32_t slot) {
+    CettaPreparedPureProgram *program = lowering->program;
+    uint32_t current = 0u;
+    if (!prepared_pure_add_node(
+            program,
+            (PreparedPureNode){.kind = PREPARED_PURE_SLOT, .auxiliary = slot},
+            NULL, 0u, &current))
+        return PREPARED_PURE_NO_TEMPLATE;
+    for (size_t index = lowering->zipper_len; index-- > 0u;) {
+        const PreparedPureZipperFrame *frame = &lowering->zipper[index];
+        uint32_t count = frame->node.child_count;
+        if (frame->hole >= count ||
+            frame->node.first_child > program->child_len ||
+            count > program->child_len - frame->node.first_child)
+            return PREPARED_PURE_NO_TEMPLATE;
+        uint32_t *children = malloc(sizeof(*children) * count);
+        if (!children)
+            return PREPARED_PURE_NO_TEMPLATE;
+        for (uint32_t child = 0u; child < count; child++) {
+            if (child == frame->hole)
+                children[child] = current;
+            else if (child < frame->hole && frame->before)
+                children[child] = frame->before[child];
+            else
+                children[child] =
+                    program->children[frame->node.first_child + child];
+        }
+        bool ok = prepared_pure_add_node(
+            program, frame->node, children, count, &current);
+        free(children);
+        if (!ok)
+            return PREPARED_PURE_NO_TEMPLATE;
+    }
+    return current;
+}
 
 static bool prepared_pure_emit_step(
     PreparedPureLowering *lowering, PreparedPureStep step,
@@ -5699,9 +5793,12 @@ static bool prepared_pure_lower_operands(
     if (!operands)
         return false;
     for (uint32_t index = 0u; index < count; index++) {
-        if (!prepared_pure_lower_operand(
+        bool ok = prepared_pure_zipper_push(lowering, node, index, operands) &&
+            prepared_pure_lower_operand(
                 lowering, program->children[first + index], depth,
-                &operands[index])) {
+                &operands[index]);
+        prepared_pure_zipper_pop(lowering);
+        if (!ok) {
             free(operands);
             return false;
         }
@@ -5753,8 +5850,12 @@ static bool prepared_pure_lower_node(
         uint32_t condition = 0u;
         uint32_t branch = 0u;
         uint32_t join = 0u;
-        if (!prepared_pure_lower_to_slot(
-                lowering, children[0], depth, &condition) ||
+        bool lowered_condition =
+            prepared_pure_zipper_push(lowering, &node, 0u, NULL) &&
+            prepared_pure_lower_to_slot(
+                lowering, children[0], depth, &condition);
+        prepared_pure_zipper_pop(lowering);
+        if (!lowered_condition ||
             !prepared_pure_emit_step(
                 lowering,
                 (PreparedPureStep){
@@ -5781,8 +5882,12 @@ static bool prepared_pure_lower_node(
             return false;
         uint32_t body = children[1];
         uint32_t bound = 0u;
-        return prepared_pure_lower_to_slot(
-                   lowering, children[0], depth, &bound) &&
+        bool lowered_bound =
+            prepared_pure_zipper_push(lowering, &node, 0u, NULL) &&
+            prepared_pure_lower_to_slot(
+                lowering, children[0], depth, &bound);
+        prepared_pure_zipper_pop(lowering);
+        return lowered_bound &&
             prepared_pure_emit_step(
                 lowering,
                 (PreparedPureStep){
@@ -5818,6 +5923,9 @@ static bool prepared_pure_lower_node(
                 program->step_argument_len += node.child_count;
             }
             free(operands);
+            uint32_t resume_template = ok && !tail
+                ? prepared_pure_resume_template(lowering, destination)
+                : PREPARED_PURE_NO_TEMPLATE;
             return ok && prepared_pure_emit_step(
                 lowering,
                 (PreparedPureStep){
@@ -5827,6 +5935,7 @@ static bool prepared_pure_lower_node(
                     .auxiliary = node.auxiliary,
                     .first_argument = first_argument,
                     .arity = node.child_count,
+                    .resume_template = resume_template,
                 },
                 NULL);
         }
@@ -5928,9 +6037,11 @@ static bool prepared_pure_lower_answer_producer(
             .next_slot = equation->local_count,
         };
         size_t first_step = program->step_len;
-        if (first_step > UINT32_MAX ||
-            !prepared_pure_lower_node(
-                &lowering, equation->root, true, 0u, 0u))
+        bool lowered = first_step <= UINT32_MAX &&
+            prepared_pure_lower_node(
+                &lowering, equation->root, true, 0u, 0u);
+        free(lowering.zipper);
+        if (!lowered)
             return prepared_pure_reject(
                 program, "answer body has no step lowering",
                 equation->lhs);
@@ -6704,7 +6815,9 @@ static PreparedPureRunResult prepared_pure_answer_cursor_run(
                 ? program->slots[step->slot] : NULL;
             if (condition && prepared_pure_is_true(condition))
                 pc++;
-            else if (condition && prepared_pure_is_false(condition))
+            else if (condition &&
+                     (prepared_pure_is_false(condition) ||
+                      prepared_pure_petta_else_value(condition)))
                 pc = step->target;
             else
                 goto unsupported;
@@ -7092,6 +7205,205 @@ bool cetta_prepared_pure_answer_cursor_frame(
         frame_out->next_equation = equation->equation;
         frame_out->next_logical_index = equation->logical_index;
     }
+    frame_out->resumes_continuation = frame->continuation != NULL;
+    return true;
+}
+
+/* Decoding a resume template back into source syntax.  Slot values are
+ * imported into the destination arena; a slot not yet computed at the call
+ * (a pattern variable bound later, for example) becomes one fresh variable
+ * shared by every read of that slot. */
+typedef struct {
+    const CettaPreparedPureProgram *program;
+    Arena *arena;
+    Atom **values;
+    Atom **fresh;
+    uint32_t slot_count;
+    CettaPreparedPureImportValueFn import_value;
+    void *import_context;
+} PreparedPureDecode;
+
+static Atom *prepared_pure_decode_slot(PreparedPureDecode *decode, uint32_t slot) {
+    if (slot >= decode->slot_count)
+        return NULL;
+    if (decode->values[slot])
+        return decode->values[slot];
+    if (!decode->fresh[slot])
+        decode->fresh[slot] = atom_var_with_id(
+            decode->arena, "__resume", fresh_var_id());
+    return decode->fresh[slot];
+}
+
+static Atom *prepared_pure_decode_pattern(
+    PreparedPureDecode *decode, const PreparedPureBindPattern *pattern,
+    Atom *atom, uint32_t depth) {
+    if (!atom || depth > PREPARED_PURE_MAX_COMPILE_DEPTH)
+        return NULL;
+    if (atom->kind == ATOM_VAR) {
+        const CettaPreparedPureProgram *program = decode->program;
+        for (uint32_t index = 0u; index < pattern->var_count; index++) {
+            const PreparedPureBindVar *var =
+                &program->bind_vars[pattern->first_var + index];
+            if (var->var == atom->var_id)
+                return prepared_pure_decode_slot(decode, var->slot);
+        }
+        return NULL;
+    }
+    if (atom->kind != ATOM_EXPR)
+        return decode->import_value(decode->import_context, atom);
+    CettaExprLen len = atom->expr.len;
+    Atom **elements = malloc(sizeof(*elements) * (len ? len : 1u));
+    if (!elements)
+        return NULL;
+    bool ok = true;
+    for (CettaExprLen index = 0u; ok && index < len; index++) {
+        elements[index] = prepared_pure_decode_pattern(
+            decode, pattern, atom->expr.elems[index], depth + 1u);
+        ok = elements[index] != NULL;
+    }
+    Atom *result = ok ? atom_expr(decode->arena, elements, len) : NULL;
+    free(elements);
+    return result;
+}
+
+static Atom *prepared_pure_decode_node(
+    PreparedPureDecode *decode, uint32_t node_index, uint32_t depth) {
+    const CettaPreparedPureProgram *program = decode->program;
+    if (node_index >= program->node_len ||
+        depth > PREPARED_PURE_MAX_COMPILE_DEPTH)
+        return NULL;
+    const PreparedPureNode *node = &program->nodes[node_index];
+    if (node->first_child > program->child_len ||
+        node->child_count > program->child_len - node->first_child)
+        return NULL;
+    const uint32_t *children = &program->children[node->first_child];
+    Atom *head = NULL;
+    uint32_t offset = 0u;
+    switch (node->kind) {
+    case PREPARED_PURE_LITERAL:
+        return node->atom
+            ? decode->import_value(decode->import_context, node->atom)
+            : NULL;
+    case PREPARED_PURE_SLOT:
+        return prepared_pure_decode_slot(decode, node->auxiliary);
+    case PREPARED_PURE_ZERO: {
+        Atom *empty = atom_symbol(decode->arena, "empty");
+        return empty ? atom_expr(decode->arena, &empty, 1u) : NULL;
+    }
+    case PREPARED_PURE_BUILD:
+        break;
+    case PREPARED_PURE_CALL:
+        head = atom_symbol_id(decode->arena, node->head);
+        offset = 1u;
+        break;
+    case PREPARED_PURE_REGISTER:
+    case PREPARED_PURE_INTRINSIC:
+        head = node->atom
+            ? decode->import_value(decode->import_context, node->atom)
+            : NULL;
+        offset = 1u;
+        break;
+    case PREPARED_PURE_IF:
+        if (node->child_count != 3u)
+            return NULL;
+        head = atom_symbol(decode->arena, "if");
+        offset = 1u;
+        break;
+    case PREPARED_PURE_BIND: {
+        if (node->child_count != 2u ||
+            node->auxiliary >= program->bind_pattern_len)
+            return NULL;
+        const PreparedPureBindPattern *pattern =
+            &program->bind_patterns[node->auxiliary];
+        Atom *elements[4] = {
+            atom_symbol(decode->arena, "let"),
+            prepared_pure_decode_pattern(decode, pattern, pattern->pattern, 0u),
+            prepared_pure_decode_node(decode, children[0], depth + 1u),
+            prepared_pure_decode_node(decode, children[1], depth + 1u),
+        };
+        for (size_t index = 0u; index < 4u; index++)
+            if (!elements[index])
+                return NULL;
+        return atom_expr(decode->arena, elements, 4u);
+    }
+    default:
+        /* No source reading: entry arguments, delayed slots, observers. */
+        return NULL;
+    }
+    if (offset > 0u && !head)
+        return NULL;
+    uint32_t len = node->child_count + offset;
+    Atom **elements = malloc(sizeof(*elements) * (len ? len : 1u));
+    if (!elements)
+        return NULL;
+    if (offset > 0u)
+        elements[0] = head;
+    bool ok = true;
+    for (uint32_t index = 0u; ok && index < node->child_count; index++) {
+        elements[index + offset] =
+            prepared_pure_decode_node(decode, children[index], depth + 1u);
+        ok = elements[index + offset] != NULL;
+    }
+    Atom *result = ok ? atom_expr(decode->arena, elements, len) : NULL;
+    free(elements);
+    return result;
+}
+
+bool cetta_prepared_pure_answer_cursor_frame_resumption(
+    const CettaPreparedPureAnswerCursor *cursor, size_t index, Arena *arena,
+    Atom *hole, CettaPreparedPureImportValueFn import_value,
+    void *import_context, Atom **term_out) {
+    if (term_out)
+        *term_out = NULL;
+    if (!cursor || !arena || !hole || !import_value || !term_out ||
+        index >= cursor->frame_len)
+        return false;
+    const CettaPreparedPureProgram *program = cursor->program;
+    Atom *term = hole;
+    for (const PreparedPureContinuation *record =
+             cursor->frames[index].continuation;
+         record; record = record->parent) {
+        if (record->equation >= program->equation_len)
+            return false;
+        const PreparedPureEquation *body = &program->equations[record->equation];
+        uint32_t call = record->step - 1u;
+        if (record->step == 0u || call < body->first_step ||
+            call - body->first_step >= body->step_count)
+            return false;
+        const PreparedPureStep *step = &program->steps[call];
+        uint32_t slots = body->frame_slot_count;
+        if (step->kind != PREPARED_PURE_STEP_CALL ||
+            step->resume_template == PREPARED_PURE_NO_TEMPLATE ||
+            record->slot >= slots)
+            return false;
+        Atom **values = calloc(slots ? slots : 1u, sizeof(*values));
+        Atom **fresh = calloc(slots ? slots : 1u, sizeof(*fresh));
+        bool ok = values && fresh;
+        for (uint32_t slot = 0u; ok && slot < slots; slot++) {
+            if (slot == record->slot)
+                values[slot] = term;
+            else if (record->locals[slot]) {
+                values[slot] = import_value(import_context, record->locals[slot]);
+                ok = values[slot] != NULL;
+            }
+        }
+        PreparedPureDecode decode = {
+            .program = program, .arena = arena, .values = values,
+            .fresh = fresh, .slot_count = slots,
+            .import_value = import_value, .import_context = import_context,
+        };
+        Atom *outer = ok
+            ? prepared_pure_decode_node(&decode, step->resume_template, 0u)
+            : NULL;
+        free(values);
+        free(fresh);
+        if (!outer)
+            return false;
+        term = outer;
+    }
+    if (term == hole)
+        return false;
+    *term_out = term;
     return true;
 }
 
@@ -7430,7 +7742,8 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
                 CettaExprIndex branch;
                 if (prepared_pure_is_true(condition))
                     branch = 2u;
-                else if (prepared_pure_is_false(condition))
+                else if (prepared_pure_is_false(condition) ||
+                         prepared_pure_petta_else_value(condition))
                     branch = 3u;
                 else
                     return prepared_pure_runtime_decline(
@@ -7707,7 +8020,8 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
                 Atom *condition = program->values[--program->value_len];
                 truth = prepared_pure_is_true(condition)
                     ? PREPARED_PURE_TRUTH_TRUE
-                    : prepared_pure_is_false(condition)
+                    : prepared_pure_is_false(condition) ||
+                        prepared_pure_petta_else_value(condition)
                         ? PREPARED_PURE_TRUTH_FALSE
                         : PREPARED_PURE_TRUTH_NOT_BOOLEAN;
             }
