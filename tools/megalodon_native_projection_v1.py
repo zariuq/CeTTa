@@ -38,18 +38,24 @@ def expr(head: str, *args: sx.SExpr) -> sx.SExpr:
     return (sx.Symbol(head), *args)
 
 
-def hosted_article(article: sx.SExpr) -> sx.SExpr:
-    """Render a proof article for a hosted record.
+def hosted_article_address(article: sx.SExpr, bodies: dict[str, str]) -> sx.SExpr:
+    """Address a proof article without treating the address as the article.
 
-    Small articles are stored verbatim so a program can match them. A large
-    article is the same text identified by its sha256; the caller checks that
-    digest against a fresh render. Inlining every article of a large source
-    duplicates its whole environment and the candidate cannot read the result.
+    Small articles are the rendered text. A large article is stored once in
+    `bodies` and the record keeps only its sha256 address. Matching must open
+    that stored text. Hashing a fresh render is not opening it. Inlining every
+    large article into each proof record duplicates the source environment.
     """
     rendered = sx.render(article)
     if len(rendered) <= 65536:
         return sx.StringLiteral(rendered)
-    return expr("sha256", sx.StringLiteral(hashlib.sha256(rendered.encode()).hexdigest()))
+    digest = hashlib.sha256(rendered.encode()).hexdigest()
+    previous = bodies.get(digest)
+    if previous is None:
+        bodies[digest] = rendered
+    elif previous != rendered:
+        raise ValueError("hosted article address collides with a different article")
+    return expr("sha256", sx.StringLiteral(digest))
 
 
 def closed_type(value: poly.Tp) -> None:
@@ -120,6 +126,8 @@ class Projection:
     frames: list = field(default_factory=list, init=False)
     primitive_instances: dict = field(default_factory=dict, init=False)
     prefix_digests: list[bytes] = field(default_factory=list, init=False)
+    # sha256 address -> rendered article text. The address is not the article.
+    hosted_articles: dict[str, str] = field(default_factory=dict, init=False)
 
     def prefix_digest(self, position: int) -> str:
         """Content-address the actual ordered prefix, including proof provenance.
@@ -461,6 +469,31 @@ class Projection:
             tuple(poly.encode_tp(argument) for argument in arguments),
             tuple(sx.StringLiteral(sx.render(article)) for article in articles))))
 
+    def host_article(self, article: sx.SExpr) -> sx.SExpr:
+        return hosted_article_address(article, self.hosted_articles)
+
+    def open_hosted_article(self, node: sx.SExpr) -> sx.SExpr | None:
+        """Read a hosted article. A sha256 is only the address of stored text."""
+        if isinstance(node, sx.StringLiteral):
+            text = node.text
+        elif (isinstance(node, tuple) and len(node) == 2
+              and node[0] == sx.Symbol("sha256")
+              and isinstance(node[1], sx.StringLiteral)):
+            text = self.hosted_articles.get(node[1].text)
+            if text is None:
+                return None
+            if hashlib.sha256(text.encode()).hexdigest() != node[1].text:
+                return None
+        else:
+            return None
+        try:
+            forms = sx.parse_sexprs(text)
+        except sx.SchemaError:
+            return None
+        if len(forms) != 1:
+            return None
+        return forms[0]
+
     def proof_steps_match(self, name: str, articles: tuple[sx.SExpr, ...]) -> bool:
         symbol = sx.Symbol(name)
         matches = []
@@ -474,16 +507,8 @@ class Projection:
         if len(matches) != 1 or len(matches[0]) != len(articles):
             return False
         for node, article in zip(matches[0], articles):
-            rendered = sx.render(article)
-            if isinstance(node, sx.StringLiteral):
-                if node.text != rendered:
-                    return False
-            elif (isinstance(node, tuple) and len(node) == 2
-                  and node[0] == sx.Symbol("sha256")
-                  and isinstance(node[1], sx.StringLiteral)
-                  and node[1].text == hashlib.sha256(rendered.encode()).hexdigest()):
-                continue
-            else:
+            opened = self.open_hosted_article(node)
+            if opened != article:
                 return False
         return True
 
@@ -497,14 +522,14 @@ class Projection:
         self.commands.append(expr("add-atom", sx.Symbol("&self"), expr(
             "MegalodonHostedProofStepsV1", symbol, sx.Symbol(kind),
             sx.StringLiteral(label),
-            tuple(hosted_article(article) for article in articles))))
+            tuple(self.host_article(article) for article in articles))))
 
     def retain_term_steps(self, symbol: sx.Symbol, kind: str, label: str,
                           articles: tuple[sx.SExpr, ...]) -> None:
         self.commands.append(expr("add-atom", sx.Symbol("&self"), expr(
             "MegalodonHostedTermStepsV1", symbol, sx.Symbol(kind),
             sx.StringLiteral(label),
-            tuple(hosted_article(article) for article in articles))))
+            tuple(self.host_article(article) for article in articles))))
 
     def render(self) -> str:
         return "\n".join("!" + sx.render(command) for command in self.commands) + "\n"

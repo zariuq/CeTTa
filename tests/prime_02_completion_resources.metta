@@ -124,11 +124,12 @@
 !(let $answer (type:may (only) Nat 1) (MayLow $answer))
 !(let $answer (type:may (only) Nat 100) (MayHigh $answer))
 
-; Structural conversion is not charged against the optional producer budget,
-; so increasing that budget leaves its determinate verdict stable.
-!(let $answer (type:eq (+ 1 1) 2 1) (ConvertLow $answer))
-!(let $answer (type:eq (+ 1 1) 2 100) (ConvertHigh $answer))
-!(let $answer (type:eq (+ 1 1) 2 200) (ConvertHigher $answer))
+; Kernel conversion is charged against the explicit budget. Too small a
+; budget leaves it incomplete; a sufficient budget refines it to a
+; determinate verdict that a larger budget keeps.
+!(let $answer (type:eq (-> (x : u0) u0) (-> (y : u0) u0) 1) (ConvertLow $answer))
+!(let $answer (type:eq (-> (x : u0) u0) (-> (y : u0) u0) 100) (ConvertHigh $answer))
+!(let $answer (type:eq (-> (x : u0) u0) (-> (y : u0) u0) 200) (ConvertHigher $answer))
 
 ; A user marker makes computation available to the experimental he-prime
 ; layer, but does not admit that equation into Prime's conversion relation.

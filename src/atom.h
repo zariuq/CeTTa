@@ -660,7 +660,14 @@ bool atom_meta_type_accepts(Arena *a, Atom *formal, Atom *actual);
 
 /* ── Predicates ─────────────────────────────────────────────────────────── */
 
+/* `name` must have static storage duration: a string literal or a constant
+ * table of literals.  The symbol it spells is cached by the pointer, so a
+ * name in memory that is later reused for another spelling would be read as
+ * the old one.  Use atom_is_symbol_named for any other string. */
 bool atom_is_symbol(Atom *a, const char *name);
+/* The same predicate for a name in arena, heap or stack memory: compares the
+ * spelling, without the pointer cache. */
+bool atom_is_symbol_named(Atom *a, const char *name);
 bool atom_is_empty(Atom *a);
 bool atom_is_error(Atom *a);
 bool atom_is_empty_or_error(Atom *a);

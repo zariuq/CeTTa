@@ -2963,6 +2963,8 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/conformance/open_lambda_pi.metta \
 	tests/prime/conformance/scoped_regular_authority_routing.metta \
 	tests/prime/conformance/closed_lambda_pi_convert.metta \
+	tests/prime/conformance/conversion_typed_operands.metta \
+	tests/prime/conformance/nested_synthesis.metta \
 	tests/prime/conformance/closed_lambda_pi_synth.metta \
 	tests/prime/conformance/closed_lambda_pi_check.metta \
 	tests/prime/conformance/closed_lambda_pi_form.metta \
@@ -2977,6 +2979,10 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/scoped/identity_eliminator.metta \
 	tests/prime/scoped/try.metta \
 	tests/prime/scoped/conversion_authority.metta \
+	tests/prime/scoped/typed_eta_conversion.metta \
+	tests/prime/scoped/admitted_computation.metta \
+	tests/prime/scoped/kernel_query.metta \
+	tests/prime/scoped/reserved_identities.metta \
 	tests/prime/scoped/retained_presentations.metta \
 	tests/prime/scoped/authority.metta \
 	tests/prime/scoped/hol_map_fusion.metta \
@@ -3022,6 +3028,9 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/scoped/certified_transform_itp.metta \
 	tests/prime/scoped/certified_transform_revision.metta \
 	tests/prime/scoped/certified_transform_correspondence.metta \
+	tests/prime/scoped/certified_transform_execution.metta \
+	tests/prime/scoped/certified_transform_article.metta \
+	tests/prime/scoped/binder_capture.metta \
 	tests/prime/scoped/native_function_domain_boundary.metta \
 	tests/prime/scoped/forks/observation.metta \
 	tests/prime/scoped/forks/identity.metta \
@@ -5826,6 +5835,7 @@ $(PRIME_GDL_STRATIFIED_EPISODE_QUALIFIER_OBJ): $(PRIME_GDL_STRATIFIED_EPISODE_QU
 $(PRIME_REGULAR_KERNEL_ENGINE_FAILURE_TEST_OBJ): $(PRIME_REGULAR_KERNEL_ENGINE_FAILURE_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+-include $(PRIME_REGULAR_KERNEL_ENGINE_FAILURE_TEST_OBJ:.o=.d)
 
 $(PRIME_REGULAR_PATTERN_TEST_BIN): $(PRIME_REGULAR_PATTERN_TEST_OBJ) $(PRIME_REGULAR_PATTERN_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -20991,17 +21001,17 @@ test-prime-regular-kernel-conversion-flip: $(BIN) $(PRIME_REGULAR_KERNEL_LEGACY_
 		"$$native_out"; \
 	cmp -s tests/prime/conformance/closed_lambda_pi_convert.legacy.expected \
 		"$$reference_out"; \
-	test "$$(sed -n '1p;2p;6p;7p;10p;11p' "$$native_out")" = \
-	     "$$(sed -n '1p;2p;6p;7p;10p;11p' "$$reference_out")"; \
-	test "$$(sed -n '3p;4p' "$$native_out")" = \
-	     "$$(printf '%s\n' '[True]' '[True]')"; \
-	test "$$(sed -n '3p;4p' "$$reference_out")" = \
-	     "$$(printf '%s\n' '[(type:eq (-> (x : u0) u0) (-> (y : u0) u0))]' '[(type:eq (sigma (x : u0) u0) (sigma (y : u0) u0))]')"; \
+	test "$$(sed -n '5p;8p;9p;10p;11p' "$$native_out")" = \
+	     "$$(sed -n '5p;8p;9p;10p;11p' "$$reference_out")"; \
+	test "$$(sed -n '1p;2p;3p;4p;6p;7p' "$$native_out")" = \
+	     "$$(printf '%s\n' '[True]' '[False]' '[True]' '[True]' '[True]' '[False]')"; \
+	test "$$(sed -n '1p;2p;3p;4p;6p;7p' "$$reference_out")" = \
+	     "$$(printf '%s\n' '[(type:eq u0 u0)]' '[(type:eq u0 (-> u0 u0))]' '[(type:eq (-> (x : u0) u0) (-> (y : u0) u0))]' '[(type:eq (sigma (x : u0) u0) (sigma (y : u0) u0))]' '[(type:eq u1 u1)]' '[(type:eq u1 u0)]')"; \
 	test "$$(sed -n '5p;8p;9p' "$$native_out")" = \
 	     "$$(printf '%s\n' '[(type:eq u0 (lam x x))]' '[(type:eq (idx 0) (idx 0))]' '[(type:eq (u0 u0) (u0 u0))]')"; \
-	test "$$(sed -n '5p;8p;9p' "$$reference_out")" = \
-	     "$$(printf '%s\n' '[(type:eq u0 (lam x x))]' '[True]' '[True]')"; \
-	echo 'PASS: six agreements, two alpha-equivalence decisions the legacy service declines, and two authority-boundary deltas are pinned'
+	test "$$(sed -n '10p;11p' "$$reference_out")" = \
+	     "$$(printf '%s\n' '[True]' '[False]')"; \
+	echo 'PASS: without the kernel only the built-in constants are decided; the kernel alone decides the six universe and binder comparisons; ill-typed operands stay unresolved in both'
 
 .PHONY: test-prime-regular-kernel-admission-mutations
 test-prime-regular-kernel-admission-mutations: $(PRIME_REGULAR_KERNEL_TEST_BIN)
@@ -21187,7 +21197,7 @@ test-prime-native-proof-search-mutations: $(BIN)
 	done
 
 .PHONY: test-prime-declared-conversion-route-mutation
-test-prime-declared-conversion-route-mutation: $(BIN) $(PRIME_REGULAR_KERNEL_TEST_BIN)
+test-prime-declared-conversion-route-mutation: $(PRIME_REGULAR_KERNEL_TEST_BIN)
 	@set -e; \
 	mutation_dir=$$(mktemp -d runtime/prime-declared-conversion-route-mutation.XXXXXX); \
 	for mutation in route-disabled budget-coupled-recognizer dependent-graphs-disabled constructed-terms-disabled; do \
@@ -21198,7 +21208,7 @@ test-prime-declared-conversion-route-mutation: $(BIN) $(PRIME_REGULAR_KERNEL_TES
 			"$$mutation_dir/prime_semantics_$$mutation.c" \
 			-o "$$mutation_dir/prime_semantics_$$mutation.o"; \
 		case "$$mutation" in \
-			route-disabled|dependent-graphs-disabled|constructed-terms-disabled) \
+			route-disabled|budget-coupled-recognizer|dependent-graphs-disabled|constructed-terms-disabled) \
 				$(CC) $(CFLAGS) -o "$$mutation_dir/test_$$mutation" \
 					$(PRIME_REGULAR_KERNEL_TEST_OBJ) \
 					"$$mutation_dir/prime_semantics_$$mutation.o" \
@@ -21216,6 +21226,9 @@ test-prime-declared-conversion-route-mutation: $(BIN) $(PRIME_REGULAR_KERNEL_TES
 					route-disabled) \
 						grep -Fq 'declared regular conversion uses native positive evidence' \
 							"$$mutation_dir/$$mutation.err" ;; \
+					budget-coupled-recognizer) \
+						grep -Fq 'a term outside the declared fragment is reported outside at every producer budget' \
+							"$$mutation_dir/$$mutation.err" ;; \
 					dependent-graphs-disabled) \
 						grep -Fq 'acyclic value-indexed declarations form, synthesize, and check natively' \
 							"$$mutation_dir/$$mutation.err" ;; \
@@ -21223,19 +21236,6 @@ test-prime-declared-conversion-route-mutation: $(BIN) $(PRIME_REGULAR_KERNEL_TES
 						grep -Fq 'constructed value-indexed evidence uses the declaration-aware authority before the context-free authored authority' \
 							"$$mutation_dir/$$mutation.err" ;; \
 				esac ;; \
-			budget-coupled-recognizer) \
-				$(CC) $(CFLAGS) -o "$$mutation_dir/cetta_$$mutation" \
-					"$$mutation_dir/prime_semantics_$$mutation.o" \
-					$(filter-out $(PRIME_SEMANTICS_OBJ),$(OBJ)) $(LDFLAGS); \
-				if python3 scripts/check_prime_budget_monotonicity.py \
-					"$$(pwd)/$$mutation_dir/cetta_$$mutation" \
-					>"$$mutation_dir/$$mutation.out" \
-					2>"$$mutation_dir/$$mutation.err"; then \
-					echo "FAIL: $$mutation declared-conversion mutation survived"; \
-					exit 1; \
-				fi; \
-				grep -Fq 'ConvertArithmetic: determinate Established changed to Unsettled' \
-					"$$mutation_dir/$$mutation.err" ;; \
 		esac; \
 	done; \
 	echo 'PASS: declared conversion keeps its route, acyclic dependencies, and producer-budget-independent recognition'

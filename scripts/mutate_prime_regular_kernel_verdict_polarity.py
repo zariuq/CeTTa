@@ -44,16 +44,14 @@ MUTATIONS = {
     "refl-of-type-refutes": (
         """        if (reflected.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
             return reflected;
-        return regular_infer_result(
-            CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED,""",
+        /* A type of a universe lies in every larger universe too, so a""",
         """        if (reflected.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
             return reflected;
         if (reflected.type_is_sort)
             return regular_infer_result(
                 CETTA_PRIME_REGULAR_KERNEL_REFUTED, NULL, false,
                 \"tower-reflexivity-refuted\");
-        return regular_infer_result(
-            CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED,""",
+        /* A type of a universe lies in every larger universe too, so a""",
     ),
 }
 

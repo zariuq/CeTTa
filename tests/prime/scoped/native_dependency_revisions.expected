@@ -12,4 +12,5 @@
 [(LaterDeclaredConsumer True True True True)]
 [(UndeclaredConsumer Refuted)]
 [(HiddenFormationRevision Undetermined True)]
-[(PrivateFamilyShadow Undetermined)]
+[(PrivateFamilyShadow Established)]
+[(FamilyAppliedUnderWrongShadow Established)]

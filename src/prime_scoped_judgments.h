@@ -36,7 +36,19 @@ Atom *prime_scoped_judgment_judge(
     Arena *arena, Space *space, Atom *judgment,
     bool steps_limited, uint64_t steps);
 
+/* Spellings of the declaration identities that proof packages generate.  No
+ * program declares them: admission refuses them and declaration lookup does
+ * not see them, so a printed spelling confers no authority. */
+#define CETTA_PRIME_PROOF_IDENTITY_PREFIX "__cetta_proof_"
+#define CETTA_PRIME_HOLDS_IDENTITY_PREFIX "__cetta_holds_"
+bool prime_scoped_judgment_reserved_name(Atom *name);
+
 /* Admission of a record that the evaluator has just published. */
 void prime_scoped_judgment_admit(Arena *a, Space *space, Atom *record);
+
+/* Whether admission published `record` in the space that `space` is or
+ * views.  Kernel computation trusts no rule and no definition record that
+ * admission did not publish. */
+bool prime_scoped_judgment_admitted(Arena *a, Space *space, Atom *record);
 
 #endif /* CETTA_PRIME_SCOPED_JUDGMENTS_H */

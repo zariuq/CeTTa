@@ -216,7 +216,7 @@ cetta_prime_typed_value_attach_indexed_application_private_v1(
         arguments[offset - 1u] = cursor->expr.elems[2];
         cursor = cursor->expr.elems[1];
     }
-    if (!atom_is_symbol(cursor, family_name)) return NULL;
+    if (!atom_is_symbol_named(cursor, family_name)) return NULL;
 
     AtomId family_head_id = term_universe_store_atom_id(
         universe, owner, cursor);

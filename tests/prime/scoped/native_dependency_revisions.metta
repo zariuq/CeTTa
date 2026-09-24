@@ -73,10 +73,20 @@
        (HiddenFormationRevision (car-atom $bad)
          (== (set:native-proof dep-left-proof) $package)))))))))
 
-; A consumer's ambient declaration cannot rebind the package-private family.
+; A consumer's ambient declaration cannot rebind the package-private family:
+; a declaration of a reserved identity is invisible, so the consumer is
+; checked against the package's own family.
 !(let $package (set:native-proof dep-left-proof)
  (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
   (let (App (DeclConst $family) $formula) $type
    (let $shadow (add-atom &self (: $family (-> prop (u 0))))
     (let $bad (try (set:native-use $package (Lam $type (DeclConst $family))))
      (PrivateFamilyShadow (car-atom $bad)))))))
+; The same holds when the ambient declaration gives the family a type under
+; which the consumer would be ill-typed.
+!(let $package (set:native-proof dep-left-proof)
+ (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
+  (let (App (DeclConst $family) $formula) $type
+   (let $shadow (add-atom &self (: $family (u 0)))
+    (let $used (try (set:native-use $package (Lam $type (App (DeclConst $family) $formula))))
+     (FamilyAppliedUnderWrongShadow (car-atom $used)))))))

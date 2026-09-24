@@ -61,7 +61,10 @@ typedef enum {
     CETTA_PRIME_REGULAR_KERNEL_ADMISSION_ADMITTED,
     CETTA_PRIME_REGULAR_KERNEL_ADMISSION_BUDGET_EXHAUSTED,
     CETTA_PRIME_REGULAR_KERNEL_ADMISSION_ENGINE_FAILURE,
-    CETTA_PRIME_REGULAR_KERNEL_ADMISSION_INVALID
+    CETTA_PRIME_REGULAR_KERNEL_ADMISSION_INVALID,
+    /* Admitted operands whose check ran without a decision a theorem
+     * covers: not cached, and never a refutation. */
+    CETTA_PRIME_REGULAR_KERNEL_ADMISSION_UNDECIDED
 } CettaPrimeRegularKernelAdmissionStatus;
 
 typedef struct {

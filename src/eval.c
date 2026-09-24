@@ -8190,10 +8190,86 @@ static Atom *prime_abt_abstract(const AbtSignature *signature, Arena *arena,
     return abt_bind(signature, arena, name, body);
 }
 
+/* A Need capability is a suspended computation, not a substitution barrier.
+ * atom-subst and let close a named variable in the template.  If that
+ * template was suspended, open the origin that still mentions the variable
+ * and leave every other thunk shared. */
+static bool prime_atom_mentions_var(const Atom *atom, VarId var_id,
+                                    uint32_t depth) {
+    if (!atom || depth > 64u || var_id == VAR_ID_NONE)
+        return false;
+    if (atom->kind == ATOM_VAR)
+        return atom->var_id == var_id;
+    if (atom->kind != ATOM_EXPR)
+        return false;
+    for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
+        if (prime_atom_mentions_var(atom->expr.elems[i], var_id, depth + 1u))
+            return true;
+    }
+    return false;
+}
+
+static Atom *prime_open_capabilities_for_var(Arena *arena, Atom *term,
+                                             VarId var_id, uint32_t depth) {
+    if (!arena || !term || depth > 32u || var_id == VAR_ID_NONE)
+        return term;
+    uint64_t thunk_id = 0u;
+    if (prime_need_ref_is_active(term, &thunk_id)) {
+        PrimeNeedCellView cell;
+        if (!prime_need_snapshot_lookup(
+                &g_prime_need_active, thunk_id, &cell) ||
+            !cell.origin ||
+            !prime_atom_mentions_var(cell.origin, var_id, 0u))
+            return term;
+        Atom *opened = prime_open_capabilities_for_var(
+            arena, cell.origin, var_id, depth + 1u);
+        return opened ? opened : cell.origin;
+    }
+    if (term->kind != ATOM_EXPR || term->expr.len == 0u)
+        return term;
+    Atom **elems = NULL;
+    for (CettaExprIndex i = 0u; i < term->expr.len; i++) {
+        Atom *child = prime_open_capabilities_for_var(
+            arena, term->expr.elems[i], var_id, depth + 1u);
+        if (!child)
+            return NULL;
+        if (!elems && child != term->expr.elems[i]) {
+            elems = arena_alloc(arena, sizeof(Atom *) * (size_t)term->expr.len);
+            if (!elems)
+                return NULL;
+            for (CettaExprIndex j = 0u; j < i; j++)
+                elems[j] = term->expr.elems[j];
+        }
+        if (elems)
+            elems[i] = child;
+    }
+    return elems ? atom_expr(arena, elems, term->expr.len) : term;
+}
+
+static Atom *prime_open_capabilities_for_pattern(Arena *arena, Atom *pattern,
+                                                 Atom *body) {
+    if (!arena || !pattern || !body)
+        return body;
+    if (pattern->kind == ATOM_VAR)
+        return prime_open_capabilities_for_var(
+            arena, body, pattern->var_id, 0u);
+    if (pattern->kind != ATOM_EXPR)
+        return body;
+    for (CettaExprIndex i = 0u; i < pattern->expr.len; i++) {
+        Atom *opened = prime_open_capabilities_for_pattern(
+            arena, pattern->expr.elems[i], body);
+        if (!opened)
+            return NULL;
+        body = opened;
+    }
+    return body;
+}
+
 static Atom *prime_let_make_canonical(const AbtSignature *signature,
                                       Arena *arena, Atom *pattern,
                                       Atom *source, Atom *body,
                                       const Bindings *existing_env) {
+    body = prime_open_capabilities_for_pattern(arena, pattern, body);
     PrimeLetSlotMap slots;
     if (!prime_let_slot_map_init(&slots)) return NULL;
     Atom *canonical_pattern = prime_let_pattern_canonicalize(
@@ -14433,6 +14509,20 @@ static PreparedFoldResult prepared_map_single_result(
             closed_items = source_items;
         }
     }
+    /* A user equation such as proof expansion is not a generated fold.
+     * Compiling it as a pure map returns the binder for every element. */
+    if (closed_body && closed_body->kind == ATOM_EXPR &&
+        closed_body->expr.len > 0u && closed_body->expr.elems[0] &&
+        closed_body->expr.elems[0]->kind == ATOM_SYMBOL &&
+        !is_grounded_op(closed_body->expr.elems[0]->sym_id) &&
+        !symbol_id_is_builtin(closed_body->expr.elems[0]->sym_id) &&
+        space_equations_may_match_known_head(
+            s, closed_body->expr.elems[0]->sym_id)) {
+        arena_reset(result_arena, result_mark);
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PREPARED_MAP_DECLINE);
+        return PREPARED_FOLD_NOT_APPLICABLE;
+    }
     if (!closed_body || !closed_items ||
         closed_items->kind != ATOM_EXPR ||
         hyperpose_atom_has_thread_local_resource(closed_body) ||
@@ -18100,7 +18190,7 @@ static bool split_dependent_domain(Atom *domain, Atom **binder_out, Atom **type_
         domain->expr.elems[2]) {
         Atom *binder = NULL;
         Atom *type = NULL;
-        /* Prefix `(: binder type)` and surface `(binder : type)`. */
+        /* Prefix `(: binder type)` and infix `(binder : type)`. */
         if (atom_is_symbol_id(domain->expr.elems[0], g_builtin_syms.colon) &&
             (domain->expr.elems[1]->kind == ATOM_VAR ||
              domain->expr.elems[1]->kind == ATOM_SYMBOL)) {
@@ -18809,6 +18899,9 @@ static uint32_t filter_profile_visible_declared_types(Atom *atom,
     return kept;
 }
 
+static Atom *subst_symbol_type(Arena *a, Atom *type,
+                               Atom **names, Atom **values, size_t count);
+
 static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom,
                                                   Atom ***out_types) {
     if (!profiled_type_budget_step(1)) {
@@ -18845,6 +18938,9 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
         Bindings tb;
         bindings_init(&tb);
         bool all_ok = true;
+        Atom *sym_names[8];
+        Atom *sym_values[8];
+        size_t nsym = 0;
 
         for (CettaExprIndex ai = 0; ai < atom->expr.len - 1 && all_ok; ai++) {
             if (!profiled_type_budget_step(1)) {
@@ -18931,6 +19027,20 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
         }
 
         if (all_ok) {
+            for (CettaExprIndex ai = 0; ai < argc && nsym < 8u; ai++) {
+                Atom *binder = NULL;
+                Atom *body = NULL;
+                if (split_dependent_domain(fresh_ft->expr.elems[ai + 1],
+                                           &binder, &body) &&
+                    binder && binder->kind == ATOM_SYMBOL) {
+                    sym_names[nsym] = binder;
+                    sym_values[nsym] = atom->expr.elems[ai + 1];
+                    nsym++;
+                }
+            }
+            if (nsym > 0)
+                fresh_ret = subst_symbol_type(
+                    &scratch, fresh_ret, sym_names, sym_values, nsym);
             Atom *concrete_ret =
                 normalize_type_expr_profiled(&scratch,
                                              bindings_apply_if_vars(&tb, &scratch, fresh_ret));
@@ -18942,6 +19052,9 @@ static uint32_t infer_dependent_application_types(Space *s, Arena *a, Atom *atom
                 residual[0] = atom_symbol_id(&scratch, g_builtin_syms.arrow);
                 for (CettaExprIndex j = 0; j < remaining; j++) {
                     Atom *domain = fresh_ft->expr.elems[argc + 1 + j];
+                    if (nsym > 0)
+                        domain = subst_symbol_type(
+                            &scratch, domain, sym_names, sym_values, nsym);
                     residual[j + 1] =
                         bindings_apply_if_vars(&tb, &scratch, domain);
                 }
@@ -19270,6 +19383,9 @@ uint32_t eval_get_atom_types_structural_profiled_budgeted(
 
 /* ── Type cast (TypeCheck.lean:126-148) ────────────────────────────────── */
 
+static bool prime_dependent_types_alpha(Space *space, Arena *arena,
+                                        Atom *left, Atom *right);
+
 static void type_cast_fn(Space *s, Arena *a, Atom *atom, Atom *expectedType,
                          int fuel, ResultSet *rs) {
     __attribute__((cleanup(eval_gc_root_frame_leave)))
@@ -19282,7 +19398,9 @@ static void type_cast_fn(Space *s, Arena *a, Atom *atom, Atom *expectedType,
     for (uint32_t i = 0; i < ntypes; i++) {
         Bindings mb;
         bindings_init(&mb);
-        if (match_types(types[i], expectedType, &mb)) {
+        if (match_types(types[i], expectedType, &mb) ||
+            (eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
+             prime_dependent_types_alpha(s, a, types[i], expectedType))) {
             bindings_free(&mb);
             result_set_add(rs, atom);
             free(types);
@@ -19597,6 +19715,247 @@ static Atom *subst_symbol_type(Arena *a, Atom *type,
     return atom_expr(a, elems, type->expr.len);
 }
 
+/* Dependent Prime arrows bind symbol names. The telescope is already
+ * instantiated before this comparison; the spelling of a binder is not
+ * part of the type. A failed match stays failed when the types differ
+ * by more than those names. */
+#define PRIME_TYPE_ALPHA_BINDERS 32u
+#define PRIME_TYPE_ALPHA_DEPTH 64u
+
+typedef struct {
+    SymbolId left;
+    SymbolId right;
+} PrimeTypeBinderPair;
+
+static bool prime_type_binder_lookup(
+        const PrimeTypeBinderPair *pairs, size_t count,
+        SymbolId left, SymbolId *right_out) {
+    for (size_t i = count; i-- > 0u; ) {
+        if (pairs[i].left == left) {
+            if (right_out)
+                *right_out = pairs[i].right;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool prime_type_binder_right_bound(
+        const PrimeTypeBinderPair *pairs, size_t count, SymbolId right) {
+    for (size_t i = count; i-- > 0u; )
+        if (pairs[i].right == right)
+            return true;
+    return false;
+}
+
+static bool prime_type_alpha_rec(
+        Atom *left, Atom *right,
+        PrimeTypeBinderPair *pairs, size_t *count, unsigned depth);
+
+static bool prime_push_type_binder(
+        PrimeTypeBinderPair *pairs, size_t *count,
+        Atom *left_binder, Atom *right_binder) {
+    if (!left_binder || !right_binder ||
+        left_binder->kind != ATOM_SYMBOL ||
+        right_binder->kind != ATOM_SYMBOL ||
+        *count >= PRIME_TYPE_ALPHA_BINDERS)
+        return false;
+    pairs[*count].left = left_binder->sym_id;
+    pairs[*count].right = right_binder->sym_id;
+    (*count)++;
+    return true;
+}
+
+static bool prime_compare_dependent_domain(
+        Atom *left, Atom *right,
+        PrimeTypeBinderPair *pairs, size_t *count, unsigned depth) {
+    Atom *left_binder = NULL;
+    Atom *left_type = NULL;
+    Atom *right_binder = NULL;
+    Atom *right_type = NULL;
+    bool left_dependent = split_dependent_domain(left, &left_binder, &left_type);
+    bool right_dependent = split_dependent_domain(right, &right_binder, &right_type);
+    if (left_dependent && right_dependent &&
+        left_binder && right_binder &&
+        left_binder->kind == ATOM_SYMBOL &&
+        right_binder->kind == ATOM_SYMBOL) {
+        if (!prime_type_alpha_rec(left_type, right_type, pairs, count, depth))
+            return false;
+        return prime_push_type_binder(pairs, count, left_binder, right_binder);
+    }
+    if ((left_dependent && left_binder) || (right_dependent && right_binder))
+        return false;
+    return prime_type_alpha_rec(left, right, pairs, count, depth);
+}
+
+static bool prime_type_alpha_rec(
+        Atom *left, Atom *right,
+        PrimeTypeBinderPair *pairs, size_t *count, unsigned depth) {
+    if (depth == 0u)
+        return false;
+    if (left == right)
+        return true;
+    if (!left || !right || left->kind != right->kind)
+        return false;
+    if (left->kind == ATOM_SYMBOL) {
+        SymbolId mapped = SYMBOL_ID_NONE;
+        if (prime_type_binder_lookup(pairs, *count, left->sym_id, &mapped))
+            return right->sym_id == mapped;
+        if (prime_type_binder_right_bound(pairs, *count, right->sym_id))
+            return false;
+        return left->sym_id == right->sym_id;
+    }
+    if (left->kind == ATOM_GROUNDED)
+        return atom_eq(left, right);
+    if (left->kind == ATOM_VAR)
+        return left->var_id == right->var_id;
+    if (left->kind != ATOM_EXPR || left->expr.len != right->expr.len)
+        return false;
+    if (is_function_type(left) && is_function_type(right)) {
+        size_t saved = *count;
+        CettaExprLen length = left->expr.len;
+        for (CettaExprIndex i = 1u; i + 1u < length; i++) {
+            if (!prime_compare_dependent_domain(
+                    left->expr.elems[i], right->expr.elems[i],
+                    pairs, count, depth - 1u)) {
+                *count = saved;
+                return false;
+            }
+        }
+        bool matched = prime_type_alpha_rec(
+            left->expr.elems[length - 1u], right->expr.elems[length - 1u],
+            pairs, count, depth - 1u);
+        *count = saved;
+        return matched;
+    }
+    if (left->expr.len == 3u &&
+        atom_is_symbol(left->expr.elems[0], "lam") &&
+        atom_is_symbol(right->expr.elems[0], "lam") &&
+        left->expr.elems[1]->kind == ATOM_SYMBOL &&
+        right->expr.elems[1]->kind == ATOM_SYMBOL) {
+        size_t saved = *count;
+        bool matched = prime_push_type_binder(
+                pairs, count, left->expr.elems[1], right->expr.elems[1]) &&
+            prime_type_alpha_rec(
+                left->expr.elems[2], right->expr.elems[2],
+                pairs, count, depth - 1u);
+        *count = saved;
+        return matched;
+    }
+    if (left->expr.len == 3u &&
+        left->expr.elems[0]->kind == ATOM_SYMBOL &&
+        right->expr.elems[0]->kind == ATOM_SYMBOL &&
+        left->expr.elems[0]->sym_id == right->expr.elems[0]->sym_id) {
+        Atom *left_binder = NULL;
+        Atom *left_type = NULL;
+        Atom *right_binder = NULL;
+        Atom *right_type = NULL;
+        bool left_dependent = split_dependent_domain(
+            left->expr.elems[1], &left_binder, &left_type);
+        bool right_dependent = split_dependent_domain(
+            right->expr.elems[1], &right_binder, &right_type);
+        if (left_dependent && right_dependent &&
+            left_binder && right_binder &&
+            left_binder->kind == ATOM_SYMBOL &&
+            right_binder->kind == ATOM_SYMBOL) {
+            size_t saved = *count;
+            bool matched = prime_type_alpha_rec(
+                    left_type, right_type, pairs, count, depth - 1u) &&
+                prime_push_type_binder(pairs, count, left_binder, right_binder) &&
+                prime_type_alpha_rec(
+                    left->expr.elems[2], right->expr.elems[2],
+                    pairs, count, depth - 1u);
+            *count = saved;
+            return matched;
+        }
+    }
+    for (CettaExprIndex i = 0u; i < left->expr.len; i++) {
+        if (!prime_type_alpha_rec(
+                left->expr.elems[i], right->expr.elems[i],
+                pairs, count, depth - 1u))
+            return false;
+    }
+    return true;
+}
+
+static _Thread_local Arena *g_prime_type_alpha_arena;
+static _Thread_local Space *g_prime_type_alpha_space;
+
+static bool prime_type_step_unfolds_identity(const Atom *step) {
+    if (!step || step->kind != ATOM_EXPR || step->expr.len == 0u ||
+        !step->expr.elems[0] || step->expr.elems[0]->kind != ATOM_SYMBOL)
+        return false;
+    const char *name = atom_name_cstr(step->expr.elems[0]);
+    return name && (strcmp(name, "id") == 0 ||
+                    strcmp(name, "id:eliminate") == 0);
+}
+
+/* Beta a computed family and fire an equation whose result is not the identity
+ * type. `(lam k (eqAt (add k zero)))` at `x` becomes `(eqAt x)` because
+ * addition returns its other argument at `zero`. Unfolding `eqAt` itself
+ * would replace the family with an identity proof. */
+static Atom *prime_type_whnf(Atom *term, unsigned depth) {
+    if (!term || depth == 0u || !g_prime_type_alpha_arena)
+        return term;
+    Atom *beta = prime_semantics_beta(g_prime_type_alpha_arena, term);
+    if (beta && beta != term)
+        return prime_type_whnf(beta, depth - 1u);
+    if (g_prime_type_alpha_space && term->kind == ATOM_EXPR &&
+        term->expr.len >= 2u && term->expr.elems[0] &&
+        term->expr.elems[0]->kind == ATOM_SYMBOL) {
+        const char *name = atom_name_cstr(term->expr.elems[0]);
+        if (name && strcmp(name, "id") != 0 &&
+            strcmp(name, "id:eliminate") != 0 &&
+            strcmp(name, "lam") != 0 && strcmp(name, "->") != 0 &&
+            strcmp(name, "sigma") != 0) {
+            Atom *step = prime_semantics_reduce_open_covered_call(
+                g_prime_type_alpha_arena, g_prime_type_alpha_space, term, -1);
+            if (step && step != term && !prime_type_step_unfolds_identity(step))
+                return prime_type_whnf(step, depth - 1u);
+        }
+    }
+    if (term->kind != ATOM_EXPR)
+        return term;
+    Atom **items = arena_alloc(
+        g_prime_type_alpha_arena, sizeof(Atom *) * (size_t)term->expr.len);
+    if (!items)
+        return term;
+    bool changed = false;
+    for (CettaExprIndex i = 0u; i < term->expr.len; i++) {
+        items[i] = prime_type_whnf(term->expr.elems[i], depth - 1u);
+        if (!items[i])
+            return term;
+        if (items[i] != term->expr.elems[i])
+            changed = true;
+    }
+    if (!changed)
+        return term;
+    Atom *rebuilt = atom_expr(
+        g_prime_type_alpha_arena, items, term->expr.len);
+    if (!rebuilt)
+        return term;
+    return prime_type_whnf(rebuilt, depth - 1u);
+}
+
+static bool prime_dependent_types_alpha(Space *space, Arena *arena,
+                                        Atom *left, Atom *right) {
+    Arena *saved_arena = g_prime_type_alpha_arena;
+    Space *saved_space = g_prime_type_alpha_space;
+    g_prime_type_alpha_arena = arena;
+    g_prime_type_alpha_space = space;
+    PrimeTypeBinderPair pairs[PRIME_TYPE_ALPHA_BINDERS];
+    size_t count = 0u;
+    Atom *left_whnf = prime_type_whnf(left, PRIME_TYPE_ALPHA_DEPTH);
+    Atom *right_whnf = prime_type_whnf(right, PRIME_TYPE_ALPHA_DEPTH);
+    bool matched = prime_type_alpha_rec(
+        left_whnf ? left_whnf : left,
+        right_whnf ? right_whnf : right,
+        pairs, &count, PRIME_TYPE_ALPHA_DEPTH);
+    g_prime_type_alpha_arena = saved_arena;
+    g_prime_type_alpha_space = saved_space;
+    return matched;
+}
+
 static bool check_function_applicable(
     Atom *expr, Atom *funcType, Atom *expectedType,
     Space *s, Arena *a, int fuel, bool allow_native_refutation,
@@ -19724,8 +20083,18 @@ static bool check_function_applicable(
                     continue;
                 }
                 ChoicePoint point = search_context_save(&candidate_context);
-                if (match_types_builder(atypes[t], expected,
-                                        search_context_builder(&candidate_context))) {
+                bool type_matched = match_types_builder(
+                    atypes[t], expected,
+                    search_context_builder(&candidate_context));
+                if (!type_matched) {
+                    search_context_rollback(&candidate_context, point);
+                    if (eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
+                        prime_dependent_types_alpha(s, a, atypes[t], expected)) {
+                        point = search_context_save(&candidate_context);
+                        type_matched = true;
+                    }
+                }
+                if (type_matched) {
                     if (!bind_domain_binder_builder(search_context_builder(&candidate_context),
                                                     domain_src, arg)) {
                         search_context_rollback(&candidate_context, point);
@@ -19743,9 +20112,6 @@ static bool check_function_applicable(
                     }
                     search_context_rollback(&candidate_context, point);
                     found = true;
-                }
-                else {
-                    search_context_rollback(&candidate_context, point);
                 }
             }
             search_context_free(&candidate_context);
@@ -19797,8 +20163,15 @@ static bool check_function_applicable(
             eval_dependent_telescope_enabled()
                 ? bindings_apply_if_vars(search_context_bindings(&ret_context), a, retType)
                 : retType;
-        if (match_types_builder(inst_ret, expectedType,
-                                search_context_builder(&ret_context))) {
+        ChoicePoint ret_point = search_context_save(&ret_context);
+        bool ret_matched = match_types_builder(
+            inst_ret, expectedType, search_context_builder(&ret_context));
+        if (!ret_matched) {
+            search_context_rollback(&ret_context, ret_point);
+            ret_matched = eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
+                prime_dependent_types_alpha(s, a, inst_ret, expectedType);
+        }
+        if (ret_matched) {
             ret_ok = true;
             Atom *contract = bindings_apply_if_vars(
                 search_context_bindings(&ret_context), a, inst_ret);
@@ -20318,10 +20691,16 @@ static bool prime_need_is_canonical_app(const Atom *atom) {
            atom_is_symbol_id(atom->expr.elems[0], syms->app);
 }
 
+/* Need's computational lambda is `(Lam <carrier-symbol> body)`.  An
+ * object-language lambda carries a type expression in that field, the same
+ * cut as PeTTa's dialect marker: hosted `Lam` stays data so a checking
+ * annotation is still present when a kernel judgment reads it. */
 static bool prime_need_is_canonical_lam(Atom *atom) {
     const PrimeNeedSymbolIds *syms = prime_need_symbols();
     return atom && atom->kind == ATOM_EXPR && atom->expr.len == 3u &&
-           atom_is_symbol_id(atom->expr.elems[0], syms->lam);
+           atom_is_symbol_id(atom->expr.elems[0], syms->lam) &&
+           atom->expr.elems[1] &&
+           atom->expr.elems[1]->kind == ATOM_SYMBOL;
 }
 
 /* Absence of a callable interpretation is not evidence of a type error.
@@ -29183,6 +29562,13 @@ static bool prime_need_try_equation_call_core(
     if (head->kind != ATOM_SYMBOL || is_grounded_op(head->sym_id) ||
         !space_equations_may_match_known_head(s, head->sym_id))
         return false;
+    /* Stdlib `id` is the unary combinator. A wider application is Prime's
+     * identity type and is not an equation call. */
+    if (atom->expr.len != 2u) {
+        const char *head_name = symbol_bytes(g_symbols, head->sym_id);
+        if (head_name && strcmp(head_name, "id") == 0)
+            return false;
+    }
 
     /* Prime's canonical equation path must not normalize arguments before
      * the selected equation establishes a value demand.  Even pure and total
@@ -30180,6 +30566,14 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
         if (he_selected_function_type)
             break;
         if (is_function_type(op_types[ti])) {
+            /* The stdlib identity combinator is unary. Prime's identity type
+             * is the same symbol at arity 3 and must remain a value. */
+            if (eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
+                nargs != 1u) {
+                const char *head_name = symbol_bytes(g_symbols, head_id);
+                if (head_name && strcmp(head_name, "id") == 0)
+                    continue;
+            }
             has_func_type = true;
             ApplicabilityErrors errors;
             applicability_errors_init(&errors);
@@ -30190,11 +30584,17 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
             Atom *fresh_ft = cetta_instantiate_frame_syntax(a, op_types[ti]);
             bool correlate_he_contracts =
                 eval_current_language_id() == CETTA_LANGUAGE_HE;
+            /* Prime's codomain still names the telescope binders. The
+             * applicability check substitutes the accepted arguments; the
+             * result contract has to be that instantiated codomain. */
+            bool collect_instantiated_return =
+                correlate_he_contracts ||
+                eval_current_language_id() == CETTA_LANGUAGE_PRIME;
             if (check_function_applicable(atom, fresh_ft, exp_type,
                                           s, a, fuel,
                                           n_op_types > 1u,
                                           &errors,
-                                          correlate_he_contracts
+                                          collect_instantiated_return
                                               ? &contracts : NULL)) {
                 applicability_errors_free(&errors);
                 if (correlate_he_contracts) {
@@ -30206,7 +30606,7 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                     applicability_errors_init(&func_errors);
                     he_selected_function_type = true;
                 }
-                if (!correlate_he_contracts) {
+                if (!collect_instantiated_return) {
                     Atom *legacy_ret_type = get_function_ret_type(fresh_ft);
                     if (atom_is_symbol_id(
                             legacy_ret_type,
@@ -30581,6 +30981,17 @@ query_done:
         }
 
         if (tuples.len == 1) {
+            if (eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
+                tail_next && tail_env) {
+                Atom *rebuilt = outcome_atom_materialize(a, &tuples.items[0]);
+                Atom *computed = prime_semantics_authored_compute(a, rebuilt);
+                if (computed && computed != rebuilt) {
+                    *tail_next = computed;
+                    bindings_copy(tail_env, &tuples.items[0].env);
+                    outcome_set_free(&tuples);
+                    return true;
+                }
+            }
             if (outcome_skip_call_observation_fast_path(s, &tuples.items[0])) {
                 outcome_set_add_existing_move(os, &tuples.items[0]);
                 outcome_set_free(&tuples);
@@ -31173,6 +31584,7 @@ static bool prime_public_declaration_compatible(
 
 static bool prime_public_publish_declaration(
     Space *space, Arena *arena, Atom *name, Atom *type) {
+    if (prime_scoped_judgment_reserved_name(name)) return false;
     bool already_present = false;
     if (!prime_public_declaration_compatible(
             space, arena, name, type, &already_present))
@@ -31234,11 +31646,12 @@ static void prime_public_emit_type_evidence(
         arena, outcomes, inert_call, current_env, preserve_bindings);
 }
 
-static void prime_public_eval_type_query(
-    Space *current_space, Arena *arena, Atom *call, int fuel,
-    const Bindings *current_env, bool preserve_bindings,
-    OutcomeSet *outcomes) {
-    (void)fuel;
+/* The judgment a typing query call poses, with its space and optional
+ * budget; on a malformed call, the error to emit. */
+static bool prime_public_type_query_judgment(
+    Space *current_space, Arena *arena, Atom *call,
+    const Bindings *current_env, Space **space_out, Atom **judgment_out,
+    bool *limited_out, uint64_t *steps_out, Atom **error_out) {
     SymbolId head_id = atom_head_symbol_id(call);
     bool binary = prime_public_type_query_is_binary(head_id);
     CettaExprLen required = binary ? 2u : 1u;
@@ -31255,12 +31668,9 @@ static void prime_public_eval_type_query(
     }
     CettaExprLen remaining = nargs - start;
     if (remaining != required && remaining != required + 1u) {
-        prime_public_emit(
-            arena, outcomes,
-            atom_error(arena, call,
-                       atom_symbol(arena, "IncorrectNumberOfArguments")),
-            current_env, preserve_bindings);
-        return;
+        *error_out = atom_error(
+            arena, call, atom_symbol(arena, "IncorrectNumberOfArguments"));
+        return false;
     }
     Atom *first = prime_public_splice_type_operand(
         arena,
@@ -31278,16 +31688,37 @@ static void prime_public_eval_type_query(
         Atom *budget = bindings_apply_if_vars(
             current_env, arena, expr_arg(call, start + required));
         if (!prime_public_positive_budget(budget, &steps)) {
-            prime_public_emit(
-                arena, outcomes,
-                atom_error(arena, call,
-                           atom_symbol(arena, "PositiveBudgetIsExpected")),
-                current_env, preserve_bindings);
-            return;
+            *error_out = atom_error(
+                arena, call, atom_symbol(arena, "PositiveBudgetIsExpected"));
+            return false;
         }
     }
-    Atom *judgment = prime_public_make_judgment(
+    *space_out = space;
+    *judgment_out = prime_public_make_judgment(
         arena, head_id, first, second);
+    *limited_out = limited;
+    *steps_out = steps;
+    return true;
+}
+
+static void prime_public_eval_type_query(
+    Space *current_space, Arena *arena, Atom *call, int fuel,
+    const Bindings *current_env, bool preserve_bindings,
+    OutcomeSet *outcomes) {
+    (void)fuel;
+    SymbolId head_id = atom_head_symbol_id(call);
+    Space *space = NULL;
+    Atom *judgment = NULL;
+    bool limited = false;
+    uint64_t steps = 0u;
+    Atom *error = NULL;
+    if (!prime_public_type_query_judgment(
+            current_space, arena, call, current_env, &space, &judgment,
+            &limited, &steps, &error)) {
+        prime_public_emit(
+            arena, outcomes, error, current_env, preserve_bindings);
+        return;
+    }
     Atom *verdict = prime_semantics_judge_typing_direct(
         arena, space, judgment, limited, steps);
     Atom *inert = prime_public_applied_call(arena, call, current_env);
@@ -31313,6 +31744,46 @@ static void prime_public_eval_type_query(
     }
     prime_public_emit(
         arena, outcomes, inert, current_env, preserve_bindings);
+}
+
+/* `(type:kernel-query (type:eq ...))` or `(type:kernel-query (type:check ...))`:
+ * the represented query the judgment poses to the kernel.  The judgment is
+ * not evaluated for its answer. */
+static void prime_public_eval_kernel_query(
+    Space *current_space, Arena *arena, Atom *call,
+    const Bindings *current_env, bool preserve_bindings,
+    OutcomeSet *outcomes) {
+    Atom *inner = expr_nargs(call) == 1u
+        ? bindings_apply_if_vars(current_env, arena, expr_arg(call, 0u))
+        : NULL;
+    SymbolId inner_head = inner ? atom_head_symbol_id(inner) : SYMBOL_ID_NONE;
+    if (inner_head != g_builtin_syms.type_colon_eq &&
+        inner_head != g_builtin_syms.type_colon_check) {
+        prime_public_emit(
+            arena, outcomes,
+            atom_error(arena, call,
+                       atom_symbol(arena, "TypeEqOrTypeCheckIsExpected")),
+            current_env, preserve_bindings);
+        return;
+    }
+    Space *space = NULL;
+    Atom *judgment = NULL;
+    bool limited = false;
+    uint64_t steps = 0u;
+    Atom *error = NULL;
+    if (!prime_public_type_query_judgment(
+            current_space, arena, inner, current_env, &space, &judgment,
+            &limited, &steps, &error)) {
+        prime_public_emit(
+            arena, outcomes, error, current_env, preserve_bindings);
+        return;
+    }
+    Atom *query = prime_semantics_kernel_query(
+        arena, space, judgment, limited, steps);
+    prime_public_emit(
+        arena, outcomes,
+        query ? query : prime_public_applied_call(arena, call, current_env),
+        current_env, preserve_bindings);
 }
 
 static void prime_public_eval_nik_check(
@@ -42239,6 +42710,12 @@ tail_call: ;
         return;
     }
     if (language_id == CETTA_LANGUAGE_PRIME &&
+        head_id == g_builtin_syms.type_colon_kernel_query) {
+        prime_public_eval_kernel_query(
+            s, a, atom, CURRENT_ENV, preserve_bindings, os);
+        return;
+    }
+    if (language_id == CETTA_LANGUAGE_PRIME &&
         head_id == g_builtin_syms.type_colon_prove) {
         prime_public_eval_prove(
             s, a, atom, fuel, CURRENT_ENV, preserve_bindings, os);
@@ -44424,6 +44901,13 @@ petta_lowered_to_shared_form:
         Atom *to_eval = expr_arg(atom, 0);
         Atom *syntax_var = prime_syntax_chain ? expr_arg(atom, 1) : NULL;
         Atom *body = expr_arg(atom, prime_syntax_chain ? 2u : 1u);
+        if (prime_syntax_chain && syntax_var &&
+            syntax_var->kind == ATOM_VAR) {
+            Atom *opened = prime_open_capabilities_for_var(
+                a, body, syntax_var->var_id, 0u);
+            if (opened)
+                body = opened;
+        }
         if (prime_syntax_chain && syntax_var->kind != ATOM_VAR) {
             Atom *refinement_elems[4] = {
                 atom_symbol_id(a, g_builtin_syms.let), syntax_var,
@@ -47614,6 +48098,11 @@ petta_lowered_to_shared_form:
     }
 
 generic_dispatch:
+    if (eval_current_language_id() == CETTA_LANGUAGE_PRIME) {
+        Atom *reduced = prime_semantics_authored_compute(a, atom);
+        if (reduced && reduced != atom)
+            TAIL_REENTER(reduced);
+    }
     {
         Atom *tail_next = NULL;
         Atom *tail_type = NULL;

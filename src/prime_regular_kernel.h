@@ -12,7 +12,10 @@ typedef enum {
     CETTA_PRIME_REGULAR_KERNEL_REFUTED,
     CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED,
     CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE,
-    CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS
+    CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS,
+    /* The operands are admitted and the check ran, but no theorem makes its
+     * negative outcome a refutation: the judgment stays open. */
+    CETTA_PRIME_REGULAR_KERNEL_UNDECIDED
 } CettaPrimeRegularKernelStatus;
 
 typedef struct {

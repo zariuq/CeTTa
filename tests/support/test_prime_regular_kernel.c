@@ -1077,8 +1077,10 @@ int main(int argc, char **argv) {
         &arena,
         "(PrimeScoped PrimeCtxNil (Lam (Pi U0 U0) (idx 0)))",
         "(Pi U0 U0)");
-    CHECK(bad_lambda.status == CETTA_PRIME_REGULAR_KERNEL_REFUTED,
-          "lambda annotation must agree with the expected domain");
+    CHECK(bad_lambda.status == CETTA_PRIME_REGULAR_KERNEL_UNDECIDED &&
+              bad_lambda.reason &&
+              strcmp(bad_lambda.reason, "lambda-domain-mismatch") == 0,
+          "a lambda annotation disagreeing with the expected domain refutes nothing about the erased abstraction");
 
     CettaPrimeRegularKernelResult unformed_annotation = check_term(
         &arena,
@@ -1093,13 +1095,13 @@ int main(int argc, char **argv) {
         &arena, "(PrimeScoped PrimeCtxNil U0)",
         "(PrimeScoped PrimeCtxNil (Pi U0 U0))");
     CHECK(distinct.status == CETTA_PRIME_REGULAR_KERNEL_REFUTED && distinct.reason &&
-              strcmp(distinct.reason, "distinct-normal-forms") == 0,
+              strcmp(distinct.reason, "not-convertible") == 0,
           "distinct same-typed normal forms are rejected");
 
     CettaPrimeRegularKernelResult context_mismatch = convert(
         &arena, "(PrimeScoped PrimeCtxNil U0)",
         "(PrimeScoped (PrimeCtxCons U0 PrimeCtxNil) U0)");
-    CHECK(context_mismatch.status == CETTA_PRIME_REGULAR_KERNEL_REFUTED &&
+    CHECK(context_mismatch.status == CETTA_PRIME_REGULAR_KERNEL_UNDECIDED &&
               context_mismatch.reason &&
               strcmp(context_mismatch.reason,
                      "conversion-context-mismatch") == 0,
@@ -1738,7 +1740,7 @@ int main(int argc, char **argv) {
                   cetta_prime_regular_kernel_closed_conversion_profile_v1,
                   &distinct_equal, &distinct_reason) &&
               !distinct_equal && distinct_reason &&
-              strcmp(distinct_reason, "distinct-normal-forms") == 0,
+              strcmp(distinct_reason, "not-convertible") == 0,
           "unequal same-typed operands produce admitted negative evidence");
 
     TermUniverse foreign_universe;
@@ -1903,8 +1905,8 @@ int main(int argc, char **argv) {
         Atom *reflexive_judgment = atom_expr(&arena, items, 3u);
         Atom *reflexive_verdict = prime_semantics_judge_typing_direct(
             &arena, &space, reflexive_judgment, false, 0u);
-        CHECK(verdict_status(reflexive_verdict, "Established"),
-              "out-of-class scoped reflexivity routes without native refutation");
+        CHECK(verdict_status(reflexive_verdict, "Undetermined"),
+              "out-of-class scoped reflexivity is neither established nor refuted");
     }
 
     Atom *mixed_scoped_judgment = parse_one(
@@ -2123,7 +2125,7 @@ int main(int argc, char **argv) {
         ? atom_to_string(&arena, closed_distinct_verdict) : NULL;
     CHECK(verdict_status(closed_distinct_verdict, "Refuted") &&
               closed_distinct_text &&
-              strstr(closed_distinct_text, "distinct-normal-forms") &&
+              strstr(closed_distinct_text, "not-convertible") &&
               strstr(closed_distinct_text, "Certificate") == NULL,
           "ordinary unequal native operands use admitted negative evidence");
 
@@ -2395,7 +2397,7 @@ int main(int argc, char **argv) {
           "declared regular conversion uses native positive evidence");
     CHECK(verdict_status(declared_distinct_verdict, "Refuted") &&
               declared_distinct_text &&
-              strstr(declared_distinct_text, "distinct-normal-forms") &&
+              strstr(declared_distinct_text, "not-convertible") &&
               strstr(declared_distinct_text, "Certificate") == NULL,
           "declared regular conversion retains checked negative evidence");
     CHECK(verdict_status(declared_limited_verdict, "Incomplete"),
@@ -2414,6 +2416,44 @@ int main(int argc, char **argv) {
               0u,
           "declared regular conversion never consults HE or constructs a certificate");
 #endif
+
+    /* Recognizing declarations is not charged to the producer budget, so at
+     * every budget a declared conversion completes or reports exhaustion. */
+    bool declared_budget_honest = true;
+    for (uint64_t steps = 1u; steps <= 16u; steps++) {
+        Atom *limited = prime_semantics_judge_typing_direct(
+            &arena, &space, declared_reflexive_conversion, true, steps);
+        if (!verdict_status(limited, "Incomplete") &&
+            !verdict_status(limited, "Established"))
+            declared_budget_honest = false;
+        limited = prime_semantics_judge_typing_direct(
+            &arena, &space, declared_distinct_conversion, true, steps);
+        if (!verdict_status(limited, "Incomplete") &&
+            !verdict_status(limited, "Refuted"))
+            declared_budget_honest = false;
+    }
+    CHECK(declared_budget_honest,
+          "declared conversion under any producer budget completes or reports resource exhaustion");
+
+    /* A name whose declared type lies outside the kernel's class is
+     * recognized as outside at every budget, never as exhaustion. */
+    Atom *outside_declaration = parse_one(
+        &arena, "(: outside-operation (-> Number Number Number))");
+    if (outside_declaration) space_add(&space, outside_declaration);
+    Atom *outside_conversion = parse_one(
+        &arena, "(type:eq (outside-operation 1 1) 2)");
+    bool outside_budget_stable = outside_declaration && outside_conversion;
+    for (uint64_t steps = 1u; outside_budget_stable && steps <= 16u; steps++) {
+        Atom *limited = prime_semantics_judge_typing_direct(
+            &arena, &space, outside_conversion, true, steps);
+        if (!verdict_status(limited, "Undetermined"))
+            outside_budget_stable = false;
+    }
+    CHECK(outside_budget_stable &&
+              verdict_status(prime_semantics_judge_typing_direct(
+                  &arena, &space, outside_conversion, false, 0u),
+                  "Undetermined"),
+          "a term outside the declared fragment is reported outside at every producer budget");
 
     Atom *declared_dependent_synthesis = parse_one(
         &arena, "(type:of declared-refl)");

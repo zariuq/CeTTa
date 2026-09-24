@@ -11,13 +11,15 @@ def main() -> None:
     args = parser.parse_args()
 
     text = args.source.read_text(encoding="utf-8")
-    old = "if (!ok || !substituted)"
-    count = text.count(old)
-    if count != 1:
-        raise SystemExit(
-            f"expected one beta-substitution failure site, found {count}")
-    text = text.replace(
-        old, "if (true)", 1)
+    # The beta-substitution failure sites of normalization and of weak-head
+    # reduction, which conversion uses.
+    for old in ("if (!ok || !substituted)", "if (!ok || !reduct)"):
+        count = text.count(old)
+        if count != 1:
+            raise SystemExit(
+                f"expected one beta-substitution failure site {old!r}, "
+                f"found {count}")
+        text = text.replace(old, "if (true)", 1)
     args.destination.write_text(text, encoding="utf-8")
 
 

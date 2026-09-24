@@ -484,6 +484,7 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(type_colon_may, "type:may") \
     X(type_colon_must, "type:must") \
     X(type_colon_theorem, "type:theorem") \
+    X(type_colon_kernel_query, "type:kernel-query") \
     X(type_colon_prove, "type:prove") \
     X(set_colon_signature, "set:signature") \
     X(set_colon_formed, "set:formed") \
@@ -513,7 +514,9 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(sort_numbers_atom, "sort-numbers-atom") \
     X(set_colon_native_proof, "set:native-proof") \
     X(set_colon_native_use, "set:native-use") \
-    X(set_colon_native_normalize, "set:native-normalize")
+    X(set_colon_native_normalize, "set:native-normalize") \
+    X(set_colon_native_link, "set:native-link") \
+    X(set_colon_interpret, "set:interpret")
 
 /* Builtins whose grounded-operation capability is independent of language
    and profile.  symbol_table_init_builtins compiles this declaration into

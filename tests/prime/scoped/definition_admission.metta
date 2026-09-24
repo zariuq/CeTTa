@@ -190,7 +190,8 @@
 !(set:define &thy lambdaIdentity (-> MissingType MissingType)
    (= lambdaIdentity (lam z z)))
 !(type:eq &thy closureIdentity lambdaIdentity)
-; A saturated clause does not unfold its unapplied head to a lambda.
+; A saturated equation does not unfold its unapplied head, but eta at the
+; function type makes the head equal to its expansion `lam z z`.
 !(type:eq &thy closureIdentity missingId)
 !(set:define &thy dependentClosure (-> (A : (u 0)) (x : A) (y : A) A)
    (= (dependentClosure $A $x) (lam y $x)))
