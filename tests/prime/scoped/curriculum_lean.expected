@@ -1,5 +1,6 @@
 [()]
 [()]
+[()]
 [bool]
 [nat]
 [(refl@bool subst@bool)]

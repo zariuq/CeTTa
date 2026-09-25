@@ -31,7 +31,8 @@ typedef struct {
     const Atom *const *names;
     size_t count;
     /* Local aliases, innermost first. A matcher variable here names an
-     * already bound clause slot; it does not become a lexical binder. */
+     * already bound variable of the equation; it does not become a lexical
+     * binder. */
     const Atom *const *local_names;
     size_t local_count;
 } CettaPrimeRegularTermEnvironmentV1;
@@ -93,9 +94,12 @@ typedef struct {
 /* Prime's authored regular syntax is intentionally smaller than the Pattern
  * wire and lower-case throughout:
  *
- *   u0 | u1 | (u n) | (idx k) | (lam name body) | (lam (name ...) body)
+ *   u0 | u1 | (u n) | (idx k) | (lam binders body)
  *   (-> domain codomain) | (app f x) | (pair x y)
  *   (fst p) | (snd p) | (id A x y) | (refl x)
+ *
+ * where `binders` is a name, a typed group such as `(x : A)`, `(x y : A)` or
+ * `(: x A)`, or a list whose elements are names and typed groups.
  *
  * A lexical name is either a bare symbol or an explicit universal name
  * quote, @key (parsed as (quote key)).  Bare `_` is anonymous; `$x` remains
@@ -105,10 +109,10 @@ typedef struct {
  * binders; PMultiLam is not introduced.
  *
  * Arrows and sigma types accept telescope groups such as `(x y : A)` and
- * lower them to nested Pi/Sigma binders.  Annotation-bearing lambdas are
- * deliberately not accepted by this interface: an annotation may only be
- * exposed after the typed elaborator proves that it is checked, never by
- * erasing it into an unannotated Pattern lambda. */
+ * lower them to nested Pi/Sigma binders.  A lambda binder with a written
+ * domain lowers to a Pattern lambda that keeps the domain, `Lam A (PLam ...)`,
+ * which the kernel checks against the expected domain; the annotation is
+ * never erased into an unannotated Pattern lambda. */
 typedef enum {
     CETTA_PRIME_REGULAR_TERM_OK = 0,
     CETTA_PRIME_REGULAR_TERM_NOT_SYNTAX,
@@ -125,7 +129,6 @@ typedef enum {
     CETTA_PRIME_REGULAR_TERM_INVALID_BINDER_NAME,
     CETTA_PRIME_REGULAR_TERM_MATCHER_BINDER,
     CETTA_PRIME_REGULAR_TERM_BINDER_TYPE_ARITY_MISMATCH,
-    CETTA_PRIME_REGULAR_TERM_TYPED_BINDER_REQUIRES_AUTHORITY,
     CETTA_PRIME_REGULAR_TERM_INVALID_INDEX,
     CETTA_PRIME_REGULAR_TERM_INVALID_LEVEL
 } CettaPrimeRegularTermSyntaxErrorV1;
@@ -190,6 +193,62 @@ cetta_prime_regular_term_to_pattern_in_environment_v1(
 
 /* Cheap root recognition only; this never grants authority. */
 bool cetta_prime_regular_term_maybe_syntax_v1(Atom *syntax);
+
+/* The binder groups of an authored lambda `(lam binders body)`, in the one
+ * grammar that both the kernel lowering and the evaluator read: `binders` is
+ * a name, one typed group (`(x : A)`, `(x y : A)`, `(x y : A B)` or
+ * `(: x A)`), or a list whose elements are names and typed groups.  A name
+ * group has `typed == false`, `syntax` the name itself and one name.  The
+ * written types of a typed group are read in the context before the group,
+ * so they never see the group's own names.  `listed` records whether the
+ * binders were written as a list of elements. */
+typedef struct {
+    Atom *syntax;
+    bool typed;
+    size_t names_start;
+    size_t names_count;
+    size_t types_start;
+    size_t types_count;
+} CettaPrimeLambdaBinderGroupV1;
+
+typedef enum {
+    CETTA_PRIME_LAMBDA_BINDERS_OK_V1 = 0,
+    CETTA_PRIME_LAMBDA_BINDERS_EMPTY_V1,
+    CETTA_PRIME_LAMBDA_BINDERS_MALFORMED_GROUP_V1,
+    CETTA_PRIME_LAMBDA_BINDERS_NOT_A_BINDER_V1,
+    CETTA_PRIME_LAMBDA_BINDERS_RESOURCE_LIMIT_V1
+} CettaPrimeLambdaBindersStatusV1;
+
+CettaPrimeLambdaBindersStatusV1 cetta_prime_lambda_binder_groups_v1(
+    Arena *arena, Atom *binders, CettaPrimeLambdaBinderGroupV1 **groups_out,
+    size_t *count_out, bool *listed_out);
+
+/* How the kernel reads a lexical name: a symbol names itself; `(quote K)`
+ * with an admissible key K names K, explicitly; a matcher variable is not a
+ * lexical name; and a bare `_` in binder position binds nothing.  A term uses
+ * a binder's value through a bare symbol or the drop `(unquote n)` of its
+ * name; the quotation of a bound name is the name, not the value. */
+typedef enum {
+    CETTA_PRIME_NAME_OK_V1 = 0,
+    CETTA_PRIME_NAME_ANONYMOUS_V1,
+    CETTA_PRIME_NAME_MATCHER_V1,
+    CETTA_PRIME_NAME_INVALID_V1
+} CettaPrimeNameStatusV1;
+
+CettaPrimeNameStatusV1 cetta_prime_name_key_v1(
+    Atom *syntax, bool binder_position, Atom **key_out,
+    bool *explicit_quote_out);
+
+/* A name with every quoted drop of a name removed: `(quote (unquote n))` is
+ * n when n is a quotation. */
+Atom *cetta_prime_name_normal_v1(Atom *name);
+
+/* The i-th name of a binder group, and the written type of that name (NULL
+ * for a name group). */
+Atom *cetta_prime_lambda_binder_name_v1(
+    const CettaPrimeLambdaBinderGroupV1 *group, size_t index);
+Atom *cetta_prime_lambda_binder_type_v1(
+    const CettaPrimeLambdaBinderGroupV1 *group, size_t index);
 
 /* Map one intrinsic regular-kernel constructor to its lower-case authored
  * spelling.  Non-constructors are returned unchanged. */

@@ -2932,6 +2932,9 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/need_storage_boundary.metta \
 	tests/prime/cardinality_observer_dynamic_space.metta \
 	tests/prime/need_quote_preservation.metta \
+	tests/prime/data_holding.metta \
+	tests/prime/data_head_patterns.metta \
+	tests/prime/lambda_names.metta \
 	tests/prime/need_sequential_unification_refinement.metta \
 	tests/prime/relational_first_demand.metta \
 	tests/prime/search_controller_frontier.metta \
@@ -2958,6 +2961,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/conformance/type_judgments.metta \
 	tests/prime/conformance/regular_kernel_constructors.metta \
 	tests/prime/conformance/regular_binders.metta \
+	tests/prime/conformance/written_domains.metta \
 	tests/prime/conformance/regular_declarations.metta \
 	tests/prime/conformance/occurs_check.metta \
 	tests/prime/conformance/open_lambda_pi.metta \
@@ -2990,6 +2994,10 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/scoped/map_fusion_verbs.metta \
 	tests/prime/scoped/try_effects.metta \
 	tests/prime/scoped/list_reversal_defined.metta \
+	tests/prime/scoped/scrutinee_first_recursion.metta \
+	tests/prime/scoped/hol_written_domains.metta \
+	tests/prime/scoped/cumulativity_curriculum.metta \
+	tests/prime/scoped/curriculum_prime_motivation.metta \
 	tests/prime/scoped/map_fusion_defined.metta \
 	tests/prime/scoped/nat_arithmetic.metta \
 	tests/prime/scoped/tree_mirror.metta \
@@ -21058,7 +21066,7 @@ test-prime-regular-kernel-verdict-polarity-mutations: $(PRIME_REGULAR_KERNEL_TES
 	@set -e; \
 	mutation_dir=runtime/prime-regular-kernel-verdict-polarity-mutations; \
 	mkdir -p "$$mutation_dir"; \
-	for mutation in formed-position-refutes universe-synthesis-refutes universe-family-refutes refl-of-type-refutes; do \
+	for mutation in formed-position-refutes universe-synthesis-refutes universe-family-refutes refl-of-type-refutes domain-mismatch-refutes; do \
 		python3 scripts/mutate_prime_regular_kernel_verdict_polarity.py \
 			"$$mutation" src/prime_regular_kernel.c \
 			"$$mutation_dir/prime_regular_kernel_$$mutation.c"; \
@@ -21083,13 +21091,14 @@ test-prime-regular-kernel-verdict-polarity-mutations: $(PRIME_REGULAR_KERNEL_TES
 			universe-synthesis-refutes) expected='the embedded legacy marker inhabits its successor universe' ;; \
 			universe-family-refutes) expected='Sigma formation joins the universe levels of domain and body' ;; \
 			refl-of-type-refutes) expected='identity introduction applies to universe-formed types' ;; \
+			domain-mismatch-refutes) expected='a written domain differing inside the same former stays undecided' ;; \
 		esac; \
 		if ! grep -Fq "$$expected" "$$mutation_dir/$$mutation.err"; then \
 			echo "FAIL: $$mutation died outside its intended verdict-polarity assertion"; \
 			exit 1; \
 		fi; \
 	done; \
-	echo 'PASS: the abstention boundary and three tower judgments resist REFUTED mutations'
+	echo 'PASS: the abstention boundaries of formation and of written domains, and three tower judgments, resist REFUTED mutations'
 
 .PHONY: test-prime-producer-bound-native-checking-mutations
 test-prime-producer-bound-native-checking-mutations: $(PRIME_REGULAR_KERNEL_TEST_BIN)

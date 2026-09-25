@@ -14,7 +14,7 @@
 !(type:check &s (all prop (lam p p)) prop)
 !(type:check &s (all (-> set prop) (lam P (P Empty))) prop)
 
-; First-order chart: the universal checked leaf by leaf at enumerated witnesses.
+; First-order reading: the universal checked leaf by leaf at enumerated witnesses.
 (= (witnesses) (superpose (Empty (Power Empty) (UnivOf Empty))))
 !(let $w (witnesses)
    (set:proves (pf:all-elim (pf:known PowerI) $w) (In $w (Power $w))))

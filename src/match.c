@@ -10742,7 +10742,32 @@ bool type_match_uses_space_class_bridge(Atom *actual, Atom *expected) {
          is_space_value_type(actual));
 }
 
+/* A held value, typed (Data ...), is an atom, and its payload has a syntax
+ * shape that only inspection can tell, so it is accepted where Atom or a
+ * shape type is expected. */
+static bool match_types_is_data(Atom *type) {
+    return type &&
+        ((type->kind == ATOM_SYMBOL && atom_is_symbol(type, "Data")) ||
+         (type->kind == ATOM_EXPR && type->expr.len >= 1u &&
+          atom_is_symbol(type->expr.elems[0], "Data")));
+}
+
+static bool match_types_held_accepted(Atom *actual, Atom *expected) {
+    /* A position expecting Data holds whatever it receives: raw syntax is
+     * held at (Data Atom) without checking, and checking held code at a
+     * result type is a separate judgment. */
+    if (match_types_is_data(expected)) return true;
+    bool held = match_types_is_data(actual);
+    if (!held || !expected || expected->kind != ATOM_SYMBOL) return false;
+    static const char *const accepting[] = {
+        "Atom", "Expression", "Symbol", "Variable", "Grounded"};
+    for (size_t i = 0u; i < sizeof(accepting) / sizeof(accepting[0]); i++)
+        if (atom_is_symbol(expected, accepting[i])) return true;
+    return false;
+}
+
 bool match_types(Atom *actual, Atom *expected, Bindings *b) {
+    if (match_types_held_accepted(actual, expected)) return true;
     /* Atom is the expected-side value top. An actual Atom is not evidence for
        an arbitrary concrete expected type. */
     if (atom_is_symbol_id(expected, g_builtin_syms.atom)) return true;
@@ -10754,6 +10779,7 @@ bool match_types(Atom *actual, Atom *expected, Bindings *b) {
 }
 
 bool match_types_builder(Atom *actual, Atom *expected, BindingsBuilder *bb) {
+    if (match_types_held_accepted(actual, expected)) return true;
     if (atom_is_symbol_id(expected, g_builtin_syms.atom)) return true;
     if (type_match_uses_space_class_bridge(actual, expected)) {
         return true;

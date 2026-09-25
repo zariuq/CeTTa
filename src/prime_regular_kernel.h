@@ -252,7 +252,7 @@ void cetta_prime_regular_kernel_rules_set(Atom *rules);
 
 /* One admitted `type:rule` step at the root of an intrinsic application.
  * Subterms are not normalized and the term is not rechecked. NULL means no
- * clause matched. A budget failure is also NULL; the caller keeps the call. */
+ * rule matched. A budget failure is also NULL; the caller keeps the call. */
 Atom *cetta_prime_regular_kernel_rule_contractum_v1(
     Arena *arena, Atom *term, CettaPrimeRegularKernelBudget *budget);
 

@@ -1094,6 +1094,18 @@ int main(int argc, char **argv) {
                      "lambda-domain-mismatch") == 0,
           "a written domain differing inside the same former stays undecided");
 
+    /* Universes with distinct closed levels are distinct types. */
+    CettaPrimeRegularKernelResult universe_lambda_mismatch = check_term(
+        &arena,
+        "(PrimeScoped PrimeCtxNil (Lam (Sort (LevelConst 0)) (idx 0)))",
+        "(Pi (Sort (LevelConst 1)) (Sort (LevelConst 1)))");
+    CHECK(universe_lambda_mismatch.status ==
+              CETTA_PRIME_REGULAR_KERNEL_REFUTED &&
+              universe_lambda_mismatch.reason &&
+              strcmp(universe_lambda_mismatch.reason,
+                     "lambda-domain-mismatch") == 0,
+          "a written universe of another level than the expected domain is refuted");
+
     CettaPrimeRegularKernelResult unformed_annotation = check_term(
         &arena,
         "(PrimeScoped PrimeCtxNil "

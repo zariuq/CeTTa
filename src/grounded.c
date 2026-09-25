@@ -2696,12 +2696,15 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if ((head_id == g_builtin_syms.car_atom ||
          head_id == g_builtin_syms.cdr_atom) &&
         nargs == 1u) {
-        Atom *argument = args[0];
+        /* A fragment of held syntax is held syntax. */
+        bool held = atom_prime_held_is(args[0]);
+        Atom *argument = atom_prime_held_payload(args[0]);
         if (argument->kind == ATOM_EXPR && argument->expr.len > 0u) {
-            if (head_id == g_builtin_syms.car_atom)
-                return argument->expr.elems[0];
-            return atom_expr(
-                a, argument->expr.elems + 1u, argument->expr.len - 1u);
+            Atom *part = head_id == g_builtin_syms.car_atom
+                ? argument->expr.elems[0]
+                : atom_expr(a, argument->expr.elems + 1u,
+                            argument->expr.len - 1u);
+            return held ? atom_prime_held_wrap(a, part) : part;
         }
         return atom_error(
             a, grounded_call_expr(a, head, args, nargs),
@@ -3145,8 +3148,8 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
                 args[0], &counted_collection)) {
             return atom_int(a, counted_collection);
         }
-        if (args[0]->kind == ATOM_EXPR)
-            return atom_int(a, args[0]->expr.len);
+        if (atom_prime_held_payload(args[0])->kind == ATOM_EXPR)
+            return atom_int(a, atom_prime_held_payload(args[0])->expr.len);
         if (head_id == g_builtin_syms.size_atom &&
             grounded_current_language_is_petta()) {
             return atom_unit(a);
@@ -3166,6 +3169,8 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     }
 
     if (head_id == g_builtin_syms.index_atom && nargs == 2) {
+        bool held = atom_prime_held_is(args[0]);
+        args[0] = atom_prime_held_payload(args[0]);
         if (args[0]->kind != ATOM_EXPR) {
             if (args[0]->kind == ATOM_GROUNDED)
                 return grounded_bad_arg_type(a, head, args, nargs, 1,
@@ -3187,7 +3192,7 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
             return atom_error(a, grounded_call_expr(a, head, args, nargs),
                               atom_string(a, "Index is out of bounds"));
         }
-        return args[0]->expr.elems[idx];
+        return held ? atom_prime_held_wrap(a, args[0]->expr.elems[idx]) : args[0]->expr.elems[idx];
     }
 
     if (head_id == g_builtin_syms.unique_atom && nargs == 1) {
@@ -3309,7 +3314,9 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
 
     /* ── Structural equality (any atom type) ───────────────────────────── */
     if (head_id == g_builtin_syms.op_eq && nargs == 2) {
-        return atom_eq(args[0], args[1]) ? atom_true(a) : atom_false(a);
+        return atom_eq(atom_prime_held_payload(args[0]),
+                       atom_prime_held_payload(args[1]))
+            ? atom_true(a) : atom_false(a);
     }
 
     /* ── Boolean ops ───────────────────────────────────────────────────── */
@@ -3396,7 +3403,9 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         }
 #else
         if (na.is_bigint || nb.is_bigint || na.is_rational || nb.is_rational)
-            return atom_eq(args[0], args[1]) ? atom_true(a) : atom_false(a);
+            return atom_eq(atom_prime_held_payload(args[0]),
+                       atom_prime_held_payload(args[1]))
+            ? atom_true(a) : atom_false(a);
 #endif
         return na.ival == nb.ival ? atom_true(a) : atom_false(a);
     }

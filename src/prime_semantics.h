@@ -205,8 +205,14 @@ Atom *prime_semantics_project_pair(Atom *call);
  * eliminates, the method is the result. NULL otherwise. */
 Atom *prime_semantics_identity_iota(Atom *call);
 
-/* `((lam $x body) argument)` reduces to `body` with `$x` replaced. */
+/* `((lam binders body) a ...)`: the first binder takes the first argument,
+ * the remaining binders keep their written domains, and the remaining
+ * arguments apply to the result.  NULL when the head is not such a lambda. */
 Atom *prime_semantics_beta(Arena *arena, Atom *call);
+
+/* Whether `term` is an authored lambda `(lam binders body)` whose binders the
+ * kernel's grammar reads.  Such a lambda is a value. */
+bool prime_semantics_is_authored_lambda(Arena *arena, Atom *term);
 
 /* One beta, pair projection, or reflexivity elimination at the root of an
  * authored term; subterms are not entered. The same pointer means nothing

@@ -208,12 +208,37 @@ static bool regular_term_quote_key(Atom *syntax, Atom **key_out) {
     return true;
 }
 
+static bool regular_term_drop_of(Atom *syntax, Atom **name_out) {
+    if (!syntax || syntax->kind != ATOM_EXPR || syntax->expr.len != 2u ||
+        !atom_is_symbol(syntax->expr.elems[0], "unquote"))
+        return false;
+    if (name_out) *name_out = syntax->expr.elems[1];
+    return true;
+}
+
+/* The quotation of a dropped name is that name: `(quote (unquote n))` is n
+ * when n is itself a quotation (the quote-drop law of the rho calculus). */
+static Atom *regular_term_name_normal(Atom *name) {
+    for (;;) {
+        Atom *inner = NULL;
+        Atom *dropped = NULL;
+        if (!regular_term_quote_key(name, &inner) ||
+            !regular_term_drop_of(inner, &dropped) ||
+            !regular_term_quote_key(dropped, NULL))
+            return name;
+        name = dropped;
+    }
+}
+
+/* A lexical name: a symbol names itself, and `(quote K)` with an admissible
+ * key K names K, explicitly.  Binders are names. */
 static RegularTermNameStatus regular_term_name_key(
     Atom *syntax, bool binder_position, Atom **key_out,
     bool *explicit_quote_out) {
     if (key_out) *key_out = NULL;
     if (explicit_quote_out) *explicit_quote_out = false;
     if (!syntax) return REGULAR_TERM_NAME_INVALID;
+    syntax = regular_term_name_normal(syntax);
     if (syntax->kind == ATOM_VAR) return REGULAR_TERM_NAME_MATCHER;
     if (syntax->kind == ATOM_SYMBOL) {
         if (atom_is_symbol(syntax, ":")) return REGULAR_TERM_NAME_INVALID;
@@ -228,6 +253,32 @@ static RegularTermNameStatus regular_term_name_key(
     if (key_out) *key_out = key;
     if (explicit_quote_out) *explicit_quote_out = true;
     return REGULAR_TERM_NAME_OK;
+}
+
+/* A term refers to the value a binder binds in two ways: a bare symbol, or
+ * the drop `(unquote n)` of the binder's name n.  A quotation `(quote K)` is a
+ * sealed name, never a reference, even when K is a bound key. */
+static RegularTermNameStatus regular_term_value_key(
+    Atom *syntax, Atom **key_out, bool *explicit_quote_out) {
+    Atom *name = NULL;
+    if (regular_term_drop_of(syntax, &name)) {
+        if (key_out) *key_out = NULL;
+        if (explicit_quote_out) *explicit_quote_out = false;
+        name = regular_term_name_normal(name);
+        Atom *key = NULL;
+        if (!regular_term_quote_key(name, &key) ||
+            !name_key_is_admissible(key))
+            return REGULAR_TERM_NAME_INVALID;
+        if (key_out) *key_out = key;
+        if (explicit_quote_out) *explicit_quote_out = true;
+        return REGULAR_TERM_NAME_OK;
+    }
+    if (regular_term_quote_key(syntax, NULL)) {
+        if (key_out) *key_out = NULL;
+        if (explicit_quote_out) *explicit_quote_out = false;
+        return REGULAR_TERM_NAME_INVALID;
+    }
+    return regular_term_name_key(syntax, false, key_out, explicit_quote_out);
 }
 
 static const RegularTermBinding *regular_term_binding_find(
@@ -424,16 +475,6 @@ static bool regular_term_root_candidate(Atom *syntax) {
            regular_term_root_candidate(syntax->expr.elems[0]);
 }
 
-static bool regular_term_contains_colon(Atom *syntax) {
-    if (!syntax) return false;
-    if (atom_is_symbol(syntax, ":")) return true;
-    if (regular_term_quote_key(syntax, NULL)) return false;
-    if (syntax->kind != ATOM_EXPR) return false;
-    for (CettaExprIndex i = 0u; i < syntax->expr.len; i++)
-        if (regular_term_contains_colon(syntax->expr.elems[i])) return true;
-    return false;
-}
-
 static RegularBinderGroupStatus regular_term_direct_group(
     Atom *syntax, RegularTypedBinderGroup *group_out,
     CettaPrimeRegularTermElaborationV1 *error_out) {
@@ -568,62 +609,162 @@ static CettaPrimeRegularTermElaborationV1 regular_term_lower_rec(
     Arena *arena, Atom *syntax, const RegularTermBinding *environment,
     CettaPrimeRegularKernelBudget *budget);
 
-static CettaPrimeRegularTermElaborationV1 regular_term_lower_lambda(
-    Arena *arena, Atom *syntax, const RegularTermBinding *environment,
-    CettaPrimeRegularKernelBudget *budget) {
-    if (syntax->expr.len != 3u)
+/* The binder groups of an authored lambda (see prime_regular_pattern.h).  A
+ * list element that is neither a name nor a typed group is a syntax error. */
+static CettaPrimeRegularTermElaborationV1 regular_term_lambda_binder_groups(
+    Arena *arena, Atom *binders, CettaPrimeLambdaBinderGroupV1 **groups_out,
+    size_t *count_out, bool *listed_out) {
+    if (!binders)
         return regular_term_syntax_failure(
-            CETTA_PRIME_REGULAR_TERM_WRONG_ARITY, 0u,
-            cetta_expr_len_fits_size(syntax->expr.len)
-                ? (size_t)syntax->expr.len - 1u : SIZE_MAX,
-            "lam-expects-binder-and-body");
-    Atom *binder_syntax = syntax->expr.elems[1];
-    if (regular_term_contains_colon(binder_syntax))
-        return regular_term_failure(
-            CETTA_PRIME_REGULAR_TERM_OUT_OF_CLASS,
-            "typed-lambda-awaits-typed-pattern-authority");
-
-    if (binder_syntax->kind != ATOM_EXPR ||
-        regular_term_quote_key(binder_syntax, NULL)) {
-        Atom *key = NULL;
-        RegularTermNameStatus name_status = regular_term_name_key(
-            binder_syntax, true, &key, NULL);
-        if (name_status == REGULAR_TERM_NAME_MATCHER)
-            return regular_term_syntax_failure(
-                CETTA_PRIME_REGULAR_TERM_MATCHER_BINDER, 0u, 1u,
-                "matcher-variable-is-not-a-lexical-binder");
-        if (name_status == REGULAR_TERM_NAME_INVALID)
-            return regular_term_syntax_failure(
-                CETTA_PRIME_REGULAR_TERM_INVALID_BINDER_NAME, 0u, 1u,
-                "invalid-lexical-binder-name");
-        RegularTermBinding binding = {
-            .key = key,
-            .referencable = name_status == REGULAR_TERM_NAME_OK,
-            .outer = environment,
-        };
-        CettaPrimeRegularTermElaborationV1 body = regular_term_lower_rec(
-            arena, syntax->expr.elems[2], &binding, budget);
-        if (body.status != CETTA_PRIME_REGULAR_TERM_OK) return body;
-        return regular_term_success(regular_term_pattern_lambda(arena, body.pattern));
-    }
-
-    if (binder_syntax->expr.len == 0u)
+            CETTA_PRIME_REGULAR_TERM_INVALID_BINDER_NAME, 0u, 0u,
+            "invalid-lexical-binder-name");
+    bool single_name = binders->kind != ATOM_EXPR ||
+                       regular_term_quote_key(binders, NULL);
+    RegularTypedBinderGroup direct;
+    CettaPrimeRegularTermElaborationV1 error = {0};
+    RegularBinderGroupStatus direct_status = single_name
+        ? REGULAR_TERM_GROUP_NOT_GROUP
+        : regular_term_direct_group(binders, &direct, &error);
+    if (direct_status == REGULAR_TERM_GROUP_ERROR) return error;
+    bool listed = !single_name && direct_status == REGULAR_TERM_GROUP_NOT_GROUP;
+    if (listed && binders->expr.len == 0u)
         return regular_term_syntax_failure(
             CETTA_PRIME_REGULAR_TERM_EMPTY_BINDER_LIST, 0u, 0u,
             "lambda-binder-list-is-empty");
-    if (!cetta_expr_len_fits_size(binder_syntax->expr.len) ||
-        !cetta_expr_len_mul_fits_size(
-            binder_syntax->expr.len, sizeof(RegularTermBinding)))
+    if (listed && (!cetta_expr_len_fits_size(binders->expr.len) ||
+                   !cetta_expr_len_mul_fits_size(
+                       binders->expr.len,
+                       sizeof(CettaPrimeLambdaBinderGroupV1))))
         return regular_term_failure(
             CETTA_PRIME_REGULAR_TERM_RESOURCE_LIMIT,
             "lambda-binder-list-too-large");
-    size_t count = (size_t)binder_syntax->expr.len;
+    size_t count = listed ? (size_t)binders->expr.len : 1u;
+    CettaPrimeLambdaBinderGroupV1 *groups = arena_alloc(
+        arena, sizeof(*groups) * count);
+    for (size_t i = 0u; i < count; i++) {
+        Atom *element = listed ? binders->expr.elems[i] : binders;
+        RegularBinderGroupStatus status = REGULAR_TERM_GROUP_NOT_GROUP;
+        if (element && element->kind == ATOM_EXPR &&
+            !regular_term_quote_key(element, NULL)) {
+            status = regular_term_direct_group(element, &direct, &error);
+            if (status == REGULAR_TERM_GROUP_ERROR) return error;
+            if (status == REGULAR_TERM_GROUP_NOT_GROUP)
+                return regular_term_syntax_failure(
+                    CETTA_PRIME_REGULAR_TERM_INVALID_BINDER_NAME, i, count,
+                    "lambda-binder-is-neither-name-nor-typed-group");
+        }
+        groups[i] = status == REGULAR_TERM_GROUP_OK
+            ? (CettaPrimeLambdaBinderGroupV1){
+                  .syntax = element,
+                  .typed = true,
+                  .names_start = direct.names_start,
+                  .names_count = direct.names_count,
+                  .types_start = direct.types_start,
+                  .types_count = direct.types_count,
+              }
+            : (CettaPrimeLambdaBinderGroupV1){
+                  .syntax = element,
+                  .typed = false,
+                  .names_count = 1u,
+              };
+    }
+    if (groups_out) *groups_out = groups;
+    if (count_out) *count_out = count;
+    if (listed_out) *listed_out = listed;
+    return regular_term_success(NULL);
+}
+
+CettaPrimeNameStatusV1 cetta_prime_name_key_v1(
+    Atom *syntax, bool binder_position, Atom **key_out,
+    bool *explicit_quote_out) {
+    switch (regular_term_name_key(syntax, binder_position, key_out,
+                                  explicit_quote_out)) {
+    case REGULAR_TERM_NAME_OK: return CETTA_PRIME_NAME_OK_V1;
+    case REGULAR_TERM_NAME_ANONYMOUS: return CETTA_PRIME_NAME_ANONYMOUS_V1;
+    case REGULAR_TERM_NAME_MATCHER: return CETTA_PRIME_NAME_MATCHER_V1;
+    default: return CETTA_PRIME_NAME_INVALID_V1;
+    }
+}
+
+Atom *cetta_prime_name_normal_v1(Atom *name) {
+    return regular_term_name_normal(name);
+}
+
+CettaPrimeLambdaBindersStatusV1 cetta_prime_lambda_binder_groups_v1(
+    Arena *arena, Atom *binders, CettaPrimeLambdaBinderGroupV1 **groups_out,
+    size_t *count_out, bool *listed_out) {
+    if (!arena) return CETTA_PRIME_LAMBDA_BINDERS_RESOURCE_LIMIT_V1;
+    CettaPrimeRegularTermElaborationV1 result =
+        regular_term_lambda_binder_groups(
+            arena, binders, groups_out, count_out, listed_out);
+    if (result.status == CETTA_PRIME_REGULAR_TERM_OK)
+        return CETTA_PRIME_LAMBDA_BINDERS_OK_V1;
+    if (result.status != CETTA_PRIME_REGULAR_TERM_SYNTAX_ERROR)
+        return CETTA_PRIME_LAMBDA_BINDERS_RESOURCE_LIMIT_V1;
+    switch (result.syntax_error) {
+    case CETTA_PRIME_REGULAR_TERM_EMPTY_BINDER_LIST:
+        return CETTA_PRIME_LAMBDA_BINDERS_EMPTY_V1;
+    case CETTA_PRIME_REGULAR_TERM_BINDER_TYPE_ARITY_MISMATCH:
+        return CETTA_PRIME_LAMBDA_BINDERS_MALFORMED_GROUP_V1;
+    default:
+        return CETTA_PRIME_LAMBDA_BINDERS_NOT_A_BINDER_V1;
+    }
+}
+
+Atom *cetta_prime_lambda_binder_name_v1(
+    const CettaPrimeLambdaBinderGroupV1 *group, size_t index) {
+    if (!group || index >= group->names_count) return NULL;
+    return group->typed
+        ? group->syntax->expr.elems[group->names_start + index]
+        : group->syntax;
+}
+
+Atom *cetta_prime_lambda_binder_type_v1(
+    const CettaPrimeLambdaBinderGroupV1 *group, size_t index) {
+    if (!group || !group->typed || index >= group->names_count) return NULL;
+    size_t offset = group->types_count == 1u ? 0u : index;
+    return group->syntax->expr.elems[group->types_start + offset];
+}
+
+/* One group of a lambda telescope, then the rest.  A written domain is
+ * lowered in the context before its group, placed past its earlier siblings,
+ * and kept on the Pattern lambda, where the kernel checks it against the
+ * expected domain (`ATyped.lamTyped`,
+ * TypedEquality/WrittenDomains.lean). */
+static CettaPrimeRegularTermElaborationV1 regular_term_lower_lambda_groups(
+    Arena *arena, const CettaPrimeLambdaBinderGroupV1 *groups,
+    size_t group_count, size_t group_index, Atom *body_syntax,
+    const RegularTermBinding *environment,
+    CettaPrimeRegularKernelBudget *budget) {
+    if (group_index == group_count)
+        return regular_term_lower_rec(
+            arena, body_syntax, environment, budget);
+    const CettaPrimeLambdaBinderGroupV1 *group = &groups[group_index];
+    size_t count = group->names_count;
+    if (count == 0u || count > SIZE_MAX / sizeof(Atom *) ||
+        count > SIZE_MAX / sizeof(RegularTermBinding))
+        return regular_term_failure(
+            CETTA_PRIME_REGULAR_TERM_RESOURCE_LIMIT,
+            "typed-binder-group-too-large");
+    Atom **domains = arena_alloc(arena, sizeof(*domains) * count);
     RegularTermBinding *bindings = arena_alloc(
         arena, sizeof(*bindings) * count);
     for (size_t i = 0u; i < count; i++) {
+        domains[i] = NULL;
+        Atom *written = cetta_prime_lambda_binder_type_v1(group, i);
+        if (!written) continue;
+        CettaPrimeRegularTermElaborationV1 domain = regular_term_lower_rec(
+            arena, written, environment, budget);
+        if (domain.status != CETTA_PRIME_REGULAR_TERM_OK) return domain;
+        CettaPrimeRegularTermElaborationV1 placed = regular_term_weaken_pattern(
+            arena, domain.pattern, (uint64_t)i, 0u, budget);
+        if (placed.status != CETTA_PRIME_REGULAR_TERM_OK) return placed;
+        domains[i] = placed.pattern;
+    }
+    for (size_t i = 0u; i < count; i++) {
         Atom *key = NULL;
         RegularTermNameStatus name_status = regular_term_name_key(
-            binder_syntax->expr.elems[i], true, &key, NULL);
+            cetta_prime_lambda_binder_name_v1(group, i), true, &key, NULL);
         if (name_status == REGULAR_TERM_NAME_MATCHER)
             return regular_term_syntax_failure(
                 CETTA_PRIME_REGULAR_TERM_MATCHER_BINDER, i, count,
@@ -638,13 +779,36 @@ static CettaPrimeRegularTermElaborationV1 regular_term_lower_lambda(
             .outer = i == 0u ? environment : &bindings[i - 1u],
         };
     }
-    CettaPrimeRegularTermElaborationV1 body = regular_term_lower_rec(
-        arena, syntax->expr.elems[2], &bindings[count - 1u], budget);
+    CettaPrimeRegularTermElaborationV1 body = regular_term_lower_lambda_groups(
+        arena, groups, group_count, group_index + 1u, body_syntax,
+        &bindings[count - 1u], budget);
     if (body.status != CETTA_PRIME_REGULAR_TERM_OK) return body;
     Atom *nested = body.pattern;
     for (size_t i = count; i > 0u; i--)
-        nested = regular_term_pattern_lambda(arena, nested);
+        nested = domains[i - 1u]
+            ? regular_term_pattern_pi(arena, "Lam", domains[i - 1u], nested)
+            : regular_term_pattern_lambda(arena, nested);
     return regular_term_success(nested);
+}
+
+static CettaPrimeRegularTermElaborationV1 regular_term_lower_lambda(
+    Arena *arena, Atom *syntax, const RegularTermBinding *environment,
+    CettaPrimeRegularKernelBudget *budget) {
+    if (syntax->expr.len != 3u)
+        return regular_term_syntax_failure(
+            CETTA_PRIME_REGULAR_TERM_WRONG_ARITY, 0u,
+            cetta_expr_len_fits_size(syntax->expr.len)
+                ? (size_t)syntax->expr.len - 1u : SIZE_MAX,
+            "lam-expects-binder-and-body");
+    CettaPrimeLambdaBinderGroupV1 *groups = NULL;
+    size_t group_count = 0u;
+    CettaPrimeRegularTermElaborationV1 parsed =
+        regular_term_lambda_binder_groups(
+            arena, syntax->expr.elems[1], &groups, &group_count, NULL);
+    if (parsed.status != CETTA_PRIME_REGULAR_TERM_OK) return parsed;
+    return regular_term_lower_lambda_groups(
+        arena, groups, group_count, 0u, syntax->expr.elems[2],
+        environment, budget);
 }
 
 static CettaPrimeRegularTermElaborationV1 regular_term_lower_arrow_rec(
@@ -778,8 +942,8 @@ static CettaPrimeRegularTermElaborationV1 regular_term_lower_rec(
 
     Atom *name_key = NULL;
     bool explicit_quote = false;
-    RegularTermNameStatus name_status = regular_term_name_key(
-        syntax, false, &name_key, &explicit_quote);
+    RegularTermNameStatus name_status = regular_term_value_key(
+        syntax, &name_key, &explicit_quote);
     uint64_t index = 0u;
     if (name_status == REGULAR_TERM_NAME_MATCHER) name_key = syntax;
     const RegularTermBinding *binding =
@@ -814,6 +978,12 @@ static CettaPrimeRegularTermElaborationV1 regular_term_lower_rec(
         };
 
     Atom *head = syntax->expr.elems[0];
+    /* A name, or a drop that is not a bound value, has no type in this
+     * fragment. */
+    if (atom_is_symbol(head, "quote") || atom_is_symbol(head, "unquote"))
+        return regular_term_failure(
+            CETTA_PRIME_REGULAR_TERM_OUT_OF_CLASS,
+            "name-outside-regular-syntax");
     if (atom_is_symbol(head, "lam"))
         return regular_term_lower_lambda(arena, syntax, environment, budget);
     if (atom_is_symbol(head, "u")) {
@@ -1046,6 +1216,22 @@ static Atom *regular_term_quote_intrinsic_rec(
     }
     if (intrinsic->kind != ATOM_EXPR)
         return atom_deep_copy(arena, intrinsic);
+    /* A kernel lambda binds index 0 anonymously: `(lam _ body)`, or
+     * `(lam (_ : A) body)` when it keeps its written domain. */
+    if ((intrinsic->expr.len == 2u || intrinsic->expr.len == 3u) &&
+        atom_is_symbol(intrinsic->expr.elems[0], "Lam")) {
+        Atom *body = regular_term_quote_intrinsic_rec(
+            arena, intrinsic->expr.elems[intrinsic->expr.len - 1u]);
+        if (!body) return NULL;
+        Atom *binder = atom_symbol(arena, "_");
+        if (intrinsic->expr.len == 3u) {
+            Atom *domain = regular_term_quote_intrinsic_rec(
+                arena, intrinsic->expr.elems[1]);
+            if (!domain) return NULL;
+            binder = atom_expr3(arena, binder, atom_symbol(arena, ":"), domain);
+        }
+        return atom_expr3(arena, atom_symbol(arena, "lam"), binder, body);
+    }
     if (intrinsic->expr.len > SIZE_MAX / sizeof(Atom *)) return NULL;
     Atom **items = arena_alloc(
         arena, sizeof(*items) * (size_t)intrinsic->expr.len);
@@ -1511,7 +1697,8 @@ static CettaPrimeRegularPatternElaborationV1 pattern_elaborate_rec(
             return pattern_success(atom_expr2(
                 arena, atom_symbol(arena, "Sort"), level.term));
         }
-        if ((strcmp(name, "Pi") == 0 || strcmp(name, "Sigma") == 0) &&
+        if ((strcmp(name, "Pi") == 0 || strcmp(name, "Sigma") == 0 ||
+             strcmp(name, "Lam") == 0) &&
             arity == 2u && pattern_tag(arguments[1], "PLam", 3u) &&
             atom_is_symbol(arguments[1]->expr.elems[1], "BNone")) {
             CettaPrimeRegularPatternElaborationV1 domain = pattern_elaborate_rec(

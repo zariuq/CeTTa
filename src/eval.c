@@ -1779,6 +1779,7 @@ static Atom *mork_handle_syntax_error(Arena *a, Atom *call,
 static Atom *make_call_expr(Arena *a, Atom *head, Atom **args, uint32_t nargs);
 static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel, OutcomeSet *os);
 static bool prime_need_ref_is_active(Atom *atom, uint64_t *thunk_id);
+static bool prime_type_is_data(Atom *type);
 static Atom *prime_need_source_argument(Atom *argument, bool *projected);
 
 /* Explicit suspensions are source values, unlike evaluator-private argument
@@ -3232,8 +3233,17 @@ petta_eval_extension_named_arity_including_resolved(
         g_library_context->lib_prolog, head, supplied);
 }
 
+/* The type of a position that holds its argument: `Data` or `(Data ...)`. */
+static bool prime_type_is_data(Atom *type) {
+    if (!type) return false;
+    if (type->kind == ATOM_SYMBOL) return atom_is_symbol(type, "Data");
+    return type->kind == ATOM_EXPR && type->expr.len >= 1u &&
+           atom_is_symbol(type->expr.elems[0], "Data");
+}
+
 static bool atom_eval_is_immediate_value(Atom *atom, int fuel) {
     return fuel == 0 ||
+           atom_prime_held_is(atom) ||
            atom->kind == ATOM_SYMBOL ||
            (atom->kind == ATOM_GROUNDED &&
             atom->ground.gkind != GV_PRIME_NEED_CAPABILITY) ||
@@ -6729,6 +6739,27 @@ static bool bound_var_stack_contains(const BoundVarStack *stack, VarId var_id) {
             return true;
     }
     return false;
+}
+
+/* Occurrences of the listed variables become held: `$v` is replaced by the
+ * held wrapper around `$v`, so that substituting a value for `$v` yields the
+ * value held.  Parts bound from held syntax are code variables. */
+static Atom *prime_held_wrap_vars(Arena *a, Atom *atom,
+                                  const BoundVarStack *vars) {
+    if (!atom) return NULL;
+    if (atom->kind == ATOM_VAR)
+        return bound_var_stack_contains(vars, atom->var_id)
+            ? atom_prime_held_wrap(a, atom) : atom;
+    if (atom->kind != ATOM_EXPR || atom_prime_held_is(atom)) return atom;
+    Atom **items = arena_alloc(a, sizeof(Atom *) * (size_t)atom->expr.len);
+    if (!items) return NULL;
+    bool changed = false;
+    for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
+        items[i] = prime_held_wrap_vars(a, atom->expr.elems[i], vars);
+        if (!items[i]) return NULL;
+        changed = changed || items[i] != atom->expr.elems[i];
+    }
+    return changed ? atom_expr(a, items, atom->expr.len) : atom;
 }
 
 static bool collect_bound_pattern_vars(Atom *atom, BoundVarStack *bound) {
@@ -20081,8 +20112,12 @@ static bool check_function_applicable(
                (resolves type variables bound by previous args) */
             Atom *expected =
                 function_domain_type(&results.items[r], a, domain_src, NULL);
+            /* A Data parameter receives its argument as written: raw
+             * syntax is held at (Data Atom) without checking, and checking
+             * held code at a result type is a separate judgment. */
             if (atom_is_symbol_id(expected, g_builtin_syms.atom) ||
-                atom_is_symbol_id(expected, g_builtin_syms.undefined_type)) {
+                atom_is_symbol_id(expected, g_builtin_syms.undefined_type) ||
+                prime_type_is_data(expected)) {
                 if (!applicability_bindings_push_move(
                         &next, &results.items[r])) {
                     applicability_bindings_free(&next);
@@ -21755,6 +21790,12 @@ static void prime_need_normalize_observation_atom(
         return;
     }
 
+    /* A held value is already the syntax it observes as. */
+    if (atom_prime_held_is(applied)) {
+        outcome_set_add(out, applied, env);
+        return;
+    }
+
     if (prime_need_observation_barrier(applied)) {
         const PrimeNeedSnapshot *snapshot =
             env && prime_need_snapshot_present(bindings_need_view(env))
@@ -23235,6 +23276,20 @@ static void prime_need_eval_canonical_app(Space *s, Arena *a, Atom *app,
 /* ── metta_eval: full recursive evaluation (metta.md lines 240-272) ────── */
 
 void metta_eval(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, ResultSet *rs) {
+    /* An expected Data type holds the value: evaluate, then hold what came
+     * out (a value already held stays held once). */
+    if (prime_type_is_data(type) && !atom_prime_held_is(atom)) {
+        ResultSet computed;
+        result_set_init(&computed);
+        metta_eval(s, a, NULL, atom, fuel, &computed);
+        for (CettaCount i = 0u; i < computed.len; i++) {
+            Atom *value = computed.items[i];
+            result_set_add(rs, atom_is_error(value) ? value
+                                                    : atom_prime_held_wrap(a, value));
+        }
+        result_set_free(&computed);
+        return;
+    }
     __attribute__((cleanup(eval_c_stack_guard_leave)))
     EvalCStackGuard stack_guard = {0};
     __attribute__((cleanup(metta_eval_depth_guard_leave)))
@@ -23246,6 +23301,12 @@ void metta_eval(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, ResultSet 
         return;
     if (!eval_completion_step())
         return;
+    /* A held value is a value: its payload is not evaluated. */
+    if (atom_prime_held_is(atom)) {
+        result_set_add(rs, atom);
+        prime_need_observe_top_answer(atom, NULL);
+        return;
+    }
     if (!eval_c_stack_guard_enter(fuel, &stack_guard)) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_EVAL_C_STACK_GUARD_TRIP_EVAL);
         Atom *overflow = atom_error(
@@ -23389,6 +23450,12 @@ static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel, OutcomeSet
         return;
     if (!eval_completion_step())
         return;
+    if (atom_prime_held_is(atom)) {
+        Bindings held_empty;
+        bindings_init(&held_empty);
+        outcome_set_add(os, atom, &held_empty);
+        return;
+    }
     if (!eval_c_stack_guard_enter(fuel, &stack_guard)) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_EVAL_C_STACK_GUARD_TRIP_BIND);
         Bindings overflow_empty;
@@ -23514,6 +23581,20 @@ static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel, OutcomeSet
 }
 
 static void metta_eval_bind_typed(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, OutcomeSet *os) {
+    if (prime_type_is_data(type) && !atom_prime_held_is(atom)) {
+        OutcomeSet computed;
+        outcome_set_init(&computed);
+        metta_eval_bind_typed(s, a, NULL, atom, fuel, &computed);
+        for (CettaCount i = 0u; i < computed.len; i++) {
+            Outcome *outcome = &computed.items[i];
+            Atom *value = outcome_atom_materialize(a, outcome);
+            outcome_set_add(os, atom_is_error(value) ? value
+                                                     : atom_prime_held_wrap(a, value),
+                            &outcome->env);
+        }
+        outcome_set_free(&computed);
+        return;
+    }
     __attribute__((cleanup(eval_c_stack_guard_leave)))
     EvalCStackGuard stack_guard = {0};
     if (eval_process_exit_requested())
@@ -24859,15 +24940,19 @@ static InterpretFunctionArgsAction interpret_function_args_frame_step(
             atom_is_symbol_id(frame->arg_type, g_builtin_syms.atom) &&
             petta_atom_argument_is_eager(
                 s, *op_io, nargs, frame->idx);
+        /* A Data parameter receives its argument as written and held; the
+         * call site does not change (the settled Data discipline). */
+        bool data_parameter = prime_type_is_data(frame->arg_type);
 
         if (!normalize_observation &&
-            (explicit_data_argument ||
+            (explicit_data_argument || data_parameter ||
              (atom_is_symbol_id(
                   frame->arg_type, g_builtin_syms.atom) &&
               !eager_petta_atom) ||
              bound_arg->kind == ATOM_VAR)) {
             if (!control_continuation &&
-                atom_is_symbol_id(frame->arg_type, g_builtin_syms.atom) &&
+                (data_parameter ||
+                 atom_is_symbol_id(frame->arg_type, g_builtin_syms.atom)) &&
                 prime_need_atom_has_observable_ref(bound_arg)) {
                 bound_arg = prime_need_reify_suspended(
                     a, bound_arg, &g_prime_need_active);
@@ -24880,6 +24965,10 @@ static InterpretFunctionArgsAction interpret_function_args_frame_step(
                         frame->env);
                     return INTERPRET_FUNCTION_ARGS_POP;
                 }
+            }
+            if (data_parameter) {
+                bound_arg = atom_prime_held_wrap(a, bound_arg);
+                if (!bound_arg) return INTERPRET_FUNCTION_ARGS_POP;
             }
             prefix[frame->idx] = bound_arg;
             if (eval_dependent_telescope_enabled()) {
@@ -29594,6 +29683,93 @@ static PrimeNeedRegionProperty prime_need_equation_region_property(
         : PRIME_NEED_REGION_PROPERTY_UNKNOWN;
 }
 
+/* Record which argument positions of a call have a Data parameter type in
+ * an applicable function type of exact arity, and which have another type. */
+static void prime_held_note_positions(const Bindings *env, Arena *a,
+                                      Atom *function_type,
+                                      CettaExprIndex nargs,
+                                      uint8_t *data_positions,
+                                      uint8_t *plain_positions) {
+    if (!data_positions || !function_type || !is_function_type(function_type) ||
+        get_function_arg_count(function_type) != nargs)
+        return;
+    for (CettaExprIndex i = 0u; i < nargs; i++) {
+        Atom *domain = function_domain_type(
+            (Bindings *)env, a, function_type->expr.elems[i + 1u], NULL);
+        if (prime_type_is_data(domain)) data_positions[i] = 1u;
+        else plain_positions[i] = 1u;
+    }
+}
+
+/* The settled Data discipline: a parameter typed Data receives its argument
+ * held, as written, and the call site does not change.  A position is held
+ * when every applicable type of exact arity types it Data.  An argument that
+ * is already held is passed as it is; an argument that is a suspended
+ * computation is first turned back into the syntax it stands for, since
+ * what is held is the source, not a thunk.  NULL when that fails. */
+static Atom *prime_held_apply_positions(Arena *a, Atom *call,
+                                        const Bindings *env,
+                                        CettaExprIndex nargs,
+                                        const uint8_t *data_positions,
+                                        const uint8_t *plain_positions) {
+    Atom **items = arena_alloc(a, sizeof(Atom *) * (size_t)call->expr.len);
+    if (!items) return NULL;
+    items[0] = call->expr.elems[0];
+    bool changed = false;
+    for (CettaExprIndex i = 0u; i < nargs; i++) {
+        Atom *argument = call->expr.elems[i + 1u];
+        bool holds = data_positions && data_positions[i] && !plain_positions[i];
+        /* The value is held, not the variable that names it. */
+        Atom *bound = env ? bindings_apply_if_vars(env, a, argument) : argument;
+        if (bound) argument = bound;
+        if (!holds) {
+            /* A position that does not hold takes a held value as the syntax
+             * it holds: the equations match its structure. */
+            Atom *stripped = atom_prime_held_strip(a, argument);
+            if (stripped) argument = stripped;
+        }
+        if (holds && !atom_prime_held_is(argument)) {
+            if (prime_need_atom_has_observable_ref(argument)) {
+                argument = prime_need_reify_suspended(
+                    a, argument, &g_prime_need_active);
+                if (!argument) return NULL;
+            }
+            argument = atom_prime_held_wrap(a, argument);
+        }
+        items[i + 1u] = argument;
+        if (!items[i + 1u]) return NULL;
+        changed = changed || items[i + 1u] != call->expr.elems[i + 1u];
+    }
+    return changed ? atom_expr(a, items, call->expr.len) : call;
+}
+
+/* An equation's right-hand side when the call holds some arguments: the head
+ * deconstructs held syntax as the syntax it holds, and every variable it binds
+ * at a held position stands for held syntax, so its occurrences in the
+ * right-hand side are held (as `unify` does for a held target). NULL when
+ * allocation fails; the equation itself when nothing changes. */
+static Atom *prime_held_equation_for_call(Arena *a, Atom *equation,
+                                          const bool *held,
+                                          CettaExprIndex nargs) {
+    if (!equation || equation->kind != ATOM_EXPR || equation->expr.len != 3u)
+        return equation;
+    Atom *lhs = equation->expr.elems[1];
+    if (!lhs || lhs->kind != ATOM_EXPR || lhs->expr.len != nargs + 1u)
+        return equation;
+    BoundVarStack vars;
+    bound_var_stack_init(&vars);
+    bool collected = true;
+    for (CettaExprIndex i = 0u; collected && i < nargs; i++)
+        if (held[i])
+            collected = collect_bound_pattern_vars(lhs->expr.elems[i + 1u], &vars);
+    Atom *rhs = collected
+        ? prime_held_wrap_vars(a, equation->expr.elems[2], &vars) : NULL;
+    bound_var_stack_free(&vars);
+    if (!rhs) return NULL;
+    return rhs == equation->expr.elems[2]
+        ? equation : atom_expr3(a, equation->expr.elems[0], lhs, rhs);
+}
+
 static bool prime_need_try_equation_call_core(
     Space *s, Arena *a, Atom *atom, Atom *declared_type, int fuel,
     const Bindings *current_env, bool preserve_bindings,
@@ -29674,6 +29850,12 @@ static bool prime_need_try_equation_call_core(
 #endif
     Atom *expected_type = declared_type
         ? declared_type : atom_undefined_type(a);
+    CettaExprIndex call_nargs = atom->expr.len - 1u;
+    uint8_t *data_positions = call_nargs
+        ? arena_alloc(a, 2u * (size_t)call_nargs) : NULL;
+    uint8_t *plain_positions = data_positions
+        ? data_positions + call_nargs : NULL;
+    if (data_positions) memset(data_positions, 0, 2u * (size_t)call_nargs);
     for (uint32_t i = 0u; i < n_head_types; i++) {
         if (!is_function_type(head_types[i])) {
             saw_non_function_type = true;
@@ -29688,6 +29870,8 @@ static bool prime_need_try_equation_call_core(
                 n_head_types > 1u,
                 &candidate_errors, collected_returns)) {
             has_applicable_function_type = true;
+            prime_held_note_positions(equation_env, a, fresh_type, call_nargs,
+                                      data_positions, plain_positions);
         } else {
             for (uint32_t j = 0u; j < candidate_errors.len; j++)
                 (void)applicability_errors_push(
@@ -29696,6 +29880,17 @@ static bool prime_need_try_equation_call_core(
         applicability_errors_free(&candidate_errors);
     }
     free(head_types);
+    {
+        Atom *held_call = prime_held_apply_positions(
+            a, atom, equation_env, call_nargs,
+            has_applicable_function_type ? data_positions : NULL, plain_positions);
+        if (!held_call) {
+            outcome_set_add(os, atom_error(a, atom, atom_symbol(a, "PrimeNeedReificationCycle")),
+                            equation_env);
+            return true;
+        }
+        atom = held_call;
+    }
     if (saw_function_type && !has_applicable_function_type &&
         !saw_non_function_type) {
         Bindings empty;
@@ -29889,10 +30084,27 @@ static bool prime_need_try_equation_call_core(
         return false;
     }
     bool prepared = true;
+    bool *held_args = nargs ? arena_alloc(a, sizeof(bool) * (size_t)nargs) : NULL;
+    if (nargs && !held_args) {
+        bindings_free(&shared_env);
+        prime_need_equation_plans_free(plans, plan_count);
+        return false;
+    }
+    bool any_held = false;
     for (CettaExprIndex ai = 0u; ai < nargs; ai++) {
         PrimeNeedActiveGuard active = prime_need_active_enter(&shared_env);
         Atom *closed = bindings_apply_if_vars(
             &shared_env, a, atom->expr.elems[ai + 1u]);
+        held_args[ai] = false;
+        /* A held argument is the syntax it holds: equation heads read it
+         * without evaluating it (prime_held_equation_for_call). */
+        if (closed && atom_prime_held_is(closed)) {
+            call_elems[ai + 1u] = atom_prime_held_payload(closed);
+            held_args[ai] = true;
+            any_held = true;
+            prime_need_active_leave(&active);
+            continue;
+        }
         /* A registry token is syntactically atomic but semantically points to
            its bound value.  Structural patterns must demand that lookup;
            treating the token as an immediate value would make a policy or
@@ -29964,6 +30176,16 @@ static bool prime_need_try_equation_call_core(
         bindings_free(&shared_env);
         prime_need_equation_plans_free(plans, plan_count);
         return false;
+    }
+    for (size_t pi = 0u; any_held && pi < plan_count; pi++) {
+        Atom *equation = prime_held_equation_for_call(
+            a, plans[pi].equation, held_args, nargs);
+        if (!equation) {
+            bindings_free(&shared_env);
+            prime_need_equation_plans_free(plans, plan_count);
+            return false;
+        }
+        plans[pi].equation = equation;
     }
 
 #if CETTA_PRIME_EVAL_STACK
@@ -30336,6 +30558,7 @@ static PrimeNeedArgumentMode prime_need_argument_mode(
  * shape is hidden behind Prime control, never an ordinary expression merely
  * because that expression has a callable head. */
 static bool prime_need_shape_argument_needs_eval(Atom *argument) {
+    if (atom_prime_held_is(argument)) return false;
     return argument &&
            (prime_need_ref_is_active(argument, NULL) ||
             prime_need_is_stored_thunk(argument, NULL, NULL, NULL) ||
@@ -32052,12 +32275,16 @@ static void prime_public_eval_scoped_judgment(
     Atom **items = arena_alloc(arena, sizeof(Atom *) * (size_t)(count + 1u));
     items[0] = call->expr.elems[0];
     for (CettaExprIndex i = 0u; i < count; i++) {
+        /* A judgment takes its operands as syntax: a held value is the
+         * syntax it holds. */
         items[i + 1u] = prime_public_operand_syntax(
             arena,
             prime_public_splice_type_operand(
                 arena,
-                bindings_apply_if_vars(
-                    current_env, arena, expr_arg(call, start + i))),
+                atom_prime_held_strip(
+                    arena,
+                    bindings_apply_if_vars(
+                        current_env, arena, expr_arg(call, start + i)))),
             0u);
     }
     Atom *judgment = atom_expr(arena, items, count + 1u);
@@ -42891,6 +43118,14 @@ static void metta_call_impl(
 #define outcome_set_add(_os, _atom, _env) \
     outcome_set_add_prefixed(a, (_os), (_atom), (_env), CURRENT_ENV, preserve_bindings)
 tail_call: ;
+    /* A held value is a value: a tail that re-enters with one stops here
+     * instead of interpreting its payload. */
+    if (atom_prime_held_is(atom)) {
+        Bindings held_empty;
+        bindings_init(&held_empty);
+        outcome_set_add(os, atom, &held_empty);
+        return;
+    }
     /* A tail-reentered special form carries its refined branch heap in the
      * logical environment.  Make that snapshot active before interpreting
      * the next form; otherwise a demanded thunk is looked up in the stale
@@ -43050,6 +43285,18 @@ tail_call: ;
      * application into eager tuple normalization.
      */
     if (is_petta_runtime_callable(atom)) {
+        outcome_set_add_prefixed(
+            a, os, atom, &_empty, CURRENT_ENV, preserve_bindings);
+        return;
+    }
+
+    /* A Prime authored lambda is a value as well.  Its body waits under the
+     * binder until an application supplies the argument, as the continuation
+     * of an input waits for its message in the rho calculus.  Evaluating it
+     * here would run the body's effects before any call and would turn the
+     * drop of a bound name into the drop of a free one. */
+    if (language_id == CETTA_LANGUAGE_PRIME &&
+        prime_semantics_is_authored_lambda(a, atom)) {
         outcome_set_add_prefixed(
             a, os, atom, &_empty, CURRENT_ENV, preserve_bindings);
         return;
@@ -44158,14 +44405,19 @@ petta_lowered_to_shared_form:
 
     /* ── cons-atom ─────────────────────────────────────────────────────── */
     if (head_id == g_builtin_syms.cons_atom && nargs == 2) {
-        Atom *hd = expr_arg(atom, 0);
-        Atom *tl = expr_arg(atom, 1);
+        /* Code built from held syntax is held syntax. */
+        bool held = atom_prime_held_is(expr_arg(atom, 0)) ||
+                    atom_prime_held_is(expr_arg(atom, 1));
+        Atom *hd = atom_prime_held_payload(expr_arg(atom, 0));
+        Atom *tl = atom_prime_held_payload(expr_arg(atom, 1));
         if (tl->kind == ATOM_EXPR) {
             Atom **elems = arena_alloc(a, sizeof(Atom *) * (tl->expr.len + 1));
             elems[0] = hd;
             for (CettaExprIndex i = 0; i < tl->expr.len; i++)
                 elems[i + 1] = tl->expr.elems[i];
-            outcome_set_add(os, atom_expr(a, elems, tl->expr.len + 1), &_empty);
+            Atom *built = atom_expr(a, elems, tl->expr.len + 1);
+            outcome_set_add(os, held ? atom_prime_held_wrap(a, built) : built,
+                            &_empty);
         } else {
             outcome_set_add(os,
                 call_signature_error(a, atom,
@@ -44201,10 +44453,16 @@ petta_lowered_to_shared_form:
                 &_empty);
             return;
         }
-        Atom *e = expr_arg(atom, 0);
+        bool held = atom_prime_held_is(expr_arg(atom, 0));
+        Atom *e = atom_prime_held_payload(expr_arg(atom, 0));
         if (e->kind == ATOM_EXPR && e->expr.len > 0) {
+            /* The parts of held syntax are held syntax. */
             Atom *hd = e->expr.elems[0];
             Atom *tl = atom_expr(a, e->expr.elems + 1, e->expr.len - 1);
+            if (held) {
+                hd = atom_prime_held_wrap(a, hd);
+                tl = atom_prime_held_wrap(a, tl);
+            }
             outcome_set_add(os, atom_expr2(a, hd, tl), &_empty);
         } else if (language_id == CETTA_LANGUAGE_PRIME &&
                    e->kind == ATOM_EXPR) {
@@ -44224,9 +44482,11 @@ petta_lowered_to_shared_form:
 
     /* ── car-atom / cdr-atom ─────────────────────────────────────────── */
     if (head_id == g_builtin_syms.car_atom && nargs == 1) {
-        Atom *e = expr_arg(atom, 0);
+        bool held = atom_prime_held_is(expr_arg(atom, 0));
+        Atom *e = atom_prime_held_payload(expr_arg(atom, 0));
         if (e->kind == ATOM_EXPR && e->expr.len > 0)
-            outcome_set_add(os, e->expr.elems[0], &_empty);
+            outcome_set_add(os, held ? atom_prime_held_wrap(a, e->expr.elems[0])
+                                     : e->expr.elems[0], &_empty);
         else
             outcome_set_add(os,
                 atom_error(a, atom,
@@ -44235,9 +44495,12 @@ petta_lowered_to_shared_form:
         return;
     }
     if (head_id == g_builtin_syms.cdr_atom && nargs == 1) {
-        Atom *e = expr_arg(atom, 0);
-        if (e->kind == ATOM_EXPR && e->expr.len > 0)
-            outcome_set_add(os, atom_expr(a, e->expr.elems + 1, e->expr.len - 1), &_empty);
+        bool held = atom_prime_held_is(expr_arg(atom, 0));
+        Atom *e = atom_prime_held_payload(expr_arg(atom, 0));
+        if (e->kind == ATOM_EXPR && e->expr.len > 0) {
+            Atom *tl = atom_expr(a, e->expr.elems + 1, e->expr.len - 1);
+            outcome_set_add(os, held ? atom_prime_held_wrap(a, tl) : tl, &_empty);
+        }
         else
             outcome_set_add(os,
                 atom_error(a, atom,
@@ -44285,10 +44548,27 @@ petta_lowered_to_shared_form:
                 &_empty);
             return;
         }
-        Atom *target = expr_arg(atom, 0);
-        Atom *pattern = expr_arg(atom, 1);
+        /* A held value unifies as the syntax it holds, and the parts the
+         * pattern binds from it are held code in the continuation. */
+        bool held_target = atom_prime_held_is(expr_arg(atom, 0));
+        Atom *target = atom_prime_held_payload(expr_arg(atom, 0));
+        Atom *pattern = atom_prime_held_payload(expr_arg(atom, 1));
         Atom *then_br = expr_arg(atom, 2);
         Atom *else_br = expr_arg(atom, 3);
+        if (held_target) {
+            BoundVarStack pattern_vars;
+            bound_var_stack_init(&pattern_vars);
+            bool collected = collect_bound_pattern_vars(pattern, &pattern_vars);
+            Atom *wrapped = collected
+                ? prime_held_wrap_vars(a, then_br, &pattern_vars) : NULL;
+            bound_var_stack_free(&pattern_vars);
+            if (!wrapped) {
+                outcome_set_add(os, atom_error(a, atom, atom_symbol(a, "OutOfMemory")),
+                                &_empty);
+                return;
+            }
+            then_br = wrapped;
+        }
         Bindings b;
         bindings_init(&b);
         if (match_atoms(target, pattern, &b)) {
@@ -46087,6 +46367,11 @@ petta_lowered_to_shared_form:
             outcome_set_free(&inner);
             return;
         }
+        /* The counit: explicit evaluation of a held value runs its payload. */
+        Atom *evaluated_argument = bindings_apply_if_vars(
+            CURRENT_ENV, a, expr_arg(atom, 0));
+        if (atom_prime_held_is(evaluated_argument))
+            TAIL_REENTER(atom_prime_held_payload(evaluated_argument));
         TAIL_REENTER(expr_arg(atom, 0));
     }
 
@@ -47808,7 +48093,8 @@ petta_lowered_to_shared_form:
                 &_empty);
             return;
         }
-        Atom *target = expr_arg(atom, 0);
+        /* The shape of a held value is the shape of the syntax it holds. */
+        Atom *target = atom_prime_held_payload(expr_arg(atom, 0));
         Atom *val = registry_lookup_atom(target);
         if (val) target = val;
         /*

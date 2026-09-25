@@ -1693,8 +1693,6 @@ static const char *prime_regular_term_syntax_name(
         return "regular-syntax-matcher-is-not-lexical-binder";
     case CETTA_PRIME_REGULAR_TERM_BINDER_TYPE_ARITY_MISMATCH:
         return "regular-syntax-binder-type-arity-mismatch";
-    case CETTA_PRIME_REGULAR_TERM_TYPED_BINDER_REQUIRES_AUTHORITY:
-        return "regular-syntax-typed-binder-not-yet-authorized";
     case CETTA_PRIME_REGULAR_TERM_INVALID_INDEX:
         return "regular-syntax-invalid-index";
     case CETTA_PRIME_REGULAR_TERM_INVALID_LEVEL:
@@ -5603,68 +5601,274 @@ Atom *prime_semantics_project_pair(Atom *call) {
     return prime_authored_projection(NULL, call);
 }
 
-/* Identity elimination on reflexivity returns the method. The six arguments
- * are carrier, point, motive, method, target, and path, which is the order
- * stored for `id:eliminate`. */
-static bool prime_same_binder(const Atom *binder, const Atom *term) {
-    if (!binder || !term || binder->kind != term->kind) return false;
-    if (binder->kind == ATOM_VAR) return binder->var_id == term->var_id;
-    if (binder->kind == ATOM_SYMBOL) return binder->sym_id == term->sym_id;
+/* A lambda binder is a name key: a symbol names itself, `(quote K)` names K
+ * (`cetta_prime_name_key_v1`), and a variable binder, which the evaluator
+ * also admits, is itself.  The body refers to the bound value through the
+ * bare name or the drop `(unquote n)` of the binder's name n.  A quotation is
+ * sealed: `(quote x)` is the literal name x even under a binder `x`, so beta
+ * never observes how its argument was written and respects the equality of
+ * arguments. */
+
+static bool prime_form(const Atom *atom, const char *head) {
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len == 2u &&
+           is_symbol_named(atom->expr.elems[0], head);
+}
+
+/* The key a binder names, or NULL for a bare `_`, which binds nothing. */
+static Atom *prime_binder_key(Atom *binder) {
+    if (!binder) return NULL;
+    binder = cetta_prime_name_normal_v1(binder);
+    if (binder->kind == ATOM_VAR) return binder;
+    if (prime_form(binder, "quote") && binder->expr.elems[1]->kind == ATOM_VAR)
+        return binder->expr.elems[1];
+    Atom *key = NULL;
+    return cetta_prime_name_key_v1(binder, true, &key, NULL) ==
+                   CETTA_PRIME_NAME_OK_V1
+               ? key
+               : NULL;
+}
+
+static bool prime_same_key(const Atom *left, const Atom *right) {
+    if (!left || !right) return false;
+    if (left->kind == ATOM_VAR || right->kind == ATOM_VAR)
+        return left->kind == ATOM_VAR && right->kind == ATOM_VAR &&
+               left->var_id == right->var_id;
+    return atom_eq((Atom *)left, (Atom *)right);
+}
+
+/* Whether `term`, taken whole, refers to the value of the binder with key
+ * `key`.  A bare `_` is a hole and refers to nothing. */
+static bool prime_binder_reference(const Atom *key, Atom *term) {
+    if (!key || !term) return false;
+    if (term->kind == ATOM_VAR ||
+        (term->kind == ATOM_SYMBOL && !is_symbol_named(term, "_")))
+        return prime_same_key(key, term);
+    if (!prime_form(term, "unquote")) return false;
+    Atom *name = cetta_prime_name_normal_v1(term->expr.elems[1]);
+    return prime_form(name, "quote") && prime_same_key(key, name->expr.elems[1]);
+}
+
+/* An authored lambda `(lam binders body)`, its binders read with the kernel's
+ * grammar (`cetta_prime_lambda_binder_groups_v1`).  The evaluator binds the
+ * kernel's names (symbols and explicitly quoted structural names) and
+ * variables; a bare `_` binds nothing. */
+typedef struct {
+    CettaPrimeLambdaBinderGroupV1 *groups;
+    size_t count;
+    bool listed;
+} PrimeLambdaTelescope;
+
+static bool prime_lambda_telescope(Arena *arena, Atom *term,
+                                   PrimeLambdaTelescope *out) {
+    if (!arena || !term || term->kind != ATOM_EXPR || term->expr.len != 3u ||
+        !is_symbol_named(term->expr.elems[0], "lam"))
+        return false;
+    PrimeLambdaTelescope telescope = {0};
+    if (cetta_prime_lambda_binder_groups_v1(
+            arena, term->expr.elems[1], &telescope.groups, &telescope.count,
+            &telescope.listed) != CETTA_PRIME_LAMBDA_BINDERS_OK_V1)
+        return false;
+    for (size_t g = 0u; g < telescope.count; g++) {
+        for (size_t i = 0u; i < telescope.groups[g].names_count; i++) {
+            Atom *name = cetta_prime_lambda_binder_name_v1(
+                &telescope.groups[g], i);
+            if (!name) return false;
+            if (name->kind != ATOM_VAR) {
+                CettaPrimeNameStatusV1 status =
+                    cetta_prime_name_key_v1(name, true, NULL, NULL);
+                if (status != CETTA_PRIME_NAME_OK_V1 &&
+                    status != CETTA_PRIME_NAME_ANONYMOUS_V1)
+                    return false;
+            }
+        }
+    }
+    *out = telescope;
+    return true;
+}
+
+static bool prime_group_binds(const CettaPrimeLambdaBinderGroupV1 *group,
+                              const Atom *key) {
+    for (size_t i = 0u; i < group->names_count; i++) {
+        Atom *name = cetta_prime_lambda_binder_name_v1(group, i);
+        if (prime_same_key(key, prime_binder_key(name))) return true;
+    }
     return false;
 }
 
-static bool prime_binder_occurs_free(const Atom *binder, const Atom *term) {
-    if (!binder || !term) return false;
-    if (prime_same_binder(binder, term)) return true;
+/* Whether `term` uses the binder with key `key` freely.  The written types of
+ * a group are read before the group's own names are bound; a group that binds
+ * the key hides it from the later groups and the body. */
+static bool prime_binder_occurs_free(Arena *arena, const Atom *key,
+                                     Atom *term) {
+    if (!key || !term) return false;
+    if (prime_binder_reference(key, term)) return true;
     if (term->kind != ATOM_EXPR) return false;
-    /* A quoted name is syntax, not a free binder occurrence. */
-    if (term->expr.len == 2u && is_symbol_named(term->expr.elems[0], "quote"))
-        return false;
-    if (term->expr.len == 3u && is_symbol_named(term->expr.elems[0], "lam") &&
-        prime_same_binder(binder, term->expr.elems[1]))
-        return false;
+    /* A quotation is sealed: nothing under it refers to a binder. */
+    if (prime_form(term, "quote")) return false;
+    PrimeLambdaTelescope telescope;
+    if (prime_lambda_telescope(arena, term, &telescope)) {
+        for (size_t g = 0u; g < telescope.count; g++) {
+            const CettaPrimeLambdaBinderGroupV1 *group = &telescope.groups[g];
+            for (size_t t = 0u; group->typed && t < group->types_count; t++) {
+                if (prime_binder_occurs_free(
+                        arena, key,
+                        group->syntax->expr.elems[group->types_start + t]))
+                    return true;
+            }
+            if (prime_group_binds(group, key)) return false;
+        }
+        return prime_binder_occurs_free(arena, key, term->expr.elems[2]);
+    }
     for (CettaExprIndex i = 0u; i < term->expr.len; i++) {
-        if (prime_binder_occurs_free(binder, term->expr.elems[i]))
+        if (prime_binder_occurs_free(arena, key, term->expr.elems[i]))
             return true;
     }
     return false;
 }
 
-static Atom *prime_subst_binder(Arena *arena, Atom *term, Atom *binder,
-                                Atom *value) {
-    if (!term || !binder) return NULL;
-    if (prime_same_binder(binder, term)) return value;
-    if (term->kind != ATOM_EXPR) return term;
-    /* Quote freezes the names under it. Substitution does not enter. */
-    if (term->expr.len == 2u && is_symbol_named(term->expr.elems[0], "quote"))
-        return term;
-    if (term->expr.len == 3u && is_symbol_named(term->expr.elems[0], "lam")) {
-        Atom *lam_binder = term->expr.elems[1];
-        if (prime_same_binder(binder, lam_binder))
-            return term;
-        /* The inner binder would capture a free name of the substitute.
-         * Rename it. Alpha-equivalent binders must not change the value. */
-        if (lam_binder && prime_binder_occurs_free(lam_binder, value)) {
-            Atom *fresh = atom_var_with_id(arena, "binder", fresh_var_id());
-            Atom *renamed = prime_subst_binder(
-                arena, term->expr.elems[2], lam_binder, fresh);
-            if (!fresh || !renamed) return NULL;
-            Atom *body = prime_subst_binder(arena, renamed, binder, value);
-            if (!body) return NULL;
-            Atom *items[3] = {term->expr.elems[0], fresh, body};
-            return atom_expr(arena, items, 3u);
+static Atom *prime_subst_binder(Arena *arena, Atom *term, const Atom *key,
+                                Atom *value);
+
+/* A group with one element replaced. */
+static Atom *prime_group_with(Arena *arena,
+                              const CettaPrimeLambdaBinderGroupV1 *group,
+                              size_t position, Atom *element) {
+    if (!group->typed) return element;
+    Atom *syntax = group->syntax;
+    Atom **items = arena_alloc(arena, sizeof(Atom *) * (size_t)syntax->expr.len);
+    if (!items) return NULL;
+    for (CettaExprIndex i = 0u; i < syntax->expr.len; i++)
+        items[i] = syntax->expr.elems[i];
+    items[position] = element;
+    return atom_expr(arena, items, syntax->expr.len);
+}
+
+/* Substitute `value` for the binder with key `key` in a telescope's written
+ * types and body.  `group_syntax` holds each group's current syntax and is
+ * updated in place.  A binder that `value` uses freely is renamed in the
+ * later groups and the body before the replacement reaches them.  With
+ * `keep_first_types` the first group's written types are not entered: they
+ * belong to the context outside this telescope, as when beta splits a
+ * group. */
+static bool prime_subst_telescope(Arena *arena,
+                                  const CettaPrimeLambdaBinderGroupV1 *groups,
+                                  size_t count, Atom **group_syntax,
+                                  Atom **body, const Atom *key, Atom *value,
+                                  bool keep_first_types) {
+    for (size_t g = 0u; g < count; g++) {
+        CettaPrimeLambdaBinderGroupV1 group = groups[g];
+        group.syntax = group_syntax[g];
+        for (size_t t = 0u; group.typed && !(keep_first_types && g == 0u) &&
+                            t < group.types_count; t++) {
+            size_t position = group.types_start + t;
+            Atom *type = group.syntax->expr.elems[position];
+            Atom *next = prime_subst_binder(arena, type, key, value);
+            if (!next) return false;
+            if (next == type) continue;
+            group.syntax = prime_group_with(arena, &group, position, next);
+            if (!group.syntax) return false;
+            group_syntax[g] = group.syntax;
         }
+        if (prime_group_binds(&group, key)) return true;
+        for (size_t i = 0u; i < group.names_count; i++) {
+            Atom *name = cetta_prime_lambda_binder_name_v1(&group, i);
+            Atom *name_key = prime_binder_key(name);
+            if (!name_key || !prime_binder_occurs_free(arena, name_key, value))
+                continue;
+            /* The binder would capture a name the value uses. Rename it.
+             * Alpha-equivalent binders must not change the value. */
+            Atom *fresh = atom_var_with_id(arena, "binder", fresh_var_id());
+            if (!fresh ||
+                !prime_subst_telescope(arena, groups + g + 1u, count - g - 1u,
+                                       group_syntax + g + 1u, body, name_key,
+                                       fresh, false))
+                return false;
+            group.syntax = prime_group_with(
+                arena, &group, group.typed ? group.names_start + i : 0u,
+                fresh);
+            if (!group.syntax) return false;
+            group_syntax[g] = group.syntax;
+        }
+    }
+    Atom *next = prime_subst_binder(arena, *body, key, value);
+    if (!next) return false;
+    *body = next;
+    return true;
+}
+
+static Atom *prime_lambda_rebuild(Arena *arena, Atom *head, bool listed,
+                                  Atom **group_syntax, size_t count,
+                                  Atom *body) {
+    Atom *binders = listed ? atom_expr(arena, group_syntax, (CettaExprLen)count)
+                           : group_syntax[0];
+    return binders ? atom_expr3(arena, head, binders, body) : NULL;
+}
+
+static Atom *prime_subst_binder(Arena *arena, Atom *term, const Atom *key,
+                                Atom *value) {
+    if (!term || !key) return NULL;
+    if (prime_binder_reference(key, term)) return value;
+    if (term->kind != ATOM_EXPR) return term;
+    /* Substitution does not enter a quotation. */
+    if (prime_form(term, "quote")) return term;
+    PrimeLambdaTelescope telescope;
+    if (prime_lambda_telescope(arena, term, &telescope)) {
+        Atom **groups = arena_alloc(arena, sizeof(Atom *) * telescope.count);
+        if (!groups) return NULL;
+        for (size_t g = 0u; g < telescope.count; g++)
+            groups[g] = telescope.groups[g].syntax;
+        Atom *body = term->expr.elems[2];
+        if (!prime_subst_telescope(arena, telescope.groups, telescope.count,
+                                   groups, &body, key, value, false))
+            return NULL;
+        bool changed = body != term->expr.elems[2];
+        for (size_t g = 0u; g < telescope.count; g++)
+            changed = changed || groups[g] != telescope.groups[g].syntax;
+        return changed
+            ? prime_lambda_rebuild(arena, term->expr.elems[0],
+                                   telescope.listed, groups, telescope.count,
+                                   body)
+            : term;
     }
     Atom **items = arena_alloc(arena, sizeof(Atom *) * (size_t)term->expr.len);
     if (!items) return NULL;
     bool changed = false;
     for (CettaExprIndex i = 0u; i < term->expr.len; i++) {
-        items[i] = prime_subst_binder(arena, term->expr.elems[i], binder, value);
+        items[i] = prime_subst_binder(arena, term->expr.elems[i], key, value);
         if (!items[i]) return NULL;
         if (items[i] != term->expr.elems[i]) changed = true;
     }
     if (!changed) return term;
     return atom_expr(arena, items, term->expr.len);
+}
+
+/* A typed group without its first name: `(x y z : A)` becomes `(y z : A)`,
+ * and `(x y : A B)` becomes `(y : B)`. */
+static bool prime_group_drop_first(Arena *arena,
+                                   const CettaPrimeLambdaBinderGroupV1 *group,
+                                   CettaPrimeLambdaBinderGroupV1 *out) {
+    Atom *syntax = group->syntax;
+    bool shared = group->types_count == 1u;
+    size_t names = group->names_count - 1u;
+    size_t types = shared ? 1u : group->types_count - 1u;
+    size_t length = names + 1u + types;
+    Atom **items = arena_alloc(arena, sizeof(Atom *) * length);
+    if (!items) return false;
+    for (size_t i = 0u; i < names; i++)
+        items[i] = syntax->expr.elems[group->names_start + 1u + i];
+    items[names] = syntax->expr.elems[group->types_start - 1u];
+    for (size_t t = 0u; t < types; t++)
+        items[names + 1u + t] =
+            syntax->expr.elems[group->types_start + (shared ? 0u : 1u + t)];
+    *out = (CettaPrimeLambdaBinderGroupV1){
+        .syntax = atom_expr(arena, items, (CettaExprLen)length),
+        .typed = true,
+        .names_start = 0u,
+        .names_count = names,
+        .types_start = names + 1u,
+        .types_count = types,
+    };
+    return out->syntax != NULL;
 }
 
 /* One contraction at the root of the atom being evaluated: one-argument beta
@@ -5681,22 +5885,69 @@ Atom *prime_semantics_authored_head_step(Arena *arena, Atom *term) {
     return next ? next : term;
 }
 
-Atom *prime_semantics_beta(Arena *arena, Atom *call) {
-    if (!arena || !call || call->kind != ATOM_EXPR || call->expr.len != 2u)
-        return NULL;
-    Atom *function = call->expr.elems[0];
-    Atom *argument = call->expr.elems[1];
-    if (!function || !argument || function->kind != ATOM_EXPR ||
-        function->expr.len != 3u ||
-        !is_symbol_named(function->expr.elems[0], "lam") ||
-        !function->expr.elems[1] ||
-        (function->expr.elems[1]->kind != ATOM_VAR &&
-         function->expr.elems[1]->kind != ATOM_SYMBOL))
-        return NULL;
-    return prime_subst_binder(arena, function->expr.elems[2],
-                              function->expr.elems[1], argument);
+bool prime_semantics_is_authored_lambda(Arena *arena, Atom *term) {
+    PrimeLambdaTelescope telescope;
+    return prime_lambda_telescope(arena, term, &telescope);
 }
 
+/* Beta for an authored lambda applied to one or more arguments: the first
+ * binder takes the first argument, and the written domains of the binders
+ * that remain are kept (annotated reduction, `ATm.Step.betaTyped`, whose
+ * erasure is ordinary beta: `Step.erasure`, WrittenDomains.lean).  The
+ * remaining arguments apply to the result. */
+Atom *prime_semantics_beta(Arena *arena, Atom *call) {
+    if (!arena || !call || call->kind != ATOM_EXPR || call->expr.len < 2u)
+        return NULL;
+    Atom *function = call->expr.elems[0];
+    PrimeLambdaTelescope telescope;
+    if (!prime_lambda_telescope(arena, function, &telescope) ||
+        telescope.count == 0u)
+        return NULL;
+    Atom *argument = call->expr.elems[1];
+    const CettaPrimeLambdaBinderGroupV1 *first = &telescope.groups[0];
+    Atom *binder = cetta_prime_lambda_binder_name_v1(first, 0u);
+    /* The siblings of the first name keep their group; their written types
+     * are read outside the group and never see the first name. */
+    CettaPrimeLambdaBinderGroupV1 siblings;
+    bool has_siblings = first->names_count > 1u;
+    if (has_siblings && !prime_group_drop_first(arena, first, &siblings))
+        return NULL;
+    size_t rest_count = telescope.count - 1u + (has_siblings ? 1u : 0u);
+    CettaPrimeLambdaBinderGroupV1 *rest = rest_count
+        ? arena_alloc(arena, sizeof(*rest) * rest_count) : NULL;
+    Atom **rest_syntax = rest_count
+        ? arena_alloc(arena, sizeof(Atom *) * rest_count) : NULL;
+    if (rest_count && (!rest || !rest_syntax)) return NULL;
+    size_t next = 0u;
+    if (has_siblings) rest[next++] = siblings;
+    for (size_t g = 1u; g < telescope.count; g++)
+        rest[next++] = telescope.groups[g];
+    for (size_t g = 0u; g < rest_count; g++)
+        rest_syntax[g] = rest[g].syntax;
+    Atom *body = function->expr.elems[2];
+    Atom *key = prime_binder_key(binder);
+    if (key &&
+        !prime_subst_telescope(arena, rest, rest_count, rest_syntax, &body,
+                               key, argument, has_siblings))
+        return NULL;
+    Atom *reduct = rest_count == 0u
+        ? body
+        : prime_lambda_rebuild(arena, function->expr.elems[0],
+                               telescope.listed, rest_syntax, rest_count,
+                               body);
+    if (!reduct || call->expr.len == 2u) return reduct;
+    Atom **items = arena_alloc(
+        arena, sizeof(Atom *) * ((size_t)call->expr.len - 1u));
+    if (!items) return NULL;
+    items[0] = reduct;
+    for (CettaExprIndex i = 2u; i < call->expr.len; i++)
+        items[i - 1u] = call->expr.elems[i];
+    return atom_expr(arena, items, call->expr.len - 1u);
+}
+
+/* Identity elimination on reflexivity returns the method. The six arguments
+ * are carrier, point, motive, method, target, and path, which is the order
+ * stored for `id:eliminate`. */
 Atom *prime_semantics_identity_iota(Atom *call) {
     if (!call || call->kind != ATOM_EXPR || call->expr.len != 7u ||
         !call->expr.elems[0] ||
