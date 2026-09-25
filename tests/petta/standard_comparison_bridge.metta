@@ -2,3 +2,5 @@
 !(println! (neq-distinct (!= term other)))
 !(println! (neq-false-branch (if (!= term term) bad good)))
 !(println! (neq-true-branch (if (!= term other) good bad)))
+!(translatePredicate (consult "tests/petta/fixtures/value_equality_graphs.pl"))
+!(let $_ (translatePredicate (graphs $r)) (println! $r))

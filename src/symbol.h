@@ -516,7 +516,10 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(set_colon_native_use, "set:native-use") \
     X(set_colon_native_normalize, "set:native-normalize") \
     X(set_colon_native_link, "set:native-link") \
-    X(set_colon_interpret, "set:interpret")
+    X(set_colon_interpret, "set:interpret") \
+    X(petta_decons, "decons") \
+    X(prime_data, "Data") \
+    X(prime_lam, "lam")
 
 /* Builtins whose grounded-operation capability is independent of language
    and profile.  symbol_table_init_builtins compiles this declaration into
@@ -713,6 +716,8 @@ SymbolId symbol_intern_bytes(SymbolTable *st, const uint8_t *bytes, uint32_t len
 SymbolId symbol_intern_span_hashed(SymbolTable *st, const uint8_t *bytes,
                                    uint32_t len, uint64_t hash);
 SymbolId symbol_intern_cstr(SymbolTable *st, const char *text);
+/* The symbol already interned for text, or SYMBOL_ID_NONE.  Never interns. */
+SymbolId symbol_lookup_cstr(SymbolTable *st, const char *text);
 
 const char *symbol_bytes(const SymbolTable *st, SymbolId id);
 uint32_t symbol_len(const SymbolTable *st, SymbolId id);

@@ -1,5 +1,6 @@
 ; PeTTa filereader.pl strip/3 plus top_forms//2 as scannerless GSLT data.
-; This compatibility presentation intentionally toggles quotes without escape handling.
+; Inside a string a backslash and the scalar after it are one escape, as in
+; PeTTa's reader, so an escaped quote does not end the string.
 (gslt-presentation-v1 PeTTaDocumentSplitterSyntaxV1
   (signature)
   (equations)
@@ -7,7 +8,7 @@
     (rule def-petta-splitter-comment-line (head (definition petta-splitter-comment-line (right (char (cp 59)) (left (star (class petta-splitter-comment-body-scalar)) (char (cp 10)))))) (body))
     (rule def-petta-splitter-comment-eof (head (definition petta-splitter-comment-eof (right (char (cp 59)) (left (star (class petta-splitter-comment-body-scalar)) eof)))) (body))
     (rule def-petta-splitter-comment (head (definition petta-splitter-comment (alt (ref petta-splitter-comment-line) (ref petta-splitter-comment-eof)))) (body))
-    (rule def-petta-splitter-quoted (head (definition petta-splitter-quoted (node naive-quoted (seq (char (cp 34)) (seq (star (class petta-splitter-nonquote-scalar)) (char (cp 34))))))) (body))
+    (rule def-petta-splitter-quoted (head (definition petta-splitter-quoted (node escaped-quoted (seq (char (cp 34)) (seq (star (alt (seq (char (cp 92)) any) (class petta-splitter-string-plain-scalar))) (char (cp 34))))))) (body))
     (rule def-petta-splitter-balanced-item (head (definition petta-splitter-balanced-item (alt (ref petta-splitter-balanced) (alt (ref petta-splitter-quoted) (alt (right (ref petta-splitter-comment-line) (eps nil)) (class petta-splitter-ordinary-scalar)))))) (body))
     (rule def-petta-splitter-balanced (head (definition petta-splitter-balanced (node balanced (seq (char (cp 40)) (seq (star (ref petta-splitter-balanced-item)) (char (cp 41))))))) (body))
     (rule def-petta-splitter-top-skip-unit (head (definition petta-splitter-top-skip-unit (alt (class petta-splitter-blank-scalar) (right (ref petta-splitter-comment) (eps nil))))) (body))

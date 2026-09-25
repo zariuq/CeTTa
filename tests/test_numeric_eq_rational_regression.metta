@@ -1,10 +1,11 @@
-; `==` remains structural; `numeric-eq` compares numeric values.
+; `==` compares numbers by exact value across representations, so 1/2
+; equals 0.5; `numeric-eq` is the same comparison restricted to numbers.
 
 !(pragma! prefer-rationals True)
 
 !(assertEqualToResult
   (== 1/2 0.5)
-  (False))
+  (True))
 
 !(assertEqualToResult
   (numeric-eq 1/2 0.5)

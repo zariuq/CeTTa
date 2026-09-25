@@ -1,0 +1,10 @@
+is ((p 1) (p 2)), should ((p 1) (p 2)). ✅ 
+is ((p 1 1)), should ((p 1 1)). ✅ 
+is ((q 1) (q 2)), should ((q 1) (q 2)). ✅ 
+is ((q 1) (q 2)), should ((q 1) (q 2)). ✅ 
+is ((q 1) (q 1)), should ((q 1) (q 1)). ✅ 
+true
+true
+true
+true
+true

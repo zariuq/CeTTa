@@ -168,17 +168,6 @@ static _Thread_local uint32_t g_petta_libpl_enter_depth;
 static void petta_libpl_register_reference_stdlib(
     CettaLibPrologRuntime *runtime);
 
-static foreign_t petta_libpl_standard_not_identical(
-    term_t arguments, int supplied_arity,
-    control_t control) {
-    (void)control;
-    if (!arguments || supplied_arity != 3)
-        return false;
-    bool identical = PL_compare(arguments, arguments + 1u) == 0;
-    return PL_unify_atom_chars(
-        arguments + 2u, identical ? "false" : "true");
-}
-
 typedef struct {
     const char *name;
     size_t function_arity;
@@ -194,6 +183,383 @@ static Atom *petta_libpl_from_term(
     PettaLibplVarMap *variables,
     PettaLibplBackVarMap *unknown,
     uint32_t depth);
+
+typedef struct {
+    term_t left;
+    term_t right;
+} PettaLibplTermPair;
+
+typedef struct {
+    PettaLibplTermPair *items;
+    size_t len;
+    size_t cap;
+} PettaLibplTermPairs;
+
+static void petta_libpl_term_pairs_push(PettaLibplTermPairs *pairs,
+                                        term_t left, term_t right) {
+    if (pairs->len == pairs->cap) {
+        size_t cap = pairs->cap ? pairs->cap * 2u : 32u;
+        pairs->items = pairs->items
+            ? cetta_realloc(pairs->items, sizeof(*pairs->items) * cap)
+            : cetta_malloc(sizeof(*pairs->items) * cap);
+        pairs->cap = cap;
+    }
+    pairs->items[pairs->len++] = (PettaLibplTermPair){left, right};
+}
+
+static bool petta_libpl_numbers_equal(Arena *arena, term_t left,
+                                      term_t right) {
+    PettaLibplVarMap variables = {0};
+    PettaLibplBackVarMap unknown = {0};
+    Atom *left_value = petta_libpl_from_term(
+        arena, left, &variables, &unknown, 0u);
+    Atom *right_value = left_value
+        ? petta_libpl_from_term(arena, right, &variables, &unknown, 0u)
+        : NULL;
+    free(variables.items);
+    free(unknown.items);
+    return left_value && right_value &&
+           atom_value_eq(left_value, right_value);
+}
+
+/* A node met with a factor, in that factor's list. */
+typedef struct {
+    term_t node;
+    size_t next;
+} PettaLibplPartner;
+
+/* The shared compound subterms of a pair of terms, after '$factorize_term':
+ * each is now an unbound variable in the terms, standing for its subterm.
+ * order sorts them by the standard order, which places unbound variables by
+ * address, and nothing moves them while no Prolog runs.  met holds the pairs
+ * of factors already compared, as (i + 1) << 32 | (j + 1), 0 for empty; a
+ * factor's pairs with other nodes are listed from left_heads or right_heads,
+ * by the factor's side, and matched by identity. */
+typedef struct {
+    term_t vars;
+    term_t values;
+    size_t *order;
+    size_t len;
+    uint64_t *met;
+    size_t met_cap;
+    size_t met_len;
+    size_t *left_heads;
+    size_t *right_heads;
+    PettaLibplPartner *partners;
+    size_t partners_len;
+    size_t partners_cap;
+} PettaLibplFactors;
+
+static _Thread_local PettaLibplFactors *g_petta_libpl_sorting_factors;
+
+static int petta_libpl_factor_order(const void *left, const void *right) {
+    const PettaLibplFactors *factors = g_petta_libpl_sorting_factors;
+    return PL_compare(factors->vars + *(const size_t *)left,
+                      factors->vars + *(const size_t *)right);
+}
+
+/* The factor a term is, or SIZE_MAX. */
+static size_t petta_libpl_factor_index(const PettaLibplFactors *factors,
+                                       term_t term) {
+    if (!PL_is_variable(term))
+        return SIZE_MAX;
+    size_t low = 0u;
+    size_t high = factors->len;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2u;
+        int order = PL_compare(term, factors->vars + factors->order[middle]);
+        if (order == 0)
+            return factors->order[middle];
+        if (order < 0)
+            high = middle;
+        else
+            low = middle + 1u;
+    }
+    return SIZE_MAX;
+}
+
+/* Records a pair of factors; false when it was already met. */
+static bool petta_libpl_factors_meet(PettaLibplFactors *factors, size_t left,
+                                     size_t right) {
+    if (factors->met_len * 2u >= factors->met_cap) {
+        size_t cap = factors->met_cap ? factors->met_cap * 2u : 64u;
+        uint64_t *met = cetta_malloc(sizeof(*met) * cap);
+        memset(met, 0, sizeof(*met) * cap);
+        for (size_t i = 0u; i < factors->met_cap; i++) {
+            uint64_t key = factors->met[i];
+            if (!key)
+                continue;
+            size_t slot = (size_t)(key * UINT64_C(0x9E3779B97F4A7C15) >> 32) &
+                          (cap - 1u);
+            while (met[slot])
+                slot = (slot + 1u) & (cap - 1u);
+            met[slot] = key;
+        }
+        free(factors->met);
+        factors->met = met;
+        factors->met_cap = cap;
+    }
+    uint64_t key = ((uint64_t)left + 1u) << 32 | ((uint64_t)right + 1u);
+    size_t slot = (size_t)(key * UINT64_C(0x9E3779B97F4A7C15) >> 32) &
+                  (factors->met_cap - 1u);
+    while (factors->met[slot]) {
+        if (factors->met[slot] == key)
+            return false;
+        slot = (slot + 1u) & (factors->met_cap - 1u);
+    }
+    factors->met[slot] = key;
+    factors->met_len++;
+    return true;
+}
+
+/* Records a pair of a factor and a compound node that is not one; false when
+ * it was already met. */
+static bool petta_libpl_factor_meets_node(PettaLibplFactors *factors,
+                                          size_t *heads, size_t factor,
+                                          term_t node) {
+    if (!PL_is_compound(node))
+        return true;
+    for (size_t at = heads[factor]; at != SIZE_MAX;
+         at = factors->partners[at].next) {
+        if (PL_same_compound(factors->partners[at].node, node))
+            return false;
+    }
+    if (factors->partners_len == factors->partners_cap) {
+        size_t cap = factors->partners_cap ? factors->partners_cap * 2u : 32u;
+        factors->partners = factors->partners
+            ? cetta_realloc(factors->partners,
+                            sizeof(*factors->partners) * cap)
+            : cetta_malloc(sizeof(*factors->partners) * cap);
+        factors->partners_cap = cap;
+    }
+    factors->partners[factors->partners_len] =
+        (PettaLibplPartner){node, heads[factor]};
+    heads[factor] = factors->partners_len++;
+    return true;
+}
+
+/* Factors both terms at once, so a subterm they share is one factor; the
+ * change to the terms lasts until the caller's frame is discarded.  The
+ * skeletons of the two terms land in left_out and right_out. */
+static bool petta_libpl_factorize(term_t left, term_t right,
+                                  PettaLibplFactors *factors,
+                                  term_t left_out, term_t right_out) {
+    term_t call = PL_new_term_refs(3);
+    predicate_t factorize = PL_predicate("$factorize_term", 3, "system");
+    atom_t minus = PL_new_atom("-");
+    functor_t pair = PL_new_functor(minus, 2);
+    PL_unregister_atom(minus);
+    if (!call || !factorize ||
+        !PL_cons_functor(call, pair, left, right) ||
+        !PL_call_predicate(NULL, PL_Q_NODEBUG | PL_Q_CATCH_EXCEPTION,
+                           factorize, call) ||
+        !PL_get_arg(1, call + 1, left_out) ||
+        !PL_get_arg(2, call + 1, right_out))
+        return false;
+    size_t len = 0u;
+    if (PL_skip_list(call + 2, 0, &len) != PL_LIST)
+        return false;
+    factors->vars = PL_new_term_refs(len ? len : 1u);
+    factors->values = PL_new_term_refs(len ? len : 1u);
+    if (!factors->vars || !factors->values)
+        return false;
+    term_t list = PL_copy_term_ref(call + 2);
+    term_t head = PL_new_term_ref();
+    for (size_t i = 0u; i < len; i++) {
+        if (!PL_get_list(list, head, list) ||
+            !PL_get_arg(1, head, factors->vars + i) ||
+            !PL_get_arg(2, head, factors->values + i))
+            return false;
+    }
+    factors->order = cetta_malloc(sizeof(*factors->order) * (len ? len : 1u));
+    factors->left_heads =
+        cetta_malloc(sizeof(*factors->left_heads) * (len ? len : 1u));
+    factors->right_heads =
+        cetta_malloc(sizeof(*factors->right_heads) * (len ? len : 1u));
+    for (size_t i = 0u; i < len; i++) {
+        factors->order[i] = i;
+        factors->left_heads[i] = SIZE_MAX;
+        factors->right_heads[i] = SIZE_MAX;
+    }
+    factors->len = len;
+    g_petta_libpl_sorting_factors = factors;
+    qsort(factors->order, len, sizeof(*factors->order),
+          petta_libpl_factor_order);
+    g_petta_libpl_sorting_factors = NULL;
+    return true;
+}
+
+typedef enum {
+    PETTA_LIBPL_VALUES_EQUAL,
+    PETTA_LIBPL_VALUES_DIFFERENT,
+    PETTA_LIBPL_VALUES_UNDECIDED,
+} PettaLibplValuesVerdict;
+
+/* A tree walk past this many branching pairs goes over to the graph walk. */
+#define PETTA_LIBPL_VALUES_TREE_STEPS (UINT32_C(1) << 16)
+
+/* Walks a pair of terms, as trees when factors is NULL, else as the graphs
+ * the factors describe, where a pair of nodes one of which is shared is
+ * taken as equal when met again: the walk is a conjunction that stops at the
+ * first difference, so such a pair is equal or still being compared, and a
+ * shared subterm that holds a NaN still differs from itself the first time.
+ * Every infinite path passes shared nodes, so the graph walk ends.  The tree
+ * walk stops undecided past its step budget. */
+static PettaLibplValuesVerdict petta_libpl_values_walk(
+        term_t left_term, term_t right_term, PettaLibplFactors *factors,
+        Arena **arena, Arena *scratch, bool *scratch_live) {
+    PettaLibplTermPairs pending = {0};
+    PettaLibplValuesVerdict verdict = PETTA_LIBPL_VALUES_EQUAL;
+    uint32_t steps = 0u;
+    petta_libpl_term_pairs_push(&pending, left_term, right_term);
+    while (verdict == PETTA_LIBPL_VALUES_EQUAL && pending.len > 0u) {
+        PettaLibplTermPair pair = pending.items[--pending.len];
+        if (factors) {
+            size_t left_factor = petta_libpl_factor_index(factors, pair.left);
+            size_t right_factor =
+                petta_libpl_factor_index(factors, pair.right);
+            bool first_meeting = true;
+            if (left_factor != SIZE_MAX && right_factor != SIZE_MAX)
+                first_meeting = petta_libpl_factors_meet(
+                    factors, left_factor, right_factor);
+            else if (left_factor != SIZE_MAX)
+                first_meeting = petta_libpl_factor_meets_node(
+                    factors, factors->left_heads, left_factor, pair.right);
+            else if (right_factor != SIZE_MAX)
+                first_meeting = petta_libpl_factor_meets_node(
+                    factors, factors->right_heads, right_factor, pair.left);
+            if (!first_meeting)
+                continue;
+            if (left_factor != SIZE_MAX)
+                pair.left = factors->values + left_factor;
+            if (right_factor != SIZE_MAX)
+                pair.right = factors->values + right_factor;
+        }
+        int left_type = PL_term_type(pair.left);
+        int right_type = PL_term_type(pair.right);
+        if (left_type == PL_VARIABLE || right_type == PL_VARIABLE) {
+            if (left_type != right_type ||
+                PL_compare(pair.left, pair.right) != 0)
+                verdict = PETTA_LIBPL_VALUES_DIFFERENT;
+            continue;
+        }
+        bool left_number = PL_is_number(pair.left);
+        bool right_number = PL_is_number(pair.right);
+        if (left_number || right_number) {
+            if (left_number && right_number && !*arena) {
+                arena_init(scratch);
+                *scratch_live = true;
+                *arena = scratch;
+            }
+            if (!left_number || !right_number ||
+                !petta_libpl_numbers_equal(*arena, pair.left, pair.right))
+                verdict = PETTA_LIBPL_VALUES_DIFFERENT;
+            continue;
+        }
+        bool left_compound = PL_is_compound(pair.left);
+        bool right_compound = PL_is_compound(pair.right);
+        if (!left_compound || !right_compound) {
+            if (left_compound || right_compound ||
+                PL_compare(pair.left, pair.right) != 0)
+                verdict = PETTA_LIBPL_VALUES_DIFFERENT;
+            continue;
+        }
+        atom_t left_name = 0;
+        atom_t right_name = 0;
+        size_t left_arity = 0u;
+        size_t right_arity = 0u;
+        if (!PL_get_compound_name_arity_sz(
+                pair.left, &left_name, &left_arity) ||
+            !PL_get_compound_name_arity_sz(
+                pair.right, &right_name, &right_arity) ||
+            left_name != right_name || left_arity != right_arity) {
+            verdict = PETTA_LIBPL_VALUES_DIFFERENT;
+            continue;
+        }
+        /* The budget counts the pairs the walk branches into: a list's
+         * elements, but not its spine. */
+        bool branch = !PL_is_pair(pair.left);
+        for (size_t index = left_arity; index >= 1u; index--) {
+            term_t left_arg = PL_new_term_ref();
+            term_t right_arg = PL_new_term_ref();
+            if (!left_arg || !right_arg ||
+                !PL_get_arg_sz(index, pair.left, left_arg) ||
+                !PL_get_arg_sz(index, pair.right, right_arg)) {
+                verdict = PETTA_LIBPL_VALUES_DIFFERENT;
+                break;
+            }
+            if (index == 1u && PL_is_compound(left_arg))
+                branch = true;
+            petta_libpl_term_pairs_push(&pending, left_arg, right_arg);
+        }
+        if (!factors && branch && ++steps > PETTA_LIBPL_VALUES_TREE_STEPS)
+            verdict = PETTA_LIBPL_VALUES_UNDECIDED;
+    }
+    free(pending.items);
+    return verdict;
+}
+
+/* PeTTa's == and != for Prolog callers, deciding what metta.pl's same_value
+ * decides: numbers by exact value (atom_value_eq), variables by identity and
+ * never bound, other atomic terms as terms, and compounds by constructor and
+ * arguments.  Terms that hold themselves, or share subterms too deeply for
+ * their trees, compare by their unfolding: the terms are factored and the
+ * graphs compared, each pair of shared nodes once.  No depth limit applies. */
+static bool petta_libpl_values_equal(term_t left_term, term_t right_term) {
+    fid_t frame = PL_open_foreign_frame();
+    if (!frame)
+        return false;
+    Arena scratch;
+    bool scratch_live = false;
+    Arena *arena = g_petta_libpl_active_arena;
+    PettaLibplValuesVerdict verdict =
+        !PL_is_acyclic(left_term) || !PL_is_acyclic(right_term)
+            ? PETTA_LIBPL_VALUES_UNDECIDED
+            : petta_libpl_values_walk(left_term, right_term, NULL, &arena,
+                                      &scratch, &scratch_live);
+    if (verdict == PETTA_LIBPL_VALUES_UNDECIDED) {
+        PettaLibplFactors factors = {0};
+        term_t left_graph = PL_new_term_ref();
+        term_t right_graph = PL_new_term_ref();
+        verdict = left_graph && right_graph &&
+                  petta_libpl_factorize(left_term, right_term, &factors,
+                                        left_graph, right_graph)
+            ? petta_libpl_values_walk(left_graph, right_graph, &factors,
+                                      &arena, &scratch, &scratch_live)
+            : PETTA_LIBPL_VALUES_DIFFERENT;
+        free(factors.order);
+        free(factors.met);
+        free(factors.left_heads);
+        free(factors.right_heads);
+        free(factors.partners);
+    }
+    if (scratch_live)
+        arena_free(&scratch);
+    PL_discard_foreign_frame(frame);
+    return verdict == PETTA_LIBPL_VALUES_EQUAL;
+}
+
+static foreign_t petta_libpl_standard_equal(
+    term_t arguments, int supplied_arity,
+    control_t control) {
+    (void)control;
+    if (!arguments || supplied_arity != 3)
+        return false;
+    bool equal = petta_libpl_values_equal(arguments, arguments + 1u);
+    return PL_unify_atom_chars(
+        arguments + 2u, equal ? "true" : "false");
+}
+
+static foreign_t petta_libpl_standard_not_equal(
+    term_t arguments, int supplied_arity,
+    control_t control) {
+    (void)control;
+    if (!arguments || supplied_arity != 3)
+        return false;
+    bool equal = petta_libpl_values_equal(arguments, arguments + 1u);
+    return PL_unify_atom_chars(
+        arguments + 2u, equal ? "false" : "true");
+}
 
 typedef struct {
     ResultSet results;
@@ -281,11 +647,14 @@ static foreign_t petta_libpl_standard_swrite(
     free(unknown.items);
     if (!value)
         return false;
-    char *rendered = atom_to_parseable_string(
+    /* PeTTa's swrite is the repr text, and it is UTF-8: handing SWI the
+     * bytes as Latin-1 would turn every non-ASCII character into several. */
+    char *rendered = atom_to_parseable_string_petta(
         g_petta_libpl_active_arena, value);
     return rendered &&
-        PL_unify_string_nchars(
-            arguments + 1u, strlen(rendered), rendered);
+        PL_unify_chars(
+            arguments + 1u, PL_STRING | REP_UTF8,
+            strlen(rendered), rendered);
 }
 
 /*
@@ -298,10 +667,16 @@ static bool petta_libpl_install_standard_bridges(
     CettaLibPrologRuntime *runtime) {
     static const PettaLibplStandardBridge bridges[] = {
         {
+            .name = "==",
+            .function_arity = 2u,
+            .implementation =
+                (pl_function_t)petta_libpl_standard_equal,
+        },
+        {
             .name = "!=",
             .function_arity = 2u,
             .implementation =
-                (pl_function_t)petta_libpl_standard_not_identical,
+                (pl_function_t)petta_libpl_standard_not_equal,
         },
         {
             .name = "eval",
@@ -781,11 +1156,17 @@ static void petta_libpl_global_init(void) {
     }
 }
 
+/* Every entry into the engine may run Prolog that changes its flags, so
+ * values read from the engine are cached only until the next entry. */
+static _Atomic uint64_t g_petta_libpl_entries;
+
 static bool petta_libpl_enter(bool *claimed) {
     if (claimed)
         *claimed = false;
     if (!claimed)
         return false;
+    atomic_fetch_add_explicit(&g_petta_libpl_entries, 1u,
+                              memory_order_acq_rel);
     if (g_petta_libpl_enter_depth > 0u) {
         if (g_petta_libpl_enter_depth == UINT32_MAX)
             return false;
@@ -1892,11 +2273,21 @@ static bool petta_libpl_to_term(
                    strlen(value), value);
     }
     case GV_RATIONAL: {
+        /* CeTTa spells a rational 1/2, which Prolog reads as the compound
+         * /(1,2); Prolog's own spelling is 1r2. */
         const char *value = atom_rational_cstr(atom);
-        return value &&
-               PL_put_term_from_chars(
-                   output, REP_UTF8,
-                   strlen(value), value);
+        if (!value)
+            return false;
+        size_t length = strlen(value);
+        char *spelled = cetta_malloc(length + 1u);
+        memcpy(spelled, value, length + 1u);
+        char *slash = strchr(spelled, '/');
+        if (slash)
+            *slash = 'r';
+        bool ok = PL_put_term_from_chars(
+            output, REP_UTF8, length, spelled);
+        free(spelled);
+        return ok;
     }
     case GV_SPACE:
     case GV_STATE:
@@ -2087,6 +2478,10 @@ static Atom *petta_libpl_from_term_mode(
                     BUF_MALLOC | REP_UTF8)) {
             return NULL;
         }
+        /* Prolog writes 1r2; CeTTa's rational text is 1/2. */
+        char *r = strchr(text, 'r');
+        if (r)
+            *r = '/';
         Atom *result = atom_rational(arena, text);
         PL_free(text);
         return result;
@@ -2305,15 +2700,62 @@ static bool petta_libpl_emit_solution(
     return true;
 }
 
+/* CeTTa's atoms are finite trees, so a cyclic Prolog term has no atom.  A
+ * solution that binds one raises an error the program can catch, rather than
+ * failing the host. */
+static bool petta_libpl_solution_is_cyclic(term_t result_term,
+                                           const PettaLibplVarMap *variables) {
+    if (result_term && !PL_is_acyclic(result_term))
+        return true;
+    for (size_t index = 0u; variables && index < variables->len; index++) {
+        if (!PL_is_acyclic(variables->items[index].term))
+            return true;
+    }
+    return false;
+}
+
+static Atom *petta_libpl_cyclic_value_error(Arena *arena) {
+    Atom *head = atom_symbol(arena, "Error");
+    Atom *kind = atom_symbol(arena, "representation_error");
+    Atom *what = atom_symbol(arena, "acyclic_term");
+    Atom *formal = kind && what ? atom_expr2(arena, kind, what) : NULL;
+    return head && formal ? atom_expr2(arena, head, formal) : NULL;
+}
+
+/* error(Formal, Context) reads as (Error Formal Context); any other thrown
+ * term as (Error Term). */
+static Atom *petta_libpl_exception_value(Arena *arena, term_t exception) {
+    PettaLibplVarMap variables = {0};
+    PettaLibplBackVarMap unknown = {0};
+    Atom *thrown = petta_libpl_from_term(
+        arena, exception, &variables, &unknown, 0u);
+    free(variables.items);
+    free(unknown.items);
+    Atom *head = atom_symbol(arena, "Error");
+    if (!thrown || !head)
+        return NULL;
+    Atom *compound = NULL;
+    if (atom_petta_prolog_compound_body(thrown, &compound) && compound)
+        thrown = compound;
+    if (thrown->kind == ATOM_EXPR && thrown->expr.len == 3u &&
+        petta_libpl_atom_is_symbol(thrown->expr.elems[0], "error")) {
+        return atom_expr3(arena, head,
+                          thrown->expr.elems[1], thrown->expr.elems[2]);
+    }
+    return atom_expr2(arena, head, thrown);
+}
+
 static bool petta_libpl_run_query(
     CettaLibPrologRuntime *runtime, Arena *arena,
     predicate_t predicate, term_t arguments,
     term_t result_term, Atom *constant_result,
     PettaLibplVarMap *variables,
     OutcomeSet *outcomes, bool first_only,
-    bool *succeeded) {
+    bool *succeeded, Atom **raised) {
     if (succeeded)
         *succeeded = false;
+    if (raised)
+        *raised = NULL;
     if (!runtime || !arena || !predicate ||
         !arguments || !variables || !outcomes ||
         !succeeded) {
@@ -2335,8 +2777,16 @@ static bool petta_libpl_run_query(
         int status = PL_next_solution(query);
         if (status == PL_S_FALSE)
             break;
-        if (status == PL_S_EXCEPTION ||
-            status == PL_S_YIELD ||
+        if (status == PL_S_EXCEPTION) {
+            /* The raised error, read while the query still holds it; the
+             * caller decides whether it is a value or a failed call. */
+            term_t exception = PL_exception(query);
+            if (raised && exception)
+                *raised = petta_libpl_exception_value(arena, exception);
+            ok = false;
+            break;
+        }
+        if (status == PL_S_YIELD ||
             status == PL_S_YIELD_DEBUG ||
             (status != PL_S_TRUE &&
              status != PL_S_LAST)) {
@@ -2347,6 +2797,9 @@ static bool petta_libpl_run_query(
         if (!petta_libpl_emit_solution(
                 arena, result_term, constant_result,
                 variables, outcomes)) {
+            if (raised && petta_libpl_solution_is_cyclic(
+                              result_term, variables))
+                *raised = petta_libpl_cyclic_value_error(arena);
             ok = false;
             break;
         }
@@ -2366,7 +2819,9 @@ static bool petta_libpl_registered_call(
     CettaLibPrologRuntime *runtime, Arena *arena,
     Atom *expression, Atom *expected,
     PettaLibplImport *entry,
-    OutcomeSet *outcomes) {
+    OutcomeSet *outcomes, Atom **raised) {
+    if (raised)
+        *raised = NULL;
     if (!runtime || !arena || !expression ||
         expression->kind != ATOM_EXPR ||
         expression->expr.len == 0u || !expected ||
@@ -2443,7 +2898,7 @@ static bool petta_libpl_registered_call(
     bool ok = petta_libpl_run_query(
         runtime, arena, call, callable,
         result, NULL,
-        &variables, outcomes, false, &succeeded);
+        &variables, outcomes, false, &succeeded, raised);
     if (ok && succeeded && releases_handle &&
         !petta_libpl_plref_release(runtime, &erased_handle)) {
         ok = false;
@@ -2459,9 +2914,56 @@ static bool petta_libpl_registered_call(
     return ok;
 }
 
+/*
+ * Run one goal in the embedded Prolog: every solution is an outcome carrying
+ * the bindings of the goal's free variables and, as its value, the success
+ * value when `answers_success`, as callPredicate answers, or else a fresh
+ * variable, as translatePredicate leaves its value unbound.  A goal is an
+ * opaque effect boundary; even one that later fails may already have
+ * changed the dynamic predicate database.
+ */
+static bool petta_libpl_call_goal(
+    CettaLibPrologRuntime *runtime, Arena *arena,
+    Atom *body, bool answers_success, OutcomeSet *outcomes,
+    bool *succeeded, Atom **raised) {
+    if (succeeded)
+        *succeeded = false;
+    term_t goal = PL_new_term_ref();
+    PettaLibplVarMap variables = {0};
+    bool converted =
+        goal &&
+        petta_libpl_to_callable(
+            body, goal, &variables, 0u);
+    if (!converted) {
+        free(variables.items);
+        return false;
+    }
+    predicate_t call = PL_predicate(
+        "call", 1, runtime->module_name);
+    Atom *success = answers_success
+        ? petta_semantics_success_value(arena)
+        : atom_var_with_id(arena, "$", fresh_var_id());
+    bool solved = false;
+    bool attempted = success != NULL;
+    bool ok = attempted && petta_libpl_run_query(
+        runtime, arena, call, goal, 0,
+        success, &variables, outcomes,
+        false, &solved, raised);
+    /* The goal's predicate exists, so a raised error is reported to the
+     * caller, which propagates it as a MeTTa error. */
+    if (!ok && raised && *raised)
+        ok = true;
+    if (attempted)
+        petta_libpl_advance_revision(runtime);
+    if (succeeded)
+        *succeeded = solved;
+    free(variables.items);
+    return ok;
+}
+
 static bool petta_libpl_call_predicate(
     CettaLibPrologRuntime *runtime, Arena *arena,
-    Atom *wrapper, OutcomeSet *outcomes) {
+    Atom *wrapper, OutcomeSet *outcomes, Atom **raised) {
     Atom *body = NULL;
     if (!runtime || !arena || !outcomes ||
         !petta_libpl_predicate_body(wrapper, &body)) {
@@ -2480,35 +2982,13 @@ static bool petta_libpl_call_predicate(
          !petta_libpl_plref_matches(runtime, &erased_handle))) {
         return true;
     }
-    term_t goal = PL_new_term_ref();
-    PettaLibplVarMap variables = {0};
-    bool converted =
-        goal &&
-        petta_libpl_to_callable(
-            body, goal, &variables, 0u);
-    if (!converted) {
-        free(variables.items);
-        return false;
-    }
-    predicate_t call = PL_predicate(
-        "call", 1, runtime->module_name);
-    Atom *success =
-        petta_semantics_success_value(arena);
     bool succeeded = false;
-    bool attempted = success != NULL;
-    bool ok = attempted && petta_libpl_run_query(
-        runtime, arena, call, goal, 0,
-        success, &variables, outcomes,
-        false, &succeeded);
-    /* callPredicate is an opaque effect boundary.  Even a goal that later
-     * fails may already have changed the dynamic predicate database. */
-    if (attempted)
-        petta_libpl_advance_revision(runtime);
+    bool ok = petta_libpl_call_goal(
+        runtime, arena, body, true, outcomes, &succeeded, raised);
     if (ok && succeeded && releases_handle &&
         !petta_libpl_plref_release(runtime, &erased_handle)) {
         ok = false;
     }
-    free(variables.items);
     return ok;
 }
 
@@ -2812,7 +3292,7 @@ static bool petta_libpl_retract_predicate(
               petta_libpl_run_query(
                   runtime, arena, retract_predicate,
                   clause, 0, success, &variables,
-                  outcomes, true, &succeeded);
+                  outcomes, true, &succeeded, NULL);
     if (ok && succeeded) {
         petta_libpl_advance_revision(runtime);
     } else if (ok) {
@@ -3297,13 +3777,126 @@ PeTTaNamedArity petta_libpl_named_arity_resolving(
     return result;
 }
 
+bool petta_libpl_evaluate_arithmetic(
+    Arena *arena, const char *functor, Atom **args, uint32_t nargs,
+    Atom **out) {
+    if (out)
+        *out = NULL;
+    CettaLibraryContext *context = eval_current_library_context();
+    CettaLibPrologRuntime *runtime = context ? context->lib_prolog : NULL;
+    if (!runtime || !arena || !out || !args || nargs == 0u ||
+        (!functor && nargs != 1u))
+        return false;
+    bool claimed = false;
+    if (!petta_libpl_enter(&claimed))
+        return false;
+    if (!petta_libpl_prepare_locked(runtime)) {
+        petta_libpl_leave(claimed);
+        return false;
+    }
+    fid_t frame = PL_open_foreign_frame();
+    if (!frame) {
+        petta_libpl_leave(claimed);
+        return false;
+    }
+    CettaLibPrologRuntime *previous_runtime = g_petta_libpl_active_runtime;
+    Arena *previous_arena = g_petta_libpl_active_arena;
+    g_petta_libpl_active_runtime = runtime;
+    g_petta_libpl_active_arena = arena;
+    PettaLibplVarMap variables = {0};
+    term_t call = PL_new_term_refs(2);
+    bool built = call != 0;
+    if (built && functor) {
+        term_t operands = PL_new_term_refs((int)nargs);
+        built = operands != 0;
+        for (uint32_t i = 0u; built && i < nargs; i++)
+            built = petta_libpl_to_term(
+                args[i], operands + i, &variables, 0u);
+        if (built) {
+            atom_t name = PL_new_atom(functor);
+            functor_t function = PL_new_functor(name, nargs);
+            PL_unregister_atom(name);
+            built = PL_cons_functor_v(call + 1, function, operands);
+        }
+    } else if (built) {
+        built = petta_libpl_to_term(args[0], call + 1, &variables, 0u);
+    }
+    bool ok = false;
+    if (built) {
+        qid_t query = PL_open_query(
+            runtime->module,
+            PL_Q_NODEBUG | PL_Q_CATCH_EXCEPTION | PL_Q_EXT_STATUS,
+            PL_predicate("is", 2, "system"), call);
+        if (query) {
+            int status = PL_next_solution(query);
+            if (status == PL_S_TRUE || status == PL_S_LAST) {
+                PettaLibplBackVarMap unknown = {0};
+                *out = petta_libpl_from_term(
+                    arena, call, &variables, &unknown, 0u);
+                free(unknown.items);
+            } else if (status == PL_S_EXCEPTION) {
+                term_t exception = PL_exception(query);
+                if (exception)
+                    *out = petta_libpl_exception_value(arena, exception);
+            }
+            ok = *out != NULL;
+            (void)PL_close_query(query);
+        }
+    }
+    free(variables.items);
+    PL_discard_foreign_frame(frame);
+    g_petta_libpl_active_arena = previous_arena;
+    g_petta_libpl_active_runtime = previous_runtime;
+    petta_libpl_leave(claimed);
+    return ok;
+}
+
+/* (entries << 1) | flag, as of the last read; 0 when never read. */
+static _Atomic uint64_t g_petta_libpl_prefer_rationals_cache;
+
+bool petta_libpl_prefer_rationals(void) {
+    CettaLibraryContext *context = eval_current_library_context();
+    CettaLibPrologRuntime *runtime = context ? context->lib_prolog : NULL;
+    /* An engine that has not started still has SWI's default, false. */
+    if (!runtime || !runtime->prepared)
+        return false;
+    uint64_t cached = atomic_load_explicit(
+        &g_petta_libpl_prefer_rationals_cache, memory_order_acquire);
+    if (cached != 0u &&
+        (cached >> 1) == atomic_load_explicit(
+                             &g_petta_libpl_entries, memory_order_acquire))
+        return (cached & 1u) != 0u;
+    bool claimed = false;
+    if (!petta_libpl_enter(&claimed))
+        return false;
+    uint64_t entries = atomic_load_explicit(
+        &g_petta_libpl_entries, memory_order_acquire);
+    bool prefer = false;
+    fid_t frame = PL_open_foreign_frame();
+    if (frame) {
+        term_t goal = PL_new_term_ref();
+        prefer = goal &&
+            PL_chars_to_term(
+                "current_prolog_flag(prefer_rationals, true)", goal) &&
+            PL_call(goal, runtime->module);
+        PL_discard_foreign_frame(frame);
+    }
+    petta_libpl_leave(claimed);
+    atomic_store_explicit(&g_petta_libpl_prefer_rationals_cache,
+                          (entries << 1) | (prefer ? 1u : 0u),
+                          memory_order_release);
+    return prefer;
+}
+
 bool petta_libpl_call(
     CettaLibPrologRuntime *runtime, Arena *arena,
     Atom *expression, Atom *expected,
     const Bindings *environment, OutcomeSet *outcomes,
-    bool *recognized) {
+    bool *recognized, Atom **raised) {
     if (recognized)
         *recognized = false;
+    if (raised)
+        *raised = NULL;
     if (!runtime || !arena ||
         !expression || !expected || !environment ||
         !outcomes || !recognized ||
@@ -3318,6 +3911,7 @@ bool petta_libpl_call(
     PeTTaForm form = petta_semantics_form(head);
     bool adapter_form =
         form == PETTA_FORM_IMPORT_PROLOG_FUNCTION ||
+        form == PETTA_FORM_TRANSLATE_PREDICATE ||
         form == PETTA_FORM_CALL_PREDICATE ||
         form == PETTA_FORM_ASSERTA_PREDICATE ||
         form == PETTA_FORM_ASSERTZ_PREDICATE ||
@@ -3399,12 +3993,35 @@ bool petta_libpl_call(
             else
                 ok = false;
         }
+    } else if (form == PETTA_FORM_TRANSLATE_PREDICATE &&
+               expression->expr.len == 2u) {
+        /* The machine hands over only goals it has no native view of.  A
+         * goal whose predicate Prolog defines is a Prolog call binding its
+         * free variables, as in PeTTa; any other goal stays unrecognized. */
+        Atom *goal = expression->expr.elems[1];
+        Atom *name = goal && goal->kind == ATOM_EXPR &&
+                     goal->expr.len > 0u
+            ? goal->expr.elems[0] : goal;
+        size_t arity = goal && goal->kind == ATOM_EXPR &&
+                       goal->expr.len > 0u
+            ? (size_t)(goal->expr.len - 1u) : 0u;
+        bool exists = false;
+        if (name && name->kind == ATOM_SYMBOL) {
+            ok = petta_libpl_predicate_exists(
+                runtime, symbol_bytes(g_symbols, name->sym_id),
+                symbol_len(g_symbols, name->sym_id), arity, &exists);
+        }
+        if (ok && exists) {
+            *recognized = true;
+            ok = petta_libpl_call_goal(
+                runtime, arena, goal, false, outcomes, NULL, raised);
+        }
     } else if (form == PETTA_FORM_CALL_PREDICATE &&
                expression->expr.len == 2u) {
         *recognized = true;
         ok = petta_libpl_call_predicate(
             runtime, arena,
-            expression->expr.elems[1], outcomes);
+            expression->expr.elems[1], outcomes, raised);
     } else if (
         (form == PETTA_FORM_ASSERTA_PREDICATE ||
          form == PETTA_FORM_ASSERTZ_PREDICATE) &&
@@ -3456,9 +4073,15 @@ bool petta_libpl_call(
                     function_arity) {
                     arity_matched = true;
                     *recognized = true;
+                    Atom *thrown = NULL;
                     ok = petta_libpl_registered_call(
                         runtime, arena, expression,
-                        expected, entry, outcomes);
+                        expected, entry, outcomes, &thrown);
+                    if (!ok && thrown) {
+                        if (raised)
+                            *raised = thrown;
+                        ok = true;
+                    }
                     break;
                 }
             }
@@ -3466,9 +4089,10 @@ bool petta_libpl_call(
                 entry->arity_len == 0u &&
                 !entry->reference_stdlib) {
                 *recognized = true;
+                Atom *thrown = NULL;
                 ok = petta_libpl_registered_call(
                     runtime, arena, expression,
-                    expected, entry, outcomes);
+                    expected, entry, outcomes, &thrown);
                 if (!ok) {
                     /* An explicit import registers a PeTTa function name
                      * before SWI necessarily has a predicate for it.  A
@@ -3497,6 +4121,10 @@ bool petta_libpl_call(
                         }
                         ok = partial &&
                             outcomes->len == prior_len + 1u;
+                    } else if (thrown) {
+                        if (raised)
+                            *raised = thrown;
+                        ok = true;
                     }
                 }
                 if (ok && *recognized) {
