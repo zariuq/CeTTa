@@ -3260,6 +3260,36 @@ Atom *atom_internal_tag(Arena *a, CettaInternalTag tag) {
     return at;
 }
 
+bool atom_prime_held_is(const Atom *atom) {
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len == 2u &&
+           atom_is_internal_tag(atom->expr.elems[0],
+                                CETTA_INTERNAL_TAG_PRIME_HELD);
+}
+
+Atom *atom_prime_held_payload(Atom *atom) {
+    return atom_prime_held_is(atom) ? atom->expr.elems[1] : atom;
+}
+
+Atom *atom_prime_held_wrap(Arena *a, Atom *atom) {
+    if (!a || !atom || atom_prime_held_is(atom)) return atom;
+    Atom *tag = atom_internal_tag(a, CETTA_INTERNAL_TAG_PRIME_HELD);
+    return tag ? atom_expr2(a, tag, atom) : NULL;
+}
+
+Atom *atom_prime_held_strip(Arena *a, Atom *atom) {
+    if (!atom) return NULL;
+    if (atom_prime_held_is(atom)) return atom_prime_held_strip(a, atom->expr.elems[1]);
+    if (atom->kind != ATOM_EXPR || atom->expr.len == 0u) return atom;
+    Atom **items = arena_alloc(a, sizeof(Atom *) * (size_t)atom->expr.len);
+    if (!items) return atom;
+    bool changed = false;
+    for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
+        items[i] = atom_prime_held_strip(a, atom->expr.elems[i]);
+        changed = changed || items[i] != atom->expr.elems[i];
+    }
+    return changed ? atom_expr(a, items, atom->expr.len) : atom;
+}
+
 Atom *atom_petta_prolog_compound(Arena *a, Atom *body) {
     if (!a || !body || body->kind != ATOM_EXPR ||
         body->expr.len == 0u ||
@@ -4902,6 +4932,11 @@ static void atom_print_mode(
         }
 
         Atom *a = action.atom;
+        if (atom_prime_held_is(a)) {
+            /* A held value prints as its payload. */
+            atom_print_stack_push_atom(&stack, a->expr.elems[1]);
+            continue;
+        }
         switch (a->kind) {
     case ATOM_SYMBOL:
         fputs(atom_name_cstr(a), out);

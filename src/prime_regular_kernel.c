@@ -2188,6 +2188,37 @@ static bool regular_formers_discriminate(Atom *left_whnf, Atom *right_whnf) {
            left != right;
 }
 
+/* Two universes are equal types only when they are the same head
+ * (`TypeEq.head_injective`), and two tower universes are the same head
+ * exactly when their levels have equal canonical forms
+ * (`Tower.headSame_sort_iff`, from `normalize_eq_iff` in
+ * UniverseLevel/Algebra.lean); a lambda whose written universe differs is
+ * refuted by `ATyped.lamTyped_head_mismatch`.  Only closed levels are
+ * compared here: a level with parameters may still be constrained by its
+ * elaboration. */
+static bool regular_universes_discriminate(
+    Arena *arena, Atom *left_whnf, Atom *right_whnf,
+    CettaPrimeRegularKernelBudget *budget) {
+    if (!regular_expr(left_whnf, "Sort", 2u) ||
+        !regular_expr(right_whnf, "Sort", 2u))
+        return false;
+    bool complete = true;
+    if (!regular_closed_level_syntax_check(
+            left_whnf->expr.elems[1], budget, &complete) ||
+        !regular_closed_level_syntax_check(
+            right_whnf->expr.elems[1], budget, &complete) ||
+        !complete)
+        return false;
+    const CettaPrimeLevelV1 *left = NULL;
+    const CettaPrimeLevelV1 *right = NULL;
+    if (regular_decode_level(arena, left_whnf->expr.elems[1], budget, &left,
+                             NULL) != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED ||
+        regular_decode_level(arena, right_whnf->expr.elems[1], budget, &right,
+                             NULL) != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
+        return false;
+    return !cetta_prime_level_equal_v1(left, right);
+}
+
 static CettaPrimeRegularKernelStatus regular_conv_budget(
     CettaPrimeRegularKernelBudget *budget, const char **reason_out) {
     if (reason_out) *reason_out = "conversion-comparison-budget";
@@ -2519,8 +2550,22 @@ static CettaPrimeRegularKernelStatus regular_type_sort(
         return inferred.status;
     }
     const CettaPrimeLevelV1 *level = NULL;
+    Atom *sort = inferred.type;
     CettaPrimeRegularKernelStatus decoded = regular_decode_sort(
-        arena, inferred.type, budget, &level, reason_out);
+        arena, sort, budget, &level, reason_out);
+    if (decoded == CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS) {
+        /* A type is formed when its synthesized type reduces to a universe
+         * (`Synth.isType_iff`, TypedEquality/Normalization/Checking.lean);
+         * the reduct need not be written as one. */
+        PrimeRegularKernelNormal normal = regular_whnf(
+            arena, inferred.type, budget);
+        if (normal.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
+            if (reason_out) *reason_out = normal.reason;
+            return normal.status;
+        }
+        sort = normal.term;
+        decoded = regular_decode_sort(arena, sort, budget, &level, reason_out);
+    }
     if (decoded != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
         if (decoded == CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED ||
             decoded == CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE)
@@ -2532,7 +2577,7 @@ static CettaPrimeRegularKernelStatus regular_type_sort(
         if (reason_out) *reason_out = "expected-formed-type";
         return CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS;
     }
-    if (sort_out) *sort_out = inferred.type;
+    if (sort_out) *sort_out = sort;
     return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
 }
 
@@ -2625,6 +2670,233 @@ static CettaPrimeRegularKernelStatus regular_sort_le(
     return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
 }
 
+/* Whether a type has a rigid shape: it is usable only at the types equal to
+ * it, and only the types equal to it are usable at it (`RigidShape.rigid`,
+ * `RigidShape.below_eq`, TypedEquality/Normalization/Synthesis.lean).  In
+ * weak-head normal form a universe is not rigid, a dependent function type is
+ * rigid when its codomain is, a dependent pair type when both components are,
+ * and every other type form (the ground head, a neutral type, an identity
+ * type, a declared type) is, being equal to no universe, dependent function
+ * type or dependent pair type (`Below.rigid`). */
+static CettaPrimeRegularKernelStatus regular_rigid_shape(
+    Arena *arena, Atom *type, CettaPrimeRegularKernelBudget *budget,
+    bool *rigid_out, const char **reason_out) {
+    *rigid_out = false;
+    if (!regular_spend(budget)) {
+        if (reason_out) *reason_out = "rigidity-budget";
+        return CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED;
+    }
+    PrimeRegularKernelNormal normal = regular_whnf(arena, type, budget);
+    if (normal.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
+        if (reason_out) *reason_out = normal.reason;
+        return normal.status;
+    }
+    Atom *form = normal.term;
+    if (regular_is_sort(form)) return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+    if (regular_expr(form, "Pi", 3u))
+        return regular_rigid_shape(
+            arena, form->expr.elems[2], budget, rigid_out, reason_out);
+    if (regular_expr(form, "Sigma", 3u)) {
+        CettaPrimeRegularKernelStatus domain = regular_rigid_shape(
+            arena, form->expr.elems[1], budget, rigid_out, reason_out);
+        if (domain != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED || !*rigid_out)
+            return domain;
+        return regular_rigid_shape(
+            arena, form->expr.elems[2], budget, rigid_out, reason_out);
+    }
+    *rigid_out = true;
+    return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+}
+
+/* For a principality flag: rigid when rigidity is established. */
+static bool regular_rigid(
+    Arena *arena, Atom *type, CettaPrimeRegularKernelBudget *budget) {
+    bool rigid = false;
+    return regular_rigid_shape(arena, type, budget, &rigid, NULL) ==
+               CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED && rigid;
+}
+
+/* Whether a type is usable at another: cumulative subtyping, decided from the
+ * lower type's weak-head normal form clause by clause
+ * (TypedEquality/Normalization/BelowDecidability.lean, `Below.decide`):
+ *   a universe is usable exactly at the universes above it
+ *   (`Below.universe_iff`);
+ *   a dependent function type exactly at dependent function types with an
+ *   equal domain and a codomain above its own, over its own domain
+ *   (`Below.pi_iff`);
+ *   a dependent pair type exactly at dependent pair types whose domain is
+ *   above its domain and whose codomain is above its codomain, over its own
+ *   domain (`Below.sigma_iff`);
+ *   any other type exactly at the types equal to it (`RigidShape.below_iff`).
+ * `below_out` is meaningful when the status is ESTABLISHED. */
+static CettaPrimeRegularKernelStatus regular_type_below(
+    Arena *arena, Atom *context, Atom *lower, Atom *upper,
+    CettaPrimeRegularKernelBudget *budget, bool *below_out,
+    const char **reason_out, PrimeRegularLevelInstantiation *instantiation) {
+    *below_out = false;
+    if (!regular_spend(budget)) {
+        if (reason_out) *reason_out = "subtyping-budget";
+        return CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED;
+    }
+    if (atom_eq(lower, upper)) {
+        *below_out = true;
+        return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+    }
+    /* Equal types first: conversion also solves level parameters of the
+     * declaration being instantiated by equality. */
+    bool equal = false;
+    CettaPrimeRegularKernelStatus converted = regular_conv_types(
+        arena, context, lower, upper, budget, &equal, reason_out, instantiation);
+    if (converted == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED && equal) {
+        *below_out = true;
+        return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+    }
+    bool sorts = regular_is_sort(lower) && regular_is_sort(upper);
+    if (converted != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED &&
+        (converted != CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS || !sorts ||
+         !instantiation))
+        return converted;
+    PrimeRegularKernelNormal lower_normal = regular_whnf(arena, lower, budget);
+    if (lower_normal.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
+        if (reason_out) *reason_out = lower_normal.reason;
+        return lower_normal.status;
+    }
+    PrimeRegularKernelNormal upper_normal = regular_whnf(arena, upper, budget);
+    if (upper_normal.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
+        if (reason_out) *reason_out = upper_normal.reason;
+        return upper_normal.status;
+    }
+    Atom *low = lower_normal.term;
+    Atom *up = upper_normal.term;
+    if (regular_is_sort(low)) {
+        if (!regular_is_sort(up)) return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+        return regular_sort_le(
+            arena, low, up, budget, below_out, reason_out, instantiation);
+    }
+    if (regular_expr(low, "Pi", 3u)) {
+        if (!regular_expr(up, "Pi", 3u)) return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+        bool domains_equal = false;
+        CettaPrimeRegularKernelStatus domains = regular_conv_types(
+            arena, context, low->expr.elems[1], up->expr.elems[1], budget,
+            &domains_equal, reason_out, instantiation);
+        if (domains != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED || !domains_equal)
+            return domains;
+        return regular_type_below(
+            arena, regular_context_extend(arena, context, low->expr.elems[1]),
+            low->expr.elems[2], up->expr.elems[2], budget, below_out,
+            reason_out, instantiation);
+    }
+    if (regular_expr(low, "Sigma", 3u)) {
+        if (!regular_expr(up, "Sigma", 3u)) return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+        CettaPrimeRegularKernelStatus domain = regular_type_below(
+            arena, context, low->expr.elems[1], up->expr.elems[1], budget,
+            below_out, reason_out, instantiation);
+        if (domain != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED || !*below_out)
+            return domain;
+        *below_out = false;
+        return regular_type_below(
+            arena, regular_context_extend(arena, context, low->expr.elems[1]),
+            low->expr.elems[2], up->expr.elems[2], budget, below_out,
+            reason_out, instantiation);
+    }
+    /* A rigid type is usable only at the types equal to it, and conversion
+     * found this one unequal. */
+    return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+}
+
+/* Whether two types have no common upper bound, so that terms of them are
+ * equal at no type (`Synth.not_equal_types`).  `apart_out` is set only when
+ * that is proved (TypedEquality/Normalization/Synthesis.lean):
+ *   two universes are bounded by their join (`boundedAbove_universes`);
+ *   a universe and a dependent function or pair type are apart
+ *   (`not_boundedAbove_universe_pi`, `not_boundedAbove_universe_sigma`), and
+ *   so are a dependent function type and a dependent pair type
+ *   (`not_boundedAbove_pi_sigma`);
+ *   dependent function types with unequal domains are apart
+ *   (`not_boundedAbove_pi_domains`), with equal ones exactly when their
+ *   codomains are (`not_boundedAbove_pi_codomains`);
+ *   dependent pair types with apart domains are apart
+ *   (`not_boundedAbove_sigma_domains`), with equal domains when their
+ *   codomains are (`not_boundedAbove_sigma_codomains`);
+ *   a rigid type and a type not usable at it are apart
+ *   (`Rigid.not_boundedAbove`). */
+static CettaPrimeRegularKernelStatus regular_types_apart(
+    Arena *arena, Atom *context, Atom *left, Atom *right,
+    CettaPrimeRegularKernelBudget *budget, bool *apart_out,
+    const char **reason_out, PrimeRegularLevelInstantiation *instantiation) {
+    *apart_out = false;
+    if (!regular_spend(budget)) {
+        if (reason_out) *reason_out = "apartness-budget";
+        return CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED;
+    }
+    PrimeRegularKernelNormal left_normal = regular_whnf(arena, left, budget);
+    if (left_normal.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
+        if (reason_out) *reason_out = left_normal.reason;
+        return left_normal.status;
+    }
+    PrimeRegularKernelNormal right_normal = regular_whnf(arena, right, budget);
+    if (right_normal.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
+        if (reason_out) *reason_out = right_normal.reason;
+        return right_normal.status;
+    }
+    Atom *l = left_normal.term;
+    Atom *r = right_normal.term;
+    bool left_sort = regular_is_sort(l), right_sort = regular_is_sort(r);
+    bool left_pi = regular_expr(l, "Pi", 3u), right_pi = regular_expr(r, "Pi", 3u);
+    bool left_sigma = regular_expr(l, "Sigma", 3u);
+    bool right_sigma = regular_expr(r, "Sigma", 3u);
+    if (left_sort && right_sort) return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+    if ((left_sort && (right_pi || right_sigma)) ||
+        (right_sort && (left_pi || left_sigma)) ||
+        (left_pi && right_sigma) || (left_sigma && right_pi)) {
+        *apart_out = true;
+        return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+    }
+    if (left_pi && right_pi) {
+        bool domains_equal = false;
+        CettaPrimeRegularKernelStatus converted = regular_conv_types(
+            arena, context, l->expr.elems[1], r->expr.elems[1], budget,
+            &domains_equal, reason_out, instantiation);
+        if (converted != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return converted;
+        if (!domains_equal) {
+            *apart_out = true;
+            return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+        }
+        return regular_types_apart(
+            arena, regular_context_extend(arena, context, l->expr.elems[1]),
+            l->expr.elems[2], r->expr.elems[2], budget, apart_out, reason_out,
+            instantiation);
+    }
+    if (left_sigma && right_sigma) {
+        CettaPrimeRegularKernelStatus domains = regular_types_apart(
+            arena, context, l->expr.elems[1], r->expr.elems[1], budget,
+            apart_out, reason_out, instantiation);
+        if (domains != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED || *apart_out)
+            return domains;
+        bool domains_equal = false;
+        CettaPrimeRegularKernelStatus converted = regular_conv_types(
+            arena, context, l->expr.elems[1], r->expr.elems[1], budget,
+            &domains_equal, reason_out, instantiation);
+        if (converted != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED || !domains_equal)
+            return converted;
+        return regular_types_apart(
+            arena, regular_context_extend(arena, context, l->expr.elems[1]),
+            l->expr.elems[2], r->expr.elems[2], budget, apart_out, reason_out,
+            instantiation);
+    }
+    bool below = false;
+    CettaPrimeRegularKernelStatus decided = CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+    if (!left_sort && !left_pi && !left_sigma)
+        decided = regular_type_below(
+            arena, context, r, l, budget, &below, reason_out, instantiation);
+    else
+        decided = regular_type_below(
+            arena, context, l, r, budget, &below, reason_out, instantiation);
+    if (decided != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return decided;
+    *apart_out = !below;
+    return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+}
+
 static CettaPrimeRegularKernelStatus regular_check_term(
     Arena *arena, Atom *context, Atom *term, Atom *expected,
     CettaPrimeRegularKernelBudget *budget, const char **reason_out,
@@ -2700,63 +2972,18 @@ static CettaPrimeRegularKernelStatus regular_check_inferred(
         if (reason_out) *reason_out = inferred.reason;
         return inferred.status;
     }
-    bool equal = false;
-    CettaPrimeRegularKernelStatus converted = regular_conv_types(
-        arena, context, inferred.type, expected, budget, &equal, reason_out,
+    /* The synthesized type must be usable at the expected one
+     * (`KernelTyping.switch`); when it is not, a principal synthesized type
+     * refutes the check (`Synth.not_typed`). */
+    bool below = false;
+    CettaPrimeRegularKernelStatus decided = regular_type_below(
+        arena, context, inferred.type, expected, budget, &below, reason_out,
         instantiation);
-    bool inferred_is_sort = regular_symbol(inferred.type, "U1") ||
-        regular_expr(inferred.type, "Sort", 2u);
-    bool expected_is_sort = regular_symbol(expected, "U1") ||
-        regular_expr(expected, "Sort", 2u);
-    if (converted != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
-        if (converted != CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS ||
-            !inferred_is_sort || !expected_is_sort || !instantiation)
-            return converted;
-        equal = false;
-    }
-    if (!equal) {
-        Atom *inferred_sort = inferred.type;
-        Atom *expected_sort = expected;
-        /* Cumulativity compares universe levels after conversion too.  An
-         * expected carrier can be a type-level application reducing to a
-         * sort; its authored constructor must not disable universe raising. */
-        if (!inferred_is_sort || !expected_is_sort) {
-            PrimeRegularKernelNormal inferred_normal = regular_whnf(
-                arena, inferred.type, budget);
-            if (inferred_normal.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
-                if (reason_out) *reason_out = inferred_normal.reason;
-                return inferred_normal.status;
-            }
-            PrimeRegularKernelNormal expected_normal = regular_whnf(
-                arena, expected, budget);
-            if (expected_normal.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
-                if (reason_out) *reason_out = expected_normal.reason;
-                return expected_normal.status;
-            }
-            inferred_sort = inferred_normal.term;
-            expected_sort = expected_normal.term;
-            inferred_is_sort = regular_symbol(inferred_sort, "U1") ||
-                regular_expr(inferred_sort, "Sort", 2u);
-            expected_is_sort = regular_symbol(expected_sort, "U1") ||
-                regular_expr(expected_sort, "Sort", 2u);
-        }
-        if (inferred_is_sort && expected_is_sort) {
-            bool cumulative = false;
-            CettaPrimeRegularKernelStatus ordered = regular_sort_le(
-                arena, inferred_sort, expected_sort, budget,
-                &cumulative, reason_out, instantiation);
-            if (ordered != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
-                return ordered;
-            if (cumulative)
-                return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
-        }
-        /* The term has no type outside those above its synthesized type,
-         * when that type is principal. */
-        if (reason_out) *reason_out = "type-mismatch";
-        return regular_principal(inferred) ? CETTA_PRIME_REGULAR_KERNEL_REFUTED
-                                           : CETTA_PRIME_REGULAR_KERNEL_UNDECIDED;
-    }
-    return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+    if (decided != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return decided;
+    if (below) return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+    if (reason_out) *reason_out = "type-mismatch";
+    return regular_principal(inferred) ? CETTA_PRIME_REGULAR_KERNEL_REFUTED
+                                       : CETTA_PRIME_REGULAR_KERNEL_UNDECIDED;
 }
 
 /* Checking that also reports, through `synthesized` when it is given, the
@@ -2821,8 +3048,10 @@ static CettaPrimeRegularKernelStatus regular_check_term_seen(
              * dependent function type only if its written domain equals the
              * domain (`ATyped.lamTyped_inv`). When one of the two domains in
              * weak-head normal form is a type former the other does not have,
-             * they are unequal and the lambda is refuted
+             * or both are universes with distinct closed levels, they are
+             * unequal and the lambda is refuted
              * (`ATyped.lamTyped_domain_mismatch`,
+             * `ATyped.lamTyped_head_mismatch`,
              * TypedEquality/Normalization/WrittenDomains.lean). Any other
              * mismatch needs completeness of conversion and stays open. */
             if (reason_out) *reason_out = "lambda-domain-mismatch";
@@ -2832,7 +3061,9 @@ static CettaPrimeRegularKernelStatus regular_check_term_seen(
                 arena, expected_normal.term->expr.elems[1], budget);
             if (written.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED &&
                 domain.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED &&
-                regular_formers_discriminate(written.term, domain.term))
+                (regular_formers_discriminate(written.term, domain.term) ||
+                 regular_universes_discriminate(
+                     arena, written.term, domain.term, budget)))
                 return CETTA_PRIME_REGULAR_KERNEL_REFUTED;
             return CETTA_PRIME_REGULAR_KERNEL_UNDECIDED;
         }
@@ -2933,11 +3164,10 @@ static CettaPrimeRegularKernelStatus regular_check_term_seen(
         }
         if (synthesized) {
             if (reflected.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
-                PrimeRegularKernelNormal carrier = regular_whnf(
-                    arena, reflected.type, budget);
+                /* Reflexivity has a least type exactly at a rigid carrier
+                 * (`KernelTyping.refl`, `refl_type_no_least_type`). */
                 bool principal = regular_principal(reflected) &&
-                    carrier.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED &&
-                    !regular_is_sort(carrier.term);
+                    regular_rigid(arena, reflected.type, budget);
                 *synthesized = regular_infer_principal(regular_infer_result(
                     CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED,
                     regular_expr4(
@@ -3159,14 +3389,13 @@ static PrimeRegularKernelInfer regular_infer(
             arena, context, term->expr.elems[1], budget, instantiation);
         if (reflected.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
             return reflected;
-        /* A type of a universe lies in every larger universe too, so a
-         * reflexivity proof of it has an identity type at each: none of them
-         * is principal. */
-        PrimeRegularKernelNormal carrier = regular_whnf(
-            arena, reflected.type, budget);
+        /* A term of a type that is not rigid is also a term of the types
+         * above it, so its reflexivity proof has an identity type at each
+         * and none of them is least (`refl_type_no_least_type`,
+         * `refl_family_no_least_type`); at a rigid carrier the synthesized
+         * identity type is principal (`KernelTyping.refl`). */
         bool principal = regular_principal(reflected) &&
-            carrier.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED &&
-            !regular_is_sort(carrier.term);
+            regular_rigid(arena, reflected.type, budget);
         return regular_infer_principal(regular_infer_result(
             CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED,
             regular_expr4(
@@ -3206,16 +3435,15 @@ static PrimeRegularKernelInfer regular_infer(
                 return regular_infer_result(
                     CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE, NULL, false,
                     "result-substitution-failed");
-            PrimeRegularKernelNormal domain = regular_whnf(
-                arena, argument.type, budget);
+            /* Principal whenever the argument's and the body's synthesized
+             * types are: a larger domain types the body at a larger type
+             * (`KernelTyping.redex`, `Typed.ctxBelow`). */
             return regular_infer_principal(regular_infer_result(
                 CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED, result_type,
                 regular_symbol(result_type, "U1") ||
                     regular_expr(result_type, "Sort", 2u),
                 NULL),
-                regular_principal(argument) && regular_principal(body) &&
-                    domain.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED &&
-                    !regular_is_sort(domain.term));
+                regular_principal(argument) && regular_principal(body));
         }
         PrimeRegularKernelInfer function = regular_infer(
             arena, context, term->expr.elems[1], budget, instantiation);
@@ -3258,17 +3486,16 @@ static PrimeRegularKernelInfer regular_infer(
                 CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE, NULL, false,
                 "result-substitution-failed");
         /* An annotated abstraction's domain is fixed by an argument whose
-         * synthesized type is principal and not a universe. */
+         * principal synthesized type is rigid: a rigid type usable at the
+         * written domain equals it (`RigidShape.rigid`), so the body's type
+         * over the domain is the redex's principal one (`KernelTyping.redex`).
+         * An argument of a smaller non-rigid type leaves the body's type over
+         * the written domain possibly larger than the least. */
         bool principal = regular_principal(function);
-        if (function.annotated_domain) {
-            PrimeRegularKernelNormal fixed_type =
-                fixed.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED
-                    ? regular_whnf(arena, fixed.type, budget)
-                    : regular_normal_result(fixed.status, NULL, fixed.reason);
+        if (function.annotated_domain)
             principal = function.principal && regular_principal(fixed) &&
-                fixed_type.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED &&
-                !regular_is_sort(fixed_type.term);
-        }
+                fixed.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED &&
+                regular_rigid(arena, fixed.type, budget);
         return regular_infer_principal(regular_infer_result(
             CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED, result_type,
             regular_symbol(result_type, "U1") ||
@@ -3990,50 +4217,58 @@ regular_decide_prepared_conversion(
                 .reason = equal_types ? NULL : "not-convertible",
             };
         }
-        /* Terms of different types have no common type when both types are
-         * principal; a reflexivity proof of a type, for one, has several. */
-        if (regular_principal(left_type) && regular_principal(right_type))
-            return (CettaPrimeRegularKernelConversionDecision){
-                .status = CETTA_PRIME_REGULAR_KERNEL_REFUTED,
-                .operands_admitted = true,
-                .left_type = left_inferred_type,
-                .right_type = right_inferred_type,
-                .reason = "conversion-type-mismatch",
-            };
-        /* A side whose synthesized type is not principal may also have the
-         * other side's type.  If one side checks at the other's type, the two
-         * are compared there, and equality there is equality at a common
-         * type.  Inequality there refutes nothing: another common type may
-         * relate them. */
-        Atom *common = NULL;
-        const char *common_reason = NULL;
-        /* A trial that fails leaves no level assignment behind. */
+        /* A trial that proves nothing leaves no level assignment behind. */
         size_t level_count = instantiation ? instantiation->count : 0u;
         Atom **level_snapshot = level_count
             ? arena_alloc(arena, sizeof(Atom *) * level_count) : NULL;
         if (level_snapshot)
             memcpy(level_snapshot, instantiation->assignments,
                    sizeof(Atom *) * level_count);
-        CettaPrimeRegularKernelStatus fits = regular_check_term(
-            arena, left_context, left, right_inferred_type, budget,
-            &common_reason, instantiation);
-        if (fits != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED && level_snapshot)
-            memcpy(instantiation->assignments, level_snapshot,
-                   sizeof(Atom *) * level_count);
-        if (fits == CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED ||
-            fits == CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE)
-            return (CettaPrimeRegularKernelConversionDecision){
-                .status = fits,
-                .operands_admitted = true,
-                .left_type = left_inferred_type,
-                .right_type = right_inferred_type,
-                .reason = common_reason,
-            };
-        if (fits == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
-            common = right_inferred_type;
-        } else {
-            fits = regular_check_term(
-                arena, left_context, right, left_inferred_type, budget,
+        /* Terms whose principal synthesized types have no common upper bound
+         * are equal at no type (`Synth.not_equal_types`).  Distinct principal
+         * types alone do not suffice: a family into `Sort 0` and one into
+         * `Sort 1` over one domain are both terms of the latter's type. */
+        if (regular_principal(left_type) && regular_principal(right_type)) {
+            bool apart = false;
+            CettaPrimeRegularKernelStatus separated = regular_types_apart(
+                arena, left_context, left_inferred_type, right_inferred_type,
+                budget, &apart, &reason, instantiation);
+            if (separated == CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED ||
+                separated == CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE)
+                return (CettaPrimeRegularKernelConversionDecision){
+                    .status = separated,
+                    .operands_admitted = true,
+                    .left_type = left_inferred_type,
+                    .right_type = right_inferred_type,
+                    .reason = reason,
+                };
+            if (separated == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED && apart)
+                return (CettaPrimeRegularKernelConversionDecision){
+                    .status = CETTA_PRIME_REGULAR_KERNEL_REFUTED,
+                    .operands_admitted = true,
+                    .left_type = left_inferred_type,
+                    .right_type = right_inferred_type,
+                    .reason = "conversion-type-mismatch",
+                };
+            if (level_snapshot)
+                memcpy(instantiation->assignments, level_snapshot,
+                       sizeof(Atom *) * level_count);
+        }
+        /* One side may also have the other's synthesized type.  If it checks
+         * there, the two are compared there: equality there is equality at a
+         * common type.  When that type is principal for the other side,
+         * inequality there is inequality at every type, since a comparison at
+         * a larger type, of terms of the principal type, is a comparison at
+         * the principal type (`not_equal_of_unrelated`,
+         * `Algorithmic.terms_down`). */
+        for (int side = 0; side < 2; ++side) {
+            Atom *subject = side == 0 ? left : right;
+            Atom *common = side == 0 ? right_inferred_type : left_inferred_type;
+            bool common_principal = side == 0 ? regular_principal(right_type)
+                                              : regular_principal(left_type);
+            const char *common_reason = NULL;
+            CettaPrimeRegularKernelStatus fits = regular_check_term(
+                arena, left_context, subject, common, budget,
                 &common_reason, instantiation);
             if (fits != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED && level_snapshot)
                 memcpy(instantiation->assignments, level_snapshot,
@@ -4047,10 +4282,7 @@ regular_decide_prepared_conversion(
                     .right_type = right_inferred_type,
                     .reason = common_reason,
                 };
-            if (fits == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
-                common = left_inferred_type;
-        }
-        if (common) {
+            if (fits != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) continue;
             bool equal_at_common = false;
             CettaPrimeRegularKernelStatus compared = regular_conv_at(
                 arena, left_context, left, right, common, budget,
@@ -4071,6 +4303,17 @@ regular_decide_prepared_conversion(
                     .left_type = left_inferred_type,
                     .right_type = right_inferred_type,
                 };
+            if (common_principal)
+                return (CettaPrimeRegularKernelConversionDecision){
+                    .status = CETTA_PRIME_REGULAR_KERNEL_REFUTED,
+                    .operands_admitted = true,
+                    .left_type = left_inferred_type,
+                    .right_type = right_inferred_type,
+                    .reason = "not-convertible",
+                };
+            if (level_snapshot)
+                memcpy(instantiation->assignments, level_snapshot,
+                       sizeof(Atom *) * level_count);
         }
         return (CettaPrimeRegularKernelConversionDecision){
             .status = CETTA_PRIME_REGULAR_KERNEL_UNDECIDED,

@@ -4,6 +4,7 @@
 ; their impredicative encodings, lists with length/map/fold, and first-order
 ; terms with substitution.  Excluded middle is an axiom, as in the ladder.
 !(import! &self pf)
+!(import! &self ../../../lib/prime/curriculum.metta)
 !(bind! &thy (new-space))
 !(set:inductive &thy bool (u 0) (: true bool) (: false bool))
 !(set:inductive &thy nat (u 0) (: O nat) (: S (-> nat nat)))

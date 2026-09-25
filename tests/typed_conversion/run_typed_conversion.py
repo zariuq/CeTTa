@@ -33,13 +33,16 @@ def comparison_binary() -> Path:
 CETTA = comparison_binary()
 CHECKER = ROOT / "lib" / "typed_conversion.metta"
 FOCUSED = ROOT / "tests" / "typed_conversion" / "focused.metta"
-SPEC = Path(
+SPEC_DIR = Path(
     "/home/aimama/aihub/Mettapedia/lean/mettapedia/Mettapedia/TypeTheory/"
-    "Calculi/ParameterizedPiSigmaId/TypedEquality/Normalization/Algorithmic/Relation.lean"
+    "Calculi/ParameterizedPiSigmaId/TypedEquality"
 )
-WORK = Path("/shared/zahrada/work/typed-conversion-grok")
+SPEC = SPEC_DIR / "Normalization" / "Algorithmic" / "Relation.lean"
+WORK = Path(os.environ.get(
+    "TC_WORK", "/shared/zahrada/work/typed-conversion-grok"))
 LEDGER = WORK / "ledger.tsv"
-SCRATCH = Path(os.environ.get("TC_SCRATCH", "/tmp/claude/grok-goal-91b79658f3d7/implementer"))
+SCRATCH = Path(os.environ.get(
+    "TC_SCRATCH", "/tmp/claude/grok-goal-6fb6ec8c9416/implementer"))
 
 THEOREM_RE = re.compile(r"set:theorem\s+([A-Za-z_][A-Za-z0-9_@+\-]*)")
 AXIOM_RE = re.compile(r"set:axiom\s+&self\s+([A-Za-z_][A-Za-z0-9_@+\-]*)")
@@ -51,6 +54,29 @@ def sha256(path: Path) -> str:
     h = hashlib.sha256()
     h.update(path.read_bytes())
     return h.hexdigest()
+
+
+def theory_hash() -> str:
+    digest = hashlib.sha256()
+    files = sorted(p for p in SPEC_DIR.rglob("*.lean") if p.is_file())
+    for path in files:
+        digest.update(path.relative_to(SPEC_DIR).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def open_reason(row: dict) -> str:
+    if row.get("route") == "missing":
+        return "export-missing"
+    if row["checker"] == "Unresolved" and row["c"] == "Unresolved":
+        return "fuel-or-kernel-unreduced"
+    if row["checker"] == "Unresolved":
+        return "checker-incomplete"
+    if row["c"] == "Unresolved":
+        return "kernel-unreduced"
+    return "open"
 
 
 # 24 GiB virtual-memory cap. Nested identity β blows up past this; see defects/3.
@@ -322,7 +348,10 @@ def adapt_type(type_sexp: str) -> str | None:
     kids = children(type_sexp)
     if head == "u" and len(kids) == 1 and kids[0].isdigit():
         return f"(Sort (LevelConst {kids[0]}))"
-    rename = {"id": "Id", "lam": "Lam", "app": "App", "pi": "Pi", "sigma": "Sigma", "refl": "Refl"}
+    rename = {
+        "id": "Id", "lam": "Lam", "app": "App", "pi": "Pi", "sigma": "Sigma",
+        "refl": "Refl", "->": "Pi",
+    }
     kernel = {"Sort", "Pi", "Sigma", "Id", "DeclConst", "idx", "App", "Fst", "Snd", "Refl", "Pair", "Lam", "LevelConst"}
     if head in rename or head in kernel:
         adapted = []
@@ -496,8 +525,12 @@ def labeled(text: str, head: str) -> dict[str, str]:
 
 
 def as_checker(token: str) -> str:
-    if token in {"Accepted", "Refuted", "Unresolved"}:
-        return token
+    if token in {"Accepted", "Established"}:
+        return "Accepted"
+    if token == "Refuted" or token.startswith("(Refuted"):
+        return "Refuted"
+    if token == "Unresolved":
+        return "Unresolved"
     return "Unresolved"
 
 
@@ -650,8 +683,16 @@ def run_stability() -> tuple[bool, list[str]]:
                     refuted += 1
                 fh.write(f"{eq['id']}\t{sub['n']}\t{chk}\t{sea}\t\n")
     ok = refuted == 0 and tested >= 40
+    named = []
+    for eq in equations:
+        if eq["subs"]:
+            named.append(f"{eq['id']}={len(eq['subs'])}")
+        else:
+            named.append(f"{eq['id']}=uninhabited")
     lines = [
         f"stability-equations {len(equations)}",
+        f"stability-families {' '.join(named)}",
+        "stability-uninhabited phase1-sort0-variable",
         f"stability-substitutions {tested}",
         f"stability-refuted {refuted}",
         f"stability {'green' if ok else 'red'}",
@@ -702,6 +743,8 @@ def run_kernel_mutation() -> tuple[bool, list[str]]:
         and original.count("if (!ok || !reduct)") == 1
     )
     binary = WORK / "cetta-engine-failure"
+    if not binary.exists():
+        binary = Path("/shared/zahrada/work/typed-conversion-grok/cetta-engine-failure")
     probe = SCRATCH / "kernel-beta.metta"
     probe.write_text(
         "!(type:eq (PrimeScoped (PrimeCtxCons (Sort (LevelConst 0)) PrimeCtxNil) (idx 0)) "
@@ -855,8 +898,12 @@ def run_phase2() -> tuple[dict, list[str]]:
         pieces = []
         last = 0
         local = []
+        fuels = {}
         for n, (start, end, inner) in enumerate(spans):
             qid = f"q{n}"
+            kids = children(inner)
+            if kids and kids[-1].isdigit():
+                fuels[qid] = int(kids[-1])
             pieces.append(text[last:start])
             pieces.append(
                 f"!(C2 {qid} {inner})\n!(K2 {qid} (type:kernel-query {inner}))"
@@ -889,6 +936,7 @@ def run_phase2() -> tuple[dict, list[str]]:
                 route = one_field(fields, "Route") or "missing"
                 judgment = one_field(fields, "Judgment") or ""
                 kind = head_of(judgment) if judgment else ""
+                fuel = fuels.get(qid, 256)
                 if route == "outside":
                     rows.append({
                         "source": rel, "profile": tag, "id": qid,
@@ -920,18 +968,29 @@ def run_phase2() -> tuple[dict, list[str]]:
                 obj_ty = adapt_universes(obj_ty) if obj_ty else obj_ty
                 var_ctx, decl_ctx = split_context(ctx_tm)
                 if kind == "type:check":
-                    left, right, ty = subject_ty, obj, obj_ty
+                    intro = head_of(subject or "") in {"Pair", "Lam", "Refl"}
+                    synth_ok = subject_ty is not None and not unsynthesized(subject_ty)
                     comparable = (
-                        not unsynthesized(subject_ty) and right is not None
-                        and ty is not None and not unsynthesized(ty)
+                        subject is not None and obj is not None
+                        and not unsynthesized(obj)
+                        and (synth_ok or intro)
+                        and obj_ty is not None and not unsynthesized(obj_ty)
                     )
+                    job_call = {
+                        "mode": "check",
+                        "term": subject, "expected": obj,
+                        "synth": subject_ty if synth_ok else "Miss",
+                        "at": obj_ty,
+                    }
                 else:
-                    left, right = subject, obj
-                    ty = subject_ty
                     comparable = (
-                        left is not None and right is not None
+                        subject is not None and obj is not None
                         and not unsynthesized(subject_ty) and not unsynthesized(obj_ty)
                     )
+                    job_call = {
+                        "mode": "eq",
+                        "left": subject, "right": obj, "ty": subject_ty,
+                    }
                 if not comparable:
                     rows.append({
                         "source": rel, "profile": tag, "id": qid,
@@ -944,7 +1003,8 @@ def run_phase2() -> tuple[dict, list[str]]:
                 jobs.append({
                     "id": jid, "row": len(rows),
                     "rules": rules, "ctx": var_ctx, "decls": decl_ctx,
-                    "left": left, "right": right, "ty": ty,
+                    "fuel": fuel,
+                    **job_call,
                 })
                 rows.append({
                     "source": rel, "profile": tag, "id": qid,
@@ -956,10 +1016,17 @@ def run_phase2() -> tuple[dict, list[str]]:
         part = jobs[start:start + 40]
         lines = [f"!(import! &self {CHECKER})"]
         for job in part:
-            lines.append(
-                f"!(K {job['id']} (tc:compare 80 none {job['rules']} {job['ctx']} "
-                f"{job['decls']} {job['left']} {job['right']} {job['ty']}))"
-            )
+            if job["mode"] == "check":
+                call = (
+                    f"(tc:check {job['fuel']} none {job['rules']} {job['ctx']} {job['decls']} "
+                    f"{job['term']} {job['expected']} {job['synth']} {job['at']})"
+                )
+            else:
+                call = (
+                    f"(tc:compare {job['fuel']} none {job['rules']} {job['ctx']} {job['decls']} "
+                    f"{job['left']} {job['right']} {job['ty']})"
+                )
+            lines.append(f"!(K {job['id']} {call})")
         dest = folder / f"checker-{start}.metta"
         dest.write_text("\n".join(lines) + "\n")
         _rc, out = run_cetta(dest, 180)
@@ -968,18 +1035,31 @@ def run_phase2() -> tuple[dict, list[str]]:
             rows[job["row"]]["checker"] = as_checker(found.get(job["id"], ""))
     counts = {"agree": 0, "disagree": 0, "open": 0, "candidate-only": 0}
     fragment = 0
+    open_lines = []
     with (WORK / "phase2-ledger.tsv").open("w") as fh:
-        fh.write("source\tprofile\tid\tkind\troute\tchecker\tc\tfragment\tclass\n")
+        fh.write("source\tprofile\tid\tkind\troute\tchecker\tc\tfragment\tclass\treason\n")
         for row in rows:
             if row["fragment"]:
                 row["class"] = klass_of(row["checker"], row["c"])
                 fragment += 1
             counts[row["class"]] = counts.get(row["class"], 0) + 1
+            reason = open_reason(row) if row["class"] == "open" else ""
+            if row["class"] == "open":
+                open_lines.append(
+                    f"unresolved {row['source']} {row['profile']} {row['id']} "
+                    f"{row['kind']} {reason}"
+                )
             fh.write(
                 f"{row['source']}\t{row['profile']}\t{row['id']}\t{row['kind']}\t"
                 f"{row['route']}\t{row['checker']}\t{row['c']}\t"
-                f"{int(row['fragment'])}\t{row['class']}\n"
+                f"{int(row['fragment'])}\t{row['class']}\t{reason}\n"
             )
+    (WORK / "unresolved.tsv").write_text(
+        "source\tprofile\tid\tkind\treason\n" + "".join(
+            line.replace("unresolved ", "").replace(" ", "\t", 4) + "\n"
+            for line in open_lines
+        )
+    )
     decided = counts["agree"] + counts["disagree"]
     lines = [
         f"phase2-files {len(sources)}",
@@ -991,12 +1071,70 @@ def run_phase2() -> tuple[dict, list[str]]:
         f"phase2-open {counts['open']}",
         f"phase2-decided {decided}",
         f"phase2-decided-fraction {(decided / fragment) if fragment else 0:.4f}",
+        *open_lines,
     ]
     return {
         "disagree": counts["disagree"],
         "fraction": (decided / fragment) if fragment else 0.0,
         "queries": len(rows),
     }, lines
+
+
+def run_budgets() -> tuple[bool, list[str]]:
+    fam = (
+        "(PrimeCtxCons (Pi (idx 0) (Sort (LevelConst 0))) "
+        "(PrimeCtxCons (Sort (LevelConst 0)) PrimeCtxNil))"
+    )
+    ctx = (
+        "(Cons (Pi (idx 0) (Sort (LevelConst 0))) "
+        "(Cons (Sort (LevelConst 0)) Nil))"
+    )
+    families = (
+        ("SubtypeCodomain", "(Pi (idx 1) (Sort (LevelConst 1)))"),
+        ("SubtypeDomain", "(Pi (Sort (LevelConst 1)) (Sort (LevelConst 0)))"),
+    )
+    c_lines = []
+    k_lines = [f"!(import! &self {CHECKER})"]
+    labels = []
+    for name, expected in families:
+        for budget in (1, 8, 64, 256):
+            label = f"{name}-{budget}"
+            labels.append((name, budget, label))
+            c_lines.append(
+                f"!(B {label} (type:check (PrimeScoped {fam} (idx 0)) {expected} {budget}))"
+            )
+            k_lines.append(
+                f"!(B {label} (tc:check {budget} none LNil {ctx} Nil (idx 0) "
+                f"{expected} Miss Open))"
+            )
+    folder = SCRATCH / "budget"
+    folder.mkdir(parents=True, exist_ok=True)
+    c_path = folder / "kernel.metta"
+    k_path = folder / "checker.metta"
+    c_path.write_text("\n".join(c_lines) + "\n")
+    k_path.write_text("\n".join(k_lines) + "\n")
+    _, cout = run_cetta(c_path, 120)
+    _, kout = run_cetta(k_path, 120)
+    cmap = labeled(cout, "B")
+    kmap = labeled(kout, "B")
+    lines = []
+    ok = True
+    seen = {}
+    for name, budget, label in labels:
+        sea = as_c(cmap.get(label, ""))
+        chk = as_checker(kmap.get(label, ""))
+        if chk != sea:
+            ok = False
+        prev = seen.get(name)
+        if prev and prev in {"Accepted", "Refuted"} and chk in {"Accepted", "Refuted"} and prev != chk:
+            ok = False
+            lines.append(f"budget-flip {name} {prev} {chk}")
+        if chk in {"Accepted", "Refuted"}:
+            seen[name] = chk
+        lines.append(f"budget {name} {budget} checker={chk} kernel={sea}")
+    lines.append(f"budget {'green' if ok else 'red'}")
+    (WORK / "budget.tsv").write_text("\n".join(lines) + "\n")
+    return ok, lines
 
 
 def main() -> int:
@@ -1097,9 +1235,11 @@ def main() -> int:
     faults_ok, fault_lines = run_faults(focused_out)
     kernel_ok, kernel_lines = run_kernel_mutation()
     phase2_status, phase2_lines = run_phase2()
+    budget_ok, budget_lines = run_budgets()
     summary = "\n".join([
         f"binary {sha256(CETTA)}",
-        f"specification {sha256(SPEC)}",
+        f"specification {theory_hash()}",
+        f"specification-relation {sha256(SPEC)}",
         f"checker {sha256(CHECKER)}",
         f"A1 {a1_note}",
         f"focused {fnote} exit {code}",
@@ -1114,6 +1254,7 @@ def main() -> int:
         f"agreement-among-decided {(counts['agree'] / decided) if decided else 0:.4f}",
         f"ownership-outside {len(bad.splitlines()) if bad else 0}",
         *phase2_lines,
+        *budget_lines,
         *gen_lines,
         *stab_lines,
         *fault_lines,
@@ -1128,6 +1269,7 @@ def main() -> int:
             and phase2_status["disagree"] == 0
             and phase2_status["queries"] > 0
             and phase2_status["fraction"] >= 0.95
+            and budget_ok
         ) else "no"),
     ])
     print(summary)
@@ -1142,6 +1284,7 @@ def main() -> int:
         and phase2_status["disagree"] == 0
         and phase2_status["queries"] > 0
         and phase2_status["fraction"] >= 0.95
+        and budget_ok
     )
     return 0 if gates else 1
 

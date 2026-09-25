@@ -9,12 +9,12 @@ MUTATIONS = {
         """        if (reason_out) *reason_out = \"expected-formed-type\";
         return CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS;
     }
-    if (sort_out) *sort_out = inferred.type;
+    if (sort_out) *sort_out = sort;
     return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;""",
         """        if (reason_out) *reason_out = \"expected-formed-type\";
         return CETTA_PRIME_REGULAR_KERNEL_REFUTED;
     }
-    if (sort_out) *sort_out = inferred.type;
+    if (sort_out) *sort_out = sort;
     return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;""",
     ),
     "universe-synthesis-refutes": (
@@ -41,17 +41,27 @@ MUTATIONS = {
     }
     if (regular_expr(term, \"Lam\", 2u))""",
     ),
+    "domain-mismatch-refutes": (
+        """                 regular_universes_discriminate(
+                     arena, written.term, domain.term, budget)))
+                return CETTA_PRIME_REGULAR_KERNEL_REFUTED;
+            return CETTA_PRIME_REGULAR_KERNEL_UNDECIDED;""",
+        """                 regular_universes_discriminate(
+                     arena, written.term, domain.term, budget)))
+                return CETTA_PRIME_REGULAR_KERNEL_REFUTED;
+            return CETTA_PRIME_REGULAR_KERNEL_REFUTED;""",
+    ),
     "refl-of-type-refutes": (
         """        if (reflected.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
             return reflected;
-        /* A type of a universe lies in every larger universe too, so a""",
+        /* A term of a type that is not rigid is also a term of the types""",
         """        if (reflected.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
             return reflected;
         if (reflected.type_is_sort)
             return regular_infer_result(
                 CETTA_PRIME_REGULAR_KERNEL_REFUTED, NULL, false,
                 \"tower-reflexivity-refuted\");
-        /* A type of a universe lies in every larger universe too, so a""",
+        /* A term of a type that is not rigid is also a term of the types""",
     ),
 }
 

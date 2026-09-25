@@ -6,6 +6,7 @@
 ; three seed axioms; the ladder's remaining set axioms are declared here as
 ; axioms, as they are in the ladder's ambient theory.
 !(import! &self pf)
+!(import! &self ../../../lib/prime/curriculum.metta)
 !(bind! &thy (new-space))
 !(set:define &thy truth prop (= truth (all prop (lam p (imp p p)))))
 !(set:define &thy falsum prop (= falsum (all prop (lam p p))))

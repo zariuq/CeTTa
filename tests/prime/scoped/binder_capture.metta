@@ -4,5 +4,7 @@
 !(((lam x (lam w x)) y) z)
 !(((lam x (lam x x)) y) z)
 !((lam x (lam y x)) y)
+; Substitution does not enter a quotation, and a quotation is sealed: (quote x)
+; is the literal name x even under the binder x.
 !((lam x (quote (lam y x))) y)
 !((lam x (quote x)) y)

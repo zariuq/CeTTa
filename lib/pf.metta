@@ -45,19 +45,18 @@
          (let $verbs (pf:verbs) (pf:member $h $verbs))
          False)))
 
-; A list is walked as syntax. The tail of a term such as (mapf (lam y b) nil)
-; is the list ((lam y b) nil), which has the shape of an application, and a
-; deconstructor forces a computation to its head; so every tail is passed
-; quoted and opened by the walker.
-(= (pf:expand-list $t) (pf:expand-tail (quote $t)))
-(= (pf:expand-tail $q)
-   (let (quote $t) $q
-     (if (== $t ()) ()
-         (let $h (car-atom $t)
-           (let $rest (cdr-atom $t)
-             (let $eh (pf:expand $h)
-               (let $et (pf:expand-tail (quote $rest))
-                 (cons-atom $eh $et))))))))
+; A list is walked as syntax: the walker's parameter is Data, so the tail of a
+; term such as (mapf (lam y b) nil), the list ((lam y b) nil), stays held
+; through car-atom and cdr-atom and is never run as an application.
+(: pf:expand-tail (-> (Data Atom) (Data Atom)))
+(= (pf:expand-list $t) (pf:expand-tail $t))
+(= (pf:expand-tail $t)
+   (if (== $t ()) ()
+       (let $h (car-atom $t)
+         (let $rest (cdr-atom $t)
+           (let $eh (pf:expand $h)
+             (let $et (pf:expand-tail $rest)
+               (cons-atom $eh $et)))))))
 
 (= (pf:expand $t)
    (if (== (get-metatype $t) Expression)
@@ -118,16 +117,16 @@
              (let $rest (cdr-atom $rows) (pf:find-carrier $A $rest))))))
 
 ; substitute the symbol s by r in t, respecting lam binders of the same name;
-; t is walked as syntax, its tails passed quoted
-(= (pf:subst-list $s $r $t) (pf:subst-tail $s $r (quote $t)))
-(= (pf:subst-tail $s $r $q)
-   (let (quote $t) $q
-     (if (== $t ()) ()
-         (let $h (car-atom $t)
-           (let $rest (cdr-atom $t)
-             (let $sh (pf:subst $s $r $h)
-               (let $st (pf:subst-tail $s $r (quote $rest))
-                 (cons-atom $sh $st))))))))
+; t is walked as syntax through a Data parameter
+(: pf:subst-tail (-> Atom Atom (Data Atom) (Data Atom)))
+(= (pf:subst-list $s $r $t) (pf:subst-tail $s $r $t))
+(= (pf:subst-tail $s $r $t)
+   (if (== $t ()) ()
+       (let $h (car-atom $t)
+         (let $rest (cdr-atom $t)
+           (let $sh (pf:subst $s $r $h)
+             (let $st (pf:subst-tail $s $r $rest)
+               (cons-atom $sh $st)))))))
 
 (= (pf:subst $s $r $t)
    (if (== $t $s) $r

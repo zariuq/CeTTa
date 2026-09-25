@@ -95,6 +95,7 @@ def main() -> int:
     required = {
         "OpenExpected", "FormNat", "SynthZ", "CheckZ", "RejectTruth", "RefineNat",
         "MayOnly", "MustChoose", "ConvertBinders", "DelayedCounterexample",
+        "SubtypeCodomain", "SubtypeDomain",
     }
     errors = validate(groups)
     if set(groups) != required:

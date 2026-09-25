@@ -70,6 +70,7 @@ typedef enum {
     CETTA_INTERNAL_TAG_PRIME_LEXICAL_SLOT = 3,
     CETTA_INTERNAL_TAG_PRIME_LEVEL_PARAMETER = 4,
     CETTA_INTERNAL_TAG_PETTA_OPEN_CONS = 5,
+    CETTA_INTERNAL_TAG_PRIME_HELD = 6,
 } CettaInternalTag;
 
 #define ATOM_FLAG_HAS_VARS 0x01u
@@ -604,6 +605,19 @@ Atom *atom_state(Arena *a, StateCell *cell);
 Atom *atom_capture(Arena *a, CaptureClosure *closure);
 Atom *atom_foreign(Arena *a, CettaForeignValue *value);
 Atom *atom_internal_tag(Arena *a, CettaInternalTag tag);
+
+/* A held value: syntax that a Data-typed position received as written.  The
+   evaluator treats it as a value, syntax observers read its payload and
+   return held fragments, explicit evaluation runs it, and it prints as its
+   payload.  The representation is CETTA_INTERNAL_TAG_PRIME_HELD applied to
+   the payload; wrapping a held value again is the identity, since a value
+   that already has a Data type is passed as it is. */
+bool atom_prime_held_is(const Atom *atom);
+Atom *atom_prime_held_payload(Atom *atom);
+Atom *atom_prime_held_wrap(Arena *a, Atom *atom);
+/* The syntax a value holds, at every depth: held wrappers removed.  For a
+   position that takes syntax as such, a held value is that syntax. */
+Atom *atom_prime_held_strip(Arena *a, Atom *atom);
 Atom *atom_petta_prolog_compound(Arena *a, Atom *body);
 bool atom_petta_prolog_compound_body(Atom *atom, Atom **body);
 bool atom_prolog_compound_body(Atom *atom, Atom **body);

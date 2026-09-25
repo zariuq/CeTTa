@@ -3,6 +3,7 @@
 ; naturals are inductive; the connectives are definitions; the ladder's
 ; negative controls are refusals here.
 !(import! &self pf)
+!(import! &self ../../../lib/prime/curriculum.metta)
 !(bind! &thy (new-space))
 !(set:inductive &thy bool (u 0) (: true bool) (: false bool))
 !(set:inductive &thy nat (u 0) (: zero nat) (: succ (-> nat nat)))

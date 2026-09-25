@@ -112,3 +112,23 @@
    (BudgetObservation DelayedCounterexample 2000 $result))
 !(let $result (type:must (delayed-answer) Nat 20000)
    (BudgetObservation DelayedCounterexample 20000 $result))
+
+; Cumulative subtyping spends the same producer budget: a family into Sort 0
+; checked at the family type into Sort 1, and at a function type over another
+; domain, stay unsettled until the budget suffices, then settle once.
+!(let $result (type:check (PrimeScoped (PrimeCtxCons (Pi (idx 0) (Sort (LevelConst 0))) (PrimeCtxCons (Sort (LevelConst 0)) PrimeCtxNil)) (idx 0)) (Pi (idx 1) (Sort (LevelConst 1))) 1)
+   (BudgetObservation SubtypeCodomain 1 $result))
+!(let $result (type:check (PrimeScoped (PrimeCtxCons (Pi (idx 0) (Sort (LevelConst 0))) (PrimeCtxCons (Sort (LevelConst 0)) PrimeCtxNil)) (idx 0)) (Pi (idx 1) (Sort (LevelConst 1))) 8)
+   (BudgetObservation SubtypeCodomain 8 $result))
+!(let $result (type:check (PrimeScoped (PrimeCtxCons (Pi (idx 0) (Sort (LevelConst 0))) (PrimeCtxCons (Sort (LevelConst 0)) PrimeCtxNil)) (idx 0)) (Pi (idx 1) (Sort (LevelConst 1))) 64)
+   (BudgetObservation SubtypeCodomain 64 $result))
+!(let $result (type:check (PrimeScoped (PrimeCtxCons (Pi (idx 0) (Sort (LevelConst 0))) (PrimeCtxCons (Sort (LevelConst 0)) PrimeCtxNil)) (idx 0)) (Pi (idx 1) (Sort (LevelConst 1))) 256)
+   (BudgetObservation SubtypeCodomain 256 $result))
+!(let $result (type:check (PrimeScoped (PrimeCtxCons (Pi (idx 0) (Sort (LevelConst 0))) (PrimeCtxCons (Sort (LevelConst 0)) PrimeCtxNil)) (idx 0)) (Pi (Sort (LevelConst 1)) (Sort (LevelConst 0))) 1)
+   (BudgetObservation SubtypeDomain 1 $result))
+!(let $result (type:check (PrimeScoped (PrimeCtxCons (Pi (idx 0) (Sort (LevelConst 0))) (PrimeCtxCons (Sort (LevelConst 0)) PrimeCtxNil)) (idx 0)) (Pi (Sort (LevelConst 1)) (Sort (LevelConst 0))) 8)
+   (BudgetObservation SubtypeDomain 8 $result))
+!(let $result (type:check (PrimeScoped (PrimeCtxCons (Pi (idx 0) (Sort (LevelConst 0))) (PrimeCtxCons (Sort (LevelConst 0)) PrimeCtxNil)) (idx 0)) (Pi (Sort (LevelConst 1)) (Sort (LevelConst 0))) 64)
+   (BudgetObservation SubtypeDomain 64 $result))
+!(let $result (type:check (PrimeScoped (PrimeCtxCons (Pi (idx 0) (Sort (LevelConst 0))) (PrimeCtxCons (Sort (LevelConst 0)) PrimeCtxNil)) (idx 0)) (Pi (Sort (LevelConst 1)) (Sort (LevelConst 0))) 256)
+   (BudgetObservation SubtypeDomain 256 $result))
