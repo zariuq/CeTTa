@@ -95,7 +95,6 @@
     (operator tptp-compact:disjuncts 2)
                 (operator tptp-compact:embedded 3)
     (operator tptp-compact:expression 1)
-    (operator tptp-compact:extend 2)
     (operator tptp-compact:file 2)
     (operator tptp-compact:file-name 1)
     (operator tptp-compact:fixed 4)
@@ -106,6 +105,8 @@
         (operator tptp-compact:kind 1)
     (operator tptp-compact:kind-after 2)
     (operator tptp-compact:kind-of 1)
+    (operator tptp-compact:left-chain 4)
+    (operator tptp-compact:left-chain-at 5)
     (operator tptp-compact:let 4)
     (operator tptp-compact:list-value 1)
         (operator tptp-compact:map 2)
@@ -175,11 +176,23 @@
       (head (metta-equation (tptp-compact:append (LCons ?item ?rest) ?tail)
                             (LCons ?item (tptp-compact:append ?rest ?tail))))
       (body))
-    ; (head a b) and c give (head a b c).
-    (rule extend
-      (head (metta-equation (tptp-compact:extend ?expression ?item)
+    ; A left-nested chain ((x1 o x2) o ...) o xn, whose value is the value of
+    ; its first link followed by the later operands: the chain is walked down
+    ; its left spine once and the later operands gathered in order, so a chain
+    ; of n operands takes n steps.  (head a b) followed by c d is (head a b c d).
+    (rule left-chain
+      (head (metta-equation (tptp-compact:left-chain ?policy ?link ?chain ?later)
+                            (tptp-compact:left-chain-at ?policy ?link
+                              (langdef:ground-equal (tptp-compact:kind ?chain) ?link) ?chain ?later)))
+      (body))
+    (rule left-chain-link
+      (head (metta-equation (tptp-compact:left-chain-at ?policy ?link LangDef:SameValue (bnf ?name ?chain ?operand) ?later)
+                            (tptp-compact:left-chain ?policy ?link ?chain (LCons (tptp-compact:v ?policy ?operand) ?later))))
+      (body))
+    (rule left-chain-first
+      (head (metta-equation (tptp-compact:left-chain-at ?policy ?link LangDef:DifferentValue ?first ?later)
                             (tptp-compact:expression
-                              (tptp-compact:append (langdef:expression->list ?expression) (LCons ?item LNil)))))
+                              (tptp-compact:append (langdef:expression->list (tptp-compact:v ?policy ?first)) ?later))))
       (body))
     ; The head applied to the compact values of its argument list.
     (rule apply
@@ -387,9 +400,9 @@
     ; ---------------------------------------------------------------- FOF
     (rule c-fof_binary_nonassoc (head (metta-equation (tptp-compact:v ?policy (bnf fof_binary_nonassoc ?a ?c ?b)) (tptp-compact:operator ?policy ?c ?a ?b))) (body))
     (rule c-fof_or_formula/0 (head (metta-equation (tptp-compact:v ?policy (bnf fof_or_formula/0 ?a ?b)) (tptp-compact:fixed ∨ ?policy ?a ?b))) (body))
-    (rule c-fof_or_formula/1 (head (metta-equation (tptp-compact:v ?policy (bnf fof_or_formula/1 ?chain ?b)) (tptp-compact:extend (tptp-compact:v ?policy ?chain) (tptp-compact:v ?policy ?b)))) (body))
+    (rule c-fof_or_formula/1 (head (metta-equation (tptp-compact:v ?policy (bnf fof_or_formula/1 ?chain ?b)) (tptp-compact:left-chain ?policy fof_or_formula/1 ?chain (LCons (tptp-compact:v ?policy ?b) LNil)))) (body))
     (rule c-fof_and_formula/0 (head (metta-equation (tptp-compact:v ?policy (bnf fof_and_formula/0 ?a ?b)) (tptp-compact:fixed ∧ ?policy ?a ?b))) (body))
-    (rule c-fof_and_formula/1 (head (metta-equation (tptp-compact:v ?policy (bnf fof_and_formula/1 ?chain ?b)) (tptp-compact:extend (tptp-compact:v ?policy ?chain) (tptp-compact:v ?policy ?b)))) (body))
+    (rule c-fof_and_formula/1 (head (metta-equation (tptp-compact:v ?policy (bnf fof_and_formula/1 ?chain ?b)) (tptp-compact:left-chain ?policy fof_and_formula/1 ?chain (LCons (tptp-compact:v ?policy ?b) LNil)))) (body))
     (rule c-fof_unary_formula (head (metta-equation (tptp-compact:v ?policy (bnf fof_unary_formula ?c ?f)) (tptp-compact:unary ?policy ?c ?f))) (body))
     (rule c-fof_infix_unary (head (metta-equation (tptp-compact:v ?policy (bnf fof_infix_unary ?a ?c ?b)) (tptp-compact:operator ?policy ?c ?a ?b))) (body))
     (rule c-fof_unitary_formula (head (metta-equation (tptp-compact:v ?policy (bnf fof_unitary_formula ?f)) (tptp-compact:v ?policy ?f))) (body))
@@ -407,9 +420,9 @@
     ; ---------------------------------------------------------------- TFF
     (rule c-tff_binary_nonassoc (head (metta-equation (tptp-compact:v ?policy (bnf tff_binary_nonassoc ?a ?c ?b)) (tptp-compact:operator ?policy ?c ?a ?b))) (body))
     (rule c-tff_or_formula/0 (head (metta-equation (tptp-compact:v ?policy (bnf tff_or_formula/0 ?a ?b)) (tptp-compact:fixed ∨ ?policy ?a ?b))) (body))
-    (rule c-tff_or_formula/1 (head (metta-equation (tptp-compact:v ?policy (bnf tff_or_formula/1 ?chain ?b)) (tptp-compact:extend (tptp-compact:v ?policy ?chain) (tptp-compact:v ?policy ?b)))) (body))
+    (rule c-tff_or_formula/1 (head (metta-equation (tptp-compact:v ?policy (bnf tff_or_formula/1 ?chain ?b)) (tptp-compact:left-chain ?policy tff_or_formula/1 ?chain (LCons (tptp-compact:v ?policy ?b) LNil)))) (body))
     (rule c-tff_and_formula/0 (head (metta-equation (tptp-compact:v ?policy (bnf tff_and_formula/0 ?a ?b)) (tptp-compact:fixed ∧ ?policy ?a ?b))) (body))
-    (rule c-tff_and_formula/1 (head (metta-equation (tptp-compact:v ?policy (bnf tff_and_formula/1 ?chain ?b)) (tptp-compact:extend (tptp-compact:v ?policy ?chain) (tptp-compact:v ?policy ?b)))) (body))
+    (rule c-tff_and_formula/1 (head (metta-equation (tptp-compact:v ?policy (bnf tff_and_formula/1 ?chain ?b)) (tptp-compact:left-chain ?policy tff_and_formula/1 ?chain (LCons (tptp-compact:v ?policy ?b) LNil)))) (body))
     (rule c-tff_unitary_formula (head (metta-equation (tptp-compact:v ?policy (bnf tff_unitary_formula ?f)) (tptp-compact:v ?policy ?f))) (body))
     (rule c-tff_quantified_formula (head (metta-equation (tptp-compact:v ?policy (bnf tff_quantified_formula ?q ?vs ?f)) (tptp-compact:quantify ?policy ?q ?vs ?f))) (body))
     (rule c-tff_typed_variable (head (metta-equation (tptp-compact:v ?policy (bnf tff_typed_variable ?x ?t)) (tptp-compact:fixed : ?policy ?x ?t))) (body))
@@ -441,7 +454,7 @@
     (rule c-tff_atomic_type/4 (head (metta-equation (tptp-compact:v ?policy (bnf tff_atomic_type/4 ?t)) (tptp-compact:v ?policy ?t))) (body))
     (rule c-tff_mapping_type (head (metta-equation (tptp-compact:v ?policy (bnf tff_mapping_type ?a ?b)) (tptp-compact:fixed ⇒ ?policy ?a ?b))) (body))
     (rule c-tff_xprod_type/0 (head (metta-equation (tptp-compact:v ?policy (bnf tff_xprod_type/0 ?a ?b)) (tptp-compact:fixed × ?policy ?a ?b))) (body))
-    (rule c-tff_xprod_type/1 (head (metta-equation (tptp-compact:v ?policy (bnf tff_xprod_type/1 ?chain ?b)) (tptp-compact:extend (tptp-compact:v ?policy ?chain) (tptp-compact:v ?policy ?b)))) (body))
+    (rule c-tff_xprod_type/1 (head (metta-equation (tptp-compact:v ?policy (bnf tff_xprod_type/1 ?chain ?b)) (tptp-compact:left-chain ?policy tff_xprod_type/1 ?chain (LCons (tptp-compact:v ?policy ?b) LNil)))) (body))
     (rule c-txf_tuple_type (head (metta-equation (tptp-compact:v ?policy (bnf txf_tuple_type ?types)) (tptp-compact:v ?policy ?types))) (body))
     (rule c-tff_subtype (head (metta-equation (tptp-compact:v ?policy (bnf tff_subtype ?a ?c ?b)) (tptp-compact:operator ?policy ?c ?a ?b))) (body))
     (rule c-txf_definition (head (metta-equation (tptp-compact:v ?policy (bnf txf_definition ?a ?c ?b)) (tptp-compact:operator ?policy ?c ?a ?b))) (body))
@@ -460,15 +473,15 @@
     ; ---------------------------------------------------------------- THF
     (rule c-thf_binary_nonassoc (head (metta-equation (tptp-compact:v ?policy (bnf thf_binary_nonassoc ?a ?c ?b)) (tptp-compact:operator ?policy ?c ?a ?b))) (body))
     (rule c-thf_or_formula/0 (head (metta-equation (tptp-compact:v ?policy (bnf thf_or_formula/0 ?a ?b)) (tptp-compact:fixed ∨ ?policy ?a ?b))) (body))
-    (rule c-thf_or_formula/1 (head (metta-equation (tptp-compact:v ?policy (bnf thf_or_formula/1 ?chain ?b)) (tptp-compact:extend (tptp-compact:v ?policy ?chain) (tptp-compact:v ?policy ?b)))) (body))
+    (rule c-thf_or_formula/1 (head (metta-equation (tptp-compact:v ?policy (bnf thf_or_formula/1 ?chain ?b)) (tptp-compact:left-chain ?policy thf_or_formula/1 ?chain (LCons (tptp-compact:v ?policy ?b) LNil)))) (body))
     (rule c-thf_and_formula/0 (head (metta-equation (tptp-compact:v ?policy (bnf thf_and_formula/0 ?a ?b)) (tptp-compact:fixed ∧ ?policy ?a ?b))) (body))
-    (rule c-thf_and_formula/1 (head (metta-equation (tptp-compact:v ?policy (bnf thf_and_formula/1 ?chain ?b)) (tptp-compact:extend (tptp-compact:v ?policy ?chain) (tptp-compact:v ?policy ?b)))) (body))
+    (rule c-thf_and_formula/1 (head (metta-equation (tptp-compact:v ?policy (bnf thf_and_formula/1 ?chain ?b)) (tptp-compact:left-chain ?policy thf_and_formula/1 ?chain (LCons (tptp-compact:v ?policy ?b) LNil)))) (body))
     ; An application in function position extends the application.
     (rule c-thf_apply_formula/0
       (head (metta-equation (tptp-compact:v ?policy (bnf thf_apply_formula/0 ?f ?a))
                             (tptp-compact:expression (tptp-compact:append (tptp-compact:spine ?policy ?f) (LCons (tptp-compact:v ?policy ?a) LNil)))))
       (body))
-    (rule c-thf_apply_formula/1 (head (metta-equation (tptp-compact:v ?policy (bnf thf_apply_formula/1 ?chain ?a)) (tptp-compact:extend (tptp-compact:v ?policy ?chain) (tptp-compact:v ?policy ?a)))) (body))
+    (rule c-thf_apply_formula/1 (head (metta-equation (tptp-compact:v ?policy (bnf thf_apply_formula/1 ?chain ?a)) (tptp-compact:left-chain ?policy thf_apply_formula/1 ?chain (LCons (tptp-compact:v ?policy ?a) LNil)))) (body))
     (rule spine
       (head (metta-equation (tptp-compact:spine ?policy ?f)
                             (tptp-compact:spine-at ?policy (langdef:ground-equal (tptp-compact:kind ?f) thf_unitary_formula) ?f)))
@@ -515,9 +528,9 @@
     (rule c-thf_mapping_type/0 (head (metta-equation (tptp-compact:v ?policy (bnf thf_mapping_type/0 ?a ?b)) (tptp-compact:fixed ⇒ ?policy ?a ?b))) (body))
     (rule c-thf_mapping_type/1 (head (metta-equation (tptp-compact:v ?policy (bnf thf_mapping_type/1 ?a ?b)) (tptp-compact:fixed ⇒ ?policy ?a ?b))) (body))
     (rule c-thf_xprod_type/0 (head (metta-equation (tptp-compact:v ?policy (bnf thf_xprod_type/0 ?a ?b)) (tptp-compact:fixed × ?policy ?a ?b))) (body))
-    (rule c-thf_xprod_type/1 (head (metta-equation (tptp-compact:v ?policy (bnf thf_xprod_type/1 ?chain ?b)) (tptp-compact:extend (tptp-compact:v ?policy ?chain) (tptp-compact:v ?policy ?b)))) (body))
+    (rule c-thf_xprod_type/1 (head (metta-equation (tptp-compact:v ?policy (bnf thf_xprod_type/1 ?chain ?b)) (tptp-compact:left-chain ?policy thf_xprod_type/1 ?chain (LCons (tptp-compact:v ?policy ?b) LNil)))) (body))
     (rule c-thf_union_type/0 (head (metta-equation (tptp-compact:v ?policy (bnf thf_union_type/0 ?a ?b)) (tptp-compact:fixed ⊎ ?policy ?a ?b))) (body))
-    (rule c-thf_union_type/1 (head (metta-equation (tptp-compact:v ?policy (bnf thf_union_type/1 ?chain ?b)) (tptp-compact:extend (tptp-compact:v ?policy ?chain) (tptp-compact:v ?policy ?b)))) (body))
+    (rule c-thf_union_type/1 (head (metta-equation (tptp-compact:v ?policy (bnf thf_union_type/1 ?chain ?b)) (tptp-compact:left-chain ?policy thf_union_type/1 ?chain (LCons (tptp-compact:v ?policy ?b) LNil)))) (body))
     (rule c-thf_subtype (head (metta-equation (tptp-compact:v ?policy (bnf thf_subtype ?a ?c ?b)) (tptp-compact:operator ?policy ?c ?a ?b))) (body))
     (rule c-thf_definition (head (metta-equation (tptp-compact:v ?policy (bnf thf_definition ?a ?c ?b)) (tptp-compact:operator ?policy ?c ?a ?b))) (body))
     (rule c-thf_sequent (head (metta-equation (tptp-compact:v ?policy (bnf thf_sequent ?a ?c ?b)) (tptp-compact:operator ?policy ?c ?a ?b))) (body))

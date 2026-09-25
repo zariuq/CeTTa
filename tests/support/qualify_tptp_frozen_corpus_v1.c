@@ -1,9 +1,14 @@
 #define _POSIX_C_SOURCE 200809L
 
-/* Frozen-path corpus walk of Problems .p files, Axioms .ax files, optional TSTP. */
+/* Frozen-path corpus walk of Problems .p files, Axioms .ax files and
+ * optional TSTP files.  Each input of a file goes through the compact
+ * morphism under the mixed leaf policy and the printer as the read yields it,
+ * and the printed text must read back to the same records.  Every row carries
+ * the time of each stage. */
 #include "native/tptp_official_snapshot_v1.h"
 #include "parser.h"
 #include "symbol.h"
+#include "tests/support/tptp_compact_stages_v1.h"
 
 #include <dirent.h>
 #include <stdio.h>
@@ -18,6 +23,14 @@ typedef struct {
     uint32_t skipped;
     uint32_t files;
     uint32_t cnf, fof, tff, thf, tcf, tpi, other, tstp, ax;
+    uint32_t compacted;
+    uint32_t printed;
+    uint32_t round_trip;
+    uint32_t stage_failures[TPTP_STAGES_ROUND_TRIP_DIFFERS_V1 + 1];
+    double read_s;
+    double compact_s;
+    double print_s;
+    double reread_s;
 } Totals;
 
 typedef struct {
@@ -227,27 +240,62 @@ static void bump_family(Totals *t, const char *fam, int is_ax, int is_tstp) {
         t->other++;
 }
 
+/* The stage columns of a row: the read, then for an accepted file the
+ * outcome and time of each later stage, its record count and printed size. */
+static void print_stages(FILE *tsv, double read_s, const TptpStageCostV1 *stage) {
+    if (!stage) {
+        fprintf(tsv, "\t%.6f\t-\t0\t0\t0\t0\t0\n", read_s);
+        return;
+    }
+    fprintf(tsv, "\t%.6f\t%s\t%.6f\t%.6f\t%.6f\t%zu\t%zu\n", read_s,
+            tptp_stage_result_name_v1(stage->result), stage->compact_s,
+            stage->print_s, stage->reread_s, stage->records,
+            stage->printed_bytes);
+}
+
+static void count_stages(Totals *tot, const TptpStageCostV1 *stage) {
+    tot->compact_s += stage->compact_s;
+    tot->print_s += stage->print_s;
+    tot->reread_s += stage->reread_s;
+    tot->stage_failures[stage->result]++;
+    if (stage->result != TPTP_STAGES_COMPACT_FAILED_V1)
+        tot->compacted++;
+    if (stage->result != TPTP_STAGES_COMPACT_FAILED_V1 &&
+        stage->result != TPTP_STAGES_PRINT_FAILED_V1)
+        tot->printed++;
+    if (stage->result == TPTP_STAGES_OK_V1)
+        tot->round_trip++;
+}
+
 typedef struct {
     int unprojected;
     int unknown;
-    const char *unproj_name;
+    char unproj_name[256];
+    TptpStageRunV1 run;
 } VisitState;
 
+/* An input that is not projected or not known rejects the file; any other
+ * goes through the later stages, and a failed stage stops the stages but not
+ * the read. */
 static bool visit_input(Atom *input, void *user) {
     VisitState *st = (VisitState *)user;
     if (atom_has_unprojected(input)) {
+        const char *name = unprojected_name(input);
         st->unprojected = 1;
-        st->unproj_name = unprojected_name(input);
+        snprintf(st->unproj_name, sizeof(st->unproj_name), "%s",
+                 name ? name : "");
         return false;
     }
     if (atom_has_unknown(input)) {
         st->unknown = 1;
         return false;
     }
+    (void)tptp_stage_run_input_v1(&st->run, input);
     return true;
 }
 
-static int qualify_one(const CettaTptpPreparedReaderV1 *reader, Arena *arena,
+static int qualify_one(const CettaTptpPreparedReaderV1 *reader,
+                       const TptpCompactStagesV1 *stages, Arena *arena,
                        const char *path, const char *fam, int is_ax,
                        int is_tstp, uint64_t work_limit,
                        uint64_t gll_descriptor_limit,
@@ -260,10 +308,13 @@ static int qualify_one(const CettaTptpPreparedReaderV1 *reader, Arena *arena,
     ArenaMark mark;
     int ok;
     VisitState visit;
+    double t0;
+    double read_s;
 
     file = fopen(path, "rb");
     if (!file) {
-        fprintf(tsv, "%s\treject\t0\t%s\tcannot-open\n", path, fam);
+        fprintf(tsv, "%s\treject\t0\t%s\tcannot-open", path, fam);
+        print_stages(tsv, 0.0, NULL);
         tot->rejected++;
         bump_family(tot, fam, is_ax, is_tstp);
         return 0;
@@ -283,24 +334,36 @@ static int qualify_one(const CettaTptpPreparedReaderV1 *reader, Arena *arena,
     text[got] = '\0';
     mark = arena_mark(arena);
     memset(&visit, 0, sizeof(visit));
+    tptp_stage_run_init_v1(&visit.run, reader, stages, arena);
+    t0 = tptp_stages_clock_v1();
     ok = cetta_tptp_prepared_reader_read_text_each_with_work_limit_v1(
         reader, text, got, work_limit, gll_descriptor_limit,
         arena, visit_input, &visit, NULL, error, sizeof(error));
+    read_s = tptp_stages_clock_v1() - t0 -
+             tptp_stage_run_seconds_v1(&visit.run);
+    tot->read_s += read_s;
     if (!ok && !visit.unprojected && !visit.unknown) {
-        fprintf(tsv, "%s\treject\t%ld\t%s\t%s\n", path, size, fam,
+        fprintf(tsv, "%s\treject\t%ld\t%s\t%s", path, size, fam,
                 error[0] ? error : "TPTP:NoParse");
+        print_stages(tsv, read_s, NULL);
         tot->rejected++;
     } else if (visit.unprojected) {
-        fprintf(tsv, "%s\treject\t%ld\t%s\tTPTP:Unprojected%s%s\n", path, size,
-                fam, visit.unproj_name ? " " : "",
-                visit.unproj_name ? visit.unproj_name : "");
+        fprintf(tsv, "%s\treject\t%ld\t%s\tTPTP:Unprojected%s%s", path, size,
+                fam, visit.unproj_name[0] ? " " : "", visit.unproj_name);
+        print_stages(tsv, read_s, NULL);
         tot->rejected++;
         tot->unprojected++;
     } else if (visit.unknown) {
-        fprintf(tsv, "%s\treject\t%ld\t%s\tTPTP:unknown\n", path, size, fam);
+        fprintf(tsv, "%s\treject\t%ld\t%s\tTPTP:unknown", path, size, fam);
+        print_stages(tsv, read_s, NULL);
         tot->rejected++;
     } else {
-        fprintf(tsv, "%s\taccept\t%ld\t%s\t-\n", path, size, fam);
+        const TptpStageCostV1 *stage = &visit.run.cost;
+        fprintf(tsv, "%s\taccept\t%ld\t%s\t%s", path, size, fam,
+                stage->result == TPTP_STAGES_OK_V1 || !stage->error[0]
+                    ? "-" : stage->error);
+        print_stages(tsv, read_s, stage);
+        count_stages(tot, stage);
         tot->accepted++;
     }
     bump_family(tot, fam, is_ax, is_tstp);
@@ -357,7 +420,8 @@ static int preflight_directory(const char *kind, const char *path) {
     return 1;
 }
 
-static void walk_dir(const CettaTptpPreparedReaderV1 *reader, Arena *arena,
+static void walk_dir(const CettaTptpPreparedReaderV1 *reader,
+                     const TptpCompactStagesV1 *stages, Arena *arena,
                      const char *dir, const char *suffix, int is_ax,
                      const PathSet *resume, uint64_t work_limit,
                      uint64_t gll_descriptor_limit,
@@ -375,15 +439,15 @@ static void walk_dir(const CettaTptpPreparedReaderV1 *reader, Arena *arena,
         if (stat(path, &st) != 0)
             continue;
         if (S_ISDIR(st.st_mode))
-            walk_dir(reader, arena, path, suffix, is_ax, resume, work_limit,
-                     gll_descriptor_limit, tot, tsv);
+            walk_dir(reader, stages, arena, path, suffix, is_ax, resume,
+                     work_limit, gll_descriptor_limit, tot, tsv);
         else if (S_ISREG(st.st_mode) && ends_with(ent->d_name, suffix)) {
             if (path_set_contains(resume, path)) {
                 tot->skipped++;
                 continue;
             }
-            qualify_one(reader, arena, path, family_of(path), is_ax, 0,
-                        work_limit, gll_descriptor_limit, tot, tsv);
+            qualify_one(reader, stages, arena, path, family_of(path), is_ax,
+                        0, work_limit, gll_descriptor_limit, tot, tsv);
         }
     }
     closedir(d);
@@ -393,6 +457,7 @@ int main(int argc, char **argv) {
     SymbolTable symbols;
     Arena arena;
     CettaTptpPreparedReaderV1 reader;
+    TptpCompactStagesV1 stages;
     Totals tot;
     PathSet resume;
     char error[512] = {0};
@@ -489,7 +554,9 @@ int main(int argc, char **argv) {
     cetta_tptp_prepared_reader_init_v1(&reader);
     if (!cetta_tptp_prepared_reader_load_v1(
             &reader, snap_path, CETTA_TPTP_OFFICIAL_SYNTAXBNF_DIGEST_V1,
-            error, sizeof(error))) {
+            error, sizeof(error)) ||
+        !tptp_compact_stages_load_v1(&stages, snap_path, error,
+                                     sizeof(error))) {
         fprintf(stderr, "load failed: %s\n", error);
         cetta_tptp_prepared_reader_free_v1(&reader);
         arena_free(&arena);
@@ -500,18 +567,19 @@ int main(int argc, char **argv) {
     }
     tsv = stdout;
     setvbuf(tsv, NULL, _IOLBF, 0);
-    fprintf(tsv, "path\tstatus\tbytes\tfamily\twitness\n");
-    walk_dir(&reader, &arena, argv[2], ".p", 0, &resume, work_limit,
+    fprintf(tsv, "path\tstatus\tbytes\tfamily\twitness\tread_s\tstages\t"
+                 "compact_s\tprint_s\treread_s\trecords\tprinted_bytes\n");
+    walk_dir(&reader, &stages, &arena, argv[2], ".p", 0, &resume, work_limit,
              gll_descriptor_limit, &tot, tsv);
-    walk_dir(&reader, &arena, argv[3], ".ax", 1, &resume, work_limit,
+    walk_dir(&reader, &stages, &arena, argv[3], ".ax", 1, &resume, work_limit,
              gll_descriptor_limit, &tot, tsv);
     for (i = extras_at; i < argc; i++) {
         if (path_set_contains(&resume, argv[i])) {
             tot.skipped++;
             continue;
         }
-        qualify_one(&reader, &arena, argv[i], "tstp", 0, 1, work_limit,
-                    gll_descriptor_limit, &tot, tsv);
+        qualify_one(&reader, &stages, &arena, argv[i], "tstp", 0, 1,
+                    work_limit, gll_descriptor_limit, &tot, tsv);
     }
     fprintf(stderr,
             "(TptpCorpusQualificationV1 accepted=%u rejected=%u unprojected=%u "
@@ -520,6 +588,18 @@ int main(int argc, char **argv) {
             tot.accepted, tot.rejected, tot.unprojected, tot.skipped, tot.cnf,
             tot.fof, tot.tff, tot.thf, tot.tcf, tot.tpi, tot.ax, tot.tstp,
             tot.other);
+    fprintf(stderr,
+            "(TptpCorpusStagesV1 compacted=%u printed=%u round-trip=%u "
+            "compact-failed=%u print-failed=%u reread-failed=%u "
+            "round-trip-differs=%u read_s=%.3f compact_s=%.3f print_s=%.3f "
+            "reread_s=%.3f)\n",
+            tot.compacted, tot.printed, tot.round_trip,
+            tot.stage_failures[TPTP_STAGES_COMPACT_FAILED_V1],
+            tot.stage_failures[TPTP_STAGES_PRINT_FAILED_V1],
+            tot.stage_failures[TPTP_STAGES_REREAD_FAILED_V1],
+            tot.stage_failures[TPTP_STAGES_ROUND_TRIP_DIFFERS_V1],
+            tot.read_s, tot.compact_s, tot.print_s, tot.reread_s);
+    tptp_compact_stages_free_v1(&stages);
     cetta_tptp_prepared_reader_free_v1(&reader);
     arena_free(&arena);
     symbol_table_free(&symbols);

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
-if (( $# != 4 && $# != 5 )); then
-    echo 'usage: generate_plain_bnf_typed_discovery_v1.sh COMPILER LEAN_PROJECT NATIVE_TYPES_OUTPUT PROGRAM_OUTPUT [ADMISSION_LANGUAGE]' >&2
+if (( $# < 4 || $# > 6 )); then
+    echo 'usage: generate_plain_bnf_typed_discovery_v1.sh COMPILER LEAN_PROJECT NATIVE_TYPES_OUTPUT PROGRAM_OUTPUT [ADMISSION_LANGUAGE [TARGET]]' >&2
+    echo '  TARGET is the dialect the program is spelled in: petta (default) or he' >&2
     exit 2
 fi
 typed_compiler=$(realpath "$1")
@@ -13,11 +14,18 @@ typed_root=$(cd -- "$(dirname -- "$0")/../.." && pwd -P)
 cd "$typed_root"
 typed_language=${5:-langdef/bnf/plain_bnf_grammar_v1.metta}
 test -f "$typed_language"
+typed_target=${6:-petta}
+case "$typed_target" in
+    petta|he) ;;
+    *) echo "TARGET must be petta or he, not '$typed_target'" >&2; exit 2 ;;
+esac
+# The ground relations are realized once per target dialect; the source
+# relations, the analysis and the discovery are shared.
 typed_sources=(
     experiments/gslt2parse_foundation/presentations/shared/ground_relations_v1.metta
-    experiments/gslt2parse_foundation/presentations/shared/cetta_petta_ground_relations_v1.metta
+    "experiments/gslt2parse_foundation/presentations/shared/cetta_${typed_target}_ground_relations_v1.metta"
     experiments/gslt2parse_foundation/presentations/shared/ground_integer_relations_v1.metta
-    experiments/gslt2parse_foundation/presentations/shared/cetta_petta_ground_integer_relations_v1.metta
+    "experiments/gslt2parse_foundation/presentations/shared/cetta_${typed_target}_ground_integer_relations_v1.metta"
     langdef/bnf/plain_bnf_semantic_admission_v1.metta
     langdef/bnf/plain_bnf_graph_analysis_v1.metta
     langdef/bnf/plain_bnf_graph_index_v1.metta
@@ -68,7 +76,7 @@ typed_staged_output=$(mktemp "$typed_output.new.XXXXXX")
 (cd "$typed_lean" && lake env lean --run \
     "$typed_root/tests/langdef/bnf/integer_provider_native_type_export_v1.lean" \
     "${typed_absolute_sources[@]}") > "$typed_staged_types"
-"$typed_compiler" petta-direct "${typed_args[@]}" \
+"$typed_compiler" petta-direct --target "$typed_target" "${typed_args[@]}" \
     --native-types "$typed_staged_types" \
     --admission-language "$typed_language" \
     --admission-entry BNFValidateGrammarDiscoveryV1:BnfGrammarInput \

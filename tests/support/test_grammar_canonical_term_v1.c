@@ -33,6 +33,12 @@
  *   V  ::= "?" #opt               an option: the list of at most one
  *   #opt ::= <empty> | I
  *   True ::= <empty>              a name a host reads as a literal is a string
+ *
+ * A second grammar has literal-only alternatives that make one text two
+ * ways; each is then a constructor, so the two derivations are two terms:
+ *   Y  ::= "ab" | "a" "b"         Y/0 and Y/1, both printing ab
+ *   Z  ::= "x" | "x"              Z/0 and Z/1
+ *   O2 ::= "+" | "let"            no collision: still text
  */
 
 typedef struct {
@@ -225,6 +231,23 @@ static void grammar_init(Grammar *grammar) {
  *   U2  ::= Ua | Ub          one rule two ways
  *   Ub  ::= Uc
  */
+static void literal_grammar_init(Grammar *grammar) {
+    memset(grammar, 0, sizeof(*grammar));
+    {
+        CettaGrammarCanonicalSymbolV1 one[] = {fixed("ab")};
+        CettaGrammarCanonicalSymbolV1 two[] = {fixed("a"), fixed("b")};
+        CettaGrammarCanonicalSymbolV1 x[] = {fixed("x")};
+        CettaGrammarCanonicalSymbolV1 plus[] = {fixed("+")};
+        CettaGrammarCanonicalSymbolV1 let[] = {fixed("let")};
+        add(grammar, "Y.0", "Y", AUTHORED, NULL, one, 1u);
+        add(grammar, "Y.1", "Y", AUTHORED, NULL, two, 2u);
+        add(grammar, "Z.0", "Z", AUTHORED, NULL, x, 1u);
+        add(grammar, "Z.1", "Z", AUTHORED, NULL, x, 1u);
+        add(grammar, "O2.0", "O2", AUTHORED, NULL, plus, 1u);
+        add(grammar, "O2.1", "O2", AUTHORED, NULL, let, 1u);
+    }
+}
+
 static void collision_grammar_init(Grammar *grammar) {
     memset(grammar, 0, sizeof(*grammar));
     {
@@ -843,6 +866,42 @@ int main(void) {
         cetta_grammar_canonical_table_free_v1(long_chain);
     }
 
+    {
+        static Grammar literal;
+        CettaGrammarCanonicalTableV1 *literals = NULL;
+        CettaGrammarCanonicalCollisionV1 *collisions = NULL;
+        uint32_t collision_len = 0u;
+        literal_grammar_init(&literal);
+        expect(&counts,
+               cetta_grammar_canonical_table_build_v1(literal.productions, literal.len, &literals,
+                                                      error, sizeof(error)),
+               "the literal grammar is classified");
+        if (!literals)
+            fprintf(stderr, "literal grammar: %s\n", error);
+        if (literals) {
+            expect_term(&counts, literals, &arena, "ab", node(&arena, "Y.0", 0, 2, NULL, 0u), "Y",
+                        "(bnf Y/0)", "one literal spelling ab is its own constructor");
+            expect_term(&counts, literals, &arena, "ab", node(&arena, "Y.1", 0, 2, NULL, 0u), "Y",
+                        "(bnf Y/1)", "two literals spelling ab are another constructor");
+            expect_term(&counts, literals, &arena, "x", node(&arena, "Z.0", 0, 1, NULL, 0u), "Z",
+                        "(bnf Z/0)", "the first of two equal alternatives is named");
+            expect_term(&counts, literals, &arena, "x", node(&arena, "Z.1", 0, 1, NULL, 0u), "Z",
+                        "(bnf Z/1)", "the second of two equal alternatives is named");
+            expect_term(&counts, literals, &arena, "+", node(&arena, "O2.0", 0, 1, NULL, 0u), "O2",
+                        "\"+\"", "a literal-only alternative nothing else spells stays text");
+            expect(&counts,
+                   cetta_grammar_canonical_collisions_v1(literals, &collisions, &collision_len,
+                                                         error, sizeof(error)) &&
+                       has_collision(collisions, collision_len,
+                                     CETTA_GRAMMAR_CANONICAL_LITERAL_COLLISION_V1, "Y", "Y", "Y") &&
+                       has_collision(collisions, collision_len,
+                                     CETTA_GRAMMAR_CANONICAL_LITERAL_COLLISION_V1, "Z", "Z", "Z") &&
+                       collision_len == 2u,
+                   "the resolved literal ambiguities are still reported");
+            free(collisions);
+            cetta_grammar_canonical_table_free_v1(literals);
+        }
+    }
     cetta_grammar_canonical_table_free_v1(table);
     arena_free(&arena);
     symbol_table_free(&symbols);

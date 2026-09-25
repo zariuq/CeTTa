@@ -1,5 +1,7 @@
 #include "str_natives.h"
 
+#include "native_sha256.h"
+
 #include "string_ops.h"
 #include "utf8.h"
 
@@ -543,6 +545,17 @@ static Atom *str_unescape(Arena *a, Atom *const *args, CettaStrRefusal *r) {
     return str_quote(a, args, r, false);
 }
 
+/* The SHA-256 digest of the text's bytes, as 64 lowercase hex digits. */
+static Atom *str_sha256(Arena *a, Atom *const *args, CettaStrRefusal *r) {
+    const char *text;
+    size_t len;
+    char digest[65];
+    if (!str_text(args[0], &text, &len))
+        return str_expects(r, "expected text argument");
+    cetta_native_sha256_hex((const uint8_t *)text, len, digest);
+    return atom_string(a, digest);
+}
+
 static const CettaStrNative str_natives[] = {
     {"byte-length", 1u, 0u, str_byte_length},
     {"byte-slice", 3u, 0u, str_byte_slice},
@@ -573,6 +586,7 @@ static const CettaStrNative str_natives[] = {
     {"set-member?", 2u, 0u, str_set_member},
     {"escape", 2u, 0u, str_escape},
     {"unescape", 2u, 0u, str_unescape},
+    {"sha256", 1u, 0u, str_sha256},
 };
 
 const CettaStrNative *cetta_str_native(const char *name) {

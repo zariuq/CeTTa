@@ -764,11 +764,14 @@ bool cetta_grammar_canonical_table_build_v1(
                  ordinal);
         production->key = symbol_intern_cstr(g_symbols, name);
     }
-    /* A unary alternative is omitted only where it is the one transparent path
-     * from its sort: where two paths meet one rule, token class or literal text
-     * (the grammar is ambiguous there), the sort's unary alternatives are named.
-     * Sorts are settled bottom-up, so a sort whose ambiguity lies below it in
-     * another ambiguous sort keeps its unary alternatives. */
+    /* A unary alternative is omitted, and a literal-only alternative is its
+     * text, only where the sort's other alternatives cannot make the same
+     * value: where two paths from a sort meet one rule, token class or
+     * literal text (the grammar is ambiguous there), every unary and
+     * literal-only alternative of that sort is a constructor named by its
+     * label, so "ab" | "a" "b" reads to two terms that print alike.  Sorts
+     * are settled bottom-up, so a sort whose ambiguity lies below it in
+     * another ambiguous sort keeps its alternatives as they are. */
     if (!gct_build_indices(table))
         goto oom;
     for (;;) {
@@ -845,7 +848,8 @@ bool cetta_grammar_canonical_table_build_v1(
                 }
                 for (q = 0u; q < table->len; q++) {
                     GctProduction *production = &table->productions[q];
-                    if (production->lhs != ambiguous[b] || production->kind != GCT_TRANSPARENT)
+                    if (production->lhs != ambiguous[b] ||
+                        (production->kind != GCT_TRANSPARENT && production->kind != GCT_LITERAL))
                         continue;
                     production->kind = GCT_CONSTRUCTOR;
                     production->actions = calloc(1u, sizeof(*production->actions));
@@ -2273,7 +2277,7 @@ typedef enum {
     GCT_REACH_NONE = 0,
     GCT_REACH_DIRECT = 1,   /* print the term by its own head */
     GCT_REACH_LITERAL = 2,  /* print the terminals of a literal production */
-    GCT_REACH_CONSTANT = 3, /* an empty constructor: prints nothing */
+    GCT_REACH_CONSTANT = 3, /* a constructor of an empty production: prints nothing */
     GCT_REACH_AT = 4        /* print the term at a list symbol */
 } GctReachKind;
 
@@ -2304,7 +2308,7 @@ static GctReach gct_reach_at(const CettaGrammarCanonicalTableV1 *table, SymbolId
         return literal;
     }
     if (production->kind == GCT_CONSTRUCTOR && node && name == production->constructor) {
-        GctReach direct = {production->value_len == 0u ? GCT_REACH_CONSTANT : GCT_REACH_DIRECT,
+        GctReach direct = {production->rhs_len == 0u ? GCT_REACH_CONSTANT : GCT_REACH_DIRECT,
                            production, symbol, false, false};
         return direct;
     }

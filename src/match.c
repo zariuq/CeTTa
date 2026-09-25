@@ -6136,17 +6136,21 @@ void bindings_builder_rollback(BindingsBuilder *bb, uint32_t mark) {
         bb->current.cycle_state = entry->cycle_state;
         restored_derived_nonzero = entry->derived_nonzero;
         restored = true;
-        bindings_prime_set(
-            &bb->current,
-            prime ? &prime->prime_need : NULL,
-            prime ? &prime->branch_state : NULL,
-            prime ? prime->occurrence_token : 0u,
+        /* With no checkpoint and no current extension there is nothing to
+         * restore (bindings_prime_set would find nothing present). */
+        if (prime || bb->current.prime_ext) {
+            bindings_prime_set(
+                &bb->current,
+                prime ? &prime->prime_need : NULL,
+                prime ? &prime->branch_state : NULL,
+                prime ? prime->occurrence_token : 0u,
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-            prime ? &prime->receipt : NULL
+                prime ? &prime->receipt : NULL
 #else
-            NULL
+                NULL
 #endif
-            );
+                );
+        }
         bb->prime_trail_len = entry->prime_state_mark;
     }
     bool frame_values_restored =
@@ -9861,7 +9865,8 @@ bool simple_match(Atom *pattern, Atom *target, Bindings *b, Arena *a) {
         return pattern->sym_id == target->sym_id;
 
     case ATOM_GROUNDED:
-        if (pattern->ground.gkind != target->ground.gkind) return false;
+        if (pattern->ground.gkind != target->ground.gkind)
+            return cetta_he_promoted_numbers_equal(pattern, target);
         switch (pattern->ground.gkind) {
         case GV_INT:    return pattern->ground.ival == target->ground.ival;
         case GV_FLOAT:  return pattern->ground.fval == target->ground.fval;
@@ -9931,7 +9936,7 @@ static bool simple_match_builder_rec(Atom *pattern, Atom *target,
 
     case ATOM_GROUNDED:
         if (pattern->ground.gkind != target->ground.gkind)
-            return false;
+            return cetta_he_promoted_numbers_equal(pattern, target);
         switch (pattern->ground.gkind) {
         case GV_INT:    return pattern->ground.ival == target->ground.ival;
         case GV_FLOAT:  return pattern->ground.fval == target->ground.fval;
@@ -10595,6 +10600,20 @@ static size_t bindings_dereference_limit(const Bindings *bindings) {
     return len > (SIZE_MAX - 2u) / 2u ? SIZE_MAX : len * 2u + 2u;
 }
 
+/* One more step along a variable-only chain.  The bound depends only on the
+ * store in hand, which a pair does not change before its chain ends, so it
+ * is computed when a chain first reaches the cached value (0 at the start
+ * of each pair) rather than for every pair. */
+static inline bool bindings_dereference_step(
+    size_t *dereferences, size_t *limit, const Bindings *current,
+    size_t allowance) {
+    if (++*dereferences <= *limit)
+        return true;
+    size_t bound = bindings_dereference_limit(current);
+    *limit = bound <= SIZE_MAX - allowance ? bound + allowance : SIZE_MAX;
+    return *dereferences <= *limit;
+}
+
 /* Upstream HE treats each nested %Undefined% as an independent wildcard.
    Type matching itself is a finite structural walk, so nesting depth is not a
    semantic budget. The optional builder selects transactional binding without
@@ -10687,7 +10706,7 @@ static bool match_decoded_atoms_worklist(BindingValue left_value, BindingValue r
            table unless it contains a cycle. This is cycle detection derived
            from the graph in hand, not an arbitrary depth cutoff. */
         size_t dereferences = 0;
-        size_t dereference_limit = bindings_dereference_limit(current);
+        size_t dereference_limit = 0u;
 
 retry_pair:
         left = left_value.skeleton;
@@ -10729,7 +10748,8 @@ retry_pair:
             BindingValue existing = bindings_lookup_value(
                 current, left_value);
             if (existing.skeleton) {
-                if (++dereferences > dereference_limit) {
+                if (!bindings_dereference_step(
+                        &dereferences, &dereference_limit, current, 0u)) {
                     goto fail;
                 }
                 attempt_resolving_bound = true;
@@ -10742,7 +10762,8 @@ retry_pair:
                 BindingValue right_existing = bindings_lookup_value(
                     current, right_value);
                 if (right_existing.skeleton) {
-                    if (++dereferences > dereference_limit) {
+                    if (!bindings_dereference_step(
+                            &dereferences, &dereference_limit, current, 0u)) {
                         goto fail;
                     }
                     right_value = right_existing;
@@ -10768,7 +10789,8 @@ retry_pair:
             BindingValue existing = bindings_lookup_value(
                 current, right_value);
             if (existing.skeleton) {
-                if (++dereferences > dereference_limit) {
+                if (!bindings_dereference_step(
+                        &dereferences, &dereference_limit, current, 0u)) {
                     goto fail;
                 }
                 attempt_resolving_bound = true;
@@ -10873,7 +10895,7 @@ retry_pair:
             left_value.skeleton = next_left;
             right_value.skeleton = next_right;
             dereferences = 0u;
-            dereference_limit = bindings_dereference_limit(current);
+            dereference_limit = 0u;
             goto retry_pair;
         }
     }
@@ -11944,15 +11966,12 @@ static bool match_atoms_epoch_views_worklist(
         attempt_resolving_bound = false;
         Bindings *current = builder ? &builder->current : bindings;
         size_t dereferences = 0;
-        size_t dereference_limit = bindings_dereference_limit(current);
+        size_t dereference_limit = 0u;
         size_t local_dereference_allowance =
             right_frame_region && right_frame_region->exclusive &&
                     right_frame_region->exclusive->active
                 ? (size_t)right_frame_region->exclusive->write_len * 2u
                 : 0u;
-        if (dereference_limit <= SIZE_MAX - local_dereference_allowance) {
-            dereference_limit += local_dereference_allowance;
-        }
 
 retry_pair:
         if (right_plan &&
@@ -12023,7 +12042,9 @@ retry_pair:
                 left_lookup_done = true;
 
                 if (existing.skeleton) {
-                    if (++dereferences > dereference_limit)
+                    if (!bindings_dereference_step(
+                            &dereferences, &dereference_limit, current,
+                            local_dereference_allowance))
                         goto fail;
                     attempt_resolving_bound = true;
                     left_value = existing;
@@ -12062,7 +12083,9 @@ retry_pair:
                 }
             }
             if (existing.skeleton) {
-                if (++dereferences > dereference_limit) goto fail;
+                if (!bindings_dereference_step(
+                            &dereferences, &dereference_limit, current,
+                            local_dereference_allowance)) goto fail;
                 attempt_resolving_bound = true;
                 left_value = existing;
                 left = existing.skeleton;
@@ -12086,7 +12109,9 @@ retry_pair:
                             ? right_plan->variable_mask : 0u,
                         current, right_value);
                 if (right_existing.skeleton) {
-                    if (++dereferences > dereference_limit) goto fail;
+                    if (!bindings_dereference_step(
+                            &dereferences, &dereference_limit, current,
+                            local_dereference_allowance)) goto fail;
                     attempt_resolving_bound = true;
                     right_value = right_existing;
                     right = right_existing.skeleton;
@@ -12170,7 +12195,9 @@ retry_pair:
                 right_plan ? right_plan->variable_mask : 0u,
                 current, right_value);
             if (existing.skeleton) {
-                if (++dereferences > dereference_limit) goto fail;
+                if (!bindings_dereference_step(
+                            &dereferences, &dereference_limit, current,
+                            local_dereference_allowance)) goto fail;
                 attempt_resolving_bound = true;
                 right_value = existing;
                 right = existing.skeleton;
@@ -12337,7 +12364,7 @@ retry_pair:
             right_value.skeleton = next_right;
             right_plan = next_plan;
             dereferences = 0u;
-            dereference_limit = bindings_dereference_limit(current);
+            dereference_limit = 0u;
             goto retry_pair;
         }
         }
@@ -12450,13 +12477,10 @@ static bool match_atoms_epoch_views_linear(
         Bindings *current = builder
             ? &builder->current : bindings;
         size_t dereferences = 0u;
-        size_t dereference_limit =
-            bindings_dereference_limit(current);
+        size_t dereference_limit = 0u;
         size_t local_dereference_allowance =
             exclusive && exclusive->active
                 ? (size_t)exclusive->write_len * 2u : 0u;
-        if (dereference_limit <= SIZE_MAX - local_dereference_allowance)
-            dereference_limit += local_dereference_allowance;
 
 retry_pair:
         if (left == right &&
@@ -12505,7 +12529,9 @@ retry_pair:
                 }
                 left_lookup_done = true;
                 if (existing.skeleton) {
-                    if (++dereferences > dereference_limit)
+                    if (!bindings_dereference_step(
+                        &dereferences, &dereference_limit, current,
+                        local_dereference_allowance))
                         goto fail;
                     left = existing.skeleton;
                     left_kind = existing.kind;
@@ -12539,7 +12565,9 @@ retry_pair:
                 }
             }
             if (existing.skeleton) {
-                if (++dereferences > dereference_limit)
+                if (!bindings_dereference_step(
+                        &dereferences, &dereference_limit, current,
+                        local_dereference_allowance))
                     goto fail;
                 left = existing.skeleton;
                 left_kind = existing.kind;
@@ -13082,6 +13110,18 @@ static bool stored_grounded_equal(Atom *left,
                                   AtomId right_id) {
     if (tu_kind(candidate_universe, right_id) != ATOM_GROUNDED)
         return false;
+    {
+        int right_kind = tu_ground_kind(candidate_universe, right_id);
+        if (left->ground.gkind != right_kind) {
+            int64_t right_int = right_kind == GV_INT
+                ? tu_int(candidate_universe, right_id) : 0;
+            double right_float = right_kind == GV_FLOAT
+                ? tu_float(candidate_universe, right_id) : 0.0;
+            return cetta_he_promoted_kind_equal(
+                left->ground.gkind, left->ground.ival, left->ground.fval,
+                right_kind, right_int, right_float);
+        }
+    }
     switch (left->ground.gkind) {
     case GV_INT:
         return tu_ground_kind(candidate_universe, right_id) == GV_INT &&
@@ -13177,7 +13217,7 @@ static bool match_atoms_atom_id_epoch_worklist(
         left_value = pair.left;
         right_id = pair.right_id;
         size_t dereferences = 0;
-        size_t dereference_limit = bindings_dereference_limit(b);
+        size_t dereference_limit = 0u;
 
 retry_pair:
         left = left_value.skeleton;
@@ -13196,7 +13236,9 @@ retry_pair:
         if (left->kind == ATOM_VAR) {
             BindingValue existing = bindings_lookup_value(b, left_value);
             if (existing.skeleton) {
-                if (++dereferences > dereference_limit) goto fail;
+                if (!bindings_dereference_step(
+                        &dereferences, &dereference_limit, b, 0u))
+                    goto fail;
                 left_value = existing;
                 goto retry_pair;
             }

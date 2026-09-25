@@ -320,38 +320,16 @@ CettaDeterministicEquationPlanV1 *cetta_tptp_compact_manifest_plan_v1(
                                      reason_size);
 }
 
-/* The constructors the morphism maps to their own child's value, whose
- * productions only wrap it: (tptp-compact:v P (bnf C x)) = (tptp-compact:v P x). */
+bool cetta_tptp_compact_wrappers_v1(
+    const CettaDeterministicEquationPlanV1 *compact,
+    SymbolId **wrappers_out, uint32_t *len_out);
+
+/* The grammar's wrappers, which printing puts back. */
 static void tptp_reader_wrappers(CettaTptpReaderV1 *resource) {
-    uint32_t count = cetta_deterministic_equation_plan_v1_rule_count(resource->compact);
-    SymbolId v = symbol_intern_cstr(g_symbols, "tptp-compact:v");
-    SymbolId bnf = symbol_intern_cstr(g_symbols, "bnf");
-    resource->wrappers = calloc(count ? count : 1u, sizeof(*resource->wrappers));
+    resource->wrappers = NULL;
     resource->wrapper_len = 0u;
-    if (!resource->wrappers)
-        return;
-    for (uint32_t r = 0u; r < count; r++) {
-        const Atom *left = NULL;
-        const Atom *right = NULL;
-        const Atom *node;
-        if (!cetta_deterministic_equation_plan_v1_rule_view(resource->compact, r, NULL,
-                                                           &left, &right) ||
-            !left || !right || left->kind != ATOM_EXPR || left->expr.len != 3u ||
-            right->kind != ATOM_EXPR || right->expr.len != 3u ||
-            left->expr.elems[0]->kind != ATOM_SYMBOL || left->expr.elems[0]->sym_id != v ||
-            right->expr.elems[0]->kind != ATOM_SYMBOL || right->expr.elems[0]->sym_id != v ||
-            left->expr.elems[1]->kind != ATOM_VAR || right->expr.elems[1]->kind != ATOM_VAR ||
-            left->expr.elems[1]->var_id != right->expr.elems[1]->var_id)
-            continue;
-        node = left->expr.elems[2];
-        if (node->kind != ATOM_EXPR || node->expr.len != 3u ||
-            node->expr.elems[0]->kind != ATOM_SYMBOL || node->expr.elems[0]->sym_id != bnf ||
-            node->expr.elems[1]->kind != ATOM_SYMBOL || node->expr.elems[2]->kind != ATOM_VAR ||
-            right->expr.elems[2]->kind != ATOM_VAR ||
-            node->expr.elems[2]->var_id != right->expr.elems[2]->var_id)
-            continue;
-        resource->wrappers[resource->wrapper_len++] = node->expr.elems[1]->sym_id;
-    }
+    (void)cetta_tptp_compact_wrappers_v1(
+        resource->compact, &resource->wrappers, &resource->wrapper_len);
 }
 
 static CettaTptpReaderV1 *tptp_reader_resource_load_bound(
@@ -6354,6 +6332,226 @@ static void langdef_term_extent(const Atom *term, uint64_t *size, uint64_t *dept
     free(stack);
 }
 
+/* The compact stage of a TPTP read: the records of a canonical file term
+ * under a leaf policy, by the checked compact morphism.  The morphism is
+ * structural, so its work and its continuation depth are bounded by the size
+ * of the canonical term: an expression or a list of n elements is walked as
+ * a spine n deep.  tptp:read and the corpus tools both run this one
+ * function. */
+bool cetta_tptp_compact_records_v1(
+    const CettaDeterministicEquationPlanV1 *compact, const char *policy,
+    Atom *canonical, Arena *arena, Atom **records_out,
+    uint64_t *work_used_out, CettaDeterministicEquationStatusV1 *status_out,
+    char *error, size_t error_size) {
+    uint64_t size = 0u;
+    uint64_t depth = 0u;
+    uint64_t work_used = 0u;
+    CettaDeterministicEquationStatusV1 status =
+        CETTA_DETERMINISTIC_EQUATION_V1_BAD_ARGUMENT;
+    Atom *call_parts[3];
+    Atom *call = NULL;
+    bool ok = false;
+    if (records_out)
+        *records_out = NULL;
+    if (compact && policy && canonical && arena && records_out) {
+        langdef_term_extent(canonical, &size, &depth);
+        call_parts[0] = atom_symbol(arena, "tptp-compact:file");
+        call_parts[1] = atom_symbol(arena, policy);
+        call_parts[2] = canonical;
+        call = atom_expr(arena, call_parts, 3u);
+        ok = call && cetta_deterministic_equation_plan_v1_apply_counted(
+            compact, call, langdef_deterministic_equation_primitive,
+            NULL, arena,
+            (uint32_t)(size > (UINT32_MAX - 65536u) / 16u
+                           ? UINT32_MAX : 16u * size + 65536u),
+            size > (UINT64_MAX - 1000000u) / 1024u
+                ? UINT64_MAX : 1024u * size + 1000000u,
+            &work_used, records_out, &status, error, error_size);
+    }
+    if (work_used_out)
+        *work_used_out = work_used;
+    if (status_out)
+        *status_out = status;
+    return ok;
+}
+
+/* The constructors the morphism maps to their own child's value, whose
+ * productions only wrap it: (tptp-compact:v P (bnf C x)) = (tptp-compact:v P
+ * x).  Printing puts them back.  The caller frees *wrappers_out. */
+bool cetta_tptp_compact_wrappers_v1(
+    const CettaDeterministicEquationPlanV1 *compact,
+    SymbolId **wrappers_out, uint32_t *len_out) {
+    uint32_t count;
+    SymbolId v;
+    SymbolId bnf;
+    SymbolId *wrappers;
+    uint32_t len = 0u;
+    if (!compact || !wrappers_out || !len_out)
+        return false;
+    *wrappers_out = NULL;
+    *len_out = 0u;
+    count = cetta_deterministic_equation_plan_v1_rule_count(compact);
+    v = symbol_intern_cstr(g_symbols, "tptp-compact:v");
+    bnf = symbol_intern_cstr(g_symbols, "bnf");
+    wrappers = calloc(count ? count : 1u, sizeof(*wrappers));
+    if (!wrappers)
+        return false;
+    for (uint32_t r = 0u; r < count; r++) {
+        const Atom *left = NULL;
+        const Atom *right = NULL;
+        const Atom *node;
+        if (!cetta_deterministic_equation_plan_v1_rule_view(compact, r, NULL,
+                                                           &left, &right) ||
+            !left || !right || left->kind != ATOM_EXPR || left->expr.len != 3u ||
+            right->kind != ATOM_EXPR || right->expr.len != 3u ||
+            left->expr.elems[0]->kind != ATOM_SYMBOL || left->expr.elems[0]->sym_id != v ||
+            right->expr.elems[0]->kind != ATOM_SYMBOL || right->expr.elems[0]->sym_id != v ||
+            left->expr.elems[1]->kind != ATOM_VAR || right->expr.elems[1]->kind != ATOM_VAR ||
+            left->expr.elems[1]->var_id != right->expr.elems[1]->var_id)
+            continue;
+        node = left->expr.elems[2];
+        if (node->kind != ATOM_EXPR || node->expr.len != 3u ||
+            node->expr.elems[0]->kind != ATOM_SYMBOL || node->expr.elems[0]->sym_id != bnf ||
+            node->expr.elems[1]->kind != ATOM_SYMBOL || node->expr.elems[2]->kind != ATOM_VAR ||
+            right->expr.elems[2]->kind != ATOM_VAR ||
+            node->expr.elems[2]->var_id != right->expr.elems[2]->var_id)
+            continue;
+        wrappers[len++] = node->expr.elems[1]->sym_id;
+    }
+    *wrappers_out = wrappers;
+    *len_out = len;
+    return true;
+}
+
+/* The print stage: compact records back to TPTP text, their canonical
+ * terms by the prepared inverse, each printed by the grammar with the
+ * wrappers its position needs, one input per line.  tptp:print and the
+ * corpus tools both run this one function.  On failure *failure_out names
+ * the step: the inverse (with *status_out), a result that is not a list of
+ * inputs, or the printing of input *index_out. */
+bool cetta_tptp_compact_print_v1(
+    const CettaTptpPreparedReaderV1 *reader,
+    const CettaGrammarCanonicalTableV1 *table,
+    const CettaDeterministicEquationPlanV1 *print,
+    const SymbolId *wrappers, uint32_t wrapper_len,
+    const Atom *records, Arena *arena,
+    char **text_out, size_t *len_out,
+    CettaTptpCompactPrintFailureV1 *failure_out, uint64_t *index_out,
+    Atom **culprit_out, CettaDeterministicEquationStatusV1 *status_out,
+    uint64_t *work_used_out, char *error, size_t error_size) {
+    Atom *call_parts[2];
+    Atom *call;
+    Atom *canonical = NULL;
+    CettaDeterministicEquationStatusV1 status =
+        CETTA_DETERMINISTIC_EQUATION_V1_BAD_ARGUMENT;
+    uint64_t size = 0u;
+    uint64_t depth = 0u;
+    uint64_t work_used = 0u;
+    CettaGrammarCanonicalTableV1 *built = NULL;
+    char *text = NULL;
+    size_t text_len = 0u;
+    size_t text_cap = 0u;
+    Atom *const *inputs = NULL;
+    CettaExprLen input_count = 0u;
+    if (text_out)
+        *text_out = NULL;
+    if (len_out)
+        *len_out = 0u;
+    if (failure_out)
+        *failure_out = CETTA_TPTP_COMPACT_PRINT_INVERSE_V1;
+    if (culprit_out)
+        *culprit_out = NULL;
+    if (!reader || !print || !records || !arena || !text_out || !len_out ||
+        records->kind != ATOM_EXPR)
+        return false;
+    langdef_term_extent(records, &size, &depth);
+    call_parts[0] = atom_symbol(arena, "tptp-canonical:file");
+    call_parts[1] = (Atom *)records;
+    call = atom_expr(arena, call_parts, 2u);
+    if (!call ||
+        !cetta_deterministic_equation_plan_v1_apply_counted(
+            print, call, langdef_deterministic_equation_primitive,
+            NULL, arena,
+            (uint32_t)(size > (UINT32_MAX - 65536u) / 16u
+                           ? UINT32_MAX : 16u * size + 65536u),
+            size > (UINT64_MAX - 1000000u) / 4096u
+                ? UINT64_MAX : 4096u * size + 1000000u,
+            &work_used, &canonical, &status, error, error_size) ||
+        !canonical || canonical->kind != ATOM_EXPR) {
+        if (status_out)
+            *status_out = status;
+        if (work_used_out)
+            *work_used_out = work_used;
+        return false;
+    }
+    if (status_out)
+        *status_out = status;
+    if (work_used_out)
+        *work_used_out = work_used;
+    if (!atom_sequence_view(canonical, &inputs, &input_count)) {
+        if (failure_out)
+            *failure_out = CETTA_TPTP_COMPACT_PRINT_NOT_RECORDS_V1;
+        if (culprit_out)
+            *culprit_out = canonical;
+        return false;
+    }
+    if (!table)
+        table = reader->canonical;
+    if (!table) {
+        if (!cetta_tptp_snapshot_canonical_table_v1(&reader->snapshot, &built,
+                                                    error, error_size)) {
+            if (failure_out)
+                *failure_out = CETTA_TPTP_COMPACT_PRINT_MEMORY_V1;
+            return false;
+        }
+        table = built;
+    }
+    for (CettaExprLen index = 0u; index < input_count; index++) {
+        char *input = NULL;
+        size_t input_len = 0u;
+        if (!cetta_tptp_snapshot_canonical_print_wrapped_v1(
+                &reader->snapshot, table, inputs[index],
+                "TPTP_input", wrappers, wrapper_len,
+                &input, &input_len, error, error_size)) {
+            if (failure_out)
+                *failure_out = CETTA_TPTP_COMPACT_PRINT_INPUT_V1;
+            if (index_out)
+                *index_out = (uint64_t)index;
+            if (culprit_out)
+                *culprit_out = inputs[index];
+            cetta_grammar_canonical_table_free_v1(built);
+            free(text);
+            return false;
+        }
+        if (text_len + input_len + 2u > text_cap) {
+            size_t next = text_cap ? text_cap : 256u;
+            char *grown;
+            while (next < text_len + input_len + 2u)
+                next *= 2u;
+            grown = realloc(text, next);
+            if (!grown) {
+                free(input);
+                free(text);
+                cetta_grammar_canonical_table_free_v1(built);
+                if (failure_out)
+                    *failure_out = CETTA_TPTP_COMPACT_PRINT_MEMORY_V1;
+                return false;
+            }
+            text = grown;
+            text_cap = next;
+        }
+        memcpy(text + text_len, input, input_len);
+        text_len += input_len;
+        text[text_len++] = '\n';
+        text[text_len] = '\0';
+        free(input);
+    }
+    cetta_grammar_canonical_table_free_v1(built);
+    *text_out = text;
+    *len_out = text_len;
+    return true;
+}
+
 static Atom *langdef_tptp_read_outcome(
     Arena *arena, const CettaTptpReadOutcomeV1 *outcome) {
     Atom *arguments[3];
@@ -6590,7 +6788,8 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
         if (!cetta_langdef_text_arg(args[1], &sort))
             return langdef_error(arena, head, "tptp canonical print expects a grammar symbol");
         if (!cetta_tptp_snapshot_canonical_print_v1(
-                &resource->reader.snapshot, args[2], sort, &text, &text_len,
+                &resource->reader.snapshot, resource->reader.canonical, args[2],
+                sort, &text, &text_len,
                 error, sizeof(error)))
             return langdef_error(
                 arena, head, error[0] ? error : "tptp canonical print failed");
@@ -6667,17 +6866,15 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
          * position needs, one input per line. */
         CettaTptpReaderV1 *resource;
         uint64_t id;
-        Atom *call_parts[2];
-        Atom *call;
-        Atom *canonical = NULL;
         CettaDeterministicEquationStatusV1 status =
             CETTA_DETERMINISTIC_EQUATION_V1_BAD_ARGUMENT;
-        uint64_t size = 0u;
-        uint64_t depth = 0u;
-        uint64_t work_used = 0u;
+        CettaTptpCompactPrintFailureV1 failure =
+            CETTA_TPTP_COMPACT_PRINT_INVERSE_V1;
+        uint64_t failing_index = 0u;
+        Atom *culprit = NULL;
         char *text = NULL;
         size_t text_len = 0u;
-        size_t text_cap = 0u;
+        const Atom *records;
 
         if (nargs != 2u ||
             !cetta_native_handle_arg(
@@ -6696,84 +6893,48 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
                 arena, langdef_expr(
                     arena, "TPTP:CompactPrinterUnavailable", reason, 1u));
         }
-        {
-            /* The records arrive quoted, so no lane evaluates them on the way;
-             * a caller may quote them too. */
-            const Atom *records = args[1];
-            while (records && records->kind == ATOM_EXPR && records->expr.len == 2u &&
-                   atom_is_symbol(records->expr.elems[0], "quote"))
-                records = records->expr.elems[1];
-            if (!records || records->kind != ATOM_EXPR) {
-                Atom *bad[1] = {args[1]};
-                return langdef_return(
-                    arena, langdef_expr(arena, "TPTP:NotCompactRecords", bad, 1u));
-            }
-            langdef_term_extent(records, &size, &depth);
-            call_parts[1] = (Atom *)records;
-        }
-        call_parts[0] = atom_symbol(arena, "tptp-canonical:file");
-        call = atom_expr(arena, call_parts, 2u);
-        if (!call ||
-            !cetta_deterministic_equation_plan_v1_apply_counted(
-                resource->print, call, langdef_deterministic_equation_primitive,
-                NULL, arena,
-                (uint32_t)(depth > (UINT32_MAX - 65536u) / 16u
-                               ? UINT32_MAX : 16u * depth + 65536u),
-                size > (UINT64_MAX - 1000000u) / 4096u
-                    ? UINT64_MAX : 4096u * size + 1000000u,
-                &work_used, &canonical, &status, error, sizeof(error)) ||
-            !canonical || canonical->kind != ATOM_EXPR) {
-            Atom *parts[2] = {
-                atom_symbol(arena, cetta_deterministic_equation_status_name_v1(status)),
-                atom_string(arena, error[0] ? error : "compact printing failed")};
-            return langdef_return(
-                arena, langdef_expr(arena, "TPTP:CompactPrintFailure", parts, 2u));
-        }
-        /* The inverse returns the list of the inputs' canonical terms. */
-        Atom *const *inputs = NULL;
-        CettaExprLen input_count = 0u;
-        if (!atom_sequence_view(canonical, &inputs, &input_count)) {
-            Atom *bad[1] = {canonical};
+        /* The records arrive quoted, so no lane evaluates them on the way;
+         * a caller may quote them too. */
+        records = args[1];
+        while (records && records->kind == ATOM_EXPR && records->expr.len == 2u &&
+               atom_is_symbol(records->expr.elems[0], "quote"))
+            records = records->expr.elems[1];
+        if (!records || records->kind != ATOM_EXPR) {
+            Atom *bad[1] = {args[1]};
             return langdef_return(
                 arena, langdef_expr(arena, "TPTP:NotCompactRecords", bad, 1u));
         }
-        for (CettaExprLen index = 0u; index < input_count; index++) {
-            char *input = NULL;
-            size_t input_len = 0u;
-            if (!cetta_tptp_snapshot_canonical_print_wrapped_v1(
-                    &resource->reader.snapshot, inputs[index],
-                    "TPTP_input", resource->wrappers, resource->wrapper_len,
-                    &input, &input_len, error, sizeof(error))) {
+        if (!cetta_tptp_compact_print_v1(
+                &resource->reader, NULL, resource->print,
+                resource->wrappers, resource->wrapper_len, records, arena,
+                &text, &text_len, &failure, &failing_index, &culprit,
+                &status, NULL, error, sizeof(error))) {
+            if (failure == CETTA_TPTP_COMPACT_PRINT_NOT_RECORDS_V1) {
+                Atom *bad[1] = {culprit};
+                return langdef_return(
+                    arena, langdef_expr(arena, "TPTP:NotCompactRecords", bad, 1u));
+            }
+            if (failure == CETTA_TPTP_COMPACT_PRINT_INPUT_V1) {
                 Atom *parts[3] = {
-                    atom_int(arena, (int64_t)index),
+                    atom_int(arena, (int64_t)failing_index),
                     atom_string(arena, error[0] ? error : "canonical printing failed"),
-                    inputs[index]};
-                free(text);
+                    culprit};
                 return langdef_return(
                     arena, langdef_expr(arena, "TPTP:CompactPrintFailure", parts, 3u));
             }
-            if (text_len + input_len + 2u > text_cap) {
-                size_t next = text_cap ? text_cap : 256u;
-                char *grown;
-                while (next < text_len + input_len + 2u)
-                    next *= 2u;
-                grown = realloc(text, next);
-                if (!grown) {
-                    free(input);
-                    free(text);
-                    return langdef_error(arena, head, "compact printing out of memory");
-                }
-                text = grown;
-                text_cap = next;
+            if (failure == CETTA_TPTP_COMPACT_PRINT_MEMORY_V1)
+                return langdef_error(arena, head, "compact printing out of memory");
+            {
+                Atom *parts[2] = {
+                    atom_symbol(arena, cetta_deterministic_equation_status_name_v1(status)),
+                    atom_string(arena, error[0] ? error : "compact printing failed")};
+                return langdef_return(
+                    arena, langdef_expr(arena, "TPTP:CompactPrintFailure", parts, 2u));
             }
-            memcpy(text + text_len, input, input_len);
-            text_len += input_len;
-            text[text_len++] = '\n';
-            text[text_len] = '\0';
-            free(input);
         }
         {
             Atom *result = atom_string(arena, text ? text : "");
+            (void)text_len;
             free(text);
             return langdef_return(arena, result);
         }
@@ -6856,20 +7017,13 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
             return langdef_error(
                 arena, head, error[0] ? error : "tptp compact read failed");
         }
-        langdef_term_extent(canonical, &size, &depth);
-        call_parts[0] = atom_symbol(arena, "tptp-compact:file");
-        call_parts[1] = args[1];
-        call_parts[2] = canonical;
-        call = atom_expr(arena, call_parts, 3u);
-        if (!call ||
-            !cetta_deterministic_equation_plan_v1_apply_counted(
-                resource->compact, call, langdef_deterministic_equation_primitive,
-                NULL, arena,
-                (uint32_t)(depth > (UINT32_MAX - 65536u) / 16u
-                               ? UINT32_MAX : 16u * depth + 65536u),
-                size > (UINT64_MAX - 1000000u) / 1024u
-                    ? UINT64_MAX : 1024u * size + 1000000u,
-                &work_used, &compact, &status, error, sizeof(error))) {
+        (void)size;
+        (void)depth;
+        (void)call_parts;
+        (void)call;
+        if (!cetta_tptp_compact_records_v1(
+                resource->compact, atom_name_cstr(args[1]), canonical, arena,
+                &compact, &work_used, &status, error, sizeof(error))) {
             Atom *parts[2] = {
                 atom_symbol(arena, cetta_deterministic_equation_status_name_v1(status)),
                 atom_string(arena, error[0] ? error : "compact morphism failed")};

@@ -57,6 +57,12 @@
      (case (__cetta_lib_str trim $text)
        (($result (return $result))))))
 
+; The SHA-256 digest of the text's bytes, as 64 lowercase hex digits.
+(= (str:sha256 $text)
+   (function
+     (case (__cetta_lib_str sha256 $text)
+       (($result (return $result))))))
+
 ; -1, 0 or 1 by byte order, a proper prefix first.
 (= (str:compare $lhs $rhs)
    (function

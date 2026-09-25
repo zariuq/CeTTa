@@ -177,6 +177,11 @@
 ; (LangDef:DeterministicCall head argument ...) envelope. Ordinary run permits
 ; argument computations; run-data applies the plan to existing values.
 (: __cetta_lib_deterministic_equations_run_data (-> Atom Atom Atom))
+; The named-binding natives take terms as data and give data back.
+(: __cetta_abt_free_names (-> Atom Atom Atom))
+(: __cetta_abt_substitute (-> Atom Atom Atom Atom))
+(: __cetta_abt_rename_bound (-> Atom Atom Atom Atom))
+(: __cetta_abt_named_alpha_eq (-> Atom Atom Atom %Undefined%))
 
 (= (langdef:load-deterministic-equations $sources)
    (function
@@ -316,7 +321,7 @@
        (((LangDef.ImportPrepared $name $pack $source $values)
          (let $protocol (langdef:invoke-entry $entry $parsed)
            (langdef:publish $handle $protocol)))
-        ($_ (return $parsed))))))
+        ($_ $parsed)))))
 
 ; Recognition and generated semantic replay finish before the target space
 ; changes. Rejection leaves the target untouched; acceptance publishes the

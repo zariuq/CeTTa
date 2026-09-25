@@ -17,23 +17,27 @@
            "json-strchar" (bnf-v1:lexical-origin "json-v1" 0))
          (bnf-v1:lexical-declarations-nil)))))
 
+; Every check answers with a symbol, so the same expectation serves the HE
+; and the PeTTa lane, which spell their booleans differently.
+(= (canon:flag $holds) (if $holds ok no))
+
 ; Print a read term and read it again: the same source and the same term.
 (= (canon:again $parser $start $source $term)
    (let $printed (bnf:print-canonical $parser $start $term)
      (case (bnf:parse-canonical-text $parser $printed)
        (((EBNF:Canonical $binding $again-source $again)
-          (and (== $again-source $source) (== $again $term)))
-        ($other false)))))
+          (canon:flag (and (== $again-source $source) (== $again $term))))
+        ($other no)))))
 
 (= (canon:round-trip $parser $start $text)
    (case (bnf:parse-canonical-text $parser $text)
      (((EBNF:Canonical $binding $source $term) (canon:again $parser $start $source $term))
-      ($other false))))
+      ($other no))))
 
 (= (canon:rejected $parser $text)
    (case (bnf:parse-canonical-text $parser $text)
-     (((EBNF:Rejected $binding $source $offset $expected) true)
-      ($other false))))
+     (((EBNF:Rejected $binding $source $offset $expected) rejected)
+      ($other accepted))))
 
 (= (canon:json $parser)
    (EbnfCanonicalV1 json
@@ -48,7 +52,7 @@
    (case (bnf:parse-canonical-file $parser $path)
      (((EBNF:Canonical $binding $source $term)
         (canon:again $parser "document" $source $term))
-      ($other false))))
+      ($other no))))
 
 (= (canon:grammars $parser)
    (EbnfCanonicalV1 grammars
@@ -58,10 +62,24 @@
       (canon:grammar-file $parser "examples/bnf/arithmetic_evaluation_v1.ebnf")
       (canon:rejected $parser "<a> ::= <b\n"))))
 
+;  An ambiguous sort: two derivations of one text read to two terms, each a
+;  constructor named by its alternative, and each prints back to the text.
+(= (canon:ambiguous $grammar $text)
+   (let $parser (bnf:parser-from-ebnf-text $grammar "s")
+     (case (bnf:parse-canonical-text $parser $text)
+       (((EBNF:CanonicalAmbiguous $binding $source ($left $right))
+          (let $result
+               (EbnfCanonicalV1 ambiguous $left $right
+                 (canon:flag (not (== $left $right)))
+                 (canon:flag (== (bnf:print-canonical $parser "s" $left) $text))
+                 (canon:flag (== (bnf:print-canonical $parser "s" $right) $text)))
+            (let $_ (bnf:close-ebnf-parser $parser) $result)))
+        ($other (let $_ (bnf:close-ebnf-parser $parser) (EbnfCanonicalV1 ambiguous $other)))))))
+
 (= (canon:language $parser)
    (case (bnf:canonical-language $parser)
-     (((GSLTLanguageDefWireV1 $name $types (LCons $row $rows) $equations $rewrites) true)
-      ($other false))))
+     (((GSLTLanguageDefWireV1 $name $types (LCons $row $rows) $equations $rewrites) ok)
+      ($other no))))
 
 !(let $parser (bnf:parser-from-ebnf-file-with-authority
                 "examples/bnf/json_v1.ebnf" (canon:json-authority))
@@ -73,3 +91,6 @@
                 "langdef/bnf/ebnf_self_v1.ebnf" (bnf:self-authority-v1))
    (let $result (canon:grammars $parser)
      (let $_ (bnf:close-ebnf-parser $parser) $result)))
+
+!(canon:ambiguous "<s> ::= \"ab\" | \"a\" \"b\"\n" "ab")
+!(canon:ambiguous "<s> ::= \"x\" | \"x\"\n" "x")

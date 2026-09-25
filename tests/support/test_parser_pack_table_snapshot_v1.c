@@ -825,6 +825,10 @@ int main(void) {
                 "include('Axioms/example.ax').\n"
                 "fof(keyword_words,axiom,"
                 "p(include) & q(creator)).\n";
+            static const char dollar_word_sample[] =
+                "fof(a,axiom,p($let)).\n"
+                "fof(b,axiom,q($let(a,b))).\n"
+                "tff(c,axiom,$let(c: $i, c := a, p(c))).\n";
 
             cetta_tptp_prepared_reader_init_v1(&reader);
             error[0] = '\0';
@@ -896,6 +900,17 @@ int main(void) {
                        NULL, error, sizeof(error)) && input_count == 2u,
                    error[0] ? error
                             : "keywords remain syntax and ordinary lower words");
+            input_count = 0u;
+            error[0] = '\0';
+            expect(&counts,
+                   cetta_tptp_prepared_reader_read_text_each_with_work_limit_v1(
+                       &reader, dollar_word_sample,
+                       sizeof(dollar_word_sample) - 1u,
+                       0u, 0u, &arena, count_tptp_input, &input_count,
+                       NULL, error, sizeof(error)) && input_count == 3u,
+                   error[0] ? error
+                            : "a fixed dollar token reads as a dollar word "
+                              "where the grammar allows one");
             cetta_tptp_prepared_reader_free_v1(&reader);
         }
         {

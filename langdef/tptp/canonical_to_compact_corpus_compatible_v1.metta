@@ -12,6 +12,8 @@
     (operator tptp-compact:append 2)
     (operator tptp-compact:disjuncts 2)
     (operator tptp-compact:disjuncts-at 3)
+    (operator tptp-compact:disjuncts-before 3)
+    (operator tptp-compact:disjuncts-before-at 4)
     (operator tptp-compact:expression 1)
     (operator tptp-compact:info 2)
     (operator tptp-compact:kind 1)
@@ -33,10 +35,28 @@
       (body))
     (rule disjuncts-chain (head (metta-equation (tptp-compact:disjuncts-at ?policy LangDef:SameValue ?chain) (tptp-compact:v ?policy ?chain))) (body))
     (rule disjuncts-literal (head (metta-equation (tptp-compact:disjuncts-at ?policy LangDef:DifferentValue ?literal) (LCons (tptp-compact:v ?policy ?literal) LNil))) (body))
-    ; The disjuncts of a disjunction followed by one more literal.
+    ; The disjuncts of a disjunction followed by one more literal.  A chain of
+    ; disjunctions nests to the left; it is walked down its left spine once
+    ; and the later literals gathered in order, so a clause of n literals takes
+    ; n steps.
     (rule then
       (head (metta-equation (tptp-compact:then ?policy ?disjunction ?literal)
-                            (tptp-compact:append (tptp-compact:disjuncts ?policy ?disjunction) (LCons (tptp-compact:v ?policy ?literal) LNil))))
+                            (tptp-compact:disjuncts-before ?policy ?disjunction (LCons (tptp-compact:v ?policy ?literal) LNil))))
+      (body))
+    (rule disjuncts-before
+      (head (metta-equation (tptp-compact:disjuncts-before ?policy ?disjunction ?later)
+                            (tptp-compact:disjuncts-before-at ?policy
+                              (tptp-compact:one-of (tptp-compact:kind ?disjunction)
+                                (LCons cnf_disjunction/1 (LCons cnf_disjunction/4 (LCons cnf_disjunction/5 LNil))))
+                              ?disjunction ?later)))
+      (body))
+    (rule disjuncts-before-then
+      (head (metta-equation (tptp-compact:disjuncts-before-at ?policy LangDef:SameValue (bnf ?name ?disjunction ?literal) ?later)
+                            (tptp-compact:disjuncts-before ?policy ?disjunction (LCons (tptp-compact:v ?policy ?literal) ?later))))
+      (body))
+    (rule disjuncts-before-other
+      (head (metta-equation (tptp-compact:disjuncts-before-at ?policy LangDef:DifferentValue ?disjunction ?later)
+                            (tptp-compact:append (tptp-compact:disjuncts ?policy ?disjunction) ?later)))
       (body))
     (rule pair
       (head (metta-equation (tptp-compact:pair ?policy ?first ?second)

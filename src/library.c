@@ -1251,6 +1251,25 @@ void cetta_library_context_set_script_path(CettaLibraryContext *ctx, const char 
     }
 }
 
+static int imported_file_lookup(CettaLibraryContext *ctx, Space *space,
+                                const char *path);
+
+void cetta_library_context_note_document_file(CettaLibraryContext *ctx, Space *space,
+                                              const char *filename) {
+    char resolved[PATH_MAX];
+    int slot;
+
+    if (!ctx || !space || !filename) return;
+    if (!realpath(filename, resolved)) return;
+    if (imported_file_lookup(ctx, space, resolved) >= 0) return;
+    if (ctx->imported_file_len >= CETTA_MAX_IMPORTED_FILES) return;
+    slot = (int)ctx->imported_file_len++;
+    ctx->imported_files[slot].space = space;
+    ctx->imported_files[slot].loading = false;
+    snprintf(ctx->imported_files[slot].path,
+             sizeof(ctx->imported_files[slot].path), "%s", resolved);
+}
+
 void cetta_library_context_set_cli_args(CettaLibraryContext *ctx, int argc,
                                         char **argv, int arg_start) {
     if (!ctx) return;
@@ -2892,6 +2911,47 @@ static bool resolve_module_candidate_with_format(const char *candidate,
     return false;
 }
 
+/*
+ * A library keeps its shared source in lib/NAME.metta, spelled in base HE,
+ * and its PeTTa spelling in lib/petta/NAME.metta.  Under the PeTTa lane an
+ * import that resolved to the shared source loads the PeTTa spelling when
+ * one exists: the importing program names the library, the lane picks the
+ * spelling.  Other lanes, other directories and non-MeTTa modules are left
+ * as resolved.
+ */
+static void prefer_language_spelling(CettaLibraryContext *ctx,
+                                     char *out, size_t out_sz,
+                                     const CettaModuleFormat *format) {
+    char candidate[PATH_MAX];
+    char resolved[PATH_MAX];
+    const char *slash;
+    size_t dir_len;
+    int n;
+
+    if (!ctx || ctx->session.language_id != CETTA_LANGUAGE_PETTA ||
+        (format && format->kind != CETTA_MODULE_FORMAT_METTA)) {
+        return;
+    }
+    slash = strrchr(out, '/');
+    if (!slash) {
+        return;
+    }
+    dir_len = (size_t)(slash - out);
+    if (dir_len < 3 || strncmp(out + dir_len - 3, "lib", 3) != 0 ||
+        (dir_len > 3 && out[dir_len - 4] != '/')) {
+        return;
+    }
+    n = snprintf(candidate, sizeof(candidate), "%.*s/petta/%s",
+                 (int)dir_len, out, slash + 1);
+    if (!(n > 0 && (size_t)n < sizeof(candidate))) {
+        return;
+    }
+    if (access(candidate, R_OK) == 0 && realpath(candidate, resolved) &&
+        strlen(resolved) < out_sz) {
+        snprintf(out, out_sz, "%s", resolved);
+    }
+}
+
 static bool resolve_relative_module_candidate_for_language(
     CettaLibraryContext *ctx,
     const char *path,
@@ -2909,8 +2969,12 @@ static bool resolve_relative_module_candidate_for_language(
         return false;
     }
     if (path[0] == '/') {
-        return resolve_module_candidate_with_format(path, out, out_sz, format_out,
-                                                    reason, reason_sz);
+        if (!resolve_module_candidate_with_format(path, out, out_sz, format_out,
+                                                  reason, reason_sz)) {
+            return false;
+        }
+        prefer_language_spelling(ctx, out, out_sz, format_out);
+        return true;
     }
 
     /*
@@ -2924,6 +2988,7 @@ static bool resolve_relative_module_candidate_for_language(
             CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY &&
         resolve_module_candidate_with_format(
             path, out, out_sz, format_out, reason, reason_sz)) {
+        prefer_language_spelling(ctx, out, out_sz, format_out);
         return true;
     }
 
@@ -2935,6 +3000,7 @@ static bool resolve_relative_module_candidate_for_language(
         }
         if (resolve_module_candidate_with_format(candidate, out, out_sz, format_out,
                                                  reason, reason_sz)) {
+            prefer_language_spelling(ctx, out, out_sz, format_out);
             return true;
         }
         if (cetta_eval_session_relative_module_policy(&ctx->session) !=
@@ -7701,8 +7767,12 @@ static bool cetta_library_petta_execute_document_ids(
                 return false;
             cetta_petta_erase_typecheck_marks_document(
                 work_space->native.universe, atom_ids + index, 2);
-            ResultSet results;
-            result_set_init(&results);
+            /* A directive's answer list claims there are no further
+             * answers, so it is observed with a completion tracker.  An
+             * incomplete observation is a failure of the document, never a
+             * shorter answer list. */
+            EvalOutcome observed;
+            eval_outcome_init(&observed);
             const PettaPlanNode *source_plan = NULL;
             if (ctx->petta_program) {
                 Atom *source = term_universe_get_atom(
@@ -7713,7 +7783,7 @@ static bool cetta_library_petta_execute_document_ids(
                           ctx->petta_program, source)
                     : NULL;
                 if (!source_plan) {
-                    result_set_free(&results);
+                    eval_outcome_free(&observed);
                     if (failure_out)
                         *failure_out =
                             CETTA_PETTA_DOCUMENT_PLAN_FAILED;
@@ -7725,41 +7795,42 @@ static bool cetta_library_petta_execute_document_ids(
                 persistent_arena ? persistent_arena : eval_arena,
                 atom_ids[index + 1]);
             if (!eval_form) {
-                result_set_free(&results);
+                eval_outcome_free(&observed);
                 if (failure_out)
                     *failure_out =
                         CETTA_PETTA_DOCUMENT_COPY_FAILED;
                 return false;
             }
-            if (ctx->petta_program) {
-                eval_top_with_registry_petta_plan(
-                    work_space, eval_arena,
-                    persistent_arena, registry,
-                    eval_form, source_plan, &results);
-            } else {
-                eval_top_with_registry(
-                    work_space, eval_arena,
-                    persistent_arena, registry,
-                    eval_form, &results);
-            }
+            eval_top_with_registry_petta_plan_outcome(
+                work_space, eval_arena,
+                persistent_arena, registry,
+                eval_form, source_plan, &observed);
+            ResultSet *results = &observed.results;
 
             Atom *first_error =
-                result_set_first_error(eval_arena, &results);
+                observed.completion != CETTA_EVAL_COMPLETE
+                    ? atom_error(
+                          eval_arena, eval_form,
+                          atom_symbol(
+                              eval_arena,
+                              eval_completion_reason(
+                                  observed.completion)))
+                    : result_set_first_error(eval_arena, results);
             bool has_error =
                 first_error != NULL ||
-                result_set_has_error(&results);
+                result_set_has_error(results);
             if (!has_error && runnable_results) {
                 for (CettaCount result_index = 0u;
-                     result_index < results.len;
+                     result_index < results->len;
                      result_index++) {
                     CettaCount previous_len =
                         runnable_results->len;
                     result_set_add(
                         runnable_results,
-                        results.items[result_index]);
+                        results->items[result_index]);
                     if (runnable_results->len !=
                             previous_len + 1u) {
-                        result_set_free(&results);
+                        eval_outcome_free(&observed);
                         eval_release_temporary_spaces();
                         if (failure_out)
                             *failure_out =
@@ -7768,7 +7839,7 @@ static bool cetta_library_petta_execute_document_ids(
                     }
                 }
             }
-            result_set_free(&results);
+            eval_outcome_free(&observed);
             eval_release_temporary_spaces();
             if (has_error) {
                 if (failure_out)

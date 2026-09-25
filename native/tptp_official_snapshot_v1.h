@@ -55,19 +55,29 @@ bool cetta_tptp_snapshot_load_bound_v1(
 typedef struct {
     PPTableSnapshotV1 snapshot;
     CettaLpNativeGrammar fallback_grammar;
+    /* Built once from the snapshot at load: the canonical term table every
+     * read projects by and printing prints by, and the lexer's index of
+     * ASCII transitions. */
+    CettaGrammarCanonicalTableV1 *canonical;
+    RSDFAV1AsciiTransitionIndex ascii;
 } CettaTptpPreparedReaderV1;
 
-/* Print a canonical term occupying a position of the named grammar symbol.
- * The text is malloc'd and owned by the caller. */
-bool cetta_tptp_snapshot_canonical_print_v1(const PPTableSnapshotV1 *snap, const Atom *term,
+/* Print a canonical term occupying a position of the named grammar symbol,
+ * by the snapshot's canonical table (see cetta_tptp_snapshot_canonical_table_v1),
+ * which a caller printing many terms builds once; NULL builds one for this
+ * call.  The text is malloc'd and owned by the caller. */
+bool cetta_tptp_snapshot_canonical_print_v1(const PPTableSnapshotV1 *snap,
+                                            const CettaGrammarCanonicalTableV1 *table,
+                                            const Atom *term,
                                             const char *sort, char **out, size_t *out_len,
                                             char *error, size_t error_size);
 
 /* Print a term whose nodes may need the grammar's wrappers, such as the
  * parenthesized formula, to stand at their positions; see
- * cetta_grammar_canonical_print_wrapped_v1. */
+ * cetta_grammar_canonical_print_wrapped_v1.  The table is as above. */
 bool cetta_tptp_snapshot_canonical_print_wrapped_v1(
-    const PPTableSnapshotV1 *snap, const Atom *term, const char *sort,
+    const PPTableSnapshotV1 *snap, const CettaGrammarCanonicalTableV1 *table,
+    const Atom *term, const char *sort,
     const SymbolId *wrappers, uint32_t wrapper_len, char **out, size_t *out_len,
     char *error, size_t error_size);
 

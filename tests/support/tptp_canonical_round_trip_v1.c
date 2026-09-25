@@ -151,18 +151,22 @@ static bool print_inputs(const PPTableSnapshotV1 *snapshot, const Atom *inputs, 
                          size_t *out_len, char *error, size_t error_size) {
     char *text = NULL;
     size_t len = 0u, cap = 0u;
+    CettaGrammarCanonicalTableV1 *table = NULL;
     *out = NULL;
     *out_len = 0u;
     if (!inputs || inputs->kind != ATOM_EXPR) {
         snprintf(error, error_size, "canonical inputs are not a sequence");
         return false;
     }
+    if (!cetta_tptp_snapshot_canonical_table_v1(snapshot, &table, error, error_size))
+        return false;
     for (CettaExprIndex i = 0u; i < inputs->expr.len; i++) {
         char *one = NULL;
         size_t one_len = 0u;
-        if (!cetta_tptp_snapshot_canonical_print_v1(snapshot, inputs->expr.elems[i],
+        if (!cetta_tptp_snapshot_canonical_print_v1(snapshot, table, inputs->expr.elems[i],
                                                     "TPTP_input", &one, &one_len, error,
                                                     error_size)) {
+            cetta_grammar_canonical_table_free_v1(table);
             free(text);
             return false;
         }
@@ -175,6 +179,7 @@ static bool print_inputs(const PPTableSnapshotV1 *snapshot, const Atom *inputs, 
             if (!grown) {
                 free(one);
                 free(text);
+                cetta_grammar_canonical_table_free_v1(table);
                 snprintf(error, error_size, "out of memory");
                 return false;
             }
@@ -187,6 +192,7 @@ static bool print_inputs(const PPTableSnapshotV1 *snapshot, const Atom *inputs, 
         text[len] = '\0';
         free(one);
     }
+    cetta_grammar_canonical_table_free_v1(table);
     *out = text ? text : calloc(1u, 1u);
     *out_len = len;
     return *out != NULL;

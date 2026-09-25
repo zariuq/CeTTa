@@ -3573,6 +3573,7 @@ int main(int argc, char **argv) {
 
     space_init_with_universe(&space, &libraries.term_universe);
     cleanup.space_initialized = true;
+    cetta_library_context_note_document_file(&libraries, &space, script_path);
     if (!space_match_backend_try_set(&space, space_engine)) {
         const char *reason = space_match_backend_unavailable_reason(space_engine);
         if (reason) {
@@ -4043,7 +4044,13 @@ process_petta_document:
                         (size_t)eval_outcome_value_count(&detailed),
                         (size_t)eval_outcome_fault_count(&detailed),
                         detailed.steps_spent);
-            } else if (g_count_only) {
+            } else if (g_count_only ||
+                       lang->id == CETTA_LANGUAGE_PETTA) {
+                /* A PeTTa directive publishes its whole answer stream, which
+                 * claims there are no further answers, so it is always
+                 * observed with a completion tracker.  Finite fuel reaches
+                 * the search machine through the same tracker; unlimited
+                 * queries carry no fuel purse. */
                 eval_outcome_init(&detailed);
                 detailed_initialized = true;
                 results = &detailed.results;
@@ -4058,15 +4065,9 @@ process_petta_document:
                 }
             } else {
                 result_set_init(&rs);
-                if (lang->id == CETTA_LANGUAGE_PETTA) {
-                    eval_top_with_registry_petta_plan(
-                        &space, &eval_arena, &arena, &registry,
-                        expr, source_plan, &rs);
-                } else {
-                    eval_top_with_registry(
-                        &space, &eval_arena, &arena, &registry,
-                        expr, &rs);
-                }
+                eval_top_with_registry(
+                    &space, &eval_arena, &arena, &registry,
+                    expr, &rs);
             }
             if (cetta_eval_session_process_exit_requested(
                     &libraries.session)) {
@@ -4101,11 +4102,15 @@ process_petta_document:
                 prime_need_trace_printer_free(&trace);
                 goto cleanup;
             }
-            if (g_count_only && detailed_initialized &&
+            if (detailed_initialized && !emit_prime_need_trace &&
                 detailed.completion != CETTA_EVAL_COMPLETE) {
+                /* An incomplete observation is not a finished answer bag.
+                 * Logical failure stays a completed empty result. */
                 fprintf(
                     stderr,
-                    "error: count observation incomplete: %s\n",
+                    g_count_only
+                        ? "error: count observation incomplete: %s\n"
+                        : "error: observation incomplete: %s\n",
                     eval_completion_reason(detailed.completion));
                 eval_outcome_free(&detailed);
                 prime_need_trace_printer_free(&trace);
@@ -4213,6 +4218,7 @@ petta_document_complete:
         filename = argv[petta_file_arg_cursor];
         script_path = filename;
         cetta_library_context_set_script_path(&libraries, script_path);
+        cetta_library_context_note_document_file(&libraries, &space, filename);
 
         free(atom_ids);
         atom_ids = NULL;

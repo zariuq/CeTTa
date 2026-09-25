@@ -198,6 +198,11 @@ bool cetta_library_root_for_exec_path(const char *argv0,
                                       char *output, size_t output_size);
 void cetta_library_context_set_exec_path(CettaLibraryContext *ctx, const char *argv0);
 void cetta_library_context_set_script_path(CettaLibraryContext *ctx, const char *filename);
+/* A document the runtime runs into a space counts as imported into it: an
+ * import of the same file later, from the document or from a library it
+ * loads, adds nothing a second time. */
+void cetta_library_context_note_document_file(CettaLibraryContext *ctx, Space *space,
+                                              const char *filename);
 void cetta_library_context_set_cli_args(CettaLibraryContext *ctx, int argc,
                                         char **argv, int arg_start);
 uint32_t cetta_library_module_mount_count(const CettaLibraryContext *ctx);

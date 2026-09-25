@@ -234,7 +234,7 @@
             (case (tptp:clausify-named-formula $occurrence (tptp-fof-batch:positive)
                     $named (tptp:binder-equality-rows $names) $skolem $naming)
               (((TPTP:ClausifiedFormulaV1 $clausification $clauses)
-                 (let ($family $name $role) (tptp:record-name-and-role $record)
+                 (let (TPTP:NameAndRole $family $name $role) (tptp:record-name-and-role $record)
                    (case (langdef:run-deterministic-equations $view
                            (LangDef:DeterministicCall tptp-res-v1:clausal-form
                              $occurrence $name $role (tptp-fof-batch:positive) $clauses))

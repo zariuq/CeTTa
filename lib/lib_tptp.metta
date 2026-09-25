@@ -1,5 +1,12 @@
 ; Public TPTP library.
 ;
+; The library runs in the HE and the PeTTa lane, under the base and the
+; extended profile alike.  This file is the shared source, spelled in base
+; HE; its PeTTa spelling is generated beside it under lib/petta, and the
+; loader picks the spelling of the running lane.  Compact values are list
+; values and byte strings, which every lane handles as values; only their
+; written literals need the extended profile.
+;
 ; The default all-family reader loads a pinned ParserPack snapshot derived
 ; from the official Extended-BNF source and returns the canonical term of each
 ; TPTP input in the language derived from that grammar: every alternative is a
@@ -34,6 +41,7 @@
 !(import! &self langdef)
 !(import! &self fs)
 !(import! &self list)
+!(import! &self str)
 
 ; Pinned official SyntaxBNF digest. A mismatch is a named fault, not a parse.
 (= (tptp:official-syntaxbnf-digest)
@@ -232,38 +240,61 @@
 (= (tptp:let-head mixed) §let)
 (= (tptp:let-head native) §let)
 
+; The binding operations take formulas as data (their formula parameters are
+; Atoms) and give a computed formula back inside quote, the one carrier that
+; crosses an evaluating position on every host; a fault comes back as it is.
 ; The free variables of a formula or any other compact value, each once, in
 ; order of first occurrence, as a list: (∀ VARS F) closes F over them.
+(: tptp:free-variables (-> Atom %Undefined%))
+(: tptp:free-variables (-> Atom Atom %Undefined%))
 (= (tptp:free-variables $value)
    (tptp:free-variables mixed $value))
 (= (tptp:free-variables $policy $value)
    (let $signature (tptp:binding-signature $policy)
-     (let $names (langdef:free-names $signature $value)
+     (let $names (__cetta_abt_free_names $signature $value)
        (__cetta_lib_list_from_expression $names))))
 
 ; Replace free variables simultaneously: ((X t) (Y u)) replaces X by t and Y
 ; by u.  A binder is renamed only where it would capture a variable of a
 ; replacement, to its name followed by a number that occurs nowhere else.
+; The result is (TPTP:Value FORMULA): a computed value is handed back inside
+; a carrier whose field is data, the same on both hosts, and is taken apart
+; with let or unify.
+(: tptp:substitute (-> Atom Atom %Undefined%))
+(: tptp:substitute (-> Atom Atom Atom %Undefined%))
 (= (tptp:substitute $bindings $value)
    (tptp:substitute mixed $bindings $value))
 (= (tptp:substitute $policy $bindings $value)
    (let $signature (tptp:binding-signature $policy)
-     (langdef:substitute-names $signature $bindings $value)))
+     (let $result (__cetta_abt_substitute $signature $bindings $value)
+       (tptp-internal:quoted $result))))
 
 ; Rename bound variables apart: every binder then declares a name no other
 ; binder declares, that is not free in the value, and that is not in avoid.
+; The result is (TPTP:Value FORMULA).
+(: tptp:rename-apart (-> Atom Atom %Undefined%))
+(: tptp:rename-apart (-> Atom Atom Atom %Undefined%))
 (= (tptp:rename-apart $avoid $value)
    (tptp:rename-apart mixed $avoid $value))
 (= (tptp:rename-apart $policy $avoid $value)
    (let $signature (tptp:binding-signature $policy)
-     (langdef:rename-apart $signature $avoid $value)))
+     (let $result (__cetta_abt_rename_bound $signature $avoid $value)
+       (tptp-internal:quoted $result))))
 
 ; Equality up to the names of bound variables.
+(: tptp:alpha-equal (-> Atom Atom %Undefined%))
+(: tptp:alpha-equal (-> Atom Atom Atom %Undefined%))
 (= (tptp:alpha-equal $left $right)
    (tptp:alpha-equal mixed $left $right))
 (= (tptp:alpha-equal $policy $left $right)
    (let $signature (tptp:binding-signature $policy)
-     (langdef:alpha-equal $signature $left $right)))
+     (__cetta_abt_named_alpha_eq $signature $left $right)))
+
+; A computed value inside its carrier; a fault as it is.
+(: TPTP:Value (-> Atom Atom))
+(: tptp-internal:quoted (-> Atom %Undefined%))
+(= (tptp-internal:quoted $value)
+   (unify $value (Error $call $reason) $value (TPTP:Value $value)))
 
 ; The canonical terms themselves, (bnf NAME child...), for programs that work
 ; with the grammar's own structure.
@@ -322,7 +353,8 @@
                      ($value (return $value)))))
        (case $read
          (((TPTP:ReadDocument $records $spans)
-            (TPTP:SourceDocument $identity (sha256 $text) $text $records $spans))
+            (let $digest (str:sha256 $text)
+              (TPTP:SourceDocument $identity $digest $text $records $spans)))
           ($fault $fault))))))
 (= (tptp:source-document-identity
       (TPTP:SourceDocument $identity $_digest $_text $_records $_spans))
@@ -638,7 +670,7 @@
                 $occurrence $polarity $named (tptp:binder-equality-rows $names)
                 $skolem-frontier $naming-frontier)
           (((TPTP:ClausifiedFormulaV1 $clausification $clauses)
-             (let ($_family $name $role) (tptp:record-name-and-role $record)
+             (let (TPTP:NameAndRole $_family $name $role) (tptp:record-name-and-role $record)
                (case (langdef:run-deterministic-equations $program
                        (LangDef:DeterministicCall tptp-res-v1:clausal-form
                          $occurrence $name $role $polarity $clauses))
@@ -648,11 +680,13 @@
            ($fault $fault))))
       ($refusal $refusal))))
 
+(: TPTP:NameAndRole (-> Atom Atom Atom Atom))
+(: tptp:record-name-and-role (-> Atom %Undefined%))
 (= (tptp:record-name-and-role $record)
-   (let ($family $fields) (decons-atom $record)
-     (let ($name $after-name) (decons-atom $fields)
-       (let ($role $_rest) (decons-atom $after-name)
-         ($family $name $role)))))
+   (let $shape (tptp-internal:annotated $record)
+     (unify $shape (TPTP:Annotated $family $name $role $formula $annotations)
+       (TPTP:NameAndRole $family $name $role)
+       $shape)))
 
 ; The resolution input of inputs with occurrences: a clause projects
 ; directly, a formula is clausified, anything else is refused by name.
@@ -844,6 +878,64 @@
               (tptp:compact-include-return $answers))))
         ($fault (TPTP:IncludeResolutionProgramFailureV1 $fault))))))
 
+; A checked certificate as compact records: the derivation in TSTP form.
+; Each input clause becomes (cnf NAME ROLE CLAUSE (file PATH NAME)), each
+; step (cnf c_N plain RESOLVENT (inference resolution [(status thm)]
+; [LEFT RIGHT])), the last concluding $false; tptp:print prints the records
+; and the printed text reads back to the same records.  The files carrier
+; pairs every source digest with its path; a document or a loaded include
+; environment gives one.  Checking is the caller's: the trace checker and
+; the provenance check accept the certificate first.
+(= (tptp:open-certificate-records)
+   (langdef:load-deterministic-equations
+     (LangDef:EquationSources
+       "langdef/bnf/plain_bnf_denotation_v1.metta"
+       "langdef/tptp/canonical_to_compact_v1.metta"
+       "langdef/tptp/certificate_to_compact_records_v1.metta")))
+(: tptp:certificate-records (-> Atom Atom Atom %Undefined%))
+(= (tptp:certificate-records $problem $certificate $files)
+   (let $program (tptp:open-certificate-records)
+     (case $program
+       (((NativeHandle $_kind $_id)
+          (let $answers
+               (collapse
+                 (langdef:run-deterministic-equations-data $program
+                   (LangDef:DeterministicCall
+                     tptp-cert-v1:records $problem $certificate $files)))
+            (let $_ (langdef:close-deterministic-equations $program)
+              (superpose $answers))))
+        ($fault (TPTP:CertificateRecordsProgramFailureV1 $fault))))))
+(: tptp:certificate-files-of-document (-> Atom %Undefined%))
+(= (tptp:certificate-files-of-document $document)
+   (unify $document (TPTP:SourceDocument (TPTP:FileSource $path) $digest $text $records $spans)
+     (tptp-cert-v1:files-cons (tptp-cert-v1:file $digest $path) (tptp-cert-v1:files-nil))
+     (TPTP:UnsupportedSourceDocument $document)))
+; A loaded include environment names the root by the path the caller gave
+; and every included file by the spelling of the include that reached it.
+(: tptp:certificate-files-of-environment (-> Atom Atom %Undefined%))
+(= (tptp:certificate-files-of-environment $loaded $root-name)
+   (unify $loaded
+     (TPTP:CompactIncludeEnvironmentV1 $root $library (tptp-ci-v1:environment $documents $bindings))
+     (let $root-digest (tptp-internal:certificate-digest-of $root $documents)
+       (tptp-cert-v1:files-cons (tptp-cert-v1:file $root-digest $root-name)
+         (tptp-internal:certificate-files-of-bindings $bindings $documents)))
+     $loaded))
+(= (tptp-internal:certificate-files-of-bindings (tptp-ci-v1:bindings-nil) $documents)
+   (tptp-cert-v1:files-nil))
+(= (tptp-internal:certificate-files-of-bindings
+      (tptp-ci-v1:bindings-cons (tptp-ci-v1:include-binding $source $requested $target $mode) $rest)
+      $documents)
+   (let $digest (tptp-internal:certificate-digest-of $target $documents)
+     (tptp-cert-v1:files-cons (tptp-cert-v1:file $digest $requested)
+       (tptp-internal:certificate-files-of-bindings $rest $documents))))
+(= (tptp-internal:certificate-digest-of $source (tptp-ci-v1:documents-nil))
+   (TPTP:IncludeEnvironmentDocumentMissingV1 $source))
+(= (tptp-internal:certificate-digest-of $source
+      (tptp-ci-v1:documents-cons (tptp-ci-v1:source-document $candidate $digest $records $text) $rest))
+   (if (== $candidate $source)
+       $digest
+       (tptp-internal:certificate-digest-of $source $rest)))
+
 ; Canonical printing is an executed authored transformation.  It normalizes
 ; layout while retaining the compact record structure on reparsing.
 (= (tptp:print-records $records)
@@ -897,135 +989,174 @@
 ; Record views.  An annotated input is (FAMILY NAME ROLE FORMULA), with the
 ; source and then the useful info appended when present, for the families
 ; thf tff tcf fof cnf tpi; an include is (incl FILE SELECTION? SPACE?).
+; A record or a formula is data on both hosts: every function here takes it
+; as an Atom, takes it apart with unify, and hands it back inside a carrier
+; whose fields are Atoms, so an equation the program has for a record's or a
+; formula's head never fires on it.
+(: TPTP:RecordName (-> Atom Atom))
+(: TPTP:RecordRole (-> Atom Atom))
+(: TPTP:RecordFormula (-> Atom Atom))
+(: TPTP:RecordAnnotation (-> Atom Atom))
+(: TPTP:RecordAnnotation (-> Atom Atom Atom))
+(: TPTP:RecordSource (-> Atom Atom))
+(: TPTP:RecordInfo (-> Atom Atom))
+(: TPTP:UnsupportedRecord (-> Atom Atom))
+(: TPTP:Annotated (-> Atom Atom Atom Atom Atom Atom))
+
 (= (tptp-internal:annotated-family $head)
    (case $head
      ((fof True) (cnf True) (tff True) (thf True) (tcf True) (tpi True)
       ($_ False))))
 
-; (TPTP:Annotated FAMILY FIELDS) for an annotated input, (TPTP:Include) for
-; an include, and (TPTP:UnsupportedRecord RECORD) otherwise.
-(= (tptp-internal:record-shape $record)
-   (if (== (get-metatype $record) Expression)
-       (if (== (size-atom $record) 0)
-           (TPTP:UnsupportedRecord $record)
-           (let ($head $fields) (decons-atom $record)
-             (if (== $head incl)
-                 (tptp-internal:include-shape $record (size-atom $fields))
-                 (if (tptp-internal:annotated-family $head)
-                     (tptp-internal:annotated-shape
-                       $record $head $fields (size-atom $fields))
-                     (TPTP:UnsupportedRecord $record)))))
-       (TPTP:UnsupportedRecord $record)))
-(= (tptp-internal:include-shape $record $count)
-   (if (>= $count 1)
-       (if (<= $count 3) (TPTP:Include) (TPTP:UnsupportedRecord $record))
-       (TPTP:UnsupportedRecord $record)))
-(= (tptp-internal:annotated-shape $record $family $fields $count)
-   (if (>= $count 3)
-       (if (<= $count 5)
-           (TPTP:Annotated $family $fields)
-           (TPTP:UnsupportedRecord $record))
-       (TPTP:UnsupportedRecord $record)))
+(: tptp-internal:include-record (-> Atom %Undefined%))
+(= (tptp-internal:include-record $record)
+   (unify $record (incl $file) True
+     (unify $record (incl $file $selection) True
+       (unify $record (incl $file $selection $space) True False))))
 
+; An annotated record taken apart: (TPTP:Annotated FAMILY NAME ROLE FORMULA
+; ANNOTATIONS), ANNOTATIONS the expression of the source and the useful info
+; that are present, (), (SOURCE) or (SOURCE INFO); (TPTP:UnsupportedRecord
+; RECORD) for any other value.  No list is written here: a list value is a
+; profile's syntax, and this library reads in every base profile.
+(: tptp-internal:annotated (-> Atom %Undefined%))
+(= (tptp-internal:annotated $record)
+   (unify $record ($family $name $role $formula)
+     (tptp-internal:annotated-of $record
+       (TPTP:Annotated $family $name $role $formula ()))
+     (unify $record ($family $name $role $formula $source)
+       (tptp-internal:annotated-of $record
+         (TPTP:Annotated $family $name $role $formula ($source)))
+       (unify $record ($family $name $role $formula $source $info)
+         (tptp-internal:annotated-of $record
+           (TPTP:Annotated $family $name $role $formula ($source $info)))
+         (TPTP:UnsupportedRecord $record)))))
+(: tptp-internal:annotated-of (-> Atom Atom %Undefined%))
+(= (tptp-internal:annotated-of $record $shape)
+   (unify $shape (TPTP:Annotated $family $name $role $formula $annotations)
+     (if (tptp-internal:annotated-family $family)
+         $shape
+         (TPTP:UnsupportedRecord $record))
+     (TPTP:UnsupportedRecord $record)))
+
+(: tptp:record-family (-> Atom %Undefined%))
 (= (tptp:record-family $record)
-   (case (tptp-internal:record-shape $record)
-     (((TPTP:Annotated $family $_fields) $family)
-      ((TPTP:Include) include)
-      ($unsupported $unsupported))))
+   (if (tptp-internal:include-record $record)
+       include
+       (let $shape (tptp-internal:annotated $record)
+         (unify $shape (TPTP:Annotated $family $name $role $formula $annotations)
+           $family
+           $shape))))
 
-(= (tptp-internal:field $fields $index)
-   (if (== $index 0)
-       (car-atom $fields)
-       (let $rest (cdr-atom $fields)
-         (tptp-internal:field $rest (- $index 1)))))
+(: tptp-internal:record-field (-> Atom Atom Atom Atom %Undefined%))
+(= (tptp-internal:record-field $record $kind $wrap $index)
+   (if (tptp-internal:include-record $record)
+       (TPTP:NotApplicable $kind include)
+       (let $shape (tptp-internal:annotated $record)
+         (unify $shape (TPTP:Annotated $family $name $role $formula $annotations)
+           (unify $index 0
+             ($wrap $name)
+             (unify $index 1 ($wrap $role) ($wrap $formula)))
+           $shape))))
 
-(= (tptp-internal:annotated-field $record $index $kind $wrap)
-   (case (tptp-internal:record-shape $record)
-     (((TPTP:Annotated $_family $fields)
-        (let $value (tptp-internal:field $fields $index) ($wrap $value)))
-      ((TPTP:Include) (TPTP:NotApplicable $kind include))
-      ($unsupported $unsupported))))
-
+(: tptp:record-name (-> Atom %Undefined%))
 (= (tptp:record-name $record)
-   (tptp-internal:annotated-field $record 0 record-name TPTP:RecordName))
+   (tptp-internal:record-field $record record-name TPTP:RecordName 0))
+(: tptp:record-role (-> Atom %Undefined%))
 (= (tptp:record-role $record)
-   (tptp-internal:annotated-field $record 1 record-role TPTP:RecordRole))
+   (tptp-internal:record-field $record record-role TPTP:RecordRole 1))
+(: tptp:record-formula (-> Atom %Undefined%))
 (= (tptp:record-formula $record)
-   (tptp-internal:annotated-field $record 2 record-formula TPTP:RecordFormula))
+   (tptp-internal:record-field $record record-formula TPTP:RecordFormula 2))
 
 ; The annotations of an input: its source and, when present, its useful info.
+(: tptp:record-annotation (-> Atom %Undefined%))
 (= (tptp:record-annotation $record)
-   (case (tptp-internal:record-shape $record)
-     (((TPTP:Annotated $_family $fields)
-        (case (size-atom $fields)
-          ((3 (TPTP:NoAnnotation))
-           (4 (let $source (tptp-internal:field $fields 3)
-                (TPTP:RecordAnnotation $source)))
-           (5 (let $source (tptp-internal:field $fields 3)
-                (let $info (tptp-internal:field $fields 4)
-                  (TPTP:RecordAnnotation $source $info)))))))
-      ((TPTP:Include) (TPTP:NotApplicable record-annotation include))
-      ($unsupported $unsupported))))
+   (if (tptp-internal:include-record $record)
+       (TPTP:NotApplicable record-annotation include)
+       (let $shape (tptp-internal:annotated $record)
+         (unify $shape (TPTP:Annotated $family $name $role $formula $annotations)
+           (unify $annotations ()
+             (TPTP:NoAnnotation)
+             (unify $annotations ($source)
+               (TPTP:RecordAnnotation $source)
+               (unify $annotations ($source $info)
+                 (TPTP:RecordAnnotation $source $info)
+                 $shape)))
+           $shape))))
+(: tptp:record-source (-> Atom %Undefined%))
 (= (tptp:record-source $record)
-   (case (tptp:record-annotation $record)
-     (((TPTP:RecordAnnotation $source) (TPTP:RecordSource $source))
-      ((TPTP:RecordAnnotation $source $_info) (TPTP:RecordSource $source))
-      ((TPTP:NoAnnotation) (TPTP:NoSource))
-      ($other $other))))
+   (let $annotation (tptp:record-annotation $record)
+     (unify $annotation (TPTP:RecordAnnotation $source)
+       (TPTP:RecordSource $source)
+       (unify $annotation (TPTP:RecordAnnotation $source $info)
+         (TPTP:RecordSource $source)
+         (unify $annotation (TPTP:NoAnnotation) (TPTP:NoSource) $annotation)))))
+(: tptp:record-info (-> Atom %Undefined%))
 (= (tptp:record-info $record)
-   (case (tptp:record-annotation $record)
-     (((TPTP:RecordAnnotation $_source $info) (TPTP:RecordInfo $info))
-      ((TPTP:RecordAnnotation $_source) (TPTP:NoInfo))
-      ((TPTP:NoAnnotation) (TPTP:NoInfo))
-      ($other $other))))
+   (let $annotation (tptp:record-annotation $record)
+     (unify $annotation (TPTP:RecordAnnotation $source $info)
+       (TPTP:RecordInfo $info)
+       (unify $annotation (TPTP:RecordAnnotation $source)
+         (TPTP:NoInfo)
+         (unify $annotation (TPTP:NoAnnotation) (TPTP:NoInfo) $annotation)))))
 
+(: tptp:record-span (-> Atom %Undefined%))
 (= (tptp:record-span $_record) (TPTP:SpanUnavailable compact-value))
+(: tptp:name-text (-> Atom Atom))
 (= (tptp:name-text $name) $name)
+(: tptp:role-text (-> Atom Atom))
 (= (tptp:role-text $role) $role)
 
 (= (tptp:record-count $records)
    (let $count (size-atom $records) $count))
 
+; Selections keep the records that answer, in order, as a list.  A list of
+; records is a value on both hosts, so it needs no Atom parameter and a
+; caller may write a call in its place; each walk takes the list apart with
+; car-atom and cdr-atom, whose results are values, so a record passes
+; through as data.
 (= (tptp:select-family $family $records)
    (if (== (size-atom $records) 0)
        $records
-       (let ($head $tail) (decons-atom $records)
-         (let $selected-tail (tptp:select-family $family $tail)
-           (if (== $family (tptp:record-family $head))
-               (let $selected
-                    (cons-atom $head $selected-tail)
-                 $selected)
-               $selected-tail)))))
+       (let $head (car-atom $records)
+         (let $tail (cdr-atom $records)
+           (let $selected-tail (tptp:select-family $family $tail)
+             (if (== $family (tptp:record-family $head))
+                 (cons-atom $head $selected-tail)
+                 $selected-tail))))))
 
+(: tptp:record-has-name (-> Atom Atom %Undefined%))
 (= (tptp:record-has-name $name $record)
-   (case (tptp:record-name $record)
-     (((TPTP:RecordName $actual) (== $name $actual))
-      ($_ False))))
+   (let $view (tptp:record-name $record)
+     (unify $view (TPTP:RecordName $actual)
+       (unify $actual $name True False)
+       False)))
 (= (tptp:select-name $name $records)
    (if (== (size-atom $records) 0)
        $records
-       (let ($head $tail) (decons-atom $records)
-         (let $selected-tail (tptp:select-name $name $tail)
-           (if (tptp:record-has-name $name $head)
-               (let $selected
-                    (cons-atom $head $selected-tail)
-                 $selected)
-               $selected-tail)))))
+       (let $head (car-atom $records)
+         (let $tail (cdr-atom $records)
+           (let $selected-tail (tptp:select-name $name $tail)
+             (if (tptp:record-has-name $name $head)
+                 (cons-atom $head $selected-tail)
+                 $selected-tail))))))
 
+(: tptp:record-has-role (-> Atom Atom %Undefined%))
 (= (tptp:record-has-role $role $record)
-   (case (tptp:record-role $record)
-     (((TPTP:RecordRole $actual) (== $role $actual))
-      ($_ False))))
+   (let $view (tptp:record-role $record)
+     (unify $view (TPTP:RecordRole $actual)
+       (unify $actual $role True False)
+       False)))
 (= (tptp:select-role $role $records)
    (if (== (size-atom $records) 0)
        $records
-       (let ($head $tail) (decons-atom $records)
-         (let $selected-tail (tptp:select-role $role $tail)
-           (if (tptp:record-has-role $role $head)
-               (let $selected
-                    (cons-atom $head $selected-tail)
-                 $selected)
-               $selected-tail)))))
+       (let $head (car-atom $records)
+         (let $tail (cdr-atom $records)
+           (let $selected-tail (tptp:select-role $role $tail)
+             (if (tptp:record-has-role $role $head)
+                 (cons-atom $head $selected-tail)
+                 $selected-tail))))))
 
 (= (tptp:record-statistics $records)
    (tptp:record-statistics-inputs $records 0 0 0 0 0 0 0 0))
@@ -1034,23 +1165,24 @@
    (if (== (size-atom $records) 0)
        (TPTP:RecordStatistics
          $total $fof $cnf $tff $thf $tcf $tpi $include)
-       (let ($head $tail) (decons-atom $records)
-         (case (tptp:record-family $head)
-           ((fof (tptp:record-statistics-inputs $tail
-                   (+ $total 1) (+ $fof 1) $cnf $tff $thf $tcf $tpi $include))
-            (cnf (tptp:record-statistics-inputs $tail
-                   (+ $total 1) $fof (+ $cnf 1) $tff $thf $tcf $tpi $include))
-            (tff (tptp:record-statistics-inputs $tail
-                   (+ $total 1) $fof $cnf (+ $tff 1) $thf $tcf $tpi $include))
-            (thf (tptp:record-statistics-inputs $tail
-                   (+ $total 1) $fof $cnf $tff (+ $thf 1) $tcf $tpi $include))
-            (tcf (tptp:record-statistics-inputs $tail
-                   (+ $total 1) $fof $cnf $tff $thf (+ $tcf 1) $tpi $include))
-            (tpi (tptp:record-statistics-inputs $tail
-                   (+ $total 1) $fof $cnf $tff $thf $tcf (+ $tpi 1) $include))
-            (include (tptp:record-statistics-inputs $tail
-                       (+ $total 1) $fof $cnf $tff $thf $tcf $tpi (+ $include 1)))
-            ($unsupported $unsupported))))))
+       (let $head (car-atom $records)
+         (let $tail (cdr-atom $records)
+           (case (tptp:record-family $head)
+             ((fof (tptp:record-statistics-inputs $tail
+                     (+ $total 1) (+ $fof 1) $cnf $tff $thf $tcf $tpi $include))
+              (cnf (tptp:record-statistics-inputs $tail
+                     (+ $total 1) $fof (+ $cnf 1) $tff $thf $tcf $tpi $include))
+              (tff (tptp:record-statistics-inputs $tail
+                     (+ $total 1) $fof $cnf (+ $tff 1) $thf $tcf $tpi $include))
+              (thf (tptp:record-statistics-inputs $tail
+                     (+ $total 1) $fof $cnf $tff (+ $thf 1) $tcf $tpi $include))
+              (tcf (tptp:record-statistics-inputs $tail
+                     (+ $total 1) $fof $cnf $tff $thf (+ $tcf 1) $tpi $include))
+              (tpi (tptp:record-statistics-inputs $tail
+                     (+ $total 1) $fof $cnf $tff $thf $tcf (+ $tpi 1) $include))
+              (include (tptp:record-statistics-inputs $tail
+                         (+ $total 1) $fof $cnf $tff $thf $tcf $tpi (+ $include 1)))
+              ($unsupported $unsupported)))))))
 
 ; Formulae, terms, and types are ordinary MeTTa atoms.  Named logical heads
 ; receive precise kinds; every other expression is an application/sequence.
@@ -1061,23 +1193,27 @@
 ; are its elements.  Atoms are symbols, host literals
 ; (numbers, strings, which are distinct objects under the mixed policy) and
 ; host variables.
+(: tptp:expression-kind (-> Atom %Undefined%))
 (= (tptp:expression-kind $expression)
    (case (get-metatype $expression)
      ((Expression
-        (if (== (size-atom $expression) 0)
-            sequence
-            (let $head (car-atom $expression)
-              (case (tptp-internal:head-kind $head)
-                (((TPTP:Kind $kind) $kind)
-                 ($_ (if (== (size-atom $expression) 1)
-                         long-connective
-                         application)))))))
+        (let $size (size-atom $expression)
+          (if (== $size 0)
+              sequence
+              (let $head (car-atom $expression)
+                (let $kind (tptp-internal:head-kind $head)
+                  (unify $kind (TPTP:Kind $named)
+                    $named
+                    (if (== $size 1) long-connective application)))))))
       ($metatype (tptp:expression-kind-metatype $metatype)))))
 (= (tptp:expression-kind-metatype List) list)
 (= (tptp:expression-kind-metatype Symbol) symbol)
 (= (tptp:expression-kind-metatype Grounded) literal)
 (= (tptp:expression-kind-metatype Variable) host-variable)
 
+; The named heads and their kinds; any other head is applied.  A head is a
+; symbol or a tagged leaf, which neither host evaluates.
+(: tptp-internal:head-kind (-> Atom %Undefined%))
 (= (tptp-internal:head-kind $head)
    (case $head
      ((¬ (TPTP:Kind not)) (∧ (TPTP:Kind and)) (∨ (TPTP:Kind or))
@@ -1100,11 +1236,14 @@
       (distinct (TPTP:Kind distinct-object))
       ($_ (TPTP:NotAKind)))))
 
+; The children of a compact value as a list: an application's arguments
+; after its head, a list's elements, and nothing for an atom.
+(: tptp:expression-children (-> Atom %Undefined%))
 (= (tptp:expression-children $expression)
    (case (get-metatype $expression)
-     ((Expression (cdr-atom $expression))
+     ((Expression (__cetta_lib_list_from_expression (cdr-atom $expression)))
       (List $expression)
-      ($_ ()))))
+      ($_ (__cetta_lib_list_from_expression ())))))
 
 ; ------------------------------------------------------------- admission --
 
@@ -1500,6 +1639,23 @@
    (tptp:resolve-loaded-compact-includes
      (tptp:load-compact-include-environment-with-reader
        $reader $policy $root-path $library-root)))
+; An expanded input holds its record as data: the resolver hands each
+; record back inside this carrier, whose fields are never evaluated.
+(: TPTP:ExpandedInputV1 (-> Atom Atom Atom Atom Atom Atom))
+; The records of an expanded document as a list, in expansion order, each
+; as data; a resolution fault passes through unchanged.
+(: tptp:expanded-records (-> Atom %Undefined%))
+(= (tptp:expanded-records $expanded)
+   (unify $expanded (TPTP:ExpandedDocumentV1 $root $inputs $edges)
+     (tptp-internal:expanded-input-records $inputs)
+     $expanded))
+(= (tptp-internal:expanded-input-records (tptp-ci-v1:expanded-inputs-nil))
+   (__cetta_lib_list_from_expression ()))
+(= (tptp-internal:expanded-input-records
+      (tptp-ci-v1:expanded-inputs-cons
+        (TPTP:ExpandedInputV1 $origin $path $namespace $name $record) $tail))
+   (let $rest (tptp-internal:expanded-input-records $tail)
+     (cons-atom $record $rest)))
 ; Physical include loading is intentionally narrower than include
 ; resolution.  It chooses files by the documented TPTP lookup order, parses
 ; each distinct canonical source once, and records the choices as typed source

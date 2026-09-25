@@ -4,6 +4,7 @@
 #include "eval.h"
 #include "match_decision.h"
 #include "nik_direct_authority.h"
+#include "open_equation_machine.h"
 #include "petta_analysis.h"
 #include "petta_program.h"
 #include "petta_semantics.h"
@@ -261,6 +262,14 @@ typedef struct {
         void *context, Space *space, Arena *arena, Atom *expression,
         const PettaPlanNode *plan,
         const Bindings *environment, OutcomeSet *outcomes);
+    /* A strict application whose arguments the machine has computed.  The
+     * host applies its operation to those values without evaluating them
+     * again, and returns false, adding nothing, when the operation needs
+     * the ordinary evaluator; the call then goes to evaluate as before.
+     * Optional. */
+    bool (*apply_ready_values)(
+        void *context, Space *space, Arena *arena, Atom *expression,
+        const Bindings *environment, OutcomeSet *outcomes);
     /* Create a new translation event at an explicit forcing boundary such as
      * PeTTa `eval`.  A returned plan fixes callability for that occurrence;
      * NULL declines because the host could not establish the event. */
@@ -367,6 +376,19 @@ typedef struct {
      * producer's remaining answers are the ones equation search would find. */
     bool (*answer_authority_token)(
         void *context, PettaMachineAuthorityToken *token);
+    /* Open a revision-pinned enumeration of a call whose arguments may hold
+     * unbound variables, over the compiled open equation tier, with the
+     * consumer's `expected` value as its destination.  Each answer reports
+     * the call's value and the values of `query_vars` (every variable of the
+     * call and of `expected`), built in `answer_arena`.  NULL declines to
+     * canonical equation search. */
+    CettaOpenEquationCursor *(*open_relation_cursor)(
+        void *context, Space *space, Arena *answer_arena, Atom *call,
+        Atom *expected, Atom *const *query_vars, uint32_t query_var_count);
+    /* A revision-keyed program fact: the relation has declined open
+     * compilation.  False means only that no decline is known. */
+    bool (*open_relation_declined)(
+        void *context, Space *space, SymbolId head, CettaExprLen arity);
     /* Native opt-in capabilities whose names are not part of the core
      * PeTTa presentation.  Returning known=false leaves the occurrence
      * available to ordinary equations, data, or an optional foreign

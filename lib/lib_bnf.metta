@@ -1,5 +1,12 @@
 ; Plain BNF as structured, source-spanned MeTTa data.
 ;
+; The library runs in the HE and the PeTTa lane, under the base and the
+; extended profile alike.  This file is the shared source, spelled in base
+; HE; its PeTTa spelling is generated beside it under lib/petta, and the
+; loader picks the spelling of the running lane.  Canonical terms are list
+; values and byte strings, which every lane handles as values; only their
+; written literals need the extended profile.
+;
 ; The reader follows one visible construction:
 ;
 ;   authored syntax LanguageDef + lexical profile
@@ -12,16 +19,25 @@
 ; a LanguageDef, parser profile, and source-occurrence map that may be loaded
 ; as a parser.  The native qualification gate also runs GLR and requires the
 ; two engines to agree.
+;
+; A loaded parser reads text to lossless canonical terms, (bnf NAME child...)
+; per production, and prints them back: bnf:parse-canonical-text and
+; bnf:parse-canonical-file give one term per parse, bnf:print-canonical the
+; text of a term at a rule, bnf:canonical-language the derived LanguageDef,
+; bnf:canonical-collisions the sorts whose productions are told apart by
+; name, and bnf:binding-signature the ABT signature a language declares over
+; those terms.  The canonical section below states the form.
 
 !(import! &self langdef)
 
-; Semantic relations are supplied by a target realization.  The current
-; generated PeTTa artifact is generated/plain_bnf_semantic_admission_v1.metta; other
-; dialects remain free to leave bnf:validate-document uninterpreted until they
-; have their own generated realization.
-; The PeTTa lowering consumes source-derived integer completion NativeTypes.
-; Public validation admits its structured input before selecting that checked
-; entry; malformed input is not sent to the generated raw fallback.
+; The semantic relations (declaration validation, discovery, analysis) are a
+; generated realization of the GSLT sources under langdef/bnf, lowered once
+; per dialect from the same sources.  This spelling imports the HE
+; realization; the PeTTa spelling imports the PeTTa one.  The lowering
+; consumes source-derived integer completion NativeTypes.  Public validation
+; admits its structured input before selecting that checked entry; malformed
+; input is not sent to the generated raw fallback.
+!(import! &self ../langdef/he/generated/plain_bnf_semantic_admission_v1.metta)
 
 (= (bnf:empty-lexical-environment)
    (bnf-v1:lexical-environment
@@ -848,7 +864,9 @@
 ; Canonical terms of the derived LanguageDef: every alternative is a
 ; constructor named by its rule (and alternative index, where a rule has
 ; several), whose arguments are its rule and token children in order; fixed
-; terminals are dropped, single-child alternatives are transparent,
+; terminals are dropped, single-child alternatives are transparent and
+; literal-only alternatives are their text, except at a sort whose
+; alternatives could make one value two ways, where each is a constructor;
 ; repetitions and separated lists are lists, an option is the list of at most
 ; one, and a token is named by its class with its text.  Every constructor
 ; application and token is written (bnf NAME child...): grammar names never

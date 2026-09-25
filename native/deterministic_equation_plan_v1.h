@@ -64,8 +64,9 @@ bool cetta_deterministic_equation_plan_v1_load_inputs(
 void cetta_deterministic_equation_plan_v1_free(
     CettaDeterministicEquationPlanV1 *plan);
 
-/* Evaluate one ground call by exact first-order matching.  A defined head
- * must match exactly one rule; zero and multiple matches fail closed.
+/* Evaluate one ground call by exact first-order matching.  The loader
+ * admits only pairwise exclusive left sides, so at most one rule matches a
+ * call; a call to a defined head that no rule matches fails closed.
  * Undefined heads are constructors after their children are evaluated.
  * `let` is the sole built-in binder; other effects enter only through the
  * explicit primitive handler. */

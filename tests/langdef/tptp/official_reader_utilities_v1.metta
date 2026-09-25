@@ -15,7 +15,8 @@
 (= (utilities-v1:file-summaries $file)
    (utilities-v1:summaries (tptp:records $file)))
 (= (utilities-v1:first $records) (car-atom $records))
-(= (utilities-v1:second $records) (car-atom (cdr-atom $records)))
+(= (utilities-v1:second $records)
+   (let $rest (cdr-atom $records) (car-atom $rest)))
 
 (= (utilities-v1:run $file)
    (let $inputs (tptp:records $file)

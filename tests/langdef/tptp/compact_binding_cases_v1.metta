@@ -38,12 +38,12 @@
    (let $b $bindings
      (let $f (binding-test:first $policy $text)
        (let $g (tptp:substitute $policy $b $f)
-         (BindingV1 substitute $policy (quote $g))))))
+         (BindingV1 substitute $policy $g)))))
 
 (= (binding-test:apart $policy $avoid $text)
    (let $f (binding-test:first $policy $text)
      (let $g (tptp:rename-apart $policy $avoid $f)
-       (BindingV1 apart $policy (quote $g)))))
+       (BindingV1 apart $policy $g))))
 
 (= (binding-test:alpha $policy $text)
    (let [$left $right] (binding-test:formulas $policy $text)

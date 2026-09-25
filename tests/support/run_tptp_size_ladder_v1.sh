@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Per-stage time and peak RSS on the frozen TPTP reader size ladder.
+# Per-stage time and peak RSS on the frozen TPTP reader size ladder: the read,
+# the compact morphism, the printer and the reread of the printed text.
 set -euo pipefail
 if (( $# != 4 )); then
   echo 'usage: run_tptp_size_ladder_v1.sh LADDER SNAPSHOT CORPUS_ROOT OUT_TSV' >&2
@@ -26,22 +27,29 @@ load_log="${out%.tsv}.load.log"
 trap 'rm -f "$temporary"' EXIT INT TERM
 : > "$load_log"
 
+# Every rung is measured; a rung whose read, compact morphism, printer or
+# round trip fails is named and fails the ladder after the last rung.
+failed=0
 run_one() {
-  local label="$1" file="$2"
+  local label="$1" file="$2" status=0
   test -f "$file"
   if [[ -n "${TPTP_SIZE_LADDER_TIMEOUT_SECONDS:-}" ]]; then
     timeout --signal=KILL "$TPTP_SIZE_LADDER_TIMEOUT_SECONDS" \
       "$ladder" "$snapshot" "$file" \
-      > "$temporary" 2>> "$load_log"
+      > "$temporary" 2>> "$load_log" || status=$?
   else
     "$ladder" "$snapshot" "$file" \
-      > "$temporary" 2>> "$load_log"
+      > "$temporary" 2>> "$load_log" || status=$?
   fi
   if [[ ! -s "$out" ]]; then
     head -n 1 "$temporary" > "$out"
   fi
   tail -n +2 "$temporary" >> "$out"
-  printf '%s\t%s\n' "$label" "$file" >> "$load_log"
+  printf '%s\t%s\texit=%s\n' "$label" "$file" "$status" >> "$load_log"
+  if (( status != 0 )); then
+    echo "size ladder: $label exited with status $status" >&2
+    failed=1
+  fi
 }
 
 rm -f "$out"
@@ -51,3 +59,4 @@ run_one itp022 "$itp"
 run_one itp024 "$mb1"
 run_one syo587 "$deep"
 run_one hwv134 "$large"
+exit "$failed"
