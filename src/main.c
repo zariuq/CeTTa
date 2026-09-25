@@ -1207,10 +1207,14 @@ static void write_results(FILE *out, ResultSet *rs,
         return;
     }
 
+    /* `Empty` is HE's no-result symbol.  PeTTa gives it a meaning only as a
+     * `case` default, so a PeTTa result `Empty` is data and is printed. */
     bool hide_legacy_empty = language_id != CETTA_LANGUAGE_PRIME &&
+        language_id != CETTA_LANGUAGE_PETTA &&
         !cetta_language_uses_embedded_gslt(language_id);
     for (uint32_t i = 0; i < rs->len; i++) {
-        if (!hide_legacy_empty || !atom_is_empty(rs->items[i]))
+        if ((!hide_legacy_empty || !atom_is_empty(rs->items[i])) &&
+            !atom_is_petta_no_result(rs->items[i]))
             visible_len++;
     }
     if (visible_len == 0) {
@@ -1225,7 +1229,8 @@ static void write_results(FILE *out, ResultSet *rs,
         if (!visible_items) return;
         uint32_t out_i = 0;
         for (uint32_t i = 0; i < rs->len; i++) {
-            if (!hide_legacy_empty || !atom_is_empty(rs->items[i]))
+            if ((!hide_legacy_empty || !atom_is_empty(rs->items[i])) &&
+                !atom_is_petta_no_result(rs->items[i]))
                 visible_items[out_i++] = rs->items[i];
         }
         visible.items = visible_items;

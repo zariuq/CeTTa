@@ -1,1 +1,1 @@
-(Error (fold (chain (match <space> (m $V0) 1) $V1 (eval $V1)) 0 $V2 $V3 (amb $V3 $V2)) ReduceStepMultipleResults)
+3

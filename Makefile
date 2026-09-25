@@ -1615,6 +1615,8 @@ STAGE0_BIN = runtime/cetta-stage0-$(BUILD_OBJ_TAG)
 VARIANT_SHAPE_TEST_BIN = runtime/test_variant_shape_roundtrip-$(BUILD_OBJ_TAG)
 BINDINGS_LOOKUP_INDEX_TEST_BIN = runtime/test_bindings_lookup_index-$(BUILD_OBJ_TAG)
 ATOM_DEEP_COPY_TEST_BIN = runtime/test_atom_deep_copy_iterative-$(BUILD_OBJ_TAG)
+ATOM_SUFFIX_TEST_BIN = runtime/test_atom_suffix-$(BUILD_OBJ_TAG)
+ATOM_GENERATIONS_TEST_BIN = runtime/test_atom_generations-$(BUILD_OBJ_TAG)
 ABT_TEST_BIN = runtime/test_abt-$(BUILD_OBJ_TAG)
 ABT_MM2_BOUNDARY_TEST_BIN = runtime/test_abt_mm2_boundary-$(BUILD_OBJ_TAG)
 ABT_BENCH_BIN = runtime/bench_abt-$(BUILD_OBJ_TAG)
@@ -3692,6 +3694,24 @@ $(ATOM_DEEP_COPY_TEST_BIN): tests/test_atom_deep_copy_iterative.c src/symbol.c s
 
 test-atom-deep-copy-iterative: $(ATOM_DEEP_COPY_TEST_BIN)
 	@$(call cetta_exec,./$(ATOM_DEEP_COPY_TEST_BIN))
+
+$(ATOM_SUFFIX_TEST_BIN): tests/test_atom_suffix.c src/symbol.c src/atom.c src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_atom_suffix.c src/symbol.c src/atom.c src/binding/frame_identity.c $(LDFLAGS)
+
+.PHONY: test-atom-suffix
+test: test-atom-suffix
+test-atom-suffix: $(ATOM_SUFFIX_TEST_BIN)
+	@$(call cetta_exec,./$(ATOM_SUFFIX_TEST_BIN))
+
+$(ATOM_GENERATIONS_TEST_BIN): tests/test_atom_generations.c src/symbol.c src/atom.c src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_atom_generations.c src/symbol.c src/atom.c src/binding/frame_identity.c $(LDFLAGS)
+
+.PHONY: test-atom-generations
+test: test-atom-generations
+test-atom-generations: $(ATOM_GENERATIONS_TEST_BIN)
+	@$(call cetta_exec,./$(ATOM_GENERATIONS_TEST_BIN))
 
 runtime/test_native_handle_ownership-$(BUILD_OBJ_TAG): tests/test_native_handle_ownership.c src/native_handle.c src/native_handle.h src/atom.c src/binding/frame_identity.c src/atom.h src/library.h src/symbol.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
@@ -19652,6 +19672,7 @@ test-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-specialized-pure-call-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-prepared-program-cache-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-prepared-collection-pull-stats
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-open-crossing-linear
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prepared-sequence-erasure-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prepared-keyed-top-k-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-libpl-runtime-stats
@@ -23110,6 +23131,14 @@ test-petta-prepared-collection-pull: $(BIN)
 	diff -u "$$oracle" "$$actual"; \
 	echo "PASS: PeTTa producer pull preserves pure, materialized, nondeterminate, effect, and fault boundaries"
 
+.PHONY: test-open-crossing-linear
+test-open-crossing-linear: $(BIN)
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_open_crossing_linear.py ./$(BIN)
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
 .PHONY: test-petta-prepared-collection-pull-stats
 test-petta-prepared-collection-pull-stats: $(BIN)
 ifeq ($(ENABLE_RUNTIME_STATS),1)
@@ -23876,6 +23905,33 @@ test-controller-diversity: $(BIN)
 		scripts/bench_controller_diversity.py --run-current --runs 1 \
 		--cetta "$(CETTA_SCRIPT_BIN)"
 
+.PHONY: test-petta-once-first-witness
+# `once` answers some witness of its body.  A body whose depth-first order
+# never returns, or returns only after a long search, still yields a
+# witness; an effect keeps depth-first order; a finite search without a
+# witness answers nothing; an explicit depth-first controller keeps the
+# depth-first witness.
+test-petta-once-first-witness: $(BIN)
+	@set -eu; \
+	for stem in once_first_witness once_first_witness_order; do \
+		actual=$$(./$(BIN) --lang petta tests/petta/$$stem.metta 2>&1); \
+		expected=$$(cat tests/petta/$$stem.expected); \
+		if [ "$$actual" != "$$expected" ]; then \
+			echo "FAIL: once first witness ($$stem)"; \
+			diff <(printf '%s\n' "$$expected") \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	dfs=$$(CETTA_SEARCH_CONTROLLER=inline-depth-first ./$(BIN) --lang petta \
+		tests/petta/once_first_witness_order.metta 2>&1); \
+	if [ "$$dfs" != "d" ]; then \
+		echo "FAIL: an explicit depth-first controller keeps the depth-first witness"; \
+		printf '%s\n' "$$dfs"; \
+		exit 1; \
+	fi; \
+	echo "PASS: once takes a witness depth-first order reaches late or never"
+
 .PHONY: test-petta-machine-trace-config
 test-petta-machine-trace-config: $(BIN)
 	@set -eu; \
@@ -23902,7 +23958,7 @@ test-petta-machine-trace-config: $(BIN)
 		./$(BIN) --lang petta "$$fixture" 2>&1 >/dev/null); \
 	printf '%s\n' "$$choice_kind" | \
 		grep -q '^\[petta-choice-kind\]'; \
-	choice=$$(CETTA_PETTA_CHOICE_TRACE=1 \
+	choice=$$(CETTA_OPEN_EQUATIONS_REFERENCE=1 CETTA_PETTA_CHOICE_TRACE=1 \
 		./$(BIN) --lang petta "$$fixture" 2>&1 >/dev/null); \
 	printf '%s\n' "$$choice" | grep -q '^\[petta-choice\]'; \
 		echo "PASS: PeTTa machine trace configuration"
@@ -24833,15 +24889,15 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-c
 	fi; \
 	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
 		-e '!(car-atom ())' 2>&1); \
-	if [ -n "$$result" ]; then \
-		echo "FAIL: native PeTTa car-atom negative case"; \
+	if [ "$$result" != "()" ]; then \
+		echo "FAIL: native PeTTa car-atom of () is ()"; \
 		printf '%s\n' "$$result"; \
 		exit 1; \
 	fi; \
 	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
 		-e '!(cdr-atom atom)' 2>&1); \
-	if [ -n "$$result" ]; then \
-		echo "FAIL: native PeTTa cdr-atom negative case"; \
+	if [ "$$result" != "()" ]; then \
+		echo "FAIL: native PeTTa cdr-atom of a symbol is ()"; \
 		printf '%s\n' "$$result"; \
 		exit 1; \
 	fi; \
@@ -25743,7 +25799,11 @@ PETTA_SEMANTIC_EXACT_STREAM_STEMS = \
 	profile_petta_base_extension_boundary conjunctive_match_count_semantics \
 	search_machine_relational_head_phases search_machine_relational_output_phases \
 	search_machine_pinned_removal_visibility search_machine_admission_revisions \
-	stream_alpha_unique root_builtin_argument_demand
+	stream_alpha_unique root_builtin_argument_demand \
+	builtin_data_vocabulary car_cdr_total empty_is_data \
+	collapse_copies_answers open_lists library_metta_suffix \
+	sort_values dynamic_head_values specialize_data_values \
+	foldall_reduce partial_values bound_head_values
 PETTA_SEMANTIC_OCCURRENCE_BAG_STEMS = semantic_counter_equations \
 	search_machine_specializer_negative_mutation \
 	search_machine_partial_head_observation search_machine_query_field_composition
@@ -27843,7 +27903,7 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	   [ "$${answer_admissions:-0}" -lt 3 ] || \
 	   [ "$${answer_commits:-0}" -lt 3 ] || \
 	   [ "$${answer_declines:-0}" -lt 1 ] || \
-	   [ "$${answer_count:-0}" -ne 6 ] || \
+	   [ "$${answer_count:-0}" -ne 8 ] || \
 	   [ "$${answer_tail_calls:-0}" -lt 1 ]; then \
 		echo "FAIL: pure-call mechanism witness admission=$$admissions commit=$$commits decline=$$declines collections=$$collections evacuated=$$evacuated reclaimed=$$reclaimed answer-admission=$$answer_admissions answer-commit=$$answer_commits answer-decline=$$answer_declines answers=$$answer_count answer-tail-calls=$$answer_tail_calls"; \
 		exit 1; \

@@ -2,6 +2,7 @@
 #define CETTA_PETTA_SEMANTICS_H
 
 #include "atom.h"
+#include "grounded.h"
 #include "match.h"
 
 struct Space;
@@ -146,6 +147,27 @@ Atom *petta_semantics_function_overapplication_error(
     size_t known_arity_count, CettaExprLen actual_input_arity);
 bool petta_semantics_boolean_relation_arity(
     SymbolId head, uint32_t *arity);
+
+/* Operations that read only the size of their one argument, so that a
+ * collection only they consume may be represented by its count: PeTTa's
+ * `length`, which is a form, and `size-atom` and `size`, which are grounded
+ * operations the language profile may withhold. */
+typedef enum {
+    PETTA_COUNT_CONSUMER_NONE = 0,
+    PETTA_COUNT_CONSUMER_FORM,
+    PETTA_COUNT_CONSUMER_BUILTIN,
+} PeTTaCountConsumer;
+PeTTaCountConsumer petta_semantics_count_consumer(SymbolId head);
+/* Whether the arguments of an operation `head` are evaluated, so that a
+ * counting operation among them consumes its argument's value: not under a
+ * quotation, a `return`, a lambda or a predicate. */
+bool petta_semantics_count_use_children_executable(SymbolId head);
+/* `(== () (R (once (match S P T))))`, in either order, where `R` is
+ * `reify`, `collapse` or `primary_reify`: the equality observes only whether
+ * the match has a row, which the search machine may answer by membership.
+ * The shape is syntactic; the machine decides the rest when it runs. */
+bool petta_semantics_match_existence_observer_shape(
+    const Atom *expression, SymbolId primary_reify);
 bool petta_semantics_intrinsic_partial_arity(
     SymbolId head, CettaExprLen *arity);
 
@@ -201,6 +223,24 @@ void petta_semantics_logical_list_cursor_init(
     PeTTaLogicalListCursor *cursor, Atom *list);
 PeTTaLogicalListStep petta_semantics_logical_list_cursor_next(
     PeTTaLogicalListCursor *cursor, Atom **item);
+/* PeTTa's is_list/1: a flat expression, or cells ending in one. */
+bool petta_semantics_is_closed_list(Atom *atom);
+/* Whether PeTTa runs `head` as the language's type-pure grounded operation.
+ * A PeTTa form whose spelling such an operation shares, as `sort-atom`
+ * shares HE's, takes the dialect's own evaluation instead. */
+static inline bool petta_semantics_grounded_type_pure(SymbolId head) {
+    return grounded_op_is_type_pure(head) &&
+        petta_semantics_form(head) == PETTA_FORM_NONE;
+}
+/* The elements of a closed list as one flat expression: `list` itself when
+ * it is flat, NULL when its cells end in a non-list or an unbound tail. */
+Atom *petta_semantics_closed_list(Arena *arena, Atom *list);
+/* PeTTa's `sort-atom` (`total`) and `msort` of a value: a list sorts in
+ * SWI's standard order; `sort-atom` gives () for a non-list, as its first
+ * clause does.  Anything else, an improper list included, is SWI's
+ * type_error(list, Value): NULL with `*type_error` set. */
+Atom *petta_semantics_sort_value(Arena *arena, Atom *value, bool total,
+                                 bool *type_error);
 bool petta_semantics_logical_list_length(
     Atom *list, CettaExprLen *length);
 Atom *petta_semantics_materialize_closed_logical_list(
@@ -311,6 +351,10 @@ Atom *petta_semantics_apply(Arena *arena, Atom *callable, Atom *argument);
  */
 Atom *petta_semantics_lambda_value(Arena *arena, Atom *canonical_body);
 bool petta_semantics_lambda_body(const Atom *atom, Atom **canonical_body);
+/* A value PeTTa applies when it heads an application: a lambda, a nullary
+ * lambda or a partial application.  Each is recognized by its top level
+ * alone. */
+bool petta_semantics_runtime_callable_value(const Atom *atom);
 Atom *petta_semantics_nullary_lambda_value(Arena *arena, Atom *body);
 bool petta_semantics_nullary_lambda_body(const Atom *atom, Atom **body);
 

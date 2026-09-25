@@ -941,6 +941,9 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "open-equation-answer",
     "open-equation-declined",
     "open-equation-stop",
+    "open-equation-host",
+    "open-equation-host-export-bytes",
+    "open-equation-host-import-bytes",
 };
 
 static int64_t clamp_counter(uint64_t value) {

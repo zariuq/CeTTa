@@ -263,24 +263,45 @@ int main(void) {
           "new callable symbol receives its specialized relation head");
 
     /* Exact named-arity judgments use the same admitted-space generation.
-     * An expression that is not known to be under-applied can become a
-     * specialization value after a larger-arity equation is admitted. */
+     * Only source syntax is an under-application.  An expression that is a
+     * call's argument is a value, and data however many arguments its head
+     * takes.  The same expression in a forwarding equation's body becomes a
+     * partial application, and so a specialization value, once a larger
+     * arity for its head is admitted. */
     Atom *var_arity = atom_var(&persistent, "arity-f");
     space_add(&space, atom_expr3(
         &persistent, atom_symbol_id(&persistent, g_builtin_syms.equals),
         atom_expr2(&persistent, atom_symbol(&persistent, "arity-cache"),
                    var_arity),
         atom_expr2(&persistent, var_arity, atom_int(&persistent, 0))));
+    Atom *var_forward = atom_var(&persistent, "arity-g");
+    space_add(&space, atom_expr3(
+        &persistent, atom_symbol_id(&persistent, g_builtin_syms.equals),
+        atom_expr2(&persistent, atom_symbol(&persistent, "arity-forward"),
+                   var_forward),
+        atom_expr2(&persistent, atom_symbol(&persistent, "arity-cache"),
+                   atom_expr2(&persistent,
+                              atom_symbol(&persistent, "late-arity"),
+                              var_forward))));
     Atom *nested_late = atom_expr2(
         &result, atom_symbol(&result, "late-arity"),
         atom_symbol(&result, "a"));
     Atom *arity_call = atom_expr2(
         &result, atom_symbol(&result, "arity-cache"), nested_late);
+    Atom *forward_call = atom_expr2(
+        &result, atom_symbol(&result, "arity-forward"),
+        atom_symbol(&result, "late-callable"));
     out = NULL;
     PettaSpecializeResult arity_before = petta_specializer_prepare_call(
         &space, NULL, &persistent, &result, arity_call, &out);
     CHECK(arity_before == PETTA_SPECIALIZE_UNCHANGED_FILTERED,
           "unknown nested arity receives a cached negative judgment");
+    out = NULL;
+    PettaSpecializeResult forward_before = petta_specializer_prepare_call(
+        &space, NULL, &persistent, &result, forward_call, &out);
+    CHECK(forward_before != PETTA_SPECIALIZE_REWRITTEN &&
+              out == forward_call,
+          "a forwarded expression of unknown arity is data");
 
     Atom *var_arity_x = atom_var(&persistent, "arity-x");
     Atom *var_arity_y = atom_var(&persistent, "arity-y");
@@ -295,10 +316,15 @@ int main(void) {
     out = NULL;
     PettaSpecializeResult arity_after = petta_specializer_prepare_call(
         &space, NULL, &persistent, &result, arity_call, &out);
-    CHECK(arity_after == PETTA_SPECIALIZE_REWRITTEN,
+    CHECK(arity_after != PETTA_SPECIALIZE_REWRITTEN && out == arity_call,
+          "an argument expression stays data after its head gains an arity");
+    out = NULL;
+    PettaSpecializeResult forward_after = petta_specializer_prepare_call(
+        &space, NULL, &persistent, &result, forward_call, &out);
+    CHECK(forward_after == PETTA_SPECIALIZE_REWRITTEN,
           "space mutation invalidates a cached negative arity judgment");
-    CHECK(out && out != arity_call,
-          "new under-application receives its specialized relation head");
+    CHECK(out && out != forward_call,
+          "a new source under-application receives its specialized relation head");
 
     /* Query observations follow the live environment, including a variable
      * used as an expression head. An unknown/stale scope cannot certify

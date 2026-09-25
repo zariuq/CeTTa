@@ -3618,7 +3618,8 @@ static Atom *system_cli_arg(const CettaLibraryContext *ctx, Arena *a, Atom *head
             return atom_expr2(a, atom_symbol(a, "CliArgumentNotFound"),
                               atom_int(a, index));
         }
-        return atom_empty(a);
+        return ctx && ctx->session.language_id == CETTA_LANGUAGE_PETTA
+            ? atom_petta_no_result(a) : atom_empty(a);
     }
     return atom_symbol(a, ctx->cmdline_args[index]);
 }
@@ -9704,6 +9705,19 @@ static bool import_standard_library_reference(
         !registry || !error_out) {
         return false;
     }
+    /* PeTTa's import! keeps an authored .metta extension and supplies a
+     * missing one, so `X` and `X.metta` name the same library member. */
+    char stem[PATH_MAX];
+    size_t member_length = strlen(member);
+    size_t suffix_length = strlen(".metta");
+    if (member_length > suffix_length &&
+        member_length < sizeof(stem) &&
+        path_has_suffix(member, ".metta")) {
+        memcpy(stem, member, member_length - suffix_length);
+        stem[member_length - suffix_length] = '\0';
+        member = stem;
+    }
+
     /* Native libraries activate a capability as well as loading their source
      * presentation.  Pure source libraries use the ordinary standard-library
      * reference below and therefore need no entry in the native mask. */

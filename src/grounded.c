@@ -618,16 +618,6 @@ classified:
     return grounded_op_capabilities_apply(capabilities);
 }
 
-/* Deliberately absent from the type-pure capability: space mutation
-   (add-atom/remove-atom, mork ops), I/O (println!/trace!/print-alternatives!),
-   foreign calls (py-*), evaluator-coupled folds, parsing, `size` (reads live
-   mutable space state), and every __cetta_lib_ op (semantics not audited).
-   Everything here is a pure function of its argument atoms. */
-bool grounded_op_is_type_pure(SymbolId id) {
-    return (symbol_flags(g_symbols, id) &
-            CETTA_SYMBOL_FLAG_TYPE_PURE_GROUNDED_OP) != 0u;
-}
-
 /* ── Numeric arg extraction (int or float, promote to double) ──────────── */
 
 typedef struct {
@@ -2365,7 +2355,7 @@ static Atom *grounded_foldl_in_space(Arena *a, Atom *head, Atom **args, uint32_t
     if (list->expr.len == 0)
         return atom_expr2(a, atom_symbol(a, "return"), init);
     head_item = list->expr.elems[0];
-    tail = atom_expr(a, list->expr.elems + 1, list->expr.len - 1);
+    tail = atom_expr_suffix(a, list, 1u);
 
     Atom *step_op = cetta_fold_bind_step_atom(a, op_expr,
                                               acc_var, init,
@@ -2632,8 +2622,23 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (head_id == g_builtin_syms.format_args)
         return grounded_format_args(a, head, args, nargs);
 
-    if (head_id == g_builtin_syms.sort_atom)
+    if (head_id == g_builtin_syms.sort_atom) {
+        /* PeTTa's sort-atom sorts a list in SWI's standard order, gives ()
+         * for any other atomic value, and raises SWI's list type error
+         * otherwise. */
+        if (grounded_current_language_is_petta() && nargs == 1u) {
+            bool type_error = false;
+            Atom *sorted =
+                petta_semantics_sort_value(a, args[0], true, &type_error);
+            if (!type_error)
+                return sorted;
+            return atom_error(
+                a, grounded_call_expr(a, head, args, nargs),
+                atom_expr3(a, atom_symbol(a, "TypeError"),
+                           atom_symbol(a, "list"), args[0]));
+        }
         return grounded_sort_atoms(a, head, args, nargs);
+    }
 
     if (head_id == g_builtin_syms.retain_top_k_keyed_atom)
         return grounded_retain_top_k_keyed_atoms(a, head, args, nargs);
@@ -2697,11 +2702,19 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
          head_id == g_builtin_syms.cdr_atom) &&
         nargs == 1u) {
         Atom *argument = args[0];
+        /* PeTTa's car-atom and cdr-atom are total: a cell gives its head or
+         * tail, and anything but a non-empty list gives (). */
+        if (grounded_current_language_is_petta()) {
+            if (petta_semantics_is_cons_constraint(argument))
+                return argument->expr.elems[
+                    head_id == g_builtin_syms.car_atom ? 1u : 2u];
+            if (argument->kind != ATOM_EXPR || argument->expr.len == 0u)
+                return atom_unit(a);
+        }
         if (argument->kind == ATOM_EXPR && argument->expr.len > 0u) {
             if (head_id == g_builtin_syms.car_atom)
                 return argument->expr.elems[0];
-            return atom_expr(
-                a, argument->expr.elems + 1u, argument->expr.len - 1u);
+            return atom_expr_suffix(a, argument, 1u);
         }
         return atom_error(
             a, grounded_call_expr(a, head, args, nargs),
@@ -3041,7 +3054,7 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         }
         if (args[0]->expr.len == 0) {
             if (grounded_current_language_is_petta())
-                return atom_empty(a);
+                return atom_petta_no_result(a);
             return grounded_string_error(a, head, args, nargs, "Empty expression");
         }
 
@@ -3174,7 +3187,7 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         }
         if (args[1]->kind != ATOM_GROUNDED || args[1]->ground.gkind != GV_INT) {
             if (grounded_current_language_is_petta())
-                return atom_empty(a);
+                return atom_petta_no_result(a);
             if (args[1]->kind == ATOM_GROUNDED)
                 return grounded_bad_arg_type(a, head, args, nargs, 2,
                                              atom_symbol(a, "Number"), args[1]);
@@ -3183,7 +3196,7 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         int64_t idx = args[1]->ground.ival;
         if (idx < 0 || (uint64_t)idx >= args[0]->expr.len) {
             if (grounded_current_language_is_petta())
-                return atom_empty(a);
+                return atom_petta_no_result(a);
             return atom_error(a, grounded_call_expr(a, head, args, nargs),
                               atom_string(a, "Index is out of bounds"));
         }
@@ -3279,6 +3292,12 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         return atom_expr(a, out, out_len);
     }
 
+    if (head_id == g_builtin_syms.subtraction_atom && nargs == 2 &&
+        grounded_current_language_is_petta() &&
+        (args[0]->kind != ATOM_EXPR || args[1]->kind != ATOM_EXPR)) {
+        return args[0]->kind == ATOM_EXPR
+            ? args[0] : atom_petta_no_result(a);
+    }
     if (head_id == g_builtin_syms.subtraction_atom && nargs == 2) {
         if (args[0]->kind != ATOM_EXPR || args[1]->kind != ATOM_EXPR) {
             if (args[0]->kind == ATOM_GROUNDED)

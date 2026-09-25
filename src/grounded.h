@@ -94,8 +94,15 @@ bool is_grounded_op(SymbolId id);
    and the he-prime checked normalizer).  Deterministic, effect-free, and
    independent of live mutable state.  A positive list, not a blocklist: an op
    absent here is left un-dispatched inside a type, so new grounded ops never
-   silently become type-runnable. */
-bool grounded_op_is_type_pure(SymbolId id);
+   silently become type-runnable.  Deliberately absent: space mutation
+   (add-atom/remove-atom, mork ops), I/O (println!/trace!/print-alternatives!),
+   foreign calls (py-*), evaluator-coupled folds, parsing, `size` (reads live
+   mutable space state), and every __cetta_lib_ op (semantics not audited).
+   Everything here is a pure function of its argument atoms. */
+static inline bool grounded_op_is_type_pure(SymbolId id) {
+    return (symbol_flags(g_symbols, id) &
+            CETTA_SYMBOL_FLAG_TYPE_PURE_GROUNDED_OP) != 0u;
+}
 
 /* Shared fold/reduce binder substitution helper. It substitutes the
    accumulator/item variables and freshens the remaining variables so the step
