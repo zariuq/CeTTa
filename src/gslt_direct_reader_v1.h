@@ -232,7 +232,7 @@ typedef struct {
     const char *profile;
 
     const GSLTDirectScalarClassV1 *splitter_blank;
-    const GSLTDirectScalarClassV1 *splitter_nonquote;
+    const GSLTDirectScalarClassV1 *splitter_string_plain;
     const GSLTDirectScalarClassV1 *splitter_comment_body;
     const GSLTDirectScalarClassV1 *splitter_ordinary;
 
@@ -249,6 +249,7 @@ typedef struct {
     uint32_t expression_close;
     uint32_t string_quote;
     uint32_t escape_marker;
+    uint32_t splitter_string_escape;
     uint32_t variable_marker;
     uint32_t runnable_marker;
 

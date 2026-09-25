@@ -124,6 +124,18 @@ def require_run(result: subprocess.CompletedProcess[str], label: str) -> None:
         )
 
 
+def require_uncaught_error(
+    result: subprocess.CompletedProcess[str], label: str
+) -> None:
+    # An uncaught error ends a PeTTa file, whose process exits with status
+    # 2, as SWI-PeTTa's does.
+    if result.returncode != 2:
+        raise AssertionError(
+            f"{label}: exit {result.returncode}, expected 2\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+
+
 def require_measured_controller_work(
     receipt: dict[str, int | str], label: str
 ) -> None:
@@ -286,7 +298,7 @@ def main() -> int:
         binary, "search_controller_effect_refusal.metta",
         controller="fifo", stats=True,
     )
-    require_run(effect_fifo, "effect refusal")
+    require_uncaught_error(effect_fifo, "effect refusal")
     effect_fifo_golden = expected(
         "search_controller_effect_refusal.fifo.expected")
     if effect_fifo.stdout != effect_fifo_golden:

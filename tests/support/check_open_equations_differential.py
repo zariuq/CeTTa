@@ -11,10 +11,14 @@ queries start at budget 2 or less; the fixed programs keep their open
 queries small for the same reason.  Heads carry constructors, integers and repeated
 variables; bodies use `if` over integer comparisons, `let` and `let*` with
 structured patterns, `+ - * % min max`, `(empty)`, constructors and calls.
+A third family's bodies use `case` over calls and values, whose arms are
+data patterns, and `if` over conditions that are no comparison: `and`,
+`or` and `not` over comparisons, truth values, and calls whose answers need
+not be truth values; some of its heads have equations of two arities.
 Queries leave variables open, share them between arguments, and set
 occurs-check traps.  Each query is its own document.  The output of the
 default route must equal the output under CETTA_OPEN_EQUATIONS_REFERENCE=1
-(canonical equation search) exactly, exit status included; documents on
+(canonical equation search) as a bag of answers, exit status included; documents on
 which canonical search does not terminate are checked against the outputs
 of the PeTTa reference implementation.  With --stats
 the binary must be a runtime-stats build, and the open tier must have taken
@@ -170,6 +174,100 @@ def gen_program(rng, index):
                 args.append(("k1", rng.choice(qvars)))
             else:
                 args.append(gen_pattern(rng, 2, qvars))
+        queries.append("!" + render(tuple([relation.name] + args)))
+    base = "\n".join(lines) + "\n"
+    return [base + query + "\n" for query in queries]
+
+
+TRUTHS = ["True", "False"]
+
+
+def gen_condition(rng, relations, bound, may_call):
+    """An if condition that is no comparison.  Each answer that is not the
+    truth value True takes the second branch."""
+    def compare():
+        return (rng.choice(TESTS), gen_int(rng, 1), gen_int(rng, 1))
+    roll = rng.random()
+    if roll < 0.3:
+        return (rng.choice(["and", "or"]), compare(), compare())
+    if roll < 0.4:
+        return ("not", compare())
+    if roll < 0.55 or not may_call:
+        return rng.choice(TRUTHS + ["maybe"])
+    return gen_call(rng, relations, bound)
+
+
+def gen_control_body(rng, depth, relations, bound, fresh, may_call):
+    """A tail expression over case, if with a computed condition, let and
+    calls; calls occur only where `may_call` holds."""
+    roll = rng.random()
+    if depth == 0 or roll < 0.2:
+        if rng.random() < 0.15:
+            return rng.choice(TRUTHS)
+        return gen_value(rng, 2, bound)
+    if roll < 0.28:
+        return ("empty",)
+    if roll < 0.48:
+        return ("if", gen_condition(rng, relations, bound, may_call),
+                gen_control_body(rng, depth - 1, relations, list(bound),
+                                 fresh, may_call),
+                gen_control_body(rng, depth - 1, relations, list(bound),
+                                 fresh, may_call))
+    if roll < 0.74:
+        if may_call and rng.random() < 0.6:
+            key = gen_call(rng, relations, bound)
+        else:
+            key = gen_value(rng, 2, bound)
+        arms = []
+        for _ in range(rng.randint(1, 3)):
+            local = list(bound)
+            pattern = gen_pattern(rng, 2, local + fresh)
+            vars_of(pattern, local)
+            arms.append((pattern, gen_control_body(
+                rng, depth - 1, relations, local, fresh, may_call)))
+        return ("case", key, tuple(arms))
+    if roll < 0.87 and may_call:
+        local = list(bound)
+        pattern = gen_pattern(rng, 2, local + fresh)
+        vars_of(pattern, local)
+        return ("let", pattern, gen_call(rng, relations, bound),
+                gen_control_body(rng, depth - 1, relations, local, fresh,
+                                 may_call))
+    if may_call:
+        return gen_call(rng, relations, bound)
+    return gen_value(rng, 2, bound)
+
+
+def gen_control_program(rng, index):
+    relations = []
+    for i in range(rng.randint(2, 3)):
+        arity = rng.randint(1, 3)
+        relations.append(Relation(f"c{index}x{i}", arity))
+        if rng.random() < 0.5:
+            relations.append(Relation(f"c{index}x{i}", arity + 1))
+    lines = []
+    for relation in relations:
+        for _ in range(rng.randint(1, 3)):
+            params = [gen_pattern(rng, 2, VARS)
+                      for _ in range(relation.arity - 1)]
+            head = tuple([relation.name, "$n"] + params)
+            bound = vars_of(head, [])
+            fresh = ["$p", "$q", "$r"]
+            body = ("if", (">", "$n", 0),
+                    gen_control_body(rng, 3, relations, list(bound), fresh,
+                                     True),
+                    gen_control_body(rng, 2, relations, list(bound), fresh,
+                                     False))
+            lines.append(f"(= {render(head)} {render(body)})")
+    queries = []
+    for _ in range(rng.randint(4, 6)):
+        relation = rng.choice(relations)
+        args = [rng.randint(0, 2)]
+        for _ in range(relation.arity - 1):
+            if rng.random() < 0.4:
+                args.append(rng.choice(["$A", "$B"]))
+            else:
+                args.append(gen_pattern(rng, 2, ["$A", "$B"]))
         queries.append("!" + render(tuple([relation.name] + args)))
     base = "\n".join(lines) + "\n"
     return [base + query + "\n" for query in queries]
@@ -456,6 +554,188 @@ CLASSICS = [
 !(walk 3 (st $a $b))
 !(mm 3 $k)
 """,
+    # Builtin data names in heads and bodies: `,` and `|` pairs, truth and
+    # metatype names are constructors, so their relations run on the tier.
+    """(= (swap (, $x $y)) (, $y $x))
+(= (fst (, $x $y)) $x)
+(= (pairs $n) (, $n Z))
+(= (pairs $n) (if (> $n 0) (, $n (pairs (- $n 1))) (empty)))
+(= (tag $x) (| $x (True $x)))
+(= (proof $n (, $a $b)) (if (> $n 0) (, (proof (- $n 1) $a) (proof (- $n 1) $b)) (empty)))
+(= (proof $n (Atom $a)) (Atom $a))
+!(swap $p)
+!(swap (, a $q))
+!(swap (swap (, $u v)))
+!(fst (, $a b))
+!(pairs 3)
+!(tag $t)
+!(proof 3 (, (Atom a) (, $x (Atom c))))
+!(proof 2 $w)
+""",
+    # Matches over spaces on the tier: rows with variables are freshened per
+    # match, a conjunction matches its patterns in turn, a template may call
+    # a relation that matches again, a named space is read like `&self`, a
+    # reference that names no space has no rows, and rows added by an answer
+    # are invisible to the match that was already running.
+    """!(bind! &kb2 (new-space))
+!(add-atom &kb2 (p z 7))
+!(add-atom &kb2 (p y $w))
+(p a 1)
+(p b 2)
+(p $v 3)
+(q 1 one)
+(q 3 $t)
+(= (look $k) (match &self (p $k $n) (found $k $n)))
+(= (both $x) (match &self (, (p $x $n) (q $n $m)) (pair $x $m)))
+(= (named $s $k) (match $s (p $k $n) (in $k $n)))
+(= (chain $k) (match &self (p $k $n) (back $n)))
+(= (back $n) (match &self (q $n $m) $m))
+(= (same $k) (match &self (p $k $k) yes))
+(= (grow $k) (match &self (p $k $n) (let $u (add-atom &self (p new 9)) $n)))
+(= (nospace $k) (match 42 (p $k $n) $n))
+!(look $k)
+!(look a)
+!(look c)
+!(both $x)
+!(chain $k)
+!(named &kb2 $k)
+!(named &self b)
+!(same $k)
+!(grow $k)
+!(look new)
+!(nospace $k)
+""",
+    # Host goals: operations outside the fragment run on the host and the
+    # tier resumes once per answer.  A value read into a host goal is taken
+    # as a value, never evaluated again; a deterministic host goal leaves
+    # nothing behind it; a nondeterministic one resumes after backtracking.
+    """(= (foo $x) (* $x 10))
+(= (Rank $x) 1)
+(= (pick $f $best $t)
+   (if (== $t ())
+       $best
+       (let* (($h (car-atom $t)) ($r (cdr-atom $t)))
+             (if (> ($f $h) 0) (pick $f $h $r) (pick $f $best $r)))))
+(= (drive $n $l)
+   (if (> $n 0) (let $p (pick Rank 0 $l) (drive (- $n 1) (cons-atom $p ()))) $l))
+(= (loop $n $acc)
+   (if (> $n 0) (loop (- $n 1) (let $l (length $acc) (append $acc ($l)))) $acc))
+(= (count $n $s) (if (> $n 0) (count (- $n 1) (+ $s (size-atom (cons-atom $n ())))) $s))
+(= (three $x) (let $y (superpose (1 2 3)) (pr $x $y)))
+(= (nest $x) (let $y (superpose (1 2)) (let $z (superpose (a b)) (tr $x $y $z))))
+(= (fo $x) (once (superpose (($x 1) ($x 2)))))
+(= (co $x) (collapse (superpose ($x 1 $x))))
+(= (tl $x) (let (w $y) (collapse (superpose ((w $x)))) $y))
+(= (mk $h $a) ($h $a 2))
+(= (g $a $b) (+ $a $b))
+(= (firsts $l) (if (== $l ()) () (let* (($h (car-atom $l)) ($t (cdr-atom $l))) (cons-atom $h (firsts $t)))))
+!(drive 3 (cons-atom 7 (cons-atom (cons-atom foo (4)) ())))
+!(collapse (let $x (pick Rank 0 (cons-atom (cons-atom foo (1)) (cons-atom 5 ()))) $x))
+!(let $r (loop 40 ()) (length $r))
+!(count 3000 0)
+!(three a)
+!(nest q)
+!(let ($a $b) (fo z) $b)
+!(co k)
+!(tl v)
+!(mk 1 x)
+!(mk 2.5 x)
+!(mk g 3)
+!(mk zz 3)
+!(mk "s" 3)
+!(firsts (1 2 3))
+!(collapse (firsts (cons-atom (cons-atom foo (1)) ())))
+!(pick Rank 0 ())
+!(car-atom ())
+""",
+    # A type-pure operation whose result is an error is the host's: the
+    # dialect decides what an error of that operation observes.
+    """(= (hd $l) (car-atom $l))
+(= (tl $l) (cdr-atom $l))
+(= (walk $n $l) (if (> $n 0) (walk (- $n 1) $l) (hd $l)))
+(= (walk2 $n $l) (if (> $n 0) (walk2 (- $n 1) $l) (tl $l)))
+!(hd ())
+!(collapse (hd ()))
+!(walk 2 ())
+!(walk 2 5)
+!(walk2 2 ())
+!(collapse (walk 2 ()))
+!(walk 2 (a b))
+!(walk2 2 (a b c))
+""",
+    # A host goal that changes the program: the calls its continuation
+    # makes enter the current version, including a relation whose own
+    # equations only relay to the host and a head the goal defines.
+    """(= (rev $x) old)
+(= (relay $x) (size-atom $x))
+(= (mut) (let $b (rev 0) (let $_ (add-atom &self (= (rev $x) new)) (pair $b (rev 0)))))
+(= (mut2 $n) (let $_ (add-atom &self (= (grown $n) yes)) (grown $n)))
+(= (via $x) (let $s (relay $x) (+ $s 1)))
+(= (via2 $n $x) (if (> $n 0) (via2 (- $n 1) $x) (via $x)))
+!(mut)
+!(mut2 4)
+!(via (a b c))
+!(via2 3 (a b))
+!(relay (a))
+""",
+    # A dynamic call whose head is a call: the elements are evaluated in
+    # order, then the head's value applies when it is callable (a lambda, a
+    # partial application, a symbol with equations) and is data otherwise.
+    # A ground add-atom is admitted as the machine admits it, a program
+    # change included; a let binder only counting operations read takes its
+    # producer's count, and a counted match yields its rows' number.
+    """(= (f $x) (fa $x))
+(= (g $x) (gb $x))
+(= (h $x) ((f $x) (g $x)))
+(= (mkl $n) (|-> ($y) (+ $y $n)))
+(= (appl $n $v) ((mkl $n) $v))
+(= (numv $n) $n)
+(= (appn $n) ((numv $n) x))
+(= (sym) k)
+(= (k $v) (kk $v))
+(= (apps $v) ((sym) $v))
+(= (sym2) nope)
+(= (apps2 $v) ((sym2) $v))
+(= (add2 $a $b) (+ $a $b))
+(= (mkp) (add2 1))
+(= (appp $v) ((mkp) $v))
+(= (two $x) (superpose ((f $x) (g $x))))
+(= (appnd $x) ((two $x) $x))
+(= (ad $x) (let $_ (add-atom &self (item $x)) (collapse (match &self (item $y) $y))))
+(= (adm $x) (let $_ (add-atom &self (= (gen $x) made)) (gen $x)))
+(= (rows) (match &self (item $y) $y))
+(= (cnt) (let $items (collapse (match &self (item $y) $y)) (length $items)))
+(= (cnt2) (let* (($a (collapse (superpose (1 2 3)))) ($b (size-atom $a))) ($b (length $a))))
+(= (nocnt) (let $items (collapse (superpose (1 2))) (pair (length $items) $items)))
+!(h 1)
+!(appl 2 5)
+!(appn 7)
+!(apps 3)
+!(apps2 3)
+!(appp 4)
+!(appnd q)
+!(ad 1)
+!(adm 5)
+!(length (collapse (rows)))
+!(let $_ (add-atom &self (item 1)) (length (collapse (rows))))
+!(cnt)
+!(cnt2)
+!(nocnt)
+""",
+    # A ground add-atom's result as a relation's answer, which a collection
+    # keeps after the call's cursor has closed.
+    """(= (admit-new $space $x)
+   (let $st (s $x)
+        (if (== () (collapse (once (match $space $st True))))
+            (add-atom $space $st)
+            (empty))))
+(= (fresh-items $n)
+   (collapse (let* (($v (superpose (a b c a b)))
+                    ($r (admit-new &seen ($n $v))))
+                   ($v $r))))
+!(fresh-items 1)
+!(let $_ (fresh-items 1) (fresh-items 1))
+""",
 ]
 
 
@@ -515,6 +795,9 @@ def main():
     for index in range(programs):
         documents += gen_program(rng, index)
         documents += gen_productive_program(rng, index)
+    control = random.Random(20260925)
+    for index in range(programs):
+        documents += gen_control_program(control, index)
     with tempfile.TemporaryDirectory(prefix="open-equations-") as directory:
         queries = 0
         for index, text in enumerate(documents):
@@ -526,7 +809,11 @@ def main():
                 tier = run(binary, path, False, stats)
                 reference = run(binary, path, True, False)
                 queries += 1
-                if tier[0] != reference[0] or tier[1] != reference[1]:
+                # Observations are bags: each document is one query, and
+                # its answers may come in any order.
+                if tier[0] != reference[0] or \
+                        sorted(tier[1].splitlines()) != \
+                        sorted(reference[1].splitlines()):
                     sys.stderr.write(
                         f"FAIL document {index}: exit "
                         f"{tier[0]} / {reference[0]}\n{text}\n"

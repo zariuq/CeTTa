@@ -725,7 +725,7 @@ static inline bool cetta_gslt_register_execute_atom_binary(
         return false;
     switch (instruction) {
     case CETTA_GSLT_REGISTER_INSTRUCTION_ATOM_EQUAL:
-        *boolean_out = atom_eq(left, right);
+        *boolean_out = atom_value_eq(left, right);
         *kind_out = CETTA_GSLT_REGISTER_RESULT_BOOLEAN;
         return true;
     default:

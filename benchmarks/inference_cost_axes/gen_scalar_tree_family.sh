@@ -28,7 +28,7 @@ case "$mode" in
     disjunction)
         condition='(and (> $n 0)
                         (or (< $n 0)
-                            (numeric-eq (+ $n 1) (+ $n 1.0))))'
+                            (== (+ $n 1) (+ $n 1.0))))'
         ;;
     *)
         printf 'unknown scalar-tree family: %s\n' "$mode" >&2
@@ -55,7 +55,7 @@ while [ "$layer" -lt "$layers" ]; do
             condition="(and $condition (== (+ $layer 1) (+ 1 $layer)))"
             ;;
         disjunction)
-            condition="(and $condition (or (< \$n 0) (numeric-eq (+ \$n $layer) (+ \$n $layer.0))))"
+            condition="(and $condition (or (< \$n 0) (== (+ \$n $layer) (+ \$n $layer.0))))"
             ;;
     esac
     layer=$((layer + 1))

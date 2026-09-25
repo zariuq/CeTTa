@@ -19,6 +19,7 @@ static FrameIdentityCell g_frame_identities[CETTA_FRAME_HANDLE_MASK + 1u];
 static pthread_mutex_t g_frame_identity_mutex = PTHREAD_MUTEX_INITIALIZER;
 static uint32_t g_frame_identity_next_handle = 1u;
 static uint32_t g_frame_identity_free_handle;
+static _Atomic uint64_t g_frame_identity_exhaustions;
 
 /* Free handles kept by the thread that released them, so minting and the
  * last release of an activation's identity take no lock.  A handle here has
@@ -82,6 +83,8 @@ bool cetta_frame_identity_acquire(CettaFrameIdentity *identity_out) {
             handle = g_frame_identity_next_handle++;
         } else {
             pthread_mutex_unlock(&g_frame_identity_mutex);
+            atomic_fetch_add_explicit(&g_frame_identity_exhaustions, 1u,
+                                      memory_order_relaxed);
             return false;
         }
         pthread_mutex_unlock(&g_frame_identity_mutex);
@@ -96,6 +99,11 @@ bool cetta_frame_identity_acquire(CettaFrameIdentity *identity_out) {
         ((uint64_t)generation << 32u) | UINT64_C(1), memory_order_release);
     *identity_out = (generation << CETTA_FRAME_HANDLE_BITS) | handle;
     return true;
+}
+
+uint64_t cetta_frame_identity_exhaustions(void) {
+    return atomic_load_explicit(&g_frame_identity_exhaustions,
+                                memory_order_relaxed);
 }
 
 bool cetta_frame_identity_retain(CettaFrameIdentity identity) {

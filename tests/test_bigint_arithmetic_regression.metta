@@ -42,7 +42,7 @@
 
 !(assertEqualToResult
   (% -9223372036854775809 10)
-  (-9))
+  (1))
 
 !(assertEqualToResult
   (% -9223372036854775808 -1)

@@ -1,0 +1,10 @@
+(type_error integer bar)
+42
+after
+(type_error integer bar)
+(type_error integer bar)
+true
+true
+true
+true
+true

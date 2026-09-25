@@ -1,7 +1,6 @@
 #define _GNU_SOURCE
 #include "petta_numeric.h"
 
-#include <errno.h>
 #include <inttypes.h>
 #include <locale.h>
 #include <math.h>
@@ -390,10 +389,12 @@ static bool petta_parse_number(
         return false;
     }
     char *end = NULL;
-    errno = 0;
+    /* SWI reads a float that underflows as the nearest float, zero or a
+     * subnormal, which strtod reports with ERANGE, and rejects one that
+     * overflows. */
     parsed->floating = strtod_l(
         parsed->canonical, &end, petta_numeric_locale);
-    if (!end || *end != '\0' || errno != 0 || !isfinite(parsed->floating)) {
+    if (!end || *end != '\0' || !isfinite(parsed->floating)) {
         free(parsed->canonical);
         parsed->canonical = NULL;
         return false;

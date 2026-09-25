@@ -96,9 +96,9 @@ CASES = (
         (("runnable", '(test "quote: \\"" "quote: \\"")'),),
     ),
     SplitterCase(
-        "single-escaped-quote-splitter-boundary",
+        "single-escaped-quote-stays-in-string",
         b"(a \"quote: \\\"\")\n",
-        None,
+        (("form", '(a "quote: \\"")'),),
     ),
     SplitterCase(
         "unicode-leading-blank",
@@ -125,9 +125,9 @@ CASES = (
         (("form", '((a) "(;)")'),),
     ),
     SplitterCase(
-        "dangling-string-escape-is-splitter-form",
+        "dangling-string-escape-leaves-string-open",
         b'("a b\\")',
-        (("form", '("a b\\")'),),
+        None,
     ),
     SplitterCase("quote-inside-form-token", b'(a"b)\n', None),
     SplitterCase("semicolon-inside-form-token", b"(a;b)\n", None),
@@ -556,17 +556,22 @@ def main() -> int:
                 }
             )
 
-        dangling_path = inputs["dangling-string-escape-is-splitter-form"]
+        # The splitter and the form reader agree on escapes: a trailing
+        # escaped quote leaves the string open at both layers.
+        dangling_path = inputs["dangling-string-escape-leaves-string-open"]
         dangling_split = run_splitter_authority(
             authority_oracle, petta_root, dangling_path
         )
-        dangling_form = directory / "dangling-form.input"
-        dangling_form.write_text(dangling_split[0][1], encoding="utf-8")
         dangling_form_result = run_form_authority(
-            form_oracle, petta_root, "form", dangling_form
+            form_oracle, petta_root, "form", dangling_path
         )
-        if not dangling_form_result or dangling_form_result[0][0] != "error":
-            raise GateFailure("splitter/form distinction lost for dangling escape")
+        if (
+            len(dangling_split) != 1
+            or dangling_split[0][0] != "error"
+            or not dangling_form_result
+            or dangling_form_result[0][0] != "error"
+        ):
+            raise GateFailure("splitter and form reader disagree on a trailing escape")
         cross_layer_gates += 1
 
         quote_token = directory / "quote-token.input"

@@ -1,5 +1,6 @@
 ; Scalar classes pinned to PeTTa filereader.pl under SWI-Prolog 10.1.9.
-; Comment termination is LF-only; quote toggling is escape-oblivious.
+; Comment termination is LF-only; inside a string a backslash and the scalar
+; after it are one escape, so an escaped quote does not end the string.
 (gslt-presentation-v1 PeTTaDocumentSplitterScalarClassesV1
   (signature)
   (equations)
@@ -25,7 +26,7 @@
     (rule member-petta-splitter-blank-scalar-8233 (head (member petta-splitter-blank-scalar (cp 8233))) (body))
     (rule member-petta-splitter-blank-scalar-8287 (head (member petta-splitter-blank-scalar (cp 8287))) (body))
     (rule member-petta-splitter-blank-scalar-12288 (head (member petta-splitter-blank-scalar (cp 12288))) (body))
-    (rule member-petta-splitter-nonquote-scalar (head (member petta-splitter-nonquote-scalar ?codepoint)) (body (different ?codepoint (cp 34))))
+    (rule member-petta-splitter-string-plain-scalar (head (member petta-splitter-string-plain-scalar ?codepoint)) (body (different ?codepoint (cp 34)) (different ?codepoint (cp 92))))
     (rule member-petta-splitter-comment-body-scalar (head (member petta-splitter-comment-body-scalar ?codepoint)) (body (different ?codepoint (cp 10))))
     (rule member-petta-splitter-ordinary-scalar (head (member petta-splitter-ordinary-scalar ?codepoint)) (body (different ?codepoint (cp 34)) (different ?codepoint (cp 40)) (different ?codepoint (cp 41)) (different ?codepoint (cp 59))))
   ))

@@ -597,10 +597,11 @@ static AtomId parser_project_word_id(TermUniverse *universe, Arena *scratch,
     }
     if (strchr(tok, '.')) {
         char *fendp;
-        double fval;
-        errno = 0;
-        fval = strtod(tok, &fendp);
-        if (*fendp == '\0' && errno == 0)
+        /* A value past the float range reads as the nearest float, zero, a
+         * subnormal or an infinity, as Hyperon reads it; strtod reports
+         * those with ERANGE. */
+        double fval = strtod(tok, &fendp);
+        if (*fendp == '\0')
             return tu_intern_float(universe, fval);
     }
     return tu_intern_symbol(
@@ -979,9 +980,9 @@ static Atom *parse_sexpr_scoped(Arena *a, const char *text, size_t *pos,
     /* Float: try to parse (must contain '.') */
     if (strchr(tok, '.')) {
         char *fendp;
-        errno = 0;
+        /* Past the float range: the nearest float, as above. */
         double fval = strtod(tok, &fendp);
-        if (*fendp == '\0' && errno == 0) {
+        if (*fendp == '\0') {
             return atom_float(a, fval);
         }
     }

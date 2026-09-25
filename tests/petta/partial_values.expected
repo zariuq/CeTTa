@@ -1,0 +1,12 @@
+(partial add (1))
+(partial add3 (1))
+(partial add3 (1 2))
+((partial add (1)))
+6
+6
+11
+10
+6
+(partial add (1))
+(partial add (1))
+(partial add (2))

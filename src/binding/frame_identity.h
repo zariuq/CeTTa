@@ -29,6 +29,11 @@ static inline uint32_t cetta_frame_generation(CettaFrameIdentity identity) {
  * stale or foreign identity.  Every retained owner must release exactly once.
  * The allocator does not store binding values or substitution versions. */
 bool cetta_frame_identity_acquire(CettaFrameIdentity *identity_out);
+/* How many acquisitions were refused because every handle was live.  A
+ * refusal fails the operation that asked, which its caller may take for an
+ * ordinary failure; work that must not publish such a failure as an
+ * observation compares this count across itself. */
+uint64_t cetta_frame_identity_exhaustions(void);
 bool cetta_frame_identity_retain(CettaFrameIdentity identity);
 void cetta_frame_identity_release(CettaFrameIdentity identity);
 /* Allocate a fresh one-based local slot after the prepared inventory.

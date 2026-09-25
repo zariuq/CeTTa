@@ -18,7 +18,12 @@ def run(binary, source, language, reference, prefer_rationals=False):
         command += ["--fuel", "1000000"]
     command.append(str(source))
     process = subprocess.run(command, capture_output=True, text=True, timeout=60)
-    if process.returncode:
+    # A PeTTa file that stops at an uncaught error, its last answer, exits
+    # with status 2, as SWI-PeTTa's does; any other status is a failure.
+    lines = process.stdout.splitlines()
+    stopped = language == "petta" and process.returncode == 2 and \
+        bool(lines) and lines[-1].startswith("(Error ")
+    if process.returncode and not stopped:
         raise AssertionError((source.read_text(), language, reference,
                               process.returncode, process.stdout, process.stderr))
     counters = {}
@@ -27,14 +32,14 @@ def run(binary, source, language, reference, prefer_rationals=False):
         if len(fields) != 3 or fields[0] != "runtime-counter":
             raise AssertionError(f"unexpected diagnostic: {line}")
         counters[fields[1]] = int(fields[2])
-    return process.stdout, counters
+    return process.stdout, counters, process.returncode
 
 
 def programs():
     pairs = [("1.5", "2.0"), ("-0.0", "0.0"), ("2", "0.5"),
              ("0.5", "-2"), ("9007199254740993", "9007199254740992.0"),
              ("9223372036854775807", "1"), ("-7", "3")]
-    operations = ["+", "-", "*", "<", ">", "<=", ">=", "numeric-eq"]
+    operations = ["+", "-", "*", "<", ">", "<=", ">="]
     for variant in range(3):
         prefix = ["measure", "renamed", "long-common-prefix-function"][variant]
         forms = []
@@ -50,6 +55,12 @@ def programs():
             forms += [f"!({name} {left} {right})" for left, right in pairs]
         yield prefix, "\n".join(forms), len(pairs) * len(operations), True
 
+    # numeric-eq is CeTTa's own operator: HE and Prime compile it, and PeTTa,
+    # whose reference does not define it, keeps it data.
+    forms = ["(= (numeric-eq-measure $left $right) (numeric-eq $left $right))"]
+    forms += [f"!(numeric-eq-measure {left} {right})" for left, right in pairs]
+    yield "numeric-eq", "\n".join(forms), len(pairs), ("he", "prime")
+
     yield "recursive", """(= (iterate-number $n $x)
    (if (== $n 0) $x
        (iterate-number (- $n 1) (+ (* $x 0.5) 1.0))))
@@ -58,7 +69,7 @@ def programs():
     yield "exceptional-floats", """(= (float-result $x $y) (Results (+ $x $y) (* $x $y) (< $x $y)))
 !(float-result (/ 1.0 0.0) 0.0)
 !(float-result (/ 0.0 0.0) 1.0)
-""", 2, True
+""", {"petta": 1, "he": 2, "prime": 2}, ("he", "prime")
     # Neither failure nor unsupported values may become a successful number.
     yield "unsupported", """(= (number-result $x $y) (+ $x $y))
 !(number-result datum 1)
@@ -85,15 +96,21 @@ def main():
         for name, program, outputs, compiled in programs():
             source.write_text(program)
             for language in ("petta", "he", "prime"):
-                candidate, counters = run(
+                candidate, counters, status = run(
                     binary, source, language, False, name == "rational")
-                reference, reference_counters = run(
+                reference, reference_counters, reference_status = run(
                     binary, source, language, True, name == "rational")
                 label = f"{language}/{name}"
-                assert candidate == reference, (label, candidate, reference)
-                assert len(candidate.splitlines()) == outputs, (label, candidate)
+                assert (candidate, status) == (reference, reference_status), \
+                    (label, candidate, status, reference, reference_status)
+                # SWI-PeTTa raises for a zero divisor and the file stops
+                # there; HE and Prime keep IEEE results.
+                expected_lines = outputs[language] \
+                    if isinstance(outputs, dict) else outputs
+                assert len(candidate.splitlines()) == expected_lines, \
+                    (label, candidate)
                 assert reference_counters["prepared-pure-call-commit"] == 0, label
-                if compiled:
+                if compiled is True or (compiled and language in compiled):
                     assert "Error" not in candidate, (label, candidate)
                     assert counters["prepared-pure-call-commit"] > 0, label
                     assert counters["prepared-pure-call-decline"] == 0, (label, counters)
