@@ -9,10 +9,12 @@
 (math-domain (error (evaluation_error undefined)) (error (evaluation_error undefined)) (error (evaluation_error zero_divisor)) (error (evaluation_error undefined)) (error (evaluation_error undefined)) (error (evaluation_error undefined)) (error (evaluation_error zero_divisor)))
 (math-overflow (error (evaluation_error float_overflow)) (error (evaluation_error float_overflow)))
 (math-values 0.5 1267650600228229401496703205376 4.0 1.7724538509055159 3 100000000000000000000)
+(subnormal 1.0e-310 1.0e-310 1.0e-310 0.0 1.0e-310)
 (rational-division 1r2 7r22 7)
 (bigint-division 18446744073709551616r3 9223372036854775808 1r2 0.5)
 (overflow-allowed 1.0Inf 1.0Inf)
 (underflow (error (evaluation_error float_underflow)) (error (evaluation_error float_underflow)) (error (evaluation_error float_underflow)))
+true
 true
 true
 true

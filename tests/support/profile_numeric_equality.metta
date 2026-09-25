@@ -27,3 +27,5 @@
 !(let $n (/ 0.0 0.0) (let $s (new-state $n) (== $s $s)))
 !(let $n (/ 0.0 0.0) (let $s (new-state $n) (== (foo $s) (foo $s))))
 !(let $s (new-state 1) (== $s $s))
+!(== 1.0e-310 (* 1.0e-200 1.0e-110))
+!(== 1.0e400 (* 1.0e308 10.0))
