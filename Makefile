@@ -22083,6 +22083,16 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 		diff <(cat tests/support/profile_bind_error_compat.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
+	for profile in he he-compat; do \
+		result=$$($(CETTA_BIN_INVOKE) --profile $$profile --lang he tests/support/profile_numeric_equality.metta 2>&1); \
+		if [ "$$result" = "$$(cat tests/support/profile_numeric_equality.$$profile.expected)" ]; then \
+			echo "PASS: $$profile == compares numbers by value"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: $$profile == compares numbers by value"; \
+			diff <(cat tests/support/profile_numeric_equality.$$profile.expected) <(echo "$$result") | head -10; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
 	if $(CETTA_BIN_INVOKE) --profile he --lang he tests/test_deep_tail_if_constructor_regression.metta >/dev/null 2>&1 && \
 	   $(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/test_deep_tail_if_constructor_regression.metta >/dev/null 2>&1; then \
 		echo "PASS: assertion diagnostics handle large failure terms"; pass=$$((pass + 1)); \
@@ -25745,7 +25755,8 @@ PETTA_SEMANTIC_EXACT_STREAM_STEMS = \
 	search_machine_pinned_removal_visibility search_machine_admission_revisions \
 	stream_alpha_unique root_builtin_argument_demand computed_value_arguments \
 	translate_predicate_prolog_goals float_layout string_layout \
-	swrite_text prolog_exception_values negative_zero
+	swrite_text prolog_exception_values negative_zero numeric_equality \
+	prolog_arithmetic_parity
 PETTA_SEMANTIC_OCCURRENCE_BAG_STEMS = semantic_counter_equations \
 	search_machine_specializer_negative_mutation \
 	search_machine_partial_head_observation search_machine_query_field_composition

@@ -679,6 +679,8 @@ SymbolId symbol_intern_bytes(SymbolTable *st, const uint8_t *bytes, uint32_t len
 SymbolId symbol_intern_span_hashed(SymbolTable *st, const uint8_t *bytes,
                                    uint32_t len, uint64_t hash);
 SymbolId symbol_intern_cstr(SymbolTable *st, const char *text);
+/* The symbol already interned for text, or SYMBOL_ID_NONE.  Never interns. */
+SymbolId symbol_lookup_cstr(SymbolTable *st, const char *text);
 
 const char *symbol_bytes(const SymbolTable *st, SymbolId id);
 uint32_t symbol_len(const SymbolTable *st, SymbolId id);

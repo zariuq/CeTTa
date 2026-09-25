@@ -119,7 +119,7 @@ REGISTER_INSTRUCTION_SMALL_C: dict[str, str] = {
 }
 
 REGISTER_INSTRUCTION_ATOM_C: dict[str, tuple[str, str]] = {
-    "atom-equal": ("boolean", "*boolean_out = atom_eq(left, right);"),
+    "atom-equal": ("boolean", "*boolean_out = atom_value_eq(left, right);"),
 }
 
 # Native instruction schemes for the prepared-pure intrinsic leaf.  The
