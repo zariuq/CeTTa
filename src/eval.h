@@ -102,6 +102,10 @@ typedef struct EvalOutcome {
     uint64_t budget_initial;
     uint64_t budget_remaining;
     uint64_t steps_spent;
+    /* PeTTa: whether the evaluator knows which of the directive's Error
+       answers were raised and not caught, and whether any was. */
+    bool petta_raise_known;
+    bool petta_raised_error;
 } EvalOutcome;
 
 typedef enum {

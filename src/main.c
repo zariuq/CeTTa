@@ -4112,6 +4112,12 @@ process_petta_document:
                 goto cleanup;
             }
             bool stop_after_error = result_set_has_error(results);
+            /* SWI-PeTTa goes on after an Error value, a caught error among
+             * them, and stops only at an uncaught one.  The evaluator knows
+             * which it was on every path but the generic one. */
+            if (lang->id == CETTA_LANGUAGE_PETTA && detailed_initialized &&
+                detailed.petta_raise_known)
+                stop_after_error = detailed.petta_raised_error;
             if (trace.allocation_failed) {
                 fprintf(stderr,
                         "error: could not allocate Prime receipt trace identity\n");

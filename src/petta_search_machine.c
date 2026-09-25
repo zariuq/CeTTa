@@ -28437,6 +28437,11 @@ const char *petta_machine_typecheck_diagnostic(
     return machine->impl->typecheck_diagnostic;
 }
 
+bool petta_machine_last_answer_raised(const PettaMachine *machine) {
+    return machine && machine->impl &&
+           machine->impl->last_answer_is_control_error;
+}
+
 int petta_machine_typecheck_exit_code(const PettaMachine *machine) {
     return machine && machine->impl
         ? machine->impl->typecheck_exit_code : 0;
