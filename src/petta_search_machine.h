@@ -536,6 +536,10 @@ const char *petta_machine_typecheck_diagnostic(
     const PettaMachine *machine);
 int petta_machine_typecheck_exit_code(const PettaMachine *machine);
 
+/* True when the last answer is an Error that was raised and not caught,
+ * rather than an Error value. */
+bool petta_machine_last_answer_raised(const PettaMachine *machine);
+
 void petta_machine_destroy(PettaMachine *machine);
 
 /*
