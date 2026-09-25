@@ -25745,7 +25745,7 @@ PETTA_SEMANTIC_EXACT_STREAM_STEMS = \
 	search_machine_pinned_removal_visibility search_machine_admission_revisions \
 	stream_alpha_unique root_builtin_argument_demand computed_value_arguments \
 	translate_predicate_prolog_goals float_layout string_layout \
-	swrite_text prolog_exception_values
+	swrite_text prolog_exception_values negative_zero
 PETTA_SEMANTIC_OCCURRENCE_BAG_STEMS = semantic_counter_equations \
 	search_machine_specializer_negative_mutation \
 	search_machine_partial_head_observation search_machine_query_field_composition
