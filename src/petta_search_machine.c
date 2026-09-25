@@ -12481,8 +12481,11 @@ static bool petta_machine_push_native_predicate(
     if (!success)
         return false;
 
+    /* To Prolog's is/2 a bare symbol is an arithmetic constant, such as nan
+     * or pi, or else an error, so the embedded Prolog evaluates that one. */
     if (petta_symbol_name_is(head, "is") &&
-        predicate->expr.len == 3u) {
+        predicate->expr.len == 3u &&
+        predicate->expr.elems[2]->kind != ATOM_SYMBOL) {
         *recognized = true;
         return petta_push_unify(
                    machine, success, expected, barrier) &&

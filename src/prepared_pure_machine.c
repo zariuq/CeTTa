@@ -4955,14 +4955,17 @@ static bool PREPARED_PURE_NOINLINE prepared_pure_inline_register_scalar(
                  program, node, &left, &right)))
             return false;
         bool equal;
+        Atom integer_leaf;
         if (left.atom && right.atom) {
-            equal = atom_eq(left.atom, right.atom);
+            equal = atom_value_eq(left.atom, right.atom);
         } else if (left.is_integer && right.is_integer) {
             equal = left.integer == right.integer;
         } else if (left.is_integer && right.atom) {
-            equal = false;
+            atom_scalar_leaf_int(&integer_leaf, left.integer);
+            equal = atom_value_eq(&integer_leaf, right.atom);
         } else if (right.is_integer && left.atom) {
-            equal = false;
+            atom_scalar_leaf_int(&integer_leaf, right.integer);
+            equal = atom_value_eq(left.atom, &integer_leaf);
         } else {
             return false;
         }

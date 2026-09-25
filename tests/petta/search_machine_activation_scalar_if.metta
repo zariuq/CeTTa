@@ -97,7 +97,7 @@
 (= (scalar-tree-disjunction $value)
    (let $_ (scalar-tree-open)
      (if (or (xor (< $value 0) (> $value 10))
-             (numeric-eq (+ $value 1) 8.0))
+             (== (+ $value 1) 8.0))
          disjunction-yes disjunction-no)))
 (= (scalar-tree-disjunction $value) (empty))
 

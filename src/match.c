@@ -12859,6 +12859,15 @@ static bool stored_grounded_equal(Atom *left,
         return false;
     {
         int right_kind = tu_ground_kind(candidate_universe, right_id);
+        if (left->ground.gkind != right_kind &&
+            (left->ground.gkind == GV_BIGINT ||
+             left->ground.gkind == GV_RATIONAL ||
+             right_kind == GV_BIGINT || right_kind == GV_RATIONAL)) {
+            /* A bigint or rational may equal a number of another kind. */
+            Atom *right = term_universe_get_atom(
+                candidate_universe, right_id);
+            return right && cetta_he_promoted_numbers_equal(left, right);
+        }
         if (left->ground.gkind != right_kind) {
             int64_t right_int = right_kind == GV_INT
                 ? tu_int(candidate_universe, right_id) : 0;

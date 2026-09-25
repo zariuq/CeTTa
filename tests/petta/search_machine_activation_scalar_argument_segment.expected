@@ -16,4 +16,4 @@ false
 3
 9223372036854775810
 18446744073709551622
-(Error (- $V0 1) (BadArgType 1 Number Variable))
+(Error instantiation_error (context (: system (/ is 2)) $V0))

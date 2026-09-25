@@ -224,6 +224,29 @@ SymbolId symbol_intern_cstr(SymbolTable *st, const char *text) {
     return symbol_intern_bytes(st, (const uint8_t *)text, (uint32_t)strlen(text));
 }
 
+SymbolId symbol_lookup_cstr(SymbolTable *st, const char *text) {
+    if (!st || !text || !*text) return SYMBOL_ID_NONE;
+    uint32_t len = (uint32_t)strlen(text);
+    uint64_t hash = symbol_hash_bytes((const uint8_t *)text, len);
+    SymbolId found = SYMBOL_ID_NONE;
+    pthread_mutex_lock(&st->write_mutex);
+    if (st->slot_cap) {
+        uint32_t slot = (uint32_t)(hash % st->slot_cap);
+        while (st->slots[slot].id != SYMBOL_ID_NONE) {
+            const SymbolSlot *entry = &st->slots[slot];
+            if (entry->hash == hash &&
+                symbol_entry_matches(symbol_table_entry_ref(st, entry->id),
+                                     (const uint8_t *)text, len, hash)) {
+                found = entry->id;
+                break;
+            }
+            slot = (slot + 1) % st->slot_cap;
+        }
+    }
+    pthread_mutex_unlock(&st->write_mutex);
+    return found;
+}
+
 const char *symbol_bytes(const SymbolTable *st, SymbolId id) {
     if (!st || id == SYMBOL_ID_NONE) return "";
     uint32_t entry_len = atomic_load_explicit(&st->entry_len, memory_order_acquire);

@@ -1,5 +1,5 @@
 (literals 0.0 -0.0 -0.0)
-(identity false true true)
+(equality true true true)
 (heads zero negative-zero)
 (space (found))
 (arithmetic false false true)
