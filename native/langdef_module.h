@@ -94,6 +94,15 @@ bool cetta_langdef_expr_head(const Atom *atom, const char *head,
                              CettaExprLen arity);
 bool cetta_langdef_slurp(const char *path, uint8_t **bytes_out,
                          size_t *len_out, char *error, size_t error_size);
+typedef struct CettaDeterministicEquationPlanV1
+    CettaDeterministicEquationPlanV1;
+/* The prepared equations of a reader's compact-v1 directory beside
+ * snapshot_path, listed with their SHA-256 digests in manifest_name, or NULL
+ * with the reason: no manifest, a listed file whose digest differs, or
+ * equations the runner does not admit. */
+CettaDeterministicEquationPlanV1 *cetta_tptp_compact_manifest_plan_v1(
+    const char *snapshot_path, const char *manifest_name,
+    char *reason, size_t reason_size);
 bool cetta_langdef_sha256_file(const char *path, char digest[65],
                                char *error, size_t error_size);
 bool cetta_langdef_path_join(const char *base_file, const char *relative,

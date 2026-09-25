@@ -3213,6 +3213,10 @@ static bool prepared_pure_compile_head(
                 occurrence.lhs->expr.elems[0], head->head))
             return prepared_pure_reject(
                 program, "wildcard or malformed equation", occurrence.lhs);
+        if (atom_structural_may_have_open_list(occurrence.lhs))
+            return prepared_pure_reject(
+                program, "equation head holds a list pattern with a rest",
+                occurrence.lhs);
 
         const void *rhs_view = NULL;
         if (program->source_view.equation_rhs &&
@@ -3786,10 +3790,12 @@ static PreparedPureMatchState prepared_pure_match_equation(
                 CETTA_PREPARED_PURE_PATTERN_VIEW_NOT_APPLICABLE)
                 return PREPARED_PURE_MATCH_ERROR;
         }
+        /* A list never meets an expression. */
         if (pattern->kind != value->kind ||
             (pattern->kind != ATOM_EXPR && !atom_eq(pattern, value)) ||
             (pattern->kind == ATOM_EXPR &&
-             pattern->expr.len != value->expr.len))
+             (pattern->expr.len != value->expr.len ||
+              atom_is_list_form(pattern) != atom_is_list_form(value))))
             return prepared_pure_count_match(
                 prepared_pure_match_mismatch(
                     program, value, pair.argument, ready_arguments,
@@ -4045,7 +4051,8 @@ static PreparedPureMatchState prepared_pure_match_bind_pattern(
                 return PREPARED_PURE_MATCH_MISMATCH;
             continue;
         }
-        if (pattern->expr.len != candidate->expr.len)
+        if (pattern->expr.len != candidate->expr.len ||
+            atom_is_list_form(pattern) != atom_is_list_form(candidate))
             return PREPARED_PURE_MATCH_MISMATCH;
         for (CettaExprIndex i = pattern->expr.len; i > 0u; i--) {
             CettaExprIndex child = i - 1u;
@@ -4469,7 +4476,7 @@ static bool prepared_pure_operands_share_type(
             Bindings type_bindings;
             bindings_init(&type_bindings);
             compatible = match_types(
-                right_types[j], left_types[i], &type_bindings);
+                right_types[j], left_types[i], &type_bindings, arena);
             bindings_free(&type_bindings);
         }
     }
@@ -4580,63 +4587,70 @@ static Atom *prepared_pure_execute_intrinsic(
             arena, head, (Atom **)arguments, arity);
         return result && !atom_is_empty_or_error(result) ? result : NULL;
     }
+    /* The structural intrinsics read an expression's children or a list's
+     * elements, and build a result of the same kind; a list pattern is
+     * declined to the canonical evaluator. */
     case CETTA_GSLT_PREPARED_PURE_INTRINSIC_DECONSTRUCT_NONEMPTY_EXPRESSION: {
-        if (arity != 1u || !arguments[0] ||
-            arguments[0]->kind != ATOM_EXPR ||
-            arguments[0]->expr.len == 0u)
+        Atom *const *elems;
+        CettaExprLen len;
+        if (arity != 1u ||
+            !atom_sequence_view(arguments[0], &elems, &len) || len == 0u)
             return NULL;
-        Atom *tail = program->construct_value(
-            arena, arguments[0]->expr.elems + 1u,
-            arguments[0]->expr.len - 1u);
+        Atom *tail = atom_is_list(arguments[0])
+            ? atom_list(arena, elems + 1u, len - 1u)
+            : program->construct_value(
+                  arena, arguments[0]->expr.elems + 1u, len - 1u);
         if (!tail)
             return NULL;
-        Atom *pair[2] = {arguments[0]->expr.elems[0], tail};
+        Atom *pair[2] = {elems[0], tail};
         return program->construct_value(arena, pair, 2u);
     }
     case CETTA_GSLT_PREPARED_PURE_INTRINSIC_CONSTRUCT_EXPRESSION_CONS: {
-        if (arity != 2u || !arguments[0] || !arguments[1] ||
-            arguments[1]->kind != ATOM_EXPR ||
-            arguments[1]->expr.len == UINT64_MAX)
+        Atom *const *tail_elems;
+        CettaExprLen tail_len;
+        if (arity != 2u || !arguments[0] ||
+            !atom_sequence_view(arguments[1], &tail_elems, &tail_len) ||
+            tail_len == UINT64_MAX)
             return NULL;
-        CettaExprLen length = arguments[1]->expr.len + 1u;
+        CettaExprLen length = tail_len + 1u;
         if (!cetta_expr_len_mul_fits_size(length, sizeof(Atom *)))
             return NULL;
         Atom **elements = arena_alloc(
             arena, sizeof(*elements) * (size_t)length);
         elements[0] = arguments[0];
-        if (arguments[1]->expr.len > 0u) {
-            memcpy(
-                elements + 1u, arguments[1]->expr.elems,
-                sizeof(*elements) * (size_t)arguments[1]->expr.len);
+        if (tail_len > 0u) {
+            memcpy(elements + 1u, tail_elems,
+                   sizeof(*elements) * (size_t)tail_len);
         }
-        return atom_expr(arena, elements, length);
+        return atom_is_list(arguments[1])
+            ? atom_list(arena, elements, length)
+            : atom_expr(arena, elements, length);
     }
     case CETTA_GSLT_PREPARED_PURE_INTRINSIC_CONCATENATE_EXPRESSIONS: {
-        if (arity != 2u || !arguments[0] || !arguments[1] ||
-            arguments[0]->kind != ATOM_EXPR ||
-            arguments[1]->kind != ATOM_EXPR ||
-            arguments[0]->expr.len >
-                UINT64_MAX - arguments[1]->expr.len)
+        Atom *const *left_elems, *const *right_elems;
+        CettaExprLen left_len, right_len;
+        if (arity != 2u ||
+            !atom_sequence_view(arguments[0], &left_elems, &left_len) ||
+            !atom_sequence_view(arguments[1], &right_elems, &right_len) ||
+            left_len > UINT64_MAX - right_len)
             return NULL;
-        CettaExprLen length =
-            arguments[0]->expr.len + arguments[1]->expr.len;
+        CettaExprLen length = left_len + right_len;
         if (!cetta_expr_len_mul_fits_size(length, sizeof(Atom *)))
             return NULL;
         Atom **elements = length
             ? arena_alloc(arena, sizeof(*elements) * (size_t)length)
             : NULL;
-        if (arguments[0]->expr.len > 0u) {
-            memcpy(
-                elements, arguments[0]->expr.elems,
-                sizeof(*elements) * (size_t)arguments[0]->expr.len);
+        if (left_len > 0u) {
+            memcpy(elements, left_elems,
+                   sizeof(*elements) * (size_t)left_len);
         }
-        if (arguments[1]->expr.len > 0u) {
-            memcpy(
-                elements + arguments[0]->expr.len,
-                arguments[1]->expr.elems,
-                sizeof(*elements) * (size_t)arguments[1]->expr.len);
+        if (right_len > 0u) {
+            memcpy(elements + left_len, right_elems,
+                   sizeof(*elements) * (size_t)right_len);
         }
-        return atom_expr(arena, elements, length);
+        return atom_is_list(arguments[0])
+            ? atom_list(arena, elements, length)
+            : atom_expr(arena, elements, length);
     }
     }
     return NULL;

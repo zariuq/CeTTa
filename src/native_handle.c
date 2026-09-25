@@ -100,7 +100,7 @@ static void native_handle_release(void *ptr) {
 static bool native_handle_kind_matches(Atom *arg, const char *expected_kind) {
     if (!arg || !expected_kind) return false;
     if (arg->kind == ATOM_GROUNDED && arg->ground.gkind == GV_STRING) {
-        return strcmp(arg->ground.sval, expected_kind) == 0;
+        return atom_string_equals_cstr(arg, expected_kind);
     }
     if (arg->kind == ATOM_SYMBOL) {
         const char *name = atom_name_cstr(arg);

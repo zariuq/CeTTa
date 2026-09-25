@@ -1,16 +1,36 @@
-; Finite sequences represented by the children of an ordinary expression.
+; Finite sequences: the children of an ordinary expression, or the elements
+; of a list value.  An operation given a list value returns a list value and
+; one given an expression returns an expression; append and the other
+; operations over two sequences return the kind of the first.
 ;
-; Algebraic domain: list operations range over Expression atoms, identified
-; with the free monoid of finite Atom sequences. On that domain:
-;   append has () as identity and is associative;
+; Algebraic domain: list operations range over Expression atoms and list
+; values, each identified with the free monoid of finite Atom sequences. On
+; that domain:
+;   append has the empty sequence as identity and is associative;
 ;   reverse is an involution and preserves length;
 ;   cons/first/rest satisfy first(cons x xs)=x and rest(cons x xs)=xs.
 ; first, rest, at, and cons retain the native partiality of car-atom,
 ; cdr-atom, index-atom, and cons-atom outside their stated domains.
 ; Explicit inductive lists and the representation isomorphism live in clist.
 
+; The list value of a sequence's elements, and the expression of them.
+(= (list:from-expression $xs)
+   (__cetta_lib_list_from_expression $xs))
+
+(= (list:to-expression $xs)
+   (__cetta_lib_list_to_expression $xs))
+
+(= (list:is-list $xs)
+   (== (get-metatype $xs) List))
+
+; The sequence of $items, of the kind of $xs.
+(= (list:like $xs $items)
+   (if (list:is-list $xs)
+       (list:from-expression $items)
+       $items))
+
 (= (list:is-empty $xs)
-   (== $xs ()))
+   (== (size-atom $xs) 0))
 
 (= (list:first $xs)
    (car-atom $xs))
@@ -34,7 +54,8 @@
    (union-atom $lhs $rhs))
 
 (= (list:reverse $xs)
-   (list:reverse-acc $xs ()))
+   (let $items (list:to-expression $xs)
+     (list:like $xs (list:reverse-acc $items ()))))
 
 (= (list:reverse-acc () $acc)
    $acc)
@@ -51,14 +72,18 @@
    (== $left $right))
 
 (= (list:remove-all-by $same $item $xs)
+   (let $items (list:to-expression $xs)
+     (list:like $xs (list:remove-all-by-walk $same $item $items))))
+
+(= (list:remove-all-by-walk $same $item $xs)
    (if (== $xs ())
        ()
        (let ($head $tail) (decons-atom $xs)
          (let $drop (eval ($same $item $head))
            (if $drop
-               (eval (list:remove-all-by $same $item $tail))
+               (eval (list:remove-all-by-walk $same $item $tail))
                (let $rest
-                    (eval (list:remove-all-by $same $item $tail))
+                    (eval (list:remove-all-by-walk $same $item $tail))
                  (eval (cons-atom $head $rest))))))))
 
 (= (list:remove-all $item $xs)
@@ -71,24 +96,32 @@
    (unique-atom $xs))
 
 (= (list:unique-by $same $xs)
+   (let $items (list:to-expression $xs)
+     (list:like $xs (list:unique-by-walk $same $items))))
+
+(= (list:unique-by-walk $same $xs)
    (if (== $xs ())
        ()
        (let ($head $tail) (decons-atom $xs)
          (let $remaining
-              (eval (list:remove-all-by $same $head $tail))
-           (let $rest (eval (list:unique-by $same $remaining))
+              (eval (list:remove-all-by-walk $same $head $tail))
+           (let $rest (eval (list:unique-by-walk $same $remaining))
              (eval (cons-atom $head $rest)))))))
 
 ; The prefix action of the natural numbers on finite sequences.  A request
 ; beyond the sequence length returns the whole sequence; a non-positive
 ; request returns the empty prefix.
 (= (list:take $count $xs)
+   (let $items (list:to-expression $xs)
+     (list:like $xs (list:take-walk $count $items))))
+
+(= (list:take-walk $count $xs)
    (if (<= $count 0)
        ()
        (if (== $xs ())
            ()
            (let ($head $tail) (decons-atom $xs)
-             (let $rest (eval (list:take (- $count 1) $tail))
+             (let $rest (eval (list:take-walk (- $count 1) $tail))
                (eval (cons-atom $head $rest)))))))
 
 ; Efficient order-statistic filtering for already-computed numeric keys.
@@ -98,10 +131,12 @@
    (retain-top-k-keyed-atom $entries $count))
 
 (= (list:key-by $key-function $xs)
-   (map-atom $xs $item
-     (let $key ($key-function $item)
-       (let $value (cons-atom $item ())
-         (cons-atom $key $value)))))
+   (let $items (list:to-expression $xs)
+     (list:like $xs
+       (map-atom $items $item
+         (let $key ($key-function $item)
+           (let $value (cons-atom $item ())
+             (cons-atom $key $value)))))))
 
 (= (list:unkey $entries)
    (unkey-atom $entries))
@@ -110,6 +145,11 @@
 ; once per occurrence, select in the native keyed representation, and return
 ; the selected values in their original occurrence order.
 (= (list:retain-top-k-by-number $key-function $xs $count)
+   (let $items (list:to-expression $xs)
+     (list:like $xs
+       (list:retain-top-k-by-number-walk $key-function $items $count))))
+
+(= (list:retain-top-k-by-number-walk $key-function $xs $count)
    (function
      (chain (eval $xs) $__list_top_k_items
        (chain (eval $count) $__list_top_k_count
@@ -145,7 +185,11 @@
 ; argument is a binary predicate denoting "left precedes or ties right".
 ; Keeping ties on the left makes equal-key occurrences retain their order.
 (= (list:split-half $xs)
-   (list:split-half-walk $xs $xs ()))
+   (let $items (list:to-expression $xs)
+     (let ($left $right) (list:split-half-walk $items $items ())
+       (let $left-part (list:like $xs $left)
+         (let $right-part (list:like $xs $right)
+           ($left-part $right-part))))))
 
 (= (list:split-half-walk $slow $fast $left-reversed)
    (if (== $fast ())
@@ -164,6 +208,12 @@
                        $slow-tail $fast-rest $next-left)))))))))
 
 (= (list:merge-by $precedes $left $right)
+   (let $left-items (list:to-expression $left)
+     (let $right-items (list:to-expression $right)
+       (list:like $left
+         (list:merge-by-walk $precedes $left-items $right-items)))))
+
+(= (list:merge-by-walk $precedes $left $right)
    (if (== $left ())
        $right
        (if (== $right ())
@@ -175,26 +225,30 @@
                  (if $take-left
                      (let $rest
                           (eval
-                            (list:merge-by
+                            (list:merge-by-walk
                               $precedes $left-tail $right))
                        (eval (cons-atom $left-head $rest)))
                      (let $rest
                           (eval
-                            (list:merge-by
+                            (list:merge-by-walk
                               $precedes $left $right-tail))
                        (eval (cons-atom $right-head $rest))))))))))
 
 (= (list:sort-by $precedes $xs)
+   (let $items (list:to-expression $xs)
+     (list:like $xs (list:sort-by-walk $precedes $items))))
+
+(= (list:sort-by-walk $precedes $xs)
    (if (== $xs ())
        ()
        (let ($head $tail) (decons-atom $xs)
          (if (== $tail ())
              $xs
-             (let ($left $right) (eval (list:split-half $xs))
-               (let $sorted-left (eval (list:sort-by $precedes $left))
-                 (let $sorted-right (eval (list:sort-by $precedes $right))
+             (let ($left $right) (eval (list:split-half-walk $xs $xs ()))
+               (let $sorted-left (eval (list:sort-by-walk $precedes $left))
+                 (let $sorted-right (eval (list:sort-by-walk $precedes $right))
                    (eval
-                     (list:merge-by
+                     (list:merge-by-walk
                        $precedes $sorted-left $sorted-right)))))))))
 
 (= (list:number-ascending $left $right)
@@ -206,14 +260,27 @@
 (= (list:sort-numbers $xs)
    (sort-numbers-atom $xs))
 
+; An expression takes the primitive's own path; a list value's elements do,
+; and a list returns.
 (= (list:map $xs $var $body)
-   (map-atom $xs $var $body))
+   (if (list:is-list $xs)
+       (let $items (list:to-expression $xs)
+         (let $mapped (map-atom $items $var $body)
+           (list:from-expression $mapped)))
+       (map-atom $xs $var $body)))
 
 (= (list:filter $xs $var $body)
-   (filter-atom $xs $var $body))
+   (if (list:is-list $xs)
+       (let $items (list:to-expression $xs)
+         (let $kept (filter-atom $items $var $body)
+           (list:from-expression $kept)))
+       (filter-atom $xs $var $body)))
 
 (= (list:foldl $xs $init $acc $item $step)
-   (foldl-atom $xs $init $acc $item $step))
+   (if (list:is-list $xs)
+       (let $items (list:to-expression $xs)
+         (foldl-atom $items $init $acc $item $step))
+       (foldl-atom $xs $init $acc $item $step)))
 
 (= (list:range $end)
    (range-atom $end))

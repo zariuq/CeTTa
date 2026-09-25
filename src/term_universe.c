@@ -2,6 +2,7 @@
 #include "match.h"
 #include "stats.h"
 #include "term_canon.h"
+#include "string_literal.h"
 
 #include <inttypes.h>
 #include <math.h>
@@ -715,7 +716,7 @@ bool term_universe_atom_is_stable(Atom *atom) {
         case ATOM_GROUNDED:
             if ((cur->structural_facts &
                  ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID) != 0u ||
-                !atom_grounded_kind_is_term_stable(cur->ground.gkind))
+                !atom_grounded_is_term_stable(cur))
                 goto done;
             break;
         case ATOM_EXPR:
@@ -1498,8 +1499,11 @@ static bool term_universe_record_payload_len(const TermUniverse *universe,
         case GV_FOREIGN:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
-        case GV_INTERNAL_TAG:
             return false;
+        case GV_INTERNAL_TAG:
+            *out_len = 0;
+            return cetta_internal_tag_is_list(
+                (int64_t)term_universe_aux_data(hdr));
         }
         return false;
     case ATOM_EXPR:
@@ -1640,7 +1644,9 @@ static uint64_t term_universe_record_slot_hash(
         case GV_FOREIGN:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
+            break;
         case GV_INTERNAL_TAG:
+            h = term_universe_index_mix(h, term_universe_aux_data(hdr));
             break;
         }
         break;
@@ -1701,11 +1707,13 @@ static uint64_t term_universe_atom_slot_hash(Atom *atom) {
         if (atom->ground.gkind == GV_BOOL)
             aux_data = atom->ground.bval ? 1u : 0u;
         else if (atom->ground.gkind == GV_STRING)
-            aux_data = (uint32_t)strlen(atom->ground.sval);
+            aux_data = atom->ground.slen;
         else if (atom->ground.gkind == GV_BIGINT)
             aux_data = (uint32_t)strlen(atom_bigint_cstr(atom));
         else if (atom->ground.gkind == GV_RATIONAL)
             aux_data = (uint32_t)strlen(atom_rational_cstr(atom));
+        else if (atom->ground.gkind == GV_INTERNAL_TAG)
+            aux_data = (uint32_t)atom->ground.ival;
     } else if (atom->kind == ATOM_EXPR) {
         sym_or_head = atom_head_symbol_id(atom);
         aux_data = (uint32_t)atom->expr.len;
@@ -1748,7 +1756,7 @@ static uint64_t term_universe_atom_slot_hash(Atom *atom) {
         case GV_STRING:
             h = term_universe_index_mix_span(
                 h, (const uint8_t *)atom->ground.sval,
-                strlen(atom->ground.sval));
+                atom->ground.slen);
             break;
         case GV_BIGINT: {
             const char *text = atom_bigint_cstr(atom);
@@ -1769,7 +1777,9 @@ static uint64_t term_universe_atom_slot_hash(Atom *atom) {
         case GV_FOREIGN:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
+            break;
         case GV_INTERNAL_TAG:
+            h = term_universe_index_mix(h, (uint64_t)atom->ground.ival);
             break;
         }
         break;
@@ -1841,6 +1851,14 @@ static uint32_t term_universe_hash_bool_value(bool value) {
     return h;
 }
 
+static uint32_t term_universe_hash_list_tag_value(int64_t tag) {
+    uint32_t h = 5381u;
+    h = term_universe_hash_mix(h, (uint32_t)ATOM_GROUNDED);
+    h = term_universe_hash_mix(h, (uint32_t)GV_INTERNAL_TAG);
+    h = term_universe_hash_mix(h, (uint32_t)(tag & 0xFFFFFFFF));
+    return h;
+}
+
 static uint32_t term_universe_hash_text_value(GroundedKind kind,
                                               const char *value) {
     uint32_t h = 5381u;
@@ -1851,8 +1869,16 @@ static uint32_t term_universe_hash_text_value(GroundedKind kind,
     return h;
 }
 
-static uint32_t term_universe_hash_string_value(const char *value) {
-    return term_universe_hash_text_value(GV_STRING, value);
+/* A string hashes over its bytes, embedded NUL included, exactly as
+ * atom_hash_compute() does. */
+static uint32_t term_universe_hash_string_bytes(const char *bytes,
+                                                size_t len) {
+    uint32_t h = 5381u;
+    h = term_universe_hash_mix(h, (uint32_t)ATOM_GROUNDED);
+    h = term_universe_hash_mix(h, (uint32_t)GV_STRING);
+    for (size_t i = 0; i < len; i++)
+        h = term_universe_hash_mix(h, (uint32_t)bytes[i]);
+    return h;
 }
 
 static uint32_t term_universe_hash_bigint_value(const char *value) {
@@ -1937,8 +1963,10 @@ static bool term_universe_entry_eq_record(const TermUniverse *universe, AtomId i
         case GV_FOREIGN:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
-        case GV_INTERNAL_TAG:
             return false;
+        case GV_INTERNAL_TAG:
+            return term_universe_aux_data(have_hdr) ==
+                   term_universe_aux_data(want_hdr);
         }
         return false;
     case ATOM_EXPR:
@@ -2296,6 +2324,20 @@ double tu_float(const TermUniverse *universe, AtomId id) {
                : 0.0;
 }
 
+int64_t tu_internal_tag(const TermUniverse *universe, AtomId id) {
+    const CettaTermHdr *hdr = tu_hdr(universe, id);
+    if (hdr)
+        return (AtomKind)hdr->tag == ATOM_GROUNDED &&
+                       (GroundedKind)hdr->subtag == GV_INTERNAL_TAG
+                   ? (int64_t)term_universe_aux_data(hdr)
+                   : 0;
+    Atom *atom = term_universe_get_atom(universe, id);
+    return atom && atom->kind == ATOM_GROUNDED &&
+                   atom->ground.gkind == GV_INTERNAL_TAG
+               ? atom->ground.ival
+               : 0;
+}
+
 bool tu_bool(const TermUniverse *universe, AtomId id) {
     const CettaTermHdr *hdr = tu_hdr(universe, id);
     if (hdr) {
@@ -2327,6 +2369,22 @@ const char *tu_string_cstr(const TermUniverse *universe, AtomId id) {
             entry->decoded_cache->ground.gkind == GV_STRING)
                ? entry->decoded_cache->ground.sval
                : NULL;
+}
+
+size_t tu_string_len(const TermUniverse *universe, AtomId id) {
+    const CettaTermHdr *hdr = tu_hdr(universe, id);
+    if (hdr) {
+        if (hdr->tag == ATOM_GROUNDED &&
+            (GroundedKind)hdr->subtag == GV_STRING)
+            return term_universe_aux_data(hdr);
+        return 0u;
+    }
+    const TermEntry *entry = term_universe_entry(universe, id);
+    return (entry && entry->decoded_cache &&
+            entry->decoded_cache->kind == ATOM_GROUNDED &&
+            entry->decoded_cache->ground.gkind == GV_STRING)
+               ? entry->decoded_cache->ground.slen
+               : 0u;
 }
 
 const char *tu_bigint_cstr(const TermUniverse *universe, AtomId id) {
@@ -2691,11 +2749,22 @@ AtomId tu_intern_bool(TermUniverse *universe, bool value) {
     return term_universe_intern_record(universe, &hdr, NULL, 0u);
 }
 
-AtomId tu_intern_string(TermUniverse *universe, const char *value) {
-    if (!value)
+/* The list tags are the only internal tags that are terms; see atom.h. */
+AtomId tu_intern_list_tag(TermUniverse *universe, int64_t tag) {
+    if (!cetta_internal_tag_is_list(tag))
         return CETTA_ATOM_ID_NONE;
-    size_t len_sz = strlen(value);
-    if (len_sz > (size_t)UINT32_MAX - 1u)
+    CettaTermHdr hdr = {0};
+    hdr.tag = (uint8_t)ATOM_GROUNDED;
+    hdr.subtag = (uint8_t)GV_INTERNAL_TAG;
+    hdr.aux32 = term_universe_aux_make((uint32_t)tag, false);
+    hdr.hash32 = term_universe_hash_list_tag_value(tag);
+    TU_DIAG_INC(universe, direct_constructor_leaf_hits);
+    return term_universe_intern_record(universe, &hdr, NULL, 0u);
+}
+
+AtomId tu_intern_string_n(TermUniverse *universe, const char *bytes,
+                          size_t len_sz) {
+    if (!bytes || len_sz > CETTA_STRING_BYTES_MAX)
         return CETTA_ATOM_ID_NONE;
     uint32_t len = (uint32_t)len_sz;
     CettaTermHdr hdr = {0};
@@ -2703,10 +2772,28 @@ AtomId tu_intern_string(TermUniverse *universe, const char *value) {
     hdr.subtag = (uint8_t)GV_STRING;
     hdr.arity_or_len = len > UINT16_MAX ? UINT16_MAX : (uint16_t)len;
     hdr.aux32 = term_universe_aux_make(len, false);
-    hdr.hash32 = term_universe_hash_string_value(value);
+    hdr.hash32 = term_universe_hash_string_bytes(bytes, len);
     TU_DIAG_INC(universe, direct_constructor_leaf_hits);
-    return term_universe_intern_record(universe, &hdr,
-                                       (const uint8_t *)value, len + 1u);
+    /* The payload is the bytes and a NUL kept for C interoperation. */
+    uint8_t stack_payload[256];
+    uint8_t *payload = len + 1u <= sizeof stack_payload
+        ? stack_payload
+        : malloc((size_t)len + 1u);
+    if (!payload)
+        return CETTA_ATOM_ID_NONE;
+    memcpy(payload, bytes, len);
+    payload[len] = 0u;
+    AtomId id = term_universe_intern_record(universe, &hdr, payload,
+                                            len + 1u);
+    if (payload != stack_payload)
+        free(payload);
+    return id;
+}
+
+AtomId tu_intern_string(TermUniverse *universe, const char *value) {
+    if (!value)
+        return CETTA_ATOM_ID_NONE;
+    return tu_intern_string_n(universe, value, strlen(value));
 }
 
 AtomId tu_intern_bigint(TermUniverse *universe, const char *value) {
@@ -2771,6 +2858,56 @@ AtomId tu_intern_rational(TermUniverse *universe, const char *value) {
                                             len + 1u);
     free(canonical);
     return id;
+}
+
+/* The list [elems...], or [elems... | rest] when rest is not
+ * CETTA_ATOM_ID_NONE: [x... | [y...]] is [x..., y...] and
+ * [x... | [y... | r]] is [x..., y... | r]. */
+AtomId tu_list_from_ids(TermUniverse *universe, const AtomId *elems,
+                        CettaExprLen elem_len, AtomId rest) {
+    int64_t tag = CETTA_INTERNAL_TAG_LIST;
+    /* The rest's own elements, when it is a list or list pattern to splice. */
+    CettaExprLen spliced = 0u;
+    CettaExprLen len;
+    AtomId *children;
+    AtomId result;
+
+    if (!universe || (elem_len > 0u && !elems))
+        return CETTA_ATOM_ID_NONE;
+    if (rest != CETTA_ATOM_ID_NONE) {
+        tag = CETTA_INTERNAL_TAG_LIST_REST;
+        if (tu_kind(universe, rest) == ATOM_EXPR &&
+            tu_arity(universe, rest) > 0u) {
+            int64_t rest_tag = tu_internal_tag(
+                universe, tu_child(universe, rest, 0u));
+            if (cetta_internal_tag_is_list(rest_tag)) {
+                tag = rest_tag;
+                spliced = tu_arity(universe, rest) - 1u;
+            }
+        }
+    }
+    len = 1u + elem_len +
+          (rest == CETTA_ATOM_ID_NONE ? 0u
+           : tag == CETTA_INTERNAL_TAG_LIST_REST && spliced == 0u ? 1u
+           : spliced);
+    if (!cetta_expr_len_mul_fits_size(len, sizeof(*children)))
+        return CETTA_ATOM_ID_NONE;
+    children = cetta_malloc((size_t)len * sizeof(*children));
+    children[0] = tu_intern_list_tag(universe, tag);
+    for (CettaExprIndex i = 0u; i < elem_len; i++)
+        children[1u + i] = elems[i];
+    if (spliced > 0u) {
+        for (CettaExprIndex i = 0u; i < spliced; i++)
+            children[1u + elem_len + i] = tu_child(universe, rest, 1u + i);
+    } else if (rest != CETTA_ATOM_ID_NONE &&
+               tag == CETTA_INTERNAL_TAG_LIST_REST) {
+        children[1u + elem_len] = rest;
+    }
+    result = children[0] == CETTA_ATOM_ID_NONE
+        ? CETTA_ATOM_ID_NONE
+        : tu_expr_from_ids(universe, children, len);
+    free(children);
+    return result;
 }
 
 AtomId tu_expr_from_ids(TermUniverse *universe, const AtomId *child_ids,
@@ -2916,7 +3053,8 @@ static AtomId term_universe_leaf_id(TermUniverse *universe, Atom *src,
         case GV_BOOL:
             return tu_intern_bool(universe, src->ground.bval);
         case GV_STRING:
-            return tu_intern_string(universe, src->ground.sval);
+            return tu_intern_string_n(universe, src->ground.sval,
+                                      src->ground.slen);
         case GV_BIGINT:
             return tu_intern_bigint(universe, atom_bigint_cstr(src));
         case GV_RATIONAL:
@@ -2928,8 +3066,9 @@ static AtomId term_universe_leaf_id(TermUniverse *universe, Atom *src,
         case GV_FOREIGN:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
-        case GV_INTERNAL_TAG:
             return CETTA_ATOM_ID_NONE;
+        case GV_INTERNAL_TAG:
+            return tu_intern_list_tag(universe, src->ground.ival);
         }
         return CETTA_ATOM_ID_NONE;
     case ATOM_EXPR:
@@ -3291,25 +3430,22 @@ static char *term_universe_sb_finish(TermUniverseStringBuilder *sb, Arena *dst) 
     return out;
 }
 
+static void term_universe_sb_emit(void *context, const char *bytes,
+                                  size_t len) {
+    term_universe_sb_append_span((TermUniverseStringBuilder *)context,
+                                 bytes, len);
+}
+
 static void term_universe_sb_append_escaped_string(TermUniverseStringBuilder *sb,
-                                                   const char *text) {
+                                                   const char *text,
+                                                   size_t len) {
     term_universe_sb_append_char(sb, '"');
-    for (const char *p = text; p && *p; p++) {
-        switch (*p) {
-        case '\n':
-            term_universe_sb_append_cstr(sb, "\\n");
-            break;
-        case '"':
-            term_universe_sb_append_cstr(sb, "\\\"");
-            break;
-        case '\\':
-            term_universe_sb_append_cstr(sb, "\\\\");
-            break;
-        default:
-            term_universe_sb_append_char(sb, *p);
-            break;
-        }
-    }
+    if (text)
+        cetta_string_literal_escape(text, len,
+                                    atom_print_raw_string_bytes()
+                                        ? CETTA_STRING_LITERAL_RAW_TEXT
+                                        : CETTA_STRING_LITERAL_ESCAPED,
+                                    term_universe_sb_emit, sb);
     term_universe_sb_append_char(sb, '"');
 }
 
@@ -3372,7 +3508,8 @@ static void term_universe_sb_append_atom_text(TermUniverseStringBuilder *sb,
             term_universe_sb_append_cstr(sb, tu_bool(universe, id) ? "True" : "False");
             return;
         case GV_STRING:
-            term_universe_sb_append_escaped_string(sb, tu_string_cstr(universe, id));
+            term_universe_sb_append_escaped_string(
+                sb, tu_string_cstr(universe, id), tu_string_len(universe, id));
             return;
         case GV_BIGINT:
             term_universe_sb_append_cstr(sb, tu_bigint_cstr(universe, id));
@@ -3391,9 +3528,30 @@ static void term_universe_sb_append_atom_text(TermUniverseStringBuilder *sb,
             return;
         }
         return;
-    case ATOM_EXPR:
-        term_universe_sb_append_char(sb, '(');
+    case ATOM_EXPR: {
         CettaExprLen len = tu_arity(universe, id);
+        int64_t list_tag = 0;
+        if (len > 0u) {
+            const CettaTermHdr *head = tu_hdr(universe, tu_child(universe, id, 0));
+            if (head && (AtomKind)head->tag == ATOM_GROUNDED &&
+                (GroundedKind)head->subtag == GV_INTERNAL_TAG)
+                list_tag = (int64_t)term_universe_aux_data(head);
+        }
+        if (cetta_internal_tag_is_list(list_tag)) {
+            /* [x1 x2] and [x1 | rest], as the atom printer writes them */
+            term_universe_sb_append_char(sb, '[');
+            for (CettaExprIndex i = 1; i < len; i++) {
+                if (i != 1)
+                    term_universe_sb_append_cstr(
+                        sb, list_tag == CETTA_INTERNAL_TAG_LIST_REST &&
+                                    i + 1u == len
+                                ? " | " : " ");
+                term_universe_sb_append_atom_text(sb, universe, tu_child(universe, id, i));
+            }
+            term_universe_sb_append_char(sb, ']');
+            return;
+        }
+        term_universe_sb_append_char(sb, '(');
         for (CettaExprIndex i = 0; i < len; i++) {
             if (i != 0)
                 term_universe_sb_append_char(sb, ' ');
@@ -3401,6 +3559,7 @@ static void term_universe_sb_append_atom_text(TermUniverseStringBuilder *sb,
         }
         term_universe_sb_append_char(sb, ')');
         return;
+    }
     }
 }
 
@@ -3548,7 +3707,7 @@ static size_t term_universe_copy_estimated_arena_bytes(
         const char *text = NULL;
         switch (tu_ground_kind(universe, id)) {
         case GV_STRING:
-            text = tu_string_cstr(universe, id);
+            bytes += tu_string_len(universe, id) + 1u;
             break;
         case GV_BIGINT:
             text = tu_bigint_cstr(universe, id);
@@ -3619,7 +3778,8 @@ static Atom *term_universe_copy_atom_impl(const TermUniverse *universe,
             out = atom_bool(dst, tu_bool(universe, id));
             break;
         case GV_STRING:
-            out = atom_string(dst, tu_string_cstr(universe, id));
+            out = atom_string_n(dst, tu_string_cstr(universe, id),
+                                tu_string_len(universe, id));
             break;
         case GV_BIGINT:
             out = atom_bigint(dst, tu_bigint_cstr(universe, id));
@@ -3634,8 +3794,11 @@ static Atom *term_universe_copy_atom_impl(const TermUniverse *universe,
         case GV_FOREIGN:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
-        case GV_INTERNAL_TAG:
             return NULL;
+        case GV_INTERNAL_TAG:
+            out = atom_internal_tag(
+                dst, (CettaInternalTag)term_universe_aux_data(hdr));
+            break;
         }
         break;
     case ATOM_EXPR: {
@@ -3703,8 +3866,13 @@ char *term_universe_atom_to_string(Arena *a, const TermUniverse *universe,
         Atom *atom = term_universe_get_atom(universe, id);
         return atom ? atom_to_string(a, atom) : NULL;
     }
-    if (hdr->tag == ATOM_GROUNDED && (GroundedKind)hdr->subtag == GV_STRING)
-        return arena_strdup(a, tu_string_cstr(universe, id));
+    if (hdr->tag == ATOM_GROUNDED && (GroundedKind)hdr->subtag == GV_STRING) {
+        size_t len = tu_string_len(universe, id);
+        char *copy = arena_alloc(a, len + 1u);
+        memcpy(copy, tu_string_cstr(universe, id), len);
+        copy[len] = '\0';
+        return copy;
+    }
 
     TermUniverseStringBuilder sb = {0};
     term_universe_sb_append_atom_text(&sb, universe, id);
@@ -3936,7 +4104,7 @@ static bool term_universe_entry_eq_atom(const TermUniverse *universe, AtomId id,
             return src->ground.bval == (term_universe_aux_data(hdr) != 0);
         case GV_STRING: {
             uint32_t len = term_universe_aux_data(hdr);
-            return strlen(src->ground.sval) == len &&
+            return src->ground.slen == len &&
                    memcmp(src->ground.sval, payload, len) == 0;
         }
         case GV_BIGINT: {
@@ -3958,8 +4126,9 @@ static bool term_universe_entry_eq_atom(const TermUniverse *universe, AtomId id,
         case GV_FOREIGN:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
-        case GV_INTERNAL_TAG:
             return false;
+        case GV_INTERNAL_TAG:
+            return src->ground.ival == (int64_t)term_universe_aux_data(hdr);
         }
         return false;
     case ATOM_EXPR: {
@@ -4281,7 +4450,8 @@ static AtomId term_universe_store_prepared_atom_id(TermUniverse *universe,
         case GV_BOOL:
             return tu_intern_bool(universe, src->ground.bval);
         case GV_STRING:
-            return tu_intern_string(universe, src->ground.sval);
+            return tu_intern_string_n(universe, src->ground.sval,
+                                      src->ground.slen);
         case GV_BIGINT:
             return tu_intern_bigint(universe, atom_bigint_cstr(src));
         case GV_RATIONAL:
@@ -4293,10 +4463,11 @@ static AtomId term_universe_store_prepared_atom_id(TermUniverse *universe,
         case GV_FOREIGN:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
-        case GV_INTERNAL_TAG:
             /* Filtered by the stable-grounded check above; keep the switch
                exhaustive for -Wswitch cleanliness. */
             return CETTA_ATOM_ID_NONE;
+        case GV_INTERNAL_TAG:
+            return tu_intern_list_tag(universe, src->ground.ival);
         }
         return CETTA_ATOM_ID_NONE;
     case ATOM_EXPR: {
@@ -4423,7 +4594,8 @@ static Atom *term_universe_decode_atom(TermUniverse *universe, AtomId id) {
         case GV_BOOL:
             return atom_bool(dst, term_universe_aux_data(hdr) != 0);
         case GV_STRING:
-            return atom_string(dst, (const char *)payload);
+            return atom_string_n(dst, (const char *)payload,
+                                 term_universe_aux_data(hdr));
         case GV_BIGINT:
             return atom_bigint(dst, (const char *)payload);
         case GV_RATIONAL:
@@ -4435,8 +4607,13 @@ static Atom *term_universe_decode_atom(TermUniverse *universe, AtomId id) {
         case GV_FOREIGN:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
-        case GV_INTERNAL_TAG:
             return NULL;
+        case GV_INTERNAL_TAG:
+            return cetta_internal_tag_is_list(
+                       (int64_t)term_universe_aux_data(hdr))
+                ? atom_internal_tag(
+                      dst, (CettaInternalTag)term_universe_aux_data(hdr))
+                : NULL;
         }
         return NULL;
     case ATOM_EXPR: {

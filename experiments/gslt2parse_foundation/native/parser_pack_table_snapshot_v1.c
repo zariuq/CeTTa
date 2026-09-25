@@ -61,7 +61,88 @@ void pp_table_snapshot_v1_free(PPTableSnapshotV1 *snap) {
         free(snap->tag_names);
     }
     free(snap->skip_tags);
+    free(snap->origins);
+    if (snap->tag_fixed_texts) {
+        for (i = 0u; i < snap->tag_name_len; i++)
+            free(snap->tag_fixed_texts[i]);
+        free(snap->tag_fixed_texts);
+    }
+    free(snap->tag_carries_lexeme);
+    free(snap->tag_symbol_ids);
     memset(snap, 0, sizeof(*snap));
+}
+
+static size_t utf8_encode_scalar(uint32_t scalar, char *out) {
+    if (scalar < 0x80u) {
+        out[0] = (char)scalar;
+        return 1u;
+    }
+    if (scalar < 0x800u) {
+        out[0] = (char)(0xC0u | (scalar >> 6));
+        out[1] = (char)(0x80u | (scalar & 0x3Fu));
+        return 2u;
+    }
+    if (scalar < 0x10000u) {
+        out[0] = (char)(0xE0u | (scalar >> 12));
+        out[1] = (char)(0x80u | ((scalar >> 6) & 0x3Fu));
+        out[2] = (char)(0x80u | (scalar & 0x3Fu));
+        return 3u;
+    }
+    out[0] = (char)(0xF0u | (scalar >> 18));
+    out[1] = (char)(0x80u | ((scalar >> 12) & 0x3Fu));
+    out[2] = (char)(0x80u | ((scalar >> 6) & 0x3Fu));
+    out[3] = (char)(0x80u | (scalar & 0x3Fu));
+    return 4u;
+}
+
+bool pp_table_snapshot_v1_derive_tag_facts(
+    PPTableSnapshotV1 *snap,
+    char *error_buf,
+    size_t error_buf_size) {
+    enum { FIXED_CAP = 256u };
+    uint32_t scalars[FIXED_CAP];
+    uint32_t tag;
+
+    if (!snap || snap->tag_name_len == 0u) {
+        snap_error(error_buf, error_buf_size, "snapshot has no tags");
+        return false;
+    }
+    snap->tag_carries_lexeme = calloc(snap->tag_name_len, sizeof(*snap->tag_carries_lexeme));
+    snap->tag_fixed_texts = calloc(snap->tag_name_len, sizeof(*snap->tag_fixed_texts));
+    snap->tag_symbol_ids = calloc(snap->tag_name_len, sizeof(*snap->tag_symbol_ids));
+    if (!snap->tag_carries_lexeme || !snap->tag_fixed_texts || !snap->tag_symbol_ids) {
+        snap_error(error_buf, error_buf_size, "tag facts allocation failed");
+        return false;
+    }
+    for (tag = 0u; tag < snap->tag_name_len; tag++)
+        snap->tag_symbol_ids[tag] = snap->tag_names && snap->tag_names[tag]
+            ? symbol_intern_cstr(g_symbols, snap->tag_names[tag])
+            : SYMBOL_ID_NONE;
+    for (tag = 0u; tag < snap->tag_name_len && tag < snap->dfa.tag_len; tag++) {
+        uint32_t count = 0u;
+        uint32_t length = 0u;
+        if (!rsdfa_v1_program_tag_language_size(
+                &snap->dfa, tag, &count, scalars, FIXED_CAP, &length)) {
+            snap_error(error_buf, error_buf_size, "tag language analysis failed");
+            return false;
+        }
+        if (count >= 2u) {
+            snap->tag_carries_lexeme[tag] = 1u;
+        } else if (count == 1u) {
+            char *text = malloc((size_t)length * 4u + 1u);
+            size_t used = 0u;
+            uint32_t k;
+            if (!text) {
+                snap_error(error_buf, error_buf_size, "tag text allocation failed");
+                return false;
+            }
+            for (k = 0u; k < length; k++)
+                used += utf8_encode_scalar(scalars[k], text + used);
+            text[used] = '\0';
+            snap->tag_fixed_texts[tag] = text;
+        }
+    }
+    return true;
 }
 
 static void put_u32(uint8_t **cur, uint32_t v) {
@@ -242,6 +323,19 @@ bool pp_table_snapshot_v1_size(
         snap_error(error_buf, error_buf_size, "cannot collect SLR names");
         return false;
     }
+    if (snap->origin_len > 0u && !snap->origins) {
+        names_free(&names);
+        snap_error(error_buf, error_buf_size, "helper origins missing");
+        return false;
+    }
+    for (i = 0u; i < snap->origin_len; i++) {
+        if (names_find(&names, snap->origins[i].helper) < 0 ||
+            names_find(&names, snap->origins[i].owner) < 0) {
+            names_free(&names);
+            snap_error(error_buf, error_buf_size, "helper origin names no parser symbol");
+            return false;
+        }
+    }
     size = 4u + 4u + 64u + 64u + 4u + strlen(snap->profile) + 4u + 4u;
     size += 4u; /* tag_name_len */
     for (i = 0u; i < snap->tag_name_len; i++) {
@@ -268,6 +362,7 @@ bool pp_table_snapshot_v1_size(
     size += (size_t)snap->slr.goto_len * 4u;
     size += 4u * 6u; /* summary */
     size += (size_t)snap->slr.glr_action_len * 4u * 4u;
+    size += 4u + (size_t)snap->origin_len * 4u * 4u;
     names_free(&names);
     *out_size = size;
     return true;
@@ -400,6 +495,13 @@ bool pp_table_snapshot_v1_write(
         put_u32(&cur, a->token_idx);
         put_u32(&cur, (uint32_t)a->kind);
         put_u32(&cur, (uint32_t)a->value);
+    }
+    put_u32(&cur, snap->origin_len);
+    for (i = 0u; i < snap->origin_len; i++) {
+        put_u32(&cur, map_id(&names, snap->origins[i].helper));
+        put_u32(&cur, map_id(&names, snap->origins[i].owner));
+        put_u32(&cur, snap->origins[i].kind);
+        put_u32(&cur, snap->origins[i].repeat);
     }
     names_free(&names);
     if ((size_t)(cur - out_bytes) != required) {
@@ -692,6 +794,24 @@ bool pp_table_snapshot_v1_read(
         snap.slr.glr_actions[i].kind = (CettaLpNativeSlrProgramActionKind)kind;
         snap.slr.glr_actions[i].value = (int32_t)value;
     }
+    if (!get_u32(&cur, end, &snap.origin_len))
+        goto fail;
+    if (snap.origin_len) {
+        if (snap.origin_len > (uint32_t)((size_t)(end - cur) / 16u))
+            goto fail;
+        snap.origins = calloc(snap.origin_len, sizeof(*snap.origins));
+        if (!snap.origins)
+            goto fail;
+    }
+    for (i = 0u; i < snap.origin_len; i++) {
+        uint32_t helper = 0u, owner = 0u;
+        if (!get_u32(&cur, end, &helper) || !get_u32(&cur, end, &owner) ||
+            !get_u32(&cur, end, &snap.origins[i].kind) ||
+            !get_u32(&cur, end, &snap.origins[i].repeat))
+            goto fail;
+        snap.origins[i].helper = MAP(helper);
+        snap.origins[i].owner = MAP(owner);
+    }
 #undef MAP
     if (cur != end) {
         snap_error(error_buf, error_buf_size, "snapshot trailing bytes");
@@ -703,6 +823,10 @@ bool pp_table_snapshot_v1_read(
         free(sym_names);
     }
     free(sym_ids);
+    sym_ids = NULL;
+    sym_names = NULL;
+    if (!pp_table_snapshot_v1_derive_tag_facts(&snap, error_buf, error_buf_size))
+        goto fail;
     pp_table_snapshot_v1_free(out);
     *out = snap;
     return true;

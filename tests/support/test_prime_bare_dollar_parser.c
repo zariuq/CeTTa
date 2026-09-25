@@ -120,7 +120,7 @@ int main(void) {
     Bindings fresh_bindings;
     bindings_init(&fresh_bindings);
     CHECK(fresh_pair && ground_pair &&
-              simple_match(fresh_pair, ground_pair, &fresh_bindings),
+              simple_match(fresh_pair, ground_pair, &fresh_bindings, &arena),
           "fresh anonymous variables independently match unequal fields");
     CHECK(fresh_bindings.len == 2u,
           "native matcher witnesses both internal anonymous bindings");
@@ -131,7 +131,7 @@ int main(void) {
     Bindings reference_binding;
     bindings_init(&reference_binding);
     CHECK(fresh_one && fresh_one->kind == ATOM_VAR && space &&
-              simple_match(fresh_one, space, &reference_binding),
+              simple_match(fresh_one, space, &reference_binding, &arena),
           "fresh anonymous variable matches a grounded space reference");
     CHECK(fresh_one &&
               bindings_lookup_value_id(&reference_binding, fresh_one->var_id).skeleton == space,
@@ -164,14 +164,14 @@ int main(void) {
     Bindings shared_unequal;
     bindings_init(&shared_unequal);
     CHECK(shared_pair && ground_pair &&
-              !simple_match(shared_pair, ground_pair, &shared_unequal),
+              !simple_match(shared_pair, ground_pair, &shared_unequal, &arena),
           "shared contender rejects unequal fields through co-reference");
     bindings_free(&shared_unequal);
     Atom *equal_pair = parse_one(&arena, "(P a a)");
     Bindings shared_equal;
     bindings_init(&shared_equal);
     CHECK(shared_pair && equal_pair &&
-              simple_match(shared_pair, equal_pair, &shared_equal),
+              simple_match(shared_pair, equal_pair, &shared_equal, &arena),
           "shared contender accepts equal fields");
     bindings_free(&shared_equal);
 

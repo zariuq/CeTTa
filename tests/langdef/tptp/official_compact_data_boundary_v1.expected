@@ -1,6 +1,6 @@
-((fof a axiom (and X n0)))
-((fof a axiom (and X n0)))
-((fof a axiom (and X n0)))
+[(fof a axiom (and X n0))]
+[(fof a axiom (and X n0))]
+[(fof a axiom (and X n0))]
 "fof(a,axiom,and(X,n0)).\n"
 "fof(a,axiom,collision(X)).\n"
 "fof(a,axiom,'+'(1,2)).\n"
@@ -9,7 +9,7 @@
 "fof(a,axiom,and(X,n0)).\nfof(b,axiom,collision(X)).\nfof(c,axiom,let(X,p,q)).\nfof(d,axiom,or(not(X),quote(Y))).\nfof(e,axiom,'+'(1,2)).\n"
 BoundaryMustNotExecute
 RecordMustNotExecute
-(BoundaryInspection application (X n0) (X))
-(BoundaryInspection application (X) (X))
+(BoundaryInspection application (X n0) [X])
+(BoundaryInspection application (X) [X])
 (return "fof(a,axiom,collision(X)).\n")
 True

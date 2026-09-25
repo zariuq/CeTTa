@@ -121,7 +121,7 @@ static void test_empty_observation_spans(TestCounts *counts, Arena *arena) {
             atom_int(arena, position), atom_int(arena, position),
             atom_symbol(arena, "Nil")};
         Atom *observed = cetta_tptp_observe_derivation_v1(
-            arena, atom_expr(arena, fields, 6u), tokens, 2u, "a   b", 5u);
+            NULL, arena, atom_expr(arena, fields, 6u), tokens, 2u, "a   b", 5u);
         int64_t expected = position == 0u ? 0 : position == 1u ? 4 : 5;
         expect(counts,
             result_is_app(observed, "tptp-cst:spanned-node", 4u) &&
@@ -130,7 +130,7 @@ static void test_empty_observation_spans(TestCounts *counts, Arena *arena) {
             "empty production has a zero-width span, including across layout");
     }
     expect(counts,
-        cetta_tptp_observe_derivation_v1(arena, NULL, tokens, 2u,
+        cetta_tptp_observe_derivation_v1(NULL, arena, NULL, tokens, 2u,
                                        "a   b", 5u) == NULL,
         "missing observation derivation is rejected");
 }
@@ -624,28 +624,28 @@ int main(void) {
         expect(&counts,
                copy_pack_replace_first(
                    pack_path, changed_role_pack_path,
-                   "tptp-record-projection-authored",
-                   "tptp-record-projection-omitted"),
-               "prepare changed authored-projection role pack");
+                   "tptp-snapshot-specializer",
+                   "tptp-snapshot-specializer-omitted"),
+               "prepare changed specializer role pack");
         error[0] = '\0';
         expect(&counts,
                !cetta_tptp_snapshot_construct_from_pack_v1(
                    changed_role_pack_path, changed_role_out_path,
                    error, sizeof(error)) && error[0] != '\0',
-               "artifact requires its authored projection source");
+               "artifact requires its snapshot specializer source");
         expect(&counts,
                copy_pack_replace_first(
                    pack_path, changed_source_path_pack_path,
-                   "langdef/tptp/official_syntax_records_v1.metta",
-                   "langdef/tptp/official_syntax_records_omitted_v1.metta"),
-               "prepare changed authored-projection source path pack");
+                   "native/tptp_official_snapshot_v1.c",
+                   "native/tptp_official_snapshot_omitted_v1.c"),
+               "prepare changed specializer source path pack");
         error[0] = '\0';
         expect(&counts,
                !cetta_tptp_snapshot_construct_from_pack_v1(
                    changed_source_path_pack_path,
                    changed_source_path_out_path,
                    error, sizeof(error)) && error[0] != '\0',
-               "artifact requires the exact authored projection source path");
+               "artifact requires the exact specializer source path");
         expect(&counts, official.tag_name_len >= 20u,
                "official DFA has many tags, not the identifier seed");
         for (ti = 0u; ti < official.tag_name_len; ti++) {
@@ -666,6 +666,46 @@ int main(void) {
         expect(&counts, has_lw && has_fof && has_iff && has_sq && has_uw,
                "official tags include tokens and ::= literals");
         expect(&counts, official.skip_tag_len >= 1u, "skip tags present");
+        {
+            /* Value-bearing tokens are exactly the tags whose DFA language
+             * holds more than one string; fixed tags keep their one text. */
+            static const char *const expected_values[] = {
+                "lower_word", "upper_word", "dollar_word", "dollar_dollar_word",
+                "single_quoted", "back_quoted", "distinct_object", "integer",
+                "rational", "real"};
+            uint32_t value_count = 0u;
+            bool values_expected = true;
+            bool vline_fixed = false;
+            bool fof_fixed = false;
+            for (ti = 0u; ti < official.tag_name_len; ti++) {
+                const char *nm = official.tag_names[ti];
+                bool skipped = false;
+                for (uint32_t si = 0u; si < official.skip_tag_len; si++)
+                    skipped = skipped || official.skip_tags[si] == ti;
+                if (!nm || skipped)
+                    continue;
+                if (official.tag_carries_lexeme[ti]) {
+                    bool listed = false;
+                    for (size_t ei = 0u; ei < sizeof(expected_values) / sizeof(expected_values[0]); ei++)
+                        listed = listed || strcmp(nm, expected_values[ei]) == 0;
+                    values_expected = values_expected && listed;
+                    value_count++;
+                }
+                if (strcmp(nm, "vline") == 0)
+                    vline_fixed = !official.tag_carries_lexeme[ti] &&
+                        official.tag_fixed_texts[ti] &&
+                        strcmp(official.tag_fixed_texts[ti], "|") == 0;
+                if (strcmp(nm, "fof") == 0)
+                    fof_fixed = !official.tag_carries_lexeme[ti] &&
+                        official.tag_fixed_texts[ti] &&
+                        strcmp(official.tag_fixed_texts[ti], "fof") == 0;
+            }
+            expect(&counts, values_expected &&
+                       value_count == sizeof(expected_values) / sizeof(expected_values[0]),
+                   "value-bearing tokens are the tags with multi-string languages");
+            expect(&counts, vline_fixed, "an operator token row has its one fixed text");
+            expect(&counts, fof_fixed, "a syntax literal tag has its one fixed text");
+        }
         error[0] = '\0';
         expect(&counts,
                cetta_tptp_snapshot_lex_text_v1(
@@ -694,7 +734,7 @@ int main(void) {
                 &arena, atom_symbol(&arena, "TokC"),
                 atom_symbol(&arena, "lower_word"), atom_int(&arena, 2));
             Atom *observed = cetta_tptp_observe_derivation_v1(
-                &arena, token_node, toks, ntok,
+                &official, &arena, token_node, toks, ntok,
                 sample, sizeof(sample) - 1u);
             expect(&counts,
                    cetta_tptp_lex_token_bytes_v1(
@@ -871,11 +911,19 @@ int main(void) {
                        &records, error, sizeof(error)) &&
                        records != NULL,
                    error[0] ? error : "frozen read fof sample");
-            if (records && records->kind == ATOM_EXPR &&
-                records->expr.len > 0u && records->expr.elems[0])
-                expect(&counts,
-                       atom_is_symbol(records->expr.elems[0], "tptp-rec:file"),
-                       "frozen read yields tptp-rec:file");
+            if (records && records->kind == ATOM_EXPR && records->expr.len == 1u &&
+                !strstr(atom_to_string(&arena, records->expr.elems[0]), "fof_arguments"))
+                fprintf(stderr, "pinned fof read: %s\n",
+                        atom_to_string(&arena, records->expr.elems[0]));
+            expect(&counts,
+                   records && records->kind == ATOM_EXPR && records->expr.len == 1u &&
+                       strcmp(atom_to_string(&arena, records->expr.elems[0]),
+                              "(bnf fof_annotated (bnf lower_word \"a\") "
+                              "(bnf lower_word \"axiom\") (bnf fof_plain_term "
+                              "(bnf lower_word \"p\") "
+                              "(bnf fof_arguments [(bnf upper_word \"X\")])) "
+                              "(bnf nothing))") == 0,
+                   "pinned read yields the canonical term");
             records = NULL;
             error[0] = '\0';
             expect(&counts,
@@ -884,11 +932,18 @@ int main(void) {
                        &records, error, sizeof(error)) &&
                        records != NULL,
                    error[0] ? error : "frozen read thf p:$o");
-            if (records && records->kind == ATOM_EXPR &&
-                records->expr.len > 0u && records->expr.elems[0])
-                expect(&counts,
-                       atom_is_symbol(records->expr.elems[0], "tptp-rec:file"),
-                       "frozen THF read yields tptp-rec:file");
+            if (records && records->kind == ATOM_EXPR && records->expr.len == 1u &&
+                !strstr(atom_to_string(&arena, records->expr.elems[0]), "thf_atom_typing"))
+                fprintf(stderr, "pinned thf read: %s\n",
+                        atom_to_string(&arena, records->expr.elems[0]));
+            expect(&counts,
+                   records && records->kind == ATOM_EXPR && records->expr.len == 1u &&
+                       strcmp(atom_to_string(&arena, records->expr.elems[0]),
+                              "(bnf thf_annotated (bnf lower_word \"a\") "
+                              "(bnf lower_word \"type\") (bnf thf_atom_typing/0 "
+                              "(bnf lower_word \"p\") (bnf dollar_word \"$o\")) "
+                              "(bnf nothing))") == 0,
+                   "pinned THF read yields the canonical term");
         }
         pp_table_snapshot_v1_free(&official);
         unlink(out_path);

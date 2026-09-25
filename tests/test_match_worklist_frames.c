@@ -25,7 +25,7 @@ static void exercise(Arena *a, bool epoch) {
     Atom *v = atom_symbol(a,"frame-test-v");
     BindingsBuilder bb;
     CHECK(bindings_builder_init(&bb,NULL),"initialize binding builder");
-    #define RUN(l,r) (epoch ? match_atoms_epoch_view_builder_current((l),0u,0u,(r),&bb,a) : match_atoms_builder((l),(r),&bb))
+    #define RUN(l,r) (epoch ? match_atoms_epoch_view_builder_current((l),0u,0u,(r),&bb,a) : match_atoms_builder((l),(r),&bb, a))
     Atom *left=atom_expr3(a,f,u,atom_expr2(a,f,u));
     Atom *right=atom_expr3(a,f,u,atom_expr2(a,f,u));
     CHECK(RUN(left,right),"equal rigid leaves succeed in nested expressions");
@@ -207,7 +207,7 @@ static void plan_head_order(Arena *a) {
           "discriminating constructor is checked before binding extension");
     bindings_builder_free(&bb);
     CHECK(bindings_builder_init(&bb, NULL), "unplanned prefix builder");
-    CHECK(!match_atoms_builder(pattern, goal, &bb),
+    CHECK(!match_atoms_builder(pattern, goal, &bb, a),
           "unplanned later mismatch still rejects");
     CHECK(bindings_lookup_value_id(&bb.current, x->var_id).skeleton == w,
           "unplanned matching retains the left-to-right failure prefix");
@@ -326,7 +326,7 @@ static void test_nested_head_dereferences(Arena *a) {
         right = atom_expr2(a, right, f);
     }
     CHECK(bindings_builder_add_var_fresh(&bb, v, left), "head-depth binding");
-    CHECK(match_atoms_builder(v, right, &bb), "nested expression heads preserve pair boundaries");
+    CHECK(match_atoms_builder(v, right, &bb, a), "nested expression heads preserve pair boundaries");
     bindings_builder_free(&bb);
 }
 
@@ -339,13 +339,13 @@ static void test_type_wildcards(Arena *a) {
     Bindings bindings;
     bindings_init(&bindings);
     CHECK(match_types(atom_expr2(a, u, v),
-                      atom_expr2(a, wildcard, wildcard), &bindings),
+                      atom_expr2(a, wildcard, wildcard), &bindings, a),
           "nested type wildcards remain independent in the plain bindings API");
     CHECK(!match_types(atom_expr2(a, wildcard, u),
-                       atom_expr2(a, f, v), &bindings),
+                       atom_expr2(a, f, v), &bindings, a),
           "first-child wildcard does not suppress a later type mismatch");
     CHECK(!match_types(atom_expr3(a, x, u, wildcard),
-                       atom_expr3(a, f, v, u), &bindings),
+                       atom_expr3(a, f, v, u), &bindings, a),
           "type mismatch retains the earlier ordinary variable binding");
     CHECK(bindings_lookup_value_id(&bindings, x->var_id).skeleton == f,
           "plain bindings retain the same failure prefix as the builder");
@@ -368,13 +368,13 @@ static void test_unary_spine(Arena *a) {
         bool matched = epoch
             ? match_atoms_epoch_view_builder_current(
                   left, 0u, 0u, right, &builder, a)
-            : match_atoms_builder(left, right, &builder);
+            : match_atoms_builder(left, right, &builder, a);
         CHECK(matched && bindings_lookup_value_id(&builder.current, x->var_id).skeleton == u,
               "a deep unary spine reaches and binds its leaf without recursion");
         matched = epoch
             ? match_atoms_epoch_view_builder_current(
                   left, 0u, 0u, mismatch, &builder, a)
-            : match_atoms_builder(left, mismatch, &builder);
+            : match_atoms_builder(left, mismatch, &builder, a);
         CHECK(!matched && builder.current.len == 1u,
               "a prebound leaf mismatch keeps its entry bindings");
         bindings_builder_rollback(&builder, 0u);
@@ -830,7 +830,7 @@ static void contextual_observation_visibility(Arena *a) {
     Atom *variables[] = {q, p};
     CHECK(bindings_activation_view_prepare(&frame, &builder, ids, variables, 2u, 410u, 1u) &&
           match_binding_values_builder(binding_value_from_atom(pa),
-              binding_value_from_context(q, 410u), &builder),
+              binding_value_from_context(q, 410u), &builder, a),
           "a new slot alias follows a binding preceding its activation boundary");
     Atom *source = atom_expr3(a, head, q, p);
     Atom *observed = bindings_apply_activation_view_then_all(&builder.current, a, source, &frame);
@@ -988,7 +988,7 @@ static void contextual_decoded_writes(Arena *a) {
 
         }
         size_t before = arena_accounted_live_bytes(a);
-        CHECK(use_builder ? match_atoms_builder(p, q, &builder) : match_atoms(p, q, &plain),
+        CHECK(use_builder ? match_atoms_builder(p, q, &builder, a) : match_atoms(p, q, &plain, a),
               "decoded matcher unifies one open skeleton under different lexical contexts");
         BindingValue alias = bindings_lookup_value_id(current, xa->var_id);
         CHECK(alias.kind == BINDING_VALUE_CONTEXTUAL && alias.skeleton == x &&
@@ -1002,7 +1002,7 @@ static void contextual_decoded_writes(Arena *a) {
                   live.kind == BINDING_VALUE_CONTEXTUAL && live.skeleton == x &&
                   live.epoch == 441u, "live slot publication retains contextual write metadata");
         }
-        CHECK(use_builder ? match_atoms_builder(z, p, &builder) : match_atoms(z, p, &plain),
+        CHECK(use_builder ? match_atoms_builder(z, p, &builder, a) : match_atoms(z, p, &plain, a),
               "decoded matching binds an open contextual expression");
         BindingValue closure = bindings_lookup_value_id(current, z->var_id);
         CHECK(closure.kind == BINDING_VALUE_CONTEXTUAL && closure.skeleton == source &&
@@ -1216,7 +1216,7 @@ static void contextual_sibling_restore(Arena *a) {
         uint32_t reference_mark = bindings_builder_save(&reference);
         Atom *left = bindings_apply_epoch_then_all(&reference.current, a, source, 101u, 0u);
         Atom *right = bindings_apply_epoch_then_all(&reference.current, a, source, 102u, 0u);
-        bool reference_ok = left && right && match_atoms_builder(left, right, &reference);
+        bool reference_ok = left && right && match_atoms_builder(left, right, &reference, a);
         bool direct_ok = match_atoms_epoch_view_builder(
             source, 101u, 0u, source, &direct, a, 102u);
         CHECK(direct_ok == !mismatch && direct_ok == reference_ok,
@@ -1245,7 +1245,7 @@ static void attempt_profile(Arena *a) {
     Atom *x = atom_var_with_id(a, "att-x", UINT64_C(31001));
     CHECK(bindings_builder_init(&bb, NULL), "attempt profile builder");
     test_runtime_stats_reset_counters();
-    CHECK(match_atoms_builder(atom_expr2(a, f, u), atom_expr2(a, f, u), &bb),
+    CHECK(match_atoms_builder(atom_expr2(a, f, u), atom_expr2(a, f, u), &bb, a),
           "identical constructors succeed");
     CHECK(test_runtime_stats_counter(
               CETTA_RUNTIME_COUNTER_UNIFICATION_ATTEMPT) >= 1u,
@@ -1255,7 +1255,7 @@ static void attempt_profile(Arena *a) {
           "a successful attempt is counted");
     test_runtime_stats_reset_counters();
     CHECK(!match_atoms_builder(
-              atom_expr2(a, f, u), atom_expr2(a, v, u), &bb),
+              atom_expr2(a, f, u), atom_expr2(a, v, u), &bb, a),
           "distinct constructors fail");
     CHECK(test_runtime_stats_counter(
               CETTA_RUNTIME_COUNTER_UNIFICATION_ATTEMPT_HEAD_FAIL) >= 1u,
@@ -1267,7 +1267,7 @@ static void attempt_profile(Arena *a) {
     bindings_builder_rollback(&bb, 0u);
     test_runtime_stats_reset_counters();
     CHECK(!match_atoms_builder(
-              atom_expr3(a, f, x, x), atom_expr3(a, f, u, v), &bb),
+              atom_expr3(a, f, x, x), atom_expr3(a, f, u, v), &bb, a),
           "repeated variable mismatch fails");
     CHECK(test_runtime_stats_counter(
               CETTA_RUNTIME_COUNTER_UNIFICATION_ATTEMPT_REPEATED_VAR_FAIL) >=
@@ -1313,7 +1313,7 @@ static void attempt_outcomes_cover_matchers(Arena *a) {
             test_runtime_stats_reset_counters();
             bool matched;
             if (mode == 0u)
-                matched = match_atoms_builder(query, pattern, &bb);
+                matched = match_atoms_builder(query, pattern, &bb, a);
             else if (mode == 1u)
                 matched = match_atoms_epoch_builder(query, pattern, &bb, a, 551u);
             else if (mode == 2u)
@@ -1382,7 +1382,7 @@ static void skeleton_plus_environment(void) {
           "environment binds both skeleton holes to the interned spine");
     size_t before = arena_accounted_live_bytes(&interned);
     test_runtime_stats_reset_counters();
-    CHECK(match_atoms_builder(head, skeleton, &bb),
+    CHECK(match_atoms_builder(head, skeleton, &bb, &interned),
           "decoded worklist matches the open head against skeleton plus env");
     CHECK(bindings_lookup_value_id(&bb.current, x->var_id).skeleton == spine_a,
           "decoded match stores the interned spine, not a copied instance");
@@ -1444,7 +1444,7 @@ static void skeleton_plus_environment(void) {
     CHECK(bindings_builder_add_var_fresh(&bb, l, spine_a) &&
               bindings_builder_add_var_fresh(&bb, r, other),
           "environment of unequal interned spines");
-    CHECK(!match_atoms_builder(head, skeleton, &bb),
+    CHECK(!match_atoms_builder(head, skeleton, &bb, &interned),
           "decoded worklist rejects interned spines of a different hash");
     bindings_builder_rollback(&bb, 0u);
     CHECK(bindings_builder_add_id_fresh(
@@ -1481,7 +1481,7 @@ static void skeleton_plus_environment(void) {
               bindings_builder_add_var_fresh(&bb, r, spine_b),
           "environment binds two equal-but-not-shared spines");
     before = arena_accounted_live_bytes(&local);
-    CHECK(match_atoms_builder(head, skeleton, &bb),
+    CHECK(match_atoms_builder(head, skeleton, &bb, &interned),
           "decoded worklist matches equal-but-not-shared bound spines");
     CHECK(arena_accounted_live_bytes(&local) == before,
           "structural consistency does not copy either local spine");
@@ -1501,7 +1501,7 @@ static void skeleton_plus_environment(void) {
     CHECK(bindings_builder_add_var_fresh(&bb, l, spine_a) &&
               bindings_builder_add_var_fresh(&bb, r, spine_a),
           "repeated environment holes share one local spine");
-    CHECK(match_atoms_builder(head, skeleton, &bb) &&
+    CHECK(match_atoms_builder(head, skeleton, &bb, &interned) &&
               bindings_lookup_value_id(&bb.current, x->var_id).skeleton == spine_a,
           "decoded repeated-variable success is a pointer, not an instance");
     bindings_builder_free(&bb);
@@ -1538,7 +1538,7 @@ static void query_slot_nonoriginal(void) {
     CHECK(match_atoms_activation_view_builder_current(
               x, &frame, u, &bb, &a),
           "non-original chain through the attempt frame unifies");
-    CHECK(match_atoms_builder_with_attempt_frame(y, u, &bb, &frame),
+    CHECK(match_atoms_builder_with_attempt_frame(y, u, &bb, &frame, &a),
           "decoded leftover with an attempt frame still unifies");
     bindings_builder_rollback(&bb, 0u);
     bindings_activation_view_free(&frame);
@@ -1589,7 +1589,7 @@ static void interned_ground_identity(void) {
     BindingsBuilder bb;
     CHECK(bindings_builder_init(&bb, NULL), "intern identity builder");
     test_runtime_stats_reset_counters();
-    CHECK(match_atoms_builder(first, second, &bb) && bb.current.len == 0u,
+    CHECK(match_atoms_builder(first, second, &bb, &arena) && bb.current.len == 0u,
           "decoded worklist accepts interned ground by identity");
     CHECK(match_atoms_epoch_view_builder_current(
               first, 0u, 0u, second, &bb, &arena) &&
@@ -1608,7 +1608,7 @@ static void interned_ground_identity(void) {
     CHECK(other && first != other,
           "distinct interned ground remains a distinct node");
     test_runtime_stats_reset_counters();
-    CHECK(!match_atoms_builder(first, other, &bb),
+    CHECK(!match_atoms_builder(first, other, &bb, &arena),
           "decoded worklist rejects interned ground of a different hash");
     CHECK(!match_atoms_epoch_view_builder_current(
               first, 0u, 0u, other, &bb, &arena),
@@ -1631,7 +1631,7 @@ static void interned_ground_identity(void) {
     CHECK(local_left && local_right && local_left != local_right &&
               local_left->arena_id != 0u,
           "arena-local copies are not interned");
-    CHECK(match_atoms_builder(local_left, local_right, &bb),
+    CHECK(match_atoms_builder(local_left, local_right, &bb, &arena),
           "open arena-local ground still matches by structure");
     bindings_builder_free(&bb);
     arena_free(&local);
@@ -1830,13 +1830,13 @@ static void contextual_observation_without_binding(Arena *a) {
     bindings_free(&b);
     bindings_init(&b);
     CHECK(match_binding_values(binding_value_from_context(x, epoch),
-              binding_value_from_atom(seven), &b), "typed public matching binds the effective left key");
+              binding_value_from_atom(seven), &b, a), "typed public matching binds the effective left key");
     CHECK(!match_binding_values(binding_value_from_context(x, epoch),
-              binding_value_from_atom(atom_int(a, 8)), &b), "typed public matching rejects inconsistent refinement");
+              binding_value_from_atom(atom_int(a, 8)), &b, a), "typed public matching rejects inconsistent refinement");
     BindingsBuilder builder;
     CHECK(bindings_builder_init(&builder, &b), "typed builder starts from a retained substitution");
     CHECK(match_binding_values_builder(binding_value_from_context(x, epoch + 1u),
-              binding_value_from_atom(atom_int(a, 8)), &builder) &&
+              binding_value_from_atom(atom_int(a, 8)), &builder, a) &&
           bindings_lookup_value_id(&builder.current, qualified).skeleton == seven &&
           !bindings_lookup_value_id(&b, var_epoch_id(x->var_id, epoch + 1u)).skeleton,
           "typed builder keeps independent contexts and the parent version separate");
@@ -1888,7 +1888,7 @@ static void contextual_exact_root_policy(Arena *a) {
           "exact aliases retain the unbound target context without spelling capture");
     CHECK(bindings_prepare_logical_write(&b), "own exact contextual edge fixture");
     CHECK(match_binding_values(binding_value_from_context(x, 521u),
-              binding_value_from_context(source, 520u), &b),
+              binding_value_from_context(source, 520u), &b, a),
           "write exact qualified edge independently of spelling-based capture");
     CHECK(bindings_resolve_value_exact(&b, binding_value_from_atom(p), &result) &&
           result.skeleton == source && result.kind == BINDING_VALUE_CONTEXTUAL && result.epoch == 520u,

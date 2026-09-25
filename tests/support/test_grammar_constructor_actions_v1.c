@@ -99,7 +99,8 @@ static bool reject_primitive_mutations(Arena *arena, const PPABIV1Pack *pack,
 static bool primitive_size_controls(void) {
     Arena arena;
     arena_init(&arena);
-    Atom huge = {.kind = ATOM_EXPR};
+    /* A real expression header with a forged length. */
+    Atom huge = *atom_expr(&arena, NULL, 0u);
     huge.expr.len = UINT64_MAX;
     huge.expr.elems = NULL;
     Atom *head = atom_symbol(&arena, "item");

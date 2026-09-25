@@ -12,13 +12,24 @@
  * Magic "TPP1". Independent of C struct layout. Fail-atomic write. */
 
 #define PP_TABLE_SNAPSHOT_V1_MAGIC "TPP1"
-#define PP_TABLE_SNAPSHOT_V1_VERSION 2u
+#define PP_TABLE_SNAPSHOT_V1_VERSION 3u
 #define PP_TABLE_SNAPSHOT_V1_PROFILE_CAP 32u
 
 typedef enum {
     PP_TABLE_SNAPSHOT_V1_KERNEL_SLR = 0,
     PP_TABLE_SNAPSHOT_V1_KERNEL_GLR = 1
 } PPTableSnapshotV1Kernel;
+
+/* The lowering origin of one helper nonterminal: what made it and the
+ * authored rule containing it.  kind and repeat are those of
+ * CettaGrammarCanonicalOriginV1 (repetition 1, option 2, group 3; '*', '+',
+ * '?' or 0). */
+typedef struct {
+    SymbolId helper;
+    SymbolId owner;
+    uint32_t kind;
+    uint32_t repeat;
+} PPTableSnapshotOriginV1;
 
 typedef struct {
     char syntax_digest[65];
@@ -32,10 +43,24 @@ typedef struct {
     uint32_t tag_name_len;
     uint32_t *skip_tags;
     uint32_t skip_tag_len;
+    PPTableSnapshotOriginV1 *origins;
+    uint32_t origin_len;
+    /* Derived from the DFA when a snapshot is read, never serialized.  A tag
+     * carries a lexeme when its language holds more than one string; a tag
+     * whose language is one string has that string as its fixed text. */
+    uint8_t *tag_carries_lexeme;
+    char **tag_fixed_texts;
+    SymbolId *tag_symbol_ids;
 } PPTableSnapshotV1;
 
 void pp_table_snapshot_v1_init(PPTableSnapshotV1 *snap);
 void pp_table_snapshot_v1_free(PPTableSnapshotV1 *snap);
+
+/* Compute tag_carries_lexeme and tag_fixed_texts from the DFA. */
+bool pp_table_snapshot_v1_derive_tag_facts(
+    PPTableSnapshotV1 *snap,
+    char *error_buf,
+    size_t error_buf_size);
 
 bool pp_table_snapshot_v1_size(
     const PPTableSnapshotV1 *snap,

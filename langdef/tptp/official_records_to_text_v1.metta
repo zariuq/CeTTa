@@ -5,16 +5,16 @@
     (operator metta-equation 2)
     (operator langdef:ground-equal 2)
     (operator langdef:value-view 1)
-    (operator langdef:codepoints->string 1)
-    (operator langdef:codepoints->symbol 1)
-    (operator langdef:string->codepoints 1)
+    (operator str:byte-length 1) (operator str:byte-slice 3)
+    (operator str:concat 2) (operator str:escape 2)
+    (operator str:starts-with 2) (operator str:string->symbol 1)
     (operator langdef:list->expression 1)
     (operator bnf-v1:string->text 1) (operator bnf-v1:text->string 1)
     (operator bnf-v1:text-append 2) (operator bnf-v1:text-nil 0)
     (operator LNil 0) (operator LCons 2)
-    (operator cons 2) (operator nil 0) (operator cp 1)
     (operator LangDef:SameValue 0) (operator LangDef:DifferentValue 0)
     (operator LangDef:ExpressionValue 1)
+    (operator LangDef:ListValue 1)
     (operator LangDef:SymbolValue 1)
     (operator LangDef:StringValue 1)
     (operator LangDef:IntegerValue 1)
@@ -69,13 +69,11 @@
     (operator tptp-print-v1:atom 1)
     (operator tptp-print-v1:atom-view 1)
     (operator tptp-print-v1:symbol-text 1)
-    (operator tptp-print-v1:symbol-first 3)
+    (operator tptp-print-v1:symbol-first 2)
     (operator tptp-print-v1:symbol-section 1)
-    (operator tptp-print-v1:symbol-section-next 3)
-    (operator tptp-print-v1:quoted 2)
-    (operator tptp-print-v1:escaped 2)
-    (operator tptp-print-v1:escape-backslash 4)
-    (operator tptp-print-v1:escape-delimiter 4)
+    (operator tptp-print-v1:symbol-section-next 2)
+    (operator tptp-print-v1:after 2)
+    (operator tptp-print-v1:quoted 3)
 
     (operator tptp-print-v1:call 3)
     (operator tptp-print-v1:call-next 4)
@@ -138,6 +136,9 @@
           (langdef:value-view ?records))))) (body))
     (rule document-expression (head (metta-equation
       (tptp-print-v1:document-view (LangDef:ExpressionValue ?records))
+      (tptp-print-v1:inputs ?records))) (body))
+    (rule document-list (head (metta-equation
+      (tptp-print-v1:document-view (LangDef:ListValue ?records))
       (tptp-print-v1:inputs ?records))) (body))
     (rule inputs-empty (head (metta-equation
       (tptp-print-v1:inputs LNil)
@@ -288,6 +289,12 @@
       (tptp-print-v1:annotation-tail-view
         ?ann (LangDef:ExpressionValue ?items))
       (tptp-print-v1:annotation-tail-list ?ann ?items))) (body))
+    (rule annotation-tail-list-value (head (metta-equation
+      (tptp-print-v1:annotation-tail-view
+        ?ann (LangDef:ListValue ?items))
+      (tptp-print-v1:cat2
+        (bnf-v1:string->text ",")
+        (tptp-print-v1:expr TptpPrint:General ?ann)))) (body))
     (rule annotation-tail-symbol (head (metta-equation
       (tptp-print-v1:annotation-tail-view
         ?ann (LangDef:SymbolValue ?text))
@@ -346,94 +353,47 @@
       (tptp-print-v1:atom-view
         (langdef:value-view ?value)))) (body))
     (rule atom-symbol (head (metta-equation
-      (tptp-print-v1:atom-view (LangDef:SymbolValue ?codepoints))
-      (tptp-print-v1:symbol-text ?codepoints))) (body))
+      (tptp-print-v1:atom-view (LangDef:SymbolValue ?spelling))
+      (tptp-print-v1:symbol-text ?spelling))) (body))
     (rule atom-string (head (metta-equation
       (tptp-print-v1:atom-view (LangDef:StringValue ?string))
-      (tptp-print-v1:quoted (cp 39) ?string))) (body))
+      (tptp-print-v1:quoted tptp-single "'" ?string))) (body))
     (rule atom-integer (head (metta-equation
       (tptp-print-v1:atom-view (LangDef:IntegerValue ?string))
       (bnf-v1:string->text ?string))) (body))
 
-    (rule symbol-text-empty (head (metta-equation
-      (tptp-print-v1:symbol-text nil)
-      (bnf-v1:text-nil))) (body))
-    (rule symbol-text-cons (head (metta-equation
-      (tptp-print-v1:symbol-text (cons ?first ?rest))
+    ; §w is $w and §§w is $$w; § is two bytes.
+    (rule symbol-text (head (metta-equation
+      (tptp-print-v1:symbol-text ?spelling)
       (tptp-print-v1:symbol-first
-        (langdef:ground-equal ?first (cp 167)) ?first ?rest))) (body))
+        (str:starts-with ?spelling "§") ?spelling))) (body))
     (rule symbol-ordinary (head (metta-equation
-      (tptp-print-v1:symbol-first
-        LangDef:DifferentValue ?first ?rest)
-      (bnf-v1:string->text
-        (langdef:codepoints->string (cons ?first ?rest))))) (body))
+      (tptp-print-v1:symbol-first False ?spelling)
+      (bnf-v1:string->text ?spelling))) (body))
     (rule symbol-section (head (metta-equation
-      (tptp-print-v1:symbol-first
-        LangDef:SameValue ?first ?rest)
-      (tptp-print-v1:symbol-section ?rest))) (body))
-    (rule symbol-section-one (head (metta-equation
-      (tptp-print-v1:symbol-section nil)
-      (bnf-v1:string->text "$"))) (body))
-    (rule symbol-section-cons (head (metta-equation
-      (tptp-print-v1:symbol-section (cons ?next ?rest))
+      (tptp-print-v1:symbol-first True ?spelling)
+      (tptp-print-v1:symbol-section (tptp-print-v1:after ?spelling 2)))) (body))
+    (rule symbol-section-next (head (metta-equation
+      (tptp-print-v1:symbol-section ?rest)
       (tptp-print-v1:symbol-section-next
-        (langdef:ground-equal ?next (cp 167)) ?next ?rest))) (body))
+        (str:starts-with ?rest "§") ?rest))) (body))
     (rule symbol-section-defined (head (metta-equation
-      (tptp-print-v1:symbol-section-next
-        LangDef:DifferentValue ?next ?rest)
-      (tptp-print-v1:cat2
-        (bnf-v1:string->text "$")
-        (bnf-v1:string->text
-          (langdef:codepoints->string (cons ?next ?rest)))))) (body))
+      (tptp-print-v1:symbol-section-next False ?rest)
+      (bnf-v1:string->text (str:concat "$" ?rest)))) (body))
     (rule symbol-section-system (head (metta-equation
-      (tptp-print-v1:symbol-section-next
-        LangDef:SameValue ?next ?rest)
-      (tptp-print-v1:cat2
-        (bnf-v1:string->text "$$")
-        (bnf-v1:string->text
-          (langdef:codepoints->string ?rest))))) (body))
+      (tptp-print-v1:symbol-section-next True ?rest)
+      (bnf-v1:string->text
+        (str:concat "$$" (tptp-print-v1:after ?rest 2))))) (body))
+    (rule after (head (metta-equation
+      (tptp-print-v1:after ?spelling ?count)
+      (str:byte-slice ?spelling ?count (str:byte-length ?spelling)))) (body))
 
+    ; A quoted text, with \ before each backslash and each quote.
     (rule quoted (head (metta-equation
-      (tptp-print-v1:quoted ?delimiter ?string)
-      (tptp-print-v1:cat3
-        (bnf-v1:string->text
-          (langdef:codepoints->string (cons ?delimiter nil)))
-        (bnf-v1:string->text
-          (langdef:codepoints->string
-            (tptp-print-v1:escaped
-              ?delimiter (langdef:string->codepoints ?string))))
-        (bnf-v1:string->text
-          (langdef:codepoints->string (cons ?delimiter nil)))))) (body))
-    (rule escaped-empty (head (metta-equation
-      (tptp-print-v1:escaped ?delimiter nil) nil)) (body))
-    (rule escaped-cons (head (metta-equation
-      (tptp-print-v1:escaped ?delimiter (cons ?head ?tail))
-      (tptp-print-v1:escape-backslash
-        (langdef:ground-equal ?head (cp 92))
-        ?delimiter ?head ?tail))) (body))
-    (rule escape-backslash-yes (head (metta-equation
-      (tptp-print-v1:escape-backslash
-        LangDef:SameValue ?delimiter ?head ?tail)
-      (cons (cp 92)
-        (cons (cp 92)
-          (tptp-print-v1:escaped ?delimiter ?tail))))) (body))
-    (rule escape-backslash-no (head (metta-equation
-      (tptp-print-v1:escape-backslash
-        LangDef:DifferentValue ?delimiter ?head ?tail)
-      (tptp-print-v1:escape-delimiter
-        (langdef:ground-equal ?head ?delimiter)
-        ?delimiter ?head ?tail))) (body))
-    (rule escape-delimiter-yes (head (metta-equation
-      (tptp-print-v1:escape-delimiter
-        LangDef:SameValue ?delimiter ?head ?tail)
-      (cons (cp 92)
-        (cons ?head
-          (tptp-print-v1:escaped ?delimiter ?tail))))) (body))
-    (rule escape-delimiter-no (head (metta-equation
-      (tptp-print-v1:escape-delimiter
-        LangDef:DifferentValue ?delimiter ?head ?tail)
-      (cons ?head
-        (tptp-print-v1:escaped ?delimiter ?tail)))) (body))
+      (tptp-print-v1:quoted ?scheme ?quote ?string)
+      (bnf-v1:string->text
+        (str:concat ?quote
+          (str:concat (str:escape ?scheme ?string) ?quote))))) (body))
 
     (rule expr (head (metta-equation
       (tptp-print-v1:expr ?mode ?value)
@@ -441,12 +401,12 @@
         ?mode (langdef:value-view ?value)))) (body))
     (rule expr-symbol (head (metta-equation
       (tptp-print-v1:expr-view
-        ?mode (LangDef:SymbolValue ?codepoints))
-      (tptp-print-v1:symbol-text ?codepoints))) (body))
+        ?mode (LangDef:SymbolValue ?spelling))
+      (tptp-print-v1:symbol-text ?spelling))) (body))
     (rule expr-string (head (metta-equation
       (tptp-print-v1:expr-view
         ?mode (LangDef:StringValue ?string))
-      (tptp-print-v1:quoted (cp 39) ?string))) (body))
+      (tptp-print-v1:quoted tptp-single "'" ?string))) (body))
     (rule expr-integer (head (metta-equation
       (tptp-print-v1:expr-view
         ?mode (LangDef:IntegerValue ?string))
@@ -455,6 +415,10 @@
       (tptp-print-v1:expr-view
         ?mode (LangDef:ExpressionValue ?items))
       (tptp-print-v1:expr-list ?mode ?items))) (body))
+    (rule expr-list-value (head (metta-equation
+      (tptp-print-v1:expr-view
+        ?mode (LangDef:ListValue ?items))
+      (tptp-print-v1:brackets-view ?mode (LangDef:ListValue ?items)))) (body))
     (rule expr-empty-list (head (metta-equation
       (tptp-print-v1:expr-list ?mode LNil)
       (bnf-v1:string->text "[]"))) (body))
@@ -465,7 +429,7 @@
         ?mode ?head ?arguments (langdef:value-view ?head)))) (body))
     (rule expr-symbol-head (head (metta-equation
       (tptp-print-v1:expr-head-view
-        ?mode ?head ?arguments (LangDef:SymbolValue ?codepoints))
+        ?mode ?head ?arguments (LangDef:SymbolValue ?spelling))
       (tptp-print-v1:expr-head-class
         (tptp-print-v1:head-class ?head)
         ?mode ?head ?arguments))) (body))
@@ -476,6 +440,11 @@
     (rule expr-integer-head (head (metta-equation
       (tptp-print-v1:expr-head-view
         ?mode ?head ?arguments (LangDef:IntegerValue ?string))
+      (tptp-print-v1:brackets
+        ?mode (langdef:list->expression (LCons ?head ?arguments))))) (body))
+    (rule expr-list-head (head (metta-equation
+      (tptp-print-v1:expr-head-view
+        ?mode ?head ?arguments (LangDef:ListValue ?items))
       (tptp-print-v1:brackets
         ?mode (langdef:list->expression (LCons ?head ?arguments))))) (body))
     (rule expr-expression-head (head (metta-equation
@@ -624,11 +593,12 @@
     (rule special-distinct (head (metta-equation
       (tptp-print-v1:special
         ?mode ◊ (LCons ?value LNil))
-      (tptp-print-v1:quoted (cp 34) ?value))) (body))
+      (tptp-print-v1:quoted tptp-double "\"" ?value))) (body))
+    ; A back-quoted word is ` and an upper word, which needs no escape.
     (rule special-backquoted (head (metta-equation
       (tptp-print-v1:special
         ?mode ⌜ (LCons ?value LNil))
-      (tptp-print-v1:quoted (cp 96) ?value))) (body))
+      (bnf-v1:string->text (str:concat "`" ?value)))) (body))
     (rule special-tuple (head (metta-equation
       (tptp-print-v1:special
         ?mode ⟨⟩ (LCons ?items LNil))
@@ -784,7 +754,7 @@
       (tptp-print-v1:expr ?mode ?value))) (body))
     (rule infix-operand-symbol (head (metta-equation
       (tptp-print-v1:infix-operand-view
-        ?mode ?value (LangDef:SymbolValue ?codepoints))
+        ?mode ?value (LangDef:SymbolValue ?spelling))
       (tptp-print-v1:expr ?mode ?value))) (body))
     (rule infix-operand-string (head (metta-equation
       (tptp-print-v1:infix-operand-view
@@ -846,7 +816,7 @@
       (tptp-print-v1:expr ?mode ?value))) (body))
     (rule binary-left-symbol (head (metta-equation
       (tptp-print-v1:binary-left-view
-        ?mode ?operator ?head ?value (LangDef:SymbolValue ?codepoints))
+        ?mode ?operator ?head ?value (LangDef:SymbolValue ?spelling))
       (tptp-print-v1:expr ?mode ?value))) (body))
     (rule binary-left-string (head (metta-equation
       (tptp-print-v1:binary-left-view
@@ -884,6 +854,10 @@
     (rule variables-expression (head (metta-equation
       (tptp-print-v1:variables-view
         (LangDef:ExpressionValue ?items))
+      (tptp-print-v1:items TptpPrint:Type ?items))) (body))
+    (rule variables-list (head (metta-equation
+      (tptp-print-v1:variables-view
+        (LangDef:ListValue ?items))
       (tptp-print-v1:items TptpPrint:Type ?items))) (body))
     (rule type-binary (head (metta-equation
       (tptp-print-v1:type-binary ?operator ?left ?right)
@@ -969,6 +943,13 @@
         (bnf-v1:string->text "[")
         (tptp-print-v1:items ?mode ?items)
         (bnf-v1:string->text "]")))) (body))
+    (rule brackets-list (head (metta-equation
+      (tptp-print-v1:brackets-view
+        ?mode (LangDef:ListValue ?items))
+      (tptp-print-v1:cat3
+        (bnf-v1:string->text "[")
+        (tptp-print-v1:items ?mode ?items)
+        (bnf-v1:string->text "]")))) (body))
     (rule tuple (head (metta-equation
       (tptp-print-v1:tuple ?mode ?items)
       (tptp-print-v1:brackets ?mode ?items))) (body))
@@ -982,6 +963,10 @@
         ?marker ?mode ?value (LangDef:ExpressionValue ?items))
       (tptp-print-v1:let-component-list
         ?marker ?mode ?value ?items))) (body))
+    (rule let-component-list-value (head (metta-equation
+      (tptp-print-v1:let-component-view
+        ?marker ?mode ?value (LangDef:ListValue ?items))
+      (tptp-print-v1:brackets ?mode ?value))) (body))
     (rule let-component-list-empty (head (metta-equation
       (tptp-print-v1:let-component-list
         ?marker ?mode ?value LNil)
@@ -993,11 +978,11 @@
         ?marker ?mode ?value ?rest (langdef:value-view ?head)))) (body))
     (rule let-component-symbol-head (head (metta-equation
       (tptp-print-v1:let-component-head
-        ?marker ?mode ?value ?rest (LangDef:SymbolValue ?codepoints))
+        ?marker ?mode ?value ?rest (LangDef:SymbolValue ?spelling))
       (tptp-print-v1:let-component-view
         ?marker ?mode ?value
         (langdef:ground-equal
-          (langdef:codepoints->symbol ?codepoints) ?marker)))) (body))
+          (str:string->symbol ?spelling) ?marker)))) (body))
     (rule let-component-expression-head (head (metta-equation
       (tptp-print-v1:let-component-head
         ?marker ?mode ?value ?rest (LangDef:ExpressionValue ?items))

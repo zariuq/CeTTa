@@ -94,9 +94,9 @@ bool cetta_atom_is_bool(Atom *a, bool val) {
            a->ground.gkind == GV_BOOL && a->ground.bval == val;
 }
 
-bool cetta_atom_is_string(Atom *a, const char *val) {
-    return a && a->kind == ATOM_GROUNDED &&
-           a->ground.gkind == GV_STRING && strcmp(a->ground.sval, val) == 0;
+bool cetta_atom_is_string_bytes(Atom *a, const char *bytes, int64_t len) {
+    return a && a->kind == ATOM_GROUNDED && a->ground.gkind == GV_STRING &&
+           len >= 0 && atom_string_equals_bytes(a, bytes, (size_t)len);
 }
 
 bool cetta_atom_eq(Atom *a, Atom *b) {
@@ -115,8 +115,8 @@ Atom *cetta_atom_bool(Arena *a, bool val) {
     return atom_bool(a, val);
 }
 
-Atom *cetta_atom_string(Arena *a, const char *val) {
-    return atom_string(a, val);
+Atom *cetta_atom_string_bytes(Arena *a, const char *bytes, int64_t len) {
+    return atom_string_n(a, bytes, len > 0 ? (size_t)len : 0u);
 }
 
 void cetta_rs_init(ResultSet *rs) {

@@ -1,25 +1,16 @@
 ; JSON (RFC 8259) read through lib_bnf: the grammar file produces the parser,
-; the derivation is converted to MeTTa values, and ordinary equations query
-; the result. Numbers are read by `parse` from their matched text.
+; the reader returns the canonical term of the grammar's derived LanguageDef,
+; written (bnf NAME child...) so grammar names never stand where an evaluator
+; could reduce them; one equation per constructor turns it into MeTTa
+; values, and ordinary
+; equations query the result.  The grammar writes its layout as the rule ws,
+; which the value equations ignore; numbers are printed back by the grammar's
+; own printer and read by `parse`.
 !(import! &self lib/lib_bnf.metta)
 
 ; --- text helpers ---------------------------------------------------------------
 (= (json:append (bnf-v1:text-nil) $ys) $ys)
 (= (json:append (bnf-v1:text-cons $c $xs) $ys) (bnf-v1:text-cons $c (json:append $xs $ys)))
-
-; the concatenated leaf text of any derivation subtree
-(= (json:leaf-text (EBNF:Literal $text $s $i)) (bnf:text $text))
-(= (json:leaf-text (EBNF:Lexical $n $token $origin $i $codepoint)) (bnf-v1:text-cons $codepoint (bnf-v1:text-nil)))
-(= (json:leaf-text (EBNF:Reference $n $s $i $sub)) (json:leaf-text $sub))
-(= (json:leaf-text (EBNF:Rule $n $rs $alt $as $in $elems)) (json:leaf-texts $elems))
-(= (json:leaf-text (EBNF:Group $id $s $alt $as $in $elems)) (json:leaf-texts $elems))
-(= (json:leaf-text (EBNF:OptionalPresent $id $s $i $e)) (json:leaf-text $e))
-(= (json:leaf-text (EBNF:OptionalAbsent $id $s $i)) (bnf-v1:text-nil))
-(= (json:leaf-text (EBNF:Repetition $k $id $s $i $its)) (json:iteration-texts $its))
-(= (json:leaf-texts (EBNF:ElementsNil)) (bnf-v1:text-nil))
-(= (json:leaf-texts (EBNF:ElementsCons $e $rest)) (json:append (json:leaf-text $e) (json:leaf-texts $rest)))
-(= (json:iteration-texts (EBNF:IterationsNil)) (bnf-v1:text-nil))
-(= (json:iteration-texts (EBNF:IterationsCons $e $rest)) (json:append (json:leaf-text $e) (json:iteration-texts $rest)))
 
 ; --- lexical class for string characters ----------------------------------------
 (= (json:controls $n)
@@ -35,76 +26,56 @@
            "json-strchar" (bnf-v1:lexical-origin "json-v1" 0))
          (bnf-v1:lexical-declarations-nil)))))
 
-; --- derivation -> value ---------------------------------------------------------
-(= (json:value (EBNF:Rule "value" $rs 0 $as $in (EBNF:ElementsCons (EBNF:Reference "object" $s $i $o) $r))) (json:object $o))
-(= (json:value (EBNF:Rule "value" $rs 1 $as $in (EBNF:ElementsCons (EBNF:Reference "array" $s $i $a) $r))) (json:array $a))
-(= (json:value (EBNF:Rule "value" $rs 2 $as $in (EBNF:ElementsCons (EBNF:Reference "string" $s $i $str) $r))) (json:string $str))
-(= (json:value (EBNF:Rule "value" $rs 3 $as $in (EBNF:ElementsCons (EBNF:Reference "number" $s $i $num) $r)))
-   (parse (bnf:text->string (json:leaf-text $num))))
-(= (json:value (EBNF:Rule "value" $rs 4 $as $in $e)) True)
-(= (json:value (EBNF:Rule "value" $rs 5 $as $in $e)) False)
-(= (json:value (EBNF:Rule "value" $rs 6 $as $in $e)) Null)
+; --- canonical term -> value -----------------------------------------------------
+(= (json:value $parser (bnf object/0 $ws)) (Object ()))
+(= (json:value $parser (bnf object/1 $ws $member $more $ws2))
+   (Object (cons-atom (json:member $parser $member) (json:members $parser $more))))
+(= (json:value $parser (bnf array/0 $ws)) (Array ()))
+(= (json:value $parser (bnf array/1 $ws $item $more $ws2))
+   (Array (cons-atom (json:value $parser $item) (json:items $parser $more))))
+(= (json:value $parser (bnf string $chars)) (bnf:text->string (json:chars $chars)))
+(= (json:value $parser (bnf number $sign $int $frac $exp))
+   (parse (bnf:print-canonical $parser "number" (bnf number $sign $int $frac $exp))))
+(= (json:value $parser "true") True)
+(= (json:value $parser "false") False)
+(= (json:value $parser "null") Null)
 
-(= (json:object (EBNF:Rule "object" $rs 0 $as $in $e)) (Object ()))
-(= (json:object (EBNF:Rule "object" $rs 1 $as $in
-      (EBNF:ElementsCons $open (EBNF:ElementsCons $ws
-        (EBNF:ElementsCons (EBNF:Reference "member" $s $i $m)
-          (EBNF:ElementsCons (EBNF:Repetition $k $id $s2 $i2 $more) $rest))))))
-   (Object (cons-atom (json:member $m) (json:members $more))))
-(= (json:members (EBNF:IterationsNil)) ())
-(= (json:members (EBNF:IterationsCons
-      (EBNF:Group $g $gs $ga $gas $gi
-        (EBNF:ElementsCons $ws1 (EBNF:ElementsCons $comma (EBNF:ElementsCons $ws2
-          (EBNF:ElementsCons (EBNF:Reference "member" $s $i $m) $rest)))))
-      $more))
-   (cons-atom (json:member $m) (json:members $more)))
-(= (json:member (EBNF:Rule "member" $rs $alt $as $in
-      (EBNF:ElementsCons (EBNF:Reference "string" $s $i $key)
-        (EBNF:ElementsCons $ws1 (EBNF:ElementsCons $colon (EBNF:ElementsCons $ws2
-          (EBNF:ElementsCons (EBNF:Reference "value" $s2 $i2 $v) $rest)))))))
-   ((json:string $key) (json:value $v)))
-
-(= (json:array (EBNF:Rule "array" $rs 0 $as $in $e)) (Array ()))
-(= (json:array (EBNF:Rule "array" $rs 1 $as $in
-      (EBNF:ElementsCons $open (EBNF:ElementsCons $ws
-        (EBNF:ElementsCons (EBNF:Reference "value" $s $i $v)
-          (EBNF:ElementsCons (EBNF:Repetition $k $id $s2 $i2 $more) $rest))))))
-   (Array (cons-atom (json:value $v) (json:values $more))))
-(= (json:values (EBNF:IterationsNil)) ())
-(= (json:values (EBNF:IterationsCons
-      (EBNF:Group $g $gs $ga $gas $gi
-        (EBNF:ElementsCons $ws1 (EBNF:ElementsCons $comma (EBNF:ElementsCons $ws2
-          (EBNF:ElementsCons (EBNF:Reference "value" $s $i $v) $rest)))))
-      $more))
-   (cons-atom (json:value $v) (json:values $more)))
+; the repetitions ("," member)* and ("," value)* are lists of (ws ws x) tuples
+(= (json:last ($ws1 $ws2 $x)) $x)
+(= (json:members $parser $more)
+   (if (== (size-atom $more) 0) ()
+     (cons-atom (json:member $parser (json:last (car-atom $more)))
+                (json:members $parser (cdr-atom $more)))))
+(= (json:items $parser $more)
+   (if (== (size-atom $more) 0) ()
+     (cons-atom (json:value $parser (json:last (car-atom $more)))
+                (json:items $parser (cdr-atom $more)))))
+(= (json:member $parser (bnf member $key $ws1 $ws2 $value))
+   ((json:value $parser $key) (json:value $parser $value)))
 
 ; strings: unescape into code points, then to a MeTTa string
-(= (json:string (EBNF:Rule "string" $rs $alt $as $in
-      (EBNF:ElementsCons $open (EBNF:ElementsCons (EBNF:Repetition $k $id $s $i $chars) $rest))))
-   (bnf:text->string (json:chars $chars)))
-(= (json:chars (EBNF:IterationsNil)) (bnf-v1:text-nil))
-(= (json:chars (EBNF:IterationsCons (EBNF:Reference "char" $s $i $c) $more))
-   (json:append (json:char $c) (json:chars $more)))
-(= (json:char (EBNF:Rule "char" $rs 0 $as $in $e)) (json:leaf-texts $e))
-(= (json:char (EBNF:Rule "char" $rs 1 $as $in
-      (EBNF:ElementsCons $backslash (EBNF:ElementsCons (EBNF:Reference "escape" $s $i $esc) $rest))))
-   (json:escape $esc))
-(= (json:escape (EBNF:Rule "escape" $rs $alt $as $in $e))
-   (case $alt
-     ((0 (bnf-v1:text-cons 34 (bnf-v1:text-nil)))
-      (1 (bnf-v1:text-cons 92 (bnf-v1:text-nil)))
-      (2 (bnf:text "/"))
-      (3 (bnf-v1:text-cons 8 (bnf-v1:text-nil)))
-      (4 (bnf-v1:text-cons 12 (bnf-v1:text-nil)))
-      (5 (bnf:text "\n"))
-      (6 (bnf:text "\r"))
-      (7 (bnf:text "\t"))
-      (8 (bnf-v1:text-cons (json:hex-value 0 (json:leaf-texts $e)) (bnf-v1:text-nil))))))
-; the leaf text of the \uXXXX alternative is "uXXXX": skip the u, fold the digits
-(= (json:hex-value $acc (bnf-v1:text-nil)) $acc)
-(= (json:hex-value $acc (bnf-v1:text-cons $d $rest))
-   (if (== $d 117) (json:hex-value $acc $rest)
-     (json:hex-value (+ (* $acc 16) (json:hex-digit $d)) $rest)))
+(= (json:chars $chars)
+   (if (== (size-atom $chars) 0) (bnf-v1:text-nil)
+     (json:append (json:char (car-atom $chars)) (json:chars (cdr-atom $chars)))))
+(= (json:char (bnf strchar $s)) (bnf:text $s))
+(= (json:char (bnf char $escape))
+   (case $escape
+     (((bnf escape $a $b $c $d)
+        (bnf-v1:text-cons
+          (+ (* 4096 (json:hex $a)) (+ (* 256 (json:hex $b)) (+ (* 16 (json:hex $c)) (json:hex $d))))
+          (bnf-v1:text-nil)))
+      ($letter (json:letter $letter)))))
+; a one-character escape is decoded by its code point; ", \ and / stand for themselves
+(= (json:letter $letter)
+   (case (bnf:text $letter)
+     (((bnf-v1:text-cons 98 $end) (bnf-v1:text-cons 8 (bnf-v1:text-nil)))
+      ((bnf-v1:text-cons 102 $end) (bnf-v1:text-cons 12 (bnf-v1:text-nil)))
+      ((bnf-v1:text-cons 110 $end) (bnf-v1:text-cons 10 (bnf-v1:text-nil)))
+      ((bnf-v1:text-cons 114 $end) (bnf-v1:text-cons 13 (bnf-v1:text-nil)))
+      ((bnf-v1:text-cons 116 $end) (bnf-v1:text-cons 9 (bnf-v1:text-nil)))
+      ($same $same))))
+(= (json:hex $digit)
+   (case (bnf:text $digit) (((bnf-v1:text-cons $d $rest) (json:hex-digit $d)))))
 (= (json:hex-digit $d)
    (if (< $d 58) (- $d 48) (if (< $d 71) (- $d 55) (- $d 87))))
 
@@ -121,14 +92,10 @@
 
 ; --- driver ---------------------------------------------------------------------
 (= (json:read $parser $text)
-   (case (bnf:parse-ebnf-text $parser $text)
-     (((EBNF:SourceParse (EBNF:Accepted $b $s (EBNF:DerivationsCons
-          (EBNF:Rule "json" $rs $alt $as $in
-            (EBNF:ElementsCons $ws1 (EBNF:ElementsCons (EBNF:Reference "value" $vs $vi $v) $rest)))
-          (EBNF:DerivationsNil))) $gb $gs $low)
-        (json:value $v))
-      ((EBNF:SourceParse (EBNF:Rejected $b $s $offset $expected) $gb $gs $low) (Rejected at $offset))
-      ((EBNF:SourceParse (EBNF:Incomplete $b $s $code $detail) $gb $gs $low) (Incomplete $detail))
+   (case (bnf:parse-canonical-text $parser $text)
+     (((EBNF:Canonical $b $s (bnf json $ws1 $value $ws2)) (json:value $parser $value))
+      ((EBNF:Rejected $b $s $offset $expected) (Rejected at $offset))
+      ((EBNF:Incomplete $b $s $code $detail) (Incomplete $detail))
       ($other (Ambiguous)))))
 
 !(let $parser (bnf:parser-from-ebnf-file-with-authority "examples/bnf/json_v1.ebnf" (json:authority))

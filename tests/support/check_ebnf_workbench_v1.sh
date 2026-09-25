@@ -32,7 +32,7 @@ sha256sum "$ebnf_runtime" "$ebnf_program" lib/lib_bnf.metta lib/langdef.metta \
     benchmarks/bnf/generate_ebnf_workbench.c \
     tests/support/check_ebnf_workbench_v1.sh > "$ebnf_evidence/inputs.sha256"
 ebnf_count=0
-for ebnf_fixture in observations integration equivalence projection diagnostics cycles helper_names namespace_freshness applications; do
+for ebnf_fixture in observations integration equivalence projection diagnostics cycles helper_names namespace_freshness applications canonical; do
     ebnf_test="tests/langdef/bnf/ebnf_${ebnf_fixture}_v1.metta"
     ebnf_expected="tests/langdef/bnf/ebnf_${ebnf_fixture}_v1.expected"
     sha256sum "$ebnf_test" "$ebnf_expected" >> "$ebnf_evidence/inputs.sha256"

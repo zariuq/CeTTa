@@ -527,9 +527,15 @@ PeTTaLogicalListStep petta_semantics_logical_list_cursor_next(
             cursor->invalid = true;
             return PETTA_LOGICAL_LIST_INVALID;
         }
-        if (cursor->flat_index < cursor->rest->expr.len) {
+        if (cursor->flat_index < cursor->flat_end) {
             *item = cursor->rest->expr.elems[cursor->flat_index++];
             return PETTA_LOGICAL_LIST_ITEM;
+        }
+        if (atom_is_list_rest(cursor->rest)) {
+            /* [x... | r] continues as r. */
+            cursor->rest = cursor->rest->expr.elems[cursor->flat_end];
+            cursor->in_flat_tail = false;
+            return petta_semantics_logical_list_cursor_next(cursor, item);
         }
         cursor->rest = NULL;
         return PETTA_LOGICAL_LIST_END;
@@ -549,8 +555,12 @@ PeTTaLogicalListStep petta_semantics_logical_list_cursor_next(
         return PETTA_LOGICAL_LIST_INVALID;
     }
 
+    /* An expression is read from its first element, a list or list pattern
+     * from the element after its tag. */
     cursor->in_flat_tail = true;
-    cursor->flat_index = 0u;
+    cursor->flat_index = atom_is_list_form(cursor->rest) ? 1u : 0u;
+    cursor->flat_end = atom_is_list_rest(cursor->rest)
+        ? cursor->rest->expr.len - 1u : cursor->rest->expr.len;
     return petta_semantics_logical_list_cursor_next(cursor, item);
 }
 
@@ -1124,7 +1134,7 @@ static bool petta_semantics_match_cons_constraint_mode(
         if (left->kind == ATOM_VAR || right->kind == ATOM_VAR) {
             /* A later pair may revisit either variable. Reject a cycle
              * before its substitution can be expanded by that next pair. */
-            if (!match_binding_values_builder(left_value, right_value, builder)) {
+            if (!match_binding_values_builder(left_value, right_value, builder, arena)) {
                 goto fail;
             }
             continue;
@@ -1147,7 +1157,7 @@ static bool petta_semantics_match_cons_constraint_mode(
             continue;
         }
         if (!left_cons && !right_cons) {
-            if (!match_binding_values_builder(left_value, right_value, builder)) {
+            if (!match_binding_values_builder(left_value, right_value, builder, arena)) {
                 goto fail;
             }
             continue;
@@ -2343,8 +2353,7 @@ bool petta_semantics_term_compare(
     case PETTA_TERM_NUMBER:
         return petta_compare_numbers(left, right, ordering);
     case PETTA_TERM_STRING:
-        *ordering = petta_compare_text(
-            left->ground.sval, right->ground.sval);
+        *ordering = atom_string_compare(left, right);
         return true;
     case PETTA_TERM_ATOM: {
         const char *left_text = petta_known_atom_text(left);
@@ -2389,8 +2398,16 @@ bool petta_semantics_term_compare(
 }
 
 Atom *petta_semantics_msort(Arena *arena, Atom *list) {
-    if (!arena || !list || list->kind != ATOM_EXPR)
+    if (!arena || !list || list->kind != ATOM_EXPR || atom_is_list_rest(list))
         return NULL;
+    /* A list's elements sort into a list. */
+    if (atom_is_list(list)) {
+        Atom *elements = atom_sequence_like(
+            arena, NULL, atom_list_elems(list), atom_list_len(list));
+        Atom *sorted = elements ? petta_semantics_msort(arena, elements) : NULL;
+        return sorted ? atom_list(arena, sorted->expr.elems, sorted->expr.len)
+                      : NULL;
+    }
     if (list->expr.len == 0u)
         return atom_expr(arena, NULL, 0u);
     if ((uint64_t)list->expr.len >

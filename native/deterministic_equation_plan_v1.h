@@ -97,7 +97,29 @@ bool cetta_deterministic_equation_plan_v1_run_counted(
     Atom **out, CettaDeterministicEquationStatusV1 *status,
     char *error, size_t error_size);
 
+/* The data application with consumed work exposed, as for run_counted. */
+bool cetta_deterministic_equation_plan_v1_apply_counted(
+    const CettaDeterministicEquationPlanV1 *plan, const Atom *call,
+    CettaDeterministicPrimitiveFnV1 primitive, void *primitive_context,
+    Arena *arena, uint32_t depth_limit, uint64_t work_limit,
+    uint64_t *work_used,
+    Atom **out, CettaDeterministicEquationStatusV1 *status,
+    char *error, size_t error_size);
+
 const char *cetta_deterministic_equation_status_name_v1(
     CettaDeterministicEquationStatusV1 status);
+
+/* Audit view of a loaded plan: its admitted equations in execution order,
+ * with source variables bound, and the operators its presentations declare. */
+uint32_t cetta_deterministic_equation_plan_v1_rule_count(
+    const CettaDeterministicEquationPlanV1 *plan);
+
+bool cetta_deterministic_equation_plan_v1_rule_view(
+    const CettaDeterministicEquationPlanV1 *plan, uint32_t index,
+    const char **name, const Atom **left, const Atom **right);
+
+bool cetta_deterministic_equation_plan_v1_declares(
+    const CettaDeterministicEquationPlanV1 *plan, const char *name,
+    size_t arity);
 
 #endif /* CETTA_DETERMINISTIC_EQUATION_PLAN_V1_H */

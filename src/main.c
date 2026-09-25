@@ -696,7 +696,7 @@ static Atom *display_atom_copy(Arena *dst, Atom *src, const CettaDisplayVarMap *
         case GV_BOOL:
             return atom_bool(dst, src->ground.bval);
         case GV_STRING:
-            return atom_string(dst, src->ground.sval);
+            return atom_string_n(dst, src->ground.sval, src->ground.slen);
         case GV_BIGINT:
             return atom_bigint_copy(dst, src);
         case GV_RATIONAL:
@@ -2198,6 +2198,8 @@ typedef struct {
     bool parser_rational_literals_old;
     bool parser_universal_names_set;
     bool parser_universal_names_old;
+    bool parser_list_syntax_set;
+    bool parser_list_syntax_old;
     void *document_reader_context;
     void (*document_reader_free)(void *context);
     CettaGsltLanguage *gslt_language;
@@ -2248,6 +2250,10 @@ static void cetta_main_cleanup(CettaMainCleanup *cleanup) {
         parser_set_universal_name_syntax_enabled(
             cleanup->parser_universal_names_old);
         cleanup->parser_universal_names_set = false;
+    }
+    if (cleanup->parser_list_syntax_set) {
+        parser_set_list_syntax_enabled(cleanup->parser_list_syntax_old);
+        cleanup->parser_list_syntax_set = false;
     }
 
     if (cleanup->output_spool) {
@@ -3091,6 +3097,8 @@ int main(int argc, char **argv) {
             ? PETTA_TYPECHECK_POLICY_STRICT
             : PETTA_TYPECHECK_POLICY_DEFAULT;
 
+    atom_print_set_raw_string_bytes(lang->id == CETTA_LANGUAGE_PRIME);
+
     if (emit_prime_need_trace && lang->id != CETTA_LANGUAGE_PRIME) {
         fprintf(stderr,
                 "error: --emit-prime-need-trace requires --lang prime\n");
@@ -3432,6 +3440,10 @@ int main(int argc, char **argv) {
         parser_set_universal_name_syntax_enabled(
             lang->id == CETTA_LANGUAGE_PRIME);
     cleanup.parser_universal_names_set = true;
+    bool list_syntax = cetta_language_reads_lists(lang->id, profile);
+    cleanup.parser_list_syntax_old =
+        parser_set_list_syntax_enabled(list_syntax);
+    cleanup.parser_list_syntax_set = true;
 
     const char *document_reader_capability = NULL;
     if (lang->id == CETTA_LANGUAGE_HE)
@@ -3467,7 +3479,9 @@ int main(int argc, char **argv) {
         strcmp(document_reader_capability, "he-reader-direct-v1") == 0) {
         char reader_error[512] = {0};
         ParserDocumentIdsBackend reader_backend;
-        he_compiled_reader = he_compiled_reader_v1_new();
+        he_compiled_reader = list_syntax
+            ? he_compiled_reader_v1_new_with_lists()
+            : he_compiled_reader_v1_new();
         cleanup.document_reader_context = he_compiled_reader;
         cleanup.document_reader_free = main_he_compiled_reader_free;
         if (!he_compiled_reader ||
@@ -3494,7 +3508,9 @@ int main(int argc, char **argv) {
                       "petta-reader-direct-v1") == 0) {
         char reader_error[512] = {0};
         ParserDocumentIdsBackend reader_backend;
-        petta_compiled_reader = petta_compiled_reader_v1_new();
+        petta_compiled_reader = list_syntax
+            ? petta_compiled_reader_v1_new_with_lists()
+            : petta_compiled_reader_v1_new();
         cleanup.document_reader_context = petta_compiled_reader;
         cleanup.document_reader_free = main_petta_compiled_reader_free;
         if (!petta_compiled_reader ||

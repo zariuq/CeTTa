@@ -1,0 +1,9 @@
+% Typed lambda terms with let, for binder declarations on canonical terms.
+% A lambda declares typed variables; let binds one variable in its body.
+% The variables include the numbered names that renaming produces.
+<term> ::= <variable> | <constant> | "\\" <declarations> "." <term> | "(" <term> " " <term> ")" | "let " <variable> " = " <term> " in " <term>
+<declarations> ::= <declaration> | <declaration> "," <declarations>
+<declaration> ::= <variable> ":" <type>
+<type> ::= "o" | "i" | "(" <type> ">" <type> ")"
+<variable> ::= "X" | "Y" | "Z" | "X1" | "Y1"
+<constant> ::= "a" | "b" | "f"

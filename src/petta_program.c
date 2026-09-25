@@ -581,7 +581,9 @@ static bool petta_program_compile_open_pattern_linear_program(
 static const CettaOpenPatternPlan *petta_program_compile_open_pattern_plan(
         PettaProgram *program, Atom *source,
         const VarId *variable_ids, uint32_t variable_count) {
-    if (!program || !source)
+    /* A list meets its counterpart by elements and rest, not by coordinate;
+     * a pattern holding one is matched unplanned. */
+    if (!program || !source || atom_structural_may_have_list(source))
         return NULL;
     CettaOpenPatternPlan *plan = arena_alloc(
         &program->plans, sizeof(*plan));
@@ -945,9 +947,12 @@ static PettaEquationTemplateC0 *petta_program_compile_equation_template_c0(
         petta_program_variable_union_count(
             &lhs_variables, &rhs_variables,
             static_variable_count_out);
+    /* A list meets its counterpart by elements and rest, which the dense
+     * template does not encode. */
     bool open_admitted =
         variables_collected &&
-        !petta_semantics_contains_cons_constraint(lhs);
+        !petta_semantics_contains_cons_constraint(lhs) &&
+        !atom_structural_may_have_list(lhs);
     size_t union_variables =
         (size_t)*static_variable_count_out;
     VarId union_first_variable = 1u;
@@ -1677,6 +1682,8 @@ bool petta_program_head_is_intrinsic(SymbolId head) {
 typedef struct {
     Atom *atom;
     PettaPlanNode *plan;
+    /* Inside a list: every occurrence is a value. */
+    bool value;
 } PettaPlanBuildItem;
 
 typedef struct {
@@ -2291,6 +2298,40 @@ static bool petta_plan_mark_open_template_admitted(
     return ok;
 }
 
+static bool petta_plan_push_children(
+    PettaProgram *program, PettaPlanBuildItem **work, size_t *work_len,
+    size_t *work_cap, Atom *atom, PettaPlanNode *node, bool value) {
+    if (atom->expr.len == 0u)
+        return true;
+    if (!cetta_expr_len_mul_fits_size(
+            atom->expr.len, sizeof(*node->children)) ||
+        !petta_program_reserve(
+            (void **)work, work_cap,
+            *work_len + (size_t)atom->expr.len,
+            sizeof(**work))) {
+        return false;
+    }
+    PettaPlanNode *children = arena_alloc(
+        &program->plans,
+        sizeof(*children) * (size_t)atom->expr.len);
+    if (!children)
+        return false;
+    memset(
+        children, 0,
+        sizeof(*children) * (size_t)atom->expr.len);
+    node->children = children;
+    for (CettaExprIndex index = atom->expr.len;
+         index > 0u; index--) {
+        CettaExprIndex child = index - 1u;
+        (*work)[(*work_len)++] = (PettaPlanBuildItem){
+            .atom = atom->expr.elems[child],
+            .plan = &children[child],
+            .value = value,
+        };
+    }
+    return true;
+}
+
 static const PettaPlanNode *petta_plan_build(
     PettaProgram *program,
     const PettaCallabilityDomain *callability, Atom *root) {
@@ -2333,6 +2374,20 @@ static const PettaPlanNode *petta_plan_build(
             continue;
         }
         node->child_count = atom->expr.len;
+        /* A list is a value: reading or passing one never evaluates its
+         * elements.  Its occurrences keep plans, all values, so equation
+         * variables inside it still get their slots. */
+        if (item.value || atom_is_list_form(atom)) {
+            node->role = PETTA_PLAN_VALUE;
+            node->output = PETTA_PLAN_OUTPUT_VALUE;
+            if (!petta_plan_push_children(
+                    program, &work, &work_len, &work_cap, atom, node,
+                    true)) {
+                ok = false;
+                break;
+            }
+            continue;
+        }
         if (atom->expr.len == 0u) {
             node->role = PETTA_PLAN_DATA;
             node->output = PETTA_PLAN_OUTPUT_VALUE;
@@ -2442,33 +2497,10 @@ static const PettaPlanNode *petta_plan_build(
             }
         }
 
-        if (!cetta_expr_len_mul_fits_size(
-                atom->expr.len, sizeof(*node->children)) ||
-            !petta_program_reserve(
-                (void **)&work, &work_cap,
-                work_len + (size_t)atom->expr.len,
-                sizeof(*work))) {
+        if (!petta_plan_push_children(
+                program, &work, &work_len, &work_cap, atom, node, false)) {
             ok = false;
             break;
-        }
-        PettaPlanNode *children = arena_alloc(
-            &program->plans,
-            sizeof(*children) * (size_t)atom->expr.len);
-        if (!children) {
-            ok = false;
-            break;
-        }
-        memset(
-            children, 0,
-            sizeof(*children) * (size_t)atom->expr.len);
-        node->children = children;
-        for (CettaExprIndex index = atom->expr.len;
-             index > 0u; index--) {
-            CettaExprIndex child = index - 1u;
-            work[work_len++] = (PettaPlanBuildItem){
-                .atom = atom->expr.elems[child],
-                .plan = &children[child],
-            };
         }
     }
     free(work);

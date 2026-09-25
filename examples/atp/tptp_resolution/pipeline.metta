@@ -1,33 +1,29 @@
-; Public lib_tptp reader to the existing first-order resolution example.
+; Public lib_tptp reader to the first-order resolution example.
 ;
-; Parsing and the compact-record projection remain responsibilities of
-; lib_tptp.  This adapter projects admitted clause data into the independently
-; admitted resolution-input carrier, then invokes the existing untrusted
-; search producer or the independent trace checker.
+; Parsing and the compact form remain responsibilities of lib_tptp, which
+; gives the clauses of a document as the admitted resolution-input carrier:
+; the clauses of one file, of a file with its includes expanded, or of files
+; whose formulas were clausified.  This adapter invokes the untrusted search
+; producer, the independent trace checker, or the provenance check that
+; relates the clauses to their source documents.
 
 !(import! &self ../../../lib/lib_tptp.metta)
-!(import! &self ../../../langdef/logic/clause_data_to_resolution_input_v1.generated.metta)
 !(import! &self ./unification.metta)
 !(import! &self ./search.metta)
 !(import! &self ./trace_check.metta)
-
-(= (tptp-resolution-example:clause-data->input $stage)
-   (case $stage
-     (((TPTP:StageValue clause-data $problem)
-        (tptp:admit-stage
-          resolution-input
-          "langdef/logic/first_order_resolution_input_v1.metta"
-          "Problem"
-          (fo-resolution:project-problem $problem)))
-      ($outcome $outcome))))
+!(import! &self ./provenance_check.metta)
 
 (= (tptp-resolution-example:text->input $text)
-   (tptp-resolution-example:clause-data->input
-     (tptp:read-text-clause-data $text)))
+   (tptp:read-text-resolution-input $text))
 
 (= (tptp-resolution-example:file->input $path)
-   (tptp-resolution-example:clause-data->input
-     (tptp:read-file-clause-data $path)))
+   (tptp:read-file-resolution-input $path))
+
+(= (tptp-resolution-example:file->expanded-input $path $library-root)
+   (tptp:read-file-expanded-resolution-input $path $library-root))
+
+(= (tptp-resolution-example:file->clausified-input $path $library-root)
+   (tptp:read-file-clausified-resolution-input $path $library-root))
 
 (= (tptp-resolution-example:clauses-count
       (fo-resolution:clauses-nil))
@@ -58,3 +54,13 @@
         (TPTPResolutionExample.TraceRejected $reason))
       ($outcome
         (TPTPResolutionExample.TraceCheckFault $outcome)))))
+
+(= (tptp-resolution-example:check-provenance $environment $problem $clausifications)
+   (case
+     (tptp-resolution-example:provenance:check $environment $problem $clausifications)
+     (((FOProvenance.Verified)
+        (TPTPResolutionExample.ProvenanceAccepted))
+      ((FOProvenance.Rejected $reason)
+        (TPTPResolutionExample.ProvenanceRejected $reason))
+      ($outcome
+        (TPTPResolutionExample.ProvenanceCheckFault $outcome)))))

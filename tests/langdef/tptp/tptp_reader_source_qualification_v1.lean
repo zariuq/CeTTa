@@ -1,6 +1,5 @@
 import Mettapedia.GSLT.Parsing.TptpCorpusCompatibilitySource
 import Mettapedia.GSLT.Parsing.TptpOfficialCompositionSource
-import Mettapedia.GSLT.Parsing.TptpOfficialRecordProjectionSource
 import Mettapedia.GSLT.Parsing.TptpCompactFirstOrderProjectionSource
 import Mettapedia.GSLT.Parsing.TptpCanonicalPrintSource
 
@@ -9,12 +8,12 @@ import Mettapedia.GSLT.Parsing.TptpCanonicalPrintSource
 
 This client quotes the exact CeTTa sources used by the reader and discharges
 the source contracts proved by the reusable Mettapedia models.  It covers the
-official-row partition, compact-record projection, ordered first-order view,
-and the compatibility transform's NativeType request and consumption.
+official-row partition, ordered first-order view, canonical printer, and the
+compatibility transform's NativeType request and consumption.
 
 The structural models are direct typed functions rather than Horn encodings.
-Native C remains outside these theorems and is checked by the separate
-authored/native differential and frozen-snapshot gates.
+Native C remains outside these theorems and is checked by the pinned-snapshot
+gates.
 -/
 
 set_option autoImplicit false
@@ -33,10 +32,6 @@ private def syntaxSyntax : SExpr :=
 private def firstOrderProjectionSyntax : SExpr :=
   metta_sexpr_file% petta "../../../langdef/tptp/compact_records_to_first_order_v1.metta"
 
-set_option maxRecDepth 100000 in
-private def recordProjectionSyntax : SExpr :=
-  metta_sexpr_file% petta "../../../langdef/tptp/official_syntax_records_v1.metta"
-
 private def compatibilityNativeTypeSyntax : SExpr :=
   metta_sexpr_file% petta "../../../langdef/tptp/official_corpus_compatibility_native_types_v1.metta"
 
@@ -51,12 +46,6 @@ theorem official_composition_source_exact :
     Mettapedia.GSLT.Parsing.TptpOfficialCompositionSource.AuthoredCompositionSourceExact
       lexicalSyntax syntaxSyntax := by
   unfold Mettapedia.GSLT.Parsing.TptpOfficialCompositionSource.AuthoredCompositionSourceExact
-  decide +kernel
-
-theorem compact_record_projection_source_exact :
-    Mettapedia.GSLT.Parsing.TptpOfficialRecordProjectionSource.AuthoredRecordProjectionSourceExact
-      recordProjectionSyntax := by
-  unfold Mettapedia.GSLT.Parsing.TptpOfficialRecordProjectionSource.AuthoredRecordProjectionSourceExact
   decide +kernel
 
 theorem compact_first_order_projection_source_exact :
@@ -96,7 +85,6 @@ theorem canonical_print_source_exact :
     simp
 
 #print axioms official_composition_source_exact
-#print axioms compact_record_projection_source_exact
 #print axioms compact_first_order_projection_source_exact
 #print axioms compatibility_native_type_source_exact
 #print axioms canonical_print_source_exact

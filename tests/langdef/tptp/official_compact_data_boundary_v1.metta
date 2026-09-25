@@ -1,5 +1,4 @@
 !(import! &self ../../../lib/lib_tptp.metta)
-!(import! &self (library tptp_binding))
 
 (= (boundary:identity $value) $value)
 (= (boundary:wrap $value) (BoundaryValue $value))
@@ -12,31 +11,31 @@
        $formula)))
 
 ; Input names may coincide with builtins or equations in the receiving space.
-; They remain data through reading, ordinary wrappers and authored printing.
+; They remain data through reading, ordinary wrappers and printing.
 !(println! (tptp:read-text "fof(a,axiom,and(X,n0))."))
 !(println! (boundary:identity
              (tptp:read-text "fof(a,axiom,and(X,n0)).")))
 !(println! (boundary:unwrap (boundary:wrap
              (tptp:read-text "fof(a,axiom,and(X,n0))."))))
-!(println! (tptp:print-records
+!(println! (tptp:print
              (tptp:read-text "fof(a,axiom,and(X,n0)).")))
-!(println! (tptp:print-records
+!(println! (tptp:print
              (tptp:read-text "fof(a,axiom,collision(X)).")))
-!(println! (tptp:print-records
+!(println! (tptp:print
              (tptp:read-text "fof(a,axiom,'+'(1,2)).")))
-!(println! (tptp:print-records
+!(println! (tptp:print
              (tptp:read-text "fof(a,axiom,let(X,p,q)).")))
 
 ; A collection's later elements must be protected too, not just its head.
 (= (boundary:roundtrip $records)
-   (let $printed (tptp:print-records $records)
+   (let $printed (tptp:print $records)
      (let $reparsed (tptp:read-text $printed)
        (BoundaryRoundTrip (== $records $reparsed)
          (tptp:record-statistics $reparsed)))))
 
 !(println! (boundary:roundtrip
   (tptp:read-text "fof(a,axiom,and(X,n0)).fof(b,axiom,collision(X)).fof(c,axiom,let(X,p,q)).fof(d,axiom,or(not(X),quote(Y))).fof(e,axiom,'+'(1,2)).")))
-!(println! (tptp:print-records
+!(println! (tptp:print
   (tptp:read-text "fof(a,axiom,and(X,n0)).fof(b,axiom,collision(X)).fof(c,axiom,let(X,p,q)).fof(d,axiom,or(not(X),quote(Y))).fof(e,axiom,'+'(1,2)).")))
 
 ; Negative control: ordinary explicit evaluation still invokes user code.

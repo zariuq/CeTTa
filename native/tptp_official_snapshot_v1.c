@@ -1,8 +1,10 @@
 #include "native/tptp_official_snapshot_v1.h"
+#include "native/grammar_canonical_term_v1.h"
 
 #include "atom.h"
 #include "lib_parse_native_grammar.h"
 #include "native_sha256.h"
+#include "parser.h"
 #include "regular_span_dfa_v1.h"
 #include "symbol.h"
 
@@ -17,21 +19,7 @@
 #define TPTP_DFA_STATE_LIMIT 8192u
 #define TPTP_DFA_TRANS_LIMIT 131072u
 
-static const char *const kClassTokenTags[] = {
-    "lower_word", "upper_word", "dollar_word", "dollar_dollar_word",
-    "single_quoted", "back_quoted", "distinct_object", "integer", "rational",
-    "real", NULL};
 
-static bool name_in(const char *name, const char *const *names) {
-    uint32_t i;
-    if (!name)
-        return false;
-    for (i = 0u; names[i]; i++) {
-        if (strcmp(name, names[i]) == 0)
-            return true;
-    }
-    return false;
-}
 
 static bool is_app(const Atom *a, const char *head, uint32_t arity) {
     return a && a->kind == ATOM_EXPR && a->expr.len == arity + 1u &&
@@ -82,6 +70,34 @@ static bool decode_text(const Atom *text, char *buf, size_t bufsz) {
     return true;
 }
 
+/* The canonical table of a snapshot's parser, its helpers named by the
+ * lowering origins the snapshot carries. */
+static bool snapshot_canonical_table(const PPTableSnapshotV1 *snap,
+                                     const CettaGrammarCanonicalTerminalsV1 *terminals,
+                                     CettaGrammarCanonicalTableV1 **out, char *error,
+                                     size_t error_size) {
+    CettaGrammarCanonicalOriginV1 *origins =
+        calloc(snap->origin_len ? snap->origin_len : 1u, sizeof(*origins));
+    bool ok;
+    uint32_t i;
+    if (!origins) {
+        if (error && error_size)
+            snprintf(error, error_size, "canonical table: out of memory");
+        return false;
+    }
+    for (i = 0u; i < snap->origin_len; i++) {
+        origins[i].helper = snap->origins[i].helper;
+        origins[i].owner = snap->origins[i].owner;
+        origins[i].kind = (CettaGrammarCanonicalRuleKindV1)snap->origins[i].kind;
+        origins[i].repeat = (char)snap->origins[i].repeat;
+    }
+    ok = cetta_grammar_canonical_table_from_slr_v1(&snap->slr, terminals, origins,
+                                                   snap->origin_len, out, error, error_size);
+    free(origins);
+    return ok;
+}
+
+
 static bool name_is_generated(const char *name) {
     return name && name[0] == '#' && strncmp(name, "#token:", 7) != 0 &&
            strcmp(name, "#layout") != 0 && strcmp(name, "#entry") != 0 &&
@@ -98,8 +114,220 @@ static bool is_layout_name(const char *name) {
                     strcmp(name, "#white") == 0);
 }
 
-static bool is_word_class_tag(const char *name) {
-    return name_in(name, kClassTokenTags);
+/* A token carries a lexeme when its tag's language holds more than one
+ * string (derived from the lexer DFA); skipped layout never reaches values. */
+static bool snapshot_tag_is_value(const PPTableSnapshotV1 *snap, uint32_t tag) {
+    uint32_t i;
+    if (!snap || !snap->tag_carries_lexeme || tag >= snap->tag_name_len ||
+        !snap->tag_carries_lexeme[tag])
+        return false;
+    for (i = 0u; i < snap->skip_tag_len; i++) {
+        if (snap->skip_tags[i] == tag)
+            return false;
+    }
+    return true;
+}
+
+static bool snapshot_symbol_is_value(const PPTableSnapshotV1 *snap,
+                                     SymbolId symbol) {
+    uint32_t tag;
+    if (!snap || !snap->tag_symbol_ids || symbol == SYMBOL_ID_NONE)
+        return false;
+    for (tag = 0u; tag < snap->tag_name_len; tag++) {
+        if (snap->tag_symbol_ids[tag] == symbol)
+            return snapshot_tag_is_value(snap, tag);
+    }
+    return false;
+}
+
+static bool canonical_terminal_is_value(void *context, SymbolId terminal) {
+    return snapshot_symbol_is_value(context, terminal);
+}
+
+static const char *canonical_terminal_fixed_text(void *context, SymbolId terminal) {
+    const PPTableSnapshotV1 *snap = context;
+    uint32_t tag;
+    if (!snap || !snap->tag_symbol_ids || !snap->tag_fixed_texts)
+        return NULL;
+    for (tag = 0u; tag < snap->tag_name_len; tag++) {
+        if (snap->tag_symbol_ids[tag] == terminal)
+            return snap->tag_fixed_texts[tag];
+    }
+    return NULL;
+}
+
+static Atom *source_token_string(Arena *arena, const char *text,
+                                 size_t text_len,
+                                 const CettaTptpLexTokenV1 *token);
+
+/* Two adjacent texts need layout when the longest token starting at the
+ * first one runs past it. */
+static bool snapshot_adjacent_needs_space(void *context, const char *left, size_t left_len,
+                                          const char *right, size_t right_len) {
+    const PPTableSnapshotV1 *snap = context;
+    char buffer[256], local[128];
+    RSDFAV1Token hits[128];
+    RSDFAV1CursorScanResult scan;
+    CettaLpNativeUtf8ScalarBuffer scalars;
+    uint32_t left_scalars = 0u, best_end = 0u, i;
+    bool needs;
+    size_t k;
+    if (left_len + right_len > sizeof(buffer) || snap->dfa.tag_len > 128u)
+        return true;
+    for (k = 0u; k < left_len; k++) {
+        if (((unsigned char)left[k] & 0xC0u) != 0x80u)
+            left_scalars++;
+    }
+    memcpy(buffer, left, left_len);
+    memcpy(buffer + left_len, right, right_len);
+    cetta_lp_native_utf8_scalar_buffer_init(&scalars);
+    if (!cetta_lp_native_utf8_scalar_buffer_prepare(&scalars, (const uint8_t *)buffer,
+                                                    left_len + right_len, local,
+                                                    sizeof(local))) {
+        cetta_lp_native_utf8_scalar_buffer_free(&scalars);
+        return true;
+    }
+    memset(&scan, 0, sizeof(scan));
+    if (!rsdfa_v1_program_scan_cursor_longest_prevalidated(&snap->dfa, &scalars.view, 0u,
+                                                           1000000ull, hits, snap->dfa.tag_len,
+                                                           &scan, local, sizeof(local))) {
+        cetta_lp_native_utf8_scalar_buffer_free(&scalars);
+        return true;
+    }
+    for (i = 0u; i < scan.accept_len; i++) {
+        if (hits[i].end_scalar > best_end)
+            best_end = hits[i].end_scalar;
+    }
+    needs = best_end != left_scalars;
+    cetta_lp_native_utf8_scalar_buffer_free(&scalars);
+    return needs;
+}
+
+bool cetta_tptp_snapshot_canonical_print_v1(const PPTableSnapshotV1 *snap, const Atom *term,
+                                            const char *sort, char **out, size_t *out_len,
+                                            char *error, size_t error_size) {
+    CettaGrammarCanonicalTerminalsV1 terminals = {
+        canonical_terminal_is_value, canonical_terminal_fixed_text, (void *)snap};
+    CettaGrammarCanonicalTableV1 *table = NULL;
+    bool ok;
+    if (out)
+        *out = NULL;
+    if (!snap || snap->slr.production_len == 0u || !sort) {
+        if (error && error_size)
+            snprintf(error, error_size, "canonical print: missing parser tables");
+        return false;
+    }
+    if (!snapshot_canonical_table(snap, &terminals, &table,
+                                                   error, error_size))
+        return false;
+    ok = cetta_grammar_canonical_print_v1(table, term, symbol_intern_cstr(g_symbols, sort),
+                                          snapshot_adjacent_needs_space, (void *)snap,
+                                          out, out_len, error, error_size);
+    cetta_grammar_canonical_table_free_v1(table);
+    return ok;
+}
+
+bool cetta_tptp_snapshot_canonical_table_v1(const PPTableSnapshotV1 *snap,
+                                            CettaGrammarCanonicalTableV1 **out,
+                                            char *error, size_t error_size) {
+    CettaGrammarCanonicalTerminalsV1 terminals = {
+        canonical_terminal_is_value, canonical_terminal_fixed_text, (void *)snap};
+    if (out)
+        *out = NULL;
+    if (!snap || snap->slr.production_len == 0u || !out) {
+        if (error && error_size)
+            snprintf(error, error_size, "canonical table: missing parser tables");
+        return false;
+    }
+    return snapshot_canonical_table(snap, &terminals, out,
+                                                     error, error_size);
+}
+
+bool cetta_tptp_snapshot_canonical_print_wrapped_v1(
+    const PPTableSnapshotV1 *snap, const Atom *term, const char *sort,
+    const SymbolId *wrappers, uint32_t wrapper_len, char **out, size_t *out_len,
+    char *error, size_t error_size) {
+    CettaGrammarCanonicalTerminalsV1 terminals = {
+        canonical_terminal_is_value, canonical_terminal_fixed_text, (void *)snap};
+    CettaGrammarCanonicalTableV1 *table = NULL;
+    bool ok;
+    if (out)
+        *out = NULL;
+    if (!snap || snap->slr.production_len == 0u || !sort) {
+        if (error && error_size)
+            snprintf(error, error_size, "canonical print: missing parser tables");
+        return false;
+    }
+    if (!snapshot_canonical_table(snap, &terminals, &table,
+                                                   error, error_size))
+        return false;
+    ok = cetta_grammar_canonical_print_wrapped_v1(
+        table, term, symbol_intern_cstr(g_symbols, sort), wrappers, wrapper_len,
+        snapshot_adjacent_needs_space, (void *)snap, out, out_len, error, error_size);
+    cetta_grammar_canonical_table_free_v1(table);
+    return ok;
+}
+
+bool cetta_tptp_snapshot_canonical_language_v1(const PPTableSnapshotV1 *snap,
+                                               Arena *arena, Atom **out,
+                                               char *error, size_t error_size) {
+    CettaGrammarCanonicalTerminalsV1 terminals = {
+        canonical_terminal_is_value, canonical_terminal_fixed_text, (void *)snap};
+    CettaGrammarCanonicalTableV1 *table = NULL;
+    bool ok;
+    if (out)
+        *out = NULL;
+    if (!snap || snap->slr.production_len == 0u) {
+        if (error && error_size)
+            snprintf(error, error_size, "canonical language: missing parser tables");
+        return false;
+    }
+    if (!snapshot_canonical_table(snap, &terminals, &table,
+                                                   error, error_size))
+        return false;
+    ok = cetta_grammar_canonical_language_v1(table, "TptpCanonicalV1", arena, out,
+                                             error, error_size);
+    cetta_grammar_canonical_table_free_v1(table);
+    return ok;
+}
+
+typedef struct {
+    const CettaTptpLexTokenV1 *tokens;
+    uint32_t token_len;
+    const char *text;
+    size_t text_len;
+} CanonicalLexemeContext;
+
+/* A token leaf, labelled #token:T, covers exactly one lexer token: token T
+ * with that token's source bytes. */
+static bool canonical_leaf(void *context, Arena *arena, const Atom *node, const char *label,
+                           SymbolId *token, Atom **text) {
+    static const char prefix[] = "#token:";
+    const CanonicalLexemeContext *lexemes = context;
+    uint32_t low = 0u, high = lexemes->token_len;
+    const Atom *start_atom;
+    int64_t start;
+    if (strncmp(label, prefix, sizeof(prefix) - 1u) != 0 || node->expr.len < 4u)
+        return false;
+    start_atom = node->expr.elems[2];
+    if (start_atom->kind != ATOM_GROUNDED || start_atom->ground.gkind != GV_INT)
+        return false;
+    start = start_atom->ground.ival;
+    while (low < high) {
+        uint32_t middle = low + (high - low) / 2u;
+        int64_t probe = (int64_t)lexemes->tokens[middle].start_scalar;
+        if (probe == start) {
+            *token = symbol_intern_cstr(g_symbols, label + sizeof(prefix) - 1u);
+            *text = source_token_string(arena, lexemes->text, lexemes->text_len,
+                                        &lexemes->tokens[middle]);
+            return *text != NULL;
+        }
+        if (probe < start)
+            low = middle + 1u;
+        else
+            high = middle;
+    }
+    return false;
 }
 
 static bool grow(void **p, uint32_t *len, uint32_t *cap, size_t sz,
@@ -894,9 +1122,6 @@ static const char *const kManifestCommonRoles[] = {
     "bnf-ebnf-reachable-view",
     "bnf-ebnf-lowering",
     "bnf-plain-denotation",
-    "tptp-record-projection-authored",
-    "tptp-record-projection-native",
-    "tptp-record-projection-native-header",
     "tptp-snapshot-specializer",
     "tptp-snapshot-specializer-header",
     "parser-pack-table-snapshot",
@@ -919,9 +1144,6 @@ static const char *const kManifestCommonPaths[] = {
     "langdef/bnf/ebnf_reachable_view_v1.metta",
     "langdef/bnf/ebnf_lowering_v1.metta",
     "langdef/bnf/plain_bnf_denotation_v1.metta",
-    "langdef/tptp/official_syntax_records_v1.metta",
-    "native/tptp_official_records_v1.c",
-    "native/tptp_official_records_v1.h",
     "native/tptp_official_snapshot_v1.c",
     "native/tptp_official_snapshot_v1.h",
     "experiments/gslt2parse_foundation/native/parser_pack_table_snapshot_v1.c",
@@ -1025,7 +1247,7 @@ static bool manifest_sources_valid(const Atom *sources,
             !manifest_role_index(profile, role_text, &role_index,
                                  &role_count) ||
             !(expected_path = manifest_role_path(profile, role_index)) ||
-            strcmp(path->ground.sval, expected_path) != 0 ||
+            !atom_string_equals_cstr(path, expected_path) ||
             role_count > sizeof(seen) / sizeof(seen[0]) ||
             seen[role_index])
             return false;
@@ -1264,9 +1486,31 @@ static bool slr_symbol_from_name(Arena *arena,
     return true;
 }
 
+/* Record what made a helper nonterminal this lowering generates. */
+typedef struct {
+    PPTableSnapshotOriginV1 *items;
+    uint32_t len;
+    uint32_t cap;
+} SlrOrigins;
+
+static bool slr_origin_add(SlrOrigins *origins, SymbolId helper, SymbolId owner, uint32_t kind,
+                           char repeat) {
+    if (origins->len == origins->cap) {
+        uint32_t cap = origins->cap ? origins->cap * 2u : 16u;
+        PPTableSnapshotOriginV1 *grown = realloc(origins->items, (size_t)cap * sizeof(*grown));
+        if (!grown)
+            return false;
+        origins->items = grown;
+        origins->cap = cap;
+    }
+    origins->items[origins->len++] =
+        (PPTableSnapshotOriginV1){helper, owner, kind, (uint32_t)(unsigned char)repeat};
+    return true;
+}
+
 static bool slr_fill_from_pack(CettaLpNativeGrammar *g, uint32_t *cap,
                                Arena *arena, const PackIndex *idx,
-                               const PackTokenFrontier *frontier,
+                               const PackTokenFrontier *frontier, SlrOrigins *origins,
                                char *error, size_t error_size) {
     uint32_t i;
     for (i = 0u; i < idx->rule_len; i++) {
@@ -1316,6 +1560,9 @@ static bool slr_fill_from_pack(CettaLpNativeGrammar *g, uint32_t *cap,
                     uint32_t galti = 0u;
                     snprintf(aux, sizeof(aux), "#grp-%u", g->production_len);
                     aux_id = atom_symbol(arena, aux)->sym_id;
+                    if (!slr_origin_add(origins, aux_id, atom_symbol(arena, rname)->sym_id,
+                                        CETTA_GRAMMAR_CANONICAL_GROUP_V1, 0))
+                        return false;
                     while (is_app(galts, "bnf-v1:alternatives-cons", 2u)) {
                         Atom *galt = galts->expr.elems[1];
                         Atom *gel;
@@ -1399,6 +1646,12 @@ static bool slr_fill_from_pack(CettaLpNativeGrammar *g, uint32_t *cap,
                         snprintf(aux, sizeof(aux), "#rep-%u",
                                  g->production_len);
                         aux_id = atom_symbol(arena, aux)->sym_id;
+                        if (!slr_origin_add(
+                                origins, aux_id, atom_symbol(arena, rname)->sym_id,
+                                rep == 3 ? CETTA_GRAMMAR_CANONICAL_OPTION_V1
+                                         : CETTA_GRAMMAR_CANONICAL_REPETITION_V1,
+                                rep == 1 ? '*' : rep == 2 ? '+' : '?'))
+                            return false;
                         if (g->production_len + 2u >= *cap) {
                             snprintf(error, error_size, "SLR production cap");
                             return false;
@@ -1461,6 +1714,7 @@ bool cetta_tptp_snapshot_construct_from_pack_v1(
     CettaLpNativeGrammar grammar;
     CettaLpNativeSlrPrepared prepared;
     CettaLpNativeSlrProgram slr;
+    SlrOrigins slr_origins = {0};
     CettaLpNativeSlrSummary summary = {0};
     PPTableSnapshotV1 snap;
     RSDFAV1Plan dfa_plan;
@@ -1615,7 +1869,7 @@ bool cetta_tptp_snapshot_construct_from_pack_v1(
     grammar.productions = calloc(prod_cap, sizeof(*grammar.productions));
     if (!grammar.productions)
         goto done;
-    if (!slr_fill_from_pack(&grammar, &prod_cap, &arena, &idx, &frontier, local,
+    if (!slr_fill_from_pack(&grammar, &prod_cap, &arena, &idx, &frontier, &slr_origins, local,
                             sizeof(local))) {
         if (error && error_size)
             snprintf(error, error_size, "SLR fill: %s", local);
@@ -1682,6 +1936,21 @@ bool cetta_tptp_snapshot_construct_from_pack_v1(
     }
     snap.skip_tags = skip;
     snap.skip_tag_len = skip_len;
+    {
+        /* The parser's helpers, each with what made it; a helper the parser
+         * table does not reach has no symbol there. */
+        uint32_t kept = 0u, o, n;
+        for (o = 0u; o < slr_origins.len; o++) {
+            bool parser = false;
+            for (n = 0u; n < snap.slr.nonterminal_len && !parser; n++)
+                parser = snap.slr.nonterminals[n] == slr_origins.items[o].helper;
+            if (parser)
+                slr_origins.items[kept++] = slr_origins.items[o];
+        }
+        snap.origins = slr_origins.items;
+        snap.origin_len = kept;
+        slr_origins.items = NULL;
+    }
     skip = NULL;
     fprintf(stderr,
             "tptp snapshot: kernel=%s conflicts=%u tags=%u dfa_states=%u "
@@ -1730,6 +1999,7 @@ done:
         free(literals);
     }
     free(skip);
+    free(slr_origins.items);
     arena_free(&arena);
     return ok;
 }
@@ -1880,16 +2150,13 @@ static bool tag_is_skip(const PPTableSnapshotV1 *snap, uint32_t tag) {
     return false;
 }
 
+/* Among equal-length matches a literal of the grammar precedes a value
+ * token; the lattice below reads the literal as a word where it must. */
 static int tag_priority(const PPTableSnapshotV1 *snap, uint32_t tag) {
-    const char *name;
     if (tag >= snap->tag_name_len || !snap->tag_names)
         return 0;
-    name = snap->tag_names[tag];
-    if (is_word_class_tag(name))
+    if (snapshot_tag_is_value(snap, tag))
         return 1;
-    /* `unknown` is a source spelling and a formula name; keep it a lower_word. */
-    if (name && strcmp(name, "unknown") == 0)
-        return 0;
     return 2;
 }
 
@@ -2183,11 +2450,12 @@ static Atom *make_cst(Arena *arena, const char *name, int64_t start,
     }
 }
 
-static Atom *tokc_to_cst(Arena *arena, Atom *node,
+static Atom *tokc_to_cst(const PPTableSnapshotV1 *snap, Arena *arena, Atom *node,
                          const CettaTptpLexTokenV1 *toks, uint32_t ntok,
                          const char *text, size_t text_len,
                          bool observation) {
     const char *tname;
+    bool value;
     char wrapped[128];
     int64_t pos;
     int64_t start = 0;
@@ -2195,6 +2463,8 @@ static Atom *tokc_to_cst(Arena *arena, Atom *node,
     if (!node || node->kind != ATOM_EXPR || node->expr.len < 3u)
         return NULL;
     tname = atom_name_cstr(node->expr.elems[1]);
+    value = tname && snapshot_symbol_is_value(
+        snap, symbol_intern_cstr(g_symbols, tname));
     pos = node->expr.elems[2]->kind == ATOM_GROUNDED
               ? node->expr.elems[2]->ground.ival
               : 0;
@@ -2204,7 +2474,7 @@ static Atom *tokc_to_cst(Arena *arena, Atom *node,
                            ? source_token_string(
                                  arena, text, text_len, &toks[pos])
                            : NULL;
-        if (is_word_class_tag(tname)) {
+        if (value) {
             Atom *elements[5] = {
                 atom_symbol(arena, "tptp-cst:token"),
                 atom_string(arena, tname), atom_int(arena, start),
@@ -2217,7 +2487,7 @@ static Atom *tokc_to_cst(Arena *arena, Atom *node,
             return lexeme ? atom_expr(arena, elements, 4u) : NULL;
         }
     }
-    if (!is_word_class_tag(tname))
+    if (!value)
         return NULL;
     snprintf(wrapped, sizeof(wrapped), "#token:%s", tname);
     return make_cst(arena, wrapped, start, stop, NULL, 0u, false);
@@ -2259,7 +2529,7 @@ static void nodec_frames_free(CettaTptpNodeCFrameVecV1 *frames) {
     memset(frames, 0, sizeof(*frames));
 }
 
-static Atom *nodec_to_cst(Arena *arena, Atom *node,
+static Atom *nodec_to_cst(const PPTableSnapshotV1 *snap, Arena *arena, Atom *node,
                           const CettaTptpLexTokenV1 *toks, uint32_t ntok,
                           const char *text, size_t text_len,
                           bool observation) {
@@ -2283,7 +2553,7 @@ static Atom *nodec_to_cst(Arena *arena, Atom *node,
                 frame->node = frame->node->expr.elems[1];
             if (is_app(frame->node, "TokC", 2u)) {
                 completed = tokc_to_cst(
-                    arena, frame->node, toks, ntok, text, text_len,
+                    snap, arena, frame->node, toks, ntok, text, text_len,
                     observation);
             } else if (is_app(frame->node, "EpsC", 0u) ||
                        (frame->node && frame->node->kind == ATOM_SYMBOL &&
@@ -2371,11 +2641,12 @@ static Atom *nodec_to_cst(Arena *arena, Atom *node,
 }
 
 Atom *cetta_tptp_observe_derivation_v1(
+    const PPTableSnapshotV1 *snap,
     Arena *arena, Atom *tree, const CettaTptpLexTokenV1 *tokens,
     uint32_t token_count, const char *source, size_t source_length) {
     if (!arena || !tree || (!tokens && token_count) || !source)
         return NULL;
-    return nodec_to_cst(arena, tree, tokens, token_count,
+    return nodec_to_cst(snap, arena, tree, tokens, token_count,
                         source, source_length, true);
 }
 
@@ -2425,20 +2696,6 @@ static bool text_is_ascii(const char *text, size_t text_len) {
     return true;
 }
 
-static bool collect_file_inputs(Atom *file, Atom ***items, uint32_t *len,
-                                uint32_t *cap) {
-    Atom *inputs;
-    if (!file || !is_app(file, "tptp-rec:file", 2u))
-        return false;
-    inputs = file->expr.elems[1];
-    while (is_app(inputs, "tptp-rec:inputs-cons", 2u)) {
-        if (!grow((void **)items, len, cap, sizeof(**items), 1u))
-            return false;
-        (*items)[(*len)++] = inputs->expr.elems[1];
-        inputs = inputs->expr.elems[2];
-    }
-    return true;
-}
 
 static uint64_t default_gll_descriptor_limit(uint32_t token_len) {
     uint64_t scaled = (uint64_t)token_len *
@@ -2573,7 +2830,8 @@ static bool tptp_token_lattice_build(
     for (index = 0u; index < token_len; index++) {
         const char *name = tok_name(snap, tokens[index].tag);
         SymbolId selected = symbol_intern_cstr(g_symbols, name);
-        bool alias = selected != lower_word && !is_word_class_tag(name) &&
+        bool alias = selected != lower_word &&
+                     !snapshot_tag_is_value(snap, tokens[index].tag) &&
                      lower_word_spelling(name);
         CettaLpNativeUtf8LatticeEdge first;
         CettaLpNativeUtf8LatticeEdge second;
@@ -2644,6 +2902,100 @@ fail:
     return false;
 }
 
+/* The terminals at the leaves reachable from a forest node. */
+static bool tptp_forest_leaf_terminals(
+    const CettaLpNativeUtf8Forest *forest, uint32_t start, SymbolId word,
+    bool *has_word, bool *has_literal) {
+    CettaTptpIndexVecV1 stack = {0};
+    uint8_t *seen = calloc(forest->node_len ? forest->node_len : 1u, sizeof(*seen));
+    bool ok = false;
+    if (!seen || !tptp_index_push(&stack, start))
+        goto done;
+    while (stack.len > 0u) {
+        uint32_t node_index = stack.data[--stack.len];
+        const CettaLpNativeUtf8ForestNode *node;
+        if (node_index == CETTA_LP_NATIVE_UTF8_FOREST_NONE)
+            continue;
+        if (node_index >= forest->node_len)
+            goto done;
+        if (seen[node_index])
+            continue;
+        seen[node_index] = 1u;
+        node = &forest->nodes[node_index];
+        if (node->kind == CETTA_LP_NATIVE_UTF8_FOREST_TERM) {
+            if (node->symbol_id == word)
+                *has_word = true;
+            else
+                *has_literal = true;
+            continue;
+        }
+        for (uint32_t c = 0u; c < node->choice_len; c++) {
+            const CettaLpNativeUtf8ForestChoice *choice;
+            if (node->choice_begin + c >= forest->choice_len)
+                goto done;
+            choice = &forest->choices[node->choice_begin + c];
+            if (!tptp_index_push(&stack, choice->prefix_node) ||
+                !tptp_index_push(&stack, choice->child_node))
+                goto done;
+        }
+    }
+    ok = true;
+done:
+    free(stack.data);
+    free(seen);
+    return ok;
+}
+
+/*
+ * The choice a forest node takes.  A literal of the grammar spelled like a
+ * word reads either way in the lattice; where both readings of that one
+ * token derive the node, the literal is the reading: the grammar writes it
+ * out at that position.  Any other ambiguity has no choice.
+ */
+static bool tptp_forest_choice(
+    const CettaLpNativeUtf8Forest *forest, uint32_t node_index,
+    uint32_t *choice_out, bool *ambiguous) {
+    const CettaLpNativeUtf8ForestNode *node = &forest->nodes[node_index];
+    SymbolId word;
+    uint32_t literal_choice = UINT32_MAX;
+    uint32_t literal_count = 0u;
+    *ambiguous = false;
+    if (node->choice_len == 1u) {
+        *choice_out = node->choice_begin;
+        return true;
+    }
+    if (node->choice_len == 0u || node->scalar_right != node->scalar_left + 1u) {
+        *ambiguous = node->choice_len > 1u;
+        return false;
+    }
+    word = symbol_intern_cstr(g_symbols, "lower_word");
+    for (uint32_t c = 0u; c < node->choice_len; c++) {
+        const CettaLpNativeUtf8ForestChoice *choice =
+            &forest->choices[node->choice_begin + c];
+        bool has_word = false;
+        bool has_literal = false;
+        if (!tptp_forest_leaf_terminals(forest, choice->prefix_node, word,
+                                        &has_word, &has_literal) ||
+            !tptp_forest_leaf_terminals(forest, choice->child_node, word,
+                                        &has_word, &has_literal))
+            return false;
+        if (has_literal && has_word) {
+            *ambiguous = true;
+            return false;
+        }
+        if (has_literal) {
+            literal_choice = node->choice_begin + c;
+            literal_count++;
+        }
+    }
+    if (literal_count != 1u) {
+        *ambiguous = true;
+        return false;
+    }
+    *choice_out = literal_choice;
+    return true;
+}
+
 static bool tptp_forest_unique_reachable(
     const CettaLpNativeUtf8Forest *forest,
     uint32_t root,
@@ -2676,15 +3028,22 @@ static bool tptp_forest_unique_reachable(
                 goto malformed;
             continue;
         }
-        if (node->choice_len > 1u) {
-            *ambiguous = true;
-            ok = true;
-            goto done;
+        {
+            uint32_t selected = UINT32_MAX;
+            bool node_ambiguous = false;
+            if (!tptp_forest_choice(forest, node_index, &selected,
+                                    &node_ambiguous)) {
+                if (node_ambiguous) {
+                    *ambiguous = true;
+                    ok = true;
+                    goto done;
+                }
+                goto malformed;
+            }
+            if (selected >= forest->choice_len)
+                goto malformed;
+            choice = &forest->choices[selected];
         }
-        if (node->choice_len != 1u ||
-            node->choice_begin >= forest->choice_len)
-            goto malformed;
-        choice = &forest->choices[node->choice_begin];
         if (choice->parent_node != node_index)
             goto malformed;
         if (choice->prefix_node != CETTA_LP_NATIVE_UTF8_FOREST_NONE &&
@@ -2802,6 +3161,7 @@ static bool tptp_forest_frame_add_child(CettaTptpForestFrameV1 *frame,
 }
 
 static Atom *tptp_forest_to_cst(
+    const PPTableSnapshotV1 *snap,
     const CettaLpNativeGrammar *grammar,
     const CettaLpNativeUtf8Forest *forest,
     uint32_t root,
@@ -2827,11 +3187,14 @@ static Atom *tptp_forest_to_cst(
         if (!frame->expanded) {
             const CettaLpNativeUtf8ForestChoice *choice;
             uint32_t production_index;
+            uint32_t selected = UINT32_MAX;
+            bool node_ambiguous = false;
             if (node->kind != CETTA_LP_NATIVE_UTF8_FOREST_SYMBOL ||
-                node->choice_len != 1u ||
-                node->choice_begin >= forest->choice_len)
+                !tptp_forest_choice(forest, frame->node_index, &selected,
+                                    &node_ambiguous) ||
+                selected >= forest->choice_len)
                 goto malformed;
-            choice = &forest->choices[node->choice_begin];
+            choice = &forest->choices[selected];
             production_index = choice->production_index;
             if (production_index >= grammar->production_len)
                 goto malformed;
@@ -2864,7 +3227,7 @@ static Atom *tptp_forest_to_cst(
                     arena, "#eps", 0, 0, NULL, 0u, false);
             } else if (child->kind == CETTA_LP_NATIVE_UTF8_FOREST_TERM) {
                 const char *name = symbol_bytes(g_symbols, child->symbol_id);
-                if (is_word_class_tag(name)) {
+                if (snapshot_symbol_is_value(snap, child->symbol_id)) {
                     char wrapped[128];
                     int64_t start = 0;
                     int64_t stop = 0;
@@ -2989,7 +3352,7 @@ static CettaTptpLatticeResultV1 tptp_keyword_lattice_cst(
     }
     if (!out_cst ||
         !(*out_cst = tptp_forest_to_cst(
-              grammar, &forest, root, tokens, token_len,
+              snap, grammar, &forest, root, tokens, token_len,
               arena, error, error_size)))
         goto done;
     result = CETTA_TPTP_LATTICE_UNIQUE_V1;
@@ -3008,6 +3371,7 @@ static bool parse_project_slice(const PPTableSnapshotV1 *snap,
                                 bool source_ascii,
                                 CettaTptpCstProjectionV1 projection,
                                 void *projection_context,
+                                const CettaGrammarCanonicalTableV1 *canonical,
                                 Arena *rec_arena, Atom **out_file,
                                 CettaTptpReadCostV1 *cost,
                                 CettaTptpReadOutcomeV1 *outcome,
@@ -3149,7 +3513,7 @@ static bool parse_project_slice(const PPTableSnapshotV1 *snap,
     }
     if (!cst) {
         cst = nodec_to_cst(
-            &parse, parsed, toks + lo, n, text, text_len,
+            snap, &parse, parsed, toks + lo, n, text, text_len,
             projection != NULL);
         if (!cst) {
             arena_free(&parse);
@@ -3167,11 +3531,17 @@ static bool parse_project_slice(const PPTableSnapshotV1 *snap,
             arena_free(&parse);
             return false;
         }
-    } else if (!cetta_tptp_records_from_cst_noreouch_ascii_v1(
-                   trees, text, source_ascii, rec_arena, &file,
-                   error, error_size)) {
-        arena_free(&parse);
-        return false;
+    } else {
+        CanonicalLexemeContext lexemes = {toks + lo, n, text, text_len};
+        if (!canonical ||
+            !cetta_grammar_canonical_from_cst_v1(
+                canonical, cst, "#eps", canonical_leaf, &lexemes,
+                rec_arena, &file, error, error_size)) {
+            arena_free(&parse);
+            if (error && error_size && !error[0])
+                snprintf(error, error_size, "TPTP canonical term failed");
+            return false;
+        }
     }
     t1 = cost ? monotonic_s() : 0.0;
     if (cost)
@@ -3180,6 +3550,27 @@ static bool parse_project_slice(const PPTableSnapshotV1 *snap,
     *out_file = file;
     return true;
 }
+
+/* out_starts, when given, receives the first byte of each input's first
+ * token, one entry per input, in a malloc'ed array. */
+static bool snapshot_read_text_spans_impl(
+    const PPTableSnapshotV1 *snap,
+    const CettaLpNativeGrammar *fallback_grammar,
+    uint64_t gll_descriptor_limit,
+    const char *text,
+    size_t text_len,
+    Arena *arena,
+    Atom **out_records,
+    CettaTptpInputVisitV1 on_input,
+    void *user,
+    CettaTptpReadCostV1 *cost,
+    CettaTptpReadOutcomeV1 *outcome,
+    uint64_t work_limit,
+    CettaTptpCstProjectionV1 projection,
+    void *projection_context,
+    size_t **out_starts,
+    char *error,
+    size_t error_size);
 
 static bool snapshot_read_text_impl(
     const PPTableSnapshotV1 *snap,
@@ -3198,6 +3589,33 @@ static bool snapshot_read_text_impl(
     void *projection_context,
     char *error,
     size_t error_size) {
+    return snapshot_read_text_spans_impl(
+        snap, fallback_grammar, gll_descriptor_limit, text, text_len, arena,
+        out_records, on_input, user, cost, outcome, work_limit, projection,
+        projection_context, NULL, error, error_size);
+}
+
+static bool snapshot_read_text_spans_impl(
+    const PPTableSnapshotV1 *snap,
+    const CettaLpNativeGrammar *fallback_grammar,
+    uint64_t gll_descriptor_limit,
+    const char *text,
+    size_t text_len,
+    Arena *arena,
+    Atom **out_records,
+    CettaTptpInputVisitV1 on_input,
+    void *user,
+    CettaTptpReadCostV1 *cost,
+    CettaTptpReadOutcomeV1 *outcome,
+    uint64_t work_limit,
+    CettaTptpCstProjectionV1 projection,
+    void *projection_context,
+    size_t **out_starts,
+    char *error,
+    size_t error_size) {
+    size_t *starts = NULL;
+    uint32_t starts_cap = 0u;
+    uint32_t starts_len = 0u;
     CettaTptpLexTokenV1 *toks = NULL;
     uint32_t ntok = 0u;
     uint32_t cap;
@@ -3211,6 +3629,7 @@ static bool snapshot_read_text_impl(
     double t0;
     bool ok = false;
     bool source_ascii;
+    CettaGrammarCanonicalTableV1 *canonical = NULL;
 
     if (out_records)
         *out_records = NULL;
@@ -3228,14 +3647,23 @@ static bool snapshot_read_text_impl(
         return false;
     }
     source_ascii = text_is_ascii(text, text_len);
+    if (!projection) {
+        CettaGrammarCanonicalTerminalsV1 terminals = {
+            canonical_terminal_is_value, canonical_terminal_fixed_text,
+            (void *)snap};
+        if (!snapshot_canonical_table(snap, &terminals, &canonical, error, error_size))
+            return false;
+    }
     cap = 65536u;
     if (text_len + 8u < cap)
         cap = (uint32_t)text_len + 8u;
     if (cap < 8u)
         cap = 8u;
     toks = malloc((size_t)cap * sizeof(*toks));
-    if (!toks)
+    if (!toks) {
+        cetta_grammar_canonical_table_free_v1(canonical);
         return false;
+    }
     t0 = cost ? monotonic_s() : 0.0;
     for (;;) {
         if (cetta_tptp_snapshot_lex_text_v1(snap, text, text_len, toks, cap,
@@ -3249,12 +3677,14 @@ static bool snapshot_read_text_impl(
                 outcome->byte_offset = byte;
             }
             free(toks);
+            cetta_grammar_canonical_table_free_v1(canonical);
             if (error && error_size)
                 snprintf(error, error_size, "%s", local);
             return false;
         }
         if (cap > (UINT32_MAX / 2u)) {
             free(toks);
+            cetta_grammar_canonical_table_free_v1(canonical);
             if (error && error_size)
                 snprintf(error, error_size, "lex token cap");
             return false;
@@ -3265,6 +3695,7 @@ static bool snapshot_read_text_impl(
                 realloc(toks, (size_t)cap * sizeof(*toks));
             if (!grown) {
                 free(toks);
+                cetta_grammar_canonical_table_free_v1(canonical);
                 return false;
             }
             toks = grown;
@@ -3301,25 +3732,32 @@ static bool snapshot_read_text_impl(
                                      gll_descriptor_limit, toks, lo, hi,
                                      text, text_len, source_ascii,
                                      projection, projection_context,
-                                     arena, &slice_file,
+                                     canonical, arena, &slice_file,
                                      cost, outcome, work_limit,
                                      error, error_size))
                 goto done;
-            if (projection && slice_file &&
-                slice_file->kind == ATOM_EXPR) {
-                for (CettaExprIndex k = 0u;
-                     k < slice_file->expr.len; k++) {
+            Atom *const *slice_inputs = NULL;
+            uint32_t input_len = 0u;
+            bool shaped = false;
+            if (slice_file && projection && slice_file->kind == ATOM_EXPR) {
+                slice_inputs = slice_file->expr.elems;
+                input_len = (uint32_t)slice_file->expr.len;
+                shaped = true;
+            } else if (slice_file && !projection) {
+                shaped = cetta_grammar_canonical_list_elements_v1(slice_file, &slice_inputs,
+                                                                  &input_len);
+            }
+            if (shaped) {
+                /* A projection returns the inputs; a canonical file is the
+                 * list node of its inputs. */
+                for (uint32_t k = 0u; k < input_len; k++) {
                     if (!grow((void **)&got, &ng, &cg,
                               sizeof(*got), 1u)) {
                         free(got);
                         goto done;
                     }
-                    got[ng++] = slice_file->expr.elems[k];
+                    got[ng++] = slice_inputs[k];
                 }
-            } else if (!projection &&
-                       collect_file_inputs(slice_file, &got, &ng, &cg)) {
-                /* The native record projector retains its historical file
-                 * envelope; collect its ordered inputs here. */
             } else {
                 free(got);
                 if (error && error_size)
@@ -3351,6 +3789,15 @@ static bool snapshot_read_text_impl(
                         goto done;
                     }
                     inputs[n_in++] = got[k];
+                    if (out_starts) {
+                        if (!grow((void **)&starts, &starts_len, &starts_cap,
+                                  sizeof(*starts), 1u)) {
+                            free(got);
+                            goto done;
+                        }
+                        starts[starts_len++] = lo < ntok ? toks[lo].start_byte
+                                                         : text_len;
+                    }
                 }
                 free(got);
             }
@@ -3359,16 +3806,9 @@ static bool snapshot_read_text_impl(
     }
     t0 = cost ? monotonic_s() : 0.0;
     if (!on_input) {
-        if (projection) {
-            *out_records = atom_expr(
-                arena, inputs, (CettaExprLen)n_in);
-            if (!*out_records)
-                goto done;
-        } else if (!cetta_tptp_file_from_inputs_v1(
-                       arena, text, inputs, n_in, out_records,
-                       error, error_size)) {
+        *out_records = atom_expr(arena, inputs, (CettaExprLen)n_in);
+        if (!*out_records)
             goto done;
-        }
     } else if (out_records) {
         *out_records = NULL;
     }
@@ -3376,10 +3816,16 @@ static bool snapshot_read_text_impl(
         cost->combine_s = monotonic_s() - t0;
     if (outcome)
         outcome->status = CETTA_TPTP_READ_OK_V1;
+    if (out_starts) {
+        *out_starts = starts;
+        starts = NULL;
+    }
     ok = true;
 done:
+    free(starts);
     free(toks);
     free(inputs);
+    cetta_grammar_canonical_table_free_v1(canonical);
     return ok;
 }
 
@@ -3489,6 +3935,26 @@ bool cetta_tptp_prepared_reader_read_text_outcome_v1(
         &reader->snapshot, &reader->fallback_grammar, 0u, text, text_len,
         arena, out_records, NULL, NULL, NULL, outcome, 0u,
         NULL, NULL,
+        error, error_size);
+}
+
+bool cetta_tptp_prepared_reader_read_text_spans_v1(
+    const CettaTptpPreparedReaderV1 *reader,
+    const char *text,
+    size_t text_len,
+    Arena *arena,
+    Atom **out_records,
+    size_t **out_starts,
+    CettaTptpReadOutcomeV1 *outcome,
+    char *error,
+    size_t error_size) {
+    if (!reader || !out_starts)
+        return false;
+    *out_starts = NULL;
+    return snapshot_read_text_spans_impl(
+        &reader->snapshot, &reader->fallback_grammar, 0u, text, text_len,
+        arena, out_records, NULL, NULL, NULL, outcome, 0u,
+        NULL, NULL, out_starts,
         error, error_size);
 }
 
@@ -3696,4 +4162,106 @@ bool cetta_tptp_prepared_reader_read_file_projected_outcome_v1(
         &reader->snapshot, &reader->fallback_grammar, 0u,
         path, arena, out_records, outcome, projection, projection_context,
         error, error_size);
+}
+
+bool cetta_tptp_file_sha256_hex_v1(const char *path, char out[65],
+                                   char *error, size_t error_size) {
+    FILE *file;
+    uint8_t buffer[4096];
+    size_t got;
+    CettaNativeSha256 sha;
+    if (!path || !out)
+        return false;
+    file = fopen(path, "rb");
+    if (!file) {
+        if (error && error_size)
+            snprintf(error, error_size, "cannot open %s", path);
+        return false;
+    }
+    cetta_native_sha256_init(&sha);
+    while ((got = fread(buffer, 1u, sizeof(buffer), file)) > 0u)
+        cetta_native_sha256_update(&sha, buffer, got);
+    fclose(file);
+    cetta_native_sha256_finish_hex(&sha, out);
+    (void)error;
+    (void)error_size;
+    return true;
+}
+
+bool cetta_tptp_write_atom_v1(const char *path, Atom *atom, Arena *arena,
+                              char *error, size_t error_size) {
+    char *text;
+    FILE *file;
+    size_t len;
+    if (!path || !atom || !arena)
+        return false;
+    text = atom_to_parseable_string(arena, atom);
+    if (!text) {
+        if (error && error_size)
+            snprintf(error, error_size, "tptp cache: cannot print atom");
+        return false;
+    }
+    file = fopen(path, "wb");
+    if (!file) {
+        if (error && error_size)
+            snprintf(error, error_size, "tptp cache: cannot write %s", path);
+        return false;
+    }
+    len = strlen(text);
+    if (fwrite(text, 1u, len, file) != len) {
+        fclose(file);
+        if (error && error_size)
+            snprintf(error, error_size, "tptp cache: short write %s", path);
+        return false;
+    }
+    if (fputc('\n', file) == EOF) {
+        fclose(file);
+        return false;
+    }
+    fclose(file);
+    return true;
+}
+
+bool cetta_tptp_read_atom_v1(const char *path, Arena *arena, Atom **out,
+                             char *error, size_t error_size) {
+    FILE *file;
+    long size;
+    char *text;
+    size_t got;
+    size_t pos = 0u;
+    if (out)
+        *out = NULL;
+    if (!path || !arena || !out)
+        return false;
+    file = fopen(path, "rb");
+    if (!file) {
+        if (error && error_size)
+            snprintf(error, error_size, "tptp cache: cannot open %s", path);
+        return false;
+    }
+    if (fseek(file, 0, SEEK_END) != 0 || (size = ftell(file)) < 0) {
+        fclose(file);
+        if (error && error_size)
+            snprintf(error, error_size, "tptp cache: cannot size %s", path);
+        return false;
+    }
+    rewind(file);
+    text = malloc((size_t)size + 1u);
+    if (!text) {
+        fclose(file);
+        if (error && error_size)
+            snprintf(error, error_size, "tptp cache: out of memory");
+        return false;
+    }
+    got = fread(text, 1u, (size_t)size, file);
+    fclose(file);
+    text[got] = '\0';
+    *out = parse_sexpr(arena, text, &pos);
+    free(text);
+    if (!*out) {
+        if (error && error_size)
+            snprintf(error, error_size, "tptp cache: cannot parse %s", path);
+        return false;
+    }
+    return true;
 }

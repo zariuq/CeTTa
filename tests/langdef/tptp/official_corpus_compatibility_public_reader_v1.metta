@@ -3,9 +3,11 @@
 
 (= (compat-public:classification $outcome)
    (case $outcome
-     (((tptp-rec:file $_inputs $_span) accepted)
-      ((TPTP:NoParse $_byte $_rule) no-parse)
-      ($_ unexpected))))
+     (((TPTP:NoParse $_byte $_rule) no-parse)
+      ($records
+        (if (== (get-metatype (car-atom $records)) Expression)
+            accepted
+            unexpected)))))
 (= (compat-public:profile
      (TptpReaderArtifactInfoV1
        $_syntax $_artifact $profile $_kernel $_conflicts $_productions))

@@ -24,6 +24,7 @@ from gslt2parse_schema_v1 import (  # noqa: E402
     SExpr,
     Symbol,
     Variable,
+    compose_presentations,
     parse_presentation,
     render,
 )
@@ -314,6 +315,9 @@ class ProjectionPolicy:
     byte_hex: tuple[int, int, int, int]
     unicode_label: str
     unicode_hex: tuple[int, int, int, int]
+    # A list node, the node closing a list pattern, and the word and variable
+    # nodes inside a list; None when the profile has no lists.
+    list_labels: tuple[str, str, str, str] | None = None
 
 
 def projection_policy(
@@ -325,6 +329,7 @@ def projection_policy(
     variable_rules: dict[str, tuple[str, str]] = {}
     maps: dict[str, tuple[str, tuple[tuple[int, int], ...]]] = {}
     hexes: dict[str, tuple[int, int, int, int]] = {}
+    list_labels: tuple[str, str, str, str] | None = None
     for rule in presentation.rules:
         if rule.body or not isinstance(rule.head, tuple) or not rule.head:
             continue
@@ -381,6 +386,18 @@ def projection_policy(
             if not all(isinstance(item, int) for item in value[3:]):
                 raise CompileError("hex projection parameters must be integers")
             hexes[symbol(value[2], "hex wrapper")] = tuple(value[3:])  # type: ignore[arg-type]
+        elif tag == "sexpr-list-rule":
+            value = form(rule.head, tag, 5, f"{presentation.source}:{rule.name}")
+            if symbol(value[1], "projection profile") != profile_name:
+                continue
+            if list_labels is not None:
+                raise CompileError(f"duplicate list projection for {profile_name}")
+            list_labels = (
+                symbol(value[2], "list label"),
+                symbol(value[3], "list rest label"),
+                symbol(value[4], "list word label"),
+                symbol(value[5], "list variable label"),
+            )
     if document_label is None or expression_label is None:
         raise CompileError(f"missing projection profile {profile_name}")
     words = [name for name, value in atom_rules.items() if value == ("symbol", "raw")]
@@ -416,6 +433,7 @@ def projection_policy(
         hexes[byte[0]],
         unicode[0],
         hexes[unicode[0]],
+        list_labels,
     )
 
 
@@ -424,6 +442,39 @@ class Boundary:
     allow_eof: bool
     literals: tuple[int, ...]
     classes: tuple[str, ...]
+
+
+def scalar_classes_disjoint(left: ScalarClass, right: ScalarClass) -> bool:
+    """Decide disjointness over Unicode scalar values, not raw integers."""
+    if not left.complement:
+        return all(not right.contains(value) for value in left.points)
+    if not right.complement:
+        return all(not left.contains(value) for value in right.points)
+    excluded = {
+        value
+        for value in (*left.points, *right.points)
+        if 0 <= value <= 0x10FFFF and not 0xD800 <= value <= 0xDFFF
+    }
+    return len(excluded) == 0x110000 - 0x800
+
+
+def boundary_contains(
+    boundary: Boundary, value: int, classes: dict[str, ScalarClass]
+) -> bool:
+    return value in boundary.literals or any(
+        classes[name].contains(value) for name in boundary.classes
+    )
+
+
+def boundary_disjoint_class(
+    boundary: Boundary,
+    scalar_class: ScalarClass,
+    classes: dict[str, ScalarClass],
+) -> bool:
+    return all(not scalar_class.contains(value) for value in boundary.literals) and all(
+        scalar_classes_disjoint(classes[name], scalar_class)
+        for name in boundary.classes
+    )
 
 
 def parse_boundary(term: SExpr, where: str) -> Boundary:
@@ -581,6 +632,19 @@ def digit_value(codepoint_value: int, radix: int) -> int | None:
 
 
 @dataclass(frozen=True)
+class ListPlan:
+    """[x y] and [x y | rest]: the punctuation and the lexical classes inside."""
+
+    open: int
+    close: int
+    rest: int
+    word_start: str
+    word_tail: str
+    boundary: Boundary
+    variable_tail: str
+
+
+@dataclass(frozen=True)
 class DirectPlan:
     presentation_name: str
     whitespace: str
@@ -608,6 +672,7 @@ class DirectPlan:
     unicode_dfa: UnicodeDFA
     unicode_hex: tuple[int, int, int, int]
     used_classes: tuple[str, ...]
+    lists: ListPlan | None = None
 
 
 @dataclass(frozen=True)
@@ -700,9 +765,20 @@ def derive_plan(
         for branch in flatten_sir_binary(defs[atom_name], "alt")
     }
     expected_atom_refs = {word_name, string_name, variable_name, expression_name}
+    lists: ListPlan | None = None
+    if policy.list_labels is not None:
+        lists, list_name = derive_list_plan(
+            defs, nodes, policy.list_labels, skip_name,
+            {string_name, expression_name},
+            sir_character(
+                sir_form(sir_form(variable_body, "left", 2, "variable")[1],
+                         "right", 2, "variable")[1],
+                "variable marker"))
+        expected_atom_refs.add(list_name)
     if atom_refs != expected_atom_refs:
         raise CompileError(
-            "atom alternatives differ from projected word/string/variable/expression nodes"
+            "atom alternatives differ from projected word/string/variable/expression"
+            + ("/list" if lists else "") + " nodes"
         )
 
     word = sir_form(word_body, "left", 2, "word")
@@ -814,6 +890,9 @@ def derive_plan(
         *variable_boundary.classes,
         *byte_digit_classes,
     }
+    if lists is not None:
+        used |= {lists.word_start, lists.word_tail, lists.variable_tail,
+                 *lists.boundary.classes}
     required = used | {simple_class, *unicode_dfa.transition_classes}
     missing = sorted(required - set(classes))
     if missing:
@@ -830,6 +909,32 @@ def derive_plan(
             raise CompileError(f"word-start class overlaps {label}")
     if len({expression_open, string_open, variable_marker}) != 3:
         raise CompileError("atom dispatch literals are not disjoint")
+    if lists is not None:
+        punctuation = {lists.open, lists.close, lists.rest}
+        if len(punctuation) != 3 or punctuation & {
+            expression_open, expression_close, string_open, variable_marker,
+            comment_marker,
+        }:
+            raise CompileError("list punctuation overlaps another dispatch literal")
+        if classes[word_start].contains(lists.open):
+            raise CompileError("word-start class overlaps the list open bracket")
+        if any(classes[lists.word_start].contains(value) for value in punctuation):
+            raise CompileError("a list word starts with list punctuation")
+        for name in (lists.word_tail, lists.variable_tail):
+            if any(classes[name].contains(value)
+                   for value in (lists.open, lists.close)):
+                raise CompileError(f"list class {name} admits a bracket")
+        if not boundary_disjoint_class(lists.boundary, classes[lists.word_tail],
+                                       classes):
+            raise CompileError(
+                "a list word may continue where the bar alone would end")
+        for label, value in (
+            ("expression open", expression_open),
+            ("string open", string_open),
+            ("variable marker", variable_marker),
+        ):
+            if classes[lists.word_start].contains(value):
+                raise CompileError(f"list word-start class overlaps {label}")
     escape_starts = {simple_prefix[0], byte_prefix[0], unicode_prefix[0]}
     if classes[string_plain].contains(string_close) or any(
         classes[string_plain].contains(value) for value in escape_starts
@@ -862,6 +967,127 @@ def derive_plan(
         unicode_dfa,
         policy.unicode_hex,
         tuple(sorted(used)),
+        lists,
+    )
+
+
+def derive_list_plan(
+    defs: dict[str, SExpr],
+    nodes: dict[str, tuple[str, SExpr]],
+    labels: tuple[str, str, str, str],
+    skip_name: str,
+    shared_elements: set[str],
+    variable_marker: int,
+) -> tuple[ListPlan, str]:
+    """Read [x y] and [x y | rest] from the list node and its parts:
+
+    list    = node LIST (right OPEN (left (right SKIP (opt ITEMS)) CLOSE))
+    items   = (seq (left ELEMENT SKIP) (seq (star (left ELEMENT SKIP)) (opt REST)))
+    rest    = node REST (right (left BAR (peek BOUNDARY))
+                               (right SKIP (left ELEMENT SKIP)))
+    element = string | list variable | expression | list | list word
+    word    = node WORD (left (alt (seq BAR (seq TAIL (star TAIL)))
+                                   (seq START (star TAIL)))
+                              (peek BOUNDARY))
+
+    Elements are separated by layout as an expression's are; the bar alone is
+    the rest marker, and a word may start with it only when more follows."""
+    list_label, rest_label, word_label, variable_label = labels
+    list_name, list_body = node_body(nodes, list_label)
+    _, rest_body = node_body(nodes, rest_label)
+    _, word_body = node_body(nodes, word_label)
+    _, variable_body = node_body(nodes, variable_label)
+
+    def element_then_skip(term: SExpr, where: str) -> str:
+        pair = sir_form(term, "left", 2, where)
+        if sir_reference(pair[2], f"{where} skip") != skip_name:
+            raise CompileError(f"{where} is not followed by the document skip")
+        return sir_reference(pair[1], where)
+
+    outer = sir_form(list_body, "right", 2, "list")
+    list_open = sir_character(outer[1], "list open")
+    inner = sir_form(outer[2], "left", 2, "list")
+    lead = sir_form(inner[1], "right", 2, "list items")
+    if sir_reference(lead[1], "list leading skip") != skip_name:
+        raise CompileError("list and document use different skip definitions")
+    items_name = sir_reference(sir_form(lead[2], "opt", 1, "list items")[1],
+                               "list items")
+    list_close = sir_character(inner[2], "list close")
+
+    items = sir_form(defs[items_name], "seq", 2, "list items")
+    element_name = element_then_skip(items[1], "list first element")
+    more = sir_form(items[2], "seq", 2, "list items")
+    star = sir_form(more[1], "star", 1, "list elements")
+    if element_then_skip(star[1], "list element") != element_name:
+        raise CompileError("list elements differ from the first element")
+    rest_name = sir_reference(sir_form(more[2], "opt", 1, "list rest")[1],
+                              "list rest")
+    if nodes[rest_label][0] != rest_name:
+        raise CompileError("list rest reference is not the projected rest node")
+    rest_right = sir_form(rest_body, "right", 2, "list rest")
+    bar = sir_form(rest_right[1], "left", 2, "list rest bar")
+    rest_marker = sir_character(bar[1], "list rest bar")
+    bar_boundary = sir_reference(sir_form(bar[2], "peek", 1, "list bar end")[1],
+                                 "list bar boundary")
+    rest_after = sir_form(rest_right[2], "right", 2, "list rest")
+    if (sir_reference(rest_after[1], "list rest element skip") != skip_name or
+            element_then_skip(rest_after[2], "list rest element") != element_name):
+        raise CompileError("list rest element differs from the list elements")
+
+    element_refs = {
+        sir_reference(branch, "list element alternative")
+        for branch in flatten_sir_binary(defs[element_name], "alt")
+    }
+    word_name = nodes[word_label][0]
+    variable_name = nodes[variable_label][0]
+    if element_refs != shared_elements | {list_name, word_name, variable_name}:
+        raise CompileError(
+            "list element alternatives differ from string/expression/list and the "
+            "list word and variable nodes")
+
+    word = sir_form(word_body, "left", 2, "list word")
+    _, barred, plain = sir_form(word[1], "alt", 2, "list word")
+    barred_seq = sir_form(barred, "seq", 2, "list word after a bar")
+    if sir_character(barred_seq[1], "list word bar") != rest_marker:
+        raise CompileError("a list word starts with a scalar other than the bar")
+    barred_tail = sir_form(barred_seq[2], "seq", 2, "list word after a bar")
+    word_sequence = sir_form(plain, "seq", 2, "list word")
+    word_start = sir_class_name(word_sequence[1], "list word start")
+    word_tail = sir_class_name(
+        sir_form(word_sequence[2], "star", 1, "list word tail")[1],
+        "list word tail")
+    if (sir_class_name(barred_tail[1], "list word after a bar") != word_tail or
+            sir_class_name(sir_form(barred_tail[2], "star", 1,
+                                    "list word after a bar")[1],
+                           "list word after a bar") != word_tail):
+        raise CompileError("a word after a bar continues with other scalars")
+    boundary_name = sir_reference(
+        sir_form(word[2], "peek", 1, "list word boundary")[1],
+        "list word boundary")
+    if bar_boundary != boundary_name:
+        raise CompileError("the bar and list words end at different boundaries")
+    boundary = parse_boundary(defs[boundary_name], "list boundary")
+
+    variable = sir_form(variable_body, "left", 2, "list variable")
+    variable_right = sir_form(variable[1], "right", 2, "list variable")
+    if sir_character(variable_right[1], "list variable marker") != variable_marker:
+        raise CompileError("list variables and variables use different markers")
+    variable_sequence = sir_form(variable_right[2], "seq", 2, "list variable")
+    variable_tail = sir_class_name(variable_sequence[1], "list variable first")
+    if sir_class_name(sir_form(variable_sequence[2], "star", 1,
+                               "list variable tail")[1],
+                      "list variable tail") != variable_tail:
+        raise CompileError("list variable first and subsequent classes differ")
+    if sir_reference(sir_form(variable[2], "peek", 1, "list variable boundary")[1],
+                     "list variable boundary") != boundary_name:
+        raise CompileError("list words and variables end at different boundaries")
+    for value, label in ((list_close, "close"), (list_open, "open")):
+        if value not in boundary.literals:
+            raise CompileError(f"list boundary does not end a word at the list {label}")
+    return (
+        ListPlan(list_open, list_close, rest_marker, word_start, word_tail,
+                 boundary, variable_tail),
+        list_name,
     )
 
 
@@ -955,6 +1181,26 @@ def emit_boundary(
     )
 
 
+def sources_digest(paths: Sequence[Path]) -> str:
+    """One file's digest, or the digest of a base and the extensions
+    composed over it."""
+    if len(paths) == 1:
+        return file_digest(paths[0])
+    digest = sha256()
+    for path in paths:
+        digest.update(file_digest(path).encode("ascii"))
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def load_composed(paths: Sequence[Path]) -> Presentation:
+    presentation = parse_presentation(paths[0])
+    for path in paths[1:]:
+        presentation = compose_presentations(
+            presentation, parse_presentation(path))
+    return presentation
+
+
 def generate(
     syntax_path: Path,
     classes_path: Path,
@@ -963,18 +1209,24 @@ def generate(
     c_prefix: str,
     output_c: Path,
     output_h: Path,
+    extension_syntax: Sequence[Path] = (),
+    extension_classes: Sequence[Path] = (),
+    extension_projection: Sequence[Path] = (),
 ) -> None:
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", c_prefix):
         raise CompileError(f"invalid C prefix {c_prefix!r}")
-    syntax = parse_presentation(syntax_path)
-    class_presentation = parse_presentation(classes_path)
-    projection = parse_presentation(projection_path)
+    syntax_paths = [syntax_path, *extension_syntax]
+    classes_paths = [classes_path, *extension_classes]
+    projection_paths = [projection_path, *extension_projection]
+    syntax = load_composed(syntax_paths)
+    class_presentation = load_composed(classes_paths)
+    projection = load_composed(projection_paths)
     classes = scalar_classes(class_presentation)
     policy = projection_policy(projection, profile)
     selection = classify_parser_fragment(syntax, classes, policy)
     plan = selection.plan
     digest = composition_digest(
-        (syntax_path, classes_path, projection_path),
+        (*syntax_paths, *classes_paths, *projection_paths),
         profile,
         selection.fragment,
     )
@@ -1055,13 +1307,20 @@ def generate(
         plan.variable_boundary,
         class_ids,
     )
+    lists = plan.lists
+    list_boundary = (
+        emit_boundary(lines, f"{c_prefix}_list_boundary", lists.boundary, class_ids)
+        if lists else
+        "{.allow_eof = false, .literals = NULL, .literal_len = UINT32_C(0), "
+        ".classes = NULL, .class_len = UINT32_C(0)}"
+    )
     lines.append(
         f"\nconst GSLTDirectReaderV1Plan {c_prefix}_plan = {{\n"
         f'    .presentation_name = "{plan.presentation_name}",\n'
         f'    .fragment = "{selection.fragment}",\n'
-        f'    .syntax_digest = "{file_digest(syntax_path)}",\n'
-        f'    .class_digest = "{file_digest(classes_path)}",\n'
-        f'    .projection_digest = "{file_digest(projection_path)}",\n'
+        f'    .syntax_digest = "{sources_digest(syntax_paths)}",\n'
+        f'    .class_digest = "{sources_digest(classes_paths)}",\n'
+        f'    .projection_digest = "{sources_digest(projection_paths)}",\n'
         f'    .compiler_digest = "{file_digest(Path(__file__).resolve())}",\n'
         f'    .composition_digest = "{digest}",\n'
         f'    .profile = "{profile}",\n'
@@ -1102,6 +1361,13 @@ def generate(
         f"    .unicode_hex_max = UINT32_C({plan.unicode_hex[1]}),\n"
         f"    .unicode_value_max = UINT32_C({plan.unicode_hex[2]}),\n"
         f"    .unicode_radix = UINT32_C({plan.unicode_hex[3]}),\n"
+        f"    .list_open = UINT32_C({lists.open if lists else 0}),\n"
+        f"    .list_close = UINT32_C({lists.close if lists else 0}),\n"
+        f"    .list_rest = UINT32_C({lists.rest if lists else 0}),\n"
+        f"    .list_word_start = {'&' + class_ids[lists.word_start] if lists else 'NULL'},\n"
+        f"    .list_word_tail = {'&' + class_ids[lists.word_tail] if lists else 'NULL'},\n"
+        f"    .list_boundary = {list_boundary},\n"
+        f"    .list_variable_tail = {'&' + class_ids[lists.variable_tail] if lists else 'NULL'},\n"
         "    .depth_limit = UINT32_C(4096),\n"
         "};\n\n"
         f"const char *{c_prefix}_program_digest(void) {{\n"
@@ -1157,6 +1423,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--c-prefix", required=True)
     parser.add_argument("--output-c", required=True, type=Path)
     parser.add_argument("--output-h", required=True, type=Path)
+    # Presentation extensions composed over the three, in the order given:
+    # each extension rule replaces the rule of the same name or adds one.
+    parser.add_argument("--extension-syntax", type=Path, action="append",
+                        default=[])
+    parser.add_argument("--extension-classes", type=Path, action="append",
+                        default=[])
+    parser.add_argument("--extension-projection", type=Path, action="append",
+                        default=[])
     arguments = parser.parse_args(argv)
     try:
         generate(
@@ -1167,6 +1441,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             arguments.c_prefix,
             arguments.output_c,
             arguments.output_h,
+            arguments.extension_syntax,
+            arguments.extension_classes,
+            arguments.extension_projection,
         )
     except (CompileError, OSError, ValueError) as error:
         print(f"GSLTDirectReaderCompileError: {error}", file=sys.stderr)

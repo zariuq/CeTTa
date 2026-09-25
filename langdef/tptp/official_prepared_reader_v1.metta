@@ -47,15 +47,6 @@
      (tptp-prep:source bnf-plain-denotation
        "langdef/bnf/plain_bnf_denotation_v1.metta")
    (TptpReaderArtifactSourcesConsV1
-     (tptp-prep:source tptp-record-projection-authored
-       "langdef/tptp/official_syntax_records_v1.metta")
-   (TptpReaderArtifactSourcesConsV1
-     (tptp-prep:source tptp-record-projection-native
-       "native/tptp_official_records_v1.c")
-   (TptpReaderArtifactSourcesConsV1
-     (tptp-prep:source tptp-record-projection-native-header
-       "native/tptp_official_records_v1.h")
-   (TptpReaderArtifactSourcesConsV1
      (tptp-prep:source tptp-snapshot-specializer
        "native/tptp_official_snapshot_v1.c")
    (TptpReaderArtifactSourcesConsV1
@@ -73,7 +64,7 @@
    (TptpReaderArtifactSourcesConsV1
      (tptp-prep:source native-grammar-parser-header
        "src/lib_parse_native_grammar.h")
-     TptpReaderArtifactSourcesNilV1)))))))))))))))))))))))
+     TptpReaderArtifactSourcesNilV1))))))))))))))))))))
 (= (tptp-prep:profile-sources strict)
    (tptp-prep:common-sources))
 (= (tptp-prep:profile-sources corpus-compatible)

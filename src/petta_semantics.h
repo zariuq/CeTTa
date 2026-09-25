@@ -192,6 +192,9 @@ typedef enum {
 typedef struct {
     Atom *rest;
     CettaExprIndex flat_index;
+    /* One past the last element of the flat tail: its length, or for a list
+     * pattern [x... | r] the index of r, which the walk continues into. */
+    CettaExprIndex flat_end;
     bool in_flat_tail;
     bool invalid;
 } PeTTaLogicalListCursor;

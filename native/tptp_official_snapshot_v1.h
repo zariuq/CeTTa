@@ -2,11 +2,15 @@
 #define CETTA_TPTP_OFFICIAL_SNAPSHOT_V1_H
 
 #include "experiments/gslt2parse_foundation/native/parser_pack_table_snapshot_v1.h"
-#include "native/tptp_official_records_v1.h"
+#include "src/atom.h"
+#include "native/grammar_canonical_term_v1.h"
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+#define CETTA_TPTP_OFFICIAL_SYNTAXBNF_DIGEST_V1 \
+    "f47940c43c23ed5ed8633a3b74a2847648d5ab794669430c8f0c38f138e61df6"
 
 #define CETTA_TPTP_OFFICIAL_SNAPSHOT_PATH_V1 \
     "runtime/tptp-official-reader/" CETTA_TPTP_OFFICIAL_SYNTAXBNF_DIGEST_V1 \
@@ -52,6 +56,30 @@ typedef struct {
     PPTableSnapshotV1 snapshot;
     CettaLpNativeGrammar fallback_grammar;
 } CettaTptpPreparedReaderV1;
+
+/* Print a canonical term occupying a position of the named grammar symbol.
+ * The text is malloc'd and owned by the caller. */
+bool cetta_tptp_snapshot_canonical_print_v1(const PPTableSnapshotV1 *snap, const Atom *term,
+                                            const char *sort, char **out, size_t *out_len,
+                                            char *error, size_t error_size);
+
+/* Print a term whose nodes may need the grammar's wrappers, such as the
+ * parenthesized formula, to stand at their positions; see
+ * cetta_grammar_canonical_print_wrapped_v1. */
+bool cetta_tptp_snapshot_canonical_print_wrapped_v1(
+    const PPTableSnapshotV1 *snap, const Atom *term, const char *sort,
+    const SymbolId *wrappers, uint32_t wrapper_len, char **out, size_t *out_len,
+    char *error, size_t error_size);
+
+/* The canonical term table of the snapshot's grammar; the caller frees it. */
+bool cetta_tptp_snapshot_canonical_table_v1(const PPTableSnapshotV1 *snap,
+                                            CettaGrammarCanonicalTableV1 **out,
+                                            char *error, size_t error_size);
+
+/* The derived LanguageDef of the reader's canonical terms. */
+bool cetta_tptp_snapshot_canonical_language_v1(const PPTableSnapshotV1 *snap,
+                                               Arena *arena, Atom **out,
+                                               char *error, size_t error_size);
 
 void cetta_tptp_prepared_reader_init_v1(CettaTptpPreparedReaderV1 *reader);
 void cetta_tptp_prepared_reader_free_v1(CettaTptpPreparedReaderV1 *reader);
@@ -150,6 +178,7 @@ typedef bool (*CettaTptpCstProjectionV1)(
  * build-time derivation qualification. The caller supplies a ParserPack
  * NodeC tree and its token/source spans, not a second TPTP grammar. */
 Atom *cetta_tptp_observe_derivation_v1(
+    const PPTableSnapshotV1 *snap,
     Arena *arena, Atom *tree, const CettaTptpLexTokenV1 *tokens,
     uint32_t token_count, const char *source, size_t source_length);
 
@@ -177,6 +206,20 @@ bool cetta_tptp_snapshot_read_file_outcome_v1(
     const char *path,
     Arena *arena,
     Atom **out_records,
+    CettaTptpReadOutcomeV1 *outcome,
+    char *error,
+    size_t error_size);
+
+/* As cetta_tptp_prepared_reader_read_text_outcome_v1, and *out_starts
+ * receives, in a malloc'ed array with one entry per input, the first byte of
+ * each input's first token. */
+bool cetta_tptp_prepared_reader_read_text_spans_v1(
+    const CettaTptpPreparedReaderV1 *reader,
+    const char *text,
+    size_t text_len,
+    Arena *arena,
+    Atom **out_records,
+    size_t **out_starts,
     CettaTptpReadOutcomeV1 *outcome,
     char *error,
     size_t error_size);
@@ -304,5 +347,15 @@ bool cetta_tptp_read_file_frozen_outcome_v1(
     CettaTptpReadOutcomeV1 *outcome,
     char *error,
     size_t error_size);
+
+/* Prepared-artifact file utilities: content digest and s-expression I/O. */
+bool cetta_tptp_file_sha256_hex_v1(
+    const char *path, char out[65], char *error, size_t error_size);
+
+bool cetta_tptp_write_atom_v1(
+    const char *path, Atom *atom, Arena *arena, char *error, size_t error_size);
+
+bool cetta_tptp_read_atom_v1(
+    const char *path, Arena *arena, Atom **out, char *error, size_t error_size);
 
 #endif

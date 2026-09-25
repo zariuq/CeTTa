@@ -34,12 +34,6 @@ awk '
   END { if (count != 1) exit 1 }
 ' tests/langdef/tptp/official_syntax_observation_v1.metta \
   > "$reader_evidence/tests/langdef/tptp/observation.metta"
-awk '
-  { count += sub(/\(RecordCase ""/,
-                 "(RecordCase \"fof(a,axiom,p).\""); print }
-  END { if (count != 1) exit 1 }
-' tests/langdef/tptp/official_syntax_records_v1.metta \
-  > "$reader_evidence/tests/langdef/tptp/records.metta"
 
 if make --no-print-directory \
     TPTP_OFFICIAL_SYNTAX_BNF_V1="$reader_syntax" \
@@ -70,30 +64,5 @@ if make --no-print-directory \
 fi
 rg -q 'TptpObservationMismatch ""' "$reader_evidence/observation.log"
 
-if make --no-print-directory \
-    TPTP_OFFICIAL_SYNTAX_BNF_V1="$reader_syntax" \
-    TPTP_OFFICIAL_SYNTAX_RECORDS_TEST_V1="$reader_evidence/tests/langdef/tptp/records.metta" \
-    TPTP_OFFICIAL_CORPUS_ROOT_V1="$reader_corpus" \
-    test-tptp-official-syntax-records-v1 > "$reader_evidence/records.log" 2>&1; then
-    echo 'records gate accepted an intentionally wrong expectation' >&2
-    exit 1
-fi
-rg -q 'TptpRecordMismatch' "$reader_evidence/records.log"
 
-awk '
-  { count += sub(/\(thf mix_type type/,
-                 "(thf mix_type-wrong type"); print }
-  END { if (count != 1) exit 1 }
-' tests/langdef/tptp/official_syntax_compact_v1.expected \
-  > "$reader_evidence/tests/langdef/tptp/compact.expected"
-if make --no-print-directory \
-    TPTP_OFFICIAL_SYNTAX_BNF_V1="$reader_syntax" \
-    TPTP_OFFICIAL_CORPUS_ROOT_V1="$reader_corpus" \
-    TPTP_OFFICIAL_SYNTAX_COMPACT_EXPECTED_V1="$reader_evidence/tests/langdef/tptp/compact.expected" \
-    test-tptp-official-syntax-compact-v1 > "$reader_evidence/compact.log" 2>&1; then
-    echo 'compact gate accepted an intentionally wrong expectation' >&2
-    exit 1
-fi
-rg -q '\(thf mix_type type \(: mix \(⇒ beverage beverage\)\)\)' \
-  "$reader_evidence/compact.log"
-echo '(TptpReaderGateFailureV1Summary 5 0)'
+echo '(TptpReaderGateFailureV1Summary 3 0)'

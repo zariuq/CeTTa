@@ -10,6 +10,7 @@
     (operator pbc-cons 2)
     (operator pbc-push-const 1)
     (operator pbc-push-slot 1)
+    (operator pa-primitive 2)
   )
   (equations)
   (rewrites

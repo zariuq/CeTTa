@@ -28,6 +28,8 @@ typedef struct {
 } PeTTaCompiledReaderV1Receipt;
 
 PeTTaCompiledReaderV1 *petta_compiled_reader_v1_new(void);
+/* The reader of the extended profiles: the PeTTa reader with CeTTa's lists. */
+PeTTaCompiledReaderV1 *petta_compiled_reader_v1_new_with_lists(void);
 void petta_compiled_reader_v1_free(PeTTaCompiledReaderV1 *reader);
 
 bool petta_compiled_reader_v1_prepare(

@@ -9,9 +9,11 @@
     (operator langdef:ground-equal 2)
     (operator langdef:value-view 1)
     (operator langdef:list->expression 1)
+    (operator langdef:list->list-value 1)
     (operator LangDef:SameValue 0)
     (operator LangDef:DifferentValue 0)
     (operator LangDef:ExpressionValue 1)
+    (operator LangDef:ListValue 1)
     (operator LNil 0)
     (operator LCons 2)
 
@@ -172,6 +174,19 @@
         ?source ?digest ?environment ?active ?path ?namespace ?index)
       (tptp-ci-v1:expand-input (langdef:value-view ?record) ?record
         ?source ?digest (langdef:list->expression ?tail)
+        ?environment ?active ?path ?namespace ?index))) (body))
+    ; A document's inputs are a list; the rest stays a list.
+    (rule inputs-list-nil (head (metta-equation
+      (tptp-ci-v1:expand-inputs-view (LangDef:ListValue LNil)
+        ?source ?digest ?environment ?active ?path ?namespace ?index)
+      (tptp-ci-v1:ok (tptp-ci-v1:expanded-inputs-nil)
+        (tptp-ci-v1:include-edges-nil)))) (body))
+    (rule inputs-list-cons (head (metta-equation
+      (tptp-ci-v1:expand-inputs-view
+        (LangDef:ListValue (LCons ?record ?tail))
+        ?source ?digest ?environment ?active ?path ?namespace ?index)
+      (tptp-ci-v1:expand-input (langdef:value-view ?record) ?record
+        ?source ?digest (langdef:list->list-value ?tail)
         ?environment ?active ?path ?namespace ?index))) (body))
 
     (rule input-fof (head (metta-equation
@@ -398,6 +413,16 @@
       (tptp-ci-v1:prepend-string ?head
         (tptp-ci-v1:decode-names-view
           (LangDef:ExpressionValue ?tail))))) (body))
+    ; A selection of names is a list.
+    (rule names-list-nil (head (metta-equation
+      (tptp-ci-v1:decode-names-view (LangDef:ListValue LNil))
+      (tptp-ci-v1:selection-names (tptp-ci-v1:strings-nil)))) (body))
+    (rule names-list-cons (head (metta-equation
+      (tptp-ci-v1:decode-names-view
+        (LangDef:ListValue (LCons ?head ?tail)))
+      (tptp-ci-v1:prepend-string ?head
+        (tptp-ci-v1:decode-names-view
+          (LangDef:ListValue ?tail))))) (body))
     (rule prepend-string-ok (head (metta-equation
       (tptp-ci-v1:prepend-string ?head
         (tptp-ci-v1:selection-names ?tail))

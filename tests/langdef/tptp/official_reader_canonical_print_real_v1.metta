@@ -2,7 +2,7 @@
 !(import! &self system)
 
 !(let $records (tptp:read-file (system:arg 0))
-   (let $reparsed (tptp:read-text (tptp:print-records $records))
+   (let $reparsed (tptp:read-text (tptp:print $records))
      (println!
        (TptpCanonicalPrintRealV1
          (== $records $reparsed)

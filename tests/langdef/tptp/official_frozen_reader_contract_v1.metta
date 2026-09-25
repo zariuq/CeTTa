@@ -1,16 +1,6 @@
 !(import! &self ../../../lib/lib_tptp.metta)
 
-(= (contract-v1:only-variable
-     (tptp-rec:file
-       (tptp-rec:inputs-cons
-         (tptp-rec:fof $_name $_role
-           (tptp-rec:atom $_head
-             (tptp-rec:terms-cons
-               (tptp-rec:var (tptp-rec:word-upper $variable))
-               (tptp-rec:terms-nil)))
-           $_annotation $_input-span)
-         (tptp-rec:inputs-nil))
-       $_file-span))
+(= (contract-v1:only-variable [(fof $_name $_role ($_head $variable))])
    $variable)
 
 !(println!

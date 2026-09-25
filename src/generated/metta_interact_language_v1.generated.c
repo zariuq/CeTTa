@@ -2486,5 +2486,5 @@ const CettaGsltEmbeddedLanguageV1 cetta_metta_interact_language_v1 = {
     },
     .observation = "bag",
     .manifest_sha256 = "74e3a7e4eff6e90a34c9a4c169ea6d4c82e3ea2db048a2fce101f1386ead0a6c",
-    .compiler_sha256 = "9d9a951260d8824302f6be6a0310031a0d7521e690163f69e943acc3ad82e358",
+    .compiler_sha256 = "13098a85c9a6df981446a1b409061018037f9fdcb72b35537675aaa45ae4e2de",
 };

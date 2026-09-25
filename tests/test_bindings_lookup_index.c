@@ -283,7 +283,7 @@ static void test_generation_checked_frame_handles(Arena *arena) {
     BindingValue context_300 = binding_value_from_context(source, 300u);
     BindingValue context_200 = binding_value_from_context(source, 200u);
     ready = ready && match_binding_values_builder(
-        context_300, context_200, &builder);
+        context_300, context_200, &builder, arena);
     BindingValue stored_context = ready
         ? bindings_lookup_value_id(
               &builder.current, var_epoch_id(source_id, 300u))
@@ -1475,7 +1475,7 @@ static void test_dense_inventory_is_slot_read(Arena *arena) {
     Atom *pat_x = atom_var_with_id(arena, "inv-b", local_b);
     Atom *pattern = atom_expr3(arena, head, pat_x, pat_x);
     Atom *query = atom_expr3(arena, head, one, one);
-    CHECK(match_atoms_builder(query, pattern, &builder) &&
+    CHECK(match_atoms_builder(query, pattern, &builder, arena) &&
               bindings_lookup_value_id(&builder.current, local_b).skeleton == one,
           "repeated inventory variable unifies with the display live");
 
@@ -4238,7 +4238,7 @@ int main(void) {
         view_current_materialized &&
         match_atoms_builder(
             view_current_materialized, view_right,
-            &view_current_reference);
+            &view_current_reference, &view_current_reference_arena);
     bool view_current_compiled_match =
         view_current_compiled_ready &&
         match_atoms_epoch_view_builder_current(
@@ -4454,7 +4454,7 @@ int main(void) {
         view_current_fail_materialized &&
         match_atoms_builder(
             view_current_fail_materialized, view_fail_right,
-            &view_current_fail_reference);
+            &view_current_fail_reference, &view_current_fail_reference_arena);
     bool view_current_fail_compiled_match =
         view_current_fail_compiled_ready &&
         match_atoms_epoch_view_builder_current(

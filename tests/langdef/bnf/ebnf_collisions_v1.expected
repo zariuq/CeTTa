@@ -1,0 +1,5 @@
+true
+(EbnfCollisionsV1 "decl" ((Shape sequence "params") (Shape sequence "params") (Shape sequence "params")))
+(EbnfCollisionsV1 distinct false false false (bnf decl (bnf params+2 [(bnf params.2 "x") (bnf params.2 "y")])) (bnf decl (bnf params+3 [(bnf params.3 "x") (bnf params.3 "y")])) (EbnfCollisionsV1 prints-back true true true))
+(EbnfCollisionsV1 "term" ())
+(EbnfCollisionsV1 "s" ((Shape literal "s")))

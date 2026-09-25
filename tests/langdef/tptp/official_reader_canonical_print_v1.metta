@@ -2,7 +2,7 @@
 !(import! &self system)
 
 (= (print-test:roundtrip $records)
-   (let $printed (tptp:print-records $records)
+   (let $printed (tptp:print $records)
      (let $reparsed (tptp:read-text $printed)
        (TptpCanonicalPrintRoundTripV1
          (== $records $reparsed)
@@ -32,6 +32,6 @@
        (tptp:read-text
          "fof(42,axiom,p(42,1/3,-2.5,\"distinct value\"))."))))
 !(println!
-   (tptp:print-records
+   (tptp:print
      (tptp:read-text
        "fof(a,axiom,p).\nfof(a,conjecture,~p).\n")))

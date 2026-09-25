@@ -65,6 +65,31 @@ bool pp_action_bytecode_v1_program_validate(
     char *error_buf,
     size_t error_buf_size);
 
+/* Build a dense action program from independently indexed first-order
+ * actions.  This is the reflection boundary used by generated grammar
+ * instances that retain a table snapshot rather than a ParserPack object.
+ * Every row is checked for ground syntax, slot bounds, primitive arity,
+ * stack balance and exact dense coverage before it enters the program. */
+bool pp_action_bytecode_v1_program_build_indexed(
+    Atom *const *actions,
+    const uint32_t *arities,
+    uint32_t production_len,
+    const char *source_digest,
+    const char *compiler_digest,
+    const char *artifact_digest,
+    PPActionBytecodeV1Program *out,
+    char *error_buf,
+    size_t error_buf_size);
+
+bool pp_action_bytecode_v1_program_validate_indexed(
+    const PPActionBytecodeV1Program *program,
+    Atom *const *actions,
+    const uint32_t *arities,
+    uint32_t production_len,
+    const char *source_digest,
+    char *error_buf,
+    size_t error_buf_size);
+
 /*
  * Compose the base ParserPack action inventory with a validated positive-
  * guard production sidecar.  Compiler answers must use the

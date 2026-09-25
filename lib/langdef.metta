@@ -353,3 +353,18 @@
      (case (__cetta_lib_langdef_symbol_append $left $right)
        (((return $result) (return $result))
         ($result (return $result))))))
+
+; Named binding over an ABT signature whose binders declare names that occur
+; in the term (BindTelescope, BindPattern): the free variable names in order
+; of first occurrence, simultaneous capture-avoiding substitution of
+; ((NAME VALUE) ...), renaming binders apart from each other, from the free
+; names and from avoid, and equality up to the names of binders.  Terms are
+; data: nothing in them is evaluated.
+(= (langdef:free-names $signature $term)
+   (__cetta_abt_free_names $signature $term))
+(= (langdef:substitute-names $signature $bindings $term)
+   (__cetta_abt_substitute $signature $bindings $term))
+(= (langdef:rename-apart $signature $avoid $term)
+   (__cetta_abt_rename_bound $signature $avoid $term))
+(= (langdef:alpha-equal $signature $left $right)
+   (__cetta_abt_named_alpha_eq $signature $left $right))

@@ -1,0 +1,7 @@
+% Function parameters, typed or untyped, spaced or comma-terminated.  The
+% three alternatives of <params> all make sequences, so canonical terms there
+% do not record which one read the text.
+<decl> ::= "fun " <params> "."
+<params> ::= (<name> ":" <type> " ")+ | (<name> " ")+ | (<name> ",")+
+<name> ::= "x" | "y"
+<type> ::= "o" | "i"

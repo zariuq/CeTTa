@@ -285,5 +285,5 @@ const CettaGsltEmbeddedLanguageV1 cetta_gslt_pipeline_canary_v1 = {
     },
     .observation = "bag",
     .manifest_sha256 = "bbc8baca181858fcae50a2d96d801762bd037e7901b527bcf8fc9dcdfcfaac3f",
-    .compiler_sha256 = "9d33d0708d05ce00c09f33c72292ad20d2bda72e1b67491b9644990c0c7e86c5",
+    .compiler_sha256 = "ae3350d227bdc84a12e5efabb754f369b3ee8e9e9e3ac64c58d2d19ad7bcdea9",
 };

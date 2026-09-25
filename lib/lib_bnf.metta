@@ -845,6 +845,140 @@
         (EBNF:Incomplete $binding $source $outcome $detail))
       ($fault (BNF:ReadFault ebnf-parser $fault)))))
 
+; Canonical terms of the derived LanguageDef: every alternative is a
+; constructor named by its rule (and alternative index, where a rule has
+; several), whose arguments are its rule and token children in order; fixed
+; terminals are dropped, single-child alternatives are transparent,
+; repetitions and separated lists are lists, an option is the list of at most
+; one, and a token is named by its class with its text.  Every constructor
+; application and token is written (bnf NAME child...): grammar names never
+; stand where an evaluator could reduce them, for any grammar.  The outcome carries the binding and
+; source digests of the parse, and one term per parse of the input.
+(= (bnf:parse-canonical-text (EBNF:Parser $parser $receipt) $text)
+   (bnf-internal:canonical-outcome $receipt (langdef:parse-authored-text $parser $text)))
+(= (bnf:parse-canonical-text
+      (EBNF:SourceParser $parser $binding $source $receipt) $text)
+   (bnf-internal:canonical-outcome $receipt (langdef:parse-authored-text $parser $text)))
+(= (bnf:parse-canonical-file (EBNF:Parser $parser $receipt) $path)
+   (bnf-internal:canonical-outcome $receipt (langdef:parse-authored-file $parser $path)))
+(= (bnf:parse-canonical-file
+      (EBNF:SourceParser $parser $binding $source $receipt) $path)
+   (bnf-internal:canonical-outcome $receipt (langdef:parse-authored-file $parser $path)))
+
+(= (bnf-internal:canonical-terms $plain $origins $authority $trees)
+   (function
+     (case (__cetta_lib_bnf_ebnf_canonical_v1 $plain $origins $authority $trees)
+       (((return $terms) (return $terms))
+        ($terms (return $terms))))))
+
+(= (bnf-internal:canonical-outcome $receipt $parsed)
+   (case $receipt
+     (((EBNF:LoweredGrammar $original $authority $plain $origins)
+        (case $parsed
+          (((LangDef:AuthoredParseAccepted $language $binding $source $trees)
+             (case (bnf-internal:canonical-terms $plain $origins $authority $trees)
+               (((Error $call $message) (Error $call $message))
+                (($term) (EBNF:Canonical $binding $source $term))
+                ($terms (EBNF:CanonicalAmbiguous $binding $source $terms)))))
+           ((LangDef:AuthoredParseRejected $language $binding $source $offset $expected)
+             (EBNF:Rejected $binding $source $offset $expected))
+           ((LangDef:AuthoredParseIncomplete $language $binding $source $outcome $detail)
+             (EBNF:Incomplete $binding $source $outcome $detail))
+           ($fault (BNF:ReadFault ebnf-parser $fault)))))
+      ($malformed (BNF:ReadFault ebnf-lowering-receipt $malformed)))))
+
+; Binders of canonical terms.  A grammar does not say which of its positions
+; bind names, so a language declares them against the derived LanguageDef:
+;   (Binds CONSTRUCTOR (Fields field ...) BINDING)
+; names a constructor of the LanguageDef, one field per argument of its
+; canonical terms (bnf CONSTRUCTOR argument ...), and a binding of CeTTa's
+; ABT layer over those fields, (BindTelescope ...) or (BindPattern ...).
+; NAMES is the (AbtNames ...) declaration of the variable names among the
+; canonical tokens.  The result is the ABT signature for langdef's named
+; binding operations; a constructor the LanguageDef lacks, or a declaration
+; with another number of fields than the constructor's arguments, is
+; refused.  A telescope's field holds a list, which a canonical term writes
+; as its node (bnf LIST elements): the telescope reads the elements.
+(= (bnf:binding-signature $parser $names $binders)
+   (let $language (bnf:canonical-language $parser)
+     (case $language
+       (((GSLTLanguageDefWireV1 $_name $_types $rules $_extra $_more)
+          (bnf-internal:binding-declarations $rules $binders $names ()))
+        ($fault (BNF:BindingFault $fault))))))
+
+(= (bnf-internal:binding-declarations $_rules () $names $declarations)
+   (cons-atom AbtSignatures (cons-atom $names $declarations)))
+(= (bnf-internal:binding-declarations $rules $binders $names $declarations)
+   (let ($binder $rest) (decons-atom $binders)
+     (case $binder
+       (((Binds $constructor $fields $binding)
+          (let $arity (bnf-internal:constructor-arity (repr $constructor) $rules)
+            (if (== $arity (- (size-atom $fields) 1))
+                (let $declaration
+                     (AbtSignature (Head bnf $constructor) $fields
+                       (bnf-internal:list-binding $binding))
+                  (let $next (cons-atom $declaration $declarations)
+                    (bnf-internal:binding-declarations
+                      $rules $rest $names $next)))
+                (BNF:BinderFieldsDiffer $constructor $arity $fields))))
+        ($other (BNF:MalformedBinder $other))))))
+
+(= (bnf-internal:list-binding (BindTelescope $field $scopes $forms))
+   (BindTelescope (In $field 2) $scopes $forms))
+(= (bnf-internal:list-binding (BindPattern $field $scopes))
+   (BindPattern $field $scopes))
+
+(= (bnf-internal:constructor-arity $label LNil)
+   (BNF:NoSuchConstructor $label))
+(= (bnf-internal:constructor-arity $label (LCons $rule $rest))
+   (case $rule
+     (((GrammarRule $name $_category $params $_syntax $_eval)
+        (if (== $name $label)
+            (bnf-internal:lcons-length $params)
+            (bnf-internal:constructor-arity $label $rest))))))
+
+(= (bnf-internal:lcons-length LNil) 0)
+(= (bnf-internal:lcons-length (LCons $_item $rest))
+   (+ 1 (bnf-internal:lcons-length $rest)))
+
+; The derived LanguageDef of a parser's canonical terms.
+(= (bnf:canonical-language (EBNF:Parser $parser $receipt))
+   (bnf-internal:canonical-language $receipt))
+(= (bnf:canonical-language (EBNF:SourceParser $parser $binding $source $receipt))
+   (bnf-internal:canonical-language $receipt))
+(= (bnf-internal:canonical-language (EBNF:LoweredGrammar $original $authority $plain $origins))
+   (function
+     (case (__cetta_lib_bnf_ebnf_canonical_language_v1 $plain $origins $authority)
+       (((return $language) (return $language))
+        ($language (return $language))))))
+
+; The sorts of a parser's grammar at which two productions give canonical
+; values of one shape, so that canonical terms there do not determine their
+; text: ((EBNF:Collision KIND SORT FIRST SECOND?) ...), KIND one of sequence,
+; literal, token and path.  Empty for a grammar whose terms are injective.
+(= (bnf:canonical-collisions (EBNF:Parser $parser $receipt))
+   (bnf-internal:canonical-collisions $receipt))
+(= (bnf:canonical-collisions (EBNF:SourceParser $parser $binding $source $receipt))
+   (bnf-internal:canonical-collisions $receipt))
+(= (bnf-internal:canonical-collisions (EBNF:LoweredGrammar $original $authority $plain $origins))
+   (function
+     (case (__cetta_lib_bnf_ebnf_canonical_collisions_v1 $plain $origins $authority)
+       (((return $collisions) (return $collisions))
+        ($collisions (return $collisions))))))
+
+; Text of a canonical term occupying a position of the named rule, printed by
+; the rows of the derived LanguageDef.
+(= (bnf:print-canonical (EBNF:Parser $parser $receipt) $rule $term)
+   (bnf-internal:print-canonical $receipt $rule $term))
+(= (bnf:print-canonical (EBNF:SourceParser $parser $binding $source $receipt) $rule $term)
+   (bnf-internal:print-canonical $receipt $rule $term))
+(= (bnf-internal:print-canonical (EBNF:LoweredGrammar $original $authority $plain $origins)
+                                 $rule $term)
+   (function
+     (case (__cetta_lib_bnf_ebnf_canonical_print_v1 $plain $origins $authority $rule $term)
+       (((return $text) (return $text))
+        ($text (return $text))))))
+
 (= (bnf:element-kind (ebnf-v1:group $_body $_span)) group)
 (= (bnf:element-kind (ebnf-v1:optional $_body $_span)) optional)
 (= (bnf:element-kind (ebnf-v1:zero-or-more $_body $_span)) zero-or-more)

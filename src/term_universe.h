@@ -372,7 +372,11 @@ GroundedKind tu_ground_kind(const TermUniverse *universe, AtomId id);
 int64_t tu_int(const TermUniverse *universe, AtomId id);
 double tu_float(const TermUniverse *universe, AtomId id);
 bool tu_bool(const TermUniverse *universe, AtomId id);
+/* The value of an internal tag, or 0 for any other atom. */
+int64_t tu_internal_tag(const TermUniverse *universe, AtomId id);
 const char *tu_string_cstr(const TermUniverse *universe, AtomId id);
+/* The byte length of a string; its bytes may hold NUL. */
+size_t tu_string_len(const TermUniverse *universe, AtomId id);
 const char *tu_bigint_cstr(const TermUniverse *universe, AtomId id);
 const char *tu_rational_cstr(const TermUniverse *universe, AtomId id);
 AtomId tu_child(const TermUniverse *universe, AtomId id, CettaExprIndex idx);
@@ -385,9 +389,16 @@ AtomId tu_intern_named_var(TermUniverse *universe, AtomId name_key_id,
 AtomId tu_intern_int(TermUniverse *universe, int64_t value);
 AtomId tu_intern_float(TermUniverse *universe, double value);
 AtomId tu_intern_bool(TermUniverse *universe, bool value);
+AtomId tu_intern_list_tag(TermUniverse *universe, int64_t tag);
+AtomId tu_intern_string_n(TermUniverse *universe, const char *bytes,
+                          size_t len);
 AtomId tu_intern_string(TermUniverse *universe, const char *value);
 AtomId tu_intern_bigint(TermUniverse *universe, const char *value);
 AtomId tu_intern_rational(TermUniverse *universe, const char *value);
+/* The list [elems...], or [elems... | rest] when rest is not CETTA_ATOM_ID_NONE;
+ * a rest that is itself a list or list pattern is spliced in. */
+AtomId tu_list_from_ids(TermUniverse *universe, const AtomId *elems,
+                        CettaExprLen elem_len, AtomId rest);
 AtomId tu_expr_from_ids(TermUniverse *universe, const AtomId *child_ids,
                         CettaExprLen arity);
 

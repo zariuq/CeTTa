@@ -1,10 +1,7 @@
 !(import! &self ../../../lib/lib_tptp.metta)
 !(import! &self system)
 
-(= (reuse:first-record
-     (tptp-rec:file
-       (tptp-rec:inputs-cons $head $_tail) $_span))
-   $head)
+(= (reuse:first-record $records) (car-atom $records))
 
 (= (reuse:summary $reader)
    (let $text-record
