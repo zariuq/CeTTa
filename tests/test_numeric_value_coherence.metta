@@ -55,6 +55,12 @@
 !(let $n (/ 0.0 0.0) (== (pair (dag 40 1) $n) (pair (dag 40 1.0) $n)))
 !(let $s (new-state 1) (== (dag 8 $s) (dag 8 $s)))
 
+; A float literal past the float range reads as the nearest float
+!(get-metatype 1.0e-310)
+!(== 1.0e-310 (* 1.0e-200 1.0e-110))
+!(== 1.0e-400 0.0)
+!(== 1.0e400 (* 1.0e308 10.0))
+
 ; State cells that hold themselves compare by their unfolding
 !(let* (($s (new-state 0)) ($t (new-state 0)) ($u (change-state! $s (a $s))) ($v (change-state! $t (a $t)))) (== $s $t))
 !(let* (($s (new-state 0)) ($t (new-state 0)) ($u (change-state! $s (a $s))) ($v (change-state! $t (b $t)))) (== $s $t))
