@@ -1633,7 +1633,9 @@ static void test_epoch_identity_and_publication(Arena *ordinary_arena) {
     Atom *nan_right = hashcons_get(
         &hashcons, atom_float(&shared_arena, NAN));
     Atom *shared_nan = atom_expr2(&shared_arena, head, nan_left);
-    Atom *distinct_nan = atom_expr2(&shared_arena, head, nan_right);
+    Atom *rebuilt_nan = NULL;
+    /* A second term over the same NaN, outside the interning arena. */
+    rebuilt_nan = atom_expr2(ordinary_arena, head, nan_right);
     Atom *local_expression = atom_expr2(
         ordinary_arena, atom_symbol(ordinary_arena, "LocalPublication"),
         atom_int(ordinary_arena, 31));
@@ -1783,16 +1785,24 @@ static void test_epoch_identity_and_publication(Arena *ordinary_arena) {
             shared_nan, 11u, 0u, shared_nan,
             &values, &shared_arena, 13u) &&
         bindings_builder_save(&values) == values_mark;
-    bool distinct_nan_fails = values_ready && distinct_nan &&
-        nan_left != nan_right &&
-        !match_atoms_epoch_view_builder(
-            shared_nan, 11u, 0u, distinct_nan,
-            &values, &shared_arena, 13u) &&
+    /* Floats intern by their bits, so the two NaN literals are one atom.
+     * Whether a NaN equals itself is its lane's rule, and with no lane here
+     * a term is itself; the epoch view settles a second term over the same
+     * NaN exactly as equality does. */
+    bool nan_interned = nan_left && nan_left == nan_right;
+    bool rebuilt_nan_agrees = values_ready && rebuilt_nan &&
+        rebuilt_nan != shared_nan &&
+        match_atoms_epoch_view_builder(
+            shared_nan, 11u, 0u, rebuilt_nan,
+            &values, &shared_arena, 13u) ==
+            atom_eq(shared_nan, rebuilt_nan) &&
         bindings_builder_save(&values) == values_mark;
     CHECK(shared_nan_matches,
           "global identity settles a shared variable-free NaN term");
-    CHECK(distinct_nan_fails,
-          "epoch-view matching does not equate distinct NaN terms");
+    CHECK(nan_interned,
+          "floats intern by their bits: two NaN literals are one atom");
+    CHECK(rebuilt_nan_agrees,
+          "epoch-view matching settles NaN terms as equality does");
     if (values_ready)
         bindings_builder_free(&values);
 

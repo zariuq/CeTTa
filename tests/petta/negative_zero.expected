@@ -1,0 +1,10 @@
+(literals 0.0 -0.0 -0.0)
+(equality true true true)
+(heads zero negative-zero)
+(space (found))
+(arithmetic false false true)
+true
+true
+true
+true
+true

@@ -60,13 +60,17 @@ typedef enum {
     OEM_S_TAIL,      /* call `relation` in place of this equation          */
     OEM_S_PRIM,      /* `pattern` unifies with op(args)                    */
     OEM_S_BIND,      /* `pattern` unifies with `value`                     */
-    OEM_S_TEST,      /* op(args) false: continue at `target`               */
+    OEM_S_TEST,      /* op(args) false: continue at `target`; with no `op`,
+                        its one argument's value not the truth value      */
     OEM_S_MATCH,     /* the following steps run once per row of the space
                         `value` that unifies with `pattern`                 */
     OEM_S_HOST,      /* the host evaluates `value` against `pattern`, under
                         the source plan `relation` names; the following
                         steps run once per answer.  A type-pure operation
                         `op` runs in the region when it can decide there */
+    OEM_S_CASE,      /* `value` unifies with `pattern`; when it does not,
+                        the attempt is undone and the body continues at
+                        `target`                                          */
 } OemStepKind;
 
 /* What a HOST step's `target` says of its goal: the host evaluates it
@@ -277,6 +281,10 @@ typedef enum {
                           `exposed`; with `host_fast` OEM_HOST_SORT, PeTTa's
                           `sort-atom` or `msort` (`op`) of its argument's
                           value, which the region sorts when it is ground */
+    OEM_N_CASE,        /* `(case key arms)`: the key's node is `value`; the
+                          children are pairs of a pattern's node, a value
+                          node whose exposed term is the pattern, and its
+                          branch; the output is the hole `exposed` */
 } OemNodeKind;
 
 typedef struct {
@@ -639,6 +647,9 @@ static bool oem_build_tail(OemCompile *compile, Atom *expr,
 static bool oem_build_match(OemCompile *compile, Atom *expr,
                             const PettaPlanNode *plan, uint32_t depth,
                             bool tail, uint32_t *out);
+static bool oem_build_case(OemCompile *compile, Atom *expr,
+                           const PettaPlanNode *plan, uint32_t depth,
+                           uint32_t *out);
 
 /* The nodes of `expr`'s elements from `from` on, under their plans. */
 static bool oem_build_elements(OemCompile *compile, Atom *expr,
@@ -1039,22 +1050,36 @@ static bool oem_build_tail(OemCompile *compile, Atom *expr,
             return oem_reject(compile, "if arity");
         Atom *test = expr->expr.elems[1];
         const PettaPlanNode *test_plan = petta_plan_child(plan, 1u);
-        /* A condition that observes whether a match has a row is the host's
-         * whole: its search answers the observation by membership, which
-         * splitting the equality from its collection would lose. */
-        if (!test || test->kind != ATOM_EXPR || test->expr.len != 3u ||
-            test->expr.elems[0]->kind != ATOM_SYMBOL ||
-            !oem_is_test(test->expr.elems[0]->sym_id) || !test_plan ||
-            test_plan->role != PETTA_PLAN_STATIC_CALL ||
-            petta_semantics_match_existence_observer_shape(
-                test, compile->host ? compile->host->reify_head
-                                    : SYMBOL_ID_NONE))
-            return oem_build_host(compile, expr, plan, depth,
-                                  "condition outside the fragment", out);
         node.kind = OEM_N_IF;
-        node.op = test->expr.elems[0]->sym_id;
-        return oem_build_elements(compile, test, test_plan, depth, 1u,
-                                  &node.first, &node.count) &&
+        /* An arithmetic comparison is a test of its arguments' values.  Any
+         * other condition is a value: PeTTa runs it, and each of its
+         * answers takes the first branch when it is the truth value and the
+         * second otherwise.  A condition that observes whether a match has
+         * a row stays one host goal, whose search answers the observation
+         * by membership, which splitting the equality from its collection
+         * would lose. */
+        bool comparison = test && test->kind == ATOM_EXPR &&
+            test->expr.len == 3u &&
+            test->expr.elems[0]->kind == ATOM_SYMBOL &&
+            oem_is_test(test->expr.elems[0]->sym_id) && test_plan &&
+            test_plan->role == PETTA_PLAN_STATIC_CALL &&
+            !petta_semantics_match_existence_observer_shape(
+                test, compile->host ? compile->host->reify_head
+                                    : SYMBOL_ID_NONE);
+        bool ok = true;
+        if (comparison) {
+            node.op = test->expr.elems[0]->sym_id;
+            ok = oem_build_elements(compile, test, test_plan, depth, 1u,
+                                    &node.first, &node.count);
+        } else {
+            uint32_t condition = 0u;
+            node.op = SYMBOL_ID_NONE;
+            node.count = 1u;
+            ok = oem_build_value(compile, test, test_plan, depth + 1u,
+                                 &condition) &&
+                oem_node_children(compile, &condition, 1u, &node.first);
+        }
+        return ok &&
             oem_build_tail(compile, expr->expr.elems[2],
                            petta_plan_child(plan, 2u), depth + 1u,
                            &node.then_node) &&
@@ -1135,6 +1160,8 @@ static bool oem_build_tail(OemCompile *compile, Atom *expr,
                               "control outside the fragment", out);
     if (head == g_builtin_syms.match && expr->expr.len == 4u)
         return oem_build_match(compile, expr, plan, depth, true, out);
+    if (head == g_builtin_syms.case_text && expr->expr.len == 3u)
+        return oem_build_case(compile, expr, plan, depth, out);
     if (head == g_builtin_syms.empty_form && expr->expr.len == 1u) {
         node.kind = OEM_N_FAIL;
         return oem_hole(compile, &node.exposed) &&
@@ -1145,6 +1172,58 @@ static bool oem_build_tail(OemCompile *compile, Atom *expr,
     if (compile->nodes[*out].kind == OEM_N_CALL)
         compile->nodes[*out].tail = true;
     return true;
+}
+
+/* `(case key ((pattern branch) ...))`: PeTTa's first-match choice.  Each
+ * answer of the key meets the patterns in order, by unification; the first
+ * that unifies commits to its branch, whose answers are the case's, and a
+ * key no pattern admits fails.  A pattern is data, as a head is: one with a
+ * relational occurrence or a list pattern, which PeTTa evaluates or
+ * converts first, stays with the host, as does the `Empty` default, which
+ * observes whether the key has an answer at all. */
+static bool oem_build_case(OemCompile *compile, Atom *expr,
+                           const PettaPlanNode *plan, uint32_t depth,
+                           uint32_t *out) {
+    Atom *arms = expr->expr.elems[2];
+    const PettaPlanNode *arms_plan = petta_plan_child(plan, 2u);
+    bool data = arms->kind == ATOM_EXPR && arms_plan &&
+        arms_plan->child_count == arms->expr.len;
+    for (CettaExprIndex index = 0u; data && index < arms->expr.len; index++) {
+        Atom *arm = arms->expr.elems[index];
+        const PettaPlanNode *arm_plan = petta_plan_child(arms_plan, index);
+        data = arm->kind == ATOM_EXPR && arm->expr.len == 2u && arm_plan &&
+            arm_plan->child_count == 2u &&
+            !atom_is_symbol_id(arm->expr.elems[0], g_builtin_syms.empty) &&
+            !petta_semantics_contains_cons_constraint(arm->expr.elems[0]) &&
+            oem_head_data(compile, arm->expr.elems[0], 0u);
+    }
+    if (!data)
+        return oem_build_host(compile, expr, plan, depth,
+                              "case outside the fragment", out);
+    OemNode node = {.kind = OEM_N_CASE, .count = 2u * arms->expr.len};
+    uint32_t *children = malloc(sizeof(*children) *
+                                (node.count ? node.count : 1u));
+    if (!children)
+        return oem_reject(compile, "out of memory");
+    bool ok = oem_build_value(compile, expr->expr.elems[1],
+                              petta_plan_child(plan, 1u), depth + 1u,
+                              &node.value);
+    for (CettaExprIndex index = 0u; ok && index < arms->expr.len; index++) {
+        Atom *arm = arms->expr.elems[index];
+        OemNode pattern = {.kind = OEM_N_VALUE};
+        ok = oem_lower_pattern(compile, arm->expr.elems[0], NULL,
+                               depth + 1u, &pattern.exposed) &&
+            oem_node(compile, pattern, &children[2u * index]) &&
+            oem_build_tail(compile, arm->expr.elems[1],
+                           petta_plan_child(petta_plan_child(arms_plan,
+                                                             index), 1u),
+                           depth + 1u, &children[2u * index + 1u]);
+    }
+    ok = ok && oem_node_children(compile, children, node.count,
+                                 &node.first) &&
+        oem_hole(compile, &node.exposed) && oem_node(compile, node, out);
+    free(children);
+    return ok;
 }
 
 /* One pattern of a match and what follows it: the rest of a conjunction's
@@ -1329,6 +1408,29 @@ static bool oem_emit_tail(OemCompile *compile, uint32_t index) {
             oem_emit_tail(compile, node.body);
     case OEM_N_FAIL:
         return oem_emit(compile, (OemStep){.kind = OEM_S_FAIL}, NULL);
+    case OEM_N_CASE: {
+        /* Each arm tries its pattern, and its branch follows; a pattern
+         * that does not unify continues at the next arm, and after the
+         * last the case fails. */
+        if (!oem_emit_goals(compile, node.value))
+            return false;
+        uint32_t key = compile->nodes[node.value].exposed;
+        for (uint32_t arm = 0u; arm < node.count; arm += 2u) {
+            uint32_t pattern = compile->node_children[node.first + arm];
+            uint32_t branch = compile->node_children[node.first + arm + 1u];
+            uint32_t attempt = 0u;
+            if (!oem_emit(compile, (OemStep){
+                              .kind = OEM_S_CASE,
+                              .pattern = compile->nodes[pattern].exposed,
+                              .value = key,
+                          }, &attempt) ||
+                !oem_emit_branch(compile, &node, branch))
+                return false;
+            compile->program->steps[attempt].target =
+                compile->program->step_len;
+        }
+        return oem_emit(compile, (OemStep){.kind = OEM_S_FAIL}, NULL);
+    }
     case OEM_N_CALL:
         if (node.tail)
             return oem_emit_goals(compile, index);
@@ -1560,7 +1662,7 @@ static bool oem_mark_first_stores(OemCompile *compile, OemEquation *equation) {
                         seen, celled);
             }
             if (step->kind == OEM_S_BIND || step->kind == OEM_S_MATCH ||
-                step->kind == OEM_S_HOST)
+                step->kind == OEM_S_HOST || step->kind == OEM_S_CASE)
                 oem_template_reads(program, step->value, seen, celled);
             if (step->kind != OEM_S_RET && step->kind != OEM_S_FAIL &&
                 step->kind != OEM_S_TEST && result == UINT32_MAX)
@@ -1575,10 +1677,10 @@ static bool oem_mark_first_stores(OemCompile *compile, OemEquation *equation) {
             if (step->kind == OEM_S_RET || step->kind == OEM_S_FAIL ||
                 step->kind == OEM_S_TAIL)
                 break;
-            if (step->kind == OEM_S_TEST) {
+            if (step->kind == OEM_S_TEST || step->kind == OEM_S_CASE) {
                 /* Both branches continue from what this path has seen; the
-                 * one taken when the test fails starts at `target` and
-                 * keeps this path's record. */
+                 * one taken when the test or the pattern fails starts at
+                 * `target` and keeps this path's record. */
                 starts[pending] = step->target;
                 memcpy(&seen_stack[(size_t)(pending + 1u) * slots], seen,
                        slots);
@@ -1932,7 +2034,7 @@ struct CettaOpenEquationCursor {
     bool scratch_ready;
     /* The variable naming cell i is the same immutable atom every time the
      * cell index is reused, so it lives for the cursor, outside the region
-     * that backtracking resets. */
+     * that backtracking resets; so does `admitted`. */
     Arena names;
     Atom **cell_names;
     uint32_t cell_name_len, cell_name_cap;
@@ -2006,7 +2108,8 @@ struct CettaOpenEquationCursor {
     bool answer_folded;
     /* The host's result of a ground add-atom, kept once for the cursor:
      * every later equal result shares it, so a binder it fills keeps no
-     * region atom alive. */
+     * region atom alive.  An answer or a host goal that holds it holds a
+     * copy, since the cursor may close before the answer is gone. */
     Atom *admitted;
     /* Named spaces' schemas, known while `schema_epoch` is
      * `authority_epoch + 1`. */
@@ -2396,13 +2499,14 @@ static bool oem_reserve_zeroed(void **items, uint32_t *cap, uint32_t needed,
     return true;
 }
 
-/* Whether the cursor's store holds `atom`: either generation of the
- * region.  What it holds is copied out of the cursor, which frees both
- * generations when it closes. */
-static inline bool oem_region_owns(const CettaOpenEquationCursor *cursor,
+/* Whether the cursor's own storage holds `atom`: either generation of the
+ * region, or what lives as long as the cursor (`names`).  What it holds is
+ * copied out of the cursor, which frees all of it when it closes. */
+static inline bool oem_cursor_owns(const CettaOpenEquationCursor *cursor,
                                    const Atom *atom) {
     return atom->arena_id == cursor->region.identity ||
-        (cursor->old_ready && atom->arena_id == cursor->old.identity);
+        (cursor->old_ready && atom->arena_id == cursor->old.identity) ||
+        atom->arena_id == cursor->names.identity;
 }
 
 /* The answer's variable for the unbound cell `index`: the caller's own
@@ -2447,21 +2551,21 @@ static void oem_forget_answer_vars(CettaOpenEquationCursor *cursor) {
 static Atom oem_exported_mark;
 
 /* A value with every bound cell replaced by its value.  For an answer
- * (`operand` false) it is built in the answer arena: region structure is
- * copied, atoms owned elsewhere are shared, and each unbound cell becomes
- * the answer's variable for it.  With `ground`, storage that outlives the
- * host's answer arena, a ground expression that has proven long-lived, by
- * surviving a collection into the old generation or by being exported a
- * second time, none of whose children is the answer arena's, is copied there
- * instead, once: the expression keeps its copy in `name_key`, as a
- * collection's forwarding does, so the next export shares it, and so does
- * the region's next collection.  An expression exported the first time is
- * copied into the answer arena, which the host reclaims after the goal, and
- * marked; the stable storage the host does not reclaim while the cursor
- * lives.  For a grounded operation's operand (`operand` true) it
- * is built in the region, sharing whatever holds no cell, and an unbound
- * cell stays the cell's own variable: the operation sees a variable, as it
- * would in equation search.  Iterative, so deep lists cost no C stack. */
+ * (`operand` false) it is built in the answer arena: the cursor's own atoms
+ * are copied, atoms owned elsewhere are shared, and each unbound cell
+ * becomes the answer's variable for it.  With `ground`, storage that
+ * outlives the host's answer arena, a ground expression that has proven
+ * long-lived, by surviving a collection into the old generation or by being
+ * exported a second time, none of whose children is the answer arena's, is
+ * copied there instead, once: the expression keeps its copy in `name_key`,
+ * as a collection's forwarding does, so the next export shares it, and so
+ * does the region's next collection.  An expression exported the first time
+ * is copied into the answer arena, which the host reclaims after the goal,
+ * and marked; the stable storage the host does not reclaim while the cursor
+ * lives.  For a grounded operation's operand (`operand` true) it is built in
+ * the region, sharing whatever holds no cell, and an unbound cell stays the
+ * cell's own variable: the operation sees a variable, as it would in
+ * equation search.  Iterative, so deep lists cost no C stack. */
 static inline __attribute__((always_inline)) Atom *oem_resolve_in(
     CettaOpenEquationCursor *cursor, Atom *root, bool operand, Arena *arena,
     Arena *ground) {
@@ -2476,7 +2580,7 @@ static inline __attribute__((always_inline)) Atom *oem_resolve_in(
         Atom *result = NULL;
         if (oem_is_cell(cursor, atom, &index)) {
             result = operand ? atom : oem_answer_cell(cursor, index);
-        } else if ((operand || !oem_region_owns(cursor, atom)) &&
+        } else if ((operand || !oem_cursor_owns(cursor, atom)) &&
                    (atom->kind != ATOM_EXPR || !atom_has_vars(atom))) {
             result = atom;
         } else if (ground && atom->kind == ATOM_EXPR && atom->name_key &&
@@ -3374,6 +3478,18 @@ static OemRun oem_run_body(CettaOpenEquationCursor *cursor,
         }
         case OEM_S_PRIM:
         case OEM_S_TEST: {
+            if (step->kind == OEM_S_TEST && step->op == SYMBOL_ID_NONE) {
+                Atom *condition = oem_instantiate(
+                    cursor, program, locals,
+                    program->step_args[step->first_arg]);
+                if (!condition)
+                    return OEM_RUN_HANDOFF;
+                bool truth = false;
+                pc = petta_semantics_truth_value(
+                         oem_deref(cursor, condition), &truth) && truth
+                    ? pc + 1u : step->target;
+                continue;
+            }
             int64_t a = 0;
             int64_t b = 0;
             if (step->arg_count != 2u)
@@ -3447,6 +3563,24 @@ static OemRun oem_run_body(CettaOpenEquationCursor *cursor,
             }
             return oem_host_step(cursor, program, pc, locals, local_count,
                                  cont, depth, step);
+        case OEM_S_CASE: {
+            /* A trial frame makes each binding of the attempt undoable; it
+             * lives for this step alone. */
+            Atom *key = oem_instantiate(cursor, program, locals, step->value);
+            if (!key ||
+                !oem_push_frame(cursor, program, OEM_RESUME_FRAME, NULL,
+                                NULL, depth))
+                return OEM_RUN_HANDOFF;
+            OemUnify unified = oem_unify_template(cursor, program, locals,
+                                                  step->pattern, key, 0u);
+            if (unified == OEM_UNIFY_FAIL)
+                oem_restore(cursor, &cursor->frames[cursor->frame_len - 1u]);
+            oem_pop_frame(cursor);
+            if (unified == OEM_UNIFY_ERROR)
+                return OEM_RUN_HANDOFF;
+            pc = unified == OEM_UNIFY_OK ? pc + 1u : step->target;
+            continue;
+        }
         case OEM_S_BIND: {
             Atom *value = oem_instantiate(cursor, program, locals, step->value);
             if (!value)

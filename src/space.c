@@ -8442,8 +8442,11 @@ static bool prepared_register_head_program(
     SymbolId head, CettaExprLen arity,
     CettaGsltRegisterResultKind *kind_out,
     CettaGsltRegisterInstruction *instruction_out) {
+    /* A register instruction realizes an operation the current dialect
+     * defines; one it leaves undefined is data. */
 #define PREPARED_REGISTER_HEAD(field, expected_arity, result_kind, instruction) \
-    if (head == g_builtin_syms.field && arity == (expected_arity)) { \
+    if (head == g_builtin_syms.field && arity == (expected_arity) && \
+        (!grounded_op_is_cetta_only(head) || is_grounded_op(head))) { \
         if (kind_out) \
             *kind_out = (result_kind); \
         if (instruction_out) \

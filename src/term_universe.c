@@ -1736,8 +1736,7 @@ static uint64_t term_universe_atom_slot_hash(Atom *atom) {
             break;
         case GV_FLOAT: {
             uint64_t bits = 0;
-            if (atom->ground.fval != 0.0)
-                memcpy(&bits, &atom->ground.fval, sizeof(bits));
+            memcpy(&bits, &atom->ground.fval, sizeof(bits));
             h = term_universe_index_mix(h, bits);
             break;
         }
@@ -1830,6 +1829,7 @@ static uint32_t term_universe_hash_float_value(double value) {
     h = term_universe_hash_mix(h, (uint32_t)ATOM_GROUNDED);
     h = term_universe_hash_mix(h, (uint32_t)GV_FLOAT);
     h = term_universe_hash_mix(h, (uint32_t)(conv.u & 0xffffffffu));
+    h = term_universe_hash_mix(h, (uint32_t)(conv.u >> 32));
     return h;
 }
 
@@ -3931,7 +3931,11 @@ static bool term_universe_entry_eq_atom(const TermUniverse *universe, AtomId id,
         case GV_INT:
             return src->ground.ival == term_universe_load_i64(payload);
         case GV_FLOAT:
-            return src->ground.fval == term_universe_load_double(payload);
+        {
+            /* A record is one term: a float by its bits. */
+            double stored = term_universe_load_double(payload);
+            return memcmp(&src->ground.fval, &stored, sizeof(stored)) == 0;
+        }
         case GV_BOOL:
             return src->ground.bval == (term_universe_aux_data(hdr) != 0);
         case GV_STRING: {

@@ -35,9 +35,11 @@ FATAL = re.compile(
     r"Segmentation fault|Out of memory|Killed(?:\n|$))"
 )
 VARIABLE = re.compile(r"\$[A-Za-z_][A-Za-z0-9_]*")
+# The setup directive's value: PeTTa leaves translatePredicate's value
+# unbound, printed $_N by SWI-PeTTa and $VN by CeTTa.
 OCCURS_SETUP = re.compile(
     r"^(?:\(translatePredicate \(set_prolog_flag occurs_check (?:true|True)\)\)|"
-    r"\$_[0-9]+)$"
+    r"\$_[0-9]+|\$V[0-9]+)$"
 )
 GENERATED_PARAMETERS = {
     "roman_chain_backward": ("25", "8"),

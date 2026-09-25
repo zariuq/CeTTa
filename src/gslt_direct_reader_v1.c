@@ -2041,8 +2041,28 @@ static bool gslt_direct_petta_extract_form(
                         return false;
                     break;
                 }
+                if (codepoint == plan->splitter_string_escape) {
+                    /* The escape and the scalar after it stay inside the
+                     * string; the form reader decodes the pair. */
+                    if (!gslt_direct_petta_append_current(
+                            cursor, form, width))
+                        return false;
+                    if (cursor->pos == cursor->input_len ||
+                        !gslt_direct_petta_peek(
+                            cursor, &codepoint, &width,
+                            error_buf, error_buf_size)) {
+                        gslt_direct_reader_v1_error(
+                            error_buf, error_buf_size,
+                            "compiled PeTTa splitter found an unclosed quote");
+                        return false;
+                    }
+                    if (!gslt_direct_petta_append_current(
+                            cursor, form, width))
+                        return false;
+                    continue;
+                }
                 if (!gslt_direct_reader_v1_class_contains(
-                        plan->splitter_nonquote, codepoint) ||
+                        plan->splitter_string_plain, codepoint) ||
                     !gslt_direct_petta_append_current(
                         cursor, form, width))
                     return false;
@@ -2523,7 +2543,7 @@ bool gslt_direct_petta_reader_v1_plan_validate(
         return false;
     }
     classes[0] = plan->splitter_blank;
-    classes[1] = plan->splitter_nonquote;
+    classes[1] = plan->splitter_string_plain;
     classes[2] = plan->splitter_comment_body;
     classes[3] = plan->splitter_ordinary;
     classes[4] = plan->form_blank;
@@ -2548,14 +2568,18 @@ bool gslt_direct_petta_reader_v1_plan_validate(
         !gslt_direct_reader_v1_scalar_valid(plan->escape_marker) ||
         !gslt_direct_reader_v1_scalar_valid(plan->variable_marker) ||
         !gslt_direct_reader_v1_scalar_valid(plan->runnable_marker) ||
+        !gslt_direct_reader_v1_scalar_valid(plan->splitter_string_escape) ||
         plan->expression_open == plan->expression_close ||
         plan->string_quote == plan->escape_marker ||
+        plan->splitter_string_escape != plan->escape_marker ||
         plan->string_escape_map_len == 0u ||
         !gslt_direct_reader_v1_map_valid(
             plan->string_escape_map, plan->string_escape_map_len) ||
         !plan->string_escape_identity_fallback ||
         gslt_direct_reader_v1_class_contains(
-            plan->splitter_nonquote, plan->string_quote) ||
+            plan->splitter_string_plain, plan->string_quote) ||
+        gslt_direct_reader_v1_class_contains(
+            plan->splitter_string_plain, plan->splitter_string_escape) ||
         gslt_direct_reader_v1_class_contains(
             plan->splitter_comment_body, plan->comment_line_end) ||
         gslt_direct_reader_v1_class_contains(

@@ -258,15 +258,13 @@ int main(void) {
     free(ids);
     ids = NULL;
 
+    /* ("a\qb\") leaves its string open: the splitter keeps an escaped
+     * quote inside the string, as PeTTa's filereader does. */
     len = parse(reader, &universe, quoted_token_document,
                 sizeof(quoted_token_document), &ids, &receipt,
                 error, sizeof(error));
-    expect(&counts,
-           len == 1 && ids && tu_arity(&universe, ids[0]) == 1u &&
-               strcmp(tu_string_cstr(
-                          &universe, tu_child(&universe, ids[0], 0u)),
-                      "a\\qb\\") == 0,
-           "PeTTa quoted-token fallback retains internal backslashes");
+    expect(&counts, len < 0 && !ids,
+           "PeTTa splitter keeps an escaped quote inside its string");
     free(ids);
     ids = NULL;
 

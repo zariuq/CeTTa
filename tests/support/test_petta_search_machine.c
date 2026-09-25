@@ -248,9 +248,11 @@ static void test_plain_scalar_truth_dispatch(Arena *arena) {
     assert(grounded_plain_scalar_from_atom(two, &compact[0]));
     assert(grounded_plain_scalar_from_atom(
         two_float, &compact[1]));
+    /* The he profile compares numbers by exact value: 2 equals 2.0 under
+     * == as under numeric-eq. */
     assert(grounded_try_plain_scalar_operation(
         structural_equal, compact, 2u, &compact_result));
-    assert(!compact_result.as.boolean);
+    assert(compact_result.as.boolean);
     assert(grounded_try_plain_scalar_operation(
         numeric_equal, compact, 2u, &compact_result));
     assert(compact_result.as.boolean);

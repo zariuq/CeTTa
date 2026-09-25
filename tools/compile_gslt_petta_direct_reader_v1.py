@@ -185,7 +185,7 @@ def projection_policy(
 class PeTTaDirectPlan:
     presentation_name: str
     splitter_blank: str
-    splitter_nonquote: str
+    splitter_string_plain: str
     splitter_comment_body: str
     splitter_ordinary: str
     form_blank: str
@@ -200,6 +200,7 @@ class PeTTaDirectPlan:
     expression_close: int
     string_quote: int
     escape_marker: int
+    splitter_string_escape: int
     variable_marker: int
     runnable_marker: int
     escape_map: tuple[tuple[int, int], ...]
@@ -228,7 +229,7 @@ def derive_splitter(
     nodes = node_definitions(defs)
     _, document_body = node_body(nodes, "document")
     _, balanced_body = node_body(nodes, "balanced")
-    _, quoted_body = node_body(nodes, "naive-quoted")
+    _, quoted_body = node_body(nodes, "escaped-quoted")
 
     document = sir_form(document_body, "right", 2, "PeTTa document")
     skip_name = sir_reference(document[1], "PeTTa document skip")
@@ -319,17 +320,27 @@ def derive_splitter(
     if len(quoted_names) != 1 or balanced_name not in item_refs:
         raise CompileError("PeTTa balanced recursion/quoted branches are malformed")
 
-    quoted = sir_form(quoted_body, "seq", 2, "PeTTa naive quote")
-    string_quote = sir_character(quoted[1], "PeTTa naive quote")
-    quoted_tail = sir_form(quoted[2], "seq", 2, "PeTTa naive quote")
-    quoted_star = sir_form(quoted_tail[1], "star", 1, "PeTTa naive quote")
-    nonquote = sir_class_name(quoted_star[1], "PeTTa nonquote")
-    if sir_character(quoted_tail[2], "PeTTa naive quote") != string_quote:
-        raise CompileError("PeTTa naive quote delimiters differ")
+    quoted = sir_form(quoted_body, "seq", 2, "PeTTa splitter quote")
+    string_quote = sir_character(quoted[1], "PeTTa splitter quote")
+    quoted_tail = sir_form(quoted[2], "seq", 2, "PeTTa splitter quote")
+    quoted_star = sir_form(quoted_tail[1], "star", 1, "PeTTa splitter quote")
+    if sir_character(quoted_tail[2], "PeTTa splitter quote") != string_quote:
+        raise CompileError("PeTTa splitter quote delimiters differ")
+    quoted_units = flatten_sir_binary(quoted_star[1], "alt")
+    quoted_classes = [x for x in quoted_units if sir_tagged(x, "class")]
+    quoted_escapes = [x for x in quoted_units if sir_tagged(x, "seq")]
+    if len(quoted_units) != 2 or len(quoted_classes) != 1 or len(quoted_escapes) != 1:
+        raise CompileError("PeTTa splitter string units are malformed")
+    string_plain = sir_class_name(quoted_classes[0], "PeTTa splitter string")
+    escape_pair = sir_form(quoted_escapes[0], "seq", 2, "PeTTa splitter escape")
+    string_escape = sir_character(escape_pair[1], "PeTTa splitter escape marker")
+    if not isinstance(escape_pair[2], Symbol) or escape_pair[2].text != "sir-any":
+        raise CompileError("PeTTa splitter escape must accept exactly one arbitrary scalar")
 
     return {
         "blank": blank,
-        "nonquote": nonquote,
+        "string_plain": string_plain,
+        "string_escape": string_escape,
         "comment_body": line_data[1],
         "ordinary": item_classes[0],
         "comment_marker": line_data[0],
@@ -492,7 +503,7 @@ def derive_plan(
         if split[key] != parsed[key]:
             raise CompileError(f"PeTTa splitter/form {key} values disagree")
     used = {
-        str(split["blank"]), str(split["nonquote"]),
+        str(split["blank"]), str(split["string_plain"]),
         str(split["comment_body"]), str(split["ordinary"]),
         str(parsed["blank"]), str(parsed["token_boundary"]),
         str(parsed["token"]), str(parsed["token_first"]),
@@ -503,9 +514,11 @@ def derive_plan(
         raise CompileError("undefined PeTTa scalar classes: " + ", ".join(missing))
     if not policy.escape_map:
         raise CompileError("PeTTa projection has no named escape map")
+    if split["string_escape"] != parsed["escape_marker"]:
+        raise CompileError("PeTTa splitter and form escape markers disagree")
     return PeTTaDirectPlan(
         f"{splitter.name}+{form_syntax.name}",
-        str(split["blank"]), str(split["nonquote"]),
+        str(split["blank"]), str(split["string_plain"]),
         str(split["comment_body"]), str(split["ordinary"]),
         str(parsed["blank"]), str(parsed["token_boundary"]),
         str(parsed["token"]), str(parsed["token_first"]),
@@ -513,6 +526,7 @@ def derive_plan(
         int(split["comment_marker"]), int(split["comment_line_end"]),
         int(split["expression_open"]), int(split["expression_close"]),
         int(split["string_quote"]), int(parsed["escape_marker"]),
+        int(split["string_escape"]),
         int(parsed["variable_marker"]), int(split["runnable_marker"]),
         policy.escape_map, policy.identity_escape, tuple(sorted(used)),
     )
@@ -605,7 +619,7 @@ def generate(
         f'    .composition_digest = "{digest}",\n'
         f'    .profile = "{profile}",\n'
         f"    .splitter_blank = &{class_ids[plan.splitter_blank]},\n"
-        f"    .splitter_nonquote = &{class_ids[plan.splitter_nonquote]},\n"
+        f"    .splitter_string_plain = &{class_ids[plan.splitter_string_plain]},\n"
         f"    .splitter_comment_body = &{class_ids[plan.splitter_comment_body]},\n"
         f"    .splitter_ordinary = &{class_ids[plan.splitter_ordinary]},\n"
         f"    .form_blank = &{class_ids[plan.form_blank]},\n"
@@ -620,6 +634,7 @@ def generate(
         f"    .expression_close = UINT32_C({plan.expression_close}),\n"
         f"    .string_quote = UINT32_C({plan.string_quote}),\n"
         f"    .escape_marker = UINT32_C({plan.escape_marker}),\n"
+        f"    .splitter_string_escape = UINT32_C({plan.splitter_string_escape}),\n"
         f"    .variable_marker = UINT32_C({plan.variable_marker}),\n"
         f"    .runnable_marker = UINT32_C({plan.runnable_marker}),\n"
         f"    .string_escape_map = {escape_name},\n"

@@ -16,4 +16,4 @@
 3
 3
 2
-(Error (/ 10 0) DivisionByZero)
+(Error (evaluation_error zero_divisor) (context (/ / 2) $V0))

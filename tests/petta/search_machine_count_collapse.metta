@@ -64,11 +64,11 @@
      (match &self (counted-drop $value)
             (drop-counted-template $value))))
 
-; Control fallback is provenance, not payload shape.  The invalid typed branch
-; is suppressed when the same search has an ordinary answer; both ordinary
-; collapse and its direct count must observe the same single occurrence.
-!(collapse (counted-control-choice))
-!(length (collapse (counted-control-choice)))
+; An error raised by one alternative leaves the collection, as an exception
+; leaves findall, whether the collection is kept or only counted; catch
+; returns it.
+!(catch (collapse (counted-control-choice)))
+!(catch (length (collapse (counted-control-choice))))
 
 ; A ground conjunction leg contributes its exact occurrence multiplicity to
 ; the surrounding count.  Alpha's duplicated guard and the three tail rows

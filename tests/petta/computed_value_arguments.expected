@@ -1,0 +1,22 @@
+is ((k (nothing))), should ((k (nothing))). ✅ 
+is ((k (nothing))), should ((k (nothing))). ✅ 
+is ((k (nothing))), should ((k (nothing))). ✅ 
+is ((k (loud))), should ((k (loud))). ✅ 
+is true, should true. ✅ 
+is false, should false. ✅ 
+is false, should false. ✅ 
+is true, should true. ✅ 
+is true, should true. ✅ 
+is 2, should 2. ✅ 
+is 3, should 3. ✅ 
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true

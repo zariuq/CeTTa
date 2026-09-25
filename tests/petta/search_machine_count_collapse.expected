@@ -10,8 +10,8 @@
 2
 2
 0
-(7)
-1
+(Error (type_error evaluable (/ not-a-number 0)) (context (: system (/ is 2)) $V0))
+(Error (type_error evaluable (/ not-a-number 0)) (context (: system (/ is 2)) $V0))
 6
 0
 (pair 3 3)

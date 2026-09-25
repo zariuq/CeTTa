@@ -1922,10 +1922,33 @@ fail:
     return NULL;
 }
 
-static bool chain_is_scheme_var(const ChainContext *ctx, VarId id) {
-    for (uint32_t i = 0; i < ctx->scheme_var_count; i++)
-        if (ctx->scheme_vars[i] == id) return true;
+static bool chain_scheme_var_rank(const ChainContext *ctx, VarId id,
+                                  uint32_t *rank_out) {
+    for (uint32_t i = 0; i < ctx->scheme_var_count; i++) {
+        if (ctx->scheme_vars[i] == id) {
+            *rank_out = i;
+            return true;
+        }
+    }
     return false;
+}
+
+static bool chain_is_scheme_var(const ChainContext *ctx, VarId id) {
+    uint32_t rank = 0u;
+    return chain_scheme_var_rank(ctx, id, &rank);
+}
+
+/* An elaboration binding and its variable's place among the scheme
+ * variables, in the order the search made them. */
+typedef struct {
+    uint32_t rank;
+    Binding binding;
+} ChainElaborationEntry;
+
+static int chain_elaboration_entry_cmp(const void *left, const void *right) {
+    uint32_t a = ((const ChainElaborationEntry *)left)->rank;
+    uint32_t b = ((const ChainElaborationEntry *)right)->rank;
+    return (a > b) - (a < b);
 }
 
 static Atom *answer_substitution_v2(ChainContext *ctx, const Bindings *env) {
@@ -1945,6 +1968,8 @@ static Atom *answer_substitution_v2(ChainContext *ctx, const Bindings *env) {
             ctx->arena, he_sym(ctx->arena, "answer-binding-v1"), var, value);
     }
 
+    /* The elaboration bindings in the order the search made their
+     * variables, which the binding store's own layout does not change. */
     uint32_t elaboration_count = 0;
     BindingsIterator iterator = {.bindings = env};
     Binding logical_binding;
@@ -1953,12 +1978,23 @@ static Atom *answer_substitution_v2(ChainContext *ctx, const Bindings *env) {
             elaboration_count++;
     Atom **elaboration = arena_alloc(
         ctx->arena, sizeof(Atom *) * (elaboration_count + 1u));
+    ChainElaborationEntry *entries = arena_alloc(
+        ctx->arena, sizeof(*entries) * (elaboration_count + 1u));
     elaboration[0] = he_sym(ctx->arena, "elaboration-substitution-v1");
-    uint32_t out = 1;
+    uint32_t listed = 0u;
     iterator = (BindingsIterator){.bindings = env};
-    while (bindings_iterator_next(&iterator, &logical_binding)) {
-        const Binding *entry = &logical_binding;
-        if (!chain_is_scheme_var(ctx, entry->var_id)) continue;
+    while (listed < elaboration_count &&
+           bindings_iterator_next(&iterator, &logical_binding)) {
+        uint32_t rank = 0u;
+        if (chain_scheme_var_rank(ctx, logical_binding.var_id, &rank))
+            entries[listed++] = (ChainElaborationEntry){
+                .rank = rank, .binding = logical_binding};
+    }
+    qsort(entries, listed, sizeof(*entries), chain_elaboration_entry_cmp);
+    elaboration_count = listed;
+    uint32_t out = 1;
+    for (uint32_t index = 0u; index < listed; index++) {
+        const Binding *entry = &entries[index].binding;
         Atom *var = binding_variable_atom(ctx->arena, entry);
         Atom *value = bindings_apply_if_vars(env, ctx->arena, var);
         if (!value) {

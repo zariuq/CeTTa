@@ -27,7 +27,7 @@ case "$mode" in
     disjunction)
         condition='(and (> $n 0)
                         (or (< $n 0)
-                            (numeric-eq (+ $n 1) (+ $n 1.0))))'
+                            (== (+ $n 1) (+ $n 1.0))))'
         ;;
     *)
         printf 'unknown match/region family: %s\n' "$mode" >&2

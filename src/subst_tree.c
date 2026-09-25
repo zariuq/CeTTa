@@ -1,5 +1,6 @@
 #include "subst_tree.h"
 #include "stats.h"
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -401,6 +402,9 @@ static void snode_add_leaf(SubstNode *n, CettaIndex idx, uint32_t epoch) {
     n->nleaves++;
 }
 
+/* Set once any bigint or rational is filed under its text. */
+static _Atomic bool g_st_exact_number_keys;
+
 /* ── Insertion ─────────────────────────────────────────────────────────── */
 
 static SubstNode *snode_insert_atom(SubstNode *node, Atom *a) {
@@ -417,6 +421,9 @@ static SubstNode *snode_insert_atom(SubstNode *node, Atom *a) {
                 : (a->ground.gkind == GV_BIGINT
                        ? atom_bigint_cstr(a)
                        : atom_rational_cstr(a));
+            if (a->ground.gkind != GV_STRING)
+                atomic_store_explicit(&g_st_exact_number_keys, true,
+                                      memory_order_release);
             SymbolId string_id = symbol_intern_cstr(g_symbols, text);
             return snode_get_sym(node, string_id);
         }
@@ -470,6 +477,9 @@ static SubstNode *snode_insert_atom_id(SubstNode *node,
                 : (tu_ground_kind(universe, atom_id) == GV_BIGINT
                        ? tu_bigint_cstr(universe, atom_id)
                        : tu_rational_cstr(universe, atom_id));
+            if (tu_ground_kind(universe, atom_id) != GV_STRING)
+                atomic_store_explicit(&g_st_exact_number_keys, true,
+                                      memory_order_release);
             SymbolId string_id =
                 symbol_intern_cstr(g_symbols, text);
             return snode_get_sym(node, string_id);
@@ -819,6 +829,35 @@ static void st_follow_he_float_ints(SubstNode *node, double fval,
     }
 }
 
+/* A bigint or rational fact sits on the symbol branch of its text, so an HE
+ * float query also follows the branch of its own exact value, if one exists. */
+static void st_follow_he_float_exact_key(SubstNode *node, double fval,
+                                         FlatToken *flat, CettaIndex nflat,
+                                         CettaIndex idx, BindingsBuilder *bb,
+                                         Arena *a, Atom **atoms,
+                                         SubstMatchSet *out) {
+    if (!atomic_load_explicit(&g_st_exact_number_keys, memory_order_acquire) ||
+        (node->nsym == 0u && !node->sym_hashed))
+        return;
+    char *text = cetta_he_float_exact_key_text(fval);
+    if (!text)
+        return;
+    SymbolId key = symbol_lookup_cstr(g_symbols, text);
+    free(text);
+    if (key == SYMBOL_ID_NONE)
+        return;
+    if (node->sym_hashed) {
+        SubstNode *match = sym_ht_get(&node->sym_ht, key);
+        if (match)
+            st_flat_walk(match, flat, nflat, idx + 1, bb, a, atoms, out);
+        return;
+    }
+    for (uint32_t i = 0; i < node->nsym; i++)
+        if (node->sym[i].key == key)
+            st_flat_walk(node->sym[i].child, flat, nflat, idx + 1,
+                         bb, a, atoms, out);
+}
+
 static bool st_bind_indexed_var(BindingsBuilder *bb, Arena *a,
                                 VarId var_id, SymbolId spelling,
                                 Atom *name_key, Atom *value) {
@@ -966,9 +1005,14 @@ static void st_flat_walk(SubstNode *node, FlatToken *flat, CettaIndex nflat,
         if (tok->original &&
             tok->original->kind == ATOM_GROUNDED &&
             tok->original->ground.gkind == GV_FLOAT)
+        {
             st_follow_he_float_ints(
                 node, tok->original->ground.fval, flat, nflat, idx,
                 bb, a, atoms, out);
+            st_follow_he_float_exact_key(
+                node, tok->original->ground.fval, flat, nflat, idx,
+                bb, a, atoms, out);
+        }
         break;
     }
 }

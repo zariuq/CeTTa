@@ -11,6 +11,10 @@ queries start at budget 2 or less; the fixed programs keep their open
 queries small for the same reason.  Heads carry constructors, integers and repeated
 variables; bodies use `if` over integer comparisons, `let` and `let*` with
 structured patterns, `+ - * % min max`, `(empty)`, constructors and calls.
+A third family's bodies use `case` over calls and values, whose arms are
+data patterns, and `if` over conditions that are no comparison: `and`,
+`or` and `not` over comparisons, truth values, and calls whose answers need
+not be truth values; some of its heads have equations of two arities.
 Queries leave variables open, share them between arguments, and set
 occurs-check traps.  Each query is its own document.  The output of the
 default route must equal the output under CETTA_OPEN_EQUATIONS_REFERENCE=1
@@ -170,6 +174,100 @@ def gen_program(rng, index):
                 args.append(("k1", rng.choice(qvars)))
             else:
                 args.append(gen_pattern(rng, 2, qvars))
+        queries.append("!" + render(tuple([relation.name] + args)))
+    base = "\n".join(lines) + "\n"
+    return [base + query + "\n" for query in queries]
+
+
+TRUTHS = ["True", "False"]
+
+
+def gen_condition(rng, relations, bound, may_call):
+    """An if condition that is no comparison.  Each answer that is not the
+    truth value True takes the second branch."""
+    def compare():
+        return (rng.choice(TESTS), gen_int(rng, 1), gen_int(rng, 1))
+    roll = rng.random()
+    if roll < 0.3:
+        return (rng.choice(["and", "or"]), compare(), compare())
+    if roll < 0.4:
+        return ("not", compare())
+    if roll < 0.55 or not may_call:
+        return rng.choice(TRUTHS + ["maybe"])
+    return gen_call(rng, relations, bound)
+
+
+def gen_control_body(rng, depth, relations, bound, fresh, may_call):
+    """A tail expression over case, if with a computed condition, let and
+    calls; calls occur only where `may_call` holds."""
+    roll = rng.random()
+    if depth == 0 or roll < 0.2:
+        if rng.random() < 0.15:
+            return rng.choice(TRUTHS)
+        return gen_value(rng, 2, bound)
+    if roll < 0.28:
+        return ("empty",)
+    if roll < 0.48:
+        return ("if", gen_condition(rng, relations, bound, may_call),
+                gen_control_body(rng, depth - 1, relations, list(bound),
+                                 fresh, may_call),
+                gen_control_body(rng, depth - 1, relations, list(bound),
+                                 fresh, may_call))
+    if roll < 0.74:
+        if may_call and rng.random() < 0.6:
+            key = gen_call(rng, relations, bound)
+        else:
+            key = gen_value(rng, 2, bound)
+        arms = []
+        for _ in range(rng.randint(1, 3)):
+            local = list(bound)
+            pattern = gen_pattern(rng, 2, local + fresh)
+            vars_of(pattern, local)
+            arms.append((pattern, gen_control_body(
+                rng, depth - 1, relations, local, fresh, may_call)))
+        return ("case", key, tuple(arms))
+    if roll < 0.87 and may_call:
+        local = list(bound)
+        pattern = gen_pattern(rng, 2, local + fresh)
+        vars_of(pattern, local)
+        return ("let", pattern, gen_call(rng, relations, bound),
+                gen_control_body(rng, depth - 1, relations, local, fresh,
+                                 may_call))
+    if may_call:
+        return gen_call(rng, relations, bound)
+    return gen_value(rng, 2, bound)
+
+
+def gen_control_program(rng, index):
+    relations = []
+    for i in range(rng.randint(2, 3)):
+        arity = rng.randint(1, 3)
+        relations.append(Relation(f"c{index}x{i}", arity))
+        if rng.random() < 0.5:
+            relations.append(Relation(f"c{index}x{i}", arity + 1))
+    lines = []
+    for relation in relations:
+        for _ in range(rng.randint(1, 3)):
+            params = [gen_pattern(rng, 2, VARS)
+                      for _ in range(relation.arity - 1)]
+            head = tuple([relation.name, "$n"] + params)
+            bound = vars_of(head, [])
+            fresh = ["$p", "$q", "$r"]
+            body = ("if", (">", "$n", 0),
+                    gen_control_body(rng, 3, relations, list(bound), fresh,
+                                     True),
+                    gen_control_body(rng, 2, relations, list(bound), fresh,
+                                     False))
+            lines.append(f"(= {render(head)} {render(body)})")
+    queries = []
+    for _ in range(rng.randint(4, 6)):
+        relation = rng.choice(relations)
+        args = [rng.randint(0, 2)]
+        for _ in range(relation.arity - 1):
+            if rng.random() < 0.4:
+                args.append(rng.choice(["$A", "$B"]))
+            else:
+                args.append(gen_pattern(rng, 2, ["$A", "$B"]))
         queries.append("!" + render(tuple([relation.name] + args)))
     base = "\n".join(lines) + "\n"
     return [base + query + "\n" for query in queries]
@@ -624,6 +722,20 @@ CLASSICS = [
 !(cnt2)
 !(nocnt)
 """,
+    # A ground add-atom's result as a relation's answer, which a collection
+    # keeps after the call's cursor has closed.
+    """(= (admit-new $space $x)
+   (let $st (s $x)
+        (if (== () (collapse (once (match $space $st True))))
+            (add-atom $space $st)
+            (empty))))
+(= (fresh-items $n)
+   (collapse (let* (($v (superpose (a b c a b)))
+                    ($r (admit-new &seen ($n $v))))
+                   ($v $r))))
+!(fresh-items 1)
+!(let $_ (fresh-items 1) (fresh-items 1))
+""",
 ]
 
 
@@ -683,6 +795,9 @@ def main():
     for index in range(programs):
         documents += gen_program(rng, index)
         documents += gen_productive_program(rng, index)
+    control = random.Random(20260925)
+    for index in range(programs):
+        documents += gen_control_program(control, index)
     with tempfile.TemporaryDirectory(prefix="open-equations-") as directory:
         queries = 0
         for index, text in enumerate(documents):

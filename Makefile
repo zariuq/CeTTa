@@ -20014,7 +20014,7 @@ ifeq ($(LIB_PROLOG_ENABLED),1)
 		exit 1; \
 	fi; \
 	if ! head -n 1 "$$host_out" | grep -Eq \
-		'^[-+]?[0-9]+([.][0-9]+)?e[+]09$$'; then \
+		'^[0-9]{10}[.][0-9]+$$'; then \
 		echo "FAIL: PeTTa current-time is not an epoch float"; \
 		head -n 1 "$$host_out"; \
 		exit 1; \
@@ -22104,6 +22104,16 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 		diff <(cat tests/support/profile_bind_error_compat.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
+	for profile in he he-compat; do \
+		result=$$($(CETTA_BIN_INVOKE) --profile $$profile --lang he tests/support/profile_numeric_equality.metta 2>&1); \
+		if [ "$$result" = "$$(cat tests/support/profile_numeric_equality.$$profile.expected)" ]; then \
+			echo "PASS: $$profile == compares numbers by value"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: $$profile == compares numbers by value"; \
+			diff <(cat tests/support/profile_numeric_equality.$$profile.expected) <(echo "$$result") | head -10; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
 	if $(CETTA_BIN_INVOKE) --profile he --lang he tests/test_deep_tail_if_constructor_regression.metta >/dev/null 2>&1 && \
 	   $(CETTA_BIN_INVOKE) --profile he-compat --lang he tests/test_deep_tail_if_constructor_regression.metta >/dev/null 2>&1; then \
 		echo "PASS: assertion diagnostics handle large failure terms"; pass=$$((pass + 1)); \
@@ -23119,13 +23129,19 @@ test-petta-prepared-collection-pull: $(BIN)
 	actual=$$(mktemp runtime/petta-prepared-collection-pull.XXXXXX); \
 	oracle=$$(mktemp runtime/petta-prepared-collection-pull-oracle.XXXXXX); \
 	trap 'rm -f "$$actual" "$$oracle"' EXIT INT TERM; \
+	status=0; \
 	CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
 		tests/petta/search_machine_prepared_collection_pull.metta \
-		>"$$actual"; \
+		>"$$actual" || status=$$?; \
+	oracle_status=0; \
 	CETTA_PETTA_SEARCH_MACHINE=1 CETTA_PETTA_LET_COUNT_FUSION=0 \
 		./$(BIN) --lang petta \
 		tests/petta/search_machine_prepared_collection_pull.metta \
-		>"$$oracle"; \
+		>"$$oracle" || oracle_status=$$?; \
+	if [ "$$status" -ne 2 ] || [ "$$oracle_status" -ne 2 ]; then \
+		echo "FAIL: the stem's last fault is uncaught and must end the file with exit 2 (got $$status and $$oracle_status)"; \
+		exit 1; \
+	fi; \
 	diff -u tests/petta/search_machine_prepared_collection_pull.expected \
 		"$$actual"; \
 	diff -u "$$oracle" "$$actual"; \
@@ -23145,10 +23161,15 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@set -e; \
 	actual=$$(mktemp runtime/petta-prepared-collection-pull-stats.XXXXXX); \
 	trap 'rm -f "$$actual"' EXIT INT TERM; \
+	status=0; \
 	stats=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
 		./$(BIN) --emit-runtime-stats --lang petta \
 		tests/petta/search_machine_prepared_collection_pull.metta \
-		2>&1 >"$$actual"); \
+		2>&1 >"$$actual") || status=$$?; \
+	if [ "$$status" -ne 2 ]; then \
+		echo "FAIL: the stem's last fault is uncaught and must end the file with exit 2 (got $$status)"; \
+		exit 1; \
+	fi; \
 	diff -u tests/petta/search_machine_prepared_collection_pull.expected \
 		"$$actual"; \
 	field() { \
@@ -24478,12 +24499,21 @@ test-petta-activation-scalar-argument-segment: $(BIN)
 	@set -eu; \
 	fixture=tests/petta/search_machine_activation_scalar_argument_segment.metta; \
 	expected=$$(cat tests/petta/search_machine_activation_scalar_argument_segment.expected); \
-	optimized=$$(./$(BIN) --lang petta --quiet "$$fixture" 2>&1); \
+	status=0; \
+	optimized=$$(./$(BIN) --lang petta --quiet "$$fixture" 2>&1) || \
+		status=$$?; statuses="$$status"; status=0; \
 	program_reference=$$(CETTA_PETTA_DETERMINISTIC_REGION_PROGRAM_REFERENCE=1 \
-		./$(BIN) --lang petta --quiet "$$fixture" 2>&1); \
+		./$(BIN) --lang petta --quiet "$$fixture" 2>&1) || \
+		status=$$?; statuses="$$statuses $$status"; status=0; \
 	reference=$$(CETTA_PETTA_ACTIVATION_SCALAR_ARGUMENT_SEGMENT_REFERENCE=1 \
-		./$(BIN) --lang petta --quiet "$$fixture" 2>&1); \
-	finite=$$(./$(BIN) --fuel 1000 --lang petta --quiet "$$fixture" 2>&1); \
+		./$(BIN) --lang petta --quiet "$$fixture" 2>&1) || \
+		status=$$?; statuses="$$statuses $$status"; status=0; \
+	finite=$$(./$(BIN) --fuel 1000 --lang petta --quiet "$$fixture" 2>&1) || \
+		status=$$?; statuses="$$statuses $$status"; \
+	if [ "$$statuses" != "2 2 2 2" ]; then \
+		echo "FAIL: the fixture's last error is uncaught and must end each run with exit 2 (got $$statuses)"; \
+		exit 1; \
+	fi; \
 	for variant in optimized program_reference reference finite; do \
 		value=$${!variant}; \
 		if [ "$$value" != "$$expected" ]; then \
@@ -24495,16 +24525,23 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@set -eu; \
 	fixture=tests/petta/search_machine_activation_scalar_argument_segment.metta; \
 	expected=$$(cat tests/petta/search_machine_activation_scalar_argument_segment.expected); \
+	status=0; \
 	optimized=$$(./$(BIN) --emit-runtime-stats --lang petta --quiet \
-		"$$fixture" 2>&1); \
+		"$$fixture" 2>&1) || status=$$?; statuses="$$status"; status=0; \
 	program_reference=$$(CETTA_PETTA_DETERMINISTIC_REGION_PROGRAM_REFERENCE=1 \
 		./$(BIN) --emit-runtime-stats --lang petta --quiet \
-		"$$fixture" 2>&1); \
+		"$$fixture" 2>&1) || status=$$?; statuses="$$statuses $$status"; \
+	status=0; \
 	reference=$$(CETTA_PETTA_ACTIVATION_SCALAR_ARGUMENT_SEGMENT_REFERENCE=1 \
 		./$(BIN) --emit-runtime-stats --lang petta --quiet \
-		"$$fixture" 2>&1); \
+		"$$fixture" 2>&1) || status=$$?; statuses="$$statuses $$status"; \
+	status=0; \
 	finite=$$(./$(BIN) --fuel 1000 --emit-runtime-stats --lang petta --quiet \
-		"$$fixture" 2>&1); \
+		"$$fixture" 2>&1) || status=$$?; statuses="$$statuses $$status"; \
+	if [ "$$statuses" != "2 2 2 2" ]; then \
+		echo "FAIL: the fixture's last error is uncaught and must end each run with exit 2 (got $$statuses)"; \
+		exit 1; \
+	fi; \
 	for variant in optimized program_reference reference finite; do \
 		value=$${!variant}; \
 		actual=$$(printf '%s\n' "$$value" | \
@@ -25799,7 +25836,10 @@ PETTA_SEMANTIC_EXACT_STREAM_STEMS = \
 	profile_petta_base_extension_boundary conjunctive_match_count_semantics \
 	search_machine_relational_head_phases search_machine_relational_output_phases \
 	search_machine_pinned_removal_visibility search_machine_admission_revisions \
-	stream_alpha_unique root_builtin_argument_demand \
+	stream_alpha_unique root_builtin_argument_demand computed_value_arguments \
+	translate_predicate_prolog_goals float_layout string_layout \
+	swrite_text prolog_exception_values negative_zero numeric_equality \
+	prolog_arithmetic_parity error_value_continuation \
 	builtin_data_vocabulary car_cdr_total empty_is_data \
 	collapse_copies_answers open_lists library_metta_suffix \
 	sort_values dynamic_head_values specialize_data_values \
@@ -26012,7 +26052,21 @@ test-petta-semantics: $(BIN) test-petta-multifile test-petta-eval-in-space
 			runtime/test-petta-assert-failure-exit.out | head -40; \
 		exit 1; \
 	fi; \
-	echo "PASS: PeTTa relational control, stream bags, list length, parse-as-data, implicit spaces, shared sequencing, named state, alpha uniqueness, metatype and typed-failure policy, library descriptors, and stable term order"
+	status=0; \
+	CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta tests/petta/uncaught_error_exit.metta \
+		>runtime/test-petta-uncaught-error-exit.out 2>&1 || status=$$?; \
+	if [ "$$status" -ne 2 ]; then \
+		echo "FAIL: PeTTa uncaught error must end the file with exit 2 (got $$status)"; \
+		exit 1; \
+	fi; \
+	if ! cmp -s tests/petta/uncaught_error_exit.expected \
+			runtime/test-petta-uncaught-error-exit.out; then \
+		echo "FAIL: PeTTa uncaught error output"; \
+		diff -u tests/petta/uncaught_error_exit.expected \
+			runtime/test-petta-uncaught-error-exit.out | head -40; \
+		exit 1; \
+	fi; \
+	echo "PASS: PeTTa relational control, stream bags, list length, parse-as-data, implicit spaces, shared sequencing, named state, alpha uniqueness, metatype and typed-failure policy, uncaught-error exit, library descriptors, and stable term order"
 
 .PHONY: test-petta-corpus-manifest-unit probe-petta-corpus-manifest test-petta-corpus-manifest probe-petta-corpus-differential test-petta-corpus-differential test-petta-corpus-native-core test-petta-native-core-no-libpl
 .PHONY: test-petta-analysis-cardinality test-petta-analysis-verdict test-petta-analysis-boundary test-petta-analysis-arrow-mode test-petta-typecheck-v2-census-codegen refresh-petta-typecheck-v2-census-catalog test-petta-typecheck-v3-intake-v1 refresh-petta-typecheck-v3-intake-v1 test-petta-typecheck-v3-h5-matrix-v1 refresh-petta-typecheck-v3-h5-matrix-v1 test-petta-typecheck-v3-core-parity-v1 test-petta-typecheck-v3-core-langdef-v1 test-petta-typecheck-v3-core-generation-v1 test-petta-typecheck-v3-file-runner-v1 test-petta-typecheck-v3-profile probe-petta-typecheck-v3-corpus-v1 test-petta-typecheck-v3-corpus-v1 test-petta-typecheck-v2 test-petta-typecheck-v2-guard-langdef-v1 test-petta-typecheck-v2-guard-langdef-mutations-v1 test-petta-typecheck-v2-fragment-generation-v1 test-petta-typecheck-v2-fragment-runtime-v1 test-petta-typecheck-v2-inferred-value-mutations test-petta-typecheck-v2-census test-petta-typecheck-v2-census-omission test-petta-typecheck-v2-manifest test-petta-typecheck-v2-isolation-stats test-petta-typecheck-v2-omission test-petta-nik-admission-boundary-controls test-petta-nik-typed-chaining test-petta-nik-typed-space-query
