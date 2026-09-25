@@ -1399,8 +1399,7 @@ static uint64_t hashcons_slot_hash(Atom *atom) {
             break;
         case GV_FLOAT: {
             uint64_t bits = 0;
-            if (atom->ground.fval != 0.0)
-                memcpy(&bits, &atom->ground.fval, sizeof(bits));
+            memcpy(&bits, &atom->ground.fval, sizeof(bits));
             h = hashcons_index_mix(h, bits);
             break;
         }
@@ -1449,6 +1448,32 @@ static uint64_t hashcons_slot_hash(Atom *atom) {
     return hashcons_index_finalize(h);
 }
 
+/* Interning keeps every distinct term: a float by its bits, so 0.0 and -0.0
+ * stay two atoms, and never a numeric promotion across kinds. */
+static bool atom_intern_identical(Atom *a, Atom *b) {
+    if (a == b)
+        return true;
+    if (!a || !b || a->kind != b->kind)
+        return false;
+    if (a->kind == ATOM_GROUNDED) {
+        if (a->ground.gkind != b->ground.gkind)
+            return false;
+        if (a->ground.gkind == GV_FLOAT)
+            return memcmp(&a->ground.fval, &b->ground.fval,
+                          sizeof(a->ground.fval)) == 0;
+        return atom_eq(a, b);
+    }
+    if (a->kind == ATOM_EXPR) {
+        if (a->expr.len != b->expr.len)
+            return false;
+        for (CettaExprIndex i = 0; i < a->expr.len; i++)
+            if (!atom_intern_identical(a->expr.elems[i], b->expr.elems[i]))
+                return false;
+        return true;
+    }
+    return atom_eq(a, b);
+}
+
 static uint32_t hashcons_find_slot(HashConsTable *hc, Atom *atom, bool *found) {
     uint32_t h = (uint32_t)(hashcons_slot_hash(atom) % hc->size);
     hc->lookup_count++;
@@ -1461,7 +1486,7 @@ static uint32_t hashcons_find_slot(HashConsTable *hc, Atom *atom, bool *found) {
             *found = false;
             return idx;
         }
-        if (atom_eq(hc->table[idx], atom)) {
+        if (atom_intern_identical(hc->table[idx], atom)) {
             *found = true;
             return idx;
         }
@@ -3907,7 +3932,14 @@ bool atom_eq(Atom *a, Atom *b) {
             return cetta_he_promoted_numbers_equal(a, b);
         switch (a->ground.gkind) {
         case GV_INT:    return a->ground.ival == b->ground.ival;
-        case GV_FLOAT:  return a->ground.fval == b->ground.fval;
+        case GV_FLOAT:
+            /* PeTTa compares floats as Prolog terms, so 0.0 and -0.0 differ
+             * and a NaN is itself; HE compares their IEEE values. */
+            if (eval_current_language_id &&
+                eval_current_language_id() == CETTA_LANGUAGE_PETTA)
+                return memcmp(&a->ground.fval, &b->ground.fval,
+                              sizeof(a->ground.fval)) == 0;
+            return a->ground.fval == b->ground.fval;
         case GV_BOOL:   return a->ground.bval == b->ground.bval;
         case GV_STRING: return strcmp(a->ground.sval, b->ground.sval) == 0;
         case GV_BIGINT:
