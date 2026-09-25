@@ -14,7 +14,7 @@ structured patterns, `+ - * % min max`, `(empty)`, constructors and calls.
 Queries leave variables open, share them between arguments, and set
 occurs-check traps.  Each query is its own document.  The output of the
 default route must equal the output under CETTA_OPEN_EQUATIONS_REFERENCE=1
-(canonical equation search) exactly, exit status included; documents on
+(canonical equation search) as a bag of answers, exit status included; documents on
 which canonical search does not terminate are checked against the outputs
 of the PeTTa reference implementation.  With --stats
 the binary must be a runtime-stats build, and the open tier must have taken
@@ -456,6 +456,174 @@ CLASSICS = [
 !(walk 3 (st $a $b))
 !(mm 3 $k)
 """,
+    # Builtin data names in heads and bodies: `,` and `|` pairs, truth and
+    # metatype names are constructors, so their relations run on the tier.
+    """(= (swap (, $x $y)) (, $y $x))
+(= (fst (, $x $y)) $x)
+(= (pairs $n) (, $n Z))
+(= (pairs $n) (if (> $n 0) (, $n (pairs (- $n 1))) (empty)))
+(= (tag $x) (| $x (True $x)))
+(= (proof $n (, $a $b)) (if (> $n 0) (, (proof (- $n 1) $a) (proof (- $n 1) $b)) (empty)))
+(= (proof $n (Atom $a)) (Atom $a))
+!(swap $p)
+!(swap (, a $q))
+!(swap (swap (, $u v)))
+!(fst (, $a b))
+!(pairs 3)
+!(tag $t)
+!(proof 3 (, (Atom a) (, $x (Atom c))))
+!(proof 2 $w)
+""",
+    # Matches over spaces on the tier: rows with variables are freshened per
+    # match, a conjunction matches its patterns in turn, a template may call
+    # a relation that matches again, a named space is read like `&self`, a
+    # reference that names no space has no rows, and rows added by an answer
+    # are invisible to the match that was already running.
+    """!(bind! &kb2 (new-space))
+!(add-atom &kb2 (p z 7))
+!(add-atom &kb2 (p y $w))
+(p a 1)
+(p b 2)
+(p $v 3)
+(q 1 one)
+(q 3 $t)
+(= (look $k) (match &self (p $k $n) (found $k $n)))
+(= (both $x) (match &self (, (p $x $n) (q $n $m)) (pair $x $m)))
+(= (named $s $k) (match $s (p $k $n) (in $k $n)))
+(= (chain $k) (match &self (p $k $n) (back $n)))
+(= (back $n) (match &self (q $n $m) $m))
+(= (same $k) (match &self (p $k $k) yes))
+(= (grow $k) (match &self (p $k $n) (let $u (add-atom &self (p new 9)) $n)))
+(= (nospace $k) (match 42 (p $k $n) $n))
+!(look $k)
+!(look a)
+!(look c)
+!(both $x)
+!(chain $k)
+!(named &kb2 $k)
+!(named &self b)
+!(same $k)
+!(grow $k)
+!(look new)
+!(nospace $k)
+""",
+    # Host goals: operations outside the fragment run on the host and the
+    # tier resumes once per answer.  A value read into a host goal is taken
+    # as a value, never evaluated again; a deterministic host goal leaves
+    # nothing behind it; a nondeterministic one resumes after backtracking.
+    """(= (foo $x) (* $x 10))
+(= (Rank $x) 1)
+(= (pick $f $best $t)
+   (if (== $t ())
+       $best
+       (let* (($h (car-atom $t)) ($r (cdr-atom $t)))
+             (if (> ($f $h) 0) (pick $f $h $r) (pick $f $best $r)))))
+(= (drive $n $l)
+   (if (> $n 0) (let $p (pick Rank 0 $l) (drive (- $n 1) (cons-atom $p ()))) $l))
+(= (loop $n $acc)
+   (if (> $n 0) (loop (- $n 1) (let $l (length $acc) (append $acc ($l)))) $acc))
+(= (count $n $s) (if (> $n 0) (count (- $n 1) (+ $s (size-atom (cons-atom $n ())))) $s))
+(= (three $x) (let $y (superpose (1 2 3)) (pr $x $y)))
+(= (nest $x) (let $y (superpose (1 2)) (let $z (superpose (a b)) (tr $x $y $z))))
+(= (fo $x) (once (superpose (($x 1) ($x 2)))))
+(= (co $x) (collapse (superpose ($x 1 $x))))
+(= (tl $x) (let (w $y) (collapse (superpose ((w $x)))) $y))
+(= (mk $h $a) ($h $a 2))
+(= (g $a $b) (+ $a $b))
+(= (firsts $l) (if (== $l ()) () (let* (($h (car-atom $l)) ($t (cdr-atom $l))) (cons-atom $h (firsts $t)))))
+!(drive 3 (cons-atom 7 (cons-atom (cons-atom foo (4)) ())))
+!(collapse (let $x (pick Rank 0 (cons-atom (cons-atom foo (1)) (cons-atom 5 ()))) $x))
+!(let $r (loop 40 ()) (length $r))
+!(count 3000 0)
+!(three a)
+!(nest q)
+!(let ($a $b) (fo z) $b)
+!(co k)
+!(tl v)
+!(mk 1 x)
+!(mk 2.5 x)
+!(mk g 3)
+!(mk zz 3)
+!(mk "s" 3)
+!(firsts (1 2 3))
+!(collapse (firsts (cons-atom (cons-atom foo (1)) ())))
+!(pick Rank 0 ())
+!(car-atom ())
+""",
+    # A type-pure operation whose result is an error is the host's: the
+    # dialect decides what an error of that operation observes.
+    """(= (hd $l) (car-atom $l))
+(= (tl $l) (cdr-atom $l))
+(= (walk $n $l) (if (> $n 0) (walk (- $n 1) $l) (hd $l)))
+(= (walk2 $n $l) (if (> $n 0) (walk2 (- $n 1) $l) (tl $l)))
+!(hd ())
+!(collapse (hd ()))
+!(walk 2 ())
+!(walk 2 5)
+!(walk2 2 ())
+!(collapse (walk 2 ()))
+!(walk 2 (a b))
+!(walk2 2 (a b c))
+""",
+    # A host goal that changes the program: the calls its continuation
+    # makes enter the current version, including a relation whose own
+    # equations only relay to the host and a head the goal defines.
+    """(= (rev $x) old)
+(= (relay $x) (size-atom $x))
+(= (mut) (let $b (rev 0) (let $_ (add-atom &self (= (rev $x) new)) (pair $b (rev 0)))))
+(= (mut2 $n) (let $_ (add-atom &self (= (grown $n) yes)) (grown $n)))
+(= (via $x) (let $s (relay $x) (+ $s 1)))
+(= (via2 $n $x) (if (> $n 0) (via2 (- $n 1) $x) (via $x)))
+!(mut)
+!(mut2 4)
+!(via (a b c))
+!(via2 3 (a b))
+!(relay (a))
+""",
+    # A dynamic call whose head is a call: the elements are evaluated in
+    # order, then the head's value applies when it is callable (a lambda, a
+    # partial application, a symbol with equations) and is data otherwise.
+    # A ground add-atom is admitted as the machine admits it, a program
+    # change included; a let binder only counting operations read takes its
+    # producer's count, and a counted match yields its rows' number.
+    """(= (f $x) (fa $x))
+(= (g $x) (gb $x))
+(= (h $x) ((f $x) (g $x)))
+(= (mkl $n) (|-> ($y) (+ $y $n)))
+(= (appl $n $v) ((mkl $n) $v))
+(= (numv $n) $n)
+(= (appn $n) ((numv $n) x))
+(= (sym) k)
+(= (k $v) (kk $v))
+(= (apps $v) ((sym) $v))
+(= (sym2) nope)
+(= (apps2 $v) ((sym2) $v))
+(= (add2 $a $b) (+ $a $b))
+(= (mkp) (add2 1))
+(= (appp $v) ((mkp) $v))
+(= (two $x) (superpose ((f $x) (g $x))))
+(= (appnd $x) ((two $x) $x))
+(= (ad $x) (let $_ (add-atom &self (item $x)) (collapse (match &self (item $y) $y))))
+(= (adm $x) (let $_ (add-atom &self (= (gen $x) made)) (gen $x)))
+(= (rows) (match &self (item $y) $y))
+(= (cnt) (let $items (collapse (match &self (item $y) $y)) (length $items)))
+(= (cnt2) (let* (($a (collapse (superpose (1 2 3)))) ($b (size-atom $a))) ($b (length $a))))
+(= (nocnt) (let $items (collapse (superpose (1 2))) (pair (length $items) $items)))
+!(h 1)
+!(appl 2 5)
+!(appn 7)
+!(apps 3)
+!(apps2 3)
+!(appp 4)
+!(appnd q)
+!(ad 1)
+!(adm 5)
+!(length (collapse (rows)))
+!(let $_ (add-atom &self (item 1)) (length (collapse (rows))))
+!(cnt)
+!(cnt2)
+!(nocnt)
+""",
 ]
 
 
@@ -526,7 +694,11 @@ def main():
                 tier = run(binary, path, False, stats)
                 reference = run(binary, path, True, False)
                 queries += 1
-                if tier[0] != reference[0] or tier[1] != reference[1]:
+                # Observations are bags: each document is one query, and
+                # its answers may come in any order.
+                if tier[0] != reference[0] or \
+                        sorted(tier[1].splitlines()) != \
+                        sorted(reference[1].splitlines()):
                     sys.stderr.write(
                         f"FAIL document {index}: exit "
                         f"{tier[0]} / {reference[0]}\n{text}\n"

@@ -1647,6 +1647,58 @@ static const PettaIntrinsicNameIds *petta_intrinsic_name_ids(void) {
     return ids;
 }
 
+/* Builtin names CeTTa interns for its own bookkeeping that name no PeTTa
+ * operation: metatype and truth names, search-policy and profile names, ABT
+ * tags, the list and handle tags, and the query algebra's connectives.  The
+ * reference registers none of them as a function, and PeTTa gives none of
+ * them a meaning in an equation body or head, so an expression they head is
+ * data, as any unregistered head is.  `,` and `|` are connectives only inside
+ * a `match` query or space argument, where `match` interprets them.  A name
+ * left off this list stays an operation, which is slower but never wrong. */
+static bool petta_program_builtin_names_data(SymbolId head) {
+    return head == g_builtin_syms.llist_cons ||
+           head == g_builtin_syms.llist_nil ||
+           head == g_builtin_syms.empty ||
+           head == g_builtin_syms.error ||
+           head == g_builtin_syms.atom ||
+           head == g_builtin_syms.symbol ||
+           head == g_builtin_syms.variable ||
+           head == g_builtin_syms.expression ||
+           head == g_builtin_syms.grounded ||
+           head == g_builtin_syms.grounded_placeholder ||
+           head == g_builtin_syms.undefined_type ||
+           head == g_builtin_syms.true_text ||
+           head == g_builtin_syms.false_text ||
+           head == g_builtin_syms.bindings ||
+           head == g_builtin_syms.comma ||
+           head == g_builtin_syms.pipe ||
+           head == g_builtin_syms.search_policy ||
+           head == g_builtin_syms.order ||
+           head == g_builtin_syms.native ||
+           head == g_builtin_syms.mork_text ||
+           head == g_builtin_syms.lex ||
+           head == g_builtin_syms.shortlex ||
+           head == g_builtin_syms.recursive_dependent_proof ||
+           head == g_builtin_syms.atp_guided_inhabitation ||
+           head == g_builtin_syms.atp_saturation ||
+           head == g_builtin_syms.solver_oracle ||
+           head == g_builtin_syms.auto_text ||
+           head == g_builtin_syms.interpreter ||
+           head == g_builtin_syms.bare_minimal ||
+           head == g_builtin_syms.max_stack_depth ||
+           head == g_builtin_syms.type_scheme ||
+           head == g_builtin_syms.chaining_rule ||
+           head == g_builtin_syms.type_level_function ||
+           head == g_builtin_syms.prime_package ||
+           head == g_builtin_syms.nik_colon_check ||
+           head == g_builtin_syms.abt_chain_v1 ||
+           head == g_builtin_syms.abt_pattern_var_v1 ||
+           head == g_builtin_syms.abt_let_scope_v1 ||
+           head == g_builtin_syms.abt_let_v1 ||
+           head == g_builtin_syms.module_parse_failed ||
+           head == g_builtin_syms.native_handle;
+}
+
 bool petta_program_head_is_intrinsic(SymbolId head) {
     const PettaIntrinsicNameIds *ids =
         head == SYMBOL_ID_NONE ? NULL : petta_intrinsic_name_ids();
@@ -1676,11 +1728,11 @@ bool petta_program_head_is_intrinsic(SymbolId head) {
         form != PETTA_FORM_TABLED;
     return head != SYMBOL_ID_NONE &&
            (intrinsic_form ||
-            /* Shared data tags are not PeTTa operations. User definitions
-             * still establish callability through ordinary resolution. */
+            /* Builtin data names are not PeTTa operations.  User
+             * definitions still establish callability through ordinary
+             * resolution. */
             (head <= g_builtin_syms.native_handle &&
-             head != g_builtin_syms.llist_cons &&
-             head != g_builtin_syms.error) ||
+             !petta_program_builtin_names_data(head)) ||
             is_grounded_op(head) ||
             machine_named ||
             typecheck_named);
@@ -2395,7 +2447,7 @@ static const PettaPlanNode *petta_plan_build(
                       : PETTA_PLAN_DATA;
             node->execution = constructor_slot_frame
                 ? PETTA_PLAN_EXEC_CONSTRUCTOR_SLOTS
-                : grounded_op_is_type_pure(head)
+                : petta_semantics_grounded_type_pure(head)
                     ? PETTA_PLAN_EXEC_PURE_GROUNDED_SLOTS
                     : node->role == PETTA_PLAN_STATIC_CALL &&
                               form == PETTA_FORM_NONE

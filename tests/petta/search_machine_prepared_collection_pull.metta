@@ -19,6 +19,13 @@
 !(let $items (pull-map (+ 1) (pull-range 4))
       (pair (length $items) (length $items)))
 
+; A producer whose body is a constant list cell yields that cell's items, not
+; the cell's own three fields.
+(= (pull-constant-one) (cons 5 ()))
+(= (pull-constant-two) (cons 5 (cons 6 ())))
+!(let $items (pull-constant-one) (length $items))
+!(let $items (pull-constant-two) (length $items))
+
 ; A materializing observation rejects the fold certificate.  The exact
 ; ordered list remains visible through canonical evaluation.
 !(let $items (pull-map (+ 1) (pull-range 4))

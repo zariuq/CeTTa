@@ -1,0 +1,24 @@
+is (Empty), should (Empty). ✅ 
+is ((Empty)), should ((Empty)). ✅ 
+is (a Empty b), should (a Empty b). ✅ 
+is (Empty), should (Empty). ✅ 
+is (Empty), should (Empty). ✅ 
+is true, should true. ✅ 
+is 42, should 42. ✅ 
+is ok, should ok. ✅ 
+is no, should no. ✅ 
+is (), should (). ✅ 
+is (), should (). ✅ 
+is (), should (). ✅ 
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true

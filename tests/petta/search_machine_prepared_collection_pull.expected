@@ -4,6 +4,8 @@
 1
 6
 (pair 4 4)
+1
+2
 (pair 4 (5 4 3 2))
 3
 3
@@ -14,4 +16,4 @@
 3
 3
 2
-3
+(Error (/ 10 0) DivisionByZero)

@@ -1433,6 +1433,34 @@ static bool prepared_pure_register_program(
     return true;
 }
 
+/* A BUILD whose head is bound at run time rather than named: it builds data
+ * only when the head's value is data. */
+enum { PREPARED_PURE_BUILD_DATA_HEAD = 1u };
+
+/* A value that heads data and never a call: a number or a string. */
+static bool prepared_pure_data_head_value(const Atom *value) {
+    return value && value->kind == ATOM_GROUNDED &&
+        (value->ground.gkind == GV_INT ||
+         value->ground.gkind == GV_FLOAT ||
+         value->ground.gkind == GV_BIGINT ||
+         value->ground.gkind == GV_RATIONAL ||
+         value->ground.gkind == GV_STRING);
+}
+
+/* Whether `head` computes an exact integer: a register whose result is one.
+ * No equation is headed by a number, so an expression whose head computes
+ * one is data over its evaluated fields. */
+static bool prepared_pure_integer_head(
+    const CettaPreparedPureProgram *program, const Atom *head) {
+    CettaGsltRegisterResultKind kind;
+    return head && head->kind == ATOM_EXPR && head->expr.len > 0u &&
+        head->expr.elems[0]->kind == ATOM_SYMBOL &&
+        prepared_pure_register_program(
+            program, head->expr.elems[0]->sym_id, head->expr.len - 1u,
+            &kind, NULL) &&
+        kind == CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
+}
+
 static bool prepared_pure_intrinsic_program(
     SymbolId head, CettaExprLen arity,
     CettaGsltPreparedPureIntrinsicInstruction *instruction_out) {
@@ -2119,6 +2147,21 @@ static bool prepared_pure_template_head_is_inert(
            PREPARED_PURE_HEAD_INERT;
 }
 
+/* Whether `atom` is a list the evaluator materialized: open list cells of
+ * scalar values, ending in `()`.  Nothing in it computes, and its length is
+ * not a depth of program syntax. */
+static bool prepared_pure_materialized_scalar_list(const Atom *atom) {
+    if (!petta_semantics_is_open_cons_value(atom))
+        return false;
+    while (petta_semantics_is_open_cons_value(atom)) {
+        const Atom *item = atom->expr.elems[1];
+        if (!item || item->kind == ATOM_EXPR || item->kind == ATOM_VAR)
+            return false;
+        atom = atom->expr.elems[2];
+    }
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len == 0u;
+}
+
 static bool prepared_pure_compile_template(
     CettaPreparedPureProgram *program,
     PreparedPureCompileContext *context,
@@ -2128,6 +2171,15 @@ static bool prepared_pure_compile_template(
     if (!program || !context || !source || !node_out ||
         depth > PREPARED_PURE_MAX_COMPILE_DEPTH)
         return false;
+    if (prepared_pure_materialized_scalar_list(source)) {
+        return prepared_pure_add_node(
+            program,
+            (PreparedPureNode){
+                .kind = PREPARED_PURE_LITERAL,
+                .atom = source,
+            },
+            NULL, 0u, node_out);
+    }
     if (source->kind == ATOM_VAR) {
         uint32_t slot = 0u;
         if (!prepared_pure_context_lookup(context, source->var_id, &slot))
@@ -2331,28 +2383,25 @@ static bool prepared_pure_compile_eval(
                     CETTA_PREPARED_PURE_OBSERVE_IS_EXPRESSION)
                 return prepared_pure_reject(
                     program, "invalid dialect value observation", source);
+            /* PeTTa's is-expr observes the value of its operand. */
             uint32_t child = 0u;
-            uint32_t child_count = 0u;
-            Atom *static_operand = expression_view.projected;
-            if (expression_view.projected->kind == ATOM_VAR) {
-                if (!prepared_pure_compile_template(
-                    program, context, expression_view.projected,
-                    prepared_pure_projected_source_child(
-                        program, source, source_view,
-                        expression_view.projected),
-                    depth + 1u, false, &child))
-                    return false;
-                child_count = 1u;
-                static_operand = NULL;
-            }
+            const void *operand_source = prepared_pure_projected_source_child(
+                program, source, source_view, expression_view.projected);
+            if (!(expression_view.projected->kind == ATOM_VAR
+                      ? prepared_pure_compile_template(
+                            program, context, expression_view.projected,
+                            operand_source, depth + 1u, false, &child)
+                      : prepared_pure_compile_eval(
+                            program, context, expression_view.projected,
+                            operand_source, depth + 1u, &child)))
+                return false;
             return prepared_pure_add_node(
                 program,
                 (PreparedPureNode){
                     .kind = PREPARED_PURE_OBSERVE,
-                    .atom = static_operand,
                     .auxiliary = (uint32_t)expression_view.observation,
                 },
-                child_count ? &child : NULL, child_count, node_out);
+                &child, 1u, node_out);
         }
         if (expression_view_state ==
             CETTA_PREPARED_PURE_EXPRESSION_CANONICAL_ONLY) {
@@ -2388,10 +2437,18 @@ static bool prepared_pure_compile_eval(
     if (!head_atom)
         return false;
     if (head_atom->kind != ATOM_SYMBOL) {
+        /* A head the program computes or binds rather than names.  A value
+         * that heads data, or an expression computing an integer, makes the
+         * whole expression data over its evaluated fields.  A head bound to
+         * a variable is data when its value is; otherwise the program
+         * declines at run time and the call is left to the evaluator. */
+        bool bound_head = head_atom->kind == ATOM_VAR;
         if (program->call_mode != CETTA_GSLT_PURE_CALL_EAGER ||
-            head_atom->kind != ATOM_GROUNDED ||
-            head_atom->ground.gkind == GV_CAPTURE ||
-            head_atom->ground.gkind == GV_FOREIGN) {
+            (!bound_head &&
+             !prepared_pure_integer_head(program, head_atom) &&
+             (head_atom->kind != ATOM_GROUNDED ||
+              head_atom->ground.gkind == GV_CAPTURE ||
+              head_atom->ground.gkind == GV_FOREIGN))) {
             return false;
         }
         uint32_t *children = NULL;
@@ -2400,7 +2457,11 @@ static bool prepared_pure_compile_eval(
                 source_view, 0u, depth, true, false, &children))
             return false;
         bool ok = prepared_pure_add_node(
-            program, (PreparedPureNode){.kind = PREPARED_PURE_BUILD},
+            program,
+            (PreparedPureNode){
+                .kind = PREPARED_PURE_BUILD,
+                .auxiliary = bound_head ? PREPARED_PURE_BUILD_DATA_HEAD : 0u,
+            },
             children, source->expr.len, node_out);
         free(children);
         return ok;
@@ -4372,7 +4433,7 @@ static bool prepared_pure_petta_else_value(Atom *condition) {
         condition &&
         condition->kind != ATOM_VAR &&
         !atom_is_error(condition) &&
-        !atom_is_empty(condition);
+        !atom_is_petta_no_result(condition);
 }
 
 #if CETTA_BUILD_WITH_GMP
@@ -5040,9 +5101,14 @@ static Atom *prepared_pure_inline_value(
         if (!operands[i])
             return NULL;
     }
-    if (node->kind == PREPARED_PURE_BUILD)
+    if (node->kind == PREPARED_PURE_BUILD) {
+        if (node->auxiliary == PREPARED_PURE_BUILD_DATA_HEAD &&
+            (node->child_count == 0u ||
+             !prepared_pure_data_head_value(operands[0])))
+            return NULL;
         return program->construct_value(
             arena, operands, node->child_count);
+    }
     if (node->kind == PREPARED_PURE_INTRINSIC) {
         Atom *result = prepared_pure_execute_intrinsic(
             program, arena, node->intrinsic_instruction, node->atom,
@@ -5225,9 +5291,12 @@ static bool PREPARED_PURE_HOT prepared_pure_resume_call(
                 (size_t)frame->value_base + arity + 1u)
             return false;
         Atom *value = program->values[--program->value_len];
-        if (((!eval_current_language_id ||
-              eval_current_language_id() != CETTA_LANGUAGE_PRIME) &&
-             atom_is_empty(value)) || atom_is_error(value))
+        CettaLanguageId language = eval_current_language_id
+            ? eval_current_language_id() : CETTA_LANGUAGE_HE;
+        if ((language == CETTA_LANGUAGE_PETTA
+                 ? atom_is_petta_no_result(value)
+                 : language != CETTA_LANGUAGE_PRIME && atom_is_empty(value)) ||
+            atom_is_error(value))
             return false;
         program->values[
             frame->value_base + frame->demanded_argument] = value;
@@ -6215,6 +6284,17 @@ void cetta_prepared_pure_program_clear_closed_entry_call(
                program->entry_argument_count);
 }
 
+/* Whether an equation of `head` takes `arity` arguments. */
+static bool prepared_pure_head_takes_arity(
+    const CettaPreparedPureProgram *program, const PreparedPureHead *head,
+    uint32_t arity) {
+    for (uint32_t index = 0u; index < head->equation_count; index++) {
+        if (program->equations[head->first_equation + index].arity == arity)
+            return true;
+    }
+    return false;
+}
+
 /* Where an answer of a call goes: the step after the call in its caller's
  * step program, over the caller's locals as they stood at the call.  A NULL
  * continuation is the cursor's consumer.  A record never changes once a call
@@ -6894,13 +6974,19 @@ CettaPreparedPureCursorStep cetta_prepared_pure_answer_cursor_next(
         if (frame->next_equation >= head->equation_count) {
             /* A dialect that reduces an unmatched call to itself still
              * type-checks a call of a head with declared types; that call is
-             * left to it. */
+             * left to it.  In a dialect where an unmatched call fails, a call
+             * of an arity no equation takes is an application of a different
+             * kind, partial or over-applied, and is left to it too. */
             if (!frame->matched_equation &&
                 (cursor->unmatched_call ==
                      CETTA_PREPARED_PURE_UNMATCHED_DECLINES ||
                  (cursor->unmatched_call ==
                       CETTA_PREPARED_PURE_UNMATCHED_REDUCES_TO_ITSELF &&
-                  head->declares_type)))
+                  head->declares_type) ||
+                 (cursor->unmatched_call ==
+                      CETTA_PREPARED_PURE_UNMATCHED_FAILS &&
+                  !prepared_pure_head_takes_arity(
+                      program, head, frame->arity))))
                 return prepared_pure_answer_cursor_handoff(
                     cursor, CETTA_PREPARED_PURE_HANDOFF_NO_MATCH);
             if (!frame->matched_equation &&
@@ -8062,6 +8148,12 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
                 program, "child evaluation arity invariant failed", node);
 
         if (node->kind == PREPARED_PURE_BUILD) {
+            if (node->auxiliary == PREPARED_PURE_BUILD_DATA_HEAD &&
+                (node->child_count == 0u ||
+                 !prepared_pure_data_head_value(
+                     program->values[frame->value_base])))
+                return prepared_pure_runtime_decline(
+                    program, "a bound head is not data", node);
             Atom *built = program->construct_value(
                 arena,
                 &program->values[frame->value_base],
@@ -8085,7 +8177,7 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
             Atom *result = operand
                 ? program->boolean_value(
                       arena,
-                      operand->kind == ATOM_EXPR)
+                      petta_semantics_is_closed_list(operand))
                 : NULL;
             program->value_len = frame->value_base;
             if (!result || !prepared_pure_push_value(program, result))

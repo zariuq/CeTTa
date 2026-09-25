@@ -696,6 +696,7 @@ void arena_init(Arena *a) {
         abort();
     }
     a->identity = identity;
+    a->older_identity = 0u;
     a->reset_epoch = 1u;
     a->finalizers = NULL;
     a->retained_owners = NULL;
@@ -1070,6 +1071,13 @@ void arena_set_runtime_kind(Arena *a, CettaArenaRuntimeKind kind) {
     arena_runtime_note_usage(a);
 }
 
+void arena_set_older_generation(Arena *young, const Arena *older) {
+    if (!young)
+        return;
+    young->older_identity = older && older != young &&
+        older->older_identity == 0u ? older->identity : 0u;
+}
+
 extern inline size_t arena_accounted_live_bytes(const Arena *a);
 extern inline size_t arena_mark_accounted_live_bytes(ArenaMark mark);
 
@@ -1099,6 +1107,41 @@ ArenaMark arena_mark(const Arena *a) {
     mark.frame_identity_len = a->frame_identities
         ? a->frame_identities->len : 0u;
     return mark;
+}
+
+bool arena_at_mark(const Arena *a, ArenaMark mark) {
+    if (!a)
+        return true;
+    return a->head == mark.head &&
+        (a->head ? a->head->used : 0u) == mark.used &&
+        a->live_bytes == mark.live_bytes &&
+        a->external_bytes == mark.external_bytes &&
+        a->finalizers == mark.finalizers &&
+        (a->frame_identities ? a->frame_identities->len : 0u) ==
+            mark.frame_identity_len;
+}
+
+void arena_release_spare(Arena *a, size_t keep_bytes) {
+    if (!a)
+        return;
+    size_t kept = 0;
+    ArenaBlock **link = &a->spare;
+    while (*link) {
+        ArenaBlock *block = *link;
+        if (kept < keep_bytes) {
+            kept += block->capacity;
+            link = &block->next;
+            continue;
+        }
+        *link = block->next;
+        a->spare_bytes -= block->capacity;
+        a->spare_block_count--;
+        a->reserved_bytes -= block->capacity;
+        a->block_count--;
+        free(block);
+    }
+    arena_runtime_note_usage(a);
+    arena_runtime_note_spare(a);
 }
 
 void arena_reset(Arena *a, ArenaMark mark) {
@@ -1260,11 +1303,6 @@ static bool atom_is_hash_stable(const Atom *atom) {
     return atom && (atom->flags & ATOM_FLAG_HASH_STABLE) != 0;
 }
 
-static bool atom_expr_is_contextual(const Atom *atom) {
-    return atom && atom->kind == ATOM_EXPR && atom->expr.len > 0 &&
-           atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.native_handle);
-}
-
 static bool atom_can_hashcons(const Atom *atom) {
     return atom && (atom->flags & ATOM_FLAG_HASHCONS_ELIGIBLE) != 0;
 }
@@ -1272,7 +1310,8 @@ static bool atom_can_hashcons(const Atom *atom) {
 static uint32_t atom_hash_flags_for_eligible_leaf(void);
 static uint32_t atom_flags_for_grounded_kind(GroundedKind gkind);
 static uint32_t atom_flags_for_symbol_id(SymbolId sym_id);
-static uint32_t atom_flags_from_children(uint32_t arena_id, Atom **elems,
+static uint32_t atom_flags_from_children(uint32_t arena_id,
+                                         uint32_t older_id, Atom **elems,
                                          CettaExprLen len,
                                          uint32_t *structural_facts_out);
 static VarId atom_single_variable_id_from_children(
@@ -1323,7 +1362,7 @@ static bool atom_hashcons_graph_admitted(const Atom *atom) {
             }
         }
         expected = atom_flags_from_children(
-            0u, atom->expr.elems, atom->expr.len,
+            0u, 0u, atom->expr.elems, atom->expr.len,
             &expected_structural_facts);
         if (atom->var_id != atom_single_variable_id_from_children(
                 atom->expr.elems, atom->expr.len))
@@ -2493,12 +2532,48 @@ static uint32_t atom_flags_for_symbol_id(SymbolId sym_id) {
     return flags;
 }
 
+/* Whether an atom's graph is closed across its own arena's generations:
+ * closed in its arena, or closed across that arena and its older one. */
+static inline bool atom_generation_closed(const Atom *atom) {
+    const uint32_t generation = ATOM_STRUCTURAL_FACTS_VALID |
+                                ATOM_STRUCTURAL_GENERATION_CLOSED;
+    return (atom->flags & ATOM_FLAG_ARENA_CLOSED) != 0u ||
+           (atom->structural_facts & generation) == generation;
+}
+
+/* Whether arena `arena_id`, whose older generation is `older_id`, may
+ * reference `child`: globally owned and closed, or closed across the
+ * generations of the arena or of its older one. */
+static inline bool atom_generation_admits(uint32_t arena_id,
+                                          uint32_t older_id,
+                                          const Atom *child) {
+    if (child->arena_id == 0u)
+        return (child->flags & ATOM_FLAG_ARENA_CLOSED) != 0u;
+    return (child->arena_id == arena_id || child->arena_id == older_id) &&
+           atom_generation_closed(child);
+}
+
 bool atom_graph_is_closed_for_arena(const Arena *arena,
                                     const Atom *atom) {
     return arena && atom &&
            (atom->flags & ATOM_FLAG_ARENA_CLOSED) != 0u &&
            (atom->arena_id == 0u ||
             atom->arena_id == arena->identity);
+}
+
+/* The settled test for a copy's inner loop, where both are present and the
+ * arena is initialized, so its identity is not zero. */
+static inline bool atom_settled_in(const Arena *arena, const Atom *atom) {
+    uint32_t id = atom->arena_id;
+    if (id == arena->identity)
+        return atom_generation_closed(atom);
+    return arena->older_identity != 0u && id == arena->older_identity &&
+           atom_generation_closed(atom);
+}
+
+bool atom_settled_for_arena(const Arena *arena, const Atom *atom) {
+    return arena && atom && arena->identity != 0u &&
+           atom_settled_in(arena, atom);
 }
 
 bool atom_graph_arena_id_bounds(const Atom *atom,
@@ -2581,21 +2656,56 @@ bool atom_graph_arena_id_bounds(const Atom *atom,
     return complete;
 }
 
-static uint32_t atom_flags_from_children(uint32_t arena_id, Atom **elems,
-                                         CettaExprLen len,
-                                         uint32_t *structural_facts_out) {
-    const uint32_t inherited = ATOM_FLAG_HAS_VARS |
-                               ATOM_FLAG_HAS_REGISTRY_REFS |
-                               ATOM_FLAG_HAS_PRIVATE_VARIANT_VAR |
-                               ATOM_FLAG_HAS_IDENTITY_GROUNDED |
-                               ATOM_FLAG_HAS_THREAD_LOCAL_RESOURCE |
-                               ATOM_FLAG_VAR_BLOOM_MASK;
-    const uint32_t required = ATOM_FLAG_HASH_STABLE |
-                              ATOM_FLAG_HASHCONS_ELIGIBLE;
+/* An expression's summary folds its children's flags: the properties it
+ * inherits by disjunction, the ones every child must have by conjunction, and
+ * arena closure by conjunction over the children closed for its arena.  Its
+ * head then adjusts the fold. */
+static const uint32_t ATOM_SUMMARY_INHERITED =
+    ATOM_FLAG_HAS_VARS |
+    ATOM_FLAG_HAS_REGISTRY_REFS |
+    ATOM_FLAG_HAS_PRIVATE_VARIANT_VAR |
+    ATOM_FLAG_HAS_IDENTITY_GROUNDED |
+    ATOM_FLAG_HAS_THREAD_LOCAL_RESOURCE |
+    ATOM_FLAG_VAR_BLOOM_MASK;
+static const uint32_t ATOM_SUMMARY_REQUIRED =
+    ATOM_FLAG_HASH_STABLE |
+    ATOM_FLAG_HASHCONS_ELIGIBLE;
+
+/* Whether `head` adjusts the summary of the expression it heads. */
+static bool atom_summary_head_adjusts(Atom *head) {
+    return head &&
+        (atom_is_symbol(head, "resolve-name") ||
+         atom_is_symbol_id(head, g_builtin_syms.native_handle));
+}
+
+/* The summary `flags` of an expression headed by `head`: a name to resolve
+ * carries a registry reference, and a native handle is contextual, so never
+ * interned. */
+static uint32_t atom_summary_head_adjust(Atom *head, uint32_t flags) {
+    if (!head)
+        return flags;
+    if (atom_is_symbol(head, "resolve-name"))
+        flags |= ATOM_FLAG_HAS_REGISTRY_REFS;
+    if (atom_is_symbol_id(head, g_builtin_syms.native_handle))
+        flags &= ~ATOM_FLAG_HASHCONS_ELIGIBLE;
+    return flags;
+}
+
+/* The fold of an expression's summary from its children.  `generational`
+ * is a constant at each use: an arena without an older generation folds
+ * exactly the one-arena summary and pays nothing for the generation bit. */
+static inline __attribute__((always_inline)) uint32_t atom_flags_fold(
+    uint32_t arena_id, uint32_t older_id, bool generational, Atom **elems,
+    CettaExprLen len, uint32_t *structural_facts_out) {
+    const uint32_t inherited = ATOM_SUMMARY_INHERITED;
+    const uint32_t required = ATOM_SUMMARY_REQUIRED;
     uint32_t flags = ATOM_FLAG_HASH_STABLE |
                      ATOM_FLAG_HASHCONS_ELIGIBLE |
                      ATOM_FLAG_ARENA_CLOSED;
     uint32_t structural_facts = ATOM_STRUCTURAL_FACTS_VALID;
+    /* The generation bit folds like the arena bit, over the arena and its
+     * older generation. */
+    bool generation_closed = generational;
     for (CettaExprIndex i = 0; i < len; i++) {
         Atom *child = elems ? elems[i] : NULL;
         if (!child) {
@@ -2603,6 +2713,7 @@ static uint32_t atom_flags_from_children(uint32_t arena_id, Atom **elems,
                        ATOM_FLAG_HASHCONS_ELIGIBLE |
                        ATOM_FLAG_ARENA_CLOSED);
             structural_facts = 0u;
+            generation_closed = false;
             continue;
         }
         const uint32_t child_flags = child->flags;
@@ -2611,31 +2722,44 @@ static uint32_t atom_flags_from_children(uint32_t arena_id, Atom **elems,
         flags |= child_flags & inherited;
         flags &= child_flags | ~required;
         if ((child_flags & ATOM_FLAG_ARENA_CLOSED) == 0u ||
-            (child->arena_id != 0u && child->arena_id != arena_id))
+            (child->arena_id != 0u && child->arena_id != arena_id)) {
             flags &= ~ATOM_FLAG_ARENA_CLOSED;
+            /* A child closed in this arena is admitted by the generation
+             * bit too, so only a child that fails the arena bit is asked. */
+            if (generational && generation_closed &&
+                !atom_generation_admits(arena_id, older_id, child))
+                generation_closed = false;
+        }
         if ((child->structural_facts &
              ATOM_STRUCTURAL_FACTS_VALID) == 0u) {
             structural_facts = 0u;
         } else if ((structural_facts &
                     ATOM_STRUCTURAL_FACTS_VALID) != 0u) {
             structural_facts |= child->structural_facts &
-                ~ATOM_STRUCTURAL_FACTS_VALID;
+                ~(ATOM_STRUCTURAL_FACTS_VALID |
+                  ATOM_STRUCTURAL_GENERATION_CLOSED);
         }
     }
-    if (len > 0 && elems && atom_is_symbol(elems[0], "resolve-name"))
-        flags |= ATOM_FLAG_HAS_REGISTRY_REFS;
-    if (len > 0) {
-        Atom temp = {0};
-        temp.kind = ATOM_EXPR;
-        temp.flags = flags;
-        temp.expr.len = len;
-        temp.expr.elems = elems;
-        if (atom_expr_is_contextual(&temp))
-            flags &= ~ATOM_FLAG_HASHCONS_ELIGIBLE;
-    }
+    if (len > 0 && elems)
+        flags = atom_summary_head_adjust(elems[0], flags);
+    if (generational && generation_closed &&
+        (flags & ATOM_FLAG_ARENA_CLOSED) == 0u &&
+        (structural_facts & ATOM_STRUCTURAL_FACTS_VALID) != 0u)
+        structural_facts |= ATOM_STRUCTURAL_GENERATION_CLOSED;
     if (structural_facts_out)
         *structural_facts_out = structural_facts;
     return flags;
+}
+
+static uint32_t atom_flags_from_children(uint32_t arena_id,
+                                         uint32_t older_id, Atom **elems,
+                                         CettaExprLen len,
+                                         uint32_t *structural_facts_out) {
+    return older_id != 0u
+        ? atom_flags_fold(arena_id, older_id, true, elems, len,
+                          structural_facts_out)
+        : atom_flags_fold(arena_id, 0u, false, elems, len,
+                          structural_facts_out);
 }
 
 static VarId atom_single_variable_id_from_children(
@@ -3232,6 +3356,10 @@ Atom *atom_internal_tag(Arena *a, CettaInternalTag tag) {
     return at;
 }
 
+Atom *atom_petta_no_result(Arena *a) {
+    return atom_internal_tag(a, CETTA_INTERNAL_TAG_PETTA_NO_RESULT);
+}
+
 Atom *atom_petta_prolog_compound(Arena *a, Atom *body) {
     if (!a || !body || body->kind != ATOM_EXPR ||
         body->expr.len == 0u ||
@@ -3595,7 +3723,7 @@ Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len) {
     elems_bytes = (size_t)len * sizeof(Atom *);
     temp.kind = ATOM_EXPR;
     temp.flags = atom_flags_from_children(
-        a->identity, elems, len, &temp.structural_facts);
+        a->identity, a->older_identity, elems, len, &temp.structural_facts);
     temp.var_id = atom_single_variable_id_from_children(elems, len);
     temp.arena_id = a->identity;
     temp.hash_cache = 0;
@@ -3614,12 +3742,125 @@ Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len) {
     at->var_id = temp.var_id;
     at->sym_id = SYMBOL_ID_NONE;
     at->arena_id = a->identity;
+    at->name_key = NULL;
     at->hash_cache = 0;
     at->structural_facts = temp.structural_facts;
     at->expr.len = len;
     at->expr.elems = elems_bytes ? (Atom **)(at + 1) : NULL;
     if (elems && elems_bytes > 0) memcpy(at->expr.elems, elems, elems_bytes);
     return at;
+}
+
+/* Whether `child` leaves the fold of an expression's flags, closure apart,
+ * as the other children fold them: no inherited property, every required
+ * one, no structural fact, no variable. */
+static bool atom_summary_neutral_child(const Atom *child) {
+    return child &&
+        (child->flags & ATOM_SUMMARY_INHERITED) == 0u &&
+        (child->flags & ATOM_SUMMARY_REQUIRED) == ATOM_SUMMARY_REQUIRED &&
+        (child->structural_facts & ~ATOM_STRUCTURAL_GENERATION_CLOSED) ==
+            ATOM_STRUCTURAL_FACTS_VALID;
+}
+
+/* Whether `child` is closed for arena `arena_id`, as the closure fold asks. */
+static bool atom_summary_closed_child(const Atom *child, uint32_t arena_id) {
+    return child &&
+        (child->flags & ATOM_FLAG_ARENA_CLOSED) != 0u &&
+        (child->arena_id == 0u || child->arena_id == arena_id);
+}
+
+Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
+    if (!a || !expression || expression->kind != ATOM_EXPR ||
+        offset > expression->expr.len)
+        return NULL;
+    CettaExprLen len = expression->expr.len - offset;
+    Atom **elems = len > 0u ? expression->expr.elems + offset : NULL;
+    /* An arena that interns its expressions takes the interned copy, and
+     * storage the suffix could outlive is copied: storage in the arena, in
+     * its older generation, or never released is shared. */
+    if (len == 0u || a->hashcons ||
+        (expression->arena_id != a->identity && expression->arena_id != 0u &&
+         (a->older_identity == 0u ||
+          expression->arena_id != a->older_identity)))
+        return atom_expr(a, elems, len);
+    Atom *suffix = arena_alloc(a, sizeof(Atom));
+    *suffix = (Atom){
+        .kind = ATOM_EXPR,
+        .var_id = VAR_ID_NONE,
+        .sym_id = SYMBOL_ID_NONE,
+        .arena_id = a->identity,
+        .expr = {
+            .elems = elems,
+            .len = len,
+        },
+    };
+    bool inherits = !atom_summary_head_adjusts(expression->expr.elems[0]);
+    bool closure_inherits = true;
+    bool generation_inherits = true;
+    for (CettaExprIndex index = 0u; inherits && index < offset; index++) {
+        Atom *departed = expression->expr.elems[index];
+        inherits = atom_summary_neutral_child(departed);
+        closure_inherits = closure_inherits &&
+            atom_summary_closed_child(departed, a->identity);
+        generation_inherits = generation_inherits &&
+            atom_generation_admits(a->identity, a->older_identity, departed);
+    }
+    if (inherits) {
+        /* The departed children hold each bit's unit and no variable, so the
+         * expression's fold is the suffix's, which its own head adjusts. */
+        uint32_t flags = atom_summary_head_adjust(
+            elems[0], expression->flags & ~ATOM_FLAG_HASH_VALID);
+        if (!closure_inherits) {
+            /* A departed child was open for the arena, so closure is folded
+             * afresh, up to the first open child that remains.  Each child
+             * ends at most one such fold over a walk by suffixes. */
+            flags |= ATOM_FLAG_ARENA_CLOSED;
+            for (CettaExprIndex index = 0u; index < len; index++) {
+                if (!atom_summary_closed_child(elems[index], a->identity)) {
+                    flags &= ~ATOM_FLAG_ARENA_CLOSED;
+                    break;
+                }
+            }
+        }
+        /* The generation bit asks every child the view keeps to be admitted
+         * by the view's arena.  When the departed children are, the
+         * parent's answer is the view's: a parent in that arena gives its
+         * own, and a parent in the older generation, which has none of its
+         * own, is admitted exactly when it is closed there.  Otherwise the
+         * bit is folded afresh up to the first child not admitted, as the
+         * closure bit is. */
+        uint32_t facts = expression->structural_facts &
+                         ~ATOM_STRUCTURAL_GENERATION_CLOSED;
+        if (a->older_identity != 0u &&
+            (flags & ATOM_FLAG_ARENA_CLOSED) == 0u &&
+            (facts & ATOM_STRUCTURAL_FACTS_VALID) != 0u) {
+            bool generation = true;
+            if (generation_inherits) {
+                generation = expression->arena_id == a->identity
+                    ? atom_generation_closed(expression)
+                    : (expression->flags & ATOM_FLAG_ARENA_CLOSED) != 0u;
+            } else {
+                for (CettaExprIndex index = 0u; index < len; index++) {
+                    if (!atom_generation_admits(
+                            a->identity, a->older_identity, elems[index])) {
+                        generation = false;
+                        break;
+                    }
+                }
+            }
+            if (generation)
+                facts |= ATOM_STRUCTURAL_GENERATION_CLOSED;
+        }
+        suffix->flags = flags;
+        suffix->structural_facts = facts;
+        suffix->var_id = expression->var_id;
+    } else {
+        suffix->flags = atom_flags_from_children(
+            a->identity, a->older_identity, elems, len,
+            &suffix->structural_facts);
+        suffix->var_id = atom_single_variable_id_from_children(elems, len);
+    }
+    return suffix;
 }
 
 Atom *atom_expr_builder_begin(Arena *a, CettaExprLen len) {
@@ -3649,7 +3890,7 @@ Atom *atom_expr_builder_finish(Arena *a, Atom *draft) {
         draft->arena_id != a->identity)
         return NULL;
     draft->flags = atom_flags_from_children(
-        a->identity, draft->expr.elems, draft->expr.len,
+        a->identity, a->older_identity, draft->expr.elems, draft->expr.len,
         &draft->structural_facts);
     draft->var_id = atom_single_variable_id_from_children(
         draft->expr.elems, draft->expr.len);
@@ -4217,8 +4458,7 @@ static Atom *atom_deep_copy_impl(
                 frame->elems[frame->next++] = child_copy;
                 continue;
             }
-            if (arena_owns_atom(dst, child) &&
-                atom_graph_is_closed_for_arena(dst, child)) {
+            if (atom_settled_in(dst, child)) {
                 if (!atom_deep_copy_memo_store(memo, child, child)) {
                     free(stack);
                     return NULL;
@@ -4313,8 +4553,7 @@ Atom *atom_deep_copy_session_copy(AtomDeepCopySession *session, Atom *src) {
      * constructors.  The per-episode forwarding table remains authoritative
      * for every graph copied during this episode.
      */
-    if (arena_owns_atom(session->dst, src) &&
-        atom_graph_is_closed_for_arena(session->dst, src)) {
+    if (atom_settled_for_arena(session->dst, src)) {
         if (!atom_deep_copy_memo_store(&session->memo, src, src))
             return NULL;
         cetta_provenance_assert_not_transient_except(
@@ -4337,8 +4576,7 @@ Atom *atom_deep_copy_session_forwarded(
 bool atom_deep_copy_session_settled(
     const AtomDeepCopySession *session, const Atom *atom) {
     return session && atom && !session->resolver &&
-           arena_owns_atom(session->dst, atom) &&
-           atom_graph_is_closed_for_arena(session->dst, atom);
+           atom_settled_for_arena(session->dst, atom);
 }
 
 void atom_deep_copy_session_free(AtomDeepCopySession *session) {

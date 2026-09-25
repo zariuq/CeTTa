@@ -70,6 +70,9 @@ typedef enum {
     CETTA_INTERNAL_TAG_PRIME_LEXICAL_SLOT = 3,
     CETTA_INTERNAL_TAG_PRIME_LEVEL_PARAMETER = 4,
     CETTA_INTERNAL_TAG_PETTA_OPEN_CONS = 5,
+    /* A PeTTa operation that has no answer.  In PeTTa `Empty` is data
+     * except as a `case` default, so no-result cannot be that symbol. */
+    CETTA_INTERNAL_TAG_PETTA_NO_RESULT = 8,
 } CettaInternalTag;
 
 #define ATOM_FLAG_HAS_VARS 0x01u
@@ -114,6 +117,11 @@ typedef enum {
 #define ATOM_STRUCTURAL_FACTS_VALID UINT32_C(0x80000000)
 #define ATOM_STRUCTURAL_HAS_INTERNAL_TAG UINT32_C(0x00000001)
 #define ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID UINT32_C(0x00000002)
+/* The atom's arena has an older generation, and every Atom child reachable
+ * through this node is globally owned, in this node's arena, or in that older
+ * generation, closed there in turn.  Set only where ATOM_FLAG_ARENA_CLOSED is
+ * not: that bit keeps its one-arena meaning for every other reader. */
+#define ATOM_STRUCTURAL_GENERATION_CLOSED UINT32_C(0x00000004)
 
 /*
  * VariantShape reserves this VarId prefix for its runtime-private slots.
@@ -200,6 +208,10 @@ static inline bool atom_is_internal_tag(
            atom->ground.ival == (int64_t)tag;
 }
 
+static inline bool atom_is_petta_no_result(const Atom *atom) {
+    return atom_is_internal_tag(atom, CETTA_INTERNAL_TAG_PETTA_NO_RESULT);
+}
+
 static inline uint32_t atom_var_bloom_for_id(VarId id) {
     if (id == VAR_ID_NONE)
         return 0u;
@@ -265,6 +277,11 @@ typedef struct {
     uint32_t spare_block_count;
     CettaArenaRuntimeKind runtime_kind;
     uint32_t identity;
+    /* The older generation, whose storage this arena's atoms may share: it
+     * is released only together with this arena.  Zero when there is none.
+     * Linked once after initialization; an older generation has none of its
+     * own. */
+    uint32_t older_identity;
     /*
      * Monotone allocation epoch.  Arena identity survives mark/reset, while
      * reset_epoch changes whenever reset or free invalidates owned pointers.
@@ -327,6 +344,11 @@ void  arena_free(Arena *a);
 void  arena_reserve(Arena *a, size_t size);
 void  arena_set_hashcons(Arena *a, HashConsTable *hc);
 void  arena_set_runtime_kind(Arena *a, CettaArenaRuntimeKind kind);
+/* Name `older` as the older generation of `young`, whose atoms may then share
+ * its storage.  The owner releases `older` only together with `young`.  An
+ * arena that has an older generation cannot serve as one: the link is then
+ * left unset. */
+void  arena_set_older_generation(Arena *young, const Arena *older);
 /* Share one atom per symbol and per small integer within each reset epoch of
  * this arena.  Atoms are immutable, so sharing is invisible to observers;
  * a reset or free forgets every shared atom with the storage it lived in. */
@@ -382,6 +404,13 @@ Atom *atom_native_handle_identifier(Arena *a, int64_t id, void *owner,
 Atom *atom_int_copy(Arena *a, const Atom *source);
 ArenaMark arena_mark(const Arena *a);
 void  arena_reset(Arena *a, ArenaMark mark);
+/* Free the arena's unused blocks beyond the first `keep_bytes` of spare
+ * capacity; the blocks in use are untouched. */
+void  arena_release_spare(Arena *a, size_t keep_bytes);
+/* Whether `a` is exactly at `mark`: nothing allocated, finalized or acquired
+ * since, so a reset to it would release nothing and every atom stays
+ * valid. */
+bool  arena_at_mark(const Arena *a, ArenaMark mark);
 void *arena_alloc(Arena *a, size_t size);
 /* Upper bound on live arena bytes allocated by atom_expr with hash-consing
  * disabled.  Block reservation overhead is not part of this logical charge. */
@@ -394,6 +423,10 @@ bool  arena_owns_atom(const Arena *a, const Atom *atom);
  * permitted.  Identity-bearing external resources deliberately fail. */
 bool  atom_graph_is_closed_for_arena(const Arena *arena,
                                      const Atom *atom);
+/* Whether a copy into `arena` may share `atom` as it is: the atom is closed
+ * in `arena`, or in `arena`'s older generation, across the generations it
+ * reaches.  Globally owned atoms are not shared this way. */
+bool  atom_settled_for_arena(const Arena *arena, const Atom *atom);
 /* Exact bounds of every arena identity reachable through ordinary atom-owned
  * storage.  Identity-bearing external resources are intentionally
  * unsupported. */
@@ -605,6 +638,8 @@ Atom *atom_capture(Arena *a, CaptureClosure *closure);
 Atom *atom_foreign(Arena *a, CettaForeignValue *value);
 Atom *atom_internal_tag(Arena *a, CettaInternalTag tag);
 Atom *atom_petta_prolog_compound(Arena *a, Atom *body);
+/* PeTTa's no-result marker: an internal atom no program can write. */
+Atom *atom_petta_no_result(Arena *a);
 bool atom_petta_prolog_compound_body(Atom *atom, Atom **body);
 bool atom_prolog_compound_body(Atom *atom, Atom **body);
 Atom *atom_counted_collection(Arena *a, int64_t count);
@@ -623,6 +658,13 @@ const CettaPrimeContext *atom_prime_context_value(const Atom *atom);
 Atom *atom_prime_context_lookup(const CettaPrimeContext *context, Atom *key);
 uint32_t atom_prime_context_depth(const CettaPrimeContext *context);
 Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len);
+/* The suffix of `expression` from its child `offset` on.  It shares the
+ * expression's children when their storage outlives the suffix: storage in
+ * the suffix's own arena, allocated first, or storage never released.  Its
+ * summary is the expression's when the departed children leave every summary
+ * bit and the variables as the others fold them; otherwise it is folded from
+ * its own children. */
+Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset);
 /* Single-allocation expression construction for incremental producers.
  * `begin` returns an unpublished draft whose child vector the caller fills;
  * `finish` computes all derived flags and returns the immutable expression

@@ -482,7 +482,8 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(compile_link_package, "compile:link-package") \
     X(unquote, "unquote") \
     X(remove_all_atom, "remove-all-atom") \
-    X(sort_numbers_atom, "sort-numbers-atom")
+    X(sort_numbers_atom, "sort-numbers-atom") \
+    X(petta_decons, "decons")
 
 /* Builtins whose grounded-operation capability is independent of language
    and profile.  symbol_table_init_builtins compiles this declaration into

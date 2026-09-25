@@ -1773,35 +1773,23 @@ petta_specializer_relation_execution_admission(
         : PETTA_SPECIALIZER_RELATION_DEFER;
 }
 
-static Atom *petta_specializable_value(
-    PettaSpecializerContext *context, Arena *arena,
-    Atom *atom) {
-    if (!context || !arena || !atom || atom_has_vars(atom))
-        return NULL;
+/* Whether a ground value selects a specialization: a callable symbol or a
+ * partial application, as SWI-PeTTa's specializer decides.  Any other
+ * value is data.  An expression whose head is a function given too few
+ * arguments is data too: only source syntax is an under-application, and a
+ * call's arguments are values by the time it is prepared. */
+static bool petta_value_specializable(
+    PettaSpecializerContext *context, Atom *atom) {
+    if (!context || !atom || atom_has_vars(atom))
+        return false;
     Atom *base = NULL;
     Atom *arguments = NULL;
     if (petta_semantics_partial_view(
             atom, &base, &arguments)) {
-        return base && arguments ? atom : NULL;
+        return base && arguments;
     }
-    if (atom->kind == ATOM_SYMBOL) {
-        return petta_symbol_is_callable(
-                   context, atom->sym_id)
-            ? atom : NULL;
-    }
-    if (atom->kind != ATOM_EXPR ||
-        atom->expr.len == 0u ||
-        atom->expr.elems[0]->kind != ATOM_SYMBOL) {
-        return NULL;
-    }
-    CettaExprLen supplied = atom->expr.len - 1u;
-    PeTTaNamedArity arity = petta_specializer_named_arity(
-        context, atom->expr.elems[0], supplied);
-    if (!arity.known || arity.exact || !arity.larger)
-        return NULL;
-    return petta_semantics_partial_value(
-        arena, atom->expr.elems[0],
-        atom->expr.elems + 1u, supplied);
+    return atom->kind == ATOM_SYMBOL &&
+           petta_symbol_is_callable(context, atom->sym_id);
 }
 
 /*
@@ -2479,7 +2467,6 @@ petta_find_record_for_call(
             record->selector_len == 0u) {
             continue;
         }
-        ArenaMark mark = arena_mark(&context->scratch);
         bool matches = true;
         for (size_t selector_index = 0u;
              selector_index < record->selector_len;
@@ -2488,17 +2475,12 @@ petta_find_record_for_call(
                 &record->selectors[selector_index];
             Atom *actual = petta_atom_at_path(
                 call, selector->path, selector->path_len);
-            Atom *specializable = actual
-                ? petta_specializable_value(
-                      context, &context->scratch, actual)
-                : NULL;
-            if (!specializable ||
-                !atom_eq(specializable, selector->value)) {
+            if (!petta_value_specializable(context, actual) ||
+                !atom_eq(actual, selector->value)) {
                 matches = false;
                 break;
             }
         }
-        arena_reset(&context->scratch, mark);
         if (matches) {
             if (petta_specializer_trace_enabled()) {
                 fprintf(
@@ -2580,7 +2562,9 @@ static bool petta_specializer_analyze_call(
  * Under-applications are different: PeTTa deterministically turns them into
  * canonical partial values, so they remain legitimate specialization keys.
  * Unknown/data constructors retain their shape while any executable children
- * are projected by the same rule.
+ * are projected by the same rule.  The rule reads source syntax only: a
+ * variable's value is already a value, and enters after the source is
+ * ready.
  */
 static Atom *petta_specializer_ready_value(
     PettaSpecializerContext *context, Atom *atom,
@@ -2656,37 +2640,39 @@ static Atom *petta_specializer_ready_value(
         &context->scratch, elements, atom->expr.len);
 }
 
+/* A forwarded source call as the specialized equation would make it ready:
+ * the specialization's values stand in the source, as they do in the
+ * specialized equation, and each argument is made ready as source is; the
+ * remaining variables' values then enter as the data they are. */
 static Atom *petta_specializer_ready_call(
     PettaSpecializerContext *context, Atom *source_call,
-    Atom *concrete_call,
+    const Bindings *bindings, const Bindings *higher_order,
     VarId forwarded_variable, bool *carries_ready) {
-    if (carries_ready)
-        *carries_ready = false;
-    if (!context || !source_call || !concrete_call ||
-        !carries_ready ||
-        source_call->kind != ATOM_EXPR ||
-        concrete_call->kind != ATOM_EXPR ||
-        source_call->expr.len != concrete_call->expr.len ||
-        concrete_call->expr.len == 0u) {
-        return concrete_call;
-    }
+    *carries_ready = false;
     Atom **elements = arena_alloc(
         &context->scratch,
-        sizeof(*elements) * (size_t)concrete_call->expr.len);
+        sizeof(*elements) * (size_t)source_call->expr.len);
     if (!elements) {
         context->capacity = true;
         return NULL;
     }
-    elements[0] = concrete_call->expr.elems[0];
+    elements[0] = source_call->expr.elems[0];
     for (CettaExprIndex index = 1u;
-         index < concrete_call->expr.len; index++) {
+         index < source_call->expr.len; index++) {
         Atom *source_argument = source_call->expr.elems[index];
-        Atom *concrete_argument =
-            concrete_call->expr.elems[index];
-        Atom *ready_argument = petta_specializer_ready_value(
-            context, concrete_argument, 0u);
-        if (!ready_argument)
+        Atom *specialized = bindings_apply_if_vars(
+            higher_order, &context->scratch, source_argument);
+        Atom *ready_argument = specialized
+            ? petta_specializer_ready_value(context, specialized, 0u)
+            : NULL;
+        ready_argument = ready_argument
+            ? bindings_apply_if_vars(
+                  bindings, &context->scratch, ready_argument)
+            : NULL;
+        if (!ready_argument) {
+            context->capacity = true;
             return NULL;
+        }
         elements[index] = ready_argument;
         if (petta_atom_contains_variable(
                 source_argument, forwarded_variable) &&
@@ -2695,13 +2681,13 @@ static Atom *petta_specializer_ready_call(
         }
     }
     return atom_expr(
-        &context->scratch, elements, concrete_call->expr.len);
+        &context->scratch, elements, source_call->expr.len);
 }
 
 static bool petta_analyze_forwarded_calls(
     PettaSpecializerContext *context, Atom *rhs,
-    const Bindings *bindings, VarId variable,
-    bool materialize, bool *saw_forward,
+    const Bindings *bindings, const Bindings *higher_order,
+    VarId variable, bool materialize, bool *saw_forward,
     bool *productive) {
     PettaAtomVector stack = {0};
     if (!petta_atom_vector_push(&stack, rhs)) {
@@ -2727,19 +2713,11 @@ static bool petta_analyze_forwarded_calls(
             }
             if (carries) {
                 *saw_forward = true;
-                Atom *concrete = bindings_apply_if_vars(
-                    bindings, &context->scratch, atom);
-                if (!concrete) {
-                    context->capacity = true;
-                    free(stack.items);
-                    return false;
-                }
                 bool carries_ready = false;
                 Atom *ready = petta_specializer_ready_call(
-                    context, atom, concrete, variable,
+                    context, atom, bindings, higher_order, variable,
                     &carries_ready);
                 if (!ready) {
-                    context->capacity = true;
                     free(stack.items);
                     return false;
                 }
@@ -2823,11 +2801,8 @@ static bool petta_specialization_selectors_match(
             &selectors->items[index];
         Atom *actual = petta_atom_at_path(
             call, selector->path, selector->path_len);
-        Atom *value = actual
-            ? petta_specializable_value(
-                  context, &context->scratch, actual)
-            : NULL;
-        if (!value || !atom_eq(value, selector->value))
+        if (!petta_value_specializable(context, actual) ||
+            !atom_eq(actual, selector->value))
             return false;
     }
     return true;
@@ -3156,12 +3131,6 @@ static bool petta_specializer_analyze_call(
 
     PettaAtomVector equations = {0};
     PettaSpecializationBindings candidates = {0};
-    Arena candidate_values;
-    arena_init(&candidate_values);
-    arena_set_runtime_kind(
-        &candidate_values,
-        CETTA_ARENA_RUNTIME_KIND_SCRATCH);
-    arena_set_hashcons(&candidate_values, NULL);
     bool productive = false;
     bool ok = petta_collect_source_equations(
         context, source, &equations);
@@ -3178,23 +3147,35 @@ static bool petta_specializer_analyze_call(
             continue;
         }
         Atom *rhs = fresh->expr.elems[2];
+        /* The bindings whose values select a specialization. */
+        Bindings higher_order;
+        bindings_init(&higher_order);
         BindingsIterator iterator = {.bindings = &bindings};
         Binding logical_binding;
         while (ok && bindings_iterator_next(&iterator, &logical_binding)) {
-            const Binding *binding = &logical_binding;
-            Atom *specializable = petta_specializable_value(
-                context, &candidate_values,
-                binding_value_materialize(&context->scratch, binding->value));
-            if (!specializable) {
-                continue;
+            Atom *value = binding_value_materialize(
+                &context->scratch, logical_binding.value);
+            if (petta_value_specializable(context, value) &&
+                !bindings_add_id(&higher_order, logical_binding.var_id,
+                                 logical_binding.spelling, value)) {
+                context->capacity = true;
+                ok = false;
             }
+        }
+        iterator = (BindingsIterator){.bindings = &bindings};
+        while (ok && bindings_iterator_next(&iterator, &logical_binding)) {
+            const Binding *binding = &logical_binding;
+            Atom *specializable = binding_value_materialize(
+                &context->scratch, binding->value);
+            if (!petta_value_specializable(context, specializable))
+                continue;
             bool direct =
                 petta_variable_is_direct_callable(
                     rhs, binding->var_id);
             bool forwarded = false;
             bool downstream = false;
             ok = petta_analyze_forwarded_calls(
-                context, rhs, &bindings,
+                context, rhs, &bindings, &higher_order,
                 binding->var_id, materialize,
                 &forwarded, &downstream);
             if (!ok)
@@ -3229,6 +3210,7 @@ static bool petta_specializer_analyze_call(
             }
             productive = productive || direct || downstream;
         }
+        bindings_free(&higher_order);
         bindings_free(&bindings);
         arena_reset(&context->scratch, mark);
     }
@@ -3287,7 +3269,6 @@ static bool petta_specializer_analyze_call(
         free(candidates.items[index].path);
     free(candidates.items);
     free(equations.items);
-    arena_free(&candidate_values);
     context->depth--;
     context->visiting_len--;
     return ok;

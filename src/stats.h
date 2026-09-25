@@ -936,7 +936,13 @@ typedef enum {
     CETTA_RUNTIME_COUNTER_OPEN_EQUATION_ANSWER = 917,
     CETTA_RUNTIME_COUNTER_OPEN_EQUATION_DECLINED = 918,
     CETTA_RUNTIME_COUNTER_OPEN_EQUATION_STOP = 919,
-    CETTA_RUNTIME_COUNTER_COUNT = 920
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_HOST = 920,
+    /* Bytes a host goal's export builds in the host's answer arena and
+     * stable storage, and bytes a host answer's import builds in the region:
+     * what crossing the tier's boundary copies. */
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_HOST_EXPORT_BYTES = 921,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_HOST_IMPORT_BYTES = 922,
+    CETTA_RUNTIME_COUNTER_COUNT = 923
 } CettaRuntimeCounter;
 
 typedef struct {
