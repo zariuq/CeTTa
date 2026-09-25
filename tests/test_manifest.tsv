@@ -461,6 +461,7 @@ tests/test_nondeterministic_types.metta	he	metta	extended	main	native	test	golde
 tests/test_not_reducible.metta	he	metta	extended	main	native	test	golden	-
 tests/test_numeric_edge_cases.metta	he	metta	extended	main	native	test	golden	-
 tests/test_numeric_eq_rational_regression.metta	he	metta	extended	main	native	test	golden	-
+tests/test_numeric_value_coherence.metta	he	metta	extended	main	native	test	golden	-
 tests/test_once.metta	he	metta	extended	main	native	test	golden	-
 tests/test_once_arity.metta	he	metta	extended	main	native	test	golden	-
 tests/test_open_equation_subst_index.metta	he	metta	extended	main	native	test	golden	-

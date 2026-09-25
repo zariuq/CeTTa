@@ -10,7 +10,6 @@
 #include "stats.h"
 #include "generated/cetta_execution_contracts.generated.h"
 #include <ctype.h>
-#include <errno.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -2778,9 +2777,9 @@ static ImportedBridgeExprDecodeResult imported_bridge_token_to_atom_id(
 
     if (strpbrk(tok, ".eE")) {
         char *fendp = NULL;
-        errno = 0;
+        /* Past the float range: the nearest float, as the parser reads it. */
         double fval = strtod(tok, &fendp);
-        if (*fendp == '\0' && errno == 0) {
+        if (*fendp == '\0') {
             *out_id = tu_intern_float(universe, fval);
             return IMPORTED_BRIDGE_EXPR_DECODE_OK;
         }
@@ -6539,9 +6538,9 @@ static Atom *imported_bridge_parse_token_bytes(Arena *a,
 
     if (strpbrk(tok, ".eE")) {
         char *fendp = NULL;
-        errno = 0;
+        /* Past the float range: the nearest float, as the parser reads it. */
         double fval = strtod(tok, &fendp);
-        if (*fendp == '\0' && errno == 0)
+        if (*fendp == '\0')
             return atom_float(a, fval);
     }
 

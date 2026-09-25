@@ -117,11 +117,17 @@ typedef enum {
 #define ATOM_STRUCTURAL_FACTS_VALID UINT32_C(0x80000000)
 #define ATOM_STRUCTURAL_HAS_INTERNAL_TAG UINT32_C(0x00000001)
 #define ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID UINT32_C(0x00000002)
+/* A NaN float leaf, or a state cell, whose value may become one.  A NaN
+ * equals nothing, not even itself, so an atom is value-equal to itself only
+ * when it holds none. */
+#define ATOM_STRUCTURAL_HAS_NAN UINT32_C(0x00000004)
 /* The atom's arena has an older generation, and every Atom child reachable
  * through this node is globally owned, in this node's arena, or in that older
  * generation, closed there in turn.  Set only where ATOM_FLAG_ARENA_CLOSED is
- * not: that bit keeps its one-arena meaning for every other reader. */
-#define ATOM_STRUCTURAL_GENERATION_CLOSED UINT32_C(0x00000004)
+ * not: that bit keeps its one-arena meaning for every other reader.  Unlike
+ * the facts above, which a node has when any child has them, it holds only
+ * when it holds of every child. */
+#define ATOM_STRUCTURAL_GENERATION_CLOSED UINT32_C(0x00000008)
 
 /*
  * VariantShape reserves this VarId prefix for its runtime-private slots.
@@ -199,6 +205,12 @@ static inline bool atom_structural_may_have_internal_tag(
            (atom->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) == 0u ||
            (atom->structural_facts &
             ATOM_STRUCTURAL_HAS_INTERNAL_TAG) != 0u;
+}
+
+static inline bool atom_structural_may_have_nan(const Atom *atom) {
+    return !atom ||
+           (atom->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) == 0u ||
+           (atom->structural_facts & ATOM_STRUCTURAL_HAS_NAN) != 0u;
 }
 
 static inline bool atom_is_internal_tag(
@@ -731,9 +743,31 @@ bool atom_tree_any(const Atom *root, AtomTreePredicate predicate,
 
 bool atom_eq(Atom *a, Atom *b);
 
+/* MeTTa's ==: a comparison that never binds.  Expressions compare element
+ * by element, and a NaN equals nothing, even itself.
+ * PeTTa: numbers are equal when their values are, whatever their
+ * representation, so 1 equals 1.0 and 0.0 equals -0.0, while a float never
+ * equals an integer it only rounds to.  Every other atom compares as a term.
+ * HE: every other leaf compares as atom_eq does, so numbers keep the lane's
+ * own equality, the one matching uses.  Other dialects use atom_eq. */
+bool atom_value_eq(Atom *a, Atom *b);
+/* A hash consistent with value equality in every lane: numbers hash by
+ * value, so 1 and 1.0, and 1/2 and 0.5, hash alike.  atom_hash stays the
+ * hash of the representation. */
+uint32_t atom_value_hash(Atom *a);
+
+/* A grounded leaf in caller storage, standing in for an unboxed Int, Float
+ * or Bool so that it compares exactly as its atom would.  It belongs to no
+ * arena and must not outlive the comparison or be published. */
+void atom_scalar_leaf_int(Atom *out, int64_t value);
+void atom_scalar_leaf_float(Atom *out, double value);
+void atom_scalar_leaf_bool(Atom *out, bool value);
+
 /* Upstream HE Number::PartialEq promotes an integer/float pair to float
- * and compares.  PeTTa and every other dialect stay kind-strict: 1 ≠ 1.0.
- * Same-kind pairs are not decided here. */
+ * and compares, so 2^53 + 1 equals 2^53 as a float.  he-compat does the
+ * same; the other HE profiles compare the exact values.  PeTTa and every
+ * other dialect stay kind-strict: 1 ≠ 1.0.  Same-kind pairs are not decided
+ * here. */
 bool cetta_he_promoted_kind_equal(int left_kind, int64_t left_int,
                                   double left_float, int right_kind,
                                   int64_t right_int, double right_float);
@@ -754,6 +788,12 @@ typedef enum {
 
 CettaHeFloatIntBranches cetta_he_float_int_branches(double value,
                                                     int64_t *out);
+
+/* The canonical text of an HE float's exact value when that value is a
+ * bigint or a rational: the key an index files such a number under.  NULL in
+ * he-compat and other lanes, for an int64 value, and for a non-finite float.
+ * The caller frees it. */
+char *cetta_he_float_exact_key_text(double value);
 
 /* ── Printing ───────────────────────────────────────────────────────────── */
 

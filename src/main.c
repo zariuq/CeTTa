@@ -3748,6 +3748,8 @@ int main(int argc, char **argv) {
 
     int i = 0;
     bool stop_document_sequence = false;
+    /* A PeTTa file stopped at an uncaught error: SWI-PeTTa's exit status 2. */
+    bool petta_uncaught_error = false;
     FILE *output_spool = NULL;
     if (!compile_mode) {
         const char *tmpdir = getenv("TMPDIR");
@@ -4117,6 +4119,14 @@ process_petta_document:
                 goto cleanup;
             }
             bool stop_after_error = result_set_has_error(results);
+            /* SWI-PeTTa goes on after an Error value, a caught error among
+             * them, and stops only at an uncaught one.  The evaluator knows
+             * which it was on every path but the generic one. */
+            if (lang->id == CETTA_LANGUAGE_PETTA && detailed_initialized &&
+                detailed.petta_raise_known) {
+                stop_after_error = detailed.petta_raised_error;
+                petta_uncaught_error = detailed.petta_raised_error;
+            }
             if (trace.allocation_failed) {
                 fprintf(stderr,
                         "error: could not allocate Prime receipt trace identity\n");
@@ -4256,7 +4266,7 @@ petta_document_complete:
         cetta_runtime_stats_print(stderr, &stats);
     }
 
-    rc = prime_need_trace_failed ? 1 : 0;
+    rc = prime_need_trace_failed ? 1 : petta_uncaught_error ? 2 : 0;
 
 cleanup:
     cetta_main_cleanup(&cleanup);

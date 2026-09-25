@@ -99,6 +99,14 @@ bool is_grounded_op(SymbolId id);
    foreign calls (py-*), evaluator-coupled folds, parsing, `size` (reads live
    mutable space state), and every __cetta_lib_ op (semantics not audited).
    Everything here is a pure function of its argument atoms. */
+/* Operators only CeTTa's own dialects define (integer floor division and
+ * numeric-eq): PeTTa and Hyperon, which he-compat follows, keep them data.
+ * is_grounded_op decides them per dialect. */
+static inline bool grounded_op_is_cetta_only(SymbolId id) {
+    return id == g_builtin_syms.op_floor_div ||
+           id == g_builtin_syms.numeric_eq;
+}
+
 static inline bool grounded_op_is_type_pure(SymbolId id) {
     return (symbol_flags(g_symbols, id) &
             CETTA_SYMBOL_FLAG_TYPE_PURE_GROUNDED_OP) != 0u;

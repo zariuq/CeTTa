@@ -195,6 +195,10 @@ typedef struct {
     /* PeTTa's translation places exposed result structure before ordered
      * equation effects. Other dialects require their own phase law. */
     bool source_output_constraints;
+    /* PeTTa's collections are findall: an error raised while collecting
+     * aborts the collection and propagates, as an exception does in
+     * SWI-PeTTa.  Other dialects keep a raised error as an occurrence. */
+    bool raises_abort_collections;
     /* A `once` whose body is one call to the open tier takes its witness
      * from a portfolio of depth-first search and iterative deepening. */
     bool first_witness_portfolio;
@@ -409,7 +413,7 @@ typedef struct {
         void *context, Arena *arena,
         Atom *expression, Atom *expected,
         const Bindings *environment, OutcomeSet *outcomes,
-        bool *recognized);
+        bool *recognized, Atom **raised);
     bool (*candidate_snapshot_lease)(
         void *context, Space *space, SymbolId head,
         PettaCandidateSnapshotLease *lease,
@@ -548,6 +552,10 @@ PettaMachineStep petta_machine_next(
 const char *petta_machine_typecheck_diagnostic(
     const PettaMachine *machine);
 int petta_machine_typecheck_exit_code(const PettaMachine *machine);
+
+/* True when the last answer is an Error that was raised and not caught,
+ * rather than an Error value. */
+bool petta_machine_last_answer_raised(const PettaMachine *machine);
 
 void petta_machine_destroy(PettaMachine *machine);
 

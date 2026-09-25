@@ -1403,8 +1403,11 @@ static bool prepared_pure_register_program(
     SymbolId head, CettaExprLen arity,
     CettaGsltRegisterResultKind *kind_out,
     CettaGsltRegisterInstruction *instruction_out) {
+    /* A register instruction realizes an operation the current dialect
+     * defines; one it leaves undefined is data. */
 #define PREPARED_PURE_REGISTER(field, expected_arity, result_kind, instruction) \
-    if (head == g_builtin_syms.field && arity == (expected_arity)) { \
+    if (head == g_builtin_syms.field && arity == (expected_arity) && \
+        (!grounded_op_is_cetta_only(head) || is_grounded_op(head))) { \
         if (kind_out) \
             *kind_out = (result_kind); \
         if (instruction_out) \
@@ -1906,12 +1909,22 @@ static bool prepared_pure_scalar_guard_flat_lhs(Atom *lhs) {
     return true;
 }
 
+/* numeric-eq is a test only where the dialect defines it: PeTTa and Hyperon,
+ * which he-compat follows, keep it data, as grounded dispatch does. */
+static bool prepared_pure_numeric_eq_defined(void) {
+    CettaLanguageId language = eval_current_language_id
+        ? eval_current_language_id() : CETTA_LANGUAGE_HE;
+    return language != CETTA_LANGUAGE_PETTA &&
+        !eval_current_uses_rust_he_compat_semantics();
+}
+
 static bool prepared_pure_plain_scalar_truth_head(SymbolId head) {
     return head == g_builtin_syms.op_lt ||
            head == g_builtin_syms.op_gt ||
            head == g_builtin_syms.op_le ||
            head == g_builtin_syms.op_ge ||
-           head == g_builtin_syms.numeric_eq;
+           (head == g_builtin_syms.numeric_eq &&
+            prepared_pure_numeric_eq_defined());
 }
 
 static bool prepared_pure_compile_scalar_guard(
@@ -5016,14 +5029,23 @@ static bool PREPARED_PURE_NOINLINE prepared_pure_inline_register_scalar(
                  program, node, &left, &right)))
             return false;
         bool equal;
+        Atom integer_leaf;
         if (left.atom && right.atom) {
-            equal = atom_eq(left.atom, right.atom);
+            /* Two integers are equal by value, as value equality has it. */
+            equal = left.atom->kind == ATOM_GROUNDED &&
+                    right.atom->kind == ATOM_GROUNDED &&
+                    left.atom->ground.gkind == GV_INT &&
+                    right.atom->ground.gkind == GV_INT
+                ? left.atom->ground.ival == right.atom->ground.ival
+                : atom_value_eq(left.atom, right.atom);
         } else if (left.is_integer && right.is_integer) {
             equal = left.integer == right.integer;
         } else if (left.is_integer && right.atom) {
-            equal = false;
+            atom_scalar_leaf_int(&integer_leaf, left.integer);
+            equal = atom_value_eq(&integer_leaf, right.atom);
         } else if (right.is_integer && left.atom) {
-            equal = false;
+            atom_scalar_leaf_int(&integer_leaf, right.integer);
+            equal = atom_value_eq(left.atom, &integer_leaf);
         } else {
             return false;
         }
