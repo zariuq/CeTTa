@@ -981,5 +981,5 @@ const CettaGsltEmbeddedLanguageV1 cetta_gslt_il_language_v1 = {
     },
     .observation = "bag",
     .manifest_sha256 = "2a202f9517c85119b1500c65d134713742b6a0427ee5d66e1b45ab85bb353a62",
-    .compiler_sha256 = "cd0b41f33e39f93bb98140d93cb851994a6a0973890e1ca31d428607864673a8",
+    .compiler_sha256 = "33ad4247f8b8dce9b59f915a9cea0b9bde1004c5fb1da25b20bf4d3155fa7521",
 };
