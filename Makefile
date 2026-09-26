@@ -3057,6 +3057,7 @@ PRIME_EXAMPLE_TESTS = \
 	examples/prime/native_hyp_grandparent.metta \
 	examples/prime/prime_native_mil_grandparent.metta \
 	examples/prime/prime_native_mil_list_map_rel.metta \
+	examples/prime/prime_cognitive_client.metta \
 	tests/prime/native_hyp_path.metta \
 	examples/prime/popper_synthesis_length_ground_truth.metta \
 	examples/prime/popper_synthesis_filter_ground_truth.metta \
