@@ -92,7 +92,7 @@
     (operator tptp-cert-v1:assign 3) (operator tptp-cert-v1:assign-with 5)
     (operator tptp-cert-v1:named 2)
     (operator tptp-cert-v1:fresh 2) (operator tptp-cert-v1:fresh-at 3)
-    (operator tptp-cert-v1:fresh-numbered 3) (operator tptp-cert-v1:fresh-numbered-at 4)
+    (operator tptp-cert-v1:fresh-numbered 4) (operator tptp-cert-v1:fresh-numbered-at 5)
     (operator tptp-cert-v1:spelling 2) (operator tptp-cert-v1:spelling-at 4)
     (operator tptp-cert-v1:records-with 4) (operator tptp-cert-v1:scope 2)
     (operator tptp-cert-v1:vocabulary 2)
@@ -101,8 +101,10 @@
     (operator tptp-cert-v1:terms-texts 2) (operator tptp-cert-v1:term-texts 2)
     (operator tptp-cert-v1:symbol-texts 2)
     (operator tptp-cert-v1:fresh-symbol 2) (operator tptp-cert-v1:fresh-symbol-at 4)
-    (operator tptp-cert-v1:fresh-symbol-numbered 3)
-    (operator tptp-cert-v1:fresh-symbol-numbered-at 4))
+    (operator tptp-cert-v1:fresh-symbol-numbered 4)
+    (operator tptp-cert-v1:fresh-symbol-numbered-at 5)
+    (operator tptp-cert-v1:vocabulary-of 1) (operator tptp-cert-v1:known 2)
+    (operator tptp-cert-v1:names-exhausted 1))
   (equations)
   (rewrites
     ; ------------------------------------------------------------- records
@@ -420,21 +422,27 @@
       (tptp-cert-v1:fresh-at (str:set-member? (str:set ?used) ?base) ?base ?used))) (body))
     (rule cert-fresh-free (head (metta-equation
       (tptp-cert-v1:fresh-at False ?base ?used) ?base)) (body))
+    ; The numbered search tries base_1, base_2, ...  Every taken candidate is
+    ; a distinct used spelling, so the used list, one element spent for each
+    ; taken candidate, always outlasts the search.
     (rule cert-fresh-taken (head (metta-equation
       (tptp-cert-v1:fresh-at True ?base ?used)
-      (tptp-cert-v1:fresh-numbered ?base ?used 1))) (body))
+      (tptp-cert-v1:fresh-numbered ?base ?used ?used 1))) (body))
     (rule cert-fresh-numbered (head (metta-equation
-      (tptp-cert-v1:fresh-numbered ?base ?used ?k)
+      (tptp-cert-v1:fresh-numbered ?base ?used ?fuel ?k)
       (tptp-cert-v1:fresh-numbered-at
         (str:set-member? (str:set ?used)
           (str:concat ?base (str:concat "_" (tptp-cert-v1:integer-text ?k))))
-        ?base ?used ?k))) (body))
+        ?base ?used ?fuel ?k))) (body))
     (rule cert-fresh-numbered-free (head (metta-equation
-      (tptp-cert-v1:fresh-numbered-at False ?base ?used ?k)
+      (tptp-cert-v1:fresh-numbered-at False ?base ?used ?fuel ?k)
       (str:concat ?base (str:concat "_" (tptp-cert-v1:integer-text ?k))))) (body))
     (rule cert-fresh-numbered-taken (head (metta-equation
-      (tptp-cert-v1:fresh-numbered-at True ?base ?used ?k)
-      (tptp-cert-v1:fresh-numbered ?base ?used (+ ?k 1)))) (body))
+      (tptp-cert-v1:fresh-numbered-at True ?base ?used (LCons ?spent ?fuel) ?k)
+      (tptp-cert-v1:fresh-numbered ?base ?used ?fuel (+ ?k 1)))) (body))
+    (rule cert-fresh-numbered-exhausted (head (metta-equation
+      (tptp-cert-v1:fresh-numbered-at True ?base ?used LNil ?k)
+      (tptp-cert-v1:names-exhausted ?base))) (body))
     (rule cert-spelling-cons (head (metta-equation
       (tptp-cert-v1:spelling ?id (LCons (tptp-cert-v1:named ?candidate ?text) ?rest))
       (tptp-cert-v1:spelling-at (langdef:ground-equal ?id ?candidate) ?text ?id ?rest))) (body))
@@ -447,9 +455,14 @@
     ; ------------------------------------------------ introduced symbol names
     ; The vocabulary is every symbol text of the problem's clauses and the
     ; certificate's steps, as a quoted and a plain word name one symbol.
+    ; The vocabulary is the set of the source texts, beside their list.
     (rule cert-vocabulary (head (metta-equation
       (tptp-cert-v1:vocabulary ?clauses ?steps)
-      (str:set (tptp-cert-v1:step-texts ?steps (tptp-cert-v1:clause-texts ?clauses LNil))))) (body))
+      (tptp-cert-v1:vocabulary-of
+        (tptp-cert-v1:step-texts ?steps (tptp-cert-v1:clause-texts ?clauses LNil))))) (body))
+    (rule cert-vocabulary-of (head (metta-equation
+      (tptp-cert-v1:vocabulary-of ?texts)
+      (tptp-cert-v1:known (str:set ?texts) ?texts))) (body))
     (rule cert-clause-texts-nil (head (metta-equation
       (tptp-cert-v1:clause-texts (fo-resolution:clauses-nil) ?acc) ?acc)) (body))
     (rule cert-clause-texts-cons (head (metta-equation
@@ -513,22 +526,26 @@
     ; An introduced symbol's name: its base, or the first numbered variant of
     ; it, that the vocabulary lacks.
     (rule cert-fresh-symbol (head (metta-equation
-      (tptp-cert-v1:fresh-symbol ?base (tptp-cert-v1:scope ?vocabulary ?names))
-      (tptp-cert-v1:fresh-symbol-at (str:set-member? ?vocabulary ?base) ?base ?vocabulary 1))) (body))
+      (tptp-cert-v1:fresh-symbol ?base (tptp-cert-v1:scope (tptp-cert-v1:known ?set ?texts) ?names))
+      (tptp-cert-v1:fresh-symbol-at (str:set-member? ?set ?base) ?base ?set ?texts))) (body))
     (rule cert-fresh-symbol-free (head (metta-equation
-      (tptp-cert-v1:fresh-symbol-at False ?base ?vocabulary ?k) ?base)) (body))
+      (tptp-cert-v1:fresh-symbol-at False ?base ?set ?texts) ?base)) (body))
+    ; As for variable names, the vocabulary's texts outlast the search.
     (rule cert-fresh-symbol-taken (head (metta-equation
-      (tptp-cert-v1:fresh-symbol-at True ?base ?vocabulary ?k)
-      (tptp-cert-v1:fresh-symbol-numbered ?base ?vocabulary ?k))) (body))
+      (tptp-cert-v1:fresh-symbol-at True ?base ?set ?texts)
+      (tptp-cert-v1:fresh-symbol-numbered ?base ?set ?texts 1))) (body))
     (rule cert-fresh-symbol-numbered (head (metta-equation
-      (tptp-cert-v1:fresh-symbol-numbered ?base ?vocabulary ?k)
+      (tptp-cert-v1:fresh-symbol-numbered ?base ?set ?fuel ?k)
       (tptp-cert-v1:fresh-symbol-numbered-at
-        (str:set-member? ?vocabulary
+        (str:set-member? ?set
           (str:concat ?base (str:concat "_" (tptp-cert-v1:integer-text ?k))))
-        ?base ?vocabulary ?k))) (body))
+        ?base ?set ?fuel ?k))) (body))
     (rule cert-fresh-symbol-numbered-free (head (metta-equation
-      (tptp-cert-v1:fresh-symbol-numbered-at False ?base ?vocabulary ?k)
+      (tptp-cert-v1:fresh-symbol-numbered-at False ?base ?set ?fuel ?k)
       (str:concat ?base (str:concat "_" (tptp-cert-v1:integer-text ?k))))) (body))
     (rule cert-fresh-symbol-numbered-taken (head (metta-equation
-      (tptp-cert-v1:fresh-symbol-numbered-at True ?base ?vocabulary ?k)
-      (tptp-cert-v1:fresh-symbol-numbered ?base ?vocabulary (+ ?k 1)))) (body))))
+      (tptp-cert-v1:fresh-symbol-numbered-at True ?base ?set (LCons ?spent ?fuel) ?k)
+      (tptp-cert-v1:fresh-symbol-numbered ?base ?set ?fuel (+ ?k 1)))) (body))
+    (rule cert-fresh-symbol-numbered-exhausted (head (metta-equation
+      (tptp-cert-v1:fresh-symbol-numbered-at True ?base ?set LNil ?k)
+      (tptp-cert-v1:names-exhausted ?base))) (body))))

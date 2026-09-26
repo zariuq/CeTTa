@@ -1,6 +1,8 @@
 #define _XOPEN_SOURCE 700
 
 #include "native/langdef_module.h"
+#include "eval.h"
+#include "lang.h"
 #include "native/grammar_canonical_bnf_v1.h"
 
 #include "native_sha256.h"
@@ -304,7 +306,9 @@ static CettaDeterministicEquationPlanV1 *tptp_reader_manifest_plan(
         goto done;
     }
     if (!cetta_deterministic_equation_plan_v1_load(
-            (const char *const *)paths, path_len, &plan, &status, reason, reason_size))
+            (const char *const *)paths, path_len,
+            &cetta_langdef_deterministic_vocabulary_v1, &plan, &status,
+            reason, reason_size))
         plan = NULL;
 done:
     fclose(manifest);
@@ -3296,7 +3300,13 @@ static Atom *langdef_context_codec_fault(
                             arguments, 3u));
 }
 
+/* A native's value in each dialect's return protocol: HE and Prime take it
+ * as (return value) in their function bodies; PeTTa, which has no return,
+ * takes the value itself. */
 static Atom *langdef_return(Arena *arena, Atom *value) {
+    if (eval_current_language_id &&
+        eval_current_language_id() == CETTA_LANGUAGE_PETTA)
+        return value;
     return atom_expr2(arena, atom_symbol(arena, "return"), value);
 }
 
@@ -5717,6 +5727,622 @@ static bool langdef_str_primitive(
     return true;
 }
 
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_expression_to_list(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    /* An expression's children, or a list value's elements. */
+    Atom *const *elems = NULL;
+    CettaExprLen len = 0u;
+    if (argument_count != 1u || !arguments || !arguments[0] ||
+        !atom_sequence_view(arguments[0], &elems, &len)) {
+        (void)langdef_set_error(error, error_size,
+                               "expression decoding expects one expression or list");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    Atom *list = atom_symbol(arena, "LNil");
+    for (CettaExprLen index = len; index > 0u; index--) {
+        Atom *fields[2] = {elems[index - 1u], list};
+        list = langdef_expr(arena, "LCons", fields, 2u);
+        if (!list)
+            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    *out = list;
+    return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
+}
+
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_expression_or_single_to_list(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    Atom *list = atom_symbol(arena, "LNil");
+    if (argument_count != 1u || !arguments || !arguments[0]) {
+        (void)langdef_set_error(
+            error, error_size,
+            "expression-or-single decoding expects one value");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    Atom *const *elems = NULL;
+    CettaExprLen len = 0u;
+    if (atom_sequence_view(arguments[0], &elems, &len)) {
+        for (CettaExprLen index = len; index > 0u; index--) {
+            Atom *fields[2] = {elems[index - 1u], list};
+            list = langdef_expr(arena, "LCons", fields, 2u);
+            if (!list)
+                return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+        }
+    } else {
+        Atom *fields[2] = {arguments[0], list};
+        list = langdef_expr(arena, "LCons", fields, 2u);
+        if (!list)
+            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    *out = list;
+    return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
+}
+
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_value_view(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    Atom *field;
+    Atom *fields[1];
+    const char *constructor;
+    char integer_text[64];
+    if (argument_count != 1u || !arguments || !arguments[0]) {
+        (void)langdef_set_error(
+            error, error_size,
+            "value observation expects one ground value");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    if (atom_is_list(arguments[0])) {
+        /* A list value is its own kind of value, over its elements. */
+        Atom *list = atom_symbol(arena, "LNil");
+        for (CettaExprLen index = atom_list_len(arguments[0]);
+             index > 0u; index--) {
+            Atom *items[2] = {
+                atom_list_elems(arguments[0])[index - 1u], list};
+            list = langdef_expr(arena, "LCons", items, 2u);
+            if (!list)
+                return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+        }
+        constructor = "LangDef:ListValue";
+        field = list;
+    } else if (arguments[0]->kind == ATOM_EXPR &&
+               !atom_is_list_rest(arguments[0])) {
+        Atom *list = atom_symbol(arena, "LNil");
+        for (CettaExprLen index = arguments[0]->expr.len;
+             index > 0u; index--) {
+            Atom *items[2] = {
+                arguments[0]->expr.elems[index - 1u], list};
+            list = langdef_expr(arena, "LCons", items, 2u);
+            if (!list)
+                return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+        }
+        constructor = "LangDef:ExpressionValue";
+        field = list;
+    } else if (arguments[0]->kind == ATOM_SYMBOL) {
+        /* A symbol's value is its spelling, a string. */
+        const char *bytes =
+            symbol_bytes(g_symbols, arguments[0]->sym_id);
+        constructor = "LangDef:SymbolValue";
+        field = bytes ? atom_string(arena, bytes) : NULL;
+    } else if (arguments[0]->kind == ATOM_GROUNDED &&
+               arguments[0]->ground.gkind == GV_STRING) {
+        constructor = "LangDef:StringValue";
+        field = arguments[0];
+    } else if (arguments[0]->kind == ATOM_GROUNDED &&
+               arguments[0]->ground.gkind == GV_INT) {
+        int written = snprintf(
+            integer_text, sizeof(integer_text), "%" PRId64,
+            arguments[0]->ground.ival);
+        constructor = "LangDef:IntegerValue";
+        field = written > 0 && (size_t)written < sizeof(integer_text)
+            ? atom_string(arena, integer_text) : NULL;
+    } else if (arguments[0]->kind == ATOM_GROUNDED &&
+               arguments[0]->ground.gkind == GV_BIGINT) {
+        const char *digits = atom_bigint_cstr(arguments[0]);
+        constructor = "LangDef:IntegerValue";
+        field = digits ? atom_string(arena, digits) : NULL;
+    } else if (arguments[0]->kind == ATOM_GROUNDED &&
+               arguments[0]->ground.gkind == GV_FLOAT) {
+        /* The canonical decimal spelling of the shortest decimal that
+         * reads back as this double. */
+        char *text = NULL;
+        if (!cetta_decimal_real_from_double_v1(
+                arguments[0]->ground.fval, &text)) {
+            (void)langdef_set_error(
+                error, error_size,
+                "value observation expects a finite float");
+            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+        }
+        constructor = "LangDef:FloatValue";
+        field = atom_string(arena, text);
+        free(text);
+    } else {
+        (void)langdef_set_error(
+            error, error_size,
+            "value observation supports expressions, symbols, strings, integers and floats");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    if (!field)
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    fields[0] = field;
+    *out = langdef_expr(arena, constructor, fields, 1u);
+    return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
+                : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+}
+
+/* An LCons/LNil list as an expression, or as a list value. */
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_list_to_expression(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    bool list_value = strcmp(head, "langdef:list->list-value") == 0;
+    Atom *cursor;
+    Atom **elements;
+    uint32_t length = 0u;
+    uint32_t index = 0u;
+    if (argument_count != 1u || !arguments || !arguments[0]) {
+        (void)langdef_set_error(
+            error, error_size,
+            "expression construction expects one LCons/LNil list");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    cursor = arguments[0];
+    while (!atom_is_symbol(cursor, "LNil")) {
+        if (!cetta_langdef_expr_head(cursor, "LCons", 2u) ||
+            length == UINT32_MAX) {
+            (void)langdef_set_error(
+                error, error_size,
+                "expression construction rejected a malformed or oversized list");
+            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+        }
+        length++;
+        cursor = cursor->expr.elems[2];
+    }
+    elements = length ? calloc((size_t)length, sizeof(*elements)) : NULL;
+    if (length && !elements) {
+        (void)langdef_set_error(
+            error, error_size,
+            "expression construction allocation failed");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    cursor = arguments[0];
+    while (index < length) {
+        elements[index++] = cursor->expr.elems[1];
+        cursor = cursor->expr.elems[2];
+    }
+    *out = list_value ? atom_list(arena, elements, (CettaExprLen)length)
+                      : atom_expr(arena, elements, (CettaExprLen)length);
+    free(elements);
+    return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
+                : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+}
+
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_ground_equal(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    if (argument_count != 2u || !arguments || !arguments[0] ||
+        !arguments[1] || atom_has_vars(arguments[0]) ||
+        atom_has_vars(arguments[1])) {
+        (void)langdef_set_error(error, error_size,
+                               "ground equality expects two ground values");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    *out = atom_symbol(arena, atom_eq(arguments[0], arguments[1])
+                                 ? "LangDef:SameValue"
+                                 : "LangDef:DifferentValue");
+    return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
+}
+
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_arithmetic(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    int64_t left;
+    int64_t right;
+    if (argument_count != 2u || !arguments || !arguments[0] ||
+        !arguments[1] || arguments[0]->kind != ATOM_GROUNDED ||
+        arguments[1]->kind != ATOM_GROUNDED ||
+        arguments[0]->ground.gkind != GV_INT ||
+        arguments[1]->ground.gkind != GV_INT) {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic integer arithmetic expects two integers");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    left = arguments[0]->ground.ival;
+    right = arguments[1]->ground.ival;
+    if (strcmp(head, "<") == 0) {
+        *out = atom_symbol(arena, left < right ? "True" : "False");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
+    }
+    if ((right > 0 && left > INT64_MAX - right) ||
+        (right < 0 && left < INT64_MIN - right)) {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic integer addition overflowed");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    *out = atom_int(arena, left + right);
+    return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
+}
+
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_string_to_codepoints(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    if (argument_count != 1u || !arguments) {
+        (void)langdef_set_error(
+            error, error_size, "string decoding expects one argument");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    *out = langdef_string_codepoints(arguments[0], arena, error, error_size);
+    return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
+                : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+}
+
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_codepoints_to_string(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    uint8_t *bytes = NULL;
+    size_t len = 0u;
+    size_t cap = 0u;
+    if (argument_count != 1u || !arguments || !arguments[0] ||
+        !langdef_codepoints_collect(
+            arguments[0], &bytes, &len, &cap, 0u)) {
+        free(bytes);
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic codepoint decoding rejected its source tree");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    *out = atom_string_n(arena, bytes ? (const char *)bytes : "", len);
+    free(bytes);
+    return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
+}
+
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_codepoints_to_symbol(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    uint8_t *bytes = NULL;
+    size_t len = 0u;
+    size_t cap = 0u;
+    if (argument_count != 1u || !arguments || !arguments[0] ||
+        !langdef_codepoints_collect(
+            arguments[0], &bytes, &len, &cap, 0u) || len == 0u ||
+        memchr(bytes, '\0', len)) {
+        free(bytes);
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic symbol construction expects a nonempty codepoint sequence without NUL");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    *out = atom_symbol(arena, (const char *)bytes);
+    free(bytes);
+    return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
+                : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+}
+
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_symbol_to_codepoints(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    const char *bytes;
+    Atom *string;
+    if (argument_count != 1u || !arguments || !arguments[0] ||
+        arguments[0]->kind != ATOM_SYMBOL) {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic symbol decoding expects one symbol");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    bytes = symbol_bytes(g_symbols, arguments[0]->sym_id);
+    if (!bytes) {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic symbol decoding could not resolve the symbol");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    string = atom_string(arena, bytes);
+    *out = langdef_string_codepoints(string, arena, error, error_size);
+    return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
+                : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+}
+
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_decimal_integer_to_number(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    if (argument_count != 1u || !arguments || !arguments[0] ||
+        arguments[0]->kind != ATOM_GROUNDED ||
+        arguments[0]->ground.gkind != GV_STRING ||
+        !arguments[0]->ground.sval) {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic decimal integer decoding expects one string");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    *out = atom_bigint(arena, arguments[0]->ground.sval);
+    if (!*out) {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic decimal integer decoding rejected its lexeme");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
+}
+
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_decimal_rational_to_parts(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    const char *text;
+    const char *slash;
+    char *numerator_text;
+    Atom *numerator;
+    Atom *denominator;
+    Atom *tail;
+    Atom *fields[2];
+    size_t numerator_len;
+    size_t index;
+    if (argument_count != 1u || !arguments || !arguments[0] ||
+        arguments[0]->kind != ATOM_GROUNDED ||
+        arguments[0]->ground.gkind != GV_STRING ||
+        !arguments[0]->ground.sval) {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic decimal rational decoding expects one string");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    text = arguments[0]->ground.sval;
+    slash = strchr(text, '/');
+    if (!slash || slash == text || slash[1] == '\0' ||
+        strchr(slash + 1, '/')) {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic decimal rational decoding rejected its lexeme");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    numerator_len = (size_t)(slash - text);
+    index = (text[0] == '+' || text[0] == '-') ? 1u : 0u;
+    if (index == numerator_len) {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic decimal rational decoding rejected its numerator");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    for (; index < numerator_len; index++) {
+        if (text[index] < '0' || text[index] > '9') {
+            (void)langdef_set_error(
+                error, error_size,
+                "deterministic decimal rational decoding rejected its numerator");
+            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+        }
+    }
+    if (slash[1] < '1' || slash[1] > '9') {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic decimal rational decoding rejected its denominator");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    for (index = 2u; slash[index] != '\0'; index++) {
+        if (slash[index] < '0' || slash[index] > '9') {
+            (void)langdef_set_error(
+                error, error_size,
+                "deterministic decimal rational decoding rejected its denominator");
+            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+        }
+    }
+    numerator_text = malloc(numerator_len + 1u);
+    if (!numerator_text) {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic decimal rational decoding allocation failed");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    memcpy(numerator_text, text, numerator_len);
+    numerator_text[numerator_len] = '\0';
+    numerator = atom_bigint(arena, numerator_text);
+    free(numerator_text);
+    denominator = atom_bigint(arena, slash + 1);
+    if (!numerator || !denominator) {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic decimal rational decoding rejected its components");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    tail = atom_symbol(arena, "LNil");
+    fields[0] = denominator;
+    fields[1] = tail;
+    tail = langdef_expr(arena, "LCons", fields, 2u);
+    fields[0] = numerator;
+    fields[1] = tail;
+    *out = langdef_expr(arena, "LCons", fields, 2u);
+    return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
+                : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+}
+
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_decimal_rational_to_value(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    char *numerator_text = NULL;
+    char *denominator_text = NULL;
+    Atom *numerator;
+    Atom *denominator;
+    Atom *fields[2];
+    if (argument_count != 1u || !arguments || !arguments[0] ||
+        arguments[0]->kind != ATOM_GROUNDED ||
+        arguments[0]->ground.gkind != GV_STRING ||
+        !arguments[0]->ground.sval ||
+        !cetta_decimal_rational_value_v1(
+            arguments[0]->ground.sval, &numerator_text, &denominator_text)) {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic decimal rational value expects one rational lexeme");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    numerator = atom_bigint(arena, numerator_text);
+    denominator = atom_bigint(arena, denominator_text);
+    free(numerator_text);
+    free(denominator_text);
+    if (!numerator || !denominator)
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    fields[0] = denominator;
+    fields[1] = atom_symbol(arena, "LNil");
+    fields[1] = langdef_expr(arena, "LCons", fields, 2u);
+    fields[0] = numerator;
+    *out = fields[1] ? langdef_expr(arena, "LCons", fields, 2u) : NULL;
+    return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
+                : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+}
+
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_decimal_real_to_float(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    double value = 0.0;
+    Atom *fields[1];
+    if (argument_count != 1u || !arguments || !arguments[0] ||
+        arguments[0]->kind != ATOM_GROUNDED ||
+        arguments[0]->ground.gkind != GV_STRING ||
+        !arguments[0]->ground.sval) {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic decimal real conversion expects one real lexeme");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    if (!cetta_decimal_real_double_v1(arguments[0]->ground.sval, &value)) {
+        *out = atom_symbol(arena, "LangDef:NoFloat");
+        return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
+                    : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    fields[0] = atom_float(arena, value);
+    *out = fields[0] ? langdef_expr(arena, "LangDef:Float", fields, 1u) : NULL;
+    return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
+                : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+}
+
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_decimal_real_to_canonical(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    char *canonical = NULL;
+    if (argument_count != 1u || !arguments || !arguments[0] ||
+        arguments[0]->kind != ATOM_GROUNDED ||
+        arguments[0]->ground.gkind != GV_STRING ||
+        !arguments[0]->ground.sval ||
+        !cetta_decimal_real_canonical_v1(
+            arguments[0]->ground.sval, &canonical)) {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic decimal real value expects one real lexeme");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    *out = atom_string(arena, canonical);
+    free(canonical);
+    return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
+                : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+}
+
+/* The codepoints from a first to a last, both included, as an LCons/LNil
+ * list: a range of Unicode codepoints, 0 to 0x10FFFF, in order. */
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_codepoint_range(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    if (argument_count != 2u || !arguments || !arguments[0] || !arguments[1] ||
+        arguments[0]->kind != ATOM_GROUNDED ||
+        arguments[0]->ground.gkind != GV_INT ||
+        arguments[1]->kind != ATOM_GROUNDED ||
+        arguments[1]->ground.gkind != GV_INT ||
+        arguments[0]->ground.ival < 0 ||
+        arguments[1]->ground.ival > 0x10FFFF ||
+        arguments[0]->ground.ival > arguments[1]->ground.ival) {
+        (void)langdef_set_error(
+            error, error_size,
+            "codepoint range expects two ordered codepoints from 0 to 0x10FFFF");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    Atom *list = atom_symbol(arena, "LNil");
+    for (int64_t cp = arguments[1]->ground.ival;
+         list && cp >= arguments[0]->ground.ival; cp--) {
+        Atom *fields[2] = {atom_int(arena, cp), list};
+        list = fields[0] ? langdef_expr(arena, "LCons", fields, 2u) : NULL;
+    }
+    *out = list;
+    return list ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
+                : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+}
+
+typedef CettaDeterministicPrimitiveResultV1 (*LangdefPrimitiveHandler)(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size);
+
+/* The structural data primitives of LangDef programs, with the class of each
+ * value, the vocabulary the loader's descent check reads.  Source equations
+ * own all traversal, lookup policy and interpretation of the resulting list
+ * or equality. */
+typedef struct {
+    const char *name;
+    CettaDeterministicPrimitiveClassV1 class_;
+    LangdefPrimitiveHandler handler;
+} LangdefPrimitiveEntry;
+
+static const LangdefPrimitiveEntry langdef_primitives[] = {
+    {"langdef:expression->list", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_PRESERVING,
+     langdef_primitive_expression_to_list},
+    {"langdef:expression-or-single->list", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_STRUCTURE,
+     langdef_primitive_expression_or_single_to_list},
+    {"langdef:value-view", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_PRESERVING,
+     langdef_primitive_value_view},
+    {"langdef:list->expression", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_PRESERVING,
+     langdef_primitive_list_to_expression},
+    {"langdef:list->list-value", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_PRESERVING,
+     langdef_primitive_list_to_expression},
+    {"langdef:ground-equal", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_ATOM,
+     langdef_primitive_ground_equal},
+    {"+", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_ATOM,
+     langdef_primitive_arithmetic},
+    {"<", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_ATOM,
+     langdef_primitive_arithmetic},
+    {"langdef:string->codepoints", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_STRUCTURE,
+     langdef_primitive_string_to_codepoints},
+    {"langdef:codepoints->string", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_ATOM,
+     langdef_primitive_codepoints_to_string},
+    {"langdef:codepoints->symbol", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_ATOM,
+     langdef_primitive_codepoints_to_symbol},
+    {"langdef:symbol->codepoints", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_STRUCTURE,
+     langdef_primitive_symbol_to_codepoints},
+    {"langdef:decimal-integer->number", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_ATOM,
+     langdef_primitive_decimal_integer_to_number},
+    {"langdef:decimal-rational->parts", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_STRUCTURE,
+     langdef_primitive_decimal_rational_to_parts},
+    {"langdef:decimal-rational->value", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_STRUCTURE,
+     langdef_primitive_decimal_rational_to_value},
+    {"langdef:decimal-real->float", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_STRUCTURE,
+     langdef_primitive_decimal_real_to_float},
+    {"langdef:decimal-real->canonical", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_ATOM,
+     langdef_primitive_decimal_real_to_canonical},
+    {"langdef:codepoint-range", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_STRUCTURE,
+     langdef_primitive_codepoint_range},
+};
+
+static const LangdefPrimitiveEntry *langdef_primitive_entry(const char *head) {
+    for (size_t index = 0u;
+         index < sizeof(langdef_primitives) / sizeof(langdef_primitives[0]);
+         index++) {
+        if (strcmp(head, langdef_primitives[index].name) == 0)
+            return &langdef_primitives[index];
+    }
+    return NULL;
+}
+
 static CettaDeterministicPrimitiveResultV1
 langdef_deterministic_equation_primitive(
     void *context, const char *head, Atom *const *arguments,
@@ -5731,472 +6357,38 @@ langdef_deterministic_equation_primitive(
         return string_result;
     /* Structural data primitives only. Source equations own all traversal,
      * lookup policy and interpretation of the resulting list or equality. */
-    if (strcmp(head, "langdef:expression->list") == 0) {
-        /* An expression's children, or a list value's elements. */
-        Atom *const *elems = NULL;
-        CettaExprLen len = 0u;
-        if (argument_count != 1u || !arguments || !arguments[0] ||
-            !atom_sequence_view(arguments[0], &elems, &len)) {
-            (void)langdef_set_error(error, error_size,
-                                   "expression decoding expects one expression or list");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        Atom *list = atom_symbol(arena, "LNil");
-        for (CettaExprLen index = len; index > 0u; index--) {
-            Atom *fields[2] = {elems[index - 1u], list};
-            list = langdef_expr(arena, "LCons", fields, 2u);
-            if (!list)
-                return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        *out = list;
-        return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
-    }
-    if (strcmp(head, "langdef:expression-or-single->list") == 0) {
-        Atom *list = atom_symbol(arena, "LNil");
-        if (argument_count != 1u || !arguments || !arguments[0]) {
-            (void)langdef_set_error(
-                error, error_size,
-                "expression-or-single decoding expects one value");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        Atom *const *elems = NULL;
-        CettaExprLen len = 0u;
-        if (atom_sequence_view(arguments[0], &elems, &len)) {
-            for (CettaExprLen index = len; index > 0u; index--) {
-                Atom *fields[2] = {elems[index - 1u], list};
-                list = langdef_expr(arena, "LCons", fields, 2u);
-                if (!list)
-                    return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-            }
-        } else {
-            Atom *fields[2] = {arguments[0], list};
-            list = langdef_expr(arena, "LCons", fields, 2u);
-            if (!list)
-                return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        *out = list;
-        return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
-    }
-    if (strcmp(head, "langdef:value-view") == 0) {
-        Atom *field;
-        Atom *fields[1];
-        const char *constructor;
-        char integer_text[64];
-        if (argument_count != 1u || !arguments || !arguments[0]) {
-            (void)langdef_set_error(
-                error, error_size,
-                "value observation expects one ground value");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        if (atom_is_list(arguments[0])) {
-            /* A list value is its own kind of value, over its elements. */
-            Atom *list = atom_symbol(arena, "LNil");
-            for (CettaExprLen index = atom_list_len(arguments[0]);
-                 index > 0u; index--) {
-                Atom *items[2] = {
-                    atom_list_elems(arguments[0])[index - 1u], list};
-                list = langdef_expr(arena, "LCons", items, 2u);
-                if (!list)
-                    return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-            }
-            constructor = "LangDef:ListValue";
-            field = list;
-        } else if (arguments[0]->kind == ATOM_EXPR &&
-                   !atom_is_list_rest(arguments[0])) {
-            Atom *list = atom_symbol(arena, "LNil");
-            for (CettaExprLen index = arguments[0]->expr.len;
-                 index > 0u; index--) {
-                Atom *items[2] = {
-                    arguments[0]->expr.elems[index - 1u], list};
-                list = langdef_expr(arena, "LCons", items, 2u);
-                if (!list)
-                    return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-            }
-            constructor = "LangDef:ExpressionValue";
-            field = list;
-        } else if (arguments[0]->kind == ATOM_SYMBOL) {
-            /* A symbol's value is its spelling, a string. */
-            const char *bytes =
-                symbol_bytes(g_symbols, arguments[0]->sym_id);
-            constructor = "LangDef:SymbolValue";
-            field = bytes ? atom_string(arena, bytes) : NULL;
-        } else if (arguments[0]->kind == ATOM_GROUNDED &&
-                   arguments[0]->ground.gkind == GV_STRING) {
-            constructor = "LangDef:StringValue";
-            field = arguments[0];
-        } else if (arguments[0]->kind == ATOM_GROUNDED &&
-                   arguments[0]->ground.gkind == GV_INT) {
-            int written = snprintf(
-                integer_text, sizeof(integer_text), "%" PRId64,
-                arguments[0]->ground.ival);
-            constructor = "LangDef:IntegerValue";
-            field = written > 0 && (size_t)written < sizeof(integer_text)
-                ? atom_string(arena, integer_text) : NULL;
-        } else if (arguments[0]->kind == ATOM_GROUNDED &&
-                   arguments[0]->ground.gkind == GV_BIGINT) {
-            const char *digits = atom_bigint_cstr(arguments[0]);
-            constructor = "LangDef:IntegerValue";
-            field = digits ? atom_string(arena, digits) : NULL;
-        } else if (arguments[0]->kind == ATOM_GROUNDED &&
-                   arguments[0]->ground.gkind == GV_FLOAT) {
-            /* The canonical decimal spelling of the shortest decimal that
-             * reads back as this double. */
-            char *text = NULL;
-            if (!cetta_decimal_real_from_double_v1(
-                    arguments[0]->ground.fval, &text)) {
-                (void)langdef_set_error(
-                    error, error_size,
-                    "value observation expects a finite float");
-                return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-            }
-            constructor = "LangDef:FloatValue";
-            field = atom_string(arena, text);
-            free(text);
-        } else {
-            (void)langdef_set_error(
-                error, error_size,
-                "value observation supports expressions, symbols, strings, integers and floats");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        if (!field)
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        fields[0] = field;
-        *out = langdef_expr(arena, constructor, fields, 1u);
-        return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
-                    : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-    }
-    /* An LCons/LNil list as an expression, or as a list value. */
-    if (strcmp(head, "langdef:list->expression") == 0 ||
-        strcmp(head, "langdef:list->list-value") == 0) {
-        bool list_value = strcmp(head, "langdef:list->list-value") == 0;
-        Atom *cursor;
-        Atom **elements;
-        uint32_t length = 0u;
-        uint32_t index = 0u;
-        if (argument_count != 1u || !arguments || !arguments[0]) {
-            (void)langdef_set_error(
-                error, error_size,
-                "expression construction expects one LCons/LNil list");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        cursor = arguments[0];
-        while (!atom_is_symbol(cursor, "LNil")) {
-            if (!cetta_langdef_expr_head(cursor, "LCons", 2u) ||
-                length == UINT32_MAX) {
-                (void)langdef_set_error(
-                    error, error_size,
-                    "expression construction rejected a malformed or oversized list");
-                return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-            }
-            length++;
-            cursor = cursor->expr.elems[2];
-        }
-        elements = length ? calloc((size_t)length, sizeof(*elements)) : NULL;
-        if (length && !elements) {
-            (void)langdef_set_error(
-                error, error_size,
-                "expression construction allocation failed");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        cursor = arguments[0];
-        while (index < length) {
-            elements[index++] = cursor->expr.elems[1];
-            cursor = cursor->expr.elems[2];
-        }
-        *out = list_value ? atom_list(arena, elements, (CettaExprLen)length)
-                          : atom_expr(arena, elements, (CettaExprLen)length);
-        free(elements);
-        return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
-                    : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-    }
-    if (strcmp(head, "langdef:ground-equal") == 0) {
-        if (argument_count != 2u || !arguments || !arguments[0] ||
-            !arguments[1] || atom_has_vars(arguments[0]) ||
-            atom_has_vars(arguments[1])) {
-            (void)langdef_set_error(error, error_size,
-                                   "ground equality expects two ground values");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        *out = atom_symbol(arena, atom_eq(arguments[0], arguments[1])
-                                     ? "LangDef:SameValue"
-                                     : "LangDef:DifferentValue");
-        return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
-    }
-    if (strcmp(head, "+") == 0 || strcmp(head, "<") == 0) {
-        int64_t left;
-        int64_t right;
-        if (argument_count != 2u || !arguments || !arguments[0] ||
-            !arguments[1] || arguments[0]->kind != ATOM_GROUNDED ||
-            arguments[1]->kind != ATOM_GROUNDED ||
-            arguments[0]->ground.gkind != GV_INT ||
-            arguments[1]->ground.gkind != GV_INT) {
-            (void)langdef_set_error(
-                error, error_size,
-                "deterministic integer arithmetic expects two integers");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        left = arguments[0]->ground.ival;
-        right = arguments[1]->ground.ival;
-        if (strcmp(head, "<") == 0) {
-            *out = atom_symbol(arena, left < right ? "True" : "False");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
-        }
-        if ((right > 0 && left > INT64_MAX - right) ||
-            (right < 0 && left < INT64_MIN - right)) {
-            (void)langdef_set_error(
-                error, error_size,
-                "deterministic integer addition overflowed");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        *out = atom_int(arena, left + right);
-        return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
-    }
-    if (strcmp(head, "langdef:string->codepoints") == 0) {
-        if (argument_count != 1u || !arguments) {
-            (void)langdef_set_error(
-                error, error_size, "string decoding expects one argument");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        *out = langdef_string_codepoints(arguments[0], arena, error, error_size);
-        return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
-                    : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-    }
-    if (strcmp(head, "langdef:codepoints->string") == 0) {
-        uint8_t *bytes = NULL;
-        size_t len = 0u;
-        size_t cap = 0u;
-        if (argument_count != 1u || !arguments || !arguments[0] ||
-            !langdef_codepoints_collect(
-                arguments[0], &bytes, &len, &cap, 0u)) {
-            free(bytes);
-            (void)langdef_set_error(
-                error, error_size,
-                "deterministic codepoint decoding rejected its source tree");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        *out = atom_string_n(arena, bytes ? (const char *)bytes : "", len);
-        free(bytes);
-        return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
-    }
-    if (strcmp(head, "langdef:codepoints->symbol") == 0) {
-        uint8_t *bytes = NULL;
-        size_t len = 0u;
-        size_t cap = 0u;
-        if (argument_count != 1u || !arguments || !arguments[0] ||
-            !langdef_codepoints_collect(
-                arguments[0], &bytes, &len, &cap, 0u) || len == 0u ||
-            memchr(bytes, '\0', len)) {
-            free(bytes);
-            (void)langdef_set_error(
-                error, error_size,
-                "deterministic symbol construction expects a nonempty codepoint sequence without NUL");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        *out = atom_symbol(arena, (const char *)bytes);
-        free(bytes);
-        return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
-                    : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-    }
-    if (strcmp(head, "langdef:symbol->codepoints") == 0) {
-        const char *bytes;
-        Atom *string;
-        if (argument_count != 1u || !arguments || !arguments[0] ||
-            arguments[0]->kind != ATOM_SYMBOL) {
-            (void)langdef_set_error(
-                error, error_size,
-                "deterministic symbol decoding expects one symbol");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        bytes = symbol_bytes(g_symbols, arguments[0]->sym_id);
-        if (!bytes) {
-            (void)langdef_set_error(
-                error, error_size,
-                "deterministic symbol decoding could not resolve the symbol");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        string = atom_string(arena, bytes);
-        *out = langdef_string_codepoints(string, arena, error, error_size);
-        return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
-                    : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-    }
-    if (strcmp(head, "langdef:decimal-integer->number") == 0) {
-        if (argument_count != 1u || !arguments || !arguments[0] ||
-            arguments[0]->kind != ATOM_GROUNDED ||
-            arguments[0]->ground.gkind != GV_STRING ||
-            !arguments[0]->ground.sval) {
-            (void)langdef_set_error(
-                error, error_size,
-                "deterministic decimal integer decoding expects one string");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        *out = atom_bigint(arena, arguments[0]->ground.sval);
-        if (!*out) {
-            (void)langdef_set_error(
-                error, error_size,
-                "deterministic decimal integer decoding rejected its lexeme");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
-    }
-    if (strcmp(head, "langdef:decimal-rational->parts") == 0) {
-        const char *text;
-        const char *slash;
-        char *numerator_text;
-        Atom *numerator;
-        Atom *denominator;
-        Atom *tail;
-        Atom *fields[2];
-        size_t numerator_len;
-        size_t index;
-        if (argument_count != 1u || !arguments || !arguments[0] ||
-            arguments[0]->kind != ATOM_GROUNDED ||
-            arguments[0]->ground.gkind != GV_STRING ||
-            !arguments[0]->ground.sval) {
-            (void)langdef_set_error(
-                error, error_size,
-                "deterministic decimal rational decoding expects one string");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        text = arguments[0]->ground.sval;
-        slash = strchr(text, '/');
-        if (!slash || slash == text || slash[1] == '\0' ||
-            strchr(slash + 1, '/')) {
-            (void)langdef_set_error(
-                error, error_size,
-                "deterministic decimal rational decoding rejected its lexeme");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        numerator_len = (size_t)(slash - text);
-        index = (text[0] == '+' || text[0] == '-') ? 1u : 0u;
-        if (index == numerator_len) {
-            (void)langdef_set_error(
-                error, error_size,
-                "deterministic decimal rational decoding rejected its numerator");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        for (; index < numerator_len; index++) {
-            if (text[index] < '0' || text[index] > '9') {
-                (void)langdef_set_error(
-                    error, error_size,
-                    "deterministic decimal rational decoding rejected its numerator");
-                return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-            }
-        }
-        if (slash[1] < '1' || slash[1] > '9') {
-            (void)langdef_set_error(
-                error, error_size,
-                "deterministic decimal rational decoding rejected its denominator");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        for (index = 2u; slash[index] != '\0'; index++) {
-            if (slash[index] < '0' || slash[index] > '9') {
-                (void)langdef_set_error(
-                    error, error_size,
-                    "deterministic decimal rational decoding rejected its denominator");
-                return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-            }
-        }
-        numerator_text = malloc(numerator_len + 1u);
-        if (!numerator_text) {
-            (void)langdef_set_error(
-                error, error_size,
-                "deterministic decimal rational decoding allocation failed");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        memcpy(numerator_text, text, numerator_len);
-        numerator_text[numerator_len] = '\0';
-        numerator = atom_bigint(arena, numerator_text);
-        free(numerator_text);
-        denominator = atom_bigint(arena, slash + 1);
-        if (!numerator || !denominator) {
-            (void)langdef_set_error(
-                error, error_size,
-                "deterministic decimal rational decoding rejected its components");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        tail = atom_symbol(arena, "LNil");
-        fields[0] = denominator;
-        fields[1] = tail;
-        tail = langdef_expr(arena, "LCons", fields, 2u);
-        fields[0] = numerator;
-        fields[1] = tail;
-        *out = langdef_expr(arena, "LCons", fields, 2u);
-        return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
-                    : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-    }
-    if (strcmp(head, "langdef:decimal-rational->value") == 0) {
-        char *numerator_text = NULL;
-        char *denominator_text = NULL;
-        Atom *numerator;
-        Atom *denominator;
-        Atom *fields[2];
-        if (argument_count != 1u || !arguments || !arguments[0] ||
-            arguments[0]->kind != ATOM_GROUNDED ||
-            arguments[0]->ground.gkind != GV_STRING ||
-            !arguments[0]->ground.sval ||
-            !cetta_decimal_rational_value_v1(
-                arguments[0]->ground.sval, &numerator_text, &denominator_text)) {
-            (void)langdef_set_error(
-                error, error_size,
-                "deterministic decimal rational value expects one rational lexeme");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        numerator = atom_bigint(arena, numerator_text);
-        denominator = atom_bigint(arena, denominator_text);
-        free(numerator_text);
-        free(denominator_text);
-        if (!numerator || !denominator)
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        fields[0] = denominator;
-        fields[1] = atom_symbol(arena, "LNil");
-        fields[1] = langdef_expr(arena, "LCons", fields, 2u);
-        fields[0] = numerator;
-        *out = fields[1] ? langdef_expr(arena, "LCons", fields, 2u) : NULL;
-        return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
-                    : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-    }
-    if (strcmp(head, "langdef:decimal-real->float") == 0) {
-        double value = 0.0;
-        Atom *fields[1];
-        if (argument_count != 1u || !arguments || !arguments[0] ||
-            arguments[0]->kind != ATOM_GROUNDED ||
-            arguments[0]->ground.gkind != GV_STRING ||
-            !arguments[0]->ground.sval) {
-            (void)langdef_set_error(
-                error, error_size,
-                "deterministic decimal real conversion expects one real lexeme");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        if (!cetta_decimal_real_double_v1(arguments[0]->ground.sval, &value)) {
-            *out = atom_symbol(arena, "LangDef:NoFloat");
-            return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
-                        : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        fields[0] = atom_float(arena, value);
-        *out = fields[0] ? langdef_expr(arena, "LangDef:Float", fields, 1u) : NULL;
-        return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
-                    : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-    }
-    if (strcmp(head, "langdef:decimal-real->canonical") == 0) {
-        char *canonical = NULL;
-        if (argument_count != 1u || !arguments || !arguments[0] ||
-            arguments[0]->kind != ATOM_GROUNDED ||
-            arguments[0]->ground.gkind != GV_STRING ||
-            !arguments[0]->ground.sval ||
-            !cetta_decimal_real_canonical_v1(
-                arguments[0]->ground.sval, &canonical)) {
-            (void)langdef_set_error(
-                error, error_size,
-                "deterministic decimal real value expects one real lexeme");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        *out = atom_string(arena, canonical);
-        free(canonical);
-        return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
-                    : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-    }
-    return CETTA_DETERMINISTIC_PRIMITIVE_V1_NOT_HANDLED;
+    const LangdefPrimitiveEntry *entry = langdef_primitive_entry(head);
+    return entry
+        ? entry->handler(head, arguments, argument_count, arena, out,
+                         error, error_size)
+        : CETTA_DETERMINISTIC_PRIMITIVE_V1_NOT_HANDLED;
 }
+
+/* The class of a LangDef primitive's value: a str: operation's from the
+ * native table, a structural primitive's from the table above. */
+static CettaDeterministicPrimitiveClassV1 langdef_deterministic_equation_class(
+    void *context, const char *head, uint32_t argument_count) {
+    (void)context;
+    (void)argument_count;
+    if (!head)
+        return CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_NONE;
+    if (strncmp(head, "str:", 4u) == 0) {
+        const CettaStrNative *native = cetta_str_native(head + 4u);
+        if (!native)
+            return CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_NONE;
+        return native->result == CETTA_STR_RESULT_ATOM
+            ? CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_ATOM
+            : CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_STRUCTURE;
+    }
+    const LangdefPrimitiveEntry *entry = langdef_primitive_entry(head);
+    return entry ? entry->class_ : CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_NONE;
+}
+
+const CettaDeterministicVocabularyV1 cetta_langdef_deterministic_vocabulary_v1 = {
+    .primitive = langdef_deterministic_equation_primitive,
+    .classify = langdef_deterministic_equation_class,
+    .context = NULL,
+};
 
 
 static Atom *langdef_publish_values(CettaLangDefV1 *resource,
@@ -7506,8 +7698,8 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
                 error[0] ? error :
                     "langdef:load-deterministic-equations expects source paths");
         if (!cetta_deterministic_equation_plan_v1_load(
-                paths, path_count, &resource, &status,
-                error, sizeof(error)))
+                paths, path_count, &cetta_langdef_deterministic_vocabulary_v1,
+                &resource, &status, error, sizeof(error)))
             return langdef_error(
                 arena, head,
                 error[0] ? error :

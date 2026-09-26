@@ -8,7 +8,9 @@
     (operator str:byte-length 1) (operator str:byte-slice 3)
     (operator str:concat 2) (operator str:escape 2)
     (operator str:starts-with 2) (operator str:string->symbol 1)
+    (operator str:string->number 1)
     (operator langdef:list->expression 1)
+    (operator langdef:list->list-value 1)
     (operator bnf-v1:string->text 1) (operator bnf-v1:text->string 1)
     (operator bnf-v1:text-append 2) (operator bnf-v1:text-nil 0)
     (operator LNil 0) (operator LCons 2)
@@ -49,8 +51,8 @@
     (operator tptp-print-v1:input-list 1)
     (operator tptp-print-v1:annotated 6)
     (operator tptp-print-v1:annotation-tail 1)
-    (operator tptp-print-v1:annotation-tail-view 2)
-    (operator tptp-print-v1:annotation-tail-list 2)
+    (operator tptp-print-v1:annotation-tail-view 1)
+    (operator tptp-print-v1:annotation-tail-list 1)
     (operator tptp-print-v1:annotation-tail-choice 3)
     (operator tptp-print-v1:annotation-parts 1)
     (operator tptp-print-v1:name 1)
@@ -59,7 +61,7 @@
     (operator tptp-print-v1:expr 2)
     (operator tptp-print-v1:expr-view 2)
     (operator tptp-print-v1:expr-list 2)
-    (operator tptp-print-v1:expr-head-view 4)
+    (operator tptp-print-v1:expr-head-view 3)
     (operator tptp-print-v1:expr-head-class 4)
     (operator tptp-print-v1:special-heads 0)
     (operator tptp-print-v1:head-class 1)
@@ -86,14 +88,14 @@
     (operator tptp-print-v1:binary 4)
     (operator tptp-print-v1:infix 4)
     (operator tptp-print-v1:infix-operand 2)
-    (operator tptp-print-v1:infix-operand-view 3)
+    (operator tptp-print-v1:infix-operand-view 2)
     (operator tptp-print-v1:infix-operand-class 3)
     (operator tptp-print-v1:grouped-heads 0)
     (operator tptp-print-v1:binary-assoc 4)
     (operator tptp-print-v1:binary-chain 4)
     (operator tptp-print-v1:binary-left 4)
-    (operator tptp-print-v1:binary-left-view 5)
-    (operator tptp-print-v1:binary-left-next 7)
+    (operator tptp-print-v1:binary-left-view 4)
+    (operator tptp-print-v1:binary-left-next 6)
     (operator tptp-print-v1:unary 3)
     (operator tptp-print-v1:quantified 4)
     (operator tptp-print-v1:variables 1)
@@ -103,9 +105,10 @@
     (operator tptp-print-v1:raw-string 1)
     (operator tptp-print-v1:raw-string-view 1)
     (operator tptp-print-v1:let-component 3)
-    (operator tptp-print-v1:let-component-view 4)
-    (operator tptp-print-v1:let-component-list 4)
-    (operator tptp-print-v1:let-component-head 5)
+    (operator tptp-print-v1:let-component-view 3)
+    (operator tptp-print-v1:let-component-list 3)
+    (operator tptp-print-v1:let-component-head 4)
+    (operator tptp-print-v1:let-component-choice 3)
 
     (operator tptp-print-v1:cat2 2)
     (operator tptp-print-v1:cat3 3)
@@ -283,56 +286,50 @@
 
     (rule annotation-tail (head (metta-equation
       (tptp-print-v1:annotation-tail ?ann)
-      (tptp-print-v1:annotation-tail-view
-        ?ann (langdef:value-view ?ann)))) (body))
+      (tptp-print-v1:annotation-tail-view (langdef:value-view ?ann)))) (body))
     (rule annotation-tail-expression (head (metta-equation
-      (tptp-print-v1:annotation-tail-view
-        ?ann (LangDef:ExpressionValue ?items))
-      (tptp-print-v1:annotation-tail-list ?ann ?items))) (body))
+      (tptp-print-v1:annotation-tail-view (LangDef:ExpressionValue ?items))
+      (tptp-print-v1:annotation-tail-list ?items))) (body))
     (rule annotation-tail-list-value (head (metta-equation
-      (tptp-print-v1:annotation-tail-view
-        ?ann (LangDef:ListValue ?items))
+      (tptp-print-v1:annotation-tail-view (LangDef:ListValue ?items))
       (tptp-print-v1:cat2
         (bnf-v1:string->text ",")
-        (tptp-print-v1:expr TptpPrint:General ?ann)))) (body))
+        (tptp-print-v1:expr-view TptpPrint:General (LangDef:ListValue ?items))))) (body))
     (rule annotation-tail-symbol (head (metta-equation
-      (tptp-print-v1:annotation-tail-view
-        ?ann (LangDef:SymbolValue ?text))
+      (tptp-print-v1:annotation-tail-view (LangDef:SymbolValue ?text))
       (tptp-print-v1:cat2
         (bnf-v1:string->text ",")
-        (tptp-print-v1:expr TptpPrint:General ?ann)))) (body))
+        (tptp-print-v1:expr-view TptpPrint:General (LangDef:SymbolValue ?text))))) (body))
     (rule annotation-tail-string (head (metta-equation
-      (tptp-print-v1:annotation-tail-view
-        ?ann (LangDef:StringValue ?text))
+      (tptp-print-v1:annotation-tail-view (LangDef:StringValue ?text))
       (tptp-print-v1:cat2
         (bnf-v1:string->text ",")
-        (tptp-print-v1:expr TptpPrint:General ?ann)))) (body))
+        (tptp-print-v1:expr-view TptpPrint:General (LangDef:StringValue ?text))))) (body))
     (rule annotation-tail-integer (head (metta-equation
-      (tptp-print-v1:annotation-tail-view
-        ?ann (LangDef:IntegerValue ?text))
+      (tptp-print-v1:annotation-tail-view (LangDef:IntegerValue ?text))
       (tptp-print-v1:cat2
         (bnf-v1:string->text ",")
-        (tptp-print-v1:expr TptpPrint:General ?ann)))) (body))
+        (tptp-print-v1:expr-view TptpPrint:General (LangDef:IntegerValue ?text))))) (body))
     (rule annotation-tail-empty (head (metta-equation
-      (tptp-print-v1:annotation-tail-list ?ann LNil)
+      (tptp-print-v1:annotation-tail-list LNil)
       (tptp-print-v1:cat2
         (bnf-v1:string->text ",")
-        (tptp-print-v1:expr TptpPrint:General ?ann)))) (body))
+        (tptp-print-v1:expr-view TptpPrint:General (LangDef:ExpressionValue LNil))))) (body))
     (rule annotation-tail-cons (head (metta-equation
-      (tptp-print-v1:annotation-tail-list
-        ?ann (LCons ?head ?rest))
+      (tptp-print-v1:annotation-tail-list (LCons ?head ?rest))
       (tptp-print-v1:annotation-tail-choice
-        (langdef:ground-equal ?head annotation) ?ann ?rest))) (body))
+        (langdef:ground-equal ?head annotation) ?head ?rest))) (body))
     (rule annotation-tail-wrapper (head (metta-equation
       (tptp-print-v1:annotation-tail-choice
-        LangDef:SameValue ?ann ?rest)
+        LangDef:SameValue ?head ?rest)
       (tptp-print-v1:annotation-parts ?rest))) (body))
     (rule annotation-tail-direct (head (metta-equation
       (tptp-print-v1:annotation-tail-choice
-        LangDef:DifferentValue ?ann ?rest)
+        LangDef:DifferentValue ?head ?rest)
       (tptp-print-v1:cat2
         (bnf-v1:string->text ",")
-        (tptp-print-v1:expr TptpPrint:General ?ann)))) (body))
+        (tptp-print-v1:expr-view TptpPrint:General
+          (LangDef:ExpressionValue (LCons ?head ?rest)))))) (body))
     (rule annotation-parts-two (head (metta-equation
       (tptp-print-v1:annotation-parts
         (LCons ?source (LCons ?info LNil)))
@@ -426,32 +423,35 @@
       (tptp-print-v1:expr-list
         ?mode (LCons ?head ?arguments))
       (tptp-print-v1:expr-head-view
-        ?mode ?head ?arguments (langdef:value-view ?head)))) (body))
+        ?mode ?arguments (langdef:value-view ?head)))) (body))
     (rule expr-symbol-head (head (metta-equation
       (tptp-print-v1:expr-head-view
-        ?mode ?head ?arguments (LangDef:SymbolValue ?spelling))
+        ?mode ?arguments (LangDef:SymbolValue ?spelling))
       (tptp-print-v1:expr-head-class
-        (tptp-print-v1:head-class ?head)
-        ?mode ?head ?arguments))) (body))
+        (tptp-print-v1:head-class (str:string->symbol ?spelling))
+        ?mode (str:string->symbol ?spelling) ?arguments))) (body))
     (rule expr-string-head (head (metta-equation
       (tptp-print-v1:expr-head-view
-        ?mode ?head ?arguments (LangDef:StringValue ?string))
-      (tptp-print-v1:call ?mode ?head ?arguments))) (body))
+        ?mode ?arguments (LangDef:StringValue ?string))
+      (tptp-print-v1:call ?mode ?string ?arguments))) (body))
     (rule expr-integer-head (head (metta-equation
       (tptp-print-v1:expr-head-view
-        ?mode ?head ?arguments (LangDef:IntegerValue ?string))
-      (tptp-print-v1:brackets
-        ?mode (langdef:list->expression (LCons ?head ?arguments))))) (body))
+        ?mode ?arguments (LangDef:IntegerValue ?string))
+      (tptp-print-v1:brackets-view
+        ?mode (LangDef:ExpressionValue
+                (LCons (str:string->number ?string) ?arguments))))) (body))
     (rule expr-list-head (head (metta-equation
       (tptp-print-v1:expr-head-view
-        ?mode ?head ?arguments (LangDef:ListValue ?items))
-      (tptp-print-v1:brackets
-        ?mode (langdef:list->expression (LCons ?head ?arguments))))) (body))
+        ?mode ?arguments (LangDef:ListValue ?items))
+      (tptp-print-v1:brackets-view
+        ?mode (LangDef:ExpressionValue
+                (LCons (langdef:list->list-value ?items) ?arguments))))) (body))
     (rule expr-expression-head (head (metta-equation
       (tptp-print-v1:expr-head-view
-        ?mode ?head ?arguments (LangDef:ExpressionValue ?items))
-      (tptp-print-v1:brackets
-        ?mode (langdef:list->expression (LCons ?head ?arguments))))) (body))
+        ?mode ?arguments (LangDef:ExpressionValue ?items))
+      (tptp-print-v1:brackets-view
+        ?mode (LangDef:ExpressionValue
+                (LCons (langdef:list->expression ?items) ?arguments))))) (body))
     (rule expr-special-head (head (metta-equation
       (tptp-print-v1:expr-head-class
         TptpPrint:Special ?mode ?head ?arguments)
@@ -739,42 +739,41 @@
     (rule infix-operand (head (metta-equation
       (tptp-print-v1:infix-operand ?mode ?value)
       (tptp-print-v1:infix-operand-view
-        ?mode ?value (langdef:value-view ?value)))) (body))
+        ?mode (langdef:value-view ?value)))) (body))
     (rule infix-operand-expression (head (metta-equation
       (tptp-print-v1:infix-operand-view
-        ?mode ?value
-        (LangDef:ExpressionValue (LCons ?head ?arguments)))
+        ?mode (LangDef:ExpressionValue (LCons ?head ?arguments)))
       (tptp-print-v1:infix-operand-class
         (tptp-print-v1:head-member
           ?head (tptp-print-v1:grouped-heads))
-        ?mode ?value))) (body))
+        ?mode (LangDef:ExpressionValue (LCons ?head ?arguments))))) (body))
     (rule infix-operand-empty-expression (head (metta-equation
       (tptp-print-v1:infix-operand-view
-        ?mode ?value (LangDef:ExpressionValue LNil))
-      (tptp-print-v1:expr ?mode ?value))) (body))
+        ?mode (LangDef:ExpressionValue LNil))
+      (tptp-print-v1:expr-view ?mode (LangDef:ExpressionValue LNil)))) (body))
     (rule infix-operand-symbol (head (metta-equation
       (tptp-print-v1:infix-operand-view
-        ?mode ?value (LangDef:SymbolValue ?spelling))
-      (tptp-print-v1:expr ?mode ?value))) (body))
+        ?mode (LangDef:SymbolValue ?spelling))
+      (tptp-print-v1:expr-view ?mode (LangDef:SymbolValue ?spelling)))) (body))
     (rule infix-operand-string (head (metta-equation
       (tptp-print-v1:infix-operand-view
-        ?mode ?value (LangDef:StringValue ?string))
-      (tptp-print-v1:expr ?mode ?value))) (body))
+        ?mode (LangDef:StringValue ?string))
+      (tptp-print-v1:expr-view ?mode (LangDef:StringValue ?string)))) (body))
     (rule infix-operand-integer (head (metta-equation
       (tptp-print-v1:infix-operand-view
-        ?mode ?value (LangDef:IntegerValue ?string))
-      (tptp-print-v1:expr ?mode ?value))) (body))
+        ?mode (LangDef:IntegerValue ?string))
+      (tptp-print-v1:expr-view ?mode (LangDef:IntegerValue ?string)))) (body))
     (rule infix-operand-grouped (head (metta-equation
       (tptp-print-v1:infix-operand-class
-        TptpPrint:Special ?mode ?value)
+        TptpPrint:Special ?mode ?view)
       (tptp-print-v1:cat3
         (bnf-v1:string->text "(")
-        (tptp-print-v1:expr ?mode ?value)
+        (tptp-print-v1:expr-view ?mode ?view)
         (bnf-v1:string->text ")")))) (body))
     (rule infix-operand-plain (head (metta-equation
       (tptp-print-v1:infix-operand-class
-        TptpPrint:Application ?mode ?value)
-      (tptp-print-v1:expr ?mode ?value))) (body))
+        TptpPrint:Application ?mode ?view)
+      (tptp-print-v1:expr-view ?mode ?view))) (body))
     (rule grouped-heads (head (metta-equation
       (tptp-print-v1:grouped-heads)
       (LCons ¬ (LCons ∧ (LCons ∨ (LCons → (LCons ← (LCons ↔
@@ -802,41 +801,42 @@
     (rule binary-left (head (metta-equation
       (tptp-print-v1:binary-left ?mode ?operator ?head ?value)
       (tptp-print-v1:binary-left-view
-        ?mode ?operator ?head ?value (langdef:value-view ?value)))) (body))
+        ?mode ?operator ?head (langdef:value-view ?value)))) (body))
     (rule binary-left-expression (head (metta-equation
       (tptp-print-v1:binary-left-view
-        ?mode ?operator ?head ?value
+        ?mode ?operator ?head
         (LangDef:ExpressionValue (LCons ?child-head ?child-arguments)))
       (tptp-print-v1:binary-left-next
         (langdef:ground-equal ?child-head ?head)
-        ?mode ?operator ?head ?value ?child-head ?child-arguments))) (body))
+        ?mode ?operator ?head ?child-head ?child-arguments))) (body))
     (rule binary-left-empty-expression (head (metta-equation
       (tptp-print-v1:binary-left-view
-        ?mode ?operator ?head ?value (LangDef:ExpressionValue LNil))
-      (tptp-print-v1:expr ?mode ?value))) (body))
+        ?mode ?operator ?head (LangDef:ExpressionValue LNil))
+      (tptp-print-v1:expr-view ?mode (LangDef:ExpressionValue LNil)))) (body))
     (rule binary-left-symbol (head (metta-equation
       (tptp-print-v1:binary-left-view
-        ?mode ?operator ?head ?value (LangDef:SymbolValue ?spelling))
-      (tptp-print-v1:expr ?mode ?value))) (body))
+        ?mode ?operator ?head (LangDef:SymbolValue ?spelling))
+      (tptp-print-v1:expr-view ?mode (LangDef:SymbolValue ?spelling)))) (body))
     (rule binary-left-string (head (metta-equation
       (tptp-print-v1:binary-left-view
-        ?mode ?operator ?head ?value (LangDef:StringValue ?string))
-      (tptp-print-v1:expr ?mode ?value))) (body))
+        ?mode ?operator ?head (LangDef:StringValue ?string))
+      (tptp-print-v1:expr-view ?mode (LangDef:StringValue ?string)))) (body))
     (rule binary-left-integer (head (metta-equation
       (tptp-print-v1:binary-left-view
-        ?mode ?operator ?head ?value (LangDef:IntegerValue ?string))
-      (tptp-print-v1:expr ?mode ?value))) (body))
+        ?mode ?operator ?head (LangDef:IntegerValue ?string))
+      (tptp-print-v1:expr-view ?mode (LangDef:IntegerValue ?string)))) (body))
     (rule binary-left-same (head (metta-equation
       (tptp-print-v1:binary-left-next
         LangDef:SameValue
-        ?mode ?operator ?head ?value ?child-head ?child-arguments)
+        ?mode ?operator ?head ?child-head ?child-arguments)
       (tptp-print-v1:binary-chain
         ?mode ?operator ?head ?child-arguments))) (body))
     (rule binary-left-different (head (metta-equation
       (tptp-print-v1:binary-left-next
         LangDef:DifferentValue
-        ?mode ?operator ?head ?value ?child-head ?child-arguments)
-      (tptp-print-v1:expr ?mode ?value))) (body))
+        ?mode ?operator ?head ?child-head ?child-arguments)
+      (tptp-print-v1:expr-view
+        ?mode (LangDef:ExpressionValue (LCons ?child-head ?child-arguments))))) (body))
     (rule quantified (head (metta-equation
       (tptp-print-v1:quantified ?mode ?operator ?variables ?body)
       (tptp-print-v1:cat5
@@ -957,49 +957,56 @@
     (rule let-component (head (metta-equation
       (tptp-print-v1:let-component ?marker ?mode ?value)
       (tptp-print-v1:let-component-view
-        ?marker ?mode ?value (langdef:value-view ?value)))) (body))
+        ?marker ?mode (langdef:value-view ?value)))) (body))
     (rule let-component-expression (head (metta-equation
       (tptp-print-v1:let-component-view
-        ?marker ?mode ?value (LangDef:ExpressionValue ?items))
+        ?marker ?mode (LangDef:ExpressionValue ?items))
       (tptp-print-v1:let-component-list
-        ?marker ?mode ?value ?items))) (body))
+        ?marker ?mode ?items))) (body))
     (rule let-component-list-value (head (metta-equation
       (tptp-print-v1:let-component-view
-        ?marker ?mode ?value (LangDef:ListValue ?items))
-      (tptp-print-v1:brackets ?mode ?value))) (body))
+        ?marker ?mode (LangDef:ListValue ?items))
+      (tptp-print-v1:brackets-view ?mode (LangDef:ListValue ?items)))) (body))
     (rule let-component-list-empty (head (metta-equation
       (tptp-print-v1:let-component-list
-        ?marker ?mode ?value LNil)
-      (tptp-print-v1:brackets ?mode ?value))) (body))
+        ?marker ?mode LNil)
+      (tptp-print-v1:brackets-view ?mode (LangDef:ExpressionValue LNil)))) (body))
     (rule let-component-list-cons (head (metta-equation
       (tptp-print-v1:let-component-list
-        ?marker ?mode ?value (LCons ?head ?rest))
+        ?marker ?mode (LCons ?head ?rest))
       (tptp-print-v1:let-component-head
-        ?marker ?mode ?value ?rest (langdef:value-view ?head)))) (body))
+        ?marker ?mode ?rest (langdef:value-view ?head)))) (body))
     (rule let-component-symbol-head (head (metta-equation
       (tptp-print-v1:let-component-head
-        ?marker ?mode ?value ?rest (LangDef:SymbolValue ?spelling))
-      (tptp-print-v1:let-component-view
-        ?marker ?mode ?value
+        ?marker ?mode ?rest (LangDef:SymbolValue ?spelling))
+      (tptp-print-v1:let-component-choice
         (langdef:ground-equal
-          (str:string->symbol ?spelling) ?marker)))) (body))
+          (str:string->symbol ?spelling) ?marker)
+        ?mode
+        (LangDef:ExpressionValue
+          (LCons (str:string->symbol ?spelling) ?rest))))) (body))
     (rule let-component-expression-head (head (metta-equation
       (tptp-print-v1:let-component-head
-        ?marker ?mode ?value ?rest (LangDef:ExpressionValue ?items))
-      (tptp-print-v1:brackets ?mode ?value))) (body))
+        ?marker ?mode ?rest (LangDef:ExpressionValue ?items))
+      (tptp-print-v1:brackets-view
+        ?mode (LangDef:ExpressionValue
+                (LCons (langdef:list->expression ?items) ?rest))))) (body))
     (rule let-component-string-head (head (metta-equation
       (tptp-print-v1:let-component-head
-        ?marker ?mode ?value ?rest (LangDef:StringValue ?text))
-      (tptp-print-v1:brackets ?mode ?value))) (body))
+        ?marker ?mode ?rest (LangDef:StringValue ?text))
+      (tptp-print-v1:brackets-view
+        ?mode (LangDef:ExpressionValue (LCons ?text ?rest))))) (body))
     (rule let-component-integer-head (head (metta-equation
       (tptp-print-v1:let-component-head
-        ?marker ?mode ?value ?rest (LangDef:IntegerValue ?text))
-      (tptp-print-v1:brackets ?mode ?value))) (body))
+        ?marker ?mode ?rest (LangDef:IntegerValue ?text))
+      (tptp-print-v1:brackets-view
+        ?mode (LangDef:ExpressionValue
+                (LCons (str:string->number ?text) ?rest))))) (body))
     (rule let-component-single (head (metta-equation
-      (tptp-print-v1:let-component-view
-        ?marker ?mode ?value LangDef:SameValue)
-      (tptp-print-v1:expr ?mode ?value))) (body))
+      (tptp-print-v1:let-component-choice
+        LangDef:SameValue ?mode ?view)
+      (tptp-print-v1:expr-view ?mode ?view))) (body))
     (rule let-component-many (head (metta-equation
-      (tptp-print-v1:let-component-view
-        ?marker ?mode ?value LangDef:DifferentValue)
-      (tptp-print-v1:brackets ?mode ?value))) (body))))
+      (tptp-print-v1:let-component-choice
+        LangDef:DifferentValue ?mode ?view)
+      (tptp-print-v1:brackets-view ?mode ?view))) (body))))

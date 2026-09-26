@@ -3,4 +3,4 @@
 (ScalarOccurrenceOracleAcceptedV1 interleaved-diagnostics)
 (ScalarOccurrenceOracleAcceptedV1 signed-increasing)
 (ScalarOccurrenceOracleAcceptedV1 signed-descending)
-True
+true

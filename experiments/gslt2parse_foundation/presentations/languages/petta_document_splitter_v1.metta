@@ -1,5 +1,6 @@
 ; PeTTa filereader.pl strip/3 plus top_forms//2 as scannerless GSLT data.
-; This compatibility presentation intentionally toggles quotes without escape handling.
+; Inside a string a backslash and the scalar after it are one escape, as in
+; PeTTa's reader, so an escaped quote does not end the string.
 (gslt-presentation-v1 PeTTaDocumentSplitterSyntaxV1
   (signature)
   (equations)

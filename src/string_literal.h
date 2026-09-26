@@ -9,7 +9,9 @@
 #include "utf8.h"
 
 /* The MeTTa string literal escapes, written as the body between the quotes.
- * Quote, backslash and newline are escaped in every mode.
+ * Quote and backslash are escaped in every mode, and newline too unless
+ * raw_newlines: PeTTa's swrite keeps a string's newlines, and its reader
+ * takes them back.
  *
  * ESCAPED (the HE printers) writes every other control byte, DEL and each
  * byte outside a valid UTF-8 sequence as \xhh, which the HE readers read
@@ -30,6 +32,7 @@ typedef void (*CettaStringLiteralEmit)(void *context, const char *bytes,
 
 static inline void cetta_string_literal_escape(const char *text, size_t len,
                                                CettaStringLiteralBytes mode,
+                                               bool raw_newlines,
                                                CettaStringLiteralEmit emit,
                                                void *context) {
     bool raw_bytes = mode != CETTA_STRING_LITERAL_ESCAPED;
@@ -41,9 +44,10 @@ static inline void cetta_string_literal_escape(const char *text, size_t len,
         uint8_t c = bytes[i];
         const char *escape = NULL;
         size_t width = 1u;
-        if (c == '\n')
-            escape = "\\n";
-        else if (c == '"')
+        if (c == '\n') {
+            if (!raw_newlines)
+                escape = "\\n";
+        } else if (c == '"')
             escape = "\\\"";
         else if (c == '\\')
             escape = "\\\\";

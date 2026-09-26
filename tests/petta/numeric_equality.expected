@@ -1,0 +1,21 @@
+(zeros true true false)
+(kinds true false true false false true)
+(large true false true false)
+(nested true true false false false)
+(variables false true unbound)
+(nan false false true false false)
+(order true true false true true false true false)
+(rationals (1r2 true false true true) (7r22 false 7))
+(shared true false false)
+(infinity true true false)
+true
+true
+true
+true
+true
+true
+true
+true
+true
+infinity-enabled
+true

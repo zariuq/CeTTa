@@ -1,5 +1,6 @@
 #include "deterministic_equation_plan_v1.h"
 
+#include "deterministic_equation_descent_v1.h"
 #include "finite_horn_gslt_v1.h"
 #include "gslt_composition_v1.h"
 #include "src/symbol.h"
@@ -30,6 +31,8 @@ struct CettaDeterministicEquationPlanV1 {
     uint32_t rule_count;
     DeterministicEquationOperatorV1 *operators;
     size_t operator_count;
+    /* The primitives the plan was admitted with, and runs with. */
+    CettaDeterministicVocabularyV1 vocabulary;
 };
 
 typedef struct {
@@ -412,6 +415,7 @@ static Atom *equation_bind_source_variables(
  * owns the projected GSLT values and selected deterministic equations. */
 static bool equation_plan_from_source(
     const FHGSLTPackage *source,
+    const CettaDeterministicVocabularyV1 *vocabulary,
     CettaDeterministicEquationPlanV1 **out,
     CettaDeterministicEquationStatusV1 *status,
     char *error, size_t error_size) {
@@ -569,6 +573,38 @@ static bool equation_plan_from_source(
     qsort(plan->rules, selected, sizeof(*plan->rules),
           equation_rule_compare);
     plan->rule_count = selected;
+    if (vocabulary)
+        plan->vocabulary = *vocabulary;
+    {
+        /* Admit only programs whose calls descend: every evaluation of an
+         * admitted program ends. */
+        CettaDescentRuleV1 *descent = calloc(selected, sizeof(*descent));
+        if (!descent) {
+            if (status)
+                *status = CETTA_DETERMINISTIC_EQUATION_V1_RESOURCE_LIMIT;
+            (void)equation_error(error, error_size,
+                                 "cannot allocate the descent check");
+            goto fail;
+        }
+        for (uint32_t index = 0u; index < selected; index++)
+            descent[index] = (CettaDescentRuleV1){
+                .name = plan->rules[index].name,
+                .left = plan->rules[index].left,
+                .right = plan->rules[index].right,
+            };
+        bool resource_failure = false;
+        bool descends = cetta_deterministic_equation_descends_v1(
+            descent, selected, &plan->vocabulary, &resource_failure,
+            error, error_size);
+        free(descent);
+        if (!descends) {
+            if (status)
+                *status = resource_failure
+                    ? CETTA_DETERMINISTIC_EQUATION_V1_RESOURCE_LIMIT
+                    : CETTA_DETERMINISTIC_EQUATION_V1_NON_DESCENDING;
+            goto fail;
+        }
+    }
     plan->operators = calloc(
         composition.operator_count ? composition.operator_count : 1u,
         sizeof(*plan->operators));
@@ -603,6 +639,7 @@ fail:
 
 bool cetta_deterministic_equation_plan_v1_load(
     const char *const *presentation_paths, size_t presentation_count,
+    const CettaDeterministicVocabularyV1 *vocabulary,
     CettaDeterministicEquationPlanV1 **out,
     CettaDeterministicEquationStatusV1 *status,
     char *error, size_t error_size) {
@@ -625,13 +662,15 @@ bool cetta_deterministic_equation_plan_v1_load(
             *status = CETTA_DETERMINISTIC_EQUATION_V1_INVALID_PRESENTATION;
         return false;
     }
-    bool ok = equation_plan_from_source(source, out, status, error, error_size);
+    bool ok = equation_plan_from_source(
+        source, vocabulary, out, status, error, error_size);
     fhgslt_package_free(source);
     return ok;
 }
 
 bool cetta_deterministic_equation_plan_v1_load_inputs(
     const CettaDeterministicEquationInputV1 *inputs, size_t input_count,
+    const CettaDeterministicVocabularyV1 *vocabulary,
     CettaDeterministicEquationPlanV1 **out,
     CettaDeterministicEquationStatusV1 *status,
     char *error, size_t error_size) {
@@ -664,7 +703,8 @@ bool cetta_deterministic_equation_plan_v1_load_inputs(
             *status = CETTA_DETERMINISTIC_EQUATION_V1_INVALID_PRESENTATION;
         return false;
     }
-    bool ok = equation_plan_from_source(source, out, status, error, error_size);
+    bool ok = equation_plan_from_source(
+        source, vocabulary, out, status, error, error_size);
     fhgslt_package_free(source);
     return ok;
 }
@@ -1594,6 +1634,10 @@ static bool deterministic_equation_execute(
         return equation_error(
             error, error_size,
             "invalid deterministic equation execution request");
+    if (primitive != plan->vocabulary.primitive)
+        return equation_error(
+            error, error_size,
+            "a deterministic equation plan runs with the primitives it was admitted with");
     mark = arena_mark(arena);
     context = (DeterministicEquationContextV1){
         .plan = plan,
@@ -1712,6 +1756,8 @@ const char *cetta_deterministic_equation_status_name_v1(
         return "primitive_fault";
     case CETTA_DETERMINISTIC_EQUATION_V1_RESOURCE_LIMIT:
         return "resource_limit";
+    case CETTA_DETERMINISTIC_EQUATION_V1_NON_DESCENDING:
+        return "non_descending";
     default:
         return "unknown_status";
     }

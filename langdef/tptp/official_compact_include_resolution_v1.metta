@@ -18,6 +18,9 @@
     (operator LCons 2)
 
     (operator tptp-ci-v1:environment 2)
+    (operator tptp-ci-v1:environment-documents 1)
+    (operator tptp-ci-v1:expand-nested 6)
+    (operator TPTP:IncludeDepthExhaustedV1 1)
     (operator tptp-ci-v1:documents-nil 0)
     (operator tptp-ci-v1:documents-cons 2)
     (operator tptp-ci-v1:source-document 4)
@@ -31,19 +34,19 @@
 
     (operator tptp-ci-v1:resolve 2)
     (operator tptp-ci-v1:resolve-result 2)
-    (operator tptp-ci-v1:expand-file 5)
-    (operator tptp-ci-v1:expand-file-document 6)
-    (operator tptp-ci-v1:expand-inputs 8)
-    (operator tptp-ci-v1:expand-inputs-view 8)
-    (operator tptp-ci-v1:expand-input 10)
-    (operator tptp-ci-v1:emit-formula 10)
+    (operator tptp-ci-v1:expand-file 6)
+    (operator tptp-ci-v1:expand-file-document 7)
+    (operator tptp-ci-v1:expand-inputs 9)
+    (operator tptp-ci-v1:expand-inputs-view 9)
+    (operator tptp-ci-v1:expand-input 11)
+    (operator tptp-ci-v1:emit-formula 11)
     (operator tptp-ci-v1:prepend-input 2)
-    (operator tptp-ci-v1:expand-include-selection 12)
-    (operator tptp-ci-v1:expand-include-namespace 12)
-    (operator tptp-ci-v1:expand-include-binding 13)
-    (operator tptp-ci-v1:expand-include-cycle 15)
-    (operator tptp-ci-v1:after-include-target 14)
-    (operator tptp-ci-v1:after-include-selection 14)
+    (operator tptp-ci-v1:expand-include-selection 13)
+    (operator tptp-ci-v1:expand-include-namespace 13)
+    (operator tptp-ci-v1:expand-include-binding 14)
+    (operator tptp-ci-v1:expand-include-cycle 16)
+    (operator tptp-ci-v1:after-include-target 15)
+    (operator tptp-ci-v1:after-include-selection 15)
     (operator tptp-ci-v1:after-include-tail 3)
 
     (operator tptp-ci-v1:decode-selection 1)
@@ -61,7 +64,6 @@
     (operator tptp-ci-v1:no-document 0)
     (operator tptp-ci-v1:one-document 1)
     (operator tptp-ci-v1:document-ok 1)
-    (operator tptp-ci-v1:document-scan-rest 2)
     (operator tptp-ci-v1:document-rest 2)
     (operator tptp-ci-v1:lookup-binding 3)
     (operator tptp-ci-v1:scan-bindings 4)
@@ -131,7 +133,8 @@
         (tptp-ci-v1:expand-file ?root ?environment
           (tptp-ci-v1:sources-cons ?root (tptp-ci-v1:sources-nil))
           (TPTP:IncludePathRootV1 ?root)
-          (TPTP:NamespaceRootV1))))) (body))
+          (TPTP:NamespaceRootV1)
+          (tptp-ci-v1:environment-documents ?environment))))) (body))
     (rule resolve-ok (head (metta-equation
       (tptp-ci-v1:resolve-result ?root
         (tptp-ci-v1:ok ?inputs ?edges))
@@ -141,100 +144,114 @@
         (TPTP:IncludeResolutionFaultV1 ?fault))
       (TPTP:IncludeResolutionFaultV1 ?fault))) (body))
 
+    ; A nested document spends one document of the environment.  The active
+    ; path holds distinct documents, so the environment's documents always
+    ; outlast the nesting.
+    (rule environment-documents (head (metta-equation
+      (tptp-ci-v1:environment-documents (tptp-ci-v1:environment ?documents ?bindings))
+      ?documents)) (body))
+    (rule expand-nested (head (metta-equation
+      (tptp-ci-v1:expand-nested (tptp-ci-v1:documents-cons ?spent ?fuel)
+        ?source ?environment ?active ?path ?namespace)
+      (tptp-ci-v1:expand-file ?source ?environment ?active ?path ?namespace ?fuel))) (body))
+    (rule expand-nested-exhausted (head (metta-equation
+      (tptp-ci-v1:expand-nested (tptp-ci-v1:documents-nil)
+        ?source ?environment ?active ?path ?namespace)
+      (TPTP:IncludeResolutionFaultV1 (TPTP:IncludeDepthExhaustedV1 ?source)))) (body))
     (rule expand-file (head (metta-equation
-      (tptp-ci-v1:expand-file ?source ?environment ?active ?path ?namespace)
+      (tptp-ci-v1:expand-file ?source ?environment ?active ?path ?namespace ?fuel)
       (tptp-ci-v1:expand-file-document ?source ?environment ?active ?path
-        ?namespace (tptp-ci-v1:lookup-document ?source ?environment)))) (body))
+        ?namespace (tptp-ci-v1:lookup-document ?source ?environment) ?fuel))) (body))
     (rule expand-file-ok (head (metta-equation
       (tptp-ci-v1:expand-file-document ?source ?environment ?active ?path
         ?namespace
         (tptp-ci-v1:document-ok
           (tptp-ci-v1:source-document ?document-source ?digest
-            ?inputs ?text)))
+            ?inputs ?text)) ?fuel)
       (tptp-ci-v1:expand-inputs ?source ?digest ?inputs ?environment ?active
-        ?path ?namespace 0))) (body))
+        ?path ?namespace 0 ?fuel))) (body))
     (rule expand-file-fault (head (metta-equation
       (tptp-ci-v1:expand-file-document ?source ?environment ?active ?path
-        ?namespace (TPTP:IncludeResolutionFaultV1 ?fault))
+        ?namespace (TPTP:IncludeResolutionFaultV1 ?fault) ?fuel)
       (TPTP:IncludeResolutionFaultV1 ?fault))) (body))
 
     (rule inputs (head (metta-equation
       (tptp-ci-v1:expand-inputs ?source ?digest ?inputs
-        ?environment ?active ?path ?namespace ?index)
+        ?environment ?active ?path ?namespace ?index ?fuel)
       (tptp-ci-v1:expand-inputs-view (langdef:value-view ?inputs)
-        ?source ?digest ?environment ?active ?path ?namespace ?index))) (body))
+        ?source ?digest ?environment ?active ?path ?namespace ?index ?fuel))) (body))
     (rule inputs-nil (head (metta-equation
       (tptp-ci-v1:expand-inputs-view (LangDef:ExpressionValue LNil)
-        ?source ?digest ?environment ?active ?path ?namespace ?index)
+        ?source ?digest ?environment ?active ?path ?namespace ?index ?fuel)
       (tptp-ci-v1:ok (tptp-ci-v1:expanded-inputs-nil)
         (tptp-ci-v1:include-edges-nil)))) (body))
     (rule inputs-cons (head (metta-equation
       (tptp-ci-v1:expand-inputs-view
         (LangDef:ExpressionValue (LCons ?record ?tail))
-        ?source ?digest ?environment ?active ?path ?namespace ?index)
+        ?source ?digest ?environment ?active ?path ?namespace ?index ?fuel)
       (tptp-ci-v1:expand-input (langdef:value-view ?record) ?record
         ?source ?digest (langdef:list->expression ?tail)
-        ?environment ?active ?path ?namespace ?index))) (body))
+        ?environment ?active ?path ?namespace ?index ?fuel))) (body))
     ; A document's inputs are a list; the rest stays a list.
     (rule inputs-list-nil (head (metta-equation
       (tptp-ci-v1:expand-inputs-view (LangDef:ListValue LNil)
-        ?source ?digest ?environment ?active ?path ?namespace ?index)
+        ?source ?digest ?environment ?active ?path ?namespace ?index ?fuel)
       (tptp-ci-v1:ok (tptp-ci-v1:expanded-inputs-nil)
         (tptp-ci-v1:include-edges-nil)))) (body))
     (rule inputs-list-cons (head (metta-equation
       (tptp-ci-v1:expand-inputs-view
         (LangDef:ListValue (LCons ?record ?tail))
-        ?source ?digest ?environment ?active ?path ?namespace ?index)
+        ?source ?digest ?environment ?active ?path ?namespace ?index ?fuel)
       (tptp-ci-v1:expand-input (langdef:value-view ?record) ?record
         ?source ?digest (langdef:list->list-value ?tail)
-        ?environment ?active ?path ?namespace ?index))) (body))
+        ?environment ?active ?path ?namespace ?index ?fuel))) (body))
 
     (rule input-fof (head (metta-equation
       (tptp-ci-v1:expand-input
         (LangDef:ExpressionValue
           (LCons fof (LCons ?name (LCons ?role (LCons ?formula ?tail-fields)))))
-        ?record ?source ?digest ?tail ?environment ?active ?path ?namespace ?index)
+        ?record ?source ?digest ?tail ?environment ?active ?path ?namespace ?index ?fuel)
       (tptp-ci-v1:emit-formula ?source ?digest ?index ?path ?namespace ?name
-        ?record ?tail ?environment ?active))) (body))
+        ?record ?tail ?environment ?active ?fuel))) (body))
     (rule input-cnf (head (metta-equation
       (tptp-ci-v1:expand-input
         (LangDef:ExpressionValue
           (LCons cnf (LCons ?name (LCons ?role (LCons ?formula ?tail-fields)))))
-        ?record ?source ?digest ?tail ?environment ?active ?path ?namespace ?index)
+        ?record ?source ?digest ?tail ?environment ?active ?path ?namespace ?index ?fuel)
       (tptp-ci-v1:emit-formula ?source ?digest ?index ?path ?namespace ?name
-        ?record ?tail ?environment ?active))) (body))
+        ?record ?tail ?environment ?active ?fuel))) (body))
     (rule input-tff (head (metta-equation
       (tptp-ci-v1:expand-input
         (LangDef:ExpressionValue
           (LCons tff (LCons ?name (LCons ?role (LCons ?formula ?tail-fields)))))
-        ?record ?source ?digest ?tail ?environment ?active ?path ?namespace ?index)
+        ?record ?source ?digest ?tail ?environment ?active ?path ?namespace ?index ?fuel)
       (tptp-ci-v1:emit-formula ?source ?digest ?index ?path ?namespace ?name
-        ?record ?tail ?environment ?active))) (body))
+        ?record ?tail ?environment ?active ?fuel))) (body))
     (rule input-thf (head (metta-equation
       (tptp-ci-v1:expand-input
         (LangDef:ExpressionValue
           (LCons thf (LCons ?name (LCons ?role (LCons ?formula ?tail-fields)))))
-        ?record ?source ?digest ?tail ?environment ?active ?path ?namespace ?index)
+        ?record ?source ?digest ?tail ?environment ?active ?path ?namespace ?index ?fuel)
       (tptp-ci-v1:emit-formula ?source ?digest ?index ?path ?namespace ?name
-        ?record ?tail ?environment ?active))) (body))
+        ?record ?tail ?environment ?active ?fuel))) (body))
     (rule input-tcf (head (metta-equation
       (tptp-ci-v1:expand-input
         (LangDef:ExpressionValue
           (LCons tcf (LCons ?name (LCons ?role (LCons ?formula ?tail-fields)))))
-        ?record ?source ?digest ?tail ?environment ?active ?path ?namespace ?index)
+        ?record ?source ?digest ?tail ?environment ?active ?path ?namespace ?index ?fuel)
       (tptp-ci-v1:emit-formula ?source ?digest ?index ?path ?namespace ?name
-        ?record ?tail ?environment ?active))) (body))
+        ?record ?tail ?environment ?active ?fuel))) (body))
     (rule input-tpi (head (metta-equation
       (tptp-ci-v1:expand-input
         (LangDef:ExpressionValue
           (LCons tpi (LCons ?name (LCons ?role (LCons ?formula ?tail-fields)))))
-        ?record ?source ?digest ?tail ?environment ?active ?path ?namespace ?index)
+        ?record ?source ?digest ?tail ?environment ?active ?path ?namespace ?index ?fuel)
       (tptp-ci-v1:emit-formula ?source ?digest ?index ?path ?namespace ?name
-        ?record ?tail ?environment ?active))) (body))
+        ?record ?tail ?environment ?active ?fuel))) (body))
 
     (rule emit-formula (head (metta-equation
       (tptp-ci-v1:emit-formula ?source ?digest ?index ?path ?namespace ?name
-        ?record ?tail ?environment ?active)
+        ?record ?tail ?environment ?active ?fuel)
       (tptp-ci-v1:prepend-input
         (TPTP:ExpandedInputV1
           (TPTP:SourceOccurrenceV1 ?source ?digest ?index
@@ -242,7 +259,7 @@
           ?path ?namespace (TPTP:QualifiedFormulaNameV1 ?namespace ?name)
           ?record)
         (tptp-ci-v1:expand-inputs ?source ?digest ?tail ?environment ?active
-          ?path ?namespace (+ ?index 1))))) (body))
+          ?path ?namespace (+ ?index 1) ?fuel)))) (body))
     (rule prepend-input-ok (head (metta-equation
       (tptp-ci-v1:prepend-input ?input (tptp-ci-v1:ok ?inputs ?edges))
       (tptp-ci-v1:ok
@@ -255,135 +272,135 @@
     (rule input-include-all (head (metta-equation
       (tptp-ci-v1:expand-input
         (LangDef:ExpressionValue (LCons incl (LCons ?requested LNil)))
-        ?record ?source ?digest ?tail ?environment ?active ?path ?namespace ?index)
+        ?record ?source ?digest ?tail ?environment ?active ?path ?namespace ?index ?fuel)
       (tptp-ci-v1:expand-include-selection
         (tptp-ci-v1:selection-all) ?requested ?source ?digest ?index ?path
         ?namespace (tptp-ci-v1:namespace-value ?namespace)
-        (TPTP:SpanUnavailable compact-value) ?tail ?environment ?active))) (body))
+        (TPTP:SpanUnavailable compact-value) ?tail ?environment ?active ?fuel))) (body))
     (rule input-include-selected (head (metta-equation
       (tptp-ci-v1:expand-input
         (LangDef:ExpressionValue
           (LCons incl (LCons ?requested (LCons ?selection LNil))))
-        ?record ?source ?digest ?tail ?environment ?active ?path ?namespace ?index)
+        ?record ?source ?digest ?tail ?environment ?active ?path ?namespace ?index ?fuel)
       (tptp-ci-v1:expand-include-selection
         (tptp-ci-v1:decode-selection ?selection) ?requested ?source ?digest
         ?index ?path ?namespace (tptp-ci-v1:namespace-value ?namespace)
-        (TPTP:SpanUnavailable compact-value) ?tail ?environment ?active))) (body))
+        (TPTP:SpanUnavailable compact-value) ?tail ?environment ?active ?fuel))) (body))
     (rule input-include-qualified (head (metta-equation
       (tptp-ci-v1:expand-input
         (LangDef:ExpressionValue
           (LCons incl
             (LCons ?requested (LCons ?selection (LCons ?qualification LNil)))))
-        ?record ?source ?digest ?tail ?environment ?active ?path ?namespace ?index)
+        ?record ?source ?digest ?tail ?environment ?active ?path ?namespace ?index ?fuel)
       (tptp-ci-v1:expand-include-selection
         (tptp-ci-v1:decode-selection ?selection) ?requested ?source ?digest
         ?index ?path ?namespace
         (tptp-ci-v1:decode-namespace ?namespace ?qualification)
-        (TPTP:SpanUnavailable compact-value) ?tail ?environment ?active))) (body))
+        (TPTP:SpanUnavailable compact-value) ?tail ?environment ?active ?fuel))) (body))
     (rule include-selection-all-value (head (metta-equation
       (tptp-ci-v1:expand-include-selection
         (tptp-ci-v1:selection-all) ?requested ?source
         ?digest ?index ?path ?namespace ?qualification ?span ?tail
-        ?environment ?active)
+        ?environment ?active ?fuel)
       (tptp-ci-v1:expand-include-namespace
         ?qualification
         (tptp-ci-v1:selection-all) ?requested ?source ?digest ?index ?path
         ?span ?tail
-        ?environment ?active ?namespace))) (body))
+        ?environment ?active ?namespace ?fuel))) (body))
     (rule include-selection-names-value (head (metta-equation
       (tptp-ci-v1:expand-include-selection
         (tptp-ci-v1:selection-names ?names) ?requested ?source
         ?digest ?index ?path ?namespace ?qualification ?span ?tail
-        ?environment ?active)
+        ?environment ?active ?fuel)
       (tptp-ci-v1:expand-include-namespace
         ?qualification
         (tptp-ci-v1:selection-names ?names) ?requested ?source ?digest
         ?index ?path ?span ?tail
-        ?environment ?active ?namespace))) (body))
+        ?environment ?active ?namespace ?fuel))) (body))
     (rule include-selection-fault (head (metta-equation
       (tptp-ci-v1:expand-include-selection
         (TPTP:IncludeResolutionFaultV1 ?fault) ?requested ?source ?digest
         ?index ?path ?namespace ?qualification ?span ?tail ?environment
-        ?active)
+        ?active ?fuel)
       (TPTP:IncludeResolutionFaultV1 ?fault))) (body))
     (rule include-namespace-value (head (metta-equation
       (tptp-ci-v1:expand-include-namespace
         (tptp-ci-v1:namespace-value ?next-namespace) ?selection ?requested
         ?source ?digest ?index ?path ?span ?tail ?environment ?active
-        ?namespace)
+        ?namespace ?fuel)
       (tptp-ci-v1:expand-include-binding
         (tptp-ci-v1:lookup-binding ?source ?requested ?environment)
         ?selection ?requested ?source ?digest ?index ?path ?span ?tail
-        ?environment ?active ?next-namespace ?namespace))) (body))
+        ?environment ?active ?next-namespace ?namespace ?fuel))) (body))
     (rule include-namespace-fault (head (metta-equation
       (tptp-ci-v1:expand-include-namespace
         (TPTP:IncludeResolutionFaultV1 ?fault) ?selection ?requested ?source
-        ?digest ?index ?path ?span ?tail ?environment ?active ?namespace)
+        ?digest ?index ?path ?span ?tail ?environment ?active ?namespace ?fuel)
       (TPTP:IncludeResolutionFaultV1 ?fault))) (body))
     (rule include-binding-value (head (metta-equation
       (tptp-ci-v1:expand-include-binding
         (tptp-ci-v1:binding-ok ?target ?mode) ?selection ?requested ?source
         ?digest ?index ?path ?span ?tail ?environment ?active ?namespace
-        ?parent-namespace)
+        ?parent-namespace ?fuel)
       (tptp-ci-v1:expand-include-cycle
         (tptp-ci-v1:source-member ?target ?active) ?target ?mode ?selection
         ?requested ?source ?digest ?index ?path ?span ?tail ?environment
-        ?active ?namespace ?parent-namespace))) (body))
+        ?active ?namespace ?parent-namespace ?fuel))) (body))
     (rule include-binding-fault (head (metta-equation
       (tptp-ci-v1:expand-include-binding
         (TPTP:IncludeResolutionFaultV1 ?fault) ?selection ?requested ?source
         ?digest ?index ?path ?span ?tail ?environment ?active ?namespace
-        ?parent-namespace)
+        ?parent-namespace ?fuel)
       (TPTP:IncludeResolutionFaultV1 ?fault))) (body))
     (rule include-cycle-found (head (metta-equation
       (tptp-ci-v1:expand-include-cycle tptp-ci-v1:true ?target ?mode
         ?selection ?requested ?source ?digest ?index ?path ?span ?tail
-        ?environment ?active ?namespace ?parent-namespace)
+        ?environment ?active ?namespace ?parent-namespace ?fuel)
       (TPTP:IncludeResolutionFaultV1
         (TPTP:IncludeCycleV1 ?source ?target ?path)))) (body))
     (rule include-cycle-clear (head (metta-equation
       (tptp-ci-v1:expand-include-cycle tptp-ci-v1:false ?target ?mode
         ?selection ?requested ?source ?digest ?index ?path ?span ?tail
-        ?environment ?active ?namespace ?parent-namespace)
+        ?environment ?active ?namespace ?parent-namespace ?fuel)
       (tptp-ci-v1:after-include-target
         (TPTP:IncludeEdgeV1
           (TPTP:SourceOccurrenceV1 ?source ?digest ?index ?span)
           ?requested ?target ?mode ?selection ?namespace ?path)
         ?selection ?target
-        (tptp-ci-v1:expand-file ?target ?environment
+        (tptp-ci-v1:expand-nested ?fuel ?target ?environment
           (tptp-ci-v1:sources-cons ?target ?active)
           (TPTP:IncludePathStepV1 ?path
             (TPTP:SourceOccurrenceV1 ?source ?digest ?index ?span) ?target)
           ?namespace)
         ?source ?digest ?index ?path ?span ?tail ?environment ?active
-        ?namespace ?parent-namespace))) (body))
+        ?namespace ?parent-namespace ?fuel))) (body))
     (rule after-target-ok (head (metta-equation
       (tptp-ci-v1:after-include-target ?edge ?selection ?target
         (tptp-ci-v1:ok ?target-inputs ?target-edges)
         ?source ?digest ?index ?path ?span ?tail ?environment ?active
-        ?namespace ?parent-namespace)
+        ?namespace ?parent-namespace ?fuel)
       (tptp-ci-v1:after-include-selection ?edge ?target ?target-edges
         (tptp-ci-v1:apply-selection ?target ?selection ?target-inputs)
         ?source ?digest ?index ?path ?span ?tail ?environment ?active
-        ?namespace ?parent-namespace))) (body))
+        ?namespace ?parent-namespace ?fuel))) (body))
     (rule after-target-fault (head (metta-equation
       (tptp-ci-v1:after-include-target ?edge ?selection ?target
         (TPTP:IncludeResolutionFaultV1 ?fault)
         ?source ?digest ?index ?path ?span ?tail ?environment ?active
-        ?namespace ?parent-namespace)
+        ?namespace ?parent-namespace ?fuel)
       (TPTP:IncludeResolutionFaultV1 ?fault))) (body))
     (rule after-selection-ok (head (metta-equation
       (tptp-ci-v1:after-include-selection ?edge ?target ?target-edges
         (tptp-ci-v1:selected ?selected) ?source ?digest ?index ?path ?span
-        ?tail ?environment ?active ?namespace ?parent-namespace)
+        ?tail ?environment ?active ?namespace ?parent-namespace ?fuel)
       (tptp-ci-v1:after-include-tail ?edge
         (tptp-ci-v1:ok ?selected ?target-edges)
         (tptp-ci-v1:expand-inputs ?source ?digest ?tail ?environment ?active
-          ?path ?parent-namespace (+ ?index 1))))) (body))
+          ?path ?parent-namespace (+ ?index 1) ?fuel)))) (body))
     (rule after-selection-fault (head (metta-equation
       (tptp-ci-v1:after-include-selection ?edge ?target ?target-edges
         (TPTP:IncludeResolutionFaultV1 ?fault) ?source ?digest ?index ?path
-        ?span ?tail ?environment ?active ?namespace ?parent-namespace)
+        ?span ?tail ?environment ?active ?namespace ?parent-namespace ?fuel)
       (TPTP:IncludeResolutionFaultV1 ?fault))) (body))
     (rule after-tail-ok (head (metta-equation
       (tptp-ci-v1:after-include-tail ?edge
@@ -459,10 +476,7 @@
       (tptp-ci-v1:scan-document-decision
         (langdef:ground-equal ?source ?candidate) ?source
         (tptp-ci-v1:source-document ?candidate ?digest ?records ?text)
-        (tptp-ci-v1:document-scan-rest ?tail ?state)))) (body))
-    (rule document-scan-rest (head (metta-equation
-      (tptp-ci-v1:document-scan-rest ?tail ?state)
-      (tptp-ci-v1:document-rest ?tail ?state))) (body))
+        (tptp-ci-v1:document-rest ?tail ?state)))) (body))
     (rule scan-document-different (head (metta-equation
       (tptp-ci-v1:scan-document-decision LangDef:DifferentValue ?source
         ?document (tptp-ci-v1:document-rest ?tail ?state))

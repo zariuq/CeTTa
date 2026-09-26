@@ -1,0 +1,6 @@
+before
+after-caught
+true
+(Error (type_error evaluable (/ a 0)) (context (: system (/ is 2)) $V0))
+true
+(Error (type_error evaluable (/ a 0)) (context (: system (/ is 2)) $V0))

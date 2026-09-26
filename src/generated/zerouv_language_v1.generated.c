@@ -4756,5 +4756,5 @@ const CettaGsltEmbeddedLanguageV1 cetta_zerouv_language_v1 = {
     },
     .observation = "bag",
     .manifest_sha256 = "e4cf314bb042b1660be6f569bd45f500690c902533698b7816364dd8dd9a2ab6",
-    .compiler_sha256 = "f6d4fca1704622c6c78e4b40333ef0edd9dc8a1ab404a114dab5df23ae5cd729",
+    .compiler_sha256 = "10c904e1db448f7d696c510faeb318e44bd2779ee1f3f5801c5decd0eba04a0e",
 };

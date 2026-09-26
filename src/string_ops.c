@@ -272,7 +272,7 @@ bool cetta_string_escape(CettaQuotingScheme scheme, const char *text,
     switch (scheme) {
     case CETTA_QUOTING_METTA: {
         EscapeSink sink = {out, true};
-        cetta_string_literal_escape(text, len, CETTA_STRING_LITERAL_ESCAPED,
+        cetta_string_literal_escape(text, len, CETTA_STRING_LITERAL_ESCAPED, false,
                                     escape_sink_emit, &sink);
         return sink.ok;
     }

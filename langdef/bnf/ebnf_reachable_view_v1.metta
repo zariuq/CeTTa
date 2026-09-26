@@ -4,6 +4,9 @@
 ; them. This preparation pass is not an input parser or a validation bypass.
 ; Requires ebnf_declaration_view_v1.metta. Name lookup is a linear scan; this
 ; reference transformation makes no claim of indexed preparation complexity.
+; The search spends one element of a list of every name it could meet, the
+; start and each reference of each rule, for each name it visits first, so
+; it ends: the visited names are distinct and each is on that list.
 (gslt-presentation-v1 EbnfReachableViewV1
   (signature
     (operator metta-equation 2)
@@ -12,8 +15,12 @@
     (operator ebnf-reach-v1:select 2)
     (operator ebnf-reach-v1:prepare 3)
     (operator ebnf-reach-v1:finish 2)
-    (operator ebnf-reach-v1:visit 3)
-    (operator ebnf-reach-v1:visit-next 4)
+    (operator ebnf-reach-v1:visit 4)
+    (operator ebnf-reach-v1:visit-next 5)
+    (operator ebnf-reach-v1:names 2)
+    (operator ebnf-reach-v1:alternative-names 2)
+    (operator ebnf-reach-v1:element-names 2)
+    (operator ebnf-reach-v1:names-exhausted 1)
     (operator ebnf-reach-v1:member 2)
     (operator ebnf-reach-v1:member-next 3)
     (operator ebnf-reach-v1:dependencies 3)
@@ -45,24 +52,55 @@
     (rule ebnf-reach-prepare (head (metta-equation
       (ebnf-reach-v1:prepare (bnf-v1:document ?entries ?span) ?start ?original)
       (ebnf-reach-v1:finish
-        (ebnf-reach-v1:visit (ebnf-reach-v1:cons ?start (ebnf-reach-v1:nil)) (ebnf-reach-v1:nil) ?entries)
+        (ebnf-reach-v1:visit (ebnf-reach-v1:cons ?start (ebnf-reach-v1:nil)) (ebnf-reach-v1:nil) ?entries
+          (ebnf-reach-v1:cons ?start (ebnf-reach-v1:names ?entries (ebnf-reach-v1:nil))))
         ?original))) (body))
     (rule ebnf-reach-finish (head (metta-equation
       (ebnf-reach-v1:finish ?names (bnf-v1:document ?entries ?span))
       (bnf-v1:document (ebnf-reach-v1:filter ?entries ?names) ?span))) (body))
     (rule ebnf-reach-visit-empty (head (metta-equation
-      (ebnf-reach-v1:visit (ebnf-reach-v1:nil) ?seen ?entries) ?seen)) (body))
+      (ebnf-reach-v1:visit (ebnf-reach-v1:nil) ?seen ?entries ?fuel) ?seen)) (body))
     (rule ebnf-reach-visit-cons (head (metta-equation
-      (ebnf-reach-v1:visit (ebnf-reach-v1:cons ?name ?todo) ?seen ?entries)
+      (ebnf-reach-v1:visit (ebnf-reach-v1:cons ?name ?todo) ?seen ?entries ?fuel)
       (ebnf-reach-v1:visit-next (ebnf-reach-v1:member ?name ?seen)
-        (ebnf-reach-v1:cons ?name ?todo) ?seen ?entries))) (body))
+        (ebnf-reach-v1:cons ?name ?todo) ?seen ?entries ?fuel))) (body))
     (rule ebnf-reach-visit-known (head (metta-equation
-      (ebnf-reach-v1:visit-next True (ebnf-reach-v1:cons ?name ?todo) ?seen ?entries)
-      (ebnf-reach-v1:visit ?todo ?seen ?entries))) (body))
+      (ebnf-reach-v1:visit-next True (ebnf-reach-v1:cons ?name ?todo) ?seen ?entries ?fuel)
+      (ebnf-reach-v1:visit ?todo ?seen ?entries ?fuel))) (body))
     (rule ebnf-reach-visit-new (head (metta-equation
-      (ebnf-reach-v1:visit-next False (ebnf-reach-v1:cons ?name ?todo) ?seen ?entries)
+      (ebnf-reach-v1:visit-next False (ebnf-reach-v1:cons ?name ?todo) ?seen ?entries
+        (ebnf-reach-v1:cons ?spent ?fuel))
       (ebnf-reach-v1:visit (ebnf-reach-v1:dependencies ?entries ?name ?todo)
-        (ebnf-reach-v1:cons ?name ?seen) ?entries))) (body))
+        (ebnf-reach-v1:cons ?name ?seen) ?entries ?fuel))) (body))
+    (rule ebnf-reach-visit-exhausted (head (metta-equation
+      (ebnf-reach-v1:visit-next False (ebnf-reach-v1:cons ?name ?todo) ?seen ?entries
+        (ebnf-reach-v1:nil))
+      (ebnf-reach-v1:names-exhausted ?name))) (body))
+    ; Every name the entries reference, before the names given.
+    (rule ebnf-reach-names-empty (head (metta-equation
+      (ebnf-reach-v1:names (bnf-v1:entries-nil) ?names) ?names)) (body))
+    (rule ebnf-reach-names-rule (head (metta-equation
+      (ebnf-reach-v1:names (bnf-v1:entries-cons (bnf-v1:rule ?head (bnf-v1:expression ?alternatives ?espan) ?span) ?tail) ?names)
+      (ebnf-reach-v1:alternative-names ?alternatives (ebnf-reach-v1:names ?tail ?names)))) (body))
+    (rule ebnf-reach-names-comment (head (metta-equation
+      (ebnf-reach-v1:names (bnf-v1:entries-cons (bnf-v1:comment ?text ?span) ?tail) ?names)
+      (ebnf-reach-v1:names ?tail ?names))) (body))
+    (rule ebnf-reach-names-blank (head (metta-equation
+      (ebnf-reach-v1:names (bnf-v1:entries-cons (bnf-v1:blank ?span) ?tail) ?names)
+      (ebnf-reach-v1:names ?tail ?names))) (body))
+    (rule ebnf-reach-alternative-names-empty (head (metta-equation
+      (ebnf-reach-v1:alternative-names (bnf-v1:alternatives-nil) ?names) ?names)) (body))
+    (rule ebnf-reach-alternative-names-cons (head (metta-equation
+      (ebnf-reach-v1:alternative-names (bnf-v1:alternatives-cons (bnf-v1:alternative ?elements ?aspan) ?tail) ?names)
+      (ebnf-reach-v1:element-names ?elements (ebnf-reach-v1:alternative-names ?tail ?names)))) (body))
+    (rule ebnf-reach-element-names-empty (head (metta-equation
+      (ebnf-reach-v1:element-names (bnf-v1:elements-nil) ?names) ?names)) (body))
+    (rule ebnf-reach-element-names-reference (head (metta-equation
+      (ebnf-reach-v1:element-names (bnf-v1:elements-cons (bnf-v1:reference ?name ?span) ?tail) ?names)
+      (ebnf-reach-v1:cons ?name (ebnf-reach-v1:element-names ?tail ?names)))) (body))
+    (rule ebnf-reach-element-names-literal (head (metta-equation
+      (ebnf-reach-v1:element-names (bnf-v1:elements-cons (bnf-v1:literal ?text ?span) ?tail) ?names)
+      (ebnf-reach-v1:element-names ?tail ?names))) (body))
     (rule ebnf-reach-member-empty (head (metta-equation
       (ebnf-reach-v1:member ?name (ebnf-reach-v1:nil)) False)) (body))
     (rule ebnf-reach-member-cons (head (metta-equation

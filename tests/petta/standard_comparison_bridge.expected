@@ -2,7 +2,10 @@
 (neq-distinct true)
 (neq-false-branch good)
 (neq-true-branch good)
+(graphs true false false true false true)
 true
 true
 true
+true
+$V0
 true

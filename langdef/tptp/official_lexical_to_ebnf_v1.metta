@@ -16,6 +16,7 @@
     (operator + 2)
     (operator < 2)
     (operator langdef:ground-equal 2)
+    (operator LNil 0) (operator LCons 2)
     (operator bnf-v1:text->string 1)
     (operator ebnf-v1:next-bits 1)
     (operator tptp-lex-v1:lower 3)
@@ -46,8 +47,8 @@
     (operator tptp-lex-v1:matcher 2)
     (operator tptp-lex-v1:items 2)
     (operator tptp-lex-v1:union 2)
-    (operator tptp-lex-v1:union-left 5)
-    (operator tptp-lex-v1:union-right 5)
+    (operator tptp-lex-v1:union-left 3)
+    (operator tptp-lex-v1:union-right 3)
     (operator tptp-lex-v1:item 2)
     (operator tptp-lex-v1:endpoint 1)
     (operator tptp-lex-v1:escape 1)
@@ -55,7 +56,8 @@
     (operator tptp-lex-v1:times-eight 1)
     (operator tptp-lex-v1:range 3)
     (operator tptp-lex-v1:range-order 4)
-    (operator tptp-lex-v1:range-next 4)
+    (operator tptp-lex-v1:range-scalars 2)
+    (operator langdef:codepoint-range 2)
     (operator tptp-lex-v1:invalid-range 2)
     (operator tptp-lex-v1:reverse-declarations 2)
     (operator tptp-lex-v1:reverse-origins 2)
@@ -277,18 +279,20 @@
       (bnf-v1:scalars-cons ?head ?tail))) (body))
     (rule tptp-lex-union-cons (head (metta-equation
       (tptp-lex-v1:union (bnf-v1:scalars-cons ?a ?as) (bnf-v1:scalars-cons ?b ?bs))
-      (tptp-lex-v1:union-left (< ?a ?b) ?a ?as ?b ?bs))) (body))
+      (tptp-lex-v1:union-left (< ?a ?b)
+        (bnf-v1:scalars-cons ?a ?as) (bnf-v1:scalars-cons ?b ?bs)))) (body))
     (rule tptp-lex-union-first (head (metta-equation
-      (tptp-lex-v1:union-left True ?a ?as ?b ?bs)
-      (bnf-v1:scalars-cons ?a (tptp-lex-v1:union ?as (bnf-v1:scalars-cons ?b ?bs))))) (body))
+      (tptp-lex-v1:union-left True (bnf-v1:scalars-cons ?a ?as) ?right)
+      (bnf-v1:scalars-cons ?a (tptp-lex-v1:union ?as ?right)))) (body))
     (rule tptp-lex-union-not-first (head (metta-equation
-      (tptp-lex-v1:union-left False ?a ?as ?b ?bs)
-      (tptp-lex-v1:union-right (< ?b ?a) ?a ?as ?b ?bs))) (body))
+      (tptp-lex-v1:union-left False (bnf-v1:scalars-cons ?a ?as) (bnf-v1:scalars-cons ?b ?bs))
+      (tptp-lex-v1:union-right (< ?b ?a)
+        (bnf-v1:scalars-cons ?a ?as) (bnf-v1:scalars-cons ?b ?bs)))) (body))
     (rule tptp-lex-union-second (head (metta-equation
-      (tptp-lex-v1:union-right True ?a ?as ?b ?bs)
-      (bnf-v1:scalars-cons ?b (tptp-lex-v1:union (bnf-v1:scalars-cons ?a ?as) ?bs)))) (body))
+      (tptp-lex-v1:union-right True ?left (bnf-v1:scalars-cons ?b ?bs))
+      (bnf-v1:scalars-cons ?b (tptp-lex-v1:union ?left ?bs)))) (body))
     (rule tptp-lex-union-equal (head (metta-equation
-      (tptp-lex-v1:union-right False ?a ?as ?b ?bs)
+      (tptp-lex-v1:union-right False (bnf-v1:scalars-cons ?a ?as) (bnf-v1:scalars-cons ?b ?bs))
       (bnf-v1:scalars-cons ?a (tptp-lex-v1:union ?as ?bs)))) (body))
     (rule tptp-lex-singleton (head (metta-equation
       (tptp-lex-v1:item (tptp-ebnf-v1:regex-class-singleton ?endpoint ?span) ?tail)
@@ -328,13 +332,12 @@
       (tptp-lex-v1:invalid-range ?first ?last))) (body))
     (rule tptp-lex-range-ordered (head (metta-equation
       (tptp-lex-v1:range-order False ?first ?last ?tail)
-      (tptp-lex-v1:range-next (langdef:ground-equal ?first ?last) ?first ?last ?tail))) (body))
-    (rule tptp-lex-range-end (head (metta-equation
-      (tptp-lex-v1:range-next LangDef:SameValue ?first ?last ?tail)
-      (bnf-v1:scalars-cons ?first ?tail))) (body))
-    (rule tptp-lex-range-more (head (metta-equation
-      (tptp-lex-v1:range-next LangDef:DifferentValue ?first ?last ?tail)
-      (bnf-v1:scalars-cons ?first (tptp-lex-v1:range (+ ?first 1) ?last ?tail)))) (body))
+      (tptp-lex-v1:range-scalars (langdef:codepoint-range ?first ?last) ?tail))) (body))
+    (rule tptp-lex-range-scalars-end (head (metta-equation
+      (tptp-lex-v1:range-scalars LNil ?tail) ?tail)) (body))
+    (rule tptp-lex-range-scalars-more (head (metta-equation
+      (tptp-lex-v1:range-scalars (LCons ?cp ?rest) ?tail)
+      (bnf-v1:scalars-cons ?cp (tptp-lex-v1:range-scalars ?rest ?tail)))) (body))
     (rule tptp-lex-reverse-declarations-empty (head (metta-equation
       (tptp-lex-v1:reverse-declarations (bnf-v1:lexical-declarations-nil) ?tail) ?tail)) (body))
     (rule tptp-lex-reverse-declarations-cons (head (metta-equation

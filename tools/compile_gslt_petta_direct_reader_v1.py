@@ -219,9 +219,9 @@ class PeTTaDirectPlan:
     expression_close: int
     string_quote: int
     escape_marker: int
+    splitter_string_escape: int
     variable_marker: int
     runnable_marker: int
-    splitter_string_escape: int
     escape_map: tuple[tuple[int, int], ...]
     identity_escape: bool
     used_classes: tuple[str, ...]
@@ -669,6 +669,8 @@ def derive_plan(
                 "a PeTTa list token may continue where the bar alone would end")
     if not policy.escape_map:
         raise CompileError("PeTTa projection has no named escape map")
+    if split["string_escape"] != parsed["escape_marker"]:
+        raise CompileError("PeTTa splitter and form escape markers disagree")
     return PeTTaDirectPlan(
         f"{splitter.name}+{form_syntax.name}",
         str(split["blank"]), str(split["string_plain"]),
@@ -679,8 +681,8 @@ def derive_plan(
         int(split["comment_marker"]), int(split["comment_line_end"]),
         int(split["expression_open"]), int(split["expression_close"]),
         int(split["string_quote"]), int(parsed["escape_marker"]),
-        int(parsed["variable_marker"]), int(split["runnable_marker"]),
         int(split["string_escape"]),
+        int(parsed["variable_marker"]), int(split["runnable_marker"]),
         policy.escape_map, policy.identity_escape, tuple(sorted(used)),
         lists,
     )
@@ -792,9 +794,9 @@ def generate(
         f"    .expression_close = UINT32_C({plan.expression_close}),\n"
         f"    .string_quote = UINT32_C({plan.string_quote}),\n"
         f"    .escape_marker = UINT32_C({plan.escape_marker}),\n"
+        f"    .splitter_string_escape = UINT32_C({plan.splitter_string_escape}),\n"
         f"    .variable_marker = UINT32_C({plan.variable_marker}),\n"
         f"    .runnable_marker = UINT32_C({plan.runnable_marker}),\n"
-        f"    .splitter_string_escape = UINT32_C({plan.splitter_string_escape}),\n"
         f"    .string_escape_map = {escape_name},\n"
         f"    .string_escape_map_len = UINT32_C({len(plan.escape_map)}),\n"
         f"    .string_escape_identity_fallback = {'true' if plan.identity_escape else 'false'},\n"

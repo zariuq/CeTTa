@@ -1,0 +1,10 @@
+(, 3 x)
+(| 3 x)
+(true 3)
+(Atom 3 (Expression))
+(LNil)
+(, 3 b)
+a
+(, a b)
+(Sized 2 (, a 2))
+(, 2 3)

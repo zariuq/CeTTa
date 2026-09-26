@@ -111,6 +111,10 @@ CettaDeterministicEquationPlanV1 *cetta_tptp_compact_manifest_plan_v1(
  * table of the reader's grammar, or with NULL the reader's own. */
 #include "native/deterministic_equation_plan_v1.h"
 #include "native/tptp_official_snapshot_v1.h"
+/* The primitives LangDef programs run with: the structural data primitives
+ * and the str: operations, each with the class of its value. */
+extern const CettaDeterministicVocabularyV1
+    cetta_langdef_deterministic_vocabulary_v1;
 typedef enum {
     CETTA_TPTP_COMPACT_PRINT_INVERSE_V1 = 0,
     CETTA_TPTP_COMPACT_PRINT_NOT_RECORDS_V1,

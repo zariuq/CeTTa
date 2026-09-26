@@ -1,0 +1,28 @@
+(cons a atom)
+(cons a (cons b atom))
+a
+atom
+(a atom)
+(a (b))
+(a b)
+(a z)
+atom
+(cons a atom)
+(cons a (cons b (cons c atom)))
+true
+true
+"(cons a atom)"
+Expression
+false
+true
+true
+false
+false
+(a b)
+1
+(a (b c))
+(a (b c))
+true
+false
+true
+false

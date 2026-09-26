@@ -72,6 +72,28 @@
 (= (swap [$a $b]) [$b $a])
 !(swap [1 2])
 
+; A list built by cons-atom meets a list pattern as it is built, as a bound
+; one does; cells ending in an expression make an expression, which no list
+; pattern opens.
+(= (built) (cons-atom a (cons-atom b [])))
+!(let [$x $y] (built) ($x $y))
+!(let [$h | $t] (cons-atom a [b c]) ($h $t))
+!(let [$x] (let $k (w a) (cons-atom $k [])) $x)
+(= (wrapped $xs)
+   (if (== (size-atom $xs) 0) $xs
+       (let $t (wrapped (cdr-atom $xs)) (cons-atom (w (car-atom $xs)) $t))))
+!(let [$x $y] (wrapped [1 2]) ($x $y))
+!(collapse (let [$x $y] (cons-atom a (cons-atom b ())) $x))
+!(collapse (let [$h | $t] (cons-atom a (b c)) $h))
+; union-atom joins lists by their elements into a list, and splits a list
+; into lists.
+(= (built-pair) [a b])
+!(let [$x $y $z] (union-atom (built-pair) [c]) ($x $y $z))
+!(let [$x | $r] (union-atom [a b] [c]) ($x $r))
+!(collapse (let [a b c] (union-atom $x $y) ($x $y)))
+!(collapse (let [a b] (union-atom $x [b]) $x))
+!(collapse (let [$x $y] (union-atom (a) (b)) $x))
+
 ; A list stored in a space is matched back, as a value and by patterns.
 !(add-atom &self (fact [1 2]))
 !(add-atom &self (fact (1 2)))

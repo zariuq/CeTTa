@@ -32,8 +32,7 @@
 !(prepared-deferred-choice (Cons 1 (Cons 2 Nil)))
 
 ; Negative: a closed call outside every compiled pattern remains an unknown
-; expression.  Physical noncoverage must decline to the canonical evaluator;
-; it is not computation zero.
+; expression, as the dialect reduces it; it is not computation zero.
 (= (prepared-partial (Cons $x $xs)) $x)
 !(prepared-partial Nil)
 
@@ -83,8 +82,8 @@
 (= (prepared-grounded-data $x) (1 (+ $x 3)))
 !(prepared-grounded-data 2)
 
-; Negative: an expression-valued head remains dynamically callable.  The
-; prepared fragment must decline rather than reclassifying it as data.
+; Negative: an expression-valued head remains dynamically callable; the
+; prepared fragment does not reclassify it as data.
 (= (prepared-dynamic-head) +)
 !((prepared-dynamic-head) 20 22)
 

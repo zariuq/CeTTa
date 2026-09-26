@@ -25,11 +25,19 @@ typedef struct {
 typedef Atom *(*CettaStrNativeFn)(Arena *a, Atom *const *args,
                                   CettaStrRefusal *refusal);
 
+/* What an operation's value is: always an atom, or possibly a structure
+ * (a list, a set, an expression). */
+typedef enum {
+    CETTA_STR_RESULT_ATOM = 0,
+    CETTA_STR_RESULT_STRUCTURE
+} CettaStrResultKind;
+
 typedef struct {
     const char *name;   /* the lib/str name without its str: prefix */
     uint32_t arity;     /* at most CETTA_STR_NATIVE_MAX_ARITY */
     uint32_t sequences; /* bit i set: argument i is a list or expression */
     CettaStrNativeFn fn;
+    CettaStrResultKind result;
 } CettaStrNative;
 
 #define CETTA_STR_NATIVE_MAX_ARITY 3u

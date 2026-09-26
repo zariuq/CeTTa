@@ -6,16 +6,19 @@
 ; terms and print back to their own text; the collision report says which
 ; list names a morphism could not erase.  The typed-lambda grammar has no
 ; collision; the ambiguous fixture reads its one literal text two ways.
-(= (collisions-test:shapes ()) ())
+; car-atom and cdr-atom are total in PeTTa, () for (), so the walk stops by
+; its own test rather than by a second equation for ().
 (= (collisions-test:shapes $collisions)
-   (let $head (car-atom $collisions)
-     (let $tail (cdr-atom $collisions)
-       (let $rest (collisions-test:shapes $tail)
-         (case $head
-           (((EBNF:Collision $kind $sort $_first $_second)
-              (cons-atom (Shape $kind $sort) $rest))
-            ((EBNF:Collision $kind $sort $_rule)
-              (cons-atom (Shape $kind $sort) $rest))))))))
+   (if (== $collisions ())
+       ()
+       (let $head (car-atom $collisions)
+         (let $tail (cdr-atom $collisions)
+           (let $rest (collisions-test:shapes $tail)
+             (case $head
+               (((EBNF:Collision $kind $sort $_first $_second)
+                  (cons-atom (Shape $kind $sort) $rest))
+                ((EBNF:Collision $kind $sort $_rule)
+                  (cons-atom (Shape $kind $sort) $rest)))))))))
 
 (= (collisions-test:terms $parser $text)
    (case (bnf:parse-canonical-text $parser $text)

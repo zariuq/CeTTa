@@ -246,8 +246,9 @@ int main(int argc, char **argv) {
         printf("(CanonicalMorphismCheckV1 grammar-failure \"%s\")\n", error);
         return 1;
     }
-    if (!cetta_deterministic_equation_plan_v1_load(rule_paths, rule_path_len, &plan, &status,
-                                                   error, sizeof(error))) {
+    if (!cetta_deterministic_equation_plan_v1_load(rule_paths, rule_path_len,
+                                                   &cetta_langdef_deterministic_vocabulary_v1,
+                                                   &plan, &status, error, sizeof(error))) {
         printf("(CanonicalMorphismCheckV1 %s \"%s\")\n",
                cetta_deterministic_equation_status_name_v1(status), error);
         return 1;

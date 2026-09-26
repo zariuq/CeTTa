@@ -281,9 +281,9 @@ typedef struct {
     uint32_t expression_close;
     uint32_t string_quote;
     uint32_t escape_marker;
+    uint32_t splitter_string_escape;
     uint32_t variable_marker;
     uint32_t runnable_marker;
-    uint32_t splitter_string_escape;
 
     const GSLTDirectCodepointMapV1 *string_escape_map;
     uint32_t string_escape_map_len;
