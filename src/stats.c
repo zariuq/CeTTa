@@ -944,6 +944,7 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "open-equation-host",
     "open-equation-host-export-bytes",
     "open-equation-host-import-bytes",
+    "open-equation-cut",
     "scoped-judgment-execution",
     "scoped-proof-check",
     "scoped-publication",
