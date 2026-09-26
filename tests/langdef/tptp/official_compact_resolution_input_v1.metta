@@ -53,3 +53,6 @@
    (println! (ResolutionInputNamesV1 $clauses)))
 
 !(println! (tptp:read-text-resolution-input "include('Axioms/SET001-0.ax')."))
+
+; A reader fault reaches the caller unchanged.
+!(println! (tptp:read-text-resolution-input "fof(a,axiom,)."))

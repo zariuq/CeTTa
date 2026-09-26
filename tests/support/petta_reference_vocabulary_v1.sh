@@ -11,6 +11,11 @@ root=$(realpath "$1")
 output=$2
 test -f "$root/src/metta.pl" && test -f "$root/src/translator.pl" && test -f "$root/lib/lib_he.metta"
 commit=$(git -C "$root" rev-parse --short HEAD)
+# The vocabulary is named by its commit, so it is read from that commit alone.
+git -C "$root" diff --quiet HEAD -- src lib || {
+    echo "the PeTTa checkout has local changes under src/ or lib/; the vocabulary names commit $commit" >&2
+    exit 1
+}
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 cat > "$scratch/dump.pl" <<'EOF'

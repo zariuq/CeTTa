@@ -1691,6 +1691,7 @@ BINDINGS_LOOKUP_INDEX_TEST_BIN = runtime/test_bindings_lookup_index-$(BUILD_OBJ_
 ATOM_DEEP_COPY_TEST_BIN = runtime/test_atom_deep_copy_iterative-$(BUILD_OBJ_TAG)
 ATOM_SUFFIX_TEST_BIN = runtime/test_atom_suffix-$(BUILD_OBJ_TAG)
 ATOM_GENERATIONS_TEST_BIN = runtime/test_atom_generations-$(BUILD_OBJ_TAG)
+ATOM_INTERN_VARS_TEST_BIN = runtime/test_atom_intern_vars-$(BUILD_OBJ_TAG)
 ABT_TEST_BIN = runtime/test_abt-$(BUILD_OBJ_TAG)
 ABT_MM2_BOUNDARY_TEST_BIN = runtime/test_abt_mm2_boundary-$(BUILD_OBJ_TAG)
 ABT_BENCH_BIN = runtime/bench_abt-$(BUILD_OBJ_TAG)
@@ -2319,8 +2320,6 @@ FIRST_ORDER_RESOLUTION_VERTICAL_TEST_V1 = tests/langdef/tptp/first_order_resolut
 FIRST_ORDER_RESOLUTION_VERTICAL_SOURCE_V1 = tests/langdef/tptp/nonground_refutation.p
 TPTP_PUBLICATION_CANARY_TEST_V1 = tests/langdef/tptp/publication_canary.metta
 TPTP_FIRST_ORDER_DOCUMENT_V1 = langdef/logic/tptp_first_order_document_v1.metta
-TPTP_FIRST_ORDER_DERIVATION_V1 = langdef/logic/tptp_first_order_derivation_v1.metta
-TPTP_FIRST_ORDER_DERIVATION_TEST_V1 = tests/langdef/tptp/first_order_derivation_carrier.metta
 DERIVATION_WORD_MACHINE_V1 = langdef/logic/derivation_word_machine_v1.metta
 DERIVATION_WORD_MACHINE_TEST_V1 = tests/langdef/tptp/derivation_word_machine_v1.metta
 DERIVATION_WORD_EXECUTOR_EXAMPLE_V1 = examples/tptp/support/derivation_word_executor.metta
@@ -2340,7 +2339,6 @@ PETTA_LIB_TPTP_V1 = lib/petta/lib_tptp.metta
 TPTP_FOF_NORMALIZATION_PUBLIC_EXAMPLE_V1 = examples/tptp/fof_normalization_reducts.metta
 TPTP_INCLUDE_DIRECTIVE_PUBLIC_EXAMPLE_V1 = examples/tptp/include_directive_decoding.metta
 TPTP_FOF_CNF_PUBLIC_EXAMPLE_V1 = examples/tptp/fof_to_official_cnf.metta
-TPTP_SEMANTIC_TSTP_ARTIFACT_EXAMPLE_V1 = examples/tptp/semantic_tstp_artifact.metta
 TPTP_OFFICIAL_DERIVATION_ARTIFACT_EXAMPLE_V1 = examples/tptp/official_derivation_artifact.metta
 TPTP_EXTERNAL_GROUND_REFUTATION_V1 = examples/tptp/external_ground_refutation.p
 TPTP_E_GROUND_REFUTATION_FIXTURE_V1 = tests/langdef/tptp/e_ground_refutation.tstp
@@ -3845,6 +3843,15 @@ test: test-atom-generations
 test-atom-generations: $(ATOM_GENERATIONS_TEST_BIN)
 	@$(call cetta_exec,./$(ATOM_GENERATIONS_TEST_BIN))
 
+$(ATOM_INTERN_VARS_TEST_BIN): tests/test_atom_intern_vars.c src/symbol.c src/atom.c src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_atom_intern_vars.c src/symbol.c src/atom.c src/binding/frame_identity.c $(LDFLAGS)
+
+.PHONY: test-atom-intern-vars
+test: test-atom-intern-vars
+test-atom-intern-vars: $(ATOM_INTERN_VARS_TEST_BIN)
+	@$(call cetta_exec,./$(ATOM_INTERN_VARS_TEST_BIN))
+
 runtime/test_native_handle_ownership-$(BUILD_OBJ_TAG): tests/test_native_handle_ownership.c src/native_handle.c src/native_handle.h src/atom.c src/binding/frame_identity.c src/atom.h src/library.h src/symbol.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_native_handle_ownership.c src/native_handle.c src/atom.c src/binding/frame_identity.c src/symbol.c $(LDFLAGS)
@@ -5230,7 +5237,11 @@ DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \
 # dependency files are nevertheless authoritative: omitting them can retain
 # an ABI-stale object after a shared header changes.  Restrict the wildcard to
 # the active configuration tag so unrelated build variants remain isolated.
-AUXILIARY_DEPS = $(wildcard runtime/bootstrap/*.$(BUILD_OBJ_TAG).d)
+# The tag's own variants (runtime stats, typecheck censuses) are included:
+# their objects link into the same tool paths, so a variant object left stale
+# by a header change would be relinked into those tools.
+AUXILIARY_DEPS = $(wildcard runtime/bootstrap/*.$(BUILD_OBJ_TAG).d \
+	runtime/bootstrap/*.$(BUILD_OBJ_TAG).*.d)
 
 # Remake configuration stamps before evaluating object dependencies.  The
 # stamp recipes update their generated headers as a side effect; treating the
@@ -16740,57 +16751,6 @@ test-tptp-publication-canary-v1: $(BIN) \
 		exit 1; \
 	fi
 
-.PHONY: test-tptp-first-order-derivation-carrier-v1
-test-tptp-first-order-derivation-carrier-v1: $(BIN) \
-		$(TPTP_FIRST_ORDER_DERIVATION_V1) \
-		$(TPTP_FIRST_ORDER_DERIVATION_TEST_V1)
-	@set -eu; \
-	result=$$($(CETTA_BIN_INVOKE) --quiet --lang prime \
-		$(TPTP_FIRST_ORDER_DERIVATION_TEST_V1) 2>&1); \
-	printf '%s\n' "$$result" | rg -Fqx \
-		'(TptpFirstOrderDerivationCarrierV1Summary 5 5 0)'; \
-	if printf '%s\n' "$$result" | rg -Fq '(Error'; then \
-		echo 'TPTP first-order derivation carrier emitted an error'; \
-		exit 1; \
-	fi
-
-.PHONY: test-tptp-first-order-derivation-carrier-mutations-v1
-test-tptp-first-order-derivation-carrier-mutations-v1: \
-		test-tptp-first-order-derivation-carrier-v1
-	@set -eu; \
-	work=$$(mktemp -d runtime/tptp-derivation-mutations.XXXXXX); \
-	trap 'rm -rf "$$work"' EXIT INT TERM; \
-	canonical_wire=$$(realpath $(TPTP_FIRST_ORDER_DERIVATION_V1)); \
-	canonical_test=$$(realpath $(TPTP_FIRST_ORDER_DERIVATION_TEST_V1)); \
-	baseline=$$($(CETTA_BIN_INVOKE) --quiet --lang prime \
-		"$$canonical_test" 2>&1); \
-	sed 's/"tstp:source-inference"/"tstp:source-inference-mutated"/g' \
-		"$$canonical_wire" >"$$work/constructor-mutated.metta"; \
-	sed "s#$(TPTP_FIRST_ORDER_DERIVATION_V1)#$$(realpath "$$work/constructor-mutated.metta")#" \
-		"$$canonical_test" >"$$work/constructor-probe.metta"; \
-	constructor_output=$$($(CETTA_BIN_INVOKE) --quiet --lang prime \
-		"$$work/constructor-probe.metta" 2>&1 || true); \
-	printf '%s\n' "$$constructor_output" | rg -Fq '(Error'; \
-	! printf '%s\n' "$$constructor_output" | rg -Fq \
-		'(TptpFirstOrderDerivationCarrierV1Summary 5 5 0)'; \
-	sed 's/(TermSimple "parents" (TBase "Parents"))/(TermSimple "parents" (TBase "InfoItems"))/g' \
-		"$$canonical_wire" >"$$work/signature-mutated.metta"; \
-	sed "s#$(TPTP_FIRST_ORDER_DERIVATION_V1)#$$(realpath "$$work/signature-mutated.metta")#" \
-		"$$canonical_test" >"$$work/signature-probe.metta"; \
-	signature_output=$$($(CETTA_BIN_INVOKE) --quiet --lang prime \
-		"$$work/signature-probe.metta" 2>&1 || true); \
-	printf '%s\n' "$$signature_output" | rg -Fq '(Error'; \
-	! printf '%s\n' "$$signature_output" | rg -Fq \
-		'(TptpFirstOrderDerivationCarrierV1Summary 5 5 0)'; \
-	sed 's/GSLTLanguageDefWireV1 "TptpFirstOrderDerivation"/GSLTLanguageDefWireV1 "TptpFirstOrderDerivationRenamed"/' \
-		"$$canonical_wire" >"$$work/renamed.metta"; \
-	sed "s#$(TPTP_FIRST_ORDER_DERIVATION_V1)#$$(realpath "$$work/renamed.metta")#" \
-		"$$canonical_test" >"$$work/rename-probe.metta"; \
-	rename_output=$$($(CETTA_BIN_INVOKE) --quiet --lang prime \
-		"$$work/rename-probe.metta" 2>&1); \
-	test "$$rename_output" = "$$baseline"; \
-	echo '(TptpFirstOrderDerivationCarrierMutationsV1Summary 3 3 0)'
-
 .PHONY: test-first-order-resolution-vertical-v1
 test-first-order-resolution-vertical-v1: $(BIN) \
 		$(CLAUSE_DATA_TO_RESOLUTION_INPUT_PROGRAM_V1) \
@@ -17536,45 +17496,10 @@ test-lib-tptp-verification-word-execution-v1: $(BIN) \
 	done; \
 	echo 'PASS: public verification-word execution is exact under Prime, PeTTa, extended HE, and HE-prime'
 
-.PHONY: test-tptp-semantic-tstp-artifact-v1
-test-tptp-semantic-tstp-artifact-v1: $(BIN) \
-		$(LIB_TPTP_V1) $(PETTA_LIB_TPTP_V1) \
-		$(TPTP_FIRST_ORDER_DERIVATION_V1) \
-		$(TPTP_SEMANTIC_TSTP_ARTIFACT_EXAMPLE_V1)
-	@set -eu; \
-	check_run() { \
-		label=$$1; \
-		shift; \
-		result=$$("$$@" 2>&1); \
-		if ! printf '%s\n' "$$result" | rg -Fqx \
-				'(TPTPSemanticTSTPArtifactV1Summary 18 18 0)'; then \
-			echo "FAIL: $$label omitted the semantic TSTP artifact summary"; \
-			printf '%s\n' "$$result"; \
-			exit 1; \
-		fi; \
-		if printf '%s\n' "$$result" | \
-				rg -q '\(Error|\(TPTPSemanticTSTPArtifactV1Failed'; then \
-			echo "FAIL: $$label emitted a semantic TSTP artifact failure"; \
-			printf '%s\n' "$$result"; \
-			exit 1; \
-		fi; \
-	}; \
-	check_run prime $(CETTA_BIN_INVOKE) --quiet --lang prime \
-		$(TPTP_SEMANTIC_TSTP_ARTIFACT_EXAMPLE_V1); \
-	check_run petta $(CETTA_BIN_INVOKE) --quiet --lang petta \
-		$(PETTA_LIB_TPTP_V1) $(TPTP_SEMANTIC_TSTP_ARTIFACT_EXAMPLE_V1); \
-	for profile in extended he-prime; do \
-		check_run "$$profile" $(CETTA_BIN_INVOKE) --quiet \
-			--lang he --profile "$$profile" \
-			$(TPTP_SEMANTIC_TSTP_ARTIFACT_EXAMPLE_V1); \
-	done; \
-	echo 'PASS: admitted first-order TSTP derivations round-trip as reusable MeTTa text under Prime, PeTTa, extended HE, and HE-prime'
-
 .PHONY: test-tptp-official-derivation-artifact-v1
 test-tptp-official-derivation-artifact-v1: $(BIN) \
 		$(LIB_TPTP_V1) $(PETTA_LIB_TPTP_V1) \
 		$(TPTP_OFFICIAL_SEMANTIC_CARRIER_V1) \
-		$(TPTP_FIRST_ORDER_DERIVATION_V1) \
 		$(TPTP_GROUND_RESOLUTION_SEMANTIC_CANARY_V1) \
 		$(TPTP_OFFICIAL_DERIVATION_ARTIFACT_EXAMPLE_V1)
 	@set -eu; \
@@ -17583,7 +17508,7 @@ test-tptp-official-derivation-artifact-v1: $(BIN) \
 		shift; \
 		result=$$("$$@" 2>&1); \
 		if ! printf '%s\n' "$$result" | rg -Fqx \
-				'(TPTPOfficialDerivationArtifactV1Summary 15 15 0)'; then \
+				'(TPTPOfficialDerivationArtifactV1Summary 17 17 0)'; then \
 			echo "FAIL: $$label omitted the official derivation artifact summary"; \
 			printf '%s\n' "$$result"; \
 			exit 1; \
@@ -18111,7 +18036,7 @@ bench-list: $(BIN) test-list-lanes
 # The list library imported as a library on the PeTTa host, from its source
 # path: list values and expressions through every operation, elements as data.
 .PHONY: test-list-library-petta-v1-body
-test-list-library-petta-v1-body: $(BIN) lib/list.metta \
+test-list-library-petta-v1-body: $(BIN) lib/list.metta lib/petta/list.metta \
 		tests/list_value/list_library_petta_v1.metta \
 		tests/list_value/list_library_petta_v1.expected
 	@set -eu; \
@@ -23165,7 +23090,49 @@ test-prime-all: test-prime test-prime-relational-plan test-prime-need-algebra \
 	test-prime-type-capacity-mutation
 	@echo "PASS: full Prime correctness gate"
 
-test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-module-profiles test-symbolid-guard test-fallback-eval-session test-he-compiled-reader-v1 test-petta-compiled-reader-v1 test-prime-compiled-reader-v1 test-import-modes test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime-crossdialect test-prime-need-he-noninterference
+.PHONY: test-bounded-select-threads
+test-bounded-select-threads: $(BIN)
+	@set -eu; \
+	for threads in 0 2 4; do \
+		for lane in petta he prime; do \
+			case $$lane in \
+				petta) args="--lang petta --profile extended"; expected=tests/bounded_select_threads.petta.expected ;; \
+				he) args="--lang he --profile extended"; expected=tests/bounded_select_threads.he.expected ;; \
+				prime) args="--lang prime"; expected=tests/bounded_select_threads.he.expected ;; \
+			esac; \
+			actual=$$($(CETTA_BIN_INVOKE) $$args --num-threads $$threads \
+				tests/bounded_select_threads.metta 2>&1); \
+			if [ "$$actual" != "$$(cat $$expected)" ]; then \
+				echo "FAIL: bounded select under $$lane with $$threads threads"; \
+				diff <(cat $$expected) <(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: a bounded select never delivers more answers than its bound, sequential or threaded"
+
+# The extended profile's collections in PeTTa, on the open tier and in the
+# search machine alone: collect and reify are collapse; select is the first
+# answer with its bindings, or the first k as a copied list, lazily; a bound
+# of zero runs nothing.
+.PHONY: test-petta-extended-collections
+test-petta-extended-collections: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta --profile extended \
+			tests/petta/extended_bounded_collections.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/extended_bounded_collections.expected)" ]; then \
+			echo "FAIL: the extended profile's collections on the $$route route"; \
+			diff <(cat tests/petta/extended_bounded_collections.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: select, collect and reify in PeTTa's extended profile, on the tier and in the machine"
+
+test-profiles: $(BIN) test-bounded-select-threads test-petta-extended-collections test-manifest test-forbidden-availability-errors test-git-module-profiles test-symbolid-guard test-fallback-eval-session test-he-compiled-reader-v1 test-petta-compiled-reader-v1 test-prime-compiled-reader-v1 test-import-modes test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime-crossdialect test-prime-need-he-noninterference
 	@pass=0; fail=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	profiles=$$($(CETTA_BIN_INVOKE) --list-profiles 2>&1); \
@@ -25924,7 +25891,11 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@set -eu; \
 	fixture=tests/petta/search_machine_conjunctive_match.metta; \
 	expected=$$(cat tests/petta/search_machine_conjunctive_match.expected); \
-	observed=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
+	tier=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
+		./$(BIN) --emit-runtime-stats --lang petta "$$fixture" 2>&1 | \
+		grep -v '^runtime-counter '); \
+	test "$$tier" = "$$expected"; \
+	observed=$$(CETTA_PETTA_SEARCH_MACHINE=1 CETTA_OPEN_EQUATIONS_REFERENCE=1 \
 		./$(BIN) --emit-runtime-stats --lang petta "$$fixture" 2>&1); \
 	actual=$$(printf '%s\n' "$$observed" | \
 		grep -v '^runtime-counter '); \
@@ -25941,7 +25912,7 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	test "$$commit" -gt 0; \
 	test "$$decline" -gt 0; \
 	test "$$legs" -gt "$$commit"; \
-	echo "PASS: PeTTa conjunctive match cursor preserves source-family observations and exact admission receipts"
+	echo "PASS: PeTTa conjunctive match cursor preserves source-family observations and exact admission receipts (the open tier's route gives the same observations)"
 else
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
 		test-petta-match-conjunction-cursor
@@ -27206,7 +27177,131 @@ test-petta-semantics-differential: $(BIN)
 	done; \
 	echo "PASS: $$pass/$$pass base PeTTa semantic fixtures match their explicit oracle observations"
 
-test-petta-semantics: $(BIN) test-petta-multifile test-petta-eval-in-space
+.PHONY: test-petta-list-values
+# Lists built with cons meet flat patterns as the lists they spell, and the
+# list natives hand elements and accumulators on as values.  The expected
+# outputs are SWI-PeTTa's; both routes must reproduce them.
+test-petta-list-values: $(BIN)
+	@set -eu; \
+	for stem in list_carriers_flat_patterns list_native_values; do \
+		for route in tier machine; do \
+			if [ $$route = machine ]; then reference=1; else reference=; fi; \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+				--lang petta tests/petta/$$stem.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/$$stem.expected)" ]; then \
+				echo "FAIL: $$stem on the $$route route"; \
+				diff <(cat tests/petta/$$stem.expected) \
+					<(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: cons-built lists meet flat patterns, and list natives pass values, on the tier and in the machine"
+
+.PHONY: test-petta-value-occurrences
+# A variable denotes the value bound to it, which is never evaluated again:
+# in lambda bodies, filter-atom conditions and fold bodies, in partial
+# applications, and in the operands of cons and ==.  The expected output is
+# SWI-PeTTa's; both routes must reproduce it.
+test-petta-value-occurrences: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/value_occurrences.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/value_occurrences.expected)" ]; then \
+			echo "FAIL: value occurrences on the $$route route"; \
+			diff <(cat tests/petta/value_occurrences.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: a variable is the value it holds, on the tier and in the machine"
+
+.PHONY: test-petta-list-building-linear
+# A list built by repeated cons-atom, and a filter over it, grow memory with
+# the list's length: no copied tail, no filter term doubling per kept item.
+test-petta-list-building-linear: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_list_building_linear.py ./$(BIN)
+
+.PHONY: test-petta-dispatch-error-scope
+# An error raised inside a call dispatched at run time fails that path alone,
+# in any exploration order, and specialization keeps the handler; argument
+# errors, Error values and direct calls keep their own behaviour.
+test-petta-dispatch-error-scope: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/dispatch_error_scope.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/dispatch_error_scope.expected)" ]; then \
+			echo "FAIL: dispatch error scope on the $$route route"; \
+			diff <(cat tests/petta/dispatch_error_scope.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: a run-time dispatch's error fails its path alone, on the tier and in the machine"
+
+.PHONY: test-petta-runtime-heads
+# A special form is syntax only where it is written: reached at run time its
+# arguments are evaluated, and it is data unless PeTTa defines a function of
+# its name; an operation's own error in a run-time dispatch fails its path;
+# a specialized callee that raises nothing is called directly.
+test-petta-runtime-heads: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/runtime_heads.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/runtime_heads.expected)" ]; then \
+			echo "FAIL: run-time heads on the $$route route"; \
+			diff <(cat tests/petta/runtime_heads.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: a special form reached at run time is a value, on the tier and in the machine"
+
+.PHONY: test-petta-special-form-arities
+# A special form is syntax only at the arities SWI-PeTTa's translator reads;
+# at any other it is an ordinary application of its name.  The expectation is
+# SWI-PeTTa's own output.
+test-petta-special-form-arities: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/special_form_arities.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/special_form_arities.expected)" ]; then \
+			echo "FAIL: special-form arities on the $$route route"; \
+			diff <(cat tests/petta/special_form_arities.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: a special form at an arity its translator does not read is an ordinary application, on the tier and in the machine"
+
+.PHONY: test-petta-specialization-after-import
+# An import invalidates the specializations of its space: the specialized
+# function sees the imported equations, and a callee it called directly
+# because it raised nothing is under the dispatch's handler again.
+test-petta-specialization-after-import: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/specialization_after_import.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/specialization_after_import.expected)" ]; then \
+			echo "FAIL: specialization after import on the $$route route"; \
+			diff <(cat tests/petta/specialization_after_import.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: an import invalidates the specializations of its space, on the tier and in the machine"
+
+test-petta-semantics: $(BIN) test-petta-multifile test-petta-eval-in-space test-petta-list-values test-petta-value-occurrences test-petta-dispatch-error-scope test-petta-list-building-linear test-petta-runtime-heads test-petta-specialization-after-import test-petta-special-form-arities
 	@set -eu; \
 	for stem in $(PETTA_SEMANTIC_ORACLE_STEMS); do \
 		contract=exact-stream; \
@@ -36972,7 +37067,6 @@ PHONY_WIRE_PROVENANCE_V1 = \
 	check-first-order-resolution-input-wire-v1 \
 	check-first-order-resolution-example-trace-wire-v1 \
 	check-tptp-first-order-document-wire-v1 \
-	check-tptp-first-order-derivation-wire-v1 \
 	check-derivation-word-machine-wire-v1 \
 	check-tptp-official-ground-resolution-semantic-canary-v1 \
 	check-tptp-ground-resolution-word-canary-v1 \
@@ -37114,10 +37208,6 @@ check-tptp-official-include-input-classification-v1: \
 check-tptp-first-order-document-wire-v1: require-mettapedia-root-for-wire-provenance-v1
 	@sh tools/check_tptp_first_order_document_wire_v1.sh "$(METTAPEDIA_ROOT)"
 
-.PHONY: check-tptp-first-order-derivation-wire-v1
-check-tptp-first-order-derivation-wire-v1: require-mettapedia-root-for-wire-provenance-v1
-	@sh tools/check_tptp_first_order_derivation_wire_v1.sh "$(METTAPEDIA_ROOT)"
-
 .PHONY: check-derivation-word-machine-wire-v1
 check-derivation-word-machine-wire-v1: require-mettapedia-root-for-wire-provenance-v1
 	@sh tools/check_derivation_word_machine_wire_v1.sh "$(METTAPEDIA_ROOT)"
@@ -37215,7 +37305,7 @@ $(LANGUAGE_DEF_GROUND_TERM_V1_TEST_BIN): \
 
 .PHONY: test-language-def-ground-term-v1
 test-language-def-ground-term-v1: $(LANGUAGE_DEF_GROUND_TERM_V1_TEST_BIN) \
-		$(TPTP_LANGDEF_CLAUSE_TARGET_V1) \
+		$(FIRST_ORDER_RESOLUTION_INPUT_V1) \
 		$(TPTP_LANGDEF_SYNTAX_TREE_V1)
 	@$(LANGUAGE_DEF_GROUND_TERM_V1_TEST_BIN)
 
@@ -38526,7 +38616,6 @@ TPTP_OFFICIAL_CORPUS_COMPATIBILITY_PREPARE_TEST_V1 ?= tests/langdef/tptp/officia
 TPTP_OFFICIAL_SYNTAX_OBSERVATION_TEST_V1 ?= tests/langdef/tptp/official_syntax_observation_v1.metta
 TPTP_OFFICIAL_SYNTAX_RECORDS_FAMILY_TEST_V1 ?= tests/langdef/tptp/official_syntax_records_family_v1.metta
 TPTP_OFFICIAL_SYNTAX_RECORDS_TSTP_TEST_V1 ?= tests/langdef/tptp/official_syntax_records_tstp_v1.metta
-TPTP_OFFICIAL_SYNTAX_FOF_CNF_VIEW_TEST_V1 ?= tests/langdef/tptp/official_syntax_fof_cnf_view_v1.metta
 TPTP_OFFICIAL_SYNTAX_EVIDENCE_TEST_V1 ?= tests/langdef/tptp/official_syntax_evidence_v1.metta
 TPTP_OFFICIAL_SYNTAX_PREPARE_TEST_V1 ?= tests/langdef/tptp/official_syntax_prepare_v1.metta
 TPTP_OFFICIAL_FROZEN_READER_CONTRACT_TEST_V1 ?= tests/langdef/tptp/official_frozen_reader_contract_v1.metta
@@ -38560,10 +38649,6 @@ TPTP_OFFICIAL_COMPACT_INCLUDE_RESOLUTION_TEST_V1 ?= tests/langdef/tptp/official_
 TPTP_OFFICIAL_COMPACT_INCLUDE_RESOLUTION_EXPECTED_V1 ?= tests/langdef/tptp/official_compact_include_resolution_v1.expected
 TPTP_OFFICIAL_COMPACT_INCLUDE_RESOLUTION_REAL_TEST_V1 ?= tests/langdef/tptp/official_compact_include_resolution_real_v1.metta
 TPTP_OFFICIAL_COMPACT_INCLUDE_RESOLUTION_REAL_EXPECTED_V1 ?= tests/langdef/tptp/official_compact_include_resolution_real_v1.expected
-TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_V1 ?= langdef/tptp/compact_records_to_first_order_v1.metta
-TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_TEST_V1 ?= tests/langdef/tptp/official_compact_first_order_view_v1.metta
-TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_EXPECTED_V1 ?= tests/langdef/tptp/official_compact_first_order_view_v1.expected
-TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_MUTATION_TEST_V1 ?= tests/langdef/tptp/official_compact_first_order_view_mutation_v1.metta
 TPTP_OFFICIAL_COMPACT_RESOLUTION_CONSUMER_TEST_V1 ?= tests/langdef/tptp/official_compact_resolution_consumer_v1.metta
 TPTP_OFFICIAL_COMPACT_RESOLUTION_CONSUMER_EXPECTED_V1 ?= tests/langdef/tptp/official_compact_resolution_consumer_v1.expected
 TPTP_OFFICIAL_COMPACT_RESOLUTION_INPUT_TEST_V1 ?= tests/langdef/tptp/official_compact_resolution_input_v1.metta
@@ -38585,7 +38670,7 @@ qualify-tptp-reader-source-lean-v1:
 		echo 'METTAPEDIA_LEAN_ROOT must name the Mettapedia Lean project' >&2; exit 2; \
 	}; \
 	client="$(abspath $(TPTP_READER_SOURCE_QUALIFICATION_V1))"; \
-	models='Mettapedia/GSLT/Parsing/TptpCorpusCompatibilitySource.lean Mettapedia/GSLT/Parsing/TptpOfficialCompositionSource.lean Mettapedia/GSLT/Parsing/TptpOfficialRecordProjectionSource.lean Mettapedia/GSLT/Parsing/TptpCompactFirstOrderProjectionSource.lean Mettapedia/GSLT/Parsing/TptpCanonicalPrintSource.lean'; \
+	models='Mettapedia/GSLT/Parsing/TptpCorpusCompatibilitySource.lean Mettapedia/GSLT/Parsing/TptpOfficialCompositionSource.lean'; \
 	if grep -En '\b(sorry|admit|axiom|native_decide|theorem_wanted)\b|_wanted' \
 		"$$client" $$(for model in $$models; do printf '%s/%s ' "$$lean_root" "$$model"; done); then \
 		echo 'TPTP reader source qualification contains a proof placeholder' >&2; exit 1; \
@@ -38596,12 +38681,9 @@ qualify-tptp-reader-source-lean-v1:
 	fi; \
 	(cd "$$lean_root" && LAKE_JOBS=3 nice -n 19 lake build \
 		Mettapedia.GSLT.Parsing.TptpCorpusCompatibilitySource \
-		Mettapedia.GSLT.Parsing.TptpOfficialCompositionSource \
-		Mettapedia.GSLT.Parsing.TptpOfficialRecordProjectionSource \
-		Mettapedia.GSLT.Parsing.TptpCompactFirstOrderProjectionSource \
-		Mettapedia.GSLT.Parsing.TptpCanonicalPrintSource && \
+		Mettapedia.GSLT.Parsing.TptpOfficialCompositionSource && \
 		lake env lean -DwarningAsError=true "$$client")
-	@echo '(TptpReaderSourceLeanV1Summary 5 5 0)'
+	@echo '(TptpReaderSourceLeanV1Summary 2 2 0)'
 
 .PHONY: test-tptp-official-lexical-to-ebnf-v1-body
 test-tptp-official-lexical-to-ebnf-v1-body: $(BIN) \
@@ -39109,7 +39191,10 @@ test-tptp-official-dollar-words-v1-body: $(BIN) prepare-tptp-compact-morphism-v1
 # files under lib/petta and lib/prime are checked against it.  Prime needs
 # its own spelling only where the source hands values to natives.
 LIBRARY_SPELLING_TOOL_V1 = tools/library_spelling.py
-LIBRARY_PETTA_SPELLING_SOURCES_V1 = langdef lib_bnf lib_tptp json str
+# The libraries that run on real PeTTa; the list library runs on the CeTTa
+# host's PeTTa lane, over natives real PeTTa does not have.
+LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_tptp json str
+LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list
 LIBRARY_PRIME_SPELLING_SOURCES_V1 = json
 .PHONY: test-library-spellings-v1
 test-library-spellings-v1: $(LIBRARY_SPELLING_TOOL_V1) \
@@ -39124,7 +39209,7 @@ test-library-spellings-v1: $(LIBRARY_SPELLING_TOOL_V1) \
 		python3 $(LIBRARY_SPELLING_TOOL_V1) lib/$$lib.metta lib/prime/$$lib.metta \
 			--dialect=prime --check; \
 	done; \
-	echo '(LibrarySpellingsV1Summary 5 1)'
+	echo '(LibrarySpellingsV1Summary 6 1)'
 
 # The PeTTa spellings use only real PeTTa's vocabulary: every head in an
 # evaluated position is one of its functions or forms (the reference file,
@@ -39136,10 +39221,10 @@ PETTA_VOCABULARY_CHECK_V1 = tools/petta_vocabulary_check.py
 .PHONY: test-petta-vocabulary-v1
 test-petta-vocabulary-v1: $(PETTA_VOCABULARY_CHECK_V1) $(PETTA_REFERENCE_VOCABULARY_V1) \
 		$(LIBRARY_SPELLING_TOOL_V1) src/symbol.h \
-		$(foreach lib,$(LIBRARY_PETTA_SPELLING_SOURCES_V1),lib/petta/$(lib).metta)
+		$(foreach lib,$(LIBRARY_PETTA_PORTABLE_SOURCES_V1),lib/petta/$(lib).metta)
 	@set -eu; \
 	python3 $(PETTA_VOCABULARY_CHECK_V1) $(PETTA_REFERENCE_VOCABULARY_V1) . \
-		$(foreach lib,$(LIBRARY_PETTA_SPELLING_SOURCES_V1),lib/petta/$(lib).metta); \
+		$(foreach lib,$(LIBRARY_PETTA_PORTABLE_SOURCES_V1),lib/petta/$(lib).metta); \
 	mkdir -p "$(BOOTSTRAP_TMPDIR)"; \
 	mutated=$$(mktemp "$(BOOTSTRAP_TMPDIR)/petta-vocabulary-mutant.XXXXXX.metta"); \
 	trap 'rm -f "$$mutated"' EXIT INT TERM; \
@@ -39422,115 +39507,12 @@ test-tptp-official-compact-include-resolution-real-v1:
 		TPTP_OFFICIAL_CORPUS_ROOT_V1="$(TPTP_OFFICIAL_CORPUS_ROOT_V1)" \
 		test-tptp-official-compact-include-resolution-real-v1-body
 
-.PHONY: test-tptp-official-syntax-fof-cnf-view-v1-body
-test-tptp-official-syntax-fof-cnf-view-v1-body: $(BIN) \
-		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
-		lib/lib_tptp.metta \
-		$(TPTP_OFFICIAL_READER_PACK_V1) \
-		langdef/bnf/plain_bnf_denotation_v1.metta \
-		$(TPTP_OFFICIAL_COMPACT_LEXICAL_VALUE_V1) \
-		$(TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_V1) \
-		langdef/logic/first_order_clause_data_v1.metta \
-		langdef/logic/tptp_first_order_document_v1.metta \
-		$(TPTP_OFFICIAL_SYNTAX_FOF_CNF_VIEW_TEST_V1)
-	@if [[ -z "$(strip $(TPTP_OFFICIAL_CORPUS_ROOT_V1))" || \
-		! -f "$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/PUZ/PUZ001-1.p" || \
-		! -f "$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/PUZ/PUZ001+1.p" ]]; then \
-		echo 'set TPTP_OFFICIAL_CORPUS_ROOT_V1 to the pinned distribution' >&2; \
-		exit 2; \
-	fi
-	@set -eu; \
-	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --profile extended --fuel 20000000 \
-		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
-		$(TPTP_OFFICIAL_SYNTAX_FOF_CNF_VIEW_TEST_V1) \
-		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/PUZ/PUZ001-1.p" \
-		"$(TPTP_OFFICIAL_CORPUS_ROOT_V1)/Problems/PUZ/PUZ001+1.p"); \
-	printf '%s\n' "$$result"; \
-	got=$$(printf '%s\n' "$$result" | sed '/^true$$/d'); \
-	test "$$got" = '(TptpFofCnfViewAgreementV1 True True)' || \
-		test "$$got" = '(TptpFofCnfViewAgreementV1 true true)'
-
-.PHONY: test-tptp-official-syntax-fof-cnf-view-v1
-test-tptp-official-syntax-fof-cnf-view-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
-		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
-		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
-		test-tptp-official-syntax-fof-cnf-view-v1-body
-
-.PHONY: test-tptp-official-compact-first-order-view-v1-body
-test-tptp-official-compact-first-order-view-v1-body: $(BIN) \
-		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
-		lib/lib_tptp.metta \
-		langdef/bnf/plain_bnf_denotation_v1.metta \
-		$(TPTP_OFFICIAL_COMPACT_LEXICAL_VALUE_V1) \
-		$(TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_V1) \
-		langdef/logic/first_order_clause_data_v1.metta \
-		langdef/logic/tptp_first_order_document_v1.metta \
-		$(TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_TEST_V1) \
-		$(TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_EXPECTED_V1)
-	@set -eu; \
-	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --profile extended --fuel 20000000 \
-		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
-		$(TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_TEST_V1)); \
-	printf '%s\n' "$$result"; \
-	got=$$(printf '%s\n' "$$result" | sed '/^true$$/d'); \
-	test "$$got" = \
-		"$$(cat $(TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_EXPECTED_V1))"
-
-.PHONY: test-tptp-official-compact-first-order-view-v1
-test-tptp-official-compact-first-order-view-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
-		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
-		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
-		test-tptp-official-compact-first-order-view-v1-body
-
-.PHONY: test-tptp-official-compact-first-order-view-mutation-v1-body
-test-tptp-official-compact-first-order-view-mutation-v1-body: $(BIN) \
-		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
-		lib/lib_tptp.metta \
-		langdef/bnf/plain_bnf_denotation_v1.metta \
-		$(TPTP_OFFICIAL_COMPACT_LEXICAL_VALUE_V1) \
-		$(TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_V1) \
-		$(TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_MUTATION_TEST_V1)
-	@set -eu; \
-	mkdir -p "$(BOOTSTRAP_TMPDIR)"; \
-	evidence=$$(mktemp -d \
-		"$(BOOTSTRAP_TMPDIR)/tptp-first-order-view-mutation-v1.XXXXXX"); \
-	trap 'rm -rf "$$evidence"' EXIT INT TERM; \
-	reference="$$evidence/compact_records_to_first_order_reference_v1.gslt-source"; \
-	mutant="$$evidence/compact_records_to_first_order_mutant_v1.gslt-source"; \
-	cp "$(TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_V1)" "$$reference"; \
-	sed 's/(fo-cnf:literal-positive (tptp-view-v1:cnf-atom ?head ?arguments ?scope))/(fo-cnf:literal-negative (tptp-view-v1:cnf-atom ?head ?arguments ?scope))/' \
-		"$(TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_V1)" > "$$mutant"; \
-	! cmp -s "$$reference" "$$mutant"; \
-	result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta --profile extended --fuel 20000000 \
-		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
-		$(TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_MUTATION_TEST_V1) \
-		"$$reference" "$$mutant"); \
-	printf '%s\n' "$$result"; \
-	got=$$(printf '%s\n' "$$result" | sed '/^true$$/d'); \
-	test "$$got" = '(TptpCompactFirstOrderViewMutationV1 true)'
-
-.PHONY: test-tptp-official-compact-first-order-view-mutation-v1
-test-tptp-official-compact-first-order-view-mutation-v1:
-	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
-		ENABLE_SANITIZERS=0 ENABLE_PIC=0 CETTA_TEST_ISOLATED=1 JSON_BACKEND=gslt \
-		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
-		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
-		test-tptp-official-compact-first-order-view-mutation-v1-body
-
 .PHONY: test-tptp-official-compact-resolution-consumer-v1-body
 test-tptp-official-compact-resolution-consumer-v1-body: $(BIN) \
 		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
 		lib/lib_tptp.metta \
 		langdef/bnf/plain_bnf_denotation_v1.metta \
 		$(TPTP_OFFICIAL_COMPACT_LEXICAL_VALUE_V1) \
-		$(TPTP_OFFICIAL_COMPACT_FIRST_ORDER_VIEW_V1) \
 		langdef/logic/first_order_clause_data_v1.metta \
 		langdef/logic/tptp_first_order_document_v1.metta \
 		langdef/logic/first_order_resolution_input_v1.metta \
@@ -39634,7 +39616,15 @@ test-tptp-official-compact-resolution-input-mutation-v1-body: $(BIN) \
 	mutate unequal 's|(tptp-res-v1:pair ≉ unequal)|(tptp-res-v1:pair ≉ equal)|'; \
 	mutate family 's|(langdef:ground-equal ?family cnf)|(langdef:ground-equal cnf cnf)|'; \
 	mutate rational 's|(str:concat "/"|(str:concat ":"|'; \
-	echo "(TptpCompactResolutionInputMutationV1Summary 1 $$killed)"
+	mutate deleted '/(rule items-nil (head/,/(body))$$/d'; \
+	renamed="$$evidence/renamed.gslt-source"; \
+	sed -e 's|(rule items-cons (head|(rule items-cons-renamed (head|' \
+		"$$reference" > "$$renamed"; \
+	! cmp -s "$$reference" "$$renamed"; \
+	test "$$(compare "$$reference" "$$renamed")" = \
+		'(TptpCompactResolutionInputMutationV1 true Expression)' || \
+		{ echo 'renaming a resolution-input rule changed its values' >&2; exit 1; }; \
+	echo "(TptpCompactResolutionInputMutationV1Summary 2 $$killed)"
 .PHONY: test-tptp-official-compact-resolution-input-mutation-v1
 test-tptp-official-compact-resolution-input-mutation-v1:
 	@$(MAKE) --no-print-directory \
@@ -39808,9 +39798,6 @@ test-lib-tptp-reader-v1:
 		test-tptp-official-compact-lexical-value-v1 \
 		test-tptp-official-compact-include-resolution-v1 \
 		test-tptp-official-compact-include-resolution-real-v1 \
-		test-tptp-official-syntax-fof-cnf-view-v1 \
-		test-tptp-official-compact-first-order-view-v1 \
-		test-tptp-official-compact-first-order-view-mutation-v1 \
 		test-tptp-official-compact-resolution-consumer-v1 \
 		test-tptp-official-syntax-evidence-v1 \
 		test-tptp-official-syntax-gate-failure-v1 \

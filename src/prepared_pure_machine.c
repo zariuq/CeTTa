@@ -2126,6 +2126,7 @@ static PreparedPureHeadRole prepared_pure_head_role(
             state == CETTA_PREPARED_PURE_EXPRESSION_ZERO)
             return PREPARED_PURE_HEAD_UNKNOWN;
         if (state == CETTA_PREPARED_PURE_EXPRESSION_PROJECT ||
+            state == CETTA_PREPARED_PURE_EXPRESSION_PROJECT_SINGLE_RESULT ||
             state == CETTA_PREPARED_PURE_EXPRESSION_OBSERVE)
             return PREPARED_PURE_HEAD_CALLABLE;
         if (state != CETTA_PREPARED_PURE_EXPRESSION_DEFAULT)
@@ -2376,7 +2377,15 @@ static bool prepared_pure_compile_eval(
         expression_view_state =
             program->expression_view(source, &expression_view);
         if (expression_view_state ==
-            CETTA_PREPARED_PURE_EXPRESSION_PROJECT) {
+                CETTA_PREPARED_PURE_EXPRESSION_PROJECT ||
+            expression_view_state ==
+                CETTA_PREPARED_PURE_EXPRESSION_PROJECT_SINGLE_RESULT) {
+            if (expression_view_state ==
+                    CETTA_PREPARED_PURE_EXPRESSION_PROJECT_SINGLE_RESULT &&
+                (!program->closed_program || program->answer_producer))
+                return prepared_pure_reject(
+                    program, "projection requires a single-result attempt",
+                    source);
             if (!expression_view.projected ||
                 expression_view.projected == source)
                 return prepared_pure_reject(
@@ -3674,17 +3683,63 @@ typedef enum {
     PREPARED_PURE_MISMATCH_REPEATED_VARIABLE,
 } PreparedPureMismatch;
 
+/* A list carrier under the runtime's open-cons tag is not the expression it
+ * spells: a cell and a flat list can spell one list. */
+static bool prepared_pure_holds_list_carrier(const Atom *value) {
+    return atom_structural_may_have_list_carrier(value);
+}
+
+static bool prepared_pure_is_list_carrier(const Atom *value) {
+    return __builtin_expect(petta_semantics_open_cons_built(), 0) &&
+           value->kind == ATOM_EXPR && value->expr.len == 3u &&
+           prepared_pure_holds_list_carrier(value) &&
+           atom_is_internal_tag(value->expr.elems[0],
+                                CETTA_INTERNAL_TAG_PETTA_OPEN_CONS);
+}
+
+/* Whether a list carrier's chain of cells ends in a list value or a list
+ * pattern rather than in an expression. */
+static bool prepared_pure_carrier_ends_in_list_form(const Atom *value) {
+    while (prepared_pure_is_list_carrier(value))
+        value = value->expr.elems[2];
+    return atom_is_list_form(value);
+}
+
+/* A carrier meets an expression pattern of `length` elements as the list it
+ * spells: its first elements are the pattern's values when the list has
+ * exactly that many (ListCells.unifies_cell_flat), and it differs otherwise
+ * (ListCells.not_unifies_cell_nil for the empty pattern).  A tail that is not
+ * a list, a partial list's included, leaves the call to the language's own
+ * list matching. */
+static PreparedPureMatchState prepared_pure_read_list_carrier(
+    Atom *list, CettaExprLen length, Atom **elements) {
+    switch (petta_semantics_read_list(list, length, elements)) {
+    case PETTA_LIST_READ_EXACT:
+        return PREPARED_PURE_MATCH_MATCHED;
+    case PETTA_LIST_READ_OTHER_LENGTH:
+        return PREPARED_PURE_MATCH_MISMATCH;
+    case PETTA_LIST_READ_UNDECIDED:
+        break;
+    }
+    return PREPARED_PURE_MATCH_ERROR;
+}
+
 /* A later occurrence of a pattern variable against the value its first
  * occurrence bound.  The canonical matcher decides a pair of ground values by
  * structural equality; a value with variables would unify instead, which
- * this matcher leaves to it. */
+ * this matcher leaves to it.  Equal spellings are one list whatever carriers
+ * they hold; unequal ones holding a carrier may still spell one list, which
+ * the language's own list matching decides. */
 static PreparedPureMatchState prepared_pure_match_same_value(
     Atom *bound, Atom *value) {
     if (!bound || !value || atom_has_vars(bound) || atom_has_vars(value))
         return PREPARED_PURE_MATCH_ERROR;
-    return atom_eq(bound, value) ||
-            cetta_he_promoted_numbers_equal(bound, value)
-        ? PREPARED_PURE_MATCH_MATCHED : PREPARED_PURE_MATCH_MISMATCH;
+    if (atom_eq(bound, value) ||
+        cetta_he_promoted_numbers_equal(bound, value))
+        return PREPARED_PURE_MATCH_MATCHED;
+    return prepared_pure_holds_list_carrier(bound) ||
+            prepared_pure_holds_list_carrier(value)
+        ? PREPARED_PURE_MATCH_ERROR : PREPARED_PURE_MATCH_MISMATCH;
 }
 
 static PreparedPureMatchState prepared_pure_match_mismatch(
@@ -3803,6 +3858,19 @@ static PreparedPureMatchState prepared_pure_match_equation(
             case PREPARED_PURE_MATCH_OP_EXPR:
                 equal = value->kind == ATOM_EXPR &&
                         value->expr.len == op->length;
+                /* A list carrier spells a list, not its three fields: it
+                 * is read as one where it has the pattern's length or
+                 * fails it. */
+                if ((!equal || op->length == 3u) &&
+                    prepared_pure_is_list_carrier(value)) {
+                    PreparedPureMatchState read =
+                        prepared_pure_read_list_carrier(
+                            value, op->length, &registers[op->operand]);
+                    if (read == PREPARED_PURE_MATCH_ERROR)
+                        return PREPARED_PURE_MATCH_ERROR;
+                    equal = read == PREPARED_PURE_MATCH_MATCHED;
+                    break;
+                }
                 /* An empty expression has no element array. */
                 if (equal && op->length > 0u)
                     memcpy(&registers[op->operand], value->expr.elems,
@@ -3887,6 +3955,38 @@ static PreparedPureMatchState prepared_pure_match_equation(
             if (view_state !=
                 CETTA_PREPARED_PURE_PATTERN_VIEW_NOT_APPLICABLE)
                 return PREPARED_PURE_MATCH_ERROR;
+        }
+        if (pattern->kind == ATOM_EXPR &&
+            prepared_pure_is_list_carrier(value)) {
+            /* A list carrier spells a list, not its three fields.  A chain
+             * ending in a list value or a list pattern spells a list of that
+             * kind, and a list pattern reads a list by its own elements:
+             * both are decided by the language's own list matching. */
+            if (atom_is_list_form(pattern) ||
+                prepared_pure_carrier_ends_in_list_form(value))
+                return PREPARED_PURE_MATCH_ERROR;
+            PreparedPureMatchState read = prepared_pure_read_list_carrier(
+                value, pattern->expr.len, NULL);
+            if (read == PREPARED_PURE_MATCH_ERROR)
+                return PREPARED_PURE_MATCH_ERROR;
+            if (read == PREPARED_PURE_MATCH_MISMATCH)
+                return prepared_pure_count_match(
+                    prepared_pure_match_mismatch(
+                        program, value, pair.argument, ready_arguments,
+                        demanded_argument),
+                    mismatch);
+            PeTTaLogicalListCursor cursor;
+            petta_semantics_logical_list_cursor_init(&cursor, value);
+            for (CettaExprIndex i = 0u; i < pattern->expr.len; i++) {
+                Atom *item = NULL;
+                if (petta_semantics_logical_list_cursor_next(
+                        &cursor, &item) != PETTA_LOGICAL_LIST_ITEM ||
+                    !prepared_pure_push_pattern_pair(
+                        program, pattern->expr.elems[i], item,
+                        pair.argument))
+                    return PREPARED_PURE_MATCH_ERROR;
+            }
+            continue;
         }
         /* A list never meets an expression. */
         if (pattern->kind != value->kind ||
@@ -4721,19 +4821,25 @@ static Atom *prepared_pure_execute_intrinsic(
             !atom_sequence_view(arguments[1], &tail_elems, &tail_len) ||
             tail_len == UINT64_MAX)
             return NULL;
-        CettaExprLen length = tail_len + 1u;
-        if (!cetta_expr_len_mul_fits_size(length, sizeof(Atom *)))
-            return NULL;
-        Atom **elements = arena_alloc(
-            arena, sizeof(*elements) * (size_t)length);
-        elements[0] = arguments[0];
-        if (tail_len > 0u) {
-            memcpy(elements + 1u, tail_elems,
-                   sizeof(*elements) * (size_t)tail_len);
+        if (atom_is_list(arguments[1])) {
+            /* A list value stays a list. */
+            CettaExprLen length = tail_len + 1u;
+            if (!cetta_expr_len_mul_fits_size(length, sizeof(Atom *)))
+                return NULL;
+            Atom **elements = arena_alloc(
+                arena, sizeof(*elements) * (size_t)length);
+            elements[0] = arguments[0];
+            if (tail_len > 0u) {
+                memcpy(elements + 1u, tail_elems,
+                       sizeof(*elements) * (size_t)tail_len);
+            }
+            return atom_list(arena, elements, length);
         }
-        return atom_is_list(arguments[1])
-            ? atom_list(arena, elements, length)
-            : atom_expr(arena, elements, length);
+        /* The expression with the head before the tail's children, in
+         * amortized constant time when the tail has room below it
+         * (PrefixBuffer.claimable_iff_free_below): a list built by
+         * repeated cons costs its length, not its square. */
+        return atom_expr_prepend(arena, arguments[0], arguments[1]);
     }
     case CETTA_GSLT_PREPARED_PURE_INTRINSIC_CONCATENATE_EXPRESSIONS: {
         Atom *const *left_elems, *const *right_elems;
@@ -7712,7 +7818,9 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
                         program->expression_view(source, &view);
                     if (state ==
                             CETTA_PREPARED_PURE_EXPRESSION_CANONICAL_ONLY ||
-                        state == CETTA_PREPARED_PURE_EXPRESSION_ZERO) {
+                        state == CETTA_PREPARED_PURE_EXPRESSION_ZERO ||
+                        state ==
+                            CETTA_PREPARED_PURE_EXPRESSION_PROJECT_SINGLE_RESULT) {
                         return prepared_pure_runtime_decline(
                             program,
                             "dynamic dialect form requires canonical evaluation",

@@ -942,7 +942,10 @@ typedef enum {
      * what crossing the tier's boundary copies. */
     CETTA_RUNTIME_COUNTER_OPEN_EQUATION_HOST_EXPORT_BYTES = 921,
     CETTA_RUNTIME_COUNTER_OPEN_EQUATION_HOST_IMPORT_BYTES = 922,
-    CETTA_RUNTIME_COUNTER_COUNT = 923
+    /* Onces of the tier that committed through host goals whose choices
+     * the host then dropped. */
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_CUT = 923,
+    CETTA_RUNTIME_COUNTER_COUNT = 924
 } CettaRuntimeCounter;
 
 typedef struct {

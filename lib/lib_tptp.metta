@@ -402,47 +402,6 @@
 (= (tptp:name-value $name)
    (tptp:compact-lexical-value tptp-lex-v1:name-value $name))
 
-; First-order consumers use an executed authored transformation over a source
-; document.  The transformation carries the real digest, ordered occurrence
-; index, source span, annotation tree, and include syntax into the established
-; tptp-fo and fo-cnf carriers.
-(= (tptp:open-compact-first-order-views)
-   (langdef:load-deterministic-equations
-     (LangDef:EquationSources
-       "langdef/bnf/plain_bnf_denotation_v1.metta"
-       "langdef/tptp/official_compact_lexical_value_v1.metta"
-       "langdef/tptp/compact_records_to_first_order_v1.metta")))
-(= (tptp:compact-first-order-view-with $program $operation $document)
-   (langdef:run-deterministic-equations $program
-     (LangDef:DeterministicCall $operation $document)))
-(= (tptp:compact-first-order-view
-      $stage $operation $carrier-path $carrier-type $document)
-   (case $document
-     (((TPTP:SourceDocument $_identity $_digest $_text $_records $_spans)
-        (tptp:run-compact-first-order-view
-          $stage $operation $carrier-path $carrier-type $document))
-      ((TPTP:LexReject $_byte) $document)
-      ((TPTP:NoParse $_byte $_rule) $document)
-      ((TPTP:Ambiguous $_rule) $document)
-      ((TPTP:ResourceLimit $_work $_limit $_rule) $document)
-      ((TPTP:DigestMismatch $_digest) $document)
-      ((TPTP:ReaderMismatch $_reader) $document)
-      ((Error $_source $_message) $document)
-      ($_ (TPTP:UnsupportedSourceDocument $document)))))
-(= (tptp:run-compact-first-order-view
-      $stage $operation $carrier-path $carrier-type $document)
-   (let $program (tptp:open-compact-first-order-views)
-     (case $program
-       (((NativeHandle $_kind $_id)
-          (let $answers
-               (collapse
-                 (tptp:compact-first-order-view-with
-                   $program $operation $document))
-            (let $_ (langdef:close-deterministic-equations $program)
-              (let $value (superpose $answers)
-                (tptp:admit-or-propagate
-                  $stage $carrier-path $carrier-type $value)))))
-        ($fault (TPTP:FirstOrderViewProgramFailureV1 $stage $fault))))))
 ; The first-order resolution input of a document's clauses: each clause keeps
 ; its source occurrence, name and role, with its variables scoped by that
 ; occurrence, admitted against the resolution input language.  The document
@@ -813,40 +772,6 @@
 (= (tptp:read-text-resolution-input $reader $text)
    (tptp:source-document->resolution-input
      (tptp:read-text-document $reader tagged $text)))
-(= (tptp:source-document->first-order-document $document)
-   (tptp:compact-first-order-view
-     first-order-document tptp-view-v1:first-order-document
-     "langdef/logic/tptp_first_order_document_v1.metta"
-     "Document" $document))
-(= (tptp:source-document->clause-data $document)
-   (tptp:compact-first-order-view
-     clause-data tptp-view-v1:clause-data
-     "langdef/logic/first_order_clause_data_v1.metta"
-     "Problem" $document))
-(= (tptp:read-text-first-order-document $text)
-   (tptp:source-document->first-order-document
-     (tptp:read-text-document $text)))
-(= (tptp:read-file-first-order-document $path)
-   (tptp:source-document->first-order-document
-     (tptp:read-file-document $path)))
-(= (tptp:read-text-first-order-document $reader $text)
-   (tptp:source-document->first-order-document
-     (tptp:read-text-document $reader $text)))
-(= (tptp:read-file-first-order-document $reader $path)
-   (tptp:source-document->first-order-document
-     (tptp:read-file-document $reader $path)))
-(= (tptp:read-text-clause-data $text)
-   (tptp:source-document->clause-data
-     (tptp:read-text-document $text)))
-(= (tptp:read-file-clause-data $path)
-   (tptp:source-document->clause-data
-     (tptp:read-file-document $path)))
-(= (tptp:read-text-clause-data $reader $text)
-   (tptp:source-document->clause-data
-     (tptp:read-text-document $reader $text)))
-(= (tptp:read-file-clause-data $reader $path)
-   (tptp:source-document->clause-data
-     (tptp:read-file-document $reader $path)))
 
 ; Include expansion is an authored transformation over the compact public
 ; records.  Physical path lookup and file reading build the finite environment
@@ -1838,15 +1763,6 @@
                 "langdef/logic/tptp_first_order_document_v1.metta"
                 "Document" $document))))
         ($_ (TPTP:StageFault first-order-document $plan))))))
-
-; Admit normalized first-order TSTP derivation data.  This checks only the
-; inert carrier boundary; topological and calculus-semantic verification is a
-; separate operation and must not be inferred from successful admission.
-(= (tptp:admit-first-order-derivation $value)
-   (tptp:admit-or-propagate
-     first-order-derivation
-     "langdef/logic/tptp_first_order_derivation_v1.metta"
-     "Derivation" $value))
 
 ; ------------------------------------------- verification-word execution --
 
@@ -2864,8 +2780,6 @@
         "langdef/logic/first_order_clause_data_v1.metta")
       (first-order-document
         "langdef/logic/tptp_first_order_document_v1.metta")
-      (first-order-derivation
-        "langdef/logic/tptp_first_order_derivation_v1.metta")
       (official-derivation
         "langdef/tptp/official_semantic_carrier_v9200.metta")
       ($_ (TPTP:ArtifactRejected UnsupportedStage $stage)))))
@@ -2970,8 +2884,6 @@
                first-order-document
                "langdef/logic/tptp_first_order_document_v1.metta"
                "Document" $value))
-           (first-order-derivation
-             (tptp:admit-first-order-derivation $value))
            (official-derivation
              (tptp:admit-official-derivation $value))
            ($_
@@ -3000,18 +2912,6 @@
 (= (tptp:first-order-document-input-count $document)
    (let (tptp-fo:document $source $inputs) $document
      (tptp:first-order-inputs-count $inputs)))
-
-(= (tptp:first-order-derivation-nodes-count
-      (tstp:derivation-nodes-nil))
-   0)
-
-(= (tptp:first-order-derivation-nodes-count
-      (tstp:derivation-nodes-cons $first $rest))
-   (+ 1 (tptp:first-order-derivation-nodes-count $rest)))
-
-(= (tptp:first-order-derivation-node-count
-      (tstp:derivation $_source $nodes))
-   (tptp:first-order-derivation-nodes-count $nodes))
 
 (= (tptp:abstract-syntax-inputs-count
       (tptp92-ast:list:tptp92ast-tptp-input:nil))

@@ -15,6 +15,14 @@ A third family's bodies use `case` over calls and values, whose arms are
 data patterns, and `if` over conditions that are no comparison: `and`,
 `or` and `not` over comparisons, truth values, and calls whose answers need
 not be truth values; some of its heads have equations of two arities.
+A fourth family's bodies collect: `collapse` of calls and of alternatives
+into let binders and in tail position, `superpose` over literal
+alternatives and over a collected list, `length` of a collection, nested.
+A fifth family's bodies commit: `once` of calls, of alternatives, of calls
+of a typed relation, which the host owns, and of bodies over them, into let
+binders and in tail position, inside collections and around them.  A sixth
+family, and a fixed program, run under the extended profile: `select` with
+and without a bound, `collect` and `reify`, over the same bodies.
 Queries leave variables open, share them between arguments, and set
 occurs-check traps.  Each query is its own document.  The output of the
 default route must equal the output under CETTA_OPEN_EQUATIONS_REFERENCE=1
@@ -269,6 +277,238 @@ def gen_control_program(rng, index):
             else:
                 args.append(gen_pattern(rng, 2, ["$A", "$B"]))
         queries.append("!" + render(tuple([relation.name] + args)))
+    base = "\n".join(lines) + "\n"
+    return [base + query + "\n" for query in queries]
+
+
+def gen_collection_body(rng, depth, relations, bound, fresh, may_call):
+    """A tail expression over collections: collapse of a call or of
+    alternatives, bound by a let or returned; superpose over literal
+    alternatives and over a collected list; nested; with the control
+    family's forms around them."""
+    roll = rng.random()
+    if depth == 0 or roll < 0.15:
+        return gen_value(rng, 2, bound)
+    if roll < 0.35:
+        return ("superpose", tuple(
+            gen_collection_body(rng, depth - 1, relations, list(bound),
+                                fresh, may_call)
+            for _ in range(rng.randint(1, 3))))
+    if roll < 0.65:
+        if may_call and rng.random() < 0.6:
+            source = gen_call(rng, relations, bound)
+        else:
+            source = gen_collection_body(rng, depth - 1, relations,
+                                         list(bound), fresh, may_call)
+        var = f"$c{depth}"
+        local = list(bound) + [var]
+        use = rng.random()
+        if use < 0.35:
+            body = ("superpose", var)
+        elif use < 0.6:
+            body = ("length", var)
+        else:
+            body = gen_collection_body(rng, depth - 1, relations, local,
+                                       fresh, may_call)
+        return ("let", var, ("collapse", source), body)
+    if roll < 0.8:
+        return ("collapse", gen_collection_body(
+            rng, depth - 1, relations, list(bound), fresh, may_call))
+    return gen_control_body(rng, depth - 1, relations, list(bound), fresh,
+                            may_call)
+
+
+def gen_collection_program(rng, index):
+    relations = [Relation(f"k{index}x{i}", rng.randint(1, 3))
+                 for i in range(rng.randint(2, 3))]
+    lines = []
+    for relation in relations:
+        for _ in range(rng.randint(1, 3)):
+            params = [gen_pattern(rng, 2, VARS)
+                      for _ in range(relation.arity - 1)]
+            head = tuple([relation.name, "$n"] + params)
+            bound = vars_of(head, [])
+            fresh = ["$p", "$q", "$r"]
+            body = ("if", (">", "$n", 0),
+                    gen_collection_body(rng, 3, relations, list(bound),
+                                        fresh, True),
+                    gen_collection_body(rng, 2, relations, list(bound),
+                                        fresh, False))
+            lines.append(f"(= {render(head)} {render(body)})")
+    queries = []
+    for _ in range(rng.randint(4, 6)):
+        relation = rng.choice(relations)
+        args = [rng.randint(0, 2)]
+        for _ in range(relation.arity - 1):
+            if rng.random() < 0.4:
+                args.append(rng.choice(["$A", "$B"]))
+            else:
+                args.append(gen_pattern(rng, 2, ["$A", "$B"]))
+        query = tuple([relation.name] + args)
+        if rng.random() < 0.3:
+            query = ("collapse", query)
+        queries.append("!" + render(query))
+    base = "\n".join(lines) + "\n"
+    return [base + query + "\n" for query in queries]
+
+
+def gen_once_body(rng, depth, relations, host, bound, fresh, may_call):
+    """A tail expression around `once`: once of a call, of a host goal, of
+    alternatives or of a body over them, bound by a let or returned; host
+    goals with several answers before and inside a once; collections of
+    onces; with the control family's forms around them."""
+    roll = rng.random()
+    if depth == 0 or roll < 0.15:
+        return gen_value(rng, 2, bound)
+    if roll < 0.3:
+        return ("superpose", tuple(
+            gen_once_body(rng, depth - 1, relations, host, list(bound),
+                          fresh, may_call)
+            for _ in range(rng.randint(1, 3))))
+    if roll < 0.7:
+        pick = rng.random()
+        if may_call and pick < 0.35:
+            source = gen_call(rng, relations, bound)
+        elif pick < 0.6:
+            source = (host, gen_value(rng, 1, bound))
+        else:
+            source = gen_once_body(rng, depth - 1, relations, host,
+                                   list(bound), fresh, may_call)
+        if rng.random() < 0.5:
+            var = f"$o{depth}"
+            return ("let", var, ("once", source), gen_once_body(
+                rng, depth - 1, relations, host, list(bound) + [var], fresh,
+                may_call))
+        return ("once", source)
+    if roll < 0.8:
+        return ("collapse", gen_once_body(
+            rng, depth - 1, relations, host, list(bound), fresh, may_call))
+    if roll < 0.9:
+        var = f"$h{depth}"
+        return ("let", var, (host, gen_value(rng, 1, bound)), gen_once_body(
+            rng, depth - 1, relations, host, list(bound) + [var], fresh,
+            may_call))
+    return gen_control_body(rng, depth - 1, relations, list(bound), fresh,
+                            may_call)
+
+
+def gen_once_program(rng, index):
+    relations = [Relation(f"n{index}x{i}", rng.randint(1, 3))
+                 for i in range(rng.randint(2, 3))]
+    host = f"h{index}"
+    lines = [f"(: {host} (-> Atom Atom))"]
+    for _ in range(rng.randint(2, 3)):
+        lines.append(f"(= ({host} {render(gen_pattern(rng, 1, ['$v']))}) "
+                     f"{render(gen_value(rng, 2, ['$v']))})")
+    for relation in relations:
+        for _ in range(rng.randint(1, 3)):
+            params = [gen_pattern(rng, 2, VARS)
+                      for _ in range(relation.arity - 1)]
+            head = tuple([relation.name, "$n"] + params)
+            bound = vars_of(head, [])
+            fresh = ["$p", "$q", "$r"]
+            body = ("if", (">", "$n", 0),
+                    gen_once_body(rng, 3, relations, host, list(bound),
+                                  fresh, True),
+                    gen_once_body(rng, 2, relations, host, list(bound),
+                                  fresh, False))
+            lines.append(f"(= {render(head)} {render(body)})")
+    queries = []
+    for _ in range(rng.randint(4, 6)):
+        relation = rng.choice(relations)
+        args = [rng.randint(0, 2)]
+        for _ in range(relation.arity - 1):
+            if rng.random() < 0.4:
+                args.append(rng.choice(["$A", "$B"]))
+            else:
+                args.append(gen_pattern(rng, 2, ["$A", "$B"]))
+        query = tuple([relation.name] + args)
+        if rng.random() < 0.3:
+            query = ("collapse", query)
+        queries.append("!" + render(query))
+    base = "\n".join(lines) + "\n"
+    return [base + query + "\n" for query in queries]
+
+
+def gen_select_body(rng, depth, relations, host, bound, fresh, may_call):
+    """A tail expression around the extended profile's collections:
+    `select` of one answer and of k, `collect` and `reify`, over calls, host
+    goals, alternatives and bodies over them; bound by a let or returned."""
+    roll = rng.random()
+    if depth == 0 or roll < 0.15:
+        return gen_value(rng, 2, bound)
+    if roll < 0.3:
+        return ("superpose", tuple(
+            gen_select_body(rng, depth - 1, relations, host, list(bound),
+                            fresh, may_call)
+            for _ in range(rng.randint(1, 3))))
+    if roll < 0.8:
+        pick = rng.random()
+        if may_call and pick < 0.35:
+            source = gen_call(rng, relations, bound)
+        elif pick < 0.6:
+            source = (host, gen_value(rng, 1, bound))
+        else:
+            source = gen_select_body(rng, depth - 1, relations, host,
+                                     list(bound), fresh, may_call)
+        form = rng.random()
+        if form < 0.25:
+            control = ("select", source)
+        elif form < 0.6:
+            control = ("select", rng.randint(0, 3), source)
+        elif form < 0.8:
+            control = ("collect", source)
+        else:
+            control = ("reify", source)
+        if rng.random() < 0.5:
+            var = f"$s{depth}"
+            return ("let", var, control, gen_select_body(
+                rng, depth - 1, relations, host, list(bound) + [var], fresh,
+                may_call))
+        return control
+    if roll < 0.9:
+        var = f"$h{depth}"
+        return ("let", var, (host, gen_value(rng, 1, bound)),
+                gen_select_body(rng, depth - 1, relations, host,
+                                list(bound) + [var], fresh, may_call))
+    return gen_control_body(rng, depth - 1, relations, list(bound), fresh,
+                            may_call)
+
+
+def gen_select_program(rng, index):
+    relations = [Relation(f"x{index}s{i}", rng.randint(1, 3))
+                 for i in range(rng.randint(2, 3))]
+    host = f"hs{index}"
+    lines = [f"(: {host} (-> Atom Atom))"]
+    for _ in range(rng.randint(2, 3)):
+        lines.append(f"(= ({host} {render(gen_pattern(rng, 1, ['$v']))}) "
+                     f"{render(gen_value(rng, 2, ['$v']))})")
+    for relation in relations:
+        for _ in range(rng.randint(1, 3)):
+            params = [gen_pattern(rng, 2, VARS)
+                      for _ in range(relation.arity - 1)]
+            head = tuple([relation.name, "$n"] + params)
+            bound = vars_of(head, [])
+            fresh = ["$p", "$q", "$r"]
+            body = ("if", (">", "$n", 0),
+                    gen_select_body(rng, 3, relations, host, list(bound),
+                                    fresh, True),
+                    gen_select_body(rng, 2, relations, host, list(bound),
+                                    fresh, False))
+            lines.append(f"(= {render(head)} {render(body)})")
+    queries = []
+    for _ in range(rng.randint(4, 6)):
+        relation = rng.choice(relations)
+        args = [rng.randint(0, 2)]
+        for _ in range(relation.arity - 1):
+            if rng.random() < 0.4:
+                args.append(rng.choice(["$A", "$B"]))
+            else:
+                args.append(gen_pattern(rng, 2, ["$A", "$B"]))
+        query = tuple([relation.name] + args)
+        if rng.random() < 0.3:
+            query = ("collapse", query)
+        queries.append("!" + render(query))
     base = "\n".join(lines) + "\n"
     return [base + query + "\n" for query in queries]
 
@@ -736,12 +976,152 @@ CLASSICS = [
 !(fresh-items 1)
 !(let $_ (fresh-items 1) (fresh-items 1))
 """,
+    # Applications whose head is a variable: its value decides whether the
+    # application is a relation's call, a builtin's, a lambda's, or data.
+    """(= (sq $x) (* $x $x))
+(= (pick a) 1)
+(= (pick b) 2)
+(= (two $x) (superpose ((f $x) (g $x))))
+(= (ap $f $x) ($f $x))
+(= (ap2 $f $x $y) ($f $x $y))
+(= (tup $a $b) ($a $b))
+(= (nest $f $x) ($f (sq $x)))
+(= (best $f $l) (if (> ($f (car-atom $l)) 0) yes no))
+!(ap sq 5)
+!(ap pick a)
+!(ap pick c)
+!(ap Sentence 3)
+!(ap2 + 2 3)
+!(ap two q)
+!(tup 1 2)
+!(tup Foo bar)
+!(nest sq 3)
+!(best sq (2 3))
+!(ap (|-> ($y) (+ $y 1)) 4)
+!(let $r (ap $u 7) ok)
+!(collapse (ap pick $z))
+""",
+    # A once commits to its body's first answer: its body's remaining
+    # alternatives go, and so do the remaining answers of host goals the
+    # body made, here calls of a typed relation, which the host owns.  A
+    # body with no answer fails the once; bindings its answer made remain.
+    """(: hgen (-> Atom Atom))
+(= (hgen $x) (h1 $x))
+(= (hgen $x) (h2 $x))
+(= (hgen $x) (h3 $x))
+(= (gen $x) (g1 $x))
+(= (gen $x) (g2 $x))
+(= (gen $x) (g3 $x))
+(= (first-gen $x) (once (gen $x)))
+(= (escape) (let $r (once (let $v (superpose (1 2 3)) (pair $v $w))) (seen $r $w)))
+(= (first-host $x) (once (hgen $x)))
+(= (host-then-tier $x) (once (let $a (hgen $x) (let $b (gen $a) (pair $a $b)))))
+(= (all-firsts) (collapse (let $y (superpose (a b c)) (once (gen $y)))))
+(= (all-host-firsts) (collapse (let $y (superpose (a b)) (once (let $h (hgen $y) (tag $h))))))
+(= (none) (once (let $x (gen zz) (if (== $x nope) $x (empty)))))
+(= (none-host $x) (once (let $h (hgen $x) (if (== $h nope) $h (empty)))))
+(= (nested $x) (once (let $a (once (gen $x)) (let $b (hgen $a) (both $a $b)))))
+(= (outer $x) (let $o (superpose (1 2)) (once (let $h (hgen $x) (pair $o $h)))))
+(= (pick-second $x) (once (let $h (hgen $x) (if (== $h (h2 $x)) $h (empty)))))
+(= (two-hosts $x) (once (let* (($h (hgen $x)) ($k (hgen $h))) (if (== $k (h2 (h3 $x))) (got $h $k) (empty)))))
+(= (after-once $x) (let $f (once (hgen $x)) (let $g (gen $f) (res $f $g))))
+(= (count-once) (length (collapse (let $y (superpose (1 2 3 4)) (once (hgen $y))))))
+!(first-gen a)
+!(escape)
+!(first-host a)
+!(host-then-tier a)
+!(all-firsts)
+!(all-host-firsts)
+!(collapse (none))
+!(collapse (none-host a))
+!(nested a)
+!(collapse (outer a))
+!(pick-second a)
+!(two-hosts a)
+!(collapse (after-once a))
+!(count-once)
+""",
 ]
 
 
 # Outputs fixed by the PeTTa reference implementation, where canonical
 # equation search does not terminate: a closed call whose destination is
 # demanded is bounded by it.
+# Programs run under the extended profile, whose collections the tier runs.
+EXTENDED_CLASSICS = [
+    """(: hgen (-> Atom Atom))
+(= (hgen $x) (h1 $x))
+(= (hgen $x) (h2 $x))
+(= (hgen $x) (h3 $x))
+(= (gen $x) (g1 $x))
+(= (gen $x) (g2 $x))
+(= (gen $x) (g3 $x))
+(= (nat $n) $n)
+(= (nat $n) (nat (+ $n 1)))
+(= (none $x) (if (== $x nope) $x (empty)))
+(= (two $x) (select 2 (gen $x)))
+(= (one $x) (select 1 (gen $x)))
+(= (firstof $x) (select (gen $x)))
+(= (zero $x) (select 0 (gen $x)))
+(= (all $x) (collect (gen $x)))
+(= (materialized $x) (reify (gen $x)))
+(= (lazy2) (select 2 (nat 0)))
+(= (lazy1) (select (nat 0)))
+(= (escapes) (let $r (select (let $v (superpose (1 2 3)) (pair $v $w))) (seen $r $w)))
+(= (copied) (let $r (select 2 (let $v (superpose (1 2 3)) (pair $v $w))) (seen $r $w)))
+(= (fresh) (collect (superpose ((pair 1 $w) (pair 2 $w)))))
+(= (host2 $x) (select 2 (let $h (hgen $x) (tag $h))))
+(= (host1 $x) (select (let $h (hgen $x) (tag $h))))
+(= (hostall $x) (collect (hgen $x)))
+(= (hostpair $x) (select 2 (let* (($h (hgen $x)) ($k (hgen $h))) (got $h $k))))
+(= (bound $k $x) (select $k (gen $x)))
+(= (nested) (collapse (let $y (superpose (a b)) (select 2 (gen $y)))))
+!(two a)
+!(one a)
+!(firstof a)
+!(zero a)
+!(all a)
+!(materialized a)
+!(lazy2)
+!(lazy1)
+!(escapes)
+!(copied)
+!(fresh)
+!(collapse (select (none a)))
+!(select 2 (none a))
+!(collect (none a))
+!(host2 a)
+!(host1 a)
+!(hostall a)
+!(hostpair a)
+!(bound 2 a)
+!(bound 0 a)
+!(bound 5 a)
+!(nested)
+!(select 2 (gen a))
+!(select (gen a))
+!(collect (gen a))
+!(reify (gen a))
+!(select 2 (nat 0))
+!(select -1 (gen a))
+""",
+]
+
+# Computed arguments must not change a static call into a dynamic dispatch.
+CLASSICS.append("""(= (divide-computed $x) (/ 10 (- $x 2)))
+(= (sort-computed $x) (msort (+ $x 1)))
+(= (dynamic-forward $f $x) (+ 1 ($f $x)))
+(= (divide-or-value $x) (divide-computed $x))
+(= (divide-or-value $x) 7)
+!(catch (collapse (divide-computed 2)))
+!(collapse (let $f (superpose (divide-computed)) ($f 2)))
+!(catch (collapse (divide-computed 4)))
+!(catch (sort-computed 2))
+!(collapse (let $f (superpose (sort-computed)) ($f 2)))
+!(catch (collapse (dynamic-forward (superpose (divide-or-value)) 2)))
+!(catch (collapse (dynamic-forward (superpose (divide-or-value)) 1)))
+""")
+
 PETTA_FIXED = [
     ("""(= (nat) Z)
 (= (nat) (S (nat)))
@@ -757,13 +1137,15 @@ PETTA_FIXED = [
 ]
 
 
-def run(binary, path, reference, stats):
+def run(binary, path, reference, stats, extended=False):
     env = dict(os.environ)
     if reference:
         env["CETTA_OPEN_EQUATIONS_REFERENCE"] = "1"
     else:
         env.pop("CETTA_OPEN_EQUATIONS_REFERENCE", None)
     command = [binary, "--lang", "petta"]
+    if extended:
+        command += ["--profile", "extended"]
     if stats:
         command.append("--emit-runtime-stats")
     command.append(path)
@@ -798,6 +1180,24 @@ def main():
     control = random.Random(20260925)
     for index in range(programs):
         documents += gen_control_program(control, index)
+    collections = random.Random(20260926)
+    for index in range(programs):
+        documents += gen_collection_program(collections, index)
+    onces = random.Random(20260927)
+    for index in range(programs):
+        documents += gen_once_program(onces, index)
+    extended = set()
+    for classic in EXTENDED_CLASSICS:
+        lines = classic.strip().splitlines()
+        base = [line for line in lines if not line.startswith("!")]
+        for query in (line for line in lines if line.startswith("!")):
+            extended.add(len(documents))
+            documents.append("\n".join(base + [query]) + "\n")
+    selects = random.Random(20260928)
+    for index in range(programs):
+        for document in gen_select_program(selects, index):
+            extended.add(len(documents))
+            documents.append(document)
     with tempfile.TemporaryDirectory(prefix="open-equations-") as directory:
         queries = 0
         for index, text in enumerate(documents):
@@ -806,8 +1206,10 @@ def main():
                 path = os.path.join(directory, f"d{index}.metta")
                 with open(path, "w") as handle:
                     handle.write(text)
-                tier = run(binary, path, False, stats)
-                reference = run(binary, path, True, False)
+                tier = run(binary, path, False, stats,
+                           index in extended)
+                reference = run(binary, path, True, False,
+                                index in extended)
                 queries += 1
                 # Observations are bags: each document is one query, and
                 # its answers may come in any order.

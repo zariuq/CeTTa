@@ -3402,8 +3402,14 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     }
 
     if (head_id == g_builtin_syms.sealed_text) {
+        const CettaLanguageId sealed_language = eval_current_language_id
+            ? eval_current_language_id() : CETTA_LANGUAGE_HE;
+        /* PeTTa's translator reads `sealed` only with two arguments; at any
+           other arity it is an ordinary application, which is data. */
         if (nargs != 2)
-            return grounded_incorrect_arity(a, head, args, nargs);
+            return sealed_language == CETTA_LANGUAGE_PETTA
+                ? grounded_call_expr(a, head, args, nargs)
+                : grounded_incorrect_arity(a, head, args, nargs);
         /* Two dialect contracts share this name.  HE's operator standardizes
            free metavariables apart: every variable NOT protected by the
            binder list is renamed.  PeTTa's translator form is the exact
@@ -3412,8 +3418,6 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
            compilers depend on the retained sharing, and an empty seal list
            is the identity.  Object-binder ABT indices are ordinary canonical
            expressions and remain untouched either way. */
-        const CettaLanguageId sealed_language = eval_current_language_id
-            ? eval_current_language_id() : CETTA_LANGUAGE_HE;
         Atom *renamed = sealed_language == CETTA_LANGUAGE_PETTA
             ? rename_vars_only(a, args[1], args[0])
             : rename_vars_except(a, args[1], args[0]);

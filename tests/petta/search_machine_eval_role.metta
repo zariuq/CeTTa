@@ -14,7 +14,8 @@
 !(: Tag (+ 1 2))
 !(let $code (quote (+ 1 2)) (: Tag $code))
 
-; reify is the canonical cross-dialect occurrence materializer.  PeTTa keeps
-; collapse as a compatibility spelling with the same occurrence bag.
+; Plain PeTTa has no reify, as SWI-PeTTa has none: the call evaluates its
+; argument and stays data.  collapse is the occurrence bag; the extended
+; profile's reify is collapse.
 !(reify (superpose (a a b)))
 !(collapse (superpose (a a b)))
