@@ -8222,10 +8222,230 @@ static Atom *prime_abt_abstract(const AbtSignature *signature, Arena *arena,
     return abt_bind(signature, arena, name, body);
 }
 
+/* A Need capability is a suspended computation, not a substitution barrier.
+ * atom-subst and let close a named variable in the template.  If that
+ * template was suspended, open the origin that still mentions the variable
+ * and leave every other thunk shared. */
+/* Cache both presence and absence for this variable.  A completed slot's
+ * result is its source when the variable occurs, NULL otherwise.  Returning
+ * false reports a failed traversal, never absence.  Origins are immutable
+ * syntax: capabilities inside them remain opaque during this occurrence
+ * check, as they are during named-variable abstraction. */
+static bool prime_atom_mentions_var(Atom *atom, VarId var_id,
+                                    PrimeBinderElabMemo *memo, bool *found) {
+    PrimeBinderElabStack stack = {0};
+    bool ok = false;
+    size_t steps = 0u;
+    if (!atom || var_id == VAR_ID_NONE ||
+        !prime_binder_elab_push(&stack, (PrimeBinderElabFrame){.source = atom}))
+        goto done;
+    while (stack.len) {
+        if ((steps++ & 255u) == 0u &&
+            eval_prepared_pure_interrupt_poll(NULL))
+            goto done;
+        PrimeBinderElabFrame *frame = &stack.items[stack.len - 1u];
+        PrimeBinderElabMemoSlot *slot = prime_binder_elab_memo_find(
+            memo, frame->source);
+        if (!frame->entered) {
+            if (slot->source) {
+                if (slot->state != 2u) goto done;
+                stack.len--;
+                continue;
+            }
+            slot = prime_binder_elab_memo_begin(memo, frame->source);
+            if (!slot) goto done;
+            frame->entered = true;
+            if (frame->source->kind == ATOM_VAR &&
+                frame->source->var_id == var_id)
+                slot->result = frame->source;
+        }
+        if (slot->result || frame->source->kind != ATOM_EXPR ||
+            frame->next_child == frame->source->expr.len) {
+            slot->state = 2u;
+            stack.len--;
+            continue;
+        }
+        Atom *child = frame->source->expr.elems[frame->next_child];
+        if (!child) goto done;
+        PrimeBinderElabMemoSlot *child_slot = prime_binder_elab_memo_find(
+            memo, child);
+        if (child_slot->source) {
+            if (child_slot->state != 2u) goto done;
+            if (child_slot->result) slot->result = frame->source;
+            frame->next_child++;
+        } else if (!prime_binder_elab_push(
+                       &stack, (PrimeBinderElabFrame){.source = child})) {
+            goto done;
+        }
+    }
+    *found = prime_binder_elab_memo_find(memo, atom)->result != NULL;
+    ok = true;
+done:
+    free(stack.items);
+    return ok;
+}
+
+static Atom *prime_open_capabilities_for_var(Arena *arena, Atom *term,
+                                             VarId var_id) {
+    if (!arena || !term || var_id == VAR_ID_NONE) return NULL;
+    /* Need capabilities carry this compositional summary.  Without one,
+     * opening cannot change the term, even when it contains named variables. */
+    if (!atom_has_registry_refs(term)) return term;
+    PrimeBinderElabMemo opened = {0}, mentions = {0}, origins = {0};
+    PrimeBinderElabStack stack = {0};
+    Atom *result = NULL;
+    size_t steps = 0u;
+    if (!prime_binder_elab_memo_init(&opened) ||
+        !prime_binder_elab_memo_init(&mentions) ||
+        !prime_binder_elab_memo_init(&origins) ||
+        !prime_binder_elab_push(&stack, (PrimeBinderElabFrame){.source = term}))
+        goto done;
+    while (stack.len) {
+        if ((steps++ & 255u) == 0u && eval_prepared_pure_interrupt_poll(NULL))
+            goto done;
+        PrimeBinderElabFrame *frame = &stack.items[stack.len - 1u];
+        PrimeBinderElabMemoSlot *slot = prime_binder_elab_memo_find(
+            &opened, frame->source);
+        if (!frame->entered) {
+            if (slot->source) {
+                /* A cycle in an expansion cannot be represented by finite
+                 * binder syntax.  Never return a partially opened term. */
+                if (slot->state != 2u) goto done;
+                stack.len--;
+                continue;
+            }
+            slot = prime_binder_elab_memo_begin(&opened, frame->source);
+            if (!slot) goto done;
+            frame->entered = true;
+            if (!atom_has_registry_refs(frame->source)) {
+                slot->result = frame->source;
+                slot->state = 2u;
+                stack.len--;
+                continue;
+            }
+            uint64_t thunk_id = 0u;
+            if (prime_need_ref_is_active(frame->source, &thunk_id)) {
+                PrimeNeedCellView cell;
+                bool found = false;
+                if (!prime_need_snapshot_lookup(
+                        &g_prime_need_active, thunk_id, &cell) || !cell.origin ||
+                    !prime_atom_mentions_var(cell.origin, var_id, &mentions, &found))
+                    goto done;
+                if (found) {
+                    PrimeBinderElabMemoSlot *origin = prime_binder_elab_memo_begin(
+                        &origins, frame->source);
+                    if (!origin) goto done;
+                    origin->result = cell.origin;
+                    origin->state = 2u;
+                } else {
+                    slot->result = frame->source;
+                    slot->state = 2u;
+                    stack.len--;
+                    continue;
+                }
+            }
+        }
+        PrimeBinderElabMemoSlot *origin = prime_binder_elab_memo_find(
+            &origins, frame->source);
+        Atom *child = origin->source ? origin->result : NULL;
+        if (!child && (frame->source->kind != ATOM_EXPR ||
+                       frame->next_child == frame->source->expr.len)) {
+            slot->result = frame->children
+                ? atom_expr(arena, frame->children, frame->source->expr.len)
+                : frame->source;
+            if (!slot->result) goto done;
+            slot->state = 2u;
+            stack.len--;
+            continue;
+        }
+        if (!child) child = frame->source->expr.elems[frame->next_child];
+        if (!child) goto done;
+        PrimeBinderElabMemoSlot *child_slot = prime_binder_elab_memo_find(
+            &opened, child);
+        if (!child_slot->source) {
+            if (!prime_binder_elab_push(
+                    &stack, (PrimeBinderElabFrame){.source = child}))
+                goto done;
+            continue;
+        }
+        if (child_slot->state != 2u) goto done;
+        if (origin->source) {
+            slot->result = child_slot->result;
+            slot->state = 2u;
+            stack.len--;
+            continue;
+        }
+        if (!frame->children && child_slot->result != child) {
+            if (!cetta_expr_len_mul_fits_size(frame->source->expr.len, sizeof(Atom *)))
+                goto done;
+            frame->children = arena_alloc(
+                arena, sizeof(Atom *) * (size_t)frame->source->expr.len);
+            if (!frame->children) goto done;
+            memcpy(frame->children, frame->source->expr.elems,
+                   sizeof(Atom *) * (size_t)frame->next_child);
+        }
+        if (frame->children) frame->children[frame->next_child] = child_slot->result;
+        frame->next_child++;
+    }
+    result = prime_binder_elab_memo_find(&opened, term)->result;
+done:
+    free(stack.items);
+    prime_binder_elab_memo_free(&opened);
+    prime_binder_elab_memo_free(&mentions);
+    prime_binder_elab_memo_free(&origins);
+    return result;
+}
+
+static Atom *prime_open_capabilities_for_pattern(Arena *arena, Atom *pattern,
+                                                 Atom *body) {
+    if (!arena || !pattern || !body) return NULL;
+    if (!atom_has_registry_refs(body)) return body;
+    if (pattern->kind == ATOM_VAR)
+        return prime_open_capabilities_for_var(arena, body, pattern->var_id);
+    if (pattern->kind != ATOM_EXPR) return body;
+    PrimeBinderElabMemo seen = {0};
+    PrimeBinderElabStack stack = {0};
+    PrimeLetSlotMap vars = {0};
+    Atom *result = NULL;
+    size_t steps = 0u;
+    if (!prime_binder_elab_memo_init(&seen) || !prime_let_slot_map_init(&vars) ||
+        !prime_binder_elab_push(&stack, (PrimeBinderElabFrame){.source = pattern}))
+        goto done;
+    while (stack.len) {
+        if ((steps++ & 255u) == 0u && eval_prepared_pure_interrupt_poll(NULL))
+            goto done;
+        Atom *source = stack.items[--stack.len].source;
+        if (!source) goto done;
+        if (prime_binder_elab_memo_find(&seen, source)->source) continue;
+        if (!prime_binder_elab_memo_begin(&seen, source)) goto done;
+        if (source->kind == ATOM_VAR) {
+            uint32_t unused;
+            if (!prime_let_slot_for_name(&vars, source, &unused)) goto done;
+        } else if (source->kind == ATOM_EXPR) {
+            for (CettaExprIndex i = source->expr.len; i > 0u; i--)
+                if (!prime_binder_elab_push(&stack, (PrimeBinderElabFrame){
+                        .source = source->expr.elems[i - 1u]}))
+                    goto done;
+        }
+    }
+    for (uint32_t i = 0u; i < vars.len; i++) {
+        body = prime_open_capabilities_for_var(arena, body, vars.names[i]->var_id);
+        if (!body) goto done;
+    }
+    result = body;
+done:
+    free(stack.items);
+    prime_binder_elab_memo_free(&seen);
+    prime_let_slot_map_free(&vars);
+    return result;
+}
+
 static Atom *prime_let_make_canonical(const AbtSignature *signature,
                                       Arena *arena, Atom *pattern,
                                       Atom *source, Atom *body,
                                       const Bindings *existing_env) {
+    body = prime_open_capabilities_for_pattern(arena, pattern, body);
+    if (!body) return NULL;
     PrimeLetSlotMap slots;
     if (!prime_let_slot_map_init(&slots)) return NULL;
     Atom *canonical_pattern = prime_let_pattern_canonicalize(
@@ -21126,19 +21346,10 @@ static void prime_need_normalize_observation_atom(
     Space *s, Arena *a, Atom *atom, int fuel, const Bindings *env,
     OutcomeSet *out, EvalGcRootFrame *lexical_root);
 
-/* A field declared as `Atom` carries syntax, not a computation.  The same
- * non-strict boundary holds during full observation and during equation
- * calls.  With overloads, opacity is licensed only when every exact-arity
- * function type agrees that this field is `Atom`. */
-static bool prime_need_function_type_argument_is_data(
-    Arena *a, const Bindings *env, Atom *function_type,
-    CettaExprIndex argument_index) {
-    Atom *domain = function_domain_type(
-        (Bindings *)env, a,
-        function_type->expr.elems[argument_index + 1u], NULL);
-    return atom_is_symbol_id(domain, g_builtin_syms.atom);
-}
-
+/* A field declared as `Atom` carries syntax, not a computation.  Respect the
+ * same non-strict boundary during full observation that typed application
+ * uses during ordinary evaluation.  With overloads, opacity is licensed only
+ * when every exact-arity function type agrees that this field is `Atom`. */
 static bool prime_need_observation_argument_is_data(
     Space *s, Arena *a, Atom *source, CettaExprIndex child_index,
     const Bindings *env) {
@@ -21161,8 +21372,10 @@ static bool prime_need_observation_argument_is_data(
             get_function_arg_count(function_type) != nargs)
             continue;
         saw_exact_arity = true;
-        if (!prime_need_function_type_argument_is_data(
-                a, env, function_type, argument_index)) {
+        Atom *domain = function_domain_type(
+            (Bindings *)env, a,
+            function_type->expr.elems[argument_index + 1u], NULL);
+        if (!atom_is_symbol_id(domain, g_builtin_syms.atom)) {
             all_data = false;
             break;
         }
@@ -29229,34 +29442,12 @@ static bool prime_need_try_equation_call_core(
 #endif
     Atom *expected_type = declared_type
         ? declared_type : atom_undefined_type(a);
-    /* An argument every exact-arity contract declares `Atom` is syntax data:
-       the parameter denotes the atom as written, so it is passed as written
-       rather than suspended as a computation of its value. */
-    CettaExprLen call_arity = atom->expr.len - 1u;
-    bool *data_arguments = call_arity
-        ? arena_alloc(a, sizeof(*data_arguments) * (size_t)call_arity)
-        : NULL;
-    if (call_arity && !data_arguments) {
-        free(head_types);
-        applicability_errors_free(&type_errors);
-        return false;
-    }
-    bool saw_exact_arity = false;
-    for (CettaExprIndex ai = 0u; ai < call_arity; ai++)
-        data_arguments[ai] = true;
     for (uint32_t i = 0u; i < n_head_types; i++) {
         if (!is_function_type(head_types[i])) {
             saw_non_function_type = true;
             continue;
         }
         saw_function_type = true;
-        if (get_function_arg_count(head_types[i]) == call_arity) {
-            saw_exact_arity = true;
-            for (CettaExprIndex ai = 0u; ai < call_arity; ai++)
-                data_arguments[ai] = data_arguments[ai] &&
-                    prime_need_function_type_argument_is_data(
-                        a, equation_env, head_types[i], ai);
-        }
         Atom *fresh_type = cetta_instantiate_frame_syntax(a, head_types[i]);
         ApplicabilityErrors candidate_errors;
         applicability_errors_init(&candidate_errors);
@@ -29273,10 +29464,6 @@ static bool prime_need_try_equation_call_core(
         applicability_errors_free(&candidate_errors);
     }
     free(head_types);
-    if (!saw_exact_arity) {
-        for (CettaExprIndex ai = 0u; ai < call_arity; ai++)
-            data_arguments[ai] = false;
-    }
     if (saw_function_type && !has_applicable_function_type &&
         !saw_non_function_type) {
         Bindings empty;
@@ -29513,8 +29700,7 @@ static bool prime_need_try_equation_call_core(
             continue;
         }
         bool direct = closed && !registry_bound &&
-            (data_arguments[ai] ||
-             prime_need_ref_is_active(closed, NULL) ||
+            (prime_need_ref_is_active(closed, NULL) ||
              closed->kind == ATOM_VAR ||
              atom_eval_is_immediate_value(closed, fuel) ||
              (!prime_need_atom_has_observable_ref(closed) &&
@@ -44756,6 +44942,17 @@ petta_lowered_to_shared_form:
         Atom *to_eval = expr_arg(atom, 0);
         Atom *syntax_var = prime_syntax_chain ? expr_arg(atom, 1) : NULL;
         Atom *body = expr_arg(atom, prime_syntax_chain ? 2u : 1u);
+        if (prime_syntax_chain && syntax_var &&
+            syntax_var->kind == ATOM_VAR) {
+            Atom *opened = prime_open_capabilities_for_var(
+                a, body, syntax_var->var_id);
+            if (!opened) {
+                outcome_set_add(os, atom_error(a, atom,
+                    atom_symbol(a, "ABTChainElaborationFailed")), &_empty);
+                return;
+            }
+            body = opened;
+        }
         if (prime_syntax_chain && syntax_var->kind != ATOM_VAR) {
             Atom *refinement_elems[4] = {
                 atom_symbol_id(a, g_builtin_syms.let), syntax_var,

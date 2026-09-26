@@ -513,8 +513,15 @@ PeTTaNamedArity petta_semantics_named_arity(
     info.larger = found && maximum > supplied;
     info.smaller = found && minimum < supplied;
 
+    /* A special form's intrinsic arity is the form's.  Once the program
+     * defines equations of the form's name, the name has the arities of
+     * those equations, as any function the program defines. */
+    bool program_names_form =
+        found && petta_semantics_runtime_head(head) ==
+                     PETTA_RUNTIME_HEAD_DATA;
     CettaExprLen intrinsic = 0u;
-    if (petta_semantics_intrinsic_partial_arity(
+    if (!program_names_form &&
+        petta_semantics_intrinsic_partial_arity(
             head, &intrinsic)) {
         info.known = true;
         info.exact = info.exact || intrinsic == supplied;

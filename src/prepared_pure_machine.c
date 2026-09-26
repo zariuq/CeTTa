@@ -142,6 +142,10 @@ typedef struct {
     uint32_t first_step;
     uint32_t step_count;
     uint32_t frame_slot_count;
+    /* A body that builds a value around one call -- a constructor whose
+     * only call child, not its head, is child `context_hole` -- or
+     * PREPARED_PURE_NO_CONTEXT. */
+    uint32_t context_hole;
 } PreparedPureEquation;
 
 typedef enum {
@@ -223,11 +227,24 @@ typedef struct {
     bool expected_truth;
 } PreparedPureScalarGuard;
 
+/* The outer shape of an equation's first argument pattern: a symbol
+ * (length 0), or an expression of `length` elements headed by a symbol. */
+typedef struct {
+    SymbolId symbol;
+    uint32_t length;
+    uint32_t equation;
+} PreparedPureArgumentKey;
+
 typedef struct {
     uint32_t arity;
     uint32_t equation_count;
     uint64_t universally_constrained_arguments;
     CettaMatchDecision *selector;
+    /* A group too small for a selector whose equations have pairwise
+     * different first-argument keys: argument_keys[first_key,
+     * +equation_count), one per equation.  Then selector is NULL. */
+    bool keyed;
+    uint32_t first_key;
 } PreparedPureDecisionProgram;
 
 typedef struct {
@@ -261,8 +278,22 @@ typedef struct {
     uint64_t ready_arguments;
     uint32_t demanded_argument;
     uint32_t memo_index;
+    /* The contexts this call recorded, the top ones of the context stack:
+     * its value is built into them when it answers. */
+    uint32_t context_count;
     uint8_t state;
 } PreparedPureFrame;
+
+/* A recorded context: the constructor node whose child `hole` awaits the
+ * value of a call.  Its other children's values lie on the value stack,
+ * below the recording frame's working values. */
+typedef struct {
+    uint32_t node;
+    uint32_t hole;
+} PreparedPureContext;
+
+#define PREPARED_PURE_NO_CONTEXT UINT32_MAX
+enum { PREPARED_PURE_CONTEXT_MAX_CHILDREN = 16u };
 
 #define PREPARED_PURE_RUNTIME_NODE UINT32_MAX
 #define PREPARED_PURE_NO_MEMO UINT32_MAX
@@ -363,6 +394,9 @@ struct CettaPreparedPureProgram {
     PreparedPureDecisionProgram *decisions;
     size_t decision_len;
     size_t decision_cap;
+    PreparedPureArgumentKey *argument_keys;
+    size_t argument_key_len;
+    size_t argument_key_cap;
     PreparedPureVarSlot *pattern_vars;
     size_t pattern_var_len;
     size_t pattern_var_cap;
@@ -398,6 +432,9 @@ struct CettaPreparedPureProgram {
     Atom **values;
     size_t value_len;
     size_t value_cap;
+    PreparedPureContext *contexts;
+    size_t context_len;
+    size_t context_cap;
     Atom **slots;
     size_t slot_len;
     size_t slot_cap;
@@ -3056,15 +3093,110 @@ static bool prepared_pure_compile_decision_group(
     return true;
 }
 
+/* The first-argument key an equation's compiled match tests before
+ * anything else: its first op compares register 0 with a symbol, or reads
+ * register 0 as an expression whose head its second op compares with a
+ * symbol. */
+static bool prepared_pure_equation_argument_key(
+    const CettaPreparedPureProgram *program,
+    const PreparedPureEquation *equation, PreparedPureArgumentKey *key) {
+    if (!equation->compiled_match || equation->arity == 0u ||
+        equation->match_op_count == 0u)
+        return false;
+    const PreparedPureMatchOp *op =
+        &program->match_ops[equation->first_match_op];
+    if (op->source != 0u)
+        return false;
+    if (op->kind == PREPARED_PURE_MATCH_OP_ATOM) {
+        if (!op->literal || op->literal->kind != ATOM_SYMBOL)
+            return false;
+        key->symbol = op->literal->sym_id;
+        key->length = 0u;
+        return true;
+    }
+    if (op->kind != PREPARED_PURE_MATCH_OP_EXPR || op->length == 0u ||
+        equation->match_op_count < 2u)
+        return false;
+    const PreparedPureMatchOp *head = op + 1;
+    if (head->kind != PREPARED_PURE_MATCH_OP_ATOM ||
+        head->source != op->operand || !head->literal ||
+        head->literal->kind != ATOM_SYMBOL)
+        return false;
+    key->symbol = head->literal->sym_id;
+    key->length = op->length;
+    return true;
+}
+
+/* A group too small for a selector is keyed when every equation's compiled
+ * match first tests its first argument against a key and no two keys are
+ * equal.  Every other equation then fails on its first or second op, so a
+ * call runs at most the one equation whose key the argument has, and that
+ * selects what the scan of every equation selects
+ * (KeyedEquationSelection.select_keyed, select_not_ambiguous_of_keyed;
+ * MatchDecisionContract.mem_candidates_of_realizes).  The keys come from
+ * compiled matches alone, which a dialect's pattern view never reinterprets:
+ * such a pattern leaves its equation uncompiled and the group unkeyed. */
+static bool prepared_pure_compile_key_group(
+    CettaPreparedPureProgram *program, uint32_t head_index,
+    uint32_t arity) {
+    const PreparedPureHead *head = &program->heads[head_index];
+    uint32_t count = 0u;
+    for (uint32_t i = 0u; i < head->equation_count; i++) {
+        if (program->equations[head->first_equation + i].arity == arity)
+            count++;
+    }
+    if (arity == 0u || count < 2u ||
+        count >= PREPARED_PURE_DECISION_MIN_EQUATIONS)
+        return true;
+    if (program->argument_key_len > UINT32_MAX - count ||
+        !prepared_pure_reserve(
+            (void **)&program->argument_keys,
+            sizeof(*program->argument_keys), &program->argument_key_cap,
+            program->argument_key_len + count) ||
+        program->decision_len >= UINT32_MAX ||
+        !prepared_pure_reserve(
+            (void **)&program->decisions, sizeof(*program->decisions),
+            &program->decision_cap, program->decision_len + 1u))
+        return false;
+    PreparedPureArgumentKey *keys =
+        &program->argument_keys[program->argument_key_len];
+    uint32_t written = 0u;
+    for (uint32_t i = 0u; i < head->equation_count; i++) {
+        uint32_t equation_index = head->first_equation + i;
+        const PreparedPureEquation *equation =
+            &program->equations[equation_index];
+        if (equation->arity != arity)
+            continue;
+        PreparedPureArgumentKey key = {.equation = equation_index};
+        if (!prepared_pure_equation_argument_key(program, equation, &key))
+            return true;
+        for (uint32_t j = 0u; j < written; j++) {
+            if (keys[j].symbol == key.symbol && keys[j].length == key.length)
+                return true;
+        }
+        keys[written++] = key;
+    }
+    uint32_t first_key = (uint32_t)program->argument_key_len;
+    program->argument_key_len += written;
+    uint32_t decision_index = (uint32_t)program->decision_len;
+    program->decisions[program->decision_len++] =
+        (PreparedPureDecisionProgram){
+            .arity = arity,
+            .equation_count = written,
+            .keyed = true,
+            .first_key = first_key,
+        };
+    PreparedPureHead *owner = &program->heads[head_index];
+    if (owner->decision_count == 0u)
+        owner->first_decision = decision_index;
+    owner->decision_count++;
+    return true;
+}
+
 static bool prepared_pure_compile_decisions_for_head(
     CettaPreparedPureProgram *program, uint32_t head_index) {
     if (!program || head_index >= program->head_len)
         return false;
-    /* Dialect-owned pattern views may reinterpret the outer pattern shape.
-     * Until the LanguageDef compiler emits a corresponding discriminator,
-     * retain the exact generic matcher as the only authority. */
-    if (program->pattern_view)
-        return true;
     PreparedPureHead *head = &program->heads[head_index];
     for (uint32_t i = 0u; i < head->equation_count; i++) {
         uint32_t arity =
@@ -3076,8 +3208,17 @@ static bool prepared_pure_compile_decisions_for_head(
                 break;
             }
         }
-        if (!seen && !prepared_pure_compile_decision_group(
-                         program, head, arity))
+        if (seen)
+            continue;
+        if (!prepared_pure_compile_key_group(program, head_index, arity))
+            return false;
+        /* Dialect-owned pattern views may reinterpret the outer pattern
+         * shape.  Until the LanguageDef compiler emits a corresponding
+         * discriminator, retain the exact generic matcher as the only
+         * authority for a selector. */
+        head = &program->heads[head_index];
+        if (!program->pattern_view &&
+            !prepared_pure_compile_decision_group(program, head, arity))
             return false;
         head = &program->heads[head_index];
     }
@@ -3237,6 +3378,35 @@ static bool prepared_pure_record_match_program(
     return true;
 }
 
+/* The child of an equation body that builds a value around one call: the
+ * body is a constructor, not one whose head is bound at run time, and
+ * exactly one of its children is a call, other than its head.  Its value is
+ * then the call's value built into the rest of the constructor, and the
+ * call can run in the caller's place while the constructor waits as a
+ * recorded context (ContextStackEvaluation.withContexts_eq). */
+static uint32_t prepared_pure_context_hole(
+    const CettaPreparedPureProgram *program, uint32_t root) {
+    if (!program || root >= program->node_len)
+        return PREPARED_PURE_NO_CONTEXT;
+    const PreparedPureNode *node = &program->nodes[root];
+    if (node->kind != PREPARED_PURE_BUILD ||
+        node->auxiliary == PREPARED_PURE_BUILD_DATA_HEAD ||
+        node->child_count < 2u ||
+        node->child_count > PREPARED_PURE_CONTEXT_MAX_CHILDREN)
+        return PREPARED_PURE_NO_CONTEXT;
+    uint32_t hole = PREPARED_PURE_NO_CONTEXT;
+    for (uint32_t i = 0u; i < node->child_count; i++) {
+        uint32_t child = program->children[node->first_child + i];
+        if (child >= program->node_len ||
+            program->nodes[child].kind != PREPARED_PURE_CALL)
+            continue;
+        if (i == 0u || hole != PREPARED_PURE_NO_CONTEXT)
+            return PREPARED_PURE_NO_CONTEXT;
+        hole = i;
+    }
+    return hole;
+}
+
 /* Record the argument-to-slot map of an equation whose argument patterns are
  * all variables; matching it binds each argument to its slot, or compares it
  * with a repeated variable's first value.  Other equations compile a match
@@ -3384,6 +3554,7 @@ static bool prepared_pure_compile_head(
             .pattern_var_count = pattern_var_count,
             .scalar_guard = scalar_guard,
             .repeated_variables = repeated_variables,
+            .context_hole = prepared_pure_context_hole(program, root),
         };
         free(context.bindings);
         if (!prepared_pure_record_argument_slots(
@@ -4265,6 +4436,45 @@ prepared_pure_decision_for_arity(
     return NULL;
 }
 
+/* A keyed group runs the one equation whose key the first argument has, or
+ * none.  Only while every argument is a value: the compiled match then tests
+ * the key first, where the general matcher visits the arguments in another
+ * order and may demand one of them first. */
+static PreparedPureDecisionState prepared_pure_key_candidates(
+    const CettaPreparedPureProgram *program,
+    const PreparedPureDecisionProgram *decision,
+    Atom *const *arguments, uint32_t arity, uint64_t ready_arguments,
+    const uint32_t **candidate_refs_out, size_t *candidate_count_out) {
+    uint64_t all_arguments = arity >= 64u
+        ? UINT64_MAX : (UINT64_C(1) << arity) - UINT64_C(1);
+    const Atom *value = arguments[0];
+    if ((ready_arguments & all_arguments) != all_arguments || !value)
+        return PREPARED_PURE_DECISION_NOT_APPLICABLE;
+    SymbolId symbol = SYMBOL_ID_NONE;
+    uint32_t length = 0u;
+    if (value->kind == ATOM_SYMBOL) {
+        symbol = value->sym_id;
+    } else if (value->kind == ATOM_EXPR && value->expr.len > 0u &&
+               value->expr.len <= UINT32_MAX && value->expr.elems[0] &&
+               value->expr.elems[0]->kind == ATOM_SYMBOL) {
+        /* A list carrier's head is an internal tag, never a symbol. */
+        symbol = value->expr.elems[0]->sym_id;
+        length = (uint32_t)value->expr.len;
+    } else {
+        return PREPARED_PURE_DECISION_NOT_APPLICABLE;
+    }
+    const PreparedPureArgumentKey *keys =
+        &program->argument_keys[decision->first_key];
+    for (uint32_t i = 0u; i < decision->equation_count; i++) {
+        if (keys[i].symbol == symbol && keys[i].length == length) {
+            *candidate_refs_out = &keys[i].equation;
+            *candidate_count_out = 1u;
+            break;
+        }
+    }
+    return PREPARED_PURE_DECISION_READY;
+}
+
 /* Shared MatchDecision performs refutation only.  Already available
  * non-callable arguments may be observed without changing Need behaviour;
  * callable arguments remain unavailable until the evaluator has forced them.
@@ -4290,6 +4500,10 @@ static PreparedPureDecisionState prepared_pure_decision_candidates(
 
     const PreparedPureDecisionProgram *decision =
         prepared_pure_decision_for_arity(program, head, arity);
+    if (decision && decision->keyed)
+        return prepared_pure_key_candidates(
+            program, decision, arguments, arity, ready_arguments,
+            candidate_refs_out, candidate_count_out);
     if (!decision ||
         decision->equation_count < PREPARED_PURE_DECISION_MIN_EQUATIONS)
         return PREPARED_PURE_DECISION_NOT_APPLICABLE;
@@ -5260,7 +5474,9 @@ static PreparedPureTruth prepared_pure_inline_truth(
     return PREPARED_PURE_TRUTH_NOT_BOOLEAN;
 }
 
-static Atom *prepared_pure_inline_child(
+/* Out of line, so that its callers do not multiply the inlined copies of
+ * prepared_pure_inline_value that the children loop relies on. */
+static PREPARED_PURE_NOINLINE Atom *prepared_pure_inline_child(
     CettaPreparedPureProgram *program, Arena *arena,
     const PreparedPureNode *node, uint32_t child, uint32_t local_base) {
     uint32_t budget = PREPARED_PURE_INLINE_NODES;
@@ -5270,7 +5486,10 @@ static Atom *prepared_pure_inline_child(
         local_base, PREPARED_PURE_INLINE_DEPTH, &budget);
 }
 
-static PreparedPureChildrenState prepared_pure_finish_children(
+/* Out of line, with its value helpers inlined into its loop: the layout the
+ * executor's hot loop was measured with. */
+static PREPARED_PURE_NOINLINE PreparedPureChildrenState
+prepared_pure_finish_children(
     CettaPreparedPureProgram *program, Arena *arena,
     PreparedPureFrame *frame, const PreparedPureNode *node) {
     if (frame->state == 0u) {
@@ -5341,7 +5560,8 @@ static bool prepared_pure_tail_reenter(
             break;
         }
     }
-    if (!found)
+    /* A caller that recorded contexts still builds its value into them. */
+    if (!found || program->frames[owner].context_count > 0u)
         return true;
     for (size_t i = owner + 1u; i < current; i++) {
         PreparedPureFrame *intermediate = &program->frames[i];
@@ -5366,6 +5586,150 @@ static bool prepared_pure_tail_reenter(
     return true;
 }
 
+/* The value of a child that a context records or a continued call takes:
+ * read directly when it is a literal or a slot, evaluated in place
+ * otherwise; NULL when it needs a frame. */
+static inline Atom *prepared_pure_context_child(
+    CettaPreparedPureProgram *program, Arena *arena,
+    const PreparedPureNode *node, uint32_t child, uint32_t local_base) {
+    const PreparedPureNode *value_node =
+        &program->nodes[program->children[node->first_child + child]];
+    switch (value_node->kind) {
+    case PREPARED_PURE_LITERAL:
+    case PREPARED_PURE_SLOT:
+    case PREPARED_PURE_ENTRY_ARGUMENT:
+        return prepared_pure_immediate_value(
+            program, value_node, local_base);
+    default:
+        return prepared_pure_inline_child(
+            program, arena, node, child, local_base);
+    }
+}
+
+typedef enum {
+    PREPARED_PURE_CONTEXT_NOT_ENTERED = 0,
+    PREPARED_PURE_CONTEXT_ENTERED,
+    PREPARED_PURE_CONTEXT_FAILED,
+} PreparedPureContextEntry;
+
+/* A selected equation whose body builds a value around one call records the
+ * constructor as a context and lets the call take the caller's frame.  The
+ * constructor's other children and the call's arguments must be values
+ * here; otherwise the body runs as usual.  The recorded children stay on the
+ * value stack, below the call's arguments, and the equation's locals are
+ * released, since nothing reads them after this point. */
+static PREPARED_PURE_NOINLINE PreparedPureContextEntry
+prepared_pure_enter_context(
+    CettaPreparedPureProgram *program, Arena *arena,
+    PreparedPureFrame *frame, const PreparedPureEquation *equation,
+    uint32_t call_base) {
+    const PreparedPureNode *build = &program->nodes[equation->root];
+    uint32_t hole = equation->context_hole;
+    uint32_t call_index = program->children[build->first_child + hole];
+    const PreparedPureNode *call = &program->nodes[call_index];
+    uint32_t recorded = build->child_count - 1u;
+    uint32_t staged_count = recorded + call->child_count;
+    Atom *staged[2u * PREPARED_PURE_CONTEXT_MAX_CHILDREN];
+    if (call->child_count > PREPARED_PURE_CONTEXT_MAX_CHILDREN ||
+        call->child_count > 64u)
+        return PREPARED_PURE_CONTEXT_NOT_ENTERED;
+    uint32_t written = 0u;
+    for (uint32_t i = 0u; i < build->child_count; i++) {
+        if (i == hole)
+            continue;
+        Atom *value = prepared_pure_context_child(
+            program, arena, build, i, call_base);
+        if (!value)
+            return PREPARED_PURE_CONTEXT_NOT_ENTERED;
+        staged[written++] = value;
+    }
+    for (uint32_t i = 0u; i < call->child_count; i++) {
+        Atom *value = prepared_pure_context_child(
+            program, arena, call, i, call_base);
+        if (!value)
+            return PREPARED_PURE_CONTEXT_NOT_ENTERED;
+        staged[written++] = value;
+    }
+    if (!prepared_pure_reserve(
+            (void **)&program->contexts, sizeof(*program->contexts),
+            &program->context_cap, program->context_len + 1u) ||
+        !prepared_pure_reserve(
+            (void **)&program->values, sizeof(*program->values),
+            &program->value_cap,
+            (size_t)frame->value_base + staged_count))
+        return PREPARED_PURE_CONTEXT_FAILED;
+    memcpy(&program->values[frame->value_base], staged,
+           sizeof(*staged) * staged_count);
+    program->contexts[program->context_len++] = (PreparedPureContext){
+        .node = equation->root,
+        .hole = hole,
+    };
+    frame->context_count++;
+    frame->value_base += recorded;
+    program->value_len = (size_t)frame->value_base + call->child_count;
+    program->slot_len = frame->saved_slot_len;
+    frame->node = call_index;
+    frame->child_index = call->child_count;
+    frame->ready_arguments = call->call_arguments_are_values
+        ? (call->child_count == 64u
+               ? UINT64_MAX
+               : (UINT64_C(1) << call->child_count) - UINT64_C(1))
+        : 0u;
+    frame->state = 4u;
+    return PREPARED_PURE_CONTEXT_ENTERED;
+}
+
+/* A call that answers builds its value into the contexts it recorded, the
+ * last recorded first (ContextStackEvaluation.plug), at most
+ * PREPARED_PURE_PLUG_BATCH contexts per step of the executor.  Between steps
+ * the value built so far stays on the value stack, where the collector finds
+ * it, and the executor polls for interrupts as it does between frames.
+ * After the last context the call completes as any call does. */
+enum { PREPARED_PURE_PLUG_BATCH = 8u };
+
+static PREPARED_PURE_NOINLINE bool prepared_pure_plug_context_step(
+    CettaPreparedPureProgram *program, Arena *arena,
+    PreparedPureFrame *frame) {
+    if (frame->context_count == 0u ||
+        program->value_len != (size_t)frame->value_base + 1u)
+        return false;
+    Atom *value = program->values[frame->value_base];
+    uint32_t base = frame->value_base;
+    for (uint32_t step = 0u;
+         step < PREPARED_PURE_PLUG_BATCH && frame->context_count > 0u;
+         step++) {
+        if (program->context_len == 0u)
+            return false;
+        PreparedPureContext context =
+            program->contexts[--program->context_len];
+        const PreparedPureNode *build = &program->nodes[context.node];
+        uint32_t recorded = build->child_count - 1u;
+        if (base < recorded || context.hole >= build->child_count ||
+            build->child_count > PREPARED_PURE_CONTEXT_MAX_CHILDREN)
+            return false;
+        base -= recorded;
+        Atom *elements[PREPARED_PURE_CONTEXT_MAX_CHILDREN];
+        for (uint32_t i = 0u, read = base; i < build->child_count; i++)
+            elements[i] = i == context.hole ? value : program->values[read++];
+        value = program->construct_value(
+            arena, elements, build->child_count);
+        if (!value)
+            return false;
+        program->values[base] = value;
+        program->value_len = (size_t)base + 1u;
+        frame->value_base = base;
+        frame->context_count--;
+    }
+    if (frame->context_count > 0u)
+        return true;
+    if (frame->saved_slot_len > program->slot_len ||
+        !prepared_pure_memo_complete(program, frame, value))
+        return false;
+    program->slot_len = frame->saved_slot_len;
+    program->frame_len--;
+    return true;
+}
+
 static bool PREPARED_PURE_HOT prepared_pure_resume_call(
     CettaPreparedPureProgram *program, Arena *arena,
     PreparedPureFrame *frame,
@@ -5377,6 +5741,12 @@ static bool PREPARED_PURE_HOT prepared_pure_resume_call(
                 (size_t)frame->value_base + 1u ||
             frame->saved_slot_len > program->slot_len)
             return false;
+        /* State 5: the call's value is being built into its recorded
+         * contexts, one per step. */
+        if (__builtin_expect(frame->context_count > 0u, 0)) {
+            frame->state = 5u;
+            return true;
+        }
         if (!prepared_pure_memo_complete(
                 program, frame,
                 program->values[frame->value_base]))
@@ -5405,8 +5775,14 @@ static bool PREPARED_PURE_HOT prepared_pure_resume_call(
             UINT64_C(1) << frame->demanded_argument;
         frame->state = 1u;
     }
-    if (frame->state != 1u ||
-        program->value_len != (size_t)frame->value_base + arity ||
+    /* State 4 is a call a recorded context continues with: its arguments
+     * are staged, as a call in state 1 has them. */
+    if (frame->state != 1u && frame->state != 4u) {
+        if (frame->state == 5u)
+            return prepared_pure_plug_context_step(program, arena, frame);
+        return false;
+    }
+    if (program->value_len != (size_t)frame->value_base + arity ||
         (program->closed_program && arity > 64u))
         return false;
 
@@ -5460,6 +5836,17 @@ static bool PREPARED_PURE_HOT prepared_pure_resume_call(
                sizeof(*program->slots) * equation->local_count);
     program->slot_len += equation->local_count;
     program->value_len = frame->value_base;
+    if (__builtin_expect(
+            equation->context_hole != PREPARED_PURE_NO_CONTEXT, 0) &&
+        frame->node != PREPARED_PURE_RUNTIME_NODE &&
+        frame->memo_index == PREPARED_PURE_NO_MEMO) {
+        PreparedPureContextEntry entry = prepared_pure_enter_context(
+            program, arena, frame, equation, call_base);
+        if (entry == PREPARED_PURE_CONTEXT_ENTERED)
+            return true;
+        if (entry == PREPARED_PURE_CONTEXT_FAILED)
+            return false;
+    }
     frame->state = 2u;
     return prepared_pure_push_frame(
         program, equation->root, call_base);
@@ -7708,6 +8095,7 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
     prepared_pure_memo_clear(program);
     program->frame_len = 0u;
     program->value_len = 0u;
+    program->context_len = 0u;
     if (step) {
         program->slot_len = step_slot_count;
     } else {
@@ -8226,8 +8614,10 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
             continue;
         }
 
-        if (node->kind == PREPARED_PURE_CALL &&
-            (frame->state == 2u || frame->state == 3u)) {
+        /* States 2 to 5: a call awaiting its body, a demanded argument, a
+         * recorded context's continuation, or a value being built into
+         * recorded contexts. */
+        if (node->kind == PREPARED_PURE_CALL && frame->state >= 2u) {
             if (!prepared_pure_resume_call(
                     program, arena, frame, node->auxiliary,
                     node->child_count))
@@ -8498,6 +8888,7 @@ void cetta_prepared_pure_program_free(
     for (size_t index = 0u; index < program->decision_len; index++)
         cetta_match_decision_free(program->decisions[index].selector);
     free(program->decisions);
+    free(program->argument_keys);
     free(program->pattern_vars);
     free(program->bind_patterns);
     free(program->bind_vars);
@@ -8508,6 +8899,7 @@ void cetta_prepared_pure_program_free(
     free(program->step_arguments);
     free(program->frames);
     free(program->frame_atoms);
+    free(program->contexts);
     free(program->values);
     free(program->slots);
     free(program->slot_live);

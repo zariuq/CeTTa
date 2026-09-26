@@ -1,8 +1,9 @@
 ; A special form is syntax only where it is written.  Reached at run time --
 ; as the value of a variable head, as the head of the application a `reduce`
 ; dispatches, or as a callee passed to a function -- its arguments are
-; evaluated first, and the application is data unless PeTTa also defines a
-; function of that name, which is then called on their values.
+; evaluated first, and the application is data unless PeTTa or the program
+; defines a function of that name, which is then called on their values
+; (runtime_program_functions.metta for the program's).
 
 (= (twice $x) (* 2 $x))
 (= (app1 $f $a) ($f $a))
@@ -20,7 +21,8 @@
 !(map-atom (1 2) quote)
 !(app3 if True 1 2)
 
-; `let` too: PeTTa names no function for it at any arity.
+; `let` too, while the program defines no function of that name
+; (swi_differences.metta, entry 3).
 !(let $f let ($f $y 1 2))
 
 ; A form PeTTa also defines as a function runs on the values.
