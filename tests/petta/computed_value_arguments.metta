@@ -27,3 +27,12 @@
 
 ; eval is the one place a computed value runs.
 !(test (let $c (sread "(+ 1 2)") (eval $c)) 3)
+
+; Typed syntax remains a value after an equation body is substituted.
+; A scalar shortcut must not turn an Atom parameter into a fresh call.
+(: held-equal (-> Atom Atom Bool))
+(= (held-equal $a $b) (== $a $b))
+!(test (held-equal (+ 1 2) 3) false)
+!(test (held-equal (- (* 2 3) 1) 5) false)
+!(test (held-equal (+ 1 2) (+ 1 2)) true)
+!(test (held-equal (/ 1 0) (/ 1 0)) true)

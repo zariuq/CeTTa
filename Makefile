@@ -1622,6 +1622,7 @@ ATOM_DEEP_COPY_TEST_BIN = runtime/test_atom_deep_copy_iterative-$(BUILD_OBJ_TAG)
 ATOM_DATA_EQUALITY_TEST_BIN = runtime/test_atom_data_equality-$(BUILD_OBJ_TAG)
 ATOM_SUFFIX_TEST_BIN = runtime/test_atom_suffix-$(BUILD_OBJ_TAG)
 ATOM_GENERATIONS_TEST_BIN = runtime/test_atom_generations-$(BUILD_OBJ_TAG)
+ATOM_INTERN_VARS_TEST_BIN = runtime/test_atom_intern_vars-$(BUILD_OBJ_TAG)
 ABT_TEST_BIN = runtime/test_abt-$(BUILD_OBJ_TAG)
 ABT_MM2_BOUNDARY_TEST_BIN = runtime/test_abt_mm2_boundary-$(BUILD_OBJ_TAG)
 ABT_BENCH_BIN = runtime/bench_abt-$(BUILD_OBJ_TAG)
@@ -3805,6 +3806,15 @@ test: test-atom-generations
 test-atom-generations: $(ATOM_GENERATIONS_TEST_BIN)
 	@$(call cetta_exec,./$(ATOM_GENERATIONS_TEST_BIN))
 
+$(ATOM_INTERN_VARS_TEST_BIN): tests/test_atom_intern_vars.c src/symbol.c src/atom.c src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_atom_intern_vars.c src/symbol.c src/atom.c src/binding/frame_identity.c $(LDFLAGS)
+
+.PHONY: test-atom-intern-vars
+test: test-atom-intern-vars
+test-atom-intern-vars: $(ATOM_INTERN_VARS_TEST_BIN)
+	@$(call cetta_exec,./$(ATOM_INTERN_VARS_TEST_BIN))
+
 runtime/test_native_handle_ownership-$(BUILD_OBJ_TAG): tests/test_native_handle_ownership.c src/native_handle.c src/native_handle.h src/atom.c src/binding/frame_identity.c src/atom.h src/library.h src/symbol.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_native_handle_ownership.c src/native_handle.c src/atom.c src/binding/frame_identity.c src/symbol.c $(LDFLAGS)
@@ -5190,7 +5200,11 @@ DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \
 # dependency files are nevertheless authoritative: omitting them can retain
 # an ABI-stale object after a shared header changes.  Restrict the wildcard to
 # the active configuration tag so unrelated build variants remain isolated.
-AUXILIARY_DEPS = $(wildcard runtime/bootstrap/*.$(BUILD_OBJ_TAG).d)
+# The tag's own variants (runtime stats, typecheck censuses) are included:
+# their objects link into the same tool paths, so a variant object left stale
+# by a header change would be relinked into those tools.
+AUXILIARY_DEPS = $(wildcard runtime/bootstrap/*.$(BUILD_OBJ_TAG).d \
+	runtime/bootstrap/*.$(BUILD_OBJ_TAG).*.d)
 
 # Remake configuration stamps before evaluating object dependencies.  The
 # stamp recipes update their generated headers as a side effect; treating the
@@ -22155,7 +22169,49 @@ test-prime-all: test-prime test-prime-relational-plan test-prime-need-algebra \
 	test-prime-type-capacity-mutation
 	@echo "PASS: full Prime correctness gate"
 
-test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-module-profiles test-symbolid-guard test-fallback-eval-session test-he-compiled-reader-v1 test-petta-compiled-reader-v1 test-prime-compiled-reader-v1 test-import-modes test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime-crossdialect test-prime-need-he-noninterference
+.PHONY: test-bounded-select-threads
+test-bounded-select-threads: $(BIN)
+	@set -eu; \
+	for threads in 0 2 4; do \
+		for lane in petta he prime; do \
+			case $$lane in \
+				petta) args="--lang petta --profile extended"; expected=tests/bounded_select_threads.petta.expected ;; \
+				he) args="--lang he --profile extended"; expected=tests/bounded_select_threads.he.expected ;; \
+				prime) args="--lang prime"; expected=tests/bounded_select_threads.he.expected ;; \
+			esac; \
+			actual=$$($(CETTA_BIN_INVOKE) $$args --num-threads $$threads \
+				tests/bounded_select_threads.metta 2>&1); \
+			if [ "$$actual" != "$$(cat $$expected)" ]; then \
+				echo "FAIL: bounded select under $$lane with $$threads threads"; \
+				diff <(cat $$expected) <(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: a bounded select never delivers more answers than its bound, sequential or threaded"
+
+# The extended profile's collections in PeTTa, on the open tier and in the
+# search machine alone: collect and reify are collapse; select is the first
+# answer with its bindings, or the first k as a copied list, lazily; a bound
+# of zero runs nothing.
+.PHONY: test-petta-extended-collections
+test-petta-extended-collections: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta --profile extended \
+			tests/petta/extended_bounded_collections.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/extended_bounded_collections.expected)" ]; then \
+			echo "FAIL: the extended profile's collections on the $$route route"; \
+			diff <(cat tests/petta/extended_bounded_collections.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: select, collect and reify in PeTTa's extended profile, on the tier and in the machine"
+
+test-profiles: $(BIN) test-bounded-select-threads test-petta-extended-collections test-manifest test-forbidden-availability-errors test-git-module-profiles test-symbolid-guard test-fallback-eval-session test-he-compiled-reader-v1 test-petta-compiled-reader-v1 test-prime-compiled-reader-v1 test-import-modes test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime-crossdialect test-prime-need-he-noninterference
 	@pass=0; fail=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	profiles=$$($(CETTA_BIN_INVOKE) --list-profiles 2>&1); \
@@ -24914,7 +24970,11 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@set -eu; \
 	fixture=tests/petta/search_machine_conjunctive_match.metta; \
 	expected=$$(cat tests/petta/search_machine_conjunctive_match.expected); \
-	observed=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
+	tier=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
+		./$(BIN) --emit-runtime-stats --lang petta "$$fixture" 2>&1 | \
+		grep -v '^runtime-counter '); \
+	test "$$tier" = "$$expected"; \
+	observed=$$(CETTA_PETTA_SEARCH_MACHINE=1 CETTA_OPEN_EQUATIONS_REFERENCE=1 \
 		./$(BIN) --emit-runtime-stats --lang petta "$$fixture" 2>&1); \
 	actual=$$(printf '%s\n' "$$observed" | \
 		grep -v '^runtime-counter '); \
@@ -24931,7 +24991,7 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	test "$$commit" -gt 0; \
 	test "$$decline" -gt 0; \
 	test "$$legs" -gt "$$commit"; \
-	echo "PASS: PeTTa conjunctive match cursor preserves source-family observations and exact admission receipts"
+	echo "PASS: PeTTa conjunctive match cursor preserves source-family observations and exact admission receipts (the open tier's route gives the same observations)"
 else
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
 		test-petta-match-conjunction-cursor
@@ -26187,7 +26247,112 @@ test-petta-semantics-differential: $(BIN)
 	done; \
 	echo "PASS: $$pass/$$pass base PeTTa semantic fixtures match their explicit oracle observations"
 
-test-petta-semantics: $(BIN) test-petta-multifile test-petta-eval-in-space
+.PHONY: test-petta-list-values
+# Lists built with cons meet flat patterns as the lists they spell, and the
+# list natives hand elements and accumulators on as values.  The expected
+# outputs are SWI-PeTTa's; both routes must reproduce them.
+test-petta-list-values: $(BIN)
+	@set -eu; \
+	for stem in list_carriers_flat_patterns list_native_values; do \
+		for route in tier machine; do \
+			if [ $$route = machine ]; then reference=1; else reference=; fi; \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+				--lang petta tests/petta/$$stem.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/$$stem.expected)" ]; then \
+				echo "FAIL: $$stem on the $$route route"; \
+				diff <(cat tests/petta/$$stem.expected) \
+					<(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: cons-built lists meet flat patterns, and list natives pass values, on the tier and in the machine"
+
+.PHONY: test-petta-value-occurrences
+# A variable denotes the value bound to it, which is never evaluated again:
+# in lambda bodies, filter-atom conditions and fold bodies, in partial
+# applications, and in the operands of cons and ==.  The expected output is
+# SWI-PeTTa's; both routes must reproduce it.
+test-petta-value-occurrences: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/value_occurrences.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/value_occurrences.expected)" ]; then \
+			echo "FAIL: value occurrences on the $$route route"; \
+			diff <(cat tests/petta/value_occurrences.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: a variable is the value it holds, on the tier and in the machine"
+
+.PHONY: test-petta-list-building-linear
+# A list built by repeated cons-atom, and a filter over it, grow memory with
+# the list's length: no copied tail, no filter term doubling per kept item.
+test-petta-list-building-linear: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_list_building_linear.py ./$(BIN)
+
+.PHONY: test-petta-dispatch-error-scope
+# An error raised inside a call dispatched at run time fails that path alone,
+# in any exploration order, and specialization keeps the handler; argument
+# errors, Error values and direct calls keep their own behaviour.
+test-petta-dispatch-error-scope: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/dispatch_error_scope.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/dispatch_error_scope.expected)" ]; then \
+			echo "FAIL: dispatch error scope on the $$route route"; \
+			diff <(cat tests/petta/dispatch_error_scope.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: a run-time dispatch's error fails its path alone, on the tier and in the machine"
+
+.PHONY: test-petta-runtime-heads
+# A special form is syntax only where it is written: reached at run time its
+# arguments are evaluated, and it is data unless PeTTa defines a function of
+# its name; an operation's own error in a run-time dispatch fails its path;
+# a specialized callee that raises nothing is called directly.
+test-petta-runtime-heads: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/runtime_heads.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/runtime_heads.expected)" ]; then \
+			echo "FAIL: run-time heads on the $$route route"; \
+			diff <(cat tests/petta/runtime_heads.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: a special form reached at run time is a value, on the tier and in the machine"
+
+.PHONY: test-petta-specialization-after-import
+# An import invalidates the specializations of its space: the specialized
+# function sees the imported equations, and a callee it called directly
+# because it raised nothing is under the dispatch's handler again.
+test-petta-specialization-after-import: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/specialization_after_import.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/specialization_after_import.expected)" ]; then \
+			echo "FAIL: specialization after import on the $$route route"; \
+			diff <(cat tests/petta/specialization_after_import.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: an import invalidates the specializations of its space, on the tier and in the machine"
+
+test-petta-semantics: $(BIN) test-petta-multifile test-petta-eval-in-space test-petta-list-values test-petta-value-occurrences test-petta-dispatch-error-scope test-petta-list-building-linear test-petta-runtime-heads test-petta-specialization-after-import
 	@set -eu; \
 	for stem in $(PETTA_SEMANTIC_ORACLE_STEMS); do \
 		contract=exact-stream; \

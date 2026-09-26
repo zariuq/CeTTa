@@ -24,6 +24,14 @@ typedef struct {
     PeTTaForm form;
 } PeTTaFormOverflowSlot;
 
+/* Room for every special form whose symbol lies above the dense range. */
+#define PETTA_RUNTIME_HEAD_OVERFLOW_CAP 48u
+
+typedef struct {
+    SymbolId symbol;
+    PeTTaRuntimeHead head;
+} PeTTaRuntimeHeadOverflow;
+
 typedef struct {
     const SymbolTable *table;
     uint64_t table_instance_id;
@@ -89,6 +97,12 @@ typedef struct {
     SymbolId library;
     SymbolId value_let;
     SymbolId value_chain;
+    SymbolId and_then;
+    SymbolId or_else;
+    uint8_t runtime_head_by_symbol[PETTA_FORM_DENSE_CAP];
+    PeTTaRuntimeHeadOverflow runtime_head_overflow[
+        PETTA_RUNTIME_HEAD_OVERFLOW_CAP];
+    uint8_t runtime_head_overflow_len;
     uint32_t open_cons_tag_arena_id;
     uint64_t open_cons_tag_arena_reset_epoch;
     Atom *open_cons_tag;
@@ -259,6 +273,68 @@ static bool petta_cons_shape_facts_ready(
            cons_preimage == ids->cons;
 }
 
+static void petta_runtime_head_note(
+    PeTTaSymbolIds *ids, SymbolId symbol, PeTTaRuntimeHead head) {
+    if (symbol == SYMBOL_ID_NONE)
+        return;
+    if (symbol < PETTA_FORM_DENSE_CAP) {
+        ids->runtime_head_by_symbol[symbol] = (uint8_t)head;
+        return;
+    }
+    for (uint8_t index = 0u;
+         index < ids->runtime_head_overflow_len; index++) {
+        if (ids->runtime_head_overflow[index].symbol == symbol) {
+            ids->runtime_head_overflow[index].head = head;
+            return;
+        }
+    }
+    if (ids->runtime_head_overflow_len < PETTA_RUNTIME_HEAD_OVERFLOW_CAP) {
+        ids->runtime_head_overflow[ids->runtime_head_overflow_len++] =
+            (PeTTaRuntimeHeadOverflow){.symbol = symbol, .head = head};
+    }
+}
+
+/* The special forms of SWI-PeTTa's translator, and its stream rewrites.  Of
+ * these, PeTTa defines a function of the same name only for the ones marked
+ * FUNCTION; every other one, reached at run time, is data.  SWI-PeTTa also
+ * registers `let` and `let*` as functions without defining one, which makes
+ * their run-time application a partial that no argument completes; here
+ * they are data like the other binding forms. */
+static void petta_runtime_heads_build(PeTTaSymbolIds *ids) {
+    const SymbolId data[] = {
+        g_builtin_syms.quote, g_builtin_syms.if_text,
+        g_builtin_syms.case_text, g_builtin_syms.let,
+        g_builtin_syms.let_star, g_builtin_syms.chain,
+        g_builtin_syms.collapse, g_builtin_syms.once,
+        g_builtin_syms.hyperpose, g_builtin_syms.sealed_text,
+        g_builtin_syms.unify, g_builtin_syms.trace_bang,
+        g_builtin_syms.petta_transaction, g_builtin_syms.petta_with_mutex,
+        ids->progn, ids->prog1, ids->catch_text, ids->lambda,
+        ids->foldall, ids->forall, ids->call, ids->cut,
+        ids->translate_predicate, ids->and_then, ids->or_else,
+        ids->stream_unique, ids->stream_alpha_unique,
+        ids->stream_union, ids->stream_intersection,
+        ids->stream_subtraction,
+    };
+    const SymbolId function[] = {
+        g_builtin_syms.eval, g_builtin_syms.reduce,
+        g_builtin_syms.superpose, g_builtin_syms.match,
+        g_builtin_syms.add_atom, g_builtin_syms.remove_atom,
+        g_builtin_syms.map_atom, g_builtin_syms.filter_atom,
+        g_builtin_syms.foldl_atom, ids->test,
+    };
+    for (size_t index = 0u; index < sizeof(data) / sizeof(data[0]);
+         index++) {
+        petta_runtime_head_note(
+            ids, data[index], PETTA_RUNTIME_HEAD_DATA);
+    }
+    for (size_t index = 0u;
+         index < sizeof(function) / sizeof(function[0]); index++) {
+        petta_runtime_head_note(
+            ids, function[index], PETTA_RUNTIME_HEAD_FUNCTION);
+    }
+}
+
 static const PeTTaSymbolIds *petta_symbol_ids_refresh(void) {
     uint64_t table_instance_id = symbol_table_instance_id(g_symbols);
     PeTTaSymbolIds ids = {
@@ -349,6 +425,9 @@ static const PeTTaSymbolIds *petta_symbol_ids_refresh(void) {
             symbol_intern_cstr(g_symbols, "PeTTa.ValueLetV1");
         ids.value_chain =
             symbol_intern_cstr(g_symbols, "PeTTa.ValueChainV1");
+        ids.and_then = symbol_intern_cstr(g_symbols, "and-then");
+        ids.or_else = symbol_intern_cstr(g_symbols, "or-else");
+        petta_runtime_heads_build(&ids);
     }
     ids.form_by_symbol_ready = petta_form_dense_build(&ids);
     ids.cons_shape_facts_ready =
@@ -398,6 +477,20 @@ bool petta_semantics_cons_shape_facts_current(
 
 PeTTaForm petta_semantics_form(SymbolId head) {
     return petta_form_lookup_ids(petta_symbol_ids(), head);
+}
+
+PeTTaRuntimeHead petta_semantics_runtime_head(SymbolId head) {
+    const PeTTaSymbolIds *ids = petta_symbol_ids();
+    if (head == SYMBOL_ID_NONE || !ids->table)
+        return PETTA_RUNTIME_HEAD_ORDINARY;
+    if (head < PETTA_FORM_DENSE_CAP)
+        return (PeTTaRuntimeHead)ids->runtime_head_by_symbol[head];
+    for (uint8_t index = 0u;
+         index < ids->runtime_head_overflow_len; index++) {
+        if (ids->runtime_head_overflow[index].symbol == head)
+            return ids->runtime_head_overflow[index].head;
+    }
+    return PETTA_RUNTIME_HEAD_ORDINARY;
 }
 
 PeTTaNamedArity petta_semantics_named_arity(
@@ -556,6 +649,26 @@ PeTTaLogicalListStep petta_semantics_logical_list_cursor_next(
     cursor->in_flat_tail = true;
     cursor->flat_index = 0u;
     return petta_semantics_logical_list_cursor_next(cursor, item);
+}
+
+PeTTaListRead petta_semantics_read_list(
+    Atom *list, CettaExprLen length, Atom **elements) {
+    PeTTaLogicalListCursor cursor;
+    petta_semantics_logical_list_cursor_init(&cursor, list);
+    for (CettaExprLen index = 0u;; index++) {
+        Atom *item = NULL;
+        PeTTaLogicalListStep step =
+            petta_semantics_logical_list_cursor_next(&cursor, &item);
+        if (step == PETTA_LOGICAL_LIST_INVALID)
+            return PETTA_LIST_READ_UNDECIDED;
+        if (step == PETTA_LOGICAL_LIST_END)
+            return index == length
+                ? PETTA_LIST_READ_EXACT : PETTA_LIST_READ_OTHER_LENGTH;
+        if (index == length)
+            return PETTA_LIST_READ_OTHER_LENGTH;
+        if (elements)
+            elements[index] = item;
+    }
 }
 
 bool petta_semantics_logical_list_length(
@@ -796,6 +909,13 @@ Atom *petta_semantics_flatten_closed_open_cons(Arena *arena, Atom *atom) {
         ? atom_expr(arena, rebuilt, atom->expr.len) : atom;
 }
 
+/* Whether an open-cons carrier has been built in this process.  Until one
+ * has, no value holds one, so structural matching agrees with list
+ * unification on every value (ListCells.subst_eq_iff_unifies).  Carriers
+ * built by other threads reach this one's values only through a
+ * synchronization that also publishes the flag. */
+atomic_bool g_petta_open_cons_built;
+
 Atom *petta_semantics_open_cons_value(
     Arena *arena, Atom *head, Atom *tail) {
     const PeTTaSymbolIds *ids = petta_symbol_ids();
@@ -819,44 +939,23 @@ Atom *petta_semantics_open_cons_value(
         g_petta_symbol_ids.open_cons_tag_arena_reset_epoch =
             arena->reset_epoch;
     }
+    if (!atomic_load_explicit(&g_petta_open_cons_built,
+                              memory_order_relaxed))
+        atomic_store_explicit(&g_petta_open_cons_built, true,
+                              memory_order_relaxed);
     return atom_expr3(
         arena, g_petta_symbol_ids.open_cons_tag,
         head, tail);
-}
-
-/*
- * PeTTa exposes lists as flat expressions, but recursive relational
- * decomposition needs shared tails.  Convert a closed flat list once to the
- * internal open-cons carrier; each subsequent tail is then a pointer into
- * the same persistent spine rather than a copied expression suffix.
- */
-Atom *petta_semantics_flat_list_spine(
-    Arena *arena, Atom *flat_list) {
-    if (!arena || !flat_list ||
-        flat_list->kind != ATOM_EXPR) {
-        return NULL;
-    }
-    if (flat_list->expr.len == 0u)
-        return flat_list;
-
-    Atom *tail = atom_unit(arena);
-    for (CettaExprIndex index = flat_list->expr.len;
-         index > 0u; index--) {
-        tail = petta_semantics_open_cons_value(
-            arena, flat_list->expr.elems[index - 1u], tail);
-        if (!tail)
-            return NULL;
-    }
-    return tail;
 }
 
 bool petta_semantics_construct_value_allocation_bound(
     CettaExprLen length, size_t *bytes_out) {
     if (!atom_expr_allocation_bound(length, bytes_out))
         return false;
-    /* A first Cons in an arena epoch also allocates its internal carrier
-     * tag.  Charging it on every three-child construction is conservative
-     * independently of the tag cache and of the actual head symbol. */
+    /* A Cons is one three-place cell, and the first in an arena epoch also
+     * allocates its internal carrier tag.  Charging the tag on every
+     * three-child construction is conservative independently of the tag
+     * cache and of the actual head symbol. */
     if (length == 3u) {
         size_t tag_bytes = (sizeof(Atom) + 7u) & ~(size_t)7u;
         if (*bytes_out > SIZE_MAX - tag_bytes)
@@ -873,6 +972,10 @@ Atom *petta_semantics_construct_value(
     if (length == 3u && elements[0] &&
         elements[0]->kind == ATOM_SYMBOL &&
         petta_semantics_form(elements[0]->sym_id) == PETTA_FORM_CONS) {
+        /* A Cons is a cell sharing its tail, in constant time: a list built
+         * by repeated Cons shares every suffix, so copying it anywhere
+         * copies only its new cells.  Every reader takes a closed chain of
+         * cells as the flat list it spells. */
         return petta_semantics_open_cons_value(
             arena, elements[1], elements[2]);
     }
@@ -1214,28 +1317,12 @@ static bool petta_semantics_match_cons_constraint_mode(
         }
 
         /*
-         * A cons constraint against a closed flat list is the one boundary
-         * where the observable tuple carrier enters relational traversal.
-         * Reify the flat side as a shared spine once.  Binding a tail
-         * variable then retains a suffix pointer, so recursive equations do
-         * not allocate and retain N, N-1, ... element arrays.
+         * A cons against a non-empty flat list meets the list's first
+         * element and its rest, a suffix view sharing the list's storage
+         * (ListCells.unifies_cell_flat_rest).  The rest stays the flat list
+         * it is, so it meets flat patterns later as one, and a walk down the
+         * list allocates no element array.
          */
-        if (left_cons && !right_cons &&
-            right->kind == ATOM_EXPR &&
-            right->expr.len > 0u) {
-            right = petta_semantics_flat_list_spine(arena, right);
-            if (!right)
-                goto fail;
-            right_cons = true;
-        } else if (right_cons && !left_cons &&
-                   left->kind == ATOM_EXPR &&
-                   left->expr.len > 0u) {
-            left = petta_semantics_flat_list_spine(arena, left);
-            if (!left)
-                goto fail;
-            left_cons = true;
-        }
-
         Atom *left_head = NULL;
         Atom *left_tail = NULL;
         Atom *right_head = NULL;
@@ -1243,12 +1330,22 @@ static bool petta_semantics_match_cons_constraint_mode(
         if (left_cons) {
             left_head = left->expr.elems[1];
             left_tail = left->expr.elems[2];
+        } else if (left->kind == ATOM_EXPR && left->expr.len > 0u) {
+            left_head = left->expr.elems[0];
+            left_tail = atom_expr_suffix(arena, left, 1u);
+            if (!left_tail)
+                goto fail;
         } else {
             goto fail;
         }
         if (right_cons) {
             right_head = right->expr.elems[1];
             right_tail = right->expr.elems[2];
+        } else if (right->kind == ATOM_EXPR && right->expr.len > 0u) {
+            right_head = right->expr.elems[0];
+            right_tail = atom_expr_suffix(arena, right, 1u);
+            if (!right_tail)
+                goto fail;
         } else {
             goto fail;
         }
@@ -1318,12 +1415,9 @@ static bool petta_semantics_contains_cons_walk(
     if (!root)
         return false;
     if (observable_open_only &&
-        !atom_structural_may_have_internal_tag(root)) {
+        !atom_structural_may_have_list_carrier(root)) {
         return false;
     }
-    PeTTaConsWalkItem *stack = NULL;
-    size_t length = 0u;
-    size_t capacity = 0u;
     bool root_matches = observable_open_only
         ? petta_semantics_is_open_cons_value(root)
         : petta_semantics_is_cons_constraint(root);
@@ -1334,61 +1428,55 @@ static bool petta_semantics_contains_cons_walk(
          petta_materialize_opaque_value(root))) {
         return false;
     }
-    for (CettaExprIndex index = root->expr.len;
-         index > 0u; index--) {
-        if (length == capacity) {
-            size_t next = capacity ? capacity * 2u : 32u;
-            if (next <= capacity ||
-                next > SIZE_MAX / sizeof(*stack)) {
-                free(stack);
-                /* Unknown must take the conservative cons-capable route. */
-                return true;
-            }
-            stack = stack
-                ? cetta_realloc(stack, sizeof(*stack) * next)
-                : cetta_malloc(sizeof(*stack) * next);
-            capacity = next;
-        }
-        stack[length++] = (PeTTaConsWalkItem){
-            .atom = root->expr.elems[index - 1u],
-        };
-    }
+    /* Small values walk on the stack; a larger one grows onto the heap. */
+    PeTTaConsWalkItem inline_stack[32];
+    PeTTaConsWalkItem *stack = inline_stack;
+    size_t length = 0u;
+    size_t capacity = 32u;
+    bool found = false;
+#define PETTA_CONS_WALK_PUSH(pushed) do { \
+    if (length == capacity) { \
+        size_t next = capacity * 2u; \
+        if (next <= capacity || next > SIZE_MAX / sizeof(*stack)) { \
+            /* Unknown must take the conservative cons-capable route. */ \
+            found = true; \
+            goto done; \
+        } \
+        PeTTaConsWalkItem *grown = stack == inline_stack \
+            ? cetta_malloc(sizeof(*stack) * next) \
+            : cetta_realloc(stack, sizeof(*stack) * next); \
+        if (stack == inline_stack) \
+            memcpy(grown, inline_stack, sizeof(*stack) * length); \
+        stack = grown; \
+        capacity = next; \
+    } \
+    stack[length++] = (PeTTaConsWalkItem){ .atom = (pushed) }; \
+} while (0)
+    for (CettaExprIndex index = root->expr.len; index > 0u; index--)
+        PETTA_CONS_WALK_PUSH(root->expr.elems[index - 1u]);
     while (length > 0u) {
-        PeTTaConsWalkItem item = stack[--length];
-        Atom *atom = item.atom;
+        Atom *atom = stack[--length].atom;
         bool matches = observable_open_only
             ? petta_semantics_is_open_cons_value(atom)
             : petta_semantics_is_cons_constraint(atom);
         if (matches) {
-            free(stack);
-            return true;
+            found = true;
+            goto done;
         }
         if (!atom || atom->kind != ATOM_EXPR ||
             (observable_open_only &&
-             petta_materialize_opaque_value(atom))) {
+             (!atom_structural_may_have_list_carrier(atom) ||
+              petta_materialize_opaque_value(atom)))) {
             continue;
         }
-        for (CettaExprIndex index = atom->expr.len;
-             index > 0u; index--) {
-            if (length == capacity) {
-                size_t next = capacity ? capacity * 2u : 32u;
-                if (next <= capacity ||
-                    next > SIZE_MAX / sizeof(*stack)) {
-                    free(stack);
-                    /* Unknown must take the conservative cons-capable route. */
-                    return true;
-                }
-                stack = cetta_realloc(
-                    stack, sizeof(*stack) * next);
-                capacity = next;
-            }
-            stack[length++] = (PeTTaConsWalkItem){
-                .atom = atom->expr.elems[index - 1u],
-            };
-        }
+        for (CettaExprIndex index = atom->expr.len; index > 0u; index--)
+            PETTA_CONS_WALK_PUSH(atom->expr.elems[index - 1u]);
     }
-    free(stack);
-    return false;
+done:
+#undef PETTA_CONS_WALK_PUSH
+    if (stack != inline_stack)
+        free(stack);
+    return found;
 }
 
 bool petta_semantics_value_contains_observable_open_cons(
@@ -1778,7 +1866,6 @@ bool petta_semantics_match_existence_observer_shape(
         ? observed->expr.elems[0] : NULL;
     if (!reify || reify->kind != ATOM_SYMBOL ||
         (reify->sym_id != primary_reify &&
-         reify->sym_id != g_builtin_syms.reify &&
          reify->sym_id != g_builtin_syms.collapse)) {
         return false;
     }

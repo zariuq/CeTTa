@@ -308,6 +308,9 @@ typedef struct {
     const Space *space;
     uint64_t instance_id;
     uint64_t synchronized_revision;
+    /* The space's equations and declarations when the catalog was last
+     * synchronized; a data-only mutation leaves it current. */
+    SpaceProgramToken synchronized_program;
     bool synchronized_snapshot;
     uint64_t catalog_generation;
     PettaProgramEquation *equations;
@@ -370,9 +373,21 @@ typedef struct {
     bool occupied;
 } PettaTableSafetyCacheEntry;
 
+/* A plan of a runtime translation, keyed by its content. */
+typedef struct {
+    uint64_t hash;
+    const PettaPlanNode *plan;
+} PettaPlanInternEntry;
+
 struct PettaProgram {
     Arena plans;
     bool (*is_host_intrinsic)(SymbolId head);
+    /* Plans of runtime translations (eval, a computed hyperpose branch),
+     * one per distinct content, and the arena each is first built in. */
+    PettaPlanInternEntry *interned_plans;
+    size_t interned_plan_len;
+    size_t interned_plan_cap;
+    Arena transient_scratch;
     PettaEquationTemplate *equation_templates;
     PettaEquationTemplateC0 **equation_template_c0;
     size_t equation_template_c0_len;
@@ -2356,13 +2371,14 @@ static bool petta_plan_mark_open_template_admitted(
     return ok;
 }
 
-static const PettaPlanNode *petta_plan_build(
-    PettaProgram *program,
-    const PettaCallabilityDomain *callability, Atom *root) {
-    if (!program || !root)
+static PettaPlanNode *petta_plan_build_in(
+    PettaProgram *program, Arena *plans,
+    const PettaCallabilityDomain *callability, Atom *root,
+    bool compile_regions) {
+    if (!program || !plans || !root)
         return NULL;
     PettaPlanNode *plan =
-        arena_alloc(&program->plans, sizeof(*plan));
+        arena_alloc(plans, sizeof(*plan));
     if (!plan)
         return NULL;
     memset(plan, 0, sizeof(*plan));
@@ -2460,6 +2476,7 @@ static const PettaPlanNode *petta_plan_build(
                         : PETTA_PLAN_EXEC_GENERIC;
         } else {
             node->role = PETTA_PLAN_DYNAMIC_CALL;
+            node->dispatch_handler = true;
         }
 
         if (node->role == PETTA_PLAN_DATA) {
@@ -2521,7 +2538,7 @@ static const PettaPlanNode *petta_plan_build(
             break;
         }
         PettaPlanNode *children = arena_alloc(
-            &program->plans,
+            plans,
             sizeof(*children) * (size_t)atom->expr.len);
         if (!children) {
             ok = false;
@@ -2531,6 +2548,11 @@ static const PettaPlanNode *petta_plan_build(
             children, 0,
             sizeof(*children) * (size_t)atom->expr.len);
         node->children = children;
+        /* The application written in a `reduce` is dispatched at run
+         * time, under the handler, whatever its head. */
+        if (head_atom->kind == ATOM_SYMBOL && atom->expr.len == 2u &&
+            petta_semantics_form(head_atom->sym_id) == PETTA_FORM_REDUCE)
+            children[1].dispatch_handler = true;
         for (CettaExprIndex index = atom->expr.len;
              index > 0u; index--) {
             CettaExprIndex child = index - 1u;
@@ -2543,11 +2565,291 @@ static const PettaPlanNode *petta_plan_build(
     free(work);
     if (!ok || !petta_plan_finish_features(plan))
         return NULL;
-    petta_plan_compile_deterministic_regions(
-        program, root, plan);
-    petta_plan_compile_region_hole_programs(
-        program, root, plan);
+    if (compile_regions) {
+        petta_plan_compile_deterministic_regions(
+            program, root, plan);
+        petta_plan_compile_region_hole_programs(
+            program, root, plan);
+    }
     return plan;
+}
+
+static const PettaPlanNode *petta_plan_build(
+    PettaProgram *program,
+    const PettaCallabilityDomain *callability, Atom *root) {
+    return program
+        ? petta_plan_build_in(
+              program, &program->plans, callability, root, true)
+        : NULL;
+}
+
+/* A subtree without a call is a value where a runtime translation reads it:
+ * nothing in it runs, as SWI-PeTTa's translation leaves call-free data as it
+ * is.  Its plan is one VALUE place, so the plan records only the term's
+ * code. */
+static bool petta_plan_collapse_values(PettaPlanNode *root) {
+    PettaPlanNode **work = NULL;
+    size_t work_len = 0u;
+    size_t work_cap = 0u;
+    if (!petta_program_reserve(
+            (void **)&work, &work_cap, 1u, sizeof(*work))) {
+        return false;
+    }
+    work[work_len++] = root;
+    bool ok = true;
+    while (work_len > 0u) {
+        PettaPlanNode *node = work[--work_len];
+        if (node->child_count == 0u)
+            continue;
+        if (!node->contains_call &&
+            !node->contains_cardinality_call &&
+            !node->contains_deferred_occurrence_transport) {
+            *node = (PettaPlanNode){
+                .role = PETTA_PLAN_VALUE,
+                .output = PETTA_PLAN_OUTPUT_VALUE,
+            };
+            continue;
+        }
+        if ((size_t)node->child_count > SIZE_MAX - work_len ||
+            !petta_program_reserve(
+                (void **)&work, &work_cap,
+                work_len + (size_t)node->child_count,
+                sizeof(*work))) {
+            ok = false;
+            break;
+        }
+        for (CettaExprIndex index = 0u;
+             index < node->child_count; index++) {
+            work[work_len++] =
+                (PettaPlanNode *)&node->children[index];
+        }
+    }
+    free(work);
+    return ok;
+}
+
+/* Every field of a plan node other than its children, as words.  Content
+ * equality of plans compares these, so a new field belongs here. */
+enum { PETTA_PLAN_NODE_KEY_WORDS = 11 };
+
+static void petta_plan_node_key(
+    const PettaPlanNode *node,
+    uint64_t key[PETTA_PLAN_NODE_KEY_WORDS]) {
+    key[0] = (uint64_t)node->role;
+    key[1] = (uint64_t)node->execution;
+    key[2] = (uint64_t)node->control;
+    key[3] = (uint64_t)node->continuation;
+    key[4] = (uint64_t)node->output;
+    key[5] = (uint64_t)node->output_child;
+    key[6] = (uint64_t)node->contains_cardinality_call |
+             (uint64_t)node->contains_call << 1 |
+             (uint64_t)node->contains_deferred_occurrence_transport << 2 |
+             (uint64_t)node->plain_scalar_tree << 3 |
+             (uint64_t)node->relation_head_admitted << 4 |
+             (uint64_t)node->open_template_admitted << 5 |
+             (uint64_t)node->has_equation_variable_slot << 6 |
+             (uint64_t)node->dispatch_handler << 7 |
+             (uint64_t)node->plain_scalar_tree_operations << 32;
+    key[7] = (uint64_t)node->equation_variable_slot;
+    key[8] = (uint64_t)(uintptr_t)node->deterministic_region;
+    key[9] = (uint64_t)(uintptr_t)node->region_hole_program;
+    key[10] = (uint64_t)node->child_count;
+}
+
+static bool petta_plan_content_hash(
+    const PettaPlanNode *root, uint64_t *hash_out) {
+    const PettaPlanNode **work = NULL;
+    size_t work_len = 0u;
+    size_t work_cap = 0u;
+    if (!petta_program_reserve(
+            (void **)&work, &work_cap, 1u, sizeof(*work))) {
+        return false;
+    }
+    work[work_len++] = root;
+    uint64_t hash = UINT64_C(0xcbf29ce484222325);
+    bool ok = true;
+    while (work_len > 0u) {
+        const PettaPlanNode *node = work[--work_len];
+        uint64_t key[PETTA_PLAN_NODE_KEY_WORDS];
+        petta_plan_node_key(node, key);
+        for (size_t word = 0u; word < PETTA_PLAN_NODE_KEY_WORDS; word++) {
+            hash ^= key[word];
+            hash *= UINT64_C(0x100000001b3);
+            hash ^= hash >> 29;
+        }
+        if ((size_t)node->child_count > SIZE_MAX - work_len ||
+            !petta_program_reserve(
+                (void **)&work, &work_cap,
+                work_len + (size_t)node->child_count,
+                sizeof(*work))) {
+            ok = false;
+            break;
+        }
+        for (CettaExprIndex index = node->child_count; index > 0u; index--)
+            work[work_len++] = &node->children[index - 1u];
+    }
+    free(work);
+    *hash_out = hash;
+    return ok;
+}
+
+typedef struct {
+    const PettaPlanNode *left;
+    const PettaPlanNode *right;
+} PettaPlanNodePair;
+
+/* 1 when the plans have the same content, 0 when not, -1 when the
+ * comparison could not be made. */
+static int petta_plan_content_equal(
+    const PettaPlanNode *left, const PettaPlanNode *right) {
+    PettaPlanNodePair *work = NULL;
+    size_t work_len = 0u;
+    size_t work_cap = 0u;
+    if (!petta_program_reserve(
+            (void **)&work, &work_cap, 1u, sizeof(*work))) {
+        return -1;
+    }
+    work[work_len++] = (PettaPlanNodePair){left, right};
+    int equal = 1;
+    while (work_len > 0u) {
+        PettaPlanNodePair pair = work[--work_len];
+        uint64_t left_key[PETTA_PLAN_NODE_KEY_WORDS];
+        uint64_t right_key[PETTA_PLAN_NODE_KEY_WORDS];
+        petta_plan_node_key(pair.left, left_key);
+        petta_plan_node_key(pair.right, right_key);
+        if (memcmp(left_key, right_key, sizeof(left_key)) != 0) {
+            equal = 0;
+            break;
+        }
+        if ((size_t)pair.left->child_count > SIZE_MAX - work_len ||
+            !petta_program_reserve(
+                (void **)&work, &work_cap,
+                work_len + (size_t)pair.left->child_count,
+                sizeof(*work))) {
+            equal = -1;
+            break;
+        }
+        for (CettaExprIndex index = 0u;
+             index < pair.left->child_count; index++) {
+            work[work_len++] = (PettaPlanNodePair){
+                &pair.left->children[index],
+                &pair.right->children[index],
+            };
+        }
+    }
+    free(work);
+    return equal;
+}
+
+static const PettaPlanNode *petta_plan_copy_into(
+    Arena *plans, const PettaPlanNode *source) {
+    PettaPlanNode *root = arena_alloc(plans, sizeof(*root));
+    if (!root)
+        return NULL;
+    *root = *source;
+    PettaPlanNode **work = NULL;
+    size_t work_len = 0u;
+    size_t work_cap = 0u;
+    if (!petta_program_reserve(
+            (void **)&work, &work_cap, 1u, sizeof(*work))) {
+        return NULL;
+    }
+    work[work_len++] = root;
+    bool ok = true;
+    while (work_len > 0u) {
+        PettaPlanNode *node = work[--work_len];
+        if (node->child_count == 0u) {
+            node->children = NULL;
+            continue;
+        }
+        if (!cetta_expr_len_mul_fits_size(
+                node->child_count, sizeof(*node->children)) ||
+            (size_t)node->child_count > SIZE_MAX - work_len ||
+            !petta_program_reserve(
+                (void **)&work, &work_cap,
+                work_len + (size_t)node->child_count,
+                sizeof(*work))) {
+            ok = false;
+            break;
+        }
+        PettaPlanNode *children = arena_alloc(
+            plans, sizeof(*children) * (size_t)node->child_count);
+        if (!children) {
+            ok = false;
+            break;
+        }
+        memcpy(children, node->children,
+               sizeof(*children) * (size_t)node->child_count);
+        node->children = children;
+        for (CettaExprIndex index = 0u;
+             index < node->child_count; index++) {
+            work[work_len++] = &children[index];
+        }
+    }
+    free(work);
+    return ok ? root : NULL;
+}
+
+static bool petta_program_grow_interned_plans(PettaProgram *program) {
+    size_t capacity = program->interned_plan_cap
+        ? program->interned_plan_cap * 2u : 64u;
+    if (capacity < program->interned_plan_cap ||
+        capacity > SIZE_MAX / sizeof(PettaPlanInternEntry))
+        return false;
+    PettaPlanInternEntry *table =
+        calloc(capacity, sizeof(*table));
+    if (!table)
+        return false;
+    for (size_t index = 0u;
+         index < program->interned_plan_cap; index++) {
+        PettaPlanInternEntry entry = program->interned_plans[index];
+        if (!entry.plan)
+            continue;
+        size_t slot = (size_t)entry.hash & (capacity - 1u);
+        while (table[slot].plan)
+            slot = (slot + 1u) & (capacity - 1u);
+        table[slot] = entry;
+    }
+    free(program->interned_plans);
+    program->interned_plans = table;
+    program->interned_plan_cap = capacity;
+    return true;
+}
+
+static const PettaPlanNode *petta_program_intern_plan(
+    PettaProgram *program, const PettaPlanNode *built) {
+    uint64_t hash = 0u;
+    if (!petta_plan_content_hash(built, &hash))
+        return NULL;
+    if ((program->interned_plan_len + 1u) * 2u >
+            program->interned_plan_cap &&
+        !petta_program_grow_interned_plans(program)) {
+        return NULL;
+    }
+    size_t mask = program->interned_plan_cap - 1u;
+    size_t slot = (size_t)hash & mask;
+    while (program->interned_plans[slot].plan) {
+        const PettaPlanInternEntry *entry =
+            &program->interned_plans[slot];
+        if (entry->hash == hash) {
+            int equal = petta_plan_content_equal(entry->plan, built);
+            if (equal < 0)
+                return NULL;
+            if (equal)
+                return entry->plan;
+        }
+        slot = (slot + 1u) & mask;
+    }
+    const PettaPlanNode *copy =
+        petta_plan_copy_into(&program->plans, built);
+    if (!copy)
+        return NULL;
+    program->interned_plans[slot] = (PettaPlanInternEntry){
+        .hash = hash,
+        .plan = copy,
+    };
+    program->interned_plan_len++;
+    return copy;
 }
 
 /* Renaming variables does not change control or callability facts.  Rebuild
@@ -2968,6 +3270,7 @@ PettaProgramRevisionView *petta_program_revision_view_capture(
         .space = source,
         .instance_id = view->source.instance_id,
         .synchronized_revision = entry->synchronized_revision,
+        .synchronized_program = entry->synchronized_program,
         .synchronized_snapshot = entry->synchronized_snapshot,
         .head_index_dirty = true,
     };
@@ -3186,6 +3489,8 @@ PettaProgram *petta_program_new_with_host_intrinsics(
     arena_set_runtime_kind(
         &program->plans, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
     arena_set_hashcons(&program->plans, NULL);
+    arena_init(&program->transient_scratch);
+    arena_set_hashcons(&program->transient_scratch, NULL);
     return program;
 }
 
@@ -3268,6 +3573,8 @@ void petta_program_free(PettaProgram *program) {
          template; template = template->next_owned)
         bindings_frame_schema_release(template->frame_schema);
     arena_free(&program->plans);
+    free(program->interned_plans);
+    arena_free(&program->transient_scratch);
     free(program);
 }
 
@@ -3281,6 +3588,32 @@ const PettaPlanNode *petta_program_plan_current(
     const PettaPlanNode *plan =
         ok ? petta_plan_build(program, &callability, atom) : NULL;
     free(callability.named_heads);
+    return plan;
+}
+
+const PettaPlanNode *petta_program_plan_transient(
+    PettaProgram *program, Atom *atom) {
+    if (!program || !atom)
+        return NULL;
+    PettaCallabilityDomain owned = {0};
+    const PettaCallabilityDomain *callability =
+        &program->callability_cache;
+    if (!petta_program_callability_cache_current(program)) {
+        if (!petta_program_collect_callability(program, &owned)) {
+            free(owned.named_heads);
+            return NULL;
+        }
+        callability = &owned;
+    }
+    ArenaMark mark = arena_mark(&program->transient_scratch);
+    PettaPlanNode *built = petta_plan_build_in(
+        program, &program->transient_scratch, callability, atom, false);
+    const PettaPlanNode *plan =
+        built && petta_plan_collapse_values(built)
+            ? petta_program_intern_plan(program, built)
+            : NULL;
+    arena_reset(&program->transient_scratch, mark);
+    free(owned.named_heads);
     return plan;
 }
 
@@ -3569,12 +3902,19 @@ bool petta_program_synchronize_space(
     PettaProgramSpace *current =
         petta_program_find_space(program, space);
     uint64_t revision = space_revision(space);
-    if (current && current->synchronized_snapshot &&
-        current->synchronized_revision == revision) {
-        return true;
+    if (current && current->synchronized_snapshot) {
+        if (current->synchronized_revision == revision)
+            return true;
+        /* A data-only mutation leaves the program as it was. */
+        if (space_program_token_matches_live_space(
+                current->synchronized_program, space)) {
+            current->synchronized_revision = revision;
+            return true;
+        }
     }
 
     SpaceReadToken read = space_read_token(space);
+    SpaceProgramToken program_token = space_program_token(space);
     CettaCount atom_count = space_length64(space);
     PettaCallabilityDomain callability = {0};
     bool ok = true;
@@ -3595,17 +3935,65 @@ bool petta_program_synchronize_space(
         }
     }
 
-    if (ok)
-        petta_program_forget_space(program, space);
+    /*
+     * PeTTa compiles an equation once, against the program as it stood
+     * when the equation was defined.  The catalog's equations were
+     * compiled that way as they were added, so each keeps its plan here;
+     * only an equation the program has not seen is compiled now.  The
+     * space's equations are matched against the catalog's in source
+     * order, which PeTTa's own additions and removals preserve.
+     */
+    PettaProgramSpace *entry =
+        ok ? petta_program_ensure_space(program, space) : NULL;
+    PettaProgramEquation *known = NULL;
+    size_t known_len = 0u;
+    bool *taken = NULL;
+    if (entry) {
+        known = entry->equations;
+        known_len = entry->equation_len;
+        entry->equations = NULL;
+        entry->equation_len = 0u;
+        entry->equation_cap = 0u;
+        petta_program_space_dispose_catalog(entry);
+        taken = known_len ? calloc(known_len, sizeof(*taken)) : NULL;
+        ok = !known_len || taken;
+    } else {
+        ok = false;
+    }
+    size_t cursor = 0u;
     for (CettaIndex index = 0u; ok && index < atom_count; index++) {
         Atom *atom = space_get_at64(space, index);
         if (!petta_program_is_equation(atom))
             continue;
+        size_t match = known_len;
+        if (cursor < known_len && !taken[cursor] &&
+            atom_eq(known[cursor].equation, atom)) {
+            match = cursor++;
+        } else {
+            for (size_t candidate = 0u;
+                 candidate < known_len; candidate++) {
+                if (!taken[candidate] &&
+                    atom_eq(known[candidate].equation, atom)) {
+                    match = candidate;
+                    break;
+                }
+            }
+        }
+        if (match < known_len) {
+            taken[match] = true;
+            ok = petta_program_space_reserve_equation(entry);
+            if (ok)
+                petta_program_space_append_reserved_equation(
+                    entry, known[match]);
+            continue;
+        }
         const PettaPlanNode *plan =
             petta_plan_build(program, &callability, atom);
         ok = plan && petta_program_note_add(
             program, space, atom, plan);
     }
+    free(taken);
+    free(known);
     free(callability.named_heads);
 
     if (!ok || !space_read_token_matches_live_space(read, space)) {
@@ -3619,6 +4007,7 @@ bool petta_program_synchronize_space(
         return false;
     }
     installed->synchronized_revision = read.revision;
+    installed->synchronized_program = program_token;
     installed->synchronized_snapshot = true;
     return true;
 }

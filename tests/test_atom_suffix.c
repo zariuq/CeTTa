@@ -5,6 +5,62 @@
 #include "atom.h"
 #include "symbol.h"
 
+/* Retaining the prefixes of one list must not expand their shared storage
+ * when roots are copied, in either order, or on a subsequent collection. */
+static void check_prefix_collection(bool reverse) {
+    enum { COUNT = 2048 };
+    Atom *roots[COUNT];
+    Atom *copies[COUNT];
+    Arena source, copied, collected;
+    arena_init(&source);
+    arena_init(&copied);
+    arena_init(&collected);
+    arena_set_hashcons(&source, NULL);
+    arena_set_hashcons(&copied, NULL);
+    arena_set_hashcons(&collected, NULL);
+    Atom *list = atom_expr(&source, NULL, 0u);
+    for (unsigned i = 0; i < COUNT; i++) {
+        list = atom_expr_prepend(&source, atom_int(&source, i), list);
+        roots[i] = list;
+    }
+    AtomDeepCopySession *session = atom_deep_copy_session_new(&copied);
+    for (unsigned i = 0; i < COUNT; i++) {
+        unsigned index = reverse ? COUNT - 1u - i : i;
+        copies[index] = atom_deep_copy_session_copy(session, roots[index]);
+        assert(atom_eq(copies[index], roots[index]));
+    }
+    atom_deep_copy_session_free(session);
+    /* A linear storage budget, independent of collection order. A separate
+     * flat array per prefix needs quadratic space and exceeds this bound. */
+    size_t budget = 16u * COUNT * (sizeof(Atom) + sizeof(Atom *));
+    assert(arena_accounted_live_bytes(&copied) < budget);
+    arena_free(&source);
+    session = atom_deep_copy_session_new(&collected);
+    for (unsigned i = 0; i < COUNT; i++) {
+        unsigned index = reverse ? i : COUNT - 1u - i;
+        roots[index] = atom_deep_copy_session_copy(session, copies[index]);
+        assert(atom_eq(roots[index], copies[index]));
+    }
+    atom_deep_copy_session_free(session);
+    assert(arena_accounted_live_bytes(&collected) < budget);
+    arena_free(&copied);
+    for (unsigned i = 0; i < COUNT; i++) {
+        assert(roots[i]->expr.len == i + 1u);
+        assert(roots[i]->expr.elems[0]->ground.ival == (int64_t)i);
+        assert(roots[i]->expr.elems[i]->ground.ival == 0);
+    }
+    /* Extending two aliases creates two distinct prefixes and preserves
+     * both the old view and every surviving suffix. */
+    Atom *left = atom_expr_prepend(&collected, atom_int(&collected, -1),
+                                   roots[COUNT - 1u]);
+    Atom *right = atom_expr_prepend(&collected, atom_int(&collected, -2),
+                                    roots[COUNT - 1u]);
+    assert(left->expr.elems[0]->ground.ival == -1);
+    assert(right->expr.elems[0]->ground.ival == -2);
+    assert(roots[COUNT - 1u]->expr.elems[0]->ground.ival == COUNT - 1);
+    arena_free(&collected);
+}
+
 /* The summary a suffix carries is the one its own children fold to. */
 static void assert_same_summary(const Atom *suffix, const Atom *folded) {
     assert(atom_eq((Atom *)suffix, (Atom *)folded));
@@ -130,6 +186,9 @@ int main(void) {
         assert(walk->expr.elems[0] == items[step]);
     }
     assert(walk->expr.len == 1u);
+
+    check_prefix_collection(false);
+    check_prefix_collection(true);
 
     arena_free(&other);
     arena_free(&arena);

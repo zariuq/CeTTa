@@ -77,10 +77,19 @@ typedef struct {
 } AtomDeepCopyMemoSlot;
 
 typedef struct {
+    Atom **source_end;
+    Atom *longest;
+    Atom *recent;
+} AtomDeepCopyBufferSlot;
+
+typedef struct {
     AtomDeepCopyMemoSlot inline_slots[CETTA_ATOM_DEEP_COPY_MEMO_INLINE_CAP];
     AtomDeepCopyMemoSlot *slots;
     size_t cap;
     size_t used;
+    AtomDeepCopyBufferSlot *buffers;
+    size_t buffer_cap;
+    size_t buffer_used;
 } AtomDeepCopyMemo;
 
 struct AtomDeepCopySession {
@@ -1493,16 +1502,15 @@ static uint64_t hashcons_slot_hash(Atom *atom) {
 }
 
 /* Interning keeps every distinct term: a float by its bits, so 0.0 and -0.0
- * stay two atoms, never a numeric promotion across kinds, and a variable with
- * its name, which atom_eq does not observe. */
+ * stay two atoms, and never a numeric promotion across kinds; a variable by
+ * its id, its spelling and its structural name, so each keeps its own name. */
 static bool atom_intern_identical(Atom *a, Atom *b) {
     if (a == b)
         return true;
     if (!a || !b || a->kind != b->kind)
         return false;
     if (a->kind == ATOM_VAR)
-        return a->var_id == b->var_id &&
-               a->sym_id == b->sym_id &&
+        return a->var_id == b->var_id && a->sym_id == b->sym_id &&
                a->name_key == b->name_key;
     if (a->kind == ATOM_GROUNDED) {
         if (a->ground.gkind != b->ground.gkind)
@@ -2776,7 +2784,8 @@ static inline __attribute__((always_inline)) uint32_t atom_flags_fold(
                     ATOM_STRUCTURAL_FACTS_VALID) != 0u) {
             structural_facts |= child->structural_facts &
                 ~(ATOM_STRUCTURAL_FACTS_VALID |
-                  ATOM_STRUCTURAL_GENERATION_CLOSED);
+                  ATOM_STRUCTURAL_GENERATION_CLOSED |
+                  ATOM_STRUCTURAL_FRONT_SLACK);
         }
     }
     if (len > 0 && elems)
@@ -3389,7 +3398,9 @@ Atom *atom_internal_tag(Arena *a, CettaInternalTag tag) {
     at->name_key = NULL;
     at->hash_cache = 0u;
     at->structural_facts =
-        atom_structural_facts_for_grounded_kind(GV_INTERNAL_TAG);
+        atom_structural_facts_for_grounded_kind(GV_INTERNAL_TAG) |
+        (tag == CETTA_INTERNAL_TAG_PETTA_OPEN_CONS
+             ? ATOM_STRUCTURAL_HAS_LIST_CARRIER : 0u);
     at->ground.gkind = GV_INTERNAL_TAG;
     at->ground.ival = (int64_t)tag;
     return at;
@@ -3854,7 +3865,8 @@ static bool atom_summary_neutral_child(const Atom *child) {
     return child &&
         (child->flags & ATOM_SUMMARY_INHERITED) == 0u &&
         (child->flags & ATOM_SUMMARY_REQUIRED) == ATOM_SUMMARY_REQUIRED &&
-        (child->structural_facts & ~ATOM_STRUCTURAL_GENERATION_CLOSED) ==
+        (child->structural_facts & ~(ATOM_STRUCTURAL_GENERATION_CLOSED |
+                                     ATOM_STRUCTURAL_FRONT_SLACK)) ==
             ATOM_STRUCTURAL_FACTS_VALID;
 }
 
@@ -3926,7 +3938,8 @@ Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
          * bit is folded afresh up to the first child not admitted, as the
          * closure bit is. */
         uint32_t facts = expression->structural_facts &
-                         ~ATOM_STRUCTURAL_GENERATION_CLOSED;
+                         ~(ATOM_STRUCTURAL_GENERATION_CLOSED |
+                           ATOM_STRUCTURAL_FRONT_SLACK);
         if (a->older_identity != 0u &&
             (flags & ATOM_FLAG_ARENA_CLOSED) == 0u &&
             (facts & ATOM_STRUCTURAL_FACTS_VALID) != 0u) {
@@ -3957,6 +3970,125 @@ Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
         suffix->var_id = atom_single_variable_id_from_children(elems, len);
     }
     return suffix;
+}
+
+/* The lowest slot of a buffer with front slack.  It is never free, so a view
+ * whose next slot down holds it has no room to claim. */
+static const Atom atom_front_slack_floor;
+
+/* The singleton-variable summary of two summaries folded together. */
+static VarId atom_single_variable_join(const Atom *left, const Atom *right) {
+    bool left_vars = (left->flags & ATOM_FLAG_HAS_VARS) != 0u;
+    bool right_vars = (right->flags & ATOM_FLAG_HAS_VARS) != 0u;
+    if (!left_vars)
+        return right_vars ? atom_single_variable_id(right) : VAR_ID_NONE;
+    if (!right_vars)
+        return atom_single_variable_id(left);
+    VarId single = atom_single_variable_id(left);
+    return single == atom_single_variable_id(right) ? single : VAR_ID_NONE;
+}
+
+Atom *atom_expr_prepend(Arena *a, Atom *head, Atom *list) {
+    if (!a || !head || !list || list->kind != ATOM_EXPR)
+        return NULL;
+    CettaExprLen len = list->expr.len;
+    if (len == UINT64_MAX)
+        cetta_oom(SIZE_MAX);
+    CettaExprLen count = len + 1u;
+    if (a->hashcons) {
+        /* An interning arena shares expressions, so none has room of its
+         * own. */
+        if (!cetta_expr_len_mul_fits_size(count, sizeof(Atom *)))
+            cetta_oom(SIZE_MAX);
+        Atom **joined = cetta_malloc((size_t)count * sizeof(Atom *));
+        joined[0] = head;
+        if (len > 0u)
+            memcpy(joined + 1u, list->expr.elems, (size_t)len * sizeof(Atom *));
+        Atom *interned = atom_expr(a, joined, count);
+        free(joined);
+        return interned;
+    }
+
+    /* The list starts at its buffer's front exactly when the slot below it
+     * is free (PrefixBuffer.claimable_iff_free_below); claiming it lowers the
+     * front, and no view of the buffer ever reads that slot again. */
+    Atom **elems = NULL;
+    if ((list->structural_facts & ATOM_STRUCTURAL_FRONT_SLACK) != 0u &&
+        list->arena_id == a->identity && len > 0u &&
+        list->expr.elems[-1] == NULL) {
+        elems = list->expr.elems - 1;
+        elems[0] = head;
+    } else {
+        /* A fresh buffer: the floor, as many free slots as the new list is
+         * long, then the new list (PrefixBuffer.fresh_packed). */
+        if (count > (UINT64_MAX - 1u) / 2u ||
+            !cetta_expr_len_mul_fits_size(2u * count + 1u, sizeof(Atom *)))
+            cetta_oom(SIZE_MAX);
+        Atom **buffer = arena_alloc(
+            a, (size_t)(2u * count + 1u) * sizeof(Atom *));
+        buffer[0] = (Atom *)&atom_front_slack_floor;
+        memset(buffer + 1u, 0, (size_t)count * sizeof(Atom *));
+        elems = buffer + 1u + count;
+        elems[0] = head;
+        if (len > 0u)
+            memcpy(elems + 1u, list->expr.elems, (size_t)len * sizeof(Atom *));
+    }
+
+    Atom *at = arena_alloc(a, sizeof(Atom));
+    *at = (Atom){
+        .kind = ATOM_EXPR,
+        .var_id = VAR_ID_NONE,
+        .sym_id = SYMBOL_ID_NONE,
+        .arena_id = a->identity,
+        .expr = {
+            .elems = elems,
+            .len = count,
+        },
+    };
+    const uint32_t generation = ATOM_STRUCTURAL_FACTS_VALID |
+                                ATOM_STRUCTURAL_GENERATION_CLOSED;
+    bool list_folded = len > 0u && list->arena_id == a->identity &&
+        !atom_summary_head_adjusts(list->expr.elems[0]) &&
+        (list->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) != 0u &&
+        (head->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) != 0u;
+    if (list_folded) {
+        /* The list's summary is its fold, since its head adjusts nothing;
+         * the new head steps onto it and then adjusts it
+         * (TailSummary.summary_prepend). */
+        uint32_t flags = list->flags & ~ATOM_FLAG_HASH_VALID;
+        flags |= head->flags & ATOM_SUMMARY_INHERITED;
+        flags &= head->flags | ~ATOM_SUMMARY_REQUIRED;
+        bool head_closed = atom_summary_closed_child(head, a->identity);
+        if (!head_closed)
+            flags &= ~ATOM_FLAG_ARENA_CLOSED;
+        flags = atom_summary_head_adjust(head, flags);
+        uint32_t facts =
+            (list->structural_facts & ~(ATOM_STRUCTURAL_GENERATION_CLOSED |
+                                        ATOM_STRUCTURAL_FRONT_SLACK)) |
+            (head->structural_facts & ~(ATOM_STRUCTURAL_FACTS_VALID |
+                                        ATOM_STRUCTURAL_GENERATION_CLOSED |
+                                        ATOM_STRUCTURAL_FRONT_SLACK));
+        /* Every child is admitted by the generations when the list's are,
+         * which its closure or its own generation bit says, and the head is
+         * too. */
+        if (a->older_identity != 0u &&
+            (flags & ATOM_FLAG_ARENA_CLOSED) == 0u &&
+            ((list->flags & ATOM_FLAG_ARENA_CLOSED) != 0u ||
+             (list->structural_facts & generation) == generation) &&
+            (head_closed ||
+             atom_generation_admits(a->identity, a->older_identity, head)))
+            facts |= ATOM_STRUCTURAL_GENERATION_CLOSED;
+        at->flags = flags;
+        at->structural_facts = facts | ATOM_STRUCTURAL_FRONT_SLACK;
+        at->var_id = atom_single_variable_join(head, list);
+    } else {
+        uint32_t facts = 0u;
+        at->flags = atom_flags_from_children(
+            a->identity, a->older_identity, elems, count, &facts);
+        at->structural_facts = facts | ATOM_STRUCTURAL_FRONT_SLACK;
+        at->var_id = atom_single_variable_id_from_children(elems, count);
+    }
+    return at;
 }
 
 Atom *atom_expr_builder_begin(Arena *a, CettaExprLen len) {
@@ -4856,6 +4988,9 @@ static void atom_deep_copy_memo_init(AtomDeepCopyMemo *memo) {
     memo->slots = memo->inline_slots;
     memo->cap = CETTA_ATOM_DEEP_COPY_MEMO_INLINE_CAP;
     memo->used = 0;
+    memo->buffers = NULL;
+    memo->buffer_cap = 0u;
+    memo->buffer_used = 0u;
     atom_deep_copy_memo_clear(memo->slots, memo->cap);
 }
 
@@ -4864,18 +4999,102 @@ static void atom_deep_copy_memo_free(AtomDeepCopyMemo *memo) {
         return;
     if (memo->slots != memo->inline_slots)
         free(memo->slots);
+    free(memo->buffers);
+    memo->buffers = NULL;
+    memo->buffer_cap = 0u;
+    memo->buffer_used = 0u;
     memo->slots = memo->inline_slots;
     memo->cap = CETTA_ATOM_DEEP_COPY_MEMO_INLINE_CAP;
     memo->used = 0;
 }
 
-static size_t atom_deep_copy_memo_hash(const Atom *src) {
+static size_t atom_deep_copy_memo_hash(const void *src) {
     uint64_t x = (uint64_t)(uintptr_t)src;
     x >>= 4;
     x ^= x >> 33;
     x *= UINT64_C(0xff51afd7ed558ccd);
     x ^= x >> 33;
     return (size_t)x;
+}
+
+/* Prefix-buffer views have distinct Atom headers but a common end of their
+ * element storage. Forwarding headers alone expands all retained prefixes
+ * quadratically during a collection. This table keeps the copied extent;
+ * a longer prefix extends it geometrically and a shorter one shares it.
+ * Source storage is immutable for the lifetime of a copy session. */
+static AtomDeepCopyBufferSlot *atom_deep_copy_buffer_lookup(
+    AtomDeepCopyMemo *memo, Atom **source_end) {
+    if (!memo->buffer_cap)
+        return NULL;
+    size_t mask = memo->buffer_cap - 1u;
+    size_t pos = atom_deep_copy_memo_hash(source_end) & mask;
+    while (memo->buffers[pos].source_end) {
+        if (memo->buffers[pos].source_end == source_end)
+            return &memo->buffers[pos];
+        pos = (pos + 1u) & mask;
+    }
+    return NULL;
+}
+
+static void atom_deep_copy_buffer_store(
+    AtomDeepCopyMemo *memo, Atom *source, Atom *copy) {
+    Atom **end = source->expr.elems + source->expr.len;
+    AtomDeepCopyBufferSlot *known = atom_deep_copy_buffer_lookup(memo, end);
+    if (known) {
+        if (copy->expr.len > known->longest->expr.len)
+            known->longest = copy;
+        known->recent = copy;
+        return;
+    }
+    if ((memo->buffer_used + 1u) * 4u >= memo->buffer_cap * 3u) {
+        size_t cap = memo->buffer_cap ? memo->buffer_cap * 2u : 16u;
+        if (cap < memo->buffer_cap || cap > SIZE_MAX / sizeof(*memo->buffers))
+            cetta_oom(SIZE_MAX);
+        AtomDeepCopyBufferSlot *slots = cetta_malloc(cap * sizeof(*slots));
+        memset(slots, 0, cap * sizeof(*slots));
+        for (size_t i = 0u; i < memo->buffer_cap; i++) {
+            AtomDeepCopyBufferSlot old = memo->buffers[i];
+            if (!old.source_end)
+                continue;
+            size_t pos = atom_deep_copy_memo_hash(old.source_end) & (cap - 1u);
+            while (slots[pos].source_end)
+                pos = (pos + 1u) & (cap - 1u);
+            slots[pos] = old;
+        }
+        free(memo->buffers);
+        memo->buffers = slots;
+        memo->buffer_cap = cap;
+    }
+    size_t pos = atom_deep_copy_memo_hash(end) & (memo->buffer_cap - 1u);
+    while (memo->buffers[pos].source_end)
+        pos = (pos + 1u) & (memo->buffer_cap - 1u);
+    memo->buffers[pos] = (AtomDeepCopyBufferSlot){end, copy, copy};
+    memo->buffer_used++;
+}
+
+static bool atom_deep_copy_buffer_enabled(
+    const Arena *dst, const Atom *source, bool share) {
+    return !share && !dst->hashcons && source->expr.len > 0u &&
+        (source->structural_facts & ATOM_STRUCTURAL_FRONT_SLACK) != 0u;
+}
+
+static Atom *atom_deep_copy_buffer_view(
+    Arena *dst, Atom *source, bool share, AtomDeepCopyMemo *memo) {
+    if (!atom_deep_copy_buffer_enabled(dst, source, share))
+        return NULL;
+    AtomDeepCopyBufferSlot *slot = atom_deep_copy_buffer_lookup(
+        memo, source->expr.elems + source->expr.len);
+    if (!slot || slot->longest->expr.len < source->expr.len)
+        return NULL;
+    Atom *parent = slot->recent->expr.len >= source->expr.len
+        ? slot->recent : slot->longest;
+    Atom *view = atom_expr_suffix(
+        dst, parent, parent->expr.len - source->expr.len);
+    /* The copied buffer has a floor, so inspecting the preceding slot is
+     * safe for every nonempty view, even when that slot is already used. */
+    view->structural_facts |= ATOM_STRUCTURAL_FRONT_SLACK;
+    slot->recent = view;
+    return view;
 }
 
 static Atom *atom_deep_copy_memo_lookup(const AtomDeepCopyMemo *memo,
@@ -5034,6 +5253,8 @@ typedef struct {
     Atom *src;
     Atom **elems;
     CettaExprIndex next;
+    CettaExprLen prefix_len;
+    Atom *tail;
 } AtomDeepCopyFrame;
 
 static Atom *atom_deep_copy_impl(
@@ -5058,9 +5279,24 @@ static Atom *atom_deep_copy_impl(
             return NULL;
         return result;
     }
+    result = atom_deep_copy_buffer_view(dst, src, share, memo);
+    if (result) {
+        if (!atom_deep_copy_memo_store(memo, src, result))
+            return NULL;
+        return result;
+    }
 
 #define PUSH_COPY_FRAME(source_atom) do { \
     Atom *copy_source = (source_atom); \
+    Atom *copy_tail = NULL; \
+    if (atom_deep_copy_buffer_enabled(dst, copy_source, share)) { \
+        AtomDeepCopyBufferSlot *buffer = atom_deep_copy_buffer_lookup( \
+            memo, copy_source->expr.elems + copy_source->expr.len); \
+        if (buffer && buffer->longest->expr.len < copy_source->expr.len) \
+            copy_tail = buffer->longest; \
+    } \
+    CettaExprLen prefix_len = copy_source->expr.len - \
+        (copy_tail ? copy_tail->expr.len : 0u); \
     if (copy_source->expr.len > 0 && \
         !cetta_expr_len_mul_fits_size(copy_source->expr.len, sizeof(Atom *))) \
         cetta_oom(SIZE_MAX); \
@@ -5075,10 +5311,12 @@ static Atom *atom_deep_copy_impl(
     } \
     stack[stack_len++] = (AtomDeepCopyFrame) { \
         .src = copy_source, \
-        .elems = copy_source->expr.len \
-            ? arena_alloc(dst, (size_t)copy_source->expr.len * sizeof(Atom *)) \
+        .elems = prefix_len \
+            ? arena_alloc(dst, (size_t)prefix_len * sizeof(Atom *)) \
             : NULL, \
         .next = 0, \
+        .prefix_len = prefix_len, \
+        .tail = copy_tail, \
     }; \
 } while (0)
 
@@ -5086,7 +5324,7 @@ static Atom *atom_deep_copy_impl(
     while (stack_len > 0) {
         AtomDeepCopyFrame *frame = &stack[stack_len - 1u];
 
-        if (frame->next < frame->src->expr.len) {
+        if (frame->next < frame->prefix_len) {
             Atom *child = frame->src->expr.elems[frame->next];
             if (resolver &&
                 !(child = resolver(resolver_context, child))) {
@@ -5113,6 +5351,15 @@ static Atom *atom_deep_copy_impl(
                 continue;
             }
             if (child->kind == ATOM_EXPR) {
+                child_copy = atom_deep_copy_buffer_view(dst, child, share, memo);
+                if (child_copy) {
+                    if (!atom_deep_copy_memo_store(memo, child, child_copy)) {
+                        free(stack);
+                        return NULL;
+                    }
+                    frame->elems[frame->next++] = child_copy;
+                    continue;
+                }
                 PUSH_COPY_FRAME(child);
                 continue;
             }
@@ -5126,9 +5373,22 @@ static Atom *atom_deep_copy_impl(
             continue;
         }
 
-        result = share
-            ? atom_expr_shared(dst, frame->elems, frame->src->expr.len)
-            : atom_expr(dst, frame->elems, frame->src->expr.len);
+        if (atom_deep_copy_buffer_enabled(dst, frame->src, share)) {
+            if (frame->tail) {
+                result = frame->tail;
+                for (CettaExprLen i = frame->prefix_len; i > 0u; i--)
+                    result = atom_expr_prepend(dst, frame->elems[i - 1u], result);
+            } else {
+                Atom *tail = atom_expr(dst, frame->elems + 1u,
+                                       frame->prefix_len - 1u);
+                result = atom_expr_prepend(dst, frame->elems[0], tail);
+            }
+            atom_deep_copy_buffer_store(memo, frame->src, result);
+        } else {
+            result = share
+                ? atom_expr_shared(dst, frame->elems, frame->src->expr.len)
+                : atom_expr(dst, frame->elems, frame->src->expr.len);
+        }
         if (!atom_deep_copy_memo_store(memo, frame->src, result)) {
             free(stack);
             return NULL;

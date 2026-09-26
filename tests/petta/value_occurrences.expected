@@ -1,0 +1,12 @@
+(((foo)) (1))
+((foo))
+((foo) (foo))
+((foo) 3)
+(1 (foo))
+42
+()
+((foo))
+((foo) 1)
+(foo)
+false
+(1 (foo))

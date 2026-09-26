@@ -10,14 +10,14 @@ typedef struct CettaLibraryContext CettaLibraryContext;
 struct CettaPettaTokenSpaceClauseRegistry;
 
 /*
- * Instantiate a canonical PeTTa callable after its arguments have reached
- * values.  The returned atom is the next unevaluated computation; relational
- * control remains with the caller.  NULL means the callable representation
- * or its ABT substitution could not be constructed.
+ * The body of a canonical one-place PeTTa callable with its parameter
+ * replaced by `parameter`.  Binding `parameter` to an argument and evaluating
+ * the body applies the callable to that argument, which stays a value;
+ * relational control remains with the caller.  NULL means the atom is not a
+ * one-place callable or its ABT substitution could not be constructed.
  */
-Atom *cetta_petta_apply_ready_callable(
-    Arena *arena, Atom *callable, Atom **arguments,
-    CettaExprLen argument_count);
+Atom *cetta_petta_open_callable(
+    Arena *arena, Atom *callable, Atom *parameter);
 
 struct CettaPettaTokenSpaceClauseRegistry *
 cetta_petta_token_space_clause_registry_new(void);
@@ -257,6 +257,7 @@ bool cetta_petta_data_op_applies(SymbolId head, CettaExprLen nargs);
 void cetta_petta_erase_typecheck_marks_document(
     TermUniverse *universe, AtomId *atom_ids, int atom_count);
 bool cetta_petta_source_head_resolves_in_engine(SymbolId head, CettaExprLen nargs);
+bool cetta_petta_head_names_extension(SymbolId head);
 bool cetta_petta_source_head_has_runtime_meaning(
     Space *space, SymbolId head, CettaExprLen nargs);
 

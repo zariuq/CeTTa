@@ -92,6 +92,10 @@ petta_specializer_query_value_execution_admission(
  */
 void petta_specializer_note_mutation(Space *space, Atom *atom);
 
+/* An import adds equations of any head without reporting each one, so it
+ * invalidates every specialization derived in its destination space. */
+void petta_specializer_note_import(Space *space);
+
 /*
  * A generated equation keeps a parallel, non-semantic pattern map recording
  * application nodes introduced by substituting higher-order parameters.

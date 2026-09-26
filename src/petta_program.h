@@ -156,6 +156,9 @@ typedef struct PettaRegionHoleProgram {
     } as;
 } PettaRegionHoleProgram;
 
+/* Runtime translations share plans by content (petta_plan_node_key in
+ * petta_program.c), so every field other than `children` is part of that
+ * key. */
 struct PettaPlanNode {
     PettaPlanRole role;
     PettaPlanExecution execution;
@@ -184,6 +187,13 @@ struct PettaPlanNode {
      * cons constraints; C0 compilation remains independently restricted to
      * RHS variables supplied by the LHS and ground-query execution. */
     bool open_template_admitted;
+    /* The occurrence is dispatched at run time: a call whose head is a
+     * variable or an expression, or the application `reduce` dispatches.
+     * PeTTa runs its body under an implicit handler, under which an error
+     * the body raises fails that path alone (DispatchErrorScope).  It is
+     * derived from the syntax, so every translation of the occurrence
+     * carries the handler, a specialized one included. */
+    bool dispatch_handler;
     /* An admitted equation occurrence may refer directly to its finite
      * activation-frame slot.  This is derived program data: source variables
      * and the exact matcher remain semantic authority. */
@@ -409,6 +419,15 @@ bool petta_program_head_declared(
  * have completed, so runtime definitions become visible in source order.
  */
 const PettaPlanNode *petta_program_plan_current(
+    PettaProgram *program, Atom *atom);
+
+/*
+ * Translate a runtime term at an explicit forcing boundary (eval, a computed
+ * hyperpose branch).  The plan records the term's code, a call-free subtree
+ * being one VALUE place, and equal plans are one program object, so the
+ * program keeps a plan per distinct code shape rather than per event.
+ */
+const PettaPlanNode *petta_program_plan_transient(
     PettaProgram *program, Atom *atom);
 
 /*

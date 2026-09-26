@@ -34,6 +34,10 @@ typedef enum {
     CETTA_PREPARED_PURE_EXPRESSION_DECLINE,
     CETTA_PREPARED_PURE_EXPRESSION_CANONICAL_ONLY,
     CETTA_PREPARED_PURE_EXPRESSION_ZERO,
+    /* Project only inside a closed single-result attempt. If evaluation
+     * declines, the caller must discard the attempt and run the original
+     * expression. Never valid for a producer that publishes answers. */
+    CETTA_PREPARED_PURE_EXPRESSION_PROJECT_SINGLE_RESULT,
 } CettaPreparedPureExpressionViewState;
 typedef struct {
     Atom *projected;

@@ -45,8 +45,13 @@
 !(let $items (pull-map pull-effect (pull-range 2))
       (length $items))
 
-; A pure mapper fault is not erased by a cardinality consumer.  The pull
-; attempt declines at the fault and canonical evaluation owns the result.
+; A pure mapper fault fails its dynamic dispatch. The failed element
+; makes this complete-list producer fail; its cardinality is not returned.
 (= (pull-fault $x) (/ 10 (- $x 2)))
 !(let $items (pull-map pull-fault (pull-range 3))
       (length $items))
+
+; Recovery is local to dynamic dispatch: evaluation continues, while the
+; same fault in a direct call remains uncaught and ends the file.
+!(id after-dispatch-failure)
+!(pull-fault 2)

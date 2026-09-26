@@ -20,7 +20,7 @@
 !(test (collapse (activation-parity (3 4)))
        ((odd 3) (even 4)))
 
-!(import! &self ../lib/lib_he)
+!(import! &self ../../lib/petta/lib_he)
 (= (activation-div $x $y $accum)
    (chain (eval (- $x $y)) $difference
      (chain (eval (< $difference 0)) $finished

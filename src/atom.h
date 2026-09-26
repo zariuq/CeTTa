@@ -130,6 +130,15 @@ typedef enum {
  * the facts above, which a node has when any child has them, it holds only
  * when it holds of every child. */
 #define ATOM_STRUCTURAL_GENERATION_CLOSED UINT32_C(0x00000008)
+/* A PeTTa list carrier's tag, the head of the cell `(tag h t)`: a subset of
+ * the internal tags, so a reader of list carriers skips every other
+ * internal tag's atom. */
+#define ATOM_STRUCTURAL_HAS_LIST_CARRIER UINT32_C(0x00000010)
+/* The expression's children are the top of a buffer with free slots below
+ * them, so a prepend may claim the slot just below its first child when that
+ * slot is free (PrefixBuffer.claimable_iff_free_below).  A fact of the node
+ * alone: no expression holding it as a child inherits it. */
+#define ATOM_STRUCTURAL_FRONT_SLACK UINT32_C(0x00000020)
 
 /*
  * VariantShape reserves this VarId prefix for its runtime-private slots.
@@ -207,6 +216,14 @@ static inline bool atom_structural_may_have_internal_tag(
            (atom->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) == 0u ||
            (atom->structural_facts &
             ATOM_STRUCTURAL_HAS_INTERNAL_TAG) != 0u;
+}
+
+static inline bool atom_structural_may_have_list_carrier(
+        const Atom *atom) {
+    return !atom ||
+           (atom->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) == 0u ||
+           (atom->structural_facts &
+            ATOM_STRUCTURAL_HAS_LIST_CARRIER) != 0u;
 }
 
 static inline bool atom_structural_may_have_nan(const Atom *atom) {
@@ -692,6 +709,13 @@ Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len);
  * bit and the variables as the others fold them; otherwise it is folded from
  * its own children. */
 Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset);
+/* The expression `list` with `head` before its first child, in amortized
+ * constant time (PrefixBuffer).  When `list` starts at its buffer's front in
+ * this arena, the free slot just below it is claimed; otherwise the children
+ * are copied into a fresh buffer with as many free slots below them as they
+ * are.  A claimed slot is never written again, so every expression sharing the
+ * buffer keeps its children.  NULL when `list` is not an expression. */
+Atom *atom_expr_prepend(Arena *a, Atom *head, Atom *list);
 /* Single-allocation expression construction for incremental producers.
  * `begin` returns an unpublished draft whose child vector the caller fills;
  * `finish` computes all derived flags and returns the immutable expression

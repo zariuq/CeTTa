@@ -1,6 +1,8 @@
 #ifndef CETTA_PETTA_SEMANTICS_H
 #define CETTA_PETTA_SEMANTICS_H
 
+#include <stdatomic.h>
+
 #include "atom.h"
 #include "grounded.h"
 #include "match.h"
@@ -138,6 +140,21 @@ static inline bool petta_semantics_facts_is_cons_constraint(
 }
 
 PeTTaForm petta_semantics_form(SymbolId head);
+
+/* A special form of PeTTa is syntax only where it is written.  Reached at
+ * run time -- as the value of a variable or expression head, or as the head
+ * of the application a `reduce` dispatches -- it is a value: the arguments
+ * are evaluated first, and the application is data, unless PeTTa also
+ * defines a function of that name, which is called on the values.  Any other
+ * head is ordinary: its written call already evaluates its arguments and
+ * calls it, so where it is written and where it is reached agree. */
+typedef enum {
+    PETTA_RUNTIME_HEAD_ORDINARY = 0,
+    PETTA_RUNTIME_HEAD_DATA,
+    PETTA_RUNTIME_HEAD_FUNCTION,
+} PeTTaRuntimeHead;
+
+PeTTaRuntimeHead petta_semantics_runtime_head(SymbolId head);
 PeTTaNamedArity petta_semantics_named_arity(
     struct Space *space, Arena *scratch, Atom *head,
     CettaExprLen supplied);
@@ -194,8 +211,13 @@ bool petta_semantics_is_cons_constraint(const Atom *atom);
 bool petta_semantics_is_open_cons_value(const Atom *atom);
 Atom *petta_semantics_open_cons_value(
     Arena *arena, Atom *head, Atom *tail);
-Atom *petta_semantics_flat_list_spine(
-    Arena *arena, Atom *flat_list);
+/* Whether any open-cons carrier has been built in this process: until one
+ * has, no value holds one.  Read on every unification, so inline. */
+extern atomic_bool g_petta_open_cons_built;
+static inline bool petta_semantics_open_cons_built(void) {
+    return atomic_load_explicit(&g_petta_open_cons_built,
+                                memory_order_relaxed);
+}
 
 /*
  * Iterate the logical elements of either a flat expression or a closed
@@ -241,6 +263,18 @@ Atom *petta_semantics_closed_list(Arena *arena, Atom *list);
  * type_error(list, Value): NULL with `*type_error` set. */
 Atom *petta_semantics_sort_value(Arena *arena, Atom *value, bool total,
                                  bool *type_error);
+/* A list read against an expression pattern of `length` elements: exactly
+ * that many elements, copied to `elements` when it is given; a proper list
+ * of another length; or a tail that is not a list, a partial or an improper
+ * list's, which a structural reader leaves undecided. */
+typedef enum {
+    PETTA_LIST_READ_EXACT = 0,
+    PETTA_LIST_READ_OTHER_LENGTH,
+    PETTA_LIST_READ_UNDECIDED,
+} PeTTaListRead;
+PeTTaListRead petta_semantics_read_list(
+    Atom *list, CettaExprLen length, Atom **elements);
+
 bool petta_semantics_logical_list_length(
     Atom *list, CettaExprLen *length);
 Atom *petta_semantics_materialize_closed_logical_list(

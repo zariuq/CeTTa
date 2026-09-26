@@ -277,6 +277,7 @@ static void test_entry_interpretation_precedes_equations(void) {
         CETTA_PREPARED_PURE_EXPRESSION_DECLINE,
         CETTA_PREPARED_PURE_EXPRESSION_CANONICAL_ONLY,
         CETTA_PREPARED_PURE_EXPRESSION_ZERO,
+        CETTA_PREPARED_PURE_EXPRESSION_PROJECT_SINGLE_RESULT,
     };
     for (size_t i = 0u; i < sizeof(refusals) / sizeof(refusals[0]); i++) {
         entry_interpretation = refusals[i];
@@ -318,6 +319,65 @@ static void test_entry_interpretation_precedes_equations(void) {
             cetta_prepared_pure_program_free(program);
         }
     }
+    destroy(&fixture);
+}
+
+/* A handler can be projected only while the entire pure attempt remains
+ * private. A streamed producer must not lose it when exporting alternatives. */
+static void test_single_result_projection(void) {
+    const char *equations[] = {
+        "(= (calc $x) (+ $x 1))",
+        "(= (guarded $x) (shield (calc $x)))",
+    };
+    Fixture fixture;
+    init(&fixture, equations, 2u, "(calc 7)");
+    entry_view_head = symbol_intern_cstr(g_symbols, "shield");
+    entry_interpretation =
+        CETTA_PREPARED_PURE_EXPRESSION_PROJECT_SINGLE_RESULT;
+    Atom *call = parse(&fixture.source, "(guarded 7)");
+    CettaPreparedPureProgram *program =
+        cetta_prepared_pure_program_compile_closed(
+            &fixture.space, call, CETTA_GSLT_PURE_CALL_EAGER,
+            atom_bool, atom_expr, NULL, NULL, entry_view,
+            NULL, NULL, true, true,
+            (CettaMatchDecisionSemanticIdentity){0});
+    assert(program);
+    Atom *answer = NULL;
+    assert(cetta_prepared_pure_program_execute_closed(
+        program, &fixture.scratch, 0u, &answer));
+    assert(answer && atom_eq(answer, parse(&fixture.source, "8")));
+    CettaPreparedPureProgram *producer =
+        cetta_prepared_pure_program_compile_closed_answers(
+            &fixture.space, call, CETTA_GSLT_PURE_CALL_EAGER,
+            atom_bool, atom_expr, NULL, NULL, entry_view,
+            NULL, NULL, true, true,
+            (CettaMatchDecisionSemanticIdentity){0});
+    assert(!producer);
+    /* An invalid operand aborts the private attempt; the original source
+     * and its handler remain the fallback authority. */
+    assert(cetta_prepared_pure_program_rebind_closed_entry_call(
+        program, parse(&fixture.source, "(guarded not-a-number)")));
+    answer = NULL;
+    assert(!cetta_prepared_pure_program_execute_closed(
+        program, &fixture.scratch, 0u, &answer));
+    assert(!answer);
+    cetta_prepared_pure_program_free(program);
+    destroy(&fixture);
+
+    /* The single-result executor cannot silently choose one of several
+     * answers, including when the other alternative would raise. */
+    const char *ambiguous[] = {
+        "(= (calc $x) (+ $x 1))",
+        "(= (calc $x) (/ $x 0))",
+        "(= (guarded $x) (shield (calc $x)))",
+    };
+    init(&fixture, ambiguous, 3u, "(calc 7)");
+    program = cetta_prepared_pure_program_compile_closed(
+        &fixture.space, parse(&fixture.source, "(guarded 7)"),
+        CETTA_GSLT_PURE_CALL_EAGER, atom_bool, atom_expr,
+        NULL, NULL, entry_view, NULL, NULL, true, true,
+        (CettaMatchDecisionSemanticIdentity){0});
+    assert(!program);
     destroy(&fixture);
 }
 
@@ -808,6 +868,7 @@ int main(void) {
     test_allocation_limit_before_construction();
     test_constructor_cost_adapters();
     test_entry_interpretation_precedes_equations();
+    test_single_result_projection();
     test_cursor_frontier_between_answers();
     test_cursor_last_call_replaces_caller();
     test_cursor_unyield();
@@ -830,6 +891,6 @@ int main(void) {
     var_intern_free(&variables);
     g_symbols = NULL;
     g_var_intern = NULL;
-    puts("prepared pure answer producer: twenty-seven boundary cases passed");
+    puts("prepared pure answer producer: twenty-eight boundary cases passed");
     return 0;
 }

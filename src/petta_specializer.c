@@ -1,6 +1,7 @@
 #include "term_canon.h"
 #include "petta_specializer.h"
 
+#include "eval.h"
 #include "grounded.h"
 #include "match.h"
 #include "petta_semantics.h"
@@ -56,6 +57,14 @@ typedef struct {
     bool productive;
     bool negative;
     bool invalidating;
+    /* The heads whose equations let the specialization call a selected
+     * callee directly, since none of them raises; a change to any of them
+     * invalidates it. */
+    SymbolId *direct_dependencies;
+    size_t direct_dependency_len;
+    size_t direct_dependency_cap;
+    /* The program's equation revision when the direct calls were checked. */
+    uint64_t direct_revision;
 } PettaSpecializationRecord;
 
 typedef struct {
@@ -135,6 +144,7 @@ typedef struct {
     uint32_t depth;
     bool capacity;
     bool invalidated;
+    bool declined;
 } PettaSpecializerContext;
 
 typedef struct {
@@ -2808,6 +2818,44 @@ static bool petta_specialization_selectors_match(
     return true;
 }
 
+/* Match the typed-call scheduler's distinction between syntax arguments
+ * and evaluated arguments. A specialization must not rewrite a dispatch in
+ * an Atom parameter: that occurrence is data. Mixed overloads cannot share
+ * one rewritten syntax tree, so leave that specialization to normal calls. */
+enum { PETTA_SPECIALIZE_EVALUATED = 1u, PETTA_SPECIALIZE_DATA = 2u };
+
+static unsigned petta_specializer_argument_mode(
+    PettaSpecializerContext *context, Atom *call, CettaExprIndex index) {
+    SymbolId head = atom_head_symbol_id(call);
+    if (index == 0u || head == SYMBOL_ID_NONE ||
+        !space_equations_may_match_known_head(context->space, head) ||
+        !space_head_has_arrow_signature(context->space, head,
+                                       call->expr.len - 1u))
+        return PETTA_SPECIALIZE_EVALUATED;
+    Atom **types = NULL;
+    uint32_t count = space_get_declared_types(
+        context->space, &context->scratch, call->expr.elems[0], &types);
+    unsigned mode = 0u;
+    for (uint32_t i = 0u; i < count; i++) {
+        Atom *type = types[i];
+        if (!type || type->kind != ATOM_EXPR ||
+            type->expr.len != call->expr.len + 1u ||
+            !atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow))
+            continue;
+        Atom *formal = type->expr.elems[index];
+        if (formal && formal->kind == ATOM_EXPR && formal->expr.len == 3u &&
+            atom_is_symbol_id(formal->expr.elems[0], g_builtin_syms.colon) &&
+            formal->expr.elems[1]->kind == ATOM_VAR)
+            formal = formal->expr.elems[2];
+        mode |= atom_is_symbol_id(formal, g_builtin_syms.atom)
+            ? PETTA_SPECIALIZE_DATA : PETTA_SPECIALIZE_EVALUATED;
+    }
+    free(types);
+    if (mode == (PETTA_SPECIALIZE_EVALUATED | PETTA_SPECIALIZE_DATA))
+        context->declined = true;
+    return mode ? mode : PETTA_SPECIALIZE_EVALUATED;
+}
+
 /* Specialization fixes higher-order selectors for the lifetime of a derived
  * relation.  Route recursive calls carrying those same selector values back
  * to that relation once, when the artifact is built, instead of rediscovering
@@ -2868,12 +2916,10 @@ static Atom *petta_rewrite_specialized_body(
                 sizeof(*elements) * (size_t)bound->expr.len);
         }
         for (CettaExprIndex index = 0u; index < supplied; index++) {
+            /* Rewrite after expansion, when the callee's typed argument
+             * positions are known. */
             elements[bound->expr.len + index + 1u] =
-                petta_rewrite_specialized_body(
-                    context, atom->expr.elems[index + 1u],
-                    source, specialized, selectors, depth + 1u);
-            if (!elements[bound->expr.len + index + 1u])
-                return NULL;
+                atom->expr.elems[index + 1u];
         }
         Atom *expanded = atom_expr(
             &context->scratch, elements, combined);
@@ -2894,9 +2940,13 @@ static Atom *petta_rewrite_specialized_body(
         sizeof(*elements) * (size_t)atom->expr.len);
     elements[0] = atom->expr.elems[0];
     for (CettaExprIndex index = 1u; index < atom->expr.len; index++) {
-        elements[index] = petta_rewrite_specialized_body(
-            context, atom->expr.elems[index],
-            source, specialized, selectors, depth + 1u);
+        unsigned mode = petta_specializer_argument_mode(context, atom, index);
+        if (context->declined)
+            return NULL;
+        elements[index] = mode == PETTA_SPECIALIZE_DATA ? atom->expr.elems[index] :
+            petta_rewrite_specialized_body(
+                context, atom->expr.elems[index],
+                source, specialized, selectors, depth + 1u);
         if (!elements[index])
             return NULL;
     }
@@ -2914,6 +2964,325 @@ static Atom *petta_rewrite_specialized_body(
     }
     return rewritten;
 }
+
+/*
+ * A call whose head is a specialized parameter was a run-time dispatch at its
+ * source, and PeTTa runs such a dispatch under an implicit handler: an error
+ * its body raises fails that path alone (DispatchErrorScope).  Specializing
+ * the parameter to a known callee would make the call direct and drop the
+ * handler, so the call is written `(reduce (callee args...))`, which is the
+ * dispatch it was, as PeTTa's translator writes it.  Patterns and quoted
+ * syntax are data and stay as they are.
+ */
+static bool petta_specializer_var_selected(
+    const Atom *atom, const VarId *selected, size_t selected_len) {
+    if (!atom || atom->kind != ATOM_VAR)
+        return false;
+    for (size_t index = 0u; index < selected_len; index++) {
+        if (selected[index] == atom->var_id)
+            return true;
+    }
+    return false;
+}
+
+static Atom *petta_specializer_keep_dispatches(
+    PettaSpecializerContext *context, Atom *atom,
+    const VarId *selected, size_t selected_len, uint32_t depth) {
+    if (!context || !atom || depth > 2048u) {
+        if (context)
+            context->capacity = true;
+        return NULL;
+    }
+    if (atom->kind != ATOM_EXPR || atom->expr.len == 0u)
+        return atom;
+    Atom *head = atom->expr.elems[0];
+    SymbolId head_id = atom_head_symbol_id(atom);
+    PeTTaForm form = head_id == SYMBOL_ID_NONE
+        ? PETTA_FORM_NONE : petta_semantics_form(head_id);
+    CettaExprLen len = atom->expr.len;
+    if (head_id == g_builtin_syms.quote ||
+        head_id == g_builtin_syms.return_text ||
+        form == PETTA_FORM_PREDICATE)
+        return atom;
+    if (!cetta_expr_len_mul_fits_size(len, sizeof(Atom *))) {
+        context->capacity = true;
+        return NULL;
+    }
+    Atom **elements = arena_alloc(
+        &context->scratch, sizeof(*elements) * (size_t)len);
+    if (!elements) {
+        context->capacity = true;
+        return NULL;
+    }
+    for (CettaExprIndex index = 0u; index < len; index++) {
+        Atom *child = atom->expr.elems[index];
+        /* A binder's pattern, and a lambda's parameters, are not code. */
+        bool pattern =
+            index == 0u ||
+            (form == PETTA_FORM_LAMBDA && index == 1u) ||
+            (form == PETTA_FORM_LET && len == 4u && index == 1u) ||
+            (form == PETTA_FORM_CHAIN && len == 4u && index == 2u) ||
+            (head_id == g_builtin_syms.match && len == 4u &&
+             index == 2u) ||
+            (head_id == g_builtin_syms.unify && index <= 2u);
+        unsigned mode = pattern ? PETTA_SPECIALIZE_DATA :
+            petta_specializer_argument_mode(context, atom, index);
+        if (context->declined)
+            return NULL;
+        if (pattern || mode == PETTA_SPECIALIZE_DATA) {
+            elements[index] = child;
+        } else if (head_id == g_builtin_syms.let_star && len == 3u &&
+                   index == 1u && child->kind == ATOM_EXPR) {
+            /* ((pattern value) ...): each value is code. */
+            Atom **pairs = arena_alloc(
+                &context->scratch,
+                sizeof(*pairs) * (size_t)child->expr.len);
+            if (!pairs) {
+                context->capacity = true;
+                return NULL;
+            }
+            for (CettaExprIndex pair = 0u; pair < child->expr.len;
+                 pair++) {
+                Atom *binding = child->expr.elems[pair];
+                pairs[pair] = binding;
+                if (binding->kind != ATOM_EXPR || binding->expr.len != 2u)
+                    continue;
+                Atom *value = petta_specializer_keep_dispatches(
+                    context, binding->expr.elems[1], selected,
+                    selected_len, depth + 1u);
+                if (!value)
+                    return NULL;
+                pairs[pair] = atom_expr2(
+                    &context->scratch, binding->expr.elems[0], value);
+            }
+            elements[index] = atom_expr(
+                &context->scratch, pairs, child->expr.len);
+        } else if (head_id == g_builtin_syms.case_text && len == 3u &&
+                   index == 2u && child->kind == ATOM_EXPR) {
+            /* ((pattern branch) ...): each branch is code. */
+            Atom **branches = arena_alloc(
+                &context->scratch,
+                sizeof(*branches) * (size_t)child->expr.len);
+            if (!branches) {
+                context->capacity = true;
+                return NULL;
+            }
+            for (CettaExprIndex branch = 0u; branch < child->expr.len;
+                 branch++) {
+                Atom *arm = child->expr.elems[branch];
+                branches[branch] = arm;
+                if (arm->kind != ATOM_EXPR || arm->expr.len != 2u)
+                    continue;
+                Atom *body = petta_specializer_keep_dispatches(
+                    context, arm->expr.elems[1], selected,
+                    selected_len, depth + 1u);
+                if (!body)
+                    return NULL;
+                branches[branch] = atom_expr2(
+                    &context->scratch, arm->expr.elems[0], body);
+            }
+            elements[index] = atom_expr(
+                &context->scratch, branches, child->expr.len);
+        } else {
+            elements[index] = petta_specializer_keep_dispatches(
+                context, child, selected, selected_len, depth + 1u);
+        }
+        if (!elements[index])
+            return NULL;
+    }
+    if (head->kind == ATOM_EXPR) {
+        elements[0] = petta_specializer_keep_dispatches(
+            context, head, selected, selected_len, depth + 1u);
+        if (!elements[0])
+            return NULL;
+    }
+    Atom *kept = atom_expr(&context->scratch, elements, len);
+    if (!kept) {
+        context->capacity = true;
+        return NULL;
+    }
+    if (!petta_specializer_var_selected(head, selected, selected_len))
+        return kept;
+    Atom *dispatch = atom_expr2(
+        &context->scratch,
+        atom_symbol_id(&context->scratch, g_builtin_syms.reduce), kept);
+    if (!dispatch)
+        context->capacity = true;
+    return dispatch;
+}
+
+/*
+ * A callee whose every equation returns without raising, whatever its
+ * arguments, needs no handler: dropping the handler of a body that raises
+ * nothing keeps every path (DispatchErrorScope.
+ * recoverList_map_answer_of_no_raise).  Only an operation raises, so a body
+ * raises nothing when it is built from variables, data, quoted syntax,
+ * `catch`, the control forms, run-time dispatches (each under its own
+ * handler), and calls of callees that also raise nothing; a function the
+ * engine provides outside the equations may raise.  Every head read
+ * is collected, since the direct call depends on each; a cycle among them
+ * raises nothing unless an operation on it does.  A profile that checks
+ * types can raise a type error at any call, so it decides nothing here.
+ */
+static bool petta_specializer_callee_raises_nothing(
+    PettaSpecializerContext *context, SymbolId head,
+    PettaSymbolVector *heads, uint32_t depth);
+
+/* A head the program defines by its equations alone: not a special form,
+ * nor an operation or function the engine provides. */
+static bool petta_specializer_head_is_equational(SymbolId head) {
+    return !petta_program_head_is_intrinsic(head) &&
+           petta_semantics_runtime_head(head) ==
+               PETTA_RUNTIME_HEAD_ORDINARY &&
+           !cetta_petta_head_names_extension(head);
+}
+
+static bool petta_specializer_body_raises_nothing(
+    PettaSpecializerContext *context, const Atom *body,
+    PettaSymbolVector *heads, uint32_t depth) {
+    if (depth > 64u)
+        return false;
+    if (!body || body->kind != ATOM_EXPR || body->expr.len == 0u)
+        return true;
+    const Atom *head = body->expr.elems[0];
+    SymbolId head_id = head->kind == ATOM_SYMBOL
+        ? head->sym_id : SYMBOL_ID_NONE;
+    if (head_id == g_builtin_syms.quote)
+        return true;
+    if (head_id != SYMBOL_ID_NONE) {
+        PeTTaForm form = petta_semantics_form(head_id);
+        if (form == PETTA_FORM_CATCH)
+            return true;
+        bool control =
+            form == PETTA_FORM_IF || form == PETTA_FORM_LET ||
+            form == PETTA_FORM_CHAIN || form == PETTA_FORM_PROGN ||
+            form == PETTA_FORM_PROG1 || form == PETTA_FORM_ID ||
+            form == PETTA_FORM_REDUCE ||
+            head_id == g_builtin_syms.let_star ||
+            head_id == g_builtin_syms.case_text ||
+            head_id == g_builtin_syms.superpose ||
+            head_id == g_builtin_syms.collapse ||
+            head_id == g_builtin_syms.once ||
+            head_id == g_builtin_syms.op_eq;
+        if (!control &&
+            (!petta_specializer_head_is_equational(head_id) ||
+             !petta_specializer_callee_raises_nothing(
+                 context, head_id, heads, depth + 1u)))
+            return false;
+    }
+    for (CettaExprIndex index = head_id == SYMBOL_ID_NONE ? 0u : 1u;
+         index < body->expr.len; index++) {
+        if (!petta_specializer_body_raises_nothing(
+                context, body->expr.elems[index], heads, depth + 1u))
+            return false;
+    }
+    return true;
+}
+
+static bool petta_specializer_callee_raises_nothing(
+    PettaSpecializerContext *context, SymbolId head,
+    PettaSymbolVector *heads, uint32_t depth) {
+    for (size_t index = 0u; index < heads->len; index++) {
+        if (heads->items[index] == head)
+            return true;
+    }
+    if (depth > 64u || cetta_petta_profile_admits_typecheck_ops() ||
+        !petta_symbol_vector_push_unique(heads, head))
+        return false;
+    /* Every equation the cursor offers for the head may run, one whose
+     * head is not a symbol included. */
+    SpaceEquationCursor cursor;
+    if (!space_equation_cursor_init(context->space, head, &cursor))
+        return false;
+    for (;;) {
+        SpaceEquationOccurrenceId id;
+        SpaceEquationCursorStep step =
+            space_equation_cursor_next(&cursor, &id);
+        if (step == SPACE_EQUATION_CURSOR_END)
+            return true;
+        SpaceEquationOccurrence occurrence;
+        if (step == SPACE_EQUATION_CURSOR_INVALIDATED ||
+            !space_equation_occurrence_resolve(id, &occurrence) ||
+            !occurrence.lhs ||
+            !occurrence.rhs ||
+            /* Callable subterms in argument patterns run before the RHS.
+             * Their errors belong to this dispatch too. */
+            !petta_specializer_body_raises_nothing(
+                context, occurrence.lhs, heads, depth + 1u) ||
+            !petta_specializer_body_raises_nothing(
+                context, occurrence.rhs, heads, depth + 1u))
+            return false;
+    }
+}
+
+/* The selected callee, a symbol naming an ordinary callee that raises
+ * nothing, is called directly; the record keeps what that relies on. */
+static bool petta_specializer_calls_directly(
+    PettaSpecializerContext *context,
+    PettaSpecializationRecord *record, const Atom *callee) {
+    if (!callee || callee->kind != ATOM_SYMBOL ||
+        !petta_specializer_head_is_equational(callee->sym_id))
+        return false;
+    PettaSymbolVector heads = {0};
+    bool direct = petta_specializer_callee_raises_nothing(
+        context, callee->sym_id, &heads, 0u);
+    for (size_t index = 0u; direct && index < heads.len; index++) {
+        bool known = false;
+        for (size_t seen = 0u;
+             !known && seen < record->direct_dependency_len; seen++)
+            known = record->direct_dependencies[seen] == heads.items[index];
+        if (known)
+            continue;
+        if (!petta_reserve(
+                (void **)&record->direct_dependencies,
+                &record->direct_dependency_cap,
+                record->direct_dependency_len + 1u,
+                sizeof(*record->direct_dependencies))) {
+            context->capacity = true;
+            direct = false;
+            break;
+        }
+        record->direct_dependencies[record->direct_dependency_len++] =
+            heads.items[index];
+    }
+    free(heads.items);
+    return direct;
+}
+
+/* Equations can arrive by a path that does not report each atom, an import
+ * among them, so a specialization reused after the program changed has its
+ * direct calls checked again: every head they relied on must still be one
+ * the program defines by equations that raise nothing.  The heads read are
+ * refreshed with the revision. */
+static bool petta_record_direct_calls_hold(
+    PettaSpecializerContext *context, PettaSpecializationRecord *record) {
+    uint64_t revision = space_equation_revision(context->space);
+    if (record->direct_dependency_len == 0u ||
+        record->direct_revision == revision)
+        return true;
+    PettaSymbolVector heads = {0};
+    bool hold = true;
+    for (size_t index = 0u;
+         hold && index < record->direct_dependency_len; index++) {
+        SymbolId head = record->direct_dependencies[index];
+        hold = petta_specializer_head_is_equational(head) &&
+            petta_specializer_callee_raises_nothing(
+                context, head, &heads, 0u);
+    }
+    if (!hold) {
+        free(heads.items);
+        return false;
+    }
+    free(record->direct_dependencies);
+    record->direct_dependencies = heads.items;
+    record->direct_dependency_len = heads.len;
+    record->direct_dependency_cap = heads.cap;
+    record->direct_revision = revision;
+    return true;
+}
+
+static void petta_specializer_invalidate(
+    Space *space, SymbolId source, bool open_equation);
 
 static bool petta_materialize_specialization(
     PettaSpecializerContext *context, SymbolId source,
@@ -2958,9 +3327,39 @@ static bool petta_materialize_specialization(
                 return false;
             }
         }
-        Atom *substituted = bindings_apply_if_vars(
-            &selected, &context->scratch,
-            source_equation);
+        VarId *selected_ids = candidates->len
+            ? arena_alloc(&context->scratch,
+                          sizeof(*selected_ids) * candidates->len)
+            : NULL;
+        size_t selected_len = 0u;
+        for (size_t binding_index = 0u;
+             selected_ids && binding_index < candidates->len;
+             binding_index++) {
+            Atom *formal = petta_atom_at_path(
+                lhs, candidates->items[binding_index].path,
+                candidates->items[binding_index].path_len);
+            if (formal && formal->kind == ATOM_VAR &&
+                !petta_specializer_calls_directly(
+                    context, record,
+                    candidates->items[binding_index].value))
+                selected_ids[selected_len++] = formal->var_id;
+        }
+        if (context->capacity) {
+            bindings_free(&selected);
+            return false;
+        }
+        Atom *kept_rhs = petta_specializer_keep_dispatches(
+            context, source_equation->expr.elems[2],
+            selected_ids, selected_len, 0u);
+        Atom *kept_equation = kept_rhs
+            ? atom_expr3(
+                  &context->scratch, source_equation->expr.elems[0],
+                  lhs, kept_rhs)
+            : NULL;
+        Atom *substituted = kept_equation
+            ? bindings_apply_if_vars(
+                  &selected, &context->scratch, kept_equation)
+            : NULL;
         Atom *rewritten = substituted
             ? petta_rewrite_specialized_body(
                   context, substituted, source, specialized,
@@ -3004,7 +3403,8 @@ static bool petta_materialize_specialization(
                 derived)) {
             record->artifact_len--;
             petta_pattern_free(pattern);
-            context->capacity = true;
+            if (!context->declined)
+                context->capacity = true;
             return false;
         }
         if (petta_specializer_trace_enabled()) {
@@ -3058,6 +3458,7 @@ static bool petta_materialize_specialization(
     }
     free(types);
     record->productive = true;
+    record->direct_revision = space_equation_revision(context->space);
     return true;
 }
 
@@ -3079,6 +3480,11 @@ static bool petta_specializer_analyze_call(
     }
     PettaSpecializationRecord *routed =
         petta_find_record_for_call(context, source, call);
+    if (routed && !petta_record_direct_calls_hold(context, routed)) {
+        petta_specializer_invalidate(
+            context->space, routed->specialized, false);
+        routed = NULL;
+    }
     if (routed) {
         analysis->eligible = true;
         analysis->productive = routed->productive;
@@ -3227,6 +3633,11 @@ static bool petta_specializer_analyze_call(
             ? petta_find_record(
                   context->space, source, specialized)
             : NULL;
+    if (known && !petta_record_direct_calls_hold(context, known)) {
+        petta_specializer_invalidate(
+            context->space, known->specialized, false);
+        known = NULL;
+    }
     if (known) {
         analysis->productive = known->productive;
         analysis->specialized = specialized;
@@ -3345,7 +3756,8 @@ PettaSpecializeResult petta_specializer_prepare_call(
             petta_remove_record_at(
                 g_petta_specializations.len - 1u);
         }
-        return PETTA_SPECIALIZE_CAPACITY;
+        return context.declined && !context.capacity
+            ? PETTA_SPECIALIZE_UNCHANGED : PETTA_SPECIALIZE_CAPACITY;
     }
     if (context.invalidated)
         return PETTA_SPECIALIZE_INVALIDATED;
@@ -3397,11 +3809,15 @@ static void petta_record_release_owned(
     }
     free(record->selectors);
     free(record->artifacts);
+    free(record->direct_dependencies);
     record->selectors = NULL;
     record->selector_len = 0u;
     record->artifacts = NULL;
     record->artifact_len = 0u;
     record->artifact_cap = 0u;
+    record->direct_dependencies = NULL;
+    record->direct_dependency_len = 0u;
+    record->direct_dependency_cap = 0u;
 }
 
 static void petta_remove_record_at(size_t index) {
@@ -3424,12 +3840,36 @@ static void petta_remove_record_at(size_t index) {
     g_petta_specializations.len--;
 }
 
+static bool petta_record_depends_on(
+    const PettaSpecializationRecord *record, SymbolId head) {
+    for (size_t index = 0u; index < record->direct_dependency_len; index++) {
+        if (record->direct_dependencies[index] == head)
+            return true;
+    }
+    return false;
+}
+
 void petta_specializer_note_mutation(
     Space *space, Atom *atom) {
     space_execution_analysis_note_mutation(space);
     SymbolId source = petta_mutated_source_head(atom);
-    if (!space || source == SYMBOL_ID_NONE)
+    /* An equation whose head is not a symbol may run for a call of any head,
+     * so no specialization knows any more that a callee it calls directly
+     * raises nothing. */
+    bool open_equation =
+        source == SYMBOL_ID_NONE && atom && atom->kind == ATOM_EXPR &&
+        atom->expr.len == 3u &&
+        atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.equals);
+    if (!space || (source == SYMBOL_ID_NONE && !open_equation))
         return;
+    petta_specializer_invalidate(space, source, open_equation);
+}
+
+/* Invalidate every specialization derived from `source`, or, after an
+ * equation whose head is not a symbol, every one that calls a callee
+ * directly, with every specialization derived from those, recursively. */
+static void petta_specializer_invalidate(
+    Space *space, SymbolId source, bool open_equation) {
     /* Any equation or type mutation can make a nested symbol callable, so the
      * relation-level negative cache is discarded wholesale.  Ordinary data
      * additions never reach this path, and the program-token key
@@ -3452,8 +3892,23 @@ void petta_specializer_note_mutation(
     }
     PettaSymbolVector invalid_heads = {0};
     bool invalidate_all =
+        source != SYMBOL_ID_NONE &&
         !petta_symbol_vector_push_unique(
             &invalid_heads, source);
+    for (size_t index = 0u;
+         open_equation && !invalidate_all &&
+         index < g_petta_specializations.len;
+         index++) {
+        PettaSpecializationRecord *record =
+            &g_petta_specializations.items[index];
+        if (record->space != space ||
+            record->space_instance != instance ||
+            record->direct_dependency_len == 0u)
+            continue;
+        record->invalidating = true;
+        invalidate_all = !petta_symbol_vector_push_unique(
+            &invalid_heads, record->specialized);
+    }
 
     for (size_t cursor = 0u;
          !invalidate_all && cursor < invalid_heads.len;
@@ -3468,7 +3923,8 @@ void petta_specializer_note_mutation(
                 record->space_instance != instance ||
                 record->invalidating ||
                 (record->source != invalid_head &&
-                 record->specialized != invalid_head)) {
+                 record->specialized != invalid_head &&
+                 !petta_record_depends_on(record, invalid_head))) {
                 continue;
             }
             record->invalidating = true;
@@ -3493,6 +3949,23 @@ void petta_specializer_note_mutation(
             continue;
         }
         record->invalidating = false;
+        index++;
+    }
+}
+
+void petta_specializer_note_import(Space *space) {
+    if (!space)
+        return;
+    petta_relation_relevance_cache_clear();
+    uint64_t instance = space_instance_id(space);
+    for (size_t index = 0u; index < g_petta_specializations.len;) {
+        PettaSpecializationRecord *record =
+            &g_petta_specializations.items[index];
+        if (record->space == space &&
+            record->space_instance == instance) {
+            petta_remove_record_at(index);
+            continue;
+        }
         index++;
     }
 }

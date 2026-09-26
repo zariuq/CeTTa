@@ -199,13 +199,28 @@ typedef struct {
      * aborts the collection and propagates, as an exception does in
      * SWI-PeTTa.  Other dialects keep a raised error as an occurrence. */
     bool raises_abort_collections;
+    /* PeTTa runs every dispatch it decides at run time -- an application
+     * whose head is a variable or an expression, `reduce`, a list native's
+     * element call -- under an implicit handler: an error its body raises
+     * fails that path alone, and every other alternative remains
+     * (DispatchErrorScope.recover_add).  Argument evaluation is outside it. */
+    bool dispatch_recovers_branch_locally;
+    /* PeTTa reads a special form as syntax only where it is written: a head
+     * reached at run time is a value, applied to evaluated arguments
+     * (petta_semantics_runtime_head). */
+    bool forms_are_written_syntax;
     /* A `once` whose body is one call to the open tier takes its witness
      * from a portfolio of depth-first search and iterative deepening. */
     bool first_witness_portfolio;
-    /* Language-owned canonical answer-traversal materializer.  Runtime
-     * dialects supply `reify`; a zero field retains the historical PeTTa
-     * spelling for standalone machine clients that omit this field. */
+    /* The language's answer-traversal materializer beside `collapse`:
+     * `reify` where the profile offers it, and `collapse` in plain PeTTa,
+     * which has no `reify`.  A zero field means `collapse`, for standalone
+     * machine clients that omit it. */
     SymbolId reify_head;
+    /* PeTTa, whose extended profile offers `select` and `collect`: where the
+     * profile allows them they are the machine's own controls, the first
+     * answers of a body and all of them; otherwise they are the host's. */
+    bool bounded_collections;
     /*
      * Called immediately before a machine transition.  Returning false
      * suspends without consuming the pending goal, so the same machine can
@@ -558,6 +573,9 @@ int petta_machine_typecheck_exit_code(const PettaMachine *machine);
 bool petta_machine_last_answer_raised(const PettaMachine *machine);
 
 void petta_machine_destroy(PettaMachine *machine);
+/* Whether CETTA_PETTA_QUERY_TRACE asks to see each query of `head`: the
+ * head it names, or every head for `*`. */
+bool petta_machine_query_traced(SymbolId head);
 
 /*
  * Introspection used by complexity gates.  These counters describe semantic

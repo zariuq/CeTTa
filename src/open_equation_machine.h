@@ -70,8 +70,13 @@ typedef struct {
     /* Whether a let binder that only counting operations read takes its
      * producer's count, as the search machine's let/count fusion does. */
     bool count_fusion;
-    /* The search machine's own collection head, beside reify and collapse. */
+    /* The host's answer materializer beside `collapse`: `reify` where the
+     * profile offers it. */
     SymbolId reify_head;
+    /* The host's search machine runs the extended profile's `select` and
+     * `collect` itself, where the profile offers them; the region then runs
+     * them too. */
+    bool bounded_collections;
 } CettaOpenEquationHost;
 
 /* The equations of `head`/`arity` and every relation they call, compiled
@@ -117,6 +122,14 @@ typedef enum {
      * own choices; that choice's next step drops the host frame.  An answer
      * after which the goal has no choice left drops the frame at once. */
     CETTA_OPEN_EQUATION_HOST,
+    /* A `once` committed to its first answer while host goals it made
+     * still had choices: the cursor has dropped its own frames above the
+     * once, and the host drops its choices above the height
+     * `cetta_open_equation_cursor_cut_height` gives, which the host
+     * reported for the oldest of those goals.  The choice left newest then
+     * resumes the cursor, which continues after the once.  Only a cursor
+     * that has accepted a host answer can report it. */
+    CETTA_OPEN_EQUATION_CUT,
 } CettaOpenEquationStep;
 
 /* A `match` over a space in an equation body is a choice over the rows the
@@ -273,6 +286,14 @@ bool cetta_open_equation_cursor_host_goal(
     Atom **destination_out, Atom *const **vars_out,
     uint32_t *var_count_out, const struct PettaPlanNode **plan_out,
     CettaOpenEquationHostMode *mode_out);
+/* The host's choice height beneath the goal now awaited: the choices the
+ * goal makes lie above it.  A once that commits through the goal's frame
+ * reports it (CETTA_OPEN_EQUATION_CUT). */
+void cetta_open_equation_cursor_host_height(CettaOpenEquationCursor *cursor,
+                                            uint32_t height);
+/* The height a CETTA_OPEN_EQUATION_CUT step reported. */
+uint32_t cetta_open_equation_cursor_cut_height(
+    const CettaOpenEquationCursor *cursor);
 
 /* Accept one answer of the newest host frame's goal into the region:
  * `host_values` are the values of the variables its HOST step reported
