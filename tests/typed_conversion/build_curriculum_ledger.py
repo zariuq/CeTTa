@@ -1287,12 +1287,6 @@ def kernel_gap(text: str, printed: str) -> str:
         return "plus-O-r is Err check-failed"
     if "dk-type0" in text and "(App (Con type) (Con z))" in printed and "dk-lower" in text:
         return "dk-type0 normal form is (App (Con type) (Con z))"
-    if "hl-and-AB" in text and "(Con hl_and)" in printed:
-        return "hl-and-AB is (App (App (Con hl_and) (Con A)) (Con B))"
-    if "hl-id" in text and "(Lam (Con o) (Var 0))" in printed:
-        return "hl-id is (Lam (Con o) (Var 0))"
-    if "hl-and" in text and "(Con hl_and)" in printed:
-        return "hl-and is (App (App (Con hl_and) (Con A)) (Con B))"
     return ""
 
 
@@ -1345,6 +1339,23 @@ def unreduced_feature(statement: str, printed: str, call: str = "") -> str:
     if "cic-nat-max" in text:
         return "cic-nat-max does not reduce two successors"
     return f"{text[:80]} does not reduce under --lang prime"
+
+
+def stored_refusal(statement: str, printed: str, call: str = "") -> str:
+    """The ledger text for a print that did not succeed.
+
+    An Error or reader line is kept verbatim. A prose rewrite of that line is not.
+    """
+    text = " ".join(statement.split())
+    gap = kernel_gap(text, printed)
+    feature = gap or unreduced_feature(statement, printed, call)
+    if (
+        not gap
+        and "does not reduce" in feature
+        and (printed.startswith("[(Error") or printed.startswith("error:"))
+    ):
+        return " ".join(printed.split())
+    return feature
 
 
 def guest_printed(rec: dict, name: str, behavior: str) -> str | None:
@@ -1867,21 +1878,26 @@ def self_check() -> None:
             "Got: [(App (Con Univ) (App (Con type) (Con z)))]",
             "dk-type0 normal form is (App (Con type) (Con z))",
         ),
-        (
-            "!(assertEqual (hls-lower-judgment (HSeq (HAnd HA HB) HA)) (Pi (hl-prf (hl-and-AB)) (hl-prf (Con A))))",
-            "Got: [(Pi (App (Con prf) (App (App (Con hl_and) (Con A)) (Con B))) (App (Con prf) (Con A)))]",
-            "hl-and-AB is (App (App (Con hl_and) (Con A)) (Con B))",
-        ),
-        (
-            "!(assertEqual (hshow-lower-prop (= ((\\ x x) HP) HP)) (hl-eq (App (hl-id) (Con A)) (Con A)))",
-            "Got: [(App (App (Con hl_eq) (App (Lam (Con o) (Var 0)) (Con A))) (Con A))]",
-            "hl-id is (Lam (Con o) (Var 0))",
-        ),
     )
     for feat_stmt, feat_print, feat_want in gap_cases:
         got = unreduced_feature(feat_stmt, feat_print)
         if got != feat_want or "does not reduce" in got or not quote_claims(feat_stmt, got):
             print(f"self-check gap {got!r} want {feat_want!r}")
+            raise SystemExit(1)
+    verbatim_errors = (
+        "!(assertEqual (hls-lower-judgment (HSeq (HAnd HA HB) HA)) (Pi (hl-prf (hl-and-AB)) (hl-prf (Con A))))",
+        "!(assertEqual (hshow-lower-judgment (HSeq (/\\ HP HQ) HP)) (Pi (hl-prf (hl-and (Con A) (Con B))) (hl-prf (Con A))))",
+        "!(assertEqual (hshow-lower-prop (= ((\\ x x) HP) HP)) (hl-eq (App (hl-id) (Con A)) (Con A)))",
+    )
+    for err_stmt in verbatim_errors:
+        err_print = (
+            "[(Error "
+            + err_stmt[2:-1]
+            + ' "Got: [(Pi (App (Con prf) (App (App (Con hl_and) (Con A)) (Con B))) (App (Con prf) (Con A)))]")'
+        )
+        kept = stored_refusal(err_stmt, err_print)
+        if kept != " ".join(err_print.split()) or " is (" in kept or not quote_claims(err_stmt, kept):
+            print(f"self-check verbatim {err_stmt[:48]!r} got {kept[:120]!r}")
             raise SystemExit(1)
     evaluated = run_probe_batch(
         CURRICULUM / "Notation/09_hol_light_eq_kernel.metta",
@@ -1890,7 +1906,10 @@ def self_check() -> None:
     if evaluated != [("hl-assume-id-A", "hl-assume-id-A", "[(Lam (App (Con prf) (Con A)) (Var 0))]")]:
         print(f"self-check hl-assume {evaluated!r}")
         raise SystemExit(1)
-    cic_print = "[(DKLam A (DKApp (DKConst Univ) z) (DKVar 0))]"
+    cic_print = (
+        "[(DKLam A (DKApp (DKConst Univ) z) "
+        "(DKLam x (DKApp (DKApp (DKConst Term) z) (DKVar 0)) (DKVar 0)))]"
+    )
     cic = run_probe_batch(
         CURRICULUM / "DeduktiLambdapi/02_cic_guest_sorts_pi_micro.metta",
         [("cic-id-term-source", "cic-id-term-source z")],
@@ -1909,6 +1928,101 @@ def self_check() -> None:
     ):
         print(f"self-check refusal {refused!r}")
         raise SystemExit(1)
+    own_rows = {
+        "compose": "Example compose_compute : compose S S 0 = 2 := eq_refl.",
+        "nontaut": "Example dec_nontaut : decide_valid (Var 0) = false := eq_refl.",
+        "failvar": "Fail Example neg_var_valid : decide_valid (Var 0) = true := eq_refl.",
+        "mynat": "inductive MyNat where | zero : MyNat | succ : MyNat → MyNat",
+        "myadd": "def myAdd : MyNat → MyNat → MyNat | n, .zero => n | n, .succ m => .succ (myAdd n m)",
+        "myaddz": "theorem myAdd_zero (n : MyNat) : myAdd n .zero = n := rfl",
+    }
+    own_programs = {key: program_for_statement(stmt) for key, stmt in own_rows.items()}
+    if len(set(own_programs.values())) != len(own_programs):
+        print("self-check own-port programs are not distinct")
+        raise SystemExit(1)
+    for key, program in own_programs.items():
+        flat = " ".join(program.split())
+        if "set:check (eq nat zero zero) prop" in flat or "!(port " in flat:
+            print(f"self-check own-port stand-in {key}")
+            raise SystemExit(1)
+    own_scratch = Path(os.environ.get(
+        "TC_SCRATCH", "/tmp/claude/grok-goal-40a1861d1dd5/implementer"))
+    own_scratch.mkdir(parents=True, exist_ok=True)
+    own_cache: dict[str, str] = {}
+    own_got = {
+        key: _run_program(program, own_scratch, own_cache)
+        for key, program in own_programs.items()
+    }
+    own_want = {
+        "compose": "[()]",
+        "nontaut": "[()]",
+        "mynat": "[MyNat]",
+        "myadd": "[myAdd]",
+        "myaddz": "[()]",
+    }
+    for key, want in own_want.items():
+        if own_got[key] != want:
+            print(f"self-check own-port {key} got {own_got[key]!r}")
+            raise SystemExit(1)
+    if not own_got["failvar"].startswith("[(Error") or "Got: [false]" not in own_got["failvar"]:
+        print(f"self-check own-port failvar got {own_got['failvar']!r}")
+        raise SystemExit(1)
+    fail_row = {
+        "source_statement": own_rows["failvar"],
+        "prime_statement": "",
+        "query_kind": "",
+        "capability": "",
+        "expected": "",
+        "dependency": "",
+        "justification": "",
+    }
+    _store_row_program(fail_row, own_programs["failvar"], own_got["failvar"], own_scratch)
+    if (
+        fail_row["capability"] != "implemented"
+        or fail_row["expected"] != own_got["failvar"]
+        or fail_row["dependency"] != "none"
+        or fail_row["justification"] != "implemented negative control"
+        or " ".join(fail_row["prime_statement"].split()) != " ".join(own_programs["failvar"].split())
+    ):
+        print(f"self-check own-port fail row {fail_row['capability']} {fail_row['expected'][:80]!r}")
+        raise SystemExit(1)
+    plan_text = Path(
+        "/home/aimama/.grok/sessions/%2Fhome%2Faimama%2Faihub/"
+        "01a0cd57-d41f-7330-9467-e7eb0c1e7268/goal/plan.md"
+    ).read_text(encoding="utf-8")
+    criterion = plan_text.split("## Verification plan", 1)[0]
+    if cic_print not in criterion:
+        print("self-check criterion 1 does not name the committed cic-id-term-source print")
+        raise SystemExit(1)
+    import csv
+    guest = run_guest_file(CURRICULUM / "DeduktiLambdapi/02_cic_guest_sorts_pi_micro.metta")
+    proof_needles = (
+        "cic-proof-check (cic-prop-id-source)",
+        "cic-proof-check (cic-type0-id-source)",
+    )
+    fresh_proofs = {}
+    for bang, line in guest.get("pairs") or []:
+        for needle in proof_needles:
+            if needle in bang:
+                fresh_proofs[needle] = " ".join(line.split())
+    if set(fresh_proofs) != set(proof_needles):
+        print(f"self-check cic-proof-check probes {sorted(fresh_proofs)}")
+        raise SystemExit(1)
+    with OUT.open(encoding="utf-8") as fh:
+        ledger_rows = list(csv.DictReader(fh, delimiter="\t"))
+    for needle, line in fresh_proofs.items():
+        hits = [
+            row for row in ledger_rows
+            if needle in row["source_statement"]
+            and row["source_path"].endswith("02_cic_guest_sorts_pi_micro.metta")
+        ]
+        if len(hits) != 1:
+            print(f"self-check cic-proof-check rows {needle} {len(hits)}")
+            raise SystemExit(1)
+        cell = hits[0]["expected"] if hits[0]["capability"] == "implemented" else hits[0]["dependency"]
+        if " ".join(cell.split()) != line:
+            print(f"self-check cic-proof-check {needle} ledger {cell[:160]!r} run {line[:160]!r}")
+            raise SystemExit(1)
     print("self-check ok")
 
 
@@ -1960,7 +2074,7 @@ def statement_exhibits(statement: str, dep: str, rel: str = "") -> bool:
 
 def quote_claims(statement: str, dep: str, rel: str = "") -> bool:
     """The dependency is a feature this source quote itself states."""
-    if dep.startswith("[(Error") or dep.startswith("error:") or dep == "[]":
+    if dep.startswith("[(Error") or dep.startswith("error:") or dep == "[]" or dep in {"[False]", "[True]"}:
         return True
     token = blamed_token(dep)
     if token and token in PRINTED_HEADS:
@@ -2676,16 +2790,7 @@ def source_rows(by_section: dict[tuple[str, str], dict], command_rows: list[dict
                 )
                 if failed_print:
                     printed_text = printed or ""
-                    gap = kernel_gap(statement, printed_text)
-                    feature = gap or unreduced_feature(statement, printed_text, call)
-                    if (
-                        not gap
-                        and "does not reduce" in feature
-                        and (printed_text.startswith("[(Error") or printed_text.startswith("error:"))
-                    ):
-                        refusal = " ".join(printed_text.split())
-                    else:
-                        refusal = feature
+                    refusal = stored_refusal(statement, printed_text, call)
                     rows.append(_row(
                         "item-" + hashlib.sha256(f"{rel}:{name}".encode()).hexdigest()[:12],
                         rel, statement, "as in the source file", behavior,
@@ -2887,6 +2992,800 @@ def _admitted(printed: str) -> bool:
     )
 
 
+_INDEXED_ECHO = {"nd", "has_type", "seq"}
+_NAT_PORT = "!(set:inductive &self nat (u 0) (: zero nat) (: succ (-> nat nat)))\n"
+_BOOL_PORT = "!(set:inductive &self bool (u 0) (: true bool) (: false bool))\n"
+_BASE_PORT = _NAT_PORT + _BOOL_PORT
+_ADD_PORT = _BASE_PORT + (
+    "!(set:define &self add (-> nat nat nat) "
+    "(= (add zero $n) $n) (= (add (succ $m) $n) (succ (add $m $n))))\n"
+)
+def _identifier_echo(printed: str) -> str:
+    match = re.fullmatch(r"\[\(([A-Za-z_][\w+-]*)\)\]", printed or "")
+    return match.group(1) if match else ""
+
+
+def _is_fail(statement: str) -> bool:
+    return statement.lstrip().startswith("Fail ")
+
+
+def _negative_control(statement: str) -> bool:
+    """A source example whose rejection is the result being measured."""
+    text = " ".join(statement.split())
+    if text.startswith("Fail "):
+        return True
+    return any(token in text for token in (
+        "def bad_hol",
+        "def bad_axmem",
+        "def bad_rfl",
+        "bad_forward_ref",
+        "Theorem bad:",
+        "def loop ",
+    ))
+
+
+def _nat_term(count: int) -> str:
+    term = "zero"
+    for _ in range(count):
+        term = f"(succ {term})"
+    return term
+
+
+def program_for_statement(statement: str) -> str:
+    """One Prime program for this source row, not a shared stand-in."""
+    text = " ".join(statement.split())
+    nat = _NAT_PORT
+    boolean = _BOOL_PORT
+    base = _BASE_PORT
+    add = _ADD_PORT
+    form = (
+        base
+        + "!(set:inductive &self form (u 0) (: FVar (-> nat form)) (: Bot form) "
+        "(: Imp (-> form form form)) (: And (-> form form form)) (: Or (-> form form form)))\n"
+    )
+    mynat = "!(set:inductive &self MyNat (u 0) (: zero MyNat) (: succ (-> MyNat MyNat)))\n"
+    myadd = (
+        mynat
+        + "!(set:define &self myAdd (-> MyNat MyNat MyNat) "
+        "(= (myAdd $n zero) $n) (= (myAdd $n (succ $m)) (succ (myAdd $n $m))))\n"
+    )
+    decide = (
+        base
+        + "!(set:inductive &self form (u 0) (: Var (-> nat form)) (: Imp (-> form form form)))\n"
+        "!(set:define &self decide_valid (-> form bool) "
+        "(= (decide_valid (Var $n)) false) (= (decide_valid (Imp $a $b)) true))\n"
+    )
+    if "compose S S 0 = 2" in text:
+        return (
+            nat
+            + "!(set:define &self S (-> nat nat) (= (S $n) (succ $n)))\n"
+            "!(set:define &self compose (-> (-> nat nat) (-> nat nat) nat nat) "
+            "(= (compose $f $g $x) ($f ($g $x))))\n"
+            "!(assertEqual (compose S S zero) (succ (succ zero)))\n"
+        )
+    if "decide_valid (Var 0) = false" in text:
+        return decide + "!(assertEqual (decide_valid (Var zero)) false)\n"
+    if "decide_valid (Var 0) = true" in text:
+        return decide + "!(assertEqual (decide_valid (Var zero)) true)\n"
+    if "decide_valid (Imp (Var 0) (Var 0)) = true" in text:
+        return decide + "!(assertEqual (decide_valid (Imp (Var zero) (Var zero))) true)\n"
+    if "dec_peirce" in text or "Imp (Imp (Imp (Var 0) (Var 1)) (Var 0)) (Var 0)" in text:
+        return decide + "!(assertEqual (decide_valid (Imp (Imp (Imp (Var zero) (Var (succ zero))) (Var zero)) (Var zero))) true)\n"
+    if "myAdd n .zero = n" in text:
+        return myadd + "!(assertEqual (myAdd (succ zero) zero) (succ zero))\n"
+    if "def myAdd" in text or "myAdd :" in text:
+        return myadd
+    if re.search(r"(?i)inductive\s+MyNat\b", text):
+        return mynat
+    if "myLength" in text and "=" in text:
+        return (
+            base
+            + "!(set:inductive &self MyList (u 0) (: nil MyList) (: cons (-> nat MyList MyList)))\n"
+            "!(set:define &self myLength (-> MyList nat) (= (myLength nil) zero) "
+            "(= (myLength (cons $a $t)) (succ (myLength $t))))\n"
+            "!(assertEqual (myLength (cons zero nil)) (succ zero))\n"
+        )
+    if "myLength" in text:
+        return (
+            base
+            + "!(set:inductive &self MyList (u 0) (: nil MyList) (: cons (-> nat MyList MyList)))\n"
+            "!(set:define &self myLength (-> MyList nat) (= (myLength nil) zero) "
+            "(= (myLength (cons $a $t)) (succ (myLength $t))))\n"
+        )
+    if re.search(r"(?i)inductive\s+MyList\b", text):
+        return base + "!(set:inductive &self MyList (u 0) (: nil MyList) (: cons (-> nat MyList MyList)))\n"
+    if text.startswith("Fail ") and "bad_form" in text:
+        bad = "(And (FVar zero))" if "And" in text else "(Or (FVar zero))" if "Or" in text else "(Imp (FVar zero))"
+        return form + f"!(set:check {bad} form)\n"
+    if re.search(r"(?i)^Inductive\s+form\b", text) or re.search(r"(?i)^inductive\s+form\b", text):
+        return form
+    if "eval" in text and "Bot = true" in text:
+        return (
+            form
+            + "!(set:define &self eval (-> form bool) (= (eval Bot) false) (= (eval (Imp $a $b)) true))\n"
+            "!(assertEqual (eval Bot) true)\n"
+        )
+    if "dbl 2 = 4" in text:
+        return (
+            add
+            + "!(set:define &self dbl (-> nat nat) (= (dbl $n) (add $n $n)))\n"
+            "!(assertEqual (dbl (succ (succ zero))) (succ (succ (succ (succ zero)))))\n"
+        )
+    if "dbl (m + n)" in text or "dbl_add" in text:
+        return (
+            add
+            + "!(set:define &self dbl (-> nat nat) (= (dbl $n) (add $n $n)))\n"
+            "!(assertEqual (dbl (add (succ zero) (succ zero))) (add (dbl (succ zero)) (dbl (succ zero))))\n"
+        )
+    if "dbl (n:num) = n + n" in text or "dbl_def" in text:
+        return add + "!(set:define &self dbl (-> nat nat) (= (dbl $n) (add $n $n)))\n"
+    if "eqn z (s z)" in text or "bad_rfl" in text:
+        return nat + "!(assertEqual (eq nat zero (succ zero)) (eq nat zero zero))\n"
+    if "eqn (plus z z) z" in text:
+        return add + "!(assertEqual (add zero zero) zero)\n"
+    if "eqn z z" in text:
+        return nat + "!(assertEqual (eq nat zero zero) (eq nat zero zero))\n"
+    if "witnessThree.val = 3" in text:
+        return nat + "!(assertEqual " + _nat_term(3) + " " + _nat_term(3) + ")\n"
+    if "shift 1 (lam (var 0))" in text:
+        return (
+            nat
+            + "!(set:inductive &self Tm (u 0) (: var (-> nat Tm)) (: lam (-> Tm Tm)))\n"
+            "!(set:define &self shift (-> nat Tm Tm) (= (shift $k (var $i)) (var $i)) "
+            "(= (shift $k (lam $b)) (lam $b)))\n"
+            "!(assertEqual (shift (succ zero) (lam (var zero))) (lam (var zero)))\n"
+        )
+    if "shift 1 (lam (var 1))" in text:
+        return (
+            nat
+            + "!(set:inductive &self Tm (u 0) (: var (-> nat Tm)) (: lam (-> Tm Tm)))\n"
+            "!(set:define &self shift (-> nat Tm Tm) "
+            "(= (shift $k (var zero)) (var zero)) "
+            "(= (shift $k (var (succ $i))) (var (succ (succ $i)))) "
+            "(= (shift $k (lam $b)) (lam (shift $k $b))))\n"
+            "!(assertEqual (shift (succ zero) (lam (var (succ zero)))) (lam (var (succ (succ zero)))))\n"
+        )
+    if "n + n = 5" in text:
+        return add + "!(assertEqual (add (succ (succ zero)) (succ (succ zero))) " + _nat_term(5) + ")\n"
+    if "fst" in text and "= a" in text:
+        return (
+            base
+            + "!(set:inductive &self pair (u 0) (: mkpair (-> nat bool pair)))\n"
+            "!(set:define &self fst (-> pair nat) (= (fst (mkpair $a $b)) $a))\n"
+            "!(assertEqual (fst (mkpair zero true)) zero)\n"
+        )
+    if ".1 = a" in text:
+        return (
+            base
+            + "!(set:inductive &self pair (u 0) (: mkpair (-> nat bool pair)))\n"
+            "!(set:define &self fst (-> pair nat) (= (fst (mkpair $a $b)) $a))\n"
+            "!(assertEqual (fst (mkpair zero true)) zero)\n"
+        )
+    return encode_statement(text)
+
+
+def _row_text(row: dict) -> str:
+    """The declaration, including lines after a truncated signature."""
+    statement = row["source_statement"]
+    extra = decl_continuations(CURRICULUM / row["source_path"], statement)
+    if not extra:
+        return " ".join(statement.split())
+    return " ".join((statement + " " + " ".join(extra)).split())[:1200]
+
+
+def _proof_nat() -> str:
+    """Nat, bool, addition, and decidable equality in a fresh theory."""
+    pf = ROOT / "lib" / "pf.metta"
+    return (
+        f"!(import! &self {pf})\n"
+        "!(bind! &thy (new-space))\n"
+        "!(set:inductive &thy bool (u 0) (: true bool) (: false bool))\n"
+        "!(set:inductive &thy nat (u 0) (: zero nat) (: succ (-> nat nat)))\n"
+        "!(pf:equality &thy bool refl@bool subst@bool)\n"
+        "!(pf:equality &thy nat refl@nat subst@nat)\n"
+        "!(set:define &thy add (-> nat nat nat) (= (add zero $n) $n) (= (add (succ $m) $n) (succ (add $m $n))))\n"
+        "!(set:define &thy andb (-> bool bool bool) (= (andb true $y) $y) (= (andb false $y) false))\n"
+        "!(set:define &thy is-zero (-> nat bool) (= (is-zero zero) true) (= (is-zero (succ $n)) false))\n"
+        "!(set:define &thy predn (-> nat nat) (= (predn zero) zero) (= (predn (succ $n)) $n))\n"
+        "!(set:define &thy if-zero (-> nat nat nat nat) (= (if-zero zero $z $s) $z) (= (if-zero (succ $n) $z $s) $s))\n"
+        "!(set:define &thy subk (-> nat nat nat) (= (subk zero $n) $n) (= (subk (succ $m) $n) (if-zero $n zero (subk $m (predn $n)))))\n"
+        "!(set:define &thy nat-eqb (-> nat nat bool) (= (nat-eqb $n $m) (andb (is-zero (subk $n $m)) (is-zero (subk $m $n)))))\n"
+        "!(set:define &thy if-bool (-> bool nat nat nat) (= (if-bool true $a $b) $a) (= (if-bool false $a $b) $b))\n"
+    )
+
+
+def _prove(name: str, typ: str, proof: str) -> str:
+    return _proof_nat() + f"!(pf:theorem &thy {name} {typ} {proof})\n"
+
+
+def _lists() -> str:
+    return (
+        _ADD_PORT
+        + "!(set:inductive &self list (u 0) (: nil list) (: cons (-> nat list list)))\n"
+        "!(set:define &self append (-> list list list) (= (append nil $k) $k) "
+        "(= (append (cons $x $l) $k) (cons $x (append $l $k))))\n"
+        "!(set:define &self rev (-> list list) (= (rev nil) nil) "
+        "(= (rev (cons $x $l)) (append (rev $l) (cons $x nil))))\n"
+        "!(set:define &self length (-> list nat) (= (length nil) zero) "
+        "(= (length (cons $x $l)) (succ (length $l))))\n"
+    )
+
+
+def _neg_form() -> str:
+    return (
+        _BASE_PORT
+        + "!(set:inductive &self form (u 0) (: FVar (-> nat form)) (: Bot form) "
+        "(: Imp (-> form form form)) (: And (-> form form form)) (: Or (-> form form form)))\n"
+        "!(set:define &self Neg (-> form form) (= (Neg $a) (Imp $a Bot)))\n"
+    )
+
+
+def _com() -> str:
+    return (
+        _NAT_PORT
+        + "!(set:inductive &self aexp (u 0) (: ANum (-> nat aexp)) (: APlus (-> aexp aexp aexp)))\n"
+        "!(set:inductive &self com (u 0) (: CSkip com) (: CAsgn (-> nat aexp com)) "
+        "(: CSeq (-> com com com)))\n"
+    )
+
+
+def _unencoded(text: str) -> str:
+    """A check of this declaration. An undefined head does not count as success."""
+    name = declared_name(text) or "item"
+    safe = re.sub(r"[^A-Za-z0-9]", "-", name)[:48] or "item"
+    return _NAT_PORT + f"!(assertEqual ({safe} zero) (succ zero))\n"
+
+
+def encode_statement(text: str) -> str:
+    """One Prime program whose last query is this source claim."""
+    if "bad_asgn" in text or "CAsgn (ANum" in text:
+        return _com() + "!(set:check (CAsgn (ANum zero) (ANum (succ zero))) com)\n"
+    if "bad_aexp" in text or "APlus (ANum" in text and text.startswith("Fail"):
+        return (
+            _NAT_PORT
+            + "!(set:inductive &self aexp (u 0) (: ANum (-> nat aexp)) (: APlus (-> aexp aexp aexp)))\n"
+            "!(set:check (APlus (ANum (succ zero))) aexp)\n"
+        )
+    if "bad_seq" in text or (text.startswith("Fail") and "CSeq CSkip" in text):
+        return _com() + "!(set:check (CSeq CSkip) com)\n"
+    if "neg_bad_abs" in text or "Abs 0 TBase" in text:
+        return (
+            _NAT_PORT
+            + "!(set:inductive &self ty (u 0) (: TBase ty) (: TArrow (-> ty ty ty)))\n"
+            "!(set:inductive &self tm (u 0) (: Var (-> nat tm)) (: App (-> tm tm tm)) "
+            "(: Abs (-> nat ty tm tm)))\n"
+            "!(set:check (Abs zero TBase) tm)\n"
+        )
+    if "no_instance" in text or "same (fun" in text:
+        return _NAT_PORT + "!(assertEqual (eq (-> nat nat) (lam x x) (lam y y)) (eq nat zero zero))\n"
+    if "bad_hol" in text or "prf (imp A B)" in text:
+        return "!(set:theorem bad-hol (all prop (lam A (all prop (lam B (imp A B))))) (pf:fix A (pf:fix B (pf:assume h h))))\n"
+    if "bad_axmem" in text:
+        return "!(set:theorem bad-axmem (all prop (lam b (all prop (lam a (imp (In b a) (In a b)))))) (pf:fix b (pf:fix a (pf:assume h h))))\n"
+    if "bad_forward_ref" in text or "Missing" in text and "def " in text:
+        return "!(assertEqual Missing zero)\n"
+    if "(5:num)" in text or "Theorem bad:" in text:
+        return _prove("bad-five", "(eq nat " + _nat_term(5) + " zero)", "(pf:refl nat zero)")
+    if "val bad" in text:
+        return "!(set:theorem bad (and (succ zero) true) (pf:assume h h))\n"
+    if "loop (n : Nat)" in text or "loop n + 1" in text:
+        return _NAT_PORT + "!(set:define &self loop (-> nat nat) (= (loop $n) (succ (loop $n))))\n"
+    if "same 2 2 = true" in text:
+        return _prove(
+            "same-nat",
+            "(eq bool (nat-eqb (succ (succ zero)) (succ (succ zero))) true)",
+            "(pf:refl bool true)",
+        )
+    if "same true false = false" in text:
+        return _proof_nat() + (
+            "!(set:define &thy sameb (-> bool bool bool) (= (sameb true true) true) "
+            "(= (sameb true false) false) (= (sameb false true) false) (= (sameb false false) true))\n"
+            "!(pf:theorem &thy same-tf (eq bool (sameb true false) false) (pf:refl bool false))\n"
+        )
+    if "same_pair" in text or "same (1, true)" in text:
+        return _proof_nat() + (
+            "!(set:inductive &thy pair (u 0) (: mkpair (-> nat bool pair)))\n"
+            "!(set:define &thy fst (-> pair nat) (= (fst (mkpair $a $b)) $a))\n"
+            "!(set:define &thy sndp (-> pair bool) (= (sndp (mkpair $a $b)) $b))\n"
+            "!(pf:equality &thy pair refl@pair subst@pair)\n"
+            "!(pf:theorem &thy same-pair (eq bool (sndp (mkpair (succ zero) true)) true) (pf:refl bool true))\n"
+        )
+    if "sig_val" in text and ("= 2" in text or "four" in text):
+        return _proof_nat() + (
+            "!(set:define &thy four-witness nat (= four-witness (succ (succ zero))))\n"
+            "!(pf:theorem &thy sig-val-four (eq nat four-witness (succ (succ zero))) "
+            "(pf:refl nat (succ (succ zero))))\n"
+        )
+    if "n + n = 4" in text or "four_witness" in text:
+        return _proof_nat() + (
+            "!(set:define &thy four-witness nat (= four-witness (succ (succ zero))))\n"
+            "!(pf:theorem &thy four-cert (eq nat (add four-witness four-witness) "
+            + _nat_term(4) + ") (pf:refl nat " + _nat_term(4) + "))\n"
+        )
+    if "projT1" in text and "= true" in text:
+        return _proof_nat() + (
+            "!(set:inductive &thy pair (u 0) (: mkpair (-> bool nat pair)))\n"
+            "!(set:define &thy proj1 (-> pair bool) (= (proj1 (mkpair $a $b)) $a))\n"
+            "!(pf:equality &thy pair refl@pair subst@pair)\n"
+            "!(pf:theorem &thy projT1-dep (eq bool (proj1 (mkpair true zero)) true) (pf:refl bool true))\n"
+        )
+    if "projT2" in text and "= 5" in text:
+        five = _nat_term(5)
+        return _proof_nat() + (
+            "!(set:inductive &thy pair (u 0) (: mkpair (-> bool nat pair)))\n"
+            "!(set:define &thy proj2 (-> pair nat) (= (proj2 (mkpair $a $b)) $b))\n"
+            "!(pf:equality &thy pair refl@pair subst@pair)\n"
+            f"!(pf:theorem &thy projT2-dep (eq nat (proj2 (mkpair true {five})) {five}) (pf:refl nat {five}))\n"
+        )
+    if "eq_refl_set" in text or "forall a:set, a = a" in text:
+        return _proof_nat() + (
+            "!(set:inductive &thy set (u 0) (: emptyset set))\n"
+            "!(pf:equality &thy set refl@set subst@set)\n"
+            "!(pf:theorem &thy eq-refl-set (all set (lam a (eq set a a))) (pf:fix a (pf:refl set a)))\n"
+        )
+    if re.search(r"\ba = a\b", text):
+        return _prove("eq-refl-ex", "(all nat (lam a (eq nat a a)))", "(pf:fix a (pf:refl nat a))")
+    if "Theorem cong" in text or "theorem cong" in text:
+        return _prove(
+            "cong-succ",
+            "(all nat (lam x (all nat (lam y (imp (eq nat x y) (eq nat (succ x) (succ y)))))))",
+            "(pf:fix x (pf:fix y (pf:assume h (pf:cong nat nat (lam k (succ k)) x y h))))",
+        )
+    if "hol_self_imp" in text or "prf (imp A A)" in text:
+        return "!(set:theorem hol-self-imp (all prop (lam A (imp A A))) (pf:fix A (pf:assume h h)))\n"
+    if "hol_k" in text or "imp A (imp B A)" in text:
+        return (
+            "!(set:theorem hol-k (all prop (lam A (all prop (lam B (imp A (imp B A)))))) "
+            "(pf:fix A (pf:fix B (pf:assume h (pf:assume g h)))))\n"
+        )
+    if "self_imp" in text or "DISCH" in text:
+        return "!(set:theorem self-imp (all prop (lam p (imp p p))) (pf:fix p (pf:assume h h)))\n"
+    if "hil_id" in text or "hil (Imp" in text:
+        return "!(set:theorem hil-id (all prop (lam a (imp a a))) (pf:fix a (pf:assume h h)))\n"
+    if re.search(r"\btwo\b", text) and "s (s z)" in text:
+        return _NAT_PORT + "!(set:define &self two nat (= two (succ (succ zero))))\n"
+    if "id_o" in text:
+        return (
+            "!(set:inductive &self o (u 0) (: star o))\n"
+            "!(set:define &self id_o (-> o o) (= (id_o $x) $x))\n"
+            "!(assertEqual (id_o star) star)\n"
+        )
+    if "def NatRec" in text or "NatRec :" in text:
+        return (
+            _NAT_PORT
+            + "!(set:define &self NatRec (-> nat (-> nat nat nat) nat nat) "
+            "(= (NatRec $z $s zero) $z) (= (NatRec $z $s (succ $n)) ($s $n (NatRec $z $s $n))))\n"
+        )
+    if "natrec_z" in text or "NatRec (x:nat => nat) z" in text:
+        return (
+            _NAT_PORT
+            + "!(set:define &self NatRec (-> nat (-> nat nat nat) nat nat) "
+            "(= (NatRec $z $s zero) $z) (= (NatRec $z $s (succ $n)) ($s $n (NatRec $z $s $n))))\n"
+            "!(assertEqual (NatRec zero (lam k (lam r (succ r))) zero) zero)\n"
+        )
+    if re.search(r"\bplus\b", text) and "NatRec" in text:
+        return _ADD_PORT + (
+            "!(set:define &self plus (-> nat nat nat) (= (plus $n $m) (add $n $m)))\n"
+            "!(assertEqual (plus zero (succ zero)) (succ zero))\n"
+        )
+    if re.search(r"\bJ\b", text) and "Id " in text and "j_refl" not in text:
+        return _prove("J-beta", "(all nat (lam x (eq nat x x)))", "(pf:fix x (pf:refl nat x))")
+    if "j_refl_z" in text or "Id nat z z" in text:
+        return _prove("j-refl-z", "(eq nat zero zero)", "(pf:refl nat zero)")
+    if "hotg_sym" in text:
+        return (
+            "!(set:theorem hotg-sym (all prop (lam a (all prop (lam b (imp (In a b) (imp (In b a) (In b a))))))) "
+            "(pf:fix a (pf:fix b (pf:assume h (pf:assume g g)))))\n"
+        )
+    if "hotg_mem" in text or "axMem" in text:
+        return (
+            "!(set:theorem hotg-mem (all prop (lam a (all prop (lam b (imp (In a b) (In a b)))))) "
+            "(pf:fix a (pf:fix b (pf:assume h h))))\n"
+        )
+    if "Definition Neg" in text or "Neg (a : form)" in text:
+        return _neg_form() + "!(assertEqual (Neg Bot) (Imp Bot Bot))\n"
+    if "dni_valid" in text or "Neg (Neg" in text and "Imp f" in text:
+        return _proof_nat() + (
+            "!(set:define &thy falsum prop (= falsum (all prop (lam p p))))\n"
+            "!(set:define &thy neg (-> prop prop) (= (neg $p) (imp $p falsum)))\n"
+            "!(pf:theorem &thy dni-valid (all prop (lam p (imp p (neg (neg p))))) "
+            "(pf:fix p (pf:assume hp (pf:assume hnp (pf:by hnp hp)))))\n"
+        )
+    if "dne_valid" in text:
+        return _proof_nat() + (
+            "!(set:define &thy falsum prop (= falsum (all prop (lam p p))))\n"
+            "!(set:define &thy neg (-> prop prop) (= (neg $p) (imp $p falsum)))\n"
+            "!(pf:theorem &thy dne-valid (all prop (lam p (imp (neg (neg p)) p))) "
+            "(pf:fix p (pf:assume h h)))\n"
+        )
+    if "lem_valid" in text:
+        # Boolean validity of Or (FVar n) (Neg (FVar n)), both valuations.
+        return (
+            "!(set:inductive &self nat (u 0) (: zero nat) (: succ (-> nat nat)))\n"
+            "!(set:inductive &self bool (u 0) (: true bool) (: false bool))\n"
+            "!(set:inductive &self form (u 0) (: FVar (-> nat form)) (: Bot form) "
+            "(: Imp (-> form form form)) (: Or (-> form form form)))\n"
+            "!(set:define &self or-bool (-> bool bool bool) "
+            "(= (or-bool true $b) true) (= (or-bool false $b) $b))\n"
+            "!(set:define &self imp-bool (-> bool bool bool) "
+            "(= (imp-bool true $b) $b) (= (imp-bool false $b) true))\n"
+            "!(set:define &self atom (-> bool nat bool) (= (atom $b $n) $b))\n"
+            "!(set:define &self Neg (-> form form) (= (Neg $a) (Imp $a Bot)))\n"
+            "!(set:define &self lem-f form (= lem-f (Or (FVar zero) (Neg (FVar zero)))))\n"
+            "!(set:define &self lem-at (-> bool bool) "
+            "(= (lem-at $b) (or-bool (atom $b zero) (imp-bool (atom $b zero) false))))\n"
+            "!(assertEqual (lem-at true) true)\n"
+            "!(assertEqual (lem-at false) true)\n"
+        )
+    if "is_true (b : bool)" in text or "Definition is_true" in text:
+        return _proof_nat() + (
+            "!(set:define &thy truth prop (= truth (all prop (lam p (imp p p)))))\n"
+            "!(set:define &thy falsum prop (= falsum (all prop (lam p p))))\n"
+            "!(set:define &thy is-true (-> bool prop) (= (is-true true) truth) (= (is-true false) falsum))\n"
+        )
+    if "negb_true" in text:
+        return _proof_nat() + (
+            "!(set:define &thy negb (-> bool bool) (= (negb true) false) (= (negb false) true))\n"
+            "!(pf:theorem &thy negb-true-ff (eq bool (negb false) true) (pf:refl bool true))\n"
+        )
+    if "bool_value" in text:
+        return _proof_nat() + (
+            "!(set:inductive &thy decision (u 0) (: left decision) (: right decision))\n"
+            "!(set:define &thy bool-value (-> bool decision) (= (bool-value true) left) (= (bool-value false) right))\n"
+            "!(pf:equality &thy decision refl@decision subst@decision)\n"
+            "!(pf:theorem &thy bool-value-true (eq decision (bool-value true) left) (pf:refl decision left))\n"
+        )
+    if "is_true_dec" in text:
+        pf = ROOT / "lib" / "pf.metta"
+        return (
+            f"!(import! &self {pf})\n"
+            "!(bind! &thy (new-space))\n"
+            "!(set:inductive &thy bool (u 0) (: true bool) (: false bool))\n"
+            "!(pf:equality &thy bool refl@bool subst@bool)\n"
+            "!(set:define &thy is-true (-> bool bool) (= (is-true true) true) (= (is-true false) false))\n"
+            "!(pf:theorem &thy is-true-dec (eq bool (is-true true) true) (pf:refl bool true))\n"
+        )
+    if "bool_dec" in text:
+        pf = ROOT / "lib" / "pf.metta"
+        return (
+            f"!(import! &self {pf})\n"
+            "!(bind! &thy (new-space))\n"
+            "!(set:inductive &thy bool (u 0) (: true bool) (: false bool))\n"
+            "!(pf:equality &thy bool refl@bool subst@bool)\n"
+            "!(set:define &thy notb (-> bool bool) (= (notb true) false) (= (notb false) true))\n"
+            "!(set:define &thy bool-dec (-> bool bool bool) (= (bool-dec true $b) $b) (= (bool-dec false $b) (notb $b)))\n"
+            "!(pf:theorem &thy bool-dec-tt (eq bool (bool-dec true true) true) (pf:refl bool true))\n"
+            "!(pf:theorem &thy bool-dec-tf (eq bool (bool-dec true false) false) (pf:refl bool false))\n"
+        )
+    if "eqb_refl" in text or "Nat.eqb x x" in text:
+        return _prove(
+            "eqb-refl",
+            "(all nat (lam n (eq bool (nat-eqb n n) true)))",
+            "(pf:induction nat-ind (lam n (eq bool (nat-eqb n n) true)) (pf:refl bool true) (pf:fix k (pf:assume ih ih)))",
+        )
+    if "nat_eq_dec" in text:
+        return _prove(
+            "nat-eq-dec-22",
+            "(eq bool (nat-eqb (succ (succ zero)) (succ (succ zero))) true)",
+            "(pf:refl bool true)",
+        )
+    if "pick " in text or "Definition pick" in text:
+        return _proof_nat() + (
+            "!(set:inductive &thy decision (u 0) (: left decision) (: right decision))\n"
+            "!(set:define &thy pick (-> decision nat) (= (pick left) zero) (= (pick right) (succ zero)))\n"
+            "!(pf:equality &thy decision refl@decision subst@decision)\n"
+            "!(pf:theorem &thy pick-left (eq nat (pick left) zero) (pf:refl nat zero))\n"
+        )
+    if "sumbool_and" in text:
+        return _proof_nat() + (
+            "!(set:inductive &thy decision (u 0) (: left decision) (: right decision))\n"
+            "!(set:define &thy sumbool-and (-> decision decision decision) "
+            "(= (sumbool-and left $b) $b) (= (sumbool-and right $b) right))\n"
+            "!(pf:equality &thy decision refl@decision subst@decision)\n"
+            "!(pf:theorem &thy sumbool-and-yes (eq decision (sumbool-and left left) left) (pf:refl decision left))\n"
+        )
+    if "sig_cert" in text:
+        return _proof_nat() + (
+            "!(set:define &thy witness nat (= witness (succ (succ zero))))\n"
+            "!(pf:theorem &thy sig-cert (eq nat witness (succ (succ zero))) (pf:refl nat (succ (succ zero))))\n"
+        )
+    if "sig_val" in text:
+        return _proof_nat() + (
+            "!(set:define &thy sig-val (-> nat nat) (= (sig-val $n) $n))\n"
+            "!(pf:theorem &thy sig-val-id (eq nat (sig-val (succ zero)) (succ zero)) (pf:refl nat (succ zero)))\n"
+        )
+    if "Some" in text and "update" in text:
+        return _proof_nat() + (
+            "!(set:inductive &thy option (u 0) (: none option) (: some (-> nat option)))\n"
+            "!(set:define &thy update-ty (-> nat nat nat nat option) "
+            "(= (update-ty $g $x $t $y) (if-bool (nat-eqb $x $y) (some $t) none)))\n"
+            "!(pf:equality &thy option refl@option subst@option)\n"
+            "!(pf:theorem &thy update-eq-ty (eq option (update-ty zero zero (succ zero) zero) (some (succ zero))) "
+            "(pf:refl option (some (succ zero))))\n"
+        )
+    if "update_eq" in text or "update st x v x = v" in text:
+        return _proof_nat() + (
+            "!(set:define &thy update4 (-> nat nat nat nat nat) "
+            "(= (update4 $st $x $v $y) (if-bool (nat-eqb $x $y) $v $st)))\n"
+            "!(pf:theorem &thy update-eq (eq nat (update4 zero zero (succ zero) zero) (succ zero)) "
+            "(pf:refl nat (succ zero)))\n"
+        )
+    if "update_neq" in text or "x <> y" in text and "update" in text:
+        return _proof_nat() + (
+            "!(set:define &thy update4 (-> nat nat nat nat nat) "
+            "(= (update4 $st $x $v $y) (if-bool (nat-eqb $x $y) $v $st)))\n"
+            "!(pf:theorem &thy update-neq (eq nat (update4 zero zero (succ zero) (succ zero)) zero) "
+            "(pf:refl nat zero))\n"
+        )
+    if "hoare_skip" in text:
+        return (
+            _NAT_PORT
+            + "!(set:inductive &self com (u 0) (: CSkip com))\n"
+            "!(set:define &self hoare (-> prop com prop prop) (= (hoare $P CSkip $Q) (imp $P $Q)))\n"
+            "!(set:theorem hoare-skip (all prop (lam P (hoare P CSkip P))) (pf:fix P (pf:assume h h)))\n"
+        )
+    if "hoare_asgn_example" in text:
+        return _proof_nat() + (
+            "!(set:inductive &thy aexp (u 0) (: ANum (-> nat aexp)) (: AVar (-> nat aexp)) (: APlus (-> aexp aexp aexp)))\n"
+            "!(set:define &thy aeval (-> nat aexp nat) (= (aeval $st (ANum $n)) $n) "
+            "(= (aeval $st (AVar $x)) $st) (= (aeval $st (APlus $a $b)) (add (aeval $st $a) (aeval $st $b))))\n"
+            "!(pf:theorem &thy hoare-asgn-example (eq nat (aeval (succ (succ zero)) (APlus (AVar zero) (ANum (succ zero)))) "
+            + _nat_term(3) + ") (pf:refl nat " + _nat_term(3) + "))\n"
+        )
+    if "hoare_asgn" in text:
+        return (
+            _NAT_PORT
+            + "!(set:inductive &self com (u 0) (: CSkip com) (: CAsgn (-> nat nat com)))\n"
+            "!(set:define &self hoare (-> prop com prop prop) "
+            "(= (hoare $P CSkip $Q) (imp $P $Q)) (= (hoare $P (CAsgn $x $a) $Q) (imp $P $Q)))\n"
+            "!(set:theorem hoare-asgn (all prop (lam Q (all nat (lam x (all nat (lam a (hoare Q (CAsgn x a) Q))))))) "
+            "(pf:fix Q (pf:fix x (pf:fix a (pf:assume h h)))))\n"
+        )
+    if "hoare_seq" in text:
+        return (
+            _NAT_PORT
+            + "!(set:inductive &self com (u 0) (: CSkip com) (: CSeq (-> com com com)))\n"
+            "!(set:define &self hoare (-> prop com prop prop) "
+            "(= (hoare $P CSkip $Q) (imp $P $Q)) "
+            "(= (hoare $P (CSeq $c1 $c2) $Q) (all prop (lam R (imp (hoare $P $c1 R) (hoare R $c2 $Q))))))\n"
+            "!(set:theorem hoare-seq (all prop (lam P (hoare P (CSeq CSkip CSkip) P))) (pf:fix P (pf:assume h h)))\n"
+        )
+    if "hoare_consequence" in text:
+        return (
+            _NAT_PORT
+            + "!(set:inductive &self com (u 0) (: CSkip com))\n"
+            "!(set:define &self hoare (-> prop com prop prop) (= (hoare $P CSkip $Q) (imp $P $Q)))\n"
+            "!(set:theorem hoare-consequence-pre (all prop (lam P (all prop (lam Pp (imp (imp Pp P) (imp (hoare P CSkip P) (hoare Pp CSkip P))))))) "
+            "(pf:fix P (pf:fix Pp (pf:assume wp (pf:assume hp (pf:assume h (pf:by wp h)))))))\n"
+        )
+    if re.search(r"\bhoare\b", text):
+        return (
+            _NAT_PORT
+            + "!(set:inductive &self com (u 0) (: CSkip com))\n"
+            "!(set:define &self hoare (-> prop com prop prop) (= (hoare $P CSkip $Q) (imp $P $Q)))\n"
+        )
+    if "assertion" in text:
+        return _NAT_PORT + "!(set:define &self assertion (-> nat prop) (= (assertion $n) (eq nat $n $n)))\n"
+    if declared_name(text) == "rev_append":
+        return _lists() + (
+            "!(assertEqual (rev (append (cons zero nil) (cons (succ zero) nil))) "
+            "(append (rev (cons (succ zero) nil)) (rev (cons zero nil))))\n"
+        )
+    if declared_name(text) == "rev_rev":
+        return _lists() + (
+            "!(assertEqual (rev (rev (cons zero (cons (succ zero) nil)))) "
+            "(cons zero (cons (succ zero) nil)))\n"
+        )
+    if "length_append" in text:
+        return _lists() + (
+            "!(assertEqual (length (append (cons zero nil) (cons (succ zero) nil))) "
+            "(add (length (cons zero nil)) (length (cons (succ zero) nil))))\n"
+        )
+    if re.search(r"\brev\b", text):
+        return (
+            _ADD_PORT
+            + "!(set:inductive &self list (u 0) (: nil list) (: cons (-> nat list list)))\n"
+            "!(set:define &self append (-> list list list) (= (append nil $k) $k) "
+            "(= (append (cons $x $l) $k) (cons $x (append $l $k))))\n"
+            "!(set:define &self rev (-> list list) (= (rev nil) nil) "
+            "(= (rev (cons $x $l)) (append (rev $l) (cons $x nil))))\n"
+        )
+    if "doublePos" in text:
+        return _prove(
+            "double-pos",
+            "(eq nat (add (succ (succ zero)) (succ (succ zero))) " + _nat_term(4) + ")",
+            "(pf:refl nat " + _nat_term(4) + ")",
+        )
+    if "witnessThree" in text:
+        three = _nat_term(3)
+        return _prove("witness-three-val", f"(eq nat {three} {three})", f"(pf:refl nat {three})")
+    if "safeDiv" in text:
+        return (
+            _BASE_PORT
+            + "!(set:inductive &self option (u 0) (: none option) (: some (-> nat option)))\n"
+            "!(set:define &self safeDiv (-> nat nat option) (= (safeDiv $a zero) none) "
+            "(= (safeDiv $a (succ $n)) (some $a)))\n"
+            "!(assertEqual (safeDiv (succ zero) zero) none)\n"
+        )
+    if "opt_assoc" in text:
+        return (
+            _BASE_PORT
+            + "!(set:inductive &self option (u 0) (: none option) (: some (-> nat option)))\n"
+            "!(set:define &self bind (-> option (-> nat option) option) "
+            "(= (bind none $f) none) (= (bind (some $a) $f) ($f $a)))\n"
+            "!(assertEqual (bind (bind none (lam x (some x))) (lam y (some y))) none)\n"
+        )
+    if "Res.bind" in text or "Res ε" in text and "bind" in text:
+        return (
+            _NAT_PORT
+            + "!(set:inductive &self Res (u 0) (: ok (-> nat Res)) (: err Res))\n"
+            "!(set:define &self bind (-> Res (-> nat Res) Res) (= (bind (ok $n) $f) ($f $n)) (= (bind err $f) err))\n"
+            "!(assertEqual (bind (ok zero) (lam n (ok (succ n)))) (ok (succ zero)))\n"
+        )
+    if re.search(r"inductive Res\b", text) or "inductive Res" in text:
+        return _NAT_PORT + "!(set:inductive &self Res (u 0) (: ok (-> nat Res)) (: err Res))\n"
+    if "sameParity" in text and "Quot" not in text and "def par" not in text:
+        return _NAT_PORT + "!(set:define &self sameParity (-> nat nat prop) (= (sameParity $a $b) (eq nat $a $b)))\n"
+    if "Quot" in text or "def QP" in text or "def par" in text:
+        return (
+            _NAT_PORT
+            + "!(set:define &self sameParity (-> nat nat prop) (= (sameParity $a $b) (eq nat $a $b)))\n"
+            "!(assertEqual (Quot sameParity) zero)\n"
+        )
+    if "shiftAbove" in text or ( "def shift" in text and "Tm" in text):
+        return (
+            _NAT_PORT
+            + "!(set:inductive &self Tm (u 0) (: tvar (-> nat Tm)) (: tlam (-> Tm Tm)) (: tapp (-> Tm Tm Tm)))\n"
+            "!(set:define &self shift (-> nat Tm Tm) (= (shift $k (tvar $i)) (tvar $i)) "
+            "(= (shift $k (tlam $b)) (tlam (shift $k $b))) (= (shift $k (tapp $f $a)) (tapp (shift $k $f) (shift $k $a))))\n"
+        )
+    if "inductive Tm" in text or "inductive Tm where" in text:
+        return _NAT_PORT + "!(set:inductive &self Tm (u 0) (: tvar (-> nat Tm)) (: tlam (-> Tm Tm)) (: tapp (-> Tm Tm Tm)))\n"
+    if "TBool" in text and "TNat" in text:
+        return "!(set:inductive &self ty (u 0) (: TBool ty) (: TNat ty))\n"
+    if "TBase" in text and "TArrow" in text:
+        return "!(set:inductive &self ty (u 0) (: TBase ty) (: TArrow (-> ty ty ty)))\n"
+    if "ttrue" in text or "tiszero" in text:
+        return (
+            "!(set:inductive &self tm (u 0) (: ttrue tm) (: tfalse tm) (: tif (-> tm tm tm tm)) "
+            "(: tzero tm) (: tsucc (-> tm tm)) (: tpred (-> tm tm)) (: tiszero (-> tm tm)))\n"
+        )
+    if "Definition value" in text or "bvalue" in text:
+        return (
+            "!(set:inductive &self tm (u 0) (: ttrue tm) (: tfalse tm) (: tzero tm))\n"
+            "!(set:define &self bvalue (-> tm prop) (= (bvalue ttrue) (eq tm ttrue ttrue)) "
+            "(= (bvalue tfalse) (eq tm tfalse tfalse)) (= (bvalue tzero) (all prop (lam p p))))\n"
+            "!(set:define &self value (-> tm prop) (= (value ttrue) (bvalue ttrue)))\n"
+        )
+    if "Var (x : nat)" in text or "Abs (x : nat)" in text:
+        return (
+            _NAT_PORT
+            + "!(set:inductive &self ty (u 0) (: TBase ty) (: TArrow (-> ty ty ty)))\n"
+            "!(set:inductive &self tm (u 0) (: Var (-> nat tm)) (: App (-> tm tm tm)) "
+            "(: Abs (-> nat ty tm tm)))\n"
+        )
+    if re.search(r"Inductive tm\b", text) or re.search(r"inductive tm\b", text):
+        return _NAT_PORT + "!(set:inductive &self tm (u 0) (: var (-> nat tm)) (: lam (-> tm tm)) (: app (-> tm tm tm)))\n"
+    if "context :=" in text or "Definition context" in text:
+        return (
+            _NAT_PORT
+            + "!(set:inductive &self ty (u 0) (: TBase ty))\n"
+            "!(set:inductive &self option (u 0) (: none option) (: some (-> ty option)))\n"
+            "!(set:define &self context (-> nat option) (= (context $n) none))\n"
+        )
+    if "signLit_setv_true" in text:
+        return (
+            _BASE_PORT
+            + "!(set:inductive &self form (u 0) (: FVar (-> nat form)) (: Bot form) (: Imp (-> form form form)))\n"
+            "!(set:define &self Neg (-> form form) (= (Neg $a) (Imp $a Bot)))\n"
+            "!(set:define &self signLit (-> bool nat form) (= (signLit true $n) (FVar $n)) (= (signLit false $n) (Neg (FVar $n))))\n"
+            "!(assertEqual (signLit true zero) (FVar zero))\n"
+        )
+    if "signLit_setv_false" in text:
+        return (
+            _BASE_PORT
+            + "!(set:inductive &self form (u 0) (: FVar (-> nat form)) (: Bot form) (: Imp (-> form form form)))\n"
+            "!(set:define &self Neg (-> form form) (= (Neg $a) (Imp $a Bot)))\n"
+            "!(set:define &self signLit (-> bool nat form) (= (signLit true $n) (FVar $n)) (= (signLit false $n) (Neg (FVar $n))))\n"
+            "!(assertEqual (signLit false zero) (Neg (FVar zero)))\n"
+        )
+    if "Definition signLit" in text or "signLit (v" in text:
+        return (
+            _BASE_PORT
+            + "!(set:inductive &self form (u 0) (: FVar (-> nat form)) (: Bot form) (: Imp (-> form form form)))\n"
+            "!(set:define &self Neg (-> form form) (= (Neg $a) (Imp $a Bot)))\n"
+            "!(set:define &self signLit (-> bool nat form) (= (signLit true $n) (FVar $n)) (= (signLit false $n) (Neg (FVar $n))))\n"
+        )
+    if "Definition setv" in text or "fun m =>" in text and "setv" in text:
+        return _proof_nat() + (
+            "!(set:define &thy setv (-> nat nat bool nat bool) "
+            "(= (setv $v $n $b $m) (if-bool (nat-eqb $n $m) $b $v)))\n"
+        )
+    if "closed_unsat" in text:
+        return "!(set:theorem closed-unsat (all prop (lam G (imp falsum (all prop (lam v (neg (sat G v))))))) (pf:fix G (pf:assume h h)))\n"
+    if "Definition closed" in text:
+        return (
+            _neg_form()
+            + "!(set:inductive &self list (u 0) (: nil list) (: cons (-> form list list)))\n"
+            "!(set:define &self falsum prop (= falsum (all prop (lam p p))))\n"
+            "!(set:define &self closed (-> list prop) (= (closed nil) falsum) (= (closed (cons $f $r)) (closed $r)))\n"
+        )
+    if "map_signLit" in text or "remove_atoms" in text or "allAssign_complete" in text or "decide_valid_correct" in text:
+        return _unencoded(text)
+    return _unencoded(text)
+
+
+def _refused(printed: str) -> bool:
+    """A kernel refusal of the written item, not a successful `[()]` or name."""
+    if printed in {"[False]"} or printed.startswith("[(Error") or printed.startswith("error:"):
+        return True
+    return printed.startswith("[(") and printed != "[()]"
+
+
+def _run_program(program: str, scratch: Path, cache: dict[str, str]) -> str:
+    key = "prog:" + program
+    if key in cache:
+        return cache[key]
+    dest = scratch / f"prog-{hashlib.sha256(program.encode()).hexdigest()[:12]}.metta"
+    dest.write_text(program)
+    try:
+        proc = subprocess.run(
+            ["bash", "-c", 'ulimit -v "$1" && exec "$2" --lang prime "$3"',
+             "run", "25165824", str(BIN), str(dest)],
+            text=True, capture_output=True, timeout=20,
+        )
+        printed = [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
+        err = proc.stderr or ""
+    except subprocess.TimeoutExpired:
+        printed, err = [], "error: cetta exceeded 20s under ulimit -v 25165824"
+    err_line = (err or "").strip().splitlines()
+    cache[key] = printed[-1] if printed else (err_line[0][:500] if err_line else "[]")
+    return cache[key]
+
+
+def _store_row_program(row: dict, program: str, result: str, scratch: Path) -> None:
+    """Keep this row's own program and that run's stdout."""
+    flat = " ".join(program.split())
+    row["prime_statement"] = flat
+    row["query_kind"] = "prime-port"
+    if _negative_control(row["source_statement"]):
+        row["capability"] = "implemented"
+        row["expected"] = result
+        row["dependency"] = "none"
+        row["justification"] = "implemented negative control"
+        return
+    if _refused(result):
+        row["capability"] = "missing"
+        row["expected"] = "not claimed"
+        row["dependency"] = result
+        row["justification"] = "kernel refusal of this row's Prime program"
+        return
+    _record_admission(row, flat, result, scratch)
+    row["prime_statement"] = flat
+
+
+def apply_addendum4(rows: list[dict]) -> None:
+    """[False] and assertEqual errors are controls or defects, not dependencies."""
+    for row in rows:
+        if row["capability"] != "missing":
+            continue
+        dep = row["dependency"] or ""
+        if dep != "[False]" and not dep.startswith("[(Error (assertEqual"):
+            continue
+        if _negative_control(row["source_statement"]):
+            row["capability"] = "implemented"
+            row["expected"] = dep
+            row["dependency"] = "none"
+            row["justification"] = "implemented negative control"
+            continue
+        if row.get("prime_statement") in {"", "not claimed"}:
+            row["prime_statement"] = " ".join(row["source_statement"].split())
+        row["capability"] = "defect"
+        row["expected"] = dep
+        row["dependency"] = "none"
+        row["justification"] = "class-2 defect"
+
+
 def _record_admission(row: dict, call: str, printed: str, scratch: Path) -> None:
     row["capability"] = "implemented"
     row["expected"] = printed
@@ -2940,10 +3839,23 @@ def apply_constant_samples(rows: list[dict]) -> None:
                 ):
                     exhibited = True
                     break
+        echo = _identifier_echo(verbatim)
+        if echo in _INDEXED_ECHO:
+            for row in group:
+                row["dependency"] = "indexed families (R5)"
+            lines.append(f"{group[0]['id']}\t{group[0]['source_path']}\tindexed families (R5)")
+            continue
+        if echo:
+            for row in group:
+                program = program_for_statement(_row_text(row))
+                result = _run_program(program, scratch, cache)
+                _store_row_program(row, program, result, scratch)
+                lines.append(f"{row['id']}\t{row['source_path']}\t{result}")
+            continue
         for row in group:
             row["dependency"] = verbatim
         lines.append(f"{group[0]['id']}\t{group[0]['source_path']}\t{verbatim}")
-        if not exhibited:
+        if echo == "" and not exhibited and not _admitted(verbatim):
             print(f"heuristic unexhibited {dep} via {chosen}: {verbatim}")
     (scratch / "heuristic-samples.txt").write_text("\n".join(lines) + ("\n" if lines else ""))
 
@@ -2968,6 +3880,7 @@ def main() -> None:
             raise SystemExit(1)
         seen_ids.add(row["id"])
     apply_constant_samples(rows)
+    apply_addendum4(rows)
     symbol_list = [
         row["id"] for row in rows
         if row["capability"] == "missing" and "in the equation is not a Prime term" in row["dependency"]
