@@ -759,6 +759,7 @@ FALLBACK_EVAL_TEST_SRC = tests/support/test_fallback_eval_session.c
 PREPARED_PURE_ANSWER_TEST_OBJ = runtime/bootstrap/test_prepared_pure_answer_producer.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 PREPARED_PURE_ANSWER_TEST_BIN = runtime/test_prepared_pure_answer_producer-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 FALLBACK_EVAL_TEST_LINK_OBJ = $(filter-out src/main.$(BUILD_OBJ_TAG).runtime-stats.o src/main.$(BUILD_OBJ_TAG).o $(COMPILED_READER_RUNTIME_OBJ),$(OBJ))
+PRIME_CAPABILITY_OPEN_TEST_BIN = runtime/test_prime_capability_opening-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 STABLE_OCCURRENCE_TRANSPORT_TEST_SRC = tests/test_stable_occurrence_transport.c
 STABLE_OCCURRENCE_TRANSPORT_TEST_OBJ = runtime/bootstrap/test_stable_occurrence_transport.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 STABLE_OCCURRENCE_TRANSPORT_TEST_BIN = runtime/test_stable_occurrence_transport-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
@@ -22991,6 +22992,25 @@ test-prime: $(BIN) $(PRIME_REGULAR_KERNEL_TEST_BIN) test-prime-public-judgment-v
 	@"$(PRIME_REGULAR_KERNEL_TEST_BIN)" \
 		langdef/prime/generated/open_lambda_pi_core_v1.metta \
 		langdef/prime/generated/open_regular_kernel_v1.metta
+
+test-prime: test-prime-fast-fixtures
+
+.PHONY: test-prime-fast-fixtures
+test-prime-fast-fixtures: test-prime-capability-opening
+.PHONY: test-prime-capability-opening
+test-prime-capability-opening: $(BIN) $(PRIME_CAPABILITY_OPEN_TEST_BIN)
+	@$(call cetta_exec,./$(PRIME_CAPABILITY_OPEN_TEST_BIN))
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_prime_capability_opening.py --cetta "$(abspath $(BIN))"
+
+$(PRIME_CAPABILITY_OPEN_TEST_BIN): tests/test_prime_capability_opening.c src/eval.c $(BUILD_CONFIG_HEADER) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_prime_capability_opening.c \
+		$(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS)
+
+# The evaluator paths Prime shares with PeTTa and HE are exercised here too,
+# so a change on those paths cannot regress Prime unseen.
+test: test-prime-fast-fixtures
+test-prime-fast-fixtures: $(BIN)
 	@pass=0; fail=0; \
 	for f in $(PRIME_FAST_TESTS); do \
 		exp="$${f%.metta}.expected"; \
@@ -22998,8 +23018,9 @@ test-prime: $(BIN) $(PRIME_REGULAR_KERNEL_TEST_BIN) test-prime-public-judgment-v
 			echo "FAIL: $$f (missing $$exp)"; fail=$$((fail + 1)); continue; \
 		fi; \
 		result=$$(timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime "$$f" 2>&1); \
-		if [ $$? -eq 124 ]; then \
-			echo "FAIL: $$f (exceeded PRIME_COMPLETION_TIMEOUT=$(PRIME_COMPLETION_TIMEOUT)s)"; \
+		status=$$?; \
+		if [ $$status -ne 0 ]; then \
+			echo "FAIL: $$f (exit $$status; timeout limit $(PRIME_COMPLETION_TIMEOUT)s)"; \
 			fail=$$((fail + 1)); continue; \
 		fi; \
 		if [ "$$result" = "$$(cat "$$exp")" ]; then \
@@ -27245,23 +27266,25 @@ test-petta-dispatch-error-scope: $(BIN)
 
 .PHONY: test-petta-runtime-heads
 # A special form is syntax only where it is written: reached at run time its
-# arguments are evaluated, and it is data unless PeTTa defines a function of
-# its name; an operation's own error in a run-time dispatch fails its path;
-# a specialized callee that raises nothing is called directly.
+# arguments are evaluated, and it is data unless PeTTa or the program defines
+# a function of its name; an operation's own error in a run-time dispatch
+# fails its path; a specialized callee that raises nothing is called directly.
 test-petta-runtime-heads: $(BIN)
 	@set -eu; \
+	for stem in runtime_heads runtime_program_functions eval_list_values; do \
 	for route in tier machine; do \
 		if [ $$route = machine ]; then reference=1; else reference=; fi; \
 		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
-			--lang petta tests/petta/runtime_heads.metta 2>&1); \
-		if [ "$$actual" != "$$(cat tests/petta/runtime_heads.expected)" ]; then \
-			echo "FAIL: run-time heads on the $$route route"; \
-			diff <(cat tests/petta/runtime_heads.expected) \
+			--lang petta tests/petta/$$stem.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/$$stem.expected)" ]; then \
+			echo "FAIL: run-time heads ($$stem) on the $$route route"; \
+			diff <(cat tests/petta/$$stem.expected) \
 				<(printf '%s\n' "$$actual") | head -20; \
 			exit 1; \
 		fi; \
 	done; \
-	echo "PASS: a special form reached at run time is a value, on the tier and in the machine"
+	done; \
+	echo "PASS: a special form reached at run time is a value, or the program's function of its name, on the tier and in the machine"
 
 .PHONY: test-petta-special-form-arities
 # A special form is syntax only at the arities SWI-PeTTa's translator reads;
@@ -27301,7 +27324,26 @@ test-petta-specialization-after-import: $(BIN)
 	done; \
 	echo "PASS: an import invalidates the specializations of its space, on the tier and in the machine"
 
-test-petta-semantics: $(BIN) test-petta-multifile test-petta-eval-in-space test-petta-list-values test-petta-value-occurrences test-petta-dispatch-error-scope test-petta-list-building-linear test-petta-runtime-heads test-petta-specialization-after-import test-petta-special-form-arities
+.PHONY: test-petta-swi-differences
+# The register of every place where plain PeTTa on CeTTa deliberately answers
+# differently from SWI-PeTTa, each with SWI-PeTTa's answer, its reason and its
+# decision.  A registered difference that drifts fails here.
+test-petta-swi-differences: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/swi_differences.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/swi_differences.expected)" ]; then \
+			echo "FAIL: registered SWI-PeTTa differences on the $$route route"; \
+			diff <(cat tests/petta/swi_differences.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: the registered differences from SWI-PeTTa hold, on the tier and in the machine"
+
+test-petta-semantics: $(BIN) test-petta-multifile test-petta-eval-in-space test-petta-list-values test-petta-value-occurrences test-petta-dispatch-error-scope test-petta-list-building-linear test-petta-runtime-heads test-petta-specialization-after-import test-petta-special-form-arities test-petta-swi-differences
 	@set -eu; \
 	for stem in $(PETTA_SEMANTIC_ORACLE_STEMS); do \
 		contract=exact-stream; \
@@ -28940,6 +28982,7 @@ $(EXECUTION_CONTRACTS_TEST_BIN): tests/test_execution_contracts_generated.c \
 		tests/test_execution_contracts_generated.c $(LDFLAGS)
 
 .PHONY: test-prepared-pure-answer-producer
+test: test-prepared-pure-answer-producer
 test-prepared-pure-answer-producer: $(PREPARED_PURE_ANSWER_TEST_BIN)
 	@$(call cetta_exec,./$(PREPARED_PURE_ANSWER_TEST_BIN))
 

@@ -4927,5 +4927,5 @@ const CettaGsltEmbeddedLanguageV1 cetta_petta_typecheck_v3_core_v1 = {
     .request_pipeline = NULL,
     .observation = "bag",
     .manifest_sha256 = "275b70382b18fe8c76764655c15824ac96b3d935b4a9725c855323047e3f4d27",
-    .compiler_sha256 = "06288f417382cdf5700ba8e39d7c48ec7d5a4f87563e1c4cc3f5f437ec815d50",
+    .compiler_sha256 = "ae8b290ee071a19f70ff4725790b48f2f1fba23dac22830add68133fab81e1f0",
 };

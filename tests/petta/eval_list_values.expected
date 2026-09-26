@@ -1,0 +1,5 @@
+((+ 1 2))
+(3)
+(quote-free (3))
+(quote-free (3))
+(quote-free ((+ 1 2)))
