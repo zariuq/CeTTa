@@ -35,6 +35,12 @@ typedef struct {
      * binder. */
     const Atom *const *local_names;
     size_t local_count;
+    /* How many arguments each declaration takes, parallel to `names`, or
+     * NULL.  A declared name applied to at most that many arguments is that
+     * name even where it spells a word of the term syntax (`fst`, `lam`);
+     * applied to more, the syntax is read.  With NULL, or for a local, the
+     * name is read at any number of arguments. */
+    const size_t *arities;
 } CettaPrimeRegularTermEnvironmentV1;
 
 /* Private declaration-elaboration marker for one already scoped universe
@@ -260,6 +266,14 @@ Atom *cetta_prime_regular_term_authored_symbol_v1(
  * that the term contains an intrinsic form for which this authored fragment
  * has not yet earned a public spelling; callers must not leak the wire form. */
 Atom *cetta_prime_regular_term_quote_intrinsic_v1(
+    Arena *arena, Atom *intrinsic);
+
+/* The same quotation with every binder the term refers to named:
+ * `(-> (x : A) B)`, `(lam x body)`, `(sigma (x : A) B)`, a reference to such
+ * a binder written as its name.  For answers shown to a program, such as the
+ * type `type:of` gives.  Only an index no binder of the term binds stays
+ * `(idx k)`. */
+Atom *cetta_prime_regular_term_quote_named_v1(
     Arena *arena, Atom *intrinsic);
 
 /* Elaborate and prepare one authored type without inspecting a subject term. */

@@ -5294,6 +5294,11 @@ bool space_admit_atom_from_source_arena(
     return space_admit_atom_impl(s, fallback, source_arena, atom);
 }
 
+/* Told when one space's contents come to be held by another, with the two
+ * instance identities: a copy (a clone holds what its source held) or a
+ * move (a space takes over another's contents). */
+static SpaceContentsMovedHook g_space_contents_moved_hook;
+
 Space *space_heap_clone_shallow(Space *src) {
     Space *clone;
     CettaCount logical_len = 0;
@@ -5335,10 +5340,13 @@ Space *space_heap_clone_shallow(Space *src) {
         if (!space_admit_atom(clone, NULL, source_atom))
             space_add(clone, source_atom);
     }
+    /* The clone holds what its source held, so what was published into the
+     * source is published into the clone: an import's working copy reuses
+     * the importer's admitted records. */
+    if (g_space_contents_moved_hook && src->instance_id != clone->instance_id)
+        g_space_contents_moved_hook(src->instance_id, clone->instance_id);
     return clone;
 }
-
-static SpaceContentsMovedHook g_space_contents_moved_hook;
 
 void space_set_contents_moved_hook(SpaceContentsMovedHook hook) {
     g_space_contents_moved_hook = hook;
@@ -9418,7 +9426,16 @@ typedef struct {
     size_t frame_cap;
     size_t calls;
     size_t max_calls;
+    /* Self calls in tail position since the run started or last returned
+     * to its caller; the run stops at the bound with the call it reached. */
+    size_t tail_calls;
+    bool tail_exit;
 } PreparedRecursiveMachine;
+
+/* Bounds a run of tail self calls, so that a call that never returns hands
+ * its current call back to the evaluator, which can be interrupted, instead
+ * of looping inside the machine. */
+enum { PREPARED_RECURSIVE_TAIL_BOUND = 1u << 16 };
 
 static bool prepared_recursive_grow_pointer_array(
     void ***items, size_t *capacity, size_t needed) {
@@ -9582,6 +9599,53 @@ static bool prepared_recursive_apply_instruction(
     return true;
 }
 
+/* Whether the value of the frame at `index` is the value of its body: each
+ * frame between it and the body's root passes a branch's value through. */
+static bool prepared_recursive_frame_in_tail_position(
+    const PreparedRecursiveMachine *machine, size_t index) {
+    size_t environment = machine->frames[index].environment;
+    for (size_t below = index; below > 0u; below--) {
+        const PreparedRecursiveFrame *frame = &machine->frames[below - 1u];
+        if (frame->environment != environment)
+            return true;
+        if (frame->state != PREPARED_RECURSIVE_IF_BRANCH)
+            return false;
+    }
+    return true;
+}
+
+/* A self call in tail position replaces its caller's activation: the
+ * arguments become the caller's registers and its body starts again, so a
+ * loop runs in constant space. */
+static bool prepared_recursive_tail_call(
+    PreparedRecursiveMachine *machine, size_t index) {
+    PreparedRecursiveFrame *frame = &machine->frames[index];
+    size_t environment = frame->environment;
+    PreparedRecursiveEnvironment *registers =
+        machine->environments[environment];
+    for (CettaExprIndex i = 0u; i < frame->argument_count; i++) {
+        mpz_set(
+            registers->registers[i],
+            machine->values[frame->value_base + (size_t)i]->integer);
+    }
+    size_t root = index;
+    while (root > 0u && machine->frames[root - 1u].environment == environment)
+        root--;
+    machine->value_len = machine->frames[root].value_base;
+    machine->frame_len = root;
+    machine->calls++;
+    if (++machine->tail_calls >= PREPARED_RECURSIVE_TAIL_BOUND) {
+        /* Only the outermost activation can hand its call back: an inner
+         * one still owes its value to a pending caller. */
+        if (environment != 0u || root != 0u)
+            return false;
+        machine->tail_exit = true;
+        return true;
+    }
+    return prepared_recursive_push_frame(
+        machine, machine->plan->rhs, environment);
+}
+
 static bool prepared_recursive_start_self_call(
     PreparedRecursiveMachine *machine,
     PreparedRecursiveFrame *frame) {
@@ -9597,6 +9661,9 @@ static bool prepared_recursive_start_self_call(
         if (machine->values[frame->value_base + (size_t)i]->kind !=
             CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER)
             return false;
+    size_t index = (size_t)(frame - machine->frames);
+    if (prepared_recursive_frame_in_tail_position(machine, index))
+        return prepared_recursive_tail_call(machine, index);
     PreparedRecursiveEnvironment *environment =
         prepared_recursive_push_environment(machine);
     if (!environment)
@@ -9615,7 +9682,7 @@ static bool prepared_recursive_start_self_call(
 
 static bool prepared_recursive_run(
     PreparedRecursiveMachine *machine) {
-    while (machine && machine->frame_len > 0u) {
+    while (machine && !machine->tail_exit && machine->frame_len > 0u) {
         PreparedRecursiveFrame *frame =
             &machine->frames[machine->frame_len - 1u];
         if (frame->state == PREPARED_RECURSIVE_ENTER) {
@@ -9751,10 +9818,13 @@ static bool prepared_recursive_run(
             }
             machine->environment_len--;
             machine->frame_len--;
+            machine->tail_calls = 0u;
             continue;
         }
         return false;
     }
+    if (machine && machine->tail_exit)
+        return machine->environment_len == 1u && machine->frame_len == 0u;
     return machine && machine->environment_len == 1u &&
            machine->value_len == 1u &&
            machine->values[0]->kind ==
@@ -9794,12 +9864,18 @@ static SpacePreparedRegisterStep prepared_mpz_run_register_recursion(
     bool completed = initialized &&
         prepared_recursive_push_frame(&machine, plan->rhs, 0u) &&
         prepared_recursive_run(&machine);
-    if (completed)
+    bool tail_exit = completed && machine.tail_exit;
+    if (tail_exit)
+        *result_out = prepared_mpz_materialize_call(
+            plan, machine.environments[0]->registers, result_arena);
+    else if (completed)
         *result_out = atom_bigint_from_mpz(
             result_arena, machine.values[0]->integer);
     prepared_recursive_machine_free(&machine);
-    return *result_out ? SPACE_PREPARED_REGISTER_VALUE
-                       : SPACE_PREPARED_REGISTER_NOT_APPLICABLE;
+    if (!*result_out)
+        return SPACE_PREPARED_REGISTER_NOT_APPLICABLE;
+    return tail_exit ? SPACE_PREPARED_REGISTER_TAIL_CALL
+                     : SPACE_PREPARED_REGISTER_VALUE;
 }
 #endif
 

@@ -1,0 +1,7 @@
+[and]
+[same]
+[(and A B)]
+[(same A)]
+[twice]
+[(s (s z))]
+[(s (s (s (s z))))]

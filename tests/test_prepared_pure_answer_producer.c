@@ -849,6 +849,87 @@ static void test_continuation_unbounded_generator_limit(void) {
     destroy(&fixture);
 }
 
+/* A call whose equation builds its value around a further call records the
+ * constructor as a context, and builds the value into its contexts one per
+ * executor step.  An interrupt requested while the value is being built is
+ * therefore observed within one poll interval, as between frames, and the
+ * execution reports the interruption rather than success. */
+static SymbolId context_out_symbol;
+static bool context_stop_on_out;
+static bool context_stop_requested;
+static size_t context_out_constructions;
+
+static Atom *construct_counting_out(Arena *arena, Atom **elements,
+                                    CettaExprLen length) {
+    if (length == 2u && elements[0]->kind == ATOM_SYMBOL &&
+        elements[0]->sym_id == context_out_symbol) {
+        context_out_constructions++;
+        if (context_stop_on_out)
+            context_stop_requested = true;
+    }
+    return atom_expr(arena, elements, length);
+}
+
+static bool poll_context_stop(void *context) {
+    size_t *observed = context;
+    if (!context_stop_requested)
+        return false;
+    (*observed)++;
+    return true;
+}
+
+static void test_context_reconstruction_observes_interrupt(void) {
+    const char *equations[] = {
+        "(= (f Nil) Nil)",
+        "(= (f (Cons $x $xs)) (Out (f $xs)))",
+        "(= (upto $n $a) (if (== $n 0) $a (upto (- $n 1) (Cons $n $a))))",
+    };
+    const char *call_text = "(f (upto 10000 Nil))";
+    Fixture fixture;
+    init(&fixture, equations, 3u, call_text);
+    context_out_symbol = symbol_intern_cstr(g_symbols, "Out");
+    Atom *call = parse(&fixture.source, call_text);
+    for (int interrupted = 0; interrupted <= 1; interrupted++) {
+        CettaPreparedPureProgram *program =
+            cetta_prepared_pure_program_compile_closed(
+                &fixture.space, call, CETTA_GSLT_PURE_CALL_EAGER,
+                atom_bool, construct_counting_out, NULL, NULL, NULL,
+                NULL, NULL, false, true,
+                (CettaMatchDecisionSemanticIdentity){
+                    .compiler_identity =
+                        cetta_match_decision_compiler_identity(),
+                });
+        assert(program);
+        context_stop_on_out = interrupted;
+        context_stop_requested = false;
+        context_out_constructions = 0u;
+        size_t observed = 0u;
+        Atom *answer = NULL;
+        bool completed = cetta_prepared_pure_program_execute_closed_controlled(
+            program, &fixture.scratch, 65536u, poll_context_stop, &observed,
+            &answer);
+        if (!interrupted) {
+            assert(completed && answer);
+            assert(context_out_constructions == 10000u);
+            size_t depth = 0u;
+            for (Atom *cursor = answer;
+                 cursor->kind == ATOM_EXPR && cursor->expr.len == 2u;
+                 cursor = cursor->expr.elems[1])
+                depth++;
+            assert(depth == 10000u);
+        } else {
+            assert(!completed);
+            assert(observed == 1u);
+            /* The executor polls every 256 steps and builds at most 8
+             * contexts per step. */
+            assert(context_out_constructions >= 1u &&
+                   context_out_constructions <= 257u * 8u);
+        }
+        cetta_prepared_pure_program_free(program);
+    }
+    destroy(&fixture);
+}
+
 int main(void) {
     SymbolTable symbols;
     VarInternTable variables;
@@ -887,10 +968,11 @@ int main(void) {
     test_continuation_late_decline();
     test_continuation_last_call_depth();
     test_continuation_unbounded_generator_limit();
+    test_context_reconstruction_observes_interrupt();
     symbol_table_free(&symbols);
     var_intern_free(&variables);
     g_symbols = NULL;
     g_var_intern = NULL;
-    puts("prepared pure answer producer: twenty-eight boundary cases passed");
+    puts("prepared pure answer producer: twenty-nine boundary cases passed");
     return 0;
 }

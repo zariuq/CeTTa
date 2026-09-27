@@ -1,0 +1,9 @@
+ran-exists
+[False]
+[False]
+[True]
+[False]
+[True]
+[False]
+[(exists P (lam $y (P $y)))]
+[()]

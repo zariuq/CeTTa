@@ -587,6 +587,10 @@ static Atom *normalize_type_checked(Arena *a, Space *space, Atom *ty,
 
         EvalOutcome outcome;
         eval_outcome_init(&outcome);
+        /* In Prime the resource status below is this normalization's own
+         * answer, not an incompleteness of the enclosing query. */
+        outcome.completion_consumed =
+            eval_current_language_id() == CETTA_LANGUAGE_PRIME;
         metta_eval_outcome(snapshot, a, NULL, norm, budget, &outcome);
         he_typing_charge_external(fuel, outcome.steps_spent);
 

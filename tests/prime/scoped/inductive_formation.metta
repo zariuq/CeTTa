@@ -94,7 +94,15 @@
 !(add-atom &names (: a P))
 !(add-atom &names (: b P~1))
 !(set:inductive &names HygieneTree (u 0) (: v1 (-> P P~1 HygieneTree)))
+; The stored recursor type, read back, is the recursor's type.  Its motive
+; ranges over a universe at a level variable; each instance is checked.
 !(let $ty (match &names (: HygieneTree-rec $ty) $ty)
-   (type:check &names HygieneTree-rec $ty))
+   (let (-> (: $motive (-> $data (u $level))) $methods) $ty
+     (type:check &names HygieneTree-rec
+       (-> (: $motive (-> $data (u 0))) $methods))))
+!(let $ty (match &names (: HygieneTree-rec $ty) $ty)
+   (let (-> (: $motive (-> $data (u $level))) $methods) $ty
+     (type:check &names HygieneTree-rec
+       (-> (: $motive (-> $data (u 1))) $methods))))
 !(type:eq &names
    (HygieneTree-rec (lam p P) (lam aa (lam bb aa)) (v1 a b)) a)

@@ -575,23 +575,27 @@ int main(void) {
         " (PApp \"Lam\" (LCons (PLam BNone (Var 1)) LNil))) LNil))",
         "anonymous binder remains addressable only by idx");
     check_regular_term_pattern(
-        &arena, "(lam @1 @1)",
+        &arena, "(lam @1 *@1)",
         "(PApp \"Lam\" (LCons (PLam BNone (Var 0)) LNil))",
         "quoted numeral is a lexical name, not index sugar");
     check_regular_term_pattern(
-        &arena, "(lam @(mm-var \"ph\") @(mm-var \"ph\"))",
+        &arena, "(lam @(mm-var \"ph\") *@(mm-var \"ph\"))",
         "(PApp \"Lam\" (LCons (PLam BNone (Var 0)) LNil))",
         "closed structural name binds lexically");
     check_regular_term_pattern(
-        &arena, "(lam @(: x u0) @(: x u0))",
+        &arena, "(lam @(: x u0) *@(: x u0))",
         "(PApp \"Lam\" (LCons (PLam BNone (Var 0)) LNil))",
         "quoted structural colon is a name, not typed-binder syntax");
     check_regular_term_pattern(
-        &arena, "(lam x @x)",
+        &arena, "(lam x *@x)",
         "(PApp \"Lam\" (LCons (PLam BNone (Var 0)) LNil))",
         "bare binder name equals its explicit quote");
+    CettaPrimeRegularTermElaborationV1 sealed_name = lower_syntax(
+        &arena, "(lam x @x)", UINT64_C(100000));
+    check(sealed_name.status == CETTA_PRIME_REGULAR_TERM_OUT_OF_CLASS,
+          "a quoted name is a sealed literal, not a reference to the binder");
     check_regular_term_pattern(
-        &arena, "(lam @_ @_)",
+        &arena, "(lam @_ *@_)",
         "(PApp \"Lam\" (LCons (PLam BNone (Var 0)) LNil))",
         "quoted underscore remains an ordinary name");
     check_regular_term_pattern(
@@ -728,10 +732,11 @@ int main(void) {
           empty_binders.syntax_error ==
               CETTA_PRIME_REGULAR_TERM_EMPTY_BINDER_LIST,
           "empty multibinder is rejected");
-    CettaPrimeRegularTermElaborationV1 typed_binder = lower_syntax(
-        &arena, "(lam (x : u0) x)", UINT64_C(100000));
-    check(typed_binder.status == CETTA_PRIME_REGULAR_TERM_OUT_OF_CLASS,
-          "typed lambda waits for annotation-preserving authority");
+    check_regular_term_pattern(
+        &arena, "(lam (x : u0) x)",
+        "(PApp \"Lam\" (LCons (PApp \"U0\" LNil) "
+        " (LCons (PLam BNone (Var 0)) LNil)))",
+        "typed lambda keeps its written domain");
     CettaPrimeRegularTermElaborationV1 malformed_index = lower_syntax(
         &arena, "(idx -1)", UINT64_C(100000));
     check(malformed_index.status == CETTA_PRIME_REGULAR_TERM_SYNTAX_ERROR &&

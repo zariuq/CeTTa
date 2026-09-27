@@ -207,9 +207,24 @@ static uint64_t minimum_kernel_synthesis_steps(
     return upper;
 }
 
+/* The recursor's declared type is a schema over its motive's level, one
+ * level variable; its lowest instance puts that level at 0. */
+static Atom *lowest_level_instance(Arena *arena, Atom *type) {
+    if (!type) return NULL;
+    if (type->kind == ATOM_VAR) return atom_int(arena, 0);
+    if (type->kind != ATOM_EXPR) return type;
+    Atom **items = arena_alloc(arena, sizeof(Atom *) * (size_t)type->expr.len);
+    for (CettaExprIndex i = 0u; i < type->expr.len; i++)
+        items[i] = lowest_level_instance(arena, type->expr.elems[i]);
+    return atom_expr(arena, items, type->expr.len);
+}
+
 /* Measure the actual formation checks selected by the generated declaration
  * inventory. The largest individual allowance must not admit their batch;
- * the batch needs their sum, with no refreshed allowance between checks. */
+ * the batch needs their sum, with no refreshed allowance between checks.
+ * The recursor is formed at its lowest instance, then declared at its
+ * schema and checked against that instance, which forms the schema at every
+ * level of its motive. */
 static void check_inductive_shared_allowance(Arena *arena, Space *space) {
     Atom *query = parse_one(arena,
         "(set:inductive BudgetTree (u 0)"
@@ -236,11 +251,23 @@ static void check_inductive_shared_allowance(Arena *arena, Space *space) {
     Atom *principle = NULL;
     uint64_t total = 0u, largest = 0u;
     unsigned stages = 0u;
+    Atom *recursor_entry = NULL;
+    Atom *recursor_lowest = NULL;
+    bool recursor_declared = false;
     for (CettaExprIndex i = 1u; i <= published->expr.len; i++) {
         Atom *entry = i < published->expr.len ? published->expr.elems[i] : NULL;
         Atom *check = NULL;
         bool add_after = false;
-        if (!entry) {
+        if (!entry && recursor_entry && !recursor_declared) {
+            /* The recursor declared at its schema, checked at its lowest
+             * instance; the entry is visited again for the principle. */
+            space_add(&view, recursor_entry);
+            recursor_declared = true;
+            check = atom_expr(arena, (Atom *[]){
+                atom_symbol(arena, "type:check"), recursor_entry->expr.elems[1],
+                recursor_lowest}, 3u);
+            i--;
+        } else if (!entry) {
             if (principle)
                 check = atom_expr(arena, (Atom *[]){
                     atom_symbol(arena, "type:check"), principle,
@@ -253,9 +280,14 @@ static void check_inductive_shared_allowance(Arena *arena, Space *space) {
                    atom_is_symbol(entry->expr.elems[0], ":")) {
             bool family = atom_is_symbol(entry->expr.elems[1], "BudgetTree");
             bool recursor = atom_is_symbol(entry->expr.elems[1], "BudgetTree-rec");
+            if (recursor) {
+                recursor_entry = entry;
+                recursor_lowest = lowest_level_instance(arena, entry->expr.elems[2]);
+            }
             check = family || recursor
                 ? atom_expr(arena, (Atom *[]){atom_symbol(arena, "type:formed"),
-                                            entry->expr.elems[2]}, 2u)
+                                            recursor ? recursor_lowest
+                                                     : entry->expr.elems[2]}, 2u)
                 : atom_expr(arena, (Atom *[]){atom_symbol(arena, "type:check"),
                                             entry->expr.elems[2],
                                             query->expr.elems[2]}, 3u);
@@ -282,7 +314,7 @@ static void check_inductive_shared_allowance(Arena *arena, Space *space) {
     space_free(&view);
     uint64_t required = minimum_judgment_steps(arena, space, query);
     checks++;
-    if (stages != 5u || required != total || total <= largest) {
+    if (stages != 6u || required != total || total <= largest) {
         failures++;
         fprintf(stderr,
                 "FAIL: datatype batch account (stages=%u sum=%llu max=%llu required=%llu)\n",

@@ -1,0 +1,6 @@
+[(Error foo bar)]
+[3]
+[(Error (checked-div 6 0) DivisionByZero)]
+[2]
+[(Error one first), two]
+[5]

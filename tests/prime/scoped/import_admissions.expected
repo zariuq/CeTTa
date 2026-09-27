@@ -1,0 +1,8 @@
+[self-imp]
+[()]
+[()]
+[Established]
+[Undetermined]
+[(Published reused)]
+[True]
+[(set:proves (pf:known forged) (imp (In Empty Empty) (In Empty Empty)))]

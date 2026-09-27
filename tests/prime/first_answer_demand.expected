@@ -1,0 +1,20 @@
+(left 3)
+(left 2)
+(left 1)
+(attempt a)
+(attempt b)
+(reject 1)
+(accept 2)
+(produce 1)
+(left 2)
+(left 1)
+(attempt a)
+(attempt b)
+(attempt c)
+[(s (s (s leaf)))]
+[40]
+[b]
+[2]
+[11]
+[(s (s leaf))]
+[(b c)]

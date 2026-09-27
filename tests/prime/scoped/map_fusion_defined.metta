@@ -25,4 +25,7 @@
    (let $first (car-atom $depends) (Depends (size-atom $depends) first (car-atom $first))))
 !(pf:theory &thy ((: ys list)))
 !(set:proves &thy (pf:by map-fusion) (eq list (mapf f (mapf g ys)) (mapf (lam y (f (g y))) ys)))
+; With the composition reversed, matching finds no instance and nothing rules
+; one out: the list sits only under the recursive mapf, where an instance
+; could still compute to the goal.  The judgment is left undetermined.
 !(set:proves &thy (pf:by map-fusion) (eq list (mapf f (mapf g ys)) (mapf (lam y (g (f y))) ys)))

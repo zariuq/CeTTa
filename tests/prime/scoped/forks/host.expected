@@ -4,7 +4,7 @@
 [()]
 [()]
 [()]
-[(-> (u 0) (-> (-> (idx 0) prop) prop))]
+[(-> (x : (u 0)) (-> (-> x prop) prop))]
 [True]
 [True]
 [True]

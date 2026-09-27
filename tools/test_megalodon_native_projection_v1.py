@@ -125,17 +125,28 @@ class NativeProjectionTests(unittest.TestCase):
         self.assertEqual(len(proofs), 10)
         self.assertEqual(sum(i.declaration.kind == "AXIOM" for i in projection.instances.values()), 0)
         identity = next(i for i in proofs if i.declaration.label == "test_assume")
+        # The signature defines Falsum as the proposition implying every
+        # proposition, as the source defines its own `False := forall p:prop, p`.
+        # The two are one proposition: instantiated at either, the identity has
+        # the decoded type of `(forall p, p) -> (forall p, p)`.
+        falsity = projection.materialize(next(
+            i for i, item in enumerate(items)
+            if item.kind == "DEF" and item.label == "False"))
         applied = self.run_program(projection.render() + f'''
 !(let $package (set:native-proof {identity.name})
  (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
   (let (App (DeclConst $family) $formula) $type
    (let (SetNativeUseV1 $checked $consumer $result $result-type)
     (set:native-use $package (Lam $type (App (idx 0) (DeclConst Falsum))))
-    (ImportedApplication
-     (== $result-type (Pi (App (DeclConst $family) (DeclConst Falsum))
-                          (App (DeclConst $family) (DeclConst Falsum)))))))))
+    (let (SetNativeUseV1 $source-checked $source-consumer $source-result $source-type)
+     (set:native-use $package (Lam $type (App (idx 0) (DeclConst {falsity.name}))))
+     (ImportedApplication
+      (== $result-type (Pi (Pi (DeclConst prop) (App (DeclConst $family) (idx 0)))
+                           (Pi (DeclConst prop) (App (DeclConst $family) (idx 0)))))
+      (== $source-type $result-type)
+      (set:eq {falsity.name} Falsum)))))))
 ''')
-        self.assertIn("[(ImportedApplication True)]", applied)
+        self.assertIn("[(ImportedApplication True True True)]", applied)
 
     def test_annotation_checks_formation_and_proof(self):
         result = self.run_program('''
@@ -753,8 +764,8 @@ class NativeProjectionTests(unittest.TestCase):
             loaded = subprocess.run([*command, "--load-library", str(library), "--run",
                 "--consumer", str(root / "tests/support/megalodon/library_consumer.metta")],
                 capture_output=True, text=True, check=True)
-            self.assertIn("[(LibraryDerivedProof True 0)]", loaded.stdout)
-            self.assertIn("[(LibraryComputedProof True True)]", loaded.stdout)
+            self.assertIn("[(LibraryDerivedProof True True 0)]", loaded.stdout)
+            self.assertIn("[(LibraryComputedProof True True True)]", loaded.stdout)
             self.assertEqual(exported.stderr, loaded.stderr)
             emitted = subprocess.run([*command, "--load-library", str(library)],
                                       capture_output=True, text=True, check=True)

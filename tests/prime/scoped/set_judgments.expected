@@ -24,7 +24,7 @@
 [empty-not-self]
 [(imp (In Empty Empty) Falsum)]
 [(pf:imp-intro (pf:imp-elim (pf:all-elim (pf:known EmptyE) Empty) (pf:hyp 0)))]
-[(Published theorem ((EmptyE (all set (lam x (imp (In x Empty) Falsum))))))]
+[(Published theorem ((EmptyE (all set (lam x (imp (In x Empty) Falsum)))) (Falsum (define prop (= Falsum (all prop (lam p p)))))))]
 [True]
 [assumed]
 [derived]

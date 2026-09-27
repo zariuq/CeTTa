@@ -1,0 +1,5 @@
+[(Found True True)]
+[(Found True True)]
+[True]
+[False]
+[(-> P Bool)]

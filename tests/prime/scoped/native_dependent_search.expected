@@ -31,4 +31,5 @@
 [False]
 [()]
 [(he-unknown (native-proof-check-undetermined))]
+[(he-accept (typed-answer-v2 (: (next a h) (P (f a))) (answer-substitution-v2 (query-substitution-v1) (elaboration-substitution-v1 (elaboration-binding-v1 $answer-v0 a) (elaboration-binding-v1 $answer-v1 h)) (answer-constraints-v1))))]
 [Refuted]
