@@ -752,6 +752,7 @@ FALLBACK_EVAL_TEST_SRC = tests/support/test_fallback_eval_session.c
 PREPARED_PURE_ANSWER_TEST_OBJ = runtime/bootstrap/test_prepared_pure_answer_producer.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 PREPARED_PURE_ANSWER_TEST_BIN = runtime/test_prepared_pure_answer_producer-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 FALLBACK_EVAL_TEST_LINK_OBJ = $(filter-out src/main.$(BUILD_OBJ_TAG).runtime-stats.o src/main.$(BUILD_OBJ_TAG).o $(COMPILED_READER_RUNTIME_OBJ),$(OBJ))
+PRIME_CAPABILITY_OPEN_TEST_BIN = runtime/test_prime_capability_opening-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 STABLE_OCCURRENCE_TRANSPORT_TEST_SRC = tests/test_stable_occurrence_transport.c
 STABLE_OCCURRENCE_TRANSPORT_TEST_OBJ = runtime/bootstrap/test_stable_occurrence_transport.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 STABLE_OCCURRENCE_TRANSPORT_TEST_BIN = runtime/test_stable_occurrence_transport-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
@@ -2935,11 +2936,20 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/need_storage_boundary.metta \
 	tests/prime/cardinality_observer_dynamic_space.metta \
 	tests/prime/need_quote_preservation.metta \
+	tests/prime/quote_head_matching.metta \
 	tests/prime/data_holding.metta \
+	tests/prime/held_equality.metta \
+	tests/prime/held_patterns.metta \
+	tests/prime/stored_variable_identity.metta \
+	tests/prime/error_continues.metta \
+	tests/prime/atom_result_type.metta \
+	tests/prime/computed_lambda_arguments.metta \
+	tests/prime/let_bound_learner.metta \
 	tests/prime/data_head_patterns.metta \
 	tests/prime/lambda_names.metta \
 	tests/prime/need_sequential_unification_refinement.metta \
 	tests/prime/relational_first_demand.metta \
+	tests/prime/first_answer_demand.metta \
 	tests/prime/search_controller_frontier.metta \
 	tests/prime/nik_plural_checking.metta \
 	tests/prime/nil_rule_machine_guests.generated.metta \
@@ -2984,12 +2994,22 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/scoped/live_propositions.metta \
 	tests/prime/scoped/judgment_continuations.metta \
 	tests/prime/scoped/identity_eliminator.metta \
+	tests/prime/scoped/universe_transport.metta \
+	tests/prime/scoped/type_valued_recursion.metta \
+	tests/prime/scoped/large_recursor.metta \
+	tests/prime/scoped/lambda_spines.metta \
+	tests/prime/scoped/stuck_eliminator_calls.metta \
+	tests/prime/scoped/lambda_in_declared_types.metta \
+	tests/prime/scoped/level_schema_synthesis.metta \
 	tests/prime/scoped/try.metta \
 	tests/prime/scoped/conversion_authority.metta \
 	tests/prime/scoped/typed_eta_conversion.metta \
 	tests/prime/scoped/admitted_computation.metta \
 	tests/prime/scoped/kernel_query.metta \
 	tests/prime/scoped/reserved_identities.metta \
+	tests/prime/scoped/syntax_word_names.metta \
+	tests/prime/scoped/named_binder_types.metta \
+	tests/prime/scoped/import_admissions.metta \
 	tests/prime/scoped/retained_presentations.metta \
 	tests/prime/scoped/authority.metta \
 	tests/prime/scoped/hol_map_fusion.metta \
@@ -3003,9 +3023,14 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/scoped/curriculum_prime_motivation.metta \
 	tests/prime/scoped/map_fusion_defined.metta \
 	tests/prime/scoped/nat_arithmetic.metta \
+	tests/prime/scoped/by_instance_verdicts.metta \
 	tests/prime/scoped/tree_mirror.metta \
 	tests/prime/scoped/bool_and_negation.metta \
 	tests/prime/scoped/propositions_defined.metta \
+	tests/prime/scoped/falsum_definition.metta \
+	tests/prime/scoped/set_eq_polymorphic_definitions.metta \
+	tests/prime/scoped/definition_revision_closure.metta \
+	tests/prime/scoped/runtime_reduct_vocabulary.metta \
 	tests/prime/scoped/curriculum_lean.metta \
 	tests/prime/scoped/curriculum_coq.metta \
 	tests/prime/scoped/curriculum_hol.metta \
@@ -3026,6 +3051,8 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/scoped/hotg_proof_carrying_pipeline.metta \
 	tests/prime/scoped/inductive_formation.metta \
 	tests/prime/scoped/definition_admission.metta \
+	tests/prime/scoped/admission_verdicts.metta \
+	tests/prime/scoped/wide_definitions.metta \
 	tests/prime/scoped/evidence_return_loop.metta \
 	tests/prime/scoped/searched_evidence_consumption.metta \
 	tests/prime/scoped/native_dependent_search.metta \
@@ -3088,7 +3115,30 @@ PRIME_EXAMPLE_TESTS = \
 	examples/prime/metagol_higher_order_map.metta \
 	examples/prime/nondeterministic_judgments.metta \
 	examples/prime/abstention_boundary.metta \
-	examples/prime/context_tutorial.metta
+	examples/prime/context_tutorial.metta \
+	examples/prime/nupln_prime.metta \
+	examples/prime/distributional_space.metta \
+	examples/prime/nupln_lambda/ancestor.metta \
+	examples/prime/nupln_lambda/distractor_ladder.metta \
+	examples/prime/nupln_lambda/grandparent.metta \
+	examples/prime/nupln_lambda/nil_tests_lambda.metta \
+	examples/prime/nupln_lambda/raven_induction.metta \
+	examples/prime/nupln_lambda/nupln.metta \
+	examples/prime/metaprogramming/inv_01_code_activation.metta \
+	examples/prime/metaprogramming/inv_01b_route_divergence.metta \
+	examples/prime/metaprogramming/inv_02_lift_prototype.metta \
+	examples/prime/metaprogramming/inv_03_quine_kleene.metta \
+	examples/prime/metaprogramming/inv_04_data_syntax.metta \
+	examples/prime/metaprogramming/inv_05_reflection.metta \
+	examples/prime/metaprogramming/inv_06_native_proofs.metta \
+	examples/prime/metaprogramming/inv_07_revision_closure.metta \
+	examples/prime/metaprogramming/show_01_lambda_synthesizer.metta \
+	examples/prime/metaprogramming/show_02_staged_interpreter.metta \
+	examples/prime/metaprogramming/show_03_checked_tactic.metta \
+	examples/prime/metaprogramming/show_04_self_revising_learner.metta \
+	examples/prime/metaprogramming/show_05_self_reproducing_agent.metta \
+	examples/prime/metaprogramming/show_06_inspecting_rewriter.metta \
+	examples/prime/metaprogramming/show_07_typed_code_intake.metta
 PRIME_PRACTICAL_TESTS = \
 	tests/prime/authored_frontier_chaining.metta \
 	tests/prime/practical/typed_pln_chainer.metta \
@@ -20932,13 +20982,14 @@ test-prime-relational-plan: $(BIN)
 	fi; \
 	fuel=tests/prime/relational_plan_fuel.metta; \
 	canonical_fuel=$$(CETTA_PRIME_RELATIONAL_PLAN_REFERENCE=1 \
-		$(CETTA_BIN_INVOKE) --fuel 3 --lang prime "$$fuel" 2>&1); \
-	probe_fuel=$$($(CETTA_BIN_INVOKE) --fuel 3 --lang prime "$$fuel" 2>&1); \
+		$(CETTA_BIN_INVOKE) --fuel 3 --lang prime "$$fuel" 2>&1 || true); \
+	probe_fuel=$$($(CETTA_BIN_INVOKE) --fuel 3 --lang prime "$$fuel" 2>&1 || true); \
 	slot_reference_fuel=$$(CETTA_PETTA_EQUATION_SLOT_FRAME_REFERENCE=1 \
-		$(CETTA_BIN_INVOKE) --fuel 3 --lang prime "$$fuel" 2>&1); \
+		$(CETTA_BIN_INVOKE) --fuel 3 --lang prime "$$fuel" 2>&1 || true); \
 	if [ "$$canonical_fuel" != "$$probe_fuel" ] || \
 	   [ "$$slot_reference_fuel" != "$$probe_fuel" ] || \
-	   printf '%s\n' "$$probe_fuel" | grep -q '\[done\]'; then \
+	   printf '%s\n' "$$probe_fuel" | grep -q '\[done\]' || \
+	   ! printf '%s\n' "$$probe_fuel" | grep -qx '(Incomplete fuel-exhausted)'; then \
 		echo "FAIL: Prime guarded relation plan laundered bounded/open execution"; \
 		exit 1; \
 	fi; \
@@ -21675,6 +21726,12 @@ bench-prime-regular-kernel-formation: $(PRIME_REGULAR_KERNEL_FORMATION_BENCH_BIN
 test-prime-regular-pattern: $(PRIME_REGULAR_PATTERN_TEST_BIN)
 	@"$(PRIME_REGULAR_PATTERN_TEST_BIN)"
 
+# The authored-syntax lowering and its mutation controls are gates of the
+# whole suite: they are quick, and every Prime judgment reads terms through
+# this lowering.
+test: test-prime-regular-pattern test-prime-regular-pattern-mutations
+test: test-prime-native-proof-search-mutations
+
 .PHONY: test-prime-regular-pattern-mutations
 test-prime-regular-pattern-mutations: $(PRIME_REGULAR_PATTERN_TEST_BIN)
 	@set -e; \
@@ -22068,6 +22125,66 @@ test-prime: $(BIN) $(PRIME_REGULAR_KERNEL_TEST_BIN) test-prime-identity-profiles
 test-prime: test-prime-fast-fixtures
 
 .PHONY: test-prime-fast-fixtures
+test-prime-fast-fixtures: test-prime-capability-opening
+.PHONY: test-prime-fuel-verdicts
+test-prime-fast-fixtures: test-prime-fuel-verdicts
+# A query that runs out of fuel is reported as incomplete in its place, the
+# run goes on, and the run exits 1.
+test-prime-fuel-verdicts: $(BIN)
+	@pass=0; fail=0; \
+	for f in tests/prime/fuel/*.metta; do \
+		exp="$${f%.metta}.fuel.expected"; \
+		result=$$(timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime --fuel 50 "$$f" 2>&1); \
+		status=$$?; \
+		if [ $$status -eq 1 ] && [ "$$result" = "$$(cat "$$exp")" ]; then \
+			echo "PASS: $$f under --fuel 50"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: $$f under --fuel 50 (exit $$status)"; \
+			diff <(cat "$$exp") <(echo "$$result") | head -20; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
+	echo "Prime fuel verdicts: $$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
+
+.PHONY: test-prime-route-agreement
+test-prime-fast-fixtures: test-prime-route-agreement
+# A query answers the same with and without --fuel: the default route (the
+# prepared calls, the Need machine and the evaluation stack) and the
+# canonical evaluator agree on each file here.
+test-prime-route-agreement: $(BIN)
+	@pass=0; fail=0; \
+	for f in tests/prime/routes/*.metta; do \
+		exp="$${f%.metta}.expected"; \
+		for route in default fuel; do \
+			if [ $$route = fuel ]; then flags="--fuel 1000000"; else flags=""; fi; \
+			result=$$(timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime $$flags "$$f" 2>&1); \
+			status=$$?; \
+			if [ $$status -eq 0 ] && [ "$$result" = "$$(cat "$$exp")" ]; then \
+				echo "PASS: $$f on the $$route route"; pass=$$((pass + 1)); \
+			else \
+				echo "FAIL: $$f on the $$route route (exit $$status)"; \
+				diff <(cat "$$exp") <(echo "$$result") | head -20; \
+				fail=$$((fail + 1)); \
+			fi; \
+		done; \
+	done; \
+	echo "Prime route agreement: $$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
+
+.PHONY: test-prime-capability-opening
+test-prime-capability-opening: $(BIN) $(PRIME_CAPABILITY_OPEN_TEST_BIN)
+	@$(call cetta_exec,./$(PRIME_CAPABILITY_OPEN_TEST_BIN))
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_prime_capability_opening.py --cetta "$(abspath $(BIN))"
+
+$(PRIME_CAPABILITY_OPEN_TEST_BIN): tests/test_prime_capability_opening.c src/eval.c $(BUILD_CONFIG_HEADER) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_prime_capability_opening.c \
+		$(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS)
+
+# The evaluator paths Prime shares with PeTTa and HE are exercised here too,
+# so a change on those paths cannot regress Prime unseen.
+test: test-prime-fast-fixtures
 test-prime-fast-fixtures: $(BIN)
 	@pass=0; fail=0; \
 	for f in $(PRIME_FAST_TESTS); do \
@@ -26315,23 +26432,25 @@ test-petta-dispatch-error-scope: $(BIN)
 
 .PHONY: test-petta-runtime-heads
 # A special form is syntax only where it is written: reached at run time its
-# arguments are evaluated, and it is data unless PeTTa defines a function of
-# its name; an operation's own error in a run-time dispatch fails its path;
-# a specialized callee that raises nothing is called directly.
+# arguments are evaluated, and it is data unless PeTTa or the program defines
+# a function of its name; an operation's own error in a run-time dispatch
+# fails its path; a specialized callee that raises nothing is called directly.
 test-petta-runtime-heads: $(BIN)
 	@set -eu; \
+	for stem in runtime_heads runtime_program_functions eval_list_values; do \
 	for route in tier machine; do \
 		if [ $$route = machine ]; then reference=1; else reference=; fi; \
 		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
-			--lang petta tests/petta/runtime_heads.metta 2>&1); \
-		if [ "$$actual" != "$$(cat tests/petta/runtime_heads.expected)" ]; then \
-			echo "FAIL: run-time heads on the $$route route"; \
-			diff <(cat tests/petta/runtime_heads.expected) \
+			--lang petta tests/petta/$$stem.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/$$stem.expected)" ]; then \
+			echo "FAIL: run-time heads ($$stem) on the $$route route"; \
+			diff <(cat tests/petta/$$stem.expected) \
 				<(printf '%s\n' "$$actual") | head -20; \
 			exit 1; \
 		fi; \
 	done; \
-	echo "PASS: a special form reached at run time is a value, on the tier and in the machine"
+	done; \
+	echo "PASS: a special form reached at run time is a value, or the program's function of its name, on the tier and in the machine"
 
 .PHONY: test-petta-specialization-after-import
 # An import invalidates the specializations of its space: the specialized
@@ -26352,7 +26471,26 @@ test-petta-specialization-after-import: $(BIN)
 	done; \
 	echo "PASS: an import invalidates the specializations of its space, on the tier and in the machine"
 
-test-petta-semantics: $(BIN) test-petta-multifile test-petta-eval-in-space test-petta-list-values test-petta-value-occurrences test-petta-dispatch-error-scope test-petta-list-building-linear test-petta-runtime-heads test-petta-specialization-after-import
+.PHONY: test-petta-swi-differences
+# The register of every place where plain PeTTa on CeTTa deliberately answers
+# differently from SWI-PeTTa, each with SWI-PeTTa's answer, its reason and its
+# decision.  A registered difference that drifts fails here.
+test-petta-swi-differences: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/swi_differences.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/swi_differences.expected)" ]; then \
+			echo "FAIL: registered SWI-PeTTa differences on the $$route route"; \
+			diff <(cat tests/petta/swi_differences.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: the registered differences from SWI-PeTTa hold, on the tier and in the machine"
+
+test-petta-semantics: $(BIN) test-petta-multifile test-petta-eval-in-space test-petta-list-values test-petta-value-occurrences test-petta-dispatch-error-scope test-petta-list-building-linear test-petta-runtime-heads test-petta-specialization-after-import test-petta-swi-differences
 	@set -eu; \
 	for stem in $(PETTA_SEMANTIC_ORACLE_STEMS); do \
 		contract=exact-stream; \
@@ -27983,6 +28121,7 @@ $(EXECUTION_CONTRACTS_TEST_BIN): tests/test_execution_contracts_generated.c \
 		tests/test_execution_contracts_generated.c $(LDFLAGS)
 
 .PHONY: test-prepared-pure-answer-producer
+test: test-prepared-pure-answer-producer
 test-prepared-pure-answer-producer: $(PREPARED_PURE_ANSWER_TEST_BIN)
 	@$(call cetta_exec,./$(PREPARED_PURE_ANSWER_TEST_BIN))
 

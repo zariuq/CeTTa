@@ -84,6 +84,10 @@
 ; An HE annotation alone cannot manufacture native evidence of an unformed type.
 !(add-atom &thy (: forgedProof Unformed))
 !(search-first-inhabitant &thy Unformed 0)
+; A found proof is handed back as evidence and never run, even where this
+; program gives its head an equation.
+(= (next a h) the-proof-ran)
+!(search-first-inhabitant &thy (P (f a)) 2)
 !(let (he-accept (typed-answer-v2 (: $proof $type) $substitution))
       (search-first-inhabitant &thy (P (f a)) 2)
       (let $removed (remove-atom &thy (: h (P a)))

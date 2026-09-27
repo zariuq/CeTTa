@@ -3776,6 +3776,7 @@ int main(int argc, char **argv) {
     bool stop_document_sequence = false;
     /* A PeTTa file stopped at an uncaught error: SWI-PeTTa's exit status 2. */
     bool petta_uncaught_error = false;
+    bool prime_incomplete_seen = false;
     FILE *output_spool = NULL;
     if (!compile_mode) {
         const char *tmpdir = getenv("TMPDIR");
@@ -4061,7 +4062,8 @@ process_petta_document:
                         (size_t)eval_outcome_fault_count(&detailed),
                         detailed.steps_spent);
             } else if (g_count_only ||
-                       lang->id == CETTA_LANGUAGE_PETTA) {
+                       lang->id == CETTA_LANGUAGE_PETTA ||
+                       lang->id == CETTA_LANGUAGE_PRIME) {
                 /* A PeTTa directive publishes its whole answer stream, which
                  * claims there are no further answers, so it is always
                  * observed with a completion tracker.  Finite fuel reaches
@@ -4070,6 +4072,10 @@ process_petta_document:
                 eval_outcome_init(&detailed);
                 detailed_initialized = true;
                 results = &detailed.results;
+                /* Prime keeps the fuel as the depth of each path; the
+                 * outcome only records whether some path ran out. */
+                detailed.depth_fuel = lang->id == CETTA_LANGUAGE_PRIME &&
+                                      !g_count_only;
                 if (lang->id == CETTA_LANGUAGE_PETTA) {
                     eval_top_with_registry_petta_plan_outcome(
                         &space, &eval_arena, &arena, &registry,
@@ -4118,22 +4124,35 @@ process_petta_document:
                 prime_need_trace_printer_free(&trace);
                 goto cleanup;
             }
+            bool report_incomplete_and_continue = false;
             if (detailed_initialized && !emit_prime_need_trace &&
                 detailed.completion != CETTA_EVAL_COMPLETE) {
                 /* An incomplete observation is not a finished answer bag.
                  * Logical failure stays a completed empty result. */
-                fprintf(
-                    stderr,
-                    g_count_only
-                        ? "error: count observation incomplete: %s\n"
-                        : "error: observation incomplete: %s\n",
-                    eval_completion_reason(detailed.completion));
-                eval_outcome_free(&detailed);
-                prime_need_trace_printer_free(&trace);
-                rc = 1;
-                goto cleanup;
+                /* A Prime file run reports the query it could not finish
+                 * in its place in the output, as an incomplete verdict
+                 * rather than an answer list, and goes on with the next
+                 * query; the run then exits 1. */
+                if (lang->id == CETTA_LANGUAGE_PRIME && !g_count_only) {
+                    fprintf(output_spool, "(Incomplete %s)\n",
+                            eval_completion_reason(detailed.completion));
+                    prime_incomplete_seen = true;
+                    report_incomplete_and_continue = true;
+                } else {
+                    fprintf(
+                        stderr,
+                        g_count_only
+                            ? "error: count observation incomplete: %s\n"
+                            : "error: observation incomplete: %s\n",
+                        eval_completion_reason(detailed.completion));
+                    eval_outcome_free(&detailed);
+                    prime_need_trace_printer_free(&trace);
+                    rc = 1;
+                    goto cleanup;
+                }
             }
-            write_results(output_spool, results, lang->id, profile);
+            if (!report_incomplete_and_continue)
+                write_results(output_spool, results, lang->id, profile);
             if (fflush(output_spool) != 0) {
                 fprintf(stderr, "error: could not write output spool\n");
                 if (detailed_initialized)
@@ -4144,7 +4163,11 @@ process_petta_document:
                 rc = 1;
                 goto cleanup;
             }
-            bool stop_after_error = result_set_has_error(results);
+            /* In Prime an Error is a value: it is reported as the query's
+             * answer and the run goes on with the next query. */
+            bool stop_after_error = !report_incomplete_and_continue &&
+                                    lang->id != CETTA_LANGUAGE_PRIME &&
+                                    result_set_has_error(results);
             /* SWI-PeTTa goes on after an Error value, a caught error among
              * them, and stops only at an uncaught one.  The evaluator knows
              * which it was on every path but the generic one. */
@@ -4292,7 +4315,8 @@ petta_document_complete:
         cetta_runtime_stats_print(stderr, &stats);
     }
 
-    rc = prime_need_trace_failed ? 1 : petta_uncaught_error ? 2 : 0;
+    rc = prime_need_trace_failed || prime_incomplete_seen ? 1
+       : petta_uncaught_error ? 2 : 0;
 
 cleanup:
     cetta_main_cleanup(&cleanup);

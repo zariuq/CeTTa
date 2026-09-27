@@ -12,6 +12,6 @@
 [length-unfused]
 [length-fused]
 [reuse-any]
-[(subst@list map-fusion length-unfused list nat length mapf)]
+[(subst@list list map-fusion mapf length-unfused nat length)]
 [pf:fix]
 [False]

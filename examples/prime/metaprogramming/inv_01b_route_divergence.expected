@@ -1,0 +1,9 @@
+field
+[(only-one (Crate 1))]
+[(pair 3 0)]
+[(pair 3 0)]
+[(pair () 0)]
+[(pair 3 (quote (+ 1 2)))]
+[(pair 3 (quote 3))]
+[(receipt 3)]
+[(receipt (three))]

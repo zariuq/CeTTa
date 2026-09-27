@@ -6,7 +6,7 @@
 [(all (-> tree prop) (lam P (imp (P leaf) (imp (all tree (lam v1 (all elem (lam v2 (all tree (lam v3 (imp (P v1) (imp (P v3) (P (node v1 v2 v3)))))))))) (all tree (lam x (P x)))))))]
 [mirror]
 [mirror-mirror]
-[False]
+[(set:define &thy spin (-> tree tree) (= (spin leaf) leaf) (= (spin (node $l $x $r)) (spin (mirror $l))))]
 [()]
 [True]
 [True]

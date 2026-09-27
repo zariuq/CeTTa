@@ -1,0 +1,13 @@
+demanded
+[False]
+[True]
+[False]
+[False]
+[False]
+[False, True, False]
+[True, False, True]
+[True]
+[False]
+[True]
+[(Error (and 1 True) (BadArgType 1 Bool Number))]
+[(Error (and True 1) (BadArgType 2 Bool Number))]

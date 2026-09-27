@@ -43,4 +43,7 @@
 ; commutativity used at symbolic numbers, instantiated by matching
 !(pf:theory &thy ((: a nat) (: b nat)))
 !(set:proves &thy (pf:by add-comm) (eq nat (add a b) (add b a)))
+; a + b = a + b is not an instance matching finds; the numbers sit only under
+; the recursive add, where an instance could still compute to the goal, so
+; the judgment is left undetermined rather than refuted
 !(set:proves &thy (pf:by add-comm) (eq nat (add a b) (add a b)))

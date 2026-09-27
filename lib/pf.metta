@@ -158,10 +158,13 @@
 (= (pf:trans $A $a $b $c $p $q)
    (pf:subst-with $A (lam pf-z (eq $A $a pf-z)) $b $c $q $p))
 
+; A lambda is a value, so the motive's body is computed before the lambda is
+; built: F applied to the name pf-z, which the lambda then binds.
 (= (pf:cong $A $B $F $a $b $p)
    (let $Fa (pf:apply $F $a)
-     (pf:subst-with $A (lam pf-z (eq $B $Fa (pf:apply $F pf-z))) $a $b $p
-                    (pf:refl $B $Fa))))
+     (let $Fz (pf:apply $F pf-z)
+       (pf:subst-with $A (lam pf-z (eq $B $Fa $Fz)) $a $b $p
+                      (pf:refl $B $Fa)))))
 
 ; ---- calc ----------------------------------------------------------------
 

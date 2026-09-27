@@ -18,8 +18,10 @@
        (pf:calc tree (mirror (mirror (node l x r)))
          (= (node l x (mirror (mirror r)))  (cong tree (lam s (node s x (mirror (mirror r)))) (mirror (mirror l)) l ihl))
          (= (node l x r)                    (cong tree (lam s (node l x s)) (mirror (mirror r)) r ihr))))))))))
-; A definition that is not structural is refused: the recursion is on the
-; mirrored subtree, which is not a constructor argument.
+; A definition that is not structural is not admitted: the recursion is on
+; the mirrored subtree, which is not a constructor argument.  It terminates,
+; since mirroring keeps the size, but no size argument is checked yet, so the
+; verdict is undetermined rather than a refusal.
 !(set:define &thy spin (-> tree tree)
    (= (spin leaf) leaf)
    (= (spin (node $l $x $r)) (spin (mirror $l))))

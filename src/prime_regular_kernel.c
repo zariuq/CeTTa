@@ -868,8 +868,11 @@ static CettaPrimeRegularKernelStatus regular_context_syntax(
         }
     }
 
+    /* A domain may hold an unannotated lambda applied to arguments, as an
+     * expected type may: its formation reads the redex (synthesis takes the
+     * lambda's domains from the arguments). */
     bool complete = true;
-    if (!regular_scope_check(domain, tail_length, budget, &complete)) {
+    if (!regular_intrinsic_scope_check(domain, tail_length, budget, &complete)) {
         if (reason_out)
             *reason_out = complete
                 ? "outside-regular-context-domain"
@@ -1261,6 +1264,26 @@ Atom *cetta_prime_regular_kernel_rule_contractum_v1(
     return stepped;
 }
 
+/* The number of pattern-variable slots a rule's patterns name: one more
+ * than the largest `(PVar k)` index, at any depth. */
+static size_t regular_rule_slot_count(Atom *pattern) {
+    if (!pattern) return 0u;
+    if (regular_expr(pattern, "PVar", 2u)) {
+        Atom *k = pattern->expr.elems[1];
+        if (k->kind == ATOM_GROUNDED && k->ground.gkind == GV_INT &&
+            k->ground.ival >= 0 && (uint64_t)k->ground.ival < (uint64_t)SIZE_MAX)
+            return (size_t)k->ground.ival + 1u;
+        return 0u;
+    }
+    if (pattern->kind != ATOM_EXPR) return 0u;
+    size_t count = 0u;
+    for (CettaExprIndex i = 0u; i < pattern->expr.len; i++) {
+        size_t child = regular_rule_slot_count(pattern->expr.elems[i]);
+        if (child > count) count = child;
+    }
+    return count;
+}
+
 static bool regular_rule_match(Atom *pat, Atom *term, Atom **binds, size_t nvars) {
     if (!pat || !term) return false;
     if (regular_expr(pat, "PVar", 2u)) {
@@ -1328,13 +1351,20 @@ static Atom *regular_rule_step_in(Arena *arena, Atom *rules, Atom *name,
             continue;
         Atom *pats = rule->expr.elems[3];
         if (pats->kind != ATOM_EXPR || pats->expr.len != argc) continue;
-        Atom *binds[32] = {0};
+        /* One slot per pattern variable the rule names, however many. */
+        size_t nvars = regular_rule_slot_count(pats);
+        Atom **binds = arena_alloc(arena, sizeof(Atom *) * (nvars ? nvars : 1u));
+        if (!binds) {
+            *ok = false;
+            return NULL;
+        }
+        memset(binds, 0, sizeof(Atom *) * (nvars ? nvars : 1u));
         bool matched = true;
         for (size_t i = 0u; i < argc && matched; i++)
-            matched = regular_rule_match(pats->expr.elems[i], args[i], binds, 32u);
+            matched = regular_rule_match(pats->expr.elems[i], args[i], binds, nvars);
         if (!matched) continue;
         bool inst_ok = true;
-        Atom *result = regular_rule_instantiate(arena, rule->expr.elems[4], binds, 32u, 0u,
+        Atom *result = regular_rule_instantiate(arena, rule->expr.elems[4], binds, nvars, 0u,
                                                 &inst_ok, budget);
         if (!inst_ok || !result) {
             *ok = false;
@@ -1351,16 +1381,19 @@ static Atom *regular_rule_step_in(Arena *arena, Atom *rules, Atom *name,
 static Atom *regular_rule_step(Arena *arena, Atom *spine, bool *ok,
                                CettaPrimeRegularKernelBudget *budget) {
     if (!regular_expr(spine, "App", 3u)) return NULL;
-    Atom *args[16] = {0};
     size_t argc = 0u;
     Atom *cursor = spine;
-    while (regular_expr(cursor, "App", 3u) && argc < 16u) {
+    while (regular_expr(cursor, "App", 3u)) {
         argc++;
         cursor = cursor->expr.elems[1];
     }
-    if (argc >= 16u) return NULL;
     Atom *name = NULL;
     if (!regular_decl_const_shape(cursor, &name, NULL)) return NULL;
+    Atom **args = arena_alloc(arena, sizeof(Atom *) * argc);
+    if (!args) {
+        *ok = false;
+        return NULL;
+    }
     cursor = spine;
     for (size_t i = argc; i > 0u; i--) {
         args[i - 1u] = cursor->expr.elems[2];
@@ -1566,15 +1599,14 @@ static PrimeRegularKernelNormal regular_whnf_spine(
     Arena *arena, Atom *spine, Atom **stepped,
     CettaPrimeRegularKernelBudget *budget) {
     *stepped = NULL;
-    Atom *args[16] = {0};
     size_t argc = 0u;
     Atom *cursor = spine;
-    while (regular_expr(cursor, "App", 3u) && argc < 16u) {
+    while (regular_expr(cursor, "App", 3u)) {
         argc++;
         cursor = cursor->expr.elems[1];
     }
     Atom *name = NULL;
-    if (argc >= 16u || !regular_decl_const_shape(cursor, &name, NULL))
+    if (!regular_decl_const_shape(cursor, &name, NULL))
         return regular_normal_result(
             CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED, spine, NULL);
     Atom *tables[2] = {g_regular_rules, regular_language_rules()};
@@ -1582,6 +1614,12 @@ static PrimeRegularKernelNormal regular_whnf_spine(
         !regular_rules_at(tables[1], name, argc, argc))
         return regular_normal_result(
             CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED, spine, NULL);
+    /* The arguments are held by the spine's own length. */
+    Atom **args = arena_alloc(arena, sizeof(Atom *) * argc);
+    if (!args)
+        return regular_normal_result(
+            CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE, NULL,
+            "spine-argument-storage");
     Atom *head = cursor;
     cursor = spine;
     for (size_t i = argc; i > 0u; i--) {
@@ -2018,6 +2056,25 @@ static Atom *regular_context_lookup_declaration(
                     schema_key, &schema_name, &schema_levels))
                 return NULL;
             if (atom_eq(schema_name, wanted_name)) {
+                /* A universe-polymorphic constant written without levels,
+                 * as a stored equation writes the language's eliminator, is
+                 * its lowest instance: every level at 0. */
+                if (wanted_levels == 0u && schema_levels > 0u &&
+                    schema_levels < SIZE_MAX / sizeof(Atom *) - 2u) {
+                    Atom **items = arena_alloc(
+                        arena, sizeof(Atom *) * (schema_levels + 2u));
+                    if (!items) return NULL;
+                    items[0] = key->expr.elems[0];
+                    items[1] = key->expr.elems[1];
+                    for (size_t index = 0u; index < schema_levels; index++)
+                        items[index + 2u] = atom_expr2(
+                            arena, atom_symbol(arena, "LevelConst"),
+                            atom_int(arena, 0));
+                    Atom *lowest = atom_expr(
+                        arena, items, (CettaExprLen)(schema_levels + 2u));
+                    return regular_context_lookup_declaration(
+                        arena, context, lowest, budget, complete);
+                }
                 if (schema_levels != wanted_levels ||
                     wanted_levels > SIZE_MAX / sizeof(uint64_t) ||
                     wanted_levels > SIZE_MAX / sizeof(Atom *))
@@ -3404,6 +3461,79 @@ static PrimeRegularKernelInfer regular_infer(
             false, NULL), principal);
     }
     if (regular_expr(term, "App", 3u)) {
+        /* Unannotated lambdas nested at the head of a spine of two or more
+         * arguments, `((lam x (lam y b)) a1 a2)`: each takes as its domain
+         * the synthesized type of its own argument, moved under the binders
+         * before it, and the annotated spine is synthesized as written.  The
+         * annotations come from the arguments, so the synthesized type is not
+         * claimed to be the least one. */
+        if (regular_expr(term->expr.elems[1], "App", 3u)) {
+            size_t argc = 0u;
+            Atom *head = term;
+            while (regular_expr(head, "App", 3u)) {
+                argc++;
+                head = head->expr.elems[1];
+            }
+            if (regular_expr(head, "Lam", 2u) &&
+                regular_expr(head->expr.elems[1], "Lam", 2u)) {
+                Atom **args = arena_alloc(arena, sizeof(Atom *) * argc);
+                if (!args)
+                    return regular_infer_result(
+                        CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE, NULL, false,
+                        "spine-argument-storage");
+                Atom *cursor = term;
+                for (size_t i = argc; i > 0u; i--) {
+                    args[i - 1u] = cursor->expr.elems[2];
+                    cursor = cursor->expr.elems[1];
+                }
+                size_t bare = 0u;
+                for (Atom *lam = head; bare < argc && regular_expr(lam, "Lam", 2u);
+                     lam = lam->expr.elems[1])
+                    bare++;
+                Atom **domains = arena_alloc(arena, sizeof(Atom *) * bare);
+                if (!domains)
+                    return regular_infer_result(
+                        CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE, NULL, false,
+                        "spine-argument-storage");
+                for (size_t i = 0u; i < bare; i++) {
+                    PrimeRegularKernelInfer argument = regular_infer(
+                        arena, context, args[i], budget, instantiation);
+                    if (argument.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
+                        return argument;
+                    bool ok = true;
+                    domains[i] = i == 0u ? argument.type
+                        : regular_shift(arena, argument.type, (int64_t)i, 0u,
+                                        &ok, budget);
+                    if (!ok || !domains[i])
+                        return regular_infer_result(
+                            CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE, NULL,
+                            false, "domain-shift-failed");
+                }
+                /* Rebuild the head innermost first: the i-th bare lambda
+                 * gets domains[i]. */
+                Atom **lams = arena_alloc(arena, sizeof(Atom *) * bare);
+                if (!lams)
+                    return regular_infer_result(
+                        CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE, NULL, false,
+                        "spine-argument-storage");
+                Atom *lam = head;
+                for (size_t i = 0u; i < bare; i++) {
+                    lams[i] = lam;
+                    lam = lam->expr.elems[1];
+                }
+                Atom *annotated = lam;
+                for (size_t i = bare; i > 0u; i--)
+                    annotated = atom_expr3(arena, atom_symbol(arena, "Lam"),
+                                           domains[i - 1u], annotated);
+                for (size_t i = 0u; i < argc; i++)
+                    annotated = atom_expr3(arena, atom_symbol(arena, "App"),
+                                           annotated, args[i]);
+                return regular_infer_principal(
+                    regular_infer(arena, context, annotated, budget,
+                                  instantiation),
+                    false);
+            }
+        }
         /* A directly applied unannotated lambda gets its domain from the
          * argument, not from beta-normalizing away the application. Infer the
          * body in that extended context and substitute in its dependent type.
@@ -3562,7 +3692,8 @@ static CettaPrimeRegularKernelStatus regular_context_valid(
         }
     }
     bool scope_complete = true;
-    if (!regular_scope_check(domain, tail_length, budget, &scope_complete)) {
+    if (!regular_intrinsic_scope_check(domain, tail_length, budget,
+                                       &scope_complete)) {
         if (reason_out)
             *reason_out = scope_complete
                 ? "outside-regular-context-domain" : "context-budget";

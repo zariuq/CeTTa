@@ -1,5 +1,5 @@
 [computed-id]
-[(NativeNormal True True True True)]
+[(NativeNormal True True False False)]
 [(NativeDependentNormal True True True True)]
 [(NativePairNormal True True True True True)]
 [Refuted]

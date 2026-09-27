@@ -7934,6 +7934,22 @@ static bool petta_machine_plan_recovers_dispatch(
            plan && plan->dispatch_handler;
 }
 
+/* Whether the program defines equations of this head.  A special form's name
+ * reached at run time is data unless the program defines it; then it names
+ * the program's function, which is applied like any other and never runs
+ * the form.  The equations do not change what the form means where it is
+ * written: the two roles cannot share one reading
+ * (BindingForms.role_erasure_cannot_preserve_both), and specializing a known
+ * name keeps a call a call (BindingDispatch.Expr.eval_specialize). */
+static bool petta_machine_program_defines_head(
+    const PettaMachineImpl *machine, SymbolId head) {
+    CettaExprLen minimum = 0u;
+    CettaExprLen maximum = 0u;
+    bool exact = false;
+    return space_equation_head_arity_bounds(
+        machine->space, head, &minimum, &maximum, &exact, 0u);
+}
+
 /* `reduce` evaluates the arguments of the application written in it and
  * dispatches its head on them.  Where the head is a symbol the translation
  * found callable and its written call already does exactly that -- it is not
@@ -25162,6 +25178,111 @@ static bool petta_machine_dispatch_equation_result(
     return dispatched;
 }
 
+/* A call of the program's equations of the application's head: under a
+ * declared type of the head when one applies, and otherwise on the values
+ * of its arguments. */
+static bool petta_machine_call_equations(
+    PettaMachineImpl *machine, const PettaGoal *goal, Atom *expression,
+    Atom *expected, const PettaPlanNode *plan, PettaMachineStep *failure) {
+    Atom *head = expression->expr.elems[0];
+    SymbolId head_id = head->sym_id;
+    CettaExprLen nargs = expression->expr.len - 1u;
+    Atom **declared_types = NULL;
+    uint32_t declared_type_count = 0u;
+    bool has_applicable_type =
+        space_head_has_arrow_signature(
+            machine->space, head_id, nargs);
+    if (has_applicable_type) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_DECLARED_TYPE_SEARCH_TYPED_DISPATCH);
+        declared_type_count = space_get_declared_types(
+            machine->space, &machine->heap, head,
+            &declared_types);
+        has_applicable_type = false;
+        for (uint32_t index = 0u;
+             index < declared_type_count; index++) {
+            if (petta_machine_type_signature_applies(
+                    declared_types[index], nargs)) {
+                has_applicable_type = true;
+                break;
+            }
+        }
+    } else {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PETTA_DECLARED_TYPE_NEGATIVE_PREFILTER);
+    }
+    if (has_applicable_type) {
+        return petta_machine_start_typed_call_choice(
+            machine, expression, expected, declared_types,
+            declared_type_count, goal->barrier, plan);
+    }
+    free(declared_types);
+    if (petta_machine_relation_slots_ready(
+            machine, expression, plan)) {
+        BindingsBuilder *builder =
+            search_context_builder(&machine->search);
+        machine->stats.relation_slot_frame_entries++;
+        machine->stats.relation_slot_operands_reused += nargs;
+        return petta_goal_push(
+            machine,
+            &(PettaGoal){
+                .kind = PETTA_GOAL_CALL_READY_RESOLVED,
+                .barrier = goal->barrier,
+                .first = expression,
+                .second = expected,
+                .plan = plan,
+                .activation_template =
+                    goal->activation_template,
+                .equation_query_source =
+                    goal->equation_query_source,
+                .activation_epoch =
+                    goal->activation_epoch,
+                .activation_first_entry =
+                    goal->activation_first_entry,
+                .binding_growth_mark = builder->growth_count,
+            });
+    }
+    if (!petta_push_evaluated_expression_planned(
+            machine, expression, expected,
+            PETTA_GOAL_CALL_READY, 1u, goal->barrier,
+            plan)) {
+        *failure = PETTA_MACHINE_STEP_CAPACITY;
+        return false;
+    }
+    return true;
+}
+
+/* The program's function of a special form's name, reached at run time: a
+ * plain application of it, which never runs the form.  Given fewer
+ * arguments than an equation takes it waits for the rest, and given more
+ * than any takes it is over-applied, as any function is.  When its
+ * equations all fail the call fails; it does not become data
+ * (BindingForms.known_failure_is_not_data). */
+static bool petta_machine_apply_program_function(
+    PettaMachineImpl *machine, const PettaGoal *goal, Atom *expression,
+    Atom *expected, const PettaPlanNode *plan, PettaMachineStep *failure) {
+    PettaPartialDecision partial =
+        petta_machine_named_partial_decision(machine, expression);
+    if (partial == PETTA_PARTIAL_INVALIDATED) {
+        *failure = PETTA_MACHINE_STEP_INVALIDATED;
+        return false;
+    }
+    if (partial == PETTA_PARTIAL_NO)
+        return petta_machine_call_equations(
+            machine, goal, expression, expected, plan, failure);
+    bool pushed = partial == PETTA_PARTIAL_OVERAPPLIED
+        ? petta_push_evaluated_expression_planned(
+              machine, expression, expected,
+              PETTA_GOAL_OVERAPPLICATION_READY, 1u,
+              goal->barrier, plan)
+        : petta_push_evaluated_expression(
+              machine, expression, expected,
+              PETTA_GOAL_PARTIAL_READY, 1u, goal->barrier);
+    if (!pushed)
+        *failure = PETTA_MACHINE_STEP_CAPACITY;
+    return pushed;
+}
+
 static bool petta_machine_dispatch_solve(
     PettaMachineImpl *machine, const PettaGoal *goal,
     PettaMachineStep *failure) {
@@ -25604,16 +25725,22 @@ static bool petta_machine_dispatch_solve(
      * A special form is syntax only where it is written.  An occurrence whose
      * head is a variable or an expression -- its plan says so -- reaches the
      * form as a value: the arguments are evaluated first, and the
-     * application is data unless PeTTa defines a function of that name,
-     * which runs on the values under the dispatch's handler
-     * (RuntimeHeads.dynamic_special).
+     * application is data unless PeTTa or the program defines a function
+     * of that name, which runs on the values under the dispatch's handler
+     * (petta_machine_program_defines_head).
      */
     if (goal->kind == PETTA_GOAL_SOLVE && plan &&
         plan->role == PETTA_PLAN_DYNAMIC_CALL &&
         machine->host.forms_are_written_syntax &&
         expression->expr.elems[0]->kind == ATOM_SYMBOL) {
-        PeTTaRuntimeHead runtime = petta_semantics_runtime_head(
-            expression->expr.elems[0]->sym_id);
+        SymbolId runtime_head = expression->expr.elems[0]->sym_id;
+        PeTTaRuntimeHead runtime =
+            petta_semantics_runtime_head(runtime_head);
+        if (runtime == PETTA_RUNTIME_HEAD_DATA &&
+            petta_machine_program_defines_head(machine, runtime_head)) {
+            return petta_machine_apply_program_function(
+                machine, goal, expression, expected, plan, failure);
+        }
         if (runtime == PETTA_RUNTIME_HEAD_DATA) {
             if (!petta_push_data_expression_planned(
                     machine, expression, expected, 1u,
@@ -26449,8 +26576,15 @@ static bool petta_machine_dispatch_solve(
             }
             return true;
         }
+        /* A held pattern is the syntax it holds. */
+        Atom *match_pattern = expression->expr.elems[2];
+        Atom *bound_pattern = petta_machine_apply_bindings(
+            machine, environment, &machine->heap, match_pattern);
+        if (bound_pattern && atom_prime_held_is(bound_pattern))
+            match_pattern = atom_prime_held_strip(
+                &machine->heap, bound_pattern);
         return petta_machine_start_ready_match(
-            machine, reference, expression->expr.elems[2],
+            machine, reference, match_pattern,
             expression->expr.elems[3], expected,
             goal->barrier, petta_plan_child(plan, 3u), failure);
     }
@@ -27626,69 +27760,8 @@ static bool petta_machine_dispatch_solve(
     if (head_id != SYMBOL_ID_NONE &&
         space_equations_may_match_known_head(
             machine->space, head_id)) {
-        Atom **declared_types = NULL;
-        uint32_t declared_type_count = 0u;
-        bool has_applicable_type =
-            space_head_has_arrow_signature(
-                machine->space, head_id, nargs);
-        if (has_applicable_type) {
-            cetta_runtime_stats_inc(
-                CETTA_RUNTIME_COUNTER_DECLARED_TYPE_SEARCH_TYPED_DISPATCH);
-            declared_type_count = space_get_declared_types(
-                machine->space, &machine->heap, head,
-                &declared_types);
-            has_applicable_type = false;
-            for (uint32_t index = 0u;
-                 index < declared_type_count; index++) {
-                if (petta_machine_type_signature_applies(
-                        declared_types[index], nargs)) {
-                    has_applicable_type = true;
-                    break;
-                }
-            }
-        } else {
-            cetta_runtime_stats_inc(
-                CETTA_RUNTIME_COUNTER_PETTA_DECLARED_TYPE_NEGATIVE_PREFILTER);
-        }
-        if (has_applicable_type) {
-            return petta_machine_start_typed_call_choice(
-                machine, expression, expected, declared_types,
-                declared_type_count, goal->barrier, plan);
-        }
-        free(declared_types);
-        if (petta_machine_relation_slots_ready(
-                machine, expression, plan)) {
-            BindingsBuilder *builder =
-                search_context_builder(&machine->search);
-            machine->stats.relation_slot_frame_entries++;
-            machine->stats.relation_slot_operands_reused += nargs;
-            return petta_goal_push(
-                machine,
-                &(PettaGoal){
-                    .kind = PETTA_GOAL_CALL_READY_RESOLVED,
-                    .barrier = goal->barrier,
-                    .first = expression,
-                    .second = expected,
-                    .plan = plan,
-                    .activation_template =
-                        goal->activation_template,
-                    .equation_query_source =
-                        goal->equation_query_source,
-                    .activation_epoch =
-                        goal->activation_epoch,
-                    .activation_first_entry =
-                        goal->activation_first_entry,
-                    .binding_growth_mark = builder->growth_count,
-                });
-        }
-        if (!petta_push_evaluated_expression_planned(
-                machine, expression, expected,
-                PETTA_GOAL_CALL_READY, 1u, goal->barrier,
-                plan)) {
-            *failure = PETTA_MACHINE_STEP_CAPACITY;
-            return false;
-        }
-        return true;
+        return petta_machine_call_equations(
+            machine, goal, expression, expected, plan, failure);
     }
 
     /*
@@ -28228,14 +28301,16 @@ static bool petta_machine_dispatch_goal(
             ? head->sym_id : SYMBOL_ID_NONE;
         PeTTaForm form = head_id == SYMBOL_ID_NONE
             ? PETTA_FORM_NONE : petta_semantics_form(head_id);
-        /* A special form reached here is data, unless PeTTa defines a
-         * function of its name (petta_semantics_runtime_head). */
+        /* A special form reached here is data, unless PeTTa or the
+         * program defines a function of its name
+         * (petta_machine_program_defines_head). */
         PeTTaRuntimeHead runtime =
             head_id != SYMBOL_ID_NONE &&
                     machine->host.forms_are_written_syntax
                 ? petta_semantics_runtime_head(head_id)
                 : PETTA_RUNTIME_HEAD_ORDINARY;
-        if (runtime == PETTA_RUNTIME_HEAD_DATA)
+        if (runtime == PETTA_RUNTIME_HEAD_DATA &&
+            !petta_machine_program_defines_head(machine, head_id))
             return petta_machine_unify(machine, first, second);
         bool callable =
             runtime == PETTA_RUNTIME_HEAD_FUNCTION ||
@@ -28345,6 +28420,11 @@ static bool petta_machine_dispatch_goal(
                petta_machine_unify(machine, partial, second);
     }
 
+    /* An application with more arguments than any definition of its head
+     * takes is an error of the application, raised where it is applied: it
+     * reaches the nearest catch, or ends the run.  A run-time dispatch
+     * covers only the body it runs, so its handler does not recover this
+     * (goal.md §1.8, boundaries). */
     if (goal.kind == PETTA_GOAL_OVERAPPLICATION_READY) {
         Atom *error = petta_machine_overapplication_error(
             machine, first);
@@ -28352,7 +28432,7 @@ static bool petta_machine_dispatch_goal(
             *failure = PETTA_MACHINE_STEP_CAPACITY;
             return false;
         }
-        return petta_machine_unify(machine, error, second);
+        return petta_machine_raise_error(machine, error);
     }
 
     if (goal.kind == PETTA_GOAL_BOOLEAN_READY) {
@@ -28687,8 +28767,15 @@ static bool petta_machine_dispatch_goal(
             *failure = PETTA_MACHINE_STEP_CAPACITY;
             return false;
         }
+        /* A held pattern is the syntax it holds. */
+        Atom *match_pattern = second;
+        Atom *bound_pattern = petta_machine_apply_bindings(
+            machine, environment, &machine->heap, second);
+        if (bound_pattern && atom_prime_held_is(bound_pattern))
+            match_pattern = atom_prime_held_strip(
+                &machine->heap, bound_pattern);
         return petta_machine_start_ready_match(
-            machine, first, second, template, expected,
+            machine, first, match_pattern, template, expected,
             goal.barrier, goal.plan, failure);
     }
 
@@ -28893,9 +28980,24 @@ static bool petta_machine_dispatch_goal(
             return false;
         }
         Atom *value = first->expr.elems[1];
-        /* A cons-built term arrives as an open-cons carrier; its spine is
-         * a flat expression before either form reads it. */
-        if (petta_semantics_is_open_cons_value(value)) {
+        Atom *form_head = first->expr.elems[0];
+        bool reduces = form_head->kind == ATOM_SYMBOL &&
+            petta_semantics_form(form_head->sym_id) == PETTA_FORM_REDUCE;
+        if (!reduces && atom_structural_may_have_list_carrier(value)) {
+            /* eval runs its whole term as code, so every list the term
+             * holds, a cons-built open-cons carrier included, is read as
+             * the expression it spells, as SWI-PeTTa's eval/2 reads the
+             * Prolog list. */
+            Atom *materialized =
+                petta_semantics_materialize_value(&machine->heap, value);
+            if (!materialized) {
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
+            value = materialized;
+        } else if (petta_semantics_is_open_cons_value(value)) {
+            /* A cons-built term arrives as an open-cons carrier; its spine
+             * is a flat expression before reduce reads it. */
             Atom *flattened =
                 petta_machine_materialize_list(machine, value);
             if (!flattened) {
@@ -28904,10 +29006,7 @@ static bool petta_machine_dispatch_goal(
             }
             value = flattened;
         }
-        Atom *form_head = first->expr.elems[0];
-        if (form_head->kind == ATOM_SYMBOL &&
-            petta_semantics_form(form_head->sym_id) ==
-                PETTA_FORM_REDUCE) {
+        if (reduces) {
             /* A held term is dispatched on its own elements, which are
              * values; a term that is no application has no reduction. */
             if (value->kind != ATOM_EXPR || value->expr.len == 0u)

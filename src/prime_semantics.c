@@ -1384,6 +1384,33 @@ static Atom *prime_synth_declared_regular(
     PrimeResourceLedger *ledger, bool *engine_fault_out,
     Atom **canonical_term_out);
 
+
+/* True when `type` writes a universe at a level variable, `(u $l)`. */
+static bool prime_type_has_level_variable(const Atom *type) {
+    if (!type || type->kind != ATOM_EXPR) return false;
+    if (type->expr.len == 2u && is_symbol_named(type->expr.elems[0], "u") &&
+        type->expr.elems[1] && type->expr.elems[1]->kind == ATOM_VAR)
+        return true;
+    for (CettaExprIndex i = 0u; i < type->expr.len; i++)
+        if (prime_type_has_level_variable(type->expr.elems[i])) return true;
+    return false;
+}
+
+/* The head of `term`, when a type the space declares for it is a schema
+ * over universe levels; NULL otherwise. */
+static Atom *prime_level_schema_head(Space *space, Arena *a, Atom *term) {
+    Atom *head = term && term->kind == ATOM_EXPR && term->expr.len > 0u
+        ? term->expr.elems[0] : term;
+    if (!space || !head || head->kind != ATOM_SYMBOL) return NULL;
+    Atom **declared = NULL;
+    uint32_t count = space_get_declared_types(space, a, head, &declared);
+    bool schema = false;
+    for (uint32_t i = 0u; i < count && !schema; i++)
+        schema = prime_type_has_level_variable(declared[i]);
+    free(declared);
+    return schema ? head : NULL;
+}
+
 static Atom *prime_synth(Space *space, Arena *a, Atom *judgment, Atom *term,
                          PrimeResourceLedger *ledger,
                          CettaPrimeTypingRouteV1 *route_out,
@@ -1475,6 +1502,15 @@ static Atom *prime_synth(Space *space, Arena *a, Atom *judgment, Atom *term,
         }
     }
     if (route_out) *route_out = CETTA_PRIME_TYPING_ROUTE_LEGACY_HE;
+    /* A declaration over universe levels is a schema only the kernel reads.
+     * When the kernel did not form it, the enumerated declared type is not
+     * a type of the term: its level variables are unread, and a schema
+     * formed at no level instantiates to no type. */
+    Atom *schema_head = prime_level_schema_head(space, a, term);
+    if (schema_head)
+        return prime_undetermined(
+            a, judgment, prime_expr2(a, "universe-schema-not-formed",
+                                     schema_head));
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PRIME_LEGACY_HE_SYNTHESIS);
     Atom **types = NULL;
@@ -2486,11 +2522,18 @@ static Atom *prime_regular_declaration_quote_intrinsic_rec(
     if (!arena || !declarations || !term || !complete || !*complete)
         return NULL;
     if (term->kind != ATOM_EXPR) return term;
+    /* A constant is written bare, unless its name also spells a universe
+     * written bare (`U0`, `U1`): it then keeps its declaration form. */
     if (term->expr.len >= 2u &&
         atom_is_symbol(term->expr.elems[0], "DeclConst") &&
         term->expr.elems[1] &&
         term->expr.elems[1]->kind == ATOM_SYMBOL) {
-        return term->expr.elems[1];
+        Atom *name = term->expr.elems[1];
+        return term->expr.len == 2u && (atom_is_symbol(name, "U0") ||
+                                        atom_is_symbol(name, "U1") ||
+                                        atom_is_symbol(name, "u0") ||
+                                        atom_is_symbol(name, "u1"))
+            ? term : name;
     }
     if (term->expr.len == 2u && atom_is_symbol(term->expr.elems[0], "idx") &&
         term->expr.elems[1]->kind == ATOM_GROUNDED &&
@@ -2908,6 +2951,77 @@ static Atom *prime_open_parameter_type(Arena *arena) {
 /* Extend one declaration context until `term` lowers to the regular Pattern
  * wire.  Declarations lower to named FVars and their schemas are installed
  * only after the acyclic declarations used by their types. */
+/* How many arguments a declared type takes: the binders of its arrows,
+ * authored `(-> A ... B)` or kernel `(Pi A B)`, however nested. */
+static size_t prime_declared_arity(Atom *type) {
+    size_t arity = 0u;
+    for (;;) {
+        if (type && type->kind == ATOM_EXPR && type->expr.len >= 3u &&
+            atom_is_symbol(type->expr.elems[0], "->")) {
+            arity += (size_t)type->expr.len - 2u;
+            type = type->expr.elems[type->expr.len - 1u];
+        } else if (type && type->kind == ATOM_EXPR && type->expr.len == 3u &&
+                   atom_is_symbol(type->expr.elems[0], "Pi")) {
+            arity++;
+            type = type->expr.elems[2];
+        } else {
+            return arity;
+        }
+    }
+}
+
+/* The words of the term syntax a program may also name a constant with.
+ * `quote` and `unquote`, the reader's `@` and `*`, are operators of the
+ * language itself, like `let`, and are not among them. */
+static bool prime_authored_form_word(Atom *atom) {
+    static const char *const words[] = {
+        "lam", "app", "fst", "snd", "pair", "refl", "id", "sigma", "u",
+        "idx", "u0", "u1",
+    };
+    if (!atom || atom->kind != ATOM_SYMBOL) return false;
+    for (size_t i = 0u; i < sizeof words / sizeof words[0]; i++)
+        if (atom_is_symbol(atom, words[i])) return true;
+    return false;
+}
+
+static PrimeRegularDeclaredElaboration
+prime_resolve_declared_regular_name(
+    Space *space, Arena *arena, Atom *name,
+    PrimeRegularDeclarationContext *declarations,
+    CettaPrimeRegularKernelBudget *budget,
+    const PrimeRegularDeclarationTrail *trail);
+
+/* A name the space declares is that name even where it spells a word of the
+ * term syntax (`fst`, `pair`, `lam`, `u0`, ...): declare it before the term
+ * is read, so that reading applies it like any other constant instead of
+ * taking it for the syntax. */
+static void prime_declare_shadowing_names(
+    Space *space, Arena *arena, Atom *term,
+    PrimeRegularDeclarationContext *declarations,
+    CettaPrimeRegularKernelBudget *budget,
+    const PrimeRegularDeclarationTrail *trail) {
+    if (!term) return;
+    Atom *name = term->kind == ATOM_EXPR && term->expr.len > 0u
+        ? term->expr.elems[0] : term;
+    if (prime_authored_form_word(name) &&
+        !prime_regular_declaration_context_contains(declarations, name)) {
+        size_t argc = term->kind == ATOM_EXPR ? (size_t)term->expr.len - 1u : 0u;
+        Atom **declared = NULL;
+        uint32_t count = space_get_declared_types(space, arena, name, &declared);
+        bool fits = false;
+        for (uint32_t i = 0u; i < count && !fits; i++)
+            fits = argc <= prime_declared_arity(declared[i]);
+        free(declared);
+        if (fits)
+            (void)prime_resolve_declared_regular_name(
+                space, arena, name, declarations, budget, trail);
+    }
+    if (term->kind != ATOM_EXPR) return;
+    for (CettaExprIndex i = 0u; i < term->expr.len; i++)
+        prime_declare_shadowing_names(
+            space, arena, term->expr.elems[i], declarations, budget, trail);
+}
+
 static PrimeRegularDeclaredElaboration
 prime_elaborate_declared_regular_term_with_trail(
     Space *space, Arena *arena, Atom *term,
@@ -2916,11 +3030,18 @@ prime_elaborate_declared_regular_term_with_trail(
     const PrimeRegularDeclarationTrail *trail) {
     if (!space || !arena || !term || !declarations || !budget)
         return (PrimeRegularDeclaredElaboration){0};
+    prime_declare_shadowing_names(
+        space, arena, term, declarations, budget, trail);
 
     for (;;) {
+        size_t *arities = arena_alloc(
+            arena, sizeof(size_t) * (declarations->count ? declarations->count : 1u));
+        for (size_t i = 0u; arities && i < declarations->count; i++)
+            arities[i] = prime_declared_arity(declarations->types[i]);
         CettaPrimeRegularTermEnvironmentV1 environment = {
             .names = (const Atom *const *)declarations->source_names,
             .count = declarations->count,
+            .arities = arities,
         };
         CettaPrimeRegularTermElaborationV1 lowered =
             cetta_prime_regular_term_to_pattern_in_environment_v1(
@@ -4897,6 +5018,9 @@ static bool prepare_answer_bag(Space *space, Arena *a, Atom *source,
     }
     EvalOutcome outcome;
     eval_outcome_init(&outcome);
+    /* An incomplete evaluation becomes this judgment's own incomplete
+     * answer; it is not also an incompleteness of the enclosing query. */
+    outcome.completion_consumed = true;
     int budget = evaluation_limited ? (int)evaluation_budget : -1;
     metta_eval_outcome(space, a, NULL, source->expr.elems[1], budget,
                        &outcome);
@@ -5384,25 +5508,47 @@ Atom *prime_semantics_kernel_rules(Arena *a, Space *space) {
 static Atom *prime_quote_open(Arena *arena, Atom *term, uint64_t depth,
                               Atom *binder);
 
+/* The arguments of an application spine `(App (App f a1) a2) ...`, as many
+ * as it has: its length, then the arguments in the order of the spine from
+ * the outermost (last) argument, and its head. */
+static size_t prime_quote_spine_length(Atom *term) {
+    size_t argc = 0u;
+    for (Atom *cursor = term;
+         cursor && cursor->kind == ATOM_EXPR && cursor->expr.len == 3u &&
+         is_symbol_named(cursor->expr.elems[0], "App");
+         cursor = cursor->expr.elems[1])
+        argc++;
+    return argc;
+}
+
+static Atom *prime_quote_spine_arguments(Atom *term, Atom **args, size_t argc) {
+    Atom *cursor = term;
+    for (size_t i = 0u; i < argc; i++) {
+        args[i] = cursor->expr.elems[2];
+        cursor = cursor->expr.elems[1];
+    }
+    return cursor;
+}
+
 static Atom *prime_quote_runtime_term(Arena *arena, Atom *term) {
     if (!arena || !term) return NULL;
+    /* A symbol standing alone is a universe or a constant; only the
+     * universes have another authored spelling.  A constant keeps its name,
+     * whatever it spells. */
     if (term->kind == ATOM_SYMBOL)
-        return cetta_prime_regular_term_authored_symbol_v1(arena, term);
+        return is_symbol_named(term, "U0") || is_symbol_named(term, "U1")
+            ? cetta_prime_regular_term_authored_symbol_v1(arena, term)
+            : term;
     if (term->kind != ATOM_EXPR) return term;
     if (term->expr.len == 2u &&
         is_symbol_named(term->expr.elems[0], "DeclConst") &&
         term->expr.elems[1] && term->expr.elems[1]->kind == ATOM_SYMBOL)
         return term->expr.elems[1];
     if (term->expr.len == 3u && is_symbol_named(term->expr.elems[0], "App")) {
-        Atom *args[16];
-        size_t argc = 0u;
-        Atom *cursor = term;
-        while (cursor && cursor->kind == ATOM_EXPR && cursor->expr.len == 3u &&
-               is_symbol_named(cursor->expr.elems[0], "App")) {
-            if (argc >= 16u) return NULL;
-            args[argc++] = cursor->expr.elems[2];
-            cursor = cursor->expr.elems[1];
-        }
+        size_t argc = prime_quote_spine_length(term);
+        Atom **args = arena_alloc(arena, sizeof(Atom *) * argc);
+        if (!args) return NULL;
+        Atom *cursor = prime_quote_spine_arguments(term, args, argc);
         Atom *head = prime_quote_runtime_term(arena, cursor);
         if (!head) return NULL;
         Atom **items = arena_alloc(arena, sizeof(Atom *) * (argc + 1u));
@@ -5488,9 +5634,9 @@ static Atom *prime_quote_level(Arena *arena, Atom *term,
     if (term->expr.len == 2u && is_symbol_named(term->expr.elems[0], "DeclConst"))
         return prime_quote_runtime_term(arena, term);
     if (is_symbol_named(term->expr.elems[0], "Lam")) {
-        if (nbinders >= 32u) return NULL;
         Atom *fresh = prime_quote_fresh_binder(arena);
-        Atom *stacked[32];
+        Atom **stacked = arena_alloc(arena, sizeof(Atom *) * (size_t)(nbinders + 1u));
+        if (!stacked) return NULL;
         for (uint64_t i = 0u; i < nbinders; i++)
             stacked[i] = binders[i];
         stacked[nbinders] = fresh;
@@ -5529,15 +5675,10 @@ static Atom *prime_quote_level(Arena *arena, Atom *term,
         return atom_expr(arena, items, 4u);
     }
     if (term->expr.len == 3u && is_symbol_named(term->expr.elems[0], "App")) {
-        Atom *args[16];
-        size_t argc = 0u;
-        Atom *cursor = term;
-        while (cursor && cursor->kind == ATOM_EXPR && cursor->expr.len == 3u &&
-               is_symbol_named(cursor->expr.elems[0], "App")) {
-            if (argc >= 16u) return NULL;
-            args[argc++] = cursor->expr.elems[2];
-            cursor = cursor->expr.elems[1];
-        }
+        size_t argc = prime_quote_spine_length(term);
+        Atom **args = arena_alloc(arena, sizeof(Atom *) * argc);
+        if (!args) return NULL;
+        Atom *cursor = prime_quote_spine_arguments(term, args, argc);
         Atom *head = prime_quote_level(arena, cursor, binders, nbinders);
         if (!head) return NULL;
         Atom **items = arena_alloc(arena, sizeof(Atom *) * (argc + 1u));
@@ -5581,6 +5722,22 @@ static Atom *prime_quote_shared_redex(Arena *arena, Atom *term) {
     if (!argument || !quoted_body) return NULL;
     Atom *items[4] = {atom_symbol(arena, "let"), binder, argument, quoted_body};
     return atom_expr(arena, items, 4u);
+}
+
+static size_t prime_declared_arity(Atom *type);
+
+/* Whether the space declares `name` at a type taking at least `argc`
+ * arguments. */
+static bool prime_program_declares(Space *space, Arena *arena, Atom *name,
+                                   size_t argc) {
+    if (!space || !name || name->kind != ATOM_SYMBOL) return false;
+    Atom **declared = NULL;
+    uint32_t count = space_get_declared_types(space, arena, name, &declared);
+    bool fits = false;
+    for (uint32_t i = 0u; i < count && !fits; i++)
+        fits = argc <= prime_declared_arity(declared[i]);
+    free(declared);
+    return fits;
 }
 
 static Atom *prime_authored_projection(Arena *arena, Atom *call) {
@@ -5966,22 +6123,59 @@ Atom *prime_semantics_identity_iota(Atom *call) {
     return method;
 }
 
-static bool prime_quote_has_kernel_residue(const Atom *term) {
-    if (!term || term->kind != ATOM_EXPR || term->expr.len == 0u ||
-        !term->expr.elems[0] || term->expr.elems[0]->kind != ATOM_SYMBOL)
-        return false;
-    const char *name = atom_name_cstr(term->expr.elems[0]);
-    if (name && (strcmp(name, "DeclConst") == 0 || strcmp(name, "App") == 0 ||
-                 strcmp(name, "Lam") == 0 || strcmp(name, "Pi") == 0 ||
-                 strcmp(name, "Sigma") == 0 || strcmp(name, "PVar") == 0 ||
-                 strcmp(name, "FVar") == 0 || strcmp(name, "Fst") == 0 ||
-                 strcmp(name, "Snd") == 0 || strcmp(name, "Pair") == 0 ||
-                 strcmp(name, "Id") == 0 || strcmp(name, "idx") == 0))
-        return true;
-    for (CettaExprIndex i = 0u; i < term->expr.len; i++)
-        if (prime_quote_has_kernel_residue(term->expr.elems[i]))
+/* True when the kernel term `term`, under `depth` binders, has an index no
+ * binder of its own binds.  Such a term has no authored reading. */
+static bool prime_kernel_term_has_free_index(const Atom *term, uint64_t depth) {
+    if (!term || term->kind != ATOM_EXPR || term->expr.len == 0u) return false;
+    if (term->expr.len == 2u && is_symbol_named(term->expr.elems[0], "idx")) {
+        const Atom *index = term->expr.elems[1];
+        return !index || index->kind != ATOM_GROUNDED ||
+               index->ground.gkind != GV_INT || index->ground.ival < 0 ||
+               (uint64_t)index->ground.ival >= depth;
+    }
+    if (is_symbol_named(term->expr.elems[0], "DeclConst")) return false;
+    for (CettaExprIndex i = 1u; i < term->expr.len; i++) {
+        bool under =
+            (term->expr.len == 2u && i == 1u &&
+             is_symbol_named(term->expr.elems[0], "Lam")) ||
+            (term->expr.len == 3u && i == 2u &&
+             (is_symbol_named(term->expr.elems[0], "Lam") ||
+              is_symbol_named(term->expr.elems[0], "Pi") ||
+              is_symbol_named(term->expr.elems[0], "Sigma")));
+        if (prime_kernel_term_has_free_index(term->expr.elems[i],
+                                             under ? depth + 1u : depth))
             return true;
+    }
     return false;
+}
+
+/* A reduct is returned only in the evaluated call's own vocabulary: every
+ * constant it names is one the call's elaboration resolved (the call's
+ * constants, and the open parameters it admitted), one the space declares,
+ * or one the language owns, under that name and with no universe argument
+ * written.  A rule's internal lowering, such as a quantifier instance
+ * specialized for the proof checker or an explicit universe argument, is not
+ * a term the program can read back, so the call is left as it is. */
+static bool prime_reduct_in_vocabulary(
+    Space *space, Arena *arena,
+    const PrimeRegularDeclarationContext *declarations, Atom *term) {
+    if (!term || term->kind != ATOM_EXPR || term->expr.len == 0u) return true;
+    if (is_symbol_named(term->expr.elems[0], "DeclConst")) {
+        Atom *name = term->expr.len == 2u ? term->expr.elems[1] : NULL;
+        if (!name || name->kind != ATOM_SYMBOL) return false;
+        if (prime_regular_declaration_context_contains(declarations, name) ||
+            prime_language_owned_declaration(arena, name))
+            return true;
+        Atom **declared = NULL;
+        uint32_t count = space_get_declared_types(space, arena, name, &declared);
+        free(declared);
+        return count > 0u;
+    }
+    for (CettaExprIndex i = 0u; i < term->expr.len; i++)
+        if (!prime_reduct_in_vocabulary(space, arena, declarations,
+                                        term->expr.elems[i]))
+            return false;
+    return true;
 }
 
 static bool prime_head_has_type_rule(Arena *arena, Space *space, Atom *head) {
@@ -6007,8 +6201,14 @@ static Atom *prime_reduce_covered_call(
     if (!arena || !space || !call || fuel == 0 ||
         call->kind != ATOM_EXPR || call->expr.len < 2u)
         return NULL;
+    /* A projection of a pair, unless `fst`, `snd` or `pair` there is the
+     * program's own function or constructor. */
     Atom *projected = prime_authored_projection(arena, call);
-    if (projected) return projected;
+    if (projected &&
+        !prime_program_declares(space, arena, call->expr.elems[0], 1u) &&
+        !prime_program_declares(space, arena,
+                                call->expr.elems[1]->expr.elems[0], 2u))
+        return projected;
     Atom *head = call->expr.elems[0];
     if (!head || head->kind != ATOM_SYMBOL) return NULL;
     if (!prime_head_has_type_rule(arena, space, head))
@@ -6057,12 +6257,19 @@ static Atom *prime_reduce_covered_call(
     Atom *contractum = cetta_prime_regular_kernel_rule_contractum_v1(
         arena, intrinsic.term, &budget);
     cetta_prime_regular_kernel_rules_set(NULL);
+    /* The kernel term is quoted form by form: a form with no authored
+     * reading, such as a pattern slot or an index no binder binds, makes the
+     * quotation fail and the call stays as written.  The authored reading is
+     * not inspected afterwards for kernel spellings: a constructor the
+     * program declared may be spelled like a kernel form. */
+    bool readable = contractum &&
+        !prime_kernel_term_has_free_index(contractum, 0u) &&
+        prime_reduct_in_vocabulary(space, arena, &declarations, contractum);
     prime_regular_declaration_context_free(&declarations);
-    if (!contractum) return NULL;
+    if (!readable) return NULL;
     Atom *shared = prime_quote_shared_redex(arena, contractum);
     Atom *quoted = shared ? shared : prime_quote_runtime_term(arena, contractum);
-    if (!quoted || atom_eq(quoted, call) ||
-        prime_quote_has_kernel_residue(quoted))
+    if (!quoted || atom_eq(quoted, call))
         return NULL;
     return quoted;
 }

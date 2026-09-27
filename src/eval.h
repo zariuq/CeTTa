@@ -106,6 +106,14 @@ typedef struct EvalOutcome {
        answers were raised and not caught, and whether any was. */
     bool petta_raise_known;
     bool petta_raised_error;
+    /* Input: the fuel bounds the depth of each evaluation path, as the
+       evaluation without an outcome does, rather than the total number of
+       steps; exhausting it on any path still marks the outcome incomplete. */
+    bool depth_fuel;
+    /* Input: the caller turns an incomplete outcome into its own explicit
+       answer, so the incompleteness is not also reported to the enclosing
+       evaluation. */
+    bool completion_consumed;
 } EvalOutcome;
 
 typedef enum {

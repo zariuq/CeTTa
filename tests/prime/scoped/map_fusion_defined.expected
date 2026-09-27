@@ -9,4 +9,4 @@
 [(Depends 5 first list-ind)]
 [()]
 [True]
-[False]
+[(set:proves &thy (pf:by map-fusion) (eq list (mapf f (mapf g ys)) (mapf (lam y (g (f y))) ys)))]

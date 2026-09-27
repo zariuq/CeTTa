@@ -1,0 +1,8 @@
+[(got $y (f $y) 0)]
+[(got $y (f $y) 0)]
+[(both (quote (F $x)) (quote (G $x)))]
+[(both (quote (F 0)) (quote (G 0)))]
+[(both (quote (F $x)) (quote (G $x)))]
+[(show (quote (∧ (F 0) (G 0))))]
+[(split (quote (F 0)) (quote (G 0)))]
+[(s z)]
