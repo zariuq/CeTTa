@@ -5502,7 +5502,7 @@ Atom *prime_semantics_kernel_rules(Arena *a, Space *space) {
     return list;
 }
 
-/* Surface spelling of a kernel normal form. An unquoted binder or wire
+/* The written spelling of a kernel normal form. An unquoted binder or wire
  * constructor declines the whole term, so ordinary evaluation never prints
  * an internal spelling in place of the source call. */
 static Atom *prime_quote_open(Arena *arena, Atom *term, uint64_t depth,

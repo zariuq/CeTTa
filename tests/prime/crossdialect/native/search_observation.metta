@@ -1,0 +1,8 @@
+; Observe semantic search outcomes and independently recheck every retained proof.
+; Work counters and fresh allocation names are not the result of the search.
+(= (native-search:observe $space
+      (typing-search $state $depth $reason $proofs $stats))
+   (Search $state $depth $reason
+     (map-atom (cdr-atom $proofs) $answer
+       (let (typed-answer-v2 (: $term $type) $substitution) $answer
+         (Checked $term $type (type:check $space $term $type))))))

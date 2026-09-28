@@ -3768,6 +3768,27 @@ int main(int argc, char **argv) {
     } else
         stdlib_load(&space, &arena);
 
+    /* The standard library is written in HE; in Prime its declarations
+     * keep their HE meaning (eval_prime_set_he_signature_heads).  The space
+     * holds exactly the library at this point, so the symbols it declares a
+     * type for are read from its annotations. */
+    if (lang->id == CETTA_LANGUAGE_PRIME) {
+        CettaCount stdlib_len = space_length64(&space);
+        SymbolId *he_heads = cetta_malloc(
+            sizeof(*he_heads) * (stdlib_len ? stdlib_len : 1u));
+        size_t he_head_count = 0u;
+        for (CettaIndex i = 0u; i < stdlib_len; i++) {
+            Atom *item = space_get_at64(&space, i);
+            if (item && item->kind == ATOM_EXPR && item->expr.len == 3u &&
+                atom_is_symbol_id(item->expr.elems[0],
+                                  g_builtin_syms.colon) &&
+                item->expr.elems[1]->kind == ATOM_SYMBOL)
+                he_heads[he_head_count++] = item->expr.elems[1]->sym_id;
+        }
+        eval_prime_set_he_signature_heads(he_heads, he_head_count);
+        free(he_heads);
+    }
+
     /* Add grounded op type declarations (HE stdlib implicit types) */
     if (lang->id != CETTA_LANGUAGE_PETTA)
         main_add_builtin_type_decls(&space, &arena, lang->id, profile);

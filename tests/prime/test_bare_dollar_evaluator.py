@@ -256,23 +256,32 @@ def main() -> int:
             "[True]",
         )
 
-    # Native substitution has two observable classes.  Lexical ABT binders
-    # (`let` and `let*`) treat quote as a scope barrier.  Matcher/template
-    # substitution (`chain`, `unify`, `match`, and rewrite application) may
-    # instantiate matching identities below quote.  Named variables pin this
-    # distinction independently of the bare-dollar contenders.
+    # Quotation suspends evaluation, not lexical binding.  A binder that
+    # receives a value (`let`, `let*`, `chain`, `unify`, `match`, and rewrite
+    # application) instantiates its identities below quote.  Lambda
+    # application does not: its argument is received as written, and a
+    # quotation that took it in would record that syntax, so `@$x` stays as
+    # written in the body.  Named variables pin this distinction
+    # independently of the bare-dollar contenders.
     for policy in contenders:
         expect(
             policy,
             "quoted-named-let-binder",
             ("! (let $x a @$x)",),
-            "[(quote $x)]",
+            "[(quote a)]",
             pretty_vars=True,
         )
         expect(
             policy,
             "quoted-named-let-star-binder",
             ("! (let* (($x a)) @$x)",),
+            "[(quote a)]",
+            pretty_vars=True,
+        )
+        expect(
+            policy,
+            "quoted-named-lambda-binder",
+            ("! ((lam $x @$x) a)",),
             "[(quote $x)]",
             pretty_vars=True,
         )
@@ -325,8 +334,8 @@ def main() -> int:
         ),
         (
             "shared",
-            "[(quote $)]",
-            "[(quote $)]",
+            "[(quote a)]",
+            "[(quote a)]",
             "[(quote a)]",
             "[(quote a)]",
             "[(quote a)]",
@@ -389,12 +398,12 @@ def main() -> int:
             pretty_vars=True,
         )
 
-    # Unquoting makes the distinction visible as ordinary syntax.  Lexical
-    # substitution still cannot retroactively cross its quote barrier;
-    # matcher substitution has already instantiated the quoted variable.
+    # Unquoting shows the same identities as ordinary syntax: a fresh
+    # anonymous occurrence is never the pattern's, and a shared one has been
+    # instantiated by `let` and by `chain` alike.
     for policy, lexical, matcher in (
         ("fresh", "[$]", "[$]"),
-        ("shared", "[$]", "[a]"),
+        ("shared", "[a]", "[a]"),
     ):
         expect(
             policy,

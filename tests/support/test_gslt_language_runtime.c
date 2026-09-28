@@ -20,7 +20,7 @@
 
 enum {
     ERROR_CAP = 1024,
-    EXPECTED_CHECKS = 351,
+    EXPECTED_CHECKS = 363,
 };
 
 static unsigned checks;
@@ -429,6 +429,90 @@ static bool horn_results_equal(const CettaGsltHornResult *left,
     }
     free(used);
     return true;
+}
+
+static void check_compiled_query_ownership(void) {
+    CettaGsltCompiledProgram *program = NULL;
+    char error[ERROR_CAP] = {0};
+    bool loaded = cetta_gslt_compiled_program_load_v1(
+        &cetta_gslt_compiled_canary_v1.compiled_plan, &program,
+        error, sizeof(error));
+    CHECK(loaded, "query ownership canary loads");
+    if (!loaded)
+        return;
+    Arena source, answers;
+    arena_init(&source);
+    arena_init(&answers);
+    enum { PAYLOAD_LENGTH = 4096 };
+    Atom *items[PAYLOAD_LENGTH];
+    for (size_t i = 0u; i < PAYLOAD_LENGTH; i++)
+        items[i] = atom_int(&source, (int64_t)i);
+    /* The unchanged payload itself contains a variable, independently of
+     * the answer variable which the rule must instantiate. */
+    items[PAYLOAD_LENGTH - 1u] = atom_var(&source, "retained");
+    Atom *payload = atom_expr(&source, items, PAYLOAD_LENGTH);
+    Atom *query = atom_expr3(&source, atom_symbol(&source, "canary-evaluate"),
+                            payload, atom_var(&source, "answer"));
+    Atom *renamed = atom_expr2(&answers, atom_symbol(&answers, "q-sym"),
+        atom_expr2(&answers, atom_symbol(&answers, "q-str"),
+                   atom_string(&answers, "renamed-answer")));
+    Atom *expected = atom_expr3(&answers,
+        atom_symbol(&answers, "canary-evaluate"),
+        atom_deep_copy(&answers, payload), renamed);
+    CettaGsltHornResult result = {0};
+    bool ok = cetta_gslt_compiled_query_v1(
+        program, &answers, query, limits(), &result, error, sizeof(error));
+    CHECK(ok, "large variable-bearing query executes");
+    CHECK(ok && result.outcome == CETTA_GSLT_HORN_COMPLETED &&
+              result.answer_count == 1u,
+          "query ownership canary has exactly one answer");
+    CHECK(result.worklist_states_created == 2u &&
+              result.worklist_states_reclaimed == 2u,
+          "both query ownership states are reclaimed");
+    CHECK(result.worklist_state_bytes_peak < PAYLOAD_LENGTH * sizeof(Atom *),
+          "state regions do not recopy the immutable query payload");
+    CHECK(ok && result.answer_count == 1u &&
+              atom_graph_is_closed_for_arena(&answers, result.answers[0]),
+          "returned answer owns every transitive child outside query storage");
+    arena_free(&source);
+    CHECK(ok && result.answer_count == 1u &&
+              atom_data_equal(result.answers[0], expected),
+          "answer survives query and state reclamation with variable identity");
+    if (ok)
+        cetta_gslt_horn_result_free(&result);
+
+    /* Sharing the payload must not bypass the rule's fixed answer pattern. */
+    Atom *wrong = atom_expr3(&answers,
+        atom_symbol(&answers, "canary-evaluate"), expected->expr.elems[1],
+        atom_symbol(&answers, "wrong-answer"));
+    ok = cetta_gslt_compiled_query_v1(
+        program, &answers, wrong, limits(), &result, error, sizeof(error));
+    CHECK(ok && result.outcome == CETTA_GSLT_HORN_COMPLETED &&
+              result.answer_count == 0u,
+          "query sharing preserves rejection of a wrong rigid answer");
+    CHECK(result.worklist_states_created == result.worklist_states_reclaimed,
+          "rejected query reclaims all shared-query states");
+    if (ok)
+        cetta_gslt_horn_result_free(&result);
+
+    CettaGsltHornLimits bounded = limits();
+    bounded.max_depth = 1u;
+    Atom *ground_query = atom_expr3(&answers,
+        atom_symbol(&answers, "canary-evaluate"), atom_int(&answers, 7), renamed);
+    ok = cetta_gslt_compiled_query_v1(
+        program, &answers, ground_query, bounded, &result, error, sizeof(error));
+    CHECK(ok && result.outcome == CETTA_GSLT_HORN_COMPLETED &&
+              result.answer_count == 1u,
+          "shared ground query retains exact one-step depth behavior");
+    CHECK(result.worklist_states_created == result.worklist_states_reclaimed,
+          "ground query reclaims all shared-query states");
+    CHECK(ok && result.answer_count == 1u &&
+              atom_graph_is_closed_for_arena(&answers, result.answers[0]),
+          "ground answer is closed after the query arena is released");
+    if (ok)
+        cetta_gslt_horn_result_free(&result);
+    arena_free(&answers);
+    cetta_gslt_compiled_program_free(program);
 }
 
 static void check_compiled_query_optimizations_cross_guest(
@@ -905,6 +989,7 @@ int main(int argc, char **argv) {
     arena_init(&answers);
 
     check_independent_compiled_wire_canary();
+    check_compiled_query_ownership();
 
     TermUniverse universe;
     term_universe_init(&universe);

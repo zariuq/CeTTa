@@ -8,13 +8,17 @@ referenced, not copied. A missing capability is a dependency row.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path("/home/aimama/aihub/hyperon/cetta-prime-2.0-draft-20260910")
+import curriculum_port_repairs
+from curriculum_trace import INVALID, failed_output, final_output, trace_failure
+
+ROOT = Path(__file__).resolve().parents[2]
 CURRICULUM = Path("/home/aimama/aihub/Mettapedia/MettaKernel/Curriculum")
 COVERAGE = Path(
     "/shared/zahrada/work/prime-coherence-opus-20260924-claude/curriculum-coverage.md"
@@ -25,7 +29,7 @@ FIXTURES = (
     ROOT / "tests/prime/scoped/curriculum_lean.metta",
     ROOT / "tests/prime/scoped/curriculum_megalodon.metta",
 )
-OUT = Path("/shared/zahrada/work/typed-conversion-grok/cumulative-b/curriculum-ledger.tsv")
+OUT = Path(os.environ.get("TC_OUT", "curriculum-ledger.tsv"))
 
 COLUMNS = (
     "id",
@@ -45,10 +49,55 @@ COLUMNS = (
 
 HEAD = re.compile(r"^!\(([\w:@+-]+)")
 HEADER = re.compile(r"^;\s*-+\s+(.+)$")
-BIN = Path(os.environ.get(
-    "TC_CETTA",
-    "/shared/zahrada/work/prime-integration-20260923-claude/binaries/cetta-sealednames-1-9f89629c",
-))
+BIN = Path(os.environ.get("TC_CETTA", "cetta"))
+# The authored derived-HOL guest requires shared evaluation of large proof terms.
+EXECUTION_FLAGS = ("--eval-hashcons",)
+
+
+def require_configuration() -> None:
+    """A recount must name its binary and destinations explicitly."""
+    missing = [key for key in ("TC_CETTA", "TC_OUT", "TC_SCRATCH") if not os.environ.get(key)]
+    if missing:
+        raise SystemExit("set explicit recount inputs: " + ", ".join(missing))
+    if not BIN.is_file():
+        raise SystemExit(f"recount binary does not exist: {BIN}")
+
+
+def input_hashes() -> dict[str, str]:
+    paths = [Path(__file__), Path(__file__).with_name("curriculum_trace.py"), Path(curriculum_port_repairs.__file__), ROOT / "lib/pf.metta",
+             ROOT / "lib/prime/curriculum.metta", *FIXTURES]
+    paths.extend(Path(__file__).with_name(name) for name in (
+        "run_curriculum.py", "test_curriculum_port_repairs.py", "test_cic_natmax.py", "test_cic_lf_normalization.py", "test_lf_guest_boundaries.py", "test_curriculum_closeout_metadata.py",
+        "contract_controls.metta", "named_controls.metta"))
+    paths.append(MOTIVATION)
+    paths.extend(curriculum_port_repairs.PORTS.glob("*.metta"))
+    paths.extend(path for path in CURRICULUM.rglob("*") if path.is_file())
+    pending = [path for path in paths if path.suffix == ".metta"]
+    pinned = set(paths)
+    while pending:
+        source = pending.pop()
+        text = source.read_text(encoding="utf-8", errors="replace")
+        for match in re.finditer(r"!\(import! &self ([^)]+)\)", text):
+            raw = match.group(1).strip()
+            target = Path(raw) if raw.startswith("/") else source.parent / raw
+            if target.suffix != ".metta":
+                target = ROOT / "lib" / (raw + ".metta")
+            target = target.resolve()
+            if target.is_file() and target not in pinned:
+                pinned.add(target)
+                pending.append(target)
+    return {str(path): sha256_file(path) for path in sorted(pinned)}
+
+
+def validate_provenance() -> None:
+    """An existing ledger may be checked only against its unchanged inputs."""
+    require_configuration()
+    receipt = json.loads(OUT.with_suffix(".provenance.json").read_text())
+    if (receipt["binary_sha256"] != sha256_file(BIN)
+            or receipt["execution_flags"] != list(EXECUTION_FLAGS)
+            or receipt["ledger_sha256"] != sha256_file(OUT)
+            or receipt["inputs"] != input_hashes()):
+        raise SystemExit("ledger inputs changed; a fresh recount is required")
 
 
 def sha256_file(path: Path) -> str:
@@ -121,14 +170,9 @@ def run_fixture(fixture: Path) -> list[str]:
     )) / f"run-{fixture.name}"
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(text)
-    proc = subprocess.run(
-        ["bash", "-c", 'ulimit -v 25165824 && exec "$1" --lang prime "$2"',
-         "run", str(BIN), str(dest)],
-        text=True, capture_output=True,
-    )
-    lines = [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
-    if proc.returncode != 0 and not lines:
-        lines = [f"[exit {proc.returncode}]"]
+    code, lines, err = cetta_lines(dest)
+    if code != 0 or err:
+        raise RuntimeError(trace_failure(code, lines, err, targets=0))
     return lines
 
 
@@ -374,18 +418,20 @@ def resolve_guest_import(form: str, source: Path) -> str:
 
 
 def cetta_lines(src: Path) -> tuple[int, list[str], str]:
-    proc = subprocess.run(
-        ["bash", "-c", 'ulimit -v "$1" && exec "$2" --lang prime "$3"',
-         "run", "25165824", str(BIN), str(src)],
-        text=True,
-        capture_output=True,
-        timeout=120,
-    )
-    lines = [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
-    err = ""
-    if proc.stderr and proc.stderr.strip():
-        err = proc.stderr.strip().splitlines()[0][:240]
-    return proc.returncode, lines, err
+    timeout = float(os.environ["TC_TIMEOUT"]) if os.environ.get("TC_TIMEOUT") else None
+    argv = [str(BIN), "--lang", "prime", *EXECUTION_FLAGS, str(src)]
+    proc = subprocess.run(argv, cwd=ROOT,
+                          text=True, capture_output=True, timeout=timeout)
+    lines = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
+    if os.environ.get("TC_SCRATCH"):
+        traces = Path(os.environ["TC_SCRATCH"]) / "process-traces"
+        traces.mkdir(parents=True, exist_ok=True)
+        key = hashlib.sha256(str(src.resolve()).encode()).hexdigest()[:16]
+        (traces / (key + ".json")).write_text(json.dumps({
+            "source": str(src), "source_sha256": sha256_file(src), "argv": argv,
+            "exit": proc.returncode, "stdout": lines, "stderr": proc.stderr,
+        }, indent=2) + "\n")
+    return proc.returncode, lines, proc.stderr.strip()
 
 
 def _command_spans(text: str, prefixes: tuple[str, ...]) -> list[tuple[int, int]]:
@@ -464,12 +510,12 @@ def _run_assert_slices(path: Path, text: str, wanted: list[str]) -> list[str] | 
         dest = scratch / f"{path.stem}-{index}.metta"
         dest.write_text(_absolutize_imports("".join(parts), path))
         try:
-            _code, lines, err = cetta_lines(dest)
+            code, lines, err = cetta_lines(dest)
         except subprocess.TimeoutExpired:
             return None
         if "compiled Prime reader" in err or "could not read" in err or not lines:
             return None
-        results.append(lines[-1])
+        results.append(final_output(code, lines, err))
     return results
 
 
@@ -507,12 +553,12 @@ def run_repaired_guest(path: Path, bangs: list[str]) -> dict | None:
         dest = scratch / f"{path.stem}-recovered-{index}.metta"
         dest.write_text("\n".join(header + [bang]) + "\n")
         try:
-            _code, lines, _err = cetta_lines(dest)
+            code, lines, err = cetta_lines(dest)
         except subprocess.TimeoutExpired:
             return None
         if not lines:
             return None
-        results.append(lines[-1])
+        results.append(final_output(code, lines, err))
     pairs = list(zip(wanted, results))
     return {
         "rel": rel,
@@ -619,25 +665,28 @@ def definition_prints(path: Path) -> list[tuple[str, str, str]]:
     assertEqual line is not reused.
     """
     text = path.read_text(encoding="utf-8", errors="replace")
-    header, calls = ground_calls(text, path)
+    _header, calls = ground_calls(text, path)
     if not calls:
         return []
     scratch = Path(os.environ.get(
         "TC_SCRATCH", "/tmp/claude/grok-goal-aaee6e0e0c16/implementer")) / "defs"
     scratch.mkdir(parents=True, exist_ok=True)
-    nimp = sum(1 for form in header if form.startswith("!(import!"))
 
     def run_calls(selected: list[tuple[str, str]]) -> list[str]:
         dest = scratch / f"{path.stem}-{len(selected)}-{selected[0][0]}.metta"
-        dest.write_text("\n".join(header + [f"!({lhs})" for _name, lhs in selected]) + "\n")
+        body, prefix = _probe_text(path, selected)
+        dest.write_text(body)
         try:
-            _code, lines, _err = cetta_lines(dest)
+            code, lines, err = cetta_lines(dest)
         except subprocess.TimeoutExpired:
             return []
-        return lines[nimp:] if len(lines) >= nimp else []
+        failure = trace_failure(code, lines, err, len(selected))
+        if failure:
+            return [failure] * len(selected)
+        return lines[prefix:] if len(lines) == prefix + len(selected) else []
 
     batched = run_calls(calls)
-    if len(batched) == len(calls) and not any(line.startswith("[(Error") for line in batched):
+    if len(batched) == len(calls) and not any(failed_output(line) for line in batched):
         return [(name, lhs, line) for (name, lhs), line in zip(calls, batched)]
     found: list[tuple[str, str, str]] = []
     for name, lhs in calls:
@@ -680,7 +729,11 @@ def _defs_only_file(path: Path, seen: dict[str, Path]) -> Path:
 
 def _probe_text(path: Path, calls: list[tuple[str, str]]) -> tuple[str, int]:
     """Definitions with their original line breaks, then the grounded calls."""
-    text = _defs_only_file(path, {}).read_text(encoding="utf-8")
+    if port_guest_asserts(path) != path:
+        source = materialize_guest(path, keep_asserts=False)
+    else:
+        source = _defs_only_file(path, {})
+    text = source.read_text(encoding="utf-8")
     prefix = len(top_level_bangs(text))
     extra = "\n".join(f"!({lhs})" for _name, lhs in calls)
     return text.rstrip() + "\n" + extra + "\n", prefix
@@ -699,12 +752,18 @@ def run_probe_batch(path: Path, calls: list[tuple[str, str]]) -> list[tuple[str,
         dest = scratch / f"{path.stem}-{len(selected)}-{selected[0][0]}.metta"
         dest.write_text(body)
         try:
-            _code, lines, err = cetta_lines(dest)
+            code, lines, err = cetta_lines(dest)
         except subprocess.TimeoutExpired:
-            return [], "error: cetta exceeded 120s under ulimit -v 25165824"
-        if len(lines) < prefix + len(selected):
-            return [], err
-        return lines[prefix:prefix + len(selected)], err
+            return [], INVALID + "configured timeout expired"
+        if len(lines) == prefix:
+            failure = trace_failure(code, lines, err, targets=0)
+            return [], failure or "error: cetta produced no result"
+        failure = trace_failure(code, lines, err, len(selected))
+        if failure:
+            return [], failure
+        if len(lines) != prefix + len(selected):
+            return [], INVALID + f"probe expected {prefix + len(selected)} outputs, received {len(lines)}"
+        return lines[prefix:prefix + len(selected)], ""
 
     batched, _err = run_calls(calls)
     if len(batched) == len(calls):
@@ -726,7 +785,7 @@ def collect_printed_heads(runs: dict, command_rows: list[dict], extra_rows: list
     texts: list[str] = []
     for rec in runs.values():
         for _name, call, line in rec.get("def_log", []):
-            if not line or line.startswith("[(Error"):
+            if not line or line.startswith(("[(Error", "error:", INVALID)):
                 continue
             if call and not call_reduced(call, line):
                 continue
@@ -734,7 +793,7 @@ def collect_printed_heads(runs: dict, command_rows: list[dict], extra_rows: list
         for bang, line in rec.get("pairs", []):
             if not bang.startswith(("!(assertEqual", "!(test")):
                 continue
-            if not line or line.startswith("[(Error"):
+            if not line or line.startswith(("[(Error", "error:", INVALID)):
                 continue
             texts.append(line)
     for row in command_rows + extra_rows:
@@ -829,7 +888,7 @@ def ground_printed_equations(runs: dict) -> None:
                             break
                 if (
                     line.startswith("[(Error")
-                    or line.startswith("error:")
+                    or line.startswith(("error:", INVALID))
                     or line == "[]"
                     or not call_reduced(call, line)
                 ):
@@ -919,14 +978,14 @@ def _render_sexp(node: object) -> str:
     return "(" + " ".join(_render_sexp(part) for part in node) + ")"
 
 
-def prime_port(text: str) -> str:
+def prime_port(text: str, imported_funs: set[str] | None = None) -> str:
     """Sequence calls Prime would leave in a non-first argument.
 
     `--lang prime` reduces the first argument of a call. A call under a
     constructor, or past the first argument, stays. `case` reduces its
     scrutinee before binding, so each such call is bound there first.
     """
-    funs: set[str] = set()
+    funs: set[str] = set(imported_funs or ())
     spans: list[tuple[int, int, object]] = []
     i = 0
     n = len(text)
@@ -934,6 +993,15 @@ def prime_port(text: str) -> str:
         if text[i] == ";":
             nl = text.find("\n", i)
             i = n if nl < 0 else nl + 1
+            continue
+        if text.startswith(("!(assertEqual", "!(test"), i):
+            try:
+                node, j = _parse_sexp(text, i + 1)
+            except ValueError:
+                i += 1
+                continue
+            spans.append((i, j, node))
+            i = j
             continue
         if text.startswith("(=", i):
             try:
@@ -970,6 +1038,8 @@ def prime_port(text: str) -> str:
         if not isinstance(node, list) or not node:
             return True
         head = node[0]
+        if head == "quote":
+            return True
         if isinstance(head, str) and (head in funs or head in {"let", "if", "case", "unify"}):
             return False
         return all(is_value(part) for part in node)
@@ -1029,6 +1099,8 @@ def prime_port(text: str) -> str:
         parts.append(text[cursor:start])
         if isinstance(node, list) and len(node) == 3 and node[0] == "=":
             parts.append(_render_sexp(["=", node[1], place(node[2])]))
+        elif isinstance(node, list) and node and node[0] in {"assertEqual", "test"}:
+            parts.append("!" + _render_sexp([node[0], *[place(arg) for arg in node[1:]]]))
         else:
             parts.append(text[start:end])
         cursor = end
@@ -1050,10 +1122,33 @@ def _strip_checks(text: str) -> str:
     return "".join(parts)
 
 
-def materialize_guest(path: Path, seen: dict | None = None, keep_asserts: bool = True) -> Path:
+def guest_function_names(path: Path, seen: set[Path] | None = None) -> set[str]:
+    """Declared equation heads from this guest and its import closure."""
+    seen = set() if seen is None else seen
+    path = path.resolve()
+    if path in seen or not path.is_file():
+        return set()
+    seen.add(path)
+    text = path.read_text(encoding="utf-8", errors="replace")
+    names = set()
+    for form in recover_forms(text):
+        if form.startswith("(="):
+            lhs = lhs_of(form)
+            if lhs:
+                names.add(lhs.split(" ", 1)[0])
+    for match in re.finditer(r"!\(import! &self ([^)]+)\)", text):
+        raw = match.group(1).strip()
+        target = Path(raw) if raw.startswith("/") else path.parent / raw
+        if target.suffix == ".metta":
+            names.update(guest_function_names(target, seen))
+    return names
+
+
+def materialize_guest(path: Path, seen: dict | None = None, keep_asserts: bool = True,
+                      keep_import_asserts: bool = False) -> Path:
     """Write the Prime-sequenced guest, with guest imports pointed at their ports."""
     seen = {} if seen is None else seen
-    key = (str(path.resolve()), keep_asserts)
+    key = (str(path.resolve()), keep_asserts, keep_import_asserts)
     if key in seen:
         return seen[key]
     scratch = Path(os.environ.get(
@@ -1062,12 +1157,14 @@ def materialize_guest(path: Path, seen: dict | None = None, keep_asserts: bool =
         rel = path.resolve().relative_to(CURRICULUM.resolve())
     except ValueError:
         return path
+    if keep_import_asserts:
+        scratch = scratch / "import-tests"
     if not keep_asserts:
         scratch = scratch / "defs-only"
     dest = scratch / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
     seen[key] = dest
-    text = prime_port(path.read_text(encoding="utf-8", errors="replace"))
+    text = prime_port(path.read_text(encoding="utf-8", errors="replace"), guest_function_names(path))
     if not keep_asserts:
         text = _strip_checks(text)
     token = "!(import! &self "
@@ -1092,7 +1189,8 @@ def materialize_guest(path: Path, seen: dict | None = None, keep_asserts: bool =
             try:
                 target.relative_to(CURRICULUM.resolve())
                 if is_guest_metta(target):
-                    target = materialize_guest(target, seen, keep_asserts=False)
+                    target = materialize_guest(target, seen, keep_asserts=keep_import_asserts,
+                                               keep_import_asserts=keep_import_asserts)
             except ValueError:
                 pass
         parts.append(f"!(import! &self {target})")
@@ -1108,6 +1206,9 @@ def port_guest_asserts(path: Path) -> Path:
     put a call in a later argument. The port binds that call under `case`.
     """
     text = path.read_text(encoding="utf-8", errors="replace")
+    forms = recover_forms(text)
+    if forms and all(form.startswith("!(import! &self ") for form in forms):
+        return materialize_guest(path, keep_import_asserts=True)
     if not re.search(
         r"!\(assertEqual\s+\((?:dk-lower|cic-proof-check|cic-stage[123]-|sig-admitted|ms-rd|hol-|mg-|hl-check-|hls-|hshow-)",
         text,
@@ -1122,23 +1223,15 @@ def run_guest_file(path: Path) -> dict:
     bangs = top_level_bangs(path.read_text(encoding="utf-8", errors="replace"))
     run_path = port_guest_asserts(path)
     try:
-        proc = subprocess.run(
-            ["bash", "-c", 'ulimit -v "$1" && exec "$2" --lang prime "$3"',
-             "run", "25165824", str(BIN), str(run_path)],
-            text=True,
-            capture_output=True,
-            timeout=120,
-        )
+        code, lines, err = cetta_lines(run_path)
     except subprocess.TimeoutExpired:
         return {
             "rel": rel, "lines": [], "pairs": [], "asserts": [], "ok": False,
-            "error": "cetta exceeded 120s under ulimit -v 25165824",
+            "error": INVALID + "configured timeout expired",
+            "execution_error": INVALID + "configured timeout expired",
             "defs": {}, "def_log": [],
         }
-    lines = [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
-    err = ""
-    if proc.stderr and proc.stderr.strip():
-        err = proc.stderr.strip().splitlines()[0][:240]
+    execution_error = trace_failure(code, lines, err, targets=0)
     content = [bang for bang in bangs if not bang.startswith("!(import!")]
     if len(lines) == len(bangs):
         pairs = list(zip(bangs, lines))
@@ -1160,7 +1253,7 @@ def run_guest_file(path: Path) -> dict:
 
     wanted = [bang for bang in bangs if bang.startswith("!(assertEqual") or bang.startswith("!(test")]
     got = [bang for bang, _line in pairs if bang.startswith("!(assertEqual") or bang.startswith("!(test")]
-    incomplete = (not pairs) or len(got) != len(wanted) or mispaired(pairs) or proc.returncode != 0
+    incomplete = (not pairs) or len(got) != len(wanted) or mispaired(pairs) or code != 0
     if incomplete and ("compiled HE reader" in err or "could not read" in err or mispaired(pairs) or len(got) != len(wanted) or not pairs):
         repaired = run_repaired_guest(run_path, bangs)
         if repaired is not None:
@@ -1168,6 +1261,7 @@ def run_guest_file(path: Path) -> dict:
             lines = repaired["lines"]
             asserts = repaired["asserts"]
             incomplete = False
+            execution_error = trace_failure(0, lines, "", targets=0)
     defs: dict[str, tuple[str, str]] = {}
     def_log: list[tuple[str, str, str]] = []
     for name, call, line in definition_prints(path):
@@ -1175,7 +1269,7 @@ def run_guest_file(path: Path) -> dict:
         def_log.append((name, call, line))
     error = ""
     if incomplete:
-        error = f"cetta exit {proc.returncode} printed {len(lines)} lines for {len(bangs)} commands"
+        error = f"cetta exit {code} printed {len(lines)} lines for {len(bangs)} commands"
         if err:
             error = f"{error}; {err}"
     return {
@@ -1183,8 +1277,9 @@ def run_guest_file(path: Path) -> dict:
         "lines": lines,
         "pairs": pairs,
         "asserts": asserts,
-        "ok": not incomplete and all(line == "[()]" for _bang, line in pairs),
+        "ok": not incomplete and not execution_error and all(line == "[()]" for _bang, line in pairs),
         "error": error,
+        "execution_error": execution_error or (INVALID + error if error else ""),
         "defs": defs,
         "def_log": def_log,
     }
@@ -1366,6 +1461,9 @@ def guest_printed(rec: dict, name: str, behavior: str) -> str | None:
         if 0 <= index < len(asserts) and asserts[index]:
             return asserts[index]
         return None
+    pairs = rec.get("pairs", [])
+    if behavior == "exercise" and len(pairs) == 1 and pairs[0][0].startswith("!(import! &self "):
+        return pairs[0][1]
     own = rec.get("defs", {}).get(name)
     if own and own[1]:
         return own[1]
@@ -1374,7 +1472,7 @@ def guest_printed(rec: dict, name: str, behavior: str) -> str | None:
 
 def call_reduced(call: str, printed: str) -> bool:
     """True when --lang prime returned a value other than the call itself."""
-    if not printed or printed.startswith("[(Error"):
+    if not printed or printed.startswith(("[(Error", "error:", INVALID)):
         return False
     inner = printed[1:-1] if printed.startswith("[") and printed.endswith("]") else printed
     return "".join(inner.split()) not in {
@@ -1450,7 +1548,7 @@ def extract_items(path: Path) -> list[tuple[str, str, str]]:
                 check += 1
                 add(f"check-{check}", bang[:500], "exercise")
     elif suffix == ".ml":
-        for match in re.finditer(r"(?m)^let\s+(\w+)\s*=", text):
+        for match in re.finditer(r"(?m)^let\s+(\w+)\s*=[^\n]*", text):
             if len(match.group(1)) == 1:
                 continue
             add(match.group(1), match.group(0), "definition")
@@ -1955,7 +2053,7 @@ def self_check() -> None:
     }
     own_want = {
         "compose": "[()]",
-        "nontaut": "[()]",
+        "nontaut": "[True]",
         "mynat": "[MyNat]",
         "myadd": "[myAdd]",
         "myaddz": "[()]",
@@ -1964,7 +2062,7 @@ def self_check() -> None:
         if own_got[key] != want:
             print(f"self-check own-port {key} got {own_got[key]!r}")
             raise SystemExit(1)
-    if not own_got["failvar"].startswith("[(Error") or "Got: [false]" not in own_got["failvar"]:
+    if own_got["failvar"] != "[False]":
         print(f"self-check own-port failvar got {own_got['failvar']!r}")
         raise SystemExit(1)
     fail_row = {
@@ -1985,14 +2083,6 @@ def self_check() -> None:
         or " ".join(fail_row["prime_statement"].split()) != " ".join(own_programs["failvar"].split())
     ):
         print(f"self-check own-port fail row {fail_row['capability']} {fail_row['expected'][:80]!r}")
-        raise SystemExit(1)
-    plan_text = Path(
-        "/home/aimama/.grok/sessions/%2Fhome%2Faimama%2Faihub/"
-        "01a0cd57-d41f-7330-9467-e7eb0c1e7268/goal/plan.md"
-    ).read_text(encoding="utf-8")
-    criterion = plan_text.split("## Verification plan", 1)[0]
-    if cic_print not in criterion:
-        print("self-check criterion 1 does not name the committed cic-id-term-source print")
         raise SystemExit(1)
     import csv
     guest = run_guest_file(CURRICULUM / "DeduktiLambdapi/02_cic_guest_sorts_pi_micro.metta")
@@ -2074,7 +2164,7 @@ def statement_exhibits(statement: str, dep: str, rel: str = "") -> bool:
 
 def quote_claims(statement: str, dep: str, rel: str = "") -> bool:
     """The dependency is a feature this source quote itself states."""
-    if dep.startswith("[(Error") or dep.startswith("error:") or dep == "[]" or dep in {"[False]", "[True]"}:
+    if dep.startswith(("[(Error", "error:", INVALID)) or dep == "[]" or dep in {"[False]", "[True]"}:
         return True
     token = blamed_token(dep)
     if token and token in PRINTED_HEADS:
@@ -2379,6 +2469,8 @@ def ranked_construct(text: str, name: str = "") -> str:
 def construct_feature(statement: str, name: str = "") -> str:
     """Name a construct this statement uses, rather than the declaration's identifier."""
     text = " ".join(statement.split())
+    if text.startswith("let ") and "DISCH" in text and "ASSUME" in text:
+        return "HOL Light DISCH/ASSUME source elaboration is unimplemented"
     coqish = bool(re.match(
         r"(?:Fail\s+)?(?:Lemma|Theorem|Example|Corollary|Definition|Fixpoint|Inductive|Remark)\b",
         text,
@@ -2748,6 +2840,16 @@ def source_rows(by_section: dict[tuple[str, str], dict], command_rows: list[dict
                 continue
             guest = guest_runs.get(rel)
             if guest is not None:
+                execution_error = guest.get("execution_error", "")
+                if execution_error:
+                    rows.append(_row(
+                        "item-" + hashlib.sha256(f"{rel}:{name}".encode()).hexdigest()[:12],
+                        rel, statement, "as in the source file", behavior,
+                        "not claimed", "none", f"Mettapedia/MettaKernel/Curriculum/{rel}",
+                        "source", "not claimed", "invalid execution trace; no verdict is counted",
+                        "missing", execution_error,
+                    ))
+                    continue
                 printed = guest_printed(guest, name, behavior)
                 own = guest.get("defs", {}).get(name)
                 call = own[0] if own else ""
@@ -2785,12 +2887,12 @@ def source_rows(by_section: dict[tuple[str, str], dict], command_rows: list[dict
                     ))
                     continue
                 failed_print = isinstance(printed, str) and (
-                    printed.startswith("[(Error")
+                    printed.startswith(("[(Error", "error:", INVALID))
                     or (bool(call) and not name.startswith("check-") and not call_reduced(call, printed))
                 )
                 if failed_print:
                     printed_text = printed or ""
-                    refusal = stored_refusal(statement, printed_text, call)
+                    refusal = printed_text if printed_text.startswith(INVALID) else stored_refusal(statement, printed_text, call)
                     rows.append(_row(
                         "item-" + hashlib.sha256(f"{rel}:{name}".encode()).hexdigest()[:12],
                         rel, statement, "as in the source file", behavior,
@@ -2966,17 +3068,10 @@ def _kernel_call(scratch: Path, call: str, cache: dict[str, str]) -> str:
     dest = scratch / f"heuristic-{digest}.metta"
     dest.write_text(f"!({call})\n")
     try:
-        proc = subprocess.run(
-            ["bash", "-c", 'ulimit -v "$1" && exec "$2" --lang prime "$3"',
-             "run", "25165824", str(BIN), str(dest)],
-            text=True, capture_output=True, timeout=20,
-        )
-        printed = [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
-        err = proc.stderr or ""
+        code, printed, err = cetta_lines(dest)
+        cache[call] = final_output(code, printed, err)
     except subprocess.TimeoutExpired:
-        printed, err = [], "error: cetta exceeded 20s under ulimit -v 25165824"
-    err_line = (err or "").strip().splitlines()
-    cache[call] = printed[0] if printed else (err_line[0][:500] if err_line else "[]")
+        cache[call] = INVALID + "configured timeout expired"
     return cache[call]
 
 
@@ -2988,7 +3083,8 @@ def _admitted(printed: str) -> bool:
         and printed.endswith("]")
         and not printed.startswith("[(Error")
         and not printed.startswith("[(")
-        and not printed.startswith("error:")
+        and printed not in {"[]", "[False]", "[Undetermined]", "[Incomplete]", "[Refuted]"}
+        and not printed.startswith(("error:", INVALID))
     )
 
 
@@ -3034,6 +3130,9 @@ def _nat_term(count: int) -> str:
 def program_for_statement(statement: str) -> str:
     """One Prime program for this source row, not a shared stand-in."""
     text = " ".join(statement.split())
+    reviewed = curriculum_port_repairs.program(declared_name(text))
+    if reviewed is not None:
+        return reviewed
     nat = _NAT_PORT
     boolean = _BOOL_PORT
     base = _BASE_PORT
@@ -3049,12 +3148,6 @@ def program_for_statement(statement: str) -> str:
         + "!(set:define &self myAdd (-> MyNat MyNat MyNat) "
         "(= (myAdd $n zero) $n) (= (myAdd $n (succ $m)) (succ (myAdd $n $m))))\n"
     )
-    decide = (
-        base
-        + "!(set:inductive &self form (u 0) (: Var (-> nat form)) (: Imp (-> form form form)))\n"
-        "!(set:define &self decide_valid (-> form bool) "
-        "(= (decide_valid (Var $n)) false) (= (decide_valid (Imp $a $b)) true))\n"
-    )
     if "compose S S 0 = 2" in text:
         return (
             nat
@@ -3064,13 +3157,13 @@ def program_for_statement(statement: str) -> str:
             "!(assertEqual (compose S S zero) (succ (succ zero)))\n"
         )
     if "decide_valid (Var 0) = false" in text:
-        return decide + "!(assertEqual (decide_valid (Var zero)) false)\n"
+        return curriculum_port_repairs.program("dec_nontaut")
     if "decide_valid (Var 0) = true" in text:
-        return decide + "!(assertEqual (decide_valid (Var zero)) true)\n"
+        return curriculum_port_repairs.program("neg_var_valid")
     if "decide_valid (Imp (Var 0) (Var 0)) = true" in text:
-        return decide + "!(assertEqual (decide_valid (Imp (Var zero) (Var zero))) true)\n"
+        return curriculum_port_repairs.program("dec_taut")
     if "dec_peirce" in text or "Imp (Imp (Imp (Var 0) (Var 1)) (Var 0)) (Var 0)" in text:
-        return decide + "!(assertEqual (decide_valid (Imp (Imp (Imp (Var zero) (Var (succ zero))) (Var zero)) (Var zero))) true)\n"
+        return curriculum_port_repairs.program("dec_peirce")
     if "myAdd n .zero = n" in text:
         return myadd + "!(assertEqual (myAdd (succ zero) zero) (succ zero))\n"
     if "def myAdd" in text or "myAdd :" in text:
@@ -3100,11 +3193,7 @@ def program_for_statement(statement: str) -> str:
     if re.search(r"(?i)^Inductive\s+form\b", text) or re.search(r"(?i)^inductive\s+form\b", text):
         return form
     if "eval" in text and "Bot = true" in text:
-        return (
-            form
-            + "!(set:define &self eval (-> form bool) (= (eval Bot) false) (= (eval (Imp $a $b)) true))\n"
-            "!(assertEqual (eval Bot) true)\n"
-        )
+        return curriculum_port_repairs.program("neg_bot_true")
     if "dbl 2 = 4" in text:
         return (
             add
@@ -3120,31 +3209,15 @@ def program_for_statement(statement: str) -> str:
     if "dbl (n:num) = n + n" in text or "dbl_def" in text:
         return add + "!(set:define &self dbl (-> nat nat) (= (dbl $n) (add $n $n)))\n"
     if "eqn z (s z)" in text or "bad_rfl" in text:
-        return nat + "!(assertEqual (eq nat zero (succ zero)) (eq nat zero zero))\n"
+        return curriculum_port_repairs.program("bad_rfl")
     if "eqn (plus z z) z" in text:
         return add + "!(assertEqual (add zero zero) zero)\n"
     if "eqn z z" in text:
         return nat + "!(assertEqual (eq nat zero zero) (eq nat zero zero))\n"
     if "witnessThree.val = 3" in text:
         return nat + "!(assertEqual " + _nat_term(3) + " " + _nat_term(3) + ")\n"
-    if "shift 1 (lam (var 0))" in text:
-        return (
-            nat
-            + "!(set:inductive &self Tm (u 0) (: var (-> nat Tm)) (: lam (-> Tm Tm)))\n"
-            "!(set:define &self shift (-> nat Tm Tm) (= (shift $k (var $i)) (var $i)) "
-            "(= (shift $k (lam $b)) (lam $b)))\n"
-            "!(assertEqual (shift (succ zero) (lam (var zero))) (lam (var zero)))\n"
-        )
-    if "shift 1 (lam (var 1))" in text:
-        return (
-            nat
-            + "!(set:inductive &self Tm (u 0) (: var (-> nat Tm)) (: lam (-> Tm Tm)))\n"
-            "!(set:define &self shift (-> nat Tm Tm) "
-            "(= (shift $k (var zero)) (var zero)) "
-            "(= (shift $k (var (succ $i))) (var (succ (succ $i)))) "
-            "(= (shift $k (lam $b)) (lam (shift $k $b))))\n"
-            "!(assertEqual (shift (succ zero) (lam (var (succ zero)))) (lam (var (succ (succ zero)))))\n"
-        )
+    if "shift 1 (lam (var 0))" in text or "shift 1 (lam (var 1))" in text:
+        return curriculum_port_repairs.program("shift")
     if "n + n = 5" in text:
         return add + "!(assertEqual (add (succ (succ zero)) (succ (succ zero))) " + _nat_term(5) + ")\n"
     if "fst" in text and "= a" in text:
@@ -3229,11 +3302,9 @@ def _com() -> str:
     )
 
 
-def _unencoded(text: str) -> str:
-    """A check of this declaration. An undefined head does not count as success."""
-    name = declared_name(text) or "item"
-    safe = re.sub(r"[^A-Za-z0-9]", "-", name)[:48] or "item"
-    return _NAT_PORT + f"!(assertEqual ({safe} zero) (succ zero))\n"
+def _unencoded(_text: str) -> str:
+    """No source translation exists; an unrelated assertion is not a port."""
+    return ""
 
 
 def encode_statement(text: str) -> str:
@@ -3257,13 +3328,13 @@ def encode_statement(text: str) -> str:
             "!(set:check (Abs zero TBase) tm)\n"
         )
     if "no_instance" in text or "same (fun" in text:
-        return _NAT_PORT + "!(assertEqual (eq (-> nat nat) (lam x x) (lam y y)) (eq nat zero zero))\n"
+        return ""
     if "bad_hol" in text or "prf (imp A B)" in text:
         return "!(set:theorem bad-hol (all prop (lam A (all prop (lam B (imp A B))))) (pf:fix A (pf:fix B (pf:assume h h))))\n"
     if "bad_axmem" in text:
         return "!(set:theorem bad-axmem (all prop (lam b (all prop (lam a (imp (In b a) (In a b)))))) (pf:fix b (pf:fix a (pf:assume h h))))\n"
     if "bad_forward_ref" in text or "Missing" in text and "def " in text:
-        return "!(assertEqual Missing zero)\n"
+        return ""
     if "(5:num)" in text or "Theorem bad:" in text:
         return _prove("bad-five", "(eq nat " + _nat_term(5) + " zero)", "(pf:refl nat zero)")
     if "val bad" in text:
@@ -3318,11 +3389,7 @@ def encode_statement(text: str) -> str:
             f"!(pf:theorem &thy projT2-dep (eq nat (proj2 (mkpair true {five})) {five}) (pf:refl nat {five}))\n"
         )
     if "eq_refl_set" in text or "forall a:set, a = a" in text:
-        return _proof_nat() + (
-            "!(set:inductive &thy set (u 0) (: emptyset set))\n"
-            "!(pf:equality &thy set refl@set subst@set)\n"
-            "!(pf:theorem &thy eq-refl-set (all set (lam a (eq set a a))) (pf:fix a (pf:refl set a)))\n"
-        )
+        return curriculum_port_repairs.program("eq_refl_set")
     if re.search(r"\ba = a\b", text):
         return _prove("eq-refl-ex", "(all nat (lam a (eq nat a a)))", "(pf:fix a (pf:refl nat a))")
     if "Theorem cong" in text or "theorem cong" in text:
@@ -3372,16 +3439,6 @@ def encode_statement(text: str) -> str:
         return _prove("J-beta", "(all nat (lam x (eq nat x x)))", "(pf:fix x (pf:refl nat x))")
     if "j_refl_z" in text or "Id nat z z" in text:
         return _prove("j-refl-z", "(eq nat zero zero)", "(pf:refl nat zero)")
-    if "hotg_sym" in text:
-        return (
-            "!(set:theorem hotg-sym (all prop (lam a (all prop (lam b (imp (In a b) (imp (In b a) (In b a))))))) "
-            "(pf:fix a (pf:fix b (pf:assume h (pf:assume g g)))))\n"
-        )
-    if "hotg_mem" in text or "axMem" in text:
-        return (
-            "!(set:theorem hotg-mem (all prop (lam a (all prop (lam b (imp (In a b) (In a b)))))) "
-            "(pf:fix a (pf:fix b (pf:assume h h))))\n"
-        )
     if "Definition Neg" in text or "Neg (a : form)" in text:
         return _neg_form() + "!(assertEqual (Neg Bot) (Imp Bot Bot))\n"
     if "dni_valid" in text or "Neg (Neg" in text and "Imp f" in text:
@@ -3390,13 +3447,6 @@ def encode_statement(text: str) -> str:
             "!(set:define &thy neg (-> prop prop) (= (neg $p) (imp $p falsum)))\n"
             "!(pf:theorem &thy dni-valid (all prop (lam p (imp p (neg (neg p))))) "
             "(pf:fix p (pf:assume hp (pf:assume hnp (pf:by hnp hp)))))\n"
-        )
-    if "dne_valid" in text:
-        return _proof_nat() + (
-            "!(set:define &thy falsum prop (= falsum (all prop (lam p p))))\n"
-            "!(set:define &thy neg (-> prop prop) (= (neg $p) (imp $p falsum)))\n"
-            "!(pf:theorem &thy dne-valid (all prop (lam p (imp (neg (neg p)) p))) "
-            "(pf:fix p (pf:assume h h)))\n"
         )
     if "lem_valid" in text:
         # Boolean validity of Or (FVar n) (Neg (FVar n)), both valuations.
@@ -3495,14 +3545,9 @@ def encode_statement(text: str) -> str:
             "!(pf:theorem &thy sig-val-id (eq nat (sig-val (succ zero)) (succ zero)) (pf:refl nat (succ zero)))\n"
         )
     if "Some" in text and "update" in text:
-        return _proof_nat() + (
-            "!(set:inductive &thy option (u 0) (: none option) (: some (-> nat option)))\n"
-            "!(set:define &thy update-ty (-> nat nat nat nat option) "
-            "(= (update-ty $g $x $t $y) (if-bool (nat-eqb $x $y) (some $t) none)))\n"
-            "!(pf:equality &thy option refl@option subst@option)\n"
-            "!(pf:theorem &thy update-eq-ty (eq option (update-ty zero zero (succ zero) zero) (some (succ zero))) "
-            "(pf:refl option (some (succ zero))))\n"
-        )
+        if "update_eq" in text:
+            return (curriculum_port_repairs.PORTS / "update.metta").read_text()
+        return _unencoded(text)
     if "update_eq" in text or "update st x v x = v" in text:
         return _proof_nat() + (
             "!(set:define &thy update4 (-> nat nat nat nat nat) "
@@ -3540,15 +3585,6 @@ def encode_statement(text: str) -> str:
             "(= (hoare $P CSkip $Q) (imp $P $Q)) (= (hoare $P (CAsgn $x $a) $Q) (imp $P $Q)))\n"
             "!(set:theorem hoare-asgn (all prop (lam Q (all nat (lam x (all nat (lam a (hoare Q (CAsgn x a) Q))))))) "
             "(pf:fix Q (pf:fix x (pf:fix a (pf:assume h h)))))\n"
-        )
-    if "hoare_seq" in text:
-        return (
-            _NAT_PORT
-            + "!(set:inductive &self com (u 0) (: CSkip com) (: CSeq (-> com com com)))\n"
-            "!(set:define &self hoare (-> prop com prop prop) "
-            "(= (hoare $P CSkip $Q) (imp $P $Q)) "
-            "(= (hoare $P (CSeq $c1 $c2) $Q) (all prop (lam R (imp (hoare $P $c1 R) (hoare R $c2 $Q))))))\n"
-            "!(set:theorem hoare-seq (all prop (lam P (hoare P (CSeq CSkip CSkip) P))) (pf:fix P (pf:assume h h)))\n"
         )
     if "hoare_consequence" in text:
         return (
@@ -3626,19 +3662,8 @@ def encode_statement(text: str) -> str:
         return _NAT_PORT + "!(set:inductive &self Res (u 0) (: ok (-> nat Res)) (: err Res))\n"
     if "sameParity" in text and "Quot" not in text and "def par" not in text:
         return _NAT_PORT + "!(set:define &self sameParity (-> nat nat prop) (= (sameParity $a $b) (eq nat $a $b)))\n"
-    if "Quot" in text or "def QP" in text or "def par" in text:
-        return (
-            _NAT_PORT
-            + "!(set:define &self sameParity (-> nat nat prop) (= (sameParity $a $b) (eq nat $a $b)))\n"
-            "!(assertEqual (Quot sameParity) zero)\n"
-        )
-    if "shiftAbove" in text or ( "def shift" in text and "Tm" in text):
-        return (
-            _NAT_PORT
-            + "!(set:inductive &self Tm (u 0) (: tvar (-> nat Tm)) (: tlam (-> Tm Tm)) (: tapp (-> Tm Tm Tm)))\n"
-            "!(set:define &self shift (-> nat Tm Tm) (= (shift $k (tvar $i)) (tvar $i)) "
-            "(= (shift $k (tlam $b)) (tlam (shift $k $b))) (= (shift $k (tapp $f $a)) (tapp (shift $k $f) (shift $k $a))))\n"
-        )
+    if "shiftAbove" in text or ("def shift" in text and "Tm" in text):
+        return curriculum_port_repairs.program("shift")
     if "inductive Tm" in text or "inductive Tm where" in text:
         return _NAT_PORT + "!(set:inductive &self Tm (u 0) (: tvar (-> nat Tm)) (: tlam (-> Tm Tm)) (: tapp (-> Tm Tm Tm)))\n"
     if "TBool" in text and "TNat" in text:
@@ -3649,13 +3674,6 @@ def encode_statement(text: str) -> str:
         return (
             "!(set:inductive &self tm (u 0) (: ttrue tm) (: tfalse tm) (: tif (-> tm tm tm tm)) "
             "(: tzero tm) (: tsucc (-> tm tm)) (: tpred (-> tm tm)) (: tiszero (-> tm tm)))\n"
-        )
-    if "Definition value" in text or "bvalue" in text:
-        return (
-            "!(set:inductive &self tm (u 0) (: ttrue tm) (: tfalse tm) (: tzero tm))\n"
-            "!(set:define &self bvalue (-> tm prop) (= (bvalue ttrue) (eq tm ttrue ttrue)) "
-            "(= (bvalue tfalse) (eq tm tfalse tfalse)) (= (bvalue tzero) (all prop (lam p p))))\n"
-            "!(set:define &self value (-> tm prop) (= (value ttrue) (bvalue ttrue)))\n"
         )
     if "Var (x : nat)" in text or "Abs (x : nat)" in text:
         return (
@@ -3696,11 +3714,6 @@ def encode_statement(text: str) -> str:
             "!(set:define &self Neg (-> form form) (= (Neg $a) (Imp $a Bot)))\n"
             "!(set:define &self signLit (-> bool nat form) (= (signLit true $n) (FVar $n)) (= (signLit false $n) (Neg (FVar $n))))\n"
         )
-    if "Definition setv" in text or "fun m =>" in text and "setv" in text:
-        return _proof_nat() + (
-            "!(set:define &thy setv (-> nat nat bool nat bool) "
-            "(= (setv $v $n $b $m) (if-bool (nat-eqb $n $m) $b $v)))\n"
-        )
     if "closed_unsat" in text:
         return "!(set:theorem closed-unsat (all prop (lam G (imp falsum (all prop (lam v (neg (sat G v))))))) (pf:fix G (pf:assume h h)))\n"
     if "Definition closed" in text:
@@ -3716,10 +3729,15 @@ def encode_statement(text: str) -> str:
 
 
 def _refused(printed: str) -> bool:
-    """A kernel refusal of the written item, not a successful `[()]` or name."""
-    if printed in {"[False]"} or printed.startswith("[(Error") or printed.startswith("error:"):
-        return True
-    return printed.startswith("[(") and printed != "[()]"
+    """An explicit target refusal; unresolved evaluation is never a refusal."""
+    return printed in {"[False]", "[Refuted]"} or printed.startswith("[(Refuted")
+
+
+def _unresolved(printed: str) -> bool:
+    return (not printed or printed in {"[]", "[Undetermined]", "[Incomplete]", "[Unresolved]"}
+            or printed.startswith(("error:", INVALID, "[(Undetermined", "[(Incomplete", "[(Unresolved"))
+            or (printed.startswith("[(") and printed != "[()]" and not _refused(printed))
+            or not (printed.startswith("[") and printed.endswith("]")))
 
 
 def _run_program(program: str, scratch: Path, cache: dict[str, str]) -> str:
@@ -3729,26 +3747,36 @@ def _run_program(program: str, scratch: Path, cache: dict[str, str]) -> str:
     dest = scratch / f"prog-{hashlib.sha256(program.encode()).hexdigest()[:12]}.metta"
     dest.write_text(program)
     try:
-        proc = subprocess.run(
-            ["bash", "-c", 'ulimit -v "$1" && exec "$2" --lang prime "$3"',
-             "run", "25165824", str(BIN), str(dest)],
-            text=True, capture_output=True, timeout=20,
-        )
-        printed = [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
-        err = proc.stderr or ""
+        code, printed, err = cetta_lines(dest)
+        cache[key] = final_output(code, printed, err)
     except subprocess.TimeoutExpired:
-        printed, err = [], "error: cetta exceeded 20s under ulimit -v 25165824"
-    err_line = (err or "").strip().splitlines()
-    cache[key] = printed[-1] if printed else (err_line[0][:500] if err_line else "[]")
+        cache[key] = INVALID + "configured timeout expired"
     return cache[key]
 
 
 def _store_row_program(row: dict, program: str, result: str, scratch: Path) -> None:
     """Keep this row's own program and that run's stdout."""
     flat = " ".join(program.split())
+    if not flat:
+        row.update(capability="missing", expected="not claimed", prime_statement="not claimed",
+                   query_kind="unported-source-proof", dependency=declared_name(row["source_statement"]) + " requires a faithful source port",
+                   justification="no substitute computation is counted as this source item")
+        return
     row["prime_statement"] = flat
     row["query_kind"] = "prime-port"
+    if result.startswith(INVALID):
+        row.update(capability="missing", expected="not claimed", dependency=result,
+                   justification="invalid execution trace; no verdict is counted")
+        return
+    if _unresolved(result):
+        row.update(capability="missing", expected="not claimed", dependency=result or "no verdict",
+                   justification="the source program produced no established or refuted judgment")
+        return
     if _negative_control(row["source_statement"]):
+        if not _refused(result):
+            row.update(capability="defect", expected=result, dependency="none",
+                       justification="negative source control was not refused")
+            return
         row["capability"] = "implemented"
         row["expected"] = result
         row["dependency"] = "none"
@@ -3772,7 +3800,7 @@ def apply_addendum4(rows: list[dict]) -> None:
         dep = row["dependency"] or ""
         if dep != "[False]" and not dep.startswith("[(Error (assertEqual"):
             continue
-        if _negative_control(row["source_statement"]):
+        if dep == "[False]" and _negative_control(row["source_statement"]):
             row["capability"] = "implemented"
             row["expected"] = dep
             row["dependency"] = "none"
@@ -3861,9 +3889,12 @@ def apply_constant_samples(rows: list[dict]) -> None:
 
 
 def main() -> None:
+    require_configuration()
     if "--self-check" in sys.argv:
         self_check()
         return
+    binary_hash = sha256_file(BIN)
+    sources_before = input_hashes()
     command_rows, by_section = load_commands()
     extra_rows = load_named(MOTIVATION, "motivation-r")
     library = library_results()
@@ -3879,6 +3910,10 @@ def main() -> None:
             print(f"duplicate id {row['id']}")
             raise SystemExit(1)
         seen_ids.add(row["id"])
+    for row in rows:
+        if row["id"] in curriculum_port_repairs.REPAIRED or row["id"] in curriculum_port_repairs.UNFINISHED:
+            row["source_statement"] = _row_text(row)
+    curriculum_port_repairs.apply(rows, BIN.resolve(), Path(os.environ["TC_SCRATCH"]))
     apply_constant_samples(rows)
     apply_addendum4(rows)
     symbol_list = [
@@ -3898,11 +3933,20 @@ def main() -> None:
         print(f"printed token blamed on {len(blamed)} missing rows")
         print("\n".join(blamed[:12]))
         raise SystemExit(1)
+    if sha256_file(BIN) != binary_hash or input_hashes() != sources_before:
+        raise SystemExit("recount inputs changed during execution; no ledger was published")
     OUT.parent.mkdir(parents=True, exist_ok=True)
     with OUT.open("w", encoding="utf-8") as fh:
         fh.write("\t".join(COLUMNS) + "\n")
         for row in rows:
             fh.write("\t".join(row[col].replace("\t", " ") for col in COLUMNS) + "\n")
+    OUT.with_suffix(".provenance.json").write_text(json.dumps({
+        "binary": str(BIN.resolve()), "binary_sha256": binary_hash,
+        "execution_flags": list(EXECUTION_FLAGS),
+        "ledger_sha256": sha256_file(OUT), "inputs": sources_before,
+        "source_port_repairs": sorted(curriculum_port_repairs.REPAIRED),
+        "unfinished_source_proofs": curriculum_port_repairs.UNFINISHED,
+    }, indent=2) + "\n")
     def is_c(row: dict) -> bool:
         return row["id"].startswith("curriculum_") and row["id"].rsplit("-c", 1)[-1].isdigit()
     commands = sum(1 for row in rows if is_c(row))

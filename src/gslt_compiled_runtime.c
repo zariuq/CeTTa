@@ -1604,7 +1604,8 @@ static bool compiled_match_flat_variable_head(
 }
 
 static GsltCompiledState *compiled_state_new(
-    Atom *query, Atom *const *goals, uint32_t goal_count, uint32_t depth) {
+    const Arena *query_arena, Atom *query, Atom *const *goals,
+    uint32_t goal_count, uint32_t depth) {
     if (!query || (goal_count != 0u && !goals))
         return NULL;
     GsltCompiledState *state = cetta_malloc(sizeof(*state));
@@ -1612,6 +1613,10 @@ static GsltCompiledState *compiled_state_new(
     arena_init(&state->arena);
     arena_set_runtime_kind(
         &state->arena, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    /* Every state may retain immutable parts of the original query.  The
+     * query arena outlives the whole worklist; sibling state arenas do not.
+     * Copying still owns all newly substituted/transient structure here. */
+    arena_set_older_generation(&state->arena, query_arena);
     AtomDeepCopySession *copy = atom_deep_copy_session_new(&state->arena);
     state->query = atom_deep_copy_session_copy(copy, query);
     state->goals = goal_count
@@ -1740,6 +1745,10 @@ bool cetta_gslt_compiled_query_with_providers_v1(
     Arena scratch;
     arena_init(&scratch);
     arena_set_runtime_kind(&scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+    Arena query_arena;
+    arena_init(&query_arena);
+    arena_set_runtime_kind(&query_arena, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    Atom *retained_query = atom_deep_copy(&query_arena, query);
     GsltCompiledQueue queue = {0};
     Atom **variable_slots = program->max_variable_count
         ? cetta_malloc(sizeof(*variable_slots) *
@@ -1757,9 +1766,9 @@ bool cetta_gslt_compiled_query_with_providers_v1(
         program->max_variable_count > 0u ? 2u : 0u;
     uint64_t variable_epoch = 0u;
     uint64_t worklist_live_bytes = 0u;
-    Atom *initial_goals[] = {query};
+    Atom *initial_goals[] = {retained_query};
     GsltCompiledState *initial_state = compiled_state_new(
-        query, initial_goals, 1u, 0u);
+        &query_arena, retained_query, initial_goals, 1u, 0u);
     bool healthy = initial_state &&
         compiled_queue_push(&queue, initial_state);
     if (healthy) {
@@ -1871,7 +1880,7 @@ bool cetta_gslt_compiled_query_with_providers_v1(
                         if (healthy) {
                             GsltCompiledState *next_state =
                                 compiled_state_new(
-                                    next_query_scratch, next_goals,
+                                    &query_arena, next_query_scratch, next_goals,
                                     next_count, state->depth + 1u);
                             healthy = next_state &&
                                 compiled_queue_push(&queue, next_state);
@@ -2054,7 +2063,7 @@ bool cetta_gslt_compiled_query_with_providers_v1(
                 }
                 if (healthy) {
                     GsltCompiledState *next_state = compiled_state_new(
-                        next_query_scratch, next_goals, next_count,
+                        &query_arena, next_query_scratch, next_goals, next_count,
                         state->depth + 1u);
                     healthy = next_state &&
                         compiled_queue_push(&queue, next_state);
@@ -2090,5 +2099,6 @@ bool cetta_gslt_compiled_query_with_providers_v1(
     free(variable_epochs);
     free(variable_slots);
     arena_free(&scratch);
+    arena_free(&query_arena);
     return healthy;
 }

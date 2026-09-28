@@ -13,12 +13,17 @@ fi
 scratch=$(mktemp -d "$ROOT/runtime/prime-need-heap-stats.XXXXXX")
 trap 'rm -rf "$scratch"' EXIT
 
-declaration='(: need-index-depth (-> Number Symbol))'
-definition='(= (need-index-depth $n)
-                (if (<= $n 0)
-                    done
-                    (need-index-depth (- $n 1))))'
-query='!(need-index-depth 4000)'
+# One branch binds many promises before it forces the earliest of them, so
+# its Need heap history grows with every binding: a log scan from the newest
+# frame back to an early cell is long, while the radix index keeps its fixed
+# depth.  (A tail-recursive loop does not show this; its lookups scan about
+# two frames each.)
+depth=300
+query='(+ (force $p1) (+ (force $p2) (force $p3)))'
+for ((i = depth; i >= 1; i--)); do
+    query="(let \$p$i (delay (+ $i 0)) $query)"
+done
+query="!$query"
 
 run_probe() {
     local mode=$1
@@ -26,14 +31,12 @@ run_probe() {
     local stderr_file=$3
     if [[ "$mode" == "indexed" ]]; then
         CETTA_GC=1 CETTA_GC_BUDGET_MB=1 \
-            "$BIN" --emit-runtime-stats --lang prime \
-                -e "$declaration" -e "$definition" -e "$query" \
+            "$BIN" --emit-runtime-stats --lang prime -e "$query" \
                 >"$stdout_file" 2>"$stderr_file"
     else
         CETTA_GC=1 CETTA_GC_BUDGET_MB=1 \
             CETTA_PRIME_NEED_HEAP_INDEX=0 \
-            "$BIN" --emit-runtime-stats --lang prime \
-                -e "$declaration" -e "$definition" -e "$query" \
+            "$BIN" --emit-runtime-stats --lang prime -e "$query" \
                 >"$stdout_file" 2>"$stderr_file"
     fi
 }
@@ -53,8 +56,8 @@ counter() {
 run_probe indexed "$scratch/indexed.stdout" "$scratch/indexed.stderr"
 run_probe oracle "$scratch/oracle.stdout" "$scratch/oracle.stderr"
 
-if [[ "$(cat "$scratch/indexed.stdout")" != '[done]' ]] ||
-   [[ "$(cat "$scratch/oracle.stdout")" != '[done]' ]] ||
+if [[ "$(cat "$scratch/indexed.stdout")" != '[6]' ]] ||
+   [[ "$(cat "$scratch/oracle.stdout")" != '[6]' ]] ||
    ! cmp -s "$scratch/indexed.stdout" "$scratch/oracle.stdout"; then
     echo "FAIL: indexed and oracle Need heaps disagree on the exact answer" >&2
     diff -u "$scratch/oracle.stdout" "$scratch/indexed.stdout" >&2 || true

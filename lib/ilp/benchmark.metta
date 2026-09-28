@@ -8,10 +8,10 @@
 
 !(import! &self ../list.metta)
 
-; Atom arguments are staged by Prime.  These declarations let a bound program
+; Data arguments are held as written.  These declarations let a bound program
 ; be substituted into an accounting record without evaluating the hypothesis.
-(: MIL.CandidateData (-> Atom Atom))
-(: MIL.CandidateVerdict (-> Atom Atom Atom Atom))
+(: MIL.CandidateData (-> (Data Atom) Atom))
+(: MIL.CandidateVerdict (-> (Data Atom) (Data Atom) (Data Atom) Atom))
 
 (= (mil:bench:same-atom $left $right)
    (== (quote $left) (quote $right)))

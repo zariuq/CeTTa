@@ -29,6 +29,7 @@
 [()]
 [selected]
 [False]
+[((done (Bindings () ())))]
 [(App Vec (idx 0))]
 [2]
 [(Error (prime-need:typed-ignore "bad") (BadArgType 1 Number String))]

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import csv
+import difflib
 import subprocess
 import sys
 from pathlib import Path
@@ -22,11 +23,27 @@ def run(binary: Path, *args: str) -> str:
         stderr=subprocess.STDOUT,
         check=False,
     )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"exit {completed.returncode}: {completed.stdout[-2000:].strip()}"
+        )
     return completed.stdout.rstrip("\n")
 
 
 def expected(path: str) -> str:
     return (ROOT / path).read_text().rstrip("\n")
+
+
+def show_difference(lane: str, golden: str, actual: str) -> None:
+    print(f"  {lane} output differs from its golden")
+    lines = list(difflib.unified_diff(
+        golden.splitlines(), actual.splitlines(),
+        fromfile="expected", tofile="actual", n=1,
+    ))
+    for line in lines[:16]:
+        print("  " + line[:500])
+    if len(lines) > 16:
+        print("  ...")
 
 
 def main() -> int:
@@ -43,7 +60,9 @@ def main() -> int:
 
     for row in rows:
         source = row["source"]
-        he = run(binary, "--profile", "he-prime", "--lang", "he", source)
+        # Native declarations retain their binders and formed universes. An HE
+        # annotation/scheme is not implicitly a declaration in that calculus.
+        prime_source = row.get("prime_source") or source
         he_expected_path = row["he_expected"]
         prime_expected_path = row["prime_expected"]
         if he_expected_path == prime_expected_path:
@@ -51,9 +70,15 @@ def main() -> int:
             failures += 1
             continue
 
-        he_golden = expected(he_expected_path)
-        prime = run(binary, "--lang", "prime", source)
-        prime_golden = expected(prime_expected_path)
+        try:
+            he = run(binary, "--profile", "he-prime", "--lang", "he", source)
+            prime = run(binary, "--lang", "prime", prime_source)
+            he_golden = expected(he_expected_path)
+            prime_golden = expected(prime_expected_path)
+        except (OSError, RuntimeError) as error:
+            print(f"FAIL: {row['id']}: {error}")
+            failures += 1
+            continue
 
         ok = he == he_golden and prime == prime_golden
         if row["id"] == "language-identity":
@@ -66,9 +91,9 @@ def main() -> int:
         else:
             print(f"FAIL: {row['id']} (independent lane contracts)")
             if he != he_golden:
-                print("  HE-prime output differs from its golden")
+                show_difference("HE-prime", he_golden, he)
             if prime != prime_golden:
-                print("  Prime output differs from its golden")
+                show_difference("Prime", prime_golden, prime)
             if row["id"] == "language-identity" and he == prime:
                 print("  Prime-only judgments collapsed into the HE-prime lane")
             failures += 1
@@ -77,19 +102,26 @@ def main() -> int:
         print("FAIL: missing executable Prime language-identity boundary")
         failures += 1
 
-    make_plan = subprocess.run(
-        ["make", "-n", "test-prime"],
+    # GNU make executes recursive-marked and '+' recipes even under -n.
+    # A target-specific no-op shell also covers prerequisite recipes, while
+    # leaving parse-time build configuration discovery unchanged. This checks
+    # the expanded prerequisite recipes; nested submakes are not executed.
+    make_result = subprocess.run(
+        ["make", "-n", "--eval=test-prime: SHELL := /bin/true", "test-prime"],
         cwd=ROOT,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         check=False,
-    ).stdout
-    if "--profile he-prime" in make_plan:
+    )
+    if make_result.returncode != 0:
+        print("FAIL: could not inspect normative test-prime target")
+        failures += 1
+    elif "--profile he-prime" in make_result.stdout:
         print("FAIL: normative test-prime target invokes the HE-prime profile")
         failures += 1
     else:
-        print("PASS: normative test-prime target is --lang prime only")
+        print("PASS: expanded test-prime prerequisite recipes do not select HE-prime")
         passed += 1
 
     print(f"Prime/HE-prime ownership gate: {passed} passed, {failures} failed")

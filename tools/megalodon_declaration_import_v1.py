@@ -2,7 +2,7 @@
 """Compile Megalodon declaration exports to ordered NIK admission evidence.
 
 The input is the existing Megalodon -sexprinfo stream, not a second parser for
-its surface language. Every declaration retains its source identity and order.
+its source language. Every declaration retains its source identity and order.
 The output is untrusted evidence checked by TheoryAdmissionKernel. Axioms are
 assumptions, including library facts exported as AXIOM; none becomes a theorem.
 Proof-bearing documents use the existing proof compiler and require matched

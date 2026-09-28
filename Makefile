@@ -3151,7 +3151,7 @@ PRIME_PRACTICAL_TESTS = \
 	tests/prime/practical/atp_superposition_replay.metta \
 	tests/prime/practical/atp_agenda_example.metta \
 	tests/prime/practical/need_control_branch_discriminators.metta
-PRIME_FAST_TESTS = $(PRIME_CONFORMANCE_TESTS) $(PRIME_EXAMPLE_TESTS) $(PRIME_PRACTICAL_TESTS)
+PRIME_FAST_TESTS = $(PRIME_CONFORMANCE_TESTS) $(PRIME_EXAMPLE_TESTS) $(PRIME_PRACTICAL_TESTS) tests/prime/need_lexical_scope.metta
 # Per-test wall-clock cap for the prime conformance/completion gates.  A clean
 # prime_02_completion_resources run is a few seconds; a pathological blow-up
 # (e.g. the O(n^3) reify-judge regression) must fail LOUD instead of grinding
@@ -4190,7 +4190,14 @@ test-prime-causal-receipt-disabled-transparency-body: $(BIN)
 test-prime-cell-causal-reference:
 	@python3 tests/prime/test_cell_causal_reference.py
 
-test-prime-shared-cause-probability: $(BIN)
+# The shared-cause explanations are read from the Need trace, which only a
+# causal-receipt build emits.
+test-prime-shared-cause-probability:
+	@$(MAKE) -s BUILD=$(BUILD_CANON) \
+		ENABLE_PRIME_CAUSAL_RECEIPTS=1 \
+		test-prime-shared-cause-probability-body
+
+test-prime-shared-cause-probability-body: $(BIN)
 	@CETTA_BIN="$(abspath $(BIN))" \
 		python3 tests/prime/test_shared_cause_probability.py
 
@@ -4435,6 +4442,59 @@ test-prime-need-equation-choice-sharing-mutation-body: $(BIN)
 		fi; \
 		echo "PASS: rule-local-thunk mutation repeats the source producer and is killed"
 
+# The persistent Need heap belongs to the evaluation episode, not to the
+# evaluator's scratch arena.  A heap placed in scratch is still never lost:
+# the collector refuses to collect while a promise lives there, so answers
+# stay right and no memory is reclaimed.  The collections are counted by the
+# runtime statistics, so this mutation is measured in a runtime-stats build.
+.PHONY: test-prime-need-scratch-owner-mutation
+.PHONY: test-prime-need-scratch-owner-mutation-body
+test-prime-need-scratch-owner-mutation:
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-prime-need-scratch-owner-mutation-body
+
+test-prime-need-scratch-owner-mutation-body: $(BIN)
+	@set -eu; \
+		mutation_dir=runtime/prime-need-mutations; \
+		mkdir -p "$$mutation_dir"; \
+		object="$$mutation_dir/eval-SCRATCH_OWNER-runtime-stats.o"; \
+		binary="$$mutation_dir/cetta-SCRATCH_OWNER-runtime-stats"; \
+		$(CC) $(CPPFLAGS) $(CFLAGS) \
+			-DCETTA_PRIME_NEED_MUTATION_SCRATCH_OWNER=1 \
+			-c src/eval.c -o "$$object"; \
+		$(CC) $(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) \
+			"$$object" -o "$$binary" $(LDFLAGS); \
+		source=tests/prime/need_gc_lifetime.metta; \
+		expected=$$(cat tests/prime/need_gc_lifetime.expected); \
+		stdout_file=$$(mktemp); stderr_file=$$(mktemp); \
+		trap 'rm -f "$$stdout_file" "$$stderr_file"' EXIT; \
+		CETTA_GC=1 CETTA_GC_BUDGET_MB=1 timeout $(PRIME_COMPLETION_TIMEOUT) \
+			$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang prime "$$source" \
+			>"$$stdout_file" 2>"$$stderr_file"; \
+		collections=$$(sed -n \
+			's/^runtime-counter prime-eval-stack-gc-frame-safe-point //p' \
+			"$$stderr_file"); \
+		if [ "$$(cat "$$stdout_file")" != "$$expected" ] || \
+		   [ "$$collections" -lt 1 ]; then \
+			echo "FAIL: Need heap lifetime baseline collected $${collections:-0} times, expected at least one collection with the promise live"; \
+			exit 1; \
+		fi; \
+		set +e; \
+		CETTA_GC=1 CETTA_GC_BUDGET_MB=1 timeout $(PRIME_COMPLETION_TIMEOUT) \
+			"$$binary" --emit-runtime-stats --lang prime "$$source" \
+			>"$$stdout_file" 2>"$$stderr_file"; \
+		status=$$?; set -e; \
+		mutant_collections=$$(sed -n \
+			's/^runtime-counter prime-eval-stack-gc-frame-safe-point //p' \
+			"$$stderr_file"); \
+		if [ $$status -eq 0 ] && \
+		   [ "$$(cat "$$stdout_file")" = "$$expected" ] && \
+		   [ "$${mutant_collections:-0}" -ge 1 ]; then \
+			echo "FAIL: Prime Need SCRATCH_OWNER mutation survived"; \
+			exit 1; \
+		fi; \
+		echo "PASS: Prime Need SCRATCH_OWNER mutation killed: a heap in scratch blocks collection ($$collections collections, mutant $${mutant_collections:-0})"
+
 ifeq ($(ENABLE_PRIME_CAUSAL_RECEIPTS),1)
 test-prime-need-mutations: $(BIN) test-prime-need-algebra \
 		test-prime-need-correspondence test-prime-need-gc-lifetime \
@@ -4442,11 +4502,17 @@ test-prime-need-mutations: $(BIN) test-prime-need-algebra \
 		test-prime-need-quote-preservation \
 		test-prime-need-effect-isolation \
 		test-prime-need-equation-choice-sharing \
-		test-prime-need-equation-choice-sharing-mutation
+		test-prime-need-equation-choice-sharing-mutation \
+		test-prime-need-scratch-owner-mutation
 	@set -eu; \
 	mutation_dir=runtime/prime-need-mutations; \
 	mkdir -p "$$mutation_dir"; \
-	for mutation in EAGER CBN STORAGE_LEAK SCRATCH_OWNER FUNCTION_BINDING_LEAK RULE_LOCAL_THUNKS DROP_RESIDUAL REGISTRY_PATTERN_INERT DROP_RESULT_CONTRACT DYNAMIC_SCOPE; do \
+	actual=$$(timeout $(PRIME_COMPLETION_TIMEOUT) \
+		$(BIN) --lang prime tests/prime/need_lexical_scope.metta); \
+	if [ "$$actual" != "$$(cat tests/prime/need_lexical_scope.expected)" ]; then \
+		echo "FAIL: Prime Need lexical-scope control"; exit 1; \
+	fi; \
+	for mutation in EAGER CBN STORAGE_LEAK FUNCTION_BINDING_LEAK RULE_LOCAL_THUNKS DROP_RESIDUAL REGISTRY_PATTERN_INERT DROP_RESULT_CONTRACT DYNAMIC_SCOPE; do \
 		case "$$mutation" in \
 			EAGER) source=tests/prime/need_application.metta; \
 			       expected=tests/prime/need_application.expected ;; \
@@ -4454,16 +4520,14 @@ test-prime-need-mutations: $(BIN) test-prime-need-algebra \
 			     expected=tests/prime/need_explicit_control.expected ;; \
 			STORAGE_LEAK) source=tests/prime/need_storage_boundary.metta; \
 			              expected=tests/prime/need_storage_boundary.expected ;; \
-			SCRATCH_OWNER) source=tests/prime/need_gc_lifetime.metta; \
-			               expected=tests/prime/need_gc_lifetime.expected ;; \
 			FUNCTION_BINDING_LEAK) source=tests/prime/need_application.metta; \
 			                       expected=tests/prime/need_application.expected ;; \
 			RULE_LOCAL_THUNKS|DROP_RESIDUAL|REGISTRY_PATTERN_INERT) source=tests/prime/need_application.metta; \
 			                                                          expected=tests/prime/need_application.expected ;; \
 			DROP_RESULT_CONTRACT) source=tests/prime/gradual/annotation_boundary.metta; \
 			                      expected=tests/prime/gradual/annotation_boundary.expected ;; \
-			DYNAMIC_SCOPE) source=tests/prime/need_closure_capture.metta; \
-			               expected=tests/prime/need_closure_capture.expected ;; \
+			DYNAMIC_SCOPE) source=tests/prime/need_lexical_scope.metta; \
+			               expected=tests/prime/need_lexical_scope.expected ;; \
 		esac; \
 		object="$$mutation_dir/eval-$$mutation.o"; \
 		binary="$$mutation_dir/cetta-$$mutation"; \
@@ -4473,13 +4537,15 @@ test-prime-need-mutations: $(BIN) test-prime-need-algebra \
 		$(CC) $(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) \
 			"$$object" -o "$$binary" $(LDFLAGS); \
 		set +e; \
-		if [ "$$mutation" = SCRATCH_OWNER ]; then \
-			actual=$$(CETTA_GC=1 CETTA_GC_BUDGET_MB=1 \
-				"$$binary" --lang prime "$$source" 2>&1); \
-		else \
-			actual=$$("$$binary" --lang prime "$$source" 2>&1); \
-		fi; \
+		actual=$$(timeout $(PRIME_COMPLETION_TIMEOUT) \
+			"$$binary" --lang prime "$$source" 2>&1); \
 		status=$$?; set -e; \
+		if [ "$$mutation" = DYNAMIC_SCOPE ] && \
+		   { [ $$status -ne 0 ] || \
+		     [ "$$actual" != "$$(cat tests/prime/need_lexical_scope.dynamic-scope.expected)" ]; }; then \
+			echo "FAIL: Prime Need DYNAMIC_SCOPE did not expose same-spelling capture"; \
+			exit 1; \
+		fi; \
 		if [ $$status -eq 0 ] && [ "$$actual" = "$$(cat "$$expected")" ]; then \
 			echo "FAIL: Prime Need $$mutation mutation survived"; \
 			exit 1; \
@@ -4520,11 +4586,11 @@ endif
 
 $(REGISTRY_RESOLVER_TEST_OBJ): $(REGISTRY_RESOLVER_TEST_SRC) src/registry_resolver.h src/space.h src/name_key.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime/bootstrap
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(STABLE_OCCURRENCE_TRANSPORT_TEST_OBJ): $(STABLE_OCCURRENCE_TRANSPORT_TEST_SRC) src/space.h src/space_match_backend.h src/subst_tree.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime/bootstrap
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(STABLE_OCCURRENCE_TRANSPORT_TEST_BIN): $(STABLE_OCCURRENCE_TRANSPORT_TEST_OBJ) $(STABLE_OCCURRENCE_TRANSPORT_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p runtime
@@ -4536,7 +4602,7 @@ test-stable-occurrence-transport: $(STABLE_OCCURRENCE_TRANSPORT_TEST_BIN)
 
 $(SHARED_SPACE_CONCURRENT_INDEX_TEST_OBJ): $(SHARED_SPACE_CONCURRENT_INDEX_TEST_SRC) src/shared_transition.h src/space.h src/space_match_backend.h src/subst_tree.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime/bootstrap
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(SHARED_SPACE_CONCURRENT_INDEX_TEST_BIN): $(SHARED_SPACE_CONCURRENT_INDEX_TEST_OBJ) $(SHARED_SPACE_CONCURRENT_INDEX_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p runtime
@@ -4548,7 +4614,7 @@ test-shared-space-concurrent-index: $(SHARED_SPACE_CONCURRENT_INDEX_TEST_BIN)
 
 $(PARALLEL_EXECUTOR_LIFECYCLE_TEST_OBJ): $(PARALLEL_EXECUTOR_LIFECYCLE_TEST_SRC) src/parallel_executor.h src/stats.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime/bootstrap
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARALLEL_EXECUTOR_LIFECYCLE_TEST_BIN): $(PARALLEL_EXECUTOR_LIFECYCLE_TEST_OBJ) $(PARALLEL_EXECUTOR_LIFECYCLE_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p runtime
@@ -4610,7 +4676,7 @@ endif
 
 $(REGISTRY_LOOKUP_BENCH_OBJ): $(REGISTRY_LOOKUP_BENCH_SRC) src/space.h src/name_key.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime/bootstrap
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(REGISTRY_LOOKUP_BENCH_BIN): $(REGISTRY_LOOKUP_BENCH_OBJ) $(REGISTRY_LOOKUP_BENCH_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p runtime
@@ -5337,8 +5403,27 @@ $(STAGE0_BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	fi; \
 	touch "$@"
 
+test test-prime-all: test-atomic-object-publication
+.PHONY: test-atomic-object-publication
+test-atomic-object-publication:
+	@python3 scripts/check_atomic_object_publication.py
+
+# Recursive test builds may compile the same configuration concurrently.
+# Publish completed object/dependency files so a linker or another make never
+# observes a truncated output; a failed compiler preserves the previous pair.
+define compile_c_object
+	@mkdir -p $(dir $@)
+	@set -eu; \
+	tmp_obj=$$(mktemp "$(dir $@).cetta-object.XXXXXX"); \
+	tmp_dep=$$(mktemp "$(dir $@).cetta-deps.XXXXXX"); \
+	trap 'rm -f "$$tmp_obj" "$$tmp_dep"' EXIT INT TERM; \
+	$(CC) $(1) -MT "$@" -MF "$$tmp_dep" -c -o "$$tmp_obj" "$<"; \
+	mv "$$tmp_dep" "$(@:.o=.d)"; \
+	mv "$$tmp_obj" "$@"
+endef
+
 %.$(BUILD_OBJ_TAG).stage0.o: %.c $(STAGE0_BUILD_CONFIG_HEADER)
-	$(CC) -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) $(HTTP_CFLAGS) -include $(STAGE0_BUILD_CONFIG_HEADER) $(CFLAGS) $(DEPFLAGS) -DCETTA_NO_STDLIB -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,-Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) $(HTTP_CFLAGS) -include $(STAGE0_BUILD_CONFIG_HEADER) $(CFLAGS) $(DEPFLAGS) -DCETTA_NO_STDLIB)
 
 $(STAGE0_BIN): $(STAGE0_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -5441,7 +5526,7 @@ $(FALLBACK_EVAL_TEST_BIN): $(FALLBACK_EVAL_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_O
 
 $(FALLBACK_EVAL_TEST_OBJ): $(FALLBACK_EVAL_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(HE_COMPILED_READER_TEST_BIN): $(HE_COMPILED_READER_TEST_OBJ) $(HE_COMPILED_READER_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -5453,7 +5538,7 @@ $(HE_COMPILED_READER_TEST_BIN): $(HE_COMPILED_READER_TEST_OBJ) $(HE_COMPILED_REA
 
 $(HE_COMPILED_READER_TEST_OBJ): $(HE_COMPILED_READER_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(HE_TYPING_DIRECT_TEST_BIN): $(HE_TYPING_DIRECT_TEST_OBJ) $(HE_TYPING_DIRECT_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -5465,7 +5550,7 @@ $(HE_TYPING_DIRECT_TEST_BIN): $(HE_TYPING_DIRECT_TEST_OBJ) $(HE_TYPING_DIRECT_TE
 
 $(HE_TYPING_DIRECT_TEST_OBJ): $(HE_TYPING_DIRECT_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PETTA_COMPILED_READER_TEST_BIN): $(PETTA_COMPILED_READER_TEST_OBJ) $(PETTA_COMPILED_READER_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -5477,7 +5562,7 @@ $(PETTA_COMPILED_READER_TEST_BIN): $(PETTA_COMPILED_READER_TEST_OBJ) $(PETTA_COM
 
 $(PETTA_COMPILED_READER_TEST_OBJ): $(PETTA_COMPILED_READER_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PETTA_SEARCH_MACHINE_TEST_BIN): $(PETTA_SEARCH_MACHINE_TEST_OBJ) $(PETTA_SEARCH_MACHINE_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -5505,7 +5590,7 @@ $(PETTA_ANALYSIS_ARROW_MODE_TEST_BIN): $(PETTA_ANALYSIS_ARROW_MODE_TEST_SRC) src
 
 $(PETTA_SEARCH_MACHINE_TEST_OBJ): $(PETTA_SEARCH_MACHINE_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(MATCH_DECISION_TEST_BIN): $(MATCH_DECISION_TEST_OBJ) $(MATCH_DECISION_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -5517,7 +5602,7 @@ $(MATCH_DECISION_TEST_BIN): $(MATCH_DECISION_TEST_OBJ) $(MATCH_DECISION_TEST_LIN
 
 $(MATCH_DECISION_TEST_OBJ): $(MATCH_DECISION_TEST_SRC) src/match_decision.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(MATCH_DECISION_PREFIX_BENCH_BIN): $(MATCH_DECISION_PREFIX_BENCH_OBJ) $(MATCH_DECISION_PREFIX_BENCH_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -5529,7 +5614,7 @@ $(MATCH_DECISION_PREFIX_BENCH_BIN): $(MATCH_DECISION_PREFIX_BENCH_OBJ) $(MATCH_D
 
 $(MATCH_DECISION_PREFIX_BENCH_OBJ): $(MATCH_DECISION_PREFIX_BENCH_SRC) src/match_decision.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 .PHONY: bench-match-decision-prefix-observation
 bench-match-decision-prefix-observation: $(MATCH_DECISION_PREFIX_BENCH_BIN)
@@ -5569,7 +5654,7 @@ $(PETTA_SPECIALIZER_PREPARE_TEST_BIN): $(PETTA_SPECIALIZER_PREPARE_TEST_OBJ) $(P
 
 $(PETTA_SPECIALIZER_PREPARE_TEST_OBJ): $(PETTA_SPECIALIZER_PREPARE_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PETTA_TYPECHECK_V2_GUARD_LANGDEF_TEST_BIN): $(PETTA_TYPECHECK_V2_GUARD_LANGDEF_TEST_OBJ) $(PETTA_TYPECHECK_V2_GUARD_LANGDEF_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -5598,7 +5683,7 @@ $(PETTA_TYPECHECK_V3_CORE_LANGDEF_TEST_OBJ): \
 		$(PETTA_TYPECHECK_V3_CORE_PROVIDER_CATALOG_V1_GENERATED_H) \
 		$(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PETTA_TYPECHECK_V3_FILE_RUNNER_BIN): \
 		$(PETTA_TYPECHECK_V3_FILE_RUNNER_OBJ) \
@@ -5617,7 +5702,7 @@ $(PETTA_TYPECHECK_V3_FILE_RUNNER_OBJ): \
 		src/petta_typecheck_v3_decision_v1.h \
 		$(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PETTA_TYPECHECK_V3_CORE_RUNTIME_V1_GENERATED_H) \
 $(PETTA_TYPECHECK_V3_CORE_RUNTIME_V1_GENERATED_C) &: FORCE \
@@ -5655,7 +5740,7 @@ $(PETTA_TYPECHECK_V3_CORE_PROVIDER_CATALOG_V1_GENERATED_C) &: \
 
 $(PETTA_TYPECHECK_V2_GUARD_LANGDEF_TEST_OBJ): $(PETTA_TYPECHECK_V2_GUARD_LANGDEF_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_GENERATED_H) \
 $(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_GENERATED_C) &: \
@@ -5709,7 +5794,7 @@ $(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_TEST_OBJ): \
 		$(PETTA_TYPECHECK_V2_FRAGMENT_PROVIDER_CATALOG_V1_GENERATED_H) \
 		$(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 .PHONY: test-petta-specializer-prepare
 test-petta-specializer-prepare: $(PETTA_SPECIALIZER_PREPARE_TEST_BIN)
@@ -5725,7 +5810,7 @@ $(PRIME_COMPILED_READER_TEST_BIN): $(PRIME_COMPILED_READER_TEST_OBJ) $(PRIME_COM
 
 $(PRIME_COMPILED_READER_TEST_OBJ): $(PRIME_COMPILED_READER_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(HE_COMPILED_READER_BENCH_BIN): $(HE_COMPILED_READER_BENCH_OBJ) $(HE_COMPILED_READER_BENCH_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -5737,7 +5822,7 @@ $(HE_COMPILED_READER_BENCH_BIN): $(HE_COMPILED_READER_BENCH_OBJ) $(HE_COMPILED_R
 
 $(HE_COMPILED_READER_BENCH_OBJ): $(HE_COMPILED_READER_BENCH_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PRIME_DELAYED_AMBIGUITY_TEST_BIN): $(PRIME_DELAYED_AMBIGUITY_TEST_OBJ) $(PRIME_DELAYED_AMBIGUITY_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -5749,7 +5834,7 @@ $(PRIME_DELAYED_AMBIGUITY_TEST_BIN): $(PRIME_DELAYED_AMBIGUITY_TEST_OBJ) $(PRIME
 
 $(PRIME_DELAYED_AMBIGUITY_TEST_OBJ): $(PRIME_DELAYED_AMBIGUITY_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PRIME_PACKAGE_VALIDATION_TEST_BIN): $(PRIME_PACKAGE_VALIDATION_TEST_OBJ) $(PRIME_PACKAGE_VALIDATION_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -5761,7 +5846,7 @@ $(PRIME_PACKAGE_VALIDATION_TEST_BIN): $(PRIME_PACKAGE_VALIDATION_TEST_OBJ) $(PRI
 
 $(PRIME_PACKAGE_VALIDATION_TEST_OBJ): $(PRIME_PACKAGE_VALIDATION_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_BIN): $(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_OBJ) $(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -5773,7 +5858,7 @@ $(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_BIN): $(PRIME_DEPENDENT_FORMATION_LANGD
 
 $(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_OBJ): $(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PRIME_REGULAR_KERNEL_TEST_BIN): $(PRIME_REGULAR_KERNEL_TEST_OBJ) $(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -5785,7 +5870,7 @@ $(PRIME_REGULAR_KERNEL_TEST_BIN): $(PRIME_REGULAR_KERNEL_TEST_OBJ) $(PRIME_REGUL
 
 $(PRIME_REGULAR_KERNEL_TEST_OBJ): $(PRIME_REGULAR_KERNEL_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PRIME_SCOPED_CONVERSION_TEST_BIN): $(PRIME_SCOPED_CONVERSION_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -5797,7 +5882,7 @@ $(PRIME_SCOPED_CONVERSION_TEST_BIN): $(PRIME_SCOPED_CONVERSION_TEST_OBJ) $(FALLB
 
 $(PRIME_SCOPED_CONVERSION_TEST_OBJ): $(PRIME_SCOPED_CONVERSION_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 .PHONY: test-prime-scoped-conversion
 test-prime-scoped-conversion: $(PRIME_SCOPED_CONVERSION_TEST_BIN)
@@ -5815,7 +5900,7 @@ $(PRIME_LEVEL_TEST_BIN): $(PRIME_LEVEL_TEST_OBJ) $(PRIME_LEVEL_TEST_LINK_OBJ) $(
 
 $(PRIME_LEVEL_TEST_OBJ): $(PRIME_LEVEL_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PRIME_TYPED_FLOW_TEST_BIN): $(PRIME_TYPED_FLOW_TEST_OBJ) $(PRIME_TYPED_FLOW_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -5827,7 +5912,7 @@ $(PRIME_TYPED_FLOW_TEST_BIN): $(PRIME_TYPED_FLOW_TEST_OBJ) $(PRIME_TYPED_FLOW_TE
 
 $(PRIME_TYPED_FLOW_TEST_OBJ): $(PRIME_TYPED_FLOW_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PRIME_HOPPER_FOLD_NATIVE_TEST_BIN): $(PRIME_HOPPER_FOLD_NATIVE_TEST_OBJ) $(PRIME_HOPPER_FOLD_NATIVE_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -5839,7 +5924,7 @@ $(PRIME_HOPPER_FOLD_NATIVE_TEST_BIN): $(PRIME_HOPPER_FOLD_NATIVE_TEST_OBJ) $(PRI
 
 $(PRIME_HOPPER_FOLD_NATIVE_TEST_OBJ): $(PRIME_HOPPER_FOLD_NATIVE_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PRIME_HOPPER_BRANCHING_NATIVE_TEST_BIN): $(PRIME_HOPPER_BRANCHING_NATIVE_TEST_OBJ) $(PRIME_HOPPER_BRANCHING_NATIVE_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -5851,7 +5936,7 @@ $(PRIME_HOPPER_BRANCHING_NATIVE_TEST_BIN): $(PRIME_HOPPER_BRANCHING_NATIVE_TEST_
 
 $(PRIME_HOPPER_BRANCHING_NATIVE_TEST_OBJ): $(PRIME_HOPPER_BRANCHING_NATIVE_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PRIME_IGGP_TYPE_OF_INFERENCE_TEST_BIN): $(PRIME_IGGP_TYPE_OF_INFERENCE_TEST_OBJ) $(PRIME_IGGP_TYPE_OF_INFERENCE_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -5863,7 +5948,7 @@ $(PRIME_IGGP_TYPE_OF_INFERENCE_TEST_BIN): $(PRIME_IGGP_TYPE_OF_INFERENCE_TEST_OB
 
 $(PRIME_IGGP_TYPE_OF_INFERENCE_TEST_OBJ): $(PRIME_IGGP_TYPE_OF_INFERENCE_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PRIME_GDL_POSITIVE_HORN_NATIVE_TEST_BIN): $(PRIME_GDL_POSITIVE_HORN_NATIVE_TEST_OBJ) $(PRIME_GDL_POSITIVE_HORN_NATIVE_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -5875,7 +5960,7 @@ $(PRIME_GDL_POSITIVE_HORN_NATIVE_TEST_BIN): $(PRIME_GDL_POSITIVE_HORN_NATIVE_TES
 
 $(PRIME_GDL_POSITIVE_HORN_NATIVE_TEST_OBJ): $(PRIME_GDL_POSITIVE_HORN_NATIVE_TEST_SRC) src/gdl_stratified_model.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PRIME_GDL_POSITIVE_HORN_NATIVE_QUALIFIER_BIN): $(PRIME_GDL_POSITIVE_HORN_NATIVE_QUALIFIER_OBJ) $(PRIME_GDL_POSITIVE_HORN_NATIVE_QUALIFIER_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -5887,7 +5972,7 @@ $(PRIME_GDL_POSITIVE_HORN_NATIVE_QUALIFIER_BIN): $(PRIME_GDL_POSITIVE_HORN_NATIV
 
 $(PRIME_GDL_POSITIVE_HORN_NATIVE_QUALIFIER_OBJ): $(PRIME_GDL_POSITIVE_HORN_NATIVE_QUALIFIER_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PRIME_GDL_STRATIFICATION_QUALIFIER_BIN): $(PRIME_GDL_STRATIFICATION_QUALIFIER_OBJ) $(PRIME_GDL_STRATIFICATION_QUALIFIER_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -5899,7 +5984,7 @@ $(PRIME_GDL_STRATIFICATION_QUALIFIER_BIN): $(PRIME_GDL_STRATIFICATION_QUALIFIER_
 
 $(PRIME_GDL_STRATIFICATION_QUALIFIER_OBJ): $(PRIME_GDL_STRATIFICATION_QUALIFIER_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PRIME_GDL_STRATIFIED_MODEL_QUALIFIER_BIN): $(PRIME_GDL_STRATIFIED_MODEL_QUALIFIER_OBJ) $(PRIME_GDL_STRATIFIED_MODEL_QUALIFIER_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -5911,7 +5996,7 @@ $(PRIME_GDL_STRATIFIED_MODEL_QUALIFIER_BIN): $(PRIME_GDL_STRATIFIED_MODEL_QUALIF
 
 $(PRIME_GDL_STRATIFIED_MODEL_QUALIFIER_OBJ): $(PRIME_GDL_STRATIFIED_MODEL_QUALIFIER_SRC) src/gdl_stratified_model.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PRIME_GDL_STRATIFIED_EPISODE_QUALIFIER_BIN): $(PRIME_GDL_STRATIFIED_EPISODE_QUALIFIER_OBJ) $(PRIME_GDL_STRATIFIED_EPISODE_QUALIFIER_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -5923,11 +6008,11 @@ $(PRIME_GDL_STRATIFIED_EPISODE_QUALIFIER_BIN): $(PRIME_GDL_STRATIFIED_EPISODE_QU
 
 $(PRIME_GDL_STRATIFIED_EPISODE_QUALIFIER_OBJ): $(PRIME_GDL_STRATIFIED_EPISODE_QUALIFIER_SRC) src/gdl_stratified_model.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PRIME_REGULAR_KERNEL_ENGINE_FAILURE_TEST_OBJ): $(PRIME_REGULAR_KERNEL_ENGINE_FAILURE_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 -include $(PRIME_REGULAR_KERNEL_ENGINE_FAILURE_TEST_OBJ:.o=.d)
 
 $(PRIME_REGULAR_PATTERN_TEST_BIN): $(PRIME_REGULAR_PATTERN_TEST_OBJ) $(PRIME_REGULAR_PATTERN_TEST_LINK_OBJ) $(BRIDGE_DEPS)
@@ -5940,7 +6025,7 @@ $(PRIME_REGULAR_PATTERN_TEST_BIN): $(PRIME_REGULAR_PATTERN_TEST_OBJ) $(PRIME_REG
 
 $(PRIME_REGULAR_PATTERN_TEST_OBJ): $(PRIME_REGULAR_PATTERN_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_OBJ): src/prime_semantics.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
@@ -5958,7 +6043,7 @@ $(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_BIN): $(PRIME_REGULAR_KERNEL_LEGACY_REFE
 
 $(PRIME_REGULAR_KERNEL_CONVERSION_BENCH_OBJ): $(PRIME_REGULAR_KERNEL_CONVERSION_BENCH_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PRIME_REGULAR_KERNEL_CONVERSION_BENCH_BIN): $(PRIME_REGULAR_KERNEL_CONVERSION_BENCH_OBJ) $(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -5978,7 +6063,7 @@ $(PRIME_REGULAR_KERNEL_CONVERSION_REFERENCE_BENCH_BIN): $(PRIME_REGULAR_KERNEL_C
 
 $(PRIME_REGULAR_KERNEL_SYNTHESIS_BENCH_OBJ): $(PRIME_REGULAR_KERNEL_SYNTHESIS_BENCH_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PRIME_REGULAR_KERNEL_SYNTHESIS_BENCH_BIN): $(PRIME_REGULAR_KERNEL_SYNTHESIS_BENCH_OBJ) $(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -5998,7 +6083,7 @@ $(PRIME_REGULAR_KERNEL_SYNTHESIS_REFERENCE_BENCH_BIN): $(PRIME_REGULAR_KERNEL_SY
 
 $(PRIME_REGULAR_KERNEL_CHECKING_BENCH_OBJ): $(PRIME_REGULAR_KERNEL_CHECKING_BENCH_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PRIME_REGULAR_KERNEL_CHECKING_BENCH_BIN): $(PRIME_REGULAR_KERNEL_CHECKING_BENCH_OBJ) $(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6018,7 +6103,7 @@ $(PRIME_REGULAR_KERNEL_CHECKING_REFERENCE_BENCH_BIN): $(PRIME_REGULAR_KERNEL_CHE
 
 $(PRIME_REGULAR_KERNEL_FORMATION_BENCH_OBJ): $(PRIME_REGULAR_KERNEL_FORMATION_BENCH_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PRIME_REGULAR_KERNEL_FORMATION_BENCH_BIN): $(PRIME_REGULAR_KERNEL_FORMATION_BENCH_OBJ) $(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6046,7 +6131,7 @@ $(RUNTIME_NAMED_VAR_TEST_BIN): $(RUNTIME_NAMED_VAR_TEST_OBJ) $(RUNTIME_NAMED_VAR
 
 $(RUNTIME_NAMED_VAR_TEST_OBJ): $(RUNTIME_NAMED_VAR_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PRIME_BARE_DOLLAR_PARSER_TEST_BIN): $(PRIME_BARE_DOLLAR_PARSER_TEST_OBJ) $(PRIME_BARE_DOLLAR_PARSER_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6058,7 +6143,7 @@ $(PRIME_BARE_DOLLAR_PARSER_TEST_BIN): $(PRIME_BARE_DOLLAR_PARSER_TEST_OBJ) $(PRI
 
 $(PRIME_BARE_DOLLAR_PARSER_TEST_OBJ): $(PRIME_BARE_DOLLAR_PARSER_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PRIME_BARE_DOLLAR_LITERAL_PARSER_OBJ): src/parser.c src/parser.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
@@ -6100,7 +6185,7 @@ $(PRIME_READER_AST_ORACLE_BIN): $(PRIME_READER_AST_ORACLE_OBJ) $(PRIME_READER_AS
 
 $(PRIME_READER_AST_ORACLE_OBJ): $(PRIME_READER_AST_ORACLE_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PRIME_SYNTAX_GSLT_ENGINE): tools/gslt2parse.c
 	@mkdir -p $(dir $@)
@@ -6128,7 +6213,7 @@ $(PAYLOAD_MAP_CAPACITY_TEST_BIN): $(PAYLOAD_MAP_CAPACITY_TEST_OBJ) $(PAYLOAD_MAP
 
 $(PAYLOAD_MAP_CAPACITY_TEST_OBJ): $(PAYLOAD_MAP_CAPACITY_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(RHOCALC_ABT_SUBSTITUTION_TEST_BIN): $(RHOCALC_ABT_SUBSTITUTION_TEST_OBJ) $(RHOCALC_ABT_SUBSTITUTION_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6140,7 +6225,7 @@ $(RHOCALC_ABT_SUBSTITUTION_TEST_BIN): $(RHOCALC_ABT_SUBSTITUTION_TEST_OBJ) $(RHO
 
 $(RHOCALC_ABT_SUBSTITUTION_TEST_OBJ): $(RHOCALC_ABT_SUBSTITUTION_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(LIB_PARSE_GLL_UTF8_FOREST_TEST_BIN): $(LIB_PARSE_GLL_UTF8_FOREST_TEST_OBJ) $(LIB_PARSE_GLL_UTF8_FOREST_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6152,7 +6237,7 @@ $(LIB_PARSE_GLL_UTF8_FOREST_TEST_BIN): $(LIB_PARSE_GLL_UTF8_FOREST_TEST_OBJ) $(L
 
 $(LIB_PARSE_GLL_UTF8_FOREST_TEST_OBJ): $(LIB_PARSE_GLL_UTF8_FOREST_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(LIB_PARSE_GLR_UTF8_FOREST_TEST_BIN): $(LIB_PARSE_GLR_UTF8_FOREST_TEST_OBJ) $(LIB_PARSE_GLR_UTF8_FOREST_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6164,7 +6249,7 @@ $(LIB_PARSE_GLR_UTF8_FOREST_TEST_BIN): $(LIB_PARSE_GLR_UTF8_FOREST_TEST_OBJ) $(L
 
 $(LIB_PARSE_GLR_UTF8_FOREST_TEST_OBJ): $(LIB_PARSE_GLR_UTF8_FOREST_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(LIB_PARSE_SLR_PREPARED_TEST_BIN): $(LIB_PARSE_SLR_PREPARED_TEST_OBJ) $(LIB_PARSE_SLR_PREPARED_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6176,7 +6261,7 @@ $(LIB_PARSE_SLR_PREPARED_TEST_BIN): $(LIB_PARSE_SLR_PREPARED_TEST_OBJ) $(LIB_PAR
 
 $(LIB_PARSE_SLR_PREPARED_TEST_OBJ): $(LIB_PARSE_SLR_PREPARED_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_PACK_GLL_V1_TEST_BIN): $(PARSER_PACK_GLL_V1_TEST_OBJ) $(PARSER_PACK_GLL_V1_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6188,7 +6273,7 @@ $(PARSER_PACK_GLL_V1_TEST_BIN): $(PARSER_PACK_GLL_V1_TEST_OBJ) $(PARSER_PACK_GLL
 
 $(PARSER_PACK_GLL_V1_TEST_OBJ): $(PARSER_PACK_GLL_V1_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_PACK_GLR_V1_TEST_BIN): $(PARSER_PACK_GLR_V1_TEST_OBJ) $(PARSER_PACK_GLR_V1_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6200,7 +6285,7 @@ $(PARSER_PACK_GLR_V1_TEST_BIN): $(PARSER_PACK_GLR_V1_TEST_OBJ) $(PARSER_PACK_GLR
 
 $(PARSER_PACK_GLR_V1_TEST_OBJ): $(PARSER_PACK_GLR_V1_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_PACK_LEXICAL_V1_TEST_BIN): $(PARSER_PACK_LEXICAL_V1_TEST_OBJ) $(PARSER_PACK_LEXICAL_V1_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6212,7 +6297,7 @@ $(PARSER_PACK_LEXICAL_V1_TEST_BIN): $(PARSER_PACK_LEXICAL_V1_TEST_OBJ) $(PARSER_
 
 $(PARSER_PACK_LEXICAL_V1_TEST_OBJ): $(PARSER_PACK_LEXICAL_V1_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_PACK_LEXICAL_PLAN_V1_STREAM_BIN): $(PARSER_PACK_LEXICAL_PLAN_V1_STREAM_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_PACK_LEXICAL_PLAN_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6224,11 +6309,11 @@ $(PARSER_PACK_LEXICAL_PLAN_V1_STREAM_BIN): $(PARSER_PACK_LEXICAL_PLAN_V1_STREAM_
 
 $(PARSER_PACK_LEXICAL_PLAN_V1_STREAM_OBJ): $(PARSER_PACK_LEXICAL_PLAN_V1_STREAM_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_PACK_GUARD_RELATION_V1_OBJ): $(PARSER_PACK_GUARD_RELATION_V1_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_PACK_GUARD_PLAN_V1_TEST_BIN): $(PARSER_PACK_GUARD_PLAN_V1_TEST_OBJ) $(PARSER_PACK_GUARD_PLAN_V1_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6240,11 +6325,11 @@ $(PARSER_PACK_GUARD_PLAN_V1_TEST_BIN): $(PARSER_PACK_GUARD_PLAN_V1_TEST_OBJ) $(P
 
 $(PARSER_PACK_GUARD_PLAN_V1_TEST_OBJ): $(PARSER_PACK_GUARD_PLAN_V1_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_PACK_GUARD_PLAN_V1_OBJ): $(PARSER_PACK_GUARD_PLAN_V1_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_PACK_GUARD_PLAN_V1_STREAM_BIN): $(PARSER_PACK_GUARD_PLAN_V1_STREAM_OBJ) $(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_PACK_GUARD_PLAN_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6256,11 +6341,11 @@ $(PARSER_PACK_GUARD_PLAN_V1_STREAM_BIN): $(PARSER_PACK_GUARD_PLAN_V1_STREAM_OBJ)
 
 $(PARSER_PACK_GUARD_PLAN_V1_STREAM_OBJ): $(PARSER_PACK_GUARD_PLAN_V1_STREAM_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_OBJ): $(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_BIN): $(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_OBJ) $(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6272,11 +6357,11 @@ $(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_BIN): $(PARSER_PACK_GUARDED_LEXICAL
 
 $(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_OBJ): $(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_PACK_GUARDED_LEXICAL_V1_OBJ): $(PARSER_PACK_GUARDED_LEXICAL_V1_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_PACK_GUARD_REF_V1_STREAM_BIN): $(PARSER_PACK_GUARD_REF_V1_STREAM_OBJ) $(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_PACK_GUARD_REF_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6288,15 +6373,15 @@ $(PARSER_PACK_GUARD_REF_V1_STREAM_BIN): $(PARSER_PACK_GUARD_REF_V1_STREAM_OBJ) $
 
 $(PARSER_PACK_GUARD_REF_V1_STREAM_OBJ): $(PARSER_PACK_GUARD_REF_V1_STREAM_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_PACK_GUARD_REF_V1_OBJ): $(PARSER_PACK_GUARD_REF_V1_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_PACK_GUARD_SCALAR_EXEC_V1_OBJ): $(PARSER_PACK_GUARD_SCALAR_EXEC_V1_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_BIN): $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_OBJ) $(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6308,26 +6393,26 @@ $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_BIN): $(PARSER_PACK_GUARDED_LEXICAL
 
 $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_OBJ): $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_OBJ): $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_SRC) $(PARSER_PACK_SEMANTIC_MASK_BINDING_V1_HEADER) $(SEMANTIC_MASK_NFA_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_PACK_CURSOR_C_EMITTER_V1_OBJ): $(PARSER_PACK_CURSOR_C_EMITTER_V1_SRC) experiments/gslt2parse_foundation/native/parser_pack_cursor_c_emitter_v1.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_OCCURRENCE_FOLD_V1_OBJ): $(PARSER_OCCURRENCE_FOLD_V1_SRC) $(PARSER_OCCURRENCE_FOLD_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_OCCURRENCE_FILE_RESOLVER_V1_OBJ): \
 		$(PARSER_OCCURRENCE_FILE_RESOLVER_V1_SRC) \
 		$(PARSER_OCCURRENCE_FILE_RESOLVER_V1_HEADER) \
 		$(PARSER_OCCURRENCE_FOLD_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_OCCURRENCE_SOURCE_COMPOSITION_V1_OBJ): \
 		$(PARSER_OCCURRENCE_SOURCE_COMPOSITION_V1_SRC) \
@@ -6335,34 +6420,34 @@ $(PARSER_OCCURRENCE_SOURCE_COMPOSITION_V1_OBJ): \
 		$(PARSER_OCCURRENCE_FOLD_V1_HEADER) \
 		$(RELATIONAL_STATE_PROGRAM_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_SOURCE_RESOLUTION_CONTROL_V1_OBJ): \
 		$(PARSER_SOURCE_RESOLUTION_CONTROL_V1_SRC) \
 		$(PARSER_SOURCE_RESOLUTION_CONTROL_V1_HEADER) \
 		$(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_OCCURRENCE_SPAN_MASK_V1_OBJ): $(PARSER_OCCURRENCE_SPAN_MASK_V1_SRC) $(PARSER_OCCURRENCE_SPAN_MASK_V1_HEADER) $(PARSER_OCCURRENCE_FOLD_V1_HEADER) $(SEMANTIC_MASK_NFA_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(RELATIONAL_VALUE_LIST_V1_OBJ): $(RELATIONAL_VALUE_LIST_V1_SRC) $(RELATIONAL_VALUE_LIST_V1_HEADER) $(PARSER_OCCURRENCE_FOLD_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(GSLT_DENSE_BITSET_V1_OBJ): \
 		$(GSLT_DENSE_BITSET_V1_SRC) \
 		$(GSLT_DENSE_BITSET_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(GSLT_INDEXED_INSTRUCTION_DECODER_V1_OBJ): \
 		$(GSLT_INDEXED_INSTRUCTION_DECODER_V1_SRC) \
 		$(GSLT_INDEXED_INSTRUCTION_DECODER_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(GSLT_INDEXED_EFFECT_MACHINE_V1_OBJ): \
 		$(GSLT_INDEXED_EFFECT_MACHINE_V1_SRC) \
@@ -6370,32 +6455,32 @@ $(GSLT_INDEXED_EFFECT_MACHINE_V1_OBJ): \
 		$(GSLT_INDEXED_INSTRUCTION_DECODER_V1_HEADER) \
 		$(GSLT_SPLIT_INDEXED_TABLE_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(GSLT_CLASSIFIED_VALUE_V1_OBJ): \
 		$(GSLT_CLASSIFIED_VALUE_V1_SRC) \
 		$(GSLT_CLASSIFIED_VALUE_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(GSLT_CHRONOLOGICAL_BUILDER_V1_OBJ): \
 		$(GSLT_CHRONOLOGICAL_BUILDER_V1_SRC) \
 		$(GSLT_CHRONOLOGICAL_BUILDER_V1_HEADER) \
 		$(GSLT_U32_INDEX_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(GSLT_INDEXED_VALUE_TABLE_V1_OBJ): \
 		$(GSLT_INDEXED_VALUE_TABLE_V1_SRC) \
 		$(GSLT_INDEXED_VALUE_TABLE_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(GSLT_LITERAL_HOLE_PROGRAM_V1_OBJ): \
 		$(GSLT_LITERAL_HOLE_PROGRAM_V1_SRC) \
 		$(GSLT_LITERAL_HOLE_PROGRAM_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(GSLT_TWO_PHASE_FRAME_MACHINE_V1_OBJ): \
 		$(GSLT_TWO_PHASE_FRAME_MACHINE_V1_SRC) \
@@ -6404,40 +6489,40 @@ $(GSLT_TWO_PHASE_FRAME_MACHINE_V1_OBJ): \
 		$(GSLT_U32_SLICE_ARENA_V1_HEADER) \
 		$(GSLT_EPOCH_SLOTS_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(GSLT_U32_INDEX_V1_OBJ): \
 		$(GSLT_U32_INDEX_V1_SRC) \
 		$(GSLT_U32_INDEX_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(GSLT_U32_SLICE_ARENA_V1_OBJ): \
 		$(GSLT_U32_SLICE_ARENA_V1_SRC) \
 		$(GSLT_U32_SLICE_ARENA_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(GSLT_EPOCH_SLOTS_V1_OBJ): \
 		$(GSLT_EPOCH_SLOTS_V1_SRC) \
 		$(GSLT_EPOCH_SLOTS_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(GSLT_GROUND_DENSE_TERM_V1_OBJ): \
 		$(GSLT_GROUND_DENSE_TERM_V1_SRC) \
 		$(GSLT_GROUND_DENSE_TERM_V1_HEADER) \
 		$(GSLT_EPOCH_SLOTS_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(RELATIONAL_STACK_PROOF_V1_OBJ): $(RELATIONAL_STACK_PROOF_V1_SRC) $(RELATIONAL_STACK_PROOF_V1_HEADER) $(RELATIONAL_STORE_V1_HEADER) $(RELATIONAL_VALUE_LIST_V1_HEADER) $(GSLT_DENSE_BITSET_V1_HEADER) $(GSLT_INDEXED_INSTRUCTION_DECODER_V1_HEADER) $(GSLT_INDEXED_VALUE_TABLE_V1_HEADER) $(GSLT_LITERAL_HOLE_PROGRAM_V1_HEADER) $(GSLT_TWO_PHASE_FRAME_MACHINE_V1_HEADER) $(GSLT_U32_INDEX_V1_HEADER) $(GSLT_U32_SLICE_ARENA_V1_HEADER) $(GSLT_EPOCH_SLOTS_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(RELATIONAL_STATE_PROGRAM_V1_OBJ): $(RELATIONAL_STATE_PROGRAM_V1_SRC) $(RELATIONAL_STATE_PROGRAM_V1_HEADER) $(RELATIONAL_STACK_PROOF_V1_HEADER) $(RELATIONAL_STORE_V1_HEADER) $(RELATIONAL_VALUE_LIST_V1_HEADER) $(PARSER_OCCURRENCE_FOLD_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(RELATIONAL_STATE_TRANSACTION_V1_TEST_OBJ): \
 		$(RELATIONAL_STATE_TRANSACTION_V1_TEST_SRC) \
@@ -6470,7 +6555,7 @@ $(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_V1_OBJ): \
 		$(CERTIFICATE_GSLT_PLAN_V1_HEADER) \
 		$(RELATIONAL_STATE_PROGRAM_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(CERTIFICATE_GSLT_RELATIONAL_DECLARATION_V1_OBJ): \
 		$(CERTIFICATE_GSLT_RELATIONAL_DECLARATION_V1_SRC) \
@@ -6480,7 +6565,7 @@ $(CERTIFICATE_GSLT_RELATIONAL_DECLARATION_V1_OBJ): \
 		$(RELATIONAL_STORE_V1_HEADER) \
 		$(RELATIONAL_VALUE_LIST_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(CERTIFICATE_GSLT_RELATIONAL_MACHINE_V1_OBJ): \
 		$(CERTIFICATE_GSLT_RELATIONAL_MACHINE_V1_SRC) \
@@ -6498,11 +6583,11 @@ $(CERTIFICATE_GSLT_RELATIONAL_MACHINE_V1_OBJ): \
 		$(RELATIONAL_STORE_V1_HEADER) \
 		$(RELATIONAL_VALUE_LIST_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_PACK_CURSOR_COMPILE_V1_STREAM_OBJ): $(PARSER_PACK_CURSOR_COMPILE_V1_STREAM_SRC) $(PARSER_OCCURRENCE_FOLD_V1_HEADER) $(PARSER_OCCURRENCE_SPAN_MASK_V1_HEADER) $(PARSER_SOURCE_RESOLUTION_CONTROL_V1_HEADER) $(RELATIONAL_STATE_PROGRAM_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_PACK_CURSOR_COMPILE_V1_STREAM_BIN): $(PARSER_PACK_CURSOR_COMPILE_V1_STREAM_OBJ) $(PARSER_PACK_CURSOR_COMPILE_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6536,23 +6621,23 @@ build-parser-pack-cursor-generated-v1: $(PARSER_PACK_CURSOR_GENERATED_V1_LINK_OB
 
 $(PARSER_ATOM_PROJECTION_V1_OBJ): $(PARSER_ATOM_PROJECTION_V1_SRC) $(PARSER_ATOM_PROJECTION_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_ATOM_PROJECTION_EVENTS_V1_OBJ): $(PARSER_ATOM_PROJECTION_EVENTS_V1_SRC) $(PARSER_ATOM_PROJECTION_EVENTS_V1_HEADER) $(PARSER_ATOM_PROJECTION_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_ATOM_PROJECTION_ACTION_V1_OBJ): $(PARSER_ATOM_PROJECTION_ACTION_V1_SRC) $(PARSER_ATOM_PROJECTION_ACTION_V1_HEADER) $(PARSER_ATOM_PROJECTION_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_ATOM_PROJECTION_DOMAIN_V1_OBJ): $(PARSER_ATOM_PROJECTION_DOMAIN_V1_SRC) $(PARSER_ATOM_PROJECTION_DOMAIN_V1_HEADER) $(PARSER_ATOM_PROJECTION_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_ATOM_PROJECTION_CLOSURE_V1_OBJ): $(PARSER_ATOM_PROJECTION_CLOSURE_V1_SRC) $(PARSER_ATOM_PROJECTION_CLOSURE_V1_HEADER) $(PARSER_ATOM_PROJECTION_DOMAIN_V1_HEADER) $(PARSER_ATOM_PROJECTION_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_ATOM_PROJECTION_CLOSURE_V1_STREAM_BIN): $(PARSER_ATOM_PROJECTION_CLOSURE_V1_STREAM_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_ATOM_PROJECTION_CLOSURE_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6564,11 +6649,11 @@ $(PARSER_ATOM_PROJECTION_CLOSURE_V1_STREAM_BIN): $(PARSER_ATOM_PROJECTION_CLOSUR
 
 $(PARSER_ATOM_PROJECTION_CLOSURE_V1_STREAM_OBJ): $(PARSER_ATOM_PROJECTION_CLOSURE_V1_STREAM_SRC) $(PARSER_ATOM_PROJECTION_CLOSURE_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(SEMANTIC_MASK_NFA_V1_OBJ): $(SEMANTIC_MASK_NFA_V1_SRC) $(SEMANTIC_MASK_NFA_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(SEMANTIC_MASK_NFA_V1_STREAM_BIN): $(SEMANTIC_MASK_NFA_V1_STREAM_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(SEMANTIC_MASK_NFA_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6580,11 +6665,11 @@ $(SEMANTIC_MASK_NFA_V1_STREAM_BIN): $(SEMANTIC_MASK_NFA_V1_STREAM_OBJ) $(FINITE_
 
 $(SEMANTIC_MASK_NFA_V1_STREAM_OBJ): $(SEMANTIC_MASK_NFA_V1_STREAM_SRC) $(SEMANTIC_MASK_NFA_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_PACK_SEMANTIC_MASK_BINDING_V1_OBJ): $(PARSER_PACK_SEMANTIC_MASK_BINDING_V1_SRC) $(PARSER_PACK_SEMANTIC_MASK_BINDING_V1_HEADER) $(SEMANTIC_MASK_NFA_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(HE_DOCUMENT_PIPELINE_V1_STREAM_BIN): $(HE_DOCUMENT_PIPELINE_V1_STREAM_OBJ) $(HE_DOCUMENT_PIPELINE_V1_OBJ) $(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(HE_DOCUMENT_PIPELINE_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6596,7 +6681,7 @@ $(HE_DOCUMENT_PIPELINE_V1_STREAM_BIN): $(HE_DOCUMENT_PIPELINE_V1_STREAM_OBJ) $(H
 
 $(HE_DOCUMENT_PIPELINE_V1_STREAM_OBJ): $(HE_DOCUMENT_PIPELINE_V1_STREAM_SRC) $(HE_DOCUMENT_PIPELINE_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(HE_DOCUMENT_PIPELINE_V1_BENCH_BIN): $(HE_DOCUMENT_PIPELINE_V1_BENCH_OBJ) $(HE_DOCUMENT_PIPELINE_V1_OBJ) $(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(HE_DOCUMENT_PIPELINE_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6608,11 +6693,11 @@ $(HE_DOCUMENT_PIPELINE_V1_BENCH_BIN): $(HE_DOCUMENT_PIPELINE_V1_BENCH_OBJ) $(HE_
 
 $(HE_DOCUMENT_PIPELINE_V1_BENCH_OBJ): $(HE_DOCUMENT_PIPELINE_V1_BENCH_SRC) $(HE_DOCUMENT_PIPELINE_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(HE_DOCUMENT_PIPELINE_V1_OBJ): $(HE_DOCUMENT_PIPELINE_V1_SRC) $(HE_DOCUMENT_PIPELINE_V1_HEADER) $(PARSER_ATOM_PROJECTION_V1_HEADER) $(PARSER_ATOM_PROJECTION_EVENTS_V1_HEADER) $(PARSER_ATOM_PROJECTION_ACTION_V1_HEADER) $(PARSER_PACK_SEMANTIC_MASK_BINDING_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PETTA_DOCUMENT_PIPELINE_V1_BIN): $(PETTA_DOCUMENT_PIPELINE_V1_OBJ) $(PARSER_PACK_NATIVE_API_V1_OBJ) $(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PETTA_DOCUMENT_PIPELINE_V1_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6635,7 +6720,7 @@ $(PETTA_DOCUMENT_PIPELINE_V1_LIB): $(PETTA_DOCUMENT_PIPELINE_V1_OBJ) $(PETTA_DOC
 
 $(PETTA_DOCUMENT_PIPELINE_V1_OBJ): $(PETTA_DOCUMENT_PIPELINE_V1_SRC) $(PETTA_DOCUMENT_PIPELINE_V1_HEADER) $(PARSER_PACK_NATIVE_API_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_PACK_GLL_V1_STREAM_BIN): $(PARSER_PACK_GLL_V1_STREAM_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_PACK_GLL_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6647,11 +6732,11 @@ $(PARSER_PACK_GLL_V1_STREAM_BIN): $(PARSER_PACK_GLL_V1_STREAM_OBJ) $(PARSER_PACK
 
 $(PARSER_PACK_GLL_V1_STREAM_OBJ): $(PARSER_PACK_GLL_V1_STREAM_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ): $(PARSER_PACK_GLL_V1_STREAM_READER_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_PACK_SLR_SUMMARY_V1_STREAM_BIN): $(PARSER_PACK_SLR_SUMMARY_V1_STREAM_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_PACK_SLR_SUMMARY_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6663,7 +6748,7 @@ $(PARSER_PACK_SLR_SUMMARY_V1_STREAM_BIN): $(PARSER_PACK_SLR_SUMMARY_V1_STREAM_OB
 
 $(PARSER_PACK_SLR_SUMMARY_V1_STREAM_OBJ): $(PARSER_PACK_SLR_SUMMARY_V1_STREAM_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_PACK_GLR_V1_STREAM_BIN): $(PARSER_PACK_GLR_V1_STREAM_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_PACK_GLR_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6675,7 +6760,7 @@ $(PARSER_PACK_GLR_V1_STREAM_BIN): $(PARSER_PACK_GLR_V1_STREAM_OBJ) $(PARSER_PACK
 
 $(PARSER_PACK_GLR_V1_STREAM_OBJ): $(PARSER_PACK_GLR_V1_STREAM_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_PACK_NATIVE_API_V1_LIB): $(PARSER_PACK_NATIVE_API_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_PACK_NATIVE_API_V1_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6687,7 +6772,7 @@ $(PARSER_PACK_NATIVE_API_V1_LIB): $(PARSER_PACK_NATIVE_API_V1_OBJ) $(PARSER_PACK
 
 $(PARSER_PACK_NATIVE_API_V1_OBJ): $(PARSER_PACK_NATIVE_API_V1_SRC) $(PARSER_PACK_NATIVE_API_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(REGULAR_SPAN_DFA_V1_TEST_BIN): $(REGULAR_SPAN_DFA_V1_TEST_OBJ) $(REGULAR_SPAN_DFA_V1_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6699,7 +6784,7 @@ $(REGULAR_SPAN_DFA_V1_TEST_BIN): $(REGULAR_SPAN_DFA_V1_TEST_OBJ) $(REGULAR_SPAN_
 
 $(REGULAR_SPAN_DFA_V1_TEST_OBJ): $(REGULAR_SPAN_DFA_V1_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(REGULAR_SPAN_NFA_V1_TEST_BIN): $(REGULAR_SPAN_NFA_V1_TEST_OBJ) $(REGULAR_SPAN_NFA_V1_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6711,7 +6796,7 @@ $(REGULAR_SPAN_NFA_V1_TEST_BIN): $(REGULAR_SPAN_NFA_V1_TEST_OBJ) $(REGULAR_SPAN_
 
 $(REGULAR_SPAN_NFA_V1_TEST_OBJ): $(REGULAR_SPAN_NFA_V1_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(REGULAR_SPAN_DFA_V1_STREAM_BIN): $(REGULAR_SPAN_DFA_V1_STREAM_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(REGULAR_SPAN_DFA_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6723,18 +6808,18 @@ $(REGULAR_SPAN_DFA_V1_STREAM_BIN): $(REGULAR_SPAN_DFA_V1_STREAM_OBJ) $(FINITE_HO
 
 $(REGULAR_SPAN_DFA_V1_STREAM_OBJ): $(REGULAR_SPAN_DFA_V1_STREAM_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(FINITE_HORN_ANSWER_STREAM_V1_OBJ): $(FINITE_HORN_ANSWER_STREAM_V1_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_PACK_TRANSPARENT_INLINE_NATIVE_V1_OBJ): \
 		$(PARSER_PACK_TRANSPARENT_INLINE_NATIVE_V1_SRC) \
 		$(PARSER_PACK_TRANSPARENT_INLINE_NATIVE_V1_HEADER) \
 		$(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PARSER_ACTION_BYTECODE_V1_STREAM_BIN): $(PARSER_ACTION_BYTECODE_V1_STREAM_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_ACTION_BYTECODE_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6746,21 +6831,21 @@ $(PARSER_ACTION_BYTECODE_V1_STREAM_BIN): $(PARSER_ACTION_BYTECODE_V1_STREAM_OBJ)
 
 $(PARSER_ACTION_BYTECODE_V1_STREAM_OBJ): $(PARSER_ACTION_BYTECODE_V1_STREAM_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 # stdlib objects depend on the generated blob header
 src/cetta_stdlib.$(BUILD_OBJ_TAG).o: src/cetta_stdlib.c src/cetta_stdlib.h $(STDLIB_BLOB) $(STDLIB_BLOB_STAMP) $(BUILD_CONFIG_HEADER)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 src/cetta_stdlib.$(BUILD_OBJ_TAG).runtime-stats.o: src/cetta_stdlib.c src/cetta_stdlib.h $(STDLIB_BLOB) $(STDLIB_BLOB_STAMP) $(BUILD_CONFIG_HEADER)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 # Native ABT objects depend on the blob generated from the importable equation.
 src/abt.$(BUILD_OBJ_TAG).o: src/abt.c src/abt.h src/atom_blob.h $(ABT_DEFAULT_SIGNATURES_BLOB) $(ABT_DEFAULT_SIGNATURES_BLOB_STAMP) $(BUILD_CONFIG_HEADER)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 src/abt.$(BUILD_OBJ_TAG).runtime-stats.o: src/abt.c src/abt.h src/atom_blob.h $(ABT_DEFAULT_SIGNATURES_BLOB) $(ABT_DEFAULT_SIGNATURES_BLOB_STAMP) $(BUILD_CONFIG_HEADER)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(RULE_MACHINE_PROGRAM_GENERATED_V1): \
 		$(RULE_MACHINE_CORE_GSLT_V1) \
@@ -6821,21 +6906,21 @@ $(LANGDEF_COMPILER_V1_OBJ): $(LANGDEF_COMPILER_V1_SRC) \
 		$(PARSER_PACK_TRANSPARENT_INLINE_NATIVE_V1_HEADER) \
 		$(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(LANGDEF_FINITE_HORN_GSLT_V1_OBJ): \
 		experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c \
 		experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.h \
 		$(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(LANGDEF_METTA_EQUATION_COMPILER_V1_OBJ): \
 		native/langdef_metta_equation_compiler_v1.c \
 		native/langdef_metta_equation_compiler_v1.h \
 		$(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(LANGDEF_GSLT_PETTA_DIRECT_V1_OBJ): \
 		native/gslt_petta_direct_v1.c \
@@ -6843,7 +6928,7 @@ $(LANGDEF_GSLT_PETTA_DIRECT_V1_OBJ): \
 		native/gslt_composition_v1.h \
 		$(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(LANGDEF_GSLT_RHOMETTA_DIRECT_V1_OBJ): \
 		native/gslt_rhometta_direct_v1.c \
@@ -6851,7 +6936,7 @@ $(LANGDEF_GSLT_RHOMETTA_DIRECT_V1_OBJ): \
 		native/gslt_composition_v1.h \
 		$(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(LANGDEF_GSLT_COMPOSITION_V1_OBJ): \
 		native/gslt_composition_v1.c \
@@ -6859,23 +6944,20 @@ $(LANGDEF_GSLT_COMPOSITION_V1_OBJ): \
 		src/native_sha256.h \
 		$(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(LANGDEF_ARTIFACT_V1_OBJ): native/langdef_module.c \
 		native/langdef_module.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_LANGDEF_ARTIFACT_ONLY=1 \
-		$(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) -DCETTA_LANGDEF_ARTIFACT_ONLY=1 $(DEPFLAGS))
 
 $(LANGDEF_PARSER_V1_OBJ): src/parser.c src/parser.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
-		$(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections $(DEPFLAGS))
 
 runtime/bootstrap/runtime_stats_sectioned.$(BUILD_OBJ_TAG).runtime-stats.o: src/stats.c src/stats.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
-		$(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections $(DEPFLAGS))
 
 $(LANGDEF_COMPILER_V1_BIN): $(LANGDEF_COMPILER_V1_OBJ) \
 		$(LANGDEF_FINITE_HORN_GSLT_V1_OBJ) \
@@ -6896,8 +6978,7 @@ $(LANGDEF_COMPILER_V1_BIN): $(LANGDEF_COMPILER_V1_OBJ) \
 
 runtime/bootstrap/gslt_metadata_v1/%.$(GSLT_METADATA_V1_OBJ_TAG).o: %.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
-		$(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections $(DEPFLAGS))
 
 -include $(GSLT_METADATA_NATIVE_V1_OBJ:.o=.d) \
 	$(GSLT_METADATA_STATS_V1_OBJ:.o=.d) \
@@ -6913,8 +6994,7 @@ runtime/bootstrap/gslt_metadata_v1/%.$(GSLT_METADATA_V1_OBJ_TAG).o: %.c $(BUILD_
 
 $(NIK_AUTHORITY_CATALOG_ABT_V1_OBJ): src/abt.c src/abt.h src/atom_blob.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_NO_STDLIB -ffunction-sections -fdata-sections \
-		$(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) -DCETTA_NO_STDLIB -ffunction-sections -fdata-sections $(DEPFLAGS))
 
 $(NIK_AUTHORITY_CATALOG_NATIVE_V1_BIN): $(NIK_AUTHORITY_CATALOG_NATIVE_V1_OBJ) $(GSLT_METADATA_STATS_V1_OBJ)
 	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ $(LDFLAGS)
@@ -17569,10 +17649,10 @@ test-tptp-langdef-load-bearing-mutations-v1: $(BIN) \
 	echo '(TPTPLangDefLoadBearingMutationsV1Summary 6 6 0)'
 
 %.$(BUILD_OBJ_TAG).o: %.c $(BUILD_CONFIG_HEADER)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 %.$(BUILD_OBJ_TAG).runtime-stats.o: %.c $(BUILD_CONFIG_HEADER)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 clean:
 	rm -f $(OBJ) $(STAGE0_OBJ) $(DEPS) $(BIN) $(STAGE0_BIN) cetta-stage0 \
@@ -20486,15 +20566,16 @@ test-prime-occurs-check-mutation: $(BIN)
 	if [ "$$baseline" != "$$expected" ]; then \
 		echo "FAIL: occurs-check mutation baseline is not green"; exit 1; \
 	fi; \
-	unsound=$$("$$mutation_dir/cetta-no-occurs-check" \
+	unsound=$$(timeout $(PRIME_COMPLETION_TIMEOUT) \
+		"$$mutation_dir/cetta-no-occurs-check" \
 		--lang prime "$$fixture" 2>&1); \
 	if [ "$$unsound" = "$$expected" ] || \
 	   ! printf '%s\n' "$$unsound" | grep -Fxq '[AcyclicSearchAccepted]' || \
-	   ! printf '%s\n' "$$unsound" | grep -Fxq '[CyclicSearchUnsound]'; then \
+	   ! printf '%s\n' "$$unsound" | grep -Fxq '[CyclicBindingAdmitted]'; then \
 		echo "FAIL: bind-time occurs-check mutation survived its soundness gate"; \
 		exit 1; \
 	fi; \
-	echo "PASS: finite-tree proof search and replay pass; unchecked binding kernel mutation is killed"
+	echo "PASS: finite-tree proof search, replay and unification pass; unchecked binding kernel mutation is killed"
 
 test-prime-completion-mutation: $(BIN)
 	@mutation_dir=runtime/prime-completion-mutation; \
@@ -22252,7 +22333,15 @@ example-petta-recursive-chain-division: $(BIN)
 	fi; \
 	echo "PASS: recursive-chain division example"
 
-test-prime-all: test-prime test-prime-relational-plan test-prime-need-algebra \
+test-curriculum-port-repairs: $(BIN) test-curriculum-lf-normalization
+	python3 tests/typed_conversion/test_curriculum_port_repairs.py --binary "$(abspath $(BIN))"
+
+test-curriculum-lf-normalization: $(BIN)
+	python3 tests/typed_conversion/test_cic_lf_normalization.py --binary "$(abspath $(BIN))" --evidence runtime/curriculum-lf-normalization
+
+.PHONY: test-curriculum-port-repairs test-curriculum-lf-normalization
+
+test-prime-all: test-prime test-prime-relational-plan test-prime-need-algebra test-curriculum-port-repairs \
 	test-prime-need-he-noninterference \
 	test-prime-need-correspondence \
 	test-prime-need-gc-lifetime \
@@ -22283,8 +22372,43 @@ test-prime-all: test-prime test-prime-relational-plan test-prime-need-algebra \
 	test-prime-abt-let-mutation \
 	test-prime-abt-sealed-mutation \
 	test-prime-applicability-capacity-mutation \
-	test-prime-type-capacity-mutation
+	test-prime-type-capacity-mutation \
+	test-prime-bare-dollar-tournament \
+	test-prime-equation-call-constitution \
+	test-prime-compiled-reader-v1 \
+	test-prime-practical \
+	test-prime-runtime-stats \
+	test-prime-need-closure-capture-build \
+	test-prime-nik-megalodon-v1 \
+	test-prime-nik-megalodon-term-v1 \
+	test-prime-nik-megalodon-polymorphic-v1 \
+	test-prime-nik-megalodon-known-implication-v1 \
+	test-prime-nik-megalodon-definition-v1 \
+	test-prime-nik-megalodon-declarations-v1 \
+	test-prime-nik-megalodon-tactics-package-v1 \
+	test-prime-nik-megalodon-native-use-v1
 	@echo "PASS: full Prime correctness gate"
+
+# The Prime gates that read runtime statistics run in the runtime-stats
+# build of the same configuration.
+.PHONY: test-prime-runtime-stats
+test-prime-runtime-stats:
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-prime-eval-stack-stats \
+		test-prime-need-heap-index-stats \
+		test-prime-need-planner-stats \
+		test-prime-relational-plan-stats \
+		test-prime-prepared-control-program-cache-stats \
+		test-prime-prepared-match-decision-stats
+
+# The exact closure-capture gates run in the closure-capture build, the
+# second one with runtime statistics as well.
+.PHONY: test-prime-need-closure-capture-build
+test-prime-need-closure-capture-build:
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_PRIME_NEED_CLOSURE_CAPTURE=1 \
+		test-prime-need-closure-capture
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_PRIME_NEED_CLOSURE_CAPTURE=1 \
+		ENABLE_RUNTIME_STATS=1 test-prime-need-closure-capture-stats
 
 .PHONY: test-bounded-select-threads
 test-bounded-select-threads: $(BIN)
@@ -28127,7 +28251,7 @@ test-prepared-pure-answer-producer: $(PREPARED_PURE_ANSWER_TEST_BIN)
 
 $(PREPARED_PURE_ANSWER_TEST_OBJ): tests/test_prepared_pure_answer_producer.c src/prepared_pure_machine.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(PREPARED_PURE_ANSWER_TEST_BIN): $(PREPARED_PURE_ANSWER_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
@@ -30502,20 +30626,17 @@ $(OSLF_NATIVE_TYPE_VM_V1_TEST_OBJ): \
 
 $(OSLF_NATIVE_TYPE_VM_V1_MATCH_OBJ): src/match.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
-		$(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections $(DEPFLAGS))
 
 $(OSLF_NATIVE_TYPE_VM_V1_VARIANT_OBJ): \
 		src/variant_shape.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
-		$(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections $(DEPFLAGS))
 
 $(OSLF_NATIVE_TYPE_VM_V1_PRIME_NEED_OBJ): \
 		src/prime_need.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
-		$(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections $(DEPFLAGS))
 
 $(OSLF_NATIVE_TYPE_VM_V1_TEST_BIN): \
 		$(OSLF_NATIVE_TYPE_VM_V1_TEST_OBJ) \
@@ -32965,7 +33086,8 @@ test-prime-nik-qualification-v1: \
 		test-prime-nik-megalodon-definition-v1 \
 		test-prime-nik-megalodon-tactics-package-v1 \
 		test-prime-nik-megalodon-declarations-v1 \
-		test-prime-nik-megalodon-native-use-v1
+		test-prime-nik-megalodon-native-use-v1 \
+		test-prime-nik-hotg-family-library-v1
 	@set -eu; \
 	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
 	if [ -z "$$lean_root" ] && \
@@ -35920,19 +36042,18 @@ $(OPERATIONAL_LANGUAGE_DEF_V1_NATIVE_PARSER_OBJ): \
 		src/lib_parse_native_grammar.h \
 		src/gslt_dense_bitset_v1.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
-		$(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections $(DEPFLAGS))
 
 $(OPERATIONAL_LANGUAGE_DEF_V1_ALLOC_OBJ): \
 		native/cetta_standalone_alloc_v1.c src/atom.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(OPERATIONAL_LANGUAGE_DEF_V1_TEST_OBJ): \
 		$(OPERATIONAL_LANGUAGE_DEF_V1_TEST_SRC) \
 		$(OPERATIONAL_LANGUAGE_DEF_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(OPERATIONAL_LANGUAGE_DEF_V1_TEST_BIN): \
 		$(OPERATIONAL_LANGUAGE_DEF_V1_TEST_OBJ) \
@@ -35963,14 +36084,14 @@ $(LANGUAGE_DEF_PFR_V1_OBJ): \
 		$(LANGUAGE_DEF_PFR_V1_SRC) \
 		$(LANGUAGE_DEF_PFR_V1_HEADER) \
 		$(OPERATIONAL_LANGUAGE_DEF_V1_HEADER) $(BUILD_CONFIG_HEADER)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(LANGUAGE_DEF_PFR_V1_TEST_OBJ): \
 		$(LANGUAGE_DEF_PFR_V1_TEST_SRC) \
 		$(LANGUAGE_DEF_PFR_V1_HEADER) \
 		$(OPERATIONAL_LANGUAGE_DEF_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(LANGUAGE_DEF_PFR_V1_TEST_BIN): \
 		$(LANGUAGE_DEF_PFR_V1_TEST_OBJ) \
@@ -36023,28 +36144,28 @@ $(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_OBJ): \
 		$(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_SRC) $(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_HEADER) \
 		$(RADIX_DIGIT_TARGET_PROGRAM_V1_HEADER) \
 		$(OPERATIONAL_LANGUAGE_DEF_V1_HEADER) $(BUILD_CONFIG_HEADER)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(RADIX_DIGIT_TARGET_PROGRAM_V1_OBJ): \
 		$(RADIX_DIGIT_TARGET_PROGRAM_V1_SRC) $(RADIX_DIGIT_TARGET_PROGRAM_V1_HEADER) \
 		$(BUILD_CONFIG_HEADER)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(RADIX_DIGIT_REFERENCE_EVALUATOR_V1_OBJ): \
 		$(RADIX_DIGIT_REFERENCE_EVALUATOR_V1_SRC) $(RADIX_DIGIT_REFERENCE_EVALUATOR_V1_HEADER) \
 		$(RADIX_DIGIT_TARGET_PROGRAM_V1_HEADER) $(BUILD_CONFIG_HEADER)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(RADIX_DIGIT_C_EMITTER_V1_OBJ): \
 		$(RADIX_DIGIT_C_EMITTER_V1_SRC) $(RADIX_DIGIT_C_EMITTER_V1_HEADER) \
 		$(RADIX_DIGIT_TARGET_PROGRAM_V1_HEADER) $(BUILD_CONFIG_HEADER)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_EMIT_OBJ): \
 		$(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_EMIT_SRC) $(RADIX_DIGIT_C_EMITTER_V1_HEADER) \
 		$(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_EMIT_BIN): \
 		$(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_EMIT_OBJ) $(RADIX_DIGIT_C_EMITTER_V1_OBJ) \
@@ -36062,7 +36183,7 @@ $(WALTERS_ZANTEMA_DA_RADIX_DIGIT_V1_REFERENCE_OBJ): \
 		$(WALTERS_ZANTEMA_DA_RADIX_DIGIT_V1_REFERENCE_SRC) $(RADIX_DIGIT_REFERENCE_EVALUATOR_V1_HEADER) \
 		$(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(WALTERS_ZANTEMA_DA_RADIX_DIGIT_V1_REFERENCE_BIN): \
 		$(WALTERS_ZANTEMA_DA_RADIX_DIGIT_V1_REFERENCE_OBJ) $(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_OBJ) \
@@ -36082,7 +36203,7 @@ $(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_TEST_OBJ): \
 		$(LANGUAGE_DEF_PFR_V1_HEADER) \
 		$(OPERATIONAL_LANGUAGE_DEF_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_TEST_BIN): \
 		$(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_TEST_OBJ) $(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_OBJ) \
@@ -36106,13 +36227,13 @@ $(WALTERS_ZANTEMA_DA_RADIX_DIGIT_NIK_V1_OBJ): \
 		$(RADIX_DIGIT_REFERENCE_EVALUATOR_V1_HEADER) $(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_HEADER) \
 		src/nik_hosted_calculus.h src/nik_direct_authority.h \
 		src/native_sha256.h $(BUILD_CONFIG_HEADER)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(WALTERS_ZANTEMA_DA_RADIX_DIGIT_NIK_V1_TEST_OBJ): \
 		$(WALTERS_ZANTEMA_DA_RADIX_DIGIT_NIK_V1_TEST_SRC) $(WALTERS_ZANTEMA_DA_RADIX_DIGIT_NIK_V1_HEADER) \
 		$(OPERATIONAL_LANGUAGE_DEF_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(WALTERS_ZANTEMA_DA_RADIX_DIGIT_NIK_V1_TEST_BIN): \
 		$(WALTERS_ZANTEMA_DA_RADIX_DIGIT_NIK_V1_TEST_OBJ) $(WALTERS_ZANTEMA_DA_RADIX_DIGIT_NIK_V1_OBJ) \
@@ -36404,7 +36525,7 @@ $(LANGUAGE_DEF_CORE_V1_TEST_OBJ): \
 		$(LANGUAGE_DEF_CORE_V1_HEADER) \
 		$(OPERATIONAL_LANGUAGE_DEF_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(LANGUAGE_DEF_CORE_V1_TEST_BIN): \
 		$(LANGUAGE_DEF_CORE_V1_TEST_OBJ) \
@@ -36446,7 +36567,7 @@ $(LANGUAGE_DEF_GROUND_TERM_V1_TEST_OBJ): \
 		$(LANGUAGE_DEF_CORE_V1_HEADER) \
 		$(OPERATIONAL_LANGUAGE_DEF_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(LANGUAGE_DEF_GROUND_TERM_V1_TEST_BIN): \
 		$(LANGUAGE_DEF_GROUND_TERM_V1_TEST_OBJ) \
@@ -36490,7 +36611,7 @@ $(LANGUAGE_DEF_CONTEXTUAL_RUNNER_V1_OBJ): \
 		$(LANGUAGE_DEF_CONTEXTUAL_RUNNER_V1_SRC) \
 		$(LANGUAGE_DEF_CONTEXTUAL_RUNNER_V1_HEADER) \
 		$(LANGUAGE_DEF_CORE_V1_HEADER) $(BUILD_CONFIG_HEADER)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(LANGUAGE_DEF_CONTEXTUAL_RUNNER_V1_TEST_OBJ): \
 		$(LANGUAGE_DEF_CONTEXTUAL_RUNNER_V1_TEST_SRC) \
@@ -36498,7 +36619,7 @@ $(LANGUAGE_DEF_CONTEXTUAL_RUNNER_V1_TEST_OBJ): \
 		$(LANGUAGE_DEF_CORE_V1_HEADER) \
 		$(OPERATIONAL_LANGUAGE_DEF_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(LANGUAGE_DEF_CONTEXTUAL_RUNNER_V1_TEST_BIN): \
 		$(LANGUAGE_DEF_CONTEXTUAL_RUNNER_V1_TEST_OBJ) \
@@ -36861,7 +36982,7 @@ STRUCTURED_PARSER_VALUE_V1_LINK_OBJ = $(filter-out native/langdef_module.%,$(OBJ
 $(STRUCTURED_PARSER_VALUE_V1_TEST_OBJ): tests/support/test_structured_parser_value_v1.c \
 		native/langdef_module.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 -include $(STRUCTURED_PARSER_VALUE_V1_TEST_OBJ:.o=.d)
 
@@ -36882,7 +37003,7 @@ PETTA_OPEN_CONS_SUMMARY_V1_TEST_BIN = runtime/test_petta_open_cons_summary_v1-$(
 
 $(PETTA_OPEN_CONS_SUMMARY_V1_TEST_OBJ): tests/support/test_petta_open_cons_summary_v1.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 -include $(PETTA_OPEN_CONS_SUMMARY_V1_TEST_OBJ:.o=.d)
 
@@ -36902,7 +37023,7 @@ VARIABLE_SUPPORT_COLLECTION_V1_TEST_BIN = runtime/test_variable_support_collecti
 
 $(VARIABLE_SUPPORT_COLLECTION_V1_TEST_OBJ): tests/support/test_variable_support_collection_v1.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 -include $(VARIABLE_SUPPORT_COLLECTION_V1_TEST_OBJ:.o=.d)
 
@@ -37805,7 +37926,7 @@ $(EXACT_INTEGER_THEORY_V1_TEST_OBJ): \
 		$(EXACT_INTEGER_THEORY_V1_HEADER) \
 		$(OPERATIONAL_LANGUAGE_DEF_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(EXACT_INTEGER_THEORY_V1_TEST_BIN): \
 		$(EXACT_INTEGER_THEORY_V1_TEST_OBJ) \
@@ -37876,12 +37997,12 @@ $(EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_OBJ): \
 		$(EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_SRC) \
 		$(EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_HEADER) \
 		$(LANGUAGE_DEF_CORE_V1_HEADER) $(BUILD_CONFIG_HEADER)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(STRUCTURED_C_PROFILE_V1_OBJ): \
 		$(STRUCTURED_C_PROFILE_V1_SRC) $(STRUCTURED_C_PROFILE_V1_HEADER) \
 		$(LANGUAGE_DEF_CORE_V1_HEADER) $(BUILD_CONFIG_HEADER)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(EXTERNAL_CALL_TO_STRUCTURED_C_V1_OBJ): \
 		$(EXTERNAL_CALL_TO_STRUCTURED_C_V1_SRC) \
@@ -37889,13 +38010,13 @@ $(EXTERNAL_CALL_TO_STRUCTURED_C_V1_OBJ): \
 		$(STRUCTURED_C_PROFILE_V1_HEADER) \
 		$(EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_HEADER) \
 		$(LANGUAGE_DEF_CORE_V1_HEADER) $(BUILD_CONFIG_HEADER)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(STRUCTURED_C_EMITTER_V1_OBJ): \
 		$(STRUCTURED_C_EMITTER_V1_SRC) $(STRUCTURED_C_EMITTER_V1_HEADER) \
 		$(STRUCTURED_C_PROFILE_V1_HEADER) \
 		$(LANGUAGE_DEF_CORE_V1_HEADER) $(BUILD_CONFIG_HEADER)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(EXACT_ARITHMETIC_EXTERNAL_CALL_EMIT_V1_OBJ): \
 		$(EXACT_ARITHMETIC_EXTERNAL_CALL_EMIT_V1_SRC) \
@@ -37904,7 +38025,7 @@ $(EXACT_ARITHMETIC_EXTERNAL_CALL_EMIT_V1_OBJ): \
 		$(EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_HEADER) \
 		$(LANGUAGE_DEF_CORE_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(EXACT_ARITHMETIC_EXTERNAL_CALL_EMIT_V1_BIN): \
 		$(EXACT_ARITHMETIC_EXTERNAL_CALL_EMIT_V1_OBJ) \
@@ -37927,7 +38048,7 @@ $(EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_TEST_OBJ): \
 		$(EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_HEADER) \
 		$(LANGUAGE_DEF_CORE_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_TEST_BIN): \
 		$(EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_TEST_OBJ) \
@@ -37949,7 +38070,7 @@ $(EXTERNAL_CALL_TO_STRUCTURED_C_V1_TEST_OBJ): \
 		$(EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_HEADER) \
 		$(LANGUAGE_DEF_CORE_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(EXTERNAL_CALL_TO_STRUCTURED_C_V1_TEST_BIN): \
 		$(EXTERNAL_CALL_TO_STRUCTURED_C_V1_TEST_OBJ) \
@@ -37972,7 +38093,7 @@ $(ARITHMETIC_TARGET_COPRODUCT_V1_TEST_OBJ): \
 		$(LANGUAGE_DEF_CORE_V1_HEADER) \
 		$(OPERATIONAL_LANGUAGE_DEF_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(ARITHMETIC_TARGET_COPRODUCT_V1_TEST_BIN): \
 		$(ARITHMETIC_TARGET_COPRODUCT_V1_TEST_OBJ) \
@@ -38007,7 +38128,7 @@ $(EXACT_ARITHMETIC_EXTERNAL_CALL_GENERATED_V1_OBJ): \
 		$(EXACT_ARITHMETIC_EXTERNAL_CALL_GENERATED_V1_C) \
 		$(EXTERNAL_CALL_GENERATED_ABI_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(EXACT_ARITHMETIC_EXTERNAL_CALL_GENERATED_V1_TEST_OBJ): \
 		$(EXACT_ARITHMETIC_EXTERNAL_CALL_GENERATED_V1_TEST_SRC) \
@@ -38080,16 +38201,15 @@ IO_BENCH_REQUESTS ?= 64
 
 $(IO_RUNTIME_TEST_OBJ): $(IO_RUNTIME_TEST_SRC) src/library_io.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(IO_RUNTIME_BENCH_OBJ): $(IO_RUNTIME_BENCH_SRC) src/library_io.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(IO_RUNTIME_MUTATION_OBJ): src/library_io.c src/library_io.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_IO_MUTATION_REPLAY_COMPLETION=1 \
-		$(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) -DCETTA_IO_MUTATION_REPLAY_COMPLETION=1 $(DEPFLAGS))
 
 $(IO_RUNTIME_TEST_BIN): $(IO_RUNTIME_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
