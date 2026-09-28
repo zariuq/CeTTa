@@ -26,7 +26,7 @@
   {
     "name": "grid",
     "lang": "petta",
-    "stdout_sha256": "ef2fd3e711060cc711268cfb2342678e125eca4b39535382cc41a47e64328188",
+    "stdout_sha256": "bb4c9cafc614fc85df27dc68dce2db0cfa8eb6b659eb36cf9f0b724e1461c0a2",
     "source": "benchmarks/inference_cost_axes/B_grid_n6.metta"
   },
   {
@@ -50,7 +50,7 @@
   {
     "name": "loowoz",
     "lang": "petta",
-    "stdout_sha256": "1188f07c7c7fb54e2b82f5cc846869c01e7d4af6b2fc22be1e18e1c6f9bd4c7f",
+    "stdout_sha256": "7f4305fb19d2fd7ef40a390b715ea9fcc7b8a92dc8b2f1f915656275fead3765",
     "source": "benchmarks/chaining/loowoz_petta_s19.metta",
     "repetitions": 2,
     "reference": {
@@ -207,7 +207,7 @@
   {
     "name": "K3_loowoz_open_mp",
     "lang": "petta",
-    "stdout_sha256": "1188f07c7c7fb54e2b82f5cc846869c01e7d4af6b2fc22be1e18e1c6f9bd4c7f",
+    "stdout_sha256": "7f4305fb19d2fd7ef40a390b715ea9fcc7b8a92dc8b2f1f915656275fead3765",
     "source": "benchmarks/inference_cost_axes/K3_loowoz_open_mp.metta"
   },
   {

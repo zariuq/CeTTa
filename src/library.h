@@ -173,6 +173,17 @@ typedef struct CettaLibraryContext {
     uint64_t petta_tabled_symbol_table_instance;
     CettaPettaMemoState petta_memo;
     struct PettaMachineTable *petta_shared_table;
+    /* The open equation tier's compiled programs, kept for the session:
+     * each serves while its Space program and the admission facts it was
+     * compiled under are current.  Owned by the evaluator, which frees it
+     * through `petta_open_programs_free`. */
+    void *petta_open_programs;
+    void (*petta_open_programs_free)(void *programs);
+    /* The search machine's compiled match decisions, kept for the session
+     * per space; owned by the evaluator, which frees them through
+     * `petta_match_decisions_free`. */
+    void *petta_match_decisions;
+    void (*petta_match_decisions_free)(void *decisions);
     bool prime_relational_plan_enabled;
     struct CettaPettaRuntimeState *petta_runtime;
     PettaProgram *petta_program;

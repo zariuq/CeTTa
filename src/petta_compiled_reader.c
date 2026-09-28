@@ -4,6 +4,7 @@
 #include "gslt_direct_reader_v1.h"
 #include "petta_numeric.h"
 #include "symbol.h"
+#include "var_index.h"
 
 #include <limits.h>
 #include <stdarg.h>
@@ -21,6 +22,7 @@ typedef struct {
     PeTTaVariableEntryV1 *variables;
     uint32_t variable_len;
     uint32_t variable_cap;
+    CettaVarIndex variable_index;
     bool form_active;
 } PeTTaProjectionContextV1;
 
@@ -103,13 +105,25 @@ static AtomId petta_projection_variable_bytes(
     if (anonymous) {
         variable = fresh_var_id();
     } else {
-        for (uint32_t index = 0u; index < context->variable_len; index++) {
-            if (context->variables[index].spelling == spelling) {
-                return tu_intern_var(
-                    context->universe, spelling,
-                    context->variables[index].variable);
+        uint32_t found = UINT32_MAX;
+        if (context->variable_len <= CETTA_VAR_INDEX_SCAN ||
+            !context->variable_index.slots) {
+            for (uint32_t index = 0u; index < context->variable_len; index++) {
+                if (context->variables[index].spelling == spelling) {
+                    found = index;
+                    break;
+                }
             }
+        } else {
+            uint32_t proposed = cetta_var_index_propose(
+                &context->variable_index, (VarId)spelling);
+            if (proposed < context->variable_len &&
+                context->variables[proposed].spelling == spelling)
+                found = proposed;
         }
+        if (found != UINT32_MAX)
+            return tu_intern_var(context->universe, spelling,
+                                 context->variables[found].variable);
         variable = fresh_var_id();
         if (context->variable_len == context->variable_cap) {
             uint32_t next = context->variable_cap
@@ -124,6 +138,20 @@ static AtomId petta_projection_variable_bytes(
         }
         context->variables[context->variable_len++] =
             (PeTTaVariableEntryV1){spelling, variable};
+        if (context->variable_len > CETTA_VAR_INDEX_SCAN) {
+            if (context->variable_len == CETTA_VAR_INDEX_SCAN + 1u ||
+                !cetta_var_index_has_room(&context->variable_index)) {
+                if (!cetta_var_index_reset(&context->variable_index,
+                                            context->variable_len))
+                    return CETTA_ATOM_ID_NONE;
+                for (uint32_t index = 0u; index < context->variable_len; index++)
+                    cetta_var_index_record(&context->variable_index,
+                        (VarId)context->variables[index].spelling, index);
+            } else {
+                cetta_var_index_record(&context->variable_index,
+                    (VarId)spelling, context->variable_len - 1u);
+            }
+        }
     }
     return tu_intern_var(context->universe, spelling, variable);
 }
@@ -267,6 +295,7 @@ int petta_compiled_reader_v1_parse_bytes_ids(
     result = petta_reader_direct_v1_parse_bytes_ids(
         input, input_len, &projection, out_ids, &direct_receipt,
         error_buf, error_buf_size);
+    cetta_var_index_free(&context.variable_index);
     free(context.variables);
     if (result < 0)
         return -1;

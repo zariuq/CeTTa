@@ -10,6 +10,8 @@ struct CettaForeignRuntime {
     int unavailable;
 };
 
+void cetta_foreign_drain_releases(void) {}
+
 static const char *CETTA_FOREIGN_DISABLED_MSG =
     "python foreign modules require a Python-enabled build (BUILD=python or BUILD=main)";
 

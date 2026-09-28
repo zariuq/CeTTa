@@ -1,0 +1,7 @@
+400
+300
+done
+200
+300000
+(Pair (Cons 4 (Cons 3 (Cons 2 (Cons 1 ())))) 4)
+(Pair (Cons 4 (Cons 3 (Cons 2 (Cons 1 ())))) 4)

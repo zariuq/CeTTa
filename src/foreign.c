@@ -6,23 +6,109 @@
 #include "parser.h"
 #include <ctype.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
+/* A foreign object as the runtime holds it.  Every arena that holds an atom
+ * of the record holds the record once for that atom (atom_foreign); when the
+ * last hold goes the record is freed, and its object waits for
+ * cetta_foreign_drain_releases, since a hold may go during an arena reset,
+ * where running Python code is not safe. */
 typedef struct CettaForeignValue {
+    /* First, so that atom_foreign finds it. */
+    CettaForeignHold hold;
+    atomic_uint_fast64_t holds;
     CettaForeignBackendKind backend;
     bool callable;
     bool unwrap;
     PyObject *obj;
+    /* The runtime whose list holds the record; NULL once it is freed. */
+    struct CettaForeignRuntime *runtime;
+    struct CettaForeignValue *prev;
     struct CettaForeignValue *next;
 } CettaForeignValue;
 
 struct CettaForeignRuntime {
     CettaForeignValue *values;
 };
+
+/* The runtimes' record lists, and the objects of released records. */
+static pthread_mutex_t g_foreign_records_mutex = PTHREAD_MUTEX_INITIALIZER;
+static PyObject **g_foreign_released = NULL;
+static size_t g_foreign_released_len = 0;
+static size_t g_foreign_released_cap = 0;
+
+static void foreign_record_retain(void *record) {
+    CettaForeignValue *value = record;
+    atomic_fetch_add_explicit(&value->holds, 1u, memory_order_relaxed);
+}
+
+static void foreign_record_unlink_locked(CettaForeignValue *value) {
+    if (value->prev)
+        value->prev->next = value->next;
+    else if (value->runtime)
+        value->runtime->values = value->next;
+    if (value->next)
+        value->next->prev = value->prev;
+    value->prev = NULL;
+    value->next = NULL;
+}
+
+static void foreign_record_release(void *record) {
+    CettaForeignValue *value = record;
+    if (atomic_fetch_sub_explicit(&value->holds, 1u,
+                                  memory_order_acq_rel) != 1u)
+        return;
+    (void)pthread_mutex_lock(&g_foreign_records_mutex);
+    if (value->runtime)
+        foreign_record_unlink_locked(value);
+    if (value->obj) {
+        if (g_foreign_released_len == g_foreign_released_cap) {
+            g_foreign_released_cap =
+                g_foreign_released_cap ? 2u * g_foreign_released_cap : 64u;
+            g_foreign_released = cetta_realloc(
+                g_foreign_released,
+                sizeof(*g_foreign_released) * g_foreign_released_cap);
+        }
+        g_foreign_released[g_foreign_released_len++] = value->obj;
+    }
+    (void)pthread_mutex_unlock(&g_foreign_records_mutex);
+    free(value);
+}
+
+/* Release the queued objects; the caller holds the GIL.  An object's
+ * finalizer may release more records, so the queue is taken until empty. */
+static void foreign_drain_released_with_gil(void) {
+    for (;;) {
+        (void)pthread_mutex_lock(&g_foreign_records_mutex);
+        PyObject **objects = g_foreign_released;
+        size_t len = g_foreign_released_len;
+        g_foreign_released = NULL;
+        g_foreign_released_len = 0;
+        g_foreign_released_cap = 0;
+        (void)pthread_mutex_unlock(&g_foreign_records_mutex);
+        for (size_t index = 0; index < len; index++)
+            Py_XDECREF(objects[index]);
+        free(objects);
+        if (len == 0)
+            return;
+    }
+}
+
+void cetta_foreign_drain_releases(void) {
+    (void)pthread_mutex_lock(&g_foreign_records_mutex);
+    bool pending = g_foreign_released_len > 0;
+    (void)pthread_mutex_unlock(&g_foreign_records_mutex);
+    if (!pending || !Py_IsInitialized())
+        return;
+    PyGILState_STATE state = PyGILState_Ensure();
+    foreign_drain_released_with_gil();
+    PyGILState_Release(state);
+}
 
 static bool g_python_bootstrap_ready = false;
 static bool g_python_inittab_ready = false;
@@ -393,6 +479,7 @@ static bool python_execution_guard_enter(
         return false;
     guard->state = PyGILState_Ensure();
     guard->active = true;
+    foreign_drain_released_with_gil();
     return true;
 }
 
@@ -488,13 +575,22 @@ static CettaForeignValue *foreign_new_python_value(CettaForeignRuntime *rt,
                                                    bool callable,
                                                    bool unwrap) {
     CettaForeignValue *value = cetta_malloc(sizeof(CettaForeignValue));
-    value->backend = CETTA_FOREIGN_BACKEND_PYTHON;
-    value->callable = callable;
-    value->unwrap = unwrap;
-    value->obj = obj;
+    *value = (CettaForeignValue){
+        .hold = {foreign_record_retain, foreign_record_release},
+        .backend = CETTA_FOREIGN_BACKEND_PYTHON,
+        .callable = callable,
+        .unwrap = unwrap,
+        .obj = obj,
+        .runtime = rt,
+    };
+    atomic_init(&value->holds, 0u);
     Py_INCREF(obj);
+    (void)pthread_mutex_lock(&g_foreign_records_mutex);
     value->next = rt->values;
+    if (rt->values)
+        rt->values->prev = value;
     rt->values = value;
+    (void)pthread_mutex_unlock(&g_foreign_records_mutex);
     return value;
 }
 
@@ -509,23 +605,42 @@ CettaForeignRuntime *cetta_foreign_runtime_new(void) {
     return rt;
 }
 
+/* The runtime's objects are released now.  A record no arena holds is freed
+ * with them; one an arena still holds loses its object and runtime, and is
+ * freed by its last release. */
 void cetta_foreign_runtime_free(CettaForeignRuntime *rt) {
     if (!rt) return;
     __attribute__((cleanup(python_execution_guard_leave)))
     PythonExecutionGuard python = {0};
-    if (rt->values && Py_IsInitialized()) {
+    if (Py_IsInitialized()) {
         python.state = PyGILState_Ensure();
         python.active = true;
+        foreign_drain_released_with_gil();
     }
-    CettaForeignValue *cur = rt->values;
-    while (cur) {
-        CettaForeignValue *next = cur->next;
-        if (python.active)
-            Py_XDECREF(cur->obj);
-        free(cur);
-        cur = next;
+    /* An object's finalizer may convert more objects into this runtime, so
+     * the list is taken until it stays empty. */
+    for (;;) {
+        (void)pthread_mutex_lock(&g_foreign_records_mutex);
+        CettaForeignValue *cur = rt->values;
+        rt->values = NULL;
+        for (CettaForeignValue *record = cur; record; record = record->next)
+            record->runtime = NULL;
+        (void)pthread_mutex_unlock(&g_foreign_records_mutex);
+        if (!cur)
+            break;
+        while (cur) {
+            CettaForeignValue *next = cur->next;
+            PyObject *obj = cur->obj;
+            cur->obj = NULL;
+            cur->prev = NULL;
+            cur->next = NULL;
+            if (atomic_load_explicit(&cur->holds, memory_order_acquire) == 0u)
+                free(cur);
+            if (python.active)
+                Py_XDECREF(obj);
+            cur = next;
+        }
     }
-    rt->values = NULL;
     free(rt);
 }
 

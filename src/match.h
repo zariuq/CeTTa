@@ -646,6 +646,10 @@ bool      bindings_add_id_acyclic(Bindings *b, VarId var_id,
                                   SymbolId spelling, Atom *val);
 bool      bindings_add_var(Bindings *b, Atom *var, Atom *val);
 bool      bindings_add_var_acyclic(Bindings *b, Atom *var, Atom *val);
+/* Construct one private binding image, preserving the ordered checked writes
+ * of bindings_add_var. Failure leaves the input image unchanged. */
+bool bindings_add_vars(Bindings *bindings, Atom *const *variables,
+                       Atom *const *values, uint32_t count);
 bool      bindings_add_constraint(Bindings *b, Atom *lhs, Atom *rhs);
 bool      bindings_try_merge(Bindings *dst, const Bindings *src);
 bool      bindings_try_merge_live(Bindings *dst, const Bindings *src);

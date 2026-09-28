@@ -54,3 +54,64 @@
 !(msort (collapse (app1 safe 1)))
 !(import! &self swi_differences_import)
 !(msort (collapse (app1 safe 1)))
+
+; 5. Data spelled with `cons` and `nil` meets an authored list pattern as the
+;    list it spells: `(cons $h $t)` in a head or a `case` takes
+;    `(cons a (cons b nil))` apart as a and (cons b nil).  SWI-PeTTa reads the
+;    value as the three-element list (cons a (cons b nil)): its head is `cons`
+;    and `nil` is no empty list, so the walks below answer nothing there, and
+;    the case answers cons.  The parser pack's forests are built this way and
+;    rely on CeTTa's reading.
+;    Recorded: Oruži, 2026-09-27 (the reading predates a09d40ae; the tier
+;    follows the machine).  The contract is Zar's to set (goal.md §5).
+(spelled-item (cons a (cons b nil)))
+(= (spelled) (match &self (spelled-item $l) $l))
+(= (walk nil) done)
+(= (walk (cons $h $t)) (walk $t))
+(= (heads nil) ())
+(= (heads (cons $h $t)) (cons-atom $h (heads $t)))
+; SWI-PeTTa: no answer.
+!(walk (spelled))
+; SWI-PeTTa: no answer.
+!(heads (spelled))
+; SWI-PeTTa: cons
+!(case (spelled) (((cons $h $t) $h) ($other none)))
+
+; 6. `==` and `!=` compare numbers by exact value, whatever their kinds, so
+;    3 and 3.0 are equal; every other term compares as a term.  SWI-PeTTa's
+;    == is ==/2, identity of terms: 3 and 3.0 differ, so false below, and
+;    true for the last.
+;    Recorded: Oruži, 2026-09-27; the rule is a71d42b1's (2026-09-25), which
+;    Zar committed.
+; SWI-PeTTa: false
+!(== 3 3.0)
+; SWI-PeTTa: true
+!(!= 3 3.0)
+
+; 7. `new-space` makes a fresh space.  SWI-PeTTa has no `new-space`, so
+;    (new-space) stays data there and is an Expression.  The extra form costs
+;    SWI-PeTTa programs nothing: a named space such as &work serves wherever
+;    a fresh one would, and a use of `new-space` translates to one.
+;    Decided: Zar, 2026-09-27 ("extras are ok").
+; SWI-PeTTa: Expression
+!(let $s (new-space) (get-metatype $s))
+
+; 8. An `if` whose branch has goals and a variable for its value keeps that
+;    variable to the branch.  SWI-PeTTa's translator unifies the `if`'s output
+;    with the variable itself, so the other branch's value must equal it too:
+;    `(pick 20)` below must return 1 there, and the query has no answer.
+;    A branch with no goals keeps them apart in both engines.
+;    Decided: Zar, 2026-09-27, as a bug of SWI-PeTTa's translator.
+(= (seven) 7)
+(= (pick $h) (if (> $h 10) (let $c (seven) $h) (pick 20)))
+; SWI-PeTTa: ()
+!(collapse (pick 1))
+
+; 9. An unbound variable in an answer prints as `$V` and its number;
+;    SWI-PeTTa prints `$_` and the same number.  Both number an answer's
+;    variables from 0 in order of first occurrence, so the two spellings
+;    correspond one to one; the PeTTa corpus reads SWI-PeTTa's answers
+;    through that correspondence.
+;    Recorded: Oruži, 2026-09-28.
+; SWI-PeTTa: (f $_0 $_1 $_0)
+!(let $a (f $x $y $x) $a)

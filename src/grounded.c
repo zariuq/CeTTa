@@ -156,14 +156,26 @@ static bool petta_repra_plain_identifier(const char *text) {
     return true;
 }
 
+/* Prolog's symbol characters: #$&*+-./:<=>?@^~\ and the backquote. */
+static bool petta_repra_graphic_char(unsigned char character) {
+    switch (character) {
+    case '#': case '$': case '&': case '*': case '+': case '-': case '.':
+    case '/': case ':': case '<': case '=': case '>': case '?': case '@':
+    case '^': case '~': case '\\': case '`':
+        return true;
+    default:
+        return false;
+    }
+}
+
 static bool petta_repra_plain_graphic(const char *text) {
-    static const char *const graphic = "#$&*+-./:<=>?@^~\\`";
     if (!text || !text[0] || strcmp(text, ".") == 0 ||
         strcmp(text, ",") == 0) {
         return false;
     }
-    for (const char *cursor = text; *cursor; cursor++) {
-        if (!strchr(graphic, *cursor))
+    for (const unsigned char *cursor = (const unsigned char *)text;
+         *cursor; cursor++) {
+        if (!petta_repra_graphic_char(*cursor))
             return false;
     }
     return true;
@@ -218,6 +230,21 @@ static void petta_repra_append_string(
     sb_append_char(output, '"');
 }
 
+/* A machine integer in decimal, as "%" PRId64 writes it. */
+static void petta_repra_append_int(StringBuf *output, int64_t value) {
+    char digits[24];
+    size_t at = sizeof(digits);
+    uint64_t magnitude = value < 0 ? (uint64_t)0 - (uint64_t)value
+                                   : (uint64_t)value;
+    do {
+        digits[--at] = (char)('0' + magnitude % 10u);
+        magnitude /= 10u;
+    } while (magnitude != 0u);
+    if (value < 0)
+        digits[--at] = '-';
+    sb_append_n(output, digits + at, sizeof(digits) - at);
+}
+
 /*
  * PeTTa's repra/1 is SWI term_to_atom/2: expressions are Prolog lists and
  * atoms use quoted(true) syntax.  Render directly instead of entering SWI on
@@ -262,18 +289,9 @@ static bool petta_repra_render(
         }
         case ATOM_GROUNDED:
             switch (atom->ground.gkind) {
-            case GV_INT: {
-                char integer[64];
-                int length = snprintf(
-                    integer, sizeof(integer), "%" PRId64,
-                    atom->ground.ival);
-                if (length <= 0 || (size_t)length >= sizeof(integer)) {
-                    ok = false;
-                    break;
-                }
-                sb_append_n(output, integer, (size_t)length);
+            case GV_INT:
+                petta_repra_append_int(output, atom->ground.ival);
                 break;
-            }
             case GV_FLOAT:
             case GV_BIGINT:
             case GV_RATIONAL: {

@@ -43,7 +43,62 @@ typedef struct {
      * call that raises an SWI existence error.
      */
     bool reference_stdlib;
+    /* A reference-stdlib name's arities in a freshly prepared engine. */
+    const struct PettaLibplFreshFacts *fresh;
 } PettaLibplImport;
+
+/*
+ * What a freshly started engine reports for each reference-stdlib name: the
+ * function arities current_predicate/1 finds once the private module is
+ * prepared (its standard bridges installed), before any Prolog has run.  The
+ * engine does not load metta.pl, so most names have none.  Until the engine
+ * starts, a registered stdlib name is classified from these facts, and
+ * classifying the names of a program that never calls Prolog never starts
+ * the engine.  They were read from SWI-Prolog 10.1.9, and serve only with
+ * that release: with any other the engine is asked, as without them.
+ * CETTA_PETTA_LIBPL_VERIFY_FRESH checks them against the engine when it
+ * prepares a module (test-petta-libpl-fresh-facts).
+ */
+#define PETTA_LIBPL_FRESH_FACTS_VERSION 100109
+typedef struct PettaLibplFreshFacts {
+    const char *name;
+    uint8_t count;
+    uint8_t arities[3];
+} PettaLibplFreshFacts;
+
+static const PettaLibplFreshFacts petta_libpl_fresh_stdlib[] = {
+    {"min", 0u, {0u}},          {"max", 0u, {0u}},
+    {"!=", 1u, {2u}},           {"=?", 0u, {0u}},
+    {"implies", 0u, {0u}},      {"sqrt", 0u, {0u}},
+    {"exp", 0u, {0u}},          {"log", 0u, {0u}},
+    {"cos", 0u, {0u}},          {"sin", 0u, {0u}},
+    {"mm2-exec", 0u, {0u}},     {"atom_concat", 1u, {2u}},
+    {"atom_chars", 1u, {1u}},   {"copy_term", 3u, {1u, 2u, 3u}},
+    {"term_hash", 2u, {1u, 3u}}, {"last", 0u, {0u}},
+    {"sort", 2u, {1u, 3u}},     {"member", 0u, {0u}},
+    {"get-mettatype", 0u, {0u}}, {"decons", 0u, {0u}},
+    {"concat", 0u, {0u}},       {"#-", 0u, {0u}},
+    {"#*", 0u, {0u}},           {"#div", 0u, {0u}},
+    {"#//", 0u, {0u}},          {"#mod", 0u, {0u}},
+    {"#min", 0u, {0u}},         {"#max", 0u, {0u}},
+    {"#<", 0u, {0u}},           {"#>", 0u, {0u}},
+    {"#=", 0u, {0u}},           {"#\\=", 0u, {0u}},
+    {"set_hook", 0u, {0u}},     {"random-int", 0u, {0u}},
+    {"random-float", 0u, {0u}}, {"current-time", 0u, {0u}},
+    {"format-time", 0u, {0u}},  {"library", 0u, {0u}},
+    {"exists_file", 1u, {0u}},  {"library-import!", 0u, {0u}},
+};
+
+static const PettaLibplFreshFacts *petta_libpl_fresh_facts(const char *name) {
+    for (size_t index = 0u;
+         index < sizeof(petta_libpl_fresh_stdlib) /
+                     sizeof(petta_libpl_fresh_stdlib[0]);
+         index++) {
+        if (strcmp(petta_libpl_fresh_stdlib[index].name, name) == 0)
+            return &petta_libpl_fresh_stdlib[index];
+    }
+    return NULL;
+}
 
 typedef struct {
     record_t record;
@@ -146,6 +201,8 @@ typedef struct {
 
 static pthread_once_t g_petta_libpl_once = PTHREAD_ONCE_INIT;
 static pthread_mutex_t g_petta_libpl_lock = PTHREAD_MUTEX_INITIALIZER;
+/* Set when this process first starts the engine. */
+static _Atomic bool g_petta_libpl_started;
 static bool g_petta_libpl_ready;
 static bool g_petta_libpl_owns_engine;
 static PL_engine_t g_petta_libpl_worker_engine;
@@ -1121,6 +1178,8 @@ void cetta_lib_prolog_global_shutdown(void) {
 }
 
 static void petta_libpl_global_init(void) {
+    atomic_store_explicit(&g_petta_libpl_started, true,
+                          memory_order_release);
     if (PL_is_initialised(NULL, NULL)) {
         g_petta_libpl_ready = true;
     } else {
@@ -1335,6 +1394,57 @@ static bool petta_libpl_install_working_dir(
  * demand-created.  This function runs only while g_petta_libpl_lock is held
  * and the calling thread owns an engine.
  */
+static bool petta_libpl_refresh_arities(
+    CettaLibPrologRuntime *runtime, PettaLibplImport *entry);
+
+/* Whether the entry's arities, as the engine reported them, are its fresh
+ * facts. */
+static bool petta_libpl_fresh_facts_hold(const PettaLibplImport *entry) {
+    const PettaLibplFreshFacts *facts = entry->fresh;
+    if (!facts || entry->arity_len != facts->count)
+        return false;
+    for (uint8_t index = 0u; index < facts->count; index++) {
+        bool found = false;
+        for (size_t reported = 0u; reported < entry->arity_len; reported++)
+            found = found ||
+                entry->function_arities[reported] == facts->arities[index];
+        if (!found)
+            return false;
+    }
+    return true;
+}
+
+/* CETTA_PETTA_LIBPL_VERIFY_FRESH: every registered stdlib name's fresh
+ * facts against what this freshly prepared module reports. */
+static void petta_libpl_verify_fresh_stdlib(CettaLibPrologRuntime *runtime) {
+    if (PLVERSION != PETTA_LIBPL_FRESH_FACTS_VERSION) {
+        fprintf(stderr,
+                "[petta-libpl] fresh stdlib facts: unused with SWI-Prolog "
+                "%d, read from %d\n",
+                PLVERSION, PETTA_LIBPL_FRESH_FACTS_VERSION);
+        return;
+    }
+    size_t verified = 0u;
+    size_t differ = 0u;
+    for (size_t index = 0u; index < runtime->import_len; index++) {
+        PettaLibplImport *entry = &runtime->imports[index];
+        if (!entry->reference_stdlib)
+            continue;
+        entry->scanned_revision = 0u;
+        if (petta_libpl_refresh_arities(runtime, entry) &&
+            petta_libpl_fresh_facts_hold(entry)) {
+            verified++;
+            continue;
+        }
+        differ++;
+        fprintf(stderr, "[petta-libpl] fresh stdlib facts differ: %.*s\n",
+                (int)entry->name_len, entry->name);
+    }
+    fprintf(stderr,
+            "[petta-libpl] fresh stdlib facts: %zu verified, %zu differ\n",
+            verified, differ);
+}
+
 static bool petta_libpl_prepare_locked(
     CettaLibPrologRuntime *runtime) {
     if (!runtime)
@@ -1386,6 +1496,8 @@ static bool petta_libpl_prepare_locked(
         return false;
     petta_libpl_register_reference_stdlib(runtime);
     runtime->prepared = true;
+    if (getenv("CETTA_PETTA_LIBPL_VERIFY_FRESH"))
+        petta_libpl_verify_fresh_stdlib(runtime);
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_LIB_PROLOG_PREPARE);
     return true;
@@ -1814,8 +1926,10 @@ static void petta_libpl_register_reference_stdlib(
             continue;
         PettaLibplImport *entry =
             petta_libpl_register_import(runtime, symbol);
-        if (entry)
+        if (entry) {
             entry->reference_stdlib = true;
+            entry->fresh = petta_libpl_fresh_facts(name);
+        }
     }
 }
 
@@ -3563,6 +3677,40 @@ CettaLibPrologQueryStatus cetta_lib_prolog_query(
         : CETTA_LIB_PROLOG_QUERY_FAILED;
 }
 
+/* A registered stdlib name before the engine has started, in this process
+ * or its host: its fresh facts, read as the engine's arities are read
+ * below.  False for any other name or once the engine has started. */
+static bool petta_libpl_fresh_named_arity(
+    CettaLibPrologRuntime *runtime, SymbolId head,
+    CettaExprLen supplied, PeTTaNamedArity *result) {
+    if (PLVERSION != PETTA_LIBPL_FRESH_FACTS_VERSION ||
+        atomic_load_explicit(&g_petta_libpl_started,
+                             memory_order_acquire) ||
+        PL_is_initialised(NULL, NULL) ||
+        pthread_mutex_lock(&g_petta_libpl_lock) != 0)
+        return false;
+    PettaLibplImport *entry = petta_libpl_find_import(runtime, head);
+    const PettaLibplFreshFacts *facts =
+        entry && entry->reference_stdlib && !entry->auto_resolved
+            ? entry->fresh : NULL;
+    (void)pthread_mutex_unlock(&g_petta_libpl_lock);
+    if (!facts)
+        return false;
+    *result = (PeTTaNamedArity){0};
+    if (facts->count == 0u) {
+        result->known = true;
+        result->exact = true;
+    }
+    for (uint8_t index = 0u; index < facts->count; index++) {
+        size_t arity = facts->arities[index];
+        result->known = true;
+        result->exact = result->exact || arity == (size_t)supplied;
+        result->larger = result->larger || arity > (size_t)supplied;
+        result->smaller = result->smaller || arity < (size_t)supplied;
+    }
+    return true;
+}
+
 static PeTTaNamedArity petta_libpl_named_arity_impl(
     CettaLibPrologRuntime *runtime, SymbolId head,
     CettaExprLen supplied) {
@@ -3604,6 +3752,8 @@ static PeTTaNamedArity petta_libpl_named_arity_impl(
         }
         return result;
     }
+    if (petta_libpl_fresh_named_arity(runtime, head, supplied, &result))
+        return result;
     bool claimed = false;
     if (!petta_libpl_enter(&claimed))
         return result;

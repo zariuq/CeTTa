@@ -989,6 +989,12 @@ Atom *petta_semantics_construct_value(
     return atom_expr(arena, elements, length);
 }
 
+bool petta_semantics_construct_value_is_expression(
+    const Atom *head, CettaExprLen length) {
+    return !(length == 3u && head && head->kind == ATOM_SYMBOL &&
+             petta_semantics_form(head->sym_id) == PETTA_FORM_CONS);
+}
+
 typedef struct {
     Atom *source;
     Atom **source_children;
@@ -1688,6 +1694,101 @@ bool petta_semantics_intrinsic_partial_arity(
         return true;
     }
     return false;
+}
+
+/* The builtins SWI-PeTTa registers as functions (fun/1) when its metta.pl
+ * loads. */
+static const char *const petta_registered_builtin_names[] = {
+    "superpose", "empty", "let", "let*", "+", "-", "*", "/", "%", "min", "max",
+    "change-state!", "get-state", "bind!", "<", ">", "==", "!=", "=", "=?",
+    "<=", ">=", "and", "or", "xor", "implies", "not", "sqrt", "exp", "log",
+    "cos", "sin", "first-from-pair", "second-from-pair", "car-atom",
+    "cdr-atom", "unique-atom", "alpha-unique-atom", "repr", "repra", "parse",
+    "println!", "readln!", "test", "assert", "mm2-exec", "atom_concat",
+    "atom_chars", "copy_term", "term_hash", "foldl", "first", "last", "append",
+    "length", "size-atom", "sort", "msort", "member", "is-member",
+    "is-alpha-member", "exclude-item", "list_to_set", "maplist", "eval",
+    "reduce", "import!", "add-atom", "remove-atom", "get-atoms", "match",
+    "is-var", "is-ground", "is-expr", "is-space", "get-mettatype", "decons",
+    "decons-atom", "py-call", "get-type", "get-metatype", "=alpha", "concat",
+    "sread", "cons", "reverse", "#+", "#-", "#*", "#div", "#//", "#mod",
+    "#min", "#max", "#<", "#>", "#=", "#\\=", "set_hook", "union-atom",
+    "cons-atom", "intersection-atom", "subtraction-atom", "index-atom", "id",
+    "pow-math", "sqrt-math", "sort-atom", "abs-math", "log-math", "trunc-math",
+    "ceil-math", "floor-math", "round-math", "sin-math", "cos-math",
+    "tan-math", "asin-math", "random-int", "random-float", "acos-math",
+    "atan-math", "isnan-math", "isinf-math", "min-atom", "max-atom",
+    "foldl-atom", "map-atom", "filter-atom", "current-time", "format-time",
+    "library", "exists_file", "import_prolog_function", "Predicate",
+    "callPredicate", "assertaPredicate", "assertzPredicate",
+    "retractPredicate", "add-translator-rule!", "remove-translator-rule!",
+    "argv"
+};
+
+enum {
+    PETTA_REGISTERED_BUILTIN_COUNT =
+        sizeof(petta_registered_builtin_names) /
+        sizeof(petta_registered_builtin_names[0]),
+};
+
+typedef struct {
+    const SymbolTable *table;
+    uint64_t table_instance_id;
+    size_t len;
+    SymbolId ids[PETTA_REGISTERED_BUILTIN_COUNT];
+} PeTTaRegisteredBuiltins;
+
+static _Thread_local PeTTaRegisteredBuiltins g_petta_registered_builtins;
+
+static int petta_symbol_id_compare(const void *left, const void *right) {
+    SymbolId a = *(const SymbolId *)left;
+    SymbolId b = *(const SymbolId *)right;
+    return (a > b) - (a < b);
+}
+
+bool petta_semantics_registered_builtin(SymbolId symbol) {
+    PeTTaRegisteredBuiltins *set = &g_petta_registered_builtins;
+    uint64_t table_instance_id = symbol_table_instance_id(g_symbols);
+    if (set->table != g_symbols ||
+        set->table_instance_id != table_instance_id) {
+        if (!g_symbols || symbol == SYMBOL_ID_NONE)
+            return false;
+        size_t len = 0u;
+        for (size_t index = 0u; index < PETTA_REGISTERED_BUILTIN_COUNT;
+             index++) {
+            SymbolId id = symbol_intern_cstr(
+                g_symbols, petta_registered_builtin_names[index]);
+            if (id != SYMBOL_ID_NONE)
+                set->ids[len++] = id;
+        }
+        qsort(set->ids, len, sizeof(set->ids[0]), petta_symbol_id_compare);
+        set->len = len;
+        set->table = g_symbols;
+        set->table_instance_id = table_instance_id;
+    }
+    size_t low = 0u;
+    size_t high = set->len;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2u;
+        if (set->ids[middle] < symbol)
+            low = middle + 1u;
+        else
+            high = middle;
+    }
+    return low < set->len && set->ids[low] == symbol;
+}
+
+/* SWI-PeTTa's get-metatype/2: a truth value is Grounded, and so is an atom
+ * that names a registered function (fun/1); any other atom is a Symbol. */
+Atom *petta_semantics_symbol_metatype(Arena *arena, SymbolId symbol,
+                                      bool registered) {
+    const PeTTaSymbolIds *ids = petta_symbol_ids();
+    bool grounded = registered ||
+        symbol == ids->true_text || symbol == ids->false_text ||
+        symbol == g_builtin_syms.true_text ||
+        symbol == g_builtin_syms.false_text ||
+        petta_semantics_registered_builtin(symbol);
+    return grounded ? atom_grounded_type(arena) : atom_symbol_type(arena);
 }
 
 bool petta_semantics_truth_value(const Atom *atom, bool *value) {
@@ -2414,6 +2515,28 @@ static int petta_compare_float_values(double left, double right) {
     return 0;
 }
 
+/* A machine integer against a finite double, exactly: an integer of at most
+ * 53 bits converts to a double without rounding; a larger one is compared
+ * with the double's whole part, which is exact below 2^63, and then with its
+ * fraction. */
+static int petta_compare_int_with_double(int64_t value, double floating) {
+    const int64_t exact_limit = INT64_C(1) << 53;
+    if (value >= -exact_limit && value <= exact_limit) {
+        double exact = (double)value;
+        return exact < floating ? -1 : exact > floating ? 1 : 0;
+    }
+    if (floating >= 9223372036854775808.0)
+        return -1;
+    if (floating < -9223372036854775808.0)
+        return 1;
+    double whole = trunc(floating);
+    int64_t whole_value = (int64_t)whole;
+    if (value != whole_value)
+        return value < whole_value ? -1 : 1;
+    double fraction = floating - whole;
+    return fraction > 0.0 ? -1 : fraction < 0.0 ? 1 : 0;
+}
+
 static bool petta_compare_numbers(
     const Atom *left, const Atom *right, int *ordering) {
     bool left_float = left->ground.gkind == GV_FLOAT;
@@ -2422,6 +2545,30 @@ static bool petta_compare_numbers(
         *ordering = petta_compare_float_values(
             left->ground.fval, right->ground.fval);
         return true;
+    }
+    /* Two machine integers, and a machine integer against a finite float,
+     * compare without GMP; a float before an exact number of equal value,
+     * as SWI orders them. */
+    if (left->ground.gkind == GV_INT && right->ground.gkind == GV_INT) {
+        *ordering = left->ground.ival < right->ground.ival ? -1
+            : left->ground.ival > right->ground.ival ? 1 : 0;
+        return true;
+    }
+    if ((left_float && right->ground.gkind == GV_INT) ||
+        (right_float && left->ground.gkind == GV_INT)) {
+        double floating =
+            left_float ? left->ground.fval : right->ground.fval;
+        if (!isnan(floating) && !isinf(floating)) {
+            int64_t exact =
+                left_float ? right->ground.ival : left->ground.ival;
+            int exact_against_float =
+                petta_compare_int_with_double(exact, floating);
+            *ordering = exact_against_float == 0
+                ? (left_float ? -1 : 1)
+                : (left_float ? -exact_against_float
+                              : exact_against_float);
+            return true;
+        }
     }
 
 #if CETTA_BUILD_WITH_GMP

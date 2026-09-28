@@ -443,6 +443,14 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
 
 void cetta_library_context_free(CettaLibraryContext *ctx) {
     if (!ctx) return;
+    if (ctx->petta_open_programs_free)
+        ctx->petta_open_programs_free(ctx->petta_open_programs);
+    ctx->petta_open_programs = NULL;
+    ctx->petta_open_programs_free = NULL;
+    if (ctx->petta_match_decisions_free)
+        ctx->petta_match_decisions_free(ctx->petta_match_decisions);
+    ctx->petta_match_decisions = NULL;
+    ctx->petta_match_decisions_free = NULL;
     cetta_nik_runtime_v1_free(ctx->nik_runtime);
     ctx->nik_runtime = NULL;
     if (ctx->nik_runtime_mutex_ready) {
@@ -7906,7 +7914,7 @@ static bool cetta_library_petta_execute_document_ids(
                 work_space->native.universe, declaration_id);
             if (petta_program_is_equation(declaration) &&
                 !petta_program_predeclare_equation(
-                    ctx->petta_program, declaration)) {
+                    ctx->petta_program, work_space, declaration)) {
                 if (failure_out)
                     *failure_out =
                         CETTA_PETTA_DOCUMENT_PLAN_FAILED;

@@ -23,5 +23,5 @@
   (source-sha256 "state_v1.metta" "80a37e8b23a8912e4dcbf28f8f938b8820ea97252e737eb88f19036f92b27942")
   (source-sha256 "proof_trace_policy_v1.metta" "b8fbcd4b5e53e79100b6b00481a18d463bd4d9c49629a29909550520b9bc33f2")
   (source-sha256 "proof_v1.metta" "145d183e6b82351bd5b0381daf8767f71ee0677c36be13a1c6b80ebb940e7551")
-  (compiled-cursor-sha256 "0854dbc7912227ac3ae46491e075212a412fe92e44b3dc5bc32b0314b955d405")
+  (compiled-cursor-sha256 "9a85308df0c0c608842bc2ee16edf7a39f36ae732cfa751475fa2409a8fea446")
 )

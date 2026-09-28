@@ -54,6 +54,7 @@ static void init_with_view(Fixture *fixture, const char *const *equations,
     fixture->program = cetta_prepared_pure_program_compile_closed_answers(
         &fixture->space, parse(&fixture->source, call),
         CETTA_GSLT_PURE_CALL_EAGER, atom_bool, atom_expr,
+        cetta_prepared_pure_constructs_expression_always,
         NULL, NULL, expression_view, NULL, NULL, true, true,
         (CettaMatchDecisionSemanticIdentity){
             .compiler_identity = cetta_match_decision_compiler_identity(),
@@ -284,7 +285,9 @@ static void test_entry_interpretation_precedes_equations(void) {
         CettaPreparedPureProgram *program =
             cetta_prepared_pure_program_compile_closed_answers(
                 &fixture.space, call, CETTA_GSLT_PURE_CALL_EAGER,
-                atom_bool, atom_expr, NULL, NULL, entry_view,
+                atom_bool, atom_expr,
+                cetta_prepared_pure_constructs_expression_always,
+                NULL, NULL, entry_view,
                 NULL, NULL, true, true,
                 (CettaMatchDecisionSemanticIdentity){0});
         assert(!program);
@@ -298,7 +301,9 @@ static void test_entry_interpretation_precedes_equations(void) {
             CettaPreparedPureProgram *program =
                 cetta_prepared_pure_program_compile_closed(
                     &fixture.space, call, modes[mode],
-                    atom_bool, atom_expr, NULL, NULL, entry_view,
+                    atom_bool, atom_expr,
+                    cetta_prepared_pure_constructs_expression_always,
+                    NULL, NULL, entry_view,
                     NULL, NULL, ready != 0u, true,
                     (CettaMatchDecisionSemanticIdentity){0});
             assert(program);
@@ -338,7 +343,9 @@ static void test_single_result_projection(void) {
     CettaPreparedPureProgram *program =
         cetta_prepared_pure_program_compile_closed(
             &fixture.space, call, CETTA_GSLT_PURE_CALL_EAGER,
-            atom_bool, atom_expr, NULL, NULL, entry_view,
+            atom_bool, atom_expr,
+            cetta_prepared_pure_constructs_expression_always,
+            NULL, NULL, entry_view,
             NULL, NULL, true, true,
             (CettaMatchDecisionSemanticIdentity){0});
     assert(program);
@@ -349,7 +356,9 @@ static void test_single_result_projection(void) {
     CettaPreparedPureProgram *producer =
         cetta_prepared_pure_program_compile_closed_answers(
             &fixture.space, call, CETTA_GSLT_PURE_CALL_EAGER,
-            atom_bool, atom_expr, NULL, NULL, entry_view,
+            atom_bool, atom_expr,
+            cetta_prepared_pure_constructs_expression_always,
+            NULL, NULL, entry_view,
             NULL, NULL, true, true,
             (CettaMatchDecisionSemanticIdentity){0});
     assert(!producer);
@@ -375,6 +384,7 @@ static void test_single_result_projection(void) {
     program = cetta_prepared_pure_program_compile_closed(
         &fixture.space, parse(&fixture.source, "(guarded 7)"),
         CETTA_GSLT_PURE_CALL_EAGER, atom_bool, atom_expr,
+        cetta_prepared_pure_constructs_expression_always,
         NULL, NULL, entry_view, NULL, NULL, true, true,
         (CettaMatchDecisionSemanticIdentity){0});
     assert(!program);
@@ -893,7 +903,7 @@ static void test_context_reconstruction_observes_interrupt(void) {
         CettaPreparedPureProgram *program =
             cetta_prepared_pure_program_compile_closed(
                 &fixture.space, call, CETTA_GSLT_PURE_CALL_EAGER,
-                atom_bool, construct_counting_out, NULL, NULL, NULL,
+                atom_bool, construct_counting_out, NULL, NULL, NULL, NULL,
                 NULL, NULL, false, true,
                 (CettaMatchDecisionSemanticIdentity){
                     .compiler_identity =

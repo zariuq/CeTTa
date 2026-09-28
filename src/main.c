@@ -3801,7 +3801,7 @@ process_petta_document:
                 atom_ids[declaration_index]);
             if (petta_program_is_equation(declaration) &&
                 !petta_program_predeclare_equation(
-                    libraries.petta_program, declaration)) {
+                    libraries.petta_program, &space, declaration)) {
                 fprintf(
                     stderr,
                     "error: could not predeclare PeTTa equation head\n");
@@ -3939,6 +3939,7 @@ process_petta_document:
                 /* Reset ephemeral arena — frees all intermediate eval atoms.
                    This makes CeTTa safe for unlimited chaining iterations. */
                 arena_free(&eval_arena);
+                cetta_foreign_drain_releases();
                 arena_init(&eval_arena);
                 arena_set_runtime_kind(&eval_arena, CETTA_ARENA_RUNTIME_KIND_EVAL);
                 arena_set_hashcons(
@@ -4141,6 +4142,7 @@ process_petta_document:
             eval_release_temporary_spaces();
             eval_reset_form_gc_survivor();
             arena_free(&eval_arena);
+            cetta_foreign_drain_releases();
             arena_init(&eval_arena);
             arena_set_runtime_kind(&eval_arena, CETTA_ARENA_RUNTIME_KIND_EVAL);
             arena_set_hashcons(
