@@ -131,6 +131,12 @@
      (chain (eval (noreduce-eq $x 3)) $binding-leaked
        (return $binding-leaked))))
 
+; A binding the body makes for its own work stays inside the function: the
+; environment its caller receives holds none of it.
+(= (prime-need:private-bind) (unify $w private done no))
+!(collapse-bind
+   (function (let $r (prime-need:private-bind) (return $r))))
+
 ; Checking-first authority does not force a valid argument, but it rejects a
 ; raw argument that violates an admitted function contract even when unused.
 (: prime-need:typed-ignore (-> Number Number))

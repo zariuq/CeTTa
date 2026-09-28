@@ -80,16 +80,19 @@ int main(void) {
     arena_set_runtime_kind(&source, CETTA_ARENA_RUNTIME_KIND_EVAL);
     arena_set_runtime_kind(&destination, CETTA_ARENA_RUNTIME_KIND_EVAL);
 
-    /* Symbol predicates read spelling, not the address of a reusable buffer. */
+    /* A name in a reusable buffer is read by its spelling, not its address
+     * (atom_is_symbol_named); atom_is_symbol is for static names. */
     char spelling[32];
     Atom *first_spelling = atom_symbol(&source, "mutable-spelling-first");
     Atom *second_spelling = atom_symbol(&source, "mutable-spelling-next");
     strcpy(spelling, "mutable-spelling-first");
-    assert(atom_is_symbol(first_spelling, spelling));
-    assert(!atom_is_symbol(second_spelling, spelling));
+    assert(atom_is_symbol_named(first_spelling, spelling));
+    assert(!atom_is_symbol_named(second_spelling, spelling));
     strcpy(spelling, "mutable-spelling-next");
-    assert(atom_is_symbol(second_spelling, spelling));
-    assert(!atom_is_symbol(first_spelling, spelling));
+    assert(atom_is_symbol_named(second_spelling, spelling));
+    assert(!atom_is_symbol_named(first_spelling, spelling));
+    assert(atom_is_symbol(first_spelling, "mutable-spelling-first"));
+    assert(!atom_is_symbol(second_spelling, "mutable-spelling-first"));
 
     /* Immutable symbols are canonical only within their owning arena. */
     Atom *source_symbol_first = atom_symbol(&source, "arena-symbol-cache");

@@ -3420,10 +3420,52 @@ Atom *atom_prime_held_payload(Atom *atom) {
     return atom_prime_held_is(atom) ? atom->expr.elems[1] : atom;
 }
 
+static bool g_atom_prime_held_made = false;
+
 Atom *atom_prime_held_wrap(Arena *a, Atom *atom) {
     if (!a || !atom || atom_prime_held_is(atom)) return atom;
     Atom *tag = atom_internal_tag(a, CETTA_INTERNAL_TAG_PRIME_HELD);
+    if (tag)
+        g_atom_prime_held_made = true;
     return tag ? atom_expr2(a, tag, atom) : NULL;
+}
+
+bool atom_prime_held_made(void) {
+    return g_atom_prime_held_made;
+}
+
+bool atom_contains_prime_held(const Atom *atom) {
+    if (!atom || !g_atom_prime_held_made)
+        return false;
+    const Atom *inline_items[64];
+    const Atom **items = inline_items;
+    size_t len = 0u, cap = sizeof(inline_items) / sizeof(inline_items[0]);
+    items[len++] = atom;
+    bool found = false;
+    while (len > 0u && !found) {
+        const Atom *current = items[--len];
+        if (!current || current->kind != ATOM_EXPR)
+            continue;
+        if (atom_prime_held_is(current)) {
+            found = true;
+            break;
+        }
+        for (CettaExprIndex i = 0u; i < current->expr.len; i++) {
+            if (len == cap) {
+                size_t next = cap * 2u;
+                const Atom **grown = cetta_malloc(sizeof(*grown) * next);
+                memcpy(grown, items, sizeof(*grown) * len);
+                if (items != inline_items)
+                    free(items);
+                items = grown;
+                cap = next;
+            }
+            items[len++] = current->expr.elems[i];
+        }
+    }
+    if (items != inline_items)
+        free(items);
+    return found;
 }
 
 Atom *atom_prime_held_strip(Arena *a, Atom *atom) {

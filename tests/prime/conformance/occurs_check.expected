@@ -1,3 +1,6 @@
 [AcyclicSearchAccepted]
 [CyclicSearchRejected]
 [CyclicReplayRejected]
+[CyclicBindingRefused]
+[CyclicBindingRefused]
+[CyclicBindingRefused]

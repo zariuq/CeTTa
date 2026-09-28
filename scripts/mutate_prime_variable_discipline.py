@@ -26,7 +26,7 @@ def main() -> int:
             "        HeEdge e = consistency(actual, expected, f);",
             "        Bindings discarded;\n"
             "        bindings_init(&discarded);\n"
-            "        HeEdge e = consistency_bind(actual, expected, f, &discarded);\n"
+            "        HeEdge e = consistency_bind(a, actual, expected, f, &discarded);\n"
             "        bindings_free(&discarded);",
         )
         prime_source = Path(sys.argv[3]).read_text()

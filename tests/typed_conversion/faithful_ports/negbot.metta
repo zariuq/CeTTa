@@ -1,0 +1,13 @@
+; Boolean semantics: the complete DNE validity scheme, over every formula and valuation.
+!(import! &self pf)
+!(bind! &thy (new-space))
+!(set:inductive &thy nat (u 0) (: zero nat) (: succ (-> nat nat)))
+!(set:inductive &thy bool (u 0) (: true bool) (: false bool))
+!(pf:equality &thy bool refl@bool subst@bool)
+!(set:inductive &thy form (u 0) (: FVar (-> nat form)) (: Bot form) (: Imp (-> form form form)) (: And (-> form form form)) (: Or (-> form form form)))
+!(set:define &thy impb (-> bool bool bool) (= (impb true $b) $b) (= (impb false $b) true))
+!(set:define &thy andb (-> bool bool bool) (= (andb true $b) $b) (= (andb false $b) false))
+!(set:define &thy orb (-> bool bool bool) (= (orb true $b) true) (= (orb false $b) $b))
+!(set:define &thy Neg (-> form form) (= (Neg $a) (Imp $a Bot)))
+!(set:define &thy eval (-> (-> nat bool) form bool) (= (eval $v (FVar $n)) ($v $n)) (= (eval $v Bot) false) (= (eval $v (Imp $a $b)) (impb (eval $v $a) (eval $v $b))) (= (eval $v (And $a $b)) (andb (eval $v $a) (eval $v $b))) (= (eval $v (Or $a $b)) (orb (eval $v $a) (eval $v $b))))
+!(type:check &thy (refl false) (id bool (eval (lam n true) Bot) true))

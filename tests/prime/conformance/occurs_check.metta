@@ -43,3 +43,11 @@
       (pm2.24ii (pm2.18i notnot) (pm2.18i notnotr))
       Target
       100000))
+
+; The binding kernel itself refuses a cyclic binding: x = (f x) has no
+; finite solution, whether the equation is posed directly, through a
+; repeated pattern variable, or by a case pattern.
+!(unify $x (f $x) CyclicBindingAdmitted CyclicBindingRefused)
+!(unify (g $x $x) (g $y (f $y)) CyclicBindingAdmitted CyclicBindingRefused)
+!(case (g $y (f $y))
+   (((g $x $x) CyclicBindingAdmitted) ($other CyclicBindingRefused)))

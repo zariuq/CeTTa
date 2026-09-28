@@ -678,6 +678,11 @@ Atom *atom_internal_tag(Arena *a, CettaInternalTag tag);
 bool atom_prime_held_is(const Atom *atom);
 Atom *atom_prime_held_payload(Atom *atom);
 Atom *atom_prime_held_wrap(Arena *a, Atom *atom);
+/* Whether the process has made a held value yet: until it has, no term can
+   contain one, and atom_contains_prime_held need not look. */
+bool atom_prime_held_made(void);
+/* Whether a held value occurs anywhere in `atom`. */
+bool atom_contains_prime_held(const Atom *atom);
 /* The syntax a value holds, at every depth: held wrappers removed.  For a
    position that takes syntax as such, a held value is that syntax. */
 Atom *atom_prime_held_strip(Arena *a, Atom *atom);

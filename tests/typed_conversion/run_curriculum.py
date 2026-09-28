@@ -4,12 +4,11 @@
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
 
-ROOT = Path("/home/aimama/aihub/hyperon/cetta-prime-2.0-draft-20260910")
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests/typed_conversion"))
 import build_curriculum_ledger as build  # noqa: E402
 
@@ -306,7 +305,10 @@ def verdict(line: str) -> tuple[str, str] | None:
 
 
 def main() -> int:
-    build.main()
+    if "--check-existing" in sys.argv:
+        build.validate_provenance()
+    else:
+        build.main()
     text = build.OUT.read_text(encoding="utf-8")
     rows = text.splitlines()[1:]
     files = {p.relative_to(build.CURRICULUM).as_posix() for p in build.CURRICULUM.rglob("*") if p.is_file()}
@@ -464,23 +466,19 @@ def main() -> int:
             ported_lines.append(
                 f"ported {path} {item['query_kind']} {item['artifact']} {item['expected']}"
             )
-    proc = subprocess.run(
-        ["bash", "-c", 'ulimit -v 25165824 && exec "$1" --lang prime "$2"',
-         "run", str(BIN), str(ROOT / "tests/typed_conversion/contract_controls.metta")],
-        text=True, capture_output=True,
-    )
-    proc2 = subprocess.run(
-        ["bash", "-c", 'ulimit -v 25165824 && exec "$1" --lang prime "$2"',
-         "run", str(BIN), str(ROOT / "tests/typed_conversion/named_controls.metta")],
-        text=True, capture_output=True,
-    )
     found = {}
-    for blob in (proc.stdout, proc2.stdout):
-        for line in blob.splitlines():
+    bad = []
+    for control in ("contract_controls", "named_controls"):
+        code, outputs, error = build.cetta_lines(ROOT / "tests/typed_conversion" / (control + ".metta"))
+        if code != 0 or error:
+            bad.append(f"{control}: process exit {code}; stderr {error}")
+        for line in outputs:
             parsed = verdict(line)
             if parsed:
+                if parsed[0] in found:
+                    bad.append(f"duplicate control verdict {parsed[0]}")
                 found[parsed[0]] = parsed[1]
-    bad = [f"{name}: got {found.get(name)} want {want}" for name, want in WANT.items() if found.get(name) != want]
+    bad.extend(f"{name}: got {found.get(name)} want {want}" for name, want in WANT.items() if found.get(name) != want)
     lines = [
         f"binary {BIN}",
         f"binary-sha256 {build.sha256_file(BIN)}",

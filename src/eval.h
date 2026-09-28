@@ -156,6 +156,10 @@ bool eval_petta_from_lib_prolog(Arena *a, Atom *expr, ResultSet *results);
 void eval_release_temporary_spaces(void);
 void eval_reset_form_gc_survivor(void);
 void eval_set_default_fuel(int fuel);
+/* The symbols whose type declarations are written in HE (the standard
+ * library's).  In Prime an `Atom` position of such a declaration holds its
+ * argument, as in HE; elsewhere in Prime `Atom` is the top type. */
+void eval_prime_set_he_signature_heads(const SymbolId *heads, size_t count);
 int eval_get_default_fuel(void);
 int eval_current_effective_fuel_limit(void);
 bool eval_current_prefer_rationals(void);

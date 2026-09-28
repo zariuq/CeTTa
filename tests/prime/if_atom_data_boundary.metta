@@ -1,10 +1,10 @@
-; A selected control branch may return syntax through an Atom-typed field.
+; A selected control branch may return syntax through a Data-typed field.
 ; Full observation must preserve that field as data, while evaluating the same
 ; ill-typed application directly must still reject it.
 
 (: Test.Rel (-> Type Type Type))
 (: Test.List (-> Type Type))
-(: Test.Wrap (-> Atom Atom))
+(: Test.Wrap (-> (Data Atom) Atom))
 (: Test.Pair
    (-> (Test.Rel Number Number)
        (Test.Rel Number Number)
