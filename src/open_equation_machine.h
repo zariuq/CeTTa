@@ -79,6 +79,10 @@ typedef struct {
     bool bounded_collections;
 } CettaOpenEquationHost;
 
+/* Term carriers the compiled region interprets. Sharing is visited once;
+ * private carriers other than complete internal list cells are rejected. */
+bool cetta_open_equation_term_supported(Atom *term);
+
 /* The equations of `head`/`arity` and every relation they call, compiled
  * from the PeTTa program's own occurrence plans when all are in the
  * fragment; NULL declines and names the first reason. */
@@ -86,6 +90,7 @@ CettaOpenEquationProgram *cetta_open_equation_program_compile(
     struct PettaProgram *petta, Space *space, SymbolId head, uint32_t arity,
     const CettaOpenEquationHost *host, const char **reason_out);
 /* Drop the compiler's reference; each open cursor holds its own. */
+void cetta_open_equation_program_retain(CettaOpenEquationProgram *program);
 void cetta_open_equation_program_release(CettaOpenEquationProgram *program);
 /* The space revision the program was compiled from is still current. */
 bool cetta_open_equation_program_is_current(
@@ -122,13 +127,14 @@ typedef enum {
      * own choices; that choice's next step drops the host frame.  An answer
      * after which the goal has no choice left drops the frame at once. */
     CETTA_OPEN_EQUATION_HOST,
-    /* A `once` committed to its first answer while host goals it made
+    /* A `once` committed to its first answer, or an equation's `(cut)`
+     * ran, while host goals made since the once or the equation's call
      * still had choices: the cursor has dropped its own frames above the
-     * once, and the host drops its choices above the height
+     * once or the call, and the host drops its choices above the height
      * `cetta_open_equation_cursor_cut_height` gives, which the host
      * reported for the oldest of those goals.  The choice left newest then
-     * resumes the cursor, which continues after the once.  Only a cursor
-     * that has accepted a host answer can report it. */
+     * resumes the cursor, which continues after the once or the cut.  Only
+     * a cursor that has accepted a host answer can report it. */
     CETTA_OPEN_EQUATION_CUT,
 } CettaOpenEquationStep;
 
@@ -166,7 +172,8 @@ typedef struct {
      * authorities changed enters through it; calls already entered keep the
      * equations they were entered with, and their callers keep their own
      * code, as each call of equation search takes its candidate snapshot
-     * on entry.  The cursor retains what it keeps. */
+     * on entry.  The program comes retained for the cursor, which keeps
+     * that reference or releases it. */
     CettaOpenEquationProgram *(*current)(void *context, Space *space,
                                          SymbolId head, uint32_t arity);
     /* The space a `match` reads: `reference` is its space operand, `root`
@@ -207,6 +214,19 @@ typedef struct {
      * value is a symbol it rejects is data, as the search machine takes it.
      * NULL leaves every such application to the host. */
     bool (*head_callable)(void *context, Space *space, Atom *expression);
+    /* Whether the language profile offers the grounded operation `head`,
+     * which the search machine consults before running one directly; the
+     * region consults it before running one named by a value.  NULL
+     * leaves every such application to the host. */
+    bool (*builtin_allowed)(void *context, SymbolId head);
+    /* SWI-PeTTa's fun/1 for a head beyond its builtins: whether the
+     * program's own space defines it (petta_program_function_registered),
+     * which get-metatype reports.  NULL leaves such a symbol to the host. */
+    bool (*function_registered)(void *context, SymbolId head);
+    /* Whether an error raised inside a call dispatched at run time fails
+     * that path alone, as the host's own dispatches recover
+     * (DispatchErrorScope); the region's dispatches then recover too. */
+    bool dispatch_recovers;
     /* Storage the host keeps for the cursor's whole life, released only
      * after the cursor is gone, as the older generation the region shares.
      * A ground value a host goal takes from the region is copied there once
@@ -280,12 +300,14 @@ typedef enum {
  * values of the variables it reads in their places, and `plan` is that
  * occurrence's plan: the host evaluates the goal under it, so a value in a
  * variable's place is taken as a value and never evaluated again.  `mode`
- * says how the host takes it.  Valid until the cursor's next step. */
+ * says how the host takes it; `recovers`, that the region issued it inside
+ * a call it dispatched at run time, whose handler the goal runs under.
+ * Valid until the cursor's next step. */
 bool cetta_open_equation_cursor_host_goal(
     const CettaOpenEquationCursor *cursor, Atom **goal_out,
     Atom **destination_out, Atom *const **vars_out,
     uint32_t *var_count_out, const struct PettaPlanNode **plan_out,
-    CettaOpenEquationHostMode *mode_out);
+    CettaOpenEquationHostMode *mode_out, bool *recovers_out);
 /* The host's choice height beneath the goal now awaited: the choices the
  * goal makes lie above it.  A once that commits through the goal's frame
  * reports it (CETTA_OPEN_EQUATION_CUT). */
@@ -325,6 +347,11 @@ CettaOpenEquationHandoff cetta_open_equation_cursor_handoff(
     const CettaOpenEquationCursor *cursor);
 /* Whether the depth bound has failed an activation whose head matched: a
  * bounded run that is exhausted and was never cut has seen every answer. */
+/* Whether this region has a checked positive, effect-free search body.
+ * False selects exact continuation, not a different evaluator. */
+bool cetta_open_equation_cursor_can_prune_depth(
+    const CettaOpenEquationCursor *cursor);
+
 bool cetta_open_equation_cursor_bound_cut(
     const CettaOpenEquationCursor *cursor);
 /* Allow the cursor `budget` activations in all (0: no budget).  A cursor

@@ -354,6 +354,7 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
     memset(&ctx->petta_library_paths, 0, sizeof(ctx->petta_library_paths));
     ctx->petta_library_paths.revision = 1u;
     ctx->imported_file_len = 0;
+    ctx->petta_trusted_library_import_depth = 0u;
     ctx->import_space_alias_len = 0;
     ctx->cmdline_arg_len = 0;
     ctx->loaded_module_len = 0;
@@ -385,6 +386,10 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
         CETTA_PETTA_MEMO_AGGREGATE_NONE;
     ctx->petta_shared_table = language_id == CETTA_LANGUAGE_PETTA
         ? petta_machine_table_new() : NULL;
+    ctx->petta_open_programs = NULL;
+    ctx->petta_open_programs_free = NULL;
+    ctx->petta_match_decisions = NULL;
+    ctx->petta_match_decisions_free = NULL;
     if (ctx->petta_shared_table) {
         PettaTableMutationPolicy table_policy =
             profile && profile->enable_cetta_extensions
@@ -440,6 +445,14 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
 
 void cetta_library_context_free(CettaLibraryContext *ctx) {
     if (!ctx) return;
+    if (ctx->petta_open_programs_free)
+        ctx->petta_open_programs_free(ctx->petta_open_programs);
+    ctx->petta_open_programs = NULL;
+    ctx->petta_open_programs_free = NULL;
+    if (ctx->petta_match_decisions_free)
+        ctx->petta_match_decisions_free(ctx->petta_match_decisions);
+    ctx->petta_match_decisions = NULL;
+    ctx->petta_match_decisions_free = NULL;
     cetta_nik_runtime_v1_free(ctx->nik_runtime);
     ctx->nik_runtime = NULL;
     if (ctx->nik_runtime_mutex_ready) {
@@ -7744,7 +7757,7 @@ static bool cetta_library_petta_execute_document_ids(
                 work_space->native.universe, declaration_id);
             if (petta_program_is_equation(declaration) &&
                 !petta_program_predeclare_equation(
-                    ctx->petta_program, declaration)) {
+                    ctx->petta_program, work_space, declaration)) {
                 if (failure_out)
                     *failure_out =
                         CETTA_PETTA_DOCUMENT_PLAN_FAILED;

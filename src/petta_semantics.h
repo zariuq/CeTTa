@@ -200,6 +200,25 @@ bool petta_semantics_intrinsic_partial_arity(
  */
 bool petta_semantics_truth_value(const Atom *atom, bool *value);
 Atom *petta_semantics_boolean_value(Arena *arena, bool value);
+/* PeTTa's metatype of a symbol, as SWI-PeTTa's get-metatype/2 gives it:
+ * Grounded for a truth value and for a registered function (fun/1), which
+ * is one of SWI-PeTTa's registered builtins or, when `registered`, a
+ * function the program defines; Symbol for any other symbol, a token
+ * included. */
+Atom *petta_semantics_symbol_metatype(Arena *arena, SymbolId symbol,
+                                      bool registered);
+/* Whether SWI-PeTTa registers `symbol` as a builtin function (fun/1) when
+ * it loads. */
+bool petta_semantics_registered_builtin(SymbolId symbol);
+/* Whether SWI-PeTTa registers `symbol` as a builtin function, and if so the
+ * input arities its registration records for it (arity/2), as a bit mask:
+ * bit n for n arguments.  A registered name may have none. */
+bool petta_semantics_registered_builtin_arities(SymbolId symbol,
+                                                uint16_t *arities);
+/* A registered name's answer about an application to `supplied` arguments:
+ * known, and exact, larger or smaller by its recorded arities. */
+PeTTaNamedArity petta_semantics_registered_named_arity(
+    uint16_t arities, CettaExprLen supplied);
 Atom *petta_semantics_success_value(Arena *arena);
 bool petta_semantics_library_reference(
     const Atom *atom, PeTTaLibraryReference *reference);
@@ -266,6 +285,12 @@ static inline bool petta_semantics_grounded_type_pure(SymbolId head) {
     return grounded_op_is_type_pure(head) &&
         petta_semantics_form(head) == PETTA_FORM_NONE;
 }
+/* PeTTa's `=alpha` and `==`: tests whose answer is fixed by their
+ * arguments' structure up to a consistent renaming of the variables in
+ * them, which they neither bind nor show. */
+static inline bool petta_semantics_structural_test(SymbolId head) {
+    return head == g_builtin_syms.alpha_eq || head == g_builtin_syms.op_eq;
+}
 /* The elements of a closed list as one flat expression, or as a list value
  * when its cells end in one: `list` itself when it is flat, NULL when its
  * cells end in a non-list or an unbound tail. */
@@ -307,6 +332,11 @@ Atom *petta_semantics_materialize_logical_list(
  * tail as authored `cons` syntax. */
 Atom *petta_semantics_construct_value(
     Arena *arena, Atom **elements, CettaExprLen length);
+/* Whether petta_semantics_construct_value builds an ordinary expression,
+ * as atom_expr does, for every value of `length` elements headed by
+ * `head`. */
+bool petta_semantics_construct_value_is_expression(
+    const Atom *head, CettaExprLen length);
 bool petta_semantics_construct_value_allocation_bound(
     CettaExprLen length, size_t *bytes_out);
 Atom *petta_semantics_materialize_value(
@@ -319,6 +349,12 @@ Atom *petta_semantics_materialize_value(
 bool petta_semantics_value_contains_observable_open_cons(
     const Atom *value);
 bool petta_semantics_contains_cons_constraint(const Atom *atom);
+/* A structural index query for a resolved logical pattern. Closed spines
+ * become flat expressions. Remaining carriers use a private wildcard to
+ * request every occurrence; that wildcard is never a unification pattern.
+ * `exact` distinguishes equivalent queries from complete approximations. */
+Atom *petta_semantics_match_index_pattern(
+    Arena *arena, Atom *pattern, bool *exact);
 /*
  * Conservative equation-index discriminator for PeTTa list patterns.
  *

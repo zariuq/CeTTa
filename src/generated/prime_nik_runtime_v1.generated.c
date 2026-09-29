@@ -86722,5 +86722,4 @@ const CettaGsltEmbeddedLanguageV1 cetta_prime_nik_runtime_v1 = {
     .request_pipeline = NULL,
     .observation = "bag",
     .manifest_sha256 = "32349e6b7422c900a3ba1c1e7e95d8afc91a62cded9478395f2f077465a1d02a",
-    .compiler_sha256 = "ae3350d227bdc84a12e5efabb754f369b3ee8e9e9e3ac64c58d2d19ad7bcdea9",
 };

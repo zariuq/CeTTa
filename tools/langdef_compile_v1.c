@@ -497,6 +497,26 @@ static bool write_digest_field(FILE *stream, const char *name,
            fputs(")\n", stream) != EOF;
 }
 
+/* Whether two files hold the same bytes. */
+static bool same_file_bytes(const char *left, const char *right) {
+    FILE *a = fopen(left, "rb");
+    FILE *b = a ? fopen(right, "rb") : NULL;
+    bool same = a && b;
+    while (same) {
+        int x = fgetc(a);
+        int y = fgetc(b);
+        if (x != y)
+            same = false;
+        else if (x == EOF)
+            break;
+    }
+    if (a)
+        fclose(a);
+    if (b)
+        fclose(b);
+    return same;
+}
+
 static bool write_lock(const char *path,
                        const CettaLangDefManifestV1 *manifest,
                        const char *manifest_digest,
@@ -581,6 +601,11 @@ static bool write_lock(const char *path,
     stream = NULL;
     if (!ok) {
         set_error(error, error_size, "cannot write langdef lock");
+        goto done;
+    }
+    /* An unchanged lock keeps its file, so the build redoes nothing for it. */
+    if (same_file_bytes(temporary, path)) {
+        ok = true;
         goto done;
     }
     if (rename(temporary, path) != 0) {

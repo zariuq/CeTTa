@@ -37,10 +37,12 @@ typedef struct {
      */
     bool auto_resolved;
     /*
-     * Reference-stdlib names are admitted only at arities the private module
-     * can prove it implements.  In particular, an absent prelude predicate
-     * must remain an unavailable MeTTa head instead of becoming an attempted
-     * call that raises an SWI existence error.
+     * A name SWI-PeTTa's prelude registers.  It has the arities the
+     * prelude's registration records for it, whatever this module
+     * implements (petta_semantics_registered_builtin_arities): a call at
+     * one of them is the reference's call, and any other application is
+     * partial or over-applied, as there.  They are known without starting
+     * the engine.
      */
     bool reference_stdlib;
 } PettaLibplImport;
@@ -146,6 +148,8 @@ typedef struct {
 
 static pthread_once_t g_petta_libpl_once = PTHREAD_ONCE_INIT;
 static pthread_mutex_t g_petta_libpl_lock = PTHREAD_MUTEX_INITIALIZER;
+/* Set when this process first starts the engine. */
+static _Atomic bool g_petta_libpl_started;
 static bool g_petta_libpl_ready;
 static bool g_petta_libpl_owns_engine;
 static PL_engine_t g_petta_libpl_worker_engine;
@@ -742,6 +746,38 @@ static bool petta_libpl_install_symbol_space_rules(
     return ok;
 }
 
+/* The reference prelude's own clauses for the registered functions this
+ * module serves (SWI-PeTTa's metta.pl, which the module does not load), so
+ * a call at a registered arity runs exactly the reference's definition.
+ * Native routes own every other registered name. */
+static bool petta_libpl_install_reference_prelude(
+    CettaLibPrologRuntime *runtime) {
+    static const char *const clauses[] = {
+        "(exp(Arg, R) :- R is exp(Arg))",
+        "bool(true)",
+        "bool(false)",
+        "(implies(A, B, C) :- bool(A), bool(B), "
+        "(A == true -> (B == true -> C = true ; B == false -> C = false) "
+        "; A == false -> C = true))",
+        "('=?'(A, B, R) :- (\\+ \\+ A = B -> R = true ; R = false))",
+    };
+    if (!runtime || !runtime->module)
+        return false;
+    fid_t frame = PL_open_foreign_frame();
+    if (!frame)
+        return false;
+    bool ok = true;
+    for (size_t index = 0u;
+         ok && index < sizeof(clauses) / sizeof(clauses[0]); index++) {
+        term_t clause = PL_new_term_ref();
+        ok = clause &&
+             PL_chars_to_term(clauses[index], clause) &&
+             PL_assert(clause, runtime->module, PL_ASSERTZ);
+    }
+    PL_discard_foreign_frame(frame);
+    return ok;
+}
+
 static bool petta_libpl_plref_register(
     CettaLibPrologRuntime *runtime, term_t term,
     PettaLibplPlrefHandle *handle) {
@@ -1121,6 +1157,8 @@ void cetta_lib_prolog_global_shutdown(void) {
 }
 
 static void petta_libpl_global_init(void) {
+    atomic_store_explicit(&g_petta_libpl_started, true,
+                          memory_order_release);
     if (PL_is_initialised(NULL, NULL)) {
         g_petta_libpl_ready = true;
     } else {
@@ -1335,6 +1373,9 @@ static bool petta_libpl_install_working_dir(
  * demand-created.  This function runs only while g_petta_libpl_lock is held
  * and the calling thread owns an engine.
  */
+static bool petta_libpl_refresh_arities(
+    CettaLibPrologRuntime *runtime, PettaLibplImport *entry);
+
 static bool petta_libpl_prepare_locked(
     CettaLibPrologRuntime *runtime) {
     if (!runtime)
@@ -1382,7 +1423,8 @@ static bool petta_libpl_prepare_locked(
     runtime->symbol_table_instance =
         symbol_table_instance_id(g_symbols);
     if (!petta_libpl_install_standard_bridges(runtime) ||
-        !petta_libpl_install_symbol_space_rules(runtime))
+        !petta_libpl_install_symbol_space_rules(runtime) ||
+        !petta_libpl_install_reference_prelude(runtime))
         return false;
     petta_libpl_register_reference_stdlib(runtime);
     runtime->prepared = true;
@@ -1760,8 +1802,8 @@ static void petta_libpl_probe_arity_facts(
  * verbatim, minus the names cetta's native machine and evaluator own
  * (forms, grounded operations, shared builtin syntax), whose engine
  * spellings must never shadow native ownership.  cons is excluded exactly
- * as the reference translator excludes it.  Arities self-populate from
- * current_predicate through the ordinary refresh scan.
+ * as the reference translator excludes it.  Their arities are those the
+ * reference's registration records (petta_libpl_reference_stdlib_arity).
  */
 static void petta_libpl_register_reference_stdlib(
     CettaLibPrologRuntime *runtime) {
@@ -3563,6 +3605,39 @@ CettaLibPrologQueryStatus cetta_lib_prolog_query(
         : CETTA_LIB_PROLOG_QUERY_FAILED;
 }
 
+/* A reference-stdlib name's answer: the arities the reference's
+ * registration records for it (petta_semantics_registered_builtin_arities),
+ * not the predicates this module happens to hold, so an application at
+ * another arity is partial or over-applied as there, never an engine call.
+ * False for any other entry. */
+static bool petta_libpl_reference_stdlib_arity(
+    const PettaLibplImport *entry, SymbolId head,
+    CettaExprLen supplied, PeTTaNamedArity *result) {
+    uint16_t arities = 0u;
+    if (!entry || !entry->reference_stdlib || entry->auto_resolved ||
+        !petta_semantics_registered_builtin_arities(head, &arities))
+        return false;
+    *result = petta_semantics_registered_named_arity(arities, supplied);
+    return true;
+}
+
+/* A reference-stdlib name before the engine has started, in this process or
+ * its host, answered without starting it.  False for any other name or once
+ * the engine has started, when the locked path below answers. */
+static bool petta_libpl_unstarted_named_arity(
+    CettaLibPrologRuntime *runtime, SymbolId head,
+    CettaExprLen supplied, PeTTaNamedArity *result) {
+    if (atomic_load_explicit(&g_petta_libpl_started,
+                             memory_order_acquire) ||
+        PL_is_initialised(NULL, NULL) ||
+        pthread_mutex_lock(&g_petta_libpl_lock) != 0)
+        return false;
+    bool answered = petta_libpl_reference_stdlib_arity(
+        petta_libpl_find_import(runtime, head), head, supplied, result);
+    (void)pthread_mutex_unlock(&g_petta_libpl_lock);
+    return answered;
+}
+
 static PeTTaNamedArity petta_libpl_named_arity_impl(
     CettaLibPrologRuntime *runtime, SymbolId head,
     CettaExprLen supplied) {
@@ -3604,6 +3679,8 @@ static PeTTaNamedArity petta_libpl_named_arity_impl(
         }
         return result;
     }
+    if (petta_libpl_unstarted_named_arity(runtime, head, supplied, &result))
+        return result;
     bool claimed = false;
     if (!petta_libpl_enter(&claimed))
         return result;
@@ -3619,6 +3696,10 @@ static PeTTaNamedArity petta_libpl_named_arity_impl(
                 g_symbols ? symbol_bytes(g_symbols, head) : "?",
                 entry != NULL,
                 entry ? (int)entry->auto_resolved : -1);
+    }
+    if (petta_libpl_reference_stdlib_arity(entry, head, supplied, &result)) {
+        petta_libpl_leave(claimed);
+        return result;
     }
     if (entry && entry->auto_resolved)
         entry = NULL;

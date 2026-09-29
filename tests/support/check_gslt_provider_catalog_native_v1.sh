@@ -18,8 +18,6 @@ catalog_tool=$(realpath "$1")
 catalog_script=$(realpath "$0")
 catalog_repo=$(cd "$(dirname "$catalog_script")/../.." && pwd -P)
 test -x "$catalog_tool"
-catalog_tool_sha=$(sha256sum "$catalog_tool")
-catalog_tool_sha=${catalog_tool_sha%% *}
 mkdir -p "$2"
 catalog_evidence=$(realpath "$2")
 test ! -e "$catalog_evidence/inputs.sha256"
@@ -118,7 +116,7 @@ for catalog_index in "${catalog_indices[@]}"; do
             "$catalog_dir/retained.o" "${catalog_objects[@]}" -lm \
             -o "$catalog_dir/compare_catalogs"
     } >> "$catalog_evidence/compile.stdout" 2>> "$catalog_evidence/compile.stderr"
-    "$catalog_dir/compare_catalogs" "$catalog_tool_sha" > "$catalog_dir/compare.stdout" \
+    "$catalog_dir/compare_catalogs" > "$catalog_dir/compare.stdout" \
         2> "$catalog_dir/compare.stderr"
     test ! -s "$catalog_dir/compare.stderr"
 done
@@ -182,7 +180,7 @@ test ! -s "$catalog_controls/utf8/generate.stderr"
     "${catalog_objects[@]}" -Wl,--gc-sections -lm \
     -o "$catalog_controls/utf8/verify_catalog" \
     >> "$catalog_evidence/compile.stdout" 2>> "$catalog_evidence/compile.stderr"
-"$catalog_controls/utf8/verify_catalog" "$catalog_tool_sha" > "$catalog_controls/utf8/verify.stdout" \
+"$catalog_controls/utf8/verify_catalog" > "$catalog_controls/utf8/verify.stdout" \
     2> "$catalog_controls/utf8/verify.stderr"
 test ! -s "$catalog_controls/utf8/verify.stderr"
 

@@ -98,15 +98,18 @@ void cetta_var_map_init(CettaVarMap *map) {
     map->items = NULL;
     map->len = 0;
     map->cap = 0;
+    cetta_var_index_init(&map->index);
 }
 
 void cetta_var_map_free(CettaVarMap *map) {
     if (!map)
         return;
+    cetta_var_index_free(&map->index);
     free(map->items);
     map->items = NULL;
     map->len = 0;
     map->cap = 0;
+    cetta_var_index_init(&map->index);
 }
 
 bool cetta_var_map_reserve(CettaVarMap *map, uint32_t needed) {
@@ -114,9 +117,16 @@ bool cetta_var_map_reserve(CettaVarMap *map, uint32_t needed) {
         return false;
     if (needed <= map->cap)
         return true;
-    uint32_t next_cap = map->cap ? map->cap * 2 : 8;
-    while (next_cap < needed)
-        next_cap *= 2;
+    uint32_t next_cap = map->cap ? map->cap : 8u;
+    while (next_cap < needed) {
+        if (next_cap > UINT32_MAX / 2u) {
+            next_cap = needed;
+            break;
+        }
+        next_cap *= 2u;
+    }
+    if ((uint64_t)next_cap * sizeof(CettaVarMapEntry) > SIZE_MAX)
+        return false;
     map->items = map->items
         ? cetta_realloc(map->items, sizeof(CettaVarMapEntry) * next_cap)
         : cetta_malloc(sizeof(CettaVarMapEntry) * next_cap);
@@ -127,22 +137,26 @@ bool cetta_var_map_reserve(CettaVarMap *map, uint32_t needed) {
 Atom *cetta_var_map_lookup(const CettaVarMap *map, VarId source_id) {
     if (!map)
         return NULL;
-    for (uint32_t i = 0; i < map->len; i++) {
-        if (map->items[i].source_id == source_id)
-            return map->items[i].mapped_var;
-    }
-    return NULL;
+    size_t position = cetta_var_index_find_records(
+        &map->index, map->items, sizeof(*map->items), map->len, source_id);
+    return position == SIZE_MAX ? NULL : map->items[position].mapped_var;
 }
 
 bool cetta_var_map_add(CettaVarMap *map, VarId source_id, Atom *mapped_var) {
     Atom *existing = cetta_var_map_lookup(map, source_id);
     if (existing)
         return existing == mapped_var;
-    if (!map || !mapped_var || !cetta_var_map_reserve(map, map->len + 1))
+    if (!map || !mapped_var || map->len == UINT32_MAX ||
+        !cetta_var_map_reserve(map, map->len + 1))
         return false;
     map->items[map->len].source_id = source_id;
     map->items[map->len].mapped_var = mapped_var;
     map->len++;
+    if (!cetta_var_index_note_records(
+            &map->index, map->items, sizeof(*map->items), map->len)) {
+        map->len--;
+        return false;
+    }
     return true;
 }
 
@@ -154,6 +168,11 @@ bool cetta_var_map_clone(CettaVarMap *dst, const CettaVarMap *src) {
         return false;
     memcpy(dst->items, src->items, sizeof(CettaVarMapEntry) * src->len);
     dst->len = src->len;
+    if (!cetta_var_index_note_records(
+            &dst->index, dst->items, sizeof(*dst->items), dst->len)) {
+        cetta_var_map_free(dst);
+        return false;
+    }
     return true;
 }
 
@@ -176,6 +195,11 @@ bool cetta_var_map_clone_live(Arena *dst, CettaVarMap *out,
         out->items[i].mapped_var = mapped;
     }
     out->len = src->len;
+    if (!cetta_var_index_note_records(
+            &out->index, out->items, sizeof(*out->items), out->len)) {
+        cetta_var_map_free(out);
+        return false;
+    }
     return true;
 }
 

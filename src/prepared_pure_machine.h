@@ -15,6 +15,15 @@ typedef struct CettaPreparedPureProgram CettaPreparedPureProgram;
 typedef Atom *(*CettaPreparedPureBooleanValue)(Arena *arena, bool value);
 typedef Atom *(*CettaPreparedPureConstructValue)(
     Arena *arena, Atom **elements, CettaExprLen length);
+/* Whether the constructor builds, for every value of `length` elements
+ * headed by `head`, exactly the expression atom_expr builds.  The machine
+ * then builds such a value with atom_expr itself.  NULL: no head is known
+ * to, and every value goes through the constructor. */
+typedef bool (*CettaPreparedPureConstructsExpression)(
+    const Atom *head, CettaExprLen length);
+/* The classifier of atom_expr as a constructor: every head. */
+bool cetta_prepared_pure_constructs_expression_always(
+    const Atom *head, CettaExprLen length);
 typedef bool (*CettaPreparedPureOpaqueValue)(const Atom *value);
 typedef bool (*CettaPreparedPureInterruptPollFn)(void *context);
 /* Map a dialect-owned syntax head to a semantic register instruction.
@@ -39,8 +48,16 @@ typedef enum {
      * expression. Never valid for a producer that publishes answers. */
     CETTA_PREPARED_PURE_EXPRESSION_PROJECT_SINGLE_RESULT,
 } CettaPreparedPureExpressionViewState;
+typedef enum {
+    CETTA_PREPARED_PURE_PROJECT_SOURCE = 0,
+    /* Dispatch the outer application; retain its children's source roles. */
+    CETTA_PREPARED_PURE_PROJECT_APPLICATION,
+    /* Interpret the entire projected term in the current program. */
+    CETTA_PREPARED_PURE_PROJECT_CODE,
+} CettaPreparedPureProjectionMode;
 typedef struct {
     Atom *projected;
+    CettaPreparedPureProjectionMode projection_mode;
     CettaPreparedPureValueObservation observation;
 } CettaPreparedPureExpressionView;
 /* Classify dialect-owned expression forms before the generic constructor
@@ -127,6 +144,7 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
     CettaGsltPureCallMode call_mode,
     CettaPreparedPureBooleanValue boolean_value,
     CettaPreparedPureConstructValue construct_value,
+    CettaPreparedPureConstructsExpression constructs_expression,
     CettaPreparedPureOpaqueValue opaque_value,
     CettaPreparedPureRegisterViewFn register_view,
     CettaPreparedPureExpressionViewFn expression_view,
@@ -143,6 +161,7 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed(
     CettaGsltPureCallMode call_mode,
     CettaPreparedPureBooleanValue boolean_value,
     CettaPreparedPureConstructValue construct_value,
+    CettaPreparedPureConstructsExpression constructs_expression,
     CettaPreparedPureOpaqueValue opaque_value,
     CettaPreparedPureRegisterViewFn register_view,
     CettaPreparedPureExpressionViewFn expression_view,
@@ -164,6 +183,7 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_answers(
     CettaGsltPureCallMode call_mode,
     CettaPreparedPureBooleanValue boolean_value,
     CettaPreparedPureConstructValue construct_value,
+    CettaPreparedPureConstructsExpression constructs_expression,
     CettaPreparedPureOpaqueValue opaque_value,
     CettaPreparedPureRegisterViewFn register_view,
     CettaPreparedPureExpressionViewFn expression_view,

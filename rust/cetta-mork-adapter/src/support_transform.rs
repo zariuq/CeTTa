@@ -6,7 +6,7 @@ use pathmap::zipper::ZipperWriting;
 use std::collections::{BTreeMap, HashMap};
 
 const PROFILE_MAGIC: &[u8; 4] = b"CSTP";
-const PROFILE_VERSION: u16 = 1;
+const PROFILE_VERSION: u16 = 2;
 const SCHEDULER_LEAST_MORK_COMPACT_EXPRESSION: u8 = 1;
 const UNSUPPORTED_LEAVE_INERT: u8 = 1;
 
@@ -140,7 +140,6 @@ pub struct SupportTransformProfile {
     pub language: String,
     pub profile: String,
     pub manifest_sha256: String,
-    pub compiler_sha256: String,
     pub work_symbol: String,
     pub compatible_input_symbol: String,
     pub compatible_input_operator_id: String,
@@ -249,7 +248,6 @@ impl SupportTransformProfile {
             language: reader.text()?,
             profile: reader.text()?,
             manifest_sha256: reader.text()?,
-            compiler_sha256: reader.text()?,
             work_symbol: reader.text()?,
             compatible_input_symbol: reader.text()?,
             compatible_input_operator_id: reader.text()?,
@@ -276,10 +274,8 @@ impl SupportTransformProfile {
     }
 
     fn validate(&self) -> Result<(), String> {
-        if !is_lower_hex_sha256(&self.manifest_sha256)
-            || !is_lower_hex_sha256(&self.compiler_sha256)
-        {
-            return Err("physical profile identities must be lowercase SHA-256".to_string());
+        if !is_lower_hex_sha256(&self.manifest_sha256) {
+            return Err("physical profile identity must be lowercase SHA-256".to_string());
         }
         if self.work_arity != 3 {
             return Err("support-transform V1 requires work arity three".to_string());
@@ -820,7 +816,6 @@ mod tests {
             "mm2",
             "gslt",
             &"a".repeat(64),
-            &"b".repeat(64),
             "exec",
             ",",
             "support.snapshot-match.v1",

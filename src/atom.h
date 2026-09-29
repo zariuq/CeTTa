@@ -189,11 +189,14 @@ struct Atom {
     uint32_t flags;
     /*
      * ATOM_VAR: the variable identity.
-     * ATOM_EXPR: an exact singleton-variable support summary.  A nonzero
-     * value means every variable occurrence in the expression has this id;
-     * zero means either no variables (distinguished by ATOM_FLAG_HAS_VARS)
-     * or support containing more than one id.  The summary is derived from
-     * immutable children and does not change equality or hashing.
+     * ATOM_EXPR: a singleton-variable support summary.  A nonzero value
+     * means every variable occurrence in the expression has this id; zero
+     * means either no variables (distinguished by ATOM_FLAG_HAS_VARS) or,
+     * with variables, support containing more than one id or not settled:
+     * a suffix view of a list with several ids may leave it unsettled
+     * (atom_expr_suffix).  Readers take zero with variables as a subterm to
+     * walk.  The summary is derived from immutable children and does not
+     * change equality or hashing.
      */
     VarId var_id;
     SymbolId sym_id;         /* ATOM_SYMBOL, or variable spelling */
@@ -657,6 +660,9 @@ Atom *atom_symbol_id(Arena *a, SymbolId sym_id);
 Atom *atom_var(Arena *a, const char *name);
 Atom *atom_var_with_id(Arena *a, const char *name, VarId id);
 Atom *atom_var_with_spelling(Arena *a, SymbolId spelling, VarId id);
+/* A variable spelled by a string literal, whose symbol is cached by the
+ * literal's address: `name` must be storage whose contents never change. */
+Atom *atom_var_with_literal(Arena *a, const char *name, VarId id);
 Atom *atom_var_with_name_key(Arena *a, Atom *name_key, VarId id);
 Atom *atom_var_with_presentation(Arena *a, SymbolId spelling,
                                  Atom *name_key, VarId id);
@@ -810,6 +816,15 @@ enum {
 
 Atom *atom_state(Arena *a, StateCell *cell);
 Atom *atom_capture(Arena *a, CaptureClosure *closure);
+/* A foreign record begins with its hold: an arena that holds an atom of the
+ * record retains it once for that atom and releases it when the arena is
+ * reset past the atom or freed, so the record lives exactly while some
+ * arena holds an atom of it (ArenaHeldResources). */
+typedef struct CettaForeignHold {
+    void (*retain)(void *record);
+    void (*release)(void *record);
+} CettaForeignHold;
+
 Atom *atom_foreign(Arena *a, CettaForeignValue *value);
 Atom *atom_internal_tag(Arena *a, CettaInternalTag tag);
 Atom *atom_petta_prolog_compound(Arena *a, Atom *body);
@@ -847,6 +862,33 @@ const CettaPrimeContext *atom_prime_context_value(const Atom *atom);
 Atom *atom_prime_context_lookup(const CettaPrimeContext *context, Atom *key);
 uint32_t atom_prime_context_depth(const CettaPrimeContext *context);
 Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len);
+/* The part of an expression's summary a fixed head gives it, folded once:
+ * atom_expr_headed then builds, from children headed by that head, exactly
+ * the expression atom_expr builds. */
+typedef struct {
+    uint32_t flags;
+    uint32_t structural_facts;
+    /* The head is closed for the arena `arena_id` (for every arena when it
+     * is 0), or for none when `open`. */
+    uint32_t arena_id;
+    bool open;
+    /* The head changes the summary of what it heads (a name to resolve, a
+     * native handle): atom_expr_headed builds through atom_expr. */
+    bool adjusts;
+} AtomExprHead;
+void atom_expr_head_init(AtomExprHead *out, const Atom *head);
+/* atom_expr of `elems`, whose first element is the head `head` was
+ * initialized from. */
+Atom *atom_expr_headed(Arena *a, const AtomExprHead *head, Atom **elems,
+                       CettaExprLen len);
+/* atom_expr_headed of `head_atom` and one, two or three arguments, passed
+ * one by one. */
+Atom *atom_expr_headed2(Arena *a, const AtomExprHead *head, Atom *head_atom,
+                        Atom *first);
+Atom *atom_expr_headed3(Arena *a, const AtomExprHead *head, Atom *head_atom,
+                        Atom *first, Atom *second);
+Atom *atom_expr_headed4(Arena *a, const AtomExprHead *head, Atom *head_atom,
+                        Atom *first, Atom *second, Atom *third);
 /* The suffix of `expression` from its child `offset` on.  It shares the
  * expression's children when their storage outlives the suffix: storage in
  * the suffix's own arena, allocated first, or storage never released.  Its
@@ -854,6 +896,15 @@ Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len);
  * bit and the variables as the others fold them; otherwise it is folded from
  * its own children. */
 Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset);
+/* A new header in arena `a`, of `view`'s length, over `elems`, which it
+ * shares: `view`'s own elements, or a copy of them that equals them as
+ * terms when `view` has no variables.  For a caller that keeps that storage,
+ * and everything it names, for as long as `a` holds the header, as a
+ * collection does for storage it does not collect or copies once.  The
+ * summaries of the elements carry over; the ones relative to an arena are
+ * cleared, which only withholds a shortcut.  NULL when `a` interns its
+ * expressions, which share nothing they do not own. */
+Atom *atom_expr_view_rehome(Arena *a, const Atom *view, Atom **elems);
 /* The expression `list` with `head` before its first child, in amortized
  * constant time (PrefixBuffer).  When `list` starts at its buffer's front in
  * this arena, the free slot just below it is claimed; otherwise the children
@@ -1007,6 +1058,15 @@ typedef Atom *(*AtomDeepCopyResolver)(void *context, Atom *src);
    resolver, installed before copying, redirects every encountered node before
    traversal; update-cell collectors use it to collapse evaluated thunks. */
 AtomDeepCopySession *atom_deep_copy_session_new(Arena *dst);
+/* The session copies out of a region its caller releases right after it:
+ * the atoms `arena` allocated since `mark`.  A copied atom of that region
+ * then records its copy in place instead of in the session's table, since
+ * nothing reads the region once the session ends.  False, leaving the table
+ * in use, when the arena keeps more blocks below the mark than the session
+ * tracks. */
+bool atom_deep_copy_session_forward_region(AtomDeepCopySession *session,
+                                           const Arena *arena,
+                                           ArenaMark mark);
 bool atom_deep_copy_session_retain_frame(
     AtomDeepCopySession *session, CettaFrameIdentity identity);
 void atom_deep_copy_session_set_resolver(
