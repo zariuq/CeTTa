@@ -380,6 +380,9 @@ typedef struct {
     uint32_t rhs_begin;
     uint32_t rhs_len;
     bool authored;
+    /* An authored production a derivation avoids: where an input has several
+     * derivations, only those reducing the fewest avoided productions count. */
+    bool avoided;
 } CettaLpNativeSlrProgramProduction;
 
 typedef struct {
@@ -549,6 +552,7 @@ Atom *cetta_lp_native_slr_program_parse_shared_counted(
     Arena *arena,
     char *error_buf,
     size_t error_buf_size);
+
 
 bool cetta_lp_native_gll_parse_utf8_forest(
     const CettaLpNativeGrammar *grammar,
@@ -836,6 +840,21 @@ Atom *cetta_lp_native_gll_parse_shared_counted(
     Atom *token_list,
     uint64_t descriptor_limit,
     uint64_t *descriptors_used,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size);
+
+/* The same parse, preferring derivations that reduce fewer of the productions
+ * marked in avoided (indexed like grammar->productions).  Only derivations
+ * with the fewest such reductions count, so the result is Ambiguous only when
+ * two of those remain.  NULL avoids nothing. */
+Atom *cetta_lp_native_gll_parse_avoiding_counted(
+    const CettaLpNativeGrammar *grammar,
+    SymbolId start_nt,
+    Atom *token_list,
+    uint64_t descriptor_limit,
+    uint64_t *descriptors_used,
+    const uint8_t *avoided,
     Arena *arena,
     char *error_buf,
     size_t error_buf_size);

@@ -30,8 +30,13 @@
 #define CETTA_TPTP_GLL_DESCRIPTORS_PER_TOKEN_V1 UINT64_C(96)
 #define CETTA_TPTP_GLL_DESCRIPTOR_ALLOWANCE_V1 UINT64_C(200000)
 
+/* Construct a reader snapshot from a prepared pack.  A corpus-compatible
+ * pack is constructed against baseline_path, the strict snapshot of the same
+ * SyntaxBNF: its grammar must contain the strict one, and the productions it
+ * adds are marked avoided.  A strict pack has no baseline (NULL). */
 bool cetta_tptp_snapshot_construct_from_pack_v1(
     const char *pack_path,
+    const char *baseline_path,
     const char *out_path,
     char *error,
     size_t error_size);

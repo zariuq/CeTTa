@@ -469,7 +469,7 @@ bool pp_table_snapshot_v1_write(
         put_u32(&cur, map_id(&names, p->lhs));
         put_u32(&cur, p->rhs_begin);
         put_u32(&cur, p->rhs_len);
-        put_u32(&cur, p->authored ? 1u : 0u);
+        put_u32(&cur, (p->authored ? 1u : 0u) | (p->avoided ? 2u : 0u));
     }
     for (i = 0u; i < snap->slr.rhs_len; i++) {
         const CettaLpNativeSymbol *s = &snap->slr.rhs[i];
@@ -729,15 +729,16 @@ bool pp_table_snapshot_v1_read(
             goto fail;
     }
     for (i = 0u; i < snap.slr.production_len; i++) {
-        uint32_t lab = 0u, lhs = 0u, authored = 0u;
+        uint32_t lab = 0u, lhs = 0u, flags = 0u;
         if (!get_u32(&cur, end, &lab) || !get_u32(&cur, end, &lhs) ||
             !get_u32(&cur, end, &snap.slr.productions[i].rhs_begin) ||
             !get_u32(&cur, end, &snap.slr.productions[i].rhs_len) ||
-            !get_u32(&cur, end, &authored))
+            !get_u32(&cur, end, &flags) || flags > 3u)
             goto fail;
         snap.slr.productions[i].label = MAP(lab);
         snap.slr.productions[i].lhs = MAP(lhs);
-        snap.slr.productions[i].authored = authored != 0u;
+        snap.slr.productions[i].authored = (flags & 1u) != 0u;
+        snap.slr.productions[i].avoided = (flags & 2u) != 0u;
     }
     if (snap.slr.rhs_len) {
         snap.slr.rhs = calloc(snap.slr.rhs_len, sizeof(*snap.slr.rhs));

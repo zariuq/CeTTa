@@ -54,6 +54,7 @@
     "tests/langdef/tptp/vampire_ground_refutation.tstp"))
 (= (print-test:compatible-files)
    ("tests/langdef/tptp/official_internal_source_compatibility_v9200.p"
+    "tests/langdef/tptp/official_nhf_bare_parameter_compatibility_v9200.p"
     "tests/langdef/tptp/official_syntax_parenthesized_cnf_v9200.p"))
 
 !(print-test:profile strict (print-test:strict-files))

@@ -6817,16 +6817,23 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
 
     if (atom_is_symbol(head, "__cetta_lib_tptp_snapshot_construct_v1")) {
         const char *pack_path = NULL;
+        const char *baseline_path = NULL;
         const char *out_path = NULL;
         PPTableSnapshotV1 loaded;
         Atom *parts[7];
         struct stat st;
-        if (nargs != 2u || !cetta_langdef_text_arg(args[0], &pack_path) ||
-            !cetta_langdef_text_arg(args[1], &out_path))
+        /* (pack out), or (pack baseline out) for a corpus-compatible pack
+         * constructed against its strict snapshot. */
+        if ((nargs != 2u && nargs != 3u) ||
+            !cetta_langdef_text_arg(args[0], &pack_path) ||
+            (nargs == 3u && !cetta_langdef_text_arg(args[1], &baseline_path)) ||
+            !cetta_langdef_text_arg(args[nargs - 1u], &out_path))
             return langdef_error(
-                arena, head, "tptp snapshot construct expects pack and out paths");
+                arena, head,
+                "tptp snapshot construct expects pack, optional baseline "
+                "and out paths");
         if (!cetta_tptp_snapshot_construct_from_pack_v1(
-                pack_path, out_path, error, sizeof(error)))
+                pack_path, baseline_path, out_path, error, sizeof(error)))
             return langdef_error(
                 arena, head,
                 error[0] ? error : "tptp snapshot construct failed");

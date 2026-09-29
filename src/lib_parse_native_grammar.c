@@ -1775,6 +1775,7 @@ bool cetta_lp_native_slr_program_validate(
             production->authored !=
                 (index < program->authored_production_len) ||
             (!production->authored && production->label != UINT32_MAX) ||
+            (production->avoided && !production->authored) ||
             slr_program_id_find(
                 program->nonterminals, program->nonterminal_len,
                 production->lhs) < 0) {
@@ -2189,6 +2190,8 @@ typedef struct {
     uint8_t ways_total;
     uint8_t ways_done;
     bool queued;
+    /* The avoided productions the stored derivation reduced. */
+    uint32_t avoid_count;
 } CettaLpNativeBranch;
 
 typedef struct {
@@ -3143,6 +3146,7 @@ static bool slr_program_enqueue_branch(
     const CettaLpNativeU32Vec *state_stack,
     const CettaLpNativeParseValueVec *value_stack,
     uint8_t ways,
+    uint32_t avoid_count,
     uint64_t work_limit,
     uint64_t *work,
     bool *resource_limit,
@@ -3152,7 +3156,41 @@ static bool slr_program_enqueue_branch(
 
     if (found >= 0) {
         CettaLpNativeBranch *branch = &configs->data[found];
-        uint32_t grown = (uint32_t)branch->ways_total + ways;
+        uint32_t grown;
+        /* Derivations meeting in one configuration share its continuations,
+         * so the ones that reduced fewer avoided productions are the only
+         * ones that count: a costlier one is dropped, and a cheaper one
+         * replaces those stored and is continued again. */
+        if (avoid_count > branch->avoid_count)
+            return true;
+        if (avoid_count < branch->avoid_count) {
+            CettaLpNativeParseValueVec replacement = {0};
+            if (!slr_program_charge_work(
+                    1u + value_stack->len, work_limit, work)) {
+                *resource_limit = true;
+                return true;
+            }
+            if (!parsevaluevec_copy(&replacement, value_stack)) {
+                slr_summary_set_error(error_buf, error_buf_size,
+                                      "failed to replace GLR branch");
+                return false;
+            }
+            free(branch->value_stack.data);
+            branch->value_stack = replacement;
+            branch->avoid_count = avoid_count;
+            branch->ways_total = ways > 2u ? 2u : ways;
+            branch->ways_done = 0u;
+            if (!branch->queued) {
+                branch->queued = true;
+                if (!u32vec_push(queue, (uint32_t)found)) {
+                    slr_summary_set_error(error_buf, error_buf_size,
+                                          "failed to schedule GLR branch");
+                    return false;
+                }
+            }
+            return true;
+        }
+        grown = (uint32_t)branch->ways_total + ways;
         if (grown > 2u)
             grown = 2u;
         if (grown > branch->ways_total) {
@@ -3185,7 +3223,43 @@ static bool slr_program_enqueue_branch(
                               "failed to enqueue GLR branch");
         return false;
     }
+    configs->data[configs->len - 1u].avoid_count = avoid_count;
     return true;
+}
+
+/* Whether a reduction by the action reduces an avoided production. */
+static uint32_t slr_program_action_avoids(
+    const CettaLpNativeSlrProgram *program,
+    const CettaLpNativeSlrProgramAction *action) {
+    return action->kind == CETTA_LP_NATIVE_SLR_PROGRAM_REDUCE &&
+                   action->value >= 0 &&
+                   (uint32_t)action->value < program->production_len &&
+                   program->productions[action->value].avoided
+               ? 1u : 0u;
+}
+
+/* Record an accepting derivation: the fewest avoided productions win, and
+ * derivations tied at the fewest are counted, up to two. */
+static void slr_program_glr_accept(
+    uint32_t *accept_count, uint32_t *accept_avoid, Atom **accept_cert,
+    Atom *cert, uint8_t ways, uint32_t avoid_count) {
+    if (avoid_count > *accept_avoid)
+        return;
+    if (avoid_count < *accept_avoid) {
+        *accept_avoid = avoid_count;
+        *accept_count = 0u;
+        *accept_cert = cert;
+    }
+    *accept_count += ways;
+    if (*accept_count > 2u)
+        *accept_count = 2u;
+}
+
+/* A second derivation at the fewest possible avoided productions settles
+ * the parse as ambiguous. */
+static bool slr_program_glr_settled(uint32_t accept_count,
+                                    uint32_t accept_avoid) {
+    return accept_count >= 2u && accept_avoid == 0u;
 }
 
 static Atom *slr_program_parse_glr(
@@ -3204,6 +3278,7 @@ static Atom *slr_program_parse_glr(
     uint32_t index;
     uint32_t farthest_position = 0u;
     uint32_t accept_count = 0u;
+    uint32_t accept_avoid = UINT32_MAX;
     Atom *accept_cert = NULL;
     Atom *result = NULL;
     uint64_t work = 0u;
@@ -3244,7 +3319,7 @@ static Atom *slr_program_parse_glr(
         if (!u32vec_push(&initial_states, 0u) ||
             !slr_program_enqueue_branch(
                 &configs, &queue, 0u, &initial_states, &initial_values, 1u,
-                work_limit, &work, &resource_limit,
+                0u, work_limit, &work, &resource_limit,
                 error_buf, error_buf_size)) {
             free(initial_states.data);
             goto done;
@@ -3254,12 +3329,14 @@ static Atom *slr_program_parse_glr(
             goto limited;
     }
 
-    while (queue.len > 0u && accept_count < 2u) {
+    while (queue.len > 0u &&
+           !slr_program_glr_settled(accept_count, accept_avoid)) {
         uint32_t config_index = queue.data[--queue.len];
         CettaLpNativeBranch *branch = &configs.data[config_index];
         CettaLpNativeU32Vec states = {0};
         CettaLpNativeParseValueVec values = {0};
         uint32_t position = branch->pos;
+        uint32_t avoid_count = branch->avoid_count;
         uint8_t ways;
 
         branch->queued = false;
@@ -3322,6 +3399,8 @@ static Atom *slr_program_parse_glr(
                 }
                 step.kind = program->glr_actions[action_i].kind;
                 step.value = program->glr_actions[action_i].value;
+                avoid_count += slr_program_action_avoids(
+                    program, &step);
                 outcome = slr_program_step_action(
                     program, &step, tokens, &states, &values, &position,
                     arena, &accepted, true, error_buf, error_buf_size);
@@ -3337,11 +3416,9 @@ static Atom *slr_program_parse_glr(
                         free(values.data);
                         goto done;
                     }
-                    if (accept_count == 0u)
-                        accept_cert = accepted->expr.elems[1];
-                    accept_count += ways;
-                    if (accept_count > 2u)
-                        accept_count = 2u;
+                    slr_program_glr_accept(
+                        &accept_count, &accept_avoid, &accept_cert,
+                        accepted->expr.elems[1], ways, avoid_count);
                 } else if (outcome == CETTA_LP_SLR_STEP_ERROR) {
                     free(states.data);
                     free(values.data);
@@ -3352,13 +3429,15 @@ static Atom *slr_program_parse_glr(
 
             /* Only conflicts fork.  Singleton stretches mutate one owned
              * stack in place, so deterministic inputs remain linear-space. */
-            while (action_i != UINT32_MAX && accept_count < 2u) {
+            while (action_i != UINT32_MAX &&
+                   !slr_program_glr_settled(accept_count, accept_avoid)) {
                 CettaLpNativeU32Vec next_states = {0};
                 CettaLpNativeParseValueVec next_values = {0};
                 CettaLpNativeSlrProgramAction step;
                 CettaLpSlrStep outcome;
                 Atom *accepted = NULL;
                 uint32_t next_position = position;
+                uint32_t next_avoid;
 
                 if (!slr_program_charge_work(1u, work_limit, &work)) {
                     resource_limit = true;
@@ -3376,6 +3455,8 @@ static Atom *slr_program_parse_glr(
                 }
                 step.kind = program->glr_actions[action_i].kind;
                 step.value = program->glr_actions[action_i].value;
+                next_avoid = avoid_count +
+                             slr_program_action_avoids(program, &step);
                 outcome = slr_program_step_action(
                     program, &step, tokens, &next_states, &next_values,
                     &next_position, arena, &accepted, true,
@@ -3383,7 +3464,7 @@ static Atom *slr_program_parse_glr(
                 if (outcome == CETTA_LP_SLR_STEP_CONTINUE) {
                     if (!slr_program_enqueue_branch(
                             &configs, &queue, next_position,
-                            &next_states, &next_values, ways,
+                            &next_states, &next_values, ways, next_avoid,
                             work_limit, &work, &resource_limit,
                             error_buf, error_buf_size)) {
                         free(next_states.data);
@@ -3404,11 +3485,9 @@ static Atom *slr_program_parse_glr(
                             "GLR accept result missing certificate");
                         goto done;
                     }
-                    if (accept_count == 0u)
-                        accept_cert = accepted->expr.elems[1];
-                    accept_count += ways;
-                    if (accept_count > 2u)
-                        accept_count = 2u;
+                    slr_program_glr_accept(
+                        &accept_count, &accept_avoid, &accept_cert,
+                        accepted->expr.elems[1], ways, next_avoid);
                 } else if (outcome == CETTA_LP_SLR_STEP_ERROR) {
                     free(next_states.data);
                     free(next_values.data);
@@ -3756,6 +3835,8 @@ typedef struct {
     uint32_t cap;
     CettaLpNativeGllIndex index;
     CettaLpNativeGllPackedStore packed;
+    /* When set, the packed choice each node's certificate takes. */
+    const uint32_t *preferred_choice;
 } CettaLpNativeGllNodeVec;
 
 typedef struct {
@@ -5772,6 +5853,13 @@ static const CettaLpNativeGllPackedChoice *gll_pick_choice(
         node->first_choice >= nodes->packed.len) {
         return NULL;
     }
+    if (nodes->preferred_choice) {
+        uint32_t preferred =
+            nodes->preferred_choice[(uint32_t)(node - nodes->data)];
+        if (preferred != CETTA_LP_NATIVE_NODE_NONE &&
+            preferred < nodes->packed.len)
+            return &nodes->packed.data[preferred];
+    }
     best = &nodes->packed.data[node->first_choice];
     for (choice_idx = best->next_idx;
          choice_idx != CETTA_LP_NATIVE_NODE_NONE;
@@ -6070,6 +6158,80 @@ static int32_t gll_count_node(const CettaLpNativeGllNodeVec *nodes,
     return total;
 }
 
+/* The fewest avoided productions a derivation of a node reduces, how many
+ * of its derivations reduce that few (up to two), and the packed choice of
+ * one of them.  A production counts where it completes, at a symbol node. */
+typedef struct {
+    uint32_t cost;
+    uint8_t count;
+    uint8_t state;
+} CettaLpNativeGllAvoidRank;
+
+static CettaLpNativeGllAvoidRank gll_rank_node(
+    const CettaLpNativeGllNodeVec *nodes, uint32_t node_idx,
+    const uint8_t *avoided, uint32_t avoided_len,
+    CettaLpNativeGllAvoidRank *memo, uint32_t *best) {
+    CettaLpNativeGllAvoidRank none = {UINT32_MAX, 0u, 2u};
+    CettaLpNativeGllAvoidRank one = {0u, 1u, 2u};
+    CettaLpNativeGllAvoidRank result = {UINT32_MAX, 0u, 2u};
+    const CettaLpNativeGllNode *node;
+    CettaLpNativeGllNodeKind kind;
+    uint32_t choice_idx;
+
+    if (node_idx >= nodes->len)
+        return none;
+    node = &nodes->data[node_idx];
+    kind = gll_node_kind_value(node);
+    if (kind == CETTA_LP_NATIVE_GLL_NODE_TERM ||
+        kind == CETTA_LP_NATIVE_GLL_NODE_EPS)
+        return one;
+    if (memo[node_idx].state == 2u)
+        return memo[node_idx];
+    if (memo[node_idx].state == 1u)
+        return none;
+    memo[node_idx].state = 1u;
+    best[node_idx] = CETTA_LP_NATIVE_NODE_NONE;
+    for (choice_idx = node->first_choice;
+         choice_idx != CETTA_LP_NATIVE_NODE_NONE;
+         choice_idx = nodes->packed.data[choice_idx].next_idx) {
+        const CettaLpNativeGllPackedChoice *choice;
+        CettaLpNativeGllAvoidRank left = one;
+        CettaLpNativeGllAvoidRank right;
+        uint64_t cost;
+        uint32_t count;
+        if (choice_idx >= nodes->packed.len)
+            break;
+        choice = &nodes->packed.data[choice_idx];
+        if (choice->left_idx != CETTA_LP_NATIVE_NODE_NONE)
+            left = gll_rank_node(nodes, choice->left_idx, avoided,
+                                 avoided_len, memo, best);
+        right = gll_rank_node(nodes, choice->right_idx, avoided,
+                              avoided_len, memo, best);
+        if (left.count == 0u || right.count == 0u)
+            continue;
+        cost = (uint64_t)left.cost + right.cost;
+        if (kind == CETTA_LP_NATIVE_GLL_NODE_SYM) {
+            int32_t prod_idx = gll_choice_prod_idx(nodes, choice);
+            if (prod_idx >= 0 && (uint32_t)prod_idx < avoided_len &&
+                avoided[prod_idx])
+                cost++;
+        }
+        if (cost >= UINT32_MAX)
+            continue;
+        count = (uint32_t)left.count * right.count;
+        if ((uint32_t)cost < result.cost) {
+            result.cost = (uint32_t)cost;
+            result.count = count > 2u ? 2u : (uint8_t)count;
+            best[node_idx] = choice_idx;
+        } else if ((uint32_t)cost == result.cost) {
+            count += result.count;
+            result.count = count > 2u ? 2u : (uint8_t)count;
+        }
+    }
+    memo[node_idx] = result;
+    return result;
+}
+
 static bool gll_collect_spine(const CettaLpNativeGllNodeVec *nodes,
                               uint32_t left_idx,
                               uint32_t right_idx,
@@ -6207,15 +6369,17 @@ Atom *cetta_lp_native_gll_parse_shared(const CettaLpNativeGrammar *grammar,
         error_buf, error_buf_size);
 }
 
-Atom *cetta_lp_native_gll_parse_shared_counted(
+static Atom *gll_parse_counted(
     const CettaLpNativeGrammar *grammar,
     SymbolId start_nt,
     Atom *token_list,
     uint64_t descriptor_limit,
     uint64_t *descriptors_used,
+    const uint8_t *avoided,
     Arena *arena,
     char *error_buf,
     size_t error_buf_size) {
+    uint32_t *preferred = NULL;
     CettaLpNativeSlrProduction *productions = NULL;
     uint32_t production_len = 0;
     CettaLpNativeInputTokenVec tokens = {0};
@@ -6459,13 +6623,30 @@ Atom *cetta_lp_native_gll_parse_shared_counted(
             result = atom_symbol(arena, "NoParse");
             goto cleanup;
         }
-        memo_seen = cetta_malloc(sizeof(*memo_seen) * nodes.len);
-        memo_value = cetta_malloc(sizeof(*memo_value) * nodes.len);
-        memset(memo_seen, 0, sizeof(*memo_seen) * nodes.len);
-        memset(memo_value, 0, sizeof(*memo_value) * nodes.len);
-        count = gll_count_node(&nodes, (uint32_t)root_idx, memo_seen, memo_value);
-        free(memo_seen);
-        free(memo_value);
+        if (avoided) {
+            CettaLpNativeGllAvoidRank *ranks =
+                cetta_malloc(sizeof(*ranks) * nodes.len);
+            CettaLpNativeGllAvoidRank root_rank;
+            memset(ranks, 0, sizeof(*ranks) * nodes.len);
+            preferred = cetta_malloc(sizeof(*preferred) * nodes.len);
+            for (uint32_t k = 0u; k < nodes.len; k++)
+                preferred[k] = CETTA_LP_NATIVE_NODE_NONE;
+            root_rank = gll_rank_node(&nodes, (uint32_t)root_idx, avoided,
+                                      grammar->production_len, ranks,
+                                      preferred);
+            free(ranks);
+            count = root_rank.count;
+            nodes.preferred_choice = preferred;
+        } else {
+            memo_seen = cetta_malloc(sizeof(*memo_seen) * nodes.len);
+            memo_value = cetta_malloc(sizeof(*memo_value) * nodes.len);
+            memset(memo_seen, 0, sizeof(*memo_seen) * nodes.len);
+            memset(memo_value, 0, sizeof(*memo_value) * nodes.len);
+            count = gll_count_node(&nodes, (uint32_t)root_idx, memo_seen,
+                                   memo_value);
+            free(memo_seen);
+            free(memo_value);
+        }
         if (count <= 0) {
             if (error_buf && error_buf_size)
                 snprintf(error_buf, error_buf_size,
@@ -6511,6 +6692,7 @@ resource_limit:
 cleanup:
     if (descriptors_used)
         *descriptors_used = seen.len;
+    free(preferred);
     free(tokens.data);
     gll_nodevec_free(&nodes);
     gll_gssvec_free(&gss_nodes);
@@ -6520,6 +6702,7 @@ cleanup:
     return result;
 
 fail:
+    free(preferred);
     free(tokens.data);
     gll_nodevec_free(&nodes);
     gll_gssvec_free(&gss_nodes);
@@ -6527,6 +6710,35 @@ fail:
     free(work.data);
     slr_productions_free(productions, production_len);
     return NULL;
+}
+
+Atom *cetta_lp_native_gll_parse_shared_counted(
+    const CettaLpNativeGrammar *grammar,
+    SymbolId start_nt,
+    Atom *token_list,
+    uint64_t descriptor_limit,
+    uint64_t *descriptors_used,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size) {
+    return gll_parse_counted(grammar, start_nt, token_list, descriptor_limit,
+                             descriptors_used, NULL, arena, error_buf,
+                             error_buf_size);
+}
+
+Atom *cetta_lp_native_gll_parse_avoiding_counted(
+    const CettaLpNativeGrammar *grammar,
+    SymbolId start_nt,
+    Atom *token_list,
+    uint64_t descriptor_limit,
+    uint64_t *descriptors_used,
+    const uint8_t *avoided,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size) {
+    return gll_parse_counted(grammar, start_nt, token_list, descriptor_limit,
+                             descriptors_used, avoided, arena, error_buf,
+                             error_buf_size);
 }
 
 Atom *cetta_lp_native_gll_recognize(const CettaLpNativeGrammar *grammar,

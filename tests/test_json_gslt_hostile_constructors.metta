@@ -16,7 +16,8 @@
 !(json:stringify (json:parse "{\"nested\": [[1], {\"t\": true}]}"))
 
 ; A value the program passes through a variable is that program's value.
-; HE evaluates an argument at the call, whatever it holds, so the
+; HE interprets an argument at a parameter that is not Atom-typed, as
+; upstream HE does (tests/he/untyped_parameter_interprets_data), so the
 ; program's equation applies there; PeTTa passes a variable's value on as
 ; it is.
 !(let $v (json:parse "[1]") (json:stringify $v))

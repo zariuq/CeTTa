@@ -9,10 +9,11 @@
 #include <stdint.h>
 
 /* Frozen ParserPack tables: DFA lexical program plus SLR parser program.
- * Magic "TPP1". Independent of C struct layout. Fail-atomic write. */
+ * Magic "TPP1". Independent of C struct layout. Fail-atomic write.
+ * Version 4 records each production's flags: 1 authored, 2 avoided. */
 
 #define PP_TABLE_SNAPSHOT_V1_MAGIC "TPP1"
-#define PP_TABLE_SNAPSHOT_V1_VERSION 3u
+#define PP_TABLE_SNAPSHOT_V1_VERSION 4u
 #define PP_TABLE_SNAPSHOT_V1_PROFILE_CAP 32u
 
 typedef enum {

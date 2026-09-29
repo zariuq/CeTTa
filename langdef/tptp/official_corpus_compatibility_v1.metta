@@ -3,6 +3,11 @@
 ; official grammar remains unchanged.  Each extension consumes a structural
 ; NativeType judgment produced from the current grammar; the judgment is
 ; rejected unless its zipper reconstructs the exact carried source.
+; The profile's reader snapshot is constructed against the strict snapshot
+; and marks the productions these extensions add as avoided: a text is read
+; by a derivation using the fewest of them, so a text the strict grammar
+; reads keeps its strict reading, and a tie among those derivations remains
+; ambiguous.
 (gslt-presentation-v1 TptpOfficialCorpusCompatibilityV1
   (signature
     (operator metta-equation 2)

@@ -126,7 +126,7 @@ static inline double tptp_stage_run_seconds_v1(const TptpStageRunV1 *run) {
 
 /* One input of the file being read.  False once a stage has failed; the
  * cost then names the stage and its error. */
-static inline bool tptp_stage_run_input_v1(TptpStageRunV1 *run, Atom *input) {
+static inline bool tptp_stage_run_input_once_v1(TptpStageRunV1 *run, Atom *input) {
     TptpStageCostV1 *cost = &run->cost;
     Atom *file;
     Atom *records = NULL;
@@ -188,6 +188,16 @@ static inline bool tptp_stage_run_input_v1(TptpStageRunV1 *run, Atom *input) {
         return false;
     }
     return true;
+}
+
+/* The stages of one input allocate above a mark that is released when they
+ * finish, so a file of many inputs needs the memory of its largest input,
+ * not of all of them. */
+static inline bool tptp_stage_run_input_v1(TptpStageRunV1 *run, Atom *input) {
+    ArenaMark mark = arena_mark(run->arena);
+    bool ok = tptp_stage_run_input_once_v1(run, input);
+    arena_reset(run->arena, mark);
+    return ok;
 }
 
 #endif /* CETTA_TPTP_COMPACT_STAGES_V1_H */

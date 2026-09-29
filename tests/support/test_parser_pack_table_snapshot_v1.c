@@ -429,6 +429,66 @@ int main(void) {
                    descriptors_used == 1u,
                error[0] ? error
                         : "GLL descriptor exhaustion is not syntax rejection");
+        {
+            /* Avoided productions: a derivation reducing fewer of them is
+             * the reading; derivations tied at the fewest stay ambiguous.
+             * Rows mark productions start-left, start-right, left-leaf and
+             * right-leaf; the reading is 'L' (left), 'R' or '?' (ambiguous). */
+            static const struct {
+                uint8_t avoided[4];
+                char reading;
+            } cases[] = {
+                {{0u, 0u, 0u, 1u}, 'L'},
+                {{0u, 1u, 0u, 0u}, 'L'},
+                {{0u, 0u, 1u, 0u}, 'R'},
+                {{0u, 1u, 1u, 1u}, 'L'},
+                {{0u, 0u, 1u, 1u}, '?'},
+                {{0u, 1u, 1u, 0u}, '?'},
+                {{1u, 1u, 1u, 1u}, '?'},
+                {{0u, 0u, 0u, 0u}, '?'},
+            };
+            for (size_t c = 0u; c < sizeof(cases) / sizeof(cases[0]); c++) {
+                char label[96];
+                for (uint32_t k = 0u; k < 4u; k++)
+                    amb_program.productions[k].avoided =
+                        cases[c].avoided[k] != 0u;
+                for (int engine = 0; engine < 2; engine++) {
+                    const char *printed;
+                    bool as_expected;
+                    error[0] = '\0';
+                    amb_result = engine == 0
+                        ? cetta_lp_native_slr_program_parse_shared_counted(
+                              &amb_program, amb_tokens, 0u, &work_used,
+                              &arena, error, sizeof(error))
+                        : cetta_lp_native_gll_parse_avoiding_counted(
+                              &amb_grammar, amb_start, amb_tokens, 0u,
+                              &descriptors_used, cases[c].avoided,
+                              &arena, error, sizeof(error));
+                    printed = amb_result
+                        ? atom_to_parseable_string(&arena, amb_result) : "";
+                    if (cases[c].reading == '?')
+                        as_expected = amb_result &&
+                            amb_result->kind == ATOM_SYMBOL &&
+                            atom_is_symbol(amb_result, "Ambiguous");
+                    else
+                        as_expected =
+                            result_is_app(amb_result, "Unique", 1u) &&
+                            strstr(printed, cases[c].reading == 'L'
+                                                ? "amb-left-leaf"
+                                                : "amb-right-leaf") &&
+                            !strstr(printed, cases[c].reading == 'L'
+                                                 ? "amb-right-leaf"
+                                                 : "amb-left-leaf");
+                    snprintf(label, sizeof(label),
+                             "%s avoid case %zu reads %c",
+                             engine == 0 ? "GLR" : "GLL", c,
+                             cases[c].reading);
+                    expect(&counts, as_expected, error[0] ? error : label);
+                }
+            }
+            for (uint32_t k = 0u; k < 4u; k++)
+                amb_program.productions[k].avoided = false;
+        }
         cetta_lp_native_slr_program_free(&amb_program);
         cetta_lp_native_slr_prepared_free(&amb_prepared);
         cetta_lp_native_grammar_free(&amb_grammar);
@@ -561,7 +621,7 @@ int main(void) {
         error[0] = '\0';
         expect(&counts,
                cetta_tptp_snapshot_construct_from_pack_v1(
-                   pack_path, out_path, error, sizeof(error)),
+                   pack_path, NULL, out_path, error, sizeof(error)),
                error[0] ? error : "construct official token DFA");
         error[0] = '\0';
         expect(&counts,
@@ -581,7 +641,7 @@ int main(void) {
         error[0] = '\0';
         expect(&counts,
                cetta_tptp_snapshot_construct_from_pack_v1(
-                   changed_pack_path, changed_out_path, error, sizeof(error)),
+                   changed_pack_path, NULL, changed_out_path, error, sizeof(error)),
                error[0] ? error : "construct changed-digest snapshot");
         {
             PPTableSnapshotV1 changed;
@@ -618,7 +678,7 @@ int main(void) {
         error[0] = '\0';
         expect(&counts,
                !cetta_tptp_snapshot_construct_from_pack_v1(
-                   changed_profile_pack_path, changed_profile_out_path,
+                   changed_profile_pack_path, NULL, changed_profile_out_path,
                    error, sizeof(error)) && error[0] != '\0',
                "profile substitution without its source is rejected");
         expect(&counts,
@@ -630,7 +690,7 @@ int main(void) {
         error[0] = '\0';
         expect(&counts,
                !cetta_tptp_snapshot_construct_from_pack_v1(
-                   changed_role_pack_path, changed_role_out_path,
+                   changed_role_pack_path, NULL, changed_role_out_path,
                    error, sizeof(error)) && error[0] != '\0',
                "artifact requires its snapshot specializer source");
         expect(&counts,
@@ -642,7 +702,7 @@ int main(void) {
         error[0] = '\0';
         expect(&counts,
                !cetta_tptp_snapshot_construct_from_pack_v1(
-                   changed_source_path_pack_path,
+                   changed_source_path_pack_path, NULL,
                    changed_source_path_out_path,
                    error, sizeof(error)) && error[0] != '\0',
                "artifact requires the exact specializer source path");

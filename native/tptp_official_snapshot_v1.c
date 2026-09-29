@@ -1705,8 +1705,208 @@ static bool slr_fill_from_pack(CettaLpNativeGrammar *g, uint32_t *cap,
     return true;
 }
 
+/* Helper nonterminals are the ones the lowering origins name. */
+static bool snapshot_is_helper(const PPTableSnapshotV1 *snap, SymbolId sym) {
+    uint32_t i;
+    for (i = 0u; i < snap->origin_len; i++) {
+        if (snap->origins[i].helper == sym)
+            return true;
+    }
+    return false;
+}
+
+/* A correspondence between the baseline's helpers and the extension's:
+ * lowering numbers helpers by position, so an extension renames them. */
+typedef struct {
+    SymbolId *base;
+    SymbolId *ext;
+    uint32_t len;
+    uint32_t cap;
+} TptpHelperMapV1;
+
+static bool helper_map_bind(TptpHelperMapV1 *map, SymbolId base,
+                            SymbolId ext) {
+    uint32_t i;
+    for (i = 0u; i < map->len; i++) {
+        if (map->base[i] == base || map->ext[i] == ext)
+            return map->base[i] == base && map->ext[i] == ext;
+    }
+    if (map->len == map->cap) {
+        uint32_t cap = map->cap ? map->cap * 2u : 16u;
+        SymbolId *b = realloc(map->base, cap * sizeof(*b));
+        SymbolId *e;
+        if (!b)
+            return false;
+        map->base = b;
+        e = realloc(map->ext, cap * sizeof(*e));
+        if (!e)
+            return false;
+        map->ext = e;
+        map->cap = cap;
+    }
+    map->base[map->len] = base;
+    map->ext[map->len] = ext;
+    map->len++;
+    return true;
+}
+
+/* Whether an extension production is a baseline one: the same lhs up to
+ * the helper map, and the same right side with helpers corresponding. */
+static bool production_extends(
+    const PPTableSnapshotV1 *ext, const CettaLpNativeSlrProgramProduction *p,
+    const PPTableSnapshotV1 *base, const CettaLpNativeSlrProgramProduction *q,
+    TptpHelperMapV1 *map) {
+    uint32_t k;
+    if (p->rhs_len != q->rhs_len)
+        return false;
+    for (k = 0u; k < p->rhs_len; k++) {
+        const CettaLpNativeSymbol *a = &ext->slr.rhs[p->rhs_begin + k];
+        const CettaLpNativeSymbol *b = &base->slr.rhs[q->rhs_begin + k];
+        bool a_helper, b_helper;
+        if (a->kind != b->kind || a->scope != b->scope)
+            return false;
+        a_helper = a->kind != CETTA_LP_NATIVE_SYMBOL_TM &&
+                   snapshot_is_helper(ext, a->name);
+        b_helper = b->kind != CETTA_LP_NATIVE_SYMBOL_TM &&
+                   snapshot_is_helper(base, b->name);
+        if (a_helper != b_helper)
+            return false;
+        if (a_helper ? !helper_map_bind(map, b->name, a->name)
+                     : a->name != b->name)
+            return false;
+    }
+    return true;
+}
+
+static int32_t production_by_label(const PPTableSnapshotV1 *snap,
+                                   SymbolId label) {
+    uint32_t i;
+    for (i = 0u; i < snap->slr.authored_production_len; i++) {
+        if (snap->slr.productions[i].label == label)
+            return (int32_t)i;
+    }
+    return -1;
+}
+
+/* The next production with the given lhs after index from (or the first,
+ * from = -1). */
+static int32_t production_next_of(const PPTableSnapshotV1 *snap,
+                                  SymbolId lhs, int32_t from) {
+    uint32_t i;
+    for (i = (uint32_t)(from + 1); i < snap->slr.authored_production_len;
+         i++) {
+        if (snap->slr.productions[i].lhs == lhs)
+            return (int32_t)i;
+    }
+    return -1;
+}
+
+/*
+ * Mark the productions an extension grammar adds to its baseline as avoided.
+ * The extension must contain the baseline exactly: every baseline production
+ * appears in it, named rules by label and helpers by their correspondence,
+ * with the same right side.  The productions left over are the extension's
+ * own named-rule productions, which are avoided, and helpers only they reach.
+ * A derivation reducing no avoided production is then a baseline derivation.
+ */
+static bool snapshot_mark_extension(PPTableSnapshotV1 *ext,
+                                    const PPTableSnapshotV1 *base,
+                                    uint32_t *avoided_len,
+                                    char *error, size_t error_size) {
+    TptpHelperMapV1 map = {0};
+    uint32_t i, done_len = 0u, marked = 0u;
+    bool ok = false;
+    const char *what = NULL;
+    SymbolId at = SYMBOL_ID_NONE;
+
+    for (i = 0u; i < ext->slr.authored_production_len; i++) {
+        CettaLpNativeSlrProgramProduction *p = &ext->slr.productions[i];
+        int32_t q;
+        if (snapshot_is_helper(ext, p->lhs))
+            continue;
+        if (production_by_label(ext, p->label) != (int32_t)i) {
+            what = "repeats the label";
+            at = p->label;
+            goto done;
+        }
+        q = production_by_label(base, p->label);
+        if (q < 0) {
+            p->avoided = true;
+            marked++;
+            continue;
+        }
+        if (base->slr.productions[q].lhs != p->lhs ||
+            !production_extends(ext, p, base, &base->slr.productions[q],
+                                &map)) {
+            what = "changes the baseline production";
+            at = p->label;
+            goto done;
+        }
+    }
+    for (i = 0u; i < base->slr.authored_production_len; i++) {
+        const CettaLpNativeSlrProgramProduction *q = &base->slr.productions[i];
+        if (!snapshot_is_helper(base, q->lhs) &&
+            production_by_label(ext, q->label) < 0) {
+            what = "lacks the baseline production";
+            at = q->label;
+            goto done;
+        }
+    }
+    /* Each corresponding helper has the baseline helper's productions, in
+     * order; their helpers correspond in turn. */
+    while (done_len < map.len) {
+        SymbolId b = map.base[done_len];
+        SymbolId a = map.ext[done_len];
+        int32_t qi = production_next_of(base, b, -1);
+        int32_t pi = production_next_of(ext, a, -1);
+        done_len++;
+        while (qi >= 0 && pi >= 0) {
+            if (!production_extends(ext, &ext->slr.productions[pi], base,
+                                    &base->slr.productions[qi], &map)) {
+                what = "changes the baseline helper";
+                at = b;
+                goto done;
+            }
+            qi = production_next_of(base, b, qi);
+            pi = production_next_of(ext, a, pi);
+        }
+        if (qi >= 0 || pi >= 0) {
+            what = "changes the baseline helper";
+            at = b;
+            goto done;
+        }
+    }
+    for (i = 0u; i < base->origin_len; i++) {
+        uint32_t m;
+        bool mapped = false;
+        for (m = 0u; m < map.len && !mapped; m++)
+            mapped = map.base[m] == base->origins[i].helper;
+        if (!mapped) {
+            what = "lacks the baseline helper";
+            at = base->origins[i].helper;
+            goto done;
+        }
+    }
+    *avoided_len = marked;
+    ok = true;
+
+done:
+    if (!ok && error && error_size) {
+        if (what)
+            snprintf(error, error_size,
+                     "the compatible grammar %s %s", what,
+                     at == SYMBOL_ID_NONE ? "?" : symbol_bytes(g_symbols, at));
+        else
+            snprintf(error, error_size, "helper correspondence failed");
+    }
+    free(map.base);
+    free(map.ext);
+    return ok;
+}
+
 bool cetta_tptp_snapshot_construct_from_pack_v1(
     const char *pack_path,
+    const char *baseline_path,
     const char *out_path,
     char *error,
     size_t error_size) {
@@ -1724,6 +1924,7 @@ bool cetta_tptp_snapshot_construct_from_pack_v1(
     SlrOrigins slr_origins = {0};
     CettaLpNativeSlrSummary summary = {0};
     PPTableSnapshotV1 snap;
+    PPTableSnapshotV1 base;
     RSDFAV1Plan dfa_plan;
     RSDFAV1Program dfa_prog;
     RSDFAV1BuildOutcome dfa_out = RSDFA_V1_BUILD_COMPLETED;
@@ -1760,6 +1961,7 @@ bool cetta_tptp_snapshot_construct_from_pack_v1(
     cetta_lp_native_slr_prepared_init(&prepared);
     cetta_lp_native_slr_program_init(&slr);
     pp_table_snapshot_v1_init(&snap);
+    pp_table_snapshot_v1_init(&base);
     rsdfa_v1_plan_init(&dfa_plan);
     rsdfa_v1_program_init(&dfa_prog);
 
@@ -1778,6 +1980,22 @@ bool cetta_tptp_snapshot_construct_from_pack_v1(
                  "pack document or lexical frontier failed");
         goto done;
     }
+    /* The corpus-compatible profile is the strict grammar with extensions;
+     * a reading uses them only where no reading does with fewer. */
+    if ((strcmp(profile, "corpus-compatible") == 0) != (baseline_path != NULL)) {
+        if (error && error_size)
+            snprintf(error, error_size,
+                     baseline_path
+                         ? "only a corpus-compatible snapshot has a baseline"
+                         : "a corpus-compatible snapshot needs its strict "
+                           "snapshot as baseline");
+        goto done;
+    }
+    if (baseline_path &&
+        !cetta_tptp_snapshot_load_bound_v1(
+            &base, baseline_path, syntax_digest, "strict", NULL,
+            error, error_size))
+        goto done;
     nfa.pack = &idx;
     nfa.lex = &lex;
     if (!nfa_new_state(&nfa, &tag)) /* state 0 = lexer start */
@@ -1959,6 +2177,13 @@ bool cetta_tptp_snapshot_construct_from_pack_v1(
         slr_origins.items = NULL;
     }
     skip = NULL;
+    if (baseline_path) {
+        uint32_t avoided_len = 0u;
+        if (!snapshot_mark_extension(&snap, &base, &avoided_len, error,
+                                     error_size))
+            goto done;
+        fprintf(stderr, "tptp snapshot: avoided=%u\n", avoided_len);
+    }
     fprintf(stderr,
             "tptp snapshot: kernel=%s conflicts=%u tags=%u dfa_states=%u "
             "slr_prods=%u grammar_prods=%u skip=%u\n",
@@ -1984,6 +2209,7 @@ done:
                 nfa.error[0] ? nfa.error : "",
                 local[0] ? local : "");
     pp_table_snapshot_v1_free(&snap);
+    pp_table_snapshot_v1_free(&base);
     cetta_lp_native_slr_prepared_free(&prepared);
     cetta_lp_native_slr_program_free(&slr);
     cetta_lp_native_grammar_free(&grammar);
@@ -3078,23 +3304,148 @@ done:
     return ok;
 }
 
+/* The productions a reading avoids, and for each forest node the fewest of
+ * them a derivation of the node reduces (UINT32_MAX where none completes). */
+typedef struct {
+    const uint8_t *avoided;
+    uint32_t avoided_len;
+    uint32_t *cost;
+} CettaTptpForestAvoidV1;
+
+static uint32_t tptp_forest_choice_cost(
+    const CettaTptpForestAvoidV1 *avoid,
+    const CettaLpNativeUtf8Forest *forest,
+    const CettaLpNativeUtf8ForestNode *node,
+    const CettaLpNativeUtf8ForestChoice *choice) {
+    uint64_t cost = 0u;
+    if (choice->prefix_node != CETTA_LP_NATIVE_UTF8_FOREST_NONE)
+        cost += avoid->cost[choice->prefix_node];
+    if (choice->child_node != CETTA_LP_NATIVE_UTF8_FOREST_NONE)
+        cost += avoid->cost[choice->child_node];
+    if (node->kind == CETTA_LP_NATIVE_UTF8_FOREST_SYMBOL &&
+        choice->production_index < avoid->avoided_len &&
+        avoid->avoided[choice->production_index])
+        cost++;
+    (void)forest;
+    return cost >= UINT32_MAX ? UINT32_MAX : (uint32_t)cost;
+}
+
+/* The costs of every node, children before parents.  A node on a cycle
+ * back to itself has no finite derivation through that cycle. */
+static bool tptp_forest_avoid_costs(const CettaLpNativeUtf8Forest *forest,
+                                    CettaTptpForestAvoidV1 *avoid) {
+    CettaTptpIndexVecV1 stack = {0};
+    uint8_t *state = NULL;
+    uint32_t start;
+    bool ok = false;
+
+    avoid->cost = malloc((forest->node_len ? forest->node_len : 1u) *
+                         sizeof(*avoid->cost));
+    state = calloc(forest->node_len ? forest->node_len : 1u, sizeof(*state));
+    if (!avoid->cost || !state)
+        goto done;
+    for (start = 0u; start < forest->node_len; start++) {
+        if (state[start] != 0u)
+            continue;
+        if (!tptp_index_push(&stack, start))
+            goto done;
+        while (stack.len > 0u) {
+            uint32_t node_index = stack.data[stack.len - 1u];
+            const CettaLpNativeUtf8ForestNode *node =
+                &forest->nodes[node_index];
+            uint32_t c;
+            if (state[node_index] == 2u) {
+                stack.len--;
+                continue;
+            }
+            if (node->kind == CETTA_LP_NATIVE_UTF8_FOREST_TERM ||
+                node->kind == CETTA_LP_NATIVE_UTF8_FOREST_EPSILON) {
+                avoid->cost[node_index] = 0u;
+                state[node_index] = 2u;
+                stack.len--;
+                continue;
+            }
+            if (node->choice_begin > forest->choice_len ||
+                node->choice_len > forest->choice_len - node->choice_begin)
+                goto done;
+            if (state[node_index] == 0u) {
+                state[node_index] = 1u;
+                avoid->cost[node_index] = UINT32_MAX;
+                for (c = 0u; c < node->choice_len; c++) {
+                    const CettaLpNativeUtf8ForestChoice *choice =
+                        &forest->choices[node->choice_begin + c];
+                    uint32_t kids[2] = {choice->prefix_node,
+                                        choice->child_node};
+                    for (uint32_t k = 0u; k < 2u; k++) {
+                        if (kids[k] == CETTA_LP_NATIVE_UTF8_FOREST_NONE)
+                            continue;
+                        if (kids[k] >= forest->node_len)
+                            goto done;
+                        if (state[kids[k]] == 0u &&
+                            !tptp_index_push(&stack, kids[k]))
+                            goto done;
+                    }
+                }
+                continue;
+            }
+            for (c = 0u; c < node->choice_len; c++) {
+                uint32_t cost = tptp_forest_choice_cost(
+                    avoid, forest, node,
+                    &forest->choices[node->choice_begin + c]);
+                if (cost < avoid->cost[node_index])
+                    avoid->cost[node_index] = cost;
+            }
+            state[node_index] = 2u;
+            stack.len--;
+        }
+    }
+    ok = true;
+done:
+    free(stack.data);
+    free(state);
+    return ok;
+}
+
 /*
- * The choice a forest node takes.  A fixed token of the grammar spelled like
- * a value reads either way in the lattice; where both readings of that one
- * token derive the node, the fixed token is the reading: the grammar writes
- * it out at that position.  Any other ambiguity has no choice.
+ * The choice a forest node takes.  With avoided productions, only the
+ * choices reducing the fewest of them are readings.  A fixed token of the
+ * grammar spelled like a value reads either way in the lattice; where both
+ * readings of that one token derive the node, the fixed token is the
+ * reading: the grammar writes it out at that position.  Any other ambiguity
+ * has no choice.
  */
 static bool tptp_forest_choice(
     const PPTableSnapshotV1 *snap,
     const CettaLpNativeUtf8Forest *forest, uint32_t node_index,
+    const CettaTptpForestAvoidV1 *avoid,
     uint32_t *choice_out, bool *ambiguous) {
     const CettaLpNativeUtf8ForestNode *node = &forest->nodes[node_index];
     uint32_t literal_choice = UINT32_MAX;
     uint32_t literal_count = 0u;
+    uint32_t least = UINT32_MAX;
+    uint32_t least_count = 0u;
+    uint32_t least_choice = UINT32_MAX;
     *ambiguous = false;
     if (node->choice_len == 1u) {
         *choice_out = node->choice_begin;
         return true;
+    }
+    if (avoid && node->choice_len > 1u) {
+        for (uint32_t c = 0u; c < node->choice_len; c++) {
+            uint32_t cost = tptp_forest_choice_cost(
+                avoid, forest, node, &forest->choices[node->choice_begin + c]);
+            if (cost < least) {
+                least = cost;
+                least_count = 0u;
+                least_choice = node->choice_begin + c;
+            }
+            if (cost == least)
+                least_count++;
+        }
+        if (least != UINT32_MAX && least_count == 1u) {
+            *choice_out = least_choice;
+            return true;
+        }
     }
     if (node->choice_len == 0u || node->scalar_right != node->scalar_left + 1u) {
         *ambiguous = node->choice_len > 1u;
@@ -3105,6 +3456,9 @@ static bool tptp_forest_choice(
             &forest->choices[node->choice_begin + c];
         bool has_value = false;
         bool has_literal = false;
+        if (avoid && least != UINT32_MAX &&
+            tptp_forest_choice_cost(avoid, forest, node, choice) != least)
+            continue;
         if (!tptp_forest_leaf_terminals(snap, forest, choice->prefix_node,
                                         &has_value, &has_literal) ||
             !tptp_forest_leaf_terminals(snap, forest, choice->child_node,
@@ -3131,6 +3485,7 @@ static bool tptp_forest_unique_reachable(
     const PPTableSnapshotV1 *snap,
     const CettaLpNativeUtf8Forest *forest,
     uint32_t root,
+    const CettaTptpForestAvoidV1 *avoid,
     bool *ambiguous,
     char *error,
     size_t error_size) {
@@ -3163,8 +3518,8 @@ static bool tptp_forest_unique_reachable(
         {
             uint32_t selected = UINT32_MAX;
             bool node_ambiguous = false;
-            if (!tptp_forest_choice(snap, forest, node_index, &selected,
-                                    &node_ambiguous)) {
+            if (!tptp_forest_choice(snap, forest, node_index, avoid,
+                                    &selected, &node_ambiguous)) {
                 if (node_ambiguous) {
                     *ambiguous = true;
                     ok = true;
@@ -3297,6 +3652,7 @@ static Atom *tptp_forest_to_cst(
     const CettaLpNativeGrammar *grammar,
     const CettaLpNativeUtf8Forest *forest,
     uint32_t root,
+    const CettaTptpForestAvoidV1 *avoid,
     const CettaTptpLexTokenV1 *tokens,
     uint32_t token_len,
     Arena *arena,
@@ -3322,8 +3678,8 @@ static Atom *tptp_forest_to_cst(
             uint32_t selected = UINT32_MAX;
             bool node_ambiguous = false;
             if (node->kind != CETTA_LP_NATIVE_UTF8_FOREST_SYMBOL ||
-                !tptp_forest_choice(snap, forest, frame->node_index, &selected,
-                                    &node_ambiguous) ||
+                !tptp_forest_choice(snap, forest, frame->node_index, avoid,
+                                    &selected, &node_ambiguous) ||
                 selected >= forest->choice_len)
                 goto malformed;
             choice = &forest->choices[selected];
@@ -3411,6 +3767,7 @@ static CettaTptpLatticeResultV1 tptp_keyword_lattice_cst(
     const CettaTptpLexTokenV1 *tokens,
     uint32_t token_len,
     uint64_t descriptor_limit,
+    const uint8_t *avoided,
     Arena *arena,
     Atom **out_cst,
     uint64_t *descriptors_used,
@@ -3423,6 +3780,8 @@ static CettaTptpLatticeResultV1 tptp_keyword_lattice_cst(
     uint32_t index;
     bool ambiguous = false;
     CettaTptpLatticeResultV1 result = CETTA_TPTP_LATTICE_ERROR_V1;
+    CettaTptpForestAvoidV1 avoid = {avoided, grammar->production_len, NULL};
+    const CettaTptpForestAvoidV1 *avoiding = NULL;
 
     memset(&token_lattice, 0, sizeof(token_lattice));
     cetta_lp_native_utf8_forest_init(&forest);
@@ -3469,9 +3828,14 @@ static CettaTptpLatticeResultV1 tptp_keyword_lattice_cst(
         result = CETTA_TPTP_LATTICE_NO_PARSE_V1;
         goto done;
     }
+    if (avoided && root_count == 1u) {
+        if (!tptp_forest_avoid_costs(&forest, &avoid))
+            goto done;
+        avoiding = &avoid;
+    }
     if (root_count > 1u ||
         !tptp_forest_unique_reachable(
-            snap, &forest, root, &ambiguous, error, error_size)) {
+            snap, &forest, root, avoiding, &ambiguous, error, error_size)) {
         if (root_count > 1u) {
             result = CETTA_TPTP_LATTICE_AMBIGUOUS_V1;
             goto done;
@@ -3484,15 +3848,37 @@ static CettaTptpLatticeResultV1 tptp_keyword_lattice_cst(
     }
     if (!out_cst ||
         !(*out_cst = tptp_forest_to_cst(
-              snap, grammar, &forest, root, tokens, token_len,
+              snap, grammar, &forest, root, avoiding, tokens, token_len,
               arena, error, error_size)))
         goto done;
     result = CETTA_TPTP_LATTICE_UNIQUE_V1;
 
 done:
+    free(avoid.cost);
     cetta_lp_native_utf8_forest_free(&forest);
     tptp_token_lattice_free(&token_lattice);
     return result;
+}
+
+/* The avoided productions of the fallback grammar, which are the snapshot's
+ * authored productions in order; NULL when the snapshot avoids none. */
+static const uint8_t *snapshot_avoided_table(
+    const PPTableSnapshotV1 *snap, const CettaLpNativeGrammar *grammar,
+    Arena *arena) {
+    uint8_t *table = NULL;
+    uint32_t i;
+    if (grammar->production_len > snap->slr.authored_production_len)
+        return NULL;
+    for (i = 0u; i < grammar->production_len; i++) {
+        if (!snap->slr.productions[i].avoided)
+            continue;
+        if (!table) {
+            table = arena_alloc(arena, grammar->production_len);
+            memset(table, 0, grammar->production_len);
+        }
+        table[i] = 1u;
+    }
+    return table;
 }
 
 static bool parse_project_slice(const PPTableSnapshotV1 *snap,
@@ -3541,13 +3927,16 @@ static bool parse_project_slice(const PPTableSnapshotV1 *snap,
         uint64_t descriptors_used = 0u;
         char table_local[sizeof(local)];
 
+        const uint8_t *avoided =
+            snapshot_avoided_table(snap, fallback_grammar, &parse);
+
         snprintf(table_local, sizeof(table_local), "%s", local);
         local[0] = '\0';
         if (gll_descriptor_limit == 0u)
             gll_descriptor_limit = default_gll_descriptor_limit(n);
-        fallback_result = cetta_lp_native_gll_parse_shared_counted(
+        fallback_result = cetta_lp_native_gll_parse_avoiding_counted(
             fallback_grammar, snap->slr.start_nonterminal, list,
-            gll_descriptor_limit, &descriptors_used,
+            gll_descriptor_limit, &descriptors_used, avoided,
             &parse, local, sizeof(local));
         if (cost)
             cost->gll_descriptor_count += descriptors_used;
@@ -3563,7 +3952,7 @@ static bool parse_project_slice(const PPTableSnapshotV1 *snap,
             local[0] = '\0';
             lattice_result = tptp_keyword_lattice_cst(
                 snap, fallback_grammar, toks + lo, n,
-                gll_descriptor_limit, &parse, &lattice_cst,
+                gll_descriptor_limit, avoided, &parse, &lattice_cst,
                 &lattice_descriptors, local, sizeof(local));
             if (cost)
                 cost->gll_descriptor_count += lattice_descriptors;

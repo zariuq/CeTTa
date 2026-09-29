@@ -57,6 +57,14 @@
      (case (__cetta_lib_tptp_snapshot_construct_v1 $pack $out)
        (((return $ok) (return $ok))
         ($result (return $result))))))
+; A corpus-compatible pack is constructed against the strict snapshot of the
+; same SyntaxBNF; the productions its extensions add are the ones a reading
+; avoids.
+(= (tptp:snapshot-construct-compatible $pack $strict $out)
+   (function
+     (case (__cetta_lib_tptp_snapshot_construct_v1 $pack $strict $out)
+       (((return $ok) (return $ok))
+        ($result (return $result))))))
 (= (tptp:snapshot-info $path)
    (function
      (case (__cetta_lib_tptp_snapshot_info_v1 $path)
@@ -1725,45 +1733,6 @@
      "langdef/tptp/official_semantic_carrier_v9200.metta"
      "TptpSemantic:derivation" $value))
 
-; -------------------------------- transformations over supplied syntax --
-
-(= (tptp:run-clause-data-plan $digest $syntax-tree)
-   (let $plan
-        (langdef:load-deterministic-equations
-          (LangDef:EquationSources
-            "langdef/tptp/cnf_clause_data_bridge_v1.metta"))
-     (case $plan
-       (((NativeHandle $kind $identifier)
-          (let $problem
-               (langdef:run-deterministic-equations $plan
-                 (LangDef:DeterministicCall
-                   tptp:syntax-tree->problem $syntax-tree $digest))
-            (let $_ (langdef:close-deterministic-equations $plan)
-              (tptp:admit-or-propagate
-                clause-data
-                "langdef/logic/first_order_clause_data_v1.metta"
-                "Problem" $problem))))
-        ($_ (TPTP:StageFault clause-data $plan))))))
-
-(= (tptp:run-document-plan $digest $syntax-tree)
-   (let $plan
-        (langdef:load-deterministic-equations
-          (LangDef:EquationSources
-            "langdef/tptp/cnf_clause_data_bridge_v1.metta"
-            "langdef/tptp/first_order_document_bridge_v1.metta"))
-     (case $plan
-       (((NativeHandle $kind $identifier)
-          (let $document
-               (langdef:run-deterministic-equations $plan
-                 (LangDef:DeterministicCall
-                   tptp-doc:syntax-tree->document $syntax-tree $digest))
-            (let $_ (langdef:close-deterministic-equations $plan)
-              (tptp:admit-or-propagate
-                first-order-document
-                "langdef/logic/tptp_first_order_document_v1.metta"
-                "Document" $document))))
-        ($_ (TPTP:StageFault first-order-document $plan))))))
-
 ; ------------------------------------------- verification-word execution --
 
 ; Execute one already-compiled derivation-check word program through the
@@ -2776,11 +2745,7 @@
 ; silently change the admission authority of a saved artifact.
 (= (tptp:stage-language-wire $stage)
    (case $stage
-     ((clause-data
-        "langdef/logic/first_order_clause_data_v1.metta")
-      (first-order-document
-        "langdef/logic/tptp_first_order_document_v1.metta")
-      (official-derivation
+     ((official-derivation
         "langdef/tptp/official_semantic_carrier_v9200.metta")
       ($_ (TPTP:ArtifactRejected UnsupportedStage $stage)))))
 
@@ -2874,17 +2839,7 @@
    (case $stage-value
      (((TPTP:StageValue $stage $value)
         (case $stage
-          ((clause-data
-             (tptp:admit-stage
-               clause-data
-               "langdef/logic/first_order_clause_data_v1.metta"
-               "Problem" $value))
-           (first-order-document
-             (tptp:admit-stage
-               first-order-document
-               "langdef/logic/tptp_first_order_document_v1.metta"
-               "Document" $value))
-           (official-derivation
+          ((official-derivation
              (tptp:admit-official-derivation $value))
            ($_
              (TPTP:ArtifactRejected UnsupportedStage $stage)))))
@@ -2892,26 +2847,6 @@
         (TPTP:ArtifactRejected NotStageValue $other)))))
 
 ; ------------------------------------------------------------- inspection --
-
-(= (tptp:clause-data-clauses-count (fo-cnf:clauses-nil)) 0)
-
-(= (tptp:clause-data-clauses-count
-      (fo-cnf:clauses-cons $first $rest))
-   (+ 1 (tptp:clause-data-clauses-count $rest)))
-
-(= (tptp:clause-data-problem-clause-count $problem)
-   (let (fo-cnf:problem $source $clauses) $problem
-     (tptp:clause-data-clauses-count $clauses)))
-
-(= (tptp:first-order-inputs-count (tptp-fo:inputs-nil)) 0)
-
-(= (tptp:first-order-inputs-count
-      (tptp-fo:inputs-cons $first $rest))
-   (+ 1 (tptp:first-order-inputs-count $rest)))
-
-(= (tptp:first-order-document-input-count $document)
-   (let (tptp-fo:document $source $inputs) $document
-     (tptp:first-order-inputs-count $inputs)))
 
 (= (tptp:abstract-syntax-inputs-count
       (tptp92-ast:list:tptp92ast-tptp-input:nil))
