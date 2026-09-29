@@ -1808,6 +1808,7 @@ bool petta_program_head_is_intrinsic(SymbolId head) {
 typedef struct {
     Atom *atom;
     PettaPlanNode *plan;
+    bool direct_call;
 } PettaPlanBuildItem;
 
 typedef struct {
@@ -2509,12 +2510,16 @@ static PettaPlanNode *petta_plan_build_in(
                  head == g_builtin_syms.arrow);
             node->relation_head_admitted =
                 petta_callability_admits(callability, head);
+            /* A name the engine provides is applied at any arity, as the
+             * reference compiles every registered name: a call at one of
+             * its arities, and otherwise a partial application or an
+             * over-application, which dispatch decides
+             * (RegisteredArity.reference). */
             node->role = constructor_slot_frame
                 ? PETTA_PLAN_DATA
-                : petta_program_head_is_intrinsic(head) ||
+                : item.direct_call || petta_program_head_is_intrinsic(head) ||
                   node->relation_head_admitted ||
-                  cetta_petta_source_head_resolves_in_engine(
-                      head, atom->expr.len - 1u)
+                  cetta_petta_head_names_extension(head)
                       ? PETTA_PLAN_STATIC_CALL
                       : PETTA_PLAN_DATA;
             node->execution = constructor_slot_frame
@@ -2617,6 +2622,12 @@ static PettaPlanNode *petta_plan_build_in(
             work[work_len++] = (PettaPlanBuildItem){
                 .atom = atom->expr.elems[child],
                 .plan = &children[child],
+                /* `call` emits a direct call even if this function will
+                 * only be installed later. Its arguments still use their
+                 * own translation-time roles. */
+                .direct_call = child == 1u && atom->expr.len == 2u &&
+                    head_atom->kind == ATOM_SYMBOL &&
+                    petta_semantics_form(head_atom->sym_id) == PETTA_FORM_CALL,
             };
         }
     }

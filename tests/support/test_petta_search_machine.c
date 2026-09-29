@@ -36,6 +36,26 @@ static Atom *parse_one(Arena *arena, const char *source) {
     return result;
 }
 
+static void test_library_context_initialization(void) {
+    CettaLibraryContext *context = malloc(sizeof(*context));
+    assert(context);
+    const CettaLanguageId languages[] = {CETTA_LANGUAGE_HE, CETTA_LANGUAGE_PETTA};
+    for (size_t i = 0u; i < sizeof(languages) / sizeof(*languages); i++) {
+        /* Fresh storage need not be zero. No cache or cleanup callback may
+         * be read before the component owning it installs one. */
+        memset(context, 0xa5, sizeof(*context));
+        cetta_library_context_init_for_language_profile(context, languages[i], NULL);
+        assert(context->petta_open_programs == NULL);
+        assert(context->petta_open_programs_free == NULL);
+        assert(context->petta_match_decisions == NULL);
+        assert(context->petta_match_decisions_free == NULL);
+        assert(context->petta_trusted_library_import_depth == 0u);
+        cetta_library_context_free(context);
+    }
+    free(context);
+    puts("PASS: library contexts initialize cache ownership on nonzero storage");
+}
+
 static bool collect_flat_fold_int(int64_t value, void *context) {
     int64_t *sum = context;
     *sum += value;
@@ -5662,6 +5682,39 @@ static void test_host_environment_projection(
     bindings_free(&base);
 }
 
+static bool declined_intrinsic_allowed(void *context, SymbolId head) {
+    HostProjectionProbe *probe = context;
+    return head != probe->head;
+}
+
+static void test_declined_intrinsic_host_dispatch(Space *space, Arena *arena) {
+    /* Global intrinsic metadata does not authorize a native implementation
+     * in every embedding. A declined pure call must reach its host owner. */
+    HostProjectionProbe probe = {.head = g_builtin_syms.abs_math};
+    assert(grounded_op_is_type_pure(probe.head));
+    PettaMachineHost host = {
+        .context = &probe,
+        .classify = host_projection_classify,
+        .evaluate = host_projection_evaluate,
+        .builtin_allowed = declined_intrinsic_allowed,
+    };
+    Atom *query = parse_one(arena, "(abs-math -7)");
+    PettaMachine machine;
+    assert(petta_machine_init(&machine, space, arena, query, NULL, &host));
+    Atom *answer = NULL;
+    Bindings environment;
+    assert(petta_machine_next(&machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, parse_one(arena, "-7")));
+    assert(probe.calls == 1u);
+    bindings_free(&environment);
+    assert(petta_machine_next(&machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+    puts("PASS: declined pure intrinsic reaches its language owner");
+}
+
 static PettaMachineHostMode quoted_result_override_classify(
     void *context, Space *space, Atom *expression) {
     return host_projection_classify(context, space, expression) ==
@@ -10245,6 +10298,7 @@ int main(void) {
     test_program_case_safety_projection(&universe, &persistent);
     space_init_with_universe(&space, &universe);
 
+    test_library_context_initialization();
     test_plain_scalar_truth_dispatch(&answers);
     test_typing_operator_identity();
     test_analysis_capability_contract(&space, &answers);
@@ -10322,6 +10376,7 @@ int main(void) {
     test_lexical_free_variable_projection(&answers);
     test_reachable_binding_projection(&answers);
     test_host_environment_projection(&space, &answers);
+    test_declined_intrinsic_host_dispatch(&space, &answers);
     test_quoted_result_override(&space, &answers);
     test_deep_callable_detection(
         &space, &persistent, &answers);

@@ -1,0 +1,33 @@
+6
+true
+(late 5)
+(late 5)
+(late 5)
+6
+6
+6
+(late 5)
+6
+(late 5)
+8
+8
+8
+6
+(late 5)
+(late 5)
+true
+true
+7
+7
+7
+(late 5)
+7
+(late 5)
+(late 5)
+true
+(7 7)
+(7 7)
+(7 7)
+true
+(Error (evaluation_error zero_divisor) (context (/ / 2) $V0))
+()

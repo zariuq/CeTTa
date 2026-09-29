@@ -26813,23 +26813,28 @@ else
 	@echo "SKIP: test-petta-foreign-holds (requires a Python-enabled build)"
 endif
 
-.PHONY: test-petta-libpl-fresh-facts
-# The registered stdlib names' fresh-engine facts hold against the engine
-# once it starts, and a program whose only stdlib names are native (min,
-# max) answers without starting it.
-test-petta-libpl-fresh-facts: $(BIN)
+.PHONY: test-petta-libpl-registered-arities
+# A name SWI-PeTTa's prelude registers has the arities its registration
+# records: a call at one of them, and otherwise a partial application; a
+# program's equations define their own arities (SWI-PeTTa's answers).  A
+# program whose only stdlib names are native (min, max) answers without
+# starting the engine.
+test-petta-libpl-registered-arities: $(BIN)
 ifeq ($(LIB_PROLOG_ENABLED),1)
 	@set -eu; \
-	verify=$$(CETTA_PETTA_LIBPL_VERIFY_FRESH=1 $(CETTA_BIN_INVOKE) \
-		--lang petta tests/petta/libpl_fresh_facts.metta 2>&1); \
-	if ! printf '%s\n' "$$verify" | \
-			grep -Eq '^\[petta-libpl\] fresh stdlib facts: ([0-9]+ verified, 0 differ|unused with SWI-Prolog [0-9]+, read from [0-9]+)$$' || \
-		[ "$$(printf '%s\n' "$$verify" | grep -v '^\[petta-libpl\]')" != \
-		  "$$(cat tests/petta/libpl_fresh_facts.expected)" ]; then \
-		echo "FAIL: the fresh stdlib facts differ from the engine's"; \
-		printf '%s\n' "$$verify" | head -20; \
-		exit 1; \
-	fi; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		for fixture in registered_arities registered_arities_program; do \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+				--lang petta tests/petta/$$fixture.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/$$fixture.expected)" ]; then \
+				echo "FAIL: $$fixture ($$route)"; \
+				diff <(cat tests/petta/$$fixture.expected) \
+					<(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
 	native=$$(CETTA_PETTA_LIBPL_DEBUG=1 $(CETTA_BIN_INVOKE) \
 		--lang petta tests/petta/libpl_native_only.metta 2>&1); \
 	if printf '%s\n' "$$native" | grep -q '^\[petta-libpl\] lookup' || \
@@ -26839,10 +26844,33 @@ ifeq ($(LIB_PROLOG_ENABLED),1)
 		printf '%s\n' "$$native" | grep -v 'named-arity' | head -20; \
 		exit 1; \
 	fi; \
-	echo "PASS: stdlib names classify without starting the engine, and their facts hold against it"
+	echo "PASS: registered names apply at their registered arities and are partial at others, without starting the engine to classify them"
 else
-	@echo "SKIP: fresh stdlib facts (BUILD=$(BUILD_CANON) has lib-prolog disabled)"
+	@echo "SKIP: registered arities (BUILD=$(BUILD_CANON) has lib-prolog disabled)"
 endif
+
+.PHONY: test-petta-match-cell-rows
+test-petta-semantics: test-petta-match-cell-rows
+# A stored row with variables meets a query holding a list built at run time
+# as the list it spells (SWI-PeTTa's answers).
+test-petta-match-cell-rows: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		for fuel in unbounded bounded; do \
+			options=; \
+			if [ $$fuel = bounded ]; then options='--fuel 1000000'; fi; \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+				--lang petta $$options tests/petta/match_cell_rows.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/match_cell_rows.expected)" ]; then \
+				echo "FAIL: match_cell_rows ($$route, $$fuel)"; \
+				diff <(cat tests/petta/match_cell_rows.expected) \
+					<(printf '%s\n' "$$actual") | head -40; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: rows with variables meet queries holding run-time lists"
 
 .PHONY: test-petta-number-order
 # The standard order of numbers: exact across integers and floats at 2^53
@@ -26858,6 +26886,50 @@ test-petta-number-order: $(BIN)
 		exit 1; \
 	fi; \
 	echo "PASS: numbers sort in SWI-PeTTa's standard order"
+
+.PHONY: test-petta-generated-match-patterns
+test-petta-semantics: test-petta-generated-match-patterns
+test-petta-generated-match-patterns: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		for fuel in unbounded bounded; do \
+			options=; \
+			if [ $$fuel = bounded ]; then options='--fuel 1000000'; fi; \
+			for fixture in generated_match_patterns generated_match_open_tail bound_type_subject; do \
+				actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+					--lang petta $$options tests/petta/$$fixture.metta 2>&1); \
+				if [ "$$actual" != "$$(cat tests/petta/$$fixture.expected)" ]; then \
+					echo "FAIL: $$fixture ($$route, $$fuel)"; \
+					diff <(cat tests/petta/$$fixture.expected) \
+						<(printf '%s\n' "$$actual") | head -40; \
+					exit 1; \
+				fi; \
+			done; \
+		done; \
+	done; \
+	echo "PASS: generated match patterns preserve aliases, occurrences, conjunctions and counts"
+
+.PHONY: test-petta-dynamic-explicit-evaluation
+test-petta-semantics: test-petta-dynamic-explicit-evaluation
+test-petta-dynamic-explicit-evaluation: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		for fuel in unbounded bounded; do \
+			options=; \
+			if [ $$fuel = bounded ]; then options='--fuel 100000'; fi; \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+				--lang petta $$options tests/petta/dynamic_explicit_evaluation.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/dynamic_explicit_evaluation.expected)" ]; then \
+				echo "FAIL: dynamic explicit evaluation ($$route, $$fuel)"; \
+				diff <(cat tests/petta/dynamic_explicit_evaluation.expected) \
+					<(printf '%s\n' "$$actual") | head -40; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: explicit calls retain argument roles, eval reinterprets code, and callee replacement preserves occurrences"
 
 .PHONY: test-petta-specialization-after-import
 # An import invalidates the specializations of its space: the specialized
@@ -26897,7 +26969,7 @@ test-petta-swi-differences: $(BIN)
 	done; \
 	echo "PASS: the registered differences from SWI-PeTTa hold, on the tier and in the machine"
 
-test-petta-semantics: $(BIN) test-petta-once-first-witness test-petta-relational-append-open test-petta-multifile test-petta-eval-in-space test-petta-list-values test-petta-value-occurrences test-petta-dispatch-error-scope test-petta-list-building-linear test-petta-runtime-heads test-petta-keyed-selection test-petta-tier-lists test-petta-tier-fold-dispatch test-petta-tier-spelled-cells test-petta-tier-repra test-petta-tier-head-occurrences test-petta-tier-list-natives test-petta-tier-value-observations test-petta-tier-let-patterns test-petta-match-conjunction-order test-petta-foldall-native-steps test-petta-tier-equation-cut test-petta-projection-grown-frames test-petta-metatype-registered-functions test-petta-tier-views-over-kept-storage test-petta-tier-tail-superpose test-petta-prepared-decons-views test-petta-tier-list-heads test-petta-open-term-walks test-petta-hyperpose-program-cache test-petta-tier-head-index test-petta-tier-session-programs test-petta-case-default-retire test-petta-tier-existence test-petta-tier-value-if test-petta-session-match-decisions test-petta-tier-small-space-rows test-petta-prepared-code test-petta-foreign-holds test-petta-libpl-fresh-facts test-petta-number-order test-petta-specialization-after-import test-petta-swi-differences
+test-petta-semantics: $(BIN) test-petta-once-first-witness test-petta-relational-append-open test-petta-multifile test-petta-eval-in-space test-petta-list-values test-petta-value-occurrences test-petta-dispatch-error-scope test-petta-list-building-linear test-petta-runtime-heads test-petta-keyed-selection test-petta-tier-lists test-petta-tier-fold-dispatch test-petta-tier-spelled-cells test-petta-tier-repra test-petta-tier-head-occurrences test-petta-tier-list-natives test-petta-tier-value-observations test-petta-tier-let-patterns test-petta-match-conjunction-order test-petta-foldall-native-steps test-petta-tier-equation-cut test-petta-projection-grown-frames test-petta-metatype-registered-functions test-petta-tier-views-over-kept-storage test-petta-tier-tail-superpose test-petta-prepared-decons-views test-petta-tier-list-heads test-petta-open-term-walks test-petta-hyperpose-program-cache test-petta-tier-head-index test-petta-tier-session-programs test-petta-case-default-retire test-petta-tier-existence test-petta-tier-value-if test-petta-session-match-decisions test-petta-tier-small-space-rows test-petta-prepared-code test-petta-foreign-holds test-petta-libpl-registered-arities test-petta-number-order test-petta-specialization-after-import test-petta-swi-differences
 	@set -eu; \
 	for stem in $(PETTA_SEMANTIC_ORACLE_STEMS); do \
 		contract=exact-stream; \

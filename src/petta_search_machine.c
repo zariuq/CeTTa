@@ -7930,6 +7930,23 @@ static bool petta_machine_match_lowered_value(
         machine, builder, growth, heap, matched);
 }
 
+/* Whether a stored row with variables is matched against the pattern by
+ * structure, standardized lazily, rather than freshened and unified.
+ * Structural matching decides the pair only when neither side holds a cell
+ * (ListCells.subst_eq_iff_unifies); a cell anywhere, at the root or nested,
+ * meets the other side as the list it spells, which only the authoritative
+ * unifier reads (ListCells.solve_sound). */
+static bool petta_machine_match_candidate_by_structure(
+    const Atom *authored, const Atom *pattern, const Atom *candidate) {
+    return atom_has_vars(candidate) &&
+           authored->kind != ATOM_VAR &&
+           !petta_semantics_is_open_cons_value(authored) &&
+           !petta_semantics_is_open_cons_value(candidate) &&
+           !(__builtin_expect(petta_semantics_open_cons_built(), 0) &&
+             (atom_structural_may_have_list_carrier(pattern) ||
+              atom_structural_may_have_list_carrier(candidate)));
+}
+
 /* Standardize a stored match candidate lazily against the live trail instead
  * of materializing a fully freshened term first. */
 static bool petta_machine_match_epoch_candidate(
@@ -12703,6 +12720,22 @@ static PeTTaNamedArity petta_machine_named_arity(
         result.exact = result.exact || extension.exact;
         result.larger = result.larger || extension.larger;
         result.smaller = result.smaller || extension.smaller;
+        /* A name the reference's prelude registers has the arities its
+         * registration records, whichever route implements it, so outside
+         * a form's own shapes it is partial or over-applied as there
+         * (RegisteredArity.classify_or).  `let` and `let*` reached at run
+         * time are data (swi_differences, entry 3). */
+        uint16_t registered = 0u;
+        SymbolId head = head_atom->sym_id;
+        if (head != g_builtin_syms.let && head != g_builtin_syms.let_star &&
+            petta_semantics_registered_builtin_arities(head, &registered)) {
+            PeTTaNamedArity prelude =
+                petta_semantics_registered_named_arity(registered, nargs);
+            result.known = true;
+            result.exact = result.exact || prelude.exact;
+            result.larger = result.larger || prelude.larger;
+            result.smaller = result.smaller || prelude.smaller;
+        }
     }
     return result;
 }
@@ -15857,10 +15890,8 @@ static bool petta_machine_advance_choice(
             if (match_pattern != authored)
                 cetta_runtime_stats_inc(
                     CETTA_RUNTIME_COUNTER_MATCH_PIN_RESOLVED_PATTERN);
-            if (atom_has_vars(candidate) &&
-                authored->kind != ATOM_VAR &&
-                !petta_semantics_is_open_cons_value(authored) &&
-                !petta_semantics_is_open_cons_value(candidate)) {
+            if (petta_machine_match_candidate_by_structure(
+                    authored, match_pattern, candidate)) {
                     CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
                 matched = petta_machine_match_epoch_candidate(
                     machine, match_pattern,
@@ -15935,10 +15966,8 @@ static bool petta_machine_advance_choice(
         if (match_pattern != authored)
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_MATCH_PIN_RESOLVED_PATTERN);
-        if (atom_has_vars(candidate) &&
-            authored->kind != ATOM_VAR &&
-            !petta_semantics_is_open_cons_value(authored) &&
-            !petta_semantics_is_open_cons_value(candidate)) {
+        if (petta_machine_match_candidate_by_structure(
+                authored, match_pattern, candidate)) {
                 CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
             matched = petta_machine_match_epoch_candidate(
                 machine, match_pattern,
@@ -17362,6 +17391,15 @@ static bool petta_machine_start_intrinsic_get_type(
         !machine->host.get_type) {
         return false;
     }
+    /* Readiness permits a bound variable; the host service needs its value
+     * in the current environment, including any contextual frame bindings. */
+    value = petta_machine_apply_bindings(
+        machine, search_context_bindings(&machine->search),
+        &machine->heap, value);
+    if (!value) {
+        *failure = PETTA_MACHINE_STEP_CAPACITY;
+        return false;
+    }
     Atom **types = NULL;
     uint32_t type_count = 0u;
     if (!machine->host.get_type(
@@ -18782,14 +18820,36 @@ static bool petta_machine_match_count_weight(
     }
 
     uint64_t match_count = 0u;
+    bool exact_query = false;
+    Atom *query = petta_semantics_match_index_pattern(
+        &machine->heap, resolved_pattern, &exact_query);
+    if (!query || !exact_query ||
+        (query->kind == ATOM_EXPR && query->expr.len > 0u &&
+         (atom_is_symbol_id(query->expr.elems[0], g_builtin_syms.comma) ||
+          atom_is_symbol_id(query->expr.elems[0], g_builtin_syms.pipe))))
+        return false;
     if (!space_match_count_flat_linear64(
-            space, &machine->heap, resolved_pattern,
+            space, &machine->heap, query,
             &match_count, examined)) {
         return false;
     }
     return cetta_observation_count_multiply_bounded(
         observer_weight, match_count, (uint64_t)INT64_MAX,
         weighted_count);
+}
+
+/* Structural count backends cannot interpret PeTTa's logical list cells.
+ * Leave their interpretation to the ordinary match path, including values
+ * reached only after resolving a binding. */
+static CettaGsltTermViewStatusV1 petta_match_index_resolve_root(
+    void *context, Atom *source, Atom **target) {
+    const CettaGsltTermViewV1 *base = context;
+    CettaGsltTermViewStatusV1 status =
+        cetta_gslt_term_view_resolve_root_v1(base, source, target);
+    if (status == CETTA_GSLT_TERM_VIEW_OK_V1 &&
+        atom_structural_may_have_list_carrier(*target))
+        return CETTA_GSLT_TERM_VIEW_DEFER_V1;
+    return status;
 }
 
 /* Count a flat match directly through the shared term-view interface.  The
@@ -18807,11 +18867,25 @@ static bool petta_machine_match_count_view_weight(
     if (examined)
         *examined = 0u;
     if (!machine || !space || !source_pattern || observer_weight == 0u ||
-        !weighted_count || !examined) {
+        !weighted_count || !examined ||
+        atom_structural_may_have_list_carrier(source_pattern)) {
         return false;
     }
-    CettaGsltTermViewV1 view = bindings_term_view_v1(
+    CettaGsltTermViewV1 base = bindings_term_view_v1(
         source_pattern, environment);
+    CettaGsltTermViewV1 view = {
+        .source = source_pattern, .resolve = petta_match_index_resolve_root,
+        .resolve_context = &base,
+    };
+    if (source_pattern->kind == ATOM_EXPR && source_pattern->expr.len > 0u) {
+        Atom *head = NULL;
+        if (cetta_gslt_term_view_resolve_root_v1(
+                &view, source_pattern->expr.elems[0], &head) !=
+                CETTA_GSLT_TERM_VIEW_OK_V1 ||
+            atom_is_symbol_id(head, g_builtin_syms.comma) ||
+            atom_is_symbol_id(head, g_builtin_syms.pipe))
+            return false;
+    }
     uint64_t match_count = 0u;
     if (!space_match_count_flat_linear_view64(
             space, &machine->heap, &view, open_bindings,
@@ -18989,17 +19063,24 @@ static bool petta_machine_start_match_choice(
                 space_match_backend_clear_error();
             }
         }
-        if (!atom_snapshot_mode && !atom_has_vars(resolved_pattern)) {
+        bool exact_query = false;
+        Atom *query = petta_semantics_match_index_pattern(
+            &machine->heap, resolved_pattern, &exact_query);
+        if (!query) {
+            binding_set_free(&binding_snapshot);
+            return false;
+        }
+        if (!atom_snapshot_mode && exact_query && !atom_has_vars(query)) {
             SpaceMatchPullVisitResult indexed =
                 space_match_backend_try_visit_bindings_indexed(
-                    space, &machine->heap, resolved_pattern,
+                    space, &machine->heap, query,
                     petta_machine_collect_match_binding,
                     &binding_snapshot);
             if (indexed == SPACE_MATCH_PULL_VISIT_COMPLETE) {
                 binding_snapshot_mode = true;
             } else if (indexed == SPACE_MATCH_PULL_VISIT_DECLINED &&
                        space_match_backend_visit_bindings_direct(
-                           space, &machine->heap, resolved_pattern,
+                           space, &machine->heap, query,
                            petta_machine_collect_match_binding,
                            &binding_snapshot)) {
                 binding_snapshot_mode = true;
@@ -19051,14 +19132,32 @@ static bool petta_machine_start_match_choice(
             }
             break;
         }
-        if (!occurrence_cursor_mode)
+        if (!occurrence_cursor_mode) {
+            Atom *index_pattern = petta_semantics_match_index_pattern(
+                &machine->heap, resolved_pattern, NULL);
+            if (!index_pattern) {
+                binding_set_free(&binding_snapshot);
+                return false;
+            }
             occurrence_cursor_mode = space_occurrence_cursor_init(
-                space, resolved_pattern, &occurrences);
+                space, index_pattern, &occurrences);
+        }
     }
     if (!occurrence_cursor_mode &&
         !binding_snapshot_mode && !atom_snapshot_mode) {
+        Atom *index_pattern = resolved_pattern;
+        if (!index_pattern)
+            index_pattern = petta_machine_apply_bindings(
+                machine, search_context_bindings(&machine->search),
+                &machine->heap, pattern);
+        index_pattern = petta_semantics_match_index_pattern(
+            &machine->heap, index_pattern, NULL);
+        if (!index_pattern) {
+            binding_set_free(&binding_snapshot);
+            return false;
+        }
         candidate_len = space_match_candidates64(
-            space, pattern, &candidate_indices);
+            space, index_pattern, &candidate_indices);
         if (candidate_len >
             (CettaCount)(SIZE_MAX / sizeof(*snapshot))) {
             free(candidate_indices);
@@ -20960,6 +21059,26 @@ static bool petta_machine_start_ready_match(
     if (!machine || !reference || !pattern || !template ||
         !expected || !failure) {
         return false;
+    }
+
+    if (pattern->kind == ATOM_VAR ||
+        petta_semantics_is_open_cons_value(pattern) ||
+        (pattern->kind == ATOM_EXPR && pattern->expr.len > 0u &&
+         pattern->expr.elems[0]->kind == ATOM_VAR)) {
+        pattern = petta_machine_apply_bindings(machine,
+            search_context_bindings(&machine->search), &machine->heap, pattern);
+        if (!pattern) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+    }
+    /* Dispatch uses the logical outer list, just as candidate indexing does.
+     * In particular a computed comma spine is still a conjunction. */
+    if (petta_semantics_is_open_cons_value(pattern)) {
+        Atom *flat = petta_semantics_materialize_closed_logical_list(
+            &machine->heap, pattern);
+        if (flat)
+            pattern = flat;
     }
 
     bool cursor_admitted = false;
@@ -27477,9 +27596,12 @@ static bool petta_machine_dispatch_solve(
     }
 
     if (form == PETTA_FORM_CALL && nargs == 1u) {
-        return petta_push_force(
+        /* The application's root is a direct call in its source plan,
+         * including a name installed after this equation was translated.
+         * Preserve the argument plans: call is not eval-as-code. */
+        return petta_push_solve_planned(
             machine, expression->expr.elems[1],
-            expected, goal->barrier);
+            expected, goal->barrier, petta_plan_child(plan, 1u));
     }
 
     if (form == PETTA_FORM_EVAL && nargs == 2u) {
@@ -29902,23 +30024,10 @@ static bool petta_machine_dispatch_goal(
                 return petta_machine_unify(
                     machine, direct, second);
             }
-            /* A type-pure operator whose arguments are already values does
-             * not need a nested evaluator episode.  Empty is failure;
-             * anything else stays on the host so PeTTa-specific extensions
-             * remain reachable. */
-            if (grounded_op_is_type_pure(head_id) &&
-                !atom_has_vars(first)) {
-                bool immediate = true;
-                for (CettaExprIndex index = 1u;
-                     immediate && index < first->expr.len; index++) {
-                    Atom *argument = first->expr.elems[index];
-                    immediate = argument &&
-                        !atom_has_vars(argument) &&
-                        petta_machine_immediate_value(argument, NULL);
-                }
-                if (immediate)
-                    return false;
-            }
+            /* NULL means that this dispatcher declined the operation, not
+             * that it produced an empty answer bag. The language may own it
+             * through equations even when the global registry calls it pure
+             * (for example a PeTTa definition of `//`). */
         }
         bool admitted = false;
         if (!petta_machine_try_admit_ground_atom(

@@ -11,8 +11,8 @@ true
 done
 (a b)
 a
-true
-false
 Grounded
 (20)
 (f $V0 $V1 $V0)
+(installed-later 5)
+6

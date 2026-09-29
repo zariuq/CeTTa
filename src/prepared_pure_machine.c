@@ -2628,10 +2628,11 @@ static uint8_t prepared_pure_undefined_type_operands(
     return operands;
 }
 
-static bool prepared_pure_compile_eval(
+static bool prepared_pure_compile_eval_with_role(
     CettaPreparedPureProgram *program,
     PreparedPureCompileContext *context,
     Atom *source, const void *source_view,
+    CettaPreparedPureSourceRole source_role,
     uint32_t depth, uint32_t *node_out) {
     if (!program || !context || !source || !node_out ||
         depth > PREPARED_PURE_MAX_COMPILE_DEPTH)
@@ -2654,8 +2655,6 @@ static bool prepared_pure_compile_eval(
             },
             NULL, 0u, node_out);
     }
-    CettaPreparedPureSourceRole source_role =
-        prepared_pure_source_role(program, source_view);
     if (source_role == CETTA_PREPARED_PURE_SOURCE_DYNAMIC_CALL ||
         source_role == CETTA_PREPARED_PURE_SOURCE_DECLINE)
         return prepared_pure_reject(
@@ -2734,11 +2733,35 @@ static bool prepared_pure_compile_eval(
                 return prepared_pure_reject(
                     program, "dialect projection did not make progress",
                     source);
-            return prepared_pure_compile_eval(
-                program, context, expression_view.projected,
-                prepared_pure_projected_source_child(
-                    program, source, source_view,
-                    expression_view.projected),
+            const void *child_view = prepared_pure_projected_source_child(
+                program, source, source_view, expression_view.projected);
+            CettaPreparedPureSourceRole child_role =
+                prepared_pure_source_role(program, child_view);
+            switch (expression_view.projection_mode) {
+            case CETTA_PREPARED_PURE_PROJECT_SOURCE:
+                break;
+            case CETTA_PREPARED_PURE_PROJECT_APPLICATION:
+                /* A collapsed value has no argument plans. Reinterpreting
+                 * its children would run values as code. The canonical
+                 * dispatch retains that boundary. */
+                if (child_role == CETTA_PREPARED_PURE_SOURCE_VALUE)
+                    return prepared_pure_reject(
+                        program, "application projection needs argument views",
+                        source);
+                if (child_role == CETTA_PREPARED_PURE_SOURCE_DATA)
+                    child_role = CETTA_PREPARED_PURE_SOURCE_UNSPECIFIED;
+                break;
+            case CETTA_PREPARED_PURE_PROJECT_CODE:
+                child_view = NULL;
+                child_role = CETTA_PREPARED_PURE_SOURCE_UNSPECIFIED;
+                break;
+            default:
+                return prepared_pure_reject(
+                    program, "invalid projection mode", source);
+            }
+            return prepared_pure_compile_eval_with_role(
+                program, context, expression_view.projected, child_view,
+                child_role,
                 depth + 1u, node_out);
         }
         if (expression_view_state ==
@@ -3008,6 +3031,16 @@ static bool prepared_pure_compile_eval(
     return prepared_pure_compile_template(
         program, context, source, source_view,
         depth, true, node_out);
+}
+
+static bool prepared_pure_compile_eval(
+    CettaPreparedPureProgram *program,
+    PreparedPureCompileContext *context,
+    Atom *source, const void *source_view,
+    uint32_t depth, uint32_t *node_out) {
+    return prepared_pure_compile_eval_with_role(
+        program, context, source, source_view,
+        prepared_pure_source_role(program, source_view), depth, node_out);
 }
 
 static bool prepared_pure_bind_pattern_vars(
@@ -6755,6 +6788,11 @@ static bool prepared_pure_compile_closed_entry_call(
         CettaPreparedPureExpressionViewState state =
             program->expression_view(expression, &view);
         if (state == CETTA_PREPARED_PURE_EXPRESSION_PROJECT) {
+            /* An entry value cannot stand for evaluation as code or for
+             * dispatch of an application. Compile those boundaries from
+             * the expression instead of aliasing an argument register. */
+            if (view.projection_mode != CETTA_PREPARED_PURE_PROJECT_SOURCE)
+                return true;
             for (CettaExprIndex index = 1u;
                  index < expression->expr.len; index++) {
                 if (expression->expr.elems[index] != view.projected)

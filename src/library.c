@@ -357,6 +357,7 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
     memset(&ctx->petta_library_paths, 0, sizeof(ctx->petta_library_paths));
     ctx->petta_library_paths.revision = 1u;
     ctx->imported_file_len = 0;
+    ctx->petta_trusted_library_import_depth = 0u;
     ctx->import_space_alias_len = 0;
     ctx->cmdline_arg_len = 0;
     ctx->loaded_module_len = 0;
@@ -388,6 +389,10 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
         CETTA_PETTA_MEMO_AGGREGATE_NONE;
     ctx->petta_shared_table = language_id == CETTA_LANGUAGE_PETTA
         ? petta_machine_table_new() : NULL;
+    ctx->petta_open_programs = NULL;
+    ctx->petta_open_programs_free = NULL;
+    ctx->petta_match_decisions = NULL;
+    ctx->petta_match_decisions_free = NULL;
     if (ctx->petta_shared_table) {
         PettaTableMutationPolicy table_policy =
             profile && profile->enable_cetta_extensions

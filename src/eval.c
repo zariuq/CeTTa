@@ -38949,6 +38949,27 @@ static bool petta_eval_machine_admits_root(
             head, expression->expr.len - 1u).known) {
         return true;
     }
+    /* A name the reference's prelude registers, applied at an arity its
+     * registration does not record, is a partial application or an
+     * over-application at the root as where nested
+     * (RegisteredArity.reference), which the machine decides.  At a
+     * recorded arity the root keeps its route: effects such as import!
+     * belong to the host.  `let` and `let*` keep their own rules
+     * (swi_differences, entry 3).  `=` unifies and `#+` adds, at the root
+     * as where nested. */
+    if (eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+        head != SYMBOL_ID_NONE) {
+        uint16_t registered = 0u;
+        if (head != g_builtin_syms.let && head != g_builtin_syms.let_star &&
+            petta_semantics_registered_builtin_arities(head, &registered) &&
+            !petta_semantics_registered_named_arity(
+                 registered, expression->expr.len - 1u).exact)
+            return true;
+        if ((head == g_builtin_syms.equals ||
+             form == PETTA_FORM_INT_ADD) &&
+            expression->expr.len == 3u)
+            return true;
+    }
     if (head == g_builtin_syms.quote ||
         head == g_builtin_syms.return_text ||
         head == g_builtin_syms.case_text ||
@@ -41334,8 +41355,10 @@ petta_prepared_pure_expression_view(
      * that application written alone does when its head is ordinary (a
      * special form is syntax only where it is written).  `eval` runs the term
      * written in it once, which is that term's own evaluation when no
-     * variable in it holds a value to be run as code.  Each is then its
-     * child; a held value, run at run time, is left to the machine.
+     * variable in it holds a value to be run as code.  These projections
+     * differ in their source authority: call retains translated argument
+     * roles, while eval reinterprets every occurrence in the current program
+     * (ExplicitEvaluation.execute_compile). Held code stays on the machine.
      * `reduce` dispatches under a handler that fails a raising path alone.
      * A closed, effect-free single-result attempt can evaluate the call
      * speculatively: failure discards the attempt and replays the original
@@ -41354,6 +41377,7 @@ petta_prepared_pure_expression_view(
                 PETTA_RUNTIME_HEAD_ORDINARY;
         if (form == PETTA_FORM_REDUCE && written_ordinary_call) {
             view->projected = expression->expr.elems[1];
+            view->projection_mode = CETTA_PREPARED_PURE_PROJECT_APPLICATION;
             return CETTA_PREPARED_PURE_EXPRESSION_PROJECT_SINGLE_RESULT;
         }
         if (form == PETTA_FORM_ID ||
@@ -41361,6 +41385,11 @@ petta_prepared_pure_expression_view(
             (form == PETTA_FORM_EVAL && child->kind == ATOM_EXPR &&
              !atom_has_vars(child))) {
             view->projected = expression->expr.elems[1];
+            view->projection_mode = form == PETTA_FORM_EVAL
+                ? CETTA_PREPARED_PURE_PROJECT_CODE
+                : form == PETTA_FORM_CALL
+                ? CETTA_PREPARED_PURE_PROJECT_APPLICATION
+                : CETTA_PREPARED_PURE_PROJECT_SOURCE;
             return CETTA_PREPARED_PURE_EXPRESSION_PROJECT;
         }
         return CETTA_PREPARED_PURE_EXPRESSION_DECLINE;

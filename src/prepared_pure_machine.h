@@ -48,8 +48,16 @@ typedef enum {
      * expression. Never valid for a producer that publishes answers. */
     CETTA_PREPARED_PURE_EXPRESSION_PROJECT_SINGLE_RESULT,
 } CettaPreparedPureExpressionViewState;
+typedef enum {
+    CETTA_PREPARED_PURE_PROJECT_SOURCE = 0,
+    /* Dispatch the outer application; retain its children's source roles. */
+    CETTA_PREPARED_PURE_PROJECT_APPLICATION,
+    /* Interpret the entire projected term in the current program. */
+    CETTA_PREPARED_PURE_PROJECT_CODE,
+} CettaPreparedPureProjectionMode;
 typedef struct {
     Atom *projected;
+    CettaPreparedPureProjectionMode projection_mode;
     CettaPreparedPureValueObservation observation;
 } CettaPreparedPureExpressionView;
 /* Classify dialect-owned expression forms before the generic constructor

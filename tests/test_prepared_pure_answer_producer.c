@@ -255,6 +255,7 @@ static void test_constructor_cost_adapters(void) {
 }
 
 static CettaPreparedPureExpressionViewState entry_interpretation;
+static CettaPreparedPureProjectionMode entry_projection_mode;
 static SymbolId entry_view_head;
 
 static CettaPreparedPureExpressionViewState entry_view(
@@ -263,6 +264,7 @@ static CettaPreparedPureExpressionViewState entry_view(
         !atom_is_symbol_id(expression->expr.elems[0], entry_view_head))
         return CETTA_PREPARED_PURE_EXPRESSION_DEFAULT;
     view->projected = expression->expr.elems[1];
+    view->projection_mode = entry_projection_mode;
     return entry_interpretation;
 }
 
@@ -324,6 +326,30 @@ static void test_entry_interpretation_precedes_equations(void) {
             cetta_prepared_pure_program_free(program);
         }
     }
+    /* An explicitly evaluated entry is not an identity on a ready argument.
+     * The outer payload call still runs, even with ready entry registers. */
+    const CettaPreparedPureProjectionMode projections[] = {
+        CETTA_PREPARED_PURE_PROJECT_APPLICATION,
+        CETTA_PREPARED_PURE_PROJECT_CODE,
+    };
+    for (size_t i = 0u; i < sizeof(projections) / sizeof(projections[0]); i++) {
+        entry_projection_mode = projections[i];
+        CettaPreparedPureProgram *program =
+            cetta_prepared_pure_program_compile_closed(
+                &fixture.space, call, CETTA_GSLT_PURE_CALL_EAGER,
+                atom_bool, atom_expr,
+                cetta_prepared_pure_constructs_expression_always,
+                NULL, NULL, entry_view,
+                NULL, NULL, true, true,
+                (CettaMatchDecisionSemanticIdentity){0});
+        assert(program);
+        Atom *answer = NULL;
+        assert(cetta_prepared_pure_program_execute_closed(
+            program, &fixture.scratch, 0u, &answer));
+        assert(answer && atom_eq(answer, parse(&fixture.source, "evaluated")));
+        cetta_prepared_pure_program_free(program);
+    }
+    entry_projection_mode = CETTA_PREPARED_PURE_PROJECT_SOURCE;
     destroy(&fixture);
 }
 

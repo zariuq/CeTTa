@@ -2,8 +2,9 @@
 ; SWI-PeTTa.  Each entry states SWI-PeTTa's answer, the reason CeTTa differs,
 ; and who decided it when.  CeTTa's answers are pinned in the .expected file,
 ; so an entry that drifts is noticed; a difference missing from this file is
-; found only by running both engines.  SWI-PeTTa's answers are those of its
-; revision ae66fa8e.  An entry leaves this file only when the two engines agree.
+; found only by running both engines.  SWI-PeTTa's answers are those of the
+; pinned in-house snapshot 9b016a39, re-verified 2026-09-29.  An entry
+; leaves this file only when the two engines agree.
 
 (= (twice $x) (* 2 $x))
 (= (boom) (/ 1 0))
@@ -77,16 +78,10 @@
 ; SWI-PeTTa: cons
 !(case (spelled) (((cons $h $t) $h) ($other none)))
 
-; 6. `==` and `!=` compare numbers by exact value, whatever their kinds, so
-;    3 and 3.0 are equal; every other term compares as a term.  SWI-PeTTa's
-;    == is ==/2, identity of terms: 3 and 3.0 differ, so false below, and
-;    true for the last.
-;    Recorded: Oruži, 2026-09-27; the rule is a71d42b1's (2026-09-25), which
-;    Zar committed.
-; SWI-PeTTa: false
-!(== 3 3.0)
-; SWI-PeTTa: true
-!(!= 3 3.0)
+; 6. Retired 2026-09-29: the pinned reference compares numbers by exact
+;    value too, so (== 3 3.0) is true and (!= 3 3.0) false in both engines.
+;    Recorded 2026-09-27 against revision ae66fa8e; retired by Oruži on
+;    re-verifying every entry against the pinned snapshot.
 
 ; 7. `new-space` makes a fresh space.  SWI-PeTTa has no `new-space`, so
 ;    (new-space) stays data there and is an Expression.  The extra form costs
@@ -115,3 +110,15 @@
 ;    Recorded: Oruži, 2026-09-28.
 ; SWI-PeTTa: (f $_0 $_1 $_0)
 !(let $a (f $x $y $x) $a)
+
+; 10. A forward declaration does not provide an equation to execute before
+;     that equation is installed. Preserve the unknown expression, then use
+;     the equation once it is present. SWI-PeTTa 9b016a39 predeclares the
+;     function but aborts the first query with Unknown procedure, exit 2.
+;     Decided: Zar, 2026-09-28, as a reference bug under the rule that unknown
+;     expressions remain uninterpreted. Normal forward references after the
+;     definitions are installed agree in both engines.
+(= (before-install) (installed-later 5))
+!(before-install)
+(= (installed-later $n) (+ $n 1))
+!(before-install)

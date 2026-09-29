@@ -14,4 +14,4 @@ true
 true
 ()
 (true)
-((empty 7))
+(Error (domain_error (function_input_arities empty (0)) 1) none)
