@@ -11,7 +11,8 @@
 typedef enum {
     PP_ACTION_BYTECODE_V1_PUSH_SLOT = 0,
     PP_ACTION_BYTECODE_V1_PUSH_CONST = 1,
-    PP_ACTION_BYTECODE_V1_APPLY = 2
+    PP_ACTION_BYTECODE_V1_APPLY = 2,
+    PP_ACTION_BYTECODE_V1_PRIMITIVE = 3
 } PPActionBytecodeV1InstructionKind;
 
 typedef struct {
@@ -29,7 +30,7 @@ typedef struct {
 
 /*
  * Flat postfix semantic-action IR produced by the action-compiler GSLT.
- * Constant terms and application heads are owned by arena.  Production
+ * Constant terms, application heads and primitive names are owned by arena.  Production
  * indexes are the dense ParserPack production indexes, so recognition tables
  * and actions share one dispatch identity without carrying language policy.
  */
@@ -64,6 +65,31 @@ bool pp_action_bytecode_v1_program_validate(
     char *error_buf,
     size_t error_buf_size);
 
+/* Build a dense action program from independently indexed first-order
+ * actions.  This is the reflection boundary used by generated grammar
+ * instances that retain a table snapshot rather than a ParserPack object.
+ * Every row is checked for ground syntax, slot bounds, primitive arity,
+ * stack balance and exact dense coverage before it enters the program. */
+bool pp_action_bytecode_v1_program_build_indexed(
+    Atom *const *actions,
+    const uint32_t *arities,
+    uint32_t production_len,
+    const char *source_digest,
+    const char *compiler_digest,
+    const char *artifact_digest,
+    PPActionBytecodeV1Program *out,
+    char *error_buf,
+    size_t error_buf_size);
+
+bool pp_action_bytecode_v1_program_validate_indexed(
+    const PPActionBytecodeV1Program *program,
+    Atom *const *actions,
+    const uint32_t *arities,
+    uint32_t production_len,
+    const char *source_digest,
+    char *error_buf,
+    size_t error_buf_size);
+
 /*
  * Compose the base ParserPack action inventory with a validated positive-
  * guard production sidecar.  Compiler answers must use the
@@ -91,9 +117,11 @@ bool pp_action_bytecode_v1_program_validate_guard_extended(
     size_t error_buf_size);
 
 /*
- * Slot values are borrowed.  Constants and application nodes are allocated
- * in result_arena.  Consequently a result that is exactly a slot remains
- * borrowed, while every constructed result is owned by result_arena.
+ * Slot values are borrowed. Constants and constructed nodes are allocated
+ * in result_arena; their child atoms may still be borrowed slots. Thus the
+ * source slot arena must outlive the result's use. Primitives construct data,
+ * never host calls, and accept only their declared operand shapes. String
+ * primitives use the current Atom carrier's NUL-free string domain.
  */
 bool pp_action_bytecode_v1_execute_prevalidated(
     const PPActionBytecodeV1Program *program,

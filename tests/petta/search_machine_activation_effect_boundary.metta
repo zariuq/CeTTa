@@ -29,7 +29,8 @@
        ())
 
 ; Zero discards its result demand, not an effect already performed by its
-; producer. An extra argument also keeps the ordinary arity interpretation.
+; producer. With an argument, `empty` is over-applied: the reference registers
+; it at arity 0 alone, and reports the same domain error.
 (= (effect-before-zero $value)
    (let $_write (add-atom &self (before-zero $value)) (empty)))
 !(collapse (effect-before-zero observed))

@@ -1,0 +1,6 @@
+!(select 4294967298 (superpose (a b c)))
+!(select 4294967296 (superpose (a a b)))
+!(select 9223372036854775807 (superpose (a b c)))
+(= (wide-pick) (select 4294967298 (superpose (a b c))))
+!(wide-pick)
+!(select 0 (println! should-not-run))

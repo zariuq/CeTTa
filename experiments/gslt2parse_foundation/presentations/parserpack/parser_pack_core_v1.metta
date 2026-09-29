@@ -1,6 +1,7 @@
 (gslt-presentation-v1 ParserPackCoreV1
   (signature
     (operator pa-apply 2)
+    (operator pa-primitive 2)
     (operator pa-const 1)
     (operator pa-cons 2)
     (operator pa-slot 1)

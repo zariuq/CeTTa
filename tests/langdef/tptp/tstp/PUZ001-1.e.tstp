@@ -1,0 +1,111 @@
+% Preprocessing class: FSMSSMSSSSSNFFN.
+% Configuration: G-E--_208_C18_F1_SE_CS_SOS_SP_PS_S5PRR_RG_S04AN
+% (lift_lambdas = 1, lambda_to_forall = 1,unroll_only_formulas = 1, sine = Auto)
+% No SInE strategy applied
+% Search class: FGHNF-FFSM00-SFFFFFNN
+% Configuration: G----_406_C05_02_F1_SE_CS_SP_PS_RG_S04AI
+% Initializing proof state
+% Scanning for AC axioms
+%
+%cnf(i_0_17, hypothesis, (~hates(agatha,X1)|~hates(charles,X1))).
+%
+%cnf(i_0_16, hypothesis, (~richer(X1,X2)|~killed(X1,X2))).
+%
+%cnf(i_0_18, hypothesis, (~hates(X1,agatha)|~hates(X1,butler)|~hates(X1,charles))).
+%
+%cnf(i_0_13, hypothesis, (lives(agatha))).
+%
+%cnf(i_0_14, hypothesis, (lives(butler))).
+%
+%cnf(i_0_15, hypothesis, (lives(charles))).
+%
+%cnf(i_0_19, hypothesis, (hates(agatha,agatha))).
+%
+%cnf(i_0_20, hypothesis, (hates(agatha,charles))).
+%
+%cnf(i_0_24, negated_conjecture, (killed(charles,agatha)|killed(butler,agatha))).
+%
+%cnf(i_0_22, hypothesis, (hates(butler,X1)|~hates(agatha,X1))).
+%
+%cnf(i_0_21, hypothesis, (hates(X1,X2)|~killed(X1,X2))).
+%
+%cnf(i_0_23, hypothesis, (hates(butler,X1)|richer(X1,agatha)|~lives(X1))).
+% Presaturation interreduction done
+%
+%cnf(i_0_13, hypothesis, (lives(agatha))).
+%
+%cnf(i_0_14, hypothesis, (lives(butler))).
+%
+%cnf(i_0_15, hypothesis, (lives(charles))).
+%
+%cnf(i_0_19, hypothesis, (hates(agatha,agatha))).
+%
+%cnf(i_0_20, hypothesis, (hates(agatha,charles))).
+%
+%cnf(i_0_24, negated_conjecture, (killed(butler,agatha)|killed(charles,agatha))).
+%
+%cnf(i_0_22, hypothesis, (hates(butler,X1)|~hates(agatha,X1))).
+%
+%cnf(i_0_25, hypothesis, (hates(butler,charles))).
+%
+%cnf(i_0_26, hypothesis, (hates(butler,agatha))).
+%
+%cnf(i_0_17, hypothesis, (~hates(agatha,X1)|~hates(charles,X1))).
+%
+%cnf(i_0_27, hypothesis, (~hates(charles,charles))).
+%
+%cnf(i_0_28, hypothesis, (~hates(charles,agatha))).
+%
+%cnf(i_0_16, hypothesis, (~richer(X1,X2)|~killed(X1,X2))).
+%
+%cnf(i_0_21, hypothesis, (hates(X1,X2)|~killed(X1,X2))).
+%
+%cnf(i_0_29, negated_conjecture, (killed(butler,agatha))).
+%
+%cnf(i_0_18, hypothesis, (~hates(X1,agatha)|~hates(X1,butler)|~hates(X1,charles))).
+%
+%cnf(i_0_31, hypothesis, (~hates(butler,butler))).
+%
+%cnf(i_0_32, hypothesis, (~hates(agatha,butler))).
+%
+%cnf(i_0_23, hypothesis, (hates(butler,X1)|richer(X1,agatha)|~lives(X1))).
+%
+%cnf(i_0_34, hypothesis, (richer(butler,agatha))).
+
+% Proof found!
+% SZS status Unsatisfiable
+% SZS output start CNFRefutation
+cnf(same_hates, hypothesis, (hates(butler,X1)|~hates(agatha,X1)), file('Problems/PUZ/PUZ001-1.p', same_hates)).
+cnf(no_one_hates_everyone, hypothesis, (~hates(X1,agatha)|~hates(X1,butler)|~hates(X1,charles)), file('Problems/PUZ/PUZ001-1.p', no_one_hates_everyone)).
+cnf(agatha_hates_agatha, hypothesis, (hates(agatha,agatha)), file('Problems/PUZ/PUZ001-1.p', agatha_hates_agatha)).
+cnf(agatha_hates_charles, hypothesis, (hates(agatha,charles)), file('Problems/PUZ/PUZ001-1.p', agatha_hates_charles)).
+cnf(different_hates, hypothesis, (~hates(agatha,X1)|~hates(charles,X1)), file('Problems/PUZ/PUZ001-1.p', different_hates)).
+cnf(butler_hates_poor, hypothesis, (richer(X1,agatha)|hates(butler,X1)|~lives(X1)), file('Problems/PUZ/PUZ001-1.p', butler_hates_poor)).
+cnf(killer_hates_victim, hypothesis, (hates(X1,X2)|~killed(X1,X2)), file('Problems/PUZ/PUZ001-1.p', killer_hates_victim)).
+cnf(poorer_killer, hypothesis, (~killed(X1,X2)|~richer(X1,X2)), file('Problems/PUZ/PUZ001-1.p', poorer_killer)).
+cnf(butler, hypothesis, (lives(butler)), file('Problems/PUZ/PUZ001-1.p', butler)).
+cnf(prove_neither_charles_nor_butler_did_it, negated_conjecture, (killed(butler,agatha)|killed(charles,agatha)), file('Problems/PUZ/PUZ001-1.p', prove_neither_charles_nor_butler_did_it)).
+cnf(c_0_10, hypothesis, (hates(butler,X1)|~hates(agatha,X1)), inference(fof_simplification,[status(thm)],[same_hates])).
+cnf(c_0_11, hypothesis, (~hates(X1,agatha)|~hates(X1,butler)|~hates(X1,charles)), inference(fof_simplification,[status(thm)],[no_one_hates_everyone])).
+cnf(c_0_12, hypothesis, (hates(butler,X1)|~hates(agatha,X1)), c_0_10).
+cnf(c_0_13, hypothesis, (hates(agatha,agatha)), agatha_hates_agatha).
+cnf(c_0_14, hypothesis, (hates(agatha,charles)), agatha_hates_charles).
+cnf(c_0_15, hypothesis, (~hates(agatha,X1)|~hates(charles,X1)), inference(fof_simplification,[status(thm)],[different_hates])).
+cnf(c_0_16, hypothesis, (richer(X1,agatha)|hates(butler,X1)|~lives(X1)), inference(fof_simplification,[status(thm)],[butler_hates_poor])).
+cnf(c_0_17, hypothesis, (~hates(X1,agatha)|~hates(X1,butler)|~hates(X1,charles)), c_0_11).
+cnf(c_0_18, hypothesis, (hates(butler,agatha)), inference(spm,[status(thm)],[c_0_12, c_0_13])).
+cnf(c_0_19, hypothesis, (hates(butler,charles)), inference(spm,[status(thm)],[c_0_12, c_0_14])).
+cnf(c_0_20, hypothesis, (hates(X1,X2)|~killed(X1,X2)), inference(fof_simplification,[status(thm)],[killer_hates_victim])).
+cnf(c_0_21, hypothesis, (~hates(agatha,X1)|~hates(charles,X1)), c_0_15).
+cnf(c_0_22, hypothesis, (~killed(X1,X2)|~richer(X1,X2)), inference(fof_simplification,[status(thm)],[poorer_killer])).
+cnf(c_0_23, hypothesis, (richer(X1,agatha)|hates(butler,X1)|~lives(X1)), c_0_16).
+cnf(c_0_24, hypothesis, (lives(butler)), butler).
+cnf(c_0_25, hypothesis, (~hates(butler,butler)), inference(cn,[status(thm)],[inference(rw,[status(thm)],[inference(spm,[status(thm)],[c_0_17, c_0_18]), c_0_19])])).
+cnf(c_0_26, hypothesis, (hates(X1,X2)|~killed(X1,X2)), c_0_20).
+cnf(c_0_27, negated_conjecture, (killed(butler,agatha)|killed(charles,agatha)), prove_neither_charles_nor_butler_did_it).
+cnf(c_0_28, hypothesis, (~hates(charles,agatha)), inference(spm,[status(thm)],[c_0_21, c_0_13])).
+cnf(c_0_29, hypothesis, (~killed(X1,X2)|~richer(X1,X2)), c_0_22).
+cnf(c_0_30, hypothesis, (richer(butler,agatha)), inference(sr,[status(thm)],[inference(spm,[status(thm)],[c_0_23, c_0_24]), c_0_25])).
+cnf(c_0_31, negated_conjecture, (killed(butler,agatha)), inference(sr,[status(thm)],[inference(spm,[status(thm)],[c_0_26, c_0_27]), c_0_28])).
+cnf(c_0_32, hypothesis, ($false), inference(cn,[status(thm)],[inference(rw,[status(thm)],[inference(spm,[status(thm)],[c_0_29, c_0_30]), c_0_31])]), ['proof']).
+% SZS output end CNFRefutation

@@ -286,6 +286,8 @@ bool cetta_language_allows_builtin(CettaLanguageId language_id,
                                    const char *name);
 bool cetta_language_enables_dependent_telescope(CettaLanguageId language_id,
                                                 const CettaProfile *profile);
+bool cetta_language_reads_lists(CettaLanguageId language_id,
+                                const CettaProfile *profile);
 bool cetta_language_uses_rust_he_compat_semantics(CettaLanguageId language_id,
                                                   const CettaProfile *profile);
 uint32_t cetta_module_provider_count(void);

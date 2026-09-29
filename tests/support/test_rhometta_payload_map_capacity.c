@@ -59,7 +59,10 @@ static int test_atom_hashflags_soundness(void) {
     Atom *space = atom_space(&arena, (void *)(uintptr_t)0x10u);
     Atom *state = atom_state(&arena, (StateCell *)(uintptr_t)0x20u);
     Atom *capture = atom_capture(&arena, (CaptureClosure *)(uintptr_t)0x30u);
-    Atom *foreign = atom_foreign(&arena, (CettaForeignValue *)(uintptr_t)0x40u);
+    /* A foreign record begins with its hold; one without retain and
+     * release functions is not held by the arena. */
+    static CettaForeignHold unheld_foreign = {0};
+    Atom *foreign = atom_foreign(&arena, (CettaForeignValue *)&unheld_foreign);
     Atom *mutable_leaves[4] = {space, state, capture, foreign};
     const char *mutable_names[4] = {"space", "state", "capture", "foreign"};
     for (size_t i = 0; i < 4; i++) {

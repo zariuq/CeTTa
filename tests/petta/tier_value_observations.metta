@@ -1,0 +1,35 @@
+; get-metatype of a value inside a relation, and a type-pure operation named
+; by a value and applied to values (SWI-PeTTa's answers).
+
+(= (mt $x) (get-metatype $x))
+(= (mt-of-call) (get-metatype (collapse (superpose (a b)))))
+(= (mt-bound) (let $v (f 1) (get-metatype $v)))
+!(mt foo)
+!(mt +)
+!(mt =alpha)
+!(mt 42)
+!(mt 1.5)
+!(mt "text")
+!(mt (a b))
+!(mt ())
+!(mt $free)
+!(mt-of-call)
+!(mt-bound)
+
+(= (apply2 $f $a $b) ($f $a $b))
+!(apply2 =alpha (f $p) (f $q))
+!(apply2 =alpha (f $p $p) (f $p $q))
+!(apply2 =alpha item3 item3)
+!(apply2 =alpha item3 item4)
+!(apply2 =alpha 1 1.0)
+!(apply2 == a a)
+!(apply2 == (f 1) (f 1))
+!(apply2 + 2 3)
+!(apply2 < 2 3)
+
+; A relation that tests with the operation it is given.
+(= (count-matches $eq $x $l)
+   (length (collapse (let $y (superpose $l) (if ($eq $x $y) hit (empty))))))
+!(count-matches =alpha a (a b a c))
+!(count-matches =alpha (f $w) ((f $s) (g $t) (f 1)))
+!(count-matches == 2 (1 2 3 2))

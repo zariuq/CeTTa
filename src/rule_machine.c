@@ -1223,8 +1223,9 @@ static void rm_solve_goal(RMRun *run, uint32_t depth, Atom *goal,
             run->limit_reason = "malformed-bytecode";
             return;
         }
-        if (match_atoms_builder(block.conclusion, goal, builder) &&
-            match_atoms_builder(block.proof, desired_proof, builder)) {
+        if (match_atoms_builder(block.conclusion, goal, builder, run->arena) &&
+            match_atoms_builder(block.proof, desired_proof, builder,
+                                run->arena)) {
             ++run->block_matches;
             if (rm_is_symbol(block.premises, "rm-nil")) {
                 continuation(run, builder, continuation_ctx);
@@ -1446,7 +1447,7 @@ static bool rm_rule_program_unify_apply(Arena *scratch, Atom *left, Atom *right,
     BindingsBuilder builder;
     if (!bindings_builder_init(&builder, NULL))
         return false;
-    bool matched = match_atoms_builder(left, right, &builder);
+    bool matched = match_atoms_builder(left, right, &builder, scratch);
     if (matched) {
         *result = bindings_apply_if_vars(
             bindings_builder_bindings(&builder), scratch, body);
@@ -1460,7 +1461,7 @@ static bool rm_rule_program_unifies(Arena *scratch, Atom *left, Atom *right) {
     BindingsBuilder builder;
     if (!bindings_builder_init(&builder, NULL))
         return false;
-    bool matched = match_atoms_builder(left, right, &builder);
+    bool matched = match_atoms_builder(left, right, &builder, scratch);
     bindings_builder_free(&builder);
     (void)scratch;
     return matched;
@@ -1558,7 +1559,7 @@ static bool rm_rule_program_apply_rule_bytecode(
             int a = rm_rule_program_reg_index(op->expr.elems[1]);
             int b = rm_rule_program_reg_index(op->expr.elems[2]);
             if (a < 0 || b < 0 || !regs[a] || !regs[b] ||
-                !match_atoms_builder(regs[a], regs[b], &builder))
+                !match_atoms_builder(regs[a], regs[b], &builder, &run->scratch))
                 goto fail;
         } else if (rm_is_expr_head(op, "rmbc-set-type", 2)) {
             int src = rm_rule_program_reg_index(op->expr.elems[1]);

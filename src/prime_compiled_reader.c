@@ -91,6 +91,13 @@ static AtomId prime_projection_expression(
         projection ? projection->host : NULL, children, child_len);
 }
 
+static AtomId prime_projection_list(
+    void *context, const AtomId *elems, size_t elem_len, AtomId rest) {
+    PrimeProjectionV1 *projection = context;
+    return parser_host_projection_v1_list(
+        projection ? projection->host : NULL, elems, elem_len, rest);
+}
+
 static AtomId prime_projection_form2(
     ParserHostProjectionV1 *projection, const char *head,
     AtomId payload) {
@@ -222,6 +229,7 @@ int prime_compiled_reader_v1_parse_bytes_ids(
         .string_bytes = prime_projection_string_bytes,
         .expression = prime_projection_expression,
         .prefix = prime_projection_prefix,
+        .list = prime_projection_list,
     };
     memset(&direct_receipt, 0, sizeof(direct_receipt));
     result = prime_reader_direct_v1_parse_bytes_ids(

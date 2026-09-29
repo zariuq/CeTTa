@@ -13,8 +13,6 @@ profile_evidence=$(realpath "$2")
 test ! -e "$profile_evidence/inputs.sha256"
 cd "$profile_repo"
 profile_reference=$(realpath "${3:-src/generated}")
-profile_tool_sha=$(sha256sum "$profile_tool")
-profile_tool_sha=${profile_tool_sha%% *}
 profile_manifest=langdef/mm2/gslt_profile_v1.metta
 profile_fixture=tests/support/gslt_support_profile_native_v1
 profile_sources=(src/gslt_support_profile_v1.c native/operational_language_def_v1.c
@@ -79,7 +77,7 @@ for profile_case in actual empty_utf8 unavailable; do
         # shellcheck disable=SC2016
         profile_work=('(seed a) (work (from (BTM (seed $x))) (do (put (seen $x))) (0 future))')
     fi
-    "$profile_evidence/$profile_binary" "$profile_input" "$profile_tool_sha" "${profile_work[@]}" \
+    "$profile_evidence/$profile_binary" "$profile_input" "${profile_work[@]}" \
         > "$profile_evidence/$profile_case/observe.log" 2>&1
 done
 profile_output="$profile_evidence/actual/first"

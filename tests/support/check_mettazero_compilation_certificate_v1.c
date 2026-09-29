@@ -24,8 +24,6 @@ typedef struct {
     size_t length;
 } FileBytes;
 
-static const uint8_t compiler_domain[] =
-    "CettaGsltLanguageCompilerV1";
 static const uint8_t selected_source_domain[] =
     "CettaGsltSelectedSourceV1";
 static const uint8_t admission_domain[] =
@@ -268,37 +266,6 @@ static void artifact_sha(const FileBytes *header, const FileBytes *source,
     cetta_native_sha256_finish_hex(&sha, output);
 }
 
-static bool compiler_sha(const char *name, const char *generator_path, const char *schema_path,
-                         char output[65], char *error, size_t error_size) {
-    FileBytes generator;
-    FileBytes schema;
-    if (!read_file(generator_path, &generator, error, error_size))
-        return false;
-    if (name && !strcmp(name, "CettaGsltLanguageNativeCompilerV1")) {
-        cetta_native_sha256_hex(generator.bytes, generator.length, output);
-        file_bytes_free(&generator);
-        return true;
-    }
-    if (!name || strcmp(name, "CettaGsltLanguageCompilerV1")) {
-        file_bytes_free(&generator);
-        return fail(error, error_size, "unknown compiler identity scheme");
-    }
-    if (!read_file(schema_path, &schema, error, error_size)) {
-        file_bytes_free(&generator);
-        return false;
-    }
-    CettaNativeSha256 sha;
-    cetta_native_sha256_init(&sha);
-    cetta_native_sha256_update(
-        &sha, compiler_domain, sizeof(compiler_domain));
-    sha_update_blob(&sha, generator.bytes, generator.length);
-    sha_update_blob(&sha, schema.bytes, schema.length);
-    cetta_native_sha256_finish_hex(&sha, output);
-    file_bytes_free(&schema);
-    file_bytes_free(&generator);
-    return true;
-}
-
 static bool check_stage(const Atom *field, size_t index,
                         const char *name, const char *input,
                         const char *output,
@@ -322,7 +289,6 @@ static bool check_certificate(
     const char *descriptor_symbol, const char *expected_profile,
     const char *certificate_path, const char *source_root,
     const char *header_path, const char *source_path,
-    const char *generator_path, const char *schema_path,
     size_t *rule_count_out, char *error, size_t error_size) {
     FileBytes certificate;
     FileBytes header = {0};
@@ -344,7 +310,7 @@ static bool check_certificate(
     int form_count = parse_metta_text(
         (const char *)certificate.bytes, &arena, &forms);
     CettaExprLen expected_root_length =
-        (CettaExprLen)(14u + descriptor->semantic_source_count);
+        (CettaExprLen)(13u + descriptor->semantic_source_count);
     if (form_count != 1 || !forms || !forms[0] ||
         forms[0]->kind != ATOM_EXPR ||
         !atom_expr_named(forms[0], "gslt-compilation-certificate-v1",
@@ -371,21 +337,6 @@ static bool check_certificate(
     }
     Atom *root = forms[0];
     CettaExprIndex cursor = 1u;
-
-    Atom *compiler = root->expr.elems[cursor++];
-    const char *compiler_name = atom_expr_named(compiler, "compiler", 3u)
-        ? atom_string_value(compiler->expr.elems[1]) : NULL;
-    const char *submitted_compiler_sha = atom_expr_named(
-        compiler, "compiler", 3u)
-        ? atom_string_value(compiler->expr.elems[2]) : NULL;
-    char actual_compiler_sha[65];
-    if (!compiler_sha(compiler_name, generator_path, schema_path, actual_compiler_sha,
-                      error, error_size) ||
-        !string_equal(submitted_compiler_sha, actual_compiler_sha,
-                      "compiler identity", error, error_size) ||
-        !string_equal(descriptor->compiler_sha256, actual_compiler_sha,
-                      "embedded compiler identity", error, error_size))
-        goto done;
 
     Atom *descriptor_field = root->expr.elems[cursor++];
     if (!atom_expr_named(descriptor_field, "descriptor", 2u) ||
@@ -589,10 +540,9 @@ done:
 }
 
 int main(int argc, char **argv) {
-    if (argc != 8) {
+    if (argc != 6) {
         fprintf(stderr,
-                "usage: %s PROFILE CERTIFICATE SOURCE_ROOT HEADER SOURCE "
-                "GENERATOR SCHEMA\n",
+                "usage: %s PROFILE CERTIFICATE SOURCE_ROOT HEADER SOURCE\n",
                 argv[0]);
         return 2;
     }
@@ -627,7 +577,7 @@ int main(int argc, char **argv) {
     size_t rule_count = 0u;
     bool accepted = check_certificate(
             descriptor, descriptor_symbol, argv[1], argv[2], argv[3],
-            argv[4], argv[5], argv[6], argv[7], &rule_count,
+            argv[4], argv[5], &rule_count,
             error, sizeof(error));
 
     g_symbols = NULL;

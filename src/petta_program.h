@@ -401,7 +401,18 @@ bool petta_program_head_is_intrinsic(SymbolId head);
  * it.  Equations constructed later by effects are deliberately absent.
  */
 bool petta_program_predeclare_equation(
-    PettaProgram *program, Atom *atom);
+    PettaProgram *program, Space *space, Atom *atom);
+
+/*
+ * SWI-PeTTa's fun/1 for `head` beyond its builtins, in `space` (the
+ * program's own): an equation of the space defines the head, or the parse
+ * pass of a document loaded into the space declared it and no equation with
+ * that head has been added to or removed from the space since.  SWI-PeTTa
+ * registers a head as it parses, and retracts the registration once a
+ * removal leaves the space no clause of it.
+ */
+bool petta_program_function_registered(
+    PettaProgram *program, Space *space, SymbolId head);
 
 /*
  * True when the parsed document or a live Space occurrence declares a named

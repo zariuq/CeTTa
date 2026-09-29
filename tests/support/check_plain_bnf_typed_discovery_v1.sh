@@ -78,7 +78,12 @@ cmp lib/lib_bnf.metta "$bnf_evidence/candidate-library.metta"
 test "$(rg -c '^\(= \(bnf:validate-document ' "$bnf_evidence/candidate-library.metta")" = 1
 sha256sum "$bnf_evidence/candidate-library.metta" >> "$bnf_evidence/inputs.sha256"
 bnf_count=0
-CETTA_PETTA_SEARCH_MACHINE=1 "$bnf_runtime" --lang petta "$bnf_evidence/program.metta" \
+# The installed library imports its installed PeTTa realization; the program
+# generated here must be that realization, byte for byte, and is not loaded a
+# second time beside it.
+cmp "$bnf_evidence/program.metta" \
+    "$bnf_root/langdef/petta/generated/plain_bnf_semantic_admission_v1.metta"
+CETTA_PETTA_SEARCH_MACHINE=1 "$bnf_runtime" --lang petta \
     "$bnf_adapter" > "$bnf_evidence/installed-orchestration.out" \
     2> "$bnf_evidence/installed-orchestration.stderr"
 test ! -s "$bnf_evidence/installed-orchestration.stderr"
@@ -245,8 +250,12 @@ done
 bnf_fifo_test=tests/langdef/bnf/plain_bnf_reachable_queue_v1.metta
 bnf_fifo_expected=tests/langdef/bnf/plain_bnf_reachable_queue_v1.expected
 sha256sum "$bnf_fifo_test" "$bnf_fifo_expected" >> "$bnf_evidence/inputs.sha256"
+# The installed library imports the installed realization; the probe reads the
+# library copy, which imports none, so the program given here is the only one.
+sed -e "s|../../../lib/lib_bnf.metta|$bnf_evidence/candidate-library.metta|" \
+    "$bnf_fifo_test" > "$bnf_evidence/fifo-test.metta"
 CETTA_PETTA_SEARCH_MACHINE=1 "$bnf_runtime" --lang petta "$bnf_evidence/program.metta" \
-    "$bnf_fifo_test" > "$bnf_evidence/fifo.out" 2> "$bnf_evidence/fifo.stderr"
+    "$bnf_evidence/fifo-test.metta" > "$bnf_evidence/fifo.out" 2> "$bnf_evidence/fifo.stderr"
 test ! -s "$bnf_evidence/fifo.stderr"
 sed '/^true$/d' "$bnf_evidence/fifo.out" > "$bnf_evidence/fifo.observation"
 cmp "$bnf_fifo_expected" "$bnf_evidence/fifo.observation"
@@ -280,7 +289,7 @@ done
     2> "$bnf_evidence/compile-fifo.stderr"
 test ! -s "$bnf_evidence/compile-fifo.stderr"
 CETTA_PETTA_SEARCH_MACHINE=1 "$bnf_runtime" --lang petta "$bnf_evidence/program-fifo.metta" \
-    "$bnf_fifo_test" > "$bnf_evidence/fifo-mutant.out" 2> "$bnf_evidence/fifo-mutant.stderr"
+    "$bnf_evidence/fifo-test.metta" > "$bnf_evidence/fifo-mutant.out" 2> "$bnf_evidence/fifo-mutant.stderr"
 test ! -s "$bnf_evidence/fifo-mutant.stderr"
 test "$(grep -Fxc FifoDiscoveryOrderMismatchV1 "$bnf_evidence/fifo-mutant.out")" -eq 1
 bnf_count=$((bnf_count + 1))

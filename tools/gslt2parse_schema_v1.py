@@ -293,6 +293,37 @@ def parse_presentation(path: Path) -> Presentation:
     return Presentation(name, tuple(operators), rules, path)
 
 
+def compose_presentations(
+    base: Presentation, extension: Presentation
+) -> Presentation:
+    """The base presentation extended by another: each extension rule replaces
+    the base rule of the same name, the others are added after the base rules,
+    and the operators are the union.  An operator both declare keeps its
+    arity."""
+
+    arities = {operator.name: operator.arity for operator in base.operators}
+    operators = list(base.operators)
+    for operator in extension.operators:
+        if operator.name in arities:
+            if arities[operator.name] != operator.arity:
+                raise SchemaError(
+                    f"{extension.source}: operator {operator.name} has arity "
+                    f"{operator.arity} but {arities[operator.name]} in "
+                    f"{base.source}"
+                )
+            continue
+        arities[operator.name] = operator.arity
+        operators.append(operator)
+    replacements = {rule.name: rule for rule in extension.rules}
+    base_names = {rule.name for rule in base.rules}
+    rules = [replacements.get(rule.name, rule) for rule in base.rules]
+    rules.extend(rule for rule in extension.rules if rule.name not in base_names)
+    return Presentation(
+        f"{base.name}+{extension.name}", tuple(operators), tuple(rules),
+        base.source,
+    )
+
+
 def _validate_term(
     term: SExpr,
     operators: set[tuple[str, int]],

@@ -1,0 +1,22 @@
+true
+true
+true
+true
+true
+true
+true
+(1 2)
+(9 9)
+(6)
+((seen edge 2) (seen edge 3))
+6
+1
+(both (5) (6))
+(both (2 3) ())
+true
+(1 2 4)
+true
+(1 4)
+true
+(both (2 3) (8))
+2

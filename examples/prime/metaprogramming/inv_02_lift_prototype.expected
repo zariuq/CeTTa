@@ -18,5 +18,5 @@
 [(quote (lam y (foo y y)))]
 [(quote (lam a (foo a)))]
 [(lam $binder (pair y $binder))]
-[(f (quote (foo $x)) [$x := (quote a]))]
+[(f (quote (foo $x)) [$x := (quote a)])]
 [(Error (parse "@(foo $x)[$x := @a]") ParseFailed)]

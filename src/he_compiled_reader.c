@@ -1,5 +1,6 @@
 #include "he_compiled_reader.h"
 
+#include "generated/he_extended_reader_direct_v1.generated.h"
 #include "generated/he_reader_direct_v1.generated.h"
 #include "gslt_direct_reader_v1.h"
 #include "parser.h"
@@ -14,6 +15,9 @@
 
 struct HECompiledReaderV1 {
     bool ready;
+    /* The HE reader, or the extended profiles' reader with lists. */
+    const GSLTDirectReaderV1Plan *plan;
+    const char *(*program_digest)(void);
     SymbolTable *owner_symbols;
     uint64_t owner_symbols_instance_id;
 };
@@ -56,8 +60,27 @@ static AtomId he_compiled_reader_v1_expression(
         context, children, child_len);
 }
 
+static AtomId he_compiled_reader_v1_list(
+    void *context, const AtomId *elems, size_t elem_len, AtomId rest) {
+    return parser_host_projection_v1_list(context, elems, elem_len, rest);
+}
+
 HECompiledReaderV1 *he_compiled_reader_v1_new(void) {
-    return calloc(1u, sizeof(HECompiledReaderV1));
+    HECompiledReaderV1 *reader = calloc(1u, sizeof(HECompiledReaderV1));
+    if (reader) {
+        reader->plan = &he_reader_direct_v1_plan;
+        reader->program_digest = he_reader_direct_v1_program_digest;
+    }
+    return reader;
+}
+
+HECompiledReaderV1 *he_compiled_reader_v1_new_with_lists(void) {
+    HECompiledReaderV1 *reader = calloc(1u, sizeof(HECompiledReaderV1));
+    if (reader) {
+        reader->plan = &he_extended_reader_direct_v1_plan;
+        reader->program_digest = he_extended_reader_direct_v1_program_digest;
+    }
+    return reader;
 }
 
 void he_compiled_reader_v1_free(HECompiledReaderV1 *reader) {
@@ -82,9 +105,9 @@ bool he_compiled_reader_v1_prepare(HECompiledReaderV1 *reader,
         return false;
     }
     if (!gslt_direct_reader_v1_plan_validate(
-            &he_reader_direct_v1_plan, error_buf, error_buf_size) ||
-        strcmp(he_reader_direct_v1_plan.composition_digest,
-               he_reader_direct_v1_program_digest()) != 0) {
+            reader->plan, error_buf, error_buf_size) ||
+        strcmp(reader->plan->composition_digest,
+               reader->program_digest()) != 0) {
         if (error_buf && error_buf_size > 0u && error_buf[0] == '\0') {
             he_compiled_reader_v1_set_error(
                 error_buf, error_buf_size,
@@ -92,7 +115,7 @@ bool he_compiled_reader_v1_prepare(HECompiledReaderV1 *reader,
         }
         return false;
     }
-    if (strcmp(he_reader_direct_v1_plan.profile, "cetta-he-v1") != 0) {
+    if (strcmp(reader->plan->profile, "cetta-he-v1") != 0) {
         he_compiled_reader_v1_set_error(
             error_buf, error_buf_size,
             "compiled HE host projection has the wrong profile");
@@ -144,34 +167,35 @@ int he_compiled_reader_v1_parse_bytes_ids(
         .variable_bytes = he_compiled_reader_v1_variable_bytes,
         .string_bytes = he_compiled_reader_v1_string_bytes,
         .expression = he_compiled_reader_v1_expression,
+        .list = he_compiled_reader_v1_list,
     };
     memset(&direct_receipt, 0, sizeof(direct_receipt));
-    result = he_reader_direct_v1_parse_bytes_ids(
-        input, input_len, &projection, out_ids, &direct_receipt,
-        error_buf, error_buf_size);
+    result = gslt_direct_reader_v1_parse_bytes_ids(
+        reader->plan, input, input_len, &projection, out_ids,
+        &direct_receipt, error_buf, error_buf_size);
     parser_host_projection_v1_free(projection_context);
     if (result < 0)
         return -1;
     if (receipt) {
         (void)snprintf(receipt->program_digest,
                        sizeof(receipt->program_digest), "%s",
-                       he_reader_direct_v1_program_digest());
+                       reader->program_digest());
         (void)snprintf(receipt->fragment, sizeof(receipt->fragment), "%s",
-                       he_reader_direct_v1_plan.fragment);
+                       reader->plan->fragment);
         (void)snprintf(receipt->profile, sizeof(receipt->profile), "%s",
-                       he_reader_direct_v1_plan.profile);
+                       reader->plan->profile);
         (void)snprintf(receipt->syntax_digest,
                        sizeof(receipt->syntax_digest), "%s",
-                       he_reader_direct_v1_plan.syntax_digest);
+                       reader->plan->syntax_digest);
         (void)snprintf(receipt->scalar_class_digest,
                        sizeof(receipt->scalar_class_digest), "%s",
-                       he_reader_direct_v1_plan.class_digest);
+                       reader->plan->class_digest);
         (void)snprintf(receipt->projection_digest,
                        sizeof(receipt->projection_digest), "%s",
-                       he_reader_direct_v1_plan.projection_digest);
+                       reader->plan->projection_digest);
         (void)snprintf(receipt->compiler_digest,
                        sizeof(receipt->compiler_digest), "%s",
-                       he_reader_direct_v1_plan.compiler_digest);
+                       reader->plan->compiler_digest);
         receipt->source_pass_count = direct_receipt.source_pass_count;
         receipt->input_byte_len = direct_receipt.input_byte_len;
         receipt->token_len = direct_receipt.token_len;

@@ -85,6 +85,9 @@ typedef enum {
     IMPORTED_FLAT_BIGINT = 7,
     IMPORTED_FLAT_RATIONAL = 8,
     IMPORTED_FLAT_GROUNDED_OTHER = 9,
+    /* A list or list pattern, kept whole: lists meet in the general matcher,
+     * which binds a list pattern's rest. */
+    IMPORTED_FLAT_LIST = 10,
 } ImportedFlatTokenKind;
 
 typedef struct {

@@ -14,11 +14,7 @@ static int same_text(const char *a, const char *b) {
 }
 
 /* Compare public descriptor observations, not generated formatting or layout. */
-int main(int argc, char **argv) {
-    if (argc != 2) {
-        fputs("usage: catalog-descriptor-observer GENERATOR_SHA256\n", stderr);
-        return 2;
-    }
+int main(void) {
     SymbolTable symbols;
     VarInternTable variables;
     char error[1024] = {0};
@@ -30,10 +26,6 @@ int main(int argc, char **argv) {
     var_intern_init(&variables);
     g_var_intern = &variables;
     int ok = cetta_gslt_provider_catalog_validate_v1(a, error, sizeof(error));
-    if (!same_text(a->generator_sha256, argv[1])) {
-        fputs("native descriptor differs from actual generator identity\n", stderr);
-        ok = 0;
-    }
 #ifdef CATALOG_UTF8_CONTROL
     ok = ok && same_text(a->name, "native λ \"quote\" \\slash") &&
         same_text(a->language_name, "native-catalog-control") &&

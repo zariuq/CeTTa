@@ -26,7 +26,6 @@ typedef struct {
     const char *language_name;
     const char *profile_name;
     const char *manifest_sha256;
-    const char *compiler_sha256;
 
     const char *work_symbol;
     uint32_t work_arity;

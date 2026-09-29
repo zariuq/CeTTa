@@ -1,0 +1,4 @@
+(TptpCompactPrintV1 strict (ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok) (ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok) (ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok))
+(TptpCompactPrintV1 corpus-compatible (ok ok ok) (ok ok ok) (ok ok ok))
+(TptpCompactPrintV1 corpus-compatible (ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok) (ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok) (ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok ok))
+(TptpCompactPrintBoundaryV1 "fof(a,axiom,and(X,n0)).\nfof(b,axiom,collision(X)).\nfof(c,axiom,let(X,p,q)).\nfof(d,axiom,or(not(X),quote(Y))).\nfof(e,axiom,'+'(1,2)).\n" True)

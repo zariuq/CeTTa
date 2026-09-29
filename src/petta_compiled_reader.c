@@ -1,9 +1,11 @@
 #include "petta_compiled_reader.h"
 
+#include "generated/petta_extended_reader_direct_v1.generated.h"
 #include "generated/petta_reader_direct_v1.generated.h"
 #include "gslt_direct_reader_v1.h"
 #include "petta_numeric.h"
 #include "symbol.h"
+#include "var_index.h"
 
 #include <limits.h>
 #include <stdarg.h>
@@ -21,11 +23,15 @@ typedef struct {
     PeTTaVariableEntryV1 *variables;
     uint32_t variable_len;
     uint32_t variable_cap;
+    CettaVarIndex variable_index;
     bool form_active;
 } PeTTaProjectionContextV1;
 
 struct PeTTaCompiledReaderV1 {
     bool ready;
+    /* The PeTTa reader, or the extended profiles' reader with lists. */
+    const GSLTDirectPeTTaReaderV1Plan *plan;
+    const char *(*program_digest)(void);
     SymbolTable *owner_symbols;
     uint64_t owner_symbols_instance_id;
 };
@@ -47,20 +53,6 @@ static bool petta_projection_begin_form(void *raw) {
     context->variable_len = 0u;
     context->form_active = true;
     return true;
-}
-
-static char *petta_projection_cstr(
-    const uint8_t *bytes, size_t len) {
-    char *text;
-    if ((len > 0u && (!bytes || memchr(bytes, '\0', len))))
-        return NULL;
-    text = malloc(len + 1u);
-    if (!text)
-        return NULL;
-    if (len > 0u)
-        memcpy(text, bytes, len);
-    text[len] = '\0';
-    return text;
 }
 
 static AtomId petta_projection_token_bytes(
@@ -103,13 +95,25 @@ static AtomId petta_projection_variable_bytes(
     if (anonymous) {
         variable = fresh_var_id();
     } else {
-        for (uint32_t index = 0u; index < context->variable_len; index++) {
-            if (context->variables[index].spelling == spelling) {
-                return tu_intern_var(
-                    context->universe, spelling,
-                    context->variables[index].variable);
+        uint32_t found = UINT32_MAX;
+        if (context->variable_len <= CETTA_VAR_INDEX_SCAN ||
+            !context->variable_index.slots) {
+            for (uint32_t index = 0u; index < context->variable_len; index++) {
+                if (context->variables[index].spelling == spelling) {
+                    found = index;
+                    break;
+                }
             }
+        } else {
+            uint32_t proposed = cetta_var_index_propose(
+                &context->variable_index, (VarId)spelling);
+            if (proposed < context->variable_len &&
+                context->variables[proposed].spelling == spelling)
+                found = proposed;
         }
+        if (found != UINT32_MAX)
+            return tu_intern_var(context->universe, spelling,
+                                 context->variables[found].variable);
         variable = fresh_var_id();
         if (context->variable_len == context->variable_cap) {
             uint32_t next = context->variable_cap
@@ -124,23 +128,33 @@ static AtomId petta_projection_variable_bytes(
         }
         context->variables[context->variable_len++] =
             (PeTTaVariableEntryV1){spelling, variable};
+        if (context->variable_len > CETTA_VAR_INDEX_SCAN) {
+            if (context->variable_len == CETTA_VAR_INDEX_SCAN + 1u ||
+                !cetta_var_index_has_room(&context->variable_index)) {
+                if (!cetta_var_index_reset(&context->variable_index,
+                                            context->variable_len))
+                    return CETTA_ATOM_ID_NONE;
+                for (uint32_t index = 0u; index < context->variable_len; index++)
+                    cetta_var_index_record(&context->variable_index,
+                        (VarId)context->variables[index].spelling, index);
+            } else {
+                cetta_var_index_record(&context->variable_index,
+                    (VarId)spelling, context->variable_len - 1u);
+            }
+        }
     }
     return tu_intern_var(context->universe, spelling, variable);
 }
 
+/* A string keeps its bytes exactly, embedded NUL included. */
 static AtomId petta_projection_string_bytes(
     void *raw, const uint8_t *bytes, size_t len) {
     PeTTaProjectionContextV1 *context = raw;
-    char *text;
-    AtomId result;
-    if (!context || !context->form_active || !context->universe)
+    if (!context || !context->form_active || !context->universe ||
+        (len > 0u && !bytes))
         return CETTA_ATOM_ID_NONE;
-    text = petta_projection_cstr(bytes, len);
-    if (!text)
-        return CETTA_ATOM_ID_NONE;
-    result = tu_intern_string(context->universe, text);
-    free(text);
-    return result;
+    return tu_intern_string_n(context->universe,
+                              len > 0u ? (const char *)bytes : "", len);
 }
 
 static AtomId petta_projection_dollar_symbol(void *raw) {
@@ -156,6 +170,15 @@ static AtomId petta_projection_expression(
         return CETTA_ATOM_ID_NONE;
     return tu_expr_from_ids(
         context->universe, children, (CettaExprLen)len);
+}
+
+static AtomId petta_projection_list(
+    void *raw, const AtomId *elems, size_t len, AtomId rest) {
+    PeTTaProjectionContextV1 *context = raw;
+    if (!context || !context->form_active || !context->universe ||
+        (len > 0u && !elems))
+        return CETTA_ATOM_ID_NONE;
+    return tu_list_from_ids(context->universe, elems, (CettaExprLen)len, rest);
 }
 
 static bool petta_projection_finish_form(
@@ -181,7 +204,21 @@ static bool petta_projection_finish_form(
 }
 
 PeTTaCompiledReaderV1 *petta_compiled_reader_v1_new(void) {
-    return calloc(1u, sizeof(PeTTaCompiledReaderV1));
+    PeTTaCompiledReaderV1 *reader = calloc(1u, sizeof(PeTTaCompiledReaderV1));
+    if (reader) {
+        reader->plan = &petta_reader_direct_v1_plan;
+        reader->program_digest = petta_reader_direct_v1_program_digest;
+    }
+    return reader;
+}
+
+PeTTaCompiledReaderV1 *petta_compiled_reader_v1_new_with_lists(void) {
+    PeTTaCompiledReaderV1 *reader = calloc(1u, sizeof(PeTTaCompiledReaderV1));
+    if (reader) {
+        reader->plan = &petta_extended_reader_direct_v1_plan;
+        reader->program_digest = petta_extended_reader_direct_v1_program_digest;
+    }
+    return reader;
 }
 
 void petta_compiled_reader_v1_free(PeTTaCompiledReaderV1 *reader) {
@@ -206,16 +243,16 @@ bool petta_compiled_reader_v1_prepare(
         return false;
     }
     if (!gslt_direct_petta_reader_v1_plan_validate(
-            &petta_reader_direct_v1_plan, error_buf, error_buf_size) ||
-        strcmp(petta_reader_direct_v1_plan.composition_digest,
-               petta_reader_direct_v1_program_digest()) != 0) {
+            reader->plan, error_buf, error_buf_size) ||
+        strcmp(reader->plan->composition_digest,
+               reader->program_digest()) != 0) {
         if (error_buf && error_buf_size > 0u && error_buf[0] == '\0')
             petta_compiled_reader_v1_set_error(
                 error_buf, error_buf_size,
                 "generated PeTTa reader digest validation failed");
         return false;
     }
-    if (strcmp(petta_reader_direct_v1_plan.profile,
+    if (strcmp(reader->plan->profile,
                "cetta-petta-v1") != 0) {
         petta_compiled_reader_v1_set_error(
             error_buf, error_buf_size,
@@ -262,33 +299,34 @@ int petta_compiled_reader_v1_parse_bytes_ids(
         .dollar_symbol = petta_projection_dollar_symbol,
         .expression = petta_projection_expression,
         .finish_form = petta_projection_finish_form,
+        .list = petta_projection_list,
     };
     memset(&direct_receipt, 0, sizeof(direct_receipt));
-    result = petta_reader_direct_v1_parse_bytes_ids(
-        input, input_len, &projection, out_ids, &direct_receipt,
-        error_buf, error_buf_size);
+    result = gslt_direct_petta_reader_v1_parse_bytes_ids(
+        reader->plan, input, input_len, &projection, out_ids,
+        &direct_receipt, error_buf, error_buf_size);
+    cetta_var_index_free(&context.variable_index);
     free(context.variables);
     if (result < 0)
         return -1;
     if (receipt) {
 #define PETTA_RECEIPT_TEXT(field, value) \
         (void)snprintf(receipt->field, sizeof(receipt->field), "%s", value)
-        PETTA_RECEIPT_TEXT(program_digest,
-                           petta_reader_direct_v1_program_digest());
-        PETTA_RECEIPT_TEXT(fragment, petta_reader_direct_v1_plan.fragment);
-        PETTA_RECEIPT_TEXT(profile, petta_reader_direct_v1_plan.profile);
+        PETTA_RECEIPT_TEXT(program_digest, reader->program_digest());
+        PETTA_RECEIPT_TEXT(fragment, reader->plan->fragment);
+        PETTA_RECEIPT_TEXT(profile, reader->plan->profile);
         PETTA_RECEIPT_TEXT(splitter_syntax_digest,
-                           petta_reader_direct_v1_plan.splitter_syntax_digest);
+                           reader->plan->splitter_syntax_digest);
         PETTA_RECEIPT_TEXT(splitter_class_digest,
-                           petta_reader_direct_v1_plan.splitter_class_digest);
+                           reader->plan->splitter_class_digest);
         PETTA_RECEIPT_TEXT(form_syntax_digest,
-                           petta_reader_direct_v1_plan.form_syntax_digest);
+                           reader->plan->form_syntax_digest);
         PETTA_RECEIPT_TEXT(form_class_digest,
-                           petta_reader_direct_v1_plan.form_class_digest);
+                           reader->plan->form_class_digest);
         PETTA_RECEIPT_TEXT(projection_digest,
-                           petta_reader_direct_v1_plan.projection_digest);
+                           reader->plan->projection_digest);
         PETTA_RECEIPT_TEXT(compiler_digest,
-                           petta_reader_direct_v1_plan.compiler_digest);
+                           reader->plan->compiler_digest);
 #undef PETTA_RECEIPT_TEXT
         receipt->source_pass_count = direct_receipt.source_pass_count;
         receipt->form_replay_count = direct_receipt.form_replay_count;

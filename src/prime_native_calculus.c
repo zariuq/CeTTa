@@ -398,10 +398,14 @@ static Atom *prime_native_parse_one(
 
 static bool prime_native_patterns_overlap(Atom *left, Atom *right) {
     if (!left || !right) return false;
+    /* Only the verdict is kept; the unifier and its syntax are dropped. */
+    Arena scratch;
+    arena_init(&scratch);
     Bindings overlap;
     bindings_init(&overlap);
-    bool result = match_atoms(left, right, &overlap);
+    bool result = match_atoms(left, right, &overlap, &scratch);
     bindings_free(&overlap);
+    arena_free(&scratch);
     return result;
 }
 

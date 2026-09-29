@@ -157,7 +157,6 @@ bool cetta_gslt_provider_catalog_validate_v1(
         !text_present(catalog->source_name) ||
         !sha256_present(catalog->source_sha256) ||
         (catalog->requirement_count > 0u && !catalog->requirements) ||
-        !sha256_present(catalog->generator_sha256) ||
         memchr(catalog->source_bytes, 0, catalog->source_length))
         return provider_error(
             error, error_size, "semantic-provider catalog is incomplete");
@@ -238,12 +237,10 @@ done:
 bool cetta_gslt_provider_catalog_from_source_v1(
     Arena *arena, const uint8_t *source, size_t source_length,
     const char *source_name, const char *language_manifest_sha256,
-    const char *generator_sha256, CettaGsltProviderCatalogV1 *catalog,
-    char *error, size_t error_size) {
+    CettaGsltProviderCatalogV1 *catalog, char *error, size_t error_size) {
     if (!arena || !catalog || !source || source_length == 0u ||
         source_length == SIZE_MAX || memchr(source, 0, source_length) ||
-        !text_present(source_name) || !sha256_present(language_manifest_sha256) ||
-        !sha256_present(generator_sha256))
+        !text_present(source_name) || !sha256_present(language_manifest_sha256))
         return provider_error(error, error_size, "catalog construction input is incomplete");
     memset(catalog, 0, sizeof(*catalog));
     char *bytes = arena_alloc(arena, source_length + 1u);
@@ -264,7 +261,6 @@ bool cetta_gslt_provider_catalog_from_source_v1(
     decoded.source_name = arena_strdup(arena, source_name);
     decoded.source_sha256 = arena_strdup(arena, digest);
     decoded.language_manifest_sha256 = arena_strdup(arena, language_manifest_sha256);
-    decoded.generator_sha256 = arena_strdup(arena, generator_sha256);
     /* Symbol atoms borrow intern-table storage. The constructed descriptor
      * instead owns every exposed string in the caller's arena. */
     decoded.name = arena_strdup(arena, decoded.name);

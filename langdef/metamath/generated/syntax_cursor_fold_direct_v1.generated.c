@@ -10,7 +10,7 @@
 #include "parser_pack_guarded_lexical_exec_v1.h"
 
 const char *metamath_syntax_cursor_fold_direct_v1_program_digest(void) {
-    return "f826143c2fbf61ac562063a49dc238dbe8f2993798fb9f28728f238abc383af6";
+    return "e902a4f76d7359c629b7d8cab2ca9e7997c05d117285ed45ec79d5822be37244";
 }
 
 static bool metamath_syntax_cursor_fold_direct_v1_copy(void **target, const void *source, size_t size,
@@ -27809,16 +27809,16 @@ bool metamath_syntax_cursor_fold_direct_v1_program_init(PPGuardedLexCursorV1Prog
     if (!fh_ground_term_v1_parse(&result.actions.arena, metamath_syntax_cursor_fold_direct_v1_action_term_331, sizeof(metamath_syntax_cursor_fold_direct_v1_action_term_331), &result.actions.instructions[331].term, error_buf, error_buf_size)) goto fail;
     if (!fh_ground_term_v1_parse(&result.actions.arena, metamath_syntax_cursor_fold_direct_v1_action_term_332, sizeof(metamath_syntax_cursor_fold_direct_v1_action_term_332), &result.actions.instructions[332].term, error_buf, error_buf_size)) goto fail;
     memcpy(result.actions.base_pack_digest, "cb13116413e8b0133798af5a900b216e9883585194fa5eb5e8d13cb5438ccd3e", sizeof(result.actions.base_pack_digest));
-    memcpy(result.actions.compiler_digest, "4ab357c261d8cf9b3fa9fe8ada3de7fde6263f463006bd81cbd6057e959450bd", sizeof(result.actions.compiler_digest));
+    memcpy(result.actions.compiler_digest, "f1db434e1e83237d286937fee18a9e03cabadc08fb04b78daa27550b5da75b9c", sizeof(result.actions.compiler_digest));
     memcpy(result.actions.answer_set_digest, "16725c2317f5aefce1d4ae96137288d0d93914db31285600acedd8470a7ac079", sizeof(result.actions.answer_set_digest));
-    memcpy(result.actions.program_digest, "3975af377ff4fc0d8663179a2ac0e3375e4ec60502533a0f6557eae74ed7a4f8", sizeof(result.actions.program_digest));
+    memcpy(result.actions.program_digest, "f4092a8503729a519268e51e4580ad7b6ecccbb2be0cdfe8c561e78154c16f85", sizeof(result.actions.program_digest));
     memcpy(result.base_pack_digest, "cb13116413e8b0133798af5a900b216e9883585194fa5eb5e8d13cb5438ccd3e", sizeof(result.base_pack_digest));
     memcpy(result.lexical_plan_digest, "3a6860fbdd0995825c5b69e554c0348886ac1c191f9061c1cf47873fc3fd1512", sizeof(result.lexical_plan_digest));
-    memcpy(result.guard_plan_digest, "09a7d82c0a8ac9f4317fea0e9de5a7b8674a9a0aebcf502bf70ea243a2dbd088", sizeof(result.guard_plan_digest));
-    memcpy(result.guarded_plan_digest, "57d80f20a7295061f4fb9caeb81ec60f62ebde2c33d45cba50d1c73e6fa3212d", sizeof(result.guarded_plan_digest));
-    memcpy(result.execution_plan_digest, "0b6c63371d0e57169dd11581f4ac8c048f3fc3bbeb6ef8c6d9f1a89051bf3f3d", sizeof(result.execution_plan_digest));
-    memcpy(result.certificate_digest, "3830cf0330c47cc7175f730b72c955f982c5d44af989daa06dc000d2e15d850f", sizeof(result.certificate_digest));
-    memcpy(result.program_digest, "f826143c2fbf61ac562063a49dc238dbe8f2993798fb9f28728f238abc383af6", sizeof(result.program_digest));
+    memcpy(result.guard_plan_digest, "fd26c7853eeddb5bf429015b38dccb0372e00de13c1a9b224f8357a208754719", sizeof(result.guard_plan_digest));
+    memcpy(result.guarded_plan_digest, "141ad79cb1f0a22077d50ec3ef4ce73a335066b71c7086a8fb494d324db42de5", sizeof(result.guarded_plan_digest));
+    memcpy(result.execution_plan_digest, "f950dc018393f7f2dc611aeb606c57c390cd79efd6a389ac559a7fc782ae52bb", sizeof(result.execution_plan_digest));
+    memcpy(result.certificate_digest, "c1d19b65dc05285166a880b8b41125da60bc617a817357a55dd2816b6f87316f", sizeof(result.certificate_digest));
+    memcpy(result.program_digest, "e902a4f76d7359c629b7d8cab2ca9e7997c05d117285ed45ec79d5822be37244", sizeof(result.program_digest));
     if (!ppguarded_lex_cursor_v1_program_validate(
             &result, error_buf, error_buf_size)) goto fail;
     ppguarded_lex_cursor_v1_program_free(out);
@@ -27834,7 +27834,7 @@ fail:
 #include "parser_occurrence_fold_v1.h"
 
 const char *metamath_syntax_cursor_fold_direct_v1_occurrence_fold_plan_digest(void) {
-    return "a7aff9464f2c6e1b8044e7f5010fd2fbdc48843d7d19a1da7699737df2d9c5c0";
+    return "07dea6d271b6115d52f752b7b0d370c56323bde7f0a89b876b28d63cb89adde8";
 }
 
 static bool metamath_syntax_cursor_fold_direct_v1_occurrence_fold_copy(
@@ -28082,9 +28082,9 @@ bool metamath_syntax_cursor_fold_direct_v1_occurrence_fold_plan_init(
     result.cursor_production_len = UINT32_C(126);
     memcpy(result.base_pack_digest, "cb13116413e8b0133798af5a900b216e9883585194fa5eb5e8d13cb5438ccd3e", sizeof(result.base_pack_digest));
     memcpy(result.lexical_plan_digest, "3a6860fbdd0995825c5b69e554c0348886ac1c191f9061c1cf47873fc3fd1512", sizeof(result.lexical_plan_digest));
-    memcpy(result.cursor_program_digest, "f826143c2fbf61ac562063a49dc238dbe8f2993798fb9f28728f238abc383af6", sizeof(result.cursor_program_digest));
+    memcpy(result.cursor_program_digest, "e902a4f76d7359c629b7d8cab2ca9e7997c05d117285ed45ec79d5822be37244", sizeof(result.cursor_program_digest));
     memcpy(result.compiler_answer_digest, "0420813846396853acd6215dbf383502211a49eb48df7cf25b56e8ef5b37a5a6", sizeof(result.compiler_answer_digest));
-    memcpy(result.plan_digest, "a7aff9464f2c6e1b8044e7f5010fd2fbdc48843d7d19a1da7699737df2d9c5c0", sizeof(result.plan_digest));
+    memcpy(result.plan_digest, "07dea6d271b6115d52f752b7b0d370c56323bde7f0a89b876b28d63cb89adde8", sizeof(result.plan_digest));
     if (!ppoccurrence_fold_v1_plan_validate_program(
             program, &result, error_buf, error_buf_size))
         goto fail;
@@ -28101,7 +28101,7 @@ fail:
 #include "parser_occurrence_span_mask_v1.h"
 
 const char *metamath_syntax_cursor_fold_direct_v1_occurrence_span_mask_plan_digest(void) {
-    return "b2fa78e3a782012473f30f7299325be0528d8cf8438ccc833d497086c2568678";
+    return "384c0b7de7d3d65b8923005977ab52e3b758fc0cf72de874c825afd7086e7240";
 }
 
 static const RSDFAV1ProgramState metamath_syntax_cursor_fold_direct_v1_occurrence_span_mask_states[14] = {
@@ -28311,11 +28311,11 @@ bool metamath_syntax_cursor_fold_direct_v1_occurrence_span_mask_plan_init(const 
     if (!metamath_syntax_cursor_fold_direct_v1_occurrence_span_mask_copy((void **)&result.terminal_tags, metamath_syntax_cursor_fold_direct_v1_occurrence_span_mask_terminal_tags, sizeof(uint32_t) * (size_t)UINT32_C(24), error_buf, error_buf_size)) goto done;
     if (!metamath_syntax_cursor_fold_direct_v1_occurrence_span_mask_copy((void **)&result.terminal_value_production_labels, metamath_syntax_cursor_fold_direct_v1_occurrence_span_mask_terminal_productions, sizeof(uint32_t) * (size_t)UINT32_C(24), error_buf, error_buf_size)) goto done;
     memcpy(result.base_pack_digest, "cb13116413e8b0133798af5a900b216e9883585194fa5eb5e8d13cb5438ccd3e", 65u);
-    memcpy(result.cursor_program_digest, "f826143c2fbf61ac562063a49dc238dbe8f2993798fb9f28728f238abc383af6", 65u);
-    memcpy(result.occurrence_fold_plan_digest, "a7aff9464f2c6e1b8044e7f5010fd2fbdc48843d7d19a1da7699737df2d9c5c0", 65u);
+    memcpy(result.cursor_program_digest, "e902a4f76d7359c629b7d8cab2ca9e7997c05d117285ed45ec79d5822be37244", 65u);
+    memcpy(result.occurrence_fold_plan_digest, "07dea6d271b6115d52f752b7b0d370c56323bde7f0a89b876b28d63cb89adde8", 65u);
     memcpy(result.compiler_digest, "c1961ca07070e699e1ecca734181b15a9c107486d9a4eda687cb11b7682ab893", 65u);
     memcpy(result.answer_set_digest, "44d542e0b72ab437d929119481f5a49cdada148679916a2526465add3c43e868", 65u);
-    memcpy(result.plan_digest, "b2fa78e3a782012473f30f7299325be0528d8cf8438ccc833d497086c2568678", 65u);
+    memcpy(result.plan_digest, "384c0b7de7d3d65b8923005977ab52e3b758fc0cf72de874c825afd7086e7240", 65u);
     if (!ppoccurrence_span_mask_v1_plan_validate(program, fold, &result, error_buf, error_buf_size)) goto done;
     ppoccurrence_span_mask_v1_plan_free(out); *out = result; memset(&result, 0, sizeof(result)); return true;
 done:
@@ -28340,7 +28340,7 @@ static uint8_t *metamath_syntax_cursor_fold_direct_v1_state_bytes_dup(const uint
     return copy;
 }
 
-const char *metamath_syntax_cursor_fold_direct_v1_state_program_plan_digest(void) { return "85ca8461be77b467fe047559ca7a6f3390cf49fe980b2af7e94ebfff1f875695"; }
+const char *metamath_syntax_cursor_fold_direct_v1_state_program_plan_digest(void) { return "f1a74f900c6ef7ae16f4de0244e7b84f26539762536c292b90df5670c0e2aeeb"; }
 
 bool metamath_syntax_cursor_fold_direct_v1_state_program_plan_init(
     const PPOccurrenceFoldV1Plan *occurrence_plan,
@@ -30768,9 +30768,9 @@ bool metamath_syntax_cursor_fold_direct_v1_state_program_plan_init(
     result.operations[UINT32_C(9)] = (PPRelationalStateOperationV1){ UINT32_C(80), UINT32_C(3) };
     result.operations[UINT32_C(10)] = (PPRelationalStateOperationV1){ UINT32_C(83), UINT32_C(1) };
     result.operations[UINT32_C(11)] = (PPRelationalStateOperationV1){ UINT32_C(84), UINT32_C(1) };
-    memcpy(result.occurrence_fold_plan_digest, "a7aff9464f2c6e1b8044e7f5010fd2fbdc48843d7d19a1da7699737df2d9c5c0", 65u);
+    memcpy(result.occurrence_fold_plan_digest, "07dea6d271b6115d52f752b7b0d370c56323bde7f0a89b876b28d63cb89adde8", 65u);
     memcpy(result.compiler_answer_digest, "43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76", 65u);
-    memcpy(result.plan_digest, "85ca8461be77b467fe047559ca7a6f3390cf49fe980b2af7e94ebfff1f875695", 65u);
+    memcpy(result.plan_digest, "f1a74f900c6ef7ae16f4de0244e7b84f26539762536c292b90df5670c0e2aeeb", 65u);
     if (!pprelational_state_program_v1_plan_validate(
             occurrence_plan, &result, error_buf, error_buf_size)) goto fail;
     pprelational_state_program_v1_plan_free(out);

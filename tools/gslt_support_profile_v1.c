@@ -2,7 +2,6 @@
 #define _XOPEN_SOURCE 700
 
 #include "gslt_support_profile_v1.h"
-#include "native_sha256.h"
 #include "symbol.h"
 #include "gslt_native_emission_v1.h"
 
@@ -63,7 +62,7 @@ static bool emit(const Options *options, const CettaGsltSupportTransformProfileV
     fprintf(c, "};\n\nconst CettaGsltSupportTransformProfileV1 %s = {\n    .abi_version = 1u,\n", options->symbol);
 #define TEXT(field) do { fputs("    ." #field " = ", c); c_string(c, p->field); fputs(",\n", c); } while (0)
 #define NUMBER(field) fprintf(c, "    ." #field " = %uu,\n", p->field)
-    TEXT(language_name); TEXT(profile_name); TEXT(manifest_sha256); TEXT(compiler_sha256);
+    TEXT(language_name); TEXT(profile_name); TEXT(manifest_sha256);
     TEXT(work_symbol); TEXT(compat_input_symbol); TEXT(compat_input_operator_id);
     TEXT(explicit_input_symbol); TEXT(compat_output_symbol); TEXT(compat_output_operator_id);
     TEXT(explicit_output_symbol);
@@ -106,10 +105,8 @@ int main(int argc, char **argv) {
         free(manifest); free(header); free(source); return 1;
     }
     options.header = header; options.source = source;
-    size_t manifest_size = 0, executable_size = 0;
+    size_t manifest_size = 0;
     unsigned char *bytes = read_bytes(manifest, &manifest_size);
-    unsigned char *executable = read_bytes("/proc/self/exe", &executable_size);
-    if (!executable) executable = read_bytes(argv[0], &executable_size);
     SymbolTable symbols;
     VarInternTable variables;
     symbol_table_init(&symbols);
@@ -118,16 +115,13 @@ int main(int argc, char **argv) {
     g_symbols = &symbols; g_var_intern = &variables; g_hashcons = NULL;
     Arena arena;
     arena_init(&arena);
-    char error[512] = {0}, compiler[65];
+    char error[512] = {0};
     CettaGsltSupportTransformProfileV1 profile = {0};
-    ok = bytes && executable;
-    if (!ok) snprintf(error, sizeof(error), "cannot read source or generator executable");
-    if (ok) {
-        /* Exact executable identity, not a source fingerprint or a proof. */
-        cetta_native_sha256_hex(executable, executable_size, compiler);
+    ok = bytes != NULL;
+    if (!ok) snprintf(error, sizeof(error), "cannot read source");
+    if (ok)
         ok = cetta_gslt_support_profile_from_source_v1(&arena, bytes, manifest_size,
-                compiler, &profile, error, sizeof(error));
-    }
+                &profile, error, sizeof(error));
     if (ok && !emit(&options, &profile)) {
         snprintf(error, sizeof(error), "cannot write generated support profile"); ok = false;
     }
@@ -135,6 +129,6 @@ int main(int argc, char **argv) {
     arena_free(&arena);
     g_var_intern = NULL; var_intern_free(&variables);
     g_symbols = NULL; symbol_table_free(&symbols);
-    free(manifest); free(header); free(source); free(bytes); free(executable);
+    free(manifest); free(header); free(source); free(bytes);
     return ok ? 0 : 1;
 }

@@ -497,6 +497,26 @@ static bool write_digest_field(FILE *stream, const char *name,
            fputs(")\n", stream) != EOF;
 }
 
+/* Whether two files hold the same bytes. */
+static bool same_file_bytes(const char *left, const char *right) {
+    FILE *a = fopen(left, "rb");
+    FILE *b = a ? fopen(right, "rb") : NULL;
+    bool same = a && b;
+    while (same) {
+        int x = fgetc(a);
+        int y = fgetc(b);
+        if (x != y)
+            same = false;
+        else if (x == EOF)
+            break;
+    }
+    if (a)
+        fclose(a);
+    if (b)
+        fclose(b);
+    return same;
+}
+
 static bool write_lock(const char *path,
                        const CettaLangDefManifestV1 *manifest,
                        const char *manifest_digest,
@@ -581,6 +601,11 @@ static bool write_lock(const char *path,
     stream = NULL;
     if (!ok) {
         set_error(error, error_size, "cannot write langdef lock");
+        goto done;
+    }
+    /* An unchanged lock keeps its file, so the build redoes nothing for it. */
+    if (same_file_bytes(temporary, path)) {
+        ok = true;
         goto done;
     }
     if (rename(temporary, path) != 0) {
@@ -2890,6 +2915,8 @@ static bool compile_petta_direct_command_v1(
     const char *native_types_path = NULL;
     const char *admission_language_path = NULL;
     const char *admission_entry = NULL;
+    const char *target_name = NULL;
+    CettaGsltDirectTargetV1 target = CETTA_GSLT_DIRECT_TARGET_PETTA_V1;
     Atom *native_type_packet = NULL;
     const char *output = NULL;
     const char *entry_modes[CETTA_LANGDEF_MAX_SOURCES];
@@ -2967,6 +2994,8 @@ static bool compile_petta_direct_command_v1(
                 goto done;
             }
             entry_modes[entry_mode_count++] = value;
+        } else if (strcmp(option, "--target") == 0 && target_name == NULL) {
+            target_name = value;
         } else if (strcmp(option, "--out") == 0 && output == NULL) {
             output = value;
         } else {
@@ -2979,6 +3008,15 @@ static bool compile_petta_direct_command_v1(
         set_error(error, error_size,
                   "petta-direct requires exactly one source list or composition and an output");
         goto done;
+    }
+    if (target_name != NULL) {
+        if (strcmp(target_name, "he") == 0) {
+            target = CETTA_GSLT_DIRECT_TARGET_HE_V1;
+        } else if (strcmp(target_name, "petta") != 0) {
+            set_error(error, error_size,
+                      "petta-direct --target must be petta or he");
+            goto done;
+        }
     }
     if (native_types_path != NULL && epilogue != NULL) {
         set_error(error, error_size,
@@ -3024,24 +3062,24 @@ static bool compile_petta_direct_command_v1(
         goto done;
     if (!(admission_language_path != NULL
               ? cetta_gslt_petta_direct_admitted_v1(
-                    presentations, source_count, native_type_packet,
+                    presentations, source_count, target, native_type_packet,
                     entry_modes, entry_mode_count, &admission_language,
                     admission_wire.source_sha256, admission_entry,
                     &program, &program_len, rule_count, source_digest,
                     error, error_size)
               : native_type_packet != NULL
               ? cetta_gslt_petta_direct_native_types_v1(
-                    presentations, source_count, native_type_packet,
+                    presentations, source_count, target, native_type_packet,
                     entry_modes, entry_mode_count, closed_entry_residual,
                     &program, &program_len, rule_count, source_digest,
                     error, error_size)
               : closed_entry_residual
               ? cetta_gslt_petta_direct_closed_v1(
-                    presentations, source_count,
+                    presentations, source_count, target,
                     entry_modes, entry_mode_count, &program, &program_len,
                     rule_count, source_digest, error, error_size)
               : cetta_gslt_petta_direct_selected_v1(
-                    presentations, source_count,
+                    presentations, source_count, target,
                     entry_modes, entry_mode_count, &program, &program_len,
                     rule_count, source_digest, error, error_size)))
         goto done;
@@ -6674,6 +6712,7 @@ static void usage(const char *program) {
             "  %s equations (--source FILE... | --composition FILE) "
             "--out FILE\n"
             "  %s petta-direct (--source FILE... | --composition FILE) "
+            "[--target petta|he] "
             "[--entry-mode RELATION:BITS... | "
             "--closed-entry-mode RELATION:BITS...] "
             "[--native-types FILE] "

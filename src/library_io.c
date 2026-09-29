@@ -87,7 +87,8 @@ static const char *io_text_arg(Atom *arg) {
     if (!arg) return NULL;
     if (arg->kind == ATOM_SYMBOL) return atom_name_cstr(arg);
     if (arg->kind == ATOM_GROUNDED && arg->ground.gkind == GV_STRING)
-        return arg->ground.sval;
+        return memchr(arg->ground.sval, '\0', arg->ground.slen)
+            ? NULL : arg->ground.sval;
     return NULL;
 }
 

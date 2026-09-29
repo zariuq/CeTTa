@@ -54,7 +54,7 @@
        (let $start (text-stream:pos $stream)
          (let $text (text-stream:text $stream)
            (ReadUntilResult
-             (str:slice $text $start $idx)
+             (str:byte-slice $text $start $idx)
              (text-stream:from $text $idx))))))))
 
 (= (text-stream:has-prefix $stream $prefix)

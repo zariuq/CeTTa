@@ -31,6 +31,8 @@ typedef struct {
      * Keeping it in the parse state preserves the one-load hot path without
      * assuming that a caller-owned plan pointer has process-lifetime identity. */
     uint8_t ascii_dispatch[256];
+    /* The same dispatch for an element of a list. */
+    uint8_t list_ascii_dispatch[256];
 } GSLTDirectStateV1;
 
 enum {
@@ -38,6 +40,7 @@ enum {
     GSLT_DISP_STRING,
     GSLT_DISP_VAR,
     GSLT_DISP_EXPR,
+    GSLT_DISP_LIST,
     GSLT_DISP_WORD
 };
 
@@ -357,10 +360,17 @@ static bool gslt_direct_reader_v1_skip(GSLTDirectStateV1 *state) {
 }
 
 static AtomId gslt_direct_reader_v1_parse_atom(
-    GSLTDirectStateV1 *state, uint32_t depth);
+    GSLTDirectStateV1 *state, uint32_t depth, bool in_list);
 
+/* A word; inside a list it uses the list classes and boundary. */
 static AtomId gslt_direct_reader_v1_parse_word(
-    GSLTDirectStateV1 *state) {
+    GSLTDirectStateV1 *state, bool in_list) {
+    const GSLTDirectScalarClassV1 *start_class =
+        in_list ? state->plan->list_word_start : state->plan->word_start;
+    const GSLTDirectScalarClassV1 *tail_class =
+        in_list ? state->plan->list_word_tail : state->plan->word_tail;
+    const GSLTDirectBoundaryV1 *boundary =
+        in_list ? &state->plan->list_boundary : &state->plan->word_boundary;
     size_t start = state->cursor.pos;
     uint32_t codepoint;
     size_t width;
@@ -373,12 +383,15 @@ static AtomId gslt_direct_reader_v1_parse_word(
                    &state->cursor, &codepoint, &width)) {
         return CETTA_ATOM_ID_NONE;
     }
-    if (
-        !gslt_direct_reader_v1_class_contains(
-            state->plan->word_start, codepoint)) {
+    /* Inside a list a word may start with the bar when more follows; the
+     * bar alone is the rest marker. */
+    bool barred = in_list && codepoint == state->plan->list_rest;
+    if (!barred &&
+        !gslt_direct_reader_v1_class_contains(start_class, codepoint)) {
         return CETTA_ATOM_ID_NONE;
     }
     gslt_direct_reader_v1_consume_width(&state->cursor, width);
+    size_t tail_start = state->cursor.pos;
     while (state->cursor.pos < state->cursor.input_len) {
         if (state->cursor.input[state->cursor.pos] < UINT8_C(0x80)) {
             codepoint = state->cursor.input[state->cursor.pos];
@@ -387,21 +400,27 @@ static AtomId gslt_direct_reader_v1_parse_word(
                        &state->cursor, &codepoint, &width)) {
             return CETTA_ATOM_ID_NONE;
         }
-        if (!gslt_direct_reader_v1_class_contains(
-                state->plan->word_tail, codepoint))
+        if (!gslt_direct_reader_v1_class_contains(tail_class, codepoint))
             break;
         gslt_direct_reader_v1_consume_width(&state->cursor, width);
     }
-    if (!gslt_direct_reader_v1_boundary(
-            &state->plan->word_boundary, &state->cursor))
+    if ((barred && state->cursor.pos == tail_start) ||
+        !gslt_direct_reader_v1_boundary(boundary, &state->cursor)) {
+        state->cursor.pos = start;
         return CETTA_ATOM_ID_NONE;
+    }
     return state->projection->word_bytes(
         state->projection->context, state->cursor.input + start,
         state->cursor.pos - start);
 }
 
+/* A variable; inside a list it uses the list class and boundary. */
 static AtomId gslt_direct_reader_v1_parse_variable(
-    GSLTDirectStateV1 *state) {
+    GSLTDirectStateV1 *state, bool in_list) {
+    const GSLTDirectScalarClassV1 *tail_class =
+        in_list ? state->plan->list_variable_tail : state->plan->variable_tail;
+    const GSLTDirectBoundaryV1 *boundary =
+        in_list ? &state->plan->list_boundary : &state->plan->variable_boundary;
     size_t start;
     uint32_t codepoint;
     size_t width;
@@ -428,9 +447,7 @@ static AtomId gslt_direct_reader_v1_parse_variable(
                    &state->cursor, &codepoint, &width)) {
         return CETTA_ATOM_ID_NONE;
     }
-    if (
-        !gslt_direct_reader_v1_class_contains(
-            state->plan->variable_tail, codepoint)) {
+    if (!gslt_direct_reader_v1_class_contains(tail_class, codepoint)) {
         return CETTA_ATOM_ID_NONE;
     }
     do {
@@ -444,10 +461,8 @@ static AtomId gslt_direct_reader_v1_parse_variable(
                        &state->cursor, &codepoint, &width)) {
             return CETTA_ATOM_ID_NONE;
         }
-    } while (gslt_direct_reader_v1_class_contains(
-        state->plan->variable_tail, codepoint));
-    if (!gslt_direct_reader_v1_boundary(
-            &state->plan->variable_boundary, &state->cursor))
+    } while (gslt_direct_reader_v1_class_contains(tail_class, codepoint));
+    if (!gslt_direct_reader_v1_boundary(boundary, &state->cursor))
         return CETTA_ATOM_ID_NONE;
     return state->projection->variable_bytes(
         state->projection->context, state->cursor.input + start,
@@ -481,9 +496,15 @@ static bool gslt_direct_reader_v1_parse_byte_escape(
     }
     if (state->plan->byte_digit_class_len < state->plan->byte_hex_min ||
         state->plan->byte_digit_class_len > state->plan->byte_hex_max ||
-        value > state->plan->byte_value_max ||
-        !gslt_direct_reader_v1_bytes_append_codepoint(decoded, value)) {
+        value > state->plan->byte_value_max || value > UINT32_C(0xff)) {
         return false;
+    }
+    {
+        /* A byte escape denotes one byte, which may be NUL and need not
+         * begin a UTF-8 sequence; below 0x80 it is also that scalar. */
+        uint8_t byte = (uint8_t)value;
+        if (!gslt_direct_reader_v1_bytes_append(decoded, &byte, 1u))
+            return false;
     }
     state->cursor = probe;
     return true;
@@ -662,7 +683,7 @@ static AtomId gslt_direct_reader_v1_parse_expression(
                 state->projection->context, children, len);
             goto done;
         }
-        child = gslt_direct_reader_v1_parse_atom(state, depth - 1u);
+        child = gslt_direct_reader_v1_parse_atom(state, depth - 1u, false);
         if (child == CETTA_ATOM_ID_NONE)
             goto done;
         if (len == cap) {
@@ -680,8 +701,112 @@ done:
     return result;
 }
 
-static AtomId gslt_direct_reader_v1_parse_atom(
+static bool gslt_direct_reader_v1_peek_at(GSLTDirectStateV1 *state,
+                                           uint32_t *codepoint,
+                                           size_t *width) {
+    if (state->cursor.pos >= state->cursor.input_len)
+        return false;
+    if (state->cursor.input[state->cursor.pos] < UINT8_C(0x80)) {
+        *codepoint = state->cursor.input[state->cursor.pos];
+        *width = 1u;
+        return true;
+    }
+    return gslt_direct_reader_v1_peek(&state->cursor, codepoint, width);
+}
+
+/* At the bar alone: the bar followed by the end of a list word. */
+static bool gslt_direct_reader_v1_at_list_bar(GSLTDirectStateV1 *state) {
+    GSLTDirectCursorV1 probe = state->cursor;
+    uint32_t codepoint;
+    size_t width;
+    if (probe.pos >= probe.input_len ||
+        !gslt_direct_reader_v1_peek(&probe, &codepoint, &width) ||
+        codepoint != state->plan->list_rest)
+        return false;
+    gslt_direct_reader_v1_consume_width(&probe, width);
+    return gslt_direct_reader_v1_boundary(&state->plan->list_boundary, &probe);
+}
+
+static AtomId gslt_direct_reader_v1_parse_list_element(
     GSLTDirectStateV1 *state, uint32_t depth) {
+    uint32_t codepoint;
+    size_t width;
+    if (gslt_direct_reader_v1_peek_at(state, &codepoint, &width) &&
+        codepoint == state->plan->list_rest)
+        return gslt_direct_reader_v1_parse_word(state, true);
+    return gslt_direct_reader_v1_parse_atom(state, depth, true);
+}
+
+/* [x y ...] or [x y ... | rest]: elements separated by layout, then
+ * optionally the bar alone and one rest element, then the close. */
+static AtomId gslt_direct_reader_v1_parse_list(
+    GSLTDirectStateV1 *state, uint32_t depth) {
+    const GSLTDirectReaderV1Plan *plan = state->plan;
+    AtomId *elems = NULL;
+    uint32_t len = 0u;
+    uint32_t cap = 0u;
+    AtomId rest = CETTA_ATOM_ID_NONE;
+    AtomId result = CETTA_ATOM_ID_NONE;
+    uint32_t codepoint;
+    size_t width;
+    if (depth == 0u || !state->projection->list ||
+        !gslt_direct_reader_v1_peek_at(state, &codepoint, &width) ||
+        codepoint != plan->list_open)
+        goto done;
+    gslt_direct_reader_v1_consume_width(&state->cursor, width);
+    for (;;) {
+        if (!gslt_direct_reader_v1_skip(state))
+            goto done;
+        if (!gslt_direct_reader_v1_peek_at(state, &codepoint, &width))
+            goto malformed;
+        if (codepoint == plan->list_close) {
+            gslt_direct_reader_v1_consume_width(&state->cursor, width);
+            break;
+        }
+        if (gslt_direct_reader_v1_at_list_bar(state)) {
+            if (len == 0u)
+                goto malformed;
+            gslt_direct_reader_v1_consume_width(&state->cursor, width);
+            if (!gslt_direct_reader_v1_skip(state))
+                goto done;
+            rest = gslt_direct_reader_v1_parse_list_element(state, depth - 1u);
+            if (rest == CETTA_ATOM_ID_NONE || !gslt_direct_reader_v1_skip(state) ||
+                !gslt_direct_reader_v1_peek_at(state, &codepoint, &width) ||
+                codepoint != plan->list_close)
+                goto malformed;
+            gslt_direct_reader_v1_consume_width(&state->cursor, width);
+            break;
+        }
+        AtomId element =
+            gslt_direct_reader_v1_parse_list_element(state, depth - 1u);
+        if (element == CETTA_ATOM_ID_NONE)
+            goto malformed;
+        if (len == cap) {
+            uint32_t next = cap ? cap * 2u : 8u;
+            if (next < cap || SIZE_MAX / (size_t)next < sizeof(*elems))
+                goto done;
+            elems = cetta_realloc(elems, (size_t)next * sizeof(*elems));
+            cap = next;
+        }
+        elems[len++] = element;
+    }
+    result = state->projection->list(state->projection->context, elems, len,
+                                     rest);
+    goto done;
+malformed:
+    if (state->error_buf && state->error_buf_size > 0u &&
+        state->error_buf[0] == '\0')
+        gslt_direct_reader_v1_error(
+            state->error_buf, state->error_buf_size,
+            "a list is its elements separated by layout, optionally a bar and "
+            "one rest, in brackets");
+done:
+    free(elems);
+    return result;
+}
+
+static AtomId gslt_direct_reader_v1_parse_atom(
+    GSLTDirectStateV1 *state, uint32_t depth, bool in_list) {
     uint32_t codepoint;
     size_t width;
     AtomId result;
@@ -689,19 +814,24 @@ static AtomId gslt_direct_reader_v1_parse_atom(
         return CETTA_ATOM_ID_NONE;
     if (state->cursor.input[state->cursor.pos] < UINT8_C(0x80)) {
         /* ASCII fast path: a single indexed dispatch precomputed to preserve
-         * the exact branch order (string, variable, expression, word). */
-        switch (state->ascii_dispatch[state->cursor.input[state->cursor.pos]]) {
+         * the exact branch order (string, variable, expression, list, word). */
+        const uint8_t *dispatch =
+            in_list ? state->list_ascii_dispatch : state->ascii_dispatch;
+        switch (dispatch[state->cursor.input[state->cursor.pos]]) {
         case GSLT_DISP_STRING:
             result = gslt_direct_reader_v1_parse_string(state);
             break;
         case GSLT_DISP_VAR:
-            result = gslt_direct_reader_v1_parse_variable(state);
+            result = gslt_direct_reader_v1_parse_variable(state, in_list);
             break;
         case GSLT_DISP_EXPR:
             result = gslt_direct_reader_v1_parse_expression(state, depth);
             break;
+        case GSLT_DISP_LIST:
+            result = gslt_direct_reader_v1_parse_list(state, depth);
+            break;
         case GSLT_DISP_WORD:
-            result = gslt_direct_reader_v1_parse_word(state);
+            result = gslt_direct_reader_v1_parse_word(state, in_list);
             break;
         default:
             result = CETTA_ATOM_ID_NONE;
@@ -712,12 +842,16 @@ static AtomId gslt_direct_reader_v1_parse_atom(
     } else if (codepoint == state->plan->string_open) {
         result = gslt_direct_reader_v1_parse_string(state);
     } else if (codepoint == state->plan->variable_marker) {
-        result = gslt_direct_reader_v1_parse_variable(state);
+        result = gslt_direct_reader_v1_parse_variable(state, in_list);
     } else if (codepoint == state->plan->expression_open) {
         result = gslt_direct_reader_v1_parse_expression(state, depth);
+    } else if (state->plan->list_open != 0u &&
+               codepoint == state->plan->list_open) {
+        result = gslt_direct_reader_v1_parse_list(state, depth);
     } else if (gslt_direct_reader_v1_class_contains(
-                   state->plan->word_start, codepoint)) {
-        result = gslt_direct_reader_v1_parse_word(state);
+                   in_list ? state->plan->list_word_start
+                           : state->plan->word_start, codepoint)) {
+        result = gslt_direct_reader_v1_parse_word(state, in_list);
     } else {
         result = CETTA_ATOM_ID_NONE;
     }
@@ -1033,6 +1167,56 @@ static bool gslt_direct_reader_v1_specialized_escape_distinct(
         plan, prefix[plan->simple_prefix_len], &ignored);
 }
 
+/* The list punctuation is four distinct scalars, none of them another
+ * dispatch literal, and none of them inside a word or variable in a list,
+ * where each of them ends one. */
+static bool gslt_direct_reader_v1_list_plan_valid(
+    const GSLTDirectReaderV1Plan *plan) {
+    const uint32_t punctuation[3] = {
+        plan->list_open, plan->list_close, plan->list_rest,
+    };
+    const uint32_t markers[6] = {
+        plan->expression_open, plan->expression_close, plan->string_open,
+        plan->string_close, plan->variable_marker, plan->comment_marker,
+    };
+    if (!gslt_direct_reader_v1_class_valid(plan->list_word_start) ||
+        !gslt_direct_reader_v1_class_valid(plan->list_word_tail) ||
+        !gslt_direct_reader_v1_class_valid(plan->list_variable_tail) ||
+        !gslt_direct_reader_v1_boundary_valid(
+            &plan->list_boundary, plan->list_word_tail) ||
+        !gslt_direct_reader_v1_boundary_valid(
+            &plan->list_boundary, plan->list_variable_tail) ||
+        gslt_direct_reader_v1_class_contains(plan->word_start, plan->list_open) ||
+        !gslt_direct_reader_v1_boundary_contains_codepoint(
+            &plan->list_boundary, plan->list_open) ||
+        !gslt_direct_reader_v1_boundary_contains_codepoint(
+            &plan->list_boundary, plan->list_close))
+        return false;
+    for (size_t i = 0u; i < 3u; i++) {
+        if (!gslt_direct_reader_v1_scalar_valid(punctuation[i]) ||
+            gslt_direct_reader_v1_class_contains(plan->whitespace, punctuation[i]) ||
+            gslt_direct_reader_v1_class_contains(plan->list_word_start, punctuation[i]))
+            return false;
+        for (size_t j = i + 1u; j < 3u; j++)
+            if (punctuation[i] == punctuation[j])
+                return false;
+        for (size_t j = 0u; j < 6u; j++)
+            if (punctuation[i] == markers[j])
+                return false;
+    }
+    /* Words and variables end at a bracket; a word may hold the bar. */
+    for (size_t i = 0u; i < 2u; i++)
+        if (gslt_direct_reader_v1_class_contains(plan->list_word_tail, punctuation[i]) ||
+            gslt_direct_reader_v1_class_contains(plan->list_variable_tail, punctuation[i]))
+            return false;
+    return !gslt_direct_reader_v1_class_contains(
+               plan->list_word_start, plan->string_open) &&
+           !gslt_direct_reader_v1_class_contains(
+               plan->list_word_start, plan->variable_marker) &&
+           !gslt_direct_reader_v1_class_contains(
+               plan->list_word_start, plan->expression_open);
+}
+
 bool gslt_direct_reader_v1_plan_validate(
     const GSLTDirectReaderV1Plan *plan, char *error_buf,
     size_t error_buf_size) {
@@ -1098,7 +1282,7 @@ bool gslt_direct_reader_v1_plan_validate(
         plan->byte_digit_class_len < plan->byte_hex_min ||
         plan->byte_digit_class_len > plan->byte_hex_max ||
         plan->byte_radix < 2u || plan->byte_radix > 36u ||
-        plan->byte_value_max > UINT32_C(0x10ffff) ||
+        plan->byte_value_max > UINT32_C(0xff) ||
         !gslt_direct_reader_v1_sequence_valid(
             plan->unicode_prefix, plan->unicode_prefix_len) ||
         !gslt_direct_reader_v1_scalar_valid(plan->unicode_suffix) ||
@@ -1221,6 +1405,13 @@ bool gslt_direct_reader_v1_plan_validate(
             "direct-reader atom dispatch is ambiguous");
         return false;
     }
+    if (plan->list_open != 0u &&
+        !gslt_direct_reader_v1_list_plan_valid(plan)) {
+        gslt_direct_reader_v1_error(
+            error_buf, error_buf_size,
+            "invalid source-derived list plan");
+        return false;
+    }
     return true;
 }
 
@@ -1229,7 +1420,8 @@ bool gslt_direct_reader_v1_plan_validate(
  * single indexed load on the common ASCII path, preserving the exact branch
  * order (string_open, variable_marker, expression_open, then word_start). */
 static void gslt_direct_reader_v1_build_ascii_dispatch(
-    const GSLTDirectReaderV1Plan *plan, uint8_t table[256]) {
+    const GSLTDirectReaderV1Plan *plan,
+    const GSLTDirectScalarClassV1 *word_start, uint8_t table[256]) {
     unsigned i;
     for (i = 0u; i < 256u; i++) {
         uint8_t kind = (uint8_t)GSLT_DISP_NONE;
@@ -1239,7 +1431,10 @@ static void gslt_direct_reader_v1_build_ascii_dispatch(
             kind = (uint8_t)GSLT_DISP_VAR;
         else if (i == plan->expression_open)
             kind = (uint8_t)GSLT_DISP_EXPR;
-        else if (gslt_direct_reader_v1_class_contains(plan->word_start, i))
+        else if (plan->list_open != 0u && i == plan->list_open)
+            kind = (uint8_t)GSLT_DISP_LIST;
+        else if (word_start &&
+                 gslt_direct_reader_v1_class_contains(word_start, i))
             kind = (uint8_t)GSLT_DISP_WORD;
         table[i] = kind;
     }
@@ -1266,7 +1461,9 @@ int gslt_direct_reader_v1_parse_bytes_ids_impl(
     if (!plan || !projection || !projection->context ||
         !projection->begin_form || !projection->word_bytes ||
         !projection->variable_bytes || !projection->string_bytes ||
-        !projection->expression || !out_ids || input_len > UINT32_MAX ||
+        !projection->expression ||
+        (plan->list_open != 0u && !projection->list) ||
+        !out_ids || input_len > UINT32_MAX ||
         (input_len > 0u && !input)) {
         gslt_direct_reader_v1_error(
             error_buf, error_buf_size, "invalid direct-reader invocation");
@@ -1280,7 +1477,9 @@ int gslt_direct_reader_v1_parse_bytes_ids_impl(
     state.error_buf_size = error_buf_size;
     state.projection = projection;
     gslt_direct_reader_v1_build_ascii_dispatch(
-        plan, state.ascii_dispatch);
+        plan, plan->word_start, state.ascii_dispatch);
+    gslt_direct_reader_v1_build_ascii_dispatch(
+        plan, plan->list_word_start, state.list_ascii_dispatch);
     for (;;) {
         AtomId id;
         if (!gslt_direct_reader_v1_skip(&state))
@@ -1289,7 +1488,7 @@ int gslt_direct_reader_v1_parse_bytes_ids_impl(
             break;
         if (!state.projection->begin_form(state.projection->context))
             goto done;
-        id = gslt_direct_reader_v1_parse_atom(&state, plan->depth_limit);
+        id = gslt_direct_reader_v1_parse_atom(&state, plan->depth_limit, false);
         if (id == CETTA_ATOM_ID_NONE)
             goto done;
         if (len == cap) {
@@ -1490,11 +1689,13 @@ done:
 }
 
 static AtomId gslt_direct_prefix_parse_token(
-    GSLTDirectPrefixStateV1 *state) {
-    for (uint32_t rule_index = 0u;
-         rule_index < state->plan->token_rule_len; rule_index++) {
-        const GSLTDirectTokenRuleV1 *rule =
-            &state->plan->token_rules[rule_index];
+    GSLTDirectPrefixStateV1 *state, bool in_list) {
+    const GSLTDirectTokenRuleV1 *rules =
+        in_list ? state->plan->list_token_rules : state->plan->token_rules;
+    uint32_t rule_len = in_list ? state->plan->list_token_rule_len
+                                : state->plan->token_rule_len;
+    for (uint32_t rule_index = 0u; rule_index < rule_len; rule_index++) {
+        const GSLTDirectTokenRuleV1 *rule = &rules[rule_index];
         GSLTDirectCursorV1 probe = state->cursor;
         size_t start = probe.pos;
         size_t payload_start;
@@ -1549,11 +1750,12 @@ static AtomId gslt_direct_prefix_parse_token(
 }
 
 static const GSLTDirectPrefixRuleV1 *gslt_direct_prefix_take_prefix(
-    GSLTDirectPrefixStateV1 *state) {
+    GSLTDirectPrefixStateV1 *state, bool in_list) {
+    const GSLTDirectPrefixRuleV1 *rules =
+        in_list ? state->plan->list_prefix_rules : state->plan->prefix_rules;
     for (uint32_t rule_index = 0u;
          rule_index < state->plan->prefix_rule_len; rule_index++) {
-        const GSLTDirectPrefixRuleV1 *rule =
-            &state->plan->prefix_rules[rule_index];
+        const GSLTDirectPrefixRuleV1 *rule = &rules[rule_index];
         GSLTDirectCursorV1 probe = state->cursor;
         uint32_t codepoint;
         size_t width;
@@ -1575,18 +1777,40 @@ static const GSLTDirectPrefixRuleV1 *gslt_direct_prefix_take_prefix(
     return NULL;
 }
 
+/* At the bar alone: the bar followed by where it ends. */
+static bool gslt_direct_prefix_at_list_bar(GSLTDirectPrefixStateV1 *state) {
+    GSLTDirectCursorV1 probe = state->cursor;
+    uint32_t codepoint;
+    size_t width;
+    if (probe.pos >= probe.input_len ||
+        !gslt_direct_reader_v1_peek(&probe, &codepoint, &width) ||
+        codepoint != state->plan->list_rest)
+        return false;
+    gslt_direct_reader_v1_consume_width(&probe, width);
+    return gslt_direct_reader_v1_boundary(&state->plan->list_bar_boundary,
+                                          &probe);
+}
+
 typedef struct {
     const GSLTDirectPrefixRuleV1 *prefix;
     AtomId *children;
     uint32_t len;
     uint32_t cap;
+    /* A list frame, [x y ...] or [x y ... | rest]: its elements are its
+     * children, and once the bar is read its next atom is the rest. */
+    bool list;
+    bool rest_pending;
+    /* A prefix frame read inside a list: its payload uses the list rules. */
+    bool in_list;
 } GSLTDirectPrefixFrameV1;
 
-/* A frame is precisely one pending expression or prefix projection. Each
- * push consumes source bytes; the source size bounds the stack independently
- * of C call-stack size. Explicit caller depth budgets remain enforced. */
+/* A frame is precisely one pending expression, list or prefix projection.
+ * Each push consumes source bytes; the source size bounds the stack
+ * independently of C call-stack size. Explicit caller depth budgets remain
+ * enforced.  An atom directly inside a list, or the payload of a prefix form
+ * read there, is read with the list token and prefix rules. */
 static AtomId gslt_direct_prefix_parse_atom(
-    GSLTDirectPrefixStateV1 *state, uint32_t depth) {
+    GSLTDirectPrefixStateV1 *state, uint32_t depth, bool in_list_at_root) {
     GSLTDirectPrefixFrameV1 *frames = NULL;
     uint32_t frame_len = 0u;
     uint32_t frame_cap = 0u;
@@ -1596,6 +1820,12 @@ static AtomId gslt_direct_prefix_parse_atom(
     for (;;) {
         const GSLTDirectPrefixRuleV1 *prefix = NULL;
         bool expression = false;
+        bool list = false;
+        bool in_list = frame_len == 0u
+            ? in_list_at_root
+            : frames[frame_len - 1u].list ||
+              (frames[frame_len - 1u].prefix &&
+               frames[frame_len - 1u].in_list);
         result = CETTA_ATOM_ID_NONE;
         if (frame_len >= depth) {
             gslt_direct_reader_v1_error(
@@ -1623,18 +1853,39 @@ static AtomId gslt_direct_prefix_parse_atom(
             } else {
                 expression = true;
             }
+        } else if (state->plan->list_token_rules &&
+                   codepoint == state->plan->list_open) {
+            if (!state->projection->list)
+                goto done;
+            gslt_direct_reader_v1_consume_width(&state->cursor, width);
+            if (!gslt_direct_prefix_skip(state) ||
+                state->cursor.pos >= state->cursor.input_len ||
+                !gslt_direct_reader_v1_peek(
+                    &state->cursor, &codepoint, &width))
+                goto done;
+            if (codepoint == state->plan->list_close) {
+                gslt_direct_reader_v1_consume_width(&state->cursor, width);
+                result = state->projection->list(
+                    state->projection->context, NULL, 0u,
+                    CETTA_ATOM_ID_NONE);
+            } else if (gslt_direct_prefix_at_list_bar(state)) {
+                /* A rest follows at least one element. */
+                goto done;
+            } else {
+                list = true;
+            }
         } else {
             size_t before = state->cursor.pos;
-            prefix = gslt_direct_prefix_take_prefix(state);
+            prefix = gslt_direct_prefix_take_prefix(state, in_list);
             if (!prefix) {
                 if (state->cursor.pos != before ||
                     (state->error_buf && state->error_buf_size > 0u &&
                      state->error_buf[0] != '\0'))
                     goto done;
-                result = gslt_direct_prefix_parse_token(state);
+                result = gslt_direct_prefix_parse_token(state, in_list);
             }
         }
-        if (prefix || expression) {
+        if (prefix || expression || list) {
             if (frame_len == frame_cap) {
                 uint32_t next = frame_cap ? frame_cap * 2u : 64u;
                 if (next < frame_cap || SIZE_MAX / (size_t)next < sizeof(*frames))
@@ -1642,7 +1893,8 @@ static AtomId gslt_direct_prefix_parse_atom(
                 frames = cetta_realloc(frames, (size_t)next * sizeof(*frames));
                 frame_cap = next;
             }
-            frames[frame_len++] = (GSLTDirectPrefixFrameV1){.prefix = prefix};
+            frames[frame_len++] = (GSLTDirectPrefixFrameV1){
+                .prefix = prefix, .list = list, .in_list = in_list};
             continue;
         }
         for (;;) {
@@ -1667,6 +1919,24 @@ static AtomId gslt_direct_prefix_parse_atom(
                 frame_len--;
                 continue;
             }
+            if (frame->rest_pending) {
+                /* The rest closes the list pattern. */
+                AtomId rest = result;
+                result = CETTA_ATOM_ID_NONE;
+                if (!gslt_direct_prefix_skip(state) ||
+                    state->cursor.pos >= state->cursor.input_len ||
+                    !gslt_direct_reader_v1_peek(
+                        &state->cursor, &codepoint, &width) ||
+                    codepoint != state->plan->list_close)
+                    goto done;
+                gslt_direct_reader_v1_consume_width(&state->cursor, width);
+                result = state->projection->list(
+                    state->projection->context, frame->children, frame->len,
+                    rest);
+                free(frame->children);
+                frame_len--;
+                continue;
+            }
             if (frame->len == frame->cap) {
                 uint32_t next = frame->cap ? frame->cap * 2u : 16u;
                 if (next < frame->cap ||
@@ -1685,6 +1955,24 @@ static AtomId gslt_direct_prefix_parse_atom(
                 !gslt_direct_reader_v1_peek(
                     &state->cursor, &codepoint, &width))
                 goto done;
+            if (frame->list) {
+                if (codepoint == state->plan->list_close) {
+                    gslt_direct_reader_v1_consume_width(&state->cursor, width);
+                    result = state->projection->list(
+                        state->projection->context, frame->children,
+                        frame->len, CETTA_ATOM_ID_NONE);
+                    free(frame->children);
+                    frame_len--;
+                    continue;
+                }
+                if (gslt_direct_prefix_at_list_bar(state)) {
+                    gslt_direct_reader_v1_consume_width(&state->cursor, width);
+                    if (!gslt_direct_prefix_skip(state))
+                        goto done;
+                    frame->rest_pending = true;
+                }
+                break;
+            }
             if (codepoint != state->plan->expression_close)
                 break;
             gslt_direct_reader_v1_consume_width(&state->cursor, width);
@@ -1699,6 +1987,213 @@ done:
         free(frames[index].children);
     free(frames);
     return result;
+}
+
+static bool gslt_direct_prefix_rule_set_valid(
+    const GSLTDirectPrefixReaderV1Plan *plan,
+    const GSLTDirectPrefixRuleV1 *rules, char *error_buf,
+    size_t error_buf_size) {
+    for (uint32_t index = 0u; index < plan->prefix_rule_len; index++) {
+        const GSLTDirectPrefixRuleV1 *rule = &rules[index];
+        if (!gslt_direct_reader_v1_sequence_valid(
+                rule->literal, rule->literal_len) ||
+            rule->role <= GSLT_DIRECT_PREFIX_ROLE_INVALID ||
+            rule->role > GSLT_DIRECT_PREFIX_ROLE_RESOLVE_NAME ||
+            (rule->payload_start &&
+             !gslt_direct_reader_v1_class_valid(rule->payload_start)) ||
+            ((rule->payload_start != NULL) ==
+             rule->skip_before_payload) ||
+            rule->literal[0] == plan->expression_open ||
+            rule->literal[0] == plan->expression_close ||
+            rule->literal[0] == plan->string_open ||
+            rule->literal[0] == plan->string_close ||
+            rule->literal[0] == plan->comment_marker) {
+            gslt_direct_reader_v1_error(
+                error_buf, error_buf_size,
+                "invalid source-derived prefix rule");
+            return false;
+        }
+        for (uint32_t previous = 0u; previous < index; previous++) {
+            if (rules[previous].literal[0] ==
+                rule->literal[0]) {
+                gslt_direct_reader_v1_error(
+                    error_buf, error_buf_size,
+                    "prefix dispatch has overlapping leading scalars");
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+static bool gslt_direct_prefix_token_rule_set_valid(
+    const GSLTDirectPrefixReaderV1Plan *plan,
+    const GSLTDirectTokenRuleV1 *rules, uint32_t rule_len,
+    const GSLTDirectPrefixRuleV1 *prefix_rules, char *error_buf,
+    size_t error_buf_size) {
+    for (uint32_t index = 0u; index < rule_len; index++) {
+        const GSLTDirectTokenRuleV1 *rule = &rules[index];
+        bool has_literal = rule->literal_len > 0u;
+        bool has_classes = rule->first && rule->tail;
+        if ((has_literal && !gslt_direct_reader_v1_sequence_valid(
+                                rule->literal, rule->literal_len)) ||
+            (!has_literal && !has_classes) ||
+            ((rule->first == NULL) != (rule->tail == NULL)) ||
+            (has_classes &&
+             (!gslt_direct_reader_v1_class_valid(rule->first) ||
+              !gslt_direct_reader_v1_class_valid(rule->tail))) ||
+            !gslt_direct_reader_v1_boundary_valid(
+                &rule->boundary, rule->tail) ||
+            rule->projection <= GSLT_DIRECT_TOKEN_PROJECTION_INVALID ||
+            rule->projection >
+                GSLT_DIRECT_TOKEN_PROJECTION_ANONYMOUS_VARIABLE ||
+            (rule->projection ==
+                 GSLT_DIRECT_TOKEN_PROJECTION_ANONYMOUS_VARIABLE &&
+             (!has_literal || has_classes || rule->strip_literal)) ||
+            (rule->strip_literal && !has_literal)) {
+            gslt_direct_reader_v1_error(
+                error_buf, error_buf_size,
+                "invalid source-derived token rule");
+            return false;
+        }
+        if (!has_literal) {
+            if (gslt_direct_reader_v1_class_contains(
+                    rule->first, plan->expression_open) ||
+                gslt_direct_reader_v1_class_contains(
+                    rule->first, plan->expression_close) ||
+                gslt_direct_reader_v1_class_contains(
+                    rule->first, plan->string_open) ||
+                gslt_direct_reader_v1_class_contains(
+                    rule->first, plan->string_close) ||
+                gslt_direct_reader_v1_class_contains(
+                    rule->first, plan->comment_marker)) {
+                gslt_direct_reader_v1_error(
+                    error_buf, error_buf_size,
+                    "generic token dispatch overlaps a structural scalar");
+                return false;
+            }
+            for (uint32_t prefix = 0u;
+                 prefix < plan->prefix_rule_len; prefix++) {
+                if (gslt_direct_reader_v1_class_contains(
+                        rule->first,
+                        prefix_rules[prefix].literal[0])) {
+                    gslt_direct_reader_v1_error(
+                        error_buf, error_buf_size,
+                        "generic token dispatch overlaps a prefix scalar");
+                    return false;
+                }
+            }
+        }
+        for (uint32_t previous = 0u; previous < index; previous++) {
+            if (!gslt_direct_reader_v1_token_rules_disjoint(
+                    &rules[previous], rule)) {
+                gslt_direct_reader_v1_error(
+                    error_buf, error_buf_size,
+                    "token alternatives have overlapping dispatch");
+                return false;
+            }
+        }
+        for (uint32_t prefix = 0u;
+             prefix < plan->prefix_rule_len; prefix++) {
+            if (!gslt_direct_reader_v1_token_prefix_disjoint(
+                    rule, &prefix_rules[prefix])) {
+                gslt_direct_reader_v1_error(
+                    error_buf, error_buf_size,
+                    "token dispatch overlaps a prefix alternative");
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+/* Inside a list the tokens mirror the atom's tokens, followed by the word
+ * led by the bar; the list punctuation is distinct and structural nowhere
+ * else, and no token holds a bracket. */
+static bool gslt_direct_prefix_list_plan_valid(
+    const GSLTDirectPrefixReaderV1Plan *plan) {
+    const uint32_t punctuation[3] = {
+        plan->list_open, plan->list_close, plan->list_rest,
+    };
+    const uint32_t markers[5] = {
+        plan->expression_open, plan->expression_close, plan->string_open,
+        plan->string_close, plan->comment_marker,
+    };
+    const GSLTDirectTokenRuleV1 *bar_word;
+    if (plan->list_token_rule_len != plan->token_rule_len + 1u)
+        return false;
+    bar_word = &plan->list_token_rules[plan->token_rule_len];
+    if (bar_word->literal_len != 1u ||
+        bar_word->literal[0] != plan->list_rest || !bar_word->first ||
+        bar_word->first != bar_word->tail || bar_word->strip_literal ||
+        bar_word->projection != GSLT_DIRECT_TOKEN_PROJECTION_WORD ||
+        !gslt_direct_reader_v1_boundary_disjoint_class(
+            &plan->list_bar_boundary, bar_word->first) ||
+        !gslt_direct_reader_v1_boundary_contains_codepoint(
+            &plan->list_bar_boundary, plan->list_open) ||
+        !gslt_direct_reader_v1_boundary_contains_codepoint(
+            &plan->list_bar_boundary, plan->list_close))
+        return false;
+    for (size_t i = 0u; i < 3u; i++) {
+        if (!gslt_direct_reader_v1_scalar_valid(punctuation[i]) ||
+            gslt_direct_reader_v1_class_contains(plan->whitespace,
+                                                 punctuation[i]))
+            return false;
+        for (size_t j = i + 1u; j < 3u; j++)
+            if (punctuation[i] == punctuation[j])
+                return false;
+        for (size_t j = 0u; j < 5u; j++)
+            if (punctuation[i] == markers[j])
+                return false;
+        for (uint32_t k = 0u; k < plan->prefix_rule_len; k++)
+            if (plan->prefix_rules[k].literal[0] == punctuation[i])
+                return false;
+    }
+    for (uint32_t k = 0u; k < plan->list_token_rule_len; k++) {
+        const GSLTDirectTokenRuleV1 *rule = &plan->list_token_rules[k];
+        for (size_t i = 0u; i < 2u; i++)
+            if ((rule->first &&
+                 gslt_direct_reader_v1_class_contains(rule->first,
+                                                      punctuation[i])) ||
+                (rule->tail &&
+                 gslt_direct_reader_v1_class_contains(rule->tail,
+                                                      punctuation[i])) ||
+                (rule->literal_len > 0u && rule->literal[0] == punctuation[i]))
+                return false;
+        if (k < plan->token_rule_len && rule->literal_len == 0u &&
+            gslt_direct_reader_v1_class_contains(rule->first, plan->list_rest))
+            return false;
+    }
+    for (uint32_t k = 0u; k < plan->prefix_rule_len; k++) {
+        const GSLTDirectPrefixRuleV1 *rule = &plan->prefix_rules[k];
+        const GSLTDirectPrefixRuleV1 *inner = &plan->list_prefix_rules[k];
+        if (rule->role != inner->role ||
+            rule->skip_before_payload != inner->skip_before_payload ||
+            rule->literal_len != inner->literal_len ||
+            memcmp(rule->literal, inner->literal,
+                   (size_t)rule->literal_len * sizeof(*rule->literal)) != 0 ||
+            (inner->payload_start &&
+             gslt_direct_reader_v1_class_contains(inner->payload_start,
+                                                  plan->list_close)))
+            return false;
+    }
+    for (uint32_t k = 0u; k < plan->token_rule_len; k++) {
+        const GSLTDirectTokenRuleV1 *rule = &plan->token_rules[k];
+        const GSLTDirectTokenRuleV1 *inner = &plan->list_token_rules[k];
+        if ((rule->literal_len > 0u
+                 ? rule->literal[0] == plan->list_open
+                 : gslt_direct_reader_v1_class_contains(rule->first,
+                                                        plan->list_open)) ||
+            rule->projection != inner->projection ||
+            rule->strip_literal != inner->strip_literal ||
+            rule->literal_len != inner->literal_len ||
+            (rule->first == NULL) != (inner->first == NULL) ||
+            (rule->literal_len > 0u &&
+             memcmp(rule->literal, inner->literal,
+                    (size_t)rule->literal_len * sizeof(*rule->literal)) != 0))
+            return false;
+    }
+    return true;
 }
 
 bool gslt_direct_prefix_reader_v1_plan_validate(
@@ -1768,108 +2263,25 @@ bool gslt_direct_prefix_reader_v1_plan_validate(
             "invalid prefix-reader delimiter or escape partition");
         return false;
     }
-    for (uint32_t index = 0u; index < plan->prefix_rule_len; index++) {
-        const GSLTDirectPrefixRuleV1 *rule = &plan->prefix_rules[index];
-        if (!gslt_direct_reader_v1_sequence_valid(
-                rule->literal, rule->literal_len) ||
-            rule->role <= GSLT_DIRECT_PREFIX_ROLE_INVALID ||
-            rule->role > GSLT_DIRECT_PREFIX_ROLE_RESOLVE_NAME ||
-            (rule->payload_start &&
-             !gslt_direct_reader_v1_class_valid(rule->payload_start)) ||
-            ((rule->payload_start != NULL) ==
-             rule->skip_before_payload) ||
-            rule->literal[0] == plan->expression_open ||
-            rule->literal[0] == plan->expression_close ||
-            rule->literal[0] == plan->string_open ||
-            rule->literal[0] == plan->string_close ||
-            rule->literal[0] == plan->comment_marker) {
+    if (!gslt_direct_prefix_rule_set_valid(
+            plan, plan->prefix_rules, error_buf, error_buf_size) ||
+        !gslt_direct_prefix_token_rule_set_valid(
+            plan, plan->token_rules, plan->token_rule_len, plan->prefix_rules,
+            error_buf, error_buf_size))
+        return false;
+    if (plan->list_token_rules &&
+        (!plan->list_prefix_rules ||
+         !gslt_direct_prefix_rule_set_valid(
+             plan, plan->list_prefix_rules, error_buf, error_buf_size) ||
+         !gslt_direct_prefix_token_rule_set_valid(
+             plan, plan->list_token_rules, plan->list_token_rule_len,
+             plan->list_prefix_rules, error_buf, error_buf_size) ||
+         !gslt_direct_prefix_list_plan_valid(plan))) {
+        if (error_buf && error_buf_size > 0u && error_buf[0] == '\0')
             gslt_direct_reader_v1_error(
                 error_buf, error_buf_size,
-                "invalid source-derived prefix rule");
-            return false;
-        }
-        for (uint32_t previous = 0u; previous < index; previous++) {
-            if (plan->prefix_rules[previous].literal[0] ==
-                rule->literal[0]) {
-                gslt_direct_reader_v1_error(
-                    error_buf, error_buf_size,
-                    "prefix dispatch has overlapping leading scalars");
-                return false;
-            }
-        }
-    }
-    for (uint32_t index = 0u; index < plan->token_rule_len; index++) {
-        const GSLTDirectTokenRuleV1 *rule = &plan->token_rules[index];
-        bool has_literal = rule->literal_len > 0u;
-        bool has_classes = rule->first && rule->tail;
-        if ((has_literal && !gslt_direct_reader_v1_sequence_valid(
-                                rule->literal, rule->literal_len)) ||
-            (!has_literal && !has_classes) ||
-            ((rule->first == NULL) != (rule->tail == NULL)) ||
-            (has_classes &&
-             (!gslt_direct_reader_v1_class_valid(rule->first) ||
-              !gslt_direct_reader_v1_class_valid(rule->tail))) ||
-            !gslt_direct_reader_v1_boundary_valid(
-                &rule->boundary, rule->tail) ||
-            rule->projection <= GSLT_DIRECT_TOKEN_PROJECTION_INVALID ||
-            rule->projection >
-                GSLT_DIRECT_TOKEN_PROJECTION_ANONYMOUS_VARIABLE ||
-            (rule->projection ==
-                 GSLT_DIRECT_TOKEN_PROJECTION_ANONYMOUS_VARIABLE &&
-             (!has_literal || has_classes || rule->strip_literal)) ||
-            (rule->strip_literal && !has_literal)) {
-            gslt_direct_reader_v1_error(
-                error_buf, error_buf_size,
-                "invalid source-derived token rule");
-            return false;
-        }
-        if (!has_literal) {
-            if (gslt_direct_reader_v1_class_contains(
-                    rule->first, plan->expression_open) ||
-                gslt_direct_reader_v1_class_contains(
-                    rule->first, plan->expression_close) ||
-                gslt_direct_reader_v1_class_contains(
-                    rule->first, plan->string_open) ||
-                gslt_direct_reader_v1_class_contains(
-                    rule->first, plan->string_close) ||
-                gslt_direct_reader_v1_class_contains(
-                    rule->first, plan->comment_marker)) {
-                gslt_direct_reader_v1_error(
-                    error_buf, error_buf_size,
-                    "generic token dispatch overlaps a structural scalar");
-                return false;
-            }
-            for (uint32_t prefix = 0u;
-                 prefix < plan->prefix_rule_len; prefix++) {
-                if (gslt_direct_reader_v1_class_contains(
-                        rule->first,
-                        plan->prefix_rules[prefix].literal[0])) {
-                    gslt_direct_reader_v1_error(
-                        error_buf, error_buf_size,
-                        "generic token dispatch overlaps a prefix scalar");
-                    return false;
-                }
-            }
-        }
-        for (uint32_t previous = 0u; previous < index; previous++) {
-            if (!gslt_direct_reader_v1_token_rules_disjoint(
-                    &plan->token_rules[previous], rule)) {
-                gslt_direct_reader_v1_error(
-                    error_buf, error_buf_size,
-                    "token alternatives have overlapping dispatch");
-                return false;
-            }
-        }
-        for (uint32_t prefix = 0u;
-             prefix < plan->prefix_rule_len; prefix++) {
-            if (!gslt_direct_reader_v1_token_prefix_disjoint(
-                    rule, &plan->prefix_rules[prefix])) {
-                gslt_direct_reader_v1_error(
-                    error_buf, error_buf_size,
-                    "token dispatch overlaps a prefix alternative");
-                return false;
-            }
-        }
+                "invalid prefix-reader list punctuation or list tokens");
+        return false;
     }
     return true;
 }
@@ -1895,6 +2307,7 @@ int gslt_direct_prefix_reader_v1_parse_bytes_ids(
         !projection->variable_bytes || !projection->anonymous_variable ||
         !projection->string_bytes ||
         !projection->expression || !projection->prefix || !out_ids ||
+        (plan->list_token_rules && !projection->list) ||
         input_len > UINT32_MAX || (input_len > 0u && !input)) {
         gslt_direct_reader_v1_error(
             error_buf, error_buf_size,
@@ -1916,7 +2329,7 @@ int gslt_direct_prefix_reader_v1_parse_bytes_ids(
             break;
         if (!state.projection->begin_form(state.projection->context))
             goto done;
-        id = gslt_direct_prefix_parse_atom(&state, plan->depth_limit);
+        id = gslt_direct_prefix_parse_atom(&state, plan->depth_limit, false);
         if (id == CETTA_ATOM_ID_NONE)
             goto done;
         if (len == cap) {
@@ -2176,7 +2589,7 @@ static bool gslt_direct_petta_skip_form(
 }
 
 static bool gslt_direct_petta_token_boundary(
-    GSLTDirectPeTTaStateV1 *state) {
+    GSLTDirectPeTTaStateV1 *state, bool in_list) {
     uint32_t codepoint;
     size_t width;
     if (state->cursor.pos == state->cursor.input_len)
@@ -2187,7 +2600,8 @@ static bool gslt_direct_petta_token_boundary(
         return false;
     (void)width;
     return gslt_direct_reader_v1_class_contains(
-        state->plan->token_boundary, codepoint);
+        in_list ? state->plan->list_token_boundary
+                : state->plan->token_boundary, codepoint);
 }
 
 static bool gslt_direct_petta_escape_target(
@@ -2208,7 +2622,7 @@ static bool gslt_direct_petta_escape_target(
 }
 
 static AtomId gslt_direct_petta_parse_atom(
-    GSLTDirectPeTTaStateV1 *state, uint32_t depth);
+    GSLTDirectPeTTaStateV1 *state, uint32_t depth, bool in_list);
 
 static AtomId gslt_direct_petta_parse_string(
     GSLTDirectPeTTaStateV1 *state) {
@@ -2292,7 +2706,7 @@ static AtomId gslt_direct_petta_parse_quoted_token(
     gslt_direct_reader_v1_consume_width(&state->cursor, width);
     while (state->cursor.pos < state->cursor.input_len) {
         size_t scalar_start = state->cursor.pos;
-        if (gslt_direct_petta_token_boundary(state))
+        if (gslt_direct_petta_token_boundary(state, false))
             break;
         if (!gslt_direct_petta_peek(
                 &state->cursor, &codepoint, &width,
@@ -2330,7 +2744,7 @@ static AtomId gslt_direct_petta_parse_quoted_token(
         }
         goto failed;
     }
-    if (!final_escape_quote || !gslt_direct_petta_token_boundary(state) ||
+    if (!final_escape_quote || !gslt_direct_petta_token_boundary(state, false) ||
         body.len == 0u)
         goto failed;
     /* The closing quote is stripped; its preceding backslash remains data. */
@@ -2354,31 +2768,42 @@ failed:
     return CETTA_ATOM_ID_NONE;
 }
 
+/* A token; inside a list it uses the list classes and boundary. */
 static AtomId gslt_direct_petta_parse_token(
-    GSLTDirectPeTTaStateV1 *state) {
+    GSLTDirectPeTTaStateV1 *state, bool in_list) {
     GSLTDirectCursorV1 start = state->cursor;
     size_t token_start = state->cursor.pos;
+    const GSLTDirectScalarClassV1 *first_class =
+        in_list ? state->plan->list_token_first : state->plan->token_first;
+    const GSLTDirectScalarClassV1 *tail_class =
+        in_list ? state->plan->list_token : state->plan->token;
     uint32_t codepoint;
     size_t width;
 
+    /* Inside a list a token may start with the bar when more follows; the
+     * bar alone is the rest marker. */
+    bool barred;
+    size_t tail_start;
     if (!gslt_direct_petta_peek(
             &state->cursor, &codepoint, &width,
-            state->error_buf, state->error_buf_size) ||
-        !gslt_direct_reader_v1_class_contains(
-            state->plan->token_first, codepoint))
+            state->error_buf, state->error_buf_size))
+        return CETTA_ATOM_ID_NONE;
+    barred = in_list && codepoint == state->plan->list_rest;
+    if (!barred && !gslt_direct_reader_v1_class_contains(first_class, codepoint))
         return CETTA_ATOM_ID_NONE;
     gslt_direct_reader_v1_consume_width(&state->cursor, width);
+    tail_start = state->cursor.pos;
     while (state->cursor.pos < state->cursor.input_len) {
         if (!gslt_direct_petta_peek(
                 &state->cursor, &codepoint, &width,
                 state->error_buf, state->error_buf_size))
             goto failed;
-        if (!gslt_direct_reader_v1_class_contains(
-                state->plan->token, codepoint))
+        if (!gslt_direct_reader_v1_class_contains(tail_class, codepoint))
             break;
         gslt_direct_reader_v1_consume_width(&state->cursor, width);
     }
-    if (!gslt_direct_petta_token_boundary(state))
+    if ((barred && state->cursor.pos == tail_start) ||
+        !gslt_direct_petta_token_boundary(state, in_list))
         goto failed;
     return state->projection->token_bytes(
         state->projection->context,
@@ -2391,7 +2816,9 @@ failed:
 }
 
 static AtomId gslt_direct_petta_parse_variable_or_dollar(
-    GSLTDirectPeTTaStateV1 *state) {
+    GSLTDirectPeTTaStateV1 *state, bool in_list) {
+    const GSLTDirectScalarClassV1 *tail_class =
+        in_list ? state->plan->list_token : state->plan->token;
     GSLTDirectCursorV1 start = state->cursor;
     uint32_t codepoint;
     size_t width;
@@ -2409,12 +2836,11 @@ static AtomId gslt_direct_petta_parse_variable_or_dollar(
                 &state->cursor, &codepoint, &width,
                 state->error_buf, state->error_buf_size))
             goto failed;
-        if (!gslt_direct_reader_v1_class_contains(
-                state->plan->token, codepoint))
+        if (!gslt_direct_reader_v1_class_contains(tail_class, codepoint))
             break;
         gslt_direct_reader_v1_consume_width(&state->cursor, width);
     }
-    if (!gslt_direct_petta_token_boundary(state))
+    if (!gslt_direct_petta_token_boundary(state, in_list))
         goto failed;
     if (state->cursor.pos == name_start)
         return state->projection->dollar_symbol(
@@ -2464,7 +2890,7 @@ static AtomId gslt_direct_petta_parse_expression(
             free(children);
             return result;
         }
-        child = gslt_direct_petta_parse_atom(state, depth - 1u);
+        child = gslt_direct_petta_parse_atom(state, depth - 1u, false);
         if (child == CETTA_ATOM_ID_NONE)
             goto failed;
         if (len == cap) {
@@ -2484,8 +2910,96 @@ failed:
     return CETTA_ATOM_ID_NONE;
 }
 
-static AtomId gslt_direct_petta_parse_atom(
+/* At the bar alone: the bar followed by the end of a list token. */
+static bool gslt_direct_petta_at_list_bar(GSLTDirectPeTTaStateV1 *state) {
+    GSLTDirectCursorV1 start = state->cursor;
+    uint32_t codepoint;
+    size_t width;
+    bool bar = false;
+    if (gslt_direct_petta_peek(&state->cursor, &codepoint, &width,
+                               state->error_buf, state->error_buf_size) &&
+        codepoint == state->plan->list_rest) {
+        gslt_direct_reader_v1_consume_width(&state->cursor, width);
+        bar = gslt_direct_petta_token_boundary(state, true);
+    }
+    state->cursor = start;
+    return bar;
+}
+
+/* [x y ...] or [x y ... | rest]: elements separated by layout, then
+ * optionally the bar alone and one rest element, then the close. */
+static AtomId gslt_direct_petta_parse_list(
     GSLTDirectPeTTaStateV1 *state, uint32_t depth) {
+    const GSLTDirectPeTTaReaderV1Plan *plan = state->plan;
+    GSLTDirectCursorV1 start = state->cursor;
+    AtomId *elems = NULL;
+    uint32_t len = 0u;
+    uint32_t cap = 0u;
+    AtomId rest = CETTA_ATOM_ID_NONE;
+    AtomId result = CETTA_ATOM_ID_NONE;
+    uint32_t codepoint;
+    size_t width;
+
+    if (depth == 0u || !state->projection->list ||
+        !gslt_direct_petta_peek(
+            &state->cursor, &codepoint, &width,
+            state->error_buf, state->error_buf_size) ||
+        codepoint != plan->list_open)
+        goto failed;
+    gslt_direct_reader_v1_consume_width(&state->cursor, width);
+    for (;;) {
+        if (!gslt_direct_petta_skip_form(state) ||
+            state->cursor.pos == state->cursor.input_len ||
+            !gslt_direct_petta_peek(
+                &state->cursor, &codepoint, &width,
+                state->error_buf, state->error_buf_size))
+            goto failed;
+        if (codepoint == plan->list_close) {
+            gslt_direct_reader_v1_consume_width(&state->cursor, width);
+            break;
+        }
+        if (gslt_direct_petta_at_list_bar(state)) {
+            if (len == 0u)
+                goto failed;
+            gslt_direct_reader_v1_consume_width(&state->cursor, width);
+            if (!gslt_direct_petta_skip_form(state))
+                goto failed;
+            rest = gslt_direct_petta_parse_atom(state, depth - 1u, true);
+            if (rest == CETTA_ATOM_ID_NONE || !gslt_direct_petta_skip_form(state) ||
+                state->cursor.pos == state->cursor.input_len ||
+                !gslt_direct_petta_peek(
+                    &state->cursor, &codepoint, &width,
+                    state->error_buf, state->error_buf_size) ||
+                codepoint != plan->list_close)
+                goto failed;
+            gslt_direct_reader_v1_consume_width(&state->cursor, width);
+            break;
+        }
+        AtomId element = gslt_direct_petta_parse_atom(state, depth - 1u, true);
+        if (element == CETTA_ATOM_ID_NONE)
+            goto failed;
+        if (len == cap) {
+            uint32_t next = cap ? cap * 2u : 8u;
+            if (next < cap)
+                goto failed;
+            elems = cetta_realloc(elems, (size_t)next * sizeof(*elems));
+            cap = next;
+        }
+        elems[len++] = element;
+    }
+    result = state->projection->list(state->projection->context, elems, len,
+                                     rest);
+    free(elems);
+    return result;
+
+failed:
+    state->cursor = start;
+    free(elems);
+    return CETTA_ATOM_ID_NONE;
+}
+
+static AtomId gslt_direct_petta_parse_atom(
+    GSLTDirectPeTTaStateV1 *state, uint32_t depth, bool in_list) {
     GSLTDirectCursorV1 start = state->cursor;
     AtomId result = CETTA_ATOM_ID_NONE;
     uint32_t codepoint;
@@ -2498,17 +3012,22 @@ static AtomId gslt_direct_petta_parse_atom(
         return CETTA_ATOM_ID_NONE;
     if (codepoint == state->plan->string_quote) {
         result = gslt_direct_petta_parse_string(state);
-        if (result == CETTA_ATOM_ID_NONE) {
+        if (result == CETTA_ATOM_ID_NONE && !in_list) {
             state->cursor = start;
             result = gslt_direct_petta_parse_quoted_token(state);
         }
     } else if (codepoint == state->plan->expression_open) {
         result = gslt_direct_petta_parse_expression(state, depth);
+    } else if (state->plan->list_open != 0u &&
+               codepoint == state->plan->list_open) {
+        result = gslt_direct_petta_parse_list(state, depth);
     } else if (codepoint == state->plan->variable_marker) {
-        result = gslt_direct_petta_parse_variable_or_dollar(state);
+        result = gslt_direct_petta_parse_variable_or_dollar(state, in_list);
     } else if (gslt_direct_reader_v1_class_contains(
-                   state->plan->token_first, codepoint)) {
-        result = gslt_direct_petta_parse_token(state);
+                   in_list ? state->plan->list_token_first
+                           : state->plan->token_first, codepoint) ||
+               (in_list && codepoint == state->plan->list_rest)) {
+        result = gslt_direct_petta_parse_token(state, in_list);
     }
     if (result != CETTA_ATOM_ID_NONE) {
         state->tokens++;
@@ -2533,7 +3052,7 @@ static AtomId gslt_direct_petta_parse_form(
     state.error_buf_size = error_buf_size;
     if (!gslt_direct_petta_skip_form(&state))
         return CETTA_ATOM_ID_NONE;
-    result = gslt_direct_petta_parse_atom(&state, plan->depth_limit);
+    result = gslt_direct_petta_parse_atom(&state, plan->depth_limit, false);
     if (result == CETTA_ATOM_ID_NONE ||
         !gslt_direct_petta_skip_form(&state) ||
         state.cursor.pos != input_len) {
@@ -2641,6 +3160,42 @@ bool gslt_direct_petta_reader_v1_plan_validate(
             "direct PeTTa reader dispatch disagrees with its LanguageDefs");
         return false;
     }
+    if (plan->list_open != 0u) {
+        const uint32_t punctuation[3] = {
+            plan->list_open, plan->list_close, plan->list_rest,
+        };
+        bool valid =
+            gslt_direct_reader_v1_class_valid(plan->list_token_first) &&
+            gslt_direct_reader_v1_class_valid(plan->list_token) &&
+            gslt_direct_reader_v1_class_valid(plan->list_token_boundary) &&
+            !gslt_direct_reader_v1_class_contains(plan->token_first,
+                                                  plan->list_open) &&
+            gslt_direct_reader_v1_class_disjoint(plan->list_token_boundary,
+                                                 plan->list_token);
+        for (size_t i = 0u; valid && i < 3u; i++) {
+            valid = gslt_direct_reader_v1_scalar_valid(punctuation[i]) &&
+                !gslt_direct_reader_v1_class_contains(plan->list_token_first,
+                                                      punctuation[i]) &&
+                punctuation[i] != plan->expression_open &&
+                punctuation[i] != plan->expression_close &&
+                punctuation[i] != plan->string_quote &&
+                punctuation[i] != plan->variable_marker;
+            for (size_t j = i + 1u; valid && j < 3u; j++)
+                valid = punctuation[i] != punctuation[j];
+            /* Tokens end at both brackets; a token may hold the bar. */
+            if (valid && i < 2u)
+                valid = !gslt_direct_reader_v1_class_contains(
+                            plan->list_token, punctuation[i]) &&
+                        gslt_direct_reader_v1_class_contains(
+                            plan->list_token_boundary, punctuation[i]);
+        }
+        if (!valid) {
+            gslt_direct_reader_v1_error(
+                error_buf, error_buf_size,
+                "invalid source-derived PeTTa list plan");
+            return false;
+        }
+    }
     return true;
 }
 
@@ -2669,7 +3224,9 @@ int gslt_direct_petta_reader_v1_parse_bytes_ids(
         !projection->begin_form || !projection->token_bytes ||
         !projection->variable_bytes || !projection->string_bytes ||
         !projection->dollar_symbol || !projection->expression ||
-        !projection->finish_form || !out_ids || input_len > UINT32_MAX ||
+        !projection->finish_form ||
+        (plan->list_open != 0u && !projection->list) ||
+        !out_ids || input_len > UINT32_MAX ||
         (input_len > 0u && !input)) {
         gslt_direct_reader_v1_error(
             error_buf, error_buf_size,

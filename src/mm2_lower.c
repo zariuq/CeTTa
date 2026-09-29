@@ -707,9 +707,9 @@ static bool bridge_emit_float_token(BridgeExprBuf *buf,
 static bool bridge_emit_string_token(Arena *a,
                                      BridgeExprBuf *buf,
                                      const char *text,
+                                     size_t text_len,
                                      BridgeExprWire wire,
                                      const char **out_error) {
-    size_t text_len = strlen(text);
     char *quoted;
     size_t off = 0;
 
@@ -788,7 +788,7 @@ static bool bridge_encode_atom_rec(Arena *a, Atom *atom, BridgeVarMap *vars,
                 wire, out_error);
         case GV_STRING:
             return bridge_emit_string_token(
-                a, buf, atom->ground.sval, wire, out_error);
+                a, buf, atom->ground.sval, atom->ground.slen, wire, out_error);
         case GV_BIGINT:
         {
             const char *text = atom_bigint_cstr(atom);
@@ -911,7 +911,8 @@ static bool bridge_encode_atom_id_rec(Arena *a,
                 wire, out_error);
         case GV_STRING:
             return bridge_emit_string_token(
-                a, buf, tu_string_cstr(universe, atom_id), wire, out_error);
+                a, buf, tu_string_cstr(universe, atom_id),
+                tu_string_len(universe, atom_id), wire, out_error);
         case GV_BIGINT: {
             const char *text = tu_bigint_cstr(universe, atom_id);
             return bridge_expr_buf_push_sized_symbol(
@@ -1296,7 +1297,7 @@ static Atom *bridge_packet_parse_token(Arena *a, const uint8_t *bytes,
             decoded[output++] = next;
         }
         decoded[output] = '\0';
-        return atom_string(a, decoded);
+        return atom_string_n(a, decoded, output);
     }
 
     if (strcmp(token, "True") == 0)

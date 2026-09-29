@@ -365,8 +365,7 @@ bool cetta_gslt_language_load_embedded_for_realization(
           descriptor->program_position >= descriptor->entry_arity ||
           descriptor->result_position >= descriptor->entry_arity ||
           descriptor->program_position == descriptor->result_position)) ||
-        !descriptor->observation || !descriptor->manifest_sha256 ||
-        !descriptor->compiler_sha256)
+        !descriptor->observation || !descriptor->manifest_sha256)
         return language_error(error, error_size,
                               "invalid embedded GSLT language descriptor");
     *out = NULL;

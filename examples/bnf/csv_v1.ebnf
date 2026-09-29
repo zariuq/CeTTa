@@ -1,0 +1,9 @@
+% CSV per RFC 4180 without the optional trailing line break. <qchar> is any
+% scalar except the quotation mark; <uchar> is any scalar except quotation
+% mark, comma and line-break characters. Both are declared by the authority.
+<file> ::= <record> (<newline> <record>)*
+<record> ::= <field> ("," <field>)*
+<field> ::= <quoted> | <unquoted>
+<quoted> ::= "\"" (<qchar> | "\"" "\"")* "\""
+<unquoted> ::= <uchar>*
+<newline> ::= "\r" "\n" | "\n"

@@ -1,0 +1,10 @@
+% Arithmetic expressions with conventional precedence, left association,
+% parentheses and optional spaces. Scannerless: spaces are explicit.
+<expr> ::= <ws> <term> (<ws> <addop> <ws> <term>)* <ws>
+<term> ::= <factor> (<ws> <mulop> <ws> <factor>)*
+<factor> ::= <number> | "(" <expr> ")"
+<number> ::= <digit>+
+<digit> ::= "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
+<addop> ::= "+" | "-"
+<mulop> ::= "*" | "/"
+<ws> ::= " "*

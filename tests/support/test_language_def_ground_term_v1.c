@@ -73,29 +73,29 @@ static Atom *pool_nullary(TestAtomPool *pool, const char *head) {
 static Atom *make_empty_problem(TestAtomPool *pool, Atom *digest_value) {
     Atom *source_arguments[1] = {digest_value};
     Atom *source = pool_expr(
-        pool, "fo-cnf:source-digest", source_arguments, 1u);
-    Atom *clauses = pool_nullary(pool, "fo-cnf:clauses-nil");
+        pool, "fo-resolution:source-digest", source_arguments, 1u);
+    Atom *clauses = pool_nullary(pool, "fo-resolution:clauses-nil");
     Atom *problem_arguments[2] = {source, clauses};
 
-    return pool_expr(pool, "fo-cnf:problem", problem_arguments, 2u);
+    return pool_expr(pool, "fo-resolution:problem", problem_arguments, 2u);
 }
 
 static Atom *make_scoped_variable_term(TestAtomPool *pool) {
     Atom *source_arguments[1] = {pool_string(pool, "sha256:source")};
     Atom *source = pool_expr(
-        pool, "fo-cnf:source-digest", source_arguments, 1u);
+        pool, "fo-resolution:source-digest", source_arguments, 1u);
     Atom *occurrence_arguments[2] = {source, pool_int(pool, 7)};
     Atom *occurrence = pool_expr(
-        pool, "fo-cnf:occurrence", occurrence_arguments, 2u);
+        pool, "fo-resolution:occurrence", occurrence_arguments, 2u);
     Atom *name_arguments[1] = {pool_string(pool, "X")};
     Atom *name = pool_expr(
-        pool, "fo-cnf:variable-name", name_arguments, 1u);
+        pool, "fo-resolution:variable-name", name_arguments, 1u);
     Atom *identifier_arguments[2] = {occurrence, name};
     Atom *identifier = pool_expr(
-        pool, "fo-cnf:variable-id", identifier_arguments, 2u);
+        pool, "fo-resolution:variable-id", identifier_arguments, 2u);
     Atom *term_arguments[1] = {identifier};
 
-    return pool_expr(pool, "fo-cnf:term-variable", term_arguments, 1u);
+    return pool_expr(pool, "fo-resolution:term-variable", term_arguments, 1u);
 }
 
 static Atom *make_empty_resolution_problem(TestAtomPool *pool) {
@@ -231,7 +231,7 @@ static void typed_pattern_codec_gates(
             &status, error, sizeof(error)) &&
             status == CETTA_LD_GROUND_TERM_V1_OK &&
             pattern_apply_has_head(
-                &encoded, "fo-cnf:term-variable", 1u),
+                &encoded, "fo-resolution:term-variable", 1u),
         error[0] ? error :
             "typed codec maps an admitted constructor term to PApp");
     variable_id = pattern_argument(&encoded, 0u);
@@ -240,13 +240,13 @@ static void typed_pattern_codec_gates(
     (void)expect(
         counts,
         pattern_apply_has_head(
-            variable_id, "fo-cnf:variable-id", 2u) &&
+            variable_id, "fo-resolution:variable-id", 2u) &&
             pattern_apply_has_head(
-                occurrence, "fo-cnf:occurrence", 2u) &&
+                occurrence, "fo-resolution:occurrence", 2u) &&
             pattern_apply_has_head(
                 pattern_argument(occurrence, 1u), "7", 0u) &&
             pattern_apply_has_head(
-                variable_name, "fo-cnf:variable-name", 1u) &&
+                variable_name, "fo-resolution:variable-name", 1u) &&
             pattern_apply_has_head(
                 pattern_argument(variable_name, 0u), "X", 0u),
         "typed codec preserves constructor structure and builtin leaves");
@@ -309,7 +309,7 @@ static void typed_pattern_codec_gates(
             128u, 20000u, &status, error, sizeof(error)) &&
             status == CETTA_LD_GROUND_TERM_V1_TYPE_MISMATCH &&
             pattern_apply_has_head(
-                &encoded, "fo-cnf:term-variable", 1u),
+                &encoded, "fo-resolution:term-variable", 1u),
         "failed typed conversion leaves the previous Pattern unchanged");
 
     cetta_ld_pattern_v1_free(&integer_pattern);
@@ -484,7 +484,7 @@ static void positive_and_type_gates(TestCounts *counts,
             language, "Term", variable_term, 128u, 10000u,
             &status, error, sizeof(error)) &&
             status == CETTA_LD_GROUND_TERM_V1_OK,
-        error[0] ? error : "explicitly scoped variable is ground clause data");
+        error[0] ? error : "explicitly scoped variable is ground problem data");
     error[0] = '\0';
     (void)expect(
         counts,
@@ -514,14 +514,14 @@ static void malformed_and_mutation_gates(TestCounts *counts,
         &pool, pool_string(&pool, "sha256:source"));
     Atom *source_arguments[1] = {pool_string(&pool, "sha256:source")};
     Atom *source = pool_expr(
-        &pool, "fo-cnf:source-digest", source_arguments, 1u);
+        &pool, "fo-resolution:source-digest", source_arguments, 1u);
     Atom *short_arguments[1] = {source};
     Atom *short_problem = pool_expr(
-        &pool, "fo-cnf:problem", short_arguments, 1u);
+        &pool, "fo-resolution:problem", short_arguments, 1u);
     Atom *unknown_arguments[2] = {
-        source, pool_nullary(&pool, "fo-cnf:clauses-nil")};
+        source, pool_nullary(&pool, "fo-resolution:clauses-nil")};
     Atom *unknown = pool_expr(
-        &pool, "fo-cnf:problem-invented", unknown_arguments, 2u);
+        &pool, "fo-resolution:problem-invented", unknown_arguments, 2u);
     Atom *variable = pool_var(&pool, "P");
     uint32_t original_term_len = language->term_len;
     CettaLdTextV1 saved_second_type = {0};
@@ -550,7 +550,7 @@ static void malformed_and_mutation_gates(TestCounts *counts,
             language, "Problem", variable, 128u, 10000u,
             &status, error, sizeof(error)) &&
             status == CETTA_LD_GROUND_TERM_V1_NON_GROUND_TERM,
-        "a host-language variable cannot replace explicit clause data");
+        "a host-language variable cannot replace explicit problem data");
 
     if (language->type_len > 1u) {
         saved_second_type = language->types[1].name;
@@ -709,8 +709,6 @@ int main(void) {
     CettaLanguageDefCoreV1 language;
     CettaOperationalLanguageDefV1 syntax_wire;
     CettaLanguageDefCoreV1 syntax_language;
-    CettaOperationalLanguageDefV1 resolution_wire;
-    CettaLanguageDefCoreV1 resolution_language;
     char error[512] = {0};
 
     symbol_table_init(&symbols);
@@ -719,13 +717,11 @@ int main(void) {
     cetta_language_def_core_v1_init(&language);
     cetta_op_lang_v1_init(&syntax_wire);
     cetta_language_def_core_v1_init(&syntax_language);
-    cetta_op_lang_v1_init(&resolution_wire);
-    cetta_language_def_core_v1_init(&resolution_language);
     if (!load_language_file(
-            "langdef/logic/first_order_clause_data_v1.metta",
+            "langdef/logic/first_order_resolution_input_v1.metta",
             &wire, &language, error, sizeof(error))) {
         fprintf(stderr, "FAIL: %s\n",
-                error[0] ? error : "load FirstOrderClauseData");
+                error[0] ? error : "load FirstOrderResolutionInput");
         cetta_language_def_core_v1_free(&language);
         cetta_op_lang_v1_free(&wire);
         g_symbols = NULL;
@@ -745,29 +741,12 @@ int main(void) {
         symbol_table_free(&symbols);
         return 1;
     }
-    if (!load_language_file(
-            "langdef/logic/first_order_resolution_input_v1.metta",
-            &resolution_wire, &resolution_language,
-            error, sizeof(error))) {
-        fprintf(stderr, "FAIL: %s\n",
-                error[0] ? error : "load FirstOrderResolutionInput");
-        cetta_language_def_core_v1_free(&resolution_language);
-        cetta_op_lang_v1_free(&resolution_wire);
-        cetta_language_def_core_v1_free(&syntax_language);
-        cetta_op_lang_v1_free(&syntax_wire);
-        cetta_language_def_core_v1_free(&language);
-        cetta_op_lang_v1_free(&wire);
-        g_symbols = NULL;
-        symbol_table_free(&symbols);
-        return 1;
-    }
-
     positive_and_type_gates(&counts, &language);
     typed_pattern_codec_gates(&counts, &language);
     malformed_and_mutation_gates(&counts, &language);
     resource_gates(&counts, &language);
     syntax_tree_language_gates(&counts, &syntax_language);
-    resolution_input_language_gates(&counts, &resolution_language);
+    resolution_input_language_gates(&counts, &language);
     (void)expect(
         &counts,
         strcmp(cetta_ld_ground_term_v1_status_name(
@@ -781,8 +760,6 @@ int main(void) {
                "noncanonical_builtin") == 0,
         "noncanonical builtin status has a stable diagnostic name");
 
-    cetta_language_def_core_v1_free(&resolution_language);
-    cetta_op_lang_v1_free(&resolution_wire);
     cetta_language_def_core_v1_free(&syntax_language);
     cetta_op_lang_v1_free(&syntax_wire);
     cetta_language_def_core_v1_free(&language);

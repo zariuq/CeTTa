@@ -15,6 +15,15 @@
 ; well-formed substitution has distinct keys and no key occurring in any of its
 ; own replacement terms, which rejects direct cycles (`X` bound to `f(X)`) and
 ; indirect ones (`X` to `f(Y)` with `Y` also bound) alike.
+;
+; Input clauses are standardized apart by their occurrences: an input's
+; variables are scoped by its occurrence.  The provenance check in
+; `provenance_check.metta` validates that, rejecting two inputs that share an
+; occurrence and an input whose variables are not those of its own source
+; record.  A step needs no renaming: each parent is instantiated by its own
+; recorded substitution, which is sound whether or not the two parents share a
+; variable, so this checker applies the two substitutions separately and never
+; merges them.
 
 ; ------------------------------------------------------- substitution form --
 

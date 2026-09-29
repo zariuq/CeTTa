@@ -53,5 +53,4 @@ const CettaGsltProviderCatalogV1 cetta_petta_typecheck_v3_core_provider_catalog_
     .source_sha256 = "2a7545980977f9f69ba9560bf36704e05d2f23e5865c8c6a93159656c3112586",
     .requirements = cetta_petta_typecheck_v3_core_provider_catalog_v1_requirements_v1,
     .requirement_count = 5u,
-    .generator_sha256 = "afb1f84a61200fcf2499fe089ad5d3d76ea60c6bd3fce11f665a8b299593483d",
 };

@@ -32,11 +32,11 @@ EXPECTED = {
     "base-pack-digest":
         "a0334e22b53a8319b23870d008af3fcdd27426f26bffd09f14f54565c12936c0",
     "compiler-digest":
-        "4ab357c261d8cf9b3fa9fe8ada3de7fde6263f463006bd81cbd6057e959450bd",
+        "78873ba92495692e2c956fc96ccf58761968e20bad36511913cd887150b93d94",
     "answer-set-digest":
         "4ea00d441b832d4d33fde53ea47ea8495c89da661821916634aedc9698957b8f",
     "program-digest":
-        "7685da3feb748dcd704cbf2186659ecb8d3f77e9c21ba7d4eda679085e90a5f6",
+        "8daf54e72e252be56b82c00bf60ad73fb61dd444817d3f9d889849e89e69805f",
     "productions": "279",
     "instructions": "383",
     "push-slots": "294",
@@ -45,7 +45,7 @@ EXPECTED = {
     "max-stack": "4",
     "tree-bytecode-agreements": "279",
     "projection-action-program-digest":
-        "33010e4e3445e829ef4307e6c063c57857483061f2fdf61ae53252b7b92dffde",
+        "dd97cad2a9746efd6d20883004329b5a69ff764dc46ec976e6da64ada23919a3",
     "projection-action-agreements": "279",
     "projection-specialized-agreements": "279",
     "projection-interpreted-productions": "2",

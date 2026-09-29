@@ -221,6 +221,10 @@ static CettaMatchDecisionPatternClass match_decision_classify(
     void *context, uint32_t source_ref,
     const CettaExprIndex *path, uint32_t path_len,
     Atom *pattern) {
+    /* A list pattern [x... | r] meets lists of every length from its prefix
+     * on, so no coordinate at or below it is a key. */
+    if (atom_is_list_rest(pattern))
+        return CETTA_MATCH_DECISION_PATTERN_OPAQUE;
     return classify
         ? classify(context, source_ref, path, path_len, pattern)
         : CETTA_MATCH_DECISION_PATTERN_STRUCTURAL;
@@ -444,12 +448,14 @@ static bool match_decision_compile_equalities(
     return true;
 }
 
+/* The pattern at a coordinate, or NULL when it has none there.  Below a list
+ * pattern no coordinate lines up with a list's, so none is observed. */
 static Atom *match_decision_pattern_at_path(
     Atom *pattern, const CettaExprIndex *path, uint32_t path_len) {
     Atom *node = pattern;
     for (uint32_t depth = 0u; depth < path_len; depth++) {
         if (!node || node->kind != ATOM_EXPR ||
-            path[depth] >= node->expr.len) {
+            path[depth] >= node->expr.len || atom_is_list_rest(node)) {
             return NULL;
         }
         node = node->expr.elems[path[depth]];
@@ -1389,10 +1395,12 @@ static unsigned char match_decision_policy(const CettaMatchDecisionQuery *query,
 static CettaMatchDecisionQueryState match_decision_resolve_observation(
         const CettaMatchDecisionQuery *query, CettaGsltTermCursorV1 source,
         CettaGsltTermCursorV1 *value) {
+    /* A variable, or a list pattern whose length is open, may meet any key. */
     if (cetta_gslt_term_cursor_resolve_root_v1(
             match_decision_observer(query), source, value) !=
                 CETTA_GSLT_TERM_VIEW_OK_V1 ||
-        !value->source || value->source->kind == ATOM_VAR) {
+        !value->source || value->source->kind == ATOM_VAR ||
+        atom_is_list_rest(value->source)) {
         *value = (CettaGsltTermCursorV1){0};
         return CETTA_MATCH_DECISION_QUERY_UNKNOWN;
     }

@@ -14,7 +14,12 @@ typedef struct {
     uint8_t *bytes;
     size_t len;
     size_t cap;
+    CettaGsltDirectTargetV1 target; /* the dialect this program is spelled in */
 } DirectBufferV1;
+
+static bool direct_target_is_he_v1(const DirectBufferV1 *program) {
+    return program->target == CETTA_GSLT_DIRECT_TARGET_HE_V1;
+}
 
 typedef struct {
     const char *name;
@@ -3169,6 +3174,106 @@ static bool direct_render_input_slot_v1(
            direct_literal_v1(program, name);
 }
 
+/* Whether a mode is one of the requested RELATION:BITS entries. */
+static bool direct_mode_is_requested_v1(
+    const DirectBindingModeV1 *mode,
+    const char *const *entries, size_t entry_count) {
+    size_t name_len = strlen(mode->relation);
+    for (size_t entry = 0u; entry < entry_count; entry++) {
+        const char *separator = strrchr(entries[entry], ':');
+        bool equal = true;
+        if (separator == NULL ||
+            (size_t)(separator - entries[entry]) != name_len ||
+            strncmp(entries[entry], mode->relation, name_len) != 0 ||
+            strlen(separator + 1u) != mode->arity)
+            continue;
+        for (size_t arg = 0u; arg < mode->arity; arg++) {
+            if (separator[arg + 1u] !=
+                (mode->input_ground[arg] ? '1' : '0'))
+                equal = false;
+        }
+        if (equal)
+            return true;
+    }
+    return false;
+}
+
+/* The HE spelling seals data by declaration.  A head declared over Atom
+ * domains does not evaluate its arguments, and a result constructor so
+ * declared is handed back as it is; so every generated head (the mode
+ * projection, its entry) and every result constructor with an output is
+ * declared, and so is each capability's data constructor.  The PeTTa
+ * spelling needs none of this: it seals results with quote. */
+static bool direct_render_atom_domains_v1(
+    DirectBufferV1 *program, size_t count, const char *codomain) {
+    if (!direct_literal_v1(program, " (->"))
+        return false;
+    for (size_t index = 0u; index < count; index++) {
+        if (!direct_literal_v1(program, " Atom"))
+            return false;
+    }
+    return direct_byte_v1(program, (uint8_t)' ') &&
+           direct_literal_v1(program, codomain) &&
+           direct_literal_v1(program, "))\n");
+}
+
+static bool direct_render_he_declarations_v1(
+    DirectBufferV1 *program, const DirectBindingModesV1 *modes,
+    const char *const *entries, size_t entry_count,
+    const DirectOperatorsV1 *relations,
+    const DirectOperatorsV1 *capabilities,
+    bool shared_constructors) {
+    if (!direct_target_is_he_v1(program))
+        return true;
+    if (!direct_literal_v1(
+            program, "; HE seals data by declaration: heads and result "
+                     "constructors over Atom domains\n"))
+        return false;
+    for (size_t index = 0u; index < modes->len; index++) {
+        const DirectBindingModeV1 *mode = &modes->items[index];
+        size_t inputs = 0u;
+        size_t outputs = 0u;
+        if (!mode->selected)
+            continue;
+        for (size_t argument = 0u; argument < mode->arity; argument++) {
+            if (mode->input_ground[argument])
+                inputs++;
+            else
+                outputs++;
+        }
+        if (!direct_literal_v1(program, "(: ") ||
+            !direct_render_mode_name_v1(
+                program, mode->functional ? "gslt:fn:" : "gslt:mode:",
+                mode) ||
+            !direct_render_atom_domains_v1(program, inputs, "%Undefined%"))
+            return false;
+        if (direct_mode_is_requested_v1(mode, entries, entry_count) &&
+            (!direct_literal_v1(program, "(: ") ||
+             !direct_render_mode_name_v1(program, "gslt:entry:", mode) ||
+             !direct_render_atom_domains_v1(
+                 program, inputs, "%Undefined%")))
+            return false;
+        if (shared_constructors && outputs > 0u &&
+            (!direct_literal_v1(program, "(: ") ||
+             !direct_render_mode_name_v1(program, "gslt:result:", mode) ||
+             !direct_render_atom_domains_v1(program, outputs, "Atom")))
+            return false;
+    }
+    for (size_t index = 0u; shared_constructors && index < capabilities->len;
+         index++) {
+        const DirectOperatorV1 *capability = &capabilities->items[index];
+        if (direct_has_operator_v1(
+                relations, capability->name, capability->arity))
+            continue;
+        if (!direct_literal_v1(program, "(: ") ||
+            !direct_literal_v1(program, capability->name) ||
+            !direct_render_atom_domains_v1(
+                program, capability->arity, "Atom"))
+            return false;
+    }
+    return direct_byte_v1(program, (uint8_t)'\n');
+}
+
 /* Public entry names do not expose the functional-mode optimization. The
  * wrapper forwards the complete answer stream, including zero/many answers. */
 static bool direct_render_entries_v1(
@@ -3176,24 +3281,8 @@ static bool direct_render_entries_v1(
     const char *const *entries, size_t entry_count) {
     for (size_t index = 0u; index < modes->len; index++) {
         const DirectBindingModeV1 *mode = &modes->items[index];
-        bool requested = false;
-        size_t name_len = strlen(mode->relation);
-        for (size_t entry = 0u; entry < entry_count; entry++) {
-            const char *separator = strrchr(entries[entry], ':');
-            if (separator == NULL ||
-                (size_t)(separator - entries[entry]) != name_len ||
-                strncmp(entries[entry], mode->relation, name_len) != 0 ||
-                strlen(separator + 1u) != mode->arity)
-                continue;
-            bool equal = true;
-            for (size_t arg = 0u; arg < mode->arity; arg++) {
-                if (separator[arg + 1u] !=
-                    (mode->input_ground[arg] ? '1' : '0'))
-                    equal = false;
-            }
-            requested = requested || equal;
-        }
-        if (!requested || !mode->selected)
+        if (!direct_mode_is_requested_v1(mode, entries, entry_count) ||
+            !mode->selected)
             continue;
         if (!direct_literal_v1(program, "; gslt-lowered-entry-v1 ") ||
             !direct_render_mode_name_v1(program, "gslt:entry:", mode) ||
@@ -3314,6 +3403,21 @@ static bool direct_render_function_call_v1(
     return direct_byte_v1(program, (uint8_t)')');
 }
 
+/* The binder of a guard whose value is not used.  PeTTa reads every $_ as a
+ * fresh anonymous variable, so one spelling serves every guard.  HE reads
+ * $_ as an ordinary variable: a second guard in the same body would have to
+ * unify with the first guard's value, so each guard gets its own binder. */
+static bool direct_render_guard_binder_v1(
+    DirectBufferV1 *program, size_t goal_index) {
+    char name[48];
+    int length;
+    if (!direct_target_is_he_v1(program))
+        return direct_literal_v1(program, "$_ ");
+    length = snprintf(name, sizeof(name), "$__gslt_guard_v1_%zu ", goal_index);
+    return length > 0 && (size_t)length < sizeof(name) &&
+           direct_literal_v1(program, name);
+}
+
 static bool direct_render_selected_mode_call_v1(
     DirectBufferV1 *program, const Atom *application,
     const DirectBindingModeV1 *mode,
@@ -3328,7 +3432,11 @@ static bool direct_render_selected_mode_call_v1(
                direct_render_function_call_v1(
                    program, application, mode, scratch) &&
                direct_literal_v1(program, "))");
-    if (caller_mode == NULL || !caller_mode->functional)
+    /* A semidet callee has at most one answer by the binding-mode analysis.
+     * PeTTa still cuts its choice point with once; HE has no once and needs
+     * none, its answers being a set. */
+    if ((caller_mode == NULL || !caller_mode->functional) &&
+        !direct_target_is_he_v1(program))
         return direct_literal_v1(program, "(once ") &&
                direct_render_function_call_v1(
                    program, application, mode, scratch) &&
@@ -3369,6 +3477,9 @@ static bool direct_render_function_result_v1(
 static bool direct_render_function_value_v1(
     DirectBufferV1 *program, const Atom *application,
     const DirectBindingModeV1 *mode, Arena *scratch) {
+    if (direct_target_is_he_v1(program))
+        return direct_render_function_result_v1(
+            program, application, mode, scratch);
     return direct_literal_v1(program, "(quote ") &&
            direct_render_function_result_v1(
                program, application, mode, scratch) &&
@@ -3437,7 +3548,7 @@ static bool direct_render_function_rule_v1(
                 !direct_render_selected_mode_call_v1(
                     program, goal, callee_mode, mode, scratch))
                 goto done;
-        } else if (!direct_literal_v1(program, "$_ ") ||
+        } else if (!direct_render_guard_binder_v1(program, index) ||
                    !direct_render_call_v1(program, goal, scratch)) {
             goto done;
         }
@@ -3777,7 +3888,9 @@ static bool direct_render_factored_group_v1(
                 program, arg_nodes[argument], scratch))
             goto done;
     }
-    if (!direct_literal_v1(program, ")\n   (let (quote "))
+    if (!direct_literal_v1(program, direct_target_is_he_v1(program)
+                                        ? ")\n   (let "
+                                        : ")\n   (let (quote "))
         goto done;
     if (output_slots == 0u) {
         if (!direct_literal_v1(program, "()"))
@@ -3865,7 +3978,9 @@ static bool direct_render_factored_group_v1(
         if (!direct_literal_v1(program, name))
             goto done;
     }
-    if (!direct_literal_v1(program, ")\n   (quote (") ||
+    if (!direct_literal_v1(program, direct_target_is_he_v1(program)
+                                        ? ")\n   ("
+                                        : ")\n   (quote (") ||
         !direct_render_mode_name_v1(program, "gslt:result:", mode))
         goto done;
     for (size_t argument = 0u; argument < mode->arity; argument++) {
@@ -3876,7 +3991,9 @@ static bool direct_render_factored_group_v1(
                 program, arg_nodes[argument], scratch))
             goto done;
     }
-    if (!direct_literal_v1(program, "))))\n\n"))
+    if (!direct_literal_v1(program, direct_target_is_he_v1(program)
+                                        ? ")))\n\n"
+                                        : "))))\n\n"))
         goto done;
 
     /* Index facts: one compact equation per source fact. */
@@ -3897,7 +4014,9 @@ static bool direct_render_factored_group_v1(
                     false, &first, scratch))
                 goto done;
         }
-        if (!direct_literal_v1(program, ") (quote "))
+        if (!direct_literal_v1(program, direct_target_is_he_v1(program)
+                                            ? ") "
+                                            : ") (quote "))
             goto done;
         if (output_slots == 0u) {
             if (!direct_literal_v1(program, "()"))
@@ -3919,7 +4038,9 @@ static bool direct_render_factored_group_v1(
                 !direct_byte_v1(program, (uint8_t)')'))
                 goto done;
         }
-        if (!direct_literal_v1(program, "))\n"))
+        if (!direct_literal_v1(program, direct_target_is_he_v1(program)
+                                            ? ")\n"
+                                            : "))\n"))
             goto done;
     }
     *factored = true;
@@ -4217,7 +4338,7 @@ static bool direct_render_rule_v1(DirectBufferV1 *program,
                 !direct_render_selected_mode_call_v1(
                     program, goal, callee_mode, NULL, scratch))
                 goto done;
-        } else if (!direct_literal_v1(program, "$_ ") ||
+        } else if (!direct_render_guard_binder_v1(program, index) ||
                    !direct_render_call_v1(program, goal, scratch)) {
             goto done;
         }
@@ -4344,6 +4465,7 @@ static bool direct_render_target_equations_v1(
 static bool direct_compile_petta_v1(
     Atom *const *presentations,
     size_t presentation_count,
+    CettaGsltDirectTargetV1 target,
     const char *const *entry_modes,
     size_t entry_mode_count,
     bool closed_entry_residual,
@@ -4370,6 +4492,7 @@ static bool direct_compile_petta_v1(
     Arena scratch;
     bool ok = false;
 
+    program.target = target;
     if (presentations == NULL || presentation_count == 0u ||
         (entry_mode_count > 0u && entry_modes == NULL) ||
         (closed_entry_residual && entry_mode_count == 0u) ||
@@ -4490,7 +4613,9 @@ static bool direct_compile_petta_v1(
 
     if (!direct_literal_v1(
             &program,
-            "; generated by direct compositional GSLT-to-PeTTa lowering\n") ||
+            direct_target_is_he_v1(&program)
+                ? "; generated by direct compositional GSLT-to-HE lowering\n"
+                : "; generated by direct compositional GSLT-to-PeTTa lowering\n") ||
         !direct_literal_v1(&program, "; source-composition-sha256 ") ||
         !direct_literal_v1(&program, source_digest_out) ||
         !direct_literal_v1(&program, "\n") ||
@@ -4516,6 +4641,13 @@ static bool direct_compile_petta_v1(
             goto allocation_failure;
     }
     if (!direct_byte_v1(&program, (uint8_t)'\n'))
+        goto allocation_failure;
+    /* The admitted family shares the result constructors and capabilities
+     * of the ordinary program it is appended to; only its own prefixed
+     * heads are new. */
+    if (!direct_render_he_declarations_v1(
+            &program, &binding_modes, entry_modes, entry_mode_count,
+            &relations, &capabilities, admitted_language == NULL))
         goto allocation_failure;
     for (size_t index = 0u; index < capabilities.len; index++) {
         if (admitted_language != NULL) break;
@@ -4597,6 +4729,7 @@ done:
 bool cetta_gslt_petta_direct_selected_v1(
     Atom *const *presentations,
     size_t presentation_count,
+    CettaGsltDirectTargetV1 target,
     const char *const *entry_modes,
     size_t entry_mode_count,
     uint8_t **program_out,
@@ -4606,7 +4739,7 @@ bool cetta_gslt_petta_direct_selected_v1(
     char *error,
     size_t error_size) {
     return direct_compile_petta_v1(
-        presentations, presentation_count, entry_modes, entry_mode_count,
+        presentations, presentation_count, target, entry_modes, entry_mode_count,
         false, NULL, NULL, NULL, 0u, 0u, program_out, program_len_out, rule_count_out,
         source_digest_out, error, error_size);
 }
@@ -4614,6 +4747,7 @@ bool cetta_gslt_petta_direct_selected_v1(
 bool cetta_gslt_petta_direct_closed_v1(
     Atom *const *presentations,
     size_t presentation_count,
+    CettaGsltDirectTargetV1 target,
     const char *const *entry_modes,
     size_t entry_mode_count,
     uint8_t **program_out,
@@ -4623,7 +4757,7 @@ bool cetta_gslt_petta_direct_closed_v1(
     char *error,
     size_t error_size) {
     return direct_compile_petta_v1(
-        presentations, presentation_count, entry_modes, entry_mode_count,
+        presentations, presentation_count, target, entry_modes, entry_mode_count,
         true, NULL, NULL, NULL, 0u, 0u, program_out, program_len_out, rule_count_out,
         source_digest_out, error, error_size);
 }
@@ -4631,6 +4765,7 @@ bool cetta_gslt_petta_direct_closed_v1(
 bool cetta_gslt_petta_direct_v1(
     Atom *const *presentations,
     size_t presentation_count,
+    CettaGsltDirectTargetV1 target,
     uint8_t **program_out,
     size_t *program_len_out,
     size_t *rule_count_out,
@@ -4638,13 +4773,14 @@ bool cetta_gslt_petta_direct_v1(
     char *error,
     size_t error_size) {
     return cetta_gslt_petta_direct_selected_v1(
-        presentations, presentation_count, NULL, 0u,
+        presentations, presentation_count, target, NULL, 0u,
         program_out, program_len_out, rule_count_out,
         source_digest_out, error, error_size);
 }
 
 bool cetta_gslt_petta_direct_native_types_v1(
     Atom *const *presentations, size_t presentation_count,
+    CettaGsltDirectTargetV1 target,
     const Atom *native_type_packet,
     const char *const *entry_modes, size_t entry_mode_count,
     bool closed_entry_residual,
@@ -4654,7 +4790,7 @@ bool cetta_gslt_petta_direct_native_types_v1(
         return direct_error_v1(error, error_size,
                                "missing integer native-type packet");
     return direct_compile_petta_v1(
-        presentations, presentation_count, entry_modes, entry_mode_count,
+        presentations, presentation_count, target, entry_modes, entry_mode_count,
         closed_entry_residual, native_type_packet,
         NULL, NULL, 0u, 0u,
         program_out, program_len_out, rule_count_out,
@@ -4663,6 +4799,7 @@ bool cetta_gslt_petta_direct_native_types_v1(
 
 bool cetta_gslt_petta_direct_admitted_v1(
     Atom *const *presentations, size_t presentation_count,
+    CettaGsltDirectTargetV1 target,
     const Atom *native_type_packet,
     const char *const *entry_modes, size_t entry_mode_count,
     const CettaLanguageDefCoreV1 *admission_language,
@@ -4722,11 +4859,11 @@ bool cetta_gslt_petta_direct_admitted_v1(
     if (relation == NULL) goto done;
     memcpy(relation, admission_entry, relation_len);
     relation[relation_len] = '\0';
-    if (!direct_compile_petta_v1(presentations, presentation_count,
+    if (!direct_compile_petta_v1(presentations, presentation_count, target,
             entry_modes, entry_mode_count, true, native_type_packet,
             NULL, NULL, 0u, 0u, &raw, &raw_len, rule_count_out,
             source_digest_out, error, error_size) ||
-        !direct_compile_petta_v1(presentations, presentation_count,
+        !direct_compile_petta_v1(presentations, presentation_count, target,
             &selected, 1u, true, native_type_packet,
             admission_language, relation, input, type,
             &typed, &typed_len, &typed_count, typed_digest, error, error_size)) goto done;
@@ -4741,7 +4878,7 @@ bool cetta_gslt_petta_direct_admitted_v1(
      * It checks the live authority, not an input's claimed admission tag.
      * Failed admission/identity checks preserve the ordinary entry route. */
     if (!direct_literal_v1(&combined,
-            "\n; Load the checked boundary before PeTTa translates its literal calls.\n"
+            "\n; Load the checked boundary before its literal calls are translated.\n"
             "!(let $_ (import! &self langdef) (empty))\n"
             "; checked LanguageDef admission boundary\n(= (gslt:admitted-entry:") ||
         !direct_literal_v1(&combined, selected) ||

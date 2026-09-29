@@ -102,6 +102,11 @@ static AtomId host_projection_expression(void *context,
     return parser_host_projection_v1_expression(context, children, len);
 }
 
+static AtomId host_projection_list(void *context, const AtomId *elems,
+                                   size_t elem_len, AtomId rest) {
+    return parser_host_projection_v1_list(context, elems, elem_len, rest);
+}
+
 int main(void) {
     static const char document[] =
         "#foo ($x $x) \"A\\n\\u{03bb}\" 2/4";
@@ -291,6 +296,7 @@ int main(void) {
             .variable_bytes = host_projection_variable,
             .string_bytes = host_projection_string,
             .expression = host_projection_expression,
+            .list = host_projection_list,
         };
         GSLTDirectReaderV1Plan mutable_plan = he_reader_direct_v1_plan;
         GSLTDirectReaderV1Receipt direct_receipt;

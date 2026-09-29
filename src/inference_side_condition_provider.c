@@ -84,26 +84,10 @@ static bool pattern_abt_signature_add(
     AbtSignature *signature = &context->signature;
     if (abt_signature_lookup(signature, head, arity))
         return true;
-    if (signature->len == signature->cap) {
-        uint32_t next = signature->cap ? signature->cap * 2u : 8u;
-        if (next < signature->cap ||
-            (size_t)next > SIZE_MAX / sizeof(*signature->entries)) {
-            context->status = CETTA_INFERENCE_PATTERN_ABT_RESOURCE_LIMIT;
-            return false;
-        }
-        signature->entries = cetta_realloc(
-            signature->entries, sizeof(*signature->entries) * (size_t)next);
-        signature->cap = next;
+    if (!abt_signature_add_fixed(signature, head, arity, depths)) {
+        context->status = CETTA_INFERENCE_PATTERN_ABT_RESOURCE_LIMIT;
+        return false;
     }
-    AbtSignatureEntry *entry = &signature->entries[signature->len];
-    entry->head = head;
-    entry->arity = arity;
-    entry->depths = arity
-        ? cetta_malloc(sizeof(*entry->depths) * (size_t)arity) : NULL;
-    if (arity)
-        memcpy(entry->depths, depths,
-               sizeof(*entry->depths) * (size_t)arity);
-    signature->len++;
     return true;
 }
 
@@ -555,7 +539,7 @@ static CettaGsltProviderOutcomeV1 name_distinct_query(
     }
     if (answer_limit == 0u)
         return CETTA_GSLT_PROVIDER_ANSWER_LIMIT;
-    if (strcmp(left->ground.sval, right->ground.sval) == 0)
+    if (atom_string_equal(left, right))
         return CETTA_GSLT_PROVIDER_COMPLETED;
     return side_condition_answer(
         answer_arena, goal, answers, error, error_size);

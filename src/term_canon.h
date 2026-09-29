@@ -2,6 +2,7 @@
 #define CETTA_TERM_CANON_H
 
 #include "atom.h"
+#include "var_index.h"
 
 /*
  * Shared variable-remapping seam for canonical keys and re-materialization.
@@ -24,6 +25,7 @@ typedef struct CettaVarMap {
     CettaVarMapEntry *items;
     uint32_t len;
     uint32_t cap;
+    CettaVarIndex index;
 } CettaVarMap;
 
 void cetta_var_map_init(CettaVarMap *map);

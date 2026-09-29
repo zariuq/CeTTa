@@ -6580,7 +6580,7 @@ static PettaBlockEffect petta_block_inferred_call_effect(
         Bindings bindings;
         bindings_init(&bindings);
         bool matches = match_atoms(
-            fresh_call, fresh_form->expr.elems[1], &bindings);
+            fresh_call, fresh_form->expr.elems[1], &bindings, &check->scratch);
         if (!matches) {
             bindings_free(&bindings);
             continue;
@@ -6877,7 +6877,8 @@ static PettaBlockEffect petta_block_call_selection_effect(
         Bindings bindings;
         bindings_init(&bindings);
         bool matches = match_atoms(
-            fresh_call, fresh_equation->expr.elems[1], &bindings);
+            fresh_call, fresh_equation->expr.elems[1], &bindings,
+                &check->scratch);
         bindings_free(&bindings);
         if (!matches)
             continue;
@@ -7521,7 +7522,7 @@ static PettaBlockEffect petta_block_expression_effect(
                 Bindings match;
                 bindings_init(&match);
                 literal_match = literal_match ||
-                    match_atoms(pattern, scrutinee, &match);
+                    match_atoms(pattern, scrutinee, &match, &check->scratch);
                 bindings_free(&match);
             }
             effect = petta_block_effect_join(
@@ -7583,7 +7584,7 @@ static PettaBlockEffect petta_block_expression_effect(
             if (!atom_has_vars(pattern) && !atom_has_vars(value)) {
                 Bindings match;
                 bindings_init(&match);
-                bool fits = match_atoms(pattern, value, &match);
+                bool fits = match_atoms(pattern, value, &match, &check->scratch);
                 bindings_free(&match);
                 effect = fits
                     ? effect : petta_block_effect_join(
@@ -7643,7 +7644,8 @@ static bool petta_block_equation_lhs_overlap(
         return true;
     Bindings bindings;
     bindings_init(&bindings);
-    bool overlap = match_atoms(fresh_left, fresh_right, &bindings);
+    bool overlap = match_atoms(fresh_left, fresh_right, &bindings,
+                                   &check->scratch);
     bindings_free(&bindings);
     return overlap;
 }

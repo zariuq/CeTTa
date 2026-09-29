@@ -269,6 +269,24 @@ bool rsdfa_v1_ascii_transition_index_validate(
 void rsdfa_v1_subset_table_init(RSDFAV1SubsetTable *table);
 void rsdfa_v1_subset_table_free(RSDFAV1SubsetTable *table);
 
+/*
+ * Size of one tag's accepted language, counted exactly up to two.  A string
+ * is accepted for the tag when reading it from the start state reaches a state
+ * whose ordinary or EOF-conditioned accepts contain the tag; a transition
+ * interval contributes one string per scalar.  *count is 0, 1 or 2, where 2
+ * means two or more (every infinite language included).  When *count is 1 and
+ * singleton_out is supplied, the unique string is written as scalars; a
+ * string longer than singleton_cap reports false.  The program must already
+ * be valid.
+ */
+bool rsdfa_v1_program_tag_language_size(
+    const RSDFAV1Program *program,
+    uint32_t tag,
+    uint32_t *count,
+    uint32_t *singleton_out,
+    uint32_t singleton_cap,
+    uint32_t *singleton_len);
+
 bool rsdfa_v1_program_validate(
     const RSDFAV1Program *program,
     char *error_buf,

@@ -87,11 +87,20 @@ AtomId parser_host_projection_v1_string_bytes(
 AtomId parser_host_projection_v1_expression(
     ParserHostProjectionV1 *projection, const AtomId *children,
     CettaExprLen arity);
+/* The list [elems...], or the list pattern [elems... | rest] when rest is not
+ * CETTA_ATOM_ID_NONE; a rest that is itself a list is spliced in. */
+AtomId parser_host_projection_v1_list(
+    ParserHostProjectionV1 *projection, const AtomId *elems,
+    CettaExprLen elem_len, AtomId rest);
 
 /* Parse a single S-expression from a string.
    Advances *pos past the parsed expression.
    Returns NULL on end-of-input or error. */
 Atom *parse_sexpr(Arena *a, const char *text, size_t *pos);
+/* The same over text_len bytes, which may hold NUL inside string literals
+   and comments; text[text_len] must be a readable NUL, as it is after a
+   string atom's bytes.  The other _n entries below read text the same way. */
+Atom *parse_sexpr_n(Arena *a, const char *text, size_t text_len, size_t *pos);
 
 /* Parse a single S-expression directly into the term universe and return its
    canonical AtomId. Returns CETTA_ATOM_ID_NONE on end-of-input or error. */
@@ -100,10 +109,13 @@ AtomId parse_sexpr_to_id(TermUniverse *universe, const char *text, size_t *pos);
 /* Return whether source text has balanced strings/parentheses/comments under
    the reader's delimiter rules. */
 bool parser_text_well_formed(const char *text);
+bool parser_text_well_formed_n(const char *text, size_t text_len);
 
 /* Advance *pos past delimiters and return whether no non-delimiter text
    remains. */
 bool parser_rest_is_delimiters(const char *text, size_t *pos);
+bool parser_rest_is_delimiters_n(const char *text, size_t text_len,
+                                 size_t *pos);
 
 /* Canonicalize reader sugar for qualified namespaces.
    This rewrites dotted qualified names such as mork.foo, runtime.bar, and
@@ -122,6 +134,10 @@ bool parser_rational_literals_enabled(void);
    Other language profiles retain their own reader. */
 bool parser_set_universal_name_syntax_enabled(bool enabled);
 bool parser_universal_name_syntax_enabled(void);
+/* CeTTa's list syntax [x y]; off in the compatibility profiles, where
+ * [a,b] is one symbol. */
+bool parser_set_list_syntax_enabled(bool enabled);
+bool parser_list_syntax_enabled(void);
 
 /* Prime's bare `$` is a fresh anonymous variable.  Literal and shared modes
    remain internal tournament controls.  Every mode is deliberately inactive
@@ -161,10 +177,15 @@ const ParserSyntaxFormSpec *parser_syntax_form_specs(size_t *count_out);
 /* Parse one complete source form. A leading top-level ! is represented as
    (syn:exec form), so source directives remain ordinary inspectable data. */
 Atom *parser_read_source_form(Arena *a, const char *text);
+Atom *parser_read_source_form_n(Arena *a, const char *text, size_t text_len);
 
 /* Render reader-admissible syntax. Returns NULL for runtime-only grounded
    handles, whose debug renderings are intentionally not reader syntax. */
 char *parser_render_syntax(Arena *a, Atom *atom, ParserSyntaxPrintMode mode);
+/* The rendered bytes exactly, with their length: a string printed raw keeps
+ * its NUL. */
+char *parser_render_syntax_bytes(Arena *a, Atom *atom,
+                                 ParserSyntaxPrintMode mode, size_t *len_out);
 
 bool parser_syn_exec_payload(Atom *form, Atom **payload_out);
 bool parser_syn_exec_payload_id(const TermUniverse *universe, AtomId form_id,

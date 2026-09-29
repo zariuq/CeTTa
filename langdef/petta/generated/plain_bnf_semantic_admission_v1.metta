@@ -2703,7 +2703,7 @@
 ; gslt-lowered-entry-v1 admitted:gslt:entry:BNFValidateGrammarDiscoveryV1:10
 (= (admitted:gslt:entry:BNFValidateGrammarDiscoveryV1:10 $__gslt_input_v1_0) (admitted:gslt:mode:BNFValidateGrammarDiscoveryV1:10 $__gslt_input_v1_0))
 
-; Load the checked boundary before PeTTa translates its literal calls.
+; Load the checked boundary before its literal calls are translated.
 !(let $_ (import! &self langdef) (empty))
 ; checked LanguageDef admission boundary
 (= (gslt:admitted-entry:BNFValidateGrammarDiscoveryV1:10 $authority $input)

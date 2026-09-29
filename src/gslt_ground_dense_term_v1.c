@@ -630,9 +630,12 @@ cetta_gslt_ground_dense_term_match_impl_v1(
                 return CETTA_GSLT_GROUND_DENSE_MISMATCH_V1;
             continue;
         }
+        /* A list never meets an expression. */
         if (node->kind != CETTA_GSLT_GROUND_DENSE_EXPRESSION_NODE_V1 ||
             pair.target->kind != ATOM_EXPR ||
             pair.target->expr.len != node->edge_len ||
+            atom_is_list_form(pair.target) !=
+                atom_is_list_form(node->source) ||
             node->edge_begin > program_impl->edge_len ||
             node->edge_len > program_impl->edge_len - node->edge_begin)
             return node->kind ==

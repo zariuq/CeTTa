@@ -47,5 +47,4 @@ const CettaGsltProviderCatalogV1 cetta_prime_nik_side_condition_provider_catalog
     .source_sha256 = "1506f94f834c2aa3f568340a7751ffc9a50212a373a5e7e53bb0da0826c8b817",
     .requirements = cetta_prime_nik_side_condition_provider_catalog_v1_requirements_v1,
     .requirement_count = 4u,
-    .generator_sha256 = "afb1f84a61200fcf2499fe089ad5d3d76ea60c6bd3fce11f665a8b299593483d",
 };

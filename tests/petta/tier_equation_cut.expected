@@ -1,0 +1,21 @@
+((one a))
+()
+(1)
+(positive)
+(other)
+(reached)
+((a in) (b in))
+true
+(pair true done)
+(chose-a)
+(other fallback)
+((found 20) never)
+((found 40))
+(x)
+true
+((a b) (a c) (b c))
+(())
+(())
+((a b) (a c) (a d) (b c) (b d) (c d))
+true
+924

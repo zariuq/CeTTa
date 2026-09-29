@@ -87,6 +87,19 @@ typedef struct {
     uint32_t unicode_value_max;
     uint32_t unicode_radix;
 
+    /* [x y] and [x y | rest]; list_open is 0 when the language has no lists.
+     * Elements are separated by layout.  Inside a list, words and variables
+     * use the list classes and end at list_boundary, which holds both
+     * brackets; the bar alone marks the rest, and a word may start with the
+     * bar when more follows. */
+    uint32_t list_open;
+    uint32_t list_close;
+    uint32_t list_rest;
+    const GSLTDirectScalarClassV1 *list_word_start;
+    const GSLTDirectScalarClassV1 *list_word_tail;
+    GSLTDirectBoundaryV1 list_boundary;
+    const GSLTDirectScalarClassV1 *list_variable_tail;
+
     uint32_t depth_limit;
 } GSLTDirectReaderV1Plan;
 
@@ -109,6 +122,10 @@ typedef struct {
                            size_t byte_len);
     AtomId (*expression)(void *context, const AtomId *children,
                          size_t child_len);
+    /* The list of the elements, or the list pattern they begin when rest is
+     * not CETTA_ATOM_ID_NONE.  Required when the plan has lists. */
+    AtomId (*list)(void *context, const AtomId *elems, size_t elem_len,
+                   AtomId rest);
 } GSLTDirectAtomProjectionV1;
 
 /*
@@ -182,6 +199,19 @@ typedef struct {
     uint32_t prefix_rule_len;
     const GSLTDirectTokenRuleV1 *token_rules;
     uint32_t token_rule_len;
+    /* Lists [x y] and list patterns [x y | rest]; list_token_rules is NULL
+     * when the presentation has no lists.  Elements are separated by layout,
+     * and the bar alone, ending at list_bar_boundary, marks the rest.  Inside
+     * a list the tokens are the token_rules, in the same order, with list
+     * classes and boundaries, followed by the word led by the bar. */
+    uint32_t list_open;
+    uint32_t list_close;
+    uint32_t list_rest;
+    GSLTDirectBoundaryV1 list_bar_boundary;
+    const GSLTDirectTokenRuleV1 *list_token_rules;
+    uint32_t list_token_rule_len;
+    /* The prefix forms inside a list, in the order of prefix_rules. */
+    const GSLTDirectPrefixRuleV1 *list_prefix_rules;
     /* Explicit nesting budget, not a C recursion bound. Generated readers
      * use the representable source-size bound; callers may choose less. */
     uint32_t depth_limit;
@@ -210,12 +240,16 @@ typedef struct {
                          size_t child_len);
     AtomId (*prefix)(void *context, GSLTDirectPrefixRoleV1 role,
                      AtomId payload);
+    /* The list of the elements, or the list pattern they begin when rest is
+     * not CETTA_ATOM_ID_NONE.  Required when the plan has lists. */
+    AtomId (*list)(void *context, const AtomId *elems, size_t elem_len,
+                   AtomId rest);
 } GSLTDirectPrefixProjectionV1;
 
 /*
  * PeTTa's source language is a composition of two independently authored
- * readers: an escape-oblivious document splitter followed by a per-form
- * S-expression reader.  This plan keeps the two class families distinct so
+ * readers: a document splitter (which keeps escaped scalars inside strings)
+ * followed by a per-form S-expression reader.  This plan keeps the two class families distinct so
  * specialization cannot accidentally replace either LanguageDef with HE's
  * one-stage delimiter policy.
  */
@@ -256,6 +290,16 @@ typedef struct {
     const GSLTDirectCodepointMapV1 *string_escape_map;
     uint32_t string_escape_map_len;
     bool string_escape_identity_fallback;
+    /* [x y] and [x y | rest]; list_open is 0 without lists.  Elements are
+     * separated by layout; inside a list a token uses the list classes and
+     * ends at list_token_boundary, which holds both brackets; the bar alone
+     * marks the rest. */
+    uint32_t list_open;
+    uint32_t list_close;
+    uint32_t list_rest;
+    const GSLTDirectScalarClassV1 *list_token_first;
+    const GSLTDirectScalarClassV1 *list_token;
+    const GSLTDirectScalarClassV1 *list_token_boundary;
     uint32_t depth_limit;
 } GSLTDirectPeTTaReaderV1Plan;
 
@@ -283,6 +327,9 @@ typedef struct {
                          size_t child_len);
     bool (*finish_form)(void *context, bool runnable, AtomId value,
                         AtomId output[2], uint32_t *output_len);
+    /* As for GSLTDirectAtomProjectionV1.list. */
+    AtomId (*list)(void *context, const AtomId *elems, size_t elem_len,
+                   AtomId rest);
 } GSLTDirectPeTTaProjectionV1;
 
 bool gslt_direct_reader_v1_plan_validate(

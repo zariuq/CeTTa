@@ -620,7 +620,7 @@ static bool prime_int_field(Atom *atom, const char *head, int64_t value) {
 static bool prime_string_value(Atom *atom, const char *value) {
     return atom && atom->kind == ATOM_GROUNDED &&
            atom->ground.gkind == GV_STRING && atom->ground.sval &&
-           strcmp(atom->ground.sval, value) == 0;
+           atom_string_equals_cstr(atom, value);
 }
 
 static bool prime_nik_authority_valid(
@@ -2395,7 +2395,7 @@ static bool prime_regular_pattern_name_equals(
     Atom *name, const char *text) {
     return name && text && name->kind == ATOM_GROUNDED &&
            name->ground.gkind == GV_STRING && name->ground.sval &&
-           strcmp(name->ground.sval, text) == 0;
+           atom_string_equals_cstr(name, text);
 }
 
 static bool prime_regular_declaration_pattern_index(

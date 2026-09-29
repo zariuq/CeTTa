@@ -26,6 +26,17 @@
 ; source occurrences and are therefore always disjoint; the restriction can
 ; only skip inferences between a derived clause and a parent it descends from.
 ; No completeness claim is made for this search.
+;
+; The search keeps a set of support.  When the problem has negated conjecture
+; clauses, only they start as given clauses; every other input clause starts
+; active and is resolved against, but never selected, so each inference
+; involves a descendant of the negated conjecture.  A problem without one
+; selects every input clause in turn.
+;
+; Passive clauses wait in buckets by literal count.  The next given clause is
+; the oldest clause of the smallest count, unit clauses first, except that
+; every third one is the oldest passive clause of any count, so that no clause
+; waits forever behind a stream of shorter ones.
 
 ; ---------------------------------------------------------------- literals --
 
@@ -97,12 +108,6 @@
      (let $extended (cons-atom $first $acc)
        (tptp-resolution-example:search:reverse-list $rest $extended))))
 
-(= (tptp-resolution-example:search:append-list () $right) $right)
-
-(= (tptp-resolution-example:search:append-list $left $right)
-   (let ($first $rest) (decons-atom $left)
-     (let $tail (tptp-resolution-example:search:append-list $rest $right)
-       (cons-atom $first $tail))))
 
 ; --------------------------------------------------------------- variables --
 
@@ -328,6 +333,87 @@
            (FOSearch.FoundEmpty $identifier)
            (tptp-resolution-example:search:find-empty $rest)))))
 
+; ---------------------------------------------------------------- passive --
+;
+; The passive set is a host list of (FOSearch.Bucket COUNT CLAUSES), in
+; increasing literal count; each bucket keeps its clauses oldest first.
+
+(= (tptp-resolution-example:search:passive-insert $clause $buckets)
+   (let (FOSearch.Clause $identifier $literals) $clause
+     (let $count (tptp-resolution-example:search:literals-length $literals)
+       (tptp-resolution-example:search:bucket-insert $count $clause $buckets ()))))
+
+(= (tptp-resolution-example:search:bucket-insert $count $clause $buckets $before)
+   (if (== $buckets ())
+       (let $bucket (FOSearch.Bucket $count ($clause))
+         (union-atom $before ($bucket)))
+       (let ($first $rest) (decons-atom $buckets)
+         (let (FOSearch.Bucket $bucket-count $clauses) $first
+           (if (== $bucket-count $count)
+               (let $extended (union-atom $clauses ($clause))
+                 (let $bucket (FOSearch.Bucket $count $extended)
+                   (union-atom $before (cons-atom $bucket $rest))))
+               (if (< $count $bucket-count)
+                   (let $bucket (FOSearch.Bucket $count ($clause))
+                     (union-atom $before (cons-atom $bucket $buckets)))
+                   (let $next (union-atom $before ($first))
+                     (tptp-resolution-example:search:bucket-insert
+                       $count $clause $rest $next))))))))
+
+(= (tptp-resolution-example:search:passive-insert-all () $buckets) $buckets)
+
+(= (tptp-resolution-example:search:passive-insert-all $clauses $buckets)
+   (let ($first $rest) (decons-atom $clauses)
+     (let $inserted (tptp-resolution-example:search:passive-insert $first $buckets)
+       (tptp-resolution-example:search:passive-insert-all $rest $inserted))))
+
+; The oldest clause of the smallest literal count, and the passive set without
+; it.
+(= (tptp-resolution-example:search:passive-select $buckets)
+   (let ($first $rest) (decons-atom $buckets)
+     (let (FOSearch.Bucket $count $clauses) $first
+       (let ($given $remaining) (decons-atom $clauses)
+         (if (== $remaining ())
+             (FOSearch.Selected $given $rest)
+             (let $bucket (FOSearch.Bucket $count $remaining)
+               (FOSearch.Selected $given (cons-atom $bucket $rest))))))))
+
+(= (tptp-resolution-example:search:clause-age
+      (FOSearch.Clause (fo-proof:derived-clause $index) $literals))
+   $index)
+
+(= (tptp-resolution-example:search:clause-age
+      (FOSearch.Clause (fo-proof:input-clause $occurrence) $literals))
+   -1)
+
+(= (tptp-resolution-example:search:oldest-age () $best) $best)
+
+(= (tptp-resolution-example:search:oldest-age $buckets $best)
+   (let ($first $rest) (decons-atom $buckets)
+     (let (FOSearch.Bucket $count $clauses) $first
+       (let $age (tptp-resolution-example:search:clause-age (index-atom $clauses 0))
+         (let $next (if (< $age $best) $age $best)
+           (tptp-resolution-example:search:oldest-age $rest $next))))))
+
+(= (tptp-resolution-example:search:take-oldest $age $buckets $before)
+   (let ($first $rest) (decons-atom $buckets)
+     (let (FOSearch.Bucket $count $clauses) $first
+       (let ($head $remaining) (decons-atom $clauses)
+         (if (== (tptp-resolution-example:search:clause-age $head) $age)
+             (if (== $remaining ())
+                 (FOSearch.Selected $head (union-atom $before $rest))
+                 (let $bucket (FOSearch.Bucket $count $remaining)
+                   (FOSearch.Selected $head
+                     (union-atom $before (cons-atom $bucket $rest)))))
+             (let $next (union-atom $before ($first))
+               (tptp-resolution-example:search:take-oldest $age $rest $next)))))))
+
+; The oldest passive clause of any literal count, and the passive set without
+; it.
+(= (tptp-resolution-example:search:passive-select-oldest $buckets)
+   (let $age (tptp-resolution-example:search:oldest-age $buckets 1000000000)
+     (tptp-resolution-example:search:take-oldest $age $buckets ())))
+
 ; -------------------------------------------------------------- certificate -
 
 (= (tptp-resolution-example:search:steps-of () $tail) $tail)
@@ -355,7 +441,10 @@
        (if (<= $given-budget 0)
            (FOSearch.Result (FOSearch.Incomplete GivenBound)
              (FOSearch.Stats $given-used $next))
-           (let ($given $remaining) (decons-atom $passive)
+           (let (FOSearch.Selected $given $remaining)
+                (if (== (% $given-used 3) 2)
+                    (tptp-resolution-example:search:passive-select-oldest $passive)
+                    (tptp-resolution-example:search:passive-select $passive))
              (let (FOSearch.Clause $given-id $given-literals) $given
                (if (== $given-literals (fo-resolution:literals-nil))
                    (FOSearch.Result
@@ -387,7 +476,7 @@
                     (FOSearch.Stats $given-used $after)))
                 ((FOSearch.NoEmpty)
                   (let $passive
-                       (tptp-resolution-example:search:append-list $remaining $ordered)
+                       (tptp-resolution-example:search:passive-insert-all $ordered $remaining)
                     (let $next-active (cons-atom $given $active)
                       (let $next-given-budget (- $given-budget 1)
                         (let $next-generated-budget
@@ -401,24 +490,40 @@
 
 ; ------------------------------------------------------------------ entry ---
 
-(= (tptp-resolution-example:search:initial (fo-resolution:clauses-nil) $acc) $acc)
+(= (tptp-resolution-example:search:initial
+      (fo-resolution:clauses-nil) $support $usable)
+   (FOSearch.Initial $support $usable))
 
 (= (tptp-resolution-example:search:initial
       (fo-resolution:clauses-cons
         (fo-resolution:clause $occurrence $name $role $literals)
         $rest)
-      $acc)
-   (let $extended
-        (cons-atom
-          (FOSearch.Clause
-            (fo-proof:input-clause $occurrence) $literals)
-          $acc)
-     (tptp-resolution-example:search:initial $rest $extended)))
+      $support $usable)
+   (let $entry
+        (FOSearch.Clause (fo-proof:input-clause $occurrence) $literals)
+     (if (== $role (fo-resolution:role "negated_conjecture"))
+         (let $extended (cons-atom $entry $support)
+           (tptp-resolution-example:search:initial $rest $extended $usable))
+         (let $extended (cons-atom $entry $usable)
+           (tptp-resolution-example:search:initial $rest $support $extended)))))
 
 (= (tptp-resolution-example:search:prove $problem $bounds)
    (let (fo-resolution:problem $source $clauses) $problem
      (let (FOSearch.Bounds $given-budget $generated-budget) $bounds
-       (let $reversed (tptp-resolution-example:search:initial $clauses ())
-         (let $passive (tptp-resolution-example:search:reverse-list $reversed ())
-           (tptp-resolution-example:search:loop $source $passive () () 0
-             $given-budget $generated-budget 0))))))
+       (let (FOSearch.Initial $support $usable)
+            (tptp-resolution-example:search:initial $clauses () ())
+         (if (== $support ())
+             (let $ordered
+                  (tptp-resolution-example:search:reverse-list $usable ())
+               (let $passive
+                    (tptp-resolution-example:search:passive-insert-all $ordered ())
+                 (tptp-resolution-example:search:loop $source $passive () () 0
+                   $given-budget $generated-budget 0)))
+             (let $ordered
+                  (tptp-resolution-example:search:reverse-list $support ())
+               (let $passive
+                    (tptp-resolution-example:search:passive-insert-all $ordered ())
+                 (let $active
+                      (tptp-resolution-example:search:reverse-list $usable ())
+                   (tptp-resolution-example:search:loop $source $passive $active
+                     () 0 $given-budget $generated-budget 0)))))))))

@@ -14334,5 +14334,4 @@ const CettaGsltEmbeddedLanguageV1 cetta_metamath_proof_trace_v1 = {
     .request_pipeline = NULL,
     .observation = "bag",
     .manifest_sha256 = "a35420fdbad16e4ce986694dd6bd9298087a8f67f6e5b11081489aab8e515ec2",
-    .compiler_sha256 = "9d33d0708d05ce00c09f33c72292ad20d2bda72e1b67491b9644990c0c7e86c5",
 };

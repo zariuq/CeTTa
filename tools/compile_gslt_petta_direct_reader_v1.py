@@ -24,17 +24,20 @@ from compile_gslt_direct_reader_v1 import (  # noqa: E402
     file_digest,
     flatten_sir_binary,
     form,
+    load_composed,
     node_body,
     node_definitions,
     normalize_syntax_ir,
     render,
     scalar_classes,
+    scalar_classes_disjoint,
     sir_character,
     sir_class_name,
     sir_form,
     sir_literal,
     sir_reference,
     sir_tagged,
+    sources_digest,
     symbol,
     tagged,
 )
@@ -58,6 +61,9 @@ class PeTTaProjectionPolicy:
     escape_map: tuple[tuple[int, int], ...]
     identity_escape: bool
     runnable_label: str
+    # A list node, the node closing a list pattern, and the token, variable
+    # and dollar-symbol nodes inside a list; None when there are no lists.
+    list_labels: tuple[str, str, str, str, str] | None = None
 
 
 def projection_policy(
@@ -69,6 +75,7 @@ def projection_policy(
     variable_rules: dict[str, tuple[str, str]] = {}
     maps: dict[str, tuple[str, tuple[tuple[int, int], ...]]] = {}
     document_rules: dict[str, str] = {}
+    list_labels: tuple[str, str, str, str, str] | None = None
     for rule in presentation.rules:
         if rule.body or not isinstance(rule.head, tuple) or not rule.head:
             continue
@@ -131,6 +138,17 @@ def projection_policy(
                 document_rules[symbol(value[2], "document wrapper")] = symbol(
                     value[3], "document mode"
                 )
+        elif tag == "sexpr-list-rule":
+            value = form(
+                rule.head, tag, 6, f"{presentation.source}:{rule.name}"
+            )
+            if symbol(value[1], "projection profile") != profile_name:
+                continue
+            if list_labels is not None:
+                raise CompileError(f"duplicate list projection for {profile_name}")
+            list_labels = tuple(
+                symbol(value[i], "list projection label") for i in range(2, 7)
+            )  # type: ignore[assignment]
 
     if form_label is None or expression_label is None:
         raise CompileError(f"missing projection profile {profile_name}")
@@ -178,6 +196,7 @@ def projection_policy(
         maps[escapes[0]][1],
         True,
         runnables[0],
+        list_labels,
     )
 
 
@@ -206,6 +225,9 @@ class PeTTaDirectPlan:
     escape_map: tuple[tuple[int, int], ...]
     identity_escape: bool
     used_classes: tuple[str, ...]
+    # [x y] and [x y | rest]: open, close, bar; the token classes and
+    # boundary inside a list.  None without lists.
+    lists: tuple[int, int, int, str, str, str] | None = None
 
 
 def only(items: Sequence[SExpr], where: str) -> SExpr:
@@ -375,6 +397,12 @@ def derive_form(
     form_blank = sir_class_name(skip[1], "PeTTa form blank")
 
     atom_refs = ref_set(defs[atom_name], "PeTTa atom")
+    lists = None
+    if policy.list_labels is not None:
+        lists, list_name = derive_petta_list(
+            defs, nodes, policy.list_labels, skip_name,
+            {string_name, expression_name})
+        atom_refs = atom_refs - {list_name}
     token_like_names = atom_refs - {string_name, expression_name}
     if len(token_like_names) != 1 or len(atom_refs) != 3:
         raise CompileError("PeTTa atom alternatives are malformed")
@@ -490,7 +518,110 @@ def derive_form(
         "string_quote": string_quote,
         "escape_marker": escape_marker,
         "variable_marker": variable_marker,
+        "lists": lists,
     }
+
+
+def derive_petta_list(
+    defs: dict[str, SExpr],
+    nodes: dict[str, tuple[str, SExpr]],
+    labels: tuple[str, str, str, str, str],
+    skip_name: str,
+    shared_elements: set[str],
+) -> tuple[tuple[int, int, int, str, str, str], str]:
+    """Read [x y] and [x y | rest] from the list node and its parts:
+
+    list    = node LIST (right OPEN (left (right SKIP (opt ITEMS)) CLOSE))
+    items   = (seq (left ELEMENT SKIP) (seq (star (left ELEMENT SKIP)) (opt REST)))
+    rest    = node REST (right (left BAR (peek BOUNDARY))
+                               (right SKIP (left ELEMENT SKIP)))
+    element = string | expression | list | list token-like
+    token-like = (left (variable | dollar | token) (peek BOUNDARY))
+    token   = (alt (seq BAR (seq TOKEN (star TOKEN))) (seq FIRST (star TOKEN)))
+
+    Elements are separated by layout as an expression's are; the bar alone is
+    the rest marker, and a token may start with it only when more follows."""
+    list_label, rest_label, token_label, variable_label, dollar_label = labels
+    list_name, list_body = node_body(nodes, list_label)
+    _, rest_body = node_body(nodes, rest_label)
+
+    def element_then_skip(term: SExpr, where: str) -> str:
+        pair = sir_form(term, "left", 2, where)
+        if sir_reference(pair[2], f"{where} skip") != skip_name:
+            raise CompileError(f"{where} is not followed by the form skip")
+        return sir_reference(pair[1], where)
+
+    outer = sir_form(list_body, "right", 2, "PeTTa list")
+    list_open = sir_character(outer[1], "PeTTa list open")
+    inner = sir_form(outer[2], "left", 2, "PeTTa list")
+    lead = sir_form(inner[1], "right", 2, "PeTTa list items")
+    if sir_reference(lead[1], "PeTTa list skip") != skip_name:
+        raise CompileError("PeTTa list uses a different skip")
+    list_close = sir_character(inner[2], "PeTTa list close")
+    items_name = sir_reference(
+        sir_form(lead[2], "opt", 1, "PeTTa list items")[1], "PeTTa list items")
+    items = sir_form(defs[items_name], "seq", 2, "PeTTa list items")
+    element_name = element_then_skip(items[1], "PeTTa list element")
+    more = sir_form(items[2], "seq", 2, "PeTTa list items")
+    if element_then_skip(sir_form(more[1], "star", 1, "PeTTa list elements")[1],
+                         "PeTTa list element") != element_name:
+        raise CompileError("PeTTa list elements differ from the first element")
+    if sir_reference(sir_form(more[2], "opt", 1, "PeTTa list rest")[1],
+                     "PeTTa list rest") != nodes[rest_label][0]:
+        raise CompileError("PeTTa list rest is malformed")
+    rest_right = sir_form(rest_body, "right", 2, "PeTTa list rest")
+    bar = sir_form(rest_right[1], "left", 2, "PeTTa list bar")
+    rest_marker = sir_character(bar[1], "PeTTa list bar")
+    bar_boundary = sir_reference(sir_form(bar[2], "peek", 1, "PeTTa list bar")[1],
+                                 "PeTTa list bar boundary")
+    rest_after = sir_form(rest_right[2], "right", 2, "PeTTa list rest")
+    if sir_reference(rest_after[1], "PeTTa list rest skip") != skip_name or \
+            element_then_skip(rest_after[2], "PeTTa list rest element") != element_name:
+        raise CompileError("PeTTa list rest element differs from the elements")
+    element_refs = ref_set(defs[element_name], "PeTTa list element")
+    token_like_names = element_refs - shared_elements - {list_name}
+    if len(token_like_names) != 1 or len(element_refs) != 4:
+        raise CompileError("PeTTa list element alternatives are malformed")
+    token_like = sir_form(defs[next(iter(token_like_names))], "left", 2,
+                          "PeTTa list token-like")
+    token_nodes: dict[str, SExpr] = {}
+    for branch in flatten_sir_binary(token_like[1], "alt"):
+        node = sir_form(branch, "node", 2, "PeTTa list token-like branch")
+        token_nodes[symbol(node[1], "PeTTa list token label")] = node[2]
+    if set(token_nodes) != {token_label, variable_label, dollar_label}:
+        raise CompileError("PeTTa list token-like labels disagree with projection")
+    boundary_name = sir_reference(sir_form(token_like[2], "peek", 1,
+                                           "PeTTa list boundary")[1],
+                                  "PeTTa list boundary")
+    if boundary_name != bar_boundary:
+        raise CompileError("the bar and list tokens end at different boundaries")
+    boundary_branches = flatten_sir_binary(defs[boundary_name], "alt")
+    boundary_classes = [sir_class_name(x, "PeTTa list boundary")
+                        for x in boundary_branches if sir_tagged(x, "class")]
+    if len(boundary_classes) != 1:
+        raise CompileError("PeTTa list boundary must be one class or eof")
+    variable_plus = sir_form(
+        sir_form(token_nodes[variable_label], "right", 2, "PeTTa list variable")[2],
+        "plus", 1, "PeTTa list variable")
+    token_class = sir_class_name(variable_plus[1], "PeTTa list variable")
+    _, barred, plain = sir_form(token_nodes[token_label], "alt", 2,
+                                "PeTTa list token")
+    barred_seq = sir_form(barred, "seq", 2, "PeTTa list token after a bar")
+    if sir_character(barred_seq[1], "PeTTa list token bar") != rest_marker:
+        raise CompileError("a PeTTa list token starts with a scalar other than the bar")
+    barred_tail = sir_form(barred_seq[2], "seq", 2, "PeTTa list token after a bar")
+    if sir_class_name(barred_tail[1], "PeTTa list token after a bar") != token_class or \
+            sir_class_name(sir_form(barred_tail[2], "star", 1,
+                                    "PeTTa list token after a bar")[1],
+                           "PeTTa list token after a bar") != token_class:
+        raise CompileError("a PeTTa token after a bar continues with other scalars")
+    token = sir_form(plain, "seq", 2, "PeTTa list token")
+    token_first = sir_class_name(token[1], "PeTTa list token first")
+    if sir_class_name(sir_form(token[2], "star", 1, "PeTTa list token")[1],
+                      "PeTTa list token tail") != token_class:
+        raise CompileError("PeTTa list token and variable tails differ")
+    return ((list_open, list_close, rest_marker, token_first, token_class,
+             boundary_classes[0]), list_name)
 
 
 def derive_plan(
@@ -502,6 +633,8 @@ def derive_plan(
     for key in ("expression_open", "expression_close", "string_quote"):
         if split[key] != parsed[key]:
             raise CompileError(f"PeTTa splitter/form {key} values disagree")
+    if split["string_escape"] != parsed["escape_marker"]:
+        raise CompileError("PeTTa splitter/form escape markers disagree")
     used = {
         str(split["blank"]), str(split["string_plain"]),
         str(split["comment_body"]), str(split["ordinary"]),
@@ -509,9 +642,31 @@ def derive_plan(
         str(parsed["token"]), str(parsed["token_first"]),
         str(parsed["string_plain"]), str(parsed["quoted_token_plain"]),
     }
+    lists = parsed["lists"]
+    if lists is not None:
+        used |= {str(lists[3]), str(lists[4]), str(lists[5])}
     missing = sorted(used - set(classes))
     if missing:
         raise CompileError("undefined PeTTa scalar classes: " + ", ".join(missing))
+    if lists is not None:
+        punctuation = set(lists[:3])
+        if len(punctuation) != 3 or punctuation & {
+            int(parsed["expression_open"]), int(parsed["expression_close"]),
+            int(parsed["string_quote"]), int(parsed["variable_marker"]),
+        }:
+            raise CompileError("PeTTa list punctuation overlaps another literal")
+        if classes[str(parsed["token_first"])].contains(lists[0]):
+            raise CompileError("PeTTa token-first class overlaps the list open")
+        if any(classes[str(lists[3])].contains(v) for v in punctuation):
+            raise CompileError("a PeTTa list token starts with list punctuation")
+        if any(classes[str(lists[4])].contains(v) for v in lists[:2]):
+            raise CompileError("a PeTTa list token holds a bracket")
+        if not all(classes[str(lists[5])].contains(v) for v in lists[:2]):
+            raise CompileError("PeTTa list boundary does not end a token at a bracket")
+        if not scalar_classes_disjoint(classes[str(lists[5])],
+                                       classes[str(lists[4])]):
+            raise CompileError(
+                "a PeTTa list token may continue where the bar alone would end")
     if not policy.escape_map:
         raise CompileError("PeTTa projection has no named escape map")
     if split["string_escape"] != parsed["escape_marker"]:
@@ -529,6 +684,7 @@ def derive_plan(
         int(split["string_escape"]),
         int(parsed["variable_marker"]), int(split["runnable_marker"]),
         policy.escape_map, policy.identity_escape, tuple(sorted(used)),
+        lists,
     )
 
 
@@ -553,24 +709,28 @@ def generate(
     form_syntax_path: Path, form_classes_path: Path,
     projection_path: Path, profile: str, c_prefix: str,
     output_c: Path, output_h: Path,
+    extension: tuple[Path, Path, Path] | None = None,
 ) -> None:
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", c_prefix):
         raise CompileError(f"invalid C prefix {c_prefix!r}")
+    form_syntax_paths = [form_syntax_path] + ([extension[0]] if extension else [])
+    form_classes_paths = [form_classes_path] + ([extension[1]] if extension else [])
+    projection_paths = [projection_path] + ([extension[2]] if extension else [])
     splitter = parse_presentation(splitter_syntax_path)
-    form_syntax = parse_presentation(form_syntax_path)
+    form_syntax = load_composed(form_syntax_paths)
     split_classes = scalar_classes(parse_presentation(splitter_classes_path))
-    form_classes = scalar_classes(parse_presentation(form_classes_path))
+    form_classes = scalar_classes(load_composed(form_classes_paths))
     overlap = set(split_classes) & set(form_classes)
     if overlap:
         raise CompileError(
             "splitter/form scalar class names overlap: " + ", ".join(sorted(overlap))
         )
     classes = {**split_classes, **form_classes}
-    policy = projection_policy(parse_presentation(projection_path), profile)
+    policy = projection_policy(load_composed(projection_paths), profile)
     plan = derive_plan(splitter, form_syntax, classes, policy)
     paths = (
         splitter_syntax_path, splitter_classes_path,
-        form_syntax_path, form_classes_path, projection_path,
+        *form_syntax_paths, *form_classes_paths, *projection_paths,
     )
     digest = composition_digest(paths, profile, PETTA_DIRECT_FRAGMENT_V1)
     class_ids = {
@@ -612,9 +772,9 @@ def generate(
         f'    .fragment = "{PETTA_DIRECT_FRAGMENT_V1}",\n'
         f'    .splitter_syntax_digest = "{file_digest(splitter_syntax_path)}",\n'
         f'    .splitter_class_digest = "{file_digest(splitter_classes_path)}",\n'
-        f'    .form_syntax_digest = "{file_digest(form_syntax_path)}",\n'
-        f'    .form_class_digest = "{file_digest(form_classes_path)}",\n'
-        f'    .projection_digest = "{file_digest(projection_path)}",\n'
+        f'    .form_syntax_digest = "{sources_digest(form_syntax_paths)}",\n'
+        f'    .form_class_digest = "{sources_digest(form_classes_paths)}",\n'
+        f'    .projection_digest = "{sources_digest(projection_paths)}",\n'
         f'    .compiler_digest = "{file_digest(Path(__file__).resolve())}",\n'
         f'    .composition_digest = "{digest}",\n'
         f'    .profile = "{profile}",\n'
@@ -640,6 +800,12 @@ def generate(
         f"    .string_escape_map = {escape_name},\n"
         f"    .string_escape_map_len = UINT32_C({len(plan.escape_map)}),\n"
         f"    .string_escape_identity_fallback = {'true' if plan.identity_escape else 'false'},\n"
+        f"    .list_open = UINT32_C({plan.lists[0] if plan.lists else 0}),\n"
+        f"    .list_close = UINT32_C({plan.lists[1] if plan.lists else 0}),\n"
+        f"    .list_rest = UINT32_C({plan.lists[2] if plan.lists else 0}),\n"
+        f"    .list_token_first = {'&' + class_ids[plan.lists[3]] if plan.lists else 'NULL'},\n"
+        f"    .list_token = {'&' + class_ids[plan.lists[4]] if plan.lists else 'NULL'},\n"
+        f"    .list_token_boundary = {'&' + class_ids[plan.lists[5]] if plan.lists else 'NULL'},\n"
         "    .depth_limit = UINT32_C(4096),\n"
         "};\n\n"
         f"const char *{c_prefix}_program_digest(void) {{\n"
@@ -687,13 +853,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--c-prefix", required=True)
     parser.add_argument("--output-c", required=True, type=Path)
     parser.add_argument("--output-h", required=True, type=Path)
+    # A presentation extension composed over the form reader: each of its
+    # rules replaces the base rule of the same name or adds one.
+    parser.add_argument("--extension-form-syntax", type=Path)
+    parser.add_argument("--extension-form-classes", type=Path)
+    parser.add_argument("--extension-projection", type=Path)
     arguments = parser.parse_args(argv)
+    extension_parts = (arguments.extension_form_syntax,
+                       arguments.extension_form_classes,
+                       arguments.extension_projection)
+    if any(extension_parts) and not all(extension_parts):
+        print("GSLTDirectPeTTaReaderCompileError: an extension names its form "
+              "syntax, form classes and projection", file=sys.stderr)
+        return 1
     try:
         generate(
             arguments.splitter_syntax, arguments.splitter_classes,
             arguments.form_syntax, arguments.form_classes,
             arguments.projection, arguments.profile, arguments.c_prefix,
             arguments.output_c, arguments.output_h,
+            extension_parts if all(extension_parts) else None,
         )
     except (CompileError, OSError, ValueError) as error:
         print(f"GSLTDirectPeTTaReaderCompileError: {error}", file=sys.stderr)

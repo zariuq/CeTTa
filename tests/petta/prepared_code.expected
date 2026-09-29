@@ -1,0 +1,18 @@
+(Cons 1 (Cons 2 (Cons 3 (Cons 4 (Cons 5 (Cons 6 Nil))))))
+610
+9
+7
+200000
+no
+153
+(W 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1)
+6
+(L 1)
+(R 1)
+2500050000
+(Cons 2 (Cons 3 Nil))
+(Cons 1 (Cons 3 Nil))
+(Cons 3 (Cons 2 Nil))
+(Cons 1 (Cons 2 Nil))
+(Cons 3 (Cons 1 Nil))
+(Cons 2 (Cons 1 Nil))

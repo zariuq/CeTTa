@@ -1,0 +1,2 @@
+cnf(base,axiom,q(a)).
+cnf(unused,axiom,s(b)).

@@ -11,7 +11,7 @@ ebnf_evidence=$(realpath "$2")
 test ! -e "$ebnf_evidence/inputs.sha256"
 cd "$ebnf_root"
 ebnf_program=${3:-langdef/petta/generated/plain_bnf_semantic_admission_v1.metta}
-sha256sum "$ebnf_runtime" "$ebnf_program" lib/lib_bnf.metta lib/langdef.metta \
+sha256sum "$ebnf_runtime" "$ebnf_program" lib/lib_bnf.metta lib/petta/lib_bnf.metta lib/langdef.metta \
     langdef/bnf/ebnf_source_v1.bnf langdef/bnf/ebnf_self_v1.ebnf \
     langdef/bnf/ebnf_grammar_v1.metta langdef/bnf/ebnf_cst_projection_v1.metta \
     langdef/bnf/ebnf_declaration_view_v1.metta langdef/bnf/ebnf_lowering_v1.metta \
@@ -32,6 +32,7 @@ sha256sum "$ebnf_runtime" "$ebnf_program" lib/lib_bnf.metta lib/langdef.metta \
     benchmarks/bnf/generate_ebnf_workbench.c \
     tests/support/check_ebnf_workbench_v1.sh > "$ebnf_evidence/inputs.sha256"
 ebnf_count=0
+# The canonical fixture runs in its own gate over both lanes.
 for ebnf_fixture in observations integration equivalence projection diagnostics cycles helper_names namespace_freshness applications; do
     ebnf_test="tests/langdef/bnf/ebnf_${ebnf_fixture}_v1.metta"
     ebnf_expected="tests/langdef/bnf/ebnf_${ebnf_fixture}_v1.expected"
@@ -43,6 +44,8 @@ for ebnf_fixture in observations integration equivalence projection diagnostics 
     ebnf_count=$((ebnf_count + 1))
 done
 
+# Mutated library copies start from the PeTTa spelling: it is what the PeTTa
+# lane loads, and a copy outside lib/ is not resolved to a lane spelling.
 # Each namespace must contribute to freshness. Mutate the authored scan,
 # execute lowering normally, and demand the specific capture observation.
 # Generated helper spellings and counts are not normative fixture outputs.
@@ -59,7 +62,7 @@ for ebnf_namespace in declaration nested-reference lexical; do
         END {if (changed != 1) exit 1}
     ' langdef/bnf/ebnf_lowering_v1.metta > "$ebnf_evidence/namespace-$ebnf_namespace.metta"
     sed "s|langdef/bnf/ebnf_lowering_v1.metta|$ebnf_evidence/namespace-$ebnf_namespace.metta|g" \
-        lib/lib_bnf.metta > "$ebnf_evidence/namespace-$ebnf_namespace-library.metta"
+        lib/petta/lib_bnf.metta > "$ebnf_evidence/namespace-$ebnf_namespace-library.metta"
     sed "s|../../../lib/lib_bnf.metta|$ebnf_evidence/namespace-$ebnf_namespace-library.metta|" \
         tests/langdef/bnf/ebnf_namespace_freshness_v1.metta \
         > "$ebnf_evidence/namespace-$ebnf_namespace-test.metta"
@@ -95,7 +98,7 @@ awk '
     END {if (changed != 1) exit 1}
 ' langdef/bnf/ebnf_lowering_v1.metta > "$ebnf_evidence/mutated-helper-counter.metta"
 sed "s|langdef/bnf/ebnf_lowering_v1.metta|$ebnf_evidence/mutated-helper-counter.metta|g" \
-    lib/lib_bnf.metta > "$ebnf_evidence/counter-mutated-library.metta"
+    lib/petta/lib_bnf.metta > "$ebnf_evidence/counter-mutated-library.metta"
 sed "s|../../../lib/lib_bnf.metta|$ebnf_evidence/counter-mutated-library.metta|" \
     tests/langdef/bnf/ebnf_helper_names_v1.metta > "$ebnf_evidence/counter-mutated-test.metta"
 CETTA_PETTA_SEARCH_MACHINE=1 "$ebnf_runtime" --lang petta "$ebnf_program" \
@@ -124,7 +127,7 @@ awk '
     END {if (changed != 1) exit 1}
 ' langdef/bnf/ebnf_lowering_v1.metta > "$ebnf_evidence/mutated-lowering.metta"
 sed "s|langdef/bnf/ebnf_lowering_v1.metta|$ebnf_evidence/mutated-lowering.metta|g" \
-    lib/lib_bnf.metta > "$ebnf_evidence/mutated-library.metta"
+    lib/petta/lib_bnf.metta > "$ebnf_evidence/mutated-library.metta"
 sed "s|../../../lib/lib_bnf.metta|$ebnf_evidence/mutated-library.metta|" \
     tests/langdef/bnf/ebnf_observations_v1.metta > "$ebnf_evidence/mutated-test.metta"
 CETTA_PETTA_SEARCH_MACHINE=1 "$ebnf_runtime" --lang petta "$ebnf_program" \
@@ -157,7 +160,7 @@ awk '
 ' langdef/bnf/ebnf_derivation_projection_v1.metta > "$ebnf_evidence/mutated-projection.metta"
 sed -e "s|langdef/bnf/ebnf_derivation_projection_v1.metta|$ebnf_evidence/mutated-projection.metta|g" \
     -e "s|(case (bnf:project-ebnf-trees \$receipt|(case (bnf:project-ebnf-trees-authored \$receipt|g" \
-    lib/lib_bnf.metta > "$ebnf_evidence/projection-mutated-library.metta"
+    lib/petta/lib_bnf.metta > "$ebnf_evidence/projection-mutated-library.metta"
 sed "s|../../../lib/lib_bnf.metta|$ebnf_evidence/projection-mutated-library.metta|" \
     tests/langdef/bnf/ebnf_projection_v1.metta > "$ebnf_evidence/projection-mutated-test.metta"
 CETTA_PETTA_SEARCH_MACHINE=1 "$ebnf_runtime" --lang petta "$ebnf_program" \
@@ -184,7 +187,7 @@ awk '
 ' langdef/bnf/ebnf_derivation_projection_v1.metta > "$ebnf_evidence/mutated-iteration-order.metta"
 sed -e "s|langdef/bnf/ebnf_derivation_projection_v1.metta|$ebnf_evidence/mutated-iteration-order.metta|g" \
     -e "s|(case (bnf:project-ebnf-trees \$receipt|(case (bnf:project-ebnf-trees-authored \$receipt|g" \
-    lib/lib_bnf.metta > "$ebnf_evidence/order-mutated-library.metta"
+    lib/petta/lib_bnf.metta > "$ebnf_evidence/order-mutated-library.metta"
 sed "s|../../../lib/lib_bnf.metta|$ebnf_evidence/order-mutated-library.metta|" \
     tests/langdef/bnf/ebnf_projection_v1.metta > "$ebnf_evidence/order-mutated-test.metta"
 CETTA_PETTA_SEARCH_MACHINE=1 "$ebnf_runtime" --lang petta "$ebnf_program" \
@@ -209,7 +212,7 @@ awk '
     END {if (changed != 1) exit 1}
 ' langdef/bnf/ebnf_lowering_v1.metta > "$ebnf_evidence/mutated-owner.metta"
 sed "s|langdef/bnf/ebnf_lowering_v1.metta|$ebnf_evidence/mutated-owner.metta|g" \
-    lib/lib_bnf.metta > "$ebnf_evidence/owner-mutated-library.metta"
+    lib/petta/lib_bnf.metta > "$ebnf_evidence/owner-mutated-library.metta"
 sed "s|../../../lib/lib_bnf.metta|$ebnf_evidence/owner-mutated-library.metta|" \
     tests/langdef/bnf/ebnf_diagnostics_v1.metta > "$ebnf_evidence/owner-mutated-test.metta"
 CETTA_PETTA_SEARCH_MACHINE=1 "$ebnf_runtime" --lang petta "$ebnf_program" \
@@ -250,7 +253,7 @@ ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror \
     benchmarks/bnf/generate_ebnf_workbench.c -o "$ebnf_evidence/generate-capacity"
 "$ebnf_evidence/generate-capacity" 50 project > "$ebnf_evidence/capacity.metta"
 CETTA_PETTA_SEARCH_MACHINE=1 "$ebnf_runtime" --lang petta "$ebnf_program" \
-    lib/lib_bnf.metta "$ebnf_evidence/capacity.metta" \
+    lib/petta/lib_bnf.metta "$ebnf_evidence/capacity.metta" \
     > "$ebnf_evidence/capacity.out" 2> "$ebnf_evidence/capacity.stderr"
 test ! -s "$ebnf_evidence/capacity.stderr"
 test "$(grep -Fxc EbnfBenchProjected "$ebnf_evidence/capacity.out")" -eq 1

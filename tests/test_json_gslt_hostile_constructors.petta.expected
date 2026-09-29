@@ -1,0 +1,9 @@
+true
+(JsonArrayV1 ((JsonNumberV1 "1") (JsonBoolV1 true)))
+"[1,true]"
+(JsonFoundV1 0 (JsonNumberV1 "5"))
+(JsonFoundV1 1 (JsonNumberV1 "6"))
+(JsonMatchesV1 ((JsonNumberV1 "5") (JsonNumberV1 "6")))
+(JsonMembersV1 ((JsonMemberV1 0 (JsonStringV1 ((cp 107))) (JsonNumberV1 "5") (JsonSourceSpanV1 1 7))))
+"{\"nested\":[[1],{\"t\":true}]}"
+"[1]"

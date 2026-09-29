@@ -164,7 +164,7 @@
                    (== $ch "("))))))
 
 (= (rho-keyword-boundary $cursor $kw)
-   (let $after-kw (text-stream:advance $cursor (str:length $kw))
+   (let $after-kw (text-stream:advance $cursor (str:byte-length $kw))
      (let $next (text-stream:peek $after-kw)
        (if (== $next AtEof) True (rho-keyword-delim $next)))))
 

@@ -15,6 +15,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from compile_gslt_direct_reader_v1 import (  # noqa: E402
     Boundary,
     CompileError,
+    boundary_contains,
+    boundary_disjoint_class,
+    scalar_classes_disjoint,
     NormalizedSyntaxIR,
     SExpr,
     ScalarClass,
@@ -57,6 +60,11 @@ class PrefixProjectionPolicy:
     escape_map: tuple[tuple[int, int], ...]
     identity_escape: bool
     prefix_roles: dict[str, tuple[str, str]]
+    # A list node, the node closing a list pattern, and the word, variable and
+    # anonymous-variable nodes inside a list; None when there are no lists.
+    list_labels: tuple[str, str, str, str, str] | None = None
+    # Each list-context prefix form and the prefix form it mirrors.
+    list_prefix_mirrors: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -96,39 +104,14 @@ class PrefixPlan:
     prefix_rules: tuple[PrefixRule, ...]
     token_rules: tuple[TokenRule, ...]
     used_classes: tuple[str, ...]
-
-
-def scalar_classes_disjoint(left: ScalarClass, right: ScalarClass) -> bool:
-    """Decide disjointness over Unicode scalar values, not raw integers."""
-    if not left.complement:
-        return all(not right.contains(value) for value in left.points)
-    if not right.complement:
-        return all(not left.contains(value) for value in right.points)
-    excluded = {
-        value
-        for value in (*left.points, *right.points)
-        if 0 <= value <= 0x10FFFF and not 0xD800 <= value <= 0xDFFF
-    }
-    return len(excluded) == 0x110000 - 0x800
-
-
-def boundary_contains(
-    boundary: Boundary, value: int, classes: dict[str, ScalarClass]
-) -> bool:
-    return value in boundary.literals or any(
-        classes[name].contains(value) for name in boundary.classes
-    )
-
-
-def boundary_disjoint_class(
-    boundary: Boundary,
-    scalar_class: ScalarClass,
-    classes: dict[str, ScalarClass],
-) -> bool:
-    return all(not scalar_class.contains(value) for value in boundary.literals) and all(
-        scalar_classes_disjoint(classes[name], scalar_class)
-        for name in boundary.classes
-    )
+    # [x y] and [x y | rest]: open, close, bar; the token rules inside a
+    # list, in the order of token_rules and then the word led by the bar; the
+    # prefix rules inside a list; and where the bar alone ends.  None without
+    # lists.
+    lists: tuple[int, int, int] | None = None
+    list_token_rules: tuple[TokenRule, ...] = ()
+    list_prefix_rules: tuple[PrefixRule, ...] = ()
+    list_bar_boundary: Boundary | None = None
 
 
 def common_literal_prefix(left: tuple[int, ...], right: tuple[int, ...]) -> int:
@@ -253,6 +236,49 @@ def validate_dispatch_partition(
                     "token dispatch overlaps a prefix alternative: "
                     f"{rule!r} and {prefix!r}"
                 )
+    if plan.lists is None:
+        return
+    punctuation = set(plan.lists)
+    brackets = set(plan.lists[:2])
+    bar = plan.lists[2]
+    if len(punctuation) != 3 or punctuation & structural or any(
+        rule.literal[0] in punctuation for rule in plan.prefix_rules
+    ):
+        raise CompileError("list punctuation overlaps another dispatch scalar")
+    assert plan.list_bar_boundary is not None
+    if not all(boundary_contains(plan.list_bar_boundary, v, classes)
+               for v in brackets):
+        raise CompileError("the bar alone does not end at a bracket")
+    for rule in plan.token_rules:
+        if (rule.literal[0] == plan.lists[0] if rule.literal
+                else classes[rule.first].contains(plan.lists[0])):
+            raise CompileError("a token may start with the list open bracket")
+    for index, rule in enumerate(plan.list_token_rules):
+        for name in (rule.first, rule.tail):
+            if name and any(classes[name].contains(v) for v in brackets):
+                raise CompileError(f"list token class {name} admits a bracket")
+        if rule.literal != (bar,) and rule.first and \
+                classes[rule.first].contains(bar) and not rule.literal:
+            raise CompileError("a list token other than the bar word starts with the bar")
+        if rule.literal == (bar,) and not boundary_disjoint_class(
+                plan.list_bar_boundary, classes[rule.first], classes):
+            raise CompileError(
+                "a list word may continue where the bar alone would end")
+        if not boundary_contains(rule.boundary, plan.lists[1], classes):
+            raise CompileError("a list token does not end at the list close")
+        for previous in plan.list_token_rules[:index]:
+            if not token_rules_disjoint(previous, rule, classes):
+                raise CompileError("list token alternatives overlap")
+        for prefix in plan.list_prefix_rules:
+            if not token_prefix_disjoint(rule, prefix, classes):
+                raise CompileError(
+                    "list token dispatch overlaps a list prefix alternative: "
+                    f"{rule!r} and {prefix!r}")
+    for prefix in plan.list_prefix_rules:
+        if prefix.payload_start and classes[prefix.payload_start].contains(
+                plan.lists[1]):
+            raise CompileError(
+                "a list prefix payload may start with the list close")
 
 
 def projection_policy(
@@ -264,6 +290,8 @@ def projection_policy(
     variable_rules: dict[str, tuple[str, str]] = {}
     maps: dict[str, tuple[str, tuple[tuple[int, int], ...]]] = {}
     prefix_rules: dict[str, tuple[str, str]] = {}
+    list_labels: tuple[str, str, str, str, str] | None = None
+    list_prefix_mirrors: list[tuple[str, str]] = []
     for rule in presentation.rules:
         if rule.body or not isinstance(rule.head, tuple) or not rule.head:
             continue
@@ -317,6 +345,20 @@ def projection_policy(
                     symbol(value[3], "prefix role"),
                     symbol(value[4], "prefix mode"),
                 )
+        elif tag == "sexpr-list-rule":
+            value = form(rule.head, tag, 6, f"{presentation.source}:{rule.name}")
+            if symbol(value[1], "projection profile") != profile_name:
+                continue
+            if list_labels is not None:
+                raise CompileError(f"duplicate list projection for {profile_name}")
+            list_labels = tuple(  # type: ignore[assignment]
+                symbol(value[i], "list projection label") for i in range(2, 7))
+        elif tag == "sexpr-list-prefix-rule":
+            value = form(rule.head, tag, 3, f"{presentation.source}:{rule.name}")
+            if symbol(value[1], "projection profile") == profile_name:
+                list_prefix_mirrors.append((
+                    symbol(value[2], "list prefix wrapper"),
+                    symbol(value[3], "mirrored prefix wrapper")))
     if document_label is None or expression_label is None:
         raise CompileError(f"missing projection profile {profile_name}")
 
@@ -357,6 +399,8 @@ def projection_policy(
         maps[escapes[0]][1],
         True,
         prefix_rules,
+        list_labels,
+        tuple(sorted(list_prefix_mirrors)),
     )
 
 
@@ -407,6 +451,69 @@ def parse_token_branch(
         star = sir_form(sequence[2], "star", 1, f"{where}: tail")
     tail = sir_class_name(star[1], f"{where}: tail")
     return TokenRule(literal, first, tail, boundary, "word", False)
+
+
+def derive_token_rules(
+    word_body: SExpr, anonymous_variable_body: SExpr, variable_body: SExpr,
+    defs: dict[str, SExpr], where: str, word_alternatives: int = 4,
+) -> tuple[TokenRule, ...]:
+    """The word alternatives, the anonymous variable and the variable, in
+    dispatch order, as token rules sharing one boundary.  A list word has one
+    alternative more than an atom's: the word led by the bar."""
+    word_rules: list[TokenRule] = []
+    for branch in flatten_sir_binary(word_body, "alt"):
+        name = sir_reference(branch, "word alternative")
+        rule = parse_token_branch(defs[name], defs, f"word alternative {name}")
+        word_rules.append(rule)
+    if len(word_rules) != word_alternatives:
+        raise CompileError(
+            f"prefix fragment requires {word_alternatives} word alternatives"
+            + (f" in the {where} context" if where else ""))
+    ordinary_boundaries = {
+        rule.boundary for rule in word_rules if rule.first is not None
+    }
+    if len(ordinary_boundaries) != 1:
+        raise CompileError("extended word alternatives disagree on their boundary")
+    token_boundary = next(iter(ordinary_boundaries))
+
+    anonymous_variable = parse_token_branch(
+        anonymous_variable_body, defs, "anonymous variable"
+    )
+    if anonymous_variable.first is not None or not anonymous_variable.literal:
+        raise CompileError("anonymous variable must be one literal token")
+    anonymous_variable = TokenRule(
+        anonymous_variable.literal,
+        None,
+        None,
+        anonymous_variable.boundary,
+        "anonymous-variable",
+        False,
+    )
+    if anonymous_variable.boundary != token_boundary:
+        raise CompileError("anonymous variable and word boundaries differ")
+
+    variable = sir_form(variable_body, "left", 2, "variable")
+    variable_right = sir_form(variable[1], "right", 2, "variable")
+    variable_literal = sir_literal(variable_right[1], "variable marker")
+    variable_sequence = sir_form(variable_right[2], "seq", 2, "variable")
+    variable_first = sir_class_name(variable_sequence[1], "variable first")
+    variable_star = sir_form(variable_sequence[2], "star", 1, "variable tail")
+    variable_tail = sir_class_name(variable_star[1], "variable tail")
+    variable_boundary = peek_boundary(variable[2], defs, "variable boundary")
+    if variable_boundary != token_boundary:
+        raise CompileError("variable and word boundaries differ")
+    token_rules = tuple(word_rules) + (
+        anonymous_variable,
+        TokenRule(
+            variable_literal,
+            variable_first,
+            variable_tail,
+            variable_boundary,
+            "variable",
+            True,
+        ),
+    )
+    return token_rules
 
 
 def derive_plan(
@@ -512,60 +619,24 @@ def derive_plan(
         expression_name,
         *(name for name, _ in prefix_nodes.values()),
     }
+    list_name = None
+    if policy.list_labels is not None:
+        list_name = node_definition(ir, policy.list_labels[0])[0]
+        expected_refs.add(list_name)
     if atom_refs != expected_refs:
         raise CompileError("atom alternatives differ from projected syntax nodes")
 
-    word_rules: list[TokenRule] = []
-    for branch in flatten_sir_binary(word_body, "alt"):
-        name = sir_reference(branch, "word alternative")
-        rule = parse_token_branch(defs[name], defs, f"word alternative {name}")
-        word_rules.append(rule)
-    if len(word_rules) != 4:
-        raise CompileError("prefix fragment requires four word alternatives")
-    ordinary_boundaries = {
-        rule.boundary for rule in word_rules if rule.first is not None
-    }
-    if len(ordinary_boundaries) != 1:
-        raise CompileError("extended word alternatives disagree on their boundary")
-    token_boundary = next(iter(ordinary_boundaries))
-
-    anonymous_variable = parse_token_branch(
-        anonymous_variable_body, defs, "anonymous variable"
-    )
-    if anonymous_variable.first is not None or not anonymous_variable.literal:
-        raise CompileError("anonymous variable must be one literal token")
-    anonymous_variable = TokenRule(
-        anonymous_variable.literal,
-        None,
-        None,
-        anonymous_variable.boundary,
-        "anonymous-variable",
-        False,
-    )
-    if anonymous_variable.boundary != token_boundary:
-        raise CompileError("anonymous variable and word boundaries differ")
-
-    variable = sir_form(variable_body, "left", 2, "variable")
-    variable_right = sir_form(variable[1], "right", 2, "variable")
-    variable_literal = sir_literal(variable_right[1], "variable marker")
-    variable_sequence = sir_form(variable_right[2], "seq", 2, "variable")
-    variable_first = sir_class_name(variable_sequence[1], "variable first")
-    variable_star = sir_form(variable_sequence[2], "star", 1, "variable tail")
-    variable_tail = sir_class_name(variable_star[1], "variable tail")
-    variable_boundary = peek_boundary(variable[2], defs, "variable boundary")
-    if variable_boundary != token_boundary:
-        raise CompileError("variable and word boundaries differ")
-    token_rules = tuple(word_rules) + (
-        anonymous_variable,
-        TokenRule(
-            variable_literal,
-            variable_first,
-            variable_tail,
-            variable_boundary,
-            "variable",
-            True,
-        ),
-    )
+    token_rules = derive_token_rules(
+        word_body, anonymous_variable_body, variable_body, defs, "")
+    lists = None
+    list_bar_boundary: Boundary | None = None
+    list_token_rules: tuple[TokenRule, ...] = ()
+    list_prefix_rules: tuple[PrefixRule, ...] = ()
+    if policy.list_labels is not None:
+        lists, list_bar_boundary, list_token_rules, list_prefix_rules = \
+            derive_prefix_list(
+                ir, defs, policy, skip_name, token_rules,
+                {string_name, expression_name}, prefix_nodes, atom_name)
 
     string = sir_form(string_body, "right", 2, "string")
     string_open = sir_character(string[1], "string open")
@@ -583,26 +654,11 @@ def derive_plan(
     escape_prefix = sir_literal(escape[1], "string escape prefix")
     escape_source = sir_class_name(escape[2], "string escape source")
 
-    prefix_rules: list[PrefixRule] = []
-    for wrapper, (role, mode) in policy.prefix_roles.items():
-        _, body = prefix_nodes[wrapper]
-        outer = sir_form(body, "right", 2, f"prefix {wrapper}")
-        literal = sir_literal(outer[1], f"prefix {wrapper}: literal")
-        continuation = sir_form(outer[2], "right", 2, f"prefix {wrapper}")
-        if mode == "open" and role == "unquote":
-            peek = sir_form(continuation[1], "peek", 1, f"prefix {wrapper}")
-            payload_start = sir_class_name(peek[1], f"prefix {wrapper}: payload")
-            skip_before_payload = False
-        else:
-            if sir_reference(continuation[1], f"prefix {wrapper}: skip") != skip_name:
-                raise CompileError(f"prefix {wrapper} uses an unexpected separator")
-            payload_start = None
-            skip_before_payload = True
-        if sir_reference(continuation[2], f"prefix {wrapper}: atom") != atom_name:
-            raise CompileError(f"prefix {wrapper} targets a different atom relation")
-        prefix_rules.append(
-            PrefixRule(literal, payload_start, role, skip_before_payload)
-        )
+    prefix_rules = [
+        derive_prefix_rule(prefix_nodes[wrapper][1], wrapper, role, mode,
+                           skip_name, atom_name)
+        for wrapper, (role, mode) in policy.prefix_roles.items()
+    ]
 
     used = {
         whitespace,
@@ -620,6 +676,17 @@ def derive_plan(
     for rule in prefix_rules:
         if rule.payload_start:
             used.add(rule.payload_start)
+    if list_bar_boundary is not None:
+        used.update(list_bar_boundary.classes)
+    for rule in list_prefix_rules:
+        if rule.payload_start:
+            used.add(rule.payload_start)
+    for rule in list_token_rules:
+        if rule.first:
+            used.add(rule.first)
+        if rule.tail:
+            used.add(rule.tail)
+        used.update(rule.boundary.classes)
     missing = sorted(used - set(classes))
     if missing:
         raise CompileError("undefined scalar classes: " + ", ".join(missing))
@@ -649,9 +716,159 @@ def derive_plan(
         tuple(prefix_rules),
         token_rules,
         tuple(sorted(used)),
+        lists,
+        list_token_rules,
+        list_prefix_rules,
+        list_bar_boundary,
     )
     validate_dispatch_partition(plan, classes)
     return plan
+
+
+def derive_prefix_rule(
+    body: SExpr,
+    wrapper: str,
+    role: str,
+    mode: str,
+    skip_name: str,
+    target_name: str,
+) -> PrefixRule:
+    outer = sir_form(body, "right", 2, f"prefix {wrapper}")
+    literal = sir_literal(outer[1], f"prefix {wrapper}: literal")
+    continuation = sir_form(outer[2], "right", 2, f"prefix {wrapper}")
+    if mode == "open" and role == "unquote":
+        peek = sir_form(continuation[1], "peek", 1, f"prefix {wrapper}")
+        payload_start = sir_class_name(peek[1], f"prefix {wrapper}: payload")
+        skip_before_payload = False
+    else:
+        if sir_reference(continuation[1], f"prefix {wrapper}: skip") != skip_name:
+            raise CompileError(f"prefix {wrapper} uses an unexpected separator")
+        payload_start = None
+        skip_before_payload = True
+    if sir_reference(continuation[2], f"prefix {wrapper}: payload") != target_name:
+        raise CompileError(f"prefix {wrapper} targets a different atom relation")
+    return PrefixRule(literal, payload_start, role, skip_before_payload)
+
+
+def derive_prefix_list(
+    ir: NormalizedSyntaxIR,
+    defs: dict[str, SExpr],
+    policy: PrefixProjectionPolicy,
+    skip_name: str,
+    token_rules: tuple[TokenRule, ...],
+    shared_elements: set[str],
+    prefix_nodes: dict[str, tuple[str, SExpr]],
+    atom_name: str,
+) -> tuple[tuple[int, int, int], Boundary, tuple[TokenRule, ...],
+           tuple[PrefixRule, ...]]:
+    """Read [x y] and [x y | rest], and the lexicon inside a list:
+
+    list    = node LIST (right OPEN (left (right SKIP (opt ITEMS)) CLOSE))
+    items   = (seq (left ELEMENT SKIP) (seq (star (left ELEMENT SKIP)) (opt REST)))
+    rest    = node REST (right (left BAR (peek BOUNDARY))
+                               (right SKIP (left ELEMENT SKIP)))
+
+    Elements are separated by layout as an expression's are, and the bar
+    alone marks the rest.  The element alternatives mirror the atom's:
+    string, expression and list are shared, and the list word, variables and
+    prefix forms are the atom's with list classes and boundaries, prefix forms
+    taking a list element.  Both tables keep the atom's order, so rule k
+    inside a list is rule k outside; the list word adds one alternative, a
+    word that starts with the bar and continues."""
+    assert policy.list_labels is not None
+    list_label, rest_label, word_label, variable_label, anonymous_label = \
+        policy.list_labels
+    list_name, list_body = node_definition(ir, list_label)
+    rest_name, rest_body = node_definition(ir, rest_label)
+    word_name, word_body = node_definition(ir, word_label)
+    variable_name, variable_body = node_definition(ir, variable_label)
+    anonymous_name, anonymous_body = node_definition(ir, anonymous_label)
+
+    def element_then_skip(term: SExpr, where: str) -> str:
+        pair = sir_form(term, "left", 2, where)
+        if sir_reference(pair[2], f"{where} skip") != skip_name:
+            raise CompileError(f"{where} is not followed by the document skip")
+        return sir_reference(pair[1], where)
+
+    outer = sir_form(list_body, "right", 2, "list")
+    list_open = sir_character(outer[1], "list open")
+    inner = sir_form(outer[2], "left", 2, "list")
+    lead = sir_form(inner[1], "right", 2, "list items")
+    if sir_reference(lead[1], "list skip") != skip_name:
+        raise CompileError("list uses a different skip")
+    list_close = sir_character(inner[2], "list close")
+    items_name = sir_reference(sir_form(lead[2], "opt", 1, "list items")[1],
+                               "list items")
+    items = sir_form(defs[items_name], "seq", 2, "list items")
+    element_name = element_then_skip(items[1], "list element")
+    more = sir_form(items[2], "seq", 2, "list items")
+    if element_then_skip(sir_form(more[1], "star", 1, "list elements")[1],
+                         "list element") != element_name:
+        raise CompileError("list elements differ from the first element")
+    if sir_reference(sir_form(more[2], "opt", 1, "list rest")[1],
+                     "list rest") != rest_name:
+        raise CompileError("list rest is malformed")
+    rest_right = sir_form(rest_body, "right", 2, "list rest")
+    bar = sir_form(rest_right[1], "left", 2, "list bar")
+    rest_marker = sir_character(bar[1], "list bar")
+    bar_boundary = parse_boundary(
+        defs[sir_reference(sir_form(bar[2], "peek", 1, "list bar")[1],
+                           "list bar boundary")],
+        "list bar boundary")
+    rest_after = sir_form(rest_right[2], "right", 2, "list rest")
+    if sir_reference(rest_after[1], "list rest skip") != skip_name or \
+            element_then_skip(rest_after[2], "list rest element") != element_name:
+        raise CompileError("list rest element differs from the elements")
+
+    mirrors = dict(policy.list_prefix_mirrors)
+    if set(mirrors.values()) != set(policy.prefix_roles):
+        raise CompileError("list prefix forms do not mirror every prefix form")
+    list_prefix_names = {
+        node_definition(ir, wrapper)[0] for wrapper in mirrors}
+    element_refs = {
+        sir_reference(branch, "list element alternative")
+        for branch in flatten_sir_binary(defs[element_name], "alt")
+    }
+    if element_refs != shared_elements | {list_name, word_name, variable_name,
+                                          anonymous_name} | list_prefix_names:
+        raise CompileError("list element alternatives differ from the atom's")
+    mirrored_by = {mirrored: wrapper for wrapper, mirrored in mirrors.items()}
+    list_prefix_rules = []
+    for mirrored, (role, mode) in policy.prefix_roles.items():
+        wrapper = mirrored_by[mirrored]
+        inner_rule = derive_prefix_rule(
+            node_definition(ir, wrapper)[1], wrapper, role, mode, skip_name,
+            element_name)
+        rule = derive_prefix_rule(
+            prefix_nodes[mirrored][1], mirrored, role, mode, skip_name,
+            atom_name)
+        if (inner_rule.literal, inner_rule.skip_before_payload,
+                inner_rule.payload_start is None) != \
+                (rule.literal, rule.skip_before_payload,
+                 rule.payload_start is None):
+            raise CompileError(f"list prefix {wrapper} differs from {mirrored}")
+        list_prefix_rules.append(inner_rule)
+
+    list_token_rules = derive_token_rules(
+        word_body, anonymous_body, variable_body, defs, "list", 5)
+    bar_words = [rule for rule in list_token_rules
+                 if rule.literal == (rest_marker,)]
+    mirrored = [rule for rule in list_token_rules
+                if rule.literal != (rest_marker,)]
+    if len(bar_words) != 1 or bar_words[0].projection != "word" or \
+            bar_words[0].first is None or bar_words[0].strip_literal or \
+            bar_words[0].first != bar_words[0].tail:
+        raise CompileError(
+            "a list word starts with the bar exactly when more follows")
+    if len(mirrored) != len(token_rules) or any(
+        (inner_rule.literal, inner_rule.projection, inner_rule.strip_literal,
+         inner_rule.first is None) !=
+        (rule.literal, rule.projection, rule.strip_literal, rule.first is None)
+        for inner_rule, rule in zip(mirrored, token_rules)
+    ):
+        raise CompileError("list tokens differ from the atom's tokens")
+    return ((list_open, list_close, rest_marker), bar_boundary,
+            tuple(mirrored) + tuple(bar_words), tuple(list_prefix_rules))
 
 
 def composition_digest(paths: Iterable[Path], profile: str) -> str:
@@ -666,6 +883,85 @@ def composition_digest(paths: Iterable[Path], profile: str) -> str:
         digest.update(len(payload).to_bytes(8, "big"))
         digest.update(payload)
     return digest.hexdigest()
+
+
+def emit_prefix_rules(
+    lines: list[str],
+    name_prefix: str,
+    rules: tuple[PrefixRule, ...] | list[PrefixRule],
+    class_ids: dict[str, str],
+) -> str:
+    literal_names: list[str] = []
+    for index, rule in enumerate(rules):
+        name = f"{name_prefix}_{index}_literal"
+        lines.append(c_u32_array(name, rule.literal))
+        literal_names.append(name)
+    role_names = {
+        "quote": "GSLT_DIRECT_PREFIX_ROLE_QUOTE",
+        "unquote": "GSLT_DIRECT_PREFIX_ROLE_UNQUOTE",
+        "named-variable": "GSLT_DIRECT_PREFIX_ROLE_NAMED_VARIABLE",
+        "resolve-name": "GSLT_DIRECT_PREFIX_ROLE_RESOLVE_NAME",
+    }
+    rules_name = f"{name_prefix}_rules"
+    lines.append(f"static const GSLTDirectPrefixRuleV1 {rules_name}[] = {{\n")
+    for index, rule in enumerate(rules):
+        lines.append(
+            "    {"
+            f".literal = {literal_names[index]}, "
+            f".literal_len = UINT32_C({len(rule.literal)}), "
+            f".payload_start = {'&' + class_ids[rule.payload_start] if rule.payload_start else 'NULL'}, "
+            f".role = {role_names[rule.role]}, "
+            f".skip_before_payload = {'true' if rule.skip_before_payload else 'false'}"
+            "},\n"
+        )
+    lines.append("};\n")
+    return rules_name
+
+
+def emit_token_rules(
+    lines: list[str],
+    name_prefix: str,
+    rules: tuple[TokenRule, ...],
+    class_ids: dict[str, str],
+) -> str:
+    literal_names: list[str | None] = []
+    boundaries: list[str] = []
+    for index, rule in enumerate(rules):
+        literal_name: str | None = None
+        if rule.literal:
+            literal_name = f"{name_prefix}_{index}_literal"
+            lines.append(c_u32_array(literal_name, rule.literal))
+        literal_names.append(literal_name)
+        boundaries.append(
+            emit_boundary(
+                lines,
+                f"{name_prefix}_{index}_boundary",
+                rule.boundary,
+                class_ids,
+            )
+        )
+    rules_name = f"{name_prefix}_rules"
+    lines.append(f"static const GSLTDirectTokenRuleV1 {rules_name}[] = {{\n")
+    for index, rule in enumerate(rules):
+        projection_name = {
+            "word": "GSLT_DIRECT_TOKEN_PROJECTION_WORD",
+            "variable": "GSLT_DIRECT_TOKEN_PROJECTION_VARIABLE",
+            "anonymous-variable":
+                "GSLT_DIRECT_TOKEN_PROJECTION_ANONYMOUS_VARIABLE",
+        }[rule.projection]
+        lines.append(
+            "    {"
+            f".literal = {literal_names[index] or 'NULL'}, "
+            f".literal_len = UINT32_C({len(rule.literal)}), "
+            f".first = {'&' + class_ids[rule.first] if rule.first else 'NULL'}, "
+            f".tail = {'&' + class_ids[rule.tail] if rule.tail else 'NULL'}, "
+            f".boundary = {boundaries[index]}, "
+            f".projection = {projection_name}, "
+            f".strip_literal = {'true' if rule.strip_literal else 'false'}"
+            "},\n"
+        )
+    lines.append("};\n")
+    return rules_name
 
 
 def emit_boundary(
@@ -764,72 +1060,31 @@ def generate(
         lines, f"{c_prefix}_comment_boundary", plan.comment_boundary, class_ids
     )
 
-    prefix_literal_names: list[str] = []
-    for index, rule in enumerate(plan.prefix_rules):
-        name = f"{c_prefix}_prefix_{index}_literal"
-        lines.append(c_u32_array(name, rule.literal))
-        prefix_literal_names.append(name)
-    role_names = {
-        "quote": "GSLT_DIRECT_PREFIX_ROLE_QUOTE",
-        "unquote": "GSLT_DIRECT_PREFIX_ROLE_UNQUOTE",
-        "named-variable": "GSLT_DIRECT_PREFIX_ROLE_NAMED_VARIABLE",
-        "resolve-name": "GSLT_DIRECT_PREFIX_ROLE_RESOLVE_NAME",
-    }
-    prefix_rules_name = f"{c_prefix}_prefix_rules"
-    lines.append(
-        f"static const GSLTDirectPrefixRuleV1 {prefix_rules_name}[] = {{\n"
-    )
-    for index, rule in enumerate(plan.prefix_rules):
-        lines.append(
-            "    {"
-            f".literal = {prefix_literal_names[index]}, "
-            f".literal_len = UINT32_C({len(rule.literal)}), "
-            f".payload_start = {'&' + class_ids[rule.payload_start] if rule.payload_start else 'NULL'}, "
-            f".role = {role_names[rule.role]}, "
-            f".skip_before_payload = {'true' if rule.skip_before_payload else 'false'}"
-            "},\n"
-        )
-    lines.append("};\n")
+    prefix_rules_name = emit_prefix_rules(
+        lines, f"{c_prefix}_prefix", plan.prefix_rules, class_ids)
 
-    token_literal_names: list[str | None] = []
-    token_boundaries: list[str] = []
-    for index, rule in enumerate(plan.token_rules):
-        literal_name: str | None = None
-        if rule.literal:
-            literal_name = f"{c_prefix}_token_{index}_literal"
-            lines.append(c_u32_array(literal_name, rule.literal))
-        token_literal_names.append(literal_name)
-        token_boundaries.append(
-            emit_boundary(
-                lines,
-                f"{c_prefix}_token_{index}_boundary",
-                rule.boundary,
-                class_ids,
-            )
+    token_rules_name = emit_token_rules(
+        lines, f"{c_prefix}_token", plan.token_rules, class_ids)
+    list_fields = ""
+    if plan.lists is not None:
+        list_token_rules_name = emit_token_rules(
+            lines, f"{c_prefix}_list_token", plan.list_token_rules, class_ids)
+        list_prefix_rules_name = emit_prefix_rules(
+            lines, f"{c_prefix}_list_prefix", plan.list_prefix_rules, class_ids)
+        list_open, list_close, list_rest = plan.lists
+        assert plan.list_bar_boundary is not None
+        list_bar_boundary = emit_boundary(
+            lines, f"{c_prefix}_list_bar_boundary", plan.list_bar_boundary,
+            class_ids)
+        list_fields = (
+            f"    .list_open = UINT32_C({list_open}),\n"
+            f"    .list_close = UINT32_C({list_close}),\n"
+            f"    .list_rest = UINT32_C({list_rest}),\n"
+            f"    .list_bar_boundary = {list_bar_boundary},\n"
+            f"    .list_token_rules = {list_token_rules_name},\n"
+            f"    .list_token_rule_len = UINT32_C({len(plan.list_token_rules)}),\n"
+            f"    .list_prefix_rules = {list_prefix_rules_name},\n"
         )
-    token_rules_name = f"{c_prefix}_token_rules"
-    lines.append(
-        f"static const GSLTDirectTokenRuleV1 {token_rules_name}[] = {{\n"
-    )
-    for index, rule in enumerate(plan.token_rules):
-        projection_name = {
-            "word": "GSLT_DIRECT_TOKEN_PROJECTION_WORD",
-            "variable": "GSLT_DIRECT_TOKEN_PROJECTION_VARIABLE",
-            "anonymous-variable":
-                "GSLT_DIRECT_TOKEN_PROJECTION_ANONYMOUS_VARIABLE",
-        }[rule.projection]
-        lines.append(
-            "    {"
-            f".literal = {token_literal_names[index] or 'NULL'}, "
-            f".literal_len = UINT32_C({len(rule.literal)}), "
-            f".first = {'&' + class_ids[rule.first] if rule.first else 'NULL'}, "
-            f".tail = {'&' + class_ids[rule.tail] if rule.tail else 'NULL'}, "
-            f".boundary = {token_boundaries[index]}, "
-            f".projection = {projection_name}, "
-            f".strip_literal = {'true' if rule.strip_literal else 'false'}"
-            "},\n"
-        )
-    lines.append("};\n")
 
     lines.append(
         f"\nconst GSLTDirectPrefixReaderV1Plan {c_prefix}_plan = {{\n"
@@ -860,6 +1115,7 @@ def generate(
         f"    .prefix_rule_len = UINT32_C({len(plan.prefix_rules)}),\n"
         f"    .token_rules = {token_rules_name},\n"
         f"    .token_rule_len = UINT32_C({len(plan.token_rules)}),\n"
+        f"{list_fields}"
         "    .depth_limit = UINT32_MAX,\n"
         "};\n\n"
         f"const char *{c_prefix}_program_digest(void) {{\n"

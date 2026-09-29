@@ -1,0 +1,22 @@
+4
+(partial max (3))
+(partial min ((5 1.0)))
+(partial sqrt (4))
+(partial sqrt (4 5))
+true
+(partial != (1))
+abcdef
+3
+true
+(partial car-atom ())
+(partial pow-math (7))
+(partial and (true))
+(partial msort ())
+(partial cons (1))
+(partial superpose ())
+1.0
+false
+true
+true
+false
+true

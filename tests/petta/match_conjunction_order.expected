@@ -1,0 +1,9 @@
+((v0 v0 v0) (v1 v1 v1) (v2 v2 v2) (v3 v3 v3) (v4 v4 v4) (v5 v5 v5) (v6 v6 v6) (v7 v7 v7))
+8
+(v0 v1 v2 v3 v4 v5 v6 v7)
+((wrapped v0) (wrapped v1) (wrapped v2) (wrapped v3) (wrapped v4) (wrapped v5) (wrapped v6) (wrapped v7))
+64
+(v3)
+()
+(b b c)
+((a b) (b b) (b b) (b c) (c c))

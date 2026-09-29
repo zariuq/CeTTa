@@ -13,7 +13,7 @@
       ($effect-error $effect-error))))
 
 (= (prime-meta:closed-items $items)
-   (if (== $items ())
+   (if (== (size-atom $items) 0)
        True
        (let ($head $tail) (decons-atom $items)
          (if (prime-meta:closed $head)
@@ -26,7 +26,9 @@
          False
          (if (== $meta Expression)
              (prime-meta:closed-items $atom)
-             True))))
+             (if (== $meta List)
+                 (prime-meta:closed-items $atom)
+                 True)))))
 
 (= (prime-meta:name-valid $name)
    (case $name

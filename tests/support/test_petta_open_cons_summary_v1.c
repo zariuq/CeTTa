@@ -70,6 +70,27 @@ int __wrap_main(int argc, char **argv) {
     check(!atom_structural_may_have_internal_tag(deep) &&
           petta_semantics_flatten_closed_open_cons(&arena, deep) == deep,
           "deep tag-free data does not require recursive normalization");
+    bool exact = false;
+    Atom *query = petta_semantics_match_index_pattern(&arena, closed, &exact);
+    check(exact && atom_eq(query, expected), "index sees a closed cell's logical length");
+    Atom *alias_parts[] = {variable, variable};
+    Atom *alias_tail = atom_expr(&arena, alias_parts, 2u);
+    Atom *aliased = atom_expr3(&arena, tag, box, alias_tail);
+    query = petta_semantics_match_index_pattern(&arena, aliased, &exact);
+    check(exact && query->expr.len == 3u &&
+          query->expr.elems[1] == variable && query->expr.elems[2] == variable,
+          "projection retains the same variable at both aliased positions");
+    query = petta_semantics_match_index_pattern(&arena, open, &exact);
+    check(!exact && query && query->kind == ATOM_VAR,
+          "an open tail requires the complete candidate frontier");
+    query = petta_semantics_match_index_pattern(&arena, nested, &exact);
+    check(!exact && query && query->kind == ATOM_VAR,
+          "nested cells cannot enter the structural index unchanged");
+    query = petta_semantics_match_index_pattern(&arena, &unknown, &exact);
+    check(!exact && query && query->kind == ATOM_VAR,
+          "unknown metadata cannot authorize an exact count");
+    check(petta_semantics_match_index_pattern(&arena, deep, &exact) == deep && exact,
+          "certified structural data uses the original index query without a walk");
     arena_free(&survivor);
     arena_free(&arena);
     symbol_table_free(&symbols);

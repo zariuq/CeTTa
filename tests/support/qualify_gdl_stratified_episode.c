@@ -65,11 +65,15 @@ static bool support_selected(
     if (query_count == 0u)
         return true;
     for (size_t index = 0u; index < query_count; index++) {
+        /* Only the verdict is kept. */
+        Arena scratch;
+        arena_init(&scratch);
         Bindings bindings;
         bindings_init(&bindings);
         bool matched = queries[index] &&
-            match_atoms(queries[index], literal, &bindings);
+            match_atoms(queries[index], literal, &bindings, &scratch);
         bindings_free(&bindings);
+        arena_free(&scratch);
         if (matched)
             return true;
     }

@@ -34,10 +34,14 @@ bool cetta_prime_typed_publication_accepts_any_v1(
             Atom *actual = actual_types[actual_index];
             if (!actual)
                 continue;
+            /* Only the verdict is kept. */
+            Arena scratch;
+            arena_init(&scratch);
             Bindings environment;
             bindings_init(&environment);
-            bool accepted = match_types(actual, expected, &environment);
+            bool accepted = match_types(actual, expected, &environment, &scratch);
             bindings_free(&environment);
+            arena_free(&scratch);
             if (accepted)
                 return true;
         }

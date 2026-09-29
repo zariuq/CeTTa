@@ -1,0 +1,11 @@
+true
+true
+(ground)
+(open)
+(open-ground-query)
+(open-unshared)
+((s (, (I $V0 soda) (I $V0 ugly) (I $V0 man)) 0.0))
+(nested)
+()
+()
+((s (, (I $V0 soda) (I $V0 ugly) (I $V0 man)) 0.0))

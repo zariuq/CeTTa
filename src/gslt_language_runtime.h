@@ -54,7 +54,6 @@ typedef struct {
     const CettaGsltRequestPipelineV1 *request_pipeline;
     const char *observation;
     const char *manifest_sha256;
-    const char *compiler_sha256;
 } CettaGsltEmbeddedLanguageV1;
 
 typedef enum {

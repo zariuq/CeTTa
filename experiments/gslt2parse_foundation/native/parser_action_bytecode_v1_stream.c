@@ -402,6 +402,7 @@ static bool run(const char *abi_path,
     uint32_t push_slot_len = 0u;
     uint32_t push_const_len = 0u;
     uint32_t apply_len = 0u;
+    uint32_t primitive_len = 0u;
     uint32_t max_stack_len = 0u;
     char error[512] = {0};
     uint32_t production_id;
@@ -566,6 +567,9 @@ static bool run(const char *abi_path,
                 break;
             case PP_ACTION_BYTECODE_V1_APPLY:
                 apply_len++;
+                break;
+            case PP_ACTION_BYTECODE_V1_PRIMITIVE:
+                primitive_len++;
                 break;
             }
         }
@@ -840,6 +844,8 @@ static bool run(const char *abi_path,
     printf("push-slots\t%u\n", push_slot_len);
     printf("push-constants\t%u\n", push_const_len);
     printf("applications\t%u\n", apply_len);
+    if (primitive_len > 0u)
+        printf("primitives\t%u\n", primitive_len);
     printf("max-stack\t%u\n", max_stack_len);
     printf("tree-bytecode-agreements\t%u\n",
            tree_bytecode_agreements);

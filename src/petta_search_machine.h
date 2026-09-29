@@ -142,6 +142,23 @@ typedef enum {
 
 PettaMachineTable *petta_machine_table_new(void);
 void petta_machine_table_free(PettaMachineTable *table);
+
+/*
+ * Compiled match decisions over the equations of a relation, kept for a
+ * session.  Each entry states the equation projection, the host semantics
+ * and the callability authority it was compiled under, and is used only
+ * while they are current.  A root machine borrows the repository when no
+ * other root holds it, and the machines it starts share its lease; a root
+ * that finds it held compiles into a repository of its own.
+ */
+typedef struct PettaMatchDecisionRepository PettaMatchDecisionRepository;
+
+PettaMatchDecisionRepository *petta_match_decision_repository_new(void);
+void petta_match_decision_repository_free(
+    PettaMatchDecisionRepository *repository);
+/* Whether a root machine holds the repository now. */
+bool petta_match_decision_repository_leased(
+    const PettaMatchDecisionRepository *repository);
 void petta_machine_table_reset(PettaMachineTable *table);
 bool petta_machine_table_set_mutation_policy(
     PettaMachineTable *table, PettaTableMutationPolicy policy);
@@ -284,6 +301,14 @@ typedef struct {
         void *context, Space *space, Arena *arena, Atom *expression,
         const PettaPlanNode *plan,
         const Bindings *environment, OutcomeSet *outcomes);
+    /* A strict application whose arguments the machine has computed.  The
+     * host applies its operation to those values without evaluating them
+     * again, and returns false, adding nothing, when the operation needs
+     * the ordinary evaluator; the call then goes to evaluate as before.
+     * Optional. */
+    bool (*apply_ready_values)(
+        void *context, Space *space, Arena *arena, Atom *expression,
+        const Bindings *environment, OutcomeSet *outcomes);
     /* Create a new translation event at an explicit forcing boundary such as
      * PeTTa `eval`.  A returned plan fixes callability for that occurrence;
      * NULL declines because the host could not establish the event. */
@@ -402,8 +427,8 @@ typedef struct {
         void *context, Space *space, Arena *answer_arena,
         Arena *stable_arena, Atom *call,
         Atom *expected, Atom *const *query_vars, uint32_t query_var_count,
-        bool source_output_constraints, bool count_only,
-        uint64_t activation_budget, uint32_t depth_bound);
+        bool source_output_constraints, bool dispatch_recovers,
+        bool count_only, uint64_t activation_budget, uint32_t depth_bound);
     /* A revision-keyed program fact: the relation has declined open
      * compilation.  False means only that no decline is known. */
     bool (*open_relation_declined)(
@@ -477,6 +502,9 @@ typedef struct {
      * still decides which relations are memoized through the callbacks
      * below; merely supplying storage cannot make a call cacheable. */
     PettaMachineTable *shared_table;
+    /* Optional session storage for the compiled match decisions of the
+     * root machine's space. */
+    PettaMatchDecisionRepository *match_decisions;
     bool (*memoized_relation_contains)(
         void *context, SymbolId head, CettaExprLen arity);
     PettaMemoAggregateMode (*memoized_relation_aggregate)(

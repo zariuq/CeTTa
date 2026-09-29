@@ -1,0 +1,2 @@
+include('leaf.ax',[base]).
+cnf(step,axiom,~ q(X) | r(X)).

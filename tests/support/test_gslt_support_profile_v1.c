@@ -44,8 +44,7 @@ static char *mutate(const char *source, const char *before, const char *after) {
 static bool decode(Arena *arena, const char *source, CettaGsltSupportTransformProfileV1 *p,
                    char *error, size_t size) {
     return source && cetta_gslt_support_profile_from_source_v1(arena,
-        (const uint8_t *)source, strlen(source), cetta_mm2_gslt_profile_v1.compiler_sha256,
-        p, error, size);
+        (const uint8_t *)source, strlen(source), p, error, size);
 }
 
 int main(int argc, char **argv) {
@@ -195,9 +194,9 @@ int main(int argc, char **argv) {
           "malformed known-provider arity refused before native operand indexing");
     const uint8_t invalid_utf8[] = {0xc0, 0x80};
     CHECK(!cetta_gslt_support_profile_from_source_v1(&arena, invalid_utf8, sizeof(invalid_utf8),
-              p.compiler_sha256, &altered, error, sizeof(error)), "overlong UTF-8 source refused");
+              &altered, error, sizeof(error)), "overlong UTF-8 source refused");
     CHECK(!cetta_gslt_support_profile_from_source_v1(&arena, (const uint8_t *)source, strlen(source) + 1,
-              p.compiler_sha256, &altered, error, sizeof(error)), "embedded NUL source refused");
+              &altered, error, sizeof(error)), "embedded NUL source refused");
 
     free(source);
     g_var_intern = NULL; var_intern_free(&variables);

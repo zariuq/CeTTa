@@ -298,7 +298,8 @@ static Atom *json_to_legacy(JsonValueCtxV1 *ctx, Atom *value,
             return NULL;
         }
         return json_app1(ctx->arena, "JsonNumber",
-                         atom_string(ctx->arena, number->ground.sval));
+                         atom_string_n(ctx->arena, number->ground.sval,
+                                       number->ground.slen));
     }
     if (json_expr_is(value, "JsonStringV1", 2u)) {
         JsonBytesV1 utf8 = {.limit = SIZE_MAX, .ctx = ctx};
@@ -654,7 +655,7 @@ static bool json_emit_value(JsonValueCtxV1 *ctx, Atom *value,
                                     "JsonNumberV1 expects exact text");
         }
         return json_bytes_append(out, number->ground.sval,
-                                 strlen(number->ground.sval));
+                                 number->ground.slen);
     }
     if (json_expr_is(value, "JsonArrayV1", 2u)) {
         Atom *items = value->expr.elems[1];

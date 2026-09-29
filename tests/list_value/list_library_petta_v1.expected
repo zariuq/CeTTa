@@ -1,0 +1,26 @@
+3
+3
+b
+[z a b]
+(z a b)
+[a b c]
+[a b c]
+(a b c)
+[c b a]
+(c b a)
+a
+[b c]
+(IsList true false)
+(IsEmpty true false)
+[a b]
+(a b)
+[b c]
+[a b c]
+[a b]
+[a b]
+(a b)
+[a b]
+(a b)
+[(1 [a]) (2 [b c])]
+2
+[(undefined-function x) (+ 1 2)]

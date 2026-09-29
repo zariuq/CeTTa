@@ -4340,5 +4340,4 @@ const CettaGsltEmbeddedLanguageV1 cetta_petta_typecheck_v2_fragment_v1 = {
     .request_pipeline = NULL,
     .observation = "bag",
     .manifest_sha256 = "2b41e7c6b1b5fe9b515d2dd3f4dc9776388a1fa5922dd8309a4a06cb2bd2e000",
-    .compiler_sha256 = "9d33d0708d05ce00c09f33c72292ad20d2bda72e1b67491b9644990c0c7e86c5",
 };

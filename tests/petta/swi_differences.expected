@@ -8,3 +8,11 @@
 (1)
 true
 (1 (extra 1))
+done
+(a b)
+a
+Grounded
+(20)
+(f $V0 $V1 $V0)
+(installed-later 5)
+6

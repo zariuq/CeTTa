@@ -1,4 +1,7 @@
-"""Check exact publication and replay after speculative producer exhaustion."""
+"""A producer publishes every occurrence of a finite answer stream, however
+large, against the canonical route; it honors semantic fuel, and later
+invocations reuse it.  Published answers are the call's result, not
+speculative scratch, so the speculation purse does not bound them."""
 
 import argparse
 import os
@@ -31,7 +34,7 @@ def run(binary, source, language, stats_enabled, environment,
                           env=environment, check=True)
 
 
-def check_publication_fallback(binary, stats_enabled):
+def check_large_publication(binary, stats_enabled):
     payload = "a" * 1_200_000
     runtime = Path.cwd() / "runtime"
     runtime.mkdir(exist_ok=True)
@@ -49,18 +52,18 @@ def check_publication_fallback(binary, stats_enabled):
         reference = run(
             binary, source, "he", stats_enabled, environment, "1000000")
         expected = f'["{payload}", "{payload}"]\n'
-        assert candidate.stdout == expected, "fallback changed occurrences"
-        assert candidate.stdout == reference.stdout, "fallback differs from canonical"
+        assert candidate.stdout == expected, "publication changed occurrences"
+        assert candidate.stdout == reference.stdout, "publication differs from canonical"
         if stats_enabled:
             prefix = "prepared-pure-answer-producer-"
             candidate_counters = runtime_counters(candidate.stderr, True)
             reference_counters = runtime_counters(reference.stderr, True)
             expected_candidate = {
                 "admission": 1,
-                "commit": 0,
-                "decline": 1,
-                "resource-decline": 1,
-                "answer": 0,
+                "commit": 1,
+                "decline": 0,
+                "resource-decline": 0,
+                "answer": 2,
             }
             for name, expected_count in expected_candidate.items():
                 assert candidate_counters[prefix + name] == expected_count, (
@@ -77,8 +80,8 @@ def main():
     parser.add_argument("--stats", action="store_true")
     args = parser.parse_args()
     source = Path(__file__).with_name("prepared_pure_answer_resource_fallback.metta")
-    # The speculation purse is the collection budget; one mebibyte cannot
-    # hold the middle stream's published occurrences.
+    # The speculation purse is the collection budget; the middle stream's
+    # published occurrences exceed one mebibyte and are all published.
     environment = dict(os.environ, CETTA_GC="1", CETTA_GC_BUDGET_MB="1")
     for language in ("he", "petta", "prime"):
         streams = [["(leaf)"] * count for count in (2, 32768, 2)]
@@ -97,18 +100,18 @@ def main():
                 prefix = "prepared-pure-answer-producer-"
                 admitted = language != "prime" and semantic_fuel is None
                 expected_counters = {
-                    "resource-decline": 1 if admitted else 0,
+                    "resource-decline": 0,
                     "admission": 3 if admitted else 0,
-                    "commit": 2 if admitted else 0,
-                    "decline": 1 if admitted else 0,
-                    "answer": 4 if admitted else 0,
+                    "commit": 3 if admitted else 0,
+                    "decline": 0,
+                    "answer": 32772 if admitted else 0,
                 }
                 for name, expected_count in expected_counters.items():
                     assert counters[prefix + name] == expected_count, (
                         language, semantic_fuel, name, counters[prefix + name],
                         expected_count)
-    check_publication_fallback(args.binary, args.stats)
-    print("PASS: producer exhaustion and publication overflow preserve all occurrences, "
+    check_large_publication(args.binary, args.stats)
+    print("PASS: producers publish every occurrence beyond the speculation purse, "
           "honor semantic fuel, and permit later invocation reentry")
 
 

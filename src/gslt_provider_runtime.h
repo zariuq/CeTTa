@@ -70,7 +70,6 @@ typedef struct {
     const char *source_sha256;
     const CettaGsltProviderRequirementV1 *requirements;
     size_t requirement_count;
-    const char *generator_sha256;
 } CettaGsltProviderCatalogV1;
 
 typedef struct {
@@ -101,8 +100,7 @@ bool cetta_gslt_provider_catalog_validate_v1(
 bool cetta_gslt_provider_catalog_from_source_v1(
     Arena *arena, const uint8_t *source, size_t source_length,
     const char *source_name, const char *language_manifest_sha256,
-    const char *generator_sha256, CettaGsltProviderCatalogV1 *catalog,
-    char *error, size_t error_size);
+    CettaGsltProviderCatalogV1 *catalog, char *error, size_t error_size);
 
 /* Select the physical providers authorized by a catalog.  Missing physical
  * providers remain ordinary empty relations; a provider with the right

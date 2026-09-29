@@ -1,0 +1,15 @@
+(Clause (if X))
+(Clause (case 1))
+(Clause (partial let (a b)))
+(Clause (chain a b))
+(Clause (partial let* (a)))
+(Clause (sealed a))
+(Clause (once a b))
+(Clause (collapse a b))
+1
+one
+2
+1
+1
+(Clause (case 1))
+(sealed a)

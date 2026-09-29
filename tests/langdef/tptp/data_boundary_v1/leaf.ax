@@ -1,0 +1,2 @@
+fof(ax,axiom,![X]: (p(X) => and(X,X))).
+fof(fact,axiom,p(word)).

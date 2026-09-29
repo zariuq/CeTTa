@@ -1,0 +1,13 @@
+; Type lookup reads current bindings; sorting retains duplicate occurrences.
+(: seed Seed)
+(: other Other)
+(= (inspect-head $items) (let $item (car-atom $items) (get-type $item)))
+(= (typed-branch $items) (let $item (car-atom $items) (if (== (get-type $item) Seed) yes no)))
+(= (inspect-alias $item) (let $alias $item (get-type $alias)))
+!(get-type seed)
+!(inspect-head (seed))
+!(inspect-head (other))
+!(typed-branch (seed))
+!(typed-branch (other))
+!(inspect-alias seed)
+!(msort (collapse (let $item (superpose (seed other seed)) (get-type $item))))

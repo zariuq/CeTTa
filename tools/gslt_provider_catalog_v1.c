@@ -175,7 +175,6 @@ static bool emit(const Options *options, const CettaGsltProviderCatalogV1 *catal
     STRING_FIELD(source_name); STRING_FIELD(source_sha256);
     fprintf(c, "    .requirements = %s_requirements_v1,\n    .requirement_count = %zuu,\n",
             options->symbol, catalog->requirement_count);
-    STRING_FIELD(generator_sha256);
 #undef STRING_FIELD
     fputs("};\n", c);
     bool ok = !ferror(h) && !ferror(c);
@@ -231,13 +230,11 @@ int main(int argc, char **argv) {
         same_file(header_path, argv[0]) || same_file(source_path, argv[0])))
         ok = fail(error, sizeof(error), "output is absent or aliases another output or input");
     if (ok) { options.header = header_path; options.source = source_path; }
-    size_t catalog_length = 0, manifest_length = 0, executable_length = 0;
+    size_t catalog_length = 0, manifest_length = 0;
     unsigned char *catalog_bytes = ok ? read_bytes(catalog_path, &catalog_length) : NULL;
     unsigned char *manifest_bytes = ok ? read_bytes(manifest_path, &manifest_length) : NULL;
-    unsigned char *executable = ok ? read_bytes("/proc/self/exe", &executable_length) : NULL;
-    if (ok && !executable) executable = read_bytes(argv[0], &executable_length);
-    if (ok && (!catalog_bytes || !manifest_bytes || !executable))
-        ok = fail(error, sizeof(error), "cannot read catalog, manifest or generator executable");
+    if (ok && (!catalog_bytes || !manifest_bytes))
+        ok = fail(error, sizeof(error), "cannot read catalog or manifest");
     SymbolTable symbols;
     VarInternTable variables;
     symbol_table_init(&symbols);
@@ -251,15 +248,12 @@ int main(int argc, char **argv) {
     CettaGsltProviderCatalogV1 catalog = {0};
     GsltLanguageManifest manifest = {0};
     if (ok) {
-        char manifest_sha[65], generator_sha[65];
+        char manifest_sha[65];
         cetta_native_sha256_hex(manifest_bytes, manifest_length, manifest_sha);
-        /* Exact generator binary identity, not a source-to-target proof or a
-         * platform-independent source fingerprint. */
-        cetta_native_sha256_hex(executable, executable_length, generator_sha);
         const char *source_name = catalog_path + root_length + (root_length == 1u ? 0u : 1u);
         ok = cetta_gslt_provider_catalog_from_source_v1(&arena, catalog_bytes,
-            catalog_length, source_name, manifest_sha, generator_sha,
-            &catalog, error, sizeof(error));
+            catalog_length, source_name, manifest_sha, &catalog, error,
+            sizeof(error));
     }
     if (ok) {
         /* Preserve the existing generator envelope, independently of the
@@ -294,6 +288,6 @@ int main(int argc, char **argv) {
     symbol_table_free(&symbols);
     free(catalog_path); free(manifest_path); free(root_path);
     free(header_path); free(source_path);
-    free(catalog_bytes); free(manifest_bytes); free(executable);
+    free(catalog_bytes); free(manifest_bytes);
     return ok ? 0 : 1;
 }

@@ -1,6 +1,8 @@
 #include "library_json.h"
 
+#include "eval.h"
 #include "json_embedded_sources_v1.h"
+#include "lang.h"
 #include "native/json_nik_v1.h"
 #include "native/json_value_v1.h"
 #include "symbol.h"
@@ -26,6 +28,87 @@ static Atom *json_call(Arena *arena, Atom *head,
     return atom_expr(arena, items, (CettaExprLen)nargs + 1u);
 }
 
+/* A JSON value is handed back as data in the running language's own terms.
+ * HE holds the failing call inside evidence with quote, since HE would
+ * evaluate it; PeTTa never evaluates a returned value, so the call itself
+ * is the datum.  PeTTa's booleans are true and false. */
+static bool json_lane_is_petta(void) {
+    return eval_current_language_id &&
+           eval_current_language_id() == CETTA_LANGUAGE_PETTA;
+}
+
+/* The codec's boolean is HE's (a grounded bool, or True/False); PeTTa's is
+ * the symbol true/false.  The library converts at its boundary: the codec
+ * only ever sees its own representation, the program its language's. */
+static bool json_codec_boolean(Atom *atom, bool *value) {
+    if (!atom)
+        return false;
+    if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_BOOL) {
+        *value = atom->ground.bval;
+        return true;
+    }
+    if (atom_is_symbol(atom, "True") || atom_is_symbol(atom, "False")) {
+        *value = atom_is_symbol(atom, "True");
+        return true;
+    }
+    return false;
+}
+
+static bool json_petta_boolean(Atom *atom, bool *value) {
+    if (atom_is_symbol(atom, "true") || atom_is_symbol(atom, "false")) {
+        *value = atom_is_symbol(atom, "true");
+        return true;
+    }
+    return false;
+}
+
+static Atom *json_respell_booleans(Arena *arena, Atom *atom, uint32_t depth,
+                                   bool to_petta) {
+    bool value = false;
+    if (!atom || atom->kind != ATOM_EXPR || depth > 2048u)
+        return atom;
+    if (atom->expr.len == 2u &&
+        (atom_is_symbol(atom->expr.elems[0], "JsonBoolV1") ||
+         atom_is_symbol(atom->expr.elems[0], "JsonBool")) &&
+        (to_petta ? json_codec_boolean(atom->expr.elems[1], &value)
+                  : json_petta_boolean(atom->expr.elems[1], &value))) {
+        Atom *items[2] = {
+            atom->expr.elems[0],
+            to_petta ? atom_symbol(arena, value ? "true" : "false")
+                     : atom_bool(arena, value),
+        };
+        return atom_expr(arena, items, 2u);
+    }
+    Atom **items = NULL;
+    for (CettaExprIndex index = 0u; index < atom->expr.len; index++) {
+        Atom *child = json_respell_booleans(
+            arena, atom->expr.elems[index], depth + 1u, to_petta);
+        if (child != atom->expr.elems[index] && !items) {
+            items = (Atom **)arena_alloc(
+                arena, sizeof(*items) * (size_t)atom->expr.len);
+            for (CettaExprIndex copy = 0u; copy < atom->expr.len; copy++)
+                items[copy] = atom->expr.elems[copy];
+        }
+        if (items)
+            items[index] = child;
+    }
+    return items ? atom_expr(arena, items, atom->expr.len) : atom;
+}
+
+/* A value leaving the codec, in the running language's spelling. */
+static Atom *json_lane_value(Arena *arena, Atom *value) {
+    return json_lane_is_petta()
+        ? json_respell_booleans(arena, value, 0u, true)
+        : value;
+}
+
+/* A value entering the codec, in the codec's own spelling. */
+static Atom *json_codec_value(Arena *arena, Atom *value) {
+    return json_lane_is_petta()
+        ? json_respell_booleans(arena, value, 0u, false)
+        : value;
+}
+
 static Atom *json_error(Arena *arena, Atom *head,
                         Atom **args, uint32_t nargs,
                         const char *message) {
@@ -38,15 +121,16 @@ static Atom *json_failure(Arena *arena, Atom *head,
                           const char *phase,
                           const char *status,
                           const char *message) {
+    Atom *call = json_call(arena, head, args, nargs);
     Atom *quoted_call_items[2] = {
         atom_symbol(arena, "quote"),
-        json_call(arena, head, args, nargs),
+        call,
     };
     Atom *items[5] = {
         atom_symbol(arena, "JsonFailureV1"),
         atom_symbol(arena, phase ? phase : "JsonOperationV1"),
         atom_symbol(arena, status ? status : "JsonInternalFailureV1"),
-        atom_expr(arena, quoted_call_items, 2u),
+        json_lane_is_petta() ? call : atom_expr(arena, quoted_call_items, 2u),
         atom_string(arena, message ? message : "JSON failure"),
     };
     return atom_expr(arena, items, 5u);
@@ -279,7 +363,7 @@ static Atom *json_parse(CettaJsonLibraryRuntimeV1 *runtime,
             "JsonParseV1", json_runtime_failure_symbol(parse_status),
             error[0] ? error : cetta_json_runtime_v1_status_name(parse_status));
     }
-    if (!legacy) return canonical;
+    if (!legacy) return json_lane_value(arena, canonical);
     if (!cetta_json_value_v1_to_legacy(
             arena, canonical, 1000000u, 1024u, &result,
             &value_status, error, sizeof(error))) {
@@ -287,7 +371,7 @@ static Atom *json_parse(CettaJsonLibraryRuntimeV1 *runtime,
             arena, head, args, nargs,
             error[0] ? error : cetta_json_value_v1_status_name(value_status));
     }
-    return result;
+    return json_lane_value(arena, result);
 }
 
 static Atom *json_stringify(CettaJsonLibraryRuntimeV1 *runtime,
@@ -314,7 +398,7 @@ static Atom *json_stringify(CettaJsonLibraryRuntimeV1 *runtime,
             "JSON NIK has no selected prepared parser realization");
     }
     if (!cetta_json_value_v1_stringify(
-            parser, args[0], legacy,
+            parser, json_codec_value(arena, args[0]), legacy,
             4000000u, 1024u, 16u * 1024u * 1024u,
             &bytes, &len, &status, error, sizeof(error))) {
         return json_failure_or_error(
@@ -389,8 +473,8 @@ static Atom *json_lookup(CettaJsonLibraryRuntimeV1 *runtime,
             "expected JSON object and key");
     }
     if (legacy_codec && !cetta_json_value_v1_from_legacy(
-            arena, object, 1000000u, 1024u, &canonical,
-            &status, error, sizeof(error))) {
+            arena, json_codec_value(arena, object), 1000000u, 1024u,
+            &canonical, &status, error, sizeof(error))) {
         return json_failure_or_error(
             arena, head, args, nargs, legacy_codec,
             "JsonLookupV1", json_value_failure_symbol(status),
@@ -434,7 +518,7 @@ static Atom *json_lookup(CettaJsonLibraryRuntimeV1 *runtime,
                               error[0] ? error : "legacy JSON projection failed");
         }
         free(matches);
-        return result;
+        return json_lane_value(arena, result);
     }
     if (mode == 0) {
         Atom **values = (Atom **)arena_alloc(

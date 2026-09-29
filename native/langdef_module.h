@@ -94,6 +94,51 @@ bool cetta_langdef_expr_head(const Atom *atom, const char *head,
                              CettaExprLen arity);
 bool cetta_langdef_slurp(const char *path, uint8_t **bytes_out,
                          size_t *len_out, char *error, size_t error_size);
+typedef struct CettaDeterministicEquationPlanV1
+    CettaDeterministicEquationPlanV1;
+/* The prepared equations of a reader's compact-v1 directory beside
+ * snapshot_path, listed with their SHA-256 digests in manifest_name, or NULL
+ * with the reason: no manifest, a listed file whose digest differs, or
+ * equations the runner does not admit. */
+CettaDeterministicEquationPlanV1 *cetta_tptp_compact_manifest_plan_v1(
+    const char *snapshot_path, const char *manifest_name,
+    char *reason, size_t reason_size);
+
+/* The two stages after a TPTP read, as tptp:read and tptp:print run them:
+ * the compact records of a canonical file term under a leaf policy
+ * (tagged, mixed or native), and those records printed back to text.  The
+ * corpus tools call the same functions.  Printing uses the given canonical
+ * table of the reader's grammar, or with NULL the reader's own. */
+#include "native/deterministic_equation_plan_v1.h"
+#include "native/tptp_official_snapshot_v1.h"
+/* The primitives LangDef programs run with: the structural data primitives
+ * and the str: operations, each with the class of its value. */
+extern const CettaDeterministicVocabularyV1
+    cetta_langdef_deterministic_vocabulary_v1;
+typedef enum {
+    CETTA_TPTP_COMPACT_PRINT_INVERSE_V1 = 0,
+    CETTA_TPTP_COMPACT_PRINT_NOT_RECORDS_V1,
+    CETTA_TPTP_COMPACT_PRINT_INPUT_V1,
+    CETTA_TPTP_COMPACT_PRINT_MEMORY_V1
+} CettaTptpCompactPrintFailureV1;
+bool cetta_tptp_compact_records_v1(
+    const CettaDeterministicEquationPlanV1 *compact, const char *policy,
+    Atom *canonical, Arena *arena, Atom **records_out,
+    uint64_t *work_used_out, CettaDeterministicEquationStatusV1 *status_out,
+    char *error, size_t error_size);
+bool cetta_tptp_compact_wrappers_v1(
+    const CettaDeterministicEquationPlanV1 *compact,
+    SymbolId **wrappers_out, uint32_t *len_out);
+bool cetta_tptp_compact_print_v1(
+    const CettaTptpPreparedReaderV1 *reader,
+    const CettaGrammarCanonicalTableV1 *table,
+    const CettaDeterministicEquationPlanV1 *print,
+    const SymbolId *wrappers, uint32_t wrapper_len,
+    const Atom *records, Arena *arena,
+    char **text_out, size_t *len_out,
+    CettaTptpCompactPrintFailureV1 *failure_out, uint64_t *index_out,
+    Atom **culprit_out, CettaDeterministicEquationStatusV1 *status_out,
+    uint64_t *work_used_out, char *error, size_t error_size);
 bool cetta_langdef_sha256_file(const char *path, char digest[65],
                                char *error, size_t error_size);
 bool cetta_langdef_path_join(const char *base_file, const char *relative,

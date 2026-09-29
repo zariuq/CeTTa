@@ -11,6 +11,11 @@ typedef struct CettaForeignRuntime CettaForeignRuntime;
 
 CettaForeignRuntime *cetta_foreign_runtime_new(void);
 void cetta_foreign_runtime_free(CettaForeignRuntime *rt);
+/* Drop the Python references of the foreign records no arena holds any more.
+ * A record is freed as soon as its last hold goes, possibly during an arena
+ * reset; its object is released here, at a point where running Python code
+ * is safe: after each top-level form and when a foreign call begins. */
+void cetta_foreign_drain_releases(void);
 void cetta_foreign_global_shutdown(void);
 
 const char *cetta_module_format_name(CettaModuleFormatKind kind);

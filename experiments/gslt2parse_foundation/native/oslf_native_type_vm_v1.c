@@ -514,7 +514,8 @@ static bool pposlf_native_type_vm_v1_decode_quoted_ground(
                     "reflected capability contains a malformed quoted string");
                 goto done;
             }
-            completed = atom_string(arena, value->ground.sval);
+            completed = atom_string_n(arena, value->ground.sval,
+                                      value->ground.slen);
         } else if (pposlf_native_type_vm_v1_expr_head(
                        current, "q-var", 1u)) {
             pposlf_native_type_vm_v1_set_error(
@@ -4561,7 +4562,8 @@ pposlf_native_type_vm_v1_try_compiled_relation(
         &logical_rule_attempts, &logical_rule_matches);
     if (logical_rule_attempts > available || !result ||
         !match_atoms_builder(
-            frame->goal->expr.elems[3], result, &search->bindings) ||
+            frame->goal->expr.elems[3], result, &search->bindings,
+            &search->scratch) ||
         bindings_has_loop(
             bindings_builder_bindings(&search->bindings))) {
         bindings_builder_rollback(&search->bindings, binding_mark);
@@ -5137,7 +5139,8 @@ static PPOSLFNativeSearchOutcomeV1 pposlf_native_type_vm_v1_search(
                 bindings_builder_save(&search->bindings);
             frame->proof_mark = search->proof_event_len;
             row_matched = match_atoms_builder(
-                frame->goal, row->fact, &search->bindings);
+                frame->goal, row->fact, &search->bindings,
+                    &search->scratch);
             row_looped = row_matched && bindings_has_loop(
                 bindings_builder_bindings(&search->bindings));
             if (!row_matched || row_looped) {

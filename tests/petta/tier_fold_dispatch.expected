@@ -1,0 +1,15 @@
+(pair c (pair b (pair a z)))
+z
+(pair b (pair a z))
+((left 2 (left 1 z)) (left 2 (right 1 z)) (right 2 (left 1 z)) (right 2 (right 1 z)))
+()
+((kept (kept z)))
+()
+128999
+(10)
+()
+(2)
+(5)
+((a b) (b a))
+(Error (evaluation_error zero_divisor) (context (/ / 2) $V0))
+6

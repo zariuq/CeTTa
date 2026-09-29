@@ -30,6 +30,52 @@ static VarId test_id(uint32_t ordinal) {
     return UINT64_C(0x10000000) + (VarId)ordinal * UINT64_C(0x10001);
 }
 
+static void test_variable_inventory(Arena *arena) {
+    CettaVarMap map = {0};
+    Atom *values[512];
+    bool ok = true;
+    for (uint32_t i = 0u; i < 512u; i++) {
+        values[i] = atom_var_with_id(arena, "same-spelling", test_id(i + 4000u));
+        ok = ok && values[i] && cetta_var_map_add(&map, test_id(i), values[i]);
+    }
+    for (uint32_t i = 0u; i < 512u; i++)
+        ok = ok && cetta_var_map_lookup(&map, test_id(i)) == values[i] &&
+            map.items[i].source_id == test_id(i);
+    CHECK(ok && map.len == 512u,
+          "indexed inventory retains distinct identities and first-appearance order");
+    CHECK(cetta_var_map_add(&map, test_id(17u), values[17]) &&
+              !cetta_var_map_add(&map, test_id(17u), values[18]) &&
+              map.len == 512u &&
+              cetta_var_map_lookup(&map, test_id(17u)) == values[17],
+          "indexed map preserves identical insertion and rejects a changed payload");
+    CettaVarMap copy = {0};
+    ok = cetta_var_map_clone(&copy, &map);
+    for (uint32_t i = 0u; i < 512u; i++)
+        ok = ok && cetta_var_map_lookup(&copy, test_id(i)) == values[i];
+    cetta_var_map_free(&map);
+    CHECK(ok && cetta_var_map_lookup(&copy, test_id(511u)) == values[511],
+          "cloned inventories own independent indexes and retain every payload");
+
+    copy.len = 300u;
+    CHECK(cetta_var_map_lookup(&copy, test_id(511u)) == NULL,
+          "truncated inventory refuses an unconfirmed stale position");
+    ok = true;
+    for (uint32_t i = 300u; i < 512u; i++)
+        ok = ok && cetta_var_map_add(&copy, test_id(i + 1000u), values[i]);
+    for (uint32_t i = 300u; i < 512u; i++)
+        ok = ok && !cetta_var_map_lookup(&copy, test_id(i)) &&
+            cetta_var_map_lookup(&copy, test_id(i + 1000u)) == values[i];
+    CHECK(ok, "refilled inventory checks stale keys against the current records");
+    copy.len = 0u;
+    ok = true;
+    for (uint32_t i = 0u; i < 512u; i++)
+        ok = ok && cetta_var_map_add(&copy, test_id(511u - i), values[i]);
+    for (uint32_t i = 0u; i < 512u; i++)
+        ok = ok && cetta_var_map_lookup(&copy, test_id(511u - i)) == values[i];
+    CHECK(ok, "empty-and-refill rebuilds the inventory in its new appearance order");
+    cetta_var_map_free(&copy);
+}
+
 static bool build_bindings(Arena *arena, uint32_t count, Bindings *out) {
     BindingsBuilder builder;
     if (!bindings_builder_init(&builder, NULL))
@@ -51,6 +97,86 @@ static bool binding_is_int(Bindings *bindings, VarId id, int64_t expected) {
     return value && value->kind == ATOM_GROUNDED &&
            value->ground.gkind == GV_INT &&
            value->ground.ival == expected;
+}
+
+static void check_binding_batch(Arena *arena, const Bindings *base,
+                                Atom **variables, Atom **values,
+                                uint32_t count, bool success,
+                                const char *message) {
+    Bindings reference, batch;
+    bool ready = bindings_clone(&reference, base) && bindings_clone(&batch, base);
+    CHECK(ready, "batch fixture clones its input");
+    if (!ready)
+        return;
+    bool reference_ok = true;
+    for (uint32_t i = 0u; i < count && reference_ok; i++)
+        reference_ok = bindings_add_var(&reference, variables[i], values[i]);
+    bool batch_ok = bindings_add_vars(&batch, variables, values, count);
+    bool equal = reference_ok == success && batch_ok == reference_ok;
+    if (batch_ok) {
+        equal = equal && bindings_eq(&reference, &batch) &&
+            bindings_occurrence_token(&batch) == bindings_occurrence_token(base);
+        for (uint32_t i = 0u; i < count && equal; i++) {
+            Atom *left = bindings_apply(&reference, arena, variables[i]);
+            Atom *right = bindings_apply(&batch, arena, variables[i]);
+            equal = left && right && atom_eq(left, right);
+        }
+    } else {
+        equal = equal && bindings_eq(&batch, (Bindings *)base) &&
+            bindings_occurrence_token(&batch) == bindings_occurrence_token(base);
+    }
+    CHECK(equal, message);
+    bindings_free(&reference);
+    bindings_free(&batch);
+}
+
+static void test_binding_batch(Arena *arena) {
+    CETTA_FRAME_IDENTITY_SCOPE(identities);
+    CettaFrameIdentity epoch = cetta_frame_identity_scope_fresh(&identities);
+    Atom *x = atom_var_with_id(arena, "batch-x", var_epoch_id(200u, epoch));
+    Atom *y = atom_var_with_id(arena, "batch-y", var_epoch_id(100u, epoch));
+    Atom *z = atom_var_with_id(arena, "batch-z", fresh_var_id());
+    Atom *seven = atom_int(arena, 7);
+    Atom *eight = atom_int(arena, 8);
+    Atom *tag = atom_symbol(arena, "Batch");
+    Bindings base;
+    bindings_init(&base);
+    CHECK(bindings_refresh_occurrence_token(&base), "batch keeps orthogonal occurrence metadata");
+    Atom *vars[] = {x, y, z};
+    Atom *vals[] = {y, seven, atom_expr3(arena, tag, x, y)};
+    check_binding_batch(arena, &base, vars, vals, 3u, true,
+                        "bulk publication preserves cross-frame aliases and metadata");
+    Atom *refine_vars[] = {x, x};
+    Atom *refine_vals[] = {atom_expr2(arena, tag, y), atom_expr2(arena, tag, seven)};
+    check_binding_batch(arena, &base, refine_vars, refine_vals, 2u, true,
+                        "bulk repeated writes refine earlier bindings by unification");
+    Atom *bad_vals[] = {seven, eight};
+    check_binding_batch(arena, &base, refine_vars, bad_vals, 2u, false,
+                        "a later conflicting write discards the whole private image");
+    Atom *cycle_vars[] = {x, y};
+    Atom *cycle_vals[] = {atom_expr2(arena, tag, y), x};
+    check_binding_batch(arena, &base, cycle_vars, cycle_vals, 2u, false,
+                        "bulk publication rejects indirect occurs cycles without publishing a prefix");
+    Atom *reverse_vals[] = {y, x};
+    check_binding_batch(arena, &base, cycle_vars, reverse_vals, 2u, true,
+                        "bulk reverse aliases retain the sequential no-op rule");
+    VarId named_id = fresh_var_id();
+    Atom *key_vars[] = {
+        atom_var_with_name_key(arena, atom_expr2(arena, tag, seven), named_id),
+        atom_var_with_name_key(arena, atom_expr2(arena, tag, eight), named_id),
+    };
+    Atom *key_vals[] = {seven, seven};
+    check_binding_batch(arena, &base, key_vars, key_vals, 2u, false,
+                        "equal identifiers with incompatible structural names are rejected");
+    CHECK(bindings_add_constraint(&base, atom_expr2(arena, tag, z),
+                                  atom_expr2(arena, tag, seven)),
+          "batch constraint fixture is admitted");
+    Atom *constraint_vars[] = {z};
+    Atom *constraint_vals[] = {seven};
+    check_binding_batch(arena, &base, constraint_vars, constraint_vals, 1u, true,
+                        "bulk writes retain sequential constraint normalization");
+    CHECK(bindings_add_vars(&base, NULL, NULL, 0u), "empty publication is an identity");
+    bindings_free(&base);
 }
 
 static void test_owner_retain(void *owner) {
@@ -283,7 +409,7 @@ static void test_generation_checked_frame_handles(Arena *arena) {
     BindingValue context_300 = binding_value_from_context(source, 300u);
     BindingValue context_200 = binding_value_from_context(source, 200u);
     ready = ready && match_binding_values_builder(
-        context_300, context_200, &builder);
+        context_300, context_200, &builder, arena);
     BindingValue stored_context = ready
         ? bindings_lookup_value_id(
               &builder.current, var_epoch_id(source_id, 300u))
@@ -1475,7 +1601,7 @@ static void test_dense_inventory_is_slot_read(Arena *arena) {
     Atom *pat_x = atom_var_with_id(arena, "inv-b", local_b);
     Atom *pattern = atom_expr3(arena, head, pat_x, pat_x);
     Atom *query = atom_expr3(arena, head, one, one);
-    CHECK(match_atoms_builder(query, pattern, &builder) &&
+    CHECK(match_atoms_builder(query, pattern, &builder, arena) &&
               bindings_lookup_value_id(&builder.current, local_b).skeleton == one,
           "repeated inventory variable unifies with the display live");
 
@@ -2536,6 +2662,7 @@ int main(void) {
     test_frame_schema_branch_lifetime(&arena);
     test_builder_frame_registration_rollback(&arena);
     test_frame_registration_compaction_rebase(&arena);
+    test_variable_inventory(&arena);
     test_unframed_context_import(&arena);
     test_frame_registration_undo_promotion();
     test_prepared_frame_schema_lifetime(&arena);
@@ -2550,6 +2677,7 @@ int main(void) {
     test_incremental_occurs_large_frontier(&arena);
     test_arena_symbol_cache_is_bounded();
     test_logical_binding_transport();
+    test_binding_batch(&arena);
     const char *lookup_index_setting =
         getenv("CETTA_BINDINGS_LOOKUP_INDEX");
     bool lookup_index_expected =
@@ -4265,7 +4393,7 @@ int main(void) {
         view_current_materialized &&
         match_atoms_builder(
             view_current_materialized, view_right,
-            &view_current_reference);
+            &view_current_reference, &view_current_reference_arena);
     bool view_current_compiled_match =
         view_current_compiled_ready &&
         match_atoms_epoch_view_builder_current(
@@ -4481,7 +4609,7 @@ int main(void) {
         view_current_fail_materialized &&
         match_atoms_builder(
             view_current_fail_materialized, view_fail_right,
-            &view_current_fail_reference);
+            &view_current_fail_reference, &view_current_fail_reference_arena);
     bool view_current_fail_compiled_match =
         view_current_fail_compiled_ready &&
         match_atoms_epoch_view_builder_current(

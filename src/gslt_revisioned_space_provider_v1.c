@@ -141,7 +141,7 @@ static const char *revisioned_space_world_digest_v1(
     const Atom *value = quoted->expr.elems[1];
     return value && value->kind == ATOM_GROUNDED &&
         value->ground.gkind == GV_STRING && value->ground.sval &&
-        strlen(value->ground.sval) == 64u
+        value->ground.slen == 64u
         ? value->ground.sval : NULL;
 }
 

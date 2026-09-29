@@ -1,0 +1,32 @@
+true
+true
+true
+true
+true
+true
+true
+((Pair blue circle) (Pair red square) (Pair red square) (Pair same same))
+((Pair blue circle) (Pair red square) (Pair red square) (Pair same same))
+((Pair blue circle) (Pair red square) (Pair red square) (Pair same same))
+((Pair same same))
+()
+((Box (Pair red square)))
+4
+1
+4
+1
+OK
+((Pair blue circle) (Pair red square) (Pair red square) (Pair same same))
+((Pair blue circle) (Pair red square) (Pair red square) (Pair same same))
+((Pair same same))
+()
+((Box (Pair red square)))
+4
+1
+4
+1
+4
+4
+()
+()
+()

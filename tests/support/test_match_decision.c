@@ -162,9 +162,9 @@ static void test_bounded_path_precision(
         expect_refs(decision, space, query, semantics,
                     UINT64_MAX, superset, 3u);
         Bindings bindings; bindings_init(&bindings);
-        assert(match_atoms(query, equations[0].pattern, &bindings));
-        assert(!match_atoms(query, equations[1].pattern, &bindings));
-        assert(match_atoms(query, equations[2].pattern, &bindings));
+        assert(match_atoms(query, equations[0].pattern, &bindings, arena));
+        assert(!match_atoms(query, equations[1].pattern, &bindings, arena));
+        assert(match_atoms(query, equations[2].pattern, &bindings, arena));
         bindings_free(&bindings);
         cetta_match_decision_free(decision);
     }
@@ -631,7 +631,7 @@ int main(void) {
         Bindings witness;
         bindings_init(&witness);
         assert(match_atoms(partial_query, partial_equations[i].pattern,
-                           &witness) == (i < 6u));
+                           &witness, &persistent) == (i < 6u));
         bindings_free(&witness);
     }
     for (unsigned mode = CETTA_MATCH_DECISION_DEEP;

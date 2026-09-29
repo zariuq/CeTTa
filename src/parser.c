@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "parser.h"
+#include "utf8.h"
 #include "name_key.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,6 +35,7 @@
 
 static __thread bool g_rational_literals_enabled = true;
 static __thread bool g_universal_name_syntax_enabled = false;
+static __thread bool g_list_syntax_enabled = false;
 static __thread ParserBareDollarMode g_bare_dollar_mode =
     CETTA_BARE_DOLLAR_DEFAULT_MODE;
 static ParserDocumentIdsBackend g_document_ids_backend;
@@ -107,6 +109,16 @@ bool parser_universal_name_syntax_enabled(void) {
     return g_universal_name_syntax_enabled;
 }
 
+bool parser_set_list_syntax_enabled(bool enabled) {
+    bool old = g_list_syntax_enabled;
+    g_list_syntax_enabled = enabled;
+    return old;
+}
+
+bool parser_list_syntax_enabled(void) {
+    return g_list_syntax_enabled;
+}
+
 ParserBareDollarMode parser_set_bare_dollar_mode(
     ParserBareDollarMode mode) {
     ParserBareDollarMode old = g_bare_dollar_mode;
@@ -135,12 +147,24 @@ void parser_clear_document_ids_backend(void *context) {
 
 /* ── Helpers ────────────────────────────────────────────────────────────── */
 
-static void skip_whitespace_and_comments(const char *text, size_t *pos) {
+/* The scanners read text_len bytes of text, which may hold NUL and is
+ * followed by a NUL byte; PARSER_TEXT_NUL_TERMINATED reads up to the first
+ * NUL instead. */
+#define PARSER_TEXT_NUL_TERMINATED SIZE_MAX
+
+static inline bool parser_more(const char *text, size_t text_len, size_t pos) {
+    return text_len == PARSER_TEXT_NUL_TERMINATED ? text[pos] != '\0'
+                                                  : pos < text_len;
+}
+
+static void skip_whitespace_and_comments(const char *text, size_t text_len,
+                                         size_t *pos) {
     for (;;) {
-        while (text[*pos] && isspace((unsigned char)text[*pos]))
+        while (parser_more(text, text_len, *pos) &&
+               isspace((unsigned char)text[*pos]))
             (*pos)++;
-        if (text[*pos] == ';') {
-            while (text[*pos] && text[*pos] != '\n')
+        if (parser_more(text, text_len, *pos) && text[*pos] == ';') {
+            while (parser_more(text, text_len, *pos) && text[*pos] != '\n')
                 (*pos)++;
         } else {
             break;
@@ -150,6 +174,20 @@ static void skip_whitespace_and_comments(const char *text, size_t *pos) {
 
 static bool is_token_char(char c) {
     return c && !isspace((unsigned char)c) && c != '(' && c != ')' && c != ';' && c != '"';
+}
+
+/* Inside a list a token also ends at a bracket. */
+static bool is_list_token_char(char c) {
+    return is_token_char(c) && c != '[' && c != ']';
+}
+
+/* The bar alone, which marks a list's rest; a token may start with it. */
+static bool parser_at_list_bar(const char *text, size_t pos) {
+    return text[pos] == '|' && !is_list_token_char(text[pos + 1u]);
+}
+
+static bool is_token_char_in(char c, bool in_list) {
+    return in_list ? is_list_token_char(c) : is_token_char(c);
 }
 
 static bool namespace_segment_start_char(char c) {
@@ -224,21 +262,78 @@ static char decode_string_escape(char c) {
     }
 }
 
-bool parser_text_well_formed(const char *text) {
+static int parser_hex_digit(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+/* The bytes a string literal's body denotes: \xhh is one byte, NUL
+ * included, and \u{h...} is its scalar in UTF-8.  Every other escape keeps
+ * its reading above.  The result is never longer than the body. */
+static size_t parser_decode_string_body(const char *text, size_t start,
+                                        size_t end, char *buf) {
+    size_t out = 0;
+    for (size_t i = start; i < end; i++) {
+        if (text[i] != '\\' || i + 1 >= end) {
+            buf[out++] = text[i];
+            continue;
+        }
+        char kind = text[i + 1];
+        if (kind == 'x' && i + 3 < end) {
+            int high = parser_hex_digit(text[i + 2]);
+            int low = parser_hex_digit(text[i + 3]);
+            if (high >= 0 && low >= 0) {
+                buf[out++] = (char)(uint8_t)((high << 4) | low);
+                i += 3;
+                continue;
+            }
+        }
+        if (kind == 'u' && i + 2 < end && text[i + 2] == '{') {
+            size_t j = i + 3;
+            uint32_t scalar = 0;
+            size_t digits = 0;
+            while (j < end && digits < 6) {
+                int digit = parser_hex_digit(text[j]);
+                if (digit < 0)
+                    break;
+                scalar = (scalar << 4) | (uint32_t)digit;
+                digits++;
+                j++;
+            }
+            if (digits > 0 && j < end && text[j] == '}' &&
+                cetta_utf8_scalar_valid(scalar)) {
+                uint8_t encoded[4];
+                size_t width = cetta_utf8_encode(scalar, encoded);
+                memcpy(buf + out, encoded, width);
+                out += width;
+                i = j;
+                continue;
+            }
+        }
+        buf[out++] = decode_string_escape(kind);
+        i++;
+    }
+    buf[out] = '\0';
+    return out;
+}
+
+bool parser_text_well_formed_n(const char *text, size_t text_len) {
     int depth = 0;
-    for (size_t i = 0; text[i]; i++) {
+    for (size_t i = 0; parser_more(text, text_len, i); i++) {
         if (text[i] == ';') {
-            while (text[i] && text[i] != '\n') i++;
-            if (!text[i]) break;
+            while (parser_more(text, text_len, i) && text[i] != '\n') i++;
+            if (!parser_more(text, text_len, i)) break;
             continue;
         }
         if (text[i] == '"') {
             i++;
-            while (text[i] && text[i] != '"') {
-                if (text[i] == '\\' && text[i + 1]) i++;
+            while (parser_more(text, text_len, i) && text[i] != '"') {
+                if (text[i] == '\\' && parser_more(text, text_len, i + 1)) i++;
                 i++;
             }
-            if (!text[i]) return false;
+            if (!parser_more(text, text_len, i)) return false;
             continue;
         }
         if (text[i] == '(') {
@@ -255,9 +350,18 @@ bool parser_text_well_formed(const char *text) {
     return depth == 0;
 }
 
+bool parser_text_well_formed(const char *text) {
+    return parser_text_well_formed_n(text, PARSER_TEXT_NUL_TERMINATED);
+}
+
+bool parser_rest_is_delimiters_n(const char *text, size_t text_len,
+                                 size_t *pos) {
+    skip_whitespace_and_comments(text, text_len, pos);
+    return !parser_more(text, text_len, *pos);
+}
+
 bool parser_rest_is_delimiters(const char *text, size_t *pos) {
-    skip_whitespace_and_comments(text, pos);
-    return text[*pos] == '\0';
+    return parser_rest_is_delimiters_n(text, PARSER_TEXT_NUL_TERMINATED, pos);
 }
 
 typedef struct {
@@ -700,12 +804,14 @@ AtomId parser_host_projection_v1_anonymous_variable(
     return tu_intern_var(projection->universe, spelling, fresh_var_id());
 }
 
+/* A string keeps its bytes exactly, embedded NUL included; words and
+ * variables are symbols and cannot hold NUL. */
 AtomId parser_host_projection_v1_string_bytes(
     ParserHostProjectionV1 *projection, const uint8_t *bytes, size_t len) {
-    char *text = parser_host_projection_v1_cstr(
-        projection, bytes, len, false);
-    return text ? tu_intern_string(projection->universe, text)
-                : CETTA_ATOM_ID_NONE;
+    if (!projection || !projection->form_active || (len > 0u && !bytes))
+        return CETTA_ATOM_ID_NONE;
+    return tu_intern_string_n(projection->universe,
+                              len > 0u ? (const char *)bytes : "", len);
 }
 
 AtomId parser_host_projection_v1_expression(
@@ -726,6 +832,14 @@ AtomId parser_host_projection_v1_expression(
     if (lowered == PARSER_SYN_LOWER_INVALID)
         return CETTA_ATOM_ID_NONE;
     return result;
+}
+
+AtomId parser_host_projection_v1_list(
+    ParserHostProjectionV1 *projection, const AtomId *elems,
+    CettaExprLen elem_len, AtomId rest) {
+    if (!projection || !projection->form_active)
+        return CETTA_ATOM_ID_NONE;
+    return tu_list_from_ids(projection->universe, elems, elem_len, rest);
 }
 
 static AtomId parser_project_atom_id_scoped(
@@ -816,18 +930,75 @@ bool parser_project_document_ids(Atom *const *atoms, uint32_t atom_len,
 
 /* ── Parse a single token or expression ─────────────────────────────────── */
 
-static Atom *parse_sexpr_scoped(Arena *a, const char *text, size_t *pos,
-                                ParserVarScope *scope, int depth) {
+static Atom *parse_sexpr_scoped_in(Arena *a, const char *text,
+                                   size_t text_len, size_t *pos,
+                                   ParserVarScope *scope, int depth,
+                                   bool in_list);
+
+static Atom *parse_sexpr_scoped(Arena *a, const char *text, size_t text_len,
+                                size_t *pos, ParserVarScope *scope, int depth) {
+    return parse_sexpr_scoped_in(a, text, text_len, pos, scope, depth, false);
+}
+
+/* [x y] and [x y | rest]: elements separated by layout, then optionally the
+ * bar alone and one rest element, in brackets. */
+static Atom *parse_list_scoped(Arena *a, const char *text, size_t text_len,
+                               size_t *pos, ParserVarScope *scope, int depth) {
+    Atom **elems = NULL;
+    uint32_t n = 0, cap = 0;
+    Atom *rest = NULL;
+    Atom *list = NULL;
+    (*pos)++;
+    for (;;) {
+        skip_whitespace_and_comments(text, text_len, pos);
+        if (parser_more(text, text_len, *pos) && text[*pos] == ']') {
+            (*pos)++;
+            list = atom_list(a, elems, n);
+            goto done;
+        }
+        if (parser_more(text, text_len, *pos) && parser_at_list_bar(text, *pos)) {
+            if (n == 0u)
+                goto done;
+            (*pos)++;
+            rest = parse_sexpr_scoped_in(a, text, text_len, pos, scope,
+                                         depth - 1, true);
+            skip_whitespace_and_comments(text, text_len, pos);
+            if (!rest || !parser_more(text, text_len, *pos) || text[*pos] != ']')
+                goto done;
+            (*pos)++;
+            list = atom_list_with_rest(a, elems, n, rest);
+            goto done;
+        }
+        Atom *element = parse_sexpr_scoped_in(a, text, text_len, pos, scope,
+                                              depth - 1, true);
+        if (!element)
+            goto done;
+        if (n >= cap) {
+            cap = cap ? cap * 2 : 8;
+            elems = cetta_realloc(elems, sizeof(Atom *) * cap);
+        }
+        elems[n++] = element;
+    }
+done:
+    free(elems);
+    return list;
+}
+
+static Atom *parse_sexpr_scoped_in(Arena *a, const char *text,
+                                   size_t text_len, size_t *pos,
+                                   ParserVarScope *scope, int depth,
+                                   bool in_list) {
     if (depth <= 0)
         return NULL;
-    skip_whitespace_and_comments(text, pos);
-    if (!text[*pos]) return NULL;
+    skip_whitespace_and_comments(text, text_len, pos);
+    if (!parser_more(text, text_len, *pos)) return NULL;
 
     if (g_universal_name_syntax_enabled &&
         text[*pos] == parser_syntax_compact_char(PARSER_SYNTAX_REF) &&
         text[*pos + 1u] == parser_syntax_compact_char(PARSER_SYNTAX_QUOTE)) {
         *pos += 2u;
-        Atom *key = parse_sexpr_scoped(a, text, pos, scope, depth - 1);
+        Atom *key = parse_sexpr_scoped_in(a, text, text_len, pos, scope,
+                                          depth - 1, in_list);
         if (!key || parser_var_scope_name_key_id(scope, key) == NAME_ID_NONE)
             return NULL;
         Atom *quoted = atom_expr2(
@@ -840,7 +1011,8 @@ static Atom *parse_sexpr_scoped(Arena *a, const char *text, size_t *pos,
         text[*pos] == parser_syntax_compact_char(PARSER_SYNTAX_VAR) &&
         text[*pos + 1u] == parser_syntax_compact_char(PARSER_SYNTAX_QUOTE)) {
         *pos += 2u;
-        Atom *key = parse_sexpr_scoped(a, text, pos, scope, depth - 1);
+        Atom *key = parse_sexpr_scoped_in(a, text, text_len, pos, scope,
+                                          depth - 1, in_list);
         if (!key) return NULL;
         VarId id = parser_var_scope_name_id(scope, key);
         return id == VAR_ID_NONE ? NULL : atom_var_with_name_key(a, key, id);
@@ -849,7 +1021,8 @@ static Atom *parse_sexpr_scoped(Arena *a, const char *text, size_t *pos,
     if (g_universal_name_syntax_enabled &&
         text[*pos] == parser_syntax_compact_char(PARSER_SYNTAX_QUOTE)) {
         (*pos)++;
-        Atom *payload = parse_sexpr_scoped(a, text, pos, scope, depth - 1);
+        Atom *payload = parse_sexpr_scoped_in(a, text, text_len, pos, scope,
+                                              depth - 1, in_list);
         return payload
                    ? atom_expr2(a, atom_symbol_id(a, g_builtin_syms.quote),
                                 payload)
@@ -858,10 +1031,13 @@ static Atom *parse_sexpr_scoped(Arena *a, const char *text, size_t *pos,
 
     if (g_universal_name_syntax_enabled &&
         text[*pos] == parser_syntax_compact_char(PARSER_SYNTAX_UNQUOTE) &&
-        text[*pos + 1u] && !isspace((unsigned char)text[*pos + 1u]) &&
-        text[*pos + 1u] != ')' && text[*pos + 1u] != ';') {
+        parser_more(text, text_len, *pos + 1u) &&
+        !isspace((unsigned char)text[*pos + 1u]) &&
+        text[*pos + 1u] != ')' && text[*pos + 1u] != ';' &&
+        (!in_list || text[*pos + 1u] != ']')) {
         (*pos)++;
-        Atom *payload = parse_sexpr_scoped(a, text, pos, scope, depth - 1);
+        Atom *payload = parse_sexpr_scoped_in(a, text, text_len, pos, scope,
+                                              depth - 1, in_list);
         return payload
                    ? atom_expr2(a, atom_symbol(a, "unquote"), payload)
                    : NULL;
@@ -871,25 +1047,21 @@ static Atom *parse_sexpr_scoped(Arena *a, const char *text, size_t *pos,
     if (text[*pos] == '"') {
         (*pos)++;
         size_t start = *pos;
-        while (text[*pos] && text[*pos] != '"') {
-            if (text[*pos] == '\\' && text[*pos + 1]) (*pos)++;
+        while (parser_more(text, text_len, *pos) && text[*pos] != '"') {
+            if (text[*pos] == '\\' && parser_more(text, text_len, *pos + 1u))
+                (*pos)++;
             (*pos)++;
         }
-        if (text[*pos] != '"') return NULL;
+        if (!parser_more(text, text_len, *pos)) return NULL;
         size_t len = *pos - start;
         char *buf = arena_alloc(a, len + 1);
-        size_t out = 0;
-        for (size_t i = start; i < *pos; i++) {
-            if (text[i] == '\\' && i + 1 < *pos) {
-                buf[out++] = decode_string_escape(text[++i]);
-            } else {
-                buf[out++] = text[i];
-            }
-        }
-        buf[out] = '\0';
+        size_t out = parser_decode_string_body(text, start, *pos, buf);
         (*pos)++;
-        return atom_string(a, buf);
+        return atom_string_n(a, buf, out);
     }
+
+    if (g_list_syntax_enabled && text[*pos] == '[')
+        return parse_list_scoped(a, text, text_len, pos, scope, depth);
 
     /* Expression */
     if (text[*pos] == '(') {
@@ -898,9 +1070,10 @@ static Atom *parse_sexpr_scoped(Arena *a, const char *text, size_t *pos,
         Atom **children = NULL;
         uint32_t n = 0, ccap = 0;
         for (;;) {
-            skip_whitespace_and_comments(text, pos);
-            if (!text[*pos] || text[*pos] == ')') break;
-            Atom *child = parse_sexpr_scoped(a, text, pos, scope, depth - 1);
+            skip_whitespace_and_comments(text, text_len, pos);
+            if (!parser_more(text, text_len, *pos) || text[*pos] == ')') break;
+            Atom *child = parse_sexpr_scoped(a, text, text_len, pos, scope,
+                                             depth - 1);
             if (!child) {
                 free(children);
                 return NULL;
@@ -911,7 +1084,7 @@ static Atom *parse_sexpr_scoped(Arena *a, const char *text, size_t *pos,
             }
             children[n++] = child;
         }
-        if (text[*pos] != ')') {
+        if (!parser_more(text, text_len, *pos) || text[*pos] != ')') {
             free(children);
             return NULL;
         }
@@ -923,7 +1096,8 @@ static Atom *parse_sexpr_scoped(Arena *a, const char *text, size_t *pos,
 
     /* Token: symbol, variable, or number */
     size_t start = *pos;
-    while (is_token_char(text[*pos]))
+    while (parser_more(text, text_len, *pos) &&
+           is_token_char_in(text[*pos], in_list))
         (*pos)++;
     size_t len = *pos - start;
     if (len == 0) return NULL;
@@ -992,30 +1166,95 @@ static Atom *parse_sexpr_scoped(Arena *a, const char *text, size_t *pos,
                                                 parser_canonicalize_namespace_token(a, tok)));
 }
 
-Atom *parse_sexpr(Arena *a, const char *text, size_t *pos) {
+Atom *parse_sexpr_n(Arena *a, const char *text, size_t text_len, size_t *pos) {
     ParserVarScope scope;
     parser_var_scope_init(&scope);
-    Atom *result = parse_sexpr_scoped(a, text, pos, &scope,
+    Atom *result = parse_sexpr_scoped(a, text, text_len, pos, &scope,
                                       CETTA_PARSE_DEPTH_LIMIT);
     parser_var_scope_free(&scope);
     return result;
 }
 
+Atom *parse_sexpr(Arena *a, const char *text, size_t *pos) {
+    return parse_sexpr_n(a, text, PARSER_TEXT_NUL_TERMINATED, pos);
+}
+
+static AtomId parse_sexpr_to_id_scoped_in(TermUniverse *universe,
+                                          Arena *scratch, const char *text,
+                                          size_t text_len, size_t *pos,
+                                          ParserVarScope *scope,
+                                          int depth, bool in_list);
+
 static AtomId parse_sexpr_to_id_scoped(TermUniverse *universe, Arena *scratch,
-                                       const char *text, size_t *pos,
-                                       ParserVarScope *scope, int depth) {
+                                       const char *text, size_t text_len,
+                                       size_t *pos, ParserVarScope *scope,
+                                       int depth) {
+    return parse_sexpr_to_id_scoped_in(universe, scratch, text, text_len, pos,
+                                       scope, depth, false);
+}
+
+static AtomId parse_list_to_id_scoped(TermUniverse *universe, Arena *scratch,
+                                      const char *text, size_t text_len,
+                                      size_t *pos, ParserVarScope *scope,
+                                      int depth) {
+    AtomId *elems = NULL;
+    uint32_t n = 0, cap = 0;
+    AtomId rest = CETTA_ATOM_ID_NONE;
+    AtomId list = CETTA_ATOM_ID_NONE;
+    (*pos)++;
+    for (;;) {
+        skip_whitespace_and_comments(text, text_len, pos);
+        if (parser_more(text, text_len, *pos) && text[*pos] == ']') {
+            (*pos)++;
+            list = tu_list_from_ids(universe, elems, n, CETTA_ATOM_ID_NONE);
+            goto done;
+        }
+        if (parser_more(text, text_len, *pos) && parser_at_list_bar(text, *pos)) {
+            if (n == 0u)
+                goto done;
+            (*pos)++;
+            rest = parse_sexpr_to_id_scoped_in(
+                universe, scratch, text, text_len, pos, scope, depth - 1, true);
+            skip_whitespace_and_comments(text, text_len, pos);
+            if (rest == CETTA_ATOM_ID_NONE || !parser_more(text, text_len, *pos) ||
+                text[*pos] != ']')
+                goto done;
+            (*pos)++;
+            list = tu_list_from_ids(universe, elems, n, rest);
+            goto done;
+        }
+        AtomId element = parse_sexpr_to_id_scoped_in(
+            universe, scratch, text, text_len, pos, scope, depth - 1, true);
+        if (element == CETTA_ATOM_ID_NONE)
+            goto done;
+        if (n >= cap) {
+            cap = cap ? cap * 2 : 8;
+            elems = cetta_realloc(elems, sizeof(AtomId) * cap);
+        }
+        elems[n++] = element;
+    }
+done:
+    free(elems);
+    return list;
+}
+
+static AtomId parse_sexpr_to_id_scoped_in(TermUniverse *universe,
+                                          Arena *scratch, const char *text,
+                                          size_t text_len, size_t *pos,
+                                          ParserVarScope *scope,
+                                          int depth, bool in_list) {
     if (depth <= 0)
         return CETTA_ATOM_ID_NONE;
-    skip_whitespace_and_comments(text, pos);
-    if (!text[*pos] || !universe)
+    skip_whitespace_and_comments(text, text_len, pos);
+    if (!parser_more(text, text_len, *pos) || !universe)
         return CETTA_ATOM_ID_NONE;
 
     if (g_universal_name_syntax_enabled &&
         text[*pos] == parser_syntax_compact_char(PARSER_SYNTAX_REF) &&
         text[*pos + 1u] == parser_syntax_compact_char(PARSER_SYNTAX_QUOTE)) {
         *pos += 2u;
-        Atom *key = parse_sexpr_scoped(
-            scratch, text, pos, scope, depth - 1);
+        Atom *key = parse_sexpr_scoped_in(
+            scratch, text, text_len, pos, scope, depth - 1, in_list);
         if (!key || parser_var_scope_name_key_id(scope, key) == NAME_ID_NONE)
             return CETTA_ATOM_ID_NONE;
         Atom *quoted = atom_expr2(
@@ -1030,8 +1269,8 @@ static AtomId parse_sexpr_to_id_scoped(TermUniverse *universe, Arena *scratch,
         text[*pos] == parser_syntax_compact_char(PARSER_SYNTAX_VAR) &&
         text[*pos + 1u] == parser_syntax_compact_char(PARSER_SYNTAX_QUOTE)) {
         *pos += 2u;
-        Atom *key = parse_sexpr_scoped(
-            scratch, text, pos, scope, depth - 1);
+        Atom *key = parse_sexpr_scoped_in(
+            scratch, text, text_len, pos, scope, depth - 1, in_list);
         if (!key) return CETTA_ATOM_ID_NONE;
         VarId var_id = parser_var_scope_name_id(scope, key);
         if (var_id == VAR_ID_NONE) return CETTA_ATOM_ID_NONE;
@@ -1044,14 +1283,14 @@ static AtomId parse_sexpr_to_id_scoped(TermUniverse *universe, Arena *scratch,
     if (g_universal_name_syntax_enabled &&
         (text[*pos] == parser_syntax_compact_char(PARSER_SYNTAX_QUOTE) ||
          (text[*pos] == parser_syntax_compact_char(PARSER_SYNTAX_UNQUOTE) &&
-          text[*pos + 1u] &&
+          parser_more(text, text_len, *pos + 1u) &&
           !isspace((unsigned char)text[*pos + 1u]) &&
           text[*pos + 1u] != ')' && text[*pos + 1u] != ';'))) {
         bool quote = text[*pos] ==
                      parser_syntax_compact_char(PARSER_SYNTAX_QUOTE);
         (*pos)++;
-        Atom *payload = parse_sexpr_scoped(
-            scratch, text, pos, scope, depth - 1);
+        Atom *payload = parse_sexpr_scoped_in(
+            scratch, text, text_len, pos, scope, depth - 1, in_list);
         if (!payload) return CETTA_ATOM_ID_NONE;
         Atom *form = atom_expr2(
             scratch,
@@ -1064,27 +1303,23 @@ static AtomId parse_sexpr_to_id_scoped(TermUniverse *universe, Arena *scratch,
     if (text[*pos] == '"') {
         (*pos)++;
         size_t start = *pos;
-        while (text[*pos] && text[*pos] != '"') {
-            if (text[*pos] == '\\' && text[*pos + 1])
+        while (parser_more(text, text_len, *pos) && text[*pos] != '"') {
+            if (text[*pos] == '\\' && parser_more(text, text_len, *pos + 1u))
                 (*pos)++;
             (*pos)++;
         }
-        if (text[*pos] != '"')
+        if (!parser_more(text, text_len, *pos))
             return CETTA_ATOM_ID_NONE;
         size_t len = *pos - start;
         char *buf = arena_alloc(scratch, len + 1);
-        size_t out = 0;
-        for (size_t i = start; i < *pos; i++) {
-            if (text[i] == '\\' && i + 1 < *pos) {
-                buf[out++] = decode_string_escape(text[++i]);
-            } else {
-                buf[out++] = text[i];
-            }
-        }
-        buf[out] = '\0';
+        size_t out = parser_decode_string_body(text, start, *pos, buf);
         (*pos)++;
-        return tu_intern_string(universe, buf);
+        return tu_intern_string_n(universe, buf, out);
     }
+
+    if (g_list_syntax_enabled && text[*pos] == '[')
+        return parse_list_to_id_scoped(universe, scratch, text, text_len, pos,
+                                       scope, depth);
 
     if (text[*pos] == '(') {
         AtomId *children = NULL;
@@ -1093,12 +1328,12 @@ static AtomId parse_sexpr_to_id_scoped(TermUniverse *universe, Arena *scratch,
         AtomId expr_id = CETTA_ATOM_ID_NONE;
         (*pos)++;
         for (;;) {
-            skip_whitespace_and_comments(text, pos);
-            if (!text[*pos] || text[*pos] == ')')
+            skip_whitespace_and_comments(text, text_len, pos);
+            if (!parser_more(text, text_len, *pos) || text[*pos] == ')')
                 break;
             AtomId child_id =
-                parse_sexpr_to_id_scoped(universe, scratch, text, pos, scope,
-                                         depth - 1);
+                parse_sexpr_to_id_scoped(universe, scratch, text, text_len,
+                                         pos, scope, depth - 1);
             if (child_id == CETTA_ATOM_ID_NONE) {
                 free(children);
                 return CETTA_ATOM_ID_NONE;
@@ -1109,7 +1344,7 @@ static AtomId parse_sexpr_to_id_scoped(TermUniverse *universe, Arena *scratch,
             }
             children[n++] = child_id;
         }
-        if (text[*pos] != ')') {
+        if (!parser_more(text, text_len, *pos) || text[*pos] != ')') {
             free(children);
             return CETTA_ATOM_ID_NONE;
         }
@@ -1126,7 +1361,8 @@ static AtomId parse_sexpr_to_id_scoped(TermUniverse *universe, Arena *scratch,
     }
 
     size_t start = *pos;
-    while (is_token_char(text[*pos]))
+    while (parser_more(text, text_len, *pos) &&
+           is_token_char_in(text[*pos], in_list))
         (*pos)++;
     size_t len = *pos - start;
     if (len == 0)
@@ -1161,7 +1397,8 @@ AtomId parse_sexpr_to_id(TermUniverse *universe, const char *text, size_t *pos) 
     parser_var_scope_init(&scope);
     arena_init(&scratch);
     arena_set_hashcons(&scratch, NULL);
-    result = parse_sexpr_to_id_scoped(universe, &scratch, text, pos, &scope,
+    result = parse_sexpr_to_id_scoped(universe, &scratch, text,
+                                      PARSER_TEXT_NUL_TERMINATED, pos, &scope,
                                       CETTA_PARSE_DEPTH_LIMIT);
     arena_free(&scratch);
     parser_var_scope_free(&scope);
@@ -1197,20 +1434,21 @@ bool parser_syn_exec_payload_id(const TermUniverse *universe, AtomId form_id,
     return true;
 }
 
-Atom *parser_read_source_form(Arena *a, const char *text) {
-    if (!a || !text || !parser_text_well_formed(text))
+Atom *parser_read_source_form_n(Arena *a, const char *text, size_t text_len) {
+    if (!a || !text || !parser_text_well_formed_n(text, text_len))
         return NULL;
 
     size_t pos = 0;
-    skip_whitespace_and_comments(text, &pos);
-    bool is_exec = text[pos] == parser_syntax_compact_char(PARSER_SYNTAX_EXEC) &&
-                   text[pos + 1u] &&
+    skip_whitespace_and_comments(text, text_len, &pos);
+    bool is_exec = parser_more(text, text_len, pos) &&
+                   text[pos] == parser_syntax_compact_char(PARSER_SYNTAX_EXEC) &&
+                   parser_more(text, text_len, pos + 1u) &&
                    !is_token_char(text[pos + 1u]);
     if (is_exec)
         pos++;
 
-    Atom *form = parse_sexpr(a, text, &pos);
-    if (!form || !parser_rest_is_delimiters(text, &pos))
+    Atom *form = parse_sexpr_n(a, text, text_len, &pos);
+    if (!form || !parser_rest_is_delimiters_n(text, text_len, &pos))
         return NULL;
     return is_exec
         ? atom_expr2(
@@ -1219,6 +1457,10 @@ Atom *parser_read_source_form(Arena *a, const char *text) {
                   a, parser_syntax_expanded_id(PARSER_SYNTAX_EXEC)),
               form)
         : form;
+}
+
+Atom *parser_read_source_form(Arena *a, const char *text) {
+    return parser_read_source_form_n(a, text, PARSER_TEXT_NUL_TERMINATED);
 }
 
 typedef struct {
@@ -1410,6 +1652,22 @@ static bool parser_render_form(FILE *out, ParserRenderContext *ctx, Atom *atom,
         return true;
     }
 
+    if (atom_is_list_form(atom)) {
+        CettaExprLen len = atom->expr.len - 1u;
+        bool open = atom_is_list_rest(atom);
+        fputc('[', out);
+        for (CettaExprIndex i = 0; i < len; i++) {
+            if (i > 0u)
+                fputs(open && i + 1u == len ? " | " : " ", out);
+            if (!parser_render_form(out, ctx, atom->expr.elems[i + 1u], mode,
+                                    depth - 1)) {
+                return false;
+            }
+        }
+        fputc(']', out);
+        return true;
+    }
+
     Atom *head = atom->expr.len > 0u ? atom->expr.elems[0] : NULL;
     SymbolId head_id = head && head->kind == ATOM_SYMBOL
         ? head->sym_id : SYMBOL_ID_NONE;
@@ -1481,7 +1739,11 @@ static bool parser_render_form(FILE *out, ParserRenderContext *ctx, Atom *atom,
     return true;
 }
 
-char *parser_render_syntax(Arena *a, Atom *atom, ParserSyntaxPrintMode mode) {
+static char *parser_render_syntax_text(Arena *a, Atom *atom,
+                                       ParserSyntaxPrintMode mode,
+                                       bool c_text, size_t *len_out) {
+    if (len_out)
+        *len_out = 0u;
     if (!a || !atom)
         return NULL;
     ParserRenderContext ctx = {.arena = a};
@@ -1498,24 +1760,41 @@ char *parser_render_syntax(Arena *a, Atom *atom, ParserSyntaxPrintMode mode) {
         free(ctx.vars);
         return NULL;
     }
+    bool previous = atom_print_set_c_text(c_text);
     bool ok = parser_render_form(stream, &ctx, atom, mode,
                                  CETTA_PARSE_DEPTH_LIMIT);
     if (fclose(stream) != 0)
         ok = false;
+    atom_print_set_c_text(previous);
     free(ctx.vars);
     if (!ok) {
         free(buffer);
         return NULL;
     }
-    char *result = arena_strdup(a, buffer ? buffer : "");
+    char *result = arena_alloc(a, length + 1u);
+    if (length)
+        memcpy(result, buffer, length);
+    result[length] = '\0';
     free(buffer);
+    if (len_out)
+        *len_out = length;
     return result;
+}
+
+char *parser_render_syntax(Arena *a, Atom *atom, ParserSyntaxPrintMode mode) {
+    return parser_render_syntax_text(a, atom, mode, true, NULL);
+}
+
+char *parser_render_syntax_bytes(Arena *a, Atom *atom,
+                                 ParserSyntaxPrintMode mode, size_t *len_out) {
+    return parser_render_syntax_text(a, atom, mode, false, len_out);
 }
 
 /* ── Parse entire file ──────────────────────────────────────────────────── */
 
-static int parse_metta_buffer(const char *text, Arena *a, Atom ***out_atoms) {
-    if (!parser_text_well_formed(text)) {
+static int parse_metta_buffer(const char *text, size_t text_len, Arena *a,
+                              Atom ***out_atoms) {
+    if (!parser_text_well_formed_n(text, text_len)) {
         *out_atoms = NULL;
         return -1;
     }
@@ -1526,11 +1805,11 @@ static int parse_metta_buffer(const char *text, Arena *a, Atom ***out_atoms) {
     size_t pos = 0;
     for (;;) {
         size_t probe = pos;
-        if (parser_rest_is_delimiters(text, &probe)) {
+        if (parser_rest_is_delimiters_n(text, text_len, &probe)) {
             pos = probe;
             break;
         }
-        Atom *at = parse_sexpr(a, text, &pos);
+        Atom *at = parse_sexpr_n(a, text, text_len, &pos);
         if (!at) {
             free(atoms);
             *out_atoms = NULL;
@@ -1547,13 +1826,13 @@ static int parse_metta_buffer(const char *text, Arena *a, Atom ***out_atoms) {
     return count;
 }
 
-static int parse_metta_buffer_ids(const char *text, TermUniverse *universe,
-                                  AtomId **out_ids) {
+static int parse_metta_buffer_ids(const char *text, size_t text_len,
+                                  TermUniverse *universe, AtomId **out_ids) {
     Arena scratch;
     if (!out_ids)
         return -1;
     *out_ids = NULL;
-    if (!text || !universe || !parser_text_well_formed(text))
+    if (!text || !universe || !parser_text_well_formed_n(text, text_len))
         return -1;
 
     arena_init(&scratch);
@@ -1565,7 +1844,7 @@ static int parse_metta_buffer_ids(const char *text, TermUniverse *universe,
     size_t pos = 0;
     for (;;) {
         size_t probe = pos;
-        if (parser_rest_is_delimiters(text, &probe)) {
+        if (parser_rest_is_delimiters_n(text, text_len, &probe)) {
             pos = probe;
             break;
         }
@@ -1573,8 +1852,8 @@ static int parse_metta_buffer_ids(const char *text, TermUniverse *universe,
         ArenaMark mark = arena_mark(&scratch);
         AtomId id;
         parser_var_scope_init(&scope);
-        id = parse_sexpr_to_id_scoped(universe, &scratch, text, &pos, &scope,
-                                      CETTA_PARSE_DEPTH_LIMIT);
+        id = parse_sexpr_to_id_scoped(universe, &scratch, text, text_len, &pos,
+                                      &scope, CETTA_PARSE_DEPTH_LIMIT);
         parser_var_scope_free(&scope);
         arena_reset(&scratch, mark);
         if (id == CETTA_ATOM_ID_NONE) {
@@ -1645,7 +1924,7 @@ int parse_metta_text(const char *text, Arena *a, Atom ***out_atoms) {
         *out_atoms = NULL;
         return -1;
     }
-    return parse_metta_buffer(text, a, out_atoms);
+    return parse_metta_buffer(text, PARSER_TEXT_NUL_TERMINATED, a, out_atoms);
 }
 
 int parse_metta_file(const char *filename, Arena *a, Atom ***out_atoms) {
@@ -1660,8 +1939,7 @@ int parse_metta_file(const char *filename, Arena *a, Atom ***out_atoms) {
     }
     fclose(f);
 
-    int count = parse_metta_buffer(text, a, out_atoms);
-    (void)nread;
+    int count = parse_metta_buffer(text, nread, a, out_atoms);
     free(text);
     return count;
 }
@@ -1687,7 +1965,8 @@ int parse_metta_text_ids_diagnostic(const char *text,
         g_document_ids_backend_active = false;
         return result;
     }
-    return parse_metta_buffer_ids(text, universe, out_ids);
+    return parse_metta_buffer_ids(text, PARSER_TEXT_NUL_TERMINATED, universe,
+                                  out_ids);
 }
 
 int parse_metta_text_ids(const char *text, TermUniverse *universe,
@@ -1724,8 +2003,7 @@ int parse_metta_file_ids_diagnostic(const char *filename,
     }
     fclose(f);
 
-    int count = parse_metta_buffer_ids(text, universe, out_ids);
-    (void)nread;
+    int count = parse_metta_buffer_ids(text, nread, universe, out_ids);
     free(text);
     return count;
 }

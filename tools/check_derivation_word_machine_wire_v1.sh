@@ -20,7 +20,7 @@ trap 'rm -f "$candidate"' EXIT INT TERM
     printf '%s\n' \
         'import Mettapedia.GSLT.LanguageDef.DerivationWordMachineLanguageDef' \
         'open Mettapedia.GSLT.LanguageDef' \
-        '#eval IO.println DerivationWordMachineLanguageDef.wire' |
+        '#eval IO.print DerivationWordMachineLanguageDef.wire' |
         lake env lean --stdin
 ) >"$candidate"
 

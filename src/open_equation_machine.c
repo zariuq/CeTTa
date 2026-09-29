@@ -4,20 +4,31 @@
 #include "grounded.h"
 #include "petta_program.h"
 #include "petta_semantics.h"
+#include "petta_specializer.h"
 #include "search_machine.h"
 #include "stats.h"
 #include "symbol.h"
+#include "var_index.h"
 
+#include <stdatomic.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 /* ---- program ------------------------------------------------------------ */
 
-/* A template instantiates over an activation's slots. */
+/* A template instantiates over an activation's slots.  A list template has
+ * two children: it is the list whose first element is the first and whose
+ * rest is the second, PeTTa's `cons`, built as a cons cell.  A pattern list
+ * is the list pattern of a `let` or a `case`, which reads a value spelled
+ * `(cons h t)` as the cell it spells, as the host's matcher reads a value
+ * against an authored list pattern; a built list reads only cons cells. */
 typedef enum {
     OEM_T_LITERAL = 0,
     OEM_T_SLOT,
     OEM_T_BUILD,
+    OEM_T_LIST,
+    OEM_T_PATTERN_LIST,
 } OemTemplateKind;
 
 typedef struct {
@@ -37,10 +48,17 @@ typedef enum {
     OEM_M_SAME,      /* the register's term unifies with the slot's       */
     OEM_M_ATOM,      /* the register's term is this atomic literal        */
     OEM_M_EXPR,      /* the register's term is an expression of `length`  */
+    OEM_M_LIST,      /* the register's term is a nonempty list, PeTTa's
+                      * `cons` pattern: its first element and its rest    */
 } OemMatchKind;
 
 typedef struct {
     uint8_t kind;
+    /* A LIST operation of an authored head reads a value spelled
+     * `(cons h t)` as the cell it spells, as the host's matcher reads a
+     * value against an authored list pattern.  foldl/4's clauses read only
+     * cons cells, as the host's foldl does. */
+    uint8_t spelled;
     uint32_t reg;
     uint32_t operand;
     uint32_t length;
@@ -58,7 +76,8 @@ typedef enum {
     OEM_S_FAIL,
     OEM_S_CALL,      /* call `relation` with destination `pattern`         */
     OEM_S_TAIL,      /* call `relation` in place of this equation          */
-    OEM_S_PRIM,      /* `pattern` unifies with op(args)                    */
+    OEM_S_PRIM,      /* `pattern` unifies with op(args); `value` is op's
+                      * head as a literal                                  */
     OEM_S_BIND,      /* `pattern` unifies with `value`                     */
     OEM_S_TEST,      /* op(args) false: continue at `target`; with no `op`,
                         its one argument's value not the truth value      */
@@ -77,6 +96,10 @@ typedef enum {
     OEM_S_CUT,       /* a once's first answer: the frames above the
                         innermost once frame, and that frame, go, and the
                         body continues at `target`                        */
+    OEM_S_EQUATION_CUT, /* PeTTa's `(cut)`: `pattern` meets the truth
+                        value, then the frames above the activation's
+                        barrier go, its call's untried equations among
+                        them                                              */
 } OemStepKind;
 
 /* What a HOST step's `target` says of its goal: the host evaluates it
@@ -91,6 +114,10 @@ typedef enum {
 enum {
     OEM_HOST_PLAIN = 0u,
     OEM_HOST_COUNTED,
+    /* A head's relational occurrence of an operation the host owns: the
+     * host evaluates it without a plan, against the kept query subterm, as
+     * the search machine evaluates a head's calls. */
+    OEM_HOST_OCCURRENCE,
     /* A control the region runs itself, whose goal stays the host's when
      * it cannot: `superpose` over a list value, which enumerates its
      * elements; `collapse` over a local relation (`local`), which collects
@@ -106,14 +133,30 @@ enum {
     OEM_HOST_ADMIT,
     OEM_HOST_APPLY,
     OEM_HOST_SORT,
+    /* PeTTa's `append` and `union-atom`, `length`, `exclude-item`,
+     * `list_to_set`, `unique-atom`, `alpha-unique-atom`, `car-atom`,
+     * `cdr-atom`, and `decons-atom` and `decons`. */
+    OEM_HOST_LIST,
+    /* `(== () (collapse (once (match S P T))))`, answered by membership. */
+    OEM_HOST_EXISTS,
+    /* `get-metatype` of a value that names no token. */
+    OEM_HOST_METATYPE,
 };
 
 typedef struct {
     uint8_t kind;
+    bool match_row; /* an already-decomposed conjunction leg */
     /* The step's `pattern` is a slot at its first occurrence on every path
      * through the body: the step stores its result there rather than
      * unifying (a PRIM, a BIND, or a HOST step the region may decide). */
     uint8_t store;
+    /* A CALL, or a HOST step's application entering a relation, that PeTTa
+     * dispatches at run time: its body runs under the implicit handler, so
+     * an error it raises fails that path alone (DispatchErrorScope). */
+    uint8_t recovers;
+    /* A literal `superpose` in a tail position: its alternatives return to
+     * the equation's caller, as a tail call does. */
+    uint8_t tail;
     union {
         SymbolId op;
         /* A control the region runs (OEM_HOST_COLLECT,
@@ -173,13 +216,95 @@ typedef struct {
      * when the body stores the slot at its first occurrence on every path,
      * so the activation leaves it without a cell. */
     uint32_t first_slot_store;
+    /* The program's `cell_slots[first_cell_slot, +cell_slot_count)`. */
+    uint32_t first_cell_slot;
+    uint32_t cell_slot_count;
+    /* The body has an EQUATION_CUT step: its slot vectors record the
+     * height beneath the call's own frame (oem_slot_header). */
+    bool cuts;
 } OemEquation;
+
+/* A path from an argument into its structure, each step a child of an
+ * expression of a given length, at which some equations' heads test a
+ * literal: the equations testing nothing there are `free`, and each key
+ * names the equations testing its literal. */
+typedef struct {
+    uint32_t arg;
+    uint32_t first_step;
+    uint32_t step_count;
+    uint32_t first_key;
+    uint32_t key_count;
+    uint64_t free;
+    /* A path with enough keys, each a symbol or an integer, also places
+     * them in `table_mask + 1` entries of the program's `index_table` from
+     * `first_table`, each a key's number plus one, or zero; no table when
+     * `table_mask` is zero. */
+    uint32_t first_table;
+    uint32_t table_mask;
+} OemIndexPath;
+
+typedef struct {
+    Atom *literal;
+    uint64_t equations;
+} OemIndexKey;
+
+/* A switch on an argument's principal functor: an atom's literal, or an
+ * expression's length with its first element's literal.  It decides the
+ * index paths at the argument itself and at its first element together:
+ * for each functor they read, the conjunction of what they admit is one
+ * entry, found by the functor's code.  Its paths stay in the relation's
+ * path array, `path_count` of them from `first_path`, for a literal whose
+ * number could equal an integer key under `atom_eq`, which they decide. */
+typedef struct {
+    uint32_t arg;
+    uint32_t first_path;
+    uint32_t path_count;
+    /* Lengths the paths read, `length_count` from `first_length` in the
+     * program's `switch_lengths`. */
+    uint32_t first_length;
+    uint32_t length_count;
+    /* `entry_mask + 1` table slots from `first_table` in the program's
+     * `switch_tables`, each an entry's number plus one, or zero. */
+    uint32_t first_table;
+    uint32_t entry_mask;
+    uint32_t first_entry;
+    /* An atom's paths have an integer key. */
+    bool int_keys;
+    /* An atom no key equals, or an expression of a length no path reads. */
+    uint64_t other;
+} OemIndexSwitch;
+
+typedef struct {
+    uint32_t length;
+    /* The first element's paths have an integer key. */
+    bool int_keys;
+    /* The expression's first element is open, or no key equals it. */
+    uint64_t open_head;
+    uint64_t no_key;
+} OemSwitchLength;
+
+typedef struct {
+    /* Zero for an atom's key. */
+    uint32_t length;
+    Atom *literal;
+    uint64_t equations;
+} OemSwitchEntry;
 
 typedef struct {
     SymbolId head;
     uint32_t arity;
     uint32_t first_equation;
     uint32_t equation_count;
+    /* The relation's index: paths at which its equations' heads test
+     * literals (at most 64 equations), none when it has no use.  The paths
+     * at an argument and its first element may be decided by a switch on
+     * the argument's functor instead: `index_path_count` paths are read
+     * one by one, and `switch_count` switches from `first_switch`. */
+    uint32_t first_index_path;
+    uint32_t index_path_count;
+    uint32_t first_switch;
+    uint32_t switch_count;
+    bool indexed;
     /* Some two equations differ in their heads' first structural tests,
      * which a call can then decide between as it enters. */
     bool first_tests_differ;
@@ -187,9 +312,12 @@ typedef struct {
      * program: its equations are compiled from `sources`, its parameters
      * are the variables the body shares with the rest of that equation,
      * and it runs in the version of the code that calls it.  One that does
-     * not compile leaves its control to the host (`failed`). */
+     * not compile leaves its control to the host (`failed`).  A local
+     * relation with a `fold_step` holds foldl/4's clauses for that step
+     * (oem_fold_relation). */
     bool local;
     bool failed;
+    SymbolId fold_step;
     uint32_t first_source;
     uint32_t source_count;
 } OemRelation;
@@ -202,8 +330,10 @@ typedef struct {
 } OemLocalSource;
 
 struct CettaOpenEquationProgram {
-    /* The compiler's reference and one per open cursor. */
-    uint32_t refs;
+    /* The compiler's reference and one per open cursor.  Cursors open and
+     * close on worker threads (hyperpose), so the count is atomic: the last
+     * release, which frees the program, follows every use before it. */
+    _Atomic uint32_t refs;
     Space *space;
     SpaceProgramToken token;
     /* The spelling of region and answer variables. */
@@ -221,6 +351,23 @@ struct CettaOpenEquationProgram {
     uint32_t equation_len, equation_cap;
     OemMatchOp *ops;
     uint32_t op_len, op_cap;
+    OemIndexPath *index_paths;
+    uint32_t index_path_len, index_path_cap;
+    /* Pairs (child, length), the steps of the index paths. */
+    uint32_t *index_steps;
+    uint32_t index_step_len, index_step_cap;
+    OemIndexKey *index_keys;
+    uint32_t index_key_len, index_key_cap;
+    uint32_t *index_tables;
+    uint32_t index_table_len, index_table_cap;
+    OemIndexSwitch *index_switchs;
+    uint32_t index_switch_len, index_switch_cap;
+    OemSwitchLength *switch_lengths;
+    uint32_t switch_length_len, switch_length_cap;
+    OemSwitchEntry *switch_entrys;
+    uint32_t switch_entry_len, switch_entry_cap;
+    uint32_t *switch_tables;
+    uint32_t switch_table_len, switch_table_cap;
     OemStep *steps;
     uint32_t step_len, step_cap;
     uint32_t *step_args;
@@ -235,9 +382,18 @@ struct CettaOpenEquationProgram {
     uint32_t host_plan_len, host_plan_cap;
     uint8_t *slot_stores;
     uint32_t slot_store_len, slot_store_cap;
+    /* Per equation, the slots an activation gives a fresh cell: those head
+     * matching leaves unset and the body does not store at first
+     * occurrence. */
+    uint32_t *cell_slots;
+    uint32_t cell_slot_len, cell_slot_cap;
     /* The entry relation only relays to the host (see
      * cetta_open_equation_program_entry_relays). */
     bool entry_relays;
+    /* Pruning a derivation gives a subset of positive, effect-free search
+     * answers. Complete observers, commits and possibly skipped effects or
+     * errors require exact execution. Computed once over the whole region. */
+    bool depth_pruning_safe;
 };
 
 enum {
@@ -272,19 +428,35 @@ static bool oem_reserve(void **items, uint32_t *cap, uint32_t needed,
      ((program)->field##s[(program)->field##_len] = (value),              \
       *(index_out) = (program)->field##_len++, true))
 
+void cetta_open_equation_program_retain(CettaOpenEquationProgram *program) {
+    if (program)
+        atomic_fetch_add_explicit(&program->refs, 1u, memory_order_relaxed);
+}
+
 void cetta_open_equation_program_release(
     CettaOpenEquationProgram *program) {
-    if (!program || --program->refs > 0u)
+    if (!program ||
+        atomic_fetch_sub_explicit(&program->refs, 1u,
+                                  memory_order_acq_rel) != 1u)
         return;
     free(program->relations);
     free(program->equations);
     free(program->ops);
+    free(program->index_paths);
+    free(program->index_steps);
+    free(program->index_keys);
+    free(program->index_tables);
+    free(program->index_switchs);
+    free(program->switch_lengths);
+    free(program->switch_entrys);
+    free(program->switch_tables);
     free(program->steps);
     free(program->step_args);
     free(program->templates);
     free(program->template_children);
     free(program->host_plans);
     free(program->slot_stores);
+    free(program->cell_slots);
     free(program->sources);
     free(program->controls);
     if (program->atoms_ready)
@@ -362,13 +534,19 @@ typedef enum {
     OEM_N_ONCE,        /* `(once body)`: the first answer of the local
                           relation `local` into the hole `exposed`; host
                           fallback as above */
+    OEM_N_CUT,         /* `(cut)` in an equation's own body: the call
+                          commits to the equation, and the cut's output,
+                          the hole `exposed`, is the truth value */
 } OemNodeKind;
 
 typedef struct {
     uint8_t kind;
+    bool match_row;
     bool tail;
     /* A HOST node's fast path (OEM_HOST_*). */
     uint8_t host_fast;
+    /* A call or an application PeTTa dispatches at run time (OemStep). */
+    bool recovers;
     SymbolId op;
     uint32_t relation;
     /* Template of the construct's exposed output term. */
@@ -389,6 +567,16 @@ typedef struct {
 typedef struct {
     CettaOpenEquationProgram *program;
     const CettaOpenEquationHost *host;
+    /* The PeTTa program the equations come from, whose planner plans the
+     * clauses the region adds (oem_fold_relation). */
+    PettaProgram *petta;
+    /* The equation is authored: its list patterns read spelled cells
+     * (OemMatchOp). */
+    bool authored;
+    /* The equation is a named relation's, whose `(cut)` commits its call
+     * to it.  A local relation's is a control's body, where PeTTa's cut
+     * acts on the enclosing equation or stays inside the control. */
+    bool named;
     /* The equation being compiled. */
     Atom *lhs;
     Atom *rhs;
@@ -408,6 +596,15 @@ typedef struct {
      * collection's YIELD, a once's CUT. */
     uint32_t *resumes;
     uint32_t resume_len, resume_cap;
+    /* The template of the equation's output, which each RET carries. */
+    uint32_t output;
+    /* An EQUATION_CUT step has been emitted. */
+    bool cuts;
+    /* While a let's pattern is lowered: the let (for a let*, the whole),
+     * and the bindings a let* evaluates before this one. */
+    const Atom *let_scope;
+    Atom *const *let_before;
+    uint32_t let_before_len;
     const char *reason;
 } OemCompile;
 
@@ -468,6 +665,17 @@ static bool oem_template_literal(OemCompile *compile, Atom *atom,
         oem_reject(compile, "out of memory");
 }
 
+/* The head of operation `op` as a literal template, made once here for the
+ * grounded dispatcher rather than at each run; none without an operation. */
+static bool oem_op_literal(OemCompile *compile, SymbolId op, uint32_t *out) {
+    *out = 0u;
+    if (op == SYMBOL_ID_NONE)
+        return true;
+    Atom *head = atom_symbol_id(&compile->program->atoms, op);
+    return head ? oem_template_literal(compile, head, out)
+                : oem_reject(compile, "out of memory");
+}
+
 static bool oem_template_slot(OemCompile *compile, uint32_t slot,
                               uint32_t *out) {
     OemTemplate item = {.kind = OEM_T_SLOT, .slot = slot};
@@ -490,6 +698,19 @@ static bool oem_template_build(OemCompile *compile, const uint32_t *children,
     OemTemplate item = {.kind = OEM_T_BUILD, .first = first, .count = count};
     return OEM_PUSH(program, template, item, out) ||
         oem_reject(compile, "out of memory");
+}
+
+static bool oem_template_list(OemCompile *compile, uint8_t kind,
+                              uint32_t head, uint32_t tail, uint32_t *out) {
+    uint32_t children[2] = {head, tail};
+    if (!oem_template_build(compile, children, 2u, out))
+        return false;
+    compile->program->templates[*out].kind = kind;
+    return true;
+}
+
+static inline bool oem_template_is_list(const OemTemplate *item) {
+    return item->kind == OEM_T_LIST || item->kind == OEM_T_PATTERN_LIST;
 }
 
 static bool oem_emit(OemCompile *compile, OemStep step, uint32_t *index_out) {
@@ -542,13 +763,16 @@ static bool oem_head_callable(OemCompile *compile, Atom *atom) {
                                      compile->program->space, atom);
 }
 
-/* A head subterm with no relational occurrence anywhere inside. */
+/* A head subterm with no relational occurrence anywhere inside.  PeTTa
+ * reads a `cons` in a head as a list pattern before it asks whether the
+ * subterm is callable. */
 static bool oem_head_data(OemCompile *compile, Atom *atom, uint32_t depth) {
     if (!atom || depth > OEM_MAX_DEPTH)
         return false;
     if (atom->kind != ATOM_EXPR)
         return true;
-    if (oem_head_callable(compile, atom))
+    if (!petta_semantics_is_cons_constraint(atom) &&
+        oem_head_callable(compile, atom))
         return false;
     for (CettaExprIndex child = 0u; child < atom->expr.len; child++) {
         if (!oem_head_data(compile, atom->expr.elems[child], depth + 1u))
@@ -568,6 +792,25 @@ static bool oem_compile_param(OemCompile *compile, Atom *param, uint32_t reg,
         param->expr.elems[0]->kind == ATOM_SYMBOL &&
         param->expr.elems[0]->sym_id == g_builtin_syms.quote)
         return oem_reject(compile, "quoted head pattern");
+    if (petta_semantics_is_cons_constraint(param)) {
+        /* A list pattern, which PeTTa reads before any relational
+         * occurrence: its head and its tail match the list's first element
+         * and its rest. */
+        if (compile->register_count > OEM_MAX_REGISTERS - 2u)
+            return oem_reject(compile, "head pattern too wide");
+        uint32_t base = compile->register_count;
+        compile->register_count += 2u;
+        OemMatchOp op = {
+            .kind = OEM_M_LIST, .spelled = compile->authored, .reg = reg,
+            .operand = base, .length = 2u,
+        };
+        return (OEM_PUSH(program, op, op, &index) ||
+                oem_reject(compile, "out of memory")) &&
+            oem_compile_param(compile, param->expr.elems[1], base,
+                              depth + 1u) &&
+            oem_compile_param(compile, param->expr.elems[2], base + 1u,
+                              depth + 1u);
+    }
     if (oem_head_callable(compile, param)) {
         /* The query subterm waits in a slot; the call runs after the
          * structural match. */
@@ -652,12 +895,47 @@ static bool oem_prim_call(Atom *expr, const PettaPlanNode *plan) {
         oem_is_prim(expr->expr.elems[0]->sym_id);
 }
 
-/* A let pattern, or an argument of a head's relational occurrence:
- * variables are slots, nothing is evaluated.  A pattern the plan calls a
- * call is a relational pattern, outside the fragment. */
+/* A pattern, or data over the equation's variables: variables are slots,
+ * nothing is evaluated.  A pattern the plan calls a call is a relational
+ * pattern, outside the fragment.  Where PeTTa reads a `cons` as a list
+ * (`lists`: a let or case pattern, an argument of a head's relational
+ * occurrence), it lowers to a list template; elsewhere (a match pattern, a
+ * goal the host evaluates) it stays as written. */
+static uint64_t oem_var_occurrences(const Atom *atom, VarId id,
+                                    uint32_t depth);
+
+/* Whether a let pattern the plan calls is data after all.  PeTTa's let
+ * evaluates its pattern first, and an application whose head is an unbound
+ * variable evaluates to itself.  The head is unbound when its variable
+ * occurs in no parameter, and in the body only within the let, not in the
+ * bindings a let* evaluates before this one: nothing binds it before the
+ * pattern.  A bound head, as in `(let $h f (let ($h 2) 3 ...))`, makes a
+ * call, and stays outside the fragment. */
+static bool oem_pattern_head_fresh(const OemCompile *compile,
+                                   const Atom *pattern) {
+    if (!compile->let_scope || pattern->kind != ATOM_EXPR ||
+        pattern->expr.len == 0u || pattern->expr.elems[0]->kind != ATOM_VAR)
+        return false;
+    VarId id = pattern->expr.elems[0]->var_id;
+    uint64_t deep = UINT64_MAX / 4u;
+    uint64_t in_head = oem_var_occurrences(compile->lhs, id, 0u);
+    uint64_t in_body = oem_var_occurrences(compile->rhs, id, 0u);
+    uint64_t in_scope = oem_var_occurrences(compile->let_scope, id, 0u);
+    if (in_head != 0u || in_body >= deep || in_scope >= deep)
+        return false;
+    for (uint32_t index = 0u; index < compile->let_before_len; index++) {
+        uint64_t before =
+            oem_var_occurrences(compile->let_before[index], id, 0u);
+        if (before >= deep || before > in_scope)
+            return false;
+        in_scope -= before;
+    }
+    return in_body == in_scope;
+}
+
 static bool oem_lower_pattern(OemCompile *compile, Atom *pattern,
                               const PettaPlanNode *plan, uint32_t depth,
-                              uint32_t *out) {
+                              bool lists, uint32_t *out) {
     if (!pattern || depth > OEM_MAX_DEPTH)
         return oem_reject(compile, "pattern too deep");
     if (pattern->kind == ATOM_VAR) {
@@ -667,7 +945,19 @@ static bool oem_lower_pattern(OemCompile *compile, Atom *pattern,
     }
     if (pattern->kind != ATOM_EXPR || pattern->expr.len == 0u)
         return oem_template_literal(compile, pattern, out);
-    if (plan && plan->role != PETTA_PLAN_DATA)
+    if (lists && petta_semantics_is_cons_constraint(pattern)) {
+        uint32_t head = 0u;
+        uint32_t tail = 0u;
+        return oem_lower_pattern(compile, pattern->expr.elems[1],
+                                 plan ? petta_plan_child(plan, 1u) : NULL,
+                                 depth + 1u, true, &head) &&
+            oem_lower_pattern(compile, pattern->expr.elems[2],
+                              plan ? petta_plan_child(plan, 2u) : NULL,
+                              depth + 1u, true, &tail) &&
+            oem_template_list(compile, OEM_T_PATTERN_LIST, head, tail, out);
+    }
+    if (plan && plan->role != PETTA_PLAN_DATA &&
+        !oem_pattern_head_fresh(compile, pattern))
         return oem_reject(compile, "relational pattern");
     uint32_t count = pattern->expr.len;
     uint32_t *children = malloc(sizeof(*children) * count);
@@ -677,10 +967,106 @@ static bool oem_lower_pattern(OemCompile *compile, Atom *pattern,
     for (uint32_t index = 0u; ok && index < count; index++)
         ok = oem_lower_pattern(compile, pattern->expr.elems[index],
                                plan ? petta_plan_child(plan, index) : NULL,
-                               depth + 1u, &children[index]);
+                               depth + 1u, lists, &children[index]);
     ok = ok && oem_template_build(compile, children, count, out);
     free(children);
     return ok;
+}
+
+/* The plan of foldl/4's recursive clause, `(foldl step $xs (step $x $acc))`,
+ * with the step application a run-time dispatch, as the host's foldl
+ * applies each step.  NULL unless the application is a call of the step's
+ * relation. */
+static const PettaPlanNode *oem_fold_recursion_plan(
+    CettaOpenEquationProgram *program, const PettaPlanNode *source) {
+    const PettaPlanNode *application = petta_plan_child(source, 3u);
+    if (!application || source->child_count != 4u ||
+        application->role != PETTA_PLAN_STATIC_CALL ||
+        application->execution != PETTA_PLAN_EXEC_RELATION_SLOTS ||
+        !application->relation_head_admitted ||
+        application->control != PETTA_PLAN_CONTROL_NONE)
+        return NULL;
+    PettaPlanNode *root = arena_alloc(&program->atoms, sizeof(*root));
+    PettaPlanNode *children =
+        arena_alloc(&program->atoms, sizeof(*children) * 4u);
+    if (!root || !children)
+        return NULL;
+    memcpy(children, source->children, sizeof(*children) * 4u);
+    children[3].dispatch_handler = true;
+    *root = *source;
+    root->children = children;
+    return root;
+}
+
+/* PeTTa's foldl is SWI's foldl/4.  Folding a relation `step`/2 over a list
+ * is a call of the local relation that holds foldl/4's two clauses for
+ * that step:
+ *     (() $acc)            -> $acc
+ *     ((cons $x $xs) $acc) -> (foldl step $xs (step $x $acc))
+ * The recursive foldl is this relation again, a tail call, and each step
+ * application is dispatched at run time, as the host's foldl applies it.
+ * One relation per step, made once; `*out` is UINT32_MAX when the planner
+ * does not plan the step application as a call of that relation. */
+static bool oem_fold_relation(OemCompile *compile, SymbolId foldl,
+                              SymbolId step, uint32_t *out) {
+    CettaOpenEquationProgram *program = compile->program;
+    *out = UINT32_MAX;
+    for (uint32_t index = 0u; index < program->relation_len; index++) {
+        if (program->relations[index].local &&
+            program->relations[index].fold_step == step) {
+            *out = index;
+            return true;
+        }
+    }
+    if (!compile->petta)
+        return true;
+    if (program->relation_len >= OEM_MAX_RELATIONS)
+        return oem_reject(compile, "too many relations");
+    if (!program->atoms_ready) {
+        arena_init(&program->atoms);
+        arena_set_hashcons(&program->atoms, NULL);
+        program->atoms_ready = true;
+    }
+    Arena *atoms = &program->atoms;
+    Atom *head = atom_symbol_id(atoms, program->spelling);
+    Atom *fold = atom_symbol_id(atoms, foldl);
+    Atom *step_atom = atom_symbol_id(atoms, step);
+    Atom *cons = atom_symbol_id(atoms, symbol_intern_cstr(g_symbols, "cons"));
+    Atom *x = atom_var_with_id(atoms, "x", fresh_var_id());
+    Atom *xs = atom_var_with_id(atoms, "xs", fresh_var_id());
+    Atom *acc = atom_var_with_id(atoms, "acc", fresh_var_id());
+    Atom *nil = atom_expr(atoms, NULL, 0u);
+    if (!head || !fold || !step_atom || !cons || !x || !xs || !acc || !nil)
+        return oem_reject(compile, "out of memory");
+    Atom *pair = atom_expr3(atoms, cons, x, xs);
+    Atom *application = atom_expr3(atoms, step_atom, x, acc);
+    Atom *empty_lhs = atom_expr3(atoms, head, nil, acc);
+    Atom *cons_lhs = pair ? atom_expr3(atoms, head, pair, acc) : NULL;
+    Atom *recursion_elems[4] = {fold, step_atom, xs, application};
+    Atom *recursion = application
+        ? atom_expr(atoms, recursion_elems, 4u) : NULL;
+    if (!empty_lhs || !cons_lhs || !recursion)
+        return oem_reject(compile, "out of memory");
+    const PettaPlanNode *acc_plan =
+        petta_program_plan_transient(compile->petta, acc);
+    const PettaPlanNode *recursion_plan = oem_fold_recursion_plan(
+        program, petta_program_plan_transient(compile->petta, recursion));
+    if (!acc_plan || !recursion_plan)
+        return true;
+    OemRelation relation = {
+        .head = SYMBOL_ID_NONE, .arity = 2u, .local = true,
+        .fold_step = step, .first_source = program->source_len,
+        .source_count = 2u,
+    };
+    uint32_t unused = 0u;
+    if (!OEM_PUSH(program, source,
+                  ((OemLocalSource){empty_lhs, acc, acc_plan}), &unused) ||
+        !OEM_PUSH(program, source,
+                  ((OemLocalSource){cons_lhs, recursion, recursion_plan}),
+                  &unused) ||
+        !OEM_PUSH(program, relation, relation, out))
+        return oem_reject(compile, "out of memory");
+    return true;
 }
 
 static bool oem_call_relation(OemCompile *compile, Atom *call,
@@ -755,29 +1141,55 @@ static bool oem_build_elements(OemCompile *compile, Atom *expr,
     return ok;
 }
 
+/* A head no application can take: a number, a string, or the empty list.
+ * PeTTa's translator keeps an expression with such a head data, its
+ * elements evaluated in order (`atomic(HV), \+ atom(HV)`), which is what the
+ * search machine's dispatch makes of it. */
+static bool oem_inert_head(const Atom *head) {
+    if (head->kind == ATOM_EXPR)
+        return head->expr.len == 0u;
+    if (head->kind != ATOM_GROUNDED)
+        return false;
+    switch (head->ground.gkind) {
+    case GV_INT:
+    case GV_FLOAT:
+    case GV_BIGINT:
+    case GV_RATIONAL:
+    case GV_STRING:
+        return true;
+    default:
+        return false;
+    }
+}
+
 /* Whether a planned node is data: a constructor node, or a list whose head
  * element is itself a data node.  The plan calls the latter a dynamic call,
  * because a head that evaluates to a symbol would be dispatched; a data
  * head keeps its constructor after evaluation, so the node stays data unless
  * that constructor is applied (a lambda or a partial application). */
 static bool oem_data_node(Atom *expr, const PettaPlanNode *plan) {
-    Atom *head = expr->expr.elems[0];
-    if (head->kind == ATOM_SYMBOL)
-        return plan->role == PETTA_PLAN_DATA &&
-            plan->control == PETTA_PLAN_CONTROL_NONE &&
-            petta_semantics_form(head->sym_id) == PETTA_FORM_NONE;
-    const PettaPlanNode *head_plan = petta_plan_child(plan, 0u);
-    Atom *body = NULL;
-    return plan->role == PETTA_PLAN_DYNAMIC_CALL &&
-        plan->control == PETTA_PLAN_CONTROL_NONE &&
-        head->kind == ATOM_EXPR && head->expr.len > 0u &&
-        head->expr.elems[0]->kind == ATOM_SYMBOL &&
-        head_plan && head_plan->role == PETTA_PLAN_DATA &&
-        petta_semantics_form(head->expr.elems[0]->sym_id) == PETTA_FORM_NONE &&
-        !petta_semantics_lambda_body(head, &body) &&
-        !petta_semantics_nullary_lambda_body(head, &body) &&
-        !petta_semantics_partial_view(head, NULL, NULL) &&
-        !petta_semantics_partial_head(head);
+    for (;;) {
+        Atom *head = expr->expr.elems[0];
+        if (head->kind == ATOM_SYMBOL)
+            return plan->role == PETTA_PLAN_DATA &&
+                plan->control == PETTA_PLAN_CONTROL_NONE &&
+                petta_semantics_form(head->sym_id) == PETTA_FORM_NONE;
+        if (plan->role != PETTA_PLAN_DYNAMIC_CALL ||
+            plan->control != PETTA_PLAN_CONTROL_NONE)
+            return false;
+        if (oem_inert_head(head))
+            return true;
+        const PettaPlanNode *head_plan = petta_plan_child(plan, 0u);
+        Atom *body = NULL;
+        if (head->kind != ATOM_EXPR || head->expr.len == 0u || !head_plan ||
+            petta_semantics_lambda_body(head, &body) ||
+            petta_semantics_nullary_lambda_body(head, &body) ||
+            petta_semantics_partial_view(head, NULL, NULL) ||
+            petta_semantics_partial_head(head))
+            return false;
+        expr = head;
+        plan = head_plan;
+    }
 }
 
 /* Whether the host may evaluate `expr` as one goal: a cut or a `return`
@@ -822,6 +1234,52 @@ static bool oem_pure_operation(const OemCompile *compile, SymbolId head) {
         compile->host->builtin_allowed(compile->host->context, head);
 }
 
+/* PeTTa's list natives the region computes over closed lists, as the
+ * search machine does once their arguments are values.  `union-atom` is
+ * PeTTa's append/3. */
+static bool oem_list_native(SymbolId head, CettaExprLen nargs) {
+    PeTTaForm form = petta_semantics_form(head);
+    return ((form == PETTA_FORM_APPEND ||
+             head == g_builtin_syms.union_atom ||
+             form == PETTA_FORM_EXCLUDE_ITEM) && nargs == 2u) ||
+        ((form == PETTA_FORM_LENGTH ||
+          form == PETTA_FORM_LIST_TO_SET ||
+          form == PETTA_FORM_ALPHA_UNIQUE ||
+          head == g_builtin_syms.unique_atom ||
+          head == g_builtin_syms.car_atom ||
+          head == g_builtin_syms.cdr_atom ||
+          head == g_builtin_syms.decons_atom ||
+          head == g_builtin_syms.petta_decons) && nargs == 1u);
+}
+
+/* PeTTa's `get-metatype`, which the search machine applies to its
+ * argument's value, where the profile offers it. */
+static bool oem_metatype_call(const OemCompile *compile, const Atom *expr,
+                              const PettaPlanNode *plan) {
+    return expr->expr.len == 2u &&
+        atom_is_symbol_id(expr->expr.elems[0], g_builtin_syms.get_metatype) &&
+        plan->role == PETTA_PLAN_STATIC_CALL && compile->host &&
+        compile->host->builtin_allowed &&
+        compile->host->builtin_allowed(compile->host->context,
+                                       g_builtin_syms.get_metatype);
+}
+
+/* The template of an existence observer's match, when it is one value the
+ * observation can ignore: an atomic constant, as the search machine
+ * requires before it answers the observer by membership. */
+static bool oem_existence_constant(const Atom *expr) {
+    const Atom *observed =
+        expr->expr.elems[1]->kind == ATOM_EXPR &&
+                expr->expr.elems[1]->expr.len == 0u
+            ? expr->expr.elems[2] : expr->expr.elems[1];
+    const Atom *match = observed->expr.elems[1]->expr.elems[1];
+    Atom *template = match->expr.elems[3];
+    return !atom_has_vars(template) && !atom_is_error(template) &&
+        (template->kind == ATOM_SYMBOL ||
+         (template->kind == ATOM_GROUNDED &&
+          term_universe_atom_is_stable(template)));
+}
+
 /* What the region may decide of a goal before its host.  A type-pure
  * grounded operation, which the language offers and which is no PeTTa form
  * (a form takes its own dialect's evaluation), over arguments the plan
@@ -857,6 +1315,39 @@ static uint32_t oem_host_fast_path(const OemCompile *compile, Atom *expr,
         *op_out = expr->expr.elems[0]->sym_id;
         return OEM_HOST_SORT;
     }
+    if (expr->expr.elems[0]->kind == ATOM_SYMBOL &&
+        oem_list_native(expr->expr.elems[0]->sym_id, expr->expr.len - 1u) &&
+        plan->role == PETTA_PLAN_STATIC_CALL &&
+        oem_fields_are_values(expr, plan, 1u)) {
+        *op_out = expr->expr.elems[0]->sym_id;
+        return OEM_HOST_LIST;
+    }
+    if (oem_metatype_call(compile, expr, plan) &&
+        oem_fields_are_values(expr, plan, 1u)) {
+        *op_out = g_builtin_syms.get_metatype;
+        return OEM_HOST_METATYPE;
+    }
+    /* The observation whether a match has a row, which the search machine
+     * answers by membership where the space proves ground matching exact:
+     * the region asks the space the same question, and leaves the goal
+     * whole to the host where it cannot. */
+    if (petta_semantics_match_existence_observer_shape(
+            expr, compile->host ? compile->host->reify_head
+                                : SYMBOL_ID_NONE) &&
+        oem_existence_constant(expr))
+        return OEM_HOST_EXISTS;
+    /* PeTTa's `repra`, SWI's term_to_atom, is the language's grounded
+     * rendering of its argument's value: a ground value renders here, the
+     * symbol the host renders, and one with variables, whose names are the
+     * host's to choose, stays the host's. */
+    if (expr->expr.elems[0]->kind == ATOM_SYMBOL && expr->expr.len == 2u &&
+        petta_semantics_form(expr->expr.elems[0]->sym_id) ==
+            PETTA_FORM_REPRA &&
+        plan->role == PETTA_PLAN_STATIC_CALL &&
+        oem_fields_are_values(expr, plan, 1u)) {
+        *op_out = expr->expr.elems[0]->sym_id;
+        return OEM_HOST_PURE;
+    }
     if (expr->expr.elems[0]->kind != ATOM_SYMBOL ||
         plan->role != PETTA_PLAN_STATIC_CALL ||
         plan->execution != PETTA_PLAN_EXEC_PURE_GROUNDED_SLOTS)
@@ -887,7 +1378,8 @@ static bool oem_build_host_goal(OemCompile *compile, Atom *expr,
         ? (uint8_t)OEM_HOST_COUNTED
         : (uint8_t)oem_host_fast_path(compile, expr, plan, &node.op);
     program->host_plans[program->host_plan_len++] = plan;
-    return oem_lower_pattern(compile, expr, NULL, depth + 1u, &node.value) &&
+    return oem_lower_pattern(compile, expr, NULL, depth + 1u, false,
+                             &node.value) &&
         oem_hole(compile, &node.exposed) &&
         oem_node(compile, node, out);
 }
@@ -965,7 +1457,7 @@ static bool oem_output_is_hole(const OemNode *node) {
     return node->kind == OEM_N_CALL || node->kind == OEM_N_PRIM ||
         node->kind == OEM_N_HOST || node->kind == OEM_N_APPLY ||
         node->kind == OEM_N_COLLECT || node->kind == OEM_N_ALTERNATIVES ||
-        node->kind == OEM_N_ONCE;
+        node->kind == OEM_N_ONCE || node->kind == OEM_N_CUT;
 }
 
 /* A let whose pattern is one variable meets its value's output hole before
@@ -1043,7 +1535,8 @@ static bool oem_build_apply(OemCompile *compile, Atom *expr,
                             const PettaPlanNode *plan, uint32_t depth,
                             uint32_t *out) {
     CettaOpenEquationProgram *program = compile->program;
-    OemNode node = {.kind = OEM_N_APPLY, .relation = program->host_plan_len};
+    OemNode node = {.kind = OEM_N_APPLY, .relation = program->host_plan_len,
+                    .recovers = plan->dispatch_handler};
     /* PeTTa's sort takes its argument's value once; applying the head to
      * that value keeps the host from evaluating it again. */
     if (expr->expr.len == 2u && expr->expr.elems[0]->kind == ATOM_SYMBOL &&
@@ -1051,6 +1544,16 @@ static bool oem_build_apply(OemCompile *compile, Atom *expr,
             PETTA_FORM_MSORT) {
         node.host_fast = (uint8_t)OEM_HOST_SORT;
         node.op = expr->expr.elems[0]->sym_id;
+    } else if (expr->expr.elems[0]->kind == ATOM_SYMBOL &&
+               oem_list_native(expr->expr.elems[0]->sym_id,
+                               expr->expr.len - 1u)) {
+        /* So do PeTTa's list natives. */
+        node.host_fast = (uint8_t)OEM_HOST_LIST;
+        node.op = expr->expr.elems[0]->sym_id;
+    } else if (oem_metatype_call(compile, expr, plan)) {
+        /* And `get-metatype`. */
+        node.host_fast = (uint8_t)OEM_HOST_METATYPE;
+        node.op = g_builtin_syms.get_metatype;
     } else if (expr->expr.elems[0]->kind == ATOM_SYMBOL &&
                oem_pure_operation(compile, expr->expr.elems[0]->sym_id)) {
         /* A pure operation over computed arguments: the arguments' goals
@@ -1215,7 +1718,8 @@ static bool oem_build_local_control(OemCompile *compile, uint8_t kind,
         program->host_plans[program->host_plan_len++] = plan;
     }
     return ok &&
-        oem_lower_pattern(compile, expr, NULL, depth + 1u, &node.value) &&
+        oem_lower_pattern(compile, expr, NULL, depth + 1u, false,
+                          &node.value) &&
         oem_hole(compile, &node.exposed) &&
         (kind != OEM_N_COLLECT || oem_hole(compile, &node.yield)) &&
         oem_node(compile, node, out);
@@ -1258,9 +1762,12 @@ static bool oem_build_control(OemCompile *compile, Atom *expr,
             bound->ground.ival < 1)
             return oem_build_host(compile, expr, plan, depth,
                                   "select bound outside the fragment", out);
-        /* A bound past what a collection could ever hold takes them all. */
-        limit = bound->ground.ival >= UINT32_MAX
-            ? 0u : (uint32_t)bound->ground.ival;
+        /* Keep the bound meaningful even when this region's collection
+         * counter cannot represent it. The host retains the full demand. */
+        if ((uint64_t)bound->ground.ival > UINT32_MAX)
+            return oem_build_host(compile, expr, plan, depth,
+                                  "select bound outside the collection counter", out);
+        limit = (uint32_t)bound->ground.ival;
         head = limit == 1u ? g_builtin_syms.once : g_builtin_syms.collapse;
     } else if (head == g_builtin_syms.select) {
         head = g_builtin_syms.once;
@@ -1335,8 +1842,125 @@ static bool oem_build_value(OemCompile *compile, Atom *expr,
     if (symbol_head && expr->expr.len == 4u &&
         expr->expr.elems[0]->sym_id == g_builtin_syms.match)
         return oem_build_match(compile, expr, plan, depth, false, out);
+    /* PeTTa's `(cut)` is Prolog's `!`, as its translation reads it, whatever
+     * equations the program has for `cut`: in an equation's own body it
+     * commits the call to that equation, and its value is the truth
+     * value. */
+    if (symbol_head && expr->expr.len == 1u &&
+        petta_semantics_form(expr->expr.elems[0]->sym_id) == PETTA_FORM_CUT) {
+        if (!compile->named)
+            return oem_reject(compile, "cut inside a control");
+        node.kind = OEM_N_CUT;
+        return oem_hole(compile, &node.exposed) &&
+            oem_node(compile, node, out);
+    }
+    /* PeTTa's `cons`, and `cons-atom`, which PeTTa defines the same way:
+     * the list whose first element is its first argument's value and whose
+     * rest is its second's, as a cons cell, as the host's machine builds
+     * both. */
+    if (symbol_head && expr->expr.len == 3u &&
+        plan->role == PETTA_PLAN_STATIC_CALL &&
+        (petta_semantics_form(expr->expr.elems[0]->sym_id) ==
+             PETTA_FORM_CONS ||
+         expr->expr.elems[0]->sym_id == g_builtin_syms.cons_atom)) {
+        if (!oem_build_elements(compile, expr, plan, depth, 1u, &node.first,
+                                &node.count))
+            return false;
+        const uint32_t *fields = &compile->node_children[node.first];
+        return oem_template_list(compile, OEM_T_LIST,
+                                 compile->nodes[fields[0]].exposed,
+                                 compile->nodes[fields[1]].exposed,
+                                 &node.exposed) &&
+            oem_node(compile, node, out);
+    }
+    /* PeTTa's foldl over a relation the region may call runs as foldl/4's
+     * clauses for that step (oem_fold_relation). */
+    if (symbol_head && expr->expr.len == 4u &&
+        plan->role == PETTA_PLAN_STATIC_CALL &&
+        petta_semantics_form(expr->expr.elems[0]->sym_id) ==
+            PETTA_FORM_FOLDL &&
+        expr->expr.elems[1]->kind == ATOM_SYMBOL &&
+        petta_semantics_form(expr->expr.elems[1]->sym_id) ==
+            PETTA_FORM_NONE &&
+        compile->host && compile->host->relation_admitted &&
+        compile->host->relation_admitted(
+            compile->host->context, compile->program->space,
+            expr->expr.elems[1]->sym_id, 2u)) {
+        uint32_t fold = UINT32_MAX;
+        if (!oem_fold_relation(compile, expr->expr.elems[0]->sym_id,
+                               expr->expr.elems[1]->sym_id, &fold))
+            return false;
+        if (fold != UINT32_MAX) {
+            node.kind = OEM_N_CALL;
+            node.relation = fold;
+            return oem_build_elements(compile, expr, plan, depth, 2u,
+                                      &node.first, &node.count) &&
+                oem_hole(compile, &node.exposed) &&
+                oem_node(compile, node, out);
+        }
+    }
     if (symbol_head && oem_control_form(compile, expr))
         return oem_build_control(compile, expr, plan, depth, out);
+    /* PeTTa's `unique` and `alpha-unique` are their translations, as
+     * PeTTa's translator rewrites them: `(unique X)` is
+     * `(superpose (unique-atom (collapse X)))`.  Here the list is bound by a
+     * let to a fresh variable, which a relational let's pattern evaluates
+     * to itself, so the collection and the aggregate are the region's and
+     * only the enumeration of the list remains: the whole runs as a local
+     * relation, so X's answers are collected here, not by the host.
+     * Should the relation not compile, the host evaluates the form. */
+    if (symbol_head && compile->petta && expr->expr.len == 2u) {
+        PeTTaForm stream = petta_semantics_form(expr->expr.elems[0]->sym_id);
+        if (stream == PETTA_FORM_STREAM_UNIQUE ||
+            stream == PETTA_FORM_STREAM_ALPHA_UNIQUE) {
+            CettaOpenEquationProgram *program = compile->program;
+            if (!program->atoms_ready) {
+                arena_init(&program->atoms);
+                arena_set_hashcons(&program->atoms, NULL);
+                program->atoms_ready = true;
+            }
+            Arena *atoms = &program->atoms;
+            SymbolId reify = compile->host &&
+                    compile->host->reify_head != SYMBOL_ID_NONE
+                ? compile->host->reify_head : g_builtin_syms.collapse;
+            SymbolId aggregate = stream == PETTA_FORM_STREAM_UNIQUE
+                ? g_builtin_syms.unique_atom
+                : symbol_intern_cstr(g_symbols, "alpha-unique-atom");
+            Atom *items = atom_var_with_id(atoms, "__stream_items",
+                                           fresh_var_id());
+            Atom *collected = items
+                ? atom_expr2(atoms, atom_symbol_id(atoms, reify),
+                             expr->expr.elems[1]) : NULL;
+            Atom *unique = collected
+                ? atom_expr2(atoms, atom_symbol_id(atoms, aggregate),
+                             collected) : NULL;
+            Atom *emit = unique
+                ? atom_expr2(atoms,
+                             atom_symbol_id(atoms, g_builtin_syms.superpose),
+                             items) : NULL;
+            Atom *let_elems[4] = {
+                atom_symbol_id(atoms, g_builtin_syms.let), items, unique,
+                emit,
+            };
+            Atom *lowered = emit ? atom_expr(atoms, let_elems, 4u) : NULL;
+            const PettaPlanNode *lowered_plan = lowered
+                ? petta_program_plan_current(compile->petta, lowered)
+                : NULL;
+            if (lowered_plan &&
+                lowered_plan->control == PETTA_PLAN_CONTROL_LET)
+                return oem_build_local_control(compile, OEM_N_ALTERNATIVES,
+                                               expr, plan, depth, &lowered,
+                                               &lowered_plan, 1u, expr, out);
+        }
+    }
+    /* An `if` whose output is a value runs as a local relation whose one
+     * equation is the `if` in a tail position: each of its answers
+     * continues after it, as each of the host's does. */
+    if (symbol_head && plan->control == PETTA_PLAN_CONTROL_IF &&
+        expr->expr.len == 4u)
+        return oem_build_local_control(compile, OEM_N_ALTERNATIVES, expr,
+                                       plan, depth, &expr, &plan, 1u, expr,
+                                       out);
     if (symbol_head && oem_relation_call(expr, plan) &&
         compile->host && compile->host->relation_admitted &&
         !compile->host->relation_admitted(
@@ -1346,6 +1970,7 @@ static bool oem_build_value(OemCompile *compile, Atom *expr,
                               "relation owned by the host", out);
     if (symbol_head && oem_relation_call(expr, plan)) {
         node.kind = OEM_N_CALL;
+        node.recovers = plan->dispatch_handler;
         return oem_build_elements(compile, expr, plan, depth, 1u,
                                   &node.first, &node.count) &&
             oem_call_relation(compile, expr, &node.relation) &&
@@ -1361,8 +1986,20 @@ static bool oem_build_value(OemCompile *compile, Atom *expr,
             oem_node(compile, node, out);
     }
     /* An equality that observes whether a match has a row stays whole, as
-     * a condition does: the host answers it by membership. */
-    if (oem_apply_call(expr, plan) ||
+     * a condition does: the host answers it by membership.  A list native,
+     * or `get-metatype`, over computed arguments applies to their values,
+     * which the region computes, collections included; a counted `length`
+     * keeps the host's counted route. */
+    bool computed_call = symbol_head &&
+        plan->role == PETTA_PLAN_STATIC_CALL &&
+        !oem_fields_are_values(expr, plan, 1u);
+    bool value_native = computed_call &&
+        ((oem_list_native(expr->expr.elems[0]->sym_id,
+                          expr->expr.len - 1u) &&
+          petta_semantics_form(expr->expr.elems[0]->sym_id) !=
+              PETTA_FORM_LENGTH) ||
+         oem_metatype_call(compile, expr, plan));
+    if (oem_apply_call(expr, plan) || value_native ||
         (symbol_head && plan->role == PETTA_PLAN_STATIC_CALL &&
          ((expr->expr.len == 2u &&
            petta_semantics_form(expr->expr.elems[0]->sym_id) ==
@@ -1455,9 +2092,14 @@ static bool oem_build_tail(OemCompile *compile, Atom *expr,
             compile, expr->expr.elems[1], expr->expr.elems[2], NULL, 0u,
             expr->expr.elems[3],
             !body_plan || body_plan->contains_cardinality_call);
-        if (!oem_lower_pattern(compile, expr->expr.elems[1],
-                               petta_plan_child(plan, 1u), depth + 1u,
-                               &node.pattern) ||
+        compile->let_scope = expr;
+        compile->let_before = NULL;
+        compile->let_before_len = 0u;
+        bool lowered = oem_lower_pattern(compile, expr->expr.elems[1],
+                                         petta_plan_child(plan, 1u),
+                                         depth + 1u, true, &node.pattern);
+        compile->let_scope = NULL;
+        if (!lowered ||
             !oem_build_producer(compile, expr->expr.elems[2],
                                 petta_plan_child(plan, 2u), depth + 1u,
                                 counted, &node.value) ||
@@ -1497,9 +2139,14 @@ static bool oem_build_tail(OemCompile *compile, Atom *expr,
                 expr->expr.elems[2], may_count);
             may_count = may_count || pair_plan->contains_cardinality_call;
             OemNode let = {.kind = OEM_N_LET, .body = body};
-            if (!oem_lower_pattern(compile, pair->expr.elems[0],
-                                   petta_plan_child(pair_plan, 0u),
-                                   depth + 1u, &let.pattern) ||
+            compile->let_scope = expr;
+            compile->let_before = bindings->expr.elems;
+            compile->let_before_len = index;
+            bool lowered = oem_lower_pattern(compile, pair->expr.elems[0],
+                                             petta_plan_child(pair_plan, 0u),
+                                             depth + 1u, true, &let.pattern);
+            compile->let_scope = NULL;
+            if (!lowered ||
                 !oem_build_producer(compile, pair->expr.elems[1],
                                     petta_plan_child(pair_plan, 1u),
                                     depth + 1u, counted, &let.value))
@@ -1526,7 +2173,13 @@ static bool oem_build_tail(OemCompile *compile, Atom *expr,
     }
     if (!oem_build_value(compile, expr, plan, depth, out))
         return false;
-    if (compile->nodes[*out].kind == OEM_N_CALL)
+    /* A call dispatched at run time keeps a return of its own, which holds
+     * its handler.  A literal `superpose` returns its alternatives' answers
+     * to the caller too, so an answer found k recursions deep returns once,
+     * not through k returns. */
+    if ((compile->nodes[*out].kind == OEM_N_CALL &&
+         !compile->nodes[*out].recovers) ||
+        compile->nodes[*out].kind == OEM_N_ALTERNATIVES)
         compile->nodes[*out].tail = true;
     return true;
 }
@@ -1534,9 +2187,9 @@ static bool oem_build_tail(OemCompile *compile, Atom *expr,
 /* `(case key ((pattern branch) ...))`: PeTTa's first-match choice.  Each
  * answer of the key meets the patterns in order, by unification; the first
  * that unifies commits to its branch, whose answers are the case's, and a
- * key no pattern admits fails.  A pattern is data, as a head is: one with a
- * relational occurrence or a list pattern, which PeTTa evaluates or
- * converts first, stays with the host, as does the `Empty` default, which
+ * key no pattern admits fails.  A pattern is read as a head is, a `cons` in
+ * it as a list pattern; one with a relational occurrence, which PeTTa
+ * evaluates first, stays with the host, as does the `Empty` default, which
  * observes whether the key has an answer at all. */
 static bool oem_build_case(OemCompile *compile, Atom *expr,
                            const PettaPlanNode *plan, uint32_t depth,
@@ -1551,7 +2204,6 @@ static bool oem_build_case(OemCompile *compile, Atom *expr,
         data = arm->kind == ATOM_EXPR && arm->expr.len == 2u && arm_plan &&
             arm_plan->child_count == 2u &&
             !atom_is_symbol_id(arm->expr.elems[0], g_builtin_syms.empty) &&
-            !petta_semantics_contains_cons_constraint(arm->expr.elems[0]) &&
             oem_head_data(compile, arm->expr.elems[0], 0u);
     }
     if (!data)
@@ -1569,7 +2221,7 @@ static bool oem_build_case(OemCompile *compile, Atom *expr,
         Atom *arm = arms->expr.elems[index];
         OemNode pattern = {.kind = OEM_N_VALUE};
         ok = oem_lower_pattern(compile, arm->expr.elems[0], NULL,
-                               depth + 1u, &pattern.exposed) &&
+                               depth + 1u, true, &pattern.exposed) &&
             oem_node(compile, pattern, &children[2u * index]) &&
             oem_build_tail(compile, arm->expr.elems[1],
                            petta_plan_child(petta_plan_child(arms_plan,
@@ -1592,22 +2244,23 @@ static bool oem_build_match_leg(OemCompile *compile, Atom *space,
                                 Atom *const *patterns, uint32_t count,
                                 Atom *template,
                                 const PettaPlanNode *template_plan,
-                                uint32_t depth, bool tail, uint32_t *out) {
+                                uint32_t depth, bool tail, bool match_row,
+                                uint32_t *out) {
     if (depth > OEM_MAX_DEPTH)
         return oem_reject(compile, "expression too deep");
-    OemNode node = {.kind = OEM_N_MATCH};
+    OemNode node = {.kind = OEM_N_MATCH, .match_row = match_row};
     if (!oem_build_value(compile, space, space_plan, depth + 1u, &node.value))
         return false;
     if (compile->nodes[node.value].kind != OEM_N_VALUE ||
         compile->nodes[node.value].count != 0u)
         return oem_reject(compile, "match space operand");
-    if (!oem_lower_pattern(compile, patterns[0], NULL, depth + 1u,
+    if (!oem_lower_pattern(compile, patterns[0], NULL, depth + 1u, false,
                            &node.pattern))
         return false;
     bool ok = count > 1u
         ? oem_build_match_leg(compile, space, space_plan, patterns + 1u,
                               count - 1u, template, template_plan,
-                              depth + 1u, tail, &node.body)
+                              depth + 1u, tail, match_row, &node.body)
         : tail ? oem_build_tail(compile, template, template_plan, depth + 1u,
                                 &node.body)
                : oem_build_value(compile, template, template_plan,
@@ -1626,6 +2279,11 @@ static bool oem_build_match(OemCompile *compile, Atom *expr,
                             const PettaPlanNode *plan, uint32_t depth,
                             bool tail, uint32_t *out) {
     Atom *pattern = expr->expr.elems[2];
+    /* PeTTa's match takes its pattern as written; a `cons` in one is the
+     * host's to read. */
+    if (petta_semantics_contains_cons_constraint(pattern))
+        return oem_build_host(compile, expr, plan, depth,
+                              "list pattern in a match", out);
     bool connective = pattern->kind == ATOM_EXPR && pattern->expr.len > 0u;
     if (connective &&
         atom_is_symbol_id(pattern->expr.elems[0], g_builtin_syms.pipe))
@@ -1638,7 +2296,7 @@ static bool oem_build_match(OemCompile *compile, Atom *expr,
         compile, expr->expr.elems[1], plan ? petta_plan_child(plan, 1u) : NULL,
         connective ? pattern->expr.elems + 1u : &expr->expr.elems[2],
         connective ? pattern->expr.len - 1u : 1u, expr->expr.elems[3],
-        plan ? petta_plan_child(plan, 3u) : NULL, depth, tail, out);
+        plan ? petta_plan_child(plan, 3u) : NULL, depth, tail, connective, out);
 }
 
 static bool oem_emit_goals(OemCompile *compile, uint32_t index);
@@ -1673,21 +2331,27 @@ static bool oem_emit_goals(OemCompile *compile, uint32_t index) {
         }
         return true;
     case OEM_N_CALL:
-    case OEM_N_PRIM:
-        if (!oem_emit_element_goals(compile, &node, &first_arg))
+    case OEM_N_PRIM: {
+        uint32_t head = 0u;
+        if (!oem_emit_element_goals(compile, &node, &first_arg) ||
+            (node.kind == OEM_N_PRIM &&
+             !oem_op_literal(compile, node.op, &head)))
             return false;
         return oem_emit(compile, (OemStep){
                             .kind = node.kind == OEM_N_CALL
                                 ? (node.tail ? OEM_S_TAIL : OEM_S_CALL)
                                 : OEM_S_PRIM,
+                            .recovers = node.recovers,
                             .op = node.op, .relation = node.relation,
                             .first_arg = first_arg, .arg_count = node.count,
-                            .pattern = node.exposed,
+                            .pattern = node.exposed, .value = head,
                         }, NULL);
+    }
     case OEM_N_MATCH:
         return oem_emit_goals(compile, node.value) &&
             oem_emit(compile, (OemStep){
                          .kind = OEM_S_MATCH, .pattern = node.pattern,
+                         .match_row = node.match_row,
                          .value = compile->nodes[node.value].exposed,
                      }, NULL) &&
             oem_emit_goals(compile, node.body);
@@ -1701,8 +2365,8 @@ static bool oem_emit_goals(OemCompile *compile, uint32_t index) {
         if (!oem_emit_element_goals(compile, &node, &first_arg))
             return false;
         return oem_emit(compile, (OemStep){
-                            .kind = OEM_S_HOST, .op = node.op,
-                            .relation = node.relation,
+                            .kind = OEM_S_HOST, .recovers = node.recovers,
+                            .op = node.op, .relation = node.relation,
                             .value = node.value, .pattern = node.exposed,
                             .target = node.host_fast
                                 ? node.host_fast : OEM_HOST_APPLY,
@@ -1727,6 +2391,8 @@ static bool oem_emit_goals(OemCompile *compile, uint32_t index) {
                           .value = node.value, .pattern = node.exposed,
                           .first_arg = first_arg, .arg_count = node.count,
                           .target = target, .control = control,
+                          .tail = node.kind == OEM_N_ALTERNATIVES &&
+                              node.tail,
                       }, &step))
             return false;
         /* A collection's YIELD step, or a once's CUT step, follows the
@@ -1738,6 +2404,12 @@ static bool oem_emit_goals(OemCompile *compile, uint32_t index) {
               (compile->resumes[compile->resume_len++] = step, true)) ||
              oem_reject(compile, "out of memory"));
     }
+    case OEM_N_CUT:
+        compile->cuts = true;
+        return oem_emit(compile, (OemStep){
+                            .kind = OEM_S_EQUATION_CUT,
+                            .pattern = node.exposed,
+                        }, NULL);
     default:
         return oem_reject(compile, "control in a value position");
     }
@@ -1776,10 +2448,13 @@ static bool oem_emit_tail(OemCompile *compile, uint32_t index) {
     case OEM_N_IF: {
         uint32_t first_arg = 0u;
         uint32_t test_step = 0u;
+        uint32_t head = 0u;
         if (!oem_emit_element_goals(compile, &node, &first_arg) ||
+            !oem_op_literal(compile, node.op, &head) ||
             !oem_emit(compile, (OemStep){
                           .kind = OEM_S_TEST, .op = node.op,
                           .first_arg = first_arg, .arg_count = node.count,
+                          .value = head,
                       }, &test_step) ||
             !oem_emit_branch(compile, &node, node.then_node))
             return false;
@@ -1791,6 +2466,7 @@ static bool oem_emit_tail(OemCompile *compile, uint32_t index) {
         return oem_emit_goals(compile, node.value) &&
             oem_emit(compile, (OemStep){
                          .kind = OEM_S_MATCH, .pattern = node.pattern,
+                         .match_row = node.match_row,
                          .value = compile->nodes[node.value].exposed,
                      }, NULL) &&
             oem_emit_tail(compile, node.body);
@@ -1830,29 +2506,58 @@ static bool oem_emit_tail(OemCompile *compile, uint32_t index) {
     case OEM_N_COLLECT:
     case OEM_N_ALTERNATIVES:
     case OEM_N_ONCE:
+    case OEM_N_CUT:
         return oem_emit_goals(compile, index) &&
-            oem_emit(compile, (OemStep){.kind = OEM_S_RET}, NULL);
+            oem_emit(compile, (OemStep){.kind = OEM_S_RET,
+                                        .value = compile->output}, NULL);
     }
     return oem_reject(compile, "unknown construct");
 }
 
 /* The relational occurrences of the head, as calls in source order whose
  * values unify with the query subterms kept for them.  Their arguments are
- * head data: variables and structure without further occurrences. */
+ * head data: variables and structure without further occurrences.  An
+ * occurrence of a builtin, or of a relation the host keeps, is a host goal
+ * over the same data. */
 static bool oem_compile_relational_occurrences(OemCompile *compile) {
+    CettaOpenEquationProgram *program = compile->program;
     for (uint32_t index = 0u; index < compile->pending_len; index++) {
         Atom *call = compile->pending[index].call;
         uint32_t count = call->expr.len - 1u;
+        for (uint32_t arg = 0u; arg < count; arg++) {
+            if (!oem_head_data(compile, call->expr.elems[arg + 1u], 0u))
+                return oem_reject(compile, "nested relational occurrence");
+        }
+        if (compile->host && compile->host->relation_admitted &&
+            !compile->host->relation_admitted(
+                compile->host->context, program->space,
+                call->expr.elems[0]->sym_id, count)) {
+            OemStep step = {
+                .kind = OEM_S_HOST, .relation = program->host_plan_len,
+                .target = OEM_HOST_OCCURRENCE,
+            };
+            if (!oem_lower_pattern(compile, call, NULL, 0u, true,
+                                   &step.value) ||
+                !oem_template_slot(compile, compile->pending[index].slot,
+                                   &step.pattern) ||
+                !(oem_reserve((void **)&program->host_plans,
+                              &program->host_plan_cap,
+                              program->host_plan_len + 1u,
+                              sizeof(*program->host_plans)) ||
+                  oem_reject(compile, "out of memory")))
+                return false;
+            program->host_plans[program->host_plan_len++] = NULL;
+            if (!oem_emit(compile, step, NULL))
+                return false;
+            continue;
+        }
         uint32_t *args = malloc(sizeof(*args) * (count ? count : 1u));
         if (!args)
             return oem_reject(compile, "out of memory");
         bool ok = true;
-        for (uint32_t arg = 0u; ok && arg < count; arg++) {
-            Atom *source = call->expr.elems[arg + 1u];
-            ok = oem_head_data(compile, source, 0u)
-                ? oem_lower_pattern(compile, source, NULL, 0u, &args[arg])
-                : oem_reject(compile, "nested relational occurrence");
-        }
+        for (uint32_t arg = 0u; ok && arg < count; arg++)
+            ok = oem_lower_pattern(compile, call->expr.elems[arg + 1u], NULL,
+                                   0u, true, &args[arg]);
         OemStep step = {.kind = OEM_S_CALL, .arg_count = count};
         ok = ok && oem_args(compile, args, count, &step.first_arg);
         free(args);
@@ -1909,7 +2614,7 @@ static bool oem_known_output(OemCompile *compile, Atom *expr,
                 return oem_reject(compile, "output child");
             expr = expr->expr.elems[plan->output_child];
         }
-        return oem_lower_pattern(compile, expr, NULL, depth + 1u,
+        return oem_lower_pattern(compile, expr, NULL, depth + 1u, false,
                                  template_out);
     }
     if (plan->output != PETTA_PLAN_OUTPUT_CONSTRUCTOR ||
@@ -1941,7 +2646,7 @@ static void oem_template_slots(const CettaOpenEquationProgram *program,
         into[item->slot] = 1u;
         return;
     }
-    if (item->kind != OEM_T_BUILD)
+    if (item->kind != OEM_T_BUILD && !oem_template_is_list(item))
         return;
     for (uint32_t index = 0u; index < item->count; index++)
         oem_template_slots(program,
@@ -1961,7 +2666,7 @@ static void oem_template_reads(const CettaOpenEquationProgram *program,
         seen[item->slot] = 1u;
         return;
     }
-    if (item->kind != OEM_T_BUILD)
+    if (item->kind != OEM_T_BUILD && !oem_template_is_list(item))
         return;
     for (uint32_t index = 0u; index < item->count; index++)
         oem_template_reads(program,
@@ -1970,11 +2675,12 @@ static void oem_template_reads(const CettaOpenEquationProgram *program,
 }
 
 /* A step's result slot when the region may store the result there: a
- * primitive's, a bind's, or a host step's the region may decide, whose
- * pattern is one slot.  UINT32_MAX otherwise. */
+ * primitive's, a bind's, a cut's truth value, or a host step's the region
+ * may decide, whose pattern is one slot.  UINT32_MAX otherwise. */
 static uint32_t oem_step_result_slot(const CettaOpenEquationProgram *program,
                                      const OemStep *step) {
     bool storing = step->kind == OEM_S_PRIM || step->kind == OEM_S_BIND ||
+        step->kind == OEM_S_CALL || step->kind == OEM_S_EQUATION_CUT ||
         (step->kind == OEM_S_HOST && step->target >= OEM_HOST_PURE);
     const OemTemplate *pattern = &program->templates[step->pattern];
     return storing && pattern->kind == OEM_T_SLOT ? pattern->slot
@@ -2068,8 +2774,11 @@ static bool oem_mark_first_stores(OemCompile *compile, OemEquation *equation) {
                         program, program->controls[step->control].yield,
                         seen, celled);
             }
+            /* A tail call returns its value in place of the equation's:
+             * nothing reads its pattern. */
             if (step->kind != OEM_S_RET && step->kind != OEM_S_FAIL &&
-                step->kind != OEM_S_TEST && result == UINT32_MAX)
+                step->kind != OEM_S_TEST && step->kind != OEM_S_TAIL &&
+                result == UINT32_MAX)
                 oem_template_reads(program, step->pattern, seen, celled);
             if (result != UINT32_MAX) {
                 if (!seen[result]) {
@@ -2106,6 +2815,23 @@ static bool oem_mark_first_stores(OemCompile *compile, OemEquation *equation) {
                 (stored[slot] && !celled[slot]) || !mentioned[slot] ? 1u : 0u;
         program->slot_store_len = base + slots;
         equation->first_slot_store = base;
+        /* The slots head matching leaves unset (no BIND, not the output
+         * slot) that the body does not store: each activation's cells. */
+        uint32_t cells = 0u;
+        for (uint32_t slot = 0u; slot < slots; slot++)
+            cells += !assigned[slot] && !program->slot_stores[base + slot];
+        equation->first_cell_slot = program->cell_slot_len;
+        equation->cell_slot_count = cells;
+        ok = oem_reserve((void **)&program->cell_slots,
+                         &program->cell_slot_cap,
+                         program->cell_slot_len + cells,
+                         sizeof(*program->cell_slots));
+        for (uint32_t slot = 0u; ok && slot < slots; slot++) {
+            if (!assigned[slot] && !program->slot_stores[base + slot])
+                program->cell_slots[program->cell_slot_len++] = slot;
+        }
+    }
+    if (ok) {
         for (uint32_t pc = first; pc < end; pc++) {
             if (!candidate[pc - first])
                 continue;
@@ -2125,11 +2851,13 @@ static bool oem_mark_first_stores(OemCompile *compile, OemEquation *equation) {
 }
 
 static bool oem_compile_equation(CettaOpenEquationProgram *program,
+                                 PettaProgram *petta,
                                  const CettaOpenEquationHost *host,
-                                 Atom *lhs, Atom *rhs,
-                                 const PettaPlanNode *rhs_plan,
+                                 bool authored, bool named, Atom *lhs,
+                                 Atom *rhs, const PettaPlanNode *rhs_plan,
                                  const char **reason) {
-    OemCompile compile = {.program = program, .host = host,
+    OemCompile compile = {.program = program, .host = host, .petta = petta,
+                          .authored = authored, .named = named,
                           .lhs = lhs, .rhs = rhs};
     OemEquation equation = {
         .first_op = program->op_len,
@@ -2137,11 +2865,7 @@ static bool oem_compile_equation(CettaOpenEquationProgram *program,
     };
     uint32_t arity = lhs->expr.len - 1u;
     compile.register_count = arity;
-    bool ok = true;
-    if (petta_semantics_contains_cons_constraint(lhs) ||
-        petta_semantics_contains_cons_constraint(rhs))
-        ok = oem_reject(&compile, "list pattern");
-    ok = ok && oem_register_vars(&compile, lhs, 0u) &&
+    bool ok = oem_register_vars(&compile, lhs, 0u) &&
         oem_register_vars(&compile, rhs, 0u);
     if (ok) {
         compile.slot_count = compile.var_len;
@@ -2161,6 +2885,7 @@ static bool oem_compile_equation(CettaOpenEquationProgram *program,
     if (ok) {
         const OemNode *node = &compile.nodes[root];
         const OemTemplate *exposed = &program->templates[node->exposed];
+        compile.output = node->exposed;
         equation.destination = node->exposed;
         equation.dest_kind =
             (node->kind == OEM_N_CALL && node->tail) ||
@@ -2193,6 +2918,7 @@ static bool oem_compile_equation(CettaOpenEquationProgram *program,
     }
     equation.register_count = compile.register_count;
     equation.slot_count = compile.slot_count;
+    equation.cuts = compile.cuts;
     ok = ok && oem_mark_first_stores(&compile, &equation);
     uint32_t index = 0u;
     ok = ok && (OEM_PUSH(program, equation, equation, &index) ||
@@ -2210,12 +2936,21 @@ static bool oem_compile_equation(CettaOpenEquationProgram *program,
 
 static void oem_note_first_tests(CettaOpenEquationProgram *program,
                                  uint32_t relation_index);
+static bool oem_build_index(CettaOpenEquationProgram *program,
+                            uint32_t relation_index);
+static bool oem_build_switches(CettaOpenEquationProgram *program,
+                               uint32_t relation_index);
+static bool oem_index_failed(const char **reason);
 
 /* A local relation's equations.  One that does not compile leaves its
- * control to the host, and whatever it had emitted unreached. */
-static void oem_compile_local_relation(CettaOpenEquationProgram *program,
+ * control to the host, and whatever it had emitted unreached; false only
+ * for foldl/4's clauses, which a call enters with no host goal to fall
+ * back to. */
+static bool oem_compile_local_relation(CettaOpenEquationProgram *program,
+                                       PettaProgram *petta,
                                        const CettaOpenEquationHost *host,
-                                       uint32_t relation_index) {
+                                       uint32_t relation_index,
+                                       const char **reason_out) {
     uint32_t first = program->equation_len;
     uint32_t source = program->relations[relation_index].first_source;
     uint32_t count = program->relations[relation_index].source_count;
@@ -2223,18 +2958,26 @@ static void oem_compile_local_relation(CettaOpenEquationProgram *program,
     bool ok = true;
     for (uint32_t index = 0u; ok && index < count; index++) {
         OemLocalSource local = program->sources[source + index];
-        ok = oem_compile_equation(program, host, local.lhs, local.rhs,
-                                  local.plan, &reason);
+        ok = oem_compile_equation(
+            program, petta, host,
+            program->relations[relation_index].fold_step == SYMBOL_ID_NONE,
+            false, local.lhs, local.rhs, local.plan, &reason);
     }
     OemRelation *relation = &program->relations[relation_index];
     if (!ok) {
         program->equation_len = first;
         relation->failed = true;
-        return;
+        if (relation->fold_step == SYMBOL_ID_NONE)
+            return true;
+        *reason_out = reason ? reason : "foldl clauses";
+        return false;
     }
     relation->first_equation = first;
     relation->equation_count = program->equation_len - first;
     oem_note_first_tests(program, relation_index);
+    if (!oem_build_index(program, relation_index))
+        return oem_index_failed(reason_out);
+    return true;
 }
 
 /* The first structural test of an equation's head, or NULL when every
@@ -2243,7 +2986,8 @@ static const OemMatchOp *oem_first_test(const CettaOpenEquationProgram *program,
                                         const OemEquation *equation) {
     for (uint32_t op = 0u; op < equation->op_count; op++) {
         const OemMatchOp *test = &program->ops[equation->first_op + op];
-        if (test->kind == OEM_M_ATOM || test->kind == OEM_M_EXPR)
+        if (test->kind == OEM_M_ATOM || test->kind == OEM_M_EXPR ||
+            test->kind == OEM_M_LIST)
             return test;
     }
     return NULL;
@@ -2268,6 +3012,464 @@ static void oem_note_first_tests(CettaOpenEquationProgram *program,
                    : test->length != first->length)));
     }
     relation->first_tests_differ = differ;
+}
+
+enum { OEM_INDEX_MAX_DEPTH = 4u };
+
+static bool oem_index_failed(const char **reason) {
+    if (reason)
+        *reason = "out of memory";
+    return false;
+}
+
+/* A path's keys go in a table from this many on; fewer are scanned. */
+enum { OEM_INDEX_TABLE_MIN_KEYS = 6u };
+
+/* The code a table places a literal by: a symbol's id or an integer's
+ * value.  `atom_eq` compares symbols by id and integers by value, and a
+ * symbol with an integer never, so literals it finds equal have one code. */
+static inline bool oem_literal_code(const Atom *atom, uint64_t *code) {
+    if (atom->kind == ATOM_SYMBOL) {
+        *code = ((uint64_t)atom->sym_id << 1) | 1u;
+        return true;
+    }
+    if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_INT) {
+        *code = (uint64_t)atom->ground.ival << 1;
+        return true;
+    }
+    return false;
+}
+
+static inline uint32_t oem_literal_home(uint64_t code, uint32_t mask) {
+    return (uint32_t)((code * UINT64_C(0x9E3779B97F4A7C15)) >> 32) & mask;
+}
+
+/* `atom_eq` against a key, decided here for a symbol or an integer. */
+static inline bool oem_key_eq(Atom *term, Atom *literal) {
+    if (term->kind != literal->kind)
+        return false;
+    if (term->kind == ATOM_SYMBOL)
+        return term->sym_id == literal->sym_id;
+    if (term->kind == ATOM_GROUNDED && term->ground.gkind == GV_INT &&
+        literal->ground.gkind == GV_INT)
+        return term->ground.ival == literal->ground.ival;
+    return atom_eq(term, literal);
+}
+
+/* Place a path's keys in a table when there are enough of them and each
+ * is a symbol or an integer.  False only when out of memory. */
+static bool oem_build_index_table(CettaOpenEquationProgram *program,
+                                  OemIndexPath *path) {
+    path->first_table = 0u;
+    path->table_mask = 0u;
+    if (path->key_count < OEM_INDEX_TABLE_MIN_KEYS)
+        return true;
+    uint64_t code = 0u;
+    for (uint32_t key = 0u; key < path->key_count; key++) {
+        if (!oem_literal_code(
+                program->index_keys[path->first_key + key].literal, &code))
+            return true;
+    }
+    uint32_t size = 8u;
+    while (size < 2u * path->key_count)
+        size *= 2u;
+    uint32_t first = program->index_table_len;
+    uint32_t added = 0u;
+    for (uint32_t entry = 0u; entry < size; entry++) {
+        if (!OEM_PUSH(program, index_table, 0u, &added))
+            return false;
+    }
+    uint32_t *table = &program->index_tables[first];
+    for (uint32_t key = 0u; key < path->key_count; key++) {
+        (void)oem_literal_code(
+            program->index_keys[path->first_key + key].literal, &code);
+        uint32_t at = oem_literal_home(code, size - 1u);
+        while (table[at])
+            at = (at + 1u) & (size - 1u);
+        table[at] = key + 1u;
+    }
+    path->first_table = first;
+    path->table_mask = size - 1u;
+    return true;
+}
+
+/* The equations a path admits for a term equal to `literal` (its key's). */
+static uint64_t oem_path_admits(const CettaOpenEquationProgram *program,
+                                const OemIndexPath *path, Atom *literal) {
+    uint64_t admitted = path->free;
+    for (uint32_t key = 0u; key < path->key_count; key++) {
+        const OemIndexKey *entry = &program->index_keys[path->first_key + key];
+        if (atom_eq(literal, entry->literal))
+            admitted |= entry->equations;
+    }
+    return admitted;
+}
+
+/* Whether a path is decided by its argument's functor: it reads the
+ * argument itself, or the first element of an expression argument. */
+static bool oem_path_on_functor(const CettaOpenEquationProgram *program,
+                                const OemIndexPath *path) {
+    return path->step_count == 0u ||
+        (path->step_count == 1u &&
+         program->index_steps[path->first_step] == 0u);
+}
+
+static uint64_t oem_switch_code(uint64_t code, uint32_t length) {
+    return code + (uint64_t)length * UINT64_C(0xD6E8FEB86659FD93);
+}
+
+static bool oem_switch_entry(CettaOpenEquationProgram *program,
+                             uint32_t length, Atom *literal,
+                             uint64_t equations) {
+    uint32_t added = 0u;
+    return OEM_PUSH(program, switch_entry,
+                    ((OemSwitchEntry){.length = length, .literal = literal,
+                                      .equations = equations}),
+                    &added);
+}
+
+/* Switches for the arguments at which two or more paths are decided by the
+ * functor, each key a symbol or an integer.  Their paths move after the
+ * paths read one by one.  False only when out of memory. */
+static bool oem_build_switches(CettaOpenEquationProgram *program,
+                               uint32_t relation_index) {
+    OemRelation *relation = &program->relations[relation_index];
+    uint32_t first = relation->first_index_path;
+    uint32_t count = relation->index_path_count;
+    relation->first_switch = program->index_switch_len;
+    relation->switch_count = 0u;
+    relation->indexed = count != 0u;
+    if (count == 0u)
+        return true;
+    uint32_t equations = relation->equation_count;
+    uint64_t all = equations == 64u ? UINT64_MAX
+                                    : (UINT64_C(1) << equations) - 1u;
+    /* Which argument's switch takes each path, plus one; zero for none. */
+    uint32_t *owner = calloc(count, sizeof(*owner));
+    OemIndexPath *sorted = malloc(sizeof(*sorted) * count);
+    if (!owner || !sorted) {
+        free(owner);
+        free(sorted);
+        return false;
+    }
+    uint64_t code = 0u;
+    for (uint32_t arg = 0u; arg < relation->arity; arg++) {
+        uint32_t taken = 0u;
+        bool literal_keys = true;
+        for (uint32_t p = 0u; p < count; p++) {
+            const OemIndexPath *path = &program->index_paths[first + p];
+            if (path->arg != arg || !oem_path_on_functor(program, path))
+                continue;
+            taken++;
+            for (uint32_t key = 0u; key < path->key_count; key++)
+                literal_keys = literal_keys &&
+                    oem_literal_code(
+                        program->index_keys[path->first_key + key].literal,
+                        &code);
+        }
+        if (taken == 0u || !literal_keys)
+            continue;
+        for (uint32_t p = 0u; p < count; p++) {
+            const OemIndexPath *path = &program->index_paths[first + p];
+            if (path->arg == arg && oem_path_on_functor(program, path))
+                owner[p] = arg + 1u;
+        }
+    }
+    /* The paths read one by one first, then each switch's own. */
+    uint32_t placed = 0u;
+    for (uint32_t p = 0u; p < count; p++) {
+        if (!owner[p])
+            sorted[placed++] = program->index_paths[first + p];
+    }
+    uint32_t generic = placed;
+    bool ok = true;
+    for (uint32_t arg = 0u; ok && arg < relation->arity; arg++) {
+        uint32_t start = placed;
+        for (uint32_t p = 0u; p < count; p++) {
+            if (owner[p] == arg + 1u)
+                sorted[placed++] = program->index_paths[first + p];
+        }
+        if (placed == start)
+            continue;
+        const OemIndexPath *own = &sorted[start];
+        uint32_t own_count = placed - start;
+        OemIndexSwitch sw = {
+            .arg = arg, .first_path = first + start, .path_count = own_count,
+            .first_length = program->switch_length_len,
+            .first_entry = program->switch_entry_len,
+        };
+        /* The argument's own path, and the conjunction of what every path
+         * at a first element admits when refuted. */
+        const OemIndexPath *atom_path = NULL;
+        uint64_t refuted = all;
+        for (uint32_t p = 0u; p < own_count; p++) {
+            if (own[p].step_count == 0u)
+                atom_path = &own[p];
+            else
+                refuted &= own[p].free;
+        }
+        uint64_t atom_free = atom_path ? atom_path->free : all;
+        sw.other = atom_free & refuted;
+        for (uint32_t key = 0u; atom_path && ok && key < atom_path->key_count;
+             key++) {
+            Atom *literal =
+                program->index_keys[atom_path->first_key + key].literal;
+            sw.int_keys = sw.int_keys || literal->kind == ATOM_GROUNDED;
+            ok = oem_switch_entry(
+                program, 0u, literal,
+                oem_path_admits(program, atom_path, literal) & refuted);
+        }
+        for (uint32_t p = 0u; ok && p < own_count; p++) {
+            const OemIndexPath *head = &own[p];
+            if (head->step_count == 0u)
+                continue;
+            uint32_t length = program->index_steps[head->first_step + 1u];
+            /* Every other path is refuted by this length. */
+            uint64_t base = atom_free;
+            for (uint32_t q = 0u; q < own_count; q++) {
+                if (q != p && own[q].step_count != 0u)
+                    base &= own[q].free;
+            }
+            OemSwitchLength shape = {
+                .length = length, .open_head = base,
+                .no_key = base & head->free,
+            };
+            for (uint32_t key = 0u; ok && key < head->key_count; key++) {
+                Atom *literal =
+                    program->index_keys[head->first_key + key].literal;
+                shape.int_keys =
+                    shape.int_keys || literal->kind == ATOM_GROUNDED;
+                ok = oem_switch_entry(
+                    program, length, literal,
+                    base & oem_path_admits(program, head, literal));
+            }
+            uint32_t added = 0u;
+            ok = ok && OEM_PUSH(program, switch_length, shape, &added);
+        }
+        sw.length_count = program->switch_length_len - sw.first_length;
+        uint32_t entries = program->switch_entry_len - sw.first_entry;
+        uint32_t size = 8u;
+        while (size < 2u * entries)
+            size *= 2u;
+        sw.first_table = program->switch_table_len;
+        sw.entry_mask = size - 1u;
+        for (uint32_t slot = 0u; ok && slot < size; slot++) {
+            uint32_t added = 0u;
+            ok = OEM_PUSH(program, switch_table, 0u, &added);
+        }
+        for (uint32_t entry = 0u; ok && entry < entries; entry++) {
+            const OemSwitchEntry *item =
+                &program->switch_entrys[sw.first_entry + entry];
+            (void)oem_literal_code(item->literal, &code);
+            uint32_t *table = &program->switch_tables[sw.first_table];
+            uint32_t at = oem_literal_home(oem_switch_code(code, item->length),
+                                           sw.entry_mask);
+            while (table[at])
+                at = (at + 1u) & sw.entry_mask;
+            table[at] = entry + 1u;
+        }
+        uint32_t added = 0u;
+        ok = ok && OEM_PUSH(program, index_switch, sw, &added);
+    }
+    if (ok) {
+        memcpy(&program->index_paths[first], sorted, sizeof(*sorted) * count);
+        relation->index_path_count = generic;
+        relation->switch_count =
+            program->index_switch_len - relation->first_switch;
+    }
+    free(owner);
+    free(sorted);
+    return ok;
+}
+
+/* Where a head register's term sits: an argument and the steps into it. */
+typedef struct {
+    bool valid;
+    uint32_t arg;
+    uint32_t step_count;
+    uint32_t steps[2u * OEM_INDEX_MAX_DEPTH];
+} OemHeadPlace;
+
+/* Whether two places are the same path. */
+static bool oem_same_place(const OemHeadPlace *left,
+                           const CettaOpenEquationProgram *program,
+                           const OemIndexPath *path) {
+    if (left->arg != path->arg || left->step_count != path->step_count)
+        return false;
+    for (uint32_t index = 0u; index < 2u * left->step_count; index++) {
+        if (left->steps[index] != program->index_steps[path->first_step +
+                                                       index])
+            return false;
+    }
+    return true;
+}
+
+/* A relation's index over the literals its equations' heads test at fixed
+ * paths into the arguments: a call leaves out, before it enters any, the
+ * equations whose literal differs from the argument's term there, or
+ * whose path the argument's structure refutes.  Only for three to 64
+ * equations, or two whose first tests agree, and only with a path that
+ * tells some of them apart: two equations told apart below their first
+ * test, as a queue's empty and nonempty sides are, then leave no frame
+ * for the one that cannot match, where first tests already tell two
+ * apart without an index.  A list
+ * pattern's parts, which a cell may spell, are not indexed.  False only
+ * when out of memory. */
+static bool oem_build_index(CettaOpenEquationProgram *program,
+                            uint32_t relation_index) {
+    OemRelation *relation = &program->relations[relation_index];
+    uint32_t count = relation->equation_count;
+    uint32_t first_path = program->index_path_len;
+    relation->first_index_path = first_path;
+    relation->index_path_count = 0u;
+    relation->first_switch = program->index_switch_len;
+    relation->switch_count = 0u;
+    relation->indexed = false;
+    if (count < 2u || count > 64u ||
+        (count == 2u && relation->first_tests_differ))
+        return true;
+    uint64_t all = count == 64u ? UINT64_MAX : (UINT64_C(1) << count) - 1u;
+    for (uint32_t e = 0u; e < count; e++) {
+        const OemEquation *eq =
+            &program->equations[relation->first_equation + e];
+        uint32_t regs = eq->register_count;
+        OemHeadPlace *places = calloc(regs ? regs : 1u, sizeof(*places));
+        if (!places)
+            return false;
+        for (uint32_t r = 0u; r < relation->arity && r < regs; r++)
+            places[r] = (OemHeadPlace){.valid = true, .arg = r};
+        bool ok = true;
+        for (uint32_t op_index = 0u; ok && op_index < eq->op_count;
+             op_index++) {
+            const OemMatchOp *op = &program->ops[eq->first_op + op_index];
+            if (op->reg >= regs)
+                continue;
+            const OemHeadPlace *place = &places[op->reg];
+            if (op->kind == OEM_M_EXPR) {
+                for (uint32_t child = 0u; child < op->length; child++) {
+                    uint32_t target = op->operand + child;
+                    if (target >= regs)
+                        continue;
+                    places[target] = *place;
+                    if (!place->valid ||
+                        place->step_count >= OEM_INDEX_MAX_DEPTH) {
+                        places[target].valid = false;
+                        continue;
+                    }
+                    places[target].steps[2u * place->step_count] = child;
+                    places[target].steps[2u * place->step_count + 1u] =
+                        op->length;
+                    places[target].step_count = place->step_count + 1u;
+                }
+            } else if (op->kind == OEM_M_LIST) {
+                if (op->operand < regs)
+                    places[op->operand].valid = false;
+                if (op->operand + 1u < regs)
+                    places[op->operand + 1u].valid = false;
+            } else if (op->kind == OEM_M_ATOM && place->valid) {
+                /* The equation's key at this place's path. */
+                uint32_t path = first_path;
+                for (; path < program->index_path_len; path++) {
+                    if (oem_same_place(place, program,
+                                       &program->index_paths[path]))
+                        break;
+                }
+                if (path == program->index_path_len) {
+                    uint32_t first_step = program->index_step_len;
+                    uint32_t added = 0u;
+                    for (uint32_t index = 0u;
+                         ok && index < 2u * place->step_count; index++)
+                        ok = OEM_PUSH(program, index_step,
+                                      place->steps[index], &added);
+                    ok = ok && OEM_PUSH(program, index_path,
+                                        ((OemIndexPath){
+                                            .arg = place->arg,
+                                            .first_step = first_step,
+                                            .step_count = place->step_count,
+                                            .free = all,
+                                        }),
+                                        &added);
+                }
+                if (ok) {
+                    /* Keys stay grouped by path: they are gathered below. */
+                    program->index_paths[path].free &=
+                        ~(UINT64_C(1) << e);
+                }
+            }
+        }
+        free(places);
+        if (!ok)
+            return false;
+    }
+    /* The keys of each path: one per distinct literal, with the equations
+     * that test it. */
+    for (uint32_t path = first_path; path < program->index_path_len;
+         path++) {
+        OemIndexPath *entry = &program->index_paths[path];
+        entry->first_key = program->index_key_len;
+        for (uint32_t e = 0u; e < count; e++) {
+            if (entry->free & (UINT64_C(1) << e))
+                continue;
+            const OemEquation *eq =
+                &program->equations[relation->first_equation + e];
+            uint32_t regs = eq->register_count;
+            OemHeadPlace *places = calloc(regs ? regs : 1u, sizeof(*places));
+            if (!places)
+                return false;
+            for (uint32_t r = 0u; r < relation->arity && r < regs; r++)
+                places[r] = (OemHeadPlace){.valid = true, .arg = r};
+            Atom *literal = NULL;
+            for (uint32_t op_index = 0u; !literal && op_index < eq->op_count;
+                 op_index++) {
+                const OemMatchOp *op = &program->ops[eq->first_op + op_index];
+                if (op->reg >= regs)
+                    continue;
+                const OemHeadPlace *place = &places[op->reg];
+                if (op->kind == OEM_M_EXPR) {
+                    for (uint32_t child = 0u; child < op->length; child++) {
+                        uint32_t target = op->operand + child;
+                        if (target >= regs)
+                            continue;
+                        places[target] = *place;
+                        if (!place->valid ||
+                            place->step_count >= OEM_INDEX_MAX_DEPTH) {
+                            places[target].valid = false;
+                            continue;
+                        }
+                        places[target].steps[2u * place->step_count] = child;
+                        places[target].steps[2u * place->step_count + 1u] =
+                            op->length;
+                        places[target].step_count = place->step_count + 1u;
+                    }
+                } else if (op->kind == OEM_M_LIST) {
+                    if (op->operand < regs)
+                        places[op->operand].valid = false;
+                    if (op->operand + 1u < regs)
+                        places[op->operand + 1u].valid = false;
+                } else if (op->kind == OEM_M_ATOM && place->valid &&
+                           oem_same_place(place, program, entry)) {
+                    literal = op->literal;
+                }
+            }
+            free(places);
+            uint32_t key = entry->first_key;
+            for (; key < program->index_key_len; key++) {
+                if (atom_eq(program->index_keys[key].literal, literal))
+                    break;
+            }
+            uint32_t added = 0u;
+            if (key == program->index_key_len &&
+                !OEM_PUSH(program, index_key,
+                          ((OemIndexKey){.literal = literal}), &added))
+                return false;
+            program->index_keys[key].equations |= UINT64_C(1) << e;
+        }
+        entry->key_count = program->index_key_len - entry->first_key;
+        if (!oem_build_index_table(program, entry))
+            return false;
+    }
+    relation->index_path_count = program->index_path_len - first_path;
+    return oem_build_switches(program, relation_index);
 }
 
 static bool oem_compile_relation(CettaOpenEquationProgram *program,
@@ -2306,14 +3508,18 @@ static bool oem_compile_relation(CettaOpenEquationProgram *program,
         }
         if (lhs->expr.len - 1u != arity)
             continue;
-        if (!candidates[index].rhs_plan) {
+        /* A residual of higher-order specialization keeps its plan in the
+         * specializer's catalog, where the machine reads it too. */
+        const PettaPlanNode *rhs_plan = candidates[index].rhs_plan
+            ? candidates[index].rhs_plan
+            : petta_specializer_equation_plan(program->space, equation);
+        if (!rhs_plan) {
             *reason = "equation has no plan";
             ok = false;
             break;
         }
-        ok = oem_compile_equation(program, host, lhs,
-                                  equation->expr.elems[2],
-                                  candidates[index].rhs_plan, reason);
+        ok = oem_compile_equation(program, petta, host, true, true, lhs,
+                                  equation->expr.elems[2], rhs_plan, reason);
     }
     free(candidates);
     if (ok && program->equation_len == first) {
@@ -2326,6 +3532,8 @@ static bool oem_compile_relation(CettaOpenEquationProgram *program,
     program->relations[relation_index].equation_count =
         program->equation_len - first;
     oem_note_first_tests(program, relation_index);
+    if (!oem_build_index(program, relation_index))
+        return oem_index_failed(reason);
     return true;
 }
 
@@ -2371,7 +3579,7 @@ CettaOpenEquationProgram *cetta_open_equation_program_compile(
     CettaOpenEquationProgram *program = calloc(1u, sizeof(*program));
     if (!program)
         return NULL;
-    program->refs = 1u;
+    atomic_init(&program->refs, 1u);
     program->space = space;
     program->token = space_program_token(space);
     program->spelling = symbol_intern_cstr(g_symbols, "_");
@@ -2379,7 +3587,8 @@ CettaOpenEquationProgram *cetta_open_equation_program_compile(
     bool ok = oem_relation_index(program, head, arity, &entry) && entry == 0u;
     for (uint32_t index = 0u; ok && index < program->relation_len; index++) {
         if (program->relations[index].local)
-            oem_compile_local_relation(program, host, index);
+            ok = oem_compile_local_relation(program, petta, host, index,
+                                            &reason);
         else
             ok = oem_compile_relation(program, petta, index, host, &reason);
     }
@@ -2390,6 +3599,29 @@ CettaOpenEquationProgram *cetta_open_equation_program_compile(
         return NULL;
     }
     program->entry_relays = oem_relation_relays(program, entry);
+    program->depth_pruning_safe = true;
+    for (uint32_t index = 0u; index < program->relation_len; index++) {
+        if (program->relations[index].failed) {
+            program->depth_pruning_safe = false;
+            break;
+        }
+    }
+    for (uint32_t index = 0u; index < program->step_len; index++) {
+        const OemStep *step = &program->steps[index];
+        /* A runtime check at an effect is too late: depth pruning could
+         * skip the call containing that effect altogether. Arithmetic also
+         * needs a totality certificate before it can enter this fragment.
+         * Dynamic calls and host-owned head occurrences remain exact. */
+        if (step->kind == OEM_S_YIELD || step->kind == OEM_S_CUT ||
+            step->kind == OEM_S_EQUATION_CUT || step->kind == OEM_S_PRIM ||
+            step->kind == OEM_S_MATCH ||
+            (step->kind == OEM_S_TEST && step->op != SYMBOL_ID_NONE) ||
+            (step->kind == OEM_S_HOST &&
+             step->target != OEM_HOST_ALTERNATIVES)) {
+            program->depth_pruning_safe = false;
+            break;
+        }
+    }
     return program;
 }
 
@@ -2412,7 +3644,15 @@ typedef struct OemCont {
     uint32_t pc;
     uint32_t pattern;
     /* The depth of the activation that continues here. */
-    uint32_t depth;
+    uint32_t depth : 30;
+    /* The return of a call dispatched at run time: until it resumes, the
+     * call's body runs under the implicit handler, and an error raised
+     * there fails that path alone (DispatchErrorScope). */
+    uint32_t recovers : 1;
+    /* The call's pattern is a slot at its first occurrence: the callee's
+     * activation meets no destination, and its return stores the value it
+     * returns there, as a return frame receives an answer. */
+    uint32_t store : 1;
 } OemCont;
 
 /* A match's rows, snapshotted in the region when the match ran; `arena`
@@ -2456,6 +3696,9 @@ typedef struct {
     /* The depth of the activation the frame resumes: for a call, one
      * deeper than its caller. */
     uint32_t depth;
+    /* For a call of an indexed relation, the equations its index leaves,
+     * found as the call enters its first. */
+    uint64_t candidates;
 } OemFrame;
 
 #define OEM_MATCH_FRAME UINT32_MAX
@@ -2525,6 +3768,10 @@ typedef struct {
     uint32_t base;
     /* An export copies this expression to stable storage (see below). */
     bool promote;
+    /* A collection copying this expression, the longest suffix of its
+     * storage, on behalf of a shorter view of it, which becomes a header
+     * over the copy. */
+    Atom *requester;
 } OemResolveItem;
 
 struct CettaOpenEquationCursor {
@@ -2543,9 +3790,34 @@ struct CettaOpenEquationCursor {
     bool old_ready;
     uint32_t old_cells;
     size_t major_after;
+    /* What a minor collection traces besides the frames above
+     * `frame_low` (RememberedSetTrace.minor_trace_complete).  The frame
+     * stack's, trail's and store trail's least lengths since the last
+     * collection mark what is unchanged below them.  The cells below
+     * `old_cells` bound since then, and the slots of older activations
+     * stored since then, are the only old places that may name young
+     * objects: `oem_bind` and `oem_store_slot` remember them.  A slot
+     * vector's header word holds, above its birth height, the collection
+     * epoch it was made in. */
+    uint32_t frame_low, trail_low, store_low;
+    uint32_t *remembered_cells;
+    uint32_t remembered_cell_len, remembered_cell_cap;
+    OemStore *remembered_slots;
+    uint32_t remembered_slot_len, remembered_slot_cap;
+    uint32_t collect_epoch;
+    /* `collect_epoch` in a header word's upper half. */
+    uintptr_t slot_epoch_bits;
     /* Minor collections declined since the last that copied: each doubles
      * the growth the region waits for before the next is tried. */
     uint32_t collect_declines;
+    /* Major collections declined since the last that copied: each doubles
+     * the growth of the old generation the next one waits for, as minor
+     * declines do for the region, up to OEM_MAJOR_DECLINE_SHIFT_MAX. */
+    uint32_t major_declines;
+    /* The forwarding table's final length in the last collection of each
+     * kind (minor, major) and phase (trace, copy): the next one starts at a
+     * size that holds it without growing. */
+    size_t forward_hints[2][2];
     /* Terms one step builds and drops before the next (a ground add-atom's
      * call), outside the region so they leave nothing behind in it;
      * initialized on first use. */
@@ -2621,9 +3893,24 @@ struct CettaOpenEquationCursor {
     uint64_t binds;
     /* The region's size at which the next collection runs. */
     size_t collect_after;
-    /* The variables of the row being copied for a match. */
+    /* The variables of the row being copied for a match, or of a host's
+     * answer or a collected answer being imported, with their positions by
+     * identifier past a short scan (oem_fresh_var). */
     OemFreshVar *fresh_vars;
     uint32_t fresh_var_len, fresh_var_cap;
+    CettaVarIndex fresh_index;
+    /* The call's variables' positions by identifier, past a short scan. */
+    CettaVarIndex query_index;
+    /* The rows of the small space the region read last, as the space's
+     * index gives them, with each row's root key (oem_row_key), for the
+     * revision `rows_read` names. */
+    SpaceReadToken rows_read;
+    Atom *every_row;
+    Atom **space_rows;
+    uint64_t *space_row_keys;
+    /* Each row's part keys (oem_part_key), OEM_ROW_PARTS per row. */
+    uint64_t *space_row_parts;
+    uint32_t space_row_len, space_row_cap;
     /* The newest HOST step's goal, destination and variables, in the
      * answer arena; valid until the next step. */
     Atom *host_goal;
@@ -2632,6 +3919,12 @@ struct CettaOpenEquationCursor {
     uint32_t host_var_count, host_var_cap;
     const PettaPlanNode *host_plan;
     CettaOpenEquationHostMode host_mode;
+    /* The newest host goal was issued inside a call dispatched at run
+     * time, whose handler it runs under. */
+    bool host_recovers;
+    /* The cursor has entered a call dispatched at run time, whose return
+     * recovers (oem_recovering). */
+    bool recovering;
     /* The multiplicity of the answer being published, and whether a count
      * fold gave it (cetta_open_equation_cursor_answer_weight). */
     uint64_t answer_weight;
@@ -2641,6 +3934,9 @@ struct CettaOpenEquationCursor {
      * region atom alive.  An answer or a host goal that holds it holds a
      * copy, since the cursor may close before the answer is gone. */
     Atom *admitted;
+    /* The host's spelling of false and true, made once for the cursor, in
+     * `names`: an answer or a host goal that holds one holds a copy. */
+    Atom *truths[2];
     /* Named spaces' schemas, known while `schema_epoch` is
      * `authority_epoch + 1`. */
     OemSchemaEntry *schemas;
@@ -2690,6 +3986,27 @@ static inline Atom *oem_deref(const CettaOpenEquationCursor *cursor,
     return atom;
 }
 
+/* The region's bump allocation, inline where calls allocate: a slot
+ * vector, a continuation, a frame's arguments.  A full block, and the
+ * runtime-stats build, which counts every allocation, take arena_alloc. */
+static inline __attribute__((always_inline)) void *oem_region_alloc(
+    CettaOpenEquationCursor *cursor, size_t size) {
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    return arena_alloc(&cursor->region, size);
+#else
+    Arena *region = &cursor->region;
+    ArenaBlock *head = region->head;
+    size = (size + 7u) & ~(size_t)7u;
+    if (__builtin_expect(head && head->used + size <= head->capacity, 1)) {
+        void *at = head->data + head->used;
+        head->used += size;
+        region->live_bytes += size;
+        return at;
+    }
+    return arena_alloc(region, size);
+#endif
+}
+
 static Atom *oem_new_cell(CettaOpenEquationCursor *cursor) {
     if (cursor->cell_len >= UINT32_MAX - 1u ||
         !oem_reserve((void **)&cursor->cells, &cursor->cell_cap,
@@ -2713,8 +4030,32 @@ static Atom *oem_new_cell(CettaOpenEquationCursor *cursor) {
     return cursor->cell_names[index];
 }
 
-static bool oem_bind(CettaOpenEquationCursor *cursor, uint32_t index,
-                     Atom *value) {
+/* The barriers' records, out of line: most writes are young. */
+static __attribute__((noinline)) bool oem_remember_cell(
+    CettaOpenEquationCursor *cursor, uint32_t index) {
+    if (!oem_reserve((void **)&cursor->remembered_cells,
+                     &cursor->remembered_cell_cap,
+                     cursor->remembered_cell_len + 1u,
+                     sizeof(*cursor->remembered_cells)))
+        return false;
+    cursor->remembered_cells[cursor->remembered_cell_len++] = index;
+    return true;
+}
+
+static __attribute__((noinline)) bool oem_remember_slot(
+    CettaOpenEquationCursor *cursor, Atom **locals, uint32_t slot) {
+    if (!oem_reserve((void **)&cursor->remembered_slots,
+                     &cursor->remembered_slot_cap,
+                     cursor->remembered_slot_len + 1u,
+                     sizeof(*cursor->remembered_slots)))
+        return false;
+    cursor->remembered_slots[cursor->remembered_slot_len++] =
+        (OemStore){.locals = locals, .slot = slot};
+    return true;
+}
+
+static inline __attribute__((always_inline)) bool oem_bind(
+    CettaOpenEquationCursor *cursor, uint32_t index, Atom *value) {
     uint32_t newest = cursor->frame_len
         ? cursor->frames[cursor->frame_len - 1u].cell_mark : 0u;
     if (index < newest) {
@@ -2724,15 +4065,104 @@ static bool oem_bind(CettaOpenEquationCursor *cursor, uint32_t index,
         cursor->trail[cursor->trail_len++] = index;
         cursor->stats.trail_writes++;
     }
+    /* An old cell may now name a young object, whether trailed or not:
+     * the next minor collection traces it (barrier_write_remember). */
+    if (index < cursor->old_cells && !oem_remember_cell(cursor, index))
+        return false;
     cursor->cells[index] = value;
     cursor->binds++;
     return true;
 }
 
-/* Does cell `index` occur in `atom`? */
+/* An invocation-local source-pointer map. An occupied key with no image
+ * marks an active traversal; published images are immutable. Callers own
+ * the semantic context and release the map before any arena reset. */
+typedef struct {
+    const Atom *source;
+    Atom *image;
+} OemAtomMapEntry;
+
+typedef struct {
+    OemAtomMapEntry inline_entries[64];
+    OemAtomMapEntry *entries;
+    size_t capacity, used;
+} OemAtomMap;
+
+static void oem_atom_map_init(OemAtomMap *map) {
+    map->entries = NULL;
+    map->capacity = 0u;
+    map->used = 0u;
+}
+
+static size_t oem_atom_map_hash(const Atom *source) {
+    uint64_t hash = (uint64_t)(uintptr_t)source >> 4u;
+    hash ^= hash >> 33u;
+    hash *= UINT64_C(0xff51afd7ed558ccd);
+    hash ^= hash >> 33u;
+    return (size_t)hash;
+}
+
+static OemAtomMapEntry *oem_atom_map_find(OemAtomMap *map, const Atom *source) {
+    if (!map->capacity)
+        return NULL;
+    size_t index = oem_atom_map_hash(source) & (map->capacity - 1u);
+    while (map->entries[index].source) {
+        if (map->entries[index].source == source)
+            return &map->entries[index];
+        index = (index + 1u) & (map->capacity - 1u);
+    }
+    return NULL;
+}
+
+static bool oem_atom_map_begin(OemAtomMap *map, const Atom *source) {
+    if (!map->capacity) {
+        memset(map->inline_entries, 0, sizeof(map->inline_entries));
+        map->entries = map->inline_entries;
+        map->capacity = 64u;
+    }
+    if (map->used >= map->capacity / 2u) {
+        if (map->capacity > SIZE_MAX / (2u * sizeof(*map->entries)))
+            return false;
+        size_t capacity = map->capacity * 2u;
+        OemAtomMapEntry *entries = calloc(capacity, sizeof(*entries));
+        if (!entries)
+            return false;
+        for (size_t old = 0u; old < map->capacity; old++) {
+            OemAtomMapEntry entry = map->entries[old];
+            if (!entry.source)
+                continue;
+            size_t index = oem_atom_map_hash(entry.source) & (capacity - 1u);
+            while (entries[index].source)
+                index = (index + 1u) & (capacity - 1u);
+            entries[index] = entry;
+        }
+        if (map->entries != map->inline_entries)
+            free(map->entries);
+        map->entries = entries;
+        map->capacity = capacity;
+    }
+    size_t index = oem_atom_map_hash(source) & (map->capacity - 1u);
+    while (map->entries[index].source)
+        index = (index + 1u) & (map->capacity - 1u);
+    map->entries[index].source = source;
+    map->used++;
+    return true;
+}
+
+static void oem_atom_map_free(OemAtomMap *map) {
+    if (map->entries != map->inline_entries)
+        free(map->entries);
+}
+
+/* Does cell `index` occur in `atom`? The dereferenced graph is fixed
+ * throughout this read. GraphOccurrence's worklist projection permits
+ * duplicate pending pointers, but expands each expression only once. */
 static bool oem_occurs(CettaOpenEquationCursor *cursor, uint32_t index,
                        Atom *atom, bool *failed) {
     uint32_t len = 0u;
+    bool found = false;
+    OemAtomMap visited;
+    oem_atom_map_init(&visited);
     if (!oem_reserve((void **)&cursor->walk, &cursor->walk_cap, 1u,
                      sizeof(*cursor->walk))) {
         *failed = true;
@@ -2743,21 +4173,27 @@ static bool oem_occurs(CettaOpenEquationCursor *cursor, uint32_t index,
         Atom *current = oem_deref(cursor, cursor->walk[--len]);
         uint32_t other = 0u;
         if (oem_is_cell(cursor, current, &other)) {
-            if (other == index)
-                return true;
+            if (other == index) {
+                found = true;
+                break;
+            }
             continue;
         }
-        if (current->kind != ATOM_EXPR || !atom_has_vars(current))
+        if (current->kind != ATOM_EXPR || !atom_has_vars(current) ||
+            oem_atom_map_find(&visited, current))
             continue;
-        if (!oem_reserve((void **)&cursor->walk, &cursor->walk_cap,
+        if (!oem_atom_map_begin(&visited, current) ||
+            current->expr.len > UINT32_MAX - len ||
+            !oem_reserve((void **)&cursor->walk, &cursor->walk_cap,
                          len + current->expr.len, sizeof(*cursor->walk))) {
             *failed = true;
-            return false;
+            break;
         }
         for (CettaExprIndex child = 0u; child < current->expr.len; child++)
             cursor->walk[len++] = current->expr.elems[child];
     }
-    return false;
+    oem_atom_map_free(&visited);
+    return found;
 }
 
 /* An internal cons cell: the list value whose first element is its head and
@@ -2842,7 +4278,13 @@ static OemUnify oem_unify(CettaOpenEquationCursor *cursor, Atom *left,
         if (a->kind == ATOM_EXPR && b->kind == ATOM_EXPR) {
             if (a->expr.len != b->expr.len)
                 return OEM_UNIFY_FAIL;
-            if (!atom_has_vars(a) && !atom_has_vars(b)) {
+            /* Equal ground expressions are one value; unequal ones differ
+             * too, unless a cons cell inside one spells a list the other
+             * holds flat. */
+            if (!atom_has_vars(a) && !atom_has_vars(b) &&
+                (!petta_semantics_open_cons_built() ||
+                 (!atom_structural_may_have_list_carrier(a) &&
+                  !atom_structural_may_have_list_carrier(b)))) {
                 if (!atom_eq(a, b))
                     return OEM_UNIFY_FAIL;
                 continue;
@@ -2877,19 +4319,33 @@ static Atom *oem_instantiate_in(CettaOpenEquationCursor *cursor,
         : arena_alloc(arena, sizeof(*children) * item->count);
     if (!children)
         return NULL;
+    /* A literal or a slot child is read in place; only a built child
+     * recurses. */
     for (uint32_t index = 0u; index < item->count; index++) {
-        children[index] = oem_instantiate_in(
-            cursor, arena, program, locals,
-            program->template_children[item->first + index]);
+        uint32_t child_index = program->template_children[item->first + index];
+        const OemTemplate *child = &program->templates[child_index];
+        children[index] = child->kind == OEM_T_LITERAL ? child->literal
+            : child->kind == OEM_T_SLOT ? locals[child->slot]
+            : oem_instantiate_in(cursor, arena, program, locals,
+                                 child_index);
         if (!children[index])
             return NULL;
     }
-    return atom_expr(arena, children, item->count);
+    return item->kind == OEM_T_BUILD
+        ? atom_expr(arena, children, item->count)
+        : petta_semantics_open_cons_value(arena, children[0], children[1]);
 }
 
-static Atom *oem_instantiate(CettaOpenEquationCursor *cursor,
-                             const CettaOpenEquationProgram *program,
-                             Atom **locals, uint32_t template_index) {
+/* A literal or slot template is read in place; only a built one calls the
+ * recursive builder. */
+static inline __attribute__((always_inline)) Atom *oem_instantiate(
+    CettaOpenEquationCursor *cursor, const CettaOpenEquationProgram *program,
+    Atom **locals, uint32_t template_index) {
+    const OemTemplate *item = &program->templates[template_index];
+    if (item->kind == OEM_T_LITERAL)
+        return item->literal;
+    if (item->kind == OEM_T_SLOT)
+        return locals[item->slot];
     return oem_instantiate_in(cursor, &cursor->region, program, locals,
                               template_index);
 }
@@ -2905,6 +4361,50 @@ static Arena *oem_scratch(CettaOpenEquationCursor *cursor) {
     return &cursor->scratch;
 }
 
+static OemUnify oem_unify_template(CettaOpenEquationCursor *cursor,
+                                   const CettaOpenEquationProgram *program,
+                                   Atom **locals, uint32_t template_index,
+                                   Atom *term, uint32_t depth);
+
+/* A list template meets a value by its first element and its rest: a cons
+ * cell's fields, or a flat list's first element and the suffix that shares
+ * its storage.  A pattern list takes a value spelled `(cons h t)` as that
+ * cell.  Out of line: most templates are built expressions. */
+static __attribute__((noinline)) OemUnify oem_unify_list_template(
+    CettaOpenEquationCursor *cursor, const CettaOpenEquationProgram *program,
+    Atom **locals, uint32_t template_index, Atom *term, uint32_t depth) {
+    const OemTemplate *item = &program->templates[template_index];
+    term = oem_deref(cursor, term);
+    uint32_t cell = 0u;
+    if (oem_is_cell(cursor, term, &cell) || depth > OEM_MAX_DEPTH) {
+        Atom *built = oem_instantiate(cursor, program, locals, template_index);
+        return built ? oem_unify(cursor, built, term) : OEM_UNIFY_ERROR;
+    }
+    Atom *first = NULL;
+    Atom *rest = NULL;
+    if (oem_is_list_cell(term) ||
+        (item->kind == OEM_T_PATTERN_LIST &&
+         petta_semantics_is_cons_constraint(term))) {
+        first = term->expr.elems[1];
+        rest = term->expr.elems[2];
+    } else if (term->kind == ATOM_EXPR && term->expr.len > 0u) {
+        first = term->expr.elems[0];
+        rest = atom_expr_suffix(&cursor->region, term, 1u);
+        if (!rest)
+            return OEM_UNIFY_ERROR;
+    } else {
+        return term->kind == ATOM_VAR ? OEM_UNIFY_ERROR : OEM_UNIFY_FAIL;
+    }
+    OemUnify unified = oem_unify_template(
+        cursor, program, locals, program->template_children[item->first],
+        first, depth + 1u);
+    return unified != OEM_UNIFY_OK
+        ? unified
+        : oem_unify_template(cursor, program, locals,
+                             program->template_children[item->first + 1u],
+                             rest, depth + 1u);
+}
+
 /* Unify a template, read over `locals`, with a term without building the
  * template: only a part that meets an unbound cell is instantiated. */
 static OemUnify oem_unify_template(CettaOpenEquationCursor *cursor,
@@ -2916,6 +4416,9 @@ static OemUnify oem_unify_template(CettaOpenEquationCursor *cursor,
         return oem_unify(cursor, item->literal, term);
     if (item->kind == OEM_T_SLOT)
         return oem_unify(cursor, locals[item->slot], term);
+    if (item->kind != OEM_T_BUILD)
+        return oem_unify_list_template(cursor, program, locals,
+                                       template_index, term, depth);
     term = oem_deref(cursor, term);
     uint32_t cell = 0u;
     if (oem_is_cell(cursor, term, &cell) || depth > OEM_MAX_DEPTH ||
@@ -2949,11 +4452,22 @@ static inline void oem_restore(CettaOpenEquationCursor *cursor,
         (region->head && region->head->used != frame->mark.used) ||
         !arena_at_mark(region, frame->mark))
         arena_reset(&cursor->region, frame->mark);
-    while (cursor->trail_len > frame->trail_mark)
-        cursor->cells[cursor->trail[--cursor->trail_len]] = NULL;
-    while (cursor->store_len > frame->store_mark) {
-        const OemStore *store = &cursor->stores[--cursor->store_len];
-        store->locals[store->slot] = NULL;
+    /* The least lengths since the last collection move only when a
+     * restore shortens the trails. */
+    if (cursor->trail_len > frame->trail_mark) {
+        do
+            cursor->cells[cursor->trail[--cursor->trail_len]] = NULL;
+        while (cursor->trail_len > frame->trail_mark);
+        if (cursor->trail_len < cursor->trail_low)
+            cursor->trail_low = cursor->trail_len;
+    }
+    if (cursor->store_len > frame->store_mark) {
+        do {
+            const OemStore *store = &cursor->stores[--cursor->store_len];
+            store->locals[store->slot] = NULL;
+        } while (cursor->store_len > frame->store_mark);
+        if (cursor->store_len < cursor->store_low)
+            cursor->store_low = cursor->store_len;
     }
     cursor->cell_len = frame->cell_mark;
     /* Cells created after the frame are gone; old atoms still reachable
@@ -2967,6 +4481,10 @@ static bool oem_push_frame(CettaOpenEquationCursor *cursor,
                            const CettaOpenEquationProgram *program,
                            uint32_t relation, Atom **args,
                            const OemCont *cont, uint32_t depth) {
+    if (cursor->runtime.depth_bound && program && !program->depth_pruning_safe) {
+        cursor->handoff = CETTA_OPEN_EQUATION_HANDOFF_UNSUPPORTED;
+        return false;
+    }
     if (!oem_reserve((void **)&cursor->frames, &cursor->frame_cap,
                      cursor->frame_len + 1u, sizeof(*cursor->frames)))
         return false;
@@ -2980,6 +4498,7 @@ static bool oem_push_frame(CettaOpenEquationCursor *cursor,
         .trail_mark = cursor->trail_len,
         .store_mark = cursor->store_len,
         .depth = depth,
+        .candidates = UINT64_MAX,
     };
     return true;
 }
@@ -2999,8 +4518,17 @@ static inline uint32_t oem_frame_arity(const OemFrame *frame) {
         : frame->program->relations[frame->relation].arity;
 }
 
+/* Drop the frames from `len` on; the frames below the least length since
+ * the last collection are unchanged since it. */
+static inline void oem_truncate_frames(CettaOpenEquationCursor *cursor,
+                                       uint32_t len) {
+    cursor->frame_len = len;
+    if (len < cursor->frame_low)
+        cursor->frame_low = len;
+}
+
 static void oem_pop_frame(CettaOpenEquationCursor *cursor) {
-    cursor->frame_len--;
+    oem_truncate_frames(cursor, cursor->frame_len - 1u);
 }
 
 
@@ -3152,6 +4680,9 @@ static Atom oem_exported_mark;
 static inline __attribute__((always_inline)) Atom *oem_resolve_in(
     CettaOpenEquationCursor *cursor, Atom *root, bool operand, Arena *arena,
     Arena *ground, bool collect) {
+    OemAtomMap images;
+    oem_atom_map_init(&images);
+    Atom *answer = NULL;
     uint32_t depth = 0u;
     uint32_t results = 0u;
     Atom *atom = root;
@@ -3161,7 +4692,11 @@ static inline __attribute__((always_inline)) Atom *oem_resolve_in(
         atom = oem_deref(cursor, atom);
         uint32_t index = 0u;
         Atom *result = NULL;
-        if (oem_is_cell(cursor, atom, &index)) {
+        OemAtomMapEntry *known = atom->kind == ATOM_EXPR
+            ? oem_atom_map_find(&images, atom) : NULL;
+        if (known) {
+            result = known->image;
+        } else if (oem_is_cell(cursor, atom, &index)) {
             result = operand ? atom
                 : oem_answer_cell(cursor, index, arena, collect);
         } else if ((operand || !oem_cursor_owns(cursor, atom)) &&
@@ -3177,7 +4712,8 @@ static inline __attribute__((always_inline)) Atom *oem_resolve_in(
                 depth > 0u && cursor->resolve_stack[depth - 1u].promote
                     ? ground : arena, atom);
         } else {
-            if (atom->expr.len > UINT32_MAX - results ||
+            if (!oem_atom_map_begin(&images, atom) ||
+                atom->expr.len > UINT32_MAX - results ||
                 !oem_reserve((void **)&cursor->resolve_stack,
                              &cursor->resolve_cap, depth + 1u,
                              sizeof(*cursor->resolve_stack)) ||
@@ -3185,7 +4721,7 @@ static inline __attribute__((always_inline)) Atom *oem_resolve_in(
                              &cursor->resolve_result_cap,
                              results + (uint32_t)atom->expr.len,
                              sizeof(*cursor->resolve_results)))
-                return NULL;
+                goto done;
             cursor->resolve_stack[depth++] = (OemResolveItem){
                 .atom = atom, .next = 1u, .base = results,
                 .promote = ground && !atom_has_vars(atom) &&
@@ -3199,9 +4735,11 @@ static inline __attribute__((always_inline)) Atom *oem_resolve_in(
          * completed expression is itself a result. */
         for (;;) {
             if (!result)
-                return NULL;
-            if (depth == 0u)
-                return result;
+                goto done;
+            if (depth == 0u) {
+                answer = result;
+                goto done;
+            }
             OemResolveItem *item = &cursor->resolve_stack[depth - 1u];
             cursor->resolve_results[results++] = result;
             if (item->next < item->atom->expr.len) {
@@ -3225,10 +4763,14 @@ static inline __attribute__((always_inline)) Atom *oem_resolve_in(
             else if (result && ground && !item->atom->name_key &&
                      !atom_has_vars(item->atom))
                 item->atom->name_key = &oem_exported_mark;
+            oem_atom_map_find(&images, item->atom)->image = result;
             results = item->base;
             depth--;
         }
     }
+done:
+    oem_atom_map_free(&images);
+    return answer;
 }
 
 /* One copy of the resolver per use, each with its mode fixed. */
@@ -3334,25 +4876,60 @@ static const CettaOpenEquationProgram *oem_enter_current(
     }
     if (!cursor->runtime.current)
         return NULL;
+    /* The host's program comes retained: the cursor keeps that reference,
+     * or releases it. */
     CettaOpenEquationProgram *program = cursor->runtime.current(
         cursor->runtime.context, space, head, arity);
-    if (!program || program->space != space || program->relation_len == 0u ||
+    if (!program)
+        return NULL;
+    if (program->space != space || program->relation_len == 0u ||
         program->relations[0].head != head ||
         program->relations[0].arity != arity ||
         !space_program_token_is_current(program->token) ||
         !oem_reserve((void **)&cursor->versions, &cursor->version_cap,
-                     cursor->version_len + 1u, sizeof(*cursor->versions)))
+                     cursor->version_len + 1u, sizeof(*cursor->versions))) {
+        cetta_open_equation_program_release(program);
         return NULL;
+    }
     uint32_t epochs = cursor->version_cap;
     uint64_t *grown = realloc(cursor->version_epochs,
                               sizeof(*grown) * (epochs ? epochs : 1u));
-    if (!grown)
+    if (!grown) {
+        cetta_open_equation_program_release(program);
         return NULL;
+    }
     cursor->version_epochs = grown;
-    program->refs++;
     cursor->versions[cursor->version_len] = program;
     cursor->version_epochs[cursor->version_len++] = cursor->authority_epoch;
     return program;
+}
+
+/* The host's spelling of a truth value. */
+static Atom *oem_truth(CettaOpenEquationCursor *cursor, bool truth) {
+    Atom **cached = &cursor->truths[truth ? 1 : 0];
+    if (!*cached)
+        *cached = cursor->runtime.boolean_value
+            ? cursor->runtime.boolean_value(cursor->runtime.context,
+                                            &cursor->names, truth)
+            : petta_semantics_boolean_value(&cursor->names, truth);
+    return *cached;
+}
+
+/* An operation over plain scalars (machine integers, floats and truth
+ * values) by the grounded operations' allocation-free evaluator, the one
+ * the search machine's scalar regions use: true with the exact result,
+ * false where the grounded dispatcher decides (another operation, an
+ * overflow, a dialect's own spelling). */
+static bool oem_scalar_operation(Atom *head, Atom *const *args,
+                                 uint32_t count, CettaPlainScalar *out) {
+    CettaPlainScalar operands[2];
+    if (count == 0u || count > 2u)
+        return false;
+    for (uint32_t index = 0u; index < count; index++) {
+        if (!grounded_plain_scalar_from_atom(args[index], &operands[index]))
+            return false;
+    }
+    return grounded_try_plain_scalar_operation(head, operands, count, out);
 }
 
 /* A test or primitive the integer path does not cover (a float, a bigint,
@@ -3362,6 +4939,7 @@ static const CettaOpenEquationProgram *oem_enter_current(
  * numeric error, empty for failure, a truth value for a test, a value for
  * a primitive. */
 static OemRun oem_host_arithmetic(CettaOpenEquationCursor *cursor,
+                                  const CettaOpenEquationProgram *program,
                                   const OemStep *step, Atom *left,
                                   Atom *right, Atom **result_out,
                                   bool *truth_out, Atom **value_out) {
@@ -3379,9 +4957,27 @@ static OemRun oem_host_arithmetic(CettaOpenEquationCursor *cursor,
         cursor->handoff = CETTA_OPEN_EQUATION_HANDOFF_UNSUPPORTED;
         return OEM_RUN_HANDOFF;
     }
-    Atom *head = atom_symbol_id(&cursor->region, step->op);
-    Atom *result = head
-        ? grounded_dispatch(&cursor->region, head, args, 2u) : NULL;
+    Atom *head = program->templates[step->value].literal;
+    CettaPlainScalar scalar;
+    if (oem_scalar_operation(head, args, 2u, &scalar)) {
+        if (step->kind == OEM_S_TEST) {
+            if (scalar.kind != CETTA_PLAIN_SCALAR_BOOL) {
+                cursor->handoff = CETTA_OPEN_EQUATION_HANDOFF_UNSUPPORTED;
+                return OEM_RUN_HANDOFF;
+            }
+            *truth_out = scalar.as.boolean;
+            return OEM_RUN_CALLED;
+        }
+        *result_out = scalar.kind == CETTA_PLAIN_SCALAR_BOOL
+            ? oem_truth(cursor, scalar.as.boolean)
+            : grounded_plain_scalar_materialize(&cursor->region, &scalar);
+        if (!*result_out) {
+            cursor->handoff = CETTA_OPEN_EQUATION_HANDOFF_UNSUPPORTED;
+            return OEM_RUN_HANDOFF;
+        }
+        return OEM_RUN_CALLED;
+    }
+    Atom *result = grounded_dispatch(&cursor->region, head, args, 2u);
     if (!result) {
         cursor->handoff = CETTA_OPEN_EQUATION_HANDOFF_UNSUPPORTED;
         return OEM_RUN_HANDOFF;
@@ -3448,7 +5044,9 @@ static bool oem_space_has_schema(CettaOpenEquationCursor *cursor, Space *root,
  * a position both terms fix differs.  A variable on either side, or a depth
  * past the check, is left to unification, so a row that unifies is never
  * dropped. */
-static bool oem_row_may_unify(Atom *pattern, Atom *row, uint32_t depth) {
+static bool oem_row_may_unify(const CettaOpenEquationCursor *cursor,
+                              Atom *pattern, Atom *row, uint32_t depth) {
+    pattern = oem_deref(cursor, pattern);
     if (pattern->kind == ATOM_VAR || row->kind == ATOM_VAR ||
         oem_is_list_cell(pattern) || oem_is_list_cell(row))
         return true;
@@ -3461,9 +5059,264 @@ static bool oem_row_may_unify(Atom *pattern, Atom *row, uint32_t depth) {
     if (depth >= 4u)
         return true;
     for (CettaExprIndex child = 0u; child < pattern->expr.len; child++) {
-        if (!oem_row_may_unify(pattern->expr.elems[child],
-                               row->expr.elems[child], depth + 1u))
+        Atom *part = oem_deref(cursor, pattern->expr.elems[child]);
+        Atom *row_part = row->expr.elems[child];
+        /* A symbol is compared at once. */
+        if (part->kind == ATOM_SYMBOL
+                ? !(row_part->kind == ATOM_SYMBOL
+                        ? row_part->sym_id == part->sym_id
+                        : row_part->kind == ATOM_VAR ||
+                              oem_is_list_cell(row_part))
+                : !oem_row_may_unify(cursor, part, row_part, depth + 1u))
             return false;
+    }
+    return true;
+}
+
+/* A term's root key, the first test a match's rows meet: an expression
+ * headed by a symbol is its length and head, one headed otherwise its
+ * length alone (OEM_ROW_ANY_HEAD).  A row whose root is a variable or a
+ * list cell may meet any pattern (OEM_ROW_WILD), and any other atom meets
+ * no expression (OEM_ROW_ATOMIC). */
+#define OEM_ROW_WILD UINT64_MAX
+#define OEM_ROW_ATOMIC (UINT64_MAX - 1u)
+#define OEM_ROW_ANY_HEAD ((uint64_t)UINT32_MAX)
+
+static uint64_t oem_row_key(const Atom *row) {
+    if (row->kind == ATOM_VAR || oem_is_list_cell(row))
+        return OEM_ROW_WILD;
+    if (row->kind != ATOM_EXPR)
+        return OEM_ROW_ATOMIC;
+    uint64_t length = (uint64_t)row->expr.len << 32;
+    return row->expr.len > 0u && row->expr.elems[0]->kind == ATOM_SYMBOL
+        ? length | row->expr.elems[0]->sym_id
+        : length | OEM_ROW_ANY_HEAD;
+}
+
+/* A pattern's root key, or OEM_ROW_WILD when its root is not an expression
+ * headed by a symbol: then every row stays a candidate. */
+static uint64_t oem_pattern_key(const CettaOpenEquationCursor *cursor,
+                                Atom *pattern) {
+    pattern = oem_deref(cursor, pattern);
+    if (pattern->kind != ATOM_EXPR || pattern->expr.len == 0u ||
+        oem_is_list_cell(pattern))
+        return OEM_ROW_WILD;
+    Atom *head = oem_deref(cursor, pattern->expr.elems[0]);
+    return head->kind == ATOM_SYMBOL
+        ? ((uint64_t)pattern->expr.len << 32) | head->sym_id
+        : OEM_ROW_WILD;
+}
+
+/* Whether a row with root key `row` may meet a pattern with root key
+ * `pattern`. */
+static inline bool oem_keys_may_meet(uint64_t pattern, uint64_t row) {
+    return pattern == OEM_ROW_WILD || row == OEM_ROW_WILD || row == pattern ||
+        row == (pattern | OEM_ROW_ANY_HEAD);
+}
+
+/* The key of a part below the root, the second test a match's rows meet: a
+ * symbol is itself, a grounded value is only a value, and an expression is
+ * its root key.  A variable or a list cell meets any part (OEM_ROW_WILD).
+ * The parts after an expression's head are keyed, the first
+ * OEM_ROW_PARTS of them. */
+#define OEM_PART_SYMBOL (UINT64_C(1) << 63)
+#define OEM_PART_VALUE (UINT64_C(1) << 62)
+enum { OEM_ROW_PARTS = 4u };
+
+static uint64_t oem_part_key(const Atom *part) {
+    if (part->kind == ATOM_SYMBOL)
+        return OEM_PART_SYMBOL | part->sym_id;
+    if (part->kind == ATOM_GROUNDED)
+        return OEM_PART_VALUE;
+    if (part->kind != ATOM_EXPR || oem_is_list_cell(part))
+        return OEM_ROW_WILD;
+    uint64_t length = (uint64_t)part->expr.len << 32;
+    return part->expr.len > 0u && part->expr.elems[0]->kind == ATOM_SYMBOL
+        ? length | part->expr.elems[0]->sym_id
+        : length | OEM_ROW_ANY_HEAD;
+}
+
+/* Whether parts with keys `pattern` and `row` may meet: equal keys, a
+ * wildcard, or expressions of one length whose heads one of them leaves
+ * open. */
+static inline bool oem_parts_may_meet(uint64_t pattern, uint64_t row) {
+    if (pattern == row || pattern == OEM_ROW_WILD || row == OEM_ROW_WILD)
+        return true;
+    if ((pattern | row) & (OEM_PART_SYMBOL | OEM_PART_VALUE))
+        return false;
+    return (pattern >> 32) == (row >> 32) &&
+        ((uint32_t)pattern == (uint32_t)OEM_ROW_ANY_HEAD ||
+         (uint32_t)row == (uint32_t)OEM_ROW_ANY_HEAD);
+}
+
+/* A space small enough that its index offers every row to any pattern
+ * (native_candidates): its rows are read once per revision, and a match
+ * tests their root keys before the rows themselves. */
+static bool oem_space_small(const Space *space) {
+    return space->native.len <= MATCH_TRIE_THRESHOLD;
+}
+
+static bool oem_small_space_rows(CettaOpenEquationCursor *cursor,
+                                 Space *space) {
+    if (space_read_token_matches_live_space(cursor->rows_read, space))
+        return true;
+    /* A root variable asks the index for every row. */
+    if (!cursor->every_row)
+        cursor->every_row = atom_var(&cursor->names, "row");
+    if (!cursor->every_row)
+        return false;
+    CettaIndex *indices = NULL;
+    CettaIndex count = space_match_candidates64(space, cursor->every_row,
+                                                &indices);
+    bool ok = count <= (CettaIndex)MATCH_TRIE_THRESHOLD &&
+        oem_reserve((void **)&cursor->space_rows, &cursor->space_row_cap,
+                    (uint32_t)count, sizeof(*cursor->space_rows));
+    if (ok) {
+        uint32_t room = cursor->space_row_cap ? cursor->space_row_cap : 1u;
+        cursor->space_row_len = 0u;
+        free(cursor->space_row_keys);
+        free(cursor->space_row_parts);
+        cursor->space_row_keys = malloc(sizeof(uint64_t) * room);
+        cursor->space_row_parts =
+            malloc(sizeof(uint64_t) * room * OEM_ROW_PARTS);
+        ok = cursor->space_row_keys && cursor->space_row_parts;
+    }
+    for (CettaIndex index = 0u; ok && index < count; index++) {
+        Atom *row = space_match_candidate_at64(space, indices[index]);
+        if (!row)
+            continue;
+        uint32_t at = cursor->space_row_len++;
+        cursor->space_rows[at] = row;
+        cursor->space_row_keys[at] = oem_row_key(row);
+        uint64_t *parts = &cursor->space_row_parts[at * OEM_ROW_PARTS];
+        for (uint32_t part = 0u; part < OEM_ROW_PARTS; part++)
+            parts[part] = row->kind == ATOM_EXPR && !oem_is_list_cell(row) &&
+                    part + 1u < row->expr.len
+                ? oem_part_key(row->expr.elems[part + 1u])
+                : OEM_ROW_WILD;
+    }
+    free(indices);
+    if (!ok) {
+        cursor->rows_read = (SpaceReadToken){0};
+        return false;
+    }
+    cursor->rows_read = space_read_token(space);
+    return true;
+}
+
+/* A match's pattern read in place, as oem_instantiate would build it over
+ * `locals`: its root key, whether a row may meet it (oem_row_may_unify),
+ * and whether the host reads it (an open cons value at its root). */
+static uint64_t oem_template_key(const CettaOpenEquationCursor *cursor,
+                                 const CettaOpenEquationProgram *program,
+                                 Atom **locals, uint32_t template_index) {
+    const OemTemplate *item = &program->templates[template_index];
+    if (item->kind == OEM_T_LITERAL)
+        return oem_pattern_key(cursor, item->literal);
+    if (item->kind == OEM_T_SLOT)
+        return oem_pattern_key(cursor, locals[item->slot]);
+    if (item->kind != OEM_T_BUILD || item->count == 0u)
+        return OEM_ROW_WILD;
+    const OemTemplate *head =
+        &program->templates[program->template_children[item->first]];
+    Atom *symbol = head->kind == OEM_T_LITERAL ? head->literal
+        : head->kind == OEM_T_SLOT ? oem_deref(cursor, locals[head->slot])
+                                   : NULL;
+    return symbol && symbol->kind == ATOM_SYMBOL
+        ? ((uint64_t)item->count << 32) | symbol->sym_id
+        : OEM_ROW_WILD;
+}
+
+/* A pattern leaf, a literal or a slot's value, against a row: a symbol is
+ * compared at once, anything else as oem_row_may_unify compares it. */
+static inline bool oem_leaf_may_unify(const CettaOpenEquationCursor *cursor,
+                                      Atom *value, Atom *row,
+                                      uint32_t depth) {
+    value = oem_deref(cursor, value);
+    if (value->kind == ATOM_SYMBOL)
+        return row->kind == ATOM_SYMBOL ? row->sym_id == value->sym_id
+                                        : row->kind == ATOM_VAR ||
+                                              oem_is_list_cell(row);
+    return oem_row_may_unify(cursor, value, row, depth);
+}
+
+/* The key of a pattern's part read in place: a literal's or a slot's
+ * value's key (oem_part_key), or a built expression's root key. */
+static uint64_t oem_template_part_key(const CettaOpenEquationCursor *cursor,
+                                      const CettaOpenEquationProgram *program,
+                                      Atom **locals, uint32_t template_index) {
+    const OemTemplate *item = &program->templates[template_index];
+    if (item->kind == OEM_T_LITERAL)
+        return oem_part_key(item->literal);
+    if (item->kind == OEM_T_SLOT)
+        return oem_part_key(oem_deref(cursor, locals[item->slot]));
+    if (item->kind != OEM_T_BUILD)
+        return OEM_ROW_WILD;
+    uint64_t length = (uint64_t)item->count << 32;
+    if (item->count == 0u)
+        return length | OEM_ROW_ANY_HEAD;
+    const OemTemplate *head =
+        &program->templates[program->template_children[item->first]];
+    Atom *symbol = head->kind == OEM_T_LITERAL ? head->literal
+        : head->kind == OEM_T_SLOT ? oem_deref(cursor, locals[head->slot])
+                                   : NULL;
+    return symbol && symbol->kind == ATOM_SYMBOL
+        ? length | symbol->sym_id : length | OEM_ROW_ANY_HEAD;
+}
+
+/* Whether a row may meet a pattern read in place, as oem_row_may_unify asks
+ * of a built pattern, to the same depth: the template's expressions are
+ * walked beside the row's with a stack, and its leaves compared at once. */
+static bool oem_template_may_unify(const CettaOpenEquationCursor *cursor,
+                                   const CettaOpenEquationProgram *program,
+                                   Atom **locals, uint32_t template_index,
+                                   Atom *row) {
+    enum { OEM_MAY_STACK = 32u };
+    uint32_t items[OEM_MAY_STACK];
+    Atom *parts[OEM_MAY_STACK];
+    uint8_t depths[OEM_MAY_STACK];
+    uint32_t top = 0u;
+    const OemTemplate *root = &program->templates[template_index];
+    if (root->kind == OEM_T_LITERAL)
+        return oem_leaf_may_unify(cursor, root->literal, row, 0u);
+    if (root->kind == OEM_T_SLOT)
+        return oem_leaf_may_unify(cursor, locals[root->slot], row, 0u);
+    items[top] = template_index;
+    parts[top] = row;
+    depths[top++] = 0u;
+    while (top > 0u) {
+        top--;
+        const OemTemplate *item = &program->templates[items[top]];
+        Atom *part = parts[top];
+        uint32_t depth = depths[top];
+        if (item->kind != OEM_T_BUILD || part->kind == ATOM_VAR ||
+            oem_is_list_cell(part))
+            continue;
+        if (part->kind != ATOM_EXPR || part->expr.len != item->count)
+            return false;
+        if (depth >= 4u)
+            continue;
+        for (uint32_t index = 0u; index < item->count; index++) {
+            uint32_t child_index =
+                program->template_children[item->first + index];
+            const OemTemplate *child = &program->templates[child_index];
+            Atom *child_part = part->expr.elems[index];
+            if (child->kind == OEM_T_LITERAL) {
+                if (!oem_leaf_may_unify(cursor, child->literal, child_part,
+                                        depth + 1u))
+                    return false;
+            } else if (child->kind == OEM_T_SLOT) {
+                if (!oem_leaf_may_unify(cursor, locals[child->slot],
+                                        child_part, depth + 1u))
+                    return false;
+            } else if (child->kind == OEM_T_BUILD &&
+                       top < OEM_MAY_STACK) {
+                /* A child past the stack is left to unification. */
+                items[top] = child_index;
+                parts[top] = child_part;
+                depths[top++] = (uint8_t)(depth + 1u);
+            }
+        }
     }
     return true;
 }
@@ -3476,10 +5329,11 @@ static OemRun oem_try_candidate(CettaOpenEquationCursor *cursor,
  * else by unifying a fresh copy of each row the index offers and undoing
  * it.  The count is taken now, under the logical-update view. */
 static OemRun oem_match_count(CettaOpenEquationCursor *cursor, Space *space,
-                              Atom *pattern, Atom *query, uint64_t *count_out) {
+                              Atom *pattern, Atom *query, bool exact_query,
+                              uint64_t *count_out) {
     uint64_t count = 0u;
     CettaIndex examined = 0u;
-    if (space_match_count_flat_linear64(space, &cursor->region, query,
+    if (exact_query && space_match_count_flat_linear64(space, &cursor->region, query,
                                         &count, &examined)) {
         cursor->stats.match_candidates += (uint64_t)examined;
         *count_out = count;
@@ -3496,7 +5350,7 @@ static OemRun oem_match_count(CettaOpenEquationCursor *cursor, Space *space,
     OemRun run = OEM_RUN_CALLED;
     for (CettaIndex index = 0u; index < offered; index++) {
         Atom *candidate = space_match_candidate_at64(space, indices[index]);
-        if (!candidate || !oem_row_may_unify(query, candidate, 0u))
+        if (!candidate || !oem_row_may_unify(cursor, query, candidate, 0u))
             continue;
         OemRun tried = oem_try_candidate(cursor, pattern, candidate);
         oem_restore(cursor, &mark);
@@ -3511,6 +5365,11 @@ static OemRun oem_match_count(CettaOpenEquationCursor *cursor, Space *space,
     *count_out = count;
     return run;
 }
+
+static OemRun oem_match_host_step(
+    CettaOpenEquationCursor *cursor, const CettaOpenEquationProgram *program,
+    uint32_t pc, Atom **locals, uint32_t local_count, const OemCont *cont,
+    uint32_t depth, const OemStep *step, Atom *reference);
 
 /* A match: the rows the space's index offers for the pattern, snapshotted
  * now, so an answer's effects neither add to nor remove from this match's
@@ -3528,10 +5387,32 @@ static __attribute__((noinline)) OemRun oem_match_step(
                              const OemCont *cont, uint32_t depth,
                              const OemStep *step) {
     Atom *reference = oem_instantiate(cursor, program, locals, step->value);
-    Atom *pattern = oem_instantiate(cursor, program, locals, step->pattern);
-    if (!reference || !pattern)
+    if (!reference)
         return OEM_RUN_HANDOFF;
     reference = oem_deref(cursor, reference);
+    /* A pattern supplied through a slot can acquire a connective at run
+     * time. Its match is a composition of matches, not a row lookup. */
+    const OemTemplate *pattern_shape = &program->templates[step->pattern];
+    Atom *head = NULL;
+    if (pattern_shape->kind == OEM_T_BUILD) {
+        if (pattern_shape->count)
+            head = oem_instantiate(cursor, program, locals,
+                program->template_children[pattern_shape->first]);
+    } else {
+        Atom *root = oem_instantiate(cursor, program, locals, step->pattern);
+        root = root ? oem_deref(cursor, root) : NULL;
+        if (root && root->kind == ATOM_EXPR && root->expr.len)
+            head = petta_semantics_is_open_cons_value(root)
+                ? root->expr.elems[1] : root->expr.elems[0];
+    }
+    head = head ? oem_deref(cursor, head) : NULL;
+    if (!step->match_row &&
+        (atom_is_symbol_id(head, g_builtin_syms.comma) ||
+         atom_is_symbol_id(head, g_builtin_syms.pipe) ||
+         (head && head->kind == ATOM_SYMBOL &&
+          strcmp(symbol_bytes(g_symbols, head->sym_id), "cons") == 0)))
+        return oem_match_host_step(cursor, program, pc, locals,
+                                    local_count, cont, depth, step, reference);
     Space *space = cursor->runtime.resolve_space
         ? cursor->runtime.resolve_space(cursor->runtime.context,
                                         program->space, &cursor->region,
@@ -3544,62 +5425,117 @@ static __attribute__((noinline)) OemRun oem_match_step(
          * elaborates the pattern.  Both are equation search's. */
         if (!space ||
             oem_space_has_schema(cursor, program->space, reference)) {
-            cursor->handoff = CETTA_OPEN_EQUATION_HANDOFF_UNSUPPORTED;
-            return OEM_RUN_HANDOFF;
+            return oem_match_host_step(cursor, program, pc, locals,
+                                        local_count, cont, depth, step, reference);
         }
     }
     if (!space)
         return OEM_RUN_FAILED;
     if (space->overlay_base ||
         (space->match_backend.kind != SPACE_ENGINE_NATIVE &&
-         space->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) ||
-        petta_semantics_is_open_cons_value(pattern)) {
-        cursor->handoff = CETTA_OPEN_EQUATION_HANDOFF_UNSUPPORTED;
-        return OEM_RUN_HANDOFF;
+         space->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT)) {
+        return oem_match_host_step(cursor, program, pc, locals,
+                                    local_count, cont, depth, step, reference);
     }
-    Atom *query = oem_resolve_mode(cursor, pattern, true);
-    if (!query)
-        return OEM_RUN_HANDOFF;
-    if (cursor->runtime.count_only && !cont &&
-        program->steps[pc + 1u].kind == OEM_S_RET) {
-        uint64_t rows = 0u;
-        OemRun counted = oem_match_count(cursor, space, pattern, query,
-                                         &rows);
-        if (counted != OEM_RUN_CALLED)
-            return counted;
-        if (rows == 0u)
-            return OEM_RUN_FAILED;
-        cursor->answer_weight = rows;
-        cursor->answer_folded = true;
-        return OEM_RUN_FOLDED;
-    }
-    CettaIndex *indices = NULL;
-    CettaIndex count = space_match_candidates64(space, query, &indices);
-    if (count > (CettaIndex)UINT32_MAX) {
-        free(indices);
-        cursor->handoff = CETTA_OPEN_EQUATION_HANDOFF_CAPACITY;
-        return OEM_RUN_HANDOFF;
-    }
-    OemRows *rows = count
-        ? arena_alloc(&cursor->region,
-                      sizeof(*rows) + sizeof(Atom *) * (size_t)count)
-        : NULL;
+    bool counted_only = cursor->runtime.count_only && !cont &&
+        program->steps[pc + 1u].kind == OEM_S_RET;
+    /* The pattern, built only where it is read as a term: for the index's
+     * query, the count, and the frame of a match over a large space. */
+    Atom *pattern = NULL;
+    OemRows *rows = NULL;
     uint32_t len = 0u;
-    for (CettaIndex index = 0u; rows && index < count; index++) {
-        Atom *candidate = space_match_candidate_at64(space, indices[index]);
-        if (candidate && oem_row_may_unify(query, candidate, 0u))
-            rows->rows[len++] = candidate;
+    if (!counted_only && oem_space_small(space)) {
+        /* The pattern is read in place: no query is built for the index,
+         * which would offer every row, and the frame keeps none. */
+        if (!oem_small_space_rows(cursor, space))
+            return OEM_RUN_HANDOFF;
+        uint32_t count = cursor->space_row_len;
+        uint64_t key = oem_template_key(cursor, program, locals,
+                                        step->pattern);
+        /* The pattern's parts after its head, keyed as the rows' are. */
+        uint64_t parts[OEM_ROW_PARTS];
+        const OemTemplate *shape = &program->templates[step->pattern];
+        for (uint32_t part = 0u; part < OEM_ROW_PARTS; part++)
+            parts[part] = shape->kind == OEM_T_BUILD &&
+                    part + 1u < shape->count
+                ? oem_template_part_key(
+                      cursor, program, locals,
+                      program->template_children[shape->first + part + 1u])
+                : OEM_ROW_WILD;
+        rows = count
+            ? arena_alloc(&cursor->region,
+                          sizeof(*rows) + sizeof(Atom *) * (size_t)count)
+            : NULL;
+        if (count && !rows)
+            return OEM_RUN_HANDOFF;
+        for (uint32_t index = 0u; index < count; index++) {
+            Atom *candidate = cursor->space_rows[index];
+            const uint64_t *row_parts =
+                &cursor->space_row_parts[index * OEM_ROW_PARTS];
+            if (oem_keys_may_meet(key, cursor->space_row_keys[index]) &&
+                oem_parts_may_meet(parts[0], row_parts[0]) &&
+                oem_parts_may_meet(parts[1], row_parts[1]) &&
+                oem_parts_may_meet(parts[2], row_parts[2]) &&
+                oem_parts_may_meet(parts[3], row_parts[3]) &&
+                oem_template_may_unify(cursor, program, locals,
+                                       step->pattern, candidate))
+                rows->rows[len++] = candidate;
+        }
+    } else {
+        pattern = oem_instantiate(cursor, program, locals, step->pattern);
+        if (!pattern)
+            return OEM_RUN_HANDOFF;
+        Atom *query = oem_resolve_mode(cursor, pattern, true);
+        if (!query)
+            return OEM_RUN_HANDOFF;
+        bool exact_query = false;
+        query = petta_semantics_match_index_pattern(
+            &cursor->region, query, &exact_query);
+        if (!query)
+            return OEM_RUN_HANDOFF;
+        if (counted_only) {
+            uint64_t counted = 0u;
+            OemRun run = oem_match_count(cursor, space, pattern, query, exact_query,
+                                         &counted);
+            if (run != OEM_RUN_CALLED)
+                return run;
+            if (counted == 0u)
+                return OEM_RUN_FAILED;
+            cursor->answer_weight = counted;
+            cursor->answer_folded = true;
+            return OEM_RUN_FOLDED;
+        }
+        CettaIndex *indices = NULL;
+        CettaIndex count = space_match_candidates64(space, query, &indices);
+        if (count > (CettaIndex)UINT32_MAX) {
+            free(indices);
+            cursor->handoff = CETTA_OPEN_EQUATION_HANDOFF_CAPACITY;
+            return OEM_RUN_HANDOFF;
+        }
+        rows = count
+            ? arena_alloc(&cursor->region,
+                          sizeof(*rows) + sizeof(Atom *) * (size_t)count)
+            : NULL;
+        for (CettaIndex index = 0u; rows && index < count; index++) {
+            Atom *candidate =
+                space_match_candidate_at64(space, indices[index]);
+            if (candidate && oem_row_may_unify(cursor, query, candidate, 0u))
+                rows->rows[len++] = candidate;
+        }
+        free(indices);
+        if (count && !rows)
+            return OEM_RUN_HANDOFF;
     }
-    free(indices);
-    if (count && !rows)
-        return OEM_RUN_HANDOFF;
     if (len == 0u)
         return OEM_RUN_FAILED;
     rows->len = len;
     rows->arena = cursor->region.identity;
     OemCont *resume = arena_alloc(&cursor->region, sizeof(*resume));
-    Atom **args = arena_alloc(&cursor->region, sizeof(*args));
-    if (!resume || !args ||
+    /* A frame over a small space keeps no pattern: each row reads it in
+     * place (oem_try_candidate_in_place). */
+    Atom **args = pattern ? arena_alloc(&cursor->region, sizeof(*args))
+                          : NULL;
+    if (!resume || (pattern && !args) ||
         !oem_push_frame(cursor, program, OEM_MATCH_FRAME, args, resume,
                         depth))
         return OEM_RUN_HANDOFF;
@@ -3607,7 +5543,8 @@ static __attribute__((noinline)) OemRun oem_match_step(
         .parent = cont, .program = program, .locals = locals,
         .local_count = local_count, .pc = pc + 1u, .depth = depth,
     };
-    args[0] = pattern;
+    if (args)
+        args[0] = pattern;
     cursor->frames[cursor->frame_len - 1u].rows = rows;
     return OEM_RUN_CALLED;
 }
@@ -3646,23 +5583,77 @@ static bool oem_unbound_cells(CettaOpenEquationCursor *cursor, Atom *root,
     return true;
 }
 
+/* Whether code returning through `cont` runs inside the body of a call
+ * dispatched at run time, whose handler turns an error raised there into
+ * the failure of that path.  Nested handlers are one handler
+ * (DispatchErrorScope.recover_recover), so any such return decides.  The
+ * returns are walked only where the host's policy recovers and the cursor
+ * has made such a call, and only for a raise or a host goal. */
+static __attribute__((noinline, cold)) bool oem_returns_recover(
+    const OemCont *cont) {
+    for (; cont; cont = cont->parent) {
+        if (cont->recovers)
+            return true;
+    }
+    return false;
+}
+
+static inline bool oem_recovering(const CettaOpenEquationCursor *cursor,
+                                  const OemCont *cont) {
+    return cursor->recovering && cursor->runtime.dispatch_recovers &&
+        oem_returns_recover(cont);
+}
+
+/* An error raised inside a run-time dispatch fails that path alone, and
+ * the other alternatives remain (DispatchErrorScope.recover_add); outside
+ * one it ends the branch as a raise. */
+static inline OemRun oem_raised(const CettaOpenEquationCursor *cursor,
+                                const OemCont *cont, OemRun run) {
+    return run == OEM_RUN_RAISE && oem_recovering(cursor, cont)
+        ? OEM_RUN_FAILED : run;
+}
+
+/* CETTA_OPEN_EQUATIONS_DEBUG=host names each goal the region leaves to the
+ * host, by its head and arity. */
+static bool oem_debug_host_goals(void) {
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *setting = getenv("CETTA_OPEN_EQUATIONS_DEBUG");
+        enabled = setting && strcmp(setting, "host") == 0;
+    }
+    return enabled == 1;
+}
+
+static __attribute__((cold, noinline)) void oem_debug_host_goal(
+    const Atom *goal) {
+    bool expr = goal->kind == ATOM_EXPR && goal->expr.len > 0u;
+    const Atom *head = expr ? goal->expr.elems[0] : goal;
+    fprintf(stderr, "open-equations host %s/%u\n",
+            head->kind == ATOM_SYMBOL ? symbol_bytes(g_symbols, head->sym_id)
+            : head->kind == ATOM_VAR  ? "<variable>"
+            : head->kind == ATOM_EXPR ? "<expression>"
+                                      : "<value>",
+            expr ? (unsigned)goal->expr.len - 1u : 0u);
+}
+
 /* A HOST step: the goal and its destination leave the region with one
  * variable per unbound cell they mention (a call variable stands for
  * itself); the frame keeps those cells, and the host passes the variables
  * back with each answer, so the cursor holds no pointer into the host's
  * store. */
-static __attribute__((noinline)) OemRun oem_host_step(
+static __attribute__((noinline)) OemRun oem_host_goal(
                             CettaOpenEquationCursor *cursor,
                             const CettaOpenEquationProgram *program,
                             uint32_t pc, Atom **locals, uint32_t local_count,
                             const OemCont *cont, uint32_t depth,
-                            const OemStep *step) {
+                            Atom *goal, Atom *destination,
+                            const PettaPlanNode *plan,
+                            CettaOpenEquationHostMode mode) {
     oem_forget_answer_vars(cursor);
-    Atom *goal = oem_instantiate(cursor, program, locals, step->value);
-    Atom *destination = oem_instantiate(cursor, program, locals,
-                                        step->pattern);
     if (!goal || !destination)
         return OEM_RUN_HANDOFF;
+    if (oem_debug_host_goals())
+        oem_debug_host_goal(oem_deref(cursor, goal));
     uint32_t *cells = NULL;
     uint32_t count = 0u;
     uint32_t cap = 0u;
@@ -3717,16 +5708,71 @@ static __attribute__((noinline)) OemRun oem_host_step(
     cursor->host_goal = exported_goal;
     cursor->host_destination = exported_destination;
     cursor->host_var_count = count;
-    cursor->host_plan = program->host_plans[step->relation];
-    /* A dynamic application has no static plan. A written call over
-     * computed values keeps its static plan with value children. */
-    cursor->host_mode = step->target == OEM_HOST_COUNTED
-        ? CETTA_OPEN_EQUATION_HOST_COUNTED
-        : program->host_plans[step->relation] == NULL
-            ? CETTA_OPEN_EQUATION_HOST_APPLY
-            : CETTA_OPEN_EQUATION_HOST_SOLVE;
+    cursor->host_plan = plan;
+    cursor->host_mode = mode;
+    cursor->host_recovers = oem_recovering(cursor, cont);
     cursor->stats.host_goals++;
     return OEM_RUN_HOST;
+}
+
+static __attribute__((noinline)) OemRun oem_host_step(
+    CettaOpenEquationCursor *cursor, const CettaOpenEquationProgram *program,
+    uint32_t pc, Atom **locals, uint32_t local_count, const OemCont *cont,
+    uint32_t depth, const OemStep *step) {
+    Atom *goal = oem_instantiate(cursor, program, locals, step->value);
+    Atom *destination = oem_instantiate(cursor, program, locals, step->pattern);
+    const PettaPlanNode *plan = program->host_plans[step->relation];
+    /* A dynamic application has no static plan. A written call over
+     * computed values keeps its static plan with value children. */
+    CettaOpenEquationHostMode mode = step->target == OEM_HOST_COUNTED
+        ? CETTA_OPEN_EQUATION_HOST_COUNTED
+        : step->target == OEM_HOST_OCCURRENCE
+            ? CETTA_OPEN_EQUATION_HOST_SOLVE
+        : plan == NULL ? CETTA_OPEN_EQUATION_HOST_APPLY
+                       : CETTA_OPEN_EQUATION_HOST_SOLVE;
+    return oem_host_goal(cursor, program, pc, locals, local_count, cont, depth,
+                         goal, destination, plan, mode);
+}
+
+/* The host enumerates match environments; each resumes the compiled body.
+ * The constant result is a control value, never an existence test: the host
+ * protocol transports every occurrence and its pattern-variable bindings.
+ * This is list bind associativity (MatchIndexProjection.host_match_bind). */
+static OemRun oem_match_host_step(
+    CettaOpenEquationCursor *cursor, const CettaOpenEquationProgram *program,
+    uint32_t pc, Atom **locals, uint32_t local_count, const OemCont *cont,
+    uint32_t depth, const OemStep *step, Atom *reference) {
+    Atom *pattern = oem_instantiate(cursor, program, locals, step->pattern);
+    Atom *success = petta_semantics_success_value(&cursor->region);
+    Atom *head = atom_symbol(&cursor->region, "match");
+    if (!pattern || !success || !head)
+        return OEM_RUN_HANDOFF;
+    Atom *parts[] = {head, reference, pattern, success};
+    Atom *goal = atom_expr(&cursor->region, parts, 4u);
+    return oem_host_goal(cursor, program, pc, locals, local_count, cont, depth,
+                         goal, success, NULL, CETTA_OPEN_EQUATION_HOST_SOLVE);
+}
+
+_Static_assert(sizeof(uintptr_t) >= 8u,
+               "a slot vector's header word holds two 32-bit fields");
+
+/* A slot vector's header word: its activation's birth height, the frames
+ * live when it began, and, above it, the collection epoch it was made in.
+ * An equation that cuts records instead the frames beneath its call's own
+ * frame, whether or not that frame is still there, which its cut truncates
+ * to (EquationCut.step_denote); a store that compares against this lower
+ * height trails no less than it must. */
+static inline uintptr_t oem_slot_header(const CettaOpenEquationCursor *cursor,
+                                        uint32_t height) {
+    return cursor->slot_epoch_bits | (uintptr_t)height;
+}
+
+static inline uint32_t oem_slot_birth(uintptr_t header) {
+    return (uint32_t)header;
+}
+
+static inline uint32_t oem_slot_epoch(uintptr_t header) {
+    return (uint32_t)(header >> 32);
 }
 
 /* Fill a slot at its first occurrence.  While a frame newer than the
@@ -3735,14 +5781,20 @@ static __attribute__((noinline)) OemRun oem_host_step(
  * slot outlives the path that stored it. */
 static bool oem_store_slot(CettaOpenEquationCursor *cursor, Atom **locals,
                            uint32_t slot, Atom *value) {
-    uintptr_t birth = ((const uintptr_t *)locals)[-1];
-    if (cursor->frame_len > birth) {
+    uintptr_t header = ((const uintptr_t *)locals)[-1];
+    if (cursor->frame_len > oem_slot_birth(header)) {
         if (!oem_reserve((void **)&cursor->stores, &cursor->store_cap,
                          cursor->store_len + 1u, sizeof(*cursor->stores)))
             return false;
         cursor->stores[cursor->store_len++] =
             (OemStore){.locals = locals, .slot = slot};
     }
+    /* A slot vector made before the last collection is old: the next
+     * minor collection traces the slot stored now
+     * (barrier_write_remember). */
+    if (oem_slot_epoch(header) != cursor->collect_epoch &&
+        !oem_remember_slot(cursor, locals, slot))
+        return false;
     locals[slot] = value;
     return true;
 }
@@ -3827,6 +5879,55 @@ static bool oem_application_inert(CettaOpenEquationCursor *cursor,
     return inert;
 }
 
+/* The most arguments a pure operation the region applies may take. */
+enum { OEM_PURE_INLINE_ARGS = 8u };
+
+static inline __attribute__((always_inline)) OemRun oem_pure_apply(
+    CettaOpenEquationCursor *cursor, const CettaOpenEquationProgram *program,
+    Atom **locals, const OemStep *step, Atom *head, Atom **args,
+    uint32_t count);
+
+/* Whether the host's machine runs an application of `head` to `arity`
+ * values as the type-pure operation `head` itself, directly: an operation
+ * the profile offers, at its own arity (another arity is a partial or an
+ * over-application, the host's to curry), of a head no equation extends. */
+static bool oem_applied_pure(const CettaOpenEquationCursor *cursor,
+                             const CettaOpenEquationProgram *program,
+                             SymbolId head, uint32_t arity) {
+    CettaExprLen own = 0u;
+    return arity > 0u && arity <= OEM_PURE_INLINE_ARGS &&
+        petta_semantics_grounded_type_pure(head) &&
+        petta_semantics_intrinsic_partial_arity(head, &own) &&
+        own == arity && cursor->runtime.builtin_allowed &&
+        cursor->runtime.builtin_allowed(cursor->runtime.context, head) &&
+        !space_equations_may_match_known_head(program->space, head);
+}
+
+/* The application `data` of the type-pure operation `head` to values, ground
+ * but for a structural test's, run as the host's machine runs it
+ * (oem_applied_pure); HOST when it is not such an application or the direct
+ * run leaves it undecided. */
+static __attribute__((noinline)) OemRun oem_applied_pure_step(
+        CettaOpenEquationCursor *cursor,
+        const CettaOpenEquationProgram *program, Atom **locals,
+        const OemStep *step, Atom *head, Atom *data, uint32_t arity) {
+    if (!oem_applied_pure(cursor, program, head->sym_id, arity))
+        return OEM_RUN_HOST;
+    Atom *args[OEM_PURE_INLINE_ARGS];
+    for (uint32_t index = 0u; index < arity; index++) {
+        Atom *arg = oem_resolve_mode(cursor, data->expr.elems[index + 1u],
+                                     true);
+        if (!arg)
+            return OEM_RUN_HANDOFF;
+        if (atom_has_vars(arg) && !petta_semantics_structural_test(head->sym_id))
+            return OEM_RUN_HOST;
+        args[index] = oem_grounded_operand(cursor, arg);
+        if (!args[index])
+            return OEM_RUN_HANDOFF;
+    }
+    return oem_pure_apply(cursor, program, locals, step, head, args, arity);
+}
+
 /* A dynamic call's evaluated elements: data when the head's value cannot
  * be applied, built over the elements' values; otherwise the host's. */
 static const CettaOpenEquationProgram *oem_enter_evaluated(
@@ -3837,7 +5938,9 @@ static const CettaOpenEquationProgram *oem_enter_evaluated(
  * cannot be applied; a call of a relation of the region when that value is
  * a symbol naming one at the call's arity, entered as a static call enters
  * it, under the program current at the call, with this step's output as
- * its destination; otherwise the host's to apply. */
+ * its destination; a type-pure operation over values, ground but for a
+ * structural test's, run here as the host's machine runs it; otherwise the
+ * host's to apply. */
 static OemRun oem_apply_step(CettaOpenEquationCursor *cursor,
                              const CettaOpenEquationProgram *program,
                              uint32_t pc, Atom **locals,
@@ -3861,6 +5964,37 @@ static OemRun oem_apply_step(CettaOpenEquationCursor *cursor,
                 cursor->runtime.current
             ? oem_enter_evaluated(cursor, program->space, head->sym_id, arity)
             : NULL;
+    if (data && symbol && !target && arity == 2u) {
+        /* A grounded operation over plain scalars, which the host applies
+         * as its ready call: the scalar evaluator's exact result, unless the
+         * program defines equations of the head, which the host's call
+         * would enter instead. */
+        Atom *args[2] = {
+            oem_resolve_mode(cursor, data->expr.elems[1], true),
+            oem_resolve_mode(cursor, data->expr.elems[2], true),
+        };
+        CettaPlainScalar scalar;
+        if (args[0] && args[1] &&
+            oem_scalar_operation(head, args, 2u, &scalar) &&
+            !space_equations_may_match_known_head(program->space,
+                                                  head->sym_id)) {
+            Atom *result = scalar.kind == CETTA_PLAIN_SCALAR_BOOL
+                ? oem_truth(cursor, scalar.as.boolean)
+                : grounded_plain_scalar_materialize(&cursor->region, &scalar);
+            if (!result)
+                return OEM_RUN_HANDOFF;
+            OemUnify unified = oem_meet(cursor, program, locals, step, result);
+            if (unified == OEM_UNIFY_ERROR)
+                return OEM_RUN_HANDOFF;
+            return unified == OEM_UNIFY_OK ? OEM_RUN_CALLED : OEM_RUN_FAILED;
+        }
+    }
+    if (data && symbol && !target) {
+        OemRun run = oem_applied_pure_step(cursor, program, locals, step,
+                                           head, data, arity);
+        if (run != OEM_RUN_HOST)
+            return run;
+    }
     if (data && symbol && !target &&
         !oem_symbol_application_inert(cursor, program, data))
         return OEM_RUN_HOST;
@@ -3886,7 +6020,10 @@ static OemRun oem_apply_step(CettaOpenEquationCursor *cursor,
             .parent = cont, .program = program, .locals = locals,
             .local_count = local_count, .pc = pc + 1u,
             .pattern = step->pattern, .depth = depth,
+            .recovers = step->recovers,
         };
+        if (step->recovers)
+            cursor->recovering = true;
         return oem_push_frame(cursor, target, 0u, args, record, depth + 1u)
             ? OEM_RUN_ENTERED : OEM_RUN_HANDOFF;
     }
@@ -3955,15 +6092,319 @@ static OemRun oem_admit_step(CettaOpenEquationCursor *cursor,
     return unified == OEM_UNIFY_OK ? OEM_RUN_CALLED : OEM_RUN_FAILED;
 }
 
+/* Whether `atom` is a list the region reads as the search machine does: an
+ * expression that is no internal representation (a counted collection, a
+ * cons cell, a Prolog term), all of whose elements are carried as they
+ * stand. */
+static bool oem_plain_list(const Atom *atom) {
+    return atom->kind == ATOM_EXPR &&
+        (atom->expr.len == 0u ||
+         atom->expr.elems[0]->kind != ATOM_GROUNDED ||
+         atom->expr.elems[0]->ground.gkind != GV_INTERNAL_TAG);
+}
+
+/* A list native over closed lists: `append` and `union-atom` of two are
+ * their concatenation, the `length` of one its element count,
+ * `exclude-item`, `list_to_set` and `unique-atom` (list_to_set) and
+ * `alpha-unique-atom` the search machine's own definitions, `car-atom` and
+ * `cdr-atom` its first element and its rest, or () for anything but a
+ * non-empty expression, `decons-atom` and `decons` the pair of its first
+ * element and its rest, and no answer for anything but a non-empty
+ * expression.
+ * These read a list's spine alone: its elements are carried as they stand,
+ * variables included, and compared by identity, as SWI's ==/2 does, or,
+ * by `alpha-unique-atom`, up to a renaming of their variables.  `append`,
+ * `union-atom` and `length` also read a chain of cells that ends in a flat
+ * list, as the flat list of its elements.  An unbound list, a partial or
+ * improper chain, a cell anywhere else, a counted collection and, but for
+ * car-atom and cdr-atom, a non-list are the host's, which answers them
+ * relationally or raises as SWI does. */
+static __attribute__((noinline)) OemRun oem_list_step(
+        CettaOpenEquationCursor *cursor,
+        const CettaOpenEquationProgram *program, Atom **locals,
+        const OemStep *step, const OemTemplate *goal) {
+    Atom *args[2];
+    uint32_t count = goal->count - 1u;
+    if (goal->kind != OEM_T_BUILD || count == 0u || count > 2u)
+        return OEM_RUN_HOST;
+    PeTTaForm form = petta_semantics_form(step->op);
+    bool spine = form == PETTA_FORM_APPEND || form == PETTA_FORM_LENGTH ||
+        step->op == g_builtin_syms.union_atom;
+    for (uint32_t index = 0u; index < count; index++) {
+        Atom *arg = oem_instantiate(
+            cursor, program, locals,
+            program->template_children[goal->first + 1u + index]);
+        arg = arg ? oem_resolve_mode(cursor, arg, true) : NULL;
+        if (!arg)
+            return OEM_RUN_HANDOFF;
+        if (arg->kind == ATOM_VAR)
+            return OEM_RUN_HOST;
+        if (petta_semantics_open_cons_built() &&
+            atom_structural_may_have_list_carrier(arg)) {
+            /* append/3 and length/2 read a list's spine alone.  A chain of
+             * cells that ends in a flat list reads as the flat list of its
+             * elements, which stand as they are
+             * (ListCells.denoteList_closedElems); a partial or improper
+             * list is the host's. */
+            Atom *flat = spine
+                ? petta_semantics_materialize_closed_logical_list(
+                      &cursor->region, arg)
+                : NULL;
+            if (!flat)
+                return OEM_RUN_HOST;
+            arg = flat;
+        }
+        args[index] = arg;
+    }
+    Atom *list = args[count - 1u];
+    Atom *result = NULL;
+    if (step->op == g_builtin_syms.decons_atom ||
+        step->op == g_builtin_syms.petta_decons) {
+        /* PeTTa's decons-atom and decons map [H|T] to (H T): a non-empty
+         * list is its first element and its rest; () and every non-list
+         * have no answer. */
+        if (list->kind == ATOM_EXPR && !oem_plain_list(list))
+            return OEM_RUN_HOST;
+        if (list->kind != ATOM_EXPR || list->expr.len == 0u)
+            return OEM_RUN_FAILED;
+        Atom *rest = atom_expr_suffix(&cursor->region, list, 1u);
+        result = rest
+            ? atom_expr2(&cursor->region, list->expr.elems[0], rest) : NULL;
+        if (!result)
+            return OEM_RUN_HANDOFF;
+        OemUnify unified = oem_meet(cursor, program, locals, step, result);
+        if (unified == OEM_UNIFY_ERROR)
+            return OEM_RUN_HANDOFF;
+        return unified == OEM_UNIFY_OK ? OEM_RUN_CALLED : OEM_RUN_FAILED;
+    }
+    if (step->op == g_builtin_syms.car_atom ||
+        step->op == g_builtin_syms.cdr_atom) {
+        if (list->kind == ATOM_EXPR && !oem_plain_list(list))
+            return OEM_RUN_HOST;
+        result = list->kind != ATOM_EXPR || list->expr.len == 0u
+            ? atom_unit(&cursor->region)
+            : step->op == g_builtin_syms.car_atom
+            ? list->expr.elems[0]
+            : atom_expr_suffix(&cursor->region, list, 1u);
+        if (!result)
+            return OEM_RUN_HANDOFF;
+        OemUnify unified = oem_meet(cursor, program, locals, step, result);
+        if (unified == OEM_UNIFY_ERROR)
+            return OEM_RUN_HANDOFF;
+        return unified == OEM_UNIFY_OK ? OEM_RUN_CALLED : OEM_RUN_FAILED;
+    }
+    bool append = form == PETTA_FORM_APPEND ||
+        step->op == g_builtin_syms.union_atom;
+    if (!oem_plain_list(list) || (append && !oem_plain_list(args[0])))
+        return OEM_RUN_HOST;
+    if (append) {
+        CettaExprLen left = args[0]->expr.len;
+        CettaExprLen length = left + list->expr.len;
+        if (length < left || !cetta_expr_len_mul_fits_size(length,
+                                                           sizeof(Atom *)))
+            return OEM_RUN_HOST;
+        Atom **items = length
+            ? arena_alloc(&cursor->region, sizeof(*items) * (size_t)length)
+            : NULL;
+        if (length && !items)
+            return OEM_RUN_HANDOFF;
+        if (left)
+            memcpy(items, args[0]->expr.elems, sizeof(*items) * (size_t)left);
+        if (list->expr.len)
+            memcpy(items + left, list->expr.elems,
+                   sizeof(*items) * (size_t)list->expr.len);
+        result = atom_expr(&cursor->region, items, length);
+    } else if (form == PETTA_FORM_LENGTH) {
+        if (list->expr.len > (CettaExprLen)INT64_MAX)
+            return OEM_RUN_HOST;
+        result = atom_int(&cursor->region, (int64_t)list->expr.len);
+    } else if (form == PETTA_FORM_LIST_TO_SET ||
+               step->op == g_builtin_syms.unique_atom) {
+        result = petta_semantics_list_to_set(&cursor->region, list);
+    } else if (form == PETTA_FORM_ALPHA_UNIQUE) {
+        result = petta_semantics_alpha_unique(&cursor->region, list);
+    } else if (form == PETTA_FORM_EXCLUDE_ITEM) {
+        result = petta_semantics_exclude_item(&cursor->region, args[0], list);
+    } else {
+        return OEM_RUN_HOST;
+    }
+    if (!result)
+        return OEM_RUN_HANDOFF;
+    OemUnify unified = oem_meet(cursor, program, locals, step, result);
+    if (unified == OEM_UNIFY_ERROR)
+        return OEM_RUN_HANDOFF;
+    return unified == OEM_UNIFY_OK ? OEM_RUN_CALLED : OEM_RUN_FAILED;
+}
+
+/* Template `index`'s child `child`, of a built template. */
+static uint32_t oem_template_child(const CettaOpenEquationProgram *program,
+                                   uint32_t index, uint32_t child) {
+    return program->template_children[program->templates[index].first +
+                                      child];
+}
+
+/* An existence observer, `(== () (collapse (once (match S P T))))` with an
+ * atomic constant T: whether the space S has a row matching P, as the
+ * search machine answers it where the space proves that ground matching is
+ * structural membership (space_match_exists_ground_exact).  A named space
+ * with a schema, a symbol naming no space, a pattern with variables and a
+ * space that cannot prove it are the host's, which answers the goal
+ * whole. */
+static __attribute__((noinline)) OemRun oem_exists_step(
+        CettaOpenEquationCursor *cursor,
+        const CettaOpenEquationProgram *program, Atom **locals,
+        const OemStep *step) {
+    uint32_t side = oem_template_child(program, step->value, 1u);
+    const OemTemplate *empty = &program->templates[side];
+    if (empty->kind == OEM_T_LITERAL && empty->literal->kind == ATOM_EXPR &&
+        empty->literal->expr.len == 0u)
+        side = oem_template_child(program, step->value, 2u);
+    uint32_t once = oem_template_child(program, side, 1u);
+    uint32_t match = oem_template_child(program, once, 1u);
+    Atom *reference = oem_instantiate(cursor, program, locals,
+                                      oem_template_child(program, match, 1u));
+    Atom *pattern = oem_instantiate(cursor, program, locals,
+                                    oem_template_child(program, match, 2u));
+    if (!reference || !pattern)
+        return OEM_RUN_HANDOFF;
+    reference = oem_deref(cursor, reference);
+    pattern = oem_resolve_mode(cursor, pattern, true);
+    if (!pattern)
+        return OEM_RUN_HANDOFF;
+    Space *space = cursor->runtime.resolve_space
+        ? cursor->runtime.resolve_space(cursor->runtime.context,
+                                        program->space, &cursor->region,
+                                        reference)
+        : NULL;
+    if (reference->kind == ATOM_SYMBOL) {
+        if (!space && reference->sym_id == g_builtin_syms.self)
+            space = program->space;
+        if (!space ||
+            oem_space_has_schema(cursor, program->space, reference))
+            return OEM_RUN_HOST;
+    }
+    if (!space || atom_has_vars(pattern))
+        return OEM_RUN_HOST;
+    bool applicable = false;
+    bool found = space_match_exists_ground_exact(space, pattern, &applicable);
+    if (!applicable)
+        return OEM_RUN_HOST;
+    Atom *truth = oem_truth(cursor, !found);
+    if (!truth)
+        return OEM_RUN_HANDOFF;
+    OemUnify unified = oem_meet(cursor, program, locals, step, truth);
+    if (unified == OEM_UNIFY_ERROR)
+        return OEM_RUN_HANDOFF;
+    return unified == OEM_UNIFY_OK ? OEM_RUN_CALLED : OEM_RUN_FAILED;
+}
+
+/* A type-pure operation `head` applied to resolved operands, ground but
+ * for a structural test's, whose unbound cells stand as their variables, as
+ * the search machine's direct path runs it once every argument is a value:
+ * two machine integers take the region's integer path, as its tests and
+ * primitives do, plain scalars the scalar evaluator, anything else the
+ * operation's own implementation; an empty result fails, a truth value takes
+ * the host's spelling, and the result meets the step's destination.  An
+ * error, or no result, is the host's (HOST). */
+static inline __attribute__((always_inline)) OemRun oem_pure_apply(
+    CettaOpenEquationCursor *cursor, const CettaOpenEquationProgram *program,
+    Atom **locals, const OemStep *step, Atom *head, Atom **args,
+    uint32_t count) {
+    SymbolId op = head->sym_id;
+    CettaPlainScalar scalar;
+    Atom *result = NULL;
+    int64_t left = 0;
+    int64_t right = 0;
+    int64_t value = 0;
+    bool test = oem_is_test(op);
+    if (count == 2u && oem_int_value(args[0], &left) &&
+        oem_int_value(args[1], &right) &&
+        (test || (oem_is_prim(op) &&
+                  oem_prim(op, left, right, &value)))) {
+        /* Two machine integers take the region's integer path, as its
+         * tests and primitives do. */
+        result = test ? oem_truth(cursor, oem_test(op, left, right))
+                      : atom_int(&cursor->region, value);
+        if (!result)
+            return OEM_RUN_HANDOFF;
+    } else if (oem_scalar_operation(head, args, count, &scalar)) {
+        result = scalar.kind == CETTA_PLAIN_SCALAR_BOOL
+            ? oem_truth(cursor, scalar.as.boolean)
+            : grounded_plain_scalar_materialize(&cursor->region, &scalar);
+        if (!result)
+            return OEM_RUN_HANDOFF;
+    } else {
+        result = grounded_dispatch(&cursor->region, head, args, count);
+        if (!result || atom_is_error(result))
+            return OEM_RUN_HOST;
+        if (atom_is_petta_no_result(result))
+            return OEM_RUN_FAILED;
+        bool truth = false;
+        if (petta_semantics_truth_value(result, &truth)) {
+            result = oem_truth(cursor, truth);
+            if (!result)
+                return OEM_RUN_HANDOFF;
+        }
+    }
+    OemUnify unified = oem_meet(cursor, program, locals, step, result);
+    if (unified == OEM_UNIFY_ERROR)
+        return OEM_RUN_HANDOFF;
+    return unified == OEM_UNIFY_OK ? OEM_RUN_CALLED : OEM_RUN_FAILED;
+}
+
+/* `get-metatype` of a value the host's registry does not rename: an
+ * unbound cell is a Variable, a list an Expression, a grounded value
+ * Grounded, and a symbol what SWI-PeTTa's get-metatype/2 makes it, Grounded
+ * for a truth value or a registered function and Symbol otherwise, as the
+ * host answers them.  A registry reference, a cons cell and any variable of
+ * the host's are the host's, and so is a symbol when the host cannot tell
+ * whether its program defines it. */
+static __attribute__((noinline)) OemRun oem_metatype_step(
+        CettaOpenEquationCursor *cursor,
+        const CettaOpenEquationProgram *program, Atom **locals,
+        const OemStep *step, const OemTemplate *goal) {
+    if (goal->kind != OEM_T_BUILD || goal->count != 2u)
+        return OEM_RUN_HOST;
+    Atom *value = oem_instantiate(
+        cursor, program, locals,
+        program->template_children[goal->first + 1u]);
+    if (!value)
+        return OEM_RUN_HANDOFF;
+    value = oem_deref(cursor, value);
+    uint32_t index = 0u;
+    Atom *type = NULL;
+    if (oem_is_cell(cursor, value, &index))
+        type = atom_variable_type(&cursor->region);
+    else if (value->kind == ATOM_EXPR && oem_plain_list(value) &&
+             !registry_ref_name_key(value, NULL))
+        type = atom_expression_type(&cursor->region);
+    else if (value->kind == ATOM_GROUNDED &&
+             value->ground.gkind != GV_INTERNAL_TAG)
+        type = atom_grounded_type(&cursor->region);
+    else if (value->kind == ATOM_SYMBOL && cursor->runtime.function_registered)
+        type = petta_semantics_symbol_metatype(
+            &cursor->region, value->sym_id,
+            cursor->runtime.function_registered(cursor->runtime.context,
+                                                value->sym_id));
+    else
+        return OEM_RUN_HOST;
+    if (!type)
+        return OEM_RUN_HANDOFF;
+    OemUnify unified = oem_meet(cursor, program, locals, step, type);
+    if (unified == OEM_UNIFY_ERROR)
+        return OEM_RUN_HANDOFF;
+    return unified == OEM_UNIFY_OK ? OEM_RUN_CALLED : OEM_RUN_FAILED;
+}
+
 /* The region decides a HOST step its fast path covers.  An expression
  * whose head has a value no call can have is data, built over its values.
  * A type-pure operation runs the search machine's direct path once every
  * argument is a value: the operation's own implementation, an empty result
  * a failure, a truth value in the host's spelling.  The result meets the
  * step's destination.  CALLED continues after the step; what this does not
- * decide (a head that may be called, an unbound argument, no result, an
- * error, which the host's dialect treats in its own way) is the host's, as
- * HOST. */
+ * decide (a head that may be called, an unbound argument but to a
+ * structural test, no result, an error, which the host's dialect treats in
+ * its own way) is the host's, as HOST. */
 static __attribute__((noinline)) OemRun oem_fast_host_step(
         CettaOpenEquationCursor *cursor,
         const CettaOpenEquationProgram *program, Atom **locals,
@@ -3979,6 +6420,12 @@ static __attribute__((noinline)) OemRun oem_fast_host_step(
         return oem_admit_step(cursor, program, locals, step, value_out);
     }
     const OemTemplate *goal = &program->templates[step->value];
+    if (step->target == OEM_HOST_LIST)
+        return oem_list_step(cursor, program, locals, step, goal);
+    if (step->target == OEM_HOST_EXISTS)
+        return oem_exists_step(cursor, program, locals, step);
+    if (step->target == OEM_HOST_METATYPE)
+        return oem_metatype_step(cursor, program, locals, step, goal);
     if (step->target == OEM_HOST_SORT) {
         /* A ground list sorts here; a value with variables, and one whose
          * sort SWI rejects, go to the host, which raises as SWI does. */
@@ -4003,7 +6450,6 @@ static __attribute__((noinline)) OemRun oem_fast_host_step(
             return OEM_RUN_HANDOFF;
         return unified == OEM_UNIFY_OK ? OEM_RUN_CALLED : OEM_RUN_FAILED;
     }
-    enum { OEM_PURE_INLINE_ARGS = 8u };
     if (goal->kind != OEM_T_BUILD || goal->count == 0u ||
         goal->count - 1u > OEM_PURE_INLINE_ARGS)
         return OEM_RUN_HOST;
@@ -4016,32 +6462,22 @@ static __attribute__((noinline)) OemRun oem_fast_host_step(
         arg = arg ? oem_resolve_mode(cursor, arg, true) : NULL;
         if (!arg)
             return OEM_RUN_HANDOFF;
-        if (atom_has_vars(arg))
+        if (atom_has_vars(arg) && !petta_semantics_structural_test(step->op))
             return OEM_RUN_HOST;
         args[index] = oem_grounded_operand(cursor, arg);
         if (!args[index])
             return OEM_RUN_HANDOFF;
     }
-    Atom *head = atom_symbol_id(&cursor->region, step->op);
-    Atom *result = head
-        ? grounded_dispatch(&cursor->region, head, args, count) : NULL;
-    if (!result || atom_is_error(result))
-        return OEM_RUN_HOST;
-    if (atom_is_petta_no_result(result))
-        return OEM_RUN_FAILED;
-    bool truth = false;
-    if (petta_semantics_truth_value(result, &truth)) {
-        result = cursor->runtime.boolean_value
-            ? cursor->runtime.boolean_value(cursor->runtime.context,
-                                            &cursor->region, truth)
-            : petta_semantics_boolean_value(&cursor->region, truth);
-        if (!result)
-            return OEM_RUN_HANDOFF;
-    }
-    OemUnify unified = oem_meet(cursor, program, locals, step, result);
-    if (unified == OEM_UNIFY_ERROR)
+    /* The goal's head is its literal, which the program holds. */
+    const OemTemplate *spelled =
+        &program->templates[program->template_children[goal->first]];
+    Atom *head = spelled->kind == OEM_T_LITERAL &&
+            spelled->literal->kind == ATOM_SYMBOL &&
+            spelled->literal->sym_id == step->op
+        ? spelled->literal : atom_symbol_id(&cursor->region, step->op);
+    if (!head)
         return OEM_RUN_HANDOFF;
-    return unified == OEM_UNIFY_OK ? OEM_RUN_CALLED : OEM_RUN_FAILED;
+    return oem_pure_apply(cursor, program, locals, step, head, args, count);
 }
 
 typedef struct OemAbsentHead {
@@ -4109,9 +6545,12 @@ static __attribute__((noinline)) OemRun oem_local_step(
         .depth = depth,
     };
     const OemControl *control = &program->controls[step->control];
+    /* A superpose in a tail position hands its caller's continuation to its
+     * alternatives, whose answers meet the destination this equation's own
+     * output met; the return after the step serves the host's route. */
     if (step->target == OEM_HOST_ALTERNATIVES)
-        return oem_push_frame(cursor, program, control->local, args, after,
-                              depth + 1u)
+        return oem_push_frame(cursor, program, control->local, args,
+                              step->tail ? cont : after, depth + 1u)
             ? OEM_RUN_CALLED : OEM_RUN_HANDOFF;
     if (step->target == OEM_HOST_ONCE) {
         after->pc = control->resume;
@@ -4172,7 +6611,7 @@ static __attribute__((noinline)) OemRun oem_bound_reached(
     }
     if (index == 0u || (crossed && height == UINT32_MAX))
         return OEM_RUN_HANDOFF;
-    cursor->frame_len = index;
+    oem_truncate_frames(cursor, index);
     if (!crossed)
         return OEM_RUN_FAILED;
     cursor->cut_height = height;
@@ -4240,7 +6679,7 @@ static __attribute__((noinline)) OemRun oem_cut_step(
     }
     if (index == 0u || (crossed && height == UINT32_MAX))
         return OEM_RUN_HANDOFF;
-    cursor->frame_len = index - 1u;
+    oem_truncate_frames(cursor, index - 1u);
     if (!crossed)
         return OEM_RUN_CALLED;
     OemCont *resume = arena_alloc(&cursor->region, sizeof(*resume));
@@ -4256,43 +6695,328 @@ static __attribute__((noinline)) OemRun oem_cut_step(
     return OEM_RUN_CUT;
 }
 
+/* PeTTa's `(cut)`, Prolog's `!` with the value true: the pattern meets the
+ * truth value first, as PeTTa's translation binds a let's pattern before
+ * its value's goals run; then the frames above the barrier the activation's
+ * header records go without restoring anything: its call's untried
+ * equations and the alternatives the goals before the cut left.  When a
+ * host goal's frame is among them, the host's choices above the height it
+ * reported for the oldest such goal go too: the cursor leaves a resumption
+ * at the barrier, which the choice beneath that height resumes, as a once's
+ * CUT does. */
+static __attribute__((noinline)) OemRun oem_equation_cut_step(
+    CettaOpenEquationCursor *cursor, const CettaOpenEquationProgram *program,
+    uint32_t pc, Atom **locals, uint32_t local_count, const OemCont *cont,
+    uint32_t depth, const OemStep *step) {
+    Atom *truth = oem_truth(cursor, true);
+    OemUnify met = truth ? oem_meet(cursor, program, locals, step, truth)
+                         : OEM_UNIFY_ERROR;
+    if (met != OEM_UNIFY_OK)
+        return met == OEM_UNIFY_FAIL ? OEM_RUN_FAILED : OEM_RUN_HANDOFF;
+    uint32_t barrier = oem_slot_birth(((const uintptr_t *)locals)[-1]);
+    if (barrier > cursor->frame_len)
+        return OEM_RUN_HANDOFF;
+    bool crossed = false;
+    uint32_t height = UINT32_MAX;
+    for (uint32_t index = cursor->frame_len; index > barrier; index--) {
+        const OemFrame *frame = &cursor->frames[index - 1u];
+        if (oem_frame_is_host(frame)) {
+            crossed = true;
+            height = frame->host->height;
+        }
+    }
+    if (crossed && height == UINT32_MAX)
+        return OEM_RUN_HANDOFF;
+    oem_truncate_frames(cursor, barrier);
+    if (!crossed)
+        return OEM_RUN_CALLED;
+    OemCont *resume = arena_alloc(&cursor->region, sizeof(*resume));
+    if (!resume)
+        return OEM_RUN_HANDOFF;
+    *resume = (OemCont){
+        .parent = cont, .program = program, .locals = locals,
+        .local_count = local_count, .pc = pc + 1u, .depth = depth,
+    };
+    if (!oem_push_frame(cursor, NULL, OEM_RESUME_FRAME, NULL, resume, depth))
+        return OEM_RUN_HANDOFF;
+    cursor->cut_height = height;
+    return OEM_RUN_CUT;
+}
+
+static Atom *oem_fresh_var(CettaOpenEquationCursor *cursor, VarId id);
+
+/* What an import makes of the terms it reads: the call's arguments, whose
+ * variables are the call's cells and whose ground parts are shared; a stored
+ * row's copy, whose variables are fresh cells; a collected answer, copied out
+ * of the collection's storage, whose variables are fresh cells; a host's
+ * answer, copied whole, whose variables are the goal's cells, the call's, or
+ * fresh ones. */
+typedef enum {
+    OEM_IMPORT_CALL,
+    OEM_IMPORT_ROW,
+    OEM_IMPORT_COLLECTED,
+    OEM_IMPORT_HOST,
+} OemImportKind;
+
+typedef struct {
+    OemImportKind kind;
+    Atom *const *host_vars;
+    const OemHostCells *cells;
+    const CettaVarIndex *host_index;
+    /* Keys have meaning only under this fixed mode and variable context. */
+    OemAtomMap images;
+    AtomDeepCopySession *copies;
+} OemImport;
+
+static void oem_import_init(OemImport *import, OemImportKind kind) {
+    import->kind = kind;
+    import->host_vars = NULL;
+    import->cells = NULL;
+    import->host_index = NULL;
+    import->copies = NULL;
+    oem_atom_map_init(&import->images);
+}
+
+static void oem_import_free(OemImport *import) {
+    oem_atom_map_free(&import->images);
+    atom_deep_copy_session_free(import->copies);
+}
+
+static Atom *oem_import_copy(CettaOpenEquationCursor *cursor,
+                              OemImport *import, Atom *atom) {
+    if (!import->copies)
+        import->copies = atom_deep_copy_session_new(&cursor->region);
+    return import->copies ? atom_deep_copy_session_copy(import->copies, atom)
+                          : NULL;
+}
+
+/* A term's image in the region when the term decides it alone: a variable's
+ * cell, or a term the import keeps or copies whole.  NULL with `*descend`
+ * set asks for an expression's image from its elements' images; NULL
+ * otherwise is a failure. */
+static Atom *oem_import_node(CettaOpenEquationCursor *cursor,
+                             OemImport *import, Atom *atom,
+                             bool *descend) {
+    *descend = false;
+    switch (import->kind) {
+    case OEM_IMPORT_CALL:
+        if (atom->kind == ATOM_VAR) {
+            uint32_t position = cetta_var_index_find_atom(
+                &cursor->query_index, cursor->query_vars,
+                cursor->query_var_count, atom->var_id);
+            return position != UINT32_MAX
+                ? cursor->query_cells[position] : NULL;
+        }
+        break;
+    case OEM_IMPORT_ROW:
+        if (atom->kind == ATOM_VAR)
+            return oem_fresh_var(cursor, atom->var_id);
+        break;
+    case OEM_IMPORT_COLLECTED:
+        if (atom->arena_id != cursor->collected.identity)
+            return atom;
+        if (atom->kind == ATOM_VAR)
+            return oem_fresh_var(cursor, atom->var_id);
+        if (atom->kind != ATOM_EXPR || atom->expr.len == 0u)
+            return oem_import_copy(cursor, import, atom);
+        *descend = true;
+        return NULL;
+    case OEM_IMPORT_HOST:
+        if (atom->kind == ATOM_VAR) {
+            uint32_t position = cetta_var_index_find_atom(
+                import->host_index, import->host_vars,
+                import->cells->count, atom->var_id);
+            if (position != UINT32_MAX)
+                return cursor->cell_names[import->cells->cells[position]];
+            position = cursor->query_vars
+                ? cetta_var_index_find_atom(&cursor->query_index,
+                                            cursor->query_vars,
+                                            cursor->query_var_count,
+                                            atom->var_id)
+                : UINT32_MAX;
+            if (position != UINT32_MAX)
+                return cursor->query_cells[position];
+            return oem_fresh_var(cursor, atom->var_id);
+        }
+        if (atom->kind != ATOM_EXPR || !atom_has_vars(atom))
+            return oem_import_copy(cursor, import, atom);
+        *descend = true;
+        return NULL;
+    }
+    if (atom->kind != ATOM_EXPR || !atom_has_vars(atom))
+        return atom;
+    *descend = true;
+    return NULL;
+}
+
+/* A pending expression of an import and the images of its elements so far. */
+typedef struct {
+    Atom *atom;
+    Atom **children;
+    CettaExprIndex next;
+} OemImportFrame;
+
+/* Left-to-right explicit-stack import. Completed node images are reused
+ * only in this episode's fixed mode and variable context. Active-node hits
+ * reject cyclic physical graphs; binding cycles remain variable references.
+ * No arena reset or collection occurs during an episode (GraphImport). */
+static Atom *oem_import_walk(CettaOpenEquationCursor *cursor,
+                             OemImport *import, Atom *root) {
+    if (!root)
+        return NULL;
+    OemAtomMapEntry *known = oem_atom_map_find(&import->images, root);
+    if (known)
+        return known->image;
+    bool descend = false;
+    Atom *image = oem_import_node(cursor, import, root, &descend);
+    if (!descend)
+        return image;
+    OemImportFrame inline_frames[16];
+    OemImportFrame *frames = inline_frames;
+    uint32_t len = 0u;
+    uint32_t cap = 16u;
+    Atom *result = NULL;
+    Atom *atom = root;
+    for (;;) {
+        if (len == cap) {
+            if (cap > UINT32_MAX / 2u ||
+                (size_t)cap > SIZE_MAX / (2u * sizeof(*frames)))
+                goto done;
+            OemImportFrame *grown = malloc(sizeof(*grown) * (size_t)cap * 2u);
+            if (!grown)
+                goto done;
+            memcpy(grown, frames, sizeof(*frames) * (size_t)len);
+            if (frames != inline_frames)
+                free(frames);
+            frames = grown;
+            cap *= 2u;
+        }
+        if (!cetta_expr_len_mul_fits_size(atom->expr.len, sizeof(Atom *)) ||
+            !oem_atom_map_begin(&import->images, atom))
+            goto done;
+        Atom **children = arena_alloc(&cursor->region,
+                                      sizeof(*children) * atom->expr.len);
+        if (!children)
+            goto done;
+        frames[len++] = (OemImportFrame){atom, children, 0u};
+        for (;;) {
+            OemImportFrame *top = &frames[len - 1u];
+            if (top->next == top->atom->expr.len) {
+                image = atom_expr(&cursor->region, top->children,
+                                  top->atom->expr.len);
+                if (!image)
+                    goto done;
+                oem_atom_map_find(&import->images, top->atom)->image = image;
+                len--;
+                if (len == 0u) {
+                    result = image;
+                    goto done;
+                }
+                top = &frames[len - 1u];
+                top->children[top->next++] = image;
+                continue;
+            }
+            Atom *child = top->atom->expr.elems[top->next];
+            known = oem_atom_map_find(&import->images, child);
+            if (known) {
+                if (!known->image)
+                    goto done;
+                top->children[top->next++] = known->image;
+                continue;
+            }
+            image = oem_import_node(cursor, import, child, &descend);
+            if (descend) {
+                atom = child;
+                break;
+            }
+            if (!image)
+                goto done;
+            top->children[top->next++] = image;
+        }
+    }
+done:
+    if (frames != inline_frames)
+        free(frames);
+    return result;
+}
+
+/* Check each represented node once. The list tag is accepted only as
+ * the head of a complete internal cons carrier. Every other bare or
+ * embedded internal tag remains outside the region's interpretation. */
+bool cetta_open_equation_term_supported(Atom *root) {
+    if (!root)
+        return false;
+    if (!atom_structural_may_have_internal_tag(root))
+        return true;
+    Atom *inline_stack[32];
+    Atom **stack = inline_stack;
+    size_t len = 0u, capacity = 32u;
+    OemAtomMap visited;
+    oem_atom_map_init(&visited);
+    bool supported = true;
+    stack[len++] = root;
+    while (len && supported) {
+        Atom *atom = stack[--len];
+        if (!atom_structural_may_have_internal_tag(atom) ||
+            oem_atom_map_find(&visited, atom))
+            continue;
+        if (atom->kind == ATOM_GROUNDED &&
+            atom->ground.gkind == GV_INTERNAL_TAG) {
+            supported = false;
+            break;
+        }
+        if (atom->kind != ATOM_EXPR)
+            continue;
+        if (!oem_atom_map_begin(&visited, atom)) {
+            supported = false;
+            break;
+        }
+        if (!cetta_expr_len_mul_fits_size(atom->expr.len, sizeof(*stack)) ||
+            (size_t)atom->expr.len > SIZE_MAX - len) {
+            supported = false;
+            break;
+        }
+        size_t needed = len + (size_t)atom->expr.len;
+        if (needed > capacity) {
+            size_t grown_capacity = capacity;
+            while (grown_capacity < needed && grown_capacity <= SIZE_MAX / 2u)
+                grown_capacity *= 2u;
+            if (grown_capacity < needed ||
+                grown_capacity > SIZE_MAX / sizeof(*stack)) {
+                supported = false;
+                break;
+            }
+            Atom **grown = malloc(grown_capacity * sizeof(*grown));
+            if (!grown) {
+                supported = false;
+                break;
+            }
+            memcpy(grown, stack, len * sizeof(*stack));
+            if (stack != inline_stack)
+                free(stack);
+            stack = grown;
+            capacity = grown_capacity;
+        }
+        CettaExprIndex first = petta_semantics_is_open_cons_value(atom) ? 1u : 0u;
+        for (CettaExprIndex child = atom->expr.len; child-- > first;)
+            stack[len++] = atom->expr.elems[child];
+    }
+    if (stack != inline_stack)
+        free(stack);
+    oem_atom_map_free(&visited);
+    return supported;
+}
+
 /* A collected answer in the region: each of its variables becomes a fresh
  * cell, one per variable of the answer, and what the collection copied is
  * copied again, since its storage is about to be reused. */
 static Atom *oem_import_collected(CettaOpenEquationCursor *cursor,
-                                  Atom *atom, uint32_t depth) {
-    if (depth > OEM_MAX_DEPTH)
-        return NULL;
-    if (atom->arena_id != cursor->collected.identity)
-        return atom;
-    if (atom->kind == ATOM_VAR) {
-        for (uint32_t index = 0u; index < cursor->fresh_var_len; index++) {
-            if (cursor->fresh_vars[index].id == atom->var_id)
-                return cursor->fresh_vars[index].cell;
-        }
-        Atom *cell = oem_new_cell(cursor);
-        if (!cell ||
-            !oem_reserve((void **)&cursor->fresh_vars, &cursor->fresh_var_cap,
-                         cursor->fresh_var_len + 1u,
-                         sizeof(*cursor->fresh_vars)))
-            return NULL;
-        cursor->fresh_vars[cursor->fresh_var_len++] =
-            (OemFreshVar){.id = atom->var_id, .cell = cell};
-        return cell;
-    }
-    if (atom->kind != ATOM_EXPR || atom->expr.len == 0u)
-        return atom_deep_copy(&cursor->region, atom);
-    Atom **children = arena_alloc(&cursor->region,
-                                  sizeof(*children) * atom->expr.len);
-    if (!children)
-        return NULL;
-    for (CettaExprIndex child = 0u; child < atom->expr.len; child++) {
-        children[child] = oem_import_collected(
-            cursor, atom->expr.elems[child], depth + 1u);
-        if (!children[child])
-            return NULL;
-    }
-    return atom_expr(&cursor->region, children, atom->expr.len);
+                                  Atom *atom) {
+    OemImport import;
+    oem_import_init(&import, OEM_IMPORT_COLLECTED);
+    Atom *result = oem_import_walk(cursor, &import, atom);
+    oem_import_free(&import);
+    return result;
 }
 
 /* A completed collection's list, its answers in the order they came, built
@@ -4306,7 +7030,7 @@ static Atom *oem_collected_list(CettaOpenEquationCursor *cursor,
     for (OemCollectItem *item = box->last; items && item;
          item = item->prev) {
         cursor->fresh_var_len = 0u;
-        items[--index] = oem_import_collected(cursor, item->value, 0u);
+        items[--index] = oem_import_collected(cursor, item->value);
         if (!items[index])
             items = NULL;
     }
@@ -4352,6 +7076,24 @@ static __attribute__((noinline)) OemRun oem_elements_step(
         ? OEM_RUN_CALLED : OEM_RUN_HANDOFF;
 }
 
+static OemRun oem_enter(CettaOpenEquationCursor *cursor,
+                        const CettaOpenEquationProgram *version,
+                        uint32_t relation_index, Atom **args,
+                        const OemCont *cont, uint32_t depth,
+                        OemEntry *entry);
+
+/* Whether the cursor's loop has work due before it enters another frame:
+ * the activation budget is spent, an interrupt poll is next, or the region
+ * has grown to its collection threshold.  A call then goes through a frame,
+ * and the loop does that work first. */
+static inline bool oem_loop_due(const CettaOpenEquationCursor *cursor) {
+    return (cursor->runtime.activation_budget &&
+            cursor->stats.activations >=
+                cursor->runtime.activation_budget) ||
+        (cursor->runtime.interrupt && cursor->poll >= 255u) ||
+        arena_accounted_live_bytes(&cursor->region) >= cursor->collect_after;
+}
+
 static OemRun oem_run_body(CettaOpenEquationCursor *cursor,
                            const CettaOpenEquationProgram *program,
                            uint32_t pc, Atom **locals, uint32_t local_count,
@@ -4363,9 +7105,25 @@ static OemRun oem_run_body(CettaOpenEquationCursor *cursor,
         const OemStep *step = &program->steps[pc];
         switch ((OemStepKind)step->kind) {
         case OEM_S_RET:
-            /* The destination already holds the output. */
+            /* The destination already holds the output, unless the caller
+             * stores it: then it goes to the caller's slot. */
             if (!cont)
                 return oem_publish(cursor, cursor->destination, value_out);
+            if (cont->store) {
+                /* When the caller's slot holds the cell a chain of last
+                 * calls filled, the value it holds replaces it, so the
+                 * caller reads no chain of bindings. */
+                uint32_t slot = cont->program->templates[cont->pattern].slot;
+                Atom *held = cont->locals[slot];
+                Atom *output = held ? held
+                                    : oem_instantiate(cursor, program, locals,
+                                                      step->value);
+                Atom *value = output ? oem_deref(cursor, output) : NULL;
+                if (!value ||
+                    (value != held &&
+                     !oem_store_slot(cursor, cont->locals, slot, value)))
+                    return OEM_RUN_HANDOFF;
+            }
             program = cont->program;
             locals = cont->locals;
             local_count = cont->local_count;
@@ -4378,12 +7136,17 @@ static OemRun oem_run_body(CettaOpenEquationCursor *cursor,
             return OEM_RUN_FAILED;
         case OEM_S_CALL:
         case OEM_S_TAIL: {
-            Atom **args = arena_alloc(
-                &cursor->region,
-                sizeof(*args) * (step->arg_count ? step->arg_count : 1u));
-            if (!args)
+            /* The arguments go where the callee's head reads them: the
+             * first registers.  A frame that keeps alternatives holds a copy
+             * in the region. */
+            uint32_t arg_count = step->arg_count;
+            uint32_t arg_need = arg_count ? arg_count : 1u;
+            if (arg_need > cursor->reg_cap &&
+                !oem_reserve((void **)&cursor->regs, &cursor->reg_cap,
+                             arg_need, sizeof(*cursor->regs)))
                 return OEM_RUN_HANDOFF;
-            for (uint32_t index = 0u; index < step->arg_count; index++) {
+            Atom **args = cursor->regs;
+            for (uint32_t index = 0u; index < arg_count; index++) {
                 args[index] = oem_instantiate(cursor, program, locals,
                     program->step_args[step->first_arg + index]);
                 if (!args[index])
@@ -4391,23 +7154,29 @@ static OemRun oem_run_body(CettaOpenEquationCursor *cursor,
             }
             const OemCont *next = cont;
             if (step->kind == OEM_S_CALL) {
-                OemCont *record = arena_alloc(&cursor->region,
-                                              sizeof(*record));
+                OemCont *record = oem_region_alloc(cursor, sizeof(*record));
                 if (!record)
                     return OEM_RUN_HANDOFF;
                 *record = (OemCont){
                     .parent = cont, .program = program, .locals = locals,
                     .local_count = local_count, .pc = pc + 1u,
                     .pattern = step->pattern, .depth = depth,
+                    .recovers = step->recovers, .store = step->store,
                 };
+                if (step->recovers)
+                    cursor->recovering = true;
                 next = record;
             }
             /* A call enters the equations current at its entry: the running
              * code's own, unless something changed since that code was
-             * entered, then the host's current program for the relation. */
+             * entered, then the host's current program for the relation.  A
+             * local relation belongs to the code that calls it, and runs in
+             * that version; the named relations it calls are entered
+             * current. */
             const CettaOpenEquationProgram *target = program;
             uint32_t relation = step->relation;
-            if (!oem_version_current(cursor, program)) {
+            if (!oem_version_current(cursor, program) &&
+                !program->relations[relation].local) {
                 const OemRelation *callee = &program->relations[relation];
                 target = oem_enter_current(cursor, program->space,
                                            callee->head, callee->arity);
@@ -4417,7 +7186,29 @@ static OemRun oem_run_body(CettaOpenEquationCursor *cursor,
                 }
                 relation = 0u;
             }
-            return oem_push_frame(cursor, target, relation, args, next,
+            /* The call selects its equation and enters it here, unless the
+             * loop has work due first; then a frame holds the call. */
+            if (!oem_loop_due(cursor)) {
+                if (cursor->runtime.interrupt)
+                    cursor->poll++;
+                OemEntry callee;
+                OemRun run = oem_enter(cursor, target, relation, args, next,
+                                       depth + 1u, &callee);
+                if (run != OEM_RUN_CALLED)
+                    return run;
+                program = callee.program;
+                pc = callee.pc;
+                locals = callee.locals;
+                local_count = callee.local_count;
+                cont = callee.cont;
+                depth = callee.depth;
+                continue;
+            }
+            Atom **held = oem_region_alloc(cursor, sizeof(*held) * arg_need);
+            if (!held)
+                return OEM_RUN_HANDOFF;
+            memcpy(held, args, sizeof(*held) * arg_count);
+            return oem_push_frame(cursor, target, relation, held, next,
                                   depth + 1u)
                 ? OEM_RUN_CALLED : OEM_RUN_HANDOFF;
         }
@@ -4461,10 +7252,11 @@ static OemRun oem_run_body(CettaOpenEquationCursor *cursor,
                     return OEM_RUN_HANDOFF;
             } else {
                 bool truth = false;
-                OemRun run = oem_host_arithmetic(cursor, step, left, right,
+                OemRun run = oem_host_arithmetic(cursor, program, step,
+                                                 left, right,
                                                  &value, &truth, value_out);
                 if (run != OEM_RUN_CALLED)
-                    return run;
+                    return oem_raised(cursor, cont, run);
                 if (step->kind == OEM_S_TEST) {
                     pc = truth ? pc + 1u : step->target;
                     continue;
@@ -4515,7 +7307,7 @@ static OemRun oem_run_body(CettaOpenEquationCursor *cursor,
                 if (run == OEM_RUN_ENTERED)
                     return OEM_RUN_CALLED;
                 if (run != OEM_RUN_HOST)
-                    return run;
+                    return oem_raised(cursor, cont, run);
                 /* The host fills a slot this step would have stored: it
                  * takes a cell here, at its first occurrence. */
                 if (step->store) {
@@ -4537,6 +7329,15 @@ static OemRun oem_run_body(CettaOpenEquationCursor *cursor,
             if (run != OEM_RUN_CALLED)
                 return run;
             pc = step->target;
+            continue;
+        }
+        case OEM_S_EQUATION_CUT: {
+            OemRun run = oem_equation_cut_step(cursor, program, pc, locals,
+                                               local_count, cont, depth,
+                                               step);
+            if (run != OEM_RUN_CALLED)
+                return run;
+            pc++;
             continue;
         }
         case OEM_S_CASE: {
@@ -4623,7 +7424,8 @@ static bool oem_may_match(CettaOpenEquationCursor *cursor,
         regs[index] = index < arity ? args[index] : NULL;
     for (uint32_t op_index = 0u; op_index < eq->op_count; op_index++) {
         const OemMatchOp *op = &program->ops[eq->first_op + op_index];
-        if (op->kind != OEM_M_ATOM && op->kind != OEM_M_EXPR)
+        if (op->kind != OEM_M_ATOM && op->kind != OEM_M_EXPR &&
+            op->kind != OEM_M_LIST)
             continue;
         Atom *term = regs[op->reg];
         uint32_t cell = 0u;
@@ -4636,6 +7438,18 @@ static bool oem_may_match(CettaOpenEquationCursor *cursor,
                 return false;
             continue;
         }
+        if (op->kind == OEM_M_LIST) {
+            /* A nonempty list; its rest is left open, and so is the whole
+             * of a cell the operation reads as spelled. */
+            if (!open && (term->kind != ATOM_EXPR || term->expr.len == 0u))
+                return false;
+            regs[op->operand] =
+                open || (op->spelled &&
+                         petta_semantics_is_cons_constraint(term))
+                    ? NULL : term->expr.elems[0];
+            regs[op->operand + 1u] = NULL;
+            continue;
+        }
         if (!open && (term->kind != ATOM_EXPR ||
                       term->expr.len != op->length))
             return false;
@@ -4645,30 +7459,67 @@ static bool oem_may_match(CettaOpenEquationCursor *cursor,
     return true;
 }
 
-static OemRun oem_activate(CettaOpenEquationCursor *cursor,
-                           const CettaOpenEquationProgram *program,
-                           uint32_t equation, Atom **args, uint32_t arity,
-                           const OemCont *cont, OemEntry *entry) {
+/* Empty a new slot vector.  Most are short, and stores cost less than a
+ * call to memset. */
+static inline void oem_clear_slots(Atom **slots, uint32_t count) {
+    switch (count) {
+    case 8u: slots[7] = NULL; /* fallthrough */
+    case 7u: slots[6] = NULL; /* fallthrough */
+    case 6u: slots[5] = NULL; /* fallthrough */
+    case 5u: slots[4] = NULL; /* fallthrough */
+    case 4u: slots[3] = NULL; /* fallthrough */
+    case 3u: slots[2] = NULL; /* fallthrough */
+    case 2u: slots[1] = NULL; /* fallthrough */
+    case 1u: slots[0] = NULL; /* fallthrough */
+    case 0u: return;
+    default: memset(slots, 0, sizeof(*slots) * count); return;
+    }
+}
+
+/* Equations selection passes over, each counted as a failed head, as its
+ * activation would count. */
+static inline void oem_count_passed_over(CettaOpenEquationCursor *cursor,
+                                         uint32_t count) {
+    cursor->stats.head_failures += count;
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_UNIFICATION_ATTEMPT, count);
+    cetta_runtime_stats_add(
+        CETTA_RUNTIME_COUNTER_UNIFICATION_ATTEMPT_HEAD_FAIL, count);
+}
+
+static inline __attribute__((always_inline)) OemRun oem_activate(
+    CettaOpenEquationCursor *cursor, const CettaOpenEquationProgram *program,
+    uint32_t equation, Atom **args, uint32_t arity, const OemCont *cont,
+    bool own_frame, OemEntry *entry) {
     const OemEquation *eq = &program->equations[equation];
     /* A slot vector is preceded by the number of frames live when its
      * activation began, which tells a store whether a later frame could
-     * resume the activation's code before the store. */
-    uintptr_t *header = arena_alloc(
-        &cursor->region,
+     * resume the activation's code before the store, less its call's own
+     * frame when the equation cuts, which tells the cut the height beneath
+     * the call, and by the collection epoch, which tells whether the vector
+     * is old. */
+    uintptr_t *header = oem_region_alloc(
+        cursor,
         sizeof(*header) + sizeof(Atom *) * (eq->slot_count ? eq->slot_count
                                                           : 1u));
-    Atom **locals = header ? (Atom **)(header + 1) : NULL;
-    if (header)
-        header[0] = cursor->frame_len;
-    if (!locals ||
+    if (!header)
+        return OEM_RUN_HANDOFF;
+    header[0] = oem_slot_header(
+        cursor, cursor->frame_len - (uint32_t)(own_frame & eq->cuts));
+    Atom **locals = (Atom **)(header + 1);
+    /* A call entered from its caller's body put its arguments in the
+     * registers; growing them keeps their contents. */
+    bool in_registers = args == cursor->regs;
+    uint32_t register_need = eq->register_count ? eq->register_count : 1u;
+    if (register_need > cursor->reg_cap &&
         !oem_reserve((void **)&cursor->regs, &cursor->reg_cap,
-                     eq->register_count ? eq->register_count : 1u,
-                     sizeof(*cursor->regs)))
+                     register_need, sizeof(*cursor->regs)))
         return OEM_RUN_HANDOFF;
     Atom **regs = cursor->regs;
-    memset(locals, 0, sizeof(*locals) * eq->slot_count);
-    for (uint32_t index = 0u; index < arity; index++)
-        regs[index] = args[index];
+    oem_clear_slots(locals, eq->slot_count);
+    if (!in_registers) {
+        for (uint32_t index = 0u; index < arity; index++)
+            regs[index] = args[index];
+    }
     uint64_t binds_at_start = cursor->binds;
     for (uint32_t op_index = 0u; op_index < eq->op_count; op_index++) {
         const OemMatchOp *op = &program->ops[eq->first_op + op_index];
@@ -4766,16 +7617,70 @@ static OemRun oem_activate(CettaOpenEquationCursor *cursor,
             }
             break;
         }
+        case OEM_M_LIST: {
+            Atom *term = oem_deref(cursor, regs[op->reg]);
+            uint32_t cell = 0u;
+            if (oem_is_cell(cursor, term, &cell)) {
+                /* An open position takes a cons cell of two fresh cells,
+                 * which the head's later operations fill. */
+                Atom *first = oem_new_cell(cursor);
+                Atom *rest = first ? oem_new_cell(cursor) : NULL;
+                Atom *node = rest
+                    ? petta_semantics_open_cons_value(&cursor->region, first,
+                                                      rest)
+                    : NULL;
+                if (!node || !oem_bind(cursor, cell, node))
+                    return OEM_RUN_HANDOFF;
+                regs[op->operand] = first;
+                regs[op->operand + 1u] = rest;
+            } else if (oem_is_list_cell(term) ||
+                       (op->spelled &&
+                        petta_semantics_is_cons_constraint(term))) {
+                regs[op->operand] = term->expr.elems[1];
+                regs[op->operand + 1u] = term->expr.elems[2];
+            } else if (term->kind == ATOM_EXPR && term->expr.len > 0u) {
+                /* A flat list's rest is its suffix, sharing its storage. */
+                Atom *rest = atom_expr_suffix(&cursor->region, term, 1u);
+                if (!rest)
+                    return OEM_RUN_HANDOFF;
+                regs[op->operand] = term->expr.elems[0];
+                regs[op->operand + 1u] = rest;
+            } else {
+                cursor->stats.head_failures++;
+                return oem_count_attempt(cursor, OEM_ATTEMPT_MISMATCH,
+                                         binds_at_start, OEM_RUN_FAILED);
+            }
+            break;
+        }
         }
     }
     Atom *destination = NULL;
     bool constrain = false;
-    if (eq->dest_kind != OEM_DEST_NONE) {
+    /* A caller that stores the value it gets back has no destination for
+     * the equation to meet, and its return stores the output.  But an
+     * output slot head matching left unset needs one to fill: the caller's
+     * slot takes a cell, which the equations of a chain of last calls
+     * then share, as they share a destination. */
+    bool meets = eq->dest_kind != OEM_DEST_NONE;
+    if (meets && cont && cont->store) {
+        uint32_t slot = cont->program->templates[cont->pattern].slot;
+        destination = cont->locals[slot];
+        if (!destination && eq->dest_kind == OEM_DEST_SLOT &&
+            !locals[eq->destination]) {
+            destination = oem_new_cell(cursor);
+            if (!destination ||
+                !oem_store_slot(cursor, cont->locals, slot, destination))
+                return OEM_RUN_HANDOFF;
+        }
+        meets = destination != NULL;
+    } else if (meets) {
         destination = cont
             ? oem_instantiate(cursor, cont->program, cont->locals, cont->pattern)
             : cursor->destination;
         if (!destination)
             return OEM_RUN_HANDOFF;
+    }
+    if (meets) {
         /* An output slot that head matching left unset is the destination
          * itself: nothing to unify, except the output the body fixes. */
         if (eq->dest_kind == OEM_DEST_SLOT && !locals[eq->destination]) {
@@ -4786,11 +7691,12 @@ static OemRun oem_activate(CettaOpenEquationCursor *cursor,
         }
     }
     /* A slot the body stores at its first occurrence waits for that store,
-     * and a slot the body never mentions stays empty; every other
-     * unassigned slot is a cell. */
-    const uint8_t *stores = &program->slot_stores[eq->first_slot_store];
-    for (uint32_t slot = 0u; slot < eq->slot_count; slot++) {
-        if (!locals[slot] && !stores[slot]) {
+     * and a slot the body never mentions stays empty; every other slot head
+     * matching left unset is a cell (the equation's `cell_slots`). */
+    const uint32_t *cell_slots = &program->cell_slots[eq->first_cell_slot];
+    for (uint32_t index = 0u; index < eq->cell_slot_count; index++) {
+        uint32_t slot = cell_slots[index];
+        if (!locals[slot]) {
             locals[slot] = oem_new_cell(cursor);
             if (!locals[slot])
                 return OEM_RUN_HANDOFF;
@@ -4813,11 +7719,7 @@ static OemRun oem_activate(CettaOpenEquationCursor *cursor,
      * the head's relational occurrences or the body run their effects. */
     if (constrain) {
         Atom *truth = eq->output_kind == OEM_OUTPUT_TRUE
-            ? (cursor->runtime.boolean_value
-                   ? cursor->runtime.boolean_value(cursor->runtime.context,
-                                                   &cursor->region, true)
-                   : petta_semantics_boolean_value(&cursor->region, true))
-            : NULL;
+            ? oem_truth(cursor, true) : NULL;
         OemUnify unified = eq->output_kind == OEM_OUTPUT_TRUE
             ? (truth ? oem_unify(cursor, truth, locals[eq->destination])
                      : OEM_UNIFY_ERROR)
@@ -4869,6 +7771,9 @@ static void oem_link_generations(CettaOpenEquationCursor *cursor) {
  * for this much, so a cursor that ends sooner, as most do, never pays for
  * one: its region is dropped whole. */
 enum { OEM_COLLECT_MIN_BYTES = 4u * 1024u * 1024u };
+/* The most a declined major's wait grows: four times the old generation
+ * found live.  A generation that later dies waits at most that long. */
+enum { OEM_MAJOR_DECLINE_SHIFT_MAX = 2u };
 /* A cursor that has collected once is long-running.  Its next window is
  * 32 times what the collection promoted, between this floor and the first
  * window: collecting then costs about 1/32 of the allocation, and a region
@@ -4881,6 +7786,34 @@ enum { OEM_COLLECT_SURVIVAL_RATIO = 32u };
 /* The old generation's size below which it is not collected: a major
  * collection runs once promotion has doubled it since the last. */
 enum { OEM_MAJOR_MIN_BYTES = 32u * 1024u * 1024u };
+
+/* The first window, the steady floor and the major threshold in force.  A
+ * test sets CETTA_OEM_COLLECT_STRESS to collect, minor and major, after
+ * every few kilobytes, so that collections meet every state the mutator
+ * makes between them; the values then are the stress sizes. */
+typedef struct {
+    size_t first;
+    size_t steady;
+    size_t major;
+} OemCollectSizes;
+
+static const OemCollectSizes *oem_collect_sizes(void) {
+    static OemCollectSizes sizes;
+    static bool ready;
+    if (!ready) {
+        const char *stress = getenv("CETTA_OEM_COLLECT_STRESS");
+        sizes = stress && stress[0] && strcmp(stress, "0") != 0
+            ? (OemCollectSizes){
+                  .first = 16u * 1024u, .steady = 16u * 1024u,
+                  .major = 64u * 1024u}
+            : (OemCollectSizes){
+                  .first = OEM_COLLECT_MIN_BYTES,
+                  .steady = OEM_COLLECT_STEADY_BYTES,
+                  .major = OEM_MAJOR_MIN_BYTES};
+        ready = true;
+    }
+    return &sizes;
+}
 /* The bound of a single-generation region: past it the region is
  * collected whatever holds it. */
 enum { OEM_REGION_BOUND_BYTES = 256u * 1024u * 1024u };
@@ -4899,6 +7832,13 @@ typedef struct {
     bool minor;
     OemSpan *young;
     uint32_t young_len;
+    /* In a major collection, the old generation's blocks, which it frees
+     * too, in address order. */
+    OemSpan *old_spans;
+    uint32_t old_span_len;
+    /* The span the last test found: objects reached together were mostly
+     * allocated together. */
+    OemSpan hit;
     /* The region's bytes the trace reached, and the bytes of the frames'
      * slot vectors and continuations it walked. */
     size_t reached_young;
@@ -4912,11 +7852,18 @@ typedef struct {
     AtomDeepCopySession *detach;
     const void **keys;
     void **values;
+    /* The table's size when its first entry comes. */
+    size_t first_cap;
     size_t cap;
     size_t len;
     /* Cells a live term mentions: `reached` marks them, `pending` lists the
      * bound ones whose values are still to be traced; `remap` is a reached
-     * cell's index after compaction. */
+     * cell's index after compaction.  A minor collection keeps every cell
+     * below `cell_base` at its index and traces none of them from a term
+     * (their values change only through `oem_bind`, which remembers them),
+     * so these tables cover the cells from `cell_base` on, and a cell below
+     * it is never shunted. */
+    uint32_t cell_base;
     uint8_t *reached;
     uint32_t *pending;
     uint32_t pending_len;
@@ -4934,10 +7881,20 @@ typedef struct {
     bool record;
 } OemCollect;
 
+/* A table size, a power of two of at least 1024, that holds `hint`
+ * entries at the table's load bound. */
+static size_t oem_collect_table_size(size_t hint) {
+    size_t cap = 1024u;
+    while (cap < SIZE_MAX / 4u && (hint + 1u) * 2u > cap)
+        cap *= 2u;
+    return cap;
+}
+
+/* Fibonacci hashing: the product's top bits index a table of `cap`, a power
+ * of two, so neighbouring addresses spread across it. */
 static size_t oem_collect_hash(const void *key, size_t cap) {
-    uint64_t h = (uint64_t)(uintptr_t)key >> 4;
-    h *= UINT64_C(0x9E3779B97F4A7C15);
-    return (size_t)(h >> 20) & (cap - 1u);
+    uint64_t h = (uint64_t)(uintptr_t)key * UINT64_C(0x9E3779B97F4A7C15);
+    return (size_t)(h >> (64u - (unsigned)__builtin_ctzll((uint64_t)cap)));
 }
 
 static void *oem_collect_find(const OemCollect *collect, const void *key) {
@@ -4952,10 +7909,24 @@ static void *oem_collect_find(const OemCollect *collect, const void *key) {
     }
 }
 
+/* The value cell of `key`, or NULL when the table has none. */
+static void **oem_collect_value_at(OemCollect *collect, const void *key) {
+    if (collect->cap == 0u)
+        return NULL;
+    for (size_t index = oem_collect_hash(key, collect->cap);;
+         index = (index + 1u) & (collect->cap - 1u)) {
+        if (!collect->keys[index])
+            return NULL;
+        if (collect->keys[index] == key)
+            return &collect->values[index];
+    }
+}
+
 static bool oem_collect_put(OemCollect *collect, const void *key,
                             void *value) {
     if ((collect->len + 1u) * 2u > collect->cap) {
-        size_t cap = collect->cap ? collect->cap * 2u : 1024u;
+        size_t cap = collect->cap ? collect->cap * 2u
+            : collect->first_cap ? collect->first_cap : 1024u;
         const void **keys = calloc(cap, sizeof(*keys));
         void **values = calloc(cap, sizeof(*values));
         if (!keys || !values) {
@@ -5001,31 +7972,51 @@ static int oem_span_order(const void *left, const void *right) {
     return a < b ? -1 : a > b;
 }
 
-static bool oem_collect_young_spans(const Arena *region,
-                                    OemCollect *collect) {
+/* An arena's used blocks, in address order. */
+static bool oem_collect_spans(const Arena *arena, OemSpan **spans_out,
+                              uint32_t *len_out) {
     uint32_t count = 0u;
-    for (const ArenaBlock *block = region->head; block; block = block->next)
+    for (const ArenaBlock *block = arena->head; block; block = block->next)
         count++;
-    collect->young = malloc(sizeof(*collect->young) * (count ? count : 1u));
-    if (!collect->young)
+    OemSpan *spans = malloc(sizeof(*spans) * (count ? count : 1u));
+    if (!spans)
         return false;
-    for (const ArenaBlock *block = region->head; block; block = block->next) {
+    uint32_t len = 0u;
+    for (const ArenaBlock *block = arena->head; block; block = block->next) {
         if (block->used == 0u)
             continue;
-        collect->young[collect->young_len++] = (OemSpan){
+        spans[len++] = (OemSpan){
             .start = (uintptr_t)block->data,
             .end = (uintptr_t)block->data + block->used,
         };
     }
-    qsort(collect->young, collect->young_len, sizeof(*collect->young),
-          oem_span_order);
+    qsort(spans, len, sizeof(*spans), oem_span_order);
+    *spans_out = spans;
+    *len_out = len;
     return true;
 }
 
+static bool oem_span_holds(const OemSpan *spans, uint32_t len,
+                           uintptr_t at) {
+    uint32_t low = 0u;
+    uint32_t high = len;
+    while (low < high) {
+        uint32_t mid = low + (high - low) / 2u;
+        if (at < spans[mid].start)
+            high = mid;
+        else if (at >= spans[mid].end)
+            low = mid + 1u;
+        else
+            return true;
+    }
+    return false;
+}
+
 /* Whether the region holds the continuation or slot vector at `ptr`. */
-static bool oem_collect_in_region(const OemCollect *collect,
-                                  const void *ptr) {
+static bool oem_collect_in_region(OemCollect *collect, const void *ptr) {
     uintptr_t at = (uintptr_t)ptr;
+    if (at >= collect->hit.start && at < collect->hit.end)
+        return true;
     uint32_t low = 0u;
     uint32_t high = collect->young_len;
     while (low < high) {
@@ -5034,10 +8025,59 @@ static bool oem_collect_in_region(const OemCollect *collect,
             high = mid;
         else if (at >= collect->young[mid].end)
             low = mid + 1u;
-        else
+        else {
+            collect->hit = collect->young[mid];
             return true;
+        }
     }
     return false;
+}
+
+/* Whether the collection frees the storage at `ptr`: the region's, and in a
+ * major collection the old generation's. */
+static bool oem_collect_frees(OemCollect *collect, const void *ptr) {
+    return oem_collect_in_region(collect, ptr) ||
+        oem_span_holds(collect->old_spans, collect->old_span_len,
+                       (uintptr_t)ptr);
+}
+
+/* A view (an expression whose elements lie outside its header) over
+ * storage the collection neither moves nor frees: the host's, or, in a
+ * minor collection, the old generation's.  That storage is immutable and
+ * older than everything the collection moves, so the young trace does not
+ * enter it (RememberedSetTrace.minor_trace_complete: a minor collection
+ * keeps every cell an old atom may name, and the host's atoms name none),
+ * and the view is traced and copied as its header alone.  An arena being
+ * detached may own the storage, so a detaching collection copies views as
+ * it copies everything else. */
+/* A view shorter than this is traced and copied whole: its cost is bounded
+ * by this length, below what the storage table costs per view. */
+enum { OEM_SHARED_VIEW_MIN = 16u };
+
+/* A nonempty expression that is a view: its elements lie outside its
+ * header, and it is at least OEM_SHARED_VIEW_MIN long. */
+static inline bool oem_long_view(const Atom *atom) {
+    return atom->expr.elems != (Atom **)(atom + 1) &&
+        atom->expr.len >= OEM_SHARED_VIEW_MIN;
+}
+
+static inline bool oem_is_view(const Atom *atom) {
+    return atom->kind == ATOM_EXPR && atom->expr.len > 0u &&
+        oem_long_view(atom);
+}
+
+static inline __attribute__((always_inline)) bool oem_view_over_kept_storage(
+    OemCollect *collect, const Atom *atom) {
+    return oem_long_view(atom) && collect->detach_identity == 0u &&
+        !oem_collect_frees(collect, atom->expr.elems);
+}
+
+/* The table key of the storage ending at `end`: a view's storage is told by
+ * its end, which every suffix of it shares.  Objects key the table at their
+ * aligned addresses and in-place renames at an address plus one, so an end
+ * plus two meets neither. */
+static inline const void *oem_storage_key(Atom *const *end) {
+    return (const char *)end + 2;
 }
 
 /* Whether the collection moves the continuation or slot vector at `ptr`: a
@@ -5045,7 +8085,7 @@ static bool oem_collect_in_region(const OemCollect *collect,
  * region holds.  An older object stays where it is: it was made before every
  * region object and names none of them, except through a slot stored since
  * its promotion. */
-static bool oem_collect_moves(const OemCollect *collect, const void *ptr) {
+static bool oem_collect_moves(OemCollect *collect, const void *ptr) {
     return !collect->minor || oem_collect_in_region(collect, ptr);
 }
 
@@ -5068,18 +8108,36 @@ static Atom *oem_collect_shunt(const CettaOpenEquationCursor *cursor,
                                const OemCollect *collect, Atom *atom) {
     uint32_t cell = 0u;
     while (oem_is_cell(cursor, atom, &cell) && cursor->cells[cell] &&
-           !collect->revocable[cell])
+           cell >= collect->cell_base &&
+           !collect->revocable[cell - collect->cell_base])
         atom = cursor->cells[cell];
     return atom;
 }
 
 static void oem_collect_reach(CettaOpenEquationCursor *cursor,
                               OemCollect *collect, uint32_t cell) {
-    if (collect->reached[cell])
+    if (cell < collect->cell_base)
         return;
-    collect->reached[cell] = 1u;
+    uint32_t at = cell - collect->cell_base;
+    if (collect->reached[at])
+        return;
+    collect->reached[at] = 1u;
     if (cursor->cells[cell])
         collect->pending[collect->pending_len++] = cell;
+}
+
+/* A cell's index after the collection: an old cell keeps its own. */
+static inline uint32_t oem_collect_index(const OemCollect *collect,
+                                         uint32_t cell) {
+    return cell < collect->cell_base
+        ? cell : collect->remap[cell - collect->cell_base];
+}
+
+/* Whether the collection keeps cell `cell`. */
+static inline bool oem_collect_kept(const OemCollect *collect,
+                                    uint32_t cell) {
+    return cell < collect->cell_base ||
+        collect->reached[cell - collect->cell_base];
 }
 
 /* A region expression the collection has visited: its `name_key`, null on
@@ -5089,6 +8147,27 @@ static void oem_collect_reach(CettaOpenEquationCursor *cursor,
  * the cursor's alone and is freed by the collection (a failed collection
  * ends the cursor), so marking it needs no side table. */
 static Atom oem_traced_mark;
+
+/* The copy a collection made of an expression, or NULL. */
+static inline Atom *oem_collected_copy(const Atom *atom) {
+    Atom *copy = atom->name_key;
+    return copy && copy != &oem_traced_mark && copy != &oem_exported_mark
+        ? copy : NULL;
+}
+
+/* For a view without variables over storage the collection frees, the
+ * longest suffix of that storage the trace met, when it is another view:
+ * the view is copied as a header over that suffix's copy
+ * (SuffixViewCopy.view_copy).  A view with variables is copied whole, since
+ * its elements' cells are renamed and its summaries would change. */
+static inline __attribute__((always_inline)) Atom *oem_view_longest(
+    OemCollect *collect, const Atom *atom) {
+    if (!oem_is_view(atom) || atom_has_vars(atom))
+        return NULL;
+    Atom *longest = oem_collect_find(
+        collect, oem_storage_key(atom->expr.elems + atom->expr.len));
+    return longest && longest != atom ? longest : NULL;
+}
 
 /* Mark the cells a term mentions; region expressions are visited once. */
 static bool oem_trace_atom(CettaOpenEquationCursor *cursor,
@@ -5144,9 +8223,37 @@ static bool oem_trace_atom(CettaOpenEquationCursor *cursor,
         if (atom->name_key && atom->name_key != &oem_exported_mark)
             continue;
         atom->name_key = &oem_traced_mark;
+        bool view = oem_long_view(atom);
+        bool header_only = view && collect->detach_identity == 0u &&
+            !oem_collect_frees(collect, atom->expr.elems);
+        /* The children to push, `[first, stop)`.  A view over storage the
+         * collection frees pushes only the elements no longer suffix of the
+         * same storage has: the table keeps, by storage end, the longest
+         * suffix traced so far (SuffixViewCopy.mem_view_of_le).  A view with
+         * variables is copied whole, and is counted so. */
+        CettaExprLen first = 0u;
+        CettaExprLen stop = header_only ? 0u : atom->expr.len;
+        CettaExprLen counted = stop;
+        if (view && !header_only) {
+            const void *key = oem_storage_key(atom->expr.elems +
+                                              atom->expr.len);
+            void **longest_at = oem_collect_value_at(collect, key);
+            Atom *longest = longest_at ? *longest_at : NULL;
+            if (longest && longest->expr.elems <= atom->expr.elems) {
+                stop = 0u;
+            } else if (longest) {
+                stop = (CettaExprLen)(longest->expr.elems -
+                                      atom->expr.elems);
+                *longest_at = atom;
+            } else if (!oem_collect_put(collect, key, atom)) {
+                return false;
+            }
+            if (!atom_has_vars(atom))
+                counted = stop;
+        }
+        size_t bytes = sizeof(Atom) + sizeof(Atom *) * (size_t)counted;
         if (atom->arena_id == collect->from_identity)
-            collect->reached_young += sizeof(Atom) +
-                sizeof(Atom *) * (size_t)atom->expr.len;
+            collect->reached_young += bytes;
         if (collect->record) {
             if (!oem_reserve((void **)&collect->marked, &collect->marked_cap,
                              collect->marked_len + 1u,
@@ -5154,15 +8261,16 @@ static bool oem_trace_atom(CettaOpenEquationCursor *cursor,
                 return false;
             collect->marked[collect->marked_len++] = atom;
             if (atom->arena_id == collect->from_old_identity)
-                collect->reached_old += sizeof(Atom) +
-                    sizeof(Atom *) * (size_t)atom->expr.len;
+                collect->reached_old += bytes;
         }
-        if (atom->expr.len > UINT32_MAX - len ||
+        if (stop <= first)
+            continue;
+        if (stop - first > UINT32_MAX - len ||
             !oem_reserve((void **)&cursor->walk, &cursor->walk_cap,
-                         len + (uint32_t)atom->expr.len,
+                         len + (uint32_t)(stop - first),
                          sizeof(*cursor->walk)))
             return false;
-        for (CettaExprIndex child = 0u; child < atom->expr.len; child++)
+        for (CettaExprIndex child = first; child < stop; child++)
             cursor->walk[len++] = atom->expr.elems[child];
     }
     return true;
@@ -5194,6 +8302,11 @@ static bool oem_trace_slots(CettaOpenEquationCursor *cursor,
 static bool oem_trace_cont(CettaOpenEquationCursor *cursor,
                            OemCollect *collect, const OemCont *cont) {
     for (const OemCont *at = cont; at; at = at->parent) {
+        /* An older continuation, and its callers, which are older still,
+         * name only older objects, except through slots stored since the
+         * last collection, which the cursor remembers. */
+        if (!oem_collect_moves(collect, at))
+            return true;
         if (oem_collect_find(collect, at))
             return true;
         if (!oem_collect_put(collect, at, (void *)at))
@@ -5221,8 +8334,9 @@ static Atom *oem_collect_atom(CettaOpenEquationCursor *cursor,
         uint32_t cell = 0u;
         atom = oem_collect_shunt(cursor, collect, atom);
         if (oem_is_cell(cursor, atom, &cell)) {
-            result = collect->reached[cell]
-                ? cursor->cell_names[collect->remap[cell]] : NULL;
+            result = oem_collect_kept(collect, cell)
+                ? cursor->cell_names[oem_collect_index(collect, cell)]
+                : NULL;
         } else if (collect->detach_identity != 0u &&
                    atom->arena_id == collect->detach_identity) {
             result = atom_deep_copy_session_copy(collect->detach, atom);
@@ -5233,13 +8347,40 @@ static Atom *oem_collect_atom(CettaOpenEquationCursor *cursor,
                    atom->name_key != &oem_exported_mark) {
             result = atom->name_key;
         } else if (atom->kind == ATOM_EXPR && atom->expr.len > 0u) {
-            /* Copied below, once its children are. */
-            result = NULL;
+            /* Copied below, once its children are; a view over storage the
+             * collection keeps moves its header alone, over that storage. */
+            result = oem_view_over_kept_storage(collect, atom)
+                ? atom_expr_view_rehome(collect->to, atom, atom->expr.elems)
+                : NULL;
+            if (result)
+                atom->name_key = result;
         } else if ((result = oem_collect_find(collect, atom)) != NULL) {
         } else {
             result = atom_deep_copy(collect->to, atom);
             if (!result || !oem_collect_put(collect, atom, result))
                 return NULL;
+        }
+        Atom *requester = NULL;
+        if (!result && oem_is_view(atom) &&
+            oem_collect_from(collect, atom) &&
+            (!atom->name_key || atom->name_key == &oem_traced_mark ||
+             atom->name_key == &oem_exported_mark)) {
+            /* A shorter view shares its storage's one copy: made now, on
+             * its behalf, unless an earlier view had it made. */
+            Atom *longest = oem_view_longest(collect, atom);
+            Atom *copied = longest ? oem_collected_copy(longest) : NULL;
+            if (copied) {
+                result = atom_expr_view_rehome(
+                    collect->to, atom,
+                    copied->expr.elems +
+                        (atom->expr.elems - longest->expr.elems));
+                if (!result)
+                    return NULL;
+                atom->name_key = result;
+            } else if (longest) {
+                requester = atom;
+                atom = longest;
+            }
         }
         if (!result && atom->kind == ATOM_EXPR && atom->expr.len > 0u &&
             oem_collect_from(collect, atom) &&
@@ -5256,6 +8397,7 @@ static Atom *oem_collect_atom(CettaOpenEquationCursor *cursor,
                 return NULL;
             cursor->resolve_stack[depth++] = (OemResolveItem){
                 .atom = atom, .next = 1u, .base = results,
+                .requester = requester,
             };
             atom = atom->expr.elems[0];
             continue;
@@ -5277,6 +8419,16 @@ static Atom *oem_collect_atom(CettaOpenEquationCursor *cursor,
             if (!result)
                 return NULL;
             item->atom->name_key = result;
+            if (item->requester) {
+                Atom *view = item->requester;
+                result = atom_expr_view_rehome(
+                    collect->to, view,
+                    result->expr.elems +
+                        (view->expr.elems - item->atom->expr.elems));
+                if (!result)
+                    return NULL;
+                view->name_key = result;
+            }
             results = item->base;
             depth--;
         }
@@ -5285,6 +8437,25 @@ static Atom *oem_collect_atom(CettaOpenEquationCursor *cursor,
 
 /* A slot vector's copy: an activation's (`locals`) keeps the header word
  * before it, a frame's arguments have none. */
+/* Rename in place a slot of a vector the collection leaves where it is, or
+ * an old cell's binding, at most once: renaming a cell again would read its
+ * new index as an old one.  A vector a continuation reaches is renamed
+ * whole, a slot the barrier remembered may be reached that way too, and a
+ * slot stored or a cell bound again after a restore is remembered again.
+ * The location's address plus one keys it in the table: every object the
+ * table keys is aligned, so the keys never meet. */
+static bool oem_collect_rename_in_place(CettaOpenEquationCursor *cursor,
+                                        OemCollect *collect, Atom **at) {
+    const void *key = (const char *)at + 1;
+    if (!*at || oem_collect_find(collect, key))
+        return true;
+    Atom *moved = oem_collect_atom(cursor, collect, *at);
+    if (!moved || !oem_collect_put(collect, key, at))
+        return false;
+    *at = moved;
+    return true;
+}
+
 static Atom **oem_collect_slots(CettaOpenEquationCursor *cursor,
                                 OemCollect *collect, Atom **slots,
                                 uint32_t count, bool locals, bool *ok) {
@@ -5304,14 +8475,11 @@ static Atom **oem_collect_slots(CettaOpenEquationCursor *cursor,
             return NULL;
         }
         for (uint32_t index = 0u; index < count; index++) {
-            if (!slots[index])
-                continue;
-            Atom *moved = oem_collect_atom(cursor, collect, slots[index]);
-            if (!moved) {
+            if (!oem_collect_rename_in_place(cursor, collect,
+                                             &slots[index])) {
                 *ok = false;
                 return NULL;
             }
-            slots[index] = moved;
         }
         return slots;
     }
@@ -5362,16 +8530,24 @@ static const OemCont *oem_collect_cont(CettaOpenEquationCursor *cursor,
         chain[len++] = at;
     }
     /* Older continuations stay in place, and so do their callers, which
-     * are older still; their slot vectors are renamed in place. */
-    for (const OemCont *at = kept; *ok && at; at = at->parent) {
-        if (oem_collect_find(collect, at))
-            break;
-        if (!oem_collect_put(collect, at, (void *)at)) {
+     * are older still.  A minor collection leaves their slot vectors too:
+     * a slot stored since the last collection is remembered and renamed
+     * on its own. */
+    if (kept && collect->minor) {
+        if (!oem_collect_find(collect, kept) &&
+            !oem_collect_put(collect, kept, (void *)kept))
             *ok = false;
-            break;
+    } else {
+        for (const OemCont *at = kept; *ok && at; at = at->parent) {
+            if (oem_collect_find(collect, at))
+                break;
+            if (!oem_collect_put(collect, at, (void *)at)) {
+                *ok = false;
+                break;
+            }
+            (void)oem_collect_slots(cursor, collect, at->locals,
+                                    at->local_count, true, ok);
         }
-        (void)oem_collect_slots(cursor, collect, at->locals, at->local_count,
-                                true, ok);
     }
     if (kept)
         top = kept;
@@ -5411,18 +8587,25 @@ static size_t oem_collect_roots(const CettaOpenEquationCursor *cursor) {
  * proportional to allocation. */
 static size_t oem_collect_threshold(const CettaOpenEquationCursor *cursor) {
     size_t walked = oem_collect_roots(cursor);
-    return walked > OEM_COLLECT_MIN_BYTES ? walked : OEM_COLLECT_MIN_BYTES;
+    size_t first = oem_collect_sizes()->first;
+    return walked > first ? walked : first;
 }
 
 /* Whether a region grown past `collect_after` is collected now.  Each
- * choice frame, and each binding the trail would undo, is state a restore
- * returns to, and a collection walks all of it whatever else it reaches.
- * Below the single-generation bound a collection therefore waits until the
- * region is twice that state: a region held by dense choice frames is mostly
- * what they will restore, and backtracking, not copying, reclaims it. */
+ * choice frame, and each binding the trail would undo, made since the last
+ * collection is state a restore returns to, and a minor collection walks all
+ * of it whatever else it reaches.  Below the single-generation bound a
+ * collection therefore waits until the region is twice that state: a region
+ * held by dense choice frames is mostly what they will restore, and
+ * backtracking, not copying, reclaims it. */
 static bool oem_collect_due(CettaOpenEquationCursor *cursor, size_t live) {
-    size_t held = (size_t)cursor->frame_len * sizeof(*cursor->frames) +
-        (size_t)cursor->trail_len * sizeof(*cursor->trail);
+    uint32_t frame_low = cursor->frame_low < cursor->frame_len
+        ? cursor->frame_low : cursor->frame_len;
+    uint32_t trail_low = cursor->trail_low < cursor->trail_len
+        ? cursor->trail_low : cursor->trail_len;
+    size_t held =
+        (size_t)(cursor->frame_len - frame_low) * sizeof(*cursor->frames) +
+        (size_t)(cursor->trail_len - trail_low) * sizeof(*cursor->trail);
     if (live >= OEM_REGION_BOUND_BYTES || held <= live / 2u)
         return true;
     size_t next = held > OEM_REGION_BOUND_BYTES / 2u
@@ -5455,6 +8638,7 @@ static void oem_collect_decline(OemCollect *collect, uint32_t *before,
         collect->marked[index]->name_key = NULL;
     free(collect->marked);
     free(collect->young);
+    free(collect->old_spans);
     free(collect->keys);
     free(collect->values);
     free(collect->reached);
@@ -5474,51 +8658,83 @@ static bool oem_collect_generation(CettaOpenEquationCursor *cursor,
                                    uint32_t detach_identity, bool major) {
     uint32_t old_cells = cursor->cell_len;
     uint32_t frames = cursor->frame_len;
-    size_t cell_room = old_cells ? old_cells : 1u;
-    uint32_t fixed = major ? 0u
+    /* A minor collection works from the old generation's boundaries up
+     * (RememberedSetTrace.minor_trace_complete): the cells from the old
+     * cells' end, and the frames, trail entries and stores from their least
+     * lengths since the last collection, below which nothing changed.  A
+     * frame below its low-water mark was there at the last collection,
+     * whose commit left its marks at the empty region and at or below these
+     * bases, and restoring or truncating keeps them so.  A major collection
+     * works from zero. */
+    uint32_t cell_base = major ? 0u
         : cursor->old_cells < old_cells ? cursor->old_cells : old_cells;
+    uint32_t frame_base = major ? 0u
+        : cursor->frame_low < frames ? cursor->frame_low : frames;
+    uint32_t trail_base = major ? 0u
+        : cursor->trail_low < cursor->trail_len ? cursor->trail_low
+                                                : cursor->trail_len;
+    uint32_t store_base = major ? 0u
+        : cursor->store_low < cursor->store_len ? cursor->store_low
+                                                : cursor->store_len;
+    uint32_t young_cells = old_cells - cell_base;
+    uint32_t young_frames = frames - frame_base;
+    size_t cell_room = young_cells ? young_cells : 1u;
     OemCollect collect = {
         .from_identity = cursor->region.identity,
         .from_old_identity =
             major && cursor->old_ready ? cursor->old.identity : 0u,
         .detach_identity = detach_identity,
+        .cell_base = cell_base,
         .reached = calloc(cell_room, sizeof(uint8_t)),
         .pending = calloc(cell_room, sizeof(uint32_t)),
         .remap = calloc(cell_room, sizeof(uint32_t)),
         .revocable = calloc(cell_room, sizeof(uint8_t)),
         .minor = !major,
         .record = detach_identity == 0u,
+        .first_cap = oem_collect_table_size(
+            cursor->forward_hints[major ? 1 : 0][0]),
     };
     uint32_t *before = calloc(cell_room + 1u, sizeof(uint32_t));
     uint32_t *kept_before = calloc(
-        (size_t)cursor->trail_len + 1u, sizeof(uint32_t));
-    Atom ***args = calloc(frames ? frames : 1u, sizeof(*args));
-    OemRows **rows = calloc(frames ? frames : 1u, sizeof(*rows));
-    OemHostCells **hosts = calloc(frames ? frames : 1u, sizeof(*hosts));
-    const OemCont **conts = calloc(frames ? frames : 1u, sizeof(*conts));
+        (size_t)(cursor->trail_len - trail_base) + 1u, sizeof(uint32_t));
+    Atom ***args = calloc(young_frames ? young_frames : 1u, sizeof(*args));
+    OemRows **rows = calloc(young_frames ? young_frames : 1u,
+                            sizeof(*rows));
+    OemHostCells **hosts = calloc(young_frames ? young_frames : 1u,
+                                  sizeof(*hosts));
+    const OemCont **conts = calloc(young_frames ? young_frames : 1u,
+                                   sizeof(*conts));
     Atom **cells = calloc(cell_room, sizeof(*cells));
     bool ok = collect.reached && collect.pending && collect.remap &&
         collect.revocable && before && kept_before && args && rows &&
         hosts && conts && cells &&
-        oem_collect_young_spans(&cursor->region, &collect);
+        oem_collect_spans(&cursor->region, &collect.young,
+                          &collect.young_len) &&
+        (!major || !cursor->old_ready ||
+         oem_collect_spans(&cursor->old, &collect.old_spans,
+                           &collect.old_span_len));
     /* A frame's restore undoes the trail from its mark on; the oldest
-     * frame's mark is the least. */
-    for (uint32_t index = frames ? cursor->frames[0].trail_mark
-                                 : cursor->trail_len;
-         ok && index < cursor->trail_len; index++)
-        collect.revocable[cursor->trail[index]] = 1u;
+     * frame's mark is the least.  A young cell was bound after the last
+     * collection, so its entry lies at or above the trail's base. */
+    uint32_t revoked = frames ? cursor->frames[0].trail_mark
+                              : cursor->trail_len;
+    if (revoked < trail_base)
+        revoked = trail_base;
+    for (uint32_t index = revoked; ok && index < cursor->trail_len; index++) {
+        uint32_t cell = cursor->trail[index];
+        if (cell >= cell_base)
+            collect.revocable[cell - cell_base] = 1u;
+    }
 
     /* Trace.  Old atoms may name any old cell, which a minor collection
      * therefore keeps; the call's cells stay cells, which its answer
      * reads. */
-    for (uint32_t index = 0u; ok && index < fixed; index++)
-        oem_collect_reach(cursor, &collect, index);
     for (uint32_t index = 0u; ok && index < cursor->query_var_count; index++) {
         uint32_t cell = 0u;
         if (oem_is_cell(cursor, cursor->query_cells[index], &cell))
             oem_collect_reach(cursor, &collect, cell);
     }
-    for (uint32_t index = 0u; ok && index < frames; index++) {
+    for (uint32_t index = frame_base; ok && index < frames; index++) {
         const OemFrame *frame = &cursor->frames[index];
         uint32_t arity = oem_frame_arity(frame);
         ok = oem_trace_slots(cursor, &collect, frame->args, arity, false) &&
@@ -5540,6 +8756,20 @@ static bool oem_collect_generation(CettaOpenEquationCursor *cursor,
                 collect.reached_old += bytes;
         }
     }
+    /* The old places written since the last collection: the old cells
+     * bound, and the old activations' slots stored.  A major collection
+     * traces everything from the frames instead. */
+    for (uint32_t index = 0u;
+         ok && !major && index < cursor->remembered_cell_len; index++) {
+        uint32_t cell = cursor->remembered_cells[index];
+        if (cell < cell_base && cursor->cells[cell])
+            ok = oem_trace_atom(cursor, &collect, cursor->cells[cell]);
+    }
+    for (uint32_t index = 0u;
+         ok && !major && index < cursor->remembered_slot_len; index++) {
+        const OemStore *slot = &cursor->remembered_slots[index];
+        ok = oem_trace_atom(cursor, &collect, slot->locals[slot->slot]);
+    }
     ok = ok && oem_trace_atom(cursor, &collect, cursor->destination);
     while (ok && collect.pending_len > 0u) {
         uint32_t cell = collect.pending[--collect.pending_len];
@@ -5547,16 +8777,24 @@ static bool oem_collect_generation(CettaOpenEquationCursor *cursor,
     }
     /* A major collection reclaims only the old generation's dead part; when
      * nearly all of it is still reached, copying it would only double it
-     * for a moment.  The marks come off, the next major waits for the old
-     * generation to double again, and a minor collection runs instead.  A
-     * detaching collection always copies, since it moves borrowed atoms. */
+     * for a moment.  The marks come off and a minor collection runs
+     * instead.  The next major waits for the old generation to grow by a
+     * factor that doubles with each consecutive decline: a generation found
+     * live again and again is traced whole ever more rarely, so the traces
+     * of a run that keeps its data total a bounded multiple of what it
+     * keeps, however long it runs.  A detaching collection always copies,
+     * since it moves borrowed atoms. */
     size_t old_live = cursor->old_ready
         ? arena_accounted_live_bytes(&cursor->old) : 0u;
     if (ok && major && collect.record &&
         collect.reached_old >= old_live - old_live / 4u) {
         oem_collect_decline(&collect, before, kept_before, args, rows, hosts,
                             conts, cells);
-        cursor->major_after = 2u * old_live;
+        uint32_t shift = cursor->major_declines < OEM_MAJOR_DECLINE_SHIFT_MAX
+            ? cursor->major_declines + 1u : OEM_MAJOR_DECLINE_SHIFT_MAX;
+        cursor->major_after = old_live > SIZE_MAX >> shift
+            ? SIZE_MAX : old_live << shift;
+        cursor->major_declines++;
         return oem_collect_generation(cursor, 0u, false);
     }
     /* Likewise a minor collection that finds at least half of the region
@@ -5581,20 +8819,23 @@ static bool oem_collect_generation(CettaOpenEquationCursor *cursor,
     }
     free(collect.marked);
     collect.marked = NULL;
-    uint32_t live = 0u;
-    for (uint32_t index = 0u; ok && index < old_cells; index++) {
-        before[index] = live;
-        if (collect.reached[index])
-            collect.remap[index] = live++;
+    uint32_t live = cell_base;
+    for (uint32_t index = cell_base; ok && index < old_cells; index++) {
+        before[index - cell_base] = live;
+        if (collect.reached[index - cell_base])
+            collect.remap[index - cell_base] = live++;
     }
     if (ok)
-        before[old_cells] = live;
+        before[young_cells] = live;
+    cursor->forward_hints[major ? 1 : 0][0] = collect.len;
     free(collect.keys);
     free(collect.values);
     collect.keys = NULL;
     collect.values = NULL;
     collect.cap = 0u;
     collect.len = 0u;
+    collect.first_cap =
+        oem_collect_table_size(cursor->forward_hints[major ? 1 : 0][1]);
 
     /* Copy into the old generation, or a new one, renaming each reached
      * cell to its index. */
@@ -5612,12 +8853,13 @@ static bool oem_collect_generation(CettaOpenEquationCursor *cursor,
         collect.detach = atom_deep_copy_session_new(to_arena);
         ok = collect.detach != NULL;
     }
-    for (uint32_t index = 0u; ok && index < frames; index++) {
+    for (uint32_t index = frame_base; ok && index < frames; index++) {
         const OemFrame *frame = &cursor->frames[index];
         uint32_t arity = oem_frame_arity(frame);
-        args[index] = oem_collect_slots(cursor, &collect, frame->args, arity,
+        uint32_t young = index - frame_base;
+        args[young] = oem_collect_slots(cursor, &collect, frame->args, arity,
                                         false, &ok);
-        conts[index] = ok ? oem_collect_cont(cursor, &collect, frame->cont,
+        conts[young] = ok ? oem_collect_cont(cursor, &collect, frame->cont,
                                              &ok) : NULL;
         if (ok && oem_frame_is_host(frame)) {
             OemHostCells *copy = arena_alloc(
@@ -5629,10 +8871,10 @@ static bool oem_collect_generation(CettaOpenEquationCursor *cursor,
                 copy->count = frame->host->count;
                 copy->height = frame->host->height;
                 for (uint32_t cell = 0u; cell < copy->count; cell++)
-                    copy->cells[cell] =
-                        collect.remap[frame->host->cells[cell]];
+                    copy->cells[cell] = oem_collect_index(
+                        &collect, frame->host->cells[cell]);
             }
-            hosts[index] = copy;
+            hosts[young] = copy;
         }
         /* A match's rows are the space's atoms; only the block moves, and
          * only out of a generation this collection collects. */
@@ -5642,49 +8884,71 @@ static bool oem_collect_generation(CettaOpenEquationCursor *cursor,
                  frame->rows->arena == collect.from_old_identity);
             size_t bytes = sizeof(OemRows) +
                 sizeof(Atom *) * (size_t)frame->rows->len;
-            rows[index] = moves ? arena_alloc(to_arena, bytes) : frame->rows;
-            ok = rows[index] != NULL;
+            rows[young] = moves ? arena_alloc(to_arena, bytes) : frame->rows;
+            ok = rows[young] != NULL;
             if (ok && moves) {
-                memcpy(rows[index], frame->rows, bytes);
-                rows[index]->arena = to_arena->identity;
+                memcpy(rows[young], frame->rows, bytes);
+                rows[young]->arena = to_arena->identity;
             }
         }
     }
-    for (uint32_t index = 0u; ok && index < old_cells; index++) {
-        if (!collect.reached[index] || !cursor->cells[index])
+    for (uint32_t index = cell_base; ok && index < old_cells; index++) {
+        if (!collect.reached[index - cell_base] || !cursor->cells[index])
             continue;
-        cells[collect.remap[index]] =
-            oem_collect_atom(cursor, &collect, cursor->cells[index]);
-        ok = cells[collect.remap[index]] != NULL;
+        uint32_t to = collect.remap[index - cell_base] - cell_base;
+        cells[to] = oem_collect_atom(cursor, &collect, cursor->cells[index]);
+        ok = cells[to] != NULL;
+    }
+    /* The remembered old places keep their places, and name the copies. */
+    for (uint32_t index = 0u;
+         ok && !major && index < cursor->remembered_cell_len; index++) {
+        uint32_t cell = cursor->remembered_cells[index];
+        if (cell >= cell_base)
+            continue;
+        ok = oem_collect_rename_in_place(cursor, &collect,
+                                         &cursor->cells[cell]);
+    }
+    for (uint32_t index = 0u;
+         ok && !major && index < cursor->remembered_slot_len; index++) {
+        const OemStore *slot = &cursor->remembered_slots[index];
+        ok = oem_collect_rename_in_place(cursor, &collect,
+                                         &slot->locals[slot->slot]);
     }
     Atom *destination = ok
         ? oem_collect_atom(cursor, &collect, cursor->destination) : NULL;
     ok = ok && destination;
     /* The store trail follows its slot vectors; a store into a vector no
-     * continuation reaches is dropped with it. */
+     * continuation reaches is dropped with it.  In a minor collection an
+     * older vector stays where it is, and so does its store. */
+    uint32_t young_stores = cursor->store_len - store_base;
     uint32_t *stores_before = ok
-        ? calloc((size_t)cursor->store_len + 1u, sizeof(uint32_t)) : NULL;
+        ? calloc((size_t)young_stores + 1u, sizeof(uint32_t)) : NULL;
     OemStore *stores = ok
-        ? calloc(cursor->store_len ? cursor->store_len : 1u, sizeof(*stores))
+        ? calloc(young_stores ? young_stores : 1u, sizeof(*stores))
         : NULL;
     ok = ok && stores_before && stores;
-    uint32_t stores_kept = 0u;
-    for (uint32_t index = 0u; ok && index < cursor->store_len; index++) {
-        stores_before[index] = stores_kept;
-        Atom **copied = oem_collect_find(&collect,
-                                         cursor->stores[index].locals);
+    uint32_t stores_kept = store_base;
+    for (uint32_t index = store_base; ok && index < cursor->store_len;
+         index++) {
+        stores_before[index - store_base] = stores_kept;
+        Atom **locals = cursor->stores[index].locals;
+        Atom **copied = oem_collect_find(&collect, locals);
+        if (!copied && !oem_collect_moves(&collect, locals))
+            copied = locals;
         if (copied)
-            stores[stores_kept++] = (OemStore){
+            stores[stores_kept++ - store_base] = (OemStore){
                 .locals = copied, .slot = cursor->stores[index].slot};
     }
     if (ok)
-        stores_before[cursor->store_len] = stores_kept;
+        stores_before[young_stores] = stores_kept;
     if (collect.detach)
         atom_deep_copy_session_free(collect.detach);
+    cursor->forward_hints[major ? 1 : 0][1] = collect.len;
     free(collect.keys);
     free(collect.values);
     if (!ok) {
         free(collect.young);
+        free(collect.old_spans);
         free(stores_before);
         free(stores);
         free(collect.reached);
@@ -5703,49 +8967,55 @@ static bool oem_collect_generation(CettaOpenEquationCursor *cursor,
         return false;
     }
 
-    /* Commit. */
-    uint32_t kept = 0u;
-    for (uint32_t index = 0u; index < cursor->trail_len; index++) {
-        kept_before[index] = kept;
+    /* Commit.  What lies below the bases stays as it is: the old trail
+     * entries name old cells, which keep their indices, and the old frames'
+     * marks already are the empty region and the bases' own. */
+    uint32_t kept = trail_base;
+    for (uint32_t index = trail_base; index < cursor->trail_len; index++) {
+        kept_before[index - trail_base] = kept;
         uint32_t cell = cursor->trail[index];
-        if (collect.reached[cell])
-            cursor->trail[kept++] = collect.remap[cell];
+        if (oem_collect_kept(&collect, cell))
+            cursor->trail[kept++] = oem_collect_index(&collect, cell);
     }
-    kept_before[cursor->trail_len] = kept;
+    kept_before[cursor->trail_len - trail_base] = kept;
     /* Every region atom the cursor still reaches has been copied: the
      * region restarts empty, keeping its blocks for what follows. */
     arena_reset(&cursor->region, (ArenaMark){0});
     ArenaMark end = arena_mark(&cursor->region);
-    for (uint32_t index = 0u; index < frames; index++) {
+    for (uint32_t index = frame_base; index < frames; index++) {
         OemFrame *frame = &cursor->frames[index];
-        frame->args = args[index];
+        uint32_t young = index - frame_base;
+        frame->args = args[young];
         if (oem_frame_is_match(frame))
-            frame->rows = rows[index];
+            frame->rows = rows[young];
         if (oem_frame_is_host(frame))
-            frame->host = hosts[index];
-        frame->cont = conts[index];
+            frame->host = hosts[young];
+        frame->cont = conts[young];
         frame->mark = end;
-        frame->cell_mark = before[frame->cell_mark];
-        frame->trail_mark = kept_before[frame->trail_mark];
-        frame->store_mark = stores_before[frame->store_mark];
+        frame->cell_mark = before[frame->cell_mark - cell_base];
+        frame->trail_mark = kept_before[frame->trail_mark - trail_base];
+        frame->store_mark = stores_before[frame->store_mark - store_base];
     }
     cursor->trail_len = kept;
-    if (stores_kept)
-        memcpy(cursor->stores, stores, sizeof(*stores) * stores_kept);
+    if (stores_kept > store_base)
+        memcpy(&cursor->stores[store_base], stores,
+               sizeof(*stores) * (stores_kept - store_base));
     cursor->store_len = stores_kept;
     free(stores_before);
     free(stores);
-    for (uint32_t index = 0u; index < live; index++)
-        cursor->cells[index] = cells[index];
+    for (uint32_t index = cell_base; index < live; index++)
+        cursor->cells[index] = cells[index - cell_base];
     for (uint32_t index = live; index < old_cells; index++)
         cursor->cells[index] = NULL;
     cursor->cell_len = live;
     for (uint32_t index = 0u; index < cursor->query_var_count; index++)
-        cursor->query_cells[index] = cursor->cell_names[
-            collect.remap[var_base_id(cursor->query_cells[index]->var_id) - 1u]];
+        cursor->query_cells[index] = cursor->cell_names[oem_collect_index(
+            &collect,
+            (uint32_t)(var_base_id(cursor->query_cells[index]->var_id) - 1u))];
     cursor->destination = destination;
     oem_forget_answer_vars(cursor);
     free(collect.young);
+    free(collect.old_spans);
     free(collect.reached);
     free(collect.pending);
     free(collect.remap);
@@ -5764,6 +9034,15 @@ static bool oem_collect_generation(CettaOpenEquationCursor *cursor,
         cursor->old_ready = true;
     }
     cursor->old_cells = live;
+    /* Everything is old now: nothing below the new lengths changes until
+     * the mutator writes it. */
+    cursor->frame_low = cursor->frame_len;
+    cursor->trail_low = cursor->trail_len;
+    cursor->store_low = cursor->store_len;
+    cursor->remembered_cell_len = 0u;
+    cursor->remembered_slot_len = 0u;
+    cursor->collect_epoch++;
+    cursor->slot_epoch_bits = (uintptr_t)cursor->collect_epoch << 32;
     cursor->collect_declines = 0u;
     cursor->collect_after = oem_collect_threshold(cursor);
     if (collect.walked > cursor->collect_after)
@@ -5775,16 +9054,13 @@ static bool oem_collect_generation(CettaOpenEquationCursor *cursor,
      * the blocks that window needs. */
     if (!major) {
         size_t promoted = arena_accounted_live_bytes(&cursor->old) - old_before;
-        size_t window = promoted > OEM_COLLECT_MIN_BYTES /
-                OEM_COLLECT_SURVIVAL_RATIO
-            ? OEM_COLLECT_MIN_BYTES
+        const OemCollectSizes *sizes = oem_collect_sizes();
+        size_t window = promoted > sizes->first / OEM_COLLECT_SURVIVAL_RATIO
+            ? sizes->first
             : promoted * OEM_COLLECT_SURVIVAL_RATIO;
-        if (window < OEM_COLLECT_STEADY_BYTES)
-            window = OEM_COLLECT_STEADY_BYTES;
-        size_t roots = oem_collect_roots(cursor);
+        if (window < sizes->steady)
+            window = sizes->steady;
         size_t twice = promoted > SIZE_MAX / 2u ? SIZE_MAX : 2u * promoted;
-        if (roots > window)
-            window = roots;
         if (collect.walked > window)
             window = collect.walked;
         if (twice > window)
@@ -5794,8 +9070,10 @@ static bool oem_collect_generation(CettaOpenEquationCursor *cursor,
     arena_release_spare(&cursor->region, cursor->collect_after);
     if (major) {
         size_t survivors = arena_accounted_live_bytes(&cursor->old);
-        cursor->major_after = survivors > OEM_MAJOR_MIN_BYTES / 2u
-            ? 2u * survivors : OEM_MAJOR_MIN_BYTES;
+        size_t major_min = oem_collect_sizes()->major;
+        cursor->major_after = survivors > major_min / 2u
+            ? 2u * survivors : major_min;
+        cursor->major_declines = 0u;
     }
     cursor->stats.collections++;
     return true;
@@ -5806,6 +9084,155 @@ static bool oem_collect_generation(CettaOpenEquationCursor *cursor,
 /* Whether the first structural test of `equation`'s head refutes the
  * call's arguments: the head's leading symbol or shape, which the call
  * decides in one comparison. */
+/* The equations of an indexed relation a call's arguments leave: along
+ * each index path, a term that is an unbound cell, or a cell of a list,
+ * leaves every equation; a term whose structure the path's steps refute
+ * leaves the equations testing nothing there; any other term leaves those
+ * and the equations whose literal there is that term. */
+static uint64_t oem_paths_admit(CettaOpenEquationCursor *cursor,
+                                const CettaOpenEquationProgram *program,
+                                uint32_t first_path, uint32_t path_count,
+                                Atom **args) {
+    uint64_t candidates = UINT64_MAX;
+    for (uint32_t index = 0u; index < path_count; index++) {
+        const OemIndexPath *path = &program->index_paths[first_path + index];
+        Atom *term = oem_deref(cursor, args[path->arg]);
+        uint32_t cell = 0u;
+        bool open = false;
+        bool refuted = false;
+        for (uint32_t step = 0u; step < path->step_count; step++) {
+            if (oem_is_cell(cursor, term, &cell) || oem_is_list_cell(term)) {
+                open = true;
+                break;
+            }
+            uint32_t child = program->index_steps[path->first_step + 2u * step];
+            uint32_t length =
+                program->index_steps[path->first_step + 2u * step + 1u];
+            if (term->kind != ATOM_EXPR || term->expr.len != length) {
+                refuted = true;
+                break;
+            }
+            term = oem_deref(cursor, term->expr.elems[child]);
+        }
+        if (open || (!refuted && (oem_is_cell(cursor, term, &cell) ||
+                                  oem_is_list_cell(term))))
+            continue;
+        uint64_t admitted = path->free;
+        uint64_t code = 0u;
+        if (refuted) {
+        } else if (path->key_count >= OEM_INDEX_TABLE_MIN_KEYS &&
+                   path->table_mask && oem_literal_code(term, &code)) {
+            /* Keys are distinct literals, so at most one equals the term;
+             * its code finds it. */
+            const uint32_t *table = &program->index_tables[path->first_table];
+            for (uint32_t at = oem_literal_home(code, path->table_mask);
+                 table[at]; at = (at + 1u) & path->table_mask) {
+                const OemIndexKey *entry =
+                    &program->index_keys[path->first_key + table[at] - 1u];
+                if (oem_key_eq(term, entry->literal)) {
+                    admitted |= entry->equations;
+                    break;
+                }
+            }
+        } else {
+            for (uint32_t key = 0u; key < path->key_count; key++) {
+                const OemIndexKey *entry =
+                    &program->index_keys[path->first_key + key];
+                if (oem_key_eq(term, entry->literal))
+                    admitted |= entry->equations;
+            }
+        }
+        candidates &= admitted;
+    }
+    return candidates;
+}
+
+/* A number other than an integer, which `atom_eq` may find equal to an
+ * integer key. */
+static inline bool oem_non_integer_number(const Atom *atom) {
+    return atom->kind == ATOM_GROUNDED && atom->ground.gkind != GV_INT;
+}
+
+/* What a switch's paths admit for the call's argument, decided by its
+ * functor; false when a number could equal an integer key, which the paths
+ * then decide one by one. */
+static inline bool oem_switch_admits(CettaOpenEquationCursor *cursor,
+                                     const CettaOpenEquationProgram *program,
+                                     const OemIndexSwitch *sw, Atom **args,
+                                     uint64_t *admitted) {
+    Atom *term = oem_deref(cursor, args[sw->arg]);
+    uint32_t cell = 0u;
+    if (oem_is_cell(cursor, term, &cell) || oem_is_list_cell(term)) {
+        *admitted = UINT64_MAX;
+        return true;
+    }
+    uint32_t length = 0u;
+    const OemSwitchLength *shape = NULL;
+    Atom *key = term;
+    if (term->kind == ATOM_EXPR) {
+        length = term->expr.len;
+        for (uint32_t index = 0u; index < sw->length_count; index++) {
+            const OemSwitchLength *candidate =
+                &program->switch_lengths[sw->first_length + index];
+            if (candidate->length == length) {
+                shape = candidate;
+                break;
+            }
+        }
+        if (!shape) {
+            *admitted = sw->other;
+            return true;
+        }
+        key = oem_deref(cursor, term->expr.elems[0]);
+        if (oem_is_cell(cursor, key, &cell) || oem_is_list_cell(key)) {
+            *admitted = shape->open_head;
+            return true;
+        }
+    }
+    uint64_t missed = shape ? shape->no_key : sw->other;
+    uint64_t code = 0u;
+    if (!oem_literal_code(key, &code)) {
+        if (oem_non_integer_number(key) &&
+            (shape ? shape->int_keys : sw->int_keys))
+            return false;
+        *admitted = missed;
+        return true;
+    }
+    const uint32_t *table = &program->switch_tables[sw->first_table];
+    for (uint32_t at = oem_literal_home(oem_switch_code(code, length),
+                                        sw->entry_mask);
+         table[at]; at = (at + 1u) & sw->entry_mask) {
+        const OemSwitchEntry *entry =
+            &program->switch_entrys[sw->first_entry + table[at] - 1u];
+        if (entry->length == length && oem_key_eq(key, entry->literal)) {
+            *admitted = entry->equations;
+            return true;
+        }
+    }
+    *admitted = missed;
+    return true;
+}
+
+static uint64_t oem_index_candidates(CettaOpenEquationCursor *cursor,
+                                     const CettaOpenEquationProgram *program,
+                                     const OemRelation *relation,
+                                     Atom **args) {
+    uint64_t candidates = relation->index_path_count
+        ? oem_paths_admit(cursor, program, relation->first_index_path,
+                          relation->index_path_count, args)
+        : UINT64_MAX;
+    for (uint32_t index = 0u; index < relation->switch_count; index++) {
+        const OemIndexSwitch *sw =
+            &program->index_switchs[relation->first_switch + index];
+        uint64_t admitted = 0u;
+        if (!oem_switch_admits(cursor, program, sw, args, &admitted))
+            admitted = oem_paths_admit(cursor, program, sw->first_path,
+                                       sw->path_count, args);
+        candidates &= admitted;
+    }
+    return candidates;
+}
+
 static bool oem_first_test_refutes(CettaOpenEquationCursor *cursor,
                                    const CettaOpenEquationProgram *program,
                                    uint32_t equation, Atom **args,
@@ -5813,7 +9240,8 @@ static bool oem_first_test_refutes(CettaOpenEquationCursor *cursor,
     const OemEquation *eq = &program->equations[equation];
     for (uint32_t op_index = 0u; op_index < eq->op_count; op_index++) {
         const OemMatchOp *op = &program->ops[eq->first_op + op_index];
-        if (op->kind != OEM_M_ATOM && op->kind != OEM_M_EXPR)
+        if (op->kind != OEM_M_ATOM && op->kind != OEM_M_EXPR &&
+            op->kind != OEM_M_LIST)
             continue;
         if (op->reg >= arity)
             return false;
@@ -5823,7 +9251,9 @@ static bool oem_first_test_refutes(CettaOpenEquationCursor *cursor,
             return false;
         return op->kind == OEM_M_ATOM
             ? !atom_eq(term, op->literal)
-            : term->kind != ATOM_EXPR || term->expr.len != op->length;
+            : term->kind != ATOM_EXPR ||
+                  (op->kind == OEM_M_LIST ? term->expr.len == 0u
+                                          : term->expr.len != op->length);
     }
     return false;
 }
@@ -5841,6 +9271,82 @@ static void oem_skip_refuted(CettaOpenEquationCursor *cursor,
                           OEM_RUN_FAILED);
         frame->next++;
     }
+}
+
+/* A call's entry from the body that makes it.  Selection runs on the
+ * call's arguments as it would on a frame just pushed, in the same state:
+ * the first equation it admits is activated here, and a frame is pushed,
+ * before the activation, only when an equation after that one remains to
+ * be tried.  The frame holds a copy of the arguments, the candidates and
+ * the next alternative, as the loop leaves a frame it has entered.  So a
+ * deterministic call makes no frame, where one pushed at the call would be
+ * popped before its only activation. */
+static OemRun oem_enter(CettaOpenEquationCursor *cursor,
+                        const CettaOpenEquationProgram *version,
+                        uint32_t relation_index, Atom **args,
+                        const OemCont *cont, uint32_t depth,
+                        OemEntry *entry) {
+    if (cursor->runtime.depth_bound && !version->depth_pruning_safe) {
+        cursor->handoff = CETTA_OPEN_EQUATION_HANDOFF_UNSUPPORTED;
+        return OEM_RUN_HANDOFF;
+    }
+    const OemRelation *relation = &version->relations[relation_index];
+    uint32_t count = relation->equation_count;
+    bool indexed = relation->indexed;
+    uint64_t candidates = indexed
+        ? oem_index_candidates(cursor, version, relation, args)
+        : UINT64_MAX;
+    uint32_t next = 0u;
+    if (indexed) {
+        /* The index leaves no equation beyond the relation's. */
+        next = candidates ? (uint32_t)__builtin_ctzll(candidates) : count;
+        if (next > count)
+            next = count;
+        oem_count_passed_over(cursor, next);
+    }
+    if (next >= count)
+        return OEM_RUN_FAILED;
+    uint32_t equation = relation->first_equation + next++;
+    while (next < count &&
+           ((indexed && !((candidates >> next) & 1u)) ||
+            (relation->first_tests_differ &&
+             oem_first_test_refutes(cursor, version,
+                                    relation->first_equation + next, args,
+                                    relation->arity)))) {
+        cursor->stats.head_failures++;
+        oem_count_attempt(cursor, OEM_ATTEMPT_MISMATCH, cursor->binds,
+                          OEM_RUN_FAILED);
+        next++;
+    }
+    Atom **held = args;
+    bool own_frame = next < count;
+    if (own_frame) {
+        uint32_t arity = relation->arity;
+        held = oem_region_alloc(cursor,
+                                sizeof(*held) * (arity ? arity : 1u));
+        if (!held)
+            return OEM_RUN_HANDOFF;
+        memcpy(held, args, sizeof(*held) * arity);
+        if (!oem_push_frame(cursor, version, relation_index, held, cont,
+                            depth))
+            return OEM_RUN_HANDOFF;
+        OemFrame *frame = &cursor->frames[cursor->frame_len - 1u];
+        frame->candidates = candidates;
+        frame->next = next;
+    }
+    OemRun run = oem_activate(cursor, version, equation, held,
+                              relation->arity, cont, own_frame, entry);
+    /* An activation past the depth bound fails once its head has matched,
+     * so the run knows it cut something. */
+    if (run == OEM_RUN_CALLED) {
+        if (cursor->runtime.depth_bound &&
+            depth > cursor->runtime.depth_bound) {
+            cursor->bound_cut = true;
+            return OEM_RUN_FAILED;
+        }
+        entry->depth = depth;
+    }
+    return run;
 }
 
 /* After an answer, whose value is copied out, the cursor's next move is to
@@ -5903,67 +9409,136 @@ bool cetta_open_equation_cursor_detach(CettaOpenEquationCursor *cursor,
  * the host's store (`cetta_open_equation_cursor_detach` copies it before
  * the host releases it), so answers share it as equation search's would;
  * each query variable becomes its cell. */
-static Atom *oem_import(CettaOpenEquationCursor *cursor, Atom *atom,
-                        uint32_t depth) {
-    if (depth > OEM_MAX_DEPTH)
-        return NULL;
-    if (atom->kind == ATOM_VAR) {
-        for (uint32_t index = 0u; index < cursor->query_var_count; index++) {
-            if (cursor->query_vars[index]->var_id == atom->var_id)
-                return cursor->query_cells[index];
+
+/* The cell of a stored row's variable in the row's current copy, made the
+ * first time the copy needs it. */
+static Atom *oem_fresh_var(CettaOpenEquationCursor *cursor, VarId id) {
+    uint32_t len = cursor->fresh_var_len;
+    if (len <= CETTA_VAR_INDEX_SCAN) {
+        for (uint32_t index = 0u; index < len; index++) {
+            if (cursor->fresh_vars[index].id == id)
+                return cursor->fresh_vars[index].cell;
         }
-        return NULL;
+    } else {
+        /* The index proposes, the list confirms (VariableIndex.lookup):
+         * entries left by an earlier copy are never confirmed. */
+        uint32_t position =
+            cetta_var_index_propose(&cursor->fresh_index, id);
+        if (position < len && cursor->fresh_vars[position].id == id)
+            return cursor->fresh_vars[position].cell;
     }
-    if (atom->kind != ATOM_EXPR || !atom_has_vars(atom))
-        return atom;
-    Atom **children = arena_alloc(&cursor->region,
-                                  sizeof(*children) * atom->expr.len);
-    if (!children)
+    Atom *cell = oem_new_cell(cursor);
+    if (!cell ||
+        !oem_reserve((void **)&cursor->fresh_vars, &cursor->fresh_var_cap,
+                     len + 1u, sizeof(*cursor->fresh_vars)))
         return NULL;
-    for (CettaExprIndex child = 0u; child < atom->expr.len; child++) {
-        children[child] = oem_import(cursor, atom->expr.elems[child],
-                                     depth + 1u);
-        if (!children[child])
+    cursor->fresh_vars[len] = (OemFreshVar){.id = id, .cell = cell};
+    cursor->fresh_var_len = ++len;
+    if (len <= CETTA_VAR_INDEX_SCAN)
+        return cell;
+    CettaVarIndex *index = &cursor->fresh_index;
+    if (len == CETTA_VAR_INDEX_SCAN + 1u || !cetta_var_index_has_room(index)) {
+        /* Past the scan the index holds every variable of this copy:
+         * recorded afresh on the way past, and again in a larger table,
+         * which drops older copies' entries. */
+        if (!cetta_var_index_reset(index, len))
             return NULL;
+        for (uint32_t index_position = 0u; index_position < len;
+             index_position++)
+            cetta_var_index_record(index,
+                                   cursor->fresh_vars[index_position].id,
+                                   index_position);
+    } else {
+        cetta_var_index_record(index, id, len - 1u);
     }
-    return atom_expr(&cursor->region, children, atom->expr.len);
+    return cell;
 }
 
 /* A copy of a stored row in the region with one new cell per distinct
  * variable: a row is universally quantified, so each match of it gets its
  * own variables.  Ground parts are shared. */
-static Atom *oem_import_fresh(CettaOpenEquationCursor *cursor, Atom *atom,
-                              uint32_t depth) {
-    if (depth > OEM_MAX_DEPTH)
-        return NULL;
-    if (atom->kind == ATOM_VAR) {
-        for (uint32_t index = 0u; index < cursor->fresh_var_len; index++) {
-            if (cursor->fresh_vars[index].id == atom->var_id)
-                return cursor->fresh_vars[index].cell;
-        }
-        Atom *cell = oem_new_cell(cursor);
-        if (!cell ||
-            !oem_reserve((void **)&cursor->fresh_vars, &cursor->fresh_var_cap,
-                         cursor->fresh_var_len + 1u,
-                         sizeof(*cursor->fresh_vars)))
-            return NULL;
-        cursor->fresh_vars[cursor->fresh_var_len++] =
-            (OemFreshVar){.id = atom->var_id, .cell = cell};
-        return cell;
+static Atom *oem_import_fresh(CettaOpenEquationCursor *cursor, Atom *atom) {
+    OemImport import;
+    oem_import_init(&import, OEM_IMPORT_ROW);
+    Atom *result = oem_import_walk(cursor, &import, atom);
+    oem_import_free(&import);
+    return result;
+}
+
+/* A region term unified with a stored row's fresh copy (oem_import_fresh),
+ * copying only what the unification keeps: the row is walked beside the
+ * term, a variable of the row gets its cell when the walk meets it, and a
+ * part of the row is copied only when an unbound cell takes it whole.  The
+ * walk is left to right, as the copy's, so the cells are the copy's own. */
+static OemUnify oem_unify_row(CettaOpenEquationCursor *cursor, Atom *term,
+                              Atom *row, uint32_t depth) {
+    if (!atom_has_vars(row)) {
+        /* A ground part of the row: an unbound cell takes it, which needs
+         * no occurs check, and an atom compares, as oem_unify would. */
+        Atom *value = oem_deref(cursor, term);
+        uint32_t cell = 0u;
+        if (oem_is_cell(cursor, value, &cell))
+            return oem_bind(cursor, cell, row) ? OEM_UNIFY_OK
+                                               : OEM_UNIFY_ERROR;
+        if (value == row)
+            return OEM_UNIFY_OK;
+        if (value->kind != ATOM_EXPR && row->kind != ATOM_EXPR &&
+            value->kind != ATOM_VAR)
+            return atom_eq(value, row) ? OEM_UNIFY_OK : OEM_UNIFY_FAIL;
+        return oem_unify(cursor, value, row);
     }
-    if (atom->kind != ATOM_EXPR || !atom_has_vars(atom))
-        return atom;
-    Atom **children = arena_alloc(&cursor->region,
-                                  sizeof(*children) * atom->expr.len);
-    if (!children)
-        return NULL;
-    for (CettaExprIndex child = 0u; child < atom->expr.len; child++) {
-        children[child] = oem_import_fresh(cursor, atom->expr.elems[child],
-                                           depth + 1u);
-        if (!children[child])
-            return NULL;
+    if (row->kind == ATOM_VAR) {
+        Atom *cell = oem_fresh_var(cursor, row->var_id);
+        return cell ? oem_unify(cursor, term, cell) : OEM_UNIFY_ERROR;
     }
-    return atom_expr(&cursor->region, children, atom->expr.len);
+    term = oem_deref(cursor, term);
+    uint32_t cell = 0u;
+    if (depth > OEM_MAX_DEPTH || row->kind != ATOM_EXPR ||
+        oem_is_cell(cursor, term, &cell) || oem_is_list_cell(term) ||
+        oem_is_list_cell(row)) {
+        Atom *copy = oem_import_fresh(cursor, row);
+        return copy ? oem_unify(cursor, term, copy) : OEM_UNIFY_ERROR;
+    }
+    if (term->kind != ATOM_EXPR || term->expr.len != row->expr.len)
+        return term->kind == ATOM_VAR ? OEM_UNIFY_ERROR : OEM_UNIFY_FAIL;
+    for (CettaExprIndex child = 0u; child < row->expr.len; child++) {
+        OemUnify unified = oem_unify_row(cursor, term->expr.elems[child],
+                                         row->expr.elems[child], depth + 1u);
+        if (unified != OEM_UNIFY_OK)
+            return unified;
+    }
+    return OEM_UNIFY_OK;
+}
+
+/* A match's pattern, read in place over `locals`, unified with a stored
+ * row's fresh copy (oem_unify_row): only a part of the pattern that meets
+ * a variable of the row, or a list cell, is built. */
+static OemUnify oem_unify_template_row(
+    CettaOpenEquationCursor *cursor, const CettaOpenEquationProgram *program,
+    Atom **locals, uint32_t template_index, Atom *row, uint32_t depth) {
+    const OemTemplate *item = &program->templates[template_index];
+    if (item->kind == OEM_T_LITERAL)
+        return oem_unify_row(cursor, item->literal, row, depth);
+    if (item->kind == OEM_T_SLOT)
+        return oem_unify_row(cursor, locals[item->slot], row, depth);
+    if (item->kind != OEM_T_BUILD || depth > OEM_MAX_DEPTH ||
+        row->kind == ATOM_VAR || oem_is_list_cell(row)) {
+        Atom *built = oem_instantiate(cursor, program, locals,
+                                      template_index);
+        return built ? oem_unify_row(cursor, built, row, depth)
+                     : OEM_UNIFY_ERROR;
+    }
+    if (row->kind != ATOM_EXPR || row->expr.len != item->count)
+        return OEM_UNIFY_FAIL;
+    for (uint32_t index = 0u; index < item->count; index++) {
+        OemUnify unified = oem_unify_template_row(
+            cursor, program, locals,
+            program->template_children[item->first + index],
+            row->expr.elems[index], depth + 1u);
+        if (unified != OEM_UNIFY_OK)
+            return unified;
+    }
+    return OEM_UNIFY_OK;
 }
 
 /* One row of a match: a fresh copy unified with the pattern.  CALLED when
@@ -5973,16 +9548,25 @@ static __attribute__((noinline)) OemRun oem_try_candidate(
                                 CettaOpenEquationCursor *cursor,
                                 Atom *pattern, Atom *candidate) {
     cursor->stats.match_candidates++;
-    if (petta_semantics_is_open_cons_value(candidate)) {
-        cursor->handoff = CETTA_OPEN_EQUATION_HANDOFF_UNSUPPORTED;
-        return OEM_RUN_HANDOFF;
-    }
     cursor->fresh_var_len = 0u;
-    Atom *row = atom_has_vars(candidate)
-        ? oem_import_fresh(cursor, candidate, 0u) : candidate;
-    if (!row)
-        return OEM_RUN_HANDOFF;
-    OemUnify unified = oem_unify(cursor, pattern, row);
+    OemUnify unified = oem_unify_row(cursor, pattern, candidate, 0u);
+    if (unified != OEM_UNIFY_OK)
+        return unified == OEM_UNIFY_FAIL ? OEM_RUN_FAILED : OEM_RUN_HANDOFF;
+    return OEM_RUN_CALLED;
+}
+
+/* One row of a match whose frame keeps no built pattern: the pattern is
+ * the match step's, read over the activation the match resumes, whose
+ * state restoring the frame returned to the state the match saw. */
+static __attribute__((noinline)) OemRun oem_try_candidate_in_place(
+                                CettaOpenEquationCursor *cursor,
+                                const OemCont *resume, Atom *candidate) {
+    cursor->stats.match_candidates++;
+    cursor->fresh_var_len = 0u;
+    const OemStep *step = &resume->program->steps[resume->pc - 1u];
+    OemUnify unified = oem_unify_template_row(
+        cursor, resume->program, resume->locals, step->pattern, candidate,
+        0u);
     if (unified != OEM_UNIFY_OK)
         return unified == OEM_UNIFY_FAIL ? OEM_RUN_FAILED : OEM_RUN_HANDOFF;
     return OEM_RUN_CALLED;
@@ -5995,16 +9579,17 @@ CettaOpenEquationCursor *cetta_open_equation_cursor_open(
     const CettaOpenEquationRuntime *runtime) {
     if (!program || !answer_arena || (!args && arity > 0u) ||
         (!query_vars && query_var_count > 0u) ||
-        program->relation_len == 0u || program->relations[0].arity != arity)
+        program->relation_len == 0u || program->relations[0].arity != arity ||
+        (runtime && runtime->depth_bound && !program->depth_pruning_safe))
         return NULL;
     CettaOpenEquationCursor *cursor = calloc(1u, sizeof(*cursor));
     if (!cursor)
         return NULL;
     cursor->program = program;
-    program->refs++;
+    atomic_fetch_add_explicit(&program->refs, 1u, memory_order_relaxed);
     cursor->answer_arena = answer_arena;
-    cursor->collect_after = OEM_COLLECT_MIN_BYTES;
-    cursor->major_after = OEM_MAJOR_MIN_BYTES;
+    cursor->collect_after = oem_collect_sizes()->first;
+    cursor->major_after = oem_collect_sizes()->major;
     if (runtime)
         cursor->runtime = *runtime;
     arena_init(&cursor->region);
@@ -6021,6 +9606,11 @@ CettaOpenEquationCursor *cetta_open_equation_cursor_open(
     }
     cursor->query_var_count = query_var_count;
     cursor->query_vars = query_vars;
+    if (!cetta_var_index_build_atom(&cursor->query_index, query_vars,
+                                    query_var_count)) {
+        cetta_open_equation_cursor_close(cursor);
+        return NULL;
+    }
     cursor->query_cells = calloc(query_var_count ? query_var_count : 1u,
                                  sizeof(*cursor->query_cells));
     cursor->query_values = calloc(query_var_count ? query_var_count : 1u,
@@ -6032,16 +9622,19 @@ CettaOpenEquationCursor *cetta_open_equation_cursor_open(
         cursor->query_cells[index] = oem_new_cell(cursor);
         ok = cursor->query_cells[index] != NULL;
     }
+    OemImport import;
+    oem_import_init(&import, OEM_IMPORT_CALL);
     for (uint32_t index = 0u; ok && index < arity; index++) {
-        imported[index] = oem_import(cursor, args[index], 0u);
+        imported[index] = oem_import_walk(cursor, &import, args[index]);
         ok = imported[index] != NULL;
     }
     if (ok) {
         cursor->destination = expected
-            ? oem_import(cursor, expected, 0u)
+            ? oem_import_walk(cursor, &import, expected)
             : oem_new_cell(cursor);
         ok = cursor->destination != NULL;
     }
+    oem_import_free(&import);
     ok = ok && oem_push_frame(cursor, program, 0u, imported, NULL, 1u);
     cursor->query_vars = NULL;
     if (!ok) {
@@ -6086,6 +9679,7 @@ static bool oem_cursor_enter(CettaOpenEquationCursor *cursor,
     cursor->host_var_count = 0u;
     cursor->host_plan = NULL;
     cursor->host_mode = CETTA_OPEN_EQUATION_HOST_SOLVE;
+    cursor->host_recovers = false;
     cursor->answer_weight = 1u;
     cursor->answer_folded = false;
     if (cursor->handoff == CETTA_OPEN_EQUATION_HANDOFF_INTERRUPT)
@@ -6123,7 +9717,7 @@ bool cetta_open_equation_cursor_host_goal(
     const CettaOpenEquationCursor *cursor, Atom **goal_out,
     Atom **destination_out, Atom *const **vars_out,
     uint32_t *var_count_out, const struct PettaPlanNode **plan_out,
-    CettaOpenEquationHostMode *mode_out) {
+    CettaOpenEquationHostMode *mode_out, bool *recovers_out) {
     if (!cursor || !cursor->host_goal)
         return false;
     *goal_out = cursor->host_goal;
@@ -6132,6 +9726,7 @@ bool cetta_open_equation_cursor_host_goal(
     *var_count_out = cursor->host_var_count;
     *plan_out = cursor->host_plan;
     *mode_out = cursor->host_mode;
+    *recovers_out = cursor->host_recovers;
     return true;
 }
 
@@ -6152,50 +9747,6 @@ uint32_t cetta_open_equation_cursor_cut_height(
  * cells they stood for, the call's variables its cells, and any other
  * variable a new cell.  Everything is copied, since the host's store may
  * move. */
-static Atom *oem_import_host(CettaOpenEquationCursor *cursor, Atom *atom,
-                             Atom *const *host_vars,
-                             const OemHostCells *cells, uint32_t depth) {
-    if (depth > OEM_MAX_DEPTH)
-        return NULL;
-    if (atom->kind == ATOM_VAR) {
-        for (uint32_t index = 0u; index < cells->count; index++) {
-            if (host_vars[index]->var_id == atom->var_id)
-                return cursor->cell_names[cells->cells[index]];
-        }
-        for (uint32_t index = 0u; index < cursor->query_var_count; index++) {
-            if (cursor->query_vars &&
-                cursor->query_vars[index]->var_id == atom->var_id)
-                return cursor->query_cells[index];
-        }
-        for (uint32_t index = 0u; index < cursor->fresh_var_len; index++) {
-            if (cursor->fresh_vars[index].id == atom->var_id)
-                return cursor->fresh_vars[index].cell;
-        }
-        Atom *cell = oem_new_cell(cursor);
-        if (!cell ||
-            !oem_reserve((void **)&cursor->fresh_vars, &cursor->fresh_var_cap,
-                         cursor->fresh_var_len + 1u,
-                         sizeof(*cursor->fresh_vars)))
-            return NULL;
-        cursor->fresh_vars[cursor->fresh_var_len++] =
-            (OemFreshVar){.id = atom->var_id, .cell = cell};
-        return cell;
-    }
-    if (atom->kind != ATOM_EXPR || !atom_has_vars(atom))
-        return atom_deep_copy(&cursor->region, atom);
-    Atom **children = arena_alloc(&cursor->region,
-                                  sizeof(*children) * atom->expr.len);
-    if (!children)
-        return NULL;
-    for (CettaExprIndex child = 0u; child < atom->expr.len; child++) {
-        children[child] = oem_import_host(cursor, atom->expr.elems[child],
-                                          host_vars, cells, depth + 1u);
-        if (!children[child])
-            return NULL;
-    }
-    return atom_expr(&cursor->region, children, atom->expr.len);
-}
-
 bool cetta_open_equation_cursor_accept(
     CettaOpenEquationCursor *cursor, Atom *const *query_vars,
     Atom *const *host_vars, Atom *const *host_values, uint32_t host_count,
@@ -6231,20 +9782,37 @@ bool cetta_open_equation_cursor_accept(
 #if CETTA_BUILD_WITH_RUNTIME_STATS
     size_t imported_before = arena_accounted_live_bytes(&cursor->region);
 #endif
+    /* The goal's variables by identifier, past a short scan, for every value
+     * of this answer. */
+    CettaVarIndex host_index;
+    cetta_var_index_init(&host_index);
+    if (!cetta_var_index_build_atom(&host_index, host_vars, host_count)) {
+        cursor->handoff = CETTA_OPEN_EQUATION_HANDOFF_CAPACITY;
+        cursor->query_vars = NULL;
+        return false;
+    }
+    OemImport import;
+    oem_import_init(&import, OEM_IMPORT_HOST);
+    import.host_vars = host_vars;
+    import.cells = cells;
+    import.host_index = &host_index;
     for (uint32_t index = 0u; unified && index < host_count; index++) {
-        Atom *imported = oem_import_host(cursor, host_values[index],
-                                         host_vars, cells, 0u);
+        Atom *imported = oem_import_walk(cursor, &import, host_values[index]);
         OemUnify outcome = imported
             ? oem_unify(cursor, cursor->cell_names[cells->cells[index]],
                         imported)
             : OEM_UNIFY_ERROR;
         if (outcome == OEM_UNIFY_ERROR) {
+            oem_import_free(&import);
+            cetta_var_index_free(&host_index);
             cursor->handoff = CETTA_OPEN_EQUATION_HANDOFF_CAPACITY;
             cursor->query_vars = NULL;
             return false;
         }
         unified = outcome == OEM_UNIFY_OK;
     }
+    oem_import_free(&import);
+    cetta_var_index_free(&host_index);
 #if CETTA_BUILD_WITH_RUNTIME_STATS
     size_t imported_after = arena_accounted_live_bytes(&cursor->region);
     cetta_runtime_stats_add(
@@ -6387,11 +9955,13 @@ static CettaOpenEquationStep oem_cursor_run(
                 continue;
             }
             Atom *candidate = frame->rows->rows[frame->next++];
-            Atom *pattern = frame->args[0];
+            Atom *pattern = frame->args ? frame->args[0] : NULL;
             const OemCont *resume = frame->cont;
             if (frame->next >= frame->rows->len)
                 oem_pop_frame(cursor);
-            run = oem_try_candidate(cursor, pattern, candidate);
+            run = pattern ? oem_try_candidate(cursor, pattern, candidate)
+                          : oem_try_candidate_in_place(cursor, resume,
+                                                       candidate);
             if (run == OEM_RUN_CALLED)
                 entry = (OemEntry){
                     .program = resume->program, .pc = resume->pc,
@@ -6407,6 +9977,22 @@ static CettaOpenEquationStep oem_cursor_run(
                 oem_pop_frame(cursor);
                 continue;
             }
+            if (relation->indexed) {
+                if (frame->next == 0u)
+                    frame->candidates = oem_index_candidates(
+                        cursor, version, relation, frame->args);
+                while (frame->next < relation->equation_count &&
+                       !((frame->candidates >> frame->next) & 1u)) {
+                    cursor->stats.head_failures++;
+                    oem_count_attempt(cursor, OEM_ATTEMPT_MISMATCH,
+                                      cursor->binds, OEM_RUN_FAILED);
+                    frame->next++;
+                }
+                if (frame->next >= relation->equation_count) {
+                    oem_pop_frame(cursor);
+                    continue;
+                }
+            }
             uint32_t equation = relation->first_equation + frame->next++;
             Atom **args = frame->args;
             const OemCont *cont = frame->cont;
@@ -6416,21 +10002,24 @@ static CettaOpenEquationStep oem_cursor_run(
              * would be tried in, and the last alternative leaves nothing to
              * return to: the frame goes, so a deterministic call, and a
              * chain of them, keeps no frame. */
-            while (relation->first_tests_differ &&
-                   frame->next < relation->equation_count &&
-                   oem_first_test_refutes(
-                       cursor, version,
-                       relation->first_equation + frame->next, args,
-                       relation->arity)) {
+            while (frame->next < relation->equation_count &&
+                   ((relation->indexed &&
+                     !((frame->candidates >> frame->next) & 1u)) ||
+                    (relation->first_tests_differ &&
+                     oem_first_test_refutes(
+                         cursor, version,
+                         relation->first_equation + frame->next, args,
+                         relation->arity)))) {
                 cursor->stats.head_failures++;
                 oem_count_attempt(cursor, OEM_ATTEMPT_MISMATCH, cursor->binds,
                                   OEM_RUN_FAILED);
                 frame->next++;
             }
-            if (frame->next >= relation->equation_count)
+            bool own_frame = frame->next < relation->equation_count;
+            if (!own_frame)
                 oem_pop_frame(cursor);
             run = oem_activate(cursor, version, equation, args,
-                               relation->arity, cont, &entry);
+                               relation->arity, cont, own_frame, &entry);
             /* An activation past the depth bound fails once its head has
              * matched, so the run knows it cut something. */
             if (run == OEM_RUN_CALLED) {
@@ -6480,6 +10069,11 @@ CettaOpenEquationHandoff cetta_open_equation_cursor_handoff(
     return cursor ? cursor->handoff : CETTA_OPEN_EQUATION_HANDOFF_CAPACITY;
 }
 
+bool cetta_open_equation_cursor_can_prune_depth(
+    const CettaOpenEquationCursor *cursor) {
+    return cursor && cursor->program->depth_pruning_safe;
+}
+
 bool cetta_open_equation_cursor_bound_cut(
     const CettaOpenEquationCursor *cursor) {
     return cursor && cursor->bound_cut;
@@ -6517,8 +10111,15 @@ void cetta_open_equation_cursor_close(CettaOpenEquationCursor *cursor) {
     free(cursor->cells);
     free(cursor->trail);
     free(cursor->stores);
+    free(cursor->remembered_cells);
+    free(cursor->remembered_slots);
     free(cursor->frames);
     free(cursor->fresh_vars);
+    cetta_var_index_free(&cursor->fresh_index);
+    cetta_var_index_free(&cursor->query_index);
+    free(cursor->space_rows);
+    free(cursor->space_row_keys);
+    free(cursor->space_row_parts);
     free(cursor->schemas);
     free(cursor->host_vars);
     free(cursor->pairs);

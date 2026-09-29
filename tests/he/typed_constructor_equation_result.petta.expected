@@ -1,0 +1,8 @@
+(B0 (r:val 2))
+(B1 (r:val 2))
+(B2 (r:val (deep 7 2)))
+(B3 (r:two 2 3))
+(B4 (r:val (h 1)))
+(B5 (r:val 2))
+(B6 (plain (r:val 2)))
+(B7 (plain 2))

@@ -14,8 +14,6 @@ static unsigned checks;
 static unsigned failures;
 static const char manifest_sha[] =
     "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-static const char generator_sha[] =
-    "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
 
 #define CHECK(condition, label)                                      \
     do {                                                             \
@@ -42,8 +40,7 @@ static bool catalog_decode(Arena *arena, const char *source,
                            char error[ERROR_CAP]) {
     return cetta_gslt_provider_catalog_from_source_v1(
         arena, (const uint8_t *)source, strlen(source),
-        "example/catalog.metta", manifest_sha, generator_sha,
-        catalog, error, ERROR_CAP);
+        "example/catalog.metta", manifest_sha, catalog, error, ERROR_CAP);
 }
 
 static bool manifest_decode(Arena *arena, const char *source,
@@ -92,9 +89,8 @@ static void catalog_positives(void) {
                   memcmp(catalog.source_bytes, catalog_source,
                          catalog.source_length) == 0,
               "catalog retains actual source bytes and their digest");
-        CHECK(strcmp(catalog.language_manifest_sha256, manifest_sha) == 0 &&
-                  strcmp(catalog.generator_sha256, generator_sha) == 0,
-              "catalog retains supplied manifest and generator identities");
+        CHECK(strcmp(catalog.language_manifest_sha256, manifest_sha) == 0,
+              "catalog retains the supplied manifest identity");
 
         CettaGsltProviderCatalogV1 changed = catalog;
         changed.source_sha256 = manifest_sha;
@@ -154,20 +150,17 @@ static void catalog_positives(void) {
         "(gslt-provider-catalog-v1 (name owned) (language example) "
         "(profile extension) (provider external 1 \"owned.identity\"))";
     char owned_name[] = "owned/catalog.metta";
-    char owned_manifest[65], owned_generator[65];
+    char owned_manifest[65];
     memcpy(owned_manifest, manifest_sha, sizeof(owned_manifest));
-    memcpy(owned_generator, generator_sha, sizeof(owned_generator));
     ok = cetta_gslt_provider_catalog_from_source_v1(
         &arena, (const uint8_t *)owned_source, strlen(owned_source), owned_name,
-        owned_manifest, owned_generator, &catalog, error, sizeof(error));
+        owned_manifest, &catalog, error, sizeof(error));
     memset(owned_source, 'x', sizeof(owned_source) - 1u);
     memset(owned_name, 'x', sizeof(owned_name) - 1u);
     memset(owned_manifest, '0', 64u);
-    memset(owned_generator, '0', 64u);
     CHECK(ok && strcmp(catalog.name, "owned") == 0 &&
               strcmp(catalog.source_name, "owned/catalog.metta") == 0 &&
               strcmp(catalog.language_manifest_sha256, manifest_sha) == 0 &&
-              strcmp(catalog.generator_sha256, generator_sha) == 0 &&
               cetta_gslt_provider_catalog_validate_v1(
                   &catalog, error, sizeof(error)),
           "catalog owns source, metadata and requirements in caller arena");
@@ -231,16 +224,12 @@ static void catalog_negatives(void) {
     arena_init(&arena);
     CHECK(!cetta_gslt_provider_catalog_from_source_v1(
               &arena, (const uint8_t *)nul_source, sizeof(nul_source) - 1u,
-              "catalog.metta", manifest_sha, generator_sha, &catalog,
+              "catalog.metta", manifest_sha, &catalog,
               error, sizeof(error)), "embedded NUL source is refused");
     CHECK(!cetta_gslt_provider_catalog_from_source_v1(
               &arena, (const uint8_t *)catalog_source, strlen(catalog_source),
-              "catalog.metta", "invalid", generator_sha, &catalog,
+              "catalog.metta", "invalid", &catalog,
               error, sizeof(error)), "invalid manifest identity is refused");
-    CHECK(!cetta_gslt_provider_catalog_from_source_v1(
-              &arena, (const uint8_t *)catalog_source, strlen(catalog_source),
-              "catalog.metta", manifest_sha, "invalid", &catalog,
-              error, sizeof(error)), "invalid generator identity is refused");
     arena_free(&arena);
 }
 

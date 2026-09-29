@@ -1,6 +1,7 @@
 #ifndef CETTA_ATOM_H
 #define CETTA_ATOM_H
 
+#include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -70,12 +71,22 @@ typedef enum {
     CETTA_INTERNAL_TAG_PRIME_LEXICAL_SLOT = 3,
     CETTA_INTERNAL_TAG_PRIME_LEVEL_PARAMETER = 4,
     CETTA_INTERNAL_TAG_PETTA_OPEN_CONS = 5,
-    /* 6 and 7 are the list tags of the NIK kernel. */
+    /* A list value [x1, ..., xn] is the expression (LIST x1 ... xn), and a list
+     * pattern [x1, ..., xk | rest] is (LIST_REST x1 ... xk rest).  No source
+     * text spells these tags and no variable binds them, so a list never
+     * equals or matches an expression. */
+    CETTA_INTERNAL_TAG_LIST = 6,
+    CETTA_INTERNAL_TAG_LIST_REST = 7,
     /* A PeTTa operation that has no answer.  In PeTTa `Empty` is data
      * except as a `case` default, so no-result cannot be that symbol. */
     CETTA_INTERNAL_TAG_PETTA_NO_RESULT = 8,
     CETTA_INTERNAL_TAG_PRIME_HELD = 9,
 } CettaInternalTag;
+
+static inline bool cetta_internal_tag_is_list(int64_t tag) {
+    return tag == (int64_t)CETTA_INTERNAL_TAG_LIST ||
+           tag == (int64_t)CETTA_INTERNAL_TAG_LIST_REST;
+}
 
 #define ATOM_FLAG_HAS_VARS 0x01u
 #define ATOM_FLAG_HASH_VALID 0x02u
@@ -123,6 +134,10 @@ typedef enum {
  * equals nothing, not even itself, so an atom is value-equal to itself only
  * when it holds none. */
 #define ATOM_STRUCTURAL_HAS_NAN UINT32_C(0x00000004)
+/* The atom is or contains a list pattern with a rest, (LIST_REST x... rest). */
+#define ATOM_STRUCTURAL_HAS_OPEN_LIST UINT32_C(0x00000040)
+/* The atom is or contains a list or a list pattern. */
+#define ATOM_STRUCTURAL_HAS_LIST UINT32_C(0x00000080)
 /* The atom's arena has an older generation, and every Atom child reachable
  * through this node is globally owned, in this node's arena, or in that older
  * generation, closed there in turn.  Set only where ATOM_FLAG_ARENA_CLOSED is
@@ -139,6 +154,19 @@ typedef enum {
  * slot is free (PrefixBuffer.claimable_iff_free_below).  A fact of the node
  * alone: no expression holding it as a child inherits it. */
 #define ATOM_STRUCTURAL_FRONT_SLACK UINT32_C(0x00000020)
+/* Each fact has its own bit: for one-bit flags the sum equals the union
+ * exactly when no two share one. */
+_Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
+                       ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID + ATOM_STRUCTURAL_HAS_NAN +
+                       ATOM_STRUCTURAL_HAS_OPEN_LIST + ATOM_STRUCTURAL_HAS_LIST +
+                       ATOM_STRUCTURAL_GENERATION_CLOSED +
+                       ATOM_STRUCTURAL_HAS_LIST_CARRIER + ATOM_STRUCTURAL_FRONT_SLACK ==
+                   (ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_HAS_INTERNAL_TAG |
+                    ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID | ATOM_STRUCTURAL_HAS_NAN |
+                    ATOM_STRUCTURAL_HAS_OPEN_LIST | ATOM_STRUCTURAL_HAS_LIST |
+                    ATOM_STRUCTURAL_GENERATION_CLOSED |
+                    ATOM_STRUCTURAL_HAS_LIST_CARRIER | ATOM_STRUCTURAL_FRONT_SLACK),
+               "structural fact bits overlap");
 
 /*
  * VariantShape reserves this VarId prefix for its runtime-private slots.
@@ -162,11 +190,14 @@ struct Atom {
     uint32_t flags;
     /*
      * ATOM_VAR: the variable identity.
-     * ATOM_EXPR: an exact singleton-variable support summary.  A nonzero
-     * value means every variable occurrence in the expression has this id;
-     * zero means either no variables (distinguished by ATOM_FLAG_HAS_VARS)
-     * or support containing more than one id.  The summary is derived from
-     * immutable children and does not change equality or hashing.
+     * ATOM_EXPR: a singleton-variable support summary.  A nonzero value
+     * means every variable occurrence in the expression has this id; zero
+     * means either no variables (distinguished by ATOM_FLAG_HAS_VARS) or,
+     * with variables, support containing more than one id or not settled:
+     * a suffix view of a list with several ids may leave it unsettled
+     * (atom_expr_suffix).  Readers take zero with variables as a subterm to
+     * walk.  The summary is derived from immutable children and does not
+     * change equality or hashing.
      */
     VarId var_id;
     SymbolId sym_id;         /* ATOM_SYMBOL, or variable spelling */
@@ -183,6 +214,11 @@ struct Atom {
     union {
         struct {            /* ATOM_GROUNDED */
             GroundedKind gkind;
+            /* GV_STRING: the byte length of `sval`.  A string is its bytes,
+             * embedded NUL included; the byte after them is a NUL kept only
+             * for C interoperation.  The field sits in the padding after the
+             * kind, so it costs no space. */
+            uint32_t slen;
             union {
                 int64_t ival;
                 double fval;
@@ -202,6 +238,11 @@ struct Atom {
     };
 };
 
+/* The string length lives in the grounded kind's padding: a grounded payload
+ * stays sixteen bytes. */
+_Static_assert(sizeof(((Atom *)0)->ground) == 16,
+               "the string length must fit the grounded padding");
+
 static inline VarId atom_single_variable_id(const Atom *atom) {
     if (!atom || (atom->flags & ATOM_FLAG_HAS_VARS) == 0u)
         return VAR_ID_NONE;
@@ -216,6 +257,21 @@ static inline bool atom_structural_may_have_internal_tag(
            (atom->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) == 0u ||
            (atom->structural_facts &
             ATOM_STRUCTURAL_HAS_INTERNAL_TAG) != 0u;
+}
+
+/* Conservative: true unless the atom is known to contain no list pattern
+ * with a rest. */
+static inline bool atom_structural_may_have_open_list(const Atom *atom) {
+    return !atom ||
+           (atom->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) == 0u ||
+           (atom->structural_facts & ATOM_STRUCTURAL_HAS_OPEN_LIST) != 0u;
+}
+
+/* Conservative: true unless the atom is known to contain no list. */
+static inline bool atom_structural_may_have_list(const Atom *atom) {
+    return !atom ||
+           (atom->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) == 0u ||
+           (atom->structural_facts & ATOM_STRUCTURAL_HAS_LIST) != 0u;
 }
 
 static inline bool atom_structural_may_have_list_carrier(
@@ -237,6 +293,50 @@ static inline bool atom_is_internal_tag(
     return atom && atom->kind == ATOM_GROUNDED &&
            atom->ground.gkind == GV_INTERNAL_TAG &&
            atom->ground.ival == (int64_t)tag;
+}
+
+/* A list value, (LIST x1 ... xn). */
+static inline bool atom_is_list(const Atom *atom) {
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len >= 1u &&
+           atom_is_internal_tag(atom->expr.elems[0], CETTA_INTERNAL_TAG_LIST);
+}
+
+/* A list pattern with a rest, (LIST_REST x1 ... xk rest), k >= 1. */
+static inline bool atom_is_list_rest(const Atom *atom) {
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len >= 3u &&
+           atom_is_internal_tag(atom->expr.elems[0], CETTA_INTERNAL_TAG_LIST_REST);
+}
+
+/* The elements a sequence primitive (car-atom, size-atom, ...) reads: an
+ * expression's, or a list's after its tag.  False for any other atom,
+ * including a list pattern, whose length is not known. */
+static inline bool atom_sequence_view(const Atom *atom, Atom *const **elems,
+                                      CettaExprLen *len) {
+    if (!atom || atom->kind != ATOM_EXPR || atom_is_list_rest(atom))
+        return false;
+    bool list = atom_is_list(atom);
+    *elems = atom->expr.elems + (list ? 1u : 0u);
+    *len = atom->expr.len - (list ? 1u : 0u);
+    return true;
+}
+
+/* A list or a list pattern: data the interpreter never calls. */
+static inline bool atom_is_list_form(const Atom *atom) {
+    return atom_is_list(atom) || atom_is_list_rest(atom);
+}
+
+/* Either list tag, which no variable may be bound to. */
+static inline bool atom_is_list_tag(const Atom *atom) {
+    return atom_is_internal_tag(atom, CETTA_INTERNAL_TAG_LIST) ||
+           atom_is_internal_tag(atom, CETTA_INTERNAL_TAG_LIST_REST);
+}
+
+/* The elements of a list value (after its tag), and their number. */
+static inline CettaExprLen atom_list_len(const Atom *list) {
+    return list->expr.len - 1u;
+}
+static inline Atom *const *atom_list_elems(const Atom *list) {
+    return list->expr.elems + 1;
 }
 
 static inline bool atom_is_petta_no_result(const Atom *atom) {
@@ -363,6 +463,8 @@ typedef struct CettaBindingsValue {
 
 Atom *atom_bindings_value(Arena *arena, CettaBindingsValue *value);
 
+/* Report an allocation of `size` bytes that failed and abort. */
+_Noreturn void cetta_oom(size_t size);
 void *cetta_malloc(size_t size);
 void *cetta_realloc(void *ptr, size_t size);
 void  arena_init(Arena *a);
@@ -559,6 +661,9 @@ Atom *atom_symbol_id(Arena *a, SymbolId sym_id);
 Atom *atom_var(Arena *a, const char *name);
 Atom *atom_var_with_id(Arena *a, const char *name, VarId id);
 Atom *atom_var_with_spelling(Arena *a, SymbolId spelling, VarId id);
+/* A variable spelled by a string literal, whose symbol is cached by the
+ * literal's address: `name` must be storage whose contents never change. */
+Atom *atom_var_with_literal(Arena *a, const char *name, VarId id);
 Atom *atom_var_with_name_key(Arena *a, Atom *name_key, VarId id);
 Atom *atom_var_with_presentation(Arena *a, SymbolId spelling,
                                  Atom *name_key, VarId id);
@@ -581,8 +686,54 @@ Atom *atom_rational_from_mpq(Arena *a, const mpq_t value);
 #endif
 Atom *atom_float(Arena *a, double val);
 Atom *atom_bool(Arena *a, bool val);
+/* A string atom of the given bytes, which may hold NUL.  `atom_string` takes
+ * a NUL-terminated C string. */
+#define CETTA_STRING_BYTES_MAX 0x7FFFFFFFu
+Atom *atom_string_n(Arena *a, const char *bytes, size_t len);
 Atom *atom_string(Arena *a, const char *val);
+static inline size_t atom_string_len(const Atom *atom) {
+    return atom->ground.slen;
+}
+/* Two strings are equal when they have the same bytes; strings order
+ * bytewise, a proper prefix first, which is strcmp's order when neither holds
+ * NUL. */
+static inline bool atom_string_equal(const Atom *left, const Atom *right) {
+    return left->ground.slen == right->ground.slen &&
+           memcmp(left->ground.sval, right->ground.sval,
+                  left->ground.slen) == 0;
+}
+static inline bool atom_string_equals_bytes(const Atom *atom,
+                                            const char *bytes, size_t len) {
+    return atom->ground.slen == len &&
+           memcmp(atom->ground.sval, bytes, len) == 0;
+}
+static inline bool atom_string_equals_cstr(const Atom *atom,
+                                           const char *text) {
+    return atom_string_equals_bytes(atom, text, strlen(text));
+}
+static inline int cetta_bytes_compare(const char *left, size_t left_len,
+                                      const char *right, size_t right_len) {
+    size_t common = left_len < right_len ? left_len : right_len;
+    int order = common ? memcmp(left, right, common) : 0;
+    if (order != 0)
+        return order < 0 ? -1 : 1;
+    return (left_len > right_len) - (left_len < right_len);
+}
+static inline int atom_string_compare(const Atom *left, const Atom *right) {
+    return cetta_bytes_compare(left->ground.sval, left->ground.slen,
+                               right->ground.sval, right->ground.slen);
+}
 Atom *atom_space(Arena *a, void *space_ptr);
+/* How printed string literals write control bytes: escaped as \xhh, which
+ * the HE readers read back (the default), or as the bytes themselves, which
+ * the PeTTa and Prime readers read back.  The PeTTa printer always writes the
+ * bytes; the program's language sets this for every other printer. */
+void atom_print_set_raw_string_bytes(bool raw);
+bool atom_print_raw_string_bytes(void);
+/* While on, printing is into text held as a C string, which cannot hold NUL:
+ * a printer that writes a string's bytes raw writes NUL as \x00.  Returns
+ * the previous setting. */
+bool atom_print_set_c_text(bool on);
 
 /* State cell: holds a mutable value + its content type */
 typedef struct {
@@ -666,6 +817,15 @@ enum {
 
 Atom *atom_state(Arena *a, StateCell *cell);
 Atom *atom_capture(Arena *a, CaptureClosure *closure);
+/* A foreign record begins with its hold: an arena that holds an atom of the
+ * record retains it once for that atom and releases it when the arena is
+ * reset past the atom or freed, so the record lives exactly while some
+ * arena holds an atom of it (ArenaHeldResources). */
+typedef struct CettaForeignHold {
+    void (*retain)(void *record);
+    void (*release)(void *record);
+} CettaForeignHold;
+
 Atom *atom_foreign(Arena *a, CettaForeignValue *value);
 Atom *atom_internal_tag(Arena *a, CettaInternalTag tag);
 
@@ -692,6 +852,20 @@ Atom *atom_petta_no_result(Arena *a);
 bool atom_petta_prolog_compound_body(Atom *atom, Atom **body);
 bool atom_prolog_compound_body(Atom *atom, Atom **body);
 Atom *atom_counted_collection(Arena *a, int64_t count);
+/* True for grounded atoms whose value is their identity as a term: numbers,
+ * strings and the list tags.  Handles, cells and machine carriers are not. */
+bool atom_grounded_is_term_stable(const Atom *atom);
+/* The list value [elems...]. */
+Atom *atom_list(Arena *a, Atom *const *elems, CettaExprLen len);
+/* [elems... | rest]: a list when rest is a list value (their concatenation),
+ * otherwise the list pattern (LIST_REST elems... rest). */
+Atom *atom_list_with_rest(Arena *a, Atom *const *elems, CettaExprLen len, Atom *rest);
+/* The list of the elements of list from index from on. */
+Atom *atom_list_tail(Arena *a, const Atom *list, CettaExprLen from);
+/* A sequence of elems of the same kind as like: a list when like is one,
+ * otherwise an expression. */
+Atom *atom_sequence_like(Arena *a, const Atom *like, Atom *const *elems,
+                         CettaExprLen len);
 bool atom_counted_collection_count(
     Atom *atom, int64_t *count);
 Atom *atom_prime_need_capability(Arena *a, uint64_t session_id,
@@ -707,6 +881,33 @@ const CettaPrimeContext *atom_prime_context_value(const Atom *atom);
 Atom *atom_prime_context_lookup(const CettaPrimeContext *context, Atom *key);
 uint32_t atom_prime_context_depth(const CettaPrimeContext *context);
 Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len);
+/* The part of an expression's summary a fixed head gives it, folded once:
+ * atom_expr_headed then builds, from children headed by that head, exactly
+ * the expression atom_expr builds. */
+typedef struct {
+    uint32_t flags;
+    uint32_t structural_facts;
+    /* The head is closed for the arena `arena_id` (for every arena when it
+     * is 0), or for none when `open`. */
+    uint32_t arena_id;
+    bool open;
+    /* The head changes the summary of what it heads (a name to resolve, a
+     * native handle): atom_expr_headed builds through atom_expr. */
+    bool adjusts;
+} AtomExprHead;
+void atom_expr_head_init(AtomExprHead *out, const Atom *head);
+/* atom_expr of `elems`, whose first element is the head `head` was
+ * initialized from. */
+Atom *atom_expr_headed(Arena *a, const AtomExprHead *head, Atom **elems,
+                       CettaExprLen len);
+/* atom_expr_headed of `head_atom` and one, two or three arguments, passed
+ * one by one. */
+Atom *atom_expr_headed2(Arena *a, const AtomExprHead *head, Atom *head_atom,
+                        Atom *first);
+Atom *atom_expr_headed3(Arena *a, const AtomExprHead *head, Atom *head_atom,
+                        Atom *first, Atom *second);
+Atom *atom_expr_headed4(Arena *a, const AtomExprHead *head, Atom *head_atom,
+                        Atom *first, Atom *second, Atom *third);
 /* The suffix of `expression` from its child `offset` on.  It shares the
  * expression's children when their storage outlives the suffix: storage in
  * the suffix's own arena, allocated first, or storage never released.  Its
@@ -714,6 +915,15 @@ Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len);
  * bit and the variables as the others fold them; otherwise it is folded from
  * its own children. */
 Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset);
+/* A new header in arena `a`, of `view`'s length, over `elems`, which it
+ * shares: `view`'s own elements, or a copy of them that equals them as
+ * terms when `view` has no variables.  For a caller that keeps that storage,
+ * and everything it names, for as long as `a` holds the header, as a
+ * collection does for storage it does not collect or copies once.  The
+ * summaries of the elements carry over; the ones relative to an arena are
+ * cleared, which only withholds a shortcut.  NULL when `a` interns its
+ * expressions, which share nothing they do not own. */
+Atom *atom_expr_view_rehome(Arena *a, const Atom *view, Atom **elems);
 /* The expression `list` with `head` before its first child, in amortized
  * constant time (PrefixBuffer).  When `list` starts at its buffer's front in
  * this arena, the free slot just below it is claimed; otherwise the children
@@ -752,6 +962,7 @@ Atom *atom_symbol_type(Arena *a);      /* Symbol "Symbol" */
 Atom *atom_variable_type(Arena *a);    /* Symbol "Variable" */
 Atom *atom_expression_type(Arena *a);  /* Symbol "Expression" */
 Atom *atom_grounded_type(Arena *a);    /* Symbol "Grounded" */
+Atom *atom_list_type(Arena *a);        /* Symbol "List": metatype and type of a list */
 Atom *get_meta_type(Arena *a, Atom *atom);  /* Meta-type of atom */
 bool atom_is_meta_type(Atom *type);
 bool atom_meta_type_accepts(Arena *a, Atom *formal, Atom *actual);
@@ -870,6 +1081,10 @@ void atom_print_petta(Atom *a, FILE *out);
 char *atom_to_string(Arena *a, Atom *atom);
 char *atom_to_parseable_string(Arena *a, Atom *atom);
 char *atom_to_parseable_string_petta(Arena *a, Atom *atom);
+/* The printed bytes exactly, with their length: where a lane writes a
+ * string's bytes raw, NUL included. */
+char *atom_to_parseable_bytes(Arena *a, Atom *atom, bool petta,
+                              size_t *len_out);
 
 /* Deep-copy an atom DAG into a different arena, preserving source pointer
    sharing within one copy episode. */
@@ -882,6 +1097,15 @@ typedef Atom *(*AtomDeepCopyResolver)(void *context, Atom *src);
    resolver, installed before copying, redirects every encountered node before
    traversal; update-cell collectors use it to collapse evaluated thunks. */
 AtomDeepCopySession *atom_deep_copy_session_new(Arena *dst);
+/* The session copies out of a region its caller releases right after it:
+ * the atoms `arena` allocated since `mark`.  A copied atom of that region
+ * then records its copy in place instead of in the session's table, since
+ * nothing reads the region once the session ends.  False, leaving the table
+ * in use, when the arena keeps more blocks below the mark than the session
+ * tracks. */
+bool atom_deep_copy_session_forward_region(AtomDeepCopySession *session,
+                                           const Arena *arena,
+                                           ArenaMark mark);
 bool atom_deep_copy_session_retain_frame(
     AtomDeepCopySession *session, CettaFrameIdentity identity);
 void atom_deep_copy_session_set_resolver(
