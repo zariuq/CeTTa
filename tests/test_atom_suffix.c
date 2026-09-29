@@ -95,6 +95,33 @@ static void check_suffixes(Arena *arena, Atom *expression, bool shares) {
     }
 }
 
+/* A walk by suffixes over a long list: each suffix carries its fold's flags
+ * and facts, and its fold's single variable or, where its list had several,
+ * none, which says the support was not settled. */
+static void assert_summary_or_unsettled(const Atom *suffix,
+                                        const Atom *folded) {
+    assert(atom_eq((Atom *)suffix, (Atom *)folded));
+    assert((suffix->flags & ~ATOM_FLAG_HASH_VALID) ==
+           (folded->flags & ~ATOM_FLAG_HASH_VALID));
+    assert(suffix->structural_facts == folded->structural_facts);
+    assert(suffix->var_id == folded->var_id ||
+           (suffix->var_id == VAR_ID_NONE &&
+            (suffix->flags & ATOM_FLAG_HAS_VARS) != 0u));
+}
+
+static void check_walk(Arena *arena, Atom *expression) {
+    Atom *walk = expression;
+    while (walk->expr.len > 0u) {
+        Atom *next = atom_expr_suffix(arena, walk, 1u);
+        Atom *folded = atom_expr(
+            arena, walk->expr.len > 1u ? walk->expr.elems + 1u : NULL,
+            walk->expr.len - 1u);
+        assert(next != NULL && folded != NULL);
+        assert_summary_or_unsettled(next, folded);
+        walk = next;
+    }
+}
+
 static Atom *list(Arena *arena, Atom **items, CettaExprLen length) {
     return atom_expr(arena, items, length);
 }
@@ -164,6 +191,31 @@ int main(void) {
         atom_symbol(&other, "r"),
     };
     check_suffixes(&arena, list(&other, elsewhere_items, 3u), false);
+
+    /* Long walks, past the single-variable scan: a list whose first element
+     * alone has another variable, whose suffixes keep one variable; a list
+     * of distinct variables, whose suffixes have several until the last; a
+     * list whose one variable comes last; and one whose only element with a
+     * variable departs first. */
+    {
+        enum { LONG = 48u };
+        Atom *first_other[LONG];
+        Atom *distinct[LONG];
+        Atom *last_only[LONG];
+        Atom *first_only[LONG];
+        Atom *fy = atom_expr2(&arena, f, y);
+        for (uint32_t index = 0u; index < LONG; index++) {
+            first_other[index] = index == 0u ? x : fy;
+            distinct[index] = atom_expr2(
+                &arena, f, atom_var_with_id(&arena, "v", fresh_var_id()));
+            last_only[index] = index + 1u == LONG ? fx : fa;
+            first_only[index] = index == 0u ? fx : fa;
+        }
+        check_walk(&arena, list(&arena, first_other, LONG));
+        check_walk(&arena, list(&arena, distinct, LONG));
+        check_walk(&arena, list(&arena, last_only, LONG));
+        check_walk(&arena, list(&arena, first_only, LONG));
+    }
 
     /* A deep copy of a suffix is an ordinary expression equal to it. */
     Atom *source = list(&arena, ground, 6u);

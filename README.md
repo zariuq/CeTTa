@@ -5,6 +5,13 @@ public lane is the base HE-style evaluator (`--lang he`) with no named profile
 selected. Use `--profile extended` when you want the labeled CeTTa
 extension interface.
 
+This branch also carries a working draft of **MeTTa Prime** (`--lang prime`),
+a higher-order MeTTa in which code is a value, programs can be checked by a
+native dependent type kernel, and proofs are terms that the kernel checks.
+The draft is where Prime's semantics is being settled against its formal
+metatheory, so its interfaces may still change. See
+[MeTTa Prime draft](#metta-prime-draft---lang-prime) below.
+
 ## Requirements
 
 For the default build:
@@ -171,6 +178,14 @@ make BUILD=main
 ./cetta --profile extended --lang he tests/test_pathmap_counted_space_interface.metta
 ```
 
+### MeTTa Prime draft
+
+```bash
+make
+./cetta --lang prime examples/prime/metaprogramming/show_01_lambda_synthesizer.metta
+./cetta --lang prime examples/prime/nupln_lambda/nupln.metta
+```
+
 ## Verified Test Commands
 
 Choose the smallest lane that matches the decision being made:
@@ -327,16 +342,92 @@ The bridge code includes two thin compatibility adapters:
 - Explicit `mork:` helper interface for the MORK/MM2 execution lane
 - Local git-module and module-inventory interfaces
 - Python foreign-module support in the default build
+- The MeTTa Prime draft described next
+
+## MeTTa Prime draft (`--lang prime`)
+
+**The language:**
+- **Code is a value.** `@` quotes code into a sealed value, and `*` activates
+  it. Equations never rewrite inside a quotation, so a program can hold,
+  inspect, transform and pass on code without running it.
+- **A native dependent type kernel** answers `type:check`, `type:eq` and
+  `type:of`. It covers dependent functions, dependent pairs (`sigma`),
+  identity types with `id:eliminate`, and a hierarchy of universes `(u n)`.
+  Universe-polymorphic constants are instantiated separately at each use.
+- **Declared inductive types** (`set:inductive`) come with recursors whose
+  motive may land in any universe, so a recursor computes types as well as
+  values.
+- **The identity principle is chosen per run:** `--profile identity-j`,
+  `identity-scoped`, `identity-uip` or `identity-univalence`. Run
+  `./cetta --lang prime --list-profiles` for the list.
+- **Checked theorems and definitions:** `set:proves`, `set:theorem`,
+  `set:define` and `set:native-proof`. Revising a definition withdraws every
+  conclusion drawn from it until it is derived again. Falsum is the
+  definition `all prop (lam p p)`, not an axiom.
+- **Verdicts say what is known:**
+  - a query that runs out of `--fuel` prints `(Incomplete fuel-exhausted)` in
+    its place, the run continues, and the exit status is 1;
+  - admission and proof search answer Undetermined unless they hold a
+    refutation witness;
+  - an `Error` at top level is reported and the run continues.
+- **Demand-driven evaluation.** On the default route `once` computes only its
+  first answer, and `and`/`or` evaluate their second operand only when needed.
+- **`Atom` is the top type.** An argument at an `Atom` position is evaluated
+  like any other; a parameter declared `(Data Atom)` receives its argument
+  as written. The standard library keeps its HE declarations and their
+  meaning.
+- **Contexts** are persistent lazy environments; see
+  `examples/prime/context_tutorial/`.
+
+**Example programs** (all in `examples/prime/`, each with its expected output):
+- **Learning:**
+  - `nupln_lambda/`: Nil Geisweiller's nuPLN backward chainer and his eleven
+    tests, with predicates as ordinary lambdas instead of combinator terms. It
+    adds a normal-form variant that learns one hypothesis instead of mirror
+    images, and it calls the learned lambda on new values.
+  - Popper, Metagol, IGGP and Hopper tasks, checked against their
+    ground-truth programs.
+- **Metaprogramming** (`metaprogramming/`):
+  - a lambda synthesizer that returns the learned program with its proof;
+  - a staged interpreter (the first Futamura projection);
+  - a tactic whose proofs only the kernel can accept;
+  - a self-revising learner;
+  - a self-reproducing agent (Kleene's recursion theorem at run time);
+  - a rewriter that inspects submitted code before anything runs;
+  - typed intake of generated code.
+- **Other:** `distributional_space.metta`, a space interpreted against a
+  joint probability model. The kernel curriculum is in `tests/prime/scoped/`.
+
+**Known gaps in this draft:**
+- General HE-to-Prime declaration elaboration remains unfinished. Native
+  proof search requires formed types and explicit dependent parameters;
+  an open HE type scheme or a multiply annotated constant does not supply
+  them implicitly. The cross-dialect gate retains the HE examples and checks
+  native counterparts with their own declarations and proof rechecking.
+- The native PLN search counterpart uses exact positive/total evidence counts.
+  It does not yet host the HE floating-point truth-value evaluator.
+- Substitution into code (`lift`) is an equation-level prototype.
 
 ## Test Status
 
-Recent verification in a clean `origin/main` clone produced:
+Draft verification on 2026-09-28 used the isolated Python-enabled build:
 
-- `make test`: main HE/golden sweep `335 passed, 0 failed, 38 skipped`
-- `make test-profiles`: `77 passed, 0 failed`
-- Explicit bridge lanes passed for `BUILD=mork`, `BUILD=main`,
-  and their compatibility aliases `BUILD=pathmap` and `BUILD=full`
-- Explicit runtime-stats lane bodies also passed for the checked bridge builds
+- `make -j2 -k CETTA_TEST_ISOLATED=1 test`: exit 0; the main HE/golden
+  sweep passed 425 cases, with 73 skipped and five lacking expected output.
+  The included Prime fast gate passed 226 cases with zero failures.
+- `make -j2 -k CETTA_TEST_ISOLATED=1 test-prime-all`: exit 0, including
+  the cross-dialect ownership gate (16 checks), native NIK runtime (104
+  checks), regular kernel (906 checks), Megalodon tactics package (29
+  production checks and 29 differential checks), and all 12 Need mutations.
+- Concurrent object publication passed nine causal controls. Recursive
+  builds publish completed object files before making them visible to a linker.
+
+The base aggregate explicitly skips unavailable browser tooling, incompatible
+Rhocalc Lean microchecks, and inactive or separately selected MORK, PathMap,
+heavy and optional feature lanes. These runs do not qualify every build profile.
+Curriculum execution and source-theorem coverage are separate: the dedicated
+repair gate checks its complete programs and mutations, while unported source
+obligations remain outside those passing counts.
 
 ## Examples
 
@@ -432,6 +523,44 @@ disabled, not slowed. See `docs/rhocalc.md` for the guided tour (calculus,
 interfaces, receipts, honest budgets, threaded waves), `examples/rho/` for
 runnable showcases (`make test-rho-examples`), and `make test-rhocalc` for
 the full lane.
+
+### MeTTa Prime: a learned program with its proof
+
+A learner is given three library predicates and seven labelled numbers. It
+proposes lambda hypotheses as code values, smallest first, and proves each one
+against the recorded evidence. No library function runs while it learns: the
+call counter stays at 30. The learned lambda is then activated with `*` and
+run on all ten numbers.
+
+```
+$ ./cetta --lang prime examples/prime/metaprogramming/show_01_lambda_synthesizer.metta | tail -3
+[(Evidence 10 (CallsSoFar 30))]
+[(Learned "@(lam x (∧ (even x) (¬ (small x))))" (TypingSize 9) (ProofSize 26) (, (cet (ran even 6) (cnt (ran small 6))) ...) (CallsAfterLearning 30))]
+[(Accepted (6 8) (CallsAfterUse 45))]
+```
+
+### MeTTa Prime: a recursor that computes types
+
+A declared inductive type's recursor may return a type. With the motive
+`(lam n (u 0))`, the recursor below gives the number type at zero and
+functions on numbers at each successor. Values are then checked at the
+computed types:
+
+```metta
+!(bind! &s (new-space))
+!(set:inductive &s num (u 0) (: zero num) (: suc (-> num num)))
+
+!(type:eq &s (num-rec (lam n (u 0)) num (lam n (lam T (-> num num))) (suc zero))
+   (-> num num))                                                   ; → True
+!(type:check &s (lam x x)
+   (num-rec (lam n (u 0)) num (lam n (lam T (-> num num))) (suc zero)))  ; → True
+!(type:check &s zero
+   (num-rec (lam n (u 0)) num (lam n (lam T (-> num num))) (suc zero)))  ; → False
+```
+
+The full file, `tests/prime/scoped/large_recursor.metta`, also builds tuple
+types, uses motives into `(u 1)`, and eliminates identity proofs over a large
+motive.
 
 ## Good First Things To Run
 

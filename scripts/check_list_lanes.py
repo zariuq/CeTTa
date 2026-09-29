@@ -382,28 +382,30 @@ def check_mutations(cetta: Path) -> int:
         (
             "reverse",
             list_source,
-            "(= (list:reverse $xs)\n   (list:reverse-acc $xs ()))",
+            "(= (list:reverse $xs)\n"
+            "   (let $items (list:to-expression $xs)\n"
+            "     (list:like $xs (list:reverse-acc $items ()))))",
             "(= (list:reverse $xs)\n   $xs)",
             "!(assertEqual (list:reverse (a b c)) (c b a))\n",
         ),
         (
             "map",
             list_source,
-            "(= (list:map $xs $var $body)\n   (map-atom $xs $var $body))",
-            "(= (list:map $xs $var $body)\n   $xs)",
+            "       (map-atom $xs $var $body)))",
+            "       $xs))",
             "!(assertEqual (list:map (1 2 3) $x (+ $x 1)) (2 3 4))\n",
         ),
         (
             "filter",
             list_source,
-            "(= (list:filter $xs $var $body)\n   (filter-atom $xs $var $body))",
-            "(= (list:filter $xs $var $body)\n   $xs)",
+            "       (filter-atom $xs $var $body)))",
+            "       $xs))",
             "!(assertEqual (list:filter (1 2 3 4) $x (> $x 2)) (3 4))\n",
         ),
         (
             "retain-top-k-by-number",
             list_source,
-            "(= (list:retain-top-k-by-number $key-function $xs $count)\n"
+            "(= (list:retain-top-k-by-number-walk $key-function $xs $count)\n"
             "   (function\n"
             "     (chain (eval $xs) $__list_top_k_items\n"
             "       (chain (eval $count) $__list_top_k_count\n"
@@ -411,7 +413,7 @@ def check_mutations(cetta: Path) -> int:
             "           (_minimal-retain-top-k-by-number\n"
             "             $__list_top_k_items $__list_top_k_count $__list_top_k_item\n"
             "             (eval ($key-function $__list_top_k_item))))))))",
-            "(= (list:retain-top-k-by-number $key-function $xs $count)\n"
+            "(= (list:retain-top-k-by-number-walk $key-function $xs $count)\n"
             "   $xs)",
             "(= (test:key (item $key $value)) $key)\n"
             "!(assertEqual (list:retain-top-k-by-number test:key "

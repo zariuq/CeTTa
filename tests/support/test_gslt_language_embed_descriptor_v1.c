@@ -19,8 +19,7 @@ static bool source(const CettaGsltEmbeddedSourceV1 *a,
         !memcmp(a->input.bytes, b->input.bytes, a->input.length);
 }
 
-int main(int argc, char **argv) {
-    if (argc != 2) return 2;
+int main(void) {
     const CettaGsltEmbeddedLanguageV1 *a = &CANDIDATE_DESCRIPTOR;
     const CettaGsltEmbeddedLanguageV1 *b = &REFERENCE_DESCRIPTOR;
     bool ok = true;
@@ -30,7 +29,7 @@ int main(int argc, char **argv) {
     TEXT(program_nil); TEXT(program_cons); TEXT(entry_relation);
     TEXT(query_relation); TEXT(observation); TEXT(manifest_sha256);
 #undef TEXT
-    ok = ok && text(a->compiler_sha256, argv[1]) && source(&a->manifest, &b->manifest) &&
+    ok = ok && source(&a->manifest, &b->manifest) &&
         a->semantic_source_count == b->semantic_source_count &&
         a->entry_arity == b->entry_arity && a->program_position == b->program_position &&
         a->result_position == b->result_position && a->query_arity == b->query_arity;

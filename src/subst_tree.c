@@ -407,6 +407,16 @@ static _Atomic bool g_st_exact_number_keys;
 
 /* ── Insertion ─────────────────────────────────────────────────────────── */
 
+/* The node for a value this tree does not discriminate: a variable that the
+ * verifying match, not the tree, decides. */
+static SubstNode *snode_get_grounded_placeholder(SubstNode *node) {
+    return snode_get_var(node,
+                         g_var_intern ? var_intern(g_var_intern,
+                                                   g_builtin_syms.grounded_placeholder)
+                                      : fresh_var_id(),
+                         g_builtin_syms.grounded_placeholder, NULL);
+}
+
 static SubstNode *snode_insert_atom(SubstNode *node, Atom *a) {
     switch (a->kind) {
     case ATOM_SYMBOL: return snode_get_sym(node, a->sym_id);
@@ -416,15 +426,17 @@ static SubstNode *snode_insert_atom(SubstNode *node, Atom *a) {
         if (a->ground.gkind == GV_INT) return snode_get_int(node, a->ground.ival);
         if (a->ground.gkind == GV_STRING || a->ground.gkind == GV_BIGINT ||
             a->ground.gkind == GV_RATIONAL) {
-            const char *text = a->ground.gkind == GV_STRING
-                ? a->ground.sval
-                : (a->ground.gkind == GV_BIGINT
-                       ? atom_bigint_cstr(a)
-                       : atom_rational_cstr(a));
             if (a->ground.gkind != GV_STRING)
                 atomic_store_explicit(&g_st_exact_number_keys, true,
                                       memory_order_release);
-            SymbolId string_id = symbol_intern_cstr(g_symbols, text);
+            SymbolId string_id = a->ground.gkind == GV_STRING
+                ? symbol_intern_bytes(g_symbols,
+                                      (const uint8_t *)a->ground.sval,
+                                      a->ground.slen)
+                : symbol_intern_cstr(g_symbols,
+                                     a->ground.gkind == GV_BIGINT
+                                         ? atom_bigint_cstr(a)
+                                         : atom_rational_cstr(a));
             return snode_get_sym(node, string_id);
         }
         return snode_get_var(node,
@@ -433,6 +445,11 @@ static SubstNode *snode_insert_atom(SubstNode *node, Atom *a) {
                                           : fresh_var_id(),
                              g_builtin_syms.grounded_placeholder, NULL);
     case ATOM_EXPR: {
+        /* A list pattern meets lists of many lengths: like an unindexed
+         * grounded value it is a placeholder here, and the verifying match
+         * applies its rest. */
+        if (atom_is_list_rest(a))
+            return snode_get_grounded_placeholder(node);
         SubstNode *cur = snode_get_expr(node, a->expr.len);
         for (CettaExprIndex i = 0; i < a->expr.len; i++)
             cur = snode_insert_atom(cur, a->expr.elems[i]);
@@ -472,16 +489,20 @@ static SubstNode *snode_insert_atom_id(SubstNode *node,
         if (tu_ground_kind(universe, atom_id) == GV_STRING ||
             tu_ground_kind(universe, atom_id) == GV_BIGINT ||
             tu_ground_kind(universe, atom_id) == GV_RATIONAL) {
-            const char *text = tu_ground_kind(universe, atom_id) == GV_STRING
-                ? tu_string_cstr(universe, atom_id)
-                : (tu_ground_kind(universe, atom_id) == GV_BIGINT
-                       ? tu_bigint_cstr(universe, atom_id)
-                       : tu_rational_cstr(universe, atom_id));
             if (tu_ground_kind(universe, atom_id) != GV_STRING)
                 atomic_store_explicit(&g_st_exact_number_keys, true,
                                       memory_order_release);
-            SymbolId string_id =
-                symbol_intern_cstr(g_symbols, text);
+            /* The key a string has in the atom paths: its bytes, NUL included. */
+            SymbolId string_id = tu_ground_kind(universe, atom_id) == GV_STRING
+                ? symbol_intern_bytes(
+                      g_symbols,
+                      (const uint8_t *)tu_string_cstr(universe, atom_id),
+                      tu_string_len(universe, atom_id))
+                : symbol_intern_cstr(
+                      g_symbols,
+                      tu_ground_kind(universe, atom_id) == GV_BIGINT
+                          ? tu_bigint_cstr(universe, atom_id)
+                          : tu_rational_cstr(universe, atom_id));
             return snode_get_sym(node, string_id);
         }
         return snode_get_var(node,
@@ -490,6 +511,10 @@ static SubstNode *snode_insert_atom_id(SubstNode *node,
                                           : fresh_var_id(),
                              g_builtin_syms.grounded_placeholder, NULL);
     case ATOM_EXPR: {
+        if (tu_arity(universe, atom_id) > 0u &&
+            tu_internal_tag(universe, tu_child(universe, atom_id, 0u)) ==
+                CETTA_INTERNAL_TAG_LIST_REST)
+            return snode_get_grounded_placeholder(node);
         SubstNode *cur = snode_get_expr(node, tu_arity(universe, atom_id));
         for (CettaExprIndex i = 0; i < tu_arity(universe, atom_id); i++) {
             AtomId child_id = tu_child(universe, atom_id, i);
@@ -733,7 +758,7 @@ static bool flat_token_count(Atom *a, CettaIndex *count) {
     if (*count == UINT64_MAX)
         return false;
     (*count)++;
-    if (a->kind != ATOM_EXPR)
+    if (a->kind != ATOM_EXPR || atom_is_list_rest(a))
         return true;
     for (CettaExprIndex i = 0; i < a->expr.len; i++) {
         if (!flat_token_count(a->expr.elems[i], count))
@@ -759,18 +784,27 @@ static CettaIndex flatten_atom(Atom *a, FlatToken *buf, CettaIndex pos) {
         }
         if (a->ground.gkind == GV_STRING || a->ground.gkind == GV_BIGINT ||
             a->ground.gkind == GV_RATIONAL) {
-            const char *text = a->ground.gkind == GV_STRING
-                ? a->ground.sval
-                : (a->ground.gkind == GV_BIGINT
-                       ? atom_bigint_cstr(a)
-                       : atom_rational_cstr(a));
-            SymbolId string_id = symbol_intern_cstr(g_symbols, text);
+            SymbolId string_id = a->ground.gkind == GV_STRING
+                ? symbol_intern_bytes(g_symbols,
+                                      (const uint8_t *)a->ground.sval,
+                                      a->ground.slen)
+                : symbol_intern_cstr(g_symbols,
+                                     a->ground.gkind == GV_BIGINT
+                                         ? atom_bigint_cstr(a)
+                                         : atom_rational_cstr(a));
             buf[pos] = (FlatToken){.kind = FT_SYM, .sym_id = string_id, .original = a};
             return pos + 1;
         }
         buf[pos] = (FlatToken){.kind = FT_GROUNDED_OTHER, .original = a};
         return pos + 1;
     case ATOM_EXPR:
+        /* A list pattern in a query may meet any indexed term, as a query
+         * variable does; the verifying match applies its rest. */
+        if (atom_is_list_rest(a)) {
+            buf[pos] = (FlatToken){.kind = FT_VAR, .var_id = VAR_ID_NONE,
+                                   .original = a};
+            return pos + 1;
+        }
         buf[pos] = (FlatToken){.kind = FT_EXPR, .arity = a->expr.len, .original = a};
         pos++;
         for (CettaExprIndex i = 0; i < a->expr.len; i++)
@@ -861,6 +895,11 @@ static void st_follow_he_float_exact_key(SubstNode *node, double fval,
 static bool st_bind_indexed_var(BindingsBuilder *bb, Arena *a,
                                 VarId var_id, SymbolId spelling,
                                 Atom *name_key, Atom *value) {
+    /* A placeholder stands for a value the tree does not discriminate; it
+     * binds nothing, and one atom may hold several.  The verifying match
+     * decides it. */
+    if (spelling == g_builtin_syms.grounded_placeholder && !name_key)
+        return true;
     Atom *var = atom_var_with_presentation(
         a, spelling, name_key, var_id);
     return var && bindings_builder_add_var_fresh(bb, var, value);

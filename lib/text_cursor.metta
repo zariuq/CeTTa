@@ -13,27 +13,27 @@
    $pos)
 
 (= (text-cursor:is-done (TextCursor $text $pos))
-   (>= $pos (str:length $text)))
+   (>= $pos (str:byte-length $text)))
 
 (= (text-cursor:rest (TextCursor $text $pos))
-   (str:slice $text $pos (str:length $text)))
+   (str:byte-slice $text $pos (str:byte-length $text)))
 
 (= (text-cursor:peek (TextCursor $text $pos))
-   (if (>= $pos (str:length $text))
+   (if (>= $pos (str:byte-length $text))
        AtEof
-       (str:slice $text $pos (+ $pos 1))))
+       (str:byte-slice $text $pos (+ $pos 1))))
 
 (= (text-cursor:peek-n (TextCursor $text $pos) $count)
-   (let $len (str:length $text)
+   (let $len (str:byte-length $text)
      (if (<= $count 0)
          ""
          (if (>= $pos $len)
              ""
              (let $end (+ $pos $count)
-               (str:slice $text $pos (if (> $end $len) $len $end)))))))
+               (str:byte-slice $text $pos (if (> $end $len) $len $end)))))))
 
 (= (text-cursor:advance (TextCursor $text $pos) $count)
-   (let $len (str:length $text)
+   (let $len (str:byte-length $text)
      (let $next (+ $pos $count)
        (TextCursor $text (if (> $next $len) $len $next)))))
 
@@ -56,11 +56,11 @@
 
 (= (text-cursor:consume-prefix $cursor $prefix)
    (if (text-cursor:has-prefix $cursor $prefix)
-       (text-cursor:advance $cursor (str:length $prefix))
+       (text-cursor:advance $cursor (str:byte-length $prefix))
        (TextPrefixMismatch $prefix)))
 
 (= (text-cursor:find-from $text $start $needle)
-   (let $tail (str:slice $text $start (str:length $text))
+   (let $tail (str:byte-slice $text $start (str:byte-length $text))
      (case (str:find $tail $needle)
        (((TextNotFound $missing) (TextNotFound $missing))
         ($found (+ $start $found))))))

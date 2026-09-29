@@ -251,7 +251,9 @@ static bool inference_atom_symbol_id(Atom *atom, SymbolId *out) {
         return true;
     }
     if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_STRING) {
-        *out = symbol_intern_cstr(g_symbols, atom->ground.sval);
+        *out = symbol_intern_bytes(g_symbols,
+                                   (const uint8_t *)atom->ground.sval,
+                                   atom->ground.slen);
         return true;
     }
     return false;

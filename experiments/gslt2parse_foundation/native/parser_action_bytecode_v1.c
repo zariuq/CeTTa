@@ -2,6 +2,7 @@
 
 #include "finite_horn_ground_term_v1.h"
 #include "native_sha256.h"
+#include "parser_action_primitive_v1.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -16,7 +17,8 @@ typedef struct {
 
 typedef enum {
     PP_ACTION_BYTECODE_V1_FRAME_ACTION = 0,
-    PP_ACTION_BYTECODE_V1_FRAME_APPLY = 1
+    PP_ACTION_BYTECODE_V1_FRAME_APPLY = 1,
+    PP_ACTION_BYTECODE_V1_FRAME_PRIMITIVE = 2
 } PPActionBytecodeV1FrameKind;
 
 typedef struct {
@@ -174,11 +176,14 @@ static bool pp_action_bytecode_v1_flatten_expected(
         Atom *term = frame.term;
         uint32_t operand;
 
-        if (frame.kind == PP_ACTION_BYTECODE_V1_FRAME_APPLY) {
+        if (frame.kind == PP_ACTION_BYTECODE_V1_FRAME_APPLY ||
+            frame.kind == PP_ACTION_BYTECODE_V1_FRAME_PRIMITIVE) {
             if (!pp_action_bytecode_v1_expected_push(
                     out,
                     (PPActionBytecodeV1Instruction){
-                        .kind = PP_ACTION_BYTECODE_V1_APPLY,
+                        .kind = frame.kind == PP_ACTION_BYTECODE_V1_FRAME_APPLY
+                            ? PP_ACTION_BYTECODE_V1_APPLY
+                            : PP_ACTION_BYTECODE_V1_PRIMITIVE,
                         .operand = frame.arity,
                         .term = term,
                     })) {
@@ -222,8 +227,12 @@ static bool pp_action_bytecode_v1_flatten_expected(
             }
             continue;
         }
-        if (pp_action_bytecode_v1_expr_head(term, "pa-apply", 2u) &&
+        if ((pp_action_bytecode_v1_expr_head(term, "pa-apply", 2u) ||
+             pp_action_bytecode_v1_expr_head(term, "pa-primitive", 2u)) &&
+            term->expr.elems[1] &&
             term->expr.elems[1]->kind == ATOM_SYMBOL) {
+            bool primitive = pp_action_bytecode_v1_expr_head(
+                term, "pa-primitive", 2u);
             Atom *head = term->expr.elems[1];
             Atom *list = term->expr.elems[2];
             Atom **arguments = NULL;
@@ -231,6 +240,12 @@ static bool pp_action_bytecode_v1_flatten_expected(
             uint32_t argument_cap = 0u;
             bool list_ok = true;
 
+            if (primitive && !pp_action_primitive_v1_action_shape(head, list)) {
+                pp_action_bytecode_v1_error(
+                    error_buf, error_buf_size,
+                    "parser action primitive has an unknown operation or wrong arity");
+                goto done;
+            }
             while (!atom_is_symbol(list, "pa-nil")) {
                 Atom **next;
                 uint32_t cap;
@@ -263,14 +278,16 @@ static bool pp_action_bytecode_v1_flatten_expected(
                 !pp_action_bytecode_v1_frame_push(
                     &frames,
                     (PPActionBytecodeV1Frame){
-                        .kind = PP_ACTION_BYTECODE_V1_FRAME_APPLY,
+                        .kind = primitive
+                            ? PP_ACTION_BYTECODE_V1_FRAME_PRIMITIVE
+                            : PP_ACTION_BYTECODE_V1_FRAME_APPLY,
                         .term = head,
                         .arity = argument_len,
                     })) {
                 free(arguments);
                 pp_action_bytecode_v1_error(
                     error_buf, error_buf_size,
-                    "parser action application list is malformed or too large");
+                    "parser action argument list is malformed or too large");
                 goto done;
             }
             while (argument_len > 0u) {
@@ -749,6 +766,20 @@ static bool pp_action_bytecode_v1_compile_code(
                     "action bytecode application is malformed");
                 goto done;
             }
+        } else if (pp_action_bytecode_v1_expr_head(
+                       encoded, "pbc-primitive", 2u)) {
+            uint32_t arity;
+            instruction.kind = PP_ACTION_BYTECODE_V1_PRIMITIVE;
+            instruction.term = encoded->expr.elems[1];
+            if (!pp_action_primitive_v1_decode(instruction.term, NULL, &arity) ||
+                !pp_action_bytecode_v1_qindex(
+                    encoded->expr.elems[2], &instruction.operand) ||
+                instruction.operand != arity) {
+                pp_action_bytecode_v1_error(
+                    error_buf, error_buf_size,
+                    "action bytecode primitive has an unknown operation or wrong arity");
+                goto done;
+            }
         } else {
             pp_action_bytecode_v1_error(
                 error_buf, error_buf_size,
@@ -764,11 +795,13 @@ static bool pp_action_bytecode_v1_compile_code(
             goto done;
         }
         expected_index++;
-        if (instruction.kind == PP_ACTION_BYTECODE_V1_APPLY) {
-            if (stack_len < instruction.operand) {
+        if (instruction.kind == PP_ACTION_BYTECODE_V1_APPLY ||
+            instruction.kind == PP_ACTION_BYTECODE_V1_PRIMITIVE) {
+            if (stack_len < instruction.operand ||
+                stack_len - instruction.operand == UINT32_MAX) {
                 pp_action_bytecode_v1_error(
                     error_buf, error_buf_size,
-                    "action bytecode application underflows its stack");
+                    "action bytecode operation underflows or overflows its stack");
                 goto done;
             }
             stack_len = stack_len - instruction.operand + 1u;
@@ -1042,10 +1075,16 @@ static bool pp_action_bytecode_v1_program_validate_source(
                     break;
                 }
                 stack_len++;
-            } else if (instruction->kind == PP_ACTION_BYTECODE_V1_APPLY) {
+            } else if (instruction->kind == PP_ACTION_BYTECODE_V1_APPLY ||
+                       instruction->kind == PP_ACTION_BYTECODE_V1_PRIMITIVE) {
+                uint32_t arity;
                 if (!instruction->term ||
                     instruction->term->kind != ATOM_SYMBOL ||
-                    stack_len < instruction->operand) {
+                    stack_len < instruction->operand ||
+                    stack_len - instruction->operand == UINT32_MAX ||
+                    (instruction->kind == PP_ACTION_BYTECODE_V1_PRIMITIVE &&
+                     (!pp_action_primitive_v1_decode(instruction->term, NULL, &arity) ||
+                      instruction->operand != arity))) {
                     valid = false;
                     break;
                 }
@@ -1074,6 +1113,279 @@ static bool pp_action_bytecode_v1_program_validate_source(
             "action bytecode has trailing storage or a stale digest");
     }
     return true;
+}
+
+static bool pp_action_bytecode_v1_append_expected(
+    PPActionBytecodeV1Program *program,
+    uint32_t *instruction_capacity,
+    const PPActionBytecodeV1ExpectedVec *expected,
+    uint32_t production_arity,
+    PPActionBytecodeV1Production *production,
+    char *error_buf,
+    size_t error_buf_size) {
+    uint32_t stack_len = 0u;
+    uint32_t index;
+
+    production->instruction_begin = program->instruction_len;
+    production->arity = production_arity;
+    for (index = 0u; index < expected->len; index++) {
+        PPActionBytecodeV1Instruction instruction = expected->data[index];
+        if (instruction.kind == PP_ACTION_BYTECODE_V1_PUSH_SLOT) {
+            if (instruction.operand >= production_arity ||
+                stack_len == UINT32_MAX) {
+                return pp_action_bytecode_v1_error(
+                    error_buf, error_buf_size,
+                    "indexed action slot or stack lies outside its production");
+            }
+            stack_len++;
+        } else if (instruction.kind == PP_ACTION_BYTECODE_V1_PUSH_CONST) {
+            if (instruction.operand != 0u || !instruction.term ||
+                !pp_action_bytecode_v1_renderable(instruction.term) ||
+                stack_len == UINT32_MAX) {
+                return pp_action_bytecode_v1_error(
+                    error_buf, error_buf_size,
+                    "indexed action has an invalid constant");
+            }
+            stack_len++;
+        } else if (instruction.kind == PP_ACTION_BYTECODE_V1_APPLY ||
+                   instruction.kind == PP_ACTION_BYTECODE_V1_PRIMITIVE) {
+            uint32_t arity;
+            if (!instruction.term || instruction.term->kind != ATOM_SYMBOL ||
+                stack_len < instruction.operand ||
+                stack_len - instruction.operand == UINT32_MAX ||
+                (instruction.kind == PP_ACTION_BYTECODE_V1_PRIMITIVE &&
+                 (!pp_action_primitive_v1_decode(
+                      instruction.term, NULL, &arity) ||
+                  instruction.operand != arity))) {
+                return pp_action_bytecode_v1_error(
+                    error_buf, error_buf_size,
+                    "indexed action operation is malformed");
+            }
+            stack_len = stack_len - instruction.operand + 1u;
+        } else {
+            return pp_action_bytecode_v1_error(
+                error_buf, error_buf_size,
+                "indexed action has an unknown instruction");
+        }
+        if (stack_len > production->max_stack_len)
+            production->max_stack_len = stack_len;
+        if (instruction.kind != PP_ACTION_BYTECODE_V1_PUSH_SLOT) {
+            instruction.term = atom_deep_copy(
+                &program->arena, instruction.term);
+            if (!instruction.term) {
+                return pp_action_bytecode_v1_error(
+                    error_buf, error_buf_size,
+                    "cannot retain indexed action term");
+            }
+        }
+        if (!pp_action_bytecode_v1_instruction_append(
+                program, instruction_capacity, instruction)) {
+            return pp_action_bytecode_v1_error(
+                error_buf, error_buf_size,
+                "cannot grow indexed action bytecode");
+        }
+    }
+    production->instruction_len =
+        program->instruction_len - production->instruction_begin;
+    if (production->instruction_len == 0u || stack_len != 1u ||
+        production->max_stack_len == 0u) {
+        return pp_action_bytecode_v1_error(
+            error_buf, error_buf_size,
+            "indexed action does not leave exactly one value");
+    }
+    return true;
+}
+
+bool pp_action_bytecode_v1_program_validate_indexed(
+    const PPActionBytecodeV1Program *program,
+    Atom *const *actions,
+    const uint32_t *arities,
+    uint32_t production_len,
+    const char *source_digest,
+    char *error_buf,
+    size_t error_buf_size) {
+    char digest[65] = {0};
+    uint32_t expected_begin = 0u;
+    uint32_t production_id;
+
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    if (!program || !actions || !arities || !source_digest ||
+        program->production_len != production_len ||
+        (production_len > 0u && !program->productions) ||
+        (program->instruction_len > 0u && !program->instructions) ||
+        !pp_action_bytecode_v1_digest_valid(source_digest) ||
+        strcmp(program->base_pack_digest, source_digest) != 0 ||
+        !pp_action_bytecode_v1_digest_valid(program->compiler_digest) ||
+        !pp_action_bytecode_v1_digest_valid(program->answer_set_digest) ||
+        !pp_action_bytecode_v1_digest_valid(program->program_digest)) {
+        return pp_action_bytecode_v1_error(
+            error_buf, error_buf_size,
+            "bad indexed action program binding");
+    }
+    for (production_id = 0u; production_id < production_len;
+         production_id++) {
+        const PPActionBytecodeV1Production *production =
+            &program->productions[production_id];
+        PPActionBytecodeV1ExpectedVec expected = {0};
+        uint32_t stack_len = 0u;
+        uint32_t max_stack_len = 0u;
+        uint32_t index;
+        if (production->instruction_begin != expected_begin ||
+            production->instruction_len == 0u ||
+            production->instruction_begin > program->instruction_len ||
+            production->instruction_len >
+                program->instruction_len - production->instruction_begin ||
+            production->arity != arities[production_id] ||
+            !pp_action_bytecode_v1_flatten_expected(
+                actions[production_id], arities[production_id], &expected,
+                error_buf, error_buf_size) ||
+            expected.len != production->instruction_len) {
+            free(expected.data);
+            return pp_action_bytecode_v1_error(
+                error_buf, error_buf_size,
+                "indexed action program slice is malformed");
+        }
+        for (index = 0u; index < expected.len; index++) {
+            const PPActionBytecodeV1Instruction *instruction =
+                &program->instructions[expected_begin + index];
+            if (!pp_action_bytecode_v1_instruction_equal(
+                    instruction, &expected.data[index])) {
+                free(expected.data);
+                return pp_action_bytecode_v1_error(
+                    error_buf, error_buf_size,
+                    "indexed action program differs from its source action");
+            }
+            if (instruction->kind == PP_ACTION_BYTECODE_V1_PUSH_SLOT) {
+                if (instruction->operand >= production->arity ||
+                    stack_len == UINT32_MAX) {
+                    free(expected.data);
+                    return pp_action_bytecode_v1_error(
+                        error_buf, error_buf_size,
+                        "indexed action slot or stack lies outside its production");
+                }
+                stack_len++;
+            } else if (instruction->kind ==
+                           PP_ACTION_BYTECODE_V1_PUSH_CONST) {
+                if (instruction->operand != 0u || !instruction->term ||
+                    !pp_action_bytecode_v1_renderable(instruction->term) ||
+                    stack_len == UINT32_MAX) {
+                    free(expected.data);
+                    return pp_action_bytecode_v1_error(
+                        error_buf, error_buf_size,
+                        "indexed action has an invalid constant");
+                }
+                stack_len++;
+            } else if (instruction->kind == PP_ACTION_BYTECODE_V1_APPLY ||
+                       instruction->kind == PP_ACTION_BYTECODE_V1_PRIMITIVE) {
+                uint32_t arity;
+                if (!instruction->term ||
+                    instruction->term->kind != ATOM_SYMBOL ||
+                    stack_len < instruction->operand ||
+                    (instruction->kind == PP_ACTION_BYTECODE_V1_PRIMITIVE &&
+                     (!pp_action_primitive_v1_decode(
+                          instruction->term, NULL, &arity) ||
+                      instruction->operand != arity))) {
+                    free(expected.data);
+                    return pp_action_bytecode_v1_error(
+                        error_buf, error_buf_size,
+                        "indexed action operation is malformed");
+                }
+                stack_len = stack_len - instruction->operand + 1u;
+            } else {
+                free(expected.data);
+                return pp_action_bytecode_v1_error(
+                    error_buf, error_buf_size,
+                    "indexed action has an unknown instruction");
+            }
+            if (stack_len > max_stack_len)
+                max_stack_len = stack_len;
+        }
+        if (stack_len != 1u || max_stack_len != production->max_stack_len) {
+            free(expected.data);
+            return pp_action_bytecode_v1_error(
+                error_buf, error_buf_size,
+                "indexed action fails stack validation");
+        }
+        expected_begin += expected.len;
+        free(expected.data);
+    }
+    if (expected_begin != program->instruction_len ||
+        !pp_action_bytecode_v1_program_digest(program, digest) ||
+        strcmp(digest, program->program_digest) != 0) {
+        return pp_action_bytecode_v1_error(
+            error_buf, error_buf_size,
+            "indexed action program has trailing storage or stale digest");
+    }
+    return true;
+}
+
+bool pp_action_bytecode_v1_program_build_indexed(
+    Atom *const *actions,
+    const uint32_t *arities,
+    uint32_t production_len,
+    const char *source_digest,
+    const char *compiler_digest,
+    const char *artifact_digest,
+    PPActionBytecodeV1Program *out,
+    char *error_buf,
+    size_t error_buf_size) {
+    PPActionBytecodeV1Program result;
+    uint32_t instruction_capacity = 0u;
+    uint32_t production_id;
+    bool ok = false;
+
+    pp_action_bytecode_v1_program_init(&result);
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    if (!actions || !arities || !out ||
+        !pp_action_bytecode_v1_digest_valid(source_digest) ||
+        !pp_action_bytecode_v1_digest_valid(compiler_digest) ||
+        !pp_action_bytecode_v1_digest_valid(artifact_digest)) {
+        pp_action_bytecode_v1_error(
+            error_buf, error_buf_size,
+            "bad indexed action compiler inputs");
+        goto done;
+    }
+    result.productions = calloc(
+        production_len ? production_len : 1u,
+        sizeof(*result.productions));
+    if (!result.productions)
+        goto done;
+    result.production_len = production_len;
+    for (production_id = 0u; production_id < production_len;
+         production_id++) {
+        PPActionBytecodeV1ExpectedVec expected = {0};
+        if (!pp_action_bytecode_v1_flatten_expected(
+                actions[production_id], arities[production_id], &expected,
+                error_buf, error_buf_size) ||
+            !pp_action_bytecode_v1_append_expected(
+                &result, &instruction_capacity, &expected,
+                arities[production_id], &result.productions[production_id],
+                error_buf, error_buf_size)) {
+            free(expected.data);
+            goto done;
+        }
+        free(expected.data);
+    }
+    memcpy(result.base_pack_digest, source_digest, 65u);
+    memcpy(result.compiler_digest, compiler_digest, 65u);
+    memcpy(result.answer_set_digest, artifact_digest, 65u);
+    if (!pp_action_bytecode_v1_program_digest(
+            &result, result.program_digest) ||
+        !pp_action_bytecode_v1_program_validate_indexed(
+            &result, actions, arities, production_len, source_digest,
+            error_buf, error_buf_size)) {
+        goto done;
+    }
+    pp_action_bytecode_v1_program_free(out);
+    *out = result;
+    memset(&result, 0, sizeof(result));
+    ok = true;
+
+done:
+    pp_action_bytecode_v1_program_free(&result);
+    return ok;
 }
 
 bool pp_action_bytecode_v1_program_build(
@@ -1178,6 +1490,7 @@ bool pp_action_bytecode_v1_execute_prevalidated(
     if (out)
         *out = NULL;
     if (!program || !result_arena || !out ||
+        !program->productions || !program->instructions ||
         production_id >= program->production_len ||
         (slot_len > 0u && !slots)) {
         return pp_action_bytecode_v1_error(
@@ -1186,6 +1499,10 @@ bool pp_action_bytecode_v1_execute_prevalidated(
     }
     production = &program->productions[production_id];
     if (slot_len != production->arity ||
+        production->instruction_len == 0u ||
+        production->instruction_begin > program->instruction_len ||
+        production->instruction_len >
+            program->instruction_len - production->instruction_begin ||
         production->max_stack_len == 0u ||
         (size_t)production->max_stack_len >
             SIZE_MAX / sizeof(*stack)) {
@@ -1223,11 +1540,15 @@ bool pp_action_bytecode_v1_execute_prevalidated(
                 result_arena, instruction->term);
         } else if (instruction->kind == PP_ACTION_BYTECODE_V1_APPLY) {
             Atom **items;
+            size_t allocation_bytes;
             uint32_t argument_begin;
             uint32_t argument_index;
             if (!instruction->term ||
                 instruction->term->kind != ATOM_SYMBOL ||
-                stack_len < instruction->operand)
+                stack_len < instruction->operand ||
+                stack_len - instruction->operand >= production->max_stack_len ||
+                !atom_expr_allocation_bound(
+                    (CettaExprLen)instruction->operand + 1u, &allocation_bytes))
                 goto malformed;
             argument_begin = stack_len - instruction->operand;
             items = arena_alloc(
@@ -1244,6 +1565,25 @@ bool pp_action_bytecode_v1_execute_prevalidated(
             stack[stack_len++] = atom_expr(
                 result_arena, items,
                 (CettaExprLen)instruction->operand + 1u);
+        } else if (instruction->kind == PP_ACTION_BYTECODE_V1_PRIMITIVE) {
+            uint32_t argument_begin;
+            Atom *value = NULL;
+            PPActionPrimitiveV1Status status;
+            if (stack_len < instruction->operand ||
+                stack_len - instruction->operand >= production->max_stack_len)
+                goto malformed;
+            argument_begin = stack_len - instruction->operand;
+            status = pp_action_primitive_v1_execute(
+                instruction->term, stack + argument_begin, instruction->operand,
+                result_arena, &value);
+            if (status != PP_ACTION_PRIMITIVE_V1_OK) {
+                pp_action_bytecode_v1_error(
+                    error_buf, error_buf_size, "%s",
+                    pp_action_primitive_v1_status_message(status));
+                goto done;
+            }
+            stack_len = argument_begin;
+            stack[stack_len++] = value;
         } else {
             goto malformed;
         }

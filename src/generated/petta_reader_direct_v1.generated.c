@@ -268,7 +268,7 @@ const GSLTDirectPeTTaReaderV1Plan petta_reader_direct_v1_plan = {
     .form_syntax_digest = "d974dc0e8f68ce1ccfa1948a26e215d1226b78b14a0f097e1bef2467a0558523",
     .form_class_digest = "b648099c04b6f5485c1fe55cf0ab87568d0b2199fddb6acbcede0a17cdf19cb3",
     .projection_digest = "c3fb68e257fb31694dcae844bafb09e42441549c84d75461b4c1ecb692ddaaeb",
-    .compiler_digest = "e38baaf5cbb595811936c04868b9af4a81e289d7e098e623b0c8297b8021b8d5",
+    .compiler_digest = "19ab1fd335bc98e1c035fa725ba03867a014f5c98ee1dcec2056f97bab6cb8c3",
     .composition_digest = "91f446041519b5f0f910316fe49e954a7512ffc205ae91ed3bac87aa3954dab0",
     .profile = "cetta-petta-v1",
     .splitter_blank = &petta_reader_direct_v1_class_2_petta_splitter_blank_scalar,
@@ -293,6 +293,12 @@ const GSLTDirectPeTTaReaderV1Plan petta_reader_direct_v1_plan = {
     .string_escape_map = petta_reader_direct_v1_string_escape_map,
     .string_escape_map_len = UINT32_C(3),
     .string_escape_identity_fallback = true,
+    .list_open = UINT32_C(0),
+    .list_close = UINT32_C(0),
+    .list_rest = UINT32_C(0),
+    .list_token_first = NULL,
+    .list_token = NULL,
+    .list_token_boundary = NULL,
     .depth_limit = UINT32_C(4096),
 };
 

@@ -88,7 +88,8 @@
         (different ?codepoint (cp 41))
         (different ?codepoint (cp 42))
         (different ?codepoint (cp 59))
-        (different ?codepoint (cp 64))))
+        (different ?codepoint (cp 64))
+        (different ?codepoint (cp 91))))
 
     (rule member-cetta-prime-star-payload-start-scalar
       (head (member cetta-prime-star-payload-start-scalar ?codepoint))
@@ -102,4 +103,74 @@
         (different ?codepoint (cp 32))
         (different ?codepoint (cp 41))
         (different ?codepoint (cp 59))))
+
+    ; Inside a list a token also ends at a bracket, and a list word starts
+    ; with a bar only when more follows.
+    (rule member-cetta-prime-list-token-scalar
+      (head (member cetta-prime-list-token-scalar ?codepoint))
+      (body
+        (different ?codepoint (cp 9))
+        (different ?codepoint (cp 10))
+        (different ?codepoint (cp 11))
+        (different ?codepoint (cp 12))
+        (different ?codepoint (cp 13))
+        (different ?codepoint (cp 32))
+        (different ?codepoint (cp 34))
+        (different ?codepoint (cp 40))
+        (different ?codepoint (cp 41))
+        (different ?codepoint (cp 59))
+        (different ?codepoint (cp 91))
+        (different ?codepoint (cp 93))))
+
+    (rule member-cetta-prime-list-token-start-nonat-scalar
+      (head (member cetta-prime-list-token-start-nonat-scalar ?codepoint))
+      (body
+        (different ?codepoint (cp 9))
+        (different ?codepoint (cp 10))
+        (different ?codepoint (cp 11))
+        (different ?codepoint (cp 12))
+        (different ?codepoint (cp 13))
+        (different ?codepoint (cp 32))
+        (different ?codepoint (cp 34))
+        (different ?codepoint (cp 40))
+        (different ?codepoint (cp 41))
+        (different ?codepoint (cp 59))
+        (different ?codepoint (cp 64))
+        (different ?codepoint (cp 91))
+        (different ?codepoint (cp 93))))
+
+    (rule member-cetta-prime-list-token-start-plain-scalar
+      (head (member cetta-prime-list-token-start-plain-scalar ?codepoint))
+      (body
+        (different ?codepoint (cp 9))
+        (different ?codepoint (cp 10))
+        (different ?codepoint (cp 11))
+        (different ?codepoint (cp 12))
+        (different ?codepoint (cp 13))
+        (different ?codepoint (cp 32))
+        (different ?codepoint (cp 34))
+        (different ?codepoint (cp 36))
+        (different ?codepoint (cp 38))
+        (different ?codepoint (cp 40))
+        (different ?codepoint (cp 41))
+        (different ?codepoint (cp 42))
+        (different ?codepoint (cp 59))
+        (different ?codepoint (cp 64))
+        (different ?codepoint (cp 91))
+        (different ?codepoint (cp 93))
+        (different ?codepoint (cp 124))))
+
+    (rule member-cetta-prime-list-star-payload-start-scalar
+      (head (member cetta-prime-list-star-payload-start-scalar ?codepoint))
+      (body
+        (different ?codepoint (cp 0))
+        (different ?codepoint (cp 9))
+        (different ?codepoint (cp 10))
+        (different ?codepoint (cp 11))
+        (different ?codepoint (cp 12))
+        (different ?codepoint (cp 13))
+        (different ?codepoint (cp 32))
+        (different ?codepoint (cp 41))
+        (different ?codepoint (cp 59))
+        (different ?codepoint (cp 93))))
   ))

@@ -180,6 +180,53 @@ static void emit_compiled_symbol_name(FILE *out, const char *head,
     fprintf(out, "__arity_%" PRIu64, (uint64_t)arity);
 }
 
+/* String literals are their bytes, NUL included, so they are named by their
+ * position in this table rather than by their spelling. */
+typedef struct {
+    const char *bytes;
+    size_t len;
+} CompileStringLiteral;
+
+static CompileStringLiteral *g_string_literals;
+static size_t g_string_literal_len;
+static size_t g_string_literal_cap;
+
+static size_t compile_string_literal_index(const Atom *atom) {
+    for (size_t i = 0; i < g_string_literal_len; i++) {
+        if (atom_string_equals_bytes(atom, g_string_literals[i].bytes,
+                                     g_string_literals[i].len))
+            return i;
+    }
+    return SIZE_MAX;
+}
+
+static void compile_string_literal_collect(const Atom *atom) {
+    if (compile_string_literal_index(atom) != SIZE_MAX)
+        return;
+    if (g_string_literal_len >= g_string_literal_cap) {
+        g_string_literal_cap = g_string_literal_cap ? g_string_literal_cap * 2 : 16;
+        g_string_literals = cetta_realloc(
+            g_string_literals, sizeof(CompileStringLiteral) * g_string_literal_cap);
+    }
+    g_string_literals[g_string_literal_len].bytes = atom->ground.sval;
+    g_string_literals[g_string_literal_len].len = atom->ground.slen;
+    g_string_literal_len++;
+}
+
+static void emit_string_literal_const(FILE *out, size_t index) {
+    const CompileStringLiteral *literal = &g_string_literals[index];
+    fprintf(out, "@strv_%zu = private constant [%zu x i8] c\"", index,
+            literal->len + 1u);
+    for (size_t i = 0; i < literal->len; i++) {
+        unsigned char c = (unsigned char)literal->bytes[i];
+        if (c >= 32 && c < 127 && c != '"' && c != '\\')
+            fputc(c, out);
+        else
+            fprintf(out, "\\%02x", c);
+    }
+    fprintf(out, "\\00\"\n");
+}
+
 /* ── Variable Capture Table ─────────────────────────────────────────────── */
 
 typedef struct {
@@ -277,13 +324,15 @@ static void emit_pattern(FILE *out, const char *atom_reg, Atom *pattern,
             fprintf(out, "  %%chk%d = call i1 @cetta_atom_is_bool(%%Atom* %s, i1 %d)\n",
                     l, atom_reg, pattern->ground.bval ? 1 : 0);
             break;
-        case GV_STRING:
-            fprintf(out, "  %%chk%d = call i1 @cetta_atom_is_string(%%Atom* %s, i8* "
-                    "getelementptr([%zu x i8], [%zu x i8]* @str_",
-                    l, atom_reg, strlen(pattern->ground.sval)+1, strlen(pattern->ground.sval)+1);
-            emit_mangled(out, pattern->ground.sval);
-            fprintf(out, ", i32 0, i32 0))\n");
+        case GV_STRING: {
+            size_t index = compile_string_literal_index(pattern);
+            size_t len = pattern->ground.slen;
+            fprintf(out, "  %%chk%d = call i1 @cetta_atom_is_string_bytes(%%Atom* %s, i8* "
+                    "getelementptr([%zu x i8], [%zu x i8]* @strv_%zu, i32 0, i32 0), "
+                    "i64 %zu)\n",
+                    l, atom_reg, len + 1u, len + 1u, index, len);
             break;
+        }
         case GV_BIGINT:
         {
             const char *text = atom_bigint_cstr(pattern);
@@ -446,14 +495,16 @@ static const char *emit_rhs(FILE *out, Arena *compiler_arena, Atom *rhs,
             fprintf(out, "  %s = call %%Atom* @cetta_atom_bool(%%Arena* %%arena, i1 %d)\n",
                     reg, rhs->ground.bval ? 1 : 0);
             return reg;
-        case GV_STRING:
+        case GV_STRING: {
+            size_t index = compile_string_literal_index(rhs);
+            size_t len = rhs->ground.slen;
             snprintf(reg, sizeof(reg), "%%str%d", t);
-            fprintf(out, "  %s = call %%Atom* @cetta_atom_string(%%Arena* %%arena, i8* "
-                    "getelementptr([%zu x i8], [%zu x i8]* @str_",
-                    reg, strlen(rhs->ground.sval)+1, strlen(rhs->ground.sval)+1);
-            emit_mangled(out, rhs->ground.sval);
-            fprintf(out, ", i32 0, i32 0))\n");
+            fprintf(out, "  %s = call %%Atom* @cetta_atom_string_bytes(%%Arena* %%arena, i8* "
+                    "getelementptr([%zu x i8], [%zu x i8]* @strv_%zu, i32 0, i32 0), "
+                    "i64 %zu)\n",
+                    reg, len + 1u, len + 1u, index, len);
             return reg;
+        }
         case GV_BIGINT:
         {
             const char *text = atom_bigint_cstr(rhs);
@@ -530,6 +581,7 @@ static const char *emit_rhs(FILE *out, Arena *compiler_arena, Atom *rhs,
 
 /* ── String Constants ───────────────────────────────────────────────────── */
 
+
 static void emit_str_const(FILE *out, const char *name) {
     fprintf(out, "@str_");
     emit_mangled(out, name);
@@ -560,12 +612,8 @@ static void collect_syms(Arena *arena, Atom *a, const char ***syms,
         if (*n >= *cap) { *cap = *cap ? *cap * 2 : 32; *syms = cetta_realloc((void*)*syms, sizeof(const char *) * *cap); }
         (*syms)[(*n)++] = name;
     }
-    if (a->kind == ATOM_GROUNDED && a->ground.gkind == GV_STRING) {
-        for (size_t i = 0; i < *n; i++)
-            if (strcmp((*syms)[i], a->ground.sval) == 0) return;
-        if (*n >= *cap) { *cap = *cap ? *cap * 2 : 32; *syms = cetta_realloc((void*)*syms, sizeof(const char *) * *cap); }
-        (*syms)[(*n)++] = a->ground.sval;
-    }
+    if (a->kind == ATOM_GROUNDED && a->ground.gkind == GV_STRING)
+        compile_string_literal_collect(a);
     if (a->kind == ATOM_EXPR)
         for (CettaExprIndex i = 0; i < a->expr.len; i++)
             collect_syms(arena, a->expr.elems[i], syms, n, cap);
@@ -579,6 +627,7 @@ void compile_space_to_llvm(Space *s, Arena *a, FILE *out) {
     if (gs.len == 0) { fprintf(out, "; No compilable equations\n"); return; }
 
     /* Collect all string constants */
+    g_string_literal_len = 0;
     const char **syms = NULL; size_t nsyms = 0, csyms = 0;
     for (size_t gi = 0; gi < gs.len; gi++) {
         collect_syms(a, atom_symbol_id(a, gs.groups[gi].head_id),
@@ -603,7 +652,7 @@ void compile_space_to_llvm(Space *s, Arena *a, FILE *out) {
     fprintf(out, "declare i1 @cetta_atom_is_rational(%%Atom*, i8*)\n");
     fprintf(out, "declare i1 @cetta_atom_is_float(%%Atom*, double)\n");
     fprintf(out, "declare i1 @cetta_atom_is_bool(%%Atom*, i1)\n");
-    fprintf(out, "declare i1 @cetta_atom_is_string(%%Atom*, i8*)\n");
+    fprintf(out, "declare i1 @cetta_atom_is_string_bytes(%%Atom*, i8*, i64)\n");
     fprintf(out, "declare i1 @cetta_atom_is_expr(%%Atom*)\n");
     fprintf(out, "declare i64 @cetta_expr_len(%%Atom*)\n");
     fprintf(out, "declare %%Atom* @cetta_expr_elem(%%Atom*, i64)\n");
@@ -617,7 +666,7 @@ void compile_space_to_llvm(Space *s, Arena *a, FILE *out) {
     fprintf(out, "declare %%Atom* @cetta_atom_rational(%%Arena*, i8*)\n");
     fprintf(out, "declare %%Atom* @cetta_atom_float(%%Arena*, double)\n");
     fprintf(out, "declare %%Atom* @cetta_atom_bool(%%Arena*, i1)\n");
-    fprintf(out, "declare %%Atom* @cetta_atom_string(%%Arena*, i8*)\n");
+    fprintf(out, "declare %%Atom* @cetta_atom_string_bytes(%%Arena*, i8*, i64)\n");
     fprintf(out, "declare %%Atom* @cetta_atom_expr(%%Arena*, %%Atom**, i64)\n");
     fprintf(out, "; Evaluation callback (for non-compiled heads)\n");
     fprintf(out, "declare void @metta_eval(%%Space*, %%Arena*, %%Atom*, %%Atom*, i32, %%ResultSet*)\n");
@@ -630,6 +679,8 @@ void compile_space_to_llvm(Space *s, Arena *a, FILE *out) {
 
     /* String constants */
     for (size_t i = 0; i < nsyms; i++) emit_str_const(out, syms[i]);
+    for (size_t i = 0; i < g_string_literal_len; i++)
+        emit_string_literal_const(out, i);
     fprintf(out, "\n");
 
     /* Note: compiled functions call each other directly via head+arity symbols.

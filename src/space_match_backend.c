@@ -6115,7 +6115,9 @@ static void imported_flatten_atom(ImportedFlatBuilder *b, Atom *atom) {
             tok.bval = atom->ground.bval;
         } else if (atom->ground.gkind == GV_STRING) {
             tok.kind = IMPORTED_FLAT_STRING;
-            tok.sym_id = symbol_intern_cstr(g_symbols, atom->ground.sval);
+            tok.sym_id = symbol_intern_bytes(
+                g_symbols, (const uint8_t *)atom->ground.sval,
+                atom->ground.slen);
         } else if (atom->ground.gkind == GV_BIGINT) {
             tok.kind = IMPORTED_FLAT_BIGINT;
             tok.sym_id = symbol_intern_cstr(g_symbols, atom_bigint_cstr(atom));
@@ -6128,6 +6130,11 @@ static void imported_flatten_atom(ImportedFlatBuilder *b, Atom *atom) {
         imported_builder_push(b, tok);
         return;
     case ATOM_EXPR:
+        if (atom_is_list_form(atom)) {
+            tok.kind = IMPORTED_FLAT_LIST;
+            imported_builder_push(b, tok);
+            return;
+        }
         tok.kind = IMPORTED_FLAT_EXPR;
         tok.arity = atom->expr.len;
         imported_builder_push(b, tok);
@@ -6176,7 +6183,9 @@ static bool imported_flatten_atom_id(ImportedFlatBuilder *b,
             break;
         case GV_STRING:
             tok.kind = IMPORTED_FLAT_STRING;
-            tok.sym_id = symbol_intern_cstr(g_symbols, tu_string_cstr(universe, atom_id));
+            tok.sym_id = symbol_intern_bytes(
+                g_symbols, (const uint8_t *)tu_string_cstr(universe, atom_id),
+                tu_string_len(universe, atom_id));
             break;
         case GV_BIGINT:
             tok.kind = IMPORTED_FLAT_BIGINT;
@@ -6199,6 +6208,13 @@ static bool imported_flatten_atom_id(ImportedFlatBuilder *b,
         imported_builder_push(b, tok);
         return true;
     case ATOM_EXPR:
+        if (tu_arity(universe, atom_id) > 0u &&
+            cetta_internal_tag_is_list(tu_internal_tag(
+                universe, tu_child(universe, atom_id, 0u)))) {
+            tok.kind = IMPORTED_FLAT_LIST;
+            imported_builder_push(b, tok);
+            return true;
+        }
         tok.kind = IMPORTED_FLAT_EXPR;
         tok.arity = tu_arity(universe, atom_id);
         imported_builder_push(b, tok);
@@ -6258,6 +6274,7 @@ static bool imported_token_equal(const ImportedFlatToken *lhs,
     case IMPORTED_FLAT_RATIONAL:
         return lhs->sym_id == rhs->sym_id;
     case IMPORTED_FLAT_GROUNDED_OTHER:
+    case IMPORTED_FLAT_LIST:
         if (lhs->origin_id != CETTA_ATOM_ID_NONE &&
             rhs->origin_id != CETTA_ATOM_ID_NONE) {
             return lhs->origin_id == rhs->origin_id;
@@ -7810,6 +7827,8 @@ static ImportedCorefVerdict imported_match_subtree_coref(const ImportedFlatToken
             if (!ct->origin || !atom_eq(qt->origin, ct->origin))
                 return IMPORTED_COREF_FAIL;
             break;
+        case IMPORTED_FLAT_LIST:
+            return IMPORTED_COREF_NEEDS_FALLBACK;
         case IMPORTED_FLAT_EXPR:
             if (qt->arity != ct->arity) return IMPORTED_COREF_FAIL;
             break;
@@ -7855,7 +7874,7 @@ static bool imported_match_subtree_legacy(const ImportedFlatToken *q, CettaIndex
                         return false;
                 } else if (!match_binding_values(
                                existing, binding_value_from_context(
-                                   imported_token_atom(ct, candidate_universe), epoch), b)) {
+                                   imported_token_atom(ct, candidate_universe), epoch), b, a)) {
                     return false;
                 }
             } else {
@@ -7874,7 +7893,7 @@ static bool imported_match_subtree_legacy(const ImportedFlatToken *q, CettaIndex
             VarId tagged_id = var_epoch_id(ct->var_id, epoch);
             BindingValue existing = bindings_lookup_value_id(b, tagged_id);
             if (existing.skeleton) {
-                if (!match_binding_values(binding_value_from_atom(qt->origin), existing, b)) return false;
+                if (!match_binding_values(binding_value_from_atom(qt->origin), existing, b, a)) return false;
             } else if (!bindings_add_id(
                            b, tagged_id, ct->sym_id, qt->origin)) {
                 return false;
@@ -7904,6 +7923,14 @@ static bool imported_match_subtree_legacy(const ImportedFlatToken *q, CettaIndex
         case IMPORTED_FLAT_GROUNDED_OTHER:
             if (!atom_eq(qt->origin,
                          imported_token_atom(ct, candidate_universe)))
+                return false;
+            break;
+        case IMPORTED_FLAT_LIST:
+            if (!match_binding_values(
+                    binding_value_from_atom(qt->origin),
+                    binding_value_from_context(
+                        imported_token_atom(ct, candidate_universe), epoch),
+                    b, a))
                 return false;
             break;
         case IMPORTED_FLAT_EXPR:

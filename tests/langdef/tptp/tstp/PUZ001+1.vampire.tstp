@@ -1,0 +1,205 @@
+% Running in auto input_syntax mode. Trying TPTP
+% Detected formulas, will run a generic FOF schedule.
+% WARNING: time unlimited strategy and instruction limiting not in place - attempting to translate instructions to time
+% lrs+1011_32_sil=2000:tgt=full:alpa=true:random_seed=2365221007:st=5:i=107:sd=1:ss=included:er=filter_1 on PUZ001+1 for (1ds/107Mi)
+%  found proof, printing...
+% ...printing done.
+% Refutation found. Thanks to Tanya!
+% SZS status Theorem for PUZ001+1
+% SZS output start Proof for PUZ001+1
+fof(f1,axiom,(
+  ? [X0] : (lives(X0) & killed(X0,agatha))),
+  file('Problems/PUZ/PUZ001+1.p',unknown)).
+fof(f5,axiom,(
+  ! [X0] : (lives(X0) => (X0 = agatha | X0 = butler | X0 = charles))),
+  file('Problems/PUZ/PUZ001+1.p',unknown)).
+fof(f6,axiom,(
+  ! [X0,X1] : (killed(X0,X1) => hates(X0,X1))),
+  file('Problems/PUZ/PUZ001+1.p',unknown)).
+fof(f7,axiom,(
+  ! [X0,X1] : (killed(X0,X1) => ~richer(X0,X1))),
+  file('Problems/PUZ/PUZ001+1.p',unknown)).
+fof(f8,axiom,(
+  ! [X0] : (hates(agatha,X0) => ~hates(charles,X0))),
+  file('Problems/PUZ/PUZ001+1.p',unknown)).
+fof(f9,axiom,(
+  ! [X0] : (X0 != butler => hates(agatha,X0))),
+  file('Problems/PUZ/PUZ001+1.p',unknown)).
+fof(f10,axiom,(
+  ! [X0] : (~richer(X0,agatha) => hates(butler,X0))),
+  file('Problems/PUZ/PUZ001+1.p',unknown)).
+fof(f11,axiom,(
+  ! [X0] : (hates(agatha,X0) => hates(butler,X0))),
+  file('Problems/PUZ/PUZ001+1.p',unknown)).
+fof(f12,axiom,(
+  ! [X0] : ? [X1] : ~hates(X0,X1)),
+  file('Problems/PUZ/PUZ001+1.p',unknown)).
+fof(f13,axiom,(
+  agatha != butler),
+  file('Problems/PUZ/PUZ001+1.p',unknown)).
+fof(f14,conjecture,(
+  killed(agatha,agatha)),
+  file('Problems/PUZ/PUZ001+1.p',unknown)).
+fof(f15,negated_conjecture,(
+  ~killed(agatha,agatha)),
+  inference(negated_conjecture,[status(cth)],[f14])).
+fof(f16,plain,(
+  ~killed(agatha,agatha)),
+  inference(flattening,[],[f15])).
+fof(f17,plain,(
+  ! [X0] : ((X0 = agatha | X0 = butler | X0 = charles) | ~lives(X0))),
+  inference(ennf_transformation,[],[f5])).
+fof(f18,plain,(
+  ! [X0] : (X0 = agatha | X0 = butler | X0 = charles | ~lives(X0))),
+  inference(flattening,[],[f17])).
+fof(f19,plain,(
+  ! [X0,X1] : (hates(X0,X1) | ~killed(X0,X1))),
+  inference(ennf_transformation,[],[f6])).
+fof(f20,plain,(
+  ! [X0,X1] : (~richer(X0,X1) | ~killed(X0,X1))),
+  inference(ennf_transformation,[],[f7])).
+fof(f21,plain,(
+  ! [X0] : (~hates(charles,X0) | ~hates(agatha,X0))),
+  inference(ennf_transformation,[],[f8])).
+fof(f22,plain,(
+  ! [X0] : (hates(agatha,X0) | butler = X0)),
+  inference(ennf_transformation,[],[f9])).
+fof(f23,plain,(
+  ! [X0] : (hates(butler,X0) | richer(X0,agatha))),
+  inference(ennf_transformation,[],[f10])).
+fof(f24,plain,(
+  ! [X0] : (hates(butler,X0) | ~hates(agatha,X0))),
+  inference(ennf_transformation,[],[f11])).
+fof(f25,plain,(
+  lives(sK0) & killed(sK0,agatha)),
+  inference(skolemize,[status(esa),new_symbols(skolem,[sK0]),skolemize(X0,sK0)],[f1])).
+fof(f26,plain,(
+  ! [X0] : ~hates(X0,sK1(X0))),
+  inference(skolemize,[status(esa),new_symbols(skolem,[sK1]),skolemize(X1,sK1(X0))],[f12])).
+fof(f27,plain,(
+  killed(sK0,agatha)),
+  inference(cnf_transformation,[],[f25])).
+fof(f28,plain,(
+  lives(sK0)),
+  inference(cnf_transformation,[],[f25])).
+fof(f32,plain,(
+  ( ! [X0] : (~lives(X0) | butler = X0 | charles = X0 | agatha = X0) )),
+  inference(cnf_transformation,[],[f18])).
+fof(f33,plain,(
+  ( ! [X0,X1] : (hates(X0,X1) | ~killed(X0,X1)) )),
+  inference(cnf_transformation,[],[f19])).
+fof(f34,plain,(
+  ( ! [X0,X1] : (~richer(X0,X1) | ~killed(X0,X1)) )),
+  inference(cnf_transformation,[],[f20])).
+fof(f35,plain,(
+  ( ! [X0] : (~hates(charles,X0) | ~hates(agatha,X0)) )),
+  inference(cnf_transformation,[],[f21])).
+fof(f36,plain,(
+  ( ! [X0] : (hates(agatha,X0) | butler = X0) )),
+  inference(cnf_transformation,[],[f22])).
+fof(f37,plain,(
+  ( ! [X0] : (richer(X0,agatha) | hates(butler,X0)) )),
+  inference(cnf_transformation,[],[f23])).
+fof(f38,plain,(
+  ( ! [X0] : (hates(butler,X0) | ~hates(agatha,X0)) )),
+  inference(cnf_transformation,[],[f24])).
+fof(f39,plain,(
+  ( ! [X0] : (~hates(X0,sK1(X0))) )),
+  inference(cnf_transformation,[],[f26])).
+fof(f40,plain,(
+  agatha != butler),
+  inference(cnf_transformation,[],[f13])).
+fof(f41,plain,(
+  ~killed(agatha,agatha)),
+  inference(cnf_transformation,[],[f16])).
+fof(f43,plain,(
+  ( ! [X0] : (~killed(charles,X0) | ~hates(agatha,X0)) )),
+  inference(resolution,[],[f35,f33])).
+fof(f49,plain,(
+  ( ! [X0] : (~killed(X0,agatha) | hates(butler,X0)) )),
+  inference(resolution,[],[f37,f34])).
+fof(f50,plain,(
+  ~hates(agatha,sK1(butler))),
+  inference(resolution,[],[f38,f39])).
+fof(f51,plain,(
+  butler = sK1(butler)),
+  inference(resolution,[],[f50,f36])).
+fof(f55,plain,(
+  ~hates(butler,butler)),
+  inference(superposition,[],[f39,f51])).
+fof(f59,plain,(
+  hates(butler,sK0)),
+  inference(resolution,[],[f49,f27])).
+fof(f63,plain,(
+  butler = sK0 | charles = sK0 | agatha = sK0),
+  inference(resolution,[],[f32,f28])).
+fof(f65,definition,(
+  spl2_1 <=> agatha = sK0),
+  introduced(definition,[new_symbols(naming,[spl2_1])],[avatar_definition])).
+fof(f67,plain,(
+  agatha = sK0 | ~spl2_1),
+  inference(avatar_component_clause,[],[f65])).
+fof(f69,definition,(
+  spl2_2 <=> charles = sK0),
+  introduced(definition,[new_symbols(naming,[spl2_2])],[avatar_definition])).
+fof(f71,plain,(
+  charles = sK0 | ~spl2_2),
+  inference(avatar_component_clause,[],[f69])).
+fof(f73,definition,(
+  spl2_3 <=> butler = sK0),
+  introduced(definition,[new_symbols(naming,[spl2_3])],[avatar_definition])).
+fof(f75,plain,(
+  butler = sK0 | ~spl2_3),
+  inference(avatar_component_clause,[],[f73])).
+fof(f76,plain,(
+  spl2_1 | spl2_2 | spl2_3),
+  inference(avatar_split_clause,[],[f63,f73,f69,f65])).
+fof(f78,plain,(
+  killed(agatha,agatha) | ~spl2_1),
+  inference(superposition,[],[f27,f67])).
+fof(f80,plain,(
+  $false | ~spl2_1),
+  inference(forward_subsumption_resolution,[],[f78,f41])).
+fof(f81,plain,(
+  ~spl2_1),
+  inference(avatar_contradiction_clause,[],[f80])).
+fof(f84,plain,(
+  killed(charles,agatha) | ~spl2_2),
+  inference(superposition,[],[f27,f71])).
+fof(f86,plain,(
+  ~hates(agatha,agatha) | ~spl2_2),
+  inference(resolution,[],[f84,f43])).
+fof(f88,plain,(
+  agatha = butler | ~spl2_2),
+  inference(resolution,[],[f86,f36])).
+fof(f90,plain,(
+  $false | ~spl2_2),
+  inference(forward_subsumption_resolution,[],[f88,f40])).
+fof(f91,plain,(
+  ~spl2_2),
+  inference(avatar_contradiction_clause,[],[f90])).
+fof(f94,plain,(
+  hates(butler,butler) | ~spl2_3),
+  inference(superposition,[],[f59,f75])).
+fof(f97,plain,(
+  $false | ~spl2_3),
+  inference(forward_subsumption_resolution,[],[f94,f55])).
+fof(f98,plain,(
+  ~spl2_3),
+  inference(avatar_contradiction_clause,[],[f97])).
+cnf(s1, plain, spl2_1 | spl2_2 | spl2_3, inference(sat_conversion,[],[f76])).
+cnf(s2, plain, ~spl2_1, inference(sat_conversion,[],[f81])).
+cnf(s3, plain, ~spl2_2, inference(sat_conversion,[],[f91])).
+cnf(s4, plain, ~spl2_3, inference(sat_conversion,[],[f98])).
+cnf(s5, plain, $false, inference(rat,[],[s1,s4,s3,s2])).
+fof(f99,plain,(
+  $false),
+  inference(avatar_sat_refutation,[],[s5])).
+% SZS output end Proof for PUZ001+1
+% ------------------------------
+% Version: Vampire 5.0.1 (Release build, commit 72927f3a4 on 2026-05-26 21:03:11 +0200)
+% CaDiCaL version: 2.1.3
+% Termination reason: Refutation
+% Time elapsed: 0.001 s
+% Peak memory usage: 13 MB
+% Success in time 0.003 s

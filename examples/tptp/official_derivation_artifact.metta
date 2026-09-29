@@ -93,7 +93,7 @@
                                  (TPTP:SemanticArtifactV1
                                    official-derivation $wire-sha256
                                    (TPTP:StageValue
-                                     first-order-derivation malformed))))
+                                     resolution-input malformed))))
                              (tptp:from-metta-text official-derivation
                                (repr $parsed))
                              (example:stage-rejected official-derivation
@@ -103,9 +103,13 @@
                                $duplicate-admitted)
                              (example:derivation-node-count
                                $duplicate-admitted)
-                             (example:stage-rejected first-order-derivation
-                               (tptp:admit-first-order-derivation
-                                 $derivation)))
+                             (tptp:from-metta-text official-derivation
+                               "(malformed")
+                             (tptp:to-metta-text not-a-stage-value)
+                             (example:stage-rejected official-derivation
+                               (tptp:re-admit-stage-value
+                                 (TPTP:StageValue
+                                   official-derivation malformed))))
                             (((5 5 5 () True
                                (TPTP:MettaText
                                  official-derivation $wire-sha256 $text)
@@ -121,13 +125,18 @@
                                (TPTP:MettaTextRejected
                                  EnvelopeStageMismatch
                                  official-derivation
-                                 first-order-derivation)
+                                 resolution-input)
                                (TPTP:MettaTextRejected
                                  NotSemanticArtifact
                                  official-derivation $parsed)
-                               True True 2 True)
+                               True True 2
+                               (TPTP:MettaTextRejected
+                                 ParseFailed official-derivation)
+                               (TPTP:MettaTextRejected
+                                 NotStageValue not-a-stage-value)
+                               True)
                               (TPTPOfficialDerivationArtifactV1Summary
-                                15 15 0))
+                                17 17 0))
                              ($observed
                                (TPTPOfficialDerivationArtifactV1Failed
                                  $observed))))))))))))

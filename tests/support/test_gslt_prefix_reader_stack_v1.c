@@ -7,7 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct { uint32_t next; uint32_t fail_at; } Projection;
+typedef struct { uint32_t next; uint32_t fail_at; uint32_t patterns; } Projection;
 
 void *cetta_realloc(void *pointer, size_t size) {
     void *result = realloc(pointer, size);
@@ -33,12 +33,22 @@ static AtomId prefix(void *context, GSLTDirectPrefixRoleV1 role, AtomId payload)
     assert(role != GSLT_DIRECT_PREFIX_ROLE_INVALID && payload != CETTA_ATOM_ID_NONE);
     return atom(context);
 }
+static AtomId list(void *context, const AtomId *elems, size_t length, AtomId rest) {
+    Projection *state = context;
+    for (size_t i = 0; i < length; ++i) assert(elems[i] != CETTA_ATOM_ID_NONE);
+    if (rest != CETTA_ATOM_ID_NONE) {
+        assert(length > 0);
+        state->patterns++;
+    }
+    return atom(context);
+}
 
-static void check(const char *source, size_t length, uint32_t depth,
-                  uint32_t fail_at, bool accepted, uint32_t prefixes) {
-    Projection state = {0, fail_at};
+static void check_lists(const char *source, size_t length, uint32_t depth,
+                        uint32_t fail_at, bool accepted, uint32_t prefixes,
+                        uint32_t patterns) {
+    Projection state = {0, fail_at, 0};
     GSLTDirectPrefixProjectionV1 projection = {
-        &state, begin, bytes, bytes, atom, bytes, expression, prefix};
+        &state, begin, bytes, bytes, atom, bytes, expression, prefix, list};
     GSLTDirectPrefixReaderV1Plan plan = prime_reader_direct_v1_plan;
     GSLTDirectPrefixReaderV1Receipt receipt;
     AtomId *ids = NULL;
@@ -53,6 +63,7 @@ static void check(const char *source, size_t length, uint32_t depth,
         assert(receipt.input_byte_len == length);
         assert(receipt.prefix_len == prefixes);
         assert(receipt.token_len == state.next && receipt.reduce_len == state.next);
+        assert(state.patterns == patterns);
     } else {
         assert(count == -1 && !ids && error[0]);
         assert(receipt.source_pass_count == 0);
@@ -60,9 +71,14 @@ static void check(const char *source, size_t length, uint32_t depth,
     free(ids);
 }
 
+static void check(const char *source, size_t length, uint32_t depth,
+                  uint32_t fail_at, bool accepted, uint32_t prefixes) {
+    check_lists(source, length, depth, fail_at, accepted, prefixes, 0);
+}
+
 int main(void) {
     const size_t nesting = 65536;
-    char *source = malloc(4 * nesting + 2);
+    char *source = malloc(6 * nesting + 2);
     assert(source);
     for (size_t i = 0; i < nesting; ++i) memcpy(source + 3 * i, "(a ", 3);
     source[3 * nesting] = 'b';
@@ -82,7 +98,35 @@ int main(void) {
     check("@a", 2, 2, 0, true, 1);
     check("(a)", 3, 1, 0, false, 0);
     check("(a)", 3, 2, 0, true, 0);
+    /* Lists are frames of the same explicit stack. */
+    for (size_t i = 0; i < nesting; ++i) memcpy(source + 3 * i, "[a ", 3);
+    source[3 * nesting] = 'b';
+    memset(source + 3 * nesting + 1, ']', nesting);
+    source[length] = '\0';
+    check(source, length, UINT32_MAX, 0, true, 0);
+    check(source, length - 1, UINT32_MAX, 0, false, 0);
+    check(source, length, UINT32_MAX, (uint32_t)nesting + 1, false, 0);
+    check(source, length, 512, 0, false, 0);
+    /* A rest may itself be a list pattern, to any depth. */
+    for (size_t i = 0; i < nesting; ++i) memcpy(source + 5 * i, "[a | ", 5);
+    source[5 * nesting] = 'b';
+    memset(source + 5 * nesting + 1, ']', nesting);
+    size_t rest_length = 6 * nesting + 1;
+    source[rest_length] = '\0';
+    check_lists(source, rest_length, UINT32_MAX, 0, true, 0, (uint32_t)nesting);
+    check(source, rest_length - 1, UINT32_MAX, 0, false, 0);
+    check(source, rest_length, 512, 0, false, 0);
+    check_lists("[a b | c]", 9, UINT32_MAX, 0, true, 0, 1);
+    check("[]", 2, 1, 0, true, 0);
+    check("[a]", 3, 1, 0, false, 0);
+    check("[a]", 3, 2, 0, true, 0);
+    check("[a]", 3, 2, 2, false, 0);
+    check("[a | b]", 7, UINT32_MAX, 3, false, 0);
+    check("[| a]", 5, UINT32_MAX, 0, false, 0);
+    check("[a | b c]", 9, UINT32_MAX, 0, false, 0);
+    check("[@a]", 4, UINT32_MAX, 0, true, 1);
+    check("([a (b [c])])", 13, UINT32_MAX, 0, true, 0);
     free(source);
-    puts("(GSLTPrefixReaderStackV1Summary cases=11 depth=65536)");
+    puts("(GSLTPrefixReaderStackV1Summary cases=28 depth=65536)");
     return 0;
 }

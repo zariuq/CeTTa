@@ -46,12 +46,6 @@ def producer_command(arguments: argparse.Namespace, output: Path) -> list[str]:
         str(arguments.source),
         "--symbol",
         arguments.symbol,
-        "--generator",
-        str(arguments.generator),
-        "--compiler-kind",
-        arguments.compiler_kind,
-        "--schema",
-        str(arguments.schema),
         "--certificate",
         str(output),
     ]
@@ -66,8 +60,6 @@ def checker_command(
     *,
     source_root: Path | None = None,
     source: Path | None = None,
-    schema: Path | None = None,
-    generator: Path | None = None,
 ) -> list[str]:
     return [
         str(arguments.checker),
@@ -76,8 +68,6 @@ def checker_command(
         str(source_root or arguments.source_root),
         str(arguments.header),
         str(source or arguments.source),
-        str(generator or arguments.generator),
-        str(schema or arguments.schema),
     ]
 
 
@@ -113,9 +103,6 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--checker", type=Path, required=True)
     parser.add_argument("--producer", type=Path, required=True)
-    parser.add_argument("--generator", type=Path, required=True)
-    parser.add_argument("--compiler-kind", choices=("python", "native"), default="python")
-    parser.add_argument("--schema", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument(
@@ -130,8 +117,6 @@ def main() -> int:
     for field in (
         "checker",
         "producer",
-        "generator",
-        "schema",
         "manifest",
         "source_root",
         "header",
@@ -214,22 +199,10 @@ def main() -> int:
             expect_success=False,
         )
 
-        corrupt_compiler = temporary / "compiler-tamper"
-        compiler_input = (arguments.generator if arguments.compiler_kind == "native"
-                          else arguments.schema)
-        corrupt_compiler.write_bytes(compiler_input.read_bytes() + b"\n# compiler tamper\n")
-        substitution = ({"generator": corrupt_compiler}
-                        if arguments.compiler_kind == "native"
-                        else {"schema": corrupt_compiler})
-        run(
-            checker_command(arguments, first, **substitution),
-            expect_success=False,
-        )
-
     print(
         "(GsltCompilationCertificateV1Summary "
         f"profile={arguments.profile} deterministic=1 artifact-erasure=1 "
-        "accepted=1 tamper-rejections=5)"
+        "accepted=1 tamper-rejections=4)"
     )
     return 0
 

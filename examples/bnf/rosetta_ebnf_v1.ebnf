@@ -1,0 +1,20 @@
+% The EBNF flavor of the Rosetta Code task "Parse EBNF": a brace-enclosed list
+% of productions, optionally preceded by a title string and followed by a
+% comment string. Identifiers and quoted literals are lexical classes supplied
+% by the grammar authority in rosetta_parse_ebnf_v1.metta.
+% Two adjacent identifiers need whitespace between them; a delimited factor
+% (literal or bracketed group) may follow anything directly. This keeps the
+% scannerless grammar unambiguous where a tokenizer would use longest match.
+<syntax> ::= <ws> (<literal> <ws>)? "{" <ws> <production>* "}" <ws> (<literal> <ws>)?
+<production> ::= <identifier> <ws> "=" <ws> <expression> <ws> <terminator> <ws>
+<terminator> ::= "." | ";"
+<expression> ::= <term> (<ws> "|" <ws> <term>)*
+<term> ::= <factor> <term-tail>
+<term-tail> ::= | <ws1> <identifier> <term-tail> | <ws> <delimited> <term-tail>
+<factor> ::= <identifier> | <delimited>
+<delimited> ::= <literal> | "[" <ws> <expression> <ws> "]" | "(" <ws> <expression> <ws> ")" | "{" <ws> <expression> <ws> "}"
+<identifier> ::= <idchar>+
+<literal> ::= "\"" <dqchar>* "\"" | "'" <sqchar>* "'"
+<ws> ::= <wschar>*
+<ws1> ::= <wschar>+
+<wschar> ::= " " | "\t" | "\n" | "\r"

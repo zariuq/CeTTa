@@ -191,16 +191,6 @@ def main() -> int:
 
     source_payload = catalog_path.read_bytes()
     manifest_payload = manifest_path.read_bytes()
-    generator_hash = sha256()
-    generator_hash.update(b"CettaGsltProviderCatalogCompilerV1\0")
-    for dependency in (
-        Path(__file__).resolve(),
-        Path(sx.__file__).resolve(),
-    ):
-        payload = dependency.read_bytes()
-        generator_hash.update(len(payload).to_bytes(8, "big"))
-        generator_hash.update(payload)
-
     guard = f"CETTA_GENERATED_{arguments.symbol.upper()}_H"
     header = (
         f"#ifndef {guard}\n#define {guard}\n\n"
@@ -236,7 +226,6 @@ def main() -> int:
         + f"    .source_sha256 = {c_string(sha256(source_payload).hexdigest())},\n"
         + f"    .requirements = {requirement_array},\n"
         + f"    .requirement_count = {len(catalog.requirements)}u,\n"
-        + f"    .generator_sha256 = {c_string(generator_hash.hexdigest())},\n"
         + "};\n"
     )
     write_if_changed(arguments.header, header)

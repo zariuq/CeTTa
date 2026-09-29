@@ -15,7 +15,7 @@
 
 enum {
     ABT_DEEP_TERM_DEPTH = CETTA_ABT_MUTATION == 0 ? 100000 : 1000,
-    ABT_EXPECTED_CHECKS = 125,
+    ABT_EXPECTED_CHECKS = 125 + 45,
 };
 
 static unsigned failures = 0;
@@ -123,6 +123,11 @@ static void check_atom_eq(const char *label, Atom *actual, Atom *expected) {
     checks++;
     if (!actual || !expected || !atom_eq(actual, expected)) {
         fprintf(stderr, "FAIL: %s\n", label);
+        if (actual) {
+            fputs("  actual:   ", stderr);
+            atom_print(actual, stderr);
+            fputc('\n', stderr);
+        }
         failures++;
     }
 }
@@ -810,6 +815,275 @@ static void test_deep_and_cyclic_inputs(Arena *arena,
           "open rejects a cyclic replacement");
 }
 
+/* A small reader for test terms: symbols, "strings", integers and lists. */
+static Atom *sx_read(Arena *arena, const char **cursor) {
+    const char *p = *cursor;
+    while (*p == ' ' || *p == '\n') p++;
+    if (*p == '(') {
+        Atom *items[64];
+        CettaExprLen len = 0u;
+        p++;
+        for (;;) {
+            while (*p == ' ' || *p == '\n') p++;
+            if (*p == ')') {
+                p++;
+                break;
+            }
+            if (!*p || len == 64u) return NULL;
+            *cursor = p;
+            items[len++] = sx_read(arena, cursor);
+            p = *cursor;
+            if (!items[len - 1u]) return NULL;
+        }
+        *cursor = p;
+        return atom_expr(arena, items, len);
+    }
+    char token[128];
+    size_t n = 0u;
+    if (*p == '"') {
+        p++;
+        while (*p && *p != '"' && n + 1u < sizeof(token)) token[n++] = *p++;
+        if (*p != '"') return NULL;
+        p++;
+        token[n] = '\0';
+        *cursor = p;
+        return atom_string(arena, token);
+    }
+    while (*p && *p != ' ' && *p != '\n' && *p != '(' && *p != ')' &&
+           n + 1u < sizeof(token))
+        token[n++] = *p++;
+    token[n] = '\0';
+    *cursor = p;
+    if (n == 0u) return NULL;
+    char *end = NULL;
+    long long value = strtoll(token, &end, 10);
+    if (end && *end == '\0' && (token[0] == '-' || (token[0] >= '0' && token[0] <= '9')))
+        return atom_int(arena, (int64_t)value);
+    return atom_symbol(arena, token);
+}
+
+static Atom *sx(Arena *arena, const char *text) {
+    const char *cursor = text;
+    return sx_read(arena, &cursor);
+}
+
+static const char *const ABT_NAMED_MIXED_SIGNATURE =
+    "(AbtSignatures"
+    " (AbtNames (SymbolInitial \"A\" \"Z\") (SymbolPrefix \"?\"))"
+    " (AbtSignature ∀ (Fields binders body)"
+    "   (BindTelescope binders (Scope body) (Annotated : 1 2)))"
+    " (AbtSignature λ (Fields binders body)"
+    "   (BindTelescope binders (Scope body) (Annotated : 1 2)))"
+    " (AbtSignature (Head (defined \"#\")) (Fields binders body)"
+    "   (BindTelescope binders (Scope body) (Annotated : 1 2)))"
+    " (AbtSignature §let (Fields typings definitions body)"
+    "   (BindTelescope typings (Scope body (Each definitions 1)) (Annotated : 1 2)))"
+    " (AbtSignature ≔ (Fields lhs rhs) (BindPattern lhs (Scope rhs))))";
+
+static const char *const ABT_NAMED_TAGGED_SIGNATURE =
+    "(AbtSignatures"
+    " (AbtNames (Form var))"
+    " (AbtSignature ∀ (Fields binders body)"
+    "   (BindTelescope binders (Scope body) (Annotated : 1 2))))";
+
+static void check_free(Arena *arena, const AbtSignature *signature,
+                       const char *label, const char *term,
+                       const char *expected) {
+    check_atom_eq(label, abt_free_names(signature, arena, sx(arena, term)),
+                  sx(arena, expected));
+}
+
+static void check_substitute(Arena *arena, const AbtSignature *signature,
+                             const char *label, const char *bindings,
+                             const char *term, const char *expected) {
+    check_atom_eq(label,
+                  abt_substitute(signature, arena, sx(arena, bindings),
+                                 sx(arena, term)),
+                  sx(arena, expected));
+}
+
+static void check_apart(Arena *arena, const AbtSignature *signature,
+                        const char *label, const char *avoid,
+                        const char *term, const char *expected) {
+    check_atom_eq(label,
+                  abt_rename_bound(signature, arena, sx(arena, avoid),
+                                   sx(arena, term)),
+                  sx(arena, expected));
+}
+
+static void check_alpha(Arena *arena, const AbtSignature *signature,
+                        const char *label, const char *left,
+                        const char *right, bool expected) {
+    bool equal = !expected;
+    bool ok = abt_named_alpha_equal(signature, arena, sx(arena, left),
+                                    sx(arena, right), &equal);
+    CHECK(ok && equal == expected, label);
+}
+
+static bool named_signature_admits(Arena *arena, const char *text) {
+    AbtSignature signature;
+    abt_signature_init(&signature);
+    bool ok = abt_signature_add_set(&signature, sx(arena, text));
+    abt_signature_free(&signature);
+    return ok;
+}
+
+static void test_named_binders(Arena *arena) {
+    AbtSignature mixed;
+    abt_signature_init(&mixed);
+    CHECK(abt_signature_add_set(&mixed, sx(arena, ABT_NAMED_MIXED_SIGNATURE)),
+          "named binder signature admitted");
+
+    /* Free names. */
+    check_free(arena, &mixed, "a quantifier binds its variables",
+               "(∀ (X) (p X Y))", "(Y)");
+    check_free(arena, &mixed, "a typed telescope binds in later annotations",
+               "(∀ ((: A tType) (: X A)) (p X B))", "(B)");
+    check_free(arena, &mixed, "an annotation is outside its own declaration",
+               "(∀ ((: X X)) (p X))", "(X)");
+    check_free(arena, &mixed, "free names in first-occurrence order",
+               "(∧ (p Y) (∀ (X) (q X Z)) (r X Y))", "(Y Z X)");
+    check_free(arena, &mixed, "variable-headed application",
+               "(F (λ (X) (G X)))", "(F G)");
+    check_free(arena, &mixed, "prefixed host-literal variable spellings",
+               "(p ?True x)", "(?True)");
+    check_free(arena, &mixed, "an expression head binds",
+               "((defined \"#\") (X) (p X W))", "(W)");
+    check_free(arena, &mixed, "a definition's pattern binds its variables",
+               "(§let ((: c i)) ((≔ (c X) (f X Y))) (p c Z))", "(Y Z)");
+    check_free(arena, &mixed, "constants are not variables",
+               "(p a (f b))", "()");
+
+    /* Substitution. */
+    check_substitute(arena, &mixed, "substitution replaces a free variable",
+                     "((Y a))", "(∀ (X) (p X Y))", "(∀ (X) (p X a))");
+    check_substitute(arena, &mixed, "substitution respects shadowing",
+                     "((X a))", "(∧ (p X) (∀ (X) (q X)))",
+                     "(∧ (p a) (∀ (X) (q X)))");
+    check_substitute(arena, &mixed, "substitution renames a capturing binder",
+                     "((Y (f X)))", "(∀ (X) (p X Y))",
+                     "(∀ (X1) (p X1 (f X)))");
+    check_substitute(arena, &mixed, "a fresh name avoids every name in use",
+                     "((Y (f X)))", "(∀ (X) (p X Y X1))",
+                     "(∀ (X2) (p X2 (f X) X1))");
+    check_substitute(arena, &mixed, "renaming reaches later annotations",
+                     "((B (g A)))", "(∀ ((: A tType) (: X A)) (p X B))",
+                     "(∀ ((: A1 tType) (: X A1)) (p X (g A)))");
+    check_substitute(arena, &mixed, "a let renames a constant it would capture",
+                     "((Z c))", "(§let ((: c i)) ((≔ c a)) (p c Z))",
+                     "(§let ((: c1 i)) ((≔ c1 a)) (p c1 c))");
+    check_substitute(arena, &mixed, "a definition's right side is outside the let",
+                     "((Z b))", "(§let ((: c i)) ((≔ c c)) (p c Z))",
+                     "(§let ((: c i)) ((≔ c c)) (p c b))");
+    check_substitute(arena, &mixed, "substitution is simultaneous",
+                     "((X Y) (Y X))", "(p X Y)", "(p Y X)");
+    check_substitute(arena, &mixed, "a higher-order value substitutes as data",
+                     "((F (λ (Z) (q Z))))", "(∀ (X) (F X))",
+                     "(∀ (X) ((λ (Z) (q Z)) X))");
+    check_substitute(arena, &mixed, "a pattern variable renames on capture",
+                     "((Y X))", "(§let ((: c i)) ((≔ (c X) (f X Y))) c)",
+                     "(§let ((: c i)) ((≔ (c X1) (f X1 X))) c)");
+    CHECK(abt_substitute(&mixed, arena, sx(arena, "((X a) (X b))"),
+                         sx(arena, "(p X)")) == NULL,
+          "substitution rejects a repeated name");
+    CHECK(abt_substitute(&mixed, arena, sx(arena, "((Y a))"),
+                         sx(arena, "(∀ X (p X Y))")) == NULL,
+          "a telescope needs a list of declarations");
+
+    /* Renaming apart. */
+    check_apart(arena, &mixed, "renaming apart separates repeated binders",
+                "()", "(∧ (∀ (X) (p X)) (∀ (X) (q X)))",
+                "(∧ (∀ (X) (p X)) (∀ (X1) (q X1)))");
+    check_apart(arena, &mixed, "renaming apart avoids requested names",
+                "(X)", "(∀ (X) (p X))", "(∀ (X1) (p X1))");
+    check_apart(arena, &mixed, "renaming apart avoids free names",
+                "()", "(∧ (p X) (∀ (X) (q X)))",
+                "(∧ (p X) (∀ (X1) (q X1)))");
+
+    /* Alpha equality. */
+    check_alpha(arena, &mixed, "alpha equality ignores binder names",
+                "(∀ (X) (p X))", "(∀ (Y) (p Y))", true);
+    check_alpha(arena, &mixed, "alpha equality keeps binder order",
+                "(∀ (X Y) (p X Y))", "(∀ (Y X) (p X Y))", false);
+    check_alpha(arena, &mixed, "alpha equality keeps free names",
+                "(∀ (X) (p X Z))", "(∀ (Y) (p Y W))", false);
+    check_alpha(arena, &mixed, "alpha equality through patterns",
+                "(≔ (f X) (g X))", "(≔ (f Y) (g Y))", true);
+    check_alpha(arena, &mixed, "alpha equality through typed telescopes",
+                "(∀ ((: A t) (: X A)) (p X))", "(∀ ((: B t) (: Y B)) (p Y))",
+                true);
+    check_alpha(arena, &mixed, "alpha equality of let-bound constants",
+                "(§let ((: c i)) ((≔ c c)) (p c))",
+                "(§let ((: d i)) ((≔ d c)) (p d))", true);
+
+    /* Tagged names. */
+    AbtSignature tagged;
+    abt_signature_init(&tagged);
+    CHECK(abt_signature_add_set(&tagged, sx(arena, ABT_NAMED_TAGGED_SIGNATURE)),
+          "tagged binder signature admitted");
+    check_free(arena, &tagged, "tagged variables are names",
+               "(∀ ((var \"X\")) ((word \"p\") (var \"X\") (var \"Y\")))",
+               "((var \"Y\"))");
+    check_substitute(arena, &tagged, "a tagged binder renames on capture",
+                     "(((var \"Y\") ((word \"f\") (var \"X\"))))",
+                     "(∀ ((var \"X\")) ((word \"p\") (var \"X\") (var \"Y\")))",
+                     "(∀ ((var \"X1\")) ((word \"p\") (var \"X1\")"
+                     " ((word \"f\") (var \"X\"))))");
+    abt_signature_free(&tagged);
+
+    /* String names, as literal tokens of a grammar. */
+    AbtSignature strings;
+    abt_signature_init(&strings);
+    CHECK(abt_signature_add_set(&strings, sx(arena,
+              "(AbtSignatures (AbtNames (StringInitial \"A\" \"Z\"))"
+              " (AbtSignature (Head bnf lam) (Fields binders body)"
+              "   (BindTelescope binders (Scope body) Names)))")),
+          "string-name signature admitted");
+    check_free(arena, &strings, "string variables are names",
+               "(bnf lam (\"X\") (\"X\" \"Z\" \"a\"))", "(\"Z\")");
+    check_substitute(arena, &strings, "a string binder renames on capture",
+                     "((\"Z\" \"X\"))", "(bnf lam (\"X\") (\"X\" \"Z\"))",
+                     "(bnf lam (\"X1\") (\"X1\" \"X\"))");
+    abt_signature_free(&strings);
+
+    /* Admission and boundaries. */
+    CHECK(!named_signature_admits(arena,
+              "(AbtSignatures (AbtSignature ∀ (Fields binders body)"
+              " (BindTelescope binders (Scope binders) Names)))"),
+          "a telescope's list is not its own scope");
+    CHECK(!named_signature_admits(arena,
+              "(AbtSignatures"
+              " (AbtSignature (Head bnf q) (Fields a b) (BindTelescope a (Scope b) Names))"
+              " (AbtSignature bnf (Fields x a b) (BindPattern a (Scope b))))"),
+          "overlapping heads are rejected");
+    CHECK(!named_signature_admits(arena,
+              "(AbtSignatures (AbtNames (SymbolInitial \"A\" \"Z\"))"
+              " (AbtNames (SymbolPrefix \"?\")))"),
+          "one variable-name declaration per signature");
+    CHECK(!named_signature_admits(arena,
+              "(AbtSignatures (AbtSignature ∀ (Fields binders body)"
+              " (BindTelescope binders (Scope (Each binders 1)) Names)))"),
+          "an (Each ...) scope needs another field");
+    CHECK(abt_shift(&mixed, arena, 1, 0u, sx(arena, "(p X)")) == NULL,
+          "canonical operations reject in-term binders");
+    AbtSignature without_names;
+    abt_signature_init(&without_names);
+    CHECK(abt_signature_add_set(&without_names, sx(arena,
+              "(AbtSignatures (AbtSignature ∀ (Fields binders body)"
+              " (BindTelescope binders (Scope body) Names)))")),
+          "a signature without variable names is admitted");
+    CHECK(abt_free_names(&without_names, arena, sx(arena, "(p X)")) == NULL,
+          "named operations need variable names");
+    abt_signature_free(&without_names);
+
+    Atom *head = atom_symbol(arena, "__cetta_abt_free_names");
+    Atom *args[] = {sx(arena, ABT_NAMED_MIXED_SIGNATURE),
+                    sx(arena, "(∀ (X) (p X Y))")};
+    check_atom_eq("free names through grounded dispatch",
+                  abt_grounded_dispatch(arena, head, args, 2u), sx(arena, "(Y)"));
+    abt_signature_free(&mixed);
+}
+
 static void test_grounded_dispatch_symbol_table_lifetime(
         SymbolTable *symbols, Arena *arena) {
     arena_init(arena);
@@ -848,6 +1122,7 @@ int main(void) {
     test_locally_nameless_seams(&arena, &signature);
     test_named_readback(&arena, &signature);
     test_deep_and_cyclic_inputs(&arena, &signature);
+    test_named_binders(&arena);
 
     abt_signature_free(&signature);
     arena_free(&arena);

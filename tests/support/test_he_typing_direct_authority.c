@@ -262,9 +262,9 @@ int main(void) {
         atom_symbol(&persistent, "Atom"));
     Bindings space_match;
     bindings_init(&space_match);
-    assert(match_types(space_value_type, space_kind, &space_match));
+    assert(match_types(space_value_type, space_kind, &space_match, &persistent));
     assert(space_match.len == 0u);
-    assert(match_types(space_kind, space_value_type, &space_match));
+    assert(match_types(space_kind, space_value_type, &space_match, &persistent));
     assert(space_match.len == 0u);
     assert(core_service->classify_consistency(
                space_value_type, space_kind, 64u) ==

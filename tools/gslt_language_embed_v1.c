@@ -235,8 +235,7 @@ static void embedded_source(FILE *out, const char *symbol, const char *suffix,
 
 static bool emit(const Options *o, const GsltLanguageManifest *m,
                  const uint8_t *manifest, size_t manifest_length, const char *manifest_name,
-                 const FHGSLTInput *inputs, const char *plan, size_t plan_length,
-                 const char *compiler_sha) {
+                 const FHGSLTInput *inputs, const char *plan, size_t plan_length) {
     char *header = NULL, *source = NULL, sha[65];
     size_t header_length = 0, source_length = 0;
     FILE *h = open_memstream(&header, &header_length);
@@ -284,7 +283,7 @@ static bool emit(const Options *o, const GsltLanguageManifest *m,
         TEXT_FIELD(observation);
 #undef TEXT_FIELD
         cetta_native_sha256_hex(manifest, manifest_length, sha);
-        fprintf(c, "    .manifest_sha256 = \"%s\",\n    .compiler_sha256 = \"%s\",\n};\n", sha, compiler_sha);
+        fprintf(c, "    .manifest_sha256 = \"%s\",\n};\n", sha);
         ok = !ferror(h) && !ferror(c);
     }
     if (h && fclose(h)) ok = false;
@@ -334,11 +333,9 @@ int main(int argc, char **argv) {
         same_file(source, "/proc/self/exe") || same_file(header, argv[0]) || same_file(source, argv[0])))
         ok = fail(error, sizeof(error), "output aliases another output or input");
     o.header = header; o.source = source;
-    size_t manifest_length = 0, executable_length = 0, plan_length = 0;
+    size_t manifest_length = 0, plan_length = 0;
     uint8_t *manifest_bytes = ok ? read_bytes(manifest_path, &manifest_length) : NULL;
-    uint8_t *executable = ok ? read_bytes("/proc/self/exe", &executable_length) : NULL;
-    if (ok && !executable) executable = read_bytes(argv[0], &executable_length);
-    if (ok && (!manifest_bytes || !executable)) ok = fail(error, sizeof(error), "cannot read manifest or executable identity");
+    if (ok && !manifest_bytes) ok = fail(error, sizeof(error), "cannot read manifest");
     SymbolTable symbols; symbol_table_init(&symbols); g_symbols = &symbols; g_hashcons = NULL;
     Arena arena; arena_init(&arena);
     Atom *manifest_atom = NULL;
@@ -370,19 +367,18 @@ int main(int argc, char **argv) {
     }
     if (ok) ok = fhgslt_package_from_inputs(inputs, m.semantic_source_count, &package, error, sizeof(error));
     if (ok) ok = encode_package(package, &plan, &plan_length, error, sizeof(error));
+    /* The outputs are a function of the manifest and its sources alone: the
+     * generator's own build is not part of what it generates. */
     if (ok) {
-        char compiler_sha[65];
-        /* Exact executable identity; not a proof or a portable source hash. */
-        cetta_native_sha256_hex(executable, executable_length, compiler_sha);
         ok = emit(&o, &m, manifest_bytes, manifest_length,
                   manifest_path + strlen(root) + (strlen(root) == 1u ? 0u : 1u),
-                  inputs, plan, plan_length, compiler_sha);
+                  inputs, plan, plan_length);
         if (!ok) fail(error, sizeof(error), "cannot publish descriptor outputs");
     }
     if (!ok) fprintf(stderr, "error: %s\n", error);
     for (uint32_t i = 0; i < m.semantic_source_count; i++) free((void *)inputs[i].bytes);
     fhgslt_package_free(package); free(plan); arena_free(&arena);
     g_symbols = NULL; symbol_table_free(&symbols);
-    free(executable); free(manifest_bytes); free(header); free(source); free(root); free(directory); free(manifest_path);
+    free(manifest_bytes); free(header); free(source); free(root); free(directory); free(manifest_path);
     return ok ? 0 : 1;
 }

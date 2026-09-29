@@ -33,12 +33,12 @@
      True
      (if
        (lib_parse:mm-label-char-valid
-         (str:slice $label $index (+ $index 1)))
+         (str:byte-slice $label $index (+ $index 1)))
        (lib_parse:mm-label-valid-from $label (+ $index 1) $length)
        False)))
 
 (= (lib_parse:mm-label-valid $label)
-   (let $length (str:length $label)
+   (let $length (str:byte-length $label)
      (if (== $length 0)
        False
        (lib_parse:mm-label-valid-from $label 0 $length))))

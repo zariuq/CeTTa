@@ -1,0 +1,2 @@
+(ImportV1 mixed ((fof a axiom (p X)) (fof a axiom (p X)) (cnf and axiom (∨ (¬ (lives X)) (if X)))) [((Axiom a (p X))) ((Axiom a (p X))) ((Clause and (∨ (¬ (lives X)) (if X))))])
+(ImportV1 tagged ((fof (word "a") axiom ((word "p") (var "X"))) (fof (word "a") axiom ((word "p") (var "X"))) (cnf (word "and") axiom (∨ (¬ ((word "lives") (var "X"))) ((word "if") (var "X"))))) [((Axiom (word "a") ((word "p") (var "X")))) ((Axiom (word "a") ((word "p") (var "X")))) ((Clause (word "and") (∨ (¬ ((word "lives") (var "X"))) ((word "if") (var "X")))))])

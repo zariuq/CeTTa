@@ -1,4 +1,5 @@
 #include "lib_parse_native_grammar.h"
+#include "utf8.h"
 #include "gslt_dense_bitset_v1.h"
 
 #include <stdarg.h>
@@ -1349,6 +1350,7 @@ static bool slr_prepared_impl_build(
     CettaLpNativeSlrPreparedImpl *prepared,
     const CettaLpNativeGrammar *grammar,
     SymbolId start_nt,
+    bool keep_all_actions,
     char *error_buf,
     size_t error_buf_size) {
     bool *nullable = NULL;
@@ -1438,11 +1440,19 @@ static bool slr_prepared_impl_build(
                             (uint32_t)symbol_index);
                     }
                     if (edge_index >= 0 &&
-                        !actionvec_set(
-                            &prepared->actions, index,
-                            (uint32_t)terminal_index, 's',
-                            (int32_t)prepared->edges.data[edge_index].target,
-                            &conflict_len)) {
+                        !(keep_all_actions
+                              ? actionvec_push_unique(
+                                    &prepared->actions, index,
+                                    (uint32_t)terminal_index, 's',
+                                    (int32_t)prepared->edges.data[edge_index]
+                                        .target,
+                                    &conflict_len)
+                              : actionvec_set(
+                                    &prepared->actions, index,
+                                    (uint32_t)terminal_index, 's',
+                                    (int32_t)prepared->edges.data[edge_index]
+                                        .target,
+                                    &conflict_len))) {
                         slr_summary_set_error(
                             error_buf, error_buf_size,
                             "failed to record shift action");
@@ -1453,10 +1463,15 @@ static bool slr_prepared_impl_build(
             }
             if (item.prod_idx == -1) {
                 accept_len++;
-                if (!actionvec_set(
-                        &prepared->actions, index,
-                        prepared->terminals.len, 'a', 0,
-                        &conflict_len)) {
+                if (!(keep_all_actions
+                          ? actionvec_push_unique(
+                                &prepared->actions, index,
+                                prepared->terminals.len, 'a', 0,
+                                &conflict_len)
+                          : actionvec_set(
+                                &prepared->actions, index,
+                                prepared->terminals.len, 'a', 0,
+                                &conflict_len))) {
                     slr_summary_set_error(
                         error_buf, error_buf_size,
                         "failed to record accept action");
@@ -1479,9 +1494,13 @@ static bool slr_prepared_impl_build(
                      token_index++) {
                     if (!bitset_test(&follow[lhs_index], token_index))
                         continue;
-                    if (!actionvec_set(
-                            &prepared->actions, index, token_index, 'r',
-                            item.prod_idx, &conflict_len)) {
+                    if (!(keep_all_actions
+                              ? actionvec_push_unique(
+                                    &prepared->actions, index, token_index,
+                                    'r', item.prod_idx, &conflict_len)
+                              : actionvec_set(
+                                    &prepared->actions, index, token_index,
+                                    'r', item.prod_idx, &conflict_len))) {
                         slr_summary_set_error(
                             error_buf, error_buf_size,
                             "failed to record reduce action");
@@ -1559,7 +1578,7 @@ bool cetta_lp_native_slr_prepare(
     }
     implementation = cetta_malloc(sizeof(*implementation));
     if (!slr_prepared_impl_build(
-            implementation, grammar, start_nt,
+            implementation, grammar, start_nt, false,
             error_buf, error_buf_size)) {
         free(implementation);
         return false;
@@ -1568,6 +1587,60 @@ bool cetta_lp_native_slr_prepare(
         slr_summary_set_error(error_buf, error_buf_size,
                               "SLR table has conflicts");
         slr_prepared_impl_free(implementation);
+        free(implementation);
+        return false;
+    }
+    cetta_lp_native_slr_prepared_free(prepared);
+    prepared->implementation = implementation;
+    return true;
+}
+
+bool cetta_lp_native_slr_prepare_shift_prefer(
+    CettaLpNativeSlrPrepared *prepared,
+    const CettaLpNativeGrammar *grammar,
+    uint32_t start_nt,
+    char *error_buf,
+    size_t error_buf_size) {
+    CettaLpNativeSlrPreparedImpl *implementation;
+
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    if (!prepared || !grammar) {
+        slr_summary_set_error(error_buf, error_buf_size,
+                              "bad native SLR preparation arguments");
+        return false;
+    }
+    implementation = cetta_malloc(sizeof(*implementation));
+    if (!slr_prepared_impl_build(
+            implementation, grammar, start_nt, false,
+            error_buf, error_buf_size)) {
+        free(implementation);
+        return false;
+    }
+    cetta_lp_native_slr_prepared_free(prepared);
+    prepared->implementation = implementation;
+    return true;
+}
+
+bool cetta_lp_native_slr_prepare_glr(
+    CettaLpNativeSlrPrepared *prepared,
+    const CettaLpNativeGrammar *grammar,
+    uint32_t start_nt,
+    char *error_buf,
+    size_t error_buf_size) {
+    CettaLpNativeSlrPreparedImpl *implementation;
+
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    if (!prepared || !grammar) {
+        slr_summary_set_error(error_buf, error_buf_size,
+                              "bad native SLR preparation arguments");
+        return false;
+    }
+    implementation = cetta_malloc(sizeof(*implementation));
+    if (!slr_prepared_impl_build(
+            implementation, grammar, start_nt, true,
+            error_buf, error_buf_size)) {
         free(implementation);
         return false;
     }
@@ -1612,6 +1685,7 @@ void cetta_lp_native_slr_program_free(
     free(program->rhs);
     free(program->actions);
     free(program->gotos);
+    free(program->glr_actions);
     memset(program, 0, sizeof(*program));
 }
 
@@ -1701,6 +1775,7 @@ bool cetta_lp_native_slr_program_validate(
             production->authored !=
                 (index < program->authored_production_len) ||
             (!production->authored && production->label != UINT32_MAX) ||
+            (production->avoided && !production->authored) ||
             slr_program_id_find(
                 program->nonterminals, program->nonterminal_len,
                 production->lhs) < 0) {
@@ -1779,11 +1854,46 @@ bool cetta_lp_native_slr_program_validate(
     if (shift_len != program->summary.shift_len ||
         reduce_len != program->summary.reduce_len ||
         accept_len != program->summary.accept_len ||
-        goto_len != program->summary.goto_len ||
-        program->summary.conflict_len != 0u) {
+        goto_len != program->summary.goto_len) {
         slr_summary_set_error(error_buf, error_buf_size,
                               "native SLR program summary changed");
         return false;
+    }
+    if (program->glr_action_len > 0u) {
+        if (!program->glr_actions) {
+            slr_summary_set_error(error_buf, error_buf_size,
+                                  "native SLR program GLR actions missing");
+            return false;
+        }
+        for (index = 0u; index < program->glr_action_len; index++) {
+            const CettaLpNativeGlrAction *ga = &program->glr_actions[index];
+            if (ga->state >= program->summary.state_len ||
+                ga->token_idx > program->terminal_len) {
+                slr_summary_set_error(
+                    error_buf, error_buf_size,
+                    "native SLR program GLR action escaped its table");
+                return false;
+            }
+            switch (ga->kind) {
+            case CETTA_LP_NATIVE_SLR_PROGRAM_SHIFT:
+                if (ga->value < 0 ||
+                    ga->token_idx == program->terminal_len ||
+                    (uint32_t)ga->value >= program->summary.state_len)
+                    goto invalid_action;
+                break;
+            case CETTA_LP_NATIVE_SLR_PROGRAM_REDUCE:
+                if (ga->value < 0 ||
+                    (uint32_t)ga->value >= program->production_len)
+                    goto invalid_action;
+                break;
+            case CETTA_LP_NATIVE_SLR_PROGRAM_ACCEPT:
+                if (ga->value != 0 || ga->token_idx != program->terminal_len)
+                    goto invalid_action;
+                break;
+            default:
+                goto invalid_action;
+            }
+        }
     }
     return true;
 
@@ -1809,7 +1919,7 @@ bool cetta_lp_native_slr_prepared_export_program(
     cetta_lp_native_slr_program_init(&result);
     if (error_buf && error_buf_size > 0u)
         error_buf[0] = '\0';
-    if (!prepared || !out || prepared->summary.conflict_len != 0u ||
+    if (!prepared || !out ||
         prepared->summary.state_len == 0u ||
         prepared->production_len == 0u ||
         prepared->grammar_production_len > prepared->production_len ||
@@ -1905,10 +2015,21 @@ bool cetta_lp_native_slr_prepared_export_program(
             rhs_write += source->rhs_len;
         }
     }
+    if (prepared->actions.len > 0u) {
+        result.glr_actions =
+            calloc(prepared->actions.len, sizeof(*result.glr_actions));
+        if (!result.glr_actions) {
+            slr_summary_set_error(error_buf, error_buf_size,
+                                  "GLR action allocation failed");
+            goto done;
+        }
+        result.glr_action_len = prepared->actions.len;
+    }
     for (index = 0u; index < prepared->actions.len; index++) {
         const CettaLpNativeAction *source =
             &prepared->actions.data[index];
         CettaLpNativeSlrProgramAction *target;
+        CettaLpNativeSlrProgramActionKind kind;
         uint32_t offset;
 
         if (source->state >= result.summary.state_len ||
@@ -1917,26 +2038,46 @@ bool cetta_lp_native_slr_prepared_export_program(
                                   "prepared SLR action escaped its table");
             goto done;
         }
-        offset = source->state * action_columns + source->token_idx;
-        target = &result.actions[offset];
-        if (target->kind != CETTA_LP_NATIVE_SLR_PROGRAM_ERROR) {
-            slr_summary_set_error(error_buf, error_buf_size,
-                                  "prepared SLR action is duplicated");
-            goto done;
-        }
-        target->kind = source->kind == 's'
-            ? CETTA_LP_NATIVE_SLR_PROGRAM_SHIFT
-            : source->kind == 'r'
-                ? CETTA_LP_NATIVE_SLR_PROGRAM_REDUCE
-                : source->kind == 'a'
-                    ? CETTA_LP_NATIVE_SLR_PROGRAM_ACCEPT
-                    : CETTA_LP_NATIVE_SLR_PROGRAM_ERROR;
-        target->value = source->value;
-        if (target->kind == CETTA_LP_NATIVE_SLR_PROGRAM_ERROR) {
+        kind = source->kind == 's'
+                   ? CETTA_LP_NATIVE_SLR_PROGRAM_SHIFT
+                   : source->kind == 'r'
+                         ? CETTA_LP_NATIVE_SLR_PROGRAM_REDUCE
+                         : source->kind == 'a'
+                               ? CETTA_LP_NATIVE_SLR_PROGRAM_ACCEPT
+                               : CETTA_LP_NATIVE_SLR_PROGRAM_ERROR;
+        if (kind == CETTA_LP_NATIVE_SLR_PROGRAM_ERROR) {
             slr_summary_set_error(error_buf, error_buf_size,
                                   "prepared SLR action kind is unknown");
             goto done;
         }
+        result.glr_actions[index].state = source->state;
+        result.glr_actions[index].token_idx = source->token_idx;
+        result.glr_actions[index].kind = kind;
+        result.glr_actions[index].value = source->value;
+        offset = source->state * action_columns + source->token_idx;
+        target = &result.actions[offset];
+        if (target->kind != CETTA_LP_NATIVE_SLR_PROGRAM_ERROR)
+            continue;
+        target->kind = kind;
+        target->value = source->value;
+    }
+    {
+        uint32_t shift_len = 0u;
+        uint32_t reduce_len = 0u;
+        uint32_t accept_len = 0u;
+        for (index = 0u; index < result.action_len; index++) {
+            if (result.actions[index].kind == CETTA_LP_NATIVE_SLR_PROGRAM_SHIFT)
+                shift_len++;
+            else if (result.actions[index].kind ==
+                     CETTA_LP_NATIVE_SLR_PROGRAM_REDUCE)
+                reduce_len++;
+            else if (result.actions[index].kind ==
+                     CETTA_LP_NATIVE_SLR_PROGRAM_ACCEPT)
+                accept_len++;
+        }
+        result.summary.shift_len = shift_len;
+        result.summary.reduce_len = reduce_len;
+        result.summary.accept_len = accept_len;
     }
     for (index = 0u; index < prepared->edges.len; index++) {
         const CettaLpNativeEdge *edge = &prepared->edges.data[index];
@@ -1999,7 +2140,7 @@ bool cetta_lp_native_slr_summary(const CettaLpNativeGrammar *grammar,
         return false;
     }
     memset(out, 0, sizeof(*out));
-    if (!slr_prepared_impl_build(&prepared, grammar, start_nt,
+    if (!slr_prepared_impl_build(&prepared, grammar, start_nt, false,
                                  error_buf, error_buf_size)) {
         return false;
     }
@@ -2049,6 +2190,8 @@ typedef struct {
     uint8_t ways_total;
     uint8_t ways_done;
     bool queued;
+    /* The avoided productions the stored derivation reduced. */
+    uint32_t avoid_count;
 } CettaLpNativeBranch;
 
 typedef struct {
@@ -2092,8 +2235,14 @@ static bool input_tokenvec_push(CettaLpNativeInputTokenVec *vec,
     return true;
 }
 
+#ifndef CETTA_LP_NATIVE_PARSE_VALUE_STACK_MAX
+#define CETTA_LP_NATIVE_PARSE_VALUE_STACK_MAX 1048576u
+#endif
+
 static bool parsevaluevec_push(CettaLpNativeParseValueVec *vec,
                                const CettaLpNativeParseValue *value) {
+    if (vec->len >= CETTA_LP_NATIVE_PARSE_VALUE_STACK_MAX)
+        return false;
     if (!grow_storage((void **)&vec->data, &vec->len, &vec->cap,
                       sizeof(*vec->data))) {
         return false;
@@ -2767,6 +2916,877 @@ Atom *cetta_lp_native_slr_parse_shared(
     cetta_lp_native_slr_prepared_free(&prepared);
     return result;
 }
+
+static int32_t slr_program_id_index(const SymbolId *ids, uint32_t len,
+                                    SymbolId id) {
+    uint32_t i;
+    for (i = 0u; i < len; i++) {
+        if (ids[i] == id)
+            return (int32_t)i;
+    }
+    return -1;
+}
+
+typedef enum {
+    CETTA_LP_SLR_STEP_CONTINUE = 0,
+    CETTA_LP_SLR_STEP_ACCEPT = 1,
+    CETTA_LP_SLR_STEP_NOPARSE = 2,
+    CETTA_LP_SLR_STEP_ERROR = 3
+} CettaLpSlrStep;
+
+static CettaLpSlrStep slr_program_step_action(
+    const CettaLpNativeSlrProgram *program,
+    const CettaLpNativeSlrProgramAction *action,
+    const CettaLpNativeInputTokenVec *tokens,
+    CettaLpNativeU32Vec *state_stack,
+    CettaLpNativeParseValueVec *value_stack,
+    uint32_t *position,
+    Arena *arena,
+    Atom **accept_out,
+    bool soft_fail,
+    char *error_buf,
+    size_t error_buf_size) {
+    if (!action || action->kind == CETTA_LP_NATIVE_SLR_PROGRAM_ERROR)
+        return CETTA_LP_SLR_STEP_NOPARSE;
+    if (action->kind == CETTA_LP_NATIVE_SLR_PROGRAM_SHIFT) {
+        CettaLpNativeParseValue value;
+        if (*position >= tokens->len) {
+            slr_summary_set_error(error_buf, error_buf_size,
+                                  "shift past end of token stream");
+            return CETTA_LP_SLR_STEP_ERROR;
+        }
+        memset(&value, 0, sizeof(value));
+        value.token_atom = tokens->data[*position].token_atom;
+        value.term_kind = tokens->data[*position].term_kind;
+        value.start = *position;
+        value.end = *position + 1u;
+        value.forest_idx = UINT32_MAX;
+        if (!u32vec_push(state_stack, (uint32_t)action->value) ||
+            !parsevaluevec_push(value_stack, &value)) {
+            slr_summary_set_error(error_buf, error_buf_size,
+                                  "failed to push shift result");
+            return CETTA_LP_SLR_STEP_ERROR;
+        }
+        (*position)++;
+        return CETTA_LP_SLR_STEP_CONTINUE;
+    }
+    if (action->kind == CETTA_LP_NATIVE_SLR_PROGRAM_REDUCE) {
+        uint32_t production_index = (uint32_t)action->value;
+        const CettaLpNativeSlrProgramProduction *prod;
+        CettaLpNativeParseValue next_value;
+        int32_t nt_index;
+        uint32_t goto_state;
+        uint32_t rhs_len;
+        if (production_index >= program->production_len) {
+            slr_summary_set_error(error_buf, error_buf_size,
+                                  "reduce production out of range");
+            return CETTA_LP_SLR_STEP_ERROR;
+        }
+        prod = &program->productions[production_index];
+        rhs_len = prod->rhs_len;
+        if (rhs_len > value_stack->len || rhs_len >= state_stack->len) {
+            if (soft_fail)
+                return CETTA_LP_SLR_STEP_NOPARSE;
+            slr_summary_set_error(error_buf, error_buf_size,
+                                  "reduce arity exceeds parse stack");
+            return CETTA_LP_SLR_STEP_ERROR;
+        }
+        memset(&next_value, 0, sizeof(next_value));
+        next_value.is_cert = true;
+        next_value.forest_idx = UINT32_MAX;
+        if (production_index >= program->authored_production_len) {
+            CettaLpNativeParseValue *child =
+                &value_stack->data[value_stack->len - 1u];
+            if (rhs_len != 1u || child->is_cert) {
+                if (soft_fail)
+                    return CETTA_LP_SLR_STEP_NOPARSE;
+                slr_summary_set_error(
+                    error_buf, error_buf_size,
+                    "leaf reduction expected one shifted token");
+                return CETTA_LP_SLR_STEP_ERROR;
+            }
+            next_value.start = child->start;
+            next_value.end = child->end;
+            next_value.cert = make_leaf_cert(
+                arena, child->token_atom, child->start, child->end);
+        } else if (rhs_len == 0u) {
+            Atom *epsilon = make_eps_cert(arena);
+            Atom *children[1] = {epsilon};
+            next_value.start = *position;
+            next_value.end = *position;
+            next_value.cert = make_node_cert(
+                arena, prod->label, prod->lhs, *position, *position,
+                children, 1u);
+        } else {
+            uint32_t base = value_stack->len - rhs_len;
+            uint32_t child_index;
+            Atom **children = arena_alloc(
+                arena, sizeof(*children) * rhs_len);
+            next_value.start = value_stack->data[base].start;
+            next_value.end =
+                value_stack->data[value_stack->len - 1u].end;
+            for (child_index = 0u; child_index < rhs_len; child_index++) {
+                CettaLpNativeParseValue *part =
+                    &value_stack->data[base + child_index];
+                const CettaLpNativeSymbol *sym =
+                    &program->rhs[prod->rhs_begin + child_index];
+                if (sym->kind == CETTA_LP_NATIVE_SYMBOL_TM) {
+                    if (part->is_cert || part->term_kind != sym->name) {
+                        if (soft_fail)
+                            return CETTA_LP_SLR_STEP_NOPARSE;
+                        slr_summary_set_error(
+                            error_buf, error_buf_size,
+                            "terminal reduction mismatch");
+                        return CETTA_LP_SLR_STEP_ERROR;
+                    }
+                    children[child_index] = make_tok_cert(
+                        arena, sym->name, part->start);
+                } else {
+                    if (!part->is_cert || !part->cert) {
+                        if (soft_fail)
+                            return CETTA_LP_SLR_STEP_NOPARSE;
+                        slr_summary_set_error(
+                            error_buf, error_buf_size,
+                            "nonterminal reduction missing child cert");
+                        return CETTA_LP_SLR_STEP_ERROR;
+                    }
+                    children[child_index] = part->cert;
+                }
+            }
+            next_value.cert = make_node_cert(
+                arena, prod->label, prod->lhs, next_value.start,
+                next_value.end, children, rhs_len);
+        }
+        value_stack->len -= rhs_len;
+        state_stack->len -= rhs_len;
+        nt_index = slr_program_id_index(
+            program->nonterminals, program->nonterminal_len, prod->lhs);
+        if (nt_index < 0 || state_stack->len == 0u) {
+            if (soft_fail)
+                return CETTA_LP_SLR_STEP_NOPARSE;
+            slr_summary_set_error(error_buf, error_buf_size,
+                                  "missing goto state for reduction");
+            return CETTA_LP_SLR_STEP_ERROR;
+        }
+        goto_state = program->gotos[
+            state_stack->data[state_stack->len - 1u] *
+                program->nonterminal_len +
+            (uint32_t)nt_index];
+        if (goto_state == UINT32_MAX ||
+            goto_state >= program->summary.state_len) {
+            if (soft_fail)
+                return CETTA_LP_SLR_STEP_NOPARSE;
+            slr_summary_set_error(error_buf, error_buf_size,
+                                  "invalid goto after reduction");
+            return CETTA_LP_SLR_STEP_ERROR;
+        }
+        if (!u32vec_push(state_stack, goto_state) ||
+            !parsevaluevec_push(value_stack, &next_value)) {
+            slr_summary_set_error(error_buf, error_buf_size,
+                                  "failed to push reduced value");
+            return CETTA_LP_SLR_STEP_ERROR;
+        }
+        return CETTA_LP_SLR_STEP_CONTINUE;
+    }
+    if (action->kind == CETTA_LP_NATIVE_SLR_PROGRAM_ACCEPT) {
+        if (value_stack->len != 1u || !value_stack->data[0].is_cert ||
+            !value_stack->data[0].cert ||
+            value_stack->data[0].start != 0u ||
+            value_stack->data[0].end != tokens->len) {
+            if (soft_fail)
+                return CETTA_LP_SLR_STEP_NOPARSE;
+            slr_summary_set_error(error_buf, error_buf_size,
+                                  "accept state missing full-span cert");
+            return CETTA_LP_SLR_STEP_ERROR;
+        }
+        if (accept_out) {
+            *accept_out = atom_expr2(
+                arena, atom_symbol(arena, "Unique"),
+                value_stack->data[0].cert);
+        }
+        return CETTA_LP_SLR_STEP_ACCEPT;
+    }
+    slr_summary_set_error(error_buf, error_buf_size,
+                          "unknown SLR program action kind");
+    return CETTA_LP_SLR_STEP_ERROR;
+}
+
+static uint64_t slr_program_default_work_limit(uint32_t token_len) {
+    uint64_t limit = (uint64_t)token_len * 96u + 200000u;
+    return limit < 200000u ? UINT64_MAX : limit;
+}
+
+static Atom *slr_program_resource_limit(Arena *arena,
+                                        uint64_t work,
+                                        uint64_t limit) {
+    int64_t shown_work = work > (uint64_t)INT64_MAX
+        ? INT64_MAX : (int64_t)work;
+    int64_t shown_limit = limit > (uint64_t)INT64_MAX
+        ? INT64_MAX : (int64_t)limit;
+    return atom_expr3(arena, atom_symbol(arena, "ResourceLimit"),
+                      atom_int(arena, shown_work),
+                      atom_int(arena, shown_limit));
+}
+
+static bool slr_program_charge_work(uint64_t amount,
+                                    uint64_t limit,
+                                    uint64_t *work) {
+    if (amount > UINT64_MAX - *work) {
+        *work = UINT64_MAX;
+        return false;
+    }
+    *work += amount;
+    return *work <= limit;
+}
+
+static bool slr_program_enqueue_branch(
+    CettaLpNativeBranchVec *configs,
+    CettaLpNativeU32Vec *queue,
+    uint32_t position,
+    const CettaLpNativeU32Vec *state_stack,
+    const CettaLpNativeParseValueVec *value_stack,
+    uint8_t ways,
+    uint32_t avoid_count,
+    uint64_t work_limit,
+    uint64_t *work,
+    bool *resource_limit,
+    char *error_buf,
+    size_t error_buf_size) {
+    int32_t found = branchvec_find(configs, position, state_stack);
+
+    if (found >= 0) {
+        CettaLpNativeBranch *branch = &configs->data[found];
+        uint32_t grown;
+        /* Derivations meeting in one configuration share its continuations,
+         * so the ones that reduced fewer avoided productions are the only
+         * ones that count: a costlier one is dropped, and a cheaper one
+         * replaces those stored and is continued again. */
+        if (avoid_count > branch->avoid_count)
+            return true;
+        if (avoid_count < branch->avoid_count) {
+            CettaLpNativeParseValueVec replacement = {0};
+            if (!slr_program_charge_work(
+                    1u + value_stack->len, work_limit, work)) {
+                *resource_limit = true;
+                return true;
+            }
+            if (!parsevaluevec_copy(&replacement, value_stack)) {
+                slr_summary_set_error(error_buf, error_buf_size,
+                                      "failed to replace GLR branch");
+                return false;
+            }
+            free(branch->value_stack.data);
+            branch->value_stack = replacement;
+            branch->avoid_count = avoid_count;
+            branch->ways_total = ways > 2u ? 2u : ways;
+            branch->ways_done = 0u;
+            if (!branch->queued) {
+                branch->queued = true;
+                if (!u32vec_push(queue, (uint32_t)found)) {
+                    slr_summary_set_error(error_buf, error_buf_size,
+                                          "failed to schedule GLR branch");
+                    return false;
+                }
+            }
+            return true;
+        }
+        grown = (uint32_t)branch->ways_total + ways;
+        if (grown > 2u)
+            grown = 2u;
+        if (grown > branch->ways_total) {
+            branch->ways_total = (uint8_t)grown;
+            if (!branch->queued) {
+                branch->queued = true;
+                if (!u32vec_push(queue, (uint32_t)found)) {
+                    slr_summary_set_error(error_buf, error_buf_size,
+                                          "failed to schedule GLR branch");
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /* Stack cells are charged as work because every retained branch owns a
+     * copy.  This bounds both computation and the memory induced by deep
+     * ambiguous prefixes with one caller-visible limit. */
+    if (!slr_program_charge_work(
+            1u + state_stack->len + value_stack->len,
+            work_limit, work)) {
+        *resource_limit = true;
+        return true;
+    }
+    if (!branchvec_push_copy(configs, position, state_stack, value_stack,
+                             ways > 2u ? 2u : ways, true) ||
+        !u32vec_push(queue, configs->len - 1u)) {
+        slr_summary_set_error(error_buf, error_buf_size,
+                              "failed to enqueue GLR branch");
+        return false;
+    }
+    configs->data[configs->len - 1u].avoid_count = avoid_count;
+    return true;
+}
+
+/* Whether a reduction by the action reduces an avoided production. */
+static uint32_t slr_program_action_avoids(
+    const CettaLpNativeSlrProgram *program,
+    const CettaLpNativeSlrProgramAction *action) {
+    return action->kind == CETTA_LP_NATIVE_SLR_PROGRAM_REDUCE &&
+                   action->value >= 0 &&
+                   (uint32_t)action->value < program->production_len &&
+                   program->productions[action->value].avoided
+               ? 1u : 0u;
+}
+
+/* Record an accepting derivation: the fewest avoided productions win, and
+ * derivations tied at the fewest are counted, up to two. */
+static void slr_program_glr_accept(
+    uint32_t *accept_count, uint32_t *accept_avoid, Atom **accept_cert,
+    Atom *cert, uint8_t ways, uint32_t avoid_count) {
+    if (avoid_count > *accept_avoid)
+        return;
+    if (avoid_count < *accept_avoid) {
+        *accept_avoid = avoid_count;
+        *accept_count = 0u;
+        *accept_cert = cert;
+    }
+    *accept_count += ways;
+    if (*accept_count > 2u)
+        *accept_count = 2u;
+}
+
+/* A second derivation at the fewest possible avoided productions settles
+ * the parse as ambiguous. */
+static bool slr_program_glr_settled(uint32_t accept_count,
+                                    uint32_t accept_avoid) {
+    return accept_count >= 2u && accept_avoid == 0u;
+}
+
+static Atom *slr_program_parse_glr(
+    const CettaLpNativeSlrProgram *program,
+    const CettaLpNativeInputTokenVec *tokens,
+    uint64_t work_limit,
+    uint64_t *work_used,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size) {
+    uint32_t *heads = NULL;
+    uint32_t *nexts = NULL;
+    CettaLpNativeBranchVec configs = {0};
+    CettaLpNativeU32Vec queue = {0};
+    uint32_t cols;
+    uint32_t index;
+    uint32_t farthest_position = 0u;
+    uint32_t accept_count = 0u;
+    uint32_t accept_avoid = UINT32_MAX;
+    Atom *accept_cert = NULL;
+    Atom *result = NULL;
+    uint64_t work = 0u;
+    bool resource_limit = false;
+
+    if (work_limit == 0u)
+        work_limit = slr_program_default_work_limit(tokens->len);
+    if (work_used)
+        *work_used = 0u;
+
+    cols = program->terminal_len + 1u;
+    heads = malloc(sizeof(*heads) * (size_t)program->action_len);
+    nexts = malloc(sizeof(*nexts) *
+                   (size_t)(program->glr_action_len ? program->glr_action_len
+                                                    : 1u));
+    if (!heads || !nexts) {
+        slr_summary_set_error(error_buf, error_buf_size,
+                              "GLR action index allocation failed");
+        goto done;
+    }
+    for (index = 0u; index < program->action_len; index++)
+        heads[index] = UINT32_MAX;
+    for (index = program->glr_action_len; index > 0u; index--) {
+        const CettaLpNativeGlrAction *ga = &program->glr_actions[index - 1u];
+        uint32_t off = ga->state * cols + ga->token_idx;
+        uint32_t i = index - 1u;
+        if (off >= program->action_len) {
+            slr_summary_set_error(error_buf, error_buf_size,
+                                  "GLR action offset out of range");
+            goto done;
+        }
+        nexts[i] = heads[off];
+        heads[off] = i;
+    }
+    {
+        CettaLpNativeU32Vec initial_states = {0};
+        CettaLpNativeParseValueVec initial_values = {0};
+        if (!u32vec_push(&initial_states, 0u) ||
+            !slr_program_enqueue_branch(
+                &configs, &queue, 0u, &initial_states, &initial_values, 1u,
+                0u, work_limit, &work, &resource_limit,
+                error_buf, error_buf_size)) {
+            free(initial_states.data);
+            goto done;
+        }
+        free(initial_states.data);
+        if (resource_limit)
+            goto limited;
+    }
+
+    while (queue.len > 0u &&
+           !slr_program_glr_settled(accept_count, accept_avoid)) {
+        uint32_t config_index = queue.data[--queue.len];
+        CettaLpNativeBranch *branch = &configs.data[config_index];
+        CettaLpNativeU32Vec states = {0};
+        CettaLpNativeParseValueVec values = {0};
+        uint32_t position = branch->pos;
+        uint32_t avoid_count = branch->avoid_count;
+        uint8_t ways;
+
+        branch->queued = false;
+        if (branch->ways_total <= branch->ways_done)
+            continue;
+        ways = (uint8_t)(branch->ways_total - branch->ways_done);
+        branch->ways_done = branch->ways_total;
+        if (!u32vec_copy(&states, &branch->state_stack) ||
+            !parsevaluevec_copy(&values, &branch->value_stack)) {
+            free(states.data);
+            free(values.data);
+            slr_summary_set_error(error_buf, error_buf_size,
+                                  "failed to resume GLR branch");
+            goto done;
+        }
+
+        for (;;) {
+            uint32_t state;
+            uint32_t token_index;
+            uint32_t action_i;
+
+            if (position > farthest_position)
+                farthest_position = position;
+            if (states.len == 0u) {
+                slr_summary_set_error(error_buf, error_buf_size,
+                                      "empty GLR parse stack");
+                free(states.data);
+                free(values.data);
+                goto done;
+            }
+            state = states.data[states.len - 1u];
+            if (state >= program->summary.state_len) {
+                slr_summary_set_error(error_buf, error_buf_size,
+                                      "GLR parse state out of range");
+                free(states.data);
+                free(values.data);
+                goto done;
+            }
+            if (position < tokens->len) {
+                int32_t terminal_index = slr_program_id_index(
+                    program->terminals, program->terminal_len,
+                    tokens->data[position].term_kind);
+                if (terminal_index < 0)
+                    break;
+                token_index = (uint32_t)terminal_index;
+            } else {
+                token_index = program->terminal_len;
+            }
+            action_i = heads[state * cols + token_index];
+            if (action_i == UINT32_MAX)
+                break;
+
+            if (nexts[action_i] == UINT32_MAX) {
+                CettaLpNativeSlrProgramAction step;
+                CettaLpSlrStep outcome;
+                Atom *accepted = NULL;
+                if (!slr_program_charge_work(1u, work_limit, &work)) {
+                    resource_limit = true;
+                    break;
+                }
+                step.kind = program->glr_actions[action_i].kind;
+                step.value = program->glr_actions[action_i].value;
+                avoid_count += slr_program_action_avoids(
+                    program, &step);
+                outcome = slr_program_step_action(
+                    program, &step, tokens, &states, &values, &position,
+                    arena, &accepted, true, error_buf, error_buf_size);
+                if (outcome == CETTA_LP_SLR_STEP_CONTINUE)
+                    continue;
+                if (outcome == CETTA_LP_SLR_STEP_ACCEPT) {
+                    if (!accepted || accepted->kind != ATOM_EXPR ||
+                        accepted->expr.len != 2u) {
+                        slr_summary_set_error(
+                            error_buf, error_buf_size,
+                            "GLR accept result missing certificate");
+                        free(states.data);
+                        free(values.data);
+                        goto done;
+                    }
+                    slr_program_glr_accept(
+                        &accept_count, &accept_avoid, &accept_cert,
+                        accepted->expr.elems[1], ways, avoid_count);
+                } else if (outcome == CETTA_LP_SLR_STEP_ERROR) {
+                    free(states.data);
+                    free(values.data);
+                    goto done;
+                }
+                break;
+            }
+
+            /* Only conflicts fork.  Singleton stretches mutate one owned
+             * stack in place, so deterministic inputs remain linear-space. */
+            while (action_i != UINT32_MAX &&
+                   !slr_program_glr_settled(accept_count, accept_avoid)) {
+                CettaLpNativeU32Vec next_states = {0};
+                CettaLpNativeParseValueVec next_values = {0};
+                CettaLpNativeSlrProgramAction step;
+                CettaLpSlrStep outcome;
+                Atom *accepted = NULL;
+                uint32_t next_position = position;
+                uint32_t next_avoid;
+
+                if (!slr_program_charge_work(1u, work_limit, &work)) {
+                    resource_limit = true;
+                    break;
+                }
+                if (!u32vec_copy(&next_states, &states) ||
+                    !parsevaluevec_copy(&next_values, &values)) {
+                    free(next_states.data);
+                    free(next_values.data);
+                    slr_summary_set_error(error_buf, error_buf_size,
+                                          "failed to fork GLR branch");
+                    free(states.data);
+                    free(values.data);
+                    goto done;
+                }
+                step.kind = program->glr_actions[action_i].kind;
+                step.value = program->glr_actions[action_i].value;
+                next_avoid = avoid_count +
+                             slr_program_action_avoids(program, &step);
+                outcome = slr_program_step_action(
+                    program, &step, tokens, &next_states, &next_values,
+                    &next_position, arena, &accepted, true,
+                    error_buf, error_buf_size);
+                if (outcome == CETTA_LP_SLR_STEP_CONTINUE) {
+                    if (!slr_program_enqueue_branch(
+                            &configs, &queue, next_position,
+                            &next_states, &next_values, ways, next_avoid,
+                            work_limit, &work, &resource_limit,
+                            error_buf, error_buf_size)) {
+                        free(next_states.data);
+                        free(next_values.data);
+                        free(states.data);
+                        free(values.data);
+                        goto done;
+                    }
+                } else if (outcome == CETTA_LP_SLR_STEP_ACCEPT) {
+                    if (!accepted || accepted->kind != ATOM_EXPR ||
+                        accepted->expr.len != 2u) {
+                        free(next_states.data);
+                        free(next_values.data);
+                        free(states.data);
+                        free(values.data);
+                        slr_summary_set_error(
+                            error_buf, error_buf_size,
+                            "GLR accept result missing certificate");
+                        goto done;
+                    }
+                    slr_program_glr_accept(
+                        &accept_count, &accept_avoid, &accept_cert,
+                        accepted->expr.elems[1], ways, next_avoid);
+                } else if (outcome == CETTA_LP_SLR_STEP_ERROR) {
+                    free(next_states.data);
+                    free(next_values.data);
+                    free(states.data);
+                    free(values.data);
+                    goto done;
+                }
+                free(next_states.data);
+                free(next_values.data);
+                if (resource_limit)
+                    break;
+                action_i = nexts[action_i];
+            }
+            break;
+        }
+        free(states.data);
+        free(values.data);
+        if (resource_limit)
+            goto limited;
+    }
+
+    if (accept_count == 0u)
+        result = atom_symbol(arena, "NoParse");
+    else if (accept_count == 1u) {
+        if (!accept_cert) {
+            slr_summary_set_error(error_buf, error_buf_size,
+                                  "GLR unique parse missing certificate");
+            goto done;
+        }
+        result = atom_expr2(arena, atom_symbol(arena, "Unique"), accept_cert);
+    } else {
+        result = atom_symbol(arena, "Ambiguous");
+    }
+    goto done;
+
+limited:
+    result = slr_program_resource_limit(arena, work, work_limit);
+
+done:
+    if (work_used)
+        *work_used = work;
+    if (result && result->kind == ATOM_SYMBOL &&
+        atom_is_symbol(result, "NoParse") && error_buf && error_buf_size > 0u)
+        snprintf(error_buf, error_buf_size, "token=%u", farthest_position);
+    free(heads);
+    free(nexts);
+    free(queue.data);
+    branchvec_free(&configs);
+    return result;
+}
+
+Atom *cetta_lp_native_slr_program_parse_shared_counted(
+    const CettaLpNativeSlrProgram *program,
+    Atom *token_list,
+    uint64_t work_limit,
+    uint64_t *work_used,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size) {
+    CettaLpNativeInputTokenVec tokens = {0};
+    CettaLpNativeU32Vec state_stack = {0};
+    CettaLpNativeParseValueVec value_stack = {0};
+    uint32_t position = 0u;
+    uint32_t cols;
+    Atom *result = NULL;
+    uint64_t work = 0u;
+
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    if (work_used)
+        *work_used = 0u;
+    if (!program || !arena || program->summary.state_len == 0u ||
+        !program->actions || !program->productions) {
+        slr_summary_set_error(error_buf, error_buf_size,
+                              "bad SLR program parse arguments");
+        return NULL;
+    }
+    cols = program->terminal_len + 1u;
+    if (!input_tokens_from_list(
+            token_list, &tokens, error_buf, error_buf_size))
+        return NULL;
+    if (work_limit == 0u)
+        work_limit = slr_program_default_work_limit(tokens.len);
+    if (program->glr_action_len > 0u && program->glr_actions) {
+        result = slr_program_parse_glr(
+            program, &tokens, work_limit, &work, arena,
+            error_buf, error_buf_size);
+        goto done;
+    }
+    if (!u32vec_push(&state_stack, 0u)) {
+        slr_summary_set_error(error_buf, error_buf_size,
+                              "failed to initialize parse stack");
+        goto done;
+    }
+    for (;;) {
+        uint32_t state;
+        uint32_t token_index;
+        const CettaLpNativeSlrProgramAction *action;
+        if (!slr_program_charge_work(1u, work_limit, &work)) {
+            result = slr_program_resource_limit(arena, work, work_limit);
+            goto done;
+        }
+        if (state_stack.len == 0u) {
+            slr_summary_set_error(error_buf, error_buf_size,
+                                  "empty SLR parse stack");
+            goto done;
+        }
+        state = state_stack.data[state_stack.len - 1u];
+        if (state >= program->summary.state_len) {
+            slr_summary_set_error(error_buf, error_buf_size,
+                                  "SLR parse state out of range");
+            goto done;
+        }
+        if (position < tokens.len) {
+            int32_t terminal_index = slr_program_id_index(
+                program->terminals, program->terminal_len,
+                tokens.data[position].term_kind);
+            if (terminal_index < 0) {
+                result = atom_symbol(arena, "NoParse");
+                goto done;
+            }
+            token_index = (uint32_t)terminal_index;
+        } else {
+            token_index = program->terminal_len;
+        }
+        action = &program->actions[state * cols + token_index];
+        if (action->kind == CETTA_LP_NATIVE_SLR_PROGRAM_ERROR) {
+            result = atom_symbol(arena, "NoParse");
+            goto done;
+        }
+        if (action->kind == CETTA_LP_NATIVE_SLR_PROGRAM_SHIFT) {
+            CettaLpNativeParseValue value;
+            if (position >= tokens.len) {
+                slr_summary_set_error(error_buf, error_buf_size,
+                                      "shift past end of token stream");
+                goto done;
+            }
+            memset(&value, 0, sizeof(value));
+            value.token_atom = tokens.data[position].token_atom;
+            value.term_kind = tokens.data[position].term_kind;
+            value.start = position;
+            value.end = position + 1u;
+            value.forest_idx = UINT32_MAX;
+            if (!u32vec_push(&state_stack, (uint32_t)action->value) ||
+                !parsevaluevec_push(&value_stack, &value)) {
+                slr_summary_set_error(error_buf, error_buf_size,
+                                      "failed to push shift result");
+                goto done;
+            }
+            position++;
+            continue;
+        }
+        if (action->kind == CETTA_LP_NATIVE_SLR_PROGRAM_REDUCE) {
+            uint32_t production_index = (uint32_t)action->value;
+            const CettaLpNativeSlrProgramProduction *prod;
+            CettaLpNativeParseValue next_value;
+            int32_t nt_index;
+            uint32_t goto_state;
+            uint32_t rhs_len;
+            if (production_index >= program->production_len) {
+                slr_summary_set_error(error_buf, error_buf_size,
+                                      "reduce production out of range");
+                goto done;
+            }
+            prod = &program->productions[production_index];
+            rhs_len = prod->rhs_len;
+            if (rhs_len > value_stack.len || rhs_len >= state_stack.len) {
+                slr_summary_set_error(error_buf, error_buf_size,
+                                      "reduce arity exceeds parse stack");
+                goto done;
+            }
+            memset(&next_value, 0, sizeof(next_value));
+            next_value.is_cert = true;
+            next_value.forest_idx = UINT32_MAX;
+            if (production_index >= program->authored_production_len) {
+                CettaLpNativeParseValue *child =
+                    &value_stack.data[value_stack.len - 1u];
+                if (rhs_len != 1u || child->is_cert) {
+                    slr_summary_set_error(
+                        error_buf, error_buf_size,
+                        "leaf reduction expected one shifted token");
+                    goto done;
+                }
+                next_value.start = child->start;
+                next_value.end = child->end;
+                next_value.cert = make_leaf_cert(
+                    arena, child->token_atom, child->start, child->end);
+            } else if (rhs_len == 0u) {
+                Atom *epsilon = make_eps_cert(arena);
+                Atom *children[1] = {epsilon};
+                next_value.start = position;
+                next_value.end = position;
+                next_value.cert = make_node_cert(
+                    arena, prod->label, prod->lhs, position, position,
+                    children, 1u);
+            } else {
+                uint32_t base = value_stack.len - rhs_len;
+                uint32_t child_index;
+                Atom **children = arena_alloc(
+                    arena, sizeof(*children) * rhs_len);
+                next_value.start = value_stack.data[base].start;
+                next_value.end =
+                    value_stack.data[value_stack.len - 1u].end;
+                for (child_index = 0u; child_index < rhs_len; child_index++) {
+                    CettaLpNativeParseValue *part =
+                        &value_stack.data[base + child_index];
+                    const CettaLpNativeSymbol *sym =
+                        &program->rhs[prod->rhs_begin + child_index];
+                    if (sym->kind == CETTA_LP_NATIVE_SYMBOL_TM) {
+                        if (part->is_cert || part->term_kind != sym->name) {
+                            slr_summary_set_error(
+                                error_buf, error_buf_size,
+                                "terminal reduction mismatch");
+                            goto done;
+                        }
+                        children[child_index] = make_tok_cert(
+                            arena, sym->name, part->start);
+                    } else {
+                        if (!part->is_cert || !part->cert) {
+                            slr_summary_set_error(
+                                error_buf, error_buf_size,
+                                "nonterminal reduction missing child cert");
+                            goto done;
+                        }
+                        children[child_index] = part->cert;
+                    }
+                }
+                next_value.cert = make_node_cert(
+                    arena, prod->label, prod->lhs, next_value.start,
+                    next_value.end, children, rhs_len);
+            }
+            value_stack.len -= rhs_len;
+            state_stack.len -= rhs_len;
+            nt_index = slr_program_id_index(
+                program->nonterminals, program->nonterminal_len, prod->lhs);
+            if (nt_index < 0 || state_stack.len == 0u) {
+                slr_summary_set_error(error_buf, error_buf_size,
+                                      "missing goto state for reduction");
+                goto done;
+            }
+            goto_state = program->gotos[
+                state_stack.data[state_stack.len - 1u] *
+                    program->nonterminal_len +
+                (uint32_t)nt_index];
+            if (goto_state == UINT32_MAX ||
+                goto_state >= program->summary.state_len) {
+                slr_summary_set_error(error_buf, error_buf_size,
+                                      "invalid goto after reduction");
+                goto done;
+            }
+            if (!u32vec_push(&state_stack, goto_state) ||
+                !parsevaluevec_push(&value_stack, &next_value)) {
+                slr_summary_set_error(error_buf, error_buf_size,
+                                      "failed to push reduced value");
+                goto done;
+            }
+            continue;
+        }
+        if (action->kind == CETTA_LP_NATIVE_SLR_PROGRAM_ACCEPT) {
+            if (value_stack.len != 1u || !value_stack.data[0].is_cert ||
+                !value_stack.data[0].cert ||
+                value_stack.data[0].start != 0u ||
+                value_stack.data[0].end != tokens.len) {
+                slr_summary_set_error(error_buf, error_buf_size,
+                                      "accept state missing full-span cert");
+                goto done;
+            }
+            result = atom_expr2(
+                arena, atom_symbol(arena, "Unique"),
+                value_stack.data[0].cert);
+            goto done;
+        }
+        slr_summary_set_error(error_buf, error_buf_size,
+                              "unknown SLR program action kind");
+        goto done;
+    }
+
+done:
+    if (work_used)
+        *work_used = work;
+    if (result && result->kind == ATOM_SYMBOL &&
+        atom_is_symbol(result, "NoParse") && error_buf && error_buf_size > 0u &&
+        error_buf[0] == '\0')
+        snprintf(error_buf, error_buf_size, "token=%u", position);
+    free(tokens.data);
+    free(value_stack.data);
+    free(state_stack.data);
+    return result;
+}
+
+Atom *cetta_lp_native_slr_program_parse_shared(
+    const CettaLpNativeSlrProgram *program,
+    Atom *token_list,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size) {
+    return cetta_lp_native_slr_program_parse_shared_counted(
+        program, token_list, 0u, NULL, arena, error_buf, error_buf_size);
+}
 #define CETTA_LP_NATIVE_NODE_NONE UINT32_MAX
 
 typedef enum {
@@ -2815,6 +3835,8 @@ typedef struct {
     uint32_t cap;
     CettaLpNativeGllIndex index;
     CettaLpNativeGllPackedStore packed;
+    /* When set, the packed choice each node's certificate takes. */
+    const uint32_t *preferred_choice;
 } CettaLpNativeGllNodeVec;
 
 typedef struct {
@@ -4831,6 +5853,13 @@ static const CettaLpNativeGllPackedChoice *gll_pick_choice(
         node->first_choice >= nodes->packed.len) {
         return NULL;
     }
+    if (nodes->preferred_choice) {
+        uint32_t preferred =
+            nodes->preferred_choice[(uint32_t)(node - nodes->data)];
+        if (preferred != CETTA_LP_NATIVE_NODE_NONE &&
+            preferred < nodes->packed.len)
+            return &nodes->packed.data[preferred];
+    }
     best = &nodes->packed.data[node->first_choice];
     for (choice_idx = best->next_idx;
          choice_idx != CETTA_LP_NATIVE_NODE_NONE;
@@ -5056,6 +6085,35 @@ static bool gll_desc_enqueue(CettaLpNativeGllDescriptorVec *seen,
     return true;
 }
 
+static bool gll_desc_enqueue_counted(
+    CettaLpNativeGllDescriptorVec *seen,
+    CettaLpNativeU32Vec *work,
+    int32_t prod_idx,
+    uint32_t dot,
+    uint32_t gss_idx,
+    uint32_t left_label,
+    uint32_t pos,
+    uint64_t descriptor_limit,
+    bool *limit_hit) {
+    CettaLpNativeGllDescriptor desc;
+
+    if (!limit_hit)
+        return false;
+    if (descriptor_limit != UINT64_MAX && seen->len >= descriptor_limit) {
+        desc.prod_idx = prod_idx;
+        desc.dot = dot;
+        desc.gss_idx = gss_idx;
+        desc.left_label = left_label;
+        desc.pos = pos;
+        if (gll_desc_find(seen, &desc) >= 0)
+            return true;
+        *limit_hit = true;
+        return true;
+    }
+    return gll_desc_enqueue(
+        seen, work, prod_idx, dot, gss_idx, left_label, pos);
+}
+
 static int32_t gll_count_node(const CettaLpNativeGllNodeVec *nodes,
                               uint32_t node_idx,
                               uint8_t *memo_seen,
@@ -5098,6 +6156,80 @@ static int32_t gll_count_node(const CettaLpNativeGllNodeVec *nodes,
     }
     memo_value[node_idx] = (uint8_t)total;
     return total;
+}
+
+/* The fewest avoided productions a derivation of a node reduces, how many
+ * of its derivations reduce that few (up to two), and the packed choice of
+ * one of them.  A production counts where it completes, at a symbol node. */
+typedef struct {
+    uint32_t cost;
+    uint8_t count;
+    uint8_t state;
+} CettaLpNativeGllAvoidRank;
+
+static CettaLpNativeGllAvoidRank gll_rank_node(
+    const CettaLpNativeGllNodeVec *nodes, uint32_t node_idx,
+    const uint8_t *avoided, uint32_t avoided_len,
+    CettaLpNativeGllAvoidRank *memo, uint32_t *best) {
+    CettaLpNativeGllAvoidRank none = {UINT32_MAX, 0u, 2u};
+    CettaLpNativeGllAvoidRank one = {0u, 1u, 2u};
+    CettaLpNativeGllAvoidRank result = {UINT32_MAX, 0u, 2u};
+    const CettaLpNativeGllNode *node;
+    CettaLpNativeGllNodeKind kind;
+    uint32_t choice_idx;
+
+    if (node_idx >= nodes->len)
+        return none;
+    node = &nodes->data[node_idx];
+    kind = gll_node_kind_value(node);
+    if (kind == CETTA_LP_NATIVE_GLL_NODE_TERM ||
+        kind == CETTA_LP_NATIVE_GLL_NODE_EPS)
+        return one;
+    if (memo[node_idx].state == 2u)
+        return memo[node_idx];
+    if (memo[node_idx].state == 1u)
+        return none;
+    memo[node_idx].state = 1u;
+    best[node_idx] = CETTA_LP_NATIVE_NODE_NONE;
+    for (choice_idx = node->first_choice;
+         choice_idx != CETTA_LP_NATIVE_NODE_NONE;
+         choice_idx = nodes->packed.data[choice_idx].next_idx) {
+        const CettaLpNativeGllPackedChoice *choice;
+        CettaLpNativeGllAvoidRank left = one;
+        CettaLpNativeGllAvoidRank right;
+        uint64_t cost;
+        uint32_t count;
+        if (choice_idx >= nodes->packed.len)
+            break;
+        choice = &nodes->packed.data[choice_idx];
+        if (choice->left_idx != CETTA_LP_NATIVE_NODE_NONE)
+            left = gll_rank_node(nodes, choice->left_idx, avoided,
+                                 avoided_len, memo, best);
+        right = gll_rank_node(nodes, choice->right_idx, avoided,
+                              avoided_len, memo, best);
+        if (left.count == 0u || right.count == 0u)
+            continue;
+        cost = (uint64_t)left.cost + right.cost;
+        if (kind == CETTA_LP_NATIVE_GLL_NODE_SYM) {
+            int32_t prod_idx = gll_choice_prod_idx(nodes, choice);
+            if (prod_idx >= 0 && (uint32_t)prod_idx < avoided_len &&
+                avoided[prod_idx])
+                cost++;
+        }
+        if (cost >= UINT32_MAX)
+            continue;
+        count = (uint32_t)left.count * right.count;
+        if ((uint32_t)cost < result.cost) {
+            result.cost = (uint32_t)cost;
+            result.count = count > 2u ? 2u : (uint8_t)count;
+            best[node_idx] = choice_idx;
+        } else if ((uint32_t)cost == result.cost) {
+            count += result.count;
+            result.count = count > 2u ? 2u : (uint8_t)count;
+        }
+    }
+    memo[node_idx] = result;
+    return result;
 }
 
 static bool gll_collect_spine(const CettaLpNativeGllNodeVec *nodes,
@@ -5232,6 +6364,22 @@ Atom *cetta_lp_native_gll_parse_shared(const CettaLpNativeGrammar *grammar,
                                        Arena *arena,
                                        char *error_buf,
                                        size_t error_buf_size) {
+    return cetta_lp_native_gll_parse_shared_counted(
+        grammar, start_nt, token_list, 0u, NULL, arena,
+        error_buf, error_buf_size);
+}
+
+static Atom *gll_parse_counted(
+    const CettaLpNativeGrammar *grammar,
+    SymbolId start_nt,
+    Atom *token_list,
+    uint64_t descriptor_limit,
+    uint64_t *descriptors_used,
+    const uint8_t *avoided,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size) {
+    uint32_t *preferred = NULL;
     CettaLpNativeSlrProduction *productions = NULL;
     uint32_t production_len = 0;
     CettaLpNativeInputTokenVec tokens = {0};
@@ -5241,7 +6389,14 @@ Atom *cetta_lp_native_gll_parse_shared(const CettaLpNativeGrammar *grammar,
     CettaLpNativeU32Vec work = {0};
     uint32_t root_idx = CETTA_LP_NATIVE_NODE_NONE;
     uint32_t max_rhs_len = 0;
+    uint32_t furthest_pos = 0u;
     Atom *result = NULL;
+    bool limit_hit = false;
+
+    if (descriptors_used)
+        *descriptors_used = 0u;
+    if (descriptor_limit == 0u)
+        descriptor_limit = UINT64_MAX;
 
     if (!grammar || !arena) {
         slr_summary_set_error(error_buf, error_buf_size,
@@ -5274,8 +6429,12 @@ Atom *cetta_lp_native_gll_parse_shared(const CettaLpNativeGrammar *grammar,
             (void)rhs_len;
             if (lhs != start_nt)
                 continue;
-            if (!gll_desc_enqueue(&seen, &work, (int32_t)prod_idx, 0, 0,
-                                  CETTA_LP_NATIVE_NODE_NONE, 0)) {
+            if (!gll_desc_enqueue_counted(
+                    &seen, &work, (int32_t)prod_idx, 0, 0,
+                    CETTA_LP_NATIVE_NODE_NONE, 0,
+                    descriptor_limit, &limit_hit) || limit_hit) {
+                if (limit_hit)
+                    goto resource_limit;
                 slr_summary_set_error(error_buf, error_buf_size,
                                       "failed to seed GLL descriptors");
                 goto fail;
@@ -5296,6 +6455,8 @@ Atom *cetta_lp_native_gll_parse_shared(const CettaLpNativeGrammar *grammar,
                                   "bad GLL descriptor index");
             goto fail;
         }
+        if (cur.pos > furthest_pos)
+            furthest_pos = cur.pos;
         slr_get_prod(productions, production_len, start_nt,
                      cur.prod_idx, &lhs, &rhs, &rhs_len);
         if (cur.dot < rhs_len) {
@@ -5316,12 +6477,16 @@ Atom *cetta_lp_native_gll_parse_shared(const CettaLpNativeGrammar *grammar,
                                                cur.left_label, (uint32_t)term_idx,
                                                error_buf, error_buf_size);
                 if (parent_idx < 0 ||
-                    !gll_desc_enqueue(&seen, &work, cur.prod_idx, cur.dot + 1,
-                                      cur.gss_idx, (uint32_t)parent_idx, cur.pos + 1)) {
+                    !gll_desc_enqueue_counted(
+                        &seen, &work, cur.prod_idx, cur.dot + 1,
+                        cur.gss_idx, (uint32_t)parent_idx, cur.pos + 1,
+                        descriptor_limit, &limit_hit)) {
                     slr_summary_set_error(error_buf, error_buf_size,
                                           "failed to advance GLL terminal descriptor");
                     goto fail;
                 }
+                if (limit_hit)
+                    goto resource_limit;
                 continue;
             }
             {
@@ -5343,13 +6508,17 @@ Atom *cetta_lp_native_gll_parse_shared(const CettaLpNativeGrammar *grammar,
                                                            cur.left_label, done,
                                                            error_buf, error_buf_size);
                     if (parent_idx < 0 ||
-                        !gll_desc_enqueue(&seen, &work, cur.prod_idx, cur.dot + 1,
-                                          cur.gss_idx, (uint32_t)parent_idx,
-                                          nodes.data[done].right)) {
+                        !gll_desc_enqueue_counted(
+                            &seen, &work, cur.prod_idx, cur.dot + 1,
+                            cur.gss_idx, (uint32_t)parent_idx,
+                            nodes.data[done].right,
+                            descriptor_limit, &limit_hit)) {
                         slr_summary_set_error(error_buf, error_buf_size,
                                               "failed to resume GLL continuation");
                         goto fail;
                     }
+                    if (limit_hit)
+                        goto resource_limit;
                 }
                 for (prod_idx = 0; prod_idx < production_len; prod_idx++) {
                     SymbolId child_lhs = 0;
@@ -5361,13 +6530,17 @@ Atom *cetta_lp_native_gll_parse_shared(const CettaLpNativeGrammar *grammar,
                     (void)child_rhs_len;
                     if (child_lhs != sym.name)
                         continue;
-                    if (!gll_desc_enqueue(&seen, &work, (int32_t)prod_idx, 0,
-                                          (uint32_t)next_gss,
-                                          CETTA_LP_NATIVE_NODE_NONE, cur.pos)) {
+                    if (!gll_desc_enqueue_counted(
+                            &seen, &work, (int32_t)prod_idx, 0,
+                            (uint32_t)next_gss,
+                            CETTA_LP_NATIVE_NODE_NONE, cur.pos,
+                            descriptor_limit, &limit_hit)) {
                         slr_summary_set_error(error_buf, error_buf_size,
                                               "failed to seed GLL child descriptor");
                         goto fail;
                     }
+                    if (limit_hit)
+                        goto resource_limit;
                 }
                 continue;
             }
@@ -5413,13 +6586,17 @@ Atom *cetta_lp_native_gll_parse_shared(const CettaLpNativeGrammar *grammar,
                                                        edge.left_label, done_idx,
                                                        error_buf, error_buf_size);
                 if (parent_idx < 0 ||
-                    !gll_desc_enqueue(&seen, &work, gss->prod_idx, gss->dot,
-                                      edge.parent_gss, (uint32_t)parent_idx,
-                                      nodes.data[done_idx].right)) {
+                    !gll_desc_enqueue_counted(
+                        &seen, &work, gss->prod_idx, gss->dot,
+                        edge.parent_gss, (uint32_t)parent_idx,
+                        nodes.data[done_idx].right,
+                        descriptor_limit, &limit_hit)) {
                     slr_summary_set_error(error_buf, error_buf_size,
                                           "failed to propagate GLL completion");
                     goto fail;
                 }
+                if (limit_hit)
+                    goto resource_limit;
             }
         }
     }
@@ -5433,21 +6610,47 @@ Atom *cetta_lp_native_gll_parse_shared(const CettaLpNativeGrammar *grammar,
                                  CETTA_LP_NATIVE_UTF8_TERMINAL_VALUE_SCALAR,
                                  0u);
         if (root_idx < 0) {
+            if (error_buf && error_buf_size)
+                snprintf(error_buf, error_buf_size,
+                         "token=%u", furthest_pos);
             result = atom_symbol(arena, "NoParse");
             goto cleanup;
         }
         if (!u32vec_contains(&gss_nodes.data[0].popped, (uint32_t)root_idx)) {
+            if (error_buf && error_buf_size)
+                snprintf(error_buf, error_buf_size,
+                         "token=%u", furthest_pos);
             result = atom_symbol(arena, "NoParse");
             goto cleanup;
         }
-        memo_seen = cetta_malloc(sizeof(*memo_seen) * nodes.len);
-        memo_value = cetta_malloc(sizeof(*memo_value) * nodes.len);
-        memset(memo_seen, 0, sizeof(*memo_seen) * nodes.len);
-        memset(memo_value, 0, sizeof(*memo_value) * nodes.len);
-        count = gll_count_node(&nodes, (uint32_t)root_idx, memo_seen, memo_value);
-        free(memo_seen);
-        free(memo_value);
+        if (avoided) {
+            CettaLpNativeGllAvoidRank *ranks =
+                cetta_malloc(sizeof(*ranks) * nodes.len);
+            CettaLpNativeGllAvoidRank root_rank;
+            memset(ranks, 0, sizeof(*ranks) * nodes.len);
+            preferred = cetta_malloc(sizeof(*preferred) * nodes.len);
+            for (uint32_t k = 0u; k < nodes.len; k++)
+                preferred[k] = CETTA_LP_NATIVE_NODE_NONE;
+            root_rank = gll_rank_node(&nodes, (uint32_t)root_idx, avoided,
+                                      grammar->production_len, ranks,
+                                      preferred);
+            free(ranks);
+            count = root_rank.count;
+            nodes.preferred_choice = preferred;
+        } else {
+            memo_seen = cetta_malloc(sizeof(*memo_seen) * nodes.len);
+            memo_value = cetta_malloc(sizeof(*memo_value) * nodes.len);
+            memset(memo_seen, 0, sizeof(*memo_seen) * nodes.len);
+            memset(memo_value, 0, sizeof(*memo_value) * nodes.len);
+            count = gll_count_node(&nodes, (uint32_t)root_idx, memo_seen,
+                                   memo_value);
+            free(memo_seen);
+            free(memo_value);
+        }
         if (count <= 0) {
+            if (error_buf && error_buf_size)
+                snprintf(error_buf, error_buf_size,
+                         "token=%u", furthest_pos);
             result = atom_symbol(arena, "NoParse");
             goto cleanup;
         }
@@ -5467,8 +6670,29 @@ Atom *cetta_lp_native_gll_parse_shared(const CettaLpNativeGrammar *grammar,
             result = atom_expr2(arena, atom_symbol(arena, "Unique"), cert);
         }
     }
+    goto cleanup;
+
+resource_limit:
+    {
+        uint64_t used = seen.len;
+        Atom *parts[2];
+        if (descriptors_used)
+            *descriptors_used = used;
+        parts[0] = atom_int(
+            arena, used > (uint64_t)INT64_MAX
+                       ? INT64_MAX : (int64_t)used);
+        parts[1] = atom_int(
+            arena, descriptor_limit > (uint64_t)INT64_MAX
+                       ? INT64_MAX : (int64_t)descriptor_limit);
+        result = atom_expr3(
+            arena, atom_symbol(arena, "ResourceLimit"),
+            parts[0], parts[1]);
+    }
 
 cleanup:
+    if (descriptors_used)
+        *descriptors_used = seen.len;
+    free(preferred);
     free(tokens.data);
     gll_nodevec_free(&nodes);
     gll_gssvec_free(&gss_nodes);
@@ -5478,6 +6702,7 @@ cleanup:
     return result;
 
 fail:
+    free(preferred);
     free(tokens.data);
     gll_nodevec_free(&nodes);
     gll_gssvec_free(&gss_nodes);
@@ -5485,6 +6710,35 @@ fail:
     free(work.data);
     slr_productions_free(productions, production_len);
     return NULL;
+}
+
+Atom *cetta_lp_native_gll_parse_shared_counted(
+    const CettaLpNativeGrammar *grammar,
+    SymbolId start_nt,
+    Atom *token_list,
+    uint64_t descriptor_limit,
+    uint64_t *descriptors_used,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size) {
+    return gll_parse_counted(grammar, start_nt, token_list, descriptor_limit,
+                             descriptors_used, NULL, arena, error_buf,
+                             error_buf_size);
+}
+
+Atom *cetta_lp_native_gll_parse_avoiding_counted(
+    const CettaLpNativeGrammar *grammar,
+    SymbolId start_nt,
+    Atom *token_list,
+    uint64_t descriptor_limit,
+    uint64_t *descriptors_used,
+    const uint8_t *avoided,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size) {
+    return gll_parse_counted(grammar, start_nt, token_list, descriptor_limit,
+                             descriptors_used, avoided, arena, error_buf,
+                             error_buf_size);
 }
 
 Atom *cetta_lp_native_gll_recognize(const CettaLpNativeGrammar *grammar,
@@ -6876,8 +8130,7 @@ typedef struct {
 } CettaLpNativeUtf8Input;
 
 static bool utf8_scalar_valid(uint32_t scalar) {
-    return scalar <= UINT32_C(0x10ffff) &&
-        !(scalar >= UINT32_C(0xd800) && scalar <= UINT32_C(0xdfff));
+    return cetta_utf8_scalar_valid(scalar);
 }
 
 static bool utf8_decode_one(const uint8_t *bytes,
@@ -6885,77 +8138,7 @@ static bool utf8_decode_one(const uint8_t *bytes,
                                 size_t pos,
                                 uint32_t *scalar,
                                 uint32_t *width) {
-    uint8_t first;
-
-    if (!bytes || !scalar || !width || pos >= len)
-        return false;
-    first = bytes[pos];
-    if (first <= UINT8_C(0x7f)) {
-        *scalar = first;
-        *width = 1u;
-        return true;
-    }
-    if (first >= UINT8_C(0xc2) && first <= UINT8_C(0xdf)) {
-        uint8_t second;
-        if (pos + 1u >= len)
-            return false;
-        second = bytes[pos + 1u];
-        if ((second & UINT8_C(0xc0)) != UINT8_C(0x80))
-            return false;
-        *scalar = ((uint32_t)(first & UINT8_C(0x1f)) << 6) |
-            (uint32_t)(second & UINT8_C(0x3f));
-        *width = 2u;
-        return true;
-    }
-    if (first >= UINT8_C(0xe0) && first <= UINT8_C(0xef)) {
-        uint8_t second;
-        uint8_t third;
-        if (pos + 2u >= len)
-            return false;
-        second = bytes[pos + 1u];
-        third = bytes[pos + 2u];
-        if ((third & UINT8_C(0xc0)) != UINT8_C(0x80) ||
-            (first == UINT8_C(0xe0) &&
-             (second < UINT8_C(0xa0) || second > UINT8_C(0xbf))) ||
-            (first == UINT8_C(0xed) &&
-             (second < UINT8_C(0x80) || second > UINT8_C(0x9f))) ||
-            ((first != UINT8_C(0xe0) && first != UINT8_C(0xed)) &&
-             (second & UINT8_C(0xc0)) != UINT8_C(0x80))) {
-            return false;
-        }
-        *scalar = ((uint32_t)(first & UINT8_C(0x0f)) << 12) |
-            ((uint32_t)(second & UINT8_C(0x3f)) << 6) |
-            (uint32_t)(third & UINT8_C(0x3f));
-        *width = 3u;
-        return utf8_scalar_valid(*scalar);
-    }
-    if (first >= UINT8_C(0xf0) && first <= UINT8_C(0xf4)) {
-        uint8_t second;
-        uint8_t third;
-        uint8_t fourth;
-        if (pos + 3u >= len)
-            return false;
-        second = bytes[pos + 1u];
-        third = bytes[pos + 2u];
-        fourth = bytes[pos + 3u];
-        if ((third & UINT8_C(0xc0)) != UINT8_C(0x80) ||
-            (fourth & UINT8_C(0xc0)) != UINT8_C(0x80) ||
-            (first == UINT8_C(0xf0) &&
-             (second < UINT8_C(0x90) || second > UINT8_C(0xbf))) ||
-            (first == UINT8_C(0xf4) &&
-             (second < UINT8_C(0x80) || second > UINT8_C(0x8f))) ||
-            ((first != UINT8_C(0xf0) && first != UINT8_C(0xf4)) &&
-             (second & UINT8_C(0xc0)) != UINT8_C(0x80))) {
-            return false;
-        }
-        *scalar = ((uint32_t)(first & UINT8_C(0x07)) << 18) |
-            ((uint32_t)(second & UINT8_C(0x3f)) << 12) |
-            ((uint32_t)(third & UINT8_C(0x3f)) << 6) |
-            (uint32_t)(fourth & UINT8_C(0x3f));
-        *width = 4u;
-        return utf8_scalar_valid(*scalar);
-    }
-    return false;
+    return cetta_utf8_decode_one(bytes, len, pos, scalar, width);
 }
 
 static void utf8_input_init(CettaLpNativeUtf8Input *input,

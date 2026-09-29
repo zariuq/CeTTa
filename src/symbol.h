@@ -58,6 +58,7 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(variable, "Variable") \
     X(expression, "Expression") \
     X(grounded, "Grounded") \
+    X(list_type, "List") \
     X(undefined_type, "%Undefined%") \
     X(true_text, "True") \
     X(false_text, "False") \
@@ -115,7 +116,7 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(abt_print, "__cetta_abt_print") \
     X(abt_parse, "__cetta_abt_parse") \
     X(abt_scope_check, "__cetta_abt_scope_check") \
-    X(abt_alpha_eq, "__cetta_abt_alpha_eq") \
+    X(abt_alpha_eq, "__cetta_abt_alpha_eq")     X(abt_free_names, "__cetta_abt_free_names")     X(abt_substitute, "__cetta_abt_substitute")     X(abt_rename_bound, "__cetta_abt_rename_bound")     X(abt_named_alpha_eq, "__cetta_abt_named_alpha_eq") \
     X(collect, "collect") \
     X(fold, "fold") \
     X(fold_by_key, "fold-by-key") \
@@ -285,6 +286,8 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(py_call, "py-call") \
     X(py_dot, "py-dot") \
     /* ── Library extension hooks ── */ \
+    X(lib_list_from_expression, "__cetta_lib_list_from_expression") \
+    X(lib_list_to_expression, "__cetta_lib_list_to_expression") \
     X(lib_system_args, "__cetta_lib_system_args") \
     X(lib_system_arg, "__cetta_lib_system_arg") \
     X(lib_system_arg_count, "__cetta_lib_system_arg_count") \
@@ -319,16 +322,7 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(lib_json_get_first_v1, "__cetta_lib_json_get_first_v1") \
     X(lib_json_get_last_v1, "__cetta_lib_json_get_last_v1") \
     X(lib_json_object_get, "__cetta_lib_json_object_get") \
-    X(lib_str_length, "__cetta_lib_str_length") \
-    X(lib_str_concat, "__cetta_lib_str_concat") \
-    X(lib_str_split, "__cetta_lib_str_split") \
-    X(lib_str_split_whitespace, "__cetta_lib_str_split_whitespace") \
-    X(lib_str_join, "__cetta_lib_str_join") \
-    X(lib_str_slice, "__cetta_lib_str_slice") \
-    X(lib_str_find, "__cetta_lib_str_find") \
-    X(lib_str_starts_with, "__cetta_lib_str_starts_with") \
-    X(lib_str_ends_with, "__cetta_lib_str_ends_with") \
-    X(lib_str_trim, "__cetta_lib_str_trim") \
+    X(lib_str, "__cetta_lib_str") \
     X(lib_lts_he_transitions, "__cetta_lib_lts_he_transitions") \
     X(lib_lts_he_step_rules, "__cetta_lib_lts_he_step_rules") \
     X(lib_lts_rho_transitions, "__cetta_lib_lts_rho_transitions") \
@@ -536,7 +530,7 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(abt_print) \
     X(abt_parse) \
     X(abt_scope_check) \
-    X(abt_alpha_eq) \
+    X(abt_alpha_eq)     X(abt_free_names)     X(abt_substitute)     X(abt_rename_bound)     X(abt_named_alpha_eq) \
     X(mork_add_atoms) \
     X(mork_add_atom) \
     X(mork_remove_atom) \
@@ -640,7 +634,7 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(abt_print) \
     X(abt_parse) \
     X(abt_scope_check) \
-    X(abt_alpha_eq) \
+    X(abt_alpha_eq)     X(abt_free_names)     X(abt_substitute)     X(abt_rename_bound)     X(abt_named_alpha_eq) \
     X(op_plus) \
     X(op_minus) \
     X(op_mul) \

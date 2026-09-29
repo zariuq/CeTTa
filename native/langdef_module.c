@@ -1,8 +1,12 @@
 #define _XOPEN_SOURCE 700
 
 #include "native/langdef_module.h"
+#include "eval.h"
+#include "lang.h"
+#include "native/grammar_canonical_bnf_v1.h"
 
 #include "native_sha256.h"
+#include "str_natives.h"
 #include "parser.h"
 
 #include "parser_pack_abi_stream_v1.h"
@@ -14,7 +18,9 @@
 #include "native/language_def_parser_pack_v1.h"
 #include "native/language_def_pattern_atom_v1.h"
 #include "native/deterministic_equation_plan_v1.h"
+#include "native/decimal_value_v1.h"
 #include "native/ebnf_derivation_projection_native_v1.h"
+#include "native/tptp_official_snapshot_v1.h"
 #include "native/utf8_scalar_v1.h"
 #include "native/operational_language_def_v1.h"
 #include "native/structural_tree_relabel_v1.h"
@@ -60,6 +66,7 @@
     "cetta.structural-tree-relabel.v1"
 #define DETERMINISTIC_EQUATION_HANDLE_KIND \
     "cetta.deterministic-equations.v1"
+#define TPTP_READER_HANDLE_KIND "cetta.tptp-reader.v1"
 #define LANGDEF_MINIMUM_WORK_LIMIT UINT64_C(4000000)
 #define LANGDEF_WORK_PER_SOURCE_BYTE UINT64_C(64)
 #define LANGDEF_DEFAULT_REPLAY_DEPTH 4096u
@@ -177,6 +184,20 @@ typedef struct {
     CettaLanguageDefRelationRowV1 *rows;
     uint32_t len;
 } CettaLanguageDefRelationEnvV1;
+
+typedef struct {
+    CettaTptpPreparedReaderV1 reader;
+    /* The compact morphism the build checked for this profile, or NULL with
+     * the reason in compact_error. */
+    CettaDeterministicEquationPlanV1 *compact;
+    char compact_error[256];
+    /* Its inverse, for printing compact values, and the wrappers of the
+     * grammar: the constructors the morphism maps to their child. */
+    CettaDeterministicEquationPlanV1 *print;
+    char print_error[256];
+    SymbolId *wrappers;
+    uint32_t wrapper_len;
+} CettaTptpReaderV1;
 #endif
 
 static bool langdef_set_error(char *buffer, size_t size,
@@ -210,6 +231,141 @@ static void authored_parser_resource_free(void *opaque) {
     cetta_language_def_core_v1_free(&resource->language);
     cetta_op_lang_v1_free(&resource->wire);
     free(resource);
+}
+
+static void tptp_reader_resource_free(void *opaque) {
+    CettaTptpReaderV1 *resource = opaque;
+
+    if (!resource)
+        return;
+    cetta_deterministic_equation_plan_v1_free(resource->compact);
+    cetta_deterministic_equation_plan_v1_free(resource->print);
+    free(resource->wrappers);
+    cetta_tptp_prepared_reader_free_v1(&resource->reader);
+    free(resource);
+}
+
+/* A prepared presentation set beside a snapshot: compact-v1/NAME lists the
+ * checked presentations, one "<sha256>  <file>" line each, in load order.  A
+ * file that no longer matches its digest is stale and nothing is loaded. */
+static CettaDeterministicEquationPlanV1 *tptp_reader_manifest_plan(
+    const char *snapshot_path, const char *manifest_name,
+    char *reason, size_t reason_size) {
+    char directory[1024];
+    char manifest_path[1100];
+    char line[1400];
+    char *paths[8] = {0};
+    size_t path_len = 0u;
+    const char *slash = strrchr(snapshot_path, '/');
+    FILE *manifest;
+    CettaDeterministicEquationStatusV1 status;
+    CettaDeterministicEquationPlanV1 *plan = NULL;
+
+    reason[0] = '\0';
+    if (!slash || (size_t)(slash - snapshot_path) >= sizeof(directory) - 16u) {
+        snprintf(reason, reason_size, "snapshot path has no directory");
+        return NULL;
+    }
+    snprintf(directory, sizeof(directory), "%.*s/compact-v1",
+             (int)(slash - snapshot_path), snapshot_path);
+    snprintf(manifest_path, sizeof(manifest_path), "%s/%s", directory, manifest_name);
+    manifest = fopen(manifest_path, "r");
+    if (!manifest) {
+        snprintf(reason, reason_size, "no prepared %s", manifest_name);
+        return NULL;
+    }
+    while (fgets(line, sizeof(line), manifest)) {
+        char digest[65];
+        char name[256];
+        char actual[65];
+        char file_error[128];
+        size_t full_len;
+        if (sscanf(line, "%64s %255s", digest, name) != 2)
+            continue;
+        if (path_len == sizeof(paths) / sizeof(paths[0])) {
+            snprintf(reason, reason_size, "%s lists too many files", manifest_name);
+            goto done;
+        }
+        full_len = strlen(directory) + strlen(name) + 2u;
+        paths[path_len] = malloc(full_len);
+        if (!paths[path_len]) {
+            snprintf(reason, reason_size, "manifest allocation failed");
+            goto done;
+        }
+        snprintf(paths[path_len], full_len, "%s/%s", directory, name);
+        path_len++;
+        if (!cetta_tptp_file_sha256_hex_v1(paths[path_len - 1u], actual, file_error,
+                                           sizeof(file_error)) ||
+            strcmp(actual, digest) != 0) {
+            snprintf(reason, reason_size, "stale prepared file %s", name);
+            goto done;
+        }
+    }
+    if (path_len == 0u) {
+        snprintf(reason, reason_size, "empty %s", manifest_name);
+        goto done;
+    }
+    if (!cetta_deterministic_equation_plan_v1_load(
+            (const char *const *)paths, path_len,
+            &cetta_langdef_deterministic_vocabulary_v1, &plan, &status,
+            reason, reason_size))
+        plan = NULL;
+done:
+    fclose(manifest);
+    for (size_t i = 0u; i < path_len; i++)
+        free(paths[i]);
+    return plan;
+}
+
+CettaDeterministicEquationPlanV1 *cetta_tptp_compact_manifest_plan_v1(
+    const char *snapshot_path, const char *manifest_name,
+    char *reason, size_t reason_size) {
+    return tptp_reader_manifest_plan(snapshot_path, manifest_name, reason,
+                                     reason_size);
+}
+
+bool cetta_tptp_compact_wrappers_v1(
+    const CettaDeterministicEquationPlanV1 *compact,
+    SymbolId **wrappers_out, uint32_t *len_out);
+
+/* The grammar's wrappers, which printing puts back. */
+static void tptp_reader_wrappers(CettaTptpReaderV1 *resource) {
+    resource->wrappers = NULL;
+    resource->wrapper_len = 0u;
+    (void)cetta_tptp_compact_wrappers_v1(
+        resource->compact, &resource->wrappers, &resource->wrapper_len);
+}
+
+static CettaTptpReaderV1 *tptp_reader_resource_load_bound(
+    const char *snapshot_path, const char *profile,
+    char *error, size_t error_size) {
+    CettaTptpReaderV1 *resource = calloc(1u, sizeof(*resource));
+
+    if (!resource) {
+        if (error && error_size)
+            snprintf(error, error_size, "tptp reader allocation failed");
+        return NULL;
+    }
+    cetta_tptp_prepared_reader_init_v1(&resource->reader);
+    if (!cetta_tptp_prepared_reader_load_bound_v1(
+            &resource->reader, snapshot_path,
+            CETTA_TPTP_OFFICIAL_SYNTAXBNF_DIGEST_V1, profile, NULL,
+            error, error_size)) {
+        tptp_reader_resource_free(resource);
+        return NULL;
+    }
+    resource->compact = tptp_reader_manifest_plan(
+        snapshot_path, "manifest", resource->compact_error, sizeof(resource->compact_error));
+    if (resource->compact) {
+        tptp_reader_wrappers(resource);
+        resource->print = tptp_reader_manifest_plan(
+            snapshot_path, "print-manifest", resource->print_error,
+            sizeof(resource->print_error));
+    } else {
+        snprintf(resource->print_error, sizeof(resource->print_error), "%s",
+                 resource->compact_error);
+    }
+    return resource;
 }
 
 static void language_def_relation_env_free(
@@ -893,6 +1049,9 @@ bool cetta_langdef_text_arg(Atom *atom, const char **out) {
     if (!atom || !out)
         return false;
     if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_STRING) {
+        /* A C text cannot hold NUL: such a string is refused, not cut. */
+        if (memchr(atom->ground.sval, '\0', atom->ground.slen))
+            return false;
         *out = atom->ground.sval;
         return true;
     }
@@ -3141,7 +3300,13 @@ static Atom *langdef_context_codec_fault(
                             arguments, 3u));
 }
 
+/* A native's value in each dialect's return protocol: HE and Prime take it
+ * as (return value) in their function bodies; PeTTa, which has no return,
+ * takes the value itself. */
 static Atom *langdef_return(Arena *arena, Atom *value) {
+    if (eval_current_language_id &&
+        eval_current_language_id() == CETTA_LANGUAGE_PETTA)
+        return value;
     return atom_expr2(arena, atom_symbol(arena, "return"), value);
 }
 
@@ -5419,7 +5584,7 @@ static Atom *langdef_string_codepoints(
     cetta_lp_native_utf8_scalar_buffer_init(&decoded);
     if (!cetta_lp_native_utf8_scalar_buffer_prepare(
             &decoded, (const uint8_t *)string->ground.sval,
-            strlen(string->ground.sval), error, error_size)) {
+            string->ground.slen, error, error_size)) {
         cetta_lp_native_utf8_scalar_buffer_free(&decoded);
         return NULL;
     }
@@ -5497,6 +5662,687 @@ static Atom *deterministic_equation_call(
     return call;
 }
 
+/* A presentation's list, LCons cells ending in LNil, as a list value; any
+ * other atom as it is. */
+static Atom *langdef_str_sequence(Arena *arena, Atom *argument) {
+    size_t count = 0u;
+    Atom *cell = argument;
+    while (cell && cell->kind == ATOM_EXPR && cell->expr.len == 3u &&
+           atom_is_symbol(cell->expr.elems[0], "LCons")) {
+        count++;
+        cell = cell->expr.elems[2];
+    }
+    if (!cell || !atom_is_symbol(cell, "LNil"))
+        return argument;
+    Atom **items = arena_alloc(arena, sizeof(Atom *) * (count ? count : 1u));
+    cell = argument;
+    for (size_t k = 0u; k < count; k++) {
+        items[k] = cell->expr.elems[1];
+        cell = cell->expr.elems[2];
+    }
+    return atom_list(arena, items, (CettaExprLen)count);
+}
+
+/* The str: operations of lib/str, under the same names and from the same
+ * native table, so a presentation's str: call means what it means in an
+ * ordinary program.  A list argument may be written as a presentation list,
+ * and predicates answer with the symbols True and False, as presentations
+ * spell them.  True when `head` names one, with its outcome in *result. */
+static bool langdef_str_primitive(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size,
+    CettaDeterministicPrimitiveResultV1 *result) {
+    if (strncmp(head, "str:", 4u) != 0)
+        return false;
+    const CettaStrNative *native = cetta_str_native(head + 4u);
+    if (!native)
+        return false;
+    *result = CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    if (argument_count != native->arity ||
+        argument_count > CETTA_STR_NATIVE_MAX_ARITY) {
+        (void)langdef_set_error(error, error_size, "%s takes %u arguments",
+                                head, native->arity);
+        return true;
+    }
+    Atom *passed[CETTA_STR_NATIVE_MAX_ARITY];
+    for (uint32_t i = 0u; i < argument_count; i++) {
+        passed[i] = native->sequences & (1u << i)
+            ? langdef_str_sequence(arena, arguments[i]) : arguments[i];
+    }
+    CettaStrRefusal refusal = {0};
+    Atom *value = native->fn(arena, passed, &refusal);
+    if (!value) {
+        if (refusal.reason)
+            (void)langdef_set_error(error, error_size, "%s refused: %s at %zu",
+                                    head, refusal.reason, refusal.offset);
+        else
+            (void)langdef_set_error(error, error_size, "%s %s", head,
+                                    refusal.expected);
+        return true;
+    }
+    if (value->kind == ATOM_GROUNDED && value->ground.gkind == GV_BOOL)
+        value = atom_symbol(arena, value->ground.bval ? "True" : "False");
+    *out = value;
+    *result = CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
+    return true;
+}
+
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_expression_to_list(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    /* An expression's children, or a list value's elements. */
+    Atom *const *elems = NULL;
+    CettaExprLen len = 0u;
+    if (argument_count != 1u || !arguments || !arguments[0] ||
+        !atom_sequence_view(arguments[0], &elems, &len)) {
+        (void)langdef_set_error(error, error_size,
+                               "expression decoding expects one expression or list");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    Atom *list = atom_symbol(arena, "LNil");
+    for (CettaExprLen index = len; index > 0u; index--) {
+        Atom *fields[2] = {elems[index - 1u], list};
+        list = langdef_expr(arena, "LCons", fields, 2u);
+        if (!list)
+            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    *out = list;
+    return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
+}
+
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_expression_or_single_to_list(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    Atom *list = atom_symbol(arena, "LNil");
+    if (argument_count != 1u || !arguments || !arguments[0]) {
+        (void)langdef_set_error(
+            error, error_size,
+            "expression-or-single decoding expects one value");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    Atom *const *elems = NULL;
+    CettaExprLen len = 0u;
+    if (atom_sequence_view(arguments[0], &elems, &len)) {
+        for (CettaExprLen index = len; index > 0u; index--) {
+            Atom *fields[2] = {elems[index - 1u], list};
+            list = langdef_expr(arena, "LCons", fields, 2u);
+            if (!list)
+                return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+        }
+    } else {
+        Atom *fields[2] = {arguments[0], list};
+        list = langdef_expr(arena, "LCons", fields, 2u);
+        if (!list)
+            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    *out = list;
+    return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
+}
+
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_value_view(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    Atom *field;
+    Atom *fields[1];
+    const char *constructor;
+    char integer_text[64];
+    if (argument_count != 1u || !arguments || !arguments[0]) {
+        (void)langdef_set_error(
+            error, error_size,
+            "value observation expects one ground value");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    if (atom_is_list(arguments[0])) {
+        /* A list value is its own kind of value, over its elements. */
+        Atom *list = atom_symbol(arena, "LNil");
+        for (CettaExprLen index = atom_list_len(arguments[0]);
+             index > 0u; index--) {
+            Atom *items[2] = {
+                atom_list_elems(arguments[0])[index - 1u], list};
+            list = langdef_expr(arena, "LCons", items, 2u);
+            if (!list)
+                return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+        }
+        constructor = "LangDef:ListValue";
+        field = list;
+    } else if (arguments[0]->kind == ATOM_EXPR &&
+               !atom_is_list_rest(arguments[0])) {
+        Atom *list = atom_symbol(arena, "LNil");
+        for (CettaExprLen index = arguments[0]->expr.len;
+             index > 0u; index--) {
+            Atom *items[2] = {
+                arguments[0]->expr.elems[index - 1u], list};
+            list = langdef_expr(arena, "LCons", items, 2u);
+            if (!list)
+                return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+        }
+        constructor = "LangDef:ExpressionValue";
+        field = list;
+    } else if (arguments[0]->kind == ATOM_SYMBOL) {
+        /* A symbol's value is its spelling, a string. */
+        const char *bytes =
+            symbol_bytes(g_symbols, arguments[0]->sym_id);
+        constructor = "LangDef:SymbolValue";
+        field = bytes ? atom_string(arena, bytes) : NULL;
+    } else if (arguments[0]->kind == ATOM_GROUNDED &&
+               arguments[0]->ground.gkind == GV_STRING) {
+        constructor = "LangDef:StringValue";
+        field = arguments[0];
+    } else if (arguments[0]->kind == ATOM_GROUNDED &&
+               arguments[0]->ground.gkind == GV_INT) {
+        int written = snprintf(
+            integer_text, sizeof(integer_text), "%" PRId64,
+            arguments[0]->ground.ival);
+        constructor = "LangDef:IntegerValue";
+        field = written > 0 && (size_t)written < sizeof(integer_text)
+            ? atom_string(arena, integer_text) : NULL;
+    } else if (arguments[0]->kind == ATOM_GROUNDED &&
+               arguments[0]->ground.gkind == GV_BIGINT) {
+        const char *digits = atom_bigint_cstr(arguments[0]);
+        constructor = "LangDef:IntegerValue";
+        field = digits ? atom_string(arena, digits) : NULL;
+    } else if (arguments[0]->kind == ATOM_GROUNDED &&
+               arguments[0]->ground.gkind == GV_FLOAT) {
+        /* The canonical decimal spelling of the shortest decimal that
+         * reads back as this double. */
+        char *text = NULL;
+        if (!cetta_decimal_real_from_double_v1(
+                arguments[0]->ground.fval, &text)) {
+            (void)langdef_set_error(
+                error, error_size,
+                "value observation expects a finite float");
+            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+        }
+        constructor = "LangDef:FloatValue";
+        field = atom_string(arena, text);
+        free(text);
+    } else {
+        (void)langdef_set_error(
+            error, error_size,
+            "value observation supports expressions, symbols, strings, integers and floats");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    if (!field)
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    fields[0] = field;
+    *out = langdef_expr(arena, constructor, fields, 1u);
+    return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
+                : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+}
+
+/* An LCons/LNil list as an expression, or as a list value. */
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_list_to_expression(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    bool list_value = strcmp(head, "langdef:list->list-value") == 0;
+    Atom *cursor;
+    Atom **elements;
+    uint32_t length = 0u;
+    uint32_t index = 0u;
+    if (argument_count != 1u || !arguments || !arguments[0]) {
+        (void)langdef_set_error(
+            error, error_size,
+            "expression construction expects one LCons/LNil list");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    cursor = arguments[0];
+    while (!atom_is_symbol(cursor, "LNil")) {
+        if (!cetta_langdef_expr_head(cursor, "LCons", 2u) ||
+            length == UINT32_MAX) {
+            (void)langdef_set_error(
+                error, error_size,
+                "expression construction rejected a malformed or oversized list");
+            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+        }
+        length++;
+        cursor = cursor->expr.elems[2];
+    }
+    elements = length ? calloc((size_t)length, sizeof(*elements)) : NULL;
+    if (length && !elements) {
+        (void)langdef_set_error(
+            error, error_size,
+            "expression construction allocation failed");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    cursor = arguments[0];
+    while (index < length) {
+        elements[index++] = cursor->expr.elems[1];
+        cursor = cursor->expr.elems[2];
+    }
+    *out = list_value ? atom_list(arena, elements, (CettaExprLen)length)
+                      : atom_expr(arena, elements, (CettaExprLen)length);
+    free(elements);
+    return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
+                : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+}
+
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_ground_equal(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    if (argument_count != 2u || !arguments || !arguments[0] ||
+        !arguments[1] || atom_has_vars(arguments[0]) ||
+        atom_has_vars(arguments[1])) {
+        (void)langdef_set_error(error, error_size,
+                               "ground equality expects two ground values");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    *out = atom_symbol(arena, atom_eq(arguments[0], arguments[1])
+                                 ? "LangDef:SameValue"
+                                 : "LangDef:DifferentValue");
+    return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
+}
+
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_arithmetic(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    int64_t left;
+    int64_t right;
+    if (argument_count != 2u || !arguments || !arguments[0] ||
+        !arguments[1] || arguments[0]->kind != ATOM_GROUNDED ||
+        arguments[1]->kind != ATOM_GROUNDED ||
+        arguments[0]->ground.gkind != GV_INT ||
+        arguments[1]->ground.gkind != GV_INT) {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic integer arithmetic expects two integers");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    left = arguments[0]->ground.ival;
+    right = arguments[1]->ground.ival;
+    if (strcmp(head, "<") == 0) {
+        *out = atom_symbol(arena, left < right ? "True" : "False");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
+    }
+    if ((right > 0 && left > INT64_MAX - right) ||
+        (right < 0 && left < INT64_MIN - right)) {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic integer addition overflowed");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    *out = atom_int(arena, left + right);
+    return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
+}
+
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_string_to_codepoints(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    if (argument_count != 1u || !arguments) {
+        (void)langdef_set_error(
+            error, error_size, "string decoding expects one argument");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    *out = langdef_string_codepoints(arguments[0], arena, error, error_size);
+    return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
+                : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+}
+
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_codepoints_to_string(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    uint8_t *bytes = NULL;
+    size_t len = 0u;
+    size_t cap = 0u;
+    if (argument_count != 1u || !arguments || !arguments[0] ||
+        !langdef_codepoints_collect(
+            arguments[0], &bytes, &len, &cap, 0u)) {
+        free(bytes);
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic codepoint decoding rejected its source tree");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    *out = atom_string_n(arena, bytes ? (const char *)bytes : "", len);
+    free(bytes);
+    return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
+}
+
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_codepoints_to_symbol(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    uint8_t *bytes = NULL;
+    size_t len = 0u;
+    size_t cap = 0u;
+    if (argument_count != 1u || !arguments || !arguments[0] ||
+        !langdef_codepoints_collect(
+            arguments[0], &bytes, &len, &cap, 0u) || len == 0u ||
+        memchr(bytes, '\0', len)) {
+        free(bytes);
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic symbol construction expects a nonempty codepoint sequence without NUL");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    *out = atom_symbol(arena, (const char *)bytes);
+    free(bytes);
+    return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
+                : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+}
+
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_symbol_to_codepoints(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    const char *bytes;
+    Atom *string;
+    if (argument_count != 1u || !arguments || !arguments[0] ||
+        arguments[0]->kind != ATOM_SYMBOL) {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic symbol decoding expects one symbol");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    bytes = symbol_bytes(g_symbols, arguments[0]->sym_id);
+    if (!bytes) {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic symbol decoding could not resolve the symbol");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    string = atom_string(arena, bytes);
+    *out = langdef_string_codepoints(string, arena, error, error_size);
+    return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
+                : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+}
+
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_decimal_integer_to_number(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    if (argument_count != 1u || !arguments || !arguments[0] ||
+        arguments[0]->kind != ATOM_GROUNDED ||
+        arguments[0]->ground.gkind != GV_STRING ||
+        !arguments[0]->ground.sval) {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic decimal integer decoding expects one string");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    *out = atom_bigint(arena, arguments[0]->ground.sval);
+    if (!*out) {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic decimal integer decoding rejected its lexeme");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
+}
+
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_decimal_rational_to_parts(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    const char *text;
+    const char *slash;
+    char *numerator_text;
+    Atom *numerator;
+    Atom *denominator;
+    Atom *tail;
+    Atom *fields[2];
+    size_t numerator_len;
+    size_t index;
+    if (argument_count != 1u || !arguments || !arguments[0] ||
+        arguments[0]->kind != ATOM_GROUNDED ||
+        arguments[0]->ground.gkind != GV_STRING ||
+        !arguments[0]->ground.sval) {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic decimal rational decoding expects one string");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    text = arguments[0]->ground.sval;
+    slash = strchr(text, '/');
+    if (!slash || slash == text || slash[1] == '\0' ||
+        strchr(slash + 1, '/')) {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic decimal rational decoding rejected its lexeme");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    numerator_len = (size_t)(slash - text);
+    index = (text[0] == '+' || text[0] == '-') ? 1u : 0u;
+    if (index == numerator_len) {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic decimal rational decoding rejected its numerator");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    for (; index < numerator_len; index++) {
+        if (text[index] < '0' || text[index] > '9') {
+            (void)langdef_set_error(
+                error, error_size,
+                "deterministic decimal rational decoding rejected its numerator");
+            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+        }
+    }
+    if (slash[1] < '1' || slash[1] > '9') {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic decimal rational decoding rejected its denominator");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    for (index = 2u; slash[index] != '\0'; index++) {
+        if (slash[index] < '0' || slash[index] > '9') {
+            (void)langdef_set_error(
+                error, error_size,
+                "deterministic decimal rational decoding rejected its denominator");
+            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+        }
+    }
+    numerator_text = malloc(numerator_len + 1u);
+    if (!numerator_text) {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic decimal rational decoding allocation failed");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    memcpy(numerator_text, text, numerator_len);
+    numerator_text[numerator_len] = '\0';
+    numerator = atom_bigint(arena, numerator_text);
+    free(numerator_text);
+    denominator = atom_bigint(arena, slash + 1);
+    if (!numerator || !denominator) {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic decimal rational decoding rejected its components");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    tail = atom_symbol(arena, "LNil");
+    fields[0] = denominator;
+    fields[1] = tail;
+    tail = langdef_expr(arena, "LCons", fields, 2u);
+    fields[0] = numerator;
+    fields[1] = tail;
+    *out = langdef_expr(arena, "LCons", fields, 2u);
+    return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
+                : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+}
+
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_decimal_rational_to_value(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    char *numerator_text = NULL;
+    char *denominator_text = NULL;
+    Atom *numerator;
+    Atom *denominator;
+    Atom *fields[2];
+    if (argument_count != 1u || !arguments || !arguments[0] ||
+        arguments[0]->kind != ATOM_GROUNDED ||
+        arguments[0]->ground.gkind != GV_STRING ||
+        !arguments[0]->ground.sval ||
+        !cetta_decimal_rational_value_v1(
+            arguments[0]->ground.sval, &numerator_text, &denominator_text)) {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic decimal rational value expects one rational lexeme");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    numerator = atom_bigint(arena, numerator_text);
+    denominator = atom_bigint(arena, denominator_text);
+    free(numerator_text);
+    free(denominator_text);
+    if (!numerator || !denominator)
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    fields[0] = denominator;
+    fields[1] = atom_symbol(arena, "LNil");
+    fields[1] = langdef_expr(arena, "LCons", fields, 2u);
+    fields[0] = numerator;
+    *out = fields[1] ? langdef_expr(arena, "LCons", fields, 2u) : NULL;
+    return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
+                : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+}
+
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_decimal_real_to_float(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    double value = 0.0;
+    Atom *fields[1];
+    if (argument_count != 1u || !arguments || !arguments[0] ||
+        arguments[0]->kind != ATOM_GROUNDED ||
+        arguments[0]->ground.gkind != GV_STRING ||
+        !arguments[0]->ground.sval) {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic decimal real conversion expects one real lexeme");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    if (!cetta_decimal_real_double_v1(arguments[0]->ground.sval, &value)) {
+        *out = atom_symbol(arena, "LangDef:NoFloat");
+        return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
+                    : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    fields[0] = atom_float(arena, value);
+    *out = fields[0] ? langdef_expr(arena, "LangDef:Float", fields, 1u) : NULL;
+    return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
+                : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+}
+
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_decimal_real_to_canonical(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    char *canonical = NULL;
+    if (argument_count != 1u || !arguments || !arguments[0] ||
+        arguments[0]->kind != ATOM_GROUNDED ||
+        arguments[0]->ground.gkind != GV_STRING ||
+        !arguments[0]->ground.sval ||
+        !cetta_decimal_real_canonical_v1(
+            arguments[0]->ground.sval, &canonical)) {
+        (void)langdef_set_error(
+            error, error_size,
+            "deterministic decimal real value expects one real lexeme");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    *out = atom_string(arena, canonical);
+    free(canonical);
+    return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
+                : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+}
+
+/* The codepoints from a first to a last, both included, as an LCons/LNil
+ * list: a range of Unicode codepoints, 0 to 0x10FFFF, in order. */
+static CettaDeterministicPrimitiveResultV1 langdef_primitive_codepoint_range(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)head;
+    if (argument_count != 2u || !arguments || !arguments[0] || !arguments[1] ||
+        arguments[0]->kind != ATOM_GROUNDED ||
+        arguments[0]->ground.gkind != GV_INT ||
+        arguments[1]->kind != ATOM_GROUNDED ||
+        arguments[1]->ground.gkind != GV_INT ||
+        arguments[0]->ground.ival < 0 ||
+        arguments[1]->ground.ival > 0x10FFFF ||
+        arguments[0]->ground.ival > arguments[1]->ground.ival) {
+        (void)langdef_set_error(
+            error, error_size,
+            "codepoint range expects two ordered codepoints from 0 to 0x10FFFF");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    Atom *list = atom_symbol(arena, "LNil");
+    for (int64_t cp = arguments[1]->ground.ival;
+         list && cp >= arguments[0]->ground.ival; cp--) {
+        Atom *fields[2] = {atom_int(arena, cp), list};
+        list = fields[0] ? langdef_expr(arena, "LCons", fields, 2u) : NULL;
+    }
+    *out = list;
+    return list ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
+                : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+}
+
+typedef CettaDeterministicPrimitiveResultV1 (*LangdefPrimitiveHandler)(
+    const char *head, Atom *const *arguments, uint32_t argument_count,
+    Arena *arena, Atom **out, char *error, size_t error_size);
+
+/* The structural data primitives of LangDef programs, with the class of each
+ * value, the vocabulary the loader's descent check reads.  Source equations
+ * own all traversal, lookup policy and interpretation of the resulting list
+ * or equality. */
+typedef struct {
+    const char *name;
+    CettaDeterministicPrimitiveClassV1 class_;
+    LangdefPrimitiveHandler handler;
+} LangdefPrimitiveEntry;
+
+static const LangdefPrimitiveEntry langdef_primitives[] = {
+    {"langdef:expression->list", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_PRESERVING,
+     langdef_primitive_expression_to_list},
+    {"langdef:expression-or-single->list", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_STRUCTURE,
+     langdef_primitive_expression_or_single_to_list},
+    {"langdef:value-view", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_PRESERVING,
+     langdef_primitive_value_view},
+    {"langdef:list->expression", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_PRESERVING,
+     langdef_primitive_list_to_expression},
+    {"langdef:list->list-value", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_PRESERVING,
+     langdef_primitive_list_to_expression},
+    {"langdef:ground-equal", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_ATOM,
+     langdef_primitive_ground_equal},
+    {"+", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_ATOM,
+     langdef_primitive_arithmetic},
+    {"<", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_ATOM,
+     langdef_primitive_arithmetic},
+    {"langdef:string->codepoints", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_STRUCTURE,
+     langdef_primitive_string_to_codepoints},
+    {"langdef:codepoints->string", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_ATOM,
+     langdef_primitive_codepoints_to_string},
+    {"langdef:codepoints->symbol", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_ATOM,
+     langdef_primitive_codepoints_to_symbol},
+    {"langdef:symbol->codepoints", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_STRUCTURE,
+     langdef_primitive_symbol_to_codepoints},
+    {"langdef:decimal-integer->number", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_ATOM,
+     langdef_primitive_decimal_integer_to_number},
+    {"langdef:decimal-rational->parts", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_STRUCTURE,
+     langdef_primitive_decimal_rational_to_parts},
+    {"langdef:decimal-rational->value", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_STRUCTURE,
+     langdef_primitive_decimal_rational_to_value},
+    {"langdef:decimal-real->float", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_STRUCTURE,
+     langdef_primitive_decimal_real_to_float},
+    {"langdef:decimal-real->canonical", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_ATOM,
+     langdef_primitive_decimal_real_to_canonical},
+    {"langdef:codepoint-range", CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_STRUCTURE,
+     langdef_primitive_codepoint_range},
+};
+
+static const LangdefPrimitiveEntry *langdef_primitive_entry(const char *head) {
+    for (size_t index = 0u;
+         index < sizeof(langdef_primitives) / sizeof(langdef_primitives[0]);
+         index++) {
+        if (strcmp(head, langdef_primitives[index].name) == 0)
+            return &langdef_primitives[index];
+    }
+    return NULL;
+}
+
 static CettaDeterministicPrimitiveResultV1
 langdef_deterministic_equation_primitive(
     void *context, const char *head, Atom *const *arguments,
@@ -5505,92 +6351,45 @@ langdef_deterministic_equation_primitive(
     (void)context;
     if (!head || !arena || !out)
         return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    CettaDeterministicPrimitiveResultV1 string_result;
+    if (langdef_str_primitive(head, arguments, argument_count, arena, out,
+                                 error, error_size, &string_result))
+        return string_result;
     /* Structural data primitives only. Source equations own all traversal,
      * lookup policy and interpretation of the resulting list or equality. */
-    if (strcmp(head, "langdef:expression->list") == 0) {
-        if (argument_count != 1u || !arguments || !arguments[0] ||
-            arguments[0]->kind != ATOM_EXPR) {
-            (void)langdef_set_error(error, error_size,
-                                   "expression decoding expects one expression");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        Atom *list = atom_symbol(arena, "LNil");
-        for (CettaExprLen index = arguments[0]->expr.len; index > 0u; index--) {
-            Atom *fields[2] = {arguments[0]->expr.elems[index - 1u], list};
-            list = langdef_expr(arena, "LCons", fields, 2u);
-            if (!list)
-                return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        *out = list;
-        return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
-    }
-    if (strcmp(head, "langdef:ground-equal") == 0) {
-        if (argument_count != 2u || !arguments || !arguments[0] ||
-            !arguments[1] || atom_has_vars(arguments[0]) ||
-            atom_has_vars(arguments[1])) {
-            (void)langdef_set_error(error, error_size,
-                                   "ground equality expects two ground values");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        *out = atom_symbol(arena, atom_eq(arguments[0], arguments[1])
-                                     ? "LangDef:SameValue"
-                                     : "LangDef:DifferentValue");
-        return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
-    }
-    if (strcmp(head, "+") == 0) {
-        int64_t left;
-        int64_t right;
-        if (argument_count != 2u || !arguments || !arguments[0] ||
-            !arguments[1] || arguments[0]->kind != ATOM_GROUNDED ||
-            arguments[1]->kind != ATOM_GROUNDED ||
-            arguments[0]->ground.gkind != GV_INT ||
-            arguments[1]->ground.gkind != GV_INT) {
-            (void)langdef_set_error(
-                error, error_size,
-                "deterministic integer addition expects two integers");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        left = arguments[0]->ground.ival;
-        right = arguments[1]->ground.ival;
-        if ((right > 0 && left > INT64_MAX - right) ||
-            (right < 0 && left < INT64_MIN - right)) {
-            (void)langdef_set_error(
-                error, error_size,
-                "deterministic integer addition overflowed");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        *out = atom_int(arena, left + right);
-        return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
-    }
-    if (strcmp(head, "langdef:string->codepoints") == 0) {
-        if (argument_count != 1u || !arguments) {
-            (void)langdef_set_error(
-                error, error_size, "string decoding expects one argument");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        *out = langdef_string_codepoints(arguments[0], arena, error, error_size);
-        return *out ? CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED
-                    : CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-    }
-    if (strcmp(head, "langdef:codepoints->string") == 0) {
-        uint8_t *bytes = NULL;
-        size_t len = 0u;
-        size_t cap = 0u;
-        if (argument_count != 1u || !arguments || !arguments[0] ||
-            !langdef_codepoints_collect(
-                arguments[0], &bytes, &len, &cap, 0u)) {
-            free(bytes);
-            (void)langdef_set_error(
-                error, error_size,
-                "deterministic codepoint decoding rejected its source tree");
-            return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
-        }
-        *out = atom_string(arena, bytes ? (const char *)bytes : "");
-        free(bytes);
-        return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
-    }
-    return CETTA_DETERMINISTIC_PRIMITIVE_V1_NOT_HANDLED;
+    const LangdefPrimitiveEntry *entry = langdef_primitive_entry(head);
+    return entry
+        ? entry->handler(head, arguments, argument_count, arena, out,
+                         error, error_size)
+        : CETTA_DETERMINISTIC_PRIMITIVE_V1_NOT_HANDLED;
 }
+
+/* The class of a LangDef primitive's value: a str: operation's from the
+ * native table, a structural primitive's from the table above. */
+static CettaDeterministicPrimitiveClassV1 langdef_deterministic_equation_class(
+    void *context, const char *head, uint32_t argument_count) {
+    (void)context;
+    (void)argument_count;
+    if (!head)
+        return CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_NONE;
+    if (strncmp(head, "str:", 4u) == 0) {
+        const CettaStrNative *native = cetta_str_native(head + 4u);
+        if (!native)
+            return CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_NONE;
+        return native->result == CETTA_STR_RESULT_ATOM
+            ? CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_ATOM
+            : CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_STRUCTURE;
+    }
+    const LangdefPrimitiveEntry *entry = langdef_primitive_entry(head);
+    return entry ? entry->class_ : CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_NONE;
+}
+
+const CettaDeterministicVocabularyV1 cetta_langdef_deterministic_vocabulary_v1 = {
+    .primitive = langdef_deterministic_equation_primitive,
+    .classify = langdef_deterministic_equation_class,
+    .context = NULL,
+};
+
 
 static Atom *langdef_publish_values(CettaLangDefV1 *resource,
                                     Space *space, Arena *arena,
@@ -5684,11 +6483,953 @@ static Atom *langdef_admit_transform_source(CettaLangDefV1 *resource,
     return atom_bool(arena, true);
 }
 
+static int64_t langdef_tptp_count(uint64_t value) {
+    return value > (uint64_t)INT64_MAX ? INT64_MAX : (int64_t)value;
+}
+
+/* The atom count and nesting depth of a term, without recursion. */
+static void langdef_term_extent(const Atom *term, uint64_t *size, uint64_t *depth) {
+    typedef struct { const Atom *atom; uint64_t depth; } Frame;
+    Frame *stack = NULL;
+    size_t len = 0u, cap = 0u;
+    *size = 0u;
+    *depth = 0u;
+    if (!term)
+        return;
+    cap = 256u;
+    stack = malloc(cap * sizeof(*stack));
+    if (!stack)
+        return;
+    stack[len++] = (Frame){term, 1u};
+    while (len > 0u) {
+        Frame frame = stack[--len];
+        (*size)++;
+        if (frame.depth > *depth)
+            *depth = frame.depth;
+        if (frame.atom->kind != ATOM_EXPR)
+            continue;
+        for (CettaExprLen i = 0u; i < frame.atom->expr.len; i++) {
+            if (len == cap) {
+                Frame *grown = realloc(stack, 2u * cap * sizeof(*stack));
+                if (!grown) {
+                    free(stack);
+                    return;
+                }
+                stack = grown;
+                cap *= 2u;
+            }
+            stack[len++] = (Frame){frame.atom->expr.elems[i], frame.depth + 1u};
+        }
+    }
+    free(stack);
+}
+
+/* The compact stage of a TPTP read: the records of a canonical file term
+ * under a leaf policy, by the checked compact morphism.  The morphism is
+ * structural, so its work and its continuation depth are bounded by the size
+ * of the canonical term: an expression or a list of n elements is walked as
+ * a spine n deep.  tptp:read and the corpus tools both run this one
+ * function. */
+bool cetta_tptp_compact_records_v1(
+    const CettaDeterministicEquationPlanV1 *compact, const char *policy,
+    Atom *canonical, Arena *arena, Atom **records_out,
+    uint64_t *work_used_out, CettaDeterministicEquationStatusV1 *status_out,
+    char *error, size_t error_size) {
+    uint64_t size = 0u;
+    uint64_t depth = 0u;
+    uint64_t work_used = 0u;
+    CettaDeterministicEquationStatusV1 status =
+        CETTA_DETERMINISTIC_EQUATION_V1_BAD_ARGUMENT;
+    Atom *call_parts[3];
+    Atom *call = NULL;
+    bool ok = false;
+    if (records_out)
+        *records_out = NULL;
+    if (compact && policy && canonical && arena && records_out) {
+        langdef_term_extent(canonical, &size, &depth);
+        call_parts[0] = atom_symbol(arena, "tptp-compact:file");
+        call_parts[1] = atom_symbol(arena, policy);
+        call_parts[2] = canonical;
+        call = atom_expr(arena, call_parts, 3u);
+        ok = call && cetta_deterministic_equation_plan_v1_apply_counted(
+            compact, call, langdef_deterministic_equation_primitive,
+            NULL, arena,
+            (uint32_t)(size > (UINT32_MAX - 65536u) / 16u
+                           ? UINT32_MAX : 16u * size + 65536u),
+            size > (UINT64_MAX - 1000000u) / 1024u
+                ? UINT64_MAX : 1024u * size + 1000000u,
+            &work_used, records_out, &status, error, error_size);
+    }
+    if (work_used_out)
+        *work_used_out = work_used;
+    if (status_out)
+        *status_out = status;
+    return ok;
+}
+
+/* The constructors the morphism maps to their own child's value, whose
+ * productions only wrap it: (tptp-compact:v P (bnf C x)) = (tptp-compact:v P
+ * x).  Printing puts them back.  The caller frees *wrappers_out. */
+bool cetta_tptp_compact_wrappers_v1(
+    const CettaDeterministicEquationPlanV1 *compact,
+    SymbolId **wrappers_out, uint32_t *len_out) {
+    uint32_t count;
+    SymbolId v;
+    SymbolId bnf;
+    SymbolId *wrappers;
+    uint32_t len = 0u;
+    if (!compact || !wrappers_out || !len_out)
+        return false;
+    *wrappers_out = NULL;
+    *len_out = 0u;
+    count = cetta_deterministic_equation_plan_v1_rule_count(compact);
+    v = symbol_intern_cstr(g_symbols, "tptp-compact:v");
+    bnf = symbol_intern_cstr(g_symbols, "bnf");
+    wrappers = calloc(count ? count : 1u, sizeof(*wrappers));
+    if (!wrappers)
+        return false;
+    for (uint32_t r = 0u; r < count; r++) {
+        const Atom *left = NULL;
+        const Atom *right = NULL;
+        const Atom *node;
+        if (!cetta_deterministic_equation_plan_v1_rule_view(compact, r, NULL,
+                                                           &left, &right) ||
+            !left || !right || left->kind != ATOM_EXPR || left->expr.len != 3u ||
+            right->kind != ATOM_EXPR || right->expr.len != 3u ||
+            left->expr.elems[0]->kind != ATOM_SYMBOL || left->expr.elems[0]->sym_id != v ||
+            right->expr.elems[0]->kind != ATOM_SYMBOL || right->expr.elems[0]->sym_id != v ||
+            left->expr.elems[1]->kind != ATOM_VAR || right->expr.elems[1]->kind != ATOM_VAR ||
+            left->expr.elems[1]->var_id != right->expr.elems[1]->var_id)
+            continue;
+        node = left->expr.elems[2];
+        if (node->kind != ATOM_EXPR || node->expr.len != 3u ||
+            node->expr.elems[0]->kind != ATOM_SYMBOL || node->expr.elems[0]->sym_id != bnf ||
+            node->expr.elems[1]->kind != ATOM_SYMBOL || node->expr.elems[2]->kind != ATOM_VAR ||
+            right->expr.elems[2]->kind != ATOM_VAR ||
+            node->expr.elems[2]->var_id != right->expr.elems[2]->var_id)
+            continue;
+        wrappers[len++] = node->expr.elems[1]->sym_id;
+    }
+    *wrappers_out = wrappers;
+    *len_out = len;
+    return true;
+}
+
+/* The print stage: compact records back to TPTP text, their canonical
+ * terms by the prepared inverse, each printed by the grammar with the
+ * wrappers its position needs, one input per line.  tptp:print and the
+ * corpus tools both run this one function.  On failure *failure_out names
+ * the step: the inverse (with *status_out), a result that is not a list of
+ * inputs, or the printing of input *index_out. */
+bool cetta_tptp_compact_print_v1(
+    const CettaTptpPreparedReaderV1 *reader,
+    const CettaGrammarCanonicalTableV1 *table,
+    const CettaDeterministicEquationPlanV1 *print,
+    const SymbolId *wrappers, uint32_t wrapper_len,
+    const Atom *records, Arena *arena,
+    char **text_out, size_t *len_out,
+    CettaTptpCompactPrintFailureV1 *failure_out, uint64_t *index_out,
+    Atom **culprit_out, CettaDeterministicEquationStatusV1 *status_out,
+    uint64_t *work_used_out, char *error, size_t error_size) {
+    Atom *call_parts[2];
+    Atom *call;
+    Atom *canonical = NULL;
+    CettaDeterministicEquationStatusV1 status =
+        CETTA_DETERMINISTIC_EQUATION_V1_BAD_ARGUMENT;
+    uint64_t size = 0u;
+    uint64_t depth = 0u;
+    uint64_t work_used = 0u;
+    CettaGrammarCanonicalTableV1 *built = NULL;
+    char *text = NULL;
+    size_t text_len = 0u;
+    size_t text_cap = 0u;
+    Atom *const *inputs = NULL;
+    CettaExprLen input_count = 0u;
+    if (text_out)
+        *text_out = NULL;
+    if (len_out)
+        *len_out = 0u;
+    if (failure_out)
+        *failure_out = CETTA_TPTP_COMPACT_PRINT_INVERSE_V1;
+    if (culprit_out)
+        *culprit_out = NULL;
+    if (!reader || !print || !records || !arena || !text_out || !len_out ||
+        records->kind != ATOM_EXPR)
+        return false;
+    langdef_term_extent(records, &size, &depth);
+    call_parts[0] = atom_symbol(arena, "tptp-canonical:file");
+    call_parts[1] = (Atom *)records;
+    call = atom_expr(arena, call_parts, 2u);
+    if (!call ||
+        !cetta_deterministic_equation_plan_v1_apply_counted(
+            print, call, langdef_deterministic_equation_primitive,
+            NULL, arena,
+            (uint32_t)(size > (UINT32_MAX - 65536u) / 16u
+                           ? UINT32_MAX : 16u * size + 65536u),
+            size > (UINT64_MAX - 1000000u) / 4096u
+                ? UINT64_MAX : 4096u * size + 1000000u,
+            &work_used, &canonical, &status, error, error_size) ||
+        !canonical || canonical->kind != ATOM_EXPR) {
+        if (status_out)
+            *status_out = status;
+        if (work_used_out)
+            *work_used_out = work_used;
+        return false;
+    }
+    if (status_out)
+        *status_out = status;
+    if (work_used_out)
+        *work_used_out = work_used;
+    if (!atom_sequence_view(canonical, &inputs, &input_count)) {
+        if (failure_out)
+            *failure_out = CETTA_TPTP_COMPACT_PRINT_NOT_RECORDS_V1;
+        if (culprit_out)
+            *culprit_out = canonical;
+        return false;
+    }
+    if (!table)
+        table = reader->canonical;
+    if (!table) {
+        if (!cetta_tptp_snapshot_canonical_table_v1(&reader->snapshot, &built,
+                                                    error, error_size)) {
+            if (failure_out)
+                *failure_out = CETTA_TPTP_COMPACT_PRINT_MEMORY_V1;
+            return false;
+        }
+        table = built;
+    }
+    for (CettaExprLen index = 0u; index < input_count; index++) {
+        char *input = NULL;
+        size_t input_len = 0u;
+        if (!cetta_tptp_snapshot_canonical_print_wrapped_v1(
+                &reader->snapshot, table, inputs[index],
+                "TPTP_input", wrappers, wrapper_len,
+                &input, &input_len, error, error_size)) {
+            if (failure_out)
+                *failure_out = CETTA_TPTP_COMPACT_PRINT_INPUT_V1;
+            if (index_out)
+                *index_out = (uint64_t)index;
+            if (culprit_out)
+                *culprit_out = inputs[index];
+            cetta_grammar_canonical_table_free_v1(built);
+            free(text);
+            return false;
+        }
+        if (text_len + input_len + 2u > text_cap) {
+            size_t next = text_cap ? text_cap : 256u;
+            char *grown;
+            while (next < text_len + input_len + 2u)
+                next *= 2u;
+            grown = realloc(text, next);
+            if (!grown) {
+                free(input);
+                free(text);
+                cetta_grammar_canonical_table_free_v1(built);
+                if (failure_out)
+                    *failure_out = CETTA_TPTP_COMPACT_PRINT_MEMORY_V1;
+                return false;
+            }
+            text = grown;
+            text_cap = next;
+        }
+        memcpy(text + text_len, input, input_len);
+        text_len += input_len;
+        text[text_len++] = '\n';
+        text[text_len] = '\0';
+        free(input);
+    }
+    cetta_grammar_canonical_table_free_v1(built);
+    *text_out = text;
+    *len_out = text_len;
+    return true;
+}
+
+static Atom *langdef_tptp_read_outcome(
+    Arena *arena, const CettaTptpReadOutcomeV1 *outcome) {
+    Atom *arguments[3];
+
+    if (!arena || !outcome)
+        return NULL;
+    switch (outcome->status) {
+    case CETTA_TPTP_READ_LEX_REJECT_V1:
+        arguments[0] = atom_int(arena, (int64_t)outcome->byte_offset);
+        return langdef_expr(arena, "TPTP:LexReject", arguments, 1u);
+    case CETTA_TPTP_READ_NO_PARSE_V1:
+        arguments[0] = atom_int(arena, (int64_t)outcome->byte_offset);
+        arguments[1] = atom_symbol(arena, "TPTP_file");
+        return langdef_expr(arena, "TPTP:NoParse", arguments, 2u);
+    case CETTA_TPTP_READ_AMBIGUOUS_V1:
+        arguments[0] = atom_symbol(arena, "TPTP_file");
+        return langdef_expr(arena, "TPTP:Ambiguous", arguments, 1u);
+    case CETTA_TPTP_READ_RESOURCE_LIMIT_V1:
+        arguments[0] = atom_int(arena, langdef_tptp_count(outcome->work));
+        arguments[1] = atom_int(arena, langdef_tptp_count(outcome->limit));
+        arguments[2] = atom_symbol(arena, "TPTP_file");
+        return langdef_expr(arena, "TPTP:ResourceLimit", arguments, 3u);
+    default:
+        return NULL;
+    }
+}
+
 Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
                                     Space *space, Arena *arena,
                                     Atom *head, Atom **args,
                                     uint32_t nargs) {
     char error[512] = {0};
+
+
+    if (atom_is_symbol(head, "__cetta_lib_tptp_syntaxbnf_digest_v1")) {
+        const char *path = NULL;
+        char digest[65];
+        if (nargs != 1u || !cetta_langdef_text_arg(args[0], &path))
+            return langdef_error(
+                arena, head, "tptp digest expects a SyntaxBNF path");
+        if (!cetta_tptp_file_sha256_hex_v1(path, digest, error, sizeof(error)))
+            return langdef_error(
+                arena, head,
+                error[0] ? error : "tptp SyntaxBNF digest failed");
+        return langdef_return(arena, atom_string(arena, digest));
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_tptp_write_atom_v1")) {
+        const char *path = NULL;
+        if (nargs != 2u || !cetta_langdef_text_arg(args[0], &path))
+            return langdef_error(
+                arena, head, "tptp write-atom expects a path and an atom");
+        if (!cetta_tptp_write_atom_v1(path, args[1], arena, error,
+                                      sizeof(error)))
+            return langdef_error(
+                arena, head, error[0] ? error : "tptp write-atom failed");
+        return langdef_return(arena, atom_symbol(arena, "True"));
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_tptp_read_atom_v1")) {
+        const char *path = NULL;
+        Atom *result = NULL;
+        if (nargs != 1u || !cetta_langdef_text_arg(args[0], &path))
+            return langdef_error(arena, head, "tptp read-atom expects a path");
+        if (!cetta_tptp_read_atom_v1(path, arena, &result, error,
+                                     sizeof(error)))
+            return langdef_error(
+                arena, head, error[0] ? error : "tptp read-atom failed");
+        return langdef_return(arena, result);
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_tptp_snapshot_construct_v1")) {
+        const char *pack_path = NULL;
+        const char *baseline_path = NULL;
+        const char *out_path = NULL;
+        PPTableSnapshotV1 loaded;
+        Atom *parts[7];
+        struct stat st;
+        /* (pack out), or (pack baseline out) for a corpus-compatible pack
+         * constructed against its strict snapshot. */
+        if ((nargs != 2u && nargs != 3u) ||
+            !cetta_langdef_text_arg(args[0], &pack_path) ||
+            (nargs == 3u && !cetta_langdef_text_arg(args[1], &baseline_path)) ||
+            !cetta_langdef_text_arg(args[nargs - 1u], &out_path))
+            return langdef_error(
+                arena, head,
+                "tptp snapshot construct expects pack, optional baseline "
+                "and out paths");
+        if (!cetta_tptp_snapshot_construct_from_pack_v1(
+                pack_path, baseline_path, out_path, error, sizeof(error)))
+            return langdef_error(
+                arena, head,
+                error[0] ? error : "tptp snapshot construct failed");
+        pp_table_snapshot_v1_init(&loaded);
+        if (!cetta_tptp_snapshot_load_v1(
+                &loaded, out_path, CETTA_TPTP_OFFICIAL_SYNTAXBNF_DIGEST_V1,
+                error, sizeof(error))) {
+            pp_table_snapshot_v1_free(&loaded);
+            return langdef_error(
+                arena, head, error[0] ? error : "tptp snapshot reload failed");
+        }
+        memset(&st, 0, sizeof(st));
+        (void)stat(out_path, &st);
+        parts[0] = atom_symbol(arena, "TptpSnapshotConstructionV1");
+        parts[1] = atom_string(arena, loaded.syntax_digest);
+        parts[2] = atom_string(arena, loaded.artifact_digest);
+        parts[3] = atom_symbol(arena, loaded.profile);
+        parts[4] = atom_symbol(
+            arena,
+            loaded.kernel == PP_TABLE_SNAPSHOT_V1_KERNEL_SLR ? "slr" : "glr");
+        parts[5] = atom_int(arena, (int64_t)loaded.conflict_len);
+        parts[6] = atom_int(arena, (int64_t)st.st_size);
+        pp_table_snapshot_v1_free(&loaded);
+        return langdef_return(arena, atom_expr(arena, parts, 7u));
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_tptp_snapshot_info_v1")) {
+        const char *path = NULL;
+        PPTableSnapshotV1 loaded;
+        Atom *parts[7];
+        struct stat st;
+        if (nargs != 1u || !cetta_langdef_text_arg(args[0], &path))
+            return langdef_error(arena, head, "tptp snapshot info expects a path");
+        pp_table_snapshot_v1_init(&loaded);
+        if (!cetta_tptp_snapshot_load_v1(
+                &loaded, path, CETTA_TPTP_OFFICIAL_SYNTAXBNF_DIGEST_V1,
+                error, sizeof(error))) {
+            pp_table_snapshot_v1_free(&loaded);
+            if (error[0] && strstr(error, "DigestMismatch"))
+                return langdef_return(
+                    arena,
+                    atom_expr2(arena, atom_symbol(arena, "TPTP:DigestMismatch"),
+                               atom_string(arena, path)));
+            return langdef_error(
+                arena, head, error[0] ? error : "tptp snapshot info failed");
+        }
+        memset(&st, 0, sizeof(st));
+        (void)stat(path, &st);
+        parts[0] = atom_symbol(arena, "TptpSnapshotInfoV1");
+        parts[1] = atom_string(arena, loaded.syntax_digest);
+        parts[2] = atom_string(arena, loaded.artifact_digest);
+        parts[3] = atom_symbol(arena, loaded.profile);
+        parts[4] = atom_symbol(
+            arena,
+            loaded.kernel == PP_TABLE_SNAPSHOT_V1_KERNEL_SLR ? "slr" : "glr");
+        parts[5] = atom_int(arena, (int64_t)loaded.conflict_len);
+        parts[6] = atom_int(arena, (int64_t)st.st_size);
+        pp_table_snapshot_v1_free(&loaded);
+        return langdef_return(arena, atom_expr(arena, parts, 7u));
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_tptp_reader_open_v1")) {
+        CettaTptpReaderV1 *resource;
+        const char *snapshot_path;
+        const char *profile;
+        uint64_t id;
+
+        if (nargs != 1u)
+            return langdef_error(
+                arena, head, "tptp reader open expects one profile");
+        if (atom_is_symbol(args[0], "strict")) {
+            snapshot_path = CETTA_TPTP_OFFICIAL_SNAPSHOT_PATH_V1;
+            profile = "strict";
+        } else if (atom_is_symbol(args[0], "corpus-compatible")) {
+            snapshot_path = CETTA_TPTP_CORPUS_COMPATIBLE_SNAPSHOT_PATH_V1;
+            profile = "corpus-compatible";
+        } else {
+            Atom *unknown[1] = {args[0]};
+            return langdef_return(
+                arena, langdef_expr(
+                    arena, "TPTP:UnknownReaderProfile", unknown, 1u));
+        }
+        resource = tptp_reader_resource_load_bound(
+            snapshot_path, profile, error, sizeof(error));
+        if (!resource)
+            return langdef_error(
+                arena, head,
+                error[0] ? error : "tptp reader snapshot load failed");
+        if (!cetta_native_handle_alloc(
+                ctx, TPTP_READER_HANDLE_KIND, resource,
+                tptp_reader_resource_free, &id)) {
+            tptp_reader_resource_free(resource);
+            return langdef_error(
+                arena, head, "tptp reader handle allocation failed");
+        }
+        return langdef_return(
+            arena, cetta_native_handle_owned_atom(
+                ctx, arena, TPTP_READER_HANDLE_KIND, id));
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_tptp_reader_info_v1")) {
+        CettaTptpReaderV1 *resource;
+        uint64_t id;
+        Atom *parts[4];
+
+        if (nargs != 1u ||
+            !cetta_native_handle_arg(
+                args[0], TPTP_READER_HANDLE_KIND, &id) ||
+            !(resource = cetta_native_handle_get(
+                  ctx, TPTP_READER_HANDLE_KIND, id))) {
+            Atom *mismatch[1] = {nargs == 1u ? args[0]
+                                            : atom_symbol(arena, "NoReader")};
+            return langdef_return(
+                arena, langdef_expr(
+                    arena, "TPTP:ReaderMismatch", mismatch, 1u));
+        }
+        parts[0] = atom_string(
+            arena, resource->reader.snapshot.syntax_digest);
+        parts[1] = atom_symbol(
+            arena,
+            resource->reader.snapshot.kernel == PP_TABLE_SNAPSHOT_V1_KERNEL_SLR
+                ? "slr" : "glr");
+        parts[2] = atom_int(
+            arena, (int64_t)resource->reader.snapshot.conflict_len);
+        parts[3] = atom_int(
+            arena, (int64_t)resource->reader.snapshot.slr.production_len);
+        return langdef_return(
+            arena, langdef_expr(arena, "TptpReaderInfoV1", parts, 4u));
+    }
+
+    if (atom_is_symbol(
+            head, "__cetta_lib_tptp_reader_canonical_print_v1")) {
+        CettaTptpReaderV1 *resource;
+        uint64_t id;
+        const char *sort = NULL;
+        char *text = NULL;
+        size_t text_len = 0u;
+        Atom *result;
+
+        if (nargs != 3u ||
+            !cetta_native_handle_arg(
+                args[0], TPTP_READER_HANDLE_KIND, &id) ||
+            !(resource = cetta_native_handle_get(
+                  ctx, TPTP_READER_HANDLE_KIND, id))) {
+            Atom *mismatch[1] = {nargs >= 1u ? args[0]
+                                            : atom_symbol(arena, "NoReader")};
+            return langdef_return(
+                arena, langdef_expr(
+                    arena, "TPTP:ReaderMismatch", mismatch, 1u));
+        }
+        if (!cetta_langdef_text_arg(args[1], &sort))
+            return langdef_error(arena, head, "tptp canonical print expects a grammar symbol");
+        if (!cetta_tptp_snapshot_canonical_print_v1(
+                &resource->reader.snapshot, resource->reader.canonical, args[2],
+                sort, &text, &text_len,
+                error, sizeof(error)))
+            return langdef_error(
+                arena, head, error[0] ? error : "tptp canonical print failed");
+        result = atom_string(arena, text);
+        free(text);
+        return langdef_return(arena, result);
+    }
+
+    if (atom_is_symbol(
+            head, "__cetta_lib_tptp_reader_canonical_language_v1")) {
+        CettaTptpReaderV1 *resource;
+        uint64_t id;
+        Atom *language = NULL;
+
+        if (nargs != 1u ||
+            !cetta_native_handle_arg(
+                args[0], TPTP_READER_HANDLE_KIND, &id) ||
+            !(resource = cetta_native_handle_get(
+                  ctx, TPTP_READER_HANDLE_KIND, id))) {
+            Atom *mismatch[1] = {nargs == 1u ? args[0]
+                                            : atom_symbol(arena, "NoReader")};
+            return langdef_return(
+                arena, langdef_expr(
+                    arena, "TPTP:ReaderMismatch", mismatch, 1u));
+        }
+        if (!cetta_tptp_snapshot_canonical_language_v1(
+                &resource->reader.snapshot, arena, &language,
+                error, sizeof(error)))
+            return langdef_error(
+                arena, head, error[0] ? error : "tptp canonical language failed");
+        return langdef_return(arena, language);
+    }
+
+    if (atom_is_symbol(
+            head, "__cetta_lib_tptp_reader_artifact_info_v1")) {
+        CettaTptpReaderV1 *resource;
+        uint64_t id;
+        Atom *parts[6];
+
+        if (nargs != 1u ||
+            !cetta_native_handle_arg(
+                args[0], TPTP_READER_HANDLE_KIND, &id) ||
+            !(resource = cetta_native_handle_get(
+                  ctx, TPTP_READER_HANDLE_KIND, id))) {
+            Atom *mismatch[1] = {nargs == 1u ? args[0]
+                                            : atom_symbol(arena, "NoReader")};
+            return langdef_return(
+                arena, langdef_expr(
+                    arena, "TPTP:ReaderMismatch", mismatch, 1u));
+        }
+        parts[0] = atom_string(
+            arena, resource->reader.snapshot.syntax_digest);
+        parts[1] = atom_string(
+            arena, resource->reader.snapshot.artifact_digest);
+        parts[2] = atom_symbol(
+            arena, resource->reader.snapshot.profile);
+        parts[3] = atom_symbol(
+            arena,
+            resource->reader.snapshot.kernel == PP_TABLE_SNAPSHOT_V1_KERNEL_SLR
+                ? "slr" : "glr");
+        parts[4] = atom_int(
+            arena, (int64_t)resource->reader.snapshot.conflict_len);
+        parts[5] = atom_int(
+            arena, (int64_t)resource->reader.snapshot.slr.production_len);
+        return langdef_return(
+            arena,
+            langdef_expr(
+                arena, "TptpReaderArtifactInfoV1", parts, 6u));
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_tptp_reader_print_compact_v1")) {
+        /* Compact records back to TPTP text: their canonical terms by the
+         * prepared inverse, printed by the grammar with the wrappers each
+         * position needs, one input per line. */
+        CettaTptpReaderV1 *resource;
+        uint64_t id;
+        CettaDeterministicEquationStatusV1 status =
+            CETTA_DETERMINISTIC_EQUATION_V1_BAD_ARGUMENT;
+        CettaTptpCompactPrintFailureV1 failure =
+            CETTA_TPTP_COMPACT_PRINT_INVERSE_V1;
+        uint64_t failing_index = 0u;
+        Atom *culprit = NULL;
+        char *text = NULL;
+        size_t text_len = 0u;
+        const Atom *records;
+
+        if (nargs != 2u ||
+            !cetta_native_handle_arg(
+                args[0], TPTP_READER_HANDLE_KIND, &id) ||
+            !(resource = cetta_native_handle_get(
+                  ctx, TPTP_READER_HANDLE_KIND, id))) {
+            Atom *mismatch[1] = {nargs > 0u ? args[0]
+                                           : atom_symbol(arena, "NoReader")};
+            return langdef_return(
+                arena, langdef_expr(
+                    arena, "TPTP:ReaderMismatch", mismatch, 1u));
+        }
+        if (!resource->print) {
+            Atom *reason[1] = {atom_string(arena, resource->print_error)};
+            return langdef_return(
+                arena, langdef_expr(
+                    arena, "TPTP:CompactPrinterUnavailable", reason, 1u));
+        }
+        /* The records arrive quoted, so no lane evaluates them on the way;
+         * a caller may quote them too. */
+        records = args[1];
+        while (records && records->kind == ATOM_EXPR && records->expr.len == 2u &&
+               atom_is_symbol(records->expr.elems[0], "quote"))
+            records = records->expr.elems[1];
+        if (!records || records->kind != ATOM_EXPR) {
+            Atom *bad[1] = {args[1]};
+            return langdef_return(
+                arena, langdef_expr(arena, "TPTP:NotCompactRecords", bad, 1u));
+        }
+        if (!cetta_tptp_compact_print_v1(
+                &resource->reader, NULL, resource->print,
+                resource->wrappers, resource->wrapper_len, records, arena,
+                &text, &text_len, &failure, &failing_index, &culprit,
+                &status, NULL, error, sizeof(error))) {
+            if (failure == CETTA_TPTP_COMPACT_PRINT_NOT_RECORDS_V1) {
+                Atom *bad[1] = {culprit};
+                return langdef_return(
+                    arena, langdef_expr(arena, "TPTP:NotCompactRecords", bad, 1u));
+            }
+            if (failure == CETTA_TPTP_COMPACT_PRINT_INPUT_V1) {
+                Atom *parts[3] = {
+                    atom_int(arena, (int64_t)failing_index),
+                    atom_string(arena, error[0] ? error : "canonical printing failed"),
+                    culprit};
+                return langdef_return(
+                    arena, langdef_expr(arena, "TPTP:CompactPrintFailure", parts, 3u));
+            }
+            if (failure == CETTA_TPTP_COMPACT_PRINT_MEMORY_V1)
+                return langdef_error(arena, head, "compact printing out of memory");
+            {
+                Atom *parts[2] = {
+                    atom_symbol(arena, cetta_deterministic_equation_status_name_v1(status)),
+                    atom_string(arena, error[0] ? error : "compact printing failed")};
+                return langdef_return(
+                    arena, langdef_expr(arena, "TPTP:CompactPrintFailure", parts, 2u));
+            }
+        }
+        {
+            Atom *result = atom_string(arena, text ? text : "");
+            (void)text_len;
+            free(text);
+            return langdef_return(arena, result);
+        }
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_tptp_reader_read_compact_text_v1") ||
+        atom_is_symbol(head, "__cetta_lib_tptp_reader_read_compact_file_v1") ||
+        atom_is_symbol(head, "__cetta_lib_tptp_reader_read_compact_document_v1")) {
+        /* Canonical terms, then the checked compact morphism of the reader's
+         * profile under the named leaf policy.  The morphism is structural, so
+         * its work and continuation depth are bounded by the size and depth
+         * of the canonical term.  A document read also returns the span of
+         * each input: the spans partition the text, each input running from
+         * its first token, or the start of the text, to the next input's
+         * first token, or the end of the text. */
+        bool from_file = atom_is_symbol(
+            head, "__cetta_lib_tptp_reader_read_compact_file_v1");
+        bool document = atom_is_symbol(
+            head, "__cetta_lib_tptp_reader_read_compact_document_v1");
+        size_t *starts = NULL;
+        CettaTptpReaderV1 *resource;
+        uint64_t id;
+        const char *input = NULL;
+        Atom *canonical = NULL;
+        Atom *call_parts[3];
+        Atom *call;
+        Atom *compact = NULL;
+        CettaTptpReadOutcomeV1 outcome;
+        CettaDeterministicEquationStatusV1 status =
+            CETTA_DETERMINISTIC_EQUATION_V1_BAD_ARGUMENT;
+        uint64_t size = 0u;
+        uint64_t depth = 0u;
+        uint64_t work_used = 0u;
+
+        if (nargs != 3u ||
+            !cetta_native_handle_arg(
+                args[0], TPTP_READER_HANDLE_KIND, &id) ||
+            !(resource = cetta_native_handle_get(
+                  ctx, TPTP_READER_HANDLE_KIND, id))) {
+            Atom *mismatch[1] = {nargs > 0u ? args[0]
+                                           : atom_symbol(arena, "NoReader")};
+            return langdef_return(
+                arena, langdef_expr(
+                    arena, "TPTP:ReaderMismatch", mismatch, 1u));
+        }
+        if (!atom_is_symbol(args[1], "tagged") &&
+            !atom_is_symbol(args[1], "mixed") &&
+            !atom_is_symbol(args[1], "native")) {
+            Atom *unknown[1] = {args[1]};
+            return langdef_return(
+                arena, langdef_expr(arena, "TPTP:UnknownLeafPolicy", unknown, 1u));
+        }
+        if (!cetta_langdef_text_arg(args[2], &input))
+            return langdef_error(
+                arena, head, from_file ? "tptp compact read expects a path"
+                                       : "tptp compact read expects a string");
+        if (!resource->compact) {
+            Atom *reason[1] = {atom_string(arena, resource->compact_error)};
+            return langdef_return(
+                arena, langdef_expr(
+                    arena, "TPTP:CompactMorphismUnavailable", reason, 1u));
+        }
+        if (!(from_file
+                  ? cetta_tptp_prepared_reader_read_file_outcome_v1(
+                        &resource->reader, input, arena, &canonical, &outcome,
+                        error, sizeof(error))
+                  : document
+                  ? cetta_tptp_prepared_reader_read_text_spans_v1(
+                        &resource->reader, input ? input : "",
+                        input ? strlen(input) : 0u, arena, &canonical, &starts,
+                        &outcome, error, sizeof(error))
+                  : cetta_tptp_prepared_reader_read_text_outcome_v1(
+                        &resource->reader, input ? input : "",
+                        input ? strlen(input) : 0u, arena, &canonical, &outcome,
+                        error, sizeof(error)))) {
+            Atom *value = langdef_tptp_read_outcome(arena, &outcome);
+            free(starts);
+            if (value)
+                return langdef_return(arena, value);
+            return langdef_error(
+                arena, head, error[0] ? error : "tptp compact read failed");
+        }
+        (void)size;
+        (void)depth;
+        (void)call_parts;
+        (void)call;
+        if (!cetta_tptp_compact_records_v1(
+                resource->compact, atom_name_cstr(args[1]), canonical, arena,
+                &compact, &work_used, &status, error, sizeof(error))) {
+            Atom *parts[2] = {
+                atom_symbol(arena, cetta_deterministic_equation_status_name_v1(status)),
+                atom_string(arena, error[0] ? error : "compact morphism failed")};
+            free(starts);
+            return langdef_return(
+                arena, langdef_expr(arena, "TPTP:CompactFailure", parts, 2u));
+        }
+        if (document) {
+            /* The records are a list; their spans are the parallel list. */
+            size_t text_len = input ? strlen(input) : 0u;
+            Atom *const *records = NULL;
+            CettaExprLen count = 0u;
+            bool records_listed = compact &&
+                atom_sequence_view(compact, &records, &count);
+            Atom **spans = count
+                ? arena_alloc(arena, sizeof(*spans) * (size_t)count) : NULL;
+            Atom *parts[2];
+            if (!records_listed || (count > 0u && !starts)) {
+                free(starts);
+                return langdef_error(arena, head, "tptp document read: input spans");
+            }
+            for (CettaExprLen k = 0u; k < count; k++) {
+                size_t start = k == 0u ? 0u : starts[k];
+                size_t stop = k + 1u < count ? starts[k + 1u] : text_len;
+                Atom *bounds[2] = {atom_int(arena, (int64_t)start),
+                                   atom_int(arena, (int64_t)stop)};
+                spans[k] = langdef_expr(arena, "TPTP:Span", bounds, 2u);
+            }
+            free(starts);
+            parts[0] = compact;
+            parts[1] = atom_is_list(compact)
+                ? atom_list(arena, spans, count)
+                : atom_expr(arena, spans, count);
+            return langdef_return(
+                arena, langdef_expr(arena, "TPTP:ReadDocument", parts, 2u));
+        }
+        free(starts);
+        return langdef_return(arena, compact);
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_tptp_reader_read_file_v1")) {
+        CettaTptpReaderV1 *resource;
+        uint64_t id;
+        const char *path = NULL;
+        Atom *result = NULL;
+        CettaTptpReadOutcomeV1 outcome;
+
+        if (nargs != 2u ||
+            !cetta_native_handle_arg(
+                args[0], TPTP_READER_HANDLE_KIND, &id) ||
+            !(resource = cetta_native_handle_get(
+                  ctx, TPTP_READER_HANDLE_KIND, id))) {
+            Atom *mismatch[1] = {nargs > 0u ? args[0]
+                                           : atom_symbol(arena, "NoReader")};
+            return langdef_return(
+                arena, langdef_expr(
+                    arena, "TPTP:ReaderMismatch", mismatch, 1u));
+        }
+        if (!cetta_langdef_text_arg(args[1], &path))
+            return langdef_error(
+                arena, head, "tptp reader read-file expects a path");
+        if (!cetta_tptp_prepared_reader_read_file_outcome_v1(
+                &resource->reader, path, arena, &result, &outcome,
+                error, sizeof(error))) {
+            Atom *value = langdef_tptp_read_outcome(arena, &outcome);
+            if (value)
+                return langdef_return(arena, value);
+            return langdef_error(
+                arena, head,
+                error[0] ? error : "tptp reader read-file failed");
+        }
+        return langdef_return(arena, result);
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_tptp_reader_read_text_v1")) {
+        CettaTptpReaderV1 *resource;
+        uint64_t id;
+        const char *text = NULL;
+        Atom *result = NULL;
+        CettaTptpReadOutcomeV1 outcome;
+
+        if (nargs != 2u ||
+            !cetta_native_handle_arg(
+                args[0], TPTP_READER_HANDLE_KIND, &id) ||
+            !(resource = cetta_native_handle_get(
+                  ctx, TPTP_READER_HANDLE_KIND, id))) {
+            Atom *mismatch[1] = {nargs > 0u ? args[0]
+                                           : atom_symbol(arena, "NoReader")};
+            return langdef_return(
+                arena, langdef_expr(
+                    arena, "TPTP:ReaderMismatch", mismatch, 1u));
+        }
+        if (!cetta_langdef_text_arg(args[1], &text))
+            return langdef_error(
+                arena, head, "tptp reader read-text expects a string");
+        if (!cetta_tptp_prepared_reader_read_text_outcome_v1(
+                &resource->reader, text ? text : "",
+                text ? strlen(text) : 0u, arena, &result, &outcome,
+                error, sizeof(error))) {
+            Atom *value = langdef_tptp_read_outcome(arena, &outcome);
+            if (value)
+                return langdef_return(arena, value);
+            return langdef_error(
+                arena, head,
+                error[0] ? error : "tptp reader read-text failed");
+        }
+        return langdef_return(arena, result);
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_tptp_read_file_frozen_v1")) {
+        const char *path = NULL;
+        Atom *result = NULL;
+        CettaTptpReadOutcomeV1 outcome;
+        if (nargs != 1u || !cetta_langdef_text_arg(args[0], &path))
+            return langdef_error(
+                arena, head, "tptp frozen read-file expects a path");
+        if (!cetta_tptp_read_file_frozen_outcome_v1(
+                path, arena, &result, &outcome, error, sizeof(error))) {
+            Atom *value = langdef_tptp_read_outcome(arena, &outcome);
+            if (value)
+                return langdef_return(arena, value);
+            return langdef_error(
+                arena, head,
+                error[0] ? error : "tptp frozen read-file failed");
+        }
+        return langdef_return(arena, result);
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_tptp_read_text_frozen_v1")) {
+        const char *text = NULL;
+        Atom *result = NULL;
+        CettaTptpReadOutcomeV1 outcome;
+        if (nargs != 1u || !cetta_langdef_text_arg(args[0], &text))
+            return langdef_error(
+                arena, head, "tptp frozen read-text expects a string");
+        if (!cetta_tptp_read_text_frozen_outcome_v1(
+                text ? text : "", arena, &result, &outcome,
+                error, sizeof(error))) {
+            Atom *value = langdef_tptp_read_outcome(arena, &outcome);
+            if (value)
+                return langdef_return(arena, value);
+            return langdef_error(
+                arena, head,
+                error[0] ? error : "tptp frozen read-text failed");
+        }
+        return langdef_return(arena, result);
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_bnf_ebnf_canonical_v1")) {
+        Atom *result = NULL;
+
+        if (nargs != 4u)
+            return langdef_error(
+                arena, head,
+                "bnf canonical terms expect the lowered document, helper origins, grammar authority, and CST tuple");
+        if (!cetta_grammar_canonical_bnf_terms_v1(
+                args[0], args[1], args[2], args[3], arena, &result,
+                error, sizeof(error)))
+            return langdef_error(
+                arena, head, error[0] ? error : "bnf canonical terms failed");
+        return langdef_return(arena, result);
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_bnf_ebnf_canonical_language_v1")) {
+        Atom *result = NULL;
+
+        if (nargs != 3u)
+            return langdef_error(
+                arena, head,
+                "bnf canonical language expects the lowered document, helper origins, and grammar authority");
+        if (!cetta_grammar_canonical_bnf_language_v1(
+                args[0], args[1], args[2], "EbnfCanonicalV1", arena, &result,
+                error, sizeof(error)))
+            return langdef_error(
+                arena, head, error[0] ? error : "bnf canonical language failed");
+        return langdef_return(arena, result);
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_bnf_ebnf_canonical_collisions_v1")) {
+        Atom *result = NULL;
+
+        if (nargs != 3u)
+            return langdef_error(
+                arena, head,
+                "bnf canonical collisions expect the lowered document, helper origins, and grammar authority");
+        if (!cetta_grammar_canonical_bnf_collisions_v1(args[0], args[1], args[2], arena, &result,
+                                                       error, sizeof(error)))
+            return langdef_error(
+                arena, head, error[0] ? error : "bnf canonical collisions failed");
+        return langdef_return(arena, result);
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_bnf_ebnf_canonical_print_v1")) {
+        Atom *result = NULL;
+        const char *rule = NULL;
+
+        if (nargs != 5u || !cetta_langdef_text_arg(args[3], &rule))
+            return langdef_error(
+                arena, head,
+                "bnf canonical print expects the lowered document, helper origins, grammar authority, a rule, and a term");
+        if (!cetta_grammar_canonical_bnf_print_v1(
+                args[0], args[1], args[2], rule, args[4], arena, &result,
+                error, sizeof(error)))
+            return langdef_error(
+                arena, head, error[0] ? error : "bnf canonical print failed");
+        return langdef_return(arena, result);
+    }
 
     if (atom_is_symbol(head, "__cetta_lib_bnf_ebnf_project_v1")) {
         Atom *result = NULL;
@@ -5964,8 +7705,8 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
                 error[0] ? error :
                     "langdef:load-deterministic-equations expects source paths");
         if (!cetta_deterministic_equation_plan_v1_load(
-                paths, path_count, &resource, &status,
-                error, sizeof(error)))
+                paths, path_count, &cetta_langdef_deterministic_vocabulary_v1,
+                &resource, &status, error, sizeof(error)))
             return langdef_error(
                 arena, head,
                 error[0] ? error :
@@ -5983,7 +7724,11 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
                 ctx, arena, DETERMINISTIC_EQUATION_HANDLE_KIND, id));
     }
 
-    if (atom_is_symbol(head, "__cetta_lib_deterministic_equations_run")) {
+    if (atom_is_symbol(head, "__cetta_lib_deterministic_equations_run") ||
+        atom_is_symbol(
+            head, "__cetta_lib_deterministic_equations_run_data")) {
+        bool arguments_are_data = atom_is_symbol(
+            head, "__cetta_lib_deterministic_equations_run_data");
         uint64_t id;
         CettaDeterministicEquationPlanV1 *resource;
         CettaDeterministicEquationStatusV1 status =
@@ -6005,7 +7750,13 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
             return langdef_error(
                 arena, head,
                 error[0] ? error : "invalid deterministic call envelope");
-        if (!cetta_deterministic_equation_plan_v1_run(
+        bool (*execute)(const CettaDeterministicEquationPlanV1 *, const Atom *,
+            CettaDeterministicPrimitiveFnV1, void *, Arena *, uint32_t, uint64_t,
+            Atom **, CettaDeterministicEquationStatusV1 *, char *, size_t) =
+                arguments_are_data
+                    ? cetta_deterministic_equation_plan_v1_apply
+                    : cetta_deterministic_equation_plan_v1_run;
+        if (!execute(
                 resource, call, langdef_deterministic_equation_primitive,
                 NULL, arena, LANGDEF_DEFAULT_EQUATION_CONTINUATIONS,
                 UINT64_C(100000000),
@@ -6854,11 +8605,11 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
         Atom *result;
         if (nargs != 1u ||
             !langdef_codepoints_collect(args[0], &bytes, &len, &cap, 0u) ||
-            len == 0u) {
+            len == 0u || memchr(bytes, '\0', len)) {
             free(bytes);
             return langdef_error(
                 arena, head,
-                "langdef:codepoints->symbol expects a nonempty cp sequence");
+                "langdef:codepoints->symbol expects a nonempty cp sequence without NUL");
         }
         result = atom_symbol(arena, (const char *)bytes);
         free(bytes);
@@ -6877,8 +8628,66 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
                 arena, head,
                 "langdef:codepoints->string expects a cp sequence");
         }
-        result = atom_string(arena, bytes ? (const char *)bytes : "");
+        result = atom_string_n(arena, bytes ? (const char *)bytes : "", len);
         free(bytes);
+        return langdef_return(arena, result);
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_langdef_symbol_codepoints")) {
+        const char *bytes;
+        Atom *string;
+        Atom *result;
+        if (nargs != 1u || !args[0] || args[0]->kind != ATOM_SYMBOL)
+            return langdef_error(
+                arena, head,
+                "langdef:symbol->codepoints expects one symbol");
+        bytes = symbol_bytes(g_symbols, args[0]->sym_id);
+        if (!bytes)
+            return langdef_error(
+                arena, head,
+                "langdef:symbol->codepoints could not resolve the symbol");
+        string = atom_string(arena, bytes);
+        result = langdef_string_codepoints(string, arena, NULL, 0u);
+        if (!result)
+            return langdef_error(
+                arena, head,
+                "langdef:symbol->codepoints could not decode the symbol");
+        return langdef_return(arena, result);
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_langdef_symbol_append")) {
+        const char *left;
+        const char *right;
+        size_t left_len;
+        size_t right_len;
+        char *joined;
+        Atom *result;
+        if (nargs != 2u || !args[0] || !args[1] ||
+            args[0]->kind != ATOM_SYMBOL || args[1]->kind != ATOM_SYMBOL)
+            return langdef_error(
+                arena, head,
+                "langdef:append-symbol expects two symbols");
+        left = symbol_bytes(g_symbols, args[0]->sym_id);
+        right = symbol_bytes(g_symbols, args[1]->sym_id);
+        if (!left || !right)
+            return langdef_error(
+                arena, head,
+                "langdef:append-symbol could not resolve a symbol");
+        left_len = strlen(left);
+        right_len = strlen(right);
+        if (left_len > SIZE_MAX - right_len - 1u)
+            return langdef_error(
+                arena, head,
+                "langdef:append-symbol length overflow");
+        joined = malloc(left_len + right_len + 1u);
+        if (!joined)
+            return langdef_error(
+                arena, head,
+                "langdef:append-symbol allocation failed");
+        memcpy(joined, left, left_len);
+        memcpy(joined + left_len, right, right_len + 1u);
+        result = atom_symbol(arena, joined);
+        free(joined);
         return langdef_return(arena, result);
     }
 

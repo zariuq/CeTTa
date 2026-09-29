@@ -252,7 +252,10 @@ typedef struct {
 
 typedef struct TermEntry {
     uint64_t byte_off;
-    uint64_t byte_len;
+    uint32_t byte_len;
+    /* The record's coordinate in the intern table, kept so the table grows
+     * and the record is placed without reading the record again. */
+    uint32_t coordinate;
     Atom *decoded_cache;
 } TermEntry;
 
@@ -360,22 +363,100 @@ char *term_universe_atom_to_parseable_string(Arena *a,
                                              AtomId id);
 Atom *term_universe_store_atom(TermUniverse *universe, Arena *fallback,
                                Atom *src);
-const CettaTermHdr *tu_hdr(const TermUniverse *universe, AtomId id);
-AtomKind tu_kind(const TermUniverse *universe, AtomId id);
-CettaExprLen tu_arity(const TermUniverse *universe, AtomId id);
+/* A record header's aux word: its data (an expression's arity, a string's
+ * length) and whether the term has variables. */
+#define CETTA_TERM_HDR_HAS_VARS 0x80000000u
+#define CETTA_TERM_HDR_DATA_MASK 0x7fffffffu
+
+/* The accessors below read an id's record header inline when the record is
+ * in the blob pool, as nearly every stored term's is; these answer the rest,
+ * a term kept only as its decoded atom, and every id in a diagnostics
+ * build, whose ids may be offset. */
+const CettaTermHdr *term_universe_hdr_checked(const TermUniverse *universe,
+                                              AtomId id);
+AtomKind term_universe_kind_unrecorded(const TermUniverse *universe,
+                                       AtomId id);
+CettaExprLen term_universe_arity_unrecorded(const TermUniverse *universe,
+                                            AtomId id);
+SymbolId term_universe_head_sym_unrecorded(const TermUniverse *universe,
+                                           AtomId id);
+
+/* The record header of `id`, or NULL when it has none. */
+static inline const CettaTermHdr *tu_hdr(const TermUniverse *universe,
+                                         AtomId id) {
+#if CETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS
+    return term_universe_hdr_checked(universe, id);
+#else
+    /* The sentinel id is past every universe's length. */
+    if (!universe || id >= universe->len)
+        return NULL;
+    const TermEntry *entry = &universe->entries[id];
+    if (entry->byte_off == CETTA_TERM_ENTRY_BLOB_NONE ||
+        entry->byte_len < sizeof(CettaTermHdr) || !universe->blob_pool ||
+        entry->byte_off > universe->blob_len ||
+        entry->byte_len > universe->blob_len - entry->byte_off)
+        return NULL;
+    return (const CettaTermHdr *)(universe->blob_pool + entry->byte_off);
+#endif
+}
+
+static inline AtomKind tu_kind(const TermUniverse *universe, AtomId id) {
+    const CettaTermHdr *hdr = tu_hdr(universe, id);
+    return hdr ? (AtomKind)hdr->tag
+               : term_universe_kind_unrecorded(universe, id);
+}
+
+static inline CettaExprLen tu_arity(const TermUniverse *universe,
+                                    AtomId id) {
+    const CettaTermHdr *hdr = tu_hdr(universe, id);
+    if (!hdr)
+        return term_universe_arity_unrecorded(universe, id);
+    return hdr->tag == ATOM_EXPR
+        ? (CettaExprLen)(hdr->aux32 & CETTA_TERM_HDR_DATA_MASK) : 0u;
+}
+
+static inline SymbolId tu_head_sym(const TermUniverse *universe, AtomId id) {
+    const CettaTermHdr *hdr = tu_hdr(universe, id);
+    if (!hdr)
+        return term_universe_head_sym_unrecorded(universe, id);
+    return hdr->tag == ATOM_SYMBOL || hdr->tag == ATOM_EXPR
+        ? hdr->sym_or_head : SYMBOL_ID_NONE;
+}
+
 uint32_t tu_hash32(const TermUniverse *universe, AtomId id);
 SymbolId tu_sym(const TermUniverse *universe, AtomId id);
 VarId tu_var_id(const TermUniverse *universe, AtomId id);
 AtomId tu_var_name_key_id(const TermUniverse *universe, AtomId id);
-SymbolId tu_head_sym(const TermUniverse *universe, AtomId id);
 GroundedKind tu_ground_kind(const TermUniverse *universe, AtomId id);
 int64_t tu_int(const TermUniverse *universe, AtomId id);
 double tu_float(const TermUniverse *universe, AtomId id);
 bool tu_bool(const TermUniverse *universe, AtomId id);
+/* The value of an internal tag, or 0 for any other atom. */
+int64_t tu_internal_tag(const TermUniverse *universe, AtomId id);
 const char *tu_string_cstr(const TermUniverse *universe, AtomId id);
+/* The byte length of a string; its bytes may hold NUL. */
+size_t tu_string_len(const TermUniverse *universe, AtomId id);
 const char *tu_bigint_cstr(const TermUniverse *universe, AtomId id);
 const char *tu_rational_cstr(const TermUniverse *universe, AtomId id);
-AtomId tu_child(const TermUniverse *universe, AtomId id, CettaExprIndex idx);
+/* The id of child `idx` of the expression `id`: its payload follows its
+ * header, one id per child at the store format's width. */
+static inline AtomId tu_child(const TermUniverse *universe, AtomId id,
+                              CettaExprIndex idx) {
+    const CettaTermHdr *hdr = tu_hdr(universe, id);
+    if (!hdr || hdr->tag != ATOM_EXPR ||
+        idx >= (CettaExprIndex)(hdr->aux32 & CETTA_TERM_HDR_DATA_MASK))
+        return CETTA_ATOM_ID_NONE;
+    const uint8_t *payload = (const uint8_t *)(hdr + 1);
+    switch (universe->store_format) {
+    case TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1:
+        return cetta_atom_id_storage_load_bits(
+            payload + (size_t)idx * sizeof(uint32_t), 32u);
+    case TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1:
+        return cetta_atom_id_storage_load_bits(
+            payload + (size_t)idx * sizeof(uint64_t), 64u);
+    }
+    return CETTA_ATOM_ID_NONE;
+}
 bool tu_has_vars(const TermUniverse *universe, AtomId id);
 
 AtomId tu_intern_symbol(TermUniverse *universe, SymbolId sym_id);
@@ -385,9 +466,16 @@ AtomId tu_intern_named_var(TermUniverse *universe, AtomId name_key_id,
 AtomId tu_intern_int(TermUniverse *universe, int64_t value);
 AtomId tu_intern_float(TermUniverse *universe, double value);
 AtomId tu_intern_bool(TermUniverse *universe, bool value);
+AtomId tu_intern_list_tag(TermUniverse *universe, int64_t tag);
+AtomId tu_intern_string_n(TermUniverse *universe, const char *bytes,
+                          size_t len);
 AtomId tu_intern_string(TermUniverse *universe, const char *value);
 AtomId tu_intern_bigint(TermUniverse *universe, const char *value);
 AtomId tu_intern_rational(TermUniverse *universe, const char *value);
+/* The list [elems...], or [elems... | rest] when rest is not CETTA_ATOM_ID_NONE;
+ * a rest that is itself a list or list pattern is spliced in. */
+AtomId tu_list_from_ids(TermUniverse *universe, const AtomId *elems,
+                        CettaExprLen elem_len, AtomId rest);
 AtomId tu_expr_from_ids(TermUniverse *universe, const AtomId *child_ids,
                         CettaExprLen arity);
 

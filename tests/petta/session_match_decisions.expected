@@ -1,0 +1,17 @@
+warm
+cool
+(blend warm cool)
+true
+cool
+(blend cool warm)
+true
+()
+()
+warm
+true
+true
+cool
+warm
+cool
+cool
+cool

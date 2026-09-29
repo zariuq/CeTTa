@@ -1,0 +1,24 @@
+[(fof a axiom (and X n0))]
+[(fof a axiom (and X n0))]
+[(fof a axiom (and X n0))]
+"fof(a,axiom,and(X,n0)).
+"
+"fof(a,axiom,collision(X)).
+"
+"fof(a,axiom,'+'(1,2)).
+"
+"fof(a,axiom,let(X,p,q)).
+"
+(BoundaryRoundTrip true (TPTP:RecordStatistics 5 5 0 0 0 0 0 0))
+"fof(a,axiom,and(X,n0)).
+fof(b,axiom,collision(X)).
+fof(c,axiom,let(X,p,q)).
+fof(d,axiom,or(not(X),quote(Y))).
+fof(e,axiom,'+'(1,2)).
+"
+BoundaryMustNotExecute
+RecordMustNotExecute
+(BoundaryInspection application [X n0] [X])
+(BoundaryInspection application [X] [X])
+"fof(a,axiom,collision(X)).
+"

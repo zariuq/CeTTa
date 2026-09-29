@@ -39,7 +39,7 @@ projection_artifact_name=official_fof_batch_projection_v1.metta
         'import Mettapedia.GSLT.LanguageDef.TptpOfficialFofBatchProjectionLanguageDef' \
         'open Mettapedia.OSLF.MeTTaIL.Syntax' \
         'open Mettapedia.GSLT.LanguageDef' \
-        '#eval IO.println ((CanonicalWire.renderLanguage? TptpOfficialFofBatchProjectionLanguageDef.language).getD "")' |
+        '#eval IO.print ((CanonicalWire.renderLanguage? TptpOfficialFofBatchProjectionLanguageDef.language).getD "")' |
         lake env lean --stdin
 ) >"$candidate_dir/$projection_artifact_name"
 

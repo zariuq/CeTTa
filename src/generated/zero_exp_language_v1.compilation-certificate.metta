@@ -1,5 +1,4 @@
 (gslt-compilation-certificate-v1
-  (compiler "CettaGsltLanguageNativeCompilerV1" "f11383da9c1fc750bbdb6a444c8954d9968bf085d45136414b37fdcdbd1d3440")
   (descriptor "cetta_zero_exp_language_v1")
   (language "zero")
   (profile "exp")
@@ -11,9 +10,9 @@
   (semantic-source 3 "semantics/semantic_runner_v1.metta" 4126 "01b84ed5a038cf849de471372c12c3300561c6c34ad9096d60d8e4ad16ed7bbd")
   (admission 4 57 "5c119178cfd3dc965a35d7b4d0040415d1c26eb3b30ec3c533f87ec34d9f04f9")
   (compiled-plan "CGP1" 25977 "e0b56c14510965f068029578f2cc4cb24912dcb5bd1ab0aedbc9f5aedae9213c")
-  (artifact 220 "f82ea891a18808699d5d37176db918fbc1a7ea432943d0a213a300732d4486a7" 305290 "69a6640d95cd4207768b5e71b2f2f34569a711c9dd91037c6e14a0d7473a0af1" "f72a8fc22ff34d0eca1f887fedfb736794a3f1660870c2ef85b72ca9e65db7e4")
+  (artifact 220 "f82ea891a18808699d5d37176db918fbc1a7ea432943d0a213a300732d4486a7" 305199 "71dbdb7dfda7f3728bed6acbd22536be1a79bb3424c3443ba4989f1f31f9517d" "347686af2673e8fe7477d17c13aa595014bad8ed2e9fe035e3fe0bf3bd47f699")
   (stage 0 "source-selection" "authored-gslt-v1" "419a29a6ec43e17583aba383c80215eff0517c7c4b45f21bc918d4182c1b433c")
   (stage 1 "source-admission" "419a29a6ec43e17583aba383c80215eff0517c7c4b45f21bc918d4182c1b433c" "5c119178cfd3dc965a35d7b4d0040415d1c26eb3b30ec3c533f87ec34d9f04f9")
   (stage 2 "plan-compilation" "5c119178cfd3dc965a35d7b4d0040415d1c26eb3b30ec3c533f87ec34d9f04f9" "e0b56c14510965f068029578f2cc4cb24912dcb5bd1ab0aedbc9f5aedae9213c")
-  (stage 3 "artifact-serialization" "e0b56c14510965f068029578f2cc4cb24912dcb5bd1ab0aedbc9f5aedae9213c" "f72a8fc22ff34d0eca1f887fedfb736794a3f1660870c2ef85b72ca9e65db7e4")
+  (stage 3 "artifact-serialization" "e0b56c14510965f068029578f2cc4cb24912dcb5bd1ab0aedbc9f5aedae9213c" "347686af2673e8fe7477d17c13aa595014bad8ed2e9fe035e3fe0bf3bd47f699")
 )

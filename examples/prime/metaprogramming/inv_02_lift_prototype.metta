@@ -91,7 +91,8 @@
 !(observe ((lam x (lam y (pair x y))) y))
 
 ; --- the proposed bracket spelling is not in the reader ----------------------
-; 19. Brackets fuse into neighbouring tokens today.
+; 19. Brackets end tokens and read a list value; a bracket touching a term
+;     is not yet a substitution.
 !(parse "(f @(foo $x)[$x := @a])")
 ; 20. A bare bracketed template is two forms, which the one-form reader
 ;     refuses.  (A top-level error ends the run, so this query is last.)

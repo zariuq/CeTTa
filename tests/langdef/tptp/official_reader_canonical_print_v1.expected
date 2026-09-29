@@ -1,0 +1,15 @@
+(TptpCanonicalPrintRoundTripV1 true (TPTP:RecordStatistics 2 2 0 0 0 0 0 0))
+(TptpCanonicalPrintRoundTripV1 true (TPTP:RecordStatistics 1 0 1 0 0 0 0 0))
+(TptpCanonicalPrintRoundTripV1 true (TPTP:RecordStatistics 3 0 0 3 0 0 0 0))
+(TptpCanonicalPrintRoundTripV1 true (TPTP:RecordStatistics 3 0 0 0 3 0 0 0))
+(TptpCanonicalPrintRoundTripV1 true (TPTP:RecordStatistics 1 0 0 0 0 1 0 0))
+(TptpCanonicalPrintRoundTripV1 true (TPTP:RecordStatistics 1 0 0 0 0 0 1 0))
+(TptpCanonicalPrintRoundTripV1 true (TPTP:RecordStatistics 1 0 0 0 0 0 0 1))
+(TptpCanonicalPrintPathRoundTripV1 1 (TptpCanonicalPrintRoundTripV1 true (TPTP:RecordStatistics 33 0 33 0 0 0 0 0)))
+(TptpCanonicalPrintPathRoundTripV1 2 (TptpCanonicalPrintRoundTripV1 true (TPTP:RecordStatistics 21 21 0 0 0 0 0 0)))
+(TptpCanonicalPrintPathRoundTripV1 3 (TptpCanonicalPrintRoundTripV1 true (TPTP:RecordStatistics 53 29 24 0 0 0 0 0)))
+(TptpCanonicalPrintPathRoundTripV1 4 (TptpCanonicalPrintRoundTripV1 true (TPTP:RecordStatistics 66 61 5 0 0 0 0 0)))
+(TptpCanonicalPrintLexicalKindsV1 (TptpCanonicalPrintRoundTripV1 true (TPTP:RecordStatistics 1 1 0 0 0 0 0 0)))
+"fof(a,axiom,p).
+fof(a,conjecture,~p).
+"

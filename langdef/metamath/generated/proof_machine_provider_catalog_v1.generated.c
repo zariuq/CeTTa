@@ -108,5 +108,4 @@ const CettaGsltProviderCatalogV1 cetta_metamath_proof_machine_provider_catalog_v
     .source_sha256 = "8f4382016126f05f5e0d3ca195eb954330356f6d453c287f81e6740e5805d8b7",
     .requirements = cetta_metamath_proof_machine_provider_catalog_v1_requirements_v1,
     .requirement_count = 12u,
-    .generator_sha256 = "c245685e10fde12878648b1ed530e91eb29a0bafb2b52e9aa8225fdebaf0b4f6",
 };

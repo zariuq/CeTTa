@@ -1,5 +1,6 @@
 #include "deterministic_equation_plan_v1.h"
 
+#include "deterministic_equation_descent_v1.h"
 #include "finite_horn_gslt_v1.h"
 #include "gslt_composition_v1.h"
 #include "src/symbol.h"
@@ -19,10 +20,19 @@ typedef struct {
     uint32_t arity;
 } DeterministicEquationRuleV1;
 
+typedef struct {
+    const char *name;
+    size_t arity;
+} DeterministicEquationOperatorV1;
+
 struct CettaDeterministicEquationPlanV1 {
     Arena source_arena;
     DeterministicEquationRuleV1 *rules;
     uint32_t rule_count;
+    DeterministicEquationOperatorV1 *operators;
+    size_t operator_count;
+    /* The primitives the plan was admitted with, and runs with. */
+    CettaDeterministicVocabularyV1 vocabulary;
 };
 
 typedef struct {
@@ -47,6 +57,17 @@ typedef struct {
     CettaDeterministicEquationStatusV1 status;
     char *error;
     size_t error_size;
+    /* A nullary call is a constant: its value is computed once per run. */
+    SymbolId *memo_heads;
+    Atom **memo_values;
+    uint32_t memo_count;
+    uint32_t memo_capacity;
+    /* The head symbol atoms of the values built in this run, allocated once
+     * each in the result arena: open addressing by symbol id. */
+    SymbolId *head_ids;
+    Atom **head_atoms;
+    uint32_t head_count;
+    uint32_t head_capacity;
 } DeterministicEquationContextV1;
 
 static int equation_rule_compare(const void *left_opaque,
@@ -394,6 +415,7 @@ static Atom *equation_bind_source_variables(
  * owns the projected GSLT values and selected deterministic equations. */
 static bool equation_plan_from_source(
     const FHGSLTPackage *source,
+    const CettaDeterministicVocabularyV1 *vocabulary,
     CettaDeterministicEquationPlanV1 **out,
     CettaDeterministicEquationStatusV1 *status,
     char *error, size_t error_size) {
@@ -551,6 +573,56 @@ static bool equation_plan_from_source(
     qsort(plan->rules, selected, sizeof(*plan->rules),
           equation_rule_compare);
     plan->rule_count = selected;
+    if (vocabulary)
+        plan->vocabulary = *vocabulary;
+    {
+        /* Admit only programs whose calls descend: every evaluation of an
+         * admitted program ends. */
+        CettaDescentRuleV1 *descent = calloc(selected, sizeof(*descent));
+        if (!descent) {
+            if (status)
+                *status = CETTA_DETERMINISTIC_EQUATION_V1_RESOURCE_LIMIT;
+            (void)equation_error(error, error_size,
+                                 "cannot allocate the descent check");
+            goto fail;
+        }
+        for (uint32_t index = 0u; index < selected; index++)
+            descent[index] = (CettaDescentRuleV1){
+                .name = plan->rules[index].name,
+                .left = plan->rules[index].left,
+                .right = plan->rules[index].right,
+            };
+        bool resource_failure = false;
+        bool descends = cetta_deterministic_equation_descends_v1(
+            descent, selected, &plan->vocabulary, &resource_failure,
+            error, error_size);
+        free(descent);
+        if (!descends) {
+            if (status)
+                *status = resource_failure
+                    ? CETTA_DETERMINISTIC_EQUATION_V1_RESOURCE_LIMIT
+                    : CETTA_DETERMINISTIC_EQUATION_V1_NON_DESCENDING;
+            goto fail;
+        }
+    }
+    plan->operators = calloc(
+        composition.operator_count ? composition.operator_count : 1u,
+        sizeof(*plan->operators));
+    if (!plan->operators) {
+        if (status)
+            *status = CETTA_DETERMINISTIC_EQUATION_V1_RESOURCE_LIMIT;
+        (void)equation_error(error, error_size,
+                             "cannot allocate deterministic equation signature");
+        goto fail;
+    }
+    for (size_t index = 0u; index < composition.operator_count; index++) {
+        const char *name = composition.operators[index].name;
+        plan->operators[index] = (DeterministicEquationOperatorV1){
+            .name = arena_strdup(&plan->source_arena, name),
+            .arity = composition.operators[index].arity,
+        };
+    }
+    plan->operator_count = composition.operator_count;
     if (status)
         *status = CETTA_DETERMINISTIC_EQUATION_V1_OK;
     *out = plan;
@@ -567,6 +639,7 @@ fail:
 
 bool cetta_deterministic_equation_plan_v1_load(
     const char *const *presentation_paths, size_t presentation_count,
+    const CettaDeterministicVocabularyV1 *vocabulary,
     CettaDeterministicEquationPlanV1 **out,
     CettaDeterministicEquationStatusV1 *status,
     char *error, size_t error_size) {
@@ -589,13 +662,15 @@ bool cetta_deterministic_equation_plan_v1_load(
             *status = CETTA_DETERMINISTIC_EQUATION_V1_INVALID_PRESENTATION;
         return false;
     }
-    bool ok = equation_plan_from_source(source, out, status, error, error_size);
+    bool ok = equation_plan_from_source(
+        source, vocabulary, out, status, error, error_size);
     fhgslt_package_free(source);
     return ok;
 }
 
 bool cetta_deterministic_equation_plan_v1_load_inputs(
     const CettaDeterministicEquationInputV1 *inputs, size_t input_count,
+    const CettaDeterministicVocabularyV1 *vocabulary,
     CettaDeterministicEquationPlanV1 **out,
     CettaDeterministicEquationStatusV1 *status,
     char *error, size_t error_size) {
@@ -628,7 +703,8 @@ bool cetta_deterministic_equation_plan_v1_load_inputs(
             *status = CETTA_DETERMINISTIC_EQUATION_V1_INVALID_PRESENTATION;
         return false;
     }
-    bool ok = equation_plan_from_source(source, out, status, error, error_size);
+    bool ok = equation_plan_from_source(
+        source, vocabulary, out, status, error, error_size);
     fhgslt_package_free(source);
     return ok;
 }
@@ -639,6 +715,7 @@ void cetta_deterministic_equation_plan_v1_free(
         return;
     arena_free(&plan->source_arena);
     free(plan->rules);
+    free(plan->operators);
     free(plan);
 }
 
@@ -773,7 +850,8 @@ typedef enum {
     EQUATION_FRAME_CALL,
     EQUATION_FRAME_LET_VALUE,
     EQUATION_FRAME_LET_BODY,
-    EQUATION_FRAME_RULE_ENVIRONMENT
+    EQUATION_FRAME_RULE_ENVIRONMENT,
+    EQUATION_FRAME_MEMOIZE
 } DeterministicEquationFrameKindV1;
 
 typedef struct {
@@ -807,6 +885,9 @@ typedef struct {
         struct {
             DeterministicEquationEnvironmentV1 *environment;
         } rule_environment;
+        struct {
+            SymbolId head;
+        } memoize;
     } as;
 } DeterministicEquationFrameV1;
 
@@ -840,6 +921,7 @@ static void equation_frame_dispose(DeterministicEquationFrameV1 *frame) {
         break;
     case EQUATION_FRAME_LET_VALUE:
     case EQUATION_FRAME_LET_BODY:
+    case EQUATION_FRAME_MEMOIZE:
         break;
     }
     memset(frame, 0, sizeof(*frame));
@@ -909,6 +991,93 @@ static bool equation_term_reusable(
         atom_graph_is_closed_for_arena(context->arena, term);
 }
 
+static Atom *equation_memo_lookup(
+    const DeterministicEquationContextV1 *context, SymbolId head) {
+    for (uint32_t i = 0u; i < context->memo_count; i++) {
+        if (context->memo_heads[i] == head)
+            return context->memo_values[i];
+    }
+    return NULL;
+}
+
+static bool equation_memo_store(
+    DeterministicEquationContextV1 *context, SymbolId head, Atom *value) {
+    if (context->memo_count == context->memo_capacity) {
+        uint32_t capacity = context->memo_capacity ? context->memo_capacity * 2u : 8u;
+        SymbolId *heads = realloc(context->memo_heads, sizeof(*heads) * capacity);
+        if (!heads)
+            return false;
+        context->memo_heads = heads;
+        Atom **values = realloc(context->memo_values, sizeof(*values) * capacity);
+        if (!values)
+            return false;
+        context->memo_values = values;
+        context->memo_capacity = capacity;
+    }
+    context->memo_heads[context->memo_count] = head;
+    context->memo_values[context->memo_count] = value;
+    context->memo_count++;
+    return true;
+}
+
+static Atom *equation_head_atom(
+    DeterministicEquationContextV1 *context, SymbolId head) {
+    uint32_t slot;
+    if (context->head_count * 2u >= context->head_capacity) {
+        uint32_t capacity = context->head_capacity ? context->head_capacity * 2u : 256u;
+        SymbolId *ids = calloc(capacity, sizeof(*ids));
+        Atom **atoms = calloc(capacity, sizeof(*atoms));
+        if (!ids || !atoms) {
+            free(ids);
+            free(atoms);
+            return atom_symbol_id(context->arena, head);
+        }
+        for (uint32_t i = 0u; i < context->head_capacity; i++) {
+            if (!context->head_atoms[i])
+                continue;
+            slot = (uint32_t)(context->head_ids[i] * 2654435761u) & (capacity - 1u);
+            while (atoms[slot])
+                slot = (slot + 1u) & (capacity - 1u);
+            ids[slot] = context->head_ids[i];
+            atoms[slot] = context->head_atoms[i];
+        }
+        free(context->head_ids);
+        free(context->head_atoms);
+        context->head_ids = ids;
+        context->head_atoms = atoms;
+        context->head_capacity = capacity;
+    }
+    slot = (uint32_t)(head * 2654435761u) & (context->head_capacity - 1u);
+    while (context->head_atoms[slot]) {
+        if (context->head_ids[slot] == head)
+            return context->head_atoms[slot];
+        slot = (slot + 1u) & (context->head_capacity - 1u);
+    }
+    context->head_ids[slot] = head;
+    context->head_atoms[slot] = atom_symbol_id(context->arena, head);
+    if (context->head_atoms[slot])
+        context->head_count++;
+    return context->head_atoms[slot];
+}
+
+/* A rule's left side (f p1 ... pn) against the evaluated arguments of a
+ * call to f: the patterns are matched argument by argument, so no call term
+ * is built to match. */
+static bool match_arguments(
+    const Atom *left, Atom *const *arguments, uint32_t arity,
+    DeterministicEquationEnvironmentV1 *environment,
+    DeterministicEquationContextV1 *context, uint32_t depth) {
+    if (!equation_take_work(context, depth) || !left ||
+        left->kind != ATOM_EXPR || left->expr.len != (CettaExprLen)arity + 1u)
+        return false;
+    for (uint32_t index = 0u; index < arity; index++) {
+        if (!match_pattern(left->expr.elems[index + 1u], arguments[index],
+                           environment, context, depth + 1u))
+            return false;
+    }
+    return true;
+}
+
 static DeterministicEquationCallOutcomeV1 equation_complete_call(
     DeterministicEquationContextV1 *context,
     DeterministicEquationStackV1 *stack,
@@ -923,7 +1092,6 @@ static DeterministicEquationCallOutcomeV1 equation_complete_call(
     const DeterministicEquationRuleV1 *matched = NULL;
     DeterministicEquationEnvironmentV1 matched_environment = {0};
     uint32_t match_count = 0u;
-    Atom *evaluated_call = NULL;
 
     *value = NULL;
     *next_term = NULL;
@@ -973,7 +1141,7 @@ static DeterministicEquationCallOutcomeV1 equation_complete_call(
                     "cannot allocate deterministic constructor result");
                 return EQUATION_CALL_FAILED;
             }
-            elements[0] = atom_symbol_id(context->arena, head);
+            elements[0] = equation_head_atom(context, head);
             for (uint32_t index = 0u; index < arity; index++)
                 elements[index + 1u] = arguments[index];
             *value = atom_expr(
@@ -983,63 +1151,58 @@ static DeterministicEquationCallOutcomeV1 equation_complete_call(
         free(arguments);
         return EQUATION_CALL_VALUE;
     }
-    if (reusable) {
-        evaluated_call = (Atom *)call;
-    } else {
-        Atom **elements = calloc(
-            (size_t)arity + 1u, sizeof(*elements));
-        if (!elements) {
-            free(arguments);
-            (void)equation_fail(
-                context, CETTA_DETERMINISTIC_EQUATION_V1_RESOURCE_LIMIT,
-                "cannot allocate deterministic match call");
-            return EQUATION_CALL_FAILED;
-        }
-        elements[0] = atom_symbol_id(context->arena, head);
-        for (uint32_t index = 0u; index < arity; index++)
-            elements[index + 1u] = arguments[index];
-        evaluated_call = atom_expr(
-            context->arena, elements, (CettaExprLen)arity + 1u);
-        free(elements);
-    }
-    free(arguments);
-    for (uint32_t offset = 0u; offset < candidate_count; offset++) {
+    (void)reusable;
+    /* The loader admits only pairwise exclusive left sides, so the first
+     * rule that matches is the only one. */
+    for (uint32_t offset = 0u; offset < candidate_count && match_count == 0u;
+         offset++) {
         const DeterministicEquationRuleV1 *candidate =
             &context->plan->rules[first + offset];
         DeterministicEquationEnvironmentV1 candidate_environment = {0};
-        if (match_pattern(
-                candidate->left, evaluated_call,
+        if (match_arguments(
+                candidate->left, arguments, arity,
                 &candidate_environment, context, stack->count + 1u)) {
             match_count++;
-            if (match_count == 1u) {
-                matched = candidate;
-                matched_environment = candidate_environment;
-                memset(&candidate_environment, 0,
-                       sizeof(candidate_environment));
-            }
+            matched = candidate;
+            matched_environment = candidate_environment;
+            memset(&candidate_environment, 0,
+                   sizeof(candidate_environment));
         } else if (context->status !=
                    CETTA_DETERMINISTIC_EQUATION_V1_OK) {
             free(candidate_environment.items);
             free(matched_environment.items);
+            free(arguments);
             return EQUATION_CALL_FAILED;
         }
         free(candidate_environment.items);
     }
     if (match_count == 0u) {
+        const char *first_argument = NULL;
+        if (arity > 0u && arguments[0]) {
+            Atom *first = arguments[0];
+            if (first->kind == ATOM_GROUNDED &&
+                first->ground.gkind == GV_STRING)
+                first_argument = first->ground.sval;
+            else if (first->kind == ATOM_SYMBOL)
+                first_argument = atom_name_cstr(first);
+        }
         free(matched_environment.items);
-        (void)equation_fail(
-            context, CETTA_DETERMINISTIC_EQUATION_V1_NO_RULE,
-            "defined deterministic equation call %s/%u has no matching rule",
-            atom_name_cstr(call->expr.elems[0]), arity);
+        if (first_argument) {
+            (void)equation_fail(
+                context, CETTA_DETERMINISTIC_EQUATION_V1_NO_RULE,
+                "defined deterministic equation call %s/%u with first argument %.120s has no matching rule",
+                atom_name_cstr(call->expr.elems[0]), arity,
+                first_argument);
+        } else {
+            (void)equation_fail(
+                context, CETTA_DETERMINISTIC_EQUATION_V1_NO_RULE,
+                "defined deterministic equation call %s/%u has no matching rule",
+                atom_name_cstr(call->expr.elems[0]), arity);
+        }
+        free(arguments);
         return EQUATION_CALL_FAILED;
     }
-    if (match_count != 1u) {
-        free(matched_environment.items);
-        (void)equation_fail(
-            context, CETTA_DETERMINISTIC_EQUATION_V1_AMBIGUOUS_RULE,
-            "defined deterministic equation call matches multiple rules");
-        return EQUATION_CALL_FAILED;
-    }
+    free(arguments);
     {
         DeterministicEquationEnvironmentV1 *owned = malloc(sizeof(*owned));
         DeterministicEquationFrameV1 cleanup;
@@ -1068,12 +1231,60 @@ static DeterministicEquationCallOutcomeV1 equation_complete_call(
 
 static Atom *evaluate_term(
     DeterministicEquationContextV1 *context, const Atom *root,
-    DeterministicEquationEnvironmentV1 *root_environment) {
+    DeterministicEquationEnvironmentV1 *root_environment,
+    bool entry_arguments_are_values) {
     DeterministicEquationStackV1 stack = {0};
     const Atom *term = root;
     DeterministicEquationEnvironmentV1 *environment = root_environment;
     Atom *value = NULL;
     bool have_value = false;
+
+    if (entry_arguments_are_values) {
+        if (!root || root->kind != ATOM_EXPR || root->expr.len == 0u ||
+            root->expr.len - 1u > UINT32_MAX ||
+            !root->expr.elems[0] ||
+            root->expr.elems[0]->kind != ATOM_SYMBOL || atom_has_vars(root)) {
+            (void)equation_fail(context,
+                CETTA_DETERMINISTIC_EQUATION_V1_BAD_ARGUMENT,
+                "deterministic data application expects a ground symbol-headed call");
+            goto fail;
+        }
+        if (!equation_take_work(context, 0u))
+            goto fail;
+        uint32_t arity = (uint32_t)(root->expr.len - 1u);
+        Atom **arguments = arity ? calloc(arity, sizeof(*arguments)) : NULL;
+        if (arity && !arguments) {
+            (void)equation_fail(context,
+                CETTA_DETERMINISTIC_EQUATION_V1_RESOURCE_LIMIT,
+                "cannot allocate deterministic data arguments");
+            goto fail;
+        }
+        bool reusable = equation_term_reusable(context, root);
+        for (uint32_t index = 0u; index < arity; index++) {
+            arguments[index] = equation_copy_atom(
+                context, root->expr.elems[index + 1u]);
+            if (!arguments[index]) {
+                free(arguments);
+                goto fail;
+            }
+            reusable = reusable &&
+                arguments[index] == root->expr.elems[index + 1u];
+        }
+        const Atom *next_term = NULL;
+        DeterministicEquationEnvironmentV1 *next_environment = NULL;
+        DeterministicEquationCallOutcomeV1 outcome = equation_complete_call(
+            context, &stack, root, arguments, arity,
+            root->expr.elems[0]->sym_id, reusable,
+            &value, &next_term, &next_environment);
+        if (outcome == EQUATION_CALL_FAILED)
+            goto fail;
+        if (outcome == EQUATION_CALL_DESCEND) {
+            term = next_term;
+            environment = next_environment;
+        } else {
+            have_value = true;
+        }
+    }
 
     while (true) {
         if (!have_value) {
@@ -1239,6 +1450,12 @@ static Atom *evaluate_term(
                 } else {
                     const Atom *next_term = NULL;
                     DeterministicEquationEnvironmentV1 *next_env = NULL;
+                    Atom *memoized = equation_memo_lookup(context, head);
+                    if (memoized) {
+                        value = memoized;
+                        have_value = true;
+                        continue;
+                    }
                     DeterministicEquationCallOutcomeV1 outcome =
                         equation_complete_call(
                             context, &stack, term, NULL, 0u, head,
@@ -1246,6 +1463,13 @@ static Atom *evaluate_term(
                     if (outcome == EQUATION_CALL_FAILED)
                         goto fail;
                     if (outcome == EQUATION_CALL_DESCEND) {
+                        /* A defined nullary call: remember its value. */
+                        DeterministicEquationFrameV1 memo_frame = {
+                            .kind = EQUATION_FRAME_MEMOIZE,
+                            .as.memoize = {.head = head},
+                        };
+                        if (!equation_stack_push(context, &stack, &memo_frame))
+                            goto fail;
                         term = next_term;
                         environment = next_env;
                     } else {
@@ -1368,6 +1592,15 @@ static Atom *evaluate_term(
                 free(frame.as.rule_environment.environment);
                 have_value = true;
                 break;
+            case EQUATION_FRAME_MEMOIZE:
+                if (!equation_memo_store(context, frame.as.memoize.head, value)) {
+                    (void)equation_fail(
+                        context, CETTA_DETERMINISTIC_EQUATION_V1_RESOURCE_LIMIT,
+                        "cannot remember a deterministic constant");
+                    goto fail;
+                }
+                have_value = true;
+                break;
             }
         }
     }
@@ -1377,13 +1610,13 @@ fail:
     return NULL;
 }
 
-bool cetta_deterministic_equation_plan_v1_run_counted(
+static bool deterministic_equation_execute(
     const CettaDeterministicEquationPlanV1 *plan, const Atom *call,
     CettaDeterministicPrimitiveFnV1 primitive, void *primitive_context,
     Arena *arena, uint32_t depth_limit, uint64_t work_limit,
     uint64_t *work_used,
     Atom **out, CettaDeterministicEquationStatusV1 *status,
-    char *error, size_t error_size) {
+    char *error, size_t error_size, bool entry_arguments_are_values) {
     DeterministicEquationContextV1 context;
     DeterministicEquationEnvironmentV1 environment = {0};
     ArenaMark mark;
@@ -1401,6 +1634,10 @@ bool cetta_deterministic_equation_plan_v1_run_counted(
         return equation_error(
             error, error_size,
             "invalid deterministic equation execution request");
+    if (primitive != plan->vocabulary.primitive)
+        return equation_error(
+            error, error_size,
+            "a deterministic equation plan runs with the primitives it was admitted with");
     mark = arena_mark(arena);
     context = (DeterministicEquationContextV1){
         .plan = plan,
@@ -1421,10 +1658,15 @@ bool cetta_deterministic_equation_plan_v1_run_counted(
             error, error_size,
             "cannot allocate deterministic equation copy session");
     }
-    *out = evaluate_term(&context, call, &environment);
+    *out = evaluate_term(&context, call, &environment,
+                         entry_arguments_are_values);
     if (work_used)
         *work_used = work_limit - context.work_remaining;
     free(environment.items);
+    free(context.memo_heads);
+    free(context.memo_values);
+    free(context.head_ids);
+    free(context.head_atoms);
     atom_deep_copy_session_free(context.copy_session);
     if (!*out) {
         arena_reset(arena, mark);
@@ -1444,6 +1686,41 @@ bool cetta_deterministic_equation_plan_v1_run_counted(
     if (status)
         *status = CETTA_DETERMINISTIC_EQUATION_V1_OK;
     return true;
+}
+
+bool cetta_deterministic_equation_plan_v1_run_counted(
+    const CettaDeterministicEquationPlanV1 *plan, const Atom *call,
+    CettaDeterministicPrimitiveFnV1 primitive, void *primitive_context,
+    Arena *arena, uint32_t depth_limit, uint64_t work_limit,
+    uint64_t *work_used,
+    Atom **out, CettaDeterministicEquationStatusV1 *status,
+    char *error, size_t error_size) {
+    return deterministic_equation_execute(
+        plan, call, primitive, primitive_context, arena, depth_limit, work_limit,
+        work_used, out, status, error, error_size, false);
+}
+
+bool cetta_deterministic_equation_plan_v1_apply(
+    const CettaDeterministicEquationPlanV1 *plan, const Atom *call,
+    CettaDeterministicPrimitiveFnV1 primitive, void *primitive_context,
+    Arena *arena, uint32_t depth_limit, uint64_t work_limit,
+    Atom **out, CettaDeterministicEquationStatusV1 *status,
+    char *error, size_t error_size) {
+    return deterministic_equation_execute(
+        plan, call, primitive, primitive_context, arena, depth_limit, work_limit,
+        NULL, out, status, error, error_size, true);
+}
+
+bool cetta_deterministic_equation_plan_v1_apply_counted(
+    const CettaDeterministicEquationPlanV1 *plan, const Atom *call,
+    CettaDeterministicPrimitiveFnV1 primitive, void *primitive_context,
+    Arena *arena, uint32_t depth_limit, uint64_t work_limit,
+    uint64_t *work_used,
+    Atom **out, CettaDeterministicEquationStatusV1 *status,
+    char *error, size_t error_size) {
+    return deterministic_equation_execute(
+        plan, call, primitive, primitive_context, arena, depth_limit, work_limit,
+        work_used, out, status, error, error_size, true);
 }
 
 bool cetta_deterministic_equation_plan_v1_run(
@@ -1479,7 +1756,41 @@ const char *cetta_deterministic_equation_status_name_v1(
         return "primitive_fault";
     case CETTA_DETERMINISTIC_EQUATION_V1_RESOURCE_LIMIT:
         return "resource_limit";
+    case CETTA_DETERMINISTIC_EQUATION_V1_NON_DESCENDING:
+        return "non_descending";
     default:
         return "unknown_status";
     }
+}
+
+uint32_t cetta_deterministic_equation_plan_v1_rule_count(
+    const CettaDeterministicEquationPlanV1 *plan) {
+    return plan ? plan->rule_count : 0u;
+}
+
+bool cetta_deterministic_equation_plan_v1_rule_view(
+    const CettaDeterministicEquationPlanV1 *plan, uint32_t index,
+    const char **name, const Atom **left, const Atom **right) {
+    if (!plan || index >= plan->rule_count)
+        return false;
+    if (name)
+        *name = plan->rules[index].name;
+    if (left)
+        *left = plan->rules[index].left;
+    if (right)
+        *right = plan->rules[index].right;
+    return true;
+}
+
+bool cetta_deterministic_equation_plan_v1_declares(
+    const CettaDeterministicEquationPlanV1 *plan, const char *name,
+    size_t arity) {
+    if (!plan || !name)
+        return false;
+    for (size_t index = 0u; index < plan->operator_count; index++) {
+        if (plan->operators[index].arity == arity &&
+            strcmp(plan->operators[index].name, name) == 0)
+            return true;
+    }
+    return false;
 }

@@ -1022,7 +1022,7 @@ int main(int argc, char **argv) {
     Bindings deep_match_bindings;
     bindings_init(&deep_match_bindings);
     if (!match_atoms(deep_match_left, deep_match_right,
-                     &deep_match_bindings)) {
+                     &deep_match_bindings, &scratch)) {
         fprintf(stderr, "decoded matcher failed above structural depth 64\n");
         bindings_free(&deep_match_bindings);
         goto cleanup;
@@ -1034,7 +1034,7 @@ int main(int argc, char **argv) {
     bindings_init(&deep_match_base);
     if (!bindings_builder_init(&deep_match_builder, &deep_match_base) ||
         !match_atoms_builder(deep_match_left, deep_match_right,
-                             &deep_match_builder)) {
+                             &deep_match_builder, &scratch)) {
         fprintf(stderr, "builder matcher failed above structural depth 64\n");
         bindings_builder_free(&deep_match_builder);
         bindings_free(&deep_match_base);
@@ -1106,7 +1106,7 @@ int main(int argc, char **argv) {
         bindings_free(&cyclic_bindings);
         goto cleanup;
     }
-    if (match_atoms(cycle_expr, cycle_expr, &cyclic_bindings)) {
+    if (match_atoms(cycle_expr, cycle_expr, &cyclic_bindings, &scratch)) {
         fprintf(stderr, "decoded matcher accepted a cyclic finite term\n");
         bindings_free(&cyclic_bindings);
         goto cleanup;
@@ -1129,7 +1129,7 @@ int main(int argc, char **argv) {
     }
     Atom *unrelated_cycle_probe = atom_symbol(&arena, "UnrelatedCycleProbe");
     if (!match_atoms(unrelated_cycle_probe, unrelated_cycle_probe,
-                     &cyclic_bindings)) {
+                     &cyclic_bindings, &scratch)) {
         fprintf(stderr, "unrelated binding cycle rejected a finite match\n");
         bindings_free(&cyclic_bindings);
         goto cleanup;

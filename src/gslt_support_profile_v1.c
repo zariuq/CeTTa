@@ -101,7 +101,6 @@ static bool fields_validate(
         profile->language_name,
         profile->profile_name,
         profile->manifest_sha256,
-        profile->compiler_sha256,
         profile->work_symbol,
         profile->compat_input_symbol,
         profile->compat_input_operator_id,
@@ -116,8 +115,7 @@ static bool fields_validate(
             return profile_error(error, error_size,
                                  "support-transform profile has an empty field");
     }
-    if (!sha256_text(profile->manifest_sha256) ||
-        !sha256_text(profile->compiler_sha256))
+    if (!sha256_text(profile->manifest_sha256))
         return profile_error(error, error_size,
                              "support-transform profile digest is malformed");
     if (profile->work_arity != 3u)
@@ -193,14 +191,15 @@ static bool utf8(const uint8_t *bytes, size_t size) {
     return true;
 }
 
+enum { PROFILE_TEXT_COUNT = 10 };
+
 static void profile_texts(const CettaGsltSupportTransformProfileV1 *p,
-                          const char *texts[11]) {
+                          const char *texts[PROFILE_TEXT_COUNT]) {
     texts[0] = p->language_name; texts[1] = p->profile_name;
-    texts[2] = p->manifest_sha256; texts[3] = p->compiler_sha256;
-    texts[4] = p->work_symbol; texts[5] = p->compat_input_symbol;
-    texts[6] = p->compat_input_operator_id; texts[7] = p->explicit_input_symbol;
-    texts[8] = p->compat_output_symbol; texts[9] = p->compat_output_operator_id;
-    texts[10] = p->explicit_output_symbol;
+    texts[2] = p->manifest_sha256; texts[3] = p->work_symbol;
+    texts[4] = p->compat_input_symbol; texts[5] = p->compat_input_operator_id;
+    texts[6] = p->explicit_input_symbol; texts[7] = p->compat_output_symbol;
+    texts[8] = p->compat_output_operator_id; texts[9] = p->explicit_output_symbol;
 }
 
 typedef struct { uint8_t *bytes; size_t length, capacity; bool ok; } Writer;
@@ -239,11 +238,12 @@ static void put_declarations(Writer *writer,
 }
 
 static void put_profile(Writer *writer, const CettaGsltSupportTransformProfileV1 *p) {
-    const uint8_t header[] = {'C', 'S', 'T', 'P', 0, 1, 0, 0};
+    const uint8_t header[] = {'C', 'S', 'T', 'P', 0, 2, 0, 0};
     put(writer, header, sizeof(header));
-    const char *texts[11];
+    const char *texts[PROFILE_TEXT_COUNT];
     profile_texts(p, texts);
-    for (size_t i = 0; writer->ok && i < 11; i++) put_text(writer, texts[i]);
+    for (size_t i = 0; writer->ok && i < PROFILE_TEXT_COUNT; i++)
+        put_text(writer, texts[i]);
     const uint8_t control[] = {(uint8_t)p->work_arity,
         (uint8_t)p->location_position, (uint8_t)p->input_position,
         (uint8_t)p->output_position, (uint8_t)p->scheduler,
@@ -314,11 +314,12 @@ bool cetta_gslt_support_profile_packet_matches_v1(
     const CettaGsltSupportTransformProfileV1 *p, char *error, size_t error_size) {
     if (!cetta_gslt_support_transform_profile_validate_v1(p, error, error_size)) return false;
     Reader reader = {p->physical_profile_packet, p->physical_profile_packet_size};
-    const uint8_t header[] = {'C', 'S', 'T', 'P', 0, 1, 0, 0};
+    const uint8_t header[] = {'C', 'S', 'T', 'P', 0, 2, 0, 0};
     bool ok = take_equal(&reader, header, sizeof(header));
-    const char *texts[11];
+    const char *texts[PROFILE_TEXT_COUNT];
     profile_texts(p, texts);
-    for (size_t i = 0; ok && i < 11; i++) ok = take_text(&reader, texts[i]);
+    for (size_t i = 0; ok && i < PROFILE_TEXT_COUNT; i++)
+        ok = take_text(&reader, texts[i]);
     const uint8_t control[] = {(uint8_t)p->work_arity,
         (uint8_t)p->location_position, (uint8_t)p->input_position,
         (uint8_t)p->output_position, (uint8_t)p->scheduler,
@@ -464,12 +465,12 @@ static bool decode_document(Arena *arena, const CettaOpLangV1SExpr *root,
 
 bool cetta_gslt_support_profile_from_source_v1(
     Arena *arena, const uint8_t *source, size_t source_size,
-    const char *compiler_sha256, CettaGsltSupportTransformProfileV1 *profile,
-    char *error, size_t error_size) {
+    CettaGsltSupportTransformProfileV1 *profile, char *error,
+    size_t error_size) {
     if (profile) memset(profile, 0, sizeof(*profile));
     if (!arena || !profile || !source || !source_size ||
-        !sha256_text(compiler_sha256) || !utf8(source, source_size))
-        return profile_error(error, error_size, "invalid support profile source bytes or compiler identity");
+        !utf8(source, source_size))
+        return profile_error(error, error_size, "invalid support profile source bytes");
     CettaOpLangV1Document document;
     cetta_op_lang_v1_document_init(&document);
     CettaOpLangV1Status status;
@@ -482,7 +483,6 @@ bool cetta_gslt_support_profile_from_source_v1(
     char digest[65];
     cetta_native_sha256_hex(source, source_size, digest);
     p.manifest_sha256 = arena_strdup(arena, digest);
-    p.compiler_sha256 = arena_strdup(arena, compiler_sha256);
     if (!fields_validate(&p, error, error_size) ||
         !cetta_gslt_support_profile_encode_packet_v1(arena, &p,
             &p.physical_profile_packet, &p.physical_profile_packet_size, error, error_size) ||

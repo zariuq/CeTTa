@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 
+#include "open_equation_machine.h"
 #include "eval.h"
 #include "generated/petta_typecheck_v2_boundary_core_source_binding_v1.generated.h"
 #include "generated/petta_typecheck_v2_source_binding_v1.generated.h"
@@ -33,6 +34,26 @@ static Atom *parse_one(Arena *arena, const char *source) {
     Atom *result = count == 1 && forms ? forms[0] : NULL;
     free(forms);
     return result;
+}
+
+static void test_library_context_initialization(void) {
+    CettaLibraryContext *context = malloc(sizeof(*context));
+    assert(context);
+    const CettaLanguageId languages[] = {CETTA_LANGUAGE_HE, CETTA_LANGUAGE_PETTA};
+    for (size_t i = 0u; i < sizeof(languages) / sizeof(*languages); i++) {
+        /* Fresh storage need not be zero. No cache or cleanup callback may
+         * be read before the component owning it installs one. */
+        memset(context, 0xa5, sizeof(*context));
+        cetta_library_context_init_for_language_profile(context, languages[i], NULL);
+        assert(context->petta_open_programs == NULL);
+        assert(context->petta_open_programs_free == NULL);
+        assert(context->petta_match_decisions == NULL);
+        assert(context->petta_match_decisions_free == NULL);
+        assert(context->petta_trusted_library_import_depth == 0u);
+        cetta_library_context_free(context);
+    }
+    free(context);
+    puts("PASS: library contexts initialize cache ownership on nonzero storage");
 }
 
 static bool collect_flat_fold_int(int64_t value, void *context) {
@@ -1239,6 +1260,37 @@ static void test_answer_materialization_boundaries(
     bindings_free(&environment);
     petta_machine_destroy(&machine);
 
+    /* Publication shares one normalized image across the returned value
+     * and separately exported aliases. The next answer owns a fresh session. */
+    add_equation(space, persistent,
+        "(= (answer-materialization-alias $x $x) $x)");
+    query = parse_one(answers,
+        "(let $value (answer-materialization-shared-dag-host)"
+        " (let $value (answer-materialization-alias $shared $alias)"
+        " (pair $shared $alias)))");
+    assert(query);
+    Atom *alias_call = query->expr.elems[3]->expr.elems[2];
+    Atom *shared_var = alias_call->expr.elems[1];
+    Atom *alias_var = alias_call->expr.elems[2];
+    assert(petta_machine_init(
+        &machine, space, answers, query, NULL, &shared_dag_host));
+    assert(petta_machine_next(&machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(answer && answer->kind == ATOM_EXPR && answer->expr.len == 3u);
+    Atom *shared_image = answer->expr.elems[1];
+    assert(shared_image == answer->expr.elems[2]);
+    Atom *exported_shared = bindings_lookup_value_id(&environment, shared_var->var_id).skeleton;
+    Atom *exported_alias = bindings_lookup_value_id(&environment, alias_var->var_id).skeleton;
+    if (exported_shared != shared_image || exported_alias != shared_image)
+        fprintf(stderr, "publication-sharing: shared=%p alias=%p answer=%p ids=%llu,%llu bindings=%u\n",
+                (void *)exported_shared, (void *)exported_alias, (void *)shared_image,
+                (unsigned long long)shared_var->var_id,
+                (unsigned long long)alias_var->var_id, environment.len);
+    assert(exported_shared == shared_image && exported_alias == shared_image);
+    petta_machine_destroy(&machine);
+    assert(shared_image->kind == ATOM_EXPR && shared_image->expr.len == 3u);
+    bindings_free(&environment);
+
     Atom *box = atom_symbol(answers, "deep-answer-box");
     Atom *leaf = atom_symbol(answers, "deep-answer-leaf");
     Atom *deep = test_nest_unary(
@@ -1981,6 +2033,8 @@ static void test_program_callability_head_kinds(Arena *arena) {
     Atom *probe = parse_one(arena, "(unrelated-call payload)");
     assert(probe);
 
+    Space space;
+    space_init(&space);
     PettaProgram *structured_program = petta_program_new();
     assert(structured_program);
     Atom *structured_equation = parse_one(
@@ -1989,7 +2043,7 @@ static void test_program_callability_head_kinds(Arena *arena) {
         "    (structured-result $program $input))");
     assert(structured_equation);
     assert(petta_program_predeclare_equation(
-        structured_program, structured_equation));
+        structured_program, &space, structured_equation));
     const PettaPlanNode *structured_probe_plan =
         petta_program_plan_current(structured_program, probe);
     assert(structured_probe_plan);
@@ -2004,13 +2058,14 @@ static void test_program_callability_head_kinds(Arena *arena) {
         "(= ($relation payload) (variable-result $relation))");
     assert(variable_equation);
     assert(petta_program_predeclare_equation(
-        variable_program, variable_equation));
+        variable_program, &space, variable_equation));
     const PettaPlanNode *variable_probe_plan =
         petta_program_plan_current(variable_program, probe);
     assert(variable_probe_plan);
     assert(variable_probe_plan->role == PETTA_PLAN_STATIC_CALL);
     assert(variable_probe_plan->relation_head_admitted);
     petta_program_free(variable_program);
+    space_free(&space);
 
     puts("PASS: callability distinguishes variable and structured heads");
 }
@@ -2031,6 +2086,127 @@ static Atom *add_compiled_program_equation(
     assert(petta_program_note_add(
         program, space, stored, plan));
     return stored;
+}
+
+/* Sharing and arena ownership are observable here through native pointers;
+ * printing the represented tree would itself require exponential output. */
+static void test_compiled_graph_transport(TermUniverse *universe, Arena *arena) {
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    Space space;
+    space_init_with_universe(&space, universe);
+    add_compiled_program_equation(program, &space, arena,
+                                  "(= (transport-value $x) $x)");
+    const char *reason = NULL;
+    CettaOpenEquationProgram *compiled = cetta_open_equation_program_compile(
+        program, &space, symbol_intern_cstr(g_symbols, "transport-value"),
+        1u, NULL, &reason);
+    if (!compiled) fprintf(stderr, "transport compile: %s\n", reason);
+    assert(compiled);
+    Arena answers;
+    arena_init(&answers);
+    Atom *variable = atom_var_with_id(arena, "graph-leaf", fresh_var_id());
+    Atom *query_vars[] = {variable};
+    Atom *input = variable;
+    for (unsigned depth = 0u; depth < 32u; depth++) {
+        Atom *children[] = {input, input};
+        input = atom_expr(arena, children, 2u);
+        assert(input);
+    }
+    assert(cetta_open_equation_term_supported(input));
+    Atom *args[] = {input};
+    CettaOpenEquationCursor *cursor = cetta_open_equation_cursor_open(
+        compiled, &answers, args, 1u, NULL, query_vars, 1u, NULL);
+    assert(cursor);
+    Atom *result = NULL;
+    Atom **values = NULL;
+    assert(cetta_open_equation_cursor_next(cursor, query_vars, &result, &values)
+           == CETTA_OPEN_EQUATION_ANSWER);
+    assert(result && values && values[0] == variable);
+    cetta_open_equation_cursor_close(cursor);
+    Atom *node = result;
+    for (unsigned depth = 0u; depth < 32u; depth++) {
+        assert(node->kind == ATOM_EXPR && node->expr.len == 2u);
+        assert(node->expr.elems[0] == node->expr.elems[1]);
+        node = node->expr.elems[0];
+    }
+    assert(node == variable);
+
+    /* Unifying a graph with its own leaf must still reject the cycle;
+     * a visited set from an earlier, different check cannot hide it. */
+    cursor = cetta_open_equation_cursor_open(
+        compiled, &answers, args, 1u, variable, query_vars, 1u, NULL);
+    assert(cursor);
+    assert(cetta_open_equation_cursor_next(cursor, query_vars, &result, &values)
+           == CETTA_OPEN_EQUATION_EXHAUSTED);
+    cetta_open_equation_cursor_close(cursor);
+    cursor = cetta_open_equation_cursor_open(
+        compiled, &answers, args, 1u, NULL, query_vars, 1u, NULL);
+    assert(cursor);
+    assert(cetta_open_equation_cursor_next(cursor, query_vars, &result, &values)
+           == CETTA_OPEN_EQUATION_ANSWER);
+    cetta_open_equation_cursor_close(cursor);
+
+    /* Collection duplicates occurrences, but gives each answer its own
+     * fresh variable. Reusing a cache across answers would conflate them. */
+    add_compiled_program_equation(program, &space, arena,
+        "(= (collect-transport $x) (collapse (superpose ($x $x))))");
+    CettaOpenEquationProgram *collector = cetta_open_equation_program_compile(
+        program, &space, symbol_intern_cstr(g_symbols, "collect-transport"),
+        1u, NULL, &reason);
+    if (!collector) fprintf(stderr, "collector compile: %s\n", reason);
+    assert(collector);
+    cursor = cetta_open_equation_cursor_open(
+        collector, &answers, args, 1u, NULL, query_vars, 1u, NULL);
+    assert(cursor);
+    assert(cetta_open_equation_cursor_next(cursor, query_vars, &result, &values)
+           == CETTA_OPEN_EQUATION_ANSWER);
+    assert(result->kind == ATOM_EXPR && result->expr.len == 2u);
+    cetta_open_equation_cursor_close(cursor);
+    Atom *leaves[2] = {NULL, NULL};
+    for (unsigned item = 0u; item < 2u; item++) {
+        node = result->expr.elems[item];
+        for (unsigned depth = 0u; depth < 32u; depth++) {
+            assert(node->kind == ATOM_EXPR && node->expr.len == 2u);
+            assert(node->expr.elems[0] == node->expr.elems[1]);
+            node = node->expr.elems[0];
+        }
+        assert(node->kind == ATOM_VAR);
+        assert(node->var_id != variable->var_id);
+        leaves[item] = node;
+    }
+    assert(leaves[0]->var_id != leaves[1]->var_id);
+    cetta_open_equation_program_release(collector);
+
+    /* Deep open cells must enter without a recursive depth cutoff. */
+    input = variable;
+    for (unsigned depth = 0u; depth < 5000u; depth++) {
+        input = petta_semantics_open_cons_value(
+            arena, atom_int(arena, (int64_t)depth), input);
+        assert(input);
+    }
+    assert(cetta_open_equation_term_supported(input));
+    assert(!cetta_open_equation_term_supported(input->expr.elems[0]));
+    args[0] = input;
+    cursor = cetta_open_equation_cursor_open(
+        compiled, &answers, args, 1u, NULL, query_vars, 1u, NULL);
+    assert(cursor);
+    assert(cetta_open_equation_cursor_next(cursor, query_vars, &result, &values)
+           == CETTA_OPEN_EQUATION_ANSWER);
+    cetta_open_equation_cursor_close(cursor);
+    node = result;
+    for (unsigned depth = 5000u; depth > 0u; depth--) {
+        assert(petta_semantics_is_open_cons_value(node));
+        assert(node->expr.elems[1]->kind == ATOM_GROUNDED);
+        assert(node->expr.elems[1]->ground.ival == (int64_t)(depth - 1u));
+        node = node->expr.elems[2];
+    }
+    assert(node == variable);
+    cetta_open_equation_program_release(compiled);
+    petta_program_free(program);
+    arena_free(&answers);
+    space_free(&space);
+    puts("PASS: compiled graph transport preserves sharing, open cells and answer lifetime");
 }
 
 static void test_program_case_safety_projection(
@@ -5504,6 +5680,39 @@ static void test_host_environment_projection(
     bindings_free(&environment);
     petta_machine_destroy(&machine);
     bindings_free(&base);
+}
+
+static bool declined_intrinsic_allowed(void *context, SymbolId head) {
+    HostProjectionProbe *probe = context;
+    return head != probe->head;
+}
+
+static void test_declined_intrinsic_host_dispatch(Space *space, Arena *arena) {
+    /* Global intrinsic metadata does not authorize a native implementation
+     * in every embedding. A declined pure call must reach its host owner. */
+    HostProjectionProbe probe = {.head = g_builtin_syms.abs_math};
+    assert(grounded_op_is_type_pure(probe.head));
+    PettaMachineHost host = {
+        .context = &probe,
+        .classify = host_projection_classify,
+        .evaluate = host_projection_evaluate,
+        .builtin_allowed = declined_intrinsic_allowed,
+    };
+    Atom *query = parse_one(arena, "(abs-math -7)");
+    PettaMachine machine;
+    assert(petta_machine_init(&machine, space, arena, query, NULL, &host));
+    Atom *answer = NULL;
+    Bindings environment;
+    assert(petta_machine_next(&machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, parse_one(arena, "-7")));
+    assert(probe.calls == 1u);
+    bindings_free(&environment);
+    assert(petta_machine_next(&machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+    puts("PASS: declined pure intrinsic reaches its language owner");
 }
 
 static PettaMachineHostMode quoted_result_override_classify(
@@ -10085,9 +10294,11 @@ int main(void) {
     test_semantic_form_facts();
     test_program_metadata_projection(&answers);
     test_program_callability_head_kinds(&answers);
+    test_compiled_graph_transport(&universe, &persistent);
     test_program_case_safety_projection(&universe, &persistent);
     space_init_with_universe(&space, &universe);
 
+    test_library_context_initialization();
     test_plain_scalar_truth_dispatch(&answers);
     test_typing_operator_identity();
     test_analysis_capability_contract(&space, &answers);
@@ -10165,6 +10376,7 @@ int main(void) {
     test_lexical_free_variable_projection(&answers);
     test_reachable_binding_projection(&answers);
     test_host_environment_projection(&space, &answers);
+    test_declined_intrinsic_host_dispatch(&space, &answers);
     test_quoted_result_override(&space, &answers);
     test_deep_callable_detection(
         &space, &persistent, &answers);

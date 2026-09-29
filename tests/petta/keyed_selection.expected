@@ -1,0 +1,14 @@
+(Cons 1 (Cons 2 (Cons 3 Nil)))
+(S (S (S (S (S Z)))))
+(one zz)
+(one (deep x))
+two
+three
+(succ Z)
+(succ Z)
+(inner k)
+(other k)
+same
+(other a)
+(Cons (P 1 a) (Cons (P 2 b) Nil))
+2

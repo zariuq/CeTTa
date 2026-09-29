@@ -338,7 +338,7 @@ static CettaGsltProviderOutcomeV1 finite_fact_query_v1(
         Bindings bindings;
         bindings_init(&bindings);
         bool matched = match_atoms(
-            (Atom *)goal, rows[index], &bindings);
+            (Atom *)goal, rows[index], &bindings, answer_arena);
         bindings_free(&bindings);
         if (!matched)
             continue;

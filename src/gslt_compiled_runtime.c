@@ -1086,7 +1086,7 @@ static bool compiled_node_matches_source(
     case GSLT_PLAN_STRING:
         return source->kind == ATOM_GROUNDED &&
             source->ground.gkind == GV_STRING &&
-            strcmp(node->text, source->ground.sval) == 0;
+            atom_string_equals_cstr(source, node->text);
     case GSLT_PLAN_INTEGER:
         return source->kind == ATOM_GROUNDED &&
             source->ground.gkind == GV_INT &&
@@ -1362,7 +1362,7 @@ static bool compiled_rigid_compatible(
         return candidate->kind == ATOM_GROUNDED &&
             candidate->ground.gkind == GV_STRING &&
             candidate->ground.sval != NULL && node->text != NULL &&
-            strcmp(candidate->ground.sval, node->text) == 0;
+            atom_string_equals_cstr(candidate, node->text);
     case GSLT_PLAN_INTEGER:
         return candidate->kind == ATOM_GROUNDED &&
             candidate->ground.gkind == GV_INT &&
@@ -1442,7 +1442,7 @@ static bool compiled_match_ground_dense_node(
         return candidate->kind == ATOM_GROUNDED &&
             candidate->ground.gkind == GV_STRING &&
             candidate->ground.sval != NULL && node->text != NULL &&
-            strcmp(candidate->ground.sval, node->text) == 0;
+            atom_string_equals_cstr(candidate, node->text);
     case GSLT_PLAN_INTEGER:
         return candidate->kind == ATOM_GROUNDED &&
             candidate->ground.gkind == GV_INT &&
@@ -1507,7 +1507,8 @@ static bool compiled_match_constructor_guided_node(
         Atom *materialized = compiled_materialize(
             program, node_index, variables, variable_epochs, variable_epoch,
             variable_count, arena, result, depth);
-        return materialized && match_atoms(candidate, materialized, bindings);
+        return materialized &&
+                   match_atoms(candidate, materialized, bindings, arena);
     }
     switch (node->kind) {
     case GSLT_PLAN_SYMBOL:
@@ -1517,7 +1518,7 @@ static bool compiled_match_constructor_guided_node(
         return candidate->kind == ATOM_GROUNDED &&
             candidate->ground.gkind == GV_STRING &&
             candidate->ground.sval != NULL && node->text != NULL &&
-            strcmp(candidate->ground.sval, node->text) == 0;
+            atom_string_equals_cstr(candidate, node->text);
     case GSLT_PLAN_INTEGER:
         return candidate->kind == ATOM_GROUNDED &&
             candidate->ground.gkind == GV_INT &&
@@ -1534,7 +1535,7 @@ static bool compiled_match_constructor_guided_node(
         if (candidate_head->kind == ATOM_VAR) {
             Atom *expected_head = atom_symbol_id(arena, node->symbol);
             if (!expected_head ||
-                !match_atoms(candidate_head, expected_head, bindings))
+                !match_atoms(candidate_head, expected_head, bindings, arena))
                 return false;
         } else if (candidate_head->kind != ATOM_SYMBOL ||
                    candidate_head->sym_id != node->symbol) {
@@ -1597,7 +1598,7 @@ static bool compiled_match_flat_variable_head(
             program, child, variables, variable_epochs, variable_epoch,
             rule->variable_count, arena, result, 0u);
         if (!argument || !variable ||
-            !match_atoms(argument, variable, bindings))
+            !match_atoms(argument, variable, bindings, arena))
             return false;
     }
     return true;
@@ -1843,7 +1844,7 @@ bool cetta_gslt_compiled_query_with_providers_v1(
                 }
                 Bindings bindings;
                 bindings_init(&bindings);
-                bool matched = match_atoms(goal, answer, &bindings);
+                bool matched = match_atoms(goal, answer, &bindings, output_arena);
                 if (matched && bindings.eq_len != 0u) {
                     healthy = false;
                     compiled_error(

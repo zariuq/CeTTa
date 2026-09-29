@@ -173,6 +173,17 @@ typedef struct CettaLibraryContext {
     uint64_t petta_tabled_symbol_table_instance;
     CettaPettaMemoState petta_memo;
     struct PettaMachineTable *petta_shared_table;
+    /* The open equation tier's compiled programs, kept for the session:
+     * each serves while its Space program and the admission facts it was
+     * compiled under are current.  Owned by the evaluator, which frees it
+     * through `petta_open_programs_free`. */
+    void *petta_open_programs;
+    void (*petta_open_programs_free)(void *programs);
+    /* The search machine's compiled match decisions, kept for the session
+     * per space; owned by the evaluator, which frees them through
+     * `petta_match_decisions_free`. */
+    void *petta_match_decisions;
+    void (*petta_match_decisions_free)(void *decisions);
     bool prime_relational_plan_enabled;
     struct CettaPettaRuntimeState *petta_runtime;
     PettaProgram *petta_program;
@@ -198,6 +209,11 @@ bool cetta_library_root_for_exec_path(const char *argv0,
                                       char *output, size_t output_size);
 void cetta_library_context_set_exec_path(CettaLibraryContext *ctx, const char *argv0);
 void cetta_library_context_set_script_path(CettaLibraryContext *ctx, const char *filename);
+/* A document the runtime runs into a space counts as imported into it: an
+ * import of the same file later, from the document or from a library it
+ * loads, adds nothing a second time. */
+void cetta_library_context_note_document_file(CettaLibraryContext *ctx, Space *space,
+                                              const char *filename);
 void cetta_library_context_set_cli_args(CettaLibraryContext *ctx, int argc,
                                         char **argv, int arg_start);
 uint32_t cetta_library_module_mount_count(const CettaLibraryContext *ctx);

@@ -344,7 +344,22 @@ static inline bool space_program_token_eq(SpaceProgramToken left,
            left.declaration_revision == right.declaration_revision &&
            left.base_dependency_epoch == right.base_dependency_epoch;
 }
-bool space_program_token_is_current(SpaceProgramToken token);
+/* The dependency epoch of an overlay's base chain. */
+uint64_t space_overlay_dependency_epoch(const Space *s);
+/* space_program_token_eq(token, space_program_token(token.space)), field by
+ * field: a space without an overlay base has dependency epoch zero, so only
+ * an overlay walks its base chain.  Inline, since every call a compiled
+ * relation makes checks it. */
+static inline bool space_program_token_is_current(SpaceProgramToken token) {
+    const Space *s = token.space;
+    return s && token.instance_id != 0u &&
+           token.base_dependency_epoch != UINT64_MAX &&
+           token.instance_id == s->instance_id &&
+           token.equation_revision == s->equation_revision &&
+           token.declaration_revision == s->declaration_revision &&
+           token.base_dependency_epoch ==
+               (s->overlay_base ? space_overlay_dependency_epoch(s) : 0u);
+}
 bool space_program_token_matches_live_space(
     SpaceProgramToken token, const Space *live_space);
 bool space_equation_token_is_current(SpaceEquationToken token);

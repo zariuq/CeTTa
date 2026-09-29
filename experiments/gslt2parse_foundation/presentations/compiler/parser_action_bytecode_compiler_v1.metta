@@ -6,9 +6,11 @@
     (operator lower-pack-action-list-dl 4)
     (operator pack-items-length 2)
     (operator pbc-apply 2)
+    (operator pbc-primitive 2)
     (operator pbc-cons 2)
     (operator pbc-push-const 1)
     (operator pbc-push-slot 1)
+    (operator pa-primitive 2)
   )
   (equations)
   (rewrites
@@ -57,6 +59,16 @@
         (lower-pack-action-list-dl
           ?arguments
           (pbc-cons (pbc-apply ?head ?arity) ?tail)
+          ?code
+          ?arity)))
+    (rule lower-pack-action-primitive
+      (head
+        (lower-pack-action-dl
+          (pa-primitive ?operation ?arguments) ?tail ?code))
+      (body
+        (lower-pack-action-list-dl
+          ?arguments
+          (pbc-cons (pbc-primitive ?operation ?arity) ?tail)
           ?code
           ?arity)))
 

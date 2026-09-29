@@ -646,6 +646,10 @@ bool      bindings_add_id_acyclic(Bindings *b, VarId var_id,
                                   SymbolId spelling, Atom *val);
 bool      bindings_add_var(Bindings *b, Atom *var, Atom *val);
 bool      bindings_add_var_acyclic(Bindings *b, Atom *var, Atom *val);
+/* Construct one private binding image, preserving the ordered checked writes
+ * of bindings_add_var. Failure leaves the input image unchanged. */
+bool bindings_add_vars(Bindings *bindings, Atom *const *variables,
+                       Atom *const *values, uint32_t count);
 bool      bindings_add_constraint(Bindings *b, Atom *lhs, Atom *rhs);
 bool      bindings_try_merge(Bindings *dst, const Bindings *src);
 bool      bindings_try_merge_live(Bindings *dst, const Bindings *src);
@@ -836,8 +840,9 @@ void      bindings_builder_take(BindingsBuilder *bb, Bindings *out);
 /* Match pattern (may contain vars) against target (ground).
    On success, fills bindings and returns true.
    On failure, returns false (bindings undefined). */
-bool simple_match(Atom *pattern, Atom *target, Bindings *b);
-bool simple_match_builder(Atom *pattern, Atom *target, BindingsBuilder *bb);
+bool simple_match(Atom *pattern, Atom *target, Bindings *b, Arena *a);
+bool simple_match_builder(Atom *pattern, Atom *target, BindingsBuilder *bb,
+                          Arena *a);
 
 /* ── Variable renaming (standardization apart, à la Vampire) ───────────── */
 
@@ -897,9 +902,14 @@ Atom *rename_vars_only(Arena *a, Atom *atom, Atom *listed_spec);
 /* Match left against right. Variables on EITHER side can bind.
    On success, fills bindings and returns true.
    On failure, returns false. */
-/* The ordinary worklist accepts independent lexical contexts on both sides. */
-bool match_binding_values(BindingValue left, BindingValue right, Bindings *b);
-bool match_binding_values_builder(BindingValue left, BindingValue right, BindingsBuilder *bb);
+/* The ordinary worklist accepts independent lexical contexts on both sides.
+ * Every matcher takes the arena its caller builds results in: a list
+ * pattern's rest is bound to the rest of a list, which the match builds
+ * there. */
+bool match_binding_values(BindingValue left, BindingValue right, Bindings *b,
+                          Arena *a);
+bool match_binding_values_builder(BindingValue left, BindingValue right,
+                                  BindingsBuilder *bb, Arena *a);
 /* Match one already-owned query closure against a freshly standardized rule
  * pattern.  The query value carries its lexical context by value, so callers
  * need neither a borrowed dense frame nor an eagerly substituted Atom. */
@@ -920,14 +930,15 @@ bool match_binding_value_epoch_builder_rule_local_in_exclusive_frame(
          const CettaOpenPatternPlan *right_plan,
          BindingsBuilder *bb, Arena *a, uint32_t right_epoch,
          BindingsExclusiveFrame *exclusive, bool linear);
-bool match_atoms(Atom *left, Atom *right, Bindings *b);
-bool match_atoms_builder(Atom *left, Atom *right, BindingsBuilder *bb);
+bool match_atoms(Atom *left, Atom *right, Bindings *b, Arena *a);
+bool match_atoms_builder(Atom *left, Atom *right, BindingsBuilder *bb,
+                         Arena *a);
 /* Same matcher when the caller already holds the attempt frame
  * (BindingDecision).  Lookups of that frame's coordinates are slot
  * indices; other identifiers keep the environment map. */
 bool match_atoms_builder_with_attempt_frame(
         Atom *left, Atom *right, BindingsBuilder *bb,
-        const BindingsActivationView *left_frame);
+        const BindingsActivationView *left_frame, Arena *a);
 bool match_atoms_epoch(Atom *left, Atom *right, Bindings *b, Arena *a, uint32_t epoch);
 /* Epoch-aware matcher over an existing trail-backed environment.  The caller
  * owns the save/rollback boundary when failure must be transactional. */
@@ -1088,8 +1099,9 @@ bool bindings_has_loop(const Bindings *b);
 
 /* Ordered HE type matching: actual first, expected second. %Undefined% is
    gradual at any depth on either side; Atom is top only on the expected side. */
-bool match_types(Atom *actual, Atom *expected, Bindings *b);
-bool match_types_builder(Atom *actual, Atom *expected, BindingsBuilder *bb);
+bool match_types(Atom *actual, Atom *expected, Bindings *b, Arena *a);
+bool match_types_builder(Atom *actual, Atom *expected, BindingsBuilder *bb,
+                         Arena *a);
 
 /* SpaceType and concrete (Space discipline) value types form one runtime
  * space class; negative-decision paths must not refute across it. */

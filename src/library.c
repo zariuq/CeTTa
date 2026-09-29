@@ -20,6 +20,7 @@
 #include "langdef_pack.h"
 #include "library_io.h"
 #include "library_json.h"
+#include "str_natives.h"
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
@@ -157,10 +158,6 @@ static void cetta_sb_append_n(CettaStringBuf *sb, const char *s, size_t n) {
     memcpy(sb->buf + sb->len, s, n);
     sb->len += n;
     sb->buf[sb->len] = '\0';
-}
-
-static void cetta_sb_append(CettaStringBuf *sb, const char *s) {
-    cetta_sb_append_n(sb, s, strlen(s));
 }
 
 static void cetta_sb_append_u32_be(CettaStringBuf *sb, uint32_t value) {
@@ -358,6 +355,7 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
     memset(&ctx->petta_library_paths, 0, sizeof(ctx->petta_library_paths));
     ctx->petta_library_paths.revision = 1u;
     ctx->imported_file_len = 0;
+    ctx->petta_trusted_library_import_depth = 0u;
     ctx->import_space_alias_len = 0;
     ctx->cmdline_arg_len = 0;
     ctx->loaded_module_len = 0;
@@ -389,6 +387,10 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
         CETTA_PETTA_MEMO_AGGREGATE_NONE;
     ctx->petta_shared_table = language_id == CETTA_LANGUAGE_PETTA
         ? petta_machine_table_new() : NULL;
+    ctx->petta_open_programs = NULL;
+    ctx->petta_open_programs_free = NULL;
+    ctx->petta_match_decisions = NULL;
+    ctx->petta_match_decisions_free = NULL;
     if (ctx->petta_shared_table) {
         PettaTableMutationPolicy table_policy =
             profile && profile->enable_cetta_extensions
@@ -447,6 +449,14 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
 
 void cetta_library_context_free(CettaLibraryContext *ctx) {
     if (!ctx) return;
+    if (ctx->petta_open_programs_free)
+        ctx->petta_open_programs_free(ctx->petta_open_programs);
+    ctx->petta_open_programs = NULL;
+    ctx->petta_open_programs_free = NULL;
+    if (ctx->petta_match_decisions_free)
+        ctx->petta_match_decisions_free(ctx->petta_match_decisions);
+    ctx->petta_match_decisions = NULL;
+    ctx->petta_match_decisions_free = NULL;
     cetta_nik_runtime_v1_free(ctx->nik_runtime);
     ctx->nik_runtime = NULL;
     if (ctx->nik_runtime_mutex_ready) {
@@ -1256,6 +1266,25 @@ void cetta_library_context_set_script_path(CettaLibraryContext *ctx, const char 
         (void)cetta_lib_prolog_runtime_set_working_dir(
             ctx->lib_prolog, ctx->script_dir);
     }
+}
+
+static int imported_file_lookup(CettaLibraryContext *ctx, Space *space,
+                                const char *path);
+
+void cetta_library_context_note_document_file(CettaLibraryContext *ctx, Space *space,
+                                              const char *filename) {
+    char resolved[PATH_MAX];
+    int slot;
+
+    if (!ctx || !space || !filename) return;
+    if (!realpath(filename, resolved)) return;
+    if (imported_file_lookup(ctx, space, resolved) >= 0) return;
+    if (ctx->imported_file_len >= CETTA_MAX_IMPORTED_FILES) return;
+    slot = (int)ctx->imported_file_len++;
+    ctx->imported_files[slot].space = space;
+    ctx->imported_files[slot].loading = false;
+    snprintf(ctx->imported_files[slot].path,
+             sizeof(ctx->imported_files[slot].path), "%s", resolved);
 }
 
 void cetta_library_context_set_cli_args(CettaLibraryContext *ctx, int argc,
@@ -2899,6 +2928,47 @@ static bool resolve_module_candidate_with_format(const char *candidate,
     return false;
 }
 
+/*
+ * A library keeps its shared source in lib/NAME.metta, spelled in base HE,
+ * and its PeTTa spelling in lib/petta/NAME.metta.  Under the PeTTa lane an
+ * import that resolved to the shared source loads the PeTTa spelling when
+ * one exists: the importing program names the library, the lane picks the
+ * spelling.  Other lanes, other directories and non-MeTTa modules are left
+ * as resolved.
+ */
+static void prefer_language_spelling(CettaLibraryContext *ctx,
+                                     char *out, size_t out_sz,
+                                     const CettaModuleFormat *format) {
+    char candidate[PATH_MAX];
+    char resolved[PATH_MAX];
+    const char *slash;
+    size_t dir_len;
+    int n;
+
+    if (!ctx || ctx->session.language_id != CETTA_LANGUAGE_PETTA ||
+        (format && format->kind != CETTA_MODULE_FORMAT_METTA)) {
+        return;
+    }
+    slash = strrchr(out, '/');
+    if (!slash) {
+        return;
+    }
+    dir_len = (size_t)(slash - out);
+    if (dir_len < 3 || strncmp(out + dir_len - 3, "lib", 3) != 0 ||
+        (dir_len > 3 && out[dir_len - 4] != '/')) {
+        return;
+    }
+    n = snprintf(candidate, sizeof(candidate), "%.*s/petta/%s",
+                 (int)dir_len, out, slash + 1);
+    if (!(n > 0 && (size_t)n < sizeof(candidate))) {
+        return;
+    }
+    if (access(candidate, R_OK) == 0 && realpath(candidate, resolved) &&
+        strlen(resolved) < out_sz) {
+        snprintf(out, out_sz, "%s", resolved);
+    }
+}
+
 static bool resolve_relative_module_candidate_for_language(
     CettaLibraryContext *ctx,
     const char *path,
@@ -2916,8 +2986,12 @@ static bool resolve_relative_module_candidate_for_language(
         return false;
     }
     if (path[0] == '/') {
-        return resolve_module_candidate_with_format(path, out, out_sz, format_out,
-                                                    reason, reason_sz);
+        if (!resolve_module_candidate_with_format(path, out, out_sz, format_out,
+                                                  reason, reason_sz)) {
+            return false;
+        }
+        prefer_language_spelling(ctx, out, out_sz, format_out);
+        return true;
     }
 
     /*
@@ -2931,6 +3005,7 @@ static bool resolve_relative_module_candidate_for_language(
             CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY &&
         resolve_module_candidate_with_format(
             path, out, out_sz, format_out, reason, reason_sz)) {
+        prefer_language_spelling(ctx, out, out_sz, format_out);
         return true;
     }
 
@@ -2942,6 +3017,7 @@ static bool resolve_relative_module_candidate_for_language(
         }
         if (resolve_module_candidate_with_format(candidate, out, out_sz, format_out,
                                                  reason, reason_sz)) {
+            prefer_language_spelling(ctx, out, out_sz, format_out);
             return true;
         }
         if (cetta_eval_session_relative_module_policy(&ctx->session) !=
@@ -3340,7 +3416,9 @@ static const char *library_text_arg(Atom *arg) {
     if (!arg) return NULL;
     if (arg->kind == ATOM_SYMBOL) return atom_name_cstr(arg);
     if (arg->kind == ATOM_GROUNDED && arg->ground.gkind == GV_STRING) {
-        return arg->ground.sval;
+        /* A C text cannot hold NUL: such a string is refused, not cut. */
+        return memchr(arg->ground.sval, '\0', arg->ground.slen)
+            ? NULL : arg->ground.sval;
     }
     return NULL;
 }
@@ -3352,22 +3430,6 @@ static bool library_int_arg(Atom *arg, int *out) {
         return true;
     }
     return false;
-}
-
-static bool library_expr_of_texts(Atom *arg) {
-    if (!arg || arg->kind != ATOM_EXPR) return false;
-    for (CettaExprIndex i = 0; i < arg->expr.len; i++) {
-        if (!library_text_arg(arg->expr.elems[i])) return false;
-    }
-    return true;
-}
-
-static Atom *library_string_list(Arena *a, char **items, uint32_t nitems) {
-    Atom **atoms = arena_alloc(a, sizeof(Atom *) * (nitems ? nitems : 1));
-    for (uint32_t i = 0; i < nitems; i++) {
-        atoms[i] = atom_string(a, items[i]);
-    }
-    return atom_expr(a, atoms, nitems);
 }
 
 static Atom *library_atoms_from_text_impl(Arena *a, const uint8_t *bytes, size_t len,
@@ -3383,8 +3445,8 @@ static Atom *library_atoms_from_text_impl(Arena *a, const uint8_t *bytes, size_t
     uint32_t natoms = 0;
     uint32_t cap = 0;
     size_t pos = 0;
-    while (text[pos]) {
-        Atom *atom = parse_sexpr(a, text, &pos);
+    while (pos < len) {
+        Atom *atom = parse_sexpr_n(a, text, len, &pos);
         if (!atom) break;
         if (quote_atoms) {
             atom = atom_expr(a, (Atom *[]){
@@ -3562,10 +3624,9 @@ static bool library_read_text_file(const char *path, CettaStringBuf *out,
     return true;
 }
 
-static bool library_write_file(const char *path, const char *text, bool append,
-                               char *errbuf, size_t errbuf_sz) {
+static bool library_write_file(const char *path, const char *text, size_t len,
+                               bool append, char *errbuf, size_t errbuf_sz) {
     FILE *fp = fopen(path, append ? "ab" : "wb");
-    size_t len = strlen(text);
 
     if (!fp) {
         if (errbuf && errbuf_sz > 0) {
@@ -4423,21 +4484,30 @@ static Atom *fs_read_text(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (!library_read_text_file(path, &text, errbuf, sizeof(errbuf))) {
         return atom_error(a, library_call_expr(a, head, args, nargs), atom_string(a, errbuf));
     }
-    result = atom_string(a, text.buf ? text.buf : "");
+    result = atom_string_n(a, text.buf ? text.buf : "", text.len);
     cetta_sb_free(&text);
     return result;
 }
 
+/* A file's text may hold any bytes, NUL included; its name may not. */
 static Atom *fs_write_like(Arena *a, Atom *head, Atom **args, uint32_t nargs, bool append) {
     const char *path;
-    const char *text;
+    const char *text = NULL;
+    size_t len = 0u;
     char errbuf[160];
-    if (nargs != 2 || !(path = library_text_arg(args[0])) ||
-        !(text = library_text_arg(args[1]))) {
+    if (nargs == 2 && args[1] && args[1]->kind == ATOM_GROUNDED &&
+        args[1]->ground.gkind == GV_STRING) {
+        text = args[1]->ground.sval;
+        len = args[1]->ground.slen;
+    } else if (nargs == 2 && args[1] && args[1]->kind == ATOM_SYMBOL &&
+               (text = atom_name_cstr(args[1]))) {
+        len = strlen(text);
+    }
+    if (nargs != 2 || !(path = library_text_arg(args[0])) || !text) {
         return library_signature_error(a, head, args, nargs,
                                        "expected filename and text");
     }
-    if (!library_write_file(path, text, append, errbuf, sizeof(errbuf))) {
+    if (!library_write_file(path, text, len, append, errbuf, sizeof(errbuf))) {
         return atom_error(a, library_call_expr(a, head, args, nargs), atom_string(a, errbuf));
     }
     return atom_unit(a);
@@ -4455,7 +4525,7 @@ static Atom *fs_read_lines(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     const char *path;
     CettaStringBuf text;
     char errbuf[160];
-    char **items = NULL;
+    Atom **items = NULL;
     uint32_t nitems = 0;
     uint32_t cap = 0;
     size_t start = 0;
@@ -4487,26 +4557,19 @@ static Atom *fs_read_lines(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         if (!(at_end && start == len)) {
             if (nitems >= cap) {
                 cap = cap ? cap * 2 : 8;
-                items = cetta_realloc(items, sizeof(char *) * cap);
+                items = cetta_realloc(items, sizeof(Atom *) * cap);
             }
-            size_t seg_len = stop - start;
-            char *line = cetta_malloc(seg_len + 1);
-            memcpy(line, text.buf + start, seg_len);
-            line[seg_len] = '\0';
-            items[nitems++] = line;
+            items[nitems++] = atom_string_n(a, text.buf + start, stop - start);
         }
         start = i + 1;
     }
 
-    if (nitems > 0 && text.buf[len - 1] == '\n' && items[nitems - 1][0] == '\0') {
-        free(items[nitems - 1]);
+    if (nitems > 0 && text.buf[len - 1] == '\n' &&
+        atom_string_len(items[nitems - 1]) == 0u) {
         nitems--;
     }
 
-    result = library_string_list(a, items, nitems);
-    for (uint32_t i = 0; i < nitems; i++) {
-        free(items[i]);
-    }
+    result = atom_expr(a, items, nitems);
     free(items);
     cetta_sb_free(&text);
     return result;
@@ -4546,250 +4609,38 @@ static Atom *cetta_library_dispatch_fs(Arena *a, Atom *head,
     return NULL;
 }
 
-static Atom *str_length(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
-    const char *text;
-    if (nargs != 1 || !(text = library_text_arg(args[0]))) {
-        return library_signature_error(a, head, args, nargs, "expected text argument");
-    }
-    return atom_int(a, (int64_t)strlen(text));
-}
-
-static Atom *str_concat(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
-    const char *lhs;
-    const char *rhs;
-    CettaStringBuf out;
-    Atom *result;
-    if (nargs != 2 || !(lhs = library_text_arg(args[0])) || !(rhs = library_text_arg(args[1]))) {
-        return library_signature_error(a, head, args, nargs, "expected two text arguments");
-    }
-    cetta_sb_init(&out);
-    cetta_sb_append(&out, lhs);
-    cetta_sb_append(&out, rhs);
-    result = atom_string(a, out.buf ? out.buf : "");
-    cetta_sb_free(&out);
-    return result;
-}
-
-static Atom *str_split(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
-    const char *sep;
-    const char *text;
-    size_t sep_len;
-    size_t text_len;
-    size_t start = 0;
-    char **items = NULL;
-    uint32_t nitems = 0;
-    uint32_t cap = 0;
-    Atom *result;
-
-    if (nargs != 2 || !(sep = library_text_arg(args[0])) || !(text = library_text_arg(args[1]))) {
-        return library_signature_error(a, head, args, nargs, "expected separator and text");
-    }
-    sep_len = strlen(sep);
-    text_len = strlen(text);
-    if (sep_len == 0) {
-        return library_signature_error(a, head, args, nargs,
-                                       "separator must be non-empty");
-    }
-
-    while (1) {
-        const char *found = strstr(text + start, sep);
-        size_t stop = found ? (size_t)(found - text) : text_len;
-        if (nitems >= cap) {
-            cap = cap ? cap * 2 : 8;
-            items = cetta_realloc(items, sizeof(char *) * cap);
-        }
-        size_t seg_len = stop - start;
-        char *piece = cetta_malloc(seg_len + 1);
-        memcpy(piece, text + start, seg_len);
-        piece[seg_len] = '\0';
-        items[nitems++] = piece;
-        if (!found) break;
-        start = stop + sep_len;
-    }
-
-    result = library_string_list(a, items, nitems);
-    for (uint32_t i = 0; i < nitems; i++) {
-        free(items[i]);
-    }
-    free(items);
-    return result;
-}
-
-static Atom *str_split_whitespace(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
-    const char *text;
-    char **items = NULL;
-    uint32_t nitems = 0;
-    uint32_t cap = 0;
-    Atom *result;
-
-    if (nargs != 1 || !(text = library_text_arg(args[0]))) {
-        return library_signature_error(a, head, args, nargs, "expected text argument");
-    }
-
-    while (*text) {
-        while (*text && isspace((unsigned char)*text)) text++;
-        if (!*text) break;
-        const char *start = text;
-        while (*text && !isspace((unsigned char)*text)) text++;
-        size_t seg_len = (size_t)(text - start);
-        char *piece = cetta_malloc(seg_len + 1);
-        memcpy(piece, start, seg_len);
-        piece[seg_len] = '\0';
-        if (nitems >= cap) {
-            cap = cap ? cap * 2 : 8;
-            items = cetta_realloc(items, sizeof(char *) * cap);
-        }
-        items[nitems++] = piece;
-    }
-
-    result = library_string_list(a, items, nitems);
-    for (uint32_t i = 0; i < nitems; i++) {
-        free(items[i]);
-    }
-    free(items);
-    return result;
-}
-
-static Atom *str_join(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
-    const char *sep;
-    CettaStringBuf out;
-    Atom *result;
-    if (nargs != 2 || !(sep = library_text_arg(args[0])) || !library_expr_of_texts(args[1])) {
-        return library_signature_error(a, head, args, nargs,
-                                       "expected separator and expression of text");
-    }
-    cetta_sb_init(&out);
-    for (CettaExprIndex i = 0; i < args[1]->expr.len; i++) {
-        if (i > 0) cetta_sb_append(&out, sep);
-        cetta_sb_append(&out, library_text_arg(args[1]->expr.elems[i]));
-    }
-    result = atom_string(a, out.buf ? out.buf : "");
-    cetta_sb_free(&out);
-    return result;
-}
-
-static Atom *str_slice(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
-    const char *text;
-    int start;
-    int stop;
-    size_t len;
-    if (nargs != 3 || !(text = library_text_arg(args[0])) ||
-        !library_int_arg(args[1], &start) || !library_int_arg(args[2], &stop) ||
-        start < 0 || stop < 0) {
-        return library_signature_error(a, head, args, nargs,
-                                       "expected text, non-negative start, non-negative end");
-    }
-    len = strlen(text);
-    if ((size_t)start > len) start = (int)len;
-    if ((size_t)stop > len) stop = (int)len;
-    if (stop < start) stop = start;
-    char *slice = cetta_malloc((size_t)(stop - start) + 1);
-    memcpy(slice, text + start, (size_t)(stop - start));
-    slice[stop - start] = '\0';
-    Atom *result = atom_string(a, slice);
-    free(slice);
-    return result;
-}
-
-static Atom *str_find(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
-    const char *haystack;
-    const char *needle;
-    const char *found;
-    if (nargs != 2 || !(haystack = library_text_arg(args[0])) ||
-        !(needle = library_text_arg(args[1]))) {
-        return library_signature_error(a, head, args, nargs,
-                                       "expected text and search text");
-    }
-    found = strstr(haystack, needle);
-    if (!found)
-        return atom_expr2(a, atom_symbol(a, "TextNotFound"), args[1]);
-    return atom_int(a, (int64_t)(found - haystack));
-}
-
-static Atom *str_starts_with(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
-    const char *text;
-    const char *prefix;
-    size_t prefix_len;
-    if (nargs != 2 || !(text = library_text_arg(args[0])) ||
-        !(prefix = library_text_arg(args[1]))) {
-        return library_signature_error(a, head, args, nargs,
-                                       "expected text and prefix");
-    }
-    prefix_len = strlen(prefix);
-    return strncmp(text, prefix, prefix_len) == 0 ? atom_true(a) : atom_false(a);
-}
-
-static Atom *str_ends_with(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
-    const char *text;
-    const char *suffix;
-    size_t text_len;
-    size_t suffix_len;
-    if (nargs != 2 || !(text = library_text_arg(args[0])) ||
-        !(suffix = library_text_arg(args[1]))) {
-        return library_signature_error(a, head, args, nargs,
-                                       "expected text and suffix");
-    }
-    text_len = strlen(text);
-    suffix_len = strlen(suffix);
-    if (suffix_len > text_len) return atom_false(a);
-    return strcmp(text + text_len - suffix_len, suffix) == 0 ? atom_true(a) : atom_false(a);
-}
-
-static Atom *str_trim(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
-    const char *text;
-    size_t len;
-    size_t start = 0;
-    size_t stop;
-    if (nargs != 1 || !(text = library_text_arg(args[0]))) {
-        return library_signature_error(a, head, args, nargs, "expected text argument");
-    }
-    len = strlen(text);
-    while (start < len && isspace((unsigned char)text[start])) start++;
-    stop = len;
-    while (stop > start && isspace((unsigned char)text[stop - 1])) stop--;
-    char *trimmed = cetta_malloc(stop - start + 1);
-    memcpy(trimmed, text + start, stop - start);
-    trimmed[stop - start] = '\0';
-    Atom *result = atom_string(a, trimmed);
-    free(trimmed);
-    return result;
-}
+/* ── lib/str: strings are bytes plus a length ───────────────────────────
+ * (__cetta_lib_str name args...) is the str: operation `name` of the shared
+ * native table, which prepared equation runners call under the same names.
+ * A refusal is (Error (str:name args...) (Reason offset)); a call outside an
+ * operation's signature is (Error (str:name args...) expectation). */
 
 static Atom *cetta_library_dispatch_str(Arena *a, Atom *head,
                                         Atom **args, uint32_t nargs) {
-    if (head->kind != ATOM_SYMBOL) return NULL;
-    SymbolId head_id = head->sym_id;
-    if (head_id == g_builtin_syms.lib_str_length) {
-        return str_length(a, head, args, nargs);
-    }
-    if (head_id == g_builtin_syms.lib_str_concat) {
-        return str_concat(a, head, args, nargs);
-    }
-    if (head_id == g_builtin_syms.lib_str_split) {
-        return str_split(a, head, args, nargs);
-    }
-    if (head_id == g_builtin_syms.lib_str_split_whitespace) {
-        return str_split_whitespace(a, head, args, nargs);
-    }
-    if (head_id == g_builtin_syms.lib_str_join) {
-        return str_join(a, head, args, nargs);
-    }
-    if (head_id == g_builtin_syms.lib_str_slice) {
-        return str_slice(a, head, args, nargs);
-    }
-    if (head_id == g_builtin_syms.lib_str_find) {
-        return str_find(a, head, args, nargs);
-    }
-    if (head_id == g_builtin_syms.lib_str_starts_with) {
-        return str_starts_with(a, head, args, nargs);
-    }
-    if (head_id == g_builtin_syms.lib_str_ends_with) {
-        return str_ends_with(a, head, args, nargs);
-    }
-    if (head_id == g_builtin_syms.lib_str_trim) {
-        return str_trim(a, head, args, nargs);
-    }
-    return NULL;
+    if (head->kind != ATOM_SYMBOL || head->sym_id != g_builtin_syms.lib_str)
+        return NULL;
+    const char *name = nargs > 0u && args[0] && args[0]->kind == ATOM_SYMBOL
+        ? atom_name_cstr(args[0]) : NULL;
+    const CettaStrNative *native = cetta_str_native(name);
+    if (!native)
+        return library_signature_error(a, head, args, nargs,
+                                       "unknown string operation");
+    size_t public_len = strlen(name) + 5u;
+    char *public_name = arena_alloc(a, public_len);
+    snprintf(public_name, public_len, "str:%s", name);
+    Atom *call = library_call_expr(a, atom_symbol(a, public_name), args + 1,
+                                   nargs - 1u);
+    if (nargs - 1u != native->arity)
+        return atom_error(a, call, atom_symbol(a, "wrong number of arguments"));
+    CettaStrRefusal refusal = {0};
+    Atom *result = native->fn(a, args + 1, &refusal);
+    if (result)
+        return result;
+    if (refusal.reason)
+        return atom_error(a, call,
+                          atom_expr2(a, atom_symbol(a, refusal.reason),
+                                     atom_int(a, (int64_t)refusal.offset)));
+    return atom_error(a, call, atom_symbol(a, refusal.expected));
 }
 
 static CettaMorkSpaceResource *library_mork_space_resource(CettaLibraryContext *ctx,
@@ -7910,7 +7761,7 @@ static bool cetta_library_petta_execute_document_ids(
                 work_space->native.universe, declaration_id);
             if (petta_program_is_equation(declaration) &&
                 !petta_program_predeclare_equation(
-                    ctx->petta_program, declaration)) {
+                    ctx->petta_program, work_space, declaration)) {
                 if (failure_out)
                     *failure_out =
                         CETTA_PETTA_DOCUMENT_PLAN_FAILED;

@@ -1,0 +1,12 @@
+(true)
+()
+(true)
+()
+(true)
+((s a) (s (b 1)) (s (b 2)))
+yes
+no
+some
+false
+true
+(1)
