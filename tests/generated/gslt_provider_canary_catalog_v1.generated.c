@@ -28,5 +28,4 @@ const CettaGsltProviderCatalogV1 cetta_gslt_provider_canary_catalog_v1 = {
     .source_sha256 = "57c8d30c600f5346fbe12885119973e1f511a2c8a8d7d4b786fe72298254c154",
     .requirements = cetta_gslt_provider_canary_catalog_v1_requirements_v1,
     .requirement_count = 1u,
-    .generator_sha256 = "492ac4649c10f4c656ce80c26dc4ee5f93545fef4a3bea68345642089d728dc8",
 };

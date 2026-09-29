@@ -154,7 +154,7 @@ static bool runtime_prepare(
         core_status != CETTA_LD_CORE_V1_OK)
         return stage_error(error, error_size, "grammar LanguageDef decode");
     if (!cetta_deterministic_equation_plan_v1_load(
-            projection_sources, 1u, &runtime->projection,
+            projection_sources, 1u, NULL, &runtime->projection,
             &projection_status, error, error_size) ||
         projection_status != CETTA_DETERMINISTIC_EQUATION_V1_OK)
         return stage_error(error, error_size, "CST projection load");
@@ -494,7 +494,7 @@ static void denotation_nullary_gate(TestCounts *counts) {
 
     arena_init(&arena);
     loaded = cetta_deterministic_equation_plan_v1_load(
-        sources, 1u, &plan, &status, error, sizeof(error));
+        sources, 1u, NULL, &plan, &status, error, sizeof(error));
     if (!expect(counts, loaded && status == CETTA_DETERMINISTIC_EQUATION_V1_OK,
                 "load authored denotation for symbol/call distinction"))
         goto cleanup;
@@ -572,7 +572,7 @@ static void denotation_nullary_gate(TestCounts *counts) {
     };
     if (!expect(counts,
                 cetta_deterministic_equation_plan_v1_load_inputs(
-                    &input, 1u, &input_plan, &status,
+                    &input, 1u, NULL, &input_plan, &status,
                     error, sizeof(error)) &&
                     status == CETTA_DETERMINISTIC_EQUATION_V1_OK,
                 "load the actual authored denotation through source buffers"))
@@ -605,7 +605,7 @@ static void denotation_nullary_gate(TestCounts *counts) {
         "loaded equations own their source independently of input buffers");
     if (!expect(counts,
                 cetta_deterministic_equation_plan_v1_load_inputs(
-                    &input, 1u, &mutant_plan, &status,
+                    &input, 1u, NULL, &mutant_plan, &status,
                     error, sizeof(error)),
                 "load a same-length mutation of the actual authored source"))
         goto cleanup;
@@ -625,14 +625,14 @@ static void denotation_nullary_gate(TestCounts *counts) {
     input.length = 1u;
     (void)expect(counts,
         !cetta_deterministic_equation_plan_v1_load_inputs(
-            &input, 1u, &refused_plan, &status, error, sizeof(error)) &&
+            &input, 1u, NULL, &refused_plan, &status, error, sizeof(error)) &&
             refused_plan == NULL &&
             status == CETTA_DETERMINISTIC_EQUATION_V1_INVALID_PRESENTATION &&
             error[0] != '\0',
         "source-buffer loading rejects malformed source without a plan");
     (void)expect(counts,
         !cetta_deterministic_equation_plan_v1_load_inputs(
-            &input, 0u, &refused_plan, &status, error, sizeof(error)) &&
+            &input, 0u, NULL, &refused_plan, &status, error, sizeof(error)) &&
             refused_plan == NULL &&
             status == CETTA_DETERMINISTIC_EQUATION_V1_BAD_ARGUMENT &&
             error[0] != '\0',
@@ -643,7 +643,7 @@ static void denotation_nullary_gate(TestCounts *counts) {
     input.source = "quoted-source-symbol-control";
     if (!expect(counts,
                 cetta_deterministic_equation_plan_v1_load_inputs(
-                    &input, 1u, &symbol_plan, &status, error, sizeof(error)),
+                    &input, 1u, NULL, &symbol_plan, &status, error, sizeof(error)),
                 "quoted source preserves Boolean-shaped symbol spellings"))
         goto cleanup;
     name = atom_symbol(&arena, "source-symbols");
@@ -726,7 +726,7 @@ static void source_loader_gate(TestCounts *counts) {
     Atom *out = NULL;
     arena_init(&arena);
     bool loaded = cetta_deterministic_equation_plan_v1_load_inputs(
-        inputs, 2u, &plan, &status, error, sizeof(error));
+        inputs, 2u, NULL, &plan, &status, error, sizeof(error));
     if (expect(counts, loaded,
                "compose source buffers with shared operator declarations")) {
         Atom *head = atom_symbol(&arena, "kinds");
@@ -764,6 +764,51 @@ static void source_loader_gate(TestCounts *counts) {
                 NULL, NULL, &arena, 128u, 10000u, &out, &status,
                 error, sizeof(error)) && atom_eq(out, expected),
             "same-spelled variables bind per rule while strings remain literal");
+
+        Atom *payload = atom_expr2(&arena, atom_symbol(&arena, "duplicate"), value);
+        Atom *data_call = atom_expr2(&arena, atom_symbol(&arena, "duplicate"), payload);
+        expected = atom_expr3(&arena, atom_symbol(&arena, "pair"), payload, payload);
+        (void)expect(counts,
+            cetta_deterministic_equation_plan_v1_apply(
+                plan, data_call, NULL, NULL, &arena, 128u, 10000u,
+                &out, &status, error, sizeof(error)) && atom_eq(out, expected),
+            "data application preserves even an argument naming an authored equation");
+        (void)expect(counts,
+            cetta_deterministic_equation_plan_v1_run(
+                plan, data_call, NULL, NULL, &arena, 128u, 10000u,
+                &out, &status, error, sizeof(error)) && !atom_eq(out, expected) &&
+                atom_eq(out, atom_expr3(&arena, atom_symbol(&arena, "pair"), pair, pair)),
+            "ordinary execution still evaluates its nested authored call");
+        Atom *literal_let = atom_expr(&arena, (Atom *[]){
+            atom_symbol(&arena, "let"), atom_symbol(&arena, "X"), value, value}, 4u);
+        data_call = atom_expr2(&arena, atom_symbol(&arena, "via"), literal_let);
+        Atom *literal_pair = atom_expr3(&arena, atom_symbol(&arena, "pair"),
+                                       literal_let, literal_let);
+        expected = atom_expr3(&arena, atom_symbol(&arena, "pair"),
+                             literal_pair, literal_let);
+        (void)expect(counts,
+            cetta_deterministic_equation_plan_v1_apply(
+                plan, data_call, NULL, NULL, &arena, 128u, 10000u,
+                &out, &status, error, sizeof(error)) && atom_eq(out, expected),
+            "authored let executes while a let-shaped input remains literal data");
+        (void)expect(counts,
+            !cetta_deterministic_equation_plan_v1_run(
+                plan, data_call, NULL, NULL, &arena, 128u, 10000u,
+                &out, &status, error, sizeof(error)) && out == NULL &&
+                status == CETTA_DETERMINISTIC_EQUATION_V1_UNSUPPORTED_RULE,
+            "the same let-shaped input is invalid when explicitly executed");
+        (void)expect(counts,
+            !cetta_deterministic_equation_plan_v1_apply(
+                plan, value, NULL, NULL, &arena, 128u, 10000u,
+                &out, &status, error, sizeof(error)) && out == NULL &&
+                status == CETTA_DETERMINISTIC_EQUATION_V1_BAD_ARGUMENT,
+            "data application rejects a non-call entry");
+        (void)expect(counts,
+            !cetta_deterministic_equation_plan_v1_apply(
+                plan, data_call, NULL, NULL, &arena, 128u, 1u,
+                &out, &status, error, sizeof(error)) && out == NULL &&
+                status == CETTA_DETERMINISTIC_EQUATION_V1_RESOURCE_LIMIT,
+            "data application reports exhausted work without an answer");
     } else if (error[0]) fprintf(stderr, "source loader: %s\n", error);
     cetta_deterministic_equation_plan_v1_free(plan);
     plan = NULL;
@@ -779,7 +824,7 @@ static void source_loader_gate(TestCounts *counts) {
             (const uint8_t *)text, length > 0 ? (size_t)length : 0u, "invalid-source"};
         (void)expect(counts, length > 0 && (size_t)length < sizeof(text) &&
             !cetta_deterministic_equation_plan_v1_load_inputs(
-                inputs, 1u, &plan, &status, error, sizeof(error)) &&
+                inputs, 1u, NULL, &plan, &status, error, sizeof(error)) &&
             plan == NULL && error[0], invalid[index].label);
         cetta_deterministic_equation_plan_v1_free(plan);
         plan = NULL;
@@ -794,7 +839,7 @@ static void source_loader_gate(TestCounts *counts) {
         (const uint8_t *)arity_source, (size_t)length, "large-unused-arity"};
     (void)expect(counts, length > 0 && (size_t)length < sizeof(arity_source) &&
         cetta_deterministic_equation_plan_v1_load_inputs(
-            inputs, 1u, &plan, &status, error, sizeof(error)),
+            inputs, 1u, NULL, &plan, &status, error, sizeof(error)),
         "unused signature arity retains the complete size_t range");
     cetta_deterministic_equation_plan_v1_free(plan);
     arena_free(&arena);

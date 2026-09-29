@@ -149,6 +149,7 @@ typedef enum {
     PETTA_GOAL_LIST_SIZE_READY,
     PETTA_GOAL_COLLECTION_COUNT_READY,
     PETTA_GOAL_WRAP_COLLECTION_COUNT,
+    PETTA_GOAL_LIST_OF,
     PETTA_GOAL_LIST_UNARY_READY,
     PETTA_GOAL_LIST_SET_READY,
     PETTA_GOAL_SREAD_READY,
@@ -424,6 +425,7 @@ static void petta_machine_record_goal_class(
     case PETTA_GOAL_LIST_SIZE_READY:
     case PETTA_GOAL_COLLECTION_COUNT_READY:
     case PETTA_GOAL_WRAP_COLLECTION_COUNT:
+    case PETTA_GOAL_LIST_OF:
     case PETTA_GOAL_LIST_UNARY_READY:
     case PETTA_GOAL_LIST_SET_READY:
     case PETTA_GOAL_SREAD_READY:
@@ -4015,6 +4017,14 @@ static void petta_choice_truncate(
         petta_choice_pop(machine);
 }
 
+/* The elements an append split ranges over: an expression's, or a list's
+ * after its tag, whose parts are lists.  A list pattern has none. */
+static CettaExprLen petta_append_whole_length(const Atom *whole) {
+    Atom *const *elems;
+    CettaExprLen len;
+    return atom_sequence_view(whole, &elems, &len) ? len : 0u;
+}
+
 static bool petta_choice_exhausted_after_success(
     const PettaChoice *choice) {
     if (!choice)
@@ -4054,7 +4064,7 @@ static bool petta_choice_exhausted_after_success(
                 petta_semantics_is_open_cons_value(choice->as.append.whole)
                     ? choice->as.append.next_split >= 2u
                     : choice->as.append.next_split >
-                          choice->as.append.whole->expr.len);
+                          petta_append_whole_length(choice->as.append.whole));
     case PETTA_CHOICE_MEMBER:
         return choice->as.member.items &&
                choice->as.member.next >=
@@ -8290,7 +8300,7 @@ static bool petta_machine_unify_resolved_values(
             machine, builder, growth_before, heap_before, matched);
     }
     if (match_binding_values_builder(
-            left_value, right_value, builder)) {
+            left_value, right_value, builder, &machine->heap)) {
         return petta_machine_finish_unification(
             machine, builder, growth_before, heap_before, true);
     }
@@ -9288,7 +9298,8 @@ static bool petta_machine_immediate_value(
         return false;
     if (plan && plan->role == PETTA_PLAN_VALUE)
         return true;
-    if (atom->kind != ATOM_EXPR || atom->expr.len == 0u)
+    if (atom->kind != ATOM_EXPR || atom->expr.len == 0u ||
+        atom_is_list_form(atom))
         return true;
     Atom *body = NULL;
     int64_t counted = 0;
@@ -9745,12 +9756,15 @@ static PettaListShape petta_machine_list_shape(
             *open_tail = list;
             return PETTA_LIST_OPEN;
         }
-        if (list->kind != ATOM_EXPR ||
-            *prefix_length >
-                UINT64_MAX - (uint64_t)list->expr.len) {
+        /* An expression or a list value counts its elements; an open list
+         * value's length is not enumerated here. */
+        Atom *const *elems;
+        CettaExprLen len;
+        if (!atom_sequence_view(list, &elems, &len) ||
+            *prefix_length > UINT64_MAX - (uint64_t)len) {
             return PETTA_LIST_INVALID;
         }
-        *prefix_length += (uint64_t)list->expr.len;
+        *prefix_length += (uint64_t)len;
         return PETTA_LIST_CLOSED;
     }
 }
@@ -9846,20 +9860,26 @@ static Atom *petta_machine_materialize_list(
         }
         if (cursor->kind != ATOM_EXPR)
             goto unresolved;
-        if ((uint64_t)cursor->expr.len >
+        /* A list pattern [x... | r] continues into r; a list value ends a
+         * list of its kind with the elements after its tag. */
+        bool list_rest = atom_is_list_rest(cursor);
+        bool list_end = atom_is_list(cursor);
+        CettaExprIndex first = list_rest || list_end ? 1u : 0u;
+        CettaExprIndex end = list_rest
+            ? cursor->expr.len - 1u : cursor->expr.len;
+        if ((uint64_t)(end - first) >
             (uint64_t)(SIZE_MAX - length)) {
             free(items);
             return NULL;
         }
-        size_t total = length + (size_t)cursor->expr.len;
+        size_t total = length + (size_t)(end - first);
         if (!petta_machine_reserve(
                 (void **)&items, &capacity, total,
                 sizeof(*items))) {
             free(items);
             return NULL;
         }
-        for (CettaExprIndex index = 0u;
-             index < cursor->expr.len; index++) {
+        for (CettaExprIndex index = first; index < end; index++) {
             Atom *item = petta_machine_apply_bindings(machine,
                 search_context_bindings(&machine->search),
                 &machine->heap, cursor->expr.elems[index]);
@@ -9867,12 +9887,17 @@ static Atom *petta_machine_materialize_list(
                 goto unresolved;
             items[length++] = item;
         }
+        if (list_rest) {
+            cursor = cursor->expr.elems[end];
+            continue;
+        }
         if (!cetta_expr_len_fits_size((CettaExprLen)length)) {
             free(items);
             return NULL;
         }
-        Atom *result = atom_expr(
-            &machine->heap, items, (CettaExprLen)length);
+        Atom *result = list_end
+            ? atom_list(&machine->heap, items, (CettaExprLen)length)
+            : atom_expr(&machine->heap, items, (CettaExprLen)length);
         free(items);
         return result;
     }
@@ -9892,13 +9917,50 @@ static Atom *petta_machine_closed_list(
     PettaMachineImpl *machine, Atom *list) {
     if (!machine || !list)
         return NULL;
+    /* Cells close to the list or expression they end in.  A list value's
+     * logical list is the expression of its elements; a list pattern with a
+     * rest is not closed. */
     if (petta_semantics_is_open_cons_value(list)) {
         list = petta_machine_materialize_list(machine, list);
+        if (!list)
+            return NULL;
     }
+    if (atom_is_list(list))
+        return atom_sequence_like(&machine->heap, NULL, atom_list_elems(list),
+                                  atom_list_len(list));
+    if (atom_is_list_rest(list))
+        return NULL;
     return list && list->kind == ATOM_EXPR &&
                    !petta_semantics_is_open_cons_value(list)
         ? list
         : NULL;
+}
+
+/* A sequence operation reading a list value computes over the list's
+ * elements, PeTTa's logical list, and returns a list: the continuation it
+ * produces into converts the closed result.  Pushed before the operation's
+ * own goals, it runs after them, once for each of their alternatives. */
+static Atom *petta_machine_list_result(
+    PettaMachineImpl *machine, Atom *expected, uint32_t barrier) {
+    Atom *items = petta_fresh_variable(machine);
+    if (!items ||
+        !petta_goal_push(
+            machine,
+            &(PettaGoal){
+                .kind = PETTA_GOAL_LIST_OF,
+                .barrier = barrier,
+                .first = items,
+                .second = expected,
+            }))
+        return NULL;
+    return items;
+}
+
+/* The logical list of a list value; any other atom as it is. */
+static Atom *petta_machine_list_elements(
+    PettaMachineImpl *machine, Atom *atom) {
+    return atom_is_list(atom) ? petta_machine_closed_list(machine, atom)
+                              : atom;
 }
 
 typedef struct {
@@ -10506,7 +10568,7 @@ static bool petta_machine_contains_callable(
         .pattern = (item_pattern), \
         .plan = (item_plan)}; \
 } while (0)
-    if (root->kind != ATOM_EXPR) {
+    if (root->kind != ATOM_EXPR || atom_is_list_form(root)) {
         free(stack);
         return false;
     }
@@ -10545,7 +10607,7 @@ static bool petta_machine_contains_callable(
             item.plan && item.plan->child_count == atom->expr.len
                 ? item.plan : NULL;
         SymbolId head = atom_head_symbol_id(atom);
-        if (head == g_builtin_syms.quote)
+        if (head == g_builtin_syms.quote || atom_is_list_form(atom))
             continue;
         PeTTaForm form = head == SYMBOL_ID_NONE
             ? PETTA_FORM_NONE : petta_semantics_form(head);
@@ -10826,6 +10888,7 @@ static bool petta_machine_callable_root(
     if (!machine || !atom || atom->kind != ATOM_EXPR ||
         atom->expr.len == 0u ||
         atom->expr.elems[0]->kind == ATOM_VAR ||
+        atom_is_list_form(atom) ||
         petta_specializer_pattern_is_structural(pattern)) {
         return false;
     }
@@ -10993,6 +11056,12 @@ static bool petta_equation_pattern_view_may_match_now(
                 goto impossible;
             continue;
         }
+        /* A list never meets an expression; a list pattern meets lists of
+         * several lengths, which this shape check leaves to the matcher. */
+        if (atom_is_list_form(left) != atom_is_list_form(right))
+            goto impossible;
+        if (atom_is_list_rest(left) || atom_is_list_rest(right))
+            continue;
         if (left->expr.len != right->expr.len)
             goto impossible;
         if ((size_t)left->expr.len >
@@ -15688,14 +15757,17 @@ static bool petta_machine_advance_choice(
             }
             return false;
         }
-        while (choice->as.append.next_split <= whole->expr.len) {
+        Atom *const *elems;
+        CettaExprLen len;
+        if (!atom_sequence_view(whole, &elems, &len))
+            return false;
+        while (choice->as.append.next_split <= len) {
             CettaExprIndex split =
                 choice->as.append.next_split++;
-            Atom *prefix = atom_expr(
-                &machine->heap, whole->expr.elems, split);
-            Atom *suffix = atom_expr(
-                &machine->heap, whole->expr.elems + split,
-                whole->expr.len - split);
+            Atom *prefix = atom_sequence_like(
+                &machine->heap, whole, elems, split);
+            Atom *suffix = atom_sequence_like(
+                &machine->heap, whole, elems + split, len - split);
             if (!prefix || !suffix ||
                 !petta_push_append_operand(
                     machine, choice->as.append.right, suffix,
@@ -18377,8 +18449,7 @@ static uint64_t petta_memo_term_size_cells(Atom *root) {
                 petta_memo_size_add(
                     3u, petta_memo_u64_limb_count(magnitude)));
         } else if (atom->ground.gkind == GV_STRING) {
-            size_t length = atom->ground.sval
-                ? strlen(atom->ground.sval) : 0u;
+            size_t length = atom->ground.slen;
             if (length == SIZE_MAX) {
                 cells = UINT64_MAX;
                 break;
@@ -18973,7 +19044,9 @@ static bool petta_machine_start_count_collapse(
 static bool petta_machine_start_superpose(
     PettaMachineImpl *machine, Atom *items, Atom *expected,
     uint32_t barrier, const PettaPlanNode *items_plan, bool values) {
-    if (!items || items->kind != ATOM_EXPR)
+    /* A Prolog compound is no list: nothing to superpose. */
+    if (!items || items->kind != ATOM_EXPR ||
+        atom_is_petta_prolog_compound(items))
         return false;
     PettaChoice choice = {
         .kind = PETTA_CHOICE_SUPERPOSE,
@@ -20647,27 +20720,30 @@ static bool petta_machine_append(
         right_open ||
         (right->kind != ATOM_EXPR &&
          (right->kind != ATOM_VAR || expected->kind != ATOM_EXPR));
-    if (left->kind == ATOM_EXPR && right_is_tail) {
+    /* Operands are read by their elements: an expression's, or a list's
+     * after its tag; a joined result has the left operand's kind. */
+    Atom *const *left_elems = NULL;
+    CettaExprLen left_len = 0u;
+    bool left_sequence = left->kind == ATOM_EXPR &&
+        atom_sequence_view(left, &left_elems, &left_len);
+    if (left_sequence && right_is_tail) {
         Atom *result = right;
-        for (CettaExprIndex index = left->expr.len;
-             index > 0u; index--) {
+        for (CettaExprIndex index = left_len; index > 0u; index--) {
             result = petta_semantics_open_cons_value(
-                &machine->heap,
-                left->expr.elems[index - 1u], result);
+                &machine->heap, left_elems[index - 1u], result);
             if (!result)
                 return false;
         }
         return petta_machine_unify(machine, result, expected);
     }
 
-    if (left->kind == ATOM_EXPR &&
-        right->kind == ATOM_EXPR && !right_open) {
-        if (left->expr.len >
-                UINT64_MAX - right->expr.len) {
+    Atom *const *right_elems = NULL;
+    CettaExprLen right_len = 0u;
+    if (left_sequence && right->kind == ATOM_EXPR && !right_open &&
+        atom_sequence_view(right, &right_elems, &right_len)) {
+        if (left_len > UINT64_MAX - right_len)
             return false;
-        }
-        CettaExprLen length =
-            left->expr.len + right->expr.len;
+        CettaExprLen length = left_len + right_len;
         if (
             !cetta_expr_len_mul_fits_size(
                 length, sizeof(Atom *))) {
@@ -20680,20 +20756,15 @@ static bool petta_machine_append(
             : NULL;
         if (length && !items)
             return false;
-        if (left->expr.len) {
-            memcpy(
-                items, left->expr.elems,
-                sizeof(*items) * (size_t)left->expr.len);
+        if (left_len)
+            memcpy(items, left_elems, sizeof(*items) * (size_t)left_len);
+        if (right_len) {
+            memcpy(items + left_len, right_elems,
+                   sizeof(*items) * (size_t)right_len);
         }
-        if (right->expr.len) {
-            memcpy(
-                items + left->expr.len, right->expr.elems,
-                sizeof(*items) * (size_t)right->expr.len);
-        }
-        return petta_machine_unify(
-            machine,
-            atom_expr(&machine->heap, items, length),
-            expected);
+        Atom *joined = atom_sequence_like(
+            &machine->heap, left, items, length);
+        return joined && petta_machine_unify(machine, joined, expected);
     }
     if (left->kind == ATOM_VAR &&
         (expected->kind != ATOM_EXPR ||
@@ -20716,6 +20787,40 @@ static bool petta_machine_append(
     return false;
 }
 
+/*
+ * Append meets an expected expression directly, joining or splitting its
+ * operands as they are, only when they are values: authored calls are
+ * computed first, and a list, which joins by its elements into a list,
+ * takes the path that reads them.
+ */
+static bool petta_machine_append_operands_direct(
+    PettaMachineImpl *machine, Atom *expression, Atom *expected,
+    const PettaPlanNode *plan) {
+    if (!expected || expected->kind != ATOM_EXPR ||
+        atom_is_list_form(expected))
+        return false;
+    const Bindings *environment =
+        search_context_bindings(&machine->search);
+    for (CettaExprIndex index = 1u; index <= 2u; index++) {
+        const PettaPlanNode *operand_plan = petta_plan_child(plan, index);
+        if (operand_plan && operand_plan->contains_call)
+            return false;
+        Atom *operand = petta_machine_resolve_root(
+            environment, expression->expr.elems[index]);
+        if (!operand || atom_is_list_form(operand))
+            return false;
+    }
+    return true;
+}
+
+/*
+ * (cons Head Tail) against a list decomposes it: Head meets the first
+ * element and Tail the rest.  Each operand is solved under its plan, so an
+ * operand that is a source variable keeps its value role and an expression
+ * reaching it through the variable is not called; operands handed on ready
+ * are values under the value place.  Against anything else the operands
+ * build a cell.
+ */
 static bool petta_machine_cons(
     PettaMachineImpl *machine, Atom *head, Atom *tail,
     Atom *expected, uint32_t barrier,
@@ -20738,7 +20843,23 @@ static bool petta_machine_cons(
                    machine, head, expected->expr.elems[1],
                    barrier, head_plan);
     }
-    if (expected->kind == ATOM_EXPR) {
+    /* A list value keeps its kind in its tails: it meets the operands as its
+     * chain of cells, ending in the empty list. */
+    if (atom_is_list(expected)) {
+        Atom *spine = petta_semantics_flat_list_spine(
+            &machine->heap, expected);
+        if (!petta_semantics_is_open_cons_value(spine))
+            return false;
+        return petta_push_solve_planned(
+                   machine, tail, spine->expr.elems[2], barrier,
+                   tail_plan) &&
+               petta_push_solve_planned(
+                   machine, head, spine->expr.elems[1], barrier,
+                   head_plan);
+    }
+    /* A list pattern with a rest meets the cell whole, so the kind its tail
+     * ends in is checked against it. */
+    if (expected->kind == ATOM_EXPR && !atom_is_list_rest(expected)) {
         if (expected->expr.len == 0u)
             return false;
         /* A flat destination's rest is its suffix, sharing its storage. */
@@ -20756,7 +20877,6 @@ static bool petta_machine_cons(
         environment, &machine->heap, tail);
     if (!head || !tail)
         return false;
-
     /*
      * Keep constructor results as shared cons cells inside the relational
      * machine.  Flattening here would copy a tail of length k at every
@@ -23577,7 +23697,7 @@ static bool petta_machine_unify_data_fields(
         if (computed[index] != 0u) {
             matched = match_binding_values_builder(
                 binding_value_from_atom(values[index]),
-                binding_value_from_atom(target), builder);
+                binding_value_from_atom(target), builder, &machine->heap);
             continue;
         }
         if (!bindings_activation_view_available(frame, &builder->current)) {
@@ -27100,6 +27220,10 @@ static bool petta_machine_dispatch_solve(
          */
         items = petta_semantics_flatten_closed_open_cons(
             &machine->heap, items);
+        /* A list's alternatives are its elements. */
+        items = items ? petta_machine_list_elements(machine, items) : NULL;
+        if (!items)
+            return false;
         /* PeTTa distributes an authored tuple, evaluating each element; a
          * variable's list is its runtime `superpose`, member/2 of the
          * value, whose elements are the alternatives as they stand. */
@@ -27994,7 +28118,8 @@ static bool petta_machine_dispatch_solve(
     if ((form == PETTA_FORM_APPEND ||
          head_id == g_builtin_syms.union_atom) &&
         nargs == 2u) {
-        if (expected->kind == ATOM_EXPR) {
+        if (petta_machine_append_operands_direct(
+                machine, expression, expected, plan)) {
             return petta_machine_append(
                 machine, expression->expr.elems[1],
                 expression->expr.elems[2], expected,
@@ -28013,7 +28138,9 @@ static bool petta_machine_dispatch_solve(
     if ((form == PETTA_FORM_CONS ||
          head_id == g_builtin_syms.cons_atom) &&
         nargs == 2u) {
-        if (expected->kind == ATOM_EXPR) {
+        /* A list pattern with a rest opens only a list, which the tail
+         * shows once computed: its operands are evaluated first. */
+        if (expected->kind == ATOM_EXPR && !atom_is_list_rest(expected)) {
             return petta_machine_cons(
                 machine, expression->expr.elems[1],
                 expression->expr.elems[2], expected,
@@ -29510,10 +29637,13 @@ static bool petta_machine_dispatch_goal(
             first->expr.len != 3u) {
             return false;
         }
-        return petta_machine_start_relational_member_choice(
-            machine, first->expr.elems[1],
-            first->expr.elems[2], second,
-            goal.barrier);
+        Atom *items = petta_machine_list_elements(
+            machine, first->expr.elems[2]);
+        /* A Prolog compound is no list, so it has no members. */
+        return items && !atom_is_petta_prolog_compound(items) &&
+               petta_machine_start_relational_member_choice(
+                   machine, first->expr.elems[1], items, second,
+                   goal.barrier);
     }
 
     if (goal.kind == PETTA_GOAL_COLLECTION_COUNT_READY) {
@@ -29523,6 +29653,10 @@ static bool petta_machine_dispatch_goal(
             return petta_machine_unify(
                 machine, first, second);
         }
+        /* A Prolog compound is no list: the binder keeps the value, and the
+         * counting operation reading it answers as for any non-list. */
+        if (atom_is_petta_prolog_compound(first))
+            return petta_machine_unify(machine, first, second);
         Atom *count = petta_fresh_variable(machine);
         if (!count)
             return false;
@@ -29544,6 +29678,14 @@ static bool petta_machine_dispatch_goal(
             return false;
         }
         return true;
+    }
+
+    if (goal.kind == PETTA_GOAL_LIST_OF) {
+        Atom *items = petta_machine_closed_list(machine, first);
+        Atom *list = items
+            ? atom_list(&machine->heap, items->expr.elems, items->expr.len)
+            : NULL;
+        return list && petta_machine_unify(machine, list, second);
     }
 
     if (goal.kind == PETTA_GOAL_WRAP_COLLECTION_COUNT) {
@@ -29578,8 +29720,9 @@ static bool petta_machine_dispatch_goal(
          * maps to the empty value.  The relational length spelling remains
          * partial on the same input, so the operator occurrence is retained
          * in this shared ready continuation as the distinguishing evidence. */
-        if (size_atom && items->kind != ATOM_EXPR &&
-            items->kind != ATOM_VAR &&
+        if (size_atom &&
+            ((items->kind != ATOM_EXPR && items->kind != ATOM_VAR) ||
+             atom_is_petta_prolog_compound(items)) &&
             !petta_semantics_is_open_cons_value(items)) {
             return petta_machine_unify(
                 machine, atom_unit(&machine->heap), second);
@@ -29626,18 +29769,22 @@ static bool petta_machine_dispatch_goal(
                             ? 1u : 2u],
                     second);
             }
+            Atom *const *elems;
+            CettaExprLen len;
             /* PeTTa's `car-atom` and `cdr-atom` are total: anything but a
-             * non-empty expression, `()` included, gives `()`. */
-            if (items->kind != ATOM_EXPR ||
-                items->expr.len == 0u) {
+             * non-empty sequence, `()` included, gives `()`. */
+            if (!atom_sequence_view(items, &elems, &len) || len == 0u) {
                 Atom *empty = atom_unit(&machine->heap);
                 return empty && petta_machine_unify(machine, empty, second);
             }
             if (operation == g_builtin_syms.car_atom) {
                 return petta_machine_unify(
-                    machine, items->expr.elems[0], second);
+                    machine, elems[0], second);
             }
-            Atom *tail = atom_expr_suffix(&machine->heap, items, 1u);
+            Atom *tail = atom_is_list(items)
+                ? atom_sequence_like(
+                      &machine->heap, items, elems + 1u, len - 1u)
+                : atom_expr_suffix(&machine->heap, items, 1u);
             return tail &&
                    petta_machine_unify(machine, tail, second);
         }
@@ -29660,7 +29807,14 @@ static bool petta_machine_dispatch_goal(
             } else if (petta_semantics_is_open_cons_value(items)) {
                 head = items->expr.elems[1];
                 tail = items->expr.elems[2];
-            } else if (items->kind == ATOM_EXPR && items->expr.len > 0u) {
+            } else if (atom_is_list(items) && atom_list_len(items) > 0u) {
+                head = atom_list_elems(items)[0];
+                tail = atom_sequence_like(
+                    &machine->heap, items, atom_list_elems(items) + 1u,
+                    atom_list_len(items) - 1u);
+            } else if (items->kind == ATOM_EXPR && items->expr.len > 0u &&
+                       !atom_is_list_form(items) &&
+                       !atom_is_petta_prolog_compound(items)) {
                 head = items->expr.elems[0];
                 tail = atom_expr_suffix(&machine->heap, items, 1u);
             } else {
@@ -29675,11 +29829,17 @@ static bool petta_machine_dispatch_goal(
             Atom *value = petta_machine_apply_bindings(machine,
                 search_context_bindings(&machine->search),
                 &machine->heap, items);
+            bool list_value = value && atom_is_list(value);
+            if (list_value)
+                value = petta_machine_list_elements(machine, value);
             Atom *sorted = value
                 ? petta_semantics_sort_value(
                       &machine->heap, value,
                       operation == g_builtin_syms.sort_atom, &type_error)
                 : NULL;
+            if (list_value && sorted && sorted->kind == ATOM_EXPR)
+                sorted = atom_list(&machine->heap, sorted->expr.elems,
+                                   sorted->expr.len);
             if (type_error)
                 return petta_machine_raise_list_error(
                     machine, first, value);
@@ -29690,29 +29850,26 @@ static bool petta_machine_dispatch_goal(
             items = petta_machine_materialize_list(
                 machine, items);
         }
-        if (!items || items->kind != ATOM_EXPR)
+        Atom *const *elems;
+        CettaExprLen len;
+        if (!items || !atom_sequence_view(items, &elems, &len))
             return false;
         if (operation == g_builtin_syms.petta_last) {
-            return items->expr.len > 0u &&
-                   petta_machine_unify(
-                       machine,
-                       items->expr.elems[items->expr.len - 1u],
-                       second);
+            return len > 0u &&
+                   petta_machine_unify(machine, elems[len - 1u], second);
         }
         if (operation != g_builtin_syms.reverse)
             return false;
-        Atom **reversed = items->expr.len
+        Atom **reversed = len
             ? arena_alloc(
                   &machine->heap,
-                  sizeof(*reversed) * (size_t)items->expr.len)
+                  sizeof(*reversed) * (size_t)len)
             : NULL;
-        for (CettaExprIndex index = 0u;
-             index < items->expr.len; index++) {
-            reversed[index] =
-                items->expr.elems[items->expr.len - index - 1u];
+        for (CettaExprIndex index = 0u; index < len; index++) {
+            reversed[index] = elems[len - index - 1u];
         }
-        Atom *result = atom_expr(
-            &machine->heap, reversed, items->expr.len);
+        Atom *result = atom_sequence_like(
+            &machine->heap, items, reversed, len);
         return result &&
                petta_machine_unify(machine, result, second);
     }
@@ -29727,6 +29884,7 @@ static bool petta_machine_dispatch_goal(
             first->expr.elems[0]->sym_id);
         Atom *list = NULL;
         Atom *result = NULL;
+        bool list_input = false;
         if (operation == PETTA_FORM_LIST_TO_SET &&
             first->expr.len == 2u) {
             list = first->expr.elems[1];
@@ -29742,30 +29900,50 @@ static bool petta_machine_dispatch_goal(
                 return value &&
                        petta_machine_raise_list_error(machine, first, value);
             }
-            if (petta_semantics_is_open_cons_value(list))
+            /* Cells close first, so a list they end in counts as one. */
+            if (list && petta_semantics_is_open_cons_value(list))
                 list = petta_machine_materialize_list(machine, list);
-            result = petta_semantics_list_to_set(
-                &machine->heap, list);
+            list_input = list && atom_is_list(list);
+            list = list ? petta_machine_list_elements(machine, list) : NULL;
+            result = list ? petta_semantics_list_to_set(
+                                &machine->heap, list) : NULL;
         } else if (operation == PETTA_FORM_EXCLUDE_ITEM &&
                    first->expr.len == 3u) {
             list = first->expr.elems[2];
-            if (petta_semantics_is_open_cons_value(list))
+            /* A Prolog compound is no list: no answer. */
+            if (atom_is_petta_prolog_compound(list))
+                return false;
+            /* Cells close first, so a list they end in counts as one. */
+            if (list && petta_semantics_is_open_cons_value(list))
                 list = petta_machine_materialize_list(machine, list);
-            result = petta_semantics_exclude_item(
-                &machine->heap, first->expr.elems[1], list);
+            list_input = list && atom_is_list(list);
+            list = list ? petta_machine_list_elements(machine, list) : NULL;
+            result = list ? petta_semantics_exclude_item(
+                                &machine->heap, first->expr.elems[1], list)
+                          : NULL;
         } else if (operation == PETTA_FORM_ALPHA_UNIQUE &&
                    first->expr.len == 2u) {
             /* PeTTa's alpha-unique-atom keeps the first element of each
              * class of alpha-equivalent elements, comparing whole values;
-             * anything but a list gives (). */
+             * anything but a list gives ().  A list value gives a list
+             * value. */
             list = first->expr.elems[1];
             if (petta_semantics_value_contains_observable_open_cons(list))
                 list = petta_semantics_materialize_value(
                     &machine->heap, list);
+            list_input = list && atom_is_list(list);
+            list = list ? petta_machine_list_elements(machine, list) : NULL;
             result = !list ? NULL
-                : list->kind == ATOM_EXPR
+                : list->kind == ATOM_EXPR &&
+                          !atom_is_petta_prolog_compound(list)
                 ? petta_semantics_alpha_unique(&machine->heap, list)
                 : atom_unit(&machine->heap);
+        }
+        if (result && list_input) {
+            Atom *items = petta_machine_closed_list(machine, result);
+            result = items ? atom_list(&machine->heap, items->expr.elems,
+                                       items->expr.len)
+                           : NULL;
         }
         return result &&
                petta_machine_unify(machine, result, second);
@@ -29824,10 +30002,20 @@ static bool petta_machine_dispatch_goal(
             first->expr.len != 3u) {
             return false;
         }
-        return petta_machine_append(
-            machine, first->expr.elems[1],
-            first->expr.elems[2], second,
-            goal.barrier);
+        /* A left list joins by its elements into a list; otherwise each
+         * operand keeps its kind, and a split takes the kind it meets. */
+        bool list_left = atom_is_list(first->expr.elems[1]);
+        Atom *expected = list_left
+            ? petta_machine_list_result(machine, second, goal.barrier)
+            : second;
+        Atom *left = petta_machine_list_elements(
+            machine, first->expr.elems[1]);
+        Atom *right = list_left
+            ? petta_machine_list_elements(machine, first->expr.elems[2])
+            : first->expr.elems[2];
+        return expected && left && right &&
+               petta_machine_append(
+                   machine, left, right, expected, goal.barrier);
     }
 
     if (goal.kind == PETTA_GOAL_CONS_READY) {
@@ -29835,11 +30023,28 @@ static bool petta_machine_dispatch_goal(
             first->expr.len != 3u) {
             return false;
         }
-        return petta_machine_cons(
-            machine, first->expr.elems[1],
-            first->expr.elems[2], second,
-            goal.barrier, &petta_machine_value_places[0],
-            &petta_machine_value_places[0]);
+        /* A cell onto a Prolog compound is the improper list [H|T]. */
+        if (atom_is_petta_prolog_compound(first->expr.elems[2])) {
+            Atom *cell = petta_semantics_open_cons_value(
+                &machine->heap, first->expr.elems[1],
+                first->expr.elems[2]);
+            if (!cell) {
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
+            return petta_machine_unify(machine, cell, second);
+        }
+        /* A cell onto a list value makes a list value. */
+        Atom *expected = atom_is_list(first->expr.elems[2])
+            ? petta_machine_list_result(machine, second, goal.barrier)
+            : second;
+        Atom *tail = petta_machine_list_elements(
+            machine, first->expr.elems[2]);
+        return expected && tail &&
+               petta_machine_cons(
+                   machine, first->expr.elems[1], tail, expected,
+                   goal.barrier, &petta_machine_value_places[0],
+                   &petta_machine_value_places[0]);
     }
 
     if (goal.kind == PETTA_GOAL_MATCH_SPACE_READY) {
@@ -29871,6 +30076,14 @@ static bool petta_machine_dispatch_goal(
             (goal.third && !body)) {
             *failure = PETTA_MACHINE_STEP_CAPACITY;
             return false;
+        }
+        if (atom_is_list(first)) {
+            expected = petta_machine_list_result(
+                machine, expected, goal.barrier);
+            if (!expected) {
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
         }
         return petta_machine_map_atom(
             machine, first, second, body, expected,
@@ -29933,6 +30146,14 @@ static bool petta_machine_dispatch_goal(
             *failure = PETTA_MACHINE_STEP_CAPACITY;
             return false;
         }
+        if (atom_is_list(first)) {
+            expected = petta_machine_list_result(
+                machine, expected, goal.barrier);
+            if (!expected) {
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
+        }
         return petta_machine_filter_atom(
             machine, first, second, body, expected,
             goal.barrier);
@@ -29990,6 +30211,7 @@ static bool petta_machine_dispatch_goal(
         }
         return first->kind == ATOM_EXPR &&
                first->expr.len == 2u &&
+               !atom_is_petta_prolog_compound(first) &&
                petta_machine_unify(
                    machine,
                    first->expr.elems[goal.choice_index],
@@ -30005,7 +30227,10 @@ static bool petta_machine_dispatch_goal(
          * the cells it finds: an unbound tail always admits one more
          * member, so such a list answers only through the relation; an
          * improper tail ends the walk; a non-list has no members. */
-        Atom *items = first->expr.elems[2];
+        Atom *items = petta_machine_list_elements(
+            machine, first->expr.elems[2]);
+        if (!items)
+            return false;
         uint64_t prefix_length = 0u;
         Atom *open_tail = NULL;
         PettaListShape shape = petta_machine_list_shape(
@@ -30718,14 +30943,25 @@ static bool petta_machine_dispatch_goal(
     outcome_set_init_with_owner(outcomes, &machine->heap);
     CettaCallOutcome end = cetta_call_failure();
     const CettaDelayView host_delay = {.service = machine->delay};
-    bool evaluated = machine->host.evaluate_planned
-        ? machine->host.evaluate_planned(
-              machine->host.context, machine->space, &machine->heap,
-              first, goal.plan, &host_environment, outcomes, &end,
-              &host_delay)
-        : machine->host.evaluate(
-              machine->host.context, machine->space, &machine->heap,
-              first, &host_environment, outcomes, &end, &host_delay);
+    /* The arguments of a strict-ready application are values the machine
+     * computed: a variable's value, a result, a datum.  Hand them over as
+     * they are; evaluating the call again would evaluate their contents. */
+    bool evaluated =
+        goal.kind == PETTA_GOAL_HOST_STRICT_READY &&
+        machine->host.apply_ready_values &&
+        machine->host.apply_ready_values(
+            machine->host.context, machine->space, &machine->heap,
+            first, &host_environment, outcomes, &end);
+    if (!evaluated) {
+        evaluated = machine->host.evaluate_planned
+            ? machine->host.evaluate_planned(
+                  machine->host.context, machine->space, &machine->heap,
+                  first, goal.plan, &host_environment, outcomes, &end,
+                  &host_delay)
+            : machine->host.evaluate(
+                  machine->host.context, machine->space, &machine->heap,
+                  first, &host_environment, outcomes, &end, &host_delay);
+    }
     if (evaluated && end.kind != CETTA_CALL_FAILURE) {
         /* The host's error propagates from this goal as the machine's own
          * would; an interrupted host leaves no answers, and the machine

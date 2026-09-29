@@ -441,13 +441,6 @@ def main() -> int:
     admitted = sx.admit(tuple(semantic_paths))
     compiled_plan = compile_plan(admitted)
 
-    compiler_hash = sha256()
-    compiler_hash.update(b"CettaGsltLanguageCompilerV1\0")
-    for compiler_source in (Path(__file__).resolve(), Path(sx.__file__).resolve()):
-        payload = compiler_source.read_bytes()
-        compiler_hash.update(len(payload).to_bytes(8, "big"))
-        compiler_hash.update(payload)
-    compiler_digest = compiler_hash.hexdigest()
     manifest_payload = manifest_path.read_bytes()
     manifest_digest = sha256(manifest_payload).hexdigest()
     manifest_relative = str(manifest_path.relative_to(source_root))
@@ -529,7 +522,6 @@ def main() -> int:
         )
         + f"    .observation = {c_string(manifest.observation)},\n"
         + f"    .manifest_sha256 = {c_string(manifest_digest)},\n"
-        + f"    .compiler_sha256 = {c_string(compiler_digest)},\n"
         + "};\n"
     )
     write_if_changed(arguments.header, header)

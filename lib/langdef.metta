@@ -174,8 +174,15 @@
 ; Compile an exact deterministic first-order evaluator from one or more
 ; source equation LanguageDefs.  Sources are supplied in a
 ; (LangDef:EquationSources ...) envelope; execution uses a
-; (LangDef:DeterministicCall head argument ...) envelope so the call remains
-; data until the checked plan owns its evaluation.
+; (LangDef:DeterministicCall head argument ...) envelope. Ordinary run permits
+; argument computations; run-data applies the plan to existing values.
+(: __cetta_lib_deterministic_equations_run_data (-> Atom Atom Atom))
+; The named-binding natives take terms as data and give data back.
+(: __cetta_abt_free_names (-> Atom Atom Atom))
+(: __cetta_abt_substitute (-> Atom Atom Atom Atom))
+(: __cetta_abt_rename_bound (-> Atom Atom Atom Atom))
+(: __cetta_abt_named_alpha_eq (-> Atom Atom Atom %Undefined%))
+
 (= (langdef:load-deterministic-equations $sources)
    (function
      (case (__cetta_lib_deterministic_equations_load $sources)
@@ -185,6 +192,14 @@
 (= (langdef:run-deterministic-equations $handle $call)
    (function
      (case (__cetta_lib_deterministic_equations_run $handle $call)
+       (((return $result) (return $result))
+        ($result (return $result))))))
+
+; Apply an authored transformation to already computed data arguments.
+; Neither argument subtrees nor the returned value are implicitly executed.
+(= (langdef:run-deterministic-equations-data $handle $call)
+   (function
+     (case (__cetta_lib_deterministic_equations_run_data $handle $call)
        (((return $result) (return $result))
         ($result (return $result))))))
 
@@ -306,7 +321,7 @@
        (((LangDef.ImportPrepared $name $pack $source $values)
          (let $protocol (langdef:invoke-entry $entry $parsed)
            (langdef:publish $handle $protocol)))
-        ($_ (return $parsed))))))
+        ($_ $parsed)))))
 
 ; Recognition and generated semantic replay finish before the target space
 ; changes. Rejection leaves the target untouched; acceptance publishes the
@@ -330,3 +345,31 @@
      (case (__cetta_lib_langdef_codepoints_string $codepoints)
        (((return $result) (return $result))
         ($result (return $result))))))
+
+; Inverse of codepoints->symbol for generic source-language algorithms.
+(= (langdef:symbol->codepoints $symbol)
+   (function
+     (case (__cetta_lib_langdef_symbol_codepoints $symbol)
+       (((return $result) (return $result))
+        ($result (return $result))))))
+
+(= (langdef:append-symbol $left $right)
+   (function
+     (case (__cetta_lib_langdef_symbol_append $left $right)
+       (((return $result) (return $result))
+        ($result (return $result))))))
+
+; Named binding over an ABT signature whose binders declare names that occur
+; in the term (BindTelescope, BindPattern): the free variable names in order
+; of first occurrence, simultaneous capture-avoiding substitution of
+; ((NAME VALUE) ...), renaming binders apart from each other, from the free
+; names and from avoid, and equality up to the names of binders.  Terms are
+; data: nothing in them is evaluated.
+(= (langdef:free-names $signature $term)
+   (__cetta_abt_free_names $signature $term))
+(= (langdef:substitute-names $signature $bindings $term)
+   (__cetta_abt_substitute $signature $bindings $term))
+(= (langdef:rename-apart $signature $avoid $term)
+   (__cetta_abt_rename_bound $signature $avoid $term))
+(= (langdef:alpha-equal $signature $left $right)
+   (__cetta_abt_named_alpha_eq $signature $left $right))

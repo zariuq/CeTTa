@@ -344,7 +344,7 @@ static Atom *horn_quote_atom(Arena *arena, const Atom *atom,
         if (atom->ground.gkind == GV_STRING)
             return atom_expr2(
                 arena, atom_symbol(arena, "q-str"),
-                atom_string(arena, atom->ground.sval));
+                atom_string_n(arena, atom->ground.sval, atom->ground.slen));
         return atom_expr2(
             arena, atom_symbol(arena, "q-ground"),
             atom_deep_copy(arena, (Atom *)atom));
@@ -843,7 +843,8 @@ static void horn_solve(GsltHornRun *run, Atom *const *goals,
             }
             frame->binding_mark = bindings_builder_save(builder);
             frame->branch_mark = arena_mark(&run->scratch);
-            if (!match_atoms_builder(frame->goal, answer, builder)) {
+            if (!match_atoms_builder(frame->goal, answer, builder,
+                                         &run->scratch)) {
                 bindings_builder_rollback(builder, frame->binding_mark);
                 arena_reset(&run->scratch, frame->branch_mark);
                 continue;
@@ -892,7 +893,8 @@ static void horn_solve(GsltHornRun *run, Atom *const *goals,
             continue;
         }
         if (!match_atoms_builder(
-                frame->goal, fresh_clause->expr.elems[1], builder)) {
+                frame->goal, fresh_clause->expr.elems[1], builder,
+                    &run->scratch)) {
             bindings_builder_rollback(builder, frame->binding_mark);
             arena_reset(&run->scratch, frame->branch_mark);
             continue;

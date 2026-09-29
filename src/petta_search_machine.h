@@ -310,6 +310,16 @@ typedef struct {
         const PettaPlanNode *plan,
         const Bindings *environment, OutcomeSet *outcomes,
         CettaCallOutcome *end, const CettaDelayView *delay);
+    /* A strict application whose arguments the machine has computed.  The
+     * host applies its operation to those values without evaluating them
+     * again, and returns false, adding nothing, when the operation needs
+     * the ordinary evaluator; the call then goes to evaluate as before.
+     * `end` is how an applied operation ended, as for `evaluate`: RAISED
+     * with its error, which adds no answer.  Optional. */
+    bool (*apply_ready_values)(
+        void *context, Space *space, Arena *arena, Atom *expression,
+        const Bindings *environment, OutcomeSet *outcomes,
+        CettaCallOutcome *end);
     /* Create a new translation event at an explicit forcing boundary such as
      * PeTTa `eval`.  A returned plan fixes callability for that occurrence;
      * NULL declines because the host could not establish the event. */

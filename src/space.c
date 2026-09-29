@@ -881,6 +881,10 @@ static DiscNode *disc_insert_atom(DiscPool *pool, DiscNode *node, Atom *a) {
         /* treat other grounded as wildcard for now */
         return disc_get_var(pool, node);
     case ATOM_EXPR: {
+        /* A list pattern meets lists of every length at least its prefix's,
+         * so it is keyed as a variable. */
+        if (atom_is_list_rest(a))
+            return disc_get_var(pool, node);
         DiscNode *cur = disc_get_expr(pool, node, a->expr.len);
         for (CettaExprIndex i = 0; i < a->expr.len; i++)
             cur = disc_insert_atom(pool, cur, a->expr.elems[i]);
@@ -913,6 +917,12 @@ static bool disc_insert_atom_id(DiscPool *pool, DiscNode *node,
         }
         return true;
     case ATOM_EXPR: {
+        if (tu_arity(universe, atom_id) > 0u &&
+            tu_internal_tag(universe, tu_child(universe, atom_id, 0u)) ==
+                CETTA_INTERNAL_TAG_LIST_REST) {
+            *out_leaf = disc_get_var(pool, node);
+            return true;
+        }
         DiscNode *cur = disc_get_expr(pool, node, tu_arity(universe, atom_id));
         for (CettaExprIndex i = 0; i < tu_arity(universe, atom_id); i++) {
             AtomId child_id = tu_child(universe, atom_id, i);
@@ -1226,6 +1236,11 @@ static void disc_step(DiscNode *node, Atom *q, DiscNodeSet *next) {
         break;
 
     case ATOM_EXPR:
+        /* A list pattern in a query may meet any indexed term there. */
+        if (atom_is_list_rest(q)) {
+            disc_skip_term(node, next);
+            break;
+        }
         disc_step_expression_coordinates(
             node, q->expr.elems, q->expr.len, next);
         break;
@@ -2833,8 +2848,9 @@ static bool atom_is_exact_indexable(const Atom *atom) {
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
-        case GV_INTERNAL_TAG:
             return false;
+        case GV_INTERNAL_TAG:
+            return cetta_internal_tag_is_list(atom->ground.ival);
         }
         return false;
     case ATOM_EXPR:
@@ -2879,8 +2895,10 @@ static bool atom_id_is_exact_indexable(const Space *s, AtomId atom_id) {
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
-        case GV_INTERNAL_TAG:
             return false;
+        case GV_INTERNAL_TAG:
+            return cetta_internal_tag_is_list(
+                tu_internal_tag(s->native.universe, atom_id));
         }
         return false;
     case ATOM_EXPR:
@@ -7501,6 +7519,12 @@ static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
                     : 0;
         break;
     case ATOM_EXPR:
+        if (atom_is_list_form(atom)) {
+            types = cetta_malloc(sizeof(Atom *));
+            types[0] = atom_list_type(a);
+            count = 1;
+            break;
+        }
         count = include_direct_annotations
                     ? get_annotated_types(s, a, atom, &types, budget, NULL)
                     : 0;
@@ -7583,7 +7607,8 @@ static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
                             if (!type_inference_step(budget, 1)) break;
                             ChoicePoint point = search_context_save(&trial_context);
                             if (match_types_builder(atypes[ti], arg_type_decl,
-                                                    search_context_builder(&trial_context))) {
+                                                    search_context_builder(&trial_context),
+                                                    a)) {
                                 Bindings next_tb;
                                 bindings_init(&next_tb);
                                 search_context_take(&trial_context, &next_tb);

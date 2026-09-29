@@ -540,7 +540,7 @@ const GSLTDirectReaderV1Plan he_reader_direct_v1_plan = {
     .syntax_digest = "d5b3fe033971baff9a71dfe8964d7e9139f2006a6789a6a1b2ef9249025e6d18",
     .class_digest = "5b7439855a64f0fe649c7016a273a595dfcfe58d6732fd7ab97bb154bd4a58dd",
     .projection_digest = "8fee931b7187673ddec25dc9e7a95619fded14de67fcca05c75296f994e72049",
-    .compiler_digest = "0772c7adf38f6fe21c0fe3d60d6db94861709c0658e41a003cbb84cdbf92e097",
+    .compiler_digest = "1e3b20abb53e044dc1e15db861698a55adac6fcb7a7a8b75795165134ea60a73",
     .composition_digest = "e8e545c04400c988f8ea975ddeca823c19a50bd6fc717c7388a062135b7194e7",
     .profile = "cetta-he-v1",
     .whitespace = &he_reader_direct_v1_class_6_he_whitespace_scalar,
@@ -580,6 +580,13 @@ const GSLTDirectReaderV1Plan he_reader_direct_v1_plan = {
     .unicode_hex_max = UINT32_C(6),
     .unicode_value_max = UINT32_C(1114111),
     .unicode_radix = UINT32_C(16),
+    .list_open = UINT32_C(0),
+    .list_close = UINT32_C(0),
+    .list_rest = UINT32_C(0),
+    .list_word_start = NULL,
+    .list_word_tail = NULL,
+    .list_boundary = {.allow_eof = false, .literals = NULL, .literal_len = UINT32_C(0), .classes = NULL, .class_len = UINT32_C(0)},
+    .list_variable_tail = NULL,
     .depth_limit = UINT32_C(4096),
 };
 

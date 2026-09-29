@@ -12,7 +12,7 @@
 extern const CettaGsltSupportTransformProfileV1 cetta_mm2_gslt_profile_v1;
 
 int main(int argc, char **argv) {
-    if (argc != 3 && argc != 4) return 2;
+    if (argc != 2 && argc != 3) return 2;
     FILE *file = fopen(argv[1], "rb");
     if (!file) return 2;
     long size;
@@ -37,18 +37,17 @@ int main(int argc, char **argv) {
     char error[512] = {0}, digest[65];
     cetta_native_sha256_hex(bytes, (size_t)size, digest);
     ok = cetta_gslt_support_profile_from_source_v1(&arena, bytes, (size_t)size,
-             argv[2], &decoded, error, sizeof(error)) &&
+             &decoded, error, sizeof(error)) &&
          cetta_gslt_support_profile_packet_matches_v1(emitted, error, sizeof(error)) &&
          !strcmp(emitted->manifest_sha256, digest) &&
-         !strcmp(emitted->compiler_sha256, argv[2]) &&
          decoded.physical_profile_packet_size == emitted->physical_profile_packet_size &&
          !memcmp(decoded.physical_profile_packet, emitted->physical_profile_packet,
                  decoded.physical_profile_packet_size);
-    if (ok && argc == 4) {
+    if (ok && argc == 3) {
         /* The fixture supplies a declared but unavailable provider. Its work
          * must remain data, not execute using the familiar source spelling. */
         Atom **forms = NULL;
-        int count = parse_metta_text(argv[3], &arena, &forms);
+        int count = parse_metta_text(argv[2], &arena, &forms);
         CettaGsltSupportTransformResultV1 result = {0};
         ok = count > 0 && cetta_gslt_support_transform_run_v1(emitted, &arena,
                  forms, (size_t)count, 8, &result, error, sizeof(error)) &&

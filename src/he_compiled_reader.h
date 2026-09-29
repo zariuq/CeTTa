@@ -24,6 +24,8 @@ typedef struct {
 } HECompiledReaderV1Receipt;
 
 HECompiledReaderV1 *he_compiled_reader_v1_new(void);
+/* The reader of the extended profiles: the HE reader with CeTTa's lists. */
+HECompiledReaderV1 *he_compiled_reader_v1_new_with_lists(void);
 void he_compiled_reader_v1_free(HECompiledReaderV1 *reader);
 
 /* Bind the checked-in C artifact generated from the HE LanguageDef. */

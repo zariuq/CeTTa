@@ -1,0 +1,1 @@
+fof(deep,axiom,deep).

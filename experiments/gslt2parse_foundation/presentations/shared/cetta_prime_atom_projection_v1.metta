@@ -8,6 +8,8 @@
     (operator sexpr-variable-rule 4)
     (operator sexpr-wrapper-map 4)
     (operator sexpr-prefix-rule 4)
+    (operator sexpr-list-rule 6)
+    (operator sexpr-list-prefix-rule 3)
     (operator sexpr-codepoint-map 2)
     (operator sexpr-projection-cons 2))
   (equations)
@@ -61,5 +63,31 @@
       (head
         (sexpr-prefix-rule
           cetta-prime-v1 structural-reference resolve-name closed))
+      (body))
+
+    ; A list node is a list value; its rest node closes a list pattern.  The
+    ; word, variables and prefix forms inside a list project like the ones
+    ; outside: each list prefix form names the prefix form it mirrors.
+    (rule sexpr-list-rule-cetta-prime-list
+      (head
+        (sexpr-list-rule
+          cetta-prime-v1 list list-rest list-word list-variable
+          list-anonymous-variable))
+      (body))
+    (rule sexpr-list-prefix-rule-cetta-prime-quote
+      (head (sexpr-list-prefix-rule cetta-prime-v1 list-quote quote))
+      (body))
+    (rule sexpr-list-prefix-rule-cetta-prime-unquote
+      (head (sexpr-list-prefix-rule cetta-prime-v1 list-unquote unquote))
+      (body))
+    (rule sexpr-list-prefix-rule-cetta-prime-structural-variable
+      (head
+        (sexpr-list-prefix-rule
+          cetta-prime-v1 list-structural-variable structural-variable))
+      (body))
+    (rule sexpr-list-prefix-rule-cetta-prime-structural-reference
+      (head
+        (sexpr-list-prefix-rule
+          cetta-prime-v1 list-structural-reference structural-reference))
       (body))
   ))

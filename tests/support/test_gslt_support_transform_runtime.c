@@ -87,7 +87,7 @@ int main(void) {
               &malformed, error, sizeof(error)),
           "malformed generated identity fails closed");
     malformed = cetta_mm2_gslt_profile_v1;
-    malformed.compiler_sha256 =
+    malformed.manifest_sha256 =
         "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg";
     CHECK(!cetta_gslt_support_transform_profile_validate_v1(
               &malformed, error, sizeof(error)),

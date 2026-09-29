@@ -1,49 +1,181 @@
-(= (str:length $text)
+; Strings are bytes plus a length; a string may hold NUL.  Byte operations
+; are named as such and take any bytes.  Codepoint operations read strict
+; UTF-8 and refuse malformed input, naming the byte offset of the first
+; invalid sequence; nothing indexes characters in O(1).  A text argument is a
+; string or a symbol's spelling.  Conversions read their whole input and
+; refuse anything else.  Prepared equation runners call these operations
+; under the same names.
+
+(= (str:byte-length $text)
    (function
-     (case (__cetta_lib_str_length $text)
+     (case (__cetta_lib_str byte-length $text)
+       (($result (return $result))))))
+
+; The bytes from start up to end; an offset outside the text is refused.
+(= (str:byte-slice $text $start $end)
+   (function
+     (case (__cetta_lib_str byte-slice $text $start $end)
        (($result (return $result))))))
 
 (= (str:concat $lhs $rhs)
    (function
-     (case (__cetta_lib_str_concat $lhs $rhs)
-       (($result (return $result))))))
-
-(= (str:split $separator $text)
-   (function
-     (case (__cetta_lib_str_split $separator $text)
-       (($result (return $result))))))
-
-(= (str:split-whitespace $text)
-   (function
-     (case (__cetta_lib_str_split_whitespace $text)
+     (case (__cetta_lib_str concat $lhs $rhs)
        (($result (return $result))))))
 
 (= (str:join $separator $parts)
    (function
-     (case (__cetta_lib_str_join $separator $parts)
+     (case (__cetta_lib_str join $separator $parts)
        (($result (return $result))))))
 
-(= (str:slice $text $start $end)
+(= (str:split $separator $text)
    (function
-     (case (__cetta_lib_str_slice $text $start $end)
+     (case (__cetta_lib_str split $separator $text)
+       (($result (return $result))))))
+
+(= (str:split-whitespace $text)
+   (function
+     (case (__cetta_lib_str split-whitespace $text)
        (($result (return $result))))))
 
 (= (str:find $text $needle)
    (function
-     (case (__cetta_lib_str_find $text $needle)
+     (case (__cetta_lib_str find $text $needle)
        (($result (return $result))))))
 
 (= (str:starts-with $text $prefix)
    (function
-     (case (__cetta_lib_str_starts_with $text $prefix)
+     (case (__cetta_lib_str starts-with $text $prefix)
        (($result (return $result))))))
 
 (= (str:ends-with $text $suffix)
    (function
-     (case (__cetta_lib_str_ends_with $text $suffix)
+     (case (__cetta_lib_str ends-with $text $suffix)
        (($result (return $result))))))
 
 (= (str:trim $text)
    (function
-     (case (__cetta_lib_str_trim $text)
+     (case (__cetta_lib_str trim $text)
+       (($result (return $result))))))
+
+; The SHA-256 digest of the text's bytes, as 64 lowercase hex digits.
+(= (str:sha256 $text)
+   (function
+     (case (__cetta_lib_str sha256 $text)
+       (($result (return $result))))))
+
+; -1, 0 or 1 by byte order, a proper prefix first.
+(= (str:compare $lhs $rhs)
+   (function
+     (case (__cetta_lib_str compare $lhs $rhs)
+       (($result (return $result))))))
+
+(= (str:codepoint-count $text)
+   (function
+     (case (__cetta_lib_str codepoint-count $text)
+       (($result (return $result))))))
+
+; The codepoints of a text as a list value of one-codepoint strings, so that
+; [$c | $rest] matches over its characters.
+(= (str:codepoints $text)
+   (function
+     (case (__cetta_lib_str codepoints $text)
+       (($result (return $result))))))
+
+; One string from a list of codepoints, each a one-codepoint string or an
+; integer scalar value.
+(= (str:from-codepoints $codepoints)
+   (function
+     (case (__cetta_lib_str from-codepoints $codepoints)
+       (($result (return $result))))))
+
+; Character classes over codepoints, those of the C locale: alpha, digit,
+; alnum, lower, upper, space, blank, punct, print, graph, cntrl, xdigit, word
+; (alnum or _) and ascii.  A codepoint beyond ASCII is in none of them.
+; Whether every codepoint of a text is in a class (the empty text is), and
+; whether its first codepoint is (the empty text has none).
+(= (str:all-in? $class $text)
+   (function
+     (case (__cetta_lib_str all-in? $class $text)
+       (($result (return $result))))))
+
+(= (str:initial-in? $class $text)
+   (function
+     (case (__cetta_lib_str initial-in? $class $text)
+       (($result (return $result))))))
+
+; Spelling tests: letters and digits only; a lower-case or an upper-case
+; initial; and a lower word or an upper word, such an initial followed by word
+; characters.
+(= (str:alphanumeric? $text)
+   (function
+     (case (__cetta_lib_str alphanumeric? $text)
+       (($result (return $result))))))
+
+(= (str:lower-initial? $text)
+   (function
+     (case (__cetta_lib_str lower-initial? $text)
+       (($result (return $result))))))
+
+(= (str:upper-initial? $text)
+   (function
+     (case (__cetta_lib_str upper-initial? $text)
+       (($result (return $result))))))
+
+(= (str:lower-word? $text)
+   (function
+     (case (__cetta_lib_str lower-word? $text)
+       (($result (return $result))))))
+
+(= (str:upper-word? $text)
+   (function
+     (case (__cetta_lib_str upper-word? $text)
+       (($result (return $result))))))
+
+; A symbol from a string: nonempty UTF-8 without NUL.
+(= (str:string->symbol $text)
+   (function
+     (case (__cetta_lib_str string->symbol $text)
+       (($result (return $result))))))
+
+(= (str:symbol->string $symbol)
+   (function
+     (case (__cetta_lib_str symbol->string $symbol)
+       (($result (return $result))))))
+
+; A number from its whole decimal spelling: an integer of any size, or a
+; float with a point or an exponent, rounded to the nearest double; a float
+; beyond the finite doubles is refused.
+(= (str:string->number $text)
+   (function
+     (case (__cetta_lib_str string->number $text)
+       (($result (return $result))))))
+
+(= (str:number->string $number)
+   (function
+     (case (__cetta_lib_str number->string $number)
+       (($result (return $result))))))
+
+; A string set is built once from a list of strings and can be bound and
+; shared; membership searches it without rebuilding it.
+(= (str:set $strings)
+   (function
+     (case (__cetta_lib_str set $strings)
+       (($result (return $result))))))
+
+(= (str:set-member? $set $text)
+   (function
+     (case (__cetta_lib_str set-member? $set $text)
+       (($result (return $result))))))
+
+; The quoting schemes are metta, json, tptp-single and tptp-double: the body
+; of a MeTTa string literal, of a JSON string, of a TPTP quoted atom and of a
+; TPTP distinct object.
+(= (str:escape $scheme $text)
+   (function
+     (case (__cetta_lib_str escape $scheme $text)
+       (($result (return $result))))))
+
+(= (str:unescape $scheme $text)
+   (function
+     (case (__cetta_lib_str unescape $scheme $text)
        (($result (return $result))))))

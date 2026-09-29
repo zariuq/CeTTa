@@ -140,6 +140,11 @@ static inline bool petta_semantics_facts_is_cons_constraint(
 }
 
 PeTTaForm petta_semantics_form(SymbolId head);
+/* Whether an application of head to nargs arguments is read as its special
+ * form: a special form is syntax only at the arities SWI-PeTTa's translator
+ * reads (translate_expr), and at any other it is an ordinary application of
+ * its name.  True for every other head. */
+bool petta_semantics_special_form_reads(SymbolId head, CettaExprLen nargs);
 
 /* A special form of PeTTa is syntax only where it is written.  Reached at
  * run time -- as the value of a variable or expression head, or as the head
@@ -230,6 +235,9 @@ bool petta_semantics_is_cons_constraint(const Atom *atom);
 bool petta_semantics_is_open_cons_value(const Atom *atom);
 Atom *petta_semantics_open_cons_value(
     Arena *arena, Atom *head, Atom *tail);
+/* A list value or a list pattern with a rest as its chain of cells. */
+Atom *petta_semantics_flat_list_spine(
+    Arena *arena, Atom *flat_list);
 /* Whether any open-cons carrier has been built in this process: until one
  * has, no value holds one.  Read on every unification, so inline. */
 extern atomic_bool g_petta_open_cons_built;
@@ -256,6 +264,9 @@ typedef enum {
 typedef struct {
     Atom *rest;
     CettaExprIndex flat_index;
+    /* One past the last element of the flat tail: its length, or for a list
+     * pattern [x... | r] the index of r, which the walk continues into. */
+    CettaExprIndex flat_end;
     bool in_flat_tail;
     bool invalid;
 } PeTTaLogicalListCursor;
@@ -264,7 +275,8 @@ void petta_semantics_logical_list_cursor_init(
     PeTTaLogicalListCursor *cursor, Atom *list);
 PeTTaLogicalListStep petta_semantics_logical_list_cursor_next(
     PeTTaLogicalListCursor *cursor, Atom **item);
-/* PeTTa's is_list/1: a flat expression, or cells ending in one. */
+/* PeTTa's is_list/1: a flat expression, or cells ending in one or in a
+ * list value, read through the list patterns they pass. */
 bool petta_semantics_is_closed_list(Atom *atom);
 /* Whether PeTTa runs `head` as the language's type-pure grounded operation.
  * A PeTTa form whose spelling such an operation shares, as `sort-atom`
@@ -279,8 +291,9 @@ static inline bool petta_semantics_grounded_type_pure(SymbolId head) {
 static inline bool petta_semantics_structural_test(SymbolId head) {
     return head == g_builtin_syms.alpha_eq || head == g_builtin_syms.op_eq;
 }
-/* The elements of a closed list as one flat expression: `list` itself when
- * it is flat, NULL when its cells end in a non-list or an unbound tail. */
+/* The elements of a closed list as one flat expression, or as a list value
+ * when its cells end in one: `list` itself when it is flat, NULL when its
+ * cells end in a non-list or an unbound tail. */
 Atom *petta_semantics_closed_list(Arena *arena, Atom *list);
 /* PeTTa's `sort-atom` (`total`) and `msort` of a value: a list sorts in
  * SWI's standard order; `sort-atom` gives () for a non-list, as its first
@@ -309,6 +322,11 @@ Atom *petta_semantics_syntax_error(Arena *arena, const char *text);
  * predicate `module:name/arity`, or an unbound context when `name` is NULL. */
 Atom *petta_semantics_cyclic_term_error(
     Arena *arena, const char *module, const char *name, int64_t arity);
+/* permission_error(modify, static_procedure, Name/Arity) in
+ * context(system:Predicate/1, _): Predicate (assertz, retractall) met the
+ * static predicate that static-import! made of a space's rows. */
+Atom *petta_semantics_static_procedure_error(
+    Arena *arena, SymbolId name, int64_t arity, const char *predicate);
 /* instantiation_error in context(Module:Name/Arity, _): the predicate needed
  * a bound argument. */
 Atom *petta_semantics_instantiation_error(
@@ -352,9 +370,10 @@ bool petta_semantics_logical_list_length(
 Atom *petta_semantics_materialize_closed_logical_list(
     Arena *arena, Atom *list);
 /* Reify the complete logical-list carrier for observation.  Closed spines
- * become PeTTa's flat expression carrier; an unresolved or improper tail is
- * retained as authored `(cons Head Tail)` syntax.  The private carrier tag is
- * never observable in either case. */
+ * become the kind they end in: PeTTa's flat expression carrier, or a list
+ * value for cells ending in one; an unresolved or improper tail is retained
+ * as authored `(cons Head Tail)` syntax.  The private carrier tag is never
+ * observable in either case. */
 Atom *petta_semantics_materialize_logical_list(
     Arena *arena, Atom *list);
 

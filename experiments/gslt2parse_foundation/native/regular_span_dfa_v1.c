@@ -350,6 +350,189 @@ static bool rsdfa_v1_program_tag_slice_valid(
     return true;
 }
 
+static bool rsdfa_v1_state_accepts_tag(const RSDFAV1Program *program,
+                                       uint32_t state_index, uint32_t tag) {
+    const RSDFAV1ProgramState *state = &program->states[state_index];
+    uint32_t i;
+    for (i = 0u; i < state->accept_len; i++) {
+        if (program->accept_tags[state->accept_begin + i] == tag)
+            return true;
+    }
+    for (i = 0u; i < state->eof_accept_len; i++) {
+        if (program->eof_accept_tags[state->eof_accept_begin + i] == tag)
+            return true;
+    }
+    return false;
+}
+
+static uint32_t rsdfa_v1_saturating_count(uint64_t value) {
+    return value >= 2u ? 2u : (uint32_t)value;
+}
+
+bool rsdfa_v1_program_tag_language_size(
+    const RSDFAV1Program *program,
+    uint32_t tag,
+    uint32_t *count,
+    uint32_t *singleton_out,
+    uint32_t singleton_cap,
+    uint32_t *singleton_len) {
+    const uint32_t n = program ? program->state_len : 0u;
+    uint32_t *reverse_begin = NULL;
+    uint32_t *reverse_source = NULL;
+    uint32_t *fill = NULL;
+    uint32_t *queue = NULL;
+    uint8_t *coreach = NULL;
+    uint8_t *color = NULL;
+    uint32_t *memo = NULL;
+    uint32_t *stack_state = NULL;
+    uint32_t *stack_next = NULL;
+    uint64_t *stack_sum = NULL;
+    uint32_t head = 0u, tail = 0u, depth = 0u, s, i;
+    bool ok = false;
+    bool infinite = false;
+
+    if (count)
+        *count = 0u;
+    if (singleton_len)
+        *singleton_len = 0u;
+    if (!program || !count || tag >= program->tag_len || n == 0u)
+        return false;
+    reverse_begin = calloc((size_t)n + 1u, sizeof(*reverse_begin));
+    reverse_source = calloc(program->transition_len ? program->transition_len : 1u,
+                            sizeof(*reverse_source));
+    fill = calloc(n, sizeof(*fill));
+    queue = calloc(n, sizeof(*queue));
+    coreach = calloc(n, sizeof(*coreach));
+    color = calloc(n, sizeof(*color));
+    memo = calloc(n, sizeof(*memo));
+    stack_state = calloc(n, sizeof(*stack_state));
+    stack_next = calloc(n, sizeof(*stack_next));
+    stack_sum = calloc(n, sizeof(*stack_sum));
+    if (!reverse_begin || !reverse_source || !fill || !queue || !coreach ||
+        !color || !memo || !stack_state || !stack_next || !stack_sum)
+        goto done;
+    /* Reverse adjacency, then the states that can still reach an accept. */
+    for (s = 0u; s < n; s++) {
+        const RSDFAV1ProgramState *state = &program->states[s];
+        for (i = 0u; i < state->transition_len; i++)
+            reverse_begin[program->transitions[state->transition_begin + i].target + 1u]++;
+    }
+    for (s = 0u; s < n; s++)
+        reverse_begin[s + 1u] += reverse_begin[s];
+    for (s = 0u; s < n; s++) {
+        const RSDFAV1ProgramState *state = &program->states[s];
+        for (i = 0u; i < state->transition_len; i++) {
+            uint32_t target = program->transitions[state->transition_begin + i].target;
+            reverse_source[reverse_begin[target] + fill[target]++] = s;
+        }
+    }
+    for (s = 0u; s < n; s++) {
+        if (rsdfa_v1_state_accepts_tag(program, s, tag)) {
+            coreach[s] = 1u;
+            queue[tail++] = s;
+        }
+    }
+    while (head < tail) {
+        uint32_t target = queue[head++];
+        for (i = reverse_begin[target]; i < reverse_begin[target + 1u]; i++) {
+            uint32_t source = reverse_source[i];
+            if (!coreach[source]) {
+                coreach[source] = 1u;
+                queue[tail++] = source;
+            }
+        }
+    }
+    if (!coreach[program->start_state]) {
+        *count = 0u;
+        ok = true;
+        goto done;
+    }
+    /* Depth-first count over the co-reachable part; a cycle there means an
+     * infinite language. */
+    stack_state[0] = program->start_state;
+    stack_next[0] = 0u;
+    stack_sum[0] = rsdfa_v1_state_accepts_tag(program, program->start_state, tag) ? 1u : 0u;
+    color[program->start_state] = 1u;
+    depth = 1u;
+    while (depth > 0u && !infinite) {
+        uint32_t top = depth - 1u;
+        const RSDFAV1ProgramState *state = &program->states[stack_state[top]];
+        if (stack_next[top] < state->transition_len) {
+            const RSDFAV1ProgramTransition *transition =
+                &program->transitions[state->transition_begin + stack_next[top]++];
+            uint32_t target = transition->target;
+            uint64_t width = (uint64_t)transition->high - transition->low + 1u;
+            if (!coreach[target])
+                continue;
+            if (color[target] == 1u) {
+                infinite = true;
+                break;
+            }
+            if (color[target] == 2u) {
+                stack_sum[top] = rsdfa_v1_saturating_count(
+                    stack_sum[top] + width * memo[target]);
+                continue;
+            }
+            color[target] = 1u;
+            stack_state[depth] = target;
+            stack_next[depth] = 0u;
+            stack_sum[depth] = rsdfa_v1_state_accepts_tag(program, target, tag) ? 1u : 0u;
+            depth++;
+            continue;
+        }
+        memo[stack_state[top]] = rsdfa_v1_saturating_count(stack_sum[top]);
+        color[stack_state[top]] = 2u;
+        depth--;
+        if (depth > 0u) {
+            uint32_t parent = depth - 1u;
+            const RSDFAV1ProgramState *parent_state = &program->states[stack_state[parent]];
+            const RSDFAV1ProgramTransition *transition =
+                &program->transitions[parent_state->transition_begin + stack_next[parent] - 1u];
+            uint64_t width = (uint64_t)transition->high - transition->low + 1u;
+            stack_sum[parent] = rsdfa_v1_saturating_count(
+                stack_sum[parent] + width * memo[stack_state[top]]);
+        }
+    }
+    *count = infinite ? 2u : memo[program->start_state];
+    if (*count == 1u && singleton_out) {
+        uint32_t current = program->start_state;
+        uint32_t length = 0u;
+        while (!rsdfa_v1_state_accepts_tag(program, current, tag)) {
+            const RSDFAV1ProgramState *state = &program->states[current];
+            bool advanced = false;
+            for (i = 0u; i < state->transition_len; i++) {
+                const RSDFAV1ProgramTransition *transition =
+                    &program->transitions[state->transition_begin + i];
+                if (!coreach[transition->target] || memo[transition->target] == 0u)
+                    continue;
+                if (length >= singleton_cap)
+                    goto done;
+                singleton_out[length++] = transition->low;
+                current = transition->target;
+                advanced = true;
+                break;
+            }
+            if (!advanced)
+                goto done;
+        }
+        if (singleton_len)
+            *singleton_len = length;
+    }
+    ok = true;
+done:
+    free(reverse_begin);
+    free(reverse_source);
+    free(fill);
+    free(queue);
+    free(coreach);
+    free(color);
+    free(memo);
+    free(stack_state);
+    free(stack_next);
+    free(stack_sum);
+    return ok;
+}
+
 bool rsdfa_v1_program_validate(
     const RSDFAV1Program *program,
     char *error_buf,

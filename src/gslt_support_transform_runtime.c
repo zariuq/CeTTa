@@ -532,7 +532,8 @@ static bool support_match_atom(SupportSpaceV1 *space, Atom *pattern,
     Atom *fresh_target = atom_has_vars(target)
         ? rename_vars(space->arena, target, cetta_frame_identity_scope_fresh(&frame_identity_scope))
         : target;
-    return fresh_target && match_atoms(pattern, fresh_target, bindings);
+    return fresh_target &&
+               match_atoms(pattern, fresh_target, bindings, space->arena);
 }
 
 static void match_rows_free(MatchRowsV1 *rows) {
@@ -821,7 +822,8 @@ static bool stage_outputs_v1(
                     result_template && pattern && value) {
                     Bindings result_bindings;
                     bindings_init(&result_bindings);
-                    if (match_atoms(pattern, value, &result_bindings))
+                    if (match_atoms(pattern, value, &result_bindings,
+                                    space->arena))
                         instantiated = bindings_apply(
                             &result_bindings, space->arena,
                             result_template);

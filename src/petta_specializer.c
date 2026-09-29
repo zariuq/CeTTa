@@ -2356,7 +2356,7 @@ static bool petta_match_source_call(
         petta_semantics_contains_cons_constraint(lhs)
             ? petta_semantics_match_cons_constraint(
                   &context->scratch, lhs, call, &builder)
-            : match_atoms_builder(lhs, call, &builder);
+            : match_atoms_builder(lhs, call, &builder, &context->scratch);
     if (matched) {
         bindings_builder_take(&builder, bindings);
     } else {

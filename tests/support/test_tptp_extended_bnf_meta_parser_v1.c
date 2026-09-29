@@ -186,7 +186,7 @@ static bool runtime_prepare(
         return false;
     }
     if (!cetta_deterministic_equation_plan_v1_load(
-            projection_sources, 1u, &runtime->ast_projection,
+            projection_sources, 1u, NULL, &runtime->ast_projection,
             &equation_status, error, error_size) ||
         equation_status != CETTA_DETERMINISTIC_EQUATION_V1_OK) {
         if (error[0] == '\0') {

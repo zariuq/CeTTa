@@ -380,7 +380,17 @@ typedef struct {
     uint32_t rhs_begin;
     uint32_t rhs_len;
     bool authored;
+    /* An authored production a derivation avoids: where an input has several
+     * derivations, only those reducing the fewest avoided productions count. */
+    bool avoided;
 } CettaLpNativeSlrProgramProduction;
+
+typedef struct {
+    uint32_t state;
+    uint32_t token_idx;
+    CettaLpNativeSlrProgramActionKind kind;
+    int32_t value;
+} CettaLpNativeGlrAction;
 
 typedef struct {
     SymbolId start_nonterminal;
@@ -390,6 +400,7 @@ typedef struct {
     CettaLpNativeSymbol *rhs;
     CettaLpNativeSlrProgramAction *actions;
     uint32_t *gotos;
+    CettaLpNativeGlrAction *glr_actions;
     uint32_t terminal_len;
     uint32_t nonterminal_len;
     uint32_t production_len;
@@ -397,6 +408,7 @@ typedef struct {
     uint32_t rhs_len;
     uint32_t action_len;
     uint32_t goto_len;
+    uint32_t glr_action_len;
     CettaLpNativeSlrSummary summary;
 } CettaLpNativeSlrProgram;
 
@@ -475,6 +487,27 @@ bool cetta_lp_native_slr_prepare(
     char *error_buf,
     size_t error_buf_size);
 
+/*
+ * Same tables as slr_prepare, keeping yacc shift-prefer resolution when the
+ * grammar is not SLR.  summary.conflict_len is the unresolved count; each
+ * action cell still holds one action.  slr_prepare remains the strict gate.
+ */
+bool cetta_lp_native_slr_prepare_shift_prefer(
+    CettaLpNativeSlrPrepared *prepared,
+    const CettaLpNativeGrammar *grammar,
+    uint32_t start_nonterminal_id,
+    char *error_buf,
+    size_t error_buf_size);
+
+/* Keep every shift/reduce in a cell (GLR multimap). conflict_len is the
+ * extra-action count. The dense unique table is still first-action per cell. */
+bool cetta_lp_native_slr_prepare_glr(
+    CettaLpNativeSlrPrepared *prepared,
+    const CettaLpNativeGrammar *grammar,
+    uint32_t start_nonterminal_id,
+    char *error_buf,
+    size_t error_buf_size);
+
 /* Copy the construction summary retained by a prepared SLR table. */
 bool cetta_lp_native_slr_prepared_summary(
     const CettaLpNativeSlrPrepared *prepared,
@@ -498,6 +531,28 @@ bool cetta_lp_native_slr_prepared_export_program(
     CettaLpNativeSlrProgram *out,
     char *error_buf,
     size_t error_buf_size);
+
+Atom *cetta_lp_native_slr_program_parse_shared(
+    const CettaLpNativeSlrProgram *program,
+    Atom *token_list,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size);
+
+/* Interpret an exported SLR/GLR program with an explicit combined work and
+ * retained-branch budget.  A zero limit selects the input-sized default.
+ * Outcomes are NoParse, (Unique certificate), Ambiguous, or
+ * (ResourceLimit consumed limit); resource exhaustion is never reported as a
+ * syntax rejection. */
+Atom *cetta_lp_native_slr_program_parse_shared_counted(
+    const CettaLpNativeSlrProgram *program,
+    Atom *token_list,
+    uint64_t work_limit,
+    uint64_t *work_used,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size);
+
 
 bool cetta_lp_native_gll_parse_utf8_forest(
     const CettaLpNativeGrammar *grammar,
@@ -775,6 +830,34 @@ Atom *cetta_lp_native_gll_parse_shared(const CettaLpNativeGrammar *grammar,
                                        Arena *arena,
                                        char *error_buf,
                                        size_t error_buf_size);
+
+/* The packed GLL parser with an explicit bound on distinct descriptors.
+ * Zero selects the unbounded legacy behavior.  Resource exhaustion is a
+ * returned (ResourceLimit used limit) value, not a syntax rejection. */
+Atom *cetta_lp_native_gll_parse_shared_counted(
+    const CettaLpNativeGrammar *grammar,
+    SymbolId start_nt,
+    Atom *token_list,
+    uint64_t descriptor_limit,
+    uint64_t *descriptors_used,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size);
+
+/* The same parse, preferring derivations that reduce fewer of the productions
+ * marked in avoided (indexed like grammar->productions).  Only derivations
+ * with the fewest such reductions count, so the result is Ambiguous only when
+ * two of those remain.  NULL avoids nothing. */
+Atom *cetta_lp_native_gll_parse_avoiding_counted(
+    const CettaLpNativeGrammar *grammar,
+    SymbolId start_nt,
+    Atom *token_list,
+    uint64_t descriptor_limit,
+    uint64_t *descriptors_used,
+    const uint8_t *avoided,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size);
 
 Atom *cetta_lp_native_gll_recognize(const CettaLpNativeGrammar *grammar,
                                     SymbolId start_nt,

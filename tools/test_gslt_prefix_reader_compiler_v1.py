@@ -192,13 +192,19 @@ def main() -> int:
             "token dispatch overlaps a prefix alternative",
         )
 
+        # The quote form inside a list mirrors the one outside, so both move.
         structural_overlap = directory / "structural_overlap.metta"
         structural_overlap.write_text(
             replace_once(
-                SYNTAX.read_text(encoding="utf-8"),
-                "(node quote (right (char (cp 64))",
-                "(node quote (right (char (cp 40))",
-                "quote/expression overlap",
+                replace_once(
+                    SYNTAX.read_text(encoding="utf-8"),
+                    "(node quote (right (char (cp 64))",
+                    "(node quote (right (char (cp 40))",
+                    "quote/expression overlap",
+                ),
+                "(node list-quote (right (char (cp 64))",
+                "(node list-quote (right (char (cp 40))",
+                "list quote/expression overlap",
             ),
             encoding="utf-8",
         )
@@ -209,6 +215,25 @@ def main() -> int:
             directory,
             "structural_overlap",
             "prefix dispatch overlaps a structural scalar",
+        )
+
+        list_prefix_mismatch = directory / "list_prefix_mismatch.metta"
+        list_prefix_mismatch.write_text(
+            replace_once(
+                SYNTAX.read_text(encoding="utf-8"),
+                "(node quote (right (char (cp 64))",
+                "(node quote (right (char (cp 94))",
+                "quote outside a list only",
+            ),
+            encoding="utf-8",
+        )
+        expect_compile_error(
+            list_prefix_mismatch,
+            CLASSES,
+            PROJECTION,
+            directory,
+            "list_prefix_mismatch",
+            "list prefix list-quote differs from quote",
         )
 
         duplicate_role = directory / "duplicate_role.metta"

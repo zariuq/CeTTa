@@ -1126,6 +1126,31 @@ static bool bindings_builder_merge_frame_by_growth(
         &builder->current, frame->epoch, needed);
 }
 
+/* A receiving frame whose slots extend past its named schema numbers every
+ * slot contiguously from the first source identifier, so a new name schema
+ * would renumber live slots.  Those slots already denote the contiguous source
+ * identifiers; a source frame's names extend them by growth instead. */
+static bool bindings_frame_merge_slot_extent(
+        const BindingsFrameIndexEntry *known,
+        const BindingsFrameIndexEntry *frame, uint32_t *needed) {
+    if (!known || known->slot_len <= known->schema->len ||
+        !known->schema->source_ids_contiguous ||
+        known->schema->source_first_id != 1u)
+        return false;
+    uint32_t extent = frame->schema->source_ids_contiguous &&
+            frame->schema->source_first_id == 1u
+        ? frame->slot_len : 0u;
+    for (uint32_t k = 0u; k < frame->schema->len; k++) {
+        VarId id = frame->schema->source_ids[k];
+        if (id == VAR_ID_NONE || id > UINT32_MAX)
+            return false;
+        if ((uint32_t)id > extent)
+            extent = (uint32_t)id;
+    }
+    *needed = extent;
+    return true;
+}
+
 bool bindings_builder_merge_frame_schemas(
         BindingsBuilder *builder, const Bindings *source) {
     if (!builder || !source)
@@ -1135,6 +1160,16 @@ bool bindings_builder_merge_frame_schemas(
              index < source->frame_index->len; index++) {
             const BindingsFrameIndexEntry *frame =
                 &source->frame_index->frames[index];
+            uint32_t needed = 0u;
+            if (bindings_frame_merge_slot_extent(
+                    bindings_frame_index_find_frame_const(
+                        builder->current.frame_index, frame->epoch),
+                    frame, &needed)) {
+                if (!bindings_frame_index_grow_slots(
+                        &builder->current, frame->epoch, needed))
+                    return false;
+                continue;
+            }
             if (!bindings_builder_register_frame_kind(
                     builder, frame->schema->source_ids,
                     frame->schema->len, frame->epoch,

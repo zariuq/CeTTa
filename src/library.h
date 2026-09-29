@@ -185,6 +185,10 @@ typedef struct CettaLibraryContext {
      * `petta_match_decisions_free`. */
     void *petta_match_decisions;
     void (*petta_match_decisions_free)(void *decisions);
+    /* What static-import! loaded in the session, owned by the evaluator,
+     * which frees it through `petta_static_imports_free`. */
+    void *petta_static_imports;
+    void (*petta_static_imports_free)(void *imports);
     bool prime_relational_plan_enabled;
     struct CettaPettaRuntimeState *petta_runtime;
     PettaProgram *petta_program;
@@ -210,6 +214,11 @@ bool cetta_library_root_for_exec_path(const char *argv0,
                                       char *output, size_t output_size);
 void cetta_library_context_set_exec_path(CettaLibraryContext *ctx, const char *argv0);
 void cetta_library_context_set_script_path(CettaLibraryContext *ctx, const char *filename);
+/* A document the runtime runs into a space counts as imported into it: an
+ * import of the same file later, from the document or from a library it
+ * loads, adds nothing a second time. */
+void cetta_library_context_note_document_file(CettaLibraryContext *ctx, Space *space,
+                                              const char *filename);
 void cetta_library_context_set_cli_args(CettaLibraryContext *ctx, int argc,
                                         char **argv, int arg_start);
 uint32_t cetta_library_module_mount_count(const CettaLibraryContext *ctx);
@@ -237,7 +246,7 @@ bool cetta_library_petta_git_import(CettaLibraryContext *ctx,
                                     const char *commit_sha,
                                     Arena *eval_arena,
                                     Atom **error_out);
-bool cetta_library_petta_git_import_enabled(
+bool cetta_library_petta_lib_import_enabled(
     const CettaLibraryContext *ctx);
 bool cetta_library_petta_tabling_enabled(
     const CettaLibraryContext *ctx);

@@ -65,6 +65,11 @@ typedef struct {
 
 struct CettaLibPrologRuntime {
     bool prepared;
+    /* The static-import! clauses are in the module (installed on first use),
+     * and the module the imported files are consulted into. */
+    bool static_import_ready;
+    char *static_module_name;
+    size_t static_module_name_len;
     uint64_t instance_id;
     char *module_name;
     size_t module_name_len;
@@ -176,6 +181,8 @@ static pthread_mutex_t g_petta_libpl_lock = PTHREAD_MUTEX_INITIALIZER;
 /* Set when this process first starts the engine. */
 static _Atomic bool g_petta_libpl_started;
 static bool g_petta_libpl_ready;
+/* The message_hook/3 clause for the private modules is in `user`. */
+static bool g_petta_libpl_message_hook_installed;
 static bool g_petta_libpl_owns_engine;
 static PL_engine_t g_petta_libpl_worker_engine;
 /* SWI's main engine was given back by the worker thread that started it. */
@@ -829,6 +836,26 @@ static bool petta_libpl_install_reference_prelude(
         ok = clause &&
              PL_chars_to_term(clauses[index], clause) &&
              PL_assert(clause, runtime->module, PL_ASSERTZ);
+    }
+    /* SWI names a procedure outside `user` with its module; the private
+     * modules read back as `user`, so the warning that a load redefined one
+     * of their procedures names it as the reference's warning does.  Once
+     * per process: message_hook/3 is user's, shared by every runtime. */
+    if (ok && !g_petta_libpl_message_hook_installed) {
+        term_t hook = PL_new_term_ref();
+        atom_t user_name = PL_new_atom("user");
+        module_t user = PL_new_module(user_name);
+        PL_unregister_atom(user_name);
+        ok = hook && user &&
+             PL_chars_to_term(
+                 "(message_hook(redefined_procedure(Type, Module:Indicator), "
+                 "warning, _) :- atom(Module), "
+                 "sub_atom(Module, 0, _, _, cetta_prolog_), "
+                 "print_message(warning, "
+                 "redefined_procedure(Type, Indicator)))",
+                 hook) &&
+             PL_assert(hook, user, PL_ASSERTZ);
+        g_petta_libpl_message_hook_installed = ok;
     }
     PL_discard_foreign_frame(frame);
     return ok;
@@ -4424,6 +4451,7 @@ void cetta_lib_prolog_runtime_free(
     free(runtime->probe_misses);
     free(runtime->plrefs);
     free(runtime->module_name);
+    free(runtime->static_module_name);
     free(runtime->working_dir);
     free(runtime);
 }
@@ -4936,6 +4964,315 @@ bool petta_libpl_predicate_defined(
     }
     petta_libpl_leave(claimed);
     return exists;
+}
+
+/*
+ * SWI-PeTTa's static-import! (lib_import.pl): a file's facts are read from its
+ * .qlf, else from its .pl compiled to a .qlf, else from its .metta converted
+ * to both, as the reference converts it (one row per line, its outer
+ * parentheses dropped, parentheses to brackets and spaces to commas outside
+ * strings), then compiled and consulted, as the reference does both in one
+ * module, into the one module that holds every file the session imports.  So
+ * SWI's own consult rules decide the facts: a file loaded again is reloaded,
+ * a multifile predicate (the conversion declares Space/3 so) gathers the facts
+ * of every file, and any other predicate a file defines is redefined, its
+ * earlier facts gone.  A load reports the predicates it changed, by their
+ * modification generations, with whether each is multifile; a predicate's
+ * facts are then read as rows [Rel, Arg...].  Predicates a file imports from
+ * a library are not its own and are never reported.
+ */
+static const char *const petta_libpl_static_import_clauses[] = {
+    "('$cetta_static_import'(M, Space, File, Touched) :- "
+    "style_check(-discontiguous), atom_string(File, SFile), "
+    "working_dir(Base), "
+    "atomic_list_concat([Base, '/', SFile, '.qlf'], Qlf), "
+    "atomic_list_concat([Base, '/', SFile, '.pl'], Pl), "
+    "atomic_list_concat([Base, '/', SFile, '.metta'], Metta), "
+    "'$cetta_static_generations'(M, Before), "
+    "( exists_file(Qlf) -> M:consult(Qlf) "
+    "; exists_file(Pl) -> M:qcompile(Pl), M:consult(Qlf) "
+    "; '$cetta_metta_file_to_prolog'(Metta, Space, Pl), "
+    "M:qcompile(Pl), M:consult(Qlf) ), "
+    "'$cetta_static_generations'(M, After), "
+    "findall(P-N-Multifile, "
+    "( member(P/N-G, After), \\+ memberchk(P/N-G, Before), "
+    "functor(H, P, N), "
+    "( predicate_property(M:H, multifile) -> Multifile = true "
+    "; Multifile = false ) ), Changed), "
+    "findall(P-N-false, "
+    "( member(P/N-_, Before), \\+ memberchk(P/N-_, After) ), Gone), "
+    "append(Changed, Gone, Touched))",
+    "('$cetta_static_generations'(M, Generations) :- "
+    "findall(P/N-G, "
+    "( current_predicate(M:P/N), functor(H, P, N), "
+    "\\+ predicate_property(M:H, imported_from(_)), "
+    "predicate_property(M:H, last_modified_generation(G)) ), "
+    "Generations))",
+    "('$cetta_static_rows'(M, P, N, Row) :- "
+    "functor(H, P, N), clause(M:H, true), H =.. [_|Row])",
+    "('$cetta_metta_file_to_prolog'(Input, Space, Output) :- "
+    "setup_call_cleanup(open(Input, read, In), "
+    "setup_call_cleanup(open(Output, write, Out), "
+    "( format(Out, \":- multifile '~w'/3.~n\", [Space]), "
+    "format(Out, \":- discontiguous '~w'/3.~n~n\", [Space]), "
+    "'$cetta_metta_convert_stream'(In, Out, Space) ), "
+    "close(Out)), close(In)))",
+    "('$cetta_metta_convert_stream'(In, Out, Space) :- "
+    "read_line_to_string(In, Line), "
+    "( Line == end_of_file -> true "
+    "; '$cetta_metta_convert_line'(Line, Space, Out), "
+    "'$cetta_metta_convert_stream'(In, Out, Space) ))",
+    "('$cetta_metta_convert_line'(Line, Space, Out) :- "
+    "sub_string(Line, 1, _, 1, Inner), string_chars(Inner, Chars), "
+    "'$cetta_metta_chars'(Chars, false, Converted), "
+    "string_chars(Text, Converted), "
+    "format(Out, \"'~w'(~w).~n\", [Space, Text]))",
+    "('$cetta_metta_chars'([], _, []) :- !)",
+    "('$cetta_metta_chars'(['\"'|T], false, ['\"'|R]) :- !, "
+    "'$cetta_metta_chars'(T, true, R))",
+    "('$cetta_metta_chars'(['\"'|T], true, ['\"'|R]) :- !, "
+    "'$cetta_metta_chars'(T, false, R))",
+    "('$cetta_metta_chars'(['('|T], false, ['['|R]) :- !, "
+    "'$cetta_metta_chars'(T, false, R))",
+    "('$cetta_metta_chars'([')'|T], false, [']'|R]) :- !, "
+    "'$cetta_metta_chars'(T, false, R))",
+    "('$cetta_metta_chars'([' '|T], false, [','|R]) :- !, "
+    "'$cetta_metta_chars'(T, false, R))",
+    "('$cetta_metta_chars'([H|T], Q, [H|R]) :- "
+    "'$cetta_metta_chars'(T, Q, R))",
+};
+
+static bool petta_libpl_install_static_import(
+    CettaLibPrologRuntime *runtime) {
+    if (runtime->static_import_ready)
+        return true;
+    if (!runtime->static_module_name) {
+        static const char suffix[] = "_static";
+        size_t length = runtime->module_name_len + sizeof(suffix) - 1u;
+        char *name = malloc(length + 1u);
+        if (!name)
+            return false;
+        memcpy(name, runtime->module_name, runtime->module_name_len);
+        memcpy(name + runtime->module_name_len, suffix, sizeof(suffix));
+        runtime->static_module_name = name;
+        runtime->static_module_name_len = length;
+    }
+    fid_t frame = PL_open_foreign_frame();
+    if (!frame)
+        return false;
+    bool ok = true;
+    size_t count = sizeof(petta_libpl_static_import_clauses) /
+                   sizeof(petta_libpl_static_import_clauses[0]);
+    for (size_t index = 0u; ok && index < count; index++) {
+        term_t clause = PL_new_term_ref();
+        ok = clause &&
+             PL_chars_to_term(petta_libpl_static_import_clauses[index],
+                              clause) &&
+             PL_assert(clause, runtime->module, PL_ASSERTZ);
+    }
+    PL_discard_foreign_frame(frame);
+    runtime->static_import_ready = ok;
+    return ok;
+}
+
+void petta_libpl_warn_redefined(
+    CettaLibPrologRuntime *runtime, SymbolId name, size_t arity) {
+    if (!runtime || !runtime->prepared || name == SYMBOL_ID_NONE ||
+        !g_symbols || arity > INT_MAX)
+        return;
+    bool claimed = false;
+    if (!petta_libpl_enter(&claimed))
+        return;
+    fid_t frame = PL_open_foreign_frame();
+    /* print_message(warning, redefined_procedure(static, Name/Arity)) */
+    term_t arguments = frame ? PL_new_term_refs(2) : 0;
+    term_t indicator = frame ? PL_new_term_refs(2) : 0;
+    term_t message = frame ? PL_new_term_refs(2) : 0;
+    atom_t slash = PL_new_atom("/");
+    atom_t redefined = PL_new_atom("redefined_procedure");
+    functor_t indicator_functor = PL_new_functor(slash, 2u);
+    functor_t message_functor = PL_new_functor(redefined, 2u);
+    PL_unregister_atom(slash);
+    PL_unregister_atom(redefined);
+    predicate_t print_message = PL_predicate("print_message", 2, "system");
+    if (arguments && indicator && message && print_message &&
+        petta_libpl_put_utf8(indicator, PL_ATOM,
+                             symbol_bytes(g_symbols, name),
+                             symbol_len(g_symbols, name)) &&
+        PL_put_integer(indicator + 1, (int)arity) &&
+        petta_libpl_put_utf8(message, PL_ATOM, "static", 6u) &&
+        PL_cons_functor_v(message + 1, indicator_functor, indicator) &&
+        petta_libpl_put_utf8(arguments, PL_ATOM, "warning", 7u) &&
+        PL_cons_functor_v(arguments + 1, message_functor, message)) {
+        (void)PL_call_predicate(runtime->module,
+                                PL_Q_NODEBUG | PL_Q_CATCH_EXCEPTION,
+                                print_message, arguments);
+    }
+    if (frame)
+        PL_discard_foreign_frame(frame);
+    petta_libpl_leave(claimed);
+}
+
+/* The facts of one changed predicate P/N, as rows, handed to `visit`. */
+static bool petta_libpl_static_import_predicate(
+    CettaLibPrologRuntime *runtime, Arena *arena, term_t module,
+    term_t predicate, int arity, bool multifile,
+    PettaLibplStaticPredicateVisit visit, void *context,
+    CettaCallOutcome *end) {
+    PettaLibplVarMap variables = {0};
+    PettaLibplBackVarMap unknown = {0};
+    Atom *target = petta_libpl_from_term(arena, predicate, &variables,
+                                         &unknown, 0u);
+    free(variables.items);
+    free(unknown.items);
+    if (!target)
+        return false;
+    term_t arguments = PL_new_term_refs(4);
+    predicate_t rows_predicate = PL_predicate(
+        "$cetta_static_rows", 4, runtime->module_name);
+    bool ok = arguments && rows_predicate &&
+              PL_put_term(arguments, module) &&
+              PL_put_term(arguments + 1, predicate) &&
+              PL_put_integer(arguments + 2, arity);
+    qid_t query = ok
+        ? PL_open_query(runtime->module,
+                        PL_Q_NODEBUG | PL_Q_CATCH_EXCEPTION |
+                            PL_Q_EXT_STATUS,
+                        rows_predicate, arguments)
+        : 0;
+    ok = ok && query;
+    Atom **rows = NULL;
+    uint32_t count = 0u;
+    uint32_t capacity = 0u;
+    while (ok) {
+        int status = PL_next_solution(query);
+        if (status == PL_S_FALSE)
+            break;
+        if (status == PL_S_EXCEPTION) {
+            term_t exception = PL_exception(query);
+            Atom *error = exception
+                ? petta_libpl_exception_value(arena, exception) : NULL;
+            if (error)
+                *end = cetta_call_raised(error);
+            ok = false;
+            break;
+        }
+        if (status != PL_S_TRUE && status != PL_S_LAST) {
+            ok = false;
+            break;
+        }
+        if (count == capacity) {
+            uint32_t next = capacity ? capacity * 2u : 64u;
+            Atom **grown = next > capacity
+                ? realloc(rows, sizeof(*rows) * next) : NULL;
+            if (!grown) {
+                ok = false;
+                break;
+            }
+            rows = grown;
+            capacity = next;
+        }
+        PettaLibplVarMap row_variables = {0};
+        PettaLibplBackVarMap row_unknown = {0};
+        rows[count] = petta_libpl_from_term(
+            arena, arguments + 3, &row_variables, &row_unknown, 0u);
+        free(row_variables.items);
+        free(row_unknown.items);
+        ok = rows[count++] != NULL;
+        if (status == PL_S_LAST)
+            break;
+    }
+    if (query)
+        PL_close_query(query);
+    /* No query is open while the rows join their space. */
+    ok = ok && visit(context, target, (CettaExprLen)arity, multifile,
+                     rows, count);
+    free(rows);
+    return ok;
+}
+
+bool petta_libpl_static_import(
+    CettaLibPrologRuntime *runtime, Arena *arena, SymbolId space,
+    const char *file, PettaLibplStaticPredicateVisit visit, void *context,
+    CettaCallOutcome *end) {
+    if (end)
+        *end = cetta_call_failure();
+    if (!runtime || !arena || space == SYMBOL_ID_NONE || !g_symbols ||
+        !file || !visit || !end)
+        return false;
+    bool claimed = false;
+    if (!petta_libpl_enter(&claimed))
+        return false;
+    if (!petta_libpl_prepare_locked(runtime) ||
+        !petta_libpl_install_static_import(runtime)) {
+        petta_libpl_leave(claimed);
+        return false;
+    }
+    CettaLibPrologRuntime *previous_active_runtime =
+        g_petta_libpl_active_runtime;
+    g_petta_libpl_active_runtime = runtime;
+    fid_t frame = PL_open_foreign_frame();
+    term_t arguments = frame ? PL_new_term_refs(4) : 0;
+    predicate_t import = PL_predicate(
+        "$cetta_static_import", 4, runtime->module_name);
+    bool ok = frame && arguments && import &&
+              petta_libpl_put_utf8(arguments, PL_ATOM,
+                                   runtime->static_module_name,
+                                   runtime->static_module_name_len) &&
+              petta_libpl_put_utf8(arguments + 1, PL_ATOM,
+                                   symbol_bytes(g_symbols, space),
+                                   symbol_len(g_symbols, space)) &&
+              petta_libpl_put_utf8(arguments + 2, PL_ATOM, file,
+                                   strlen(file));
+    qid_t query = ok
+        ? PL_open_query(runtime->module,
+                        PL_Q_NODEBUG | PL_Q_CATCH_EXCEPTION |
+                            PL_Q_EXT_STATUS,
+                        import, arguments)
+        : 0;
+    ok = ok && query;
+    if (ok) {
+        int status = PL_next_solution(query);
+        if (status == PL_S_EXCEPTION) {
+            term_t exception = PL_exception(query);
+            Atom *error = exception
+                ? petta_libpl_exception_value(arena, exception) : NULL;
+            if (error)
+                *end = cetta_call_raised(error);
+            ok = false;
+        } else if (status != PL_S_TRUE && status != PL_S_LAST) {
+            ok = false;
+        }
+    }
+    /* Cutting keeps the load and the list of changed predicates. */
+    if (query)
+        PL_cut_query(query);
+    term_t list = ok ? PL_copy_term_ref(arguments + 3) : 0;
+    term_t head = ok ? PL_new_term_ref() : 0;
+    term_t pair = ok ? PL_new_term_ref() : 0;
+    term_t name = ok ? PL_new_term_ref() : 0;
+    term_t arity_term = ok ? PL_new_term_ref() : 0;
+    term_t multifile_term = ok ? PL_new_term_ref() : 0;
+    ok = ok && list && head && pair && name && arity_term && multifile_term;
+    while (ok && PL_get_list(list, head, list)) {
+        int arity = 0;
+        int multifile = 0;
+        ok = PL_get_arg(1, head, pair) &&
+             PL_get_arg(2, head, multifile_term) &&
+             PL_get_arg(1, pair, name) &&
+             PL_get_arg(2, pair, arity_term) &&
+             PL_get_integer(arity_term, &arity) && arity >= 0 &&
+             PL_get_bool(multifile_term, &multifile) &&
+             petta_libpl_static_import_predicate(
+                 runtime, arena, arguments, name, arity,
+                 multifile != 0, visit, context, end);
+    }
+    ok = ok && PL_get_nil(list);
+    if (frame)
+        PL_discard_foreign_frame(frame);
+    g_petta_libpl_active_runtime = previous_active_runtime;
+    petta_libpl_leave(claimed);
+    return ok || end->kind == CETTA_CALL_RAISED;
 }
 
 /* (entries << 1) | flag, as of the last read; 0 when never read. */

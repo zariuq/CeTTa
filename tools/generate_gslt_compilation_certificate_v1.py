@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Emit a deterministic certificate for one generated GSLT language pack.
 
-The producer is intentionally untrusted.  The independent native checker
-recomputes every identity below, reparses and admits the embedded sources, and
-checks the residual plan against every admitted rule occurrence.
+The producer is intentionally untrusted, and the certificate does not name it:
+it binds the inputs to the outputs.  The independent native checker recomputes
+every identity below, reparses and admits the embedded sources, and checks the
+residual plan against every admitted rule occurrence.
 """
 
 from __future__ import annotations
@@ -12,7 +13,6 @@ import argparse
 from hashlib import sha256
 import json
 from pathlib import Path
-import re
 from typing import Iterable
 
 import generate_gslt_language_v1 as language_compiler
@@ -23,7 +23,6 @@ class CertificateError(RuntimeError):
     pass
 
 
-COMPILER_DOMAIN = b"CettaGsltLanguageCompilerV1\0"
 SELECTED_SOURCE_DOMAIN = b"CettaGsltSelectedSourceV1\0"
 ADMISSION_DOMAIN = b"CettaGsltAdmissionV1\0"
 ARTIFACT_DOMAIN = b"CettaGsltEmbeddedArtifactV1\0"
@@ -45,14 +44,6 @@ def _digest_blobs(domain: bytes, payloads: Iterable[bytes]) -> str:
     digest.update(domain)
     for payload in payloads:
         _update_blob(digest, payload)
-    return digest.hexdigest()
-
-
-def compiler_digest(generator: Path, schema: Path) -> str:
-    digest = sha256()
-    digest.update(COMPILER_DOMAIN)
-    for path in (generator, schema):
-        _update_blob(digest, path.read_bytes())
     return digest.hexdigest()
 
 
@@ -94,15 +85,6 @@ def _quoted(value: str) -> str:
     return json.dumps(value, ensure_ascii=True, separators=(",", ":"))
 
 
-def _embedded_compiler_digest(source: str) -> str:
-    match = re.search(
-        r'\.compiler_sha256\s*=\s*"([0-9a-f]{64})"', source
-    )
-    if not match:
-        raise CertificateError("generated source omits compiler identity")
-    return match.group(1)
-
-
 def render_certificate(
     *,
     manifest_path: Path,
@@ -111,9 +93,6 @@ def render_certificate(
     descriptor_symbol: str,
     header_path: Path,
     source_path: Path,
-    generator_path: Path,
-    schema_path: Path,
-    compiler_kind: str = "python",
 ) -> str:
     manifest = language_compiler.parse_manifest(manifest_path, profile_name)
     try:
@@ -147,15 +126,6 @@ def render_certificate(
     ):
         raise CertificateError("generated artifact omits its descriptor symbol")
 
-    compiler_sha = (sha256(generator_path.read_bytes()).hexdigest()
-                    if compiler_kind == "native"
-                    else compiler_digest(generator_path, schema_path))
-    compiler_name = ("CettaGsltLanguageNativeCompilerV1" if compiler_kind == "native"
-                     else "CettaGsltLanguageCompilerV1")
-    if _embedded_compiler_digest(source_text) != compiler_sha:
-        raise CertificateError(
-            "generated artifact was produced by a different compiler identity"
-        )
     profile = profile_name if profile_name is not None else "base"
     selected_sha = selected_source_digest(
         profile,
@@ -173,7 +143,6 @@ def render_certificate(
 
     rows = [
         "(gslt-compilation-certificate-v1",
-        f"  (compiler {_quoted(compiler_name)} {_quoted(compiler_sha)})",
         f"  (descriptor {_quoted(descriptor_symbol)})",
         f"  (language {_quoted(manifest.name)})",
         f"  (profile {_quoted(profile)})",
@@ -232,9 +201,6 @@ def main() -> int:
     parser.add_argument("--header", type=Path, required=True)
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--symbol", required=True)
-    parser.add_argument("--generator", type=Path, required=True)
-    parser.add_argument("--compiler-kind", choices=("python", "native"), default="python")
-    parser.add_argument("--schema", type=Path, required=True)
     parser.add_argument("--certificate", type=Path, required=True)
     arguments = parser.parse_args()
 
@@ -251,9 +217,6 @@ def main() -> int:
         descriptor_symbol=arguments.symbol,
         header_path=arguments.header.resolve(),
         source_path=arguments.source.resolve(),
-        generator_path=arguments.generator.resolve(),
-        schema_path=arguments.schema.resolve(),
-        compiler_kind=arguments.compiler_kind,
     )
     write_if_changed(arguments.certificate, content)
     return 0

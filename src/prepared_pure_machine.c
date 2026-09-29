@@ -3016,6 +3016,19 @@ static bool prepared_pure_compile_eval_with_role(
         return prepared_pure_reject(
             program, "dialect-owned form requires canonical evaluation",
             source);
+    /* A declared signature decides which of a constructor's arguments are
+     * computed: HE keeps an argument at an Atom-typed position as written,
+     * inside an equation's result as anywhere else.  The typed-demand
+     * discipline owns such a constructor, as it owns a typed call.  PeTTa
+     * computes a constructor's callable children whatever its declaration,
+     * which is exactly the eager build below. */
+    if (program->call_mode == CETTA_GSLT_PURE_CALL_EAGER &&
+        !(eval_current_language_id &&
+          eval_current_language_id() == CETTA_LANGUAGE_PETTA) &&
+        space_head_has_arrow_signature(program->space, head, arity))
+        return prepared_pure_reject(
+            program, "declared constructor signature decides argument demand",
+            source);
     if (program->call_mode == CETTA_GSLT_PURE_CALL_EAGER) {
         uint32_t *children = NULL;
         if (!prepared_pure_compile_children(
@@ -3955,6 +3968,10 @@ static bool prepared_pure_compile_head(
                 occurrence.lhs->expr.elems[0], head->head))
             return prepared_pure_reject(
                 program, "wildcard or malformed equation", occurrence.lhs);
+        if (atom_structural_may_have_open_list(occurrence.lhs))
+            return prepared_pure_reject(
+                program, "equation head holds a list pattern with a rest",
+                occurrence.lhs);
 
         const void *rhs_view = NULL;
         if (program->source_view.equation_rhs &&
@@ -4334,6 +4351,14 @@ static bool prepared_pure_is_list_carrier(const Atom *value) {
                                 CETTA_INTERNAL_TAG_PETTA_OPEN_CONS);
 }
 
+/* Whether a list carrier's chain of cells ends in a list value or a list
+ * pattern rather than in an expression. */
+static bool prepared_pure_carrier_ends_in_list_form(const Atom *value) {
+    while (prepared_pure_is_list_carrier(value))
+        value = value->expr.elems[2];
+    return atom_is_list_form(value);
+}
+
 /* A carrier meets an expression pattern of `length` elements as the list it
  * spells: its first elements are the pattern's values when the list has
  * exactly that many (ListCells.unifies_cell_flat), and it differs otherwise
@@ -4592,7 +4617,13 @@ prepared_pure_match_into(
         }
         if (pattern->kind == ATOM_EXPR &&
             prepared_pure_is_list_carrier(value)) {
-            /* A list carrier spells a list, not its three fields. */
+            /* A list carrier spells a list, not its three fields.  A chain
+             * ending in a list value or a list pattern spells a list of that
+             * kind, and a list pattern reads a list by its own elements:
+             * both are decided by the language's own list matching. */
+            if (atom_is_list_form(pattern) ||
+                prepared_pure_carrier_ends_in_list_form(value))
+                return PREPARED_PURE_MATCH_ERROR;
             PreparedPureMatchState read = prepared_pure_read_list_carrier(
                 value, pattern->expr.len, NULL);
             if (read == PREPARED_PURE_MATCH_ERROR)
@@ -4616,10 +4647,12 @@ prepared_pure_match_into(
             }
             continue;
         }
+        /* A list never meets an expression. */
         if (pattern->kind != value->kind ||
             (pattern->kind != ATOM_EXPR && !atom_eq(pattern, value)) ||
             (pattern->kind == ATOM_EXPR &&
-             pattern->expr.len != value->expr.len))
+             (pattern->expr.len != value->expr.len ||
+              atom_is_list_form(pattern) != atom_is_list_form(value))))
             return prepared_pure_count_match(
                 prepared_pure_match_mismatch(
                     program, value, pair.argument, ready_arguments,
@@ -4895,7 +4928,8 @@ static PreparedPureMatchState prepared_pure_match_bind_pattern(
                 return PREPARED_PURE_MATCH_MISMATCH;
             continue;
         }
-        if (pattern->expr.len != candidate->expr.len)
+        if (pattern->expr.len != candidate->expr.len ||
+            atom_is_list_form(pattern) != atom_is_list_form(candidate))
             return PREPARED_PURE_MATCH_MISMATCH;
         for (CettaExprIndex i = pattern->expr.len; i > 0u; i--) {
             CettaExprIndex child = i - 1u;
@@ -5444,7 +5478,7 @@ static bool prepared_pure_operands_share_type(
             Bindings type_bindings;
             bindings_init(&type_bindings);
             compatible = match_types(
-                right_types[j], left_types[i], &type_bindings);
+                right_types[j], left_types[i], &type_bindings, arena);
             bindings_free(&type_bindings);
         }
     }
@@ -5555,21 +5589,32 @@ static Atom *prepared_pure_execute_intrinsic(
             arena, head, (Atom **)arguments, arity);
         return result && !atom_is_empty_or_error(result) ? result : NULL;
     }
+    /* The structural intrinsics read an expression's children or a list's
+     * elements, and build a result of the same kind; a list pattern is
+     * declined to the canonical evaluator. */
     case CETTA_GSLT_PREPARED_PURE_INTRINSIC_DECONSTRUCT_NONEMPTY_EXPRESSION: {
-        if (arity != 1u || !arguments[0] ||
-            arguments[0]->kind != ATOM_EXPR ||
-            arguments[0]->expr.len == 0u)
+        Atom *const *elems;
+        CettaExprLen len;
+        if (arity != 1u ||
+            !atom_sequence_view(arguments[0], &elems, &len) || len == 0u)
             return NULL;
-        /* A cons cell is its head and its tail.  A list is its first
-         * element and the rest, a view sharing the list's storage, so a
-         * walk by deconstruction costs the list's length, and the rest is
-         * data as it stands, never read as a Cons however it begins.  Any
-         * other internal representation is the canonical evaluator's. */
+        /* A cons cell is its head and its tail.  A list value is its first
+         * element and the list value of the others.  An expression is its
+         * first element and the rest, a view sharing the expression's
+         * storage, so a walk by deconstruction costs the expression's
+         * length, and the rest is data as it stands, never read as a Cons
+         * however it begins.  Any other internal representation is the
+         * canonical evaluator's. */
         Atom *list = arguments[0];
         Atom *pair[2];
         if (petta_semantics_is_open_cons_value(list)) {
             pair[0] = list->expr.elems[1];
             pair[1] = list->expr.elems[2];
+        } else if (atom_is_list(list)) {
+            pair[0] = elems[0];
+            pair[1] = atom_list(arena, elems + 1u, len - 1u);
+            if (!pair[1])
+                return NULL;
         } else if (list->expr.elems[0]->kind == ATOM_GROUNDED &&
                    list->expr.elems[0]->ground.gkind == GV_INTERNAL_TAG) {
             return NULL;
@@ -5582,10 +5627,26 @@ static Atom *prepared_pure_execute_intrinsic(
         return program->construct_value(arena, pair, 2u);
     }
     case CETTA_GSLT_PREPARED_PURE_INTRINSIC_CONSTRUCT_EXPRESSION_CONS: {
-        if (arity != 2u || !arguments[0] || !arguments[1] ||
-            arguments[1]->kind != ATOM_EXPR ||
-            arguments[1]->expr.len == UINT64_MAX)
+        Atom *const *tail_elems;
+        CettaExprLen tail_len;
+        if (arity != 2u || !arguments[0] ||
+            !atom_sequence_view(arguments[1], &tail_elems, &tail_len) ||
+            tail_len == UINT64_MAX)
             return NULL;
+        if (atom_is_list(arguments[1])) {
+            /* A list value stays a list. */
+            CettaExprLen length = tail_len + 1u;
+            if (!cetta_expr_len_mul_fits_size(length, sizeof(Atom *)))
+                return NULL;
+            Atom **elements = arena_alloc(
+                arena, sizeof(*elements) * (size_t)length);
+            elements[0] = arguments[0];
+            if (tail_len > 0u) {
+                memcpy(elements + 1u, tail_elems,
+                       sizeof(*elements) * (size_t)tail_len);
+            }
+            return atom_list(arena, elements, length);
+        }
         /* The expression with the head before the tail's children, in
          * amortized constant time when the tail has room below it
          * (PrefixBuffer.claimable_iff_free_below): a list built by
@@ -5593,31 +5654,30 @@ static Atom *prepared_pure_execute_intrinsic(
         return atom_expr_prepend(arena, arguments[0], arguments[1]);
     }
     case CETTA_GSLT_PREPARED_PURE_INTRINSIC_CONCATENATE_EXPRESSIONS: {
-        if (arity != 2u || !arguments[0] || !arguments[1] ||
-            arguments[0]->kind != ATOM_EXPR ||
-            arguments[1]->kind != ATOM_EXPR ||
-            arguments[0]->expr.len >
-                UINT64_MAX - arguments[1]->expr.len)
+        Atom *const *left_elems, *const *right_elems;
+        CettaExprLen left_len, right_len;
+        if (arity != 2u ||
+            !atom_sequence_view(arguments[0], &left_elems, &left_len) ||
+            !atom_sequence_view(arguments[1], &right_elems, &right_len) ||
+            left_len > UINT64_MAX - right_len)
             return NULL;
-        CettaExprLen length =
-            arguments[0]->expr.len + arguments[1]->expr.len;
+        CettaExprLen length = left_len + right_len;
         if (!cetta_expr_len_mul_fits_size(length, sizeof(Atom *)))
             return NULL;
         Atom **elements = length
             ? arena_alloc(arena, sizeof(*elements) * (size_t)length)
             : NULL;
-        if (arguments[0]->expr.len > 0u) {
-            memcpy(
-                elements, arguments[0]->expr.elems,
-                sizeof(*elements) * (size_t)arguments[0]->expr.len);
+        if (left_len > 0u) {
+            memcpy(elements, left_elems,
+                   sizeof(*elements) * (size_t)left_len);
         }
-        if (arguments[1]->expr.len > 0u) {
-            memcpy(
-                elements + arguments[0]->expr.len,
-                arguments[1]->expr.elems,
-                sizeof(*elements) * (size_t)arguments[1]->expr.len);
+        if (right_len > 0u) {
+            memcpy(elements + left_len, right_elems,
+                   sizeof(*elements) * (size_t)right_len);
         }
-        return atom_expr(arena, elements, length);
+        return atom_is_list(arguments[0])
+            ? atom_list(arena, elements, length)
+            : atom_expr(arena, elements, length);
     }
     }
     return NULL;

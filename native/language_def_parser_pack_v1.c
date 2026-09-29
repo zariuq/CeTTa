@@ -834,6 +834,22 @@ static CettaDeterministicPrimitiveResultV1 ldpp_primitive(
     return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
 }
 
+/* The compiler's one primitive answers True or False. */
+static CettaDeterministicPrimitiveClassV1 ldpp_primitive_class(
+    void *context, const char *head, uint32_t count) {
+    (void)context;
+    (void)count;
+    return head && strcmp(head, "ldpp-v1:text-equal") == 0
+        ? CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_ATOM
+        : CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_NONE;
+}
+
+static const CettaDeterministicVocabularyV1 ldpp_vocabulary = {
+    .primitive = ldpp_primitive,
+    .classify = ldpp_primitive_class,
+    .context = NULL,
+};
+
 static bool ldpp_source_run(
     const CettaDeterministicEquationPlanV1 *plan, LdppTermsV1 *terms,
     const char *head, Atom *argument, LdppWorkV1 *work, Atom **result,
@@ -996,7 +1012,8 @@ bool cetta_language_def_parser_pack_v1_compile_source(
         goto done;
     }
     if (!cetta_deterministic_equation_plan_v1_load_inputs(
-            &source_input, 1u, &plan, &plan_status, error_buf, error_buf_size)) {
+            &source_input, 1u, &ldpp_vocabulary, &plan, &plan_status,
+            error_buf, error_buf_size)) {
         if (status) *status = plan_status == CETTA_DETERMINISTIC_EQUATION_V1_RESOURCE_LIMIT
             ? CETTA_LD_PARSER_PACK_V1_RESOURCE_LIMIT
             : CETTA_LD_PARSER_PACK_V1_COMPILER_REJECTED;

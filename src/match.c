@@ -5,6 +5,7 @@
 #include "term_canon.h"
 #include "variant_shape.h"
 #include <assert.h>
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -2386,7 +2387,7 @@ static bool bindings_store_constraint(Bindings *b, BindingValue lhs, BindingValu
 
 static bool match_decoded_atoms_worklist(BindingValue left, BindingValue right,
                                          Bindings *bindings, BindingsBuilder *builder,
-                                         bool undefined_is_wildcard);
+                                         Arena *a, bool undefined_is_wildcard);
 
 static bool bindings_add_inplace_internal(Bindings *b, VarId var_id,
                                           SymbolId spelling, Atom *name_key,
@@ -3981,7 +3982,7 @@ static bool bindings_add_inplace_internal(Bindings *b, VarId var_id,
             Bindings probe;
             if (!bindings_clone(&probe, b))
                 return false;
-            ok = match_decoded_atoms_worklist(existing, val, &probe, NULL, false);
+            ok = match_decoded_atoms_worklist(existing, val, &probe, NULL, NULL, false);
             if (!ok) {
                 bindings_free(&probe);
                 return false;
@@ -6539,7 +6540,7 @@ static bool bindings_builder_add_id_internal_with_cycle_evidence(
             return true;
         }
         uint32_t mark = bb->trail_len;
-        if (match_decoded_atoms_worklist(existing, val, NULL, bb, false)) {
+        if (match_decoded_atoms_worklist(existing, val, NULL, bb, NULL, false)) {
             if (authoritative_value_out) {
                 *authoritative_value_out = existing;
             }
@@ -10061,9 +10062,135 @@ Atom *rename_vars_only(Arena *a, Atom *atom, Atom *listed_spec) {
     return result;
 }
 
+/* ── Lists ──────────────────────────────────────────────────────────────── */
+
+/* A list [x1, ..., xn] is (LIST x1 ... xn) and a list pattern [x1, ..., xk |
+ * r] is (LIST_REST x1 ... xk r); see atom.h.  A list never meets an
+ * expression.  Two lists meet element by element.  A list pattern meets a
+ * list or another list pattern by its k leading elements, and its rest meets
+ * what the other has left: the rest of a list is itself a list, built in the
+ * matcher's arena, and the rest of an exhausted list is []. */
+typedef enum {
+    MATCH_LIST_EXPRESSIONS, /* neither is a list: match them as expressions */
+    MATCH_LIST_MISMATCH,
+    MATCH_LIST_ELEMENTS,
+} MatchListOutcome;
+
+typedef struct {
+    /* Elements 1..prefix of the two sides meet pairwise. */
+    CettaExprLen prefix;
+    /* Then left_rest meets right_rest, when they are not NULL.  A derived
+     * side was built here from that side's elements, so it carries that
+     * side's context but no plan and no owner of its own. */
+    Atom *left_rest;
+    Atom *right_rest;
+    bool left_derived;
+    bool right_derived;
+} MatchListMeeting;
+
+/* An expression that is a list or a list pattern.  Most expressions carry
+ * no internal tag at all, which one fact bit decides. */
+static inline bool match_expr_is_list(const Atom *e) {
+    if ((e->structural_facts &
+         (ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_HAS_INTERNAL_TAG)) ==
+        ATOM_STRUCTURAL_FACTS_VALID)
+        return false;
+    return e->expr.len > 0u && atom_is_list_tag(e->expr.elems[0]);
+}
+
+/* Elements from..from+count-1 of a list or list pattern, closed by rest. */
+static Atom *match_list_remainder_unowned(const Atom *list,
+                                          CettaExprIndex from,
+                                          CettaExprLen count, Atom *rest);
+
+static Atom *match_list_remainder(Arena *a, const Atom *list,
+                                  CettaExprIndex from, CettaExprLen count,
+                                  Atom *rest) {
+    if (!a)
+        return match_list_remainder_unowned(list, from, count, rest);
+    Atom *const *elems = list->expr.elems + from;
+    return rest ? atom_list_with_rest(a, elems, count, rest)
+                : atom_list(a, elems, count);
+}
+
+/* The binding paths that unify an already-bound variable's two values carry
+ * no arena; a rest derived there is kept for the process.  Every matcher
+ * entry point takes its caller's arena and never comes here. */
+static pthread_mutex_t g_match_list_unowned_lock = PTHREAD_MUTEX_INITIALIZER;
+static Arena g_match_list_unowned_arena;
+static bool g_match_list_unowned_ready;
+
+static Atom *match_list_remainder_unowned(const Atom *list,
+                                          CettaExprIndex from,
+                                          CettaExprLen count, Atom *rest) {
+    pthread_mutex_lock(&g_match_list_unowned_lock);
+    if (!g_match_list_unowned_ready) {
+        arena_init(&g_match_list_unowned_arena);
+        g_match_list_unowned_ready = true;
+    }
+    Atom *const *elems = list->expr.elems + from;
+    Atom *result = rest
+        ? atom_list_with_rest(&g_match_list_unowned_arena, elems, count, rest)
+        : atom_list(&g_match_list_unowned_arena, elems, count);
+    pthread_mutex_unlock(&g_match_list_unowned_lock);
+    return result;
+}
+
+static MatchListOutcome match_list_meet(Arena *a, Atom *left, Atom *right,
+                                        MatchListMeeting *m) {
+    bool left_list = match_expr_is_list(left);
+    bool right_list = match_expr_is_list(right);
+    if (!left_list && !right_list)
+        return MATCH_LIST_EXPRESSIONS;
+    if (!left_list || !right_list)
+        return MATCH_LIST_MISMATCH;
+    bool left_open = atom_is_list_rest(left);
+    bool right_open = atom_is_list_rest(right);
+    Atom *left_rest = left_open ? left->expr.elems[left->expr.len - 1u] : NULL;
+    Atom *right_rest = right_open ? right->expr.elems[right->expr.len - 1u] : NULL;
+    CettaExprLen p = left->expr.len - 1u - (left_open ? 1u : 0u);
+    CettaExprLen q = right->expr.len - 1u - (right_open ? 1u : 0u);
+    *m = (MatchListMeeting){.prefix = p < q ? p : q};
+    if (p == q) {
+        if (left_open || right_open) {
+            m->left_rest = left_open ? left_rest : atom_list(a, NULL, 0u);
+            m->right_rest = right_open ? right_rest : atom_list(a, NULL, 0u);
+            m->left_derived = !left_open;
+            m->right_derived = !right_open;
+        }
+        return MATCH_LIST_ELEMENTS;
+    }
+    if (p < q) {
+        if (!left_open)
+            return MATCH_LIST_MISMATCH;
+        m->left_rest = left_rest;
+        m->right_rest = match_list_remainder(a, right, 1u + p, q - p, right_rest);
+        m->right_derived = true;
+    } else {
+        if (!right_open)
+            return MATCH_LIST_MISMATCH;
+        m->left_rest = match_list_remainder(a, left, 1u + q, p - q, left_rest);
+        m->right_rest = right_rest;
+        m->left_derived = true;
+    }
+    return m->left_rest && m->right_rest ? MATCH_LIST_ELEMENTS
+                                         : MATCH_LIST_MISMATCH;
+}
+
+/* The value of a derived rest: that side's context over new syntax, which
+ * no persistent owner holds. */
+static BindingValue match_list_derived_value(BindingValue side, Atom *derived) {
+    side.skeleton = derived;
+    if (side.kind == BINDING_VALUE_CONTEXTUAL_PERSISTENT)
+        side.kind = BINDING_VALUE_CONTEXTUAL;
+    else if (!atom_has_vars(derived))
+        side = binding_value_from_atom(derived);
+    return side;
+}
+
 /* ── One-way pattern matching ───────────────────────────────────────────── */
 
-bool simple_match(Atom *pattern, Atom *target, Bindings *b) {
+bool simple_match(Atom *pattern, Atom *target, Bindings *b, Arena *a) {
     /* Variable in pattern binds to target */
     if (pattern->kind == ATOM_VAR) {
         return bindings_add_var(b, pattern, target);
@@ -10083,7 +10210,7 @@ bool simple_match(Atom *pattern, Atom *target, Bindings *b) {
         case GV_INT:    return pattern->ground.ival == target->ground.ival;
         case GV_FLOAT:  return pattern->ground.fval == target->ground.fval;
         case GV_BOOL:   return pattern->ground.bval == target->ground.bval;
-        case GV_STRING: return strcmp(pattern->ground.sval, target->ground.sval) == 0;
+        case GV_STRING: return atom_string_equal(pattern, target);
         case GV_BIGINT:
             return cetta_bigint_compare_cstr(atom_bigint_cstr(pattern),
                                             atom_bigint_cstr(target)) == 0;
@@ -10106,13 +10233,28 @@ bool simple_match(Atom *pattern, Atom *target, Bindings *b) {
         }
         return false;
 
-    case ATOM_EXPR:
+    case ATOM_EXPR: {
+        MatchListMeeting meet;
+        switch (match_list_meet(a, pattern, target, &meet)) {
+        case MATCH_LIST_MISMATCH:
+            return false;
+        case MATCH_LIST_ELEMENTS:
+            for (CettaExprIndex i = 1; i <= meet.prefix; i++) {
+                if (!simple_match(pattern->expr.elems[i], target->expr.elems[i], b, a))
+                    return false;
+            }
+            return !meet.left_rest ||
+                   simple_match(meet.left_rest, meet.right_rest, b, a);
+        case MATCH_LIST_EXPRESSIONS:
+            break;
+        }
         if (pattern->expr.len != target->expr.len) return false;
         for (CettaExprIndex i = 0; i < pattern->expr.len; i++) {
-            if (!simple_match(pattern->expr.elems[i], target->expr.elems[i], b))
+            if (!simple_match(pattern->expr.elems[i], target->expr.elems[i], b, a))
                 return false;
         }
         return true;
+    }
 
     case ATOM_VAR:
         /* Already handled above */
@@ -10122,7 +10264,7 @@ bool simple_match(Atom *pattern, Atom *target, Bindings *b) {
 }
 
 static bool simple_match_builder_rec(Atom *pattern, Atom *target,
-                                     BindingsBuilder *bb) {
+                                     BindingsBuilder *bb, Arena *a) {
     if (pattern->kind == ATOM_VAR)
         return bindings_builder_add_var_fresh(bb, pattern, target);
 
@@ -10140,7 +10282,7 @@ static bool simple_match_builder_rec(Atom *pattern, Atom *target,
         case GV_INT:    return pattern->ground.ival == target->ground.ival;
         case GV_FLOAT:  return pattern->ground.fval == target->ground.fval;
         case GV_BOOL:   return pattern->ground.bval == target->ground.bval;
-        case GV_STRING: return strcmp(pattern->ground.sval, target->ground.sval) == 0;
+        case GV_STRING: return atom_string_equal(pattern, target);
         case GV_BIGINT:
             return cetta_bigint_compare_cstr(atom_bigint_cstr(pattern),
                                             atom_bigint_cstr(target)) == 0;
@@ -10163,16 +10305,32 @@ static bool simple_match_builder_rec(Atom *pattern, Atom *target,
         }
         return false;
 
-    case ATOM_EXPR:
+    case ATOM_EXPR: {
+        MatchListMeeting meet;
+        switch (match_list_meet(a, pattern, target, &meet)) {
+        case MATCH_LIST_MISMATCH:
+            return false;
+        case MATCH_LIST_ELEMENTS:
+            for (CettaExprIndex i = 1; i <= meet.prefix; i++) {
+                if (!simple_match_builder_rec(pattern->expr.elems[i],
+                                              target->expr.elems[i], bb, a))
+                    return false;
+            }
+            return !meet.left_rest ||
+                   simple_match_builder_rec(meet.left_rest, meet.right_rest, bb, a);
+        case MATCH_LIST_EXPRESSIONS:
+            break;
+        }
         if (pattern->expr.len != target->expr.len)
             return false;
         for (CettaExprIndex i = 0; i < pattern->expr.len; i++) {
             if (!simple_match_builder_rec(pattern->expr.elems[i],
-                                          target->expr.elems[i], bb)) {
+                                          target->expr.elems[i], bb, a)) {
                 return false;
             }
         }
         return true;
+    }
 
     case ATOM_VAR:
         return false;
@@ -10180,8 +10338,9 @@ static bool simple_match_builder_rec(Atom *pattern, Atom *target,
     return false;
 }
 
-bool simple_match_builder(Atom *pattern, Atom *target, BindingsBuilder *bb) {
-    return simple_match_builder_rec(pattern, target, bb);
+bool simple_match_builder(Atom *pattern, Atom *target, BindingsBuilder *bb,
+                          Arena *a) {
+    return simple_match_builder_rec(pattern, target, bb, a);
 }
 
 /* ── Type matching (from HE spec Matching.lean:188-195) ────────────────── */
@@ -10857,7 +11016,7 @@ static void match_note_unification_attempt(
 static bool match_decoded_atoms_worklist(BindingValue left_value, BindingValue right_value,
                                          Bindings *bindings,
                                          BindingsBuilder *builder,
-                                         bool undefined_is_wildcard) {
+                                         Arena *a, bool undefined_is_wildcard) {
     Atom *left, *right;
     DecodedMatchWorklist work;
     MatchPathSet path;
@@ -11008,8 +11167,15 @@ retry_pair:
             }
             continue;
         }
-        if (left->kind != ATOM_EXPR || right->kind != ATOM_EXPR ||
-            left->expr.len != right->expr.len) {
+        MatchListMeeting meet;
+        MatchListOutcome list_outcome =
+            left->kind == ATOM_EXPR && right->kind == ATOM_EXPR
+                ? match_list_meet(a, left, right, &meet)
+                : MATCH_LIST_EXPRESSIONS;
+        if (list_outcome == MATCH_LIST_MISMATCH ||
+            left->kind != ATOM_EXPR || right->kind != ATOM_EXPR ||
+            (list_outcome == MATCH_LIST_EXPRESSIONS &&
+             left->expr.len != right->expr.len)) {
             if (attempt_resolving_bound)
                 attempt_repeated_var = true;
             goto fail;
@@ -11023,6 +11189,31 @@ retry_pair:
              !decoded_match_push_exit(&work, (MatchTerm){.value = left_value},
                                       (MatchTerm){.value = right_value})))
             goto fail;
+        if (list_outcome == MATCH_LIST_ELEMENTS) {
+            /* The rest meets last, after the elements, left to right. */
+            if (meet.left_rest &&
+                !decoded_match_push(
+                    &work,
+                    (MatchTerm){.value = meet.left_derived
+                        ? match_list_derived_value(left_value, meet.left_rest)
+                        : (BindingValue){meet.left_rest, left_value.epoch,
+                                         left_value.kind}},
+                    (MatchTerm){.value = meet.right_derived
+                        ? match_list_derived_value(right_value, meet.right_rest)
+                        : (BindingValue){meet.right_rest, right_value.epoch,
+                                         right_value.kind}}))
+                goto fail;
+            for (CettaExprIndex i = meet.prefix; i >= 1u; i--) {
+                BindingValue left_child = left_value, right_child = right_value;
+                left_child.skeleton = left->expr.elems[i];
+                right_child.skeleton = right->expr.elems[i];
+                if (!decoded_match_push(&work,
+                        (MatchTerm){.value = left_child},
+                        (MatchTerm){.value = right_child}))
+                    goto fail;
+            }
+            continue;
+        }
         /* Push in reverse so binding effects retain the recursive
            implementation's left-to-right traversal order. */
         for (CettaExprIndex i = left->expr.len; i > 1u; i--) {
@@ -11085,7 +11276,7 @@ bool type_match_uses_space_class_bridge(Atom *actual, Atom *expected) {
          is_space_value_type(actual));
 }
 
-bool match_types(Atom *actual, Atom *expected, Bindings *b) {
+bool match_types(Atom *actual, Atom *expected, Bindings *b, Arena *a) {
     /* Atom is the expected-side value top. An actual Atom is not evidence for
        an arbitrary concrete expected type. */
     if (atom_is_symbol_id(expected, g_builtin_syms.atom)) return true;
@@ -11093,16 +11284,19 @@ bool match_types(Atom *actual, Atom *expected, Bindings *b) {
         return true;
     }
     return match_decoded_atoms_worklist(
-        binding_value_from_atom(actual), binding_value_from_atom(expected), b, NULL, true);
+        binding_value_from_atom(actual), binding_value_from_atom(expected), b, NULL,
+        a, true);
 }
 
-bool match_types_builder(Atom *actual, Atom *expected, BindingsBuilder *bb) {
+bool match_types_builder(Atom *actual, Atom *expected, BindingsBuilder *bb,
+                         Arena *a) {
     if (atom_is_symbol_id(expected, g_builtin_syms.atom)) return true;
     if (type_match_uses_space_class_bridge(actual, expected)) {
         return true;
     }
     return match_decoded_atoms_worklist(
-        binding_value_from_atom(actual), binding_value_from_atom(expected), NULL, bb, true);
+        binding_value_from_atom(actual), binding_value_from_atom(expected), NULL, bb,
+        a, true);
 }
 
 /* ── Bidirectional matching (match_atoms from HE spec metta.md:577-617) ── */
@@ -11151,29 +11345,34 @@ static bool match_atoms_epoch_views_linear(
     const CettaOpenPatternPlan *right_plan,
     BindingsExclusiveFrame *exclusive);
 
-bool match_binding_values(BindingValue left, BindingValue right, Bindings *b) {
+bool match_binding_values(BindingValue left, BindingValue right, Bindings *b,
+                          Arena *a) {
     return left.skeleton && right.skeleton &&
-        match_decoded_atoms_worklist(left, right, b, NULL, false);
+        match_decoded_atoms_worklist(left, right, b, NULL, a, false);
 }
 
-bool match_atoms(Atom *left, Atom *right, Bindings *b) {
-    return match_binding_values(binding_value_from_atom(left), binding_value_from_atom(right), b);
+bool match_atoms(Atom *left, Atom *right, Bindings *b, Arena *a) {
+    return match_binding_values(binding_value_from_atom(left),
+                                binding_value_from_atom(right), b, a);
 }
 
-bool match_binding_values_builder(BindingValue left, BindingValue right, BindingsBuilder *bb) {
+bool match_binding_values_builder(BindingValue left, BindingValue right,
+                                  BindingsBuilder *bb, Arena *a) {
     return left.skeleton && right.skeleton && bb &&
-        match_decoded_atoms_worklist(left, right, NULL, bb, false);
+        match_decoded_atoms_worklist(left, right, NULL, bb, a, false);
 }
 
-bool match_atoms_builder(Atom *left, Atom *right, BindingsBuilder *bb) {
-    return match_binding_values_builder(binding_value_from_atom(left), binding_value_from_atom(right), bb);
+bool match_atoms_builder(Atom *left, Atom *right, BindingsBuilder *bb,
+                         Arena *a) {
+    return match_binding_values_builder(binding_value_from_atom(left),
+                                        binding_value_from_atom(right), bb, a);
 }
 
 bool match_atoms_builder_with_attempt_frame(
         Atom *left, Atom *right, BindingsBuilder *bb,
-        const BindingsActivationView *left_frame) {
+        const BindingsActivationView *left_frame, Arena *a) {
     (void)left_frame;
-    return match_atoms_builder(left, right, bb);
+    return match_atoms_builder(left, right, bb, a);
 }
 
 /* Leaf-patch view: OFF by default (env CETTA_LEAF_PATCH_VIEW=1 opts in).  When
@@ -12386,6 +12585,57 @@ retry_pair:
             }
             continue;
         }
+        if (left->kind == ATOM_EXPR && right->kind == ATOM_EXPR &&
+            (match_expr_is_list(left) || match_expr_is_list(right))) {
+            MatchListMeeting meet;
+            if (match_list_meet(a, left, right, &meet) != MATCH_LIST_ELEMENTS ||
+                (right_plan &&
+                 (right_plan->child_count != right->expr.len ||
+                  !right_plan->children))) {
+                if (attempt_resolving_bound)
+                    attempt_repeated_var = true;
+                goto fail;
+            }
+            if (!track_path &&
+                ++untracked_pairs > MATCH_UNTRACKED_PAIR_LIMIT)
+                track_path = true;
+            MatchTerm left_term = {
+                .value = left_value,
+                .frame = left_frame,
+                .first_entry = left_first_entry,
+            };
+            MatchTerm right_term = {.value = right_value};
+            left_term.value.skeleton = left;
+            right_term.value.skeleton = right;
+            if (!right_plan && track_path &&
+                (!match_path_enter(&path, left_term, right_term) ||
+                 !epoch_match_push_exit(&work, left_term, right_term)))
+                goto fail;
+            /* The rest meets last, after the elements, left to right. */
+            if (meet.left_rest) {
+                MatchTerm left_rest = left_term, right_rest = right_term;
+                left_rest.value = meet.left_derived
+                    ? match_list_derived_value(left_term.value, meet.left_rest)
+                    : (BindingValue){meet.left_rest, left_value.epoch,
+                                     left_value.kind};
+                right_rest.value = meet.right_derived
+                    ? match_list_derived_value(right_term.value, meet.right_rest)
+                    : (BindingValue){meet.right_rest, right_value.epoch,
+                                     right_value.kind};
+                if (!epoch_match_push(
+                        &work, left_rest, right_rest,
+                        right_plan && !meet.right_derived
+                            ? &right_plan->children[right->expr.len - 1u]
+                            : NULL))
+                    goto fail;
+            }
+            if (meet.prefix > 0u &&
+                !epoch_match_push_children(
+                    &work, left_term, right_term, right_plan, 1u,
+                    1u + meet.prefix))
+                goto fail;
+            continue;
+        }
         if (left->kind != ATOM_EXPR || right->kind != ATOM_EXPR ||
             left->expr.len != right->expr.len ||
             (right_plan &&
@@ -12814,9 +13064,12 @@ retry_pair:
                 goto fail;
             continue;
         }
+        /* Rule patterns holding a list compile no program (petta_program.c),
+         * so here a list meets only an expression, which it never matches. */
         if (left->kind != ATOM_EXPR ||
             right->kind != ATOM_EXPR ||
             left->expr.len != right->expr.len ||
+            match_expr_is_list(left) || match_expr_is_list(right) ||
             (right->expr.len == 0u &&
              instruction->subtree_span != 1u)) {
             goto fail;
@@ -13234,7 +13487,9 @@ static bool stored_grounded_equal(Atom *left,
     case GV_STRING: {
         const char *rhs = tu_string_cstr(candidate_universe, right_id);
         return tu_ground_kind(candidate_universe, right_id) == GV_STRING &&
-               rhs && strcmp(left->ground.sval, rhs) == 0;
+               rhs &&
+               atom_string_equals_bytes(
+                   left, rhs, tu_string_len(candidate_universe, right_id));
     }
     case GV_BIGINT: {
         const char *rhs = tu_bigint_cstr(candidate_universe, right_id);
@@ -13300,7 +13555,7 @@ static bool match_atoms_atom_id_epoch_worklist(
         Atom *right = term_universe_get_atom((TermUniverse *)candidate_universe, right_id);
         return right && match_decoded_atoms_worklist(
             left_value, binding_value_from_persistent_context(right, epoch),
-            b, NULL, false);
+            b, NULL, a, false);
     }
     StoredMatchWorklist work;
     work.items = work.inline_items;
@@ -13348,7 +13603,7 @@ retry_pair:
                 BindingValue right_existing = bindings_lookup_value_id(b, right_var_id);
                 if (right_existing.skeleton) {
                     if (!match_decoded_atoms_worklist(
-                            left_value, right_existing, b, NULL, false)) {
+                            left_value, right_existing, b, NULL, a, false)) {
                         attempt_repeated_var = true;
                         goto fail;
                     }
@@ -13379,7 +13634,7 @@ retry_pair:
             BindingValue existing = bindings_lookup_value_id(b, right_var_id);
             if (existing.skeleton) {
                 if (!match_decoded_atoms_worklist(
-                        left_value, existing, b, NULL, false)) {
+                        left_value, existing, b, NULL, a, false)) {
                     attempt_repeated_var = true;
                     goto fail;
                 }
@@ -13412,6 +13667,24 @@ retry_pair:
                 goto fail;
             break;
         case ATOM_EXPR:
+            if (right_kind == ATOM_EXPR &&
+                (match_expr_is_list(left) ||
+                 (tu_arity(candidate_universe, right_id) > 0u &&
+                  cetta_internal_tag_is_list(tu_internal_tag(
+                      candidate_universe,
+                      tu_child(candidate_universe, right_id, 0u)))))) {
+                /* Lists meet in the contextual matcher, which builds the
+                 * rest a list pattern is bound to. */
+                Atom *right = term_universe_get_atom(
+                    (TermUniverse *)candidate_universe, right_id);
+                if (!right || !match_atoms_epoch_views_worklist(
+                        left, left_value.kind,
+                        left_value.epoch, 0u, right, b, NULL, a, epoch,
+                        BINDING_VALUE_CONTEXTUAL, false,
+                        NULL, NULL, NULL))
+                    goto fail;
+                break;
+            }
             if (right_kind != ATOM_EXPR ||
                 left->expr.len != tu_arity(candidate_universe, right_id))
                 goto fail;

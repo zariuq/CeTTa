@@ -624,7 +624,9 @@ static bool petta_program_compile_open_pattern_linear_program(
 static const CettaOpenPatternPlan *petta_program_compile_open_pattern_plan(
         PettaProgram *program, Atom *source,
         const VarId *variable_ids, uint32_t variable_count) {
-    if (!program || !source)
+    /* A list meets its counterpart by elements and rest, not by coordinate;
+     * a pattern holding one is matched unplanned. */
+    if (!program || !source || atom_structural_may_have_list(source))
         return NULL;
     CettaOpenPatternPlan *plan = arena_alloc(
         &program->plans, sizeof(*plan));
@@ -988,9 +990,12 @@ static PettaEquationTemplateC0 *petta_program_compile_equation_template_c0(
         petta_program_variable_union_count(
             &lhs_variables, &rhs_variables,
             static_variable_count_out);
+    /* A list meets its counterpart by elements and rest, which the dense
+     * template does not encode. */
     bool open_admitted =
         variables_collected &&
-        !petta_semantics_contains_cons_constraint(lhs);
+        !petta_semantics_contains_cons_constraint(lhs) &&
+        !atom_structural_may_have_list(lhs);
     size_t union_variables =
         (size_t)*static_variable_count_out;
     VarId union_first_variable = 1u;
@@ -1811,6 +1816,10 @@ bool petta_program_head_is_intrinsic(SymbolId head) {
 typedef struct {
     Atom *atom;
     PettaPlanNode *plan;
+    /* Inside a list: every occurrence is a value. */
+    bool value;
+    /* The operand of `call`: a direct call, even to a function installed
+     * only later. */
     bool direct_call;
 } PettaPlanBuildItem;
 
@@ -2426,6 +2435,55 @@ static bool petta_plan_mark_open_template_admitted(
     return ok;
 }
 
+/* Push an expression's children as work items with fresh plan nodes; the
+ * child at `handler_child`, when nonzero, is dispatched under the handler.
+ * The child at `quoted_child`, when nonzero, is a value left unread, and the
+ * child at `direct_call_child`, when nonzero, is a direct call. */
+static bool petta_plan_push_children(
+    Arena *plans, PettaPlanBuildItem **work, size_t *work_len,
+    size_t *work_cap, Atom *atom, PettaPlanNode *node, bool value,
+    CettaExprIndex handler_child, CettaExprIndex quoted_child,
+    CettaExprIndex direct_call_child) {
+    if (atom->expr.len == 0u)
+        return true;
+    if (!cetta_expr_len_mul_fits_size(
+            atom->expr.len, sizeof(*node->children)) ||
+        !petta_program_reserve(
+            (void **)work, work_cap,
+            *work_len + (size_t)atom->expr.len,
+            sizeof(**work))) {
+        return false;
+    }
+    PettaPlanNode *children = arena_alloc(
+        plans,
+        sizeof(*children) * (size_t)atom->expr.len);
+    if (!children)
+        return false;
+    memset(
+        children, 0,
+        sizeof(*children) * (size_t)atom->expr.len);
+    if (handler_child != 0u && handler_child < atom->expr.len)
+        children[handler_child].dispatch_handler = true;
+    node->children = children;
+    for (CettaExprIndex index = atom->expr.len;
+         index > 0u; index--) {
+        CettaExprIndex child = index - 1u;
+        if (quoted_child != 0u && child == quoted_child) {
+            children[child].role = PETTA_PLAN_VALUE;
+            children[child].output = PETTA_PLAN_OUTPUT_VALUE;
+            continue;
+        }
+        (*work)[(*work_len)++] = (PettaPlanBuildItem){
+            .atom = atom->expr.elems[child],
+            .plan = &children[child],
+            .value = value,
+            .direct_call = direct_call_child != 0u &&
+                child == direct_call_child,
+        };
+    }
+    return true;
+}
+
 /* The plan of `root`.  A runtime translation (`translation`) leaves the
  * argument of `(quote X)` as the value it is, unread, as PeTTa's translator
  * does: a quoted argument is data, and a value may share its subterms, so
@@ -2473,6 +2531,20 @@ static PettaPlanNode *petta_plan_build_in(
             continue;
         }
         node->child_count = atom->expr.len;
+        /* A list is a value: reading or passing one never evaluates its
+         * elements.  Its occurrences keep plans, all values, so equation
+         * variables inside it still get their slots. */
+        if (item.value || atom_is_list_form(atom)) {
+            node->role = PETTA_PLAN_VALUE;
+            node->output = PETTA_PLAN_OUTPUT_VALUE;
+            if (!petta_plan_push_children(
+                    plans, &work, &work_len, &work_cap, atom, node,
+                    true, 0u, 0u, 0u)) {
+                ok = false;
+                break;
+            }
+            continue;
+        }
         if (atom->expr.len == 0u) {
             node->role = PETTA_PLAN_DATA;
             node->output = PETTA_PLAN_OUTPUT_VALUE;
@@ -2587,51 +2659,26 @@ static PettaPlanNode *petta_plan_build_in(
             }
         }
 
-        if (!cetta_expr_len_mul_fits_size(
-                atom->expr.len, sizeof(*node->children)) ||
-            !petta_program_reserve(
-                (void **)&work, &work_cap,
-                work_len + (size_t)atom->expr.len,
-                sizeof(*work))) {
-            ok = false;
-            break;
-        }
-        PettaPlanNode *children = arena_alloc(
-            plans,
-            sizeof(*children) * (size_t)atom->expr.len);
-        if (!children) {
-            ok = false;
-            break;
-        }
-        memset(
-            children, 0,
-            sizeof(*children) * (size_t)atom->expr.len);
-        node->children = children;
         /* The application written in a `reduce` is dispatched at run
          * time, under the handler, whatever its head. */
-        if (head_atom->kind == ATOM_SYMBOL && atom->expr.len == 2u &&
-            petta_semantics_form(head_atom->sym_id) == PETTA_FORM_REDUCE)
-            children[1].dispatch_handler = true;
+        bool reduce_application =
+            head_atom->kind == ATOM_SYMBOL && atom->expr.len == 2u &&
+            petta_semantics_form(head_atom->sym_id) == PETTA_FORM_REDUCE;
+        /* `call` emits a direct call even if this function will only be
+         * installed later. Its arguments still use their own
+         * translation-time roles. */
+        bool call_application =
+            head_atom->kind == ATOM_SYMBOL && atom->expr.len == 2u &&
+            petta_semantics_form(head_atom->sym_id) == PETTA_FORM_CALL;
         bool quoted = translation &&
             node->output == PETTA_PLAN_OUTPUT_QUOTED_CHILD;
-        for (CettaExprIndex index = atom->expr.len;
-             index > 0u; index--) {
-            CettaExprIndex child = index - 1u;
-            if (quoted && child == node->output_child) {
-                children[child].role = PETTA_PLAN_VALUE;
-                children[child].output = PETTA_PLAN_OUTPUT_VALUE;
-                continue;
-            }
-            work[work_len++] = (PettaPlanBuildItem){
-                .atom = atom->expr.elems[child],
-                .plan = &children[child],
-                /* `call` emits a direct call even if this function will
-                 * only be installed later. Its arguments still use their
-                 * own translation-time roles. */
-                .direct_call = child == 1u && atom->expr.len == 2u &&
-                    head_atom->kind == ATOM_SYMBOL &&
-                    petta_semantics_form(head_atom->sym_id) == PETTA_FORM_CALL,
-            };
+        if (!petta_plan_push_children(
+                plans, &work, &work_len, &work_cap, atom, node, false,
+                reduce_application ? 1u : 0u,
+                quoted ? node->output_child : 0u,
+                call_application ? 1u : 0u)) {
+            ok = false;
+            break;
         }
     }
     free(work);

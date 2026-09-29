@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "atom.h"
+#include "string_literal.h"
 #include "lang.h"
 #include "petta_numeric.h"
 #include "stats.h"
@@ -143,7 +144,7 @@ bool atom_deep_copy_session_retain_frame(
 
 /* ── Arena ──────────────────────────────────────────────────────────────── */
 
-static void cetta_oom(size_t size) {
+_Noreturn void cetta_oom(size_t size) {
     fprintf(stderr, "fatal: out of memory allocating %zu bytes\n", size);
     abort();
 }
@@ -1249,8 +1250,9 @@ static uint32_t atom_hash_compute(Atom *a) {
                          h = ((h << 5) + h) ^ (uint32_t)(conv.u & 0xFFFFFFFF); break; }
         case GV_BOOL: h = ((h << 5) + h) ^ (uint32_t)a->ground.bval; break;
         case GV_STRING: {
-            for (const char *p = a->ground.sval; *p; p++)
-                h = ((h << 5) + h) ^ (uint32_t)*p;
+            const char *p = a->ground.sval;
+            for (uint32_t i = 0; i < a->ground.slen; i++)
+                h = ((h << 5) + h) ^ (uint32_t)p[i];
             break;
         }
         case GV_BIGINT: {
@@ -1271,8 +1273,10 @@ static uint32_t atom_hash_compute(Atom *a) {
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
-        case GV_INTERNAL_TAG:
             break; /* mutable/contextual — don't hash-cons */
+        case GV_INTERNAL_TAG:
+            h = ((h << 5) + h) ^ (uint32_t)(a->ground.ival & 0xFFFFFFFF);
+            break;
         }
         break;
     case ATOM_EXPR:
@@ -1364,6 +1368,8 @@ static bool atom_can_hashcons(const Atom *atom) {
 
 static uint32_t atom_hash_flags_for_eligible_leaf(void);
 static uint32_t atom_flags_for_grounded_kind(GroundedKind gkind);
+static uint32_t atom_flags_for_internal_tag(int64_t tag);
+static uint32_t atom_structural_facts_for_internal_tag(int64_t tag);
 static uint32_t atom_flags_for_symbol_id(SymbolId sym_id);
 static inline __attribute__((always_inline)) uint32_t
 atom_flags_from_children(uint32_t arena_id, uint32_t older_id, Atom **elems,
@@ -1401,11 +1407,13 @@ static bool atom_hashcons_graph_admitted(const Atom *atom) {
                         ? ATOM_FLAG_HAS_PRIVATE_VARIANT_VAR : 0u);
         break;
     case ATOM_GROUNDED:
-        expected = atom_flags_for_grounded_kind(atom->ground.gkind);
         if (atom->ground.gkind == GV_INTERNAL_TAG) {
-            expected_structural_facts |=
-                ATOM_STRUCTURAL_HAS_INTERNAL_TAG;
+            expected = atom_flags_for_internal_tag(atom->ground.ival);
+            expected_structural_facts =
+                atom_structural_facts_for_internal_tag(atom->ground.ival);
+            break;
         }
+        expected = atom_flags_for_grounded_kind(atom->ground.gkind);
         if (atom->ground.gkind == GV_FLOAT && isnan(atom->ground.fval))
             expected_structural_facts |= ATOM_STRUCTURAL_HAS_NAN;
         break;
@@ -1506,7 +1514,7 @@ static uint64_t hashcons_slot_hash(Atom *atom) {
         case GV_STRING:
             h = hashcons_index_mix_span(
                 h, (const uint8_t *)atom->ground.sval,
-                strlen(atom->ground.sval));
+                atom->ground.slen);
             break;
         case GV_BIGINT: {
             const char *text = atom_bigint_cstr(atom);
@@ -1691,9 +1699,13 @@ static Atom *hashcons_alloc_owned(HashConsTable *hc, const Atom *atom) {
             &hc->frame_identities, var_epoch_suffix(atom->var_id));
     if (atom->kind == ATOM_GROUNDED &&
         atom->ground.gkind == GV_STRING) {
-        owned->ground.sval = strdup(atom->ground.sval);
-        if (!owned->ground.sval)
-            cetta_oom(strlen(atom->ground.sval) + 1);
+        size_t len = atom->ground.slen;
+        char *bytes = malloc(len + 1u);
+        if (!bytes)
+            cetta_oom(len + 1u);
+        memcpy(bytes, atom->ground.sval, len);
+        bytes[len] = '\0';
+        owned->ground.sval = bytes;
     } else if (atom->kind == ATOM_GROUNDED &&
                atom->ground.gkind == GV_BIGINT) {
         owned->ground.bigint = cetta_bigint_clone_owned(atom->ground.bigint);
@@ -2614,6 +2626,31 @@ static uint32_t atom_structural_facts_for_grounded_kind(
            (gkind == GV_STATE || gkind == GV_TERM_GRAPH
                 ? ATOM_STRUCTURAL_HAS_NAN : 0u) |
            (gkind == GV_TERM_GRAPH ? ATOM_STRUCTURAL_HAS_RATIONAL : 0u);
+}
+
+/* The list tags are structural data, stable under hashing and shareable; the
+ * other internal tags mark machine carriers and stay out of the hash-cons. */
+static uint32_t atom_flags_for_internal_tag(int64_t tag) {
+    return cetta_internal_tag_is_list(tag)
+        ? atom_hash_flags_for_eligible_leaf()
+        : atom_flags_for_grounded_kind(GV_INTERNAL_TAG);
+}
+
+static uint32_t atom_structural_facts_for_internal_tag(int64_t tag) {
+    return atom_structural_facts_for_grounded_kind(GV_INTERNAL_TAG) |
+           (cetta_internal_tag_is_list(tag) ? ATOM_STRUCTURAL_HAS_LIST : 0u) |
+           (tag == (int64_t)CETTA_INTERNAL_TAG_LIST_REST
+                ? ATOM_STRUCTURAL_HAS_OPEN_LIST : 0u) |
+           (tag == (int64_t)CETTA_INTERNAL_TAG_PETTA_OPEN_CONS
+                ? ATOM_STRUCTURAL_HAS_LIST_CARRIER : 0u);
+}
+
+bool atom_grounded_is_term_stable(const Atom *atom) {
+    if (!atom || atom->kind != ATOM_GROUNDED)
+        return false;
+    if (atom->ground.gkind == GV_INTERNAL_TAG)
+        return cetta_internal_tag_is_list(atom->ground.ival);
+    return atom_grounded_kind_is_term_stable(atom->ground.gkind);
 }
 
 static uint32_t atom_flags_for_symbol_id(SymbolId sym_id) {
@@ -3565,7 +3602,64 @@ Atom *atom_rational_open(Arena *arena, Atom *atom) {
         ? term_graph_open_value(arena, atom) : atom;
 }
 
+/* atom_hash_compute of a list tag, as a constant: the tags are shared by every
+ * list and owned by no arena, so their hash is fixed at compile time. */
+#define ATOM_LIST_TAG_HASH_STEP(h, x) \
+    ((uint32_t)((uint32_t)(h) * 33u) ^ (uint32_t)(x))
+#define ATOM_LIST_TAG_HASH(tag)                                            \
+    ATOM_LIST_TAG_HASH_STEP(                                               \
+        ATOM_LIST_TAG_HASH_STEP(                                           \
+            ATOM_LIST_TAG_HASH_STEP(5381u, ATOM_GROUNDED), GV_INTERNAL_TAG), \
+        (tag))
+#define ATOM_LIST_TAG_INIT(tag, facts)                                     \
+    {                                                                      \
+        .kind = ATOM_GROUNDED,                                             \
+        .flags = ATOM_FLAG_HASH_STABLE | ATOM_FLAG_HASHCONS_ELIGIBLE |     \
+                 ATOM_FLAG_ARENA_CLOSED | ATOM_FLAG_HASH_VALID,            \
+        .var_id = VAR_ID_NONE,                                             \
+        .sym_id = SYMBOL_ID_NONE,                                          \
+        .arena_id = 0u,                                                    \
+        .name_key = NULL,                                                  \
+        .hash_cache = ATOM_LIST_TAG_HASH(tag),                             \
+        .structural_facts = ATOM_STRUCTURAL_FACTS_VALID |                  \
+                            ATOM_STRUCTURAL_HAS_INTERNAL_TAG | (facts),    \
+        .ground = {.gkind = GV_INTERNAL_TAG, .ival = (tag)},               \
+    }
+
+static Atom g_atom_list_tag =
+    ATOM_LIST_TAG_INIT(CETTA_INTERNAL_TAG_LIST, ATOM_STRUCTURAL_HAS_LIST);
+static Atom g_atom_list_rest_tag =
+    ATOM_LIST_TAG_INIT(CETTA_INTERNAL_TAG_LIST_REST,
+                       ATOM_STRUCTURAL_HAS_LIST |
+                           ATOM_STRUCTURAL_HAS_OPEN_LIST);
+
+/* [] is shared the same way: (LIST), with its hash fixed like the tags'. */
+static Atom *g_atom_empty_list_elems[1] = {&g_atom_list_tag};
+static Atom g_atom_empty_list = {
+    .kind = ATOM_EXPR,
+    .flags = ATOM_FLAG_HASH_STABLE | ATOM_FLAG_HASHCONS_ELIGIBLE |
+             ATOM_FLAG_ARENA_CLOSED | ATOM_FLAG_HASH_VALID,
+    .var_id = VAR_ID_NONE,
+    .sym_id = SYMBOL_ID_NONE,
+    .arena_id = 0u,
+    .name_key = NULL,
+    .hash_cache = ATOM_LIST_TAG_HASH_STEP(
+        ATOM_LIST_TAG_HASH_STEP(
+            ATOM_LIST_TAG_HASH_STEP(
+                ATOM_LIST_TAG_HASH_STEP(5381u, ATOM_EXPR), 1u),
+            0u),
+        ATOM_LIST_TAG_HASH(CETTA_INTERNAL_TAG_LIST)),
+    .structural_facts = ATOM_STRUCTURAL_FACTS_VALID |
+                        ATOM_STRUCTURAL_HAS_INTERNAL_TAG |
+                        ATOM_STRUCTURAL_HAS_LIST,
+    .expr = {.elems = g_atom_empty_list_elems, .len = 1u},
+};
+
 Atom *atom_internal_tag(Arena *a, CettaInternalTag tag) {
+    if (tag == CETTA_INTERNAL_TAG_LIST)
+        return &g_atom_list_tag;
+    if (tag == CETTA_INTERNAL_TAG_LIST_REST)
+        return &g_atom_list_rest_tag;
     if (!a || tag == 0)
         return NULL;
     Atom *at = arena_alloc(a, sizeof(*at));
@@ -3576,10 +3670,7 @@ Atom *atom_internal_tag(Arena *a, CettaInternalTag tag) {
     at->arena_id = a->identity;
     at->name_key = NULL;
     at->hash_cache = 0u;
-    at->structural_facts =
-        atom_structural_facts_for_grounded_kind(GV_INTERNAL_TAG) |
-        (tag == CETTA_INTERNAL_TAG_PETTA_OPEN_CONS
-             ? ATOM_STRUCTURAL_HAS_LIST_CARRIER : 0u);
+    at->structural_facts = atom_structural_facts_for_internal_tag((int64_t)tag);
     at->ground.gkind = GV_INTERNAL_TAG;
     at->ground.ival = (int64_t)tag;
     return at;
@@ -3659,6 +3750,86 @@ Atom *atom_counted_collection(
         a, CETTA_INTERNAL_TAG_COUNTED_COLLECTION);
     Atom *value = atom_int(a, count);
     return tag && value ? atom_expr2(a, tag, value) : NULL;
+}
+
+Atom *atom_list(Arena *a, Atom *const *elems, CettaExprLen len) {
+    Atom *tag, *list;
+    Atom **parts;
+    if (len == 0u)
+        return &g_atom_empty_list;
+    if (!a || !elems ||
+        !cetta_expr_len_mul_fits_size(len + 1u, sizeof(Atom *)))
+        return NULL;
+    tag = atom_internal_tag(a, CETTA_INTERNAL_TAG_LIST);
+    if (!tag)
+        return NULL;
+    parts = cetta_malloc(sizeof(*parts) * (size_t)(len + 1u));
+    parts[0] = tag;
+    if (len > 0u)
+        memcpy(parts + 1, elems, sizeof(*parts) * (size_t)len);
+    list = atom_expr(a, parts, len + 1u);
+    free(parts);
+    return list;
+}
+
+Atom *atom_list_with_rest(Arena *a, Atom *const *elems, CettaExprLen len, Atom *rest) {
+    Atom *tag, *result;
+    Atom **parts;
+    CettaExprLen rest_len;
+    if (!a || !rest || (!elems && len > 0u))
+        return NULL;
+    if (atom_is_list(rest) || atom_is_list_rest(rest)) {
+        /* [x... | [y...]] is [x... y...]; [x... | [y... | r]] is [x... y... | r]. */
+        rest_len = rest->expr.len - 1u;
+        if (!cetta_expr_len_mul_fits_size(len + rest_len + 1u, sizeof(Atom *)))
+            return NULL;
+        parts = cetta_malloc(sizeof(*parts) * (size_t)(len + rest_len + 1u));
+        parts[0] = rest->expr.elems[0];
+        if (len > 0u)
+            memcpy(parts + 1, elems, sizeof(*parts) * (size_t)len);
+        memcpy(parts + 1 + len, rest->expr.elems + 1, sizeof(*parts) * (size_t)rest_len);
+        result = atom_expr(a, parts, len + rest_len + 1u);
+        free(parts);
+        return result;
+    }
+    if (len == 0u)
+        return rest; /* [| r] is r */
+    if (!cetta_expr_len_mul_fits_size(len + 2u, sizeof(Atom *)))
+        return NULL;
+    tag = atom_internal_tag(a, CETTA_INTERNAL_TAG_LIST_REST);
+    if (!tag)
+        return NULL;
+    parts = cetta_malloc(sizeof(*parts) * (size_t)(len + 2u));
+    parts[0] = tag;
+    if (len > 0u)
+        memcpy(parts + 1, elems, sizeof(*parts) * (size_t)len);
+    parts[len + 1u] = rest;
+    result = atom_expr(a, parts, len + 2u);
+    free(parts);
+    return result;
+}
+
+Atom *atom_sequence_like(Arena *a, const Atom *like, Atom *const *elems,
+                         CettaExprLen len) {
+    if (atom_is_list(like))
+        return atom_list(a, elems, len);
+    if (!a || (len > 0u && !elems) ||
+        !cetta_expr_len_mul_fits_size(len, sizeof(Atom *)))
+        return NULL;
+    Atom **copy = len ? cetta_malloc(sizeof(*copy) * (size_t)len) : NULL;
+    if (len)
+        memcpy(copy, elems, sizeof(*copy) * (size_t)len);
+    Atom *result = atom_expr(a, copy, len);
+    free(copy);
+    return result;
+}
+
+Atom *atom_list_tail(Arena *a, const Atom *list, CettaExprLen from) {
+    if (!atom_is_list(list))
+        return NULL;
+    if (from > atom_list_len(list))
+        from = atom_list_len(list);
+    return atom_list(a, atom_list_elems(list) + from, atom_list_len(list) - from);
 }
 
 bool atom_counted_collection_count(
@@ -3936,7 +4107,13 @@ Atom *atom_bool(Arena *a, bool val) {
     return at;
 }
 
-Atom *atom_string(Arena *a, const char *val) {
+Atom *atom_string_n(Arena *a, const char *bytes, size_t len) {
+    if (len > CETTA_STRING_BYTES_MAX) {
+        fprintf(stderr,
+                "fatal: a string of %zu bytes exceeds the %u-byte string limit\n",
+                len, CETTA_STRING_BYTES_MAX);
+        abort();
+    }
     Atom temp = {0};
     temp.kind = ATOM_GROUNDED;
     temp.flags = atom_flags_for_grounded_kind(GV_STRING);
@@ -3946,7 +4123,8 @@ Atom *atom_string(Arena *a, const char *val) {
     temp.structural_facts =
         atom_structural_facts_for_grounded_kind(GV_STRING);
     temp.ground.gkind = GV_STRING;
-    temp.ground.sval = val;
+    temp.ground.slen = (uint32_t)len;
+    temp.ground.sval = bytes ? bytes : "";
     Atom *shared = atom_maybe_hashcons(a, &temp);
     if (shared) return shared;
     Atom *at = arena_alloc(a, sizeof(Atom));
@@ -3958,8 +4136,17 @@ Atom *atom_string(Arena *a, const char *val) {
     at->hash_cache = 0;
     at->structural_facts = temp.structural_facts;
     at->ground.gkind = temp.ground.gkind;
-    at->ground.sval = arena_strdup(a, val);
+    at->ground.slen = temp.ground.slen;
+    char *copy = arena_alloc(a, len + 1u);
+    if (len)
+        memcpy(copy, bytes, len);
+    copy[len] = '\0';
+    at->ground.sval = copy;
     return at;
+}
+
+Atom *atom_string(Arena *a, const char *val) {
+    return atom_string_n(a, val, val ? strlen(val) : 0u);
 }
 
 bool atom_expr_allocation_bound(CettaExprLen length, size_t *bytes_out) {
@@ -3969,6 +4156,17 @@ bool atom_expr_allocation_bound(CettaExprLen length, size_t *bytes_out) {
     *bytes_out = (sizeof(Atom) + (size_t)length * sizeof(Atom *) + 7u)
         & ~(size_t)7u;
     return true;
+}
+
+/* A list pattern whose rest is itself a list or a list pattern is the one list
+ * they spell together: [x... | [y...]] is [x..., y...].  Construction keeps
+ * that normal form, so substitution into a rest never leaves a nested one. */
+static bool atom_list_rest_parts_splice(Atom *const *elems, CettaExprLen len,
+                                        uint32_t structural_facts) {
+    return (structural_facts & ATOM_STRUCTURAL_HAS_OPEN_LIST) != 0u &&
+           len >= 3u && elems &&
+           atom_is_internal_tag(elems[0], CETTA_INTERNAL_TAG_LIST_REST) &&
+           (atom_is_list(elems[len - 1u]) || atom_is_list_rest(elems[len - 1u]));
 }
 
 /* An expression in an arena that interns nothing, with its summary. */
@@ -4011,6 +4209,8 @@ static inline __attribute__((always_inline)) Atom *atom_expr_small(
     uint32_t structural_facts = 0u;
     uint32_t flags = atom_flags_fold(
         a->identity, 0u, false, elems, len, &structural_facts);
+    if (atom_list_rest_parts_splice(elems, len, structural_facts))
+        return atom_list_with_rest(a, elems + 1, len - 2u, elems[len - 1u]);
     VarId var_id = atom_single_variable_id_of(flags, elems, len);
     return atom_expr_build(a, elems, len, flags, structural_facts, var_id);
 }
@@ -4046,6 +4246,8 @@ static inline __attribute__((always_inline)) Atom *atom_expr_headed_small(
     uint32_t structural_facts = 0u;
     uint32_t flags = atom_summary_finish(
         &summary, false, NULL, &structural_facts);
+    if (atom_list_rest_parts_splice(elems, len, structural_facts))
+        return atom_list_with_rest(a, elems + 1, len - 2u, elems[len - 1u]);
     VarId var_id = atom_single_variable_id_of(flags, elems, len);
     return atom_expr_build(a, elems, len, flags, structural_facts, var_id);
 }
@@ -4118,6 +4320,8 @@ Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len) {
     uint32_t structural_facts = 0u;
     uint32_t flags = atom_flags_from_children(
         a->identity, a->older_identity, elems, len, &structural_facts);
+    if (atom_list_rest_parts_splice(elems, len, structural_facts))
+        return atom_list_with_rest(a, elems + 1, len - 2u, elems[len - 1u]);
     VarId var_id = atom_single_variable_id_of(flags, elems, len);
     /* An arena that interns nothing takes the expression as built:
      * atom_maybe_hashcons would decline it. */
@@ -4499,6 +4703,11 @@ Atom *atom_expr_builder_finish(Arena *a, Atom *draft) {
     draft->flags = atom_flags_from_children(
         a->identity, a->older_identity, draft->expr.elems, draft->expr.len,
         &draft->structural_facts);
+    if (atom_list_rest_parts_splice(draft->expr.elems, draft->expr.len,
+                                    draft->structural_facts))
+        return atom_list_with_rest(a, draft->expr.elems + 1,
+                                   draft->expr.len - 2u,
+                                   draft->expr.elems[draft->expr.len - 1u]);
     draft->var_id = atom_single_variable_id_of(
         draft->flags, draft->expr.elems, draft->expr.len);
     draft->hash_cache = 0u;
@@ -4535,13 +4744,16 @@ Atom *atom_symbol_type(Arena *a)    { return atom_symbol_id(a, g_builtin_syms.sy
 Atom *atom_variable_type(Arena *a)  { return atom_symbol_id(a, g_builtin_syms.variable); }
 Atom *atom_expression_type(Arena *a){ return atom_symbol_id(a, g_builtin_syms.expression); }
 Atom *atom_grounded_type(Arena *a)  { return atom_symbol_id(a, g_builtin_syms.grounded); }
+Atom *atom_list_type(Arena *a)      { return atom_symbol_id(a, g_builtin_syms.list_type); }
 
 Atom *get_meta_type(Arena *a, Atom *atom) {
     switch (atom->kind) {
     case ATOM_SYMBOL:   return atom_symbol_type(a);
     case ATOM_VAR:      return atom_variable_type(a);
     case ATOM_GROUNDED: return atom_grounded_type(a);
-    case ATOM_EXPR:     return atom_expression_type(a);
+    case ATOM_EXPR:
+        return atom_is_list(atom) || atom_is_list_rest(atom)
+                   ? atom_list_type(a) : atom_expression_type(a);
     }
     return atom_undefined_type(a);
 }
@@ -4559,6 +4771,11 @@ bool atom_meta_type_accepts(Arena *a, Atom *formal, Atom *actual) {
         return true;
     if (!atom_is_meta_type(formal))
         return false;
+    /* The sequence operations read a list as they read an expression, so a
+     * list may stand where an Expression is taken.  Not the converse. */
+    if (atom_is_symbol_id(formal, g_builtin_syms.expression) &&
+        atom_is_list(actual))
+        return true;
     return atom_eq(formal, get_meta_type(a, actual));
 }
 
@@ -4961,7 +5178,10 @@ static bool atom_eq_in(Atom *a, Atom *b, AtomEqWalk *walk) {
         case GV_FLOAT:
             return atom_float_eq(a->ground.fval, b->ground.fval);
         case GV_BOOL:   return a->ground.bval == b->ground.bval;
-        case GV_STRING: return strcmp(a->ground.sval, b->ground.sval) == 0;
+        case GV_STRING:
+            return a->ground.slen == b->ground.slen &&
+                   memcmp(a->ground.sval, b->ground.sval,
+                          a->ground.slen) == 0;
         case GV_BIGINT:
             return cetta_bigint_compare_cstr(atom_bigint_cstr(a),
                                             atom_bigint_cstr(b)) == 0;
@@ -5514,8 +5734,11 @@ static Atom *atom_deep_copy_leaf(Arena *dst, Atom *src, bool share) {
                                       : atom_bool(dst, src->ground.bval);
             break;
         case GV_STRING:
-            out = share && g_hashcons ? hashcons_get(g_hashcons, atom_string(dst, src->ground.sval))
-                                      : atom_string(dst, src->ground.sval);
+            out = share && g_hashcons
+                ? hashcons_get(g_hashcons,
+                               atom_string_n(dst, src->ground.sval,
+                                             src->ground.slen))
+                : atom_string_n(dst, src->ground.sval, src->ground.slen);
             break;
         case GV_BIGINT:
             out = atom_bigint_copy(dst, src);
@@ -6194,6 +6417,38 @@ char *cetta_petta_number_to_string(Arena *arena, const Atom *atom) {
     }
 }
 
+static bool g_atom_print_raw_string_bytes = false;
+static _Thread_local bool g_atom_print_c_text = false;
+
+void atom_print_set_raw_string_bytes(bool raw) {
+    g_atom_print_raw_string_bytes = raw;
+}
+
+bool atom_print_raw_string_bytes(void) {
+    return g_atom_print_raw_string_bytes;
+}
+
+bool atom_print_set_c_text(bool on) {
+    bool previous = g_atom_print_c_text;
+    g_atom_print_c_text = on;
+    return previous;
+}
+
+static void atom_print_emit_file(void *context, const char *bytes,
+                                 size_t len) {
+    fwrite(bytes, 1, len, (FILE *)context);
+}
+
+static void atom_print_string_bytes(FILE *out, const char *text, size_t len,
+                                    bool petta) {
+    CettaStringLiteralBytes mode =
+        !(petta || g_atom_print_raw_string_bytes) ? CETTA_STRING_LITERAL_ESCAPED
+        : g_atom_print_c_text ? CETTA_STRING_LITERAL_RAW_TEXT
+                              : CETTA_STRING_LITERAL_RAW;
+    cetta_string_literal_escape(text, len, mode, petta, atom_print_emit_file,
+                                out);
+}
+
 static void atom_print_mode(
     Atom *root, FILE *out, bool petta,
     PettaPrintVariables *variables) {
@@ -6264,12 +6519,8 @@ static void atom_print_mode(
             /* PeTTa's swrite escapes only quotes and backslashes; its
              * strings keep their newlines, and its reader takes them back. */
             fputc('"', out);
-            for (const char *p = a->ground.sval; *p; p++) {
-                if (*p == '\n' && !petta) fputs("\\n", out);
-                else if (*p == '"') fputs("\\\"", out);
-                else if (*p == '\\') fputs("\\\\", out);
-                else fputc(*p, out);
-            }
+            atom_print_string_bytes(out, a->ground.sval, a->ground.slen,
+                                    petta);
             fputc('"', out);
             break;
         }
@@ -6319,6 +6570,25 @@ static void atom_print_mode(
         }
         break;
     case ATOM_EXPR:
+        if (atom_is_list(a) || atom_is_list_rest(a)) {
+            /* [x1 x2 ... xn] and [x1 ... xk | rest] */
+            bool rest = atom_is_list_rest(a);
+            fputc('[', out);
+            atom_print_stack_push_char(&stack, ']');
+            for (CettaExprIndex i = a->expr.len; i > 1u; i--) {
+                atom_print_stack_push_atom(&stack, a->expr.elems[i - 1u]);
+                if (i > 2u) {
+                    if (rest && i == a->expr.len) {
+                        atom_print_stack_push_char(&stack, ' ');
+                        atom_print_stack_push_char(&stack, '|');
+                        atom_print_stack_push_char(&stack, ' ');
+                    } else {
+                        atom_print_stack_push_char(&stack, ' ');
+                    }
+                }
+            }
+            break;
+        }
         if (petta) {
             Atom *compound_body = NULL;
             if (atom_petta_prolog_compound_body(
@@ -6352,36 +6622,55 @@ void atom_print_petta(Atom *a, FILE *out) {
     free(variables.slots);
 }
 
-char *atom_to_parseable_string(Arena *a, Atom *atom) {
-    char *buf = NULL;
-    size_t len = 0;
-    FILE *mem = open_memstream(&buf, &len);
-    if (!mem) {
-        return arena_strdup(a, "");
-    }
-    atom_print(atom, mem);
-    fclose(mem);
-    char *out = arena_strdup(a, buf ? buf : "");
-    free(buf);
-    return out;
-}
-
-char *atom_to_parseable_string_petta(Arena *a, Atom *atom) {
+/* The printed text of an atom and its length.  As a C string (`c_text`) it
+ * cannot hold NUL, so NUL a lane writes raw is written \x00 there. */
+static char *atom_print_to_text(Arena *a, Atom *atom, bool petta, bool c_text,
+                                size_t *len_out) {
     char *buffer = NULL;
     size_t length = 0u;
     FILE *memory = open_memstream(&buffer, &length);
+    if (len_out)
+        *len_out = 0u;
     if (!memory)
         return arena_strdup(a, "");
-    atom_print_petta(atom, memory);
+    bool previous = atom_print_set_c_text(c_text);
+    if (petta)
+        atom_print_petta(atom, memory);
+    else
+        atom_print(atom, memory);
     fclose(memory);
-    char *result = arena_strdup(a, buffer ? buffer : "");
+    atom_print_set_c_text(previous);
+    char *result = arena_alloc(a, length + 1u);
+    if (length)
+        memcpy(result, buffer, length);
+    result[length] = '\0';
     free(buffer);
+    if (len_out)
+        *len_out = length;
     return result;
+}
+
+char *atom_to_parseable_string(Arena *a, Atom *atom) {
+    return atom_print_to_text(a, atom, false, true, NULL);
+}
+
+char *atom_to_parseable_string_petta(Arena *a, Atom *atom) {
+    return atom_print_to_text(a, atom, true, true, NULL);
+}
+
+char *atom_to_parseable_bytes(Arena *a, Atom *atom, bool petta,
+                              size_t *len_out) {
+    return atom_print_to_text(a, atom, petta, false, len_out);
 }
 
 char *atom_to_string(Arena *a, Atom *atom) {
     if (atom && atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_STRING) {
-        return arena_strdup(a, atom->ground.sval);
+        size_t len = atom->ground.slen;
+        char *copy = arena_alloc(a, len + 1u);
+        if (len)
+            memcpy(copy, atom->ground.sval, len);
+        copy[len] = '\0';
+        return copy;
     }
     return atom_to_parseable_string(a, atom);
 }

@@ -8,12 +8,27 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* The dialect a lowered program is spelled in.  Both spellings realize the
+ * same relations from the same composition; they differ only in how a rule
+ * hands its result back.  PeTTa seals a result with quote, which its
+ * evaluator strips on return.  HE keeps quote, so the HE spelling writes
+ * results bare and declares every generated head and result constructor
+ * over Atom domains: a declared head does not evaluate its arguments and a
+ * declared constructor is returned as it is.  HE has no once; a semidet
+ * call is emitted plainly, since the binding-mode analysis bounds it to
+ * one answer. */
+typedef enum {
+    CETTA_GSLT_DIRECT_TARGET_PETTA_V1 = 0,
+    CETTA_GSLT_DIRECT_TARGET_HE_V1 = 1
+} CettaGsltDirectTargetV1;
+
 /* Lower the relation-rule fragment of an ordered GSLT composition directly
- * to ordinary PeTTa equations.  The output contains no reflected rule data
- * and requires no source-language interpreter. */
+ * to ordinary MeTTa equations in the target dialect.  The output contains
+ * no reflected rule data and requires no source-language interpreter. */
 bool cetta_gslt_petta_direct_v1(
     Atom *const *presentations,
     size_t presentation_count,
+    CettaGsltDirectTargetV1 target,
     uint8_t **program_out,
     size_t *program_len_out,
     size_t *rule_count_out,
@@ -29,6 +44,7 @@ bool cetta_gslt_petta_direct_v1(
 bool cetta_gslt_petta_direct_selected_v1(
     Atom *const *presentations,
     size_t presentation_count,
+    CettaGsltDirectTargetV1 target,
     const char *const *entry_modes,
     size_t entry_mode_count,
     uint8_t **program_out,
@@ -44,6 +60,7 @@ bool cetta_gslt_petta_direct_selected_v1(
 bool cetta_gslt_petta_direct_closed_v1(
     Atom *const *presentations,
     size_t presentation_count,
+    CettaGsltDirectTargetV1 target,
     const char *const *entry_modes,
     size_t entry_mode_count,
     uint8_t **program_out,
@@ -61,6 +78,7 @@ bool cetta_gslt_petta_direct_closed_v1(
  * this contract. Variable-domain transport from BNF admission is separate. */
 bool cetta_gslt_petta_direct_native_types_v1(
     Atom *const *presentations, size_t presentation_count,
+    CettaGsltDirectTargetV1 target,
     const Atom *native_type_packet,
     const char *const *entry_modes, size_t entry_mode_count,
     bool closed_entry_residual,
@@ -80,6 +98,7 @@ bool cetta_gslt_petta_direct_native_types_v1(
  * from source-type inference and the selected guard-partition laws. */
 bool cetta_gslt_petta_direct_admitted_v1(
     Atom *const *presentations, size_t presentation_count,
+    CettaGsltDirectTargetV1 target,
     const Atom *native_type_packet,
     const char *const *entry_modes, size_t entry_mode_count,
     const CettaLanguageDefCoreV1 *admission_language,

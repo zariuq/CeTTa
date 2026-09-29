@@ -34,6 +34,32 @@ PeTTaNamedArity petta_libpl_named_arity_resolving(
     CettaLibPrologRuntime *runtime, SymbolId head,
     CettaExprLen supplied);
 
+/* One predicate P/N a static-import! load changed: P, the space it names, N,
+ * whether it is multifile, and its facts now, each as the row (Rel Arg...). */
+typedef bool (*PettaLibplStaticPredicateVisit)(
+    void *context, Atom *target, CettaExprLen length, bool multifile,
+    Atom **rows, uint32_t count);
+
+/* static-import! (SWI-PeTTa's lib_import): load `file`, relative to the
+ * working directory, as the reference's importer does, from its .qlf, else its
+ * .pl compiled to one, else its .metta converted to both, consulting it into
+ * the one module that holds the session's imported files, so SWI's consult
+ * rules decide the facts (a reload, a multifile predicate's facts gathered, a
+ * redefinition); then visit each predicate the load changed (a file converted
+ * for one space keeps that space), no query open.  `end` is RAISED with the
+ * error loading raised.  False when no Prolog is available, or a visit
+ * declines. */
+bool petta_libpl_static_import(
+    CettaLibPrologRuntime *runtime, Arena *arena, SymbolId space,
+    const char *file, PettaLibplStaticPredicateVisit visit, void *context,
+    CettaCallOutcome *end);
+
+/* SWI's warning that a load redefined the static procedure name/arity, as
+ * its consult prints it: rows a space held that a static-import! load
+ * redefined. */
+void petta_libpl_warn_redefined(
+    CettaLibPrologRuntime *runtime, SymbolId name, size_t arity);
+
 /* Whether the embedded Prolog defines the predicate name/arity now
  * (current_predicate/1), registering nothing.  An engine this runtime has
  * not started defines none, and is not started to say so. */

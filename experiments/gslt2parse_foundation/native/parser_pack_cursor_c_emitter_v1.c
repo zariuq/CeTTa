@@ -141,13 +141,15 @@ static void pp_cursor_c_v1_slr(PPCursorCEmitterV1 *emitter,
         for (index = 0u; index < program->production_len; index++) {
             const CettaLpNativeSlrProgramProduction *production =
                 &program->productions[index];
+            /* An avoided production carries its mark; the rest omit it. */
             pp_cursor_c_v1_write(
                 emitter,
                 "    { UINT32_C(%u), UINT32_C(%u), UINT32_C(%u), "
-                "UINT32_C(%u), %s }%s\n",
+                "UINT32_C(%u), %s%s }%s\n",
                 production->label, production->lhs,
                 production->rhs_begin, production->rhs_len,
                 production->authored ? "true" : "false",
+                production->avoided ? ", true" : "",
                 index + 1u == program->production_len ? "" : ",");
         }
         pp_cursor_c_v1_write(emitter, "};\n\n");

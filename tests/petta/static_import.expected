@@ -1,0 +1,31 @@
+true
+true
+((a b) (a b) (b c))
+((edge a b) (edge a b) (edge b c))
+(Error (permission_error modify static_procedure (/ facts 3)) (context (: system (/ assertz 1)) $V0))
+(Error (permission_error modify static_procedure (/ facts 3)) (context (: system (/ retractall 1)) $V0))
+true
+(edge a b)
+(edge a b)
+(edge b c)
+(foo x)
+true
+true
+((a b) (a b) (b c))
+()
+true
+(("a b" 1 2.5))
+(((x y) z) ((x (y w)) "q"))
+true
+((a b) (a b) (b c) (c d))
+true
+true
+((x y z))
+true
+((a b c) (b c d))
+true
+((a b) (b c))
+((edge a b) (edge b c) (weight a 3))
+true
+caught
+caught
