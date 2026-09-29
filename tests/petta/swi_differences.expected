@@ -13,6 +13,7 @@ done
 a
 Grounded
 (20)
-(f $V0 $V1 $V0)
 (installed-later 5)
 6
+true
+(Error (representation_error cyclic_term) $V0)

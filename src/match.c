@@ -5971,6 +5971,7 @@ bool bindings_builder_init(BindingsBuilder *bb, const Bindings *base) {
     bb->unobserved_write_region_has_checkpoint = false;
     bb->unobserved_write_region_entry_mark = 0u;
     bb->frame_registration_save_barrier = false;
+    bb->history = (BindingsBuilderHistory){0};
     if (!base)
         return true;
     if (!bindings_clone(&bb->current, base)) {
@@ -6022,6 +6023,7 @@ void bindings_builder_init_owned(BindingsBuilder *bb, Bindings *owned) {
     bb->unobserved_write_region_has_checkpoint = false;
     bb->unobserved_write_region_entry_mark = 0u;
     bb->frame_registration_save_barrier = false;
+    bb->history = (BindingsBuilderHistory){0};
     bindings_init(owned);
 }
 
@@ -6376,6 +6378,8 @@ void bindings_builder_rollback(BindingsBuilder *bb, uint32_t mark) {
     }
     if (bb->unobserved_write_region_active)
         bb->unobserved_write_region_has_checkpoint = false;
+    if (bb->history.rollback)
+        bb->history.rollback(bb->history.context, mark);
 }
 
 void bindings_builder_commit(BindingsBuilder *bb) {
@@ -6385,6 +6389,50 @@ void bindings_builder_commit(BindingsBuilder *bb) {
     bindings_builder_discard_frame_registration_history(bb, false);
     bb->prime_trail_len = 0;
     bb->unobserved_write_region_has_checkpoint = false;
+    if (bb->history.commit)
+        bb->history.commit(bb->history.context);
+}
+
+void bindings_builder_set_history(BindingsBuilder *bb,
+                                  BindingsBuilderHistory history) {
+    if (bb)
+        bb->history = history;
+}
+
+BindingsBuilderWriteMark bindings_builder_write_mark(
+    const BindingsBuilder *bb) {
+    return bb ? (BindingsBuilderWriteMark){bb->current.len, bb->frame_undo_len}
+              : (BindingsBuilderWriteMark){0u, 0u};
+}
+
+bool bindings_builder_visit_bound_since(
+    const BindingsBuilder *bb, BindingsBuilderWriteMark since,
+    bool (*visit)(void *context, VarId var), void *context) {
+    if (!bb || !visit)
+        return false;
+    for (uint32_t row = since.entries; row < bb->current.len; row++) {
+        if (!visit(context, bindings_entry_at(&bb->current, row)->var_id))
+            return false;
+    }
+    for (uint32_t index = since.frame_writes; index < bb->frame_undo_len;
+         index++) {
+        const BindingsFrameUndoEntry *undo = &bb->frame_undo[index];
+        if (!visit(context, var_epoch_id(undo->source_id,
+                                         undo->frame_ref.identity)))
+            return false;
+    }
+    return true;
+}
+
+uint32_t bindings_builder_history_mark(BindingsBuilder *bb) {
+    if (!bb)
+        return UINT32_MAX;
+    bb->unobserved_write_region_has_checkpoint = false;
+    uint32_t mark = bb->trail_len;
+    bool created = false;
+    if (!bindings_builder_snapshot(bb, &created) || !created)
+        return UINT32_MAX;
+    return mark;
 }
 
 bool bindings_builder_prime_present(const BindingsBuilder *bb) {
@@ -10047,6 +10095,8 @@ bool simple_match(Atom *pattern, Atom *target, Bindings *b) {
         case GV_CAPTURE:
         case GV_FOREIGN:
             return pattern->ground.ptr == target->ground.ptr;
+        /* A rational term is equal to any node with its unfolding. */
+        case GV_TERM_GRAPH:
         case GV_BINDINGS:
             return atom_eq(pattern, target);
         case GV_PRIME_NEED_CAPABILITY:
@@ -10102,6 +10152,8 @@ static bool simple_match_builder_rec(Atom *pattern, Atom *target,
         case GV_CAPTURE:
         case GV_FOREIGN:
             return pattern->ground.ptr == target->ground.ptr;
+        /* A rational term is equal to any node with its unfolding. */
+        case GV_TERM_GRAPH:
         case GV_BINDINGS:
             return atom_eq(pattern, target);
         case GV_PRIME_NEED_CAPABILITY:
@@ -13201,6 +13253,7 @@ static bool stored_grounded_equal(Atom *left,
     case GV_CAPTURE:
     case GV_BINDINGS:
     case GV_FOREIGN:
+    case GV_TERM_GRAPH:
     case GV_PRIME_NEED_CAPABILITY:
     case GV_PRIME_CONTEXT:
     case GV_INTERNAL_TAG:

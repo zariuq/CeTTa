@@ -407,7 +407,20 @@ const char *cetta_foreign_backend_name(CettaForeignBackendKind kind) {
     return "unknown";
 }
 
+static bool foreign_language_is_petta(void) {
+    return eval_current_language_id &&
+           eval_current_language_id() == CETTA_LANGUAGE_PETTA;
+}
+
+/* A failure of the bridge itself, no Python exception: HE and Prime read
+ * the message as a symbol, PeTTa raises system_error(Message). */
 static Atom *foreign_error_atom(Arena *a, const char *message) {
+    if (foreign_language_is_petta()) {
+        return atom_error(a,
+                          atom_expr2(a, atom_symbol(a, "system_error"),
+                                     atom_string(a, message)),
+                          atom_var_with_id(a, "_", fresh_var_id()));
+    }
     return atom_symbol(a, message);
 }
 
@@ -490,28 +503,53 @@ static void python_execution_guard_leave(PythonExecutionGuard *guard) {
     PyGILState_Release(guard->state);
 }
 
-static Atom *python_error_atom(Arena *a, const char *prefix) {
+static CettaForeignValue *foreign_new_python_value(CettaForeignRuntime *rt,
+                                                   PyObject *obj,
+                                                   bool callable,
+                                                   bool unwrap);
+
+/* The Python exception now set, fetched and cleared, as the failure of
+ * `prefix`.  HE and Prime read it as the symbol "prefix: message".  PeTTa
+ * reads it as SWI-PeTTa's janus raises it, error(python_error(Type, Value),
+ * _): Type the exception class's name, Value the exception object, held by
+ * `rt`; with no exception set, or no runtime to hold the object, it is
+ * system_error(Message). */
+static Atom *python_error_atom(CettaForeignRuntime *rt, Arena *a,
+                               const char *prefix) {
     PyObject *ptype = NULL;
     PyObject *pvalue = NULL;
     PyObject *ptrace = NULL;
     PyErr_Fetch(&ptype, &pvalue, &ptrace);
     PyErr_NormalizeException(&ptype, &pvalue, &ptrace);
-    const char *detail = "";
-    PyObject *detail_obj = NULL;
-    if (pvalue) {
-        detail_obj = PyObject_Str(pvalue);
-        if (detail_obj) detail = PyUnicode_AsUTF8(detail_obj);
+    Atom *error = NULL;
+    if (foreign_language_is_petta() && rt && ptype && pvalue &&
+        PyType_Check(ptype)) {
+        Atom *object = atom_foreign(
+            a, foreign_new_python_value(rt, pvalue, false, false));
+        Atom *formal = atom_expr3(
+            a, atom_symbol(a, "python_error"),
+            atom_symbol(a, ((PyTypeObject *)ptype)->tp_name), object);
+        error = atom_error(a, formal,
+                           atom_var_with_id(a, "_", fresh_var_id()));
+    } else {
+        const char *detail = "";
+        PyObject *detail_obj = NULL;
+        if (pvalue) {
+            detail_obj = PyObject_Str(pvalue);
+            if (detail_obj) detail = PyUnicode_AsUTF8(detail_obj);
+        }
+        char buf[1024];
+        snprintf(buf, sizeof(buf), "%s%s%s",
+                 prefix ? prefix : "python bridge error",
+                 detail && *detail ? ": " : "",
+                 detail && *detail ? detail : "");
+        Py_XDECREF(detail_obj);
+        error = foreign_error_atom(a, buf);
     }
-    char buf[1024];
-    snprintf(buf, sizeof(buf), "%s%s%s",
-             prefix ? prefix : "python bridge error",
-             detail && *detail ? ": " : "",
-             detail && *detail ? detail : "");
-    Py_XDECREF(detail_obj);
     Py_XDECREF(ptype);
     Py_XDECREF(pvalue);
     Py_XDECREF(ptrace);
-    return atom_symbol(a, buf);
+    return error;
 }
 
 static bool path_has_suffix_ci(const char *path, const char *suffix) {
@@ -570,13 +608,21 @@ bool cetta_foreign_resolve_candidate(const char *candidate,
     return false;
 }
 
+/* SWI-PeTTa prints a Python object reference as (<py_Type>(Address)). */
+static void foreign_record_print_petta(const void *record, FILE *out) {
+    const CettaForeignValue *value = record;
+    fprintf(out, "(<py_%s>(%p))", Py_TYPE(value->obj)->tp_name,
+            (void *)value->obj);
+}
+
 static CettaForeignValue *foreign_new_python_value(CettaForeignRuntime *rt,
                                                    PyObject *obj,
                                                    bool callable,
                                                    bool unwrap) {
     CettaForeignValue *value = cetta_malloc(sizeof(CettaForeignValue));
     *value = (CettaForeignValue){
-        .hold = {foreign_record_retain, foreign_record_release},
+        .hold = {foreign_record_retain, foreign_record_release,
+                 foreign_record_print_petta},
         .backend = CETTA_FOREIGN_BACKEND_PYTHON,
         .callable = callable,
         .unwrap = unwrap,
@@ -776,13 +822,13 @@ static bool ensure_python_bridge(Arena *error_arena, Atom **error_out) {
     if (g_python_bootstrap_ready) return true;
 
     if (PyRun_SimpleString(PYTHON_BOOTSTRAP) != 0) {
-        if (error_out) *error_out = python_error_atom(error_arena, "python bootstrap failed");
+        if (error_out) *error_out = python_error_atom(NULL, error_arena, "python bootstrap failed");
         return false;
     }
 
     g_bridge_module = PyImport_ImportModule("cetta_bridge");
     if (!g_bridge_module) {
-        if (error_out) *error_out = python_error_atom(error_arena, "failed to import cetta_bridge");
+        if (error_out) *error_out = python_error_atom(NULL, error_arena, "failed to import cetta_bridge");
         return false;
     }
     g_bridge_cetta_atom_class = PyObject_GetAttrString(g_bridge_module, "CettaAtom");
@@ -792,7 +838,7 @@ static bool ensure_python_bridge(Arena *error_arena, Atom **error_out) {
     g_bridge_resolve = PyObject_GetAttrString(g_bridge_module, "_cetta_resolve");
     if (!g_bridge_cetta_atom_class || !g_bridge_operation_atom_class ||
         !g_bridge_load_module || !g_bridge_resolve) {
-        if (error_out) *error_out = python_error_atom(error_arena, "python bootstrap missing bridge helpers");
+        if (error_out) *error_out = python_error_atom(NULL, error_arena, "python bootstrap missing bridge helpers");
         return false;
     }
 
@@ -821,7 +867,7 @@ static PyObject *call_python_load_module(const char *path, Arena *error_arena, A
              (unsigned long long)++g_bridge_module_counter);
     PyObject *module = PyObject_CallFunction(g_bridge_load_module, "ss", unique_name, path);
     if (!module) {
-        if (error_out) *error_out = python_error_atom(error_arena, "python module load failed");
+        if (error_out) *error_out = python_error_atom(NULL, error_arena, "python module load failed");
         return NULL;
     }
     return module;
@@ -830,13 +876,13 @@ static PyObject *call_python_load_module(const char *path, Arena *error_arena, A
 static PyObject *python_make_metta_bridge(Arena *error_arena, Atom **error_out) {
     PyObject *cls = PyObject_GetAttrString(g_bridge_module, "MeTTa");
     if (!cls) {
-        if (error_out) *error_out = python_error_atom(error_arena, "failed to fetch bridge MeTTa class");
+        if (error_out) *error_out = python_error_atom(NULL, error_arena, "failed to fetch bridge MeTTa class");
         return NULL;
     }
     PyObject *instance = PyObject_CallObject(cls, NULL);
     Py_DECREF(cls);
     if (!instance && error_out) {
-        *error_out = python_error_atom(error_arena, "failed to construct bridge MeTTa");
+        *error_out = python_error_atom(NULL, error_arena, "failed to construct bridge MeTTa");
     }
     return instance;
 }
@@ -866,7 +912,7 @@ static bool python_emit_many(CettaForeignRuntime *rt, Arena *a, PyObject *obj,
         for (Py_ssize_t i = 0; i < n; i++) {
             PyObject *item = PySequence_GetItem(obj, i);
             if (!item) {
-                if (error_out) *error_out = python_error_atom(a, "failed to read python result item");
+                if (error_out) *error_out = python_error_atom(rt, a, "failed to read python result item");
                 return false;
             }
             bool ok = python_emit_single(rt, a, item, rs, error_out);
@@ -940,7 +986,7 @@ static bool python_emit_single(CettaForeignRuntime *rt, Arena *a, PyObject *obj,
     if (g_bridge_value_atom_class && PyObject_IsInstance(obj, g_bridge_value_atom_class) == 1) {
         PyObject *value = PyObject_GetAttrString(obj, "value");
         if (!value) {
-            if (error_out) *error_out = python_error_atom(a, "failed to read ValueAtom.value");
+            if (error_out) *error_out = python_error_atom(rt, a, "failed to read ValueAtom.value");
             return false;
         }
         bool ok = python_emit_single(rt, a, value, rs, error_out);
@@ -952,7 +998,7 @@ static bool python_emit_single(CettaForeignRuntime *rt, Arena *a, PyObject *obj,
         PyObject_IsInstance(obj, g_bridge_operation_atom_class) == 1) {
         PyObject *callable_obj = PyObject_GetAttrString(obj, "callable");
         if (!callable_obj) {
-            if (error_out) *error_out = python_error_atom(a, "failed to read OperationAtom.callable");
+            if (error_out) *error_out = python_error_atom(rt, a, "failed to read OperationAtom.callable");
             return false;
         }
         PyObject *unwrap_obj = PyObject_GetAttrString(obj, "unwrap");
@@ -967,13 +1013,13 @@ static bool python_emit_single(CettaForeignRuntime *rt, Arena *a, PyObject *obj,
     if (g_bridge_cetta_atom_class && PyObject_IsInstance(obj, g_bridge_cetta_atom_class) == 1) {
         PyObject *text_obj = PyObject_GetAttrString(obj, "text");
         if (!text_obj) {
-            if (error_out) *error_out = python_error_atom(a, "failed to read CettaAtom.text");
+            if (error_out) *error_out = python_error_atom(rt, a, "failed to read CettaAtom.text");
             return false;
         }
         const char *text = PyUnicode_AsUTF8(text_obj);
         if (!text) {
             Py_DECREF(text_obj);
-            if (error_out) *error_out = python_error_atom(a, "failed to decode CettaAtom.text");
+            if (error_out) *error_out = python_error_atom(rt, a, "failed to decode CettaAtom.text");
             return false;
         }
         result_set_add(rs, parse_text_atom(a, text));
@@ -1220,7 +1266,7 @@ static bool python_emit_petta_value(
     if (sequence_len < 0 || \
         (uint64_t)sequence_len > (uint64_t)UINT32_MAX) { \
         if (error_out && !*error_out) \
-            *error_out = python_error_atom( \
+            *error_out = python_error_atom(rt, \
                 a, "python sequence conversion failed"); \
         if (owned_value) \
             Py_DECREF(sequence_value); \
@@ -1291,7 +1337,7 @@ static bool python_emit_petta_value(
         if (!item) {
             if (error_out && !*error_out)
                 *error_out = python_error_atom(
-                    a, "python sequence item conversion failed");
+                    rt, a, "python sequence item conversion failed");
             goto sequence_failure;
         }
         Atom **target = &frame->elements[index];
@@ -1389,7 +1435,8 @@ static bool python_path_is_canonical_namespace(const char *path) {
     return !at_segment_start;
 }
 
-static PyObject *python_resolve_path(Atom *path_atom, PyObject *base,
+static PyObject *python_resolve_path(CettaForeignRuntime *rt,
+                                     Atom *path_atom, PyObject *base,
                                      Arena *a, Atom **error_out) {
     const char *path = string_like_atom(path_atom);
     if (!path) {
@@ -1414,7 +1461,7 @@ static PyObject *python_resolve_path(Atom *path_atom, PyObject *base,
         ? PyObject_CallFunction(g_bridge_resolve, "sO", resolved_path, base)
         : PyObject_CallFunction(g_bridge_resolve, "s", resolved_path);
     if (!result && error_out) {
-        *error_out = python_error_atom(a, "python path resolution failed");
+        *error_out = python_error_atom(rt, a, "python path resolution failed");
     }
     return result;
 }
@@ -1425,14 +1472,14 @@ static bool python_call_object(CettaForeignRuntime *rt, Space *space, Arena *a,
                                ResultSet *rs, Atom **error_out) {
     PyObject *tuple = PyTuple_New((Py_ssize_t)nargs);
     if (!tuple) {
-        if (error_out) *error_out = python_error_atom(a, "failed to allocate python arg tuple");
+        if (error_out) *error_out = python_error_atom(rt, a, "failed to allocate python arg tuple");
         return false;
     }
     for (uint32_t i = 0; i < nargs; i++) {
         PyObject *item = python_from_atom(a, args[i], unwrap);
         if (!item) {
             Py_DECREF(tuple);
-            if (error_out) *error_out = python_error_atom(a, "failed to convert CeTTa arg to python");
+            if (error_out) *error_out = python_error_atom(rt, a, "failed to convert CeTTa arg to python");
             return false;
         }
         PyTuple_SET_ITEM(tuple, (Py_ssize_t)i, item);
@@ -1444,7 +1491,7 @@ static bool python_call_object(CettaForeignRuntime *rt, Space *space, Arena *a,
     g_python_callback_space = saved_space;
     Py_DECREF(tuple);
     if (!result) {
-        if (error_out) *error_out = python_error_atom(a, "python callable failed");
+        if (error_out) *error_out = python_error_atom(rt, a, "python callable failed");
         return false;
     }
     bool petta_result =
@@ -1574,7 +1621,7 @@ static bool module_add_export_value(CettaForeignRuntime *rt, Space *target_space
         PyObject_IsInstance(value_obj, g_bridge_operation_atom_class) == 1) {
         PyObject *callable_obj = PyObject_GetAttrString(value_obj, "callable");
         if (!callable_obj) {
-            if (error_out) *error_out = python_error_atom(persistent_arena, "failed to read OperationAtom.callable");
+            if (error_out) *error_out = python_error_atom(rt, persistent_arena, "failed to read OperationAtom.callable");
             return false;
         }
         PyObject *unwrap_obj = PyObject_GetAttrString(value_obj, "unwrap");
@@ -1602,7 +1649,7 @@ static bool module_export_dict(CettaForeignRuntime *rt, Space *target_space,
                                PyObject *mapping, Atom **error_out) {
     PyObject *items = PyMapping_Items(mapping);
     if (!items) {
-        if (error_out) *error_out = python_error_atom(persistent_arena, "python module export mapping failed");
+        if (error_out) *error_out = python_error_atom(rt, persistent_arena, "python module export mapping failed");
         return false;
     }
     Py_ssize_t len = PyList_Size(items);
@@ -1642,7 +1689,7 @@ bool cetta_foreign_load_module(CettaForeignRuntime *rt,
     PyObject *names = PyObject_Dir(module);
     if (!names) {
         Py_DECREF(module);
-        if (error_out) *error_out = python_error_atom(persistent_arena, "failed to enumerate python module exports");
+        if (error_out) *error_out = python_error_atom(rt, persistent_arena, "failed to enumerate python module exports");
         return false;
     }
 
@@ -1658,7 +1705,7 @@ bool cetta_foreign_load_module(CettaForeignRuntime *rt,
         PyObject *attr = PyObject_GetAttrString(module, name);
         if (!attr) {
             ok = false;
-            if (error_out) *error_out = python_error_atom(persistent_arena, "failed to inspect python module attribute");
+            if (error_out) *error_out = python_error_atom(rt, persistent_arena, "failed to inspect python module attribute");
             break;
         }
         if (!PyObject_HasAttrString(attr, "metta_type")) {
@@ -1676,7 +1723,7 @@ bool cetta_foreign_load_module(CettaForeignRuntime *rt,
         if (pass_metta && !mapping) {
             Py_DECREF(attr);
             ok = false;
-            if (error_out) *error_out = python_error_atom(persistent_arena, "failed to construct MeTTa bridge for python module");
+            if (error_out) *error_out = python_error_atom(rt, persistent_arena, "failed to construct MeTTa bridge for python module");
             break;
         }
 
@@ -1687,7 +1734,7 @@ bool cetta_foreign_load_module(CettaForeignRuntime *rt,
         if (!exports) {
             Py_DECREF(attr);
             ok = false;
-            if (error_out) *error_out = python_error_atom(persistent_arena, "python register_atoms function failed");
+            if (error_out) *error_out = python_error_atom(rt, persistent_arena, "python register_atoms function failed");
             break;
         }
 
@@ -1751,11 +1798,22 @@ static void foreign_result_set_append(ResultSet *dst, const ResultSet *src) {
         result_set_add(dst, src->items[i]);
 }
 
-static void foreign_result_set_add_failure(ResultSet *results, Arena *a,
+/* A failed foreign operation: PeTTa raises its error, which ends the call;
+ * HE and Prime answer with it. */
+static void foreign_fail(ResultSet *results, CettaCallOutcome *end,
+                         Atom *error) {
+    if (foreign_language_is_petta())
+        *end = cetta_call_raised(error);
+    else
+        result_set_add(results, error);
+}
+
+static void foreign_result_set_add_failure(ResultSet *results,
+                                           CettaCallOutcome *end, Arena *a,
                                            Atom *error,
                                            const char *fallback) {
-    result_set_add(results,
-                   error ? error : python_error_atom(a, fallback));
+    foreign_fail(results, end,
+                 error ? error : python_error_atom(NULL, a, fallback));
 }
 
 bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
@@ -1764,9 +1822,11 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
                                            Atom *head,
                                            Atom **args,
                                            uint32_t nargs,
-                                           ResultSet *results) {
-    if (!head || head->kind != ATOM_SYMBOL || !results)
+                                           ResultSet *results,
+                                           CettaCallOutcome *end) {
+    if (!head || head->kind != ATOM_SYMBOL || !results || !end)
         return false;
+    *end = cetta_call_failure();
     const char *head_name = atom_name_cstr(head);
     if (!head_name)
         return false;
@@ -1780,20 +1840,20 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
     __attribute__((cleanup(python_execution_guard_leave)))
     PythonExecutionGuard python = {0};
     if (!python_execution_guard_enter(&python, a, &bridge_error)) {
-        foreign_result_set_add_failure(results, a, bridge_error,
+        foreign_result_set_add_failure(results, end, a, bridge_error,
                                        "python provider entry failed");
         return true;
     }
     if (!ensure_python_bridge(a, &bridge_error)) {
-        foreign_result_set_add_failure(results, a, bridge_error,
+        foreign_result_set_add_failure(results, end, a, bridge_error,
                                        "python bridge initialization failed");
         return true;
     }
 
     if (is_py_atom) {
         if (nargs < 1 || nargs > 3) {
-            result_set_add(
-                results,
+            foreign_fail(
+                results, end,
                 atom_error(a, atom_expr(a, (Atom *[]){ head }, 1),
                            atom_symbol(a, "IncorrectNumberOfArguments")));
             return true;
@@ -1802,9 +1862,9 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
         parse_optional_unwrap(args, nargs, 1, &unwrap);
         Atom *path_atom = args[0];
         Atom *error = NULL;
-        PyObject *obj = python_resolve_path(path_atom, NULL, a, &error);
+        PyObject *obj = python_resolve_path(rt, path_atom, NULL, a, &error);
         if (!obj) {
-            foreign_result_set_add_failure(results, a, error,
+            foreign_result_set_add_failure(results, end, a, error,
                                            "py-atom failed");
             return true;
         }
@@ -1820,7 +1880,7 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
             if (python_emit_single(rt, a, obj, &produced, &error)) {
                 foreign_result_set_append(results, &produced);
             } else {
-                foreign_result_set_add_failure(results, a, error,
+                foreign_result_set_add_failure(results, end, a, error,
                                                "py-atom conversion failed");
             }
             result_set_free(&produced);
@@ -1831,8 +1891,8 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
 
     if (is_py_dot) {
         if (nargs < 2 || nargs > 4) {
-            result_set_add(
-                results,
+            foreign_fail(
+                results, end,
                 atom_error(a, atom_expr(a, (Atom *[]){ head }, 1),
                            atom_symbol(a, "IncorrectNumberOfArguments")));
             return true;
@@ -1849,19 +1909,19 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
                 Py_INCREF(base);
             }
         } else {
-            base = python_resolve_path(args[0], NULL, a, &error);
+            base = python_resolve_path(rt, args[0], NULL, a, &error);
         }
         if (!base) {
             foreign_result_set_add_failure(
-                results, a, error, "py-dot base resolution failed");
+                results, end, a, error, "py-dot base resolution failed");
             return true;
         }
 
-        PyObject *obj = python_resolve_path(args[1], base, a, &error);
+        PyObject *obj = python_resolve_path(rt, args[1], base, a, &error);
         Py_DECREF(base);
         if (!obj) {
             foreign_result_set_add_failure(
-                results, a, error, "py-dot attribute resolution failed");
+                results, end, a, error, "py-dot attribute resolution failed");
             return true;
         }
 
@@ -1877,7 +1937,7 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
             if (python_emit_single(rt, a, obj, &produced, &error)) {
                 foreign_result_set_append(results, &produced);
             } else {
-                foreign_result_set_add_failure(results, a, error,
+                foreign_result_set_add_failure(results, end, a, error,
                                                "py-dot conversion failed");
             }
             result_set_free(&produced);
@@ -1888,8 +1948,8 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
 
     if (is_py_call) {
         if (nargs != 1) {
-            result_set_add(
-                results,
+            foreign_fail(
+                results, end,
                 atom_error(a, atom_expr(a, (Atom *[]){ head }, 1),
                            atom_symbol(a, "IncorrectNumberOfArguments")));
             return true;
@@ -1900,10 +1960,10 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
          * immediate invocation form `(py-call (path args...))`. */
         if (args[0]->kind != ATOM_EXPR) {
             Atom *error = NULL;
-            PyObject *obj = python_resolve_path(args[0], NULL, a, &error);
+            PyObject *obj = python_resolve_path(rt, args[0], NULL, a, &error);
             if (!obj) {
                 foreign_result_set_add_failure(
-                    results, a, error, "py-call path resolution failed");
+                    results, end, a, error, "py-call path resolution failed");
                 return true;
             }
             if (PyCallable_Check(obj)) {
@@ -1921,7 +1981,7 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
                     foreign_result_set_append(results, &produced);
                 } else {
                     foreign_result_set_add_failure(
-                        results, a, error,
+                        results, end, a, error,
                         "py-call path conversion failed");
                 }
                 result_set_free(&produced);
@@ -1930,8 +1990,8 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
             return true;
         }
         if (args[0]->expr.len < 1) {
-            result_set_add(
-                results,
+            foreign_fail(
+                results, end,
                 atom_error(a, atom_expr(a, (Atom *[]){ head }, 1),
                            atom_symbol(a, "IncorrectNumberOfArguments")));
             return true;
@@ -1940,8 +2000,8 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
         Atom *call_head = call_expr->expr.elems[0];
         Atom **call_args = call_expr->expr.elems + 1;
         if (!cetta_expr_len_fits_u32(call_expr->expr.len - 1)) {
-            result_set_add(
-                results,
+            foreign_fail(
+                results, end,
                 atom_error(a, call_expr, atom_symbol(a, "ArityTooLarge")));
             return true;
         }
@@ -1954,8 +2014,8 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
             eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
             call_head_name && call_head_name[0] == '.') {
             if (call_head_name[1] == '\0' || call_nargs < 1u) {
-                result_set_add(
-                    results,
+                foreign_fail(
+                    results, end,
                     atom_error(
                         a, call_expr,
                         atom_symbol(a, "IncorrectNumberOfArguments")));
@@ -1964,26 +2024,26 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
             PyObject *base =
                 python_from_atom(a, call_args[0], true);
             if (!base) {
-                result_set_add(
-                    results,
+                foreign_fail(
+                    results, end,
                     python_error_atom(
-                        a, "py-call method receiver conversion failed"));
+                        rt, a, "py-call method receiver conversion failed"));
                 return true;
             }
             PyObject *method = PyObject_GetAttrString(
                 base, call_head_name + 1u);
             Py_DECREF(base);
             if (!method) {
-                result_set_add(
-                    results,
+                foreign_fail(
+                    results, end,
                     python_error_atom(
-                        a, "py-call method resolution failed"));
+                        rt, a, "py-call method resolution failed"));
                 return true;
             }
             if (!PyCallable_Check(method)) {
                 Py_DECREF(method);
-                result_set_add(
-                    results,
+                foreign_fail(
+                    results, end,
                     foreign_error_atom(
                         a, "py-call method is not callable"));
                 return true;
@@ -1999,7 +2059,7 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
             if (!called) {
                 result_set_free(&method_results);
                 foreign_result_set_add_failure(
-                    results, a, method_error, "py-call method failed");
+                    results, end, a, method_error, "py-call method failed");
                 return true;
             }
             foreign_result_set_append(results, &method_results);
@@ -2012,10 +2072,10 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
         if (call_head->kind == ATOM_GROUNDED && call_head->ground.gkind == GV_FOREIGN) {
             callable_atom = call_head;
         } else {
-            PyObject *obj = python_resolve_path(call_head, NULL, a, &error);
+            PyObject *obj = python_resolve_path(rt, call_head, NULL, a, &error);
             if (!obj) {
                 foreign_result_set_add_failure(
-                    results, a, error, "py-call head resolution failed");
+                    results, end, a, error, "py-call head resolution failed");
                 return true;
             }
             if (PyCallable_Check(obj)) {
@@ -2027,7 +2087,7 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
                     foreign_result_set_append(results, &produced);
                 } else {
                     foreign_result_set_add_failure(
-                        results, a, error, "py-call value conversion failed");
+                        results, end, a, error, "py-call value conversion failed");
                 }
                 result_set_free(&produced);
             }
@@ -2041,7 +2101,7 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
         if (!cetta_foreign_call(rt, space, a, callable_atom, call_args,
                                 call_nargs, &produced, &error)) {
             result_set_free(&produced);
-            foreign_result_set_add_failure(results, a, error,
+            foreign_result_set_add_failure(results, end, a, error,
                                            "py-call failed");
             return true;
         }
@@ -2053,20 +2113,25 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
     return false;
 }
 
-Atom *cetta_foreign_dispatch_native(CettaForeignRuntime *rt,
-                                    Space *space,
-                                    Arena *a,
-                                    Atom *head,
-                                    Atom **args,
-                                    uint32_t nargs) {
+bool cetta_foreign_call_native(CettaForeignRuntime *rt,
+                               Space *space,
+                               Arena *a,
+                               Atom *head,
+                               Atom **args,
+                               uint32_t nargs,
+                               CettaCallOutcome *out) {
     ResultSet results;
     result_set_init(&results);
-    if (!cetta_foreign_dispatch_native_results(
-            rt, space, a, head, args, nargs, &results)) {
+    CettaCallOutcome end;
+    if (!out ||
+        !cetta_foreign_dispatch_native_results(
+            rt, space, a, head, args, nargs, &results, &end)) {
         result_set_free(&results);
-        return NULL;
+        return false;
     }
-    Atom *result = result_set_collapse_for_native(a, &results);
+    *out = end.kind == CETTA_CALL_RAISED
+        ? end
+        : cetta_call_value(result_set_collapse_for_native(a, &results));
     result_set_free(&results);
-    return result;
+    return out->kind == CETTA_CALL_RAISED || out->term != NULL;
 }

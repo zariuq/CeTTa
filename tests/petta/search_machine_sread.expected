@@ -1,2 +1,2 @@
 (in stockholm sweden)
-(Error (parse "(") ParseFailed)
+(Error (syntax_error Parse error in form: () none)

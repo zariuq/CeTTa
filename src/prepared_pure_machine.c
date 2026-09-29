@@ -5401,6 +5401,7 @@ static bool prepared_pure_grounded_intrinsic_type_equal(
     case GV_CAPTURE:
     case GV_BINDINGS:
     case GV_FOREIGN:
+    case GV_TERM_GRAPH:
     case GV_INTERNAL_TAG:
     case GV_PRIME_NEED_CAPABILITY:
     case GV_PRIME_CONTEXT:

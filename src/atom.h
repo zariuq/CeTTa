@@ -61,7 +61,9 @@ typedef enum {
     GV_PRIME_NEED_CAPABILITY,
     GV_PRIME_CONTEXT,
     GV_INTERNAL_TAG,
-    GV_BINDINGS
+    GV_BINDINGS,
+    /* A node of a rational term's graph (term_graph.h). */
+    GV_TERM_GRAPH
 } GroundedKind;
 
 typedef enum {
@@ -73,6 +75,9 @@ typedef enum {
     /* A PeTTa operation that has no answer.  In PeTTa `Empty` is data
      * except as a `case` default, so no-result cannot be that symbol. */
     CETTA_INTERNAL_TAG_PETTA_NO_RESULT = 8,
+    /* A rational term's node with the values of the free variables it
+     * reaches: (tag node value...), term_graph.h. */
+    CETTA_INTERNAL_TAG_RATIONAL = 9,
 } CettaInternalTag;
 
 #define ATOM_FLAG_HAS_VARS 0x01u
@@ -117,9 +122,9 @@ typedef enum {
 #define ATOM_STRUCTURAL_FACTS_VALID UINT32_C(0x80000000)
 #define ATOM_STRUCTURAL_HAS_INTERNAL_TAG UINT32_C(0x00000001)
 #define ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID UINT32_C(0x00000002)
-/* A NaN float leaf, or a state cell, whose value may become one.  A NaN
- * equals nothing, not even itself, so an atom is value-equal to itself only
- * when it holds none. */
+/* A NaN float leaf, a state cell, whose value may become one, or a rational
+ * term's node, whose leaves may hold one.  A NaN equals nothing, not even
+ * itself, so an atom is value-equal to itself only when it holds none. */
 #define ATOM_STRUCTURAL_HAS_NAN UINT32_C(0x00000004)
 /* The atom's arena has an older generation, and every Atom child reachable
  * through this node is globally owned, in this node's arena, or in that older
@@ -137,6 +142,10 @@ typedef enum {
  * slot is free (PrefixBuffer.claimable_iff_free_below).  A fact of the node
  * alone: no expression holding it as a child inherits it. */
 #define ATOM_STRUCTURAL_FRONT_SLACK UINT32_C(0x00000020)
+/* A node of a rational term (term_graph.h), so the term is not a finite
+ * tree.  Such an atom is equal to, and hashes as, every other atom with the
+ * same unfolding, whatever part of it is open. */
+#define ATOM_STRUCTURAL_HAS_RATIONAL UINT32_C(0x00000040)
 
 /*
  * VariantShape reserves this VarId prefix for its runtime-private slots.
@@ -233,6 +242,16 @@ static inline bool atom_structural_may_have_nan(const Atom *atom) {
            (atom->structural_facts & ATOM_STRUCTURAL_HAS_NAN) != 0u;
 }
 
+/* The atom holds a rational term's node.  Exact where the facts are known;
+ * an atom without facts is read as it is built, and a node below it answers
+ * for itself. */
+static inline bool atom_structural_has_rational(const Atom *atom) {
+    return atom &&
+           (atom->structural_facts & (ATOM_STRUCTURAL_FACTS_VALID |
+                                      ATOM_STRUCTURAL_HAS_RATIONAL)) ==
+               (ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_HAS_RATIONAL);
+}
+
 static inline bool atom_is_internal_tag(
         const Atom *atom, CettaInternalTag tag) {
     return atom && atom->kind == ATOM_GROUNDED &&
@@ -314,6 +333,9 @@ typedef struct {
      * Linked once after initialization; an older generation has none of its
      * own. */
     uint32_t older_identity;
+    /* The capacity of a new block; zero for ARENA_BLOCK_SIZE
+     * (arena_set_block_capacity). */
+    uint32_t block_capacity;
     /*
      * Monotone allocation epoch.  Arena identity survives mark/reset, while
      * reset_epoch changes whenever reset or free invalidates owned pointers.
@@ -372,6 +394,10 @@ void  arena_init(Arena *a);
  * cross-thread owners: an ordinary arena_init deliberately inherits the
  * current evaluator's table for branch-local sharing. */
 void  arena_init_detached(Arena *a);
+/* An arena that holds little takes blocks of `capacity` bytes rather than
+ * ARENA_BLOCK_SIZE; an allocation larger than that still gets a block of its
+ * own size. */
+void  arena_set_block_capacity(Arena *a, size_t capacity);
 void  arena_free(Arena *a);
 void  arena_reserve(Arena *a, size_t size);
 void  arena_set_hashcons(Arena *a, HashConsTable *hc);
@@ -677,9 +703,41 @@ Atom *atom_capture(Arena *a, CaptureClosure *closure);
 typedef struct CettaForeignHold {
     void (*retain)(void *record);
     void (*release)(void *record);
+    /* How PeTTa prints the record's value; NULL keeps the generic form. */
+    void (*print_petta)(const void *record, FILE *out);
 } CettaForeignHold;
 
 Atom *atom_foreign(Arena *a, CettaForeignValue *value);
+
+/* A node of a rational term's graph (term_graph.h), the payload of a
+ * GV_TERM_GRAPH atom: one record per node for the graph's life, so two atoms
+ * of one node hold the same pointer. */
+typedef struct CettaTermGraph CettaTermGraph;
+typedef struct {
+    CettaTermGraph *graph;
+    uint32_t node;
+} CettaTermGraphRef;
+
+/* The atom of a graph node, the graph retained by `arena`. */
+Atom *atom_term_graph(Arena *arena, CettaTermGraph *graph, uint32_t node);
+const CettaTermGraphRef *atom_term_graph_ref(const Atom *atom);
+/* A reader of term structure sees a rational term's node, or its carrier,
+ * as its term one level open (term_graph_open_value); any other atom is
+ * itself.  NULL when the opening cannot be allocated. */
+Atom *atom_rational_open(Arena *arena, Atom *atom);
+static inline bool atom_is_rational_node(const Atom *atom) {
+    return atom && atom->kind == ATOM_GROUNDED &&
+           atom->ground.gkind == GV_TERM_GRAPH;
+}
+/* A rational term's node as a value: its node atom when the node reaches no
+ * free variable, else its carrier (term_graph.h). */
+static inline bool atom_is_rational_value(const Atom *atom) {
+    return atom_is_rational_node(atom) ||
+           (atom && atom->kind == ATOM_EXPR && atom->expr.len >= 2u &&
+            atom_is_internal_tag(atom->expr.elems[0],
+                                 CETTA_INTERNAL_TAG_RATIONAL) &&
+            atom_is_rational_node(atom->expr.elems[1]));
+}
 Atom *atom_internal_tag(Arena *a, CettaInternalTag tag);
 Atom *atom_petta_prolog_compound(Arena *a, Atom *body);
 /* PeTTa's no-result marker: an internal atom no program can write. */
@@ -792,6 +850,8 @@ bool atom_meta_type_accepts(Arena *a, Atom *formal, Atom *actual);
 bool atom_is_symbol(Atom *a, const char *name);
 bool atom_is_empty(Atom *a);
 bool atom_is_error(Atom *a);
+/* An integer, float, big integer or rational. */
+bool atom_is_number(const Atom *atom);
 bool atom_is_empty_or_error(Atom *a);
 bool atom_is_var(Atom *a);
 bool atom_is_expr(Atom *a);

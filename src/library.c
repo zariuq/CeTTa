@@ -9859,9 +9859,11 @@ bool cetta_library_import_petta_reference_at(
     return false;
 }
 
-Atom *cetta_library_dispatch_native(CettaLibraryContext *ctx, Space *space,
-                                    Arena *a,
-                                    Atom *head, Atom **args, uint32_t nargs) {
+/* The active libraries' native operations, as values; a foreign call
+ * reports its own outcome (cetta_foreign_call_native). */
+static Atom *cetta_library_dispatch_native_value(
+    CettaLibraryContext *ctx, Space *space, Arena *a,
+    Atom *head, Atom **args, uint32_t nargs) {
     if (!ctx || !head || head->kind != ATOM_SYMBOL) return NULL;
     {
         Atom *result = cetta_rule_machine_dispatch(a, head, args, nargs);
@@ -9917,10 +9919,19 @@ Atom *cetta_library_dispatch_native(CettaLibraryContext *ctx, Space *space,
                                                            nargs, ctx->active_mask);
         if (result) return result;
     }
-    if (ctx->foreign_runtime) {
-        Atom *result = cetta_foreign_dispatch_native(ctx->foreign_runtime,
-                                                     space, a, head, args, nargs);
-        if (result) return result;
-    }
     return NULL;
+}
+
+bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
+                               Arena *a, Atom *head, Atom **args,
+                               uint32_t nargs, CettaCallOutcome *out) {
+    Atom *value = cetta_library_dispatch_native_value(
+        ctx, space, a, head, args, nargs);
+    if (value) {
+        *out = cetta_call_value(value);
+        return true;
+    }
+    return ctx && ctx->foreign_runtime &&
+           cetta_foreign_call_native(ctx->foreign_runtime,
+                                     space, a, head, args, nargs, out);
 }

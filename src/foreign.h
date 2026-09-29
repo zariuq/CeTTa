@@ -2,6 +2,7 @@
 #define CETTA_FOREIGN_H
 
 #include "atom.h"
+#include "call_outcome.h"
 #include "eval.h"
 #include "space.h"
 #include <stdbool.h>
@@ -45,21 +46,29 @@ bool cetta_foreign_call(CettaForeignRuntime *rt,
 
 /* Exact occurrence-valued dispatch for the symbolic Python convenience
  * syntax forms.  `true` means the head was recognized; `results` then contains
- * zero, one, or many occurrences, including an Error occurrence on an
- * operational failure.  No Empty sentinel or tuple encoding is introduced. */
+ * zero, one, or many occurrences, and `end` says how the call ended
+ * (call_outcome.h): FAILURE once its answers are given, or RAISED with the
+ * error of an operational failure, which PeTTa raises.  HE and Prime answer
+ * with that error as an Error occurrence instead.  No Empty sentinel or
+ * tuple encoding is introduced. */
 bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
                                            Space *space,
                                            Arena *a,
                                            Atom *head,
                                            Atom **args,
                                            uint32_t nargs,
-                                           ResultSet *results);
+                                           ResultSet *results,
+                                           CettaCallOutcome *end);
 
-Atom *cetta_foreign_dispatch_native(CettaForeignRuntime *rt,
-                                    Space *space,
-                                    Arena *a,
-                                    Atom *head,
-                                    Atom **args,
-                                    uint32_t nargs);
+/* The same dispatch with its answers collapsed into one value: `out` is
+ * that VALUE, or the RAISED error.  False when `head` is not one of the
+ * forms. */
+bool cetta_foreign_call_native(CettaForeignRuntime *rt,
+                               Space *space,
+                               Arena *a,
+                               Atom *head,
+                               Atom **args,
+                               uint32_t nargs,
+                               CettaCallOutcome *out);
 
 #endif /* CETTA_FOREIGN_H */

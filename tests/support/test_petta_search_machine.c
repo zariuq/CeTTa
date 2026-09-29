@@ -1144,8 +1144,11 @@ static PettaMachineHostMode shared_dag_answer_classify(
 
 static bool shared_dag_answer_evaluate(
     void *context, Space *space, Arena *arena, Atom *expression,
-    const Bindings *environment, OutcomeSet *outcomes) {
+    const Bindings *environment, OutcomeSet *outcomes,
+    CettaCallOutcome *end, const CettaDelayView *delay) {
+    (void)delay;
     (void)space;
+    *end = cetta_call_failure();
     (void)arena;
     (void)expression;
     (void)environment;
@@ -3836,8 +3839,11 @@ static PettaMachineHostMode terminal_empty_classify(
 
 static bool terminal_empty_evaluate(
     void *context, Space *space, Arena *arena, Atom *expression,
-    const Bindings *environment, OutcomeSet *outcomes) {
+    const Bindings *environment, OutcomeSet *outcomes,
+    CettaCallOutcome *end, const CettaDelayView *delay) {
+    (void)delay;
     (void)space;
+    *end = cetta_call_failure();
     (void)environment;
     EquationGuardObserverProbe *probe = context;
     assert(expression->kind == ATOM_EXPR && expression->expr.len == 1u);
@@ -5603,8 +5609,11 @@ static PettaMachineHostMode host_projection_classify(
 
 static bool host_projection_evaluate(
     void *context, Space *space, Arena *arena, Atom *expression,
-    const Bindings *environment, OutcomeSet *outcomes) {
+    const Bindings *environment, OutcomeSet *outcomes,
+    CettaCallOutcome *end, const CettaDelayView *delay) {
+    (void)delay;
     (void)space;
+    *end = cetta_call_failure();
     HostProjectionProbe *probe = context;
     if (!probe || !arena || !expression || !environment ||
         !outcomes || expression->kind != ATOM_EXPR ||

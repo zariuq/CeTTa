@@ -6,3 +6,9 @@
    (pair $strict $syntax))
 
 !(typed-pair (+ 2 4) (+ 4 2))
+
+(: both (-> Number Atom))
+(: both (-> Atom Atom))
+(: both (-> Number Atom))
+(= (both $x) (got $x))
+!(both (+ 1 1))

@@ -6,6 +6,7 @@
 !(Predicate (fixture_handle 7))
 !(quote (Predicate (fixture_handle 7)))
 !(let $value 7 (Predicate (fixture_handle $value)))
+!(Predicate (fixture_handle (cetta_foreign_add_one 6)))
 !(import_prolog_function cetta_foreign_compound_result)
 !(import_prolog_function cetta_foreign_echo)
 !(import_prolog_function cetta_foreign_term_kind)
@@ -16,16 +17,18 @@
     (cetta_foreign_echo $compound))
 !(cetta_foreign_term_kind (cetta_foreign_compound_result))
 !(cetta_foreign_term_kind (quote (fixture_handle 7)))
+!(cetta_foreign_term_kind (Predicate (fixture_handle 7)))
 !(assertaPredicate (Predicate (cetta_foreign_hello world)))
 !(callPredicate (Predicate (cetta_foreign_hello $what)))
 !(import_prolog_function cetta_foreign_hello)
 !(cetta_foreign_hello)
-!(retractPredicate (Predicate (cetta_foreign_hello world)))
-!(callPredicate (Predicate (cetta_foreign_hello $what)))
+!(retractPredicate (Predicate (quote (cetta_foreign_hello world))))
+!(collapse (callPredicate (Predicate (quote (cetta_foreign_hello $what)))))
+!(retractPredicate (Predicate (quote (cetta_foreign_hello world))))
 !(assertaPredicate
     (Predicate
         (:- (Predicate (cetta_foreign_add_two $x $out))
-            (Predicate (+ $x 2 $out)))))
+            (Predicate (plus $x 2 $out)))))
 !(progn
     (callPredicate
         (Predicate (cetta_foreign_add_two 40 $out)))

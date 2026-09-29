@@ -2,6 +2,7 @@
 #define CETTA_LIBRARY_H
 
 #include "atom.h"
+#include "call_outcome.h"
 #include "foreign.h"
 #include "mork_space_bridge_runtime.h"
 #include "native_handle.h"
@@ -298,9 +299,13 @@ Atom *cetta_library_module_inventory_space(CettaLibraryContext *ctx,
 bool cetta_library_print_loaded_modules(CettaLibraryContext *ctx, FILE *out,
                                         Arena *eval_arena, Atom **error_out);
 
-Atom *cetta_library_dispatch_native(CettaLibraryContext *ctx, Space *space,
-                                    Arena *a,
-                                    Atom *head, Atom **args, uint32_t nargs);
+/* A native operation of an active library, and what it did
+ * (call_outcome.h): a library operation's value, or a foreign call's
+ * outcome, whose failure PeTTa raises.  False when no active library
+ * defines `head` for these arguments. */
+bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
+                               Arena *a, Atom *head, Atom **args,
+                               uint32_t nargs, CettaCallOutcome *out);
 bool cetta_library_lookup_explicit_mork_bridge(CettaLibraryContext *ctx,
                                                Atom *space_arg,
                                                CettaMorkSpaceHandle **bridge_out);

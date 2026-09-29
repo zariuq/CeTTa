@@ -1,6 +1,8 @@
 #ifndef CETTA_PETTA_LIBPL_H
 #define CETTA_PETTA_LIBPL_H
 
+#include "delay_service.h"
+#include "call_outcome.h"
 #include "eval.h"
 #include "lib_prolog.h"
 #include "petta_semantics.h"
@@ -32,29 +34,38 @@ PeTTaNamedArity petta_libpl_named_arity_resolving(
     CettaLibPrologRuntime *runtime, SymbolId head,
     CettaExprLen supplied);
 
+/* Whether the embedded Prolog defines the predicate name/arity now
+ * (current_predicate/1), registering nothing.  An engine this runtime has
+ * not started defines none, and is not started to say so. */
+bool petta_libpl_predicate_defined(
+    CettaLibPrologRuntime *runtime, SymbolId name, size_t arity);
+
 /*
  * Execute one optional foreign-predicate boundary.  `recognized` separates
  * an unavailable/unregistered form from a predicate whose valid result bag
- * happens to be empty.  The caller initializes and owns `outcomes`.  A goal
- * that raises a Prolog error sets `raised` to its Error term and adds no
- * outcome; the caller propagates it.
+ * happens to be empty.  The caller initializes and owns `outcomes`, and
+ * `end` says how the call ended (call_outcome.h): FAILURE after its
+ * answers, or RAISED with the Error term of the Prolog error the goal
+ * raised, which adds no outcome; the caller propagates it.
  */
 bool petta_libpl_call(
     CettaLibPrologRuntime *runtime, Arena *arena,
     Atom *expression, Atom *expected,
     const Bindings *environment, OutcomeSet *outcomes,
-    bool *recognized, Atom **raised);
+    bool *recognized, CettaCallOutcome *end,
+    const CettaDelayView *delay);
 
 /*
  * PeTTa arithmetic off CeTTa's native fast path.  The embedded Prolog
  * evaluates functor(args...) with is/2, or with no functor the single
  * argument, so the value, the float flags in force and any error are
- * exactly SWI-PeTTa's.  *out receives the number, or the raised error as
- * (Error Formal Context).  False when no embedded Prolog is available.
+ * exactly SWI-PeTTa's.  *out is the number as a VALUE, or the error is/2
+ * raised as (Error Formal Context), RAISED.  False when no embedded Prolog
+ * is available.
  */
 bool petta_libpl_evaluate_arithmetic(
     Arena *arena, const char *functor, Atom **args, uint32_t nargs,
-    Atom **out);
+    CettaCallOutcome *out);
 
 /* SWI's prefer_rationals flag in the embedded Prolog: whether PeTTa's /
  * gives a rational for integers that do not divide. */

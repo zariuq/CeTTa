@@ -1,6 +1,8 @@
 #ifndef CETTA_PETTA_SEARCH_MACHINE_H
 #define CETTA_PETTA_SEARCH_MACHINE_H
 
+#include "delay_service.h"
+#include "call_outcome.h"
 #include "eval.h"
 #include "match_decision.h"
 #include "nik_direct_authority.h"
@@ -289,9 +291,15 @@ typedef struct {
      * an authored occurrence as data.  The host owns that language policy;
      * the search machine still resolves only at a SOLVE boundary. */
     bool resolve_value_references_in_value_role;
+    /* Evaluate a goal the machine hands to the host, adding its answers to
+     * `outcomes`; `end` says how the evaluation ended (call_outcome.h):
+     * FAILURE once its answers are given, RAISED with an error the host
+     * evaluation raised and did not catch, whose answers are then dropped,
+     * or INTERRUPTED when cancellation or an exit request stopped it. */
     bool (*evaluate)(
         void *context, Space *space, Arena *arena, Atom *expression,
-        const Bindings *environment, OutcomeSet *outcomes);
+        const Bindings *environment, OutcomeSet *outcomes,
+        CettaCallOutcome *end, const CettaDelayView *delay);
     /* Preserve the translation-stage classification of an authored source
      * occurrence when evaluation crosses a host-owned boundary.  The plan is
      * positional metadata for `expression`; NULL means that this boundary
@@ -300,7 +308,8 @@ typedef struct {
     bool (*evaluate_planned)(
         void *context, Space *space, Arena *arena, Atom *expression,
         const PettaPlanNode *plan,
-        const Bindings *environment, OutcomeSet *outcomes);
+        const Bindings *environment, OutcomeSet *outcomes,
+        CettaCallOutcome *end, const CettaDelayView *delay);
     /* Create a new translation event at an explicit forcing boundary such as
      * PeTTa `eval`.  A returned plan fixes callability for that occurrence;
      * NULL declines because the host could not establish the event. */
@@ -441,11 +450,20 @@ typedef struct {
      * match): may register the name as auto-resolved on first proof. */
     PeTTaNamedArity (*foreign_named_arity_resolving)(
         void *context, SymbolId head, CettaExprLen supplied);
+    /* Whether the foreign engine defines the predicate name/arity now,
+     * registering nothing.  NULL: it defines none. */
+    bool (*foreign_predicate_defined)(
+        void *context, SymbolId name, CettaExprLen arity);
+    /* `end`: how a recognized call ended (call_outcome.h), FAILURE after
+     * its answers or RAISED with its error. */
+    /* `delay`: the machine's delayed goals, which the call carries in and
+     * reads back (delay_service.h). */
     bool (*extension_call)(
         void *context, Arena *arena,
         Atom *expression, Atom *expected,
         const Bindings *environment, OutcomeSet *outcomes,
-        bool *recognized, Atom **raised);
+        bool *recognized, CettaCallOutcome *end,
+        const CettaDelayView *delay);
     bool (*candidate_snapshot_lease)(
         void *context, Space *space, SymbolId head,
         PettaCandidateSnapshotLease *lease,
@@ -532,6 +550,11 @@ typedef struct {
         void **mutex);
     void (*mutex_release)(
         void *context, void *mutex);
+    /* Variables the caller reads from every answer, (v...): each is visible,
+     * and its binding exported, whether or not the query binds it
+     * lexically.  A hyperpose branch runs apart from its caller, whose
+     * variables its let patterns bind. */
+    Atom *export_variables;
 } PettaMachineHost;
 
 typedef enum {
@@ -591,6 +614,18 @@ int petta_machine_typecheck_exit_code(const PettaMachine *machine);
 /* True when the last answer is an Error that was raised and not caught,
  * rather than an Error value. */
 bool petta_machine_last_answer_raised(const PettaMachine *machine);
+/* A machine created to evaluate for a caller that delays goals starts from
+ * a copy of them, as a child machine does. */
+bool petta_machine_inherit_delayed_goals(PettaMachine *machine,
+                                         const CettaDelayService *service);
+/* The goals the machine delays on an answer's variables (those of the
+ * answer, of the values its environment gives, and the visible variables it
+ * leaves unbound), as a conditional answer's payload (carried components):
+ * the caller withdraws what it delays on those variables and suspends these
+ * in their place.  NULL when there is none. */
+bool petta_machine_answer_delayed(PettaMachine *machine, Atom *answer,
+                                  const Bindings *environment, Arena *arena,
+                                  Atom **payload);
 
 void petta_machine_destroy(PettaMachine *machine);
 /* Whether CETTA_PETTA_QUERY_TRACE asks to see each query of `head`: the

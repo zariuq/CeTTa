@@ -709,6 +709,10 @@ static Atom *display_atom_copy(Arena *dst, Atom *src, const CettaDisplayVarMap *
             return atom_bindings_value(dst, src->ground.ptr);
         case GV_FOREIGN:
             return atom_foreign(dst, (CettaForeignValue *)src->ground.ptr);
+        case GV_TERM_GRAPH: {
+            const CettaTermGraphRef *ref = src->ground.ptr;
+            return atom_term_graph(dst, ref->graph, ref->node);
+        }
         case GV_PRIME_NEED_CAPABILITY: {
             const CettaPrimeNeedCapability *capability =
                 atom_prime_need_capability_value(src);
@@ -3750,6 +3754,7 @@ int main(int argc, char **argv) {
     bool stop_document_sequence = false;
     /* A PeTTa file stopped at an uncaught error: SWI-PeTTa's exit status 2. */
     bool petta_uncaught_error = false;
+    bool petta_answer_without_text = false;
     FILE *output_spool = NULL;
     if (!compile_mode) {
         const char *tmpdir = getenv("TMPDIR");
@@ -4108,25 +4113,43 @@ process_petta_document:
                 rc = 1;
                 goto cleanup;
             }
-            write_results(output_spool, results, lang->id, profile);
-            if (fflush(output_spool) != 0) {
-                fprintf(stderr, "error: could not write output spool\n");
-                if (detailed_initialized)
-                    eval_outcome_free(&detailed);
-                else
-                    result_set_free(&rs);
-                prime_need_trace_printer_free(&trace);
-                rc = 1;
-                goto cleanup;
-            }
             bool stop_after_error = result_set_has_error(results);
             /* SWI-PeTTa goes on after an Error value, a caught error among
              * them, and stops only at an uncaught one.  The evaluator knows
-             * which it was on every path but the generic one. */
+             * which it was on every path but the generic one.  An uncaught
+             * error ends the run with status 2 and no answers, the earlier
+             * queries' included, since answers print when the run completes
+             * (P-OBS-7): its report goes to stderr, never among answers. */
             if (lang->id == CETTA_LANGUAGE_PETTA && detailed_initialized &&
                 detailed.petta_raise_known) {
                 stop_after_error = detailed.petta_raised_error;
                 petta_uncaught_error = detailed.petta_raised_error;
+            }
+            /* An answer that is not a finite tree has no text, and answers
+             * are written when the run completes: the queries after it run,
+             * and the run then ends with status 2 and no answers
+             * (P-GRAPH-5). */
+            if (lang->id == CETTA_LANGUAGE_PETTA && !petta_uncaught_error) {
+                for (uint32_t i = 0u; i < results->len; i++) {
+                    if (atom_structural_has_rational(results->items[i]))
+                        petta_answer_without_text = true;
+                }
+            }
+            if (petta_uncaught_error) {
+                fputs("error: uncaught PeTTa error: ", stderr);
+                write_results(stderr, results, lang->id, profile);
+            } else if (!petta_answer_without_text) {
+                write_results(output_spool, results, lang->id, profile);
+                if (fflush(output_spool) != 0) {
+                    fprintf(stderr, "error: could not write output spool\n");
+                    if (detailed_initialized)
+                        eval_outcome_free(&detailed);
+                    else
+                        result_set_free(&rs);
+                    prime_need_trace_printer_free(&trace);
+                    rc = 1;
+                    goto cleanup;
+                }
             }
             if (trace.allocation_failed) {
                 fprintf(stderr,
@@ -4245,12 +4268,16 @@ petta_document_complete:
         goto cleanup;
     }
 
-    if (fseek(output_spool, 0, SEEK_SET) != 0) {
+    if (petta_answer_without_text && !petta_uncaught_error)
+        fputs("error: a PeTTa answer is not a finite term, so it has no "
+              "text\n", stderr);
+    bool write_answers = !petta_uncaught_error && !petta_answer_without_text;
+    if (write_answers && fseek(output_spool, 0, SEEK_SET) != 0) {
         fprintf(stderr, "error: could not rewind output spool\n");
         rc = 1;
         goto cleanup;
     }
-    {
+    if (write_answers) {
         char io_buf[8192];
         size_t nread;
         while ((nread = fread(io_buf, 1, sizeof(io_buf), output_spool)) > 0) {
@@ -4268,7 +4295,8 @@ petta_document_complete:
         cetta_runtime_stats_print(stderr, &stats);
     }
 
-    rc = prime_need_trace_failed ? 1 : petta_uncaught_error ? 2 : 0;
+    rc = prime_need_trace_failed ? 1
+        : petta_uncaught_error || petta_answer_without_text ? 2 : 0;
 
 cleanup:
     cetta_main_cleanup(&cleanup);

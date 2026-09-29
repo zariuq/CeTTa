@@ -288,6 +288,53 @@ Atom *petta_semantics_closed_list(Arena *arena, Atom *list);
  * type_error(list, Value): NULL with `*type_error` set. */
 Atom *petta_semantics_sort_value(Arena *arena, Atom *value, bool total,
                                  bool *type_error);
+/* The errors the reference raises, as its catch gives them: Prolog's
+ * error(Formal, Context) reads (Error Formal Context), and an unbound
+ * context is a fresh variable.
+ *
+ * `list_error`: what the list builtin `operation` raises for an argument
+ * that is no proper list -- instantiation_error for an unbound variable or
+ * a list with an unbound tail, type_error(list, Culprit) for anything else
+ * -- in the context of the reference's predicate: context(length/2, _) for
+ * length and size-atom (which counts with length), context(system:msort/2,
+ * _) for msort and sort-atom (which sorts with msort), and unbound for
+ * list_to_set.  NULL for another operation.
+ * `syntax_error`: syntax_error('Parse error in form: Text') in context
+ * none, as sread and parse raise for text they cannot read. */
+Atom *petta_semantics_list_error(Arena *arena, SymbolId operation,
+                                 Atom *culprit);
+Atom *petta_semantics_syntax_error(Arena *arena, const char *text);
+/* PeTTa's error for a term that is not a finite tree where only a finite
+ * one can go: representation_error(cyclic_term), in the context of the
+ * predicate `module:name/arity`, or an unbound context when `name` is NULL. */
+Atom *petta_semantics_cyclic_term_error(
+    Arena *arena, const char *module, const char *name, int64_t arity);
+/* instantiation_error in context(Module:Name/Arity, _): the predicate needed
+ * a bound argument. */
+Atom *petta_semantics_instantiation_error(
+    Arena *arena, const char *module, const char *name, int64_t arity);
+/* What (Predicate V) gives for the value V of its argument, the reference's
+ * 'Predicate'([F|Args], T) :- T =.. [F|Args]: a list whose first element is
+ * a symbol names that compound, and a list of one element names the element.
+ * =../2's errors are the answer's: an unbound first element or tail is an
+ * instantiation error, and a first element that is no symbol, with
+ * arguments after it, a type error, in context(system:(=..)/2, _).  A value
+ * that is no nonempty list has no answer. */
+typedef enum {
+    PETTA_PREDICATE_TERM_NONE = 0,
+    PETTA_PREDICATE_TERM_VALUE,
+    PETTA_PREDICATE_TERM_ERROR,
+    PETTA_PREDICATE_TERM_CAPACITY,
+} PeTTaPredicateTerm;
+PeTTaPredicateTerm petta_semantics_predicate_term(
+    Arena *arena, Atom *value, Atom **term);
+/* Whether a declared type of `head` at `arity` gives parameter `index`
+ * (0-based) the type Atom, itself or as the dependent domain (: $v Atom):
+ * the argument is then passed as written, for any function
+ * (translator.pl:707-710). */
+bool petta_semantics_parameter_declared_atom(
+    Space *space, Arena *arena, Atom *head, CettaExprLen arity,
+    CettaExprIndex index);
 /* A list read against an expression pattern of `length` elements: exactly
  * that many elements, copied to `elements` when it is given; a proper list
  * of another length; or a tail that is not a list, a partial or an improper

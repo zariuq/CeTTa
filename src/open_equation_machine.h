@@ -67,6 +67,12 @@ typedef struct {
     /* Whether the language profile offers the grounded operation `head`,
      * which the search machine consults before running one directly. */
     bool (*builtin_allowed)(void *context, SymbolId head);
+    /* Whether a goal of `head` with `arity` arguments may answer with goals
+     * delayed on its variables (delay_service.h), as a call into the
+     * embedded Prolog may.  The region moves its variables between its own
+     * slots, so such a goal, and a relation that reaches it, stays with the
+     * search machine, which keeps the delayed goals.  NULL: none may. */
+    bool (*may_delay)(void *context, SymbolId head, uint32_t arity);
     /* Whether a let binder that only counting operations read takes its
      * producer's count, as the search machine's let/count fusion does. */
     bool count_fusion;

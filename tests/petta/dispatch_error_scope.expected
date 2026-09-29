@@ -20,7 +20,7 @@ true
 (Error (evaluation_error zero_divisor) (context (/ / 2) $V0))
 ()
 (5)
-(Error (msort 3) (TypeError list 3))
+(Error (type_error list 3) (context (: system (/ msort 2)) $V0))
 ()
 (8)
 (-9 8)

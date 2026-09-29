@@ -1194,8 +1194,11 @@ static bool oem_data_node(Atom *expr, const PettaPlanNode *plan) {
 
 /* Whether the host may evaluate `expr` as one goal: a cut or a `return`
  * inside it would act on the enclosing equation, which the host does not
- * see, so such an expression stays outside the tier. */
-static bool oem_host_goal_admitted(Atom *expr, uint32_t depth) {
+ * see, and a goal that may leave goals delayed on the equation's variables
+ * would outlive the goal in variables the region moves; such an expression
+ * stays outside the tier. */
+static bool oem_host_goal_admitted(const OemCompile *compile, Atom *expr,
+                                   uint32_t depth) {
     if (depth > OEM_MAX_DEPTH)
         return false;
     if (expr->kind != ATOM_EXPR || expr->expr.len == 0u)
@@ -1205,8 +1208,14 @@ static bool oem_host_goal_admitted(Atom *expr, uint32_t depth) {
         (petta_semantics_form(head->sym_id) == PETTA_FORM_CUT ||
          head->sym_id == g_builtin_syms.return_text))
         return false;
+    if (head->kind == ATOM_SYMBOL && compile->host &&
+        compile->host->may_delay &&
+        compile->host->may_delay(compile->host->context, head->sym_id,
+                                 (uint32_t)(expr->expr.len - 1u)))
+        return false;
     for (CettaExprIndex child = 0u; child < expr->expr.len; child++) {
-        if (!oem_host_goal_admitted(expr->expr.elems[child], depth + 1u))
+        if (!oem_host_goal_admitted(compile, expr->expr.elems[child],
+                                    depth + 1u))
             return false;
     }
     return true;
@@ -1366,7 +1375,7 @@ static bool oem_build_host_goal(OemCompile *compile, Atom *expr,
                                 const PettaPlanNode *plan, uint32_t depth,
                                 bool counted, const char *reason,
                                 uint32_t *out) {
-    if (!plan || !oem_host_goal_admitted(expr, 0u))
+    if (!plan || !oem_host_goal_admitted(compile, expr, 0u))
         return oem_reject(compile, reason);
     CettaOpenEquationProgram *program = compile->program;
     if (!oem_reserve((void **)&program->host_plans, &program->host_plan_cap,
@@ -1689,7 +1698,7 @@ static bool oem_build_local_control(OemCompile *compile, uint8_t kind,
     CettaOpenEquationProgram *program = compile->program;
     /* Its goal stays the host's should the body not compile, so it is a
      * control the host goal protocol admits. */
-    if (!plan || !oem_host_goal_admitted(expr, 0u))
+    if (!plan || !oem_host_goal_admitted(compile, expr, 0u))
         return oem_reject(compile, "control outside the fragment");
     Atom **params = NULL;
     uint32_t count = 0u;
@@ -4977,15 +4986,16 @@ static OemRun oem_host_arithmetic(CettaOpenEquationCursor *cursor,
         }
         return OEM_RUN_CALLED;
     }
-    Atom *result = grounded_dispatch(&cursor->region, head, args, 2u);
-    if (!result) {
+    CettaCallOutcome outcome;
+    if (!grounded_call(&cursor->region, head, args, 2u, &outcome)) {
         cursor->handoff = CETTA_OPEN_EQUATION_HANDOFF_UNSUPPORTED;
         return OEM_RUN_HANDOFF;
     }
-    if (grounded_result_is_raised_numeric_error(head, 2u, result))
-        return oem_publish_raise(cursor, result, value_out);
-    if (atom_is_petta_no_result(result))
+    if (outcome.kind == CETTA_CALL_RAISED)
+        return oem_publish_raise(cursor, outcome.term, value_out);
+    if (outcome.kind != CETTA_CALL_VALUE)
         return OEM_RUN_FAILED;
+    Atom *result = outcome.term;
     if (step->kind == OEM_S_TEST) {
         if (!petta_semantics_truth_value(result, truth_out)) {
             cursor->handoff = CETTA_OPEN_EQUATION_HANDOFF_UNSUPPORTED;

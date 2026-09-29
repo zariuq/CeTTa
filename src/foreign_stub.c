@@ -147,7 +147,8 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
                                            Atom *head,
                                            Atom **args,
                                            uint32_t nargs,
-                                           ResultSet *results) {
+                                           ResultSet *results,
+                                           CettaCallOutcome *end) {
     (void)rt;
     (void)space;
     (void)a;
@@ -155,23 +156,26 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
     (void)args;
     (void)nargs;
     (void)results;
+    (void)end;
     /* An optional adapter may interpret these forms, but its absence does not
        change the language into an eager error semantics.  Decline dispatch so
        the ordinary evaluator preserves unknown foreign syntax as authored. */
     return false;
 }
 
-Atom *cetta_foreign_dispatch_native(CettaForeignRuntime *rt,
-                                    Space *space,
-                                    Arena *a,
-                                    Atom *head,
-                                    Atom **args,
-                                    uint32_t nargs) {
+bool cetta_foreign_call_native(CettaForeignRuntime *rt,
+                               Space *space,
+                               Arena *a,
+                               Atom *head,
+                               Atom **args,
+                               uint32_t nargs,
+                               CettaCallOutcome *out) {
     (void)rt;
     (void)space;
     (void)a;
     (void)head;
     (void)args;
     (void)nargs;
-    return NULL;
+    (void)out;
+    return false;
 }
