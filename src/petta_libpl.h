@@ -34,11 +34,13 @@ PeTTaNamedArity petta_libpl_named_arity_resolving(
     CettaLibPrologRuntime *runtime, SymbolId head,
     CettaExprLen supplied);
 
-/* One predicate P/N a static-import! load changed: P, the space it names, N,
- * whether it is multifile, and its facts now, each as the row (Rel Arg...). */
+/* One predicate P/N a static-import! load changed. Begin is delivered once
+ * with no rows, before its clause query opens. Subsequent ordered batches
+ * borrow rows_arena until the synchronous visit returns; the sink must own
+ * everything it retains. A clause query is open during a row visit. */
 typedef bool (*PettaLibplStaticPredicateVisit)(
     void *context, Atom *target, CettaExprLen length, bool multifile,
-    Atom **rows, uint32_t count);
+    bool begin, Arena *rows_arena, Atom **rows, uint32_t count);
 
 /* static-import! (SWI-PeTTa's lib_import): load `file`, relative to the
  * working directory, as the reference's importer does, from its .qlf, else its
@@ -46,7 +48,7 @@ typedef bool (*PettaLibplStaticPredicateVisit)(
  * the one module that holds the session's imported files, so SWI's consult
  * rules decide the facts (a reload, a multifile predicate's facts gathered, a
  * redefinition); then visit each predicate the load changed (a file converted
- * for one space keeps that space), no query open.  `end` is RAISED with the
+ * for one space keeps that space), in synchronous batches. `end` is RAISED with the
  * error loading raised.  False when no Prolog is available, or a visit
  * declines. */
 bool petta_libpl_static_import(
@@ -92,6 +94,11 @@ bool petta_libpl_call(
 bool petta_libpl_evaluate_arithmetic(
     Arena *arena, const char *functor, Atom **args, uint32_t nargs,
     CettaCallOutcome *out);
+
+/* SWI arithmetic comparison, including rational/float promotion and its
+ * overflow rules. The result is a PeTTa truth value or a raised payload. */
+bool petta_libpl_compare_arithmetic(
+    Arena *arena, const char *relation, Atom **args, CettaCallOutcome *out);
 
 /* SWI's prefer_rationals flag in the embedded Prolog: whether PeTTa's /
  * gives a rational for integers that do not divide. */

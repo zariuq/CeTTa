@@ -5836,6 +5836,7 @@ static bool project_query_visible_bindings(Arena *a,
 
 void registry_init(Registry *r) {
     if (!r) return;
+    r->states = NULL;
     r->entries = r->inline_entries;
     r->len = 0;
     r->cap = (uint32_t)(sizeof(r->inline_entries) /
@@ -5847,8 +5848,12 @@ void registry_init(Registry *r) {
     memset(r->inline_index_slots, 0, sizeof(r->inline_index_slots));
 }
 
+static void registry_states_free(struct RegistryStates *states);
+
 void registry_free(Registry *r) {
     if (!r) return;
+    registry_states_free(r->states);
+    r->states = NULL;
     if (r->entries && r->entries != r->inline_entries)
         free(r->entries);
     if (r->index_slots && r->index_slots != r->inline_index_slots)
@@ -5983,6 +5988,123 @@ Atom *registry_lookup_id(Registry *r, SymbolId key) {
     if (!r || key == SYMBOL_ID_NONE) return NULL;
     uint32_t index = registry_index_find(r, key, NAME_ID_NONE);
     return index == UINT32_MAX ? NULL : r->entries[index].value;
+}
+
+/* The states' names and current values, with the arena holding each value.
+   A replaced value's arena is emptied and kept for the next change, so a
+   change takes no new arena: an arena's identity is a finite resource. */
+struct RegistryStates {
+    Registry names;
+    Arena **storage;
+    uint32_t storage_cap;
+    Arena *spare;
+};
+
+enum { REGISTRY_STATE_BLOCK_CAPACITY = 256u };
+
+static Arena *registry_state_arena_take(struct RegistryStates *states) {
+    Arena *arena = states->spare;
+    states->spare = NULL;
+    if (arena)
+        return arena;
+    arena = cetta_malloc(sizeof(*arena));
+    arena_init_detached(arena);
+    arena_set_block_capacity(arena, REGISTRY_STATE_BLOCK_CAPACITY);
+    return arena;
+}
+
+static void registry_state_arena_drop(Arena *arena) {
+    if (!arena)
+        return;
+    arena_free(arena);
+    free(arena);
+}
+
+/* Release what `arena` holds, keeping one block, as the next change's. */
+static void registry_state_arena_give_back(struct RegistryStates *states,
+                                           Arena *arena) {
+    if (!arena)
+        return;
+    if (states->spare) {
+        registry_state_arena_drop(arena);
+        return;
+    }
+    arena_reset(arena, (ArenaMark){0});
+    arena_release_spare(arena, REGISTRY_STATE_BLOCK_CAPACITY);
+    states->spare = arena;
+}
+
+static void registry_states_free(struct RegistryStates *states) {
+    if (!states)
+        return;
+    for (uint32_t index = 0u; index < states->names.len; index++)
+        registry_state_arena_drop(states->storage[index]);
+    registry_state_arena_drop(states->spare);
+    free(states->storage);
+    registry_free(&states->names);
+    free(states);
+}
+
+Atom *registry_state_lookup(const Registry *r, SymbolId key) {
+    if (!r || !r->states || key == SYMBOL_ID_NONE)
+        return NULL;
+    uint32_t index =
+        registry_index_find(&r->states->names, key, NAME_ID_NONE);
+    return index == UINT32_MAX ? NULL
+                               : r->states->names.entries[index].value;
+}
+
+bool registry_state_set(Registry *r, SymbolId key, Atom *value) {
+    if (!r || key == SYMBOL_ID_NONE || !value)
+        return false;
+    struct RegistryStates *states = r->states;
+    if (!states) {
+        states = cetta_malloc(sizeof(*states));
+        memset(states, 0, sizeof(*states));
+        registry_init(&states->names);
+        r->states = states;
+    }
+    Arena *arena = registry_state_arena_take(states);
+    Atom *stored = atom_deep_copy(arena, value);
+    if (!stored) {
+        registry_state_arena_give_back(states, arena);
+        return false;
+    }
+    uint32_t index = registry_index_find(&states->names, key, NAME_ID_NONE);
+    if (index != UINT32_MAX) {
+        Arena *replaced = states->storage[index];
+        states->names.entries[index].value = stored;
+        states->storage[index] = arena;
+        registry_state_arena_give_back(states, replaced);
+        return true;
+    }
+    if (states->names.len >= states->storage_cap) {
+        uint32_t cap = states->storage_cap ? states->storage_cap * 2u : 8u;
+        states->storage =
+            cetta_realloc(states->storage, sizeof(*states->storage) * cap);
+        states->storage_cap = cap;
+    }
+    registry_bind_id(&states->names, key, stored);
+    index = registry_index_find(&states->names, key, NAME_ID_NONE);
+    if (index == UINT32_MAX || index >= states->storage_cap) {
+        registry_state_arena_give_back(states, arena);
+        return false;
+    }
+    states->storage[index] = arena;
+    return true;
+}
+
+uint32_t registry_state_count(const Registry *r) {
+    return r && r->states ? r->states->names.len : 0u;
+}
+
+bool registry_state_entry(const Registry *r, uint32_t index,
+                          SymbolId *key_out, Atom **value_out) {
+    if (!r || !r->states || index >= r->states->names.len)
+        return false;
+    *key_out = r->states->names.entries[index].key;
+    *value_out = r->states->names.entries[index].value;
+    return true;
 }
 
 void registry_bind(Registry *r, const char *name, Atom *value) {

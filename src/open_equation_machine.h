@@ -197,6 +197,15 @@ typedef struct {
      * payload that changes the program), before any effect. */
     bool (*admit_ground_atom)(void *context, Space *root, Space *target,
                               Arena *arena, Atom *call, Atom **result_out);
+    /* The search machine's own path for PeTTa's named state over values:
+     * `(get-state name)` reads the value the name holds, and
+     * `(change-state! name value)` makes it hold `value`; `result_out` is
+     * the host's answer, built in `arena`.  False where the machine would
+     * do otherwise (an unset name, which raises; a transaction; a value
+     * with an unbound cell; an override of the operation), before any
+     * effect. */
+    bool (*named_state)(void *context, Space *root, Arena *arena, Atom *call,
+                        Atom **result_out);
     /* The host's search constrains an equation's destination by the
      * output its body's plan fixes before any effect of the equation, as
      * PeTTa's translation places that output in the left-hand side. */

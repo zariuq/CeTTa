@@ -2628,10 +2628,11 @@ static uint32_t atom_structural_facts_for_grounded_kind(
            (gkind == GV_TERM_GRAPH ? ATOM_STRUCTURAL_HAS_RATIONAL : 0u);
 }
 
-/* The list tags are structural data, stable under hashing and shareable; the
- * other internal tags mark machine carriers and stay out of the hash-cons. */
+/* Lists and nominal callable constructors are immutable structural data.
+ * A callable's identity is retained as a child; captures supply their own
+ * retention facts. Other machine tags stay out of the hash-cons. */
 static uint32_t atom_flags_for_internal_tag(int64_t tag) {
-    return cetta_internal_tag_is_list(tag)
+    return cetta_internal_tag_is_term_stable(tag)
         ? atom_hash_flags_for_eligible_leaf()
         : atom_flags_for_grounded_kind(GV_INTERNAL_TAG);
 }
@@ -2642,14 +2643,17 @@ static uint32_t atom_structural_facts_for_internal_tag(int64_t tag) {
            (tag == (int64_t)CETTA_INTERNAL_TAG_LIST_REST
                 ? ATOM_STRUCTURAL_HAS_OPEN_LIST : 0u) |
            (tag == (int64_t)CETTA_INTERNAL_TAG_PETTA_OPEN_CONS
-                ? ATOM_STRUCTURAL_HAS_LIST_CARRIER : 0u);
+                ? ATOM_STRUCTURAL_HAS_LIST_CARRIER : 0u) |
+           (cetta_internal_tag_is_callable(tag) ||
+            tag == (int64_t)CETTA_INTERNAL_TAG_PETTA_PROLOG_COMPOUND
+                ? ATOM_STRUCTURAL_HAS_PETTA_NONLIST : 0u);
 }
 
 bool atom_grounded_is_term_stable(const Atom *atom) {
     if (!atom || atom->kind != ATOM_GROUNDED)
         return false;
     if (atom->ground.gkind == GV_INTERNAL_TAG)
-        return cetta_internal_tag_is_list(atom->ground.ival);
+        return cetta_internal_tag_is_term_stable(atom->ground.ival);
     return atom_grounded_kind_is_term_stable(atom->ground.gkind);
 }
 
@@ -6570,6 +6574,21 @@ static void atom_print_mode(
         }
         break;
     case ATOM_EXPR:
+        if (petta) {
+            int64_t identity = 0;
+            if (atom_petta_callable_identity(a, &identity)) {
+                fprintf(out, "lambda_%llu", (unsigned long long)identity);
+                break;
+            }
+        }
+        if (atom_is_petta_partial(a)) {
+            fputs("(partial ", out);
+            atom_print_stack_push_char(&stack, ')');
+            atom_print_stack_push_atom(&stack, a->expr.elems[2]);
+            atom_print_stack_push_char(&stack, ' ');
+            atom_print_stack_push_atom(&stack, a->expr.elems[1]);
+            break;
+        }
         if (atom_is_list(a) || atom_is_list_rest(a)) {
             /* [x1 x2 ... xn] and [x1 ... xk | rest] */
             bool rest = atom_is_list_rest(a);

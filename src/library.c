@@ -3280,19 +3280,39 @@ static bool build_library_resource_path(
         return false;
     }
     /* Explicit imports select a language overlay when present, then fall back
-       to the shared library. Merely selecting a language never loads either. */
+       to the shared library. Merely selecting a language never loads either.
+       A typecheck profile reads the language's typed spelling of a library
+       first, where one exists: the same library with the effect types its
+       checker reads, so the plain spelling stays the reference's. */
     language_name = cetta_language_canonical_name(ctx->session.language_id);
+    bool typed = ctx->session.profile &&
+        (ctx->session.profile->id == CETTA_PROFILE_PETTA_TYPECHECK_V2 ||
+         ctx->session.profile->id == CETTA_PROFILE_PETTA_TYPECHECK_V3);
     if (ctx->root_dir[0] != '\0') {
-        int n = snprintf(out, out_sz, "%s/lib/%s/%s%s",
+        int n;
+        if (typed) {
+            n = snprintf(out, out_sz, "%s/lib/%s/typecheck/%s%s",
                          ctx->root_dir, language_name, name, suffix);
+            if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0)
+                return true;
+        }
+        n = snprintf(out, out_sz, "%s/lib/%s/%s%s",
+                     ctx->root_dir, language_name, name, suffix);
         if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0) return true;
         n = snprintf(out, out_sz, "%s/lib/%s%s",
                      ctx->root_dir, name, suffix);
         if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0) return true;
     }
     {
-        int n = snprintf(out, out_sz, "lib/%s/%s%s",
+        int n;
+        if (typed) {
+            n = snprintf(out, out_sz, "lib/%s/typecheck/%s%s",
                          language_name, name, suffix);
+            if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0)
+                return true;
+        }
+        n = snprintf(out, out_sz, "lib/%s/%s%s",
+                     language_name, name, suffix);
         if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0) return true;
         n = snprintf(out, out_sz, "lib/%s%s", name, suffix);
         if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0) return true;
@@ -7785,7 +7805,7 @@ static bool cetta_library_petta_execute_document_ids(
                     atom_ids + index, 2, false,
                     failure_out, detail_out))
                 return false;
-            cetta_petta_erase_typecheck_marks_document(
+            cetta_petta_prepare_document_forms(
                 work_space->native.universe, atom_ids + index, 2);
             /* A directive's answer list claims there are no further
              * answers, so it is observed with a completion tracker.  An
@@ -7893,7 +7913,7 @@ static bool cetta_library_petta_execute_document_ids(
                 true,
                 failure_out, detail_out))
             return false;
-        cetta_petta_erase_typecheck_marks_document(
+        cetta_petta_prepare_document_forms(
             work_space->native.universe, atom_ids + index,
             block_end - index);
         PettaDeclarationBlock *block = NULL;

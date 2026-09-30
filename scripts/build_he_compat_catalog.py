@@ -15,6 +15,7 @@ import argparse
 import re
 import subprocess
 from collections import Counter
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -28,9 +29,22 @@ CATALOG_DATE = "2026-06-25"
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE = ROOT.parents[1]
-METTAPEDIA = discover_mettapedia_root()
-ALGORITHMS = discover_algorithms_root()
-FIXTURES = METTAPEDIA / "scripts" / "conformance" / "he_io_fixtures.json"
+
+
+# The Mettapedia and algorithms checkouts are located when a catalog is built,
+# not when this module is imported: its guard functions need neither.
+@lru_cache(maxsize=None)
+def mettapedia_root() -> Path:
+    return discover_mettapedia_root()
+
+
+@lru_cache(maxsize=None)
+def algorithms_root() -> Path:
+    return discover_algorithms_root()
+
+
+def fixtures_path() -> Path:
+    return mettapedia_root() / "scripts" / "conformance" / "he_io_fixtures.json"
 DEFAULT_OUT = (
     ROOT
     / "tests"
@@ -1283,11 +1297,12 @@ def direct_probe_row(rel_path: str) -> dict[str, Any]:
 
 
 def load_fixtures() -> list[dict[str, Any]]:
-    if not FIXTURES.exists():
+    fixtures = fixtures_path()
+    if not fixtures.exists():
         return []
-    data = json.loads(FIXTURES.read_text(encoding="utf-8"))
+    data = json.loads(fixtures.read_text(encoding="utf-8"))
     if not isinstance(data, list):
-        raise ValueError(f"fixture file must contain a JSON list: {FIXTURES}")
+        raise ValueError(f"fixture file must contain a JSON list: {fixtures}")
     return data
 
 
@@ -1324,7 +1339,7 @@ def build_cases() -> list[dict[str, Any]]:
                 "version": "0.2.10",
                 "repository_head_ref": "repositories.hyperon_experimental.head",
                 "baseline": workspace_display(
-                    METTAPEDIA
+                    mettapedia_root()
                     / "scripts"
                     / "conformance"
                     / "he_io_baseline_hyperon_0.2.10.json"
@@ -1981,8 +1996,8 @@ def main() -> int:
         },
         "repositories": {
             "cetta": git_head(ROOT),
-            "mettapedia": git_head(METTAPEDIA),
-            "algorithms": git_head(ALGORITHMS),
+            "mettapedia": git_head(mettapedia_root()),
+            "algorithms": git_head(algorithms_root()),
             "hyperon_experimental": git_head(WORKSPACE / "hyperon" / "hyperon-experimental"),
         },
         "oracle_versions": {

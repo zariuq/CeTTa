@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <assert.h>
+#include <math.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdint.h>
@@ -35,17 +36,21 @@ static size_t test_term_entry_align_up(size_t n) {
     return (n + 7u) & ~(size_t)7u;
 }
 
-static uint64_t test_intern_probe_tail_limit(uint64_t lookups) {
-    /* Intern insertion resizes before exceeding 70% occupancy.  Under
-     * uniform double hashing, a union bound for observing a probe run of
-     * this length in any lookup is lookups * 0.7^length.  Keep that risk
-     * below 2^-20 while allowing the contract to grow logarithmically with
-     * the workload instead of imposing a fixed probe ceiling. */
-    long double tail_bound = (long double)lookups;
+static uint64_t test_intern_probe_tail_limit(size_t table_capacity) {
+    /* The table uses linear probing at at most 70% occupancy. Independent
+     * uniform home slots give an interval of k slots with at least k homes
+     * Chernoff bound (alpha * exp(1-alpha))^k. Sum over interval lengths and
+     * starting slots, and over geometrically growing tables (total capacity
+     * less than twice the final capacity). A lookup may also visit the empty
+     * slot after a cluster. This is a distribution-quality regression check,
+     * conditional on the uniform-home model, not a worst-case hash guarantee.
+     * The double-hashing bound alpha^k does not apply to these clusters. */
+    const long double decay = 0.7L * expl(0.3L);
+    long double tail_bound = 2.0L * (long double)table_capacity / (1.0L - decay);
     const long double risk_budget = 1.0L / 1048576.0L;
-    uint64_t limit = 0u;
+    uint64_t limit = 1u;
     while (tail_bound > risk_budget) {
-        tail_bound *= 0.7L;
+        tail_bound *= decay;
         limit++;
     }
     return limit;
@@ -259,11 +264,31 @@ static void test_structural_variable_name_store_contract(void) {
         &scratch, seen_value, NULL, &matches);
     assert(matches.len == 1u);
     assert(matches.items[0].atom_idx == 91u);
-    assert(matches.items[0].bindings.len == 1u);
-    assert(matches.items[0].bindings.entries[0].name_key);
-    assert(atom_eq(matches.items[0].bindings.entries[0].name_key, key));
-    assert(atom_is_symbol(
-        matches.items[0].bindings.entries[0].value.skeleton, "value"));
+    size_t current_count = 0u;
+    assert(bindings_current_binding_count(
+        &matches.items[0].bindings, &current_count));
+    assert(current_count == 1u);
+    /* Current values may live only in frame slots. Inspect the exported
+     * substitution rather than requiring a chronological binding row. */
+    Atom *matched_bindings = bindings_to_atom(
+        &scratch, &matches.items[0].bindings);
+    assert(matched_bindings && matched_bindings->kind == ATOM_EXPR &&
+           matched_bindings->expr.len == 3u);
+    Atom *assignments = matched_bindings->expr.elems[1];
+    assert(assignments->kind == ATOM_EXPR && assignments->expr.len == 1u);
+    Atom *assignment = assignments->expr.elems[0];
+    assert(assignment->kind == ATOM_EXPR && assignment->expr.len == 2u);
+    Atom *matched_variable = assignment->expr.elems[0];
+    assert(matched_variable->kind == ATOM_VAR && matched_variable->name_key);
+    assert(atom_eq(matched_variable->name_key, key));
+    assert(atom_is_symbol(assignment->expr.elems[1], "value"));
+    Bindings matched_view;
+    assert(bindings_from_atom(matched_bindings, &matched_view));
+    assert(bindings_current_binding_count(&matched_view, &current_count));
+    assert(current_count == 1u);
+    assert(atom_is_symbol(bindings_apply(&matched_view, &scratch,
+                                        matched_variable), "value"));
+    bindings_free(&matched_view);
     smset_free(&matches);
     stree_free(&stree);
 
@@ -1200,7 +1225,7 @@ static void test_structural_slot_hash_collision_family(void) {
     assert(lookups > 6000u);
     assert(diag.direct_lookup_probes <= lookups * 8u);
     assert(diag.direct_lookup_max_probe <=
-           test_intern_probe_tail_limit(lookups));
+           test_intern_probe_tail_limit(universe.intern_mask + 1u));
 
     free(frontier);
     term_universe_free(&universe);
@@ -1662,6 +1687,72 @@ static void test_native_handle_id_retention(void) {
     assert(holders == 0);
 }
 
+/* Immutable callable tags retain their public role through both term-store
+ * formats. Authored head spellings have no such role. */
+static void test_callable_value_store_contract(void) {
+    Arena source, persistent, copy;
+    TermUniverse universe;
+    arena_init(&source);
+    arena_init(&persistent);
+    arena_init(&copy);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    Atom *body = atom_symbol(&source, "body");
+    Atom *domain = atom_expr2(&source,
+        atom_internal_tag(&source, CETTA_INTERNAL_TAG_PETTA_CALLABLE_IDENTITY),
+        atom_int(&source, 71));
+    Atom *capture_items[] = {atom_int(&source, 3)};
+    Atom *captures = atom_expr(&source, capture_items, 1u);
+    Atom *values[] = {
+        atom_expr3(&source, atom_symbol(&source, "Lam"), domain, body),
+        atom_expr3(&source,
+            atom_internal_tag(&source, CETTA_INTERNAL_TAG_PETTA_NULLARY_CALLABLE),
+            atom_int(&source, 72), body),
+        atom_expr3(&source, atom_internal_tag(&source, CETTA_INTERNAL_TAG_PETTA_PARTIAL),
+            atom_symbol(&source, "fn"), captures),
+        atom_expr3(&source, atom_symbol(&source, "partial"),
+            atom_symbol(&source, "fn"), captures),
+        atom_expr3(&source, atom_symbol(&source, "Lam"),
+            atom_expr2(&source, atom_symbol(&source, "PeTTa.CallableV1"),
+                       atom_int(&source, 71)), body),
+    };
+    PeTTaValueRepresentation expected[] = {
+        PETTA_VALUE_REGISTERED_CALLABLE, PETTA_VALUE_REGISTERED_CALLABLE,
+        PETTA_VALUE_COMPOUND, PETTA_VALUE_ORDINARY, PETTA_VALUE_ORDINARY,
+    };
+    for (size_t i = 0u; i < sizeof(values) / sizeof(values[0]); i++) {
+        AtomId id = term_universe_store_atom_id(&universe, NULL, values[i]);
+        assert(id != CETTA_ATOM_ID_NONE);
+        assert(atom_petta_value_representation(values[i]) == expected[i]);
+        assert(tu_petta_value_representation(&universe, id) == expected[i]);
+        Atom *retained = term_universe_copy_atom(&universe, &copy, id);
+        assert(retained && atom_eq(retained, values[i]));
+        assert(atom_petta_value_representation(retained) == expected[i]);
+        assert(term_universe_migrate_store_format(
+            &universe, TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1));
+        assert(tu_petta_value_representation(&universe, id) == expected[i]);
+        assert(term_universe_migrate_store_format(
+            &universe, TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1));
+        assert(tu_petta_value_representation(&universe, id) == expected[i]);
+        for (size_t j = 0u; j < sizeof(values) / sizeof(values[0]); j++) {
+            Bindings bindings;
+            bindings_init(&bindings);
+            CETTA_FRAME_IDENTITY_SCOPE(scope);
+            uint32_t epoch = 0u;
+            assert(cetta_frame_identity_scope_try(&scope, &epoch));
+            assert(match_atoms_atom_id_epoch(values[j], &universe, id,
+                                             &bindings, &copy, epoch) == (i == j));
+            bindings_free(&bindings);
+        }
+    }
+    assert(!atom_petta_decomposition_compatible(values[2], values[3]));
+    assert(!atom_petta_decomposition_compatible(values[0], values[4]));
+    term_universe_free(&universe);
+    arena_free(&copy);
+    arena_free(&persistent);
+    arena_free(&source);
+}
+
 int main(void) {
     SymbolTable symbols;
     VarInternTable var_intern;
@@ -1673,6 +1764,7 @@ int main(void) {
     var_intern_init(&var_intern);
     g_var_intern = &var_intern;
     test_native_handle_id_retention();
+    test_callable_value_store_contract();
     test_arena_accounting_saturation_contract();
     test_store_format_contract();
     test_root_token_generation_contract();

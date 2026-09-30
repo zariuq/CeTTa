@@ -433,6 +433,8 @@ double tu_float(const TermUniverse *universe, AtomId id);
 bool tu_bool(const TermUniverse *universe, AtomId id);
 /* The value of an internal tag, or 0 for any other atom. */
 int64_t tu_internal_tag(const TermUniverse *universe, AtomId id);
+PeTTaValueRepresentation tu_petta_value_representation(
+    const TermUniverse *universe, AtomId id);
 const char *tu_string_cstr(const TermUniverse *universe, AtomId id);
 /* The byte length of a string; its bytes may hold NUL. */
 size_t tu_string_len(const TermUniverse *universe, AtomId id);
@@ -466,7 +468,7 @@ AtomId tu_intern_named_var(TermUniverse *universe, AtomId name_key_id,
 AtomId tu_intern_int(TermUniverse *universe, int64_t value);
 AtomId tu_intern_float(TermUniverse *universe, double value);
 AtomId tu_intern_bool(TermUniverse *universe, bool value);
-AtomId tu_intern_list_tag(TermUniverse *universe, int64_t tag);
+AtomId tu_intern_stable_tag(TermUniverse *universe, int64_t tag);
 AtomId tu_intern_string_n(TermUniverse *universe, const char *bytes,
                           size_t len);
 AtomId tu_intern_string(TermUniverse *universe, const char *value);

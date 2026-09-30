@@ -327,12 +327,15 @@ typedef struct {
         void *context, Space *space, Atom *expression);
     /* Enumerate the intrinsic answers of the language's `get-type`
      * relation after its subject has reached the ready-value boundary.
-     * The returned pointer array is caller-owned; every Atom is owned by
-     * `arena`.  Explicit user equations remain ordinary later relation
-     * equations and are not included by this service. */
+     * `target` is NULL for a fresh type, or the declared type a typed
+     * parameter checks the value against, with the machine's bindings
+     * applied; the answers then are its instances.  The returned pointer
+     * array is caller-owned; every Atom is owned by `arena`.  Explicit user
+     * equations remain ordinary later relation equations and are not
+     * included by this service. */
     bool (*get_type)(
         void *context, Space *space, Arena *arena, Atom *value,
-        Atom ***types, uint32_t *count);
+        Atom *target, Atom ***types, uint32_t *count);
     /* Construct the active language's public Boolean datum.  Search owns the
      * truth relation; spelling and representation remain language-owned. */
     Atom *(*boolean_value)(
@@ -383,7 +386,8 @@ typedef struct {
     bool (*named_state)(
         void *context, Space *space, Arena *arena, PeTTaForm form,
         Atom *name, Atom *value,
-        const Bindings *environment, OutcomeSet *outcomes);
+        const Bindings *environment, OutcomeSet *outcomes,
+        CettaCallOutcome *end);
     /*
      * Ground `add-atom` after the space argument is a value and the payload
      * has been substituted.  The host owns storage, typing, and program

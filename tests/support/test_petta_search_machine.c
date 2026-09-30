@@ -705,7 +705,7 @@ static void test_deep_typecheck_source_rewrites(
     AtomId deep_marker = test_nest_unary_id(
         universe, box, marker, DEEP_FINITE_DEPTH);
     AtomId document[1] = {deep_marker};
-    cetta_petta_erase_typecheck_marks_document(
+    cetta_petta_prepare_document_forms(
         universe, document, 1);
     assert(test_descend_unary_id(
                universe, document[0], box,
@@ -719,7 +719,7 @@ static void test_deep_typecheck_source_rewrites(
     AtomId deep_quoted_marker = test_nest_unary_id(
         universe, box, quoted_marker, DEEP_FINITE_DEPTH);
     document[0] = deep_quoted_marker;
-    cetta_petta_erase_typecheck_marks_document(
+    cetta_petta_prepare_document_forms(
         universe, document, 1);
     assert(document[0] == deep_quoted_marker);
 
@@ -737,7 +737,7 @@ static void test_deep_typecheck_source_rewrites(
     AtomId match_form = tu_expr_from_ids(
         universe, match_elems, 4u);
     document[0] = match_form;
-    cetta_petta_erase_typecheck_marks_document(
+    cetta_petta_prepare_document_forms(
         universe, document, 1);
     AtomId normalized_match = document[0];
     assert(tu_kind(universe, normalized_match) == ATOM_EXPR);
@@ -772,7 +772,7 @@ static void test_deep_typecheck_source_rewrites(
     AtomId case_form = tu_expr_from_ids(
         universe, case_elems, 3u);
     document[0] = case_form;
-    cetta_petta_erase_typecheck_marks_document(
+    cetta_petta_prepare_document_forms(
         universe, document, 1);
     AtomId normalized_branches = tu_child(
         universe, document[0], 2u);
@@ -3290,8 +3290,14 @@ static void test_constructor_slot_frame_plans(
     assert(petta_machine_next(
                &machine, &answer, &environment) ==
            PETTA_MACHINE_STEP_ANSWER);
-    assert(atom_alpha_eq(
-        answer, parse_one(answers, "(partial + (2))")));
+    {
+        Atom *base = NULL;
+        Atom *arguments = NULL;
+        assert(petta_semantics_partial_view(answer, &base, &arguments));
+        assert(atom_eq(base, parse_one(answers, "+")));
+        assert(atom_eq(arguments, parse_one(answers, "(2)")));
+        assert(!atom_eq(answer, parse_one(answers, "(partial + (2))")));
+    }
     bindings_free(&environment);
     assert(petta_machine_stats(&machine, &stats));
     /* Ordinary execution materializes the equation RHS before this metric's
@@ -3347,8 +3353,14 @@ static void test_constructor_slot_frame_plans(
     assert(petta_machine_next(
                &machine, &answer, &environment) ==
            PETTA_MACHINE_STEP_ANSWER);
-    assert(atom_alpha_eq(
-        answer, parse_one(answers, "(partial + (1))")));
+    {
+        Atom *base = NULL;
+        Atom *arguments = NULL;
+        assert(petta_semantics_partial_view(answer, &base, &arguments));
+        assert(atom_eq(base, parse_one(answers, "+")));
+        assert(atom_eq(arguments, parse_one(answers, "(1)")));
+        assert(!atom_eq(answer, parse_one(answers, "(partial + (1))")));
+    }
     bindings_free(&environment);
     assert(petta_machine_stats(&machine, &stats));
     assert(stats.pure_grounded_slot_frame_entries == 0u);
@@ -5005,9 +5017,20 @@ static void expect_answers(
             fputc('\n', stderr);
             abort();
         }
-        Atom *expected = parse_one(arena, expected_sources[index]);
+        const char *source = expected_sources[index];
+        bool retained = strncmp(source, "@retained ", 10u) == 0;
+        Atom *expected = parse_one(arena, source + (retained ? 10u : 0u));
         assert(expected);
-        if (!atom_alpha_eq(answer, expected)) {
+        if (retained) {
+            assert(expected->kind == ATOM_EXPR && expected->expr.len == 3u);
+            Atom *base = NULL;
+            Atom *arguments = NULL;
+            assert(petta_semantics_partial_view(answer, &base, &arguments));
+            assert(atom_alpha_eq(base, expected->expr.elems[1]));
+            assert(atom_alpha_eq(arguments, expected->expr.elems[2]));
+            assert(!atom_alpha_eq(answer, expected));
+        }
+        if (!retained && !atom_alpha_eq(answer, expected)) {
             fputs("unexpected PeTTa machine answer: ", stderr);
             atom_print(answer, stderr);
             fputs(" expected ", stderr);
@@ -10550,7 +10573,7 @@ int main(void) {
     add_equation(
         &space, &persistent,
         "(= (pair2 $left $right) ($left $right))");
-    const char *partial_pair[] = {"(partial pair2 (a))"};
+    const char *partial_pair[] = {"@retained (partial pair2 (a))"};
     expect_answers(
         &space, &answers,
         "(pair2 a)", partial_pair, 1u);
@@ -10558,7 +10581,7 @@ int main(void) {
     expect_answers(
         &space, &answers,
         "((pair2 a) b)", applied_pair, 1u);
-    const char *partial_intrinsic[] = {"(partial + (1))"};
+    const char *partial_intrinsic[] = {"@retained (partial + (1))"};
     expect_answers(
         &space, &answers,
         "(+ 1)", partial_intrinsic, 1u);
@@ -10602,7 +10625,7 @@ int main(void) {
         &space, &persistent,
         "(= (mixed-arity $x $y $z) three)");
     const char *gap_stays_partial[] = {
-        "(partial mixed-arity (a b))",
+        "@retained (partial mixed-arity (a b))",
     };
     expect_answers(
         &space, &answers,

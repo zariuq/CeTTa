@@ -259,7 +259,7 @@ bool cetta_petta_profile_admits_arrow_modes(void);
 bool cetta_petta_profile_admits_typecheck_ops(void);
 bool cetta_petta_profile_admits_native_typecheck_v2(void);
 bool cetta_petta_data_op_applies(SymbolId head, CettaExprLen nargs);
-void cetta_petta_erase_typecheck_marks_document(
+void cetta_petta_prepare_document_forms(
     TermUniverse *universe, AtomId *atom_ids, int atom_count);
 bool cetta_petta_source_head_resolves_in_engine(SymbolId head, CettaExprLen nargs);
 bool cetta_petta_head_names_extension(SymbolId head);

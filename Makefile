@@ -369,7 +369,7 @@ LIB_PROLOG_CONFIG_ID := $(strip $(shell { \
 	printf '%s\n' "$(LIB_PROLOG_CFLAGS)" "$(LIB_PROLOG_LDFLAGS)"; \
 	printf '%s\n' "$(LIB_PROLOG_LIBDIR)" "$(LIB_PROLOG_VERSION)"; \
 	} | sha256sum | cut -c1-16))
-LIB_PROLOG_SRC := src/petta_libpl.c
+LIB_PROLOG_SRC := src/petta_libpl.c src/foreign_region.c
 else
 LIB_PROLOG_CFLAGS :=
 LIB_PROLOG_LDFLAGS :=
@@ -1744,6 +1744,7 @@ GSLT_HORN_RUNTIME_TEST_BIN = runtime/test_gslt_horn_runtime-$(BUILD_OBJ_TAG)
 GSLT_HORN_RUNTIME_CANARY_V1 = tests/fixtures/gslt_horn_runtime_canary_v1.metta
 GSLT_LANGUAGE_RUNTIME_TEST_BIN = runtime/test_gslt_language_runtime-$(BUILD_OBJ_TAG)
 GSLT_COMPILED_PACKET_CHECK_BIN = runtime/check_gslt_compiled_packet_v1-$(BUILD_OBJ_TAG)
+PETTA_LIBPL_QUERY_RELEASE_CHECK_BIN = runtime/check_petta_libpl_query_release_v1-$(BUILD_OBJ_TAG)
 NIK_RUNTIME_TEST_BIN = runtime/test_nik_runtime_v1-$(BUILD_OBJ_TAG)
 NIK_HOSTED_CALCULUS_OBJ = src/nik_hosted_calculus.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 NIK_HOSTED_CALCULUS_TEST_BIN = runtime/test_nik_hosted_calculus-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
@@ -3247,6 +3248,10 @@ BACKEND_DEDICATED_TESTS = \
 	tests/test_pathmap_direct_store_runtime_stats.metta \
 	tests/test_new_space_mork_syntax.metta \
 	tests/test_step_space_syntax.metta
+
+# Corpus files that import a Mettapedia checkout; make test-lean runs them.
+METTAPEDIA_CORPUS_TESTS = \
+	tests/test_lts_mi_syntax.metta
 
 OPT_IN_FEATURE_TESTS = \
 	tests/test_io_json_bridge.metta \
@@ -4929,7 +4934,7 @@ test-abt-scope-construction-candidates: $(BIN)
 		exit 1; \
 	fi
 
-test-abt: $(ABT_TEST_BIN) test-abt-mm2-boundary test-rhocalc-abt-substitution test-abt-mutations test-abt-default-signatures test-abt-differential test-lib-parse-abt-bridge test-abt-integration-ledger
+test-abt: $(ABT_TEST_BIN) test-abt-mm2-boundary test-rhocalc-abt-substitution test-abt-mutations test-abt-default-signatures test-lib-parse-abt-bridge test-abt-integration-ledger
 	@result=$$(./$(ABT_TEST_BIN) 2>&1); \
 	printf '%s\n' "$$result"; \
 	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(ABTCoreSummary 162 162 0)')" -ne 1 ] || \
@@ -17386,12 +17391,90 @@ test: test-plain-bnf-meta-parser-v1
 test: test-plain-bnf-meta-parser-no-python-build-dependency-v1
 test: test-bnf-native-entry-v1
 test: test-plain-bnf-semantic-generator-no-python-build-dependency-v1
-test: test-plain-bnf-typed-admission-v1
-test: test-plain-bnf-semantic-generated-artifact-current-v1
+test-lean: test-plain-bnf-typed-admission-v1
+test-lean: test-plain-bnf-semantic-generated-artifact-current-v1
 test: test-plain-bnf-reader-v1
 test: test-plain-bnf-denotation-v1
 
 test: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-vocabulary test-prime-public-judgment-vocabulary test-manifest-strict test-fail-atomic-build-v1 test-operational-language-def-v1 test-language-def-premise-free-rewriter-v1 test-walters-zantema-da-to-radix-digit-transform-v1 test-walters-zantema-da-to-radix-digit-emitted-c-v1 test-walters-zantema-da-radix-digit-nik-v1 test-exact-arithmetic-to-external-call-v1 test-language-def-core-v1 test-language-def-ground-term-v1 test-exact-integer-theory-v1 test-json-gslt test-io test-git-module test-symbolid-guard test-variant-shape-roundtrip test-arena-frame-identity-ownership test-delay-service test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-stable-occurrence-transport test-shared-space-concurrent-index test-parallel-executor-lifecycle test-stable-occurrence-realization-tournament test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-petta-typecheck-v3-core-langdef-v1 test-petta-typecheck-v3-file-runner-v1 test-petta-typecheck-v3-profile test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-core-v1 test-prime-authored-chaining-fixtures test-prime-relational-plan test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1 test-decl-langdef-v1
+
+.PHONY: test-lean test-rhocalc-lean test-lean-corpus
+# Gates that check CeTTa against a Mettapedia checkout, some with its Lean
+# toolchain.  Opt-in: the default suite needs neither.  METTAPEDIA_LEAN_ROOT
+# names the Lean project (default: the sibling checkout); the corpus files
+# import the checkout at its sibling location.
+METTAPEDIA_LEAN_CHECKOUT = $(if $(strip $(METTAPEDIA_LEAN_ROOT)),$(METTAPEDIA_LEAN_ROOT),$(METTAPEDIA_LEAN_AUTO_ROOT))
+test-lean: test-rhocalc-lean test-lean-corpus test-abt-differential \
+	test-petta-typecheck-v3-core-parity-v1
+
+test-rhocalc-lean: $(BIN)
+	@pass=0; fail=0; \
+	mettapedia_root="$(METTAPEDIA_LEAN_CHECKOUT)"; \
+	if [ ! -f "$$mettapedia_root/lakefile.lean" ]; then \
+		echo "FAIL: METTAPEDIA_LEAN_ROOT must name the Mettapedia Lean project"; \
+		exit 2; \
+	fi; \
+	rhocalc_lean_skip=85; \
+	while IFS=$$(printf '\t') read -r name fixture expected_file lean_file anchor; do \
+		[ -n "$$name" ] || continue; \
+		case "$$name" in \#*) continue ;; esac; \
+		bridge_output=$$(METTAPEDIA_ROOT="$$mettapedia_root" $(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_cost_lean_bridge.py "$(CETTA_SCRIPT_BIN)" "$$fixture" "$$expected_file" "$$lean_file" "$$anchor" 2>&1); \
+		bridge_status=$$?; \
+		if [ "$$bridge_status" -eq 0 ]; then \
+			echo "PASS: rhocalc cost lean bridge $$name"; \
+			pass=$$((pass + 1)); \
+		elif [ "$$bridge_status" -eq "$$rhocalc_lean_skip" ]; then \
+			printf '%s\n' "$$bridge_output"; \
+			echo "SKIP: rhocalc cost lean bridge $$name"; \
+		else \
+			printf '%s\n' "$$bridge_output"; \
+			echo "FAIL: rhocalc cost lean bridge $$name"; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done < tests/rhocalc_cost_lean_bridge.tsv; \
+	differential_output=$$(METTAPEDIA_ROOT="$$mettapedia_root" $(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_cost_differential.py "$(CETTA_SCRIPT_BIN)" 2>&1); \
+	differential_status=$$?; \
+	if [ "$$differential_status" -eq 0 ]; then \
+		printf '%s\n' "$$differential_output"; \
+		pass=$$((pass + 1)); \
+	else \
+		printf '%s\n' "$$differential_output"; \
+		echo "FAIL: bounded cost-rho CeTTa/Lean differential"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	microcheck_output=$$(python3 scripts/rhocalc_lean_microcheck.py "$$mettapedia_root" tests/rhocalc_lean_microcheck.lean 2>&1); \
+	microcheck_status=$$?; \
+	if [ "$$microcheck_status" -eq 0 ]; then \
+		echo "PASS: rhocalc lean microcheck"; \
+		pass=$$((pass + 1)); \
+	elif [ "$$microcheck_status" -eq "$$rhocalc_lean_skip" ]; then \
+		printf '%s\n' "$$microcheck_output"; \
+		echo "SKIP: rhocalc lean microcheck"; \
+	else \
+		printf '%s\n' "$$microcheck_output"; \
+		echo "FAIL: rhocalc lean microcheck"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	echo "---"; \
+	echo "rhocalc lean: $$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
+
+test-lean-corpus: $(BIN)
+	@pass=0; fail=0; \
+	for f in $(METTAPEDIA_CORPUS_TESTS); do \
+		exp="$${f%.metta}.expected"; \
+		runtime_status=0; result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he "$$f" 2>&1) || runtime_status=$$?; \
+		if [ $$runtime_status -eq 0 ] && [ "$$result" = "$$(cat $$exp)" ]; then \
+			echo "PASS: $$f"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: $$f (runtime status $$runtime_status)"; \
+			diff <(cat "$$exp") <(echo "$$result") | head -10; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
+	echo "Mettapedia corpus: $$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
 
 .PHONY: test-main-corpus
 test: test-main-corpus
@@ -17445,6 +17528,11 @@ test-main-corpus: $(BIN)
 			continue; \
 		fi; \
 		if printf '%s\n' $(BACKEND_DEDICATED_TESTS) | grep -Fxq "$$f"; then \
+			continue; \
+		fi; \
+		if printf '%s\n' $(METTAPEDIA_CORPUS_TESTS) | grep -Fxq "$$f"; then \
+			echo "SKIP: $$f (imports a Mettapedia checkout; covered by test-lean)"; \
+			skip=$$((skip + 1)); \
 			continue; \
 		fi; \
 		if printf '%s\n' $(OPT_IN_FEATURE_TESTS) | grep -Fxq "$$f"; then \
@@ -18227,9 +18315,6 @@ test-rhocalc: $(BIN) test-rhocalc-rhometta-profile test-gslt-rhometta-rhocalc-pr
 			fail=$$((fail + 1)); \
 		fi; \
 	done < tests/rhocalc_tiny_oracle.tsv; \
-	mettapedia_root="$${METTAPEDIA_ROOT:-../../Mettapedia/lean/mettapedia}"; \
-	rhocalc_lean_skip=85; \
-	if [ -d "$$mettapedia_root" ]; then \
 			while IFS=$$(printf '\t') read -r name fixture expected_count mode expected_file lean_file anchor; do \
 				[ -n "$$name" ] || continue; \
 				case "$$name" in \#*) continue ;; esac; \
@@ -18252,52 +18337,6 @@ test-rhocalc: $(BIN) test-rhocalc-rhometta-profile test-gslt-rhometta-rhocalc-pr
 				fail=$$((fail + 1)); \
 			fi; \
 		done < tests/rhocalc_run_lean_bridge.tsv; \
-		while IFS=$$(printf '\t') read -r name fixture expected_file lean_file anchor; do \
-			[ -n "$$name" ] || continue; \
-			case "$$name" in \#*) continue ;; esac; \
-			bridge_output=$$(METTAPEDIA_ROOT="$$mettapedia_root" $(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_cost_lean_bridge.py "$(CETTA_SCRIPT_BIN)" "$$fixture" "$$expected_file" "$$lean_file" "$$anchor" 2>&1); \
-			bridge_status=$$?; \
-			if [ "$$bridge_status" -eq 0 ]; then \
-				echo "PASS: rhocalc cost lean bridge $$name"; \
-				pass=$$((pass + 1)); \
-			elif [ "$$bridge_status" -eq "$$rhocalc_lean_skip" ]; then \
-				printf '%s\n' "$$bridge_output"; \
-				echo "SKIP: rhocalc cost lean bridge $$name"; \
-			else \
-				printf '%s\n' "$$bridge_output"; \
-				echo "FAIL: rhocalc cost lean bridge $$name"; \
-				fail=$$((fail + 1)); \
-			fi; \
-		done < tests/rhocalc_cost_lean_bridge.tsv; \
-		differential_output=$$(METTAPEDIA_ROOT="$$mettapedia_root" $(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_cost_differential.py "$(CETTA_SCRIPT_BIN)" 2>&1); \
-		differential_status=$$?; \
-		if [ "$$differential_status" -eq 0 ]; then \
-			printf '%s\n' "$$differential_output"; \
-			pass=$$((pass + 1)); \
-		else \
-			printf '%s\n' "$$differential_output"; \
-			echo "FAIL: bounded cost-rho CeTTa/Lean differential"; \
-			fail=$$((fail + 1)); \
-		fi; \
-		microcheck_output=$$(python3 scripts/rhocalc_lean_microcheck.py "$$mettapedia_root" tests/rhocalc_lean_microcheck.lean 2>&1); \
-		microcheck_status=$$?; \
-		if [ "$$microcheck_status" -eq 0 ]; then \
-			echo "PASS: rhocalc lean microcheck"; \
-			pass=$$((pass + 1)); \
-		elif [ "$$microcheck_status" -eq "$$rhocalc_lean_skip" ]; then \
-			printf '%s\n' "$$microcheck_output"; \
-			echo "SKIP: rhocalc lean microcheck"; \
-		else \
-			printf '%s\n' "$$microcheck_output"; \
-			echo "FAIL: rhocalc lean microcheck"; \
-			fail=$$((fail + 1)); \
-		fi; \
-	else \
-		echo "SKIP: rhocalc lean trace bridge (set METTAPEDIA_ROOT to a local Mettapedia checkout)"; \
-		echo "SKIP: rhocalc cost lean bridge (set METTAPEDIA_ROOT to a local Mettapedia checkout)"; \
-		echo "SKIP: cost-rho differential harness (set METTAPEDIA_ROOT to a local Mettapedia checkout)"; \
-		echo "SKIP: rhocalc lean microcheck (set METTAPEDIA_ROOT to a local Mettapedia checkout)"; \
-	fi; \
 	if python3 -c "from pathlib import Path; import re, sys; lines = Path('lib/rho.metta').read_text().splitlines(); pat = re.compile(r'^\\s*\\((=|:)\\s+\\((rho[.:](step|frontier|reduce|eval))\\b'); sys.exit(1 if any((not line.lstrip().startswith(';')) and pat.search(line) for line in lines) else 0)" >/dev/null; then \
 		echo "PASS: rhocalc lib/rho hygiene"; \
 		pass=$$((pass + 1)); \
@@ -23782,7 +23821,7 @@ else
 endif
 .PHONY: test-lib-prolog-build-config
 
-test-petta-libpl: $(BIN) test-petta-libpl-explicit-utf8
+test-petta-libpl: $(BIN) test-petta-libpl-explicit-utf8 test-petta-libpl-query-release test-foreign-region
 	@actual=$$(mktemp runtime/petta-libpl.XXXXXX); \
 	trap 'rm -f "$$actual"' EXIT INT TERM; \
 	CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
@@ -25391,9 +25430,10 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-c
 	fi; \
 	if [ "$(ENABLE_PYTHON)" = 1 ]; then \
 		result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+			-e '!(py-call (builtins.abs -3))' \
 			-e '!((py-call builtins.abs) -3)' 2>&1); \
 		if [ "$$result" != 3 ]; then \
-			echo "FAIL: PeTTa Python callable lookup/application composition"; \
+			echo "FAIL: PeTTa py-call applies a call spec, and a path alone has no answer"; \
 			printf '%s\n' "$$result"; \
 			exit 1; \
 		fi; \
@@ -26425,7 +26465,11 @@ PETTA_SEMANTIC_EXACT_STREAM_STEMS = \
 	builtin_data_vocabulary car_cdr_total empty_is_data \
 	collapse_copies_answers open_lists library_metta_suffix \
 	sort_values dynamic_head_values specialize_data_values \
-	foldall_reduce partial_values bound_head_values
+	foldall_reduce partial_values bound_head_values \
+	get_type_relation list_natives_several let_star_patterns \
+	lambda_pattern_parameters lambda_parameter_scope \
+	specialized_partial_values closure_values activation_cons_let \
+	partial_argument_values
 PETTA_SEMANTIC_OCCURRENCE_BAG_STEMS = semantic_counter_equations \
 	search_machine_specializer_negative_mutation \
 	search_machine_partial_head_observation search_machine_query_field_composition
@@ -26612,6 +26656,71 @@ test-petta-value-occurrences: $(BIN)
 		fi; \
 	done; \
 	echo "PASS: a variable is the value it holds, on the tier and in the machine"
+
+.PHONY: test-petta-get-type-relation
+# get-type is SWI-PeTTa's relation over the space's declarations: a literal's
+# type, any type for a variable, a declared function's result type when its
+# arguments have the declared types, the expression of the elements' types,
+# and the declared types.  A value is typed as it is, never evaluated.  The
+# expected output is SWI-PeTTa's; both routes must reproduce it.
+test-petta-semantics: test-petta-get-type-relation
+test-petta-get-type-relation: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/get_type_relation.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/get_type_relation.expected)" ]; then \
+			echo "FAIL: get-type on the $$route route"; \
+			diff <(cat tests/petta/get_type_relation.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: get-type types a value by the space's declarations, on the tier and in the machine"
+
+.PHONY: test-petta-py-call-spec
+# py-call takes a call spec, (path args...); any other value, a function's
+# result included, has no answer.  The expected output is SWI-PeTTa's.
+test-petta-semantics: test-petta-py-call-spec
+test-petta-py-call-spec: $(BIN)
+ifeq ($(ENABLE_PYTHON),1)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/py_call_spec.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/py_call_spec.expected)" ]; then \
+			echo "FAIL: py-call specs on the $$route route"; \
+			diff <(cat tests/petta/py_call_spec.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: py-call takes a call spec, and any other value has no answer"
+else
+	@echo "SKIP: test-petta-py-call-spec (requires a Python-enabled build)"
+endif
+
+.PHONY: test-petta-list-natives-several
+# maplist over several lists and foldl over several lists are SWI's
+# maplist/4-5 and foldl/5-7; append of a list of lists is SWI's append/2.
+# The expected output is SWI-PeTTa's; both routes must reproduce it.
+test-petta-semantics: test-petta-list-natives-several
+test-petta-list-natives-several: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/list_natives_several.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/list_natives_several.expected)" ]; then \
+			echo "FAIL: list natives over several lists on the $$route route"; \
+			diff <(cat tests/petta/list_natives_several.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: maplist and foldl over several lists, and append of lists, on the tier and in the machine"
 
 .PHONY: test-petta-list-building-linear
 # A list built by repeated cons-atom, and a filter over it, grow memory with
@@ -27456,14 +27565,135 @@ test-petta-match-cell-rows: $(BIN)
 # (SWI-PeTTa's answers).
 test-petta-number-order: $(BIN)
 	@set -eu; \
-	actual=$$($(CETTA_BIN_INVOKE) --lang petta tests/petta/number_order.metta 2>&1); \
-	if [ "$$actual" != "$$(cat tests/petta/number_order.expected)" ]; then \
-		echo "FAIL: the standard order of numbers"; \
-		diff <(cat tests/petta/number_order.expected) \
-			<(printf '%s\n' "$$actual") | head -20; \
-		exit 1; \
-	fi; \
-	echo "PASS: numbers sort in SWI-PeTTa's standard order"
+	for stem in number_order numeric_order_promotions; do \
+		for route in 0 1; do \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$route $(CETTA_BIN_INVOKE) --lang petta tests/petta/$$stem.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/$$stem.expected)" ]; then \
+				echo "FAIL: $$stem on route $$route"; \
+				diff <(cat tests/petta/$$stem.expected) \
+					<(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: standard number order and arithmetic promotion on both PeTTa routes"
+
+.PHONY: test-petta-callable-identity test-petta-import-batches
+test-petta-semantics: test-petta-callable-identity test-petta-callable-value-observers test-petta-callable-value-matching
+test-petta-callable-identity: $(BIN)
+	@set -eu; \
+	for route in 0 1; do \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$route $(CETTA_BIN_INVOKE) --lang petta tests/petta/callable_identity.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/callable_identity.expected)" ]; then \
+			echo "FAIL: nominal callable identity on route $$route"; \
+			printf '%s\n' "$$actual"; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: callable occurrence identity survives reuse, capture and application"
+
+.PHONY: test-petta-callable-value-observers
+test-petta-callable-value-observers: $(BIN)
+	@set -eu; \
+	for route in 0 1; do \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$route $(CETTA_BIN_INVOKE) --lang petta tests/petta/callable_value_observers.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/callable_value_observers.expected)" ]; then \
+			echo "FAIL: callable value observations on route $$route"; \
+			diff <(cat tests/petta/callable_value_observers.expected) <(printf '%s\n' "$$actual"); \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: callable value observers preserve registered names, compounds and authored lists"
+
+.PHONY: test-petta-callable-value-matching
+test-petta-callable-value-matching: $(BIN)
+	@set -eu; \
+	for route in 0 1; do \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$route $(CETTA_BIN_INVOKE) --lang petta tests/petta/callable_value_matching.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/callable_value_matching.expected)" ]; then \
+			echo "FAIL: callable value matching on route $$route"; \
+			diff <(cat tests/petta/callable_value_matching.expected) <(printf '%s\n' "$$actual"); \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: callable matching preserves opaque values and whole-value variable binding"
+
+test-petta-libpl: test-petta-import-batches test-petta-callable-foreign-values test-petta-callable-name-hygiene
+.PHONY: test-petta-callable-name-hygiene
+test-petta-callable-name-hygiene: $(BIN)
+	@set -eu; if [ "$(LIB_PROLOG_ENABLED)" = 1 ]; then \
+		for route in 0 1; do \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$route $(CETTA_BIN_INVOKE) --lang petta tests/petta/callable_name_hygiene.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/callable_name_hygiene.expected)" ]; then \
+				echo "FAIL: callable name hygiene on route $$route"; \
+				diff <(cat tests/petta/callable_name_hygiene.expected) <(printf '%s\n' "$$actual"); \
+				exit 1; \
+			fi; \
+		done; \
+		echo "PASS: fresh callable names preserve authored functions and foreign term roles"; \
+	fi
+.PHONY: test-petta-callable-foreign-values
+test-petta-callable-foreign-values: $(BIN)
+	@set -eu; if [ "$(LIB_PROLOG_ENABLED)" = 1 ]; then \
+		for route in 0 1; do \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$route $(CETTA_BIN_INVOKE) --lang petta tests/petta/callable_foreign_values.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/callable_foreign_values.expected)" ]; then \
+				echo "FAIL: callable foreign values on route $$route"; \
+				diff <(cat tests/petta/callable_foreign_values.expected) <(printf '%s\n' "$$actual"); \
+				exit 1; \
+			fi; \
+		done; \
+		echo "PASS: callable foreign transport retains public term roles and native code"; \
+	fi
+test-petta-import-batches: $(BIN)
+	@set -eu; if [ "$(LIB_PROLOG_ENABLED)" = 1 ]; then \
+		python3 tests/support/check_petta_import_batches.py "$(BIN)"; \
+		for route in 0 1; do \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$route $(CETTA_BIN_INVOKE) --lang petta tests/petta/libpl_query_regions.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/libpl_query_regions.expected)" ]; then \
+				echo "FAIL: solution conversion regions on route $$route"; \
+				printf '%s\n' "$$actual"; exit 1; \
+			fi; \
+		done; \
+		echo "PASS: nested and variable projections survive repeated foreign solutions"; \
+	else \
+		echo "SKIP: import batches require embedded Prolog"; \
+	fi
+
+.PHONY: test-petta-libpl-query-release
+test-petta-libpl-query-release: $(BIN) $(if $(filter 1,$(LIB_PROLOG_ENABLED)),$(PETTA_LIBPL_QUERY_RELEASE_CHECK_BIN),)
+	@set -eu; if [ "$(LIB_PROLOG_ENABLED)" = 1 ]; then \
+		$(PETTA_LIBPL_QUERY_RELEASE_CHECK_BIN) \
+			tests/petta/fixtures/libpl_query_release.pl; \
+		actual=$$(mktemp runtime/petta-libpl-query-release.XXXXXX); \
+		trap 'rm -f "$$actual"' EXIT INT TERM; \
+		PYTHONPATH=tests/support CETTA_PETTA_SEARCH_MACHINE=1 \
+			./$(BIN) --lang petta \
+			tests/petta/libpl_query_release.metta > "$$actual"; \
+		if ! diff -u tests/petta/libpl_query_release.expected \
+				"$$actual"; then \
+			echo "FAIL: PeTTa/libpl query release values"; \
+			exit 1; \
+		fi; \
+		echo "PASS: PeTTa/libpl query-release values and lifecycle"; \
+	else \
+		echo "SKIP: query-release gate requires embedded Prolog"; \
+	fi
+
+.PHONY: test-petta-cardinality-observers
+test-petta-semantics: test-petta-cardinality-observers
+test-petta-cardinality-observers: $(BIN)
+	@set -eu; \
+	for route in 0 1; do \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$route $(CETTA_BIN_INVOKE) --lang petta tests/petta/collection_cardinality_observers.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/collection_cardinality_observers.expected)" ]; then \
+			echo "FAIL: collection cardinality observations on route $$route"; \
+			diff <(cat tests/petta/collection_cardinality_observers.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: cardinality preserves occurrences, effects, data and caught faults"
 
 .PHONY: test-petta-generated-match-patterns
 test-petta-semantics: test-petta-generated-match-patterns
@@ -27760,8 +27990,7 @@ test-petta-typecheck-v3-core-parity-v1:
 test-petta-typecheck-v3-core-langdef-v1: \
 		test-petta-typecheck-v3-core-generation-v1 \
 		test-petta-typecheck-v3-h5-matrix-v1 \
-		$(PETTA_TYPECHECK_V3_CORE_LANGDEF_TEST_BIN) \
-		test-petta-typecheck-v3-core-parity-v1
+		$(PETTA_TYPECHECK_V3_CORE_LANGDEF_TEST_BIN)
 	@"$(PETTA_TYPECHECK_V3_CORE_LANGDEF_TEST_BIN)" \
 		$(PETTA_TYPECHECK_V3_CORE_LANGDEF_V1)
 
@@ -28958,6 +29187,7 @@ test-mork-lane-core:
 	fi
 
 test-mork-lane-core-body: $(BIN)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-petta-mork-space
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-deprecated-space-engine-mork-guard
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mm2-mork-program-space
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mm2-exec-basic
@@ -28967,6 +29197,26 @@ test-mork-lane-core-body: $(BIN)
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mm2-conformance-lean-suite
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mm2-kiss-suite
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-basic-pathmap-guard
+
+.PHONY: test-petta-mork-space
+# PeTTa's &mork is the MORK space, as in SWI-PeTTa's mork_ffi: lib_mm2's
+# operations reach it and mm2-exec steps its exec rules; mm2-exec has no
+# answer on any other space.  The expected output is SWI-PeTTa's; both
+# routes must reproduce it.  Runs on a MORK bridge build.
+test-petta-mork-space: $(BIN)
+	@set -e; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference ./$(BIN) \
+			--lang petta tests/petta/petta_mork_space.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/petta_mork_space.expected)" ]; then \
+			echo "FAIL: PeTTa &mork and mm2-exec on the $$route route"; \
+			diff <(cat tests/petta/petta_mork_space.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: PeTTa's &mork is the MORK space and mm2-exec steps it, on the tier and in the machine"
 
 test-mork-runtime-stats-lane:
 	@if [ "$(MORK_BUILD_HAS_BRIDGE)" = "1" ] || [ -n "$(CETTA_MORK_SPACE_BRIDGE_LIB)" ]; then \
@@ -33076,9 +33326,39 @@ $(GSLT_COMPILED_PACKET_CHECK_BIN): \
 
 .PHONY: check-gslt-compiled-packet-v1
 check-gslt-compiled-packet-v1: $(GSLT_COMPILED_PACKET_CHECK_BIN)
+
 	@test -n "$(PACKET)" || \
 		{ echo "PACKET must name a CGP1 file" >&2; exit 2; }
 	@$(GSLT_COMPILED_PACKET_CHECK_BIN) "$(PACKET)"
+
+# Standalone FFI lifecycle gate: swipl-only, never built when lib-prolog is
+# unavailable (its gate target guards on LIB_PROLOG_ENABLED).
+.PHONY: test-foreign-region
+test-foreign-region: $(if $(filter 1,$(LIB_PROLOG_ENABLED)),runtime/check_foreign_region_v1-$(BUILD_OBJ_TAG),)
+ifeq ($(LIB_PROLOG_ENABLED),1)
+	@runtime/check_foreign_region_v1-$(BUILD_OBJ_TAG) tests/petta/fixtures/foreign_region.pl
+else
+	@echo "SKIP: retained foreign regions (lib-prolog disabled)"
+endif
+
+ifeq ($(LIB_PROLOG_ENABLED),1)
+runtime/check_foreign_region_v1-$(BUILD_OBJ_TAG): \
+		tests/support/check_foreign_region_v1.c src/foreign_region.c \
+		src/foreign_region.h tests/petta/fixtures/foreign_region.pl
+	@mkdir -p runtime
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -pthread -Isrc -o $@ \
+		tests/support/check_foreign_region_v1.c src/foreign_region.c \
+		$(LIB_PROLOG_CFLAGS) $(LIB_PROLOG_LDFLAGS) $(LIB_PROLOG_RPATH)
+
+$(PETTA_LIBPL_QUERY_RELEASE_CHECK_BIN): \
+		tests/support/check_petta_libpl_query_release_v1.c \
+		tests/petta/fixtures/libpl_query_release.pl
+	@mkdir -p runtime
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -pthread -o $@ \
+		tests/support/check_petta_libpl_query_release_v1.c \
+		$(LIB_PROLOG_CFLAGS) $(LIB_PROLOG_LDFLAGS) \
+		$(LIB_PROLOG_RPATH)
+endif
 
 $(NIK_RUNTIME_TEST_BIN): \
 		tests/support/test_nik_runtime_v1.c \

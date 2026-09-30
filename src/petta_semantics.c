@@ -7,6 +7,7 @@
 
 #include <math.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -98,14 +99,13 @@ typedef struct {
     SymbolId catch_text;
     SymbolId lambda;
     SymbolId canonical_lam;
-    SymbolId callable_marker;
-    SymbolId nullary_callable;
-    SymbolId partial;
     SymbolId library;
     SymbolId value_let;
     SymbolId value_chain;
     SymbolId and_then;
     SymbolId or_else;
+    SymbolId mm2_exec;
+    SymbolId mork_space;
     uint8_t runtime_head_by_symbol[PETTA_FORM_DENSE_CAP];
     PeTTaRuntimeHeadOverflow runtime_head_overflow[
         PETTA_RUNTIME_HEAD_OVERFLOW_CAP];
@@ -422,11 +422,6 @@ static const PeTTaSymbolIds *petta_symbol_ids_refresh(void) {
         ids.catch_text = symbol_intern_cstr(g_symbols, "catch");
         ids.lambda = symbol_intern_cstr(g_symbols, "|->");
         ids.canonical_lam = symbol_intern_cstr(g_symbols, "Lam");
-        ids.callable_marker =
-            symbol_intern_cstr(g_symbols, "PeTTa.CallableV1");
-        ids.nullary_callable =
-            symbol_intern_cstr(g_symbols, "PeTTa.NullaryCallableV1");
-        ids.partial = symbol_intern_cstr(g_symbols, "partial");
         ids.library = symbol_intern_cstr(g_symbols, "library");
         ids.value_let =
             symbol_intern_cstr(g_symbols, "PeTTa.ValueLetV1");
@@ -434,6 +429,8 @@ static const PeTTaSymbolIds *petta_symbol_ids_refresh(void) {
             symbol_intern_cstr(g_symbols, "PeTTa.ValueChainV1");
         ids.and_then = symbol_intern_cstr(g_symbols, "and-then");
         ids.or_else = symbol_intern_cstr(g_symbols, "or-else");
+        ids.mm2_exec = symbol_intern_cstr(g_symbols, "mm2-exec");
+        ids.mork_space = symbol_intern_cstr(g_symbols, "&mork");
         petta_runtime_heads_build(&ids);
     }
     ids.form_by_symbol_ready = petta_form_dense_build(&ids);
@@ -674,7 +671,8 @@ PeTTaLogicalListStep petta_semantics_logical_list_cursor_next(
         cursor->rest = cursor->rest->expr.elems[2];
         return PETTA_LOGICAL_LIST_ITEM;
     }
-    if (cursor->rest->kind != ATOM_EXPR) {
+    if (cursor->rest->kind != ATOM_EXPR ||
+        petta_semantics_is_nonlist_carrier(cursor->rest)) {
         cursor->invalid = true;
         return PETTA_LOGICAL_LIST_INVALID;
     }
@@ -801,7 +799,7 @@ static Atom *petta_logical_list_close(Arena *arena, PeTTaListItems *items,
                                       Atom *end) {
     Atom *const *elems;
     CettaExprLen len;
-    if (!atom_sequence_view(end, &elems, &len) ||
+    if (!petta_semantics_sequence_view(end, &elems, &len) ||
         (uint64_t)len > (uint64_t)SIZE_MAX ||
         !petta_list_items_append(items, elems, (size_t)len) ||
         !cetta_expr_len_fits_size((CettaExprLen)items->length))
@@ -819,7 +817,7 @@ bool petta_semantics_is_closed_list(Atom *atom) {
             atom = atom->expr.elems[atom->expr.len - 1u];
         else
             return atom && atom->kind == ATOM_EXPR &&
-                   !atom_is_petta_prolog_compound(atom);
+                   !petta_semantics_is_nonlist_carrier(atom);
     }
 }
 
@@ -827,7 +825,8 @@ Atom *petta_semantics_closed_list(Arena *arena, Atom *list) {
     if (!arena || !list)
         return NULL;
     if (!petta_semantics_is_cons_constraint(list) && !atom_is_list_rest(list))
-        return list->kind == ATOM_EXPR ? list : NULL;
+        return list->kind == ATOM_EXPR &&
+               !petta_semantics_is_nonlist_carrier(list) ? list : NULL;
     PeTTaListItems items = {0};
     Atom *end = petta_logical_list_collect(list, true, &items);
     Atom *closed = end && end->kind == ATOM_EXPR
@@ -875,7 +874,7 @@ Atom *petta_semantics_list_error(Arena *arena, SymbolId operation,
         context = petta_error_predicate_context(arena, NULL, "length", 2);
     else if (form == PETTA_FORM_MSORT)
         context = petta_error_predicate_context(arena, "system", "msort", 2);
-    else if (form == PETTA_FORM_LIST_TO_SET)
+    else if (form == PETTA_FORM_LIST_TO_SET || form == PETTA_FORM_APPEND)
         context = petta_error_unbound_context(arena);
     else
         return NULL;
@@ -911,6 +910,17 @@ Atom *petta_semantics_static_procedure_error(
         : NULL;
     Atom *context = petta_error_predicate_context(arena, "system", predicate, 1);
     return petta_error_term(arena, formal, context);
+}
+
+Atom *petta_semantics_state_existence_error(Arena *arena, Atom *name) {
+    if (!arena || !name)
+        return NULL;
+    Atom *formal = atom_expr3(
+        arena, atom_symbol(arena, "existence_error"),
+        atom_symbol(arena, "variable"), name);
+    return petta_error_term(
+        arena, formal,
+        petta_error_predicate_context(arena, "system", "nb_getval", 2));
 }
 
 Atom *petta_semantics_instantiation_error(
@@ -983,7 +993,7 @@ static PeTTaListWalk petta_list_walk(Arena *arena, Atom *value,
     }
     Atom *const *elems = NULL;
     CettaExprLen len = 0u;
-    if (atom_sequence_view(cursor, &elems, &len)) {
+    if (petta_semantics_sequence_view(cursor, &elems, &len)) {
         for (CettaExprIndex i = 0u; i < len; i++)
             if (!petta_list_walk_push(arena, items, count, &capacity,
                                       elems[i]))
@@ -1125,7 +1135,7 @@ Atom *petta_semantics_sort_value(Arena *arena, Atom *value, bool total,
         return NULL;
     /* A Prolog compound is no list: non_list/1 for sort-atom, a type error
      * for msort. */
-    if (atom_is_petta_prolog_compound(value)) {
+    if (petta_semantics_is_nonlist_carrier(value)) {
         if (total)
             return atom_unit(arena);
         *type_error = true;
@@ -1152,7 +1162,8 @@ Atom *petta_semantics_materialize_closed_logical_list(
     if (!arena || !list)
         return NULL;
     if (!petta_semantics_is_open_cons_value(list))
-        return list->kind == ATOM_EXPR ? list : NULL;
+        return list->kind == ATOM_EXPR &&
+               !petta_semantics_is_nonlist_carrier(list) ? list : NULL;
     PeTTaListItems items = {0};
     Atom *end = petta_logical_list_collect(list, false, &items);
     Atom *closed = end && end->kind == ATOM_EXPR
@@ -1186,13 +1197,14 @@ Atom *petta_semantics_materialize_logical_list(
     if (!arena || !list)
         return NULL;
     if (!petta_semantics_is_open_cons_value(list))
-        return list->kind == ATOM_EXPR ? list : NULL;
+        return list->kind == ATOM_EXPR &&
+               !petta_semantics_is_nonlist_carrier(list) ? list : NULL;
 
     PeTTaListItems items = {0};
     Atom *end = petta_logical_list_collect(list, false, &items);
     Atom *result = NULL;
     if (end && end->kind == ATOM_EXPR &&
-        !atom_is_petta_prolog_compound(end)) {
+        !petta_semantics_is_nonlist_carrier(end)) {
         result = petta_logical_list_close(arena, &items, end);
     } else if (end) {
         /* An open end, or an improper one such as a Prolog compound, keeps
@@ -1721,6 +1733,8 @@ static bool petta_semantics_match_cons_constraint_mode(
                 goto fail;
             continue;
         }
+        if (!atom_petta_decomposition_compatible(left, right))
+            goto fail;
         /* Two expressions of one kind meet element by element; a list and a
          * list pattern, or a list and an expression, meet as the general
          * matcher decides. */
@@ -2449,6 +2463,438 @@ Atom *petta_semantics_boolean_value(Arena *arena, bool value) {
         ? atom_symbol_id(
               arena, value ? ids->true_text : ids->false_text)
         : NULL;
+}
+
+/* ── get-type ─────────────────────────────────────────────────────────────
+ *
+ * The reference's relation (metta.pl):
+ *
+ *   get-type(X, T) :- candidate(X, T) *-> true ; T = %Undefined%.
+ *   candidate(X, Number) :- number(X), !.
+ *   candidate(X, _)      :- var(X), !.
+ *   candidate(X, String) :- string(X), !.
+ *   candidate(true, Bool) :- !.         candidate(false, Bool) :- !.
+ *   candidate(X, T) :- function_type(X, T).
+ *   candidate(X, T) :- \+ function_type(X, _), is_list(X),
+ *                      maplist(get-type, X, T).
+ *   candidate(X, T) :- (: X T) is in the space.
+ *   function_type([F|Args], T) :- nonvar(F), (: F (-> As... T)) is in the
+ *                                 space, maplist(get-type, Args, As).
+ *
+ * Answers for a fresh T are computed bottom-up over the elements of X with
+ * an explicit stack, so a deep value costs heap rather than C stack.  An
+ * argument checked against its declared type keeps the reference's reading
+ * of a call with T bound: the candidates that unify with it, a literal's
+ * declarations when its own type does not, and %Undefined% when nothing
+ * does and the declared type admits it. */
+
+typedef struct {
+    Atom **items;
+    uint32_t length;
+    uint32_t capacity;
+} PeTTaTypeList;
+
+typedef struct {
+    Atom *atom;
+    Atom *const *elements;
+    CettaExprLen length;
+    CettaExprIndex next;
+    PeTTaTypeList *element_types;
+} PeTTaTypeFrame;
+
+static bool petta_type_list_push(PeTTaTypeList *list, Atom *type) {
+    if (!list || !type)
+        return false;
+    if (list->length == list->capacity) {
+        if (list->capacity > UINT32_MAX / 2u)
+            return false;
+        uint32_t capacity = list->capacity ? list->capacity * 2u : 2u;
+        Atom **items = realloc(list->items, sizeof(*items) * capacity);
+        if (!items)
+            return false;
+        list->items = items;
+        list->capacity = capacity;
+    }
+    list->items[list->length++] = type;
+    return true;
+}
+
+/* A number's, a string's or a truth value's type, which no declaration
+ * overrides; NULL for every other atom. */
+static Atom *petta_type_of_literal(Arena *arena, const Atom *atom) {
+    if (atom->kind == ATOM_GROUNDED) {
+        switch (atom->ground.gkind) {
+        case GV_INT:
+        case GV_BIGINT:
+        case GV_RATIONAL:
+        case GV_FLOAT:
+            return atom_symbol(arena, "Number");
+        case GV_STRING:
+            return atom_symbol(arena, "String");
+        default:
+            break;
+        }
+    }
+    bool truth = false;
+    return petta_semantics_truth_value(atom, &truth)
+        ? atom_symbol(arena, "Bool") : NULL;
+}
+
+/* The elements of X when is_list(X) holds: an expression or a list value,
+ * or open cells whose last tail is one.  A list pattern, a cell with an
+ * open tail, a Prolog compound and every non-expression are not lists. */
+static bool petta_type_list_elements(
+    Arena *arena, Atom *atom, Atom *const **elements, CettaExprLen *length) {
+    if (!petta_semantics_is_open_cons_value(atom))
+        return petta_semantics_sequence_view(atom, elements, length);
+    size_t cells = 0u;
+    Atom *end = atom;
+    while (petta_semantics_is_open_cons_value(end)) {
+        cells++;
+        end = end->expr.elems[2];
+    }
+    Atom *const *tail = NULL;
+    CettaExprLen tail_length = 0u;
+    if (!petta_semantics_sequence_view(end, &tail, &tail_length) ||
+        (uint64_t)tail_length > (uint64_t)(SIZE_MAX / sizeof(Atom *)) - cells)
+        return false;
+    size_t total = cells + (size_t)tail_length;
+    Atom **items = total
+        ? arena_alloc(arena, sizeof(*items) * total) : NULL;
+    if (total && !items)
+        return false;
+    size_t index = 0u;
+    for (Atom *cell = atom; petta_semantics_is_open_cons_value(cell);
+         cell = cell->expr.elems[2])
+        items[index++] = cell->expr.elems[1];
+    for (CettaExprIndex i = 0u; i < tail_length; i++)
+        items[index++] = tail[i];
+    *elements = items;
+    *length = (CettaExprLen)total;
+    return true;
+}
+
+static bool petta_type_push_declared(
+    Space *space, Arena *arena, Atom *subject, PeTTaTypeList *out) {
+    Atom **declared = NULL;
+    uint32_t count = space_get_declared_types(space, arena, subject, &declared);
+    bool ok = true;
+    for (uint32_t i = 0u; ok && i < count; i++)
+        ok = petta_type_list_push(out, declared[i]);
+    free(declared);
+    return ok;
+}
+
+/* get-type(Argument, Formal) under `bindings`, for each solution the rest
+ * of the arguments, then the declaration's result type.  Recursion is by
+ * argument position, bounded by the declaration's arity. */
+static bool petta_type_check_arguments(
+    Space *space, Arena *arena, Atom *const *arguments,
+    const PeTTaTypeList *argument_types, Atom *declaration,
+    CettaExprIndex index, Bindings *bindings, PeTTaTypeList *out) {
+    CettaExprLen arity = declaration->expr.len - 2u;
+    if (index == arity)
+        return petta_type_list_push(
+            out, bindings_apply_if_vars(
+                     bindings, arena, declaration->expr.elems[arity + 1u]));
+    Atom *formal = declaration->expr.elems[index + 1u];
+    Atom *argument = arguments[index];
+    if (argument->kind == ATOM_VAR)
+        return petta_type_check_arguments(
+            space, arena, arguments, argument_types, declaration,
+            index + 1u, bindings, out);
+
+    PeTTaTypeList declared = {0};
+    const PeTTaTypeList *candidates = &argument_types[index];
+    Atom *literal = petta_type_of_literal(arena, argument);
+    if (literal) {
+        Bindings trial;
+        bindings_init(&trial);
+        bool unified = bindings_clone(&trial, bindings) &&
+                       match_atoms(literal, formal, &trial, arena);
+        bool ok = !unified ||
+                  petta_type_check_arguments(
+                      space, arena, arguments, argument_types, declaration,
+                      index + 1u, &trial, out);
+        bindings_free(&trial);
+        if (unified || !ok)
+            return ok;
+        if (!petta_type_push_declared(space, arena, argument, &declared)) {
+            free(declared.items);
+            return false;
+        }
+        candidates = &declared;
+    }
+
+    bool any = false;
+    bool ok = true;
+    for (uint32_t i = 0u; ok && i < candidates->length; i++) {
+        Bindings trial;
+        bindings_init(&trial);
+        if (bindings_clone(&trial, bindings) &&
+            match_atoms(candidates->items[i], formal, &trial, arena)) {
+            any = true;
+            ok = petta_type_check_arguments(
+                space, arena, arguments, argument_types, declaration,
+                index + 1u, &trial, out);
+        }
+        bindings_free(&trial);
+    }
+    free(declared.items);
+    if (!ok || any)
+        return ok;
+    Bindings trial;
+    bindings_init(&trial);
+    if (bindings_clone(&trial, bindings) &&
+        match_atoms(atom_undefined_type(arena), formal, &trial, arena))
+        ok = petta_type_check_arguments(
+            space, arena, arguments, argument_types, declaration,
+            index + 1u, &trial, out);
+    bindings_free(&trial);
+    return ok;
+}
+
+/* The answers of a list: its function types, else its elements' types,
+ * then its declarations. */
+static bool petta_type_list_answers(
+    Space *space, Arena *arena, const PeTTaTypeFrame *frame,
+    PeTTaTypeList *out) {
+    Atom *head = frame->length > 0u ? frame->elements[0] : NULL;
+    if (head && head->kind != ATOM_VAR) {
+        Atom **declared = NULL;
+        uint32_t count = space_get_declared_types(
+            space, arena, head, &declared);
+        bool ok = true;
+        for (uint32_t i = 0u; ok && i < count; i++) {
+            Atom *type = declared[i];
+            if (!type || type->kind != ATOM_EXPR || type->expr.len < 2u ||
+                type->expr.len - 2u != frame->length - 1u ||
+                !atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow))
+                continue;
+            Bindings bindings;
+            bindings_init(&bindings);
+            ok = petta_type_check_arguments(
+                space, arena, frame->elements + 1u,
+                frame->element_types + 1u, type, 0u, &bindings, out);
+            bindings_free(&bindings);
+        }
+        free(declared);
+        if (!ok)
+            return false;
+    }
+    if (out->length == 0u) {
+        /* maplist(get-type, X, T): every combination of the elements'
+         * answers, the last element varying fastest. */
+        CettaExprLen length = frame->length;
+        uint64_t total = 1u;
+        for (CettaExprIndex i = 0u; i < length; i++) {
+            total *= frame->element_types[i].length;
+            if (total > UINT32_MAX)
+                return false;
+        }
+        uint32_t *indices = length ? calloc((size_t)length, sizeof(*indices))
+                                   : NULL;
+        Atom **row = length ? malloc(sizeof(*row) * (size_t)length) : NULL;
+        if (length && (!indices || !row)) {
+            free(indices);
+            free(row);
+            return false;
+        }
+        bool ok = true;
+        for (uint64_t produced = 0u; ok && produced < total; produced++) {
+            for (CettaExprIndex i = 0u; i < length; i++)
+                row[i] = frame->element_types[i].items[indices[i]];
+            ok = petta_type_list_push(out, atom_expr(arena, row, length));
+            for (CettaExprIndex i = length; i > 0u; i--) {
+                if (++indices[i - 1u] < frame->element_types[i - 1u].length)
+                    break;
+                indices[i - 1u] = 0u;
+            }
+        }
+        free(indices);
+        free(row);
+        if (!ok)
+            return false;
+    }
+    return petta_type_push_declared(space, arena, frame->atom, out);
+}
+
+/* The answers of a variable, a literal or an atom that is not a list. */
+static bool petta_type_leaf_answers(
+    Space *space, Arena *arena, Atom *atom, PeTTaTypeList *out) {
+    if (atom->kind == ATOM_VAR)
+        return petta_type_list_push(
+            out, atom_var_with_id(arena, "__petta_type", fresh_var_id()));
+    Atom *literal = petta_type_of_literal(arena, atom);
+    if (literal)
+        return petta_type_list_push(out, literal);
+    return petta_type_push_declared(space, arena, atom, out);
+}
+
+static void petta_type_frame_free(PeTTaTypeFrame *frame) {
+    if (frame->element_types) {
+        for (CettaExprIndex i = 0u; i < frame->length; i++)
+            free(frame->element_types[i].items);
+        free(frame->element_types);
+    }
+}
+
+static bool petta_type_frame_open(
+    Arena *arena, Atom *atom, PeTTaTypeFrame *frame, bool *is_list) {
+    *frame = (PeTTaTypeFrame){.atom = atom};
+    *is_list = petta_type_list_elements(
+        arena, atom, &frame->elements, &frame->length);
+    if (!*is_list || frame->length == 0u)
+        return true;
+    if ((uint64_t)frame->length > (uint64_t)(SIZE_MAX / sizeof(PeTTaTypeList)))
+        return false;
+    frame->element_types = calloc(
+        (size_t)frame->length, sizeof(*frame->element_types));
+    return frame->element_types != NULL;
+}
+
+/* get-type(Subject, T) for a fresh T. */
+static bool petta_type_answers_fresh(
+    Space *space, Arena *arena, Atom *subject, PeTTaTypeList *out) {
+    PeTTaTypeFrame *stack = NULL;
+    size_t depth = 0u;
+    size_t capacity = 0u;
+    bool is_list = false;
+    PeTTaTypeFrame root;
+    if (!petta_type_frame_open(arena, subject, &root, &is_list))
+        return false;
+    if (!is_list) {
+        bool ok = petta_type_leaf_answers(space, arena, subject, out);
+        if (ok && out->length == 0u)
+            ok = petta_type_list_push(out, atom_undefined_type(arena));
+        return ok;
+    }
+    bool ok = true;
+    stack = malloc(sizeof(*stack) * 8u);
+    capacity = 8u;
+    if (!stack) {
+        petta_type_frame_free(&root);
+        return false;
+    }
+    stack[depth++] = root;
+    while (ok && depth > 0u) {
+        PeTTaTypeFrame *frame = &stack[depth - 1u];
+        if (frame->next < frame->length) {
+            Atom *element = frame->elements[frame->next];
+            PeTTaTypeFrame child;
+            bool child_is_list = false;
+            if (!petta_type_frame_open(arena, element, &child, &child_is_list)) {
+                ok = false;
+                break;
+            }
+            if (child_is_list) {
+                if (depth == capacity) {
+                    PeTTaTypeFrame *grown = capacity <= SIZE_MAX / (2u * sizeof(*stack))
+                        ? realloc(stack, sizeof(*stack) * capacity * 2u) : NULL;
+                    if (!grown) {
+                        petta_type_frame_free(&child);
+                        ok = false;
+                        break;
+                    }
+                    stack = grown;
+                    capacity *= 2u;
+                }
+                stack[depth++] = child;
+                continue;
+            }
+            PeTTaTypeList *slot = &frame->element_types[frame->next];
+            ok = petta_type_leaf_answers(space, arena, element, slot) &&
+                 (slot->length > 0u ||
+                  petta_type_list_push(slot, atom_undefined_type(arena)));
+            frame->next++;
+            continue;
+        }
+        PeTTaTypeList answers = {0};
+        ok = petta_type_list_answers(space, arena, frame, &answers) &&
+             (answers.length > 0u ||
+              petta_type_list_push(&answers, atom_undefined_type(arena)));
+        petta_type_frame_free(frame);
+        depth--;
+        if (!ok) {
+            free(answers.items);
+            break;
+        }
+        if (depth == 0u) {
+            *out = answers;
+            break;
+        }
+        PeTTaTypeFrame *parent = &stack[depth - 1u];
+        parent->element_types[parent->next++] = answers;
+    }
+    while (depth > 0u)
+        petta_type_frame_free(&stack[--depth]);
+    free(stack);
+    return ok;
+}
+
+bool petta_semantics_type_answers(
+    Space *space, Arena *arena, Atom *subject, Atom *target,
+    Atom ***types_out, uint32_t *count_out) {
+    if (!types_out || !count_out)
+        return false;
+    *types_out = NULL;
+    *count_out = 0u;
+    if (!space || !arena || !subject)
+        return false;
+    PeTTaTypeList answers = {0};
+    if (!petta_type_answers_fresh(space, arena, subject, &answers)) {
+        free(answers.items);
+        return false;
+    }
+    if (!target) {
+        *types_out = answers.items;
+        *count_out = answers.length;
+        return true;
+    }
+
+    /* A bound T: the candidates that unify with it, else %Undefined% if it
+     * does.  A literal's own type decides unless it fails to unify, when the
+     * literal's declarations are its candidates. */
+    PeTTaTypeList declared = {0};
+    PeTTaTypeList solutions = {0};
+    const PeTTaTypeList *candidates = &answers;
+    bool ok = true;
+    Atom *literal = petta_type_of_literal(arena, subject);
+    if (literal) {
+        Bindings trial;
+        bindings_init(&trial);
+        bool unified = match_atoms(literal, target, &trial, arena);
+        bindings_free(&trial);
+        if (!unified) {
+            ok = petta_type_push_declared(space, arena, subject, &declared);
+            candidates = &declared;
+        }
+    }
+    for (uint32_t i = 0u; ok && i < candidates->length; i++) {
+        Bindings trial;
+        bindings_init(&trial);
+        if (match_atoms(candidates->items[i], target, &trial, arena))
+            ok = petta_type_list_push(
+                &solutions, bindings_apply_if_vars(&trial, arena, target));
+        bindings_free(&trial);
+    }
+    if (ok && solutions.length == 0u) {
+        Bindings trial;
+        bindings_init(&trial);
+        if (match_atoms(atom_undefined_type(arena), target, &trial, arena))
+            ok = petta_type_list_push(
+                &solutions, bindings_apply_if_vars(&trial, arena, target));
+        bindings_free(&trial);
+    }
+    free(answers.items);
+    free(declared.items);
+    if (!ok) {
+        free(solutions.items);
+        return false;
+    }
+    *types_out = solutions.items;
+    *count_out = solutions.length;
+    return true;
 }
 
 static const char *petta_semantics_path_component(
@@ -3428,15 +3874,46 @@ Atom *petta_semantics_apply(
     return atom_expr2(arena, callable, argument);
 }
 
+/* Fresh names may be translated by different workers, then copied between
+ * them. Like variable identities, their allocation cannot be thread-local. */
+static _Atomic uint64_t g_petta_callable_identity;
+
+Atom *petta_semantics_new_callable_identity(Arena *arena) {
+    if (!arena || !petta_symbol_ids()->table)
+        return NULL;
+    for (;;) {
+        uint64_t previous = atomic_load_explicit(
+            &g_petta_callable_identity, memory_order_relaxed);
+        do {
+            if (previous == (uint64_t)INT64_MAX)
+                return NULL;
+        } while (!atomic_compare_exchange_weak_explicit(
+            &g_petta_callable_identity, &previous, previous + 1u,
+            memory_order_relaxed, memory_order_relaxed));
+        uint64_t identity = previous + 1u;
+        char spelling[64];
+        int length = snprintf(spelling, sizeof(spelling), "lambda_%llu",
+                              (unsigned long long)identity);
+        if (length <= 0 || (size_t)length >= sizeof(spelling))
+            return NULL;
+        /* Avoid taking an authored name when the callable later crosses
+         * the foreign atom boundary. Do not intern unused labels: repeated
+         * translation must not retain one symbol per transient callable. */
+        if (symbol_lookup_cstr(g_symbols, spelling) == SYMBOL_ID_NONE)
+            return atom_int(arena, (int64_t)identity);
+    }
+}
+
 Atom *petta_semantics_lambda_value(
-    Arena *arena, Atom *canonical_body) {
+    Arena *arena, Atom *identity, Atom *canonical_body) {
     const PeTTaSymbolIds *ids = petta_symbol_ids();
-    if (!arena || !canonical_body || !ids->table)
+    if (!arena || !identity || !canonical_body || !ids->table)
         return NULL;
     return atom_expr3(
         arena,
         atom_symbol_id(arena, ids->canonical_lam),
-        atom_symbol_id(arena, ids->callable_marker),
+        atom_expr2(arena, atom_internal_tag(arena, CETTA_INTERNAL_TAG_PETTA_CALLABLE_IDENTITY),
+                   identity),
         canonical_body);
 }
 
@@ -3448,12 +3925,69 @@ bool petta_semantics_lambda_body(
     if (!atom || !ids->table || atom->kind != ATOM_EXPR ||
         atom->expr.len != 3u ||
         !atom_is_symbol_id(atom->expr.elems[0], ids->canonical_lam) ||
-        !atom_is_symbol_id(atom->expr.elems[1], ids->callable_marker)) {
+        atom->expr.elems[1]->kind != ATOM_EXPR ||
+        atom->expr.elems[1]->expr.len != 2u ||
+        !atom_is_internal_tag(atom->expr.elems[1]->expr.elems[0],
+                           CETTA_INTERNAL_TAG_PETTA_CALLABLE_IDENTITY)) {
         return false;
     }
     if (canonical_body)
         *canonical_body = atom->expr.elems[2];
     return true;
+}
+
+bool petta_semantics_is_mm2_exec(SymbolId head) {
+    const PeTTaSymbolIds *ids = petta_symbol_ids();
+    return ids->table && head != SYMBOL_ID_NONE && head == ids->mm2_exec;
+}
+
+bool petta_semantics_is_mork_space_name(const Atom *atom) {
+    const PeTTaSymbolIds *ids = petta_symbol_ids();
+    return ids->table && atom && atom->kind == ATOM_SYMBOL &&
+        atom->sym_id == ids->mork_space;
+}
+
+bool petta_semantics_is_canonical_closure(const Atom *atom) {
+    Atom *base = NULL;
+    if (petta_semantics_partial_view(atom, &base, NULL))
+        atom = base;
+    return petta_semantics_lambda_body(atom, NULL) ||
+           petta_semantics_nullary_lambda_body(atom, NULL);
+}
+
+bool petta_semantics_closure_remaining(const Atom *atom,
+                                       CettaExprLen *remaining) {
+    Atom *base = NULL;
+    Atom *bound = NULL;
+    if (!petta_semantics_partial_view(atom, &base, &bound) ||
+        !petta_semantics_lambda_body(base, NULL))
+        return false;
+    CettaExprLen parameters = 0u;
+    for (Atom *body = base; petta_semantics_lambda_body(body, &body);)
+        parameters++;
+    if (parameters < bound->expr.len)
+        return false;
+    if (remaining)
+        *remaining = parameters - bound->expr.len;
+    return true;
+}
+
+CettaExprIndex petta_semantics_output_child(const Atom *body) {
+    if (!body || body->kind != ATOM_EXPR || body->expr.len < 2u ||
+        body->expr.elems[0]->kind != ATOM_SYMBOL)
+        return 0u;
+    SymbolId head = body->expr.elems[0]->sym_id;
+    PeTTaForm form = petta_semantics_form(head);
+    CettaExprLen len = body->expr.len;
+    if ((form == PETTA_FORM_LET || form == PETTA_FORM_CHAIN) && len == 4u)
+        return 3u;
+    if (head == g_builtin_syms.let_star && len == 3u)
+        return 2u;
+    if (form == PETTA_FORM_PROGN)
+        return len - 1u;
+    if (form == PETTA_FORM_PROG1)
+        return 1u;
+    return 0u;
 }
 
 bool petta_semantics_runtime_callable_value(const Atom *atom) {
@@ -3463,12 +3997,13 @@ bool petta_semantics_runtime_callable_value(const Atom *atom) {
 }
 
 Atom *petta_semantics_nullary_lambda_value(
-    Arena *arena, Atom *body) {
+    Arena *arena, Atom *identity, Atom *body) {
     const PeTTaSymbolIds *ids = petta_symbol_ids();
-    if (!arena || !body || !ids->table)
+    if (!arena || !identity || !body || !ids->table)
         return NULL;
-    return atom_expr2(
-        arena, atom_symbol_id(arena, ids->nullary_callable), body);
+    return atom_expr3(
+        arena, atom_internal_tag(arena, CETTA_INTERNAL_TAG_PETTA_NULLARY_CALLABLE),
+        identity, body);
 }
 
 bool petta_semantics_nullary_lambda_body(
@@ -3477,12 +4012,13 @@ bool petta_semantics_nullary_lambda_body(
     if (body)
         *body = NULL;
     if (!atom || !ids->table || atom->kind != ATOM_EXPR ||
-        atom->expr.len != 2u ||
-        !atom_is_symbol_id(atom->expr.elems[0], ids->nullary_callable)) {
+        atom->expr.len != 3u ||
+        !atom_is_internal_tag(atom->expr.elems[0],
+                              CETTA_INTERNAL_TAG_PETTA_NULLARY_CALLABLE)) {
         return false;
     }
     if (body)
-        *body = atom->expr.elems[1];
+        *body = atom->expr.elems[2];
     return true;
 }
 
@@ -3502,13 +4038,12 @@ Atom *petta_semantics_partial_value(
         items[index] = arguments[index];
     Atom *bound = atom_expr(arena, items, nargs);
     return atom_expr3(
-        arena, atom_symbol_id(arena, ids->partial), base, bound);
+        arena, atom_internal_tag(arena, CETTA_INTERNAL_TAG_PETTA_PARTIAL),
+        base, bound);
 }
 
 bool petta_semantics_partial_head(const Atom *head) {
-    const PeTTaSymbolIds *ids = petta_symbol_ids();
-    return ids->table && head && head->kind == ATOM_SYMBOL &&
-        head->sym_id == ids->partial;
+    return atom_is_internal_tag(head, CETTA_INTERNAL_TAG_PETTA_PARTIAL);
 }
 
 bool petta_semantics_partial_view(
@@ -3529,4 +4064,18 @@ bool petta_semantics_partial_view(
     if (arguments)
         *arguments = atom->expr.elems[2];
     return true;
+}
+
+PeTTaValueRepresentation petta_semantics_value_representation(const Atom *value) {
+    return atom_petta_value_representation(value);
+}
+
+bool petta_semantics_is_nonlist_carrier(const Atom *value) {
+    return petta_semantics_value_representation(value) != PETTA_VALUE_ORDINARY;
+}
+
+bool petta_semantics_sequence_view(
+    const Atom *value, Atom *const **elements, CettaExprLen *length) {
+    return !petta_semantics_is_nonlist_carrier(value) &&
+           atom_sequence_view(value, elements, length);
 }

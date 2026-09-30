@@ -2,6 +2,7 @@
 #define CETTA_DELAY_SERVICE_H
 
 #include "atom.h"
+#include "match.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -41,10 +42,77 @@ typedef struct {
 
 typedef struct CettaDelayService CettaDelayService;
 
+typedef enum {
+    CETTA_DELAY_SYNC_READY,
+    CETTA_DELAY_SYNC_FAILED,
+    CETTA_DELAY_SYNC_RAISED,
+    CETTA_DELAY_SYNC_CAPACITY,
+} CettaDelaySyncStatus;
+
+/* One retained solver client belongs to the branch, alongside ordinary
+ * delayed goals. Its history uses the binding trail's marks. clone() copies
+ * current state into an independent owner with a fresh history; rollback,
+ * commit and rebase follow the same protocol as the goal table.
+ *
+ * A watched native write queues work through bound(). sync() drains that
+ * work against the native bindings and publishes only its consequences in
+ * delta. READY is quiescent; FAILED is logical inconsistency; RAISED carries
+ * the exact exception. Native allocation/protocol failure is separate.
+ *
+ * roots() visits owned native terms needed by current and rewindable state.
+ * goals() materializes current conditional goals only at an observation or
+ * foreign boundary. Those views live until the next client operation. They
+ * use the same variable identities as native bindings, without transferring
+ * a mutable solver handle to a sibling. A client may not reenter this
+ * service from its callbacks. */
+typedef struct {
+    CettaDelayClient client;
+    void *(*clone)(const void *state);
+    void (*free)(void *state);
+    void (*rollback)(void *state, uint32_t mark);
+    void (*commit)(void *state);
+    void (*rebase)(void *state, const uint32_t *kept, uint32_t count);
+    bool (*watches)(const void *state, VarId var);
+    bool (*bound)(void *state, uint32_t mark, VarId var);
+    bool (*withdraw)(void *state, uint32_t mark, VarId var);
+    bool (*reset)(void *state, uint32_t mark);
+    bool (*pending)(const void *state);
+    CettaDelaySyncStatus (*sync)(void *state, uint32_t mark, const Bindings *bindings,
+                                 Arena *arena, Bindings *delta, Atom **raised);
+    bool (*roots)(const void *state,
+                   bool (*visit)(void *context, Atom *root), void *context);
+    bool (*goals)(const void *state,
+                   bool (*visit)(void *context, const CettaDelayGoal *goal),
+                   void *context);
+} CettaDelayOwnerOps;
+
+/* Ownership transfers on success only. Installing over an existing owner
+ * is refused; replacement must be an explicit client history operation. */
+bool cetta_delay_owner_install(CettaDelayService *service,
+                               const CettaDelayOwnerOps *ops, void *state);
+void *cetta_delay_owner(const CettaDelayService *service, CettaDelayClient client);
+bool cetta_delay_holds(const CettaDelayService *service);
+bool cetta_delay_owner_pending(const CettaDelayService *service);
+CettaDelaySyncStatus cetta_delay_owner_sync(
+    CettaDelayService *service, uint32_t mark, const Bindings *bindings, Arena *arena,
+    Bindings *delta, Atom **raised);
+bool cetta_delay_visit_owned_roots(
+    const CettaDelayService *service,
+    bool (*visit)(void *context, Atom *root), void *context);
+/* Export retained conditional goals into the ordinary table at an explicit
+ * foreign/answer boundary, then reset the client's current solver epoch.
+ * The old epoch remains rewindable until the shared history commits it. */
+bool cetta_delay_materialize(CettaDelayService *service, uint32_t mark);
+
 /* What a caller that keeps delayed goals hands a foreign call: its service,
  * NULL while it holds none.  A caller that keeps none passes no view. */
 typedef struct {
     const CettaDelayService *service;
+    /* Acquire a branch-owned service only when a client needs it. The mark
+     * callback reserves an actual binding-history barrier before mutation. */
+    CettaDelayService *(*acquire)(void *context);
+    uint32_t (*mark)(void *context);
+    void *context;
 } CettaDelayView;
 
 CettaDelayService *cetta_delay_service_new(void);
@@ -54,6 +122,7 @@ CettaDelayService *cetta_delay_service_clone(const CettaDelayService *service);
 
 /* Whether any goal waits on any variable: the unwatched path's one test. */
 bool cetta_delay_watching(const CettaDelayService *service);
+bool cetta_delay_serialized(const CettaDelayService *service);
 bool cetta_delay_watches(const CettaDelayService *service, VarId var);
 
 /* Suspend `goal` on `vars`, or queue it at once when one of them is
@@ -106,7 +175,8 @@ bool cetta_delay_reach(const CettaDelayService *service, const VarId *vars,
                        uint32_t *count);
 
 /* The live goals suspended on `var`, for a client that must carry them into
- * a foreign call; returns how many were written to `goals`. */
+ * a foreign call; returns the total count, writing up to capacity entries.
+ * UINT32_MAX signals failed retained-goal materialization or overflow. */
 uint32_t cetta_delay_goals_on(const CettaDelayService *service, VarId var,
                               const CettaDelayGoal **goals,
                               uint32_t capacity);

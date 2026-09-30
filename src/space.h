@@ -639,6 +639,8 @@ typedef struct {
     Atom *value;  /* Usually a grounded space atom, but can be anything */
 } RegistryEntry;
 
+struct RegistryStates;
+
 typedef struct {
     RegistryEntry *entries;
     uint32_t len, cap;
@@ -649,6 +651,9 @@ typedef struct {
     uint32_t *index_slots;
     uint32_t index_cap;
     uint32_t inline_index_slots[32];
+    /* PeTTa's named state, a namespace beside the bindings; NULL until a
+       state is first set. */
+    struct RegistryStates *states;
 } Registry;
 
 void registry_init(Registry *r);
@@ -660,6 +665,17 @@ Atom *registry_lookup(Registry *r, const char *name);
 bool registry_bind_name(Registry *r, Atom *name_key, Atom *value);
 Atom *registry_lookup_name(Registry *r, Atom *name_key);
 const Atom *registry_entry_name_key(const Registry *r, uint32_t index);
+
+/* PeTTa's named state: the reference's global variables, whose names are
+   independent of the names bound above.  Each state owns its value's
+   storage, and setting a state copies the value in and releases the value
+   it replaces, so a reader copies a stored value out before the state can
+   next change, and never keeps it. */
+Atom *registry_state_lookup(const Registry *r, SymbolId key);
+bool registry_state_set(Registry *r, SymbolId key, Atom *value);
+uint32_t registry_state_count(const Registry *r);
+bool registry_state_entry(const Registry *r, uint32_t index,
+                          SymbolId *key_out, Atom **value_out);
 
 /* Canonical structural reference: (resolve-name (quote <closed-key>)). */
 bool registry_ref_name_key(Atom *ref, Atom **name_key_out);

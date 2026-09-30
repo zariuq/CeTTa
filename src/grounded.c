@@ -325,6 +325,26 @@ static bool petta_repra_render(
             }
             break;
         case ATOM_EXPR: {
+            int64_t identity = 0;
+            if (atom_petta_callable_identity(atom, &identity)) {
+                char spelling[64];
+                int length = snprintf(spelling, sizeof(spelling), "lambda_%llu",
+                                      (unsigned long long)identity);
+                if (length <= 0 || (size_t)length >= sizeof(spelling)) {
+                    ok = false;
+                    break;
+                }
+                sb_append_n(output, spelling, (size_t)length);
+                break;
+            }
+            if (atom_is_petta_partial(atom)) {
+                sb_append(output, "partial(");
+                ok = petta_repra_push_char(&stack, ')') &&
+                     petta_repra_push_atom(&stack, atom->expr.elems[2]) &&
+                     petta_repra_push_char(&stack, ',') &&
+                     petta_repra_push_atom(&stack, atom->expr.elems[1]);
+                break;
+            }
             Atom *compound = NULL;
             /* A list value is written as the translator's encoding of it,
              * (__tr_list_cons x ... __tr_list_nil), the term upstream PeTTa
@@ -1287,6 +1307,9 @@ static Atom *make_numeric(Arena *a, double val, bool any_float) {
 bool petta_libpl_evaluate_arithmetic(
     Arena *arena, const char *functor, Atom **args, uint32_t nargs,
     CettaCallOutcome *out) __attribute__((weak));
+bool petta_libpl_compare_arithmetic(
+    Arena *arena, const char *relation, Atom **args,
+    CettaCallOutcome *out) __attribute__((weak));
 bool petta_libpl_prefer_rationals(void) __attribute__((weak));
 
 /* The functor PeTTa's metta.pl evaluates a MeTTa arithmetic head with. */
@@ -1395,15 +1418,14 @@ static int64_t floor_mod_i64(int64_t lhs, int64_t rhs) {
 
 /* ── Number order ─────────────────────────────────────────────────────── */
 
-/* Numbers compare exactly in the PeTTa lane and in HE outside he-compat,
- * which keeps Hyperon's rounding of an integer to a float.  Other dialects
- * keep that rounding too. */
+/* HE outside he-compat orders integers and floats exactly.  PeTTa's
+ * arithmetic ordering promotes mixed numbers to floats, as SWI does;
+ * its separate value equality remains exact. */
 static bool grounded_compares_numbers_exactly(void) {
     CettaLanguageId language = eval_current_language_id
         ? eval_current_language_id() : CETTA_LANGUAGE_HE;
-    return language == CETTA_LANGUAGE_PETTA ||
-        (language == CETTA_LANGUAGE_HE &&
-         !eval_current_uses_rust_he_compat_semantics());
+    return language == CETTA_LANGUAGE_HE &&
+        !eval_current_uses_rust_he_compat_semantics();
 }
 
 /* The exact order of an integer and a float.  False for a NaN, which is
@@ -3281,7 +3303,7 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
      * unique-atom, sort-atom and size-atom give (), as their non_list
      * clauses do. */
     if (grounded_current_language_is_petta() && nargs >= 1u &&
-        atom_is_petta_prolog_compound(args[0])) {
+        petta_semantics_is_nonlist_carrier(args[0])) {
         if (head_id == g_builtin_syms.index_atom && nargs == 2u)
             return atom_petta_no_result(a);
         if (nargs == 1u &&
@@ -3533,7 +3555,9 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         /* A list's elements are read as an expression's are. */
         Atom *const *elems = NULL;
         CettaExprLen len = 0u;
-        bool sequence = atom_sequence_view(argument, &elems, &len);
+        bool sequence = grounded_current_language_is_petta()
+            ? petta_semantics_sequence_view(argument, &elems, &len)
+            : atom_sequence_view(argument, &elems, &len);
         /* PeTTa's car-atom and cdr-atom are total: a cell gives its head or
          * tail, and anything but a non-empty list gives (). */
         if (grounded_current_language_is_petta()) {
@@ -3737,7 +3761,9 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         }
         Atom *const *size_elems;
         CettaExprLen size_len;
-        if (atom_sequence_view(args[0], &size_elems, &size_len))
+        if (grounded_current_language_is_petta()
+                ? petta_semantics_sequence_view(args[0], &size_elems, &size_len)
+                : atom_sequence_view(args[0], &size_elems, &size_len))
             return atom_int(a, (int64_t)size_len);
         if (head_id == g_builtin_syms.size_atom &&
             grounded_current_language_is_petta()) {
@@ -4179,6 +4205,21 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
                                                               : grounded_division_by_zero(a, head, args, nargs);
     if (head_id == g_builtin_syms.op_lt || head_id == g_builtin_syms.op_gt ||
         head_id == g_builtin_syms.op_le || head_id == g_builtin_syms.op_ge) {
+        /* mpq_get_d truncates, whereas SWI rounds a rational in a mixed
+         * float comparison, and comparison overflow differs from is/2.
+         * Let the host comparison retain those rules and flags. */
+        if (petta && fl && (na.is_rational || nb.is_rational)) {
+            const char *relation = head_id == g_builtin_syms.op_lt ? "<"
+                : head_id == g_builtin_syms.op_gt ? ">"
+                : head_id == g_builtin_syms.op_le ? "=<" : ">=";
+            CettaCallOutcome out = cetta_call_failure();
+            if (!petta_libpl_compare_arithmetic ||
+                !petta_libpl_compare_arithmetic(a, relation, args, &out))
+                return NULL;
+            if (out.kind == CETTA_CALL_RAISED)
+                g_grounded_raised = true;
+            return out.term;
+        }
         int ordering = 0;
         return grounded_number_order(&na, &nb, &ordering) &&
                grounded_order_truth(head_id, ordering)

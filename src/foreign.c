@@ -1954,9 +1954,15 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
                            atom_symbol(a, "IncorrectNumberOfArguments")));
             return true;
         }
-        /* PeTTa/SWI permits `(py-call path)` to denote the Python callable
-         * itself.  Ordinary MeTTa application may then supply its arguments,
-         * as in `((py-call time.sleep) 1.0)`.  Keep lookup distinct from the
+        /* PeTTa's py-call takes a call spec, `(path args...)`; any other
+         * value, the empty expression included, matches none of its
+         * clauses, so the call has no answer. */
+        if (foreign_language_is_petta() &&
+            (args[0]->kind != ATOM_EXPR || args[0]->expr.len == 0u))
+            return true;
+        /* `(py-call path)` denotes the Python callable itself.  Ordinary
+         * MeTTa application may then supply its arguments, as in
+         * `((py-call time.sleep) 1.0)`.  Keep lookup distinct from the
          * immediate invocation form `(py-call (path args...))`. */
         if (args[0]->kind != ATOM_EXPR) {
             Atom *error = NULL;

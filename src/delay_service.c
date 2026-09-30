@@ -36,6 +36,8 @@ typedef struct {
 } DelayGoalRecord;
 
 struct CettaDelayService {
+    CettaDelayOwnerOps owner_ops;
+    void *owner;
     Arena arena;
     DelayGoalRecord *goals;
     uint32_t goal_len;
@@ -163,6 +165,8 @@ CettaDelayService *cetta_delay_service_new(void) {
 void cetta_delay_service_free(CettaDelayService *service) {
     if (!service)
         return;
+    if (service->owner)
+        service->owner_ops.free(service->owner);
     arena_free(&service->arena);
     free(service->goals);
     free(service->watches);
@@ -172,13 +176,72 @@ void cetta_delay_service_free(CettaDelayService *service) {
     free(service);
 }
 
+bool cetta_delay_owner_install(CettaDelayService *service,
+                               const CettaDelayOwnerOps *ops, void *state) {
+    if (!service || service->owner || !ops || !state ||
+        ops->client != CETTA_DELAY_CLIENT_PROLOG || !ops->clone || !ops->free ||
+        !ops->rollback || !ops->commit || !ops->rebase || !ops->watches ||
+        !ops->bound || !ops->withdraw || !ops->reset || !ops->pending || !ops->sync ||
+        !ops->roots || !ops->goals)
+        return false;
+    service->owner_ops = *ops;
+    service->owner = state;
+    return true;
+}
+
+void *cetta_delay_owner(const CettaDelayService *service, CettaDelayClient client) {
+    return service && service->owner && service->owner_ops.client == client
+        ? service->owner : NULL;
+}
+
+bool cetta_delay_holds(const CettaDelayService *service) {
+    return service && (service->owner || service->suspended ||
+                        service->queue_head < service->queue_len);
+}
+
+bool cetta_delay_owner_pending(const CettaDelayService *service) {
+    return service && service->owner &&
+           service->owner_ops.pending(service->owner);
+}
+
+CettaDelaySyncStatus cetta_delay_owner_sync(
+    CettaDelayService *service, uint32_t mark, const Bindings *bindings, Arena *arena,
+    Bindings *delta, Atom **raised) {
+    if (!bindings || !arena || !delta || !raised)
+        return CETTA_DELAY_SYNC_CAPACITY;
+    *raised = NULL;
+    if (!cetta_delay_owner_pending(service))
+        return CETTA_DELAY_SYNC_READY;
+    CettaDelaySyncStatus result = service->owner_ops.sync(
+        service->owner, mark, bindings, arena, delta, raised);
+    if ((result == CETTA_DELAY_SYNC_RAISED && !*raised) ||
+        (result == CETTA_DELAY_SYNC_READY &&
+         cetta_delay_owner_pending(service)))
+        return CETTA_DELAY_SYNC_CAPACITY;
+    return result;
+}
+
+bool cetta_delay_visit_owned_roots(
+    const CettaDelayService *service,
+    bool (*visit)(void *context, Atom *root), void *context) {
+    return !service || !service->owner ||
+           service->owner_ops.roots(service->owner, visit, context);
+}
+
 bool cetta_delay_watching(const CettaDelayService *service) {
+    /* An owner may watch variables even when no serialized goal exists. */
+    return service && (service->suspended > 0u || service->owner);
+}
+
+bool cetta_delay_serialized(const CettaDelayService *service) {
     return service && service->suspended > 0u;
 }
 
 bool cetta_delay_watches(const CettaDelayService *service, VarId var) {
     if (!cetta_delay_watching(service))
         return false;
+    if (service->owner && service->owner_ops.watches(service->owner, var))
+        return true;
     for (uint32_t cursor = service->buckets[
              delay_bucket(var, service->bucket_cap)];
          cursor; cursor = service->watches[cursor - 1u].next) {
@@ -266,6 +329,9 @@ bool cetta_delay_bound(CettaDelayService *service, uint32_t trail_mark,
                        VarId var) {
     if (!cetta_delay_watching(service))
         return true;
+    if (service->owner && service->owner_ops.watches(service->owner, var) &&
+        !service->owner_ops.bound(service->owner, trail_mark, var))
+        return false;
     uint32_t count = 0u;
     if (!delay_gather(service, var, &count))
         return false;
@@ -292,6 +358,9 @@ bool cetta_delay_withdraw(CettaDelayService *service, uint32_t trail_mark,
                           VarId var) {
     if (!cetta_delay_watching(service))
         return true;
+    if (service->owner && service->owner_ops.watches(service->owner, var) &&
+        !service->owner_ops.withdraw(service->owner, trail_mark, var))
+        return false;
     uint32_t count = 0u;
     if (!delay_gather(service, var, &count))
         return false;
@@ -326,6 +395,8 @@ bool cetta_delay_take_woken(CettaDelayService *service, uint32_t trail_mark,
 void cetta_delay_rollback(CettaDelayService *service, uint32_t trail_mark) {
     if (!service)
         return;
+    if (service->owner)
+        service->owner_ops.rollback(service->owner, trail_mark);
     while (service->log_len > 0u &&
            service->log[service->log_len - 1u].trail_mark >= trail_mark) {
         DelayUndo undo = service->log[--service->log_len];
@@ -363,14 +434,19 @@ void cetta_delay_rollback(CettaDelayService *service, uint32_t trail_mark) {
 }
 
 void cetta_delay_commit(CettaDelayService *service) {
-    if (service)
+    if (service) {
+        if (service->owner)
+            service->owner_ops.commit(service->owner);
         service->log_len = 0u;
+    }
 }
 
 void cetta_delay_rebase(CettaDelayService *service, const uint32_t *kept,
                         uint32_t kept_len) {
     if (!service)
         return;
+    if (service->owner)
+        service->owner_ops.rebase(service->owner, kept, kept_len);
     /* Marks along the log never decrease, so the changes older than every
      * kept checkpoint are a prefix, and the map is monotone. */
     uint32_t from = 0u;
@@ -408,65 +484,146 @@ bool cetta_delay_visit_live(const CettaDelayService *service,
     return true;
 }
 
+typedef struct {
+    const CettaDelayGoal **items;
+    uint32_t len, cap;
+} DelayReachGoals;
+
+static bool delay_reach_goal(void *context, const CettaDelayGoal *goal) {
+    DelayReachGoals *goals = context;
+    if (!goal || !goal->goal || (goal->var_len && !goal->vars) ||
+        goals->len == UINT32_MAX ||
+        !delay_grow((void **)&goals->items, &goals->cap, goals->len + 1u,
+                     sizeof(*goals->items)))
+        return false;
+    goals->items[goals->len++] = goal;
+    return true;
+}
+
+bool cetta_delay_materialize(CettaDelayService *service, uint32_t mark) {
+    if (!service || !service->owner)
+        return true;
+    DelayReachGoals owned = {0};
+    bool ok = service->owner_ops.goals(service->owner, delay_reach_goal, &owned);
+    for (uint32_t at = 0; ok && at < owned.len; at++) {
+        const CettaDelayGoal *goal = owned.items[at];
+        ok = cetta_delay_suspend(service, mark, goal->client, goal->goal,
+                                  goal->vars, goal->var_len, false);
+    }
+    free(owned.items);
+    return ok && service->owner_ops.reset(service->owner, mark);
+}
+
 bool cetta_delay_reach(const CettaDelayService *service, const VarId *vars,
                        uint32_t var_len, const CettaDelayGoal ***goals,
                        uint32_t *count) {
     *goals = NULL;
     *count = 0u;
-    if (!cetta_delay_watching(service) || var_len == 0u)
+    if (!service || var_len == 0u)
         return true;
-    bool *reached = cetta_malloc(sizeof(*reached) * service->goal_len);
+    if (!vars)
+        return false;
+    DelayReachGoals owned = {0};
+    bool ok = !service->owner || service->owner_ops.goals(
+        service->owner, delay_reach_goal, &owned);
+    if (!ok) {
+        free(owned.items);
+        return false;
+    }
+    /* Build an observation-local index for retained goal views. Ordinary
+     * goals keep their existing index; neither inventory is duplicated in
+     * the persistent branch state. Both participate in the same closure. */
+    uint32_t watch_len = 0u, bucket_cap = 64u;
+    for (uint32_t at = 0; ok && at < owned.len; at++) {
+        if (owned.items[at]->var_len > UINT32_MAX - watch_len)
+            ok = false;
+        else
+            watch_len += owned.items[at]->var_len;
+    }
+    while (ok && bucket_cap / 2u < watch_len) {
+        if (bucket_cap > UINT32_MAX / 2u)
+            ok = false;
+        else
+            bucket_cap *= 2u;
+    }
+    uint32_t *buckets = ok && watch_len
+        ? calloc(bucket_cap, sizeof(*buckets)) : NULL;
+    DelayWatch *watches = ok && watch_len
+        ? cetta_malloc((size_t)watch_len * sizeof(*watches)) : NULL;
+    bool *reached = service->goal_len
+        ? calloc(service->goal_len, sizeof(*reached)) : NULL;
+    bool *owned_reached = owned.len ? calloc(owned.len, sizeof(*owned_reached)) : NULL;
     VarId *pending = NULL;
     uint32_t pending_len = 0u, pending_cap = 0u;
-    if (!reached || !delay_grow((void **)&pending, &pending_cap, var_len,
-                                sizeof(*pending))) {
-        free(reached);
-        free(pending);
-        return false;
-    }
-    memset(reached, 0, sizeof(*reached) * service->goal_len);
-    memcpy(pending, vars, sizeof(*pending) * var_len);
-    pending_len = var_len;
-    uint32_t found = 0u;
-    while (pending_len > 0u) {
-        VarId var = pending[--pending_len];
-        for (uint32_t cursor = service->buckets[
-                 delay_bucket(var, service->bucket_cap)];
-             cursor; cursor = service->watches[cursor - 1u].next) {
-            const DelayWatch *watch = &service->watches[cursor - 1u];
-            const DelayGoalRecord *record = &service->goals[watch->goal];
-            if (watch->var != var || !record->goal.suspended ||
-                reached[watch->goal])
-                continue;
-            reached[watch->goal] = true;
-            found++;
-            if (!delay_grow((void **)&pending, &pending_cap,
-                            pending_len + record->goal.var_len,
-                            sizeof(*pending))) {
-                free(reached);
-                free(pending);
-                return false;
-            }
-            memcpy(pending + pending_len, record->goal.vars,
-                   sizeof(*pending) * record->goal.var_len);
-            pending_len += record->goal.var_len;
+    ok = ok && (!watch_len || (buckets && watches)) &&
+         (!service->goal_len || reached) && (!owned.len || owned_reached) &&
+         delay_grow((void **)&pending, &pending_cap, var_len, sizeof(*pending));
+    uint32_t used = 0u;
+    for (uint32_t at = 0; ok && at < owned.len; at++) {
+        for (uint32_t v = 0; v < owned.items[at]->var_len; v++) {
+            VarId var = owned.items[at]->vars[v];
+            uint32_t bucket = delay_bucket(var, bucket_cap);
+            watches[used] = (DelayWatch){var, at, buckets[bucket]};
+            buckets[bucket] = ++used;
         }
     }
-    free(pending);
-    if (found == 0u) {
-        free(reached);
-        return true;
+    if (ok) {
+        memcpy(pending, vars, (size_t)var_len * sizeof(*pending));
+        pending_len = var_len;
     }
-    const CettaDelayGoal **out = cetta_malloc(sizeof(*out) * found);
-    if (!out) {
-        free(reached);
+    uint32_t found = 0u;
+    while (ok && pending_len) {
+        VarId var = pending[--pending_len];
+        for (unsigned family = 0; ok && family < 2; family++) {
+            const DelayWatch *index = family ? watches : service->watches;
+            uint32_t cursor = family
+                ? (watch_len ? buckets[delay_bucket(var, bucket_cap)] : 0u)
+                : service->buckets[delay_bucket(var, service->bucket_cap)];
+            for (; ok && cursor; cursor = index[cursor - 1u].next) {
+                const DelayWatch *watch = &index[cursor - 1u];
+                bool *seen = family ? owned_reached : reached;
+                const CettaDelayGoal *goal = family ? owned.items[watch->goal]
+                    : &service->goals[watch->goal].goal;
+                if (watch->var != var || seen[watch->goal] ||
+                    (!family && !goal->suspended))
+                    continue;
+                if (found == UINT32_MAX || goal->var_len > UINT32_MAX - pending_len ||
+                    !delay_grow((void **)&pending, &pending_cap,
+                                pending_len + goal->var_len, sizeof(*pending))) {
+                    ok = false;
+                    break;
+                }
+                seen[watch->goal] = true;
+                found++;
+                if (goal->var_len)
+                    memcpy(pending + pending_len, goal->vars,
+                           (size_t)goal->var_len * sizeof(*pending));
+                pending_len += goal->var_len;
+            }
+        }
+    }
+    const CettaDelayGoal **out = ok && found
+        ? cetta_malloc((size_t)found * sizeof(*out)) : NULL;
+    ok = ok && (!found || out);
+    for (uint32_t at = 0; ok && at < service->goal_len; at++) {
+        if (reached[at])
+            out[(*count)++] = &service->goals[at].goal;
+    }
+    for (uint32_t at = 0; ok && at < owned.len; at++) {
+        if (owned_reached[at])
+            out[(*count)++] = owned.items[at];
+    }
+    free(pending);
+    free(reached);
+    free(owned_reached);
+    free(watches);
+    free(buckets);
+    free(owned.items);
+    if (!ok) {
+        free(out);
+        *count = 0u;
         return false;
     }
-    for (uint32_t index = 0u; index < service->goal_len; index++) {
-        if (reached[index])
-            out[(*count)++] = &service->goals[index].goal;
-    }
-    free(reached);
     *goals = out;
     return true;
 }
@@ -488,6 +645,29 @@ uint32_t cetta_delay_goals_on(const CettaDelayService *service, VarId var,
             goals[count] = &record->goal;
         count++;
     }
+    if (service->owner) {
+        DelayReachGoals owned = {0};
+        if (!service->owner_ops.goals(service->owner, delay_reach_goal, &owned)) {
+            free(owned.items);
+            return UINT32_MAX;
+        }
+        for (uint32_t at = 0; at < owned.len; at++) {
+            const CettaDelayGoal *goal = owned.items[at];
+            for (uint32_t v = 0; v < goal->var_len; v++) {
+                if (goal->vars[v] != var)
+                    continue;
+                if (count == UINT32_MAX) {
+                    free(owned.items);
+                    return UINT32_MAX;
+                }
+                if (count < capacity)
+                    goals[count] = goal;
+                count++;
+                break;
+            }
+        }
+        free(owned.items);
+    }
     return count;
 }
 
@@ -495,6 +675,14 @@ CettaDelayService *cetta_delay_service_clone(const CettaDelayService *service) {
     CettaDelayService *copy = cetta_delay_service_new();
     if (!copy || !service)
         return copy;
+    if (service->owner) {
+        copy->owner = service->owner_ops.clone(service->owner);
+        if (!copy->owner) {
+            cetta_delay_service_free(copy);
+            return NULL;
+        }
+        copy->owner_ops = service->owner_ops;
+    }
     /* The suspended goals in their order, then the queue in its order: a
      * copy's goals keep their relative order, so wakeups do too. */
     for (uint32_t index = 0u; index < service->goal_len; index++) {

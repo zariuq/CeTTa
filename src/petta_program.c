@@ -1786,7 +1786,8 @@ bool petta_program_head_is_intrinsic(SymbolId head) {
          head == ids->min ||
          head == ids->max ||
          head == ids->transaction ||
-         head == ids->with_mutex);
+         head == ids->with_mutex ||
+         petta_semantics_is_mm2_exec(head));
     /* `data` is shared with historical extended PeTTa.  Live `make-list`
      * and `the` forms are owned only by typecheck-v2; extended erases `the`
      * during document ingestion. */
@@ -2488,10 +2489,24 @@ static bool petta_plan_push_children(
  * argument of `(quote X)` as the value it is, unread, as PeTTa's translator
  * does: a quoted argument is data, and a value may share its subterms, so
  * reading it could take time exponential in its size. */
+/* Whether `atom` is one of the values a derived equation holds: a partial
+ * application the specializer substituted for a parameter. */
+static bool petta_plan_held_value(
+    const Atom *atom, Atom *const *held, size_t held_len) {
+    if (held_len == 0u || !petta_semantics_partial_view(atom, NULL, NULL))
+        return false;
+    for (size_t index = 0u; index < held_len; index++) {
+        if (atom_eq((Atom *)atom, held[index]))
+            return true;
+    }
+    return false;
+}
+
 static PettaPlanNode *petta_plan_build_in(
     PettaProgram *program, Arena *plans,
     const PettaCallabilityDomain *callability, Atom *root,
-    bool compile_regions, bool translation) {
+    bool compile_regions, bool translation,
+    Atom *const *held, size_t held_len) {
     if (!program || !plans || !root)
         return NULL;
     PettaPlanNode *plan =
@@ -2533,8 +2548,11 @@ static PettaPlanNode *petta_plan_build_in(
         node->child_count = atom->expr.len;
         /* A list is a value: reading or passing one never evaluates its
          * elements.  Its occurrences keep plans, all values, so equation
-         * variables inside it still get their slots. */
-        if (item.value || atom_is_list_form(atom)) {
+         * variables inside it still get their slots.  So is a compiled
+         * lambda or closure, and a value a derived equation holds. */
+        if (item.value || atom_is_list_form(atom) ||
+            petta_semantics_is_canonical_closure(atom) ||
+            petta_plan_held_value(atom, held, held_len)) {
             node->role = PETTA_PLAN_VALUE;
             node->output = PETTA_PLAN_OUTPUT_VALUE;
             if (!petta_plan_push_children(
@@ -2607,7 +2625,13 @@ static PettaPlanNode *petta_plan_build_in(
                         : PETTA_PLAN_EXEC_GENERIC;
         } else {
             node->role = PETTA_PLAN_DYNAMIC_CALL;
-            node->dispatch_handler = true;
+            /* Translation already knows a literal closed lambda's callable
+             * identity, so its written invocation is a direct call. A head
+             * obtained through a variable/partial or another computation
+             * retains the implicit run-time-dispatch handler. */
+            node->dispatch_handler =
+                !petta_semantics_lambda_body(head_atom, NULL) &&
+                !petta_semantics_nullary_lambda_body(head_atom, NULL);
         }
 
         if (node->role == PETTA_PLAN_DATA) {
@@ -2698,7 +2722,8 @@ static const PettaPlanNode *petta_plan_build(
     const PettaCallabilityDomain *callability, Atom *root) {
     return program
         ? petta_plan_build_in(
-              program, &program->plans, callability, root, true, false)
+              program, &program->plans, callability, root, true, false,
+              NULL, 0u)
         : NULL;
 }
 
@@ -3938,7 +3963,7 @@ const PettaPlanNode *petta_program_plan_transient(
     ArenaMark mark = arena_mark(&program->transient_scratch);
     PettaPlanNode *built = petta_plan_build_in(
         program, &program->transient_scratch, callability, atom, false,
-        true);
+        true, NULL, 0u);
     const PettaPlanNode *plan =
         built && petta_plan_collapse_values(built)
             ? petta_program_intern_plan(program, built)
@@ -4018,8 +4043,21 @@ const PettaPlanNode *petta_program_declaration_block_plan_at(
         ? block->plans[index] : NULL;
 }
 
+static const PettaPlanNode *petta_program_plan_equation(
+    PettaProgram *program, Atom *atom, Atom *const *held, size_t held_len);
+
 const PettaPlanNode *petta_program_plan_dynamic_add(
     PettaProgram *program, Atom *atom) {
+    return petta_program_plan_equation(program, atom, NULL, 0u);
+}
+
+const PettaPlanNode *petta_program_plan_derived_add(
+    PettaProgram *program, Atom *atom, Atom *const *held, size_t held_len) {
+    return petta_program_plan_equation(program, atom, held, held_len);
+}
+
+static const PettaPlanNode *petta_program_plan_equation(
+    PettaProgram *program, Atom *atom, Atom *const *held, size_t held_len) {
     if (!program || !atom)
         return NULL;
     PettaCallabilityDomain callability = {0};
@@ -4037,7 +4075,10 @@ const PettaPlanNode *petta_program_plan_dynamic_add(
         }
     }
     const PettaPlanNode *plan =
-        ok ? petta_plan_build(program, &callability, atom) : NULL;
+        ok ? petta_plan_build_in(
+                 program, &program->plans, &callability, atom, true, false,
+                 held, held_len)
+           : NULL;
     free(callability.named_heads);
     return plan;
 }

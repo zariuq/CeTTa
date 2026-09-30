@@ -33,6 +33,7 @@ typedef enum {
 
 typedef struct {
     uint8_t kind;
+    uint8_t representation;
     uint32_t slot;
     uint32_t first;
     uint32_t count;
@@ -141,6 +142,8 @@ enum {
     OEM_HOST_EXISTS,
     /* `get-metatype` of a value that names no token. */
     OEM_HOST_METATYPE,
+    /* PeTTa's named state, `get-state` and `change-state!`, over values. */
+    OEM_HOST_STATE,
 };
 
 typedef struct {
@@ -696,6 +699,29 @@ static bool oem_template_build(OemCompile *compile, const uint32_t *children,
                sizeof(*children) * count);
     program->template_child_len += count;
     OemTemplate item = {.kind = OEM_T_BUILD, .first = first, .count = count};
+    const OemTemplate *head = count
+        ? &program->templates[children[0]] : NULL;
+    Atom *head_value = head && head->kind == OEM_T_LITERAL ? head->literal : NULL;
+    if ((count == 2u && atom_is_internal_tag(head_value,
+                CETTA_INTERNAL_TAG_PETTA_PROLOG_COMPOUND)) ||
+        (count == 3u && atom_is_internal_tag(head_value,
+                CETTA_INTERNAL_TAG_PETTA_PARTIAL))) {
+        item.representation = PETTA_VALUE_COMPOUND;
+    } else if (count == 3u) {
+        const OemTemplate *domain = &program->templates[children[1]];
+        Atom *domain_head = NULL;
+        if (domain->kind == OEM_T_LITERAL && domain->literal->kind == ATOM_EXPR &&
+            domain->literal->expr.len == 2u)
+            domain_head = domain->literal->expr.elems[0];
+        else if (domain->kind == OEM_T_BUILD && domain->count == 2u) {
+            const OemTemplate *tag = &program->templates[
+                program->template_children[domain->first]];
+            domain_head = tag->kind == OEM_T_LITERAL ? tag->literal : NULL;
+        }
+        if (atom_is_internal_tag(head_value, CETTA_INTERNAL_TAG_PETTA_NULLARY_CALLABLE) ||
+            atom_is_internal_tag(domain_head, CETTA_INTERNAL_TAG_PETTA_CALLABLE_IDENTITY))
+            item.representation = PETTA_VALUE_REGISTERED_CALLABLE;
+    }
     return OEM_PUSH(program, template, item, out) ||
         oem_reject(compile, "out of memory");
 }
@@ -850,6 +876,7 @@ static bool oem_compile_param(OemCompile *compile, Atom *param, uint32_t reg,
     compile->register_count += length;
     OemMatchOp op = {
         .kind = OEM_M_EXPR, .reg = reg, .operand = base, .length = length,
+        .literal = param,
     };
     if (!OEM_PUSH(program, op, op, &index))
         return oem_reject(compile, "out of memory");
@@ -1289,6 +1316,17 @@ static bool oem_existence_constant(const Atom *expr) {
           term_universe_atom_is_stable(template)));
 }
 
+/* PeTTa's named state: `(get-state name)` and `(change-state! name value)`,
+ * functions whose arguments PeTTa's translation evaluates before the call. */
+static bool oem_state_call(const Atom *expr) {
+    if (expr->kind != ATOM_EXPR || expr->expr.len == 0u ||
+        expr->expr.elems[0]->kind != ATOM_SYMBOL)
+        return false;
+    PeTTaForm form = petta_semantics_form(expr->expr.elems[0]->sym_id);
+    return (expr->expr.len == 2u && form == PETTA_FORM_GET_STATE) ||
+        (expr->expr.len == 3u && form == PETTA_FORM_CHANGE_STATE);
+}
+
 /* What the region may decide of a goal before its host.  A type-pure
  * grounded operation, which the language offers and which is no PeTTa form
  * (a form takes its own dialect's evaluation), over arguments the plan
@@ -1316,6 +1354,8 @@ static uint32_t oem_host_fast_path(const OemCompile *compile, Atom *expr,
         compile->host->builtin_allowed(compile->host->context,
                                        g_builtin_syms.add_atom))
         return OEM_HOST_ADMIT;
+    if (oem_state_call(expr) && oem_fields_are_values(expr, plan, 1u))
+        return OEM_HOST_STATE;
     if (expr->expr.elems[0]->kind == ATOM_SYMBOL && expr->expr.len == 2u &&
         petta_semantics_form(expr->expr.elems[0]->sym_id) ==
             PETTA_FORM_MSORT &&
@@ -1563,6 +1603,10 @@ static bool oem_build_apply(OemCompile *compile, Atom *expr,
         /* And `get-metatype`. */
         node.host_fast = (uint8_t)OEM_HOST_METATYPE;
         node.op = g_builtin_syms.get_metatype;
+    } else if (oem_state_call(expr)) {
+        /* And PeTTa's named state. */
+        node.host_fast = (uint8_t)OEM_HOST_STATE;
+        node.op = expr->expr.elems[0]->sym_id;
     } else if (expr->expr.elems[0]->kind == ATOM_SYMBOL &&
                oem_pure_operation(compile, expr->expr.elems[0]->sym_id)) {
         /* A pure operation over computed arguments: the arguments' goals
@@ -1996,18 +2040,27 @@ static bool oem_build_value(OemCompile *compile, Atom *expr,
     }
     /* An equality that observes whether a match has a row stays whole, as
      * a condition does: the host answers it by membership.  A list native,
-     * or `get-metatype`, over computed arguments applies to their values,
-     * which the region computes, collections included; a counted `length`
-     * keeps the host's counted route. */
+     * `get-metatype`, or the named state, over computed arguments applies to
+     * their values, which the region computes, collections included; a
+     * counted `length` keeps the host's counted route. */
     bool computed_call = symbol_head &&
         plan->role == PETTA_PLAN_STATIC_CALL &&
         !oem_fields_are_values(expr, plan, 1u);
+    /* Keep a cardinality consumer with its producer. Splitting it into
+     * eagerly computed fields materializes a collection the host can count
+     * without retaining its items. Value arguments still use the native
+     * observer below. */
+    if (computed_call && expr->expr.len == 2u &&
+        petta_semantics_count_consumer(expr->expr.elems[0]->sym_id) !=
+            PETTA_COUNT_CONSUMER_NONE)
+        return oem_build_host(compile, expr, plan, depth,
+                              "collection cardinality observer", out);
     bool value_native = computed_call &&
         ((oem_list_native(expr->expr.elems[0]->sym_id,
                           expr->expr.len - 1u) &&
           petta_semantics_form(expr->expr.elems[0]->sym_id) !=
               PETTA_FORM_LENGTH) ||
-         oem_metatype_call(compile, expr, plan));
+         oem_metatype_call(compile, expr, plan) || oem_state_call(expr));
     if (oem_apply_call(expr, plan) || value_native ||
         (symbol_head && plan->role == PETTA_PLAN_STATIC_CALL &&
          ((expr->expr.len == 2u &&
@@ -4263,6 +4316,8 @@ static OemUnify oem_unify(CettaOpenEquationCursor *cursor, Atom *left,
         }
         if (a->kind == ATOM_VAR || b->kind == ATOM_VAR)
             return OEM_UNIFY_ERROR;
+        if (!atom_petta_decomposition_compatible(a, b))
+            return OEM_UNIFY_FAIL;
         /* A cons cell and a flat list are one list value when their
          * elements are: the cell's head meets the list's first element and
          * its tail the rest of the list, which shares the list's storage.
@@ -4396,7 +4451,8 @@ static __attribute__((noinline)) OemUnify oem_unify_list_template(
          petta_semantics_is_cons_constraint(term))) {
         first = term->expr.elems[1];
         rest = term->expr.elems[2];
-    } else if (term->kind == ATOM_EXPR && term->expr.len > 0u) {
+    } else if (term->kind == ATOM_EXPR && term->expr.len > 0u &&
+               atom_petta_value_representation(term) == PETTA_VALUE_ORDINARY) {
         first = term->expr.elems[0];
         rest = atom_expr_suffix(&cursor->region, term, 1u);
         if (!rest)
@@ -4435,7 +4491,8 @@ static OemUnify oem_unify_template(CettaOpenEquationCursor *cursor,
         Atom *built = oem_instantiate(cursor, program, locals, template_index);
         return built ? oem_unify(cursor, built, term) : OEM_UNIFY_ERROR;
     }
-    if (term->kind != ATOM_EXPR || term->expr.len != item->count)
+    if (term->kind != ATOM_EXPR || term->expr.len != item->count ||
+        atom_petta_value_representation(term) != item->representation)
         return term->kind == ATOM_VAR ? OEM_UNIFY_ERROR : OEM_UNIFY_FAIL;
     for (uint32_t index = 0u; index < item->count; index++) {
         OemUnify unified = oem_unify_template(
@@ -6102,6 +6159,37 @@ static OemRun oem_admit_step(CettaOpenEquationCursor *cursor,
     return unified == OEM_UNIFY_OK ? OEM_RUN_CALLED : OEM_RUN_FAILED;
 }
 
+/* PeTTa's named state over values: the host reads or changes the state as
+ * its machine does, and its answer meets the step's destination.  What the
+ * host declines (an unset name, which raises; a value with an unbound
+ * cell) is the host's.  A change is an effect, which a bounded run leaves
+ * to the unbounded run that follows, as it leaves `add-atom`. */
+static __attribute__((noinline)) OemRun oem_state_step(
+        CettaOpenEquationCursor *cursor,
+        const CettaOpenEquationProgram *program, Atom **locals,
+        const OemStep *step) {
+    if (!cursor->runtime.named_state)
+        return OEM_RUN_HOST;
+    Atom *call = oem_instantiate(cursor, program, locals, step->value);
+    call = call ? oem_resolve_mode(cursor, call, true) : NULL;
+    if (!call)
+        return OEM_RUN_HANDOFF;
+    if (call->kind == ATOM_EXPR && call->expr.len == 3u &&
+        (cursor->runtime.activation_budget || cursor->runtime.depth_bound)) {
+        cursor->handoff = CETTA_OPEN_EQUATION_HANDOFF_UNSUPPORTED;
+        return OEM_RUN_HANDOFF;
+    }
+    Atom *result = NULL;
+    if (!cursor->runtime.named_state(cursor->runtime.context, program->space,
+                                     &cursor->region, call, &result) ||
+        !result)
+        return OEM_RUN_HOST;
+    OemUnify unified = oem_meet(cursor, program, locals, step, result);
+    if (unified == OEM_UNIFY_ERROR)
+        return OEM_RUN_HANDOFF;
+    return unified == OEM_UNIFY_OK ? OEM_RUN_CALLED : OEM_RUN_FAILED;
+}
+
 /* Whether `atom` is a list the region reads as the search machine does: an
  * expression that is no internal representation (a counted collection, a
  * cons cell, a Prolog term), all of whose elements are carried as they
@@ -6429,6 +6517,8 @@ static __attribute__((noinline)) OemRun oem_fast_host_step(
         }
         return oem_admit_step(cursor, program, locals, step, value_out);
     }
+    if (step->target == OEM_HOST_STATE)
+        return oem_state_step(cursor, program, locals, step);
     const OemTemplate *goal = &program->templates[step->value];
     if (step->target == OEM_HOST_LIST)
         return oem_list_step(cursor, program, locals, step, goal);
@@ -7451,7 +7541,8 @@ static bool oem_may_match(CettaOpenEquationCursor *cursor,
         if (op->kind == OEM_M_LIST) {
             /* A nonempty list; its rest is left open, and so is the whole
              * of a cell the operation reads as spelled. */
-            if (!open && (term->kind != ATOM_EXPR || term->expr.len == 0u))
+            if (!open && (term->kind != ATOM_EXPR || term->expr.len == 0u ||
+                          atom_petta_value_representation(term) != PETTA_VALUE_ORDINARY))
                 return false;
             regs[op->operand] =
                 open || (op->spelled &&
@@ -7460,8 +7551,8 @@ static bool oem_may_match(CettaOpenEquationCursor *cursor,
             regs[op->operand + 1u] = NULL;
             continue;
         }
-        if (!open && (term->kind != ATOM_EXPR ||
-                      term->expr.len != op->length))
+        if (!open && (!atom_petta_decomposition_compatible(term, op->literal) ||
+                      term->kind != ATOM_EXPR || term->expr.len != op->length))
             return false;
         for (uint32_t child = 0u; child < op->length; child++)
             regs[op->operand + child] = open ? NULL : term->expr.elems[child];
@@ -7617,6 +7708,7 @@ static inline __attribute__((always_inline)) OemRun oem_activate(
                                              binds_at_start, OEM_RUN_FAILED);
                 }
             } else if (term->kind == ATOM_EXPR &&
+                       atom_petta_decomposition_compatible(term, op->literal) &&
                        term->expr.len == op->length) {
                 for (uint32_t child = 0u; child < op->length; child++)
                     regs[op->operand + child] = term->expr.elems[child];
@@ -7648,7 +7740,8 @@ static inline __attribute__((always_inline)) OemRun oem_activate(
                         petta_semantics_is_cons_constraint(term))) {
                 regs[op->operand] = term->expr.elems[1];
                 regs[op->operand + 1u] = term->expr.elems[2];
-            } else if (term->kind == ATOM_EXPR && term->expr.len > 0u) {
+            } else if (term->kind == ATOM_EXPR && term->expr.len > 0u &&
+                       atom_petta_value_representation(term) == PETTA_VALUE_ORDINARY) {
                 /* A flat list's rest is its suffix, sharing its storage. */
                 Atom *rest = atom_expr_suffix(&cursor->region, term, 1u);
                 if (!rest)
@@ -9509,7 +9602,8 @@ static OemUnify oem_unify_row(CettaOpenEquationCursor *cursor, Atom *term,
         Atom *copy = oem_import_fresh(cursor, row);
         return copy ? oem_unify(cursor, term, copy) : OEM_UNIFY_ERROR;
     }
-    if (term->kind != ATOM_EXPR || term->expr.len != row->expr.len)
+    if (term->kind != ATOM_EXPR || term->expr.len != row->expr.len ||
+        !atom_petta_decomposition_compatible(term, row))
         return term->kind == ATOM_VAR ? OEM_UNIFY_ERROR : OEM_UNIFY_FAIL;
     for (CettaExprIndex child = 0u; child < row->expr.len; child++) {
         OemUnify unified = oem_unify_row(cursor, term->expr.elems[child],
@@ -9538,7 +9632,8 @@ static OemUnify oem_unify_template_row(
         return built ? oem_unify_row(cursor, built, row, depth)
                      : OEM_UNIFY_ERROR;
     }
-    if (row->kind != ATOM_EXPR || row->expr.len != item->count)
+    if (row->kind != ATOM_EXPR || row->expr.len != item->count ||
+        atom_petta_value_representation(row) != item->representation)
         return OEM_UNIFY_FAIL;
     for (uint32_t index = 0u; index < item->count; index++) {
         OemUnify unified = oem_unify_template_row(

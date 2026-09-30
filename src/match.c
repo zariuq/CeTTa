@@ -10234,6 +10234,8 @@ bool simple_match(Atom *pattern, Atom *target, Bindings *b, Arena *a) {
         return false;
 
     case ATOM_EXPR: {
+        if (!atom_petta_decomposition_compatible(pattern, target))
+            return false;
         MatchListMeeting meet;
         switch (match_list_meet(a, pattern, target, &meet)) {
         case MATCH_LIST_MISMATCH:
@@ -10306,6 +10308,8 @@ static bool simple_match_builder_rec(Atom *pattern, Atom *target,
         return false;
 
     case ATOM_EXPR: {
+        if (!atom_petta_decomposition_compatible(pattern, target))
+            return false;
         MatchListMeeting meet;
         switch (match_list_meet(a, pattern, target, &meet)) {
         case MATCH_LIST_MISMATCH:
@@ -11167,6 +11171,8 @@ retry_pair:
             }
             continue;
         }
+        if (!atom_petta_decomposition_compatible(left, right))
+            goto fail;
         MatchListMeeting meet;
         MatchListOutcome list_outcome =
             left->kind == ATOM_EXPR && right->kind == ATOM_EXPR
@@ -11406,6 +11412,8 @@ bool match_atoms_epoch_positional_linear(Atom *query, Atom *lhs, Bindings *b,
         return false;
     if (lhs->expr.len == 0 || query->expr.len != lhs->expr.len)
         return false;
+    if (!atom_petta_decomposition_compatible(query, lhs))
+        return false;
     Atom *lh = lhs->expr.elems[0];
     Atom *qh = query->expr.elems[0];
     if (!lh || !qh || lh->kind != ATOM_SYMBOL || qh->kind != ATOM_SYMBOL ||
@@ -11456,6 +11464,8 @@ bool match_atoms_epoch_positional_linear_builder(
     if (query->kind != ATOM_EXPR || lhs->kind != ATOM_EXPR)
         return false;
     if (lhs->expr.len == 0u || query->expr.len != lhs->expr.len)
+        return false;
+    if (!atom_petta_decomposition_compatible(query, lhs))
         return false;
     Atom *lh = lhs->expr.elems[0];
     Atom *qh = query->expr.elems[0];
@@ -12585,6 +12595,8 @@ retry_pair:
             }
             continue;
         }
+        if (!atom_petta_decomposition_compatible(left, right))
+            goto fail;
         if (left->kind == ATOM_EXPR && right->kind == ATOM_EXPR &&
             (match_expr_is_list(left) || match_expr_is_list(right))) {
             MatchListMeeting meet;
@@ -13064,6 +13076,8 @@ retry_pair:
                 goto fail;
             continue;
         }
+        if (!atom_petta_decomposition_compatible(left, right))
+            goto fail;
         /* Rule patterns holding a list compile no program (petta_program.c),
          * so here a list meets only an expression, which it never matches. */
         if (left->kind != ATOM_EXPR ||
@@ -13503,6 +13517,9 @@ static bool stored_grounded_equal(Atom *left,
                rhs &&
                cetta_rational_compare_cstr(atom_rational_cstr(left), rhs) == 0;
     }
+    case GV_INTERNAL_TAG:
+        return cetta_internal_tag_is_term_stable(left->ground.ival) &&
+               left->ground.ival == tu_internal_tag(candidate_universe, right_id);
     case GV_SPACE:
     case GV_STATE:
     case GV_CAPTURE:
@@ -13511,7 +13528,6 @@ static bool stored_grounded_equal(Atom *left,
     case GV_TERM_GRAPH:
     case GV_PRIME_NEED_CAPABILITY:
     case GV_PRIME_CONTEXT:
-    case GV_INTERNAL_TAG:
         return false;
     }
     return false;
@@ -13667,6 +13683,9 @@ retry_pair:
                 goto fail;
             break;
         case ATOM_EXPR:
+            if (atom_petta_value_representation(left) !=
+                tu_petta_value_representation(candidate_universe, right_id))
+                goto fail;
             if (right_kind == ATOM_EXPR &&
                 (match_expr_is_list(left) ||
                  (tu_arity(candidate_universe, right_id) > 0u &&

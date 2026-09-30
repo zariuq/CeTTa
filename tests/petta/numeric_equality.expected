@@ -4,7 +4,7 @@
 (nested true true false false false)
 (variables false true unbound)
 (nan true true false false false)
-(order true true false true true false true false)
+(order false false true true true false true false)
 (rationals (1r2 true false true true) (7r22 false 7))
 (shared true false true)
 (infinity true true false)

@@ -1511,7 +1511,7 @@ static bool term_universe_record_payload_len(const TermUniverse *universe,
             return false;
         case GV_INTERNAL_TAG:
             *out_len = 0;
-            return cetta_internal_tag_is_list(
+            return cetta_internal_tag_is_term_stable(
                 (int64_t)term_universe_aux_data(hdr));
         }
         return false;
@@ -2411,6 +2411,30 @@ int64_t tu_internal_tag(const TermUniverse *universe, AtomId id) {
                : 0;
 }
 
+PeTTaValueRepresentation tu_petta_value_representation(
+    const TermUniverse *universe, AtomId id) {
+    if (tu_kind(universe, id) != ATOM_EXPR)
+        return PETTA_VALUE_ORDINARY;
+    CettaExprLen length = tu_arity(universe, id);
+    if (length != 2u && length != 3u)
+        return PETTA_VALUE_ORDINARY;
+    int64_t head = tu_internal_tag(universe, tu_child(universe, id, 0u));
+    if ((length == 2u && head == CETTA_INTERNAL_TAG_PETTA_PROLOG_COMPOUND) ||
+        (length == 3u && head == CETTA_INTERNAL_TAG_PETTA_PARTIAL))
+        return PETTA_VALUE_COMPOUND;
+    if (length == 3u) {
+        if (head == CETTA_INTERNAL_TAG_PETTA_NULLARY_CALLABLE)
+            return PETTA_VALUE_REGISTERED_CALLABLE;
+        AtomId domain = tu_child(universe, id, 1u);
+        if (tu_kind(universe, domain) == ATOM_EXPR &&
+            tu_arity(universe, domain) == 2u &&
+            tu_internal_tag(universe, tu_child(universe, domain, 0u)) ==
+                CETTA_INTERNAL_TAG_PETTA_CALLABLE_IDENTITY)
+            return PETTA_VALUE_REGISTERED_CALLABLE;
+    }
+    return PETTA_VALUE_ORDINARY;
+}
+
 bool tu_bool(const TermUniverse *universe, AtomId id) {
     const CettaTermHdr *hdr = tu_hdr(universe, id);
     if (hdr) {
@@ -2809,9 +2833,9 @@ AtomId tu_intern_bool(TermUniverse *universe, bool value) {
     return term_universe_intern_record(universe, &hdr, NULL, 0u);
 }
 
-/* The list tags are the only internal tags that are terms; see atom.h. */
-AtomId tu_intern_list_tag(TermUniverse *universe, int64_t tag) {
-    if (!cetta_internal_tag_is_list(tag))
+/* Admit immutable structural tags under atom.h's retention judgment. */
+AtomId tu_intern_stable_tag(TermUniverse *universe, int64_t tag) {
+    if (!cetta_internal_tag_is_term_stable(tag))
         return CETTA_ATOM_ID_NONE;
     CettaTermHdr hdr = {0};
     hdr.tag = (uint8_t)ATOM_GROUNDED;
@@ -2953,7 +2977,7 @@ AtomId tu_list_from_ids(TermUniverse *universe, const AtomId *elems,
     if (!cetta_expr_len_mul_fits_size(len, sizeof(*children)))
         return CETTA_ATOM_ID_NONE;
     children = cetta_malloc((size_t)len * sizeof(*children));
-    children[0] = tu_intern_list_tag(universe, tag);
+    children[0] = tu_intern_stable_tag(universe, tag);
     for (CettaExprIndex i = 0u; i < elem_len; i++)
         children[1u + i] = elems[i];
     if (spliced > 0u) {
@@ -3219,7 +3243,7 @@ static AtomId term_universe_leaf_id(TermUniverse *universe, Atom *src,
         case GV_PRIME_CONTEXT:
             return CETTA_ATOM_ID_NONE;
         case GV_INTERNAL_TAG:
-            return tu_intern_list_tag(universe, src->ground.ival);
+            return tu_intern_stable_tag(universe, src->ground.ival);
         }
         return CETTA_ATOM_ID_NONE;
     case ATOM_EXPR:
@@ -4609,7 +4633,7 @@ static AtomId term_universe_store_prepared_atom_id(TermUniverse *universe,
                exhaustive for -Wswitch cleanliness. */
             return CETTA_ATOM_ID_NONE;
         case GV_INTERNAL_TAG:
-            return tu_intern_list_tag(universe, src->ground.ival);
+            return tu_intern_stable_tag(universe, src->ground.ival);
         }
         return CETTA_ATOM_ID_NONE;
     case ATOM_EXPR: {
@@ -4752,7 +4776,7 @@ static Atom *term_universe_decode_atom(TermUniverse *universe, AtomId id) {
         case GV_PRIME_CONTEXT:
             return NULL;
         case GV_INTERNAL_TAG:
-            return cetta_internal_tag_is_list(
+            return cetta_internal_tag_is_term_stable(
                        (int64_t)term_universe_aux_data(hdr))
                 ? atom_internal_tag(
                       dst, (CettaInternalTag)term_universe_aux_data(hdr))

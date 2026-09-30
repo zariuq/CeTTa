@@ -458,6 +458,11 @@ const PettaPlanNode *petta_program_declaration_block_plan_at(
  */
 const PettaPlanNode *petta_program_plan_dynamic_add(
     PettaProgram *program, Atom *atom);
+/* The plan of an equation the specializer derived, where each of `held`, a
+ * value substituted for a parameter, is a value wherever it stands, as the
+ * reference's specialized clause holds the selected term. */
+const PettaPlanNode *petta_program_plan_derived_add(
+    PettaProgram *program, Atom *atom, Atom *const *held, size_t held_len);
 
 /* Prove that one successful match produces exactly one ordinary data answer
  * under PeTTa's translation-time occurrence plan.  Payload spelling is not

@@ -169,7 +169,6 @@ enum {
 
 enum {
     PETTA_SYMBOL_CALLABLE = 1u,
-    PETTA_SYMBOL_PARTIAL_CONSTRUCTOR = 2u,
 };
 
 typedef struct {
@@ -911,9 +910,7 @@ static uint8_t petta_symbol_classification_uncached(
     Space *space, Arena *scratch, SymbolId symbol) {
     if (!space || !scratch || symbol == SYMBOL_ID_NONE)
         return 0u;
-    Atom *subject = atom_symbol_id(scratch, symbol);
-    uint8_t classification = petta_semantics_partial_head(subject)
-        ? PETTA_SYMBOL_PARTIAL_CONSTRUCTOR : 0u;
+    uint8_t classification = 0u;
     if (space_equations_may_match_known_head(space, symbol) ||
         is_grounded_op(symbol) ||
         petta_semantics_form(symbol) != PETTA_FORM_NONE) {
@@ -925,6 +922,7 @@ static uint8_t petta_symbol_classification_uncached(
         return classification | PETTA_SYMBOL_CALLABLE;
     }
     Atom **types = NULL;
+    Atom *subject = atom_symbol_id(scratch, symbol);
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_DECLARED_TYPE_SPECIALIZER_CALLABLE);
     uint32_t count = space_get_declared_types(
@@ -1147,10 +1145,7 @@ static uint64_t petta_forest_supplier_class(
         uint64_t mixed = UINT64_C(0x55) |
             ((uint64_t)classification << 8) |
             ((uint64_t)atom->expr.len << 16);
-        if (atom->expr.len == 3u &&
-            (classification & PETTA_SYMBOL_PARTIAL_CONSTRUCTOR) &&
-            atom->expr.elems && atom->expr.elems[2] &&
-            atom->expr.elems[2]->kind == ATOM_EXPR)
+        if (atom->expr.len == 3u && petta_semantics_partial_head(head))
             mixed |= UINT64_C(1) << 24;
         return mixed;
     }
@@ -1880,7 +1875,7 @@ petta_query_arguments_may_supply_specializable_value(
         if (classification & PETTA_SYMBOL_CALLABLE)
             return PETTA_RELEVANCE_YES;
         if (atom->expr.len == 3u &&
-            (classification & PETTA_SYMBOL_PARTIAL_CONSTRUCTOR)) {
+            petta_semantics_partial_head(head)) {
             CettaGsltTermCursorV1 tuple = {
                 .source = atom->expr.elems[2], .scope = cursor.scope};
             if (cetta_gslt_term_cursor_resolve_root_v1(
@@ -1966,7 +1961,7 @@ petta_query_values_may_supply_specializable_value(
         if (classification & PETTA_SYMBOL_CALLABLE)
             return PETTA_RELEVANCE_YES;
         if (atom->expr.len == 3u &&
-            (classification & PETTA_SYMBOL_PARTIAL_CONSTRUCTOR)) {
+            petta_semantics_partial_head(head)) {
             BindingValue tuple;
             if (!bindings_resolve_value_preview(
                     environment,
@@ -2925,6 +2920,32 @@ static Atom *petta_rewrite_specialized_body(
             &context->scratch, elements, combined);
         if (!expanded)
             return NULL;
+        /* The held arguments are values, which the callee receives as they
+         * are, as the reference appends a partial's bound terms to the new
+         * arguments: where the callee evaluates an argument, a held
+         * expression is quoted, so the expansion never runs it as code. */
+        for (CettaExprIndex index = 1u; index <= bound->expr.len; index++) {
+            Atom *held = elements[index];
+            if (held->kind != ATOM_EXPR || held->expr.len == 0u)
+                continue;
+            unsigned mode = petta_specializer_argument_mode(
+                context, expanded, index);
+            if (context->declined)
+                return NULL;
+            if (mode == PETTA_SPECIALIZE_DATA)
+                continue;
+            elements[index] = atom_expr2(
+                &context->scratch,
+                atom_symbol_id(&context->scratch, g_builtin_syms.quote),
+                held);
+            if (!elements[index]) {
+                context->capacity = true;
+                return NULL;
+            }
+        }
+        expanded = atom_expr(&context->scratch, elements, combined);
+        if (!expanded)
+            return NULL;
         return petta_rewrite_specialized_body(
             context, expanded, source, specialized,
             selectors, depth + 1u);
@@ -3351,14 +3372,18 @@ static bool petta_materialize_specialization(
         Atom *kept_rhs = petta_specializer_keep_dispatches(
             context, source_equation->expr.elems[2],
             selected_ids, selected_len, 0u);
-        Atom *kept_equation = kept_rhs
+        /* The head keeps its parameters, so a call binds each selected one
+         * to the value it passes, however that value is spelled; the body
+         * holds the selected term, as the reference's specialized clause
+         * does, and the parameter no longer occurs there. */
+        Atom *selected_rhs = kept_rhs
+            ? bindings_apply_if_vars(
+                  &selected, &context->scratch, kept_rhs)
+            : NULL;
+        Atom *substituted = selected_rhs
             ? atom_expr3(
                   &context->scratch, source_equation->expr.elems[0],
-                  lhs, kept_rhs)
-            : NULL;
-        Atom *substituted = kept_equation
-            ? bindings_apply_if_vars(
-                  &selected, &context->scratch, kept_equation)
+                  lhs, selected_rhs)
             : NULL;
         Atom *rewritten = substituted
             ? petta_rewrite_specialized_body(
@@ -3382,10 +3407,23 @@ static bool petta_materialize_specialization(
                   derived->expr.elems[1],
                   &selected)
             : NULL;
+        /* Every selected partial application stands in the derived
+         * equation as the value it is. */
+        Atom **held = candidates->len
+            ? arena_alloc(&context->scratch,
+                          sizeof(*held) * candidates->len)
+            : NULL;
+        size_t held_len = 0u;
+        for (size_t binding_index = 0u;
+             held && binding_index < candidates->len; binding_index++) {
+            Atom *value = candidates->items[binding_index].value;
+            if (petta_semantics_partial_view(value, NULL, NULL))
+                held[held_len++] = value;
+        }
         const PettaPlanNode *equation_plan =
             built && derived && context->program
-                ? petta_program_plan_dynamic_add(
-                      context->program, derived)
+                ? petta_program_plan_derived_add(
+                      context->program, derived, held, held_len)
                 : NULL;
         const PettaPlanNode *rhs_plan =
             petta_plan_child(equation_plan, 2u);
@@ -4078,6 +4116,8 @@ bool petta_specializer_pattern_is_structural(
     const PettaSpecializerPatternNode *node) {
     return node && node->structural;
 }
+
+
 
 const PettaSpecializerPatternNode *
 petta_specializer_pattern_child(

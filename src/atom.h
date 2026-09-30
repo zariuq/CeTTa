@@ -85,11 +85,29 @@ typedef enum {
     /* A rational term's node with the values of the free variables it
      * reaches: (tag node value...), term_graph.h. */
     CETTA_INTERNAL_TAG_RATIONAL = 9,
+    /* A retained PeTTa partial value. Authored `(partial ...)` is a list,
+     * while the reference's partial/2 is a compound. */
+    CETTA_INTERNAL_TAG_PETTA_PARTIAL = 10,
+    /* Private nominal domain of neutral Lam code, and a nullary callable.
+     * Source expressions cannot manufacture these value constructors. */
+    CETTA_INTERNAL_TAG_PETTA_CALLABLE_IDENTITY = 11,
+    CETTA_INTERNAL_TAG_PETTA_NULLARY_CALLABLE = 12,
 } CettaInternalTag;
 
 static inline bool cetta_internal_tag_is_list(int64_t tag) {
     return tag == (int64_t)CETTA_INTERNAL_TAG_LIST ||
            tag == (int64_t)CETTA_INTERNAL_TAG_LIST_REST;
+}
+
+static inline bool cetta_internal_tag_is_callable(int64_t tag) {
+    return tag == (int64_t)CETTA_INTERNAL_TAG_PETTA_PARTIAL ||
+           tag == (int64_t)CETTA_INTERNAL_TAG_PETTA_CALLABLE_IDENTITY ||
+           tag == (int64_t)CETTA_INTERNAL_TAG_PETTA_NULLARY_CALLABLE;
+}
+
+static inline bool cetta_internal_tag_is_term_stable(int64_t tag) {
+    return cetta_internal_tag_is_list(tag) ||
+           cetta_internal_tag_is_callable(tag);
 }
 
 #define ATOM_FLAG_HAS_VARS 0x01u
@@ -162,6 +180,7 @@ static inline bool cetta_internal_tag_is_list(int64_t tag) {
  * tree.  Such an atom is equal to, and hashes as, every other atom with the
  * same unfolding, whatever part of it is open. */
 #define ATOM_STRUCTURAL_HAS_RATIONAL UINT32_C(0x00000100)
+#define ATOM_STRUCTURAL_HAS_PETTA_NONLIST UINT32_C(0x00000200)
 /* Each fact has its own bit: for one-bit flags the sum equals the union
  * exactly when no two share one. */
 _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
@@ -169,13 +188,15 @@ _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
                        ATOM_STRUCTURAL_HAS_OPEN_LIST + ATOM_STRUCTURAL_HAS_LIST +
                        ATOM_STRUCTURAL_GENERATION_CLOSED +
                        ATOM_STRUCTURAL_HAS_LIST_CARRIER + ATOM_STRUCTURAL_FRONT_SLACK +
-                       ATOM_STRUCTURAL_HAS_RATIONAL ==
+                       ATOM_STRUCTURAL_HAS_RATIONAL +
+                       ATOM_STRUCTURAL_HAS_PETTA_NONLIST ==
                    (ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_HAS_INTERNAL_TAG |
                     ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID | ATOM_STRUCTURAL_HAS_NAN |
                     ATOM_STRUCTURAL_HAS_OPEN_LIST | ATOM_STRUCTURAL_HAS_LIST |
                     ATOM_STRUCTURAL_GENERATION_CLOSED |
                     ATOM_STRUCTURAL_HAS_LIST_CARRIER | ATOM_STRUCTURAL_FRONT_SLACK |
-                    ATOM_STRUCTURAL_HAS_RATIONAL),
+                    ATOM_STRUCTURAL_HAS_RATIONAL |
+                    ATOM_STRUCTURAL_HAS_PETTA_NONLIST),
                "structural fact bits overlap");
 
 /*
@@ -335,6 +356,67 @@ static inline bool atom_is_petta_prolog_compound(const Atom *atom) {
                                 CETTA_INTERNAL_TAG_PETTA_PROLOG_COMPOUND);
 }
 
+static inline bool atom_is_petta_partial(const Atom *atom) {
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len == 3u &&
+           atom_is_internal_tag(atom->expr.elems[0],
+                                CETTA_INTERNAL_TAG_PETTA_PARTIAL);
+}
+
+/* Public value role is independent of the expression-shaped executable
+ * representation. Private tags establish that role; public head spellings do
+ * not. A constructor-derived negative fact keeps ordinary matching O(1). */
+typedef enum {
+    PETTA_VALUE_ORDINARY = 0,
+    PETTA_VALUE_REGISTERED_CALLABLE,
+    PETTA_VALUE_COMPOUND,
+} PeTTaValueRepresentation;
+
+static inline PeTTaValueRepresentation atom_petta_value_representation(
+        const Atom *atom) {
+    if (!atom || atom->kind != ATOM_EXPR ||
+        ((atom->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) != 0u &&
+         (atom->structural_facts & ATOM_STRUCTURAL_HAS_PETTA_NONLIST) == 0u))
+        return PETTA_VALUE_ORDINARY;
+    if (atom_is_petta_prolog_compound(atom) || atom_is_petta_partial(atom))
+        return PETTA_VALUE_COMPOUND;
+    if (atom->expr.len == 3u) {
+        if (atom_is_internal_tag(atom->expr.elems[0],
+                CETTA_INTERNAL_TAG_PETTA_NULLARY_CALLABLE))
+            return PETTA_VALUE_REGISTERED_CALLABLE;
+        const Atom *domain = atom->expr.elems[1];
+        if (domain && domain->kind == ATOM_EXPR && domain->expr.len == 2u &&
+            atom_is_internal_tag(domain->expr.elems[0],
+                CETTA_INTERNAL_TAG_PETTA_CALLABLE_IDENTITY))
+            return PETTA_VALUE_REGISTERED_CALLABLE;
+    }
+    return PETTA_VALUE_ORDINARY;
+}
+
+/* Only privately constructed callable values carry an identity. Authored
+ * Lam/partial expressions do not acquire one from their public spelling. */
+static inline bool atom_petta_callable_identity(
+        const Atom *atom, int64_t *identity) {
+    if (!identity || atom_petta_value_representation(atom) !=
+                         PETTA_VALUE_REGISTERED_CALLABLE)
+        return false;
+    const Atom *token = atom_is_internal_tag(atom->expr.elems[0],
+        CETTA_INTERNAL_TAG_PETTA_NULLARY_CALLABLE)
+        ? atom->expr.elems[1] : atom->expr.elems[1]->expr.elems[1];
+    if (!token || token->kind != ATOM_GROUNDED ||
+        token->ground.gkind != GV_INT || token->ground.ival <= 0)
+        return false;
+    *identity = token->ground.ival;
+    return true;
+}
+
+/* Call after dereferencing variables. A variable may bind a whole value;
+ * expression decomposition must preserve its public constructor class. */
+static inline bool atom_petta_decomposition_compatible(
+        const Atom *left, const Atom *right) {
+    return atom_petta_value_representation(left) ==
+           atom_petta_value_representation(right);
+}
+
 /* The elements a sequence primitive (car-atom, size-atom, ...) reads: an
  * expression's, or a list's after its tag.  False for any other atom,
  * including a list pattern, whose length is not known, and a Prolog
@@ -342,7 +424,7 @@ static inline bool atom_is_petta_prolog_compound(const Atom *atom) {
 static inline bool atom_sequence_view(const Atom *atom, Atom *const **elems,
                                       CettaExprLen *len) {
     if (!atom || atom->kind != ATOM_EXPR || atom_is_list_rest(atom) ||
-        atom_is_petta_prolog_compound(atom))
+        atom_petta_value_representation(atom) != PETTA_VALUE_ORDINARY)
         return false;
     bool list = atom_is_list(atom);
     *elems = atom->expr.elems + (list ? 1u : 0u);

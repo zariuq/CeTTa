@@ -2469,7 +2469,7 @@ static MainPettaBlockLoadResult main_petta_load_declaration_block(
         if (checked != MAIN_PETTA_BLOCK_LOAD_OK)
             return checked;
     }
-    cetta_petta_erase_typecheck_marks_document(
+    cetta_petta_prepare_document_forms(
         universe, atom_ids, atom_count);
     PettaDeclarationBlock *block =
         petta_program_declaration_block_new(
@@ -3997,7 +3997,7 @@ process_petta_document:
                 }
             }
             if (lang->id == CETTA_LANGUAGE_PETTA) {
-                cetta_petta_erase_typecheck_marks_document(
+                cetta_petta_prepare_document_forms(
                     &libraries.term_universe, atom_ids + i,
                     exec_width);
                 if (!main_document_exec_at(
