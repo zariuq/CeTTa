@@ -59,6 +59,7 @@ static void assert_query_indices(Space *space, Arena *scratch, Atom *query,
 }
 
 static void realize_both_indexes(Space *space, Arena *scratch, Atom *query) {
+    space_match_native_ensure_trie(space);
     CettaIndex *candidates = NULL;
     CettaIndex candidate_len =
         space_match_backend_candidates64(space, query, &candidates);
@@ -422,6 +423,64 @@ static void test_atom_id_removal_preserves_pinned_view(
     space_free(&space);
 }
 
+static void test_cold_candidate_cursor(TermUniverse *universe, Arena *scratch) {
+    Space space;
+    space_init_with_universe(&space, universe);
+    SymbolId edge = symbol_intern_cstr(g_symbols, "cold-edge");
+    SymbolId other = symbol_intern_cstr(g_symbols, "cold-other");
+    AtomId rows[23];
+    for (CettaIndex i = 0u; i < 20u; i++)
+        rows[i] = store_atom(universe, edge_value(scratch, edge, (int64_t)i));
+    rows[20] = rows[7];
+    Atom *variable = atom_var_with_spelling(scratch,
+        symbol_intern_cstr(g_symbols, "cold-x"), UINT64_C(91001));
+    rows[21] = store_atom(universe, binary(scratch, edge, variable, variable));
+    rows[22] = store_atom(universe, binary(scratch, other, variable, variable));
+    uint64_t revision = space.revision;
+    assert(space_add_atom_ids_batch(&space, rows, 23u));
+    assert(space.native.len == 23u && space.revision == revision + 1u);
+    Atom *query = binary(scratch, edge, atom_int(scratch, 7),
+        atom_var_with_spelling(scratch,
+            symbol_intern_cstr(g_symbols, "cold-y"), UINT64_C(91002)));
+    SpaceOccurrenceCursor cursor, clone;
+    assert(space_occurrence_cursor_init(&space, query, &cursor));
+    assert(cursor.flat_mode && cursor.node_len == 0u);
+    assert(space.match_backend.native.match_trie == NULL);
+    assert(space_occurrence_cursor_clone(&cursor, &clone));
+    /* The encoded selector is conservative for stored correlations. Its
+     * unrelated variable-bearing row is rejected by canonical matching. */
+    const CettaIndex candidates[] = {7u, 20u, 21u, 22u};
+    const CettaIndex matches[] = {7u, 20u, 21u};
+    assert_query_indices(&space, scratch, query, matches, 3u);
+    assert(space_remove_atom_id(&space, rows[7]));
+    AtomId appended[] = {rows[7], rows[7]};
+    assert(space_add_atom_ids_batch(&space, appended, 2u));
+    for (size_t i = 0u; i < 4u; i++) {
+        CettaIndex index = UINT64_MAX, cloned = UINT64_MAX;
+        assert(space_occurrence_cursor_next(&cursor, &index) == SPACE_OCCURRENCE_CURSOR_ITEM);
+        assert(space_occurrence_cursor_next(&clone, &cloned) == SPACE_OCCURRENCE_CURSOR_ITEM);
+        assert(index == candidates[i] && cloned == index);
+        assert(atom_eq(space_occurrence_cursor_atom(&cursor, index),
+                       term_universe_get_atom(universe, rows[index])));
+    }
+    CettaIndex end = UINT64_MAX;
+    assert(space_occurrence_cursor_next(&cursor, &end) == SPACE_OCCURRENCE_CURSOR_END);
+    assert(space_occurrence_cursor_next(&clone, &end) == SPACE_OCCURRENCE_CURSOR_END);
+    space_occurrence_cursor_release(&clone);
+    space_occurrence_cursor_release(&cursor);
+    /* Exhausting the startup scan allowance returns to the reusable trie. */
+    for (unsigned i = 0u; i < 5u; i++) {
+        CettaIndex *selected = NULL;
+        (void)space_match_backend_candidates64(&space, query, &selected);
+        free(selected);
+    }
+    assert(space.match_backend.native.match_trie != NULL);
+    assert(space_add_atom_ids_batch(&space, appended, 2u));
+    const CettaIndex later_matches[] = {20u, 21u, 22u, 23u, 24u, 25u};
+    assert_query_indices(&space, scratch, query, later_matches, 6u);
+    space_free(&space);
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena persistent;
@@ -439,6 +498,7 @@ int main(void) {
     cetta_runtime_stats_enable();
 #endif
 
+    test_cold_candidate_cursor(&universe, &scratch);
     test_duplicate_order_and_open_patterns(&universe, &scratch);
     test_remove_all_releases_small_indexes(&universe, &scratch);
     test_queue_linearization(&universe, &scratch);

@@ -11,6 +11,7 @@
 #include "grounded.h"
 #include "he_typing.h"
 #include "he_typing_authority.h"
+#include "he_type_policy.h"
 #include "prime_native_calculus.h"
 #include "prime_semantics.h"
 #include "library.h"
@@ -21,6 +22,7 @@
 #include "petta_runtime.h"
 #include "petta_specializer.h"
 #include "petta_semantics.h"
+#include "petta_type_policy.h"
 #include "petta_typecheck.h"
 #include "match_decision.h"
 #include "prepared_pure_machine.h"
@@ -3469,6 +3471,29 @@ static bool eval_atom_is_cast_value(const Atom *atom) {
            atom_is_list_form(atom);
 }
 
+/* Only HE's source-demand policy is selected here. Other lanes retain their
+ * own demand rules; the common continuation still performs the requested work. */
+static HeTypeDemand eval_atom_type_demand(Arena *arena, Atom *atom,
+                                         Atom *expected) {
+    Atom *meta = get_meta_type(arena, atom);
+    if (eval_current_language_id() == CETTA_LANGUAGE_HE)
+        return he_type_demand(atom, expected, meta);
+    if (atom_is_symbol_id(expected, g_builtin_syms.atom) ||
+        atom_eq(expected, meta) ||
+        (atom_is_symbol_id(expected, g_builtin_syms.expression) &&
+         atom_is_list(atom)) ||
+        atom_is_symbol_id(meta, g_builtin_syms.variable))
+        return HE_TYPE_KEEP;
+    return eval_atom_is_cast_value(atom) ? HE_TYPE_CAST : HE_TYPE_INTERPRET;
+}
+
+static bool eval_type_refine(Atom *actual, Atom *expected,
+                             Bindings *bindings, Arena *arena) {
+    return eval_current_language_id() == CETTA_LANGUAGE_HE
+        ? he_type_refine(actual, expected, bindings, arena)
+        : match_types(actual, expected, bindings, arena);
+}
+
 static bool petta_atom_requires_control_eval(Atom *atom) {
     if (eval_current_language_id() != CETTA_LANGUAGE_PETTA ||
         !atom || atom->kind != ATOM_EXPR || atom->expr.len == 0u ||
@@ -5033,6 +5058,21 @@ static AtomId petta_erase_typecheck_marks_id(
                     break;
                 }
                 SymbolId head = tu_head_sym(universe, source);
+                /* The v2 translator reads a written (eval (quote E)) as
+                 * source E, not as a second evaluation of a returned value.
+                 * Select that source before occurrence plans are compiled;
+                 * an enclosing quote and a variable-held quote stay data. */
+                if (cetta_petta_profile_admits_native_typecheck_v2() &&
+                    head == g_builtin_syms.eval && arity == 2u) {
+                    AtomId payload = tu_child(universe, source, 1u);
+                    if (tu_kind(universe, payload) == ATOM_EXPR &&
+                        tu_arity(universe, payload) == 2u &&
+                        tu_head_sym(universe, payload) ==
+                            g_builtin_syms.quote) {
+                        frame->source = tu_child(universe, payload, 1u);
+                        continue;
+                    }
+                }
                 if (head == SYMBOL_ID_NONE || arity != 3u)
                     break;
                 const char *name = symbol_bytes(g_symbols, head);
@@ -14364,6 +14404,15 @@ static bool hyperpose_threaded_execute(
     if (thread_count > branch_count)
         thread_count = (uint32_t)branch_count;
 
+    /* Worker clones read an immutable foreign graph, never their parent's
+     * engine-local frames. Detach on the owning thread before publication. */
+    if (petta_execution && !cetta_delay_owner_detach(g_petta_eval_delay_service)) {
+        for (CettaCount i = 0; i < branch_count; i++)
+            hyperpose_thread_branch_free(&branches[i]);
+        free(branches);
+        return false;
+    }
+
     HyperposeThreadRun run = {
         .branches = branches,
         .branch_count = branch_count,
@@ -19435,8 +19484,7 @@ static bool is_function_type(Atom *a) {
        equationless head declares a CONSTRUCTOR's field types (the chainer
        types `:` and its record heads this way).  The relational machine
        recognizes mode arrows itself, gated on live equations. */
-    return a->kind == ATOM_EXPR && a->expr.len >= 2 &&
-           atom_is_symbol_id(a->expr.elems[0], g_builtin_syms.arrow);
+    return he_type_call_open(a, NULL);
 }
 
 static CettaExprLen get_function_arg_count(Atom *ft) {
@@ -19464,19 +19512,10 @@ static bool eval_dependent_telescope_enabled(void) {
 }
 
 static bool split_dependent_domain(Atom *domain, Atom **binder_out, Atom **type_out) {
-    if (eval_dependent_telescope_enabled() &&
-        domain &&
-        domain->kind == ATOM_EXPR &&
-        domain->expr.len == 3 &&
-        atom_is_symbol_id(domain->expr.elems[0], g_builtin_syms.colon) &&
-        domain->expr.elems[1]->kind == ATOM_VAR) {
-        *binder_out = domain->expr.elems[1];
-        *type_out = domain->expr.elems[2];
-        return true;
-    }
-    *binder_out = NULL;
-    *type_out = domain;
-    return false;
+    HeTypeDomain view = he_type_domain(domain, eval_dependent_telescope_enabled());
+    *binder_out = view.binder;
+    *type_out = view.formal;
+    return view.binder != NULL;
 }
 
 static Atom *function_domain_type(Bindings *env, Arena *a, Atom *domain, Atom **binder_out) {
@@ -20505,19 +20544,16 @@ static uint32_t eval_get_type_intrinsic_answers(
     *out_types = NULL;
     if (!s || !a || !input) return 0u;
 
-    /* PeTTa's get-type is the reference's relation over the space's
-     * declarations: a value is typed as data, never evaluated. */
     if (eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
         uint32_t count = 0u;
-        if (!petta_semantics_type_answers(
-                s, a, input, NULL, out_types, &count))
+        if (!petta_type_intrinsic_answers(s, a, input, NULL, out_types, &count))
             return 0u;
         return count;
     }
+
     bool source_projected = false;
     Atom *target = prime_need_source_argument(
         input, &source_projected);
-
     Atom *registered = registry_lookup_atom(target);
     if (registered) target = registered;
     Atom **types = NULL;
@@ -20627,7 +20663,7 @@ static void type_cast_fn(Space *s, Arena *a, Atom *atom, Atom *expectedType,
     for (uint32_t i = 0; i < ntypes; i++) {
         Bindings mb;
         bindings_init(&mb);
-        if (match_types(types[i], expectedType, &mb, a)) {
+        if (eval_type_refine(types[i], expectedType, &mb, a)) {
             bindings_free(&mb);
             result_set_add(rs, atom);
             free(types);
@@ -20650,184 +20686,45 @@ static void type_cast_fn(Space *s, Arena *a, Atom *atom, Atom *expectedType,
 
 /* ── Check if function type is applicable (TypeCheck.lean:55-116) ──────── */
 
-typedef struct {
-    Bindings *items;
-    uint32_t len;
-    uint32_t cap;
-    Bindings inline_items[4];
-} ApplicabilityBindings;
-
-typedef struct {
-    Atom **items;
-    uint32_t len;
-    uint32_t cap;
-    Atom *inline_items[8];
-} ApplicabilityErrors;
-
-/* Return contracts surviving application checking.  Prime evaluates a
- * call once under Need and checks its result against this set; overloaded
- * annotations must not duplicate computation or observable effects. */
-typedef struct {
-    Atom **items;
-    uint32_t len;
-    uint32_t cap;
-    Atom *inline_items[4];
-} ApplicabilityTypes;
-
-static void applicability_bindings_init(ApplicabilityBindings *vec) {
-    vec->items = vec->inline_items;
-    vec->len = 0;
-    vec->cap = sizeof vec->inline_items / sizeof vec->inline_items[0];
-}
-
-static void applicability_bindings_free(ApplicabilityBindings *vec) {
-    if (!vec) return;
-    for (uint32_t i = 0; i < vec->len; i++)
-        bindings_free(&vec->items[i]);
-    if (vec->items != vec->inline_items) free(vec->items);
-    applicability_bindings_init(vec);
-}
-
-static Bindings *applicability_bindings_push(ApplicabilityBindings *vec) {
-    if (!vec || vec->len == UINT32_MAX) {
-        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
-        return NULL;
-    }
-    if (vec->len == vec->cap) {
-        uint32_t next_cap = vec->cap * 2u;
-        if (next_cap <= vec->cap) next_cap = UINT32_MAX;
-        if ((size_t)next_cap > SIZE_MAX / sizeof(Bindings)) {
-            eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
-            return NULL;
-        }
-        Bindings *next = cetta_malloc(
-            sizeof(Bindings) * (size_t)next_cap);
-        memcpy(next, vec->items, sizeof(Bindings) * (size_t)vec->len);
-        if (vec->items != vec->inline_items) free(vec->items);
-        vec->items = next;
-        vec->cap = next_cap;
-    }
-    Bindings *slot = &vec->items[vec->len++];
-    bindings_init(slot);
-    return slot;
-}
-
-static bool applicability_bindings_push_move(ApplicabilityBindings *vec,
-                                              Bindings *source) {
-    Bindings *slot = applicability_bindings_push(vec);
-    if (!slot) return false;
-    bindings_move(slot, source);
-    return true;
-}
-
-static bool applicability_bindings_push_clone(ApplicabilityBindings *vec,
-                                               const Bindings *source) {
-    Bindings *slot = applicability_bindings_push(vec);
-    if (!slot) return false;
-    if (bindings_clone(slot, source)) return true;
-    bindings_free(slot);
-    vec->len--;
-    return false;
-}
-
-static void applicability_bindings_move_vec(ApplicabilityBindings *dest,
-                                            ApplicabilityBindings *source) {
-    applicability_bindings_free(dest);
-    if (source->items != source->inline_items) {
-        dest->items = source->items;
-        dest->len = source->len;
-        dest->cap = source->cap;
-        applicability_bindings_init(source);
-        return;
-    }
-    memcpy(dest->inline_items, source->inline_items,
-           sizeof(Bindings) * (size_t)source->len);
-    dest->len = source->len;
-    applicability_bindings_init(source);
-}
+typedef HeTypeErrors ApplicabilityErrors;
+typedef HeTypeContracts ApplicabilityTypes;
 
 static void applicability_errors_init(ApplicabilityErrors *vec) {
-    vec->items = vec->inline_items;
-    vec->len = 0;
-    vec->cap = sizeof vec->inline_items / sizeof vec->inline_items[0];
+    he_type_errors_init(vec);
 }
 
 static void applicability_errors_free(ApplicabilityErrors *vec) {
-    if (!vec) return;
-    if (vec->items != vec->inline_items) free(vec->items);
-    applicability_errors_init(vec);
+    he_type_errors_free(vec);
 }
 
 static void applicability_errors_cleanup(ApplicabilityErrors *vec) {
-    applicability_errors_free(vec);
+    he_type_errors_free(vec);
 }
 
 static bool applicability_errors_push(ApplicabilityErrors *vec, Atom *error) {
-    if (!vec || vec->len == UINT32_MAX) {
-        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
-        return false;
-    }
-    if (vec->len == vec->cap) {
-        uint32_t next_cap = vec->cap * 2u;
-        if (next_cap <= vec->cap) next_cap = UINT32_MAX;
-        if ((size_t)next_cap > SIZE_MAX / sizeof(Atom *)) {
-            eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
-            return false;
-        }
-        Atom **next = cetta_malloc(sizeof(Atom *) * (size_t)next_cap);
-        memcpy(next, vec->items, sizeof(Atom *) * (size_t)vec->len);
-        if (vec->items != vec->inline_items) free(vec->items);
-        vec->items = next;
-        vec->cap = next_cap;
-    }
-    vec->items[vec->len++] = error;
-    return true;
+    if (he_type_errors_push(vec, error)) return true;
+    eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+    return false;
 }
 
 static void applicability_types_init(ApplicabilityTypes *vec) {
-    vec->items = vec->inline_items;
-    vec->len = 0;
-    vec->cap = sizeof vec->inline_items / sizeof vec->inline_items[0];
+    he_type_contracts_init(vec);
 }
 
 static void applicability_types_free(ApplicabilityTypes *vec) {
-    if (!vec) return;
-    if (vec->items != vec->inline_items) free(vec->items);
-    applicability_types_init(vec);
+    he_type_contracts_free(vec);
 }
 
 static void atom_pointer_array_cleanup(Atom ***items) {
-    if (!items)
-        return;
+    if (!items) return;
     free(*items);
     *items = NULL;
 }
 
-static bool applicability_types_push_unique(ApplicabilityTypes *vec,
-                                             Atom *type) {
-    if (!vec) return true;
-    for (uint32_t i = 0u; i < vec->len; i++)
-        if (atom_eq(vec->items[i], type))
-            return true;
-    if (vec->len == UINT32_MAX) {
-        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
-        return false;
-    }
-    if (vec->len == vec->cap) {
-        uint32_t next_cap = vec->cap * 2u;
-        if (next_cap <= vec->cap ||
-            (size_t)next_cap > SIZE_MAX / sizeof(Atom *)) {
-            eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
-            return false;
-        }
-        Atom **next = cetta_malloc(sizeof(Atom *) * (size_t)next_cap);
-        memcpy(next, vec->items, sizeof(Atom *) * (size_t)vec->len);
-        if (vec->items != vec->inline_items) free(vec->items);
-        vec->items = next;
-        vec->cap = next_cap;
-    }
-    vec->items[vec->len++] = type;
-    return true;
+static bool applicability_types_push_unique(ApplicabilityTypes *vec, Atom *type) {
+    if (he_type_contracts_push_unique(vec, type)) return true;
+    eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+    return false;
 }
 
 /* A private Need capability is an evaluator representation, not the source
@@ -20871,6 +20768,9 @@ static bool prime_he_typed_applicability_assistance_enabled(void) {
 
 static bool typed_applicability_candidate_has_checked_refutation(
     Atom *actual, Atom *expected) {
+    if (eval_current_language_id() == CETTA_LANGUAGE_HE &&
+        (he_type_is_wildcard(actual) || he_type_is_wildcard(expected)))
+        return false;
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_NIK_TYPED_APPLICABILITY_CANDIDATE_TESTED);
     if (!cetta_nik_typed_applicability_pruning_enabled() ||
@@ -20901,218 +20801,59 @@ static bool typed_applicability_candidate_has_checked_refutation(
     return true;
 }
 
-/* Returns true if at least one complete applicability environment survives.
-   Every alternative is retained in dynamically growing storage; callers only
-   consume the decision and diagnostic atoms, so no binding array escapes. */
+/* Type services stay in the evaluator adapter; the applicability fold owns
+ * its ordered environments, diagnostics and instantiated result contracts. */
+typedef struct {
+    Space *space;
+    Arena *arena;
+} HeTypeEvalApplication;
+
+static uint32_t he_type_eval_infer(void *context, Atom *subject, Atom ***types) {
+    HeTypeEvalApplication *application = context;
+    return eval_get_atom_types_profiled(application->space, application->arena,
+                                         subject, types);
+}
+
+static Atom *he_type_eval_source_argument(void *context, Atom *argument) {
+    (void)context;
+    return prime_need_typecheck_argument(argument);
+}
+
+static bool he_type_eval_refuted(void *context, Atom *actual, Atom *expected) {
+    (void)context;
+    return typed_applicability_candidate_has_checked_refutation(actual, expected);
+}
+
 static bool check_function_applicable(
     Atom *expr, Atom *funcType, Atom *expectedType,
     Space *s, Arena *a, int fuel, bool allow_native_refutation,
     ApplicabilityErrors *errors,
     ApplicabilityTypes *applicable_returns) {
-
-    CettaExprLen nargs = get_function_arg_count(funcType);
-    CettaExprLen expr_narg = (expr->kind == ATOM_EXPR && expr->expr.len > 0)
-                             ? expr->expr.len - 1 : 0;
-    /* Step 1: arity check */
-    if (expr_narg != nargs) {
-        applicability_errors_push(
-            errors, atom_error(a, expr,
-                               atom_symbol(a, "IncorrectNumberOfArguments")));
-        return false;
-    }
-
-    Atom **arg_types = nargs
-        ? arena_alloc(a, sizeof(Atom *) * (size_t)nargs)
-        : NULL;
-    if (arg_types)
-        get_function_arg_types(funcType, arg_types);
-
-    Atom *retType = get_function_ret_type(funcType);
-    if (!retType) retType = atom_undefined_type(a);
-
-    /* Step 2: check each argument type, threading bindings */
-    ApplicabilityBindings results;
-    applicability_bindings_init(&results);
-    if (!applicability_bindings_push(&results)) return false;
-
-    for (CettaExprIndex i = 0; i < nargs && results.len > 0; i++) {
-        Atom *arg = prime_need_typecheck_argument(
-            expr->expr.elems[i + 1]);
-        ApplicabilityBindings next;
-        applicability_bindings_init(&next);
-
-        for (uint32_t r = 0; r < results.len; r++) {
-            bool found = false;
-            /* Apply accumulated bindings to expected arg type
-               (resolves type variables bound by previous args) */
-            Atom *expected =
-                function_domain_type(&results.items[r], a, arg_types[i], NULL);
-            if (atom_is_symbol_id(expected, g_builtin_syms.atom) ||
-                atom_is_symbol_id(expected, g_builtin_syms.undefined_type)) {
-                if (!applicability_bindings_push_move(
-                        &next, &results.items[r])) {
-                    applicability_bindings_free(&next);
-                    applicability_bindings_free(&results);
-                    return false;
-                }
-                continue;
-            }
-            if (atom_is_meta_type(expected)) {
-                if (atom_meta_type_accepts(a, expected, arg)) {
-                    BindingsBuilder candidate_builder;
-                    if (bindings_builder_init(&candidate_builder,
-                                              &results.items[r])) {
-                        if (bind_domain_binder_builder(&candidate_builder,
-                                                       arg_types[i], arg)) {
-                            if (!applicability_bindings_push_clone(
-                                    &next,
-                                    bindings_builder_bindings(
-                                        &candidate_builder))) {
-                                bindings_builder_free(&candidate_builder);
-                                applicability_bindings_free(&next);
-                                applicability_bindings_free(&results);
-                                return false;
-                            }
-                        }
-                        bindings_builder_free(&candidate_builder);
-                    }
-                    found = true;
-                } else {
-                    Atom **actual_types = NULL;
-                    uint32_t n_actual_types =
-                        eval_get_atom_types_profiled(s, a, arg, &actual_types);
-                    Atom *actual_type = n_actual_types > 0
-                        ? actual_types[0]
-                        : get_meta_type(a, arg);
-                    Atom *reason = atom_expr(a, (Atom*[]){
-                        atom_symbol(a, "BadArgType"),
-                        atom_int(a, (int64_t)(i + 1)),
-                        expected,
-                        actual_type
-                    }, 4);
-                    free(actual_types);
-                    if (!applicability_errors_push(
-                            errors, atom_error(a, expr, reason))) {
-                        applicability_bindings_free(&next);
-                        applicability_bindings_free(&results);
-                        return false;
-                    }
-                }
-                continue;
-            }
-
-            Atom **atypes;
-            uint32_t natypes =
-                eval_get_atom_types_profiled(s, a, arg, &atypes);
-            if (natypes == 0) {
-                if (!applicability_bindings_push_move(
-                        &next, &results.items[r])) {
-                    free(atypes);
-                    applicability_bindings_free(&next);
-                    applicability_bindings_free(&results);
-                    return false;
-                }
-                free(atypes);
-                continue;
-            }
-            SearchContext candidate_context;
-            search_context_init_owned(&candidate_context, &results.items[r],
-                                      NULL);
-            for (uint32_t t = 0; t < natypes; t++) {
-                if (allow_native_refutation &&
-                    typed_applicability_candidate_has_checked_refutation(
-                        atypes[t], expected)) {
-                    continue;
-                }
-                ChoicePoint point = search_context_save(&candidate_context);
-                if (match_types_builder(atypes[t], expected,
-                                        search_context_builder(&candidate_context), a)) {
-                    if (!bind_domain_binder_builder(search_context_builder(&candidate_context),
-                                                    arg_types[i], arg)) {
-                        search_context_rollback(&candidate_context, point);
-                        continue;
-                    }
-                    if (!applicability_bindings_push_clone(
-                            &next,
-                            search_context_bindings(&candidate_context))) {
-                        search_context_rollback(&candidate_context, point);
-                        search_context_free(&candidate_context);
-                        free(atypes);
-                        applicability_bindings_free(&next);
-                        applicability_bindings_free(&results);
-                        return false;
-                    }
-                    search_context_rollback(&candidate_context, point);
-                    found = true;
-                }
-                else {
-                    search_context_rollback(&candidate_context, point);
-                }
-            }
-            search_context_free(&candidate_context);
-            if (!found && natypes > 0) {
-                /* Report first mismatching type */
-                Atom *reason = atom_expr(a, (Atom*[]){
-                    atom_symbol(a, "BadArgType"),
-                    atom_int(a, (int64_t)(i + 1)),
-                    expected,
-                    atypes[0]
-                }, 4);
-                if (!applicability_errors_push(
-                        errors, atom_error(a, expr, reason))) {
-                    free(atypes);
-                    applicability_bindings_free(&next);
-                    applicability_bindings_free(&results);
-                    return false;
-                }
-            }
-            free(atypes);
-        }
-        applicability_bindings_move_vec(&results, &next);
-    }
-
-    if (results.len == 0) {
-        applicability_bindings_free(&results);
-        return false;
-    }
-
-    /* Step 3: check return type */
-    bool ret_ok = false;
-    for (uint32_t r = 0; r < results.len; r++) {
-        SearchContext ret_context;
-        search_context_init_owned(&ret_context, &results.items[r], NULL);
-        Atom *inst_ret =
-            eval_dependent_telescope_enabled()
-                ? bindings_apply_if_vars(search_context_bindings(&ret_context), a, retType)
-                : retType;
-        if (match_types_builder(inst_ret, expectedType,
-                                search_context_builder(&ret_context), a)) {
-            ret_ok = true;
-            Atom *contract = bindings_apply_if_vars(
-                search_context_bindings(&ret_context), a, inst_ret);
-            if (atom_is_symbol_id(contract, g_builtin_syms.expression))
-                contract = atom_undefined_type(a);
-            if (!applicability_types_push_unique(applicable_returns,
-                                                 contract)) {
-                search_context_free(&ret_context);
-                applicability_bindings_free(&results);
-                return false;
-            }
-        } else {
-            Atom *reason = atom_expr3(a, atom_symbol(a, "BadType"),
-                                      expectedType, inst_ret);
-            if (!applicability_errors_push(
-                    errors, atom_error(a, expr, reason))) {
-                search_context_free(&ret_context);
-                applicability_bindings_free(&results);
-                return false;
-            }
-        }
-        search_context_free(&ret_context);
-    }
-
-    applicability_bindings_free(&results);
-    return ret_ok;
+    (void)fuel;
+    HeTypeEvalApplication application = {s, a};
+    CettaLanguageId language = eval_current_language_id();
+    HeTypeApplicationServices services = {
+        .context = &application,
+        .infer = he_type_eval_infer,
+        .source_argument = language == CETTA_LANGUAGE_PRIME
+            ? he_type_eval_source_argument : NULL,
+        .refuted = allow_native_refutation ? he_type_eval_refuted : NULL,
+        .refine = language == CETTA_LANGUAGE_HE ? NULL : match_types_builder,
+    };
+    /* Dependent inference may evaluate types. The fold's local binding
+     * alternatives are not moving-GC roots; retain their arena until the
+     * synchronous callback returns. Base HE inference does not evaluate. */
+    bool dependent = eval_dependent_telescope_enabled();
+    if (dependent)
+        eval_gc_external_owner_enter();
+    HeTypeApplicability result = he_type_call_applicable(
+        a, expr, funcType, expectedType, dependent,
+        &services, errors, applicable_returns);
+    if (dependent)
+        eval_gc_external_owner_leave();
+    if (result == HE_TYPE_APPLICATION_INCOMPLETE)
+        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+    return result == HE_TYPE_APPLICABLE;
 }
 
 /* ── Forward declarations ───────────────────────────────────────────────── */
@@ -24273,18 +24014,15 @@ void metta_eval(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, ResultSet 
 
     /* Type == Atom or matches meta-type, or meta-type is Variable:
        return as-is (spec line 255) — THIS is the laziness control */
-    Atom *meta = get_meta_type(a, atom);
-    if (atom_is_symbol_id(etype, g_builtin_syms.atom) || atom_eq(etype, meta) ||
-        (atom_is_symbol_id(etype, g_builtin_syms.expression) &&
-         atom_is_list(atom)) ||
-        atom_is_symbol_id(meta, g_builtin_syms.variable)) {
+    HeTypeDemand demand = eval_atom_type_demand(a, atom, etype);
+    if (demand == HE_TYPE_KEEP) {
         result_set_add(rs, atom);
         prime_need_observe_top_answer(atom, NULL);
         return;
     }
 
     /* Symbol/Grounded/empty-expr: typeCast (spec line 260) */
-    if (eval_atom_is_cast_value(atom)) {
+    if (demand == HE_TYPE_CAST) {
         CettaCount before = rs->len;
         type_cast_fn(s, a, atom, etype, fuel, rs);
         for (CettaCount i = before; i < rs->len; i++)
@@ -24538,16 +24276,13 @@ static void metta_eval_bind_typed(Space *s, Arena *a, Atom *type, Atom *atom, in
         return;
     }
 
-    Atom *meta = get_meta_type(a, atom);
-    if (atom_is_symbol_id(etype, g_builtin_syms.atom) || atom_eq(etype, meta) ||
-        (atom_is_symbol_id(etype, g_builtin_syms.expression) &&
-         atom_is_list(atom)) ||
-        atom_is_symbol_id(meta, g_builtin_syms.variable)) {
+    HeTypeDemand demand = eval_atom_type_demand(a, atom, etype);
+    if (demand == HE_TYPE_KEEP) {
         outcome_set_add(os, atom, &empty);
         return;
     }
 
-    if (eval_atom_is_cast_value(atom)) {
+    if (demand == HE_TYPE_CAST) {
         ResultSet rs;
         result_set_init(&rs);
         type_cast_fn(s, a, atom, etype, fuel, &rs);
@@ -31693,11 +31428,7 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                 }
                 if (!correlate_he_contracts) {
                     Atom *legacy_ret_type = get_function_ret_type(fresh_ft);
-                    if (atom_is_symbol_id(
-                            legacy_ret_type,
-                            g_builtin_syms.expression)) {
-                        legacy_ret_type = atom_undefined_type(a);
-                    }
+                    legacy_ret_type = he_type_result_demand(a, legacy_ret_type);
                     if (!applicability_types_push_unique(
                             &contracts, legacy_ret_type)) {
                         continue;
@@ -38284,8 +38015,8 @@ typedef struct {
  * drops, as the reference's consult keeps or drops those clauses. */
 static bool petta_static_import_sync(void *context, Atom *target,
                                      CettaExprLen length, bool multifile,
-                                     bool begin, Arena *rows_arena,
-                                     Atom **rows, uint32_t count) {
+                                     bool begin, TermUniverse **literal_universe,
+                                     const PettaLibplStaticRows *batch) {
     PettaStaticImportSync *sync = context;
     if (!target || target->kind != ATOM_SYMBOL)
         return false;
@@ -38305,9 +38036,36 @@ static bool petta_static_import_sync(void *context, Atom *target,
     if (begin && !petta_space_remove_rows_of_length(
             space, length, entry->kept, program))
         return false;
-    for (uint32_t i = 0u; i < count; i++) {
-        Arena *source = rows_arena ? rows_arena : sync->arena;
-        Atom *flat = petta_flatten_closed_open_cons(source, rows[i]);
+    if (begin) {
+        CettaEvalSession *session = active_eval_session();
+        if (literal_universe)
+            *literal_universe =
+                !cetta_profile_uses_petta_typing(session->profile)
+                    ? space->native.universe : NULL;
+        return true;
+    }
+    if (!batch)
+        return false;
+    for (uint32_t i = 0u; i < batch->count; i++) {
+        if (batch->literal_ids[i] != CETTA_ATOM_ID_NONE) {
+            uint32_t first = i;
+            while (i + 1u < batch->count &&
+                   batch->literal_ids[i + 1u] != CETTA_ATOM_ID_NONE)
+                i++;
+            __attribute__((cleanup(cetta_shared_transition_guard_leave)))
+            CettaSharedTransitionGuard transition = {0};
+            cetta_shared_transition_guard_enter(&transition);
+            if (!space_add_atom_ids_batch(
+                    space, batch->literal_ids + first, i - first + 1u)) {
+                sync->error = space_term_universe_or_symbol_error(
+                    sync->arena, sync->call, space, "AddAtomFailed");
+                return false;
+            }
+            space_execution_analysis_note_mutation(space);
+            continue;
+        }
+        Arena *source = batch->arena ? batch->arena : sync->arena;
+        Atom *flat = petta_flatten_closed_open_cons(source, batch->rows[i]);
         /* Compiled equation plans retain their source syntax. Ordinary
          * facts are copied into space storage by admission below. */
         if (flat && program && petta_program_is_equation(flat)) {
@@ -39876,17 +39634,68 @@ static bool petta_eval_machine_evaluate_planned_host(
 }
 
 static bool petta_eval_machine_get_type(
-    void *opaque, Space *space, Arena *arena, Atom *value,
-    Atom *target, Atom ***types, uint32_t *count) {
+    void *opaque, Space *space, Arena *arena, Atom *value, Atom *target,
+    Atom ***types, uint32_t *count) {
     PettaEvalMachineContext *context = opaque;
     if (!space || !arena || !value || !types || !count)
         return false;
     if (eval_current_language_id() == CETTA_LANGUAGE_PETTA)
-        return petta_semantics_type_answers(
+        return petta_type_intrinsic_answers(
             space, arena, value, target, types, count);
     *count = eval_get_type_intrinsic_answers(
         space, arena, value, context ? context->fuel : -1, types);
     return true;
+}
+
+/* Shared by the public operator and the ready-value machine service. */
+static bool eval_get_metatype_intrinsic(
+    Space *space, Arena *arena, Atom *value, Atom **type) {
+    if (!arena || !value || !type)
+        return false;
+    *type = NULL;
+    if (eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
+        PeTTaValueRepresentation representation =
+            petta_semantics_value_representation(value);
+        if (representation == PETTA_VALUE_COMPOUND)
+            return true;
+        if (representation == PETTA_VALUE_REGISTERED_CALLABLE) {
+            *type = atom_symbol(arena, "Grounded");
+            return *type != NULL;
+        }
+    }
+    if (eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+        value->kind == ATOM_SYMBOL) {
+        *type = petta_semantics_symbol_metatype(
+            arena, value->sym_id,
+            petta_eval_function_registered(space, value->sym_id));
+        return *type != NULL;
+    }
+    Atom *registered = registry_lookup_atom(value);
+    if (registered)
+        value = registered;
+    if (eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+        petta_semantics_is_cons_constraint(value) &&
+        !petta_semantics_is_closed_list(value))
+        return true;
+    *type = get_meta_type(arena, value);
+    return *type != NULL;
+}
+
+static bool petta_eval_machine_get_metatype(
+    void *context, Space *space, Arena *arena, Atom *value, Atom **type) {
+    (void)context;
+    return eval_get_metatype_intrinsic(space, arena, value, type);
+}
+
+static bool petta_eval_machine_type_calls(
+    void *context, Space *space, Arena *arena, Atom *head,
+    CettaExprLen supplied, PettaTypeCall **calls, uint32_t *count,
+    bool *hold_body) {
+    PettaEvalMachineContext *owner = context;
+    PettaProgram *program = owner && owner->library_context
+        ? owner->library_context->petta_program : NULL;
+    return petta_program_type_calls(program, space, head, supplied, arena,
+                                    calls, count, hold_body);
 }
 
 static PettaMachineFoldResult petta_eval_machine_foldl_single_result(
@@ -40901,6 +40710,7 @@ static PettaMachineHost petta_eval_machine_host(
         .reify_head = eval_reify_head(),
         .bounded_collections =
             eval_current_language_id() == CETTA_LANGUAGE_PETTA,
+        .dependent_type_domains = eval_dependent_telescope_enabled(),
         .permit_transition = frontier_admitted
             ? petta_eval_machine_permit_controller_transition
             : petta_eval_machine_permit_transition,
@@ -40926,6 +40736,10 @@ static PettaMachineHost petta_eval_machine_host(
         .translate_source = !prime_machine && !portable_machine
             ? petta_eval_machine_translate_source : NULL,
         .get_type = petta_eval_machine_get_type,
+        .get_metatype = eval_current_language_id() == CETTA_LANGUAGE_PETTA
+            ? petta_eval_machine_get_metatype : NULL,
+        .type_calls = eval_current_language_id() == CETTA_LANGUAGE_PETTA
+            ? petta_eval_machine_type_calls : NULL,
         .boolean_value = petta_eval_machine_boolean_value,
         .is_data_constructor =
             petta_eval_machine_is_data_constructor,
@@ -44499,16 +44313,13 @@ tail_call: ;
         return;
     }
 
-    Atom *meta = get_meta_type(a, atom);
-    if (atom_is_symbol_id(etype, g_builtin_syms.atom) || atom_eq(etype, meta) ||
-        (atom_is_symbol_id(etype, g_builtin_syms.expression) &&
-         atom_is_list(atom)) ||
-        atom_is_symbol_id(meta, g_builtin_syms.variable)) {
+    HeTypeDemand demand = eval_atom_type_demand(a, atom, etype);
+    if (demand == HE_TYPE_KEEP) {
         outcome_set_add(os, atom, &_empty);
         return;
     }
 
-    if (eval_atom_is_cast_value(atom)) {
+    if (demand == HE_TYPE_CAST) {
         ResultSet rs;
         result_set_init(&rs);
         type_cast_fn(s, a, atom, etype, fuel, &rs);
@@ -49488,42 +49299,14 @@ petta_lowered_to_shared_form:
                 &_empty);
             return;
         }
-        Atom *target = expr_arg(atom, 0);
-        if (language_id == CETTA_LANGUAGE_PETTA) {
-            PeTTaValueRepresentation representation =
-                petta_semantics_value_representation(target);
-            if (representation == PETTA_VALUE_COMPOUND)
-                return;
-            if (representation == PETTA_VALUE_REGISTERED_CALLABLE) {
-                outcome_set_add(os, atom_symbol(a, "Grounded"), &_empty);
-                return;
-            }
-        }
         /*
          * PeTTa's get-metatype/2 reads its argument as it stands, a token
          * included, and reports a symbol that names a registered function
          * (fun/1) as Grounded; HE and Prime resolve tokens first.
          */
-        if (language_id == CETTA_LANGUAGE_PETTA &&
-            target->kind == ATOM_SYMBOL) {
-            outcome_set_add(
-                os,
-                petta_semantics_symbol_metatype(
-                    a, target->sym_id,
-                    petta_eval_function_registered(s, target->sym_id)),
-                &_empty);
-            return;
-        }
-        Atom *val = registry_lookup_atom(target);
-        if (val) target = val;
-        /* PeTTa answers Expression only for a list (is_list/1); a partial or
-         * improper cell has no metatype. */
-        if (language_id == CETTA_LANGUAGE_PETTA &&
-            petta_semantics_is_cons_constraint(target) &&
-            !petta_semantics_is_closed_list(target)) {
-            return;
-        }
-        outcome_set_add(os, get_meta_type(a, target), &_empty);
+        Atom *type = NULL;
+        if (eval_get_metatype_intrinsic(s, a, expr_arg(atom, 0), &type) && type)
+            outcome_set_add(os, type, &_empty);
         return;
     }
 

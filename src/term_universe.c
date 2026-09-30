@@ -23,6 +23,45 @@ typedef struct CettaTermVariableSupportBlock {
         slots[CETTA_TERM_VARIABLE_SUPPORT_BLOCK_SIZE];
 } CettaTermVariableSupportBlock;
 
+enum { TERM_UNIVERSE_INTEGER_PAGE_BITS = 9,
+       TERM_UNIVERSE_INTEGER_PAGE_SIZE = 1u << TERM_UNIVERSE_INTEGER_PAGE_BITS,
+       TERM_UNIVERSE_INTEGER_DENSE_AT = 128u };
+
+typedef struct {
+    size_t physical_plus_one;
+    uint16_t offset;
+} CettaIntegerPageEntry;
+
+typedef struct {
+    uint16_t len, cap;
+    bool dense;
+    union {
+        CettaIntegerPageEntry *sparse;
+        size_t *positions;
+    } data;
+} CettaIntegerInternPage;
+
+typedef struct CettaIntegerInternSlot {
+    uint64_t prefix;
+    CettaIntegerInternPage *page;
+} CettaIntegerInternSlot;
+
+static void term_universe_integer_free(TermUniverse *universe) {
+    if (universe->integer_slots) {
+        for (size_t i = 0u; i <= universe->integer_mask; i++) {
+            CettaIntegerInternPage *page = universe->integer_slots[i].page;
+            if (!page)
+                continue;
+            if (page->dense)
+                free(page->data.positions);
+            else
+                free(page->data.sparse);
+            free(page);
+        }
+    }
+    free(universe->integer_slots);
+}
+
 static _Atomic uint64_t g_term_universe_next_instance_id = 1u;
 
 static uint64_t term_universe_fresh_instance_id(void) {
@@ -83,11 +122,19 @@ static bool term_universe_append_raw_record(TermUniverse *universe,
                                             const uint8_t *payload,
                                             size_t payload_len,
                                             TermEntry *out_entry);
+/* A miss proves this position is the first vacancy on its probe path.
+ * Constructors may reuse it only while layout and occupancy stay unchanged. */
+typedef struct {
+    size_t slot, mask, used;
+    TermUniverseStoreFormat format;
+} TermUniverseVacancy;
+
 static AtomId term_universe_insert_new_record(TermUniverse *universe,
                                               const CettaTermHdr *hdr,
                                               const uint8_t *payload,
                                               size_t payload_len,
-                                              uint32_t coordinate);
+                                              uint32_t coordinate,
+                                              const TermUniverseVacancy *vacancy);
 static bool term_universe_notify_store_format_observers(
     TermUniverse *universe,
     TermUniverseStoreFormat old_format,
@@ -769,6 +816,7 @@ static void term_universe_clear_storage(TermUniverse *universe) {
     free(universe->blob_pool);
     free(universe->entries);
     free(universe->intern_slots);
+    term_universe_integer_free(universe);
     free(universe->ptr_slots);
     universe->blob_pool = NULL;
     universe->blob_len = 0;
@@ -781,6 +829,9 @@ static void term_universe_clear_storage(TermUniverse *universe) {
     universe->intern_slots = NULL;
     universe->intern_mask = 0;
     universe->intern_used = 0;
+    universe->integer_slots = NULL;
+    universe->integer_mask = 0;
+    universe->integer_used = 0;
     universe->ptr_slots = NULL;
     universe->ptr_mask = 0;
     universe->ptr_used = 0;
@@ -820,6 +871,9 @@ bool term_universe_init_with_store_format(TermUniverse *universe,
     universe->intern_slots = NULL;
     universe->intern_mask = 0;
     universe->intern_used = 0;
+    universe->integer_slots = NULL;
+    universe->integer_mask = 0;
+    universe->integer_used = 0;
     universe->ptr_slots = NULL;
     universe->ptr_mask = 0;
     universe->ptr_used = 0;
@@ -2039,11 +2093,178 @@ static bool term_universe_entry_eq_record(const TermUniverse *universe, AtomId i
     return false;
 }
 
+static size_t term_universe_integer_hash(uint64_t prefix) {
+    uint64_t x = prefix;
+    x ^= x >> 30;
+    x *= UINT64_C(0xbf58476d1ce4e5b9);
+    x ^= x >> 27;
+    return (size_t)x;
+}
+
+static bool term_universe_integer_reserve(TermUniverse *universe,
+                                           size_t additional) {
+    if (additional > SIZE_MAX - universe->integer_used)
+        goto too_large;
+    size_t required = universe->integer_used + additional;
+    size_t cap = universe->integer_slots ? universe->integer_mask + 1u : 128u;
+    while (required > cap - cap / 3u) {
+        if (cap > SIZE_MAX / 2u)
+            goto too_large;
+        cap *= 2u;
+    }
+    if (universe->integer_slots && cap == universe->integer_mask + 1u)
+        return true;
+    if (cap > SIZE_MAX / sizeof(CettaIntegerInternSlot))
+        goto too_large;
+    CettaIntegerInternSlot *slots = calloc(cap, sizeof(*slots));
+    if (!slots) {
+        term_universe_set_error(universe, TERM_UNIVERSE_ERROR_ALLOCATION_FAILED);
+        return false;
+    }
+    for (size_t i = 0u; universe->integer_slots && i <= universe->integer_mask; i++) {
+        CettaIntegerInternSlot entry = universe->integer_slots[i];
+        if (!entry.page)
+            continue;
+        size_t pos = term_universe_integer_hash(entry.prefix) & (cap - 1u);
+        while (slots[pos].page)
+            pos = (pos + 1u) & (cap - 1u);
+        slots[pos] = entry;
+    }
+    free(universe->integer_slots);
+    universe->integer_slots = slots;
+    universe->integer_mask = cap - 1u;
+    return true;
+too_large:
+    term_universe_set_error(universe, TERM_UNIVERSE_ERROR_STORAGE_TOO_LARGE);
+    return false;
+}
+
+static CettaIntegerInternPage *term_universe_integer_page(
+        const TermUniverse *universe, int64_t value, size_t *vacancy,
+        size_t *probes) {
+    if (probes)
+        *probes = 0u;
+    if (!universe || !universe->integer_slots)
+        return NULL;
+    uint64_t prefix = (uint64_t)value >> TERM_UNIVERSE_INTEGER_PAGE_BITS;
+    size_t pos = term_universe_integer_hash(prefix) & universe->integer_mask;
+    for (;; pos = (pos + 1u) & universe->integer_mask) {
+        CettaIntegerInternSlot slot = universe->integer_slots[pos];
+        if (probes)
+            (*probes)++;
+        if (!slot.page) {
+            if (vacancy)
+                *vacancy = pos;
+            return NULL;
+        }
+        if (slot.prefix == prefix)
+            return slot.page;
+    }
+}
+
+static uint16_t term_universe_integer_sparse_position(
+        const CettaIntegerInternPage *page, uint16_t offset) {
+    uint16_t lo = 0u, hi = page->len;
+    while (lo < hi) {
+        uint16_t mid = lo + (hi - lo) / 2u;
+        if (page->data.sparse[mid].offset < offset)
+            lo = mid + 1u;
+        else
+            hi = mid;
+    }
+    return lo;
+}
+
+static AtomId term_universe_lookup_integer(const TermUniverse *universe,
+                                           int64_t value,
+                                           TermUniverseVacancy *vacancy) {
+    (void)vacancy;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LOOKUP);
+    size_t probes = 0u;
+    CettaIntegerInternPage *page = term_universe_integer_page(universe, value, NULL, &probes);
+    size_t physical = 0u;
+    uint16_t offset = (uint64_t)value & (TERM_UNIVERSE_INTEGER_PAGE_SIZE - 1u);
+    if (page) {
+        if (page->dense) {
+            physical = page->data.positions[offset];
+        } else {
+            uint16_t pos = term_universe_integer_sparse_position(page, offset);
+            if (pos < page->len && page->data.sparse[pos].offset == offset)
+                physical = page->data.sparse[pos].physical_plus_one;
+        }
+    }
+    TU_DIAG_LOOKUP_PROBES((TermUniverse *)universe, probes);
+    if (physical) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_HIT);
+        TU_DIAG_INC((TermUniverse *)universe, direct_lookup_hits);
+        return term_universe_physical_index_to_atom_id(universe, physical - 1u);
+    }
+    TU_DIAG_INC((TermUniverse *)universe, direct_lookup_misses);
+    return CETTA_ATOM_ID_NONE;
+}
+
+/* Reserve the publication coordinate before appending a record. Promotion
+ * retains all old physical positions; zero remains the only absent value. */
+static CettaIntegerInternPage *term_universe_integer_prepare(
+        TermUniverse *universe, int64_t value, uint16_t *position) {
+    size_t vacancy = SIZE_MAX;
+    CettaIntegerInternPage *page = term_universe_integer_page(universe, value, &vacancy, NULL);
+    if (!page) {
+        if (!term_universe_integer_reserve(universe, 1u))
+            return NULL;
+        (void)term_universe_integer_page(universe, value, &vacancy, NULL);
+        page = calloc(1u, sizeof(*page));
+        if (!page)
+            goto allocation_failed;
+        universe->integer_slots[vacancy] = (CettaIntegerInternSlot){
+            .prefix = (uint64_t)value >> TERM_UNIVERSE_INTEGER_PAGE_BITS,
+            .page = page};
+        universe->integer_used++;
+    }
+    uint16_t offset = (uint64_t)value & (TERM_UNIVERSE_INTEGER_PAGE_SIZE - 1u);
+    if (!page->dense && page->len >= TERM_UNIVERSE_INTEGER_DENSE_AT) {
+        size_t *positions = calloc(TERM_UNIVERSE_INTEGER_PAGE_SIZE, sizeof(*positions));
+        if (!positions)
+            goto allocation_failed;
+        for (uint16_t i = 0u; i < page->len; i++)
+            positions[page->data.sparse[i].offset] = page->data.sparse[i].physical_plus_one;
+        free(page->data.sparse);
+        page->data.positions = positions;
+        page->dense = true;
+    }
+    if (page->dense) {
+        *position = offset;
+        return page;
+    }
+    if (page->len == page->cap) {
+        uint16_t cap = page->cap ? page->cap * 2u : 4u;
+        CettaIntegerPageEntry *entries = realloc(page->data.sparse, cap * sizeof(*entries));
+        if (!entries)
+            goto allocation_failed;
+        page->data.sparse = entries;
+        page->cap = cap;
+    }
+    *position = term_universe_integer_sparse_position(page, offset);
+    return page;
+allocation_failed:
+    term_universe_set_error(universe, TERM_UNIVERSE_ERROR_ALLOCATION_FAILED);
+    return NULL;
+}
+
 static AtomId term_universe_lookup_record_at(const TermUniverse *universe,
                                              const CettaTermHdr *hdr,
                                              const uint8_t *payload,
                                              size_t payload_len,
-                                             uint32_t hslot) {
+                                             uint32_t hslot,
+                                             TermUniverseVacancy *vacancy) {
+    if (vacancy) {
+        *vacancy = (TermUniverseVacancy){.slot = SIZE_MAX};
+        if (universe) {
+            vacancy->mask = universe->intern_mask;
+            vacancy->used = universe->intern_used;
+            vacancy->format = term_universe_store_format(universe);
+        }
+    }
     if (!universe || !universe->intern_slots || !hdr)
         return CETTA_ATOM_ID_NONE;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LOOKUP);
@@ -2056,6 +2277,8 @@ static AtomId term_universe_lookup_record_at(const TermUniverse *universe,
         uint32_t have_tag = term_universe_intern_tag_at(
             universe->intern_slots, width, idx);
         if (have_tag == 0u) {
+            if (vacancy)
+                vacancy->slot = idx;
             TU_DIAG_LOOKUP_PROBES(
                 (TermUniverse *)universe, probe + 1u);
             TU_DIAG_INC((TermUniverse *)universe, direct_lookup_misses);
@@ -2087,10 +2310,14 @@ static AtomId term_universe_lookup_record_id(const TermUniverse *universe,
                                              const CettaTermHdr *hdr,
                                              const uint8_t *payload,
                                              size_t payload_len) {
+    if (hdr && hdr->tag == ATOM_GROUNDED && hdr->subtag == GV_INT &&
+        payload && payload_len == sizeof(int64_t))
+        return term_universe_lookup_integer(
+            universe, term_universe_load_i64(payload), NULL);
     return term_universe_lookup_record_at(
         universe, hdr, payload, payload_len,
         term_universe_coordinate(term_universe_record_slot_hash(
-            universe, hdr, payload, payload_len)));
+            universe, hdr, payload, payload_len)), NULL);
 }
 
 static bool term_universe_entry_eq_expr_ids(
@@ -2122,7 +2349,16 @@ static bool term_universe_entry_eq_expr_ids(
 
 static AtomId term_universe_lookup_expr_id_from_ids(
         const TermUniverse *universe, const CettaTermHdr *hdr,
-        const AtomId *child_ids, uint32_t arity, uint32_t hslot) {
+        const AtomId *child_ids, uint32_t arity, uint32_t hslot,
+        TermUniverseVacancy *vacancy) {
+    if (vacancy) {
+        *vacancy = (TermUniverseVacancy){.slot = SIZE_MAX};
+        if (universe) {
+            vacancy->mask = universe->intern_mask;
+            vacancy->used = universe->intern_used;
+            vacancy->format = term_universe_store_format(universe);
+        }
+    }
     if (!universe || !universe->intern_slots || !hdr ||
         (arity > 0u && !child_ids)) {
         return CETTA_ATOM_ID_NONE;
@@ -2136,6 +2372,8 @@ static AtomId term_universe_lookup_expr_id_from_ids(
         uint32_t have_tag = term_universe_intern_tag_at(
             universe->intern_slots, width, idx);
         if (have_tag == 0u) {
+            if (vacancy)
+                vacancy->slot = idx;
             TU_DIAG_LOOKUP_PROBES(
                 (TermUniverse *)universe, probe + 1u);
             TU_DIAG_INC((TermUniverse *)universe, direct_lookup_misses);
@@ -2204,31 +2442,43 @@ static AtomId term_universe_intern_record(TermUniverse *universe,
     if (!universe || !universe->persistent_arena || !hdr)
         return CETTA_ATOM_ID_NONE;
 
-    uint32_t coordinate = term_universe_coordinate(
+    bool integer = hdr->tag == ATOM_GROUNDED && hdr->subtag == GV_INT;
+    uint32_t coordinate = integer ? hdr->hash32 : term_universe_coordinate(
         term_universe_record_slot_hash(universe, hdr, payload, payload_len));
-    AtomId existing = term_universe_lookup_record_at(
-        universe, hdr, payload, payload_len, coordinate);
+    TermUniverseVacancy vacancy;
+    AtomId existing = integer
+        ? term_universe_lookup_integer(universe, term_universe_load_i64(payload), &vacancy)
+        : term_universe_lookup_record_at(
+            universe, hdr, payload, payload_len, coordinate, &vacancy);
     if (existing != CETTA_ATOM_ID_NONE)
         return existing;
 
     if (!term_universe_atom_id_capacity_available(universe))
         return CETTA_ATOM_ID_NONE;
     return term_universe_insert_new_record(universe, hdr, payload, payload_len,
-                                           coordinate);
+                                           coordinate, &vacancy);
 }
 
 static AtomId term_universe_insert_new_record(TermUniverse *universe,
                                               const CettaTermHdr *hdr,
                                               const uint8_t *payload,
                                               size_t payload_len,
-                                              uint32_t coordinate) {
+                                              uint32_t coordinate,
+                                              const TermUniverseVacancy *vacancy) {
     if (!universe || !universe->persistent_arena || !hdr)
         return CETTA_ATOM_ID_NONE;
     if (!term_universe_reserve_entries(universe, universe->len + 1))
         return CETTA_ATOM_ID_NONE;
 
+    bool integer = hdr->tag == ATOM_GROUNDED && hdr->subtag == GV_INT;
+    uint16_t integer_position = 0u;
+    CettaIntegerInternPage *integer_page = integer
+        ? term_universe_integer_prepare(universe, term_universe_load_i64(payload),
+                                        &integer_position) : NULL;
+    if (integer && !integer_page)
+        return CETTA_ATOM_ID_NONE;
     size_t needed = universe->intern_slots ? (universe->intern_mask + 1) : 0;
-    if (needed == 0 || (universe->intern_used + 1) * 10 > needed * 7) {
+    if (!integer && (needed == 0 || (universe->intern_used + 1) * 10 > needed * 7)) {
         size_t min_slots = 0;
         if (!term_universe_double_request(universe, needed, 1024,
                                           &min_slots) ||
@@ -2254,7 +2504,37 @@ static AtomId term_universe_insert_new_record(TermUniverse *universe,
         return CETTA_ATOM_ID_NONE;
     universe->len++;
     universe->entries[physical_index] = entry;
-    if (!term_universe_insert_stable_id(universe, id)) {
+    bool published = false;
+    size_t width = term_universe_intern_width(universe);
+    if (integer) {
+        if (integer_page->dense) {
+            integer_page->data.positions[integer_position] = physical_index + 1u;
+        } else {
+            memmove(integer_page->data.sparse + integer_position + 1u,
+                    integer_page->data.sparse + integer_position,
+                    (integer_page->len - integer_position) * sizeof(CettaIntegerPageEntry));
+            integer_page->data.sparse[integer_position] = (CettaIntegerPageEntry){
+                .offset = (uint64_t)term_universe_load_i64(payload) &
+                    (TERM_UNIVERSE_INTEGER_PAGE_SIZE - 1u),
+                .physical_plus_one = physical_index + 1u};
+            integer_page->len++;
+        }
+        published = true;
+    } else if (vacancy && vacancy->slot <= universe->intern_mask &&
+        vacancy->mask == universe->intern_mask &&
+        vacancy->used == universe->intern_used &&
+        vacancy->format == term_universe_store_format(universe) &&
+        term_universe_intern_tag_at(
+            universe->intern_slots, width, vacancy->slot) == 0u) {
+        term_universe_intern_store_pair(
+            universe->intern_slots, width, vacancy->slot,
+            term_universe_intern_tag(coordinate), id);
+        universe->intern_used++;
+        published = true;
+    } else {
+        published = term_universe_insert_stable_id(universe, id);
+    }
+    if (!published) {
         universe->len--;
         universe->entries[physical_index].byte_off = CETTA_TERM_ENTRY_BLOB_NONE;
         universe->entries[physical_index].byte_len = 0;
@@ -2810,6 +3090,34 @@ AtomId tu_intern_int(TermUniverse *universe, int64_t value) {
     return id;
 }
 
+/* Integer positions are independent of the encoded AtomId width. Batch
+ * reservation and prefetching preserve scalar constructor identity and order. */
+bool tu_intern_ints(TermUniverse *universe, const int64_t *values,
+                    size_t count, AtomId *ids) {
+    enum { WINDOW = 32 };
+    if (!universe || !universe->persistent_arena ||
+        (count && (!values || !ids)))
+        return false;
+    for (size_t first = 0u; first < count;) {
+        size_t length = count - first < WINDOW ? count - first : WINDOW;
+        if (!term_universe_integer_reserve(universe, length))
+            return false;
+        for (size_t i = 0u; i < length; i++) {
+            size_t home = term_universe_integer_hash(
+                (uint64_t)values[first + i] >> TERM_UNIVERSE_INTEGER_PAGE_BITS) &
+                universe->integer_mask;
+            __builtin_prefetch(&universe->integer_slots[home], 1, 1);
+        }
+        for (size_t i = 0u; i < length; i++) {
+            ids[first + i] = tu_intern_int(universe, values[first + i]);
+            if (ids[first + i] == CETTA_ATOM_ID_NONE)
+                return false;
+        }
+        first += length;
+    }
+    return true;
+}
+
 AtomId tu_intern_float(TermUniverse *universe, double value) {
     CettaTermHdr hdr = {0};
     uint8_t payload[sizeof(double)] = {0};
@@ -3028,8 +3336,9 @@ AtomId tu_expr_from_ids(TermUniverse *universe, const AtomId *child_ids,
     TU_DIAG_INC(universe, direct_constructor_expr_hits);
     uint32_t coordinate = term_universe_coordinate(
         term_universe_expr_ids_slot_hash(&hdr, child_ids, arity32));
+    TermUniverseVacancy vacancy;
     AtomId id = term_universe_lookup_expr_id_from_ids(
-        universe, &hdr, child_ids, arity32, coordinate);
+        universe, &hdr, child_ids, arity32, coordinate, &vacancy);
     if (id != CETTA_ATOM_ID_NONE)
         return id;
     if (!term_universe_atom_id_capacity_available(universe))
@@ -3079,7 +3388,7 @@ AtomId tu_expr_from_ids(TermUniverse *universe, const AtomId *child_ids,
         heap_payload = payload != NULL;
     }
     id = term_universe_insert_new_record(universe, &hdr, payload, payload_len,
-                                         coordinate);
+                                         coordinate, &vacancy);
     if (heap_payload)
         free(payload);
     return id;
@@ -3288,7 +3597,7 @@ static AtomId term_universe_expr_id_from_ids(TermUniverse *universe,
     return term_universe_lookup_expr_id_from_ids(
         universe, &hdr, child_ids, arity32,
         term_universe_coordinate(
-            term_universe_expr_ids_slot_hash(&hdr, child_ids, arity32)));
+            term_universe_expr_ids_slot_hash(&hdr, child_ids, arity32)), NULL);
 }
 
 /* Read-only term lookup for the common shallow case.  It shares canonical
@@ -4311,7 +4620,11 @@ static bool term_universe_entry_eq_atom(const TermUniverse *universe, AtomId id,
 
 static AtomId term_universe_lookup_stable_id(const TermUniverse *universe,
                                              Atom *src) {
-    if (!universe || !universe->intern_slots || !src)
+    if (!universe || !src)
+        return CETTA_ATOM_ID_NONE;
+    if (src->kind == ATOM_GROUNDED && src->ground.gkind == GV_INT)
+        return term_universe_lookup_integer(universe, src->ground.ival, NULL);
+    if (!universe->intern_slots)
         return CETTA_ATOM_ID_NONE;
     if (src->kind == ATOM_EXPR) {
         bool stable = false;
@@ -4500,6 +4813,10 @@ bool term_universe_atom_id_eq(const TermUniverse *universe, AtomId id,
 }
 
 static bool term_universe_insert_stable_id(TermUniverse *universe, AtomId id) {
+    const CettaTermHdr *hdr = tu_hdr(universe, id);
+    if (hdr && hdr->tag == ATOM_GROUNDED && hdr->subtag == GV_INT)
+        return term_universe_lookup_integer(universe,
+            term_universe_load_i64(term_universe_payload(universe, id)), NULL) == id;
     const TermEntry *entry =
         universe && universe->intern_slots ? term_universe_entry(universe, id)
                                            : NULL;

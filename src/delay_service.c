@@ -179,8 +179,8 @@ void cetta_delay_service_free(CettaDelayService *service) {
 bool cetta_delay_owner_install(CettaDelayService *service,
                                const CettaDelayOwnerOps *ops, void *state) {
     if (!service || service->owner || !ops || !state ||
-        ops->client != CETTA_DELAY_CLIENT_PROLOG || !ops->clone || !ops->free ||
-        !ops->rollback || !ops->commit || !ops->rebase || !ops->watches ||
+        ops->client != CETTA_DELAY_CLIENT_PROLOG || !ops->clone || !ops->free || !ops->detach ||
+        !ops->frontier || !ops->rollback || !ops->commit || !ops->rebase || !ops->watches ||
         !ops->bound || !ops->withdraw || !ops->reset || !ops->pending || !ops->sync ||
         !ops->roots || !ops->goals)
         return false;
@@ -197,6 +197,16 @@ void *cetta_delay_owner(const CettaDelayService *service, CettaDelayClient clien
 bool cetta_delay_holds(const CettaDelayService *service) {
     return service && (service->owner || service->suspended ||
                         service->queue_head < service->queue_len);
+}
+
+bool cetta_delay_owner_detach(const CettaDelayService *service) {
+    return !service || !service->owner || service->owner_ops.detach(service->owner);
+}
+
+bool cetta_delay_owner_frontier(const CettaDelayService *service,
+                                const uint32_t *kept, uint32_t count) {
+    return !service || !service->owner ||
+           service->owner_ops.frontier(service->owner, kept, count);
 }
 
 bool cetta_delay_owner_pending(const CettaDelayService *service) {

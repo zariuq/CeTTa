@@ -310,6 +310,34 @@ CettaForeignStatus cetta_foreign_region_rebase(
     return CETTA_FOREIGN_OK;
 }
 
+CettaForeignStatus cetta_foreign_region_frontier(
+    CettaForeignRegion *region, const uint32_t *kept, size_t count) {
+    if (!available(region) || region->operation || (count && !kept))
+        return CETTA_FOREIGN_INVALID;
+    if (PL_current_query() != region->caller_query)
+        return CETTA_FOREIGN_NOT_INNER;
+    for (size_t at = 1u; at < count; at++)
+        if (kept[at] <= kept[at - 1u])
+            return CETTA_FOREIGN_INVALID;
+    if (!count)
+        return cetta_foreign_region_commit(region);
+    size_t position = 0u;
+    for (size_t at = 0u; at < region->checkpoint_len; at++) {
+        ForeignCheckpoint *checkpoint = &region->checkpoints[at];
+        if (!checkpoint->rewindable)
+            continue;
+        if (checkpoint->mark < kept[0]) {
+            checkpoint->rewindable = false;
+            continue;
+        }
+        while (position + 1u < count && kept[position + 1u] <= checkpoint->mark)
+            position++;
+        checkpoint->mark = kept[position];
+    }
+    close_anchors(region);
+    return CETTA_FOREIGN_OK;
+}
+
 CettaForeignStatus cetta_foreign_region_begin(CettaForeignRegion *region) {
     if (!available(region) || region->operation)
         return CETTA_FOREIGN_INVALID;

@@ -523,7 +523,7 @@ static void test_space_atom_id_storage_migrates_with_universe(void) {
     assert(term_universe_store_format(&universe) ==
            TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1);
     assert(space.native.atom_id_width_bits == 32u);
-    assert(universe.intern_slots != NULL);
+    assert(universe.integer_slots != NULL);
 
     cached = term_universe_get_atom(&universe, ids[0]);
     assert(cached != NULL);
@@ -535,7 +535,7 @@ static void test_space_atom_id_storage_migrates_with_universe(void) {
     assert(term_universe_store_format(&universe) ==
            TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1);
     assert(space.native.atom_id_width_bits == 64u);
-    assert(universe.intern_slots != NULL);
+    assert(universe.integer_slots != NULL);
     assert(universe.ptr_slots != NULL);
     assert(universe.ptr_used > 0u);
 
@@ -692,6 +692,12 @@ void space_match_backend_init(Space *s) {
 }
 
 /* This standalone fixture does not provide native cursor execution. */
+bool space_match_native_try_cold_candidates(
+    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count) {
+    (void)space; (void)pattern; (void)out; (void)count;
+    return false;
+}
+
 void space_match_native_ensure_trie(Space *s) {
     (void)s;
     assert(false && "unexpected native cursor execution in standalone fixture");
@@ -1753,6 +1759,59 @@ static void test_callable_value_store_contract(void) {
     arena_free(&source);
 }
 
+static void test_batched_integer_identity(void) {
+    Arena persistent, scratch;
+    TermUniverse universe;
+    arena_init(&persistent);
+    arena_init(&scratch);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    AtomId existing = tu_intern_int(&universe, 42);
+    int64_t values[1100];
+    AtomId ids[1100];
+    for (size_t i = 0u; i < 1100u; i++)
+        values[i] = (int64_t)(i % 550u) * INT64_C(0x100000003) - 700;
+    values[17] = values[817] = 42;
+    values[31] = INT64_MIN;
+    values[32] = INT64_MAX;
+    assert(tu_intern_ints(&universe, values, 1100u, ids));
+    assert(ids[17] == existing && ids[817] == existing);
+    for (size_t i = 0u; i < 1100u; i++) {
+        assert(ids[i] != CETTA_ATOM_ID_NONE);
+        assert(tu_int(&universe, ids[i]) == values[i]);
+        assert(term_universe_store_atom_id(
+            &universe, NULL, atom_int(&scratch, values[i])) == ids[i]);
+        assert(universe.entries[ids[i]].decoded_cache == NULL);
+    }
+    assert(ids[31] != ids[32]);
+    assert(ids[1] == ids[551]);
+    int64_t dense_values[1024];
+    AtomId dense_ids[1024];
+    for (size_t i = 0u; i < 1024u; i++)
+        dense_values[i] = (int64_t)i - 512;
+    assert(tu_intern_ints(&universe, dense_values, 1024u, dense_ids));
+    assert(term_universe_migrate_store_format(&universe,
+        TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1));
+    for (size_t i = 0u; i < 1024u; i++) {
+        assert(tu_intern_int(&universe, dense_values[i]) == dense_ids[i]);
+        assert(term_universe_lookup_atom_id(&universe,
+            atom_int(&scratch, dense_values[i])) == dense_ids[i]);
+    }
+    for (size_t i = 0u; i < 1100u; i++)
+        assert(tu_intern_int(&universe, values[i]) == ids[i]);
+    assert(term_universe_lookup_atom_id(&universe,
+        atom_int(&scratch, INT64_MIN + 1)) == CETTA_ATOM_ID_NONE);
+    assert(tu_intern_ints(&universe, NULL, 0u, NULL));
+    term_universe_set_persistent_arena(&universe, NULL);
+    assert(universe.integer_slots == NULL && universe.integer_used == 0u);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    AtomId reset_id = tu_intern_int(&universe, INT64_MAX);
+    assert(reset_id != CETTA_ATOM_ID_NONE && tu_int(&universe, reset_id) == INT64_MAX);
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&persistent);
+}
+
 int main(void) {
     SymbolTable symbols;
     VarInternTable var_intern;
@@ -1763,6 +1822,7 @@ int main(void) {
     init_test_symbols(&symbols);
     var_intern_init(&var_intern);
     g_var_intern = &var_intern;
+    test_batched_integer_identity();
     test_native_handle_id_retention();
     test_callable_value_store_contract();
     test_arena_accounting_saturation_contract();

@@ -56,6 +56,21 @@ def main():
 !(let $xs (collapse (match variables (alias $x $x) $x))
     (== (car-atom $xs) (car-atom (cdr-atom $xs))))
 '''
+    literals = """!(import! &self (library lib_import))
+!(static-import! literals scalar)
+!(size-atom (collapse (get-atoms literals)))
+!(size-atom (collapse (match literals (literal $x $y) $x)))
+!(collapse (match literals (literal 17 $y) $y))
+!(collapse (match literals (nested $x $y) $y))
+!(collapse (match literals (= $lhs $rhs) ($lhs $rhs)))
+!(static-import! literals scalar)
+!(size-atom (collapse (get-atoms literals)))
+"""
+    scalar = [f"(literal {i} {i + 1})" for i in range(1000)]
+    scalar[255:255] = ["(literal 17 18)"] * 3
+    scalar[512:512] = ["(nested a (b c))", "(= (answer) 42)"]
+    literal_expected = ("true\ntrue\n1005\n1003\n(18 18 18 18)\n"
+                        "((b c))\n(((answer) 42))\ntrue\n1005\n")
     for route in ("0", "1"):
         directory = root / route
         directory.mkdir()
@@ -66,12 +81,15 @@ def main():
             ":- multifile variables/3.\n" +
             "variables(alias, X, X).\n" * 600)
         (directory / "variables.metta").write_text(variables)
+        (directory / "scalar.metta").write_text("\n".join(scalar) + "\n")
+        (directory / "literals.metta").write_text(literals)
         for phase in ("cold", "warm"):
             run(binary, directory / "import.metta", expected, route, phase)
+            run(binary, directory / "literals.metta", literal_expected, route, phase)
             run(binary, directory / "variables.metta",
                 "true\ntrue\n600\n600\nfalse\n", route, phase)
     print("PASS: import batches own nested/oversized rows, retain occurrences "
-          "and isolate clause variables on cold and warm routes")
+          "and isolate clause variables across literal/syntax batches on cold and warm routes")
 
 
 if __name__ == "__main__":

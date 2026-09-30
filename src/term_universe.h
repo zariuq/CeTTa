@@ -147,6 +147,11 @@ struct TermUniverse {
     uint8_t *intern_slots;
     size_t intern_mask;
     size_t intern_used;
+    /* Integer pages retain exact coordinates and physical record positions.
+       Positions remain valid when the AtomId storage format changes. */
+    struct CettaIntegerInternSlot *integer_slots;
+    size_t integer_mask;
+    size_t integer_used;
     uint8_t *ptr_slots;
     size_t ptr_mask;
     size_t ptr_used;
@@ -466,6 +471,11 @@ AtomId tu_intern_var(TermUniverse *universe, SymbolId sym_id, VarId var_id);
 AtomId tu_intern_named_var(TermUniverse *universe, AtomId name_key_id,
                            VarId var_id);
 AtomId tu_intern_int(TermUniverse *universe, int64_t value);
+/* Canonical scalar admission in input order, with bounded internal windows.
+ * Duplicate values retain the same identity as singular admission. A false
+ * result may have interned a prefix, but never publishes rows into a Space. */
+bool tu_intern_ints(TermUniverse *universe, const int64_t *values,
+                    size_t count, AtomId *ids);
 AtomId tu_intern_float(TermUniverse *universe, double value);
 AtomId tu_intern_bool(TermUniverse *universe, bool value);
 AtomId tu_intern_stable_tag(TermUniverse *universe, int64_t tag);

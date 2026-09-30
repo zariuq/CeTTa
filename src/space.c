@@ -1541,6 +1541,13 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
         cursor->occurrences = space_pinned_occurrences_acquire(s);
         return space_read_token_prefix_intact(cursor->read);
     }
+    if (space_match_native_try_cold_candidates(
+            s, pattern, &cursor->flat, &cursor->flat_len)) {
+        cursor->flat_mode = true;
+        cursor->pinned = true;
+        cursor->occurrences = space_pinned_occurrences_acquire(s);
+        return space_read_token_prefix_intact(cursor->read);
+    }
     space_match_native_ensure_trie(s);
     DiscNode *root = s->match_backend.native.match_trie;
     if (!root)
@@ -5252,6 +5259,41 @@ bool space_add_atom_ids_batch(Space *s, const AtomId *atom_ids,
         equation_projection = space_merge_equation_projection(
             equation_projection,
             space_atom_equation_projection(s, atom_ids[i], NULL));
+    }
+
+    /* A data-only native batch is one append publication. The authoritative
+     * ordered occurrence array retains duplicates, while secondary indexes
+     * may be rebuilt when queried. Existing pinned cursors keep their ceiling. */
+    if (!space_has_overlay_base(s) && !space_is_queue(s) &&
+        s->match_backend.kind == SPACE_ENGINE_NATIVE &&
+        equation_projection == SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY &&
+        space_tracks_atom_ids(s)) {
+        if (atom_count > UINT64_MAX - s->native.len ||
+            !space_sync_atom_id_storage_width(s))
+            return false;
+        CettaIndex next_len = s->native.len + atom_count;
+        size_t width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
+        if (!width || next_len > SIZE_MAX / width)
+            return false;
+        space_reserve_linear(s, next_len);
+        CettaIndex start = s->native.len;
+        for (CettaCount i = 0u; i < atom_count; i++) {
+            if (!space_atom_id_storage_store_at(s->native.atom_ids,
+                    s->native.atom_id_width_bits, start + i, atom_ids[i]))
+                return false;
+        }
+        s->native.len = next_len;
+        s->native.exact_idx_dirty = true;
+        s->native.has_non_exact_atoms_dirty = true;
+        SpaceMatchNativeState *native = &s->match_backend.native;
+        if ((native->match_trie && !native->match_trie_dirty) ||
+            (native->stree && !native->stree_dirty)) {
+            for (CettaCount i = 0u; i < atom_count; i++)
+                space_match_backend_note_add(s, atom_ids[i], NULL, start + i);
+        }
+        space_note_atom_id_storage_peak(s);
+        space_publish_mutation(s, equation_projection, SPACE_MUTATION_PREFIX_APPEND_ONLY);
+        return true;
     }
 
     if (!space_has_overlay_base(s) &&

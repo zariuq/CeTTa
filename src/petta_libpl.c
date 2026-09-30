@@ -11,6 +11,7 @@
 #include "term_graph.h"
 #include "var_index.h"
 #include "foreign_region.h"
+#include "shared_transition.h"
 
 #include <SWI-Prolog.h>
 
@@ -82,6 +83,9 @@ struct CettaLibPrologRuntime {
     size_t module_name_len;
     char *working_dir;
     module_t module;
+    char *solver_module_name;
+    module_t solver_module;
+    bool solver_monitor_ready;
     PettaLibplImport *imports;
     size_t import_len;
     size_t import_cap;
@@ -178,6 +182,9 @@ typedef struct {
     CettaVarIndex index;
     term_t (*slot)(void *context, Atom *variable);
     void *slot_context;
+    /* A retained client can recognize an unbound variable outside the small
+     * argument map. The callback reads its owned identity, never its spelling. */
+    Atom *(*native_variable)(void *context, Arena *arena, term_t variable);
     /* Convert a term that is not a finite tree to its graph
      * (petta_libpl_graph_from_term); set only to convert a solution again
      * after it failed as a tree, so the tree path never tests for cycles. */
@@ -2668,6 +2675,11 @@ static Atom *petta_libpl_back_variable(
     PettaLibplBackVarMap *unknown) {
     if (!arena || !term || !variables || !unknown)
         return NULL;
+    if (variables->native_variable) {
+        Atom *owned = variables->native_variable(variables->slot_context, arena, term);
+        if (owned)
+            return owned;
+    }
     size_t known = petta_libpl_known_variable(term, variables, unknown);
     if (known != SIZE_MAX)
         return atom_var_like(arena, variables->items[known].prototype,
@@ -3713,41 +3725,62 @@ static bool petta_libpl_delay_answer(Arena *arena,
 static bool petta_libpl_solution_bindings(
     Arena *arena, PettaLibplVarMap *variables,
     PettaLibplBackVarMap *unknown, Bindings *bindings) {
-    if (!arena || !variables || !unknown || !bindings)
+    if (!arena || !variables || !unknown || !bindings || variables->len > UINT32_MAX)
         return false;
     bindings_init(bindings);
     if (!petta_libpl_known_variables(variables, unknown))
         return false;
-    for (size_t index = 0u;
-         index < variables->len; index++) {
-        PettaLibplVar *variable =
-            &variables->items[index];
+    enum { LOCAL_BINDINGS = 32 };
+    Atom *local[LOCAL_BINDINGS * 2];
+    if (variables->len > SIZE_MAX / (2u * sizeof(Atom *)))
+        return false;
+    Atom **batch = variables->len <= LOCAL_BINDINGS ? local
+        : cetta_malloc(variables->len * 2u * sizeof(*batch));
+    if (!batch)
+        return false;
+    Atom **values = batch + (variables->len <= LOCAL_BINDINGS ? LOCAL_BINDINGS : variables->len);
+    uint32_t count = 0u;
+    bool ok = true;
+    for (size_t index = 0u; ok && index < variables->len; index++) {
+        PettaLibplVar *variable = &variables->items[index];
         Atom *value = NULL;
         if (PL_is_variable(variable->term)) {
-            size_t prior = petta_libpl_known_variable(variable->term,
-                                                       variables, unknown);
-            if (prior == index)
-                continue;
-            if (prior == SIZE_MAX || prior > index) {
-                bindings_free(bindings);
-                return false;
+            if (variables->native_variable) {
+                value = variables->native_variable(variables->slot_context, arena,
+                                                    variable->term);
+                if (value && value->var_id == variable->id)
+                    continue;
             }
-            value = atom_var_like(arena, variables->items[prior].prototype,
-                                   variables->items[prior].id);
+            if (!value) {
+                size_t prior = petta_libpl_known_variable(variable->term, variables, unknown);
+                if (prior == index)
+                    continue;
+                if (prior == SIZE_MAX || prior > index) {
+                    ok = false;
+                    break;
+                }
+                value = atom_var_like(arena, variables->items[prior].prototype,
+                                       variables->items[prior].id);
+            }
         } else {
-            value = petta_libpl_from_term(
-                arena, variable->term, variables,
-                unknown, 0u);
+            value = petta_libpl_from_term(arena, variable->term, variables, unknown, 0u);
         }
         Atom *prototype = value ? atom_var_like(arena, variable->prototype, variable->id) : NULL;
-        if (!prototype ||
-            !bindings_add_var_acyclic(
-                bindings, prototype, value)) {
-            bindings_free(bindings);
-            return false;
+        if (!prototype) {
+            ok = false;
+            break;
         }
+        batch[count] = prototype;
+        values[count++] = value;
     }
-    return true;
+    /* One owned publication, with the same ordered checked insertions. No
+     * intermediate binding image escapes while the solution is decoded. */
+    ok = ok && bindings_add_vars(bindings, batch, values, count);
+    if (batch != local)
+        free(batch);
+    if (!ok)
+        bindings_free(bindings);
+    return ok;
 }
 
 static bool petta_libpl_emit_solution(
@@ -4737,6 +4770,7 @@ void cetta_lib_prolog_runtime_free(
     arena_free(&runtime->callable_codes);
     free(runtime->module_name);
     free(runtime->static_module_name);
+    free(runtime->solver_module_name);
     free(runtime->working_dir);
     free(runtime);
 }
@@ -5453,6 +5487,7 @@ void petta_libpl_warn_redefined(
 typedef struct {
     atom_t *handles;
     SymbolId *symbols;
+    AtomId *literal_ids;
     uint32_t cap;
     uint32_t len;
 } PettaLibplAtomSymbols;
@@ -5478,7 +5513,10 @@ static SymbolId petta_libpl_atom_symbols_find(PettaLibplAtomSymbols *cache,
         };
         grown.handles = cetta_malloc(sizeof(*grown.handles) * grown.cap);
         grown.symbols = cetta_malloc(sizeof(*grown.symbols) * grown.cap);
+        grown.literal_ids = cetta_malloc(sizeof(*grown.literal_ids) * grown.cap);
         memset(grown.handles, 0, sizeof(*grown.handles) * grown.cap);
+        for (uint32_t i = 0u; i < grown.cap; i++)
+            grown.literal_ids[i] = CETTA_ATOM_ID_NONE;
         for (uint32_t index = 0u; index < cache->cap; index++) {
             if (!cache->handles[index])
                 continue;
@@ -5486,9 +5524,11 @@ static SymbolId petta_libpl_atom_symbols_find(PettaLibplAtomSymbols *cache,
                 &grown, cache->handles[index]);
             grown.handles[slot] = cache->handles[index];
             grown.symbols[slot] = cache->symbols[index];
+            grown.literal_ids[slot] = cache->literal_ids[index];
         }
         free(cache->handles);
         free(cache->symbols);
+        free(cache->literal_ids);
         *cache = grown;
     }
     uint32_t slot = petta_libpl_atom_symbols_slot(cache, handle);
@@ -5555,6 +5595,102 @@ static Atom *petta_libpl_static_row(Arena *arena, term_t head, int arity,
     return row;
 }
 
+/* Copy scalar coordinates out of a clause solution. Integers are admitted
+ * together when the bounded batch flushes; symbol ids already have the sink's
+ * immutable identity. No SWI reference survives the solution's frame. */
+static bool petta_libpl_static_literal(
+    TermUniverse *universe, term_t head, int arity, term_t argument,
+    PettaLibplAtomSymbols *cache, AtomId *items, int64_t *integers) {
+    if (!universe || arity < 0)
+        return false;
+    __attribute__((cleanup(cetta_shared_transition_guard_leave)))
+    CettaSharedTransitionGuard transition = {0};
+    cetta_shared_transition_guard_enter(&transition);
+    for (int index = 0; index < arity; index++) {
+        AtomId item = CETTA_ATOM_ID_NONE;
+        atom_t handle = 0;
+        if (!PL_get_arg(index + 1, head, argument))
+            return false;
+        switch (PL_term_type(argument)) {
+        case PL_ATOM: {
+            SymbolId symbol = PL_get_atom(argument, &handle)
+                ? petta_libpl_atom_symbols_find(cache, handle, argument)
+                : SYMBOL_ID_NONE;
+            if (symbol == SYMBOL_ID_NONE ||
+                petta_libpl_callable_find(g_petta_libpl_active_runtime, symbol) ||
+                (index == 0 && (symbol == g_builtin_syms.equals ||
+                                symbol == g_builtin_syms.colon ||
+                                petta_semantics_form(symbol) == PETTA_FORM_CONS)))
+                return false;
+            uint32_t slot = petta_libpl_atom_symbols_slot(cache, handle);
+            item = cache->literal_ids[slot];
+            if (item == CETTA_ATOM_ID_NONE) {
+                item = tu_intern_symbol(universe, symbol);
+                cache->literal_ids[slot] = item;
+            }
+            if (item == CETTA_ATOM_ID_NONE)
+                return false;
+            break;
+        }
+        case PL_INTEGER:
+            if (!PL_get_int64(argument, integers + index))
+                return false;
+            break;
+        default:
+            return false;
+        }
+        items[index] = item;
+    }
+    return true;
+}
+
+typedef struct {
+    TermUniverse *universe;
+    uint32_t arity;
+    AtomId *coordinates;
+    int64_t *integers, *values;
+    AtomId *value_ids;
+    bool present[256];
+} PettaLibplStaticEncoding;
+
+static bool petta_libpl_static_encode(
+    PettaLibplStaticEncoding *encoding, AtomId *ids, uint32_t count) {
+    for (uint32_t row = 0u; row < count; row++)
+        ids[row] = CETTA_ATOM_ID_NONE;
+    if (!encoding->universe)
+        return true;
+    __attribute__((cleanup(cetta_shared_transition_guard_leave)))
+    CettaSharedTransitionGuard transition = {0};
+    cetta_shared_transition_guard_enter(&transition);
+    size_t integers = 0u;
+    for (uint32_t row = 0u; row < count; row++) {
+        if (!encoding->present[row])
+            continue;
+        for (uint32_t column = 0u; column < encoding->arity; column++) {
+            size_t index = (size_t)row * encoding->arity + column;
+            if (encoding->coordinates[index] == CETTA_ATOM_ID_NONE)
+                encoding->values[integers++] = encoding->integers[index];
+        }
+    }
+    if (!tu_intern_ints(encoding->universe, encoding->values, integers,
+                        encoding->value_ids))
+        return false;
+    size_t next = 0u;
+    for (uint32_t row = 0u; row < count; row++) {
+        if (!encoding->present[row])
+            continue;
+        AtomId *coordinates = encoding->arity
+            ? encoding->coordinates + (size_t)row * encoding->arity : NULL;
+        for (uint32_t column = 0u; column < encoding->arity; column++)
+            if (coordinates[column] == CETTA_ATOM_ID_NONE)
+                coordinates[column] = encoding->value_ids[next++];
+        ids[row] = tu_expr_from_ids(encoding->universe, coordinates, encoding->arity);
+        if (ids[row] == CETTA_ATOM_ID_NONE)
+            return false;
+    }
+    return true;
+}
+
 /* The facts of one changed predicate P/N, as rows, handed to `visit`. */
 static bool petta_libpl_static_import_predicate(
     CettaLibPrologRuntime *runtime, Arena *arena, term_t module,
@@ -5569,8 +5705,9 @@ static bool petta_libpl_static_import_predicate(
     petta_libpl_back_map_free(&unknown);
     if (!target)
         return false;
+    TermUniverse *literal_universe = NULL;
     if (!visit(context, target, (CettaExprLen)arity, multifile,
-               true, NULL, NULL, 0u))
+               true, &literal_universe, NULL))
         return false;
     /* clause(M:H, true) over the head P(_, ...), whose arguments each
      * solution binds. */
@@ -5596,6 +5733,23 @@ static bool petta_libpl_static_import_predicate(
     PettaLibplAtomSymbols cache = {0};
     enum { BATCH_ROWS = 256, BATCH_BYTES = 64 * 1024 };
     Atom *rows[BATCH_ROWS];
+    AtomId literal_ids[BATCH_ROWS];
+    PettaLibplStaticEncoding encoding = {0};
+    uint32_t batch_limit = BATCH_ROWS;
+    if (literal_universe && arity >= 0 &&
+        (size_t)arity <= BATCH_BYTES / (4u * sizeof(AtomId))) {
+        encoding.universe = literal_universe;
+        encoding.arity = (uint32_t)arity;
+        if (arity) {
+            size_t limit = BATCH_BYTES / (4u * sizeof(AtomId) * (size_t)arity);
+            batch_limit = limit < BATCH_ROWS ? (uint32_t)limit : BATCH_ROWS;
+            size_t cells = (size_t)batch_limit * (size_t)arity;
+            encoding.coordinates = cetta_malloc(cells * sizeof(*encoding.coordinates));
+            encoding.integers = cetta_malloc(cells * sizeof(*encoding.integers));
+            encoding.values = cetta_malloc(cells * sizeof(*encoding.values));
+            encoding.value_ids = cetta_malloc(cells * sizeof(*encoding.value_ids));
+        }
+    }
     Arena scratch;
     arena_init_detached(&scratch);
     ArenaMark origin = arena_mark(&scratch);
@@ -5623,16 +5777,27 @@ static bool petta_libpl_static_import_predicate(
          * global-stack cells and also retains unbounded conversion metadata. */
         fid_t row_frame = PL_open_foreign_frame();
         term_t argument = row_frame ? PL_new_term_ref() : 0;
-        rows[count] = argument
+        encoding.present[count] = argument && encoding.universe &&
+            petta_libpl_static_literal(encoding.universe, head, arity,
+                argument, &cache,
+                encoding.arity ? encoding.coordinates + (size_t)count * encoding.arity : NULL,
+                encoding.arity ? encoding.integers + (size_t)count * encoding.arity : NULL);
+        rows[count] = !encoding.present[count] && argument
             ? petta_libpl_static_row(&scratch, head, arity, argument, &cache)
             : NULL;
         if (row_frame)
             PL_discard_foreign_frame(row_frame);
-        ok = rows[count++] != NULL;
-        if (ok && (count == BATCH_ROWS ||
+        ok = rows[count] || encoding.present[count];
+        count++;
+        if (ok && (count == batch_limit ||
                    arena_accounted_live_bytes(&scratch) >= BATCH_BYTES)) {
-            ok = visit(context, target, (CettaExprLen)arity, multifile,
-                       false, &scratch, rows, count);
+            PettaLibplStaticRows batch = {
+                .arena = &scratch, .rows = rows,
+                .literal_ids = literal_ids, .count = count,
+            };
+            ok = petta_libpl_static_encode(&encoding, literal_ids, count) &&
+                 visit(context, target, (CettaExprLen)arity, multifile,
+                       false, &literal_universe, &batch);
             count = 0u;
             arena_reset(&scratch, origin);
         }
@@ -5649,9 +5814,20 @@ static bool petta_libpl_static_import_predicate(
     }
     free(cache.handles);
     free(cache.symbols);
-    if (ok && count)
-        ok = visit(context, target, (CettaExprLen)arity, multifile,
-                   false, &scratch, rows, count);
+    free(cache.literal_ids);
+    if (ok && count) {
+        PettaLibplStaticRows batch = {
+            .arena = &scratch, .rows = rows,
+            .literal_ids = literal_ids, .count = count,
+        };
+        ok = petta_libpl_static_encode(&encoding, literal_ids, count) &&
+             visit(context, target, (CettaExprLen)arity, multifile,
+                   false, &literal_universe, &batch);
+    }
+    free(encoding.coordinates);
+    free(encoding.integers);
+    free(encoding.values);
+    free(encoding.value_ids);
     arena_free(&scratch);
     return ok;
 }

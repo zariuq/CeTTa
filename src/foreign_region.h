@@ -59,6 +59,11 @@ CettaForeignStatus cetta_foreign_region_commit(CettaForeignRegion *region);
  * non-rewindable anchors until their younger frames have been discharged. */
 CettaForeignStatus cetta_foreign_region_rebase(
     CettaForeignRegion *region, const uint32_t *kept, size_t count);
+/* At a quiescent guest-step boundary, retain only the search's live rollback
+ * horizons. Round each operation down to its preceding horizon, preserving
+ * the original numeric marks. Native bindings are not renumbered. */
+CettaForeignStatus cetta_foreign_region_frontier(
+    CettaForeignRegion *region, const uint32_t *kept, size_t count);
 
 /* Begin before converting inputs, then start and enumerate a goal. Only an
  * observed solution can be committed. next() returns SWI's extended status;

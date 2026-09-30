@@ -69,6 +69,10 @@ typedef struct {
     CettaDelayClient client;
     void *(*clone)(const void *state);
     void (*free)(void *state);
+    /* Release engine-local handles while retaining exact current and
+     * rewindable states. Called by the owning thread before worker clones. */
+    bool (*detach)(void *state);
+    bool (*frontier)(void *state, const uint32_t *kept, uint32_t count);
     void (*rollback)(void *state, uint32_t mark);
     void (*commit)(void *state);
     void (*rebase)(void *state, const uint32_t *kept, uint32_t count);
@@ -92,6 +96,9 @@ bool cetta_delay_owner_install(CettaDelayService *service,
                                const CettaDelayOwnerOps *ops, void *state);
 void *cetta_delay_owner(const CettaDelayService *service, CettaDelayClient client);
 bool cetta_delay_holds(const CettaDelayService *service);
+bool cetta_delay_owner_detach(const CettaDelayService *service);
+bool cetta_delay_owner_frontier(const CettaDelayService *service,
+                                const uint32_t *kept, uint32_t count);
 bool cetta_delay_owner_pending(const CettaDelayService *service);
 CettaDelaySyncStatus cetta_delay_owner_sync(
     CettaDelayService *service, uint32_t mark, const Bindings *bindings, Arena *arena,

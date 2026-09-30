@@ -34,13 +34,25 @@ PeTTaNamedArity petta_libpl_named_arity_resolving(
     CettaLibPrologRuntime *runtime, SymbolId head,
     CettaExprLen supplied);
 
-/* One predicate P/N a static-import! load changed. Begin is delivered once
- * with no rows, before its clause query opens. Subsequent ordered batches
- * borrow rows_arena until the synchronous visit returns; the sink must own
- * everything it retains. A clause query is open during a row visit. */
+/* Ordered occurrences from one changed predicate. Each occurrence is either
+ * a borrowed syntax row or an immutable literal id in the sink's universe.
+ * The two representations never stand for two occurrences. The sink owns
+ * retained syntax before this synchronous visit returns. */
+typedef struct {
+    Arena *arena;
+    Atom **rows;
+    const AtomId *literal_ids;
+    uint32_t count;
+} PettaLibplStaticRows;
+
+/* Begin is delivered once before the clause query opens. A sink may supply
+ * its universe to admit ground literal data directly; NULL requires syntax
+ * for every row. Equations, declarations, callables and non-literal terms
+ * always use syntax. An open clause query owns the borrowed row batch. */
 typedef bool (*PettaLibplStaticPredicateVisit)(
     void *context, Atom *target, CettaExprLen length, bool multifile,
-    bool begin, Arena *rows_arena, Atom **rows, uint32_t count);
+    bool begin, TermUniverse **literal_universe,
+    const PettaLibplStaticRows *batch);
 
 /* static-import! (SWI-PeTTa's lib_import): load `file`, relative to the
  * working directory, as the reference's importer does, from its .qlf, else its

@@ -1,0 +1,14 @@
+(pair 6 (+ 4 2))
+(println! SHOULD-NOT-RUN)
+()
+((tag a))
+6
+(witness (+ 6 1))
+7
+true
+9
+()
+6
+(+ 2 4)
+()
+7

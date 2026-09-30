@@ -169,6 +169,37 @@ static void catalogue_and_cycles(void) {
     puts("PASS: stable slots across radix boundaries, catalogue rollback and cyclic snapshots");
 }
 
+static void checkpoint_frontier(void) {
+    CettaForeignRegion *region = cetta_foreign_region_open();
+    require(region != NULL, "frontier region");
+    for (uint32_t mark = 1u; mark <= 4u; mark++)
+        require(cetta_foreign_region_checkpoint(region, mark) == CETTA_FOREIGN_OK &&
+                bind_integer(region, mark * 100u, mark * 10u), "frontier history");
+    const uint32_t invalid[] = {4u, 2u}, kept[] = {2u, 4u};
+    require(cetta_foreign_region_frontier(region, invalid, 2u) == CETTA_FOREIGN_INVALID,
+            "unordered frontier is refused without pruning");
+    require(cetta_foreign_region_frontier(region, kept, 2u) == CETTA_FOREIGN_OK &&
+            cetta_foreign_region_frontier(region, kept, 2u) == CETTA_FOREIGN_OK &&
+            cetta_foreign_region_variable_count(region) == 4u,
+            "frontier is idempotent and retains current graph");
+    require(cetta_foreign_region_rollback(region, 4u) == CETTA_FOREIGN_OK &&
+            cetta_foreign_region_variable_count(region) == 3u,
+            "frontier preserves absolute last rollback mark");
+    observe_integer(region, 300u, 30);
+    require(cetta_foreign_region_rollback(region, 2u) == CETTA_FOREIGN_OK &&
+            cetta_foreign_region_variable_count(region) == 1u,
+            "same horizon restores earliest operation, not latest");
+    observe_integer(region, 100u, 10);
+    require(cetta_foreign_region_checkpoint(region, 9u) == CETTA_FOREIGN_OK &&
+            bind_integer(region, 200u, 55) &&
+            cetta_foreign_region_frontier(region, NULL, 0u) == CETTA_FOREIGN_OK &&
+            cetta_foreign_region_rollback(region, 9u) == CETTA_FOREIGN_OK,
+            "empty live frontier commits graph without copying");
+    observe_integer(region, 200u, 55);
+    require(cetta_foreign_region_free(region) == CETTA_FOREIGN_OK, "release frontier region");
+    puts("PASS: live absolute horizons preserve rollback, catalogue and current state");
+}
+
 static void checkpoint_compaction(void) {
     CettaForeignRegion *region = cetta_foreign_region_open();
     require(region != NULL, "compaction region");
@@ -387,6 +418,7 @@ int main(int argc, char **argv) {
     retained_attributes_and_history();
     catalogue_and_cycles();
     checkpoint_compaction();
+    checkpoint_frontier();
     query_lifecycle();
     network(100);
     network(1100);

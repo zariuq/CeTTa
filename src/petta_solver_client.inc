@@ -17,6 +17,7 @@ typedef struct {
     VarId id;
     Atom *prototype;
     uint64_t key;
+    bool queued;
 } PettaSolverVariable;
 typedef struct {
     uint32_t mark;
@@ -39,14 +40,81 @@ struct PettaSolverClient {
     size_t history_len, history_cap;
     Arena arena, views;
     bool pending, broken, retired;
+    bool rescan;
+    VarId *changed;
+    size_t changed_len, changed_cap;
     uint64_t admitted_revision;
     unsigned admitted, checked;
     uint64_t posts, synchronizations, detached_states;
+    uint64_t published, native_reads;
 };
 
 /* Protected by the existing libpl engine lease. This is resource metadata:
  * each semantic graph is owned by one branch client, never by this registry. */
 static PettaSolverClient *petta_solver_clients;
+
+/* The monitor stores no global variable state. Its trailed queue and attribute
+ * belong to the region's graph and travel with its snapshots. Union publishes
+ * the two old representatives, then retains the least owned key; later binding
+ * publishes that representative, whose native aliases already follow it.
+ * Implementation attributes are omitted from guest residual-goal observations. */
+static bool petta_solver_monitor(CettaLibPrologRuntime *runtime) {
+    if (runtime->solver_monitor_ready)
+        return true;
+    if (!runtime->solver_module_name) {
+        size_t size = runtime->module_name_len + 32u;
+        runtime->solver_module_name = cetta_malloc(size);
+        if (!runtime->solver_module_name)
+            return false;
+        snprintf(runtime->solver_module_name, size, "%s_solver", runtime->module_name);
+        atom_t name = PL_new_atom(runtime->solver_module_name);
+        runtime->solver_module = name ? PL_new_module(name) : NULL;
+        if (name)
+            PL_unregister_atom(name);
+    }
+    if (!runtime->solver_module)
+        return false;
+    const char *name = runtime->solver_module_name;
+    char source[4096];
+    int length = snprintf(source, sizeof(source),
+        "(assertz((observe(V,B,K):-put_attr(V,'%s',mon(B,K)))),"
+        "assertz((push(B,K,V):-arg(1,B,Q),setarg(1,B,[event(K,V)|Q]))),"
+        "assertz((attr_unify_hook(mon(B,K),V):-push(B,K,V),"
+            "(var(V)->(get_attr(V,'%s',mon(C,L))->push(C,L,V),"
+                "M is min(K,L),put_attr(V,'%s',mon(B,M));"
+                "put_attr(V,'%s',mon(B,K)));true))),"
+        "assertz((attribute_goals(_,G,G))),"
+        "assertz((drain(B,E):-arg(1,B,E),setarg(1,B,[]))))",
+        name, name, name, name);
+    fid_t frame = PL_open_foreign_frame();
+    term_t goal = frame ? PL_new_term_ref() : 0;
+    bool ok = length > 0 && (size_t)length < sizeof(source) && goal &&
+              PL_chars_to_term(source, goal) && PL_call(goal, runtime->solver_module);
+    if (frame)
+        PL_discard_foreign_frame(frame);
+    runtime->solver_monitor_ready = ok;
+    return ok;
+}
+
+static functor_t petta_solver_functor(const char *name, int arity) {
+    atom_t atom = PL_new_atom(name);
+    functor_t result = atom ? PL_new_functor(atom, arity) : 0;
+    if (atom)
+        PL_unregister_atom(atom);
+    return result;
+}
+
+static term_t petta_solver_box(PettaSolverClient *client) {
+    term_t box = cetta_foreign_region_variable(client->region, 0u);
+    if (box && PL_is_variable(box)) {
+        term_t empty = PL_new_term_ref(), value = PL_new_term_ref();
+        if (!empty || !value || !PL_put_nil(empty) ||
+            !PL_cons_functor(value, petta_solver_functor("box", 1), empty) ||
+            !PL_unify(box, value))
+            return 0;
+    }
+    return box;
+}
 
 static bool petta_solver_grow(void **array, size_t *capacity, size_t count,
                               size_t width) {
@@ -147,6 +215,8 @@ static bool petta_solver_detach(PettaSolverClient *client) {
 static bool petta_solver_activate(PettaSolverClient *client) {
     if (client->broken || client->retired || PL_current_query())
         return false;
+    if (!petta_solver_monitor(client->runtime))
+        return false;
     PL_engine_t engine = PL_current_engine();
     if (client->region && client->engine != engine)
         return false;
@@ -166,10 +236,12 @@ static bool petta_solver_activate(PettaSolverClient *client) {
 
 static void petta_solver_dispose(PettaSolverClient *client) {
     if (getenv("CETTA_TRACE_SOLVER_CLIENT"))
-        fprintf(stderr, "[petta-solver] posts=%llu syncs=%llu detached-states=%llu\n",
+        fprintf(stderr, "[petta-solver] posts=%llu syncs=%llu detached-states=%llu published=%llu native-reads=%llu\n",
             (unsigned long long)client->posts,
             (unsigned long long)client->synchronizations,
-            (unsigned long long)client->detached_states);
+            (unsigned long long)client->detached_states,
+            (unsigned long long)client->published,
+            (unsigned long long)client->native_reads);
     PettaSolverClient **link = &petta_solver_clients;
     while (*link && *link != client)
         link = &(*link)->next;
@@ -183,6 +255,7 @@ static void petta_solver_dispose(PettaSolverClient *client) {
     cetta_var_index_free(&client->index);
     free(client->vars);
     free(client->history);
+    free(client->changed);
     free(client);
 }
 
@@ -228,6 +301,16 @@ static PettaSolverClient *petta_solver_new(CettaLibPrologRuntime *runtime) {
     return client;
 }
 
+static bool petta_solver_prepare_detach(void *state) {
+    PettaSolverClient *client = state;
+    bool claimed = false;
+    if (!petta_libpl_enter(&claimed))
+        return false;
+    bool ok = !client->broken && petta_solver_detach(client);
+    petta_libpl_leave(claimed);
+    return ok;
+}
+
 static void *petta_solver_clone(const void *state) {
     PettaSolverClient *parent = (PettaSolverClient *)state;
     bool claimed = false;
@@ -247,12 +330,14 @@ static void *petta_solver_clone(const void *state) {
             child->image = image;
             child->next_key = parent->next_key;
             child->pending = parent->pending;
+            child->rescan = parent->pending;
             size_t count = parent->len - parent->first;
             if (!petta_solver_grow((void **)&child->vars, &child->cap, count,
                                    sizeof(*child->vars)))
                 child->broken = true;
             for (size_t at = parent->first; !child->broken && at < parent->len; at++) {
                 PettaSolverVariable variable = parent->vars[at];
+                variable.queued = false;
                 variable.prototype = atom_deep_copy(&child->arena, variable.prototype);
                 if (!variable.prototype) {
                     child->broken = true;
@@ -329,7 +414,7 @@ static void petta_solver_rollback_locked(PettaSolverClient *client, uint32_t mar
         client->first = before.first;
         arena_reset(&client->arena, before.storage);
         cetta_var_index_free(&client->index);
-        if (!cetta_var_index_note_records(&client->index, client->vars + client->first,
+        if (!cetta_var_index_note_records(&client->index, client->vars ? client->vars + client->first : NULL,
                                            sizeof(*client->vars), client->len - client->first))
             client->broken = true;
     }
@@ -337,6 +422,10 @@ static void petta_solver_rollback_locked(PettaSolverClient *client, uint32_t mar
      * remain. Reconcile it before the next guest step rather than dropping a
      * consumed wake notification. */
     client->pending = client->len > client->first;
+    client->rescan = client->pending;
+    client->changed_len = 0u;
+    for (size_t at = client->first; at < client->len; at++)
+        client->vars[at].queued = false;
     petta_solver_clear_views(client);
 }
 
@@ -374,6 +463,8 @@ static void petta_solver_commit(void *state) {
             client->image = NULL;
             client->len = client->first = 0u;
             client->pending = false;
+            client->rescan = false;
+            client->changed_len = 0u;
             cetta_var_index_free(&client->index);
             arena_reset(&client->arena, (ArenaMark){0});
         }
@@ -409,15 +500,61 @@ static void petta_solver_rebase(void *state, const uint32_t *kept, uint32_t coun
     petta_libpl_leave(claimed);
 }
 
+/* The search publishes its live rollback horizons only between guest steps.
+ * Equal rounded marks need one pre-state: the earliest operation in that
+ * segment. Physical prefix frames remain anchors until safe to close. */
+static bool petta_solver_frontier(void *state, const uint32_t *kept, uint32_t count) {
+    PettaSolverClient *client = state;
+    if (client->broken || (count && !kept))
+        return false;
+    if (!client->history_len)
+        return true;
+    if (!count) {
+        petta_solver_commit(client);
+        return !client->broken;
+    }
+    for (uint32_t at = 1u; at < count; at++)
+        if (kept[at] <= kept[at - 1u])
+            return false;
+    bool claimed = false;
+    if (!petta_libpl_enter(&claimed))
+        return false;
+    bool ok = !client->region || (petta_solver_activate(client) &&
+        cetta_foreign_region_frontier(client->region, kept, count) == CETTA_FOREIGN_OK);
+    if (ok) {
+        size_t written = 0u, position = 0u;
+        for (size_t at = 0u; at < client->history_len; at++) {
+            PettaSolverCheckpoint checkpoint = client->history[at];
+            if (checkpoint.mark < kept[0]) {
+                petta_solver_image_drop(checkpoint.before);
+                continue;
+            }
+            while (position + 1u < count && kept[position + 1u] <= checkpoint.mark)
+                position++;
+            checkpoint.mark = kept[position];
+            if (written && client->history[written - 1u].mark == checkpoint.mark) {
+                petta_solver_image_drop(checkpoint.before);
+            } else {
+                client->history[written++] = checkpoint;
+            }
+        }
+        client->history_len = written;
+    }
+    petta_libpl_leave(claimed);
+    return ok;
+}
+
 static size_t petta_solver_find(const PettaSolverClient *client, VarId id) {
     size_t at = cetta_var_index_find_records(&client->index,
-        client->vars + client->first, sizeof(*client->vars), client->len - client->first, id);
+        client->vars ? client->vars + client->first : NULL,
+        sizeof(*client->vars), client->len - client->first, id);
     return at == SIZE_MAX ? SIZE_MAX : at + client->first;
 }
 
 static term_t petta_solver_slot(void *context, Atom *variable) {
     PettaSolverClient *client = context;
     size_t at = petta_solver_find(client, variable->var_id);
+    bool added = at == SIZE_MAX;
     if (at == SIZE_MAX) {
         if (!client->next_key || client->next_key == UINT64_MAX ||
             !petta_solver_grow((void **)&client->vars, &client->cap, client->len + 1u,
@@ -427,12 +564,134 @@ static term_t petta_solver_slot(void *context, Atom *variable) {
         if (!owned)
             return 0;
         at = client->len++;
-        client->vars[at] = (PettaSolverVariable){variable->var_id, owned, client->next_key++};
+        client->vars[at] = (PettaSolverVariable){
+            .id = variable->var_id, .prototype = owned, .key = client->next_key++};
         if (!cetta_var_index_note_records(&client->index, client->vars + client->first,
                                            sizeof(*client->vars), client->len - client->first))
             return 0;
     }
-    return cetta_foreign_region_variable(client->region, client->vars[at].key);
+    term_t slot = cetta_foreign_region_variable(client->region, client->vars[at].key);
+    if (added && slot && PL_is_variable(slot)) {
+        term_t arguments = PL_new_term_refs(3);
+        term_t box = petta_solver_box(client);
+        if (!arguments || !box || !PL_put_term(arguments, slot) ||
+            !PL_put_term(arguments + 1, box) ||
+            !PL_put_uint64(arguments + 2, client->vars[at].key) ||
+            !PL_call_predicate(client->runtime->solver_module, PL_Q_NODEBUG,
+                PL_predicate("observe", 3, client->runtime->solver_module_name), arguments))
+            return 0;
+    }
+    return slot;
+}
+
+static PettaSolverVariable *petta_solver_key(PettaSolverClient *client, uint64_t key) {
+    size_t low = client->first, high = client->len;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2u;
+        if (client->vars[middle].key < key)
+            low = middle + 1u;
+        else
+            high = middle;
+    }
+    return low < client->len && client->vars[low].key == key ? &client->vars[low] : NULL;
+}
+
+static Atom *petta_solver_native_variable(void *context, Arena *arena, term_t variable) {
+    PettaSolverClient *client = context;
+    term_t attrs = PL_new_term_ref(), part = PL_new_term_ref(), value = PL_new_term_ref();
+    if (!attrs || !part || !value || !PL_get_attr(variable, attrs))
+        return NULL;
+    while (!PL_get_nil(attrs)) {
+        char *module = NULL;
+        if (!PL_get_arg(1, attrs, part) || !PL_get_atom_chars(part, &module))
+            return NULL;
+        if (strcmp(module, client->runtime->solver_module_name) == 0) {
+            uint64_t key;
+            if (!PL_get_arg(2, attrs, value) || !PL_get_arg(2, value, part) ||
+                !PL_get_uint64(part, &key))
+                return NULL;
+            PettaSolverVariable *owned = petta_solver_key(client, key);
+            return owned ? atom_var_like(arena, owned->prototype, owned->id) : NULL;
+        }
+        if (!PL_get_arg(3, attrs, part) || !PL_put_term(attrs, part))
+            return NULL;
+    }
+    return NULL;
+}
+
+/* Drain after propagation, inside the selected query. setarg/3 is trailed;
+ * neither a failed call nor branch rollback consumes another branch's events. */
+static term_t petta_solver_query(PettaSolverClient *client, term_t goal) {
+    term_t box = petta_solver_box(client), events = PL_new_term_ref();
+    term_t arguments = PL_new_term_refs(2), drain = PL_new_term_ref();
+    term_t qualified = PL_new_term_ref(), parts = PL_new_term_refs(2);
+    if (!box || !events || !arguments || !drain || !qualified || !parts ||
+        !PL_put_term(arguments, box) || !PL_put_term(arguments + 1, events) ||
+        !PL_cons_functor_v(drain, petta_solver_functor("drain", 2), arguments) ||
+        !PL_put_atom_chars(parts, client->runtime->solver_module_name) ||
+        !PL_put_term(parts + 1, drain) ||
+        !PL_cons_functor_v(qualified, petta_solver_functor(":", 2), parts) ||
+        !PL_put_term(parts, goal) || !PL_put_term(parts + 1, qualified) ||
+        !PL_cons_functor_v(goal, petta_solver_functor(",", 2), parts))
+        return 0;
+    return events;
+}
+
+static bool petta_solver_changes(PettaSolverClient *client, Arena *arena,
+                                 term_t events, PettaLibplVarMap *variables,
+                                 PettaLibplBackVarMap *back, Bindings *bindings) {
+    term_t list = PL_new_term_ref(), head = PL_new_term_ref(), key_term = PL_new_term_ref();
+    term_t value_term = PL_new_term_ref();
+    if (!list || !head || !key_term || !value_term || !PL_put_term(list, events))
+        return false;
+    Atom **prototypes = NULL, **values = NULL;
+    size_t count = 0u, prototype_cap = 0u, value_cap = 0u;
+    bool ok = true;
+    while (!PL_get_nil(list)) {
+        uint64_t key;
+        if (!PL_get_list(list, head, list) || !PL_get_arg(1, head, key_term) ||
+            !PL_get_uint64(key_term, &key) || !PL_get_arg(2, head, value_term))
+            { ok = false; break; }
+        PettaSolverVariable *variable = petta_solver_key(client, key);
+        if (!variable)
+            continue; /* A released epoch is no longer observable by this owner. */
+        Atom *value = petta_libpl_from_term(arena, value_term, variables, back, 0u);
+        if (!value || (value->kind != ATOM_VAR || value->var_id != variable->id)) {
+            Atom *prototype = value ? atom_var_like(arena, variable->prototype, variable->id) : NULL;
+            if (!prototype || count == UINT32_MAX ||
+                !petta_solver_grow((void **)&prototypes, &prototype_cap, count + 1u,
+                                   sizeof(*prototypes)) ||
+                !petta_solver_grow((void **)&values, &value_cap, count + 1u, sizeof(*values))) {
+                ok = false;
+                break;
+            }
+            prototypes[count] = prototype;
+            values[count++] = value;
+        }
+    }
+    ok = ok && bindings_add_vars(bindings, prototypes, values, (uint32_t)count);
+    if (ok)
+        client->published += count;
+    free(prototypes);
+    free(values);
+    return ok;
+}
+
+static bool petta_solver_emit(PettaSolverClient *client, Arena *arena, term_t result,
+                              term_t events, PettaLibplVarMap *variables,
+                              OutcomeSet *outcomes) {
+    PettaLibplBackVarMap back = {0};
+    Bindings bindings = {0};
+    bool ok = petta_libpl_solution_bindings(arena, variables, &back, &bindings);
+    if (ok)
+        ok = petta_solver_changes(client, arena, events, variables, &back, &bindings);
+    Atom *value = ok ? petta_libpl_from_term(arena, result, variables, &back, 0u) : NULL;
+    CettaCount before = outcomes->len;
+    if (value)
+        outcome_set_add(outcomes, value, &bindings);
+    bindings_free(&bindings);
+    petta_libpl_back_map_free(&back);
+    return value && outcomes->len == before + 1u;
 }
 
 static bool petta_solver_map(PettaSolverClient *client, PettaLibplVarMap *variables) {
@@ -466,8 +725,19 @@ static bool petta_solver_watches(const void *state, VarId var) {
 }
 
 static bool petta_solver_bound(void *state, uint32_t mark, VarId var) {
-    (void)mark; (void)var;
-    ((PettaSolverClient *)state)->pending = true;
+    (void)mark;
+    PettaSolverClient *client = state;
+    size_t at = petta_solver_find(client, var);
+    if (at == SIZE_MAX)
+        return true;
+    if (!client->vars[at].queued) {
+        if (!petta_solver_grow((void **)&client->changed, &client->changed_cap,
+                               client->changed_len + 1u, sizeof(*client->changed)))
+            return false;
+        client->changed[client->changed_len++] = var;
+        client->vars[at].queued = true;
+    }
+    client->pending = true;
     return true;
 }
 
@@ -490,6 +760,8 @@ static bool petta_solver_reset(void *state, uint32_t mark) {
         client->first = client->len;
         cetta_var_index_free(&client->index);
         client->pending = false;
+        client->rescan = false;
+        client->changed_len = 0u;
     }
     petta_libpl_leave(claimed);
     return ok;
@@ -512,7 +784,8 @@ static CettaDelaySyncStatus petta_solver_sync(void *state, uint32_t mark,
     CettaDelaySyncStatus status = CETTA_DELAY_SYNC_CAPACITY;
     bool started = petta_solver_checkpoint(client, mark) &&
                    cetta_foreign_region_begin(client->region) == CETTA_FOREIGN_OK;
-    PettaLibplVarMap variables = {.slot = petta_solver_slot, .slot_context = client};
+    PettaLibplVarMap variables = {.slot = petta_solver_slot, .slot_context = client,
+                                 .native_variable = petta_solver_native_variable};
     PettaLibplBackVarMap back = {0};
     term_t goal = started ? PL_new_term_ref() : 0;
     bool ok = goal && PL_put_atom_chars(goal, "true");
@@ -520,7 +793,13 @@ static CettaDelaySyncStatus petta_solver_sync(void *state, uint32_t mark,
     functor_t equal = PL_new_functor(equal_name, 2), comma = PL_new_functor(comma_name, 2);
     PL_unregister_atom(equal_name);
     PL_unregister_atom(comma_name);
-    for (size_t at = client->first; ok && at < client->len; at++) {
+    size_t visits = client->rescan ? client->len - client->first : client->changed_len;
+    for (size_t visit = 0; ok && visit < visits; visit++) {
+        size_t at = client->rescan ? client->first + visit
+                                  : petta_solver_find(client, client->changed[visit]);
+        if (at == SIZE_MAX)
+            continue;
+        client->native_reads++;
         Atom *prototype = client->vars[at].prototype;
         Atom *value = bindings_apply_if_vars(bindings, arena, prototype);
         term_t pair = PL_new_term_refs(2), equation = PL_new_term_ref(), parts = PL_new_term_refs(2);
@@ -533,14 +812,16 @@ static CettaDelaySyncStatus petta_solver_sync(void *state, uint32_t mark,
                  PL_cons_functor_v(goal, comma, parts);
         }
     }
-    ok = ok && petta_solver_map(client, &variables) &&
+    term_t events = ok ? petta_solver_query(client, goal) : 0;
+    ok = ok && events &&
          cetta_foreign_region_start(client->region, client->runtime->module,
              PL_predicate("call", 1, client->runtime->module_name), goal) == CETTA_FOREIGN_OK;
     int result = ok ? cetta_foreign_region_next(client->region) : -1;
     if (ok)
         client->synchronizations++;
     bool solved = result == PL_S_TRUE || result == PL_S_LAST;
-    bool read = solved && petta_libpl_solution_bindings(arena, &variables, &back, delta);
+    bool read = solved && petta_libpl_solution_bindings(arena, &variables, &back, delta) &&
+                petta_solver_changes(client, arena, events, &variables, &back, delta);
     if (started) {
         status = petta_solver_finish(client, read, arena, raised);
         if (status == CETTA_DELAY_SYNC_READY && !read)
@@ -548,6 +829,13 @@ static CettaDelaySyncStatus petta_solver_sync(void *state, uint32_t mark,
     }
     petta_libpl_var_map_free(&variables);
     petta_libpl_back_map_free(&back);
+    for (size_t visit = 0; visit < client->changed_len; visit++) {
+        size_t at = petta_solver_find(client, client->changed[visit]);
+        if (at != SIZE_MAX)
+            client->vars[at].queued = false;
+    }
+    client->changed_len = 0u;
+    client->rescan = false;
     client->pending = false;
     if (status != CETTA_DELAY_SYNC_READY && client->history_len)
         petta_solver_rollback_locked(client, mark);
@@ -581,7 +869,8 @@ static bool petta_solver_goals(const void *state,
     g_petta_libpl_active_runtime = client->runtime;
     bool started = petta_solver_activate(client) &&
                    cetta_foreign_region_begin(client->region) == CETTA_FOREIGN_OK;
-    PettaLibplVarMap variables = {.slot = petta_solver_slot, .slot_context = client};
+    PettaLibplVarMap variables = {.slot = petta_solver_slot, .slot_context = client,
+                                 .native_variable = petta_solver_native_variable};
     PettaLibplBackVarMap back = {0};
     Atom *payload = NULL;
     bool ok = started && petta_solver_map(client, &variables) &&
@@ -617,7 +906,9 @@ static bool petta_solver_goals(const void *state,
 
 static const CettaDelayOwnerOps petta_solver_ops = {
     .client = CETTA_DELAY_CLIENT_PROLOG, .clone = petta_solver_clone,
-    .free = petta_solver_free, .rollback = petta_solver_rollback,
+    .free = petta_solver_free, .detach = petta_solver_prepare_detach,
+    .frontier = petta_solver_frontier,
+    .rollback = petta_solver_rollback,
     .commit = petta_solver_commit, .rebase = petta_solver_rebase,
     .watches = petta_solver_watches, .bound = petta_solver_bound,
     .withdraw = petta_solver_withdraw, .reset = petta_solver_reset,
@@ -672,11 +963,24 @@ static bool petta_solver_try_call(CettaLibPrologRuntime *runtime, Arena *arena,
                                  Atom *expression, Atom *expected, OutcomeSet *outcomes,
                                  Atom **raised, const CettaDelayView *view, bool *handled) {
     *handled = false;
-    int relation = petta_solver_relation(expression);
+    bool predicate = expression && expression->kind == ATOM_EXPR &&
+        expression->expr.len == 2u && expression->expr.elems[0]->kind == ATOM_SYMBOL &&
+        petta_semantics_form(expression->expr.elems[0]->sym_id) == PETTA_FORM_TRANSLATE_PREDICATE;
+    Atom *source = predicate ? expression->expr.elems[1] : expression;
+    Atom *result_value = expected;
+    if (predicate) {
+        if (!source || source->kind != ATOM_EXPR || source->expr.len != 4u)
+            return true;
+        result_value = source->expr.elems[3];
+        source = atom_expr(arena, source->expr.elems, 3u);
+        if (!source)
+            return false;
+    }
+    int relation = petta_solver_relation(source);
     if (relation < 0 || !view || !view->acquire || !view->mark || PL_current_query())
         return true;
-    PettaLibplImport *entry = petta_libpl_find_import(runtime, expression->expr.elems[0]->sym_id);
-    if (!entry || !entry->reference_stdlib || entry->auto_resolved)
+    PettaLibplImport *entry = petta_libpl_find_import(runtime, source->expr.elems[0]->sym_id);
+    if (!predicate && (!entry || !entry->reference_stdlib || entry->auto_resolved))
         return true;
     CettaDelayService *service = view->acquire(view->context);
     if (!service)
@@ -701,24 +1005,29 @@ static bool petta_solver_try_call(CettaLibPrologRuntime *runtime, Arena *arena,
     if (mark == UINT32_MAX || !petta_solver_checkpoint(client, mark))
         return false;
     bool started = cetta_foreign_region_begin(client->region) == CETTA_FOREIGN_OK;
-    PettaLibplVarMap variables = {.slot = petta_solver_slot, .slot_context = client};
+    PettaLibplVarMap variables = {.slot = petta_solver_slot, .slot_context = client,
+                                 .native_variable = petta_solver_native_variable};
     term_t arguments = started ? PL_new_term_refs(3) : 0;
     term_t goal = started ? PL_new_term_ref() : 0;
-    bool ok = arguments && goal &&
-              petta_libpl_to_term(expression->expr.elems[1], arguments, &variables, 0u) &&
-              petta_libpl_to_term(expression->expr.elems[2], arguments + 1, &variables, 0u) &&
-              petta_libpl_to_term(expected, arguments + 2, &variables, 0u) &&
-              petta_solver_map(client, &variables);
-    atom_t name = petta_libpl_new_utf8_atom(entry->name, entry->name_len);
+    term_t result_term = predicate && started ? PL_new_term_ref() : arguments + 2;
+    bool ok = arguments && goal && result_term &&
+              petta_libpl_to_term(source->expr.elems[1], arguments, &variables, 0u) &&
+              petta_libpl_to_term(source->expr.elems[2], arguments + 1, &variables, 0u) &&
+              petta_libpl_to_term(result_value, arguments + 2, &variables, 0u) &&
+              (!predicate || PL_put_atom_chars(result_term, "true"));
+    static const char *names[] = {"#+", "#-", "#*", "#div", "#//", "#mod", "#min", "#max"};
+    atom_t name = PL_new_atom(names[relation]);
     functor_t functor = name ? PL_new_functor(name, 3) : 0;
     ok = ok && functor && PL_cons_functor_v(goal, functor, arguments);
     if (name)
         PL_unregister_atom(name);
-    ok = ok && cetta_foreign_region_start(client->region, runtime->module,
+    term_t events = ok ? petta_solver_query(client, goal) : 0;
+    ok = ok && events && cetta_foreign_region_start(client->region, runtime->module,
         PL_predicate("call", 1, runtime->module_name), goal) == CETTA_FOREIGN_OK;
     int result = ok ? cetta_foreign_region_next(client->region) : -1;
     bool solved = result == PL_S_TRUE || result == PL_S_LAST;
-    bool emitted = solved && petta_libpl_emit_solution(arena, arguments + 2, NULL, &variables, outcomes);
+    bool emitted = solved && petta_solver_emit(client, arena, result_term, events,
+                                              &variables, outcomes);
     if (solved)
         client->posts++;
     CettaDelaySyncStatus status = started ? petta_solver_finish(client, emitted, arena, raised)

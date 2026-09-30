@@ -305,6 +305,13 @@ typedef struct {
 } PettaProgramTypeBucket;
 
 typedef struct {
+    SymbolId head;
+    PettaTypeCall *calls;
+    uint32_t count;
+    bool hold_body;
+} PettaProgramTypeFamily;
+
+typedef struct {
     const Space *space;
     uint64_t instance_id;
     uint64_t synchronized_revision;
@@ -331,6 +338,14 @@ typedef struct {
     size_t snapshot_len;
     size_t snapshot_cap;
     PettaProgramRevisionView *revision_view;
+    PettaProgramTypeFamily *type_families;
+    size_t type_family_len;
+    size_t type_family_cap;
+    SpaceProgramToken type_family_program;
+    /* Families share one immutable generation region, not a minimum-sized
+     * arena block per head. Activations instantiate into their own heap. */
+    Arena type_family_storage;
+    bool type_families_current;
 } PettaProgramSpace;
 
 typedef struct {
@@ -3286,6 +3301,18 @@ static void petta_program_space_commit_catalog_mutation(
     petta_program_space_clear_candidate_snapshots(entry);
 }
 
+static void petta_program_space_clear_type_families(PettaProgramSpace *entry) {
+    for (size_t i = 0u; i < entry->type_family_len; i++) {
+        free(entry->type_families[i].calls);
+    }
+    if (entry->type_families_current)
+        arena_free(&entry->type_family_storage);
+    free(entry->type_families);
+    entry->type_families = NULL;
+    entry->type_family_len = entry->type_family_cap = 0u;
+    entry->type_families_current = false;
+}
+
 static void petta_program_space_dispose_catalog(
         PettaProgramSpace *entry) {
     if (!entry)
@@ -3294,6 +3321,7 @@ static void petta_program_space_dispose_catalog(
         entry, PETTA_REVISION_VIEW_INVALIDATE_DISPOSE);
     petta_program_space_clear_head_index(entry);
     petta_program_space_clear_candidate_snapshots(entry);
+    petta_program_space_clear_type_families(entry);
     free(entry->equations);
     entry->equations = NULL;
     entry->equation_len = 0u;
@@ -3643,6 +3671,115 @@ static PettaProgramSpace *petta_program_ensure_space(
     created->space = space;
     created->instance_id = space_instance_id(space);
     return created;
+}
+
+static bool petta_program_type_family_build(
+    Space *space, Atom *head, Arena *storage, PettaProgramTypeFamily *family) {
+    memset(family, 0, sizeof(*family));
+    family->head = head->sym_id;
+    ArenaMark mark = arena_mark(storage);
+    Atom **types = NULL;
+    uint32_t count = space_get_declared_types(space, storage, head, &types);
+    family->hold_body = petta_type_body_is_data(types, count);
+    count = petta_type_unique_signatures(types, count);
+    family->calls = count ? calloc(count, sizeof(*family->calls)) : NULL;
+    bool ok = !count || family->calls;
+    for (uint32_t i = 0u; ok && i < count; i++) {
+        if (!petta_type_call_plan(types[i], 0u, NULL))
+            continue;
+        ok = petta_type_call_compile(types[i], &family->calls[family->count]);
+        if (ok)
+            family->count++;
+    }
+    free(types);
+    if (!ok) {
+        free(family->calls);
+        arena_reset(storage, mark);
+    }
+    return ok;
+}
+
+bool petta_program_type_calls(PettaProgram *program, Space *space, Atom *head,
+                              CettaExprLen supplied, Arena *arena,
+                              PettaTypeCall **calls_out, uint32_t *count_out,
+                              bool *hold_body) {
+    if (!calls_out || !count_out || !hold_body)
+        return false;
+    *calls_out = NULL;
+    *count_out = 0u;
+    *hold_body = false;
+    if (!space || !arena || !head || head->kind != ATOM_SYMBOL)
+        return false;
+    CETTA_SCOPED_SHARED_TRANSITION(type_family_observation);
+    SpaceProgramToken token = space_program_token(space);
+    PettaProgramSpace *entry = program ? petta_program_ensure_space(program, space) : NULL;
+    if (program && !entry)
+        return false;
+    PettaProgramTypeFamily temporary;
+    Arena temporary_storage;
+    PettaProgramTypeFamily *family = NULL;
+    if (entry) {
+        if (!entry->type_families_current ||
+            !space_program_token_eq(entry->type_family_program, token)) {
+            petta_program_space_clear_type_families(entry);
+            arena_init_detached(&entry->type_family_storage);
+            entry->type_family_program = token;
+            entry->type_families_current = true;
+        }
+        size_t low = 0u, high = entry->type_family_len;
+        while (low < high) {
+            size_t middle = low + (high - low) / 2u;
+            if (entry->type_families[middle].head < head->sym_id)
+                low = middle + 1u;
+            else
+                high = middle;
+        }
+        if (low < entry->type_family_len && entry->type_families[low].head == head->sym_id) {
+            family = &entry->type_families[low];
+        } else {
+            if (!petta_program_reserve((void **)&entry->type_families,
+                    &entry->type_family_cap, entry->type_family_len + 1u,
+                    sizeof(*entry->type_families)) ||
+                !petta_program_type_family_build(space, head,
+                    &entry->type_family_storage, &temporary))
+                return false;
+            memmove(entry->type_families + low + 1u, entry->type_families + low,
+                    (entry->type_family_len - low) * sizeof(*entry->type_families));
+            entry->type_families[low] = temporary;
+            entry->type_family_len++;
+            family = &entry->type_families[low];
+        }
+    } else {
+        arena_init_detached(&temporary_storage);
+        if (!petta_program_type_family_build(space, head, &temporary_storage, &temporary)) {
+            arena_free(&temporary_storage);
+            return false;
+        }
+        family = &temporary;
+    }
+    uint32_t count = 0u;
+    for (uint32_t i = 0u; i < family->count; i++)
+        count += supplied <= family->calls[i].arity;
+    PettaTypeCall *calls = count ? calloc(count, sizeof(*calls)) : NULL;
+    bool ok = !count || calls;
+    uint32_t next = 0u;
+    for (uint32_t i = 0u; ok && i < family->count; i++) {
+        if (supplied <= family->calls[i].arity)
+            ok = petta_type_call_instantiate(arena, &family->calls[i], &calls[next++]);
+    }
+    ok = ok && space_program_token_matches_live_space(token, space);
+    if (ok) {
+        *calls_out = calls;
+        *count_out = count;
+        *hold_body = family->hold_body;
+    } else {
+        free(calls);
+    }
+    if (!entry) {
+        free(temporary.calls);
+        arena_free(&temporary_storage);
+    }
+    return ok;
 }
 
 static PettaProgramAnalysisSpace *petta_program_find_analysis_space(

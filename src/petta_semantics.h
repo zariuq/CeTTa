@@ -200,13 +200,6 @@ bool petta_semantics_intrinsic_partial_arity(
  */
 bool petta_semantics_truth_value(const Atom *atom, bool *value);
 Atom *petta_semantics_boolean_value(Arena *arena, bool value);
-/* The answers of the reference's get-type(Subject, T) in `space`, as types
- * owned by `arena` in a caller-owned array.  A NULL target is a fresh T;
- * otherwise the answers are the target's instances, as for a call with T
- * bound (a typed parameter's check).  False only when memory runs out. */
-bool petta_semantics_type_answers(
-    Space *space, Arena *arena, Atom *subject, Atom *target,
-    Atom ***types_out, uint32_t *count_out);
 /* PeTTa's metatype of a symbol, as SWI-PeTTa's get-metatype/2 gives it:
  * Grounded for a truth value and for a registered function (fun/1), which
  * is one of SWI-PeTTa's registered builtins or, when `registered`, a
