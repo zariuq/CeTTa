@@ -6,6 +6,7 @@
 #include "nik_direct_authority.h"
 #include "match.h"
 #include "space.h"
+#include "petta_type_policy.h"
 #include "term_universe.h"
 
 /*
@@ -357,6 +358,16 @@ typedef enum {
 
 PettaProgram *petta_program_new(void);
 void petta_program_free(PettaProgram *program);
+/* Signature facts are owned by the existing program and keyed by the live
+ * SpaceProgramToken. Data-only changes preserve them; equation, declaration,
+ * overlay and lifetime changes invalidate them. This caches declarations,
+ * never answers to a type query. The returned array is caller-owned; its
+ * fresh signatures and literal modes belong to arena. NULL program performs
+ * the same compilation without retaining facts. */
+bool petta_program_type_calls(PettaProgram *program, Space *space, Atom *head,
+                              CettaExprLen supplied, Arena *arena,
+                              PettaTypeCall **calls, uint32_t *count,
+                              bool *hold_body);
 /* Optional language-owned catalog for analyses.  Ordinary PeTTa leaves this
  * disabled and therefore allocates no annotation or inferred-fact state. */
 bool petta_program_enable_analysis(PettaProgram *program);

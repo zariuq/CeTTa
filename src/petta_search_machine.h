@@ -238,6 +238,9 @@ typedef struct {
      * profile allows them they are the machine's own controls, the first
      * answers of a body and all of them; otherwise they are the host's. */
     bool bounded_collections;
+    /* Explicit dependent domains belong to the active language profile,
+     * not to the shared declaration cache or residual-type analysis. */
+    bool dependent_type_domains;
     /*
      * Called immediately before a machine transition.  Returning false
      * suspends without consuming the pending goal, so the same machine can
@@ -317,10 +320,12 @@ typedef struct {
     /* Enumerate the intrinsic answers of the language's `get-type`
      * relation after its subject has reached the ready-value boundary.
      * The returned pointer array is caller-owned; every Atom is owned by
-     * `arena`.  Explicit user equations remain ordinary later relation
+     * `arena`. A NULL target is a fresh type; a non-NULL target is the
+     * current required-type operand, not a post-enumeration filter.
+     * Explicit user equations remain ordinary later relation
      * equations and are not included by this service. */
     bool (*get_type)(
-        void *context, Space *space, Arena *arena, Atom *value,
+        void *context, Space *space, Arena *arena, Atom *value, Atom *target,
         Atom ***types, uint32_t *count);
     /* Construct the active language's public Boolean datum.  Search owns the
      * truth relation; spelling and representation remain language-owned. */
@@ -540,6 +545,19 @@ typedef struct {
         void **mutex);
     void (*mutex_release)(
         void *context, void *mutex);
+    /* Observe a ready value's intrinsic metatype without interpreting it.
+     * A true return with NULL output means no metatype; false is a service
+     * fault. The output belongs to arena. Authored equations remain on the
+     * ordinary relation path; NULL callback keeps generic host dispatch. */
+    bool (*get_metatype)(
+        void *context, Space *space, Arena *arena, Atom *value, Atom **type);
+    /* Compile/instantiate declaration facts, not relational type answers.
+     * Atoms and literal modes belong to arena; free the returned call array.
+     * A NULL service uses the same uncached compilation. */
+    bool (*type_calls)(
+        void *context, Space *space, Arena *arena, Atom *head,
+        CettaExprLen supplied, PettaTypeCall **calls, uint32_t *count,
+        bool *hold_body);
 } PettaMachineHost;
 
 typedef enum {

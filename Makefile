@@ -629,6 +629,7 @@ PETTA_TYPECHECK_CENSUS_SRC = src/petta_typecheck_census.c
 endif
 SRC = src/symbol.c src/atom.c src/string_ops.c src/str_natives.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/match_decision.c src/select/code_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/fold_algebra.c src/open_equation_machine.c src/eval.c src/grounded.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 SRC += src/shared_transition.c
+SRC += src/petta_type_policy.c src/petta_type_relation.c src/he_type_policy.c
 SRC += src/gslt_language_manifest_v1.c
 SRC += src/gslt_support_profile_v1.c
 SRC += src/library_io.c
@@ -25264,6 +25265,41 @@ endif
 test-petta-search-machine: test-petta-match-conjunction-cursor
 test-petta-search-machine: test-petta-named-arity-source-cache
 
+.PHONY: test-petta-type-policy
+test-petta-type-policy: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		for profile in "" "--profile extended"; do \
+			for fixture in type_policy_reference type_policy_guard_reference \
+				type_policy_compound_reference type_policy_dedup_history \
+				type_policy_revision_reference type_policy_mixed_codomain \
+				type_policy_partial_codomain type_policy_held_guard \
+				type_policy_relational_boundary type_policy_suspended_revision \
+				type_policy_owned_space type_policy_body_revision type_policy_domain_syntax \
+				type_policy_sequential_binding \
+				type_policy_import_revision type_policy_native_partial \
+				type_policy_classifier_effects; do \
+				actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+					--lang petta $$profile tests/petta/$$fixture.metta); \
+				expected_file=tests/petta/$$fixture.expected; \
+				if [ -n "$$profile" ] && [ -f tests/petta/$$fixture.extended.expected ]; then \
+					expected_file=tests/petta/$$fixture.extended.expected; \
+				fi; \
+				expected=$$(cat "$$expected_file"); \
+				if [ "$$actual" != "$$expected" ]; then \
+					echo "FAIL: PeTTa type policy $$fixture ($$route $$profile)"; \
+					diff -u "$$expected_file" <(printf '%s\n' "$$actual"); \
+					exit 1; \
+				fi; \
+			done; \
+		done; \
+	done; \
+	echo "PASS: PeTTa type policy qualifies pinned base semantics and explicit extended observations on both routes"
+
+test-petta-search-machine: test-petta-type-policy
+test-petta-semantics: test-petta-type-policy
+
 .PHONY: test-petta-named-arity-source-cache
 test-petta-named-arity-source-cache: $(BIN)
 	@set -eu; \
@@ -28674,7 +28710,21 @@ test-petta-frame-owned-mutation: $(BIN)
 		| diff -u tests/petta/frame_owned_nested_mutation.expected -; \
 	echo 'PASS: nested mutation observes framed bindings and removes consumed facts'
 
-test-he-contract-suite: $(BIN) test-he-compat-catalog-guards test-he-outcome-list-contracts test-he-nik-typed-applicability-pruning test-eval-in-space-profiles test-he-guarded-equation-plan
+.PHONY: test-he-type-policy
+test-he-type-policy: $(BIN) \
+		tests/he/type_policy_reference.metta tests/he/type_policy_reference.expected \
+		tests/he/type_policy_wildcards.metta tests/he/type_policy_wildcards.expected \
+		tests/he/type_policy_nested_wildcards.metta tests/he/type_policy_nested_wildcards.expected
+	@set -eu -o pipefail; \
+	for profile in "" "--profile extended"; do \
+		for fixture in type_policy_reference type_policy_wildcards type_policy_nested_wildcards; do \
+			$(CETTA_BIN_INVOKE) --lang he $$profile tests/he/$$fixture.metta \
+				| diff -u tests/he/$$fixture.expected -; \
+		done; \
+	done; \
+	echo 'PASS: HE type demand and interpreter wildcards match upstream HE'
+
+test-he-contract-suite: $(BIN) test-he-type-policy test-he-compat-catalog-guards test-he-outcome-list-contracts test-he-nik-typed-applicability-pruning test-eval-in-space-profiles test-he-guarded-equation-plan
 	@pass=0; fail=0; \
 	files=($(HE_CONTRACT_GENERATED_DIR)/*.metta); \
 	if [ ! -e "$${files[0]}" ]; then \

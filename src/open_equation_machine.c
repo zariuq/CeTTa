@@ -671,6 +671,11 @@ static bool oem_op_literal(OemCompile *compile, SymbolId op, uint32_t *out) {
     *out = 0u;
     if (op == SYMBOL_ID_NONE)
         return true;
+    if (!compile->program->atoms_ready) {
+        arena_init(&compile->program->atoms);
+        arena_set_hashcons(&compile->program->atoms, NULL);
+        compile->program->atoms_ready = true;
+    }
     Atom *head = atom_symbol_id(&compile->program->atoms, op);
     return head ? oem_template_literal(compile, head, out)
                 : oem_reject(compile, "out of memory");
