@@ -1101,6 +1101,31 @@ bool bindings_builder_register_contextual_frame(
         builder, source_ids, source_len, epoch);
 }
 
+static bool bindings_builder_merge_frame_by_growth(
+        BindingsBuilder *builder, const BindingsFrameIndexEntry *frame) {
+    const BindingsFrameIndexEntry *known =
+        bindings_frame_index_find_frame_const(
+            builder->current.frame_index, frame->epoch);
+    /* Only the fixed-inventory refusal is answered by growth. */
+    if (!known || !known->schema->source_ids_contiguous ||
+        known->schema->source_first_id != 1u ||
+        !(known->schema_complete ||
+          known->slot_len > known->schema->len))
+        return false;
+    uint32_t needed = frame->schema->source_ids_contiguous &&
+                              frame->schema->source_first_id == 1u
+                          ? frame->slot_len : 0u;
+    for (uint32_t id = 0u; id < frame->schema->len; id++) {
+        VarId source_id = frame->schema->source_ids[id];
+        if (source_id > UINT32_MAX)
+            return false;
+        if ((uint32_t)source_id > needed)
+            needed = (uint32_t)source_id;
+    }
+    return bindings_frame_index_grow_slots(
+        &builder->current, frame->epoch, needed);
+}
+
 /* A receiving frame whose slots extend past its named schema numbers every
  * slot contiguously from the first source identifier, so a new name schema
  * would renumber live slots.  Those slots already denote the contiguous source
@@ -1148,10 +1173,20 @@ bool bindings_builder_merge_frame_schemas(
             if (!bindings_builder_register_frame_kind(
                     builder, frame->schema->source_ids,
                     frame->schema->len, frame->epoch,
-                    frame->schema_complete, frame->schema, NULL) ||
-                (frame->slot_len > frame->schema->len &&
-                 !bindings_frame_index_grow_slots(
-                     &builder->current, frame->epoch, frame->slot_len))) {
+                    frame->schema_complete, frame->schema, NULL)) {
+                /* Refused because the frame grew slots past its schema.  A
+                 * contiguous frame names each slot by its position, the grown
+                 * ones too, so the image's identifiers join it by growing it
+                 * (transport uses grow_slots, as the registration rule says);
+                 * a schema of the image's own would renumber them. */
+                if (!bindings_builder_merge_frame_by_growth(
+                        builder, frame))
+                    return false;
+                continue;
+            }
+            if (frame->slot_len > frame->schema->len &&
+                !bindings_frame_index_grow_slots(
+                    &builder->current, frame->epoch, frame->slot_len)) {
                 return false;
             }
         }

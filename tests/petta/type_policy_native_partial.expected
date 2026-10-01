@@ -1,0 +1,5 @@
+((partial + (2)))
+6
+((partial pcg-two (2)))
+(+ 2 4)
+()

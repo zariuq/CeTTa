@@ -35,6 +35,12 @@ void space_match_backend_init(Space *s) {
     s->match_backend.kind = SPACE_ENGINE_NATIVE;
 }
 /* This standalone fixture does not provide native cursor execution. */
+bool space_match_native_try_cold_candidates(
+    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count) {
+    (void)space; (void)pattern; (void)out; (void)count;
+    return false;
+}
+
 void space_match_native_ensure_trie(Space *s) {
     (void)s;
     assert(false && "unexpected native cursor execution in standalone fixture");

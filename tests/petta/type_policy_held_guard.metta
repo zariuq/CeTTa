@@ -1,0 +1,5 @@
+(: return-syntax (-> Atom Atom))
+(= (return-syntax $x) $x)
+(: accept-expression (-> Expression Atom))
+(= (accept-expression $x) OK)
+!(collapse (accept-expression (return-syntax (println! SHOULD-NOT-RUN))))

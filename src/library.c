@@ -391,6 +391,8 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
     ctx->petta_open_programs_free = NULL;
     ctx->petta_match_decisions = NULL;
     ctx->petta_match_decisions_free = NULL;
+    ctx->petta_static_imports = NULL;
+    ctx->petta_static_imports_free = NULL;
     if (ctx->petta_shared_table) {
         PettaTableMutationPolicy table_policy =
             profile && profile->enable_cetta_extensions
@@ -457,6 +459,10 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
         ctx->petta_match_decisions_free(ctx->petta_match_decisions);
     ctx->petta_match_decisions = NULL;
     ctx->petta_match_decisions_free = NULL;
+    if (ctx->petta_static_imports_free)
+        ctx->petta_static_imports_free(ctx->petta_static_imports);
+    ctx->petta_static_imports = NULL;
+    ctx->petta_static_imports_free = NULL;
     cetta_nik_runtime_v1_free(ctx->nik_runtime);
     ctx->nik_runtime = NULL;
     if (ctx->nik_runtime_mutex_ready) {
@@ -3278,19 +3284,39 @@ static bool build_library_resource_path(
         return false;
     }
     /* Explicit imports select a language overlay when present, then fall back
-       to the shared library. Merely selecting a language never loads either. */
+       to the shared library. Merely selecting a language never loads either.
+       A typecheck profile reads the language's typed spelling of a library
+       first, where one exists: the same library with the effect types its
+       checker reads, so the plain spelling stays the reference's. */
     language_name = cetta_language_canonical_name(ctx->session.language_id);
+    bool typed = ctx->session.profile &&
+        (ctx->session.profile->id == CETTA_PROFILE_PETTA_TYPECHECK_V2 ||
+         ctx->session.profile->id == CETTA_PROFILE_PETTA_TYPECHECK_V3);
     if (ctx->root_dir[0] != '\0') {
-        int n = snprintf(out, out_sz, "%s/lib/%s/%s%s",
+        int n;
+        if (typed) {
+            n = snprintf(out, out_sz, "%s/lib/%s/typecheck/%s%s",
                          ctx->root_dir, language_name, name, suffix);
+            if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0)
+                return true;
+        }
+        n = snprintf(out, out_sz, "%s/lib/%s/%s%s",
+                     ctx->root_dir, language_name, name, suffix);
         if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0) return true;
         n = snprintf(out, out_sz, "%s/lib/%s%s",
                      ctx->root_dir, name, suffix);
         if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0) return true;
     }
     {
-        int n = snprintf(out, out_sz, "lib/%s/%s%s",
+        int n;
+        if (typed) {
+            n = snprintf(out, out_sz, "lib/%s/typecheck/%s%s",
                          language_name, name, suffix);
+            if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0)
+                return true;
+        }
+        n = snprintf(out, out_sz, "lib/%s/%s%s",
+                     language_name, name, suffix);
         if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0) return true;
         n = snprintf(out, out_sz, "lib/%s%s", name, suffix);
         if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0) return true;
@@ -7783,7 +7809,7 @@ static bool cetta_library_petta_execute_document_ids(
                     atom_ids + index, 2, false,
                     failure_out, detail_out))
                 return false;
-            cetta_petta_erase_typecheck_marks_document(
+            cetta_petta_prepare_document_forms(
                 work_space->native.universe, atom_ids + index, 2);
             /* A directive's answer list claims there are no further
              * answers, so it is observed with a completion tracker.  An
@@ -7891,7 +7917,7 @@ static bool cetta_library_petta_execute_document_ids(
                 true,
                 failure_out, detail_out))
             return false;
-        cetta_petta_erase_typecheck_marks_document(
+        cetta_petta_prepare_document_forms(
             work_space->native.universe, atom_ids + index,
             block_end - index);
         PettaDeclarationBlock *block = NULL;
@@ -9393,7 +9419,7 @@ bool cetta_library_petta_git_import(CettaLibraryContext *ctx,
         eval_arena, error_out);
 }
 
-bool cetta_library_petta_git_import_enabled(
+bool cetta_library_petta_lib_import_enabled(
     const CettaLibraryContext *ctx) {
     return ctx &&
            ctx->session.language_id == CETTA_LANGUAGE_PETTA &&
@@ -9701,9 +9727,11 @@ bool cetta_library_import_petta_reference_at(
     return false;
 }
 
-Atom *cetta_library_dispatch_native(CettaLibraryContext *ctx, Space *space,
-                                    Arena *a,
-                                    Atom *head, Atom **args, uint32_t nargs) {
+/* The active libraries' native operations, as values; a foreign call
+ * reports its own outcome (cetta_foreign_call_native). */
+static Atom *cetta_library_dispatch_native_value(
+    CettaLibraryContext *ctx, Space *space, Arena *a,
+    Atom *head, Atom **args, uint32_t nargs) {
     if (!ctx || !head || head->kind != ATOM_SYMBOL) return NULL;
     {
         Atom *result = cetta_rule_machine_dispatch(a, head, args, nargs);
@@ -9759,10 +9787,19 @@ Atom *cetta_library_dispatch_native(CettaLibraryContext *ctx, Space *space,
                                                            nargs, ctx->active_mask);
         if (result) return result;
     }
-    if (ctx->foreign_runtime) {
-        Atom *result = cetta_foreign_dispatch_native(ctx->foreign_runtime,
-                                                     space, a, head, args, nargs);
-        if (result) return result;
-    }
     return NULL;
+}
+
+bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
+                               Arena *a, Atom *head, Atom **args,
+                               uint32_t nargs, CettaCallOutcome *out) {
+    Atom *value = cetta_library_dispatch_native_value(
+        ctx, space, a, head, args, nargs);
+    if (value) {
+        *out = cetta_call_value(value);
+        return true;
+    }
+    return ctx && ctx->foreign_runtime &&
+           cetta_foreign_call_native(ctx->foreign_runtime,
+                                     space, a, head, args, nargs, out);
 }

@@ -14,6 +14,12 @@ void space_match_backend_init(Space *s) {
 }
 
 /* This standalone fixture does not provide native cursor execution. */
+bool space_match_native_try_cold_candidates(
+    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count) {
+    (void)space; (void)pattern; (void)out; (void)count;
+    return false;
+}
+
 void space_match_native_ensure_trie(Space *s) {
     (void)s;
     assert(false && "unexpected native cursor execution in standalone fixture");
@@ -2094,6 +2100,53 @@ int main(void) {
         assert(space_get_at64(&replace_source, 0)->ground.ival == 20003);
         space_free(&replace_source);
         space_free(&replace_target);
+    }
+
+    /* Relational type exclusion must retain open declarations and lose its
+     * negative answers after mutation or reuse of the Space address. */
+    {
+        Space declarations;
+        space_init_with_universe(&declarations, &universe);
+        Atom *head = atom_symbol(&scratch_d, "type-exclusion-subject");
+        Atom *subject = atom_expr2(&scratch_d, head, atom_int(&scratch_d, 7));
+        Atom *annotation = atom_expr3(&scratch_d,
+            atom_symbol_id(&scratch_d, g_builtin_syms.colon), subject,
+            atom_symbol(&scratch_d, "TypeExclusionResult"));
+        assert(!space_type_annotation_may_match_subject(&declarations, head));
+        assert(!space_type_annotation_may_match_subject(&declarations, subject));
+        assert(space_type_annotations_have_only_symbol_subjects(&declarations));
+        space_add(&declarations, annotation);
+        assert(!space_type_annotations_have_only_symbol_subjects(&declarations));
+        assert(space_type_annotation_may_match_subject(&declarations, subject));
+        /* A key is conservative: equal heads retain both outer kinds. */
+        assert(space_type_annotation_may_match_subject(&declarations, head));
+        assert(!space_type_annotation_may_match_subject(&declarations,
+            atom_symbol(&scratch_d, "unrelated-type-subject")));
+        space_truncate64(&declarations, 0u);
+        assert(!space_type_annotation_may_match_subject(&declarations, subject));
+        assert(space_type_annotations_have_only_symbol_subjects(&declarations));
+        Atom *open = atom_var(&scratch_d, "open-type-subject");
+        space_add(&declarations, atom_expr3(&scratch_d,
+            atom_symbol_id(&scratch_d, g_builtin_syms.colon), open,
+            atom_symbol(&scratch_d, "UniversalType")));
+        assert(space_type_annotation_may_match_subject(&declarations, head));
+        assert(space_type_annotation_may_match_subject(&declarations, subject));
+        assert(!space_type_annotations_have_only_symbol_subjects(&declarations));
+        space_truncate64(&declarations, 0u);
+        space_add(&declarations, open);
+        assert(space_type_annotation_may_match_subject(&declarations, subject));
+        space_free(&declarations);
+        space_init_with_universe(&declarations, &universe);
+        assert(!space_type_annotation_may_match_subject(&declarations, subject));
+        AtomId open_id = term_universe_store_atom_id(&universe, NULL, open);
+        assert(space_add_atom_ids_batch(&declarations, &open_id, 1u));
+        assert(space_type_annotation_may_match_subject(&declarations, subject));
+        space_truncate64(&declarations, 0u);
+        assert(!space_type_annotation_may_match_subject(&declarations, subject));
+        space_add(&declarations, atom_expr3(&scratch_d, open, head,
+            atom_symbol(&scratch_d, "OpenTagType")));
+        assert(space_type_annotation_may_match_subject(&declarations, head));
+        space_free(&declarations);
     }
 
     space_free(&right);

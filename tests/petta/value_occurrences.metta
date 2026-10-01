@@ -25,3 +25,12 @@
 !(let $v (quote (foo)) (== $v (foo)))
 ; a lexical fold body reads its element as a value
 !(foldl-atom (quote ((foo) 1)) () $acc $x (let $z (cons $x $acc) $z))
+; a fold step that is only a binder is the value it holds
+!(foldl-atom (quote (1 (foo))) 0 $acc $x $x)
+!(foldl-atom (quote (1)) (quote (foo)) $acc $x $acc)
+!(foldl-atom (quote ((foo))) 0 $acc $x (first-of ($x)))
+; the pair selectors answer the element as it is
+!(let $p (quote ((foo) 1)) (first-from-pair $p))
+!(let $p (quote (1 (foo))) (second-from-pair $p))
+; get-type types the value, not what it would compute
+!(let $v (quote (foo)) (get-type $v))

@@ -85,6 +85,15 @@ ifneq ($(BUILD),core)
 $(error standalone GSLT source qualification requires BUILD=core)
 endif
 endif
+PYTHON_CONFIG ?= python3-config
+# The default test run can exercise native checks without the optional adapter.
+# An explicitly selected Python build still requires its configuration.
+ifneq ($(filter test test-light test-correctness,$(MAKECMDGOALS)),)
+ifeq ($(strip $(shell command -v "$(PYTHON_CONFIG)" 2>/dev/null)),)
+BUILD ?= core
+export BUILD
+endif
+endif
 BUILD ?= python
 BUILD_CANON := $(BUILD)
 ifneq ($(filter $(BUILD_CANON),core python mork main pathmap full),$(BUILD_CANON))
@@ -342,6 +351,30 @@ $(MORK_BRIDGE_FEATURE_STATICLIB): $(MORK_BRIDGE_BUILD_STAMP)
 	flock 9; \
 	cp "$(MORK_BRIDGE_STATICLIB)" "$@"
 
+ENABLE_DURABLE ?= 0
+SQLITE_PROVIDER ?= vendored
+DURABLE_CFLAGS := -DCETTA_BUILD_WITH_DURABLE=$(ENABLE_DURABLE)
+DURABLE_LDFLAGS :=
+DURABLE_SRC :=
+ifneq ($(filter $(ENABLE_DURABLE),0 1),$(ENABLE_DURABLE))
+$(error ENABLE_DURABLE must be 0 or 1)
+endif
+ifeq ($(ENABLE_DURABLE),1)
+DURABLE_SRC += src/durable_store.c src/durable_value.c src/supervisor.c
+ifeq ($(SQLITE_PROVIDER),vendored)
+DURABLE_CFLAGS += -Ivendor/sqlite -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_DQS=0 -DSQLITE_OMIT_SHARED_CACHE -DSQLITE_DEFAULT_MEMSTATUS=0
+DURABLE_SRC += vendor/sqlite/sqlite3.c
+else ifeq ($(SQLITE_PROVIDER),system)
+ifeq ($(shell pkg-config --exists sqlite3 && echo yes),)
+$(error SQLITE_PROVIDER=system requires the sqlite3 development package)
+endif
+DURABLE_CFLAGS += $(shell pkg-config --cflags sqlite3)
+DURABLE_LDFLAGS += $(shell pkg-config --libs sqlite3)
+else
+$(error SQLITE_PROVIDER must be vendored or system)
+endif
+endif
+
 PY_CFLAGS =
 PY_LDFLAGS =
 PY_RPATH =
@@ -369,7 +402,7 @@ LIB_PROLOG_CONFIG_ID := $(strip $(shell { \
 	printf '%s\n' "$(LIB_PROLOG_CFLAGS)" "$(LIB_PROLOG_LDFLAGS)"; \
 	printf '%s\n' "$(LIB_PROLOG_LIBDIR)" "$(LIB_PROLOG_VERSION)"; \
 	} | sha256sum | cut -c1-16))
-LIB_PROLOG_SRC := src/petta_libpl.c
+LIB_PROLOG_SRC := src/petta_libpl.c src/foreign_region.c
 else
 LIB_PROLOG_CFLAGS :=
 LIB_PROLOG_LDFLAGS :=
@@ -454,6 +487,9 @@ comma := ,
 BUILD_OBJ_TAG = $(BUILD_CANON)
 ifeq ($(ENABLE_GMP),0)
 BUILD_OBJ_TAG := $(BUILD_CANON).nogmp
+endif
+ifeq ($(ENABLE_DURABLE),1)
+BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).durable-$(SQLITE_PROVIDER)
 endif
 ifeq ($(ENABLE_SANITIZERS),1)
 SANITIZER_TAG := $(subst $(comma),-,$(subst $(space),_,$(SANITIZERS)))
@@ -569,10 +605,10 @@ PRIME_EVAL_STACK_CPPFLAGS =
 ifeq ($(ENABLE_PRIME_EVAL_STACK),1)
 PRIME_EVAL_STACK_CPPFLAGS = -DCETTA_PRIME_EVAL_STACK=1
 endif
-CPPFLAGS = -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) $(HTTP_CFLAGS) $(PROVENANCE_CPPFLAGS) $(PRIME_RECEIPT_INDEX_CPPFLAGS) $(PRIME_NEED_HEAP_INDEX_CPPFLAGS) $(PRIME_NEED_CLOSURE_CAPTURE_CPPFLAGS) $(PRIME_EVAL_STACK_CPPFLAGS) -include $(BUILD_CONFIG_HEADER)
+CPPFLAGS = -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) $(HTTP_CFLAGS) $(DURABLE_CFLAGS) $(PROVENANCE_CPPFLAGS) $(PRIME_RECEIPT_INDEX_CPPFLAGS) $(PRIME_NEED_HEAP_INDEX_CPPFLAGS) $(PRIME_NEED_CLOSURE_CAPTURE_CPPFLAGS) $(PRIME_EVAL_STACK_CPPFLAGS) -include $(BUILD_CONFIG_HEADER)
 CFLAGS = -O3 -Wall -Werror -std=c11 -pthread
 DEPFLAGS = -MMD -MP
-LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm -pthread $(GMP_LDFLAGS) $(LIB_PROLOG_LDFLAGS) $(LIB_PROLOG_RPATH) $(HTTP_LDFLAGS) $(PY_LDFLAGS) $(PY_RPATH)
+LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm -pthread $(GMP_LDFLAGS) $(LIB_PROLOG_LDFLAGS) $(LIB_PROLOG_RPATH) $(HTTP_LDFLAGS) $(DURABLE_LDFLAGS) $(PY_LDFLAGS) $(PY_RPATH)
 ifeq ($(ENABLE_SANITIZERS),1)
 CFLAGS := -O1 -g -fno-omit-frame-pointer -fsanitize=$(SANITIZERS) -fno-sanitize-recover=all -Wall -Werror -std=c11 -pthread
 LDFLAGS += -fsanitize=$(SANITIZERS) -fno-sanitize-recover=all
@@ -627,8 +663,10 @@ endif
 ifeq ($(ENABLE_PETTA_TYPECHECK_CENSUS),1)
 PETTA_TYPECHECK_CENSUS_SRC = src/petta_typecheck_census.c
 endif
-SRC = src/symbol.c src/atom.c src/string_ops.c src/str_natives.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/match_decision.c src/select/code_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/fold_algebra.c src/open_equation_machine.c src/eval.c src/grounded.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
-SRC += src/shared_transition.c
+SRC = src/symbol.c src/atom.c src/term_graph.c src/delay_service.c src/string_ops.c src/str_natives.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/match_decision.c src/select/code_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/fold_algebra.c src/open_equation_machine.c src/eval.c src/grounded.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC += src/shared_transition.c src/run_report.c src/run_cli.c src/error_presentation.c src/run_guard.c
+SRC += src/library_supervise.c $(DURABLE_SRC)
+SRC += src/petta_type_policy.c src/petta_type_relation.c src/he_type_policy.c
 SRC += src/gslt_language_manifest_v1.c
 SRC += src/gslt_support_profile_v1.c
 SRC += src/library_io.c
@@ -1749,6 +1787,7 @@ GSLT_HORN_RUNTIME_TEST_BIN = runtime/test_gslt_horn_runtime-$(BUILD_OBJ_TAG)
 GSLT_HORN_RUNTIME_CANARY_V1 = tests/fixtures/gslt_horn_runtime_canary_v1.metta
 GSLT_LANGUAGE_RUNTIME_TEST_BIN = runtime/test_gslt_language_runtime-$(BUILD_OBJ_TAG)
 GSLT_COMPILED_PACKET_CHECK_BIN = runtime/check_gslt_compiled_packet_v1-$(BUILD_OBJ_TAG)
+PETTA_LIBPL_QUERY_RELEASE_CHECK_BIN = runtime/check_petta_libpl_query_release_v1-$(BUILD_OBJ_TAG)
 NIK_RUNTIME_TEST_BIN = runtime/test_nik_runtime_v1-$(BUILD_OBJ_TAG)
 NIK_HOSTED_CALCULUS_OBJ = src/nik_hosted_calculus.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 NIK_HOSTED_CALCULUS_TEST_BIN = runtime/test_nik_hosted_calculus-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
@@ -3381,6 +3420,10 @@ BACKEND_DEDICATED_TESTS = \
 	tests/test_new_space_mork_syntax.metta \
 	tests/test_step_space_syntax.metta
 
+# Corpus files that import a Mettapedia checkout; make test-lean runs them.
+METTAPEDIA_CORPUS_TESTS = \
+	tests/test_lts_mi_syntax.metta
+
 OPT_IN_FEATURE_TESTS = \
 	tests/test_io_json_bridge.metta \
 	tests/test_io_json_bridge_compat.metta \
@@ -3735,6 +3778,19 @@ $(ARENA_FRAME_IDENTITY_OWNERSHIP_TEST_BIN): tests/test_arena_frame_identity_owne
 test-arena-frame-identity-ownership: $(ARENA_FRAME_IDENTITY_OWNERSHIP_TEST_BIN)
 	@$(call cetta_exec,./$(ARENA_FRAME_IDENTITY_OWNERSHIP_TEST_BIN))
 
+# The delay service against ConstraintPropagation's goal-table laws: wake
+# each waiting goal once, in suspension order; queue a goal suspended on a
+# bound variable; roll back to any mark; rebase onto compacted checkpoints.
+DELAY_SERVICE_TEST_BIN = runtime/test_delay_service-$(BUILD_OBJ_TAG)
+
+$(DELAY_SERVICE_TEST_BIN): tests/test_delay_service.c src/delay_service.c src/delay_service.h src/atom.c src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 -DCETTA_RUNTIME_STATS_NOOP=1 $(CFLAGS) -o $@ tests/test_delay_service.c src/delay_service.c src/symbol.c src/atom.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c $(LDFLAGS)
+
+.PHONY: test-delay-service
+test-delay-service: $(DELAY_SERVICE_TEST_BIN)
+	@$(call cetta_exec,./$(DELAY_SERVICE_TEST_BIN))
+
 $(BINDINGS_LOOKUP_INDEX_TEST_BIN): tests/test_bindings_lookup_index.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -o $@ tests/test_bindings_lookup_index.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
@@ -3972,8 +4028,8 @@ test-native-handle-ownership: runtime/test_native_handle_ownership-$(BUILD_OBJ_T
 runtime/test_native_handle_scope_observer-$(BUILD_OBJ_TAG): tests/support/test_plain_bnf_typed_lifetime_v1.c $(OBJ) $(BRIDGE_DEPS)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/support/test_plain_bnf_typed_lifetime_v1.c $(OBJ) \
-		-Wl,--wrap=eval_top_with_registry_petta_plan \
-		-Wl,--wrap=cetta_library_dispatch_native \
+		-Wl,--wrap=eval_top_with_registry_petta_plan_outcome \
+		-Wl,--wrap=cetta_library_call_native \
 		-Wl,--wrap=cetta_library_context_free $(LDFLAGS)
 
 .PHONY: test-plain-bnf-handle-scope-v1
@@ -5123,7 +5179,7 @@ test-abt-scope-construction-candidates: $(BIN)
 		exit 1; \
 	fi
 
-test-abt: $(ABT_TEST_BIN) test-abt-mm2-boundary test-rhocalc-abt-substitution test-abt-mutations test-abt-default-signatures test-abt-differential test-lib-parse-abt-bridge test-abt-integration-ledger
+test-abt: $(ABT_TEST_BIN) test-abt-mm2-boundary test-rhocalc-abt-substitution test-abt-mutations test-abt-default-signatures test-lib-parse-abt-bridge test-abt-integration-ledger
 	@result=$$(./$(ABT_TEST_BIN) 2>&1); \
 	printf '%s\n' "$$result"; \
 	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(ABTCoreSummary 170 170 0)')" -ne 1 ] || \
@@ -5446,6 +5502,7 @@ $(BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	printf '#define CETTA_BUILD_WITH_LIB_PROLOG %s\n' "$(LIB_PROLOG_ENABLED)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_LIB_PROLOG_CONFIG_ID "%s"\n' "$(LIB_PROLOG_CONFIG_ID)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_HTTP %s\n' "$(HTTP_ENABLED)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_WITH_DURABLE %s\n' "$(ENABLE_DURABLE)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_JSON_GSLT %s\n' "$(ENABLE_JSON_GSLT)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_HTTP_PROVIDER_CURL %s\n' "$(HTTP_PROVIDER_CURL)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_HTTP_PROVIDER_EMSCRIPTEN %s\n' "$(HTTP_PROVIDER_EMSCRIPTEN)" >> "$$tmp_cfg"; \
@@ -5481,6 +5538,7 @@ $(STAGE0_BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	printf '#define CETTA_BUILD_WITH_LIB_PROLOG %s\n' "$(LIB_PROLOG_ENABLED)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_LIB_PROLOG_CONFIG_ID "%s"\n' "$(LIB_PROLOG_CONFIG_ID)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_HTTP %s\n' "$(HTTP_ENABLED)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_WITH_DURABLE %s\n' "$(ENABLE_DURABLE)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_JSON_GSLT %s\n' "$(ENABLE_JSON_GSLT)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_HTTP_PROVIDER_CURL %s\n' "$(HTTP_PROVIDER_CURL)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_HTTP_PROVIDER_EMSCRIPTEN %s\n' "$(HTTP_PROVIDER_EMSCRIPTEN)" >> "$$tmp_cfg"; \
@@ -5519,7 +5577,7 @@ define compile_c_object
 endef
 
 %.$(BUILD_OBJ_TAG).stage0.o: %.c $(STAGE0_BUILD_CONFIG_HEADER)
-	$(call compile_c_object,-Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) $(HTTP_CFLAGS) -include $(STAGE0_BUILD_CONFIG_HEADER) $(CFLAGS) $(DEPFLAGS) -DCETTA_NO_STDLIB)
+	$(call compile_c_object,-Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) $(HTTP_CFLAGS) $(DURABLE_CFLAGS) -include $(STAGE0_BUILD_CONFIG_HEADER) $(CFLAGS) $(DEPFLAGS) -DCETTA_NO_STDLIB)
 
 $(STAGE0_BIN): $(STAGE0_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -7213,7 +7271,12 @@ $(NIK_AUTHORITY_CATALOG_ABT_V1_OBJ): src/abt.c src/abt.h src/atom_blob.h $(BUILD
 	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) -DCETTA_NO_STDLIB -ffunction-sections -fdata-sections $(DEPFLAGS))
 
 $(NIK_AUTHORITY_CATALOG_NATIVE_V1_BIN): $(NIK_AUTHORITY_CATALOG_NATIVE_V1_OBJ) $(GSLT_METADATA_STATS_V1_OBJ)
-	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ $(LDFLAGS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/gslt-native-link.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
 
 .PHONY: test-nik-authority-catalog-native-v1
 test-nik-authority-catalog-native-v1: $(NIK_AUTHORITY_CATALOG_NATIVE_V1_BIN) \
@@ -7241,7 +7304,12 @@ test-nik-authority-catalog-native-v1: $(NIK_AUTHORITY_CATALOG_NATIVE_V1_BIN) \
 	echo "native NIK registry evidence: $$nik_evidence"
 
 $(RULE_MACHINE_PROGRAM_GENERATOR_V1): $(RULE_MACHINE_PROGRAM_NATIVE_V1_OBJ) $(GSLT_METADATA_STATS_V1_OBJ)
-	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ $(LDFLAGS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/gslt-native-link.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
 
 .PHONY: test-rule-machine-program-native-v1
 test-rule-machine-program-native-v1: $(RULE_MACHINE_PROGRAM_GENERATOR_V1) $(RULE_MACHINE_PROGRAM_GENERATED_V1)
@@ -7253,7 +7321,12 @@ test-rule-machine-program-native-v1: $(RULE_MACHINE_PROGRAM_GENERATOR_V1) $(RULE
 	echo "native rule program evidence: $$rule_evidence"
 
 $(GSLT_SUPPORT_PROFILE_NATIVE_V1_BIN): $(GSLT_SUPPORT_PROFILE_TOOL_V1_OBJ) $(GSLT_SUPPORT_PROFILE_NATIVE_V1_OBJ) $(GSLT_METADATA_STATS_V1_OBJ)
-	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ $(LDFLAGS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/gslt-native-link.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
 
 $(GSLT_SUPPORT_PROFILE_TEST_V1_BIN): $(GSLT_SUPPORT_PROFILE_TEST_V1_OBJ) \
 		$(GSLT_SUPPORT_PROFILE_NATIVE_V1_OBJ) $(GSLT_METADATA_STATS_V1_OBJ) \
@@ -7265,14 +7338,20 @@ test-gslt-support-profile-native-v1: $(GSLT_SUPPORT_PROFILE_TEST_V1_BIN)
 	@$(GSLT_SUPPORT_PROFILE_TEST_V1_BIN) $(MM2_GSLT_PROFILE_V1)
 
 $(GSLT_PROVIDER_CATALOG_NATIVE_V1_BIN): $(GSLT_PROVIDER_CATALOG_NATIVE_V1_OBJ) $(GSLT_METADATA_NATIVE_V1_OBJ) $(GSLT_METADATA_STATS_V1_OBJ)
-	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ $(LDFLAGS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/gslt-native-link.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
 
 $(GSLT_LANGUAGE_NATIVE_V1_BIN): $(GSLT_LANGUAGE_NATIVE_V1_OBJ) $(GSLT_METADATA_STATS_V1_OBJ)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
 	@set -eu; \
-	linked=$$(mktemp -d "$@.link.XXXXXX"); \
-	trap 'rm -f "$$linked/program"; rmdir "$$linked"' EXIT INT TERM; \
-	$(CC) $(CFLAGS) -Wl,--gc-sections -o "$$linked/program" $^ $(LDFLAGS); \
-	mv -f "$$linked/program" "$@"
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/gslt-native-link.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
 
 $(GSLT_LANGUAGE_SOURCE_CODEC_TEST_V1_BIN): $(GSLT_LANGUAGE_SOURCE_CODEC_TEST_V1_OBJ) \
 		$(filter-out %/tools/gslt_language_embed_v1.$(BUILD_OBJ_TAG).o,$(GSLT_LANGUAGE_NATIVE_V1_OBJ))
@@ -17617,12 +17696,90 @@ test: test-plain-bnf-meta-parser-v1
 test: test-plain-bnf-meta-parser-no-python-build-dependency-v1
 test: test-bnf-native-entry-v1
 test: test-plain-bnf-semantic-generator-no-python-build-dependency-v1
-test: test-plain-bnf-typed-admission-v1
-test: test-plain-bnf-semantic-generated-artifact-current-v1
+test-lean: test-plain-bnf-typed-admission-v1
+test-lean: test-plain-bnf-semantic-generated-artifact-current-v1
 test: test-plain-bnf-reader-v1
 test: test-plain-bnf-denotation-v1
 
-test: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-vocabulary test-prime-public-judgment-vocabulary test-manifest-strict test-fail-atomic-build-v1 test-operational-language-def-v1 test-language-def-premise-free-rewriter-v1 test-walters-zantema-da-to-radix-digit-transform-v1 test-walters-zantema-da-to-radix-digit-emitted-c-v1 test-walters-zantema-da-radix-digit-nik-v1 test-exact-arithmetic-to-external-call-v1 test-language-def-core-v1 test-language-def-ground-term-v1 test-exact-integer-theory-v1 test-json-gslt test-io test-git-module test-symbolid-guard test-variant-shape-roundtrip test-arena-frame-identity-ownership test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-stable-occurrence-transport test-shared-space-concurrent-index test-parallel-executor-lifecycle test-stable-occurrence-realization-tournament test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-petta-typecheck-v3-core-langdef-v1 test-petta-typecheck-v3-file-runner-v1 test-petta-typecheck-v3-profile test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-core-v1 test-prime-authored-chaining-fixtures test-prime-relational-plan test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1 test-decl-langdef-v1
+test: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-vocabulary test-prime-public-judgment-vocabulary test-manifest-strict test-fail-atomic-build-v1 test-operational-language-def-v1 test-language-def-premise-free-rewriter-v1 test-walters-zantema-da-to-radix-digit-transform-v1 test-walters-zantema-da-to-radix-digit-emitted-c-v1 test-walters-zantema-da-radix-digit-nik-v1 test-exact-arithmetic-to-external-call-v1 test-language-def-core-v1 test-language-def-ground-term-v1 test-exact-integer-theory-v1 test-json-gslt test-io test-git-module test-symbolid-guard test-variant-shape-roundtrip test-arena-frame-identity-ownership test-delay-service test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-stable-occurrence-transport test-shared-space-concurrent-index test-parallel-executor-lifecycle test-stable-occurrence-realization-tournament test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-petta-typecheck-v3-core-langdef-v1 test-petta-typecheck-v3-file-runner-v1 test-petta-typecheck-v3-profile test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-core-v1 test-prime-authored-chaining-fixtures test-prime-relational-plan test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1 test-decl-langdef-v1
+
+.PHONY: test-lean test-rhocalc-lean test-lean-corpus
+# Gates that check CeTTa against a Mettapedia checkout, some with its Lean
+# toolchain.  Opt-in: the default suite needs neither.  METTAPEDIA_LEAN_ROOT
+# names the Lean project (default: the sibling checkout); the corpus files
+# import the checkout at its sibling location.
+METTAPEDIA_LEAN_CHECKOUT = $(if $(strip $(METTAPEDIA_LEAN_ROOT)),$(METTAPEDIA_LEAN_ROOT),$(METTAPEDIA_LEAN_AUTO_ROOT))
+test-lean: test-rhocalc-lean test-lean-corpus test-abt-differential \
+	test-petta-typecheck-v3-core-parity-v1
+
+test-rhocalc-lean: $(BIN)
+	@pass=0; fail=0; \
+	mettapedia_root="$(METTAPEDIA_LEAN_CHECKOUT)"; \
+	if [ ! -f "$$mettapedia_root/lakefile.lean" ]; then \
+		echo "FAIL: METTAPEDIA_LEAN_ROOT must name the Mettapedia Lean project"; \
+		exit 2; \
+	fi; \
+	rhocalc_lean_skip=85; \
+	while IFS=$$(printf '\t') read -r name fixture expected_file lean_file anchor; do \
+		[ -n "$$name" ] || continue; \
+		case "$$name" in \#*) continue ;; esac; \
+		bridge_output=$$(METTAPEDIA_ROOT="$$mettapedia_root" $(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_cost_lean_bridge.py "$(CETTA_SCRIPT_BIN)" "$$fixture" "$$expected_file" "$$lean_file" "$$anchor" 2>&1); \
+		bridge_status=$$?; \
+		if [ "$$bridge_status" -eq 0 ]; then \
+			echo "PASS: rhocalc cost lean bridge $$name"; \
+			pass=$$((pass + 1)); \
+		elif [ "$$bridge_status" -eq "$$rhocalc_lean_skip" ]; then \
+			printf '%s\n' "$$bridge_output"; \
+			echo "SKIP: rhocalc cost lean bridge $$name"; \
+		else \
+			printf '%s\n' "$$bridge_output"; \
+			echo "FAIL: rhocalc cost lean bridge $$name"; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done < tests/rhocalc_cost_lean_bridge.tsv; \
+	differential_output=$$(METTAPEDIA_ROOT="$$mettapedia_root" $(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_cost_differential.py "$(CETTA_SCRIPT_BIN)" 2>&1); \
+	differential_status=$$?; \
+	if [ "$$differential_status" -eq 0 ]; then \
+		printf '%s\n' "$$differential_output"; \
+		pass=$$((pass + 1)); \
+	else \
+		printf '%s\n' "$$differential_output"; \
+		echo "FAIL: bounded cost-rho CeTTa/Lean differential"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	microcheck_output=$$(python3 scripts/rhocalc_lean_microcheck.py "$$mettapedia_root" tests/rhocalc_lean_microcheck.lean 2>&1); \
+	microcheck_status=$$?; \
+	if [ "$$microcheck_status" -eq 0 ]; then \
+		echo "PASS: rhocalc lean microcheck"; \
+		pass=$$((pass + 1)); \
+	elif [ "$$microcheck_status" -eq "$$rhocalc_lean_skip" ]; then \
+		printf '%s\n' "$$microcheck_output"; \
+		echo "SKIP: rhocalc lean microcheck"; \
+	else \
+		printf '%s\n' "$$microcheck_output"; \
+		echo "FAIL: rhocalc lean microcheck"; \
+		fail=$$((fail + 1)); \
+	fi; \
+	echo "---"; \
+	echo "rhocalc lean: $$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
+
+test-lean-corpus: $(BIN)
+	@pass=0; fail=0; \
+	for f in $(METTAPEDIA_CORPUS_TESTS); do \
+		exp="$${f%.metta}.expected"; \
+		runtime_status=0; result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he "$$f" 2>&1) || runtime_status=$$?; \
+		if [ $$runtime_status -eq 0 ] && [ "$$result" = "$$(cat $$exp)" ]; then \
+			echo "PASS: $$f"; \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: $$f (runtime status $$runtime_status)"; \
+			diff <(cat "$$exp") <(echo "$$result") | head -10; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
+	echo "Mettapedia corpus: $$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
 
 .PHONY: test-main-corpus
 test: test-main-corpus
@@ -17676,6 +17833,11 @@ test-main-corpus: $(BIN)
 			continue; \
 		fi; \
 		if printf '%s\n' $(BACKEND_DEDICATED_TESTS) | grep -Fxq "$$f"; then \
+			continue; \
+		fi; \
+		if printf '%s\n' $(METTAPEDIA_CORPUS_TESTS) | grep -Fxq "$$f"; then \
+			echo "SKIP: $$f (imports a Mettapedia checkout; covered by test-lean)"; \
+			skip=$$((skip + 1)); \
 			continue; \
 		fi; \
 		if printf '%s\n' $(OPT_IN_FEATURE_TESTS) | grep -Fxq "$$f"; then \
@@ -18458,9 +18620,6 @@ test-rhocalc: $(BIN) test-rhocalc-rhometta-profile test-gslt-rhometta-rhocalc-pr
 			fail=$$((fail + 1)); \
 		fi; \
 	done < tests/rhocalc_tiny_oracle.tsv; \
-	mettapedia_root="$${METTAPEDIA_ROOT:-../../Mettapedia/lean/mettapedia}"; \
-	rhocalc_lean_skip=85; \
-	if [ -d "$$mettapedia_root" ]; then \
 			while IFS=$$(printf '\t') read -r name fixture expected_count mode expected_file lean_file anchor; do \
 				[ -n "$$name" ] || continue; \
 				case "$$name" in \#*) continue ;; esac; \
@@ -18483,52 +18642,6 @@ test-rhocalc: $(BIN) test-rhocalc-rhometta-profile test-gslt-rhometta-rhocalc-pr
 				fail=$$((fail + 1)); \
 			fi; \
 		done < tests/rhocalc_run_lean_bridge.tsv; \
-		while IFS=$$(printf '\t') read -r name fixture expected_file lean_file anchor; do \
-			[ -n "$$name" ] || continue; \
-			case "$$name" in \#*) continue ;; esac; \
-			bridge_output=$$(METTAPEDIA_ROOT="$$mettapedia_root" $(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_cost_lean_bridge.py "$(CETTA_SCRIPT_BIN)" "$$fixture" "$$expected_file" "$$lean_file" "$$anchor" 2>&1); \
-			bridge_status=$$?; \
-			if [ "$$bridge_status" -eq 0 ]; then \
-				echo "PASS: rhocalc cost lean bridge $$name"; \
-				pass=$$((pass + 1)); \
-			elif [ "$$bridge_status" -eq "$$rhocalc_lean_skip" ]; then \
-				printf '%s\n' "$$bridge_output"; \
-				echo "SKIP: rhocalc cost lean bridge $$name"; \
-			else \
-				printf '%s\n' "$$bridge_output"; \
-				echo "FAIL: rhocalc cost lean bridge $$name"; \
-				fail=$$((fail + 1)); \
-			fi; \
-		done < tests/rhocalc_cost_lean_bridge.tsv; \
-		differential_output=$$(METTAPEDIA_ROOT="$$mettapedia_root" $(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_cost_differential.py "$(CETTA_SCRIPT_BIN)" 2>&1); \
-		differential_status=$$?; \
-		if [ "$$differential_status" -eq 0 ]; then \
-			printf '%s\n' "$$differential_output"; \
-			pass=$$((pass + 1)); \
-		else \
-			printf '%s\n' "$$differential_output"; \
-			echo "FAIL: bounded cost-rho CeTTa/Lean differential"; \
-			fail=$$((fail + 1)); \
-		fi; \
-		microcheck_output=$$(python3 scripts/rhocalc_lean_microcheck.py "$$mettapedia_root" tests/rhocalc_lean_microcheck.lean 2>&1); \
-		microcheck_status=$$?; \
-		if [ "$$microcheck_status" -eq 0 ]; then \
-			echo "PASS: rhocalc lean microcheck"; \
-			pass=$$((pass + 1)); \
-		elif [ "$$microcheck_status" -eq "$$rhocalc_lean_skip" ]; then \
-			printf '%s\n' "$$microcheck_output"; \
-			echo "SKIP: rhocalc lean microcheck"; \
-		else \
-			printf '%s\n' "$$microcheck_output"; \
-			echo "FAIL: rhocalc lean microcheck"; \
-			fail=$$((fail + 1)); \
-		fi; \
-	else \
-		echo "SKIP: rhocalc lean trace bridge (set METTAPEDIA_ROOT to a local Mettapedia checkout)"; \
-		echo "SKIP: rhocalc cost lean bridge (set METTAPEDIA_ROOT to a local Mettapedia checkout)"; \
-		echo "SKIP: cost-rho differential harness (set METTAPEDIA_ROOT to a local Mettapedia checkout)"; \
-		echo "SKIP: rhocalc lean microcheck (set METTAPEDIA_ROOT to a local Mettapedia checkout)"; \
-	fi; \
 	if python3 -c "from pathlib import Path; import re, sys; lines = Path('lib/rho.metta').read_text().splitlines(); pat = re.compile(r'^\\s*\\((=|:)\\s+\\((rho[.:](step|frontier|reduce|eval))\\b'); sys.exit(1 if any((not line.lstrip().startswith(';')) and pat.search(line) for line in lines) else 0)" >/dev/null; then \
 		echo "PASS: rhocalc lib/rho hygiene"; \
 		pass=$$((pass + 1)); \
@@ -24058,8 +24171,8 @@ test-petta-prepared-collection-pull: $(BIN)
 		./$(BIN) --lang petta \
 		tests/petta/search_machine_prepared_collection_pull.metta \
 		>"$$oracle" || oracle_status=$$?; \
-	if [ "$$status" -ne 2 ] || [ "$$oracle_status" -ne 2 ]; then \
-		echo "FAIL: the stem's last fault is uncaught and must end the file with exit 2 (got $$status and $$oracle_status)"; \
+	if [ "$$status" -ne 0 ] || [ "$$oracle_status" -ne 0 ]; then \
+		echo "FAIL: the stem catches its direct fault, so the file must end with exit 0 (got $$status and $$oracle_status)"; \
 		exit 1; \
 	fi; \
 	diff -u tests/petta/search_machine_prepared_collection_pull.expected \
@@ -24086,8 +24199,8 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		./$(BIN) --emit-runtime-stats --lang petta \
 		tests/petta/search_machine_prepared_collection_pull.metta \
 		2>&1 >"$$actual") || status=$$?; \
-	if [ "$$status" -ne 2 ]; then \
-		echo "FAIL: the stem's last fault is uncaught and must end the file with exit 2 (got $$status)"; \
+	if [ "$$status" -ne 0 ]; then \
+		echo "FAIL: the stem catches its direct fault, so the file must end with exit 0 (got $$status)"; \
 		exit 1; \
 	fi; \
 	diff -u tests/petta/search_machine_prepared_collection_pull.expected \
@@ -24186,7 +24299,7 @@ else
 endif
 .PHONY: test-lib-prolog-build-config
 
-test-petta-libpl: $(BIN) test-petta-libpl-explicit-utf8
+test-petta-libpl: $(BIN) test-petta-libpl-explicit-utf8 test-petta-libpl-query-release test-foreign-region
 	@actual=$$(mktemp runtime/petta-libpl.XXXXXX); \
 	trap 'rm -f "$$actual"' EXIT INT TERM; \
 	CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
@@ -24243,10 +24356,14 @@ test-petta-libpl: $(BIN) test-petta-libpl-explicit-utf8
 				exit 1; \
 			fi; \
 		for fixture in libpl_boundary_substitution \
+				foreign_answer_frames \
 				libpl_clause_ref_lifetime \
 				token_space_clause_ref_lifetime \
 				logical_list_capacity \
-				generic_goal_revision; do \
+				generic_goal_revision \
+				predicate_function \
+				predicate_atom_parameter \
+				prolog_compound_values; do \
 			CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
 				--profile extended "tests/petta/$$fixture.metta" \
 				> "$$actual"; \
@@ -24256,6 +24373,36 @@ test-petta-libpl: $(BIN) test-petta-libpl-explicit-utf8
 				exit 1; \
 			fi; \
 		done; \
+		static_dir=$$(mktemp -d runtime/petta-static-import.XXXXXX); \
+		mkdir -p "$$static_dir/fixtures"; \
+		cp tests/petta/static_import.metta "$$static_dir/"; \
+		cp tests/petta/fixtures/static_import_edges.metta \
+			tests/petta/fixtures/static_import_more_edges.metta \
+			tests/petta/fixtures/static_import_triples_a.metta \
+			tests/petta/fixtures/static_import_triples_b.metta \
+			tests/petta/fixtures/static_import_values.metta \
+			tests/petta/fixtures/static_import_library.pl \
+			"$$static_dir/fixtures/"; \
+		for phase in cold warm; do \
+			CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+				"$$static_dir/static_import.metta" > "$$actual" \
+				2> "$$static_dir/stderr"; \
+			if ! diff -u tests/petta/static_import.expected \
+					"$$actual"; then \
+				echo "FAIL: static-import! ($$phase)"; \
+				rm -rf "$$static_dir"; \
+				exit 1; \
+			fi; \
+			if ! grep -q 'Redefined static procedure triples/4$$' \
+					"$$static_dir/stderr" || \
+				grep -q 'cetta_prolog_' "$$static_dir/stderr"; then \
+				cat "$$static_dir/stderr"; \
+				echo "FAIL: static-import! redefinition warning ($$phase)"; \
+				rm -rf "$$static_dir"; \
+				exit 1; \
+			fi; \
+		done; \
+		rm -rf "$$static_dir"; \
 		expected_dir=$$(realpath tests/petta); \
 		(cd runtime && CETTA_PETTA_SEARCH_MACHINE=1 ../$(BIN) \
 			--lang petta --profile extended \
@@ -24876,7 +25023,7 @@ test-petta-once-first-witness: $(BIN)
 			$(CETTA_BIN_INVOKE) --lang petta \
 			tests/petta/once_deep_error.metta 2>&1) || status=$$?; \
 		if [ "$$status" -ne 2 ] || \
-		   ! printf '%s\n' "$$actual" | grep -q '^[(]Error (evaluation_error zero_divisor)'; then \
+		   ! printf '%s\n' "$$actual" | grep -q '^error: uncaught PeTTa error: [(]Error (evaluation_error zero_divisor)'; then \
 			echo "FAIL: a depth cutoff hid a late error (reference=$$reference, status=$$status)"; \
 			printf '%s\n' "$$actual"; exit 1; \
 		fi; \
@@ -25444,8 +25591,8 @@ test-petta-activation-scalar-argument-segment: $(BIN)
 		status=$$?; statuses="$$statuses $$status"; status=0; \
 	finite=$$(./$(BIN) --fuel 1000 --lang petta --quiet "$$fixture" 2>&1) || \
 		status=$$?; statuses="$$statuses $$status"; \
-	if [ "$$statuses" != "2 2 2 2" ]; then \
-		echo "FAIL: the fixture's last error is uncaught and must end each run with exit 2 (got $$statuses)"; \
+	if [ "$$statuses" != "0 0 0 0" ]; then \
+		echo "FAIL: the fixture catches its one error, so each run must end with exit 0 (got $$statuses)"; \
 		exit 1; \
 	fi; \
 	for variant in optimized program_reference reference finite; do \
@@ -25472,8 +25619,8 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	status=0; \
 	finite=$$(./$(BIN) --fuel 1000 --emit-runtime-stats --lang petta --quiet \
 		"$$fixture" 2>&1) || status=$$?; statuses="$$statuses $$status"; \
-	if [ "$$statuses" != "2 2 2 2" ]; then \
-		echo "FAIL: the fixture's last error is uncaught and must end each run with exit 2 (got $$statuses)"; \
+	if [ "$$statuses" != "0 0 0 0" ]; then \
+		echo "FAIL: the fixture catches its one error, so each run must end with exit 0 (got $$statuses)"; \
 		exit 1; \
 	fi; \
 	for variant in optimized program_reference reference finite; do \
@@ -25681,6 +25828,41 @@ endif
 test-petta-search-machine: test-petta-match-conjunction-cursor
 test-petta-search-machine: test-petta-named-arity-source-cache
 
+.PHONY: test-petta-type-policy
+test-petta-type-policy: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		for profile in "" "--profile extended"; do \
+			for fixture in type_policy_reference type_policy_guard_reference \
+				type_policy_compound_reference type_policy_dedup_history \
+				type_policy_revision_reference type_policy_mixed_codomain \
+				type_policy_partial_codomain type_policy_held_guard \
+				type_policy_relational_boundary type_policy_suspended_revision \
+				type_policy_owned_space type_policy_body_revision type_policy_domain_syntax \
+				type_policy_sequential_binding type_policy_exclusion_revision \
+				type_policy_import_revision type_policy_native_partial \
+				type_policy_classifier_effects; do \
+				actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+					--lang petta $$profile tests/petta/$$fixture.metta); \
+				expected_file=tests/petta/$$fixture.expected; \
+				if [ -n "$$profile" ] && [ -f tests/petta/$$fixture.extended.expected ]; then \
+					expected_file=tests/petta/$$fixture.extended.expected; \
+				fi; \
+				expected=$$(cat "$$expected_file"); \
+				if [ "$$actual" != "$$expected" ]; then \
+					echo "FAIL: PeTTa type policy $$fixture ($$route $$profile)"; \
+					diff -u "$$expected_file" <(printf '%s\n' "$$actual"); \
+					exit 1; \
+				fi; \
+			done; \
+		done; \
+	done; \
+	echo "PASS: PeTTa type policy qualifies pinned base semantics and explicit extended observations on both routes"
+
+test-petta-search-machine: test-petta-type-policy
+test-petta-semantics: test-petta-type-policy
+
 .PHONY: test-petta-named-arity-source-cache
 test-petta-named-arity-source-cache: $(BIN)
 	@set -eu; \
@@ -25709,15 +25891,32 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-c
 		echo "FAIL: --lang petta did not select its search machine by default"; \
 		exit 1; \
 	fi; \
-	legacy_stats=$$(CETTA_PETTA_SEARCH_MACHINE=0 \
+	core_stats=$$(CETTA_PETTA_SEARCH_MACHINE=0 \
 		CETTA_PETTA_MACHINE_STATS=1 \
 		./$(BIN) --lang petta -e '!(+ 1 2)' \
 		2>&1 >/dev/null); \
-	if printf '%s\n' "$$legacy_stats" | \
+	if ! printf '%s\n' "$$core_stats" | \
 			grep -q '^PETTA_MACHINE_STATS '; then \
-		echo "FAIL: explicit PeTTa legacy-oracle selection was ignored"; \
+		echo "FAIL: disabling an optimization disabled the PeTTa semantic core"; \
 		exit 1; \
 	fi
+	@set -eu; \
+	for enabled in 0 1; do \
+		actual=$$(CETTA_PETTA_SEARCH_MACHINE=$$enabled \
+			CETTA_OPEN_EQUATIONS_REFERENCE=0 CETTA_PETTA_MACHINE_STATS=1 \
+			./$(BIN) --lang petta tests/petta/search_machine_core_tier.metta 2>&1); \
+		answers=$$(printf '%s\n' "$$actual" | grep -v '^PETTA_MACHINE_STATS '); \
+		test "$$answers" = "$$(cat tests/petta/search_machine_core_tier.expected)"; \
+		attempts=$$(printf '%s\n' "$$actual" | awk '/^PETTA_MACHINE_STATS / { \
+			for (i=1;i<=NF;i++) if ($$i ~ /^equation_match_attempts=/) { \
+				split($$i,a,"="); print a[2] } }'); \
+		if [ "$$enabled" = 0 ]; then \
+			test "$$attempts" -gt 0; \
+		else \
+			test "$$attempts" -eq 0; \
+		fi; \
+	done; \
+	echo "PASS: disabling the compiled equation tier retains the PeTTa semantic core and answers"
 	@result=$$(printf 'q\n' | CETTA_PETTA_SEARCH_MACHINE=1 \
 		./$(BIN) --lang petta \
 		tests/petta/interactive_readln.metta 2>&1); \
@@ -25761,22 +25960,28 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-c
 	fi; \
 	if [ "$(ENABLE_PYTHON)" = 1 ]; then \
 		result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+			-e '!(py-call (builtins.abs -3))' \
 			-e '!((py-call builtins.abs) -3)' 2>&1); \
 		if [ "$$result" != 3 ]; then \
-			echo "FAIL: PeTTa Python callable lookup/application composition"; \
+			echo "FAIL: PeTTa py-call applies a call spec, and a path alone has no answer"; \
 			printf '%s\n' "$$result"; \
 			exit 1; \
 		fi; \
 	fi; \
+	status=0; \
 	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
-		-e '!(py-call (cetta_missing_python_module.answer))' 2>&1); \
+		-e '!(py-call (cetta_missing_python_module.answer))' 2>&1) || \
+		status=$$?; \
 	if [ "$(ENABLE_PYTHON)" = 1 ]; then \
-		expected="python path resolution failed: No module named 'cetta_missing_python_module'"; \
+		expected_status=2; \
+		expected_prefix='error: uncaught PeTTa error: (Error (python_error ModuleNotFoundError (<py_ModuleNotFoundError>(0x'; \
 	else \
-		expected='(py-call (cetta_missing_python_module.answer))'; \
+		expected_status=0; \
+		expected_prefix='(py-call (cetta_missing_python_module.answer))'; \
 	fi; \
-	if [ "$$result" != "$$expected" ]; then \
-		echo "FAIL: native PeTTa missing Python namespace/inert result"; \
+	if [ "$$status" -ne "$$expected_status" ] || \
+	   [ "$${result#"$$expected_prefix"}" = "$$result" ]; then \
+		echo "FAIL: native PeTTa missing Python namespace/inert result (exit $$status)"; \
 		printf '%s\n' "$$result"; \
 		exit 1; \
 	fi; \
@@ -25943,7 +26148,7 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-c
 		tests/petta/search_machine_type_demand_negative.metta 2>&1); \
 	expected=$$(cat tests/petta/search_machine_type_demand_negative.expected); \
 	if [ "$$result" != "$$expected" ]; then \
-		echo "FAIL: native PeTTa machine type-declaration bag and arity"; \
+		echo "FAIL: native PeTTa machine type declarations as a set up to renaming, and arity"; \
 		diff <(printf '%s\n' "$$expected") \
 			<(printf '%s\n' "$$result") | head -40; \
 		exit 1; \
@@ -26790,7 +26995,11 @@ PETTA_SEMANTIC_EXACT_STREAM_STEMS = \
 	builtin_data_vocabulary car_cdr_total empty_is_data \
 	collapse_copies_answers open_lists library_metta_suffix \
 	sort_values dynamic_head_values specialize_data_values \
-	foldall_reduce partial_values bound_head_values
+	foldall_reduce partial_values bound_head_values \
+	get_type_relation list_natives_several let_star_patterns \
+	lambda_pattern_parameters lambda_parameter_scope \
+	specialized_partial_values closure_values activation_cons_let \
+	partial_argument_values
 PETTA_SEMANTIC_OCCURRENCE_BAG_STEMS = semantic_counter_equations \
 	search_machine_specializer_negative_mutation \
 	search_machine_partial_head_observation search_machine_query_field_composition
@@ -26977,6 +27186,71 @@ test-petta-value-occurrences: $(BIN)
 		fi; \
 	done; \
 	echo "PASS: a variable is the value it holds, on the tier and in the machine"
+
+.PHONY: test-petta-get-type-relation
+# get-type is SWI-PeTTa's relation over the space's declarations: a literal's
+# type, any type for a variable, a declared function's result type when its
+# arguments have the declared types, the expression of the elements' types,
+# and the declared types.  A value is typed as it is, never evaluated.  The
+# expected output is SWI-PeTTa's; both routes must reproduce it.
+test-petta-semantics: test-petta-get-type-relation
+test-petta-get-type-relation: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/get_type_relation.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/get_type_relation.expected)" ]; then \
+			echo "FAIL: get-type on the $$route route"; \
+			diff <(cat tests/petta/get_type_relation.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: get-type types a value by the space's declarations, on the tier and in the machine"
+
+.PHONY: test-petta-py-call-spec
+# py-call takes a call spec, (path args...); any other value, a function's
+# result included, has no answer.  The expected output is SWI-PeTTa's.
+test-petta-semantics: test-petta-py-call-spec
+test-petta-py-call-spec: $(BIN)
+ifeq ($(ENABLE_PYTHON),1)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/py_call_spec.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/py_call_spec.expected)" ]; then \
+			echo "FAIL: py-call specs on the $$route route"; \
+			diff <(cat tests/petta/py_call_spec.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: py-call takes a call spec, and any other value has no answer"
+else
+	@echo "SKIP: test-petta-py-call-spec (requires a Python-enabled build)"
+endif
+
+.PHONY: test-petta-list-natives-several
+# maplist over several lists and foldl over several lists are SWI's
+# maplist/4-5 and foldl/5-7; append of a list of lists is SWI's append/2.
+# The expected output is SWI-PeTTa's; both routes must reproduce it.
+test-petta-semantics: test-petta-list-natives-several
+test-petta-list-natives-several: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/list_natives_several.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/list_natives_several.expected)" ]; then \
+			echo "FAIL: list natives over several lists on the $$route route"; \
+			diff <(cat tests/petta/list_natives_several.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: maplist and foldl over several lists, and append of lists, on the tier and in the machine"
 
 .PHONY: test-petta-list-building-linear
 # A list built by repeated cons-atom, and a filter over it, grow memory with
@@ -27724,6 +27998,74 @@ else
 	@echo "SKIP: registered arities (BUILD=$(BUILD_CANON) has lib-prolog disabled)"
 endif
 
+.PHONY: test-petta-nan-equality
+test-petta-semantics: test-petta-nan-equality
+# PeTTa's == compares numbers by exact value, and every NaN equals every NaN
+# and nothing else (SWI-PeTTa's answers).
+test-petta-nan-equality: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/nan_equality.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/nan_equality.expected)" ]; then \
+			echo "FAIL: nan_equality ($$route)"; \
+			diff <(cat tests/petta/nan_equality.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: PeTTa's == takes every NaN as one value, on the tier and in the machine"
+
+.PHONY: test-petta-error-outcomes
+test-petta-semantics: test-petta-error-outcomes
+# An error is raised where it occurs: catch makes the reference's error term a
+# value, a dispatch decided at run time fails its own branch, and an uncaught
+# error ends the run with status 2 and no answers, the effects before it
+# standing (SWI-PeTTa's answers).
+test-petta-error-outcomes: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/error_outcomes.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/error_outcomes.expected)" ]; then \
+			echo "FAIL: caught and recovered errors on the $$route route"; \
+			diff <(cat tests/petta/error_outcomes.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+		for case in static collapse branch effect function list; do \
+			status=0; \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+				--lang petta tests/petta/error_uncaught_$$case.metta \
+				2>/dev/null) || status=$$?; \
+			if [ $$status -ne 2 ] || \
+				[ "$$actual" != "$$(cat tests/petta/error_uncaught_$$case.expected)" ]; then \
+				echo "FAIL: uncaught error ($$case) on the $$route route, exit $$status"; \
+				diff <(cat tests/petta/error_uncaught_$$case.expected) \
+					<(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: errors raise where they occur, on the tier and in the machine"
+ifeq ($(ENABLE_PYTHON),1)
+	@set -eu; \
+	actual=$$($(CETTA_BIN_INVOKE) --lang petta \
+		tests/petta/error_outcomes_python.metta 2>&1); \
+	actual=$$(printf '%s\n' "$$actual" | sed -E 's/0x[0-9a-f]+/0xADDR/g'); \
+	if [ "$$actual" != "$$(cat tests/petta/error_outcomes_python.expected)" ]; then \
+		echo "FAIL: a raising Python call"; \
+		diff <(cat tests/petta/error_outcomes_python.expected) \
+			<(printf '%s\n' "$$actual") | head -20; \
+		exit 1; \
+	fi; \
+	echo "PASS: a Python call raises janus's error"
+else
+	@echo "SKIP: test-petta-error-outcomes Python calls (requires a Python-enabled build)"
+endif
+
 .PHONY: test-petta-match-cell-rows
 test-petta-semantics: test-petta-match-cell-rows
 # A stored row with variables meets a query holding a list built at run time
@@ -27753,14 +28095,138 @@ test-petta-match-cell-rows: $(BIN)
 # (SWI-PeTTa's answers).
 test-petta-number-order: $(BIN)
 	@set -eu; \
-	actual=$$($(CETTA_BIN_INVOKE) --lang petta tests/petta/number_order.metta 2>&1); \
-	if [ "$$actual" != "$$(cat tests/petta/number_order.expected)" ]; then \
-		echo "FAIL: the standard order of numbers"; \
-		diff <(cat tests/petta/number_order.expected) \
-			<(printf '%s\n' "$$actual") | head -20; \
-		exit 1; \
-	fi; \
-	echo "PASS: numbers sort in SWI-PeTTa's standard order"
+	for stem in number_order numeric_order_promotions; do \
+		for route in 0 1; do \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$route $(CETTA_BIN_INVOKE) --lang petta tests/petta/$$stem.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/$$stem.expected)" ]; then \
+				echo "FAIL: $$stem on route $$route"; \
+				diff <(cat tests/petta/$$stem.expected) \
+					<(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: standard number order and arithmetic promotion on both PeTTa routes"
+
+.PHONY: test-petta-callable-identity test-petta-import-batches
+test-petta-semantics: test-petta-callable-identity test-petta-callable-value-observers test-petta-callable-value-matching
+test-petta-callable-identity: $(BIN)
+	@set -eu; \
+	for route in 0 1; do \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$route $(CETTA_BIN_INVOKE) --lang petta tests/petta/callable_identity.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/callable_identity.expected)" ]; then \
+			echo "FAIL: nominal callable identity on route $$route"; \
+			printf '%s\n' "$$actual"; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: callable occurrence identity survives reuse, capture and application"
+
+.PHONY: test-petta-callable-value-observers
+test-petta-callable-value-observers: $(BIN)
+	@set -eu; \
+	for route in 0 1; do \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$route $(CETTA_BIN_INVOKE) --lang petta tests/petta/callable_value_observers.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/callable_value_observers.expected)" ]; then \
+			echo "FAIL: callable value observations on route $$route"; \
+			diff <(cat tests/petta/callable_value_observers.expected) <(printf '%s\n' "$$actual"); \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: callable value observers preserve registered names, compounds and authored lists"
+
+.PHONY: test-petta-callable-value-matching
+test-petta-callable-value-matching: $(BIN)
+	@set -eu; \
+	for route in 0 1; do \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$route $(CETTA_BIN_INVOKE) --lang petta tests/petta/callable_value_matching.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/callable_value_matching.expected)" ]; then \
+			echo "FAIL: callable value matching on route $$route"; \
+			diff <(cat tests/petta/callable_value_matching.expected) <(printf '%s\n' "$$actual"); \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: callable matching preserves opaque values and whole-value variable binding"
+
+test-petta-libpl: test-petta-import-batches test-petta-callable-foreign-values test-petta-callable-name-hygiene
+.PHONY: test-petta-callable-name-hygiene
+test-petta-callable-name-hygiene: $(BIN)
+	@set -eu; if [ "$(LIB_PROLOG_ENABLED)" = 1 ]; then \
+		for route in 0 1; do \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$route $(CETTA_BIN_INVOKE) --lang petta tests/petta/callable_name_hygiene.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/callable_name_hygiene.expected)" ]; then \
+				echo "FAIL: callable name hygiene on route $$route"; \
+				diff <(cat tests/petta/callable_name_hygiene.expected) <(printf '%s\n' "$$actual"); \
+				exit 1; \
+			fi; \
+		done; \
+		echo "PASS: fresh callable names preserve authored functions and foreign term roles"; \
+	fi
+.PHONY: test-petta-callable-foreign-values
+test-petta-callable-foreign-values: $(BIN)
+	@set -eu; if [ "$(LIB_PROLOG_ENABLED)" = 1 ]; then \
+		for route in 0 1; do \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$route $(CETTA_BIN_INVOKE) --lang petta tests/petta/callable_foreign_values.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/callable_foreign_values.expected)" ]; then \
+				echo "FAIL: callable foreign values on route $$route"; \
+				diff <(cat tests/petta/callable_foreign_values.expected) <(printf '%s\n' "$$actual"); \
+				exit 1; \
+			fi; \
+		done; \
+		echo "PASS: callable foreign transport retains public term roles and native code"; \
+	fi
+test-petta-import-batches: $(BIN)
+	@set -eu; if [ "$(LIB_PROLOG_ENABLED)" = 1 ]; then \
+		python3 tests/support/check_petta_import_batches.py "$(BIN)"; \
+		for route in 0 1; do \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$route $(CETTA_BIN_INVOKE) --lang petta tests/petta/libpl_query_regions.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/libpl_query_regions.expected)" ]; then \
+				echo "FAIL: solution conversion regions on route $$route"; \
+				printf '%s\n' "$$actual"; exit 1; \
+			fi; \
+		done; \
+		echo "PASS: nested and variable projections survive repeated foreign solutions"; \
+	else \
+		echo "SKIP: import batches require embedded Prolog"; \
+	fi
+
+.PHONY: test-petta-libpl-query-release
+test-petta-libpl-query-release: $(BIN) $(if $(filter 1,$(LIB_PROLOG_ENABLED)),$(PETTA_LIBPL_QUERY_RELEASE_CHECK_BIN),)
+	@set -eu; if [ "$(LIB_PROLOG_ENABLED)" = 1 ]; then \
+		$(PETTA_LIBPL_QUERY_RELEASE_CHECK_BIN) \
+			tests/petta/fixtures/libpl_query_release.pl; \
+		actual=$$(mktemp runtime/petta-libpl-query-release.XXXXXX); \
+		trap 'rm -f "$$actual"' EXIT INT TERM; \
+		for optimized in 0 1; do for route in 0 1; do \
+			for fixture in libpl_query_release libpl_tabled_routes; do \
+				PYTHONPATH=tests/support CETTA_PETTA_SEARCH_MACHINE=$$optimized \
+					CETTA_OPEN_EQUATIONS_REFERENCE=$$route \
+					./$(BIN) --lang petta tests/petta/$$fixture.metta > "$$actual"; \
+				if ! diff -u tests/petta/$$fixture.expected "$$actual"; then \
+					echo "FAIL: $$fixture (optimization=$$optimized, route=$$route)"; \
+					exit 1; \
+				fi; \
+			done; \
+		done; done; \
+		echo "PASS: PeTTa/libpl query-release values and lifecycle"; \
+	else \
+		echo "SKIP: query-release gate requires embedded Prolog"; \
+	fi
+
+.PHONY: test-petta-cardinality-observers
+test-petta-semantics: test-petta-cardinality-observers
+test-petta-cardinality-observers: $(BIN)
+	@set -eu; \
+	for route in 0 1; do \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$route $(CETTA_BIN_INVOKE) --lang petta tests/petta/collection_cardinality_observers.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/collection_cardinality_observers.expected)" ]; then \
+			echo "FAIL: collection cardinality observations on route $$route"; \
+			diff <(cat tests/petta/collection_cardinality_observers.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: cardinality preserves occurrences, effects, data and caught faults"
 
 .PHONY: test-petta-generated-match-patterns
 test-petta-semantics: test-petta-generated-match-patterns
@@ -27824,6 +28290,116 @@ test-petta-specialization-after-import: $(BIN)
 		fi; \
 	done; \
 	echo "PASS: an import invalidates the specializations of its space, on the tier and in the machine"
+
+.PHONY: test-petta-rational-terms
+test-petta-semantics: test-petta-rational-terms
+# A term built in Prolog that is not a finite tree crosses into MeTTa as the
+# term it is, closed or with free variables: == and unification compare such
+# terms by their unfoldings, operations read them one level open, and a term
+# with no finite text stops a run that would write it (SWI-PeTTa's answers
+# and exit statuses).
+test-petta-rational-terms: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/rational_terms.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/rational_terms.expected)" ]; then \
+			echo "FAIL: rational terms on the $$route route"; \
+			diff <(cat tests/petta/rational_terms.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+		for stem in rational_terms_unwritable rational_terms_text; do \
+			status=0; \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+				--lang petta tests/petta/$$stem.metta 2>/dev/null) || status=$$?; \
+			if [ "$$status" != 2 ] || \
+			   [ "$$actual" != "$$(cat tests/petta/$$stem.expected)" ]; then \
+				echo "FAIL: $$stem on the $$route route (status $$status)"; \
+				printf '%s\n' "$$actual" | head -20; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: rational terms cross from Prolog, compare and unify by their unfoldings, and have no text, on the tier and in the machine"
+
+.PHONY: test-petta-hyperpose-answers
+test-petta-semantics: test-petta-hyperpose-answers test-petta-hyperpose-named-state test-petta-identity-forwarding
+.PHONY: test-petta-identity-forwarding
+test-petta-identity-forwarding: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/identity_forwarding.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/identity_forwarding.expected)" ]; then \
+			echo "FAIL: identity forwarding ($$route)"; \
+			diff -u tests/petta/identity_forwarding.expected <(printf '%s\n' "$$actual"); exit 1; \
+		fi; \
+	done; \
+	echo "PASS: identity forwarding retains aliases, effects, constraints, handlers, cuts and occurrences"
+.PHONY: test-petta-hyperpose-named-state
+test-petta-hyperpose-named-state: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		for threads in 1 4; do \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+				--num-threads $$threads --lang petta tests/petta/hyperpose_named_state.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/hyperpose_named_state.expected)" ]; then \
+				echo "FAIL: hyperpose named state ($$route, $$threads threads)"; \
+				diff -u tests/petta/hyperpose_named_state.expected <(printf '%s\n' "$$actual"); exit 1; \
+			fi; \
+		done; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--num-threads 1 --lang petta tests/petta/hyperpose_worker_reuse.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/hyperpose_worker_reuse.expected)" ]; then \
+			echo "FAIL: hyperpose worker state reuse ($$route)"; \
+			diff -u tests/petta/hyperpose_worker_reuse.expected <(printf '%s\n' "$$actual"); exit 1; \
+		fi; \
+	done; \
+	echo "PASS: hyperpose worker state is private, nested, reused across jobs, and discarded at join"
+# An answer of a hyperpose branch binds the caller's variables the branch
+# binds, on one thread and on several (SWI-PeTTa's concurrent_and).
+test-petta-hyperpose-answers: $(BIN)
+	@set -eu; \
+	for threads in 1 4; do \
+		actual=$$($(CETTA_BIN_INVOKE) --num-threads $$threads --lang petta \
+			tests/petta/hyperpose_answers.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/hyperpose_answers.expected)" ]; then \
+			echo "FAIL: hyperpose answers on $$threads threads"; \
+			diff <(cat tests/petta/hyperpose_answers.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: hyperpose answers bind the caller's variables, on one thread and on several"
+
+.PHONY: test-petta-constraints
+test-petta-semantics: test-petta-constraints
+# SWI-PeTTa's CLP(FD) operators, attributes and delayed goals: a constraint
+# on unbound variables holds until they are bound, a binding wakes the goals
+# waiting on it once each in the order posted, a branch that backtracks
+# takes its constraints with it, a collection's answers take theirs along,
+# and delayed goals survive collection (SWI-PeTTa's answers and effects).
+test-petta-constraints: $(BIN)
+	@set -eu; \
+	for route in tier machine core; do \
+		if [ $$route = tier ]; then reference=; else reference=1; fi; \
+		if [ $$route = core ]; then optimized=0; else optimized=1; fi; \
+		for fixture in constraints retained_constraint_publication libpl_boundary_substitution; do \
+			actual=$$(CETTA_PETTA_SEARCH_MACHINE=$$optimized CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+				--lang petta tests/petta/$$fixture.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/$$fixture.expected)" ]; then \
+				echo "FAIL: $$fixture on the $$route route"; \
+				diff <(cat tests/petta/$$fixture.expected) \
+					<(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: constraints and delayed goals wake, publish aliases, veto, roll back, cross collections and survive collection, on the tier and in the machine"
 
 .PHONY: test-petta-swi-differences
 # The register of every place where plain PeTTa on CeTTa deliberately answers
@@ -27984,8 +28560,7 @@ test-petta-typecheck-v3-core-parity-v1:
 test-petta-typecheck-v3-core-langdef-v1: \
 		test-petta-typecheck-v3-core-generation-v1 \
 		test-petta-typecheck-v3-h5-matrix-v1 \
-		$(PETTA_TYPECHECK_V3_CORE_LANGDEF_TEST_BIN) \
-		test-petta-typecheck-v3-core-parity-v1
+		$(PETTA_TYPECHECK_V3_CORE_LANGDEF_TEST_BIN)
 	@"$(PETTA_TYPECHECK_V3_CORE_LANGDEF_TEST_BIN)" \
 		$(PETTA_TYPECHECK_V3_CORE_LANGDEF_V1)
 
@@ -29104,7 +29679,21 @@ test-petta-frame-owned-mutation: $(BIN)
 		| diff -u tests/petta/frame_owned_nested_mutation.expected -; \
 	echo 'PASS: nested mutation observes framed bindings and removes consumed facts'
 
-test-he-contract-suite: $(BIN) test-he-compat-catalog-guards test-he-outcome-list-contracts test-he-nik-typed-applicability-pruning test-eval-in-space-profiles test-he-guarded-equation-plan
+.PHONY: test-he-type-policy
+test-he-type-policy: $(BIN) \
+		tests/he/type_policy_reference.metta tests/he/type_policy_reference.expected \
+		tests/he/type_policy_wildcards.metta tests/he/type_policy_wildcards.expected \
+		tests/he/type_policy_nested_wildcards.metta tests/he/type_policy_nested_wildcards.expected
+	@set -eu -o pipefail; \
+	for profile in "" "--profile extended"; do \
+		for fixture in type_policy_reference type_policy_wildcards type_policy_nested_wildcards; do \
+			$(CETTA_BIN_INVOKE) --lang he $$profile tests/he/$$fixture.metta \
+				| diff -u tests/he/$$fixture.expected -; \
+		done; \
+	done; \
+	echo 'PASS: HE type demand and interpreter wildcards match upstream HE'
+
+test-he-contract-suite: $(BIN) test-he-type-policy test-he-compat-catalog-guards test-he-outcome-list-contracts test-he-nik-typed-applicability-pruning test-eval-in-space-profiles test-he-guarded-equation-plan
 	@pass=0; fail=0; \
 	files=($(HE_CONTRACT_GENERATED_DIR)/*.metta); \
 	if [ ! -e "$${files[0]}" ]; then \
@@ -29195,6 +29784,7 @@ test-mork-lane-core:
 	fi
 
 test-mork-lane-core-body: $(BIN)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-petta-mork-space
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-deprecated-space-engine-mork-guard
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mm2-mork-program-space
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mm2-exec-basic
@@ -29204,6 +29794,26 @@ test-mork-lane-core-body: $(BIN)
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mm2-conformance-lean-suite
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mm2-kiss-suite
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-basic-pathmap-guard
+
+.PHONY: test-petta-mork-space
+# PeTTa's &mork is the MORK space, as in SWI-PeTTa's mork_ffi: lib_mm2's
+# operations reach it and mm2-exec steps its exec rules; mm2-exec has no
+# answer on any other space.  The expected output is SWI-PeTTa's; both
+# routes must reproduce it.  Runs on a MORK bridge build.
+test-petta-mork-space: $(BIN)
+	@set -e; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference ./$(BIN) \
+			--lang petta tests/petta/petta_mork_space.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/petta_mork_space.expected)" ]; then \
+			echo "FAIL: PeTTa &mork and mm2-exec on the $$route route"; \
+			diff <(cat tests/petta/petta_mork_space.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: PeTTa's &mork is the MORK space and mm2-exec steps it, on the tier and in the machine"
 
 test-mork-runtime-stats-lane:
 	@if [ "$(MORK_BUILD_HAS_BRIDGE)" = "1" ] || [ -n "$(CETTA_MORK_SPACE_BRIDGE_LIB)" ]; then \
@@ -29680,6 +30290,22 @@ test-open-equations: $(BIN)
 ifneq ($(ENABLE_RUNTIME_STATS),1)
 	@$(MAKE) -s ENABLE_RUNTIME_STATS=1 $@
 endif
+
+.PHONY: test-petta-oem-single-sequence
+test: test-petta-oem-single-sequence
+test-petta-semantics: test-petta-oem-single-sequence
+test-petta-oem-single-sequence: $(BIN)
+	@set -eu; \
+	for reference in 0 1; do \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/oem_single_sequence.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/oem_single_sequence.expected)" ]; then \
+			echo "FAIL: compiled one-child sequences (reference $$reference)"; \
+			diff -u tests/petta/oem_single_sequence.expected <(printf '%s\n' "$$actual"); \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: one-child sequences preserve values, choices, effects, failure, payloads and equation cuts"
 
 .PHONY: test-petta-oem-collection-stress
 # The open-equation machine answers the same when it collects every few
@@ -33310,9 +33936,39 @@ $(GSLT_COMPILED_PACKET_CHECK_BIN): \
 
 .PHONY: check-gslt-compiled-packet-v1
 check-gslt-compiled-packet-v1: $(GSLT_COMPILED_PACKET_CHECK_BIN)
+
 	@test -n "$(PACKET)" || \
 		{ echo "PACKET must name a CGP1 file" >&2; exit 2; }
 	@$(GSLT_COMPILED_PACKET_CHECK_BIN) "$(PACKET)"
+
+# Standalone FFI lifecycle gate: swipl-only, never built when lib-prolog is
+# unavailable (its gate target guards on LIB_PROLOG_ENABLED).
+.PHONY: test-foreign-region
+test-foreign-region: $(if $(filter 1,$(LIB_PROLOG_ENABLED)),runtime/check_foreign_region_v1-$(BUILD_OBJ_TAG),)
+ifeq ($(LIB_PROLOG_ENABLED),1)
+	@runtime/check_foreign_region_v1-$(BUILD_OBJ_TAG) tests/petta/fixtures/foreign_region.pl
+else
+	@echo "SKIP: retained foreign regions (lib-prolog disabled)"
+endif
+
+ifeq ($(LIB_PROLOG_ENABLED),1)
+runtime/check_foreign_region_v1-$(BUILD_OBJ_TAG): \
+		tests/support/check_foreign_region_v1.c src/foreign_region.c \
+		src/foreign_region.h tests/petta/fixtures/foreign_region.pl
+	@mkdir -p runtime
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -pthread -Isrc -o $@ \
+		tests/support/check_foreign_region_v1.c src/foreign_region.c \
+		$(LIB_PROLOG_CFLAGS) $(LIB_PROLOG_LDFLAGS) $(LIB_PROLOG_RPATH)
+
+$(PETTA_LIBPL_QUERY_RELEASE_CHECK_BIN): \
+		tests/support/check_petta_libpl_query_release_v1.c \
+		tests/petta/fixtures/libpl_query_release.pl
+	@mkdir -p runtime
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -pthread -o $@ \
+		tests/support/check_petta_libpl_query_release_v1.c \
+		$(LIB_PROLOG_CFLAGS) $(LIB_PROLOG_LDFLAGS) \
+		$(LIB_PROLOG_RPATH)
+endif
 
 $(NIK_RUNTIME_TEST_BIN): \
 		tests/support/test_nik_runtime_v1.c \
@@ -41740,3 +42396,63 @@ test-prime-native-control-mutations: $(BIN)
 		python3 scripts/test_prime_native_control.py --binary "$$binary" \
 			--mutation "$$mutation" --receipt "$(PRIME_NATIVE_CONTROL_MUTATION_DIR)/$$mutation.json"; \
 	done
+
+.PHONY: test-run-report test-run-cli
+
+test-run-report:
+	@mkdir -p runtime
+	$(CC) -O2 -std=c11 -Wall -Wextra -Werror -Isrc src/run_report.c tests/support/check_run_report.c -o runtime/check-run-report
+	@runtime/check-run-report
+
+test-run-cli: $(BIN) test-run-report
+	@python3 tests/support/check_run_cli.py $(BIN) --artifacts runtime
+
+test: test-run-cli
+
+.PHONY: test-error-presentation
+test-error-presentation: $(BIN)
+ifeq ($(ENABLE_PYTHON),1)
+	@python3 tests/support/check_error_presentation.py $(BIN) --artifacts runtime
+else
+	@printf 'SKIP: Python diagnostic controls require the Python adapter\n'
+endif
+
+test: test-error-presentation
+
+.PHONY: test-run-guard
+test-run-guard:
+	@$(CC) -O2 -std=c11 -Wall -Wextra -Werror -Isrc src/run_guard.c tests/support/check_run_guard.c -o runtime/check-run-guard
+	@runtime/check-run-guard
+	@printf 'PASS: process receipts reject raw successful exits, signals, catalogue changes and channel loss\n'
+test-run-cli: test-run-guard
+
+# The SQLite amalgamation is compiled with its own upstream warning policy.
+vendor/sqlite/sqlite3.$(BUILD_OBJ_TAG).o vendor/sqlite/sqlite3.$(BUILD_OBJ_TAG).stage0.o vendor/sqlite/sqlite3.$(BUILD_OBJ_TAG).runtime-stats.o: CFLAGS := $(filter-out -Werror -O3,$(CFLAGS)) -O2
+
+.PHONY: test-supervise
+ifeq ($(ENABLE_DURABLE),1)
+SUPERVISOR_TEST_SQLITE_OBJ = $(if $(filter vendored,$(SQLITE_PROVIDER)),runtime/sqlite-supervisor-test.o,)
+runtime/sqlite-supervisor-test.o: vendor/sqlite/sqlite3.c vendor/sqlite/sqlite3.h
+	@mkdir -p runtime
+	$(CC) -O2 -std=c11 -pthread -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_DQS=0 -DSQLITE_OMIT_SHARED_CACHE -DSQLITE_DEFAULT_MEMSTATUS=0 -c $< -o $@
+
+runtime/check_supervisor-$(SQLITE_PROVIDER): tests/support/check_supervisor.c src/supervisor.c src/supervisor.h src/durable_store.c src/durable_store.h $(SUPERVISOR_TEST_SQLITE_OBJ) Makefile
+	$(CC) -O2 -Wall -Wextra -Werror -std=c11 -pthread -DCETTA_DURABLE_TEST -Isrc $(DURABLE_CFLAGS) tests/support/check_supervisor.c src/supervisor.c src/durable_store.c $(SUPERVISOR_TEST_SQLITE_OBJ) $(DURABLE_LDFLAGS) -lm -ldl -o $@
+
+runtime/check_durable_value-$(BUILD_OBJ_TAG): tests/support/check_durable_value.c src/durable_value.c src/durable_value.h src/symbol.c src/atom.c src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/support/check_durable_value.c src/durable_value.c src/symbol.c src/atom.c src/binding/frame_identity.c $(LDFLAGS) -o $@
+
+test-supervise: $(BIN) runtime/check_supervisor-$(SQLITE_PROVIDER) runtime/check_durable_value-$(BUILD_OBJ_TAG)
+	@python3 -c 'import subprocess,tempfile; subprocess.run(["runtime/check_supervisor-$(SQLITE_PROVIDER)",tempfile.mkdtemp(prefix="supervisor-core.",dir="runtime")],check=True)'
+	@runtime/check_durable_value-$(BUILD_OBJ_TAG)
+ifeq ($(ENABLE_PYTHON),1)
+	@python3 tests/support/check_supervise_library.py $(BIN) --artifacts runtime
+else
+	@python3 tests/support/check_supervise_library.py $(BIN) --artifacts runtime --skip-external-adapter
+endif
+else
+test-supervise:
+	@printf 'SKIP: supervised-task controls require ENABLE_DURABLE=1\n'
+endif
+
+test: test-supervise

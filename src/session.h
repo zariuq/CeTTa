@@ -248,6 +248,10 @@ typedef struct {
     CettaModulePolicy module_policy;
     CettaEvaluatorOptions options;
     CettaProcessControl process_control;
+    /* Optional native assertion observer; execution owns the callback scope.
+     * It neither handles exceptions nor changes a dialect's test result. */
+    void (*test_verdict)(void *context, bool passed);
+    void *test_verdict_context;
 } CettaEvalSession;
 
 typedef struct {

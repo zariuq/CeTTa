@@ -3740,6 +3740,7 @@ static bool prepared_pure_emit_match_ops(
                 return true;
             }
             op.kind = PREPARED_PURE_MATCH_OP_EXPR;
+            op.literal = pattern;
             op.operand = *next_register;
             op.length = pattern->expr.len;
             *next_register += pattern->expr.len;
@@ -4466,8 +4467,8 @@ prepared_pure_run_match_ops(
                  cetta_he_promoted_numbers_equal(op->literal, value));
             break;
         case PREPARED_PURE_MATCH_OP_EXPR:
-            equal = value->kind == ATOM_EXPR &&
-                    value->expr.len == op->length;
+            equal = atom_petta_decomposition_compatible(op->literal, value) &&
+                    value->kind == ATOM_EXPR && value->expr.len == op->length;
             /* A list carrier spells a list, not its three fields: it
              * is read as one where it has the pattern's length or
              * fails it. */
@@ -4984,6 +4985,8 @@ prepared_pure_decision_for_arity(
  * never a symbol. */
 static inline bool prepared_pure_value_key(
     const Atom *value, SymbolId *symbol, uint32_t *length) {
+    if (atom_petta_value_representation(value) != PETTA_VALUE_ORDINARY)
+        return false;
     if (!value)
         return false;
     if (value->kind == ATOM_SYMBOL) {
@@ -5435,6 +5438,7 @@ static bool prepared_pure_grounded_intrinsic_type_equal(
     case GV_CAPTURE:
     case GV_BINDINGS:
     case GV_FOREIGN:
+    case GV_TERM_GRAPH:
     case GV_INTERNAL_TAG:
     case GV_PRIME_NEED_CAPABILITY:
     case GV_PRIME_CONTEXT:
@@ -7922,6 +7926,8 @@ static bool prepared_pure_code_liveness(
  * with no key. */
 static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_code_key(
     const Atom *value, uint64_t *key_out) {
+    if (atom_petta_value_representation(value) != PETTA_VALUE_ORDINARY)
+        return false;
     if (value->kind == ATOM_SYMBOL) {
         *key_out = (uint64_t)value->sym_id << 32;
         return true;

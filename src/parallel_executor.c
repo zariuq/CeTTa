@@ -589,6 +589,10 @@ uint32_t cetta_parallel_worker_index(const CettaParallelWorker *worker) {
     return worker ? worker->index : 0u;
 }
 
+bool cetta_parallel_worker_active(void) {
+    return g_parallel_worker_depth != 0u;
+}
+
 CettaParallelExecutor *cetta_parallel_worker_executor(
     const CettaParallelWorker *worker) {
     return worker ? worker->executor : NULL;

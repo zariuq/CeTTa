@@ -2,6 +2,7 @@
 #define CETTA_LIBRARY_H
 
 #include "atom.h"
+#include "call_outcome.h"
 #include "foreign.h"
 #include "mork_space_bridge_runtime.h"
 #include "native_handle.h"
@@ -184,6 +185,10 @@ typedef struct CettaLibraryContext {
      * `petta_match_decisions_free`. */
     void *petta_match_decisions;
     void (*petta_match_decisions_free)(void *decisions);
+    /* What static-import! loaded in the session, owned by the evaluator,
+     * which frees it through `petta_static_imports_free`. */
+    void *petta_static_imports;
+    void (*petta_static_imports_free)(void *imports);
     bool prime_relational_plan_enabled;
     struct CettaPettaRuntimeState *petta_runtime;
     PettaProgram *petta_program;
@@ -241,7 +246,7 @@ bool cetta_library_petta_git_import(CettaLibraryContext *ctx,
                                     const char *commit_sha,
                                     Arena *eval_arena,
                                     Atom **error_out);
-bool cetta_library_petta_git_import_enabled(
+bool cetta_library_petta_lib_import_enabled(
     const CettaLibraryContext *ctx);
 bool cetta_library_petta_tabling_enabled(
     const CettaLibraryContext *ctx);
@@ -303,9 +308,13 @@ Atom *cetta_library_module_inventory_space(CettaLibraryContext *ctx,
 bool cetta_library_print_loaded_modules(CettaLibraryContext *ctx, FILE *out,
                                         Arena *eval_arena, Atom **error_out);
 
-Atom *cetta_library_dispatch_native(CettaLibraryContext *ctx, Space *space,
-                                    Arena *a,
-                                    Atom *head, Atom **args, uint32_t nargs);
+/* A native operation of an active library, and what it did
+ * (call_outcome.h): a library operation's value, or a foreign call's
+ * outcome, whose failure PeTTa raises.  False when no active library
+ * defines `head` for these arguments. */
+bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
+                               Arena *a, Atom *head, Atom **args,
+                               uint32_t nargs, CettaCallOutcome *out);
 bool cetta_library_lookup_explicit_mork_bridge(CettaLibraryContext *ctx,
                                                Atom *space_arg,
                                                CettaMorkSpaceHandle **bridge_out);

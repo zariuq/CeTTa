@@ -1154,6 +1154,10 @@ static bool rho_atom_text_key_direct_emit(
                 ok = rho_atom_text_sink_appendf(
                     sink, "<foreign %p>", atom->ground.ptr);
                 break;
+            case GV_TERM_GRAPH:
+                ok = rho_atom_text_sink_appendf(
+                    sink, "<term-graph %p>", atom->ground.ptr);
+                break;
             case GV_RATIONAL:
                 ok = rho_atom_text_sink_append(
                     sink, atom_rational_cstr(atom));
@@ -1272,6 +1276,7 @@ static bool rho_atom_text_structural_hash_admitted(
         case GV_CAPTURE:
         case GV_BINDINGS:
         case GV_FOREIGN:
+        case GV_TERM_GRAPH:
         case GV_RATIONAL:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:

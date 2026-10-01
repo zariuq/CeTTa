@@ -1,0 +1,26 @@
+; Distinct translated callable occurrences retain identity even when their
+; bodies are identical. Reuse, capture and copying preserve that identity.
+(= (factory) (box (|-> ($x) (+ $x 1))))
+(= (captured $k) (box (|-> ($x) (+ $k $x))))
+(= (nullary-factory) (box (|-> () 42)))
+!(== (|-> ($x) (+ $x 1)) (|-> ($x) (+ $x 1)))
+!(=alpha (|-> ($x) (+ $x 1)) (|-> ($y) (+ $y 1)))
+!(== (|-> () 42) (|-> () 42))
+!(let $f (|-> ($x) (+ $x 1)) (== $f $f))
+!(let $f (|-> ($x) (+ $x 1)) (let $g $f (=alpha $f $g)))
+!(let (box $f) (factory) (let (box $g) (factory) (== $f $g)))
+!(let (box $f) (captured 2) (let (box $g) (captured 2) (== $f $g)))
+!(let (box $f) (captured 2) (let (box $g) (captured 3) (== $f $g)))
+!(let (box $f) (nullary-factory) (let (box $g) (nullary-factory) (== $f $g)))
+!(let (box $f) (factory) ($f 10))
+!(let (box $f) (captured 2) ($f 10))
+!(let (box $f) (nullary-factory) ($f))
+!(let $f (|-> ($x $y) (+ $x $y)) (let $g $f (== ($f 1) ($g 1))))
+!(let $f (|-> ($x $y) (+ $x $y)) (== ($f 1) ($f 2)))
+!(== (quote (|-> ($x) (+ $x 1))) (quote (|-> ($x) (+ $x 1))))
+
+; Literal invocation and computed dispatch retain distinct handler scopes.
+!(catch ((|-> ($x) (/ 1 $x)) 0))
+!(catch ((|-> ($x) $x) (/ 1 0)))
+!(catch (let $f (|-> ($x) (/ 1 $x)) ($f 0)))
+!(filter-atom (1 0 2) (|-> ($x) (> (/ 6 $x) 2)))

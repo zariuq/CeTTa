@@ -17,6 +17,21 @@
 #include <stdatomic.h>
 #include <string.h>
 
+/* The rational-term module (term_graph.c).  A link unit without it builds
+ * no graph, so no GV_TERM_GRAPH atom reaches its code. */
+const CettaTermGraphRef *term_graph_ref(const CettaTermGraph *graph,
+                                        uint32_t node) __attribute__((weak));
+void term_graph_retain(void *graph) __attribute__((weak));
+void term_graph_release(void *graph) __attribute__((weak));
+bool term_graph_value_eq(Atom *left, Atom *right,
+                         bool (*leaf_eq)(Atom *, Atom *)) __attribute__((weak));
+uint32_t term_graph_view_hash(Atom *atom,
+                              uint32_t (*leaf_hash)(Atom *))
+    __attribute__((weak));
+void term_graph_print(const CettaTermGraphRef *ref, FILE *out,
+                      bool petta) __attribute__((weak));
+Atom *term_graph_open_value(Arena *arena, Atom *atom) __attribute__((weak));
+
 #define CETTA_ATOM_DEEP_COPY_MEMO_INLINE_CAP 64u
 
 #ifndef CETTA_STRUCTURAL_NAME_TRANSPORT_MUTATION
@@ -271,12 +286,12 @@ static ArenaBlock *arena_claim_block(Arena *a, size_t min_capacity) {
         return block;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_ARENA_SPARE_MISS);
 
-    size_t block_size = sizeof(ArenaBlock);
-    if (min_capacity > ARENA_BLOCK_SIZE)
-        block_size = sizeof(ArenaBlock) - ARENA_BLOCK_SIZE + min_capacity;
-    block = cetta_malloc(block_size);
-    block->capacity = min_capacity > ARENA_BLOCK_SIZE ? min_capacity
-                                                      : ARENA_BLOCK_SIZE;
+    size_t capacity = a->block_capacity ? a->block_capacity
+                                        : ARENA_BLOCK_SIZE;
+    if (min_capacity > capacity)
+        capacity = min_capacity;
+    block = cetta_malloc(sizeof(ArenaBlock) - ARENA_BLOCK_SIZE + capacity);
+    block->capacity = capacity;
     block->used = 0;
     block->next = NULL;
     a->reserved_bytes += block->capacity;
@@ -728,6 +743,7 @@ void arena_init(Arena *a) {
     }
     a->identity = identity;
     a->older_identity = 0u;
+    a->block_capacity = 0u;
     a->reset_epoch = 1u;
     a->finalizers = NULL;
     a->retained_owners = NULL;
@@ -738,6 +754,11 @@ void arena_init(Arena *a) {
 void arena_init_detached(Arena *a) {
     arena_init(a);
     a->hashcons = NULL;
+}
+
+void arena_set_block_capacity(Arena *a, size_t capacity) {
+    a->block_capacity = capacity > ARENA_BLOCK_SIZE ? 0u
+                                                    : (uint32_t)capacity;
 }
 
 static void arena_run_finalizers_until(Arena *a, ArenaFinalizer *stop) {
@@ -1205,6 +1226,9 @@ static bool atom_is_hash_stable(const Atom *atom);
 
 static uint32_t atom_hash_compute(Atom *a) {
     if (!a) return 0;
+    /* A rational term hashes by its unfolding, as atom_eq compares it. */
+    if (term_graph_view_hash && atom_structural_has_rational(a))
+        return term_graph_view_hash(a, atom_hash);
     uint32_t h = 5381;
     h = ((h << 5) + h) ^ (uint32_t)a->kind;
     switch (a->kind) {
@@ -1246,6 +1270,7 @@ static uint32_t atom_hash_compute(Atom *a) {
         case GV_CAPTURE:
         case GV_BINDINGS:
         case GV_FOREIGN:
+        case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
             break; /* mutable/contextual — don't hash-cons */
@@ -1283,9 +1308,9 @@ bool atom_eq_fast(Atom *a, Atom *b) {
     return atom_eq(a, b);
 }
 
-void hashcons_init(HashConsTable *hc) {
+static void hashcons_init_capacity(HashConsTable *hc, uint32_t capacity) {
     hc->frame_identities = (CettaFrameIdentityScope){0};
-    hc->size = HASHCONS_TABLE_SIZE;
+    hc->size = capacity;
     hc->used = 0;
     hc->symbol_cache = NULL;
     hc->symbol_cache_size = 0u;
@@ -1297,6 +1322,14 @@ void hashcons_init(HashConsTable *hc) {
     hc->maximum_lookup_probe = 0;
     hc->table = cetta_malloc(sizeof(Atom *) * hc->size);
     memset(hc->table, 0, sizeof(Atom *) * hc->size);
+}
+
+void hashcons_init(HashConsTable *hc) {
+    hashcons_init_capacity(hc, HASHCONS_TABLE_SIZE);
+}
+
+void hashcons_init_compact(HashConsTable *hc) {
+    hashcons_init_capacity(hc, 64u);
 }
 
 void hashcons_free(HashConsTable *hc) {
@@ -1510,6 +1543,7 @@ static uint64_t hashcons_slot_hash(Atom *atom) {
         case GV_CAPTURE:
         case GV_BINDINGS:
         case GV_FOREIGN:
+        case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
         case GV_INTERNAL_TAG:
@@ -2574,6 +2608,7 @@ bool atom_grounded_kind_is_term_stable(GroundedKind gkind) {
     case GV_CAPTURE:
     case GV_BINDINGS:
     case GV_FOREIGN:
+    case GV_TERM_GRAPH:
     case GV_PRIME_NEED_CAPABILITY:
     case GV_PRIME_CONTEXT:
     case GV_INTERNAL_TAG:
@@ -2598,13 +2633,16 @@ static uint32_t atom_structural_facts_for_grounded_kind(
     return ATOM_STRUCTURAL_FACTS_VALID |
            (gkind == GV_INTERNAL_TAG
                 ? ATOM_STRUCTURAL_HAS_INTERNAL_TAG : 0u) |
-           (gkind == GV_STATE ? ATOM_STRUCTURAL_HAS_NAN : 0u);
+           (gkind == GV_STATE || gkind == GV_TERM_GRAPH
+                ? ATOM_STRUCTURAL_HAS_NAN : 0u) |
+           (gkind == GV_TERM_GRAPH ? ATOM_STRUCTURAL_HAS_RATIONAL : 0u);
 }
 
-/* The list tags are structural data, stable under hashing and shareable; the
- * other internal tags mark machine carriers and stay out of the hash-cons. */
+/* Lists and nominal callable constructors are immutable structural data.
+ * A callable's identity is retained as a child; captures supply their own
+ * retention facts. Other machine tags stay out of the hash-cons. */
 static uint32_t atom_flags_for_internal_tag(int64_t tag) {
-    return cetta_internal_tag_is_list(tag)
+    return cetta_internal_tag_is_term_stable(tag)
         ? atom_hash_flags_for_eligible_leaf()
         : atom_flags_for_grounded_kind(GV_INTERNAL_TAG);
 }
@@ -2615,14 +2653,17 @@ static uint32_t atom_structural_facts_for_internal_tag(int64_t tag) {
            (tag == (int64_t)CETTA_INTERNAL_TAG_LIST_REST
                 ? ATOM_STRUCTURAL_HAS_OPEN_LIST : 0u) |
            (tag == (int64_t)CETTA_INTERNAL_TAG_PETTA_OPEN_CONS
-                ? ATOM_STRUCTURAL_HAS_LIST_CARRIER : 0u);
+                ? ATOM_STRUCTURAL_HAS_LIST_CARRIER : 0u) |
+           (cetta_internal_tag_is_callable(tag) ||
+            tag == (int64_t)CETTA_INTERNAL_TAG_PETTA_PROLOG_COMPOUND
+                ? ATOM_STRUCTURAL_HAS_PETTA_NONLIST : 0u);
 }
 
 bool atom_grounded_is_term_stable(const Atom *atom) {
     if (!atom || atom->kind != ATOM_GROUNDED)
         return false;
     if (atom->ground.gkind == GV_INTERNAL_TAG)
-        return cetta_internal_tag_is_list(atom->ground.ival);
+        return cetta_internal_tag_is_term_stable(atom->ground.ival);
     return atom_grounded_kind_is_term_stable(atom->ground.gkind);
 }
 
@@ -3541,6 +3582,38 @@ Atom *atom_bindings_value(Arena *arena, CettaBindingsValue *value) {
         .ground = {.gkind = GV_BINDINGS, .ptr = value},
     };
     return atom;
+}
+
+Atom *atom_term_graph(Arena *arena, CettaTermGraph *graph, uint32_t node) {
+    const CettaTermGraphRef *ref =
+        graph && term_graph_ref ? term_graph_ref(graph, node) : NULL;
+    if (!arena || !ref ||
+        !arena_retain_owner(arena, graph, term_graph_retain,
+                            term_graph_release))
+        return NULL;
+    Atom *atom = arena_alloc(arena, sizeof(*atom));
+    *atom = (Atom){
+        .kind = ATOM_GROUNDED,
+        .flags = atom_flags_for_grounded_kind(GV_TERM_GRAPH),
+        .var_id = VAR_ID_NONE,
+        .sym_id = SYMBOL_ID_NONE,
+        .arena_id = arena->identity,
+        .structural_facts =
+            atom_structural_facts_for_grounded_kind(GV_TERM_GRAPH),
+        .ground = {.gkind = GV_TERM_GRAPH, .ptr = (void *)ref},
+    };
+    return atom;
+}
+
+const CettaTermGraphRef *atom_term_graph_ref(const Atom *atom) {
+    return atom && atom->kind == ATOM_GROUNDED &&
+           atom->ground.gkind == GV_TERM_GRAPH
+        ? atom->ground.ptr : NULL;
+}
+
+Atom *atom_rational_open(Arena *arena, Atom *atom) {
+    return term_graph_open_value && atom_is_rational_value(atom)
+        ? term_graph_open_value(arena, atom) : atom;
 }
 
 /* atom_hash_compute of a list tag, as a constant: the tags are shared by every
@@ -4961,7 +5034,6 @@ bool cetta_he_promoted_kind_equal(int left_kind, int64_t left_int,
         : float_is_int64(left_float, right_int);
 }
 
-static bool atom_is_number(const Atom *atom);
 static bool atom_numbers_value_eq(Atom *a, Atom *b);
 
 /* Numbers of different kinds, in the HE lane.  Outside he-compat they are
@@ -5123,6 +5195,10 @@ static inline __attribute__((always_inline)) bool atom_eq_decided(
         return true;
     }
     if (a->kind != b->kind) {
+        /* A rational term is equal to its open forms. */
+        if (atom_structural_has_rational(a) ||
+            atom_structural_has_rational(b))
+            return false;
         *equal = false;
         return true;
     }
@@ -5139,7 +5215,9 @@ static inline __attribute__((always_inline)) bool atom_eq_decided(
         *equal = a->ground.ival == b->ground.ival;
         return true;
     case ATOM_EXPR:
-        if (a->expr.len == b->expr.len)
+        if (a->expr.len == b->expr.len ||
+            atom_structural_has_rational(a) ||
+            atom_structural_has_rational(b))
             return false;
         *equal = false;
         return true;
@@ -5161,6 +5239,12 @@ bool atom_eq(Atom *a, Atom *b) {
     return atom_eq_walk(a, b);
 }
 
+/* The leaves of a rational term's unfolding are atomic, so they compare as
+ * atoms. */
+static bool atom_eq_leaf(Atom *a, Atom *b) {
+    return atom_eq(a, b);
+}
+
 static bool atom_eq_in(Atom *a, Atom *b, AtomEqWalk *walk) {
     /* In the HE lane a NaN equals nothing, not even itself, so an atom that
      * may hold one is compared even against itself. */
@@ -5168,6 +5252,12 @@ static bool atom_eq_in(Atom *a, Atom *b, AtomEqWalk *walk) {
         (!atom_structural_may_have_nan(a) || !eval_current_language_id ||
          eval_current_language_id() != CETTA_LANGUAGE_HE))
         return true;
+    /* A term that is not a finite tree is its unfolding: two atoms are equal
+     * when their unfoldings are, however much of either is open
+     * (RationalTermGraph.Bisimilar). */
+    if (term_graph_value_eq &&
+        (atom_structural_has_rational(a) || atom_structural_has_rational(b)))
+        return term_graph_value_eq(a, b, atom_eq_leaf);
     if (a->kind != b->kind) return false;
     switch (a->kind) {
     case ATOM_SYMBOL:
@@ -5201,6 +5291,7 @@ static bool atom_eq_in(Atom *a, Atom *b, AtomEqWalk *walk) {
                                     left->equal(left, right));
         }
         case GV_FOREIGN: return a->ground.ptr == b->ground.ptr;
+        case GV_TERM_GRAPH: return a->ground.ptr == b->ground.ptr;
         case GV_INTERNAL_TAG:
             return a->ground.ival == b->ground.ival;
         case GV_PRIME_NEED_CAPABILITY: {
@@ -5241,7 +5332,7 @@ static bool atom_eq_in(Atom *a, Atom *b, AtomEqWalk *walk) {
     return false;
 }
 
-static bool atom_is_number(const Atom *atom) {
+bool atom_is_number(const Atom *atom) {
     if (atom->kind != ATOM_GROUNDED)
         return false;
     switch (atom->ground.gkind) {
@@ -5309,21 +5400,42 @@ static bool atom_numbers_value_eq(Atom *a, Atom *b) {
 #endif
 }
 
-/* all_numbers: every representation compares by value, as PeTTa's == does.
+/* PeTTa's == on two leaves of a term: numbers by value, every NaN one
+ * value; any other leaf as itself. */
+static bool atom_petta_leaf_eq(Atom *a, Atom *b) {
+    if (atom_is_number(a) && atom_is_number(b)) {
+        if (a->ground.gkind == GV_FLOAT && b->ground.gkind == GV_FLOAT)
+            return a->ground.fval == b->ground.fval ||
+                   (isnan(a->ground.fval) && isnan(b->ground.fval));
+        return atom_numbers_value_eq(a, b);
+    }
+    return atom_eq(a, b);
+}
+
+/* all_numbers: every representation compares by value, as PeTTa's == does,
+ * and every NaN equals every NaN and nothing else (PeTTaLeafEquality).
  * Otherwise numbers compare as the HE lane's atoms do (atom_eq), except that
  * a NaN is never equal to itself. */
 static bool atom_value_eq_in(Atom *a, Atom *b, AtomEqWalk *walk) {
     if (atom_is_number(a) && atom_is_number(b)) {
         if (a->ground.gkind == GV_FLOAT && b->ground.gkind == GV_FLOAT)
-            return a->ground.fval == b->ground.fval;
+            return a->ground.fval == b->ground.fval ||
+                   (walk->all_numbers && isnan(a->ground.fval) &&
+                    isnan(b->ground.fval));
         return walk->all_numbers ? atom_numbers_value_eq(a, b)
                                  : atom_eq(a, b);
     }
+    /* A rational term compares by its unfolding (RationalTermGraph.PeTTaEq),
+     * however much of either side is open. */
+    if (term_graph_value_eq &&
+        (atom_structural_has_rational(a) || atom_structural_has_rational(b)))
+        return term_graph_value_eq(
+            a, b, walk->all_numbers ? atom_petta_leaf_eq : atom_eq_leaf);
     if (a->kind != ATOM_EXPR || b->kind != ATOM_EXPR)
         return atom_eq(a, b);
     if (a->expr.len != b->expr.len)
         return false;
-    if (a == b && !atom_structural_may_have_nan(a))
+    if (a == b && (walk->all_numbers || !atom_structural_may_have_nan(a)))
         return true;
     if (atom_eq_memo_met(walk, a, b))
         return true;
@@ -5415,6 +5527,9 @@ uint32_t atom_value_hash(Atom *a) {
         return 0u;
     if (atom_is_number(a))
         return atom_number_value_hash(a);
+    /* As == reads it: a rational term by its unfolding. */
+    if (term_graph_view_hash && atom_structural_has_rational(a))
+        return term_graph_view_hash(a, atom_value_hash);
     if (a->kind != ATOM_EXPR)
         return atom_hash(a);
     uint32_t h = value_hash_mix(5381u, (uint32_t)ATOM_EXPR);
@@ -5432,7 +5547,8 @@ static __attribute__((noinline)) bool atom_value_eq_walk(
 
 bool atom_value_eq(Atom *a, Atom *b) {
     /* Two integers are equal exactly when their values are, in every lane;
-     * so is an atom that holds no NaN to itself. */
+     * so is an atom that holds no NaN to itself, and in PeTTa, where every
+     * NaN equals every NaN, any atom to itself. */
     if (a == b && !atom_structural_may_have_nan(a))
         return true;
     if (a->kind == ATOM_GROUNDED && b->kind == ATOM_GROUNDED &&
@@ -5442,6 +5558,8 @@ bool atom_value_eq(Atom *a, Atom *b) {
         ? eval_current_language_id() : CETTA_LANGUAGE_HE;
     if (language != CETTA_LANGUAGE_PETTA && language != CETTA_LANGUAGE_HE)
         return atom_eq(a, b);
+    if (a == b && language == CETTA_LANGUAGE_PETTA)
+        return true;
     return atom_value_eq_walk(a, b, language == CETTA_LANGUAGE_PETTA);
 }
 
@@ -5875,6 +5993,12 @@ static Atom *atom_deep_copy_leaf(Arena *dst, Atom *src, bool share) {
         case GV_FOREIGN:
             out = atom_foreign(dst, (CettaForeignValue *)src->ground.ptr);
             break;
+        case GV_TERM_GRAPH: {
+            /* The graph is immutable: the copy shares it. */
+            const CettaTermGraphRef *ref = src->ground.ptr;
+            out = atom_term_graph(dst, ref->graph, ref->node);
+            break;
+        }
         case GV_INTERNAL_TAG:
             out = atom_internal_tag(
                 dst, (CettaInternalTag)src->ground.ival);
@@ -6657,9 +6781,18 @@ static void atom_print_mode(
             arena_free(&observation);
             break;
         }
-        case GV_FOREIGN:
-            fprintf(out, "<foreign %p>", a->ground.ptr);
+        case GV_TERM_GRAPH:
+            if (term_graph_print)
+                term_graph_print(a->ground.ptr, out, petta);
             break;
+        case GV_FOREIGN: {
+            const CettaForeignHold *hold = a->ground.ptr;
+            if (petta && hold && hold->print_petta)
+                hold->print_petta(a->ground.ptr, out);
+            else
+                fprintf(out, "<foreign %p>", a->ground.ptr);
+            break;
+        }
         case GV_INTERNAL_TAG:
             fprintf(out, "<internal-tag %ld>", (long)a->ground.ival);
             break;
@@ -6673,6 +6806,21 @@ static void atom_print_mode(
         }
         break;
     case ATOM_EXPR:
+        if (petta) {
+            int64_t identity = 0;
+            if (atom_petta_callable_identity(a, &identity)) {
+                fprintf(out, "lambda_%llu", (unsigned long long)identity);
+                break;
+            }
+        }
+        if (atom_is_petta_partial(a)) {
+            fputs("(partial ", out);
+            atom_print_stack_push_char(&stack, ')');
+            atom_print_stack_push_atom(&stack, a->expr.elems[2]);
+            atom_print_stack_push_char(&stack, ' ');
+            atom_print_stack_push_atom(&stack, a->expr.elems[1]);
+            break;
+        }
         if (atom_is_list(a) || atom_is_list_rest(a)) {
             /* [x1 x2 ... xn] and [x1 ... xk | rest] */
             bool rest = atom_is_list_rest(a);

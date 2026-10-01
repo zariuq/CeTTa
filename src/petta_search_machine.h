@@ -1,6 +1,8 @@
 #ifndef CETTA_PETTA_SEARCH_MACHINE_H
 #define CETTA_PETTA_SEARCH_MACHINE_H
 
+#include "delay_service.h"
+#include "call_outcome.h"
 #include "eval.h"
 #include "match_decision.h"
 #include "nik_direct_authority.h"
@@ -238,6 +240,9 @@ typedef struct {
      * profile allows them they are the machine's own controls, the first
      * answers of a body and all of them; otherwise they are the host's. */
     bool bounded_collections;
+    /* Explicit dependent domains belong to the active language profile,
+     * not to the shared declaration cache or residual-type analysis. */
+    bool dependent_type_domains;
     /*
      * Called immediately before a machine transition.  Returning false
      * suspends without consuming the pending goal, so the same machine can
@@ -289,9 +294,15 @@ typedef struct {
      * an authored occurrence as data.  The host owns that language policy;
      * the search machine still resolves only at a SOLVE boundary. */
     bool resolve_value_references_in_value_role;
+    /* Evaluate a goal the machine hands to the host, adding its answers to
+     * `outcomes`; `end` says how the evaluation ended (call_outcome.h):
+     * FAILURE once its answers are given, RAISED with an error the host
+     * evaluation raised and did not catch, whose answers are then dropped,
+     * or INTERRUPTED when cancellation or an exit request stopped it. */
     bool (*evaluate)(
         void *context, Space *space, Arena *arena, Atom *expression,
-        const Bindings *environment, OutcomeSet *outcomes);
+        const Bindings *environment, OutcomeSet *outcomes,
+        CettaCallOutcome *end, const CettaDelayView *delay);
     /* Preserve the translation-stage classification of an authored source
      * occurrence when evaluation crosses a host-owned boundary.  The plan is
      * positional metadata for `expression`; NULL means that this boundary
@@ -300,15 +311,18 @@ typedef struct {
     bool (*evaluate_planned)(
         void *context, Space *space, Arena *arena, Atom *expression,
         const PettaPlanNode *plan,
-        const Bindings *environment, OutcomeSet *outcomes);
+        const Bindings *environment, OutcomeSet *outcomes,
+        CettaCallOutcome *end, const CettaDelayView *delay);
     /* A strict application whose arguments the machine has computed.  The
      * host applies its operation to those values without evaluating them
      * again, and returns false, adding nothing, when the operation needs
      * the ordinary evaluator; the call then goes to evaluate as before.
-     * Optional. */
+     * `end` is how an applied operation ended, as for `evaluate`: RAISED
+     * with its error, which adds no answer.  Optional. */
     bool (*apply_ready_values)(
         void *context, Space *space, Arena *arena, Atom *expression,
-        const Bindings *environment, OutcomeSet *outcomes);
+        const Bindings *environment, OutcomeSet *outcomes,
+        CettaCallOutcome *end);
     /* Create a new translation event at an explicit forcing boundary such as
      * PeTTa `eval`.  A returned plan fixes callability for that occurrence;
      * NULL declines because the host could not establish the event. */
@@ -317,10 +331,12 @@ typedef struct {
     /* Enumerate the intrinsic answers of the language's `get-type`
      * relation after its subject has reached the ready-value boundary.
      * The returned pointer array is caller-owned; every Atom is owned by
-     * `arena`.  Explicit user equations remain ordinary later relation
+     * `arena`. A NULL target is a fresh type; a non-NULL target is the
+     * current required-type operand, not a post-enumeration filter.
+     * Explicit user equations remain ordinary later relation
      * equations and are not included by this service. */
     bool (*get_type)(
-        void *context, Space *space, Arena *arena, Atom *value,
+        void *context, Space *space, Arena *arena, Atom *value, Atom *target,
         Atom ***types, uint32_t *count);
     /* Construct the active language's public Boolean datum.  Search owns the
      * truth relation; spelling and representation remain language-owned. */
@@ -372,7 +388,8 @@ typedef struct {
     bool (*named_state)(
         void *context, Space *space, Arena *arena, PeTTaForm form,
         Atom *name, Atom *value,
-        const Bindings *environment, OutcomeSet *outcomes);
+        const Bindings *environment, OutcomeSet *outcomes,
+        CettaCallOutcome *end);
     /*
      * Ground `add-atom` after the space argument is a value and the payload
      * has been substituted.  The host owns storage, typing, and program
@@ -449,11 +466,20 @@ typedef struct {
      * match): may register the name as auto-resolved on first proof. */
     PeTTaNamedArity (*foreign_named_arity_resolving)(
         void *context, SymbolId head, CettaExprLen supplied);
+    /* Whether the foreign engine defines the predicate name/arity now,
+     * registering nothing.  NULL: it defines none. */
+    bool (*foreign_predicate_defined)(
+        void *context, SymbolId name, CettaExprLen arity);
+    /* `end`: how a recognized call ended (call_outcome.h), FAILURE after
+     * its answers or RAISED with its error. */
+    /* `delay`: the machine's delayed goals, which the call carries in and
+     * reads back (delay_service.h). */
     bool (*extension_call)(
         void *context, Arena *arena,
         Atom *expression, Atom *expected,
         const Bindings *environment, OutcomeSet *outcomes,
-        bool *recognized, Atom **raised);
+        bool *recognized, CettaCallOutcome *end,
+        const CettaDelayView *delay);
     bool (*candidate_snapshot_lease)(
         void *context, Space *space, SymbolId head,
         PettaCandidateSnapshotLease *lease,
@@ -540,6 +566,24 @@ typedef struct {
         void **mutex);
     void (*mutex_release)(
         void *context, void *mutex);
+    /* Variables the caller reads from every answer, (v...): each is visible,
+     * and its binding exported, whether or not the query binds it
+     * lexically.  A hyperpose branch runs apart from its caller, whose
+     * variables its let patterns bind. */
+    Atom *export_variables;
+    /* Observe a ready value's intrinsic metatype without interpreting it.
+     * A true return with NULL output means no metatype; false is a service
+     * fault. The output belongs to arena. Authored equations remain on the
+     * ordinary relation path; NULL callback keeps generic host dispatch. */
+    bool (*get_metatype)(
+        void *context, Space *space, Arena *arena, Atom *value, Atom **type);
+    /* Compile/instantiate declaration facts, not relational type answers.
+     * Atoms and literal modes belong to arena; free the returned call array.
+     * A NULL service uses the same uncached compilation. */
+    bool (*type_calls)(
+        void *context, Space *space, Arena *arena, Atom *head,
+        CettaExprLen supplied, PettaTypeCall **calls, uint32_t *count,
+        bool *hold_body);
 } PettaMachineHost;
 
 typedef enum {
@@ -599,6 +643,18 @@ int petta_machine_typecheck_exit_code(const PettaMachine *machine);
 /* True when the last answer is an Error that was raised and not caught,
  * rather than an Error value. */
 bool petta_machine_last_answer_raised(const PettaMachine *machine);
+/* A machine created to evaluate for a caller that delays goals starts from
+ * a copy of them, as a child machine does. */
+bool petta_machine_inherit_delayed_goals(PettaMachine *machine,
+                                         const CettaDelayService *service);
+/* The goals the machine delays on an answer's variables (those of the
+ * answer, of the values its environment gives, and the visible variables it
+ * leaves unbound), as a conditional answer's payload (carried components):
+ * the caller withdraws what it delays on those variables and suspends these
+ * in their place.  NULL when there is none. */
+bool petta_machine_answer_delayed(PettaMachine *machine, Atom *answer,
+                                  const Bindings *environment, Arena *arena,
+                                  Atom **payload);
 
 void petta_machine_destroy(PettaMachine *machine);
 /* Whether CETTA_PETTA_QUERY_TRACE asks to see each query of `head`: the

@@ -5972,6 +5972,7 @@ bool bindings_builder_init(BindingsBuilder *bb, const Bindings *base) {
     bb->unobserved_write_region_has_checkpoint = false;
     bb->unobserved_write_region_entry_mark = 0u;
     bb->frame_registration_save_barrier = false;
+    bb->history = (BindingsBuilderHistory){0};
     if (!base)
         return true;
     if (!bindings_clone(&bb->current, base)) {
@@ -6023,6 +6024,7 @@ void bindings_builder_init_owned(BindingsBuilder *bb, Bindings *owned) {
     bb->unobserved_write_region_has_checkpoint = false;
     bb->unobserved_write_region_entry_mark = 0u;
     bb->frame_registration_save_barrier = false;
+    bb->history = (BindingsBuilderHistory){0};
     bindings_init(owned);
 }
 
@@ -6377,6 +6379,8 @@ void bindings_builder_rollback(BindingsBuilder *bb, uint32_t mark) {
     }
     if (bb->unobserved_write_region_active)
         bb->unobserved_write_region_has_checkpoint = false;
+    if (bb->history.rollback)
+        bb->history.rollback(bb->history.context, mark);
 }
 
 void bindings_builder_commit(BindingsBuilder *bb) {
@@ -6386,6 +6390,50 @@ void bindings_builder_commit(BindingsBuilder *bb) {
     bindings_builder_discard_frame_registration_history(bb, false);
     bb->prime_trail_len = 0;
     bb->unobserved_write_region_has_checkpoint = false;
+    if (bb->history.commit)
+        bb->history.commit(bb->history.context);
+}
+
+void bindings_builder_set_history(BindingsBuilder *bb,
+                                  BindingsBuilderHistory history) {
+    if (bb)
+        bb->history = history;
+}
+
+BindingsBuilderWriteMark bindings_builder_write_mark(
+    const BindingsBuilder *bb) {
+    return bb ? (BindingsBuilderWriteMark){bb->current.len, bb->frame_undo_len}
+              : (BindingsBuilderWriteMark){0u, 0u};
+}
+
+bool bindings_builder_visit_bound_since(
+    const BindingsBuilder *bb, BindingsBuilderWriteMark since,
+    bool (*visit)(void *context, VarId var), void *context) {
+    if (!bb || !visit)
+        return false;
+    for (uint32_t row = since.entries; row < bb->current.len; row++) {
+        if (!visit(context, bindings_entry_at(&bb->current, row)->var_id))
+            return false;
+    }
+    for (uint32_t index = since.frame_writes; index < bb->frame_undo_len;
+         index++) {
+        const BindingsFrameUndoEntry *undo = &bb->frame_undo[index];
+        if (!visit(context, var_epoch_id(undo->source_id,
+                                         undo->frame_ref.identity)))
+            return false;
+    }
+    return true;
+}
+
+uint32_t bindings_builder_history_mark(BindingsBuilder *bb) {
+    if (!bb)
+        return UINT32_MAX;
+    bb->unobserved_write_region_has_checkpoint = false;
+    uint32_t mark = bb->trail_len;
+    bool created = false;
+    if (!bindings_builder_snapshot(bb, &created) || !created)
+        return UINT32_MAX;
+    return mark;
 }
 
 bool bindings_builder_prime_present(const BindingsBuilder *bb) {
@@ -10174,6 +10222,8 @@ bool simple_match(Atom *pattern, Atom *target, Bindings *b, Arena *a) {
         case GV_CAPTURE:
         case GV_FOREIGN:
             return pattern->ground.ptr == target->ground.ptr;
+        /* A rational term is equal to any node with its unfolding. */
+        case GV_TERM_GRAPH:
         case GV_BINDINGS:
             return atom_eq(pattern, target);
         case GV_PRIME_NEED_CAPABILITY:
@@ -10184,6 +10234,8 @@ bool simple_match(Atom *pattern, Atom *target, Bindings *b, Arena *a) {
         return false;
 
     case ATOM_EXPR: {
+        if (!atom_petta_decomposition_compatible(pattern, target))
+            return false;
         MatchListMeeting meet;
         switch (match_list_meet(a, pattern, target, &meet)) {
         case MATCH_LIST_MISMATCH:
@@ -10244,6 +10296,8 @@ static bool simple_match_builder_rec(Atom *pattern, Atom *target,
         case GV_CAPTURE:
         case GV_FOREIGN:
             return pattern->ground.ptr == target->ground.ptr;
+        /* A rational term is equal to any node with its unfolding. */
+        case GV_TERM_GRAPH:
         case GV_BINDINGS:
             return atom_eq(pattern, target);
         case GV_PRIME_NEED_CAPABILITY:
@@ -10254,6 +10308,8 @@ static bool simple_match_builder_rec(Atom *pattern, Atom *target,
         return false;
 
     case ATOM_EXPR: {
+        if (!atom_petta_decomposition_compatible(pattern, target))
+            return false;
         MatchListMeeting meet;
         switch (match_list_meet(a, pattern, target, &meet)) {
         case MATCH_LIST_MISMATCH:
@@ -11115,6 +11171,8 @@ retry_pair:
             }
             continue;
         }
+        if (!atom_petta_decomposition_compatible(left, right))
+            goto fail;
         MatchListMeeting meet;
         MatchListOutcome list_outcome =
             left->kind == ATOM_EXPR && right->kind == ATOM_EXPR
@@ -11380,6 +11438,8 @@ bool match_atoms_epoch_positional_linear(Atom *query, Atom *lhs, Bindings *b,
         return false;
     if (lhs->expr.len == 0 || query->expr.len != lhs->expr.len)
         return false;
+    if (!atom_petta_decomposition_compatible(query, lhs))
+        return false;
     Atom *lh = lhs->expr.elems[0];
     Atom *qh = query->expr.elems[0];
     if (!lh || !qh || lh->kind != ATOM_SYMBOL || qh->kind != ATOM_SYMBOL ||
@@ -11430,6 +11490,8 @@ bool match_atoms_epoch_positional_linear_builder(
     if (query->kind != ATOM_EXPR || lhs->kind != ATOM_EXPR)
         return false;
     if (lhs->expr.len == 0u || query->expr.len != lhs->expr.len)
+        return false;
+    if (!atom_petta_decomposition_compatible(query, lhs))
         return false;
     Atom *lh = lhs->expr.elems[0];
     Atom *qh = query->expr.elems[0];
@@ -12559,6 +12621,8 @@ retry_pair:
             }
             continue;
         }
+        if (!atom_petta_decomposition_compatible(left, right))
+            goto fail;
         if (left->kind == ATOM_EXPR && right->kind == ATOM_EXPR &&
             (match_expr_is_list(left) || match_expr_is_list(right))) {
             MatchListMeeting meet;
@@ -13038,6 +13102,8 @@ retry_pair:
                 goto fail;
             continue;
         }
+        if (!atom_petta_decomposition_compatible(left, right))
+            goto fail;
         /* Rule patterns holding a list compile no program (petta_program.c),
          * so here a list meets only an expression, which it never matches. */
         if (left->kind != ATOM_EXPR ||
@@ -13477,14 +13543,17 @@ static bool stored_grounded_equal(Atom *left,
                rhs &&
                cetta_rational_compare_cstr(atom_rational_cstr(left), rhs) == 0;
     }
+    case GV_INTERNAL_TAG:
+        return cetta_internal_tag_is_term_stable(left->ground.ival) &&
+               left->ground.ival == tu_internal_tag(candidate_universe, right_id);
     case GV_SPACE:
     case GV_STATE:
     case GV_CAPTURE:
     case GV_BINDINGS:
     case GV_FOREIGN:
+    case GV_TERM_GRAPH:
     case GV_PRIME_NEED_CAPABILITY:
     case GV_PRIME_CONTEXT:
-    case GV_INTERNAL_TAG:
         return false;
     }
     return false;
@@ -13640,6 +13709,9 @@ retry_pair:
                 goto fail;
             break;
         case ATOM_EXPR:
+            if (atom_petta_value_representation(left) !=
+                tu_petta_value_representation(candidate_universe, right_id))
+                goto fail;
             if (right_kind == ATOM_EXPR &&
                 (match_expr_is_list(left) ||
                  (tu_arity(candidate_universe, right_id) > 0u &&

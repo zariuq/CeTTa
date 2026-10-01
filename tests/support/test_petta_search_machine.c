@@ -15,9 +15,11 @@
 #include "search_control_advice.h"
 #include "stats.h"
 #include "petta_semantics.h"
+#include "petta_type_policy.h"
 #include "petta_typecheck.h"
 #include "symbol.h"
 #include "variant_shape.h"
+#include "binding/frame_identity.h"
 
 #include <assert.h>
 #include <inttypes.h>
@@ -26,6 +28,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 static Atom *parse_one(Arena *arena, const char *source) {
@@ -34,6 +37,267 @@ static Atom *parse_one(Arena *arena, const char *source) {
     Atom *result = count == 1 && forms ? forms[0] : NULL;
     free(forms);
     return result;
+}
+
+static void test_type_policy_component(Arena *arena) {
+    PettaTypeCall call;
+    assert(petta_type_call_open(parse_one(arena, "(-> Number Atom Expression)"), 2u, &call));
+    assert(call.guard_result && !call.hold_result);
+    assert(!petta_type_call_open(call.signature, 1u, NULL));
+    assert(!petta_type_call_open(parse_one(arena, "(-[det]-> Number Atom)"), 1u, NULL));
+    assert(petta_type_argument(call.signature->expr.elems[1], false).demand ==
+           PETTA_TYPE_TRANSLATE_AND_GUARD);
+    assert(petta_type_argument(call.signature->expr.elems[2], false).demand == PETTA_TYPE_RAW);
+    assert(petta_type_demand(parse_one(arena, "%Undefined%")) == PETTA_TYPE_TRANSLATE);
+    assert(petta_type_demand(parse_one(arena, "_")) == PETTA_TYPE_TRANSLATE);
+    assert(petta_type_literal_proves(parse_one(arena, "6"), parse_one(arena, "Number")));
+    assert(!petta_type_literal_proves(parse_one(arena, "6"), parse_one(arena, "Grounded")));
+    Atom *number_prefix = atom_symbol_id(arena, symbol_intern_bytes(
+        g_symbols, (const uint8_t *)"Number\0X", 8u));
+    Atom *underscore_prefix = atom_symbol_id(arena, symbol_intern_bytes(
+        g_symbols, (const uint8_t *)"_\0X", 3u));
+    assert(!petta_type_literal_proves(parse_one(arena, "6"), number_prefix));
+    assert(petta_type_demand(underscore_prefix) == PETTA_TYPE_TRANSLATE_AND_GUARD);
+    Atom *number = parse_one(arena, "6");
+    Atom *number_type = parse_one(arena, "Number");
+    size_t before = arena_accounted_live_bytes(arena);
+    assert(petta_type_literal_proves(number, number_type));
+    assert(arena_accounted_live_bytes(arena) == before);
+    Atom *formal = parse_one(arena, "$type");
+    PettaTypeArgument frozen = petta_type_argument(formal, false);
+    Bindings bindings;
+    bindings_init(&bindings);
+    assert(match_atoms(formal, parse_one(arena, "Atom"), &bindings, arena));
+    assert(frozen.demand == PETTA_TYPE_TRANSLATE_AND_GUARD);
+    bindings_free(&bindings);
+
+    PettaTypeCall telescope;
+    assert(petta_type_call_compile(parse_one(arena, "(-> (: $x Atom) Atom)"), &telescope));
+    PettaTypeArgument literal = petta_type_call_argument(&telescope, 1u, false);
+    PettaTypeArgument dependent = petta_type_call_argument(&telescope, 1u, true);
+    assert(!literal.binder && literal.demand == PETTA_TYPE_TRANSLATE_AND_GUARD);
+    assert(atom_eq(literal.formal, telescope.signature->expr.elems[1]));
+    assert(dependent.binder && dependent.demand == PETTA_TYPE_RAW);
+    assert(atom_is_symbol_id(dependent.formal, g_builtin_syms.atom));
+
+    Atom *types[] = {
+        parse_one(arena, "(-> $a $a Atom)"),
+        parse_one(arena, "(-> $b $b Atom)"),
+        parse_one(arena, "(-> $c $d Atom)"),
+    };
+    assert(petta_type_unique_signatures(types, 3u) == 2u);
+    assert(petta_type_body_is_data(types, 2u));
+    assert(atom_alpha_eq(types[0], parse_one(arena, "(-> $x $x Atom)")));
+    assert(atom_alpha_eq(types[1], parse_one(arena, "(-> $x $y Atom)")));
+
+    Space space;
+    space_init(&space);
+    Atom **answers = NULL;
+    uint32_t count = 0u;
+    assert(petta_type_intrinsic_answers(&space, arena, parse_one(arena, "6"),
+                                       NULL, &answers, &count));
+    assert(count == 1u && atom_eq(answers[0], parse_one(arena, "Number")));
+    free(answers);
+    Atom *output_type = parse_one(arena, "$pcg_type");
+    assert(petta_type_intrinsic_answers(&space, arena, parse_one(arena, "6"),
+                                       output_type, &answers, &count));
+    assert(count == 1u && atom_eq(answers[0], number_type));
+    Bindings output_bindings;
+    bindings_init(&output_bindings);
+    assert(match_atoms(answers[0], output_type, &output_bindings, arena));
+    assert(atom_eq(bindings_apply_if_vars(&output_bindings, arena, output_type), number_type));
+    bindings_free(&output_bindings);
+    free(answers);
+    assert(petta_type_intrinsic_answers(&space, arena, parse_one(arena, "6"),
+                                       parse_one(arena, "%Undefined%"), &answers, &count));
+    assert(count == 1u && atom_eq(answers[0], parse_one(arena, "%Undefined%")));
+    free(answers);
+    assert(petta_type_intrinsic_answers(&space, arena, parse_one(arena, "6"),
+                                       parse_one(arena, "Grounded"), &answers, &count));
+    assert(count == 0u);
+    free(answers);
+    assert(petta_type_intrinsic_answers(&space, arena, parse_one(arena, "(a 6)"),
+                                       parse_one(arena, "(%Undefined% %Undefined%)"),
+                                       &answers, &count));
+    assert(count == 1u);
+    free(answers);
+    Atom *closed_tuple = parse_one(arena, "(box 6)");
+    Atom *expression_type = parse_one(arena, "Expression");
+    before = arena_accounted_live_bytes(arena);
+    assert(petta_type_intrinsic_answers(&space, arena, closed_tuple,
+                                       expression_type, &answers, &count));
+    assert(count == 0u);
+    assert(arena_accounted_live_bytes(arena) == before);
+    free(answers);
+    /* Shape rejection must not skip an explicit scalar declaration. */
+    space_add(&space, parse_one(arena, "(: (box 6) Expression)"));
+    assert(petta_type_intrinsic_answers(&space, arena, closed_tuple,
+                                       expression_type, &answers, &count));
+    assert(count == 1u && atom_eq(answers[0], expression_type));
+    free(answers);
+    /* Nor may it skip an applicable function result. */
+    space_add(&space, parse_one(arena, "(: pcg-constructor (-> Number Expression))"));
+    assert(petta_type_intrinsic_answers(&space, arena,
+                                       parse_one(arena, "(pcg-constructor 6)"),
+                                       expression_type, &answers, &count));
+    assert(count == 1u && atom_eq(answers[0], expression_type));
+    free(answers);
+    space_free(&space);
+    puts("PASS: PeTTa type component separates literal demands, variants and bound queries");
+}
+
+static void test_type_frame_exhaustion(Arena *arena) {
+    /* Exhaust the real identity facility in an isolated child, rather than
+     * changing a production limit or pretending an empty lookup succeeded. */
+    pid_t child = fork();
+    assert(child >= 0);
+    if (child == 0) {
+        Space space;
+        space_init(&space);
+        space_add(&space, parse_one(arena, "(: exhaustion-ground Number)"));
+        space_add(&space, parse_one(arena, "(: exhaustion-poly (-> $t $t))"));
+        Atom *ground = parse_one(arena, "exhaustion-ground");
+        Atom *poly = parse_one(arena, "exhaustion-poly");
+        Atom *number = parse_one(arena, "Number");
+        CettaFrameIdentity *held = malloc(
+            sizeof(*held) * CETTA_FRAME_HANDLE_MASK);
+        assert(held);
+        size_t count = 0u;
+        while (count < CETTA_FRAME_HANDLE_MASK &&
+               cetta_frame_identity_acquire(&held[count]))
+            count++;
+        Atom **types = NULL;
+        uint32_t length = 0u;
+        uint64_t before = cetta_frame_identity_exhaustions();
+        assert(petta_type_intrinsic_answers(&space, arena, ground, NULL,
+                                            &types, &length));
+        assert(length == 1u && atom_eq(types[0], number));
+        assert(cetta_frame_identity_exhaustions() == before);
+        free(types);
+        assert(!petta_type_intrinsic_answers(&space, arena, poly, NULL,
+                                             &types, &length));
+        assert(types == NULL && length == 0u);
+        assert(cetta_frame_identity_exhaustions() > before);
+        pid_t terminal = fork();
+        assert(terminal >= 0);
+        if (terminal == 0) {
+            CETTA_FRAME_IDENTITY_SCOPE(scope);
+            (void)cetta_frame_identity_scope_fresh(&scope);
+            _exit(0);
+        }
+        int terminal_status = 0;
+        assert(waitpid(terminal, &terminal_status, 0) == terminal);
+        assert(WIFEXITED(terminal_status) && WEXITSTATUS(terminal_status) == 2);
+        for (size_t i = 0u; i < count; i++)
+            cetta_frame_identity_release(held[i]);
+        free(held);
+        assert(petta_type_intrinsic_answers(&space, arena, poly, NULL,
+                                            &types, &length));
+        assert(length == 1u && types[0]);
+        free(types);
+        space_free(&space);
+        _exit(0);
+    }
+    int status = 0;
+    assert(waitpid(child, &status, 0) == child);
+    assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    puts("PASS: closed type lookup needs no fresh identity; polymorphic exhaustion is incomplete and recoverable");
+}
+
+static void test_type_call_facts(Arena *arena) {
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    Space space, other, overlay;
+    space_init(&space);
+    space_init(&other);
+    Atom *head = parse_one(arena, "pcg-facts");
+    Atom *one = parse_one(arena, "(: pcg-facts (-> $a $a Atom))");
+    Atom *duplicate = parse_one(arena, "(: pcg-facts (-> $b $b Atom))");
+    Atom *two = parse_one(arena, "(: pcg-facts (-> $a $b %Undefined%))");
+    space_add(&space, one);
+    space_add(&space, duplicate);
+    space_add(&space, two);
+    PettaTypeCall *first = NULL, *next = NULL, *uncached = NULL;
+    uint32_t count = 0u, next_count = 0u, uncached_count = 0u;
+    bool hold = false, next_hold = false, uncached_hold = false;
+    assert(petta_program_type_calls(program, &space, head, 1u, arena,
+                                    &first, &count, &hold));
+    assert(count == 2u && hold && first[0].compiled_demands);
+    assert(atom_eq(first[0].signature->expr.elems[1], first[0].signature->expr.elems[2]));
+    assert(!atom_eq(first[1].signature->expr.elems[1], first[1].signature->expr.elems[2]));
+    assert(petta_program_type_calls(NULL, &space, head, 1u, arena,
+                                    &uncached, &uncached_count, &uncached_hold));
+    assert(uncached_count == count && uncached_hold == hold);
+    for (uint32_t i = 0u; i < count; i++) {
+        assert(atom_alpha_eq(first[i].signature, uncached[i].signature));
+        assert(first[i].raw_arguments == uncached[i].raw_arguments);
+        assert(first[i].translated_arguments == uncached[i].translated_arguments);
+    }
+    free(uncached);
+    space_add(&space, parse_one(arena, "ordinary-data"));
+    assert(petta_program_type_calls(program, &space, head, 2u, arena,
+                                    &next, &next_count, &next_hold));
+    assert(next_count == count && next_hold);
+    assert(!atom_eq(first[0].signature->expr.elems[1], next[0].signature->expr.elems[1]));
+    free(next);
+    assert(petta_type_call_argument(&first[0], 1u, false).demand == PETTA_TYPE_TRANSLATE_AND_GUARD);
+
+    /* The same name in a different owner cannot reuse these facts. */
+    Atom *other_type = parse_one(arena, "(: pcg-facts (-> Atom Number))");
+    space_add(&other, other_type);
+    assert(petta_program_type_calls(program, &other, head, 1u, arena,
+                                    &next, &next_count, &next_hold));
+    assert(next_count == 1u && !next_hold && next[0].guard_result);
+    assert(petta_type_call_argument(&next[0], 1u, false).demand == PETTA_TYPE_RAW);
+    free(next);
+
+    /* Base edits invalidate an overlay even without an overlay-local edit. */
+    space_init_overlay(&overlay, &other);
+    assert(petta_program_type_calls(program, &overlay, head, 1u, arena,
+                                    &next, &next_count, &next_hold));
+    assert(next_count == 1u && next[0].guard_result);
+    free(next);
+    space_add(&other, parse_one(arena, "(: pcg-facts (-> Number Atom))"));
+    /* An overlay captures a visible prefix: later base appends are hidden.
+     * Rewriting that prefix, however, changes the declaration it presents. */
+    assert(petta_program_type_calls(program, &overlay, head, 1u, arena,
+                                    &next, &next_count, &next_hold));
+    assert(next_count == 1u && !next_hold && next[0].guard_result);
+    free(next);
+    assert(space_remove(&other, other_type));
+    assert(petta_program_type_calls(program, &overlay, head, 1u, arena,
+                                    &next, &next_count, &next_hold));
+    assert(next_count == 1u && next_hold && !next[0].guard_result);
+    free(next);
+
+    space_remove(&space, one);
+    space_remove(&space, duplicate);
+    space_remove(&space, two);
+    assert(petta_program_type_calls(program, &space, head, 1u, arena,
+                                    &next, &next_count, &next_hold));
+    assert(next_count == 0u && !next_hold);
+    free(next);
+    petta_program_free(program);
+    /* Retiring every cached generation leaves the earlier activation valid. */
+    assert(atom_alpha_eq(first[0].signature, one->expr.elems[2]));
+    assert(petta_type_call_argument(&first[0], 1u, false).demand == PETTA_TYPE_TRANSLATE_AND_GUARD);
+    free(first);
+    space_free(&overlay);
+    space_free(&other);
+    space_free(&space);
+
+    /* The word-sized optimization does not impose an arity limit. */
+    Atom *parts[68];
+    parts[0] = parse_one(arena, "->");
+    for (size_t i = 1u; i < 67u; i++)
+        parts[i] = parse_one(arena, i == 64u ? "_" : "Atom");
+    parts[67] = parse_one(arena, "Number");
+    PettaTypeCall wide;
+    assert(petta_type_call_compile(atom_expr(arena, parts, 68u), &wide));
+    assert(wide.arity == 66u);
+    assert(petta_type_call_argument(&wide, 64u, false).demand == PETTA_TYPE_TRANSLATE);
+    assert(petta_type_call_argument(&wide, 65u, false).demand == PETTA_TYPE_RAW);
+    puts("PASS: compiled PeTTa signature facts preserve fresh sharing, owners, overlays and retired activations");
 }
 
 static void test_library_context_initialization(void) {
@@ -705,7 +969,7 @@ static void test_deep_typecheck_source_rewrites(
     AtomId deep_marker = test_nest_unary_id(
         universe, box, marker, DEEP_FINITE_DEPTH);
     AtomId document[1] = {deep_marker};
-    cetta_petta_erase_typecheck_marks_document(
+    cetta_petta_prepare_document_forms(
         universe, document, 1);
     assert(test_descend_unary_id(
                universe, document[0], box,
@@ -719,7 +983,7 @@ static void test_deep_typecheck_source_rewrites(
     AtomId deep_quoted_marker = test_nest_unary_id(
         universe, box, quoted_marker, DEEP_FINITE_DEPTH);
     document[0] = deep_quoted_marker;
-    cetta_petta_erase_typecheck_marks_document(
+    cetta_petta_prepare_document_forms(
         universe, document, 1);
     assert(document[0] == deep_quoted_marker);
 
@@ -737,7 +1001,7 @@ static void test_deep_typecheck_source_rewrites(
     AtomId match_form = tu_expr_from_ids(
         universe, match_elems, 4u);
     document[0] = match_form;
-    cetta_petta_erase_typecheck_marks_document(
+    cetta_petta_prepare_document_forms(
         universe, document, 1);
     AtomId normalized_match = document[0];
     assert(tu_kind(universe, normalized_match) == ATOM_EXPR);
@@ -772,7 +1036,7 @@ static void test_deep_typecheck_source_rewrites(
     AtomId case_form = tu_expr_from_ids(
         universe, case_elems, 3u);
     document[0] = case_form;
-    cetta_petta_erase_typecheck_marks_document(
+    cetta_petta_prepare_document_forms(
         universe, document, 1);
     AtomId normalized_branches = tu_child(
         universe, document[0], 2u);
@@ -1144,8 +1408,11 @@ static PettaMachineHostMode shared_dag_answer_classify(
 
 static bool shared_dag_answer_evaluate(
     void *context, Space *space, Arena *arena, Atom *expression,
-    const Bindings *environment, OutcomeSet *outcomes) {
+    const Bindings *environment, OutcomeSet *outcomes,
+    CettaCallOutcome *end, const CettaDelayView *delay) {
+    (void)delay;
     (void)space;
+    *end = cetta_call_failure();
     (void)arena;
     (void)expression;
     (void)environment;
@@ -3287,8 +3554,14 @@ static void test_constructor_slot_frame_plans(
     assert(petta_machine_next(
                &machine, &answer, &environment) ==
            PETTA_MACHINE_STEP_ANSWER);
-    assert(atom_alpha_eq(
-        answer, parse_one(answers, "(partial + (2))")));
+    {
+        Atom *base = NULL;
+        Atom *arguments = NULL;
+        assert(petta_semantics_partial_view(answer, &base, &arguments));
+        assert(atom_eq(base, parse_one(answers, "+")));
+        assert(atom_eq(arguments, parse_one(answers, "(2)")));
+        assert(!atom_eq(answer, parse_one(answers, "(partial + (2))")));
+    }
     bindings_free(&environment);
     assert(petta_machine_stats(&machine, &stats));
     /* Ordinary execution materializes the equation RHS before this metric's
@@ -3344,8 +3617,14 @@ static void test_constructor_slot_frame_plans(
     assert(petta_machine_next(
                &machine, &answer, &environment) ==
            PETTA_MACHINE_STEP_ANSWER);
-    assert(atom_alpha_eq(
-        answer, parse_one(answers, "(partial + (1))")));
+    {
+        Atom *base = NULL;
+        Atom *arguments = NULL;
+        assert(petta_semantics_partial_view(answer, &base, &arguments));
+        assert(atom_eq(base, parse_one(answers, "+")));
+        assert(atom_eq(arguments, parse_one(answers, "(1)")));
+        assert(!atom_eq(answer, parse_one(answers, "(partial + (1))")));
+    }
     bindings_free(&environment);
     assert(petta_machine_stats(&machine, &stats));
     assert(stats.pure_grounded_slot_frame_entries == 0u);
@@ -3836,8 +4115,11 @@ static PettaMachineHostMode terminal_empty_classify(
 
 static bool terminal_empty_evaluate(
     void *context, Space *space, Arena *arena, Atom *expression,
-    const Bindings *environment, OutcomeSet *outcomes) {
+    const Bindings *environment, OutcomeSet *outcomes,
+    CettaCallOutcome *end, const CettaDelayView *delay) {
+    (void)delay;
     (void)space;
+    *end = cetta_call_failure();
     (void)environment;
     EquationGuardObserverProbe *probe = context;
     assert(expression->kind == ATOM_EXPR && expression->expr.len == 1u);
@@ -4999,9 +5281,20 @@ static void expect_answers(
             fputc('\n', stderr);
             abort();
         }
-        Atom *expected = parse_one(arena, expected_sources[index]);
+        const char *source = expected_sources[index];
+        bool retained = strncmp(source, "@retained ", 10u) == 0;
+        Atom *expected = parse_one(arena, source + (retained ? 10u : 0u));
         assert(expected);
-        if (!atom_alpha_eq(answer, expected)) {
+        if (retained) {
+            assert(expected->kind == ATOM_EXPR && expected->expr.len == 3u);
+            Atom *base = NULL;
+            Atom *arguments = NULL;
+            assert(petta_semantics_partial_view(answer, &base, &arguments));
+            assert(atom_alpha_eq(base, expected->expr.elems[1]));
+            assert(atom_alpha_eq(arguments, expected->expr.elems[2]));
+            assert(!atom_alpha_eq(answer, expected));
+        }
+        if (!retained && !atom_alpha_eq(answer, expected)) {
             fputs("unexpected PeTTa machine answer: ", stderr);
             atom_print(answer, stderr);
             fputs(" expected ", stderr);
@@ -5603,8 +5896,11 @@ static PettaMachineHostMode host_projection_classify(
 
 static bool host_projection_evaluate(
     void *context, Space *space, Arena *arena, Atom *expression,
-    const Bindings *environment, OutcomeSet *outcomes) {
+    const Bindings *environment, OutcomeSet *outcomes,
+    CettaCallOutcome *end, const CettaDelayView *delay) {
+    (void)delay;
     (void)space;
+    *end = cetta_call_failure();
     HostProjectionProbe *probe = context;
     if (!probe || !arena || !expression || !environment ||
         !outcomes || expression->kind != ATOM_EXPR ||
@@ -10286,6 +10582,9 @@ int main(void) {
     var_intern_init(&variables);
     g_symbols = &symbols;
     g_var_intern = &variables;
+    test_type_policy_component(&answers);
+    test_type_frame_exhaustion(&answers);
+    test_type_call_facts(&answers);
     assert_type_pure_symbol_facts();
     puts("PASS: type-pure grounded symbol facts");
     test_search_context_checkpoint_capabilities();
@@ -10541,7 +10840,7 @@ int main(void) {
     add_equation(
         &space, &persistent,
         "(= (pair2 $left $right) ($left $right))");
-    const char *partial_pair[] = {"(partial pair2 (a))"};
+    const char *partial_pair[] = {"@retained (partial pair2 (a))"};
     expect_answers(
         &space, &answers,
         "(pair2 a)", partial_pair, 1u);
@@ -10549,7 +10848,7 @@ int main(void) {
     expect_answers(
         &space, &answers,
         "((pair2 a) b)", applied_pair, 1u);
-    const char *partial_intrinsic[] = {"(partial + (1))"};
+    const char *partial_intrinsic[] = {"@retained (partial + (1))"};
     expect_answers(
         &space, &answers,
         "(+ 1)", partial_intrinsic, 1u);
@@ -10593,7 +10892,7 @@ int main(void) {
         &space, &persistent,
         "(= (mixed-arity $x $y $z) three)");
     const char *gap_stays_partial[] = {
-        "(partial mixed-arity (a b))",
+        "@retained (partial mixed-arity (a b))",
     };
     expect_answers(
         &space, &answers,

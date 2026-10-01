@@ -1,0 +1,23 @@
+()
+()
+()
+()
+()
+()
+()
+()
+()
+()
+()
+()
+()
+()
+()
+false
+(cons z (f a b))
+(Error (type_error list (f a b)) (context (/ length 2) $V0))
+(Error (type_error list (f a b)) (context (: system (/ msort 2)) $V0))
+()
+f
+3
+true

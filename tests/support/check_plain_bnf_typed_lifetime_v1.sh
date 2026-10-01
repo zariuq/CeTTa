@@ -95,8 +95,8 @@ for bnf_object in "${bnf_objects[@]}"; do
 done
 sha256sum "${bnf_objects[@]}" >> "$bnf_evidence/inputs.sha256"
 bnf_link=("${bnf_cc[@]}" "${bnf_flags[@]}" "$bnf_observer" "${bnf_objects[@]}"
-    '-Wl,--wrap=eval_top_with_registry_petta_plan'
-    '-Wl,--wrap=cetta_library_dispatch_native'
+    '-Wl,--wrap=eval_top_with_registry_petta_plan_outcome'
+    '-Wl,--wrap=cetta_library_call_native'
     '-Wl,--wrap=cetta_library_context_free' "${bnf_ldflags[@]}"
     -o "$bnf_evidence/observe")
 printf '%q ' "${bnf_link[@]}" > "$bnf_evidence/link-command.txt"

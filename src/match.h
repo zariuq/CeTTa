@@ -234,6 +234,17 @@ typedef struct {
     uint32_t trail_mark;
 } BindingsOwnerUndo;
 
+/* A structure kept beside the bindings that records its own changes at the
+ * binding trail's positions (the delay service, delay_service.h): rolling
+ * the bindings back to a mark rolls it back to the same mark, and committing
+ * the trail commits it, so the two keep one history
+ * (ConstraintPropagation.rollback_split). */
+typedef struct {
+    void (*rollback)(void *context, uint32_t trail_mark);
+    void (*commit)(void *context);
+    void *context;
+} BindingsBuilderHistory;
+
 typedef struct {
     Bindings current;
     /* Ownership changes occur only at captured-version boundaries. Ordinary
@@ -288,6 +299,9 @@ typedef struct {
     /* A registration made at the current trail length must make a later
      * save distinguish the state before and after that registration. */
     bool frame_registration_save_barrier;
+    /* None until a structure beside the bindings keeps a history; a clone
+     * starts without one. */
+    BindingsBuilderHistory history;
 } BindingsBuilder;
 
 /*
@@ -772,6 +786,25 @@ bool      bindings_builder_promote_atoms_to_arena(
 bool      bindings_builder_promote_prime_atoms_to_arena(
               BindingsBuilder *bb, Arena *owner);
 void      bindings_builder_free(BindingsBuilder *bb);
+void      bindings_builder_set_history(BindingsBuilder *bb,
+                                       BindingsBuilderHistory history);
+/* The trail position of a change the history is about to record: a
+ * checkpoint is pushed for it, even inside an unobserved write region, so a
+ * mark saved before the change is at or below it and one saved after is
+ * past it.  UINT32_MAX when the trail cannot grow. */
+uint32_t  bindings_builder_history_mark(BindingsBuilder *bb);
+/* A position in a builder's writes: its entries and its frame-slot writes. */
+typedef struct {
+    uint32_t entries;
+    uint32_t frame_writes;
+} BindingsBuilderWriteMark;
+BindingsBuilderWriteMark bindings_builder_write_mark(const BindingsBuilder *bb);
+/* Visit each variable bound since `since`, entries first, by the identity
+ * the bindings give it; a rollback past `since` visits nothing of what it
+ * undid.  False when `visit` is. */
+bool      bindings_builder_visit_bound_since(
+              const BindingsBuilder *bb, BindingsBuilderWriteMark since,
+              bool (*visit)(void *context, VarId var), void *context);
 /* Begin/end one non-nested region whose intermediate physical states are not
  * observed.  Begin captures the exact entrance mark.  End either publishes
  * the final state or restores that mark before the region becomes observable;

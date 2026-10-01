@@ -62,7 +62,9 @@ typedef enum {
     GV_PRIME_NEED_CAPABILITY,
     GV_PRIME_CONTEXT,
     GV_INTERNAL_TAG,
-    GV_BINDINGS
+    GV_BINDINGS,
+    /* A node of a rational term's graph (term_graph.h). */
+    GV_TERM_GRAPH
 } GroundedKind;
 
 typedef enum {
@@ -80,12 +82,33 @@ typedef enum {
     /* A PeTTa operation that has no answer.  In PeTTa `Empty` is data
      * except as a `case` default, so no-result cannot be that symbol. */
     CETTA_INTERNAL_TAG_PETTA_NO_RESULT = 8,
-    CETTA_INTERNAL_TAG_PRIME_HELD = 9,
+    /* A rational term's node with the values of the free variables it
+     * reaches: (tag node value...), term_graph.h. */
+    CETTA_INTERNAL_TAG_RATIONAL = 9,
+    /* A retained PeTTa partial value. Authored `(partial ...)` is a list,
+     * while the reference's partial/2 is a compound. */
+    CETTA_INTERNAL_TAG_PETTA_PARTIAL = 10,
+    /* Private nominal domain of neutral Lam code, and a nullary callable.
+     * Source expressions cannot manufacture these value constructors. */
+    CETTA_INTERNAL_TAG_PETTA_CALLABLE_IDENTITY = 11,
+    CETTA_INTERNAL_TAG_PETTA_NULLARY_CALLABLE = 12,
+    CETTA_INTERNAL_TAG_PRIME_HELD = 13,
 } CettaInternalTag;
 
 static inline bool cetta_internal_tag_is_list(int64_t tag) {
     return tag == (int64_t)CETTA_INTERNAL_TAG_LIST ||
            tag == (int64_t)CETTA_INTERNAL_TAG_LIST_REST;
+}
+
+static inline bool cetta_internal_tag_is_callable(int64_t tag) {
+    return tag == (int64_t)CETTA_INTERNAL_TAG_PETTA_PARTIAL ||
+           tag == (int64_t)CETTA_INTERNAL_TAG_PETTA_CALLABLE_IDENTITY ||
+           tag == (int64_t)CETTA_INTERNAL_TAG_PETTA_NULLARY_CALLABLE;
+}
+
+static inline bool cetta_internal_tag_is_term_stable(int64_t tag) {
+    return cetta_internal_tag_is_list(tag) ||
+           cetta_internal_tag_is_callable(tag);
 }
 
 #define ATOM_FLAG_HAS_VARS 0x01u
@@ -130,9 +153,9 @@ static inline bool cetta_internal_tag_is_list(int64_t tag) {
 #define ATOM_STRUCTURAL_FACTS_VALID UINT32_C(0x80000000)
 #define ATOM_STRUCTURAL_HAS_INTERNAL_TAG UINT32_C(0x00000001)
 #define ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID UINT32_C(0x00000002)
-/* A NaN float leaf, or a state cell, whose value may become one.  A NaN
- * equals nothing, not even itself, so an atom is value-equal to itself only
- * when it holds none. */
+/* A NaN float leaf, a state cell, whose value may become one, or a rational
+ * term's node, whose leaves may hold one.  A NaN equals nothing, not even
+ * itself, so an atom is value-equal to itself only when it holds none. */
 #define ATOM_STRUCTURAL_HAS_NAN UINT32_C(0x00000004)
 /* The atom is or contains a list pattern with a rest, (LIST_REST x... rest). */
 #define ATOM_STRUCTURAL_HAS_OPEN_LIST UINT32_C(0x00000040)
@@ -154,18 +177,27 @@ static inline bool cetta_internal_tag_is_list(int64_t tag) {
  * slot is free (PrefixBuffer.claimable_iff_free_below).  A fact of the node
  * alone: no expression holding it as a child inherits it. */
 #define ATOM_STRUCTURAL_FRONT_SLACK UINT32_C(0x00000020)
+/* A node of a rational term (term_graph.h), so the term is not a finite
+ * tree.  Such an atom is equal to, and hashes as, every other atom with the
+ * same unfolding, whatever part of it is open. */
+#define ATOM_STRUCTURAL_HAS_RATIONAL UINT32_C(0x00000100)
+#define ATOM_STRUCTURAL_HAS_PETTA_NONLIST UINT32_C(0x00000200)
 /* Each fact has its own bit: for one-bit flags the sum equals the union
  * exactly when no two share one. */
 _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
                        ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID + ATOM_STRUCTURAL_HAS_NAN +
                        ATOM_STRUCTURAL_HAS_OPEN_LIST + ATOM_STRUCTURAL_HAS_LIST +
                        ATOM_STRUCTURAL_GENERATION_CLOSED +
-                       ATOM_STRUCTURAL_HAS_LIST_CARRIER + ATOM_STRUCTURAL_FRONT_SLACK ==
+                       ATOM_STRUCTURAL_HAS_LIST_CARRIER + ATOM_STRUCTURAL_FRONT_SLACK +
+                       ATOM_STRUCTURAL_HAS_RATIONAL +
+                       ATOM_STRUCTURAL_HAS_PETTA_NONLIST ==
                    (ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_HAS_INTERNAL_TAG |
                     ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID | ATOM_STRUCTURAL_HAS_NAN |
                     ATOM_STRUCTURAL_HAS_OPEN_LIST | ATOM_STRUCTURAL_HAS_LIST |
                     ATOM_STRUCTURAL_GENERATION_CLOSED |
-                    ATOM_STRUCTURAL_HAS_LIST_CARRIER | ATOM_STRUCTURAL_FRONT_SLACK),
+                    ATOM_STRUCTURAL_HAS_LIST_CARRIER | ATOM_STRUCTURAL_FRONT_SLACK |
+                    ATOM_STRUCTURAL_HAS_RATIONAL |
+                    ATOM_STRUCTURAL_HAS_PETTA_NONLIST),
                "structural fact bits overlap");
 
 /*
@@ -288,6 +320,16 @@ static inline bool atom_structural_may_have_nan(const Atom *atom) {
            (atom->structural_facts & ATOM_STRUCTURAL_HAS_NAN) != 0u;
 }
 
+/* The atom holds a rational term's node.  Exact where the facts are known;
+ * an atom without facts is read as it is built, and a node below it answers
+ * for itself. */
+static inline bool atom_structural_has_rational(const Atom *atom) {
+    return atom &&
+           (atom->structural_facts & (ATOM_STRUCTURAL_FACTS_VALID |
+                                      ATOM_STRUCTURAL_HAS_RATIONAL)) ==
+               (ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_HAS_RATIONAL);
+}
+
 static inline bool atom_is_internal_tag(
         const Atom *atom, CettaInternalTag tag) {
     return atom && atom->kind == ATOM_GROUNDED &&
@@ -307,12 +349,83 @@ static inline bool atom_is_list_rest(const Atom *atom) {
            atom_is_internal_tag(atom->expr.elems[0], CETTA_INTERNAL_TAG_LIST_REST);
 }
 
+/* A Prolog compound PeTTa holds (Predicate's value, or one Prolog hands
+ * back): a term, not a sequence.  The reference's non_list/1 holds of it. */
+static inline bool atom_is_petta_prolog_compound(const Atom *atom) {
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len == 2u &&
+           atom_is_internal_tag(atom->expr.elems[0],
+                                CETTA_INTERNAL_TAG_PETTA_PROLOG_COMPOUND);
+}
+
+static inline bool atom_is_petta_partial(const Atom *atom) {
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len == 3u &&
+           atom_is_internal_tag(atom->expr.elems[0],
+                                CETTA_INTERNAL_TAG_PETTA_PARTIAL);
+}
+
+/* Public value role is independent of the expression-shaped executable
+ * representation. Private tags establish that role; public head spellings do
+ * not. A constructor-derived negative fact keeps ordinary matching O(1). */
+typedef enum {
+    PETTA_VALUE_ORDINARY = 0,
+    PETTA_VALUE_REGISTERED_CALLABLE,
+    PETTA_VALUE_COMPOUND,
+} PeTTaValueRepresentation;
+
+static inline PeTTaValueRepresentation atom_petta_value_representation(
+        const Atom *atom) {
+    if (!atom || atom->kind != ATOM_EXPR ||
+        ((atom->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) != 0u &&
+         (atom->structural_facts & ATOM_STRUCTURAL_HAS_PETTA_NONLIST) == 0u))
+        return PETTA_VALUE_ORDINARY;
+    if (atom_is_petta_prolog_compound(atom) || atom_is_petta_partial(atom))
+        return PETTA_VALUE_COMPOUND;
+    if (atom->expr.len == 3u) {
+        if (atom_is_internal_tag(atom->expr.elems[0],
+                CETTA_INTERNAL_TAG_PETTA_NULLARY_CALLABLE))
+            return PETTA_VALUE_REGISTERED_CALLABLE;
+        const Atom *domain = atom->expr.elems[1];
+        if (domain && domain->kind == ATOM_EXPR && domain->expr.len == 2u &&
+            atom_is_internal_tag(domain->expr.elems[0],
+                CETTA_INTERNAL_TAG_PETTA_CALLABLE_IDENTITY))
+            return PETTA_VALUE_REGISTERED_CALLABLE;
+    }
+    return PETTA_VALUE_ORDINARY;
+}
+
+/* Only privately constructed callable values carry an identity. Authored
+ * Lam/partial expressions do not acquire one from their public spelling. */
+static inline bool atom_petta_callable_identity(
+        const Atom *atom, int64_t *identity) {
+    if (!identity || atom_petta_value_representation(atom) !=
+                         PETTA_VALUE_REGISTERED_CALLABLE)
+        return false;
+    const Atom *token = atom_is_internal_tag(atom->expr.elems[0],
+        CETTA_INTERNAL_TAG_PETTA_NULLARY_CALLABLE)
+        ? atom->expr.elems[1] : atom->expr.elems[1]->expr.elems[1];
+    if (!token || token->kind != ATOM_GROUNDED ||
+        token->ground.gkind != GV_INT || token->ground.ival <= 0)
+        return false;
+    *identity = token->ground.ival;
+    return true;
+}
+
+/* Call after dereferencing variables. A variable may bind a whole value;
+ * expression decomposition must preserve its public constructor class. */
+static inline bool atom_petta_decomposition_compatible(
+        const Atom *left, const Atom *right) {
+    return atom_petta_value_representation(left) ==
+           atom_petta_value_representation(right);
+}
+
 /* The elements a sequence primitive (car-atom, size-atom, ...) reads: an
  * expression's, or a list's after its tag.  False for any other atom,
- * including a list pattern, whose length is not known. */
+ * including a list pattern, whose length is not known, and a Prolog
+ * compound, which is a term, not a sequence. */
 static inline bool atom_sequence_view(const Atom *atom, Atom *const **elems,
                                       CettaExprLen *len) {
-    if (!atom || atom->kind != ATOM_EXPR || atom_is_list_rest(atom))
+    if (!atom || atom->kind != ATOM_EXPR || atom_is_list_rest(atom) ||
+        atom_petta_value_representation(atom) != PETTA_VALUE_ORDINARY)
         return false;
     bool list = atom_is_list(atom);
     *elems = atom->expr.elems + (list ? 1u : 0u);
@@ -413,6 +526,9 @@ typedef struct {
      * Linked once after initialization; an older generation has none of its
      * own. */
     uint32_t older_identity;
+    /* The capacity of a new block; zero for ARENA_BLOCK_SIZE
+     * (arena_set_block_capacity). */
+    uint32_t block_capacity;
     /*
      * Monotone allocation epoch.  Arena identity survives mark/reset, while
      * reset_epoch changes whenever reset or free invalidates owned pointers.
@@ -473,6 +589,10 @@ void  arena_init(Arena *a);
  * cross-thread owners: an ordinary arena_init deliberately inherits the
  * current evaluator's table for branch-local sharing. */
 void  arena_init_detached(Arena *a);
+/* An arena that holds little takes blocks of `capacity` bytes rather than
+ * ARENA_BLOCK_SIZE; an allocation larger than that still gets a block of its
+ * own size. */
+void  arena_set_block_capacity(Arena *a, size_t capacity);
 void  arena_free(Arena *a);
 void  arena_reserve(Arena *a, size_t size);
 void  arena_set_hashcons(Arena *a, HashConsTable *hc);
@@ -591,6 +711,9 @@ struct HashConsTable {
 };
 
 void hashcons_init(HashConsTable *hc);
+/* A private ownership domain starts small and uses the same growing table.
+ * Canonical atoms retain their addresses when its index grows. */
+void hashcons_init_compact(HashConsTable *hc);
 void hashcons_free(HashConsTable *hc);
 /*
  * Return a shared atom if an identical one exists, otherwise insert it.
@@ -824,9 +947,41 @@ Atom *atom_capture(Arena *a, CaptureClosure *closure);
 typedef struct CettaForeignHold {
     void (*retain)(void *record);
     void (*release)(void *record);
+    /* How PeTTa prints the record's value; NULL keeps the generic form. */
+    void (*print_petta)(const void *record, FILE *out);
 } CettaForeignHold;
 
 Atom *atom_foreign(Arena *a, CettaForeignValue *value);
+
+/* A node of a rational term's graph (term_graph.h), the payload of a
+ * GV_TERM_GRAPH atom: one record per node for the graph's life, so two atoms
+ * of one node hold the same pointer. */
+typedef struct CettaTermGraph CettaTermGraph;
+typedef struct {
+    CettaTermGraph *graph;
+    uint32_t node;
+} CettaTermGraphRef;
+
+/* The atom of a graph node, the graph retained by `arena`. */
+Atom *atom_term_graph(Arena *arena, CettaTermGraph *graph, uint32_t node);
+const CettaTermGraphRef *atom_term_graph_ref(const Atom *atom);
+/* A reader of term structure sees a rational term's node, or its carrier,
+ * as its term one level open (term_graph_open_value); any other atom is
+ * itself.  NULL when the opening cannot be allocated. */
+Atom *atom_rational_open(Arena *arena, Atom *atom);
+static inline bool atom_is_rational_node(const Atom *atom) {
+    return atom && atom->kind == ATOM_GROUNDED &&
+           atom->ground.gkind == GV_TERM_GRAPH;
+}
+/* A rational term's node as a value: its node atom when the node reaches no
+ * free variable, else its carrier (term_graph.h). */
+static inline bool atom_is_rational_value(const Atom *atom) {
+    return atom_is_rational_node(atom) ||
+           (atom && atom->kind == ATOM_EXPR && atom->expr.len >= 2u &&
+            atom_is_internal_tag(atom->expr.elems[0],
+                                 CETTA_INTERNAL_TAG_RATIONAL) &&
+            atom_is_rational_node(atom->expr.elems[1]));
+}
 Atom *atom_internal_tag(Arena *a, CettaInternalTag tag);
 
 /* A held value: syntax that a Data-typed position received as written.  The
@@ -979,6 +1134,8 @@ bool atom_is_symbol(Atom *a, const char *name);
 bool atom_is_symbol_named(Atom *a, const char *name);
 bool atom_is_empty(Atom *a);
 bool atom_is_error(Atom *a);
+/* An integer, float, big integer or rational. */
+bool atom_is_number(const Atom *atom);
 bool atom_is_empty_or_error(Atom *a);
 bool atom_is_var(Atom *a);
 bool atom_is_expr(Atom *a);

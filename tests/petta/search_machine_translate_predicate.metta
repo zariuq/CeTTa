@@ -1,11 +1,15 @@
 (= (native-predicate-inc $x) (+ $x 1))
-(= (predicate-value $x) (Predicate (+ $x 1)))
+(= (predicate-value $x) (Predicate (quote (+ $x 1))))
+(= (predicate-sum $x) (Predicate (+ $x 1)))
 
-; Predicate is the reified-call boundary: bindings flow into its body, but
-; call-shaped syntax remains data until a predicate operation consumes it.
+; Predicate is a function: its argument is evaluated and the value names the
+; term.  A quoted argument is the goal it spells, bindings included.
 !(test
     (predicate-value 41)
-    (quote (Predicate (+ 41 1))))
+    (Predicate (quote (+ 41 1))))
+
+; Evaluated, (+ 41 1) is 42, which names no term.
+!(test (collapse (predicate-sum 41)) ())
 
 ; The same syntax remains executable outside that boundary.
 !(test (+ 41 1) 42)
@@ -27,6 +31,6 @@
     (collapse (translatePredicate (+ 2 40 41)))
     ())
 
-!(test
-    (translatePredicate (unknown-predicate a $x))
-    (quote (translatePredicate (unknown-predicate a $x))))
+; A goal Prolog does not define raises its existence error, as the
+; reference's compiled call does.
+!(catch (translatePredicate (unknown-predicate a $x)))
