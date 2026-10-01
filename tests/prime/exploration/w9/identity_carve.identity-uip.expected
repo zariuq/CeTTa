@@ -1,0 +1,6 @@
+[identity-uip]
+[True]
+[True]
+[(id (u 0) Bool Bool)]
+[(type:of (ua Bool Bool not-equiv))]
+[(type:eq (ua Bool Bool not-equiv) (refl Bool))]

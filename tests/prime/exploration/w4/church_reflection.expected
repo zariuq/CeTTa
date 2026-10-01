@@ -1,0 +1,4 @@
+[True]
+[True]
+[(type:eq ((((lam (m : (-> (-> Base Base) (-> Base Base))) (lam (n : (-> (-> Base Base) (-> Base Base))) (lam (f : (-> Base Base)) (lam (x : Base) ((m f) ((n f) x)))))) (lam (f : (-> Base Base)) (lam (x : Base) (f (f x))))) (lam (f : (-> Base Base)) (lam (x : Base) (f (f x)))))) (lam (f : (-> Base Base)) (lam (x : Base) (f (f (f (f x)))))) 1)]
+[True]

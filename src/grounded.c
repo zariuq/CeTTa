@@ -2015,10 +2015,38 @@ static bool grounded_keyed_number_compare(
         isnan(left->val) || isnan(right->val)) {
         return false;
     }
-    *ordering = left->val < right->val
-        ? -1 : left->val > right->val ? 1 : 0;
+    if (!left->is_float && !right->is_float) {
+        *ordering = left->ival < right->ival ? -1 : left->ival > right->ival ? 1 : 0;
+    } else if (left->is_float && right->is_float) {
+        *ordering = left->val < right->val ? -1 : left->val > right->val ? 1 : 0;
+    } else {
+        const NumArg *floating = left->is_float ? left : right;
+        const NumArg *integer = left->is_float ? right : left;
+        int compare;
+        /* Check the conversion range before truncation.  Converting the
+         * integer to double first would collapse adjacent large integers. */
+        if (floating->val < -0x1p63)
+            compare = -1;
+        else if (floating->val >= 0x1p63)
+            compare = 1;
+        else {
+            int64_t truncated = (int64_t)floating->val;
+            compare = truncated < integer->ival ? -1 : truncated > integer->ival ? 1 :
+                floating->val < (double)truncated ? -1 :
+                floating->val > (double)truncated ? 1 : 0;
+        }
+        *ordering = left->is_float ? compare : -compare;
+    }
     return true;
 #endif
+}
+
+bool grounded_compare_numeric_atoms(Atom *left, Atom *right, int *ordering) {
+    NumArg l, r;
+    if (!left || !right || !ordering ||
+        !get_numeric_arg(left, &l) || !get_numeric_arg(right, &r))
+        return false;
+    return grounded_keyed_number_compare(&l, &r, ordering);
 }
 
 typedef enum {

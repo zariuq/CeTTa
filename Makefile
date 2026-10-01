@@ -33342,6 +33342,101 @@ $(NIK_RUNTIME_TEST_BIN): \
 test-nik-runtime-v1: $(NIK_RUNTIME_TEST_BIN)
 	@$(NIK_RUNTIME_TEST_BIN)
 
+INFERENCE_TRACE_SCOPE_TEST_BIN = runtime/test_inference_trace_scope_v1-$(BUILD_OBJ_TAG)
+
+$(INFERENCE_TRACE_SCOPE_TEST_BIN): \
+		tests/support/test_inference_trace_scope_v1.c \
+		src/inference_checker.h \
+		$(PRIME_NIK_RUNTIME_GENERATED_C) \
+		$(PRIME_NIK_SIDE_CONDITION_PROVIDER_CATALOG_GENERATED_C) \
+		$(FALLBACK_EVAL_TEST_LINK_OBJ) \
+		$(COMPILED_READER_RUNTIME_OBJ) \
+		$(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ \
+		tests/support/test_inference_trace_scope_v1.c \
+		$(PRIME_NIK_RUNTIME_GENERATED_C) \
+		$(PRIME_NIK_SIDE_CONDITION_PROVIDER_CATALOG_GENERATED_C) \
+		$(FALLBACK_EVAL_TEST_LINK_OBJ) \
+		$(COMPILED_READER_RUNTIME_OBJ) $(LDFLAGS)
+
+.PHONY: test-inference-trace-scope-v1
+test: test-inference-trace-scope-v1
+test-inference-trace-scope-v1: $(INFERENCE_TRACE_SCOPE_TEST_BIN)
+	@$(INFERENCE_TRACE_SCOPE_TEST_BIN)
+
+# Experimental Vibe-ITP certificate reader over the VIBE-ITP NIK authority.
+# Hand-written stepping stone: not part of the production gate.  The
+# authority lives in its own experiment catalog, outside the default NIK
+# authority catalog: the Lean export writes the catalog, and the native
+# catalog tool admits it and generates the registry the reader links.
+VIBE_ITP_NIK_HOST_BIN = runtime/vibe-itp-nik-host-v1-$(BUILD_OBJ_TAG)
+VIBE_ITP_NIK_AUTHORITY_EXPORTER = experiments/vibe_itp_nik/export_vibe_itp_authority_catalog_v1.lean
+VIBE_ITP_NIK_AUTHORITY_CATALOG = experiments/vibe_itp_nik/vibe_itp_authority_catalog_v1.metta
+VIBE_ITP_NIK_REGISTRY_DIR = runtime/vibe-itp-nik
+VIBE_ITP_NIK_REGISTRY_H = $(VIBE_ITP_NIK_REGISTRY_DIR)/vibe_itp_authorities_v1.generated.h
+VIBE_ITP_NIK_REGISTRY_C = $(VIBE_ITP_NIK_REGISTRY_DIR)/vibe_itp_authorities_v1.generated.c
+
+$(VIBE_ITP_NIK_REGISTRY_H) $(VIBE_ITP_NIK_REGISTRY_C) &: \
+		$(NIK_AUTHORITY_CATALOG_NATIVE_V1_BIN) \
+		$(VIBE_ITP_NIK_AUTHORITY_CATALOG)
+	@set -eu; \
+	mkdir -p $(VIBE_ITP_NIK_REGISTRY_DIR); \
+	registry_stage=$$(mktemp -d "$(VIBE_ITP_NIK_REGISTRY_DIR)/.registry.XXXXXX"); \
+	$(NIK_AUTHORITY_CATALOG_NATIVE_V1_BIN) \
+		--catalog $(VIBE_ITP_NIK_AUTHORITY_CATALOG) \
+		--header "$$registry_stage/catalog.h" \
+		--source "$$registry_stage/catalog.c" \
+		--symbol cetta_vibe_itp_authorities_v1 \
+		--header-include vibe_itp_authorities_v1.generated.h; \
+	test -s "$$registry_stage/catalog.h" && test -s "$$registry_stage/catalog.c"; \
+	mv "$$registry_stage/catalog.h" $(VIBE_ITP_NIK_REGISTRY_H); \
+	mv "$$registry_stage/catalog.c" $(VIBE_ITP_NIK_REGISTRY_C); \
+	rmdir "$$registry_stage"
+
+$(VIBE_ITP_NIK_HOST_BIN): \
+		experiments/vibe_itp_nik/vibe_itp_nik_host_v1.c \
+		src/inference_checker.h \
+		$(VIBE_ITP_NIK_REGISTRY_H) \
+		$(VIBE_ITP_NIK_REGISTRY_C) \
+		$(PRIME_NIK_RUNTIME_GENERATED_C) \
+		$(PRIME_NIK_SIDE_CONDITION_PROVIDER_CATALOG_GENERATED_C) \
+		$(FALLBACK_EVAL_TEST_LINK_OBJ) \
+		$(COMPILED_READER_RUNTIME_OBJ) \
+		$(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) -I$(VIBE_ITP_NIK_REGISTRY_DIR) $(CFLAGS) -std=gnu11 -o $@ \
+		experiments/vibe_itp_nik/vibe_itp_nik_host_v1.c \
+		$(VIBE_ITP_NIK_REGISTRY_C) \
+		$(PRIME_NIK_RUNTIME_GENERATED_C) \
+		$(PRIME_NIK_SIDE_CONDITION_PROVIDER_CATALOG_GENERATED_C) \
+		$(FALLBACK_EVAL_TEST_LINK_OBJ) \
+		$(COMPILED_READER_RUNTIME_OBJ) $(LDFLAGS)
+
+.PHONY: vibe-itp-nik-host
+vibe-itp-nik-host: $(VIBE_ITP_NIK_HOST_BIN)
+	@echo "$(VIBE_ITP_NIK_HOST_BIN)"
+
+# The experiment catalog is exactly the Lean export of the kernel package.
+.PHONY: test-vibe-itp-nik-lean-export
+test-vibe-itp-nik-lean-export: $(VIBE_ITP_NIK_AUTHORITY_EXPORTER)
+	@test -n "$(METTAPEDIA_LEAN_ROOT)" || { \
+		echo "METTAPEDIA_LEAN_ROOT must name the Mettapedia Lean project"; \
+		exit 2; \
+	}
+	@set -eu; \
+	mkdir -p $(BOOTSTRAP_TMPDIR); \
+	tmp_catalog=$$(mktemp "$(BOOTSTRAP_TMPDIR)/vibe-itp-nik-catalog.XXXXXX"); \
+	tmp_catalog_abs=$$(realpath "$$tmp_catalog"); \
+	checked_catalog_abs=$$(realpath "$(VIBE_ITP_NIK_AUTHORITY_CATALOG)"); \
+	trap 'rm -f "$$tmp_catalog_abs"' EXIT INT TERM; \
+	cd "$(METTAPEDIA_LEAN_ROOT)" && \
+		lake env lean --run \
+			"$(abspath $(VIBE_ITP_NIK_AUTHORITY_EXPORTER))" \
+			"$$tmp_catalog_abs"; \
+	cmp "$$tmp_catalog_abs" "$$checked_catalog_abs"; \
+	echo "(VibeItpNikLeanExportSummary exact=1 authorities=1)"
+
 $(NIK_LICENSED_IMPLEMENTATION_SELECTION_TEST_BIN): \
 		tests/support/test_nik_licensed_implementation_selection.c \
 		src/nik_licensed_implementation_selection.h \
@@ -41589,3 +41684,59 @@ test-petta-variable-inventory-order: $(BIN)
 	@echo "PASS: variable inventories preserve first appearance, aliases and per-form scope"
 
 test-petta-semantics: test-petta-variable-inventory-order
+
+# Examples kept in step with the Prime foundation exploration: programs and
+# curriculum items whose expected outputs follow from named theorems of the
+# metatheory.  A file runs once for its plain expected output and once for
+# each identity profile that has an expected output of its own.
+.PHONY: test-prime-exploration
+test-prime: test-prime-exploration
+test-prime-exploration: $(BIN)
+	@pass=0; fail=0; \
+	for f in tests/prime/exploration/*/*.metta; do \
+		ran=0; \
+		for p in plain $(PRIME_IDENTITY_PROFILES); do \
+			if [ $$p = plain ]; then \
+				exp="$${f%.metta}.expected"; flags=""; label="$$f"; \
+			else \
+				exp="$${f%.metta}.$$p.expected"; flags="--profile $$p"; label="$$f under $$p"; \
+			fi; \
+			[ -f "$$exp" ] || continue; \
+			ran=1; \
+			result=$$(timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime $$flags "$$f" 2>&1); \
+			status=$$?; \
+			if [ $$status -eq 0 ] && [ "$$result" = "$$(cat "$$exp")" ]; then \
+				echo "PASS: $$label"; pass=$$((pass + 1)); \
+			else \
+				echo "FAIL: $$label (exit $$status)"; \
+				diff <(cat "$$exp") <(echo "$$result") | head -20; \
+				fail=$$((fail + 1)); \
+			fi; \
+		done; \
+		if [ $$ran -eq 0 ]; then \
+			echo "FAIL: $$f (no expected output)"; fail=$$((fail + 1)); \
+		fi; \
+	done; \
+	echo "Prime exploration examples: $$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
+
+.PHONY: test-prime-native-control test-prime-native-control-mutations
+test-prime: test-prime-native-control test-prime-native-control-mutations
+test-prime-native-control: $(BIN)
+	@python3 scripts/test_prime_native_control.py --binary "$(BIN)"
+
+PRIME_NATIVE_CONTROL_MUTATION_DIR ?= runtime/prime-native-control-mutations
+test-prime-native-control-mutations: $(BIN)
+	@set -eu; \
+	mkdir -p "$(PRIME_NATIVE_CONTROL_MUTATION_DIR)"; \
+	for mutation in DROP DUPLICATE INVENT FALSE_CLOSED EARLY_BEST; do \
+		object="$(PRIME_NATIVE_CONTROL_MUTATION_DIR)/eval-$$mutation.o"; \
+		binary="$(PRIME_NATIVE_CONTROL_MUTATION_DIR)/cetta-$$mutation"; \
+		$(CC) $(CPPFLAGS) $(CFLAGS) \
+			-DCETTA_PRIME_NATIVE_CONTROL_MUTATION_$$mutation=1 \
+			-c src/eval.c -o "$$object"; \
+		$(CC) $(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) \
+			"$$object" -o "$$binary" $(LDFLAGS); \
+		python3 scripts/test_prime_native_control.py --binary "$$binary" \
+			--mutation "$$mutation" --receipt "$(PRIME_NATIVE_CONTROL_MUTATION_DIR)/$$mutation.json"; \
+	done
