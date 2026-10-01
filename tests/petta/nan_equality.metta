@@ -1,0 +1,16 @@
+; PeTTa's == compares numbers by exact value, and every NaN equals every NaN
+; and nothing else (SWI-PeTTa's answers).
+(= (nan) (let $_ (translatePredicate (is $n nan)) $n))
+(= (inf) (let $_ (translatePredicate (is $i inf)) $i))
+!(let $n (nan) (== $n $n))
+!(== (nan) (nan))
+!(!= (nan) (nan))
+!(== (nan) 1.0)
+!(== (nan) 0)
+!(== (nan) (inf))
+!(== (inf) (inf))
+!(let $n (nan) (== (a $n) (a $n)))
+!(let $n (nan) (== (a $n 1) (a $n 1.0)))
+!(let $n (nan) (== (a $n 1) (a $n 2)))
+!(== (a (nan)) (a (nan)))
+!(let $n (nan) (unique-atom ($n $n 1 1.0)))

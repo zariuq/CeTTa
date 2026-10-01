@@ -59,6 +59,9 @@ typedef struct {
     CettaCount match_trie_stale_occurrences;
     /* Cursors on the current pinned view; its trie is not rebuilt or freed
      * while any remain. */
+    /* Cold flat queries can consume the encoded sequence before a full
+     * trie is worth retaining. Repeated scans exhaust this startup allowance. */
+    uint8_t cold_flat_scans;
     uint32_t match_trie_pins;
     SpacePinnedOccurrences *pinned;
     SubstTree *stree;
@@ -66,6 +69,10 @@ typedef struct {
     CettaCount stree_stale_occurrences;
 } SpaceMatchNativeState;
 
+/* Refutation-only encoded scan before retaining a complete cold trie. The
+ * caller still performs canonical matching on each returned occurrence. */
+bool space_match_native_try_cold_candidates(
+    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count);
 void space_match_native_ensure_trie(Space *s);
 void space_match_native_pin_trie(Space *s);
 void space_match_native_unpin_trie(Space *s);

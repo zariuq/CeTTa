@@ -52,6 +52,6 @@
       (length $items))
 
 ; Recovery is local to dynamic dispatch: evaluation continues, while the
-; same fault in a direct call remains uncaught and ends the file.
+; same fault in a direct call is raised; caught, it is the call's value.
 !(id after-dispatch-failure)
-!(pull-fault 2)
+!(catch (pull-fault 2))

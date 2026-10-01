@@ -963,6 +963,8 @@ int cetta_eval_session_process_exit_code(const CettaEvalSession *session) {
 void cetta_eval_session_init(CettaEvalSession *session,
                              CettaLanguageId language_id,
                              const CettaProfile *profile) {
+    session->test_verdict = NULL;
+    session->test_verdict_context = NULL;
     session->language_id = language_id;
     session->profile = cetta_profile_is_valid_for_language(language_id, profile)
         ? profile

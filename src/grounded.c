@@ -316,6 +316,7 @@ static bool petta_repra_render(
             case GV_CAPTURE:
             case GV_BINDINGS:
             case GV_FOREIGN:
+            case GV_TERM_GRAPH:
             case GV_PRIME_NEED_CAPABILITY:
             case GV_PRIME_CONTEXT:
             case GV_INTERNAL_TAG:
@@ -324,6 +325,26 @@ static bool petta_repra_render(
             }
             break;
         case ATOM_EXPR: {
+            int64_t identity = 0;
+            if (atom_petta_callable_identity(atom, &identity)) {
+                char spelling[64];
+                int length = snprintf(spelling, sizeof(spelling), "lambda_%llu",
+                                      (unsigned long long)identity);
+                if (length <= 0 || (size_t)length >= sizeof(spelling)) {
+                    ok = false;
+                    break;
+                }
+                sb_append_n(output, spelling, (size_t)length);
+                break;
+            }
+            if (atom_is_petta_partial(atom)) {
+                sb_append(output, "partial(");
+                ok = petta_repra_push_char(&stack, ')') &&
+                     petta_repra_push_atom(&stack, atom->expr.elems[2]) &&
+                     petta_repra_push_char(&stack, ',') &&
+                     petta_repra_push_atom(&stack, atom->expr.elems[1]);
+                break;
+            }
             Atom *compound = NULL;
             /* A list value is written as the translator's encoding of it,
              * (__tr_list_cons x ... __tr_list_nil), the term upstream PeTTa
@@ -512,6 +533,18 @@ Atom *cetta_fold_bind_step_atom(Arena *a, Atom *atom,
     return bound;
 }
 
+/* Whether the operation now dispatching raised its result: set where an
+ * operation constructs its own error, never by an Error it returns as data
+ * (grounded_call). */
+static __thread bool g_grounded_raised;
+
+/* The operation's own error: (Error call reason), raised. */
+static Atom *grounded_raise(Arena *a, Atom *head, Atom **args,
+                            uint32_t nargs, Atom *reason) {
+    g_grounded_raised = true;
+    return atom_error(a, grounded_call_expr(a, head, args, nargs), reason);
+}
+
 static Atom *grounded_bad_arg_type(Arena *a, Atom *head, Atom **args, uint32_t nargs,
                                    int bad_idx, Atom *expected_type, Atom *actual_atom) {
     Atom *actual_type = (actual_atom && actual_atom->kind == ATOM_GROUNDED)
@@ -523,18 +556,17 @@ static Atom *grounded_bad_arg_type(Arena *a, Atom *head, Atom **args, uint32_t n
         expected_type,
         actual_type
     }, 4);
-    return atom_error(a, grounded_call_expr(a, head, args, nargs), reason);
+    return grounded_raise(a, head, args, nargs, reason);
 }
 
 static Atom *grounded_string_error(Arena *a, Atom *head, Atom **args, uint32_t nargs,
                                    const char *message) {
-    return atom_error(a, grounded_call_expr(a, head, args, nargs),
-                      atom_symbol(a, message));
+    return grounded_raise(a, head, args, nargs, atom_symbol(a, message));
 }
 
 static Atom *grounded_incorrect_arity(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
-    return atom_error(a, grounded_call_expr(a, head, args, nargs),
-                      atom_symbol(a, "IncorrectNumberOfArguments"));
+    return grounded_raise(a, head, args, nargs,
+                          atom_symbol(a, "IncorrectNumberOfArguments"));
 }
 
 static Atom *grounded_expr_message_error(Arena *a, Atom *head, Atom **args, uint32_t nargs,
@@ -550,8 +582,7 @@ static Atom *grounded_expr_message_error(Arena *a, Atom *head, Atom **args, uint
         }
     }
     buf[sizeof(buf) - 1] = '\0';
-    return atom_error(a, grounded_call_expr(a, head, args, nargs),
-                      atom_symbol(a, buf));
+    return grounded_raise(a, head, args, nargs, atom_symbol(a, buf));
 }
 
 static bool find_unused_alpha_equal_atom(Atom **elems, bool *used,
@@ -1036,8 +1067,8 @@ static Atom *grounded_rational_unavailable(Arena *a, Atom *head,
     __attribute__((unused));
 static Atom *grounded_rational_unavailable(Arena *a, Atom *head,
                                            Atom **args, uint32_t nargs) {
-    return atom_error(a, grounded_call_expr(a, head, args, nargs),
-                      atom_symbol(a, "RationalArithmeticUnavailable"));
+    return grounded_raise(a, head, args, nargs,
+                          atom_symbol(a, "RationalArithmeticUnavailable"));
 }
 
 /* % pairs with // in "he" as Python pairs them, so that
@@ -1240,8 +1271,8 @@ static Atom *eval_integer_binary_gmp(Arena *a, Atom *head, SymbolId head_id,
 #else
 static Atom *grounded_bigint_unavailable(Arena *a, Atom *head, Atom **args,
                                          uint32_t nargs) {
-    return atom_error(a, grounded_call_expr(a, head, args, nargs),
-                      atom_symbol(a, "BigintArithmeticUnavailable"));
+    return grounded_raise(a, head, args, nargs,
+                          atom_symbol(a, "BigintArithmeticUnavailable"));
 }
 
 static Atom *eval_integer_binary_gmp(Arena *a, Atom *head, SymbolId head_id,
@@ -1275,7 +1306,10 @@ static Atom *make_numeric(Arena *a, double val, bool any_float) {
 
 bool petta_libpl_evaluate_arithmetic(
     Arena *arena, const char *functor, Atom **args, uint32_t nargs,
-    Atom **out) __attribute__((weak));
+    CettaCallOutcome *out) __attribute__((weak));
+bool petta_libpl_compare_arithmetic(
+    Arena *arena, const char *relation, Atom **args,
+    CettaCallOutcome *out) __attribute__((weak));
 bool petta_libpl_prefer_rationals(void) __attribute__((weak));
 
 /* The functor PeTTa's metta.pl evaluates a MeTTa arithmetic head with. */
@@ -1304,14 +1338,18 @@ static const char *grounded_petta_prolog_functor(SymbolId head_id) {
 /* PeTTa arithmetic off the native fast path goes to the embedded Prolog's
  * is/2, so its value, the float flags in force and any error are exactly
  * SWI-PeTTa's: with a functor the whole operation, without one a single
- * operand.  NULL when no embedded Prolog is available. */
+ * operand.  An error is/2 raises is raised here too.  NULL when no
+ * embedded Prolog is available. */
 static Atom *grounded_petta_prolog_is(Arena *a, const char *functor,
                                       Atom **args, uint32_t nargs) {
-    Atom *out = NULL;
+    CettaCallOutcome out = cetta_call_failure();
     if (!petta_libpl_evaluate_arithmetic ||
         !petta_libpl_evaluate_arithmetic(a, functor, args, nargs, &out))
         return NULL;
-    return out;
+    if (out.kind == CETTA_CALL_RAISED)
+        g_grounded_raised = true;
+    return out.kind == CETTA_CALL_VALUE || out.kind == CETTA_CALL_RAISED
+        ? out.term : NULL;
 }
 
 static Atom *grounded_petta_prolog_operation(Arena *a, SymbolId head_id,
@@ -1339,8 +1377,8 @@ static Atom *grounded_division_by_zero(Arena *a, Atom *head, Atom **args, uint32
         if (prolog)
             return prolog;
     }
-    return atom_error(a, grounded_call_expr(a, head, args, nargs),
-                      atom_symbol(a, "DivisionByZero"));
+    return grounded_raise(a, head, args, nargs,
+                          atom_symbol(a, "DivisionByZero"));
 }
 
 static Atom *grounded_math_domain_error(Arena *a, Atom *head, Atom **args,
@@ -1351,7 +1389,7 @@ static Atom *grounded_math_domain_error(Arena *a, Atom *head, Atom **args,
         atom_int(a, bad_idx),
         atom_symbol(a, constraint)
     }, 3);
-    return atom_error(a, grounded_call_expr(a, head, args, nargs), reason);
+    return grounded_raise(a, head, args, nargs, reason);
 }
 
 static bool numeric_arg_is_integral(const NumArg *arg) {
@@ -1380,15 +1418,14 @@ static int64_t floor_mod_i64(int64_t lhs, int64_t rhs) {
 
 /* ── Number order ─────────────────────────────────────────────────────── */
 
-/* Numbers compare exactly in the PeTTa lane and in HE outside he-compat,
- * which keeps Hyperon's rounding of an integer to a float.  Other dialects
- * keep that rounding too. */
+/* HE outside he-compat orders integers and floats exactly.  PeTTa's
+ * arithmetic ordering promotes mixed numbers to floats, as SWI does;
+ * its separate value equality remains exact. */
 static bool grounded_compares_numbers_exactly(void) {
     CettaLanguageId language = eval_current_language_id
         ? eval_current_language_id() : CETTA_LANGUAGE_HE;
-    return language == CETTA_LANGUAGE_PETTA ||
-        (language == CETTA_LANGUAGE_HE &&
-         !eval_current_uses_rust_he_compat_semantics());
+    return language == CETTA_LANGUAGE_HE &&
+        !eval_current_uses_rust_he_compat_semantics();
 }
 
 /* The exact order of an integer and a float.  False for a NaN, which is
@@ -2305,8 +2342,8 @@ static Atom *grounded_sort_numbers(
         return list;
     if (list->expr.len >
         (CettaExprLen)(SIZE_MAX / sizeof(GroundedNumericSortItem))) {
-        return atom_error(
-            a, grounded_call_expr(a, head, args, nargs),
+        return grounded_raise(
+            a, head, args, nargs,
             atom_symbol(a, "ArityTooLarge"));
     }
 
@@ -2437,8 +2474,8 @@ static Atom *grounded_unkey_atoms(
             a, head, args, nargs, 1, atom_expression_type(a), args[0]);
     if (!cetta_expr_len_mul_fits_size(
             args[0]->expr.len, sizeof(Atom *))) {
-        return atom_error(
-            a, grounded_call_expr(a, head, args, nargs),
+        return grounded_raise(
+            a, head, args, nargs,
             atom_symbol(a, "ArityTooLarge"));
     }
     Atom **values = args[0]->expr.len
@@ -2449,8 +2486,8 @@ static Atom *grounded_unkey_atoms(
          index < args[0]->expr.len; index++) {
         Atom *entry = args[0]->expr.elems[index];
         if (!entry || entry->kind != ATOM_EXPR || entry->expr.len != 2u)
-            return atom_error(
-                a, grounded_call_expr(a, head, args, nargs),
+            return grounded_raise(
+                a, head, args, nargs,
                 atom_symbol(a, "ExpectedKeyValuePair"));
         values[index] = entry->expr.elems[1];
     }
@@ -2519,10 +2556,65 @@ static Atom *grounded_sha256(Arena *a, Atom *head, Atom **args,
      whitespace/comments around it. This is the safer PeTTa-style default.
    - parse-first is stream-like: it returns the first parsed atom and ignores
      all remaining text, including malformed trailing text. */
+/* PeTTa's parse and sread read the text of a string, a symbol or a number
+ * (atom_string/2 gives a number its printed text), raise the reference's
+ * instantiation error for an unbound argument and its syntax error for text
+ * they cannot read. */
+static Atom *grounded_petta_sread(Arena *a, Atom *argument) {
+    if (argument->kind == ATOM_VAR) {
+        g_grounded_raised = true;
+        return petta_semantics_instantiation_error(
+            a, "system", "atom_string", 2);
+    }
+    const char *text = NULL;
+    size_t text_len = 0u;
+    char *printed = NULL;
+    size_t printed_len = 0u;
+    if (argument->kind == ATOM_GROUNDED &&
+        argument->ground.gkind == GV_STRING) {
+        /* Every byte of the string, a NUL among them. */
+        text = argument->ground.sval;
+        text_len = argument->ground.slen;
+    } else if (argument->kind == ATOM_SYMBOL) {
+        text = atom_name_cstr(argument);
+        text_len = text ? strlen(text) : 0u;
+    } else if (atom_is_number(argument)) {
+        FILE *stream = open_memstream(&printed, &printed_len);
+        if (!stream)
+            return NULL;
+        atom_print_petta(argument, stream);
+        if (fclose(stream) != 0) {
+            free(printed);
+            return NULL;
+        }
+        text = printed;
+        text_len = printed_len;
+    }
+    if (!text)
+        return NULL;
+    bool old_rational_literals = parser_set_rational_literals_enabled(true);
+    Atom *parsed = NULL;
+    size_t pos = 0;
+    if (parser_text_well_formed_n(text, text_len)) {
+        parsed = parse_sexpr_n(a, text, text_len, &pos);
+        if (parsed && !parser_rest_is_delimiters_n(text, text_len, &pos))
+            parsed = NULL;
+    }
+    parser_set_rational_literals_enabled(old_rational_literals);
+    if (!parsed) {
+        g_grounded_raised = true;
+        parsed = petta_semantics_syntax_error(a, text);
+    }
+    free(printed);
+    return parsed;
+}
+
 static Atom *grounded_parse_text(Arena *a, Atom *head, Atom **args,
                                 uint32_t nargs, bool require_all_input) {
     if (nargs != 1)
         return grounded_incorrect_arity(a, head, args, nargs);
+    if (require_all_input && grounded_current_language_is_petta())
+        return grounded_petta_sread(a, args[0]);
     if (!(args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_STRING)) {
         if (args[0]->kind != ATOM_GROUNDED)
             return NULL;
@@ -2540,15 +2632,15 @@ static Atom *grounded_parse_text(Arena *a, Atom *head, Atom **args,
         parser_set_rational_literals_enabled(old_rational_literals);
         return parsed
             ? parsed
-            : atom_error(a, grounded_call_expr(a, head, args, nargs),
-                         atom_symbol(a, "ParseFailed"));
+            : grounded_raise(a, head, args, nargs,
+                             atom_symbol(a, "ParseFailed"));
     }
 
     if (require_all_input &&
         !parser_text_well_formed_n(args[0]->ground.sval, args[0]->ground.slen)) {
         parser_set_rational_literals_enabled(old_rational_literals);
-        return atom_error(a, grounded_call_expr(a, head, args, nargs),
-                          atom_symbol(a, "ParseFailed"));
+        return grounded_raise(a, head, args, nargs,
+                              atom_symbol(a, "ParseFailed"));
     }
 
     size_t pos = 0;
@@ -2556,12 +2648,12 @@ static Atom *grounded_parse_text(Arena *a, Atom *head, Atom **args,
                                  &pos);
     parser_set_rational_literals_enabled(old_rational_literals);
     if (!parsed)
-        return atom_error(a, grounded_call_expr(a, head, args, nargs),
-                          atom_symbol(a, "ParseFailed"));
+        return grounded_raise(a, head, args, nargs,
+                              atom_symbol(a, "ParseFailed"));
     if (require_all_input &&
         !parser_rest_is_delimiters_n(args[0]->ground.sval, args[0]->ground.slen, &pos))
-        return atom_error(a, grounded_call_expr(a, head, args, nargs),
-                          atom_symbol(a, "ParseFailed"));
+        return grounded_raise(a, head, args, nargs,
+                              atom_symbol(a, "ParseFailed"));
     return parsed;
 }
 
@@ -2718,8 +2810,8 @@ static Atom *grounded_range_atom(Arena *a, Atom *head, Atom **args, uint32_t nar
 
     CettaExprLen len = (CettaExprLen)(end - start);
     if (!cetta_expr_len_mul_fits_size(len, sizeof(Atom *))) {
-        return atom_error(a, grounded_call_expr(a, head, args, nargs),
-                          atom_symbol(a, "RangeTooLarge"));
+        return grounded_raise(a, head, args, nargs,
+                              atom_symbol(a, "RangeTooLarge"));
     }
 
     Atom **elems = arena_alloc(a, sizeof(Atom *) * (size_t)len);
@@ -2743,8 +2835,8 @@ static Atom *grounded_repeat_atom(Arena *a, Atom *head, Atom **args, uint32_t na
     if (count <= 0)
         return atom_expr(a, NULL, 0);
     if (!cetta_expr_len_mul_fits_size((CettaExprLen)count, sizeof(Atom *))) {
-        return atom_error(a, grounded_call_expr(a, head, args, nargs),
-                          atom_symbol(a, "RepeatTooLarge"));
+        return grounded_raise(a, head, args, nargs,
+                              atom_symbol(a, "RepeatTooLarge"));
     }
 
     CettaExprLen len = (CettaExprLen)count;
@@ -2772,8 +2864,8 @@ static Atom *grounded_remove_all_atom(
     }
     if (!cetta_expr_len_mul_fits_size(
             args[1]->expr.len, sizeof(Atom *))) {
-        return atom_error(
-            a, grounded_call_expr(a, head, args, nargs),
+        return grounded_raise(
+            a, head, args, nargs,
             atom_symbol(a, "ArityTooLarge"));
     }
     Atom **survivors = arena_alloc(
@@ -2790,6 +2882,7 @@ static Atom *grounded_remove_all_atom(
 
 /* ── Dispatch ──────────────────────────────────────────────────────────── */
 
+
 static bool grounded_is_binary_numeric_operator(SymbolId head_id) {
     return head_id == g_builtin_syms.op_plus ||
            head_id == g_builtin_syms.op_minus ||
@@ -2802,13 +2895,6 @@ static bool grounded_is_binary_numeric_operator(SymbolId head_id) {
            head_id == g_builtin_syms.op_le ||
            head_id == g_builtin_syms.op_ge ||
            head_id == g_builtin_syms.numeric_eq;
-}
-
-bool grounded_numeric_error_is_raised(Atom *head, uint32_t nargs) {
-    return head && head->kind == ATOM_SYMBOL &&
-           nargs == 2u && grounded_is_binary_numeric_operator(head->sym_id) &&
-           eval_current_language_id &&
-           eval_current_language_id() == CETTA_LANGUAGE_PETTA;
 }
 
 /* The -math functions; NULL for any other head.  Dispatch is its only
@@ -3152,8 +3238,78 @@ static Atom *grounded_petta_math_result(Arena *a, SymbolId head_id,
     return prolog ? prolog : native;
 }
 
+bool grounded_call(Arena *a, Atom *head, Atom **args, uint32_t nargs,
+                   CettaCallOutcome *out) {
+    /* An operation run inside another, by a callback, keeps the enclosing
+     * operation's mark. */
+    bool enclosing_raised = g_grounded_raised;
+    g_grounded_raised = false;
+    Atom *result = grounded_dispatch(a, head, args, nargs);
+    bool raised = g_grounded_raised;
+    g_grounded_raised = enclosing_raised;
+    if (!result || !out)
+        return false;
+    if (raised && atom_is_error(result) &&
+        grounded_current_language_is_petta())
+        *out = cetta_call_raised(result);
+    else if (atom_is_petta_no_result(result))
+        *out = cetta_call_failure();
+    else
+        *out = cetta_call_value(result);
+    return true;
+}
+
+static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
+                                    uint32_t nargs);
+
+/* The operations that write a term as text, and how many of their first
+ * arguments they write. */
+static uint32_t grounded_written_arguments(SymbolId head_id, uint32_t nargs) {
+    if (head_id == g_builtin_syms.trace_bang)
+        return nargs ? 1u : 0u;
+    if (head_id == g_builtin_syms.println_bang ||
+        head_id == g_builtin_syms.repr ||
+        head_id == g_builtin_syms.format_args ||
+        petta_semantics_form(head_id) == PETTA_FORM_REPRA)
+        return nargs;
+    return 0u;
+}
+
+/* A rational term among the arguments.  A term that is not a finite tree
+ * has no text, so an operation that would write one raises
+ * representation_error(cyclic_term) (P-GRAPH-6).  Any other operation reads
+ * a node among its arguments as its term one level open, so it sees the
+ * structure the node's unfolding has at that level. */
+static Atom *grounded_dispatch_rational(Arena *a, Atom *head, Atom **args,
+                                        uint32_t nargs) {
+    uint32_t written = grounded_written_arguments(head->sym_id, nargs);
+    for (uint32_t i = 0u; i < written; i++) {
+        if (atom_structural_has_rational(args[i]) &&
+            grounded_current_language_is_petta()) {
+            g_grounded_raised = true;
+            return petta_semantics_cyclic_term_error(a, NULL, NULL, 0);
+        }
+    }
+    Atom **opened = arena_alloc(a, sizeof(*opened) * nargs);
+    for (uint32_t i = 0u; i < nargs; i++) {
+        opened[i] = atom_rational_open(a, args[i]);
+        if (!opened[i])
+            return NULL;
+    }
+    return grounded_dispatch_open(a, head, opened, nargs);
+}
+
 Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (head->kind != ATOM_SYMBOL) return NULL;
+    for (uint32_t i = 0u; i < nargs; i++) {
+        if (atom_structural_has_rational(args[i]))
+            return grounded_dispatch_rational(a, head, args, nargs);
+    }
+    return grounded_dispatch_open(a, head, args, nargs);
+}
+
+static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
+                                    uint32_t nargs) {
     {
         Atom *abt = abt_grounded_dispatch(a, head, args, nargs);
         if (abt) return abt;
@@ -3169,6 +3325,23 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         if (he) return he;
     }
     SymbolId head_id = head->sym_id;
+
+    /* A Prolog compound is no list (the reference's non_list/1): index-atom
+     * has no answer for it, and the total observers min-atom, max-atom,
+     * unique-atom, sort-atom and size-atom give (), as their non_list
+     * clauses do. */
+    if (grounded_current_language_is_petta() && nargs >= 1u &&
+        petta_semantics_is_nonlist_carrier(args[0])) {
+        if (head_id == g_builtin_syms.index_atom && nargs == 2u)
+            return atom_petta_no_result(a);
+        if (nargs == 1u &&
+            (head_id == g_builtin_syms.min_atom ||
+             head_id == g_builtin_syms.max_atom ||
+             head_id == g_builtin_syms.unique_atom ||
+             head_id == g_builtin_syms.sort_atom ||
+             head_id == g_builtin_syms.size_atom))
+            return atom_unit(a);
+    }
 
     /* The sequence operations read a list's elements as they read an
      * expression's, and a sequence they build is of the kind of their first
@@ -3279,8 +3452,8 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         if (nargs != 0)
             return grounded_incorrect_arity(a, head, args, nargs);
         if (fflush(stdout) != 0)
-            return atom_error(
-                a, grounded_call_expr(a, head, args, nargs),
+            return grounded_raise(
+                a, head, args, nargs,
                 atom_symbol(a, "FlushFailed"));
         if (eval_current_language_id &&
             eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
@@ -3318,8 +3491,8 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
                 petta_semantics_sort_value(a, args[0], true, &type_error);
             if (!type_error)
                 return sorted;
-            return atom_error(
-                a, grounded_call_expr(a, head, args, nargs),
+            return grounded_raise(
+                a, head, args, nargs,
                 atom_expr3(a, atom_symbol(a, "TypeError"),
                            atom_symbol(a, "list"), args[0]));
         }
@@ -3412,7 +3585,9 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         /* A list's elements are read as an expression's are. */
         Atom *const *elems = NULL;
         CettaExprLen len = 0u;
-        bool sequence = atom_sequence_view(argument, &elems, &len);
+        bool sequence = grounded_current_language_is_petta()
+            ? petta_semantics_sequence_view(argument, &elems, &len)
+            : atom_sequence_view(argument, &elems, &len);
         /* PeTTa's car-atom and cdr-atom are total: a cell gives its head or
          * tail, and anything but a non-empty list gives (). */
         if (grounded_current_language_is_petta()) {
@@ -3430,8 +3605,8 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
                     : atom_expr_suffix(a, argument, 1u);
             return held ? atom_prime_held_wrap(a, part) : part;
         }
-        return atom_error(
-            a, grounded_call_expr(a, head, args, nargs),
+        return grounded_raise(
+            a, head, args, nargs,
             atom_string(
                 a, head_id == g_builtin_syms.car_atom
                        ? "car-atom expects a non-empty expression as an argument"
@@ -3471,8 +3646,8 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
             ? rename_vars_only(a, args[1], args[0])
             : rename_vars_except(a, args[1], args[0]);
         return renamed ? renamed
-                       : atom_error(a, grounded_call_expr(a, head, args, nargs),
-                                    atom_symbol(a, "SealedInvalidTerm"));
+                       : grounded_raise(a, head, args, nargs,
+                                        atom_symbol(a, "SealedInvalidTerm"));
     }
 
     if (head_id == g_builtin_syms.print_alternatives_bang) {
@@ -3618,8 +3793,10 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         /* A held value has the size of the syntax it holds. */
         Atom *const *size_elems;
         CettaExprLen size_len;
-        if (atom_sequence_view(atom_prime_held_payload(args[0]),
-                               &size_elems, &size_len))
+        if (grounded_current_language_is_petta()
+                ? petta_semantics_sequence_view(args[0], &size_elems, &size_len)
+                : atom_sequence_view(atom_prime_held_payload(args[0]),
+                                     &size_elems, &size_len))
             return atom_int(a, (int64_t)size_len);
         if (head_id == g_builtin_syms.size_atom &&
             grounded_current_language_is_petta()) {
@@ -3669,8 +3846,8 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         if (idx < 0 || (uint64_t)idx >= args[0]->expr.len) {
             if (grounded_current_language_is_petta())
                 return atom_petta_no_result(a);
-            return atom_error(a, grounded_call_expr(a, head, args, nargs),
-                              atom_string(a, "Index is out of bounds"));
+            return grounded_raise(a, head, args, nargs,
+                                  atom_string(a, "Index is out of bounds"));
         }
         return held ? atom_prime_held_wrap(a, args[0]->expr.elems[idx]) : args[0]->expr.elems[idx];
     }
@@ -3685,8 +3862,8 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
             return NULL;
         }
         if (!cetta_expr_len_fits_u32(args[0]->expr.len))
-            return atom_error(a, grounded_call_expr(a, head, args, nargs),
-                              atom_symbol(a, "ArityTooLarge"));
+            return grounded_raise(a, head, args, nargs,
+                                  atom_symbol(a, "ArityTooLarge"));
         if (eval_current_language_id &&
             eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
             return petta_semantics_list_to_set(a, args[0]);
@@ -4076,6 +4253,21 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
                                                               : grounded_division_by_zero(a, head, args, nargs);
     if (head_id == g_builtin_syms.op_lt || head_id == g_builtin_syms.op_gt ||
         head_id == g_builtin_syms.op_le || head_id == g_builtin_syms.op_ge) {
+        /* mpq_get_d truncates, whereas SWI rounds a rational in a mixed
+         * float comparison, and comparison overflow differs from is/2.
+         * Let the host comparison retain those rules and flags. */
+        if (petta && fl && (na.is_rational || nb.is_rational)) {
+            const char *relation = head_id == g_builtin_syms.op_lt ? "<"
+                : head_id == g_builtin_syms.op_gt ? ">"
+                : head_id == g_builtin_syms.op_le ? "=<" : ">=";
+            CettaCallOutcome out = cetta_call_failure();
+            if (!petta_libpl_compare_arithmetic ||
+                !petta_libpl_compare_arithmetic(a, relation, args, &out))
+                return NULL;
+            if (out.kind == CETTA_CALL_RAISED)
+                g_grounded_raised = true;
+            return out.term;
+        }
         int ordering = 0;
         return grounded_number_order(&na, &nb, &ordering) &&
                grounded_order_truth(head_id, ordering)

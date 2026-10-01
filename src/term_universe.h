@@ -147,6 +147,11 @@ struct TermUniverse {
     uint8_t *intern_slots;
     size_t intern_mask;
     size_t intern_used;
+    /* Integer pages retain exact coordinates and physical record positions.
+       Positions remain valid when the AtomId storage format changes. */
+    struct CettaIntegerInternSlot *integer_slots;
+    size_t integer_mask;
+    size_t integer_used;
     uint8_t *ptr_slots;
     size_t ptr_mask;
     size_t ptr_used;
@@ -433,6 +438,8 @@ double tu_float(const TermUniverse *universe, AtomId id);
 bool tu_bool(const TermUniverse *universe, AtomId id);
 /* The value of an internal tag, or 0 for any other atom. */
 int64_t tu_internal_tag(const TermUniverse *universe, AtomId id);
+PeTTaValueRepresentation tu_petta_value_representation(
+    const TermUniverse *universe, AtomId id);
 const char *tu_string_cstr(const TermUniverse *universe, AtomId id);
 /* The byte length of a string; its bytes may hold NUL. */
 size_t tu_string_len(const TermUniverse *universe, AtomId id);
@@ -464,9 +471,14 @@ AtomId tu_intern_var(TermUniverse *universe, SymbolId sym_id, VarId var_id);
 AtomId tu_intern_named_var(TermUniverse *universe, AtomId name_key_id,
                            VarId var_id);
 AtomId tu_intern_int(TermUniverse *universe, int64_t value);
+/* Canonical scalar admission in input order, with bounded internal windows.
+ * Duplicate values retain the same identity as singular admission. A false
+ * result may have interned a prefix, but never publishes rows into a Space. */
+bool tu_intern_ints(TermUniverse *universe, const int64_t *values,
+                    size_t count, AtomId *ids);
 AtomId tu_intern_float(TermUniverse *universe, double value);
 AtomId tu_intern_bool(TermUniverse *universe, bool value);
-AtomId tu_intern_list_tag(TermUniverse *universe, int64_t tag);
+AtomId tu_intern_stable_tag(TermUniverse *universe, int64_t tag);
 AtomId tu_intern_string_n(TermUniverse *universe, const char *bytes,
                           size_t len);
 AtomId tu_intern_string(TermUniverse *universe, const char *value);
@@ -478,5 +490,12 @@ AtomId tu_list_from_ids(TermUniverse *universe, const AtomId *elems,
                         CettaExprLen elem_len, AtomId rest);
 AtomId tu_expr_from_ids(TermUniverse *universe, const AtomId *child_ids,
                         CettaExprLen arity);
+/* Canonical fixed-arity rows in input order. An optional presence mask skips
+ * rows without reading their coordinates and returns NONE in those positions.
+ * Failure retains admitted prefix identities, with remaining outputs NONE;
+ * no Space rows are published. Coordinates must precede the call's admission. */
+bool tu_exprs_from_ids(TermUniverse *universe, const AtomId *child_ids,
+                       size_t count, CettaExprLen arity, const bool *present,
+                       AtomId *ids);
 
 #endif /* CETTA_TERM_UNIVERSE_H */

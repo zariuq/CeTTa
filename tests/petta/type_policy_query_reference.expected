@@ -1,0 +1,8 @@
+-(literal_enumeration,['Number'])
+-(bound_undefined,[yes])
+-(bound_grounded,[])
+-(grounded_guard,[yes])
+-(symbol_guard,[])
+-(unbound_subject,[yes])
+-(repeated_exact_answers,[yes,yes])
+-(no_fallback_after_exact_success,[])

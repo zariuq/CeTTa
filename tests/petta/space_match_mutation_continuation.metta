@@ -52,7 +52,7 @@
     ((pair a b) (pair c d)))
 !(test
     (collapse (match &mutation-nonlinear (tagged-value $value) $value))
-    (first second))
+    (quote (first second)))
 
 ; Stored variables are local to their occurrence.  A closed removal pattern
 ; may match such an open occurrence without capturing any ambient variable.

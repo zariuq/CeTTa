@@ -47,6 +47,9 @@ typedef struct Outcome {
     Bindings env;
     VariantInstance variant;
     OutcomeAnswerRef answer_ref;
+    /* A conditional answer's delayed goals (CETTA_CALL_SUSPENDED); NULL for
+     * an answer that holds outright. */
+    Atom *delayed;
 } Outcome;
 
 typedef struct OutcomeSet {
@@ -60,6 +63,8 @@ void outcome_set_init(OutcomeSet *os);
 void outcome_set_init_with_owner(OutcomeSet *os, Arena *owner);
 void outcome_set_set_owner(OutcomeSet *os, Arena *owner);
 void outcome_set_add(OutcomeSet *os, Atom *atom, const Bindings *env);
+/* The newest answer holds only while `delayed` holds (CETTA_CALL_SUSPENDED). */
+void outcome_set_delay_last(OutcomeSet *os, Atom *delayed);
 void outcome_set_add_move(OutcomeSet *os, Atom *atom, Bindings *env);
 void outcome_set_free(OutcomeSet *os);
 
@@ -266,7 +271,7 @@ bool cetta_petta_profile_admits_arrow_modes(void);
 bool cetta_petta_profile_admits_typecheck_ops(void);
 bool cetta_petta_profile_admits_native_typecheck_v2(void);
 bool cetta_petta_data_op_applies(SymbolId head, CettaExprLen nargs);
-void cetta_petta_erase_typecheck_marks_document(
+void cetta_petta_prepare_document_forms(
     TermUniverse *universe, AtomId *atom_ids, int atom_count);
 bool cetta_petta_source_head_resolves_in_engine(SymbolId head, CettaExprLen nargs);
 bool cetta_petta_head_names_extension(SymbolId head);

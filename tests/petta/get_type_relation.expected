@@ -1,0 +1,26 @@
+%Undefined%
+(-> Number Number)
+(%Undefined% Number Number)
+Number
+((-> Number Number) %Undefined%)
+(%Undefined% Number)
+(%Undefined% (Number Number))
+(Number String Bool)
+()
+Number
+(%Undefined% Number Number)
+Lst
+((-> Number Lst Lst) %Undefined% Lst)
+Number
+Bool
+((-> $V0 $V0 Bool) Number String)
+Number
+(Seed Seed)
+(Seed Other)
+(Other Seed)
+(Other Other)
+Seed
+Other
+(Number (Number (Number (Number))))
+(%Undefined% %Undefined%)
+(%Undefined% Number Number)

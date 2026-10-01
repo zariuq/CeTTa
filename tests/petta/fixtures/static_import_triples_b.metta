@@ -1,0 +1,1 @@
+(edge x y z)

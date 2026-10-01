@@ -1,0 +1,8 @@
+(%Undefined% Number)
+()
+(OK)
+()
+String
+((-> Number String) Bool)
+(: pcg-ignore Number)
+(%Undefined% %Undefined%)

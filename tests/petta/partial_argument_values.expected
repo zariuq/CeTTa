@@ -1,0 +1,5 @@
+(got (+ 1 2) a b)
+(partial keep ((+ 1 2)))
+(got (Q (+ 1 2)) a b)
+(got 7 (CPU F (* 2 3) o) z)
+(((got (+ 1 2) ((got (+ 1 2) () 1)) 2)))

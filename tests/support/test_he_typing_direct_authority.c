@@ -3,6 +3,7 @@
 #include "generated/he_typing_closed_ground_core_source_binding_v1.generated.h"
 #include "generated/he_typing_consistency_core_source_binding_v1.generated.h"
 #include "he_typing_authority.h"
+#include "he_type_policy.h"
 #include "match.h"
 #include "space.h"
 #include "stats.h"
@@ -67,6 +68,113 @@ static CettaTypeInferenceBudget inference_budget(uint32_t type_capacity) {
     };
 }
 
+typedef struct {
+    Space *space;
+    Arena *arena;
+} PolicyTestInference;
+
+static uint32_t policy_test_infer(void *context, Atom *subject, Atom ***types) {
+    PolicyTestInference *inference = context;
+    return get_atom_types(inference->space, inference->arena, subject, types);
+}
+
+static void test_he_type_policy_component(Arena *arena) {
+    Atom *top = atom_symbol_id(arena, g_builtin_syms.atom);
+    Atom *expression = atom_symbol_id(arena, g_builtin_syms.expression);
+    Atom *undefined = atom_undefined_type(arena);
+    Atom *number = atom_symbol(arena, "Number");
+    Atom *text = atom_symbol(arena, "String");
+    Atom *source = atom_expr3(arena, atom_symbol(arena, "+"),
+                               atom_int(arena, 2), atom_int(arena, 4));
+    assert(he_type_demand(source, expression, get_meta_type(arena, source)) ==
+           HE_TYPE_KEEP);
+    assert(he_type_demand(source, top, get_meta_type(arena, source)) == HE_TYPE_KEEP);
+    assert(he_type_demand(source, undefined, get_meta_type(arena, source)) ==
+           HE_TYPE_INTERPRET);
+    Atom *value = atom_int(arena, 6);
+    assert(he_type_demand(value, number, get_meta_type(arena, value)) == HE_TYPE_CAST);
+    Atom *variable = atom_var(arena, "$he-policy-type");
+    assert(he_type_demand(variable, number, get_meta_type(arena, variable)) ==
+           HE_TYPE_KEEP);
+    assert(he_type_argument_check(top) == HE_TYPE_ARGUMENT_ANY);
+    assert(he_type_argument_check(undefined) == HE_TYPE_ARGUMENT_ANY);
+    assert(he_type_argument_check(expression) == HE_TYPE_ARGUMENT_METATYPE);
+    assert(he_type_argument_check(variable) == HE_TYPE_ARGUMENT_INFER);
+    assert(atom_eq(he_type_result_demand(arena, expression), undefined));
+    assert(he_type_result_demand(arena, top) == top);
+
+    HeTypeCall call;
+    assert(he_type_call_open(atom_expr2(arena, atom_symbol_id(arena, g_builtin_syms.arrow), top), &call));
+    assert(call.arity == 0u && call.result_type == top);
+    assert(!he_type_call_open(atom_expr2(arena, atom_symbol(arena, "-[det]->"), top), NULL));
+    Atom *telescope = atom_expr3(arena, atom_symbol_id(arena, g_builtin_syms.colon), variable, number);
+    assert(he_type_domain(telescope, false).formal == telescope);
+    assert(!he_type_domain(telescope, false).binder);
+    assert(he_type_domain(telescope, true).binder == variable);
+    assert(he_type_domain(telescope, true).formal == number);
+
+    Bindings bindings;
+    bindings_init(&bindings);
+    assert(he_type_refine(top, number, &bindings, arena));
+    assert(he_type_refine(number, top, &bindings, arena));
+    assert(he_type_refine(undefined, number, &bindings, arena));
+    assert(!he_type_refine(text, number, &bindings, arena));
+    assert(!he_type_refine(atom_expr2(arena, atom_symbol(arena, "Box"), top),
+                          atom_expr2(arena, atom_symbol(arena, "Box"), number),
+                          &bindings, arena));
+    assert(!he_type_refine(atom_expr2(arena, atom_symbol(arena, "Box"), undefined),
+                          atom_expr2(arena, atom_symbol(arena, "Box"), number),
+                          &bindings, arena));
+    assert(!match_types(top, number, &bindings, arena));
+    assert(he_type_refine(number, variable, &bindings, arena));
+    assert(atom_eq(bindings_apply_if_vars(&bindings, arena, variable), number));
+    bindings_free(&bindings);
+
+    BindingsBuilder builder;
+    assert(bindings_builder_init(&builder, NULL));
+    assert(he_type_refine_builder(top, number, &builder, arena));
+    assert(bindings_logically_empty(bindings_builder_bindings(&builder)));
+    assert(he_type_refine_builder(number, variable, &builder, arena));
+    assert(atom_eq(bindings_apply_if_vars(bindings_builder_bindings(&builder), arena, variable), number));
+    bindings_builder_free(&builder);
+
+    Space space;
+    space_init(&space);
+    Atom *first = atom_symbol(arena, "he-policy-first");
+    Atom *second = atom_symbol(arena, "he-policy-second");
+    Atom *colon = atom_symbol_id(arena, g_builtin_syms.colon);
+    space_add(&space, atom_expr3(arena, colon, first, number));
+    space_add(&space, atom_expr3(arena, colon, first, text));
+    space_add(&space, atom_expr3(arena, colon, second, text));
+    Atom *signature = atom_expr(arena, (Atom *[]){
+        atom_symbol_id(arena, g_builtin_syms.arrow), variable, variable, variable}, 4u);
+    Atom *application = atom_expr3(arena, atom_symbol(arena, "he-policy-pair"), first, second);
+    PolicyTestInference inference = {&space, arena};
+    HeTypeApplicationServices services = {.context = &inference, .infer = policy_test_infer};
+    HeTypeErrors errors;
+    HeTypeContracts contracts;
+    he_type_errors_init(&errors);
+    he_type_contracts_init(&contracts);
+    /* The second argument refines the first argument's alternatives. */
+    assert(he_type_call_applicable(arena, application, signature, undefined,
+                                  false, &services, &errors, &contracts) == HE_TYPE_APPLICABLE);
+    assert(contracts.len == 1u && atom_eq(contracts.items[0], text));
+    assert(errors.len == 1u);
+    he_type_errors_free(&errors);
+    he_type_contracts_free(&contracts);
+    assert(he_type_call_applicable(arena, application, signature, number,
+                                  false, &services, &errors, &contracts) == HE_TYPE_INAPPLICABLE);
+    assert(contracts.len == 0u && errors.len == 2u);
+    he_type_errors_free(&errors);
+    he_type_contracts_free(&contracts);
+    services.infer = NULL;
+    assert(he_type_call_applicable(arena, application, signature, undefined,
+                                  false, &services, &errors, &contracts) == HE_TYPE_APPLICATION_INCOMPLETE);
+    assert(errors.len == 0u && contracts.len == 0u);
+    space_free(&space);
+    puts("PASS: HE type interface preserves demands, wildcard refinement and ordered applicability paths");
+}
+
 int main(void) {
     Arena persistent;
     TermUniverse universe;
@@ -85,6 +193,7 @@ int main(void) {
     g_symbols = &symbols;
     g_var_intern = &variables;
     space_init_with_universe(&space, &universe);
+    test_he_type_policy_component(&persistent);
 
     const CettaHeTypingCoreDirectServiceV1 *core_service =
         &cetta_he_typing_core_direct_service_v1;

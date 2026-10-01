@@ -815,6 +815,7 @@ static bool bridge_encode_atom_rec(Arena *a, Atom *atom, BridgeVarMap *vars,
             return false;
         case GV_BINDINGS:
         case GV_FOREIGN:
+        case GV_TERM_GRAPH:
             if (out_error)
                 *out_error = "MORK bridge expr-byte ingress does not support foreign grounded values";
             return false;
@@ -937,6 +938,7 @@ static bool bridge_encode_atom_id_rec(Arena *a,
             return false;
         case GV_BINDINGS:
         case GV_FOREIGN:
+        case GV_TERM_GRAPH:
             if (out_error)
                 *out_error = "MORK bridge expr-byte ingress does not support foreign grounded values";
             return false;

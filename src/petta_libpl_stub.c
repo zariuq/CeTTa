@@ -73,6 +73,36 @@ PeTTaNamedArity petta_libpl_named_arity_including_resolved(
     return (PeTTaNamedArity){0};
 }
 
+bool petta_libpl_static_import(
+    CettaLibPrologRuntime *runtime, Arena *arena, SymbolId space,
+    const char *file, PettaLibplStaticPredicateVisit visit, void *context,
+    CettaCallOutcome *end) {
+    (void)runtime;
+    (void)arena;
+    (void)space;
+    (void)file;
+    (void)visit;
+    (void)context;
+    if (end)
+        *end = cetta_call_failure();
+    return false;
+}
+
+void petta_libpl_warn_redefined(
+    CettaLibPrologRuntime *runtime, SymbolId name, size_t arity) {
+    (void)runtime;
+    (void)name;
+    (void)arity;
+}
+
+bool petta_libpl_predicate_defined(
+    CettaLibPrologRuntime *runtime, SymbolId name, size_t arity) {
+    (void)runtime;
+    (void)name;
+    (void)arity;
+    return false;
+}
+
 PeTTaNamedArity petta_libpl_named_arity_resolving(
     CettaLibPrologRuntime *runtime, SymbolId head,
     CettaExprLen supplied) {
@@ -86,9 +116,11 @@ bool petta_libpl_call(
     CettaLibPrologRuntime *runtime, Arena *arena,
     Atom *expression, Atom *expected,
     const Bindings *environment, OutcomeSet *outcomes,
-    bool *recognized, Atom **raised) {
-    if (raised)
-        *raised = NULL;
+    bool *recognized, CettaCallOutcome *end,
+    const CettaDelayView *delay) {
+    (void)delay;
+    if (end)
+        *end = cetta_call_failure();
     (void)runtime;
     (void)arena;
     (void)expression;

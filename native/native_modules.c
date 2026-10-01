@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "library.h"
+#include "library_supervise.h"
 #include "lib_parse_inference_native.h"
 #include "lib_parse_native_grammar.h"
 #include "native/langdef_module.h"
@@ -1185,8 +1186,11 @@ static bool native_module_loaded(const CettaLibraryContext *ctx,
 }
 
 static const CettaNativeBuiltinModule g_native_modules[] = {
-    {"gparse", CETTA_NATIVE_IMPORT_GPARSE, gparse_dispatch},
-    {"langdef", CETTA_NATIVE_IMPORT_LANGDEF, cetta_langdef_module_dispatch},
+    {"gparse", CETTA_NATIVE_IMPORT_GPARSE, gparse_dispatch, NULL},
+    {"langdef", CETTA_NATIVE_IMPORT_LANGDEF, cetta_langdef_module_dispatch, NULL},
+#if CETTA_BUILD_WITH_DURABLE
+    {"supervise", 1u << 26, cetta_supervise_dispatch, "__cetta_lib_supervise_"},
+#endif
 };
 
 const CettaNativeBuiltinModule *cetta_native_module_lookup(const char *name) {
@@ -1210,6 +1214,9 @@ Atom *cetta_native_module_dispatch_active(struct CettaLibraryContext *ctx,
     for (i = 0; i < sizeof(g_native_modules) / sizeof(g_native_modules[0]); i++) {
         const CettaNativeBuiltinModule *mod = &g_native_modules[i];
         Atom *result;
+        if (mod->head_prefix && (!head || head->kind != ATOM_SYMBOL ||
+            strncmp(atom_name_cstr(head), mod->head_prefix, strlen(mod->head_prefix))))
+            continue;
         if ((active_mask & mod->import_bit) == 0 &&
             !native_module_loaded(ctx, mod))
             continue;

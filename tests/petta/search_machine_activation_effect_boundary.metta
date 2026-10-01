@@ -30,10 +30,11 @@
 
 ; Zero discards its result demand, not an effect already performed by its
 ; producer. With an argument, `empty` is over-applied: the reference registers
-; it at arity 0 alone, and reports the same domain error.
+; it at arity 0 alone, and raises the same domain error, caught here so that
+; every answer before it stays observable.
 (= (effect-before-zero $value)
    (let $_write (add-atom &self (before-zero $value)) (empty)))
 !(collapse (effect-before-zero observed))
 !(collapse (match &self (before-zero observed) true))
 (= (zero-with-extra-argument $value) (empty $value))
-!(collapse (zero-with-extra-argument 7))
+!(catch (collapse (zero-with-extra-argument 7)))

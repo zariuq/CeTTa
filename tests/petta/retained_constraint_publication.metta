@@ -1,0 +1,6 @@
+!(let* (($b (#+ $a 0)) ($c (#+ $b 0)) ($d (#+ $c 0)) ($a 7)) ($a $b $c $d))
+!(let* (($b (#+ $a 0)) ($c (#+ $b 0)) ($d (#+ $c 0)) ($d 7)) ($a $b $c $d))
+!(collapse (let* (($b (#+ $a 0)) ($c (#+ $b 0)) ($a (superpose (3 5)))) ($a $b $c)))
+!(let* (($b (#+ $a 0)) ($c (#+ $b 0)) ($failed (collapse (let* (($a 4) ($c 5)) $b))) ($c 9)) ($failed $a $b $c))
+!(let* (($b (#+ $a 0)) ($c (#+ $b 0)) ($branch (collapse (let $c (superpose (2 6)) ($a $b $c)))) ($a 8)) ($branch $a $b $c))
+!(let* (($b (#+ $a 0)) ($c (#+ $b 0)) ($branch (hyperpose ((let $a 2 ($a $b $c)) (let $c 6 ($a $b $c))))) ($a 8)) ($branch $a $b $c))

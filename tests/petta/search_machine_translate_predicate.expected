@@ -1,12 +1,13 @@
-is (Predicate (+ 41 1)), should (Predicate (+ 41 1)). ✅ 
+is (+ 41 1), should (+ 41 1). ✅ 
+is (), should (). ✅ 
 is 42, should 42. ✅ 
 is 42, should 42. ✅ 
 is 5, should 5. ✅ 
 is (), should (). ✅ 
-is (translatePredicate (unknown-predicate a $V0)), should (translatePredicate (unknown-predicate a $V0)). ✅ 
 true
 true
 true
 true
 true
 true
+(Error (existence_error procedure (/ unknown-predicate 2)) (context (: system (/ <meta-call> 1)) $V0))

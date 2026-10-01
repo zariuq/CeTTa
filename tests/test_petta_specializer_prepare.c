@@ -384,11 +384,11 @@ int main(void) {
               &space, consumer, &view_argument, 1u, observer) ==
               PETTA_SPECIALIZER_RELATION_DEFER,
           "unknown scope cannot certify absence of suppliers");
-    /* The partial-constructor fact is cached with callability, while its
-     * tuple remains a live observation that can change after rollback. */
+    /* A private partial carrier's tuple is a live observation that can
+     * change after rollback. Public partial spelling remains ordinary data. */
     Atom *partial_tuple = atom_var(&result, "partial-tuple");
     Atom *partial_term = atom_expr3(
-        &result, atom_symbol(&result, "partial"),
+        &result, atom_internal_tag(&result, CETTA_INTERNAL_TAG_PETTA_PARTIAL),
         atom_symbol(&result, "inert-base"), partial_tuple);
     CettaGsltTermCursorV1 partial_view = {.source = partial_term};
     CHECK(petta_specializer_query_view_execution_admission(
@@ -402,7 +402,15 @@ int main(void) {
     CHECK(petta_specializer_query_view_execution_admission(
               &space, consumer, &partial_view, 1u, observer) ==
               PETTA_SPECIALIZER_RELATION_DEFER,
-          "cached partial head still observes its bound tuple");
+          "private partial head still observes its bound tuple");
+    Atom *authored_partial = atom_expr3(
+        &result, atom_symbol(&result, "partial"),
+        atom_symbol(&result, "inert-base"), partial_tuple);
+    CettaGsltTermCursorV1 authored_view = {.source = authored_partial};
+    CHECK(petta_specializer_query_view_execution_admission(
+              &space, consumer, &authored_view, 1u, observer) ==
+              PETTA_SPECIALIZER_RELATION_IRRELEVANT,
+          "authored partial spelling grants no private callable role");
     bindings_builder_rollback(&observation_bindings, observation_mark);
     CHECK(petta_specializer_query_view_execution_admission(
               &space, consumer, &partial_view, 1u, observer) ==

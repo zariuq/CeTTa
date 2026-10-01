@@ -305,6 +305,13 @@ typedef struct {
 } PettaProgramTypeBucket;
 
 typedef struct {
+    SymbolId head;
+    PettaTypeCall *calls;
+    uint32_t count;
+    bool hold_body;
+} PettaProgramTypeFamily;
+
+typedef struct {
     const Space *space;
     uint64_t instance_id;
     uint64_t synchronized_revision;
@@ -331,6 +338,14 @@ typedef struct {
     size_t snapshot_len;
     size_t snapshot_cap;
     PettaProgramRevisionView *revision_view;
+    PettaProgramTypeFamily *type_families;
+    size_t type_family_len;
+    size_t type_family_cap;
+    SpaceProgramToken type_family_program;
+    /* Families share one immutable generation region, not a minimum-sized
+     * arena block per head. Activations instantiate into their own heap. */
+    Arena type_family_storage;
+    bool type_families_current;
 } PettaProgramSpace;
 
 typedef struct {
@@ -1726,10 +1741,13 @@ static const PettaIntrinsicNameIds *petta_intrinsic_name_ids(void) {
  * reference registers none of them as a function, and PeTTa gives none of
  * them a meaning in an equation body or head, so an expression they head is
  * data, as any unregistered head is.  `,` and `|` are connectives only inside
- * a `match` query or space argument, where `match` interprets them.  A name
- * left off this list stays an operation, which is slower but never wrong. */
+ * a `match` query or space argument, where `match` interprets them.  `&self`
+ * names a space, an atom in the reference; as an operation the host would
+ * read it as the space object itself.  A name left off this list stays an
+ * operation, so the host evaluates the expression it heads. */
 static bool petta_program_builtin_names_data(SymbolId head) {
-    return head == g_builtin_syms.llist_cons ||
+    return head == g_builtin_syms.self ||
+           head == g_builtin_syms.llist_cons ||
            head == g_builtin_syms.llist_nil ||
            head == g_builtin_syms.empty ||
            head == g_builtin_syms.error ||
@@ -1784,7 +1802,8 @@ bool petta_program_head_is_intrinsic(SymbolId head) {
          head == ids->min ||
          head == ids->max ||
          head == ids->transaction ||
-         head == ids->with_mutex);
+         head == ids->with_mutex ||
+         petta_semantics_is_mm2_exec(head));
     /* `data` is shared with historical extended PeTTa.  Live `make-list`
      * and `the` forms are owned only by typecheck-v2; extended erases `the`
      * during document ingestion. */
@@ -2486,10 +2505,24 @@ static bool petta_plan_push_children(
  * argument of `(quote X)` as the value it is, unread, as PeTTa's translator
  * does: a quoted argument is data, and a value may share its subterms, so
  * reading it could take time exponential in its size. */
+/* Whether `atom` is one of the values a derived equation holds: a partial
+ * application the specializer substituted for a parameter. */
+static bool petta_plan_held_value(
+    const Atom *atom, Atom *const *held, size_t held_len) {
+    if (held_len == 0u || !petta_semantics_partial_view(atom, NULL, NULL))
+        return false;
+    for (size_t index = 0u; index < held_len; index++) {
+        if (atom_eq((Atom *)atom, held[index]))
+            return true;
+    }
+    return false;
+}
+
 static PettaPlanNode *petta_plan_build_in(
     PettaProgram *program, Arena *plans,
     const PettaCallabilityDomain *callability, Atom *root,
-    bool compile_regions, bool translation) {
+    bool compile_regions, bool translation,
+    Atom *const *held, size_t held_len) {
     if (!program || !plans || !root)
         return NULL;
     PettaPlanNode *plan =
@@ -2531,8 +2564,11 @@ static PettaPlanNode *petta_plan_build_in(
         node->child_count = atom->expr.len;
         /* A list is a value: reading or passing one never evaluates its
          * elements.  Its occurrences keep plans, all values, so equation
-         * variables inside it still get their slots. */
-        if (item.value || atom_is_list_form(atom)) {
+         * variables inside it still get their slots.  So is a compiled
+         * lambda or closure, and a value a derived equation holds. */
+        if (item.value || atom_is_list_form(atom) ||
+            petta_semantics_is_canonical_closure(atom) ||
+            petta_plan_held_value(atom, held, held_len)) {
             node->role = PETTA_PLAN_VALUE;
             node->output = PETTA_PLAN_OUTPUT_VALUE;
             if (!petta_plan_push_children(
@@ -2610,7 +2646,13 @@ static PettaPlanNode *petta_plan_build_in(
                         : PETTA_PLAN_EXEC_GENERIC;
         } else {
             node->role = PETTA_PLAN_DYNAMIC_CALL;
-            node->dispatch_handler = true;
+            /* Translation already knows a literal closed lambda's callable
+             * identity, so its written invocation is a direct call. A head
+             * obtained through a variable/partial or another computation
+             * retains the implicit run-time-dispatch handler. */
+            node->dispatch_handler =
+                !petta_semantics_lambda_body(head_atom, NULL) &&
+                !petta_semantics_nullary_lambda_body(head_atom, NULL);
         }
 
         if (node->role == PETTA_PLAN_DATA) {
@@ -2701,7 +2743,8 @@ static const PettaPlanNode *petta_plan_build(
     const PettaCallabilityDomain *callability, Atom *root) {
     return program
         ? petta_plan_build_in(
-              program, &program->plans, callability, root, true, false)
+              program, &program->plans, callability, root, true, false,
+              NULL, 0u)
         : NULL;
 }
 
@@ -3264,6 +3307,18 @@ static void petta_program_space_commit_catalog_mutation(
     petta_program_space_clear_candidate_snapshots(entry);
 }
 
+static void petta_program_space_clear_type_families(PettaProgramSpace *entry) {
+    for (size_t i = 0u; i < entry->type_family_len; i++) {
+        free(entry->type_families[i].calls);
+    }
+    if (entry->type_families_current)
+        arena_free(&entry->type_family_storage);
+    free(entry->type_families);
+    entry->type_families = NULL;
+    entry->type_family_len = entry->type_family_cap = 0u;
+    entry->type_families_current = false;
+}
+
 static void petta_program_space_dispose_catalog(
         PettaProgramSpace *entry) {
     if (!entry)
@@ -3272,6 +3327,7 @@ static void petta_program_space_dispose_catalog(
         entry, PETTA_REVISION_VIEW_INVALIDATE_DISPOSE);
     petta_program_space_clear_head_index(entry);
     petta_program_space_clear_candidate_snapshots(entry);
+    petta_program_space_clear_type_families(entry);
     free(entry->equations);
     entry->equations = NULL;
     entry->equation_len = 0u;
@@ -3623,6 +3679,115 @@ static PettaProgramSpace *petta_program_ensure_space(
     return created;
 }
 
+static bool petta_program_type_family_build(
+    Space *space, Atom *head, Arena *storage, PettaProgramTypeFamily *family) {
+    memset(family, 0, sizeof(*family));
+    family->head = head->sym_id;
+    ArenaMark mark = arena_mark(storage);
+    Atom **types = NULL;
+    uint32_t count = space_get_declared_types(space, storage, head, &types);
+    family->hold_body = petta_type_body_is_data(types, count);
+    count = petta_type_unique_signatures(types, count);
+    family->calls = count ? calloc(count, sizeof(*family->calls)) : NULL;
+    bool ok = !count || family->calls;
+    for (uint32_t i = 0u; ok && i < count; i++) {
+        if (!petta_type_call_plan(types[i], 0u, NULL))
+            continue;
+        ok = petta_type_call_compile(types[i], &family->calls[family->count]);
+        if (ok)
+            family->count++;
+    }
+    free(types);
+    if (!ok) {
+        free(family->calls);
+        arena_reset(storage, mark);
+    }
+    return ok;
+}
+
+bool petta_program_type_calls(PettaProgram *program, Space *space, Atom *head,
+                              CettaExprLen supplied, Arena *arena,
+                              PettaTypeCall **calls_out, uint32_t *count_out,
+                              bool *hold_body) {
+    if (!calls_out || !count_out || !hold_body)
+        return false;
+    *calls_out = NULL;
+    *count_out = 0u;
+    *hold_body = false;
+    if (!space || !arena || !head || head->kind != ATOM_SYMBOL)
+        return false;
+    CETTA_SCOPED_SHARED_TRANSITION(type_family_observation);
+    SpaceProgramToken token = space_program_token(space);
+    PettaProgramSpace *entry = program ? petta_program_ensure_space(program, space) : NULL;
+    if (program && !entry)
+        return false;
+    PettaProgramTypeFamily temporary;
+    Arena temporary_storage;
+    PettaProgramTypeFamily *family = NULL;
+    if (entry) {
+        if (!entry->type_families_current ||
+            !space_program_token_eq(entry->type_family_program, token)) {
+            petta_program_space_clear_type_families(entry);
+            arena_init_detached(&entry->type_family_storage);
+            entry->type_family_program = token;
+            entry->type_families_current = true;
+        }
+        size_t low = 0u, high = entry->type_family_len;
+        while (low < high) {
+            size_t middle = low + (high - low) / 2u;
+            if (entry->type_families[middle].head < head->sym_id)
+                low = middle + 1u;
+            else
+                high = middle;
+        }
+        if (low < entry->type_family_len && entry->type_families[low].head == head->sym_id) {
+            family = &entry->type_families[low];
+        } else {
+            if (!petta_program_reserve((void **)&entry->type_families,
+                    &entry->type_family_cap, entry->type_family_len + 1u,
+                    sizeof(*entry->type_families)) ||
+                !petta_program_type_family_build(space, head,
+                    &entry->type_family_storage, &temporary))
+                return false;
+            memmove(entry->type_families + low + 1u, entry->type_families + low,
+                    (entry->type_family_len - low) * sizeof(*entry->type_families));
+            entry->type_families[low] = temporary;
+            entry->type_family_len++;
+            family = &entry->type_families[low];
+        }
+    } else {
+        arena_init_detached(&temporary_storage);
+        if (!petta_program_type_family_build(space, head, &temporary_storage, &temporary)) {
+            arena_free(&temporary_storage);
+            return false;
+        }
+        family = &temporary;
+    }
+    uint32_t count = 0u;
+    for (uint32_t i = 0u; i < family->count; i++)
+        count += supplied <= family->calls[i].arity;
+    PettaTypeCall *calls = count ? calloc(count, sizeof(*calls)) : NULL;
+    bool ok = !count || calls;
+    uint32_t next = 0u;
+    for (uint32_t i = 0u; ok && i < family->count; i++) {
+        if (supplied <= family->calls[i].arity)
+            ok = petta_type_call_instantiate(arena, &family->calls[i], &calls[next++]);
+    }
+    ok = ok && space_program_token_matches_live_space(token, space);
+    if (ok) {
+        *calls_out = calls;
+        *count_out = count;
+        *hold_body = family->hold_body;
+    } else {
+        free(calls);
+    }
+    if (!entry) {
+        free(temporary.calls);
+        arena_free(&temporary_storage);
+    }
+    return ok;
+}
+
 static PettaProgramAnalysisSpace *petta_program_find_analysis_space(
     PettaProgram *program, const Space *space) {
     if (!program || !program->analysis || !space)
@@ -3947,7 +4112,7 @@ const PettaPlanNode *petta_program_plan_transient(
     ArenaMark mark = arena_mark(&program->transient_scratch);
     PettaPlanNode *built = petta_plan_build_in(
         program, &program->transient_scratch, callability, atom, false,
-        true);
+        true, NULL, 0u);
     const PettaPlanNode *plan =
         built && petta_plan_collapse_values(built)
             ? petta_program_intern_plan(program, built)
@@ -4027,8 +4192,21 @@ const PettaPlanNode *petta_program_declaration_block_plan_at(
         ? block->plans[index] : NULL;
 }
 
+static const PettaPlanNode *petta_program_plan_equation(
+    PettaProgram *program, Atom *atom, Atom *const *held, size_t held_len);
+
 const PettaPlanNode *petta_program_plan_dynamic_add(
     PettaProgram *program, Atom *atom) {
+    return petta_program_plan_equation(program, atom, NULL, 0u);
+}
+
+const PettaPlanNode *petta_program_plan_derived_add(
+    PettaProgram *program, Atom *atom, Atom *const *held, size_t held_len) {
+    return petta_program_plan_equation(program, atom, held, held_len);
+}
+
+static const PettaPlanNode *petta_program_plan_equation(
+    PettaProgram *program, Atom *atom, Atom *const *held, size_t held_len) {
     if (!program || !atom)
         return NULL;
     PettaCallabilityDomain callability = {0};
@@ -4046,7 +4224,10 @@ const PettaPlanNode *petta_program_plan_dynamic_add(
         }
     }
     const PettaPlanNode *plan =
-        ok ? petta_plan_build(program, &callability, atom) : NULL;
+        ok ? petta_plan_build_in(
+                 program, &program->plans, &callability, atom, true, false,
+                 held, held_len)
+           : NULL;
     free(callability.named_heads);
     return plan;
 }

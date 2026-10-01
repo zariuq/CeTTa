@@ -460,6 +460,7 @@ def normalize(raw: bytes, kind: str) -> bytes:
 
 def engine_specs(row: dict[str, str]) -> list[tuple[str, str]]:
     profiles = {
+        "he": [("cetta-he", "he")],
         "petta": [("cetta-petta", "petta"), ("swi-petta", "swi")],
         "he-prime": [("cetta-he", "he"), ("cetta-prime", "prime")],
         "he-prime-petta": [

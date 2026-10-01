@@ -197,8 +197,8 @@
     "oracle_event_count": 94
   },
   "inputs": {
-    "acceptance_manifest_canonical_sha256": "7b0277015dbe6e8c188c839311f7041b1d547137839689fc8a036ac2a8397558",
-    "witness_ledger_canonical_sha256": "6f08b71c2f5124b9259fe0c0549892f11034e0c74043ae5dc86af8983084db44"
+    "acceptance_manifest_canonical_sha256": "59c6ab961e37c381960101f26b9d12ab0496beb4772d4a48a0e8811e5bddeebf",
+    "witness_ledger_canonical_sha256": "cfa4ea5c6c70da27c073261022dde2552afdf22625fca8f182bf73bdf62f3dbe"
   },
   "native_v3_intake": {
     "by_axis": {

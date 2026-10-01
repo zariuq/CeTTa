@@ -58,6 +58,22 @@ if ! timeout "$timeout_seconds" "$cetta" --lang petta \
     exit 1
 fi
 
+source_stdout="$work/source-boundaries.stdout"
+source_stderr="$work/source-boundaries.stderr"
+if ! timeout "$timeout_seconds" "$cetta" --lang petta \
+        --profile typecheck-v2 \
+        tests/petta/typecheck_v2_source_boundaries.metta \
+        >"$source_stdout" 2>"$source_stderr" ||
+   ! cmp -s "$source_stdout" \
+        tests/petta/typecheck_v2_source_boundaries.expected ||
+   [[ -s "$source_stderr" ]]; then
+    echo "FAIL: v2 source reactivation and sequential binding" >&2
+    diff -u tests/petta/typecheck_v2_source_boundaries.expected \
+        "$source_stdout" | head -40 >&2 || true
+    sed -n '1,20p' "$source_stderr" >&2
+    exit 1
+fi
+
 authority_negative=tests/petta/typecheck_v2_repros/02_stale_obligation_conflicting_type_addition.metta
 set +e
 timeout "$timeout_seconds" "$cetta" --lang petta \
@@ -262,6 +278,11 @@ for name in "${positives[@]}"; do
     if grep -Fq 'PeTTa type error:' "$typed_err"; then
         ((new_type_rejections += 1))
         echo "unexpected positive rejection: $name" >&2
+    fi
+    if [[ $typed_green -ne 1 ]]; then
+        echo "FAIL: positive runtime case $name (exit $typed_status)" >&2
+        sed -n '1,12p' "$typed_out" >&2
+        sed -n '1,12p' "$typed_err" >&2
     fi
 done
 

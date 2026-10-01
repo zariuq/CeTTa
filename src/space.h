@@ -94,6 +94,10 @@ typedef struct {
 
 typedef struct {
     TypeAnnBucket buckets[EQ_INDEX_BUCKETS];
+    /* Rows with an open outer constructor can match a declaration without
+     * being syntactically headed by ':'. They prohibit negative exclusion. */
+    bool has_open_rows;
+    bool has_non_symbol_subjects;
 } TypeAnnIndex;
 
 #define EXACT_INDEX_BUCKETS 4096
@@ -645,6 +649,8 @@ typedef struct {
     Atom *value;  /* Usually a grounded space atom, but can be anything */
 } RegistryEntry;
 
+struct RegistryStates;
+
 typedef struct {
     RegistryEntry *entries;
     uint32_t len, cap;
@@ -655,6 +661,9 @@ typedef struct {
     uint32_t *index_slots;
     uint32_t index_cap;
     uint32_t inline_index_slots[32];
+    /* PeTTa's named state, a namespace beside the bindings; NULL until a
+       state is first set. */
+    struct RegistryStates *states;
 } Registry;
 
 void registry_init(Registry *r);
@@ -666,6 +675,17 @@ Atom *registry_lookup(Registry *r, const char *name);
 bool registry_bind_name(Registry *r, Atom *name_key, Atom *value);
 Atom *registry_lookup_name(Registry *r, Atom *name_key);
 const Atom *registry_entry_name_key(const Registry *r, uint32_t index);
+
+/* PeTTa's named state: the reference's global variables, whose names are
+   independent of the names bound above.  Each state owns its value's
+   storage, and setting a state copies the value in and releases the value
+   it replaces, so a reader copies a stored value out before the state can
+   next change, and never keeps it. */
+Atom *registry_state_lookup(const Registry *r, SymbolId key);
+bool registry_state_set(Registry *r, SymbolId key, Atom *value);
+uint32_t registry_state_count(const Registry *r);
+bool registry_state_entry(const Registry *r, uint32_t index,
+                          SymbolId *key_out, Atom **value_out);
 
 /* Canonical structural reference: (resolve-name (quote <closed-key>)). */
 bool registry_ref_name_key(Atom *ref, Atom **name_key_out);
@@ -796,6 +816,12 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
  */
 uint32_t space_get_declared_types(
     Space *s, Arena *a, Atom *subject, Atom ***out_types);
+
+/* Conservative exclusion for relational (: subject type) queries. False
+ * certifies that no current occurrence can have the requested subject's
+ * outer constructor; true retains ordinary relational search. */
+bool space_type_annotation_may_match_subject(Space *s, const Atom *subject);
+bool space_type_annotations_have_only_symbol_subjects(Space *s);
 
 typedef struct {
     uint64_t indexed_lookups;

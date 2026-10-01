@@ -1,7 +1,7 @@
 ; == compares values and never binds: numbers by exact value at any depth,
-; every other term as a term.  != is its negation, and ordering compares
-; numbers exactly too, so it agrees with ==.  A NaN equals nothing and is
-; unordered.  Terms that share subterms compare in time linear in the
+; every other term as a term.  != is its negation. Arithmetic ordering
+; promotes mixed float operands, independently of ==. Every NaN equals every NaN
+; and nothing else, and is unordered.  Terms that share subterms compare in time linear in the
 ; sharing, not in their unfolding.
 (= (from-above) (* 1.0e-200 1.0e-200))
 (= (from-below) (* -1.0e-200 1.0e-200))

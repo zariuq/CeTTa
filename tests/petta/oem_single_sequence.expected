@@ -1,0 +1,20 @@
+single-effect
+first-effect
+last-effect
+last-effect
+plain
+plain
+(progn (println! inert))
+(prog1 (println! inert))
+(left left right)
+left
+8
+(Box 9)
+done
+(true)
+((Box true))
+()
+(evaluation_error zero_divisor)
+true
+(one two)
+(one two)

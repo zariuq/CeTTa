@@ -77,6 +77,8 @@ bool cetta_parallel_executor_failed(const CettaParallelExecutor *executor);
 
 Arena *cetta_parallel_worker_arena(CettaParallelWorker *worker);
 uint32_t cetta_parallel_worker_index(const CettaParallelWorker *worker);
+/* Whether the calling thread is running a parallel worker's episode. */
+bool cetta_parallel_worker_active(void);
 CettaParallelExecutor *cetta_parallel_worker_executor(
     const CettaParallelWorker *worker);
 

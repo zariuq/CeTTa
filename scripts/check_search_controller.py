@@ -299,12 +299,18 @@ def main() -> int:
         controller="fifo", stats=True,
     )
     require_uncaught_error(effect_fifo, "effect refusal")
+    # The refusal is raised: the file ends without its answers, and the
+    # refusal is reported on stderr.
     effect_fifo_golden = expected(
         "search_controller_effect_refusal.fifo.expected")
-    if effect_fifo.stdout != effect_fifo_golden:
+    if effect_fifo.stdout != effect_fifo_golden or (
+        "(Error (effect) SearchControllerAdmissionRefused)"
+        not in effect_fifo.stderr
+    ):
         raise AssertionError(
             "effectful root was not refused under FIFO request\n"
             f"expected:\n{effect_fifo_golden}fifo:\n{effect_fifo.stdout}"
+            f"stderr:\n{effect_fifo.stderr}"
         )
     effect_receipts = [
         line for line in effect_fifo.stderr.splitlines()

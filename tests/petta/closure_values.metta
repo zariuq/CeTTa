@@ -1,0 +1,28 @@
+; A lambda that names variables of its enclosing form is a closure over
+; their values: applied anywhere, it reads each as the value it held, and a
+; function whose body gives a closure takes the closure's parameters as its
+; own.
+(= (keep $k $a $x) (got $k $a $x))
+(= (my-apply $f $a $x) ($f $a $x))
+(= (apply1 $f $x) ($f $x))
+(= (adder $k) (|-> ($x) (+ $k $x)))
+(= (adder2 $k) (|-> ($x $y) (+ $k (* $x $y))))
+(= (twice-of $k) (let $j (* 2 $k) (|-> ($x) (+ $j $x))))
+(= (thunk $k) (|-> () (w $k)))
+!(let $k (quote (+ 1 2)) (my-apply (|-> ($a $x) (keep $k $a $x)) a b))
+!(let $k (quote (+ 1 2)) ((|-> ($x) (g $k $x)) a))
+!(let $k (quote (Q (+ 1 2))) (let $f (|-> () (w $k)) ($f)))
+!(let $k (quote (+ 1 2)) (let $f (|-> (($a $b)) (p $k $a $b)) ($f (1 2))))
+!(let $k (quote (+ 1 2)) (let $f (|-> ($x) (case $x (($k yes) ($_ no)))) ($f 3)))
+!(let $k (quote (+ 1 2)) (let $f (|-> ($x) (case $x (($k yes) ($_ no)))) ($f (quote (+ 1 2)))))
+!(let $k 5 (let $f (|-> ($x) (+ $k $x)) (collapse (superpose (($f 1) ($f 2))))))
+!(collapse (let $f (|-> ($x) (let $y $x $y)) (($f 1) ($f 2))))
+!(let $f (|-> ($x) (+ $k $x)) (let $k 5 ($f 1)))
+!(let $k 2 (let $f (|-> ($x) (|-> ($y) (+ $k (* $x $y)))) (($f 3) 4)))
+!(let $f (|-> ((f $a) $c) (r $a $c)) ($f (quote (f (+ 1 2))) z))
+!(adder 5 1)
+!(adder2 1 2 3)
+!(adder2 1 2)
+!(twice-of 2 1)
+!(thunk 5)
+!((adder2 1 2) 3)

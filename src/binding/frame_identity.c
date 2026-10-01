@@ -241,8 +241,13 @@ CettaFrameIdentity cetta_frame_identity_scope_fresh(CettaFrameIdentityScope *sco
     CettaFrameIdentity identity;
     if (cetta_frame_identity_scope_try(scope, &identity))
         return identity;
-    fputs("fatal: contextual frame identity space exhausted\n", stderr);
-    abort();
+    /* This entry point cannot return an identity on exhaustion. End the
+     * process as a resource failure; no finalization or cleanup is claimed.
+     * Recoverable callers use scope_try instead. _Exit also avoids running
+     * process-wide teardown from a participating worker. */
+    fputs("error: resource exhausted: contextual frame identities\n", stderr);
+    (void)fflush(stderr);
+    _Exit(2);
 }
 
 void cetta_frame_identity_scope_clear(CettaFrameIdentityScope *scope) {

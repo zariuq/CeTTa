@@ -1193,7 +1193,7 @@ static Atom *ground_term_from_pattern_at(
         return result;
     }
     case CETTA_LD_CARRIER_BUILTIN_STRING_V1: {
-        char *value;
+        char *value = NULL;
         Atom *result;
 
         if (!ground_term_pattern_is_leaf(pattern)) {
@@ -1214,7 +1214,7 @@ static Atom *ground_term_from_pattern_at(
         return result;
     }
     case CETTA_LD_CARRIER_BUILTIN_INT_V1: {
-        int64_t value;
+        int64_t value = 0;
         Atom *result;
 
         if (!ground_term_pattern_is_leaf(pattern)) {

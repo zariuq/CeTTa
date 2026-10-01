@@ -43,15 +43,16 @@ static int probe_fuel(void) {
     return (int)value;
 }
 
-void __real_eval_top_with_registry_petta_plan(
+void __real_eval_top_with_registry_petta_plan_outcome(
     Space *, Arena *, Arena *, Registry *, Atom *,
-    const struct PettaPlanNode *, ResultSet *);
-void __wrap_eval_top_with_registry_petta_plan(
+    const struct PettaPlanNode *, EvalOutcome *);
+void __wrap_eval_top_with_registry_petta_plan_outcome(
     Space *space, Arena *arena, Arena *persistent, Registry *registry,
-    Atom *expression, const struct PettaPlanNode *plan, ResultSet *results) {
+    Atom *expression, const struct PettaPlanNode *plan,
+    EvalOutcome *directive) {
     if (!has_head(expression, "typed-lifetime:probe")) {
-        __real_eval_top_with_registry_petta_plan(
-            space, arena, persistent, registry, expression, plan, results);
+        __real_eval_top_with_registry_petta_plan_outcome(
+            space, arena, persistent, registry, expression, plan, directive);
         return;
     }
     CettaLibraryContext *context = eval_current_library_context();
@@ -65,7 +66,7 @@ void __wrap_eval_top_with_registry_petta_plan(
     eval_outcome_init(&outcome);
     observing = true;
     opened_in_probe = 0;
-    eval_top_with_registry_petta_plan_outcome(
+    __real_eval_top_with_registry_petta_plan_outcome(
         space, arena, persistent, registry, expression, plan, &outcome);
     observing = false;
     bool exited = cetta_eval_session_process_exit_requested(&context->session);
@@ -84,7 +85,8 @@ void __wrap_eval_top_with_registry_petta_plan(
      * The observation above owns the actual occurrence/coverage evidence.
      * The CLI sees one test marker so its document loop can run the explicit
      * recovery query. This is not a claim about default CLI abort recovery. */
-    result_set_add(results, atom_symbol(arena, "BnfLifetimeProbeObservedV1"));
+    result_set_add(&directive->results,
+                   atom_symbol(arena, "BnfLifetimeProbeObservedV1"));
     eval_outcome_free(&outcome);
     context->session.options.fuel_limit = previous_fuel;
     context->session.options.max_stack_depth = previous_depth;
@@ -92,14 +94,15 @@ void __wrap_eval_top_with_registry_petta_plan(
     ++probes;
 }
 
-Atom *__real_cetta_library_dispatch_native(
-    CettaLibraryContext *, Space *, Arena *, Atom *, Atom **, uint32_t);
-Atom *__wrap_cetta_library_dispatch_native(
+bool __real_cetta_library_call_native(
+    CettaLibraryContext *, Space *, Arena *, Atom *, Atom **, uint32_t,
+    CettaCallOutcome *);
+bool __wrap_cetta_library_call_native(
     CettaLibraryContext *context, Space *space, Arena *arena,
-    Atom *head, Atom **arguments, uint32_t count) {
+    Atom *head, Atom **arguments, uint32_t count, CettaCallOutcome *out) {
     unsigned live_before = observing ? live_handles(context) : 0;
-    Atom *answer = __real_cetta_library_dispatch_native(
-        context, space, arena, head, arguments, count);
+    bool answer = __real_cetta_library_call_native(
+        context, space, arena, head, arguments, count, out);
     if (observing) {
         unsigned live_after = live_handles(context);
         if (live_after > live_before)

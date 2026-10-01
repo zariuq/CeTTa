@@ -1541,6 +1541,13 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
         cursor->occurrences = space_pinned_occurrences_acquire(s);
         return space_read_token_prefix_intact(cursor->read);
     }
+    if (space_match_native_try_cold_candidates(
+            s, pattern, &cursor->flat, &cursor->flat_len)) {
+        cursor->flat_mode = true;
+        cursor->pinned = true;
+        cursor->occurrences = space_pinned_occurrences_acquire(s);
+        return space_read_token_prefix_intact(cursor->read);
+    }
     space_match_native_ensure_trie(s);
     DiscNode *root = s->match_backend.native.match_trie;
     if (!root)
@@ -2651,15 +2658,25 @@ static uint32_t atom_hash_for_index_id(const Space *s, AtomId atom_id) {
 }
 
 static void ty_ann_index_init(TypeAnnIndex *idx) {
+    idx->has_open_rows = false;
+    idx->has_non_symbol_subjects = false;
     for (uint32_t i = 0; i < EQ_INDEX_BUCKETS; i++)
         ty_ann_bucket_init(&idx->buckets[i]);
 }
 static void ty_ann_index_free(TypeAnnIndex *idx) {
+    idx->has_open_rows = false;
+    idx->has_non_symbol_subjects = false;
     for (uint32_t i = 0; i < EQ_INDEX_BUCKETS; i++)
         ty_ann_bucket_free(&idx->buckets[i]);
 }
 static void ty_ann_index_add(TypeAnnIndex *idx, Atom *ann_atom,
                              CettaIndex atom_idx, AtomId annotation_id) {
+    if (!ann_atom || ann_atom->kind != ATOM_SYMBOL)
+        idx->has_non_symbol_subjects = true;
+    if (!ann_atom || atom_structural_has_rational(ann_atom) ||
+        (ann_atom->kind == ATOM_EXPR &&
+         atom_petta_value_representation(ann_atom) != PETTA_VALUE_ORDINARY))
+        idx->has_open_rows = true;
     uint32_t h = atom_hash_for_index(ann_atom);
     ty_ann_bucket_add(&idx->buckets[h], atom_idx, annotation_id);
 }
@@ -2667,8 +2684,48 @@ static void ty_ann_index_add(TypeAnnIndex *idx, Atom *ann_atom,
 static void ty_ann_index_add_id(TypeAnnIndex *idx, const Space *s,
                                 AtomId subject_id, CettaIndex atom_idx,
                                 AtomId annotation_id) {
+    if (!s || !s->native.universe || subject_id == CETTA_ATOM_ID_NONE ||
+        tu_kind(s->native.universe, subject_id) != ATOM_SYMBOL)
+        idx->has_non_symbol_subjects = true;
+    if (!s || !s->native.universe || subject_id == CETTA_ATOM_ID_NONE) {
+        idx->has_open_rows = true;
+    } else if (tu_hdr(s->native.universe, subject_id)) {
+        if (tu_kind(s->native.universe, subject_id) == ATOM_EXPR &&
+            tu_petta_value_representation(s->native.universe, subject_id) !=
+                PETTA_VALUE_ORDINARY)
+            idx->has_open_rows = true;
+    } else {
+        Atom *subject = term_universe_get_atom(s->native.universe, subject_id);
+        if (!subject || atom_structural_has_rational(subject) ||
+            (subject->kind == ATOM_EXPR &&
+             atom_petta_value_representation(subject) != PETTA_VALUE_ORDINARY))
+            idx->has_open_rows = true;
+    }
     ty_ann_bucket_add(&idx->buckets[atom_hash_for_index_id(s, subject_id)],
                       atom_idx, annotation_id);
+}
+
+static void ty_ann_index_note_row(TypeAnnIndex *idx, const Space *s,
+                                   AtomId row_id) {
+    if (idx->has_open_rows)
+        return;
+    const TermUniverse *universe = s->native.universe;
+    if (tu_hdr(universe, row_id)) {
+        AtomKind kind = tu_kind(universe, row_id);
+        if (kind == ATOM_VAR ||
+            (kind == ATOM_EXPR && tu_arity(universe, row_id) != 0u &&
+             (tu_head_sym(universe, row_id) == SYMBOL_ID_NONE ||
+              tu_petta_value_representation(universe, row_id) !=
+                  PETTA_VALUE_ORDINARY)))
+            idx->has_open_rows = true;
+        return;
+    }
+    Atom *row = term_universe_get_atom(universe, row_id);
+    if (!row || row->kind == ATOM_VAR || atom_structural_has_rational(row) ||
+        (row->kind == ATOM_EXPR && row->expr.len != 0u &&
+         (atom_head_symbol_id(row) == SYMBOL_ID_NONE ||
+          atom_petta_value_representation(row) != PETTA_VALUE_ORDINARY)))
+        idx->has_open_rows = true;
 }
 
 static void exact_atom_bucket_init(ExactAtomBucket *b) {
@@ -2845,6 +2902,7 @@ static bool atom_is_exact_indexable(const Atom *atom) {
         case GV_CAPTURE:
         case GV_BINDINGS:
         case GV_FOREIGN:
+        case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
             return false;
@@ -2891,6 +2949,7 @@ static bool atom_id_is_exact_indexable(const Space *s, AtomId atom_id) {
         case GV_CAPTURE:
         case GV_BINDINGS:
         case GV_FOREIGN:
+        case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
             return false;
@@ -4942,6 +5001,7 @@ static void ty_ann_index_rebuild(Space *s) {
     ty_ann_index_init(&s->native.ty_idx);
     for (CettaIndex i = 0; i < s->native.len; i++) {
         AtomId atom_id = space_get_atom_id_at64(s, i);
+        ty_ann_index_note_row(&s->native.ty_idx, s, atom_id);
         AtomId subject_id = CETTA_ATOM_ID_NONE;
         AtomId type_id = CETTA_ATOM_ID_NONE;
         if (space_type_annotation_child_ids_at_id(s, atom_id, &subject_id, &type_id)) {
@@ -5191,6 +5251,7 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
         }
         /* Index type annotations (: atom type) */
         if (!s->native.ty_idx_dirty) {
+            ty_ann_index_note_row(&s->native.ty_idx, s, atom_id);
             AtomId subject_id = CETTA_ATOM_ID_NONE;
             AtomId type_id = CETTA_ATOM_ID_NONE;
             if (space_type_annotation_child_ids_at_id(s, atom_id, &subject_id, &type_id)) {
@@ -5250,6 +5311,43 @@ bool space_add_atom_ids_batch(Space *s, const AtomId *atom_ids,
         equation_projection = space_merge_equation_projection(
             equation_projection,
             space_atom_equation_projection(s, atom_ids[i], NULL));
+    }
+
+    /* A data-only native batch is one append publication. The authoritative
+     * ordered occurrence array retains duplicates, while secondary indexes
+     * may be rebuilt when queried. Existing pinned cursors keep their ceiling. */
+    if (!space_has_overlay_base(s) && !space_is_queue(s) &&
+        s->match_backend.kind == SPACE_ENGINE_NATIVE &&
+        equation_projection == SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY &&
+        space_tracks_atom_ids(s)) {
+        if (atom_count > UINT64_MAX - s->native.len ||
+            !space_sync_atom_id_storage_width(s))
+            return false;
+        CettaIndex next_len = s->native.len + atom_count;
+        size_t width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
+        if (!width || next_len > SIZE_MAX / width)
+            return false;
+        space_reserve_linear(s, next_len);
+        CettaIndex start = s->native.len;
+        for (CettaCount i = 0u; i < atom_count; i++) {
+            if (!space_atom_id_storage_store_at(s->native.atom_ids,
+                    s->native.atom_id_width_bits, start + i, atom_ids[i]))
+                return false;
+            if (!s->native.ty_idx_dirty)
+                ty_ann_index_note_row(&s->native.ty_idx, s, atom_ids[i]);
+        }
+        s->native.len = next_len;
+        s->native.exact_idx_dirty = true;
+        s->native.has_non_exact_atoms_dirty = true;
+        SpaceMatchNativeState *native = &s->match_backend.native;
+        if ((native->match_trie && !native->match_trie_dirty) ||
+            (native->stree && !native->stree_dirty)) {
+            for (CettaCount i = 0u; i < atom_count; i++)
+                space_match_backend_note_add(s, atom_ids[i], NULL, start + i);
+        }
+        space_note_atom_id_storage_peak(s);
+        space_publish_mutation(s, equation_projection, SPACE_MUTATION_PREFIX_APPEND_ONLY);
+        return true;
     }
 
     if (!space_has_overlay_base(s) &&
@@ -5851,6 +5949,7 @@ static bool project_query_visible_bindings(Arena *a,
 
 void registry_init(Registry *r) {
     if (!r) return;
+    r->states = NULL;
     r->entries = r->inline_entries;
     r->len = 0;
     r->cap = (uint32_t)(sizeof(r->inline_entries) /
@@ -5862,8 +5961,12 @@ void registry_init(Registry *r) {
     memset(r->inline_index_slots, 0, sizeof(r->inline_index_slots));
 }
 
+static void registry_states_free(struct RegistryStates *states);
+
 void registry_free(Registry *r) {
     if (!r) return;
+    registry_states_free(r->states);
+    r->states = NULL;
     if (r->entries && r->entries != r->inline_entries)
         free(r->entries);
     if (r->index_slots && r->index_slots != r->inline_index_slots)
@@ -5998,6 +6101,123 @@ Atom *registry_lookup_id(Registry *r, SymbolId key) {
     if (!r || key == SYMBOL_ID_NONE) return NULL;
     uint32_t index = registry_index_find(r, key, NAME_ID_NONE);
     return index == UINT32_MAX ? NULL : r->entries[index].value;
+}
+
+/* The states' names and current values, with the arena holding each value.
+   A replaced value's arena is emptied and kept for the next change, so a
+   change takes no new arena: an arena's identity is a finite resource. */
+struct RegistryStates {
+    Registry names;
+    Arena **storage;
+    uint32_t storage_cap;
+    Arena *spare;
+};
+
+enum { REGISTRY_STATE_BLOCK_CAPACITY = 256u };
+
+static Arena *registry_state_arena_take(struct RegistryStates *states) {
+    Arena *arena = states->spare;
+    states->spare = NULL;
+    if (arena)
+        return arena;
+    arena = cetta_malloc(sizeof(*arena));
+    arena_init_detached(arena);
+    arena_set_block_capacity(arena, REGISTRY_STATE_BLOCK_CAPACITY);
+    return arena;
+}
+
+static void registry_state_arena_drop(Arena *arena) {
+    if (!arena)
+        return;
+    arena_free(arena);
+    free(arena);
+}
+
+/* Release what `arena` holds, keeping one block, as the next change's. */
+static void registry_state_arena_give_back(struct RegistryStates *states,
+                                           Arena *arena) {
+    if (!arena)
+        return;
+    if (states->spare) {
+        registry_state_arena_drop(arena);
+        return;
+    }
+    arena_reset(arena, (ArenaMark){0});
+    arena_release_spare(arena, REGISTRY_STATE_BLOCK_CAPACITY);
+    states->spare = arena;
+}
+
+static void registry_states_free(struct RegistryStates *states) {
+    if (!states)
+        return;
+    for (uint32_t index = 0u; index < states->names.len; index++)
+        registry_state_arena_drop(states->storage[index]);
+    registry_state_arena_drop(states->spare);
+    free(states->storage);
+    registry_free(&states->names);
+    free(states);
+}
+
+Atom *registry_state_lookup(const Registry *r, SymbolId key) {
+    if (!r || !r->states || key == SYMBOL_ID_NONE)
+        return NULL;
+    uint32_t index =
+        registry_index_find(&r->states->names, key, NAME_ID_NONE);
+    return index == UINT32_MAX ? NULL
+                               : r->states->names.entries[index].value;
+}
+
+bool registry_state_set(Registry *r, SymbolId key, Atom *value) {
+    if (!r || key == SYMBOL_ID_NONE || !value)
+        return false;
+    struct RegistryStates *states = r->states;
+    if (!states) {
+        states = cetta_malloc(sizeof(*states));
+        memset(states, 0, sizeof(*states));
+        registry_init(&states->names);
+        r->states = states;
+    }
+    Arena *arena = registry_state_arena_take(states);
+    Atom *stored = atom_deep_copy(arena, value);
+    if (!stored) {
+        registry_state_arena_give_back(states, arena);
+        return false;
+    }
+    uint32_t index = registry_index_find(&states->names, key, NAME_ID_NONE);
+    if (index != UINT32_MAX) {
+        Arena *replaced = states->storage[index];
+        states->names.entries[index].value = stored;
+        states->storage[index] = arena;
+        registry_state_arena_give_back(states, replaced);
+        return true;
+    }
+    if (states->names.len >= states->storage_cap) {
+        uint32_t cap = states->storage_cap ? states->storage_cap * 2u : 8u;
+        states->storage =
+            cetta_realloc(states->storage, sizeof(*states->storage) * cap);
+        states->storage_cap = cap;
+    }
+    registry_bind_id(&states->names, key, stored);
+    index = registry_index_find(&states->names, key, NAME_ID_NONE);
+    if (index == UINT32_MAX || index >= states->storage_cap) {
+        registry_state_arena_give_back(states, arena);
+        return false;
+    }
+    states->storage[index] = arena;
+    return true;
+}
+
+uint32_t registry_state_count(const Registry *r) {
+    return r && r->states ? r->states->names.len : 0u;
+}
+
+bool registry_state_entry(const Registry *r, uint32_t index,
+                          SymbolId *key_out, Atom **value_out) {
+    if (!r || !r->states || index >= r->states->names.len)
+        return false;
+    *key_out = r->states->names.entries[index].key;
+    *value_out = r->states->names.entries[index].value;
+    return true;
 }
 
 void registry_bind(Registry *r, const char *name, Atom *value) {
@@ -7206,6 +7426,9 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
         return atom_symbol(a, "Bindings");
     case GV_FOREIGN:
         return atom_symbol(a, "Foreign");
+    case GV_TERM_GRAPH:
+        /* A rational term is a list or a compound term: an expression. */
+        return atom_symbol(a, "Expression");
     case GV_CAPTURE:
         return atom_expr3(a, atom_symbol(a, "->"),
                           atom_atom_type(a), atom_atom_type(a));
@@ -7247,9 +7470,47 @@ static bool type_inference_can_add(CettaTypeInferenceBudget *budget,
     return false;
 }
 
-/* Resolve (: atom type) annotations through the native index.  Overlay
- * spaces retain their existing logical-view fallback, made observable to
- * focused callers through the optional cost record. */
+/* Exclusion uses the same incrementally maintained declaration index as
+ * exact type lookup. Bucket zero retains variable/structured heads. A hash
+ * collision admits extra candidates; it cannot exclude a real match.
+ * Open outer rows and unsupported stores retain the ordinary relational path. */
+bool space_type_annotation_may_match_subject(Space *s, const Atom *subject) {
+    CETTA_SCOPED_SHARED_TRANSITION(observation);
+    if (!s || !subject || space_has_overlay_base(s) ||
+        s->match_backend.kind != SPACE_ENGINE_NATIVE)
+        return true;
+    if (subject->kind != ATOM_SYMBOL &&
+        (subject->kind != ATOM_EXPR ||
+         atom_petta_value_representation(subject) != PETTA_VALUE_ORDINARY ||
+         atom_structural_has_rational(subject)))
+        return true;
+    SymbolId head = subject->kind == ATOM_SYMBOL ? subject->sym_id :
+        atom_head_symbol_id(subject);
+    if (head == SYMBOL_ID_NONE)
+        return true;
+    ensure_ty_ann_index(s);
+    if (s->native.ty_idx_dirty || s->native.ty_idx.has_open_rows)
+        return true;
+    uint32_t bucket = symbol_hash(head);
+    return s->native.ty_idx.buckets[bucket].len != 0u ||
+           s->native.ty_idx.buckets[0].len != 0u;
+}
+
+/* Symbol-subject declarations cannot refine variables in a compound subject.
+ * The caller separately excludes authored classifiers before using an
+ * intrinsic answer producer. Unsupported views receive no certificate. */
+bool space_type_annotations_have_only_symbol_subjects(Space *s) {
+    CETTA_SCOPED_SHARED_TRANSITION(observation);
+    if (!s || space_has_overlay_base(s) ||
+        s->match_backend.kind != SPACE_ENGINE_NATIVE)
+        return false;
+    ensure_ty_ann_index(s);
+    return !s->native.ty_idx_dirty && !s->native.ty_idx.has_open_rows &&
+           !s->native.ty_idx.has_non_symbol_subjects;
+}
+
+/* Resolve (: atom type) annotations through the native index. Overlay spaces
+ * retain their logical-view fallback and optional lookup cost record. */
 static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
                                     Atom ***out_types,
                                     CettaTypeInferenceBudget *budget,
@@ -7277,7 +7538,15 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
                 cap = cap ? cap * 2u : 4u;
                 types = cetta_realloc(types, sizeof(Atom *) * cap);
             }
-            types[count++] = cetta_instantiate_frame_syntax(a, annotation->expr.elems[2]);
+            Atom *type = annotation->expr.elems[2];
+            Atom *copy = atom_has_vars(type)
+                ? cetta_instantiate_frame_syntax(a, type)
+                : atom_deep_copy_shared(a, type);
+            if (!copy) {
+                free(types);
+                goto allocation_failed;
+            }
+            types[count++] = copy;
         }
         *out_types = types;
         return count;
@@ -7307,8 +7576,19 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
                                                   &subject_id, &type_id)) {
             if (term_universe_atom_id_eq(s->native.universe, subject_id, atom)) {
                 CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
-                Atom *type_copy = term_universe_copy_atom_epoch(
-                    s->native.universe, a, type_id, cetta_frame_identity_scope_fresh(&frame_identity_scope));
+                CettaFrameIdentity identity = 0u;
+                if (tu_has_vars(s->native.universe, type_id) &&
+                    !cetta_frame_identity_scope_try(&frame_identity_scope, &identity)) {
+                    free(types);
+                    goto allocation_failed;
+                }
+                Atom *type_copy = identity
+                    ? term_universe_copy_atom_epoch(s->native.universe, a, type_id, identity)
+                    : term_universe_copy_atom(s->native.universe, a, type_id);
+                if (!type_copy) {
+                    free(types);
+                    goto allocation_failed;
+                }
                 if (type_copy) {
                     if (!type_inference_can_add(budget, count)) break;
                     if (count >= cap) {
@@ -7333,10 +7613,25 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
             cap = cap ? cap * 2 : 4;
             types = cetta_realloc(types, sizeof(Atom *) * cap);
         }
-        types[count++] = cetta_instantiate_frame_syntax(a, annotation->expr.elems[2]);
+        Atom *type = annotation->expr.elems[2];
+        Atom *copy = atom_has_vars(type)
+            ? cetta_instantiate_frame_syntax(a, type)
+            : atom_deep_copy_shared(a, type);
+        if (!copy) {
+            free(types);
+            goto allocation_failed;
+        }
+        types[count++] = copy;
     }
     *out_types = types;
     return count;
+allocation_failed:
+    if (budget) {
+        budget->complete = false;
+        budget->evaluator_capacity_exhausted = true;
+    }
+    *out_types = NULL;
+    return 0u;
 }
 
 uint32_t space_get_declared_types(

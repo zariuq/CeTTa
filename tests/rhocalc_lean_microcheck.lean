@@ -537,7 +537,7 @@ theorem semanticTypingCounterexample_orig_typed :
   apply HasType.quote
   apply HasType.drop
   apply HasType.fvar
-  simp [TypingContext.extend, TypingContext.lookup]
+  rfl
 
 theorem semanticTypingCounterexample_norm_eq :
     semanticTypingCounterexampleNorm = .apply "PDrop" [.fvar "x"] := by
@@ -550,7 +550,7 @@ theorem semanticTypingCounterexample_norm_typed :
   unfold semanticTypingCounterexampleCtx
   apply HasType.drop
   apply HasType.fvar
-  simp [TypingContext.extend, TypingContext.lookup]
+  rfl
 
 theorem semanticTypingCounterexample_orig_typed_upToSubjectEquiv :
     HasTypeUpToSubjectEquiv
@@ -627,7 +627,7 @@ theorem costSyntax_continued_contract_left_term :
         { term := costBodyTerm, grade := zeroCostGrade }
         { term := costPayloadTerm, grade := zeroCostGrade }).left.term
       = costBodyTerm := by
-  calc
+  have wrapped :
     (rhoContinuedCutPresentation.contractWrapped
         costChannel costChannel
         { term := costBodyTerm, grade := zeroCostGrade }
@@ -639,12 +639,14 @@ theorem costSyntax_continued_contract_left_term :
             costChannel costChannel
             { term := costBodyTerm, grade := zeroCostGrade }
             { term := costPayloadTerm, grade := zeroCostGrade }
-    _ = semanticCommSubst costBodyTerm costPayloadTerm := by
-          simpa [rhoContinuedCutPresentation] using
-            rhoInteractionCutPresentation_contract_fst
-              costChannel costChannel costBodyTerm costPayloadTerm
-    _ = costBodyTerm := by
-          exact costSyntax_semantic_subst_body_ignores_payload
+  have contracted :
+      (rhoContinuedCutPresentation.interactionCut.contract
+        costChannel costChannel costBodyTerm costPayloadTerm).1 =
+      semanticCommSubst costBodyTerm costPayloadTerm := by
+    simpa [rhoContinuedCutPresentation] using
+      rhoInteractionCutPresentation_contract_fst
+        costChannel costChannel costBodyTerm costPayloadTerm
+  exact wrapped.trans (contracted.trans costSyntax_semantic_subst_body_ignores_payload)
 
 theorem costSyntax_continued_contract_right_term :
     (rhoContinuedCutPresentation.contractWrapped

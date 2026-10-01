@@ -1184,6 +1184,9 @@ static void imported_binding_set_to_exact_matches(SubstMatchSet *out,
         subst_matchset_push(out, 0, 0, &matches->items[i], true);
 }
 
+static bool native_cold_flat_candidates(
+    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count);
+
 static CettaIndex native_candidates(Space *s, Atom *pattern, CettaIndex **out) {
     SpaceMatchNativeState *st = &s->match_backend.native;
     /* A root variable matches every visible occurrence.  Its complete
@@ -1198,6 +1201,9 @@ static CettaIndex native_candidates(Space *s, Atom *pattern, CettaIndex **out) {
         for (CettaIndex i = 0; i < s->native.len; i++) (*out)[i] = i;
         return s->native.len;
     }
+    CettaIndex cold_count = 0u;
+    if (space_match_native_try_cold_candidates(s, pattern, out, &cold_count))
+        return cold_count;
     native_ensure_match_trie(s);
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MATCH_NATIVE_TRIE_LOOKUP);
     CettaIndex ncand = 0, ccand = 0;
@@ -1249,6 +1255,84 @@ static bool native_pattern_is_flat_linear(Atom *pattern) {
     }
     free(seen);
     return admissible;
+}
+
+/* A cold selective flat query need not retain an index of every term in
+ * the space. This is only a refutation filter: correlated stored variables
+ * and opaque representations remain candidates for the canonical matcher.
+ * Occurrences keep their source order, including repeated immutable ids. */
+static bool native_cold_flat_candidates(
+    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count) {
+    if (!space || !pattern || !out || !count || !space->native.universe ||
+        space->overlay_base || atom_structural_may_have_list_carrier(pattern) ||
+        !native_pattern_is_flat_linear(pattern))
+        return false;
+    bool rigid = false;
+    for (CettaExprIndex column = 0u; column < pattern->expr.len; column++) {
+        Atom *item = pattern->expr.elems[column];
+        if (item->kind == ATOM_VAR)
+            continue;
+        if (item->kind != ATOM_SYMBOL &&
+            (item->kind != ATOM_GROUNDED ||
+             (item->ground.gkind != GV_INT && item->ground.gkind != GV_FLOAT &&
+              item->ground.gkind != GV_BOOL && item->ground.gkind != GV_STRING)))
+            return false;
+        rigid = true;
+    }
+    if (!rigid)
+        return false;
+    CettaIndex *indices = NULL;
+    CettaIndex length = 0u, capacity = 0u;
+    for (CettaIndex position = 0u; position < space->native.len; position++) {
+        AtomId id = space_get_atom_id_at64(space, position);
+        const CettaTermHdr *header = tu_hdr(space->native.universe, id);
+        bool candidate = !header || tu_has_vars(space->native.universe, id);
+        if (!candidate && tu_kind(space->native.universe, id) == ATOM_EXPR &&
+            tu_arity(space->native.universe, id) == pattern->expr.len) {
+            candidate = true;
+            for (CettaExprIndex column = 0u; column < pattern->expr.len; column++) {
+                Atom *item = pattern->expr.elems[column];
+                if (item->kind == ATOM_VAR)
+                    continue;
+                AtomId child = tu_child(space->native.universe, id, column);
+                if (child == CETTA_ATOM_ID_NONE ||
+                    !native_stored_coordinate_matches(space->native.universe,
+                                                       child, item)) {
+                    candidate = false;
+                    break;
+                }
+            }
+        }
+        if (!candidate)
+            continue;
+        if (length == capacity) {
+            if (capacity > SIZE_MAX / sizeof(*indices) / 2u) {
+                free(indices);
+                return false;
+            }
+            capacity = capacity ? capacity * 2u : 16u;
+            indices = cetta_realloc(indices, (size_t)capacity * sizeof(*indices));
+        }
+        indices[length++] = position;
+    }
+    *out = indices;
+    *count = length;
+    return true;
+}
+
+bool space_match_native_try_cold_candidates(
+    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count) {
+    if (!space || !out || !count ||
+        (space->match_backend.kind != SPACE_ENGINE_NATIVE &&
+         space->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
+        return false;
+    SpaceMatchNativeState *state = &space->match_backend.native;
+    if (state->match_trie || state->cold_flat_scans >= 4u ||
+        !native_cold_flat_candidates(space, pattern, out, count))
+        return false;
+    state->cold_flat_scans++;
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_NATIVE_CANDIDATES, *count);
+    return true;
 }
 
 static bool native_count_rigid_occurrences(
@@ -1585,8 +1669,9 @@ static bool native_count_flat_linear_view(
 
     SpaceMatchNativeState *state = &s->match_backend.native;
     bool indexed = state->match_trie && !state->match_trie_dirty;
-    if (!indexed && s->native.len > MATCH_TRIE_THRESHOLD)
-        return false;
+
+    /* A cold count view can scan the same authoritative AtomId sequence as
+     * the materialized-pattern count. It need not first build a full trie. */
 
     CettaIndex *candidates = NULL;
     CettaIndex candidate_len = s->native.len;
@@ -1625,7 +1710,12 @@ static bool native_count_flat_linear_view(
         }
         if (tu_kind(s->native.universe, candidate_id) != ATOM_EXPR ||
             tu_arity(s->native.universe, candidate_id) != column_count) {
-            if (tu_has_vars(s->native.universe, candidate_id)) {
+            if (tu_kind(s->native.universe, candidate_id) == ATOM_VAR ||
+                (tu_has_vars(s->native.universe, candidate_id) &&
+                 tu_kind(s->native.universe, candidate_id) == ATOM_EXPR &&
+                 (tu_head_sym(s->native.universe, candidate_id) == SYMBOL_ID_NONE ||
+                  tu_petta_value_representation(s->native.universe, candidate_id) !=
+                      PETTA_VALUE_ORDINARY))) {
                 free(candidates);
                 return false;
             }
@@ -6200,6 +6290,7 @@ static bool imported_flatten_atom_id(ImportedFlatBuilder *b,
         case GV_CAPTURE:
         case GV_BINDINGS:
         case GV_FOREIGN:
+        case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
         case GV_INTERNAL_TAG:

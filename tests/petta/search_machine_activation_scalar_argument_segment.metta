@@ -71,7 +71,9 @@
 !(get-state scalar-segment-state)
 
 ; Overflow, unresolved variables and nonnumeric values retain the ordinary
-; numeric and error semantics. Effects and duplicate answers remain visible.
+; numeric and error semantics. Effects and duplicate answers remain visible;
+; the unresolved variable's error, raised on each route, is caught so that
+; every answer before it stays observable.
 !(scalar-result 9223372036854775807 2)
 !(scalar-result 9 9223372036854775807)
-!(scalar-result $free 3)
+!(catch (scalar-result $free 3))
