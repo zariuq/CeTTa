@@ -1,0 +1,30 @@
+first-effect
+second-effect
+last-effect
+last-effect
+(a b a b a b)
+(left left left left right right)
+(Box 9)
+done
+(kept)
+((Box kept) (Box kept))
+(tail tail outside)
+()
+(evaluation_error zero_divisor)
+()
+()
+done
+(one two)
+(Box 10)
+(Box 18)
+((Box a) (Box a) (Box b))
+((Box a))
+(Box small)
+(Box large)
+((Box kept))
+(Box (progn (println! inert) (+ 1 2)))
+((Box old))
+true
+((Box old) (Box newer))
+true
+((Box old))

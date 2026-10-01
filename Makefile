@@ -29881,6 +29881,27 @@ test-petta-oem-single-sequence: $(BIN)
 	done; \
 	echo "PASS: one-child sequences preserve values, choices, effects, failure, payloads and equation cuts"
 
+.PHONY: test-petta-tier-composition
+test: test-petta-tier-composition
+test-petta-semantics: test-petta-tier-composition
+test-open-equations: test-petta-tier-composition
+test-petta-tier-composition: $(BIN)
+	@set -eu; \
+	for fixture in tier_sequences tier_primitives; do \
+		for reference in 0 1; do \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+				--lang petta tests/petta/$$fixture.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/$$fixture.expected)" ]; then \
+				echo "FAIL: $$fixture (reference $$reference)"; \
+				diff -u tests/petta/$$fixture.expected <(printf '%s\n' "$$actual"); \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: sequencing, value bindings, structural observations and unification preserve choices, effects and cut scope"
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_tier_composition.py \
+		./$(BIN) $(if $(filter 1,$(ENABLE_RUNTIME_STATS)),--stats,)
+
 .PHONY: test-petta-oem-collection-stress
 # The open-equation machine answers the same when it collects every few
 # kilobytes: choice frames kept across many collections, old cells bound and
