@@ -18,21 +18,25 @@ def run(binary, source, language, reference, prefer_rationals=False):
         command += ["--fuel", "1000000"]
     command.append(str(source))
     process = subprocess.run(command, capture_output=True, text=True, timeout=60)
-    # A PeTTa file that stops at an uncaught error, its last answer, exits
-    # with status 2, as SWI-PeTTa's does; any other status is a failure.
-    lines = process.stdout.splitlines()
-    stopped = language == "petta" and process.returncode == 2 and \
-        bool(lines) and lines[-1].startswith("(Error ")
+    # An uncaught PeTTa error is a diagnostic and exits with status 2.
+    # Preserve its payload in the comparison, separately from answer lines.
+    error_prefix = "error: uncaught PeTTa error: "
+    errors = [line.removeprefix(error_prefix)
+              for line in process.stderr.splitlines()
+              if line.startswith(error_prefix)]
+    stopped = language == "petta" and process.returncode == 2 and len(errors) == 1
     if process.returncode and not stopped:
         raise AssertionError((source.read_text(), language, reference,
                               process.returncode, process.stdout, process.stderr))
     counters = {}
     for line in process.stderr.splitlines():
+        if stopped and line.startswith(error_prefix):
+            continue
         fields = line.split()
         if len(fields) != 3 or fields[0] != "runtime-counter":
             raise AssertionError(f"unexpected diagnostic: {line}")
         counters[fields[1]] = int(fields[2])
-    return process.stdout, counters, process.returncode
+    return process.stdout, counters, process.returncode, errors
 
 
 def programs():
@@ -69,11 +73,11 @@ def programs():
     yield "exceptional-floats", """(= (float-result $x $y) (Results (+ $x $y) (* $x $y) (< $x $y)))
 !(float-result (/ 1.0 0.0) 0.0)
 !(float-result (/ 0.0 0.0) 1.0)
-""", {"petta": 1, "he": 2, "prime": 2}, ("he", "prime")
+""", {"petta": 0, "he": 2, "prime": 2}, ("he", "prime")
     # Neither failure nor unsupported values may become a successful number.
     yield "unsupported", """(= (number-result $x $y) (+ $x $y))
 !(number-result datum 1)
-""", 1, False
+""", {"petta": 0, "he": 1, "prime": 1}, False
     yield "rational", """(= (ratio $x $y) (+ (/ $x $y) (/ 1 3)))
 !(ratio 1 2)
 (= (ratio-less $x $y) (< (/ $x 3) (/ $y 2)))
@@ -96,13 +100,17 @@ def main():
         for name, program, outputs, compiled in programs():
             source.write_text(program)
             for language in ("petta", "he", "prime"):
-                candidate, counters, status = run(
+                candidate, counters, status, errors = run(
                     binary, source, language, False, name == "rational")
-                reference, reference_counters, reference_status = run(
+                reference, reference_counters, reference_status, reference_errors = run(
                     binary, source, language, True, name == "rational")
                 label = f"{language}/{name}"
-                assert (candidate, status) == (reference, reference_status), \
-                    (label, candidate, status, reference, reference_status)
+                assert (candidate, status, errors) == (reference, reference_status, reference_errors), \
+                    (label, candidate, status, errors, reference, reference_status, reference_errors)
+                if language == "petta" and name in ("exceptional-floats", "unsupported"):
+                    formal = "(evaluation_error zero_divisor)" if name == "exceptional-floats" \
+                        else "(type_error evaluable (/ datum 0))"
+                    assert status == 2 and errors[0].startswith(f"(Error {formal} "), (label, errors)
                 # SWI-PeTTa raises for a zero divisor and the file stops
                 # there; HE and Prime keep IEEE results.
                 expected_lines = outputs[language] \

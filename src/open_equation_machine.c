@@ -144,6 +144,8 @@ enum {
     OEM_HOST_METATYPE,
     /* PeTTa's named state, `get-state` and `change-state!`, over values. */
     OEM_HOST_STATE,
+    /* Structural predicates and boolean unification over evaluated values. */
+    OEM_HOST_OBSERVE,
 };
 
 typedef struct {
@@ -509,6 +511,7 @@ typedef enum {
     OEM_N_CALL,        /* a relation call; its output is the hole `exposed` */
     OEM_N_PRIM,
     OEM_N_LET,
+    OEM_N_SEQUENCE,    /* ordered child goals; `exposed` selects one output */
     OEM_N_IF,
     OEM_N_FAIL,
     OEM_N_MATCH,       /* `(match space pattern template)`: the template's
@@ -1255,7 +1258,7 @@ static bool oem_host_goal_admitted(const OemCompile *compile, Atom *expr,
 
 /* Whether the plan takes every field of `expr` from `first` on as a value:
  * a variable's value or call-free data. */
-static bool oem_fields_are_values(Atom *expr, const PettaPlanNode *plan,
+static bool oem_fields_are_values(const Atom *expr, const PettaPlanNode *plan,
                                   CettaExprIndex first) {
     for (CettaExprIndex index = first; index < expr->expr.len; index++) {
         const PettaPlanNode *field = petta_plan_child(plan, index);
@@ -1270,7 +1273,9 @@ static bool oem_fields_are_values(Atom *expr, const PettaPlanNode *plan,
 /* A type-pure grounded operation the language offers that is no PeTTa form:
  * the region may apply it to its arguments' values. */
 static bool oem_pure_operation(const OemCompile *compile, SymbolId head) {
-    return petta_semantics_grounded_type_pure(head) &&
+    return (petta_semantics_grounded_type_pure(head) ||
+            head == g_builtin_syms.petta_min ||
+            head == g_builtin_syms.petta_max) &&
         compile->host && compile->host->builtin_allowed &&
         compile->host->builtin_allowed(compile->host->context, head);
 }
@@ -1303,6 +1308,28 @@ static bool oem_metatype_call(const OemCompile *compile, const Atom *expr,
         compile->host->builtin_allowed &&
         compile->host->builtin_allowed(compile->host->context,
                                        g_builtin_syms.get_metatype);
+}
+
+static bool oem_observation_call(const OemCompile *compile, const Atom *expr,
+                                  const PettaPlanNode *plan) {
+    if (expr->expr.elems[0]->kind != ATOM_SYMBOL ||
+        plan->role != PETTA_PLAN_STATIC_CALL || !compile->host ||
+        !compile->host->builtin_allowed ||
+        !compile->host->builtin_allowed(compile->host->context,
+                                        expr->expr.elems[0]->sym_id))
+        return false;
+    SymbolId head = expr->expr.elems[0]->sym_id;
+    PeTTaForm form = petta_semantics_form(head);
+    /* Open computed operands can require expected-side evaluation of a
+     * function occurrence. Leave that relational demand with the machine;
+     * values and closed computations use the boolean unification trial. */
+    return (expr->expr.len == 3u && head == g_builtin_syms.equals &&
+            (oem_fields_are_values(expr, plan, 1u) ||
+             (!atom_has_vars(expr->expr.elems[1]) &&
+              !atom_has_vars(expr->expr.elems[2])))) ||
+        (expr->expr.len == 2u &&
+         (form == PETTA_FORM_IS_VAR || form == PETTA_FORM_IS_EXPR ||
+          form == PETTA_FORM_IS_GROUND || form == PETTA_FORM_IS_SPACE));
 }
 
 /* The template of an existence observer's match, when it is one value the
@@ -1361,6 +1388,11 @@ static uint32_t oem_host_fast_path(const OemCompile *compile, Atom *expr,
         return OEM_HOST_ADMIT;
     if (oem_state_call(expr) && oem_fields_are_values(expr, plan, 1u))
         return OEM_HOST_STATE;
+    if (oem_observation_call(compile, expr, plan) &&
+        oem_fields_are_values(expr, plan, 1u)) {
+        *op_out = expr->expr.elems[0]->sym_id;
+        return OEM_HOST_OBSERVE;
+    }
     if (expr->expr.elems[0]->kind == ATOM_SYMBOL && expr->expr.len == 2u &&
         petta_semantics_form(expr->expr.elems[0]->sym_id) ==
             PETTA_FORM_MSORT &&
@@ -1611,6 +1643,9 @@ static bool oem_build_apply(OemCompile *compile, Atom *expr,
     } else if (oem_state_call(expr)) {
         /* And PeTTa's named state. */
         node.host_fast = (uint8_t)OEM_HOST_STATE;
+        node.op = expr->expr.elems[0]->sym_id;
+    } else if (oem_observation_call(compile, expr, plan)) {
+        node.host_fast = (uint8_t)OEM_HOST_OBSERVE;
         node.op = expr->expr.elems[0]->sym_id;
     } else if (expr->expr.elems[0]->kind == ATOM_SYMBOL &&
                oem_pure_operation(compile, expr->expr.elems[0]->sym_id)) {
@@ -1877,18 +1912,50 @@ static bool oem_build_control(OemCompile *compile, Atom *expr,
     return ok;
 }
 
-/* A one-child sequence has exactly the child's output and goals. Keep its
- * occurrence plan, including value/code roles, and the enclosing cut scope.
- * Empty and multiple-child sequences retain their ordinary host execution. */
-static bool oem_single_child_sequence(const Atom *expr,
-                                      const PettaPlanNode *plan) {
-    if (!expr || expr->kind != ATOM_EXPR || expr->expr.len != 2u ||
+/* A sequence composes the children's existing occurrence plans. Its output
+ * is the selected child's exposed term, unified at the same frontier as
+ * the ordinary translator; unused values are never evaluated again. Only
+ * the final child of progn may inherit a tail position. No delimiter or
+ * synthetic binder is introduced around the children. */
+static bool oem_sequence(const Atom *expr, const PettaPlanNode *plan) {
+    if (!expr || expr->kind != ATOM_EXPR || expr->expr.len < 2u ||
         expr->expr.elems[0]->kind != ATOM_SYMBOL || !plan ||
-        plan->output != PETTA_PLAN_OUTPUT_CHILD || plan->output_child != 1u)
+        plan->output != PETTA_PLAN_OUTPUT_CHILD)
         return false;
     PeTTaForm form = petta_semantics_form(expr->expr.elems[0]->sym_id);
-    return form == PETTA_FORM_PROGN || form == PETTA_FORM_PROG1;
+    return (form == PETTA_FORM_PROGN &&
+            plan->output_child == expr->expr.len - 1u) ||
+        (form == PETTA_FORM_PROG1 && plan->output_child == 1u);
 }
+
+static bool oem_build_sequence(OemCompile *compile, Atom *expr,
+                               const PettaPlanNode *plan, uint32_t depth,
+                               bool tail, uint32_t *out) {
+    OemNode node = {.kind = OEM_N_SEQUENCE,
+                    .count = (uint32_t)expr->expr.len - 1u,
+                    .tail = tail && petta_semantics_form(
+                        expr->expr.elems[0]->sym_id) == PETTA_FORM_PROGN};
+    uint32_t *children = malloc(sizeof(*children) * node.count);
+    if (!children)
+        return oem_reject(compile, "out of memory");
+    bool ok = true;
+    for (uint32_t index = 0u; ok && index < node.count; index++) {
+        bool last = node.tail && index + 1u == node.count;
+        ok = (last ? oem_build_tail : oem_build_value)(
+            compile, expr->expr.elems[index + 1u],
+            petta_plan_child(plan, index + 1u), depth + 1u, &children[index]);
+    }
+    if (ok) {
+        node.exposed = compile->nodes[children[plan->output_child - 1u]].exposed;
+        ok = oem_node_children(compile, children, node.count, &node.first);
+    }
+    free(children);
+    return ok && oem_node(compile, node, out);
+}
+
+static bool oem_build_bindings(OemCompile *compile, Atom *expr,
+                               const PettaPlanNode *plan, uint32_t depth,
+                               bool tail, uint32_t *out);
 
 /* A value position: a variable, a literal, a constructor over values, a
  * relation call or a primitive. */
@@ -1909,9 +1976,11 @@ static bool oem_build_value(OemCompile *compile, Atom *expr,
             oem_node(compile, node, out);
     if (!plan)
         return oem_reject(compile, "occurrence has no plan");
-    if (oem_single_child_sequence(expr, plan))
-        return oem_build_value(compile, expr->expr.elems[1],
-                                petta_plan_child(plan, 1u), depth + 1u, out);
+    if (oem_sequence(expr, plan))
+        return oem_build_sequence(compile, expr, plan, depth, false, out);
+    if (plan->control == PETTA_PLAN_CONTROL_LET ||
+        plan->control == PETTA_PLAN_CONTROL_LET_STAR)
+        return oem_build_bindings(compile, expr, plan, depth, false, out);
     bool symbol_head = expr->expr.elems[0]->kind == ATOM_SYMBOL;
     if (symbol_head && expr->expr.len == 4u &&
         expr->expr.elems[0]->sym_id == g_builtin_syms.match)
@@ -2035,14 +2104,33 @@ static bool oem_build_value(OemCompile *compile, Atom *expr,
         return oem_build_local_control(compile, OEM_N_ALTERNATIVES, expr,
                                        plan, depth, &expr, &plan, 1u, expr,
                                        out);
-    if (symbol_head && oem_relation_call(expr, plan) &&
+    /* These intrinsics precede authored equations in the machine. Compute
+     * their arguments once; integer min/max and structural observations
+     * stay native, while other min/max domains use the prepared leaf. */
+    if (symbol_head &&
+        (oem_observation_call(compile, expr, plan) ||
+         (plan->role == PETTA_PLAN_STATIC_CALL && expr->expr.len == 3u &&
+          (expr->expr.elems[0]->sym_id == g_builtin_syms.petta_min ||
+           expr->expr.elems[0]->sym_id == g_builtin_syms.petta_max) &&
+          oem_pure_operation(compile, expr->expr.elems[0]->sym_id))))
+        return oem_build_apply(compile, expr, plan, depth, out);
+    /* A full-arity grounded spelling undefined by this dialect is data
+     * until an authored function registers it. Partial applications keep
+     * the machine's arity protocol. Its children retain their plans, and
+     * registration/mutation invalidates the enclosing program. */
+    bool undefined = symbol_head && expr->expr.len == 3u && compile->petta &&
+        petta_semantics_grounded_undefined(expr->expr.elems[0]->sym_id) &&
+        !petta_program_function_registered(
+            compile->petta, compile->program->space,
+            expr->expr.elems[0]->sym_id);
+    if (!undefined && symbol_head && oem_relation_call(expr, plan) &&
         compile->host && compile->host->relation_admitted &&
         !compile->host->relation_admitted(
             compile->host->context, compile->program->space,
             expr->expr.elems[0]->sym_id, expr->expr.len - 1u))
         return oem_build_host(compile, expr, plan, depth,
                               "relation owned by the host", out);
-    if (symbol_head && oem_relation_call(expr, plan)) {
+    if (!undefined && symbol_head && oem_relation_call(expr, plan)) {
         node.kind = OEM_N_CALL;
         node.recovers = plan->dispatch_handler;
         return oem_build_elements(compile, expr, plan, depth, 1u,
@@ -2081,8 +2169,9 @@ static bool oem_build_value(OemCompile *compile, Atom *expr,
                           expr->expr.len - 1u) &&
           petta_semantics_form(expr->expr.elems[0]->sym_id) !=
               PETTA_FORM_LENGTH) ||
-         oem_metatype_call(compile, expr, plan) || oem_state_call(expr));
-    if (oem_apply_call(expr, plan) || value_native ||
+         oem_metatype_call(compile, expr, plan) || oem_state_call(expr) ||
+         oem_observation_call(compile, expr, plan));
+    if (!undefined && (oem_apply_call(expr, plan) || value_native ||
         (symbol_head && plan->role == PETTA_PLAN_STATIC_CALL &&
          ((expr->expr.len == 2u &&
            petta_semantics_form(expr->expr.elems[0]->sym_id) ==
@@ -2091,9 +2180,9 @@ static bool oem_build_value(OemCompile *compile, Atom *expr,
            !oem_fields_are_values(expr, plan, 1u) &&
            !petta_semantics_match_existence_observer_shape(
                expr, compile->host ? compile->host->reify_head
-                                   : SYMBOL_ID_NONE)))))
+                                   : SYMBOL_ID_NONE))))))
         return oem_build_apply(compile, expr, plan, depth, out);
-    if (!oem_data_node(expr, plan))
+    if (!undefined && !oem_data_node(expr, plan))
         return oem_build_host(compile, expr, plan, depth,
                               "operation outside the fragment", out);
     if (!oem_build_elements(compile, expr, plan, depth, 0u,
@@ -2111,6 +2200,92 @@ static bool oem_build_value(OemCompile *compile, Atom *expr,
     return ok && oem_node(compile, node, out);
 }
 
+/* The same binding construction in tail and value positions: a producer
+ * meets its pattern before its goals, and the body exposes its own value.
+ * Only the body's continuation differs; neither position adds a cut scope. */
+static bool oem_build_bindings(OemCompile *compile, Atom *expr,
+                               const PettaPlanNode *plan, uint32_t depth,
+                               bool tail, uint32_t *out) {
+    OemNode node = {0};
+    if (plan->control == PETTA_PLAN_CONTROL_LET) {
+        if (expr->expr.len != 4u)
+            return oem_reject(compile, "let arity");
+        node.kind = OEM_N_LET;
+        const PettaPlanNode *body_plan = petta_plan_child(plan, 3u);
+        bool counted = oem_count_only_binder(
+            compile, expr->expr.elems[1], expr->expr.elems[2], NULL, 0u,
+            expr->expr.elems[3],
+            !body_plan || body_plan->contains_cardinality_call);
+        compile->let_scope = expr;
+        compile->let_before = NULL;
+        compile->let_before_len = 0u;
+        bool lowered = oem_lower_pattern(compile, expr->expr.elems[1],
+                                         petta_plan_child(plan, 1u),
+                                         depth + 1u, true, &node.pattern);
+        compile->let_scope = NULL;
+        if (!lowered ||
+            !oem_build_producer(compile, expr->expr.elems[2],
+                                petta_plan_child(plan, 2u), depth + 1u,
+                                counted, &node.value) ||
+            !(tail ? oem_build_tail : oem_build_value)(
+                compile, expr->expr.elems[3], petta_plan_child(plan, 3u),
+                depth + 1u, &node.body))
+            return false;
+        oem_let_fills_pattern(compile, node.pattern, node.value);
+        node.exposed = compile->nodes[node.body].exposed;
+        return oem_node(compile, node, out);
+    }
+    if (plan->control == PETTA_PLAN_CONTROL_LET_STAR) {
+        /* Sequential lets, the last binding innermost. */
+        Atom *bindings = expr->expr.len == 3u ? expr->expr.elems[1] : NULL;
+        const PettaPlanNode *bindings_plan = petta_plan_child(plan, 1u);
+        if (!bindings || bindings->kind != ATOM_EXPR || !bindings_plan)
+            return oem_reject(compile, "let* bindings");
+        uint32_t body = 0u;
+        const PettaPlanNode *body_plan = petta_plan_child(plan, 2u);
+        if (!(tail ? oem_build_tail : oem_build_value)(
+                compile, expr->expr.elems[2], body_plan, depth + 1u, &body))
+            return false;
+        /* Whether a counting operation may occur after binding `index`,
+         * in a later binding or the body. */
+        bool may_count = !body_plan || body_plan->contains_cardinality_call;
+        for (uint32_t index = bindings->expr.len; index-- > 0u;) {
+            Atom *pair = bindings->expr.elems[index];
+            const PettaPlanNode *pair_plan =
+                petta_plan_child(bindings_plan, index);
+            if (!pair || pair->kind != ATOM_EXPR || pair->expr.len != 2u ||
+                !pair_plan)
+                return oem_reject(compile, "let* binding");
+            bool counted = oem_count_only_binder(
+                compile, pair->expr.elems[0], pair->expr.elems[1],
+                bindings->expr.elems + index + 1u,
+                (uint32_t)(bindings->expr.len - index - 1u),
+                expr->expr.elems[2], may_count);
+            may_count = may_count || pair_plan->contains_cardinality_call;
+            OemNode let = {.kind = OEM_N_LET, .body = body};
+            compile->let_scope = expr;
+            compile->let_before = bindings->expr.elems;
+            compile->let_before_len = index;
+            bool lowered = oem_lower_pattern(compile, pair->expr.elems[0],
+                                             petta_plan_child(pair_plan, 0u),
+                                             depth + 1u, true, &let.pattern);
+            compile->let_scope = NULL;
+            if (!lowered ||
+                !oem_build_producer(compile, pair->expr.elems[1],
+                                    petta_plan_child(pair_plan, 1u),
+                                    depth + 1u, counted, &let.value))
+                return false;
+            oem_let_fills_pattern(compile, let.pattern, let.value);
+            let.exposed = compile->nodes[body].exposed;
+            if (!oem_node(compile, let, &body))
+                return false;
+        }
+        *out = body;
+        return true;
+    }
+    return oem_reject(compile, "not a binding control");
+}
+
 /* A tail position: the construct's output is the activation's output. */
 static bool oem_build_tail(OemCompile *compile, Atom *expr,
                            const PettaPlanNode *plan, uint32_t depth,
@@ -2122,9 +2297,8 @@ static bool oem_build_tail(OemCompile *compile, Atom *expr,
         return oem_build_value(compile, expr, plan, depth, out);
     SymbolId head = expr->expr.elems[0]->sym_id;
     OemNode node = {0};
-    if (oem_single_child_sequence(expr, plan))
-        return oem_build_tail(compile, expr->expr.elems[1],
-                               petta_plan_child(plan, 1u), depth + 1u, out);
+    if (oem_sequence(expr, plan))
+        return oem_build_sequence(compile, expr, plan, depth, true, out);
     if (plan->control == PETTA_PLAN_CONTROL_IF) {
         if (expr->expr.len != 4u)
             return oem_reject(compile, "if arity");
@@ -2169,82 +2343,9 @@ static bool oem_build_tail(OemCompile *compile, Atom *expr,
             oem_hole(compile, &node.exposed) &&
             oem_node(compile, node, out);
     }
-    if (plan->control == PETTA_PLAN_CONTROL_LET) {
-        if (expr->expr.len != 4u)
-            return oem_reject(compile, "let arity");
-        node.kind = OEM_N_LET;
-        const PettaPlanNode *body_plan = petta_plan_child(plan, 3u);
-        bool counted = oem_count_only_binder(
-            compile, expr->expr.elems[1], expr->expr.elems[2], NULL, 0u,
-            expr->expr.elems[3],
-            !body_plan || body_plan->contains_cardinality_call);
-        compile->let_scope = expr;
-        compile->let_before = NULL;
-        compile->let_before_len = 0u;
-        bool lowered = oem_lower_pattern(compile, expr->expr.elems[1],
-                                         petta_plan_child(plan, 1u),
-                                         depth + 1u, true, &node.pattern);
-        compile->let_scope = NULL;
-        if (!lowered ||
-            !oem_build_producer(compile, expr->expr.elems[2],
-                                petta_plan_child(plan, 2u), depth + 1u,
-                                counted, &node.value) ||
-            !oem_build_tail(compile, expr->expr.elems[3],
-                            petta_plan_child(plan, 3u), depth + 1u,
-                            &node.body))
-            return false;
-        oem_let_fills_pattern(compile, node.pattern, node.value);
-        node.exposed = compile->nodes[node.body].exposed;
-        return oem_node(compile, node, out);
-    }
-    if (plan->control == PETTA_PLAN_CONTROL_LET_STAR) {
-        /* Sequential lets, the last binding innermost. */
-        Atom *bindings = expr->expr.len == 3u ? expr->expr.elems[1] : NULL;
-        const PettaPlanNode *bindings_plan = petta_plan_child(plan, 1u);
-        if (!bindings || bindings->kind != ATOM_EXPR || !bindings_plan)
-            return oem_reject(compile, "let* bindings");
-        uint32_t body = 0u;
-        const PettaPlanNode *body_plan = petta_plan_child(plan, 2u);
-        if (!oem_build_tail(compile, expr->expr.elems[2], body_plan,
-                            depth + 1u, &body))
-            return false;
-        /* Whether a counting operation may occur after binding `index`,
-         * in a later binding or the body. */
-        bool may_count = !body_plan || body_plan->contains_cardinality_call;
-        for (uint32_t index = bindings->expr.len; index-- > 0u;) {
-            Atom *pair = bindings->expr.elems[index];
-            const PettaPlanNode *pair_plan =
-                petta_plan_child(bindings_plan, index);
-            if (!pair || pair->kind != ATOM_EXPR || pair->expr.len != 2u ||
-                !pair_plan)
-                return oem_reject(compile, "let* binding");
-            bool counted = oem_count_only_binder(
-                compile, pair->expr.elems[0], pair->expr.elems[1],
-                bindings->expr.elems + index + 1u,
-                (uint32_t)(bindings->expr.len - index - 1u),
-                expr->expr.elems[2], may_count);
-            may_count = may_count || pair_plan->contains_cardinality_call;
-            OemNode let = {.kind = OEM_N_LET, .body = body};
-            compile->let_scope = expr;
-            compile->let_before = bindings->expr.elems;
-            compile->let_before_len = index;
-            bool lowered = oem_lower_pattern(compile, pair->expr.elems[0],
-                                             petta_plan_child(pair_plan, 0u),
-                                             depth + 1u, true, &let.pattern);
-            compile->let_scope = NULL;
-            if (!lowered ||
-                !oem_build_producer(compile, pair->expr.elems[1],
-                                    petta_plan_child(pair_plan, 1u),
-                                    depth + 1u, counted, &let.value))
-                return false;
-            oem_let_fills_pattern(compile, let.pattern, let.value);
-            let.exposed = compile->nodes[body].exposed;
-            if (!oem_node(compile, let, &body))
-                return false;
-        }
-        *out = body;
-        return true;
-    }
+    if (plan->control == PETTA_PLAN_CONTROL_LET ||
+        plan->control == PETTA_PLAN_CONTROL_LET_STAR)
+        return oem_build_bindings(compile, expr, plan, depth, true, out);
     if (plan->control != PETTA_PLAN_CONTROL_NONE)
         return oem_build_host(compile, expr, plan, depth,
                               "control outside the fragment", out);
@@ -2409,6 +2510,15 @@ static bool oem_emit_goals(OemCompile *compile, uint32_t index) {
     OemNode node = compile->nodes[index];
     uint32_t first_arg = 0u;
     switch ((OemNodeKind)node.kind) {
+    case OEM_N_LET:
+        return (node.pattern == compile->nodes[node.value].exposed ||
+                oem_emit(compile, (OemStep){
+                             .kind = OEM_S_BIND, .pattern = node.pattern,
+                             .value = compile->nodes[node.value].exposed,
+                         }, NULL)) &&
+            oem_emit_goals(compile, node.value) &&
+            oem_emit_goals(compile, node.body);
+    case OEM_N_SEQUENCE:
     case OEM_N_VALUE:
         for (uint32_t child = 0u; child < node.count; child++) {
             if (!oem_emit_goals(compile,
@@ -2523,6 +2633,18 @@ static bool oem_emit_branch(OemCompile *compile, const OemNode *node,
 static bool oem_emit_tail(OemCompile *compile, uint32_t index) {
     OemNode node = compile->nodes[index];
     switch ((OemNodeKind)node.kind) {
+    case OEM_N_SEQUENCE:
+        if (!node.tail)
+            return oem_emit_goals(compile, index) &&
+                oem_emit(compile, (OemStep){.kind = OEM_S_RET,
+                                            .value = compile->output}, NULL);
+        for (uint32_t child = 0u; child + 1u < node.count; child++) {
+            if (!oem_emit_goals(compile,
+                                compile->node_children[node.first + child]))
+                return false;
+        }
+        return oem_emit_tail(compile,
+                              compile->node_children[node.first + node.count - 1u]);
     case OEM_N_LET:
         return (node.pattern == compile->nodes[node.value].exposed ||
                 oem_emit(compile, (OemStep){
@@ -4140,10 +4262,9 @@ static __attribute__((noinline)) bool oem_remember_slot(
     return true;
 }
 
-static inline __attribute__((always_inline)) bool oem_bind(
-    CettaOpenEquationCursor *cursor, uint32_t index, Atom *value) {
-    uint32_t newest = cursor->frame_len
-        ? cursor->frames[cursor->frame_len - 1u].cell_mark : 0u;
+static inline __attribute__((always_inline)) bool oem_bind_before(
+    CettaOpenEquationCursor *cursor, uint32_t index, Atom *value,
+    uint32_t newest) {
     if (index < newest) {
         if (!oem_reserve((void **)&cursor->trail, &cursor->trail_cap,
                          cursor->trail_len + 1u, sizeof(*cursor->trail)))
@@ -4158,6 +4279,16 @@ static inline __attribute__((always_inline)) bool oem_bind(
     cursor->cells[index] = value;
     cursor->binds++;
     return true;
+}
+
+static inline uint32_t oem_choice_cells(const CettaOpenEquationCursor *cursor) {
+    return cursor->frame_len
+        ? cursor->frames[cursor->frame_len - 1u].cell_mark : 0u;
+}
+
+static inline __attribute__((always_inline)) bool oem_bind(
+    CettaOpenEquationCursor *cursor, uint32_t index, Atom *value) {
+    return oem_bind_before(cursor, index, value, oem_choice_cells(cursor));
 }
 
 /* An invocation-local source-pointer map. An occupied key with no image
@@ -4307,8 +4438,14 @@ typedef enum {
     OEM_UNIFY_ERROR,
 } OemUnify;
 
-static OemUnify oem_unify(CettaOpenEquationCursor *cursor, Atom *left,
-                          Atom *right) {
+/* The caller fixes the trail policy. Ordinary matching only reads its
+ * choice mark when a cell is actually bound; a marked boolean trial must
+ * also remember writes to cells younger than that choice. The common
+ * unifier is specialized at compilation, without a policy branch in its
+ * comparison loop. */
+static inline __attribute__((always_inline)) OemUnify oem_unify_marked(
+    CettaOpenEquationCursor *cursor, Atom *left, Atom *right,
+    bool marked, uint32_t newest) {
     uint32_t len = 0u;
     if (!oem_reserve((void **)&cursor->pairs, &cursor->pair_cap, 1u,
                      sizeof(*cursor->pairs)))
@@ -4334,7 +4471,9 @@ static OemUnify oem_unify(CettaOpenEquationCursor *cursor, Atom *left,
             bool failed = false;
             if (oem_occurs(cursor, index, value, &failed))
                 return OEM_UNIFY_FAIL;
-            if (failed || !oem_bind(cursor, index, value))
+            if (failed || !(marked
+                    ? oem_bind_before(cursor, index, value, newest)
+                    : oem_bind(cursor, index, value)))
                 return OEM_UNIFY_ERROR;
             continue;
         }
@@ -4389,6 +4528,11 @@ static OemUnify oem_unify(CettaOpenEquationCursor *cursor, Atom *left,
             return OEM_UNIFY_FAIL;
     }
     return OEM_UNIFY_OK;
+}
+
+static OemUnify oem_unify(CettaOpenEquationCursor *cursor, Atom *left,
+                          Atom *right) {
+    return oem_unify_marked(cursor, left, right, false, 0u);
 }
 
 static Atom *oem_instantiate_in(CettaOpenEquationCursor *cursor,
@@ -6518,15 +6662,88 @@ static __attribute__((noinline)) OemRun oem_metatype_step(
     return unified == OEM_UNIFY_OK ? OEM_RUN_CALLED : OEM_RUN_FAILED;
 }
 
-/* The region decides a HOST step its fast path covers.  An expression
- * whose head has a value no call can have is data, built over its values.
- * A type-pure operation runs the search machine's direct path once every
- * argument is a value: the operation's own implementation, an empty result
- * a failure, a truth value in the host's spelling.  The result meets the
- * step's destination.  CALLED continues after the step; what this does not
- * decide (a head that may be called, an unbound argument but to a
- * structural test, no result, an error, which the host's dialect treats in
- * its own way) is the host's, as HOST. */
+/* Boolean unification retains a successful refinement and rolls back a
+ * mismatch before returning false. The trial marks every existing cell,
+ * including younger cells the enclosing choice does not need to trail.
+ * On success only entries needed by that enclosing choice remain. No
+ * search choice or cut delimiter is installed by the trial. */
+static OemUnify oem_unify_trial(CettaOpenEquationCursor *cursor,
+                                Atom *left, Atom *right) {
+    OemFrame mark = {
+        .mark = arena_mark(&cursor->region),
+        .cell_mark = cursor->cell_len,
+        .trail_mark = cursor->trail_len,
+        .store_mark = cursor->store_len,
+    };
+    uint32_t oldest = oem_choice_cells(cursor);
+    OemUnify result = oem_unify_marked(
+        cursor, left, right, true, cursor->cell_len);
+    if (result != OEM_UNIFY_OK) {
+        oem_restore(cursor, &mark);
+        return result;
+    }
+    uint32_t kept = mark.trail_mark;
+    for (uint32_t entry = mark.trail_mark; entry < cursor->trail_len; entry++) {
+        if (cursor->trail[entry] < oldest)
+            cursor->trail[kept++] = cursor->trail[entry];
+    }
+    cursor->trail_len = kept;
+    return result;
+}
+
+static __attribute__((noinline)) OemRun oem_observation_step(
+        CettaOpenEquationCursor *cursor,
+        const CettaOpenEquationProgram *program, Atom **locals,
+        const OemStep *step, const OemTemplate *goal) {
+    uint32_t count = step->op == g_builtin_syms.equals ? 2u : 1u;
+    if (goal->kind != OEM_T_BUILD || goal->count != count + 1u)
+        return OEM_RUN_HOST;
+    Atom *args[2];
+    for (uint32_t index = 0u; index < count; index++) {
+        args[index] = oem_instantiate(cursor, program, locals,
+            program->template_children[goal->first + index + 1u]);
+        if (!args[index])
+            return OEM_RUN_HANDOFF;
+    }
+    bool answer = false;
+    if (step->op == g_builtin_syms.equals) {
+        OemUnify unified = oem_unify_trial(cursor, args[0], args[1]);
+        if (unified == OEM_UNIFY_ERROR)
+            return OEM_RUN_HANDOFF;
+        answer = unified == OEM_UNIFY_OK;
+    } else {
+        Atom *value = oem_resolve_mode(cursor, args[0], true);
+        if (!value)
+            return OEM_RUN_HANDOFF;
+        switch (petta_semantics_form(step->op)) {
+        case PETTA_FORM_IS_VAR:
+            answer = value->kind == ATOM_VAR;
+            break;
+        case PETTA_FORM_IS_EXPR:
+            answer = petta_semantics_is_closed_list(value);
+            break;
+        case PETTA_FORM_IS_GROUND:
+            answer = !atom_has_vars(value);
+            break;
+        case PETTA_FORM_IS_SPACE:
+            answer = value->kind == ATOM_SYMBOL &&
+                symbol_bytes(g_symbols, value->sym_id)[0] == '&';
+            break;
+        default:
+            return OEM_RUN_HOST;
+        }
+    }
+    Atom *truth = oem_truth(cursor, answer);
+    if (!truth)
+        return OEM_RUN_HANDOFF;
+    OemUnify unified = oem_meet(cursor, program, locals, step, truth);
+    if (unified == OEM_UNIFY_ERROR)
+        return OEM_RUN_HANDOFF;
+    return unified == OEM_UNIFY_OK ? OEM_RUN_CALLED : OEM_RUN_FAILED;
+}
+
+/* The region decides a HOST step its fast path covers. Values outside
+ * each native domain retain the host's prepared leaf and dialect policy. */
 static __attribute__((noinline)) OemRun oem_fast_host_step(
         CettaOpenEquationCursor *cursor,
         const CettaOpenEquationProgram *program, Atom **locals,
@@ -6544,6 +6761,8 @@ static __attribute__((noinline)) OemRun oem_fast_host_step(
     if (step->target == OEM_HOST_STATE)
         return oem_state_step(cursor, program, locals, step);
     const OemTemplate *goal = &program->templates[step->value];
+    if (step->target == OEM_HOST_OBSERVE)
+        return oem_observation_step(cursor, program, locals, step, goal);
     if (step->target == OEM_HOST_LIST)
         return oem_list_step(cursor, program, locals, step, goal);
     if (step->target == OEM_HOST_EXISTS)
