@@ -1,0 +1,282 @@
+; Raw certificates for finite Bayesian decisions and resumable log comparisons.
+; Lean references: FiniteBayesianDecision, FiniteExecutionCoupling,
+; FiniteKLCertificate and ResumableLogChoice.
+!(import! &self finite_bayes.metta)
+
+(= (bayes:natural? $n) (and (<= 0 $n) (== $n (floor-math $n))))
+(= (bayes:append () $tail) $tail)
+(= (bayes:append $items $tail)
+   (let ($head $rest) (decons-atom $items)
+     (let $next (bayes:append $rest $tail) (cons-atom $head $next))))
+(= (bayes:names $rows) (map-atom $rows $row (let ($name $value) $row $name)))
+(= (bayes:masses-same? $first $second)
+   (and (bayes:covered? $first $second)
+     (and (bayes:covered? $second $first)
+       (foldl-atom $first True $ok $row
+         (let ($state $mass) $row
+           (and $ok (== $mass (bayes:lookup $state $second))))))))
+
+; Signed coefficients require reversing the endpoints for negative weights.
+(= (bayes:log-score-raw () $terms) (bayes:interval 0 0))
+(= (bayes:log-score-raw $entries $terms)
+   (let (($weight $argument) $rest) (decons-atom $entries)
+     (case (bayes:log-interval $argument $terms)
+       (((bayes:interval $lo $hi)
+          (case (bayes:log-score-raw $rest $terms)
+            (((bayes:interval $tailLo $tailHi)
+               (if (<= 0 $weight)
+                 (bayes:interval (+ (* $weight $lo) $tailLo) (+ (* $weight $hi) $tailHi))
+                 (bayes:interval (+ (* $weight $hi) $tailLo) (+ (* $weight $lo) $tailHi))))
+             ($failure $failure)))) ($failure $failure)))))
+(= (bayes:log-score $entries $terms)
+   (if (not (bayes:natural? $terms)) (bayes:invalid logarithm-budget)
+     (if (== $terms 0) (bayes:log-score-raw $entries 0)
+       (case (bayes:log-score $entries (- $terms 1))
+         (((bayes:interval $oldLo $oldHi)
+            (case (bayes:log-score-raw $entries $terms)
+              (((bayes:interval $lo $hi)
+                 (bayes:interval (if (< $oldLo $lo) $lo $oldLo)
+                                 (if (< $hi $oldHi) $hi $oldHi)))
+               ($failure $failure)))) ($failure $failure))))))
+(= (bayes:log-intervals () $terms) (bayes:intervals ()))
+(= (bayes:log-intervals $candidates $terms)
+   (let (($name $entries) $rest) (decons-atom $candidates)
+     (case (bayes:log-score $entries $terms)
+       (((bayes:interval $lo $hi)
+          (case (bayes:log-intervals $rest $terms)
+            (((bayes:intervals $tail)
+               (let $rows (cons-atom ($name ($lo $hi)) $tail) (bayes:intervals $rows)))
+             ($failure $failure)))) ($failure $failure)))))
+(= (bayes:log-passes? $selected $candidate $intervals)
+   (let* ((($lo $hi) (bayes:lookup $selected $intervals))
+          (($otherLo $otherHi) (bayes:lookup $candidate $intervals)))
+     (or (noreduce-eq $selected $candidate) (<= $otherHi $lo))))
+(= (bayes:log-prefix? () $selected $intervals) True)
+(= (bayes:log-prefix? $checked $selected $intervals)
+   (let ($candidate $rest) (decons-atom $checked)
+     (and (bayes:has $candidate $intervals)
+       (and (bayes:log-passes? $selected $candidate $intervals)
+         (bayes:log-prefix? $rest $selected $intervals)))))
+(= (bayes:log-advance $budget $selected $checked () $terms $candidates $deps $intervals)
+   (bayes:established $selected))
+(= (bayes:log-advance $budget $selected $checked $pending $terms $candidates $deps $intervals)
+   (if (<= $budget 0)
+     (bayes:incomplete (bayes:log-work $selected $checked $pending $terms $candidates $deps))
+     (let ($candidate $rest) (decons-atom $pending)
+       (if (bayes:log-passes? $selected $candidate $intervals)
+         (let $next (bayes:append $checked ($candidate))
+           (bayes:log-advance (- $budget 1) $selected $next $rest $terms $candidates $deps $intervals))
+         (bayes:incomplete (bayes:log-work $selected $checked $pending $terms $candidates $deps))))))
+(= (bayes:resume-log-choice $terms $budget $candidates $deps $current
+       (bayes:log-work $selected $checked $pending $oldTerms $oldCandidates $oldDeps))
+   (if (not (and (noreduce-eq $deps $current) (noreduce-eq $deps $oldDeps)))
+     (bayes:incomplete stale-dependencies)
+     (if (not (and (bayes:natural? $terms)
+                (and (bayes:natural? $budget) (and (bayes:natural? $oldTerms) (<= $oldTerms $terms)))))
+       (bayes:invalid comparison-budget)
+       (let* (($joined (bayes:append $checked $pending)) ($names (bayes:names $candidates)))
+       (if (not (and (noreduce-eq $candidates $oldCandidates)
+                  (and (bayes:unique $candidates)
+                    (and (bayes:has $selected $candidates)
+                      (noreduce-eq $joined $names)))))
+         (bayes:invalid resume-state)
+         (case (bayes:log-intervals $candidates $terms)
+           (((bayes:intervals $intervals)
+              (if (bayes:log-prefix? $checked $selected $intervals)
+                (bayes:log-advance $budget $selected $checked $pending $terms $candidates $deps $intervals)
+                (bayes:invalid resume-state))) ($failure $failure))))))))
+(= (bayes:start-log-choice $terms $budget $selected $candidates $deps $current)
+   (let $pending (bayes:names $candidates)
+     (bayes:resume-log-choice $terms $budget $candidates $deps $current
+       (bayes:log-work $selected () $pending 0 $candidates $deps))))
+
+(= (bayes:kl-entries $trial $posterior)
+   (map-atom $trial $row
+     (let ($state $mass) $row
+       (let $argument (if (== $mass 0) 1 (/ $mass (bayes:lookup $state $posterior)))
+         ($mass $argument)))))
+(= (bayes:kl-bound? $trial $posterior $magnitude $error $terms)
+   (if (not (and (bayes:distribution? $trial)
+              (and (bayes:distribution? $posterior)
+                (and (bayes:covered? $trial $posterior)
+                  (and (bayes:supported? $trial $posterior)
+                    (and (<= 0 $magnitude) (<= 0 $error))))))) False
+     (case (bayes:log-score (bayes:kl-entries $trial $posterior) $terms)
+       (((bayes:interval $lo $hi) (<= (* 2 (* (* $magnitude $magnitude) $hi)) (* $error $error)))
+        ($failure False)))))
+(= (bayes:reward-bounded? $reward $magnitude)
+   (and (bayes:unique $reward)
+     (foldl-atom $reward True $ok $row
+       (let ($state $value) $row (and $ok (<= (bayes:abs $value) $magnitude))))))
+
+(= (bayes:metric-valid? $metric)
+   (case $metric
+     (((bayes:constant-distance $value) (<= 0 $value))
+      ($rows (and (bayes:unique $rows) (bayes:nonnegative $rows))))))
+(= (bayes:metric-has? $metric $first $second)
+   (case $metric
+     (((bayes:constant-distance $value) True) ($rows (bayes:has ($first $second) $rows)))))
+(= (bayes:distance $metric $first $second)
+   (case $metric
+     (((bayes:constant-distance $value) $value) ($rows (bayes:lookup ($first $second) $rows)))))
+(= (bayes:metric-covered? () $metric) True)
+(= (bayes:metric-covered? $table $metric)
+   (let ((($first $second) $mass) $rest) (decons-atom $table)
+     (and (if (== $mass 0) True (bayes:metric-has? $metric $first $second))
+          (bayes:metric-covered? $rest $metric))))
+(= (bayes:coupling-cost $table $metric)
+   (foldl-atom $table 0 $cost $row
+     (let (($first $second) $mass) $row
+       (if (== $mass 0) $cost (+ $cost (* $mass (bayes:distance $metric $first $second)))))))
+
+; Tree leaves check reward discrepancy. Internal nodes check both real margins
+; and recurse only on positive coupling mass, with each controller's branch.
+(= (bayes:execution? $model $world $mReward $wReward $mAllowed $wAllowed $metric
+       $mPolicy $wPolicy $first $second $certificate)
+   (case ($mPolicy $wPolicy $certificate)
+     ((( (bayes:stop) (bayes:stop) (bayes:terminal))
+        (and (bayes:has $first $mReward)
+          (and (bayes:has $second $wReward)
+            (and (bayes:metric-has? $metric $first $second)
+              (<= (bayes:abs (- (bayes:lookup $first $mReward) (bayes:lookup $second $wReward)))
+                  (bayes:distance $metric $first $second))))))
+      (((bayes:act $a $mBranches) (bayes:act $b $wBranches) (bayes:step $table $children))
+        (if (not (and (bayes:member $a $mAllowed)
+                   (and (bayes:member $b $wAllowed)
+                     (and (bayes:has ($a $first) $model)
+                       (and (bayes:has ($b $second) $world)
+                         (and (bayes:unique $mBranches)
+                           (and (bayes:unique $wBranches) (bayes:unique $children)))))))) False
+          (let* (($left (bayes:lookup ($a $first) $model))
+                 ($right (bayes:lookup ($b $second) $world)))
+            (and (bayes:coupling? $left $right $table)
+              (and (bayes:successor-cost? $table $metric $first $second)
+                (bayes:execution-children? $model $world $mReward $wReward $mAllowed $wAllowed
+                  $metric $mBranches $wBranches $table $children))))))
+      ($other False))))
+(= (bayes:successor-cost? $table $metric $first $second)
+   (if (not (bayes:metric-has? $metric $first $second)) False
+     (let $states (map-atom $table $row
+       (let ((($s $o) ($t $u)) $mass) $row (($s $t) $mass)))
+       (and (bayes:metric-covered? $states $metric)
+         (<= (bayes:coupling-cost $states $metric) (bayes:distance $metric $first $second))))))
+(= (bayes:execution-children? $model $world $mReward $wReward $mAllowed $wAllowed
+       $metric $mBranches $wBranches () $children) True)
+(= (bayes:execution-children? $model $world $mReward $wReward $mAllowed $wAllowed
+       $metric $mBranches $wBranches $table $children)
+   (let (((($s $o) ($t $u)) $mass) $rest) (decons-atom $table)
+     (and (if (== $mass 0) True
+       (if (not (and (bayes:has $o $mBranches)
+                  (and (bayes:has $u $wBranches) (bayes:has (($s $o) ($t $u)) $children)))) False
+         (bayes:execution? $model $world $mReward $wReward $mAllowed $wAllowed $metric
+           (bayes:lookup $o $mBranches) (bayes:lookup $u $wBranches) $s $t
+           (bayes:lookup (($s $o) ($t $u)) $children))))
+       (bayes:execution-children? $model $world $mReward $wReward $mAllowed $wAllowed
+         $metric $mBranches $wBranches $rest $children))))
+(= (bayes:initial-executions? $input $mPolicy $wPolicy () $trees) True)
+(= (bayes:initial-executions? $input $mPolicy $wPolicy $initial $trees)
+   (let ((($s $t) $mass) $rest) (decons-atom $initial)
+     (let (bayes:decision-input $prior $like $post $trial $wPrior
+             (bayes:system $model $mReward $mAllowed) (bayes:system $world $wReward $wAllowed)
+             $metric $table $magnitude $terms) $input
+       (and (if (== $mass 0) True
+         (if (bayes:has ($s $t) $trees)
+           (bayes:execution? $model $world $mReward $wReward $mAllowed $wAllowed $metric
+             $mPolicy $wPolicy $s $t (bayes:lookup ($s $t) $trees)) False))
+         (bayes:initial-executions? $input $mPolicy $wPolicy $rest $trees)))))
+
+(= (bayes:verify-plan $input $name
+       (bayes:plan $mPolicy $wPolicy $trees $prediction $inference $numerical $computed))
+   (let (bayes:decision-input $prior $like $post $trial $wPrior
+           (bayes:system $model $mReward $mAllowed) (bayes:system $world $wReward $wAllowed)
+           $metric $initial $magnitude $terms) $input
+     (if (not (and (<= 0 $prediction) (and (<= 0 $numerical)
+                  (and (bayes:unique $trees)
+                    (and (<= (bayes:coupling-cost $initial $metric) $prediction)
+                      (bayes:kl-bound? $trial $post $magnitude $inference $terms))))))
+       (bayes:invalid (plan-bound $name))
+       (if (not (bayes:initial-executions? $input $mPolicy $wPolicy $initial $trees))
+         (bayes:invalid (execution-certificate $name))
+         (case (bayes:evaluate $trial $model $mReward $mAllowed $mPolicy)
+           (((bayes:ok $score)
+              (if (<= (bayes:abs (- $score $computed)) $numerical)
+                (let $radius (+ (+ $prediction $inference) $numerical)
+                  (bayes:verified ($name ((- $computed $radius) (+ $computed $radius) $radius $computed))))
+                (bayes:invalid (numerical-bound $name)))) ($failure $failure)))))))
+(= (bayes:verify-plans $input ()) (bayes:verified-plans ()))
+(= (bayes:verify-plans $input $plans)
+   (let (($name $plan) $rest) (decons-atom $plans)
+     (case (bayes:verify-plan $input $name $plan)
+       (((bayes:verified $row)
+          (case (bayes:verify-plans $input $rest)
+            (((bayes:verified-plans $tail)
+               (let $rows (cons-atom $row $tail) (bayes:verified-plans $rows)))
+             ($failure $failure)))) ($failure $failure)))))
+(= (bayes:decision-order? $selected $rows $uniform $slack)
+   (let ($lo $hi $radius $score) (bayes:lookup $selected $rows)
+     (foldl-atom $rows True $ok $row
+       (let ($name ($otherLo $otherHi $otherRadius $otherScore)) $row
+         (and $ok (and (<= $otherRadius $uniform) (<= $otherScore (+ $score $slack))))))))
+(= (bayes:certify-decision $input $selected $plans $uniform $slack $deps $current)
+   (if (not (noreduce-eq $deps $current)) (bayes:incomplete stale-dependencies)
+     (let (bayes:decision-input $prior $like $post $trial $wPrior
+             (bayes:system $model $mReward $mAllowed) (bayes:system $world $wReward $wAllowed)
+             $metric $initial $magnitude $terms) $input
+       (if (not (and (bayes:distribution? $post)
+                  (and (bayes:distribution? $trial)
+                    (and (bayes:distribution? $wPrior)
+                      (and (bayes:kernel-valid? $model)
+                        (and (bayes:kernel-valid? $world)
+                          (and (bayes:reward-bounded? $mReward $magnitude)
+                            (and (bayes:unique $wReward)
+                              (and (bayes:metric-valid? $metric)
+                                (and (bayes:metric-covered? $initial $metric)
+                                  (and (bayes:coupling? $post $wPrior $initial)
+                                    (and (bayes:unique $plans)
+                                      (and (bayes:has $selected $plans)
+                                        (and (<= 0 $uniform) (<= 0 $slack)))))))))))))))
+         (bayes:invalid decision-data)
+         (case (bayes:update $prior $like)
+           (((bayes:posterior $actual $evidence)
+              (if (not (bayes:masses-same? $actual $post)) (bayes:invalid posterior-certificate)
+                (case (bayes:verify-plans $input $plans)
+                  (((bayes:verified-plans $rows)
+                     (if (bayes:decision-order? $selected $rows $uniform $slack)
+                       (bayes:decision $selected $rows (bayes:regret (+ (* 2 $uniform) $slack)))
+                       (bayes:invalid decision-order))) ($failure $failure))))) ($failure $failure)))))))
+
+; These are untrusted certificate producers. certify-decision checks their output
+; against the independently supplied world kernel and rewards.
+(= (bayes:diagonal-table $mass)
+   (map-atom $mass $row (let ($state $weight) $row (($state $state) $weight))))
+(= (bayes:diagonal-execution $kernel (bayes:stop) $state) (bayes:terminal))
+(= (bayes:diagonal-execution $kernel (bayes:act $action $branches) $state)
+   (let* (($row (bayes:lookup ($action $state) $kernel)) ($table (bayes:diagonal-table $row))
+          ($children (map-atom $row $entry
+            (let (($next $observation) $mass) $entry
+              (let $child (bayes:diagonal-execution $kernel (bayes:lookup $observation $branches) $next)
+                ((($next $observation) ($next $observation)) $child))))))
+     (bayes:step $table $children)))
+(= (bayes:exact-plans $prior $kernel $reward $allowed $plans)
+   (map-atom $plans $row
+     (let ($name $policy) $row
+       (case (bayes:evaluate $prior $kernel $reward $allowed $policy)
+         (((bayes:ok $score)
+            (let $trees (map-atom $prior $entry
+              (let ($state $mass) $entry
+                (let $tree (bayes:diagonal-execution $kernel $policy $state) (($state $state) $tree))))
+              ($name (bayes:plan $policy $policy $trees 0 0 0 $score)))) ($failure ($name $failure)))))))
+(= (bayes:certify-exact $prior $like $wPrior $model $world $mReward $wReward $allowed
+       $selected $plans $deps $current)
+   (case (bayes:update $prior $like)
+     (((bayes:posterior $post $evidence)
+        (let* (($initial (bayes:diagonal-table $post))
+               ($certificates (bayes:exact-plans $post $model $mReward $allowed $plans))
+               ($magnitude (foldl-atom $mReward 0 $bound $row
+                 (let ($state $value) $row
+                   (let $absolute (bayes:abs $value) (if (< $bound $absolute) $absolute $bound))))))
+          (bayes:certify-decision
+            (bayes:decision-input $prior $like $post $post $wPrior
+              (bayes:system $model $mReward $allowed) (bayes:system $world $wReward $allowed)
+              (bayes:constant-distance 0) $initial $magnitude 0)
+            $selected $certificates 0 0 $deps $current))) ($failure $failure))))

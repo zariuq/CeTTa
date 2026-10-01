@@ -58,7 +58,29 @@ typedef struct {
     Atom **saved;
     size_t saved_len;
     size_t saved_capacity;
+    /* Identity memo for argument validation, live only inside a scope; it is
+     * dropped whenever the checker's constructor signature has grown. */
+    void *scope_memo;
+    size_t scope_constructor_count;
+    bool scope_active;
 } CettaInferenceTrace;
+
+/*
+ * A scoped step retains exactly one conclusion of a derivation fragment.
+ * Inside a scope, argument validation is memoized by atom identity, so the
+ * caller must keep every argument atom allocated and unchanged until the
+ * scope ends.  Commit requires exactly one new stack entry, data-equal to
+ * goal; it discards the entries saved inside the scope and the arena
+ * allocations made since begin, restores the stack to its depth at begin,
+ * and saves goal (which must outlive the trace) as a new saved value.
+ * Abort restores stack, saved values, and arena to their state at begin.
+ * Scopes do not nest.
+ */
+typedef struct {
+    ArenaMark arena_mark;
+    size_t stack_len;
+    size_t saved_len;
+} CettaInferenceTraceScope;
 
 const char *cetta_inference_status_name(CettaInferenceStatus status);
 
@@ -149,6 +171,35 @@ CettaInferenceStatus cetta_inference_trace_apply_named(
     size_t argument_count,
     char *error_buf,
     size_t error_buf_size);
+
+/*
+ * Opt-in: the caller guarantees that every argument atom not allocated in the
+ * trace's arena stays allocated, unchanged and acyclic for the life of the
+ * trace.  Validation of such atoms inside scopes is then remembered across
+ * scopes (and dropped whenever the constructor signature grows), and an
+ * argument whose validation finds no bound-variable occurrence skips the
+ * separate binder-support check, which such an argument always passes.
+ */
+void cetta_inference_trace_retain_foreign_validation(
+    CettaInferenceTrace *trace, bool enabled);
+
+CettaInferenceStatus cetta_inference_trace_scope_begin(
+    CettaInferenceTrace *trace,
+    CettaInferenceTraceScope *scope,
+    char *error_buf,
+    size_t error_buf_size);
+
+CettaInferenceStatus cetta_inference_trace_scope_commit(
+    CettaInferenceTrace *trace,
+    const CettaInferenceTraceScope *scope,
+    Atom *goal,
+    size_t *saved_index,
+    char *error_buf,
+    size_t error_buf_size);
+
+void cetta_inference_trace_scope_abort(
+    CettaInferenceTrace *trace,
+    const CettaInferenceTraceScope *scope);
 
 CettaInferenceStatus cetta_inference_trace_save(
     CettaInferenceTrace *trace,

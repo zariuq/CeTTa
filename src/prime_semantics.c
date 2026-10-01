@@ -2652,6 +2652,9 @@ static Atom *prime_language_owned_declaration(Arena *arena, Atom *name) {
     return NULL;
 }
 
+static bool prime_theorem_context_unavailable(
+    Space *space, Arena *arena, Atom *name, Atom **reason_out);
+
 static PrimeRegularDeclaredElaboration
 prime_resolve_declared_regular_name(
     Space *space, Arena *arena, Atom *name,
@@ -2703,6 +2706,17 @@ prime_resolve_declared_regular_name(
         free(declared_types);
         return (PrimeRegularDeclaredElaboration){0};
     }
+    /* A published theorem is the judgment it was checked as, in the context
+     * that judgment used.  While that context is unavailable, its statement
+     * is not reused: the lookup abstains and names what is missing. */
+    Atom *unavailable = NULL;
+    if (!builtin &&
+        prime_theorem_context_unavailable(space, arena, name, &unavailable)) {
+        free(declared_types);
+        return prime_declared_elaboration(
+            true, CETTA_PRIME_REGULAR_KERNEL_UNDECIDED,
+            (CettaPrimeRegularTermElaborationV1){0}, unavailable);
+    }
 
     if ((size_t)declared_count > SIZE_MAX / sizeof(Atom *) ||
         (size_t)declared_count > SIZE_MAX / sizeof(size_t)) {
@@ -2749,10 +2763,14 @@ prime_resolve_declared_regular_name(
         if (dependencies.status !=
             CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
             free(declared_types);
+            /* A type that mentions a theorem whose context is unavailable
+             * is not known to be formed: abstain with the same reason. */
             return dependencies.status ==
                        CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED ||
                    dependencies.status ==
-                       CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE
+                       CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE ||
+                   dependencies.status ==
+                       CETTA_PRIME_REGULAR_KERNEL_UNDECIDED
                 ? prime_declared_elaboration(
                       true, dependencies.status, dependencies.lowered,
                       dependencies.detail)
@@ -2772,7 +2790,9 @@ prime_resolve_declared_regular_name(
             return lowered.status ==
                        CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED ||
                    lowered.status ==
-                       CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE
+                       CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE ||
+                   lowered.status ==
+                       CETTA_PRIME_REGULAR_KERNEL_UNDECIDED
                 ? prime_declared_elaboration(
                       true, lowered.status, lowered.lowered, lowered.detail)
                 : (PrimeRegularDeclaredElaboration){0};
@@ -6422,6 +6442,346 @@ Atom *prime_semantics_kernel_query(
     items[count++] = prime_expr2(a, "Object", capture.object);
     items[count++] = prime_expr2(a, "ObjectType", object_type);
     return atom_expr(a, items, (CettaExprLen)count);
+}
+
+/* ------------------------------------------------------------------------ */
+/* Published theorems are hypothetical judgments.                            */
+/*                                                                            */
+/* `type:theorem` and `type:prove` publish a declaration only after a native  */
+/* checking judgment succeeds, and that judgment was made in a context: the   */
+/* space declarations the declared route consulted (exactly its class) and    */
+/* the admitted rules at those heads.  The published theorem is the judgment  */
+/* G |- P, and its record keeps G, one context per accepted proof.            */
+/*                                                                            */
+/* Withdrawing a declaration of G changes neither the published statement nor */
+/* its record, and it does not turn the statement into an implication.  While */
+/* no recorded context is available, the kernel does not resolve the          */
+/* theorem's name: a typing judgment that would reuse it abstains and names   */
+/* what is missing.  Once a recorded context is available again, reuse        */
+/* resumes.  A published theorem inside a context needs its own context in    */
+/* turn.  Discharging a hypothesis into an implication is a proof a program   */
+/* writes and the kernel checks, where the profile's logic has that rule;     */
+/* withdrawal never performs it.                                              */
+/* ------------------------------------------------------------------------ */
+
+typedef struct {
+    uint64_t space;          /* the publishing space, by instance */
+    Atom *name;
+    Atom *type;              /* the statement as published */
+    Atom **contexts;         /* (PrimeTheoremContextV1 dependency ...) */
+    size_t context_count;
+    size_t context_capacity;
+} PrimeTheoremRecord;
+
+static struct {
+    bool ready;
+    Arena arena;             /* owns every recorded atom for the process */
+    PrimeTheoremRecord *records;
+    size_t count;
+    size_t capacity;
+} g_prime_theorems;
+
+static uint64_t prime_theorem_space_key(const Space *space) {
+    while (space && space->overlay_base) space = space->overlay_base;
+    return space ? space_instance_id(space) : 0u;
+}
+
+static bool prime_theorem_names_contain(Atom **names, size_t count,
+                                        Atom *name) {
+    for (size_t i = 0u; i < count; i++)
+        if (atom_eq(names[i], name)) return true;
+    return false;
+}
+
+/* The dependency record of one checking judgment: each space declaration of
+ * the declared route's class, as the declarations `(: name type)` the space
+ * holds for it, and the admitted rules at those heads, in kernel spelling.
+ * A judgment that the declared route did not decide consulted no space
+ * declaration, and its record is empty.  NULL when the class of a
+ * declared-route judgment cannot be read back. */
+Atom *prime_semantics_theorem_context(
+    Arena *a, Space *space, Atom *judgment, bool declared_route) {
+    if (!a || !space || !judgment) return NULL;
+    Atom *head = prime_sym(a, "PrimeTheoremContextV1");
+    if (!declared_route) return atom_expr(a, &head, 1u);
+    free(g_prime_kernel_query.levels);
+    g_prime_kernel_query = (PrimeKernelQueryCapture){.active = true};
+    (void)prime_semantics_judge_typing_direct(a, space, judgment, false, 0u);
+    PrimeKernelQueryCapture capture = g_prime_kernel_query;
+    g_prime_kernel_query = (PrimeKernelQueryCapture){0};
+    free(capture.levels);
+    if (!capture.captured || !capture.route || !capture.context ||
+        strcmp(capture.route, "declared") != 0)
+        return NULL;
+
+    size_t name_count = 0u, name_capacity = 8u;
+    Atom **names = cetta_malloc(sizeof(Atom *) * name_capacity);
+    for (Atom *cursor = capture.context;
+         cursor && cursor->kind == ATOM_EXPR && cursor->expr.len == 4u &&
+         atom_is_symbol(cursor->expr.elems[0], "PrimeCtxDecl");
+         cursor = cursor->expr.elems[3]) {
+        Atom *constant = cursor->expr.elems[1];
+        if (!constant || constant->kind != ATOM_EXPR ||
+            constant->expr.len < 2u ||
+            !atom_is_symbol(constant->expr.elems[0], "DeclConst"))
+            continue;
+        Atom *name = constant->expr.elems[1];
+        if (!name || name->kind != ATOM_SYMBOL ||
+            prime_language_owned_declaration(a, name) ||
+            prime_theorem_names_contain(names, name_count, name))
+            continue;
+        if (name_count == name_capacity) {
+            name_capacity *= 2u;
+            names = cetta_realloc(names, sizeof(Atom *) * name_capacity);
+        }
+        names[name_count++] = name;
+    }
+
+    size_t count = 1u, capacity = 16u;
+    Atom **items = cetta_malloc(sizeof(Atom *) * capacity);
+    items[0] = head;
+    for (size_t i = 0u; i < name_count; i++) {
+        Atom **types = NULL;
+        uint32_t type_count = space_get_declared_types(
+            space, a, names[i], &types);
+        for (uint32_t t = 0u; t < type_count; t++) {
+            if (count == capacity) {
+                capacity *= 2u;
+                items = cetta_realloc(items, sizeof(Atom *) * capacity);
+            }
+            items[count++] = atom_expr3(
+                a, atom_symbol_id(a, g_builtin_syms.colon), names[i],
+                types[t]);
+        }
+        free(types);
+    }
+    for (Atom *rules = prime_semantics_kernel_rules(a, space);
+         rules && rules->kind == ATOM_EXPR && rules->expr.len == 3u &&
+         atom_is_symbol(rules->expr.elems[0], "LCons");
+         rules = rules->expr.elems[2]) {
+        Atom *rule = rules->expr.elems[1];
+        if (!rule || rule->kind != ATOM_EXPR || rule->expr.len != 5u ||
+            !prime_theorem_names_contain(names, name_count,
+                                         rule->expr.elems[1]))
+            continue;
+        if (count == capacity) {
+            capacity *= 2u;
+            items = cetta_realloc(items, sizeof(Atom *) * capacity);
+        }
+        items[count++] = rule;
+    }
+    Atom *context = atom_expr(a, items, (CettaExprLen)count);
+    free(items);
+    free(names);
+    return context;
+}
+
+static PrimeTheoremRecord *prime_theorem_record_slot(
+    uint64_t space, Atom *name, Atom *type) {
+    for (size_t i = 0u; i < g_prime_theorems.count; i++) {
+        PrimeTheoremRecord *record = &g_prime_theorems.records[i];
+        if (record->space == space && atom_eq(record->name, name) &&
+            atom_alpha_eq(record->type, type))
+            return record;
+    }
+    if (g_prime_theorems.count == g_prime_theorems.capacity) {
+        g_prime_theorems.capacity = g_prime_theorems.capacity
+            ? g_prime_theorems.capacity * 2u : 16u;
+        g_prime_theorems.records = cetta_realloc(
+            g_prime_theorems.records,
+            sizeof(PrimeTheoremRecord) * g_prime_theorems.capacity);
+    }
+    PrimeTheoremRecord *record =
+        &g_prime_theorems.records[g_prime_theorems.count++];
+    *record = (PrimeTheoremRecord){
+        .space = space,
+        .name = atom_deep_copy(&g_prime_theorems.arena, name),
+        .type = atom_deep_copy(&g_prime_theorems.arena, type),
+    };
+    return record;
+}
+
+static void prime_theorem_record_add_context(PrimeTheoremRecord *record,
+                                             Atom *context) {
+    for (size_t i = 0u; i < record->context_count; i++)
+        if (atom_alpha_eq(record->contexts[i], context)) return;
+    if (record->context_count == record->context_capacity) {
+        record->context_capacity = record->context_capacity
+            ? record->context_capacity * 2u : 2u;
+        record->contexts = cetta_realloc(
+            record->contexts, sizeof(Atom *) * record->context_capacity);
+    }
+    record->contexts[record->context_count++] =
+        atom_deep_copy(&g_prime_theorems.arena, context);
+}
+
+static void prime_theorem_ledger_ready(void) {
+    if (g_prime_theorems.ready) return;
+    arena_init_detached(&g_prime_theorems.arena);
+    g_prime_theorems.ready = true;
+    /* An import's working copy and the space that takes over its contents
+     * hold the same theorems, so they hold the same records. */
+    prime_scoped_judgment_follow_space_contents();
+}
+
+void prime_semantics_theorem_record(
+    Space *space, Atom *name, Atom *type,
+    Atom *const *contexts, size_t context_count) {
+    if (!space || !name || !type || !contexts) return;
+    prime_theorem_ledger_ready();
+    PrimeTheoremRecord *record = prime_theorem_record_slot(
+        prime_theorem_space_key(space), name, type);
+    for (size_t i = 0u; i < context_count; i++)
+        if (contexts[i]) prime_theorem_record_add_context(record, contexts[i]);
+}
+
+void prime_semantics_theorem_ledger_follow(uint64_t from, uint64_t to) {
+    if (from == to || !g_prime_theorems.ready) return;
+    size_t count = g_prime_theorems.count;
+    for (size_t i = 0u; i < count; i++) {
+        if (g_prime_theorems.records[i].space != from) continue;
+        /* The slot may move the records; read this one by index. */
+        Atom *name = g_prime_theorems.records[i].name;
+        Atom *type = g_prime_theorems.records[i].type;
+        PrimeTheoremRecord *target = prime_theorem_record_slot(to, name, type);
+        PrimeTheoremRecord *source = &g_prime_theorems.records[i];
+        for (size_t c = 0u; c < source->context_count; c++)
+            prime_theorem_record_add_context(target, source->contexts[c]);
+    }
+}
+
+/* The record whose statement the space now declares for `name`. */
+static const PrimeTheoremRecord *prime_theorem_record_in_force(
+    Space *space, Arena *arena, Atom *name, uint64_t key) {
+    Atom **types = NULL;
+    uint32_t type_count = 0u;
+    bool looked_up = false;
+    const PrimeTheoremRecord *found = NULL;
+    for (size_t i = 0u; i < g_prime_theorems.count && !found; i++) {
+        const PrimeTheoremRecord *record = &g_prime_theorems.records[i];
+        if (record->space != key || !atom_eq(record->name, name)) continue;
+        if (!looked_up) {
+            type_count = space_get_declared_types(space, arena, name, &types);
+            looked_up = true;
+        }
+        for (uint32_t t = 0u; t < type_count && !found; t++)
+            if (atom_alpha_eq(types[t], record->type)) found = record;
+    }
+    free(types);
+    return found;
+}
+
+typedef struct PrimeTheoremVisit {
+    const PrimeTheoremRecord *record;
+    const struct PrimeTheoremVisit *outer;
+} PrimeTheoremVisit;
+
+typedef struct {
+    Space *space;
+    Arena *arena;
+    uint64_t key;
+    bool rules_read;
+    Atom *rules;
+} PrimeTheoremAvailability;
+
+static bool prime_theorem_available(
+    PrimeTheoremAvailability *view, const PrimeTheoremRecord *record,
+    const PrimeTheoremVisit *outer, Atom **missing_out);
+
+static bool prime_theorem_dependency_available(
+    PrimeTheoremAvailability *view, Atom *dependency,
+    const PrimeTheoremVisit *visit) {
+    if (dependency && dependency->kind == ATOM_EXPR &&
+        dependency->expr.len == 3u &&
+        atom_is_symbol_id(dependency->expr.elems[0], g_builtin_syms.colon)) {
+        Atom *name = dependency->expr.elems[1];
+        Atom **types = NULL;
+        uint32_t type_count = space_get_declared_types(
+            view->space, view->arena, name, &types);
+        bool declared = false;
+        for (uint32_t t = 0u; t < type_count && !declared; t++)
+            declared = atom_alpha_eq(types[t], dependency->expr.elems[2]);
+        free(types);
+        if (!declared) return false;
+        const PrimeTheoremRecord *inner = prime_theorem_record_in_force(
+            view->space, view->arena, name, view->key);
+        return !inner || prime_theorem_available(view, inner, visit, NULL);
+    }
+    if (dependency && dependency->kind == ATOM_EXPR &&
+        dependency->expr.len == 5u &&
+        atom_is_symbol(dependency->expr.elems[0], "PrimeRule")) {
+        if (!view->rules_read) {
+            view->rules = prime_semantics_kernel_rules(view->arena, view->space);
+            view->rules_read = true;
+        }
+        for (Atom *rules = view->rules;
+             rules && rules->kind == ATOM_EXPR && rules->expr.len == 3u &&
+             atom_is_symbol(rules->expr.elems[0], "LCons");
+             rules = rules->expr.elems[2])
+            if (atom_alpha_eq(rules->expr.elems[1], dependency)) return true;
+        return false;
+    }
+    return false;
+}
+
+static bool prime_theorem_available(
+    PrimeTheoremAvailability *view, const PrimeTheoremRecord *record,
+    const PrimeTheoremVisit *outer, Atom **missing_out) {
+    /* A justification is well founded: a theorem is not its own support. */
+    size_t depth = 0u;
+    for (const PrimeTheoremVisit *v = outer; v; v = v->outer, depth++)
+        if (v->record == record || depth >= 64u) return false;
+    PrimeTheoremVisit visit = {.record = record, .outer = outer};
+    for (size_t c = 0u; c < record->context_count; c++) {
+        Atom *context = record->contexts[c];
+        bool available = true;
+        for (CettaExprIndex i = 1u; i < context->expr.len && available; i++)
+            available = prime_theorem_dependency_available(
+                view, context->expr.elems[i], &visit);
+        if (available) return true;
+    }
+    if (missing_out) {
+        /* What the recorded contexts lack, by name, each name once. */
+        size_t total = 0u;
+        for (size_t c = 0u; c < record->context_count; c++)
+            total += (size_t)record->contexts[c]->expr.len;
+        size_t count = 0u;
+        Atom **missing = arena_alloc(
+            view->arena, sizeof(Atom *) * (total ? total : 1u));
+        for (size_t c = 0u; c < record->context_count; c++) {
+            Atom *context = record->contexts[c];
+            for (CettaExprIndex i = 1u; i < context->expr.len; i++) {
+                Atom *dependency = context->expr.elems[i];
+                if (prime_theorem_dependency_available(
+                        view, dependency, &visit))
+                    continue;
+                Atom *name = dependency->expr.elems[1];
+                if (!prime_theorem_names_contain(missing, count, name))
+                    missing[count++] = name;
+            }
+        }
+        *missing_out = atom_expr(view->arena, missing, (CettaExprLen)count);
+    }
+    return false;
+}
+
+static bool prime_theorem_context_unavailable(
+    Space *space, Arena *arena, Atom *name, Atom **reason_out) {
+    if (!g_prime_theorems.count || !space || !arena || !name) return false;
+    uint64_t key = prime_theorem_space_key(space);
+    const PrimeTheoremRecord *record =
+        prime_theorem_record_in_force(space, arena, name, key);
+    if (!record) return false;
+    PrimeTheoremAvailability view = {
+        .space = space, .arena = arena, .key = key,
+    };
+    Atom *missing = NULL;
+    if (prime_theorem_available(&view, record, NULL, &missing)) return false;
+    if (reason_out)
+        *reason_out = prime_expr3(
+            arena, "theorem-context-unavailable", name,
+            missing ? missing : atom_unit(arena));
+    return true;
 }
 
 Atom *prime_semantics_check_nik_direct(

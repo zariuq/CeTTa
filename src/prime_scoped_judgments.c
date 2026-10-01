@@ -304,8 +304,10 @@ static void sj_admitted_revoke(uint64_t instance, const char *digest) {
 void prime_scoped_judgment_admit(Arena *a, Space *space, Atom *record);
 
 /* A space that takes over another's contents, as an import commits its
- * working copy, takes over what admission published there. */
+ * working copy, takes over what admission published there, and the records
+ * of the theorems published there. */
 static void sj_admission_follows_contents(uint64_t from, uint64_t to) {
+    prime_semantics_theorem_ledger_follow(from, to);
     size_t count = 0u;
     for (size_t i = 0u; i < g_admitted_cap; i++)
         if (g_admitted[i].digest[0] != '\0' && !g_admitted[i].revoked &&
@@ -322,12 +324,16 @@ static void sj_admission_follows_contents(uint64_t from, uint64_t to) {
     free(digests);
 }
 
-static void sj_admit(Arena *a, Space *space, Atom *record) {
+void prime_scoped_judgment_follow_space_contents(void) {
     static bool follows_contents = false;
     if (!follows_contents) {
         space_set_contents_moved_hook(sj_admission_follows_contents);
         follows_contents = true;
     }
+}
+
+static void sj_admit(Arena *a, Space *space, Atom *record) {
+    prime_scoped_judgment_follow_space_contents();
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SCOPED_PUBLICATION);
     char digest[65];
     sj_record_digest(a, record, digest);
@@ -3276,6 +3282,9 @@ typedef struct {
     /* The named `identity` interpretation: the family at a represented
      * equation `eq@A x y` computes to `Id A x y`. */
     bool identity;
+    /* A carrier whose decoding rule was not generated (sj_native_rules):
+     * a check that fails without it abstains instead of refuting. */
+    Atom *withheld_carrier;
 } SjNativeCompiler;
 
 enum {
@@ -3659,7 +3668,26 @@ static Atom *sj_native_rule_cons(Arena *a, Atom *head, Atom *patterns,
                     tail ? tail : sj_sym(a, "LNil"));
 }
 
-static Atom *sj_native_rules(SjNativeCompiler *compiler) {
+/* The family `Holds : prop -> Sort 0` decodes a code into a type of
+ * `Sort 0`.  `Holds (all@A P) ↦ Pi A (Holds (P #0))` and
+ * `Holds (eq@A x y) ↦ Id A x y` keep that type only when the carrier A is
+ * itself in `Sort 0`; for a larger carrier, such as a universe, the right
+ * side is a larger type than the left, and the kernel, which computes with
+ * these rules without checking them, would identify the two.  No decoding
+ * rule is generated for such a carrier, so a proof that needs one is not
+ * decided natively. */
+static bool sj_native_small_carrier(Arena *a, Atom *context, Atom *carrier) {
+    if (!context || !carrier) return false;
+    CettaPrimeRegularKernelBudget budget;
+    cetta_prime_regular_kernel_budget_init(&budget, false, 0u);
+    Atom *small = sj_expr2(a, "Sort", sj_expr2(a, "LevelConst", atom_int(a, 0)));
+    CettaPrimeRegularKernelResult checked =
+        cetta_prime_regular_kernel_check_intrinsic(a, context, carrier, small,
+                                                   &budget);
+    return checked.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+}
+
+static Atom *sj_native_rules(SjNativeCompiler *compiler, Atom *context) {
     SjProofState *st = compiler->proof;
     Arena *a = st->arena;
     Atom *family = sj_expr2(a, "DeclConst", compiler->family_name);
@@ -3682,6 +3710,10 @@ static Atom *sj_native_rules(SjNativeCompiler *compiler) {
             continue;
         Atom *domain = sj_to_kernel(a, type->expr.elems[1]->expr.elems[1]);
         if (!domain) return NULL;
+        if (!sj_native_small_carrier(a, context, domain)) {
+            if (!compiler->withheld_carrier) compiler->withheld_carrier = domain;
+            continue;
+        }
         Atom *predicate = sj_expr2(a, "PVar", atom_int(a, 0));
         Atom *code = sj_expr3(
             a, "App", sj_expr2(a, "DeclConst", st->instance_names[i]),
@@ -3705,6 +3737,10 @@ static Atom *sj_native_rules(SjNativeCompiler *compiler) {
             continue;
         Atom *carrier = sj_to_kernel(a, type->expr.elems[1]);
         if (!carrier) return NULL;
+        if (!sj_native_small_carrier(a, context, carrier)) {
+            if (!compiler->withheld_carrier) compiler->withheld_carrier = carrier;
+            continue;
+        }
         Atom *code = sj_expr3(
             a, "App",
             sj_expr3(a, "App", sj_expr2(a, "DeclConst", st->instance_names[i]),
@@ -3861,7 +3897,7 @@ static Atom *sj_set_native_proof_with_state(
             a, (Atom *[]){assumption->source_name, assumption->source_prop,
                           assumption->constant_name}, 3u);
     }
-    Atom *rules = sj_native_rules(&compiler);
+    Atom *rules = sj_native_rules(&compiler, context);
     if (!rules)
         return sj_undetermined(a, judgment,
                                sj_expr1(a, "set:native-decoder-rules"));
@@ -3876,6 +3912,11 @@ static Atom *sj_set_native_proof_with_state(
         if (checked.status == CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED)
             return sj_incomplete(a, judgment,
                                  sj_expr2(a, "set:native-kernel", reason));
+        if (compiler.withheld_carrier)
+            return sj_undetermined(
+                a, judgment,
+                sj_expr2(a, "set:native-large-carrier",
+                         compiler.withheld_carrier));
         if (checked.status == CETTA_PRIME_REGULAR_KERNEL_REFUTED)
             return sj_refuted(a, judgment,
                               sj_expr2(a, "set:native-kernel", reason));
@@ -4308,7 +4349,7 @@ static Atom *sj_set_native_link_with_state(Arena *a, Atom *judgment,
         .family_name = family,
         .identity = true,
     };
-    Atom *rules = sj_native_rules(&link_compiler);
+    Atom *rules = sj_native_rules(&link_compiler, context);
     if (!rules)
         return sj_undetermined(a, judgment,
                                sj_expr1(a, "set:native-decoder-rules"));
@@ -4541,7 +4582,7 @@ static Atom *sj_set_native_use(Arena *a, Space *space, Atom *judgment,
         .family_name = proof_type->expr.elems[1]->expr.elems[1],
         .identity = linked || automatic,
     };
-    Atom *rules = sj_native_rules(&consumer_compiler);
+    Atom *rules = sj_native_rules(&consumer_compiler, context);
     if (!rules)
         return sj_undetermined(a, judgment,
                                sj_expr1(a, "set:native-consumer-rules"));
@@ -4569,6 +4610,11 @@ static Atom *sj_set_native_use(Arena *a, Space *space, Atom *judgment,
         if (used.status == CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED)
             return sj_incomplete(a, judgment,
                                  sj_expr2(a, "set:native-consumer", reason));
+        if (consumer_compiler.withheld_carrier)
+            return sj_undetermined(
+                a, judgment,
+                sj_expr2(a, "set:native-large-carrier",
+                         consumer_compiler.withheld_carrier));
         if (used.status == CETTA_PRIME_REGULAR_KERNEL_REFUTED)
             return sj_refuted(a, judgment,
                               sj_expr2(a, "set:native-consumer", reason));

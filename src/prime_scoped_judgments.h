@@ -46,6 +46,10 @@ bool prime_scoped_judgment_reserved_name(Atom *name);
 /* Admission of a record that the evaluator has just published. */
 void prime_scoped_judgment_admit(Arena *a, Space *space, Atom *record);
 
+/* Keep what was published in a space, admitted records and theorem records,
+ * with the space's contents when another space comes to hold them. */
+void prime_scoped_judgment_follow_space_contents(void);
+
 /* Whether admission published `record` in the space that `space` is or
  * views.  Kernel computation trusts no rule and no definition record that
  * admission did not publish. */

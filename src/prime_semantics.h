@@ -250,4 +250,22 @@ Atom *prime_semantics_kernel_query(
     Arena *a, Space *space, Atom *judgment, bool steps_limited,
     uint64_t steps);
 
+/* Published theorems are hypothetical judgments G |- P.  The context of one
+ * successful checking judgment, `(PrimeTheoremContextV1 dependency ...)`:
+ * the space declarations `(: name type)` of the declared route's class and
+ * the admitted rules at those heads.  Empty unless the judgment was decided
+ * on the declared route; NULL when that route's class cannot be read. */
+Atom *prime_semantics_theorem_context(
+    Arena *a, Space *space, Atom *judgment, bool declared_route);
+
+/* Record the contexts of a theorem just published in `space`, one per
+ * accepted proof.  While none of them is available, the kernel does not
+ * resolve the theorem's name; the statement is never rewritten. */
+void prime_semantics_theorem_record(
+    Space *space, Atom *name, Atom *type,
+    Atom *const *contexts, size_t context_count);
+
+/* A space that comes to hold another's contents holds its theorem records. */
+void prime_semantics_theorem_ledger_follow(uint64_t from, uint64_t to);
+
 #endif /* CETTA_PRIME_SEMANTICS_H */

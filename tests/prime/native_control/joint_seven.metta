@@ -1,0 +1,15 @@
+!(import! &self ../../../lib/native_search_goals.metta)
+(= (routes) (Route a (0) 8))
+(= (routes) (Route b (0) 1))
+(= (routes) (Route c (1) 2))
+(= (routes) (Route d (2) 3))
+(= (routes) (Route e (3) 4))
+(= (routes) (Route f (4) 5))
+(= (routes) (Route g (5) 6))
+(= (routes) (Route h (6) 7))
+!(select 7
+   (search-policy (control WO
+      (key (Route $id $coverage $cost) $cost)
+      (goal $selected (search:joint? (0 1 2 3 4 5 6) () $selected))
+      (budget 200000)))
+   (routes))

@@ -87,6 +87,10 @@ bool grounded_retain_top_k_numeric_projection(
     Arena *arena, Atom *keys, Atom *values, int64_t requested,
     Atom **result_out);
 
+/* Exact numeric comparison for native selection.  Refuses nonnumbers and
+ * NaNs; shares the arithmetic layer's integer/rational comparison. */
+bool grounded_compare_numeric_atoms(Atom *left, Atom *right, int *ordering);
+
 /* Check if a symbol is a known grounded op head (by SymbolId). */
 bool is_grounded_op(SymbolId id);
 
