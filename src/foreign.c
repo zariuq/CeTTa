@@ -2,6 +2,7 @@
 #include <Python.h>
 
 #include "foreign.h"
+#include "error_presentation.h"
 
 #include "parser.h"
 #include <ctype.h>
@@ -2140,4 +2141,71 @@ bool cetta_foreign_call_native(CettaForeignRuntime *rt,
         : cetta_call_value(result_set_collapse_for_native(a, &results));
     result_set_free(&results);
     return out->kind == CETTA_CALL_RAISED || out->term != NULL;
+}
+
+/* A borrowed native exception is projected without invoking Python formatting
+ * methods. This function neither initializes Python nor drains finalizers. */
+bool cetta_foreign_exception_detail(Atom *atom, char *out, size_t capacity,
+                                    bool *truncated) {
+    if (truncated) *truncated = false;
+    if (!out || !capacity) return false;
+    memset(out, 0, capacity);
+    if (!atom || atom->kind != ATOM_GROUNDED || atom->ground.gkind != GV_FOREIGN ||
+        !atom->ground.ptr || !Py_IsInitialized()) return false;
+    const CettaForeignHold *hold = atom->ground.ptr;
+    if (hold->retain != foreign_record_retain) return false;
+    CettaForeignValue *value = atom->ground.ptr;
+    if (value->backend != CETTA_FOREIGN_BACKEND_PYTHON || !value->obj) return false;
+    PyGILState_STATE state = PyGILState_Ensure();
+    PyObject *saved_type = NULL, *saved_value = NULL, *saved_trace = NULL;
+    PyErr_Fetch(&saved_type, &saved_value, &saved_trace);
+    bool ok = false;
+    PyObject *args = NULL;
+    if (PyExceptionInstance_Check(value->obj)) {
+#if PY_VERSION_HEX >= 0x030c0000
+        args = PyException_GetArgs(value->obj);
+#else
+        /* Older CPython has no public args getter. Keep the total fallback;
+         * do not invoke an arbitrary __getattribute__ implementation. */
+        args = NULL;
+#endif
+    }
+    if (args && PyTuple_CheckExact(args) && PyTuple_GET_SIZE(args) == 1) {
+        PyObject *text = PyTuple_GET_ITEM(args, 0);
+        if (PyUnicode_CheckExact(text)) {
+            Py_ssize_t length = PyUnicode_GET_LENGTH(text), i = 0;
+            size_t used = 0u;
+            int kind = PyUnicode_KIND(text);
+            const void *data = PyUnicode_DATA(text);
+            while (i < length) {
+                Py_UCS4 ch = PyUnicode_READ(kind, data, i);
+                if (ch < 0x20u || ch == 0x7fu || ch == 0x2028u || ch == 0x2029u) ch = ' ';
+                if (ch >= 0xd800u && ch <= 0xdfffu) ch = 0xfffdu;
+                size_t width = ch < 0x80u ? 1u : ch < 0x800u ? 2u : ch < 0x10000u ? 3u : 4u;
+                if (width >= capacity - used) break;
+                if (width == 1u) out[used++] = (char)ch;
+                else {
+                    if (width == 2u) out[used++] = (char)(0xc0u | (ch >> 6));
+                    else if (width == 3u) {
+                        out[used++] = (char)(0xe0u | (ch >> 12));
+                        out[used++] = (char)(0x80u | ((ch >> 6) & 0x3fu));
+                    } else {
+                        out[used++] = (char)(0xf0u | (ch >> 18));
+                        out[used++] = (char)(0x80u | ((ch >> 12) & 0x3fu));
+                        out[used++] = (char)(0x80u | ((ch >> 6) & 0x3fu));
+                    }
+                    out[used++] = (char)(0x80u | (ch & 0x3fu));
+                }
+                i++;
+            }
+            out[used] = '\0';
+            if (truncated) *truncated = i < length;
+            ok = true;
+        }
+    }
+    Py_XDECREF(args);
+    PyErr_Clear();
+    PyErr_Restore(saved_type, saved_value, saved_trace);
+    PyGILState_Release(state);
+    return ok;
 }

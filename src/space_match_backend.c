@@ -1669,8 +1669,9 @@ static bool native_count_flat_linear_view(
 
     SpaceMatchNativeState *state = &s->match_backend.native;
     bool indexed = state->match_trie && !state->match_trie_dirty;
-    if (!indexed && s->native.len > MATCH_TRIE_THRESHOLD)
-        return false;
+
+    /* A cold count view can scan the same authoritative AtomId sequence as
+     * the materialized-pattern count. It need not first build a full trie. */
 
     CettaIndex *candidates = NULL;
     CettaIndex candidate_len = s->native.len;
@@ -1709,7 +1710,12 @@ static bool native_count_flat_linear_view(
         }
         if (tu_kind(s->native.universe, candidate_id) != ATOM_EXPR ||
             tu_arity(s->native.universe, candidate_id) != column_count) {
-            if (tu_has_vars(s->native.universe, candidate_id)) {
+            if (tu_kind(s->native.universe, candidate_id) == ATOM_VAR ||
+                (tu_has_vars(s->native.universe, candidate_id) &&
+                 tu_kind(s->native.universe, candidate_id) == ATOM_EXPR &&
+                 (tu_head_sym(s->native.universe, candidate_id) == SYMBOL_ID_NONE ||
+                  tu_petta_value_representation(s->native.universe, candidate_id) !=
+                      PETTA_VALUE_ORDINARY))) {
                 free(candidates);
                 return false;
             }

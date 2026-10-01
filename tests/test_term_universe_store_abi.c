@@ -1812,6 +1812,106 @@ static void test_batched_integer_identity(void) {
     arena_free(&persistent);
 }
 
+static void test_compact_hashcons_identity_across_growth(void) {
+    HashConsTable table;
+    Arena owner;
+    hashcons_init_compact(&table);
+    arena_init_detached(&owner);
+    arena_set_hashcons(&owner, &table);
+    Atom *values[512];
+    Atom *head = atom_symbol(&owner, "compact-owner-value");
+    uint32_t initial = table.size;
+    for (size_t i = 0u; i < 512u; i++)
+        values[i] = atom_expr2(&owner, head,
+            hashcons_get(&table, atom_int(&owner, (int64_t)i + 1000000)));
+    assert(table.size > initial);
+    for (size_t i = 0u; i < 512u; i++) {
+        Atom *again = atom_expr2(&owner,
+            atom_symbol(&owner, "compact-owner-value"),
+            hashcons_get(&table, atom_int(&owner, (int64_t)i + 1000000)));
+        assert(again == values[i]);
+        if (i > 0u)
+            assert(!atom_eq(again, values[i - 1u]));
+    }
+    Atom *left = atom_var_with_id(&owner, "same-name", 991u);
+    Atom *right = atom_var_with_id(&owner, "same-name", 992u);
+    assert(!atom_eq(left, right));
+    arena_free(&owner);
+    hashcons_free(&table);
+}
+
+static void test_batched_expression_identity(void) {
+    for (unsigned wide = 0u; wide < 2u; wide++) {
+        Arena arenas[2];
+        TermUniverse universes[2];
+        AtomId children[2][81][3], results[2][81];
+        bool present[81];
+        SymbolId head = symbol_intern_cstr(g_symbols, "batch-expression");
+        for (size_t side = 0u; side < 2u; side++) {
+            arena_init(&arenas[side]);
+            assert(term_universe_init_with_store_format(&universes[side], wide
+                ? TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1
+                : TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1));
+            term_universe_set_persistent_arena(&universes[side], &arenas[side]);
+            AtomId head_id = tu_intern_symbol(&universes[side], head);
+            AtomId variable = tu_intern_var(&universes[side], head, 42u);
+            for (size_t row = 0u; row < 81u; row++) {
+                children[side][row][0] = head_id;
+                children[side][row][1] = tu_intern_int(&universes[side], row % 39u);
+                children[side][row][2] = row % 7u ? head_id : variable;
+                present[row] = row != 31u && row != 47u;
+            }
+            children[side][31][0] = CETTA_ATOM_ID_NONE;
+            children[side][47][0] = CETTA_ATOM_ID_NONE;
+        }
+        assert(tu_exprs_from_ids(&universes[0], children[0][0], 81u, 3u,
+                                 present, results[0]));
+        for (size_t row = 0u; row < 81u; row++) {
+            results[1][row] = present[row]
+                ? tu_expr_from_ids(&universes[1], children[1][row], 3u)
+                : CETTA_ATOM_ID_NONE;
+            assert(results[0][row] == results[1][row]);
+            if (!present[row])
+                continue;
+            assert(tu_has_vars(&universes[0], results[0][row]) == (row % 7u == 0u));
+            assert(tu_head_sym(&universes[0], results[0][row]) == head);
+            for (size_t col = 0u; col < 3u; col++)
+                assert(tu_child(&universes[0], results[0][row], col) ==
+                       children[0][row][col]);
+        }
+        assert(results[0][1] == results[0][40]);
+        assert(universes[0].len == universes[1].len);
+        assert(term_universe_migrate_store_format(&universes[0], wide
+            ? TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1
+            : TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1));
+        AtomId rerun[81];
+        assert(tu_exprs_from_ids(&universes[0], children[0][0], 81u, 3u,
+                                 present, rerun));
+        assert(memcmp(results[0], rerun, sizeof(rerun)) == 0);
+        assert(tu_exprs_from_ids(&universes[0], NULL, 0u, 3u, NULL, NULL));
+        AtomId empty[3];
+        assert(tu_exprs_from_ids(&universes[0], NULL, 3u, 0u, NULL, empty));
+        assert(empty[0] == empty[1] && empty[1] == empty[2]);
+        /* Invalid coordinates stop admission at that occurrence. Later rows
+         * must not become published identities, even in a prepared window. */
+        AtomId bad[3][3] = {
+            {children[0][0][0], tu_intern_int(&universes[0], 999), children[0][0][0]},
+            {children[0][0][0], CETTA_ATOM_ID_NONE, children[0][0][0]},
+            {children[0][0][0], tu_intern_int(&universes[0], 1000), children[0][0][0]}};
+        AtomId prefix[3];
+        size_t before = universes[0].len;
+        assert(!tu_exprs_from_ids(&universes[0], bad[0], 3u, 3u, NULL, prefix));
+        assert(prefix[0] != CETTA_ATOM_ID_NONE);
+        assert(prefix[1] == CETTA_ATOM_ID_NONE && prefix[2] == CETTA_ATOM_ID_NONE);
+        assert(universes[0].len == before + 1u);
+        assert(tu_expr_from_ids(&universes[0], bad[0], 3u) == prefix[0]);
+        for (size_t side = 0u; side < 2u; side++) {
+            term_universe_free(&universes[side]);
+            arena_free(&arenas[side]);
+        }
+    }
+}
+
 int main(void) {
     SymbolTable symbols;
     VarInternTable var_intern;
@@ -1822,7 +1922,9 @@ int main(void) {
     init_test_symbols(&symbols);
     var_intern_init(&var_intern);
     g_var_intern = &var_intern;
+    test_compact_hashcons_identity_across_growth();
     test_batched_integer_identity();
+    test_batched_expression_identity();
     test_native_handle_id_retention();
     test_callable_value_store_contract();
     test_arena_accounting_saturation_contract();

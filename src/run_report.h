@@ -17,8 +17,9 @@
  *    an interrupted or depth-cut stop, a failed output or cleanup, an
  *    illegal worker lifetime, or an unresolved failed assertion prevents
  *    success.
- *  - An unhandled execution fault, recorded or terminal, forces status 2.
- *    Other unsuccessful contracts give 1; successful ones 0.  A caught
+ *  - Invalid framing has status 1. Within valid framing, an unhandled
+ *    execution fault, recorded or terminal, forces status 2. Other
+ *    unsuccessful contracts give 1; successful ones 0.  A caught
  *    error or a passed expected-error assertion produces no unhandled-fault
  *    event at all.  Answer payloads are never inspected for classification.
  *  - Test mode checks exact declared identity multiplicities and resolved
@@ -101,12 +102,14 @@ typedef struct {
 } RunReportCollected;
 
 typedef struct {
-    uint32_t exit_code;             /* 0 success, 1 unsuccessful, 2 unhandled fault */
+    uint32_t exit_code;             /* 0 success, 1 invalid/unsuccessful, 2 validly framed fault */
     bool observation_complete;      /* Completion: demand-relative observation */
     bool tests_passed;              /* TestContract: no-plan all-pass or exact bag */
     bool finalization_ready;        /* ResourcesReady: protocol + workers + outputs */
     bool framing_ok;                /* exactly one terminal, nothing after it */
     RunReportCollected diagnostics;
+    uint64_t answer_count;
+    uint64_t test_count;
     uint64_t worker_count_started;
     uint64_t worker_count_pending;
 } RunReportOutcome;
@@ -134,8 +137,8 @@ void run_report_outcome_details_free(RunReportOutcome *outcome);
 bool run_report_answer(RunReport *report);
 /* Worker lifetime events: started/settled with the id; the remaining kinds
  * take id argument ignored (pass 0).  False means framing is already broken
- * (an event after the terminal) and was latched; feed is accepted to keep
- * accounting honest but can no longer make the run successful. */
+ * (an event after the terminal) and was latched; the rejected feed cannot
+ * make the run successful. */
 bool run_report_activity(RunReport *report, RunReportActivityKind kind,
                          uint64_t worker_id);
 /* A resolved verdict, already evaluated by an assertion host (an expected
@@ -169,8 +172,13 @@ bool run_report_finalize(RunReport *report, RunReportOutcome *outcome);
  * lifetimes must never pool: each query is its own RunReport.  Document
  * success requires every declared query to settle successfully. */
 RunReportDoc *run_report_doc_begin(void);
+/* Declare the entire catalogue before execution: unopened queries remain
+ * outstanding, including those skipped after a failure. */
+bool run_report_doc_declare_query(RunReportDoc *doc, uint64_t query_id);
+RunReport *run_report_doc_boundary(RunReportDoc *doc);
 void run_report_doc_free(RunReportDoc *doc);
-/* Open a named query.  Demand/plans stay inside the query's report. */
+/* Open one previously declared query, exactly once. Demand/plans stay
+ * inside the query report. Settle the separate document boundary last. */
 RunReport *run_report_doc_open_query(RunReportDoc *doc, uint64_t query_id,
                                      RunReportDemand demand,
                                      uint64_t detail_budget);
@@ -187,6 +195,8 @@ typedef struct {
     uint64_t queries_unsettled;
 } RunReportDocStatus;
 bool run_report_doc_verify(const RunReportDoc *doc, RunReportDocStatus *out);
+bool run_report_doc_query_at(const RunReportDoc *doc, size_t index,
+                            uint64_t *query_id, RunReportOutcome *out);
 
 #ifdef __cplusplus
 }

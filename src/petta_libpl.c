@@ -5352,6 +5352,12 @@ bool petta_libpl_predicate_defined(
  * a library are not its own and are never reported.
  */
 static const char *const petta_libpl_static_import_clauses[] = {
+    "('$cetta_static_rows'(Head, Visitor) :- "
+    "( predicate_property(Head, static), "
+    "predicate_property(Head, number_of_rules(0)), "
+    "\\+ predicate_property(Head, tabled) "
+    "-> forall(Head, Visitor) "
+    "; forall(clause(Head, true), Visitor) ))",
     "('$cetta_static_import'(M, Space, File, Touched) :- "
     "style_check(-discontiguous), atom_string(File, SFile), "
     "working_dir(Base), "
@@ -5546,8 +5552,7 @@ static SymbolId petta_libpl_atom_symbols_find(PettaLibplAtomSymbols *cache,
 
 /* One fact P(Arg...) as the row (Arg...): an atom or an integer that fits is
  * read as it stands, and any other argument as every term crossing is. */
-static Atom *petta_libpl_static_row(Arena *arena, term_t head, int arity,
-                                    term_t argument,
+static Atom *petta_libpl_static_row(Arena *arena, term_t arguments, int arity,
                                     PettaLibplAtomSymbols *cache) {
     Atom *inline_items[8];
     Atom **items = arity <= 8
@@ -5559,10 +5564,7 @@ static Atom *petta_libpl_static_row(Arena *arena, term_t head, int arity,
         Atom *item = NULL;
         atom_t handle = 0;
         int64_t value = 0;
-        if (!PL_get_arg(index + 1, head, argument)) {
-            ok = false;
-            break;
-        }
+        term_t argument = arguments + index;
         switch (PL_term_type(argument)) {
         case PL_ATOM: {
             SymbolId symbol = PL_get_atom(argument, &handle)
@@ -5599,7 +5601,7 @@ static Atom *petta_libpl_static_row(Arena *arena, term_t head, int arity,
  * together when the bounded batch flushes; symbol ids already have the sink's
  * immutable identity. No SWI reference survives the solution's frame. */
 static bool petta_libpl_static_literal(
-    TermUniverse *universe, term_t head, int arity, term_t argument,
+    TermUniverse *universe, term_t arguments, int arity,
     PettaLibplAtomSymbols *cache, AtomId *items, int64_t *integers) {
     if (!universe || arity < 0)
         return false;
@@ -5609,8 +5611,7 @@ static bool petta_libpl_static_literal(
     for (int index = 0; index < arity; index++) {
         AtomId item = CETTA_ATOM_ID_NONE;
         atom_t handle = 0;
-        if (!PL_get_arg(index + 1, head, argument))
-            return false;
+        term_t argument = arguments + index;
         switch (PL_term_type(argument)) {
         case PL_ATOM: {
             SymbolId symbol = PL_get_atom(argument, &handle)
@@ -5684,14 +5685,75 @@ static bool petta_libpl_static_encode(
         for (uint32_t column = 0u; column < encoding->arity; column++)
             if (coordinates[column] == CETTA_ATOM_ID_NONE)
                 coordinates[column] = encoding->value_ids[next++];
-        ids[row] = tu_expr_from_ids(encoding->universe, coordinates, encoding->arity);
-        if (ids[row] == CETTA_ATOM_ID_NONE)
-            return false;
     }
-    return true;
+    return tu_exprs_from_ids(encoding->universe, encoding->coordinates, count,
+                             encoding->arity, encoding->present, ids);
 }
 
-/* The facts of one changed predicate P/N, as rows, handed to `visit`. */
+/* A query-owned sink. The foreign arguments are borrowed only for the
+ * callback; a bounded batch contains native coordinates or owning syntax,
+ * never SWI references. Nested invocations restore the preceding sink. */
+enum { PETTA_STATIC_BATCH_ROWS = 256, PETTA_STATIC_BATCH_BYTES = 64 * 1024 };
+typedef struct {
+    PettaLibplStaticPredicateVisit visit;
+    void *context;
+    Atom *target;
+    int arity;
+    bool multifile, ok;
+    TermUniverse *universe;
+    PettaLibplAtomSymbols cache;
+    PettaLibplStaticEncoding encoding;
+    Arena scratch;
+    ArenaMark origin;
+    Atom *rows[PETTA_STATIC_BATCH_ROWS];
+    AtomId literal_ids[PETTA_STATIC_BATCH_ROWS];
+    uint32_t count, limit;
+} PettaLibplStaticSink;
+static _Thread_local PettaLibplStaticSink *g_petta_static_sink;
+
+static bool petta_libpl_static_sink_flush(PettaLibplStaticSink *sink) {
+    if (!sink->count) return sink->ok;
+    PettaLibplStaticRows batch = {
+        .arena = &sink->scratch, .rows = sink->rows,
+        .literal_ids = sink->literal_ids, .count = sink->count,
+    };
+    sink->ok = petta_libpl_static_encode(&sink->encoding, sink->literal_ids, sink->count) &&
+        sink->visit(sink->context, sink->target, (CettaExprLen)sink->arity,
+            sink->multifile, false, &sink->universe, &batch);
+    sink->count = 0u;
+    arena_reset(&sink->scratch, sink->origin);
+    return sink->ok;
+}
+
+static foreign_t petta_libpl_static_sink_row(term_t arguments, int arity,
+                                            control_t control) {
+    (void)control;
+    PettaLibplStaticSink *sink = g_petta_static_sink;
+    if (!sink || !sink->ok || arity != sink->arity) return FALSE;
+    uint32_t row = sink->count;
+    sink->encoding.present[row] = sink->encoding.universe &&
+        petta_libpl_static_literal(sink->encoding.universe, arguments, arity,
+            &sink->cache,
+            arity ? sink->encoding.coordinates + (size_t)row * arity : NULL,
+            arity ? sink->encoding.integers + (size_t)row * arity : NULL);
+    sink->rows[row] = NULL;
+    if (!sink->encoding.present[row]) {
+        fid_t frame = PL_open_foreign_frame();
+        sink->rows[row] = frame ? petta_libpl_static_row(
+            &sink->scratch, arguments, arity, &sink->cache) : NULL;
+        if (frame) PL_discard_foreign_frame(frame);
+    }
+    sink->ok = sink->rows[row] || sink->encoding.present[row];
+    sink->count++;
+    if (sink->ok && (sink->count == sink->limit ||
+        arena_accounted_live_bytes(&sink->scratch) >= PETTA_STATIC_BATCH_BYTES))
+        sink->ok = petta_libpl_static_sink_flush(sink);
+    return sink->ok ? TRUE : FALSE;
+}
+
+/* A certified static, untabled fact predicate executes directly; all other
+ * predicates enumerate stored facts through clause/2. SWI owns variable
+ * freshness and clause order, including duplicate occurrences. */
 static bool petta_libpl_static_import_predicate(
     CettaLibPrologRuntime *runtime, Arena *arena, term_t module,
     term_t predicate, int arity, bool multifile,
@@ -5699,136 +5761,71 @@ static bool petta_libpl_static_import_predicate(
     CettaCallOutcome *end) {
     PettaLibplVarMap variables = {0};
     PettaLibplBackVarMap unknown = {0};
-    Atom *target = petta_libpl_from_term(arena, predicate, &variables,
-                                         &unknown, 0u);
+    Atom *target = petta_libpl_from_term(arena, predicate, &variables, &unknown, 0u);
     petta_libpl_var_map_free(&variables);
     petta_libpl_back_map_free(&unknown);
-    if (!target)
+    if (!target || arity < 0) return false;
+    PettaLibplStaticSink sink = {
+        .visit = visit, .context = context, .target = target, .arity = arity,
+        .multifile = multifile, .ok = true, .limit = PETTA_STATIC_BATCH_ROWS,
+    };
+    if (!visit(context, target, (CettaExprLen)arity, multifile, true, &sink.universe, NULL))
         return false;
-    TermUniverse *literal_universe = NULL;
-    if (!visit(context, target, (CettaExprLen)arity, multifile,
-               true, &literal_universe, NULL))
-        return false;
-    /* clause(M:H, true) over the head P(_, ...), whose arguments each
-     * solution binds. */
-    term_t arguments = PL_new_term_refs(2);
-    term_t head = PL_new_term_ref();
-    atom_t name = 0;
-    atom_t colon = PL_new_atom(":");
-    functor_t qualified = PL_new_functor(colon, 2);
-    PL_unregister_atom(colon);
-    predicate_t clause_predicate = PL_predicate("clause", 2, "system");
-    bool ok = arguments && head && clause_predicate &&
-              PL_get_atom(predicate, &name) &&
-              PL_put_functor(head, PL_new_functor(name, (size_t)arity)) &&
-              PL_cons_functor(arguments, qualified, module, head) &&
-              petta_libpl_put_utf8(arguments + 1, PL_ATOM, "true", 4u);
-    qid_t query = ok
-        ? PL_open_query(runtime->module,
-                        PL_Q_NODEBUG | PL_Q_CATCH_EXCEPTION |
-                            PL_Q_EXT_STATUS,
-                        clause_predicate, arguments)
-        : 0;
-    ok = ok && query;
-    PettaLibplAtomSymbols cache = {0};
-    enum { BATCH_ROWS = 256, BATCH_BYTES = 64 * 1024 };
-    Atom *rows[BATCH_ROWS];
-    AtomId literal_ids[BATCH_ROWS];
-    PettaLibplStaticEncoding encoding = {0};
-    uint32_t batch_limit = BATCH_ROWS;
-    if (literal_universe && arity >= 0 &&
-        (size_t)arity <= BATCH_BYTES / (4u * sizeof(AtomId))) {
-        encoding.universe = literal_universe;
-        encoding.arity = (uint32_t)arity;
+    if (sink.universe && (size_t)arity <= PETTA_STATIC_BATCH_BYTES / (4u*sizeof(AtomId))) {
+        sink.encoding.universe = sink.universe;
+        sink.encoding.arity = (uint32_t)arity;
         if (arity) {
-            size_t limit = BATCH_BYTES / (4u * sizeof(AtomId) * (size_t)arity);
-            batch_limit = limit < BATCH_ROWS ? (uint32_t)limit : BATCH_ROWS;
-            size_t cells = (size_t)batch_limit * (size_t)arity;
-            encoding.coordinates = cetta_malloc(cells * sizeof(*encoding.coordinates));
-            encoding.integers = cetta_malloc(cells * sizeof(*encoding.integers));
-            encoding.values = cetta_malloc(cells * sizeof(*encoding.values));
-            encoding.value_ids = cetta_malloc(cells * sizeof(*encoding.value_ids));
+            size_t limit = PETTA_STATIC_BATCH_BYTES / (4u*sizeof(AtomId)*(size_t)arity);
+            sink.limit = limit < PETTA_STATIC_BATCH_ROWS ? (uint32_t)limit : PETTA_STATIC_BATCH_ROWS;
+            size_t cells = (size_t)sink.limit * (size_t)arity;
+            sink.encoding.coordinates = cetta_malloc(cells*sizeof(*sink.encoding.coordinates));
+            sink.encoding.integers = cetta_malloc(cells*sizeof(*sink.encoding.integers));
+            sink.encoding.values = cetta_malloc(cells*sizeof(*sink.encoding.values));
+            sink.encoding.value_ids = cetta_malloc(cells*sizeof(*sink.encoding.value_ids));
         }
     }
-    Arena scratch;
-    arena_init_detached(&scratch);
-    ArenaMark origin = arena_mark(&scratch);
-    uint32_t count = 0u;
-    while (ok) {
-        int status = PL_next_solution(query);
-        if (status == PL_S_FALSE)
-            break;
-        if (status == PL_S_EXCEPTION) {
-            term_t exception = PL_exception(query);
-            Atom *error = exception
-                ? petta_libpl_exception_value(arena, exception) : NULL;
-            if (error)
-                *end = cetta_call_raised(error);
-            ok = false;
-            break;
-        }
-        if (status != PL_S_TRUE && status != PL_S_LAST) {
-            ok = false;
-            break;
-        }
-        /* Every term reference into this solution dies before the query
-         * backtracks. General conversion creates traversal/alias references;
-         * keeping them into the next solution leaves roots into discarded
-         * global-stack cells and also retains unbounded conversion metadata. */
-        fid_t row_frame = PL_open_foreign_frame();
-        term_t argument = row_frame ? PL_new_term_ref() : 0;
-        encoding.present[count] = argument && encoding.universe &&
-            petta_libpl_static_literal(encoding.universe, head, arity,
-                argument, &cache,
-                encoding.arity ? encoding.coordinates + (size_t)count * encoding.arity : NULL,
-                encoding.arity ? encoding.integers + (size_t)count * encoding.arity : NULL);
-        rows[count] = !encoding.present[count] && argument
-            ? petta_libpl_static_row(&scratch, head, arity, argument, &cache)
-            : NULL;
-        if (row_frame)
-            PL_discard_foreign_frame(row_frame);
-        ok = rows[count] || encoding.present[count];
-        count++;
-        if (ok && (count == batch_limit ||
-                   arena_accounted_live_bytes(&scratch) >= BATCH_BYTES)) {
-            PettaLibplStaticRows batch = {
-                .arena = &scratch, .rows = rows,
-                .literal_ids = literal_ids, .count = count,
-            };
-            ok = petta_libpl_static_encode(&encoding, literal_ids, count) &&
-                 visit(context, target, (CettaExprLen)arity, multifile,
-                       false, &literal_universe, &batch);
-            count = 0u;
-            arena_reset(&scratch, origin);
-        }
-        if (status == PL_S_LAST)
-            break;
-    }
+    arena_init_detached(&sink.scratch);
+    sink.origin = arena_mark(&sink.scratch);
+    atom_t name = 0;
+    term_t forall_args = PL_new_term_refs(2);
+    term_t head = PL_new_term_ref();
+    term_t visitor_args = arity ? PL_new_term_refs(arity) : 0;
+    atom_t colon = PL_new_atom(":");
+    atom_t visitor = PL_new_atom("$cetta_static_row");
+    functor_t qualified = PL_new_functor(colon,2);
+    functor_t visitor_functor = PL_new_functor(visitor,(size_t)arity);
+    PL_unregister_atom(colon); PL_unregister_atom(visitor);
+    bool ok = forall_args && head && (!arity || visitor_args) &&
+        PL_get_atom(predicate,&name) &&
+        PL_register_foreign_in_module(runtime->module_name,"$cetta_static_row",arity,
+            (pl_function_t)petta_libpl_static_sink_row,PL_FA_VARARGS) &&
+        PL_put_functor(head,PL_new_functor(name,(size_t)arity));
+    for (int i=0;ok && i<arity;i++) ok=PL_get_arg(i+1,head,visitor_args+i);
+    ok = ok && PL_cons_functor(forall_args,qualified,module,head) &&
+        (arity ? PL_cons_functor_v(forall_args+1,visitor_functor,visitor_args)
+               : PL_put_functor(forall_args+1,visitor_functor));
+    predicate_t forall_predicate = PL_predicate("$cetta_static_rows",2,runtime->module_name);
+    qid_t query = ok ? PL_open_query(runtime->module,
+        PL_Q_NODEBUG | PL_Q_CATCH_EXCEPTION | PL_Q_EXT_STATUS,forall_predicate,forall_args) : 0;
+    PettaLibplStaticSink *previous = g_petta_static_sink;
+    g_petta_static_sink = &sink;
     if (query) {
-        /* System clause/3 enumeration: a release fault after visiting rows
-         * must not let the caller trust an unloaded import — unconditional. */
-        const PettaLibplReleaseStatus release_status =
-            petta_libpl_release_query(arena, NULL, query,
-                                      PETTA_LIBPL_RELEASE_CLOSE);
-        ok = ok && release_status == PETTA_LIBPL_RELEASE_OK;
-    }
-    free(cache.handles);
-    free(cache.symbols);
-    free(cache.literal_ids);
-    if (ok && count) {
-        PettaLibplStaticRows batch = {
-            .arena = &scratch, .rows = rows,
-            .literal_ids = literal_ids, .count = count,
-        };
-        ok = petta_libpl_static_encode(&encoding, literal_ids, count) &&
-             visit(context, target, (CettaExprLen)arity, multifile,
-                   false, &literal_universe, &batch);
-    }
-    free(encoding.coordinates);
-    free(encoding.integers);
-    free(encoding.values);
-    free(encoding.value_ids);
-    arena_free(&scratch);
+        int status = PL_next_solution(query);
+        ok = (status==PL_S_TRUE || status==PL_S_LAST) && sink.ok;
+        if (status==PL_S_EXCEPTION) {
+            term_t exception = PL_exception(query);
+            Atom *error = exception ? petta_libpl_exception_value(arena,exception) : NULL;
+            if (error) *end = cetta_call_raised(error);
+        }
+        PettaLibplReleaseStatus released = petta_libpl_release_query(arena,NULL,query,PETTA_LIBPL_RELEASE_CLOSE);
+        ok = ok && released==PETTA_LIBPL_RELEASE_OK;
+    } else ok=false;
+    g_petta_static_sink = previous;
+    if (ok) ok = petta_libpl_static_sink_flush(&sink);
+    free(sink.cache.handles); free(sink.cache.symbols); free(sink.cache.literal_ids);
+    free(sink.encoding.coordinates); free(sink.encoding.integers);
+    free(sink.encoding.values); free(sink.encoding.value_ids);
+    arena_free(&sink.scratch);
     return ok;
 }
 

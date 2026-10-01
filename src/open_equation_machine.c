@@ -1877,6 +1877,19 @@ static bool oem_build_control(OemCompile *compile, Atom *expr,
     return ok;
 }
 
+/* A one-child sequence has exactly the child's output and goals. Keep its
+ * occurrence plan, including value/code roles, and the enclosing cut scope.
+ * Empty and multiple-child sequences retain their ordinary host execution. */
+static bool oem_single_child_sequence(const Atom *expr,
+                                      const PettaPlanNode *plan) {
+    if (!expr || expr->kind != ATOM_EXPR || expr->expr.len != 2u ||
+        expr->expr.elems[0]->kind != ATOM_SYMBOL || !plan ||
+        plan->output != PETTA_PLAN_OUTPUT_CHILD || plan->output_child != 1u)
+        return false;
+    PeTTaForm form = petta_semantics_form(expr->expr.elems[0]->sym_id);
+    return form == PETTA_FORM_PROGN || form == PETTA_FORM_PROG1;
+}
+
 /* A value position: a variable, a literal, a constructor over values, a
  * relation call or a primitive. */
 static bool oem_build_value(OemCompile *compile, Atom *expr,
@@ -1896,6 +1909,9 @@ static bool oem_build_value(OemCompile *compile, Atom *expr,
             oem_node(compile, node, out);
     if (!plan)
         return oem_reject(compile, "occurrence has no plan");
+    if (oem_single_child_sequence(expr, plan))
+        return oem_build_value(compile, expr->expr.elems[1],
+                                petta_plan_child(plan, 1u), depth + 1u, out);
     bool symbol_head = expr->expr.elems[0]->kind == ATOM_SYMBOL;
     if (symbol_head && expr->expr.len == 4u &&
         expr->expr.elems[0]->sym_id == g_builtin_syms.match)
@@ -2106,6 +2122,9 @@ static bool oem_build_tail(OemCompile *compile, Atom *expr,
         return oem_build_value(compile, expr, plan, depth, out);
     SymbolId head = expr->expr.elems[0]->sym_id;
     OemNode node = {0};
+    if (oem_single_child_sequence(expr, plan))
+        return oem_build_tail(compile, expr->expr.elems[1],
+                               petta_plan_child(plan, 1u), depth + 1u, out);
     if (plan->control == PETTA_PLAN_CONTROL_IF) {
         if (expr->expr.len != 4u)
             return oem_reject(compile, "if arity");

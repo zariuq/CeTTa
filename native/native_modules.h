@@ -12,6 +12,7 @@ typedef struct {
     uint32_t import_bit;
     Atom *(*dispatch)(struct CettaLibraryContext *ctx, Space *space, Arena *a,
                       Atom *head, Atom **args, uint32_t nargs);
+    const char *head_prefix; /* NULL keeps the module's ordinary dispatch policy. */
 } CettaNativeBuiltinModule;
 
 const CettaNativeBuiltinModule *cetta_native_module_lookup(const char *name);

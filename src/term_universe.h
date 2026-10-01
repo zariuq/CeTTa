@@ -490,5 +490,12 @@ AtomId tu_list_from_ids(TermUniverse *universe, const AtomId *elems,
                         CettaExprLen elem_len, AtomId rest);
 AtomId tu_expr_from_ids(TermUniverse *universe, const AtomId *child_ids,
                         CettaExprLen arity);
+/* Canonical fixed-arity rows in input order. An optional presence mask skips
+ * rows without reading their coordinates and returns NONE in those positions.
+ * Failure retains admitted prefix identities, with remaining outputs NONE;
+ * no Space rows are published. Coordinates must precede the call's admission. */
+bool tu_exprs_from_ids(TermUniverse *universe, const AtomId *child_ids,
+                       size_t count, CettaExprLen arity, const bool *present,
+                       AtomId *ids);
 
 #endif /* CETTA_TERM_UNIVERSE_H */

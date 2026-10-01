@@ -496,9 +496,11 @@ bool petta_type_intrinsic_answers(
     *count_out = 0u;
     if (!space || !arena || !subject)
         return false;
+    uint64_t identity_exhaustions = cetta_frame_identity_exhaustions();
     PeTTaTypeList answers = {0};
     if (!(target ? petta_type_answers_bound(space, arena, subject, target, &answers)
-                 : petta_type_answers_fresh(space, arena, subject, &answers))) {
+                 : petta_type_answers_fresh(space, arena, subject, &answers)) ||
+        cetta_frame_identity_exhaustions() != identity_exhaustions) {
         free(answers.items);
         return false;
     }

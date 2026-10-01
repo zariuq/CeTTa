@@ -1,4 +1,5 @@
 #include "foreign.h"
+#include "error_presentation.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -177,5 +178,13 @@ bool cetta_foreign_call_native(CettaForeignRuntime *rt,
     (void)args;
     (void)nargs;
     (void)out;
+    return false;
+}
+
+bool cetta_foreign_exception_detail(Atom *value, char *out, size_t capacity,
+                                    bool *truncated) {
+    (void)value;
+    if (out && capacity) out[0]='\0';
+    if (truncated) *truncated=false;
     return false;
 }

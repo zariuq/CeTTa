@@ -94,6 +94,10 @@ typedef struct {
 
 typedef struct {
     TypeAnnBucket buckets[EQ_INDEX_BUCKETS];
+    /* Rows with an open outer constructor can match a declaration without
+     * being syntactically headed by ':'. They prohibit negative exclusion. */
+    bool has_open_rows;
+    bool has_non_symbol_subjects;
 } TypeAnnIndex;
 
 #define EXACT_INDEX_BUCKETS 4096
@@ -806,6 +810,12 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
  */
 uint32_t space_get_declared_types(
     Space *s, Arena *a, Atom *subject, Atom ***out_types);
+
+/* Conservative exclusion for relational (: subject type) queries. False
+ * certifies that no current occurrence can have the requested subject's
+ * outer constructor; true retains ordinary relational search. */
+bool space_type_annotation_may_match_subject(Space *s, const Atom *subject);
+bool space_type_annotations_have_only_symbol_subjects(Space *s);
 
 typedef struct {
     uint64_t indexed_lookups;

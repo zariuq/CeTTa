@@ -1,0 +1,25 @@
+is (Error), should (Error). ✅ 
+is (11), should (11). ✅ 
+is 10, should 10. ✅ 
+is (1 2), should (1 2). ✅ 
+is Error, should Error. ✅ 
+is (Error), should (Error). ✅ 
+is (((Error) 17)), should (((Error) 17)). ✅ 
+is Error, should Error. ✅ 
+is (ok), should (ok). ✅ 
+is (7), should (7). ✅ 
+is (Error), should (Error). ✅ 
+is 10, should 10. ✅ 
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true

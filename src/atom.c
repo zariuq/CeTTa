@@ -1308,9 +1308,9 @@ bool atom_eq_fast(Atom *a, Atom *b) {
     return atom_eq(a, b);
 }
 
-void hashcons_init(HashConsTable *hc) {
+static void hashcons_init_capacity(HashConsTable *hc, uint32_t capacity) {
     hc->frame_identities = (CettaFrameIdentityScope){0};
-    hc->size = HASHCONS_TABLE_SIZE;
+    hc->size = capacity;
     hc->used = 0;
     hc->symbol_cache = NULL;
     hc->symbol_cache_size = 0u;
@@ -1322,6 +1322,14 @@ void hashcons_init(HashConsTable *hc) {
     hc->maximum_lookup_probe = 0;
     hc->table = cetta_malloc(sizeof(Atom *) * hc->size);
     memset(hc->table, 0, sizeof(Atom *) * hc->size);
+}
+
+void hashcons_init(HashConsTable *hc) {
+    hashcons_init_capacity(hc, HASHCONS_TABLE_SIZE);
+}
+
+void hashcons_init_compact(HashConsTable *hc) {
+    hashcons_init_capacity(hc, 64u);
 }
 
 void hashcons_free(HashConsTable *hc) {

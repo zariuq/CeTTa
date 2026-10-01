@@ -1,5 +1,7 @@
 #define _GNU_SOURCE
 #include "atom.h"
+#include "run_cli.h"
+#include "run_guard.h"
 #include "parser.h"
 #include "he_compiled_reader.h"
 #include "gslt_language_runtime.h"
@@ -1740,6 +1742,9 @@ static void print_usage(FILE *out) {
     fputs("       cetta --compile <file.metta>           # emit LLVM IR to stdout\n", out);
     fputs("       cetta --compile-stdlib <file.metta>     # emit precompiled stdlib blob to stdout\n", out);
     fputs("       cetta --count-only <file.metta>        # print result counts only\n", out);
+    fputs("       cetta --run-report <path> <file>      # native query report as JSON\n", out);
+    fputs("       cetta --diagnostic-details           # include bounded private exception text in run reports\n", out);
+    fputs("       cetta --run-contract <file>           # require completed queries and passing tests\n", out);
     fputs("       cetta --quiet <file.metta>              # hide pure [()] success clutter\n", out);
     fputs("       cetta --emit-runtime-stats <file.metta> # dump runtime counters to stderr after execution\n", out);
     fputs("       cetta --emit-prime-need-trace <file.metta> # emit exact Prime occurrences, receipts, and completion to stderr\n", out);
@@ -2248,8 +2253,9 @@ static void cetta_main_cleanup_registry_spaces(
     }
 }
 
-static void cetta_main_cleanup(CettaMainCleanup *cleanup) {
-    if (!cleanup) return;
+static bool cetta_main_cleanup(CettaMainCleanup *cleanup) {
+    if (!cleanup) return true;
+    bool ok = true;
 
     if (cleanup->parser_rational_literals_set) {
         parser_set_rational_literals_enabled(cleanup->parser_rational_literals_old);
@@ -2266,7 +2272,7 @@ static void cetta_main_cleanup(CettaMainCleanup *cleanup) {
     }
 
     if (cleanup->output_spool) {
-        fclose(cleanup->output_spool);
+        if (fclose(cleanup->output_spool) != 0) ok = false;
         cleanup->output_spool = NULL;
     }
 
@@ -2351,6 +2357,7 @@ static void cetta_main_cleanup(CettaMainCleanup *cleanup) {
         hashcons_free(cleanup->hashcons_table);
         cleanup->hashcons_initialized = false;
     }
+    return ok;
 }
 
 static bool main_document_exec_at(
@@ -2623,7 +2630,7 @@ static int main_run_langdef_source(const char *manifest_path,
     return rc;
 }
 
-int main(int argc, char **argv) {
+static int cetta_main(int argc, char **argv) {
     /* Install SIGSEGV handler on alternate stack so it works during stack overflow */
     {
         stack_t ss;
@@ -2657,6 +2664,10 @@ int main(int argc, char **argv) {
     int petta_file_arg_end = -1;
     bool compile_mode = false;
     bool compile_stdlib_mode = false;
+    const char *run_report_path = NULL;
+    bool run_contract = false;
+    bool diagnostic_details = false;
+    RunCli *run_cli = NULL;
     bool count_only = false;
     bool emit_runtime_stats = false;
     CettaLangDefProofExecutionV1 langdef_proof_execution =
@@ -2723,6 +2734,19 @@ int main(int argc, char **argv) {
         }
         if (strcmp(argv[i], "--compile-stdlib") == 0) {
             compile_stdlib_mode = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--run-report") == 0) {
+            if (++i >= argc) { fputs("error: --run-report requires a path\n", stderr); return 1; }
+            run_report_path = argv[i];
+            continue;
+        }
+        if (strcmp(argv[i], "--diagnostic-details") == 0) {
+            diagnostic_details = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--run-contract") == 0) {
+            run_contract = true;
             continue;
         }
         if (strcmp(argv[i], "--count-only") == 0) {
@@ -3030,6 +3054,18 @@ int main(int argc, char **argv) {
         return 2;
     }
 
+    if (diagnostic_details && !run_contract && !run_report_path) {
+        fputs("error: --diagnostic-details requires --run-report or --run-contract\n", stderr);
+        free(inline_buf); return 1;
+    }
+    if ((run_contract || run_report_path) &&
+        (translate_mode || compile_mode || compile_stdlib_mode ||
+         source_endpoint.langdef_manifest_path[0] ||
+         (source_endpoint.lang && source_endpoint.lang->id != CETTA_LANGUAGE_HE &&
+          source_endpoint.lang->id != CETTA_LANGUAGE_PETTA))) {
+        fputs("error: run reporting requires direct document execution\n", stderr);
+        free(inline_buf); return 1;
+    }
     if (source_endpoint.langdef_manifest_path[0]) {
         bool unsupported_option =
             translate_mode || compile_mode || compile_stdlib_mode ||
@@ -3293,6 +3329,10 @@ int main(int argc, char **argv) {
     CettaGsltLanguage *gslt_language = NULL;
     CettaMainCleanup cleanup = {0};
     bool lang_is_mm2 = strcmp(lang->canonical, "mm2") == 0;
+    if (run_contract || run_report_path) {
+        run_cli = run_cli_begin();
+        if (!run_cli) { fputs("error: could not allocate run report\n", stderr); free(inline_buf); return 1; }
+    }
     char document_reader_error[512] = {0};
     int n = 0;
 
@@ -3799,6 +3839,38 @@ int main(int argc, char **argv) {
         cleanup.output_spool = output_spool;
     }
 
+    if (run_cli) {
+        uint64_t query_count = 0;
+        for (int pos = 0; pos < n;) {
+            int width = 0;
+            if (main_document_exec_at(&libraries.term_universe, atom_ids, n, pos, NULL, &width)) {
+                query_count++; pos += width;
+            } else pos++;
+        }
+        if (!run_cli_declare_queries(run_cli, query_count)) { rc=1; goto cleanup; }
+        for (int file_index = petta_file_arg_cursor + 1;
+             petta_file_arg_cursor >= 0 && file_index < petta_file_arg_end; file_index++) {
+            AtomId *future_ids = NULL;
+            char error[512] = {0};
+            int length = parse_metta_file_ids_diagnostic(argv[file_index],
+                &libraries.term_universe, &future_ids, error, sizeof(error));
+            if (length < 0) {
+                free(future_ids);
+                fprintf(stderr, "error: contracted catalogue reader: %s\n", error);
+                rc=1; goto cleanup;
+            }
+            query_count=0;
+            for (int pos=0;pos<length;) {
+                int width=0;
+                if (main_document_exec_at(&libraries.term_universe,future_ids,length,pos,NULL,&width)) {
+                    query_count++; pos+=width;
+                } else pos++;
+            }
+            free(future_ids);
+            if (!run_cli_declare_queries(run_cli,query_count)) { rc=1; goto cleanup; }
+        }
+    }
+
 process_petta_document:
 
     /*
@@ -3984,6 +4056,7 @@ process_petta_document:
         if (main_document_exec_at(
                 &libraries.term_universe, atom_ids, n, i,
                 &payload_id, &exec_width)) {
+            if (!run_cli_query_begin(run_cli)) { rc=1; goto cleanup; }
             if (lang->id == CETTA_LANGUAGE_PETTA && profile &&
                 cetta_profile_uses_petta_typing(profile)) {
                 MainPettaBlockLoadResult checked = main_petta_check_forms(
@@ -4028,6 +4101,8 @@ process_petta_document:
             }
             Atom *expr = term_universe_copy_atom(&libraries.term_universe, &arena,
                                                  payload_id);
+            libraries.session.test_verdict = run_cli ? run_cli_test_verdict : NULL;
+            libraries.session.test_verdict_context = run_cli;
             ResultSet rs;
             EvalOutcome detailed;
             ResultSet *results = &rs;
@@ -4057,7 +4132,7 @@ process_petta_document:
                         (size_t)eval_outcome_value_count(&detailed),
                         (size_t)eval_outcome_fault_count(&detailed),
                         detailed.steps_spent);
-            } else if (g_count_only ||
+            } else if (g_count_only || run_cli ||
                        lang->id == CETTA_LANGUAGE_PETTA) {
                 /* A PeTTa directive publishes its whole answer stream, which
                  * claims there are no further answers, so it is always
@@ -4125,9 +4200,19 @@ process_petta_document:
                         ? "error: count observation incomplete: %s\n"
                         : "error: observation incomplete: %s\n",
                     eval_completion_reason(detailed.completion));
+                bool resource_fault = lang->id == CETTA_LANGUAGE_PETTA &&
+                    detailed.completion == CETTA_EVAL_INCOMPLETE_CAPACITY;
+                if (resource_fault) {
+                    CettaErrorPresentation view = {
+                        .code = CETTA_DIAGNOSTIC_RESOURCE,
+                        .classification = "resource",
+                        .message = "Evaluator capacity exhausted",
+                    };
+                    run_cli_query_fault(run_cli, &view);
+                }
                 eval_outcome_free(&detailed);
                 prime_need_trace_printer_free(&trace);
-                rc = 1;
+                rc = resource_fault ? 2 : 1;
                 goto cleanup;
             }
             bool stop_after_error = result_set_has_error(results);
@@ -4152,9 +4237,23 @@ process_petta_document:
                         petta_answer_without_text = true;
                 }
             }
+            if (!petta_uncaught_error)
+                run_cli_answers(run_cli, results->len);
             if (petta_uncaught_error) {
-                fputs("error: uncaught PeTTa error: ", stderr);
-                write_results(stderr, results, lang->id, profile);
+                run_cli_query_stop(run_cli, RUN_REPORT_STOP_FAULT);
+                if (run_cli) {
+                    Atom *exception = NULL;
+                    for (uint32_t j = 0u; j < results->len && !exception; j++)
+                        if (atom_is_error(results->items[j])) exception=results->items[j];
+                    CettaErrorPresentation view;
+                    cetta_error_present(exception,diagnostic_details,&view);
+                    run_cli_query_fault(run_cli,&view);
+                    fprintf(stderr,"error: uncaught PeTTa error: %s: %s%s\n",
+                        view.classification,view.message,view.truncated ? " [truncated]" : "");
+                } else {
+                    fputs("error: uncaught PeTTa error: ", stderr);
+                    write_results(stderr, results, lang->id, profile);
+                }
             } else if (!petta_answer_without_text) {
                 write_results(output_spool, results, lang->id, profile);
                 if (fflush(output_spool) != 0) {
@@ -4179,6 +4278,8 @@ process_petta_document:
             else
                 result_set_free(&rs);
             prime_need_trace_printer_free(&trace);
+            libraries.session.test_verdict = NULL;
+            libraries.session.test_verdict_context = NULL;
             eval_release_temporary_spaces();
             eval_reset_form_gc_survivor();
             arena_free(&eval_arena);
@@ -4187,6 +4288,7 @@ process_petta_document:
             arena_set_runtime_kind(&eval_arena, CETTA_ARENA_RUNTIME_KIND_EVAL);
             arena_set_hashcons(
                 &eval_arena, eval_hashcons ? &hashcons_table : NULL);
+            run_cli_query_end(run_cli, !petta_answer_without_text, true);
             if (stop_after_error) {
                 stop_document_sequence = true;
                 break;
@@ -4316,7 +4418,14 @@ petta_document_complete:
     rc = prime_need_trace_failed ? 1
         : petta_uncaught_error || petta_answer_without_text ? 2 : 0;
 
-cleanup:
-    cetta_main_cleanup(&cleanup);
+cleanup: {
+    bool output_ok = fflush(stdout) == 0 && !ferror(stdout);
+    bool cleanup_ok = cetta_main_cleanup(&cleanup);
+    if (!output_ok || !cleanup_ok) rc = 1;
+    rc = run_cli_finish(run_cli, rc, output_ok, cleanup_ok, run_report_path, run_contract);
+    run_cli_free(run_cli);
     return rc;
 }
+}
+
+int main(int argc,char **argv) { return cetta_run_guard(argc,argv,cetta_main); }

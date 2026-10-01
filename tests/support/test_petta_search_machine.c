@@ -19,6 +19,7 @@
 #include "petta_typecheck.h"
 #include "symbol.h"
 #include "variant_shape.h"
+#include "binding/frame_identity.h"
 
 #include <assert.h>
 #include <inttypes.h>
@@ -27,6 +28,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 static Atom *parse_one(Arena *arena, const char *source) {
@@ -142,6 +144,64 @@ static void test_type_policy_component(Arena *arena) {
     free(answers);
     space_free(&space);
     puts("PASS: PeTTa type component separates literal demands, variants and bound queries");
+}
+
+static void test_type_frame_exhaustion(Arena *arena) {
+    /* Exhaust the real identity facility in an isolated child, rather than
+     * changing a production limit or pretending an empty lookup succeeded. */
+    pid_t child = fork();
+    assert(child >= 0);
+    if (child == 0) {
+        Space space;
+        space_init(&space);
+        space_add(&space, parse_one(arena, "(: exhaustion-ground Number)"));
+        space_add(&space, parse_one(arena, "(: exhaustion-poly (-> $t $t))"));
+        Atom *ground = parse_one(arena, "exhaustion-ground");
+        Atom *poly = parse_one(arena, "exhaustion-poly");
+        Atom *number = parse_one(arena, "Number");
+        CettaFrameIdentity *held = malloc(
+            sizeof(*held) * CETTA_FRAME_HANDLE_MASK);
+        assert(held);
+        size_t count = 0u;
+        while (count < CETTA_FRAME_HANDLE_MASK &&
+               cetta_frame_identity_acquire(&held[count]))
+            count++;
+        Atom **types = NULL;
+        uint32_t length = 0u;
+        uint64_t before = cetta_frame_identity_exhaustions();
+        assert(petta_type_intrinsic_answers(&space, arena, ground, NULL,
+                                            &types, &length));
+        assert(length == 1u && atom_eq(types[0], number));
+        assert(cetta_frame_identity_exhaustions() == before);
+        free(types);
+        assert(!petta_type_intrinsic_answers(&space, arena, poly, NULL,
+                                             &types, &length));
+        assert(types == NULL && length == 0u);
+        assert(cetta_frame_identity_exhaustions() > before);
+        pid_t terminal = fork();
+        assert(terminal >= 0);
+        if (terminal == 0) {
+            CETTA_FRAME_IDENTITY_SCOPE(scope);
+            (void)cetta_frame_identity_scope_fresh(&scope);
+            _exit(0);
+        }
+        int terminal_status = 0;
+        assert(waitpid(terminal, &terminal_status, 0) == terminal);
+        assert(WIFEXITED(terminal_status) && WEXITSTATUS(terminal_status) == 2);
+        for (size_t i = 0u; i < count; i++)
+            cetta_frame_identity_release(held[i]);
+        free(held);
+        assert(petta_type_intrinsic_answers(&space, arena, poly, NULL,
+                                            &types, &length));
+        assert(length == 1u && types[0]);
+        free(types);
+        space_free(&space);
+        _exit(0);
+    }
+    int status = 0;
+    assert(waitpid(child, &status, 0) == child);
+    assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    puts("PASS: closed type lookup needs no fresh identity; polymorphic exhaustion is incomplete and recoverable");
 }
 
 static void test_type_call_facts(Arena *arena) {
@@ -10523,6 +10583,7 @@ int main(void) {
     g_symbols = &symbols;
     g_var_intern = &variables;
     test_type_policy_component(&answers);
+    test_type_frame_exhaustion(&answers);
     test_type_call_facts(&answers);
     assert_type_pure_symbol_facts();
     puts("PASS: type-pure grounded symbol facts");

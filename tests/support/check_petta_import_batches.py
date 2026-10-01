@@ -83,11 +83,28 @@ def main():
         (directory / "variables.metta").write_text(variables)
         (directory / "scalar.metta").write_text("\n".join(scalar) + "\n")
         (directory / "literals.metta").write_text(literals)
+        # A direct fact call must never execute a stored rule body, and a
+        # tabled predicate must retain duplicate stored clause occurrences.
+        (directory / "guarded.pl").write_text(
+            "mixedfacts(row,1).\nmixedfacts(row,1).\n"
+            "mixedfacts(row,999) :- throw(import_executed_a_rule).\n"
+            ":- table storedtable/2.\n"
+            "storedtable(row,2).\nstoredtable(row,2).\n"
+            ":- dynamic dynamicfacts/2.\n"
+            "dynamicfacts(row,3).\ndynamicfacts(row,3).\n")
+        (directory / "guarded.metta").write_text(
+            "!(import! &self (library lib_import))\n"
+            "!(static-import! unused guarded)\n"
+            "!(collapse (match mixedfacts (row $x) $x))\n"
+            "!(collapse (match storedtable (row $x) $x))\n"
+            "!(collapse (match dynamicfacts (row $x) $x))\n")
         for phase in ("cold", "warm"):
             run(binary, directory / "import.metta", expected, route, phase)
             run(binary, directory / "literals.metta", literal_expected, route, phase)
             run(binary, directory / "variables.metta",
                 "true\ntrue\n600\n600\nfalse\n", route, phase)
+            run(binary, directory / "guarded.metta",
+                "true\ntrue\n(1 1)\n(2 2)\n(3 3)\n", route, phase)
     print("PASS: import batches own nested/oversized rows, retain occurrences "
           "and isolate clause variables across literal/syntax batches on cold and warm routes")
 

@@ -18213,7 +18213,8 @@ static bool petta_machine_start_intrinsic_get_type(
     CettaExprLen length = 0u;
     bool sequence = atom_sequence_view(value, &elements, &length);
     if (value->kind != ATOM_VAR &&
-        (atom_has_vars(value) ||
+        ((atom_has_vars(value) &&
+          !space_type_annotations_have_only_symbol_subjects(machine->space)) ||
          (sequence && petta_machine_get_type_has_exact_extension(machine)))) {
         if (!petta_machine_start_relational_type_query(
                 machine, value, expected, barrier)) {
@@ -18224,11 +18225,13 @@ static bool petta_machine_start_intrinsic_get_type(
     }
     Atom **types = NULL;
     uint32_t type_count = 0u;
+    uint64_t identity_exhaustions = cetta_frame_identity_exhaustions();
     if (!machine->host.get_type(
             machine->host.context, machine->space,
             &machine->heap, value, target, &types, &type_count)) {
         free(types);
-        *failure = PETTA_MACHINE_STEP_HOST_ERROR;
+        *failure = cetta_frame_identity_exhaustions() != identity_exhaustions
+            ? PETTA_MACHINE_STEP_CAPACITY : PETTA_MACHINE_STEP_HOST_ERROR;
         return false;
     }
     if (type_count == 0u) {
@@ -20935,11 +20938,13 @@ static bool petta_machine_type_accept(
             return true;
         /* Base guards inspect values, including held call-shaped values.
          * They need no residual-checker readiness/callability judgment.
-         * With no authored classifier, the closed intrinsic service is the
-         * same relation; open structured subjects keep the soft-cut trail.
+         * With no authored classifier, intrinsic production also admits open
+         * compounds when the declaration index certifies symbol-only subjects.
+         * Declarations that can refine the subject keep the soft-cut trail.
          * Failure may fall back to metatype; a provider fault may not. */
         if (machine->host.get_type && failure &&
-            (value->kind == ATOM_VAR || !atom_has_vars(value)) &&
+            (value->kind == ATOM_VAR || !atom_has_vars(value) ||
+             space_type_annotations_have_only_symbol_subjects(machine->space)) &&
             !petta_machine_get_type_has_exact_extension(machine)) {
             bool accepted = petta_machine_start_intrinsic_get_type(
                 machine, value, formal, barrier, failure);
@@ -21984,6 +21989,7 @@ static bool petta_direct_let_binding_count_only(
                search_context_bindings(&machine->search),
                binder->var_id);
 }
+
 
 typedef struct {
     uint64_t count;
@@ -28527,6 +28533,34 @@ static bool petta_machine_dispatch_solve(
 
     if ((form == PETTA_FORM_LET || form == PETTA_FORM_CHAIN) &&
         nargs == 3u) {
+        CettaExprIndex source_index = form == PETTA_FORM_LET ? 2u : 1u;
+        CettaExprIndex binder_index = form == PETTA_FORM_LET ? 1u : 2u;
+        /* Inspect the authored identity before substitutions replace both
+         * variable occurrences by an already constrained destination. */
+        Atom *identity = goal->first && goal->first->kind == ATOM_EXPR &&
+            goal->first->expr.len == 4u &&
+            atom_head_symbol_id(goal->first) == head_id
+                ? goal->first : expression;
+        Atom *binder = identity->expr.elems[binder_index];
+        Atom *body = identity->expr.elems[3];
+        if (binder->kind == ATOM_VAR && body->kind == ATOM_VAR &&
+            binder->var_id != VAR_ID_NONE && binder->var_id == body->var_id &&
+            !goal->result_matched) {
+            /* The reference aliases an identity form's binder to its output
+             * before the producer runs. Keep this binding for callers, closures
+             * and delayed goals; only its redundant continuation is removed. */
+            if (!petta_machine_unify(machine, binder, expected))
+                return false;
+            /* The producer performs its own result match. The receipt for the
+             * eliminated variable read must not suppress that match. */
+            if (!petta_push_solve_planned(
+                    machine, expression->expr.elems[source_index], binder,
+                    goal->barrier, petta_plan_child(plan, source_index))) {
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
+            return true;
+        }
         Atom *joined = petta_fresh_variable(machine);
         bool solve_right_first =
             form == PETTA_FORM_LET &&
@@ -29774,6 +29808,11 @@ static bool petta_machine_dispatch_goal(
         if (!atom_sequence_view(first, &elements, &length) || !length ||
             elements[0]->kind == ATOM_VAR)
             return false;
+        /* No declaration can supply the function signature. Its argument
+         * classifiers run only after that match succeeds, so omit the entire
+         * failed branch without touching the caller's relational trail. */
+        if (!space_type_annotation_may_match_subject(machine->space, elements[0]))
+            return false;
         PettaTypeFunctionQuery query;
         if (!petta_type_function_query(&machine->heap, first, second, &query) ||
             !petta_machine_type_element_queries(
@@ -29857,6 +29896,8 @@ static bool petta_machine_dispatch_goal(
     }
 
     if (goal.kind == PETTA_GOAL_TYPE_DECLARATION_QUERY) {
+        if (!space_type_annotation_may_match_subject(machine->space, first))
+            return false;
         Atom *pattern = petta_type_declaration_query(&machine->heap, first, second);
         if (!pattern) {
             *failure = PETTA_MACHINE_STEP_CAPACITY;

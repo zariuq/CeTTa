@@ -710,6 +710,9 @@ struct HashConsTable {
 };
 
 void hashcons_init(HashConsTable *hc);
+/* A private ownership domain starts small and uses the same growing table.
+ * Canonical atoms retain their addresses when its index grows. */
+void hashcons_init_compact(HashConsTable *hc);
 void hashcons_free(HashConsTable *hc);
 /*
  * Return a shared atom if an identical one exists, otherwise insert it.

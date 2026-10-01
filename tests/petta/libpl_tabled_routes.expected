@@ -1,0 +1,7 @@
+true
+(b c d)
+valid-witness
+(b c d)
+((1 11) (2 12) (3 13))
+(Error tabled_boundary_fault)
+(1 2 3)

@@ -61,6 +61,32 @@ static void outcome_refresh_materialized_fast_path(Outcome *out);
 
 /* Global registry for named spaces/values (set by eval_top_with_registry) */
 static __thread Registry *g_registry = NULL;
+
+/* PeTTa named state belongs to an executing worker, independently of spaces
+ * and transaction registry views. Its scope spans all jobs in one invocation. */
+typedef struct {
+    Registry local;
+    Registry *previous;
+    bool active;
+} PettaWorkerStateScope;
+static __thread Registry *g_petta_worker_named_state = NULL;
+
+static void petta_worker_state_scope_enter(PettaWorkerStateScope *scope) {
+    *scope = (PettaWorkerStateScope){.previous = g_petta_worker_named_state,
+                                    .active = true};
+    /* Only the state namespace is used; storage is allocated lazily. */
+    g_petta_worker_named_state = &scope->local;
+}
+
+static void petta_worker_state_scope_leave(PettaWorkerStateScope *scope) {
+    if (!scope || !scope->active)
+        return;
+    assert(g_petta_worker_named_state == &scope->local);
+    g_petta_worker_named_state = scope->previous;
+    registry_free(&scope->local);
+    scope->active = false;
+}
+
 /*
  * The compiled occurrence plan belongs to exactly one top-level PeTTa
  * evaluation.  It is private metadata, scoped and restored by the public
@@ -3923,8 +3949,15 @@ static bool eval_is_reify_head(SymbolId head) {
         (head == g_builtin_syms.reify && active_builtin_allowed("reify"));
 }
 
+static void eval_note_test_verdict(bool passed) {
+    CettaEvalSession *session = active_eval_session();
+    if (session && session->test_verdict)
+        session->test_verdict(session->test_verdict_context, passed);
+}
+
 static bool petta_emit_test_diagnostic(Atom *actual, Atom *expected,
                                        bool equal) {
+    eval_note_test_verdict(equal);
     if (fputs("is ", stdout) == EOF)
         return false;
     atom_print_petta(actual, stdout);
@@ -12937,6 +12970,7 @@ typedef struct HyperposeThreadBranch {
 
 typedef struct {
     HyperposeThreadBranch *branches;
+    PettaWorkerStateScope *worker_states;
     CettaCount branch_count;
     int fuel;
     bool preserve_bindings;
@@ -13382,9 +13416,10 @@ static bool hyperpose_clone_registry(Registry *dst, Registry *src,
             self_value, "hyperpose.registry.self");
         registry_bind_id(dst, g_builtin_syms.self, self_value);
     }
-    /* A branch starts from its parent's named states, as it starts from
-     * its bindings. */
-    for (uint32_t index = 0u; index < registry_state_count(src); index++) {
+    /* PeTTa worker globals are not inherited. Other dialects retain their
+     * existing cloned registry policy. */
+    for (uint32_t index = 0u; eval_current_language_id() != CETTA_LANGUAGE_PETTA &&
+         index < registry_state_count(src); index++) {
         SymbolId key = SYMBOL_ID_NONE;
         Atom *value = NULL;
         if (!registry_state_entry(src, index, &key, &value))
@@ -13435,7 +13470,7 @@ static bool hyperpose_prepare_thread_branch(HyperposeThreadBranch *branch,
     branch->index = index;
     branch->source_plan = source_plan;
     bindings_init(&branch->capture_env);
-    hashcons_init(&branch->hashcons);
+    hashcons_init_compact(&branch->hashcons);
     arena_init(&branch->persistent_arena);
     arena_reserve(&branch->persistent_arena,
                   HYPERPOSE_THREAD_PERSISTENT_ARENA_RESERVE);
@@ -14110,6 +14145,9 @@ static void hyperpose_worker_enter(CettaParallelWorker *worker, void *user) {
     g_eval_parallel_resource_share_count =
         run && run->worker_count > 0u ? run->worker_count : 1u;
     cetta_shared_transition_scope_enter();
+    if (run && run->worker_states)
+        petta_worker_state_scope_enter(
+            &run->worker_states[cetta_parallel_worker_index(worker)]);
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HYPERPOSE_WORKER_STARTED);
 }
 
@@ -14128,6 +14166,10 @@ static void hyperpose_worker_leave(CettaParallelWorker *worker, void *user) {
     eval_profiled_type_cache_free_for_current_thread();
     space_execution_analysis_cache_free_for_current_thread();
     bindings_thread_cache_free();
+    HyperposeThreadRun *run = user;
+    if (run && run->worker_states)
+        petta_worker_state_scope_leave(
+            &run->worker_states[cetta_parallel_worker_index(worker)]);
     cetta_shared_transition_scope_leave();
     g_eval_parallel_resource_share_count = 1u;
 }
@@ -14442,6 +14484,15 @@ static bool hyperpose_threaded_execute(
     atomic_init(&run.unsafe_result, false);
     atomic_init(&run.winner_index, -1);
 
+    if (petta_execution) {
+        run.worker_states = calloc(thread_count, sizeof(*run.worker_states));
+        if (!run.worker_states) {
+            for (CettaCount i = 0u; i < branch_count; i++)
+                hyperpose_thread_branch_free(&branches[i]);
+            free(branches);
+            return false;
+        }
+    }
     CettaParallelExecutorConfig config = {
         .thread_count = thread_count,
         .stack_size_bytes = HYPERPOSE_WORKER_STACK_BYTES,
@@ -14453,6 +14504,7 @@ static bool hyperpose_threaded_execute(
         .worker_failure_message = "hyperpose threaded worker failed",
     };
     if (!cetta_parallel_executor_init(&run.parallel, &config)) {
+        free(run.worker_states);
         for (CettaCount i = 0; i < branch_count; i++)
             hyperpose_thread_branch_free(&branches[i]);
         free(branches);
@@ -14469,6 +14521,7 @@ static bool hyperpose_threaded_execute(
 
     if (!pushed) {
         cetta_parallel_executor_free(&run.parallel);
+        free(run.worker_states);
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_HYPERPOSE_FALLBACK_THREAD_LIMIT);
         for (CettaCount i = 0; i < branch_count; i++)
@@ -14486,6 +14539,7 @@ static bool hyperpose_threaded_execute(
     bool unsafe =
         atomic_load_explicit(&run.unsafe_result, memory_order_acquire);
     cetta_parallel_executor_free(&run.parallel);
+    free(run.worker_states);
 
     if (!run_ok || unsafe) {
         const bool petta_execution_started =
@@ -26819,6 +26873,8 @@ static bool petta_try_alpha_unique(
  * shares, as nb_getval/2 answers the one stored term. */
 static bool petta_named_state_write(Registry *registry, Arena *scratch,
                                     SymbolId name, Atom *value) {
+    if (g_petta_worker_named_state)
+        registry = g_petta_worker_named_state;
     Atom *fresh = atom_has_vars(value)
         ? rename_vars_except(scratch, value, atom_unit(scratch))
         : value;
@@ -26831,6 +26887,8 @@ static bool petta_named_state_write(Registry *registry, Arena *scratch,
 
 static Atom *petta_named_state_read(Registry *registry, Arena *arena,
                                     SymbolId name) {
+    if (g_petta_worker_named_state)
+        registry = g_petta_worker_named_state;
     Atom *stored = registry_state_lookup(registry, name);
     return stored ? payload_rebind_resources(arena, stored) : NULL;
 }
@@ -36689,7 +36747,11 @@ static bool petta_eval_transaction_bind_entry(
 }
 
 static bool petta_eval_machine_switch_enabled(void) {
-    return g_active_petta_search_machine;
+    /* PeTTa's foreign calls, delayed goals and occurrence roles are semantic
+     * operations of the relational core. Disabling an execution tier must
+     * not send them to the HE fallback, where they become symbolic data. */
+    return eval_current_language_id() == CETTA_LANGUAGE_PETTA ||
+        g_active_petta_search_machine;
 }
 
 static bool petta_eval_machine_stats_enabled(void) {
@@ -42852,12 +42914,14 @@ static bool prepared_pure_eager_entry_arguments_are_values(
 static size_t prepared_pure_nursery_budget_bytes(void) {
     if (!eval_gc_enabled())
         return 0u;
-    /* The configured GC budget is an aggregate purse.  Concurrent workers
-     * divide it, while the private-machine cap bounds the from-space,
-     * survivor, and evacuation reserve of one sequential invocation. */
+    /* Concurrent workers share the configured collection threshold with
+     * one coordinator/evacuation owner.  The sequential threshold is
+     * unchanged.  This is collection headroom, not a limit on live data;
+     * the minimum arena block can exceed a very small owner's share. */
     uint32_t shares = g_eval_parallel_resource_share_count > 0u
         ? g_eval_parallel_resource_share_count : 1u;
-    size_t budget = g_eval_gc.budget_bytes / shares;
+    uint64_t owners = shares > 1u ? (uint64_t)shares + 1u : 1u;
+    size_t budget = g_eval_gc.budget_bytes / owners;
     if (budget < ARENA_BLOCK_SIZE)
         budget = ARENA_BLOCK_SIZE;
     const size_t private_cap = 256u * ARENA_BLOCK_SIZE;
@@ -43994,6 +44058,7 @@ static CettaOpenEquationProgram *petta_eval_open_program_acquire(
 static bool petta_eval_open_relation_ready(
     PettaEvalMachineContext *eval_context) {
     return eval_context && !eval_context->transaction &&
+        g_active_petta_search_machine &&
         eval_context->library_context &&
         eval_context->library_context->petta_program &&
         eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
@@ -45432,6 +45497,12 @@ petta_lowered_to_shared_form:
                 preserve_bindings, os)) {
             return;
         }
+        /* The cooperative realization is one worker episode, even on the
+         * caller's OS thread. State survives its jobs but not this call. */
+        __attribute__((cleanup(petta_worker_state_scope_leave)))
+        PettaWorkerStateScope worker_state = {0};
+        if (language_id == CETTA_LANGUAGE_PETTA)
+            petta_worker_state_scope_enter(&worker_state);
         Atom *list = expr_arg(atom, 0);
         /* A list's alternatives are its elements; a list pattern's are not
          * known. */
@@ -49394,6 +49465,7 @@ petta_lowered_to_shared_form:
             }
             free(used);
         }
+        eval_note_test_verdict(ok);
         if (ok) {
             result_set_free(&actual);
             result_set_free(&expected);
@@ -49473,6 +49545,7 @@ petta_lowered_to_shared_form:
             ok = atom_lists_equal_as_bags(actual.items, actual.len,
                                           expected_items, expected_len);
         }
+        eval_note_test_verdict(ok);
         if (ok) {
             result_set_free(&actual);
             outcome_set_add(os, atom_unit(a), &_empty);
@@ -49549,6 +49622,7 @@ petta_lowered_to_shared_form:
         }
         result_set_free(&actual);
         result_set_free(&expected);
+        eval_note_test_verdict(ok);
         if (ok) {
             outcome_set_add(os, atom_unit(a), &_empty);
         } else {
@@ -49586,6 +49660,7 @@ petta_lowered_to_shared_form:
                                           expected_items, expected_len);
         }
         result_set_free(&actual);
+        eval_note_test_verdict(ok);
         if (ok) {
             outcome_set_add(os, atom_unit(a), &_empty);
         } else {
@@ -49622,6 +49697,7 @@ petta_lowered_to_shared_form:
         }
         result_set_free(&actual);
         result_set_free(&expected);
+        eval_note_test_verdict(ok);
         if (ok) {
             outcome_set_add(os, atom_unit(a), &_empty);
         } else {
@@ -49658,6 +49734,7 @@ petta_lowered_to_shared_form:
         }
         result_set_free(&actual);
         result_set_free(&expected);
+        eval_note_test_verdict(ok);
         if (ok) {
             outcome_set_add(os, atom_unit(a), &_empty);
         } else {
@@ -49688,6 +49765,7 @@ petta_lowered_to_shared_form:
             expected_list->expr.len == 0)
             ok = true;
         result_set_free(&actual);
+        eval_note_test_verdict(ok);
         if (ok) {
             outcome_set_add(os, atom_unit(a), &_empty);
         } else {
@@ -49718,6 +49796,7 @@ petta_lowered_to_shared_form:
             expected_list->expr.len == 0)
             ok = true;
         result_set_free(&actual);
+        eval_note_test_verdict(ok);
         if (ok) {
             outcome_set_add(os, atom_unit(a), &_empty);
         } else {
@@ -49749,6 +49828,7 @@ petta_lowered_to_shared_form:
                 if (!found) ok = false;
             }
         }
+        eval_note_test_verdict(ok);
         if (ok) {
             outcome_set_add(os, atom_unit(a), &_empty);
         } else {

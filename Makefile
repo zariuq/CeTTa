@@ -85,6 +85,15 @@ ifneq ($(BUILD),core)
 $(error standalone GSLT source qualification requires BUILD=core)
 endif
 endif
+PYTHON_CONFIG ?= python3-config
+# The default test run can exercise native checks without the optional adapter.
+# An explicitly selected Python build still requires its configuration.
+ifneq ($(filter test test-light test-correctness,$(MAKECMDGOALS)),)
+ifeq ($(strip $(shell command -v "$(PYTHON_CONFIG)" 2>/dev/null)),)
+BUILD ?= core
+export BUILD
+endif
+endif
 BUILD ?= python
 BUILD_CANON := $(BUILD)
 ifneq ($(filter $(BUILD_CANON),core python mork main pathmap full),$(BUILD_CANON))
@@ -342,6 +351,30 @@ $(MORK_BRIDGE_FEATURE_STATICLIB): $(MORK_BRIDGE_BUILD_STAMP)
 	flock 9; \
 	cp "$(MORK_BRIDGE_STATICLIB)" "$@"
 
+ENABLE_DURABLE ?= 0
+SQLITE_PROVIDER ?= vendored
+DURABLE_CFLAGS := -DCETTA_BUILD_WITH_DURABLE=$(ENABLE_DURABLE)
+DURABLE_LDFLAGS :=
+DURABLE_SRC :=
+ifneq ($(filter $(ENABLE_DURABLE),0 1),$(ENABLE_DURABLE))
+$(error ENABLE_DURABLE must be 0 or 1)
+endif
+ifeq ($(ENABLE_DURABLE),1)
+DURABLE_SRC += src/durable_store.c src/durable_value.c src/supervisor.c
+ifeq ($(SQLITE_PROVIDER),vendored)
+DURABLE_CFLAGS += -Ivendor/sqlite -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_DQS=0 -DSQLITE_OMIT_SHARED_CACHE -DSQLITE_DEFAULT_MEMSTATUS=0
+DURABLE_SRC += vendor/sqlite/sqlite3.c
+else ifeq ($(SQLITE_PROVIDER),system)
+ifeq ($(shell pkg-config --exists sqlite3 && echo yes),)
+$(error SQLITE_PROVIDER=system requires the sqlite3 development package)
+endif
+DURABLE_CFLAGS += $(shell pkg-config --cflags sqlite3)
+DURABLE_LDFLAGS += $(shell pkg-config --libs sqlite3)
+else
+$(error SQLITE_PROVIDER must be vendored or system)
+endif
+endif
+
 PY_CFLAGS =
 PY_LDFLAGS =
 PY_RPATH =
@@ -454,6 +487,9 @@ comma := ,
 BUILD_OBJ_TAG = $(BUILD_CANON)
 ifeq ($(ENABLE_GMP),0)
 BUILD_OBJ_TAG := $(BUILD_CANON).nogmp
+endif
+ifeq ($(ENABLE_DURABLE),1)
+BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).durable-$(SQLITE_PROVIDER)
 endif
 ifeq ($(ENABLE_SANITIZERS),1)
 SANITIZER_TAG := $(subst $(comma),-,$(subst $(space),_,$(SANITIZERS)))
@@ -569,10 +605,10 @@ PRIME_EVAL_STACK_CPPFLAGS =
 ifeq ($(ENABLE_PRIME_EVAL_STACK),1)
 PRIME_EVAL_STACK_CPPFLAGS = -DCETTA_PRIME_EVAL_STACK=1
 endif
-CPPFLAGS = -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) $(HTTP_CFLAGS) $(PROVENANCE_CPPFLAGS) $(PRIME_RECEIPT_INDEX_CPPFLAGS) $(PRIME_NEED_HEAP_INDEX_CPPFLAGS) $(PRIME_NEED_CLOSURE_CAPTURE_CPPFLAGS) $(PRIME_EVAL_STACK_CPPFLAGS) -include $(BUILD_CONFIG_HEADER)
+CPPFLAGS = -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) $(HTTP_CFLAGS) $(DURABLE_CFLAGS) $(PROVENANCE_CPPFLAGS) $(PRIME_RECEIPT_INDEX_CPPFLAGS) $(PRIME_NEED_HEAP_INDEX_CPPFLAGS) $(PRIME_NEED_CLOSURE_CAPTURE_CPPFLAGS) $(PRIME_EVAL_STACK_CPPFLAGS) -include $(BUILD_CONFIG_HEADER)
 CFLAGS = -O3 -Wall -Werror -std=c11 -pthread
 DEPFLAGS = -MMD -MP
-LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm -pthread $(GMP_LDFLAGS) $(LIB_PROLOG_LDFLAGS) $(LIB_PROLOG_RPATH) $(HTTP_LDFLAGS) $(PY_LDFLAGS) $(PY_RPATH)
+LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm -pthread $(GMP_LDFLAGS) $(LIB_PROLOG_LDFLAGS) $(LIB_PROLOG_RPATH) $(HTTP_LDFLAGS) $(DURABLE_LDFLAGS) $(PY_LDFLAGS) $(PY_RPATH)
 ifeq ($(ENABLE_SANITIZERS),1)
 CFLAGS := -O1 -g -fno-omit-frame-pointer -fsanitize=$(SANITIZERS) -fno-sanitize-recover=all -Wall -Werror -std=c11 -pthread
 LDFLAGS += -fsanitize=$(SANITIZERS) -fno-sanitize-recover=all
@@ -628,7 +664,8 @@ ifeq ($(ENABLE_PETTA_TYPECHECK_CENSUS),1)
 PETTA_TYPECHECK_CENSUS_SRC = src/petta_typecheck_census.c
 endif
 SRC = src/symbol.c src/atom.c src/term_graph.c src/delay_service.c src/string_ops.c src/str_natives.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/match_decision.c src/select/code_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/fold_algebra.c src/open_equation_machine.c src/eval.c src/grounded.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
-SRC += src/shared_transition.c
+SRC += src/shared_transition.c src/run_report.c src/run_cli.c src/error_presentation.c src/run_guard.c
+SRC += src/library_supervise.c $(DURABLE_SRC)
 SRC += src/petta_type_policy.c src/petta_type_relation.c src/he_type_policy.c
 SRC += src/gslt_language_manifest_v1.c
 SRC += src/gslt_support_profile_v1.c
@@ -5258,6 +5295,7 @@ $(BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	printf '#define CETTA_BUILD_WITH_LIB_PROLOG %s\n' "$(LIB_PROLOG_ENABLED)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_LIB_PROLOG_CONFIG_ID "%s"\n' "$(LIB_PROLOG_CONFIG_ID)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_HTTP %s\n' "$(HTTP_ENABLED)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_WITH_DURABLE %s\n' "$(ENABLE_DURABLE)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_JSON_GSLT %s\n' "$(ENABLE_JSON_GSLT)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_HTTP_PROVIDER_CURL %s\n' "$(HTTP_PROVIDER_CURL)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_HTTP_PROVIDER_EMSCRIPTEN %s\n' "$(HTTP_PROVIDER_EMSCRIPTEN)" >> "$$tmp_cfg"; \
@@ -5293,6 +5331,7 @@ $(STAGE0_BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	printf '#define CETTA_BUILD_WITH_LIB_PROLOG %s\n' "$(LIB_PROLOG_ENABLED)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_LIB_PROLOG_CONFIG_ID "%s"\n' "$(LIB_PROLOG_CONFIG_ID)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_HTTP %s\n' "$(HTTP_ENABLED)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_WITH_DURABLE %s\n' "$(ENABLE_DURABLE)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_JSON_GSLT %s\n' "$(ENABLE_JSON_GSLT)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_HTTP_PROVIDER_CURL %s\n' "$(HTTP_PROVIDER_CURL)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_HTTP_PROVIDER_EMSCRIPTEN %s\n' "$(HTTP_PROVIDER_EMSCRIPTEN)" >> "$$tmp_cfg"; \
@@ -5312,7 +5351,7 @@ $(STAGE0_BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	touch "$@"
 
 %.$(BUILD_OBJ_TAG).stage0.o: %.c $(STAGE0_BUILD_CONFIG_HEADER)
-	$(CC) -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) $(HTTP_CFLAGS) -include $(STAGE0_BUILD_CONFIG_HEADER) $(CFLAGS) $(DEPFLAGS) -DCETTA_NO_STDLIB -MF $(@:.o=.d) -c -o $@ $<
+	$(CC) -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) $(HTTP_CFLAGS) $(DURABLE_CFLAGS) -include $(STAGE0_BUILD_CONFIG_HEADER) $(CFLAGS) $(DEPFLAGS) -DCETTA_NO_STDLIB -MF $(@:.o=.d) -c -o $@ $<
 
 $(STAGE0_BIN): $(STAGE0_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -6992,7 +7031,12 @@ $(NIK_AUTHORITY_CATALOG_ABT_V1_OBJ): src/abt.c src/abt.h src/atom_blob.h $(BUILD
 		$(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
 $(NIK_AUTHORITY_CATALOG_NATIVE_V1_BIN): $(NIK_AUTHORITY_CATALOG_NATIVE_V1_OBJ) $(GSLT_METADATA_STATS_V1_OBJ)
-	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ $(LDFLAGS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/gslt-native-link.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
 
 .PHONY: test-nik-authority-catalog-native-v1
 test-nik-authority-catalog-native-v1: $(NIK_AUTHORITY_CATALOG_NATIVE_V1_BIN) \
@@ -7020,7 +7064,12 @@ test-nik-authority-catalog-native-v1: $(NIK_AUTHORITY_CATALOG_NATIVE_V1_BIN) \
 	echo "native NIK registry evidence: $$nik_evidence"
 
 $(RULE_MACHINE_PROGRAM_GENERATOR_V1): $(RULE_MACHINE_PROGRAM_NATIVE_V1_OBJ) $(GSLT_METADATA_STATS_V1_OBJ)
-	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ $(LDFLAGS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/gslt-native-link.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
 
 .PHONY: test-rule-machine-program-native-v1
 test-rule-machine-program-native-v1: $(RULE_MACHINE_PROGRAM_GENERATOR_V1) $(RULE_MACHINE_PROGRAM_GENERATED_V1)
@@ -7032,7 +7081,12 @@ test-rule-machine-program-native-v1: $(RULE_MACHINE_PROGRAM_GENERATOR_V1) $(RULE
 	echo "native rule program evidence: $$rule_evidence"
 
 $(GSLT_SUPPORT_PROFILE_NATIVE_V1_BIN): $(GSLT_SUPPORT_PROFILE_TOOL_V1_OBJ) $(GSLT_SUPPORT_PROFILE_NATIVE_V1_OBJ) $(GSLT_METADATA_STATS_V1_OBJ)
-	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ $(LDFLAGS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/gslt-native-link.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
 
 $(GSLT_SUPPORT_PROFILE_TEST_V1_BIN): $(GSLT_SUPPORT_PROFILE_TEST_V1_OBJ) \
 		$(GSLT_SUPPORT_PROFILE_NATIVE_V1_OBJ) $(GSLT_METADATA_STATS_V1_OBJ) \
@@ -7044,10 +7098,20 @@ test-gslt-support-profile-native-v1: $(GSLT_SUPPORT_PROFILE_TEST_V1_BIN)
 	@$(GSLT_SUPPORT_PROFILE_TEST_V1_BIN) $(MM2_GSLT_PROFILE_V1)
 
 $(GSLT_PROVIDER_CATALOG_NATIVE_V1_BIN): $(GSLT_PROVIDER_CATALOG_NATIVE_V1_OBJ) $(GSLT_METADATA_NATIVE_V1_OBJ) $(GSLT_METADATA_STATS_V1_OBJ)
-	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ $(LDFLAGS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/gslt-native-link.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
 
 $(GSLT_LANGUAGE_NATIVE_V1_BIN): $(GSLT_LANGUAGE_NATIVE_V1_OBJ) $(GSLT_METADATA_STATS_V1_OBJ)
-	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ $(LDFLAGS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/gslt-native-link.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
 
 $(GSLT_LANGUAGE_SOURCE_CODEC_TEST_V1_BIN): $(GSLT_LANGUAGE_SOURCE_CODEC_TEST_V1_OBJ) \
 		$(filter-out %/tools/gslt_language_embed_v1.$(BUILD_OBJ_TAG).o,$(GSLT_LANGUAGE_NATIVE_V1_OBJ))
@@ -25363,7 +25427,7 @@ test-petta-type-policy: $(BIN)
 				type_policy_partial_codomain type_policy_held_guard \
 				type_policy_relational_boundary type_policy_suspended_revision \
 				type_policy_owned_space type_policy_body_revision type_policy_domain_syntax \
-				type_policy_sequential_binding \
+				type_policy_sequential_binding type_policy_exclusion_revision \
 				type_policy_import_revision type_policy_native_partial \
 				type_policy_classifier_effects; do \
 				actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
@@ -25414,15 +25478,32 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-c
 		echo "FAIL: --lang petta did not select its search machine by default"; \
 		exit 1; \
 	fi; \
-	legacy_stats=$$(CETTA_PETTA_SEARCH_MACHINE=0 \
+	core_stats=$$(CETTA_PETTA_SEARCH_MACHINE=0 \
 		CETTA_PETTA_MACHINE_STATS=1 \
 		./$(BIN) --lang petta -e '!(+ 1 2)' \
 		2>&1 >/dev/null); \
-	if printf '%s\n' "$$legacy_stats" | \
+	if ! printf '%s\n' "$$core_stats" | \
 			grep -q '^PETTA_MACHINE_STATS '; then \
-		echo "FAIL: explicit PeTTa legacy-oracle selection was ignored"; \
+		echo "FAIL: disabling an optimization disabled the PeTTa semantic core"; \
 		exit 1; \
 	fi
+	@set -eu; \
+	for enabled in 0 1; do \
+		actual=$$(CETTA_PETTA_SEARCH_MACHINE=$$enabled \
+			CETTA_OPEN_EQUATIONS_REFERENCE=0 CETTA_PETTA_MACHINE_STATS=1 \
+			./$(BIN) --lang petta tests/petta/search_machine_core_tier.metta 2>&1); \
+		answers=$$(printf '%s\n' "$$actual" | grep -v '^PETTA_MACHINE_STATS '); \
+		test "$$answers" = "$$(cat tests/petta/search_machine_core_tier.expected)"; \
+		attempts=$$(printf '%s\n' "$$actual" | awk '/^PETTA_MACHINE_STATS / { \
+			for (i=1;i<=NF;i++) if ($$i ~ /^equation_match_attempts=/) { \
+				split($$i,a,"="); print a[2] } }'); \
+		if [ "$$enabled" = 0 ]; then \
+			test "$$attempts" -gt 0; \
+		else \
+			test "$$attempts" -eq 0; \
+		fi; \
+	done; \
+	echo "PASS: disabling the compiled equation tier retains the PeTTa semantic core and answers"
 	@result=$$(printf 'q\n' | CETTA_PETTA_SEARCH_MACHINE=1 \
 		./$(BIN) --lang petta \
 		tests/petta/interactive_readln.metta 2>&1); \
@@ -27703,14 +27784,17 @@ test-petta-libpl-query-release: $(BIN) $(if $(filter 1,$(LIB_PROLOG_ENABLED)),$(
 			tests/petta/fixtures/libpl_query_release.pl; \
 		actual=$$(mktemp runtime/petta-libpl-query-release.XXXXXX); \
 		trap 'rm -f "$$actual"' EXIT INT TERM; \
-		PYTHONPATH=tests/support CETTA_PETTA_SEARCH_MACHINE=1 \
-			./$(BIN) --lang petta \
-			tests/petta/libpl_query_release.metta > "$$actual"; \
-		if ! diff -u tests/petta/libpl_query_release.expected \
-				"$$actual"; then \
-			echo "FAIL: PeTTa/libpl query release values"; \
-			exit 1; \
-		fi; \
+		for optimized in 0 1; do for route in 0 1; do \
+			for fixture in libpl_query_release libpl_tabled_routes; do \
+				PYTHONPATH=tests/support CETTA_PETTA_SEARCH_MACHINE=$$optimized \
+					CETTA_OPEN_EQUATIONS_REFERENCE=$$route \
+					./$(BIN) --lang petta tests/petta/$$fixture.metta > "$$actual"; \
+				if ! diff -u tests/petta/$$fixture.expected "$$actual"; then \
+					echo "FAIL: $$fixture (optimization=$$optimized, route=$$route)"; \
+					exit 1; \
+				fi; \
+			done; \
+		done; done; \
 		echo "PASS: PeTTa/libpl query-release values and lifecycle"; \
 	else \
 		echo "SKIP: query-release gate requires embedded Prolog"; \
@@ -27828,7 +27912,41 @@ test-petta-rational-terms: $(BIN)
 	echo "PASS: rational terms cross from Prolog, compare and unify by their unfoldings, and have no text, on the tier and in the machine"
 
 .PHONY: test-petta-hyperpose-answers
-test-petta-semantics: test-petta-hyperpose-answers
+test-petta-semantics: test-petta-hyperpose-answers test-petta-hyperpose-named-state test-petta-identity-forwarding
+.PHONY: test-petta-identity-forwarding
+test-petta-identity-forwarding: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/identity_forwarding.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/identity_forwarding.expected)" ]; then \
+			echo "FAIL: identity forwarding ($$route)"; \
+			diff -u tests/petta/identity_forwarding.expected <(printf '%s\n' "$$actual"); exit 1; \
+		fi; \
+	done; \
+	echo "PASS: identity forwarding retains aliases, effects, constraints, handlers, cuts and occurrences"
+.PHONY: test-petta-hyperpose-named-state
+test-petta-hyperpose-named-state: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		for threads in 1 4; do \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+				--num-threads $$threads --lang petta tests/petta/hyperpose_named_state.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/hyperpose_named_state.expected)" ]; then \
+				echo "FAIL: hyperpose named state ($$route, $$threads threads)"; \
+				diff -u tests/petta/hyperpose_named_state.expected <(printf '%s\n' "$$actual"); exit 1; \
+			fi; \
+		done; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--num-threads 1 --lang petta tests/petta/hyperpose_worker_reuse.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/hyperpose_worker_reuse.expected)" ]; then \
+			echo "FAIL: hyperpose worker state reuse ($$route)"; \
+			diff -u tests/petta/hyperpose_worker_reuse.expected <(printf '%s\n' "$$actual"); exit 1; \
+		fi; \
+	done; \
+	echo "PASS: hyperpose worker state is private, nested, reused across jobs, and discarded at join"
 # An answer of a hyperpose branch binds the caller's variables the branch
 # binds, on one thread and on several (SWI-PeTTa's concurrent_and).
 test-petta-hyperpose-answers: $(BIN)
@@ -27854,10 +27972,11 @@ test-petta-semantics: test-petta-constraints
 # and delayed goals survive collection (SWI-PeTTa's answers and effects).
 test-petta-constraints: $(BIN)
 	@set -eu; \
-	for route in tier machine; do \
-		if [ $$route = machine ]; then reference=1; else reference=; fi; \
-		for fixture in constraints retained_constraint_publication; do \
-			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+	for route in tier machine core; do \
+		if [ $$route = tier ]; then reference=; else reference=1; fi; \
+		if [ $$route = core ]; then optimized=0; else optimized=1; fi; \
+		for fixture in constraints retained_constraint_publication libpl_boundary_substitution; do \
+			actual=$$(CETTA_PETTA_SEARCH_MACHINE=$$optimized CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
 				--lang petta tests/petta/$$fixture.metta 2>&1); \
 			if [ "$$actual" != "$$(cat tests/petta/$$fixture.expected)" ]; then \
 				echo "FAIL: $$fixture on the $$route route"; \
@@ -29745,6 +29864,22 @@ test-open-equations: $(BIN)
 ifneq ($(ENABLE_RUNTIME_STATS),1)
 	@$(MAKE) -s ENABLE_RUNTIME_STATS=1 $@
 endif
+
+.PHONY: test-petta-oem-single-sequence
+test: test-petta-oem-single-sequence
+test-petta-semantics: test-petta-oem-single-sequence
+test-petta-oem-single-sequence: $(BIN)
+	@set -eu; \
+	for reference in 0 1; do \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/oem_single_sequence.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/oem_single_sequence.expected)" ]; then \
+			echo "FAIL: compiled one-child sequences (reference $$reference)"; \
+			diff -u tests/petta/oem_single_sequence.expected <(printf '%s\n' "$$actual"); \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: one-child sequences preserve values, choices, effects, failure, payloads and equation cuts"
 
 .PHONY: test-petta-oem-collection-stress
 # The open-equation machine answers the same when it collects every few
@@ -41660,3 +41795,63 @@ test-petta-variable-inventory-order: $(BIN)
 	@echo "PASS: variable inventories preserve first appearance, aliases and per-form scope"
 
 test-petta-semantics: test-petta-variable-inventory-order
+
+.PHONY: test-run-report test-run-cli
+
+test-run-report:
+	@mkdir -p runtime
+	$(CC) -O2 -std=c11 -Wall -Wextra -Werror -Isrc src/run_report.c tests/support/check_run_report.c -o runtime/check-run-report
+	@runtime/check-run-report
+
+test-run-cli: $(BIN) test-run-report
+	@python3 tests/support/check_run_cli.py $(BIN) --artifacts runtime
+
+test: test-run-cli
+
+.PHONY: test-error-presentation
+test-error-presentation: $(BIN)
+ifeq ($(ENABLE_PYTHON),1)
+	@python3 tests/support/check_error_presentation.py $(BIN) --artifacts runtime
+else
+	@printf 'SKIP: Python diagnostic controls require the Python adapter\n'
+endif
+
+test: test-error-presentation
+
+.PHONY: test-run-guard
+test-run-guard:
+	@$(CC) -O2 -std=c11 -Wall -Wextra -Werror -Isrc src/run_guard.c tests/support/check_run_guard.c -o runtime/check-run-guard
+	@runtime/check-run-guard
+	@printf 'PASS: process receipts reject raw successful exits, signals, catalogue changes and channel loss\n'
+test-run-cli: test-run-guard
+
+# The SQLite amalgamation is compiled with its own upstream warning policy.
+vendor/sqlite/sqlite3.$(BUILD_OBJ_TAG).o vendor/sqlite/sqlite3.$(BUILD_OBJ_TAG).stage0.o vendor/sqlite/sqlite3.$(BUILD_OBJ_TAG).runtime-stats.o: CFLAGS := $(filter-out -Werror -O3,$(CFLAGS)) -O2
+
+.PHONY: test-supervise
+ifeq ($(ENABLE_DURABLE),1)
+SUPERVISOR_TEST_SQLITE_OBJ = $(if $(filter vendored,$(SQLITE_PROVIDER)),runtime/sqlite-supervisor-test.o,)
+runtime/sqlite-supervisor-test.o: vendor/sqlite/sqlite3.c vendor/sqlite/sqlite3.h
+	@mkdir -p runtime
+	$(CC) -O2 -std=c11 -pthread -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_DQS=0 -DSQLITE_OMIT_SHARED_CACHE -DSQLITE_DEFAULT_MEMSTATUS=0 -c $< -o $@
+
+runtime/check_supervisor-$(SQLITE_PROVIDER): tests/support/check_supervisor.c src/supervisor.c src/supervisor.h src/durable_store.c src/durable_store.h $(SUPERVISOR_TEST_SQLITE_OBJ) Makefile
+	$(CC) -O2 -Wall -Wextra -Werror -std=c11 -pthread -DCETTA_DURABLE_TEST -Isrc $(DURABLE_CFLAGS) tests/support/check_supervisor.c src/supervisor.c src/durable_store.c $(SUPERVISOR_TEST_SQLITE_OBJ) $(DURABLE_LDFLAGS) -lm -ldl -o $@
+
+runtime/check_durable_value-$(BUILD_OBJ_TAG): tests/support/check_durable_value.c src/durable_value.c src/durable_value.h src/symbol.c src/atom.c src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/support/check_durable_value.c src/durable_value.c src/symbol.c src/atom.c src/binding/frame_identity.c $(LDFLAGS) -o $@
+
+test-supervise: $(BIN) runtime/check_supervisor-$(SQLITE_PROVIDER) runtime/check_durable_value-$(BUILD_OBJ_TAG)
+	@python3 -c 'import subprocess,tempfile; subprocess.run(["runtime/check_supervisor-$(SQLITE_PROVIDER)",tempfile.mkdtemp(prefix="supervisor-core.",dir="runtime")],check=True)'
+	@runtime/check_durable_value-$(BUILD_OBJ_TAG)
+ifeq ($(ENABLE_PYTHON),1)
+	@python3 tests/support/check_supervise_library.py $(BIN) --artifacts runtime
+else
+	@python3 tests/support/check_supervise_library.py $(BIN) --artifacts runtime --skip-external-adapter
+endif
+else
+test-supervise:
+	@printf 'SKIP: supervised-task controls require ENABLE_DURABLE=1\n'
+endif
+
+test: test-supervise
