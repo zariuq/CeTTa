@@ -285,6 +285,12 @@ static inline bool petta_semantics_grounded_type_pure(SymbolId head) {
     return grounded_op_is_type_pure(head) &&
         petta_semantics_form(head) == PETTA_FORM_NONE;
 }
+/* Grounded spellings whose arithmetic meaning PeTTa does not define. An
+ * unregistered occurrence remains data; an authored function still runs. */
+static inline bool petta_semantics_grounded_undefined(SymbolId head) {
+    return head == g_builtin_syms.op_floor_div ||
+        head == g_builtin_syms.numeric_eq;
+}
 /* PeTTa's `=alpha` and `==`: tests whose answer is fixed by their
  * arguments' structure up to a consistent renaming of the variables in
  * them, which they neither bind nor show. */
