@@ -3297,6 +3297,7 @@ OPT_IN_FEATURE_TESTS = \
 	tests/test_io_no_http.metta \
 	tests/test_io_rho_bridge.metta \
 	tests/test_io_syntax.metta \
+	tests/test_json_gslt_byte_lengths.metta \
 	tests/test_json_gslt_hostile_constructors.metta \
 	tests/test_json_gslt_invalid_number.metta \
 	tests/test_json_gslt_legacy_nul.metta \
@@ -41604,7 +41605,10 @@ test-io-json-bridge:
 test-json-gslt-library-body: $(BIN) lib/json.metta lib/petta/json.metta lib/prime/json.metta \
 		tests/test_json_gslt_hostile_constructors.metta \
 		tests/test_json_gslt_hostile_constructors.expected \
-		tests/test_json_gslt_hostile_constructors.petta.expected
+		tests/test_json_gslt_hostile_constructors.petta.expected \
+		tests/test_json_gslt_byte_lengths.metta \
+		tests/test_json_gslt_byte_lengths.expected \
+		tests/test_json_gslt_byte_lengths.petta.expected
 	@set -eu; \
 	actual=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-json-gslt-library.XXXXXX"); \
 	trap 'rm -f "$$actual"' EXIT INT TERM; \
@@ -41617,18 +41621,26 @@ test-json-gslt-library-body: $(BIN) lib/json.metta lib/petta/json.metta lib/prim
 		diff -u tests/test_json_gslt_hostile_constructors.expected "$$actual"; \
 		$(BIN) --lang petta $$profile tests/test_json_gslt_hostile_constructors.metta > "$$actual"; \
 		diff -u tests/test_json_gslt_hostile_constructors.petta.expected "$$actual"; \
+		$(BIN) --lang he $$profile tests/test_json_gslt_byte_lengths.metta > "$$actual"; \
+		diff -u tests/test_json_gslt_byte_lengths.expected "$$actual"; \
+		$(BIN) --lang petta $$profile tests/test_json_gslt_byte_lengths.metta > "$$actual"; \
+		diff -u tests/test_json_gslt_byte_lengths.petta.expected "$$actual"; \
+		$(BIN) --lang he $$profile tests/test_json_gslt_legacy_nul.metta > "$$actual"; \
+		diff -u tests/test_json_gslt_legacy_nul.expected "$$actual"; \
+		$(BIN) --lang petta $$profile tests/test_json_gslt_legacy_nul.metta > "$$actual"; \
+		diff -u tests/test_json_gslt_legacy_nul.petta.expected "$$actual"; \
 	done; \
 	$(BIN) --lang prime tests/test_json_gslt_library.metta > "$$actual"; \
 	diff -u tests/test_json_gslt_library.expected "$$actual"; \
-	$(BIN) --lang he tests/test_json_gslt_legacy_nul.metta > "$$actual"; \
+	$(BIN) --lang prime tests/test_json_gslt_byte_lengths.metta > "$$actual"; \
+	diff -u tests/test_json_gslt_byte_lengths.expected "$$actual"; \
+	$(BIN) --lang prime tests/test_json_gslt_legacy_nul.metta > "$$actual"; \
 	diff -u tests/test_json_gslt_legacy_nul.expected "$$actual"; \
-	$(BIN) --lang petta tests/test_json_gslt_legacy_nul.metta > "$$actual"; \
-	diff -u tests/test_json_gslt_legacy_nul.petta.expected "$$actual"; \
 	$(BIN) --lang he tests/test_json_gslt_invalid_number.metta > "$$actual"; \
 	diff -u tests/test_json_gslt_invalid_number.expected "$$actual"; \
 	$(BIN) --lang petta tests/test_json_gslt_invalid_number.metta > "$$actual"; \
 	diff -u tests/test_json_gslt_invalid_number.petta.expected "$$actual"; \
-	echo "(JsonGsltLibrarySummary 13 13 0)"
+	echo "(JsonGsltLibrarySummary 21 21 0)"
 
 .PHONY: test-json-gslt-library
 test-json-gslt-library:

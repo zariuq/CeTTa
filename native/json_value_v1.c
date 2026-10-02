@@ -248,19 +248,13 @@ static bool json_utf8_append_scalar(JsonBytesV1 *out, uint32_t scalar) {
 }
 
 static bool json_canonical_string_utf8(JsonValueCtxV1 *ctx, Atom *string,
-                                       JsonBytesV1 *out,
-                                       bool reject_nul) {
+                                       JsonBytesV1 *out) {
     Atom *list;
     CettaExprIndex index;
     if (!json_scalar_list_view(ctx, string, &list)) return false;
     for (index = 0u; index < list->expr.len; index++) {
         uint32_t scalar = (uint32_t)
             list->expr.elems[index]->expr.elems[1]->ground.ival;
-        if (reject_nul && scalar == 0u) {
-            return json_value_error(
-                ctx, CETTA_JSON_VALUE_V1_UNREPRESENTABLE_LEGACY_STRING,
-                "legacy grounded strings cannot retain U+0000");
-        }
         if (!json_utf8_append_scalar(out, scalar)) return false;
     }
     return true;
@@ -302,13 +296,12 @@ static Atom *json_to_legacy(JsonValueCtxV1 *ctx, Atom *value,
                                        number->ground.slen));
     }
     if (json_expr_is(value, "JsonStringV1", 2u)) {
-        JsonBytesV1 utf8 = {.limit = SIZE_MAX, .ctx = ctx};
+        JsonBytesV1 utf8 = {.limit = CETTA_STRING_BYTES_MAX, .ctx = ctx};
         Atom *result = NULL;
-        if (json_canonical_string_utf8(ctx, value, &utf8, true) &&
-            json_bytes_char(&utf8, 0u)) {
+        if (json_canonical_string_utf8(ctx, value, &utf8)) {
             result = json_app1(ctx->arena, "JsonString",
-                               atom_string(ctx->arena,
-                                           (const char *)utf8.bytes));
+                               atom_string_n(ctx->arena,
+                                   (const char *)utf8.bytes, utf8.len));
         }
         free(utf8.bytes);
         return result;
@@ -343,7 +336,7 @@ static Atom *json_to_legacy(JsonValueCtxV1 *ctx, Atom *value,
         if (!pairs) goto allocation;
         for (index = 0u; index < members->expr.len; index++) {
             Atom *member = members->expr.elems[index];
-            JsonBytesV1 utf8 = {.limit = SIZE_MAX, .ctx = ctx};
+            JsonBytesV1 utf8 = {.limit = CETTA_STRING_BYTES_MAX, .ctx = ctx};
             Atom *member_value;
             if (!json_expr_is(member, "JsonMemberV1", 5u) ||
                 !member->expr.elems[1] ||
@@ -352,8 +345,7 @@ static Atom *json_to_legacy(JsonValueCtxV1 *ctx, Atom *value,
                 member->expr.elems[1]->ground.ival != (int64_t)index ||
                 !json_member_span_valid(member->expr.elems[4]) ||
                 !json_canonical_string_utf8(
-                    ctx, member->expr.elems[2], &utf8, true) ||
-                !json_bytes_char(&utf8, 0u) ||
+                    ctx, member->expr.elems[2], &utf8) ||
                 !(member_value = json_to_legacy(
                       ctx, member->expr.elems[3], depth + 1u))) {
                 free(utf8.bytes);
@@ -363,7 +355,7 @@ static Atom *json_to_legacy(JsonValueCtxV1 *ctx, Atom *value,
             }
             pairs[index] = json_app2(
                 ctx->arena, "JsonPair",
-                atom_string(ctx->arena, (const char *)utf8.bytes),
+                atom_string_n(ctx->arena, (const char *)utf8.bytes, utf8.len),
                 member_value);
             free(utf8.bytes);
         }
@@ -383,7 +375,7 @@ allocation:
 }
 
 static Atom *json_scalar_list_from_utf8(JsonValueCtxV1 *ctx,
-                                        const char *text) {
+                                        const char *text, size_t text_len) {
     CettaLpNativeUtf8ScalarBuffer scalars;
     Atom **items = NULL;
     Atom *list = NULL;
@@ -392,7 +384,7 @@ static Atom *json_scalar_list_from_utf8(JsonValueCtxV1 *ctx,
     char error[256] = {0};
     cetta_lp_native_utf8_scalar_buffer_init(&scalars);
     if (!cetta_lp_native_utf8_scalar_buffer_decode(
-            &scalars, (const uint8_t *)text, strlen(text),
+            &scalars, (const uint8_t *)text, text_len,
             error, sizeof(error))) {
         json_value_error(ctx, CETTA_JSON_VALUE_V1_INVALID_UTF8,
                          "%s", error[0] ? error : "invalid UTF-8 string");
@@ -432,6 +424,11 @@ static const char *json_text(Atom *atom) {
     return NULL;
 }
 
+/* The caller has already checked that atom is text. */
+static size_t json_text_len(Atom *atom, const char *text) {
+    return atom->kind == ATOM_GROUNDED ? atom_string_len(atom) : strlen(text);
+}
+
 static Atom *json_from_legacy(JsonValueCtxV1 *ctx, Atom *value,
                               uint32_t depth) {
     CettaExprIndex index;
@@ -460,7 +457,8 @@ static Atom *json_from_legacy(JsonValueCtxV1 *ctx, Atom *value,
             return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
                                     "JsonString expects text"), NULL;
         }
-        return json_scalar_list_from_utf8(ctx, text);
+        return json_scalar_list_from_utf8(
+            ctx, text, json_text_len(value->expr.elems[1], text));
     }
     if (json_expr_is(value, "JsonNumber", 2u)) {
         const char *text = json_text(value->expr.elems[1]);
@@ -470,7 +468,8 @@ static Atom *json_from_legacy(JsonValueCtxV1 *ctx, Atom *value,
                 NULL;
         }
         return json_app1(ctx->arena, "JsonNumberV1",
-                         atom_string(ctx->arena, text));
+                         atom_string_n(ctx->arena, text,
+                             json_text_len(value->expr.elems[1], text)));
     }
     if (json_expr_is(value, "JsonArray", 2u)) {
         Atom *items = value->expr.elems[1];
@@ -507,7 +506,8 @@ static Atom *json_from_legacy(JsonValueCtxV1 *ctx, Atom *value,
             Atom *member_value;
             if (!json_expr_is(pair, "JsonPair", 3u) ||
                 !(key = json_text(pair->expr.elems[1])) ||
-                !(key_value = json_scalar_list_from_utf8(ctx, key)) ||
+                !(key_value = json_scalar_list_from_utf8(
+                      ctx, key, json_text_len(pair->expr.elems[1], key))) ||
                 !(member_value = json_from_legacy(
                       ctx, pair->expr.elems[2], depth + 1u))) {
                 free(members);
@@ -781,8 +781,6 @@ const char *cetta_json_value_v1_status_name(CettaJsonValueV1Status status) {
     case CETTA_JSON_VALUE_V1_BAD_ARGUMENT: return "bad-argument";
     case CETTA_JSON_VALUE_V1_MALFORMED_VALUE: return "malformed-value";
     case CETTA_JSON_VALUE_V1_INVALID_UTF8: return "invalid-utf8";
-    case CETTA_JSON_VALUE_V1_UNREPRESENTABLE_LEGACY_STRING:
-        return "unrepresentable-legacy-string";
     case CETTA_JSON_VALUE_V1_RESOURCE_LIMIT: return "resource-limit";
     case CETTA_JSON_VALUE_V1_ALLOCATION_FAILURE:
         return "allocation-failure";

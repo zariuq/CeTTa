@@ -12,7 +12,6 @@ typedef enum {
     CETTA_JSON_VALUE_V1_BAD_ARGUMENT,
     CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
     CETTA_JSON_VALUE_V1_INVALID_UTF8,
-    CETTA_JSON_VALUE_V1_UNREPRESENTABLE_LEGACY_STRING,
     CETTA_JSON_VALUE_V1_RESOURCE_LIMIT,
     CETTA_JSON_VALUE_V1_ALLOCATION_FAILURE,
     CETTA_JSON_VALUE_V1_ROUNDTRIP_DISAGREEMENT
@@ -25,6 +24,8 @@ typedef enum {
  * representation carry JsonNoSourceSpanV1 instead of an invented location.
  * The historical JsonObject/JsonPair/JsonArray/... representation is a
  * compatibility codec over that value, not its definition.
+ * Historical strings and keys use their full stored byte lengths in both
+ * directions, including U+0000.
  */
 bool cetta_json_value_v1_to_legacy(
     Arena *arena,

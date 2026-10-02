@@ -1,4 +1,22 @@
+!(import! &self str)
 !(import! &self json)
 
-; The compatibility codec cannot silently erase U+0000.
-!(json-parse "\"\\u0000\"")
+; Historical strings and keys retain the entire decoded byte sequence.
+!(str:byte-length (json-string-value (json-parse "\"\\u0000\"")))
+!(str:byte-length (json-string-value (json-parse "\"a\\u0000b\"")))
+!(json-stringify (json-parse "\"a\\u0000b\""))
+!(json-stringify (json-parse "\"\""))
+!(json-stringify (json-parse "{\"\":\"\"}"))
+!(json-object-get (json-parse "{\"\":\"\"}") "")
+!(json-stringify (json-parse "[\"\\u0000\",\"λ\",\"\"]"))
+
+(= (json-legacy-nul-object)
+   (json-parse "{\"x\":1,\"x\\u0000y\":2,\"x\\u0000y\":3}"))
+!(json-stringify (json-legacy-nul-object))
+!(json-object-get (json-legacy-nul-object) "x")
+!(let $key (str:from-codepoints (120 0 121))
+   (json-object-get (json-legacy-nul-object) $key))
+!(let $key (str:from-codepoints (120 0 121))
+   (json:get-all (json:parse (json-stringify (json-legacy-nul-object))) $key))
+!(let $key (str:from-codepoints (120 0 122))
+   (json:get-first (json:parse (json-stringify (json-legacy-nul-object))) $key))
