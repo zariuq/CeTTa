@@ -336,6 +336,7 @@ tests/test_io_rho_bridge.metta	he	metta	extended	core	native	test-opt-in-feature
 tests/test_io_syntax.metta	he	metta	extended	core	native	test-opt-in-feature	property	assertion-only property without golden oracle
 tests/test_isinf_math_bad_type.metta	he	metta	extended	main	native	test	golden	-
 tests/test_isnan_math_bad_type.metta	he	metta	extended	main	native	test	golden	-
+tests/test_json_gslt_byte_lengths.metta	he	metta	extended	core	native	test-opt-in-feature	golden	isolated opt-in feature regression
 tests/test_json_gslt_hostile_constructors.metta	he	metta	extended	core	native	test-opt-in-feature	golden	isolated opt-in feature regression
 tests/test_json_gslt_invalid_number.metta	he	metta	extended	core	native	test-opt-in-feature	golden	isolated opt-in feature regression
 tests/test_json_gslt_legacy_nul.metta	he	metta	extended	core	native	test-opt-in-feature	golden	isolated opt-in feature regression

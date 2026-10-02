@@ -718,6 +718,60 @@ static void test_continuation_permutations(void) {
     destroy(&fixture);
 }
 
+/* Saved locals, not just pending call arguments, must survive detachment.
+ * Equal inputs still produce separate ordered occurrences after the caller
+ * arena has been freed.  Exercise fresh and partially consumed frontiers. */
+static void test_continuation_detach(void) {
+    const char *equations[] = {
+        "(= (select (Cons $x $xs)) (Pair $x $xs))",
+        "(= (select (Cons $x $xs)) (let (Pair $y $ys) (select $xs) "
+        "(Pair $y (Cons $x $ys))))",
+        "(= (perm Nil) Nil)",
+        "(= (perm (Cons $h $t)) (let (Pair $y $ys) (select (Cons $h $t)) "
+        "(Cons $y (perm $ys))))",
+    };
+    const char *expected[] = {
+        "(Cons a (Cons a (Cons b Nil)))",
+        "(Cons a (Cons b (Cons a Nil)))",
+        "(Cons a (Cons a (Cons b Nil)))",
+        "(Cons a (Cons b (Cons a Nil)))",
+        "(Cons b (Cons a (Cons a Nil)))",
+        "(Cons b (Cons a (Cons a Nil)))",
+    };
+    const size_t detach_after[] = {0u, 1u, 3u};
+    for (size_t run = 0u; run < 3u; run++) {
+        Fixture fixture;
+        init(&fixture, equations, 4u, "(perm (Cons a Nil))");
+        Arena call_arena;
+        arena_init(&call_arena);
+        arena_set_hashcons(&call_arena, NULL);
+        Atom *call = parse(&call_arena, "(perm (Cons a (Cons a (Cons b Nil))))");
+        assert(cetta_prepared_pure_program_rebind_closed_entry_call(
+            fixture.program, call));
+        CettaPreparedPureAnswerCursor *cursor = open_cursor(&fixture, false);
+        cetta_prepared_pure_program_clear_closed_entry_call(fixture.program);
+        for (size_t index = 0u; index < 6u; index++) {
+            if (index == detach_after[run]) {
+                assert(cetta_prepared_pure_answer_cursor_detach(cursor));
+                assert(cetta_prepared_pure_answer_cursor_detach(cursor));
+                assert(!cetta_prepared_pure_answer_cursor_unyield(cursor));
+                arena_free(&call_arena);
+                arena_init(&call_arena);
+                arena_set_hashcons(&call_arena, NULL);
+                for (size_t noise = 0u; noise < 64u; noise++)
+                    (void)parse(&call_arena, "(noise (noise (noise noise)))");
+            }
+            expect_answer(&fixture, cursor, expected[index]);
+        }
+        Atom *answer = NULL;
+        assert(cetta_prepared_pure_answer_cursor_next(cursor, &answer) ==
+               CETTA_PREPARED_PURE_CURSOR_EXHAUSTED);
+        cetta_prepared_pure_answer_cursor_close(cursor);
+        arena_free(&call_arena);
+        destroy(&fixture);
+    }
+}
+
 /* A call that matches no equation answers by dialect: nothing, a decline,
  * or itself as data. */
 static void test_continuation_unmatched_call_rules(void) {
@@ -995,6 +1049,7 @@ int main(void) {
     test_cursor_last_call_chain_is_bounded();
     test_cursor_limit_keeps_frontier();
     test_continuation_permutations();
+    test_continuation_detach();
     test_continuation_unmatched_call_rules();
     test_continuation_guard_and_zero();
     test_continuation_operand_order();
@@ -1009,6 +1064,6 @@ int main(void) {
     var_intern_free(&variables);
     g_symbols = NULL;
     g_var_intern = NULL;
-    puts("prepared pure answer producer: twenty-nine boundary cases passed");
+    puts("prepared pure answer producer: thirty boundary cases passed");
     return 0;
 }

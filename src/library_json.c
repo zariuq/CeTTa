@@ -189,8 +189,6 @@ static const char *json_value_failure_symbol(CettaJsonValueV1Status status) {
     case CETTA_JSON_VALUE_V1_MALFORMED_VALUE:
         return "JsonMalformedValueV1";
     case CETTA_JSON_VALUE_V1_INVALID_UTF8: return "JsonInvalidUtf8V1";
-    case CETTA_JSON_VALUE_V1_UNREPRESENTABLE_LEGACY_STRING:
-        return "JsonUnrepresentableLegacyStringV1";
     case CETTA_JSON_VALUE_V1_RESOURCE_LIMIT:
         return "JsonResourceLimitV1";
     case CETTA_JSON_VALUE_V1_ALLOCATION_FAILURE:
@@ -356,7 +354,9 @@ static Atom *json_parse(CettaJsonLibraryRuntimeV1 *runtime,
     }
     if (!cetta_json_nik_v1_parse_prepared(
             runtime->parser_host, arena,
-            (const uint8_t *)source, strlen(source), NULL,
+            (const uint8_t *)source,
+            args[0]->kind == ATOM_GROUNDED
+                ? atom_string_len(args[0]) : strlen(source), NULL,
             &canonical, &parse_status, error, sizeof(error))) {
         return json_failure_or_error(
             arena, head, args, nargs, legacy,
@@ -406,26 +406,7 @@ static Atom *json_stringify(CettaJsonLibraryRuntimeV1 *runtime,
             "JsonStringifyV1", json_value_failure_symbol(status),
             error[0] ? error : cetta_json_value_v1_status_name(status));
     }
-    if (len > SIZE_MAX - 1u) {
-        free(bytes);
-        return json_failure_or_error(
-            arena, head, args, nargs, legacy,
-            "JsonStringifyV1", "JsonResourceLimitV1",
-            "JSON output is too large");
-    }
-    {
-        uint8_t *terminated = (uint8_t *)realloc(bytes, len + 1u);
-        if (!terminated) {
-            free(bytes);
-            return json_failure_or_error(
-                arena, head, args, nargs, legacy,
-                "JsonStringifyV1", "JsonAllocationFailureV1",
-                "out of memory materializing JSON text");
-        }
-        bytes = terminated;
-    }
-    bytes[len] = '\0';
-    result = atom_string(arena, (const char *)bytes);
+    result = atom_string_n(arena, (const char *)bytes, len);
     free(bytes);
     return result;
 }
@@ -442,7 +423,7 @@ static Atom *json_canonical_key(Arena *arena, Atom *key,
         return NULL;
     }
     legacy_items[0] = atom_symbol(arena, "JsonString");
-    legacy_items[1] = atom_string(arena, text);
+    legacy_items[1] = key;
     legacy = atom_expr(arena, legacy_items, 2u);
     if (!cetta_json_value_v1_from_legacy(
             arena, legacy, 100000u, 128u, &canonical,
