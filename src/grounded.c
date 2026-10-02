@@ -3992,8 +3992,8 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
     bool petta = grounded_current_language_is_petta();
     /* SWI-PeTTa defines neither, so both stay data there; Hyperon has no
      * numeric-eq either. */
-    if ((petta && head_id == g_builtin_syms.op_floor_div) ||
-        ((petta || rust_compat) && head_id == g_builtin_syms.numeric_eq))
+    if ((petta && petta_semantics_grounded_undefined(head_id)) ||
+        (rust_compat && head_id == g_builtin_syms.numeric_eq))
         return NULL;
     NumArg na = {0}, nb = {0};
     bool na_ok = get_numeric_arg(args[0], &na);
