@@ -24,3 +24,6 @@
 [True]
 [False]
 [(Refuted (set:proposition-mismatch (App (App R a) (App (App add a) a)) (App (App R a) b)))]
+[True]
+[True]
+[(Refuted (set:by-no-instance r-diag (App Q zero)))]

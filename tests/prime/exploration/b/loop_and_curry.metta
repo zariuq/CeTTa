@@ -7,13 +7,15 @@
 ; accessibility proof, one unfolding and four beta steps return to the
 ; recursor at the same point, and no normal form is ever reached
 ; (Signature.loop_cycle, Signature.loop_no_normal_form).  So the unfolding
-; cannot be admitted as a definition: admission refutes it with the looping
-; call as witness.  With the unfolding propositional the recursor never
-; unfolds, and the same conversion problem is decided by beta alone.
+; is not admitted as a definition, and the looping call is named.  It is not
+; refuted: a refusal says that no set satisfies the equation, and the draft
+; has no such witness for a step that is any function.  With the unfolding
+; propositional the recursor never unfolds, and the same conversion problem
+; is decided by beta alone.
 ;
 ; Without the accessibility premise the unfolding proves falsum (Curry).  As a
-; definition it is refused; as an assumption it proves falsum, and the proof
-; is refused once the premises are required.
+; definition it is not admitted; as an assumption it proves falsum, and the
+; proof is refused once the premises are required.
 
 !(import! &self pf)
 (= (verdict-of $r)
@@ -25,7 +27,7 @@
                   (: rec (-> (-> A A prop) (-> A (-> A Res) Res) A Res))
                   (: r (-> A A prop)) (: a A)))
 
-; 1. The definitional unfolding is refuted, with the looping call as witness
+; 1. The definitional unfolding is not admitted, the looping call named
 ;    (loop_no_normal_form, Signature.loop_no_normal_form), and nothing is
 ;    published.
 !(let $v (try (set:define &thy recd (-> (-> A A prop) (-> A (-> A Res) Res) A Res)
@@ -48,9 +50,11 @@
 !(set:define &curry falsum prop (= falsum (all prop (lam p p))))
 !(set:define &curry any-rel (-> prop prop prop) (= (any-rel $y $x) falsum))
 !(set:define &curry curry-step (-> prop (-> prop prop) prop) (= (curry-step $x $z) (imp ($z $x) falsum)))
-;    A code equal to its own implication of falsum, and the unguarded
-;    unfolding, are refuted as definitions (CurryData.curry_falsum,
-;    curry_unguarded).
+;    A code equal to its own implication of falsum is refuted as a
+;    definition: no truth value is its own negation (CurryData.curry_falsum).
+;    The unguarded unfolding is not admitted; at the Curry step no set
+;    satisfies it (curry_unguarded), but the draft names no witness for a
+;    step that is any function.
 !(let $v (try (set:define &curry c prop (= c (imp c falsum)))) (verdict-of $v))
 !(let $v (try (set:define &curry recd (-> (-> prop prop prop) (-> prop (-> prop prop) prop) prop prop)
      (= (recd $R $F $x) ($F $x (lam b (recd $R $F b)))))) (verdict-of $v))

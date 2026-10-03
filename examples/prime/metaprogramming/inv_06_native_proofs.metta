@@ -76,5 +76,5 @@
    (Assumptions (size-atom $assumptions)))
 
 ; 13. Unsupported proof syntax abstains rather than counting as evidence.
-!(set:theorem by-name (In Empty (Power Empty)) (pf:by PowerI))
+!(set:theorem by-name (In Empty (UnivOf Empty)) (pf:by universeIn))
 !(car-atom (try (set:native-proof by-name)))

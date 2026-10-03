@@ -1,8 +1,9 @@
 ; The first theorem of the Isabelle tutorial, rev (rev xs) = xs, written the
 ; way it reads there: four lemmas by induction, each an equational chain.
 ; The object theory lives in its own space; the program space holds only the
-; proof verbs.  The list functions are given by their equations as axioms
-; (there is no definition form yet); every other equality step is derived.
+; proof verbs.  The list functions are uninterpreted constants given by their
+; equations as assumptions (list_reversal_defined.metta defines them instead);
+; every other equality step is derived.
 
 !(import! &self pf)
 !(bind! &thy (new-space))

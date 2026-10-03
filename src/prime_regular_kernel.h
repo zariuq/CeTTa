@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "atom.h"
+#include "prime_level.h"
 
 typedef enum {
     CETTA_PRIME_REGULAR_KERNEL_NOT_SCOPED = 0,
@@ -18,11 +19,12 @@ typedef enum {
     CETTA_PRIME_REGULAR_KERNEL_UNDECIDED
 } CettaPrimeRegularKernelStatus;
 
-typedef struct {
-    bool limited;
-    uint64_t remaining;
-    uint64_t spent;
-} CettaPrimeRegularKernelBudget;
+/* The steps a judgment may still take.  It is the budget of the level
+ * library, so that the arithmetic of a level counts against the budget of
+ * the judgment that reads the level.  The kernel and the lowering take their
+ * own steps from the budget alone; where it stands within another one, the
+ * arithmetic of levels is taken from that one as well. */
+typedef CettaPrimeLevelBudgetV1 CettaPrimeRegularKernelBudget;
 
 typedef struct {
     CettaPrimeRegularKernelStatus status;
@@ -85,11 +87,61 @@ bool cetta_prime_regular_kernel_intrinsic_term_maybe_syntax(Atom *term);
  * enclosing synthesis judgment before using it as a universe classification. */
 bool cetta_prime_regular_kernel_term_is_universe_sort_v1(Atom *term);
 
-/* Quote a declaration-free closed explicit sort as the public `(u n)` form.
- * The sealed legacy marker `U1` is deliberately not rewritten by this API.
- * NULL means either "not an explicit sort" or "not closed". */
+/* The sorts above every universe an author writes are written by name.
+ * The sort of all sets, `(Sort (LevelAbove 0))`, is `set`; its sort,
+ * `(Sort (LevelAbove 1))`, is `class`; and the n-th of them is `(class n)`,
+ * for n of any size.  The names are spelled in one place, behind these
+ * functions.
+ *
+ * `sort_above_word` tells whether a symbol is one of the two names.
+ * `sort_above_spelling` tells whether syntax is one of the spellings, and
+ * gives n as a numeral of the level wire (built in `arena` for a name).
+ * `sort_above_name` is the spelling of the n-th sort: the name for 0 and 1,
+ * and `(class n)` otherwise.  `sort_above_term` is the kernel term of the
+ * n-th sort, `(Sort (LevelAbove n))`.  NULL when there is no memory. */
+bool cetta_prime_regular_kernel_sort_above_word_v1(Atom *symbol);
+
+bool cetta_prime_regular_kernel_sort_above_spelling_v1(
+    Arena *arena, Atom *syntax, Atom **numeral_out);
+
+Atom *cetta_prime_regular_kernel_sort_above_name_v1(
+    Arena *arena, const CettaPrimeLevelNaturalV1 *n);
+
+Atom *cetta_prime_regular_kernel_sort_above_term_v1(
+    Arena *arena, Atom *numeral);
+
+/* Whether the closed sort `lower` lies inside the closed sort `upper`, both
+ * in kernel spelling `(Sort level)`: universes are cumulative, so a type of
+ * a universe is also a type of every sort above it, the sort of all sets
+ * included.  False when either is not a closed sort. */
+bool cetta_prime_regular_kernel_sort_within_v1(Arena *arena, Atom *lower,
+                                              Atom *upper);
+
+/* Quote a declaration-free closed explicit sort as an author writes it: a
+ * universe at a level an author writes is the public `(u level)` form, the
+ * level in that notation (a numeral of any length, or an ordinal notation
+ * such as `omega`, `(+ omega 1)` or `(* (^ omega 2) 3)`), and a sort above
+ * all of them is its name.  The sealed legacy marker `U1` is deliberately
+ * not rewritten by this API.  NULL means "not an explicit sort" or "not
+ * closed". */
 Atom *cetta_prime_regular_kernel_quote_closed_universe_sort_v1(
     Arena *arena, Atom *term);
+
+/* The name of a closed sort above every universe an author writes, and NULL
+ * for any other term, a universe at a written level included. */
+Atom *cetta_prime_regular_kernel_quote_sort_above_v1(Arena *arena, Atom *term);
+
+/* A numeral of the level wire is a natural number of any size: an integer
+ * atom that is not negative, a machine integer or a long one.  These tell
+ * whether an atom is one, give its number, and write a number as one. */
+bool cetta_prime_regular_kernel_level_numeral_v1(const Atom *numeral);
+
+CettaPrimeLevelStatusV1 cetta_prime_regular_kernel_level_numeral_value_v1(
+    Arena *arena, const Atom *numeral,
+    const CettaPrimeLevelNaturalV1 **natural_out);
+
+Atom *cetta_prime_regular_kernel_level_numeral_atom_v1(
+    Arena *arena, const CettaPrimeLevelNaturalV1 *natural);
 
 /* Exact closed-syntax recognition for the native regular-kernel class.
  * ESTABLISHED means every constructor is in the fragment, every term index is
@@ -224,6 +276,23 @@ cetta_prime_regular_kernel_decide_intrinsic_conversion_v1(
     Arena *arena, Atom *context, Atom *left, Atom *right,
     CettaPrimeRegularKernelBudget *budget);
 
+/* One step of the search for the least level instance of a declaration,
+ * exposed for the comparison with the definition it follows (Mettapedia,
+ * TypeTheory/UniverseLevel/LeastInstance.lean, `raise`).  The parameters
+ * `parameters[0..parameter_count)` hold the closed levels `assignments`, NULL
+ * where a parameter holds nothing yet.  They are raised by the least
+ * assignment at which `level` reaches the closed level `bound`.  With the
+ * status ESTABLISHED, `*outside_out` tells that no least raise exists, and
+ * otherwise every assignment that is not NULL is a closed level constant in
+ * the core spelling.  A parameter stands for a level an author writes, so a
+ * bound above those levels is reached by no assignment: the status is then
+ * REFUTED, and nothing is assigned. */
+CettaPrimeRegularKernelStatus
+cetta_prime_regular_kernel_raise_level_parameters_v1(
+    Arena *arena, Atom *level, Atom *bound,
+    const uint64_t *parameters, Atom **assignments, size_t parameter_count,
+    CettaPrimeRegularKernelBudget *budget, bool *outside_out);
+
 CettaPrimeRegularKernelConversionDecision
 cetta_prime_regular_kernel_decide_intrinsic_conversion_instantiating_levels_v1(
     Arena *arena, Atom *context, Atom *left, Atom *right,
@@ -255,5 +324,23 @@ void cetta_prime_regular_kernel_rules_set(Atom *rules);
  * rule matched. A budget failure is also NULL; the caller keeps the call. */
 Atom *cetta_prime_regular_kernel_rule_contractum_v1(
     Arena *arena, Atom *term, CettaPrimeRegularKernelBudget *budget);
+
+/* The same step, where an argument the rule inspects that is a call waiting
+ * for an observation (a rule at arity `(PObserved n)`) unfolds first; and
+ * how many rule firings the step took, the unfoldings included. */
+Atom *cetta_prime_regular_kernel_rule_contractum_counted_v1(
+    Arena *arena, Atom *term, CettaPrimeRegularKernelBudget *budget,
+    uint64_t *firings_out);
+
+/* Whether a rule of `name` in the rules set for the call is guarded: admitted
+ * on a set solution, it unfolds only at closed arguments, or, admitted with a
+ * family's set model, only under an observation. */
+bool cetta_prime_regular_kernel_rule_guarded_v1(Atom *name);
+
+/* The normal form of `term` by the rules set for the call, and how many rule
+ * firings it took.  NULL on a budget or engine failure. */
+Atom *cetta_prime_regular_kernel_rule_normal_form_v1(
+    Arena *arena, Atom *term, CettaPrimeRegularKernelBudget *budget,
+    uint64_t *firings_out);
 
 #endif /* CETTA_PRIME_REGULAR_KERNEL_H */

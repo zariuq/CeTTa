@@ -21,6 +21,56 @@ typedef struct {
     unsigned failed;
 } TestCounts;
 
+/* A form over two long numerals, written over several lines: the product
+ * of the binary numerals 2^33 + 1 and 2^31 + 1, and two 21-digit decimal
+ * numerals.  The same form on one line, and the form with the close of
+ * `cost:firings` missing, which is the source an earlier fixture had. */
+#define LONG_BIT33 \
+    "(bit1 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 " \
+    "(bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 " \
+    "(bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 " \
+    "one)))))))))))))))))))))))))))))))))"
+#define LONG_BIT31 \
+    "(bit1 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 " \
+    "(bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 " \
+    "(bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 one)))))))))))))))))))))))))))))))"
+#define LONG_FORM_HEAD "!(let ($values $n) (cost:firings\n      (pmul " LONG_BIT33 "\n            " LONG_BIT31
+#define LONG_FORM_TAIL \
+    "\n   (quote (product-by-equations (firings $n)\n          (decimal 123456789012345678901\n" \
+    "                   -987654321098765432109))))\n"
+static const char LONG_FORM_LINES[] = LONG_FORM_HEAD "))" LONG_FORM_TAIL;
+static const char LONG_FORM_ONE_LINE[] =
+    "!(let ($values $n) (cost:firings (pmul " LONG_BIT33 " " LONG_BIT31 ")) "
+    "(quote (product-by-equations (firings $n) (decimal 123456789012345678901 "
+    "-987654321098765432109))))";
+static const char LONG_FORM_MISSING_CLOSE[] = LONG_FORM_HEAD ")" LONG_FORM_TAIL;
+
+/* Rejected sources and the message each must carry: what the input ends
+ * inside of, or what no rule reads, and where. */
+typedef struct {
+    const char *label;
+    const char *source;
+    const char *message;
+} PrimeReaderRejectionV1;
+
+static const PrimeReaderRejectionV1 REJECTIONS[] = {
+    {"form missing a close", LONG_FORM_MISSING_CLOSE,
+     "source is outside the compiled prefix S-expression LanguageDef: the input "
+     "ends inside the expression opened at line 1, column 2"},
+    {"stray close after a complete form", "!(f x)\n  (g y))\n",
+     "source is outside the compiled prefix S-expression LanguageDef: no rule "
+     "reads ')' at line 2, column 8"},
+    {"unterminated string on a later line", "(a b)\n(c \"d e\n",
+     "source is outside the compiled prefix S-expression LanguageDef: the input "
+     "ends inside the string opened at line 2, column 4"},
+    {"unclosed list after non-ASCII text", "(λ x [1 2\n",
+     "source is outside the compiled prefix S-expression LanguageDef: the input "
+     "ends inside the list opened at line 1, column 6"},
+    {"prefix without payload at the end", "(a b) @",
+     "source is outside the compiled prefix S-expression LanguageDef: the input "
+     "ends before the payload of the prefix at line 1, column 7"},
+};
+
 static const PrimeReaderCaseV1 CASES[] = {
     {"empty document", "", true},
     {"comment at eof", " \t; no newline", true},
@@ -53,6 +103,9 @@ static const PrimeReaderCaseV1 CASES[] = {
     {"non-ASCII name", "@\"κόσμος\"", true},
     {"adjacent atoms", "(a(b)c)", true},
     {"canonical numbers", "42 -3 1.5 3/4", true},
+    {"long numerals over several lines", LONG_FORM_LINES, true},
+    {"long numerals on one line", LONG_FORM_ONE_LINE, true},
+    {"long numerals with a close missing", LONG_FORM_MISSING_CLOSE, false},
     {"missing close", "(a", false},
     {"stray close", ")", false},
     {"unterminated string", "\"unterminated", false},
@@ -279,6 +332,40 @@ int main(void) {
                    is_sha256_text(receipt.projection_digest) &&
                    is_sha256_text(receipt.compiler_digest),
                "Prime receipt retains composed derivation identity");
+        free(ids);
+    }
+    /* Line breaks and long numerals read as on one line. */
+    {
+        AtomId *lines = NULL;
+        AtomId *one_line = NULL;
+        int lines_len = prime_compiled_reader_v1_parse_text_ids(
+            reader, LONG_FORM_LINES, &compiled_universe, &lines,
+            &receipt, error, sizeof(error));
+        int one_line_len = prime_compiled_reader_v1_parse_text_ids(
+            reader, LONG_FORM_ONE_LINE, &compiled_universe, &one_line,
+            &receipt, error, sizeof(error));
+        expect(&counts,
+               lines_len == 2 && one_line_len == 2 &&
+                   ids_alpha_equal(&compiled_universe, lines, lines_len,
+                                   &compiled_universe, one_line, one_line_len),
+               "a form over several lines reads as the same form on one line");
+        free(lines);
+        free(one_line);
+    }
+    for (size_t index = 0u;
+         index < sizeof(REJECTIONS) / sizeof(REJECTIONS[0]); index++) {
+        const PrimeReaderRejectionV1 *rejection = &REJECTIONS[index];
+        AtomId *ids = NULL;
+        char label[256];
+        int len = prime_compiled_reader_v1_parse_text_ids(
+            reader, rejection->source, &compiled_universe, &ids,
+            &receipt, error, sizeof(error));
+        (void)snprintf(label, sizeof(label), "%s is refused with its place",
+                       rejection->label);
+        if (!expect(&counts, len < 0 && !ids &&
+                                 strcmp(error, rejection->message) == 0,
+                     label))
+            fprintf(stderr, "  message: %s\n", error);
         free(ids);
     }
     {

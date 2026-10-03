@@ -1,5 +1,5 @@
 [(define prop (= Falsum (all prop (lam p p))))]
-[(definition-evidence (rules 0 (() (App (App all prop) (Lam prop (idx 0))) 0)) (non-recursive))]
+[(definition-evidence (rules 0 (() (App (App all prop) (Lam prop (idx 0))) 0)) (non-recursive) (lean TowerInterpretation.explicit_setModel))]
 [True]
 [True]
 [True]

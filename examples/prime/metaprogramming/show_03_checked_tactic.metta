@@ -68,6 +68,7 @@
 !(let $goal (imp (imp A B) (imp (imp B C) (imp A C)))
    (let $p (tac:prove $goal 1 6)
      (set:theorem composition $goal $p)))
+; Assumptions about the uninterpreted A, B and C, which the tactic composes.
 !(set:axiom a-to-b (imp A B))
 !(set:axiom b-to-c (imp B C))
 !(set:proves (pf:imp-elim (pf:imp-elim (pf:known composition) (pf:known a-to-b))

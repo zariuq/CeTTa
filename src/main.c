@@ -23,6 +23,7 @@
 #include "petta_typecheck_v3.h"
 #include "lib_prolog.h"
 #include "prime_compiled_reader.h"
+#include "prime_arith_oracle.h"
 #include "space.h"
 #include "eval.h"
 #include "library.h"
@@ -1749,6 +1750,8 @@ static void print_usage(FILE *out) {
     fputs("       cetta --emit-runtime-stats <file.metta> # dump runtime counters to stderr after execution\n", out);
     fputs("       cetta --emit-prime-need-trace <file.metta> # emit exact Prime occurrences, receipts, and completion to stderr\n", out);
     fputs("       cetta --lang prime --prime-rewrite-frontier <monolithic|candidate-local|demand-cohort> <file.metta>\n", out);
+    fputs("       cetta --lang prime --oracle-audit <file.metta>    # replay every oracle answer through the declared equations; stop on a mismatch\n", out);
+    fputs("       cetta --lang prime --oracle-residues <file.metta> # check oracle sums and products modulo three primes; stop on a mismatch\n", out);
     fputs("       cetta --eval-hashcons <file.metta>      # experimental: hash-cons eval-arena atoms\n", out);
     fputs("       cetta --pretty-vars <file.metta>       # pretty-print result vars for humans\n", out);
     fputs("       cetta --raw-vars <file.metta>          # print raw internal var epochs\n", out);
@@ -1972,6 +1975,7 @@ static void main_add_prime_semantic_op_decls(Space *space, Arena *arena) {
         {"type:must", "AA"},
         {"type:theorem", "AAA"},
         {"type:prove", "AAA"},
+        {"cost:firings", "A"},
         {"nik:check", "AAA"},
         {"nik:check", "AAAN"},
         /* Draft scoped judgment bubbles; operands are data like `type:`. */
@@ -1984,6 +1988,7 @@ static void main_add_prime_semantic_op_decls(Space *space, Arena *arena) {
         {"set:axiom", "AAA"},
         {"set:define", "AAAAAAAAAA"},
         {"set:inductive", "AAAAAAAAAA"},
+        {"set:family", "AAAAAAAAAA"},
         {"captured", "AA"},
         {"ctx:capture", "AA"},
         {"set:theorem", "AAAA"},
@@ -1991,6 +1996,8 @@ static void main_add_prime_semantic_op_decls(Space *space, Arena *arena) {
         {"set:known-proof", "AA"},
         {"set:known-proposition", "AA"},
         {"set:signature-digest", "A"},
+        {"set:numerals", "AAA"},
+        {"set:oracle", "AAAA"},
         {"try", "A"},
         {"id:region", "A"},
         {"id:policy", ""},
@@ -2817,6 +2824,14 @@ static int cetta_main(int argc, char **argv) {
         }
         if (strcmp(argv[i], "--emit-prime-need-trace") == 0) {
             emit_prime_need_trace = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--oracle-audit") == 0) {
+            prime_arith_oracle_set_audit(true);
+            continue;
+        }
+        if (strcmp(argv[i], "--oracle-residues") == 0) {
+            prime_arith_oracle_set_residues(true);
             continue;
         }
         if (strcmp(argv[i], "--strict") == 0) {
@@ -3859,6 +3874,7 @@ static int cetta_main(int argc, char **argv) {
     /* A PeTTa file stopped at an uncaught error: SWI-PeTTa's exit status 2. */
     bool petta_uncaught_error = false;
     bool prime_incomplete_seen = false;
+    bool prime_oracle_check_failed = false;
     bool petta_answer_without_text = false;
     FILE *output_spool = NULL;
     if (!compile_mode) {
@@ -4161,6 +4177,8 @@ process_petta_document:
                 rc = 1;
                 goto cleanup;
             }
+            if (lang->id == CETTA_LANGUAGE_PRIME)
+                prime_arith_oracle_query_begin();
             if (emit_prime_need_trace) {
                 eval_outcome_init(&detailed);
                 detailed_initialized = true;
@@ -4326,6 +4344,16 @@ process_petta_document:
             } else if (!petta_answer_without_text) {
                 if (!report_incomplete_and_continue)
                     write_results(output_spool, results, lang->id, profile);
+                /* The trust records of the oracles this answer used, and
+                 * a failed check of one, which stops the run. */
+                if (lang->id == CETTA_LANGUAGE_PRIME) {
+                    prime_arith_oracle_query_report(output_spool);
+                    if (prime_arith_oracle_check_failed()) {
+                        prime_arith_oracle_report_failure(output_spool);
+                        prime_oracle_check_failed = true;
+                        stop_after_error = true;
+                    }
+                }
                 if (fflush(output_spool) != 0) {
                     fprintf(stderr, "error: could not write output spool\n");
                     if (detailed_initialized)
@@ -4402,6 +4430,25 @@ process_petta_document:
                    &libraries.term_universe, atom_ids,
                    n, block_end, NULL, NULL)) {
             block_end++;
+        }
+        /* Prime refuses an equation or a type declaration for a name it
+         * interprets itself, in its place in the output, and loads the rest
+         * of the program (cetta_prime_reserved_definition_error). */
+        Atom *refused = NULL;
+        if (lang->id == CETTA_LANGUAGE_PRIME) {
+            for (int k = i; k < block_end && !refused; k++) {
+                refused = cetta_prime_reserved_definition_error(
+                    &eval_arena,
+                    term_universe_get_atom(&libraries.term_universe,
+                                           atom_ids[k]));
+                if (refused) block_end = k;
+            }
+        }
+        if (refused && block_end == i) {
+            atom_print(refused, output_spool);
+            fputc('\n', output_spool);
+            i++;
+            continue;
         }
         bool prime_relational_plan =
             libraries.prime_relational_plan_enabled;
@@ -4487,6 +4534,8 @@ petta_document_complete:
 
     rc = prime_need_trace_failed || prime_incomplete_seen ? 1
         : petta_uncaught_error || petta_answer_without_text ? 2 : 0;
+    prime_arith_oracle_report_audit(stderr);
+    if (prime_oracle_check_failed) rc = 3;
 
 cleanup: {
     bool output_ok = fflush(stdout) == 0 && !ferror(stdout);

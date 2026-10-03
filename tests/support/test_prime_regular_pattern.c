@@ -1,9 +1,11 @@
 #include "parser.h"
+#include "prime_level.h"
 #include "prime_regular_pattern.h"
 #include "symbol.h"
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static size_t checks;
 static size_t failures;
@@ -84,6 +86,73 @@ static void check_regular_term_pattern(
     Atom *expected = parse_one(arena, expected_pattern_text);
     check(result.status == CETTA_PRIME_REGULAR_TERM_OK &&
           result.pattern && expected && atom_eq(result.pattern, expected), name);
+}
+
+/* The kernel term of one authored term, or NULL. */
+static Atom *regular_term_intrinsic(Arena *arena, const char *syntax) {
+    CettaPrimeRegularTermElaborationV1 lowered = lower_syntax(
+        arena, syntax, UINT64_C(100000));
+    if (lowered.status != CETTA_PRIME_REGULAR_TERM_OK) return NULL;
+    CettaPrimeRegularKernelBudget budget;
+    cetta_prime_regular_kernel_budget_init(&budget, true, UINT64_C(100000));
+    CettaPrimeRegularPatternElaborationV1 result =
+        cetta_prime_regular_pattern_elaborate_v1(
+            arena, (CettaPrimeRegularPatternEnvironmentV1){0},
+            lowered.pattern, &budget);
+    return result.status == CETTA_PRIME_REGULAR_PATTERN_OK
+        ? result.term : NULL;
+}
+
+/* The kernel term of one authored term given as an atom, within a budget of
+ * the caller's, or NULL. */
+static Atom *regular_atom_intrinsic_within(
+    Arena *arena, Atom *syntax, uint64_t steps) {
+    CettaPrimeRegularKernelBudget budget;
+    cetta_prime_regular_kernel_budget_init(&budget, true, steps);
+    CettaPrimeRegularTermElaborationV1 lowered =
+        cetta_prime_regular_term_to_pattern_v1(arena, syntax, &budget);
+    if (lowered.status != CETTA_PRIME_REGULAR_TERM_OK) return NULL;
+    cetta_prime_regular_kernel_budget_init(&budget, true, steps);
+    CettaPrimeRegularPatternElaborationV1 result =
+        cetta_prime_regular_pattern_elaborate_v1(
+            arena, (CettaPrimeRegularPatternEnvironmentV1){0},
+            lowered.pattern, &budget);
+    return result.status == CETTA_PRIME_REGULAR_PATTERN_OK
+        ? result.term : NULL;
+}
+
+static Atom *regular_term_intrinsic_within(
+    Arena *arena, const char *syntax, uint64_t steps) {
+    return regular_atom_intrinsic_within(
+        arena, parse_one(arena, syntax), steps);
+}
+
+/* A universe written one way elaborates to `kernel_text`, is quoted as
+ * `printed_text`, and what is quoted reads back as the same kernel term. */
+static void check_universe_round_trip(
+    Arena *arena, const char *written_text, const char *kernel_text,
+    const char *printed_text, const char *name) {
+    Atom *kernel = regular_term_intrinsic(arena, written_text);
+    Atom *expected = parse_one(arena, kernel_text);
+    Atom *printed = kernel
+        ? cetta_prime_regular_term_quote_intrinsic_v1(arena, kernel) : NULL;
+    Atom *expected_printed = parse_one(arena, printed_text);
+    Atom *reread = regular_term_intrinsic(arena, printed_text);
+    check(kernel && expected && atom_eq(kernel, expected) && printed &&
+          expected_printed && atom_eq(printed, expected_printed) && reread &&
+          atom_eq(reread, kernel), name);
+}
+
+/* A universe whose level is read incompletely, for the reason named: the
+ * term is neither lowered nor refused. */
+static void check_level_incomplete(
+    Arena *arena, const char *syntax, const char *reason, const char *name) {
+    CettaPrimeRegularTermElaborationV1 lowered = lower_syntax(
+        arena, syntax, UINT64_C(100000));
+    check(lowered.status == CETTA_PRIME_REGULAR_TERM_BUDGET_EXHAUSTED &&
+          lowered.pattern == NULL && lowered.reason &&
+          strcmp(lowered.reason, reason) == 0 &&
+          cetta_prime_regular_term_level_incomplete_v1(&lowered), name);
 }
 
 static void check_regular_term_elaboration(
@@ -468,11 +537,82 @@ int main(void) {
         "closed tower zero lowers through ordinary Pattern structure");
     check_regular_term_pattern(
         &arena, "(u 2)",
-        "(PApp \"Sort\" (LCons "
-        " (PApp \"LevelSucc\" (LCons "
-        "  (PApp \"LevelSucc\" (LCons "
-        "   (PApp \"LevelZero\" LNil) LNil)) LNil)) LNil))",
-        "numeric universe sugar lowers to structural successors");
+        "(PApp \"Sort\" (LCons (PApp \"LevelCantor\" (LCons "
+        " (PApp \"LevelZero\" LNil) (LCons 2 "
+        " (LCons (PApp \"LevelZero\" LNil) LNil)))) LNil))",
+        "a numeral universe lowers to the constant of its number");
+    check_regular_term_pattern(
+        &arena, "(u 12345678901234567890123456789012345678901234567890)",
+        "(PApp \"Sort\" (LCons (PApp \"LevelCantor\" (LCons "
+        " (PApp \"LevelZero\" LNil) "
+        " (LCons 12345678901234567890123456789012345678901234567890 "
+        " (LCons (PApp \"LevelZero\" LNil) LNil)))) LNil))",
+        "a numeral universe of fifty digits lowers to one constant");
+    check_universe_round_trip(
+        &arena, "(u 2)", "(Sort (LevelConst 2))", "(u 2)",
+        "a numeral universe reads, elaborates and prints");
+    /* The sorts above every written universe are written by name. */
+    check_regular_term_pattern(
+        &arena, "set",
+        "(PApp \"Sort\" (LCons (PApp \"LevelAbove\" (LCons 0 LNil)) LNil))",
+        "the sort of all sets lowers to the universe at the first level "
+        "above the written ones");
+    check_universe_round_trip(
+        &arena, "set", "(Sort (LevelAbove 0))", "set",
+        "the sort of all sets reads, elaborates and prints by its name");
+    check_universe_round_trip(
+        &arena, "class", "(Sort (LevelAbove 1))", "class",
+        "the sort of the sort of all sets prints by its name");
+    check_universe_round_trip(
+        &arena, "(class 0)", "(Sort (LevelAbove 0))", "set",
+        "the 0-th sort above the written universes is set");
+    check_universe_round_trip(
+        &arena, "(class 12345678901234567890)",
+        "(Sort (LevelAbove 12345678901234567890))",
+        "(class 12345678901234567890)",
+        "a sort above the written universes has a number of any length");
+    check_regular_term_elaboration(
+        &arena, "(-> set set)",
+        "(Pi (Sort (LevelAbove 0)) (Sort (LevelAbove 0)))",
+        "set is a type in a function type");
+    check_regular_term_elaboration(
+        &arena, "(lam (set : (u 0)) set)",
+        "(Lam (Sort (LevelConst 0)) (idx 0))",
+        "a binder named set is the binder, not the sort");
+    check(lower_syntax(&arena, "(class omega)", UINT64_C(100000)).status !=
+              CETTA_PRIME_REGULAR_TERM_OK &&
+              lower_syntax(&arena, "(class -1)", UINT64_C(100000)).status !=
+                  CETTA_PRIME_REGULAR_TERM_OK &&
+              lower_syntax(&arena, "(u set)", UINT64_C(100000)).status !=
+                  CETTA_PRIME_REGULAR_TERM_OK,
+          "a sort above is numbered by a numeral, and is no level");
+    check_universe_round_trip(
+        &arena, "(u 100000)", "(Sort (LevelConst 100000))", "(u 100000)",
+        "a numeral universe is one constant whatever its number");
+    check_universe_round_trip(
+        &arena, "(u 12345678901234567890123456789012345678901234567890)",
+        "(Sort (LevelConst "
+        " 12345678901234567890123456789012345678901234567890))",
+        "(u 12345678901234567890123456789012345678901234567890)",
+        "a numeral universe of fifty digits reads, elaborates and prints");
+    Atom *fifty_digits =
+        regular_term_intrinsic(
+            &arena, "(u 12345678901234567890123456789012345678901234567890)");
+    Atom *fifty_digits_and_one =
+        regular_term_intrinsic(
+            &arena, "(u 12345678901234567890123456789012345678901234567891)");
+    Atom *fifty_digits_cut =
+        regular_term_intrinsic(
+            &arena, "(u 1234567890123456789012345678901234567890123456789)");
+    check(fifty_digits && fifty_digits_and_one && fifty_digits_cut &&
+          !atom_eq(fifty_digits, fifty_digits_and_one) &&
+          !atom_eq(fifty_digits, fifty_digits_cut) &&
+          atom_eq(
+              fifty_digits,
+              regular_term_intrinsic(
+                  &arena,
+                  "(u 0012345678901234567890123456789012345678901234567890)")),
+          "numeral universes of fifty digits differ where their numerals do");
     Atom *private_level_marker =
         cetta_prime_regular_level_parameter_marker_v1(&arena, 7u);
     Atom *private_level_syntax = private_level_marker
@@ -749,11 +889,29 @@ int main(void) {
           malformed_level.syntax_error ==
               CETTA_PRIME_REGULAR_TERM_INVALID_LEVEL,
           "negative universe level is rejected as authored syntax");
+    /* A universe costs one step and its level one step for each numeral,
+     * `omega` and operation written: a budget that does not cover them is
+     * exhausted, and that is not the reading of a level that had no
+     * memory. */
     CettaPrimeRegularTermElaborationV1 level_budget = lower_syntax(
-        &arena, "(u 2)", 2u);
+        &arena, "(u 2)", 1u);
     check(level_budget.status ==
-              CETTA_PRIME_REGULAR_TERM_BUDGET_EXHAUSTED,
-          "universe sugar expansion preserves explicit budget exhaustion");
+              CETTA_PRIME_REGULAR_TERM_BUDGET_EXHAUSTED &&
+          !cetta_prime_regular_term_level_incomplete_v1(&level_budget),
+          "reading a universe level preserves explicit budget exhaustion");
+    level_budget = lower_syntax(&arena, "(u (+ omega 2))", 3u);
+    check(level_budget.status ==
+              CETTA_PRIME_REGULAR_TERM_BUDGET_EXHAUSTED &&
+          !cetta_prime_regular_term_level_incomplete_v1(&level_budget),
+          "reading a computed universe level preserves explicit budget "
+          "exhaustion");
+    level_budget = lower_syntax(&arena, "(u 2)", 2u);
+    check(level_budget.status == CETTA_PRIME_REGULAR_TERM_OK,
+          "a numeral universe is read in the steps of its syntax");
+    level_budget = lower_syntax(
+        &arena, "(u 99999999999999999999999999)", 2u);
+    check(level_budget.status == CETTA_PRIME_REGULAR_TERM_OK,
+          "a long numeral universe is read in the same steps");
     CettaPrimeRegularTermElaborationV1 loose_index = lower_syntax(
         &arena, "(idx 0)", UINT64_C(100000));
     check(loose_index.status == CETTA_PRIME_REGULAR_TERM_OUT_OF_CLASS,
@@ -880,6 +1038,1008 @@ int main(void) {
           public_term_syntax.syntax.status ==
               CETTA_PRIME_REGULAR_TERM_SYNTAX_ERROR,
           "subject syntax follows the prepared expected type");
+
+    /* Closed levels beyond the numerals: ordinal notations below
+     * epsilon-zero in Cantor normal form.  The Pattern of one is `LevelZero`
+     * or `LevelCantor` over an exponent, a coefficient and a remainder. */
+    check_regular_term_pattern(
+        &arena, "(u omega)",
+        "(PApp \"Sort\" (LCons (PApp \"LevelCantor\" (LCons "
+        " (PApp \"LevelCantor\" (LCons (PApp \"LevelZero\" LNil) (LCons 1 "
+        "  (LCons (PApp \"LevelZero\" LNil) LNil)))) (LCons 1 "
+        " (LCons (PApp \"LevelZero\" LNil) LNil)))) LNil))",
+        "omega lowers to one Cantor constant whose exponent is one");
+    check_universe_round_trip(
+        &arena, "(u omega)",
+        "(Sort (LevelCantor (LevelConst 1) 1 (LevelConst 0)))",
+        "(u omega)", "omega reads, elaborates and prints");
+    check_universe_round_trip(
+        &arena, "(u \xcf\x89)",
+        "(Sort (LevelCantor (LevelConst 1) 1 (LevelConst 0)))",
+        "(u omega)", "the Greek letter is the level omega");
+    check_universe_round_trip(
+        &arena, "(u (+ omega 1))",
+        "(Sort (LevelCantor (LevelConst 1) 1 (LevelConst 1)))",
+        "(u (+ omega 1))", "omega plus one");
+    check_universe_round_trip(
+        &arena, "(u (* omega 2))",
+        "(Sort (LevelCantor (LevelConst 1) 2 (LevelConst 0)))",
+        "(u (* omega 2))", "omega times two");
+    check_universe_round_trip(
+        &arena, "(u (+ (* omega 2) 3))",
+        "(Sort (LevelCantor (LevelConst 1) 2 (LevelConst 3)))",
+        "(u (+ (* omega 2) 3))", "omega times two plus three");
+    check_universe_round_trip(
+        &arena, "(u (^ omega 2))",
+        "(Sort (LevelCantor (LevelConst 2) 1 (LevelConst 0)))",
+        "(u (^ omega 2))", "omega squared");
+    check_universe_round_trip(
+        &arena, "(u (^ omega omega))",
+        "(Sort (LevelCantor "
+        " (LevelCantor (LevelConst 1) 1 (LevelConst 0)) 1 (LevelConst 0)))",
+        "(u (^ omega omega))", "omega to the omega");
+    check_universe_round_trip(
+        &arena, "(u (+ (^ omega 2) (* omega 3) 5))",
+        "(Sort (LevelCantor (LevelConst 2) 1 "
+        " (LevelCantor (LevelConst 1) 3 (LevelConst 5))))",
+        "(u (+ (^ omega 2) (* omega 3) 5))",
+        "a sum of three terms with decreasing exponents");
+    check_universe_round_trip(
+        &arena, "(u (+ (+ (^ omega 2) omega) 1))",
+        "(Sort (LevelCantor (LevelConst 2) 1 "
+        " (LevelCantor (LevelConst 1) 1 (LevelConst 1))))",
+        "(u (+ (^ omega 2) omega 1))",
+        "a sum nested on the left is the same notation");
+    check_universe_round_trip(
+        &arena, "(u (+ (^ omega 2) (+ omega 1)))",
+        "(Sort (LevelCantor (LevelConst 2) 1 "
+        " (LevelCantor (LevelConst 1) 1 (LevelConst 1))))",
+        "(u (+ (^ omega 2) omega 1))",
+        "a sum nested on the right is the same notation");
+    check_universe_round_trip(
+        &arena, "(u (* (^ omega (+ omega 1)) 4))",
+        "(Sort (LevelCantor "
+        " (LevelCantor (LevelConst 1) 1 (LevelConst 1)) 4 (LevelConst 0)))",
+        "(u (* (^ omega (+ omega 1)) 4))",
+        "an exponent is itself a notation");
+    check_universe_round_trip(
+        &arena, "(u (* (^ omega 0) 2))", "(Sort (LevelConst 2))",
+        "(u 2)", "a natural number written as a power is that numeral");
+
+    /* Among natural numbers the sum, product and power of levels are those
+     * of the numbers, and the result stands where a numeral stands. */
+    check_universe_round_trip(
+        &arena, "(u (+ 1 2))", "(Sort (LevelConst 3))",
+        "(u 3)", "a sum of numerals is that number");
+    check_universe_round_trip(
+        &arena, "(u (* 2 3))", "(Sort (LevelConst 6))",
+        "(u 6)", "a product of numerals is that number");
+    check_universe_round_trip(
+        &arena, "(u (^ 2 3))", "(Sort (LevelConst 8))",
+        "(u 8)", "a power of numerals is that number");
+    check_universe_round_trip(
+        &arena, "(u (+ 1 2 3))", "(Sort (LevelConst 6))",
+        "(u 6)", "a sum of several numerals is their sum");
+    check_universe_round_trip(
+        &arena, "(u (+ (* 2 2) (^ 0 0)))", "(Sort (LevelConst 5))",
+        "(u 5)", "arithmetic of numerals nests; zero to the zero is one");
+    check_universe_round_trip(
+        &arena, "(u (^ 0 3))", "(Sort (LevelConst 0))", "(u 0)",
+        "zero to a positive power is zero");
+    check_universe_round_trip(
+        &arena, "(u (* 7 0))", "(Sort (LevelConst 0))", "(u 0)",
+        "a product with zero is zero");
+    check_universe_round_trip(
+        &arena, "(u (+ omega (+ 1 2)))",
+        "(Sort (LevelCantor (LevelConst 1) 1 (LevelConst 3)))",
+        "(u (+ omega 3))", "a number computed from numerals is a last term");
+    check_universe_round_trip(
+        &arena, "(u (* omega (* 2 3)))",
+        "(Sort (LevelCantor (LevelConst 1) 6 (LevelConst 0)))",
+        "(u (* omega 6))", "a number computed from numerals is a coefficient");
+    check_universe_round_trip(
+        &arena, "(u (^ omega (+ 1 1)))",
+        "(Sort (LevelCantor (LevelConst 2) 1 (LevelConst 0)))",
+        "(u (^ omega 2))", "a number computed from numerals is an exponent");
+    /* A number beyond the machine integers is the number it is: the sum,
+     * product and power of numerals have any number of digits. */
+    static const struct {
+        const char *written;
+        const char *kernel;
+        const char *printed;
+    } beyond_machine_integers[] = {
+        {"(u (^ 2 64))", "(Sort (LevelConst 18446744073709551616))",
+         "(u 18446744073709551616)"},
+        {"(u (+ 9223372036854775807 1))",
+         "(Sort (LevelConst 9223372036854775808))",
+         "(u 9223372036854775808)"},
+        {"(u (* 4294967296 4294967296))",
+         "(Sort (LevelConst 18446744073709551616))",
+         "(u 18446744073709551616)"},
+        {"(u (^ 7 100))",
+         "(Sort (LevelConst 3234476509624757991344647769100216810857203198"
+         "904625400933895331391691459636928060001))",
+         "(u 3234476509624757991344647769100216810857203198904625400933895"
+         "331391691459636928060001)"},
+        {"(u (+ omega (^ 2 64)))",
+         "(Sort (LevelCantor (LevelConst 1) 1 "
+         " (LevelConst 18446744073709551616)))",
+         "(u (+ omega 18446744073709551616))"},
+        {"(u (* omega (^ 2 64)))",
+         "(Sort (LevelCantor (LevelConst 1) 18446744073709551616 "
+         " (LevelConst 0)))",
+         "(u (* omega 18446744073709551616))"},
+        {"(u (^ omega (^ 2 64)))",
+         "(Sort (LevelCantor (LevelConst 18446744073709551616) 1 "
+         " (LevelConst 0)))",
+         "(u (^ omega 18446744073709551616))"},
+    };
+    for (size_t i = 0u;
+         i < sizeof beyond_machine_integers /
+                 sizeof beyond_machine_integers[0];
+         i++)
+        check_universe_round_trip(
+            &arena, beyond_machine_integers[i].written,
+            beyond_machine_integers[i].kernel,
+            beyond_machine_integers[i].printed,
+            "a number beyond the machine integers is that number");
+    Atom *two_to_sixty_four = regular_term_intrinsic(&arena, "(u (^ 2 64))");
+    Atom *one_less = regular_term_intrinsic(
+        &arena, "(u 18446744073709551615)");
+    check(two_to_sixty_four && one_less &&
+          !atom_eq(two_to_sixty_four, one_less) &&
+          !atom_eq(two_to_sixty_four, regular_term_intrinsic(&arena, "(u 0)")),
+          "a number beyond the machine integers is not a number near it");
+    /* A power whose value no memory holds is incomplete, not refused: a
+     * number above one to the power 2^100 has more than 2^100 binary
+     * digits. */
+    static const char *const beyond_memory[] = {
+        "(u (^ 2 (^ 2 100)))", "(u (^ 3 (^ 10 30)))",
+        "(u (+ omega (^ 2 (^ 2 100))))",
+    };
+    for (size_t i = 0u; i < sizeof beyond_memory / sizeof beyond_memory[0];
+         i++)
+        check_level_incomplete(
+            &arena, beyond_memory[i], "level-out-of-memory",
+            "a number no memory holds is incomplete, not refused");
+
+    /* The maximum of two closed levels is the larger one. */
+    check_universe_round_trip(
+        &arena, "(u (max omega 1))",
+        "(Sort (LevelCantor (LevelConst 1) 1 (LevelConst 0)))",
+        "(u omega)", "the maximum of omega and one is omega");
+    check_universe_round_trip(
+        &arena, "(u (max 2 3))", "(Sort (LevelConst 3))",
+        "(u 3)", "the maximum of two numerals is the larger");
+    check_universe_round_trip(
+        &arena, "(u (max 3 2))", "(Sort (LevelConst 3))",
+        "(u 3)", "the maximum does not depend on the order written");
+    check_universe_round_trip(
+        &arena,
+        "(u (max 99999999999999999999999999 100000000000000000000000000))",
+        "(Sort (LevelConst 100000000000000000000000000))",
+        "(u 100000000000000000000000000)",
+        "the maximum of two long numerals is the larger");
+    check_universe_round_trip(
+        &arena, "(u (max (* omega 2) (+ omega 7)))",
+        "(Sort (LevelCantor (LevelConst 1) 2 (LevelConst 0)))",
+        "(u (* omega 2))", "the maximum compares notations, not their size");
+    check_universe_round_trip(
+        &arena, "(u (+ (max omega 3) 1))",
+        "(Sort (LevelCantor (LevelConst 1) 1 (LevelConst 1)))",
+        "(u (+ omega 1))", "a maximum is a summand like any closed level");
+
+    /* Beyond the natural numbers the sum, product and power are those of
+     * the ordinals, and the level read is the normal form of the value:
+     * 1 + omega is omega, omega + omega is omega * 2, 2 * omega is omega. */
+    static const char *const omega_kernel =
+        "(Sort (LevelCantor (LevelConst 1) 1 (LevelConst 0)))";
+    static const struct {
+        const char *written;
+        const char *kernel;
+        const char *printed;
+    } computed[] = {
+        {"(u (+ 1 omega))", NULL, "(u omega)"},
+        {"(u (+ omega 0))", NULL, "(u omega)"},
+        {"(u (+ 0 omega))", NULL, "(u omega)"},
+        {"(u (* 2 omega))", NULL, "(u omega)"},
+        {"(u (^ 2 omega))", NULL, "(u omega)"},
+        {"(u (max omega (+ 1 omega)))", NULL, "(u omega)"},
+        {"(u (+ 9223372036854775807 1 omega))", NULL, "(u omega)"},
+        {"(u (+ omega omega))",
+         "(Sort (LevelCantor (LevelConst 1) 2 (LevelConst 0)))",
+         "(u (* omega 2))"},
+        {"(u (* (max omega 1) 2))",
+         "(Sort (LevelCantor (LevelConst 1) 2 (LevelConst 0)))",
+         "(u (* omega 2))"},
+        {"(u (+ (* omega 2) omega))",
+         "(Sort (LevelCantor (LevelConst 1) 3 (LevelConst 0)))",
+         "(u (* omega 3))"},
+        {"(u (* (* omega 2) 3))",
+         "(Sort (LevelCantor (LevelConst 1) 6 (LevelConst 0)))",
+         "(u (* omega 6))"},
+        {"(u (+ omega 1 2))",
+         "(Sort (LevelCantor (LevelConst 1) 1 (LevelConst 3)))",
+         "(u (+ omega 3))"},
+        {"(u (* (+ omega 1) 2))",
+         "(Sort (LevelCantor (LevelConst 1) 2 (LevelConst 1)))",
+         "(u (+ (* omega 2) 1))"},
+        {"(u (* omega 0))", "(Sort (LevelConst 0))", "(u 0)"},
+        {"(u (* omega omega))",
+         "(Sort (LevelCantor (LevelConst 2) 1 (LevelConst 0)))",
+         "(u (^ omega 2))"},
+        {"(u (+ omega (^ omega 2)))",
+         "(Sort (LevelCantor (LevelConst 2) 1 (LevelConst 0)))",
+         "(u (^ omega 2))"},
+        {"(u (^ (^ omega 2) 2))",
+         "(Sort (LevelCantor (LevelConst 4) 1 (LevelConst 0)))",
+         "(u (^ omega 4))"},
+        {"(u (^ 2 (+ (* omega 2) 3)))",
+         "(Sort (LevelCantor (LevelConst 2) 8 (LevelConst 0)))",
+         "(u (* (^ omega 2) 8))"},
+        {"(u (+ (^ omega 2) (+ 1 omega)))",
+         "(Sort (LevelCantor (LevelConst 2) 1 "
+         "(LevelCantor (LevelConst 1) 1 (LevelConst 0))))",
+         "(u (+ (^ omega 2) omega))"},
+        {"(u (^ (+ omega 1) 2))",
+         "(Sort (LevelCantor (LevelConst 2) 1 "
+         "(LevelCantor (LevelConst 1) 1 (LevelConst 1))))",
+         "(u (+ (^ omega 2) omega 1))"},
+        {"(u (^ omega (+ 1 omega)))",
+         "(Sort (LevelCantor "
+         "(LevelCantor (LevelConst 1) 1 (LevelConst 0)) 1 (LevelConst 0)))",
+         "(u (^ omega omega))"},
+        {"(u (^ (+ omega 1) omega))",
+         "(Sort (LevelCantor "
+         "(LevelCantor (LevelConst 1) 1 (LevelConst 0)) 1 (LevelConst 0)))",
+         "(u (^ omega omega))"},
+        {"(u (^ omega 5000))",
+         "(Sort (LevelCantor (LevelConst 5000) 1 (LevelConst 0)))",
+         "(u (^ omega 5000))"},
+    };
+    for (size_t i = 0u; i < sizeof computed / sizeof computed[0]; i++)
+        check_universe_round_trip(
+            &arena, computed[i].written,
+            computed[i].kernel ? computed[i].kernel : omega_kernel,
+            computed[i].printed,
+            "a closed level is read as the normal form of its value");
+    /* The order of summands and factors matters: omega + 1 is above
+     * 1 + omega, and omega * 2 is above 2 * omega. */
+    Atom *one_plus_omega = regular_term_intrinsic(&arena, "(u (+ 1 omega))");
+    Atom *omega_plus_one = regular_term_intrinsic(&arena, "(u (+ omega 1))");
+    Atom *two_times_omega = regular_term_intrinsic(&arena, "(u (* 2 omega))");
+    Atom *omega_times_two = regular_term_intrinsic(&arena, "(u (* omega 2))");
+    check(one_plus_omega && omega_plus_one && two_times_omega &&
+          omega_times_two && !atom_eq(one_plus_omega, omega_plus_one) &&
+          !atom_eq(two_times_omega, omega_times_two) &&
+          atom_eq(one_plus_omega, two_times_omega),
+          "the sum and the product of levels are not commutative");
+    /* A notation has any number of terms: the power of omega + 1 to n has
+     * n + 1 of them.  The universe at one with 5001 terms reads, elaborates
+     * and prints like any other, and what is printed reads back. */
+    Atom *long_power = regular_term_intrinsic_within(
+        &arena, "(u (^ (+ omega 1) 5000))", UINT64_C(10000000));
+    Atom *long_power_printed = long_power
+        ? cetta_prime_regular_term_quote_intrinsic_v1(&arena, long_power)
+        : NULL;
+    Atom *long_power_reread = long_power_printed
+        ? regular_atom_intrinsic_within(
+              &arena, long_power_printed, UINT64_C(10000000))
+        : NULL;
+    check(long_power &&
+          cetta_prime_regular_kernel_term_is_universe_sort_v1(long_power) &&
+          long_power_printed && long_power_printed->kind == ATOM_EXPR &&
+          long_power_printed->expr.len == 2u &&
+          long_power_printed->expr.elems[1]->kind == ATOM_EXPR &&
+          long_power_printed->expr.elems[1]->expr.len == 5002u &&
+          atom_is_symbol(
+              long_power_printed->expr.elems[1]->expr.elems[0], "+") &&
+          long_power_reread && atom_eq(long_power_reread, long_power),
+          "a level of 5001 terms reads, elaborates, prints and reads back");
+    Atom *long_power_by_parts = regular_term_intrinsic_within(
+        &arena, "(u (^ (^ (+ omega 1) 50) 100))", UINT64_C(10000000));
+    Atom *shorter_power = regular_term_intrinsic_within(
+        &arena, "(u (^ (+ omega 1) 4999))", UINT64_C(10000000));
+    check(long_power && long_power_by_parts && shorter_power &&
+          atom_eq(long_power, long_power_by_parts) &&
+          !atom_eq(long_power, shorter_power) &&
+          !atom_eq(
+              long_power,
+              regular_term_intrinsic(&arena, "(u (^ omega 5000))")),
+          "a power of a power is the power to the product, and a shorter "
+          "power is another level");
+    CettaPrimeRegularKernelBudget long_power_budget;
+    cetta_prime_regular_kernel_budget_init(&long_power_budget, false, 0u);
+    CettaPrimeRegularTermCheckV1 shorter_in_longer =
+        cetta_prime_regular_term_elaborate_and_check_v1(
+            &arena, atom_symbol(&arena, "PrimeCtxNil"),
+            parse_one(&arena, "(u (^ (+ omega 1) 4999))"),
+            parse_one(&arena, "(u (^ (+ omega 1) 5000))"),
+            &long_power_budget);
+    CettaPrimeRegularTermCheckV1 longer_in_shorter =
+        cetta_prime_regular_term_elaborate_and_check_v1(
+            &arena, atom_symbol(&arena, "PrimeCtxNil"),
+            parse_one(&arena, "(u (^ (+ omega 1) 5000))"),
+            parse_one(&arena, "(u (^ (+ omega 1) 4999))"),
+            &long_power_budget);
+    check(shorter_in_longer.judgment.status ==
+              CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED &&
+          longer_in_shorter.judgment.status ==
+              CETTA_PRIME_REGULAR_KERNEL_REFUTED,
+          "universes at levels of thousands of terms are ordered as the "
+          "levels are");
+    /* A power with more terms than memory addresses is incomplete, not
+     * refused. */
+    static const char *const beyond_terms[] = {
+        "(u (^ (+ omega 1) 18446744073709551615))",
+        "(u (^ (+ omega 1) 99999999999999999999999999))",
+        "(u (* 2 (^ (+ omega 1) 99999999999999999999999999)))",
+    };
+    for (size_t i = 0u; i < sizeof beyond_terms / sizeof beyond_terms[0]; i++)
+        check_level_incomplete(
+            &arena, beyond_terms[i], "level-out-of-memory",
+            "a level with more terms than memory holds is incomplete");
+    /* What is no level at all is an invalid level, also inside a sum,
+     * product or power. */
+    static const char *const not_a_level[] = {
+        "(u (+ omega banana))", "(u (^ omega))", "(u (max omega banana))",
+        "(u (+ omega -1))", "(u (^ omega 1 2))", "(u banana)", "(u (+ omega))",
+        "(u (+ 1 banana))", "(u (* 2 3 4))", "(u (max omega))",
+        "(u (max 1 2 3))", "(u (min omega 1))",
+    };
+    for (size_t i = 0u; i < sizeof not_a_level / sizeof not_a_level[0]; i++) {
+        CettaPrimeRegularTermElaborationV1 refused = lower_syntax(
+            &arena, not_a_level[i], UINT64_C(100000));
+        check(refused.status == CETTA_PRIME_REGULAR_TERM_SYNTAX_ERROR &&
+              refused.syntax_error == CETTA_PRIME_REGULAR_TERM_INVALID_LEVEL,
+              "what is no level notation is an invalid level");
+    }
+
+    /* A numeral has any number of digits, as a level, a coefficient, an
+     * exponent and a last term. */
+    static const struct {
+        const char *written;
+        const char *kernel;
+        const char *printed;
+    } long_numerals[] = {
+        {"(u 99999999999999999999999999)",
+         "(Sort (LevelConst 99999999999999999999999999))",
+         "(u 99999999999999999999999999)"},
+        {"(u (* omega 99999999999999999999999999))",
+         "(Sort (LevelCantor (LevelConst 1) 99999999999999999999999999 "
+         " (LevelConst 0)))",
+         "(u (* omega 99999999999999999999999999))"},
+        {"(u (+ (^ omega 99999999999999999999999999) 1))",
+         "(Sort (LevelCantor (LevelConst 99999999999999999999999999) 1 "
+         " (LevelConst 1)))",
+         "(u (+ (^ omega 99999999999999999999999999) 1))"},
+        {"(u (+ omega 99999999999999999999999999))",
+         "(Sort (LevelCantor (LevelConst 1) 1 "
+         " (LevelConst 99999999999999999999999999)))",
+         "(u (+ omega 99999999999999999999999999))"},
+        {"(u (+ 1 (* omega 99999999999999999999999999)))",
+         "(Sort (LevelCantor (LevelConst 1) 99999999999999999999999999 "
+         " (LevelConst 0)))",
+         "(u (* omega 99999999999999999999999999))"},
+        {"(u (+ 99999999999999999999999999 1))",
+         "(Sort (LevelConst 100000000000000000000000000))",
+         "(u 100000000000000000000000000)"},
+    };
+    for (size_t i = 0u; i < sizeof long_numerals / sizeof long_numerals[0];
+         i++)
+        check_universe_round_trip(
+            &arena, long_numerals[i].written, long_numerals[i].kernel,
+            long_numerals[i].printed,
+            "a numeral of any number of digits is the number it writes");
+    check(!atom_eq(
+              regular_term_intrinsic(
+                  &arena, "(u 99999999999999999999999999)"),
+              regular_term_intrinsic(
+                  &arena, "(u 99999999999999999999999998)")) &&
+          !atom_eq(
+              regular_term_intrinsic(
+                  &arena, "(u (* omega 99999999999999999999999999))"),
+              regular_term_intrinsic(
+                  &arena, "(u (* omega 9999999999999999999999999))")),
+          "long numerals that differ write different levels");
+    /* A tower omega^omega^...^omega of any height is a level, and a taller
+     * tower is a larger one. */
+    static const unsigned tower_heights[] = {31u, 32u, 33u, 400u};
+    const CettaPrimeLevelNotationV1 *lower_tower = NULL;
+    for (size_t i = 0u; i < sizeof tower_heights / sizeof tower_heights[0];
+         i++) {
+        Atom *tower = atom_symbol(&arena, "omega");
+        for (unsigned level = 1u; level < tower_heights[i]; level++)
+            tower = atom_expr3(
+                &arena, atom_symbol(&arena, "^"),
+                atom_symbol(&arena, "omega"), tower);
+        Atom *universe = atom_expr2(&arena, atom_symbol(&arena, "u"), tower);
+        CettaPrimeRegularKernelBudget tower_budget;
+        cetta_prime_regular_kernel_budget_init(
+            &tower_budget, true, UINT64_C(100000));
+        const CettaPrimeLevelNotationV1 *notation = NULL;
+        CettaPrimeRegularTermElaborationV1 read =
+            cetta_prime_regular_term_closed_level_v1(
+                &arena, tower, &tower_budget, &notation);
+        int order = 0;
+        check(read.status == CETTA_PRIME_REGULAR_TERM_OK && notation &&
+              cetta_prime_level_notation_compare_v1(
+                  lower_tower, notation, &order) ==
+                  CETTA_PRIME_LEVEL_OK_V1 &&
+              order < 0,
+              "a tower of omegas of any height is a level above the "
+              "shorter ones");
+        lower_tower = notation;
+        Atom *kernel = regular_atom_intrinsic_within(
+            &arena, universe, UINT64_C(100000));
+        Atom *printed = kernel
+            ? cetta_prime_regular_term_quote_intrinsic_v1(&arena, kernel)
+            : NULL;
+        check(kernel && printed && atom_eq(printed, universe) &&
+              cetta_prime_regular_kernel_term_is_universe_sort_v1(kernel),
+              "the universe at a tower of omegas elaborates and prints as "
+              "written");
+    }
+    /* No author writes a level above the Cantor normal forms: inside
+     * `(u ...)` the spellings of the wire are no level syntax. */
+    static const char *const no_source_spelling[] = {
+        "(u (LevelAbove 0))", "(u (above 0))", "(u LevelAbove)",
+        "(u (+ omega (LevelAbove 0)))", "(u (max omega (LevelAbove 1)))",
+        "(u (LevelConst 3))", "(u epsilon)", "(u epsilon0)",
+    };
+    for (size_t i = 0u;
+         i < sizeof no_source_spelling / sizeof no_source_spelling[0]; i++) {
+        CettaPrimeRegularTermElaborationV1 refused = lower_syntax(
+            &arena, no_source_spelling[i], UINT64_C(100000));
+        check(refused.status == CETTA_PRIME_REGULAR_TERM_SYNTAX_ERROR &&
+              refused.syntax_error == CETTA_PRIME_REGULAR_TERM_INVALID_LEVEL,
+              "a level above the Cantor normal forms has no source spelling");
+    }
+
+    /* Over a level parameter, `(+ level k)` is the level k successors up. */
+    Atom *offset_level_syntax = private_level_marker
+        ? atom_expr2(
+              &arena, atom_symbol(&arena, "u"),
+              atom_expr3(
+                  &arena, atom_symbol(&arena, "+"),
+                  atom_expr3(
+                      &arena, atom_symbol(&arena, "+"), private_level_marker,
+                      atom_int(&arena, 1)),
+                  atom_int(&arena, 1)))
+        : NULL;
+    cetta_prime_regular_kernel_budget_init(
+        &private_level_budget, true, UINT64_C(100000));
+    CettaPrimeRegularTermElaborationV1 offset_level_lowered =
+        cetta_prime_regular_term_to_pattern_v1(
+            &arena, offset_level_syntax, &private_level_budget);
+    Atom *offset_level_pattern = parse_one(
+        &arena,
+        "(PApp \"Sort\" (LCons (PApp \"LevelSucc\" (LCons "
+        " (PApp \"LevelSucc\" (LCons "
+        "  (PApp \"LevelParam\" (LCons 7 LNil)) LNil)) LNil)) LNil))");
+    check(offset_level_lowered.status == CETTA_PRIME_REGULAR_TERM_OK &&
+              offset_level_lowered.pattern && offset_level_pattern &&
+              atom_eq(offset_level_lowered.pattern, offset_level_pattern),
+          "an offset over a level parameter lowers to successors");
+    Atom *omega_offset_syntax = private_level_marker
+        ? atom_expr2(
+              &arena, atom_symbol(&arena, "u"),
+              atom_expr3(
+                  &arena, atom_symbol(&arena, "+"), private_level_marker,
+                  atom_symbol(&arena, "omega")))
+        : NULL;
+    cetta_prime_regular_kernel_budget_init(
+        &private_level_budget, true, UINT64_C(100000));
+    CettaPrimeRegularTermElaborationV1 omega_offset_lowered =
+        cetta_prime_regular_term_to_pattern_v1(
+            &arena, omega_offset_syntax, &private_level_budget);
+    check(omega_offset_lowered.status ==
+              CETTA_PRIME_REGULAR_TERM_SYNTAX_ERROR &&
+              omega_offset_lowered.syntax_error ==
+                  CETTA_PRIME_REGULAR_TERM_INVALID_LEVEL,
+          "only a numeral of successors applies to a level parameter");
+    /* Over a parameter the level k successors up is one counted form: the
+     * level itself for no successor, `LevelSucc` for one, and `LevelOffset`
+     * with the numeral for more, whatever the length of the numeral.  The
+     * lowering takes the same few steps for every count. */
+    static const struct {
+        const char *count;
+        const char *pattern;
+    } counted_offsets[] = {
+        {"0", "(PApp \"Sort\" (LCons (PApp \"LevelParam\" (LCons 7 LNil)) "
+              " LNil))"},
+        {"1", "(PApp \"Sort\" (LCons (PApp \"LevelSucc\" (LCons "
+              " (PApp \"LevelParam\" (LCons 7 LNil)) LNil)) LNil))"},
+        {"2", "(PApp \"Sort\" (LCons (PApp \"LevelOffset\" (LCons "
+              " (PApp \"LevelParam\" (LCons 7 LNil)) (LCons 2 LNil))) "
+              " LNil))"},
+        {"20000", "(PApp \"Sort\" (LCons (PApp \"LevelOffset\" (LCons "
+                  " (PApp \"LevelParam\" (LCons 7 LNil)) "
+                  " (LCons 20000 LNil))) LNil))"},
+        {"99999999999999999999999999",
+         "(PApp \"Sort\" (LCons (PApp \"LevelOffset\" (LCons "
+         " (PApp \"LevelParam\" (LCons 7 LNil)) "
+         " (LCons 99999999999999999999999999 LNil))) LNil))"},
+    };
+    uint64_t uncounted_steps = 0u;
+    uint64_t counted_offset_steps = 0u;
+    for (size_t i = 0u;
+         i < sizeof counted_offsets / sizeof counted_offsets[0]; i++) {
+        Atom *counted_syntax = private_level_marker
+            ? atom_expr2(
+                  &arena, atom_symbol(&arena, "u"),
+                  atom_expr3(
+                      &arena, atom_symbol(&arena, "+"), private_level_marker,
+                      parse_one(&arena, counted_offsets[i].count)))
+            : NULL;
+        cetta_prime_regular_kernel_budget_init(
+            &private_level_budget, true, UINT64_C(100000));
+        CettaPrimeRegularTermElaborationV1 counted_lowered =
+            cetta_prime_regular_term_to_pattern_v1(
+                &arena, counted_syntax, &private_level_budget);
+        Atom *counted_pattern = parse_one(&arena, counted_offsets[i].pattern);
+        check(counted_lowered.status == CETTA_PRIME_REGULAR_TERM_OK &&
+                  counted_lowered.pattern && counted_pattern &&
+                  atom_eq(counted_lowered.pattern, counted_pattern),
+              "a count of successors over a level parameter lowers to one "
+              "counted form");
+        /* A count of one or more takes one step more than no count, and no
+         * more for being long. */
+        if (i == 0u) uncounted_steps = private_level_budget.spent;
+        if (i == 1u) counted_offset_steps = private_level_budget.spent;
+        check(i == 0u ||
+                  (counted_offset_steps == uncounted_steps + 1u &&
+                   private_level_budget.spent == counted_offset_steps),
+              "a count of successors takes one step, however long it is");
+    }
+    static const char *const refused_counts[] = {
+        "-1", "-99999999999999999999999999", "banana", "(+ 1 1)", "1.5",
+    };
+    for (size_t i = 0u;
+         i < sizeof refused_counts / sizeof refused_counts[0]; i++) {
+        Atom *refused_syntax = private_level_marker
+            ? atom_expr2(
+                  &arena, atom_symbol(&arena, "u"),
+                  atom_expr3(
+                      &arena, atom_symbol(&arena, "+"), private_level_marker,
+                      parse_one(&arena, refused_counts[i])))
+            : NULL;
+        cetta_prime_regular_kernel_budget_init(
+            &private_level_budget, true, UINT64_C(100000));
+        CettaPrimeRegularTermElaborationV1 refused_count =
+            cetta_prime_regular_term_to_pattern_v1(
+                &arena, refused_syntax, &private_level_budget);
+        check(refused_count.status == CETTA_PRIME_REGULAR_TERM_SYNTAX_ERROR &&
+                  refused_count.syntax_error ==
+                      CETTA_PRIME_REGULAR_TERM_INVALID_LEVEL &&
+                  refused_count.pattern == NULL,
+              "a count of successors is a numeral that is not negative");
+    }
+
+    /* Over a level parameter, `(max a b)` is the maximum of the two levels,
+     * with the parameter on either side and a closed level on the other. */
+    static const struct {
+        const char *closed;
+        bool parameter_first;
+        unsigned successors;
+        const char *pattern;
+    } open_maxima[] = {
+        {"1", true, 0u,
+         "(PApp \"Sort\" (LCons (PApp \"LevelMax\" (LCons "
+         " (PApp \"LevelParam\" (LCons 7 LNil)) (LCons "
+         " (PApp \"LevelCantor\" (LCons (PApp \"LevelZero\" LNil) "
+         "  (LCons 1 (LCons (PApp \"LevelZero\" LNil) LNil)))) "
+         " LNil))) LNil))"},
+        {"99999999999999999999999999", true, 0u,
+         "(PApp \"Sort\" (LCons (PApp \"LevelMax\" (LCons "
+         " (PApp \"LevelParam\" (LCons 7 LNil)) (LCons "
+         " (PApp \"LevelCantor\" (LCons (PApp \"LevelZero\" LNil) "
+         "  (LCons 99999999999999999999999999 "
+         "  (LCons (PApp \"LevelZero\" LNil) LNil)))) "
+         " LNil))) LNil))"},
+        {"omega", false, 0u,
+         "(PApp \"Sort\" (LCons (PApp \"LevelMax\" (LCons "
+         " (PApp \"LevelCantor\" (LCons "
+         "  (PApp \"LevelCantor\" (LCons (PApp \"LevelZero\" LNil) "
+         "   (LCons 1 (LCons (PApp \"LevelZero\" LNil) LNil)))) "
+         "  (LCons 1 (LCons (PApp \"LevelZero\" LNil) LNil)))) (LCons "
+         " (PApp \"LevelParam\" (LCons 7 LNil)) LNil))) LNil))"},
+        {"(+ 1 omega)", false, 0u,
+         "(PApp \"Sort\" (LCons (PApp \"LevelMax\" (LCons "
+         " (PApp \"LevelCantor\" (LCons "
+         "  (PApp \"LevelCantor\" (LCons (PApp \"LevelZero\" LNil) "
+         "   (LCons 1 (LCons (PApp \"LevelZero\" LNil) LNil)))) "
+         "  (LCons 1 (LCons (PApp \"LevelZero\" LNil) LNil)))) (LCons "
+         " (PApp \"LevelParam\" (LCons 7 LNil)) LNil))) LNil))"},
+        {"(max 0 (+ 0 0))", true, 1u,
+         "(PApp \"Sort\" (LCons (PApp \"LevelSucc\" (LCons "
+         " (PApp \"LevelMax\" (LCons "
+         "  (PApp \"LevelParam\" (LCons 7 LNil)) (LCons "
+         "  (PApp \"LevelZero\" LNil) LNil))) LNil)) LNil))"},
+    };
+    for (size_t i = 0u; i < sizeof open_maxima / sizeof open_maxima[0]; i++) {
+        Atom *closed = parse_one(&arena, open_maxima[i].closed);
+        Atom *level = private_level_marker && closed
+            ? atom_expr3(
+                  &arena, atom_symbol(&arena, "max"),
+                  open_maxima[i].parameter_first
+                      ? private_level_marker : closed,
+                  open_maxima[i].parameter_first
+                      ? closed : private_level_marker)
+            : NULL;
+        if (level && open_maxima[i].successors != 0u)
+            level = atom_expr3(
+                &arena, atom_symbol(&arena, "+"), level,
+                atom_int(&arena, (int64_t)open_maxima[i].successors));
+        cetta_prime_regular_kernel_budget_init(
+            &private_level_budget, true, UINT64_C(100000));
+        CettaPrimeRegularTermElaborationV1 lowered =
+            cetta_prime_regular_term_to_pattern_v1(
+                &arena,
+                level ? atom_expr2(&arena, atom_symbol(&arena, "u"), level)
+                      : NULL,
+                &private_level_budget);
+        Atom *expected = parse_one(&arena, open_maxima[i].pattern);
+        check(lowered.status == CETTA_PRIME_REGULAR_TERM_OK &&
+                  lowered.pattern && expected &&
+                  atom_eq(lowered.pattern, expected),
+              "a maximum over a level parameter lowers to the level maximum");
+        cetta_prime_regular_kernel_budget_init(
+            &private_level_budget, true, UINT64_C(100000));
+        CettaPrimeRegularPatternElaborationV1 elaborated =
+            cetta_prime_regular_pattern_elaborate_v1(
+                &arena, (CettaPrimeRegularPatternEnvironmentV1){0},
+                lowered.pattern, &private_level_budget);
+        check(elaborated.status == CETTA_PRIME_REGULAR_PATTERN_OK &&
+                  elaborated.term &&
+                  cetta_prime_regular_kernel_term_maybe_syntax(
+                      elaborated.term),
+              "the level maximum of the wire is a level of the kernel");
+    }
+    /* A closed side with a number beyond the machine integers is the level
+     * it writes. */
+    Atom *open_maximum_long = private_level_marker
+        ? atom_expr2(
+              &arena, atom_symbol(&arena, "u"),
+              atom_expr3(
+                  &arena, atom_symbol(&arena, "max"), private_level_marker,
+                  parse_one(&arena, "(+ omega (^ 2 64))")))
+        : NULL;
+    cetta_prime_regular_kernel_budget_init(
+        &private_level_budget, true, UINT64_C(100000));
+    CettaPrimeRegularTermElaborationV1 open_maximum_lowered =
+        cetta_prime_regular_term_to_pattern_v1(
+            &arena, open_maximum_long, &private_level_budget);
+    Atom *open_maximum_long_pattern = parse_one(
+        &arena,
+        "(PApp \"Sort\" (LCons (PApp \"LevelMax\" (LCons "
+        " (PApp \"LevelParam\" (LCons 7 LNil)) (LCons "
+        " (PApp \"LevelCantor\" (LCons "
+        "  (PApp \"LevelCantor\" (LCons (PApp \"LevelZero\" LNil) "
+        "   (LCons 1 (LCons (PApp \"LevelZero\" LNil) LNil)))) "
+        "  (LCons 1 (LCons "
+        "  (PApp \"LevelCantor\" (LCons (PApp \"LevelZero\" LNil) "
+        "   (LCons 18446744073709551616 "
+        "   (LCons (PApp \"LevelZero\" LNil) LNil)))) LNil)))) "
+        " LNil))) LNil))");
+    check(open_maximum_lowered.status == CETTA_PRIME_REGULAR_TERM_OK &&
+              open_maximum_lowered.pattern && open_maximum_long_pattern &&
+              atom_eq(open_maximum_lowered.pattern, open_maximum_long_pattern),
+          "a closed side beyond the machine integers is a side of a "
+          "maximum like any other");
+    /* A closed side no memory holds leaves the maximum incomplete. */
+    Atom *open_maximum_incomplete = private_level_marker
+        ? atom_expr2(
+              &arena, atom_symbol(&arena, "u"),
+              atom_expr3(
+                  &arena, atom_symbol(&arena, "max"), private_level_marker,
+                  parse_one(&arena, "(+ omega (^ 2 (^ 2 100)))")))
+        : NULL;
+    cetta_prime_regular_kernel_budget_init(
+        &private_level_budget, true, UINT64_C(100000));
+    open_maximum_lowered = cetta_prime_regular_term_to_pattern_v1(
+        &arena, open_maximum_incomplete, &private_level_budget);
+    check(open_maximum_lowered.status ==
+              CETTA_PRIME_REGULAR_TERM_BUDGET_EXHAUSTED &&
+              cetta_prime_regular_term_level_incomplete_v1(
+                  &open_maximum_lowered),
+          "a closed side no memory holds leaves a maximum incomplete");
+    Atom *open_maximum_invalid = private_level_marker
+        ? atom_expr2(
+              &arena, atom_symbol(&arena, "u"),
+              atom_expr3(
+                  &arena, atom_symbol(&arena, "max"), private_level_marker,
+                  atom_symbol(&arena, "banana")))
+        : NULL;
+    cetta_prime_regular_kernel_budget_init(
+        &private_level_budget, true, UINT64_C(100000));
+    open_maximum_lowered = cetta_prime_regular_term_to_pattern_v1(
+        &arena, open_maximum_invalid, &private_level_budget);
+    check(open_maximum_lowered.status ==
+              CETTA_PRIME_REGULAR_TERM_SYNTAX_ERROR &&
+              open_maximum_lowered.syntax_error ==
+                  CETTA_PRIME_REGULAR_TERM_INVALID_LEVEL,
+          "what is no level is refused on either side of a maximum");
+    static const char *const malformed_maximum[] = {
+        "(PApp \"LevelMax\" (LCons (PApp \"LevelZero\" LNil) LNil))",
+        "(PApp \"Sort\" (LCons (PApp \"LevelMax\" (LCons "
+        " (PApp \"LevelZero\" LNil) (LCons (PApp \"U1\" LNil) LNil))) "
+        " LNil))",
+    };
+    for (size_t i = 0u;
+         i < sizeof malformed_maximum / sizeof malformed_maximum[0]; i++) {
+        cetta_prime_regular_kernel_budget_init(
+            &private_level_budget, true, UINT64_C(100000));
+        CettaPrimeRegularPatternElaborationV1 refused =
+            cetta_prime_regular_pattern_elaborate_v1(
+                &arena, (CettaPrimeRegularPatternEnvironmentV1){0},
+                parse_one(&arena, malformed_maximum[i]),
+                &private_level_budget);
+        check(refused.status != CETTA_PRIME_REGULAR_PATTERN_OK &&
+                  refused.term == NULL,
+              "a level maximum of the wire takes two levels");
+    }
+
+    /* The counted successor of the wire, `LevelOffset` over a level and a
+     * numeral of any length, is the kernel's `(LevelOffset level count)`. */
+    check_elaboration(
+        &arena, empty,
+        "(PApp \"Sort\" (LCons (PApp \"LevelOffset\" (LCons "
+        " (PApp \"LevelParam\" (LCons 7 LNil)) "
+        " (LCons 99999999999999999999999999 LNil))) LNil))",
+        "(Sort (LevelOffset (LevelParam 7) 99999999999999999999999999))",
+        "a counted successor of the wire has a numeral of any length");
+    check_elaboration(
+        &arena, empty,
+        "(PApp \"Sort\" (LCons (PApp \"LevelOffset\" (LCons "
+        " (PApp \"LevelMax\" (LCons (PApp \"LevelParam\" (LCons 7 LNil)) "
+        "  (LCons (PApp \"LevelZero\" LNil) LNil))) "
+        " (LCons 20000 LNil))) LNil))",
+        "(Sort (LevelOffset (LevelMax (LevelParam 7) (LevelConst 0)) 20000))",
+        "a counted successor of the wire stands over any level");
+    check_elaboration(
+        &arena, empty,
+        "(PApp \"Sort\" (LCons (PApp \"LevelSucc\" (LCons "
+        " (PApp \"LevelOffset\" (LCons (PApp \"LevelZero\" LNil) "
+        "  (LCons 0 LNil))) LNil)) LNil))",
+        "(Sort (LevelSucc (LevelOffset (LevelConst 0) 0)))",
+        "the one-step successor of the wire stands over a counted one");
+    check_elaboration(
+        &arena, empty,
+        "(DeclConst list (LevelOffset (LevelParam 7) "
+        " 99999999999999999999999999) (LevelSucc (LevelParam 7)))",
+        "(DeclConst list (LevelOffset (LevelParam 7) "
+        " 99999999999999999999999999) (LevelSucc (LevelParam 7)))",
+        "a declaration occurrence carries counted successors");
+    static const char *const malformed_counted[] = {
+        "(PApp \"Sort\" (LCons (PApp \"LevelOffset\" (LCons "
+        " (PApp \"LevelZero\" LNil) LNil)) LNil))",
+        "(PApp \"Sort\" (LCons (PApp \"LevelOffset\" (LCons "
+        " (PApp \"LevelZero\" LNil) (LCons banana LNil))) LNil))",
+        "(PApp \"Sort\" (LCons (PApp \"LevelOffset\" (LCons "
+        " (PApp \"LevelZero\" LNil) (LCons -1 LNil))) LNil))",
+        "(PApp \"Sort\" (LCons (PApp \"LevelOffset\" (LCons "
+        " (PApp \"LevelZero\" LNil) "
+        " (LCons (PApp \"LevelZero\" LNil) LNil))) LNil))",
+        "(PApp \"Sort\" (LCons (PApp \"LevelOffset\" (LCons 3 "
+        " (LCons 1 LNil))) LNil))",
+        "(PApp \"Sort\" (LCons (PApp \"LevelOffset\" (LCons "
+        " (PApp \"LevelZero\" LNil) (LCons 1 (LCons 1 LNil)))) LNil))",
+        "(PApp \"Sort\" (LCons (PApp \"LevelCantor\" (LCons "
+        " (PApp \"LevelOffset\" (LCons (PApp \"LevelZero\" LNil) "
+        "  (LCons 1 LNil))) (LCons 1 "
+        " (LCons (PApp \"LevelZero\" LNil) LNil)))) LNil))",
+        "(DeclConst list (LevelOffset (LevelParam 7) banana))",
+        "(DeclConst list (LevelOffset (LevelParam 7) -1))",
+        "(DeclConst list (LevelOffset (LevelParam 7)))",
+        "(DeclConst list (LevelOffset banana 1))",
+    };
+    for (size_t i = 0u;
+         i < sizeof malformed_counted / sizeof malformed_counted[0]; i++) {
+        cetta_prime_regular_kernel_budget_init(
+            &private_level_budget, true, UINT64_C(100000));
+        CettaPrimeRegularPatternElaborationV1 refused =
+            cetta_prime_regular_pattern_elaborate_v1(
+                &arena, (CettaPrimeRegularPatternEnvironmentV1){0},
+                parse_one(&arena, malformed_counted[i]),
+                &private_level_budget);
+        check((refused.status == CETTA_PRIME_REGULAR_PATTERN_SYNTAX_ERROR ||
+               refused.status == CETTA_PRIME_REGULAR_PATTERN_INVALID_WIRE) &&
+                  refused.term == NULL,
+              "a counted successor of the wire takes a level and a numeral "
+              "that is not negative");
+    }
+
+    /* The level constants of the wire carry numerals of any length, and the
+     * wire has the levels above the Cantor normal forms as `LevelAbove` over
+     * a numeral: closed levels of the kernel like the others. */
+    check_elaboration(
+        &arena, empty,
+        "(PApp \"Sort\" (LCons (PApp \"LevelCantor\" (LCons "
+        " (PApp \"LevelZero\" LNil) (LCons 99999999999999999999999999 "
+        " (LCons (PApp \"LevelZero\" LNil) LNil)))) LNil))",
+        "(Sort (LevelConst 99999999999999999999999999))",
+        "a natural constant of the wire has a numeral of any length");
+    check_elaboration(
+        &arena, empty,
+        "(PApp \"Sort\" (LCons (PApp \"LevelCantor\" (LCons "
+        " (PApp \"LevelCantor\" (LCons (PApp \"LevelZero\" LNil) (LCons 1 "
+        "  (LCons (PApp \"LevelZero\" LNil) LNil)))) "
+        " (LCons 99999999999999999999999999 "
+        " (LCons (PApp \"LevelZero\" LNil) LNil)))) LNil))",
+        "(Sort (LevelCantor (LevelConst 1) 99999999999999999999999999 "
+        " (LevelConst 0)))",
+        "a coefficient of the wire has a numeral of any length");
+    check_elaboration(
+        &arena, empty,
+        "(PApp \"Sort\" (LCons (PApp \"LevelAbove\" (LCons 0 LNil)) LNil))",
+        "(Sort (LevelAbove 0))",
+        "the level of the sort of all sets is spelled in the wire");
+    check_elaboration(
+        &arena, empty,
+        "(PApp \"Sort\" (LCons (PApp \"LevelSucc\" (LCons "
+        " (PApp \"LevelAbove\" (LCons 99999999999999999999999999 LNil)) "
+        " LNil)) LNil))",
+        "(Sort (LevelSucc (LevelAbove 99999999999999999999999999)))",
+        "a level above the Cantor normal forms stands under a successor");
+    check_elaboration(
+        &arena, empty,
+        "(DeclConst list (LevelAbove 1) "
+        " (LevelCantor (LevelConst 1) 99999999999999999999999999 "
+        "  (LevelConst 0)) (LevelConst 99999999999999999999999999))",
+        "(DeclConst list (LevelAbove 1) "
+        " (LevelCantor (LevelConst 1) 99999999999999999999999999 "
+        "  (LevelConst 0)) (LevelConst 99999999999999999999999999))",
+        "a declaration occurrence carries level constants of every "
+        "spelling");
+    static const char *const malformed_level_constants[] = {
+        "(PApp \"Sort\" (LCons (PApp \"LevelAbove\" LNil) LNil))",
+        "(PApp \"Sort\" (LCons (PApp \"LevelAbove\" "
+        " (LCons banana LNil)) LNil))",
+        "(PApp \"Sort\" (LCons (PApp \"LevelAbove\" "
+        " (LCons -1 LNil)) LNil))",
+        "(PApp \"Sort\" (LCons (PApp \"LevelAbove\" "
+        " (LCons 0 (LCons 1 LNil))) LNil))",
+        "(PApp \"Sort\" (LCons (PApp \"LevelCantor\" (LCons "
+        " (PApp \"LevelZero\" LNil) (LCons 0 "
+        " (LCons (PApp \"LevelZero\" LNil) LNil)))) LNil))",
+        "(PApp \"Sort\" (LCons (PApp \"LevelCantor\" (LCons "
+        " (PApp \"LevelZero\" LNil) (LCons -99999999999999999999999999 "
+        " (LCons (PApp \"LevelZero\" LNil) LNil)))) LNil))",
+        "(PApp \"Sort\" (LCons (PApp \"LevelCantor\" (LCons "
+        " (PApp \"LevelZero\" LNil) (LCons 3 "
+        " (LCons (PApp \"LevelCantor\" (LCons (PApp \"LevelZero\" LNil) "
+        "  (LCons 1 (LCons (PApp \"LevelZero\" LNil) LNil)))) LNil)))) "
+        " LNil))",
+        "(DeclConst list (LevelAbove banana))",
+        "(DeclConst list (LevelAbove))",
+        "(DeclConst list (LevelConst -99999999999999999999999999))",
+        "(DeclConst list (LevelCantor (LevelConst 1) banana (LevelConst 0)))",
+        "(DeclConst list (LevelCantor (LevelParam 1) 1 (LevelConst 0)))",
+    };
+    for (size_t i = 0u;
+         i < sizeof malformed_level_constants /
+                 sizeof malformed_level_constants[0];
+         i++) {
+        cetta_prime_regular_kernel_budget_init(
+            &private_level_budget, true, UINT64_C(100000));
+        CettaPrimeRegularPatternElaborationV1 refused =
+            cetta_prime_regular_pattern_elaborate_v1(
+                &arena, (CettaPrimeRegularPatternEnvironmentV1){0},
+                parse_one(&arena, malformed_level_constants[i]),
+                &private_level_budget);
+        check((refused.status == CETTA_PRIME_REGULAR_PATTERN_SYNTAX_ERROR ||
+               refused.status == CETTA_PRIME_REGULAR_PATTERN_INVALID_WIRE) &&
+                  refused.term == NULL,
+              "a level constant of the wire that is not one is refused");
+    }
+    /* A level constant of the wire of five thousand terms elaborates within
+     * a budget, and a budget it exceeds is exhausted. */
+    cetta_prime_regular_kernel_budget_init(
+        &private_level_budget, true, UINT64_C(10000000));
+    CettaPrimeRegularTermElaborationV1 long_wire_lowered =
+        cetta_prime_regular_term_to_pattern_v1(
+            &arena, parse_one(&arena, "(u (^ (+ omega 1) 5000))"),
+            &private_level_budget);
+    cetta_prime_regular_kernel_budget_init(
+        &private_level_budget, true, UINT64_C(1000));
+    CettaPrimeRegularPatternElaborationV1 long_wire_exhausted =
+        cetta_prime_regular_pattern_elaborate_v1(
+            &arena, (CettaPrimeRegularPatternEnvironmentV1){0},
+            long_wire_lowered.pattern, &private_level_budget);
+    check(long_wire_lowered.status == CETTA_PRIME_REGULAR_TERM_OK &&
+              long_wire_exhausted.status ==
+                  CETTA_PRIME_REGULAR_PATTERN_BUDGET_EXHAUSTED &&
+              long_wire_exhausted.term == NULL,
+          "a long level constant of the wire exhausts a small budget");
+
+    /* The arithmetic of a level counts against the budget of the lowering.
+     * A level whose value takes more steps than the budget has is read
+     * incompletely for lack of budget: it is a level, it is not refused, and
+     * the budget is spent.  Within a budget its value takes the level is
+     * read. */
+    static const struct {
+        const char *level;
+        uint64_t steps;
+        bool complete;
+    } budgeted_levels[] = {
+        {"(u (^ (+ omega 1) 1000000000))", UINT64_C(100000), false},
+        {"(u (^ (+ omega 1) 5000))", UINT64_C(20000), false},
+        {"(u (^ 2 (^ 2 40)))", UINT64_C(1000000), false},
+        {"(u (* (^ 7 100000) (^ 7 100000)))", UINT64_C(1000), false},
+        {"(u (+ (^ (+ omega 1) 1000000000) 1))", UINT64_C(100000), false},
+        {"(u (^ (+ omega 1) 5000))", UINT64_C(10000000), true},
+        {"(u (^ (+ omega 1) 50))", UINT64_C(100000), true},
+        {"(u (^ 2 (^ 2 7)))", UINT64_C(100000), true},
+        {"(u (+ omega 1))", UINT64_C(100), true},
+    };
+    for (size_t i = 0u;
+         i < sizeof budgeted_levels / sizeof budgeted_levels[0]; i++) {
+        cetta_prime_regular_kernel_budget_init(
+            &private_level_budget, true, budgeted_levels[i].steps);
+        CettaPrimeRegularTermElaborationV1 budgeted =
+            cetta_prime_regular_term_to_pattern_v1(
+                &arena, parse_one(&arena, budgeted_levels[i].level),
+                &private_level_budget);
+        if (budgeted_levels[i].complete)
+            check(budgeted.status == CETTA_PRIME_REGULAR_TERM_OK &&
+                      budgeted.pattern != NULL &&
+                      private_level_budget.remaining != 0u &&
+                      private_level_budget.spent ==
+                          budgeted_levels[i].steps -
+                              private_level_budget.remaining,
+                  "a level is read within a budget its arithmetic takes");
+        else
+            check(budgeted.status ==
+                      CETTA_PRIME_REGULAR_TERM_BUDGET_EXHAUSTED &&
+                      budgeted.pattern == NULL &&
+                      !cetta_prime_regular_term_level_incomplete_v1(
+                          &budgeted) &&
+                      budgeted.reason &&
+                      strcmp(budgeted.reason,
+                             "universe-level-elaboration-budget") == 0 &&
+                      private_level_budget.remaining == 0u &&
+                      private_level_budget.spent == budgeted_levels[i].steps,
+                  "a level whose arithmetic exceeds the budget is read "
+                  "incompletely, for lack of budget");
+    }
+
+    /* The universe at omega is a term of the next one, in the notation an
+     * author writes, and that answer feeds back through checking. */
+    cetta_prime_regular_kernel_budget_init(
+        &check_budget, true, UINT64_C(100000));
+    CettaPrimeRegularTermCheckV1 omega_universe_synth =
+        cetta_prime_regular_term_synth_v1(
+            &arena, atom_symbol(&arena, "PrimeCtxNil"),
+            parse_one(&arena, "(u omega)"), &check_budget);
+    Atom *quoted_omega_universe = omega_universe_synth.judgment.type
+        ? cetta_prime_regular_term_quote_intrinsic_v1(
+              &arena, omega_universe_synth.judgment.type)
+        : NULL;
+    check(omega_universe_synth.judgment.status ==
+              CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED &&
+          quoted_omega_universe && atom_eq(
+              quoted_omega_universe, parse_one(&arena, "(u (+ omega 1))")),
+          "the universe at omega synthesizes its successor universe");
+    cetta_prime_regular_kernel_budget_init(
+        &check_budget, true, UINT64_C(100000));
+    CettaPrimeRegularTermCheckV1 omega_universe_check =
+        cetta_prime_regular_term_elaborate_and_check_v1(
+            &arena, atom_symbol(&arena, "PrimeCtxNil"),
+            parse_one(&arena, "(u omega)"), quoted_omega_universe,
+            &check_budget);
+    cetta_prime_regular_kernel_budget_init(
+        &check_budget, true, UINT64_C(100000));
+    CettaPrimeRegularTermCheckV1 omega_universe_self_check =
+        cetta_prime_regular_term_elaborate_and_check_v1(
+            &arena, atom_symbol(&arena, "PrimeCtxNil"),
+            parse_one(&arena, "(u omega)"), parse_one(&arena, "(u omega)"),
+            &check_budget);
+    check(omega_universe_check.judgment.status ==
+              CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED &&
+          omega_universe_self_check.judgment.status ==
+              CETTA_PRIME_REGULAR_KERNEL_REFUTED,
+          "the universe at omega is in its successor and not in itself");
 
     printf("(PrimeRegularPatternSummary checks=%zu failures=%zu)\n",
            checks, failures);

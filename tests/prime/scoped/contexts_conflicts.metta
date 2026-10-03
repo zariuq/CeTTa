@@ -22,5 +22,6 @@
 ; 6. A space write is a state change, not an assertion that both values hold.
 !(add-atom &kb (counter 1))
 !(let $_ (remove-atom &kb (counter 1)) (let $_ (add-atom &kb (counter 2)) (collapse (match &kb (counter $c) $c))))
-; 7. No success manufactured from an error: try of an erroring program refutes.
+; 7. No success manufactured from an error: try of an erroring program reports
+;    it as Failed, with the error; no judgment was asked, so nothing is refuted.
 !(try (index-atom (a) 5))

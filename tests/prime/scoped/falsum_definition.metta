@@ -28,11 +28,11 @@
 !(set:proves (pf:all-intro (pf:imp-intro (pf:imp-intro (pf:imp-elim (pf:hyp 0) (pf:hyp 1)))))
    (all prop (lam p (imp p (neg p)))))
 
-; The seed EmptyE still concludes Falsum, and so now eliminates into any
+; The law emptyLaw still concludes Falsum, and so now eliminates into any
 ; proposition.
-!(set:proves (pf:imp-intro (pf:imp-elim (pf:all-elim (pf:known EmptyE) Empty) (pf:hyp 0)))
+!(set:proves (pf:imp-intro (pf:imp-elim (pf:all-elim (pf:known emptyLaw) Empty) (pf:hyp 0)))
    (imp (In Empty Empty) Falsum))
-!(set:proves (pf:imp-intro (pf:all-elim (pf:imp-elim (pf:all-elim (pf:known EmptyE) Empty) (pf:hyp 0)) q))
+!(set:proves (pf:imp-intro (pf:all-elim (pf:imp-elim (pf:all-elim (pf:known emptyLaw) Empty) (pf:hyp 0)) q))
    (imp (In Empty Empty) q))
 
 ; The native package of ex falso is checked by the kernel with the definition's
@@ -42,7 +42,7 @@
 ; No closed proof of Falsum is accepted.
 !(set:proves (pf:imp-intro (pf:hyp 0)) Falsum)
 !(set:proves (pf:all-intro (pf:hyp 0)) Falsum)
-!(set:proves (pf:known EmptyE) Falsum)
+!(set:proves (pf:known emptyLaw) Falsum)
 !(set:theorem bottom-proved Falsum (pf:all-intro (pf:hyp 0)))
 
 ; The same ex-falso proof does not eliminate an opaque proposition.

@@ -17,7 +17,7 @@
 ; First-order reading: the universal checked leaf by leaf at enumerated witnesses.
 (= (witnesses) (superpose (Empty (Power Empty) (UnivOf Empty))))
 !(let $w (witnesses)
-   (set:proves (pf:all-elim (pf:known PowerI) $w) (In $w (Power $w))))
+   (set:proves (pf:all-elim (pf:known universeIn) $w) (In $w (UnivOf $w))))
 ; Higher-order statement: the same claim once, for every witness.
-!(set:proves (pf:all-intro (pf:all-elim (pf:known PowerI) (pf:var 0)))
-             (all set (lam x (In x (Power x)))))
+!(set:proves (pf:all-intro (pf:all-elim (pf:known universeIn) (pf:var 0)))
+             (all set (lam x (In x (UnivOf x)))))

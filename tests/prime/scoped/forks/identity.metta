@@ -2,11 +2,23 @@
 ; Application sees only the proposition; learning sees the route; revision
 ; sees which route survives when a premise is withdrawn.
 
+; Every set is a member of its power set: the law of the power set at the set
+; itself, whose second half, read from right to left, applies to the proof
+; that every member of the set is a member of it.
+!(set:theorem power-self (all set (lam x (In x (Power x))))
+   (pf:all-intro
+     (pf:imp-elim
+       (pf:imp-elim
+         (pf:all-elim (pf:all-elim (pf:all-elim (pf:known powerLaw) (pf:var 0)) (pf:var 0))
+           (imp (all set (lam y (imp (In y (pf:var 0)) (In y (pf:var 0)))))
+                (In (pf:var 0) (Power (pf:var 0)))))
+         (pf:imp-intro (pf:imp-intro (pf:hyp 0))))
+       (pf:all-intro (pf:imp-intro (pf:hyp 0))))))
 !(set:theorem membership-implication (imp (In Empty Empty) (In Empty (Power Empty)))
-              (pf:imp-intro (pf:all-elim (pf:known PowerI) Empty)))
+              (pf:imp-intro (pf:all-elim (pf:known power-self) Empty)))
 !(set:axiom live-assumption (In Empty Empty))
 !(set:theorem via-power (In Empty (Power Empty))
-              (pf:all-elim (pf:known PowerI) Empty))
+              (pf:all-elim (pf:known power-self) Empty))
 !(set:theorem via-implication (In Empty (Power Empty))
               (pf:imp-elim (pf:known membership-implication) (pf:known live-assumption)))
 

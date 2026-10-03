@@ -1,5 +1,6 @@
 #include "prime_scoped_judgments.h"
 #include "generated/prime_nik_authorities_v1.generated.h"
+#include "prime_arith_oracle.h"
 
 #include "lang.h"
 #include "native_sha256.h"
@@ -8,8 +9,10 @@
 #include "prime_regular_kernel.h"
 #include "prime_regular_pattern.h"
 #include "prime_semantics.h"
+#include "eval.h"
 #include "stats.h"
 
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,6 +38,16 @@ static Atom *sj_expr2(Arena *a, const char *head, Atom *x) {
 static Atom *sj_expr3(Arena *a, const char *head, Atom *x, Atom *y) {
     return atom_expr3(a, sj_sym(a, head), x, y);
 }
+
+/* A name a program would define as a constant is refused when it is
+ * reserved: an identity proof packages generate, or a name Prime interprets
+ * itself (cetta_prime_reserved_name_reason) that the space already declares
+ * through Prime's own library, with the reason; such a definition could not
+ * be admitted beside that declaration.  Otherwise a theory may name its
+ * constants `and`, `not` or `eval`: the definition takes effect, when run
+ * and in judgments. */
+static Atom *sj_reserved_definition(Arena *a, Space *space, Atom *judgment,
+                                    Atom *name);
 
 static Atom *sj_verdict(Arena *a, const char *status, Atom *judgment,
                         Atom *evidence) {
@@ -117,6 +130,7 @@ bool prime_scoped_judgment_is_head_id(SymbolId head) {
            head == g_builtin_syms.set_colon_axiom ||
            head == g_builtin_syms.set_colon_define ||
            head == g_builtin_syms.set_colon_inductive ||
+           head == g_builtin_syms.set_colon_family ||
            head == g_builtin_syms.set_colon_theorem ||
            head == g_builtin_syms.set_colon_native_proof ||
            head == g_builtin_syms.set_colon_native_use ||
@@ -127,6 +141,8 @@ bool prime_scoped_judgment_is_head_id(SymbolId head) {
            head == g_builtin_syms.set_colon_known_proof ||
            head == g_builtin_syms.set_colon_known_proposition ||
            head == g_builtin_syms.set_colon_signature_digest ||
+           head == g_builtin_syms.set_colon_numerals ||
+           head == g_builtin_syms.set_colon_oracle ||
            head == g_builtin_syms.lang_colon_languages ||
            head == g_builtin_syms.lang_colon_parse ||
            head == g_builtin_syms.lang_colon_print ||
@@ -138,13 +154,15 @@ bool prime_scoped_judgment_is_head_id(SymbolId head) {
 }
 
 /* ------------------------------------------------------------------------ */
-/* The admitted `set:` signature.  The quantifier and equality are declared   */
-/* once, polymorphic over a universe level; every use is an instance at a     */
-/* simple type, and the proof checker lowers instances to simple constants   */
-/* for the kernel, a specialization that keeps the higher-order source.     */
-/* Base types live in the tower universe `(u 0)`; the legacy `u0`/`u1` and   */
-/* HE `Type` spellings are not accepted as declared base types by the        */
-/* declared route.                                                           */
+/* The admitted `set:` signature.  `set` is the sort of all sets, above     */
+/* every universe `(u l)` an author writes, and `class` is its sort.  The    */
+/* quantifier and equality are declared once, over any type of `class`: a   */
+/* set, the type of all sets, or a type of predicates or functions on them; */
+/* no level variable is needed.  Every use is an instance at a simple type, */
+/* and the proof checker lowers instances to simple constants for the       */
+/* kernel, a specialization that keeps the higher-order source.  `prop`     */
+/* lives in the tower universe `(u 0)`; the legacy `u0`/`u1` and HE `Type`  */
+/* spellings are not accepted as declared base types by the declared route. */
 /*                                                                            */
 /* A `set:define` entry defines a constant of the signature.  It is checked   */
 /* by the same judgment as a program's definitions, in order, against the    */
@@ -152,15 +170,28 @@ bool prime_scoped_judgment_is_head_id(SymbolId head) {
 /* by its equations in every space.  A refused entry leaves the signature    */
 /* unavailable rather than the constant opaque.  Falsity is defined, as the   */
 /* proposition that implies every proposition.                               */
+/*                                                                            */
+/* The seeds are the eleven laws of the sets and their universes, as Lean's */
+/* package of the tower inside the sets states them (`lawRows`): seven laws  */
+/* of sets and four of `UnivOf`, each named by its Lean row.  Conjunction,   */
+/* equivalence and the existential quantifier are written out by their      */
+/* definitions from `imp` and `all`, as that package writes them, and       */
+/* negation as implication of Falsum.  `Eps_set` has its type and no law.   */
+/*                                                                            */
+/* A `set:native-rule` entry names a rule constant of native proof packages  */
+/* and the rule it is: the introduction or elimination of implication, of    */
+/* the quantifier, or of the equation code.  A package declares the rule     */
+/* constants at the carriers it compiles by them, with the types the native  */
+/* compiler gives them over the package's proof family; they have no         */
+/* equation, so the kernel computes nothing with them.                       */
 /* ------------------------------------------------------------------------ */
 
 static const char SJ_SET_SIGNATURE_TEXT[] =
-    "(: set (u 0))\n"
     "(: prop (u 0))\n"
     "(: imp (-> prop (-> prop prop)))\n"
-    "(: all (-> (A : (u $level)) (-> (-> A prop) prop)))\n"
+    "(: all (-> (A : class) (-> (-> A prop) prop)))\n"
     "(set:define Falsum prop (= Falsum (all prop (lam p p))))\n"
-    "(: eq (-> (A : (u $level)) (-> A (-> A prop))))\n"
+    "(: eq (-> (A : class) (-> A (-> A prop))))\n"
     "(: In (-> set (-> set prop)))\n"
     "(: Empty set)\n"
     "(: Union (-> set set))\n"
@@ -169,9 +200,62 @@ static const char SJ_SET_SIGNATURE_TEXT[] =
     "(: Repl (-> set (-> (-> set set) set)))\n"
     "(: Eps_set (-> (-> set prop) set))\n"
     "(: UnivOf (-> set set))\n"
-    "(set:seed EmptyE (all set (lam x (imp (In x Empty) Falsum))))\n"
-    "(set:seed PowerI (all set (lam x (In x (Power x)))))\n"
-    "(set:seed UnivOfI (all set (lam x (In x (UnivOf x)))))\n";
+    /* extensionality, Megalodon law_extensionality: sets with the same members are equal. */
+    "(set:seed extensionality (all set (lam a (all set (lam b (imp (all set (lam x (all "
+    "prop (lam r (imp (imp (imp (In x a) (In x b)) (imp (imp (In x b) (In x a)) r)) "
+    "r))))) (eq set a b)))))))\n"
+    /* emptyLaw, Megalodon law_empty: nothing is a member of Empty. */
+    "(set:seed emptyLaw (all set (lam x (imp (In x Empty) Falsum))))\n"
+    /* unionLaw, Megalodon law_union: the members of a union. */
+    "(set:seed unionLaw (all set (lam a (all set (lam x (all prop (lam r (imp (imp (imp "
+    "(In x (Union a)) (all prop (lam r (imp (all set (lam y (imp (all prop (lam r (imp "
+    "(imp (In y a) (imp (In x y) r)) r))) r))) r)))) (imp (imp (all prop (lam r (imp (all"
+    " set (lam y (imp (all prop (lam r (imp (imp (In y a) (imp (In x y) r)) r))) r))) "
+    "r))) (In x (Union a))) r)) r))))))))\n"
+    /* powerLaw, Megalodon law_power: the members of a power set. */
+    "(set:seed powerLaw (all set (lam a (all set (lam x (all prop (lam r (imp (imp (imp "
+    "(In x (Power a)) (all set (lam y (imp (In y x) (In y a))))) (imp (imp (all set (lam "
+    "y (imp (In y x) (In y a)))) (In x (Power a))) r)) r))))))))\n"
+    /* separationLaw, Megalodon law_separation: the members of a separated set. */
+    "(set:seed separationLaw (all set (lam a (all (-> set prop) (lam P (all set (lam x "
+    "(all prop (lam r (imp (imp (imp (In x (Sep a P)) (all prop (lam r (imp (imp (In x a)"
+    " (imp (P x) r)) r)))) (imp (imp (all prop (lam r (imp (imp (In x a) (imp (P x) r)) "
+    "r))) (In x (Sep a P))) r)) r))))))))))\n"
+    /* replacementLaw, Megalodon law_replacement: the members of a replacement. */
+    "(set:seed replacementLaw (all set (lam a (all (-> set set) (lam F (all set (lam y "
+    "(all prop (lam r (imp (imp (imp (In y (Repl a F)) (all prop (lam r (imp (all set "
+    "(lam x (imp (all prop (lam r (imp (imp (In x a) (imp (eq set (F x) y) r)) r))) r))) "
+    "r)))) (imp (imp (all prop (lam r (imp (all set (lam x (imp (all prop (lam r (imp "
+    "(imp (In x a) (imp (eq set (F x) y) r)) r))) r))) r))) (In y (Repl a F))) r)) "
+    "r))))))))))\n"
+    /* setInduction, Megalodon law_set_induction: induction on membership. */
+    "(set:seed setInduction (all (-> set prop) (lam P (imp (all set (lam X (imp (all set "
+    "(lam x (imp (In x X) (P x)))) (P X)))) (all set (lam X (P X)))))))\n"
+    /* universeIn, Megalodon law_universe_in: a set is a member of its universe. */
+    "(set:seed universeIn (all set (lam N (In N (UnivOf N)))))\n"
+    /* universeTransitive, Megalodon law_universe_transitive: a universe is transitive. */
+    "(set:seed universeTransitive (all set (lam N (all set (lam x (imp (In x (UnivOf N)) "
+    "(all set (lam z (imp (In z x) (In z (UnivOf N)))))))))))\n"
+    /* universeClosed, Megalodon law_universe_closed: a universe is closed. */
+    "(set:seed universeClosed (all set (lam N (all prop (lam r (imp (imp (all set (lam x "
+    "(imp (In x (UnivOf N)) (In (Union x) (UnivOf N))))) (imp (all prop (lam r (imp (imp "
+    "(all set (lam x (imp (In x (UnivOf N)) (In (Power x) (UnivOf N))))) (imp (all set "
+    "(lam a (imp (In a (UnivOf N)) (all (-> set set) (lam f (imp (all set (lam x (imp (In"
+    " x a) (In (f x) (UnivOf N))))) (In (Repl a f) (UnivOf N)))))))) r)) r))) r)) r))))))\n"
+    /* universeMinimal, Megalodon law_universe_minimal: a universe is the least such set. */
+    "(set:seed universeMinimal (all set (lam N (all set (lam U (imp (In N U) (imp (all "
+    "set (lam x (imp (In x U) (all set (lam z (imp (In z x) (In z U))))))) (imp (all prop"
+    " (lam r (imp (imp (all set (lam x (imp (In x U) (In (Union x) U)))) (imp (all prop "
+    "(lam r (imp (imp (all set (lam x (imp (In x U) (In (Power x) U)))) (imp (all set "
+    "(lam a (imp (In a U) (all (-> set set) (lam f (imp (all set (lam x (imp (In x a) (In"
+    " (f x) U)))) (In (Repl a f) U))))))) r)) r))) r)) r))) (all set (lam z (imp (In z "
+    "(UnivOf N)) (In z U))))))))))))\n"
+    "(set:native-rule impI imp-intro)\n"
+    "(set:native-rule impE imp-elim)\n"
+    "(set:native-rule allI all-intro)\n"
+    "(set:native-rule allE all-elim)\n"
+    "(set:native-rule eqI eq-intro)\n"
+    "(set:native-rule eqE eq-elim)\n";
 
 /* Content digest of the admitted signature: the theory a published fact was
  * checked against.  Reuse under a different signature is not automatic. */
@@ -185,8 +269,10 @@ static const char *sj_signature_digest(void) {
 
 /* A known proposition is an eight-place record:
  *   (set:known name proposition origin proof depends revision signature)
- * origin ∈ {signature, axiom, theorem, inductive, definition}; proof is the
- * proof of a theorem, and of a definition the evidence it was admitted on,
+ * origin ∈ {signature, axiom, theorem, inductive, definition, family}; proof
+ * is the proof of a theorem, of a family's constant the set model it was
+ * admitted on, (set-model theorem), and of a definition the evidence it was
+ * admitted on,
  *   (definition-evidence (rules arity rule ...) termination),
  * where termination is (structural position type (constructor (field ...)) ...),
  * listing for each equation the constructor fields its recursive calls
@@ -268,7 +354,17 @@ static void sj_admitted_grow(void) {
     free(old);
 }
 
+/* Moves whenever admission publishes or withdraws anything, or the
+ * signature's own records change: what was found admitted before may differ
+ * after. */
+static uint64_t g_admission_epoch = 1u;
+
+uint64_t prime_scoped_judgment_admission_epoch(void) {
+    return g_admission_epoch;
+}
+
 static void sj_admitted_insert(uint64_t instance, const char *digest) {
+    g_admission_epoch++;
     if (g_admitted_count * 2u >= g_admitted_cap) sj_admitted_grow();
     size_t slot = sj_admitted_slot(instance, digest);
     for (size_t probe = 0u; probe < g_admitted_cap; probe++) {
@@ -289,6 +385,7 @@ static void sj_admitted_insert(uint64_t instance, const char *digest) {
 /* Withdraw an admission: the record stays in its space as syntax, and is
  * reusable again only once admitted again. */
 static void sj_admitted_revoke(uint64_t instance, const char *digest) {
+    g_admission_epoch++;
     if (!g_admitted_cap) return;
     size_t slot = sj_admitted_slot(instance, digest);
     for (size_t probe = 0u; probe < g_admitted_cap; probe++) {
@@ -387,6 +484,37 @@ typedef struct {
     Atom *prop;                  /* the authored (define type equations...) */
 } SjDefinition;
 
+/* The rules of the logic a native proof package can name by a constant. */
+typedef enum {
+    SJ_NATIVE_IMP_INTRO,
+    SJ_NATIVE_IMP_ELIM,
+    SJ_NATIVE_ALL_INTRO,
+    SJ_NATIVE_ALL_ELIM,
+    SJ_NATIVE_EQ_INTRO,
+    SJ_NATIVE_EQ_ELIM,
+    SJ_NATIVE_RULE_COUNT
+} SjNativeRuleRole;
+
+static const char *const SJ_NATIVE_RULE_ROLES[SJ_NATIVE_RULE_COUNT] = {
+    "imp-intro", "imp-elim", "all-intro", "all-elim", "eq-intro", "eq-elim",
+};
+
+/* A functor whose stored atoms a space declares typed with
+ * `(type:stored (F T1 ... Tn))`, read once per revision of the space: its
+ * stored occurrences in the order of the space, their names, and their
+ * arguments in kernel spelling.  A functor whose stored atoms do not all
+ * have the declared types is kept with the reason, and gives nothing. */
+typedef struct SjStoredFunctor {
+    Atom *functor;
+    Atom *declared;              /* (F T1 ... Tn) */
+    size_t arity;
+    size_t count;
+    Atom **atoms;                /* the stored occurrences */
+    Atom **names;                /* their names */
+    Atom ***arguments;           /* [occurrence][position 1..arity], kernel */
+    Atom *failure;               /* why the declaration does not hold */
+} SjStoredFunctor;
+
 typedef struct {
     bool parsed;
     Arena arena;                 /* process-lifetime owner of the parsed text */
@@ -421,23 +549,33 @@ typedef struct {
     SjDefinition *defs;          /* the space's definitions, reloaded per revision */
     size_t def_count;
     Atom *kernel_rules;          /* (LCons (PrimeRule ...) ...) from the space's type:rule atoms */
+    Atom *native_rules[SJ_NATIVE_RULE_COUNT]; /* the rule constants, by role */
+    struct SjStoredFunctor *stored; /* functors the space declares stored typed */
+    size_t stored_count;
+    Atom **stored_atoms;         /* the declarations and equations they give */
+    size_t stored_atom_count;
 } SjSetEnv;
 
 static SjSetEnv g_set_env;
 
+static bool sj_is_sort(Atom *t);
+
+/* Whether a type binds a variable at a sort, `(A : (u l))` or `(A : class)`:
+ * the type of a polymorphic head. */
 static bool sj_type_binds_universe(Atom *type) {
     if (!type || type->kind != ATOM_EXPR) return false;
     if (type->expr.len == 3u && atom_is_symbol(type->expr.elems[1], ":") &&
-        sj_is_expr(type->expr.elems[2], "u", 2u))
+        sj_is_sort(type->expr.elems[2]))
         return true;
     for (CettaExprIndex i = 0u; i < type->expr.len; i++)
         if (sj_type_binds_universe(type->expr.elems[i])) return true;
     return false;
 }
 
-/* A declaration joins the signature's classification of its names. */
+/* A declaration joins the signature's classification of its names: a name
+ * declared at a sort, `set` included, is a base type. */
 static void sj_env_classify_declaration(SjSetEnv *env, Atom *declaration) {
-    if (sj_is_expr(declaration->expr.elems[2], "u", 2u))
+    if (sj_is_sort(declaration->expr.elems[2]))
         env->base_types[env->base_type_count++] = declaration->expr.elems[1];
     else if (sj_type_binds_universe(declaration->expr.elems[2]))
         env->poly_heads[env->poly_count++] = declaration->expr.elems[1];
@@ -472,6 +610,11 @@ static bool sj_env_parse(SjSetEnv *env) {
                    atom_is_symbol(atom->expr.elems[0], "set:define")) {
             env->definition_positions[env->definition_count] = env->signature_count;
             env->definitions[env->definition_count++] = atom;
+        } else if (sj_is_expr(atom, "set:native-rule", 3u) &&
+                   atom->expr.elems[1]->kind == ATOM_SYMBOL) {
+            for (size_t role = 0u; role < SJ_NATIVE_RULE_COUNT; role++)
+                if (atom_is_symbol(atom->expr.elems[2], SJ_NATIVE_RULE_ROLES[role]))
+                    env->native_rules[role] = atom->expr.elems[1];
         }
     }
     free(atoms);
@@ -533,6 +676,7 @@ static bool sj_env_check_definitions(SjSetEnv *env) {
     }
     env->theory_checking = false;
     env->theory_ready = true;
+    g_admission_epoch++;
     /* The environment built while checking was the theory's own. */
     if (env->overlay_ready) {
         space_free(&env->overlay);
@@ -582,7 +726,9 @@ static void sj_env_add_definitions(SjSetEnv *env, Space *space) {
             !sj_record_admitted(a, space, atom))
             continue;
         Atom *evidence = atom->expr.elems[SJ_KNOWN_PROOF];
-        if (!sj_is_expr(evidence, "definition-evidence", 3u)) continue;
+        if (!evidence || evidence->kind != ATOM_EXPR || evidence->expr.len < 3u ||
+            !atom_is_symbol(evidence->expr.elems[0], "definition-evidence"))
+            continue;
         Atom *compiled = evidence->expr.elems[1];
         if (!compiled || compiled->kind != ATOM_EXPR || compiled->expr.len < 2u ||
             !atom_is_symbol(compiled->expr.elems[0], "rules") ||
@@ -665,6 +811,8 @@ static void sj_env_load_kernel_rules(SjSetEnv *env, Space *space) {
     env->kernel_rules = list;
 }
 
+static void sj_env_load_stored(SjSetEnv *env, Space *space);
+
 static SjSetEnv *sj_env(Space *space) {
     SjSetEnv *env = &g_set_env;
     if (!sj_env_parse(env)) return NULL;
@@ -690,6 +838,7 @@ static SjSetEnv *sj_env(Space *space) {
     env->constant_count = 0u;
     sj_env_load_definitions(env, space);
     sj_env_load_kernel_rules(env, space);
+    sj_env_load_stored(env, space);
     return env;
 }
 
@@ -705,7 +854,7 @@ static bool sj_env_is_base_type(SjSetEnv *env, Atom *name) {
         &env->overlay, &env->arena, name, &declared, &cost);
     bool base = false;
     for (uint32_t i = 0u; i < count && !base; i++)
-        base = sj_is_expr(declared[i], "u", 2u);
+        base = sj_is_sort(declared[i]);
     free(declared);
     return base;
 }
@@ -787,16 +936,30 @@ static Atom *sj_known_lookup(Arena *a, SjSetEnv *env, Space *space, Atom *name,
 /* occurs only applied to a closed simple type.                              */
 /* ------------------------------------------------------------------------ */
 
+/* A sort: a universe `(u l)`, a sort above them by name (`set`, `class`,
+ * `(class n)`), the kernel's `(Sort level)`, or a legacy spelling. */
 static bool sj_is_sort(Atom *t) {
     return atom_is_symbol(t, "U0") || atom_is_symbol(t, "U1") ||
            atom_is_symbol(t, "u0") || atom_is_symbol(t, "u1") ||
-           sj_is_expr(t, "Sort", 2u) || sj_is_expr(t, "u", 2u);
+           sj_is_expr(t, "Sort", 2u) || sj_is_expr(t, "u", 2u) ||
+           cetta_prime_regular_kernel_sort_above_spelling_v1(NULL, t, NULL);
 }
+
+static bool sj_env_declares_type_former(SjSetEnv *env, Atom *head, size_t argc);
 
 static bool sj_authored_simple_type(SjSetEnv *env, Atom *t) {
     if (!t) return false;
     if (sj_is_sort(t)) return true;
     if (t->kind == ATOM_SYMBOL) return sj_env_is_base_type(env, t);
+    /* A declared type former applied to simple types, `(Stream num)`, is a
+     * type of the fragment like a base type: every use is at closed
+     * arguments. */
+    if (t->kind == ATOM_EXPR && t->expr.len >= 2u &&
+        sj_env_declares_type_former(env, t->expr.elems[0], (size_t)t->expr.len - 1u)) {
+        for (CettaExprIndex i = 1u; i < t->expr.len; i++)
+            if (!sj_authored_simple_type(env, t->expr.elems[i])) return false;
+        return true;
+    }
     if (t->kind == ATOM_EXPR && t->expr.len >= 3u &&
         atom_is_symbol(t->expr.elems[0], "->")) {
         for (CettaExprIndex i = 1u; i < t->expr.len; i++) {
@@ -825,6 +988,34 @@ static bool sj_env_declares_applied(SjSetEnv *env, Atom *head, size_t argc) {
         fits = argc <= sj_type_arity(declared[i]);
     free(declared);
     return fits;
+}
+
+/* Whether the extended space declares `head` a type former of `argc`
+ * arguments: at a type `(-> A1 ... An S)` of plain domains with a sort `S`. */
+static bool sj_env_declares_type_former(SjSetEnv *env, Atom *head, size_t argc) {
+    if (!env->overlay_ready || !head || head->kind != ATOM_SYMBOL || argc == 0u)
+        return false;
+    Atom **declared = NULL;
+    SpaceDeclaredTypeLookupCost cost = {0};
+    uint32_t count = space_get_declared_types_costed(
+        &env->overlay, &env->arena, head, &declared, &cost);
+    bool former = false;
+    for (uint32_t i = 0u; i < count && !former; i++) {
+        Atom *type = declared[i];
+        if (!type || type->kind != ATOM_EXPR || (size_t)type->expr.len != argc + 2u ||
+            !atom_is_symbol(type->expr.elems[0], "->") ||
+            !sj_is_sort(type->expr.elems[type->expr.len - 1u]))
+            continue;
+        former = true;
+        for (CettaExprIndex k = 1u; former && k + 1u < type->expr.len; k++) {
+            Atom *domain = type->expr.elems[k];
+            former = !(domain && domain->kind == ATOM_EXPR && domain->expr.len == 3u &&
+                       (atom_is_symbol(domain->expr.elems[0], ":") ||
+                        atom_is_symbol(domain->expr.elems[1], ":")));
+        }
+    }
+    free(declared);
+    return former;
 }
 
 static bool sj_authored_simple_term(SjSetEnv *env, Atom *t) {
@@ -1164,8 +1355,27 @@ static SjDefinition *sj_definition_of(Atom *head) {
 
 /* First-order matching of a compiled pattern against an argument; a
  * constructor pattern looks at the argument's weak head normal form. */
+static bool sj_binds_body(Atom *t, CettaExprIndex i);
+
+/* Whether `t` has no variable bound outside it and no metavariable. */
+static bool sj_term_closed(Atom *t, uint64_t depth) {
+    if (!t || t->kind != ATOM_EXPR) return true;
+    uint64_t index = 0u;
+    if (sj_intrinsic_index(t, &index)) return index < depth;
+    if (sj_is_expr(t, "pf:meta", 2u) || sj_is_expr(t, "pf:var", 2u)) return false;
+    for (CettaExprIndex i = 1u; i < t->expr.len; i++)
+        if (!sj_term_closed(t->expr.elems[i], sj_binds_body(t, i) ? depth + 1u : depth))
+            return false;
+    return true;
+}
+
 static bool sj_match_rule(Arena *a, Atom *pat, Atom *arg, Atom **sols,
                           size_t nvars, unsigned *fuel) {
+    /* A guarded position of a rule admitted on a set solution matches only
+     * a closed argument. */
+    if (sj_is_expr(pat, "PGuard", 2u))
+        return sj_term_closed(arg, 0u) &&
+               sj_match_rule(a, pat->expr.elems[1], arg, sols, nvars, fuel);
     uint64_t index = 0u;
     if (sj_intrinsic_index(pat, &index)) {
         if (index >= nvars) return false;
@@ -1310,14 +1520,50 @@ static bool sj_constant_named(Atom *t, const char *name) {
            atom_is_symbol(t->expr.elems[1], name);
 }
 
+/* The tower universe `(u level)` in kernel spelling.  At a numeral n that is
+ * a machine integer it is `(Sort (LevelConst n))`.  Any other closed level,
+ * such as a longer numeral, `(u omega)` or `(u (+ 1 2))`, is read as the
+ * authored term syntax reads it, where a natural number of any length is
+ * again spelled `(Sort (LevelConst n))`.  A level that does not read is kept
+ * as written, and the kernel declines it. */
+static Atom *sj_universe_to_kernel(Arena *a, Atom *universe) {
+    Atom *level = universe->expr.elems[1];
+    if (level && !(level->kind == ATOM_GROUNDED &&
+                   level->ground.gkind == GV_INT)) {
+        CettaPrimeRegularKernelBudget budget;
+        cetta_prime_regular_kernel_budget_init(&budget, false, 0u);
+        CettaPrimeRegularTermElaborationV1 lowered =
+            cetta_prime_regular_term_to_pattern_v1(a, universe, &budget);
+        if (lowered.status == CETTA_PRIME_REGULAR_TERM_OK) {
+            CettaPrimeRegularPatternEnvironmentV1 closed = {0};
+            CettaPrimeRegularPatternElaborationV1 elaborated =
+                cetta_prime_regular_pattern_elaborate_v1(
+                    a, closed, lowered.pattern, &budget);
+            if (elaborated.status == CETTA_PRIME_REGULAR_PATTERN_OK)
+                return elaborated.term;
+        }
+    }
+    return sj_expr2(a, "Sort", sj_expr2(a, "LevelConst", level));
+}
+
+/* A sort above the written universes, by its name, in kernel spelling:
+ * `(Sort (LevelAbove n))`.  NULL for anything else. */
+static Atom *sj_sort_above_to_kernel(Arena *a, Atom *t) {
+    Atom *numeral = NULL;
+    return cetta_prime_regular_kernel_sort_above_spelling_v1(a, t, &numeral)
+        ? cetta_prime_regular_kernel_sort_above_term_v1(a, numeral) : NULL;
+}
+
 /* Kernel spelling: bare constants become `(DeclConst c)`, the tower universe
- * `(u n)` becomes `(Sort (LevelConst n))`; indices, `App`, `Lam`, `Pi` are
- * shared. */
+ * `(u n)` becomes `(Sort (LevelConst n))`, and `set` and `class` the sorts
+ * `(Sort (LevelAbove 0))` and `(Sort (LevelAbove 1))`; indices, `App`,
+ * `Lam`, `Pi` are shared. */
 static Atom *sj_to_kernel(Arena *a, Atom *t) {
     if (!t) return NULL;
     if (sj_is_constant(t)) return sj_expr2(a, "DeclConst", t);
-    if (sj_is_expr(t, "u", 2u))
-        return sj_expr2(a, "Sort", sj_expr2(a, "LevelConst", t->expr.elems[1]));
+    if (sj_is_expr(t, "u", 2u)) return sj_universe_to_kernel(a, t);
+    Atom *above = sj_sort_above_to_kernel(a, t);
+    if (above) return above;
     if (sj_is_leaf(t)) return t;
     Atom **children = sj_children(a, t);
     if (!children) return NULL;
@@ -1328,14 +1574,246 @@ static Atom *sj_to_kernel(Arena *a, Atom *t) {
     return sj_rebuild(a, t, children);
 }
 
+/* ------------------------------------------------------------------------ */
+/* Stored atoms declared typed.  `(type:stored (F T1 ... Tn))` in a space     */
+/* says that every stored atom `(F x1 ... xn)` is an occurrence, with xi a    */
+/* term of Ti.  The occurrences are the type `F@occurrence`; an occurrence    */
+/* is named by its content, `F@x1@...@xn`, and the k-th stored copy of one   */
+/* atom, for k from 2, by `F@x1@...@xn#k`, so that removing an atom renames   */
+/* no other atom, only a later copy of the same one; and the i-th argument    */
+/* of an occurrence is `F@argi`, with one equation for each stored atom.      */
+/* These declarations and equations are part of the space for the `type:`    */
+/* and `set:` judgments on it.                                               */
+/* ------------------------------------------------------------------------ */
+
+static Atom *sj_stored_name(Arena *a, Atom *functor, Atom *atom, size_t copy) {
+    size_t bytes = strlen(atom_name_cstr(functor)) + 24u;
+    for (CettaExprIndex i = 1u; i < atom->expr.len; i++) {
+        char *shown = atom_to_string(a, atom->expr.elems[i]);
+        bytes += strlen(shown ? shown : "") + 1u;
+    }
+    char *name = arena_alloc(a, bytes);
+    size_t at = (size_t)snprintf(name, bytes, "%s", atom_name_cstr(functor));
+    for (CettaExprIndex i = 1u; i < atom->expr.len; i++) {
+        char *shown = atom_to_string(a, atom->expr.elems[i]);
+        at += (size_t)snprintf(name + at, bytes - at, "@%s", shown ? shown : "");
+    }
+    if (copy > 1u)
+        snprintf(name + at, bytes - at, "#%zu", copy);
+    return sj_sym(a, name);
+}
+
+static Atom *sj_stored_map_name(Arena *a, Atom *functor, const char *suffix) {
+    size_t bytes = strlen(atom_name_cstr(functor)) + strlen(suffix) + 2u;
+    char *name = arena_alloc(a, bytes);
+    snprintf(name, bytes, "%s@%s", atom_name_cstr(functor), suffix);
+    return sj_sym(a, name);
+}
+
+static Atom *sj_stored_argument_name(Arena *a, Atom *functor, size_t position) {
+    char suffix[32];
+    snprintf(suffix, sizeof suffix, "arg%zu", position);
+    return sj_stored_map_name(a, functor, suffix);
+}
+
+static void sj_stored_add(SjSetEnv *env, Atom *atom, size_t *cap) {
+    if (env->stored_atom_count == *cap) {
+        size_t next = *cap ? 2u * *cap : 16u;
+        Atom **grown = arena_alloc(&env->arena, sizeof(Atom *) * next);
+        for (size_t i = 0u; i < env->stored_atom_count; i++)
+            grown[i] = env->stored_atoms[i];
+        env->stored_atoms = grown;
+        *cap = next;
+    }
+    env->stored_atoms[env->stored_atom_count++] = atom;
+}
+
+/* Read the typed functors of a space.  Each stored argument is checked at
+ * its declared type through the extended space, as any term is; the
+ * declarations and equations of a functor whose arguments all check are
+ * added to the extended space, and its equations to the kernel's rules.  A
+ * rule computes only where admission published it: these are published
+ * with the space's own reading. */
+static void sj_env_load_stored(SjSetEnv *env, Space *space) {
+    Arena *a = &env->arena;
+    env->stored = NULL;
+    env->stored_count = 0u;
+    env->stored_atoms = NULL;
+    env->stored_atom_count = 0u;
+    Atom *pattern = sj_expr2(a, "type:stored", atom_var(a, "declared"));
+    CettaIndex *candidates = NULL;
+    CettaIndex count = space_match_candidates64(space, pattern, &candidates);
+    if (count == 0u) {
+        free(candidates);
+        return;
+    }
+    env->stored = arena_alloc(a, sizeof(SjStoredFunctor) * (size_t)count);
+    size_t atom_cap = 0u;
+    CettaCount length = space_length64(space);
+    for (CettaIndex c = 0u; c < count; c++) {
+        Atom *declaration = space_match_candidate_at64(space, candidates[c]);
+        Atom *declared = sj_is_expr(declaration, "type:stored", 2u)
+            ? declaration->expr.elems[1] : NULL;
+        if (!declared || declared->kind != ATOM_EXPR ||
+            declared->expr.len < 2u ||
+            declared->expr.elems[0]->kind != ATOM_SYMBOL ||
+            atom_is_symbol(declared->expr.elems[0], "="))
+            continue;
+        SjStoredFunctor *functor = &env->stored[env->stored_count++];
+        *functor = (SjStoredFunctor){
+            .functor = declared->expr.elems[0],
+            .declared = declared,
+            .arity = (size_t)declared->expr.len - 1u,
+        };
+        functor->atoms = arena_alloc(a, sizeof(Atom *) * (length ? length : 1u));
+        functor->names = arena_alloc(a, sizeof(Atom *) * (length ? length : 1u));
+        functor->arguments = arena_alloc(a, sizeof(Atom **) * (length ? length : 1u));
+        for (CettaIndex index = 0u; index < length && !functor->failure; index++) {
+            Atom *atom = space_get_at64(space, index);
+            if (!atom || atom->kind != ATOM_EXPR ||
+                atom->expr.len != declared->expr.len ||
+                !atom_eq(atom->expr.elems[0], functor->functor))
+                continue;
+            size_t copy = 1u;
+            for (size_t prior = 0u; prior < functor->count; prior++)
+                if (atom_eq(functor->atoms[prior], atom)) copy++;
+            Atom **row = arena_alloc(a, sizeof(Atom *) * (functor->arity + 1u));
+            for (size_t position = 1u; position <= functor->arity; position++) {
+                Atom *canonical = NULL;
+                CettaNikOutcomeV1 outcome = CETTA_NIK_OUTCOME_INCOMPLETE;
+                row[position] = sj_canonical_checked(
+                        a, &env->overlay, atom->expr.elems[position],
+                        declared->expr.elems[position], &canonical, &outcome)
+                    ? sj_to_kernel(a, canonical) : NULL;
+                if (!row[position]) {
+                    functor->failure = sj_expr2(
+                        a, outcome == CETTA_NIK_OUTCOME_REFUTED
+                               ? "typed-query-ill-typed-occurrence"
+                               : "typed-query-occurrence",
+                        atom);
+                    break;
+                }
+            }
+            functor->atoms[functor->count] = atom;
+            functor->names[functor->count] =
+                sj_stored_name(a, functor->functor, atom, copy);
+            functor->arguments[functor->count++] = row;
+        }
+        if (functor->failure) continue;
+        Atom *occurrence = sj_stored_map_name(a, functor->functor, "occurrence");
+        sj_stored_add(env, sj_expr3(a, ":", occurrence,
+                                    sj_expr2(a, "u", atom_int(a, 0))),
+                      &atom_cap);
+        for (size_t i = 0u; i < functor->count; i++)
+            sj_stored_add(env, sj_expr3(a, ":", functor->names[i], occurrence),
+                          &atom_cap);
+        for (size_t position = 1u; position <= functor->arity; position++) {
+            Atom *map = sj_stored_argument_name(a, functor->functor, position);
+            sj_stored_add(env, sj_expr3(a, ":", map,
+                                        sj_expr3(a, "->", occurrence,
+                                                 declared->expr.elems[position])),
+                          &atom_cap);
+            for (size_t i = 0u; i < functor->count; i++) {
+                Atom *patterns = atom_expr(
+                    a, (Atom *[]){sj_expr2(a, "DeclConst", functor->names[i])}, 1u);
+                Atom *items[5] = {sj_sym(a, "type:rule"), map, atom_int(a, 1),
+                                  patterns, functor->arguments[i][position]};
+                Atom *rule = atom_expr(a, items, 5u);
+                sj_stored_add(env, rule, &atom_cap);
+                char digest[65];
+                sj_record_digest(a, rule, digest);
+                sj_admitted_insert(space_instance_id(space), digest);
+                Atom *kernel_rule = atom_expr(
+                    a, (Atom *[]){sj_sym(a, "PrimeRule"), map, atom_int(a, 1),
+                                  patterns, functor->arguments[i][position]}, 5u);
+                env->kernel_rules = sj_expr3(
+                    a, "LCons", kernel_rule,
+                    env->kernel_rules ? env->kernel_rules : sj_sym(a, "LNil"));
+            }
+        }
+    }
+    free(candidates);
+    for (size_t i = 0u; i < env->stored_atom_count; i++)
+        space_add(&env->overlay, env->stored_atoms[i]);
+}
+
+static SjStoredFunctor *sj_env_stored_functor(SjSetEnv *env, Atom *functor,
+                                              size_t arity) {
+    for (size_t i = 0u; i < env->stored_count; i++)
+        if (atom_eq(env->stored[i].functor, functor) &&
+            env->stored[i].arity == arity)
+            return &env->stored[i];
+    return NULL;
+}
+
+/* The space for an ordinary `type:` judgment: the space itself, and, where
+ * it declares stored atoms typed, the space extended with the declarations
+ * and equations they give.  The extended spaces the set language builds
+ * already have them. */
+static Space g_stored_space;
+static bool g_stored_space_ready;
+static uint64_t g_stored_space_instance;
+static uint64_t g_stored_space_revision;
+
+/* Whether a space is one the set language or this extension built, or a
+ * view over one: it is never extended again, and the environment it was
+ * built from is never rebuilt for it. */
+static bool sj_space_is_derived(const Space *space) {
+    for (const Space *s = space; s; s = s->overlay_base)
+        if (s == &g_set_env.overlay || s == &g_set_env.theory ||
+            s == &g_stored_space)
+            return true;
+    return false;
+}
+
+/* Whether a space declares stored atoms typed.  An indexed lookup may
+ * propose candidates that are not such declarations. */
+static bool sj_space_declares_stored(Arena *a, Space *space) {
+    Atom *pattern = sj_expr2(a, "type:stored", atom_var(a, "declared"));
+    CettaIndex *candidates = NULL;
+    CettaIndex count = space_match_candidates64(space, pattern, &candidates);
+    bool found = false;
+    for (CettaIndex i = 0u; i < count && !found; i++)
+        found = sj_is_expr(space_match_candidate_at64(space, candidates[i]),
+                           "type:stored", 2u);
+    free(candidates);
+    return found;
+}
+
+Space *prime_scoped_stored_space(Arena *a, Space *space) {
+    if (!a || !space || sj_space_is_derived(space) ||
+        !sj_space_declares_stored(a, space))
+        return space;
+    uint64_t instance = space_instance_id(space);
+    uint64_t revision = space_revision(space);
+    if (g_stored_space_ready && g_stored_space_instance == instance &&
+        g_stored_space_revision == revision)
+        return &g_stored_space;
+    SjSetEnv *env = sj_env(space);
+    if (!env) return space;
+    if (g_stored_space_ready) space_free(&g_stored_space);
+    space_init_overlay(&g_stored_space, space);
+    for (size_t i = 0u; i < env->stored_atom_count; i++)
+        space_add(&g_stored_space, env->stored_atoms[i]);
+    g_stored_space_ready = true;
+    g_stored_space_instance = instance;
+    g_stored_space_revision = revision;
+    return &g_stored_space;
+}
+
 /* The declared-name readout and the intrinsic kernel wire share binders and
  * indices. Only a monomorphic global occurrence changes spelling here. */
 static Atom *sj_from_kernel(Arena *a, Atom *term) {
     /* A constant is written bare, unless its name also spells one of the
-     * universes written bare (`U0`, `U1`): it then keeps its declaration
-     * form, so that a theory's constant `U0` is never read as a universe. */
+     * universes written bare (`U0`, `U1`, `set`, `class`): it then keeps its
+     * declaration form, so that a theory's constant `U0` is never read as a
+     * universe.  A sort above the written universes is written by name. */
     if (sj_is_expr(term, "DeclConst", 2u))
         return sj_is_sort(term->expr.elems[1]) ? term : term->expr.elems[1];
+    if (sj_is_expr(term, "Sort", 2u)) {
+        Atom *named = cetta_prime_regular_kernel_quote_sort_above_v1(a, term);
+        if (named) return named;
+    }
     if (sj_is_leaf(term)) return term;
     Atom **children = sj_children(a, term);
     if (!children) return NULL;
@@ -1582,8 +2060,9 @@ static Atom *sj_to_kernel_specialized(SjProofState *st, Atom *t) {
         return term;
     }
     if (sj_is_constant(t)) return sj_expr2(a, "DeclConst", t);
-    if (sj_is_expr(t, "u", 2u))
-        return sj_expr2(a, "Sort", sj_expr2(a, "LevelConst", t->expr.elems[1]));
+    if (sj_is_expr(t, "u", 2u)) return sj_universe_to_kernel(a, t);
+    Atom *above = sj_sort_above_to_kernel(a, t);
+    if (above) return above;
     if (sj_is_leaf(t)) return t;
     Atom **children = sj_children(a, t);
     if (!children) return NULL;
@@ -1673,7 +2152,10 @@ static Atom *sj_declare_mentioned(SjProofState *st, Atom *term, Atom *context) {
         sj_note_instance(st, term, type);
         return context;
     }
-    if (term->kind != ATOM_EXPR) return context;
+    /* A universe mentions no constant: its level, which can have any
+     * number of terms, is not walked. */
+    if (term->kind != ATOM_EXPR || sj_is_expr(term, "Sort", 2u))
+        return context;
     /* The head of a canonical expression is the form's own word (`App`,
      * `Pi`, `Sort`, ...), never a constant, whatever a program's constants
      * are called. */
@@ -1856,6 +2338,14 @@ static Atom *sj_rule_term_from_kernel(Arena *a, Atom *t, size_t nvars,
         return t->expr.elems[1];
     if (sj_is_expr(t, "Sort", 2u) && sj_is_expr(t->expr.elems[1], "LevelConst", 2u))
         return sj_expr2(a, "u", t->expr.elems[1]->expr.elems[1]);
+    if (sj_is_expr(t, "Sort", 2u) && sj_is_expr(t->expr.elems[1], "LevelCantor", 4u)) {
+        Atom *universe = cetta_prime_regular_kernel_quote_closed_universe_sort_v1(a, t);
+        if (universe) return universe;
+    }
+    if (sj_is_expr(t, "Sort", 2u)) {
+        Atom *named = cetta_prime_regular_kernel_quote_sort_above_v1(a, t);
+        if (named) return named;
+    }
     if (sj_is_leaf(t)) return t;
     Atom **children = sj_children(a, t);
     if (!children) return NULL;
@@ -2116,6 +2606,17 @@ static Atom *sj_open_domain(SjProofState *st, Atom *t) {
     Arena *a = st->arena;
     if (!t) return NULL;
     if (t->kind == ATOM_SYMBOL) return t;
+    /* A declared type former applied to types, `(Stream num)`. */
+    if (t->kind == ATOM_EXPR && t->expr.len >= 2u &&
+        sj_env_declares_type_former(st->env, t->expr.elems[0], (size_t)t->expr.len - 1u)) {
+        Atom *applied = t->expr.elems[0];
+        for (CettaExprIndex i = 1u; i < t->expr.len; i++) {
+            Atom *arg = sj_open_domain(st, t->expr.elems[i]);
+            if (!arg) return NULL;
+            applied = sj_expr3(a, "App", applied, arg);
+        }
+        return applied;
+    }
     if (t->kind == ATOM_EXPR && t->expr.len >= 3u && atom_is_symbol(t->expr.elems[0], "->")) {
         Atom *cod = sj_open_domain(st, t->expr.elems[t->expr.len - 1u]);
         if (!cod) return NULL;
@@ -2215,14 +2716,18 @@ static Atom *sj_open_synth(SjProofState *st, Atom *w, Atom **type_out) {
             if (!term) return NULL;
         }
         for (CettaExprIndex i = first; i < w->expr.len; i++) {
-            if (!sj_is_expr(type, "Pi", 3u) || sj_mentions_index(type->expr.elems[2], 0u)) {
+            if (!sj_is_expr(type, "Pi", 3u)) {
                 sj_fail(st, true, sj_expr2(a, "set:witness-not-a-function", w));
                 return NULL;
             }
             Atom *arg = sj_open_check(st, w->expr.elems[i], type->expr.elems[1]);
             if (!arg) return NULL;
             term = sj_expr3(a, "App", term, arg);
-            type = sj_shift(a, type->expr.elems[2], 0u, -1);
+            /* A dependent function's result is read at its argument: a
+             * family's constant takes its set first, `(shead num s)`. */
+            type = sj_mentions_index(type->expr.elems[2], 0u)
+                ? sj_subst(a, type->expr.elems[2], 0u, arg)
+                : sj_shift(a, type->expr.elems[2], 0u, -1);
             if (!type) {
                 sj_fail(st, false, sj_expr2(a, "set:shift-failed", w));
                 return NULL;
@@ -2290,7 +2795,10 @@ static Atom *sj_open_check(SjProofState *st, Atom *w, Atom *domain) {
     Atom *type = NULL;
     Atom *term = sj_open_synth(st, w, &type);
     if (!term) return NULL;
-    if (!atom_eq(type, domain)) {
+    /* Universes are cumulative: a type of `(u 0)` is a set. */
+    if (!atom_eq(type, domain) &&
+        !cetta_prime_regular_kernel_sort_within_v1(a, sj_to_kernel(a, type),
+                                                   sj_to_kernel(a, domain))) {
         sj_fail(st, true, sj_expr3(a, "set:witness-type", w, domain));
         return NULL;
     }
@@ -2382,7 +2890,20 @@ static bool sj_match_meta(SjProofState *st, Atom *pat, Atom *term, Atom **sol,
      * admitted definition. */
     if (pat->kind == ATOM_EXPR && sj_has_solved_meta(pat, sol)) {
         Atom *filled = sj_fill_solved(a, pat, sol, depth);
-        Atom *normal = filled ? sj_normalize(a, filled, &st->fuel) : NULL;
+        if (!filled) return false;
+        /* A node whose metavariables are all solved solves nothing more: it
+         * is compared with the goal's node, as written and then with both
+         * sides normalized, never one side normalized against the other
+         * as written.  The match stays first-order: a metavariable is solved
+         * only where it stands in the pattern. */
+        if (!sj_has_unsolved_meta(filled, sol)) {
+            if (atom_eq(filled, term)) return true;
+            Atom *normal = sj_normalize(a, filled, &st->fuel);
+            Atom *target = normal ? sj_normalize(a, term, &st->fuel) : NULL;
+            return normal && target &&
+                   atom_eq(sj_unannotate(a, normal), sj_unannotate(a, target));
+        }
+        Atom *normal = sj_normalize(a, filled, &st->fuel);
         if (!normal) return false;
         if (!atom_eq(normal, pat)) return sj_match_meta(st, normal, term, sol, depth);
     }
@@ -2592,25 +3113,26 @@ static void sj_by_undetermined_instance(SjProofState *st, Atom *name) {
                            st->failure);
 }
 
-static bool sj_check_by(SjProofState *st, Atom *proof, Atom *goal) {
+typedef enum {
+    SJ_BY_PROVED,       /* the instance proves the goal */
+    SJ_BY_FAILED,       /* a failure is recorded in the proof state */
+    SJ_BY_NEXT          /* the pass without unfolding found nothing: go on */
+} SjByOutcome;
+
+/* One attempt of `pf:by`: the fact's prefix is peeled, by its quantifiers up
+ * to and between the antecedents its premises discharge, then by at most
+ * `limit` further quantifiers, and the conclusion left is matched against
+ * the goal.  `*trailing_out` is how many quantifiers after the last
+ * antecedent were peeled.  A refutation recorded here is about this depth
+ * only: some instance at another depth may still give the goal. */
+static SjByOutcome sj_check_by_at(SjProofState *st, Atom *proof, Atom *goal,
+                                  Atom *name, Atom *prop0, size_t premise_count,
+                                  int pass, size_t limit, size_t *trailing_out) {
     Arena *a = st->arena;
-    Atom *name = proof->expr.elems[1];
-    size_t premise_count = proof->expr.len - 2u;
-    Atom *prop0 = NULL;
-    if (name->kind == ATOM_SYMBOL) {
-        prop0 = sj_hypothesis_named(st, name);
-        if (!prop0) prop0 = sj_known_proposition(st, name);
-    } else {
-        /* the major premise is a proof term: its proposition is synthesized */
-        prop0 = sj_synth(st, name);
-    }
-    if (!prop0) return false;
-    /* Two passes: first the prefix is peeled without unfolding definitions,
-     * so that a conclusion keeps the spelling the fact gives it and matches
-     * the goal as written; if that finds no instance, the prefix is peeled
-     * with definitions unfolded. */
-    for (int pass = 0; pass < 2; pass++) {
+    *trailing_out = 0u;
+    {
         Atom *prop = prop0;
+        size_t trailing = 0u;
         size_t meta_count = 0u;
         size_t meta_cap = 0u;
         Atom **meta_domains = NULL;
@@ -2618,7 +3140,7 @@ static bool sj_check_by(SjProofState *st, Atom *proof, Atom *goal) {
             a, sizeof(Atom *) * (premise_count ? premise_count : 1u));
         if (!antecedents) {
             sj_fail(st, false, sj_expr2(a, "set:by-storage", name));
-            return false;
+            return SJ_BY_FAILED;
         }
         size_t antecedent_count = 0u;
         bool ok = true;
@@ -2628,7 +3150,7 @@ static bool sj_check_by(SjProofState *st, Atom *proof, Atom *goal) {
             g_sj_no_delta = false;
             if (!w) {
                 sj_fail_fuel(st, prop);
-                return false;
+                return SJ_BY_FAILED;
             }
             Atom *head = NULL;
             Atom *args[4] = {0};
@@ -2636,9 +3158,16 @@ static bool sj_check_by(SjProofState *st, Atom *proof, Atom *goal) {
             Atom *domain = NULL;
             Atom *family_arg = NULL;
             if (sj_quantifier(head, args, argc, &domain, &family_arg)) {
+                if (antecedent_count == premise_count) {
+                    if (trailing == limit) {
+                        prop = w;
+                        break;
+                    }
+                    trailing++;
+                }
                 if (!sj_grow_pair(a, &meta_domains, NULL, meta_count, &meta_cap)) {
                     sj_fail(st, false, sj_expr2(a, "set:by-storage", name));
-                    return false;
+                    return SJ_BY_FAILED;
                 }
                 Atom *meta = sj_expr2(a, "pf:meta", atom_int(a, (int64_t)meta_count));
                 meta_domains[meta_count] = domain;
@@ -2648,13 +3177,13 @@ static bool sj_check_by(SjProofState *st, Atom *proof, Atom *goal) {
                 g_sj_no_delta = false;
                 if (!family) {
                     sj_fail_fuel(st, family_arg);
-                    return false;
+                    return SJ_BY_FAILED;
                 }
                 Atom *body = sj_lambda_body(family);
                 prop = body ? sj_subst(a, body, 0u, meta) : sj_expr3(a, "App", family, meta);
                 if (!prop) {
                     sj_fail(st, false, sj_expr2(a, "set:shift-failed", name));
-                    return false;
+                    return SJ_BY_FAILED;
                 }
                 continue;
             }
@@ -2666,14 +3195,15 @@ static bool sj_check_by(SjProofState *st, Atom *proof, Atom *goal) {
             prop = w;
             break;
         }
+        *trailing_out = trailing;
         if (antecedent_count < premise_count) {
-            if (pass == 0) continue;
+            if (pass == 0) return SJ_BY_NEXT;
             /* Refuted only when no instantiation can make the rest an
              * implication: its head is rigid.  A metavariable, or a head
              * that still computes, may yet become one. */
             sj_fail(st, sj_rigid_proposition(st, prop),
                     sj_expr2(a, "set:by-needs-implication", prop));
-            return false;
+            return SJ_BY_FAILED;
         }
         Atom *raw_conclusion = sj_unannotate(a, prop);
         Atom *raw_target = sj_unannotate(a, goal);
@@ -2681,13 +3211,13 @@ static bool sj_check_by(SjProofState *st, Atom *proof, Atom *goal) {
         Atom *target = conclusion ? sj_normalize(a, goal, &st->fuel) : NULL;
         if (!conclusion || !target) {
             sj_fail_fuel(st, conclusion ? goal : prop);
-            return false;
+            return SJ_BY_FAILED;
         }
         size_t sol_len = meta_count > SJ_META_MAX ? meta_count : SJ_META_MAX;
         Atom **sol = arena_alloc(a, sizeof(Atom *) * sol_len);
         if (!sol) {
             sj_fail(st, false, sj_expr2(a, "set:by-storage", name));
-            return false;
+            return SJ_BY_FAILED;
         }
         memset(sol, 0, sizeof(Atom *) * sol_len);
         conclusion = sj_unannotate(a, conclusion);
@@ -2706,7 +3236,7 @@ static bool sj_check_by(SjProofState *st, Atom *proof, Atom *goal) {
          * eta and the rules this matching does not. */
         if (!matched && meta_count == 0u && pass == 1) matched = true;
         if (!matched) {
-            if (pass == 0) continue;
+            if (pass == 0) return SJ_BY_NEXT;
             /* First-order matching is incomplete: an instance may exist only
              * up to conversion, by a higher-order solution, or by unfolding
              * a definition at an instantiated argument.  Refuted needs a
@@ -2714,12 +3244,12 @@ static bool sj_check_by(SjProofState *st, Atom *proof, Atom *goal) {
             Atom **seen = arena_alloc(a, sizeof(Atom *) * sol_len);
             if (!seen) {
                 sj_fail(st, false, sj_expr2(a, "set:by-storage", name));
-                return false;
+                return SJ_BY_FAILED;
             }
             memset(seen, 0, sizeof(Atom *) * sol_len);
             if (sj_rigid_refutes(st, conclusion, target, 0u, seen)) {
                 sj_fail(st, true, sj_expr3(a, "set:by-no-instance", name, goal));
-                return false;
+                return SJ_BY_FAILED;
             }
             /* No witness: the instance the goal's rigid positions fix, when
              * they fix every metavariable of the conclusion, is the only
@@ -2728,7 +3258,7 @@ static bool sj_check_by(SjProofState *st, Atom *proof, Atom *goal) {
                 if (seen[i] || !sj_mentions_meta(conclusion, (int64_t)i)) continue;
                 sj_fail(st, false, sj_expr3(a, "set:by-no-first-order-instance",
                                             name, goal));
-                return false;
+                return SJ_BY_FAILED;
             }
             memcpy(sol, seen, sizeof(Atom *) * sol_len);
         }
@@ -2739,7 +3269,7 @@ static bool sj_check_by(SjProofState *st, Atom *proof, Atom *goal) {
         bool *rigid = arena_alloc(a, sizeof(bool) * sol_len);
         if (!rigid) {
             sj_fail(st, false, sj_expr2(a, "set:by-storage", name));
-            return false;
+            return SJ_BY_FAILED;
         }
         memset(rigid, 0, sizeof(bool) * sol_len);
         sj_rigid_metas(st, conclusion, rigid);
@@ -2766,11 +3296,11 @@ static bool sj_check_by(SjProofState *st, Atom *proof, Atom *goal) {
         }
         for (size_t i = 0u; i < meta_count && ok; i++) ok = sol[i] != NULL;
         if (!ok) {
-            if (pass == 0) continue;
+            if (pass == 0) return SJ_BY_NEXT;
             /* The goal and the premises leave a quantifier uninstantiated:
              * whether some instance works is not decided here. */
             sj_fail(st, false, sj_expr2(a, "set:by-unsolved", name));
-            return false;
+            return SJ_BY_FAILED;
         }
         bool determined = meta_count > 0u || sj_rigid_proposition(st, conclusion);
         for (size_t i = 0u; i < meta_count && determined; i++)
@@ -2779,14 +3309,81 @@ static bool sj_check_by(SjProofState *st, Atom *proof, Atom *goal) {
             Atom *antecedent = sj_fill_meta(a, antecedents[k], sol, meta_domains, 0u);
             if (!antecedent || !sj_check(st, proof->expr.elems[2u + k], antecedent)) {
                 if (!determined) sj_by_undetermined_instance(st, name);
-                return false;
+                return SJ_BY_FAILED;
             }
         }
         Atom *instantiated = sj_fill_meta(a, conclusion, sol, meta_domains, 0u);
-        if (!instantiated) return false;
-        if (sj_convertible(st, instantiated, goal)) return true;
+        if (!instantiated) return SJ_BY_FAILED;
+        if (sj_convertible(st, instantiated, goal)) return SJ_BY_PROVED;
         if (!determined) sj_by_undetermined_instance(st, name);
-        return false;
+        return SJ_BY_FAILED;
+    }
+}
+
+/* `(pf:by fact premise ...)`.  Two passes: first the prefix is peeled
+ * without unfolding definitions, so that a conclusion keeps the spelling the
+ * fact gives it and matches the goal as written; then with definitions
+ * unfolded.  In each pass every depth of peeling the quantifiers after the
+ * last antecedent is tried, from all of them to none: a fact whose
+ * conclusion is itself universal can give a universal goal.  The fact gives
+ * the goal if one attempt does.  A refutation is the verdict only when every
+ * attempt of the pass with unfolding is refuted, each by its own witness at
+ * its depth; otherwise the first failure of the verdict's kind is kept. */
+static bool sj_check_by(SjProofState *st, Atom *proof, Atom *goal) {
+    Atom *name = proof->expr.elems[1];
+    size_t premise_count = proof->expr.len - 2u;
+    Atom *prop0 = NULL;
+    if (name->kind == ATOM_SYMBOL) {
+        prop0 = sj_hypothesis_named(st, name);
+        if (!prop0) prop0 = sj_known_proposition(st, name);
+    } else {
+        /* the major premise is a proof term: its proposition is synthesized */
+        prop0 = sj_synth(st, name);
+    }
+    if (!prop0) return false;
+    Atom *first_refutation = NULL;
+    Atom *first_undecided = NULL;
+    Atom *first_incomplete = NULL;
+    bool unfolded_refuted_everywhere = true;
+    for (int pass = 0; pass < 2; pass++) {
+        size_t limit = SIZE_MAX;
+        for (;;) {
+            size_t trailing = 0u;
+            SjByOutcome outcome = sj_check_by_at(st, proof, goal, name, prop0,
+                                                 premise_count, pass, limit,
+                                                 &trailing);
+            if (outcome == SJ_BY_PROVED) return true;
+            if (outcome == SJ_BY_FAILED) {
+                if (st->incomplete) {
+                    if (!first_incomplete) first_incomplete = st->failure;
+                } else if (st->refuted) {
+                    if (!first_refutation) first_refutation = st->failure;
+                } else if (!first_undecided) {
+                    first_undecided = st->failure;
+                }
+                if (pass == 1 && (st->incomplete || !st->refuted))
+                    unfolded_refuted_everywhere = false;
+                st->failure = NULL;
+                st->refuted = false;
+                st->incomplete = false;
+            }
+            if (limit == SIZE_MAX) limit = trailing;
+            if (limit == 0u) break;
+            limit--;
+        }
+    }
+    if (first_incomplete) {
+        st->failure = first_incomplete;
+        st->incomplete = true;
+        st->refuted = false;
+    } else if (unfolded_refuted_everywhere && first_refutation) {
+        st->failure = first_refutation;
+        st->refuted = true;
+    } else {
+        st->failure = first_undecided ? first_undecided
+            : sj_expr3(st->arena, "set:by-instance-not-determined", name,
+                       first_refutation ? first_refutation : atom_unit(st->arena));
+        st->refuted = false;
     }
     return false;
 }
@@ -2907,10 +3504,56 @@ static bool sj_check(SjProofState *st, Atom *proof, Atom *goal) {
  * every cited name must still be known with the recorded proposition under
  * the current signature, and so must their own dependencies.  Reuse also
  * requires each of them to be admitted here; publication, which has just
- * used them, requires only that they are unchanged. */
-static bool sj_dependencies_current_as(SjProofState *st, Atom *record,
-                                       unsigned depth, bool require_admission) {
+ * used them, requires only that they are unchanged.
+ *
+ * The dependencies form a graph that shares its nodes: a definition built on
+ * a stack of others cites each of them, and so does every one of those.  A
+ * name is checked once per walk: the walk remembers each name it has found
+ * current, with that record's proposition and the height of the walk below
+ * it (how many records deep its own dependencies go).  Meeting the name
+ * again, it compares the recorded proposition with the remembered one, and
+ * walks below it again only when the depth bound would now be exceeded, so
+ * the verdict and its reason are those of the walk that rechecks every path.
+ * Without this the work grows with the number of paths, which is
+ * exponential in the depth of a shared stack of definitions. */
+typedef struct {
+    Atom **names;
+    Atom **props;
+    int *heights;   /* levels of the walk below the record; -1 when it is not walked */
+    size_t count;
+    size_t cap;
+} SjDependencyMemo;
+
+static bool sj_dependency_memo_add(Arena *a, SjDependencyMemo *memo, Atom *name, Atom *prop,
+                                   int height) {
+    if (memo->count == memo->cap) {
+        size_t next = memo->cap ? memo->cap * 2u : 16u;
+        Atom **names = arena_alloc(a, sizeof(Atom *) * next);
+        Atom **props = arena_alloc(a, sizeof(Atom *) * next);
+        int *heights = arena_alloc(a, sizeof(int) * next);
+        if (!names || !props || !heights) return false;
+        for (size_t i = 0u; i < memo->count; i++) {
+            names[i] = memo->names[i];
+            props[i] = memo->props[i];
+            heights[i] = memo->heights[i];
+        }
+        memo->names = names;
+        memo->props = props;
+        memo->heights = heights;
+        memo->cap = next;
+    }
+    memo->names[memo->count] = name;
+    memo->props[memo->count] = prop;
+    memo->heights[memo->count] = height;
+    memo->count++;
+    return true;
+}
+
+static bool sj_dependencies_walk(SjProofState *st, Atom *record, unsigned depth,
+                                 bool require_admission, SjDependencyMemo *memo,
+                                 int *height_out) {
     Arena *a = st->arena;
+    *height_out = 0;
     if (depth > 64u) {
         sj_fail(st, false, sj_expr2(a, "set:dependency-depth", record->expr.elems[SJ_KNOWN_NAME]));
         return false;
@@ -2922,6 +3565,27 @@ static bool sj_dependencies_current_as(SjProofState *st, Atom *record,
         if (!pair || pair->kind != ATOM_EXPR || pair->expr.len != 2u) continue;
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SCOPED_DEPENDENCY_VISIT);
         Atom *name = pair->expr.elems[0];
+        size_t seen = memo->count;
+        for (size_t m = 0u; m < memo->count; m++)
+            if (atom_eq(memo->names[m], name)) {
+                seen = m;
+                break;
+            }
+        if (seen < memo->count) {
+            /* Found current before: the name resolves to the same record
+             * throughout the walk, so only the proposition this record cited
+             * and the depth bound are left to check. */
+            if (!atom_eq(memo->props[seen], pair->expr.elems[1])) {
+                sj_fail(st, false, sj_expr2(a, "set:dependency-changed", name));
+                return false;
+            }
+            int below = memo->heights[seen];
+            if (below < 0) continue;
+            if ((unsigned long)depth + 1u + (unsigned)below <= 64u) {
+                if (below + 1 > *height_out) *height_out = below + 1;
+                continue;
+            }
+        }
         bool ambiguous = false;
         Atom *current = sj_known_lookup(a, st->env, st->user_space, name, &ambiguous);
         if (ambiguous) {
@@ -2949,12 +3613,28 @@ static bool sj_dependencies_current_as(SjProofState *st, Atom *record,
         }
         /* A cited theorem's statement holds while its own dependencies do;
          * a definition means what it meant while its own do. */
-        if ((atom_is_symbol(current->expr.elems[SJ_KNOWN_ORIGIN], "theorem") ||
-             atom_is_symbol(current->expr.elems[SJ_KNOWN_ORIGIN], "definition")) &&
-            !sj_dependencies_current_as(st, current, depth + 1u, require_admission))
+        int below = -1;
+        if (atom_is_symbol(current->expr.elems[SJ_KNOWN_ORIGIN], "theorem") ||
+            atom_is_symbol(current->expr.elems[SJ_KNOWN_ORIGIN], "definition")) {
+            if (!sj_dependencies_walk(st, current, depth + 1u, require_admission, memo, &below))
+                return false;
+            if (below + 1 > *height_out) *height_out = below + 1;
+        }
+        if (seen == memo->count &&
+            !sj_dependency_memo_add(a, memo, name, current->expr.elems[SJ_KNOWN_PROP], below)) {
+            st->incomplete = true;
+            sj_fail(st, false, sj_expr1(a, "set:dependency-storage"));
             return false;
+        }
     }
     return true;
+}
+
+static bool sj_dependencies_current_as(SjProofState *st, Atom *record,
+                                       unsigned depth, bool require_admission) {
+    SjDependencyMemo memo = {0};
+    int height = 0;
+    return sj_dependencies_walk(st, record, depth, require_admission, &memo, &height);
 }
 
 static bool sj_dependencies_current(SjProofState *st, Atom *record,
@@ -2964,8 +3644,19 @@ static bool sj_dependencies_current(SjProofState *st, Atom *record,
 
 /* The canonical proposition of a known fact, with the record's authority
  * and dependencies verified, noted as a dependency of this proof. */
+static Atom *sj_family_rename(Arena *a, Atom *t, Atom **from, Atom **to, size_t count);
+
+/* A known fact, or `(law T ...)`: the instance of a law stated as a schema,
+ * `(schema (A ...) P)`, at the types T ...  The instance is elaborated as
+ * any statement; the dependency is on the schema. */
 static Atom *sj_known_proposition(SjProofState *st, Atom *name) {
     Arena *a = st->arena;
+    Atom *instance = NULL;
+    if (name && name->kind == ATOM_EXPR && name->expr.len >= 2u &&
+        name->expr.elems[0]->kind == ATOM_SYMBOL) {
+        instance = name;
+        name = name->expr.elems[0];
+    }
     bool ambiguous = false;
     Atom *record = sj_known_lookup(a, st->env, st->user_space, name, &ambiguous);
     if (ambiguous) {
@@ -2990,12 +3681,28 @@ static Atom *sj_known_proposition(SjProofState *st, Atom *name) {
         !sj_dependencies_current(st, record, 0u))
         return NULL;
     Atom *prop = record->expr.elems[SJ_KNOWN_PROP];
-    Atom *elaborated = sj_elaborate_closed(st, prop, sj_sym(a, "prop"));
+    Atom *statement = prop;
+    bool schema = sj_is_expr(prop, "schema", 3u) &&
+                  prop->expr.elems[1]->kind == ATOM_EXPR;
+    if (schema || instance) {
+        size_t params = schema ? (size_t)prop->expr.elems[1]->expr.len : 0u;
+        if (!schema || !instance || (size_t)instance->expr.len - 1u != params) {
+            sj_fail(st, false, sj_expr2(a, "set:law-instance", instance ? instance : name));
+            return NULL;
+        }
+        statement = sj_family_rename(a, prop->expr.elems[2], prop->expr.elems[1]->expr.elems,
+                                     instance->expr.elems + 1, params);
+        if (!statement) {
+            sj_fail(st, false, sj_expr2(a, "set:law-instance", instance));
+            return NULL;
+        }
+    }
+    Atom *elaborated = sj_elaborate_closed(st, statement, sj_sym(a, "prop"));
     if (!elaborated) return NULL;
     sj_note_dependency(st, name, prop);
     /* The cited statement is converted here with the definitions it
      * mentions: they are this proof's dependencies too. */
-    sj_note_definition_uses(st, prop);
+    sj_note_definition_uses(st, statement);
     return elaborated;
 }
 
@@ -3142,6 +3849,7 @@ static void sj_proof_state_init(SjProofState *st, Arena *a, Space *space,
  * success carries no evidence; under `try` it names the checked proposition
  * and which conversion decided. */
 static Atom *sj_inductive_record(SjProofState *st, Atom *type);
+static Atom *sj_family_record(SjProofState *st, Atom *name);
 
 static bool sj_dependency_noted(SjProofState *st, Atom *name) {
     for (size_t i = 0u; i < st->depend_count; i++)
@@ -3164,6 +3872,7 @@ static void sj_note_definition_uses(SjProofState *st, Atom *t) {
             sj_note_definition_uses(st, def->prop);
         }
         Atom *record = sj_inductive_record(st, t);
+        if (!record) record = sj_family_record(st, t);
         if (record) {
             sj_note_dependency(st, t, record->expr.elems[SJ_KNOWN_PROP]);
             sj_note_definition_uses(st, record->expr.elems[SJ_KNOWN_PROP]);
@@ -3246,9 +3955,17 @@ static Atom *sj_set_theorem(Arena *a, Space *space, Atom *judgment,
 /*                                                                            */
 /* A successful set proof is not yet a Curry--Howard witness: `prop` is the  */
 /* type of proposition codes.  The native package below adds one displayed   */
-/* family `Holds : prop -> Type`, equips implication and universal codes with */
-/* their two decoding equations, compiles the retained logical proof tree,   */
-/* and asks the regular kernel to check the result.  Axioms remain explicit   */
+/* family `Holds : prop -> Type`, compiles the retained logical proof tree,  */
+/* and asks the regular kernel to check the result.  A rule of the logic is  */
+/* compiled in one of two presentations.  By unfolding, the family decodes  */
+/* an implication or a quantifier over a carrier of the least universe to a */
+/* function type, and the rule is an abstraction or an application.  By     */
+/* rule constants, the rule is a declared constant of the signature with no */
+/* equation (`impI`, `impE`, `allI`, `allE`, `eqI`, `eqE`, at the carrier's */
+/* instance for the quantifier and the equation): a quantifier over a       */
+/* larger carrier, such as all sets, is compiled so, since its decoding     */
+/* would identify a small type with a larger one, and every rule is when    */
+/* the package is asked for in that presentation.  Axioms remain explicit   */
 /* declaration assumptions in the returned context.  The operation therefore */
 /* neither turns a Boolean verdict into a proof nor installs new trusted      */
 /* kernel code.                                                               */
@@ -3282,9 +3999,15 @@ typedef struct {
     /* The named `identity` interpretation: the family at a represented
      * equation `eq@A x y` computes to `Id A x y`. */
     bool identity;
-    /* A carrier whose decoding rule was not generated (sj_native_rules):
-     * a check that fails without it abstains instead of refuting. */
-    Atom *withheld_carrier;
+    /* Every rule is compiled to its rule constant, and the family decodes
+     * nothing: the presentation by rule constants throughout. */
+    bool rule_constants;
+    /* The carriers classified so far, and whether the quantifier and the
+     * equation at each are compiled by rule constants. */
+    Atom **carriers;
+    bool *carrier_by_rules;
+    size_t carrier_count;
+    size_t carrier_cap;
 } SjNativeCompiler;
 
 enum {
@@ -3411,6 +4134,259 @@ static Atom *sj_native_proof_type(SjNativeCompiler *compiler,
         : NULL;
 }
 
+static bool sj_native_small_carrier(Arena *a, Atom *context, Atom *carrier);
+
+/* The kernel code of a proposition in the target context: annotated as a
+ * proof type is, its polymorphic heads specialized, and its object indices
+ * placed past the proof binders. */
+static Atom *sj_native_code(SjNativeCompiler *compiler, Atom *canonical) {
+    SjProofState *st = compiler->proof;
+    Atom **locals = sj_locals_for(st->arena, 0u, canonical, NULL);
+    if (!locals) return NULL;
+    Atom *annotated = sj_annotate(st, canonical, locals, 0u);
+    Atom *kernel = annotated ? sj_to_kernel_specialized(st, annotated) : NULL;
+    return kernel ? sj_native_reindex_objects(compiler, kernel, 0u) : NULL;
+}
+
+/* The declarations of the signature and of every instance noted so far, in
+ * the order they were noted. */
+static Atom *sj_native_instance_context(SjProofState *st) {
+    Arena *a = st->arena;
+    Atom *context = sj_kernel_context(st);
+    if (!context) return NULL;
+    for (size_t i = 0u; i < st->instance_count; i++) {
+        Atom *kernel_type = sj_to_kernel(a, st->instance_types[i]);
+        if (!kernel_type) return NULL;
+        Atom *items[4] = {sj_sym(a, "PrimeCtxDecl"),
+                          sj_expr2(a, "DeclConst", st->instance_names[i]),
+                          kernel_type, context};
+        context = atom_expr(a, items, 4u);
+    }
+    return context;
+}
+
+/* Whether the quantifier and the equation at a carrier (in canonical
+ * spelling) are compiled by rule constants: always in that presentation,
+ * and otherwise exactly when the carrier is not a type of the least
+ * universe.  The carrier is classified in `context` when one is given, and
+ * otherwise in the declarations noted so far; a classification is kept for
+ * the whole package.  False when the carrier cannot be classified. */
+static bool sj_native_carrier_by_rules(SjNativeCompiler *compiler,
+                                       Atom *carrier, Atom *context,
+                                       bool *by_rules) {
+    if (compiler->rule_constants) {
+        *by_rules = true;
+        return true;
+    }
+    for (size_t i = 0u; i < compiler->carrier_count; i++) {
+        if (!atom_eq(compiler->carriers[i], carrier)) continue;
+        *by_rules = compiler->carrier_by_rules[i];
+        return true;
+    }
+    SjProofState *st = compiler->proof;
+    Arena *a = st->arena;
+    if (!context) {
+        sj_declare_mentioned(st, carrier, NULL);
+        context = sj_native_instance_context(st);
+    }
+    Atom *kernel = sj_to_kernel(a, carrier);
+    if (!context || !kernel) {
+        sj_fail(st, false, sj_expr2(a, "set:native-carrier", carrier));
+        return false;
+    }
+    if (compiler->carrier_count == compiler->carrier_cap) {
+        size_t cap = compiler->carrier_cap ? 2u * compiler->carrier_cap : 8u;
+        Atom **carriers = arena_alloc(a, sizeof(Atom *) * cap);
+        bool *flags = arena_alloc(a, sizeof(bool) * cap);
+        for (size_t i = 0u; i < compiler->carrier_count; i++) {
+            carriers[i] = compiler->carriers[i];
+            flags[i] = compiler->carrier_by_rules[i];
+        }
+        compiler->carriers = carriers;
+        compiler->carrier_by_rules = flags;
+        compiler->carrier_cap = cap;
+    }
+    *by_rules = !sj_native_small_carrier(a, context, kernel);
+    compiler->carriers[compiler->carrier_count] = carrier;
+    compiler->carrier_by_rules[compiler->carrier_count++] = *by_rules;
+    return true;
+}
+
+/* The rule constant of a role.  Implication has one; the quantifier and the
+ * equation have one at every instance: `allI@A` at the instance `all@A`,
+ * `eqE@A` at `eq@A`.  NULL when the signature names none for the role. */
+static Atom *sj_native_rule_name(SjNativeCompiler *compiler,
+                                 SjNativeRuleRole role, Atom *instance) {
+    SjProofState *st = compiler->proof;
+    Arena *a = st->arena;
+    Atom *rule = st->env->native_rules[role];
+    const char *at = instance ? strchr(atom_name_cstr(instance), '@') : NULL;
+    if (!rule || (instance && !at)) {
+        sj_fail(st, false, sj_expr2(a, "set:native-rule-undeclared",
+                                    sj_sym(a, SJ_NATIVE_RULE_ROLES[role])));
+        return NULL;
+    }
+    if (!instance) return rule;
+    size_t bytes = strlen(atom_name_cstr(rule)) + strlen(at) + 1u;
+    char *name = arena_alloc(a, bytes);
+    snprintf(name, bytes, "%s%s", atom_name_cstr(rule), at);
+    return sj_sym(a, name);
+}
+
+/* The instance a kernel code applies, `(App (DeclConst all@A) P)` for the
+ * quantifier and `(App (App (DeclConst eq@A) x) y)` for the equation, and
+ * its first argument. */
+static Atom *sj_native_code_instance(Atom *code, const char *poly,
+                                     Atom **argument_out) {
+    Atom *head = code;
+    while (sj_is_expr(head, "App", 3u) &&
+           sj_is_expr(head->expr.elems[1], "App", 3u))
+        head = head->expr.elems[1];
+    if (!sj_is_expr(head, "App", 3u) ||
+        !sj_is_expr(head->expr.elems[1], "DeclConst", 2u))
+        return NULL;
+    Atom *instance = head->expr.elems[1]->expr.elems[1];
+    const char *name = instance && instance->kind == ATOM_SYMBOL
+        ? atom_name_cstr(instance) : NULL;
+    size_t length = strlen(poly);
+    if (!name || strncmp(name, poly, length) != 0 || name[length] != '@')
+        return NULL;
+    if (argument_out) *argument_out = head->expr.elems[2];
+    return instance;
+}
+
+/* The type of a rule constant over the package's family `H`:
+ *
+ *   impI   : Π (p q : prop). (H p → H q) → H (imp p q)
+ *   impE   : Π (p q : prop). H (imp p q) → H p → H q
+ *   allI@A : Π (P : A → prop). (Π (x : A). H (P x)) → H (all@A P)
+ *   allE@A : Π (P : A → prop). H (all@A P) → Π (x : A). H (P x)
+ *   eqI@A  : Π (a b : A). Id A a b → H (eq@A a b)
+ *   eqE@A  : Π (a b : A). H (eq@A a b) → Id A a b
+ *
+ * where `A` is the closed carrier of the instance. */
+static Atom *sj_native_rule_type(Arena *a, SjNativeRuleRole role,
+                                 Atom *family_name, Atom *instance,
+                                 Atom *carrier) {
+    Atom *H = sj_expr2(a, "DeclConst", family_name);
+    Atom *prop = sj_expr2(a, "DeclConst", sj_sym(a, "prop"));
+    Atom *imp = sj_expr2(a, "DeclConst", sj_sym(a, "imp"));
+    Atom *code = instance ? sj_expr2(a, "DeclConst", instance) : NULL;
+#define SJ_I(n) sj_expr2(a, "idx", atom_int(a, (n)))
+#define SJ_H(t) sj_expr3(a, "App", H, (t))
+#define SJ_APP2(f, x, y) sj_expr3(a, "App", sj_expr3(a, "App", (f), (x)), (y))
+    Atom *type = NULL;
+    switch (role) {
+    case SJ_NATIVE_IMP_INTRO:
+        type = sj_expr3(a, "Pi", prop, sj_expr3(a, "Pi", prop, sj_expr3(a, "Pi",
+            sj_expr3(a, "Pi", SJ_H(SJ_I(1)), SJ_H(SJ_I(1))),
+            SJ_H(SJ_APP2(imp, SJ_I(2), SJ_I(1))))));
+        break;
+    case SJ_NATIVE_IMP_ELIM:
+        type = sj_expr3(a, "Pi", prop, sj_expr3(a, "Pi", prop, sj_expr3(a, "Pi",
+            SJ_H(SJ_APP2(imp, SJ_I(1), SJ_I(0))),
+            sj_expr3(a, "Pi", SJ_H(SJ_I(2)), SJ_H(SJ_I(2))))));
+        break;
+    case SJ_NATIVE_ALL_INTRO:
+        type = sj_expr3(a, "Pi", sj_expr3(a, "Pi", carrier, prop), sj_expr3(a, "Pi",
+            sj_expr3(a, "Pi", carrier, SJ_H(sj_expr3(a, "App", SJ_I(1), SJ_I(0)))),
+            SJ_H(sj_expr3(a, "App", code, SJ_I(1)))));
+        break;
+    case SJ_NATIVE_ALL_ELIM:
+        type = sj_expr3(a, "Pi", sj_expr3(a, "Pi", carrier, prop), sj_expr3(a, "Pi",
+            SJ_H(sj_expr3(a, "App", code, SJ_I(0))),
+            sj_expr3(a, "Pi", carrier, SJ_H(sj_expr3(a, "App", SJ_I(2), SJ_I(0))))));
+        break;
+    case SJ_NATIVE_EQ_INTRO:
+        type = sj_expr3(a, "Pi", carrier, sj_expr3(a, "Pi", carrier, sj_expr3(a, "Pi",
+            atom_expr(a, (Atom *[]){sj_sym(a, "Id"), carrier, SJ_I(1), SJ_I(0)}, 4u),
+            SJ_H(SJ_APP2(code, SJ_I(2), SJ_I(1))))));
+        break;
+    case SJ_NATIVE_EQ_ELIM:
+        type = sj_expr3(a, "Pi", carrier, sj_expr3(a, "Pi", carrier, sj_expr3(a, "Pi",
+            SJ_H(SJ_APP2(code, SJ_I(1), SJ_I(0))),
+            atom_expr(a, (Atom *[]){sj_sym(a, "Id"), carrier, SJ_I(2), SJ_I(1)}, 4u))));
+        break;
+    case SJ_NATIVE_RULE_COUNT:
+        break;
+    }
+#undef SJ_I
+#undef SJ_H
+#undef SJ_APP2
+    return type;
+}
+
+static bool sj_native_context_declares(Atom *context, Atom *name) {
+    for (Atom *row = context; sj_is_expr(row, "PrimeCtxDecl", 4u);
+         row = row->expr.elems[3])
+        if (sj_is_expr(row->expr.elems[1], "DeclConst", 2u) &&
+            atom_eq(row->expr.elems[1]->expr.elems[1], name))
+            return true;
+    return false;
+}
+
+static Atom *sj_native_declare_rule(SjNativeCompiler *compiler, Atom *context,
+                                    SjNativeRuleRole role, Atom *instance,
+                                    Atom *carrier) {
+    Arena *a = compiler->proof->arena;
+    Atom *name = sj_native_rule_name(compiler, role, instance);
+    if (!name) return NULL;
+    if (sj_native_context_declares(context, name)) return context;
+    Atom *type = sj_native_rule_type(a, role, compiler->family_name, instance,
+                                     carrier);
+    if (!type) return NULL;
+    Atom *items[4] = {sj_sym(a, "PrimeCtxDecl"), sj_expr2(a, "DeclConst", name),
+                      type, context};
+    return atom_expr(a, items, 4u);
+}
+
+/* The context, which declares the family, with the rule constants the
+ * presentation needs: implication's when every rule is compiled to its
+ * constant, and the quantifier's at every instance in view whose carrier is
+ * compiled by rule constants (the equation's too, under the identity
+ * reading).  A constant the context declares is not declared again.  NULL
+ * when one cannot be declared. */
+static Atom *sj_native_rule_declarations(SjNativeCompiler *compiler,
+                                         Atom *context) {
+    SjProofState *st = compiler->proof;
+    Arena *a = st->arena;
+    if (compiler->rule_constants) {
+        context = sj_native_declare_rule(compiler, context,
+                                         SJ_NATIVE_IMP_INTRO, NULL, NULL);
+        if (context)
+            context = sj_native_declare_rule(compiler, context,
+                                             SJ_NATIVE_IMP_ELIM, NULL, NULL);
+    }
+    Atom *classifying = context;
+    for (size_t i = 0u; context && i < st->instance_count; i++) {
+        const char *name = atom_name_cstr(st->instance_names[i]);
+        Atom *type = st->instance_types[i];
+        bool all = name && strncmp(name, "all@", 4u) == 0 &&
+                   sj_is_expr(type, "Pi", 3u) &&
+                   sj_is_expr(type->expr.elems[1], "Pi", 3u);
+        bool eq = compiler->identity && name && strncmp(name, "eq@", 3u) == 0 &&
+                  sj_is_expr(type, "Pi", 3u);
+        if (!all && !eq) continue;
+        Atom *carrier = all ? type->expr.elems[1]->expr.elems[1]
+                            : type->expr.elems[1];
+        bool by_rules = false;
+        if (!sj_native_carrier_by_rules(compiler, carrier, classifying,
+                                        &by_rules))
+            return NULL;
+        if (!by_rules) continue;
+        Atom *kernel_carrier = sj_to_kernel(a, carrier);
+        if (!kernel_carrier) return NULL;
+        context = sj_native_declare_rule(
+            compiler, context, all ? SJ_NATIVE_ALL_INTRO : SJ_NATIVE_EQ_INTRO,
+            st->instance_names[i], kernel_carrier);
+        if (context)
+            context = sj_native_declare_rule(
+                compiler, context, all ? SJ_NATIVE_ALL_ELIM : SJ_NATIVE_EQ_ELIM,
+                st->instance_names[i], kernel_carrier);
+    }
+    return context;
+}
+
 static Atom *sj_native_assumption(SjNativeCompiler *compiler, Atom *name,
                                   Atom *canonical_prop) {
     Arena *a = compiler->proof->arena;
@@ -3529,7 +4505,15 @@ static Atom *sj_native_compile_synth(SjNativeCompiler *compiler,
             compiler, proof->expr.elems[2], args[0]);
         if (!minor) return NULL;
         *proposition_out = args[1];
-        return sj_expr3(a, "App", major, minor);
+        if (!compiler->rule_constants) return sj_expr3(a, "App", major, minor);
+        /* `impE p q major minor` */
+        Atom *rule = sj_native_rule_name(compiler, SJ_NATIVE_IMP_ELIM, NULL);
+        Atom *p = sj_native_code(compiler, args[0]);
+        Atom *q = sj_native_code(compiler, args[1]);
+        if (!rule || !p || !q) return NULL;
+        Atom *applied = sj_expr3(a, "App", sj_expr3(a, "App",
+            sj_expr2(a, "DeclConst", rule), p), q);
+        return sj_expr3(a, "App", sj_expr3(a, "App", applied, major), minor);
     }
     if (sj_is_expr(proof, "pf:all-elim", 3u)) {
         Atom *major_prop = NULL;
@@ -3558,7 +4542,21 @@ static Atom *sj_native_compile_synth(SjNativeCompiler *compiler,
             ? sj_subst(a, body, 0u, canonical_witness)
             : sj_expr3(a, "App", family_arg, canonical_witness);
         if (!*proposition_out) return NULL;
-        return sj_expr3(a, "App", major, witness);
+        bool by_rules = false;
+        if (!sj_native_carrier_by_rules(compiler, domain, NULL, &by_rules))
+            return NULL;
+        if (!by_rules) return sj_expr3(a, "App", major, witness);
+        /* `allE@A P major witness` */
+        Atom *code = sj_native_code(compiler, whnf);
+        Atom *predicate = NULL;
+        Atom *instance = code
+            ? sj_native_code_instance(code, "all", &predicate) : NULL;
+        Atom *rule = instance
+            ? sj_native_rule_name(compiler, SJ_NATIVE_ALL_ELIM, instance) : NULL;
+        if (!rule) return NULL;
+        Atom *applied = sj_expr3(a, "App", sj_expr3(a, "App",
+            sj_expr2(a, "DeclConst", rule), predicate), major);
+        return sj_expr3(a, "App", applied, witness);
     }
     sj_fail(st, false,
             sj_expr2(a, "set:native-unsupported-proof-form", proof));
@@ -3611,7 +4609,16 @@ static Atom *sj_native_compile_check(SjNativeCompiler *compiler,
         Atom *body = sj_native_compile_check(compiler, intro_body, args[1]);
         compiler->binder_count--;
         st->hypothesis_count--;
-        return body ? sj_expr3(a, "Lam", domain, body) : NULL;
+        Atom *abstraction = body ? sj_expr3(a, "Lam", domain, body) : NULL;
+        if (!abstraction || !compiler->rule_constants) return abstraction;
+        /* `impI p q (λ h. body)` */
+        Atom *rule = sj_native_rule_name(compiler, SJ_NATIVE_IMP_INTRO, NULL);
+        Atom *p = sj_native_code(compiler, args[0]);
+        Atom *q = sj_native_code(compiler, args[1]);
+        if (!rule || !p || !q) return NULL;
+        Atom *applied = sj_expr3(a, "App", sj_expr3(a, "App",
+            sj_expr2(a, "DeclConst", rule), p), q);
+        return sj_expr3(a, "App", applied, abstraction);
     }
     if (universal) {
         Atom *domain = NULL;
@@ -3651,7 +4658,22 @@ static Atom *sj_native_compile_check(SjNativeCompiler *compiler,
         st->binder_count--;
         for (size_t i = 0u; i < hypothesis_count; i++)
             st->hypotheses[i] = saved[i];
-        return body ? sj_expr3(a, "Lam", native_domain, body) : NULL;
+        Atom *abstraction = body ? sj_expr3(a, "Lam", native_domain, body) : NULL;
+        if (!abstraction) return NULL;
+        bool by_rules = false;
+        if (!sj_native_carrier_by_rules(compiler, domain, NULL, &by_rules))
+            return NULL;
+        if (!by_rules) return abstraction;
+        /* `allI@A P (λ x. body)` */
+        Atom *code = sj_native_code(compiler, whnf);
+        Atom *predicate = NULL;
+        Atom *instance = code
+            ? sj_native_code_instance(code, "all", &predicate) : NULL;
+        Atom *rule = instance
+            ? sj_native_rule_name(compiler, SJ_NATIVE_ALL_INTRO, instance) : NULL;
+        if (!rule) return NULL;
+        return sj_expr3(a, "App", sj_expr3(a, "App",
+            sj_expr2(a, "DeclConst", rule), predicate), abstraction);
     }
     Atom *synthesized = NULL;
     Atom *term = sj_native_compile_synth(compiler, proof, &synthesized);
@@ -3671,11 +4693,11 @@ static Atom *sj_native_rule_cons(Arena *a, Atom *head, Atom *patterns,
 /* The family `Holds : prop -> Sort 0` decodes a code into a type of
  * `Sort 0`.  `Holds (all@A P) ↦ Pi A (Holds (P #0))` and
  * `Holds (eq@A x y) ↦ Id A x y` keep that type only when the carrier A is
- * itself in `Sort 0`; for a larger carrier, such as a universe, the right
- * side is a larger type than the left, and the kernel, which computes with
- * these rules without checking them, would identify the two.  No decoding
- * rule is generated for such a carrier, so a proof that needs one is not
- * decided natively. */
+ * itself in `Sort 0`; for a larger carrier, such as a universe or the sort
+ * of all sets, the right side is a larger type than the left, and the
+ * kernel, which computes with these rules without checking them, would
+ * identify the two.  No decoding rule is generated for such a carrier: its
+ * quantifier and equation are compiled by rule constants instead. */
 static bool sj_native_small_carrier(Arena *a, Atom *context, Atom *carrier) {
     if (!context || !carrier) return false;
     CettaPrimeRegularKernelBudget budget;
@@ -3687,20 +4709,27 @@ static bool sj_native_small_carrier(Arena *a, Atom *context, Atom *carrier) {
     return checked.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
 }
 
+/* The decoding rules of the family, after the reachable definition rules:
+ * implication's, unless every rule is compiled to its constant, and the
+ * quantifier's (the equation's, under the identity reading) at every
+ * instance in view whose carrier is not compiled by rule constants. */
 static Atom *sj_native_rules(SjNativeCompiler *compiler, Atom *context) {
     SjProofState *st = compiler->proof;
     Arena *a = st->arena;
     Atom *family = sj_expr2(a, "DeclConst", compiler->family_name);
     Atom *p0 = sj_expr2(a, "PVar", atom_int(a, 0));
     Atom *p1 = sj_expr2(a, "PVar", atom_int(a, 1));
-    Atom *imp = sj_expr2(a, "DeclConst", sj_sym(a, "imp"));
-    Atom *imp_code = sj_expr3(a, "App", sj_expr3(a, "App", imp, p0), p1);
-    Atom *imp_patterns = atom_expr(a, (Atom *[]){imp_code}, 1u);
-    Atom *imp_rhs = sj_expr3(
-        a, "Pi", sj_expr3(a, "App", family, p0),
-        sj_expr3(a, "App", family, p1));
-    Atom *rules = sj_native_rule_cons(a, compiler->family_name, imp_patterns,
-                                      imp_rhs, st->reachable_rules);
+    Atom *rules = st->reachable_rules;
+    if (!compiler->rule_constants) {
+        Atom *imp = sj_expr2(a, "DeclConst", sj_sym(a, "imp"));
+        Atom *imp_code = sj_expr3(a, "App", sj_expr3(a, "App", imp, p0), p1);
+        Atom *imp_patterns = atom_expr(a, (Atom *[]){imp_code}, 1u);
+        Atom *imp_rhs = sj_expr3(
+            a, "Pi", sj_expr3(a, "App", family, p0),
+            sj_expr3(a, "App", family, p1));
+        rules = sj_native_rule_cons(a, compiler->family_name, imp_patterns,
+                                    imp_rhs, rules);
+    }
     for (size_t i = 0u; i < st->instance_count; i++) {
         const char *name = atom_name_cstr(st->instance_names[i]);
         Atom *type = st->instance_types[i];
@@ -3708,12 +4737,13 @@ static Atom *sj_native_rules(SjNativeCompiler *compiler, Atom *context) {
             !sj_is_expr(type, "Pi", 3u) ||
             !sj_is_expr(type->expr.elems[1], "Pi", 3u))
             continue;
-        Atom *domain = sj_to_kernel(a, type->expr.elems[1]->expr.elems[1]);
+        Atom *carrier = type->expr.elems[1]->expr.elems[1];
+        bool by_rules = false;
+        if (!sj_native_carrier_by_rules(compiler, carrier, context, &by_rules))
+            return NULL;
+        if (by_rules) continue;
+        Atom *domain = sj_to_kernel(a, carrier);
         if (!domain) return NULL;
-        if (!sj_native_small_carrier(a, context, domain)) {
-            if (!compiler->withheld_carrier) compiler->withheld_carrier = domain;
-            continue;
-        }
         Atom *predicate = sj_expr2(a, "PVar", atom_int(a, 0));
         Atom *code = sj_expr3(
             a, "App", sj_expr2(a, "DeclConst", st->instance_names[i]),
@@ -3735,12 +4765,13 @@ static Atom *sj_native_rules(SjNativeCompiler *compiler, Atom *context) {
             !sj_is_expr(type, "Pi", 3u) ||
             !sj_is_expr(type->expr.elems[2], "Pi", 3u))
             continue;
+        bool by_rules = false;
+        if (!sj_native_carrier_by_rules(compiler, type->expr.elems[1], context,
+                                        &by_rules))
+            return NULL;
+        if (by_rules) continue;
         Atom *carrier = sj_to_kernel(a, type->expr.elems[1]);
         if (!carrier) return NULL;
-        if (!sj_native_small_carrier(a, context, carrier)) {
-            if (!compiler->withheld_carrier) compiler->withheld_carrier = carrier;
-            continue;
-        }
         Atom *code = sj_expr3(
             a, "App",
             sj_expr3(a, "App", sj_expr2(a, "DeclConst", st->instance_names[i]),
@@ -3794,7 +4825,8 @@ static Atom *sj_native_context_failure(Arena *a, Atom *context) {
 }
 
 static Atom *sj_set_native_proof_with_state(
-    Arena *a, Atom *judgment, Atom *name, SjProofState *st) {
+    Arena *a, Atom *judgment, Atom *name, bool rule_constants,
+    SjProofState *st) {
     SjSetEnv *env = st->env;
     Space *space = st->user_space;
     bool ambiguous = false;
@@ -3823,6 +4855,7 @@ static Atom *sj_set_native_proof_with_state(
     SjNativeCompiler compiler = {
         .proof = st,
         .family_name = sj_sym(a, family_spelling),
+        .rule_constants = rule_constants,
     };
     Atom *native_proposition = NULL;
     Atom *term = sj_native_compile_known(&compiler, name, &native_proposition);
@@ -3859,20 +4892,13 @@ static Atom *sj_set_native_proof_with_state(
         return sj_undetermined(a, judgment,
                                sj_expr1(a, "set:native-rule-dependencies"));
 
-    Atom *context = sj_kernel_context(st);
-    if (!context)
+    if (!sj_kernel_context(st))
         return sj_undetermined(a, judgment,
                                sj_expr1(a, "set:native-context"));
-    for (size_t i = 0u; i < st->instance_count; i++) {
-        Atom *kernel_type = sj_to_kernel(a, st->instance_types[i]);
-        if (!kernel_type)
-            return sj_undetermined(a, judgment,
-                                   sj_expr1(a, "set:native-instance-type"));
-        Atom *items[4] = {sj_sym(a, "PrimeCtxDecl"),
-                          sj_expr2(a, "DeclConst", st->instance_names[i]),
-                          kernel_type, context};
-        context = atom_expr(a, items, 4u);
-    }
+    Atom *context = sj_native_instance_context(st);
+    if (!context)
+        return sj_undetermined(a, judgment,
+                               sj_expr1(a, "set:native-instance-type"));
     Atom *proof_family_type = sj_expr3(
         a, "Pi", sj_expr2(a, "DeclConst", sj_sym(a, "prop")),
         sj_expr2(a, "Sort", sj_expr2(a, "LevelConst", atom_int(a, 0))));
@@ -3880,6 +4906,11 @@ static Atom *sj_set_native_proof_with_state(
         a, (Atom *[]){sj_sym(a, "PrimeCtxDecl"),
                       sj_expr2(a, "DeclConst", compiler.family_name),
                       proof_family_type, context}, 4u);
+    context = sj_native_rule_declarations(&compiler, context);
+    if (!context)
+        return sj_undetermined(a, judgment,
+                               st->failure ? st->failure
+                                           : sj_expr1(a, "set:native-rule-constants"));
     Atom **assumption_rows = arena_alloc(
         a, sizeof(Atom *) * (compiler.assumption_count
                                  ? compiler.assumption_count
@@ -3912,11 +4943,6 @@ static Atom *sj_set_native_proof_with_state(
         if (checked.status == CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED)
             return sj_incomplete(a, judgment,
                                  sj_expr2(a, "set:native-kernel", reason));
-        if (compiler.withheld_carrier)
-            return sj_undetermined(
-                a, judgment,
-                sj_expr2(a, "set:native-large-carrier",
-                         compiler.withheld_carrier));
         if (checked.status == CETTA_PRIME_REGULAR_KERNEL_REFUTED)
             return sj_refuted(a, judgment,
                               sj_expr2(a, "set:native-kernel", reason));
@@ -3939,14 +4965,27 @@ static Atom *sj_set_native_proof_with_state(
 }
 
 static Atom *sj_set_native_proof(Arena *a, Space *space, Atom *judgment,
-                                 Atom *name, bool limited, uint64_t steps) {
+                                 Atom *name, bool rule_constants,
+                                 bool limited, uint64_t steps) {
     SjSetEnv *env = sj_env(space);
     if (!env)
         return sj_undetermined(a, judgment,
                                sj_expr1(a, "set:signature-unavailable"));
     SjProofState st;
     sj_proof_state_init(&st, a, space, env, limited, steps, false, true);
-    return sj_set_native_proof_with_state(a, judgment, name, &st);
+    return sj_set_native_proof_with_state(a, judgment, name, rule_constants,
+                                          &st);
+}
+
+/* Whether a package was compiled with every rule as its rule constant: its
+ * context declares implication's introduction, which only that
+ * presentation declares.  A package is recompiled in the presentation it
+ * names, and must then agree with it field by field. */
+static bool sj_native_package_rule_constants(SjSetEnv *env, Atom *package) {
+    Atom *rule = env->native_rules[SJ_NATIVE_IMP_INTRO];
+    return rule &&
+           sj_native_context_declares(
+               package->expr.elems[SJ_NATIVE_PACKAGE_CONTEXT], rule);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -4268,8 +5307,9 @@ static Atom *sj_set_native_link_with_state(Arena *a, Atom *judgment,
         strcmp(digest->ground.sval, sj_signature_digest()) != 0)
         return sj_undetermined(a, judgment,
                                sj_expr1(a, "set:native-package-signature"));
+    bool rule_constants = sj_native_package_rule_constants(st->env, package);
     Atom *proof_verdict = sj_set_native_proof_with_state(
-        a, sj_expr2(a, "set:native-proof", name), name, st);
+        a, sj_expr2(a, "set:native-proof", name), name, rule_constants, st);
     Atom *proof_evidence = NULL;
     SjStatus proof_status = sj_verdict_status(proof_verdict, &proof_evidence);
     if (proof_status != SJ_STATUS_ESTABLISHED)
@@ -4348,7 +5388,12 @@ static Atom *sj_set_native_link_with_state(Arena *a, Atom *judgment,
         .proof = st,
         .family_name = family,
         .identity = true,
+        .rule_constants = rule_constants,
     };
+    context = sj_native_rule_declarations(&link_compiler, context);
+    if (!context)
+        return sj_undetermined(a, judgment,
+                               sj_expr1(a, "set:native-link-rule-constants"));
     Atom *rules = sj_native_rules(&link_compiler, context);
     if (!rules)
         return sj_undetermined(a, judgment,
@@ -4526,7 +5571,8 @@ static Atom *sj_set_native_use(Arena *a, Space *space, Atom *judgment,
     } else {
         Atom *proof_query = sj_expr2(a, "set:native-proof", name);
         Atom *proof_verdict = sj_set_native_proof_with_state(
-            a, proof_query, name, &st);
+            a, proof_query, name, sj_native_package_rule_constants(env, native),
+            &st);
         Atom *proof_evidence = NULL;
         SjStatus proof_status = sj_verdict_status(proof_verdict, &proof_evidence);
         if (proof_status != SJ_STATUS_ESTABLISHED)
@@ -4581,7 +5627,12 @@ static Atom *sj_set_native_use(Arena *a, Space *space, Atom *judgment,
         .proof = &st,
         .family_name = proof_type->expr.elems[1]->expr.elems[1],
         .identity = linked || automatic,
+        .rule_constants = sj_native_package_rule_constants(env, native),
     };
+    context = sj_native_rule_declarations(&consumer_compiler, context);
+    if (!context)
+        return sj_undetermined(a, judgment,
+                               sj_expr1(a, "set:native-consumer-rule-constants"));
     Atom *rules = sj_native_rules(&consumer_compiler, context);
     if (!rules)
         return sj_undetermined(a, judgment,
@@ -4610,11 +5661,6 @@ static Atom *sj_set_native_use(Arena *a, Space *space, Atom *judgment,
         if (used.status == CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED)
             return sj_incomplete(a, judgment,
                                  sj_expr2(a, "set:native-consumer", reason));
-        if (consumer_compiler.withheld_carrier)
-            return sj_undetermined(
-                a, judgment,
-                sj_expr2(a, "set:native-large-carrier",
-                         consumer_compiler.withheld_carrier));
         if (used.status == CETTA_PRIME_REGULAR_KERNEL_REFUTED)
             return sj_refuted(a, judgment,
                               sj_expr2(a, "set:native-consumer", reason));
@@ -4638,6 +5684,686 @@ static Atom *sj_set_native_use(Arena *a, Space *space, Atom *judgment,
         sj_expr2(a, "PrimeScopedValue", atom_expr(a, use_items, 5u)));
 }
 
+
+/* ------------------------------------------------------------------------ */
+/* A query is a type.                                                         */
+/*                                                                            */
+/* For a functor the space declares stored typed (see the stored atoms       */
+/* above), a match of `(F ... k ...)`, the key `k` at position p and          */
+/* variables elsewhere, returning the variable at position j, has the        */
+/* answers                                                                    */
+/*                                                                            */
+/*     Sigma (o : F@occurrence). Id Tp (F@argp o) k                           */
+/*                                                                            */
+/* an occurrence with the evidence that its key is `k`; the answer returns    */
+/* `F@argj o`.  Two stored copies of one atom are two occurrences, and two    */
+/* answers.                                                                   */
+/*                                                                            */
+/* A call to a definition by stored rules is typed as a query followed by    */
+/* the answers of the right side each rule gives.  For `(type:stored (= (f K) */
+/* T))`, the stored equations `(= (f x) r)` with a closed left side are the   */
+/* rules, the type `f@rule`, named like occurrences; `f@lhs` gives a rule's   */
+/* argument, `f@answers` the type of the answers of its right side, and      */
+/* `f@returns` the value an answer of it returns.  The answers of `(f k)` are */
+/*                                                                            */
+/*     Sigma (q : Sigma (r : f@rule). Id K (f@lhs r) k). f@answers (fst q)    */
+/*                                                                            */
+/* a rule whose left side is the call with an answer of its right side: a    */
+/* typed query of the space, or a closed value `v`, whose one answer is      */
+/* `refl v` of `Id T v v`.  Two rules with one left side and equal right      */
+/* sides give every answer twice.  The judgment checks every stored          */
+/* occurrence or rule, and the value each answer returns.                    */
+/* ------------------------------------------------------------------------ */
+
+/* The declaration `(type:stored (F T1 ... Tn))` of a functor and arity, or
+ * NULL. */
+static Atom *sj_query_declaration(Arena *a, Space *space, Atom *functor,
+                                  CettaExprLen arity) {
+    Atom *pattern = sj_expr2(a, "type:stored", atom_var(a, "declared"));
+    CettaIndex *candidates = NULL;
+    CettaIndex count = space_match_candidates64(space, pattern, &candidates);
+    Atom *found = NULL;
+    for (CettaIndex i = 0u; i < count && !found; i++) {
+        Atom *atom = space_match_candidate_at64(space, candidates[i]);
+        if (!sj_is_expr(atom, "type:stored", 2u)) continue;
+        Atom *declared = atom->expr.elems[1];
+        if (declared && declared->kind == ATOM_EXPR &&
+            declared->expr.len == arity + 1u &&
+            atom_eq(declared->expr.elems[0], functor))
+            found = declared;
+    }
+    free(candidates);
+    return found;
+}
+
+/* A verdict of a query or call judgment from a kernel status that is not a
+ * decision of the question asked. */
+static Atom *sj_query_declined(Arena *a, Atom *judgment,
+                               CettaPrimeRegularKernelResult result,
+                               const char *what) {
+    Atom *reason = sj_expr2(a, what,
+                            sj_sym(a, result.reason ? result.reason
+                                                    : "kernel-declined"));
+    return result.status == CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED
+        ? sj_incomplete(a, judgment, reason)
+        : sj_undetermined(a, judgment, reason);
+}
+
+/* A match read as a query of a typed functor. */
+typedef struct {
+    Atom *functor;
+    SjStoredFunctor *stored;
+    size_t key_position;
+    size_t value_position;
+    Atom *kernel_key;
+    Atom **types;                /* [position 1..arity], kernel */
+    Atom *occurrence_type;       /* (DeclConst F@occurrence) */
+    Atom *answer_type;           /* kernel */
+    Atom *value_map;             /* (DeclConst F@argj) */
+} SjQueryPlan;
+
+typedef enum {
+    SJ_QUERY_PLANNED,
+    SJ_QUERY_NOT_TYPED,          /* no typed functor: another route judges */
+    SJ_QUERY_REFUSED,            /* *reason_out refutes the judgment */
+    SJ_QUERY_DECLINED            /* *reason_out leaves it undetermined */
+} SjQueryPlanStatus;
+
+/* Read `(match space pattern returned)` against the space of the proof
+ * state as a query of a typed functor, noting what its types and arguments
+ * mention. */
+static SjQueryPlanStatus sj_query_plan(SjProofState *st, Atom *term,
+                                       SjQueryPlan *plan, Atom **reason_out) {
+    Arena *a = st->arena;
+    SjSetEnv *env = st->env;
+    *reason_out = NULL;
+    if (!sj_is_expr(term, "match", 4u)) return SJ_QUERY_NOT_TYPED;
+    Space *space = prime_public_space_argument(a, term->expr.elems[1]);
+    Atom *pattern = term->expr.elems[2];
+    Atom *returned = term->expr.elems[3];
+    if (!space || space != st->user_space || !pattern ||
+        pattern->kind != ATOM_EXPR || pattern->expr.len < 2u ||
+        pattern->expr.elems[0]->kind != ATOM_SYMBOL)
+        return SJ_QUERY_NOT_TYPED;
+    Atom *functor = pattern->expr.elems[0];
+    CettaExprLen arity = pattern->expr.len - 1u;
+    Atom *declared = sj_query_declaration(a, space, functor, arity);
+    if (!declared) return SJ_QUERY_NOT_TYPED;
+    *plan = (SjQueryPlan){.functor = functor};
+
+    /* The shape of this slice: one key, a closed term at one position, and
+     * distinct variables elsewhere, one of which the match returns. */
+    for (CettaExprIndex i = 1u; i < pattern->expr.len; i++) {
+        Atom *argument = pattern->expr.elems[i];
+        if (argument->kind == ATOM_VAR) {
+            for (CettaExprIndex k = 1u; k < i; k++)
+                if (atom_eq(pattern->expr.elems[k], argument)) {
+                    *reason_out = sj_expr2(a, "typed-query-repeated-variable",
+                                           argument);
+                    return SJ_QUERY_DECLINED;
+                }
+            if (atom_eq(argument, returned)) plan->value_position = (size_t)i;
+            continue;
+        }
+        if (!atom_has_vars(argument) && plan->key_position == 0u) {
+            plan->key_position = (size_t)i;
+            continue;
+        }
+        *reason_out = sj_expr2(a, "typed-query-pattern", pattern);
+        return SJ_QUERY_DECLINED;
+    }
+    if (plan->key_position == 0u || plan->value_position == 0u) {
+        *reason_out = sj_expr2(a, "typed-query-pattern", pattern);
+        return SJ_QUERY_DECLINED;
+    }
+
+    plan->stored = sj_env_stored_functor(env, functor, (size_t)arity);
+    if (!plan->stored) {
+        *reason_out = sj_expr2(a, "typed-query-functor", functor);
+        return SJ_QUERY_DECLINED;
+    }
+    if (plan->stored->failure) {
+        *reason_out = plan->stored->failure;
+        return atom_is_symbol(plan->stored->failure->expr.elems[0],
+                              "typed-query-ill-typed-occurrence")
+            ? SJ_QUERY_REFUSED : SJ_QUERY_DECLINED;
+    }
+    plan->types = arena_alloc(a, sizeof(Atom *) * ((size_t)arity + 1u));
+    for (size_t position = 1u; position <= arity; position++) {
+        Atom *canonical = NULL;
+        Atom *sort = NULL;
+        if (!sj_canonical_synthesized(a, &env->overlay,
+                                      declared->expr.elems[position],
+                                      &canonical, &sort) ||
+            !sj_is_sort(sort) ||
+            !(plan->types[position] = sj_to_kernel(a, canonical))) {
+            *reason_out = sj_expr2(a, "typed-query-position-type",
+                                   declared->expr.elems[position]);
+            return SJ_QUERY_DECLINED;
+        }
+        sj_declare_mentioned(st, canonical, NULL);
+    }
+    Atom *key = NULL;
+    CettaNikOutcomeV1 outcome = CETTA_NIK_OUTCOME_INCOMPLETE;
+    if (!sj_canonical_checked(a, &env->overlay,
+                              pattern->expr.elems[plan->key_position],
+                              declared->expr.elems[plan->key_position], &key,
+                              &outcome) ||
+        !(plan->kernel_key = sj_to_kernel(a, key))) {
+        *reason_out = sj_expr2(a, "typed-query-key",
+                               pattern->expr.elems[plan->key_position]);
+        return outcome == CETTA_NIK_OUTCOME_REFUTED ? SJ_QUERY_REFUSED
+                                                    : SJ_QUERY_DECLINED;
+    }
+    sj_declare_mentioned(st, key, NULL);
+    for (size_t i = 0u; i < plan->stored->count; i++)
+        for (size_t position = 1u; position <= arity; position++)
+            sj_declare_kernel_mentioned(st, plan->stored->arguments[i][position],
+                                        NULL);
+    plan->occurrence_type = sj_expr2(
+        a, "DeclConst", sj_stored_map_name(a, functor, "occurrence"));
+    plan->value_map = sj_expr2(
+        a, "DeclConst", sj_stored_argument_name(a, functor, plan->value_position));
+    Atom *key_map = sj_expr2(
+        a, "DeclConst", sj_stored_argument_name(a, functor, plan->key_position));
+    plan->answer_type = sj_expr3(
+        a, "Sigma", plan->occurrence_type,
+        atom_expr(a, (Atom *[]){sj_sym(a, "Id"), plan->types[plan->key_position],
+                                sj_expr3(a, "App", key_map,
+                                         sj_expr2(a, "idx", atom_int(a, 0))),
+                                plan->kernel_key}, 4u));
+    return SJ_QUERY_PLANNED;
+}
+
+static Atom *sj_query_context_declare(Arena *a, Atom *context, Atom *key,
+                                      Atom *type) {
+    return atom_expr(a, (Atom *[]){sj_sym(a, "PrimeCtxDecl"), key, type,
+                                   context}, 4u);
+}
+
+/* The context with a planned query's type of occurrences, its occurrences
+ * and its argument maps, once for each functor. */
+static Atom *sj_query_context(Arena *a, Atom *context, const SjQueryPlan *plan) {
+    if (sj_native_context_declares(context,
+                                   plan->occurrence_type->expr.elems[1]))
+        return context;
+    context = sj_query_context_declare(
+        a, context, plan->occurrence_type,
+        sj_expr2(a, "Sort", sj_expr2(a, "LevelConst", atom_int(a, 0))));
+    for (size_t i = 0u; i < plan->stored->count; i++)
+        context = sj_query_context_declare(
+            a, context, sj_expr2(a, "DeclConst", plan->stored->names[i]),
+            plan->occurrence_type);
+    for (size_t position = 1u; position <= plan->stored->arity; position++)
+        context = sj_query_context_declare(
+            a, context,
+            sj_expr2(a, "DeclConst",
+                     sj_stored_argument_name(a, plan->functor, position)),
+            sj_expr3(a, "Pi", plan->occurrence_type, plan->types[position]));
+    return context;
+}
+
+/* The answers of a planned query: for every stored occurrence, the pair of
+ * it with the reflexivity of the key, checked against the answer type;
+ * `*answers_out` holds the answers that check, `*keys_out` for the others
+ * the key their occurrence has.  The kernel's rules are set. */
+static CettaPrimeRegularKernelResult sj_query_answers(
+    SjProofState *st, Atom *context, const SjQueryPlan *plan,
+    Atom ***answers_out, size_t *answer_count_out,
+    Atom ***others_out, Atom ***keys_out, size_t *other_count_out) {
+    Arena *a = st->arena;
+    size_t count = plan->stored->count;
+    Atom **answers = arena_alloc(a, sizeof(Atom *) * (count ? count : 1u));
+    Atom **others = arena_alloc(a, sizeof(Atom *) * (count ? count : 1u));
+    Atom **keys = arena_alloc(a, sizeof(Atom *) * (count ? count : 1u));
+    size_t answer_count = 0u, other_count = 0u;
+    Atom *key_map = sj_expr2(a, "DeclConst",
+                             sj_stored_argument_name(a, plan->functor,
+                                                     plan->key_position));
+    for (size_t i = 0u; i < count; i++) {
+        Atom *occurrence = sj_expr2(a, "DeclConst", plan->stored->names[i]);
+        Atom *candidate = sj_expr3(a, "Pair", occurrence,
+                                   sj_expr2(a, "Refl", plan->kernel_key));
+        CettaPrimeRegularKernelResult checked =
+            cetta_prime_regular_kernel_check_intrinsic(
+                a, context, candidate, plan->answer_type, &st->budget);
+        if (checked.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
+            answers[answer_count++] = candidate;
+            continue;
+        }
+        if (checked.status != CETTA_PRIME_REGULAR_KERNEL_REFUTED)
+            return checked;
+        CettaPrimeRegularKernelNormalFormV1 its_key =
+            cetta_prime_regular_kernel_normalize_intrinsic_v1(
+                a, context, sj_expr3(a, "App", key_map, occurrence),
+                &st->budget);
+        if (its_key.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
+            return (CettaPrimeRegularKernelResult){its_key.status, NULL,
+                                                   its_key.reason};
+        others[other_count] = occurrence;
+        keys[other_count++] = its_key.term;
+    }
+    *answers_out = answers;
+    *answer_count_out = answer_count;
+    *others_out = others;
+    *keys_out = keys;
+    *other_count_out = other_count;
+    return (CettaPrimeRegularKernelResult){
+        CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED, NULL, NULL};
+}
+
+/* The value an answer returns, computed by a function on the answers and
+ * checked at the type of values. */
+static CettaPrimeRegularKernelNormalFormV1 sj_query_value(
+    SjProofState *st, Atom *context, Atom *returns, Atom *answer,
+    Atom *value_type) {
+    Arena *a = st->arena;
+    CettaPrimeRegularKernelNormalFormV1 value =
+        cetta_prime_regular_kernel_normalize_intrinsic_v1(
+            a, context, sj_expr3(a, "App", returns, answer), &st->budget);
+    if (value.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return value;
+    CettaPrimeRegularKernelResult typed =
+        cetta_prime_regular_kernel_check_intrinsic(
+            a, context, value.term, value_type, &st->budget);
+    if (typed.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
+        return (CettaPrimeRegularKernelNormalFormV1){
+            .status = typed.status, .reason = typed.reason};
+    return value;
+}
+
+static Atom *sj_query_list(Arena *a, const char *head, Atom **items,
+                           size_t count) {
+    Atom **all = arena_alloc(a, sizeof(Atom *) * (count + 1u));
+    all[0] = sj_sym(a, head);
+    for (size_t i = 0u; i < count; i++) all[i + 1u] = items[i];
+    return atom_expr(a, all, (CettaExprLen)(count + 1u));
+}
+
+static Atom *sj_quoted(Arena *a, Atom *kernel) {
+    return cetta_prime_regular_term_quote_intrinsic_v1(a, kernel);
+}
+
+static Atom *sj_typed_query_judge(SjProofState *st, Atom *judgment,
+                                  Atom *term) {
+    Arena *a = st->arena;
+    SjQueryPlan plan;
+    Atom *reason = NULL;
+    switch (sj_query_plan(st, term, &plan, &reason)) {
+    case SJ_QUERY_NOT_TYPED: return NULL;
+    case SJ_QUERY_REFUSED: return sj_refuted(a, judgment, reason);
+    case SJ_QUERY_DECLINED: return sj_undetermined(a, judgment, reason);
+    case SJ_QUERY_PLANNED: break;
+    }
+    Atom *context = sj_native_instance_context(st);
+    if (!context)
+        return sj_undetermined(a, judgment, sj_expr1(a, "typed-query-context"));
+    context = sj_query_context(a, context, &plan);
+    cetta_prime_regular_kernel_rules_set(st->env->kernel_rules);
+    CettaPrimeRegularKernelResult formed =
+        cetta_prime_regular_kernel_synth_intrinsic_v1(
+            a, context, plan.answer_type, &st->budget);
+    if (formed.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED ||
+        !cetta_prime_regular_kernel_term_is_universe_sort_v1(formed.type)) {
+        cetta_prime_regular_kernel_rules_set(NULL);
+        return formed.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED
+            ? sj_undetermined(a, judgment, sj_expr1(a, "typed-query-answer-type"))
+            : sj_query_declined(a, judgment, formed, "typed-query-answer-type");
+    }
+    Atom **answers = NULL, **others = NULL, **keys = NULL;
+    size_t answer_count = 0u, other_count = 0u;
+    CettaPrimeRegularKernelResult enumerated = sj_query_answers(
+        st, context, &plan, &answers, &answer_count, &others, &keys,
+        &other_count);
+    if (enumerated.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
+        cetta_prime_regular_kernel_rules_set(NULL);
+        return sj_query_declined(a, judgment, enumerated, "typed-query-answer");
+    }
+    /* The value an answer returns: the returned position of its occurrence,
+     * a function on the answers applied to this one. */
+    Atom *returns = sj_expr3(
+        a, "Lam", plan.answer_type,
+        sj_expr3(a, "App", plan.value_map,
+                 sj_expr2(a, "Fst", sj_expr2(a, "idx", atom_int(a, 0)))));
+    Atom **rows = arena_alloc(a, sizeof(Atom *) * (answer_count ? answer_count : 1u));
+    for (size_t i = 0u; i < answer_count; i++) {
+        CettaPrimeRegularKernelNormalFormV1 value = sj_query_value(
+            st, context, returns, answers[i], plan.types[plan.value_position]);
+        if (value.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
+            cetta_prime_regular_kernel_rules_set(NULL);
+            return sj_query_declined(
+                a, judgment,
+                (CettaPrimeRegularKernelResult){value.status, NULL, value.reason},
+                "typed-query-value");
+        }
+        rows[i] = atom_expr(a, (Atom *[]){sj_sym(a, "Answer"),
+                                          sj_quoted(a, answers[i]),
+                                          sj_quoted(a, value.term)}, 3u);
+    }
+    cetta_prime_regular_kernel_rules_set(NULL);
+    Atom **not_rows = arena_alloc(a, sizeof(Atom *) * (other_count ? other_count : 1u));
+    for (size_t i = 0u; i < other_count; i++)
+        not_rows[i] = atom_expr(a, (Atom *[]){sj_sym(a, "NotAnswer"),
+                                              sj_quoted(a, others[i]),
+                                              sj_quoted(a, keys[i])}, 3u);
+    Atom *evidence = atom_expr(
+        a, (Atom *[]){sj_sym(a, "PrimeTypedQuery"),
+                      cetta_prime_regular_term_quote_named_v1(a, plan.answer_type),
+                      sj_query_list(a, "Answers", rows, answer_count),
+                      sj_query_list(a, "NotAnswers", not_rows, other_count)},
+        4u);
+    return sj_established(a, judgment, evidence);
+}
+
+/* The name of a stored rule: the function, its argument, a digest of its
+ * right side, and the copy index of an identical rule from the second. */
+static Atom *sj_rule_name(Arena *a, Atom *function, Atom *argument,
+                          Atom *right, size_t copy) {
+    char digest[65];
+    char *shown = atom_to_string(a, right);
+    cetta_native_sha256_hex((const uint8_t *)(shown ? shown : ""),
+                            shown ? strlen(shown) : 0u, digest);
+    char *argument_shown = atom_to_string(a, argument);
+    size_t bytes = strlen(atom_name_cstr(function)) +
+                   strlen(argument_shown ? argument_shown : "") + 40u;
+    char *name = arena_alloc(a, bytes);
+    size_t at = (size_t)snprintf(name, bytes, "%s@%s@%.8s",
+                                 atom_name_cstr(function),
+                                 argument_shown ? argument_shown : "", digest);
+    if (copy > 1u) snprintf(name + at, bytes - at, "#%zu", copy);
+    return sj_sym(a, name);
+}
+
+static Atom *sj_typed_call_judge(SjProofState *st, Atom *judgment, Atom *term) {
+    Arena *a = st->arena;
+    SjSetEnv *env = st->env;
+    Space *space = st->user_space;
+    if (!term || term->kind != ATOM_EXPR || term->expr.len != 2u ||
+        term->expr.elems[0]->kind != ATOM_SYMBOL)
+        return NULL;
+    Atom *function = term->expr.elems[0];
+    /* `(type:stored (= (f K) T))` */
+    Atom *pattern = sj_expr2(a, "type:stored", atom_var(a, "declared"));
+    CettaIndex *candidates = NULL;
+    CettaIndex count = space_match_candidates64(space, pattern, &candidates);
+    Atom *declared = NULL;
+    for (CettaIndex i = 0u; i < count && !declared; i++) {
+        Atom *atom = space_match_candidate_at64(space, candidates[i]);
+        Atom *d = sj_is_expr(atom, "type:stored", 2u) ? atom->expr.elems[1] : NULL;
+        if (sj_is_expr(d, "=", 3u) && d->expr.elems[1]->kind == ATOM_EXPR &&
+            d->expr.elems[1]->expr.len == 2u &&
+            atom_eq(d->expr.elems[1]->expr.elems[0], function))
+            declared = d;
+    }
+    free(candidates);
+    if (!declared) return NULL;
+    Atom *key_type_authored = declared->expr.elems[1]->expr.elems[1];
+    Atom *value_type_authored = declared->expr.elems[2];
+
+    /* The types of the argument and of the values, and the key. */
+    Atom *canonical = NULL, *sort = NULL;
+    Atom *key_type = NULL, *value_type = NULL;
+    if (sj_canonical_synthesized(a, &env->overlay, key_type_authored,
+                                 &canonical, &sort) && sj_is_sort(sort)) {
+        sj_declare_mentioned(st, canonical, NULL);
+        key_type = sj_to_kernel(a, canonical);
+    }
+    if (sj_canonical_synthesized(a, &env->overlay, value_type_authored,
+                                 &canonical, &sort) && sj_is_sort(sort)) {
+        sj_declare_mentioned(st, canonical, NULL);
+        value_type = sj_to_kernel(a, canonical);
+    }
+    if (!key_type || !value_type)
+        return sj_undetermined(a, judgment,
+                               sj_expr2(a, "typed-call-types", declared));
+    Atom *key = NULL;
+    CettaNikOutcomeV1 outcome = CETTA_NIK_OUTCOME_INCOMPLETE;
+    if (!sj_canonical_checked(a, &env->overlay, term->expr.elems[1],
+                              key_type_authored, &key, &outcome))
+        return outcome == CETTA_NIK_OUTCOME_REFUTED
+            ? sj_refuted(a, judgment, sj_expr2(a, "typed-call-key",
+                                               term->expr.elems[1]))
+            : sj_undetermined(a, judgment, sj_expr2(a, "typed-call-key",
+                                                    term->expr.elems[1]));
+    sj_declare_mentioned(st, key, NULL);
+    Atom *kernel_key = sj_to_kernel(a, key);
+
+    /* The stored rules with a closed left side, in the order of the space:
+     * each with its argument, the type of the answers of its right side and
+     * the function giving the value of each. */
+    CettaCount length = space_length64(space);
+    size_t cap = length ? (size_t)length : 1u;
+    Atom **rule_atoms = arena_alloc(a, sizeof(Atom *) * cap);
+    Atom **rule_names = arena_alloc(a, sizeof(Atom *) * cap);
+    Atom **arguments = arena_alloc(a, sizeof(Atom *) * cap);
+    Atom **answer_types = arena_alloc(a, sizeof(Atom *) * cap);
+    Atom **returns = arena_alloc(a, sizeof(Atom *) * cap);
+    SjQueryPlan *plans = arena_alloc(a, sizeof(SjQueryPlan) * cap);
+    bool *queried = arena_alloc(a, sizeof(bool) * cap);
+    size_t rule_count = 0u;
+    for (CettaIndex index = 0u; index < length; index++) {
+        Atom *atom = space_get_at64(space, index);
+        if (!sj_is_expr(atom, "=", 3u)) continue;
+        Atom *left = atom->expr.elems[1];
+        if (!left || left->kind != ATOM_EXPR || left->expr.len != 2u ||
+            !atom_eq(left->expr.elems[0], function) ||
+            atom_has_vars(left->expr.elems[1]))
+            continue;
+        Atom *right = atom->expr.elems[2];
+        /* Two stored copies of one rule differ in the identity of their
+         * variables only: a copy is a rule written the same way. */
+        size_t copy = 1u;
+        char *written = atom_to_string(a, atom);
+        for (size_t prior = 0u; prior < rule_count; prior++) {
+            char *other = atom_to_string(a, rule_atoms[prior]);
+            if (written && other && strcmp(written, other) == 0) copy++;
+        }
+        Atom *argument = NULL;
+        outcome = CETTA_NIK_OUTCOME_INCOMPLETE;
+        if (!sj_canonical_checked(a, &env->overlay, left->expr.elems[1],
+                                  key_type_authored, &argument, &outcome))
+            return outcome == CETTA_NIK_OUTCOME_REFUTED
+                ? sj_refuted(a, judgment, sj_expr2(a, "typed-call-ill-typed-rule", atom))
+                : sj_undetermined(a, judgment, sj_expr2(a, "typed-call-rule", atom));
+        sj_declare_mentioned(st, argument, NULL);
+        size_t r = rule_count++;
+        rule_atoms[r] = atom;
+        rule_names[r] = sj_rule_name(a, function, left->expr.elems[1], right, copy);
+        arguments[r] = sj_to_kernel(a, argument);
+        Atom *reason = NULL;
+        SjQueryPlanStatus planned = sj_query_plan(st, right, &plans[r], &reason);
+        if (planned == SJ_QUERY_REFUSED) return sj_refuted(a, judgment, reason);
+        if (planned == SJ_QUERY_DECLINED) return sj_undetermined(a, judgment, reason);
+        queried[r] = planned == SJ_QUERY_PLANNED;
+        if (queried[r]) {
+            answer_types[r] = plans[r].answer_type;
+            returns[r] = sj_expr3(
+                a, "Lam", answer_types[r],
+                sj_expr3(a, "App", plans[r].value_map,
+                         sj_expr2(a, "Fst", sj_expr2(a, "idx", atom_int(a, 0)))));
+            continue;
+        }
+        /* A closed value: its one answer is its reflexivity. */
+        Atom *value = NULL;
+        outcome = CETTA_NIK_OUTCOME_INCOMPLETE;
+        if (atom_has_vars(right) ||
+            !sj_canonical_checked(a, &env->overlay, right, value_type_authored,
+                                  &value, &outcome))
+            return outcome == CETTA_NIK_OUTCOME_REFUTED
+                ? sj_refuted(a, judgment, sj_expr2(a, "typed-call-ill-typed-rule", atom))
+                : sj_undetermined(a, judgment, sj_expr2(a, "typed-call-right-side", atom));
+        sj_declare_mentioned(st, value, NULL);
+        Atom *kernel_value = sj_to_kernel(a, value);
+        answer_types[r] = atom_expr(a, (Atom *[]){sj_sym(a, "Id"), value_type,
+                                                  kernel_value, kernel_value}, 4u);
+        returns[r] = sj_expr3(a, "Lam", answer_types[r], kernel_value);
+    }
+    if (!kernel_key)
+        return sj_undetermined(a, judgment, sj_expr1(a, "typed-call-key"));
+
+    /* The context and the rules of the call. */
+    Atom *context = sj_native_instance_context(st);
+    if (!context)
+        return sj_undetermined(a, judgment, sj_expr1(a, "typed-call-context"));
+    for (size_t r = 0u; r < rule_count; r++)
+        if (queried[r]) context = sj_query_context(a, context, &plans[r]);
+    Atom *rule_type = sj_expr2(a, "DeclConst", sj_stored_map_name(a, function, "rule"));
+    Atom *lhs = sj_expr2(a, "DeclConst", sj_stored_map_name(a, function, "lhs"));
+    Atom *answers_of = sj_expr2(a, "DeclConst", sj_stored_map_name(a, function, "answers"));
+    Atom *returns_of = sj_expr2(a, "DeclConst", sj_stored_map_name(a, function, "returns"));
+    Atom *small = sj_expr2(a, "Sort", sj_expr2(a, "LevelConst", atom_int(a, 0)));
+    context = sj_query_context_declare(a, context, rule_type, small);
+    for (size_t r = 0u; r < rule_count; r++)
+        context = sj_query_context_declare(
+            a, context, sj_expr2(a, "DeclConst", rule_names[r]), rule_type);
+    context = sj_query_context_declare(a, context, lhs,
+                                       sj_expr3(a, "Pi", rule_type, key_type));
+    context = sj_query_context_declare(a, context, answers_of,
+                                       sj_expr3(a, "Pi", rule_type, small));
+    context = sj_query_context_declare(
+        a, context, returns_of,
+        sj_expr3(a, "Pi", rule_type,
+                 sj_expr3(a, "Pi",
+                          sj_expr3(a, "App", answers_of,
+                                   sj_expr2(a, "idx", atom_int(a, 0))),
+                          value_type)));
+    Atom *rules = env->kernel_rules;
+    for (size_t r = 0u; r < rule_count; r++) {
+        Atom *patterns = atom_expr(
+            a, (Atom *[]){sj_expr2(a, "DeclConst", rule_names[r])}, 1u);
+        rules = sj_native_rule_cons(a, lhs->expr.elems[1], patterns, arguments[r], rules);
+        rules = sj_native_rule_cons(a, answers_of->expr.elems[1], patterns,
+                                    answer_types[r], rules);
+        rules = sj_native_rule_cons(a, returns_of->expr.elems[1], patterns,
+                                    returns[r], rules);
+    }
+    Atom *selected = sj_expr3(
+        a, "Sigma", rule_type,
+        atom_expr(a, (Atom *[]){sj_sym(a, "Id"), key_type,
+                                sj_expr3(a, "App", lhs,
+                                         sj_expr2(a, "idx", atom_int(a, 0))),
+                                kernel_key}, 4u));
+    Atom *call_type = sj_expr3(
+        a, "Sigma", selected,
+        sj_expr3(a, "App", answers_of,
+                 sj_expr2(a, "Fst", sj_expr2(a, "idx", atom_int(a, 0)))));
+
+    cetta_prime_regular_kernel_rules_set(rules);
+    CettaPrimeRegularKernelResult formed =
+        cetta_prime_regular_kernel_synth_intrinsic_v1(a, context, call_type,
+                                                      &st->budget);
+    if (formed.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED ||
+        !cetta_prime_regular_kernel_term_is_universe_sort_v1(formed.type)) {
+        cetta_prime_regular_kernel_rules_set(NULL);
+        return formed.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED
+            ? sj_undetermined(a, judgment, sj_expr1(a, "typed-call-type"))
+            : sj_query_declined(a, judgment, formed, "typed-call-type");
+    }
+    /* Every rule: selected by the call, or not; each selected rule's right
+     * side answers, each paired with the rule's selection. */
+    Atom **rows = arena_alloc(a, sizeof(Atom *) * 1u);
+    size_t row_count = 0u, row_cap = 1u;
+    Atom **not_rows = arena_alloc(a, sizeof(Atom *) * (rule_count ? rule_count : 1u));
+    size_t not_count = 0u;
+    Atom *answer_value = sj_expr3(
+        a, "Lam", call_type,
+        sj_expr3(a, "App",
+                 sj_expr3(a, "App", returns_of,
+                          sj_expr2(a, "Fst", sj_expr2(a, "Fst",
+                                                      sj_expr2(a, "idx", atom_int(a, 0))))),
+                 sj_expr2(a, "Snd", sj_expr2(a, "idx", atom_int(a, 0)))));
+    for (size_t r = 0u; r < rule_count; r++) {
+        Atom *rule = sj_expr2(a, "DeclConst", rule_names[r]);
+        Atom *selection = sj_expr3(a, "Pair", rule, sj_expr2(a, "Refl", kernel_key));
+        CettaPrimeRegularKernelResult chosen =
+            cetta_prime_regular_kernel_check_intrinsic(a, context, selection,
+                                                       selected, &st->budget);
+        if (chosen.status == CETTA_PRIME_REGULAR_KERNEL_REFUTED) {
+            not_rows[not_count++] = atom_expr(
+                a, (Atom *[]){sj_sym(a, "NotAnswer"), sj_quoted(a, rule),
+                              sj_quoted(a, arguments[r])}, 3u);
+            continue;
+        }
+        if (chosen.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
+            cetta_prime_regular_kernel_rules_set(NULL);
+            return sj_query_declined(a, judgment, chosen, "typed-call-rule");
+        }
+        Atom **inner = NULL, **others = NULL, **keys = NULL;
+        size_t inner_count = 0u, other_count = 0u;
+        if (queried[r]) {
+            CettaPrimeRegularKernelResult enumerated = sj_query_answers(
+                st, context, &plans[r], &inner, &inner_count, &others, &keys,
+                &other_count);
+            if (enumerated.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
+                cetta_prime_regular_kernel_rules_set(NULL);
+                return sj_query_declined(a, judgment, enumerated,
+                                         "typed-call-right-side");
+            }
+        } else {
+            inner = arena_alloc(a, sizeof(Atom *));
+            inner[0] = sj_expr2(a, "Refl", answer_types[r]->expr.elems[2]);
+            inner_count = 1u;
+        }
+        for (size_t i = 0u; i < inner_count; i++) {
+            Atom *answer = sj_expr3(a, "Pair", selection, inner[i]);
+            CettaPrimeRegularKernelResult checked =
+                cetta_prime_regular_kernel_check_intrinsic(a, context, answer,
+                                                           call_type, &st->budget);
+            CettaPrimeRegularKernelNormalFormV1 value =
+                checked.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED
+                    ? sj_query_value(st, context, answer_value, answer, value_type)
+                    : (CettaPrimeRegularKernelNormalFormV1){
+                          .status = checked.status, .reason = checked.reason};
+            if (value.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
+                cetta_prime_regular_kernel_rules_set(NULL);
+                return sj_query_declined(
+                    a, judgment,
+                    (CettaPrimeRegularKernelResult){value.status, NULL, value.reason},
+                    "typed-call-answer");
+            }
+            if (row_count == row_cap) {
+                Atom **grown = arena_alloc(a, sizeof(Atom *) * 2u * row_cap);
+                for (size_t k = 0u; k < row_count; k++) grown[k] = rows[k];
+                rows = grown;
+                row_cap *= 2u;
+            }
+            rows[row_count++] = atom_expr(
+                a, (Atom *[]){sj_sym(a, "Answer"), sj_quoted(a, answer),
+                              sj_quoted(a, value.term)}, 3u);
+        }
+    }
+    cetta_prime_regular_kernel_rules_set(NULL);
+    Atom *evidence = atom_expr(
+        a, (Atom *[]){sj_sym(a, "PrimeTypedQuery"),
+                      cetta_prime_regular_term_quote_named_v1(a, call_type),
+                      sj_query_list(a, "Answers", rows, row_count),
+                      sj_query_list(a, "NotAnswers", not_rows, not_count)},
+        4u);
+    return sj_established(a, judgment, evidence);
+}
+
+Atom *prime_scoped_typed_query_judge(Arena *a, Space *space, Atom *judgment,
+                                     Atom *term, bool limited, uint64_t steps) {
+    if (!a || !term || term->kind != ATOM_EXPR || term->expr.len < 2u)
+        return NULL;
+    /* A match names the space it asks; a call is asked of the judgment's
+     * space, where its rules are stored. */
+    Space *asked = sj_is_expr(term, "match", 4u)
+        ? prime_public_space_argument(a, term->expr.elems[1]) : space;
+    /* A view the set language or this extension built is read as the
+     * space it views. */
+    while (asked && asked->overlay_base && sj_space_is_derived(asked))
+        asked = (Space *)asked->overlay_base;
+    if (!asked || sj_space_is_derived(asked) ||
+        !sj_space_declares_stored(a, asked))
+        return NULL;
+    SjSetEnv *env = sj_env(asked);
+    if (!env) return NULL;
+    SjProofState st;
+    sj_proof_state_init(&st, a, asked, env, limited, steps, false, true);
+    return sj_is_expr(term, "match", 4u)
+        ? sj_typed_query_judge(&st, judgment, term)
+        : sj_typed_call_judge(&st, judgment, term);
+}
 
 /* ------------------------------------------------------------------------ */
 /* Definitions by equations.  `(set:define name type (= lhs rhs) ...)`        */
@@ -4667,6 +6393,17 @@ static Atom *sj_inductive_record(SjProofState *st, Atom *type) {
     Atom *record = sj_known_lookup(st->arena, st->env, st->user_space, type, &ambiguous);
     if (!record || ambiguous ||
         !atom_is_symbol(record->expr.elems[SJ_KNOWN_ORIGIN], "inductive"))
+        return NULL;
+    return record;
+}
+
+/* The record of a constant of an admitted family. */
+static Atom *sj_family_record(SjProofState *st, Atom *name) {
+    if (!name || name->kind != ATOM_SYMBOL) return NULL;
+    bool ambiguous = false;
+    Atom *record = sj_known_lookup(st->arena, st->env, st->user_space, name, &ambiguous);
+    if (!record || ambiguous ||
+        !atom_is_symbol(record->expr.elems[SJ_KNOWN_ORIGIN], "family"))
         return NULL;
     return record;
 }
@@ -4993,6 +6730,30 @@ static Atom *sj_inductive_check_declarations(
 
 static bool sj_typed_binder_parts(Atom *t, Atom **name, Atom **domain);
 
+/* A function type whose result is written as a function type again,
+ * `(-> A (-> B C))`, is the function type `(-> A B C)`.  The arguments of a
+ * constructor are the arguments of all of them, so its declared type is read
+ * in the second form however its arrows are grouped. */
+static Atom *sj_arrow_with_all_arguments(Arena *a, Atom *type) {
+    while (type && type->kind == ATOM_EXPR && type->expr.len >= 3u &&
+           atom_is_symbol(type->expr.elems[0], "->")) {
+        Atom *result = type->expr.elems[type->expr.len - 1u];
+        if (!result || result->kind != ATOM_EXPR || result->expr.len < 3u ||
+            !atom_is_symbol(result->expr.elems[0], "->"))
+            break;
+        CettaExprLen kept = type->expr.len - 1u;
+        CettaExprLen total = kept + (result->expr.len - 1u);
+        Atom **items = arena_alloc(a, sizeof(Atom *) * total);
+        if (!items) break;
+        for (CettaExprIndex i = 0u; i < kept; i++)
+            items[i] = type->expr.elems[i];
+        for (CettaExprIndex i = 1u; i < result->expr.len; i++)
+            items[kept + i - 1u] = result->expr.elems[i];
+        type = atom_expr(a, items, total);
+    }
+    return type;
+}
+
 /* True when `type` occurs in the domain of a function type inside `t`:
  * written `(-> A1 ... An R)`, in some Ai, at any depth. */
 static bool sj_occurs_in_domain(Atom *t, Atom *type) {
@@ -5045,14 +6806,17 @@ static Atom *sj_set_inductive(Arena *a, Space *space, Atom *judgment,
         return sj_undetermined(a, judgment, sj_expr2(a, "set:inductive-parameters", type));
     if (!type || type->kind != ATOM_SYMBOL)
         return sj_refuted(a, judgment, sj_expr1(a, "set:inductive-name"));
-    if (prime_scoped_judgment_reserved_name(type))
-        return sj_refuted(a, judgment, sj_expr2(a, "set:reserved-name", type));
-    if (!sj_is_expr(universe, "u", 2u)) {
+    Atom *reserved_type = sj_reserved_definition(a, space, judgment, type);
+    if (reserved_type) return reserved_type;
+    /* A datatype is declared at a universe `(u l)` or at a sort above them,
+     * `set` among them: a datatype declared at `set` is a set. */
+    if (!sj_is_expr(universe, "u", 2u) &&
+        !cetta_prime_regular_kernel_sort_above_spelling_v1(NULL, universe, NULL)) {
         /* A family `(-> I ... (u n))` is legal; families are not admitted
          * yet.  Anything else is not a universe. */
         if (universe && universe->kind == ATOM_EXPR && universe->expr.len >= 3u &&
             atom_is_symbol(universe->expr.elems[0], "->") &&
-            sj_is_expr(universe->expr.elems[universe->expr.len - 1u], "u", 2u))
+            sj_is_sort(universe->expr.elems[universe->expr.len - 1u]))
             return sj_undetermined(a, judgment, sj_expr2(a, "set:inductive-family", universe));
         return sj_refuted(a, judgment, sj_expr2(a, "set:inductive-universe", universe));
     }
@@ -5075,9 +6839,9 @@ static Atom *sj_set_inductive(Arena *a, Space *space, Atom *judgment,
         if (!c || c->kind != ATOM_EXPR || c->expr.len != 3u || c->expr.elems[1]->kind != ATOM_SYMBOL)
             return sj_refuted(a, judgment, sj_expr2(a, "set:inductive-constructor", c));
         Atom *name = c->expr.elems[1];
-        Atom *ctype = c->expr.elems[2];
-        if (prime_scoped_judgment_reserved_name(name))
-            return sj_refuted(a, judgment, sj_expr2(a, "set:reserved-name", name));
+        Atom *ctype = sj_arrow_with_all_arguments(a, c->expr.elems[2]);
+        Atom *reserved_constructor = sj_reserved_definition(a, space, judgment, name);
+        if (reserved_constructor) return reserved_constructor;
         for (size_t j = 0u; j < i; j++)
             if (atom_eq(names[j], name))
                 return sj_refuted(a, judgment, sj_expr2(a, "set:inductive-duplicate", name));
@@ -5277,58 +7041,705 @@ static Atom *sj_set_inductive(Arena *a, Space *space, Atom *judgment,
     return sj_established(a, judgment, atom_expr(a, published, (CettaExprLen)n));
 }
 
-/* The universe level n of a sort `(u n)`. */
-static bool sj_sort_level(Atom *sort, uint64_t *level_out) {
-    Atom *n = sj_is_expr(sort, "u", 2u) ? sort->expr.elems[1]
-            : sj_is_expr(sort, "Sort", 2u) && sj_is_expr(sort->expr.elems[1], "LevelConst", 2u)
-              ? sort->expr.elems[1]->expr.elems[1] : NULL;
-    if (n) {
-        if (n->kind != ATOM_GROUNDED || n->ground.gkind != GV_INT || n->ground.ival < 0)
+/* ------------------------------------------------------------------------ */
+/* Declared families.  `(set:family (: c1 T1) ... (: cn Tn) (= l1 r1) ...)` */
+/* declares constants with equations between them, as Lean declares a       */
+/* family over the tower inside the sets (`withFamily`); the draft builds   */
+/* no such package, it compares the declared family with the ones Lean      */
+/* declares.  A family is admitted on a set model: one that interprets its  */
+/* constants by sets and satisfies its equations between sets.  The models  */
+/* the draft knows are the ones Lean constructs, and a family is admitted   */
+/* when it is one of those families up to the names of its constants,       */
+/* binders and variables; its record names the model.  Lean also proves of  */
+/* some families that no set model has them: a family that is one of those, */
+/* up to names, is refuted with the theorem named.  Any other family is not */
+/* refused, only not admitted yet: whether it has a set model is not        */
+/* decided here.                                                            */
+/*                                                                          */
+/* A declaration at a proposition declares a proof of it, a constant typed  */
+/* at `cHolds p` in Lean.  A family can extend the constants of one         */
+/* admitted before: they are then read by that family's model, as the       */
+/* theorem about the extension reads them, and a template names them after  */
+/* `over`.                                                                  */
+/*                                                                          */
+/* The equations become rules.  A rule whose right side calls its own head  */
+/* again without descending into a constructor its left side matches makes  */
+/* a new call on every use; it is published at arity `(PObserved n)` and    */
+/* unfolds only where another rule inspects the call, so a stream is never  */
+/* unfolded by itself and every observation of it stops.                    */
+/* ------------------------------------------------------------------------ */
+
+/* The Lean theorems are named in full below
+ * Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId, as C strings: read
+ * as MeTTa, a dotted name would become a colon name.  The models hold
+ * relative to a chain of closed universes with the numbers in the universe
+ * of the sets, which cofinally many inaccessibles give; a record says so. */
+typedef struct {
+    const char *theorem;     /* the Lean theorem: its set model, or that it has none */
+    const char *over;        /* the model of the constants it extends, or NULL */
+    const char *relative;    /* what the theorem holds relative to */
+    const char *given;       /* its further hypotheses the draft takes as given,
+                                space-separated, or NULL */
+    const char *text;        /* the family, as that theorem's package declares it */
+    const char *law;         /* a law of the model, or NULL: its Lean theorem, */
+    const char *law_suffix;  /* the suffix of its name after the type former's, */
+    const char *law_text;    /* and its statement, a schema over `law~A` */
+} SjKnownFamily;
+
+/* Families with a set model. */
+static const SjKnownFamily SJ_FAMILY_MODELS[] = {
+    /* Streams over a set, read as the functions from the numbers into it:
+     * Instances/TowerInterpretation/AmbientStreams.lean:732, over a chain of
+     * closed universes (`chain`) with the numbers in the universe of the sets
+     * (`omegaMem`) and its ground typed (`groundTyped`).
+     * Its law is extensionality, `streams_ext` (the same file:221): two
+     * streams over one set with the same element at every position are
+     * equal, where the element at position k is the head after k tails
+     * (`observeSet`).  The law writes the positions as the pairs reached from
+     * (s, t) by applying the tail to both: the least relation that holds of
+     * (s, t) and is closed under the two tails, which in the set model holds
+     * exactly of the k-th tails.  Agreement at the first position alone is
+     * not enough (`not_streams_ext_at_first`, the same file:292). */
+    {"TowerInterpretation.AmbientSets.Streams.streamFamily_setModel", NULL,
+     "CofinalInaccessibles", "chain omegaMem groundTyped",
+     "(: Stream (-> set set))\n"
+     "(: scons (-> (A : set) (a : A) (s : (Stream A)) (Stream A)))\n"
+     "(: shead (-> (A : set) (s : (Stream A)) A))\n"
+     "(: stail (-> (A : set) (s : (Stream A)) (Stream A)))\n"
+     "(: iter (-> (A : set) (f : (-> A A)) (a : A) (Stream A)))\n"
+     "(= (shead $A (scons $A $a $s)) $a)\n"
+     "(= (stail $A (scons $A $a $s)) $s)\n"
+     "(= (iter $A $f $a) (scons $A $a (iter $A $f ($f $a))))\n",
+     "TowerInterpretation.AmbientSets.Streams.streams_ext", "-ext",
+     "(schema (law~A)"
+     " (all (Stream law~A) (lam law~s (all (Stream law~A) (lam law~t"
+     "  (imp (all (Stream law~A) (lam law~u (all (Stream law~A) (lam law~v"
+     "         (imp (all (-> (Stream law~A) (Stream law~A) prop) (lam law~Q"
+     "                (imp (law~Q law~s law~t)"
+     "                  (imp (all (Stream law~A) (lam law~x (all (Stream law~A) (lam law~y"
+     "                          (imp (law~Q law~x law~y)"
+     "                               (law~Q (stail law~A law~x) (stail law~A law~y)))))))"
+     "                       (law~Q law~u law~v)))))"
+     "              (eq law~A (shead law~A law~u) (shead law~A law~v)))))))"
+     "       (eq (Stream law~A) law~s law~t)))))))\n"},
+    /* Lists over a set, read as the finite lists of its members:
+     * Instances/TowerInterpretation/AmbientLists.lean:443, with the same
+     * hypotheses. */
+    {"TowerInterpretation.AmbientSets.Lists.listFamily_setModel", NULL,
+     "CofinalInaccessibles", "chain omegaMem groundTyped",
+     "(: List (-> set set))\n"
+     "(: nil (-> (A : set) (List A)))\n"
+     "(: cons (-> (A : set) (a : A) (l : (List A)) (List A)))\n"
+     "(: append (-> (A : set) (l : (List A)) (m : (List A)) (List A)))\n"
+     "(= (append $A (nil $A) $m) $m)\n"
+     "(= (append $A (cons $A $a $l) $m) (cons $A $a (append $A $l $m)))\n",
+     NULL, NULL, NULL},
+};
+
+/* Families with no set model. */
+static const SjKnownFamily SJ_FAMILY_NON_MODELS[] = {
+    /* The stream equation at lists, over the list family read as lists: it
+     * puts a list in front of itself
+     * (Instances/TowerInterpretation/AmbientStreams.lean:1396), on the
+     * stages of cofinally many inaccessibles, at the readings of `List` and
+     * `cons` as the lists (`readsList`, `readsCons`), which the draft takes
+     * from the admitted list family. */
+    {"TowerInterpretation.AmbientSets.Streams.iterList_no_setModel",
+     "TowerInterpretation.AmbientSets.Lists.listFamily_setModel",
+     "CofinalInaccessibles", "readsList readsCons",
+     "(over List cons)\n"
+     "(: iterList (-> (A : set) (f : (-> A A)) (a : A) (List A)))\n"
+     "(= (iterList $A $f $a) (cons $A $a (iterList $A $f ($f $a))))\n",
+     NULL, NULL, NULL},
+    /* A set with a proof that it is a member of itself, at a reading of the
+     * constants of set theory (`Reads`)
+     * (Instances/TowerInterpretation/AmbientHypersets.lean:1350). */
+    {"TowerInterpretation.AmbientSets.selfMemberTheory_no_setModel", NULL,
+     "Reads", NULL,
+     "(: selfSet set)\n"
+     "(: selfIn (In selfSet selfSet))\n",
+     NULL, NULL, NULL},
+};
+
+/* The hypotheses a known family's theorem is stated under:
+ * `(relative R)`, and `(given h ...)` for the further ones the draft takes
+ * as given. */
+static Atom *sj_family_hypotheses(Arena *a, const SjKnownFamily *known, Atom **given_out) {
+    *given_out = NULL;
+    if (known->given) {
+        size_t words = 1u;
+        for (const char *c = known->given; *c; c++) words += *c == ' ';
+        Atom **items = arena_alloc(a, sizeof(Atom *) * (words + 1u));
+        size_t n = 0u;
+        items[n++] = sj_sym(a, "given");
+        const char *cursor = known->given;
+        while (*cursor && n <= words) {
+            const char *space = strchr(cursor, ' ');
+            size_t len = space ? (size_t)(space - cursor) : strlen(cursor);
+            char *word = arena_alloc(a, len + 1u);
+            memcpy(word, cursor, len);
+            word[len] = '\0';
+            items[n++] = sj_sym(a, word);
+            cursor += len + (space ? 1u : 0u);
+        }
+        *given_out = atom_expr(a, items, (CettaExprLen)n);
+    }
+    return sj_expr2(a, "relative", sj_sym(a, known->relative));
+}
+
+enum {
+    SJ_FAMILY_MODEL_COUNT = sizeof SJ_FAMILY_MODELS / sizeof SJ_FAMILY_MODELS[0],
+    SJ_FAMILY_NON_MODEL_COUNT = sizeof SJ_FAMILY_NON_MODELS / sizeof SJ_FAMILY_NON_MODELS[0]
+};
+
+/* A known family's text, parsed once for the life of the process: the
+ * names of the constants it extends, as their model's family names them,
+ * then its declarations and equations. */
+typedef struct {
+    bool parsed;
+    bool valid;
+    Arena arena;
+    const char *over;
+    Atom **base;
+    size_t base_count;
+    Atom **decls;
+    size_t decl_count;
+    Atom **eqs;
+    size_t eq_count;
+} SjFamilyTemplate;
+
+static SjFamilyTemplate g_family_models[SJ_FAMILY_MODEL_COUNT];
+static SjFamilyTemplate g_family_non_models[SJ_FAMILY_NON_MODEL_COUNT];
+
+static SjFamilyTemplate *sj_family_template(SjFamilyTemplate *slot, const SjKnownFamily *known) {
+    if (!slot->parsed) {
+        slot->parsed = true;
+        arena_init_detached(&slot->arena);
+        Atom **atoms = NULL;
+        int count = parse_metta_text(known->text, &slot->arena, &atoms);
+        size_t at = 0u;
+        slot->over = known->over;
+        if (count > 0 && atoms && atoms[0]->kind == ATOM_EXPR && atoms[0]->expr.len >= 2u &&
+            atom_is_symbol(atoms[0]->expr.elems[0], "over")) {
+            slot->base = atoms[0]->expr.elems + 1;
+            slot->base_count = (size_t)atoms[0]->expr.len - 1u;
+            at = 1u;
+        }
+        slot->decls = count > 0 && atoms ? atoms + at : NULL;
+        while (slot->decls && at + slot->decl_count < (size_t)count &&
+               sj_is_expr(slot->decls[slot->decl_count], ":", 3u))
+            slot->decl_count++;
+        slot->eqs = slot->decls ? slot->decls + slot->decl_count : NULL;
+        slot->eq_count = count > 0 ? (size_t)count - at - slot->decl_count : 0u;
+        slot->valid = slot->decl_count > 0u && (slot->base_count == 0u) == (slot->over == NULL);
+        for (size_t e = 0u; slot->valid && e < slot->eq_count; e++)
+            slot->valid = sj_is_expr(slot->eqs[e], "=", 3u);
+    }
+    return slot->valid ? slot : NULL;
+}
+
+/* `t` with each of `from[i]` replaced by `to[i]`. */
+static Atom *sj_family_rename(Arena *a, Atom *t, Atom **from, Atom **to, size_t count) {
+    if (!t) return NULL;
+    if (t->kind == ATOM_SYMBOL) {
+        for (size_t i = 0u; i < count; i++)
+            if (atom_eq(t, from[i])) return to[i];
+        return t;
+    }
+    if (t->kind != ATOM_EXPR) return t;
+    Atom **items = arena_alloc(a, sizeof(Atom *) * (t->expr.len ? t->expr.len : 1u));
+    if (!items) return NULL;
+    for (CettaExprIndex i = 0u; i < t->expr.len; i++) {
+        items[i] = sj_family_rename(a, t->expr.elems[i], from, to, count);
+        if (!items[i]) return NULL;
+    }
+    return atom_expr(a, items, t->expr.len);
+}
+
+/* An authored equation and a template's, alike up to a one-to-one renaming
+ * of their variables.  The template's constants are `from`: the first
+ * `own` are the family's own, named `to` by position; the others are base
+ * constants, named by the first authored symbol met in their place. */
+typedef struct {
+    Atom *left[32];
+    Atom *right[32];
+    size_t count;
+} SjVariablePairs;
+
+static bool sj_family_alike(Atom *x, Atom *y, Atom **from, Atom **to, size_t own,
+                            size_t count, SjVariablePairs *pairs) {
+    if (!x || !y) return false;
+    if (x->kind == ATOM_VAR || y->kind == ATOM_VAR) {
+        if (x->kind != ATOM_VAR || y->kind != ATOM_VAR) return false;
+        for (size_t i = 0u; i < pairs->count; i++) {
+            bool left = atom_eq(pairs->left[i], x), right = atom_eq(pairs->right[i], y);
+            if (left || right) return left && right;
+        }
+        if (pairs->count == sizeof pairs->left / sizeof pairs->left[0]) return false;
+        pairs->left[pairs->count] = x;
+        pairs->right[pairs->count] = y;
+        pairs->count++;
+        return true;
+    }
+    if (y->kind == ATOM_SYMBOL) {
+        for (size_t i = 0u; i < count; i++) {
+            if (!atom_eq(y, from[i])) continue;
+            if (!to[i] && i >= own && x->kind == ATOM_SYMBOL) to[i] = x;
+            return to[i] && atom_eq(x, to[i]);
+        }
+        return atom_eq(x, y);
+    }
+    if (x->kind == ATOM_EXPR || y->kind == ATOM_EXPR) {
+        if (x->kind != ATOM_EXPR || y->kind != ATOM_EXPR || x->expr.len != y->expr.len)
             return false;
-        *level_out = (uint64_t)n->ground.ival;
+        for (CettaExprIndex i = 0u; i < x->expr.len; i++)
+            if (!sj_family_alike(x->expr.elems[i], y->expr.elems[i], from, to, own, count, pairs))
+                return false;
         return true;
     }
-    if (atom_is_symbol(sort, "U0") || atom_is_symbol(sort, "u0")) {
-        *level_out = 0u;
-        return true;
+    return atom_eq(x, y);
+}
+
+/* The base constants a template's types mention, named by the authored
+ * symbols in their place; a mismatch elsewhere is left to the comparison of
+ * the types. */
+static void sj_family_name_base(Atom *x, Atom *y, Atom **from, Atom **to, size_t own,
+                                size_t count) {
+    if (!x || !y) return;
+    if (y->kind == ATOM_SYMBOL) {
+        for (size_t i = own; i < count; i++)
+            if (atom_eq(y, from[i]) && !to[i] && x->kind == ATOM_SYMBOL) to[i] = x;
+        return;
     }
-    if (atom_is_symbol(sort, "U1") || atom_is_symbol(sort, "u1")) {
-        *level_out = 1u;
-        return true;
+    if (x->kind != ATOM_EXPR || y->kind != ATOM_EXPR || x->expr.len != y->expr.len) return;
+    for (CettaExprIndex i = 0u; i < x->expr.len; i++)
+        sj_family_name_base(x->expr.elems[i], y->expr.elems[i], from, to, own, count);
+}
+
+/* Whether `name` is the constant at the place of `base` in an admitted
+ * family whose record names the model `over`. */
+static bool sj_family_base_in_place(SjProofState *st, const char *over, Atom *base,
+                                    Atom *name) {
+    Atom *record = sj_family_record(st, name);
+    Atom *evidence = record ? record->expr.elems[SJ_KNOWN_PROOF] : NULL;
+    if (!evidence || evidence->kind != ATOM_EXPR || evidence->expr.len < 2u ||
+        !atom_is_symbol(evidence->expr.elems[0], "set-model") ||
+        !atom_is_symbol(evidence->expr.elems[1], over))
+        return false;
+    SjFamilyTemplate *model = NULL;
+    for (size_t k = 0u; k < SJ_FAMILY_MODEL_COUNT && !model; k++)
+        if (strcmp(over, SJ_FAMILY_MODELS[k].theorem) == 0)
+            model = sj_family_template(&g_family_models[k], &SJ_FAMILY_MODELS[k]);
+    Atom *prop = record->expr.elems[SJ_KNOWN_PROP];
+    if (!model || !prop || prop->kind != ATOM_EXPR) return false;
+    for (size_t i = 0u; i < model->decl_count; i++) {
+        if (!atom_eq(model->decls[i]->expr.elems[1], base)) continue;
+        Atom *decl = 1u + i < prop->expr.len ? prop->expr.elems[1u + i] : NULL;
+        return sj_is_expr(decl, ":", 3u) && atom_eq(decl->expr.elems[1], name);
     }
     return false;
 }
 
-/* The universe level of a type, in canonical spelling: a sort, a declared
- * type, a bound type variable, an arrow, or a declared family applied to
- * arguments.  `locals` types the indices, innermost last. */
-static bool sj_type_level(SjProofState *st, Atom *type, Atom **locals,
-                          size_t count, uint64_t *level_out) {
-    uint64_t level = 0u;
-    if (sj_sort_level(type, &level)) {
-        *level_out = level + 1u;
-        return true;
+/* Whether the declared family is the template's, up to names.  `proofs[i]`
+ * tells that declaration i declares a proof of a proposition; `canonical`
+ * holds each type, or proposition, as the kernel formed it in `view`. */
+static bool sj_family_matches(Arena *a, SjProofState *st, Space *view, Atom *judgment,
+                              Atom **names, const bool *proofs, Atom **canonical,
+                              size_t decl_count, Atom **equations, size_t eq_count,
+                              SjFamilyTemplate *tmpl, CettaPrimeRegularKernelBudget *budget) {
+    if (!tmpl || tmpl->decl_count != decl_count || tmpl->eq_count != eq_count) return false;
+    size_t count = decl_count + tmpl->base_count;
+    Atom **from = arena_alloc(a, sizeof(Atom *) * count);
+    Atom **to = arena_alloc(a, sizeof(Atom *) * count);
+    Atom **trial = arena_alloc(a, sizeof(Atom *) * count);
+    bool *used = arena_alloc(a, sizeof(bool) * (eq_count ? eq_count : 1u));
+    if (!from || !to || !trial || !used) return false;
+    for (size_t i = 0u; i < decl_count; i++) {
+        from[i] = tmpl->decls[i]->expr.elems[1];
+        to[i] = names[i];
     }
+    for (size_t b = 0u; b < tmpl->base_count; b++) {
+        from[decl_count + b] = tmpl->base[b];
+        to[decl_count + b] = NULL;
+    }
+    memset(used, 0, sizeof(bool) * (eq_count ? eq_count : 1u));
+    /* The equations, in any order. */
+    for (size_t e = 0u; e < eq_count; e++) {
+        bool found = false;
+        for (size_t t = 0u; !found && t < eq_count; t++) {
+            if (used[t]) continue;
+            memcpy(trial, to, sizeof(Atom *) * count);
+            SjVariablePairs pairs = {.count = 0u};
+            if (sj_family_alike(equations[e], tmpl->eqs[t], from, trial, decl_count, count,
+                                &pairs)) {
+                memcpy(to, trial, sizeof(Atom *) * count);
+                used[t] = true;
+                found = true;
+            }
+        }
+        if (!found) return false;
+    }
+    /* The base constants: each named, and in its place in its family. */
+    for (size_t i = 0u; i < decl_count; i++)
+        sj_family_name_base(judgment->expr.elems[1u + i]->expr.elems[2],
+                            tmpl->decls[i]->expr.elems[2], from, to, decl_count, count);
+    for (size_t b = 0u; b < tmpl->base_count; b++)
+        if (!to[decl_count + b] ||
+            !sj_family_base_in_place(st, tmpl->over, tmpl->base[b], to[decl_count + b]))
+            return false;
+    /* The declarations, in order, by the types the kernel forms. */
+    for (size_t i = 0u; i < decl_count; i++) {
+        Atom *type = sj_family_rename(a, tmpl->decls[i]->expr.elems[2], from, to, count);
+        Atom *query = proofs[i]
+            ? sj_expr3(a, "type:check", type, sj_sym(a, "prop"))
+            : sj_expr2(a, "type:formed", type);
+        Atom *formed = NULL;
+        Atom *obstruction = type ? sj_declaration_check_obstruction(
+            a, view, judgment, names[i], query, budget, &formed) : NULL;
+        if (!type || obstruction || !formed || !atom_eq(formed, canonical[i])) return false;
+    }
+    return true;
+}
+
+/* Kernel spelling of a family equation's side.  On the left, each variable
+ * is a fresh pattern variable at each occurrence, so the rule is linear: a
+ * typed instance agrees at the repeated positions anyway, as the language's
+ * identity rule also assumes.  On the right, a variable is the pattern
+ * variable of its first occurrence on the left. */
+typedef struct {
+    Atom *vars[32];
+    size_t count;          /* first occurrences, by pattern variable */
+    size_t slots;          /* pattern variables, every occurrence */
+    size_t first[32];      /* the pattern variable of each first occurrence */
+} SjFamilyVariables;
+
+static bool sj_family_names_constant(Atom *t, Atom **names, size_t count) {
+    for (size_t i = 0u; i < count; i++)
+        if (atom_eq(t, names[i])) return true;
+    return false;
+}
+
+static Atom *sj_family_pattern(Arena *a, Atom *t, Atom **names, size_t count,
+                               SjFamilyVariables *vars) {
+    if (t && t->kind == ATOM_VAR) {
+        if (vars->slots == sizeof vars->vars / sizeof vars->vars[0]) return NULL;
+        size_t slot = vars->slots++;
+        bool seen = false;
+        for (size_t i = 0u; i < vars->count && !seen; i++)
+            seen = atom_eq(vars->vars[i], t);
+        if (!seen) {
+            vars->vars[vars->count] = t;
+            vars->first[vars->count] = slot;
+            vars->count++;
+        }
+        return sj_expr2(a, "PVar", atom_int(a, (int64_t)slot));
+    }
+    if (!t || t->kind != ATOM_EXPR || t->expr.len < 2u ||
+        !sj_family_names_constant(t->expr.elems[0], names, count))
+        return NULL;
+    Atom *term = sj_expr2(a, "DeclConst", t->expr.elems[0]);
+    for (CettaExprIndex i = 1u; i < t->expr.len; i++) {
+        Atom *arg = sj_family_pattern(a, t->expr.elems[i], names, count, vars);
+        if (!arg) return NULL;
+        term = sj_expr3(a, "App", term, arg);
+    }
+    return term;
+}
+
+static Atom *sj_family_right(Arena *a, Atom *t, SjFamilyVariables *vars) {
+    if (!t) return NULL;
+    if (t->kind == ATOM_VAR) {
+        for (size_t i = 0u; i < vars->count; i++)
+            if (atom_eq(vars->vars[i], t))
+                return sj_expr2(a, "PVar", atom_int(a, (int64_t)vars->first[i]));
+        return NULL;
+    }
+    if (t->kind == ATOM_SYMBOL) return sj_expr2(a, "DeclConst", t);
+    if (t->kind != ATOM_EXPR || t->expr.len < 2u) return NULL;
+    Atom *term = sj_family_right(a, t->expr.elems[0], vars);
+    for (CettaExprIndex i = 1u; term && i < t->expr.len; i++) {
+        Atom *arg = sj_family_right(a, t->expr.elems[i], vars);
+        term = arg ? sj_expr3(a, "App", term, arg) : NULL;
+    }
+    return term;
+}
+
+/* Whether the variable `v` occurs below the root of the pattern `p`. */
+static bool sj_family_inside(Atom *p, Atom *v) {
+    if (!p || p->kind != ATOM_EXPR) return false;
+    for (CettaExprIndex i = 1u; i < p->expr.len; i++)
+        if (atom_eq(p->expr.elems[i], v) || sj_family_inside(p->expr.elems[i], v))
+            return true;
+    return false;
+}
+
+/* Whether every use of the left side's head in `t` is a full call that
+ * descends: at some position the left side matches a constructor and the
+ * call passes a variable bound below it. */
+static bool sj_family_calls_descend(Atom *t, Atom *lhs) {
+    Atom *head = lhs->expr.elems[0];
+    if (!t) return true;
+    if (t->kind == ATOM_SYMBOL) return !atom_eq(t, head);
+    if (t->kind != ATOM_EXPR || t->expr.len == 0u) return true;
+    CettaExprIndex first = 0u;
+    if (atom_eq(t->expr.elems[0], head)) {
+        if (t->expr.len != lhs->expr.len) return false;
+        bool descends = false;
+        for (CettaExprIndex k = 1u; k < t->expr.len && !descends; k++)
+            descends = lhs->expr.elems[k]->kind == ATOM_EXPR &&
+                       t->expr.elems[k]->kind == ATOM_VAR &&
+                       sj_family_inside(lhs->expr.elems[k], t->expr.elems[k]);
+        if (!descends) return false;
+        first = 1u;
+    }
+    for (CettaExprIndex i = first; i < t->expr.len; i++)
+        if (!sj_family_calls_descend(t->expr.elems[i], lhs)) return false;
+    return true;
+}
+
+/* The rule of a family equation `(= (c p1 ... pn) r)`, NULL outside the
+ * shape the known families have. */
+static Atom *sj_family_rule(Arena *a, Atom *eq, Atom **names, size_t count) {
+    Atom *lhs = eq->expr.elems[1];
+    if (!lhs || lhs->kind != ATOM_EXPR || lhs->expr.len < 2u ||
+        !sj_family_names_constant(lhs->expr.elems[0], names, count))
+        return NULL;
+    Atom *head = lhs->expr.elems[0];
+    size_t arity = (size_t)lhs->expr.len - 1u;
+    SjFamilyVariables vars = {.count = 0u, .slots = 0u};
+    Atom **pats = arena_alloc(a, sizeof(Atom *) * arity);
+    if (!pats) return NULL;
+    for (size_t k = 0u; k < arity; k++) {
+        pats[k] = sj_family_pattern(a, lhs->expr.elems[1u + k], names, count, &vars);
+        if (!pats[k]) return NULL;
+    }
+    Atom *rhs = sj_family_right(a, eq->expr.elems[2], &vars);
+    if (!rhs) return NULL;
+    Atom *arity_atom = atom_int(a, (int64_t)arity);
+    if (!sj_family_calls_descend(eq->expr.elems[2], lhs))
+        arity_atom = sj_expr2(a, "PObserved", arity_atom);
+    Atom *items[5] = {sj_sym(a, "type:rule"), head, arity_atom,
+                      atom_expr(a, pats, (CettaExprLen)arity), rhs};
+    return atom_expr(a, items, 5u);
+}
+
+static Atom *sj_set_family(Arena *a, Space *space, Atom *judgment,
+                           bool limited, uint64_t steps) {
+    if (limited && steps == 0u)
+        return sj_incomplete(a, judgment, sj_expr1(a, "set:family-budget"));
+    CettaPrimeRegularKernelBudget budget;
+    cetta_prime_regular_kernel_budget_init(&budget, limited, steps);
+    size_t len = (size_t)judgment->expr.len;
+    size_t decl_count = 0u;
+    while (1u + decl_count < len && sj_is_expr(judgment->expr.elems[1u + decl_count], ":", 3u))
+        decl_count++;
+    size_t eq_count = len - 1u - decl_count;
+    if (decl_count == 0u)
+        return sj_refuted(a, judgment, sj_expr1(a, "set:family-arity"));
+    Atom **names = arena_alloc(a, sizeof(Atom *) * decl_count);
+    Atom **types = arena_alloc(a, sizeof(Atom *) * decl_count);
+    Atom **canonical = arena_alloc(a, sizeof(Atom *) * decl_count);
+    bool *proofs = arena_alloc(a, sizeof(bool) * decl_count);
+    Atom **equations = arena_alloc(a, sizeof(Atom *) * (eq_count ? eq_count : 1u));
+    if (!names || !types || !canonical || !proofs || !equations)
+        return sj_incomplete(a, judgment, sj_expr1(a, "set:family-storage"));
+    for (size_t e = 0u; e < eq_count; e++) {
+        equations[e] = judgment->expr.elems[1u + decl_count + e];
+        if (!sj_is_expr(equations[e], "=", 3u))
+            return sj_refuted(a, judgment, sj_expr2(a, "set:family-equation", equations[e]));
+    }
+    SjSetEnv *env = sj_env(space);
+    if (!env)
+        return sj_undetermined(a, judgment, sj_expr1(a, "set:signature-unavailable"));
+    SjProofState st;
+    sj_proof_state_init(&st, a, space, env, false, 0u, false, true);
+    for (size_t i = 0u; i < decl_count; i++) {
+        Atom *decl = judgment->expr.elems[1u + i];
+        names[i] = decl->expr.elems[1];
+        types[i] = decl->expr.elems[2];
+        proofs[i] = false;
+        if (!names[i] || names[i]->kind != ATOM_SYMBOL)
+            return sj_refuted(a, judgment, sj_expr2(a, "set:family-name", decl));
+        Atom *reserved_member = sj_reserved_definition(a, space, judgment, names[i]);
+        if (reserved_member) return reserved_member;
+        for (size_t j = 0u; j < i; j++)
+            if (atom_eq(names[j], names[i]))
+                return sj_refuted(a, judgment, sj_expr2(a, "set:family-duplicate", names[i]));
+        if (sj_name_taken(&st, names[i]))
+            return sj_refuted(a, judgment, sj_expr2(a, "set:family-already-declared", names[i]));
+    }
+    /* Each type is formed where the ones before it are declared.  A
+     * declaration at a proposition declares a proof of it; nothing after it
+     * mentions it. */
+    Space view;
+    space_init_overlay(&view, &env->overlay);
+    for (size_t i = 0u; i < decl_count; i++) {
+        Atom *obstruction = sj_declaration_check_obstruction(
+            a, &view, judgment, names[i], sj_expr2(a, "type:formed", types[i]),
+            &budget, &canonical[i]);
+        if (obstruction) {
+            Atom *proposition = NULL;
+            if (!sj_declaration_check_obstruction(
+                    a, &view, judgment, names[i],
+                    sj_expr3(a, "type:check", types[i], sj_sym(a, "prop")),
+                    &budget, &proposition) && proposition) {
+                proofs[i] = true;
+                canonical[i] = proposition;
+                continue;
+            }
+        }
+        if (!obstruction && !canonical[i])
+            obstruction = sj_undetermined(a, judgment,
+                                          sj_expr2(a, "set:family-type-fragment", types[i]));
+        if (obstruction) {
+            space_free(&view);
+            return obstruction;
+        }
+        space_add(&view, sj_expr3(a, ":", names[i], types[i]));
+    }
+    int known = -1;
+    for (size_t k = 0u; k < SJ_FAMILY_MODEL_COUNT && known < 0; k++)
+        if (sj_family_matches(a, &st, &view, judgment, names, proofs, canonical, decl_count,
+                              equations, eq_count,
+                              sj_family_template(&g_family_models[k], &SJ_FAMILY_MODELS[k]),
+                              &budget))
+            known = (int)k;
+    for (size_t k = 0u; k < SJ_FAMILY_NON_MODEL_COUNT && known < 0; k++) {
+        if (!sj_family_matches(a, &st, &view, judgment, names, proofs, canonical, decl_count,
+                               equations, eq_count,
+                               sj_family_template(&g_family_non_models[k],
+                                                  &SJ_FAMILY_NON_MODELS[k]),
+                               &budget))
+            continue;
+        space_free(&view);
+        Atom *given = NULL;
+        Atom *relative = sj_family_hypotheses(a, &SJ_FAMILY_NON_MODELS[k], &given);
+        Atom *items[4] = {sj_sym(a, "set:family-no-set-model"),
+                          sj_sym(a, SJ_FAMILY_NON_MODELS[k].theorem), relative, given};
+        return sj_refuted(a, judgment, atom_expr(a, items, given ? 4u : 3u));
+    }
+    space_free(&view);
+    if (known < 0)
+        return sj_undetermined(a, judgment, sj_expr1(a, "set:family-no-known-model"));
+    Atom **rules = arena_alloc(a, sizeof(Atom *) * (eq_count ? eq_count : 1u));
+    for (size_t e = 0u; e < eq_count; e++) {
+        rules[e] = sj_family_rule(a, equations[e], names, decl_count);
+        if (!rules[e])
+            return sj_undetermined(a, judgment,
+                                   sj_expr2(a, "set:family-rule-lowering", equations[e]));
+    }
+    /* One record per constant, each the whole family and the model it was
+     * admitted on, then the declarations and the rules. */
+    Atom **prop_items = arena_alloc(a, sizeof(Atom *) * len);
+    prop_items[0] = sj_sym(a, "family");
+    for (size_t i = 1u; i < len; i++) prop_items[i] = judgment->expr.elems[i];
+    Atom *prop = atom_expr(a, prop_items, (CettaExprLen)len);
+    const SjKnownFamily *model = &SJ_FAMILY_MODELS[known];
+    Atom *given = NULL;
+    Atom *relative = sj_family_hypotheses(a, model, &given);
+    Atom *evidence_items[4] = {sj_sym(a, "set-model"), sj_sym(a, model->theorem), relative,
+                               given};
+    Atom *evidence = atom_expr(a, evidence_items, given ? 4u : 3u);
+    /* The model's law, with the family's names, as a schema over the set the
+     * streams are of: `(pf:known (law A))` is its instance at a set A. */
+    Atom *law_record = NULL;
+    uint64_t revision = space_revision(space);
+    if (model->law) {
+        SjFamilyTemplate *tmpl = sj_family_template(&g_family_models[known], model);
+        Atom **law_atoms = NULL;
+        int law_count = parse_metta_text(model->law_text, a, &law_atoms);
+        Atom *schema = law_count == 1 && law_atoms ? law_atoms[0] : NULL;
+        free(law_atoms);
+        Atom **from = arena_alloc(a, sizeof(Atom *) * decl_count);
+        for (size_t i = 0u; tmpl && i < decl_count; i++)
+            from[i] = tmpl->decls[i]->expr.elems[1];
+        Atom *law_prop = tmpl && schema
+            ? sj_family_rename(a, schema, from, names, decl_count) : NULL;
+        const char *former = atom_name_cstr(names[0]);
+        size_t name_len = strlen(former ? former : "") + strlen(model->law_suffix) + 1u;
+        char *law_spelling = arena_alloc(a, name_len);
+        snprintf(law_spelling, name_len, "%s%s", former ? former : "", model->law_suffix);
+        Atom *law_name = sj_sym(a, law_spelling);
+        if (!law_prop)
+            return sj_undetermined(a, judgment, sj_expr2(a, "set:family-law", law_name));
+        if (sj_name_taken(&st, law_name))
+            return sj_refuted(a, judgment, sj_expr2(a, "set:family-already-declared", law_name));
+        for (size_t i = 0u; i < decl_count; i++)
+            if (atom_eq(names[i], law_name))
+                return sj_refuted(a, judgment, sj_expr2(a, "set:family-duplicate", law_name));
+        Atom *law_items[4] = {sj_sym(a, "law"), sj_sym(a, model->law), relative,
+                              sj_expr2(a, "positions", sj_sym(a, "stail-reach"))};
+        law_record = sj_known_record(a, law_name, law_prop, "family-law",
+                                     atom_expr(a, law_items, 4u), NULL, revision);
+    }
+    Atom **published = arena_alloc(a, sizeof(Atom *) * (2u * decl_count + eq_count + 2u));
+    size_t n = 0u;
+    published[n++] = sj_sym(a, "SetPublish");
+    for (size_t i = 0u; i < decl_count; i++)
+        published[n++] = sj_known_record(a, names[i], prop, "family", evidence, NULL, revision);
+    if (law_record) published[n++] = law_record;
+    for (size_t i = 0u; i < decl_count; i++)
+        published[n++] = sj_expr3(a, ":", names[i], types[i]);
+    for (size_t e = 0u; e < eq_count; e++)
+        published[n++] = rules[e];
+    return sj_established(a, judgment, atom_expr(a, published, (CettaExprLen)n));
+}
+
+/* The level of a sort, in the kernel's spelling of levels: the level of
+ * `(u l)` as the kernel reads it, `(LevelAbove n)` for the n-th sort above
+ * every written universe (`set`, `class`, `(class n)`), the level of the
+ * kernel's own `(Sort level)`, and the levels of the legacy spellings.  A
+ * level is carried as a level, whatever it is: a long numeral, an ordinal
+ * notation, a level above the written ones.  NULL for anything else and for
+ * a level that does not read. */
+static Atom *sj_sort_level(Arena *a, Atom *sort) {
+    Atom *kernel = sj_is_expr(sort, "Sort", 2u) ? sort
+                 : sj_is_expr(sort, "u", 2u) ? sj_universe_to_kernel(a, sort)
+                 : sj_sort_above_to_kernel(a, sort);
+    if (kernel && sj_is_expr(kernel, "Sort", 2u)) {
+        Atom *level = kernel->expr.elems[1];
+        /* A level the authored syntax does not read is kept as written by
+         * `sj_universe_to_kernel`: it is no level here. */
+        if (sj_is_expr(level, "LevelConst", 2u) &&
+            !cetta_prime_regular_kernel_level_numeral_v1(level->expr.elems[1]))
+            return NULL;
+        return level;
+    }
+    if (atom_is_symbol(sort, "U0") || atom_is_symbol(sort, "u0"))
+        return sj_expr2(a, "LevelConst", atom_int(a, 0));
+    if (atom_is_symbol(sort, "U1") || atom_is_symbol(sort, "u1"))
+        return sj_expr2(a, "LevelConst", atom_int(a, 1));
+    return NULL;
+}
+
+/* The universe level of a type, in canonical spelling and as a kernel level:
+ * the successor of the level of a sort, the level of the sort of a declared
+ * type, of a bound type variable, or of a declared family applied to
+ * arguments, and the maximum of the levels of an arrow's domain and
+ * codomain.  `locals` types the indices, innermost last.  NULL where the
+ * level is not known. */
+static Atom *sj_type_level(SjProofState *st, Atom *type, Atom **locals,
+                           size_t count) {
+    Arena *a = st->arena;
+    Atom *level = sj_sort_level(a, type);
+    if (level) return sj_expr2(a, "LevelSucc", level);
     uint64_t index = 0u;
     if (sj_intrinsic_index(type, &index))
-        return index < count && locals[count - 1u - index] &&
-               sj_sort_level(locals[count - 1u - index], level_out);
+        return index < count && locals[count - 1u - index]
+            ? sj_sort_level(a, locals[count - 1u - index]) : NULL;
     if (sj_constant_ref(type)) {
         Atom *declared = sj_constant_type(st, sj_constant_ref(type));
-        return declared && sj_sort_level(declared, level_out);
+        return declared ? sj_sort_level(a, declared) : NULL;
     }
     if (sj_is_expr(type, "Pi", 3u)) {
-        uint64_t domain = 0u, codomain = 0u;
-        if (!sj_type_level(st, type->expr.elems[1], locals, count, &domain))
-            return false;
-        Atom **inner = arena_alloc(st->arena, sizeof(Atom *) * (count + 1u));
-        if (!inner) return false;
+        Atom *domain = sj_type_level(st, type->expr.elems[1], locals, count);
+        if (!domain) return NULL;
+        Atom **inner = arena_alloc(a, sizeof(Atom *) * (count + 1u));
+        if (!inner) return NULL;
         for (size_t i = 0u; i < count; i++) inner[i] = locals[i];
         inner[count] = type->expr.elems[1];
-        if (!sj_type_level(st, type->expr.elems[2], inner, count + 1u, &codomain))
-            return false;
-        *level_out = domain > codomain ? domain : codomain;
-        return true;
+        Atom *codomain = sj_type_level(st, type->expr.elems[2], inner, count + 1u);
+        return codomain ? sj_expr3(a, "LevelMax", domain, codomain) : NULL;
     }
     Atom *head = NULL;
     size_t argc = sj_spine(type, &head, NULL, 0u);
@@ -5336,7 +7747,23 @@ static bool sj_type_level(SjProofState *st, Atom *type, Atom **locals,
         Atom *family = sj_constant_type(st, sj_constant_ref(head));
         for (size_t i = 0u; family && i < argc; i++)
             family = sj_is_expr(family, "Pi", 3u) ? family->expr.elems[2] : NULL;
-        return family && sj_sort_level(family, level_out);
+        return family ? sj_sort_level(a, family) : NULL;
+    }
+    return NULL;
+}
+
+/* Whether a polymorphic head of the signature is declared over a universe
+ * at a level variable, `(A : (u $level))`: each kernel occurrence then
+ * carries the level of its domain.  A head declared over `class` has no
+ * level variable. */
+static bool sj_env_poly_head_levelled(SjSetEnv *env, Atom *name) {
+    for (size_t i = 0u; i < env->signature_count; i++) {
+        Atom *declaration = env->signature[i];
+        if (!atom_eq(declaration->expr.elems[1], name)) continue;
+        Atom *type = declaration->expr.elems[2];
+        return sj_is_expr(type, "->", 3u) &&
+               sj_is_expr(type->expr.elems[1], ":", 3u) &&
+               sj_is_expr(type->expr.elems[1]->expr.elems[2], "u", 2u);
     }
     return false;
 }
@@ -5362,8 +7789,9 @@ static Atom *sj_rule_term_to_kernel(SjProofState *st, Atom *t, size_t nvars,
         return t;
     }
     if (sj_is_constant(t)) return sj_expr2(a, "DeclConst", t);
-    if (sj_is_expr(t, "u", 2u))
-        return sj_expr2(a, "Sort", sj_expr2(a, "LevelConst", t->expr.elems[1]));
+    if (sj_is_expr(t, "u", 2u)) return sj_universe_to_kernel(a, t);
+    Atom *above = sj_sort_above_to_kernel(a, t);
+    if (above) return above;
     if (sj_is_leaf(t)) return t;
     Atom *head = NULL;
     Atom *args[4] = {0};
@@ -5371,10 +7799,12 @@ static Atom *sj_rule_term_to_kernel(SjProofState *st, Atom *t, size_t nvars,
     const char *poly = sj_constant_named(head, "all") ? "all"
                      : sj_constant_named(head, "eq") ? "eq" : NULL;
     if (poly && argc >= 1u && argc <= 4u) {
-        uint64_t level = 0u;
-        if (!sj_type_level(st, args[0], locals, count, &level)) return NULL;
-        Atom *term = atom_expr3(a, sj_sym(a, "DeclConst"), sj_sym(a, poly),
-                                sj_expr2(a, "LevelConst", atom_int(a, (int64_t)level)));
+        Atom *term = sj_expr2(a, "DeclConst", sj_sym(a, poly));
+        if (sj_env_poly_head_levelled(st->env, sj_sym(a, poly))) {
+            Atom *level = sj_type_level(st, args[0], locals, count);
+            if (!level) return NULL;
+            term = atom_expr3(a, sj_sym(a, "DeclConst"), sj_sym(a, poly), level);
+        }
         for (size_t i = 0u; i < argc; i++) {
             Atom *arg = sj_rule_term_to_kernel(st, args[i], nvars, depth, locals, count);
             if (!arg) return NULL;
@@ -5567,6 +7997,16 @@ static Atom *sj_equation_lower(SjProofState *st, Atom *source,
             return NULL;
         }
     }
+}
+
+/* The verdict of a failed binding: refuted only for a refutation the
+ * binding found (a pattern variable twice); a storage miss or a shift with
+ * no reason leaves the definition undetermined. */
+static Atom *sj_equation_bind_failure(Arena *a, SjProofState *st, Atom *judgment) {
+    Atom *reason = st->failure ? st->failure : sj_expr1(a, "set:define-pattern-binding");
+    if (st->incomplete) return sj_incomplete(a, judgment, reason);
+    return st->refuted && st->failure ? sj_refuted(a, judgment, reason)
+                                      : sj_undetermined(a, judgment, reason);
 }
 
 /* Extend the actual pattern context. Previous arguments and the remaining
@@ -5763,6 +8203,193 @@ static Atom *sj_define_missing_constructor(Atom *judgment, size_t scrut,
  * position 0, RecursiveDefinitions.lean); the second is a definition by one
  * equation (`DeclaresDefinition`, Definitions.lean).  The authored equations
  * hold by conversion, and the record of `name` keeps them. */
+/* Whether `call` occurs in `t` below a nonempty path of constructors of the
+ * inductive type whose constructors are `ctors`, each entered at one of its
+ * fields of that same type.  `call` is a subterm of `t`, compared by
+ * identity. */
+static bool sj_call_inside_own_value(Atom *t, Atom *call, SjConstructor *ctors,
+                                     size_t ctor_count, bool below) {
+    if (t == call) return below;
+    if (!t || t->kind != ATOM_EXPR || t->expr.len < 2u) return false;
+    for (size_t c = 0u; c < ctor_count; c++) {
+        if (!atom_eq(t->expr.elems[0], ctors[c].name) ||
+            ctors[c].arity != (size_t)t->expr.len - 1u)
+            continue;
+        for (size_t i = 0u; i < ctors[c].arity; i++) {
+            if (!ctors[c].recursive[i]) continue;
+            if (sj_call_inside_own_value(t->expr.elems[1u + i], call, ctors,
+                                         ctor_count, true))
+                return true;
+        }
+        return false;
+    }
+    return false;
+}
+
+/* Whether a closed value of `type` is known to exist: a sort, a function
+ * type whose result has one, or a datatype with a constructor whose fields
+ * all have one, the datatypes being checked not counted (a least value comes
+ * first).  Anything else is not known.  Both refutations of a loop need an
+ * instance of the equation's variables: over a type with no value, such as
+ * a datatype whose only constructor takes one of its own, every equation
+ * holds of every function. */
+static bool sj_type_has_value(SjProofState *st, Atom *type, Atom **visiting, size_t depth,
+                              size_t room) {
+    if (!type) return false;
+    if (sj_is_sort(type) || atom_is_symbol(type, "prop")) return true;
+    if (sj_is_expr(type, "Pi", 3u)) {
+        if (sj_mentions_index(type->expr.elems[2], 0u)) return false;
+        Atom *codomain = sj_shift(st->arena, type->expr.elems[2], 0u, -1);
+        return codomain && sj_type_has_value(st, codomain, visiting, depth, room);
+    }
+    Atom *name = sj_constant_ref(type);
+    if (!name || !sj_inductive_record(st, name) || depth == room) return false;
+    for (size_t i = 0u; i < depth; i++)
+        if (atom_eq(visiting[i], name)) return false;
+    visiting[depth] = name;
+    SjConstructor *ctors = NULL;
+    size_t ctor_count = 0u;
+    Atom *principle = NULL;
+    Atom *saved_failure = st->failure;
+    bool saved_refuted = st->refuted, saved_incomplete = st->incomplete;
+    bool found = sj_datatype_constructors(st, name, &ctors, &ctor_count, &principle);
+    bool value = false;
+    for (size_t c = 0u; found && !value && c < ctor_count; c++) {
+        Atom *ctype = sj_constant_type(st, ctors[c].name);
+        bool fields = ctype != NULL;
+        for (size_t i = 0u; fields && i < ctors[c].arity; i++) {
+            fields = sj_is_expr(ctype, "Pi", 3u) &&
+                     !sj_mentions_index(ctype->expr.elems[2], 0u) &&
+                     sj_type_has_value(st, ctype->expr.elems[1], visiting, depth + 1u, room);
+            if (fields) ctype = sj_shift(st->arena, ctype->expr.elems[2], 0u, -1);
+        }
+        value = fields;
+    }
+    st->failure = saved_failure;
+    st->refuted = saved_refuted;
+    st->incomplete = saved_incomplete;
+    return value;
+}
+
+/* Whether every variable of an equation has a type with a known value. */
+static bool sj_variables_have_values(SjProofState *st, Atom **types, size_t count) {
+    for (size_t j = 0u; j < count; j++) {
+        Atom **visiting = arena_alloc(st->arena, sizeof(Atom *) * 64u);
+        if (!visiting || !sj_type_has_value(st, types[j], visiting, 0u, 64u)) return false;
+    }
+    return true;
+}
+
+/* Whether the equation is the one of `fromList` (Trinity/Stream/
+ * AdmittedBySetSolution.lean:588), up to names: one argument of a type of
+ * numbers (a constant and a successor), `f n = c n (f (s n))` with `s` the
+ * successor and `c` the constructor of a type of lists of those numbers (a
+ * constant, and `c` of a number and a list). */
+static bool sj_loop_is_from_list(SjProofState *st, Atom *lhs, Atom *rhs, Atom *list_type,
+                                 Atom *number_type) {
+    if (!lhs || lhs->kind != ATOM_EXPR || lhs->expr.len != 2u || !sj_is_var(lhs->expr.elems[1]))
+        return false;
+    Atom *n = lhs->expr.elems[1];
+    if (!rhs || rhs->kind != ATOM_EXPR || rhs->expr.len != 3u || !atom_eq(rhs->expr.elems[1], n))
+        return false;
+    Atom *call = rhs->expr.elems[2];
+    if (!call || call->kind != ATOM_EXPR || call->expr.len != 2u ||
+        !atom_eq(call->expr.elems[0], lhs->expr.elems[0]))
+        return false;
+    Atom *step = call->expr.elems[1];
+    if (!step || step->kind != ATOM_EXPR || step->expr.len != 2u || !atom_eq(step->expr.elems[1], n))
+        return false;
+    SjConstructor *lists = NULL, *numbers = NULL;
+    size_t list_count = 0u, number_count = 0u;
+    Atom *principle = NULL;
+    Atom *saved_failure = st->failure;
+    bool saved_refuted = st->refuted, saved_incomplete = st->incomplete;
+    bool shaped =
+        number_type && list_type &&
+        sj_datatype_constructors(st, list_type, &lists, &list_count, &principle) &&
+        sj_datatype_constructors(st, number_type, &numbers, &number_count, &principle) &&
+        list_count == 2u && number_count == 2u;
+    st->failure = saved_failure;
+    st->refuted = saved_refuted;
+    st->incomplete = saved_incomplete;
+    if (!shaped) return false;
+    bool cons = false, nil = false, suc = false, zero = false;
+    for (size_t c = 0u; c < 2u; c++) {
+        nil = nil || lists[c].arity == 0u;
+        cons = cons || (lists[c].arity == 2u && atom_eq(lists[c].name, rhs->expr.elems[0]) &&
+                        !lists[c].recursive[0] && lists[c].recursive[1]);
+        zero = zero || numbers[c].arity == 0u;
+        suc = suc || (numbers[c].arity == 1u && atom_eq(numbers[c].name, step->expr.elems[0]) &&
+                      numbers[c].recursive[0]);
+    }
+    if (!(cons && nil && suc && zero)) return false;
+    Atom *cons_type = sj_constant_type(st, rhs->expr.elems[0]);
+    return sj_is_expr(cons_type, "Pi", 3u) && atom_eq(cons_type->expr.elems[1], number_type);
+}
+
+/* A loop of an equation, its call `loop` repeating the left side, that no
+ * set satisfies: the result type is an inductive type and the call stands
+ * inside a constructor of that type, at a field of the type.  Every value of
+ * the left side would then contain the value of the call as a proper part,
+ * whose own value contains the next one, and so on: a value of an inductive
+ * type, whose parts are finitely deep, cannot.  The call may be at any
+ * instance of the left side.  The type's name, or NULL.  The refutation is
+ * TowerInterpretation.DatatypeBound.containsItself_no_setModel
+ * (TowerInterpretation/SetDefinitionsByBound.lean:603), given that the
+ * variables stay typed along the instances and the constructors on the path
+ * fit (`stable`, `fitting`), which the typing of the equation gives and this
+ * check, made before it, takes as given. */
+static Atom *sj_loop_without_solution(SjProofState *st, Atom *rhs, Atom *loop,
+                                      Atom *result_type) {
+    if (!result_type || result_type->kind != ATOM_SYMBOL ||
+        !sj_inductive_record(st, result_type))
+        return NULL;
+    SjConstructor *ctors = NULL;
+    size_t ctor_count = 0u;
+    Atom *principle = NULL;
+    Atom *saved_failure = st->failure;
+    bool saved_refuted = st->refuted, saved_incomplete = st->incomplete;
+    bool found = sj_datatype_constructors(st, result_type, &ctors, &ctor_count,
+                                          &principle);
+    st->failure = saved_failure;
+    st->refuted = saved_refuted;
+    st->incomplete = saved_incomplete;
+    if (!found) return NULL;
+    return sj_call_inside_own_value(rhs, loop, ctors, ctor_count, false)
+        ? result_type : NULL;
+}
+
+/* A loop that makes a proposition equal to its own negation: the right side
+ * is `(imp CALL Q)` with CALL the left side itself and Q a closed
+ * proposition convertible with Falsum, so the equation says that the left
+ * side holds exactly when it does not.  No truth value satisfies that
+ * (Curry): it proves Falsum.  A call at another instance of the left side
+ * is not this shape: `alt n = (alt (n + 1) → ⊥)` holds of the function true
+ * at the even numbers and false at the odd ones.  The refutation is
+ * TowerInterpretation.equals_own_negation_no_setModel
+ * (TowerInterpretation/SetDefinitions.lean:376, `OwnNegation.right_eq`),
+ * read with propositions as truth codes and `imp` as implication. */
+static bool sj_loop_is_own_negation(SjProofState *st, Atom *lhs, Atom *rhs, Atom *loop) {
+    if (!rhs || rhs->kind != ATOM_EXPR || rhs->expr.len != 3u ||
+        !atom_is_symbol(rhs->expr.elems[0], "imp") || rhs->expr.elems[1] != loop ||
+        !atom_eq(loop, lhs))
+        return false;
+    Atom *saved_failure = st->failure;
+    bool saved_refuted = st->refuted, saved_incomplete = st->incomplete;
+    Atom *prop = sj_sym(st->arena, "prop");
+    Atom *consequent = sj_elaborate_closed(st, rhs->expr.elems[2], prop);
+    Atom *falsum = consequent
+        ? sj_elaborate_closed(st, sj_expr3(st->arena, "all", prop,
+                                           sj_expr3(st->arena, "lam", sj_sym(st->arena, "p"),
+                                                    sj_sym(st->arena, "p"))), prop)
+        : NULL;
+    bool negation = falsum && sj_convertible(st, consequent, falsum);
+    st->failure = saved_failure;
+    st->refuted = saved_refuted;
+    st->incomplete = saved_incomplete;
+    return negation;
+}
+
 /* One equation of `name` at `canonical_type`, checked in the context of its
  * patterns: the patterns against the constructors of the scrutinee's type,
  * the recursion guard, and both sides typed at the remaining type. The
@@ -5804,7 +8431,7 @@ static Atom *sj_definition_equation_check(Arena *a, SjProofState *st, Atom *judg
         if (sj_is_var(pat)) {
             if (!sj_equation_bind(st, pat, remaining_type->expr.elems[1],
                                 vars, vtypes, &nvars, &remaining_type, pats, k))
-                return sj_refuted(a, judgment, st->failure);
+                return sj_equation_bind_failure(a, st, judgment);
             pats[k] = sj_expr2(a, "idx", atom_int(a, 0));
             remaining_type = sj_subst(a, remaining_type->expr.elems[2], 0u, pats[k]);
             continue;
@@ -5814,8 +8441,12 @@ static Atom *sj_definition_equation_check(Arena *a, SjProofState *st, Atom *judg
         size_t cargs = pat->kind == ATOM_SYMBOL ? 0u : (pat->kind == ATOM_EXPR ? pat->expr.len - 1u : 0u);
         for (size_t c = 0u; c < ctor_count && !ctor; c++)
             if (atom_eq(ctors[c].name, chead) && ctors[c].arity == cargs) ctor = &ctors[c];
+        /* A pattern that is not a constructor of the argument's type is
+         * not a definition by cases, and no route of the draft reads it;
+         * it does not say that no set solves the equations: `pred (add
+         * zero n) = n` and `pred zero = zero` hold of the identity. */
         if (!ctor)
-            return sj_refuted(a, judgment, sj_expr2(a, "set:define-not-a-constructor", pat));
+            return sj_undetermined(a, judgment, sj_expr2(a, "set:define-not-a-constructor", pat));
         size_t ci = (size_t)(ctor - ctors);
         /* Two equations for one constructor are legal, the first matching
          * one computing; case trees with overlap are not admitted yet. */
@@ -5831,12 +8462,13 @@ static Atom *sj_definition_equation_check(Arena *a, SjProofState *st, Atom *judg
             Atom *v = pat->expr.elems[1u + i];
             /* A nested pattern is legal; case trees are not admitted yet. */
             if (!sj_is_var(v))
-                return sj_undetermined(a, judgment, sj_expr2(a, "set:define-nested-pattern", pat));
+                return sj_undetermined(a, judgment, sj_expr3(a, "set:define-nested-pattern", pat,
+                                                             sj_expr2(a, "admit-by", sj_sym(a, "bound"))));
             if (!sj_is_expr(ctype, "Pi", 3u))
                 return sj_undetermined(a, judgment, sj_expr2(a, "set:define-constructor-type", chead));
             if (!sj_equation_bind(st, v, ctype->expr.elems[1], vars, vtypes,
                                 &nvars, &remaining_type, pats, k))
-                return sj_refuted(a, judgment, st->failure);
+                return sj_equation_bind_failure(a, st, judgment);
             ctype = sj_shift(a, ctype, 0u, 1);
             constructor_term = sj_shift(a, constructor_term, 0u, 1);
             Atom *argument = sj_expr2(a, "idx", atom_int(a, 0));
@@ -5850,14 +8482,61 @@ static Atom *sj_definition_equation_check(Arena *a, SjProofState *st, Atom *judg
         pats[k] = constructor_term;
         remaining_type = sj_subst(a, remaining_type->expr.elems[2], 0u, pats[k]);
     }
-    /* A call that repeats the equation's own left side is a loop: a
-     * refutation of totality with the call as its witness.  Any other
-     * unguarded call may still terminate by a measure not checked yet. */
+    /* A recursion that is not structural is not admitted here, and is
+     * refuted only when the equations have no solution in sets.  A call that
+     * repeats the equation's own left side never stops when run; it has no
+     * solution when its value would contain itself (sj_loop_without_solution)
+     * or when a proposition would equal its own negation
+     * (sj_loop_is_own_negation), and may have one otherwise, as a stream or a function of positions
+     * does: a set solution or a coinductive reading may admit it.  Any other
+     * call off the structure may stop by a measure: a bound on the calls, a
+     * set solution or accessibility may admit it. */
     if (!sj_recursion_guarded(rhs, name, arity, scrut, rec_vars, rec_count)) {
         Atom *loop = sj_recursion_repeats(a, rhs, lhs, arity);
-        if (loop)
-            return sj_refuted(a, judgment, sj_expr3(a, "set:define-recursion-loop", eq, loop));
-        return sj_undetermined(a, judgment, sj_expr2(a, "set:define-recursion", eq));
+        /* Both refutations need an instance of the equation's variables, and
+         * a call of exactly the left side's arity: the theorems speak of the
+         * call as an instance of the left side, and a call with more
+         * arguments is the left side's value applied further. */
+        bool exact = loop && (arity == 0u
+            ? loop->kind != ATOM_EXPR
+            : loop->kind == ATOM_EXPR && (size_t)loop->expr.len == arity + 1u);
+        bool instances = exact && sj_variables_have_values(st, vtypes, nvars);
+        if (loop && instances) {
+            Atom *contains = sj_loop_without_solution(st, rhs, loop, remaining_type);
+            if (contains) {
+                Atom *number_type = arity == 1u && sj_is_expr(canonical_type, "Pi", 3u)
+                    ? sj_constant_ref(canonical_type->expr.elems[1]) : NULL;
+                bool from_list = sj_loop_is_from_list(st, lhs, rhs, contains, number_type);
+                Atom *reason_items[5] = {
+                    sj_sym(a, "contains-itself"), contains,
+                    sj_sym(a, "TowerInterpretation.DatatypeBound.containsItself_no_setModel"),
+                    sj_expr3(a, "given", sj_sym(a, "stability"), sj_sym(a, "path-fits")),
+                    sj_sym(a, "Trinity.Stream.fromList_no_setModel")};
+                Atom *items[4] = {sj_sym(a, "set:define-no-set-solution"), eq, loop,
+                                  atom_expr(a, reason_items, from_list ? 5u : 4u)};
+                return sj_refuted(a, judgment, atom_expr(a, items, 4u));
+            }
+            if (sj_loop_is_own_negation(st, lhs, rhs, loop)) {
+                Atom *reason_items[3] = {
+                    sj_sym(a, "equals-own-negation"),
+                    sj_sym(a, "TowerInterpretation.equals_own_negation_no_setModel"),
+                    sj_expr3(a, "relative", sj_sym(a, "truthCode"), sj_sym(a, "impReads"))};
+                Atom *items[4] = {sj_sym(a, "set:define-no-set-solution"), eq, loop,
+                                  atom_expr(a, reason_items, 3u)};
+                return sj_refuted(a, judgment, atom_expr(a, items, 4u));
+            }
+        }
+        if (loop) {
+            Atom *items[4] = {sj_sym(a, "set:define-not-terminating"), eq, loop,
+                              sj_expr3(a, "admit-by", sj_sym(a, "set-solution"),
+                                       sj_sym(a, "coinductive"))};
+            return sj_undetermined(a, judgment, atom_expr(a, items, 4u));
+        }
+        Atom *routes[4] = {sj_sym(a, "admit-by"), sj_sym(a, "bound"),
+                           sj_sym(a, "set-solution"), sj_sym(a, "accessibility")};
+        return sj_undetermined(a, judgment,
+                               sj_expr3(a, "set:define-not-structural", eq,
+                                        atom_expr(a, routes, 4u)));
     }
     if (ctor) {
         size_t calls = sj_recursion_call_count(rhs, name);
@@ -5893,6 +8572,70 @@ static Atom *sj_definition_equation_check(Arena *a, SjProofState *st, Atom *judg
     if (types_out)
         for (size_t j = 0u; j < nvars; j++) types_out[j] = vtypes[j];
     return NULL;
+}
+
+/* What an admitted definition rests on in Lean.  The record's evidence ends
+ * with `(lean name ...)`: the theorem that gives the package with the
+ * definition a set model, and the lemmas that supply its hypotheses from
+ * the checks made here, named in full below
+ * Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId (C strings: read as
+ * MeTTa, a dotted name would become a colon name).
+ *   explicit_setModel             TowerInterpretation/SetExplicitDefinitions.lean:60
+ *   recursion_setModel            TowerInterpretation/SetRecursion.lean:515
+ *   definition_setModel_of_bound  TowerInterpretation/SetDefinitionsByBound.lean:260
+ *   DatatypeBound.reading_structOrder_wf      the same file:358
+ *   DatatypeBound.apart_of_linear_patterns    the same file:530
+ *   DatatypeBound.boundCovers_of_one_level    the same file:701
+ *   definition_setModel_of_evidence  TowerInterpretation/SetDefinitionsBySolution.lean:146
+ *   equationHolds_iff_atPosition     the same file:172
+ * Where the definition has a shape the theorem does not state, the record
+ * says what the theorem covers: `(lean-covers one-argument)` for a
+ * definition of several arguments (recursion and the bound state a function
+ * of one argument), `(lean-covers one-level)` for patterns below one
+ * constructor (recursion states one equation per constructor over
+ * variables).  The verdict does not depend on it.  None of these theorems
+ * says that the equations, run as rules, stop at open terms. */
+#define SJ_LEAN_EXPLICIT "TowerInterpretation.explicit_setModel"
+#define SJ_LEAN_RECURSION "TowerInterpretation.recursion_setModel"
+#define SJ_LEAN_BOUND "TowerInterpretation.definition_setModel_of_bound"
+#define SJ_LEAN_BOUND_ORDER "TowerInterpretation.DatatypeBound.reading_structOrder_wf"
+#define SJ_LEAN_BOUND_APART "TowerInterpretation.DatatypeBound.apart_of_linear_patterns"
+#define SJ_LEAN_BOUND_COVERS "TowerInterpretation.DatatypeBound.boundCovers_of_one_level"
+#define SJ_LEAN_EVIDENCE "TowerInterpretation.definition_setModel_of_evidence"
+#define SJ_LEAN_AT_POSITION "TowerInterpretation.equationHolds_iff_atPosition"
+
+static Atom *sj_lean_basis(Arena *a, const char *const *names, size_t count,
+                           bool one_argument, bool one_level) {
+    Atom **items = arena_alloc(a, sizeof(Atom *) * (count + 3u));
+    size_t n = 0u;
+    items[n++] = sj_sym(a, "lean");
+    for (size_t i = 0u; i < count; i++) items[n++] = sj_sym(a, names[i]);
+    if (one_argument) items[n++] = sj_expr2(a, "lean-covers", sj_sym(a, "one-argument"));
+    if (one_level) items[n++] = sj_expr2(a, "lean-covers", sj_sym(a, "one-level"));
+    return atom_expr(a, items, (CettaExprLen)n);
+}
+
+static Atom *sj_definition_evidence(Arena *a, Atom *compiled, Atom *termination,
+                                    Atom *basis) {
+    Atom *items[4] = {sj_sym(a, "definition-evidence"), compiled, termination, basis};
+    return atom_expr(a, items, 4u);
+}
+
+/* Whether every compiled rule's pattern at `position` is one constructor
+ * applied to variables. */
+static bool sj_rules_one_level(Atom *compiled, size_t position) {
+    for (CettaExprIndex r = 2u; r < compiled->expr.len; r++) {
+        Atom *pats = compiled->expr.elems[r]->expr.elems[0];
+        if (!pats || pats->kind != ATOM_EXPR || position >= (size_t)pats->expr.len)
+            return false;
+        Atom *pat = pats->expr.elems[position];
+        while (sj_is_expr(pat, "App", 3u)) {
+            if (!sj_intrinsic_index(pat->expr.elems[2], NULL)) return false;
+            pat = pat->expr.elems[1];
+        }
+        if (!sj_constant_ref(pat)) return false;
+    }
+    return true;
 }
 
 static Atom *sj_set_define_scrutinee_first(Arena *a, Space *space,
@@ -6070,13 +8813,18 @@ static Atom *sj_set_define_scrutinee_first(Arena *a, Space *space,
      * scrutinee-first form; its termination evidence is that of the authored
      * equations, at the authored scrutinee, through that form. */
     Atom *wrapper = record->expr.elems[SJ_KNOWN_PROOF];
-    if (!sj_is_expr(wrapper, "definition-evidence", 3u))
+    if (!wrapper || wrapper->kind != ATOM_EXPR || wrapper->expr.len < 3u ||
+        !atom_is_symbol(wrapper->expr.elems[0], "definition-evidence"))
         return sj_undetermined(a, judgment, sj_expr1(a, "set:define-scrutinee-first"));
-    record_items[SJ_KNOWN_PROOF] = sj_expr3(
-        a, "definition-evidence", wrapper->expr.elems[1],
+    /* The passing equation is an explicit definition over the form, whose
+     * own record carries the recursion it rests on. */
+    const char *passing_basis[1] = {SJ_LEAN_EXPLICIT};
+    record_items[SJ_KNOWN_PROOF] = sj_definition_evidence(
+        a, wrapper->expr.elems[1],
         sj_expr3(a, "scrutinee-first", permuted,
                  sj_structural_evidence(a, scrut, scrut_type, authored_descents,
-                                        (size_t)len - 3u)));
+                                        (size_t)len - 3u)),
+        sj_lean_basis(a, passing_basis, 1u, false, false));
     size_t count = (size_t)published_second->expr.len + (size_t)published_first->expr.len - 1u;
     Atom **published = arena_alloc(a, sizeof(Atom *) * count);
     size_t n = 0u;
@@ -6089,18 +8837,801 @@ static Atom *sj_set_define_scrutinee_first(Arena *a, Space *space,
     return sj_established(a, judgment, atom_expr(a, published, (CettaExprLen)n));
 }
 
+/* ------------------------------------------------------------------------ */
+/* A definition admitted by a bound on its calls (route 1 of a recursion   */
+/* that is not structural):                                                  */
+/*                                                                            */
+/*   (set:define name type (by bound T B proof ...) (= lhs rhs) ...)          */
+/*                                                                            */
+/* B maps the arguments to the inductive type T.  For every call of `name`   */
+/* in a right side, at arguments y, under the left side x, the bound goes    */
+/* down: B y is below B x in T, where "below" is the least transitive        */
+/* relation that puts every recursive field of a constructor below the       */
+/* constructor's value.  Each such statement, quantified over the pattern    */
+/* variables, is an obligation, proved by the proofs given in order.  So     */
+/* every chain of calls is at most B x long: the equations computed with     */
+/* that many calls left (the bounded form) give a function, and it satisfies */
+/* the equations, by induction on the bound.  The equations are admitted as  */
+/* written, with nested constructor patterns allowed, and run as written;    */
+/* the record keeps the bound and the obligations as its termination         */
+/* evidence, beside `structural` and `scrutinee-first`.                     */
+/* ------------------------------------------------------------------------ */
+
+typedef struct {
+    Atom **vars;        /* pattern variables, in order of binding */
+    Atom **types;       /* their canonical types */
+    Atom **authored;    /* their authored types */
+    size_t count;
+    size_t cap;
+} SjBoundVars;
+
+/* The authored type of constructor `ctor` of the inductive type `type`, as
+ * its declaration record writes it. */
+static Atom *sj_bound_authored_constructor_type(SjProofState *st, Atom *type,
+                                                Atom *ctor) {
+    Atom *record = sj_inductive_record(st, type);
+    Atom *decl = record ? record->expr.elems[SJ_KNOWN_PROP] : NULL;
+    if (!decl || decl->kind != ATOM_EXPR) return NULL;
+    for (CettaExprIndex i = 2u; i < decl->expr.len; i++) {
+        Atom *c = decl->expr.elems[i];
+        if (c && c->kind == ATOM_EXPR && c->expr.len == 3u &&
+            atom_eq(c->expr.elems[1], ctor))
+            return c->expr.elems[2];
+    }
+    return NULL;
+}
+
+/* Bind the variables of a linear constructor pattern of canonical type
+ * `type` and authored type `authored`, constructors nested to any depth.
+ * The constructors' fields must not depend on each other. */
+static bool sj_bound_bind(SjProofState *st, Atom *pat, Atom *type,
+                          Atom *authored, SjBoundVars *v) {
+    Arena *a = st->arena;
+    if (sj_is_var(pat)) {
+        for (size_t i = 0u; i < v->count; i++)
+            if (atom_eq(v->vars[i], pat)) {
+                sj_fail(st, true, sj_expr2(a, "set:define-nonlinear", pat));
+                return false;
+            }
+        if (v->count >= v->cap) {
+            sj_fail(st, false, sj_expr1(a, "set:define-variable-storage"));
+            return false;
+        }
+        v->vars[v->count] = pat;
+        v->types[v->count] = type;
+        v->authored[v->count] = authored;
+        v->count++;
+        return true;
+    }
+    Atom *head = pat->kind == ATOM_SYMBOL ? pat
+               : (pat->kind == ATOM_EXPR && pat->expr.len >= 2u ? pat->expr.elems[0] : NULL);
+    size_t fields = pat->kind == ATOM_EXPR ? (size_t)pat->expr.len - 1u : 0u;
+    if (!head || !type || type->kind != ATOM_SYMBOL || !sj_inductive_record(st, type)) {
+        sj_fail(st, false, sj_expr2(a, "set:define-not-a-constructor", pat));
+        return false;
+    }
+    SjConstructor *ctors = NULL;
+    size_t ctor_count = 0u;
+    Atom *principle = NULL;
+    if (!sj_datatype_constructors(st, type, &ctors, &ctor_count, &principle)) return false;
+    SjConstructor *ctor = NULL;
+    for (size_t c = 0u; c < ctor_count && !ctor; c++)
+        if (atom_eq(ctors[c].name, head) && ctors[c].arity == fields) ctor = &ctors[c];
+    if (!ctor) {
+        sj_fail(st, false, sj_expr2(a, "set:define-not-a-constructor", pat));
+        return false;
+    }
+    Atom *ctype = sj_constant_type(st, head);
+    Atom *atype = sj_bound_authored_constructor_type(st, type, head);
+    if (!ctype || !atype) {
+        sj_fail(st, false, sj_expr2(a, "set:define-constructor-type", head));
+        return false;
+    }
+    for (size_t i = 0u; i < fields; i++) {
+        if (!sj_is_expr(ctype, "Pi", 3u) || sj_mentions_index(ctype->expr.elems[2], 0u) ||
+            atype->kind != ATOM_EXPR || (size_t)atype->expr.len < fields + 2u ||
+            !atom_is_symbol(atype->expr.elems[0], "->")) {
+            sj_fail(st, false, sj_expr2(a, "set:define-dependent-domain", pat));
+            return false;
+        }
+        Atom *field_type = ctype->expr.elems[1];
+        ctype = sj_shift(a, ctype->expr.elems[2], 0u, -1);
+        if (!ctype ||
+            !sj_bound_bind(st, pat->expr.elems[1u + i], field_type,
+                           atype->expr.elems[1u + i], v))
+            return false;
+    }
+    return true;
+}
+
+/* Two linear patterns that some argument matches both. */
+static bool sj_bound_patterns_overlap(Atom *p, Atom *q) {
+    if (sj_is_var(p) || sj_is_var(q)) return true;
+    if (p->kind != ATOM_EXPR || q->kind != ATOM_EXPR) return atom_eq(p, q);
+    if (p->expr.len != q->expr.len) return false;
+    for (CettaExprIndex i = 0u; i < p->expr.len; i++)
+        if (!sj_bound_patterns_overlap(p->expr.elems[i], q->expr.elems[i])) return false;
+    return true;
+}
+
+/* Whether `t` is a form that binds names: an abstraction, or a MeTTa
+ * binding form that a right side may hold. */
+static bool sj_bound_binding_form(Atom *t) {
+    if (!t || t->kind != ATOM_EXPR || t->expr.len < 1u) return false;
+    Atom *h = t->expr.elems[0];
+    return atom_is_symbol(h, "lam") || atom_is_symbol(h, "let") ||
+           atom_is_symbol(h, "let*") || atom_is_symbol(h, "match") ||
+           atom_is_symbol(h, "case") || atom_is_symbol(h, "chain") ||
+           atom_is_symbol(h, "unify");
+}
+
+/* Whether `t` mentions a variable that is not one of the equation's pattern
+ * variables. */
+static bool sj_bound_foreign_variable(Atom *t, SjBoundVars *v) {
+    if (!t) return false;
+    if (sj_is_var(t)) {
+        for (size_t i = 0u; i < v->count; i++)
+            if (atom_eq(v->vars[i], t)) return false;
+        return true;
+    }
+    if (t->kind != ATOM_EXPR) return false;
+    for (CettaExprIndex i = 0u; i < t->expr.len; i++)
+        if (sj_bound_foreign_variable(t->expr.elems[i], v)) return true;
+    return false;
+}
+
+/* The calls of `name` in `t`.  The obligations speak of every call, so
+ * `name` may occur only as the head of a call at exactly `arity` arguments
+ * that do not mention it, whose arguments mention only the equation's
+ * pattern variables, and not inside a form that binds names.  Any other
+ * occurrence is returned in `*offence`, with the kind of occurrence. */
+static bool sj_bound_calls(Atom *t, Atom *name, size_t arity, SjBoundVars *v,
+                           bool under_binder, Atom ***calls, size_t *count,
+                           size_t *cap, Arena *a, Atom **offence) {
+    if (!t) return true;
+    if (atom_eq(t, name)) {
+        *offence = sj_expr2(a, "not-a-call", t);
+        return false;
+    }
+    if (t->kind != ATOM_EXPR) return true;
+    if (t->expr.len >= 1u && atom_eq(t->expr.elems[0], name)) {
+        if (under_binder) {
+            *offence = sj_expr2(a, "under-binder", t);
+            return false;
+        }
+        if ((size_t)t->expr.len != arity + 1u) {
+            *offence = sj_expr2(a, "not-a-call", t);
+            return false;
+        }
+        for (CettaExprIndex i = 1u; i < t->expr.len; i++) {
+            if (sj_mentions_symbol(t->expr.elems[i], name)) {
+                *offence = sj_expr2(a, "nested-call", t);
+                return false;
+            }
+            if (sj_bound_foreign_variable(t->expr.elems[i], v)) {
+                *offence = sj_expr2(a, "under-binder", t);
+                return false;
+            }
+        }
+        if (*count == *cap) *calls = sj_grow(a, *calls, *count, cap);
+        (*calls)[(*count)++] = t;
+        return true;
+    }
+    bool binder = under_binder || sj_bound_binding_form(t);
+    for (CettaExprIndex i = 0u; i < t->expr.len; i++)
+        if (!sj_bound_calls(t->expr.elems[i], name, arity, v, binder, calls, count,
+                            cap, a, offence))
+            return false;
+    return true;
+}
+
+/* `t` with each pattern variable replaced by its name in the obligation. */
+static Atom *sj_bound_named(Arena *a, Atom *t, SjBoundVars *v, Atom **names) {
+    if (!t) return NULL;
+    if (sj_is_var(t)) {
+        for (size_t i = 0u; i < v->count; i++)
+            if (atom_eq(v->vars[i], t)) return names[i];
+        return t;
+    }
+    if (t->kind != ATOM_EXPR) return t;
+    Atom **children = arena_alloc(a, sizeof(Atom *) * (t->expr.len ? t->expr.len : 1u));
+    if (!children) return NULL;
+    for (CettaExprIndex i = 0u; i < t->expr.len; i++) {
+        children[i] = sj_bound_named(a, t->expr.elems[i], v, names);
+        if (!children[i]) return NULL;
+    }
+    return atom_expr(a, children, t->expr.len);
+}
+
+/* `m` below `n` in the inductive type `type`, written out:
+ *   (all (-> T (-> T prop)) (lam bound~below
+ *     (imp <each recursive field is below its value>
+ *       (imp <what is below a field is below its value> (bound~below m n)))))
+ * The relation is the least one closed under the two kinds of clause. */
+static Atom *sj_bound_below(SjProofState *st, Atom *type, Atom *m, Atom *n) {
+    Arena *a = st->arena;
+    SjConstructor *ctors = NULL;
+    size_t ctor_count = 0u;
+    Atom *principle = NULL;
+    if (!sj_datatype_constructors(st, type, &ctors, &ctor_count, &principle)) return NULL;
+    Atom *rel = sj_sym(a, "bound~below");
+    Atom **clauses = NULL;
+    size_t clause_count = 0u, clause_cap = 0u;
+    for (int kind = 0; kind < 2; kind++) {
+        for (size_t c = 0u; c < ctor_count; c++) {
+            SjConstructor *ctor = &ctors[c];
+            Atom *atype = sj_bound_authored_constructor_type(st, type, ctor->name);
+            if (ctor->arity > 0u &&
+                (!atype || atype->kind != ATOM_EXPR ||
+                 (size_t)atype->expr.len < ctor->arity + 2u))
+                return NULL;
+            Atom **fields = arena_alloc(a, sizeof(Atom *) * (ctor->arity + 1u));
+            for (size_t i = 0u; i < ctor->arity; i++) {
+                char buf[48];
+                snprintf(buf, sizeof buf, "bound~field%zu", i);
+                fields[i] = sj_sym(a, buf);
+            }
+            Atom *value = ctor->name;
+            if (ctor->arity > 0u) {
+                Atom **items = arena_alloc(a, sizeof(Atom *) * (ctor->arity + 1u));
+                items[0] = ctor->name;
+                for (size_t i = 0u; i < ctor->arity; i++) items[1u + i] = fields[i];
+                value = atom_expr(a, items, (CettaExprLen)(ctor->arity + 1u));
+            }
+            for (size_t r = 0u; r < ctor->arity; r++) {
+                if (!ctor->recursive[r]) continue;
+                Atom *low = sj_sym(a, "bound~low");
+                Atom *body = kind == 0
+                    ? atom_expr3(a, rel, fields[r], value)
+                    : sj_expr3(a, "imp", atom_expr3(a, rel, low, fields[r]),
+                               atom_expr3(a, rel, low, value));
+                for (size_t i = ctor->arity; i > 0u; i--)
+                    body = sj_expr3(a, "all", atype->expr.elems[i],
+                                    sj_expr3(a, "lam", fields[i - 1u], body));
+                if (kind == 1)
+                    body = sj_expr3(a, "all", type, sj_expr3(a, "lam", low, body));
+                if (clause_count == clause_cap)
+                    clauses = sj_grow(a, clauses, clause_count, &clause_cap);
+                clauses[clause_count++] = body;
+            }
+        }
+    }
+    Atom *goal = atom_expr3(a, rel, m, n);
+    for (size_t i = clause_count; i > 0u; i--)
+        goal = sj_expr3(a, "imp", clauses[i - 1u], goal);
+    Atom *arrow[4] = {sj_sym(a, "->"), type, type, sj_sym(a, "prop")};
+    return sj_expr3(a, "all", atom_expr(a, arrow, 4u), sj_expr3(a, "lam", rel, goal));
+}
+
+/* `t` with the constant `name` replaced by `by`. */
+static Atom *sj_solution_rename(Arena *a, Atom *t, Atom *name, Atom *by) {
+    if (!t) return NULL;
+    if (atom_eq(t, name)) return by;
+    if (t->kind != ATOM_EXPR) return t;
+    Atom **children = arena_alloc(a, sizeof(Atom *) * (t->expr.len ? t->expr.len : 1u));
+    if (!children) return NULL;
+    for (CettaExprIndex i = 0u; i < t->expr.len; i++) {
+        children[i] = sj_solution_rename(a, t->expr.elems[i], name, by);
+        if (!children[i]) return NULL;
+    }
+    return atom_expr(a, children, t->expr.len);
+}
+
+/* Admission on evidence that the equations have a solution in sets: the
+ * clause's proof proves, by the existing judgment, the statement that some
+ * function of the declared type satisfies every equation.  When the result
+ * is itself a function, of positions, an equation is stated at every
+ * position: in sets two functions with the same values are one.  The rules
+ * are guarded: they unfold only at closed arguments where they inspect
+ * them, and a result that is a function waits for a closed position.  So
+ * they never unfold in an open term, and a comparison that meets them is not
+ * refuted (regular_mentions_guarded). */
+static Atom *sj_set_define_admit_solution(Arena *a, Space *space, Atom *judgment,
+                                          SjProofState *st, SjSetEnv *env, Atom *name,
+                                          Atom *type, size_t arity, Atom *result,
+                                          size_t eq_count, SjBoundVars *bound,
+                                          Atom **rules, bool limited, uint64_t steps) {
+    Atom *clause = judgment->expr.elems[3];
+    /* The result read after the arguments, and the position it waits for
+     * when it is a function. */
+    size_t rest = (size_t)type->expr.len - 1u - arity;
+    Atom *authored_result = rest == 1u ? type->expr.elems[1u + arity] : NULL;
+    if (rest > 1u) {
+        Atom **items = arena_alloc(a, sizeof(Atom *) * (rest + 1u));
+        items[0] = sj_sym(a, "->");
+        for (size_t i = 0u; i < rest; i++) items[1u + i] = type->expr.elems[1u + arity + i];
+        authored_result = atom_expr(a, items, (CettaExprLen)(rest + 1u));
+    }
+    Atom *observed = NULL;          /* authored type of the position */
+    Atom *observed_result = NULL;   /* authored type at a position */
+    Atom *observed_canonical = NULL;
+    if (sj_is_expr(result, "Pi", 3u)) {
+        if (sj_mentions_index(result->expr.elems[2], 0u) ||
+            authored_result->kind != ATOM_EXPR || authored_result->expr.len < 3u ||
+            !atom_is_symbol(authored_result->expr.elems[0], "->") ||
+            sj_is_typed_binder(authored_result->expr.elems[1]))
+            return sj_undetermined(a, judgment,
+                                   sj_expr2(a, "set:define-set-solution-type-fragment", type));
+        observed = authored_result->expr.elems[1];
+        observed_canonical = result->expr.elems[1];
+        if (authored_result->expr.len == 3u) {
+            observed_result = authored_result->expr.elems[2];
+        } else {
+            Atom **items = arena_alloc(a, sizeof(Atom *) * (size_t)(authored_result->expr.len - 1u));
+            items[0] = sj_sym(a, "->");
+            for (CettaExprIndex i = 2u; i < authored_result->expr.len; i++)
+                items[i - 1u] = authored_result->expr.elems[i];
+            observed_result = atom_expr(a, items, authored_result->expr.len - 1u);
+        }
+    }
+    /* The statement: some function g of the declared type satisfies them. */
+    Atom *g = sj_sym(a, "solution~f");
+    Atom *position = sj_sym(a, "solution~k");
+    Atom *conjunction = NULL;
+    for (size_t e = eq_count; e > 0u; e--) {
+        Atom *eq = judgment->expr.elems[4u + e - 1u];
+        Atom *lhs = eq->expr.elems[1];
+        SjBoundVars *v = &bound[e - 1u];
+        Atom **names = arena_alloc(a, sizeof(Atom *) * (v->count ? v->count : 1u));
+        for (size_t i = 0u; i < v->count; i++) {
+            const char *spelling = atom_name_cstr(v->vars[i]);
+            Atom *symbol = sj_sym(a, spelling ? spelling : "solution~x");
+            if (sj_constant_type(st, symbol)) {
+                char buf[96];
+                snprintf(buf, sizeof buf, "%s~v", spelling ? spelling : "solution~x");
+                symbol = sj_sym(a, buf);
+            }
+            names[i] = symbol;
+        }
+        Atom **left_items = arena_alloc(a, sizeof(Atom *) * (arity + 2u));
+        left_items[0] = g;
+        for (size_t k = 0u; k < arity; k++)
+            left_items[1u + k] = sj_bound_named(a, lhs->expr.elems[1u + k], v, names);
+        size_t left_len = arity + 1u;
+        Atom *right = sj_solution_rename(a, sj_bound_named(a, eq->expr.elems[2], v, names),
+                                         name, g);
+        if (observed) {
+            left_items[left_len++] = position;
+            right = atom_expr2(a, right, position);
+        }
+        Atom *statement = atom_expr(a, (Atom *[]){sj_sym(a, "eq"),
+                                                  observed ? observed_result : authored_result,
+                                                  atom_expr(a, left_items, (CettaExprLen)left_len),
+                                                  right}, 4u);
+        if (observed)
+            statement = sj_expr3(a, "all", observed, sj_expr3(a, "lam", position, statement));
+        for (size_t i = v->count; i > 0u; i--)
+            statement = sj_expr3(a, "all", v->authored[i - 1u],
+                                 sj_expr3(a, "lam", names[i - 1u], statement));
+        if (!conjunction) {
+            conjunction = statement;
+        } else {
+            Atom *c = sj_sym(a, "solution~c");
+            conjunction = sj_expr3(a, "all", sj_sym(a, "prop"), sj_expr3(a, "lam", c,
+                sj_expr3(a, "imp", sj_expr3(a, "imp", statement, sj_expr3(a, "imp", conjunction, c)),
+                         c)));
+        }
+    }
+    Atom *r = sj_sym(a, "solution~r");
+    Atom *exists = sj_expr3(a, "all", sj_sym(a, "prop"), sj_expr3(a, "lam", r,
+        sj_expr3(a, "imp",
+                 sj_expr3(a, "all", type, sj_expr3(a, "lam", g, sj_expr3(a, "imp", conjunction, r))),
+                 r)));
+    if (clause->expr.len < 3u)
+        return sj_undetermined(a, judgment, sj_expr2(a, "set:define-set-solution-statement", exists));
+    st->collect_dependencies = true;
+    Atom *goal = sj_elaborate_closed(st, exists, sj_sym(a, "prop"));
+    if (!goal || !sj_check(st, clause->expr.elems[2], goal)) {
+        Atom *items[4] = {sj_sym(a, "set:define-set-solution-evidence"), exists,
+                          clause->expr.elems[2], st->failure ? st->failure : atom_unit(a)};
+        return st->incomplete ? sj_incomplete(a, judgment, atom_expr(a, items, 4u))
+                              : sj_undetermined(a, judgment, atom_expr(a, items, 4u));
+    }
+    /* The guarded rules, and their record.  A result that is a type of an
+     * admitted family, a stream, is not computed at a closed argument
+     * either: its value never ends.  Its rules also wait for an
+     * observation, as the family's own iteration does: under each
+     * observation of a closed call one unfolding happens. */
+    bool family_result = false;
+    if (!observed) {
+        Atom *former = result;
+        while (sj_is_expr(former, "App", 3u)) former = former->expr.elems[1];
+        family_result = former != result && sj_constant_ref(former) &&
+                        sj_family_record(st, sj_constant_ref(former)) != NULL;
+    }
+    size_t rule_arity = arity + (observed ? 1u : 0u);
+    Atom **kernel_rules = arena_alloc(a, sizeof(Atom *) * eq_count);
+    for (size_t e = 0u; e < eq_count; e++) {
+        Atom *rule = rules[2u + e];                  /* ((pats) rhs nvars) */
+        Atom *lhs = judgment->expr.elems[4u + e]->expr.elems[1];
+        SjBoundVars *v = &bound[e];
+        size_t nvars = v->count + (observed ? 1u : 0u);
+        Atom **pats = arena_alloc(a, sizeof(Atom *) * rule_arity);
+        Atom **types = arena_alloc(a, sizeof(Atom *) * (nvars ? nvars : 1u));
+        Atom *rhs = rule->expr.elems[1];
+        bool guarded = false;
+        for (size_t k = 0u; k < arity; k++) {
+            Atom *pat = rule->expr.elems[0]->expr.elems[k];
+            if (observed) pat = sj_shift(a, pat, 0u, 1);
+            if (!sj_is_var(lhs->expr.elems[1u + k])) {
+                pat = sj_expr2(a, "PGuard", pat);
+                guarded = true;
+            }
+            pats[k] = pat;
+        }
+        for (size_t j = 0u; j < v->count; j++) types[j] = v->types[j];
+        if (observed) {
+            pats[arity] = sj_expr2(a, "PGuard", sj_expr2(a, "idx", atom_int(a, 0)));
+            types[v->count] = observed_canonical;
+            rhs = sj_expr3(a, "App", sj_shift(a, rhs, 0u, 1), sj_expr2(a, "idx", atom_int(a, 0)));
+            guarded = true;
+        }
+        if (!guarded)
+            for (size_t k = 0u; k < arity; k++) pats[k] = sj_expr2(a, "PGuard", pats[k]);
+        Atom *items[3] = {atom_expr(a, pats, (CettaExprLen)rule_arity), rhs,
+                          atom_int(a, (int64_t)nvars)};
+        rules[2u + e] = atom_expr(a, items, 3u);
+        kernel_rules[e] = sj_type_rule_atom(st, name, rule_arity, pats, rhs, nvars, types);
+        if (!kernel_rules[e])
+            return sj_undetermined(a, judgment,
+                                   sj_expr2(a, "set:define-rule-lowering", rules[2u + e]));
+        if (family_result) {
+            Atom *items[5] = {kernel_rules[e]->expr.elems[0], kernel_rules[e]->expr.elems[1],
+                              sj_expr2(a, "PObserved", kernel_rules[e]->expr.elems[2]),
+                              kernel_rules[e]->expr.elems[3], kernel_rules[e]->expr.elems[4]};
+            kernel_rules[e] = atom_expr(a, items, 5u);
+        }
+    }
+    rules[1] = atom_int(a, (int64_t)rule_arity);
+    Atom *compiled = atom_expr(a, rules, (CettaExprLen)(eq_count + 2u));
+    const char *solution_basis[2] = {SJ_LEAN_EVIDENCE, SJ_LEAN_AT_POSITION};
+    Atom *evidence = sj_definition_evidence(
+        a, compiled, sj_expr2(a, "set-solution", exists),
+        sj_lean_basis(a, solution_basis, observed ? 2u : 1u, false, false));
+    Atom **prop_items = arena_alloc(a, sizeof(Atom *) * (eq_count + 2u));
+    prop_items[0] = sj_sym(a, "define");
+    prop_items[1] = type;
+    for (size_t e = 0u; e < eq_count; e++) prop_items[2u + e] = judgment->expr.elems[4u + e];
+    Atom *prop = atom_expr(a, prop_items, (CettaExprLen)(eq_count + 2u));
+    sj_note_definition_uses(st, prop);
+    Atom *record = sj_known_record(a, name, prop, "definition", evidence,
+                                   sj_depends_atom(st), space_revision(space));
+    {
+        SjProofState check;
+        sj_proof_state_init(&check, a, space, env, limited, steps, false, false);
+        if (!sj_dependencies_current_as(&check, record, 0u, false))
+            return check.incomplete ? sj_incomplete(a, judgment, check.failure)
+                                    : sj_undetermined(a, judgment, check.failure);
+    }
+    Atom **published = arena_alloc(a, sizeof(Atom *) * (eq_count + 3u));
+    size_t np = 0u;
+    published[np++] = sj_sym(a, "SetPublish");
+    published[np++] = record;
+    published[np++] = sj_expr3(a, ":", name, type);
+    for (size_t e = 0u; e < eq_count; e++) published[np++] = kernel_rules[e];
+    return sj_established(a, judgment, atom_expr(a, published, (CettaExprLen)np));
+}
+
+static Atom *sj_set_define_by_clause(Arena *a, Space *space, Atom *judgment,
+                                     bool by_bound, bool limited, uint64_t steps) {
+    CettaExprLen len = judgment->expr.len;
+    Atom *name = judgment->expr.elems[1];
+    Atom *type = judgment->expr.elems[2];
+    Atom *clause = judgment->expr.elems[3];
+    if (len < 5u || clause->expr.len < (by_bound ? 4u : 2u) ||
+        (!by_bound && clause->expr.len > 3u))
+        return sj_refuted(a, judgment, sj_expr1(a, by_bound ? "set:define-bound-arity"
+                                                            : "set:define-set-solution-arity"));
+    if (!name || name->kind != ATOM_SYMBOL)
+        return sj_refuted(a, judgment, sj_expr1(a, "set:define-name"));
+    Atom *reserved = sj_reserved_definition(a, space, judgment, name);
+    if (reserved) return reserved;
+    SjSetEnv *env = sj_env(space);
+    if (!env)
+        return sj_undetermined(a, judgment, sj_expr1(a, "set:signature-unavailable"));
+    SjProofState st;
+    sj_proof_state_init(&st, a, space, env, limited, steps, false, true);
+    if (sj_name_taken(&st, name))
+        return sj_refuted(a, judgment, sj_expr2(a, "set:define-already-declared", name));
+    Atom *canonical_type = NULL;
+    Atom *obstruction = sj_declaration_check_obstruction(
+        a, &env->overlay, judgment, type, sj_expr2(a, "type:formed", type),
+        &st.budget, &canonical_type);
+    if (obstruction) return obstruction;
+    if (!canonical_type)
+        return sj_undetermined(a, judgment, sj_expr2(a, "set:define-type-fragment", type));
+    size_t eq_count = (size_t)len - 4u;
+    Atom *first_lhs = sj_is_expr(judgment->expr.elems[4], "=", 3u)
+        ? judgment->expr.elems[4]->expr.elems[1] : NULL;
+    if (!first_lhs || first_lhs->kind != ATOM_EXPR || first_lhs->expr.len < 2u ||
+        !atom_eq(first_lhs->expr.elems[0], name))
+        return sj_refuted(a, judgment, sj_expr2(a, "set:define-left-side",
+                                                first_lhs ? first_lhs : judgment->expr.elems[4]));
+    size_t arity = (size_t)first_lhs->expr.len - 1u;
+    /* The arguments' types, authored and canonical, and the result type:
+     * the bound route reads a type of plain arrows. */
+    Atom **params = arena_alloc(a, sizeof(Atom *) * arity);
+    if (!params) return sj_incomplete(a, judgment, sj_expr1(a, "set:define-storage"));
+    Atom *result = sj_pi_result(a, canonical_type, arity, params);
+    if (!result || type->kind != ATOM_EXPR || (size_t)type->expr.len < arity + 2u ||
+        !atom_is_symbol(type->expr.elems[0], "->"))
+        return sj_undetermined(a, judgment, sj_expr2(a, "set:define-bound-type-fragment", type));
+    for (size_t k = 0u; k < arity; k++)
+        if (sj_is_typed_binder(type->expr.elems[1u + k]))
+            return sj_undetermined(a, judgment, sj_expr2(a, "set:define-bound-type-fragment", type));
+    Atom *bound_type = by_bound ? clause->expr.elems[2] : NULL;
+    Atom *measure = by_bound ? clause->expr.elems[3] : NULL;
+    size_t proof_count = by_bound ? (size_t)clause->expr.len - 4u : 0u;
+    if (by_bound &&
+        (!bound_type || bound_type->kind != ATOM_SYMBOL || !sj_inductive_record(&st, bound_type)))
+        return sj_undetermined(a, judgment, sj_expr2(a, "set:define-bound-not-inductive", bound_type));
+    for (size_t e = 0u; e < eq_count; e++) {
+        Atom *eq = judgment->expr.elems[4u + e];
+        if (!sj_is_expr(eq, "=", 3u))
+            return sj_refuted(a, judgment, sj_expr2(a, "set:define-equation", eq));
+        Atom *lhs = eq->expr.elems[1];
+        if (lhs->kind != ATOM_EXPR || (size_t)lhs->expr.len != arity + 1u ||
+            !atom_eq(lhs->expr.elems[0], name))
+            return sj_refuted(a, judgment, sj_expr2(a, "set:define-left-side", lhs));
+    }
+    /* Two equations whose left sides some argument matches both are not
+     * admitted: the rules would not agree with each other. */
+    for (size_t e = 0u; e < eq_count; e++)
+        for (size_t f = e + 1u; f < eq_count; f++)
+            if (sj_bound_patterns_overlap(judgment->expr.elems[4u + e]->expr.elems[1],
+                                          judgment->expr.elems[4u + f]->expr.elems[1]))
+                return sj_undetermined(a, judgment, sj_expr2(a, "set:define-overlap",
+                    judgment->expr.elems[4u + f]->expr.elems[1]));
+
+    /* The equations: patterns bound, both sides typed at the result type with
+     * the constant at its declared type and no rule of its own. */
+    Atom **rules = arena_alloc(a, sizeof(Atom *) * (eq_count + 2u));
+    Atom **kernel_rules = arena_alloc(a, sizeof(Atom *) * (eq_count ? eq_count : 1u));
+    SjBoundVars *bound = arena_alloc(a, sizeof(SjBoundVars) * eq_count);
+    if (!rules || !kernel_rules || !bound)
+        return sj_incomplete(a, judgment, sj_expr1(a, "set:define-storage"));
+    rules[0] = sj_sym(a, "rules");
+    rules[1] = atom_int(a, (int64_t)arity);
+    size_t saved_constants = env->constant_count;
+    sj_constant_cache_add(env, name, canonical_type);
+    sj_declare_mentioned(&st, canonical_type, NULL);
+    sj_note_instance(&st, name, canonical_type);
+    for (size_t e = 0u; e < eq_count; e++) {
+        Atom *eq = judgment->expr.elems[4u + e];
+        Atom *lhs = eq->expr.elems[1];
+        SjBoundVars *v = &bound[e];
+        v->cap = sj_atom_size(lhs);
+        v->count = 0u;
+        v->vars = arena_alloc(a, sizeof(Atom *) * v->cap);
+        v->types = arena_alloc(a, sizeof(Atom *) * v->cap);
+        v->authored = arena_alloc(a, sizeof(Atom *) * v->cap);
+        Atom **pats = arena_alloc(a, sizeof(Atom *) * arity);
+        if (pats) memset(pats, 0, sizeof(Atom *) * arity);
+        if (!v->vars || !v->types || !v->authored || !pats) {
+            env->constant_count = saved_constants;
+            return sj_incomplete(a, judgment, sj_expr1(a, "set:define-storage"));
+        }
+        for (size_t k = 0u; k < arity; k++) {
+            if (!sj_bound_bind(&st, lhs->expr.elems[1u + k], params[k],
+                               type->expr.elems[1u + k], v)) {
+                env->constant_count = saved_constants;
+                return st.refuted ? sj_refuted(a, judgment, st.failure)
+                                  : sj_undetermined(a, judgment, st.failure);
+            }
+        }
+        if (by_bound) {
+            /* Every occurrence of the constant in the right side is a call
+             * the obligations can see, before the side is read at all. */
+            Atom **seen_calls = NULL;
+            size_t seen_count = 0u, seen_cap = 0u;
+            Atom *offence = NULL;
+            if (!sj_bound_calls(eq->expr.elems[2], name, arity, v, false, &seen_calls,
+                                &seen_count, &seen_cap, a, &offence)) {
+                env->constant_count = saved_constants;
+                return sj_undetermined(a, judgment, sj_expr3(a, "set:define-bound-occurrence",
+                                                             offence, eq));
+            }
+        }
+        for (size_t k = 0u; k < arity && v->count <= 16u; k++) {
+            pats[k] = sj_equation_lower(&st, lhs->expr.elems[1u + k], v->vars, v->count);
+            if (!pats[k]) break;
+        }
+        Atom *crhs = v->count <= 16u && pats[arity - 1u]
+            ? sj_equation_lower(&st, eq->expr.elems[2], v->vars, v->count) : NULL;
+        if (crhs) {
+            Atom **locals = sj_locals_for(a, v->count, crhs, NULL);
+            if (!locals) {
+                env->constant_count = saved_constants;
+                return sj_incomplete(a, judgment, sj_expr1(a, "set:define-storage"));
+            }
+            for (size_t j = 0u; j < v->count; j++) locals[j] = v->types[j];
+            crhs = sj_annotate(&st, crhs, locals, v->count);
+        }
+        if (!crhs) {
+            env->constant_count = saved_constants;
+            if (!st.failure)
+                sj_fail(&st, false, sj_expr2(a, "set:define-variable-storage", eq));
+            return st.incomplete ? sj_incomplete(a, judgment, st.failure)
+                : st.refuted ? sj_refuted(a, judgment, st.failure)
+                : sj_undetermined(a, judgment, st.failure);
+        }
+        Atom *cleft = sj_canonical_constant(a, name);
+        for (size_t k = 0u; k < arity; k++) cleft = sj_expr3(a, "App", cleft, pats[k]);
+        Atom *mismatch = sj_definition_equation_obstruction(
+            &st, judgment, v->types, v->count, cleft, crhs, result, &st.budget);
+        if (mismatch) {
+            env->constant_count = saved_constants;
+            return mismatch;
+        }
+        Atom *rule_items[3] = {atom_expr(a, pats, (CettaExprLen)arity), crhs,
+                               atom_int(a, (int64_t)v->count)};
+        rules[2u + e] = atom_expr(a, rule_items, 3u);
+        kernel_rules[e] = sj_type_rule_atom(&st, name, arity, pats, crhs, v->count, v->types);
+        if (!kernel_rules[e]) {
+            env->constant_count = saved_constants;
+            return sj_undetermined(a, judgment,
+                                   sj_expr2(a, "set:define-rule-lowering", rules[2u + e]));
+        }
+    }
+    env->constant_count = saved_constants;
+    if (!by_bound)
+        return sj_set_define_admit_solution(a, space, judgment, &st, env, name, type,
+                                            arity, result, eq_count, bound, rules,
+                                            limited, steps);
+
+    /* The measure, a function from the arguments to the bound's type. */
+    Atom **arrow = arena_alloc(a, sizeof(Atom *) * (arity + 2u));
+    arrow[0] = sj_sym(a, "->");
+    for (size_t k = 0u; k < arity; k++) arrow[1u + k] = type->expr.elems[1u + k];
+    arrow[arity + 1u] = bound_type;
+    if (!sj_elaborate_closed(&st, measure, atom_expr(a, arrow, (CettaExprLen)(arity + 2u))))
+        return sj_undetermined(a, judgment, sj_expr3(a, "set:define-bound-measure",
+                                                     measure, st.failure));
+
+    /* The obligations: at every call, the bound goes down. */
+    Atom **obligations = NULL;
+    size_t obligation_count = 0u, obligation_cap = 0u;
+    for (size_t e = 0u; e < eq_count; e++) {
+        Atom *eq = judgment->expr.elems[4u + e];
+        Atom *lhs = eq->expr.elems[1];
+        SjBoundVars *v = &bound[e];
+        Atom **calls = NULL;
+        size_t call_count = 0u, call_cap = 0u;
+        Atom *offence = NULL;
+        if (!sj_bound_calls(eq->expr.elems[2], name, arity, v, false, &calls,
+                            &call_count, &call_cap, a, &offence))
+            return sj_undetermined(a, judgment, sj_expr3(a, "set:define-bound-occurrence",
+                                                         offence, eq));
+        Atom **names = arena_alloc(a, sizeof(Atom *) * (v->count ? v->count : 1u));
+        for (size_t i = 0u; i < v->count; i++) {
+            const char *spelling = atom_name_cstr(v->vars[i]);
+            Atom *symbol = sj_sym(a, spelling ? spelling : "bound~x");
+            if (sj_constant_type(&st, symbol)) {
+                char buf[96];
+                snprintf(buf, sizeof buf, "%s~v", spelling ? spelling : "bound~x");
+                symbol = sj_sym(a, buf);
+            }
+            names[i] = symbol;
+        }
+        Atom **xs = arena_alloc(a, sizeof(Atom *) * (arity + 1u));
+        xs[0] = measure;
+        for (size_t k = 0u; k < arity; k++)
+            xs[1u + k] = sj_bound_named(a, lhs->expr.elems[1u + k], v, names);
+        Atom *above = atom_expr(a, xs, (CettaExprLen)(arity + 1u));
+        for (size_t c = 0u; c < call_count; c++) {
+            Atom **ys = arena_alloc(a, sizeof(Atom *) * (arity + 1u));
+            ys[0] = measure;
+            for (size_t k = 0u; k < arity; k++)
+                ys[1u + k] = sj_bound_named(a, calls[c]->expr.elems[1u + k], v, names);
+            Atom *statement = sj_bound_below(&st, bound_type,
+                                             atom_expr(a, ys, (CettaExprLen)(arity + 1u)),
+                                             above);
+            if (!statement)
+                return sj_undetermined(a, judgment,
+                                       sj_expr2(a, "set:define-bound-not-inductive", bound_type));
+            for (size_t i = v->count; i > 0u; i--)
+                statement = sj_expr3(a, "all", v->authored[i - 1u],
+                                     sj_expr3(a, "lam", names[i - 1u], statement));
+            if (obligation_count == obligation_cap)
+                obligations = sj_grow(a, obligations, obligation_count, &obligation_cap);
+            obligations[obligation_count++] = statement;
+        }
+    }
+    Atom *obligation_list = atom_expr(a, obligations ? obligations : &name,
+                                      (CettaExprLen)obligation_count);
+    if (proof_count != obligation_count)
+        return sj_undetermined(a, judgment, sj_expr3(a, "set:define-bound-obligations",
+            atom_int(a, (int64_t)proof_count), obligation_list));
+    st.collect_dependencies = true;
+    for (size_t i = 0u; i < obligation_count; i++) {
+        Atom *goal = sj_elaborate_closed(&st, obligations[i], sj_sym(a, "prop"));
+        if (!goal || !sj_check(&st, clause->expr.elems[4u + i], goal)) {
+            Atom *items[4] = {sj_sym(a, "set:define-bound-obligation"), obligations[i],
+                              clause->expr.elems[4u + i],
+                              st.failure ? st.failure : atom_unit(a)};
+            return st.incomplete ? sj_incomplete(a, judgment, atom_expr(a, items, 4u))
+                                 : sj_undetermined(a, judgment, atom_expr(a, items, 4u));
+        }
+    }
+
+    /* Admitted: the equations as written, with the bound as termination. */
+    Atom *compiled = atom_expr(a, rules, (CettaExprLen)(eq_count + 2u));
+    Atom *bound_items[4] = {sj_sym(a, "bound"), bound_type, measure, obligation_list};
+    /* The bound's order is the structural order of a declared datatype, and
+     * the patterns are linear constructor patterns that do not overlap; one
+     * level per constructor also covers the datatype, which uniqueness uses. */
+    bool covers_one_level = arity == 1u && sj_rules_one_level(compiled, 0u);
+    const char *bound_basis[4] = {SJ_LEAN_BOUND, SJ_LEAN_BOUND_ORDER, SJ_LEAN_BOUND_APART,
+                                  SJ_LEAN_BOUND_COVERS};
+    /* The theorem's `filler`: the declared function type has a value.  It
+     * is checked where the result type is a datatype with a constructor of
+     * no field, whose constant function is a value; otherwise the record
+     * says it is not checked. */
+    Atom *filler = sj_expr2(a, "unchecked", sj_sym(a, "filler"));
+    Atom *result_type = type && type->kind == ATOM_EXPR && type->expr.len >= 3u
+        ? type->expr.elems[type->expr.len - 1u] : NULL;
+    Atom *result_record = result_type ? sj_inductive_record(&st, result_type) : NULL;
+    Atom *result_decl = result_record ? result_record->expr.elems[SJ_KNOWN_PROP] : NULL;
+    for (CettaExprIndex i = 2u; result_decl && result_decl->kind == ATOM_EXPR &&
+                                i < result_decl->expr.len; i++) {
+        Atom *ctor = result_decl->expr.elems[i];
+        if (sj_is_expr(ctor, ":", 3u) && atom_eq(ctor->expr.elems[2], result_type)) {
+            filler = sj_expr2(a, "filler", ctor->expr.elems[1]);
+            break;
+        }
+    }
+    Atom *basis = sj_lean_basis(a, bound_basis, covers_one_level ? 4u : 3u, arity > 1u, false);
+    Atom **basis_items = arena_alloc(a, sizeof(Atom *) * ((size_t)basis->expr.len + 1u));
+    for (CettaExprIndex i = 0u; i < basis->expr.len; i++) basis_items[i] = basis->expr.elems[i];
+    basis_items[basis->expr.len] = filler;
+    basis = atom_expr(a, basis_items, basis->expr.len + 1u);
+    Atom *evidence = sj_definition_evidence(
+        a, compiled, atom_expr(a, bound_items, 4u), basis);
+    Atom **prop_items = arena_alloc(a, sizeof(Atom *) * (eq_count + 2u));
+    prop_items[0] = sj_sym(a, "define");
+    prop_items[1] = type;
+    for (size_t e = 0u; e < eq_count; e++) prop_items[2u + e] = judgment->expr.elems[4u + e];
+    Atom *prop = atom_expr(a, prop_items, (CettaExprLen)(eq_count + 2u));
+    sj_note_definition_uses(&st, prop);
+    sj_note_definition_uses(&st, measure);
+    Atom *record = sj_known_record(a, name, prop, "definition", evidence,
+                                   sj_depends_atom(&st), space_revision(space));
+    {
+        SjProofState check;
+        sj_proof_state_init(&check, a, space, env, limited, steps, false, false);
+        if (!sj_dependencies_current_as(&check, record, 0u, false))
+            return check.incomplete ? sj_incomplete(a, judgment, check.failure)
+                                    : sj_undetermined(a, judgment, check.failure);
+    }
+    Atom **published = arena_alloc(a, sizeof(Atom *) * (eq_count + 3u));
+    size_t np = 0u;
+    published[np++] = sj_sym(a, "SetPublish");
+    published[np++] = record;
+    published[np++] = sj_expr3(a, ":", name, type);
+    for (size_t e = 0u; e < eq_count; e++) published[np++] = kernel_rules[e];
+    return sj_established(a, judgment, atom_expr(a, published, (CettaExprLen)np));
+}
+
 static Atom *sj_set_define(Arena *a, Space *space, Atom *judgment,
                             bool limited, uint64_t steps) {
     if (limited && steps == 0u)
         return sj_incomplete(a, judgment, sj_expr1(a, "set:define-budget"));
     CettaExprLen len = judgment->expr.len;
     if (len < 4u) return sj_refuted(a, judgment, sj_expr1(a, "set:define-arity"));
+    Atom *clause = judgment->expr.elems[3];
+    if (clause && clause->kind == ATOM_EXPR && clause->expr.len >= 2u &&
+        atom_is_symbol(clause->expr.elems[0], "by") &&
+        (atom_is_symbol(clause->expr.elems[1], "bound") ||
+         atom_is_symbol(clause->expr.elems[1], "set-solution")))
+        return sj_set_define_by_clause(a, space, judgment,
+                                       atom_is_symbol(clause->expr.elems[1], "bound"),
+                                       limited, steps);
     Atom *name = judgment->expr.elems[1];
     Atom *type = judgment->expr.elems[2];
     if (!name || name->kind != ATOM_SYMBOL)
         return sj_refuted(a, judgment, sj_expr1(a, "set:define-name"));
-    if (prime_scoped_judgment_reserved_name(name))
-        return sj_refuted(a, judgment, sj_expr2(a, "set:reserved-name", name));
+    Atom *reserved = sj_reserved_definition(a, space, judgment, name);
+    if (reserved) return reserved;
     SjSetEnv *env = sj_env(space);
     if (!env)
         return sj_undetermined(a, judgment, sj_expr1(a, "set:signature-unavailable"));
@@ -6156,7 +9687,8 @@ static Atom *sj_set_define(Arena *a, Space *space, Atom *judgment,
             /* Inspecting two arguments is legal; case trees over several
              * arguments are not admitted yet. */
             if (scrut != arity && scrut != k)
-                return sj_undetermined(a, judgment, sj_expr2(a, "set:define-two-scrutinees", lhs));
+                return sj_undetermined(a, judgment, sj_expr3(a, "set:define-two-scrutinees", lhs,
+                                                             sj_expr2(a, "admit-by", sj_sym(a, "bound"))));
             scrut = k;
         }
     }
@@ -6193,15 +9725,18 @@ static Atom *sj_set_define(Arena *a, Space *space, Atom *judgment,
         memset(covered, 0, sizeof(bool) * (ctor_count ? ctor_count : 1u));
         if (eq_count != ctor_count) {
             /* A constructor no equation names, when every equation names a
-             * constructor, is a missing case: the refutation's witness.  A
-             * variable at the inspected position, or two equations for one
-             * constructor, is legal with the first matching equation
-             * computing; such case trees are not admitted yet. */
+             * constructor, is a missing case.  The equations then leave the
+             * value there open and some set satisfies them, so the structural
+             * route declines without refuting.  A variable at the inspected
+             * position, or two equations for one constructor, is legal with
+             * the first matching equation computing; such case trees are not
+             * admitted yet. */
             Atom *missing = sj_define_missing_constructor(
                 judgment, scrut, ctors, ctor_count);
             if (missing)
-                return sj_refuted(a, judgment, sj_expr2(a, "set:define-missing-case", missing));
-            return sj_undetermined(a, judgment, sj_expr2(a, "set:define-coverage", name));
+                return sj_undetermined(a, judgment, sj_expr2(a, "set:define-missing-case", missing));
+            return sj_undetermined(a, judgment, sj_expr3(a, "set:define-coverage", name,
+                                                         sj_expr2(a, "admit-by", sj_sym(a, "bound"))));
         }
         /* A variable at the inspected position beside constructor patterns
          * is legal, the first matching equation computing; such case trees
@@ -6271,7 +9806,7 @@ static Atom *sj_set_define(Arena *a, Space *space, Atom *judgment,
     env->constant_count = saved_constants;
     for (size_t c = 0u; c < ctor_count; c++)
         if (!covered[c])
-            return sj_refuted(a, judgment, sj_expr2(a, "set:define-missing-case", ctors[c].name));
+            return sj_undetermined(a, judgment, sj_expr2(a, "set:define-missing-case", ctors[c].name));
     Atom *compiled = atom_expr(a, rules, (CettaExprLen)(eq_count + 2u));
     /* The record keeps the compiled rules with the termination evidence they
      * were admitted on: structural recursion on the argument at `scrut`, or
@@ -6279,7 +9814,13 @@ static Atom *sj_set_define(Arena *a, Space *space, Atom *judgment,
     Atom *termination = scrut == arity
         ? sj_expr1(a, "non-recursive")
         : sj_structural_evidence(a, scrut, scrut_type, descents, eq_count);
-    Atom *evidence = sj_expr3(a, "definition-evidence", compiled, termination);
+    const char *explicit_basis[1] = {SJ_LEAN_EXPLICIT};
+    const char *recursion_basis[1] = {SJ_LEAN_RECURSION};
+    Atom *basis = scrut == arity
+        ? sj_lean_basis(a, explicit_basis, 1u, false, false)
+        : sj_lean_basis(a, recursion_basis, 1u, arity > 1u,
+                        !sj_rules_one_level(compiled, scrut));
+    Atom *evidence = sj_definition_evidence(a, compiled, termination, basis);
     Atom **prop_items = arena_alloc(a, sizeof(Atom *) * (eq_count + 2u));
     prop_items[0] = sj_sym(a, "define");
     prop_items[1] = type;
@@ -6343,6 +9884,14 @@ static Atom *sj_set_recheck(Arena *a, Space *space, Atom *judgment, Atom *name, 
     bool withdrawable = !diagnostic &&
         !atom_is_symbol(record->expr.elems[SJ_KNOWN_ORIGIN], "signature") &&
         !sj_signature_owns(env, record);
+    if (atom_is_symbol(record->expr.elems[SJ_KNOWN_ORIGIN], "family") ||
+        atom_is_symbol(record->expr.elems[SJ_KNOWN_ORIGIN], "family-law")) {
+        /* A family is admitted by `set:family` alone, on the set model its
+         * record names.  Rechecking one confirms that it is admitted. */
+        if (!sj_record_admitted(a, space, record))
+            return sj_undetermined(a, judgment, sj_expr2(a, "set:not-admitted", name));
+        return sj_established(a, judgment, sj_expr1(a, "SetFamilyCurrent"));
+    }
     if (atom_is_symbol(record->expr.elems[SJ_KNOWN_ORIGIN], "definition")) {
         /* A definition is admitted by `set:define` alone.  Rechecking one
          * confirms that it is admitted and that what it was admitted over is
@@ -6658,6 +10207,31 @@ static Atom *sj_lang_step(Arena *a, Atom *judgment) {
 static Atom *sj_judge(Arena *a, Space *space, Atom *judgment,
                       bool steps_limited, uint64_t steps, bool diagnostic);
 
+/* Evidence as `try` shows it: every sort above the written universes is
+ * written by its name, as every judgment prints it, wherever the evidence
+ * holds a kernel term.  A level is not walked: it can have any number of
+ * terms, and only a whole sort has a name. */
+static Atom *sj_name_sorts_above(Arena *a, Atom *t) {
+    if (!t || t->kind != ATOM_EXPR || t->expr.len == 0u) return t;
+    if (sj_is_expr(t, "Sort", 2u)) {
+        Atom *named = cetta_prime_regular_kernel_quote_sort_above_v1(a, t);
+        return named ? named : t;
+    }
+    const char *head = sj_head_name(t);
+    if (head && strncmp(head, "Level", 5u) == 0) return t;
+    Atom **items = NULL;
+    for (CettaExprIndex i = 0u; i < t->expr.len; i++) {
+        Atom *child = sj_name_sorts_above(a, t->expr.elems[i]);
+        if (child == t->expr.elems[i] && !items) continue;
+        if (!items) {
+            items = arena_alloc(a, sizeof(Atom *) * (size_t)t->expr.len);
+            for (CettaExprIndex k = 0u; k < i; k++) items[k] = t->expr.elems[k];
+        }
+        items[i] = child;
+    }
+    return items ? atom_expr(a, items, t->expr.len) : t;
+}
+
 static Atom *sj_try(Arena *a, Space *space, Atom *judgment, Atom *subject,
                     bool limited, uint64_t steps) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SCOPED_TRY);
@@ -6704,7 +10278,8 @@ static Atom *sj_try(Arena *a, Space *space, Atom *judgment, Atom *subject,
     SjStatus status = sj_verdict_status(verdict, &evidence);
     if (status == SJ_STATUS_INVALID) return NULL;
     Atom *value = atom_expr2(a, sj_sym(a, sj_status_name(status)),
-                             evidence ? evidence : atom_unit(a));
+                             evidence ? sj_name_sorts_above(a, evidence)
+                                      : atom_unit(a));
     return sj_established(a, judgment, sj_expr2(a, "PrimeScopedValue", value));
 }
 
@@ -6867,8 +10442,14 @@ static Atom *sj_judge(Arena *a, Space *space, Atom *judgment,
     }
     if (head == g_builtin_syms.set_colon_define)
         return sj_set_define(a, space, judgment, steps_limited, steps);
+    if (head == g_builtin_syms.set_colon_numerals)
+        return prime_arith_oracle_judge_numerals(a, space, judgment);
+    if (head == g_builtin_syms.set_colon_oracle)
+        return prime_arith_oracle_judge_declaration(a, space, judgment);
     if (head == g_builtin_syms.set_colon_inductive)
         return sj_set_inductive(a, space, judgment, steps_limited, steps);
+    if (head == g_builtin_syms.set_colon_family)
+        return sj_set_family(a, space, judgment, steps_limited, steps);
     if (head == g_builtin_syms.set_colon_axiom) {
         if (len != 3u) return sj_refuted(a, judgment, sj_expr1(a, "set:axiom-arity"));
         Atom *axiom_name = judgment->expr.elems[1];
@@ -6903,7 +10484,24 @@ static Atom *sj_judge(Arena *a, Space *space, Atom *judgment,
                               steps_limited, steps);
     }
     if (head == g_builtin_syms.set_colon_native_proof) {
-        if (len != 2u)
+        /* `(set:native-proof name)`, then optionally `rule-constants`, the
+         * presentation with every rule as its constant, and a number of
+         * steps, as the last operand of a judgment may be. */
+        CettaExprIndex next = 2u;
+        bool rule_constants = len > next &&
+            atom_is_symbol(judgment->expr.elems[next], "rule-constants");
+        if (rule_constants) next++;
+        if (len > next) {
+            Atom *limit = judgment->expr.elems[next];
+            if (len != next + 1u || !limit || limit->kind != ATOM_GROUNDED ||
+                limit->ground.gkind != GV_INT || limit->ground.ival < 0)
+                return sj_refuted(a, judgment,
+                                  sj_expr1(a, "set:native-proof-arity"));
+            uint64_t given = (uint64_t)limit->ground.ival;
+            if (!steps_limited || given < steps) steps = given;
+            steps_limited = true;
+        }
+        if (len < 2u)
             return sj_refuted(a, judgment,
                               sj_expr1(a, "set:native-proof-arity"));
         Atom *theorem_name = judgment->expr.elems[1];
@@ -6911,7 +10509,7 @@ static Atom *sj_judge(Arena *a, Space *space, Atom *judgment,
             return sj_refuted(a, judgment,
                               sj_expr1(a, "set:native-proof-name"));
         return sj_set_native_proof(a, space, judgment, theorem_name,
-                                   steps_limited, steps);
+                                   rule_constants, steps_limited, steps);
     }
     if (head == g_builtin_syms.set_colon_native_use ||
         head == g_builtin_syms.set_colon_native_normalize) {
@@ -6999,11 +10597,119 @@ bool prime_scoped_judgment_reserved_name(Atom *name) {
                     sizeof CETTA_PRIME_HOLDS_IDENTITY_PREFIX - 1u) == 0);
 }
 
+static Atom *sj_reserved_definition(Arena *a, Space *space, Atom *judgment,
+                                    Atom *name) {
+    if (prime_scoped_judgment_reserved_name(name))
+        return sj_refuted(a, judgment, sj_expr2(a, "set:reserved-name", name));
+    const char *reason = cetta_prime_reserved_name_reason(name);
+    if (!reason || !space) return NULL;
+    Atom **declared = NULL;
+    uint32_t count = space_get_declared_types(space, a, name, &declared);
+    free(declared);
+    if (count == 0u) return NULL;
+    return sj_refuted(a, judgment,
+                      sj_expr3(a, "set:reserved-name", name, sj_sym(a, reason)));
+}
+
 void prime_scoped_judgment_admit(Arena *a, Space *space, Atom *record) {
+    /* The numeral readings and oracle declarations of prime_arith_oracle.h
+     * are published by their own admission checks, as these are. */
     if (!record || (!sj_is_expr(record, "set:known", SJ_KNOWN_LEN) &&
-                    !sj_is_expr(record, "type:rule", 5u)))
+                    !sj_is_expr(record, "type:rule", 5u) &&
+                    !sj_is_expr(record, "set:numerals-of", 4u) &&
+                    !sj_is_expr(record, "set:oracle-of", 6u)))
         return;
     sj_admit(a, space, record);
+}
+
+/* The digests of computation rules, remembered per thread.  Every covered
+ * call reads the space's rules and asks of each whether admission published
+ * it, and a digest prints the rule and hashes the text; computed once per
+ * rule instead, the cost of a call no longer grows with the number of rules
+ * times their size.  An entry is used only for the atom it was computed for
+ * and only while that atom is still structurally equal to the copy kept with
+ * the digest, so a reused address or a changed atom is digested afresh.  The
+ * admitted set itself is not remembered: membership is looked up each time,
+ * so admissions and revocations take effect at once. */
+typedef struct {
+    const Atom *rule;
+    Atom *copy;
+    char digest[65];
+} SjRuleDigest;
+
+typedef struct {
+    SjRuleDigest *slots;
+    Arena copies;
+} SjRuleDigests;
+
+enum { SJ_RULE_DIGEST_SLOTS = 4096u, SJ_RULE_DIGEST_PROBES = 8u };
+static _Thread_local SjRuleDigests *t_rule_digests;
+static pthread_key_t g_rule_digests_key;
+static pthread_once_t g_rule_digests_key_once = PTHREAD_ONCE_INIT;
+static bool g_rule_digests_key_ready = false;
+
+static void sj_rule_digests_destroy(void *raw) {
+    SjRuleDigests *digests = raw;
+    if (!digests) return;
+    free(digests->slots);
+    arena_free(&digests->copies);
+    free(digests);
+}
+
+static void sj_rule_digests_make_key(void) {
+    g_rule_digests_key_ready =
+        pthread_key_create(&g_rule_digests_key, sj_rule_digests_destroy) == 0;
+}
+
+static SjRuleDigests *sj_rule_digests_get(void) {
+    if (t_rule_digests) return t_rule_digests;
+    pthread_once(&g_rule_digests_key_once, sj_rule_digests_make_key);
+    if (!g_rule_digests_key_ready) return NULL;
+    SjRuleDigests *digests = calloc(1u, sizeof *digests);
+    if (!digests) return NULL;
+    digests->slots = calloc(SJ_RULE_DIGEST_SLOTS, sizeof *digests->slots);
+    arena_init_detached(&digests->copies);
+    if (!digests->slots || pthread_setspecific(g_rule_digests_key, digests) != 0) {
+        sj_rule_digests_destroy(digests);
+        return NULL;
+    }
+    t_rule_digests = digests;
+    return digests;
+}
+
+static bool sj_is_rule_atom(Atom *atom) {
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len == 5u &&
+           atom_is_symbol(atom->expr.elems[0], "type:rule");
+}
+
+static void sj_rule_digest(Arena *a, Atom *rule, char out[65]) {
+    SjRuleDigests *digests = sj_rule_digests_get();
+    if (!digests) {
+        sj_record_digest(a, rule, out);
+        return;
+    }
+    size_t home = (size_t)(((uintptr_t)rule >> 4) * 11400714819323198485ull) %
+                  SJ_RULE_DIGEST_SLOTS;
+    size_t empty = SJ_RULE_DIGEST_SLOTS;
+    for (size_t probe = 0u; probe < SJ_RULE_DIGEST_PROBES; probe++) {
+        SjRuleDigest *entry = &digests->slots[(home + probe) % SJ_RULE_DIGEST_SLOTS];
+        if (!entry->rule) {
+            if (empty == SJ_RULE_DIGEST_SLOTS) empty = (home + probe) % SJ_RULE_DIGEST_SLOTS;
+            continue;
+        }
+        if (entry->rule == rule && atom_eq(entry->copy, rule)) {
+            memcpy(out, entry->digest, sizeof entry->digest);
+            return;
+        }
+    }
+    sj_record_digest(a, rule, out);
+    if (empty == SJ_RULE_DIGEST_SLOTS) return;
+    Atom *copy = atom_deep_copy(&digests->copies, rule);
+    if (!copy) return;
+    SjRuleDigest *entry = &digests->slots[empty];
+    entry->rule = rule;
+    entry->copy = copy;
+    memcpy(entry->digest, out, sizeof entry->digest);
 }
 
 bool prime_scoped_judgment_admitted(Arena *a, Space *space, Atom *record) {
@@ -7014,6 +10720,291 @@ bool prime_scoped_judgment_admitted(Arena *a, Space *space, Atom *record) {
     const Space *root = space;
     while (root->overlay_base) root = root->overlay_base;
     char digest[65];
-    sj_record_digest(a, record, digest);
+    if (sj_is_rule_atom(record) && !atom_has_vars(record))
+        sj_rule_digest(a, record, digest);
+    else
+        sj_record_digest(a, record, digest);
     return sj_admitted_contains(space_instance_id(root), digest);
+}
+
+/* ------------------------------------------------------------------------ */
+/* What a refutation by the conversion algorithm assumes.  The refutation    */
+/* is `not_equal_of_unrelated`, whose hypothesis is that the algorithm is    */
+/* complete for the package.  Lean proves that for the bare tower and for    */
+/* the object package (see regular_unrelated_refuted).  A comparison that    */
+/* meets declarations outside those assumes it for them, and the reason      */
+/* names which kinds: the constants of the two sides, closed under the       */
+/* declared types of the constants and under the statements of the           */
+/* definitions and families they come from, are classified by the record or */
+/* the declaration that introduced them.                                     */
+/*   declared-constants  declared at a type, with no record and no datatype  */
+/*                       of their own                                        */
+/*   declared-datatypes  a type declared by `set:inductive`, its             */
+/*                       constructors, recursor and induction principle      */
+/*   families            a constant or law of a `set:family`                 */
+/*   definitions         one equation, no recursion (`non-recursive`)        */
+/*   recursion           structural recursion, directly or scrutinee-first   */
+/*   bound               admitted by a bound                                 */
+/*   set-solution        admitted on evidence of a solution                  */
+/* The signature's constants, the set theory every space has, are not       */
+/* counted.  NULL when nothing is outside the proven packages.              */
+/* ------------------------------------------------------------------------ */
+
+enum {
+    SJ_EXT_CONSTANTS, SJ_EXT_DATATYPES, SJ_EXT_FAMILIES, SJ_EXT_DEFINITIONS,
+    SJ_EXT_RECURSION, SJ_EXT_BOUND, SJ_EXT_SOLUTION, SJ_EXT_COUNT
+};
+
+static const char *const SJ_EXT_NAMES[SJ_EXT_COUNT] = {
+    "declared-constants", "declared-datatypes", "families", "definitions",
+    "recursion", "bound", "set-solution",
+};
+
+typedef struct {
+    SjProofState *st;
+    Atom **seen;
+    size_t count;
+    size_t cap;
+    bool kinds[SJ_EXT_COUNT];
+} SjExtensionWalk;
+
+static void sj_ext_walk(SjExtensionWalk *w, Atom *t);
+
+static bool sj_ext_first_visit(SjExtensionWalk *w, Atom *name) {
+    for (size_t i = 0u; i < w->count; i++)
+        if (atom_eq(w->seen[i], name)) return false;
+    if (w->count == w->cap) {
+        size_t next = w->cap ? 2u * w->cap : 16u;
+        Atom **grown = arena_alloc(w->st->arena, sizeof(Atom *) * next);
+        if (!grown) return false;
+        for (size_t i = 0u; i < w->count; i++) grown[i] = w->seen[i];
+        w->seen = grown;
+        w->cap = next;
+    }
+    w->seen[w->count++] = name;
+    return true;
+}
+
+static bool sj_ext_signature_constant(SjSetEnv *env, Atom *name) {
+    for (size_t i = 0u; i < env->signature_count; i++)
+        if (atom_eq(env->signature[i]->expr.elems[1], name)) return true;
+    return false;
+}
+
+/* Whether `name` is a constructor, the recursor or the induction principle
+ * of the datatype whose record is `record`. */
+static bool sj_ext_part_of_datatype(Atom *record, Atom *name) {
+    Atom *decl = record->expr.elems[SJ_KNOWN_PROP];
+    if (sj_is_expr(decl, "inductive", decl && decl->kind == ATOM_EXPR ? decl->expr.len : 0u))
+        for (CettaExprIndex i = 2u; i < decl->expr.len; i++)
+            if (sj_is_expr(decl->expr.elems[i], ":", 3u) &&
+                atom_eq(decl->expr.elems[i]->expr.elems[1], name))
+                return true;
+    const char *type = atom_name_cstr(record->expr.elems[SJ_KNOWN_NAME]);
+    const char *spelling = atom_name_cstr(name);
+    if (!type || !spelling) return false;
+    size_t len = strlen(type);
+    return strncmp(spelling, type, len) == 0 &&
+           (strcmp(spelling + len, "-rec") == 0 || strcmp(spelling + len, "-ind") == 0);
+}
+
+/* The datatypes a term mentions, by their records. */
+static bool sj_ext_names_part(SjExtensionWalk *w, Atom *t, Atom *name) {
+    if (!t) return false;
+    if (t->kind == ATOM_SYMBOL) {
+        Atom *record = sj_inductive_record(w->st, t);
+        return record && sj_ext_part_of_datatype(record, name);
+    }
+    if (t->kind != ATOM_EXPR) return false;
+    for (CettaExprIndex i = 0u; i < t->expr.len; i++)
+        if (sj_ext_names_part(w, t->expr.elems[i], name)) return true;
+    return false;
+}
+
+static void sj_ext_symbol(SjExtensionWalk *w, Atom *name) {
+    SjProofState *st = w->st;
+    if (prime_scoped_judgment_reserved_name(name) || !sj_ext_first_visit(w, name)) return;
+    if (sj_ext_signature_constant(st->env, name) || sj_signature_defines(st->env, name))
+        return;
+    bool ambiguous = false;
+    Atom *record = sj_known_lookup(st->arena, st->env, st->user_space, name, &ambiguous);
+    if (record && !ambiguous) {
+        Atom *origin = record->expr.elems[SJ_KNOWN_ORIGIN];
+        if (atom_is_symbol(origin, "signature")) return;
+        if (atom_is_symbol(origin, "inductive")) {
+            w->kinds[SJ_EXT_DATATYPES] = true;
+            sj_ext_walk(w, record->expr.elems[SJ_KNOWN_PROP]);
+            return;
+        }
+        if (atom_is_symbol(origin, "family") || atom_is_symbol(origin, "family-law")) {
+            w->kinds[SJ_EXT_FAMILIES] = true;
+            sj_ext_walk(w, record->expr.elems[SJ_KNOWN_PROP]);
+            return;
+        }
+        if (atom_is_symbol(origin, "definition")) {
+            Atom *evidence = record->expr.elems[SJ_KNOWN_PROOF];
+            Atom *termination = evidence && evidence->kind == ATOM_EXPR &&
+                                        evidence->expr.len >= 3u
+                ? evidence->expr.elems[2] : NULL;
+            const char *kind = termination && termination->kind == ATOM_EXPR &&
+                                       termination->expr.len >= 1u
+                ? atom_name_cstr(termination->expr.elems[0]) : NULL;
+            if (kind && strcmp(kind, "non-recursive") == 0)
+                w->kinds[SJ_EXT_DEFINITIONS] = true;
+            else if (kind && strcmp(kind, "bound") == 0)
+                w->kinds[SJ_EXT_BOUND] = true;
+            else if (kind && strcmp(kind, "set-solution") == 0)
+                w->kinds[SJ_EXT_SOLUTION] = true;
+            else
+                w->kinds[SJ_EXT_RECURSION] = true;
+            sj_ext_walk(w, record->expr.elems[SJ_KNOWN_PROP]);
+            return;
+        }
+        return;
+    }
+    /* No record: a constant the space declares at a type, unless it is part
+     * of a datatype its type mentions.  Only names the declared route types
+     * are constants of the comparison: an operator of the language with a
+     * runtime type, such as `=` or `*`, is not. */
+    if (!sj_constant_type(st, name)) return;
+    Atom **declared = NULL;
+    SpaceDeclaredTypeLookupCost cost = {0};
+    uint32_t count = space_get_declared_types_costed(
+        &st->env->overlay, st->arena, name, &declared, &cost);
+    bool part = false;
+    for (uint32_t i = 0u; i < count; i++) {
+        part = part || sj_ext_names_part(w, declared[i], name);
+        sj_ext_walk(w, declared[i]);
+    }
+    free(declared);
+    if (count > 0u && !part) w->kinds[SJ_EXT_CONSTANTS] = true;
+}
+
+static void sj_ext_walk(SjExtensionWalk *w, Atom *t) {
+    if (!t) return;
+    if (t->kind == ATOM_SYMBOL) {
+        sj_ext_symbol(w, t);
+        return;
+    }
+    if (t->kind != ATOM_EXPR) return;
+    for (CettaExprIndex i = 0u; i < t->expr.len; i++) sj_ext_walk(w, t->expr.elems[i]);
+}
+
+Atom *prime_scoped_judgment_completeness_assumed(Arena *a, Space *space, Atom *left,
+                                                 Atom *right) {
+    SjSetEnv *env = sj_env(space);
+    if (!a || !env) return NULL;
+    SjProofState st;
+    sj_proof_state_init(&st, a, space, env, false, 0u, false, true);
+    SjExtensionWalk w = {.st = &st, .seen = NULL, .count = 0u, .cap = 0u};
+    sj_ext_walk(&w, left);
+    sj_ext_walk(&w, right);
+    Atom *items[SJ_EXT_COUNT + 1u];
+    size_t n = 0u;
+    items[n++] = sj_sym(a, "assumes-completeness");
+    for (size_t k = 0u; k < SJ_EXT_COUNT; k++)
+        if (w.kinds[k]) items[n++] = sj_sym(a, SJ_EXT_NAMES[k]);
+    return n > 1u ? atom_expr(a, items, (CettaExprLen)n) : NULL;
+}
+
+/* ------------------------------------------------------------------------ */
+/* A refutation that needs no completeness.  Lean separates the empty list  */
+/* from every non-empty one at the reading, so the refutation of `nil`      */
+/* against `cons a l` rests on that theorem and assumes nothing about the   */
+/* conversion algorithm (ExecutableModel/ObjectChurchLists.lean, below      */
+/* Mettapedia.Languages.MeTTa.PrimeCandidates):                             */
+/*   DeclarationBased.CertifiedTransformProgram.ExecutableModel.CodeModel   */
+/*   .nil_not_equal_cons (a l : CTm Tower.Head 0) :                         */
+/*     ¬ CEqual (dataChurch listDecl) .nil cnil (ccons a l) clist           */
+/* that is, for closed `a` and `l`, no equality of `nil` and `cons a l` at  */
+/* the lists is derivable in the object package with the lists of numbers. */
+/* It is cited only for exactly that comparison: one side `nil`, the other  */
+/* `cons` of two closed terms built from the constructors of the numbers    */
+/* and the lists, in a space whose numbers and lists are admitted word for  */
+/* word as Lean declares them (the object package's `num`, `zero`, `suc`;   */
+/* `listDecl`'s `list`, `nil`, `cons`), each constructor declared at its    */
+/* constructor type only.  Every other refutation at declared datatypes     */
+/* keeps its (assumes-completeness ...).                                    */
+/* ------------------------------------------------------------------------ */
+
+static const char *const SJ_NIL_NOT_EQUAL_CONS =
+    "DeclarationBased.CertifiedTransformProgram.ExecutableModel.CodeModel.nil_not_equal_cons";
+
+/* The datatypes and constructor types of the lists of numbers, as Lean
+ * declares them. */
+static const char *const SJ_LISTS_OF_NUMBERS[][2] = {
+    {"num", "(inductive (u 0) (: zero num) (: suc (-> num num)))"},
+    {"list", "(inductive (u 0) (: nil list) (: cons (-> num list list)))"},
+};
+static const char *const SJ_LISTS_CONSTRUCTORS[][2] = {
+    {"zero", "num"}, {"suc", "(-> num num)"},
+    {"nil", "list"}, {"cons", "(-> num list list)"},
+};
+
+static Atom *sj_read_one(Arena *a, const char *text) {
+    Atom **atoms = NULL;
+    int count = parse_metta_text(text, a, &atoms);
+    Atom *atom = count == 1 && atoms ? atoms[0] : NULL;
+    free(atoms);
+    return atom;
+}
+
+/* A closed term built from zero, suc, nil and cons, each at its arity. */
+static bool sj_lists_constructor_term(Atom *t) {
+    Atom **stack = NULL;
+    size_t len = 0u;
+    size_t cap = 0u;
+    bool ok = true;
+    for (Atom *cur = t; ok && cur;
+         cur = len ? stack[--len] : NULL) {
+        if (atom_is_symbol(cur, "zero") || atom_is_symbol(cur, "nil")) continue;
+        bool suc = sj_is_expr(cur, "suc", 2u);
+        if (!suc && !sj_is_expr(cur, "cons", 3u)) {
+            ok = false;
+            break;
+        }
+        if (len + 2u > cap) {
+            size_t next = cap ? cap * 2u : 32u;
+            Atom **grown = realloc(stack, next * sizeof *grown);
+            if (!grown) {
+                ok = false;
+                break;
+            }
+            stack = grown;
+            cap = next;
+        }
+        for (CettaExprIndex i = 1u; i < cur->expr.len; i++) stack[len++] = cur->expr.elems[i];
+    }
+    free(stack);
+    return ok;
+}
+
+const char *prime_scoped_judgment_refutation_without_completeness(
+    Arena *a, Space *space, Atom *left, Atom *right) {
+    Atom *nonempty = atom_is_symbol(left, "nil") ? right
+                     : atom_is_symbol(right, "nil") ? left : NULL;
+    if (!a || !sj_is_expr(nonempty, "cons", 3u) || !sj_lists_constructor_term(nonempty))
+        return NULL;
+    SjSetEnv *env = sj_env(space);
+    if (!env) return NULL;
+    SjProofState st;
+    sj_proof_state_init(&st, a, space, env, false, 0u, false, true);
+    for (size_t k = 0u; k < sizeof SJ_LISTS_OF_NUMBERS / sizeof SJ_LISTS_OF_NUMBERS[0]; k++) {
+        Atom *record = sj_inductive_record(&st, sj_sym(a, SJ_LISTS_OF_NUMBERS[k][0]));
+        Atom *expected = sj_read_one(a, SJ_LISTS_OF_NUMBERS[k][1]);
+        if (!record || !expected || !prime_scoped_judgment_admitted(a, space, record) ||
+            !atom_eq(record->expr.elems[SJ_KNOWN_PROP], expected))
+            return NULL;
+    }
+    for (size_t k = 0u; k < sizeof SJ_LISTS_CONSTRUCTORS / sizeof SJ_LISTS_CONSTRUCTORS[0]; k++) {
+        Atom **declared = NULL;
+        SpaceDeclaredTypeLookupCost cost = {0};
+        uint32_t count = space_get_declared_types_costed(
+            &env->overlay, a, sj_sym(a, SJ_LISTS_CONSTRUCTORS[k][0]), &declared, &cost);
+        Atom *expected = sj_read_one(a, SJ_LISTS_CONSTRUCTORS[k][1]);
+        bool exact = count == 1u && expected && atom_eq(declared[0], expected);
+        free(declared);
+        if (!exact) return NULL;
+    }
+    return SJ_NIL_NOT_EQUAL_CONS;
 }

@@ -54,8 +54,8 @@ static void check_request_cache_lifetime(Arena *persistent, Space *space) {
     g_var_intern = NULL;
     const uint64_t revision = space_revision(space);
     expect_status(&request, space,
-        "(set:proves (pf:fix x (pf:all-elim (pf:known PowerI) (cacheFunction x)))"
-        " (all Field (lam x (In (cacheFunction x) (Power (cacheFunction x))))))",
+        "(set:proves (pf:fix x (pf:all-elim (pf:known universeIn) (cacheFunction x)))"
+        " (all Field (lam x (In (cacheFunction x) (UnivOf (cacheFunction x))))))",
         false, 0u, "Established");
     arena_reset(&request, start);
     /* Reuse the source arena, so a borrowed cached Atom is visibly wrong
@@ -410,10 +410,10 @@ int main(void) {
     check_overlay_rule_inventory(&arena, &universe);
 
     const char *valid =
-        "(set:proves (pf:all-elim (pf:known PowerI) Empty)"
-        " (In Empty (Power Empty)))";
+        "(set:proves (pf:all-elim (pf:known universeIn) Empty)"
+        " (In Empty (UnivOf Empty)))";
     const char *wrong_target =
-        "(set:proves (pf:all-elim (pf:known PowerI) Empty)"
+        "(set:proves (pf:all-elim (pf:known universeIn) Empty)"
         " (In Empty Empty))";
 
     /* Exhaustion of the conversion authority is not a new decision route. */
@@ -433,7 +433,7 @@ int main(void) {
     /* Dependent use rechecks the exact package before applying the consumer.
      * Exhaustion remains incomplete; with an unbounded budget the same
      * package and consumer establish a genuine dependent application. */
-    Atom *proof_query = parse_one(&arena, "(set:native-proof PowerI)");
+    Atom *proof_query = parse_one(&arena, "(set:native-proof universeIn)");
     Atom *proof_verdict = prime_scoped_judgment_judge(
         &arena, &space, proof_query, false, 0u);
     Atom *proof_evidence = proof_verdict && proof_verdict->kind == ATOM_EXPR &&
@@ -502,9 +502,11 @@ int main(void) {
     expect_status(&arena, &space,
         "(set:inductive GhostTree (u 0) (: GhostNode (-> MissingType GhostTree)))",
         false, 0u, "Undetermined");
+    /* A set is a type of the sort of all sets, above (u 0): a field whose
+     * type is the set Empty is a checked universe violation at (u 0). */
     expect_status(&arena, &space,
         "(set:inductive ValueTree (u 0) (: ValueNode (-> Empty ValueTree)))",
-        false, 0u, "Undetermined");
+        false, 0u, "Refuted");
     expect_status(&arena, &space,
         "(set:inductive BadLevel (u -1) (: BadLevelCtor BadLevel))",
         false, 0u, "Refuted");
@@ -540,9 +542,11 @@ int main(void) {
     expect_status(&arena, &space,
         "(set:define missingId (-> MissingType MissingType) (= (missingId $x) $x))",
         false, 0u, "Undetermined");
+    /* Empty is a type, a set: the identity on it is no function into Field,
+     * a checked refutation. */
     expect_status(&arena, &space,
         "(set:define valueDomain (-> Empty Field) (= (valueDomain $x) $x))",
-        false, 0u, "Undetermined");
+        false, 0u, "Refuted");
     expect_status(&arena, &space,
         "(set:define badDefinition (-> (u -1) Field) (= (badDefinition $x) $x))",
         false, 0u, "Refuted");

@@ -1,6 +1,6 @@
 ; Booleans, with the safeguard that a definition needs a datatype, not an
 ; induction-shaped statement: negation is not a constructor, so a "height"
-; that steps on negation is refused, although Booleans do satisfy an
+; that steps on negation is not admitted, although Booleans do satisfy an
 ; induction principle with false as zero and negation as successor.
 !(import! &self pf)
 !(bind! &thy (new-space))
@@ -23,10 +23,12 @@
        (pf:imp-elim (pf:all-elim step false) base)
        base)))))
 ; ...but it justifies no recursive definition: `height (not x) = succ (height x)`
-; is refused, because not is not a constructor of bool.
-!(set:define &thy height (-> bool nat)
+; is not admitted, because not is not a constructor of bool and no route of
+; the draft reads such a pattern.  It is not refuted on that ground: a
+; pattern that is not a constructor says nothing about a solution in sets.
+!(try (set:define &thy height (-> bool nat)
    (= (height false) zero)
-   (= (height (not $x)) (succ (height $x))))
+   (= (height (not $x)) (succ (height $x)))))
 ; and a definition over an induction-shaped axiom alone is refused too.
 !(pf:theory &thy ((: word (u 0)) (: empty word) (: step (-> word word))))
 !(set:axiom &thy word-ind (all (-> word prop) (lam P (imp (P empty) (imp (all word (lam w (imp (P w) (P (step w))))) (all word (lam w (P w))))))))

@@ -28,5 +28,5 @@
 [(Undetermined (set:define-scrutinee-first-type (-> (: x num) (: x num) num)))]
 [plus-two]
 [(non-recursive)]
-[False]
+[(set:define &thy spin-onto (-> list list list) (= (spin-onto $acc nil) $acc) (= (spin-onto $acc (cons $x $xs)) (spin-onto (cons $x $acc) (cons $x $xs))))]
 [(Refuted (set:declaration-check (Lam list (Lam elem (Lam list (App (App bad-step (App succ (idx 2))) (idx 0))))) (type-mismatch)))]

@@ -9,4 +9,4 @@
 [(Pair a b)]
 [()]
 [(2)]
-[(Refuted (Error (index-atom (a) 5) "Index is out of bounds"))]
+[(Failed (Error (index-atom (a) 5) "Index is out of bounds"))]
