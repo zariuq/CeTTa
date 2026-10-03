@@ -714,6 +714,11 @@ void hashcons_init(HashConsTable *hc);
  * Canonical atoms retain their addresses when its index grows. */
 void hashcons_init_compact(HashConsTable *hc);
 void hashcons_free(HashConsTable *hc);
+/* Process-wide stamp for caches borrowing atoms from any hash-cons table.
+ * Reclamation advances it before freeing atoms; UINT64_MAX permanently
+ * disables pointer-key reuse rather than wrapping. The caller still keeps
+ * every borrowed atom alive throughout each operation that reads it. */
+uint64_t hashcons_reclamation_epoch(void);
 /*
  * Return a shared atom if an identical one exists, otherwise insert it.
  * Expressions and variable name keys are published only when their retained

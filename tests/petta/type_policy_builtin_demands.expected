@@ -1,0 +1,10 @@
+operand
+(4 (RawMax (policy-operand) 4))
+(2)
+(4 (RawMax 2 4))
+(4 (RawMax 2 4))
+(4 (RawMax 3 4))
+(raw-partial-fault)
+(matched)
+(builtin-value extension-value)
+(4 7 (RawMax (+ 1 2) 4))

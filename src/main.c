@@ -2397,6 +2397,7 @@ typedef enum {
     MAIN_PETTA_BLOCK_LOAD_FAILED = 0,
     MAIN_PETTA_BLOCK_LOAD_OK,
     MAIN_PETTA_BLOCK_LOAD_TYPE_REJECTED,
+    MAIN_PETTA_BLOCK_LOAD_DEFINITION_REJECTED,
 } MainPettaBlockLoadResult;
 
 static MainPettaBlockLoadResult main_petta_check_forms(
@@ -2485,9 +2486,21 @@ static MainPettaBlockLoadResult main_petta_load_declaration_block(
     if (!block)
         return MAIN_PETTA_BLOCK_LOAD_FAILED;
     bool ok = true;
+    Arena diagnostic_arena;
+    arena_init(&diagnostic_arena);
     for (int index = 0; ok && index < atom_count; index++) {
         Atom *source =
             term_universe_get_atom(universe, atom_ids[index]);
+        Atom *definition_error = eval_petta_builtin_definition_error(
+            &diagnostic_arena, registry, space, source);
+        if (definition_error) {
+            fprintf(stderr, "error: ");
+            atom_print(definition_error, stderr);
+            fputc('\n', stderr);
+            arena_free(&diagnostic_arena);
+            petta_program_declaration_block_free(block);
+            return MAIN_PETTA_BLOCK_LOAD_DEFINITION_REJECTED;
+        }
         const PettaPlanNode *plan =
             petta_program_declaration_block_plan_at(
                 block, index);
@@ -2510,6 +2523,7 @@ static MainPettaBlockLoadResult main_petta_load_declaration_block(
             libraries ? libraries->petta_program : NULL, space);
 #endif
     }
+    arena_free(&diagnostic_arena);
     petta_program_declaration_block_free(block);
     return ok ? MAIN_PETTA_BLOCK_LOAD_OK
               : MAIN_PETTA_BLOCK_LOAD_FAILED;
@@ -3963,8 +3977,7 @@ process_petta_document:
                             stderr,
                             "error: could not compile PeTTa declaration block\n");
                     }
-                    rc = loaded == MAIN_PETTA_BLOCK_LOAD_TYPE_REJECTED
-                        ? 2 : 1;
+                    rc = loaded == MAIN_PETTA_BLOCK_LOAD_FAILED ? 1 : 2;
                     goto cleanup;
                 }
                 pi = block_end;
@@ -4201,13 +4214,17 @@ process_petta_document:
                         : "error: observation incomplete: %s\n",
                     eval_completion_reason(detailed.completion));
                 bool resource_fault = lang->id == CETTA_LANGUAGE_PETTA &&
-                    detailed.completion == CETTA_EVAL_INCOMPLETE_CAPACITY;
+                    (detailed.completion == CETTA_EVAL_INCOMPLETE_CAPACITY ||
+                     detailed.completion == CETTA_EVAL_INCOMPLETE_STACK);
                 if (resource_fault) {
                     CettaErrorPresentation view = {
                         .code = CETTA_DIAGNOSTIC_RESOURCE,
                         .classification = "resource",
-                        .message = "Evaluator capacity exhausted",
                     };
+                    snprintf(view.message, sizeof(view.message), "%s",
+                        detailed.completion == CETTA_EVAL_INCOMPLETE_STACK
+                            ? "Evaluator stack exhausted (StackOverflow)"
+                            : "Evaluator capacity exhausted");
                     run_cli_query_fault(run_cli, &view);
                 }
                 eval_outcome_free(&detailed);
@@ -4241,15 +4258,22 @@ process_petta_document:
                 run_cli_answers(run_cli, results->len);
             if (petta_uncaught_error) {
                 run_cli_query_stop(run_cli, RUN_REPORT_STOP_FAULT);
-                if (run_cli) {
-                    Atom *exception = NULL;
-                    for (uint32_t j = 0u; j < results->len && !exception; j++)
-                        if (atom_is_error(results->items[j])) exception=results->items[j];
+                Atom *exception = NULL;
+                for (uint32_t j = 0u; j < results->len && !exception; j++)
+                    if (atom_is_error(results->items[j]))
+                        exception = results->items[j];
+                Atom *formal = exception && exception->expr.len >= 2u
+                    ? exception->expr.elems[1] : NULL;
+                bool python_error = formal && formal->kind == ATOM_EXPR &&
+                    formal->expr.len >= 3u &&
+                    atom_is_symbol(formal->expr.elems[0], "python_error");
+                if (run_cli || python_error) {
                     CettaErrorPresentation view;
-                    cetta_error_present(exception,diagnostic_details,&view);
-                    run_cli_query_fault(run_cli,&view);
-                    fprintf(stderr,"error: uncaught PeTTa error: %s: %s%s\n",
-                        view.classification,view.message,view.truncated ? " [truncated]" : "");
+                    cetta_error_present(exception, diagnostic_details, &view);
+                    run_cli_query_fault(run_cli, &view);
+                    fprintf(stderr, "error: uncaught PeTTa error: %s: %s%s\n",
+                        view.classification, view.message,
+                        view.truncated ? " [truncated]" : "");
                 } else {
                     fputs("error: uncaught PeTTa error: ", stderr);
                     write_results(stderr, results, lang->id, profile);
@@ -4318,8 +4342,7 @@ process_petta_document:
                         stderr,
                         "error: could not compile PeTTa declaration block\n");
                 }
-                rc = loaded == MAIN_PETTA_BLOCK_LOAD_TYPE_REJECTED
-                    ? 2 : 1;
+                rc = loaded == MAIN_PETTA_BLOCK_LOAD_FAILED ? 1 : 2;
                 goto cleanup;
             }
             i = block_end;

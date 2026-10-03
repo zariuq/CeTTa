@@ -60,11 +60,92 @@ def documents():
             allowed = ["min/2"]
         yield name, f"(= (composition-run $x) {body})\n!(composition-run $free)\n", allowed
 
+    typed = {
+        "raw": ("(: typed-f (-> Atom Atom))\n(= (typed-f $x) (Box $x))\n",
+                "(typed-f (+ 2 3))"),
+        "translated": ("(: typed-f (-> %Undefined% %Undefined%))\n"
+                       "(= (typed-f $x) (+ $x 1))\n",
+                       "(typed-f (progn ignored (+ 2 3)))"),
+        "guarded": ("(: typed-f (-> Number Number))\n(= (typed-f $x) (+ $x 1))\n",
+                    "(typed-f (+ 2 3))"),
+        "overloads": ("(: typed-f (-> Number Atom))\n(: typed-f (-> Atom Atom))\n"
+                      "(= (typed-f $x) (Seen $x))\n",
+                      "(collapse (typed-f (+ 2 3)))"),
+        "shared-reject": ("(: typed-f (-> $t $t %Undefined%))\n"
+                          "(= (typed-f $x $y) (Pair $x $y))\n",
+                          "(collapse (typed-f 6 symbol))"),
+        "result-reject": ("(: typed-f (-> Number Number))\n"
+                          "(= (typed-f $x) symbol)\n",
+                          "(collapse (typed-f 6))"),
+        "held-family": ("(: typed-f (-> Number Atom))\n"
+                        "(: typed-f (-> Number %Undefined%))\n"
+                        "(= (typed-f $x) (+ $x 1))\n",
+                        "(collapse (typed-f 6))"),
+        "bound-check": ("(: 6 Foo)\n(: typed-f (-> Foo Foo))\n"
+                        "(= (typed-f $x) $x)\n", "(typed-f 6)"),
+        "late-atom": ("(: marker Atom)\n(: typed-f (-> $t $t Atom))\n"
+                      "(= (typed-f $x $y) (Pair $x $y))\n",
+                      "(collapse (typed-f marker (+ 2 3)))"),
+    }
+    for name, (prefix, body) in typed.items():
+        for position in ("tail", "field", "binding"):
+            if position == "field":
+                placed = f"(Box {body})"
+            elif position == "binding":
+                placed = f"(let $v {body} (Box $v))"
+            else:
+                placed = body
+            # A result-bearing outer box also witnesses the empty-call cases.
+            source = prefix + f"(= (composition-run $free) (Box {placed}))\n!(composition-run $free)\n"
+            yield f"typed-{name}-{position}", source, []
+    parameters = [f"$v{i}" for i in range(70)]
+    domains = ["Atom" if i in (0, 64, 69) else "Number" for i in range(70)]
+    arguments = ["(+ 2 3)" if d == "Atom" else "6" for d in domains]
+    source = ("(: typed-f (-> " + " ".join(domains) + " Atom))\n"
+              "(= (typed-f " + " ".join(parameters) + ") (Row " + " ".join(parameters) + "))\n"
+              "(= (composition-run $free) (typed-f " + " ".join(arguments) + "))\n"
+              "!(composition-run $free)\n")
+    yield "typed-arity-70", source, []
 
-def invoke(binary, path, reference, stats):
+    # A shared engine registry spelling can still name an ordinary equation.
+    for name in ("fold", "chain"):
+        for arity in (0, 1, 2, 7, 70):
+            parameters = [f"$v{i}" for i in range(arity)]
+            domains = ["Atom" if i == 0 else "Number" for i in range(arity)]
+            arguments = ["(+ 2 3)" if d == "Atom" else "6" for d in domains]
+            prefix = (f"(: {name} (-> " + " ".join(domains + ["%Undefined%"]) + "))\n"
+                      f"(= ({name} " + " ".join(parameters) + ") (Row " + " ".join(parameters) + "))\n")
+            for position in ("tail", "field", "binding"):
+                body = f"({name} " + " ".join(arguments) + ")"
+                if position == "field":
+                    body = f"(Box {body})"
+                elif position == "binding":
+                    body = f"(let $v {body} (Box $v))"
+                source = prefix + f"(= (composition-run $free) {body})\n!(composition-run $free)\n"
+                profile = "extended" if name == "chain" and arity == 1 else None
+                yield f"typed-registry-{name}-{arity}-{position}", source, [], profile
+
+    source = ("(: min (-> Atom Atom Atom))\n(= (min $x $y) authored)\n"
+              "(= (composition-run $free) (Row (is-var $free) (min (+ 2 3) 7)))\n!(composition-run $free)\n")
+    yield "extended-min", source, ["min/2"], "extended"
+    source = ("(: chain (-> Number Number Number %Undefined%))\n"
+              "(= (chain $x $y $z) authored)\n"
+              "(= (composition-run $free) (Row (is-var $free) (chain (+ 2 3) $v (Row $v))))\n"
+              "!(composition-run $free)\n")
+    yield "owned-chain", source, ["chain/3"]
+    source = ("(: fold-step (-> Number Number Number))\n"
+              "(= (fold-step $item $acc) rejected)\n"
+              "(= (composition-run $free) (Row (is-var $free) (collapse (foldl fold-step (1) 0))))\n"
+              "!(composition-run $free)\n")
+    yield "fold-adapter-result-guard", source, ["foldl/3"]
+
+
+def invoke(binary, path, reference, stats, profile=None):
     env = dict(os.environ, CETTA_OPEN_EQUATIONS_REFERENCE=str(int(reference)),
                CETTA_OPEN_EQUATIONS_DEBUG="host")
     command = [str(binary), "--lang", "petta"]
+    if profile:
+        command += ["--profile", profile]
     if stats:
         command.append("--emit-runtime-stats")
     command.append(str(path))
@@ -84,11 +165,13 @@ def main():
     with tempfile.TemporaryDirectory(prefix="tier-composition-") as temporary:
         directory = args.output or Path(temporary)
         directory.mkdir(parents=True, exist_ok=True)
-        for name, source, allowed in documents():
+        for document in documents():
+            name, source, allowed = document[:3]
+            profile = document[3] if len(document) > 3 else None
             path = directory / f"{name}.metta"
             path.write_text(source)
-            tier = invoke(binary, path, False, args.stats)
-            machine = invoke(binary, path, True, False)
+            tier = invoke(binary, path, False, args.stats, profile)
+            machine = invoke(binary, path, True, False, profile)
             for route, result in (("tier", tier), ("machine", machine)):
                 (directory / f"{name}.{route}.out").write_text(result.stdout)
                 (directory / f"{name}.{route}.err").write_text(result.stderr)
@@ -105,10 +188,14 @@ def main():
                 if len(parts) == 3 and parts[0] == "runtime-counter":
                     counters[parts[1]] = int(parts[2])
             if args.stats:
-                for counter in ("open-equation-choice", "open-equation-answer"):
-                    if not counters.get(counter, 0):
-                        raise AssertionError(f"{name}: tier did not take and answer a call")
-            if args.petta_root:
+                if not counters.get("open-equation-choice", 0):
+                    raise AssertionError(f"{name}: tier did not take a call")
+                if not (counters.get("open-equation-answer", 0) or
+                        counters.get("open-equation-host-transfer", 0)):
+                    raise AssertionError(f"{name}: tier neither answered nor transferred its continuation")
+                if name.startswith("typed-") and not counters.get("open-equation-typed-call", 0):
+                    raise AssertionError(f"{name}: typed call did not enter the tier")
+            if args.petta_root and profile is None:
                 swi = subprocess.run(["bash", "run.sh", "--silent", str(path)],
                                      cwd=args.petta_root, capture_output=True,
                                      text=True, timeout=30)
@@ -116,7 +203,8 @@ def main():
                 (directory / f"{name}.swi.err").write_text(swi.stderr)
                 if swi.returncode or swi.stdout != tier.stdout:
                     raise AssertionError(f"{name}: SWI discrepancy; inspect {directory}")
-            receipts.append({"name": name, "hosts": hosts, "counters": counters})
+            receipts.append({"name": name, "profile": profile or "default",
+                             "hosts": hosts, "counters": counters})
         (directory / "receipt.json").write_text(json.dumps(receipts, indent=2) + "\n")
     print(f"PASS: {len(receipts)} compositions preserve ordered answers and child/domain boundaries")
     return 0

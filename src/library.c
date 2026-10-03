@@ -4178,6 +4178,13 @@ static Atom *library_value_result(Arena *a, Atom *value) {
         atom_expr2(a, atom_symbol_id(a, g_builtin_syms.return_text), value));
 }
 
+bool cetta_library_native_returns_delimited_values(SymbolId head) {
+    return head == g_builtin_syms.lib_rhometta_transitions ||
+           head == g_builtin_syms.lib_rhometta_run ||
+           head == g_builtin_syms.lib_rhometta_run_canonical ||
+           head == g_builtin_syms.lib_rhometta_values;
+}
+
 static Atom *library_value_frontier(Arena *a, Atom *frontier) {
     /* The rho frontier API produces (superpose (value ...)). Keep its branch
      * order and multiplicity, but deliver each already-computed state once. */
@@ -7949,6 +7956,22 @@ static bool cetta_library_petta_execute_document_ids(
                             CETTA_PETTA_DOCUMENT_PLAN_FAILED;
                     return false;
                 }
+            }
+            if (!source)
+                source = term_universe_get_atom(
+                    work_space->native.universe, block_atom_id);
+            Atom *definition_error = eval_petta_builtin_definition_error(
+                eval_arena, registry, work_space, source);
+            if (definition_error) {
+                /* PeTTa stores the equation row before its compiler's
+                 * assertz rejects the protected executable predicate. */
+                space_add_atom_id(work_space, block_atom_id);
+                petta_program_declaration_block_free(block);
+                if (failure_out)
+                    *failure_out = CETTA_PETTA_DOCUMENT_EVAL_FAILED;
+                if (detail_out)
+                    *detail_out = definition_error;
+                return false;
             }
             space_add_atom_id(work_space, block_atom_id);
             if (block &&

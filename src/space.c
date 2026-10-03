@@ -23,7 +23,7 @@ static _Thread_local uint64_t
 static _Thread_local CettaCount g_query_results_capacity_limit_override = 0;
 static _Atomic uint64_t g_space_next_instance_id = 1u;
 static _Atomic uint64_t g_space_next_prefix_epoch = 1u;
-static _Atomic uint64_t g_space_global_mutation_epoch = 0u;
+_Atomic uint64_t cetta_space_global_mutation_epoch = 0u;
 
 static _Thread_local bool g_declared_type_index_configured = false;
 static _Thread_local bool g_declared_type_index_enabled = true;
@@ -5096,11 +5096,6 @@ static void recompute_has_non_exact_atoms(Space *s) {
     s->native.has_non_exact_atoms_dirty = false;
 }
 
-uint64_t space_global_mutation_epoch(void) {
-    return atomic_load_explicit(&g_space_global_mutation_epoch,
-                                memory_order_relaxed);
-}
-
 static void space_publish_mutation(
         Space *s, SpaceMutationEquationProjection equation_projection,
         SpaceMutationPrefixEffect prefix_effect) {
@@ -5165,7 +5160,7 @@ static void space_publish_mutation(
             CETTA_RUNTIME_COUNTER_SPACE_EQUATION_REVISION_BUMP);
     }
     uint64_t prior = atomic_fetch_add_explicit(
-        &g_space_global_mutation_epoch, 1u, memory_order_relaxed);
+        &cetta_space_global_mutation_epoch, 1u, memory_order_relaxed);
     if (prior == UINT64_MAX) {
         fputs("CeTTa: exhausted global Space mutation epoch\n", stderr);
         abort();

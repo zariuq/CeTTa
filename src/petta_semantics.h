@@ -210,6 +210,13 @@ Atom *petta_semantics_symbol_metatype(Arena *arena, SymbolId symbol,
 /* Whether SWI-PeTTa registers `symbol` as a builtin function (fun/1) when
  * it loads. */
 bool petta_semantics_registered_builtin(SymbolId symbol);
+/* A definition at this exact input arity collides with a static predicate
+ * in the reference prelude. Dynamic classifiers remain extensible. */
+bool petta_semantics_static_builtin_definition(
+    SymbolId symbol, CettaExprLen input_arity);
+Atom *petta_semantics_builtin_definition_error(
+    Arena *arena, SymbolId symbol, CettaExprLen input_arity);
+
 /* Whether SWI-PeTTa registers `symbol` as a builtin function, and if so the
  * input arities its registration records for it (arity/2), as a bit mask:
  * bit n for n arguments.  A registered name may have none. */

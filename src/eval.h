@@ -3,6 +3,7 @@
 
 #include "answer_bank.h"
 #include "atom.h"
+#include "eval_completion.h"
 #include "space.h"
 #include "term_canon.h"
 #include "variant_instance.h"
@@ -85,18 +86,6 @@ void result_set_free(ResultSet *rs);
 /* Evaluation coverage is separate from the occurrence frontier.  Existing
    callers that only need HE-compatible answers continue to use metta_eval;
    callers making universal or no-more-occurrences claims use EvalOutcome. */
-typedef enum {
-    CETTA_EVAL_COMPLETE = 0,
-    CETTA_EVAL_INCOMPLETE_FUEL,
-    CETTA_EVAL_INCOMPLETE_CANCELLED,
-    CETTA_EVAL_INCOMPLETE_STACK,
-    CETTA_EVAL_INCOMPLETE_CAPACITY,
-    /* The program changed under pending work that could not follow it. */
-    CETTA_EVAL_INCOMPLETE_INVALIDATED,
-    /* A host service the machine depends on failed. */
-    CETTA_EVAL_INCOMPLETE_HOST_FAILURE,
-} CettaEvalCompletion;
-
 typedef struct EvalOutcome {
     /* Ordered occurrence bag.  Prime retains both ordinary values and
        Error-headed fault occurrences here; compatibility projections may be
@@ -135,6 +124,13 @@ CettaCount eval_outcome_fault_count(const EvalOutcome *outcome);
 CettaEvalZeroStatus eval_outcome_zero_status(const EvalOutcome *outcome);
 const char *eval_completion_reason(CettaEvalCompletion completion);
 uint64_t eval_current_c_stack_budget_bytes(void);
+typedef struct {
+    uintptr_t anchor;
+    uint64_t budget_bytes;
+} CettaEvalCStackBoundary;
+/* Capture a service boundary and a budget that leaves room to unwind and
+ * publish an evaluator fault before reaching the thread's guard page. */
+void eval_c_stack_boundary_capture(CettaEvalCStackBoundary *boundary);
 
 /* ── Evaluation (public API) ───────────────────────────────────────────── */
 
@@ -219,6 +215,13 @@ CettaCount eval_payload_state_redirect_count(void);
 bool eval_payload_state_redirect_at(CettaCount idx, StateCell **orig,
                                     StateCell **redirect);
 Registry *eval_current_registry(void);
+/* Base PeTTa protects the default program's static primitive predicates.
+ * Named owners and extended profiles admit their own equations. */
+bool eval_petta_builtin_definition_protected(
+    Registry *registry, Space *space, SymbolId head, CettaExprLen input_arity);
+Atom *eval_petta_builtin_definition_error(
+    Arena *arena, Registry *registry, Space *space, Atom *equation);
+
 Arena *eval_current_persistent_arena(void);
 Space *eval_space_snapshot_clone(Space *src, Arena *a);
 

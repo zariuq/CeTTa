@@ -86,6 +86,7 @@ static void cetta_rational_free_owned(CettaRational *rat);
 static Atom *atom_prime_context_deep_copy(
     Arena *dst, const CettaPrimeContext *context);
 static _Atomic(uint32_t) g_arena_identity_counter = 1u;
+static _Atomic(uint64_t) g_hashcons_reclamation_epoch = 1u;
 
 typedef struct {
     const Atom *src;
@@ -1332,8 +1333,24 @@ void hashcons_init_compact(HashConsTable *hc) {
     hashcons_init_capacity(hc, 64u);
 }
 
+uint64_t hashcons_reclamation_epoch(void) {
+    return atomic_load_explicit(&g_hashcons_reclamation_epoch,
+                                memory_order_acquire);
+}
+
+static void hashcons_note_reclamation(void) {
+    uint64_t epoch = hashcons_reclamation_epoch();
+    while (epoch != UINT64_MAX &&
+           !atomic_compare_exchange_weak_explicit(
+               &g_hashcons_reclamation_epoch, &epoch, epoch + 1u,
+               memory_order_acq_rel, memory_order_acquire)) {
+    }
+}
+
 void hashcons_free(HashConsTable *hc) {
     if (!hc || !hc->table) return;
+    /* Invalidate borrowed pointer keys before allocations can be reused. */
+    hashcons_note_reclamation();
     for (uint32_t i = 0; i < hc->size; i++) {
         Atom *atom = hc->table[i];
         if (!atom) continue;
