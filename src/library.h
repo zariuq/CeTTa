@@ -315,6 +315,9 @@ bool cetta_library_print_loaded_modules(CettaLibraryContext *ctx, FILE *out,
 bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
                                Arena *a, Atom *head, Atom **args,
                                uint32_t nargs, CettaCallOutcome *out);
+/* Native observers that transport completed values through function/return
+ * delimiters. Ready-value dispatch may peel only these producers' results. */
+bool cetta_library_native_returns_delimited_values(SymbolId head);
 bool cetta_library_lookup_explicit_mork_bridge(CettaLibraryContext *ctx,
                                                Atom *space_arg,
                                                CettaMorkSpaceHandle **bridge_out);

@@ -1,0 +1,44 @@
+argument
+multi-consumer
+multi-consumer
+argument
+classifier
+classifier
+(Results (Box (+ 2 3)) 6 (Pair 4 7))
+((Seen 6) (Seen (tier-producer)))
+()
+()
+((Multi tier-multi-value) (Multi tier-multi-value))
+(First First Second)
+(Accepted Accepted Accepted)
+(WrappedFirst WrappedFirst WrappedSecond)
+(((-> Number Result) String))
+()
+(($V0 $V1))
+(Result)
+((Bound %Undefined%))
+((Tagged Number))
+((Tagged Result))
+(Fresh)
+(Fresh)
+(((Box $V0) (Box $V1)))
+Number
+(6)
+()
+((+ 6 1) (+ 6 1))
+20
+()
+6
+((Changed (+ 2 3)) (Changed 5))
+(FirstDeclaration (+ 1 2))
+(Accepted Accepted)
+(Accepted Accepted Accepted Accepted)
+(Accepted Accepted)
+(Accepted)
+()
+()
+()
+((TypedValue 6))
+authored
+(Results authored foreign)
+foreign

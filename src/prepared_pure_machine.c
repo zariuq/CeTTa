@@ -9446,10 +9446,6 @@ bool cetta_prepared_pure_answer_cursor_detach(
         return false;
     if (!cursor->owns_arena || cursor->detached)
         return true;
-    /* A continuation's locals are not frontier arguments; a consumer that
-     * detaches never opens a program with continuations. */
-    if (cursor->program->continuation_steps)
-        return false;
     /* The borrowed answer's storage is about to lie below live values. */
     cursor->answer_pending = false;
     cursor->undo_valid = false;
@@ -9463,6 +9459,47 @@ bool cetta_prepared_pure_answer_cursor_detach(
         else
             ok = false;
     }
+    /* Continuation records and their local arrays already belong to our
+     * arena, but their values can still borrow the consumer's call storage.
+     * Shared parent chains must be visited once, using the same copy session
+     * as the arguments so that sharing survives the move. */
+    const PreparedPureContinuation **copied = NULL;
+    size_t copied_len = 0u, copied_cap = 0u;
+    for (size_t frame = 0u; ok && frame < cursor->frame_len; frame++) {
+        for (const PreparedPureContinuation *record =
+                 cursor->frames[frame].continuation;
+             ok && record; record = record->parent) {
+            bool seen = false;
+            for (size_t index = 0u; index < copied_len; index++) {
+                if (copied[index] == record) {
+                    seen = true;
+                    break;
+                }
+            }
+            if (seen)
+                break;
+            if (record->equation >= cursor->program->equation_len ||
+                !prepared_pure_reserve((void **)&copied, sizeof(*copied),
+                                      &copied_cap, copied_len + 1u)) {
+                ok = false;
+                break;
+            }
+            uint32_t slots = cursor->program->equations[
+                record->equation].frame_slot_count;
+            for (uint32_t index = 0u; ok && index < slots; index++) {
+                if (!record->locals[index])
+                    continue;
+                Atom *copy = atom_deep_copy_session_copy(
+                    session, record->locals[index]);
+                if (copy)
+                    record->locals[index] = copy;
+                else
+                    ok = false;
+            }
+            copied[copied_len++] = record;
+        }
+    }
+    free(copied);
     if (session)
         atom_deep_copy_session_free(session);
     /* Copies sit above every call's position, so no finished call may

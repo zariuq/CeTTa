@@ -1,0 +1,21 @@
+(prolog-arity caught)
+(prolog-arithmetic caught)
+(native-arity caught)
+(native-arithmetic caught)
+(error-data (Error ordinary payload))
+(subsequent-call 42)
+SURVIVED
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true

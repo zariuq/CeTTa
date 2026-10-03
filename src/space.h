@@ -1,6 +1,8 @@
 #ifndef CETTA_SPACE_H
 #define CETTA_SPACE_H
 
+#include <stdatomic.h>
+
 #include "atom.h"
 #include "generated/cetta_execution_contracts.generated.h"
 #include "gslt_term_view_v1.h"
@@ -264,7 +266,13 @@ static inline uint64_t space_instance_id(const Space *s) {
  * a fortiori every space a computation consulted is unchanged.  Ground-call
  * memoization uses it as a conservative whole-episode invalidation key; it is
  * read only by opt-in memoization and changes no existing behaviour. */
-uint64_t space_global_mutation_epoch(void);
+/* Compiled entry checks read this clock on every invocation. Keep the
+ * accessor inline; atomic publication remains centralized in space.c. */
+extern _Atomic uint64_t cetta_space_global_mutation_epoch;
+static inline uint64_t space_global_mutation_epoch(void) {
+    return atomic_load_explicit(&cetta_space_global_mutation_epoch,
+                                memory_order_relaxed);
+}
 
 /* An in-process read token for one live Space revision.  The token carries a
    process-local lifetime identity as well as the address and revision, so a

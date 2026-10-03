@@ -621,6 +621,52 @@ static void test_cursor_detach(void) {
     destroy(&fixture);
 }
 
+/* Pending non-tail calls retain locals as well as frontier arguments.  Move
+ * both before the consumer reuses the storage of its original call. */
+static void test_cursor_detach_continuations(void) {
+    const char *equations[] = {
+        "(= (pick (Cons $x $xs)) $x)",
+        "(= (pick (Cons $x (Cons $y $ys))) (pick (Cons $y $ys)))",
+        "(= (pair $xs) (let $x (pick $xs) (Pair $xs $x)))",
+        "(= (outer $xs) (Box $xs (pair $xs)))",
+    };
+    /* Cover detachment before stepping and with nested continuations live. */
+    for (int yielded = 0; yielded <= 1; yielded++) {
+        Fixture fixture;
+        init(&fixture, equations, 4u, "(outer (Cons a Nil))");
+        Arena call_arena;
+        arena_init(&call_arena);
+        arena_set_hashcons(&call_arena, NULL);
+        ArenaMark empty = arena_mark(&call_arena);
+        Atom *call = parse(&call_arena,
+            "(outer (Cons a (Cons b (Cons c Nil))))");
+        assert(cetta_prepared_pure_program_rebind_closed_entry_call(
+            fixture.program, call));
+        CettaPreparedPureAnswerCursor *cursor = open_cursor(&fixture, false);
+        cetta_prepared_pure_program_clear_closed_entry_call(fixture.program);
+        const char *answers[] = {
+            "(Box (Cons a (Cons b (Cons c Nil))) (Pair (Cons a (Cons b (Cons c Nil))) a))",
+            "(Box (Cons a (Cons b (Cons c Nil))) (Pair (Cons a (Cons b (Cons c Nil))) b))",
+            "(Box (Cons a (Cons b (Cons c Nil))) (Pair (Cons a (Cons b (Cons c Nil))) c))",
+        };
+        if (yielded)
+            expect_answer(&fixture, cursor, answers[0]);
+        assert(cetta_prepared_pure_answer_cursor_detach(cursor));
+        assert(cetta_prepared_pure_answer_cursor_detach(cursor));
+        arena_reset(&call_arena, empty);
+        for (int i = 0; i < 64; i++)
+            (void)parse(&call_arena, "(noise (noise (noise noise)))");
+        for (int i = yielded; i < 3; i++)
+            expect_answer(&fixture, cursor, answers[i]);
+        Atom *answer = NULL;
+        assert(cetta_prepared_pure_answer_cursor_next(cursor, &answer) ==
+               CETTA_PREPARED_PURE_CURSOR_EXHAUSTED);
+        cetta_prepared_pure_answer_cursor_close(cursor);
+        arena_free(&call_arena);
+        destroy(&fixture);
+    }
+}
+
 /* A chain of last calls keeps the frontier one call deep while it grows
  * its argument; the scratch purse, not the frontier, ends the stream. */
 static void test_cursor_last_call_chain_is_bounded(void) {
@@ -992,6 +1038,7 @@ int main(void) {
     test_cursor_unmatched_call();
     test_cursor_stale_program_and_retention();
     test_cursor_detach();
+    test_cursor_detach_continuations();
     test_cursor_last_call_chain_is_bounded();
     test_cursor_limit_keeps_frontier();
     test_continuation_permutations();
@@ -1009,6 +1056,6 @@ int main(void) {
     var_intern_free(&variables);
     g_symbols = NULL;
     g_var_intern = NULL;
-    puts("prepared pure answer producer: twenty-nine boundary cases passed");
+    puts("prepared pure answer producer: thirty boundary cases passed");
     return 0;
 }

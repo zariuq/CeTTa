@@ -45,6 +45,16 @@ typedef enum {
 } PettaMachineHostMode;
 
 typedef enum {
+    PETTA_MACHINE_BUILTIN_EQUATIONS_NONE = 0,
+    /* This profile permits a later authored alternative. No equation is
+     * installed yet, so direct dispatch remains valid at the call itself. */
+    PETTA_MACHINE_BUILTIN_EQUATIONS_AVAILABLE,
+    PETTA_MACHINE_BUILTIN_EQUATIONS_APPEND,
+    PETTA_MACHINE_BUILTIN_EQUATIONS_OWNED,
+    PETTA_MACHINE_BUILTIN_EQUATIONS_PROTECTED,
+} PettaMachineBuiltinEquations;
+
+typedef enum {
     PETTA_MACHINE_FOLD_NOT_APPLICABLE = 0,
     PETTA_MACHINE_FOLD_VALUE,
     PETTA_MACHINE_FOLD_INTERRUPTED,
@@ -260,6 +270,11 @@ typedef struct {
      * shared opcode; absence preserves the standalone machine's unrestricted
      * embedding contract. */
     bool (*builtin_allowed)(void *context, SymbolId head);
+    /* Authority for authored equations sharing an intrinsic head. APPEND
+     * enumerates the intrinsic first; OWNED selects this space's equations;
+     * PROTECTED retains rows as data without executing them. */
+    PettaMachineBuiltinEquations (*builtin_equations)(
+        void *context, Space *space, SymbolId head, CettaExprLen arity);
     /* Exact mutable authority for deciding whether an expression root is
      * callable.  A missing token disables reuse of derived callability
      * judgments; it never makes an unknown host registry look immutable. */
@@ -337,7 +352,7 @@ typedef struct {
      * equations and are not included by this service. */
     bool (*get_type)(
         void *context, Space *space, Arena *arena, Atom *value, Atom *target,
-        Atom ***types, uint32_t *count);
+        Atom ***types, uint32_t *count, CettaEvalCompletion *completion);
     /* Construct the active language's public Boolean datum.  Search owns the
      * truth relation; spelling and representation remain language-owned. */
     Atom *(*boolean_value)(
@@ -439,17 +454,20 @@ typedef struct {
      * call and of `expected`), built in `answer_arena`.  With
      * `source_output_constraints` an equation's statically known output
      * meets the destination before its effects, as in this machine.  NULL
-     * declines to canonical equation search. */
+     * declines to canonical equation search. The call is already prepared:
+     * its argument demands and guards have run. With evaluate_result=false
+     * the equation RHS is returned as substituted data instead of evaluated. */
     CettaOpenEquationCursor *(*open_relation_cursor)(
         void *context, Space *space, Arena *answer_arena,
         Arena *stable_arena, Atom *call,
         Atom *expected, Atom *const *query_vars, uint32_t query_var_count,
-        bool source_output_constraints, bool dispatch_recovers,
+        bool evaluate_result, bool source_output_constraints, bool dispatch_recovers,
         bool count_only, uint64_t activation_budget, uint32_t depth_bound);
     /* A revision-keyed program fact: the relation has declined open
      * compilation.  False means only that no decline is known. */
     bool (*open_relation_declined)(
-        void *context, Space *space, SymbolId head, CettaExprLen arity);
+        void *context, Space *space, SymbolId head, CettaExprLen arity,
+        bool evaluate_result);
     /* Native opt-in capabilities whose names are not part of the core
      * PeTTa presentation.  Returning known=false leaves the occurrence
      * available to ordinary equations, data, or an optional foreign
@@ -591,6 +609,7 @@ typedef enum {
     PETTA_MACHINE_STEP_EXHAUSTED,
     PETTA_MACHINE_STEP_DECLINED,
     PETTA_MACHINE_STEP_INVALIDATED,
+    PETTA_MACHINE_STEP_STACK,
     PETTA_MACHINE_STEP_CAPACITY,
     PETTA_MACHINE_STEP_HOST_ERROR,
     PETTA_MACHINE_STEP_SUSPENDED,

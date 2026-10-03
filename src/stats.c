@@ -945,6 +945,17 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "open-equation-host-export-bytes",
     "open-equation-host-import-bytes",
     "open-equation-cut",
+    "open-equation-typed-call",
+    "open-equation-type-guard",
+    "petta-type-fact-hit",
+    "petta-type-fact-miss",
+    "petta-type-fact-store",
+    "petta-type-fact-retained-bytes",
+    "petta-type-open-visit",
+    "petta-type-closed-visit",
+    "petta-type-fact-peak-bytes",
+    "open-equation-direct-type-guard",
+    "open-equation-host-transfer",
 };
 
 static int64_t clamp_counter(uint64_t value) {

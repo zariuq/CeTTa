@@ -285,20 +285,23 @@ static bool json_whitespace(JsonElabV1 *ctx, Atom *term, uint32_t depth) {
             ctx, CETTA_JSON_CST_VALUE_V1_RESOURCE_LIMIT,
             "JSON whitespace nesting limit exceeded");
     }
-    if (!json_elab_work(ctx, 1u)) return false;
-    if (json_cst_is(ctx, term, CETTA_JSON_ELAB_WS_EMPTY_V1, NULL))
-        return true;
-    if (!json_cst_is(ctx, term, CETTA_JSON_ELAB_WS_CONS_V1, &children) ||
-        !json_lexical_scalar(ctx, children[0], &scalar) ||
-        (scalar != 0x20u && scalar != 0x09u &&
-         scalar != 0x0au && scalar != 0x0du)) {
-        if (ctx->status == CETTA_JSON_CST_VALUE_V1_OK) {
-            json_elab_error(ctx, CETTA_JSON_CST_VALUE_V1_MALFORMED_CST,
-                            "malformed JSON whitespace CST");
+    /* Siblings/characters do not add semantic nesting. Work remains bounded. */
+    for (;;) {
+        if (!json_elab_work(ctx, 1u)) return false;
+        if (json_cst_is(ctx, term, CETTA_JSON_ELAB_WS_EMPTY_V1, NULL))
+            return true;
+        if (!json_cst_is(ctx, term, CETTA_JSON_ELAB_WS_CONS_V1, &children) ||
+            !json_lexical_scalar(ctx, children[0], &scalar) ||
+            (scalar != 0x20u && scalar != 0x09u &&
+             scalar != 0x0au && scalar != 0x0du)) {
+            if (ctx->status == CETTA_JSON_CST_VALUE_V1_OK) {
+                json_elab_error(ctx, CETTA_JSON_CST_VALUE_V1_MALFORMED_CST,
+                                "malformed JSON whitespace CST");
+            }
+            return false;
         }
-        return false;
+        term = children[1];
     }
-    return json_whitespace(ctx, children[1], depth + 1u);
 }
 
 static Atom *json_scalar_list(JsonElabV1 *ctx,
@@ -447,20 +450,22 @@ static bool json_string_chars(JsonElabV1 *ctx, Atom *term,
             ctx, CETTA_JSON_CST_VALUE_V1_RESOURCE_LIMIT,
             "JSON string nesting limit exceeded");
     }
-    if (!json_elab_work(ctx, 1u)) return false;
-    if (json_cst_is(ctx, term, CETTA_JSON_ELAB_STRING_CHARS_EMPTY_V1,
-                    NULL))
-        return true;
-    if (!json_cst_is(ctx, term, CETTA_JSON_ELAB_STRING_CHARS_CONS_V1,
-                     &children)) {
-        return json_elab_error(
-            ctx, CETTA_JSON_CST_VALUE_V1_MALFORMED_CST,
-            "expected a JSON string-character list CST node");
+    /* Siblings/characters do not add semantic nesting. Work remains bounded. */
+    for (;;) {
+        if (!json_elab_work(ctx, 1u)) return false;
+        if (json_cst_is(ctx, term, CETTA_JSON_ELAB_STRING_CHARS_EMPTY_V1,
+                        NULL))
+            return true;
+        if (!json_cst_is(ctx, term, CETTA_JSON_ELAB_STRING_CHARS_CONS_V1,
+                         &children)) {
+            return json_elab_error(
+                ctx, CETTA_JSON_CST_VALUE_V1_MALFORMED_CST,
+                "expected a JSON string-character list CST node");
+        }
+        if (!json_string_char(ctx, children[0], scalars, pending_high, depth + 1u))
+            return false;
+        term = children[1];
     }
-    return json_string_char(
-               ctx, children[0], scalars, pending_high, depth + 1u) &&
-        json_string_chars(
-               ctx, children[1], scalars, pending_high, depth + 1u);
 }
 
 static Atom *json_string_value(JsonElabV1 *ctx, Atom *term,
@@ -501,21 +506,24 @@ static bool json_number_digits(JsonElabV1 *ctx, Atom *term,
             ctx, CETTA_JSON_CST_VALUE_V1_RESOURCE_LIMIT,
             "JSON number nesting limit exceeded");
     }
-    if (!json_elab_work(ctx, 1u)) return false;
-    if (json_cst_is(ctx, term, CETTA_JSON_ELAB_DIGITS_EMPTY_V1, NULL))
-        return true;
-    if (!json_cst_is(ctx, term, CETTA_JSON_ELAB_DIGITS_CONS_V1,
-                     &children) ||
-        !json_lexical_scalar(ctx, children[0], &scalar) ||
-        scalar < '0' || scalar > '9' ||
-        !json_byte_vec_push(ctx, bytes, (char)scalar)) {
-        if (ctx->status == CETTA_JSON_CST_VALUE_V1_OK) {
-            json_elab_error(ctx, CETTA_JSON_CST_VALUE_V1_MALFORMED_CST,
-                            "malformed JSON digit-list CST");
+    /* Siblings/characters do not add semantic nesting. Work remains bounded. */
+    for (;;) {
+        if (!json_elab_work(ctx, 1u)) return false;
+        if (json_cst_is(ctx, term, CETTA_JSON_ELAB_DIGITS_EMPTY_V1, NULL))
+            return true;
+        if (!json_cst_is(ctx, term, CETTA_JSON_ELAB_DIGITS_CONS_V1,
+                         &children) ||
+            !json_lexical_scalar(ctx, children[0], &scalar) ||
+            scalar < '0' || scalar > '9' ||
+            !json_byte_vec_push(ctx, bytes, (char)scalar)) {
+            if (ctx->status == CETTA_JSON_CST_VALUE_V1_OK) {
+                json_elab_error(ctx, CETTA_JSON_CST_VALUE_V1_MALFORMED_CST,
+                                "malformed JSON digit-list CST");
+            }
+            return false;
         }
-        return false;
+        term = children[1];
     }
-    return json_number_digits(ctx, children[1], bytes, depth + 1u);
 }
 
 static bool json_number_integer(JsonElabV1 *ctx, Atom *term,
@@ -683,21 +691,24 @@ static bool json_member_tail(JsonElabV1 *ctx, Atom *term,
                              JsonAtomVecV1 *members, uint32_t depth) {
     Atom **children = NULL;
     Atom *member;
-    if (json_cst_is(ctx, term, CETTA_JSON_ELAB_MEMBER_TAIL_EMPTY_V1,
-                    NULL))
-        return true;
-    if (!json_cst_is(ctx, term, CETTA_JSON_ELAB_MEMBER_TAIL_CONS_V1,
-                     &children)) {
-        return json_elab_error(
-            ctx, CETTA_JSON_CST_VALUE_V1_MALFORMED_CST,
-            "expected a JSON member-tail CST node");
+    /* Siblings/characters do not add semantic nesting. Work remains bounded. */
+    for (;;) {
+        if (json_cst_is(ctx, term, CETTA_JSON_ELAB_MEMBER_TAIL_EMPTY_V1,
+                        NULL))
+            return true;
+        if (!json_cst_is(ctx, term, CETTA_JSON_ELAB_MEMBER_TAIL_CONS_V1,
+                         &children)) {
+            return json_elab_error(
+                ctx, CETTA_JSON_CST_VALUE_V1_MALFORMED_CST,
+                "expected a JSON member-tail CST node");
+        }
+        member = json_whitespace(ctx, children[0], depth + 1u) &&
+                 json_whitespace(ctx, children[1], depth + 1u)
+            ? json_member(ctx, children[2], members->len, depth + 1u)
+            : NULL;
+        if (!member || !json_atom_vec_push(ctx, members, member)) return false;
+        term = children[3];
     }
-    member = json_whitespace(ctx, children[0], depth + 1u) &&
-             json_whitespace(ctx, children[1], depth + 1u)
-        ? json_member(ctx, children[2], members->len, depth + 1u)
-        : NULL;
-    return member && json_atom_vec_push(ctx, members, member) &&
-        json_member_tail(ctx, children[3], members, depth + 1u);
 }
 
 static bool json_members(JsonElabV1 *ctx, Atom *term,
@@ -746,21 +757,24 @@ static bool json_element_tail(JsonElabV1 *ctx, Atom *term,
                               JsonAtomVecV1 *values, uint32_t depth) {
     Atom **children = NULL;
     Atom *value;
-    if (json_cst_is(ctx, term, CETTA_JSON_ELAB_ELEMENT_TAIL_EMPTY_V1,
-                    NULL))
-        return true;
-    if (!json_cst_is(ctx, term, CETTA_JSON_ELAB_ELEMENT_TAIL_CONS_V1,
-                     &children)) {
-        return json_elab_error(
-            ctx, CETTA_JSON_CST_VALUE_V1_MALFORMED_CST,
-            "expected a JSON element-tail CST node");
+    /* Siblings/characters do not add semantic nesting. Work remains bounded. */
+    for (;;) {
+        if (json_cst_is(ctx, term, CETTA_JSON_ELAB_ELEMENT_TAIL_EMPTY_V1,
+                        NULL))
+            return true;
+        if (!json_cst_is(ctx, term, CETTA_JSON_ELAB_ELEMENT_TAIL_CONS_V1,
+                         &children)) {
+            return json_elab_error(
+                ctx, CETTA_JSON_CST_VALUE_V1_MALFORMED_CST,
+                "expected a JSON element-tail CST node");
+        }
+        value = json_whitespace(ctx, children[0], depth + 1u) &&
+                json_whitespace(ctx, children[1], depth + 1u)
+            ? json_value(ctx, children[2], depth + 1u)
+            : NULL;
+        if (!value || !json_atom_vec_push(ctx, values, value)) return false;
+        term = children[3];
     }
-    value = json_whitespace(ctx, children[0], depth + 1u) &&
-            json_whitespace(ctx, children[1], depth + 1u)
-        ? json_value(ctx, children[2], depth + 1u)
-        : NULL;
-    return value && json_atom_vec_push(ctx, values, value) &&
-        json_element_tail(ctx, children[3], values, depth + 1u);
 }
 
 static bool json_elements(JsonElabV1 *ctx, Atom *term,
