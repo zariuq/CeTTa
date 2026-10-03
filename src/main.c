@@ -25,6 +25,7 @@
 #include "prime_compiled_reader.h"
 #include "space.h"
 #include "eval.h"
+#include "he_type_policy.h"
 #include "library.h"
 #include "lang.h"
 #include "compile.h"
@@ -1849,7 +1850,7 @@ static bool main_try_add_builtin_type_decls_direct(Space *space,
         : arith_ops_formal;
 
     TermUniverse *universe = space->native.universe;
-    AtomId decl_ids[12];
+    AtomId decl_ids[12u];
     uint32_t decl_count = 0;
 
     AtomId colon_id = tu_intern_symbol(universe, g_builtin_syms.colon);
@@ -2068,6 +2069,55 @@ static void main_add_prime_semantic_op_decls(Space *space, Arena *arena) {
     }
 }
 
+/* The library module &self imports in HE profiles.  Its declarations are
+ * upstream's, in upstream's order.  CeTTa's library file keeps its own
+ * declarations of names upstream's library does not know; of the others it
+ * keeps only, outside the profile with upstream's exact semantics, those
+ * adding a call form of an arity upstream does not declare.  A grounded
+ * operation's name has no declaration: its type is the operation's own. */
+static bool main_he_prepare_library(Space *space, Arena *arena,
+                                    bool extensions) {
+    CettaCount len = space_length64(space);
+    uint8_t *mask = calloc(len ? (size_t)len : 1u, 1u);
+    AtomId *kept = calloc(len ? (size_t)len : 1u, sizeof(*kept));
+    if (!mask || !kept) {
+        free(mask);
+        free(kept);
+        return false;
+    }
+    CettaCount kept_len = 0u;
+    for (CettaIndex i = 0u; i < len; i++) {
+        Atom *atom = space_get_at64(space, i);
+        if (!atom || atom->kind != ATOM_EXPR || atom->expr.len != 3u ||
+            !atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.colon))
+            continue;
+        Atom *subject = atom->expr.elems[1];
+        Atom *type = atom->expr.elems[2];
+        bool grounded = subject->kind == ATOM_SYMBOL &&
+            he_grounded_symbol_types(subject->sym_id, extensions, NULL) != 0u;
+        if (!grounded && !he_library_names_subject(subject))
+            continue;
+        mask[i] = 1u;
+        if (!grounded && extensions && he_library_declares(subject) &&
+            type->kind == ATOM_EXPR && type->expr.len >= 2u &&
+            atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow) &&
+            !he_library_declares_arity(subject, type->expr.len - 2u))
+            kept[kept_len++] = space_get_atom_id_at64(space, i);
+    }
+    CettaCount removed = 0u;
+    bool ok = space_remove_occurrence_mask_stable(space, mask, len, &removed);
+    for (size_t i = 0u; ok && i < he_library_declaration_count(); i++) {
+        Atom *declaration = he_library_declaration_at(i);
+        if (!space_admit_atom(space, arena, declaration))
+            space_add(space, declaration);
+    }
+    for (CettaCount i = 0u; ok && i < kept_len; i++)
+        space_add_atom_id(space, kept[i]);
+    free(mask);
+    free(kept);
+    return ok;
+}
+
 static void main_add_builtin_type_decls(Space *space, Arena *arena,
                                         CettaLanguageId language_id,
                                         const CettaProfile *profile) {
@@ -2119,6 +2169,7 @@ static void main_add_builtin_type_decls(Space *space, Arena *arena,
         atom_symbol(arena, "=="), arrow_eqeq);
     if (!space_admit_atom(space, arena, eqeq_decl))
         space_add(space, eqeq_decl);
+
 }
 
 static int main_he_compiled_text_backend(
@@ -2223,14 +2274,18 @@ typedef struct {
 } CettaMainCleanup;
 
 static void cetta_main_cleanup_registry_spaces(
-    Registry *registry, Space *root_space, PettaProgram *petta_program) {
+    Registry *registry, Space *root_space, PettaProgram *petta_program,
+    const CettaLibraryContext *libraries) {
     if (!registry || !root_space) return;
     for (uint32_t ri = 0; ri < registry->len; ri++) {
         Atom *val = registry->entries[ri].value;
         if (!val) continue;
         if (val->kind == ATOM_GROUNDED && val->ground.gkind == GV_SPACE) {
             Space *sp = (Space *)val->ground.ptr;
-            if (sp != root_space) {
+            /* A module's space belongs to the library context, which
+               frees it with the other modules. */
+            if (sp != root_space &&
+                !cetta_library_owns_space(libraries, sp)) {
                 bool already_freed = false;
                 for (uint32_t previous = 0; previous < ri; previous++) {
                     Atom *prior = registry->entries[previous].value;
@@ -2301,6 +2356,9 @@ static bool cetta_main_cleanup(CettaMainCleanup *cleanup) {
                 cleanup->registry, cleanup->space,
                 cleanup->libraries_initialized
                     ? cleanup->libraries->petta_program
+                    : NULL,
+                cleanup->libraries_initialized
+                    ? cleanup->libraries
                     : NULL);
             eval_cleanup_owned_new_spaces(cleanup->registry, cleanup->space);
         } else {
@@ -2397,6 +2455,7 @@ typedef enum {
     MAIN_PETTA_BLOCK_LOAD_FAILED = 0,
     MAIN_PETTA_BLOCK_LOAD_OK,
     MAIN_PETTA_BLOCK_LOAD_TYPE_REJECTED,
+    MAIN_PETTA_BLOCK_LOAD_DEFINITION_REJECTED,
 } MainPettaBlockLoadResult;
 
 static MainPettaBlockLoadResult main_petta_check_forms(
@@ -2485,9 +2544,21 @@ static MainPettaBlockLoadResult main_petta_load_declaration_block(
     if (!block)
         return MAIN_PETTA_BLOCK_LOAD_FAILED;
     bool ok = true;
+    Arena diagnostic_arena;
+    arena_init(&diagnostic_arena);
     for (int index = 0; ok && index < atom_count; index++) {
         Atom *source =
             term_universe_get_atom(universe, atom_ids[index]);
+        Atom *definition_error = eval_petta_builtin_definition_error(
+            &diagnostic_arena, registry, space, source);
+        if (definition_error) {
+            fprintf(stderr, "error: ");
+            atom_print(definition_error, stderr);
+            fputc('\n', stderr);
+            arena_free(&diagnostic_arena);
+            petta_program_declaration_block_free(block);
+            return MAIN_PETTA_BLOCK_LOAD_DEFINITION_REJECTED;
+        }
         const PettaPlanNode *plan =
             petta_program_declaration_block_plan_at(
                 block, index);
@@ -2510,6 +2581,7 @@ static MainPettaBlockLoadResult main_petta_load_declaration_block(
             libraries ? libraries->petta_program : NULL, space);
 #endif
     }
+    arena_free(&diagnostic_arena);
     petta_program_declaration_block_free(block);
     return ok ? MAIN_PETTA_BLOCK_LOAD_OK
               : MAIN_PETTA_BLOCK_LOAD_FAILED;
@@ -3640,6 +3712,9 @@ static int cetta_main(int argc, char **argv) {
     Atom *self_value = atom_space(&arena, &space);
     cetta_provenance_assert_not_transient(self_value, "main.registry.self");
     registry_bind_id(&registry, g_builtin_syms.self, self_value);
+    /* HE's program is the top of its module tree. */
+    if (lang->id == CETTA_LANGUAGE_HE)
+        cetta_library_set_top_module_space(&libraries, &space);
 
     if (!lang_is_mm2) {
         n = inline_text
@@ -3787,6 +3862,12 @@ static int cetta_main(int argc, char **argv) {
         goto cleanup;
     }
 
+    if (lang->id == CETTA_LANGUAGE_HE && !he_library_tables_init()) {
+        fprintf(stderr, "error: HE grounded operation types failed to load\n");
+        rc = 1;
+        goto cleanup;
+    }
+
     /*
      * PeTTa owns its library equations.  Loading HE's definitions into
      * &self changes equation choice, specialization, and reflection even when
@@ -3806,6 +3887,20 @@ static int cetta_main(int argc, char **argv) {
     /* Add grounded op type declarations (HE stdlib implicit types) */
     if (lang->id != CETTA_LANGUAGE_PETTA)
         main_add_builtin_type_decls(&space, &arena, lang->id, profile);
+    /* HE's standard library is a module &self imports: its atoms answer
+       queries after the program's own and are not removable through &self.
+       Prime keeps its library defaults as removable atoms of &self. */
+    if (lang->id == CETTA_LANGUAGE_HE) {
+        if (!main_he_prepare_library(
+                &space, &arena,
+                !cetta_language_uses_rust_he_compat_semantics(lang->id,
+                                                              profile))) {
+            fprintf(stderr, "error: HE library could not be prepared\n");
+            rc = 1;
+            goto cleanup;
+        }
+        (void)space_mark_imported_prefix(&space);
+    }
 
     int i = 0;
     bool stop_document_sequence = false;
@@ -3963,8 +4058,7 @@ process_petta_document:
                             stderr,
                             "error: could not compile PeTTa declaration block\n");
                     }
-                    rc = loaded == MAIN_PETTA_BLOCK_LOAD_TYPE_REJECTED
-                        ? 2 : 1;
+                    rc = loaded == MAIN_PETTA_BLOCK_LOAD_FAILED ? 1 : 2;
                     goto cleanup;
                 }
                 pi = block_end;
@@ -4201,13 +4295,17 @@ process_petta_document:
                         : "error: observation incomplete: %s\n",
                     eval_completion_reason(detailed.completion));
                 bool resource_fault = lang->id == CETTA_LANGUAGE_PETTA &&
-                    detailed.completion == CETTA_EVAL_INCOMPLETE_CAPACITY;
+                    (detailed.completion == CETTA_EVAL_INCOMPLETE_CAPACITY ||
+                     detailed.completion == CETTA_EVAL_INCOMPLETE_STACK);
                 if (resource_fault) {
                     CettaErrorPresentation view = {
                         .code = CETTA_DIAGNOSTIC_RESOURCE,
                         .classification = "resource",
-                        .message = "Evaluator capacity exhausted",
                     };
+                    snprintf(view.message, sizeof(view.message), "%s",
+                        detailed.completion == CETTA_EVAL_INCOMPLETE_STACK
+                            ? "Evaluator stack exhausted (StackOverflow)"
+                            : "Evaluator capacity exhausted");
                     run_cli_query_fault(run_cli, &view);
                 }
                 eval_outcome_free(&detailed);
@@ -4241,15 +4339,22 @@ process_petta_document:
                 run_cli_answers(run_cli, results->len);
             if (petta_uncaught_error) {
                 run_cli_query_stop(run_cli, RUN_REPORT_STOP_FAULT);
-                if (run_cli) {
-                    Atom *exception = NULL;
-                    for (uint32_t j = 0u; j < results->len && !exception; j++)
-                        if (atom_is_error(results->items[j])) exception=results->items[j];
+                Atom *exception = NULL;
+                for (uint32_t j = 0u; j < results->len && !exception; j++)
+                    if (atom_is_error(results->items[j]))
+                        exception = results->items[j];
+                Atom *formal = exception && exception->expr.len >= 2u
+                    ? exception->expr.elems[1] : NULL;
+                bool python_error = formal && formal->kind == ATOM_EXPR &&
+                    formal->expr.len >= 3u &&
+                    atom_is_symbol(formal->expr.elems[0], "python_error");
+                if (run_cli || python_error) {
                     CettaErrorPresentation view;
-                    cetta_error_present(exception,diagnostic_details,&view);
-                    run_cli_query_fault(run_cli,&view);
-                    fprintf(stderr,"error: uncaught PeTTa error: %s: %s%s\n",
-                        view.classification,view.message,view.truncated ? " [truncated]" : "");
+                    cetta_error_present(exception, diagnostic_details, &view);
+                    run_cli_query_fault(run_cli, &view);
+                    fprintf(stderr, "error: uncaught PeTTa error: %s: %s%s\n",
+                        view.classification, view.message,
+                        view.truncated ? " [truncated]" : "");
                 } else {
                     fputs("error: uncaught PeTTa error: ", stderr);
                     write_results(stderr, results, lang->id, profile);
@@ -4318,8 +4423,7 @@ process_petta_document:
                         stderr,
                         "error: could not compile PeTTa declaration block\n");
                 }
-                rc = loaded == MAIN_PETTA_BLOCK_LOAD_TYPE_REJECTED
-                    ? 2 : 1;
+                rc = loaded == MAIN_PETTA_BLOCK_LOAD_FAILED ? 1 : 2;
                 goto cleanup;
             }
             i = block_end;

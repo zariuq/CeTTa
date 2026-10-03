@@ -51,6 +51,7 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
 
 #define CETTA_BUILTIN_SYMBOLS(X) \
     X(empty, "Empty") \
+    X(not_reducible, "NotReducible") \
     X(error, "Error") \
     X(equals, "=") \
     X(atom, "Atom") \

@@ -43,6 +43,34 @@ typedef enum {
 HeTypeArgumentCheck he_type_argument_check(Atom *expected);
 Atom *he_type_result_demand(Arena *arena, Atom *codomain);
 
+/* HE's grounded operation types and library declarations: immutable
+ * language data, built once per process and shared by every session.
+ * Lookups build them on first use; false reports tables that failed to
+ * load. */
+bool he_library_tables_init(void);
+/* HE's grounded operations type themselves, as upstream's grounded atoms do
+ * (Grounded::type_): the type is not a declaration atom in any space, and a
+ * declaration a program writes for the name does not change it.  The types
+ * of a grounded operation's name, or 0 for any other symbol; `extensions`
+ * adds CeTTa's extended signatures, which the profile with upstream's exact
+ * semantics leaves out. */
+uint32_t he_grounded_symbol_types(SymbolId symbol, bool extensions,
+                                  Atom *const **types);
+
+/* The declarations of HE's standard library, in upstream's order, parsed by
+ * he_library_tables_init.  In HE profiles they are the declarations of the
+ * library module &self imports. */
+size_t he_library_declaration_count(void);
+Atom *he_library_declaration_at(size_t index);
+/* Whether a CeTTa library declaration with this subject concerns a name of
+ * upstream's library: one upstream declares, or one it defines or uses
+ * without declaring. */
+bool he_library_names_subject(const Atom *subject);
+/* Whether upstream declares `subject` with an arrow of this arity; a CeTTa
+ * signature of another arity extends the name's call forms. */
+bool he_library_declares(const Atom *subject);
+bool he_library_declares_arity(const Atom *subject, CettaExprLen arity);
+
 /* Interpreter type matching treats root Atom and Undefined symmetrically as
  * wildcards, then performs ordinary atom matching, not recursive wildcard
  * matching. Structural inference has its own rules; do not substitute this
@@ -89,6 +117,13 @@ typedef struct {
     /* NULL uses HE interpreter refinement. Non-HE clients of the shared
      * applicability mechanism supply their own relation explicitly. */
     bool (*refine)(Atom *actual, Atom *expected, BindingsBuilder *, Arena *);
+    /* Optional observation of an accepted instantiated codomain together
+     * with its refinement. It runs before the fold releases its path. */
+    bool (*accepted)(void *context, Atom *codomain, const Bindings *refinement);
+    bool first_applicable;
+    /* HE treats metatype recognition as an early success; its mismatch
+     * still permits inferred declared types. Other clients may reject it. */
+    bool infer_after_metatype_mismatch;
 } HeTypeApplicationServices;
 
 typedef enum {

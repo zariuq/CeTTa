@@ -142,12 +142,13 @@
 
 ; The represented consumer expansion is licensed only while the imported
 ; definition is its sole applicable equation.  An added alternative must
-; disable the optimization and preserve the ordinary result bag.
+; disable the optimization and preserve the ordinary result bag.  The order
+; of the two results is the language's: HE answers an importer's own
+; equations before an imported module's.
 (= (clist:foldl $list $init $acc $item $step)
    extra-fold-result)
-!(assertEqual
-  (collapse
-    (clist:foldl
-      (clist:from-list (1 2))
-      0 $acc $item (+ $acc $item)))
+!(assertEqualToResult
+  (clist:foldl
+    (clist:from-list (1 2))
+    0 $acc $item (+ $acc $item))
   (3 extra-fold-result))
