@@ -28,6 +28,11 @@ for route in ('0','1'):
     env=dict(os.environ,CETTA_OPEN_EQUATIONS_REFERENCE=route,PYTHONPATH=str(root)+os.pathsep+os.environ.get('PYTHONPATH',''))
     for case in ('plain','private','huge','controls','hostile','nonstring','surrogate'):
         source=root/f'{case}-{route}.metta'; source.write_text(f'!(py-call (diagnostic_probe.{case}))\n!(+ 40 2)\n')
+        legacy=subprocess.run([str(a.binary.resolve()),'--lang','petta',str(source)],env=env,capture_output=True,text=True,timeout=30)
+        assert legacy.returncode==2 and legacy.stdout=='',(case,route,legacy)
+        assert legacy.stderr.startswith('error: uncaught PeTTa error: '),(case,route,legacy.stderr)
+        assert '<py_' not in legacy.stderr and 'PRIVATE_SENTINEL' not in legacy.stderr
+        assert not (root/'diagnostic_probe.called').exists()
         for detail in (False,True):
             report=root/f'{case}-{route}-{detail}.json'
             cmd=[str(a.binary.resolve()),'--lang','petta','--run-contract','--run-report',str(report)]

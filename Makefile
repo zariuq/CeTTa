@@ -3464,6 +3464,7 @@ OPT_IN_FEATURE_TESTS = \
 	tests/test_io_no_http.metta \
 	tests/test_io_rho_bridge.metta \
 	tests/test_io_syntax.metta \
+	tests/test_json_gslt_byte_lengths.metta \
 	tests/test_json_gslt_hostile_constructors.metta \
 	tests/test_json_gslt_invalid_number.metta \
 	tests/test_json_gslt_legacy_nul.metta \
@@ -7315,6 +7316,17 @@ runtime/bootstrap/gslt_metadata_v1/%.$(GSLT_METADATA_V1_OBJ_TAG).o: %.c $(BUILD_
 $(NIK_AUTHORITY_CATALOG_ABT_V1_OBJ): src/abt.c src/abt.h src/atom_blob.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) -DCETTA_NO_STDLIB -ffunction-sections -fdata-sections $(DEPFLAGS))
+
+# These helper links use the bridge archive through LDFLAGS too. Its
+# prerequisite must be explicit for a fresh parallel bridge build.
+$(NIK_AUTHORITY_CATALOG_NATIVE_V1_BIN) \
+	$(RULE_MACHINE_PROGRAM_GENERATOR_V1) \
+	$(GSLT_SUPPORT_PROFILE_NATIVE_V1_BIN) \
+	$(GSLT_SUPPORT_PROFILE_TEST_V1_BIN) \
+	$(GSLT_PROVIDER_CATALOG_NATIVE_V1_BIN) \
+	$(GSLT_LANGUAGE_NATIVE_V1_BIN) \
+	$(GSLT_LANGUAGE_SOURCE_CODEC_TEST_V1_BIN) \
+	$(GSLT_METADATA_DECODERS_V1_TEST_BIN): $(filter %.a,$(BRIDGE_DEPS))
 
 $(NIK_AUTHORITY_CATALOG_NATIVE_V1_BIN): $(NIK_AUTHORITY_CATALOG_NATIVE_V1_OBJ) $(GSLT_METADATA_STATS_V1_OBJ)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -26067,7 +26079,8 @@ test-petta-type-policy: $(BIN)
 				type_policy_owned_space type_policy_body_revision type_policy_domain_syntax \
 				type_policy_sequential_binding type_policy_exclusion_revision \
 				type_policy_import_revision type_policy_native_partial \
-				type_policy_classifier_effects; do \
+				type_policy_classifier_effects type_policy_tier_calls type_query_spine \
+				type_policy_builtin_extensions; do \
 				actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
 					--lang petta $$profile tests/petta/$$fixture.metta); \
 				expected_file=tests/petta/$$fixture.expected; \
@@ -26082,6 +26095,15 @@ test-petta-type-policy: $(BIN)
 				fi; \
 			done; \
 		done; \
+		fixture=type_policy_builtin_demands; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta --profile extended tests/petta/$$fixture.metta); \
+		expected=$$(cat tests/petta/$$fixture.expected); \
+		if [ "$$actual" != "$$expected" ]; then \
+			echo "FAIL: PeTTa type policy $$fixture ($$route extended)"; \
+			diff -u tests/petta/$$fixture.expected <(printf '%s\n' "$$actual"); \
+			exit 1; \
+		fi; \
 	done; \
 	echo "PASS: PeTTa type policy qualifies pinned base semantics and explicit extended observations on both routes"
 
@@ -26199,7 +26221,7 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-c
 		status=$$?; \
 	if [ "$(ENABLE_PYTHON)" = 1 ]; then \
 		expected_status=2; \
-		expected_prefix='error: uncaught PeTTa error: (Error (python_error ModuleNotFoundError (<py_ModuleNotFoundError>(0x'; \
+		expected_prefix='error: uncaught PeTTa error: ModuleNotFoundError: A requested Python module does not exist'; \
 	else \
 		expected_status=0; \
 		expected_prefix='(py-call (cetta_missing_python_module.answer))'; \
@@ -27220,6 +27242,7 @@ PETTA_SEMANTIC_EXACT_STREAM_STEMS = \
 	builtin_data_vocabulary car_cdr_total empty_is_data \
 	collapse_copies_answers open_lists library_metta_suffix \
 	sort_values dynamic_head_values specialize_data_values \
+	specialize_space_arguments \
 	foldall_reduce partial_values bound_head_values \
 	get_type_relation list_natives_several let_star_patterns \
 	lambda_pattern_parameters lambda_parameter_scope \
@@ -29908,7 +29931,15 @@ test-petta-frame-owned-mutation: $(BIN)
 test-he-type-policy: $(BIN) \
 		tests/he/type_policy_reference.metta tests/he/type_policy_reference.expected \
 		tests/he/type_policy_wildcards.metta tests/he/type_policy_wildcards.expected \
-		tests/he/type_policy_nested_wildcards.metta tests/he/type_policy_nested_wildcards.expected
+		tests/he/type_policy_nested_wildcards.metta tests/he/type_policy_nested_wildcards.expected \
+		tests/he/result_boundary_v1.metta tests/he/result_boundary_v1.expected \
+		tests/he/minimal_member_handoff_v1.metta tests/he/minimal_member_handoff_v1.expected \
+		tests/he/library_module_v1.metta tests/he/library_module_v1.expected \
+		tests/he/library_declarations_v1.metta tests/he/library_declarations_v1.expected \
+		$(wildcard tests/he/module_import_v1/*.metta) \
+		tests/he/module_import_v1/main.expected \
+		tests/he/module_import_v1/rollback.expected \
+		tests/he/module_import_v1/import_destination.expected
 	@set -eu -o pipefail; \
 	for profile in "" "--profile extended"; do \
 		for fixture in type_policy_reference type_policy_wildcards type_policy_nested_wildcards; do \
@@ -29916,7 +29947,39 @@ test-he-type-policy: $(BIN) \
 				| diff -u tests/he/$$fixture.expected -; \
 		done; \
 	done; \
-	echo 'PASS: HE type demand and interpreter wildcards match upstream HE'
+	actual=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-he-result-boundary.XXXXXX"); \
+	errors=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-he-result-boundary-errors.XXXXXX"); \
+	trap 'rm -f "$$actual" "$$errors"' EXIT; \
+	for fixture in result_boundary_v1 minimal_member_handoff_v1 library_module_v1 \
+			module_import_v1/main module_import_v1/rollback \
+			module_import_v1/import_destination; do \
+	for profile in "" "--profile extended" "--profile he-compat"; do \
+		for reference in 0 1; do \
+			if ! CETTA_OPEN_EQUATIONS_REFERENCE=$$reference \
+				$(CETTA_BIN_INVOKE) --lang he $$profile \
+					tests/he/$$fixture.metta >"$$actual" 2>"$$errors"; then \
+				cat "$$errors" >&2; \
+				echo "FAIL: HE $$fixture ($$profile, reference=$$reference) exited unsuccessfully" >&2; \
+				exit 1; \
+			fi; \
+			if [ -s "$$errors" ]; then \
+				cat "$$errors" >&2; \
+				echo "FAIL: HE $$fixture ($$profile, reference=$$reference) wrote stderr" >&2; \
+				exit 1; \
+			fi; \
+			if [ "$$profile" = "--profile he-compat" ]; then \
+				diff -u tests/he/$$fixture.expected "$$actual"; \
+			else \
+				diff -u <(sed '/^\[\]$$/d' tests/he/$$fixture.expected) "$$actual"; \
+			fi; \
+		done; \
+	done; \
+	done; \
+	$(CETTA_BIN_INVOKE) --lang he --profile he-compat \
+		tests/he/library_declarations_v1.metta \
+		| sed -E 's/\$$([A-Za-z_][A-Za-z0-9_-]*)#[0-9]+/$$\1/g' \
+		| diff -u tests/he/library_declarations_v1.expected -; \
+	echo 'PASS: HE type demand, interpreter wildcards, the library module and its declarations, and module imports match upstream HE'
 
 test-he-contract-suite: $(BIN) test-he-type-policy test-he-compat-catalog-guards test-he-outcome-list-contracts test-he-nik-typed-applicability-pruning test-eval-in-space-profiles test-he-guarded-equation-plan
 	@pass=0; fail=0; \
@@ -30531,6 +30594,56 @@ test-petta-oem-single-sequence: $(BIN)
 		fi; \
 	done; \
 	echo "PASS: one-child sequences preserve values, choices, effects, failure, payloads and equation cuts"
+
+.PHONY: test-petta-late-foreign-continuation
+test: test-petta-late-foreign-continuation
+test-petta-search-machine: test-petta-late-foreign-continuation
+test-petta-late-foreign-continuation: $(BIN)
+	@set -eu; \
+	for reference in 0 1; do \
+		for fixture in late_foreign_continuation late_foreign_scopes \
+			late_foreign_rejected_calls late_foreign_ready_calls oem_tail_transfer \
+			completed_host_controls completed_host_collection; do \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+				--lang petta tests/petta/$$fixture.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/$$fixture.expected)" ]; then \
+				echo "FAIL: $$fixture (reference $$reference)"; \
+				diff -u tests/petta/$$fixture.expected <(printf '%s\n' "$$actual"); \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	for reference in 0 1; do \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta --profile extended tests/petta/late_foreign_bounded.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/late_foreign_bounded.expected)" ]; then \
+			echo "FAIL: bounded late collection (reference $$reference)"; \
+			diff -u tests/petta/late_foreign_bounded.expected <(printf '%s\n' "$$actual"); \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: late registration preserves aliases, delayed constraints, collection, commitment, recovery and older alternatives"
+
+.PHONY: test-petta-tier-composition
+test: test-petta-tier-composition
+test-petta-semantics: test-petta-tier-composition
+test-open-equations: test-petta-tier-composition
+test-petta-tier-composition: $(BIN)
+	@set -eu; \
+	for fixture in tier_sequences tier_primitives; do \
+		for reference in 0 1; do \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+				--lang petta tests/petta/$$fixture.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/$$fixture.expected)" ]; then \
+				echo "FAIL: $$fixture (reference $$reference)"; \
+				diff -u tests/petta/$$fixture.expected <(printf '%s\n' "$$actual"); \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: sequencing, value bindings, structural observations and unification preserve choices, effects and cut scope"
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_tier_composition.py \
+		./$(BIN) $(if $(filter 1,$(ENABLE_RUNTIME_STATS)),--stats,)
 
 .PHONY: test-petta-oem-collection-stress
 # The open-equation machine answers the same when it collects every few
@@ -41129,16 +41242,18 @@ test-tptp-official-dollar-words-v1-body: $(BIN) prepare-tptp-compact-morphism-v1
 # files under lib/petta and lib/prime are checked against it.  Prime needs
 # its own spelling only where the source hands values to natives.
 LIBRARY_SPELLING_TOOL_V1 = tools/library_spelling.py
-# The libraries that run on real PeTTa; the list library runs on the CeTTa
-# host's PeTTa lane, over natives real PeTTa does not have.
+# The libraries that run on real PeTTa; the remaining native libraries run
+# on the CeTTa host's PeTTa lane, over natives real PeTTa does not have.
 LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_tptp json str
-LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list
+LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list system fs io
 LIBRARY_PRIME_SPELLING_SOURCES_V1 = json
 .PHONY: test-library-spellings-v1
 test-library-spellings-v1: $(LIBRARY_SPELLING_TOOL_V1) \
+		tests/support/test_library_spelling_v1.py \
 		$(foreach lib,$(LIBRARY_PETTA_SPELLING_SOURCES_V1),lib/$(lib).metta lib/petta/$(lib).metta) \
 		$(foreach lib,$(LIBRARY_PRIME_SPELLING_SOURCES_V1),lib/$(lib).metta lib/prime/$(lib).metta)
 	@set -eu; \
+	python3 tests/support/test_library_spelling_v1.py; \
 	for lib in $(LIBRARY_PETTA_SPELLING_SOURCES_V1); do \
 		python3 $(LIBRARY_SPELLING_TOOL_V1) lib/$$lib.metta lib/petta/$$lib.metta \
 			--dialect=petta --check; \
@@ -41147,7 +41262,7 @@ test-library-spellings-v1: $(LIBRARY_SPELLING_TOOL_V1) \
 		python3 $(LIBRARY_SPELLING_TOOL_V1) lib/$$lib.metta lib/prime/$$lib.metta \
 			--dialect=prime --check; \
 	done; \
-	echo '(LibrarySpellingsV1Summary 6 1)'
+	echo '(LibrarySpellingsV1Summary $(words $(LIBRARY_PETTA_SPELLING_SOURCES_V1)) $(words $(LIBRARY_PRIME_SPELLING_SOURCES_V1)))'
 
 # The PeTTa spellings use only real PeTTa's vocabulary: every head in an
 # evaluated position is one of its functions or forms (the reference file,
@@ -42399,7 +42514,10 @@ test-io-json-bridge:
 test-json-gslt-library-body: $(BIN) lib/json.metta lib/petta/json.metta lib/prime/json.metta \
 		tests/test_json_gslt_hostile_constructors.metta \
 		tests/test_json_gslt_hostile_constructors.expected \
-		tests/test_json_gslt_hostile_constructors.petta.expected
+		tests/test_json_gslt_hostile_constructors.petta.expected \
+		tests/test_json_gslt_byte_lengths.metta \
+		tests/test_json_gslt_byte_lengths.expected \
+		tests/test_json_gslt_byte_lengths.petta.expected
 	@set -eu; \
 	actual=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-json-gslt-library.XXXXXX"); \
 	trap 'rm -f "$$actual"' EXIT INT TERM; \
@@ -42412,18 +42530,26 @@ test-json-gslt-library-body: $(BIN) lib/json.metta lib/petta/json.metta lib/prim
 		diff -u tests/test_json_gslt_hostile_constructors.expected "$$actual"; \
 		$(BIN) --lang petta $$profile tests/test_json_gslt_hostile_constructors.metta > "$$actual"; \
 		diff -u tests/test_json_gslt_hostile_constructors.petta.expected "$$actual"; \
+		$(BIN) --lang he $$profile tests/test_json_gslt_byte_lengths.metta > "$$actual"; \
+		diff -u tests/test_json_gslt_byte_lengths.expected "$$actual"; \
+		$(BIN) --lang petta $$profile tests/test_json_gslt_byte_lengths.metta > "$$actual"; \
+		diff -u tests/test_json_gslt_byte_lengths.petta.expected "$$actual"; \
+		$(BIN) --lang he $$profile tests/test_json_gslt_legacy_nul.metta > "$$actual"; \
+		diff -u tests/test_json_gslt_legacy_nul.expected "$$actual"; \
+		$(BIN) --lang petta $$profile tests/test_json_gslt_legacy_nul.metta > "$$actual"; \
+		diff -u tests/test_json_gslt_legacy_nul.petta.expected "$$actual"; \
 	done; \
 	$(BIN) --lang prime tests/test_json_gslt_library.metta > "$$actual"; \
 	diff -u tests/test_json_gslt_library.expected "$$actual"; \
-	$(BIN) --lang he tests/test_json_gslt_legacy_nul.metta > "$$actual"; \
+	$(BIN) --lang prime tests/test_json_gslt_byte_lengths.metta > "$$actual"; \
+	diff -u tests/test_json_gslt_byte_lengths.expected "$$actual"; \
+	$(BIN) --lang prime tests/test_json_gslt_legacy_nul.metta > "$$actual"; \
 	diff -u tests/test_json_gslt_legacy_nul.expected "$$actual"; \
-	$(BIN) --lang petta tests/test_json_gslt_legacy_nul.metta > "$$actual"; \
-	diff -u tests/test_json_gslt_legacy_nul.petta.expected "$$actual"; \
 	$(BIN) --lang he tests/test_json_gslt_invalid_number.metta > "$$actual"; \
 	diff -u tests/test_json_gslt_invalid_number.expected "$$actual"; \
 	$(BIN) --lang petta tests/test_json_gslt_invalid_number.metta > "$$actual"; \
 	diff -u tests/test_json_gslt_invalid_number.petta.expected "$$actual"; \
-	echo "(JsonGsltLibrarySummary 13 13 0)"
+	echo "(JsonGsltLibrarySummary 21 21 0)"
 
 .PHONY: test-json-gslt-library
 test-json-gslt-library:
@@ -42498,6 +42624,8 @@ test-petta-imported-host-bridges: $(BIN)
 	trap 'rm -f "$$actual"' EXIT INT TERM; \
 	$(BIN) --lang petta tests/petta/libpl_native_eval.metta > "$$actual"; \
 	diff -u tests/petta/libpl_native_eval.expected "$$actual"; \
+	$(BIN) --lang petta tests/petta/libpl_eval_errors.metta > "$$actual"; \
+	diff -u tests/petta/libpl_eval_errors.expected "$$actual"; \
 	$(BIN) --lang petta tests/petta/imported_swrite.metta > "$$actual"; \
 	diff -u tests/petta/imported_swrite.expected "$$actual"; \
 	echo "PASS: imported Prolog eval and swrite host bridges"
@@ -42526,6 +42654,40 @@ endif
 test-petta-search-machine: test-petta-imported-host-bridges
 ifeq ($(ENABLE_PYTHON)$(LIB_PROLOG_ENABLED),11)
 test-petta-libpl: test-petta-imported-python-host-bridge
+
+# The native result protocol distinguishes a missing answer, a completed
+# observer value, and ordinary data with the same expression shape.
+.PHONY: test-petta-native-value-boundaries
+test-petta-semantics: test-petta-native-value-boundaries
+test-petta-native-value-boundaries: $(BIN)
+	@set -eu; \
+	for route in 0 1; do \
+		for fixture in ready_native_no_result ready_native_value_delimiter library_no_result_spelled; do \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$route $(CETTA_BIN_INVOKE) \
+				--lang petta "tests/petta/$$fixture.metta" probe-arg 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/$$fixture.expected)" ]; then \
+				echo "FAIL: PeTTa native value boundary ($$fixture, route $$route)"; \
+				diff <(cat tests/petta/$$fixture.expected) \
+					<(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: PeTTa native values and missing answers on both routes"
+ifeq ($(ENABLE_PYTHON),1)
+	@set -eu; \
+	for route in 0 1; do \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$route $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/py_call_data.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/py_call_data.expected)" ]; then \
+			echo "FAIL: PeTTa Python result data (route $$route)"; \
+			diff <(cat tests/petta/py_call_data.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: Python results retain call-shaped data on both routes"
+endif
 endif
 
 .PHONY: test-gslt2parse-schema-v1 test-gslt2parse-schema-v1-native test-gslt2parse-c-horn-v1-native test-gslt2parse-c-horn-v1-differential test-gslt2parse-parser-action-bytecode-v1 test-gslt2parse-lookahead-semantics-v1 test-gslt2parse-parser-pack-guard-compiler-v1 test-gslt2parse-parser-pack-guard-regular-v1 test-gslt2parse-parser-pack-lr1-v1 test-gslt2parse-parser-pack-guard-plan-he-v1 test-gslt2parse-parser-pack-guard-plan-prime-v1 test-gslt2parse-parser-pack-abi-v1-native test-gslt2parse-parser-pack-abi-v1-matrix test-gslt2parse-parser-term-projection-v1-native test-gslt2parse-parser-atom-projection-v1-native test-gslt2parse-parser-atom-projection-closure-v1 test-gslt2parse-semantic-mask-span-compiler-v1 test-gslt2parse-parser-pack-gll-v1-native test-gslt2parse-parser-pack-gll-v1-matrix test-gslt2parse-regular-span-dfa-v1-native test-gslt2parse-regular-span-dfa-v1-matrix test-term-universe-backend-add-abi bench-space-scale-ladder

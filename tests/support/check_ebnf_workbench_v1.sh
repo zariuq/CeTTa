@@ -44,6 +44,22 @@ for ebnf_fixture in observations integration equivalence projection diagnostics 
     ebnf_count=$((ebnf_count + 1))
 done
 
+# Run the complete public example, including all successful evaluations and
+# syntax refusals, in one episode.  Its saved answer continuations must keep
+# their locals alive across nursery evacuation between parser calls.
+sha256sum examples/bnf/arithmetic_evaluation_v1.metta \
+    examples/bnf/arithmetic_evaluation_v1.ebnf \
+    tests/langdef/bnf/ebnf_arithmetic_evaluation_v1.expected \
+    >> "$ebnf_evidence/inputs.sha256"
+CETTA_PETTA_SEARCH_MACHINE=1 "$ebnf_runtime" --lang petta \
+    examples/bnf/arithmetic_evaluation_v1.metta \
+    > "$ebnf_evidence/arithmetic-evaluation.out" \
+    2> "$ebnf_evidence/arithmetic-evaluation.stderr"
+test ! -s "$ebnf_evidence/arithmetic-evaluation.stderr"
+cmp tests/langdef/bnf/ebnf_arithmetic_evaluation_v1.expected \
+    "$ebnf_evidence/arithmetic-evaluation.out"
+ebnf_count=$((ebnf_count + 1))
+
 # Mutated library copies start from the PeTTa spelling: it is what the PeTTa
 # lane loads, and a copy outside lib/ is not resolved to a lane spelling.
 # Each namespace must contribute to freshness. Mutate the authored scan,

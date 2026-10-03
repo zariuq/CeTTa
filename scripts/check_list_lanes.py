@@ -89,8 +89,11 @@ DOMAIN_CASES = (
     (
         "list-len-non-expression",
         "(list:len not-an-expression)",
-        "[(Error (size-atom not-an-expression) "
-        "(BadArgType 1 Expression %Undefined%))]",
+        {
+            "he": "[(Error (size-atom not-an-expression) Atom is not an ExpressionAtom)]",
+            "prime": "[(Error (size-atom not-an-expression) "
+            "(BadArgType 1 Expression %Undefined%))]",
+        },
     ),
     (
         "clist-from-non-expression",
@@ -116,12 +119,14 @@ def check_domains(cetta: Path) -> int:
             )
             for lane in ("he", "prime")
         }
-        expected = f"[()]\n{expected_result}"
         for lane, output in outputs.items():
+            lane_expected = expected_result[lane] if isinstance(expected_result, dict) else expected_result
+            expected = f"[()]\n{lane_expected}"
             require_equal(f"{label}:{lane}", output, expected)
             checks += 1
-        require_equal(f"{label}:cross-lane", outputs["prime"], outputs["he"])
-        checks += 1
+        if not isinstance(expected_result, dict):
+            require_equal(f"{label}:cross-lane", outputs["prime"], outputs["he"])
+            checks += 1
     return checks
 
 
@@ -297,11 +302,11 @@ def check_mutations(cetta: Path) -> int:
             clist_source,
             "(= (clist:from-list $xs)\n"
             "   (let ($head $tail) (decons-atom $xs)\n"
-            "     (let $rest (eval (clist:from-list $tail))\n"
+            "     (let $rest (clist:from-list $tail)\n"
             "       (clist:cons $head $rest))))",
             "(= (clist:from-list $xs)\n"
             "   (let ($head $tail) (decons-atom $xs)\n"
-            "     (let $rest (eval (clist:from-list $tail))\n"
+            "     (let $rest (clist:from-list $tail)\n"
             "       (clist:append $rest (clist:cons $head (clist:nil))))))",
             "!(assertEqual (clist:to-list (clist:from-list (a b c))) (a b c))\n",
         ),
@@ -310,19 +315,19 @@ def check_mutations(cetta: Path) -> int:
             clist_source,
             "(= (clist:len-acc (ClistCons $head $tail) $acc)\n"
             "   (let $next (eval (+ $acc 1))\n"
-            "     (eval (clist:len-acc $tail $next))))",
+            "     (clist:len-acc $tail $next)))",
             "(= (clist:len-acc (ClistCons $head $tail) $acc)\n"
-            "   (eval (clist:len-acc $tail $acc)))",
+            "   (clist:len-acc $tail $acc))",
             "!(assertEqual (clist:len (clist:from-list (a b c))) 3)\n",
         ),
         (
             "clist-reverse-accumulator",
             clist_source,
             "(= (clist:reverse-acc (ClistCons $head $tail) $acc)\n"
-            "   (let $next (eval (clist:cons $head $acc))\n"
-            "     (eval (clist:reverse-acc $tail $next))))",
+            "   (let $next (clist:cons $head $acc)\n"
+            "     (clist:reverse-acc $tail $next)))",
             "(= (clist:reverse-acc (ClistCons $head $tail) $acc)\n"
-            "   (eval (clist:reverse-acc $tail $acc)))",
+            "   (clist:reverse-acc $tail $acc))",
             "!(assertEqual (clist:reverse (clist:from-list (a b c))) "
             "(clist:from-list (c b a)))\n",
         ),
@@ -362,7 +367,7 @@ def check_mutations(cetta: Path) -> int:
             "stable-merge",
             list_source,
             "if $take-left\n",
-            "if (if (eval ($precedes $right-head $left-head))\n"
+            "if (if ($precedes $right-head $left-head)\n"
             "                        False\n"
             "                        $take-left)\n",
             "(= (test:key<= (item $a $x) (item $b $y)) (<= $a $b))\n"
@@ -391,14 +396,14 @@ def check_mutations(cetta: Path) -> int:
         (
             "map",
             list_source,
-            "       (map-atom $xs $var $body)))",
+            "       (map-atom $xs $var (metta $body %Undefined% (context-space)))))",
             "       $xs))",
             "!(assertEqual (list:map (1 2 3) $x (+ $x 1)) (2 3 4))\n",
         ),
         (
             "filter",
             list_source,
-            "       (filter-atom $xs $var $body)))",
+            "       (filter-atom $xs $var (metta $body %Undefined% (context-space)))))",
             "       $xs))",
             "!(assertEqual (list:filter (1 2 3 4) $x (> $x 2)) (3 4))\n",
         ),
@@ -407,12 +412,13 @@ def check_mutations(cetta: Path) -> int:
             list_source,
             "(= (list:retain-top-k-by-number-walk $key-function $xs $count)\n"
             "   (function\n"
-            "     (chain (eval $xs) $__list_top_k_items\n"
-            "       (chain (eval $count) $__list_top_k_count\n"
+            "     (chain (metta $xs %Undefined% (context-space)) $__list_top_k_items\n"
+            "       (chain (metta $count %Undefined% (context-space)) $__list_top_k_count\n"
             "         (eval\n"
             "           (_minimal-retain-top-k-by-number\n"
             "             $__list_top_k_items $__list_top_k_count $__list_top_k_item\n"
-            "             (eval ($key-function $__list_top_k_item))))))))",
+            "             (metta ($key-function $__list_top_k_item)\n"
+            "               %Undefined% (context-space))))))))",
             "(= (list:retain-top-k-by-number-walk $key-function $xs $count)\n"
             "   $xs)",
             "(= (test:key (item $key $value)) $key)\n"
@@ -423,9 +429,9 @@ def check_mutations(cetta: Path) -> int:
         (
             "retain-top-k-relational-fallback",
             list_source,
-            "(chain (unkey-atom $retained) $result\n"
+            "(chain (eval (unkey-atom $retained)) $result\n"
             "         (return $result))",
-            "(chain (unkey-atom $retained) $result\n"
+            "(chain (eval (unkey-atom $retained)) $result\n"
             "         (return ()))",
             "(= (test:key-choice (item $key $value)) $key)\n"
             "(= (test:key-choice (item $key $value)) (+ $key 10))\n"

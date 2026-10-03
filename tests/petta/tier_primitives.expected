@@ -1,0 +1,37 @@
+equality-left
+equality-right
+min-left
+min-right
+configured
+(Flags true false false false)
+(Flags false true true false)
+(Flags false true false false)
+(Flags false false false false)
+(Flags false false true true)
+(Flags false false true true)
+(Flags false false true false)
+(Flags false true true true)
+((Box false) (Box true) (Box true) (Box true) (Box false))
+(Result a false)
+(Result false true)
+(Result false true)
+(Result false true true)
+((Result true a) (Result true b) (Result true a))
+(Result good)
+(Box true)
+(Box true)
+(Box false)
+(Box false)
+(Box true)
+((Box true) (Box false) (Box true) (Box false) (Box false) (Box true))
+(Result false true)
+()
+true
+((Result a))
+(Numbers 3 7 1)
+(Numbers -7 3 2)
+(Numbers 7 9)
+(4 7 2 2 4 7)
+(type_error evaluable (/ not-a-number 0))
+2.5
+(Box (// 7 2) (numeric-eq 6 6))

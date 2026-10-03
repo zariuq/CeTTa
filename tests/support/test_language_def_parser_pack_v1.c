@@ -1558,12 +1558,26 @@ static void reusable_runtime_gate(TestCounts *counts) {
     error[0] = '\0';
     (void)expect(
         counts,
-        !cetta_json_value_v1_to_legacy(
+        cetta_json_value_v1_to_legacy(
             &arena, value, 100000u, 128u, &legacy,
             &value_status, error, sizeof(error)) &&
-            value_status ==
-                CETTA_JSON_VALUE_V1_UNREPRESENTABLE_LEGACY_STRING,
-        "legacy projection rejects unrepresentable U+0000 without loss");
+            value_status == CETTA_JSON_VALUE_V1_OK &&
+            legacy && legacy->kind == ATOM_EXPR && legacy->expr.len == 2u &&
+            atom_is_symbol(legacy->expr.elems[0], "JsonString") &&
+            legacy->expr.elems[1]->kind == ATOM_GROUNDED &&
+            legacy->expr.elems[1]->ground.gkind == GV_STRING &&
+            atom_string_len(legacy->expr.elems[1]) == 1u &&
+            legacy->expr.elems[1]->ground.sval[0] == '\0',
+        "legacy projection preserves U+0000 as one stored byte");
+    {
+        Atom *roundtrip = NULL;
+        (void)expect(
+            counts,
+            cetta_json_value_v1_from_legacy(
+                &arena, legacy, 100000u, 128u, &roundtrip,
+                &value_status, error, sizeof(error)) && atom_eq(roundtrip, value),
+            "legacy embedded-NUL string round-trips to its canonical value");
+    }
     error[0] = '\0';
     (void)expect(
         counts,
@@ -1577,6 +1591,51 @@ static void reusable_runtime_gate(TestCounts *counts) {
     json_bytes = NULL;
 
     sentinel = atom_symbol(&arena, "stable-runtime-output");
+    {
+        /* Both legacy text paths must validate bytes after an embedded NUL. */
+        static const char invalid_utf8[] = {'x', '\0', (char)0xff};
+        Atom *text = atom_string_n(&arena, invalid_utf8, sizeof(invalid_utf8));
+        Atom *string_items[2] = {atom_symbol(&arena, "JsonString"), text};
+        Atom *pair_items[3] = {
+            atom_symbol(&arena, "JsonPair"), text,
+            atom_symbol(&arena, "JsonNull"),
+        };
+        Atom *pair = atom_expr(&arena, pair_items, 3u);
+        Atom *object_items[2] = {
+            atom_symbol(&arena, "JsonObject"), atom_expr(&arena, &pair, 1u),
+        };
+        Atom *inputs[2] = {
+            atom_expr(&arena, string_items, 2u),
+            atom_expr(&arena, object_items, 2u),
+        };
+        for (size_t i = 0; i < 2u; i++) {
+            Atom *converted = sentinel;
+            error[0] = '\0';
+            (void)expect(
+                counts,
+                !cetta_json_value_v1_from_legacy(
+                    &arena, inputs[i], 100000u, 128u, &converted,
+                    &value_status, error, sizeof(error)) &&
+                    value_status == CETTA_JSON_VALUE_V1_INVALID_UTF8 &&
+                    converted == sentinel,
+                i == 0u ? "legacy string validates UTF-8 after NUL atomically"
+                        : "legacy key validates UTF-8 after NUL atomically");
+        }
+        static const char invalid_number[] = {'1', '\0', 'j'};
+        Atom *number_items[2] = {
+            atom_symbol(&arena, "JsonNumber"),
+            atom_string_n(&arena, invalid_number, sizeof(invalid_number)),
+        };
+        (void)expect(
+            counts,
+            !cetta_json_value_v1_stringify(
+                runtime, atom_expr(&arena, number_items, 2u), true,
+                100000u, 128u, 64u, &json_bytes, &json_len, &value_status,
+                error, sizeof(error)) &&
+                value_status == CETTA_JSON_VALUE_V1_ROUNDTRIP_DISAGREEMENT &&
+                json_bytes == NULL,
+            "legacy number keeps NUL suffix for whole-lexeme validation");
+    }
     value = sentinel;
     limits.kernel = (CettaJsonKernelV1)99;
     error[0] = '\0';

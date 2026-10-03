@@ -419,12 +419,12 @@ static bool space_has_unary_marker(Space *space, SymbolId marker,
         if (applicable)
             return found;
     }
-    uint32_t len = 0;
-    if (!space_length_u32_checked(space, &len)) return false;
-    for (uint32_t i = 0; i < len; i++) {
+    /* A marker may come from an imported module: read the composed view. */
+    CettaCount len = space_view_length64(space);
+    for (CettaIndex i = 0; i < len; i++) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_HE_UNARY_MARKER_FALLBACK_ROW);
-        Atom *at = space_get_at(space, i);
+        Atom *at = space_view_get_at64(space, i);
         if (!at || at->kind != ATOM_EXPR || at->expr.len != 2) continue;
         if (!atom_is_symbol_id(at->expr.elems[0], marker)) continue;
         if (atom_eq(at->expr.elems[1], payload)) return true;
@@ -824,14 +824,9 @@ static HeTypeValidity check_type_refinements(Arena *a, Space *space,
         }
 
         if (ty && ty->kind == ATOM_EXPR && ty->expr.len > 0) {
-            uint32_t space_len = 0;
-            if (!space_length_u32_checked(space, &space_len)) {
-                if (detail) *detail = he_reason(a, "space-too-large");
-                if (stack != inline_stack) free(stack);
-                return HE_TYPE_VALIDATION_UNKNOWN;
-            }
-            for (uint32_t i = 0; i < space_len; i++) {
-                Atom *row = space_get_at(space, i);
+            CettaCount space_len = space_view_length64(space);
+            for (CettaIndex i = 0; i < space_len; i++) {
+                Atom *row = space_view_get_at64(space, i);
                 if (!row || row->kind != ATOM_EXPR || row->expr.len != 4)
                     continue;
                 if (!atom_is_symbol(row->expr.elems[0],
@@ -1741,9 +1736,11 @@ static bool chain_index_build(ChainContext *ctx) {
     ChainIndex *idx = &ctx->index;
     chain_index_init(idx);
     uint32_t len = 0;
-    if (!space_length_u32_checked(ctx->space, &len)) return false;
+    CettaCount view_len = space_view_length64(ctx->space);
+    if (view_len > UINT32_MAX) return false;
+    len = (uint32_t)view_len;
     for (uint32_t i = 0; i < len; i++) {
-        Atom *row = space_get_at(ctx->space, i);
+        Atom *row = space_view_get_at64(ctx->space, i);
         if (!row || row->kind != ATOM_EXPR || row->expr.len != 3) continue;
         if (!atom_is_symbol_id(row->expr.elems[0], g_builtin_syms.colon)) continue;
         Atom *term = row->expr.elems[1];

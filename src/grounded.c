@@ -3807,6 +3807,12 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
             args[0]->ground.gkind == GV_SPACE) {
             return atom_int(a, (int64_t)space_length64((Space *)args[0]->ground.ptr));
         }
+        if (head_id == g_builtin_syms.size_atom &&
+            eval_current_language_id &&
+            eval_current_language_id() == CETTA_LANGUAGE_HE) {
+            return grounded_string_error(a, head, args, nargs,
+                                         "Atom is not an ExpressionAtom");
+        }
         if (args[0]->kind == ATOM_GROUNDED) {
             Atom *expected = (head_id == g_builtin_syms.size_atom)
                 ? atom_expression_type(a)
@@ -4038,8 +4044,8 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
     bool petta = grounded_current_language_is_petta();
     /* SWI-PeTTa defines neither, so both stay data there; Hyperon has no
      * numeric-eq either. */
-    if ((petta && head_id == g_builtin_syms.op_floor_div) ||
-        ((petta || rust_compat) && head_id == g_builtin_syms.numeric_eq))
+    if ((petta && petta_semantics_grounded_undefined(head_id)) ||
+        (rust_compat && head_id == g_builtin_syms.numeric_eq))
         return NULL;
     NumArg na = {0}, nb = {0};
     bool na_ok = get_numeric_arg(args[0], &na);

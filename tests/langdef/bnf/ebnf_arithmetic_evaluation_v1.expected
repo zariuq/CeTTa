@@ -1,0 +1,2 @@
+true
+((Evaluated "(1+3)*7" (Bin "*" (Bin "+" (Num 1) (Num 3)) (Num 7)) 28) (Evaluated "2*3 + 4/23 - 7" (Bin "-" (Bin "+" (Bin "*" (Num 2) (Num 3)) (Bin "/" (Num 4) (Num 23))) (Num 7)) -0.8260869565217392) (Evaluated "(3 + 4) * 6-2+(4*(4))" (Bin "+" (Bin "-" (Bin "*" (Bin "+" (Num 3) (Num 4)) (Num 6)) (Num 2)) (Bin "*" (Num 4) (Num 4))) 56) (Evaluated "10 - 2 - 3" (Bin "-" (Bin "-" (Num 10) (Num 2)) (Num 3)) 5) (Rejected "-2" at 0) (Rejected "3 +" at 3) (Rejected "(4 + 3" at 6))

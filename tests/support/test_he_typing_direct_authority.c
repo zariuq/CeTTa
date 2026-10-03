@@ -167,6 +167,24 @@ static void test_he_type_policy_component(Arena *arena) {
     assert(contracts.len == 0u && errors.len == 2u);
     he_type_errors_free(&errors);
     he_type_contracts_free(&contracts);
+    Atom *unknown = atom_symbol(arena, "he-policy-untyped");
+    Atom *expression_signature = atom_expr3(
+        arena, atom_symbol_id(arena, g_builtin_syms.arrow), expression, top);
+    Atom *expression_call = atom_expr2(
+        arena, atom_symbol(arena, "he-policy-expression"), unknown);
+    assert(he_type_call_applicable(arena, expression_call, expression_signature,
+                                  undefined, false, &services, &errors,
+                                  &contracts) == HE_TYPE_INAPPLICABLE);
+    assert(errors.len == 1u && contracts.len == 0u);
+    he_type_errors_free(&errors);
+    he_type_contracts_free(&contracts);
+    services.infer_after_metatype_mismatch = true;
+    assert(he_type_call_applicable(arena, expression_call, expression_signature,
+                                  undefined, false, &services, &errors,
+                                  &contracts) == HE_TYPE_APPLICABLE);
+    assert(errors.len == 0u && contracts.len == 1u);
+    he_type_errors_free(&errors);
+    he_type_contracts_free(&contracts);
     services.infer = NULL;
     assert(he_type_call_applicable(arena, application, signature, undefined,
                                   false, &services, &errors, &contracts) == HE_TYPE_APPLICATION_INCOMPLETE);

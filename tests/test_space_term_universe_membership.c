@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "parser.h"
 #include "space.h"
 #include "stats.h"
 #include "symbol.h"
@@ -803,6 +804,142 @@ static void test_space_equation_projection_tokens(void) {
     puts("PASS: equation-projection tokens preserve data-only reuse and reject changed, opaque, transported, and stale lifetimes");
 }
 
+static Atom *prefix_test_atom(Arena *a, const char *text) {
+    size_t pos = 0u;
+    Atom *atom = parse_sexpr(a, text, &pos);
+    assert(atom);
+    return atom;
+}
+
+static bool prefix_test_types_are(Space *s, Arena *a, const char *subject,
+                                  const char *first, const char *second) {
+    Atom **types = NULL;
+    uint32_t count = space_get_declared_types(
+        s, a, prefix_test_atom(a, subject), &types);
+    bool ok = count == 2u &&
+        atom_eq(types[0], prefix_test_atom(a, first)) &&
+        atom_eq(types[1], prefix_test_atom(a, second));
+    free(types);
+    return ok;
+}
+
+/* A space whose first atoms belong to an imported module (HE's standard
+ * library): own atoms answer first; imported atoms are neither removable nor
+ * truncatable through the space; copies, replacements and overlays keep the
+ * prefix, and a moved-from space does not. */
+static void test_space_imported_prefix(void) {
+    Arena persistent;
+    Arena scratch;
+    TermUniverse universe;
+    Space s;
+    arena_init(&persistent);
+    arena_set_runtime_kind(&persistent, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    arena_init(&scratch);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    space_init_with_universe(&s, &universe);
+
+    space_add(&s, prefix_test_atom(&scratch, "(: prefix-f (-> A A))"));
+    space_add(&s, prefix_test_atom(&scratch, "(= (prefix-g) lib)"));
+    assert(space_imported_length(&s) == 0u);
+    assert(space_mark_imported_prefix(&s));
+    assert(space_imported_length(&s) == 2u);
+    space_add(&s, prefix_test_atom(&scratch, "(: prefix-f (-> B B))"));
+    space_add(&s, prefix_test_atom(&scratch, "(= (prefix-g) own)"));
+
+    /* Own declarations answer before imported ones. */
+    assert(prefix_test_types_are(&s, &scratch, "prefix-f",
+                                 "(-> B B)", "(-> A A)"));
+    /* So do own equations, through the known-head cursor. */
+    SymbolId g_head = symbol_intern_cstr(g_symbols, "prefix-g");
+    SpaceEquationCursor cursor;
+    SpaceEquationOccurrenceId occurrence;
+    assert(space_equation_cursor_init(&s, g_head, &cursor));
+    assert(space_equation_cursor_next(&cursor, &occurrence) ==
+           SPACE_EQUATION_CURSOR_ITEM);
+    assert(occurrence.logical_index == 3u);
+    assert(space_equation_cursor_next(&cursor, &occurrence) ==
+           SPACE_EQUATION_CURSOR_ITEM);
+    assert(occurrence.logical_index == 1u);
+    assert(space_equation_cursor_next(&cursor, &occurrence) ==
+           SPACE_EQUATION_CURSOR_END);
+
+    /* Imported atoms are not removable through the space. */
+    Atom *imported = prefix_test_atom(&scratch, "(: prefix-f (-> A A))");
+    assert(!space_remove(&s, imported));
+    assert(!space_remove_atom_id(
+        &s, term_universe_lookup_atom_id(&universe, imported)));
+    assert(space_length64(&s) == 4u);
+    /* An own copy of an imported atom is; the imported one stays. */
+    space_add(&s, imported);
+    assert(space_length64(&s) == 5u);
+    assert(space_remove(&s, imported));
+    assert(space_length64(&s) == 4u);
+    assert(atom_eq(space_get_at64(&s, 0u), imported));
+    assert(!space_truncate64(&s, 1u));
+    assert(space_length64(&s) == 4u);
+
+    /* A copy keeps the prefix; a replacement with the same leading atoms
+     * keeps it, and the moved-from source is an empty space without one. */
+    Space *copy = space_heap_clone_shallow(&s);
+    assert(copy && space_imported_length(copy) == 2u);
+    space_replace_contents(&s, copy);
+    assert(space_imported_length(&s) == 2u);
+    assert(space_length64(copy) == 0u);
+    assert(space_imported_length(copy) == 0u);
+    assert(space_truncate64(copy, 0u));
+    space_free(copy);
+    free(copy);
+    /* A replacement with other leading atoms drops it. */
+    Space other;
+    space_init_with_universe(&other, &universe);
+    space_add(&other, prefix_test_atom(&scratch, "(unrelated atom)"));
+    space_add(&other, prefix_test_atom(&scratch, "(= (prefix-g) lib)"));
+    Space keep;
+    space_init_with_universe(&keep, &universe);
+    space_replace_contents(&keep, &s);
+    assert(space_imported_length(&keep) == 2u);
+    space_replace_contents(&keep, &other);
+    assert(space_imported_length(&keep) == 0u);
+    space_free(&keep);
+    space_free(&other);
+
+    /* Overlays, nested too, see the root's prefix and cannot remove it. */
+    Space root;
+    space_init_with_universe(&root, &universe);
+    space_add(&root, prefix_test_atom(&scratch, "(: prefix-f (-> A A))"));
+    assert(space_mark_imported_prefix(&root));
+    space_add(&root, prefix_test_atom(&scratch, "(own atom)"));
+    Space overlay;
+    Space nested;
+    space_init_overlay(&overlay, &root);
+    space_init_overlay(&nested, &overlay);
+    assert(space_imported_length(&overlay) == 1u);
+    assert(space_imported_length(&nested) == 1u);
+    assert(!space_mark_imported_prefix(&overlay));
+    assert(!space_remove(&nested, imported));
+    assert(!space_remove(&overlay, imported));
+    assert(space_remove(&nested, prefix_test_atom(&scratch, "(own atom)")));
+    assert(space_length64(&root) == 2u);
+    space_free(&nested);
+    space_free(&overlay);
+    space_free(&root);
+
+    /* Only a plain atom space carries a prefix. */
+    Space stack;
+    space_init_with_universe(&stack, &universe);
+    stack.kind = SPACE_KIND_STACK;
+    assert(!space_mark_imported_prefix(&stack));
+    space_free(&stack);
+
+    space_free(&s);
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&persistent);
+    printf("PASS: imported atoms answer after own ones and survive "
+           "removal, truncation, copies and overlays\n");
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena persistent;
@@ -816,6 +953,7 @@ int main(void) {
     Space right;
 
     init_test_symbols(&symbols);
+    test_space_imported_prefix();
     test_space_equation_projection_tokens();
     test_space_program_projection_tokens();
 

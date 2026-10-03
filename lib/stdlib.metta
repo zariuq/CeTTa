@@ -373,7 +373,7 @@
   (@return "Unit on success, or an Error value on failure"))
 
 (@doc import!
-  (@desc "Loads a module into &self or a fresh &name. CeTTa keeps imports transactional when materializing into existing spaces; fresh compiled .act imports may stay attached as compiled PathMap spaces instead of reparsing. Raw .mm2 files are not imported through the generic CeTTa module syntax: import! rejects .mm2 specs, while explicit MorkSpace workflows use include with sugar enabled or the direct mork:include! helper. Loader failures can report ModuleImportCycle, ModuleParseFailed, or a module-format-specific load error.")
+  (@desc "Imports a module into &self or a fresh &name. In HE a MeTTa module is loaded once into its own space, with its own tokens: &self then reads the module, and the modules it imports, after its own atoms, while listing and removal through &self see only its own atoms; a fresh &name denotes the module's space. Other languages and module formats load the module into &self or the fresh space transactionally; fresh compiled .act imports may stay attached as compiled PathMap spaces instead of reparsing. Raw .mm2 files are not imported through the generic CeTTa module syntax: import! rejects .mm2 specs, while explicit MorkSpace workflows use include with sugar enabled or the direct mork:include! helper. Loader failures can report ModuleImportCycle, ModuleParseFailed, or a module-format-specific load error.")
   (@params (
     (@param "Destination space reference: &self or a fresh &name")
     (@param "Module spec or path to import")))
@@ -698,23 +698,31 @@
           (if (== $fallback Empty) Empty $fallback))
         (car-atom $docs)))))
 
+; format-args reads its argument tuple as written in HE, while Prime evaluates
+; it.  The doc printers render each atom to text first, so both print the
+; same line.
 (= (help! $atom)
   (case (get-doc $atom) (
     ((@doc-formal (@item $item) (@kind function) (@type $type) (@desc $descr)
                   (@params $params)
                   (@return (@type $ret-type) (@desc $ret-desc)))
-      (let () (println! (format-args "Function {}: {} {}" (noeval ($item $type $descr))))
-        (let () (println! (format-args "Parameters:" ()))
-          (let () (for-each-in-atom $params help-param!)
-            (let () (println! (format-args "Return: (type {}) {}" (noeval ($ret-type $ret-desc))))
-              ())))))
+      (let* (($i (repr $item)) ($t (repr $type)))
+        (let () (println! (format-args "Function {}: {} {}" ($i $t $descr)))
+          (let () (println! (format-args "Parameters:" ()))
+            (let () (for-each-in-atom $params help-param!)
+              (let $r (repr $ret-type)
+                (let () (println! (format-args "Return: (type {}) {}" ($r $ret-desc)))
+                  ())))))))
     ((@doc-formal (@item $item) (@kind function) (@type $type) (@desc $descr))
-      (let () (println! (format-args "Function {}: {} {}" (noeval ($item $type $descr))))
-        ()))
+      (let* (($i (repr $item)) ($t (repr $type)))
+        (let () (println! (format-args "Function {}: {} {}" ($i $t $descr)))
+          ())))
     ((@doc-formal (@item $item) (@kind atom) (@type $type) (@desc $descr))
-      (let () (println! (format-args "Atom {}: {} {}" (noeval ($item $type $descr))))
-        ()))
-    (Empty (println! (format-args "No documentation found for {}" (noeval ($atom)))))
+      (let* (($i (repr $item)) ($t (repr $type)))
+        (let () (println! (format-args "Atom {}: {} {}" ($i $t $descr)))
+          ())))
+    (Empty (let $a (repr $atom)
+      (println! (format-args "No documentation found for {}" ($a)))))
     ($other (Error $other "Cannot match @doc-formal structure")) )))
 
 (= (help!)
@@ -727,18 +735,20 @@
   (let $_
     (reify
       (match $space (@doc $name (@desc $desc) $params $ret)
-        (let () (println! (format-args "{}\n\t{}" (noeval ($name $desc))))
-          (empty))))
+        (let $n (repr $name)
+          (let () (println! (format-args "{}\n\t{}" ($n $desc)))
+            (empty)))))
     (let $_
       (reify
         (match $space (@doc $name (@desc $desc))
-          (let () (println! (format-args "{}\n\t{}" (noeval ($name $desc))))
-            (empty))))
+          (let $n (repr $name)
+            (let () (println! (format-args "{}\n\t{}" ($n $desc)))
+              (empty)))))
       ())))
 
 (= (help-param! $param)
   (let (@param (@type $type) (@desc $desc)) $param
-    (println! (format-args "  {} {}" (noeval ($type $desc))))))
+    (let $t (repr $type) (println! (format-args "  {} {}" ($t $desc))))))
 
 ; Higher-order list combinators from HE stdlib. These depend on `sealed` so
 ; recursive calls do not accidentally capture the user variable.
@@ -759,7 +769,13 @@
             (empty)))))))
 
 (= (filter-atom $list $filter)
-  (filter-atom $list $__filter_atom_item (eval ($filter $__filter_atom_item))))
+  (function
+    (chain (context-space) $space
+      (chain
+        (eval (filter-atom $list $__filter_atom_item
+          (metta ($filter $__filter_atom_item) %Undefined% $space)))
+        $result
+        (return $result)))))
 
 (= (map-atom $list $var $map)
   (function

@@ -1,0 +1,6 @@
+!(import! &self mi_contextmod)
+!(import! &context mi_contextmod)
+!(case (import-from-module) (((Error $call $message) ContextRejected) ($_ WronglyAccepted)))
+!(case (import! &context mi_moda) (((Error $call $message) HandleRejected) ($_ WronglyAccepted)))
+!(import! &self mi_moda)
+!(collapse (match &self (a-fact $x) $x))

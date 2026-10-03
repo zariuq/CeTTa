@@ -23,7 +23,7 @@ static _Thread_local uint64_t
 static _Thread_local CettaCount g_query_results_capacity_limit_override = 0;
 static _Atomic uint64_t g_space_next_instance_id = 1u;
 static _Atomic uint64_t g_space_next_prefix_epoch = 1u;
-static _Atomic uint64_t g_space_global_mutation_epoch = 0u;
+_Atomic uint64_t cetta_space_global_mutation_epoch = 0u;
 
 static _Thread_local bool g_declared_type_index_configured = false;
 static _Thread_local bool g_declared_type_index_enabled = true;
@@ -86,6 +86,15 @@ static uint64_t space_fresh_prefix_epoch(void) {
         abort();
     }
     return epoch;
+}
+
+static void space_advance_global_mutation_epoch(void) {
+    uint64_t prior = atomic_fetch_add_explicit(
+        &cetta_space_global_mutation_epoch, 1u, memory_order_relaxed);
+    if (prior == UINT64_MAX) {
+        fputs("CeTTa: exhausted global Space mutation epoch\n", stderr);
+        abort();
+    }
 }
 
 static uint64_t space_match_backend_atom_id_materialization_limit(void) {
@@ -1525,7 +1534,7 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
                                   SpaceOccurrenceCursor *cursor) {
     CETTA_SCOPED_SHARED_TRANSITION(transition);
     space_occurrence_cursor_init_empty(cursor);
-    if (!s || !pattern || !cursor || s->overlay_base ||
+    if (!s || !pattern || !cursor || s->overlay_base || s->dep_count != 0u ||
         (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
          s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
         return false;
@@ -3953,6 +3962,8 @@ static void space_reset_moved_from(Space *s) {
     space_attach_to_universe(s, s->native.universe);
     s->payload_owner_epoch = 0;
     s->payload_export_owner_epoch = 0;
+    s->imported_len = 0;
+    s->module_dependency_epoch = 0u;
 }
 
 /* ── Space ──────────────────────────────────────────────────────────────── */
@@ -3971,6 +3982,220 @@ void space_init_with_universe(Space *s, TermUniverse *universe) {
     space_attach_to_universe(s, s->native.universe);
     s->payload_owner_epoch = 0;
     s->payload_export_owner_epoch = 0;
+    s->imported_len = 0;
+    s->deps = NULL;
+    s->dep_count = 0u;
+    s->dep_cap = 0u;
+    s->importers = NULL;
+    s->importer_count = 0u;
+    s->importer_cap = 0u;
+    s->module_dependency_epoch = 0u;
+}
+
+static bool space_handle_list_push(Space ***items, uint32_t *count,
+                                   uint32_t *cap, Space *item) {
+    if (*count == *cap) {
+        uint32_t next = *cap ? *cap * 2u : 4u;
+        if (next <= *cap)
+            return false;
+        *items = cetta_realloc(*items, sizeof(**items) * (size_t)next);
+        *cap = next;
+    }
+    (*items)[(*count)++] = item;
+    return true;
+}
+
+static void space_handle_list_remove(Space **items, uint32_t *count,
+                                     const Space *item) {
+    uint32_t write = 0u;
+    for (uint32_t read = 0u; read < *count; read++) {
+        if (items[read] != item)
+            items[write++] = items[read];
+    }
+    *count = write;
+}
+
+/* A module the importer reads through changed: the importer's composed view
+ * changed after its own atoms.  Advance its revisions without publishing a
+ * mutation of its own atoms, so no cascade runs through further importers;
+ * those link the module directly, since imports flatten.  A rewrite of the
+ * module, or a change of the importer's links, rewrites the composed view
+ * and so ends the importer's prefix epoch as well. */
+static void space_note_dependency_mutation(
+        Space *importer, SpaceMutationEquationProjection equation_projection,
+        bool view_rewritten) {
+    if (!importer)
+        return;
+    if (importer->revision == UINT64_MAX ||
+        ((equation_projection &
+            (SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION |
+             SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE)) &&
+         importer->declaration_revision == UINT64_MAX) ||
+        ((equation_projection &
+            (SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT |
+             SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE)) &&
+         importer->equation_revision == UINT64_MAX)) {
+        fputs("CeTTa: exhausted imported Space revision counter\n", stderr);
+        abort();
+    }
+    importer->revision++;
+    importer->module_dependency_epoch = space_fresh_prefix_epoch();
+    if (view_rewritten)
+        importer->prefix_epoch = space_fresh_prefix_epoch();
+    if (equation_projection &
+            (SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT |
+             SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE |
+             SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION))
+        space_execution_analysis_note_mutation(importer);
+    if ((equation_projection &
+            (SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION |
+             SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE)))
+        importer->declaration_revision++;
+    if ((equation_projection &
+            (SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT |
+             SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE)))
+        importer->equation_revision++;
+}
+
+bool space_add_dependency(Space *importer, Space *dependency) {
+    if (!importer || !dependency || importer == dependency)
+        return false;
+    for (uint32_t i = 0u; i < importer->dep_count; i++) {
+        if (importer->deps[i] == dependency)
+            return true;
+    }
+    if (!space_handle_list_push(&importer->deps, &importer->dep_count,
+                                &importer->dep_cap, dependency))
+        return false;
+    if (!space_handle_list_push(&dependency->importers,
+                                &dependency->importer_count,
+                                &dependency->importer_cap, importer)) {
+        importer->dep_count--;
+        return false;
+    }
+    space_note_dependency_mutation(
+        importer, SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE, true);
+    space_advance_global_mutation_epoch();
+    return true;
+}
+
+/* A dependency contributes its own atoms: those after its imported prefix. */
+static CettaIndex space_dependency_own_begin(const Space *dependency) {
+    CettaIndex imported = space_imported_length(dependency);
+    CettaCount len = space_length64(dependency);
+    return imported < len ? imported : len;
+}
+
+CettaCount space_view_length64(const Space *s) {
+    CettaCount len = space_length64(s);
+    uint32_t dependencies = space_dependency_count(s);
+    for (uint32_t d = 0u; d < dependencies; d++) {
+        const Space *dependency = space_dependency_at(s, d);
+        len += space_length64(dependency) -
+               space_dependency_own_begin(dependency);
+    }
+    return len;
+}
+
+Atom *space_view_get_at64(const Space *s, CettaIndex index) {
+    CettaCount len = space_length64(s);
+    if (index < len)
+        return space_get_at64(s, index);
+    index -= len;
+    uint32_t dependencies = space_dependency_count(s);
+    for (uint32_t d = 0u; d < dependencies; d++) {
+        const Space *dependency = space_dependency_at(s, d);
+        CettaIndex begin = space_dependency_own_begin(dependency);
+        CettaCount own = space_length64(dependency) - begin;
+        if (index < own)
+            return space_get_at64(dependency, begin + index);
+        index -= own;
+    }
+    return NULL;
+}
+
+bool space_copy_module_view(Space *dst, const Space *src) {
+    if (!dst || !src)
+        return false;
+    CettaIndex imported = space_imported_length(src);
+    if (imported != 0u && !space_has_overlay_base(dst) &&
+        dst->kind == SPACE_KIND_ATOM &&
+        imported <= space_length64(dst)) {
+        bool same_prefix = true;
+        for (CettaIndex i = 0u; i < imported && same_prefix; i++)
+            same_prefix = space_get_atom_id_at64(dst, i) ==
+                          space_get_atom_id_at64(src, i);
+        if (same_prefix)
+            dst->imported_len = imported;
+    }
+    uint32_t dependencies = space_dependency_count(src);
+    for (uint32_t d = 0u; d < dependencies; d++) {
+        if (!space_add_dependency(dst, space_dependency_at(src, d)))
+            return false;
+    }
+    return true;
+}
+
+/* Remove every link of `s` in both directions. */
+static void space_dependencies_unlink(Space *s) {
+    if (s->importer_count != 0u)
+        space_advance_global_mutation_epoch();
+    for (uint32_t i = 0u; i < s->dep_count; i++)
+        space_handle_list_remove(s->deps[i]->importers,
+                                 &s->deps[i]->importer_count, s);
+    for (uint32_t i = 0u; i < s->importer_count; i++) {
+        Space *importer = s->importers[i];
+        space_handle_list_remove(importer->deps, &importer->dep_count, s);
+        space_note_dependency_mutation(
+            importer, SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE, true);
+    }
+    free(s->deps);
+    free(s->importers);
+    s->deps = NULL;
+    s->importers = NULL;
+    s->dep_count = s->dep_cap = 0u;
+    s->importer_count = s->importer_cap = 0u;
+}
+
+bool space_mark_imported_prefix(Space *s) {
+    if (!s || space_has_overlay_base(s) || s->kind != SPACE_KIND_ATOM)
+        return false;
+    s->imported_len = space_length64(s);
+    return true;
+}
+
+CettaIndex space_imported_length(const Space *s) {
+    /* An overlay's logical prefix is its base's, down to the root space:
+       no overlay can remove imported atoms from under it. */
+    while (s && s->overlay_base)
+        s = s->overlay_base;
+    return s ? s->imported_len : 0u;
+}
+
+static uint32_t space_grounded_types(SymbolId symbol, Atom *const **types) {
+    if (types)
+        *types = NULL;
+    return space_session_grounded_symbol_types && symbol != SYMBOL_ID_NONE
+        ? space_session_grounded_symbol_types(symbol, types) : 0u;
+}
+
+/* An atom occurring among the imported atoms and nowhere among the space's
+ * own stays when it is removed through the space. */
+static bool space_atom_id_imported_only(const Space *s, AtomId atom_id) {
+    CettaIndex imported = space_imported_length(s);
+    if (imported == 0u || atom_id == CETTA_ATOM_ID_NONE)
+        return false;
+    bool in_imported = false;
+    for (CettaIndex i = 0u; i < imported && !in_imported; i++)
+        in_imported = space_get_atom_id_at64(s, i) == atom_id;
+    if (!in_imported)
+        return false;
+    CettaCount logical_len = space_length64(s);
+    for (CettaIndex i = imported; i < logical_len; i++) {
+        if (space_get_atom_id_at64(s, i) == atom_id)
+            return false;
+    }
+    return true;
 }
 
 void space_init_overlay(Space *s, const Space *base) {
@@ -3995,6 +4220,7 @@ void space_free(Space *s) {
        Space before consulting a token. */
     space_execution_analysis_note_mutation(s);
     space_pinned_occurrences_detach(s);
+    space_dependencies_unlink(s);
     space_detach_from_universe(s);
     free(s->native.atom_ids);
     s->native.atom_ids = NULL;
@@ -4041,25 +4267,36 @@ static bool is_equation_atom(Atom *a, Atom **lhs_out, Atom **rhs_out) {
     return true;
 }
 
+static uint64_t space_projection_dependency_epoch(const Space *s,
+                                                 bool include_modules);
+
 SpaceReadToken space_read_token(const Space *s) {
     return (SpaceReadToken){
         .space = s,
         .instance_id = space_instance_id(s),
         .revision = space_revision(s),
         .prefix_epoch = s ? s->prefix_epoch : 0u,
+        .base_prefix_epoch = space_projection_dependency_epoch(s, false),
+        .base_dependency_epoch = space_projection_dependency_epoch(s, true),
     };
 }
 
 bool space_read_token_is_current(SpaceReadToken token) {
     return token.space && token.instance_id != 0u &&
            token.instance_id == space_instance_id(token.space) &&
-           token.revision == space_revision(token.space);
+           token.revision == space_revision(token.space) &&
+           token.base_dependency_epoch != UINT64_MAX &&
+           token.base_dependency_epoch ==
+               space_projection_dependency_epoch(token.space, true);
 }
 
 bool space_read_token_prefix_intact(SpaceReadToken token) {
     return token.space && token.instance_id != 0u &&
            token.instance_id == space_instance_id(token.space) &&
-           token.prefix_epoch == token.space->prefix_epoch;
+           token.prefix_epoch == token.space->prefix_epoch &&
+           token.base_prefix_epoch != UINT64_MAX &&
+           token.base_prefix_epoch ==
+               space_projection_dependency_epoch(token.space, false);
 }
 
 bool space_read_token_matches_live_space(SpaceReadToken token,
@@ -4067,10 +4304,14 @@ bool space_read_token_matches_live_space(SpaceReadToken token,
     return live_space && token.space == live_space &&
            token.instance_id != 0u &&
            token.instance_id == space_instance_id(live_space) &&
-           token.revision == space_revision(live_space);
+           token.revision == space_revision(live_space) &&
+           token.base_dependency_epoch != UINT64_MAX &&
+           token.base_dependency_epoch ==
+               space_projection_dependency_epoch(live_space, true);
 }
 
-static uint64_t space_projection_dependency_epoch(const Space *s) {
+static uint64_t space_projection_dependency_epoch(const Space *s,
+                                                 bool include_modules) {
     const Space *slow = s ? s->overlay_base : NULL;
     const Space *fast = slow;
     while (fast && fast->overlay_base) {
@@ -4085,6 +4326,8 @@ static uint64_t space_projection_dependency_epoch(const Space *s) {
          dependency; dependency = dependency->overlay_base) {
         if (dependency->prefix_epoch > latest)
             latest = dependency->prefix_epoch;
+        if (include_modules && dependency->module_dependency_epoch > latest)
+            latest = dependency->module_dependency_epoch;
     }
     return latest;
 }
@@ -4096,7 +4339,7 @@ SpaceProgramToken space_program_token(const Space *s) {
         .equation_revision = space_equation_revision(s),
         .declaration_revision = space_declaration_revision(s),
         .base_dependency_epoch =
-            space_projection_dependency_epoch(s),
+            space_projection_dependency_epoch(s, true),
     };
 }
 
@@ -4107,12 +4350,12 @@ SpaceEquationToken space_equation_token(const Space *s) {
         .equation_revision = space_equation_revision(s),
         .projection_dependency = s ? s->overlay_base : NULL,
         .projection_dependency_epoch =
-            space_projection_dependency_epoch(s),
+            space_projection_dependency_epoch(s, true),
     };
 }
 
 uint64_t space_overlay_dependency_epoch(const Space *s) {
-    return space_projection_dependency_epoch(s);
+    return space_projection_dependency_epoch(s, true);
 }
 
 bool space_program_token_matches_live_space(
@@ -4132,7 +4375,7 @@ bool space_equation_token_is_current(SpaceEquationToken token) {
            token.projection_dependency == token.space->overlay_base &&
            token.projection_dependency_epoch != UINT64_MAX &&
            token.projection_dependency_epoch ==
-               space_projection_dependency_epoch(token.space);
+               space_projection_dependency_epoch(token.space, true);
 }
 
 bool space_equation_token_matches_live_space(
@@ -4145,7 +4388,7 @@ bool space_equation_token_matches_live_space(
            token.projection_dependency == live_space->overlay_base &&
            token.projection_dependency_epoch != UINT64_MAX &&
            token.projection_dependency_epoch ==
-               space_projection_dependency_epoch(live_space);
+               space_projection_dependency_epoch(live_space, true);
 }
 
 static AtomId space_indexed_occurrence_atom_id(
@@ -4197,16 +4440,16 @@ bool space_equation_occurrence_resolve(SpaceEquationOccurrenceId id,
 static bool space_equation_cursor_index_matches(
     const SpaceEquationCursor *cursor, const EqBucket *bucket,
     CettaIndex position, bool wildcard) {
-    if (!cursor || !cursor->read.space || !bucket ||
+    if (!cursor || !cursor->member.space || !bucket ||
         position >= bucket->len) {
         return false;
     }
     AtomId equation_id = space_indexed_occurrence_atom_id(
-        cursor->read.space, bucket->atom_indices, bucket->atom_ids,
+        cursor->member.space, bucket->atom_indices, bucket->atom_ids,
         position);
     Atom *equation = equation_id != CETTA_ATOM_ID_NONE
         ? term_universe_get_atom(
-              cursor->read.space->native.universe, equation_id)
+              cursor->member.space->native.universe, equation_id)
         : NULL;
     Atom *lhs = NULL;
     Atom *rhs = NULL;
@@ -4234,7 +4477,9 @@ static bool space_equation_cursor_peek_bucket(
         return false;
     while (*position < bucket->len) {
         CettaIndex candidate = bucket->atom_indices[*position];
-        if (candidate >= cursor->ceiling) {
+        if (candidate >= cursor->ceiling ||
+            (cursor->imported != 0u &&
+             (candidate < cursor->imported) != (cursor->phase == 1u))) {
             (*position)++;
             continue;
         }
@@ -4242,7 +4487,7 @@ static bool space_equation_cursor_peek_bucket(
                 cursor, bucket, *position, wildcard)) {
             *logical_index = candidate;
             *equation_id = space_indexed_occurrence_atom_id(
-                cursor->read.space, bucket->atom_indices,
+                cursor->member.space, bucket->atom_indices,
                 bucket->atom_ids, *position);
             return true;
         }
@@ -4251,33 +4496,63 @@ static bool space_equation_cursor_peek_bucket(
     return false;
 }
 
+/* Start reading `s` as the cursor's next member: its own equations, then,
+ * unless `own_only`, its imported ones. */
+static void space_equation_cursor_enter(SpaceEquationCursor *cursor,
+                                        Space *s, bool own_only) {
+    if (!space_has_overlay_base(s))
+        ensure_eq_index(s);
+    cursor->member = space_read_token(s);
+    cursor->own_only = own_only;
+    cursor->ceiling = space_length64(s);
+    cursor->overlay = space_has_overlay_base(s);
+    cursor->imported = space_imported_length(s);
+    if (cursor->imported > cursor->ceiling)
+        cursor->imported = 0u;
+    /* A member holding imported atoms only has no own equations: a
+       dependency then contributes nothing, and the space itself reads its
+       imported ones in one pass. */
+    if (cursor->imported != 0u && cursor->imported == cursor->ceiling) {
+        if (own_only)
+            cursor->ceiling = 0u;
+        cursor->imported = 0u;
+    }
+    cursor->phase = 0u;
+    cursor->exact_position = 0u;
+    cursor->wildcard_position = 0u;
+    cursor->overlay_position = cursor->overlay ? cursor->imported : 0u;
+}
+
 bool space_equation_cursor_init(Space *s, SymbolId head,
                                 SpaceEquationCursor *cursor) {
     if (cursor)
         memset(cursor, 0, sizeof(*cursor));
     if (!s || !cursor || head == SYMBOL_ID_NONE)
         return false;
-    if (!space_has_overlay_base(s))
-        ensure_eq_index(s);
     cursor->read = space_read_token(s);
     cursor->head = head;
-    cursor->ceiling = space_length64(s);
-    cursor->overlay = space_has_overlay_base(s);
+    space_equation_cursor_enter(cursor, s, false);
     return space_read_token_prefix_intact(cursor->read);
 }
 
-SpaceEquationCursorStep space_equation_cursor_next(
+/* The next equation of the member being read, or END when it is done. */
+static SpaceEquationCursorStep space_equation_cursor_member_next(
     SpaceEquationCursor *cursor, SpaceEquationOccurrenceId *out) {
-    if (out)
-        memset(out, 0, sizeof(*out));
-    if (!cursor || !out || !space_read_token_prefix_intact(cursor->read))
+    /* The space itself was checked by the caller; a dependency is checked
+       here. */
+    if (cursor->dependency != 0u &&
+        !space_read_token_prefix_intact(cursor->member))
         return SPACE_EQUATION_CURSOR_INVALIDATED;
-
-    Space *s = (Space *)cursor->read.space;
+    if (cursor->ceiling == 0u)
+        return SPACE_EQUATION_CURSOR_END;
+    Space *s = (Space *)cursor->member.space;
     if (cursor->overlay) {
         CettaCount logical_len = space_length64(s);
         if (logical_len > cursor->ceiling)
             logical_len = cursor->ceiling;
+    overlay_phase:
+        if (cursor->phase == 1u && logical_len > cursor->imported)
+            logical_len = cursor->imported;
         while (cursor->overlay_position < logical_len) {
             CettaIndex logical_index = cursor->overlay_position++;
             Atom *equation = space_get_at64(s, logical_index);
@@ -4294,7 +4569,7 @@ SpaceEquationCursorStep space_equation_cursor_next(
 #endif
                 continue;
             }
-            out->read = cursor->read;
+            out->read = cursor->member;
             out->logical_index = logical_index;
             out->equation_id = CETTA_ATOM_ID_NONE;
             out->has_equation_id = false;
@@ -4303,6 +4578,12 @@ SpaceEquationCursorStep space_equation_cursor_next(
                     ? CETTA_RUNTIME_COUNTER_SPACE_KNOWN_HEAD_CURSOR_EXACT_ITEM
                     : CETTA_RUNTIME_COUNTER_SPACE_KNOWN_HEAD_CURSOR_OPEN_ITEM);
             return SPACE_EQUATION_CURSOR_ITEM;
+        }
+        if (cursor->imported != 0u && !cursor->own_only &&
+            cursor->phase == 0u) {
+            cursor->phase = 1u;
+            cursor->overlay_position = 0u;
+            goto overlay_phase;
         }
         return SPACE_EQUATION_CURSOR_END;
     }
@@ -4320,6 +4601,19 @@ SpaceEquationCursorStep space_equation_cursor_next(
     bool has_wildcard = space_equation_cursor_peek_bucket(
         cursor, wildcard, &cursor->wildcard_position, true,
         &wildcard_index, &wildcard_id);
+    if (!has_exact && !has_wildcard &&
+        cursor->imported != 0u && !cursor->own_only &&
+        cursor->phase == 0u) {
+        cursor->phase = 1u;
+        cursor->exact_position = 0u;
+        cursor->wildcard_position = 0u;
+        has_exact = space_equation_cursor_peek_bucket(
+            cursor, exact, &cursor->exact_position, false, &exact_index,
+            &exact_id);
+        has_wildcard = space_equation_cursor_peek_bucket(
+            cursor, wildcard, &cursor->wildcard_position, true,
+            &wildcard_index, &wildcard_id);
+    }
     if (!has_exact && !has_wildcard)
         return SPACE_EQUATION_CURSOR_END;
 
@@ -4352,7 +4646,7 @@ SpaceEquationCursorStep space_equation_cursor_next(
         cursor->exact_position++;
         cursor->wildcard_position++;
     }
-    out->read = cursor->read;
+    out->read = cursor->member;
     out->logical_index = logical_index;
     out->equation_id = equation_id;
     out->has_equation_id = equation_id != CETTA_ATOM_ID_NONE;
@@ -4363,6 +4657,28 @@ SpaceEquationCursorStep space_equation_cursor_next(
             : CETTA_RUNTIME_COUNTER_SPACE_KNOWN_HEAD_CURSOR_OPEN_ITEM);
 #endif
     return SPACE_EQUATION_CURSOR_ITEM;
+}
+
+SpaceEquationCursorStep space_equation_cursor_next(
+    SpaceEquationCursor *cursor, SpaceEquationOccurrenceId *out) {
+    if (out)
+        memset(out, 0, sizeof(*out));
+    if (!cursor || !out || !space_read_token_prefix_intact(cursor->read))
+        return SPACE_EQUATION_CURSOR_INVALIDATED;
+    for (;;) {
+        SpaceEquationCursorStep step =
+            space_equation_cursor_member_next(cursor, out);
+        if (step != SPACE_EQUATION_CURSOR_END)
+            return step;
+        /* The space's own and imported equations are done: each module it
+           imports follows with its own, in import order. */
+        Space *dependency = space_dependency_at(
+            cursor->read.space, cursor->dependency);
+        if (!dependency)
+            return SPACE_EQUATION_CURSOR_END;
+        cursor->dependency++;
+        space_equation_cursor_enter(cursor, dependency, true);
+    }
 }
 
 /* ── Revision-pinned execution-contract analysis ──────────────────────── */
@@ -5096,9 +5412,14 @@ static void recompute_has_non_exact_atoms(Space *s) {
     s->native.has_non_exact_atoms_dirty = false;
 }
 
-uint64_t space_global_mutation_epoch(void) {
-    return atomic_load_explicit(&g_space_global_mutation_epoch,
-                                memory_order_relaxed);
+/* A module changed: every space importing it reads the change. */
+static __attribute__((noinline, cold)) void space_notify_importers(
+        Space *s, SpaceMutationEquationProjection equation_projection,
+        SpaceMutationPrefixEffect prefix_effect) {
+    for (uint32_t i = 0u; i < s->importer_count; i++)
+        space_note_dependency_mutation(
+            s->importers[i], equation_projection,
+            prefix_effect == SPACE_MUTATION_PREFIX_REWRITTEN);
 }
 
 static void space_publish_mutation(
@@ -5164,12 +5485,9 @@ static void space_publish_mutation(
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_SPACE_EQUATION_REVISION_BUMP);
     }
-    uint64_t prior = atomic_fetch_add_explicit(
-        &g_space_global_mutation_epoch, 1u, memory_order_relaxed);
-    if (prior == UINT64_MAX) {
-        fputs("CeTTa: exhausted global Space mutation epoch\n", stderr);
-        abort();
-    }
+    if (__builtin_expect(s->importer_count != 0u, 0))
+        space_notify_importers(s, equation_projection, prefix_effect);
+    space_advance_global_mutation_epoch();
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_REVISION_BUMP);
 }
 
@@ -5551,6 +5869,12 @@ Space *space_heap_clone_shallow(Space *src) {
         if (!space_admit_atom(clone, NULL, source_atom))
             space_add(clone, source_atom);
     }
+    /* A copy reads through the same modules as its source. */
+    if (!space_copy_module_view(clone, src)) {
+        space_free(clone);
+        free(clone);
+        return NULL;
+    }
     /* The clone holds what its source held, so what was published into the
      * source is published into the clone: an import's working copy reuses
      * the importer's admitted records. */
@@ -5576,8 +5900,45 @@ static void space_replace_contents_classified(
     uint64_t src_equation_revision = src->equation_revision;
     uint64_t old_declaration_revision = dst->declaration_revision;
     uint64_t src_declaration_revision = src->declaration_revision;
+    /* Imported atoms travel with the contents: a source that has them passes
+       them on, and a rebuild that starts with the destination's imported
+       atoms, as a rebuild in logical order does, keeps them. */
+    CettaIndex imported = src->imported_len;
+    if (imported == 0u) {
+        imported = dst->imported_len;
+        if (imported > space_length64(src))
+            imported = 0u;
+        for (CettaIndex i = 0u; i < imported; i++) {
+            if (space_get_atom_id_at64(dst, i) !=
+                space_get_atom_id_at64(src, i)) {
+                imported = 0u;
+                break;
+            }
+        }
+    }
+    /* The links are the space's own: dst keeps its dependencies and its
+       importers, and gains the dependencies src added, so a committed
+       transaction keeps the imports made inside it, while a rebuild from
+       a fresh copy loses none.  The moved-from source's links end. */
+    Space **deps = dst->deps, **importers = dst->importers;
+    uint32_t dep_count = dst->dep_count, dep_cap = dst->dep_cap;
+    uint32_t importer_count = dst->importer_count;
+    uint32_t importer_cap = dst->importer_cap;
+    dst->deps = dst->importers = NULL;
+    dst->dep_count = dst->dep_cap = 0u;
+    dst->importer_count = dst->importer_cap = 0u;
     space_free(dst);
     space_move_storage_and_backend(dst, src);
+    dst->imported_len = imported;
+    dst->deps = deps;
+    dst->dep_count = dep_count;
+    dst->dep_cap = dep_cap;
+    dst->importers = importers;
+    dst->importer_count = importer_count;
+    dst->importer_cap = importer_cap;
+    for (uint32_t i = 0u; i < src->dep_count; i++)
+        (void)space_add_dependency(dst, src->deps[i]);
+    space_dependencies_unlink(src);
     space_detach_from_universe(src);
     space_attach_to_universe(dst, dst->native.universe);
     dst->instance_id = dst_instance_id;
@@ -6314,7 +6675,8 @@ bool space_remove(Space *s, Atom *atom) {
         for (CettaCount i = 0; i < base_visible; i++) {
             CettaIndex raw = 0;
             Atom *candidate = NULL;
-            if (!space_overlay_visible_base_raw_index(s, i, &raw))
+            if (!space_overlay_visible_base_raw_index(s, i, &raw) ||
+                raw < space_imported_length(s->overlay_base))
                 continue;
             candidate = space_get_at64(s->overlay_base, raw);
             if (candidate && atom_eq(candidate, atom)) {
@@ -6338,7 +6700,8 @@ bool space_remove(Space *s, Atom *atom) {
         for (CettaCount i = 0; i < base_visible; i++) {
             CettaIndex raw = 0;
             Atom *candidate = NULL;
-            if (!space_overlay_visible_base_raw_index(s, i, &raw))
+            if (!space_overlay_visible_base_raw_index(s, i, &raw) ||
+                raw < space_imported_length(s->overlay_base))
                 continue;
             candidate = space_get_at64(s->overlay_base, raw);
             if (candidate && atom_alpha_eq(candidate, atom)) {
@@ -6376,11 +6739,13 @@ bool space_remove(Space *s, Atom *atom) {
     if (s->native.universe && atom) {
         AtomId atom_id = term_universe_lookup_atom_id(s->native.universe, atom);
         if (atom_id != CETTA_ATOM_ID_NONE &&
+            !space_atom_id_imported_only(s, atom_id) &&
             space_remove_via_backend_primary(s, atom_id)) {
             return true;
         }
     }
-    if (space_remove_atom_via_backend_primary(s, atom))
+    if (space_imported_length(s) == 0u &&
+        space_remove_atom_via_backend_primary(s, atom))
         return true;
     if (!atom)
         return false;
@@ -6399,7 +6764,8 @@ bool space_remove(Space *s, Atom *atom) {
         space_linearize(s);
     bool found = false;
     CettaIndex remove_idx = 0;
-    for (CettaIndex i = 0; i < s->native.len; i++) {
+    CettaIndex own_begin = s->imported_len;
+    for (CettaIndex i = own_begin; i < s->native.len; i++) {
         Atom *candidate = space_get_at64(s, i);
         if (!candidate)
             continue;
@@ -6412,7 +6778,7 @@ bool space_remove(Space *s, Atom *atom) {
     if (!found) {
         CettaIndex alpha_idx = 0;
         CettaCount alpha_count = 0;
-        for (CettaIndex i = 0; i < s->native.len; i++) {
+        for (CettaIndex i = own_begin; i < s->native.len; i++) {
             Atom *candidate = space_get_at64(s, i);
             if (!candidate)
                 continue;
@@ -6474,7 +6840,8 @@ bool space_remove_atom_id(Space *s, AtomId atom_id) {
         CettaCount base_visible = space_overlay_visible_base_count(s);
         for (CettaCount i = 0; i < base_visible; i++) {
             CettaIndex raw = 0;
-            if (!space_overlay_visible_base_raw_index(s, i, &raw))
+            if (!space_overlay_visible_base_raw_index(s, i, &raw) ||
+                raw < space_imported_length(s->overlay_base))
                 continue;
             if (space_get_atom_id_at64(s->overlay_base, raw) != atom_id)
                 continue;
@@ -6494,6 +6861,8 @@ bool space_remove_atom_id(Space *s, AtomId atom_id) {
         }
         return false;
     }
+    if (space_atom_id_imported_only(s, atom_id))
+        return false;
     if (s->match_backend.native.match_trie_pins == 0u &&
         space_remove_via_backend_primary(s, atom_id))
         return true;
@@ -6501,7 +6870,7 @@ bool space_remove_atom_id(Space *s, AtomId atom_id) {
         return false;
     if (space_is_queue(s))
         space_linearize(s);
-    for (CettaIndex i = 0; i < s->native.len; i++) {
+    for (CettaIndex i = s->imported_len; i < s->native.len; i++) {
         if (space_get_atom_id_at64(s, i) != atom_id)
             continue;
         SpaceMutationEquationProjection equation_projection =
@@ -6544,7 +6913,7 @@ bool space_remove_atom_ids_batch(Space *s, const AtomId *atom_ids,
     if (atom_count == 0)
         return true;
 
-    batch_result = space_has_overlay_base(s)
+    batch_result = space_has_overlay_base(s) || space_imported_length(s) != 0u
         ? SPACE_BACKEND_BATCH_UNSUPPORTED
         : space_match_backend_remove_atom_ids_batch_direct(
               s, atom_ids, atom_count, &removed);
@@ -6587,6 +6956,11 @@ bool space_remove_occurrence_mask_stable(
     CettaCount logical_len = space_length64(s);
     if (mask_len != logical_len)
         return false;
+    CettaIndex imported = space_imported_length(s);
+    for (CettaIndex index = 0u; index < imported && index < mask_len; index++) {
+        if (remove_mask[index] != 0u)
+            return false;
+    }
 
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_SPACE_STABLE_MASK_CONTRACTION);
@@ -6876,7 +7250,7 @@ bool space_pop(Space *s, Atom **out) {
 bool space_truncate(Space *s, uint32_t new_len) {
     uint32_t logical_len;
 
-    if (!s)
+    if (!s || new_len < space_imported_length(s))
         return false;
     if (space_has_overlay_base(s))
         return space_truncate64(s, new_len);
@@ -6906,7 +7280,7 @@ bool space_truncate(Space *s, uint32_t new_len) {
 bool space_truncate64(Space *s, CettaCount new_len) {
     CettaCount logical_len;
 
-    if (!s)
+    if (!s || new_len < space_imported_length(s))
         return false;
     if (space_has_overlay_base(s)) {
         CettaCount base_visible = space_overlay_visible_base_count(s);
@@ -7122,9 +7496,10 @@ bool space_contains_exact_symbol_application(
     if (out_applicable)
         *out_applicable = false;
     bool native_membership_authoritative =
-        s && (!space_engine_uses_pathmap(s->match_backend.kind) ||
-              (s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
-               s->match_backend.pathmap.bridge.preserve_logical_order));
+        s && !space_has_dependencies(s) &&
+        (!space_engine_uses_pathmap(s->match_backend.kind) ||
+         (s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
+          s->match_backend.pathmap.bridge.preserve_logical_order));
     if (!native_membership_authoritative || !s->native.universe ||
         head == SYMBOL_ID_NONE ||
         (argument_count > 0u && !arguments)) {
@@ -7152,7 +7527,7 @@ bool space_match_exists_ground_exact(Space *s, Atom *pattern,
     if (out_applicable)
         *out_applicable = false;
     if (!s || !pattern || atom_has_vars(pattern) ||
-        !atom_is_exact_indexable(pattern)) {
+        !atom_is_exact_indexable(pattern) || space_has_dependencies(s)) {
         return false;
     }
 
@@ -7187,7 +7562,7 @@ bool space_match_exists_ground_exact_expression_coordinates(
     if (out_applicable)
         *out_applicable = false;
     if (!s || coordinate_count == 0u || !coordinates ||
-        space_has_overlay_base(s) ||
+        space_has_overlay_base(s) || space_has_dependencies(s) ||
         space_engine_uses_pathmap(s->match_backend.kind) ||
         !s->native.universe || !space_contains_only_exact_atoms(s)) {
         return false;
@@ -7477,6 +7852,7 @@ static bool type_inference_can_add(CettaTypeInferenceBudget *budget,
 bool space_type_annotation_may_match_subject(Space *s, const Atom *subject) {
     CETTA_SCOPED_SHARED_TRANSITION(observation);
     if (!s || !subject || space_has_overlay_base(s) ||
+        space_has_dependencies(s) ||
         s->match_backend.kind != SPACE_ENGINE_NATIVE)
         return true;
     if (subject->kind != ATOM_SYMBOL &&
@@ -7501,7 +7877,7 @@ bool space_type_annotation_may_match_subject(Space *s, const Atom *subject) {
  * intrinsic answer producer. Unsupported views receive no certificate. */
 bool space_type_annotations_have_only_symbol_subjects(Space *s) {
     CETTA_SCOPED_SHARED_TRANSITION(observation);
-    if (!s || space_has_overlay_base(s) ||
+    if (!s || space_has_overlay_base(s) || space_has_dependencies(s) ||
         s->match_backend.kind != SPACE_ENGINE_NATIVE)
         return false;
     ensure_ty_ann_index(s);
@@ -7511,20 +7887,49 @@ bool space_type_annotations_have_only_symbol_subjects(Space *s) {
 
 /* Resolve (: atom type) annotations through the native index. Overlay spaces
  * retain their logical-view fallback and optional lookup cost record. */
-static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
-                                    Atom ***out_types,
-                                    CettaTypeInferenceBudget *budget,
-                                    SpaceDeclaredTypeLookupCost *cost) {
+/* Declared types gathered across the members of a composed lookup. */
+typedef struct {
+    Atom **types;
+    uint32_t count;
+    uint32_t cap;
+    bool stopped;
+} SpaceAnnotatedTypes;
+
+static void space_annotated_types_append(SpaceAnnotatedTypes *list,
+                                         Atom *type) {
+    if (list->count >= list->cap) {
+        list->cap = list->cap ? list->cap * 2u : 4u;
+        list->types = cetta_realloc(list->types,
+                                    sizeof(Atom *) * list->cap);
+    }
+    list->types[list->count++] = type;
+}
+
+/* One member of a type lookup: the space's own declarations, then, unless
+ * `own_only`, the ones it holds as imported atoms.  False when allocation
+ * fails. */
+static inline __attribute__((always_inline)) bool
+space_member_annotated_types(
+        Space *s, Arena *a, Atom *atom, SpaceAnnotatedTypes *list,
+        CettaTypeInferenceBudget *budget,
+        SpaceDeclaredTypeLookupCost *cost, bool own_only) {
     if (space_has_overlay_base(s) || !declared_type_index_enabled()) {
-        Atom **types = NULL;
-        uint32_t count = 0, cap = 0;
         CettaCount logical_len = space_length64(s);
-        for (CettaIndex i = 0; i < logical_len; i++) {
+        CettaIndex imported = space_imported_length(s);
+        if (imported > logical_len)
+            imported = 0u;
+        int passes = own_only || imported == 0u ? 1 : 2;
+        for (int pass = 0; pass < passes && !list->stopped; pass++)
+        for (CettaIndex i = pass == 0 ? imported : 0u;
+             i < (pass == 0 ? logical_len : imported); i++) {
             if (cost)
                 cost->full_space_rows_examined++;
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_DECLARED_TYPE_FULL_SCAN_ROW);
-            if (!type_inference_step(budget, 1)) break;
+            if (!type_inference_step(budget, 1)) {
+                list->stopped = true;
+                break;
+            }
             Atom *annotation = space_get_at64(s, i);
             if (!annotation || annotation->kind != ATOM_EXPR ||
                 annotation->expr.len != 3)
@@ -7533,23 +7938,19 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
                 continue;
             if (!atom_eq(annotation->expr.elems[1], atom))
                 continue;
-            if (!type_inference_can_add(budget, count)) break;
-            if (count >= cap) {
-                cap = cap ? cap * 2u : 4u;
-                types = cetta_realloc(types, sizeof(Atom *) * cap);
+            if (!type_inference_can_add(budget, list->count)) {
+                list->stopped = true;
+                break;
             }
             Atom *type = annotation->expr.elems[2];
             Atom *copy = atom_has_vars(type)
                 ? cetta_instantiate_frame_syntax(a, type)
                 : atom_deep_copy_shared(a, type);
-            if (!copy) {
-                free(types);
-                goto allocation_failed;
-            }
-            types[count++] = copy;
+            if (!copy)
+                return false;
+            space_annotated_types_append(list, copy);
         }
-        *out_types = types;
-        return count;
+        return true;
     }
     /* Use type annotation index for O(bucket_size) instead of O(N) */
     ensure_ty_ann_index(s);
@@ -7559,15 +7960,23 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
         CETTA_RUNTIME_COUNTER_DECLARED_TYPE_INDEXED_LOOKUP);
     uint32_t h = atom_hash_for_index(atom);
     TypeAnnBucket *bucket = &s->native.ty_idx.buckets[h];
-    Atom **types = NULL;
-    uint32_t count = 0, cap = 0;
+    CettaIndex imported = bucket->atom_indices ? s->imported_len : 0u;
+    int passes = own_only || imported == 0u ? 1 : 2;
+    /* The space's own declarations precede imported ones. */
+    for (int pass = 0; pass < passes && !list->stopped; pass++)
     for (CettaIndex i = 0; i < bucket->len; i++) {
+        if (imported != 0u &&
+            (bucket->atom_indices[i] < imported) != (pass == 1))
+            continue;
         CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
         if (cost)
             cost->indexed_rows_examined++;
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_DECLARED_TYPE_INDEXED_ROW);
-        if (!type_inference_step(budget, 1)) break;
+        if (!type_inference_step(budget, 1)) {
+            list->stopped = true;
+            break;
+        }
         AtomId annotation_id = space_indexed_occurrence_atom_id(
             s, bucket->atom_indices, bucket->atom_ids, i);
         AtomId subject_id = CETTA_ATOM_ID_NONE;
@@ -7578,26 +7987,19 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
                 CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
                 CettaFrameIdentity identity = 0u;
                 if (tu_has_vars(s->native.universe, type_id) &&
-                    !cetta_frame_identity_scope_try(&frame_identity_scope, &identity)) {
-                    free(types);
-                    goto allocation_failed;
-                }
+                    !cetta_frame_identity_scope_try(&frame_identity_scope, &identity))
+                    return false;
                 Atom *type_copy = identity
                     ? term_universe_copy_atom_epoch(s->native.universe, a, type_id, identity)
                     : term_universe_copy_atom(s->native.universe, a, type_id);
-                if (!type_copy) {
-                    free(types);
-                    goto allocation_failed;
+                if (!type_copy)
+                    return false;
+                if (!type_inference_can_add(budget, list->count)) {
+                    list->stopped = true;
+                    break;
                 }
-                if (type_copy) {
-                    if (!type_inference_can_add(budget, count)) break;
-                    if (count >= cap) {
-                        cap = cap ? cap * 2 : 4;
-                        types = cetta_realloc(types, sizeof(Atom *) * cap);
-                    }
-                    types[count++] = type_copy;
-                    continue;
-                }
+                space_annotated_types_append(list, type_copy);
+                continue;
             }
         }
         Atom *annotation = space_indexed_occurrence_atom(
@@ -7608,23 +8010,79 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
             continue;
         if (!atom_eq(annotation->expr.elems[1], atom))
             continue;
-        if (!type_inference_can_add(budget, count)) break;
-        if (count >= cap) {
-            cap = cap ? cap * 2 : 4;
-            types = cetta_realloc(types, sizeof(Atom *) * cap);
+        if (!type_inference_can_add(budget, list->count)) {
+            list->stopped = true;
+            break;
         }
         Atom *type = annotation->expr.elems[2];
         Atom *copy = atom_has_vars(type)
             ? cetta_instantiate_frame_syntax(a, type)
             : atom_deep_copy_shared(a, type);
-        if (!copy) {
-            free(types);
-            goto allocation_failed;
-        }
-        types[count++] = copy;
+        if (!copy)
+            return false;
+        space_annotated_types_append(list, copy);
     }
-    *out_types = types;
-    return count;
+    return true;
+}
+
+/* The imported modules' share of a type lookup, off the common path. */
+static __attribute__((noinline)) bool space_dependencies_annotated_types(
+        Space *s, Arena *a, Atom *atom, SpaceAnnotatedTypes *list,
+        CettaTypeInferenceBudget *budget,
+        SpaceDeclaredTypeLookupCost *cost) {
+    bool ok = true;
+    uint32_t dependencies = space_dependency_count(s);
+    for (uint32_t d = 0u; ok && !list->stopped && d < dependencies; d++)
+        ok = space_member_annotated_types(
+            space_dependency_at(s, d), a, atom, list, budget, cost, true);
+    return ok;
+}
+
+static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
+                                    Atom ***out_types,
+                                    CettaTypeInferenceBudget *budget,
+                                    SpaceDeclaredTypeLookupCost *cost) {
+    Atom *const *grounded = NULL;
+    uint32_t grounded_count = atom && atom->kind == ATOM_SYMBOL
+        ? space_grounded_types(atom->sym_id, &grounded) : 0u;
+    if (grounded_count != 0u) {
+        /* A grounded operation's type is its own. */
+        Atom **types = cetta_malloc(sizeof(*types) * grounded_count);
+        uint32_t count = 0u;
+        for (uint32_t i = 0u; i < grounded_count; i++) {
+            if (!type_inference_step(budget, 1) ||
+                !type_inference_can_add(budget, count))
+                break;
+            Atom *copy = atom_has_vars(grounded[i])
+                ? cetta_instantiate_frame_syntax(a, grounded[i])
+                : atom_deep_copy_shared(a, grounded[i]);
+            if (!copy) {
+                free(types);
+                goto allocation_failed;
+            }
+            types[count++] = copy;
+        }
+        if (count == 0u) {
+            free(types);
+            types = NULL;
+        }
+        *out_types = types;
+        return count;
+    }
+    /* A module space answers its own declarations, then each imported
+       module's own, in import order (HE's ModuleSpace query). */
+    SpaceAnnotatedTypes list = {0};
+    bool ok = space_member_annotated_types(
+        s, a, atom, &list, budget, cost, false);
+    if (ok && !list.stopped && space_has_dependencies(s))
+        ok = space_dependencies_annotated_types(
+            s, a, atom, &list, budget, cost);
+    if (!ok) {
+        free(list.types);
+        goto allocation_failed;
+    }
+    *out_types = list.types;
+    return list.count;
 allocation_failed:
     if (budget) {
         budget->complete = false;
@@ -8149,9 +8607,25 @@ static Atom *query_bucket_equation_at(
         ? space_get_at64(space, logical_index) : NULL;
 }
 
+/* A module space answers its own equations, across the exact-head and
+ * wildcard buckets together, before those of the modules it imports.  The
+ * equation query therefore visits both buckets once per pass: pass 0 the
+ * space's own entries, pass 1 the imported ones; pass -1 visits every entry
+ * of a space without imported atoms.  An entry without a logical index is
+ * the space's own. */
+static inline bool eq_bucket_entry_in_pass(const Space *s,
+                                           const EqBucket *bucket,
+                                           CettaIndex position, int pass) {
+    if (pass < 0)
+        return true;
+    if (!bucket->atom_indices)
+        return pass == 0;
+    return (bucket->atom_indices[position] < s->imported_len) == (pass == 1);
+}
+
 static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
                                 const QueryVisibleVarSet *visible, Arena *a,
-                                QueryResultSink *sink) {
+                                QueryResultSink *sink, int pass) {
     SymbolId query_head = eq_head_symbol(query);
     if (!sink || sink->stop)
         return;
@@ -8165,6 +8639,7 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
             CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
             CettaIndex i = candidates[ci];
             if (i >= bucket->len) continue;
+            if (!eq_bucket_entry_in_pass(s, bucket, i, pass)) continue;
             Atom *planned_lhs = NULL;
             Atom *planned_rhs = NULL;
             Atom *planned_failure = NULL;
@@ -8248,6 +8723,7 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
     uint32_t considered = 0;
     (void)considered;
     for (CettaIndex i = 0; i < bucket->len; i++) {
+        if (!eq_bucket_entry_in_pass(s, bucket, i, pass)) continue;
         CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
         Atom *planned_lhs = NULL;
         Atom *planned_rhs = NULL;
@@ -8501,7 +8977,7 @@ static bool query_equation_emit_candidate_plan_epoch(
    fresh query-time epoch and rechecked by the authoritative matcher. */
 static void query_bucket(Space *s, EqBucket *bucket, Atom *query,
                          const QueryVisibleVarSet *visible, Arena *a,
-                         QueryResultSink *sink) {
+                         QueryResultSink *sink, int pass) {
     SymbolId query_head = eq_head_symbol(query);
     CettaCount emitted_before;
     bool head_bucket_mismatch;
@@ -8513,7 +8989,7 @@ static void query_bucket(Space *s, EqBucket *bucket, Atom *query,
         (bucket->mixed_heads || bucket->head != query_head);
     if (head_bucket_mismatch || bucket->subst.count <= 4 || !bucket->subst.root ||
         !bucket->subst_safe || !atom_is_eq_subst_safe(query)) {
-        query_bucket_legacy(s, bucket, query, visible, a, sink);
+        query_bucket_legacy(s, bucket, query, visible, a, sink, pass);
         return;
     }
     SubstMatchSet matches;
@@ -8525,6 +9001,8 @@ static void query_bucket(Space *s, EqBucket *bucket, Atom *query,
         CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
         const SubstMatch *sm = &matches.items[mi];
         if (sm->atom_idx >= bucket->len)
+            continue;
+        if (!eq_bucket_entry_in_pass(s, bucket, sm->atom_idx, pass))
             continue;
         Atom *planned_lhs = NULL;
         Atom *planned_rhs = NULL;
@@ -8627,12 +9105,13 @@ static void query_bucket(Space *s, EqBucket *bucket, Atom *query,
     if (!sink->stop && sink->emitted == emitted_before) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_QUERY_EQUATION_SUBST_BUCKET_FALLBACK);
-        query_bucket_legacy(s, bucket, query, visible, a, sink);
+        query_bucket_legacy(s, bucket, query, visible, a, sink, pass);
     }
 }
 
 static CettaCount query_equations_core_overlay(Space *s, Atom *query, Arena *a,
-                                               QueryResultSink *sink) {
+                                               QueryResultSink *sink,
+                                               bool own_only) {
     QueryVisibleVarSet visible;
     SymbolId query_head = eq_head_symbol(query);
     CettaCount logical_len;
@@ -8646,7 +9125,15 @@ static CettaCount query_equations_core_overlay(Space *s, Atom *query, Arena *a,
     }
 
     logical_len = space_length64(s);
-    for (CettaIndex i = 0; i < logical_len && !sink->stop; i++) {
+    /* Own equations first, then imported ones (see eq_bucket_entry_in_pass). */
+    CettaIndex imported = space_imported_length(s);
+    if (imported > logical_len)
+        imported = 0u;
+    int passes = own_only || imported == 0u ? 1 : 2;
+    for (int pass = 0; pass < passes && !sink->stop; pass++)
+    for (CettaIndex i = pass == 0 ? imported : 0u;
+         i < (pass == 0 ? logical_len : imported) && !sink->stop;
+         i++) {
         Atom *equation = space_get_at64(s, i);
         Atom *lhs = NULL;
         Atom *rhs = NULL;
@@ -8697,33 +9184,62 @@ static CettaCount query_equations_core_overlay(Space *s, Atom *query, Arena *a,
     return sink->emitted;
 }
 
-static CettaCount query_equations_core(Space *s, Atom *query, Arena *a,
-                                       QueryResultSink *sink) {
-    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_QUERY_EQUATIONS);
-    if (space_has_overlay_base(s))
-        return query_equations_core_overlay(s, query, a, sink);
+/* One member of an equation query: the space's own equations, then, unless
+ * `own_only`, its imported ones. */
+static inline __attribute__((always_inline)) void
+query_equations_member(Space *s, Atom *query, Arena *a,
+                       QueryResultSink *sink, bool own_only) {
+    if (space_has_overlay_base(s)) {
+        (void)query_equations_core_overlay(s, query, a, sink, own_only);
+        return;
+    }
     ensure_eq_index(s);
     QueryVisibleVarSet visible;
     query_visible_var_set_init(&visible);
     if (!collect_query_visible_vars_rec(query, &visible)) {
         query_visible_var_set_free(&visible);
-        return 0;
+        return;
     }
     /* Use head-symbol index for O(1) lookup instead of O(N) scan.
        This is the key optimization from Vampire's LiteralIndex. */
     SymbolId head = eq_head_symbol(query);
-    if (head != SYMBOL_ID_NONE) {
-        /* Query has a known head symbol — look up matching bucket */
-        query_bucket(s, &s->native.eq_idx.buckets[symbol_hash(head)], query, &visible, a, sink);
+    bool imported = s->imported_len != 0u;
+    int first_pass = imported ? 0 : -1;
+    int end_pass = !imported ? 0 : own_only ? 1 : 2;
+    for (int pass = first_pass; pass < end_pass && !sink->stop; pass++) {
+        if (head != SYMBOL_ID_NONE) {
+            /* Query has a known head symbol — look up matching bucket */
+            query_bucket(s, &s->native.eq_idx.buckets[symbol_hash(head)],
+                         query, &visible, a, sink, pass);
+        }
+        /* Non-symbol-headed queries may still match wildcard equations whose
+           LHS head is itself a variable or complex term, but they must not
+           unlock every named equation bucket by unifying the head variable
+           with an unrelated function symbol. HE treats ($f x) as data unless
+           a wildcard equation explicitly matches it. */
+        if (!sink->stop)
+            query_bucket(s, &s->native.eq_idx.wildcard, query, &visible, a,
+                         sink, pass);
     }
-    /* Non-symbol-headed queries may still match wildcard equations whose LHS
-       head is itself a variable or complex term, but they must not unlock
-       every named equation bucket by unifying the head variable with an
-       unrelated function symbol. HE treats ($f x) as data unless a wildcard
-       equation explicitly matches it. */
-    if (!sink->stop)
-        query_bucket(s, &s->native.eq_idx.wildcard, query, &visible, a, sink);
     query_visible_var_set_free(&visible);
+}
+
+/* A module space answers its own equations, then each imported module's
+ * own, in import order (HE's ModuleSpace query). */
+static __attribute__((noinline)) void query_equations_dependencies(
+        Space *s, Atom *query, Arena *a, QueryResultSink *sink) {
+    uint32_t dependencies = space_dependency_count(s);
+    for (uint32_t d = 0u; d < dependencies && !sink->stop; d++)
+        query_equations_member(space_dependency_at(s, d), query, a, sink,
+                               true);
+}
+
+static CettaCount query_equations_core(Space *s, Atom *query, Arena *a,
+                                       QueryResultSink *sink) {
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_QUERY_EQUATIONS);
+    query_equations_member(s, query, a, sink, false);
+    if (!sink->stop && space_has_dependencies(s))
+        query_equations_dependencies(s, query, a, sink);
     return sink->emitted;
 }
 
@@ -8784,11 +9300,17 @@ static bool pattern_vars_unique_rec(const Atom *a, VarId *seen, uint32_t *n,
  * by the eligibility predicate and the revision-keyed view cache.  Cheap: one
  * hashed bucket read + a tiny linearity walk; the cache calls it once per
  * (head, revision), not per reduction. */
+static bool space_dependencies_may_match_known_head(const Space *s,
+                                                    SymbolId head);
+
 static Atom *space_single_linear_equation_at(Space *s, SymbolId head,
                                              CettaIndex *logical_index) {
     if (logical_index)
         *logical_index = 0u;
     if (!s || head == SYMBOL_ID_NONE || space_has_overlay_base(s))
+        return NULL;
+    /* An imported module's equation for the head adds a branch. */
+    if (space_dependencies_may_match_known_head(s, head))
         return NULL;
     ensure_eq_index(s);
     if (s->native.eq_idx_dirty)
@@ -9073,6 +9595,79 @@ static bool prepared_register_compile_guarded_step(
     return true;
 }
 
+/* Whether one member of a composed read declares `head` with an arrow type
+ * of the call arity: the space's declarations, or with `own_only` those that
+ * are not imported atoms. */
+static bool space_member_has_arrow_signature(Space *s, SymbolId head,
+                                             CettaExprLen arity,
+                                             bool own_only) {
+    if (space_has_overlay_base(s)) {
+        CettaCount logical_len = space_length64(s);
+        for (CettaIndex i = own_only ? space_imported_length(s) : 0u;
+             i < logical_len; i++) {
+            Atom *annotation = space_get_at64(s, i);
+            if (!annotation || annotation->kind != ATOM_EXPR ||
+                annotation->expr.len != 3u ||
+                !atom_is_symbol_id(annotation->expr.elems[0],
+                                   g_builtin_syms.colon) ||
+                !atom_is_symbol_id(annotation->expr.elems[1], head)) {
+                continue;
+            }
+            Atom *type = annotation->expr.elems[2];
+            if (type && type->kind == ATOM_EXPR &&
+                type->expr.len == (CettaExprLen)(arity + 2u) &&
+                atom_is_symbol_id(type->expr.elems[0],
+                                  g_builtin_syms.arrow)) {
+                return true;
+            }
+        }
+    } else {
+        ensure_ty_ann_index(s);
+        TypeAnnBucket *bucket =
+            &s->native.ty_idx.buckets[symbol_hash(head)];
+        for (CettaIndex i = 0; i < bucket->len; i++) {
+            if (own_only && bucket->atom_indices &&
+                bucket->atom_indices[i] < s->imported_len)
+                continue;
+            AtomId annotation_id = space_indexed_occurrence_atom_id(
+                s, bucket->atom_indices, bucket->atom_ids, i);
+            AtomId subject_id = CETTA_ATOM_ID_NONE;
+            AtomId type_id = CETTA_ATOM_ID_NONE;
+            if (space_type_annotation_child_ids_at_id(
+                    s, annotation_id, &subject_id, &type_id) &&
+                tu_hdr(s->native.universe, subject_id) &&
+                tu_kind(s->native.universe, subject_id) == ATOM_SYMBOL &&
+                tu_sym(s->native.universe, subject_id) == head &&
+                tu_hdr(s->native.universe, type_id) &&
+                tu_kind(s->native.universe, type_id) == ATOM_EXPR &&
+                tu_arity(s->native.universe, type_id) ==
+                    (CettaExprLen)(arity + 2u) &&
+                tu_head_sym(s->native.universe, type_id) ==
+                    g_builtin_syms.arrow) {
+                return true;
+            }
+
+            Atom *annotation = space_indexed_occurrence_atom(
+                s, bucket->atom_indices, bucket->atom_ids, i);
+            if (!annotation || annotation->kind != ATOM_EXPR ||
+                annotation->expr.len != 3u ||
+                !atom_is_symbol_id(annotation->expr.elems[0],
+                                   g_builtin_syms.colon) ||
+                !atom_is_symbol_id(annotation->expr.elems[1], head)) {
+                continue;
+            }
+            Atom *type = annotation->expr.elems[2];
+            if (type && type->kind == ATOM_EXPR &&
+                type->expr.len == (CettaExprLen)(arity + 2u) &&
+                atom_is_symbol_id(type->expr.elems[0],
+                                  g_builtin_syms.arrow)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 /* A declared arrow signature at the call arity hands the head to the
  * typed-demand discipline; the prepared ground-call lane may not evaluate
  * arguments whose declared parameter types keep them syntax. */
@@ -9080,6 +9675,18 @@ bool space_head_has_arrow_signature(Space *s, SymbolId head,
                                     CettaExprLen arity) {
     if (!s || head == SYMBOL_ID_NONE)
         return false;
+    Atom *const *grounded = NULL;
+    uint32_t grounded_count = space_grounded_types(head, &grounded);
+    if (grounded_count != 0u) {
+        for (uint32_t i = 0u; i < grounded_count; i++) {
+            Atom *type = grounded[i];
+            if (type->kind == ATOM_EXPR &&
+                type->expr.len == (CettaExprLen)(arity + 2u) &&
+                atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow))
+                return true;
+        }
+        return false;
+    }
     /* The consult runs on hot accelerator admissions (eager closed-call
      * compiles ask once per call), so the indexed annotation consult is memoized
      * per (space instance, revision, head, arity).  Any space mutation
@@ -9104,70 +9711,10 @@ bool space_head_has_arrow_signature(Space *s, SymbolId head,
         entry->head == head && entry->arity == arity) {
         return entry->shadowed;
     }
-    bool shadowed = false;
-    if (space_has_overlay_base(s)) {
-        CettaCount logical_len = space_length64(s);
-        for (CettaIndex i = 0; i < logical_len; i++) {
-            Atom *annotation = space_get_at64(s, i);
-            if (!annotation || annotation->kind != ATOM_EXPR ||
-                annotation->expr.len != 3u ||
-                !atom_is_symbol_id(annotation->expr.elems[0],
-                                   g_builtin_syms.colon) ||
-                !atom_is_symbol_id(annotation->expr.elems[1], head)) {
-                continue;
-            }
-            Atom *type = annotation->expr.elems[2];
-            if (type && type->kind == ATOM_EXPR &&
-                type->expr.len == (CettaExprLen)(arity + 2u) &&
-                atom_is_symbol_id(type->expr.elems[0],
-                                  g_builtin_syms.arrow)) {
-                shadowed = true;
-                break;
-            }
-        }
-    } else {
-        ensure_ty_ann_index(s);
-        TypeAnnBucket *bucket =
-            &s->native.ty_idx.buckets[symbol_hash(head)];
-        for (CettaIndex i = 0; i < bucket->len; i++) {
-            AtomId annotation_id = space_indexed_occurrence_atom_id(
-                s, bucket->atom_indices, bucket->atom_ids, i);
-            AtomId subject_id = CETTA_ATOM_ID_NONE;
-            AtomId type_id = CETTA_ATOM_ID_NONE;
-            if (space_type_annotation_child_ids_at_id(
-                    s, annotation_id, &subject_id, &type_id) &&
-                tu_hdr(s->native.universe, subject_id) &&
-                tu_kind(s->native.universe, subject_id) == ATOM_SYMBOL &&
-                tu_sym(s->native.universe, subject_id) == head &&
-                tu_hdr(s->native.universe, type_id) &&
-                tu_kind(s->native.universe, type_id) == ATOM_EXPR &&
-                tu_arity(s->native.universe, type_id) ==
-                    (CettaExprLen)(arity + 2u) &&
-                tu_head_sym(s->native.universe, type_id) ==
-                    g_builtin_syms.arrow) {
-                shadowed = true;
-                break;
-            }
-
-            Atom *annotation = space_indexed_occurrence_atom(
-                s, bucket->atom_indices, bucket->atom_ids, i);
-            if (!annotation || annotation->kind != ATOM_EXPR ||
-                annotation->expr.len != 3u ||
-                !atom_is_symbol_id(annotation->expr.elems[0],
-                                   g_builtin_syms.colon) ||
-                !atom_is_symbol_id(annotation->expr.elems[1], head)) {
-                continue;
-            }
-            Atom *type = annotation->expr.elems[2];
-            if (type && type->kind == ATOM_EXPR &&
-                type->expr.len == (CettaExprLen)(arity + 2u) &&
-                atom_is_symbol_id(type->expr.elems[0],
-                                  g_builtin_syms.arrow)) {
-                shadowed = true;
-                break;
-            }
-        }
-    }
+    bool shadowed = space_member_has_arrow_signature(s, head, arity, false);
+    for (uint32_t d = 0u; !shadowed && d < space_dependency_count(s); d++)
+        shadowed = space_member_has_arrow_signature(
+            space_dependency_at(s, d), head, arity, true);
     *entry = (ArrowSignatureMemo){
         .space = (const Space *)s,
         .instance_id = read.instance_id,
@@ -9180,12 +9727,13 @@ bool space_head_has_arrow_signature(Space *s, SymbolId head,
     return shadowed;
 }
 
-bool space_head_declares_type(Space *s, SymbolId head) {
-    if (!s || head == SYMBOL_ID_NONE)
-        return false;
+/* Whether one member of a composed read declares a type for `head`. */
+static bool space_member_declares_type(Space *s, SymbolId head,
+                                       bool own_only) {
     if (space_has_overlay_base(s)) {
         CettaCount logical_len = space_length64(s);
-        for (CettaIndex i = 0; i < logical_len; i++) {
+        for (CettaIndex i = own_only ? space_imported_length(s) : 0u;
+             i < logical_len; i++) {
             Atom *annotation = space_get_at64(s, i);
             if (annotation && annotation->kind == ATOM_EXPR &&
                 annotation->expr.len == 3u &&
@@ -9199,6 +9747,9 @@ bool space_head_declares_type(Space *s, SymbolId head) {
     ensure_ty_ann_index(s);
     TypeAnnBucket *bucket = &s->native.ty_idx.buckets[symbol_hash(head)];
     for (CettaIndex i = 0; i < bucket->len; i++) {
+        if (own_only && bucket->atom_indices &&
+            bucket->atom_indices[i] < s->imported_len)
+            continue;
         AtomId annotation_id = space_indexed_occurrence_atom_id(
             s, bucket->atom_indices, bucket->atom_ids, i);
         AtomId subject_id = CETTA_ATOM_ID_NONE;
@@ -9216,6 +9767,20 @@ bool space_head_declares_type(Space *s, SymbolId head) {
             atom_is_symbol_id(annotation->expr.elems[0],
                               g_builtin_syms.colon) &&
             atom_is_symbol_id(annotation->expr.elems[1], head))
+            return true;
+    }
+    return false;
+}
+
+bool space_head_declares_type(Space *s, SymbolId head) {
+    if (!s || head == SYMBOL_ID_NONE)
+        return false;
+    if (space_grounded_types(head, NULL) != 0u)
+        return true;
+    if (space_member_declares_type(s, head, false))
+        return true;
+    for (uint32_t d = 0u; d < space_dependency_count(s); d++) {
+        if (space_member_declares_type(space_dependency_at(s, d), head, true))
             return true;
     }
     return false;
@@ -10444,9 +11009,32 @@ void query_equations(Space *s, Atom *query, Arena *a, QueryResults *out) {
     (void)query_equations_core(s, query, a, &sink);
 }
 
+static bool space_member_equations_may_match_known_head(Space *s,
+                                                        SymbolId head);
+
+/* Whether a module that `s` imports may define `head`.  A dependency's
+ * imported atoms belong to the modules `s` reads anyway, so its whole space
+ * is consulted. */
+static bool space_dependencies_may_match_known_head(const Space *s,
+                                                    SymbolId head) {
+    uint32_t dependencies = space_dependency_count(s);
+    for (uint32_t d = 0u; d < dependencies; d++) {
+        if (space_member_equations_may_match_known_head(
+                space_dependency_at(s, d), head))
+            return true;
+    }
+    return false;
+}
+
 bool space_equations_may_match_known_head(Space *s, SymbolId head) {
     if (!s || head == SYMBOL_ID_NONE)
         return true;
+    return space_member_equations_may_match_known_head(s, head) ||
+           space_dependencies_may_match_known_head(s, head);
+}
+
+static bool space_member_equations_may_match_known_head(Space *s,
+                                                        SymbolId head) {
     if (space_has_overlay_base(s)) {
         /* Scan only the local scratch tail and delegate the base-visible
          * prefix to the base's own (indexed) check.  Base equations removed
@@ -10463,8 +11051,8 @@ bool space_equations_may_match_known_head(Space *s, SymbolId head) {
             if (eq_lhs_may_match_known_head(lhs, head))
                 return true;
         }
-        return space_equations_may_match_known_head((Space *)s->overlay_base,
-                                                    head);
+        return space_member_equations_may_match_known_head(
+            (Space *)s->overlay_base, head);
     }
     ensure_eq_index(s);
     if (eq_head_set_contains(&s->native.eq_idx.heads, head))
@@ -10503,6 +11091,30 @@ static void space_equation_note_head_arity(
     *has_exact = *has_exact || arity == query_arity;
 }
 
+static void space_member_equation_head_arity(
+    Space *s, SymbolId head, CettaExprLen query_arity, bool *found,
+    CettaExprLen *minimum, CettaExprLen *maximum, bool *has_exact) {
+    if (space_has_overlay_base(s)) {
+        CettaCount logical_len = space_length64(s);
+        for (CettaIndex index = 0u; index < logical_len; index++) {
+            space_equation_note_head_arity(
+                space_get_at64(s, index), head, query_arity,
+                found, minimum, maximum, has_exact);
+        }
+        return;
+    }
+    ensure_eq_index(s);
+    EqBucket *bucket =
+        &s->native.eq_idx.buckets[symbol_hash(head)];
+    for (CettaIndex index = 0u; index < bucket->len; index++) {
+        space_equation_note_head_arity(
+            space_indexed_occurrence_atom(
+                s, bucket->atom_indices, bucket->atom_ids, index),
+            head, query_arity,
+            found, minimum, maximum, has_exact);
+    }
+}
+
 bool space_equation_head_arity_bounds(
     Space *s, SymbolId head, CettaExprLen *minimum,
     CettaExprLen *maximum, bool *has_exact,
@@ -10518,25 +11130,12 @@ bool space_equation_head_arity_bounds(
         return false;
 
     bool found = false;
-    if (space_has_overlay_base(s)) {
-        CettaCount logical_len = space_length64(s);
-        for (CettaIndex index = 0u; index < logical_len; index++) {
-            space_equation_note_head_arity(
-                space_get_at64(s, index), head, query_arity,
-                &found, minimum, maximum, has_exact);
-        }
-        return found;
-    }
-
-    ensure_eq_index(s);
-    EqBucket *bucket =
-        &s->native.eq_idx.buckets[symbol_hash(head)];
-    for (CettaIndex index = 0u; index < bucket->len; index++) {
-        space_equation_note_head_arity(
-            space_indexed_occurrence_atom(
-                s, bucket->atom_indices, bucket->atom_ids, index),
-            head, query_arity,
-            &found, minimum, maximum, has_exact);
-    }
+    space_member_equation_head_arity(s, head, query_arity, &found, minimum,
+                                     maximum, has_exact);
+    uint32_t dependencies = space_dependency_count(s);
+    for (uint32_t d = 0u; d < dependencies; d++)
+        space_member_equation_head_arity(
+            space_dependency_at(s, d), head, query_arity, &found, minimum,
+            maximum, has_exact);
     return found;
 }

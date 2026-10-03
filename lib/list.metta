@@ -63,7 +63,7 @@
 (= (list:reverse-acc $xs $acc)
    (let ($head $tail) (decons-atom $xs)
      (let $next (eval (cons-atom $head $acc))
-       (eval (list:reverse-acc $tail $next)))))
+       (list:reverse-acc $tail $next))))
 
 ; Structural equality is the default equivalence for list filtering.  The
 ; explicit predicate argument on the -by forms also admits alpha, key-only,
@@ -79,11 +79,11 @@
    (if (== $xs ())
        ()
        (let ($head $tail) (decons-atom $xs)
-         (let $drop (eval ($same $item $head))
+         (let $drop ($same $item $head)
            (if $drop
-               (eval (list:remove-all-by-walk $same $item $tail))
+               (list:remove-all-by-walk $same $item $tail)
                (let $rest
-                    (eval (list:remove-all-by-walk $same $item $tail))
+                    (list:remove-all-by-walk $same $item $tail)
                  (eval (cons-atom $head $rest))))))))
 
 (= (list:remove-all $item $xs)
@@ -104,8 +104,9 @@
        ()
        (let ($head $tail) (decons-atom $xs)
          (let $remaining
-              (eval (list:remove-all-by-walk $same $head $tail))
-           (let $rest (eval (list:unique-by-walk $same $remaining))
+              (list:remove-all-by-walk $same $head $tail)
+           (let $rest
+                (list:unique-by-walk $same $remaining)
              (eval (cons-atom $head $rest)))))))
 
 ; The prefix action of the natural numbers on finite sequences.  A request
@@ -121,7 +122,8 @@
        (if (== $xs ())
            ()
            (let ($head $tail) (decons-atom $xs)
-             (let $rest (eval (list:take-walk (- $count 1) $tail))
+             (let $rest
+                  (list:take-walk (- $count 1) $tail)
                (eval (cons-atom $head $rest)))))))
 
 ; Efficient order-statistic filtering for already-computed numeric keys.
@@ -134,9 +136,11 @@
    (let $items (list:to-expression $xs)
      (list:like $xs
        (map-atom $items $item
-         (let $key ($key-function $item)
-           (let $value (cons-atom $item ())
-             (cons-atom $key $value)))))))
+         (metta
+           (let $key ($key-function $item)
+             (let $value (cons-atom $item ())
+               (cons-atom $key $value)))
+           %Undefined% (context-space))))))
 
 (= (list:unkey $entries)
    (unkey-atom $entries))
@@ -151,28 +155,32 @@
 
 (= (list:retain-top-k-by-number-walk $key-function $xs $count)
    (function
-     (chain (eval $xs) $__list_top_k_items
-       (chain (eval $count) $__list_top_k_count
+     (chain (metta $xs %Undefined% (context-space)) $__list_top_k_items
+       (chain (metta $count %Undefined% (context-space)) $__list_top_k_count
          (eval
            (_minimal-retain-top-k-by-number
              $__list_top_k_items $__list_top_k_count $__list_top_k_item
-             (eval ($key-function $__list_top_k_item))))))))
+             (metta ($key-function $__list_top_k_item)
+               %Undefined% (context-space))))))))
 
 ; The native path may fuse keying, bounded selection, and key erasure only
 ; after proving that every item has one pure key.  This equation remains the
 ; complete relational meaning when that proof is unavailable.
 (= (_minimal-retain-top-k-by-number $xs $count $item $key)
    (chain
-     (eval
+     (metta
        (map-atom $xs $item
-         (let $score $key
-           (let $value (cons-atom $item ())
-             (cons-atom $score $value)))))
+         (metta
+           (let $score $key
+             (let $value (cons-atom $item ())
+               (cons-atom $score $value)))
+           %Undefined% (context-space)))
+       %Undefined% (context-space))
      $keyed
      (chain
-       (retain-top-k-keyed-atom $keyed $count)
+       (eval (retain-top-k-keyed-atom $keyed $count))
        $retained
-       (chain (unkey-atom $retained) $result
+       (chain (eval (unkey-atom $retained)) $result
          (return $result)))))
 
 ; The default order is stable shortlex over common parseable Atom syntax.
@@ -193,19 +201,18 @@
 
 (= (list:split-half-walk $slow $fast $left-reversed)
    (if (== $fast ())
-       (let $left (eval (list:reverse $left-reversed))
+       (let $left (list:reverse $left-reversed)
          ($left $slow))
        (let ($fast-head $fast-tail) (decons-atom $fast)
          (if (== $fast-tail ())
-             (let $left (eval (list:reverse $left-reversed))
+             (let $left (list:reverse $left-reversed)
                ($left $slow))
              (let ($slow-head $slow-tail) (decons-atom $slow)
                (let ($fast-second $fast-rest) (decons-atom $fast-tail)
                  (let $next-left
                       (eval (cons-atom $slow-head $left-reversed))
-                   (eval
-                     (list:split-half-walk
-                       $slow-tail $fast-rest $next-left)))))))))
+                   (list:split-half-walk
+                     $slow-tail $fast-rest $next-left))))))))
 
 (= (list:merge-by $precedes $left $right)
    (let $left-items (list:to-expression $left)
@@ -221,17 +228,15 @@
            (let ($left-head $left-tail) (decons-atom $left)
              (let ($right-head $right-tail) (decons-atom $right)
                (let $take-left
-                    (eval ($precedes $left-head $right-head))
+                    ($precedes $left-head $right-head)
                  (if $take-left
                      (let $rest
-                          (eval
-                            (list:merge-by-walk
-                              $precedes $left-tail $right))
+                          (list:merge-by-walk
+                            $precedes $left-tail $right)
                        (eval (cons-atom $left-head $rest)))
                      (let $rest
-                          (eval
-                            (list:merge-by-walk
-                              $precedes $left $right-tail))
+                          (list:merge-by-walk
+                            $precedes $left $right-tail)
                        (eval (cons-atom $right-head $rest))))))))))
 
 (= (list:sort-by $precedes $xs)
@@ -244,12 +249,14 @@
        (let ($head $tail) (decons-atom $xs)
          (if (== $tail ())
              $xs
-             (let ($left $right) (eval (list:split-half-walk $xs $xs ()))
-               (let $sorted-left (eval (list:sort-by-walk $precedes $left))
-                 (let $sorted-right (eval (list:sort-by-walk $precedes $right))
-                   (eval
-                     (list:merge-by-walk
-                       $precedes $sorted-left $sorted-right)))))))))
+             (let ($left $right)
+                  (list:split-half-walk $xs $xs ())
+               (let $sorted-left
+                    (list:sort-by-walk $precedes $left)
+                 (let $sorted-right
+                      (list:sort-by-walk $precedes $right)
+                   (list:merge-by-walk
+                     $precedes $sorted-left $sorted-right))))))))
 
 (= (list:number-ascending $left $right)
    (<= $left $right))
@@ -265,16 +272,18 @@
 (= (list:map $xs $var $body)
    (if (list:is-list $xs)
        (let $items (list:to-expression $xs)
-         (let $mapped (map-atom $items $var $body)
+         (let $mapped
+              (map-atom $items $var (metta $body %Undefined% (context-space)))
            (list:from-expression $mapped)))
-       (map-atom $xs $var $body)))
+       (map-atom $xs $var (metta $body %Undefined% (context-space)))))
 
 (= (list:filter $xs $var $body)
    (if (list:is-list $xs)
        (let $items (list:to-expression $xs)
-         (let $kept (filter-atom $items $var $body)
+         (let $kept
+              (filter-atom $items $var (metta $body %Undefined% (context-space)))
            (list:from-expression $kept)))
-       (filter-atom $xs $var $body)))
+       (filter-atom $xs $var (metta $body %Undefined% (context-space)))))
 
 (= (list:foldl $xs $init $acc $item $step)
    (if (list:is-list $xs)

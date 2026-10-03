@@ -1,6 +1,8 @@
 #ifndef CETTA_SPACE_H
 #define CETTA_SPACE_H
 
+#include <stdatomic.h>
+
 #include "atom.h"
 #include "generated/cetta_execution_contracts.generated.h"
 #include "gslt_term_view_v1.h"
@@ -198,11 +200,78 @@ typedef struct Space {
     CettaIndex overlay_removed_base_cap;
     uint64_t payload_owner_epoch;
     uint64_t payload_export_owner_epoch;
+    /* The first imported_len logical atoms belong to modules this space
+       imports (HE's standard library).  As in HE's module space, a query
+       sees them after the space's own atoms, while listing, counting and
+       removal through this space see only its own atoms.  Zero when every
+       atom is the space's own. */
+    CettaIndex imported_len;
+    /* Modules this space imports (HE's ModuleSpace): ordered, non-owning
+       handles to their spaces.  A query answers this space's own atoms, then
+       each dependency's own atoms, in order; adding, removing, listing and
+       counting see this space's own atoms only.  The module table owns the
+       dependency spaces. */
+    struct Space **deps;
+    uint32_t dep_count, dep_cap;
+    /* Spaces importing this one: a mutation here advances their revisions,
+       so caches over their composed view go stale. */
+    struct Space **importers;
+    uint32_t importer_count, importer_cap;
+    /* Unique stamp of changes read through the live module handles.
+       Dependency appends change this, but preserve the storage prefix. */
+    uint64_t module_dependency_epoch;
 } Space;
 
 void space_init_with_universe(Space *s, TermUniverse *universe);
 void space_init_overlay(Space *s, const Space *base);
 void space_init(Space *s);
+/* Mark the current contents as imported-module atoms.  False, leaving the
+   space unchanged, for an overlay or a stack, queue or hash space. */
+bool space_mark_imported_prefix(Space *s);
+/* Leading logical atoms that belong to imported modules: the space's own
+   count, or for an overlay the count of the space at the bottom of its
+   overlay chain. */
+CettaIndex space_imported_length(const Space *s);
+/* Append `dependency` to `importer`'s dependencies unless it is already
+   there.  False on allocation failure or for a space importing itself.  A
+   change of the list advances the importer's revisions. */
+bool space_add_dependency(Space *importer, Space *dependency);
+/* The dependencies a read composes after `s`'s own atoms: an overlay reads
+   through those of the space at the bottom of its overlay chain. */
+static inline uint32_t space_dependency_count(const Space *s) {
+    while (s && s->overlay_base)
+        s = s->overlay_base;
+    return s ? s->dep_count : 0u;
+}
+static inline Space *space_dependency_at(const Space *s, uint32_t index) {
+    while (s && s->overlay_base)
+        s = s->overlay_base;
+    return s && index < s->dep_count ? s->deps[index] : NULL;
+}
+/* The rows a query of `s` reads, as one sequence: `s`'s logical atoms, then
+   each dependency's own atoms in import order.  For a space without
+   dependencies this is its logical sequence.  Listing, counting and mutation
+   use the logical sequence instead. */
+CettaCount space_view_length64(const Space *s);
+Atom *space_view_get_at64(const Space *s, CettaIndex index);
+/* Give `dst`, holding a copy of `src`'s logical atoms, src's module view:
+   the same imported prefix and the same dependencies.  False on allocation
+   failure. */
+bool space_copy_module_view(Space *dst, const Space *src);
+/* Whether reads of `s` compose dependencies.  The composed readers (equation
+   queries and cursors, match, conjunctions, declared types) answer for such a
+   space; an accelerator that reads one space's storage or indices declines. */
+static inline bool space_has_dependencies(const Space *s) {
+    return space_dependency_count(s) != 0u;
+}
+/* The active session's grounded operation types: in a language whose
+   grounded operations type themselves (HE's Grounded::type_), type lookup
+   for such a symbol answers these alone, and declarations written for the
+   name do not change them.  0 for every other symbol and language.  Weak:
+   a binary without the evaluator types every symbol by declarations. */
+uint32_t space_session_grounded_symbol_types(SymbolId symbol,
+                                             Atom *const **types)
+    __attribute__((weak));
 void space_free(Space *s);
 void space_execution_analysis_cache_free_for_current_thread(void);
 Atom *space_store_atom(Space *s, Arena *fallback, Atom *atom);
@@ -270,7 +339,13 @@ static inline uint64_t space_instance_id(const Space *s) {
  * a fortiori every space a computation consulted is unchanged.  Ground-call
  * memoization uses it as a conservative whole-episode invalidation key; it is
  * read only by opt-in memoization and changes no existing behaviour. */
-uint64_t space_global_mutation_epoch(void);
+/* Compiled entry checks read this clock on every invocation. Keep the
+ * accessor inline; atomic publication remains centralized in space.c. */
+extern _Atomic uint64_t cetta_space_global_mutation_epoch;
+static inline uint64_t space_global_mutation_epoch(void) {
+    return atomic_load_explicit(&cetta_space_global_mutation_epoch,
+                                memory_order_relaxed);
+}
 
 /* An in-process read token for one live Space revision.  The token carries a
    process-local lifetime identity as well as the address and revision, so a
@@ -285,6 +360,10 @@ typedef struct {
      * consult this rather than `revision` so an in-flight pin survives
      * appends without copying the bag. */
     uint64_t prefix_epoch;
+    /* A frozen base prefix and live module handles have different
+       validity conditions. Only the full read notices module appends. */
+    uint64_t base_prefix_epoch;
+    uint64_t base_dependency_epoch;
 } SpaceReadToken;
 
 /* Lifetime-qualified identity of the ordered equation-occurrence projection.
@@ -303,9 +382,9 @@ typedef struct {
 /* Lifetime-qualified identity of the program projection a Space presents to
    callability, named-arity, and effect classification: its equation and
    declaration occurrences.  Data-only mutations leave it unchanged.  An
-   overlay reads a live base chain whose program may change without touching
-   the overlay's own clocks, so an overlay's token folds in the process-wide
-   mutation epoch and stays conservative. */
+   overlay freezes a base storage prefix but reads its modules live. Its
+   token includes the newest base-prefix or module-view stamp, so module
+   appends invalidate it without unrelated spaces doing so. */
 typedef struct {
     const Space *space;
     uint64_t instance_id;
@@ -382,11 +461,21 @@ bool space_equation_occurrence_resolve(SpaceEquationOccurrenceId id,
 typedef struct {
     SpaceReadToken read;
     SymbolId head;
+    /* The member being read: the space itself, then each dependency's own
+       equations in import order (dependency counts the members entered
+       after the space).  An item's occurrence names its member. */
+    SpaceReadToken member;
+    uint32_t dependency;
+    bool own_only;
     CettaIndex ceiling;
     CettaIndex exact_position;
     CettaIndex wildcard_position;
     CettaIndex overlay_position;
     bool overlay;
+    /* With imported atoms (Space.imported_len), the member's own equations
+       are visited in phase 0 and the imported ones in phase 1. */
+    CettaIndex imported;
+    uint8_t phase;
 } SpaceEquationCursor;
 
 typedef enum {
