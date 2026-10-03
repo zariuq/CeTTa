@@ -1535,6 +1535,15 @@ int gslt_direct_reader_v1_parse_bytes_ids(
         error_buf, error_buf_size);
 }
 
+/* What the input ends inside of, when it ends before a form is complete. */
+typedef enum {
+    GSLT_DIRECT_PREFIX_OPEN_NONE = 0,
+    GSLT_DIRECT_PREFIX_OPEN_EXPRESSION,
+    GSLT_DIRECT_PREFIX_OPEN_LIST,
+    GSLT_DIRECT_PREFIX_OPEN_PREFIX,
+    GSLT_DIRECT_PREFIX_OPEN_STRING,
+} GSLTDirectPrefixOpenV1;
+
 typedef struct {
     const GSLTDirectPrefixReaderV1Plan *plan;
     GSLTDirectCursorV1 cursor;
@@ -1544,6 +1553,10 @@ typedef struct {
     uint32_t reductions;
     char *error_buf;
     size_t error_buf_size;
+    /* A rejected source: the innermost form the input ends inside of, and
+     * where it opened.  NONE when reading stopped elsewhere, at the cursor. */
+    GSLTDirectPrefixOpenV1 open_kind;
+    size_t open_pos;
 } GSLTDirectPrefixStateV1;
 
 static bool gslt_direct_prefix_skip(GSLTDirectPrefixStateV1 *state) {
@@ -1796,6 +1809,8 @@ typedef struct {
     AtomId *children;
     uint32_t len;
     uint32_t cap;
+    /* The source offset of the frame's opening punctuation or prefix. */
+    size_t open_pos;
     /* A list frame, [x y ...] or [x y ... | rest]: its elements are its
      * children, and once the bar is read its next atom is the rest. */
     bool list;
@@ -1803,6 +1818,16 @@ typedef struct {
     /* A prefix frame read inside a list: its payload uses the list rules. */
     bool in_list;
 } GSLTDirectPrefixFrameV1;
+
+/* The input ended inside a form that opened at `pos`. */
+static void gslt_direct_prefix_note_open(GSLTDirectPrefixStateV1 *state,
+                                         GSLTDirectPrefixOpenV1 kind, size_t pos) {
+    if (state->cursor.pos < state->cursor.input_len ||
+        state->open_kind != GSLT_DIRECT_PREFIX_OPEN_NONE)
+        return;
+    state->open_kind = kind;
+    state->open_pos = pos;
+}
 
 /* A frame is precisely one pending expression, list or prefix projection.
  * Each push consumes source bytes; the source size bounds the stack
@@ -1821,6 +1846,7 @@ static AtomId gslt_direct_prefix_parse_atom(
         const GSLTDirectPrefixRuleV1 *prefix = NULL;
         bool expression = false;
         bool list = false;
+        size_t atom_start = state->cursor.pos;
         bool in_list = frame_len == 0u
             ? in_list_at_root
             : frames[frame_len - 1u].list ||
@@ -1839,13 +1865,19 @@ static AtomId gslt_direct_prefix_parse_atom(
             goto done;
         if (codepoint == state->plan->string_open) {
             result = gslt_direct_prefix_parse_string(state);
+            if (result == CETTA_ATOM_ID_NONE)
+                gslt_direct_prefix_note_open(
+                    state, GSLT_DIRECT_PREFIX_OPEN_STRING, atom_start);
         } else if (codepoint == state->plan->expression_open) {
             gslt_direct_reader_v1_consume_width(&state->cursor, width);
             if (!gslt_direct_prefix_skip(state) ||
                 state->cursor.pos >= state->cursor.input_len ||
                 !gslt_direct_reader_v1_peek(
-                    &state->cursor, &codepoint, &width))
+                    &state->cursor, &codepoint, &width)) {
+                gslt_direct_prefix_note_open(
+                    state, GSLT_DIRECT_PREFIX_OPEN_EXPRESSION, atom_start);
                 goto done;
+            }
             if (codepoint == state->plan->expression_close) {
                 gslt_direct_reader_v1_consume_width(&state->cursor, width);
                 result = state->projection->expression(
@@ -1861,8 +1893,11 @@ static AtomId gslt_direct_prefix_parse_atom(
             if (!gslt_direct_prefix_skip(state) ||
                 state->cursor.pos >= state->cursor.input_len ||
                 !gslt_direct_reader_v1_peek(
-                    &state->cursor, &codepoint, &width))
+                    &state->cursor, &codepoint, &width)) {
+                gslt_direct_prefix_note_open(
+                    state, GSLT_DIRECT_PREFIX_OPEN_LIST, atom_start);
                 goto done;
+            }
             if (codepoint == state->plan->list_close) {
                 gslt_direct_reader_v1_consume_width(&state->cursor, width);
                 result = state->projection->list(
@@ -1894,7 +1929,8 @@ static AtomId gslt_direct_prefix_parse_atom(
                 frame_cap = next;
             }
             frames[frame_len++] = (GSLTDirectPrefixFrameV1){
-                .prefix = prefix, .list = list, .in_list = in_list};
+                .prefix = prefix, .list = list, .in_list = in_list,
+                .open_pos = atom_start};
             continue;
         }
         for (;;) {
@@ -1983,10 +2019,83 @@ static AtomId gslt_direct_prefix_parse_atom(
         }
     }
 done:
+    if (result == CETTA_ATOM_ID_NONE && frame_len > 0u) {
+        const GSLTDirectPrefixFrameV1 *open = &frames[frame_len - 1u];
+        gslt_direct_prefix_note_open(
+            state,
+            open->prefix ? GSLT_DIRECT_PREFIX_OPEN_PREFIX
+            : open->list ? GSLT_DIRECT_PREFIX_OPEN_LIST
+                         : GSLT_DIRECT_PREFIX_OPEN_EXPRESSION,
+            open->open_pos);
+    }
     for (uint32_t index = 0u; index < frame_len; index++)
         free(frames[index].children);
     free(frames);
     return result;
+}
+
+/* The line and column of a source offset, both from 1; a column counts
+ * scalars, not bytes. */
+static void gslt_direct_prefix_position(const uint8_t *input, size_t pos,
+                                        size_t *line_out, size_t *column_out) {
+    size_t line = 1u;
+    size_t column = 1u;
+    for (size_t index = 0u; index < pos; index++) {
+        if (input[index] == (uint8_t)'\n') {
+            line++;
+            column = 1u;
+        } else if ((input[index] & UINT8_C(0xC0)) != UINT8_C(0x80)) {
+            column++;
+        }
+    }
+    *line_out = line;
+    *column_out = column;
+}
+
+/* A rejected source names what it ends inside of, or what no rule reads,
+ * and where. */
+static void gslt_direct_prefix_rejection(const GSLTDirectPrefixStateV1 *state) {
+    static const char outside[] =
+        "source is outside the compiled prefix S-expression LanguageDef";
+    const GSLTDirectCursorV1 *cursor = &state->cursor;
+    size_t line;
+    size_t column;
+    if (state->open_kind != GSLT_DIRECT_PREFIX_OPEN_NONE) {
+        static const char *const what[] = {
+            [GSLT_DIRECT_PREFIX_OPEN_EXPRESSION] =
+                "the input ends inside the expression opened",
+            [GSLT_DIRECT_PREFIX_OPEN_LIST] =
+                "the input ends inside the list opened",
+            [GSLT_DIRECT_PREFIX_OPEN_PREFIX] =
+                "the input ends before the payload of the prefix",
+            [GSLT_DIRECT_PREFIX_OPEN_STRING] =
+                "the input ends inside the string opened",
+        };
+        gslt_direct_prefix_position(cursor->input, state->open_pos, &line, &column);
+        gslt_direct_reader_v1_error(
+            state->error_buf, state->error_buf_size,
+            "%s: %s at line %zu, column %zu", outside,
+            what[state->open_kind], line, column);
+        return;
+    }
+    if (cursor->pos >= cursor->input_len) {
+        gslt_direct_reader_v1_error(state->error_buf, state->error_buf_size,
+                                    "%s: the input ends inside a form", outside);
+        return;
+    }
+    gslt_direct_prefix_position(cursor->input, cursor->pos, &line, &column);
+    uint8_t byte = cursor->input[cursor->pos];
+    if (byte >= UINT8_C(0x21) && byte < UINT8_C(0x7F)) {
+        gslt_direct_reader_v1_error(
+            state->error_buf, state->error_buf_size,
+            "%s: no rule reads '%c' at line %zu, column %zu", outside,
+            (char)byte, line, column);
+    } else {
+        gslt_direct_reader_v1_error(
+            state->error_buf, state->error_buf_size,
+            "%s: no rule reads the text at line %zu, column %zu", outside,
+            line, column);
+    }
 }
 
 static bool gslt_direct_prefix_rule_set_valid(
@@ -2356,11 +2465,8 @@ int gslt_direct_prefix_reader_v1_parse_bytes_ids(
     result = (int)len;
 done:
     if (result < 0 && error_buf && error_buf_size > 0u &&
-        error_buf[0] == '\0') {
-        gslt_direct_reader_v1_error(
-            error_buf, error_buf_size,
-            "source is outside the compiled prefix S-expression LanguageDef");
-    }
+        error_buf[0] == '\0')
+        gslt_direct_prefix_rejection(&state);
     free(ids);
     return result;
 }

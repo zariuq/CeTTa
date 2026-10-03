@@ -188,6 +188,17 @@ Atom *prime_semantics_kernel_rules(Arena *arena, Space *space);
  * must already have passed telescope checking. NULL leaves the call as it
  * is: the head has no computation, the budget ran out, or the normal form
  * has no authored spelling. Exhaustion is not a value and not a refutation. */
+/* How many rule firings the last covered call reduced by this thread took:
+ * one, or more for a definition computed to its normal form at once, or for
+ * a call whose argument unfolded under its observation. */
+uint64_t prime_semantics_covered_call_firings(void);
+
+/* Whether the written sort `lower`, a universe `(u l)` or a sort above them
+ * by name, lies inside the written sort `upper`: universes are cumulative,
+ * and every universe an author writes lies inside `set`.  False for anything
+ * that is not a closed written sort. */
+bool prime_semantics_written_sort_within(Arena *arena, Atom *lower, Atom *upper);
+
 Atom *prime_semantics_reduce_covered_call(
     Arena *arena, Space *space, Atom *call, int fuel);
 
@@ -196,6 +207,20 @@ Atom *prime_semantics_reduce_covered_call(
  * Ordinary execution keeps prime_semantics_reduce_covered_call. */
 Atom *prime_semantics_reduce_open_covered_call(
     Arena *arena, Space *space, Atom *call, int fuel);
+
+/* The right side of the admitted rule of arity zero that defines `name`
+ * (`set:define` of a constant with no arguments), in the authored spelling;
+ * NULL when there is none. */
+Atom *prime_semantics_unfold_covered_constant(Arena *arena, Space *space,
+                                              Atom *name);
+
+/* The normal form of a closed call by the space's admitted rules alone, in
+ * the authored spelling, computed in the kernel within `steps` steps; no
+ * oracle takes part.  NULL when there is none: no admitted rules, no
+ * elaboration, no authored spelling, or the steps ran out (`*exhausted`). */
+Atom *prime_semantics_rules_normal_form(Arena *arena, Space *space,
+                                        Atom *call, uint64_t steps,
+                                        bool *exhausted);
 
 /* `(fst (pair a b))` and `(snd (pair a b))` as values. NULL if the call
  * is not that projection. */

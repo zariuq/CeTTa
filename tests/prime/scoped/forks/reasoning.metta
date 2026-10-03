@@ -3,7 +3,7 @@
 ; distinguishable.
 
 ; Native proof service: a checked derivation, retained on publication.
-!(set:theorem native-fact (In Empty (Power Empty)) (pf:all-elim (pf:known PowerI) Empty))
+!(set:theorem native-fact (In Empty (UnivOf Empty)) (pf:all-elim (pf:known universeIn) Empty))
 !(match &self (set:known native-fact $p $origin $proof $d $r $sig) $origin)
 
 ; Native decision service: an operational observation of a producer.

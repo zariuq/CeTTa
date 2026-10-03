@@ -12,9 +12,8 @@ def main() -> int:
         return 2
     source = Path(sys.argv[1]).read_text()
     marker = (
-        "static Bindings *applicability_bindings_push("
-        "ApplicabilityBindings *vec) {\n"
-        "    if (!vec || vec->len == UINT32_MAX) {")
+        "static Bindings *apply_bindings_push(ApplyBindings *bindings) {\n"
+        "    if (bindings->len == UINT32_MAX) return NULL;")
     replacement = marker.replace("UINT32_MAX", "64u")
     if source.count(marker) != 1:
         print("dynamic applicability growth marker must occur exactly once",

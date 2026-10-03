@@ -56,7 +56,7 @@
 
 ; Parse each line; keep each line that reads as one equation, as a code
 ; value.  A line that is not one form (a comment, a fragment of a longer
-; form) is Refuted by `try`.  Quoting keeps the parsed syntax as written: a
+; form) is reported Failed by `try`.  Quoting keeps the parsed syntax as written: a
 ; bare parsed equation in an evaluated position would have its left side
 ; evaluated (see query 22).
 (= (own-equations $lines)

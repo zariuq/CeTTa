@@ -709,6 +709,7 @@ SRC += \
 	src/prime_regular_pattern.c \
 	src/prime_typing_publication.c \
 	src/prime_scoped_judgments.c \
+	src/prime_arith_oracle.c \
 	src/generated/prime_typing_elaborated_dependent_formation_core_source_binding_v1.generated.c \
 	src/generated/prime_typing_open_lambda_pi_core_source_binding_v1.generated.c \
 	src/generated/prime_typing_open_regular_kernel_source_binding_v1.generated.c \
@@ -913,6 +914,11 @@ PRIME_LEVEL_TEST_SRC = tests/support/test_prime_level.c
 PRIME_LEVEL_TEST_OBJ = runtime/bootstrap/test_prime_level.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 PRIME_LEVEL_TEST_BIN = runtime/test_prime_level-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 PRIME_LEVEL_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PRIME_LEVEL_DIFFERENTIAL_SRC = tests/support/prime_level_differential.c
+PRIME_LEVEL_DIFFERENTIAL_OBJ = runtime/bootstrap/prime_level_differential.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PRIME_LEVEL_DIFFERENTIAL_BIN = runtime/prime_level_differential-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PRIME_LEVEL_DIFFERENTIAL_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PRIME_LEVEL_DIFFERENTIAL_DIR ?= runtime/prime-level-lean-differential
 PRIME_TYPED_FLOW_TEST_SRC = tests/support/test_prime_typed_flow.c
 PRIME_TYPED_FLOW_TEST_OBJ = runtime/bootstrap/test_prime_typed_flow.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 PRIME_TYPED_FLOW_TEST_BIN = runtime/test_prime_typed_flow-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
@@ -1865,6 +1871,7 @@ PRIME_NIK_PROOF_DAG_TEST_V1 = tools/test_nik_proof_dag_v1.py
 MEGALODON_AUTO_BIN ?= $(abspath ../../Mettapedia/megalodon/bin/megalodon)
 MEGALODON_HOTG_PREAMBLE ?= $(abspath ../../Mettapedia/megalodon/ramsey36/preamble.mgs)
 MEGALODON_HOTG_FAMILY_SOURCE ?= $(abspath ../../Mettapedia/megalodon/theory/foundations/family_enclosing_universe.mg)
+MEGALODON_PRIME_TOWER_SOURCE ?= $(abspath ../../Mettapedia/megalodon/theory/foundations/prime_tower_inside_sets.mg)
 METTAPEDIA_LEAN_ROOT ?=
 METTAPEDIA_LEAN_AUTO_ROOT ?= $(abspath ../../Mettapedia/lean/mettapedia)
 GSLT_IL_LANGDEF_V1 = langdef/gslt-il/langdef.metta
@@ -3076,6 +3083,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/need_quote_preservation.metta \
 	tests/prime/quote_head_matching.metta \
 	tests/prime/data_holding.metta \
+	tests/prime/nullary_constants.metta \
 	tests/prime/held_equality.metta \
 	tests/prime/held_patterns.metta \
 	tests/prime/stored_variable_identity.metta \
@@ -3139,12 +3147,22 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/scoped/stuck_eliminator_calls.metta \
 	tests/prime/scoped/lambda_in_declared_types.metta \
 	tests/prime/scoped/level_schema_synthesis.metta \
+	tests/prime/scoped/transfinite_universes.metta \
+	tests/prime/scoped/level_notations.metta \
+	tests/prime/scoped/level_arithmetic_and_maximum.metta \
+	tests/prime/scoped/level_least_instance.metta \
+	tests/prime/scoped/level_instance_from_all_uses.metta \
+	tests/prime/scoped/omega_ordinary_symbol.metta \
+	tests/prime/scoped/sets_are_ambient.metta \
+	tests/prime/scoped/large_carrier_rule_constants.metta \
 	tests/prime/scoped/try.metta \
 	tests/prime/scoped/conversion_authority.metta \
 	tests/prime/scoped/typed_eta_conversion.metta \
+	tests/prime/scoped/refutation_nil_cons.metta \
 	tests/prime/scoped/admitted_computation.metta \
 	tests/prime/scoped/kernel_query.metta \
 	tests/prime/scoped/reserved_identities.metta \
+	tests/prime/scoped/reserved_names.metta \
 	tests/prime/scoped/syntax_word_names.metta \
 	tests/prime/scoped/named_binder_types.metta \
 	tests/prime/scoped/import_admissions.metta \
@@ -3187,6 +3205,22 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/scoped/native_dependency_revisions.metta \
 	tests/prime/scoped/hotg_universe_native_use.metta \
 	tests/prime/scoped/hotg_proof_carrying_pipeline.metta \
+	tests/prime/scoped/induction_append_nil.metta \
+	tests/prime/scoped/induction_curriculum.metta \
+	tests/prime/trinity/append.operational.metta \
+	tests/prime/trinity/append.intensional.metta \
+	tests/prime/trinity/append.extensional.metta \
+	tests/prime/trinity/reverse.operational.metta \
+	tests/prime/trinity/reverse.intensional.metta \
+	tests/prime/trinity/reverse.extensional.metta \
+	tests/prime/trinity/power-in-universe.metta \
+	tests/prime/trinity/log2.metta \
+	tests/prime/trinity/arith.binary.metta \
+	tests/prime/trinity/arith.oracle.metta \
+	tests/prime/trinity/stream.metta \
+	tests/prime/trinity/stream.family.metta \
+	tests/prime/trinity/query.typed.metta \
+	tests/prime/trinity/call.typed.metta \
 	tests/prime/scoped/inductive_formation.metta \
 	tests/prime/scoped/definition_admission.metta \
 	tests/prime/scoped/admission_verdicts.metta \
@@ -6053,6 +6087,18 @@ $(PRIME_LEVEL_TEST_BIN): $(PRIME_LEVEL_TEST_OBJ) $(PRIME_LEVEL_TEST_LINK_OBJ) $(
 	mv "$$tmp_out" $@
 
 $(PRIME_LEVEL_TEST_OBJ): $(PRIME_LEVEL_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
+
+$(PRIME_LEVEL_DIFFERENTIAL_BIN): $(PRIME_LEVEL_DIFFERENTIAL_OBJ) $(PRIME_LEVEL_DIFFERENTIAL_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/prime-level-differential.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PRIME_LEVEL_DIFFERENTIAL_OBJ): $(PRIME_LEVEL_DIFFERENTIAL_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
@@ -17710,7 +17756,102 @@ test: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-
 # import the checkout at its sibling location.
 METTAPEDIA_LEAN_CHECKOUT = $(if $(strip $(METTAPEDIA_LEAN_ROOT)),$(METTAPEDIA_LEAN_ROOT),$(METTAPEDIA_LEAN_AUTO_ROOT))
 test-lean: test-rhocalc-lean test-lean-corpus test-abt-differential \
-	test-petta-typecheck-v3-core-parity-v1
+	test-petta-typecheck-v3-core-parity-v1 \
+	test-prime-level-lean-differential \
+	test-prime-lean-citations
+
+# Judgments with level variables against their written instances: seeded
+# declarations over a level variable, each also written at the levels 0..9, and
+# uses of them alone and nested; and declarations over two level variables with
+# a maximum in result position, at finite levels and at and above omega.  A
+# judgment that holds at a written instance is neither refuted nor left
+# undetermined, and an established judgment holds at some written instance.
+# PRIME_LEVEL_INSTANCE_DIR receives the programs, their labels and the answers.
+PRIME_LEVEL_INSTANCE_DIR ?= runtime/prime-level-instances
+PRIME_LEVEL_INSTANCE_SEEDS ?= 1 2 3 4 5 6 7 8
+PRIME_LEVEL_INSTANCE_TWO_SEEDS ?= 1 2 3 4 5 6
+.PHONY: test-prime-level-instance-agreement
+test-prime-level-instance-agreement: $(BIN)
+	@set -eu; \
+	out="$(PRIME_LEVEL_INSTANCE_DIR)"; mkdir -p "$$out"; \
+	batches=0; \
+	for seed in $(PRIME_LEVEL_INSTANCE_SEEDS); do \
+		python3 tests/support/prime_level_instances.py generate "$$seed" 24 "$$out/batch-$$seed.metta"; \
+		if ! timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime "$$out/batch-$$seed.metta" > "$$out/batch-$$seed.out" 2>&1; then \
+			echo "FAIL: the generated program of seed $$seed did not run"; \
+			exit 1; \
+		fi; \
+		python3 tests/support/prime_level_instances.py check "$$out/batch-$$seed.metta.labels" "$$out/batch-$$seed.out" || exit 1; \
+		batches=$$((batches + 1)); \
+	done; \
+	for seed in $(PRIME_LEVEL_INSTANCE_TWO_SEEDS); do \
+		python3 tests/support/prime_level_instances.py generate-two "$$seed" 10 "$$out/two-$$seed.metta"; \
+		if ! timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime "$$out/two-$$seed.metta" > "$$out/two-$$seed.out" 2>&1; then \
+			echo "FAIL: the generated program of seed $$seed with two level variables did not run"; \
+			exit 1; \
+		fi; \
+		python3 tests/support/prime_level_instances.py check "$$out/two-$$seed.metta.labels" "$$out/two-$$seed.out" || exit 1; \
+		batches=$$((batches + 1)); \
+	done; \
+	echo "PASS: judgments with level variables agree with their written instances on $$batches generated batches"
+
+# The level library against the Lean definitions it follows (Mettapedia,
+# TypeTheory/UniverseLevel): ordinal notations below epsilon-zero and the
+# successor/maximum level algebra over them, with numbers of any length; the
+# levels above every notation; and the order of level expressions whose
+# parameters stand for notations, with their values at such valuations.
+# One seeded set of cases; the C verdicts and the verdicts Lean computes from
+# its definitions must be the same lines.  PRIME_LEVEL_DIFFERENTIAL_DIR
+# receives the cases, the generated Lean file and both verdict files.
+# METTAPEDIA_LEAN_FILE_CHECK is the command that checks one Lean file inside
+# the Lean project and prints what the file prints; a host that runs Lean
+# through a runner of its own names that runner here.
+METTAPEDIA_LEAN_FILE_CHECK ?= lake env lean
+.PHONY: test-prime-level-lean-differential
+test-prime-level-lean-differential: $(PRIME_LEVEL_DIFFERENTIAL_BIN)
+	@set -eu; \
+	lean_root="$(METTAPEDIA_LEAN_CHECKOUT)"; \
+	if [ ! -f "$$lean_root/lakefile.lean" ]; then \
+		echo "FAIL: METTAPEDIA_LEAN_ROOT must name the Mettapedia Lean project"; \
+		exit 2; \
+	fi; \
+	out="$(PRIME_LEVEL_DIFFERENTIAL_DIR)"; \
+	python3 tests/support/generate_prime_level_differential.py --output "$$out"; \
+	if ! "$(PRIME_LEVEL_DIFFERENTIAL_BIN)" "$$out/cases.txt" > "$$out/c.verdicts"; then \
+		echo "FAIL: the level library gave no verdict on a generated case"; \
+		exit 1; \
+	fi; \
+	lean_file=$$(realpath "$$out/PrimeLevelDifferential.lean"); \
+	if ! (cd "$$lean_root" && $(METTAPEDIA_LEAN_FILE_CHECK) "$$lean_file") > "$$out/lean.verdicts"; then \
+		echo "FAIL: Lean did not accept the generated verdict file"; \
+		head -20 "$$out/lean.verdicts"; \
+		exit 1; \
+	fi; \
+	if cmp -s "$$out/c.verdicts" "$$out/lean.verdicts"; then \
+		echo "PASS: Prime level operations agree with the Lean definitions on $$(wc -l < "$$out/c.verdicts") cases"; \
+	else \
+		echo "FAIL: Prime level operations differ from the Lean definitions"; \
+		diff "$$out/c.verdicts" "$$out/lean.verdicts" | head -20; \
+		exit 1; \
+	fi
+
+# Every Lean name the C sources cite, in a verdict, a record or a trace,
+# resolves in the Lean project: the names are collected from the string
+# literals of src, and one generated Lean file imports their modules and runs
+# #check on each full name.  It needs the Lean project built, and reads
+# METTAPEDIA_LEAN_FILE_CHECK as the level differential does.
+# PRIME_LEAN_CITATIONS_DIR receives the Lean file and what Lean printed.
+PRIME_LEAN_CITATIONS_DIR ?= runtime/prime-lean-citations
+.PHONY: test-prime-lean-citations
+test-prime-lean-citations:
+	@set -eu; \
+	lean_root="$(METTAPEDIA_LEAN_CHECKOUT)"; \
+	if [ ! -f "$$lean_root/lakefile.lean" ]; then \
+		echo "FAIL: METTAPEDIA_LEAN_ROOT must name the Mettapedia Lean project"; \
+		exit 2; \
+	fi; \
+	python3 tests/support/check_prime_lean_citations.py --lean-root "$$lean_root" \
+		--file-check "$(METTAPEDIA_LEAN_FILE_CHECK)" --out "$(PRIME_LEAN_CITATIONS_DIR)"
 
 test-rhocalc-lean: $(BIN)
 	@pass=0; fail=0; \
@@ -21283,10 +21424,10 @@ test-prime-applicability-capacity-mutation: $(BIN)
 	@mutation_dir=runtime/prime-applicability-capacity-mutation; \
 	mkdir -p "$$mutation_dir"; \
 	python3 scripts/mutate_prime_applicability_capacity.py \
-		src/eval.c "$$mutation_dir/eval.c" || exit 1; \
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/eval.c" -o "$$mutation_dir/eval.o" || exit 1; \
-	$(CC) $(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) \
-		"$$mutation_dir/eval.o" -o "$$mutation_dir/cetta-silent-applicability-cap" $(LDFLAGS) || exit 1; \
+		src/he_type_policy.c "$$mutation_dir/he_type_policy.c" || exit 1; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/he_type_policy.c" -o "$$mutation_dir/he_type_policy.o" || exit 1; \
+	$(CC) $(filter-out src/he_type_policy.$(BUILD_OBJ_TAG).o src/he_type_policy.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) \
+		"$$mutation_dir/he_type_policy.o" -o "$$mutation_dir/cetta-silent-applicability-cap" $(LDFLAGS) || exit 1; \
 	baseline=$$(timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime tests/prime_02_completion_resources.metta 2>&1); \
 	if [ "$$baseline" != "$$(cat tests/prime_02_completion_resources.expected)" ]; then \
 		echo "FAIL: Prime applicability-capacity mutation baseline is not green"; exit 1; \
@@ -21806,6 +21947,44 @@ test-prime-regular-kernel-verdict-polarity-mutations: $(PRIME_REGULAR_KERNEL_TES
 		fi; \
 	done; \
 	echo 'PASS: the abstention boundaries of formation and of written domains, and three tower judgments, resist REFUTED mutations'
+
+.PHONY: test-prime-regular-kernel-guard-mutations
+test-prime-regular-kernel-guard-mutations: $(PRIME_REGULAR_KERNEL_TEST_BIN)
+	@set -e; \
+	mutation_dir=runtime/prime-regular-kernel-guard-mutations; \
+	mkdir -p "$$mutation_dir"; \
+	for mutation in closed-guard-dropped observation-dropped guarded-refutes reached-guard-dropped; do \
+		python3 scripts/mutate_prime_regular_kernel_guards.py \
+			"$$mutation" src/prime_regular_kernel.c \
+			"$$mutation_dir/prime_regular_kernel_$$mutation.c"; \
+		$(CC) $(CPPFLAGS) $(CFLAGS) -c \
+			"$$mutation_dir/prime_regular_kernel_$$mutation.c" \
+			-o "$$mutation_dir/prime_regular_kernel_$$mutation.o"; \
+		$(CC) $(CFLAGS) -o "$$mutation_dir/test_$$mutation" \
+			$(PRIME_REGULAR_KERNEL_TEST_OBJ) \
+			"$$mutation_dir/prime_regular_kernel_$$mutation.o" \
+			$(filter-out $(PRIME_REGULAR_KERNEL_CORE_OBJ),$(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ)) \
+			$(LDFLAGS); \
+		if "$$mutation_dir/test_$$mutation" \
+			langdef/prime/generated/open_lambda_pi_core_v1.metta \
+			langdef/prime/generated/open_regular_kernel_v1.metta \
+			>"$$mutation_dir/$$mutation.out" \
+			2>"$$mutation_dir/$$mutation.err"; then \
+			echo "FAIL: $$mutation guard mutation survived"; \
+			exit 1; \
+		fi; \
+		case "$$mutation" in \
+			closed-guard-dropped) expected='a guarded rule waits at an open argument' ;; \
+			observation-dropped) expected='a stream is not unfolded where nothing observes it' ;; \
+			guarded-refutes) expected='two different streams are undecided, never refuted' ;; \
+			reached-guard-dropped) expected='a constant whose rule leads to a guarded one is undecided too' ;; \
+		esac; \
+		if ! grep -Fq "$$expected" "$$mutation_dir/$$mutation.err"; then \
+			echo "FAIL: $$mutation died outside its intended guard assertion"; \
+			exit 1; \
+		fi; \
+	done; \
+	echo 'PASS: guarded rules wait at open arguments, observed rules wait for an observation, and comparisons that meet them stay undecided, against four mutations'
 
 .PHONY: test-prime-producer-bound-native-checking-mutations
 test-prime-producer-bound-native-checking-mutations: $(PRIME_REGULAR_KERNEL_TEST_BIN)
@@ -22737,7 +22916,7 @@ test-prime-context-profiles: $(BIN)
 	echo "Prime context profiles: $$pass passed, $$fail failed"; \
 	[ $$fail -eq 0 ]
 
-test-prime: $(BIN) $(PRIME_REGULAR_KERNEL_TEST_BIN) test-prime-identity-profiles test-prime-context-profiles test-prime-public-judgment-vocabulary test-prime-regular-pattern test-prime-regular-pattern-mutations test-prime-open-lambda-pi-langdef-source-binding-v1 test-prime-open-lambda-pi-langdef-mutations test-prime-open-regular-kernel-source-binding-v1 test-prime-open-regular-kernel-mutations test-prime-coverage test-prime-budget-monotonicity test-prime-package-validation test-prime-internal-graduality test-prime-nik-core-v1 test-prime-nik-typed-applicability-pruning test-prime-regular-kernel-conversion-flip test-prime-regular-kernel-synthesis-flip test-prime-regular-kernel-checking-flip test-prime-regular-kernel-checking-stats test-prime-regular-kernel-formation-flip test-prime-regular-kernel-formation-stats test-prime-regular-kernel-refinement-boundary test-prime-regular-kernel-production-authority test-prime-regular-kernel-resource-honesty test-prime-regular-kernel-recognizer-mutation test-prime-regular-kernel-admission-mutations test-prime-regular-kernel-verdict-polarity-mutations test-prime-producer-bound-native-checking-mutations test-prime-scoped-formation-route-mutation test-prime-declared-conversion-route-mutation test-prime-declared-formation-route-mutation test-prime-typing-engine-fault-separation-mutation test-prime-regular-kernel-constructors test-prime-native-typed-flow test-prime-mil-benchmark-accounting test-prime-mil-native-workloads test-prime-mil-native-claim-guard test-prime-mil-zero-he-applicability-guard test-prime-popper-synthesis-manifest test-prime-hopper-table1-manifest test-prime-chaining-readiness-manifest test-prime-iggp-manifest test-prime-iggp-type-of-inference test-prime-gdl-positive-horn-native test-prime-authored-chaining-fixtures
+test-prime: $(BIN) $(PRIME_REGULAR_KERNEL_TEST_BIN) test-prime-identity-profiles test-prime-context-profiles test-prime-public-judgment-vocabulary test-prime-regular-pattern test-prime-regular-pattern-mutations test-prime-open-lambda-pi-langdef-source-binding-v1 test-prime-open-lambda-pi-langdef-mutations test-prime-open-regular-kernel-source-binding-v1 test-prime-open-regular-kernel-mutations test-prime-coverage test-prime-budget-monotonicity test-prime-package-validation test-prime-internal-graduality test-prime-nik-core-v1 test-prime-nik-typed-applicability-pruning test-prime-regular-kernel-conversion-flip test-prime-regular-kernel-synthesis-flip test-prime-regular-kernel-checking-flip test-prime-regular-kernel-checking-stats test-prime-regular-kernel-formation-flip test-prime-regular-kernel-formation-stats test-prime-regular-kernel-refinement-boundary test-prime-regular-kernel-production-authority test-prime-regular-kernel-resource-honesty test-prime-regular-kernel-recognizer-mutation test-prime-regular-kernel-admission-mutations test-prime-regular-kernel-verdict-polarity-mutations test-prime-regular-kernel-guard-mutations test-prime-producer-bound-native-checking-mutations test-prime-scoped-formation-route-mutation test-prime-declared-conversion-route-mutation test-prime-declared-formation-route-mutation test-prime-typing-engine-fault-separation-mutation test-prime-regular-kernel-constructors test-prime-native-typed-flow test-prime-mil-benchmark-accounting test-prime-mil-native-workloads test-prime-mil-native-claim-guard test-prime-mil-zero-he-applicability-guard test-prime-popper-synthesis-manifest test-prime-hopper-table1-manifest test-prime-chaining-readiness-manifest test-prime-iggp-manifest test-prime-iggp-type-of-inference test-prime-gdl-positive-horn-native test-prime-authored-chaining-fixtures
 	@"$(PRIME_REGULAR_KERNEL_TEST_BIN)" \
 		langdef/prime/generated/open_lambda_pi_core_v1.metta \
 		langdef/prime/generated/open_regular_kernel_v1.metta
@@ -22828,6 +23007,51 @@ test-prime-fast-fixtures: $(BIN)
 	done; \
 	echo "Prime fast gate: $$pass passed, $$fail failed"; \
 	[ $$fail -eq 0 ]
+
+.PHONY: test-prime-kernel-rules-bounded
+# Covered calls read the space's current admitted rules, kept per thread for
+# one state of the space and of admission: a rule removed stops computing, a
+# raw rule confers nothing, and K changes of the space followed by covered
+# calls do not keep memory in proportion to K times the rules.
+test-prime: test-prime-kernel-rules-bounded
+test-prime-kernel-rules-bounded: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_prime_kernel_rules_bounded.py ./$(BIN)
+
+.PHONY: test-prime-arith-oracle
+# Native arithmetic as a specified oracle, checked without being believed: the
+# arithmetic fixture with its operations declared as oracles answers as it
+# does without them, the audit and the residue check agree, 1,000 random calls
+# agree with the declared equations, and a build whose backend adds wrongly at
+# large values is caught by all three.
+test-prime: test-prime-arith-oracle
+test-prime-arith-oracle: $(BIN)
+	@mutation_dir=runtime/prime-arith-oracle-fault; \
+	mkdir -p "$$mutation_dir"; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_PRIME_ORACLE_PLANTED_FAULT=1 \
+		-c src/prime_arith_oracle.c -o "$$mutation_dir/prime_arith_oracle.o" || exit 1; \
+	$(CC) $(CFLAGS) -Wl,--export-dynamic -o "$$mutation_dir/cetta-planted-fault" \
+		$(filter-out src/prime_arith_oracle.$(BUILD_OBJ_TAG).o src/prime_arith_oracle.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) \
+		"$$mutation_dir/prime_arith_oracle.o" $(filter-out FORCE,$(BRIDGE_DEPS)) $(LDFLAGS) || exit 1; \
+	$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_prime_arith_oracle.py ./$(BIN) \
+		--fault-binary "$$mutation_dir/cetta-planted-fault"
+
+.PHONY: test-prime-hyperseed-laboratory test-prime-hyperseed-laboratory-equations
+# Hyperseed's d-calculus concepts (Goertzel, "Hyperseed in the d-Calculus",
+# chapters 3 and 5) as Prime programs over the arithmetic of arith.binary.metta,
+# whose definitions the script places before them: chapter 5's laboratory is
+# recomputed from the generic definitions with the arithmetic oracle, each
+# value equal to its Lean theorem, and the oracle's answers carry their trust
+# records.  Not in the fast fixture list: the file is not run alone.
+test-prime: test-prime-hyperseed-laboratory
+test-prime-hyperseed-laboratory: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_prime_hyperseed_laboratory.py ./$(BIN) --oracle-only
+
+# The same laboratory on the declared equations alone as well, which takes
+# about a minute and a half, and the answers of the two runs compared: in the
+# slower list.
+test-prime-all: test-prime-hyperseed-laboratory-equations
+test-prime-hyperseed-laboratory-equations: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_prime_hyperseed_laboratory.py ./$(BIN)
 
 .PHONY: test-prime-authored-chaining-fixtures
 test-prime-authored-chaining-fixtures:
@@ -22925,7 +23149,8 @@ test-prime-all: test-prime test-prime-relational-plan test-prime-need-algebra te
 	test-prime-nik-megalodon-definition-v1 \
 	test-prime-nik-megalodon-declarations-v1 \
 	test-prime-nik-megalodon-tactics-package-v1 \
-	test-prime-nik-megalodon-native-use-v1
+	test-prime-nik-megalodon-native-use-v1 \
+	test-prime-megalodon-set-proof-export-v1
 	@echo "PASS: full Prime correctness gate"
 
 # The Prime gates that read runtime statistics run in the runtime-stats
@@ -29310,7 +29535,7 @@ test-prime-compiled-reader-v1: test-prime-compiled-reader-direct-generated-v1 te
 	@result=$$(./$(PRIME_COMPILED_READER_TEST_BIN) 2>&1); \
 	printf '%s\n' "$$result"; \
 	if [ "$$(printf '%s\n' "$$result" | \
-		grep -Fxc '(PrimeCompiledReaderV1Summary 93 93 0 cases 39)')" -ne 1 ]; then \
+		grep -Fxc '(PrimeCompiledReaderV1Summary 105 105 0 cases 42)')" -ne 1 ]; then \
 		echo "FAIL: compiled Prime reader exact differential summary absent or duplicated"; \
 		exit 1; \
 	fi; \
@@ -35116,6 +35341,30 @@ test-prime-nik-megalodon-native-use-v1: $(BIN) tools/megalodon_native_projection
 	@test -x "$(MEGALODON_AUTO_BIN)" || { echo "Megalodon executable is required for source-to-native qualification"; exit 1; }
 	python3 tools/test_megalodon_native_projection_v1.py --cetta "$(abspath $(BIN))" --megalodon "$(MEGALODON_AUTO_BIN)" --hotg-preamble "$(MEGALODON_HOTG_PREAMBLE)"
 
+# The other direction: a set proof C has checked, written as a Megalodon
+# article after the development whose Part 7 states the eleven laws, and
+# checked again by Megalodon; altered articles must be rejected.
+.PHONY: test-prime-megalodon-set-proof-export-v1
+test-prime-megalodon-set-proof-export-v1: $(BIN) tools/megalodon_set_proof_export_v1.py \
+		tools/test_megalodon_set_proof_export_v1.py tools/gslt2parse_schema_v1.py \
+		tests/prime/trinity/power-in-universe.metta tests/prime/scoped/native_proof_package.metta \
+		tests/prime/scoped/hotg_universe_native_use.metta
+	@test -x "$(MEGALODON_AUTO_BIN)" || { echo "Megalodon executable is required for the set proof export"; exit 1; }
+	python3 tools/test_megalodon_set_proof_export_v1.py --cetta "$(abspath $(BIN))" \
+		--megalodon "$(MEGALODON_AUTO_BIN)" --hotg-preamble "$(MEGALODON_HOTG_PREAMBLE)" \
+		--development "$(MEGALODON_PRIME_TOWER_SOURCE)"
+
+# Export one theorem of a space:
+#   make megalodon-set-proof-export SOURCE=<file.metta> THEOREM=<name> OUT=<article.mg>
+.PHONY: megalodon-set-proof-export
+megalodon-set-proof-export: $(BIN) tools/megalodon_set_proof_export_v1.py
+	@test -n "$(SOURCE)" && test -n "$(THEOREM)" && test -n "$(OUT)" || \
+		{ echo "usage: make megalodon-set-proof-export SOURCE=<file.metta> THEOREM=<name> OUT=<article.mg>"; exit 1; }
+	python3 tools/megalodon_set_proof_export_v1.py --cetta "$(abspath $(BIN))" \
+		--source "$(SOURCE)" --theorem "$(THEOREM)" --out "$(OUT)" \
+		--development "$(MEGALODON_PRIME_TOWER_SOURCE)" \
+		$(if $(wildcard $(MEGALODON_AUTO_BIN)),--megalodon "$(MEGALODON_AUTO_BIN)" --preamble "$(MEGALODON_HOTG_PREAMBLE)",)
+
 .PHONY: test-prime-nik-megalodon-tactics-package-v1
 .PHONY: test-prime-nik-hotg-family-library-v1
 test-prime-nik-hotg-family-library-v1: $(BIN) tools/test_megalodon_native_projection_v1.py \
@@ -35168,6 +35417,7 @@ test-prime-nik-qualification-v1: \
 		test-prime-nik-megalodon-tactics-package-v1 \
 		test-prime-nik-megalodon-declarations-v1 \
 		test-prime-nik-megalodon-native-use-v1 \
+		test-prime-megalodon-set-proof-export-v1 \
 		test-prime-nik-hotg-family-library-v1
 	@set -eu; \
 	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \

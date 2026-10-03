@@ -1,0 +1,35 @@
+(Error (= (size $x) (my-size $x)) (reserved-name size builtin))
+(Error (: size (-> Expression Number)) (reserved-name size builtin))
+(Error (= (+ $a $b) (my-plus $a $b)) (reserved-name + grounded-operation))
+(Error (= (try $v $c) (go $c $v)) (reserved-name try judgment))
+(Error (= (if $c $a $b) (my-if $c $a $b)) (reserved-name if evaluator-form))
+(Error (= (collect $x) (my-collect $x)) (reserved-name collect builtin))
+[3]
+[3]
+[yes]
+[(Error (add-atom &self (= (once $x) (my-once $x))) (reserved-name once builtin))]
+[(Error (add-atom &self (: repr (-> Number Number))) (reserved-name repr grounded-operation))]
+[1]
+[42]
+[7]
+[nat]
+[(Refuted (set:reserved-name repr grounded-operation))]
+[(Refuted (set:reserved-name size builtin))]
+[plus1]
+[(succ zero)]
+[and]
+[(succ zero)]
+[True]
+[()]
+[bool]
+[and]
+[True]
+[repr]
+[True]
+[()]
+[bool]
+[(my-pair 1 2)]
+[()]
+[token]
+[first]
+[True]

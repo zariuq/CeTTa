@@ -1,0 +1,280 @@
+[()]
+[num]
+[(all (-> num prop) (lam P (imp (P zero) (imp (all num (lam v1 (imp (P v1) (P (suc v1))))) (all num (lam x (P x)))))))]
+[(refl@num subst@num)]
+[add]
+[mul]
+[pos]
+[nat]
+[int]
+[rat]
+[ord]
+[divided]
+[(all (-> pos prop) (lam P (imp (P one) (imp (all pos (lam v1 (imp (P v1) (P (bit0 v1))))) (imp (all pos (lam v1 (imp (P v1) (P (bit1 v1))))) (all pos (lam x (P x))))))))]
+[(all (-> nat prop) (lam P (imp (P n0) (imp (all pos (lam v1 (P (npos v1)))) (all nat (lam x (P x)))))))]
+[(all (-> int prop) (lam P (imp (P z0) (imp (all pos (lam v1 (P (zpos v1)))) (imp (all pos (lam v1 (P (zneg v1)))) (all int (lam x (P x))))))))]
+[psucc]
+[phalf]
+[nhalf]
+[nsucc-pos]
+[low0-pos]
+[low0]
+[low1-pos]
+[low1]
+[padd-nat]
+[padd]
+[pmul]
+[(quote ((structural 0 pos (one ()) (bit0 (0)) (bit1 (0))) (lean TowerInterpretation.recursion_setModel (lean-covers one-argument)) "Trinity.Arith.Binary.binaryProgram_admissible"))]
+[(quote ((non-recursive) (lean TowerInterpretation.explicit_setModel)))]
+[(Undetermined (set:define-two-scrutinees (padd-cases (bit0 $p) one) (admit-by bound)))]
+[below-if-same]
+[above-if-same]
+[cmp-one-pos]
+[cmp-one]
+[cmp-low0-pos]
+[cmp-low0]
+[cmp-low1-pos]
+[cmp-low1]
+[pcmp-nat]
+[pcmp]
+[ncmp-zero]
+[ncmp]
+[pick-min]
+[pick-max]
+[pmin]
+[pmax]
+[nsucc]
+[nadd]
+[nmul-pos]
+[nmul]
+[ndouble]
+[nsucc-double]
+[pdouble-pred]
+[zdouble]
+[zsucc-double]
+[zpred-double]
+[one-minus-pos]
+[one-minus]
+[zlow0-pos]
+[zlow0]
+[zlow1-pos]
+[zlow1]
+[psub-nat]
+[psub]
+[zopp]
+[zadd-pos]
+[zadd]
+[zsub]
+[zmul-pos]
+[zmul]
+[zsign]
+[zcmp]
+[int-of-nat]
+[nat-of-int]
+[nsub]
+[pos-of-int]
+[pos-of-nat]
+[pdiff]
+[pval]
+[nval]
+[pos-digits]
+[nat-digits]
+[divided-quot]
+[div-pick]
+[div-settle]
+[div-step0]
+[div-step1]
+[(Undetermined (set:define-coverage ndivmod-plain (admit-by bound)))]
+[ndivmod]
+[(quote ((Bound num (lam a (lam d (nat-digits a))) 2) (lean TowerInterpretation.definition_setModel_of_bound TowerInterpretation.DatatypeBound.reading_structOrder_wf TowerInterpretation.DatatypeBound.apart_of_linear_patterns (lean-covers one-argument) (unchecked filler))))]
+[pquot]
+[below]
+[le]
+[le-refl]
+[le-step]
+[le-trans]
+[le-suc]
+[le-zero]
+[below-later]
+[le-below]
+[le-suc-add]
+[le-add-right]
+[le-add-left]
+[one-le]
+[pdouble-pred-digits]
+[zdouble-digits]
+[zsucc-double-digits]
+[zpred-double-digits]
+[zlow0-digits]
+[zlow1-digits]
+[one-minus-digits]
+[sub-digits]
+[pdiff-digits]
+[(Undetermined (set:define-two-scrutinees (pgcd-plain less (bit1 $x) (bit1 $y)) (admit-by bound)))]
+[pgcd-by]
+[(quote ((Bound num (lam c (lam x (lam y (add (pos-digits x) (pos-digits y))))) 5) (lean TowerInterpretation.definition_setModel_of_bound TowerInterpretation.DatatypeBound.reading_structOrder_wf TowerInterpretation.DatatypeBound.apart_of_linear_patterns (lean-covers one-argument) (filler one))))]
+[pgcd]
+[qreduce]
+[qopp]
+[qmake]
+[qadd-over]
+[qadd]
+[qsub]
+[qmul-over]
+[qmul]
+[qcmp-over]
+[qcmp]
+[qpick-min]
+[qpick-max]
+[qmin]
+[qmax]
+[digit]
+[digit-value]
+[dec]
+[num1]
+[num2]
+[num3]
+[num4]
+[num5]
+[frac]
+[whole]
+[written]
+[pos]
+[nat]
+[int]
+[rat]
+[ord]
+[divided]
+[padd]
+[pmul]
+[pcmp]
+[ncmp]
+[nsub]
+[ndivmod]
+[pgcd]
+[qmake]
+[qadd]
+[qsub]
+[qmul]
+[qcmp]
+[(bit0 (bit0 (bit1 one)))]
+(uses-oracle padd (trusted gmp-mpz add) (spec-agreement (proved Trinity.Arith.Oracle.realization_meets Trinity.Arith.Oracle.conservative_padd)) (calls 1) (tests test-prime-arith-oracle))
+[(bit1 (bit0 (bit0 (bit0 (bit0 (bit1 (bit1 one)))))))]
+(uses-oracle pmul (trusted gmp-mpz mul) (spec-agreement (proved Trinity.Arith.Oracle.realization_meets Trinity.Arith.Oracle.conservative_pmul)) (calls 1) (tests test-prime-arith-oracle))
+[(zneg (bit1 (bit0 one)))]
+[(quot-rem (npos (bit0 (bit0 one))) (npos one))]
+(uses-oracle ndivmod (trusted gmp-mpz divmod) (spec-agreement (tested (admission-calls 9))) (calls 1) (tests test-prime-arith-oracle))
+[(bit0 (bit1 one))]
+(uses-oracle pgcd (trusted gmp-mpz gcd) (spec-agreement (tested (admission-calls 9))) (calls 1) (tests test-prime-arith-oracle))
+[(bit0 (bit0 one))]
+(uses-oracle pcmp (trusted gmp-mpz compare) (spec-agreement (tested (admission-calls 9))) (calls 1) (tests test-prime-arith-oracle))
+[(bit1 (bit0 (bit0 one)))]
+(uses-oracle pcmp (trusted gmp-mpz compare) (spec-agreement (tested (admission-calls 9))) (calls 1) (tests test-prime-arith-oracle))
+[(over (zpos one) (bit0 one))]
+(uses-oracle qmake (trusted gmp-mpz normalize) (spec-agreement (tested (admission-calls 9))) (calls 2) (tests test-prime-arith-oracle))
+(uses-oracle qadd (trusted gmp-mpz add) (spec-agreement (tested (admission-calls 9))) (calls 1) (tests test-prime-arith-oracle))
+[(over (zpos one) (bit0 one))]
+(uses-oracle qmake (trusted gmp-mpz normalize) (spec-agreement (tested (admission-calls 9))) (calls 1) (tests test-prime-arith-oracle))
+[more]
+(uses-oracle qmake (trusted gmp-mpz normalize) (spec-agreement (tested (admission-calls 9))) (calls 2) (tests test-prime-arith-oracle))
+(uses-oracle qcmp (trusted gmp-mpz compare) (spec-agreement (tested (admission-calls 9))) (calls 1) (tests test-prime-arith-oracle))
+[(over (zpos one) (bit0 one))]
+(uses-oracle qmake (trusted gmp-mpz normalize) (spec-agreement (tested (admission-calls 9))) (calls 2) (tests test-prime-arith-oracle))
+(uses-oracle qcmp (trusted gmp-mpz compare) (spec-agreement (tested (admission-calls 9))) (calls 1) (tests test-prime-arith-oracle))
+[(-> pos (-> pos pos))]
+[(-> pos (-> pos pos))]
+[(-> rat (-> rat rat))]
+[rat]
+[True]
+[False]
+[True]
+[True]
+[True]
+[True]
+[(suc (suc (suc (suc (suc zero)))))]
+[(quote ("Trinity.Arith.Binary.padd_value" True))]
+(uses-oracle padd (trusted gmp-mpz add) (spec-agreement (proved Trinity.Arith.Oracle.realization_meets Trinity.Arith.Oracle.conservative_padd)) (calls 1) (tests test-prime-arith-oracle))
+[(quote ("Trinity.Arith.Binary.pmul_value" True))]
+(uses-oracle pmul (trusted gmp-mpz mul) (spec-agreement (proved Trinity.Arith.Oracle.realization_meets Trinity.Arith.Oracle.conservative_pmul)) (calls 1) (tests test-prime-arith-oracle))
+[True]
+[True]
+(uses-oracle ndivmod (trusted gmp-mpz divmod) (spec-agreement (tested (admission-calls 9))) (calls 1) (tests test-prime-arith-oracle))
+[low1-pos-wrong]
+[False]
+[graphtropy]
+[(quote ("Laboratory.initial_graphtropy" (fraction 547 720) True (firings 259)))]
+(uses-oracle pmul (trusted gmp-mpz mul) (spec-agreement (proved Trinity.Arith.Oracle.realization_meets Trinity.Arith.Oracle.conservative_pmul)) (calls 13) (tests test-prime-arith-oracle))
+(uses-oracle qmake (trusted gmp-mpz normalize) (spec-agreement (tested (admission-calls 9))) (calls 4) (tests test-prime-arith-oracle))
+(uses-oracle qmul (trusted gmp-mpz mul) (spec-agreement (tested (admission-calls 9))) (calls 4) (tests test-prime-arith-oracle))
+(uses-oracle qadd (trusted gmp-mpz add) (spec-agreement (tested (admission-calls 9))) (calls 3) (tests test-prime-arith-oracle))
+[(quote ("Laboratory.initial_graphtropy" (fraction 341 720) True (firings 214)))]
+(uses-oracle pmul (trusted gmp-mpz mul) (spec-agreement (proved Trinity.Arith.Oracle.realization_meets Trinity.Arith.Oracle.conservative_pmul)) (calls 11) (tests test-prime-arith-oracle))
+(uses-oracle qmake (trusted gmp-mpz normalize) (spec-agreement (tested (admission-calls 9))) (calls 4) (tests test-prime-arith-oracle))
+(uses-oracle qmul (trusted gmp-mpz mul) (spec-agreement (tested (admission-calls 9))) (calls 4) (tests test-prime-arith-oracle))
+(uses-oracle qadd (trusted gmp-mpz add) (spec-agreement (tested (admission-calls 9))) (calls 3) (tests test-prime-arith-oracle))
+[(over (zpos (bit1 (bit1 (bit0 (bit0 (bit0 (bit1 (bit0 (bit0 (bit0 one)))))))))) (bit0 (bit0 (bit0 (bit0 (bit1 (bit0 (bit1 (bit1 (bit0 one))))))))))]
+(uses-oracle pmul (trusted gmp-mpz mul) (spec-agreement (proved Trinity.Arith.Oracle.realization_meets Trinity.Arith.Oracle.conservative_pmul)) (calls 9) (tests test-prime-arith-oracle))
+(uses-oracle qmake (trusted gmp-mpz normalize) (spec-agreement (tested (admission-calls 9))) (calls 4) (tests test-prime-arith-oracle))
+(uses-oracle qmul (trusted gmp-mpz mul) (spec-agreement (tested (admission-calls 9))) (calls 4) (tests test-prime-arith-oracle))
+(uses-oracle qadd (trusted gmp-mpz add) (spec-agreement (tested (admission-calls 9))) (calls 3) (tests test-prime-arith-oracle))
+[(quote ("Laboratory.measure_and_weights" (fraction 5 24) True))]
+(uses-oracle pmul (trusted gmp-mpz mul) (spec-agreement (proved Trinity.Arith.Oracle.realization_meets Trinity.Arith.Oracle.conservative_pmul)) (calls 2) (tests test-prime-arith-oracle))
+(uses-oracle qmake (trusted gmp-mpz normalize) (spec-agreement (tested (admission-calls 9))) (calls 2) (tests test-prime-arith-oracle))
+(uses-oracle qmul (trusted gmp-mpz mul) (spec-agreement (tested (admission-calls 9))) (calls 2) (tests test-prime-arith-oracle))
+[metric-ac]
+[product-ac]
+[(quote ("Laboratory.transport_and_completion" (fraction 23 40) True))]
+(uses-oracle pmul (trusted gmp-mpz mul) (spec-agreement (proved Trinity.Arith.Oracle.realization_meets Trinity.Arith.Oracle.conservative_pmul)) (calls 10) (tests test-prime-arith-oracle))
+(uses-oracle qmake (trusted gmp-mpz normalize) (spec-agreement (tested (admission-calls 9))) (calls 3) (tests test-prime-arith-oracle))
+(uses-oracle qadd (trusted gmp-mpz add) (spec-agreement (tested (admission-calls 9))) (calls 1) (tests test-prime-arith-oracle))
+(uses-oracle qsub (trusted gmp-mpz sub) (spec-agreement (tested (admission-calls 9))) (calls 1) (tests test-prime-arith-oracle))
+(uses-oracle qcmp (trusted gmp-mpz compare) (spec-agreement (tested (admission-calls 9))) (calls 2) (tests test-prime-arith-oracle))
+[(quote ("Laboratory.transport_and_completion" (fraction 12393 20000) True))]
+(uses-oracle pmul (trusted gmp-mpz mul) (spec-agreement (proved Trinity.Arith.Oracle.realization_meets Trinity.Arith.Oracle.conservative_pmul)) (calls 16) (tests test-prime-arith-oracle))
+(uses-oracle qmake (trusted gmp-mpz normalize) (spec-agreement (tested (admission-calls 9))) (calls 3) (tests test-prime-arith-oracle))
+(uses-oracle qmul (trusted gmp-mpz mul) (spec-agreement (tested (admission-calls 9))) (calls 1) (tests test-prime-arith-oracle))
+(uses-oracle qcmp (trusted gmp-mpz compare) (spec-agreement (tested (admission-calls 9))) (calls 1) (tests test-prime-arith-oracle))
+[(quote ("Laboratory.completion_balance" (fraction 4981 14400) True (firings 623)))]
+(uses-oracle pmul (trusted gmp-mpz mul) (spec-agreement (proved Trinity.Arith.Oracle.realization_meets Trinity.Arith.Oracle.conservative_pmul)) (calls 28) (tests test-prime-arith-oracle))
+(uses-oracle qmake (trusted gmp-mpz normalize) (spec-agreement (tested (admission-calls 9))) (calls 8) (tests test-prime-arith-oracle))
+(uses-oracle qmul (trusted gmp-mpz mul) (spec-agreement (tested (admission-calls 9))) (calls 8) (tests test-prime-arith-oracle))
+(uses-oracle qadd (trusted gmp-mpz add) (spec-agreement (tested (admission-calls 9))) (calls 6) (tests test-prime-arith-oracle))
+(uses-oracle qsub (trusted gmp-mpz sub) (spec-agreement (tested (admission-calls 9))) (calls 1) (tests test-prime-arith-oracle))
+[(quote ("Laboratory.completion_balance" (fraction 893 96000) True (firings 1065)))]
+(uses-oracle pmul (trusted gmp-mpz mul) (spec-agreement (proved Trinity.Arith.Oracle.realization_meets Trinity.Arith.Oracle.conservative_pmul)) (calls 40) (tests test-prime-arith-oracle))
+(uses-oracle qmake (trusted gmp-mpz normalize) (spec-agreement (tested (admission-calls 9))) (calls 8) (tests test-prime-arith-oracle))
+(uses-oracle qmul (trusted gmp-mpz mul) (spec-agreement (tested (admission-calls 9))) (calls 8) (tests test-prime-arith-oracle))
+(uses-oracle qadd (trusted gmp-mpz add) (spec-agreement (tested (admission-calls 9))) (calls 6) (tests test-prime-arith-oracle))
+(uses-oracle qsub (trusted gmp-mpz sub) (spec-agreement (tested (admission-calls 9))) (calls 1) (tests test-prime-arith-oracle))
+[(quote ("Laboratory.transport_and_completion" (fraction 4981 14400) True))]
+(uses-oracle pmul (trusted gmp-mpz mul) (spec-agreement (proved Trinity.Arith.Oracle.realization_meets Trinity.Arith.Oracle.conservative_pmul)) (calls 16) (tests test-prime-arith-oracle))
+(uses-oracle qmake (trusted gmp-mpz normalize) (spec-agreement (tested (admission-calls 9))) (calls 4) (tests test-prime-arith-oracle))
+(uses-oracle qsub (trusted gmp-mpz sub) (spec-agreement (tested (admission-calls 9))) (calls 1) (tests test-prime-arith-oracle))
+(uses-oracle qmul (trusted gmp-mpz mul) (spec-agreement (tested (admission-calls 9))) (calls 1) (tests test-prime-arith-oracle))
+(uses-oracle qadd (trusted gmp-mpz add) (spec-agreement (tested (admission-calls 9))) (calls 1) (tests test-prime-arith-oracle))
+[(quote ("Laboratory.transport_and_completion" (fraction 893 96000) True))]
+(uses-oracle pmul (trusted gmp-mpz mul) (spec-agreement (proved Trinity.Arith.Oracle.realization_meets Trinity.Arith.Oracle.conservative_pmul)) (calls 17) (tests test-prime-arith-oracle))
+(uses-oracle qmake (trusted gmp-mpz normalize) (spec-agreement (tested (admission-calls 9))) (calls 3) (tests test-prime-arith-oracle))
+(uses-oracle qsub (trusted gmp-mpz sub) (spec-agreement (tested (admission-calls 9))) (calls 1) (tests test-prime-arith-oracle))
+(uses-oracle qmul (trusted gmp-mpz mul) (spec-agreement (tested (admission-calls 9))) (calls 1) (tests test-prime-arith-oracle))
+[(quote (unary 7 9 82))]
+[(quote (binary 7 9 1))]
+(uses-oracle pmul (trusted gmp-mpz mul) (spec-agreement (proved Trinity.Arith.Oracle.realization_meets Trinity.Arith.Oracle.conservative_pmul)) (calls 1) (tests test-prime-arith-oracle))
+[(quote (unary 9 9 100))]
+[(quote (binary 9 9 1))]
+(uses-oracle pmul (trusted gmp-mpz mul) (spec-agreement (proved Trinity.Arith.Oracle.realization_meets Trinity.Arith.Oracle.conservative_pmul)) (calls 1) (tests test-prime-arith-oracle))
+[(quote (binary-digits 2 1))]
+(uses-oracle pmul (trusted gmp-mpz mul) (spec-agreement (proved Trinity.Arith.Oracle.realization_meets Trinity.Arith.Oracle.conservative_pmul)) (calls 1) (tests test-prime-arith-oracle))
+[(quote (binary-digits 4 1))]
+(uses-oracle pmul (trusted gmp-mpz mul) (spec-agreement (proved Trinity.Arith.Oracle.realization_meets Trinity.Arith.Oracle.conservative_pmul)) (calls 1) (tests test-prime-arith-oracle))
+[(quote (binary-digits 8 1))]
+(uses-oracle pmul (trusted gmp-mpz mul) (spec-agreement (proved Trinity.Arith.Oracle.realization_meets Trinity.Arith.Oracle.conservative_pmul)) (calls 1) (tests test-prime-arith-oracle))
+[(quote (binary-digits 16 1))]
+(uses-oracle pmul (trusted gmp-mpz mul) (spec-agreement (proved Trinity.Arith.Oracle.realization_meets Trinity.Arith.Oracle.conservative_pmul)) (calls 1) (tests test-prime-arith-oracle))
+[(Error (over (zpos one) n0) (BadArgType 2 pos nat))]
+[(Refuted (type-mismatch))]
+[False]
+[True]
+[(Undetermined (set:define-not-terminating (= (spin (bit0 $p)) (spin (bit0 $p))) (spin (bit0 $p)) (admit-by set-solution coinductive)))]
+[(Undetermined set:define-bound-obligations 3)]
+[(Undetermined set:define-bound-obligation)]

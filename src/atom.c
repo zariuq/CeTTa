@@ -5245,20 +5245,16 @@ static bool atom_eq_leaf(Atom *a, Atom *b) {
     return atom_eq(a, b);
 }
 
-static bool atom_eq_in(Atom *a, Atom *b, AtomEqWalk *walk) {
-    /* In the HE lane a NaN equals nothing, not even itself, so an atom that
-     * may hold one is compared even against itself. */
-    if (a == b &&
-        (!atom_structural_may_have_nan(a) || !eval_current_language_id ||
-         eval_current_language_id() != CETTA_LANGUAGE_HE))
-        return true;
-    /* A term that is not a finite tree is its unfolding: two atoms are equal
-     * when their unfoldings are, however much of either is open
-     * (RationalTermGraph.Bisimilar). */
-    if (term_graph_value_eq &&
-        (atom_structural_has_rational(a) || atom_structural_has_rational(b)))
-        return term_graph_value_eq(a, b, atom_eq_leaf);
-    if (a->kind != b->kind) return false;
+/* What comparing one pair of atoms tells: they differ, they are equal, or
+ * they are expressions of one length whose children are compared next. */
+typedef enum {
+    ATOM_EQ_DIFFERENT = 0,
+    ATOM_EQ_EQUAL,
+    ATOM_EQ_DESCEND,
+} AtomEqNode;
+
+/* Two atoms of which neither is an expression, compared. */
+static bool atom_eq_atomic(Atom *a, Atom *b) {
     switch (a->kind) {
     case ATOM_SYMBOL:
         return a->sym_id == b->sym_id;
@@ -5313,23 +5309,92 @@ static bool atom_eq_in(Atom *a, Atom *b, AtomEqWalk *walk) {
         }
         return false;
     case ATOM_EXPR:
-        if (a->expr.len != b->expr.len) return false;
-        if (atom_eq_memo_met(walk, a, b)) return true;
-        for (CettaExprIndex i = 0; i < a->expr.len; i++) {
-            Atom *left = a->expr.elems[i];
-            Atom *right = b->expr.elems[i];
-            bool equal = false;
-            if (atom_eq_decided(left, right, &equal)) {
-                if (!equal)
-                    return false;
-                continue;
-            }
-            if (!atom_eq_in(left, right, walk))
-                return false;
-        }
-        return true;
+        break;
     }
     return false;
+}
+
+static AtomEqNode atom_eq_node(Atom *a, Atom *b, AtomEqWalk *walk) {
+    /* In the HE lane a NaN equals nothing, not even itself, so an atom that
+     * may hold one is compared even against itself. */
+    if (a == b &&
+        (!atom_structural_may_have_nan(a) || !eval_current_language_id ||
+         eval_current_language_id() != CETTA_LANGUAGE_HE))
+        return ATOM_EQ_EQUAL;
+    /* A term that is not a finite tree is its unfolding: two atoms are equal
+     * when their unfoldings are, however much of either is open
+     * (RationalTermGraph.Bisimilar). */
+    if (term_graph_value_eq &&
+        (atom_structural_has_rational(a) || atom_structural_has_rational(b)))
+        return term_graph_value_eq(a, b, atom_eq_leaf)
+            ? ATOM_EQ_EQUAL : ATOM_EQ_DIFFERENT;
+    if (a->kind != b->kind) return ATOM_EQ_DIFFERENT;
+    if (a->kind != ATOM_EXPR)
+        return atom_eq_atomic(a, b) ? ATOM_EQ_EQUAL : ATOM_EQ_DIFFERENT;
+    if (a->expr.len != b->expr.len) return ATOM_EQ_DIFFERENT;
+    if (atom_eq_memo_met(walk, a, b)) return ATOM_EQ_EQUAL;
+    return ATOM_EQ_DESCEND;
+}
+
+/* The walk keeps the pairs of expressions it is inside on a stack of its
+ * own, so the depth of the atoms costs no depth of calls.  Children are
+ * compared from the first on and the walk ends at the first difference. */
+typedef struct {
+    Atom *a;
+    Atom *b;
+    CettaExprIndex next;
+} AtomEqFrame;
+
+enum { ATOM_EQ_INLINE_FRAMES = 32u };
+
+static bool atom_eq_in(Atom *a, Atom *b, AtomEqWalk *walk) {
+    AtomEqNode node = atom_eq_node(a, b, walk);
+    if (node != ATOM_EQ_DESCEND)
+        return node == ATOM_EQ_EQUAL;
+    AtomEqFrame inline_frames[ATOM_EQ_INLINE_FRAMES];
+    AtomEqFrame *frames = inline_frames;
+    size_t len = 0u, cap = ATOM_EQ_INLINE_FRAMES;
+    bool equal = true;
+    frames[len++] = (AtomEqFrame){a, b, 0u};
+    while (len > 0u) {
+        AtomEqFrame *top = &frames[len - 1u];
+        if (top->next == top->a->expr.len) {
+            len--;
+            continue;
+        }
+        Atom *left = top->a->expr.elems[top->next];
+        Atom *right = top->b->expr.elems[top->next];
+        top->next++;
+        bool decided = false;
+        if (atom_eq_decided(left, right, &decided)) {
+            if (!decided) {
+                equal = false;
+                break;
+            }
+            continue;
+        }
+        node = atom_eq_node(left, right, walk);
+        if (node == ATOM_EQ_EQUAL)
+            continue;
+        if (node == ATOM_EQ_DIFFERENT) {
+            equal = false;
+            break;
+        }
+        if (len == cap) {
+            size_t next_cap = cap * 2u;
+            AtomEqFrame *grown = frames == inline_frames
+                ? cetta_malloc(sizeof(*frames) * next_cap)
+                : cetta_realloc(frames, sizeof(*frames) * next_cap);
+            if (frames == inline_frames)
+                memcpy(grown, inline_frames, sizeof(*frames) * len);
+            frames = grown;
+            cap = next_cap;
+        }
+        frames[len++] = (AtomEqFrame){left, right, 0u};
+    }
+    if (frames != inline_frames)
+        free(frames);
+    return equal;
 }
 
 bool atom_is_number(const Atom *atom) {

@@ -3572,10 +3572,17 @@ static bool prime_position_holds(Atom *head, Atom *type) {
            prime_signature_is_he_authored(head->sym_id);
 }
 
+static bool prime_symbol_is_defined(Space *s, Atom *atom);
+static void prime_symbol_unfold(Space *s, Arena *a, Atom *type, Atom *atom,
+                                int fuel, OutcomeSet *os);
+
+/* In Prime a symbol the program defines is not yet a value: it evaluates by
+ * its definition (prime_symbol_is_defined). */
 static bool atom_eval_is_immediate_value(Atom *atom, int fuel) {
     return fuel == 0 ||
            atom_prime_held_is(atom) ||
-           atom->kind == ATOM_SYMBOL ||
+           (atom->kind == ATOM_SYMBOL &&
+            !prime_symbol_is_defined(g_eval_root_space, atom)) ||
            (atom->kind == ATOM_GROUNDED &&
             atom->ground.gkind != GV_PRIME_NEED_CAPABILITY) ||
            atom->kind == ATOM_VAR ||
@@ -7279,6 +7286,13 @@ static Atom *dispatch_native_space_mutation(Space *s, Arena *a, Atom *head,
                                    ? "add-atom expects a space as the first argument"
                                    : "remove-atom expects a space as the first argument");
     }
+    /* Prime refuses an equation or a type declaration for a name it
+     * interprets itself in the space the program runs in, as it does in the
+     * program's text. */
+    Atom *reserved = is_add && cetta_prime_space_is_program_space(target)
+        ? cetta_prime_reserved_definition_error(a, payload) : NULL;
+    if (reserved)
+        return atom_error(a, call, reserved->expr.elems[2]);
 
     Atom *mork_error = guard_mork_space_syntax(
         a, call, target, syntax, explicit_syntax);
@@ -20268,8 +20282,11 @@ typedef struct {
     uint32_t hash;
 } ProfiledTypeCacheKey;
 
+/* An entry is valid only in the generation it was stored in (see
+ * profiled_type_cache_prepare_store). */
 typedef struct {
     bool occupied;
+    uint64_t generation;
     ProfiledTypeCacheKey key;
     Atom *atom_key;
     Atom **types;
@@ -20278,14 +20295,18 @@ typedef struct {
 
 typedef struct {
     bool occupied;
+    uint64_t generation;
     ProfiledTypeCacheKey key;
     Atom *atom_key;
     bool result;
 } ProfiledTypeFormationCacheEntry;
 
 static __thread Arena g_profiled_type_cache_arena;
+static __thread ArenaMark g_profiled_type_cache_arena_root;
 static __thread bool g_profiled_type_cache_arena_ready = false;
 static __thread uint32_t g_profiled_type_cache_stores = 0;
+static __thread uint64_t g_profiled_type_cache_generation = 1u;
+static __thread uint64_t g_profiled_type_cache_epoch = 0u;
 static __thread ProfiledTypeListCacheEntry
     g_profiled_type_cache[PROFILED_TYPE_CACHE_CAP];
 static __thread ProfiledTypeFormationCacheEntry
@@ -20351,16 +20372,34 @@ static void profiled_type_cache_clear_all(void) {
     arena_set_hashcons(&g_profiled_type_cache_arena, NULL);
     arena_set_runtime_kind(&g_profiled_type_cache_arena,
                            CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    g_profiled_type_cache_arena_root = arena_mark(&g_profiled_type_cache_arena);
     g_profiled_type_cache_arena_ready = true;
 }
 
-static bool profiled_type_cache_prepare_store(void) {
+/* Every mutation of any space advances the global mutation epoch, and every
+ * key holds the epoch it was made at, so an entry stored at an earlier epoch
+ * is never found again.  Its copies are released when the first store at a
+ * newer epoch arrives: otherwise a program that changes a space between
+ * calls keeps one dead copy per stored judgment until the store count
+ * resets the cache, about 2 KB per call.  Releasing them starts a new
+ * generation and returns the arena's blocks for reuse; an entry of an older
+ * generation reads as empty, so no pass over the tables is needed. */
+static void profiled_type_cache_retire_epoch(void) {
+    arena_reset(&g_profiled_type_cache_arena, g_profiled_type_cache_arena_root);
+    g_profiled_type_cache_generation++;
+    g_profiled_type_cache_stores = 0;
+}
+
+static bool profiled_type_cache_prepare_store(uint64_t epoch) {
     if (!profiled_type_cache_enabled())
         return false;
     if (!g_profiled_type_cache_arena_ready ||
         g_profiled_type_cache_stores >= PROFILED_TYPE_CACHE_RESET_STORES) {
         profiled_type_cache_clear_all();
+    } else if (epoch != g_profiled_type_cache_epoch) {
+        profiled_type_cache_retire_epoch();
     }
+    g_profiled_type_cache_epoch = epoch;
     g_profiled_type_cache_stores++;
     return true;
 }
@@ -20532,6 +20571,7 @@ static bool profiled_type_cache_lookup_key(
     ProfiledTypeListCacheEntry *entry =
         &g_profiled_type_cache[key->hash % PROFILED_TYPE_CACHE_CAP];
     if (!entry->occupied ||
+        entry->generation != g_profiled_type_cache_generation ||
         !profiled_type_cache_key_matches(&entry->key, key) ||
         !atom_eq(entry->atom_key, atom)) {
         return false;
@@ -20552,13 +20592,14 @@ static void profiled_type_cache_store_key(
         if (!profiled_type_cache_result_stable(types[i]))
             return;
     }
-    if (!profiled_type_cache_prepare_store())
+    if (!profiled_type_cache_prepare_store(admitted_key->global_mutation_epoch))
         return;
 
     ProfiledTypeListCacheEntry *entry =
         &g_profiled_type_cache[
             admitted_key->hash % PROFILED_TYPE_CACHE_CAP];
     entry->occupied = true;
+    entry->generation = g_profiled_type_cache_generation;
     entry->key = *admitted_key;
     entry->atom_key = atom_deep_copy(&g_profiled_type_cache_arena, atom);
     entry->count = count;
@@ -20579,6 +20620,7 @@ static bool profiled_type_formation_cache_lookup_key(
         &g_profiled_type_formation_cache[
             key->hash % PROFILED_TYPE_FORMATION_CACHE_CAP];
     if (!entry->occupied ||
+        entry->generation != g_profiled_type_cache_generation ||
         !profiled_type_cache_key_matches(&entry->key, key) ||
         !atom_eq(entry->atom_key, ty)) {
         return false;
@@ -20594,13 +20636,14 @@ static void profiled_type_formation_cache_store_key(
     if (!admitted_key ||
         !profiled_type_cache_make_key(s, ty, &current_key) ||
         !profiled_type_cache_key_matches(admitted_key, &current_key) ||
-        !profiled_type_cache_prepare_store()) {
+        !profiled_type_cache_prepare_store(admitted_key->global_mutation_epoch)) {
         return;
     }
     ProfiledTypeFormationCacheEntry *entry =
         &g_profiled_type_formation_cache[
             admitted_key->hash % PROFILED_TYPE_FORMATION_CACHE_CAP];
     entry->occupied = true;
+    entry->generation = g_profiled_type_cache_generation;
     entry->key = *admitted_key;
     entry->atom_key = atom_deep_copy(&g_profiled_type_cache_arena, ty);
     entry->result = result;
@@ -21445,6 +21488,65 @@ uint32_t eval_get_atom_types_structural_profiled_budgeted(
 static bool prime_dependent_types_alpha(Space *space, Arena *arena,
                                         Atom *left, Atom *right);
 
+/* A Prime type is usable where another is expected when the two are the
+ * same up to bound names, or when it is a universe and the expected type a
+ * larger sort: universes are cumulative, so a type in `(u 0)` is a set where
+ * a set is expected, as the kernel judges it. */
+/* A function type with its last result written as a function type again,
+ * `(-> A (-> B C))`, is the function type `(-> A B C)`: Prime reads both as
+ * the same curried type, as the kernel does.  NULL when there is nothing to
+ * join. */
+static Atom *prime_uncurried_function_type(Arena *arena, Atom *type) {
+    bool changed = false;
+    while (type && is_function_type(type) && type->expr.len >= 3u &&
+           is_function_type(type->expr.elems[type->expr.len - 1u]) &&
+           type->expr.elems[type->expr.len - 1u]->expr.len >= 3u) {
+        Atom *inner = type->expr.elems[type->expr.len - 1u];
+        CettaExprLen len = (CettaExprLen)(type->expr.len - 1u + inner->expr.len - 1u);
+        Atom **items = arena_alloc(arena, sizeof(Atom *) * len);
+        if (!items) return NULL;
+        for (CettaExprIndex i = 0u; i + 1u < type->expr.len; i++) items[i] = type->expr.elems[i];
+        for (CettaExprIndex i = 1u; i < inner->expr.len; i++)
+            items[type->expr.len - 2u + i] = inner->expr.elems[i];
+        type = atom_expr(arena, items, len);
+        changed = true;
+    }
+    return changed ? type : NULL;
+}
+
+static Atom *prime_unnamed_domain(Atom **elems, CettaExprIndex at, CettaExprIndex len);
+
+/* A function type with its arrows joined and the names of its domains that
+ * nothing after them mentions dropped; NULL when it is already so. */
+static Atom *prime_plain_function_type(Arena *arena, Atom *type) {
+    Atom *flat = prime_uncurried_function_type(arena, type);
+    Atom *t = flat ? flat : type;
+    if (!t || !is_function_type(t)) return flat;
+    Atom **items = arena_alloc(arena, sizeof(Atom *) * t->expr.len);
+    if (!items) return flat;
+    bool changed = false;
+    items[0] = t->expr.elems[0];
+    for (CettaExprIndex i = 1u; i < t->expr.len; i++) {
+        items[i] = i + 1u < t->expr.len
+            ? prime_unnamed_domain(t->expr.elems, i, t->expr.len) : t->expr.elems[i];
+        changed = changed || items[i] != t->expr.elems[i];
+    }
+    return changed ? atom_expr(arena, items, t->expr.len) : flat;
+}
+
+static bool prime_runtime_type_fits(Space *space, Arena *arena,
+                                    Atom *actual, Atom *expected) {
+    if (prime_dependent_types_alpha(space, arena, actual, expected) ||
+        prime_semantics_written_sort_within(arena, actual, expected))
+        return true;
+    /* Function types written curried or not, with unused names or not. */
+    Atom *plain_actual = prime_plain_function_type(arena, actual);
+    Atom *plain_expected = prime_plain_function_type(arena, expected);
+    return (plain_actual || plain_expected) &&
+           prime_dependent_types_alpha(space, arena, plain_actual ? plain_actual : actual,
+                                       plain_expected ? plain_expected : expected);
+}
+
 static void type_cast_fn(Space *s, Arena *a, Atom *atom, Atom *expectedType,
                          int fuel, ResultSet *rs) {
     __attribute__((cleanup(eval_gc_root_frame_leave)))
@@ -21459,7 +21561,7 @@ static void type_cast_fn(Space *s, Arena *a, Atom *atom, Atom *expectedType,
         bindings_init(&mb);
         if (eval_type_refine(types[i], expectedType, &mb, a) ||
             (eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
-             prime_dependent_types_alpha(s, a, types[i], expectedType))) {
+             prime_runtime_type_fits(s, a, types[i], expectedType))) {
             bindings_free(&mb);
             result_set_add(rs, atom);
             free(types);
@@ -21922,8 +22024,8 @@ static bool prime_type_eval_takes_source(void *context, Atom *expected) {
 
 static bool prime_type_eval_equivalent(void *context, Atom *actual, Atom *expected) {
     HeTypeEvalApplication *application = context;
-    return prime_dependent_types_alpha(application->space, application->arena,
-                                       actual, expected);
+    return prime_runtime_type_fits(application->space, application->arena,
+                                   actual, expected);
 }
 
 static bool check_function_applicable(
@@ -22533,7 +22635,8 @@ static bool prime_need_is_explicit_control_form(const Atom *atom) {
              prime_scoped_judgment_is_head_id(head_id) ||
              head_id == g_builtin_syms.nik_colon_check ||
              head_id == g_builtin_syms.type_colon_theorem ||
-             head_id == g_builtin_syms.type_colon_prove)) ||
+             head_id == g_builtin_syms.type_colon_prove ||
+             head_id == g_builtin_syms.cost_colon_firings)) ||
            prime_need_form_is(atom, syms->delay, 1u) ||
            prime_need_form_is(atom, syms->force, 1u) ||
            prime_need_form_is(atom, syms->resample, 1u) ||
@@ -23402,8 +23505,99 @@ static bool prime_runtime_form(Space *s, Arena *a, Atom *atom, int word) {
 /* One contraction of the term syntax at the root (beta, a projection of a
  * pair, identity elimination at reflexivity), unless a word it reads is the
  * program's own function or constructor there. */
+/* Partial application, Prime only.  A constant typed at a function of n
+ * arguments, applied to fewer, is a value: the partial application, printed
+ * as written.  Its type is the function type read curried at the arguments
+ * given, `(-> D1 .. Dk (-> Dk+1 .. Dn R))`, so the arguments given are
+ * checked as at a full call and the value has the remaining function type.
+ * Applied to further arguments, `((f a1 .. ak) b1 .. bm)` is the call
+ * `(f a1 .. ak b1 .. bm)`, evaluated as written: at the arity it computes,
+ * past it the arity check refuses it as before.  The kernel reads the same
+ * terms as applications of the constant (`App` spines).  A grounded
+ * operation keeps its own arity. */
+static bool prime_partial_application_head(Space *s, Arena *a, Atom *head, size_t given) {
+    if (eval_current_language_id() != CETTA_LANGUAGE_PRIME || !head ||
+        head->kind != ATOM_SYMBOL || given == 0u)
+        return false;
+    /* Only when no function type of the head takes exactly the arguments
+     * given: a full application of one overload is never also read as a
+     * partial application of another. */
+    Atom **types = NULL;
+    uint32_t count = eval_get_atom_types_profiled(s, a, head, &types);
+    bool longer = false, exact = false;
+    for (uint32_t i = 0u; i < count; i++) {
+        if (!is_function_type(types[i])) continue;
+        size_t arity = (size_t)get_function_arg_count(types[i]);
+        longer = longer || arity > given;
+        exact = exact || arity == given;
+    }
+    free(types);
+    return longer && !exact;
+}
+
+static bool prime_type_mentions_symbol(Atom *t, Atom *name) {
+    if (!t) return false;
+    if (t->kind == ATOM_SYMBOL) return atom_eq(t, name);
+    if (t->kind != ATOM_EXPR) return false;
+    for (CettaExprIndex i = 0u; i < t->expr.len; i++)
+        if (prime_type_mentions_symbol(t->expr.elems[i], name)) return true;
+    return false;
+}
+
+/* A domain `(x : D)` whose name nothing after it mentions is the domain D:
+ * the remaining arrow of a partial application is written as an ordinary
+ * function type where it is one. */
+static Atom *prime_unnamed_domain(Atom **elems, CettaExprIndex at, CettaExprIndex len) {
+    Atom *domain = elems[at];
+    if (!domain || domain->kind != ATOM_EXPR || domain->expr.len != 3u ||
+        !atom_is_symbol_id(domain->expr.elems[1], g_builtin_syms.colon) ||
+        domain->expr.elems[0]->kind != ATOM_SYMBOL)
+        return domain;
+    for (CettaExprIndex i = at + 1u; i < len; i++)
+        if (prime_type_mentions_symbol(elems[i], domain->expr.elems[0])) return domain;
+    return domain->expr.elems[2];
+}
+
+static Atom *prime_curried_function_type(Arena *a, Atom *ft, size_t given) {
+    CettaExprLen arity = get_function_arg_count(ft);
+    if (given == 0u || given >= (size_t)arity) return ft;
+    CettaExprLen rest_len = (CettaExprLen)(arity - given + 2u);
+    Atom **rest = arena_alloc(a, sizeof(Atom *) * rest_len);
+    Atom **outer = arena_alloc(a, sizeof(Atom *) * (given + 2u));
+    if (!rest || !outer) return ft;
+    rest[0] = ft->expr.elems[0];
+    for (CettaExprIndex i = 0u; i + 1u < rest_len; i++)
+        rest[1u + i] = i + 2u < rest_len
+            ? prime_unnamed_domain(ft->expr.elems, 1u + given + i, ft->expr.len)
+            : ft->expr.elems[1u + given + i];
+    outer[0] = ft->expr.elems[0];
+    for (size_t i = 0u; i < given; i++) outer[1u + i] = ft->expr.elems[1u + i];
+    outer[given + 1u] = atom_expr(a, rest, rest_len);
+    return atom_expr(a, outer, (CettaExprLen)(given + 2u));
+}
+
+/* `((f a1 .. ak) b1 .. bm)` with `(f a1 .. ak)` a partial application: the
+ * call `(f a1 .. ak b1 .. bm)`; NULL otherwise. */
+static Atom *prime_partial_application_call(Space *s, Arena *a, Atom *term) {
+    if (!term || term->kind != ATOM_EXPR || term->expr.len < 2u) return NULL;
+    Atom *head = term->expr.elems[0];
+    if (!head || head->kind != ATOM_EXPR || head->expr.len < 2u ||
+        !prime_partial_application_head(s, a, head->expr.elems[0],
+                                        (size_t)head->expr.len - 1u))
+        return NULL;
+    CettaExprLen len = (CettaExprLen)(head->expr.len + term->expr.len - 1u);
+    Atom **items = arena_alloc(a, sizeof(Atom *) * len);
+    if (!items) return NULL;
+    for (CettaExprIndex i = 0u; i < head->expr.len; i++) items[i] = head->expr.elems[i];
+    for (CettaExprIndex i = 1u; i < term->expr.len; i++)
+        items[head->expr.len + i - 1u] = term->expr.elems[i];
+    return atom_expr(a, items, len);
+}
+
 static Atom *prime_runtime_head_step(Space *s, Arena *a, Atom *term) {
     if (!term || term->kind != ATOM_EXPR || term->expr.len < 2u) return term;
+    Atom *continued = prime_partial_application_call(s, a, term);
+    if (continued) return continued;
     Atom *head = term->expr.elems[0];
     Atom *last = term->expr.elems[term->expr.len - 1u];
     if ((head->kind == ATOM_EXPR &&
@@ -23866,6 +24060,17 @@ bool eval_space_mutation_contract_kind(
         arena, call, target, syntax, explicit_syntax);
     if (mork_error) {
         outcome_set_add(outcomes, mork_error, &empty);
+        return true;
+    }
+    /* Prime refuses an equation or a type declaration for a name it
+     * interprets itself in the space the program runs in, as it does in the
+     * program's text. */
+    Atom *reserved = !is_remove && cetta_prime_space_is_program_space(target)
+        ? cetta_prime_reserved_definition_error(arena, payload) : NULL;
+    if (reserved) {
+        outcome_set_add(
+            outcomes, atom_error(arena, call, reserved->expr.elems[2]),
+            &empty);
         return true;
     }
     bool materialized = is_remove
@@ -25354,6 +25559,24 @@ void metta_eval(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, ResultSet 
         return;
     }
 
+    /* A symbol the Prime program defines evaluates by its definition. */
+    if (demand == HE_TYPE_CAST && prime_symbol_is_defined(s, atom)) {
+        OutcomeSet os;
+        outcome_set_init(&os);
+        prime_symbol_unfold(s, a, type, atom, fuel, &os);
+        for (CettaCount oi = 0; oi < os.len; oi++) {
+            Atom *observed = prime_need_observe_data(
+                a, outcome_atom_materialize(a, &os.items[oi]),
+                &os.items[oi].env);
+            if (!observed)
+                observed = atom_error(
+                    a, atom, atom_symbol(a, "PrimeNeedReificationCycle"));
+            result_set_add(rs, observed);
+            prime_need_observe_top_answer(observed, &os.items[oi].env);
+        }
+        outcome_set_free(&os);
+        return;
+    }
     /* Symbol/Grounded/empty-expr: typeCast (spec line 260) */
     if (demand == HE_TYPE_CAST) {
         CettaCount before = rs->len;
@@ -25405,6 +25628,224 @@ void metta_eval(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, ResultSet 
         }
         outcome_set_free(&os);
     }
+}
+
+/* The Prime calls this thread has rewritten by one rule of a declared
+ * definition (or by the projection of a pair); `cost:firings` reads it. */
+static __thread uint64_t g_prime_rule_firings = 0u;
+
+/* ── Prime: a symbol the program defines ─────────────────────────────────
+ * In Prime a symbol is a constant with no arguments.  One the program
+ * defines evaluates by its definition: an admitted rule of arity zero
+ * (`set:define` of `c` with `(= c v)`), the rule the kernel unfolds when it
+ * compares terms, or an equation whose left side is the symbol itself,
+ * `(= c v)`.  A symbol with neither stays itself: unknown symbols are data,
+ * never empty and never an error.  Whether a symbol is defined is kept per
+ * thread for one state of the space and of admission. */
+typedef struct {
+    const Space *space;
+    uint64_t instance;
+    uint64_t revision;
+    uint64_t admission;
+    SymbolId symbol;
+    bool defined;
+} PrimeSymbolDefinitionEntry;
+
+#define PRIME_SYMBOL_DEFINITION_SLOTS 256u
+static __thread PrimeSymbolDefinitionEntry
+    g_prime_symbol_definitions[PRIME_SYMBOL_DEFINITION_SLOTS];
+
+static bool prime_symbol_has_own_equation(Space *s, Atom *symbol) {
+    if (!space_equations_may_match_known_head(s, symbol->sym_id))
+        return false;
+    SpaceEquationCursor cursor;
+    if (!space_equation_cursor_init(s, symbol->sym_id, &cursor))
+        return false;
+    for (;;) {
+        SpaceEquationOccurrenceId id;
+        if (space_equation_cursor_next(&cursor, &id) !=
+            SPACE_EQUATION_CURSOR_ITEM)
+            return false;
+        SpaceEquationOccurrence occurrence;
+        if (space_equation_occurrence_resolve(id, &occurrence) &&
+            occurrence.lhs && atom_eq(occurrence.lhs, symbol))
+            return true;
+    }
+}
+
+static bool prime_symbol_is_defined(Space *s, Atom *atom) {
+    if (!s || !atom || atom->kind != ATOM_SYMBOL ||
+        eval_current_language_id() != CETTA_LANGUAGE_PRIME)
+        return false;
+    uint64_t instance = space_instance_id(s);
+    uint64_t revision = space_revision(s);
+    uint64_t admission = prime_scoped_judgment_admission_epoch();
+    PrimeSymbolDefinitionEntry *slot = &g_prime_symbol_definitions[
+        (atom->sym_id * UINT32_C(2654435761)) &
+        (PRIME_SYMBOL_DEFINITION_SLOTS - 1u)];
+    if (slot->space == s && slot->instance == instance &&
+        slot->revision == revision && slot->admission == admission &&
+        slot->symbol == atom->sym_id)
+        return slot->defined;
+    bool defined = prime_symbol_has_own_equation(s, atom);
+    if (!defined) {
+        Arena scratch;
+        arena_init_detached(&scratch);
+        defined = prime_semantics_unfold_covered_constant(
+                      &scratch, s, atom) != NULL;
+        arena_free(&scratch);
+    }
+    slot->space = s;
+    slot->instance = instance;
+    slot->revision = revision;
+    slot->admission = admission;
+    slot->symbol = atom->sym_id;
+    slot->defined = defined;
+    return defined;
+}
+
+/* The values of a defined symbol: its admitted rule unfolded once (one
+ * firing, as any rule of a declared definition), or each of its own
+ * equations, each right side then evaluated at `type`.  A right side that is
+ * the symbol itself is its value.  The source is closed, so only bindings
+ * the values carry leave. */
+static void prime_symbol_unfold(Space *s, Arena *a, Atom *type, Atom *atom,
+                                int fuel, OutcomeSet *os) {
+    int next_fuel = fuel > 0 ? fuel - 1 : fuel;
+    Bindings empty;
+    bindings_init(&empty);
+    Atom *covered = prime_semantics_unfold_covered_constant(a, s, atom);
+    if (covered) {
+        g_prime_rule_firings++;
+        metta_eval_bind_typed(s, a, type, covered, next_fuel, os);
+        return;
+    }
+    QueryResults qr;
+    query_results_init(&qr);
+    query_equations(s, atom, a, &qr);
+    for (CettaCount i = 0u; i < qr.len; i++) {
+        Atom *value = bindings_apply_if_vars(
+            &qr.items[i].bindings, a, qr.items[i].result);
+        if (!value) continue;
+        if (atom_eq(value, atom)) {
+            outcome_set_add(os, atom, &empty);
+            continue;
+        }
+        metta_eval_bind_typed(s, a, type, value, next_fuel, os);
+    }
+    query_results_free(&qr);
+}
+
+/* ── Prime: names Prime interprets itself ────────────────────────────────
+ * A call whose head Prime interprets itself is answered without reading the
+ * program's equations for that head, and a second type declaration for it
+ * changes how its calls are checked.  An equation or a declaration that a
+ * program writes for such a name would be ignored, or would act on some
+ * calls only, without a word, so Prime refuses it and says which name and
+ * why.  The words of the term syntax (`lam`, `pair`, `fst`, `snd`, ...) are
+ * not among these names: a program may define them, and its definition
+ * takes effect (prime_runtime_word_shadowed).  The reasons:
+ *   grounded-operation  a native operation (`+`, `size`, `size-atom`, ...);
+ *   builtin             a builtin of Prime's profile (`collect`, `once`, ...);
+ *   judgment            a judgment of Prime (`set:`, `type:`, `try`, ...);
+ *   evaluator-form      a form of the evaluator itself (`if`, `let`, ...). */
+static const char *prime_reserved_evaluator_form(SymbolId id) {
+    const SymbolId forms[] = {
+        g_builtin_syms.quote, g_builtin_syms.unquote,
+        g_builtin_syms.superpose, g_builtin_syms.collapse,
+        g_builtin_syms.hyperpose, g_builtin_syms.reify,
+        g_builtin_syms.union_atom, g_builtin_syms.decons_atom,
+        g_builtin_syms.cons_atom, g_builtin_syms.car_atom,
+        g_builtin_syms.cdr_atom, g_builtin_syms.unify,
+        g_builtin_syms.case_text, g_builtin_syms.switch_text,
+        g_builtin_syms.switch_minimal, g_builtin_syms.chain,
+        g_builtin_syms.let, g_builtin_syms.let_star, g_builtin_syms.match,
+        g_builtin_syms.if_text, g_builtin_syms.return_text,
+        g_builtin_syms.function, g_builtin_syms.eval, g_builtin_syms.evalc,
+        g_builtin_syms.metta, g_builtin_syms.call_native,
+        g_builtin_syms.new_space, g_builtin_syms.context_space,
+        g_builtin_syms.register_module_bang, g_builtin_syms.import_bang,
+        g_builtin_syms.include, g_builtin_syms.mod_space_bang,
+        g_builtin_syms.print_mods_bang, g_builtin_syms.bind_bang,
+        g_builtin_syms.collapse_bind, g_builtin_syms.superpose_bind,
+        g_builtin_syms.new_state, g_builtin_syms.get_state,
+        g_builtin_syms.change_state_bang, g_builtin_syms.pragma_bang,
+        g_builtin_syms.get_metatype, g_builtin_syms.get_type,
+        g_builtin_syms.get_type_space, g_builtin_syms.map_atom,
+        g_builtin_syms.filter_atom, g_builtin_syms.foldl_atom,
+        g_builtin_syms.empty_form, g_builtin_syms.capture,
+        g_builtin_syms.run, g_builtin_syms.context_colon_self,
+        g_builtin_syms.ctx_colon_capture, g_builtin_syms.space_union,
+        g_builtin_syms.space_intersection, g_builtin_syms.add_reduct,
+        g_builtin_syms.add_atoms, g_builtin_syms.get_atoms,
+        g_builtin_syms.nop, g_builtin_syms.assert_text,
+        g_builtin_syms.assertEqual, g_builtin_syms.assertEqualToResult,
+        g_builtin_syms.assertAlphaEqual,
+        g_builtin_syms.assertAlphaEqualToResult,
+        g_builtin_syms.assertIncludes,
+    };
+    for (size_t i = 0u; i < sizeof forms / sizeof forms[0]; i++)
+        if (forms[i] == id) return "evaluator-form";
+    return NULL;
+}
+
+static bool prime_reserved_judgment(SymbolId id) {
+    return prime_scoped_judgment_is_head_id(id) ||
+           id == g_builtin_syms.type_colon_of ||
+           id == g_builtin_syms.type_colon_check ||
+           id == g_builtin_syms.type_colon_analyze ||
+           id == g_builtin_syms.type_colon_eq ||
+           id == g_builtin_syms.type_colon_formed ||
+           id == g_builtin_syms.type_colon_refine ||
+           id == g_builtin_syms.type_colon_may ||
+           id == g_builtin_syms.type_colon_must ||
+           id == g_builtin_syms.type_colon_theorem ||
+           id == g_builtin_syms.type_colon_kernel_query ||
+           id == g_builtin_syms.type_colon_prove ||
+           id == g_builtin_syms.cost_colon_firings ||
+           id == g_builtin_syms.nik_colon_check;
+}
+
+const char *cetta_prime_reserved_name_reason(Atom *name) {
+    if (eval_current_language_id() != CETTA_LANGUAGE_PRIME || !name ||
+        name->kind != ATOM_SYMBOL)
+        return NULL;
+    SymbolId id = name->sym_id;
+    if (prime_reserved_judgment(id)) return "judgment";
+    const char *builtin = whole_call_extension_builtin_name(id);
+    if (builtin && active_builtin_allowed(builtin)) return "builtin";
+    if (is_grounded_op(id)) return "grounded-operation";
+    return prime_reserved_evaluator_form(id);
+}
+
+/* Whether `space` is the space the program runs in, where calls are
+ * evaluated with its equations; a space of its own (a theory, a store of
+ * data) may name its constants as it likes. */
+bool cetta_prime_space_is_program_space(const Space *space) {
+    return space && space == g_eval_root_space;
+}
+
+/* The name a program's atom defines or declares, when that is a name Prime
+ * interprets itself: the head of the left side of an equation `(= (N ...) v)`
+ * or `(= N v)`, or the name of a type declaration `(: N T)`. */
+Atom *cetta_prime_reserved_definition_error(Arena *a, Atom *atom) {
+    if (eval_current_language_id() != CETTA_LANGUAGE_PRIME || !a || !atom ||
+        atom->kind != ATOM_EXPR || atom->expr.len != 3u)
+        return NULL;
+    Atom *head = atom->expr.elems[0];
+    Atom *name = NULL;
+    if (atom_is_symbol_id(head, g_builtin_syms.equals)) {
+        Atom *lhs = atom->expr.elems[1];
+        name = lhs && lhs->kind == ATOM_EXPR && lhs->expr.len > 0u
+            ? lhs->expr.elems[0] : lhs;
+    } else if (atom_is_symbol_id(head, g_builtin_syms.colon)) {
+        name = atom->expr.elems[1];
+    }
+    const char *reason = cetta_prime_reserved_name_reason(name);
+    if (!reason) return NULL;
+    return atom_error(a, atom,
+                      atom_expr3(a, atom_symbol(a, "reserved-name"), name,
+                                 atom_symbol(a, reason)));
 }
 
 /* ── metta_eval_bind: like metta_eval but returns bindings too ──────────── */
@@ -25495,7 +25936,11 @@ static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel, OutcomeSet
         return;
     }
 
-    if (atom_eval_is_immediate_value(atom, fuel)) {
+    if (fuel != 0 && prime_symbol_is_defined(s, atom)) {
+        prime_symbol_unfold(s, a, NULL, atom, fuel, os);
+        return;
+    }
+    if (atom->kind == ATOM_SYMBOL || atom_eval_is_immediate_value(atom, fuel)) {
         outcome_set_add(os, atom, &empty);
         return;
     }
@@ -25635,6 +26080,10 @@ static void metta_eval_bind_typed(Space *s, Arena *a, Atom *type, Atom *atom, in
         return;
     }
 
+    if (demand == HE_TYPE_CAST && prime_symbol_is_defined(s, atom)) {
+        prime_symbol_unfold(s, a, type, atom, fuel, os);
+        return;
+    }
     if (demand == HE_TYPE_CAST) {
         ResultSet rs;
         result_set_init(&rs);
@@ -32066,6 +32515,10 @@ static bool prime_need_try_equation_call_core(
         }
         saw_function_type = true;
         Atom *fresh_type = cetta_instantiate_frame_syntax(a, head_types[i]);
+        if (fresh_type && call_nargs >= 1u &&
+            call_nargs < get_function_arg_count(fresh_type) &&
+            prime_partial_application_head(s, a, head, (size_t)call_nargs))
+            fresh_type = prime_curried_function_type(a, fresh_type, (size_t)call_nargs);
         ApplicabilityErrors candidate_errors;
         applicability_errors_init(&candidate_errors);
         if (fresh_type && check_function_applicable(
@@ -33095,6 +33548,11 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
             applicability_types_init(&contracts);
             Atom *exp_type = etype ? etype : atom_undefined_type(a);
             Atom *fresh_ft = cetta_instantiate_frame_syntax(a, op_types[ti]);
+            /* Fewer arguments than the arity: a partial application, checked
+             * at the function type read curried (prime_curried_function_type). */
+            if (nargs >= 1u && nargs < (uint32_t)get_function_arg_count(fresh_ft) &&
+                prime_partial_application_head(s, a, op, nargs))
+                fresh_ft = prime_curried_function_type(a, fresh_ft, nargs);
             bool correlate_he_contracts =
                 eval_current_language_id() == CETTA_LANGUAGE_HE;
             /* Prime's codomain still names the telescope binders. The
@@ -33349,6 +33807,8 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                                 Atom *step = prime_semantics_reduce_covered_call(
                                     a, s, call_atom, fuel);
                                 if (step) {
+                                    g_prime_rule_firings +=
+                                        prime_semantics_covered_call_firings();
                                     *tail_next = step;
                                     *tail_type = inst_ret_type;
                                     bindings_copy(tail_env, combo_ctx);
@@ -34280,6 +34740,14 @@ static void prime_public_emit_type_evidence(
             preserve_bindings);
         return;
     }
+    /* A typed query's type is the type of its answers. */
+    if (evidence && evidence->kind == ATOM_EXPR && evidence->expr.len == 4u &&
+        prime_public_symbol_named(evidence->expr.elems[0], "PrimeTypedQuery")) {
+        prime_public_emit(
+            arena, outcomes, evidence->expr.elems[1], current_env,
+            preserve_bindings);
+        return;
+    }
     if (evidence && evidence->kind == ATOM_EXPR && evidence->expr.len >= 3u &&
         prime_public_symbol_named(evidence->expr.elems[0], "InferredTypes")) {
         bool emitted = false;
@@ -34589,8 +35057,10 @@ static void prime_public_eval_scoped_judgment(
             Atom *error = NULL;
             for (CettaCount i = 0u; i < tmp.len && !error; i++)
                 if (atom_is_error(tmp.items[i].atom)) error = tmp.items[i].atom;
+            /* An error of the program is not a refutation: no judgment was
+             * asked.  It is reported as the evaluation failing. */
             if (error) {
-                value = atom_expr(arena, (Atom *[]) {atom_symbol(arena, "Refuted"), error}, 2);
+                value = atom_expr(arena, (Atom *[]) {atom_symbol(arena, "Failed"), error}, 2);
             } else if (tmp.len == 0u) {
                 value = atom_expr(arena, (Atom *[]) {atom_symbol(arena, "Undetermined"),
                     atom_expr(arena, (Atom *[]) {atom_symbol(arena, "no-result"), subject}, 2)}, 2);
@@ -34843,6 +35313,47 @@ static void prime_public_eval_prove(
     free(contexts);
     free(accepted);
     outcome_set_free(&candidates);
+}
+
+/* `(cost:firings expression)`: the expression's values, as `reify` lists
+ * them, and the number of firings their evaluation took, a firing being one
+ * call rewritten by one rule of a declared definition (or the projection of
+ * a pair).  Ordinary equations and built-in operations are not counted.  The
+ * count is of this evaluation alone, nested evaluations included.  The
+ * `cost:` namespace holds the named measurements of a run, each its own. */
+static void prime_public_eval_cost_firings(
+    Space *space, Arena *arena, Atom *call, int fuel,
+    const Bindings *current_env, bool preserve_bindings,
+    OutcomeSet *outcomes) {
+    if (expr_nargs(call) != 1u) {
+        prime_public_emit(
+            arena, outcomes,
+            atom_error(arena, call,
+                       atom_symbol(arena, "IncorrectNumberOfArguments")),
+            current_env, preserve_bindings);
+        return;
+    }
+    Atom *expression = bindings_apply_if_vars(
+        current_env, arena, expr_arg(call, 0u));
+    OutcomeSet values;
+    outcome_set_init(&values);
+    uint64_t before = g_prime_rule_firings;
+    metta_eval_bind(space, arena, expression, fuel, &values);
+    uint64_t taken = g_prime_rule_firings - before;
+    Atom **items = values.len
+        ? cetta_malloc(sizeof(Atom *) * (size_t)values.len)
+        : NULL;
+    CettaExprLen count = 0u;
+    for (CettaCount i = 0u; i < values.len; i++) {
+        Atom *value = outcome_atom_materialize(arena, &values.items[i]);
+        if (value) items[count++] = value;
+    }
+    Atom *result = atom_expr2(
+        arena, atom_expr(arena, items, count),
+        atom_int(arena, (int64_t)taken));
+    free(items);
+    outcome_set_free(&values);
+    prime_public_emit(arena, outcomes, result, current_env, preserve_bindings);
 }
 
 #if CETTA_PRIME_EVAL_STACK
@@ -48920,6 +49431,15 @@ tail_call: ;
         return;
     }
 
+    /* A symbol the Prime program defines evaluates by its definition. */
+    if (demand == HE_TYPE_CAST && prime_symbol_is_defined(s, atom)) {
+        prime_symbol_unfold(
+            s, a,
+            atom_is_symbol_id(etype, g_builtin_syms.undefined_type)
+                ? NULL : etype,
+            atom, fuel, os);
+        return;
+    }
     if (demand == HE_TYPE_CAST) {
         ResultSet rs;
         result_set_init(&rs);
@@ -49044,6 +49564,12 @@ tail_call: ;
     if (language_id == CETTA_LANGUAGE_PRIME &&
         head_id == g_builtin_syms.type_colon_prove) {
         prime_public_eval_prove(
+            s, a, atom, fuel, CURRENT_ENV, preserve_bindings, os);
+        return;
+    }
+    if (language_id == CETTA_LANGUAGE_PRIME &&
+        head_id == g_builtin_syms.cost_colon_firings) {
+        prime_public_eval_cost_firings(
             s, a, atom, fuel, CURRENT_ENV, preserve_bindings, os);
         return;
     }

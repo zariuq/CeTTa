@@ -16,12 +16,15 @@
    (= (add $n (succ $m)) (succ (add $n $m))))
 !(pf:theory &thy ((: Q (-> nat prop)) (: R (-> nat nat prop)) (: a nat) (: b nat)
                   (: s (-> nat nat)) (: T (-> (-> nat nat) prop))))
+; Assumptions about the uninterpreted Q, R and T, which the verdicts are about.
 !(set:axiom &thy q-succ (all nat (lam x (Q (succ x)))))
 !(set:axiom &thy q-add (all nat (lam x (Q (add zero x)))))
 !(set:axiom &thy r-diag (all nat (lam x (R x x))))
 !(set:axiom &thy r-add (all nat (lam x (R x (add x x)))))
 !(set:axiom &thy t-eta (T (lam x (s x))))
-!(set:axiom &thy motive (all (-> nat prop) (lam P (imp (all nat (lam n (P n))) (P zero)))))
+; The motive fact is a theorem: a property of every number holds at zero.
+!(pf:theorem &thy motive (all (-> nat prop) (lam P (imp (all nat (lam n (P n))) (P zero))))
+   (pf:fix P (pf:assume every (pf:all-elim every zero))))
 
 ; Established: a first-order instance.
 !(set:proves &thy (pf:by q-succ) (Q (succ zero)))
@@ -49,3 +52,14 @@
 ; Refuted: the goal fixes x at a, and a + a is not b.
 !(set:proves &thy (pf:by r-add) (R a b))
 !(try (set:proves &thy (pf:by r-add) (R a b)))
+
+; A conclusion is matched at every depth of peeling the quantifiers after the
+; premises, from all of them to none.  So a fact gives its own universal
+; statement, and a fact whose conclusion is universal gives that conclusion.
+!(set:proves &thy (pf:by q-succ) (all nat (lam x (Q (succ x)))))
+!(set:proves &thy (pf:assume H (pf:assume q (pf:by H q)))
+   (imp (imp (Q zero) (all nat (lam x (Q (succ x)))))
+        (imp (Q zero) (all nat (lam x (Q (succ x)))))))
+; Refuted: at every depth the conclusion's head is not the goal's, R ?x ?x
+; and then the quantifier itself against Q zero.
+!(try (set:proves &thy (pf:by r-diag) (Q zero)))

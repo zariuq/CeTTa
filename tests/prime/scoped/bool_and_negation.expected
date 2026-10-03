@@ -7,7 +7,7 @@
 [and]
 [not-not]
 [neg-induction]
-[False]
+[(Undetermined (set:define-not-a-constructor (not $x)))]
 [()]
 [word-ind]
 [(set:define &thy len (-> word nat) (= (len empty) zero) (= (len (step $w)) (succ (len $w))))]

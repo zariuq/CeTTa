@@ -18,8 +18,8 @@
 ; The record keeps the termination evidence each definition was admitted on:
 ; the scrutinee position, its inductive type, and for each constructor the
 ; fields its recursive calls descend on.
-!(let (definition-evidence $rules $termination) (set:known-proof &thy rev-onto) $termination)
-!(let (definition-evidence $rules $termination) (set:known-proof &thy rev-onto~scrutinee-first) $termination)
+!(let (definition-evidence $rules $termination $lean) (set:known-proof &thy rev-onto) $termination)
+!(let (definition-evidence $rules $termination $lean) (set:known-proof &thy rev-onto~scrutinee-first) $termination)
 !(set:eq &thy (rev-onto nil (cons a (cons b (cons c nil)))) (cons c (cons b (cons a nil))))
 !(set:eq &thy (rev-onto nil (cons a (cons b nil))) (cons a (cons b nil)))
 !(set:eq &thy (rev-onto (cons c nil) (cons a nil)) (cons a (cons c nil)))
@@ -30,14 +30,14 @@
    (= (add-onto $acc (succ $n)) (add-onto (succ $acc) $n)))
 !(set:eq &thy (add-onto (succ zero) (succ (succ zero))) (succ (succ (succ zero))))
 !(set:eq &thy (add-onto zero (succ zero)) zero)
-!(let (definition-evidence $rules $termination) (set:known-proof &thy add-onto) $termination)
+!(let (definition-evidence $rules $termination $lean) (set:known-proof &thy add-onto) $termination)
 
 ; A fixed prefix is admitted directly, with no scrutinee-first form.
 !(set:define &thy snoc-each (-> elem list list)
    (= (snoc-each $e nil) (cons $e nil))
    (= (snoc-each $e (cons $x $xs)) (cons $x (snoc-each $e $xs))))
 !(set:known-proposition &thy snoc-each~scrutinee-first)
-!(let (definition-evidence $rules $termination) (set:known-proof &thy snoc-each) $termination)
+!(let (definition-evidence $rules $termination $lean) (set:known-proof &thy snoc-each) $termination)
 !(set:eq &thy (snoc-each c (cons a nil)) (cons a (cons c nil)))
 
 ; The arguments before the scrutinee may form a dependent telescope: the
@@ -49,7 +49,7 @@
 !(set:eq &thy (apply-n num succ zero (succ (succ zero))) (succ (succ zero)))
 !(set:eq &thy (apply-n num succ (succ zero) (succ zero)) (succ (succ zero)))
 !(set:eq &thy (apply-n num succ zero (succ zero)) zero)
-!(let (definition-evidence $rules $termination) (set:known-proof &thy apply-n) $termination)
+!(let (definition-evidence $rules $termination $lean) (set:known-proof &thy apply-n) $termination)
 
 ; A scrutinee binder named like an earlier binder would capture the later
 ; references once moved: the definition is left undetermined.
@@ -59,7 +59,7 @@
 
 ; A definition with no scrutinee is admitted as one equation.
 !(set:define &thy plus-two (-> num num) (= (plus-two $n) (succ (succ $n))))
-!(let (definition-evidence $rules $termination) (set:known-proof &thy plus-two) $termination)
+!(let (definition-evidence $rules $termination $lean) (set:known-proof &thy plus-two) $termination)
 
 ; The scrutinee-first form is still checked: a call on the same argument is
 ; not structural, whatever else it changes.

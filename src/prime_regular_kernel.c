@@ -2,8 +2,11 @@
 #include "prime_level.h"
 #include "stats.h"
 
+#include <inttypes.h>
 #include <limits.h>
 #include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef struct {
@@ -17,6 +20,9 @@ typedef struct {
     /* An abstraction's type follows its annotation, which its erased term
      * does not fix: principal only once an argument fixes the domain. */
     bool annotated_domain;
+    /* Of an abstraction with a written domain: its synthesized type is below
+     * every type of the written abstraction (see regular_written_principal). */
+    bool written_principal;
     const char *reason;
 } PrimeRegularKernelInfer;
 
@@ -66,10 +72,19 @@ static bool regular_spend(CettaPrimeRegularKernelBudget *budget) {
     return true;
 }
 
+/* The search for the least level instance of the declarations a term uses
+ * (Mettapedia, TypeTheory/UniverseLevel/LeastInstance.lean).  Each parameter
+ * being solved holds the least level its constraints have forced so far, or
+ * nothing while none has; a parameter an equation identified with another
+ * one holds that parameter.  `raises` counts the changes, and `unreachable`
+ * the bounds that no assignment reaches: a parameter stands for a level an
+ * author writes, and those bounds lie above every such level. */
 typedef struct {
     const uint64_t *parameters;
     Atom **assignments;
     size_t count;
+    size_t raises;
+    size_t unreachable;
 } PrimeRegularLevelInstantiation;
 
 static bool regular_level_instantiation_find(
@@ -98,6 +113,132 @@ static bool regular_level_parameter_syntax(
     return true;
 }
 
+/* A numeral of the level wire is a natural number of any size: an integer
+ * atom that is not negative, a machine integer or a long one. */
+bool cetta_prime_regular_kernel_level_numeral_v1(const Atom *numeral) {
+    if (!numeral || numeral->kind != ATOM_GROUNDED) return false;
+    if (numeral->ground.gkind == GV_INT) return numeral->ground.ival >= 0;
+    if (numeral->ground.gkind != GV_BIGINT) return false;
+    const char *digits = atom_bigint_cstr(numeral);
+    return digits && digits[0] >= '0' && digits[0] <= '9';
+}
+
+CettaPrimeLevelStatusV1 cetta_prime_regular_kernel_level_numeral_value_v1(
+    Arena *arena, const Atom *numeral,
+    const CettaPrimeLevelNaturalV1 **natural_out) {
+    if (natural_out) *natural_out = NULL;
+    if (!arena || !natural_out ||
+        !cetta_prime_regular_kernel_level_numeral_v1(numeral))
+        return CETTA_PRIME_LEVEL_INVALID_ARGUMENT_V1;
+    return numeral->ground.gkind == GV_INT
+        ? cetta_prime_level_natural_v1(
+              arena, (uint64_t)numeral->ground.ival, natural_out)
+        : cetta_prime_level_natural_from_decimal_v1(
+              arena, atom_bigint_cstr(numeral), natural_out);
+}
+
+Atom *cetta_prime_regular_kernel_level_numeral_atom_v1(
+    Arena *arena, const CettaPrimeLevelNaturalV1 *natural) {
+    uint64_t value = 0u;
+    const char *digits = NULL;
+    if (!arena) return NULL;
+    if (cetta_prime_level_natural_fits_uint64_v1(natural, &value) &&
+        value <= (uint64_t)INT64_MAX)
+        return atom_int(arena, (int64_t)value);
+    return cetta_prime_level_natural_decimal_v1(arena, natural, &digits) ==
+                   CETTA_PRIME_LEVEL_OK_V1
+        ? atom_bigint(arena, digits) : NULL;
+}
+
+static bool regular_level_numeral_is_zero(const Atom *numeral) {
+    if (numeral->ground.gkind == GV_INT) return numeral->ground.ival == 0;
+    const char *digits = atom_bigint_cstr(numeral);
+    while (*digits == '0') digits++;
+    return *digits == '\0';
+}
+
+/* Room for the decimal digits of a machine integer. */
+#define REGULAR_LEVEL_MACHINE_NUMERAL_ROOM 24u
+
+/* The decimal digits of a numeral without leading zeros, and how many there
+ * are.  A machine integer is written into `room`. */
+static const char *regular_level_numeral_digits(
+    const Atom *numeral, char *room, size_t *length_out) {
+    const char *digits = room;
+    if (numeral->ground.gkind == GV_INT) {
+        snprintf(
+            room, REGULAR_LEVEL_MACHINE_NUMERAL_ROOM, "%" PRId64,
+            numeral->ground.ival);
+    } else {
+        digits = atom_bigint_cstr(numeral);
+        while (digits[0] == '0' && digits[1] != '\0') digits++;
+    }
+    *length_out = strlen(digits);
+    return digits;
+}
+
+/* The order of two numerals of the level wire. */
+static int regular_level_numeral_order(const void *left, const void *right) {
+    const Atom *left_numeral = left;
+    const Atom *right_numeral = right;
+    if (left_numeral->ground.gkind == GV_INT &&
+        right_numeral->ground.gkind == GV_INT)
+        return (left_numeral->ground.ival > right_numeral->ground.ival) -
+               (left_numeral->ground.ival < right_numeral->ground.ival);
+    char left_room[REGULAR_LEVEL_MACHINE_NUMERAL_ROOM];
+    char right_room[REGULAR_LEVEL_MACHINE_NUMERAL_ROOM];
+    size_t left_length = 0u;
+    size_t right_length = 0u;
+    const char *left_digits = regular_level_numeral_digits(
+        left_numeral, left_room, &left_length);
+    const char *right_digits = regular_level_numeral_digits(
+        right_numeral, right_room, &right_length);
+    if (left_length != right_length)
+        return left_length < right_length ? -1 : 1;
+    return memcmp(left_digits, right_digits, left_length);
+}
+
+/* The levels above every level an author writes, `(LevelAbove n)`: the level
+ * of the sort of all sets (n = 0), of its sort (n = 1), and so on.  They are
+ * closed levels of the wire like the others.  They are not source spellings:
+ * the notation of levels an author writes has no form for them. */
+static bool regular_level_above_syntax(Atom *level) {
+    return regular_expr(level, "LevelAbove", 2u) &&
+           cetta_prime_regular_kernel_level_numeral_v1(level->expr.elems[1]);
+}
+
+/* Whether a level expression is spelled as a closed level constant: a
+ * natural number, a Cantor normal form, or a level above them.  Whether the
+ * constant is well formed is asked of its parts. */
+static bool regular_level_closed_constant_shape(Atom *level) {
+    return regular_expr(level, "LevelConst", 2u) ||
+           regular_expr(level, "LevelCantor", 4u) ||
+           regular_level_above_syntax(level);
+}
+
+/* The level `count` successors above another, `(LevelOffset level count)`
+ * with a numeral of any length.  `(LevelSucc level)` is the one-step form:
+ * the level one successor above. */
+static bool regular_level_offset_syntax(Atom *level) {
+    return regular_expr(level, "LevelOffset", 3u) &&
+           cetta_prime_regular_kernel_level_numeral_v1(level->expr.elems[2]);
+}
+
+/* Whether a level expression mentions a level above every level an author
+ * writes.  Successors and maxima only raise a level, so such an expression
+ * denotes one of those levels under every valuation, and an expression that
+ * mentions none denotes a level an author writes wherever its parameters
+ * do. */
+static bool regular_level_mentions_above(Atom *level) {
+    if (regular_expr(level, "LevelSucc", 2u) ||
+        regular_level_offset_syntax(level))
+        return regular_level_mentions_above(level->expr.elems[1]);
+    if (regular_expr(level, "LevelMax", 3u))
+        return regular_level_mentions_above(level->expr.elems[1]) ||
+               regular_level_mentions_above(level->expr.elems[2]);
+    return regular_level_above_syntax(level);
+}
+
 static Atom *regular_level_apply_instantiation(
     Arena *arena, Atom *level,
     const PrimeRegularLevelInstantiation *instantiation,
@@ -120,7 +261,7 @@ static Atom *regular_level_apply_instantiation(
         return regular_level_apply_instantiation(
             arena, replacement, instantiation, budget, complete);
     }
-    if (regular_expr(level, "LevelConst", 2u) ||
+    if (regular_level_closed_constant_shape(level) ||
         regular_expr(level, "LevelParam", 2u)) {
         return level;
     }
@@ -128,6 +269,14 @@ static Atom *regular_level_apply_instantiation(
         Atom *inner = regular_level_apply_instantiation(
             arena, level->expr.elems[1], instantiation, budget, complete);
         return inner ? atom_expr2(arena, level->expr.elems[0], inner) : NULL;
+    }
+    if (regular_level_offset_syntax(level)) {
+        Atom *inner = regular_level_apply_instantiation(
+            arena, level->expr.elems[1], instantiation, budget, complete);
+        return inner
+            ? atom_expr3(
+                  arena, level->expr.elems[0], inner, level->expr.elems[2])
+            : NULL;
     }
     if (regular_expr(level, "LevelMax", 3u)) {
         Atom *left = regular_level_apply_instantiation(
@@ -149,7 +298,8 @@ static bool regular_level_mentions_instantiation_parameter(
     if (regular_level_parameter_syntax(level, &parameter))
         return regular_level_instantiation_find(
             instantiation, parameter, NULL);
-    if (regular_expr(level, "LevelSucc", 2u))
+    if (regular_expr(level, "LevelSucc", 2u) ||
+        regular_level_offset_syntax(level))
         return regular_level_mentions_instantiation_parameter(
             level->expr.elems[1], instantiation);
     if (regular_expr(level, "LevelMax", 3u))
@@ -160,42 +310,249 @@ static bool regular_level_mentions_instantiation_parameter(
     return false;
 }
 
-static bool regular_level_raise_instantiation_parameters(
+/* The level with every parameter being solved replaced by zero.  Applied to
+ * a level whose assigned parameters are already replaced, it is the level at
+ * the least value of the parameters that nothing has bounded. */
+static Atom *regular_level_unsolved_at_zero(
+    Arena *arena, Atom *level,
+    const PrimeRegularLevelInstantiation *instantiation,
+    CettaPrimeRegularKernelBudget *budget, bool *complete) {
+    if (!regular_spend(budget)) {
+        *complete = false;
+        return NULL;
+    }
+    uint64_t parameter = 0u;
+    if (regular_level_parameter_syntax(level, &parameter))
+        return regular_level_instantiation_find(
+                   instantiation, parameter, NULL)
+            ? atom_expr2(
+                  arena, atom_symbol(arena, "LevelConst"),
+                  atom_int(arena, 0))
+            : level;
+    if (regular_expr(level, "LevelSucc", 2u)) {
+        Atom *inner = regular_level_unsolved_at_zero(
+            arena, level->expr.elems[1], instantiation, budget, complete);
+        return inner ? atom_expr2(arena, level->expr.elems[0], inner) : NULL;
+    }
+    if (regular_level_offset_syntax(level)) {
+        Atom *inner = regular_level_unsolved_at_zero(
+            arena, level->expr.elems[1], instantiation, budget, complete);
+        return inner
+            ? atom_expr3(
+                  arena, level->expr.elems[0], inner, level->expr.elems[2])
+            : NULL;
+    }
+    if (regular_expr(level, "LevelMax", 3u)) {
+        Atom *left = regular_level_unsolved_at_zero(
+            arena, level->expr.elems[1], instantiation, budget, complete);
+        Atom *right = left
+            ? regular_level_unsolved_at_zero(
+                  arena, level->expr.elems[2], instantiation, budget,
+                  complete)
+            : NULL;
+        return left && right
+            ? atom_expr3(arena, level->expr.elems[0], left, right) : NULL;
+    }
+    return level;
+}
+
+/* A level expression without parameters. */
+static bool regular_level_syntax_closed(Atom *level) {
+    if (regular_expr(level, "LevelSucc", 2u) ||
+        regular_level_offset_syntax(level))
+        return regular_level_syntax_closed(level->expr.elems[1]);
+    if (regular_expr(level, "LevelMax", 3u))
+        return regular_level_syntax_closed(level->expr.elems[1]) &&
+               regular_level_syntax_closed(level->expr.elems[2]);
+    return regular_level_closed_constant_shape(level);
+}
+
+static CettaPrimeRegularKernelStatus regular_level_under_offset(
+    Arena *arena, Atom *level, const CettaPrimeLevelNaturalV1 *count,
+    CettaPrimeRegularKernelBudget *budget, Atom **under_out,
+    const char **reason_out);
+
+static CettaPrimeRegularKernelStatus regular_level_status(
+    CettaPrimeLevelStatusV1 status, const char **reason_out);
+
+static CettaPrimeRegularKernelStatus regular_level_syntax_le(
+    Arena *arena, Atom *left, Atom *right,
+    CettaPrimeRegularKernelBudget *budget, bool *le_out,
+    const char **reason_out);
+
+static CettaPrimeRegularKernelStatus regular_level_instantiation_failure(
+    const CettaPrimeRegularKernelBudget *budget, const char **reason_out) {
+    if (reason_out) *reason_out = "level-instantiation-budget";
+    return budget && budget->limited && budget->remaining == 0u
+        ? CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED
+        : CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE;
+}
+
+/* The least value of a level in the search: the parameters being solved at
+ * what they hold, and at zero where nothing has bounded them.  It has no
+ * parameter being solved. */
+static CettaPrimeRegularKernelStatus regular_level_least_value(
+    Arena *arena, Atom *level,
+    const PrimeRegularLevelInstantiation *instantiation,
+    CettaPrimeRegularKernelBudget *budget, Atom **value_out,
+    const char **reason_out) {
+    bool complete = true;
+    Atom *held = regular_level_apply_instantiation(
+        arena, level, instantiation, budget, &complete);
+    *value_out = complete && held
+        ? regular_level_unsolved_at_zero(
+              arena, held, instantiation, budget, &complete)
+        : NULL;
+    return complete && *value_out
+        ? CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED
+        : regular_level_instantiation_failure(budget, reason_out);
+}
+
+/* What the search found of a bound on the parameters being solved. */
+typedef enum {
+    /* The parameters reach the bound once the level does: they were raised
+     * to it by the least assignment that does it, or nothing was demanded
+     * of them. */
+    PRIME_REGULAR_LEVEL_RAISED = 0,
+    /* No least assignment exists, or it is no level expression. */
+    PRIME_REGULAR_LEVEL_RAISE_OUTSIDE,
+    /* No assignment exists: the bound lies above every level an author
+     * writes, and a parameter stands for one of those. */
+    PRIME_REGULAR_LEVEL_RAISE_UNREACHABLE
+} PrimeRegularLevelRaise;
+
+/* Why a use has no level instance: it would need one above every level an
+ * author writes. */
+static const char regular_level_instance_above_reason[] =
+    "level-instantiation-above-written-levels";
+
+/* Raise the parameters being solved so that `level` is at least
+ * `lower_bound`, by the least assignment that does it.  A declaration is
+ * used at its least level instance, so an assignment that is not the least
+ * one would make the kernel judge a different term, and refute what holds
+ * at the least one.
+ *
+ *   parameter        it is raised to the bound.
+ *   successor        `bound <= level + 1` exactly when the least level whose
+ *                    successor reaches the bound is at most `level`; that
+ *                    level is passed down.  A counted successor passes down
+ *                    the least level that reaches the bound under its count.
+ *   maximum          with parameters on one side only and a closed bound:
+ *                    nothing is demanded when the other side reaches the
+ *                    bound, and otherwise the bound is passed to the side
+ *                    with parameters.
+ *
+ * Where no least assignment exists, or it is no level expression, nothing is
+ * assigned and `*found` tells that the bound is outside: the level under a
+ * bound that is a bare parameter is none; a maximum with parameters on both
+ * sides is reached by raising either; and how much of an open bound the
+ * other side of a maximum covers varies with the valuation.
+ *
+ * A parameter stands for a level an author writes.  A bound above all of
+ * those is reached by no assignment of the parameter: nothing is assigned,
+ * and `*found` tells that the bound is unreachable. */
+static CettaPrimeRegularKernelStatus
+regular_level_raise_instantiation_parameters(
     Arena *arena, Atom *level, Atom *lower_bound,
     PrimeRegularLevelInstantiation *instantiation,
-    CettaPrimeRegularKernelBudget *budget) {
+    CettaPrimeRegularKernelBudget *budget, PrimeRegularLevelRaise *found,
+    const char **reason_out) {
     if (!regular_spend(budget) || !level || !lower_bound ||
-        !instantiation)
-        return false;
+        !instantiation || !found)
+        return regular_level_instantiation_failure(budget, reason_out);
     uint64_t parameter = 0u;
     size_t index = 0u;
     if (regular_level_parameter_syntax(level, &parameter)) {
         if (!regular_level_instantiation_find(
                 instantiation, parameter, &index))
-            return true;
+            return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+        if (regular_level_mentions_above(lower_bound)) {
+            *found = PRIME_REGULAR_LEVEL_RAISE_UNREACHABLE;
+            instantiation->unreachable++;
+            return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+        }
+        Atom *prior = instantiation->assignments[index];
+        /* A parameter that an equation identified with another one is raised
+         * through that one, so that the two stay equal. */
+        uint64_t identified = 0u;
+        if (prior && regular_level_parameter_syntax(prior, &identified) &&
+            regular_level_instantiation_find(instantiation, identified, NULL))
+            return regular_level_raise_instantiation_parameters(
+                arena, prior, lower_bound, instantiation, budget, found,
+                reason_out);
+        if (prior) {
+            /* A bound the parameter already reaches changes nothing. */
+            bool reached = false;
+            CettaPrimeRegularKernelStatus status = regular_level_syntax_le(
+                arena, lower_bound, prior, budget, &reached, reason_out);
+            if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return status;
+            if (reached) return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+        }
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PRIME_DECLARATION_LEVEL_CONSTRAINT);
-        Atom *prior = instantiation->assignments[index];
         instantiation->assignments[index] = prior
             ? atom_expr3(
                   arena, atom_symbol(arena, "LevelMax"),
                   prior, lower_bound)
             : lower_bound;
-        return instantiation->assignments[index] != NULL;
+        instantiation->raises++;
+        return instantiation->assignments[index] != NULL
+            ? CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED
+            : regular_level_instantiation_failure(budget, reason_out);
     }
-    if (regular_expr(level, "LevelConst", 2u)) return true;
-    if (regular_expr(level, "LevelSucc", 2u))
+    if (regular_level_closed_constant_shape(level))
+        return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+    if (regular_expr(level, "LevelSucc", 2u) ||
+        regular_level_offset_syntax(level)) {
+        if (!regular_level_mentions_instantiation_parameter(
+                level->expr.elems[1], instantiation))
+            return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+        /* One successor, or as many as the numeral counts. */
+        const CettaPrimeLevelNaturalV1 *count = NULL;
+        CettaPrimeRegularKernelStatus status = regular_level_status(
+            level->expr.len == 2u
+                ? cetta_prime_level_natural_v1(arena, 1u, &count)
+                : cetta_prime_regular_kernel_level_numeral_value_v1(
+                      arena, level->expr.elems[2], &count),
+            reason_out);
+        if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return status;
+        Atom *under = NULL;
+        status = regular_level_under_offset(
+            arena, lower_bound, count, budget, &under, reason_out);
+        if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return status;
+        if (!under) {
+            *found = PRIME_REGULAR_LEVEL_RAISE_OUTSIDE;
+            return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+        }
         return regular_level_raise_instantiation_parameters(
-            arena, level->expr.elems[1], lower_bound,
-            instantiation, budget);
-    if (regular_expr(level, "LevelMax", 3u))
+            arena, level->expr.elems[1], under, instantiation, budget,
+            found, reason_out);
+    }
+    if (regular_expr(level, "LevelMax", 3u)) {
+        bool left = regular_level_mentions_instantiation_parameter(
+            level->expr.elems[1], instantiation);
+        bool right = regular_level_mentions_instantiation_parameter(
+            level->expr.elems[2], instantiation);
+        if (!left && !right) return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+        /* A bound that mentions a level above every written level is that
+         * level under every valuation, as a closed bound is its value. */
+        if ((left && right) ||
+            (!regular_level_syntax_closed(lower_bound) &&
+             !regular_level_mentions_above(lower_bound))) {
+            *found = PRIME_REGULAR_LEVEL_RAISE_OUTSIDE;
+            return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+        }
+        bool reached = false;
+        CettaPrimeRegularKernelStatus status = regular_level_syntax_le(
+            arena, lower_bound, level->expr.elems[left ? 2u : 1u], budget,
+            &reached, reason_out);
+        if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return status;
+        if (reached) return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
         return regular_level_raise_instantiation_parameters(
-                   arena, level->expr.elems[1], lower_bound,
-                   instantiation, budget) &&
-               regular_level_raise_instantiation_parameters(
-                   arena, level->expr.elems[2], lower_bound,
-                   instantiation, budget);
-    return false;
+            arena, level->expr.elems[left ? 1u : 2u], lower_bound,
+            instantiation, budget, found, reason_out);
+    }
+    return regular_level_instantiation_failure(budget, reason_out);
 }
 
 static bool regular_level_instantiation_default_zero(
@@ -262,7 +619,10 @@ static Atom *regular_term_apply_level_instantiation(
         return regular_term_apply_level_instantiation(
             arena, replacement, instantiation, budget, complete);
     }
-    if (term->kind != ATOM_EXPR) return term;
+    /* A closed level constant has no parameter: it is not walked, however
+     * many terms it has. */
+    if (term->kind != ATOM_EXPR || regular_level_closed_constant_shape(term))
+        return term;
     if (term->expr.len > SIZE_MAX / sizeof(Atom *)) {
         *complete = false;
         return NULL;
@@ -284,6 +644,8 @@ void cetta_prime_regular_kernel_budget_init(
     budget->limited = limited;
     budget->remaining = limited ? steps : 0u;
     budget->spent = 0u;
+    budget->within = NULL;
+    budget->allowance = false;
 }
 
 /* `Sort` and `Level*` are the declaration-free internal tower wire.  They are
@@ -299,6 +661,149 @@ static bool regular_level_natural(Atom *atom, uint64_t *value_out) {
     return true;
 }
 
+/* A closed level constant has exactly one spelling.  A natural number n is
+ * `(LevelConst n)`.  A level beyond the natural numbers and below
+ * epsilon-zero is `(LevelCantor exponent coefficient remainder)`, which
+ * stands for omega^exponent * coefficient + remainder in Cantor normal form:
+ * exponent and remainder are closed constants in these same two spellings,
+ * the exponent is not zero, the coefficient is a positive numeral, and the
+ * remainder is below omega^exponent.  The n-th level above all of these is
+ * `(LevelAbove n)`; it is no part of a Cantor normal form.  A numeral has
+ * any number of digits.
+ *
+ * Over the constants and the parameters `(LevelParam i)` a level is built
+ * with `(LevelSucc level)`, the level one successor up, with
+ * `(LevelOffset level count)`, the level as many successors up as the
+ * numeral counts, and with `(LevelMax left right)`.
+ *
+ * This reads one constant as its leading term; false is the level zero. */
+static bool regular_level_constant_read(
+    const void *handle, CettaPrimeLevelNotationReadTermV1 *term_out) {
+    Atom *constant = (Atom *)handle;
+    if (regular_expr(constant, "LevelConst", 2u)) {
+        Atom *numeral = constant->expr.elems[1];
+        if (!cetta_prime_regular_kernel_level_numeral_v1(numeral) ||
+            regular_level_numeral_is_zero(numeral))
+            return false;
+        *term_out = (CettaPrimeLevelNotationReadTermV1){.number = numeral};
+        return true;
+    }
+    if (regular_level_above_syntax(constant)) {
+        *term_out = (CettaPrimeLevelNotationReadTermV1){
+            .above = true,
+            .number = constant->expr.elems[1],
+        };
+        return true;
+    }
+    if (!regular_expr(constant, "LevelCantor", 4u) ||
+        !cetta_prime_regular_kernel_level_numeral_v1(constant->expr.elems[2]))
+        return false;
+    *term_out = (CettaPrimeLevelNotationReadTermV1){
+        .exponent = constant->expr.elems[1],
+        .number = constant->expr.elems[2],
+        .remainder = constant->expr.elems[3],
+    };
+    return true;
+}
+
+/* The check of a closed level constant, one constant of it at a time.  The
+ * constant the check starts from is paid for by the caller. */
+typedef struct {
+    Atom *root;
+    CettaPrimeRegularKernelBudget *budget;
+    bool *complete;
+} RegularLevelConstantCheck;
+
+/* What the check knows of a constant it has passed: nothing of zero, this
+ * mark of a level above the Cantor normal forms, and of a term the term. */
+static const char regular_level_checked_above = 0;
+
+static CettaPrimeLevelStatusV1 regular_level_check_spend(
+    RegularLevelConstantCheck *check, const void *handle) {
+    if (handle == check->root || regular_spend(check->budget))
+        return CETTA_PRIME_LEVEL_OK_V1;
+    *check->complete = false;
+    return CETTA_PRIME_LEVEL_INVALID_ARGUMENT_V1;
+}
+
+static CettaPrimeLevelStatusV1 regular_level_check_zero(
+    void *context, const void *handle, void **value_out) {
+    Atom *constant = (Atom *)handle;
+    *value_out = NULL;
+    /* A natural number has neither exponent nor remainder. */
+    if (!constant) return CETTA_PRIME_LEVEL_OK_V1;
+    CettaPrimeLevelStatusV1 status =
+        regular_level_check_spend(context, handle);
+    if (status != CETTA_PRIME_LEVEL_OK_V1) return status;
+    /* What reads as zero is `(LevelConst 0)` or no constant at all. */
+    return regular_expr(constant, "LevelConst", 2u) &&
+           cetta_prime_regular_kernel_level_numeral_v1(
+               constant->expr.elems[1])
+        ? CETTA_PRIME_LEVEL_OK_V1
+        : CETTA_PRIME_LEVEL_INVALID_ARGUMENT_V1;
+}
+
+static CettaPrimeLevelStatusV1 regular_level_check_above(
+    void *context, const void *handle,
+    const CettaPrimeLevelNotationReadTermV1 *read, void **value_out) {
+    (void)read;
+    *value_out = (void *)&regular_level_checked_above;
+    return regular_level_check_spend(context, handle);
+}
+
+/* A term: `(LevelConst n)` is a natural number.  In `LevelCantor` both
+ * constants are Cantor normal forms, the exponent is positive, the
+ * coefficient is positive, and the remainder is zero or leads with a smaller
+ * exponent. */
+static CettaPrimeLevelStatusV1 regular_level_check_term(
+    void *context, const void *handle,
+    const CettaPrimeLevelNotationReadTermV1 *read, void *exponent_value,
+    void *remainder_value, void **value_out) {
+    RegularLevelConstantCheck *check = context;
+    *value_out = (void *)handle;
+    CettaPrimeLevelStatusV1 status = regular_level_check_spend(check, handle);
+    if (status != CETTA_PRIME_LEVEL_OK_V1 || !read->exponent) return status;
+    /* A natural number is written `LevelConst`, never with exponent zero. */
+    if (!exponent_value || exponent_value == &regular_level_checked_above ||
+        remainder_value == &regular_level_checked_above ||
+        regular_level_numeral_is_zero(read->number))
+        return CETTA_PRIME_LEVEL_INVALID_ARGUMENT_V1;
+    if (!remainder_value) return CETTA_PRIME_LEVEL_OK_V1;
+    CettaPrimeLevelNotationReadTermV1 rest = {0};
+    int order = 0;
+    regular_level_constant_read(read->remainder, &rest);
+    status = cetta_prime_level_notation_compare_read_v1(
+        regular_level_constant_read, regular_level_numeral_order,
+        rest.exponent, read->exponent, &order);
+    if (status != CETTA_PRIME_LEVEL_OK_V1) {
+        *check->complete = false;
+        return status;
+    }
+    return order < 0 ? CETTA_PRIME_LEVEL_OK_V1
+                     : CETTA_PRIME_LEVEL_INVALID_ARGUMENT_V1;
+}
+
+/* Whether a closed level constant is well formed.  The step of the constant
+ * itself is the caller's; each constant inside it is one step more. */
+static bool regular_level_constant_syntax_check(
+    Atom *constant, CettaPrimeRegularKernelBudget *budget, bool *complete) {
+    static const CettaPrimeLevelNotationFoldV1 fold = {
+        .zero = regular_level_check_zero,
+        .above = regular_level_check_above,
+        .term = regular_level_check_term,
+    };
+    RegularLevelConstantCheck check = {
+        .root = constant,
+        .budget = budget,
+        .complete = complete,
+    };
+    void *checked = NULL;
+    CettaPrimeLevelStatusV1 status = cetta_prime_level_notation_fold_read_v1(
+        regular_level_constant_read, &fold, &check, constant, &checked);
+    if (status == CETTA_PRIME_LEVEL_OUT_OF_MEMORY_V1) *complete = false;
+    return status == CETTA_PRIME_LEVEL_OK_V1;
+}
+
 static bool regular_level_syntax_check(
     Atom *level, CettaPrimeRegularKernelBudget *budget, bool *complete) {
     if (!complete || !*complete) return false;
@@ -308,12 +813,15 @@ static bool regular_level_syntax_check(
     }
     if (!level) return false;
     uint64_t ignored = 0u;
-    if ((regular_expr(level, "LevelConst", 2u) ||
-         regular_expr(level, "LevelParam", 2u)) &&
-        regular_level_natural(level->expr.elems[1], &ignored)) {
-        return true;
-    }
-    if (regular_expr(level, "LevelSucc", 2u))
+    if (regular_expr(level, "LevelConst", 2u))
+        return cetta_prime_regular_kernel_level_numeral_v1(
+            level->expr.elems[1]);
+    if (regular_expr(level, "LevelParam", 2u))
+        return regular_level_natural(level->expr.elems[1], &ignored);
+    if (regular_level_closed_constant_shape(level))
+        return regular_level_constant_syntax_check(level, budget, complete);
+    if (regular_expr(level, "LevelSucc", 2u) ||
+        regular_level_offset_syntax(level))
         return regular_level_syntax_check(
             level->expr.elems[1], budget, complete);
     if (regular_expr(level, "LevelMax", 3u))
@@ -336,12 +844,13 @@ static bool regular_closed_level_syntax_check(
         return false;
     }
     if (!level) return false;
-    uint64_t ignored = 0u;
-    if (regular_expr(level, "LevelConst", 2u) &&
-        regular_level_natural(level->expr.elems[1], &ignored)) {
-        return true;
-    }
-    if (regular_expr(level, "LevelSucc", 2u))
+    if (regular_expr(level, "LevelConst", 2u))
+        return cetta_prime_regular_kernel_level_numeral_v1(
+            level->expr.elems[1]);
+    if (regular_level_closed_constant_shape(level))
+        return regular_level_constant_syntax_check(level, budget, complete);
+    if (regular_expr(level, "LevelSucc", 2u) ||
+        regular_level_offset_syntax(level))
         return regular_closed_level_syntax_check(
             level->expr.elems[1], budget, complete);
     if (regular_expr(level, "LevelMax", 3u))
@@ -364,8 +873,11 @@ static CettaPrimeRegularKernelStatus regular_level_status(
     switch (status) {
     case CETTA_PRIME_LEVEL_OK_V1:
         return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
-    case CETTA_PRIME_LEVEL_REPRESENTATION_LIMIT_V1:
-        if (reason_out) *reason_out = "level-representation-limit";
+    case CETTA_PRIME_LEVEL_OUT_OF_MEMORY_V1:
+        if (reason_out) *reason_out = "level-out-of-memory";
+        return CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED;
+    case CETTA_PRIME_LEVEL_BUDGET_EXHAUSTED_V1:
+        if (reason_out) *reason_out = "level-normalization-budget";
         return CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED;
     case CETTA_PRIME_LEVEL_INVALID_ARGUMENT_V1:
         if (reason_out) *reason_out = "invalid-level-expression";
@@ -373,6 +885,143 @@ static CettaPrimeRegularKernelStatus regular_level_status(
     }
     if (reason_out) *reason_out = "unknown-level-status";
     return CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE;
+}
+
+/* The notation of a closed level constant, one constant of it at a time.
+ * `root`, where there is one, is a constant its caller has paid for. */
+typedef struct {
+    Arena *arena;
+    Atom *root;
+    CettaPrimeRegularKernelBudget *budget;
+    CettaPrimeRegularKernelStatus status;
+    const char **reason_out;
+} RegularLevelConstantDecode;
+
+static CettaPrimeLevelStatusV1 regular_level_decode_fail(
+    RegularLevelConstantDecode *decode, CettaPrimeRegularKernelStatus status,
+    const char *reason) {
+    decode->status = status;
+    if (decode->reason_out) *decode->reason_out = reason;
+    return CETTA_PRIME_LEVEL_INVALID_ARGUMENT_V1;
+}
+
+/* What the level library answered, as the kernel reports it. */
+static CettaPrimeLevelStatusV1 regular_level_decode_answer(
+    RegularLevelConstantDecode *decode, CettaPrimeLevelStatusV1 answer) {
+    if (answer != CETTA_PRIME_LEVEL_OK_V1)
+        decode->status = regular_level_status(answer, decode->reason_out);
+    return answer;
+}
+
+static CettaPrimeLevelStatusV1 regular_level_decode_spend(
+    RegularLevelConstantDecode *decode, const void *handle) {
+    if (handle == decode->root) return CETTA_PRIME_LEVEL_OK_V1;
+    if (!regular_spend(decode->budget))
+        return regular_level_decode_fail(
+            decode, CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED,
+            "level-normalization-budget");
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PRIME_LEVEL_NORMALIZATION_STEP);
+    return CETTA_PRIME_LEVEL_OK_V1;
+}
+
+static CettaPrimeLevelStatusV1 regular_level_decode_zero(
+    void *context, const void *handle, void **value_out) {
+    RegularLevelConstantDecode *decode = context;
+    Atom *constant = (Atom *)handle;
+    *value_out = NULL;
+    /* A natural number has neither exponent nor remainder. */
+    if (!constant) return CETTA_PRIME_LEVEL_OK_V1;
+    CettaPrimeLevelStatusV1 status =
+        regular_level_decode_spend(decode, handle);
+    if (status != CETTA_PRIME_LEVEL_OK_V1) return status;
+    /* What reads as zero is `(LevelConst 0)` or no constant at all. */
+    return regular_expr(constant, "LevelConst", 2u) &&
+           cetta_prime_regular_kernel_level_numeral_v1(
+               constant->expr.elems[1])
+        ? CETTA_PRIME_LEVEL_OK_V1
+        : regular_level_decode_fail(
+              decode, CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS,
+              "invalid-level-expression");
+}
+
+static CettaPrimeLevelStatusV1 regular_level_decode_above(
+    void *context, const void *handle,
+    const CettaPrimeLevelNotationReadTermV1 *read, void **value_out) {
+    RegularLevelConstantDecode *decode = context;
+    const CettaPrimeLevelNaturalV1 *number = NULL;
+    const CettaPrimeLevelNotationV1 *notation = NULL;
+    CettaPrimeLevelStatusV1 status =
+        regular_level_decode_spend(decode, handle);
+    if (status != CETTA_PRIME_LEVEL_OK_V1) return status;
+    status = cetta_prime_regular_kernel_level_numeral_value_v1(
+        decode->arena, read->number, &number);
+    if (status == CETTA_PRIME_LEVEL_OK_V1)
+        status = cetta_prime_level_notation_above_v1(
+            decode->arena, number, &notation);
+    *value_out = (void *)notation;
+    return regular_level_decode_answer(decode, status);
+}
+
+/* The notation is built only in normal form, so a constant that is not one,
+ * or that writes a natural number with exponent zero, is no level
+ * expression. */
+static CettaPrimeLevelStatusV1 regular_level_decode_term(
+    void *context, const void *handle,
+    const CettaPrimeLevelNotationReadTermV1 *read, void *exponent_value,
+    void *remainder_value, void **value_out) {
+    RegularLevelConstantDecode *decode = context;
+    const CettaPrimeLevelNaturalV1 *number = NULL;
+    const CettaPrimeLevelNotationV1 *notation = NULL;
+    CettaPrimeLevelStatusV1 status =
+        regular_level_decode_spend(decode, handle);
+    if (status != CETTA_PRIME_LEVEL_OK_V1) return status;
+    if (read->exponent && !exponent_value)
+        return regular_level_decode_fail(
+            decode, CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS,
+            "invalid-level-expression");
+    status = cetta_prime_regular_kernel_level_numeral_value_v1(
+        decode->arena, read->number, &number);
+    if (status == CETTA_PRIME_LEVEL_OK_V1)
+        status = read->exponent
+            ? cetta_prime_level_notation_v1(
+                  decode->arena, exponent_value, number, remainder_value,
+                  &notation)
+            : cetta_prime_level_notation_natural_v1(
+                  decode->arena, number, &notation);
+    *value_out = (void *)notation;
+    return regular_level_decode_answer(decode, status);
+}
+
+/* The notation of a closed level constant in any of its spellings.  `paid`
+ * tells that the caller has spent the step of the constant itself; each
+ * constant inside it is one step more. */
+static CettaPrimeRegularKernelStatus regular_decode_level_constant(
+    Arena *arena, Atom *syntax, bool paid,
+    CettaPrimeRegularKernelBudget *budget,
+    const CettaPrimeLevelNotationV1 **notation_out, const char **reason_out) {
+    static const CettaPrimeLevelNotationFoldV1 fold = {
+        .zero = regular_level_decode_zero,
+        .above = regular_level_decode_above,
+        .term = regular_level_decode_term,
+    };
+    RegularLevelConstantDecode decode = {
+        .arena = arena,
+        .root = paid ? syntax : NULL,
+        .budget = budget,
+        .status = CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED,
+        .reason_out = reason_out,
+    };
+    void *notation = NULL;
+    *notation_out = NULL;
+    CettaPrimeLevelStatusV1 status = cetta_prime_level_notation_fold_read_v1(
+        regular_level_constant_read, &fold, &decode, syntax, &notation);
+    if (status == CETTA_PRIME_LEVEL_OK_V1) {
+        *notation_out = notation;
+        return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+    }
+    return decode.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED
+        ? decode.status : regular_level_status(status, reason_out);
 }
 
 static CettaPrimeRegularKernelStatus regular_decode_level(
@@ -392,9 +1041,27 @@ static CettaPrimeRegularKernelStatus regular_decode_level(
     uint64_t natural = 0u;
     CettaPrimeLevelStatusV1 level_status;
     if (regular_expr(syntax, "LevelConst", 2u) &&
-        regular_level_natural(syntax->expr.elems[1], &natural)) {
+        cetta_prime_regular_kernel_level_numeral_v1(syntax->expr.elems[1])) {
+        const CettaPrimeLevelNaturalV1 *number = NULL;
+        const CettaPrimeLevelNotationV1 *constant = NULL;
+        level_status = cetta_prime_regular_kernel_level_numeral_value_v1(
+            arena, syntax->expr.elems[1], &number);
+        if (level_status == CETTA_PRIME_LEVEL_OK_V1)
+            level_status = cetta_prime_level_notation_natural_v1(
+                arena, number, &constant);
+        if (level_status == CETTA_PRIME_LEVEL_OK_V1)
+            level_status = cetta_prime_level_constant_v1(
+                arena, constant, level_out);
+        return regular_level_status(level_status, reason_out);
+    }
+    if (regular_expr(syntax, "LevelCantor", 4u) ||
+        regular_level_above_syntax(syntax)) {
+        const CettaPrimeLevelNotationV1 *constant = NULL;
+        CettaPrimeRegularKernelStatus status = regular_decode_level_constant(
+            arena, syntax, true, budget, &constant, reason_out);
+        if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return status;
         level_status = cetta_prime_level_constant_v1(
-            arena, natural, level_out);
+            arena, constant, level_out);
         return regular_level_status(level_status, reason_out);
     }
     if (regular_expr(syntax, "LevelParam", 2u) &&
@@ -403,13 +1070,61 @@ static CettaPrimeRegularKernelStatus regular_decode_level(
             arena, natural, level_out);
         return regular_level_status(level_status, reason_out);
     }
-    if (regular_expr(syntax, "LevelSucc", 2u)) {
+    if (regular_expr(syntax, "LevelSucc", 2u) ||
+        regular_level_offset_syntax(syntax)) {
+        /* A run of successors, one at a time or counted, is read without
+         * recursing on its length: the successors are added up into one
+         * count, and the level under the run is decoded once.  Each
+         * successor of the run is one step, as each level is. */
+        const CettaPrimeLevelNotationV1 *count = NULL;
+        uint64_t single = 0u;
+        Atom *under = syntax;
+        level_status = CETTA_PRIME_LEVEL_OK_V1;
+        for (;;) {
+            bool one = regular_expr(under, "LevelSucc", 2u);
+            if (!one && !regular_level_offset_syntax(under)) break;
+            if (under != syntax) {
+                if (!regular_spend(budget)) {
+                    if (reason_out) *reason_out = "level-normalization-budget";
+                    return CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED;
+                }
+                cetta_runtime_stats_inc(
+                    CETTA_RUNTIME_COUNTER_PRIME_LEVEL_NORMALIZATION_STEP);
+            }
+            if (one) {
+                /* A successor is a node in memory, so their number is a
+                 * machine number. */
+                single++;
+            } else {
+                const CettaPrimeLevelNaturalV1 *counted = NULL;
+                level_status =
+                    cetta_prime_regular_kernel_level_numeral_value_v1(
+                        arena, under->expr.elems[2], &counted);
+                if (level_status == CETTA_PRIME_LEVEL_OK_V1)
+                    level_status = cetta_prime_level_notation_offset_v1(
+                        arena, count, counted, &count);
+                if (level_status != CETTA_PRIME_LEVEL_OK_V1)
+                    return regular_level_status(level_status, reason_out);
+            }
+            under = under->expr.elems[1];
+        }
+        const CettaPrimeLevelNaturalV1 *singles = NULL;
+        const CettaPrimeLevelNaturalV1 *total = NULL;
         const CettaPrimeLevelV1 *inner = NULL;
+        level_status = cetta_prime_level_natural_v1(arena, single, &singles);
+        if (level_status == CETTA_PRIME_LEVEL_OK_V1)
+            level_status = cetta_prime_level_notation_offset_v1(
+                arena, count, singles, &count);
+        if (level_status == CETTA_PRIME_LEVEL_OK_V1 &&
+            !cetta_prime_level_notation_natural_value_v1(count, &total))
+            level_status = CETTA_PRIME_LEVEL_INVALID_ARGUMENT_V1;
+        if (level_status != CETTA_PRIME_LEVEL_OK_V1)
+            return regular_level_status(level_status, reason_out);
         CettaPrimeRegularKernelStatus status = regular_decode_level(
-            arena, syntax->expr.elems[1], budget, &inner, reason_out);
+            arena, under, budget, &inner, reason_out);
         if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return status;
-        level_status = cetta_prime_level_successor_v1(
-            arena, inner, level_out);
+        level_status = cetta_prime_level_offset_v1(
+            arena, inner, total, level_out);
         return regular_level_status(level_status, reason_out);
     }
     if (regular_expr(syntax, "LevelMax", 3u)) {
@@ -432,6 +1147,237 @@ static CettaPrimeRegularKernelStatus regular_decode_level(
 static Atom *regular_level_zero_syntax(Arena *arena) {
     return atom_expr2(
         arena, atom_symbol(arena, "LevelConst"), atom_int(arena, 0));
+}
+
+/* The core spelling of a closed level constant, one notation of it at a
+ * time. */
+typedef struct {
+    Arena *arena;
+    Atom *zero;
+} RegularLevelConstantSyntax;
+
+static CettaPrimeLevelStatusV1 regular_level_spell_zero(
+    void *context, const void *handle, void **value_out) {
+    RegularLevelConstantSyntax *syntax = context;
+    (void)handle;
+    if (!syntax->zero) syntax->zero = regular_level_zero_syntax(syntax->arena);
+    *value_out = syntax->zero;
+    return CETTA_PRIME_LEVEL_OK_V1;
+}
+
+static CettaPrimeLevelStatusV1 regular_level_spell_above(
+    void *context, const void *handle,
+    const CettaPrimeLevelNotationReadTermV1 *read, void **value_out) {
+    RegularLevelConstantSyntax *syntax = context;
+    (void)handle;
+    Atom *numeral = cetta_prime_regular_kernel_level_numeral_atom_v1(
+        syntax->arena, read->number);
+    if (!numeral) return CETTA_PRIME_LEVEL_OUT_OF_MEMORY_V1;
+    *value_out = atom_expr2(
+        syntax->arena, atom_symbol(syntax->arena, "LevelAbove"), numeral);
+    return CETTA_PRIME_LEVEL_OK_V1;
+}
+
+static CettaPrimeLevelStatusV1 regular_level_spell_term(
+    void *context, const void *handle,
+    const CettaPrimeLevelNotationReadTermV1 *read, void *exponent_value,
+    void *remainder_value, void **value_out) {
+    RegularLevelConstantSyntax *syntax = context;
+    (void)handle;
+    Atom *numeral = cetta_prime_regular_kernel_level_numeral_atom_v1(
+        syntax->arena, read->number);
+    if (!numeral) return CETTA_PRIME_LEVEL_OUT_OF_MEMORY_V1;
+    if (!read->exponent) {
+        *value_out = atom_expr2(
+            syntax->arena, atom_symbol(syntax->arena, "LevelConst"), numeral);
+        return CETTA_PRIME_LEVEL_OK_V1;
+    }
+    Atom *items[4] = {
+        atom_symbol(syntax->arena, "LevelCantor"), exponent_value, numeral,
+        remainder_value,
+    };
+    *value_out = atom_expr(syntax->arena, items, 4u);
+    return CETTA_PRIME_LEVEL_OK_V1;
+}
+
+/* The core spelling of a closed level constant: `(LevelConst n)` for a
+ * natural number, `(LevelCantor exponent coefficient remainder)` beyond, and
+ * `(LevelAbove n)` above the Cantor normal forms.  NULL when there is no
+ * memory for it. */
+static Atom *regular_level_constant_syntax(
+    Arena *arena, const CettaPrimeLevelNotationV1 *notation) {
+    static const CettaPrimeLevelNotationFoldV1 fold = {
+        .zero = regular_level_spell_zero,
+        .above = regular_level_spell_above,
+        .term = regular_level_spell_term,
+    };
+    RegularLevelConstantSyntax syntax = {.arena = arena};
+    void *constant = NULL;
+    return cetta_prime_level_notation_fold_read_v1(
+               cetta_prime_level_notation_read_v1, &fold, &syntax, notation,
+               &constant) == CETTA_PRIME_LEVEL_OK_V1
+        ? constant : NULL;
+}
+
+/* What is left of one natural number once another is taken from it, and
+ * zero where the other is the larger. */
+static CettaPrimeLevelStatusV1 regular_level_numbers_left(
+    Arena *arena, const CettaPrimeLevelNaturalV1 *number,
+    const CettaPrimeLevelNaturalV1 *taken,
+    const CettaPrimeLevelNaturalV1 **left_out) {
+    const CettaPrimeLevelNotationV1 *whole = NULL;
+    const CettaPrimeLevelNotationV1 *rest = NULL;
+    *left_out = NULL;
+    CettaPrimeLevelStatusV1 status =
+        cetta_prime_level_notation_natural_v1(arena, number, &whole);
+    if (status == CETTA_PRIME_LEVEL_OK_V1)
+        status = cetta_prime_level_notation_under_offset_v1(
+            arena, whole, taken, &rest);
+    if (status == CETTA_PRIME_LEVEL_OK_V1 &&
+        !cetta_prime_level_notation_natural_value_v1(rest, left_out))
+        status = CETTA_PRIME_LEVEL_INVALID_ARGUMENT_V1;
+    return status;
+}
+
+/* The level `count` successors above another, in the spelling of the wire:
+ * the level itself for no successor, `LevelSucc` for one, and `LevelOffset`
+ * for more.  NULL when there is no memory for the numeral. */
+static Atom *regular_level_offset_spelling(
+    Arena *arena, Atom *level, const CettaPrimeLevelNaturalV1 *count) {
+    uint64_t steps = 0u;
+    if (!count) return level;
+    if (cetta_prime_level_natural_fits_uint64_v1(count, &steps) &&
+        steps == 1u)
+        return atom_expr2(arena, atom_symbol(arena, "LevelSucc"), level);
+    Atom *numeral = cetta_prime_regular_kernel_level_numeral_atom_v1(
+        arena, count);
+    return numeral
+        ? atom_expr3(
+              arena, atom_symbol(arena, "LevelOffset"), level, numeral)
+        : NULL;
+}
+
+/* The least level that reaches `level` when it is raised by `count`
+ * successors: that many successors removed where the level ends in them,
+ * and the level itself where it is zero or a limit.  For one successor it is
+ * the least level whose successor is at least `level`.  `*under_out` stays
+ * NULL when that is no level expression, as for a parameter, whose value may
+ * or may not be a successor. */
+static CettaPrimeRegularKernelStatus regular_level_under_offset(
+    Arena *arena, Atom *level, const CettaPrimeLevelNaturalV1 *count,
+    CettaPrimeRegularKernelBudget *budget, Atom **under_out,
+    const char **reason_out) {
+    *under_out = NULL;
+    if (!count) {
+        /* No successor to remove. */
+        if (!regular_spend(budget))
+            return regular_level_instantiation_failure(budget, reason_out);
+        *under_out = level;
+        return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+    }
+    if (regular_expr(level, "LevelSucc", 2u) ||
+        regular_level_offset_syntax(level)) {
+        if (!regular_spend(budget))
+            return regular_level_instantiation_failure(budget, reason_out);
+        /* The successors the level ends in, against those to remove: what
+         * is left of the first stays on the level, and what is left of the
+         * second is removed from the level under them. */
+        const CettaPrimeLevelNaturalV1 *ends_in = NULL;
+        const CettaPrimeLevelNaturalV1 *kept = NULL;
+        const CettaPrimeLevelNaturalV1 *further = NULL;
+        CettaPrimeLevelStatusV1 numbers = level->expr.len == 2u
+            ? cetta_prime_level_natural_v1(arena, 1u, &ends_in)
+            : cetta_prime_regular_kernel_level_numeral_value_v1(
+                  arena, level->expr.elems[2], &ends_in);
+        if (numbers == CETTA_PRIME_LEVEL_OK_V1)
+            numbers = regular_level_numbers_left(
+                arena, ends_in, count, &kept);
+        if (numbers == CETTA_PRIME_LEVEL_OK_V1)
+            numbers = regular_level_numbers_left(
+                arena, count, ends_in, &further);
+        if (numbers != CETTA_PRIME_LEVEL_OK_V1)
+            return regular_level_status(numbers, reason_out);
+        if (further)
+            return regular_level_under_offset(
+                arena, level->expr.elems[1], further, budget, under_out,
+                reason_out);
+        *under_out = regular_level_offset_spelling(
+            arena, level->expr.elems[1], kept);
+        return *under_out
+            ? CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED
+            : regular_level_status(
+                  CETTA_PRIME_LEVEL_OUT_OF_MEMORY_V1, reason_out);
+    }
+    if (regular_level_closed_constant_shape(level) ||
+        regular_level_mentions_above(level)) {
+        const CettaPrimeLevelNotationV1 *notation = NULL;
+        const CettaPrimeLevelNotationV1 *under = NULL;
+        CettaPrimeRegularKernelStatus status =
+            CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+        if (regular_level_closed_constant_shape(level)) {
+            status = regular_decode_level_constant(
+                arena, level, false, budget, &notation, reason_out);
+        } else {
+            /* A maximum with a level above every written level is that
+             * level, whatever else it mentions. */
+            const CettaPrimeLevelV1 *decoded = NULL;
+            CettaPrimeLevelViewV1 view = {0};
+            status = regular_decode_level(
+                arena, level, budget, &decoded, reason_out);
+            if (status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED &&
+                (!cetta_prime_level_view_v1(decoded, &view) ||
+                 view.parameter_count != 0u))
+                status = regular_level_status(
+                    CETTA_PRIME_LEVEL_INVALID_ARGUMENT_V1, reason_out);
+            notation = view.constant;
+        }
+        if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return status;
+        status = regular_level_status(
+            cetta_prime_level_notation_under_offset_v1(
+                arena, notation, count, &under),
+            reason_out);
+        if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return status;
+        *under_out = regular_level_constant_syntax(arena, under);
+        return *under_out
+            ? CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED
+            : regular_level_status(
+                  CETTA_PRIME_LEVEL_OUT_OF_MEMORY_V1, reason_out);
+    }
+    if (regular_expr(level, "LevelMax", 3u)) {
+        Atom *left = NULL;
+        Atom *right = NULL;
+        CettaPrimeRegularKernelStatus status = regular_level_under_offset(
+            arena, level->expr.elems[1], count, budget, &left, reason_out);
+        if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED || !left)
+            return status;
+        status = regular_level_under_offset(
+            arena, level->expr.elems[2], count, budget, &right, reason_out);
+        if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED || !right)
+            return status;
+        *under_out = atom_expr3(arena, level->expr.elems[0], left, right);
+        return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+    }
+    if (!regular_spend(budget))
+        return regular_level_instantiation_failure(budget, reason_out);
+    return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+}
+
+/* Whether one level is at most another under every valuation of the
+ * parameters they mention. */
+static CettaPrimeRegularKernelStatus regular_level_syntax_le(
+    Arena *arena, Atom *left, Atom *right,
+    CettaPrimeRegularKernelBudget *budget, bool *le_out,
+    const char **reason_out) {
+    const CettaPrimeLevelV1 *left_level = NULL;
+    const CettaPrimeLevelV1 *right_level = NULL;
+    CettaPrimeRegularKernelStatus status = regular_decode_level(
+        arena, left, budget, &left_level, reason_out);
+    if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return status;
+    status = regular_decode_level(
+        arena, right, budget, &right_level, reason_out);
+    if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return status;
+    return regular_level_status(
+        cetta_prime_level_le_v1(left_level, right_level, le_out), reason_out);
 }
 
 static Atom *regular_sort_level_syntax(Arena *arena, Atom *sort) {
@@ -465,7 +1411,7 @@ static CettaPrimeRegularKernelStatus regular_decode_sort(
     const CettaPrimeLevelV1 **level_out, const char **reason_out) {
     if (regular_symbol(sort, "U1")) {
         CettaPrimeLevelStatusV1 status = cetta_prime_level_constant_v1(
-            arena, 0u, level_out);
+            arena, NULL, level_out);
         return regular_level_status(status, reason_out);
     }
     if (!regular_expr(sort, "Sort", 2u)) {
@@ -502,6 +1448,7 @@ static PrimeRegularKernelInfer regular_infer_result(
         .type_is_sort = type_is_sort,
         .principal = true,
         .annotated_domain = false,
+        .written_principal = false,
         .reason = reason,
     };
 }
@@ -516,6 +1463,177 @@ static PrimeRegularKernelInfer regular_infer_principal(
 /* Whether a synthesized type is below every type of its term. */
 static bool regular_principal(PrimeRegularKernelInfer result) {
     return result.principal && !result.annotated_domain;
+}
+
+/* Whether a synthesized type is below every type of the written term.  The
+ * equality of the type: judgments relates written terms typed at a common
+ * type, the equality of their erasures there (`AEqual`,
+ * TypedEquality/WrittenDomains.lean).  For a term whose root has no written
+ * domain this is principality.  An abstraction with a written domain is typed
+ * only at dependent function types whose domain equals the written one
+ * (`ATyped.lamTyped_inv`), with its body typed at the codomain over it, and a
+ * dependent function type is usable exactly at those with an equal domain and
+ * a codomain above its own (`Below.pi_iff`).  So the synthesized type of the
+ * written abstraction is below every type of it exactly when its body's
+ * synthesized type is below every type of the written body. */
+static bool regular_written_principal(PrimeRegularKernelInfer result) {
+    return result.annotated_domain ? result.written_principal
+                                   : regular_principal(result);
+}
+
+/* Whether two terms of one synthesized type that the algorithm does not
+ * relate there are refuted equal, or left undecided.  Refuted when the type
+ * is below every type of one of the written terms: written terms equal at a
+ * type are equal there as erasures, that type is above the synthesized one,
+ * a comparison at a larger type of terms of a smaller one is the comparison at
+ * the smaller one (Normalization/Synthesis.lean), and there the algorithm
+ * decides equality completely, by the normal forms of the admitted rules,
+ * which are confluent and terminating.  So a declared unknown list and a
+ * bound one get one verdict: `rev l` and `rev-onto nil l` have different
+ * normal forms at the principal type `list`, whether `l` is a declared
+ * constant or the variable of `(lam (l : list) ...)`, whose written domain
+ * fixes the abstractions' type.  Otherwise the verdict is undecided.
+ * The refutation is Presentation.TypedEquality.Normalization
+ * .not_equal_of_unrelated (TypedEquality/Normalization/Synthesis.lean:792),
+ * whose hypothesis is that the algorithm is complete for the package
+ * (`AlgorithmicComplete`), and the printed reason names it.  Lean proves that
+ * completeness for the bare tower (Normalization.TowerModel.complete,
+ * Instances/TowerDecidability.lean:34) and for the object package, given its
+ * facts about weak-head forms and its lifting of spines
+ * (object_algorithmicComplete, PrimeCandidates/DeclarationBased/
+ * CertifiedTransformProgram/ExecutableModel/ObjectAlgorithmic.lean:605); not
+ * yet for packages with declared datatypes, recursion, or rules admitted by a
+ * bound or a set solution.  There the refutation rests on the algorithm being
+ * complete for them, as Abel, Öhman and Vezzosi (2018) show for a type
+ * theory with such rules, and on the rules being confluent and terminating,
+ * which Lean does not state yet; the printed reason then says which kinds
+ * of declaration it assumes completeness for
+ * (prime_scoped_judgment_completeness_assumed). */
+static bool regular_unrelated_refuted(PrimeRegularKernelInfer left,
+                                      PrimeRegularKernelInfer right) {
+    return regular_written_principal(left) || regular_written_principal(right);
+}
+
+static Atom *g_regular_rules;
+
+/* Whether the rule list has a guarded rule at all, and one that waits for an
+ * observation: most have none, and then no question about guards walks the
+ * rules.  Set with the list. */
+static bool g_regular_rules_guarded = false;
+static bool g_regular_rules_observed = false;
+
+/* Rule firings, counted for the runtime's account of a call. */
+static uint64_t g_regular_rule_firings = 0u;
+
+/* The arity of a rule: a numeral, or `(PObserved n)` for a rule that
+ * unfolds a call only where it is observed, that is, where another rule
+ * inspects it as an argument.  A rule whose right side makes a new call of
+ * the same kind on every use, such as the iteration of a stream, is admitted
+ * so: it never unfolds by itself, and an observation unfolds it once. */
+static bool regular_rule_arity(Atom *arity, size_t *n_out, bool *observed_out) {
+    bool observed = false;
+    if (regular_expr(arity, "PObserved", 2u)) {
+        arity = arity->expr.elems[1];
+        observed = true;
+    }
+    if (!arity || arity->kind != ATOM_GROUNDED || arity->ground.gkind != GV_INT ||
+        arity->ground.ival < 0)
+        return false;
+    if (n_out) *n_out = (size_t)arity->ground.ival;
+    if (observed_out) *observed_out = observed;
+    return true;
+}
+
+/* Whether a rule of `name` in the rule list unfolds only under an
+ * observation. */
+static bool regular_name_observed(Atom *name) {
+    if (!g_regular_rules_observed) return false;
+    for (Atom *r = g_regular_rules; regular_expr(r, "LCons", 3u); r = r->expr.elems[2]) {
+        Atom *rule = r->expr.elems[1];
+        bool observed = false;
+        if (regular_expr(rule, "PrimeRule", 5u) && atom_eq(rule->expr.elems[1], name) &&
+            regular_rule_arity(rule->expr.elems[2], NULL, &observed) && observed)
+            return true;
+    }
+    return false;
+}
+
+/* Whether a rule of `name` in the rule list carries a guard: a guarded
+ * argument, or an arity that waits for an observation. */
+static bool regular_name_guarded(Atom *name) {
+    if (!g_regular_rules_guarded) return false;
+    for (Atom *r = g_regular_rules; regular_expr(r, "LCons", 3u); r = r->expr.elems[2]) {
+        Atom *rule = r->expr.elems[1];
+        if (!regular_expr(rule, "PrimeRule", 5u) || !atom_eq(rule->expr.elems[1], name))
+            continue;
+        bool observed = false;
+        if (regular_rule_arity(rule->expr.elems[2], NULL, &observed) && observed)
+            return true;
+        Atom *patterns = rule->expr.elems[3];
+        if (patterns->kind != ATOM_EXPR) continue;
+        for (CettaExprIndex i = 0u; i < patterns->expr.len; i++)
+            if (regular_expr(patterns->expr.elems[i], "PGuard", 2u)) return true;
+    }
+    return false;
+}
+
+/* The constants met while asking whether a term reaches a guarded rule:
+ * each is looked at once.  Without room for one more the answer is yes, the
+ * side on which nothing is refuted. */
+typedef struct {
+    Atom **seen;
+    size_t count;
+    size_t capacity;
+    bool full;
+} PrimeRegularGuardSearch;
+
+static bool regular_reaches_guarded(Atom *term, PrimeRegularGuardSearch *search);
+
+static bool regular_name_reaches_guarded(Atom *name, PrimeRegularGuardSearch *search) {
+    for (size_t i = 0u; i < search->count; i++)
+        if (atom_eq(search->seen[i], name)) return false;
+    if (search->count == search->capacity) {
+        size_t next = search->capacity ? 2u * search->capacity : 16u;
+        Atom **grown = realloc(search->seen, sizeof(Atom *) * next);
+        if (!grown) {
+            search->full = true;
+            return true;
+        }
+        search->seen = grown;
+        search->capacity = next;
+    }
+    search->seen[search->count++] = name;
+    if (regular_name_guarded(name)) return true;
+    for (Atom *r = g_regular_rules; regular_expr(r, "LCons", 3u); r = r->expr.elems[2]) {
+        Atom *rule = r->expr.elems[1];
+        if (regular_expr(rule, "PrimeRule", 5u) && atom_eq(rule->expr.elems[1], name) &&
+            regular_reaches_guarded(rule->expr.elems[4], search))
+            return true;
+    }
+    return false;
+}
+
+static bool regular_reaches_guarded(Atom *term, PrimeRegularGuardSearch *search) {
+    if (!term || term->kind != ATOM_EXPR) return false;
+    Atom *name = NULL;
+    if (regular_decl_const_shape(term, &name, NULL))
+        return regular_name_reaches_guarded(name, search);
+    for (CettaExprIndex i = 0u; i < term->expr.len; i++)
+        if (regular_reaches_guarded(term->expr.elems[i], search)) return true;
+    return false;
+}
+
+/* Whether `term` mentions a constant whose rules are guarded, or one whose
+ * rules lead to such a constant.  A guarded rule waits at open arguments or
+ * for an observation, so two terms that conversion does not relate may still
+ * be equal by the rule's equation, which holds in every set solution: the
+ * verdict is then undecided, never refuted. */
+static bool regular_mentions_guarded(Atom *term) {
+    if (!g_regular_rules_guarded) return false;
+    PrimeRegularGuardSearch search = {.seen = NULL, .count = 0u, .capacity = 0u, .full = false};
+    bool reached = regular_reaches_guarded(term, &search) || search.full;
+    free(search.seen);
+    return reached;
 }
 
 static PrimeRegularKernelNormal regular_normal_result(
@@ -587,9 +1705,166 @@ bool cetta_prime_regular_kernel_term_is_universe_sort_v1(Atom *term) {
     return regular_sort_syntax(term, &budget, &complete) && complete;
 }
 
-Atom *cetta_prime_regular_kernel_quote_closed_universe_sort_v1(
-    Arena *arena, Atom *term) {
-    if (!arena || !regular_expr(term, "Sort", 2u)) return NULL;
+/* The terms an author writes for a notation, first to last.  They are
+ * collected from the last term back. */
+typedef struct RegularQuotedTerms RegularQuotedTerms;
+struct RegularQuotedTerms {
+    Atom *term;
+    const RegularQuotedTerms *rest;
+    size_t count;
+};
+
+/* What an author writes for the terms collected: the numeral zero for none,
+ * the term for one, and `(+ ...)` of two or more. */
+static Atom *regular_quote_level_sum(
+    Arena *arena, const RegularQuotedTerms *terms) {
+    if (!terms) return atom_int(arena, 0);
+    if (terms->count == 1u) return terms->term;
+    if (terms->count > SIZE_MAX / sizeof(Atom *) - 1u) return NULL;
+    Atom **items = arena_alloc(arena, sizeof(Atom *) * (terms->count + 1u));
+    size_t index = 0u;
+    items[index++] = atom_symbol(arena, "+");
+    for (; terms; terms = terms->rest) items[index++] = terms->term;
+    return atom_expr(arena, items, (CettaExprLen)index);
+}
+
+static CettaPrimeLevelStatusV1 regular_quote_level_zero(
+    void *context, const void *handle, void **value_out) {
+    (void)context;
+    (void)handle;
+    *value_out = NULL;
+    return CETTA_PRIME_LEVEL_OK_V1;
+}
+
+/* A level above the Cantor normal forms is one no author writes. */
+static CettaPrimeLevelStatusV1 regular_quote_level_above(
+    void *context, const void *handle,
+    const CettaPrimeLevelNotationReadTermV1 *read, void **value_out) {
+    (void)context;
+    (void)handle;
+    (void)read;
+    *value_out = NULL;
+    return CETTA_PRIME_LEVEL_INVALID_ARGUMENT_V1;
+}
+
+/* One term omega^e * n: a numeral where e is zero, and otherwise `omega`,
+ * `(^ omega e)`, `(* omega n)` or `(* (^ omega e) n)`. */
+static CettaPrimeLevelStatusV1 regular_quote_level_term(
+    void *context, const void *handle,
+    const CettaPrimeLevelNotationReadTermV1 *read, void *exponent_value,
+    void *remainder_value, void **value_out) {
+    Arena *arena = context;
+    const RegularQuotedTerms *rest = remainder_value;
+    const CettaPrimeLevelNaturalV1 *natural = NULL;
+    uint64_t machine = 0u;
+    (void)handle;
+    Atom *written = cetta_prime_regular_kernel_level_numeral_atom_v1(
+        arena, read->number);
+    if (!written) return CETTA_PRIME_LEVEL_OUT_OF_MEMORY_V1;
+    if (read->exponent) {
+        Atom *power = atom_symbol(arena, "omega");
+        if (!cetta_prime_level_notation_natural_value_v1(
+                read->exponent, &natural) ||
+            !cetta_prime_level_natural_fits_uint64_v1(natural, &machine) ||
+            machine != 1u) {
+            Atom *exponent = regular_quote_level_sum(arena, exponent_value);
+            if (!exponent) return CETTA_PRIME_LEVEL_OUT_OF_MEMORY_V1;
+            power = atom_expr3(
+                arena, atom_symbol(arena, "^"), power, exponent);
+        }
+        written = cetta_prime_level_natural_fits_uint64_v1(
+                      read->number, &machine) && machine == 1u
+            ? power
+            : atom_expr3(arena, atom_symbol(arena, "*"), power, written);
+    }
+    RegularQuotedTerms *terms = arena_alloc(arena, sizeof(*terms));
+    *terms = (RegularQuotedTerms){
+        .term = written,
+        .rest = rest,
+        .count = rest ? rest->count + 1u : 1u,
+    };
+    *value_out = terms;
+    return CETTA_PRIME_LEVEL_OK_V1;
+}
+
+/* A closed level in the notation an author writes: a numeral for a natural
+ * number; `omega`, `(^ omega e)`, `(* omega n)` or `(* (^ omega e) n)` for
+ * one term omega^e * n; and `(+ ...)` of two or more terms with strictly
+ * decreasing exponents, a natural number last.  A numeral is written in
+ * full, whatever its length.  NULL for a level above the Cantor normal
+ * forms, which no author writes, and when there is no memory. */
+static Atom *regular_quote_level_notation(
+    Arena *arena, const CettaPrimeLevelNotationV1 *notation) {
+    static const CettaPrimeLevelNotationFoldV1 fold = {
+        .zero = regular_quote_level_zero,
+        .above = regular_quote_level_above,
+        .term = regular_quote_level_term,
+    };
+    void *terms = NULL;
+    return cetta_prime_level_notation_fold_read_v1(
+               cetta_prime_level_notation_read_v1, &fold, arena, notation,
+               &terms) == CETTA_PRIME_LEVEL_OK_V1
+        ? regular_quote_level_sum(arena, terms) : NULL;
+}
+
+/* The names of the sorts above every universe an author writes.  This is
+ * the one place where they are spelled. */
+static const char regular_sort_name_of_sets[] = "set";
+static const char regular_sort_name_of_classes[] = "class";
+
+bool cetta_prime_regular_kernel_sort_above_word_v1(Atom *symbol) {
+    return regular_symbol(symbol, regular_sort_name_of_sets) ||
+           regular_symbol(symbol, regular_sort_name_of_classes);
+}
+
+bool cetta_prime_regular_kernel_sort_above_spelling_v1(
+    Arena *arena, Atom *syntax, Atom **numeral_out) {
+    if (numeral_out) *numeral_out = NULL;
+    Atom *numeral = NULL;
+    if (regular_symbol(syntax, regular_sort_name_of_sets))
+        numeral = arena ? atom_int(arena, 0) : NULL;
+    else if (regular_symbol(syntax, regular_sort_name_of_classes))
+        numeral = arena ? atom_int(arena, 1) : NULL;
+    else if (regular_expr(syntax, regular_sort_name_of_classes, 2u) &&
+             cetta_prime_regular_kernel_level_numeral_v1(
+                 syntax->expr.elems[1]))
+        numeral = syntax->expr.elems[1];
+    else
+        return false;
+    if (numeral_out) *numeral_out = numeral;
+    return true;
+}
+
+Atom *cetta_prime_regular_kernel_sort_above_name_v1(
+    Arena *arena, const CettaPrimeLevelNaturalV1 *n) {
+    uint64_t value = 0u;
+    if (!arena) return NULL;
+    if (cetta_prime_level_natural_fits_uint64_v1(n, &value) && value <= 1u)
+        return atom_symbol(
+            arena, value == 0u ? regular_sort_name_of_sets
+                               : regular_sort_name_of_classes);
+    Atom *numeral = cetta_prime_regular_kernel_level_numeral_atom_v1(arena, n);
+    return numeral
+        ? atom_expr2(
+              arena, atom_symbol(arena, regular_sort_name_of_classes),
+              numeral)
+        : NULL;
+}
+
+Atom *cetta_prime_regular_kernel_sort_above_term_v1(
+    Arena *arena, Atom *numeral) {
+    if (!arena || !cetta_prime_regular_kernel_level_numeral_v1(numeral))
+        return NULL;
+    return atom_expr2(
+        arena, atom_symbol(arena, "Sort"),
+        atom_expr2(arena, atom_symbol(arena, "LevelAbove"), numeral));
+}
+
+/* The closed constant of the level of a sort, or false where the level has
+ * parameters, does not decode, or the term is no sort. */
+static bool regular_quote_sort_constant(
+    Arena *arena, Atom *term, const CettaPrimeLevelNotationV1 **constant_out) {
+    if (!arena || !regular_expr(term, "Sort", 2u)) return false;
     CettaPrimeRegularKernelBudget budget;
     cetta_prime_regular_kernel_budget_init(&budget, false, 0u);
     const CettaPrimeLevelV1 *level = NULL;
@@ -597,14 +1872,35 @@ Atom *cetta_prime_regular_kernel_quote_closed_universe_sort_v1(
     if (regular_decode_level(
             arena, term->expr.elems[1], &budget, &level, &reason) !=
             CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
-        return NULL;
+        return false;
     CettaPrimeLevelViewV1 view = {0};
     if (!cetta_prime_level_view_v1(level, &view) ||
-        view.parameter_count != 0u || view.constant > (uint64_t)INT64_MAX)
+        view.parameter_count != 0u)
+        return false;
+    *constant_out = view.constant;
+    return true;
+}
+
+Atom *cetta_prime_regular_kernel_quote_sort_above_v1(
+    Arena *arena, Atom *term) {
+    const CettaPrimeLevelNotationV1 *constant = NULL;
+    const CettaPrimeLevelNaturalV1 *n = NULL;
+    if (!regular_quote_sort_constant(arena, term, &constant) ||
+        !cetta_prime_level_notation_above_value_v1(constant, &n))
         return NULL;
-    return atom_expr2(
-        arena, atom_symbol(arena, "u"),
-        atom_int(arena, (int64_t)view.constant));
+    return cetta_prime_regular_kernel_sort_above_name_v1(arena, n);
+}
+
+Atom *cetta_prime_regular_kernel_quote_closed_universe_sort_v1(
+    Arena *arena, Atom *term) {
+    const CettaPrimeLevelNotationV1 *constant = NULL;
+    const CettaPrimeLevelNaturalV1 *n = NULL;
+    if (!regular_quote_sort_constant(arena, term, &constant)) return NULL;
+    if (cetta_prime_level_notation_above_value_v1(constant, &n))
+        return cetta_prime_regular_kernel_sort_above_name_v1(arena, n);
+    Atom *written = regular_quote_level_notation(arena, constant);
+    return written
+        ? atom_expr2(arena, atom_symbol(arena, "u"), written) : NULL;
 }
 
 static bool regular_decl_const_levels_check(
@@ -1218,6 +2514,20 @@ static bool g_regular_present_types = false;
 
 void cetta_prime_regular_kernel_rules_set(Atom *rules) {
     g_regular_rules = rules;
+    g_regular_rules_guarded = false;
+    g_regular_rules_observed = false;
+    for (Atom *r = rules; regular_expr(r, "LCons", 3u); r = r->expr.elems[2]) {
+        Atom *rule = r->expr.elems[1];
+        if (!regular_expr(rule, "PrimeRule", 5u)) continue;
+        bool observed = false;
+        if (regular_rule_arity(rule->expr.elems[2], NULL, &observed) && observed)
+            g_regular_rules_guarded = g_regular_rules_observed = true;
+        Atom *patterns = rule->expr.elems[3];
+        for (CettaExprIndex i = 0u; patterns && patterns->kind == ATOM_EXPR &&
+                                    i < patterns->expr.len; i++)
+            if (regular_expr(patterns->expr.elems[i], "PGuard", 2u))
+                g_regular_rules_guarded = true;
+    }
 }
 
 /* The computation rules of the language-owned identity package, in the same
@@ -1251,17 +2561,45 @@ static Atom *regular_language_rules(void) {
     return rules;
 }
 
-static Atom *regular_rule_step(Arena *arena, Atom *spine, bool *ok,
-                               CettaPrimeRegularKernelBudget *budget);
+static Atom *regular_rule_step_observing(Arena *arena, Atom *spine, bool *ok,
+                                         CettaPrimeRegularKernelBudget *budget);
+
+Atom *cetta_prime_regular_kernel_rule_contractum_counted_v1(
+    Arena *arena, Atom *term, CettaPrimeRegularKernelBudget *budget,
+    uint64_t *firings_out) {
+    if (firings_out) *firings_out = 0u;
+    if (!arena || !term || !budget || !regular_expr(term, "App", 3u))
+        return NULL;
+    uint64_t before = g_regular_rule_firings;
+    bool ok = true;
+    Atom *stepped = regular_rule_step_observing(arena, term, &ok, budget);
+    if (firings_out) *firings_out = g_regular_rule_firings - before;
+    if (!ok) return NULL;
+    return stepped;
+}
 
 Atom *cetta_prime_regular_kernel_rule_contractum_v1(
     Arena *arena, Atom *term, CettaPrimeRegularKernelBudget *budget) {
-    if (!arena || !term || !budget || !regular_expr(term, "App", 3u))
-        return NULL;
-    bool ok = true;
-    Atom *stepped = regular_rule_step(arena, term, &ok, budget);
-    if (!ok) return NULL;
-    return stepped;
+    return cetta_prime_regular_kernel_rule_contractum_counted_v1(arena, term, budget, NULL);
+}
+
+static bool regular_name_guarded(Atom *name);
+static PrimeRegularKernelNormal regular_normalize(
+    Arena *arena, Atom *term, CettaPrimeRegularKernelBudget *budget);
+
+bool cetta_prime_regular_kernel_rule_guarded_v1(Atom *name) {
+    return name && regular_name_guarded(name);
+}
+
+Atom *cetta_prime_regular_kernel_rule_normal_form_v1(
+    Arena *arena, Atom *term, CettaPrimeRegularKernelBudget *budget,
+    uint64_t *firings_out) {
+    if (firings_out) *firings_out = 0u;
+    if (!arena || !term || !budget) return NULL;
+    uint64_t before = g_regular_rule_firings;
+    PrimeRegularKernelNormal normal = regular_normalize(arena, term, budget);
+    if (firings_out) *firings_out = g_regular_rule_firings - before;
+    return normal.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED ? normal.term : NULL;
 }
 
 /* The number of pattern-variable slots a rule's patterns name: one more
@@ -1284,8 +2622,33 @@ static size_t regular_rule_slot_count(Atom *pattern) {
     return count;
 }
 
+/* Whether `term` has no index bound outside it. */
+static bool regular_term_closed(Atom *term, uint64_t depth) {
+    if (!term || term->kind != ATOM_EXPR) return true;
+    uint64_t index = 0u;
+    if (regular_index(term, &index)) return index < depth;
+    if (regular_expr(term, "Lam", 2u))
+        return regular_term_closed(term->expr.elems[1], depth + 1u);
+    if (regular_expr(term, "Pi", 3u) || regular_expr(term, "Sigma", 3u) ||
+        regular_expr(term, "Lam", 3u))
+        return regular_term_closed(term->expr.elems[1], depth) &&
+               regular_term_closed(term->expr.elems[2], depth + 1u);
+    for (CettaExprIndex i = 1u; i < term->expr.len; i++)
+        if (!regular_term_closed(term->expr.elems[i], depth)) return false;
+    return true;
+}
+
+/* A rule admitted on evidence that its equations have a solution in sets,
+ * not on a measure, marks the arguments it may unfold at with
+ * `(PGuard pattern)`: the argument must be closed.  At an argument with a
+ * variable the rule waits, so the rule never unfolds in an open term, and a
+ * comparison that meets it unfolded is not refuted
+ * (regular_mentions_guarded). */
 static bool regular_rule_match(Atom *pat, Atom *term, Atom **binds, size_t nvars) {
     if (!pat || !term) return false;
+    if (regular_expr(pat, "PGuard", 2u))
+        return regular_term_closed(term, 0u) &&
+               regular_rule_match(pat->expr.elems[1], term, binds, nvars);
     if (regular_expr(pat, "PVar", 2u)) {
         Atom *k = pat->expr.elems[1];
         if (k->kind != ATOM_GROUNDED || k->ground.gkind != GV_INT ||
@@ -1337,17 +2700,20 @@ static Atom *regular_rule_instantiate(
 }
 
 /* The first rule of `rules` for `name` at arity `argc` whose patterns match
- * `args`, instantiated; NULL when none applies. */
+ * `args`, instantiated; NULL when none applies.  `observed` chooses the rules
+ * that unfold only under an observation, and only those; otherwise they are
+ * passed over. */
 static Atom *regular_rule_step_in(Arena *arena, Atom *rules, Atom *name,
-                                  Atom **args, size_t argc, bool *ok,
+                                  Atom **args, size_t argc, bool observed, bool *ok,
                                   CettaPrimeRegularKernelBudget *budget) {
     for (Atom *r = rules; regular_expr(r, "LCons", 3u); r = r->expr.elems[2]) {
         Atom *rule = r->expr.elems[1];
         if (!regular_expr(rule, "PrimeRule", 5u)) continue;
         if (!atom_eq(rule->expr.elems[1], name)) continue;
-        Atom *arity = rule->expr.elems[2];
-        if (arity->kind != ATOM_GROUNDED || arity->ground.gkind != GV_INT ||
-            (size_t)arity->ground.ival != argc)
+        size_t arity = 0u;
+        bool waits = false;
+        if (!regular_rule_arity(rule->expr.elems[2], &arity, &waits) ||
+            arity != argc || waits != observed)
             continue;
         Atom *pats = rule->expr.elems[3];
         if (pats->kind != ATOM_EXPR || pats->expr.len != argc) continue;
@@ -1370,6 +2736,7 @@ static Atom *regular_rule_step_in(Arena *arena, Atom *rules, Atom *name,
             *ok = false;
             return NULL;
         }
+        g_regular_rule_firings++;
         return result;
     }
     return NULL;
@@ -1378,7 +2745,7 @@ static Atom *regular_rule_step_in(Arena *arena, Atom *rules, Atom *name,
 /* One computation step at the head of a normalized application spine, by
  * the first admitted or language-owned rule whose patterns match; NULL when
  * no rule applies. */
-static Atom *regular_rule_step(Arena *arena, Atom *spine, bool *ok,
+static Atom *regular_rule_step(Arena *arena, Atom *spine, bool observed, bool *ok,
                                CettaPrimeRegularKernelBudget *budget) {
     if (!regular_expr(spine, "App", 3u)) return NULL;
     size_t argc = 0u;
@@ -1400,11 +2767,14 @@ static Atom *regular_rule_step(Arena *arena, Atom *spine, bool *ok,
         cursor = cursor->expr.elems[1];
     }
     Atom *result = regular_rule_step_in(
-        arena, g_regular_rules, name, args, argc, ok, budget);
-    if (result || !*ok) return result;
+        arena, g_regular_rules, name, args, argc, observed, ok, budget);
+    if (result || !*ok || observed) return result;
     return regular_rule_step_in(
-        arena, regular_language_rules(), name, args, argc, ok, budget);
+        arena, regular_language_rules(), name, args, argc, false, ok, budget);
 }
+
+static PrimeRegularKernelNormal regular_step_observing(
+    Arena *arena, Atom *spine, CettaPrimeRegularKernelBudget *budget);
 
 static PrimeRegularKernelNormal regular_normalize(
     Arena *arena, Atom *term, CettaPrimeRegularKernelBudget *budget) {
@@ -1534,13 +2904,9 @@ static PrimeRegularKernelNormal regular_normalize(
         }
         Atom *normal = atom_expr3(arena, term->expr.elems[0], first.term, second.term);
         if (regular_expr(term, "App", 3u)) {
-            bool ok = true;
-            Atom *stepped = regular_rule_step(arena, normal, &ok, budget);
-            if (!ok)
-                return regular_normal_result(
-                    CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE, NULL,
-                    "rule-instantiation-failed");
-            if (stepped) return regular_normalize(arena, stepped, budget);
+            PrimeRegularKernelNormal step = regular_step_observing(arena, normal, budget);
+            if (step.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return step;
+            if (step.term) return regular_normalize(arena, step.term, budget);
         }
         return regular_normal_result(
             CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED, normal, NULL);
@@ -1556,7 +2922,8 @@ static PrimeRegularKernelNormal regular_normalize(
 /* Weak-head reduction contracts a beta redex, a projection of a pair, or a   */
 /* computation rule at the head of a spine applied to exactly the rule's      */
 /* arity; the arguments the rule inspects are first brought to weak-head      */
-/* normal form in place.  Otherwise it reduces in the function position of an */
+/* normal form in place, and so are the parts of them that a nested pattern   */
+/* inspects.  Otherwise it reduces in the function position of an             */
 /* application or under a projection, and stops.  It never reduces under a    */
 /* binder or in an argument the rules do not inspect.  This is the reduction  */
 /* of the normalization model, deterministic, and every typed term reaches    */
@@ -1565,6 +2932,27 @@ static PrimeRegularKernelNormal regular_normalize(
 
 static PrimeRegularKernelNormal regular_whnf(
     Arena *arena, Atom *term, CettaPrimeRegularKernelBudget *budget);
+
+/* The weak-head normal form of an argument that a rule inspects.  It is
+ * observed: past its weak-head normal form, a call whose rule waits for an
+ * observation unfolds, and again while the head is such a call.  Nowhere
+ * else does such a rule fire. */
+static PrimeRegularKernelNormal regular_whnf_observed(
+    Arena *arena, Atom *term, CettaPrimeRegularKernelBudget *budget) {
+    PrimeRegularKernelNormal current = regular_whnf(arena, term, budget);
+    while (g_regular_rules_observed &&
+           current.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
+        bool ok = true;
+        Atom *stepped = regular_rule_step(arena, current.term, true, &ok, budget);
+        if (!ok)
+            return regular_normal_result(
+                CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE, NULL,
+                "rule-instantiation-failed");
+        if (!stepped) return current;
+        current = regular_whnf(arena, stepped, budget);
+    }
+    return current;
+}
 
 /* Whether some rule of `rules` for `name` at arity `argc` exists and, when
  * `position` is below `argc`, whether one inspects that argument, that is,
@@ -1576,9 +2964,8 @@ static bool regular_rules_at(Atom *rules, Atom *name, size_t argc,
         if (!regular_expr(rule, "PrimeRule", 5u) ||
             !atom_eq(rule->expr.elems[1], name))
             continue;
-        Atom *arity = rule->expr.elems[2];
-        if (arity->kind != ATOM_GROUNDED || arity->ground.gkind != GV_INT ||
-            arity->ground.ival < 0 || (size_t)arity->ground.ival != argc)
+        size_t arity = 0u;
+        if (!regular_rule_arity(rule->expr.elems[2], &arity, NULL) || arity != argc)
             continue;
         if (position >= argc) return true;
         Atom *patterns = rule->expr.elems[3];
@@ -1588,6 +2975,44 @@ static bool regular_rules_at(Atom *rules, Atom *name, size_t argc,
             return true;
     }
     return false;
+}
+
+/* `term` with every position that `pattern` inspects below its root brought
+ * to weak-head normal form: a rule whose patterns nest constructors looks at
+ * the arguments of an argument, and those must show their constructors
+ * too.  The root is brought to weak-head normal form by the caller. */
+static PrimeRegularKernelNormal regular_normalize(
+    Arena *arena, Atom *term, CettaPrimeRegularKernelBudget *budget);
+
+static PrimeRegularKernelNormal regular_whnf_along(
+    Arena *arena, Atom *pattern, Atom *term,
+    CettaPrimeRegularKernelBudget *budget) {
+    /* A guarded argument that is closed is computed to its value, which the
+     * pattern below the guard then reads. */
+    if (regular_expr(pattern, "PGuard", 2u)) {
+        if (!regular_term_closed(term, 0u))
+            return regular_normal_result(CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED, term, NULL);
+        return regular_normalize(arena, term, budget);
+    }
+    if (!regular_expr(pattern, "App", 3u) || !regular_expr(term, "App", 3u))
+        return regular_normal_result(CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED, term, NULL);
+    PrimeRegularKernelNormal function = regular_whnf_along(
+        arena, pattern->expr.elems[1], term->expr.elems[1], budget);
+    if (function.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return function;
+    Atom *argument = term->expr.elems[2];
+    Atom *inner = pattern->expr.elems[2];
+    if (!regular_expr(inner, "PVar", 2u)) {
+        PrimeRegularKernelNormal head = regular_whnf_observed(arena, argument, budget);
+        if (head.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return head;
+        PrimeRegularKernelNormal along = regular_whnf_along(arena, inner, head.term, budget);
+        if (along.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return along;
+        argument = along.term;
+    }
+    if (function.term == term->expr.elems[1] && argument == term->expr.elems[2])
+        return regular_normal_result(CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED, term, NULL);
+    return regular_normal_result(
+        CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED,
+        atom_expr3(arena, term->expr.elems[0], function.term, argument), NULL);
 }
 
 /* The weak-head normal form of the spine `head args`, whose head is already
@@ -1631,18 +3056,39 @@ static PrimeRegularKernelNormal regular_whnf_spine(
         if (!regular_rules_at(tables[0], name, argc, i) &&
             !regular_rules_at(tables[1], name, argc, i))
             continue;
-        PrimeRegularKernelNormal inspected = regular_whnf(arena, args[i], budget);
+        PrimeRegularKernelNormal inspected = regular_whnf_observed(arena, args[i], budget);
         if (inspected.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
             return inspected;
         if (inspected.term != args[i]) {
             args[i] = inspected.term;
             reduced = true;
         }
+        /* A pattern nested below the argument's constructor looks further:
+         * the positions it inspects are reduced in place as well. */
+        for (size_t t = 0u; t < 2u; t++) {
+            for (Atom *r = tables[t]; regular_expr(r, "LCons", 3u); r = r->expr.elems[2]) {
+                Atom *rule = r->expr.elems[1];
+                if (!regular_expr(rule, "PrimeRule", 5u) ||
+                    !atom_eq(rule->expr.elems[1], name))
+                    continue;
+                Atom *patterns = rule->expr.elems[3];
+                if (patterns->kind != ATOM_EXPR || (size_t)patterns->expr.len != argc)
+                    continue;
+                PrimeRegularKernelNormal along = regular_whnf_along(
+                    arena, patterns->expr.elems[i], args[i], budget);
+                if (along.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
+                    return along;
+                if (along.term != args[i]) {
+                    args[i] = along.term;
+                    reduced = true;
+                }
+            }
+        }
     }
     bool ok = true;
     Atom *result = NULL;
     for (size_t t = 0u; t < 2u && !result && ok; t++)
-        result = regular_rule_step_in(arena, tables[t], name, args, argc, &ok, budget);
+        result = regular_rule_step_in(arena, tables[t], name, args, argc, false, &ok, budget);
     if (!ok)
         return regular_normal_result(
             CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE, NULL,
@@ -1751,16 +3197,63 @@ static PrimeRegularKernelNormal regular_whnf(
     }
 }
 
+/* Whether an argument of `spine` is a call whose rule waits for an
+ * observation. */
+static bool regular_spine_has_observed_argument(Atom *spine) {
+    for (Atom *cursor = spine; regular_expr(cursor, "App", 3u);
+         cursor = cursor->expr.elems[1]) {
+        Atom *head = cursor->expr.elems[2];
+        while (regular_expr(head, "App", 3u)) head = head->expr.elems[1];
+        Atom *name = NULL;
+        if (regular_decl_const_shape(head, &name, NULL) && regular_name_observed(name))
+            return true;
+    }
+    return false;
+}
+
+/* One computation step at the head of `spine`, its term NULL when no rule
+ * applies.  When no rule applies as the arguments stand and one of them is a
+ * call waiting for an observation, the arguments the rules inspect are
+ * observed (regular_whnf_spine) and the step is tried there. */
+static PrimeRegularKernelNormal regular_step_observing(
+    Arena *arena, Atom *spine, CettaPrimeRegularKernelBudget *budget) {
+    bool ok = true;
+    Atom *stepped = regular_rule_step(arena, spine, false, &ok, budget);
+    if (!ok)
+        return regular_normal_result(
+            CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE, NULL,
+            "rule-instantiation-failed");
+    if (stepped || !regular_spine_has_observed_argument(spine))
+        return regular_normal_result(
+            CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED, stepped, NULL);
+    Atom *observed = NULL;
+    PrimeRegularKernelNormal stuck = regular_whnf_spine(arena, spine, &observed, budget);
+    if (stuck.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return stuck;
+    return regular_normal_result(CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED, observed, NULL);
+}
+
+static Atom *regular_rule_step_observing(Arena *arena, Atom *spine, bool *ok,
+                                         CettaPrimeRegularKernelBudget *budget) {
+    PrimeRegularKernelNormal step = regular_step_observing(arena, spine, budget);
+    if (step.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
+        *ok = false;
+        return NULL;
+    }
+    return step.term;
+}
+
 static CettaPrimeRegularKernelStatus regular_equal_normal_terms(
     Arena *arena, Atom *left, Atom *right,
     CettaPrimeRegularKernelBudget *budget, bool *equal_out,
     const char **reason_out,
     PrimeRegularLevelInstantiation *instantiation);
 
-/* Exact level instantiation used inside conversion.  The deliberately small
- * solved fragment is one bare, fresh declaration parameter against one
- * closed level normal form.  More general level equations remain outside the
- * native fragment rather than becoming a false type mismatch. */
+/* Equality of two universe levels during the search for the least instance.
+ * Two parameters nothing has bounded are identified.  Any other equation
+ * with a parameter being solved is two bounds, each met by a least raise;
+ * what holds a parameter so far is a lower bound on it, never its value, so
+ * an equation is not refuted from it.  Level equations the raises do not
+ * settle stay outside the fragment instead of becoming a false mismatch. */
 static CettaPrimeRegularKernelStatus
 regular_equal_sort_levels_instantiating(
     Arena *arena, Atom *left, Atom *right,
@@ -1819,35 +3312,76 @@ regular_equal_sort_levels_instantiating(
         *equal_out = true;
         return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
     }
-    if (left_is_fresh_parameter &&
-        !regular_level_mentions_instantiation_parameter(
-            instantiated_right, instantiation)) {
-        instantiation->assignments[left_parameter_index] =
-            instantiated_right;
-        cetta_runtime_stats_inc(
-            CETTA_RUNTIME_COUNTER_PRIME_DECLARATION_LEVEL_CONSTRAINT);
-        *equal_out = true;
+    bool left_solved = regular_level_mentions_instantiation_parameter(
+        left_level, instantiation);
+    bool right_solved = regular_level_mentions_instantiation_parameter(
+        right_level, instantiation);
+    if (left_solved || right_solved) {
+        /* An equation is two bounds.  A side with parameters being solved is
+         * raised to the least value of the other side, by the least
+         * assignment that reaches it; the two least values are then
+         * compared.  With such parameters on one side only, a difference
+         * that remains is one at every instance
+         * (`Below.no_solution_of_eq_left`).  With them on both sides it may
+         * close after another raise, and where the rounds here do not close
+         * it there is no verdict. */
+        for (unsigned round = 0u;; round++) {
+            Atom *left_value = NULL;
+            Atom *right_value = NULL;
+            CettaPrimeRegularKernelStatus status = regular_level_least_value(
+                arena, left_level, instantiation, budget, &left_value,
+                reason_out);
+            if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return status;
+            status = regular_level_least_value(
+                arena, right_level, instantiation, budget, &right_value,
+                reason_out);
+            if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return status;
+            bool below = false;
+            bool above = false;
+            status = regular_level_syntax_le(
+                arena, left_value, right_value, budget, &below, reason_out);
+            if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return status;
+            status = regular_level_syntax_le(
+                arena, right_value, left_value, budget, &above, reason_out);
+            if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return status;
+            if (below && above) {
+                *equal_out = true;
+                return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+            }
+            if (round == 4u) break;
+            size_t raises = instantiation->raises;
+            PrimeRegularLevelRaise found = PRIME_REGULAR_LEVEL_RAISED;
+            if (!below && right_solved)
+                status = regular_level_raise_instantiation_parameters(
+                    arena, right_level, left_value, instantiation, budget,
+                    &found, reason_out);
+            else if (!above && left_solved)
+                status = regular_level_raise_instantiation_parameters(
+                    arena, left_level, right_value, instantiation, budget,
+                    &found, reason_out);
+            if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return status;
+            if (found == PRIME_REGULAR_LEVEL_RAISE_UNREACHABLE) {
+                /* One side lies above every written level, and the other
+                 * reaches it only through a parameter: at no instance are
+                 * the two equal. */
+                *equal_out = false;
+                return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+            }
+            if (found == PRIME_REGULAR_LEVEL_RAISE_OUTSIDE) {
+                if (reason_out)
+                    *reason_out =
+                        "level-equality-instantiation-outside-fragment";
+                return CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS;
+            }
+            if (instantiation->raises == raises) break;
+        }
+        if (left_solved && right_solved) {
+            if (reason_out)
+                *reason_out = "level-equality-instantiation-outside-fragment";
+            return CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS;
+        }
+        *equal_out = false;
         return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
-    }
-
-    if (right_is_fresh_parameter &&
-        !regular_level_mentions_instantiation_parameter(
-            instantiated_left, instantiation)) {
-        instantiation->assignments[right_parameter_index] =
-            instantiated_left;
-        cetta_runtime_stats_inc(
-            CETTA_RUNTIME_COUNTER_PRIME_DECLARATION_LEVEL_CONSTRAINT);
-        *equal_out = true;
-        return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
-    }
-
-    if (regular_level_mentions_instantiation_parameter(
-            instantiated_left, instantiation) ||
-        regular_level_mentions_instantiation_parameter(
-            instantiated_right, instantiation)) {
-        if (reason_out)
-            *reason_out = "level-equality-instantiation-outside-fragment";
-        return CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS;
     }
 
     const CettaPrimeLevelV1 *left_normal = NULL;
@@ -1858,8 +3392,9 @@ regular_equal_sort_levels_instantiating(
     status = regular_decode_level(
         arena, instantiated_right, budget, &right_normal, reason_out);
     if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return status;
-    *equal_out = cetta_prime_level_equal_v1(left_normal, right_normal);
-    return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+    return regular_level_status(
+        cetta_prime_level_equal_v1(left_normal, right_normal, equal_out),
+        reason_out);
 }
 
 static CettaPrimeRegularKernelStatus regular_equal_decl_constants(
@@ -1904,8 +3439,10 @@ static CettaPrimeRegularKernelStatus regular_equal_decl_constants(
                     arena, right->expr.elems[index + 2u], budget,
                     &right_level, reason_out);
             if (status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
-                level_equal = cetta_prime_level_equal_v1(
-                    left_level, right_level);
+                status = regular_level_status(
+                    cetta_prime_level_equal_v1(
+                        left_level, right_level, &level_equal),
+                    reason_out);
         }
         if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
             return status;
@@ -1952,8 +3489,9 @@ static CettaPrimeRegularKernelStatus regular_equal_normal_terms(
         status = regular_decode_sort(
             arena, right, budget, &right_level, reason_out);
         if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return status;
-        *equal_out = cetta_prime_level_equal_v1(left_level, right_level);
-        return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+        return regular_level_status(
+            cetta_prime_level_equal_v1(left_level, right_level, equal_out),
+            reason_out);
     }
     bool left_decl = regular_decl_const_shape(left, NULL, NULL);
     bool right_decl = regular_decl_const_shape(right, NULL, NULL);
@@ -2273,7 +3811,11 @@ static bool regular_universes_discriminate(
         regular_decode_level(arena, right_whnf->expr.elems[1], budget, &right,
                              NULL) != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
         return false;
-    return !cetta_prime_level_equal_v1(left, right);
+    /* Levels that could not be compared are not known to differ. */
+    bool equal = false;
+    return cetta_prime_level_equal_v1(left, right, &equal) ==
+               CETTA_PRIME_LEVEL_OK_V1 &&
+           !equal;
 }
 
 static CettaPrimeRegularKernelStatus regular_conv_budget(
@@ -2518,7 +4060,16 @@ static CettaPrimeRegularKernelStatus regular_conv_types(
         equal_out, reason_out, instantiation);
 }
 
-/* Two terms compared at a type. */
+/* Two terms compared at a type.  Equal means joined: both sides reach one
+ * form by β, η and the admitted rules, and each rule step is an instance of
+ * an admitted equation.  Lean reads every typed instance of a package's
+ * equations as an equality of its judgment
+ * (Presentation.TypedEquality.Annotated.equation_holds,
+ * TypedEquality/Annotated/DefinedConstants.lean:198), and the admission
+ * theorems give the package a set model in which they hold; so an
+ * Established verdict by conversion holds there, at open terms too.  That the
+ * comparison stops at open terms is bounded by its budget, not by a Lean
+ * theorem: a comparison that runs the budget out answers Incomplete. */
 static CettaPrimeRegularKernelStatus regular_conv_at(
     Arena *arena, Atom *context, Atom *left, Atom *right, Atom *type,
     CettaPrimeRegularKernelBudget *budget, bool *equal_out,
@@ -2687,30 +4238,70 @@ static CettaPrimeRegularKernelStatus regular_sort_le(
             arena, atom_symbol(arena, "Sort"), instantiated_right),
         budget, &right_level, reason_out);
     if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return status;
-    *le_out = cetta_prime_level_le_v1(left_level, right_level);
-    if (*le_out || !instantiation ||
-        !regular_level_mentions_instantiation_parameter(
-            right_level_syntax, instantiation))
+    status = regular_level_status(
+        cetta_prime_level_le_v1(left_level, right_level, le_out), reason_out);
+    if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return status;
+    if (*le_out || !instantiation)
         return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
-    /* A schema-rigid parameter is closed relative to this instantiation and
-     * is therefore a valid lower bound for a freshly looked-up declaration.
-     * Only a bound mentioning one of the variables being solved would create
-     * a cyclic or mutually recursive assignment. */
-    if (regular_level_mentions_instantiation_parameter(
-            instantiated_left, instantiation)) {
+    if (!regular_level_mentions_instantiation_parameter(
+            right_level_syntax, instantiation)) {
+        if (!regular_level_mentions_instantiation_parameter(
+                instantiated_left, instantiation))
+            return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+        /* The left level still has parameters that nothing has bounded.  A
+         * declaration is used at its least instance, where they are zero,
+         * and a later bound only raises the left level.  So the order is the
+         * one at zero: where it fails there it fails at every instance, and
+         * where it holds the judgment is checked again at the completed
+         * instance. */
+        complete = true;
+        Atom *least_left = regular_level_unsolved_at_zero(
+            arena, instantiated_left, instantiation, budget, &complete);
+        if (!complete || !least_left) {
+            if (reason_out) *reason_out = "level-instantiation-budget";
+            return CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED;
+        }
+        status = regular_decode_sort(
+            arena, atom_expr2(
+                arena, atom_symbol(arena, "Sort"), least_left),
+            budget, &left_level, reason_out);
+        if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return status;
+        return regular_level_status(
+            cetta_prime_level_le_v1(left_level, right_level, le_out),
+            reason_out);
+    }
+    /* The right level has parameters being solved.  The least value of the
+     * left level, with the parameters nothing has bounded at zero, is a
+     * bound every instance must reach: the right level is raised to it by
+     * the least assignment that does so (`raise_forced`). */
+    Atom *bound = NULL;
+    status = regular_level_least_value(
+        arena, left_level_syntax, instantiation, budget, &bound, reason_out);
+    if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return status;
+    PrimeRegularLevelRaise found = PRIME_REGULAR_LEVEL_RAISED;
+    status = regular_level_raise_instantiation_parameters(
+        arena, right_level_syntax, bound, instantiation, budget,
+        &found, reason_out);
+    if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return status;
+    if (found == PRIME_REGULAR_LEVEL_RAISE_UNREACHABLE) {
+        /* The left level lies above every written level, and the right one
+         * reaches it only through a parameter: the order fails at every
+         * instance. */
+        *le_out = false;
+        return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+    }
+    if (found == PRIME_REGULAR_LEVEL_RAISE_OUTSIDE) {
+        /* No least instance to judge at: neither established nor refuted. */
         if (reason_out)
-            *reason_out =
-                "level-instantiation-lower-bound-mentions-solved-parameter";
+            *reason_out = "level-instantiation-outside-fragment";
         return CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS;
     }
-    if (!regular_level_raise_instantiation_parameters(
-            arena, right_level_syntax, instantiated_left,
-            instantiation, budget)) {
-        if (reason_out) *reason_out = "level-instantiation-budget";
-        return budget && budget->limited && budget->remaining == 0u
-            ? CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED
-            : CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE;
-    }
+    /* The raise reaches the bound.  It leaves the comparison open only where
+     * it moved a parameter of the left level as well, as for a level that
+     * must exceed itself: no verdict there. */
+    status = regular_level_least_value(
+        arena, left_level_syntax, instantiation, budget, &bound, reason_out);
+    if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return status;
     complete = true;
     instantiated_right = regular_level_apply_instantiation(
         arena, right_level_syntax, instantiation, budget, &complete);
@@ -2718,13 +4309,26 @@ static CettaPrimeRegularKernelStatus regular_sort_le(
         if (reason_out) *reason_out = "level-instantiation-budget";
         return CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED;
     }
-    status = regular_decode_sort(
-        arena, atom_expr2(
-            arena, atom_symbol(arena, "Sort"), instantiated_right),
-        budget, &right_level, reason_out);
+    status = regular_level_syntax_le(
+        arena, bound, instantiated_right, budget, le_out, reason_out);
     if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return status;
-    *le_out = cetta_prime_level_le_v1(left_level, right_level);
-    return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+    if (*le_out) return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+    if (reason_out)
+        *reason_out =
+            "level-instantiation-lower-bound-mentions-solved-parameter";
+    return CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS;
+}
+
+bool cetta_prime_regular_kernel_sort_within_v1(Arena *arena, Atom *lower,
+                                              Atom *upper) {
+    if (!arena || !regular_expr(lower, "Sort", 2u) || !regular_expr(upper, "Sort", 2u))
+        return false;
+    CettaPrimeRegularKernelBudget budget;
+    cetta_prime_regular_kernel_budget_init(&budget, true, 4096u);
+    bool le = false;
+    const char *reason = NULL;
+    return regular_sort_le(arena, lower, upper, &budget, &le, &reason, NULL) ==
+               CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED && le;
 }
 
 /* Whether a type has a rigid shape: it is usable only at the types equal to
@@ -2799,20 +4403,21 @@ static CettaPrimeRegularKernelStatus regular_type_below(
         *below_out = true;
         return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
     }
-    /* Equal types first: conversion also solves level parameters of the
-     * declaration being instantiated by equality. */
-    bool equal = false;
-    CettaPrimeRegularKernelStatus converted = regular_conv_types(
-        arena, context, lower, upper, budget, &equal, reason_out, instantiation);
-    if (converted == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED && equal) {
-        *below_out = true;
-        return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+    /* Equal types first.  Not while level parameters are being solved:
+     * there conversion raises them to make the two types equal, which asks
+     * for more than usability does, and the instance found would not be the
+     * least.  The clauses below decide usability of equal types as well. */
+    if (!instantiation) {
+        bool equal = false;
+        CettaPrimeRegularKernelStatus converted = regular_conv_types(
+            arena, context, lower, upper, budget, &equal, reason_out, NULL);
+        if (converted != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
+            return converted;
+        if (equal) {
+            *below_out = true;
+            return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+        }
     }
-    bool sorts = regular_is_sort(lower) && regular_is_sort(upper);
-    if (converted != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED &&
-        (converted != CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS || !sorts ||
-         !instantiation))
-        return converted;
     PrimeRegularKernelNormal lower_normal = regular_whnf(arena, lower, budget);
     if (lower_normal.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
         if (reason_out) *reason_out = lower_normal.reason;
@@ -2856,9 +4461,12 @@ static CettaPrimeRegularKernelStatus regular_type_below(
             low->expr.elems[2], up->expr.elems[2], budget, below_out,
             reason_out, instantiation);
     }
-    /* A rigid type is usable only at the types equal to it, and conversion
-     * found this one unequal. */
-    return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+    /* A rigid type is usable only at the types equal to it.  Without level
+     * parameters to solve, conversion found this one unequal above. */
+    if (!instantiation) return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+    return regular_conv_whnf_types(
+        arena, context, low, up, budget, below_out, reason_out,
+        instantiation);
 }
 
 /* Whether two types have no common upper bound, so that terms of them are
@@ -2930,10 +4538,15 @@ static CettaPrimeRegularKernelStatus regular_types_apart(
             apart_out, reason_out, instantiation);
         if (domains != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED || *apart_out)
             return domains;
+        /* The codomains are compared when the domains are equal.  Pair types
+         * with unequal domains can still have a common upper bound, so while
+         * level parameters are being solved the domains are asked to be
+         * equal as they stand, for every value of the parameters, and no
+         * parameter is raised to make them so. */
         bool domains_equal = false;
         CettaPrimeRegularKernelStatus converted = regular_conv_types(
             arena, context, l->expr.elems[1], r->expr.elems[1], budget,
-            &domains_equal, reason_out, instantiation);
+            &domains_equal, reason_out, NULL);
         if (converted != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED || !domains_equal)
             return converted;
         return regular_types_apart(
@@ -3031,14 +4644,20 @@ static CettaPrimeRegularKernelStatus regular_check_inferred(
     }
     /* The synthesized type must be usable at the expected one
      * (`KernelTyping.switch`); when it is not, a principal synthesized type
-     * refutes the check (`Synth.not_typed`). */
+     * refutes the check (`Synth.not_typed`).  Where it is not because a
+     * level parameter being solved would have to stand for a level above
+     * every level an author writes, the reason says that. */
     bool below = false;
+    size_t unreachable = instantiation ? instantiation->unreachable : 0u;
     CettaPrimeRegularKernelStatus decided = regular_type_below(
         arena, context, inferred.type, expected, budget, &below, reason_out,
         instantiation);
     if (decided != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return decided;
     if (below) return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
-    if (reason_out) *reason_out = "type-mismatch";
+    if (reason_out)
+        *reason_out =
+            instantiation && instantiation->unreachable != unreachable
+                ? regular_level_instance_above_reason : "type-mismatch";
     return regular_principal(inferred) ? CETTA_PRIME_REGULAR_KERNEL_REFUTED
                                        : CETTA_PRIME_REGULAR_KERNEL_UNDECIDED;
 }
@@ -3142,6 +4761,7 @@ static CettaPrimeRegularKernelStatus regular_check_term_seen(
                         false, NULL),
                     regular_principal(body));
                 result.annotated_domain = true;
+                result.written_principal = regular_written_principal(body);
                 *synthesized = result;
             } else {
                 *synthesized = body;
@@ -3289,6 +4909,15 @@ static PrimeRegularKernelInfer regular_infer(
                 NULL, false, "universe-successor-construction-failed");
     }
     if (regular_decl_const_shape(term, NULL, NULL)) {
+        /* The level parameters of a declaration stand for levels an author
+         * writes, and its type was formed under that.  So a declaration has
+         * no instance at a level above all of those: used at one, it has no
+         * type. */
+        for (CettaExprIndex index = 2u; index < term->expr.len; index++)
+            if (regular_level_mentions_above(term->expr.elems[index]))
+                return regular_infer_result(
+                    CETTA_PRIME_REGULAR_KERNEL_REFUTED, NULL, false,
+                    regular_level_instance_above_reason);
         bool complete = true;
         Atom *type = regular_context_lookup_declaration(
             arena, context, term, budget, &complete);
@@ -3372,6 +5001,7 @@ static PrimeRegularKernelInfer regular_infer(
                 false, NULL),
             regular_principal(body));
         result.annotated_domain = true;
+        result.written_principal = regular_written_principal(body);
         return result;
     }
     if (regular_expr(term, "Id", 4u)) {
@@ -3907,6 +5537,31 @@ regular_level_instantiation_substitution_failure(
             : "level-instantiation-substitution-failed");
 }
 
+/* Whether the search for the least instance is over after a round.  A round
+ * is one search pass, which raises the parameters as the judgment demands,
+ * and the judgment at the instance it reached.  The round is the last one
+ * when the judgment holds there, when the engine gave no verdict, or when
+ * the pass raised nothing: then every comparison of the pass was made at
+ * the instance itself.  Otherwise a comparison made before a later raise is
+ * out of date, and the search goes on from the assignment it reached; every
+ * raise is forced, so the assignment stays below every instance at which
+ * the judgment holds (`Below.passes`). */
+static bool regular_level_search_over(
+    CettaPrimeRegularKernelStatus status,
+    const PrimeRegularLevelInstantiation *instantiation, size_t raises) {
+    return status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED ||
+           status == CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED ||
+           status == CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE ||
+           instantiation->raises == raises;
+}
+
+/* More rounds than there are parameters, and two: the raises feed one
+ * another without end, as for a level that must exceed itself. */
+static bool regular_level_search_exhausted(
+    const PrimeRegularLevelInstantiation *instantiation, size_t round) {
+    return round > instantiation->count + 1u;
+}
+
 CettaPrimeRegularKernelResult
 cetta_prime_regular_kernel_synth_intrinsic_instantiating_levels_v1(
     Arena *arena, Atom *context, Atom *term,
@@ -3927,45 +5582,55 @@ cetta_prime_regular_kernel_synth_intrinsic_instantiating_levels_v1(
             CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE,
             "invalid-level-instantiation-parameters");
 
-    uint64_t context_length = 0u;
-    const char *reason = NULL;
-    CettaPrimeRegularKernelStatus context_status = regular_context_valid(
-        arena, context, budget, &context_length, &reason, &instantiation);
-    if (context_status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
-        return regular_level_instantiation_result(context_status, reason);
-    bool complete = true;
-    if (!regular_intrinsic_scope_check(
-            term, context_length, budget, &complete))
-        return regular_level_instantiation_result(
-            complete ? CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS
-                     : CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED,
-            complete ? "outside-intrinsic-term"
-                     : "intrinsic-scope-budget");
-    PrimeRegularKernelInfer proposed = regular_infer(
-        arena, context, term, budget, &instantiation);
-    if (proposed.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
-        return regular_result(
-            proposed.status, proposed.type, proposed.reason);
-    if (!regular_level_instantiation_default_zero(arena, &instantiation))
-        return regular_level_instantiation_result(
-            CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE,
-            "level-instantiation-default-failed");
+    for (size_t round = 0u;; round++) {
+        size_t raises = instantiation.raises;
+        uint64_t context_length = 0u;
+        const char *reason = NULL;
+        CettaPrimeRegularKernelStatus context_status = regular_context_valid(
+            arena, context, budget, &context_length, &reason, &instantiation);
+        if (context_status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
+            return regular_level_instantiation_result(context_status, reason);
+        bool complete = true;
+        if (!regular_intrinsic_scope_check(
+                term, context_length, budget, &complete))
+            return regular_level_instantiation_result(
+                complete ? CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS
+                         : CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED,
+                complete ? "outside-intrinsic-term"
+                         : "intrinsic-scope-budget");
+        PrimeRegularKernelInfer proposed = regular_infer(
+            arena, context, term, budget, &instantiation);
+        if (proposed.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
+            return regular_result(
+                proposed.status, proposed.type, proposed.reason);
+        if (!regular_level_instantiation_default_zero(arena, &instantiation))
+            return regular_level_instantiation_result(
+                CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE,
+                "level-instantiation-default-failed");
 
-    complete = true;
-    Atom *instantiated_context = regular_term_apply_level_instantiation(
-        arena, context, &instantiation, budget, &complete);
-    instantiated_context = complete && instantiated_context
-        ? regular_context_deduplicate_declarations(
-              arena, instantiated_context, budget, &complete)
-        : NULL;
-    Atom *instantiated_term = complete
-        ? regular_term_apply_level_instantiation(
-              arena, term, &instantiation, budget, &complete)
-        : NULL;
-    if (!complete || !instantiated_context || !instantiated_term)
-        return regular_level_instantiation_substitution_failure(budget);
-    return cetta_prime_regular_kernel_synth_intrinsic_v1(
-        arena, instantiated_context, instantiated_term, budget);
+        complete = true;
+        Atom *instantiated_context = regular_term_apply_level_instantiation(
+            arena, context, &instantiation, budget, &complete);
+        instantiated_context = complete && instantiated_context
+            ? regular_context_deduplicate_declarations(
+                  arena, instantiated_context, budget, &complete)
+            : NULL;
+        Atom *instantiated_term = complete
+            ? regular_term_apply_level_instantiation(
+                  arena, term, &instantiation, budget, &complete)
+            : NULL;
+        if (!complete || !instantiated_context || !instantiated_term)
+            return regular_level_instantiation_substitution_failure(budget);
+        CettaPrimeRegularKernelResult result =
+            cetta_prime_regular_kernel_synth_intrinsic_v1(
+                arena, instantiated_context, instantiated_term, budget);
+        if (regular_level_search_over(result.status, &instantiation, raises))
+            return result;
+        if (regular_level_search_exhausted(&instantiation, round))
+            return regular_level_instantiation_result(
+                CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS,
+                "level-instantiation-does-not-settle");
+    }
 }
 
 CettaPrimeRegularKernelResult
@@ -3987,56 +5652,66 @@ cetta_prime_regular_kernel_check_intrinsic_instantiating_levels_v1(
         return regular_level_instantiation_result(
             CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE,
             "invalid-level-instantiation-parameters");
-    uint64_t context_length = 0u;
-    const char *reason = NULL;
-    CettaPrimeRegularKernelStatus status = regular_context_valid(
-        arena, context, budget, &context_length, &reason, &instantiation);
-    if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
-        return regular_level_instantiation_result(status, reason);
-    bool complete = true;
-    if (!regular_intrinsic_scope_check(
-            expected, context_length, budget, &complete) ||
-        !regular_intrinsic_scope_check(
-            term, context_length, budget, &complete))
-        return regular_level_instantiation_result(
-            complete ? CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS
-                     : CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED,
-            complete ? "outside-intrinsic-check"
-                     : "intrinsic-scope-budget");
-    status = regular_ordinary_type(
-        arena, context, expected, budget, &reason, &instantiation);
-    if (status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
-        status = regular_check_term(
-            arena, context, term, expected, budget, &reason,
-            &instantiation);
-    if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
-        return regular_level_instantiation_result(status, reason);
-    if (!regular_level_instantiation_default_zero(arena, &instantiation))
-        return regular_level_instantiation_result(
-            CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE,
-            "level-instantiation-default-failed");
+    for (size_t round = 0u;; round++) {
+        size_t raises = instantiation.raises;
+        uint64_t context_length = 0u;
+        const char *reason = NULL;
+        CettaPrimeRegularKernelStatus status = regular_context_valid(
+            arena, context, budget, &context_length, &reason, &instantiation);
+        if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
+            return regular_level_instantiation_result(status, reason);
+        bool complete = true;
+        if (!regular_intrinsic_scope_check(
+                expected, context_length, budget, &complete) ||
+            !regular_intrinsic_scope_check(
+                term, context_length, budget, &complete))
+            return regular_level_instantiation_result(
+                complete ? CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS
+                         : CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED,
+                complete ? "outside-intrinsic-check"
+                         : "intrinsic-scope-budget");
+        status = regular_ordinary_type(
+            arena, context, expected, budget, &reason, &instantiation);
+        if (status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
+            status = regular_check_term(
+                arena, context, term, expected, budget, &reason,
+                &instantiation);
+        if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
+            return regular_level_instantiation_result(status, reason);
+        if (!regular_level_instantiation_default_zero(arena, &instantiation))
+            return regular_level_instantiation_result(
+                CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE,
+                "level-instantiation-default-failed");
 
-    complete = true;
-    Atom *instantiated_context = regular_term_apply_level_instantiation(
-        arena, context, &instantiation, budget, &complete);
-    instantiated_context = complete && instantiated_context
-        ? regular_context_deduplicate_declarations(
-              arena, instantiated_context, budget, &complete)
-        : NULL;
-    Atom *instantiated_term = complete
-        ? regular_term_apply_level_instantiation(
-              arena, term, &instantiation, budget, &complete)
-        : NULL;
-    Atom *instantiated_expected = complete
-        ? regular_term_apply_level_instantiation(
-              arena, expected, &instantiation, budget, &complete)
-        : NULL;
-    if (!complete || !instantiated_context || !instantiated_term ||
-        !instantiated_expected)
-        return regular_level_instantiation_substitution_failure(budget);
-    return cetta_prime_regular_kernel_check_intrinsic(
-        arena, instantiated_context, instantiated_term,
-        instantiated_expected, budget);
+        complete = true;
+        Atom *instantiated_context = regular_term_apply_level_instantiation(
+            arena, context, &instantiation, budget, &complete);
+        instantiated_context = complete && instantiated_context
+            ? regular_context_deduplicate_declarations(
+                  arena, instantiated_context, budget, &complete)
+            : NULL;
+        Atom *instantiated_term = complete
+            ? regular_term_apply_level_instantiation(
+                  arena, term, &instantiation, budget, &complete)
+            : NULL;
+        Atom *instantiated_expected = complete
+            ? regular_term_apply_level_instantiation(
+                  arena, expected, &instantiation, budget, &complete)
+            : NULL;
+        if (!complete || !instantiated_context || !instantiated_term ||
+            !instantiated_expected)
+            return regular_level_instantiation_substitution_failure(budget);
+        CettaPrimeRegularKernelResult result =
+            cetta_prime_regular_kernel_check_intrinsic(
+                arena, instantiated_context, instantiated_term,
+                instantiated_expected, budget);
+        if (regular_level_search_over(result.status, &instantiation, raises))
+            return result;
+        if (regular_level_search_exhausted(&instantiation, round))
+            return regular_level_instantiation_result(
+                CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS,
+                "level-instantiation-does-not-settle");
+    }
 }
 
 CettaPrimeRegularKernelFormedSchemaV1
@@ -4060,64 +5735,73 @@ cetta_prime_regular_kernel_form_intrinsic_level_schema_v1(
                 "invalid-level-instantiation-parameters");
         instantiation = &storage;
     }
-    uint64_t context_length = 0u;
-    const char *reason = NULL;
-    CettaPrimeRegularKernelStatus status = regular_context_valid(
-        arena, context, budget, &context_length, &reason, instantiation);
-    if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
-        return regular_formed_schema_result(status, NULL, reason);
-    bool complete = true;
-    if (!regular_intrinsic_scope_check(
-            expected, context_length, budget, &complete))
-        return regular_formed_schema_result(
-            complete ? CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS
-                     : CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED,
-            NULL,
-            complete ? "outside-intrinsic-expected"
-                     : "intrinsic-scope-budget");
-    status = regular_ordinary_type(
-        arena, context, expected, budget, &reason, instantiation);
-    if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
-        return regular_formed_schema_result(status, NULL, reason);
-    if (instantiation &&
-        !regular_level_instantiation_default_zero(arena, instantiation))
-        return regular_formed_schema_result(
-            CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE,
-            NULL,
-            "level-instantiation-default-failed");
+    for (size_t round = 0u;; round++) {
+        size_t raises = instantiation ? instantiation->raises : 0u;
+        uint64_t context_length = 0u;
+        const char *reason = NULL;
+        CettaPrimeRegularKernelStatus status = regular_context_valid(
+            arena, context, budget, &context_length, &reason, instantiation);
+        if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
+            return regular_formed_schema_result(status, NULL, reason);
+        bool complete = true;
+        if (!regular_intrinsic_scope_check(
+                expected, context_length, budget, &complete))
+            return regular_formed_schema_result(
+                complete ? CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS
+                         : CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED,
+                NULL,
+                complete ? "outside-intrinsic-expected"
+                         : "intrinsic-scope-budget");
+        status = regular_ordinary_type(
+            arena, context, expected, budget, &reason, instantiation);
+        if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
+            return regular_formed_schema_result(status, NULL, reason);
+        if (instantiation &&
+            !regular_level_instantiation_default_zero(arena, instantiation))
+            return regular_formed_schema_result(
+                CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE,
+                NULL,
+                "level-instantiation-default-failed");
 
-    Atom *instantiated_context = context;
-    Atom *instantiated_expected = expected;
-    if (instantiation) {
-        complete = true;
-        instantiated_context = regular_term_apply_level_instantiation(
-            arena, context, instantiation, budget, &complete);
-        instantiated_context = complete && instantiated_context
-            ? regular_context_deduplicate_declarations(
-                  arena, instantiated_context, budget, &complete)
-            : NULL;
-        instantiated_expected = complete
-            ? regular_term_apply_level_instantiation(
-                  arena, expected, instantiation, budget, &complete)
-            : NULL;
+        Atom *instantiated_context = context;
+        Atom *instantiated_expected = expected;
+        if (instantiation) {
+            complete = true;
+            instantiated_context = regular_term_apply_level_instantiation(
+                arena, context, instantiation, budget, &complete);
+            instantiated_context = complete && instantiated_context
+                ? regular_context_deduplicate_declarations(
+                      arena, instantiated_context, budget, &complete)
+                : NULL;
+            instantiated_expected = complete
+                ? regular_term_apply_level_instantiation(
+                      arena, expected, instantiation, budget, &complete)
+                : NULL;
+        }
+        if (!complete || !instantiated_context || !instantiated_expected)
+            return regular_formed_schema_result(
+                budget && budget->limited && budget->remaining == 0u
+                    ? CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED
+                    : CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE,
+                NULL,
+                budget && budget->limited && budget->remaining == 0u
+                    ? "level-instantiation-budget"
+                    : "level-instantiation-substitution-failed");
+        CettaPrimeRegularKernelPreparedExpectedResultV1 replay =
+            cetta_prime_regular_kernel_prepare_intrinsic_expected_v1(
+                arena, instantiated_context, instantiated_expected, budget);
+        if (!instantiation ||
+            regular_level_search_over(replay.status, instantiation, raises))
+            return regular_formed_schema_result(
+                replay.status,
+                replay.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED
+                    ? instantiated_expected : NULL,
+                replay.reason);
+        if (regular_level_search_exhausted(instantiation, round))
+            return regular_formed_schema_result(
+                CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS, NULL,
+                "level-instantiation-does-not-settle");
     }
-    if (!complete || !instantiated_context || !instantiated_expected)
-        return regular_formed_schema_result(
-            budget && budget->limited && budget->remaining == 0u
-                ? CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED
-                : CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE,
-            NULL,
-            budget && budget->limited && budget->remaining == 0u
-                ? "level-instantiation-budget"
-                : "level-instantiation-substitution-failed");
-    CettaPrimeRegularKernelPreparedExpectedResultV1 replay =
-        cetta_prime_regular_kernel_prepare_intrinsic_expected_v1(
-            arena, instantiated_context, instantiated_expected, budget);
-    return regular_formed_schema_result(
-        replay.status,
-        replay.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED
-            ? instantiated_expected : NULL,
-        replay.reason);
 }
 
 CettaPrimeRegularKernelResult
@@ -4246,6 +5930,76 @@ static CettaPrimeRegularKernelStatus regular_conv_contexts(
         budget, equal_out, reason_out, instantiation);
 }
 
+/* The conversion question while level parameters are being solved.  Only
+ * what every instance with the two terms equal satisfies is asked of the
+ * parameters, so that what they hold stays below every such instance
+ * (Mettapedia, TypeTheory/UniverseLevel/LeastInstance.lean, `Below.step`).
+ *   Two terms equal at a common type have synthesized types with a common
+ *   upper bound.  That asks for equal domains of function types and for
+ *   nothing of universes in result position, so the types are tested for
+ *   apartness and never made equal: a parameter that the typing fixes is
+ *   not raised to bring one synthesized universe up to the other.
+ *   The terms are then compared at the left type.  A comparison at a type
+ *   reads the type's formers and domains and no level in result position,
+ *   and those are the same in every common upper bound.
+ * The trials of the fixed-level decision (equal synthesized types, one side
+ * at the other's type) are not made here: each is sufficient and none is
+ * necessary, and a raise made for one would not be forced. */
+static CettaPrimeRegularKernelConversionDecision
+regular_decide_conversion_solving_levels(
+    Arena *arena, Atom *context, Atom *left, Atom *right,
+    PrimeRegularKernelInfer left_type, PrimeRegularKernelInfer right_type,
+    CettaPrimeRegularKernelBudget *budget,
+    PrimeRegularLevelInstantiation *instantiation) {
+    const char *reason = NULL;
+    if (regular_principal(left_type) && regular_principal(right_type)) {
+        bool apart = false;
+        CettaPrimeRegularKernelStatus separated = regular_types_apart(
+            arena, context, left_type.type, right_type.type, budget, &apart,
+            &reason, instantiation);
+        if (separated != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
+            return (CettaPrimeRegularKernelConversionDecision){
+                .status = separated,
+                .operands_admitted = true,
+                .left_type = left_type.type,
+                .right_type = right_type.type,
+                .reason = reason,
+            };
+        if (apart)
+            return (CettaPrimeRegularKernelConversionDecision){
+                .status = CETTA_PRIME_REGULAR_KERNEL_REFUTED,
+                .operands_admitted = true,
+                .left_type = left_type.type,
+                .right_type = right_type.type,
+                .reason = "conversion-type-mismatch",
+            };
+    }
+    bool equal = false;
+    CettaPrimeRegularKernelStatus converted = regular_conv_at(
+        arena, context, left, right, left_type.type, budget, &equal, &reason,
+        instantiation);
+    if (converted != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
+        return (CettaPrimeRegularKernelConversionDecision){
+            .status = converted,
+            .operands_admitted = true,
+            .left_type = left_type.type,
+            .right_type = right_type.type,
+            .reason = reason,
+        };
+    return (CettaPrimeRegularKernelConversionDecision){
+        .status = equal ? CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED
+            : (regular_unrelated_refuted(left_type, right_type) &&
+                 !regular_mentions_guarded(left) && !regular_mentions_guarded(right))
+                ? CETTA_PRIME_REGULAR_KERNEL_REFUTED
+                : CETTA_PRIME_REGULAR_KERNEL_UNDECIDED,
+        .operands_admitted = true,
+        .equal = equal,
+        .left_type = left_type.type,
+        .right_type = right_type.type,
+        .reason = equal ? NULL : "not-convertible",
+    };
+}
+
 static CettaPrimeRegularKernelConversionDecision
 regular_decide_prepared_conversion(
     Arena *arena, Atom *left_context, Atom *left,
@@ -4293,10 +6047,14 @@ regular_decide_prepared_conversion(
         };
     left_inferred_type = left_type.type;
     right_inferred_type = right_type.type;
+    if (instantiation)
+        return regular_decide_conversion_solving_levels(
+            arena, left_context, left, right, left_type, right_type, budget,
+            instantiation);
     bool types_equal = false;
     CettaPrimeRegularKernelStatus type_conversion = regular_conv_types(
         arena, left_context, left_type.type, right_type.type, budget,
-        &types_equal, &reason, instantiation);
+        &types_equal, &reason, NULL);
     if (type_conversion != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
         return (CettaPrimeRegularKernelConversionDecision){
             .status = type_conversion,
@@ -4327,7 +6085,7 @@ regular_decide_prepared_conversion(
             bool equal_types = false;
             CettaPrimeRegularKernelStatus as_types = regular_conv_types(
                 arena, left_context, left, right, budget, &equal_types,
-                &reason, instantiation);
+                &reason, NULL);
             if (as_types != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
                 return (CettaPrimeRegularKernelConversionDecision){
                     .status = as_types,
@@ -4338,7 +6096,8 @@ regular_decide_prepared_conversion(
                 };
             return (CettaPrimeRegularKernelConversionDecision){
                 .status = equal_types ? CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED
-                    : regular_principal(left_type) || regular_principal(right_type)
+                    : (regular_unrelated_refuted(left_type, right_type) &&
+                 !regular_mentions_guarded(left) && !regular_mentions_guarded(right))
                         ? CETTA_PRIME_REGULAR_KERNEL_REFUTED
                         : CETTA_PRIME_REGULAR_KERNEL_UNDECIDED,
                 .operands_admitted = true,
@@ -4348,13 +6107,6 @@ regular_decide_prepared_conversion(
                 .reason = equal_types ? NULL : "not-convertible",
             };
         }
-        /* A trial that proves nothing leaves no level assignment behind. */
-        size_t level_count = instantiation ? instantiation->count : 0u;
-        Atom **level_snapshot = level_count
-            ? arena_alloc(arena, sizeof(Atom *) * level_count) : NULL;
-        if (level_snapshot)
-            memcpy(level_snapshot, instantiation->assignments,
-                   sizeof(Atom *) * level_count);
         /* Terms whose principal synthesized types have no common upper bound
          * are equal at no type (`Synth.not_equal_types`).  Distinct principal
          * types alone do not suffice: a family into `Sort 0` and one into
@@ -4363,7 +6115,7 @@ regular_decide_prepared_conversion(
             bool apart = false;
             CettaPrimeRegularKernelStatus separated = regular_types_apart(
                 arena, left_context, left_inferred_type, right_inferred_type,
-                budget, &apart, &reason, instantiation);
+                budget, &apart, &reason, NULL);
             if (separated == CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED ||
                 separated == CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE)
                 return (CettaPrimeRegularKernelConversionDecision){
@@ -4381,9 +6133,6 @@ regular_decide_prepared_conversion(
                     .right_type = right_inferred_type,
                     .reason = "conversion-type-mismatch",
                 };
-            if (level_snapshot)
-                memcpy(instantiation->assignments, level_snapshot,
-                       sizeof(Atom *) * level_count);
         }
         /* One side may also have the other's synthesized type.  If it checks
          * there, the two are compared there: equality there is equality at a
@@ -4400,10 +6149,7 @@ regular_decide_prepared_conversion(
             const char *common_reason = NULL;
             CettaPrimeRegularKernelStatus fits = regular_check_term(
                 arena, left_context, subject, common, budget,
-                &common_reason, instantiation);
-            if (fits != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED && level_snapshot)
-                memcpy(instantiation->assignments, level_snapshot,
-                       sizeof(Atom *) * level_count);
+                &common_reason, NULL);
             if (fits == CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED ||
                 fits == CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE)
                 return (CettaPrimeRegularKernelConversionDecision){
@@ -4417,7 +6163,7 @@ regular_decide_prepared_conversion(
             bool equal_at_common = false;
             CettaPrimeRegularKernelStatus compared = regular_conv_at(
                 arena, left_context, left, right, common, budget,
-                &equal_at_common, &reason, instantiation);
+                &equal_at_common, &reason, NULL);
             if (compared != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
                 return (CettaPrimeRegularKernelConversionDecision){
                     .status = compared,
@@ -4434,7 +6180,8 @@ regular_decide_prepared_conversion(
                     .left_type = left_inferred_type,
                     .right_type = right_inferred_type,
                 };
-            if (common_principal)
+            if (common_principal && !regular_mentions_guarded(left) &&
+                !regular_mentions_guarded(right))
                 return (CettaPrimeRegularKernelConversionDecision){
                     .status = CETTA_PRIME_REGULAR_KERNEL_REFUTED,
                     .operands_admitted = true,
@@ -4442,9 +6189,6 @@ regular_decide_prepared_conversion(
                     .right_type = right_inferred_type,
                     .reason = "not-convertible",
                 };
-            if (level_snapshot)
-                memcpy(instantiation->assignments, level_snapshot,
-                       sizeof(Atom *) * level_count);
         }
         return (CettaPrimeRegularKernelConversionDecision){
             .status = CETTA_PRIME_REGULAR_KERNEL_UNDECIDED,
@@ -4458,7 +6202,7 @@ regular_decide_prepared_conversion(
     bool equal = false;
     CettaPrimeRegularKernelStatus converted = regular_conv_at(
         arena, left_context, left, right, left_type.type, budget, &equal,
-        &reason, instantiation);
+        &reason, NULL);
     if (converted != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
         return (CettaPrimeRegularKernelConversionDecision){
             .status = converted,
@@ -4469,7 +6213,8 @@ regular_decide_prepared_conversion(
         };
     return (CettaPrimeRegularKernelConversionDecision){
         .status = equal ? CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED
-            : regular_principal(left_type) || regular_principal(right_type)
+            : (regular_unrelated_refuted(left_type, right_type) &&
+                 !regular_mentions_guarded(left) && !regular_mentions_guarded(right))
                 ? CETTA_PRIME_REGULAR_KERNEL_REFUTED
                 : CETTA_PRIME_REGULAR_KERNEL_UNDECIDED,
         .operands_admitted = true,
@@ -4570,68 +6315,138 @@ cetta_prime_regular_kernel_decide_intrinsic_conversion_instantiating_levels_v1(
             .status = CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE,
             .reason = "invalid-level-instantiation-parameters",
         };
-    uint64_t context_length = 0u;
+    for (size_t round = 0u;; round++) {
+        size_t raises = instantiation.raises;
+        uint64_t context_length = 0u;
+        const char *reason = NULL;
+        CettaPrimeRegularKernelStatus context_status = regular_context_valid(
+            arena, context, budget, &context_length, &reason, &instantiation);
+        if (context_status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
+            return (CettaPrimeRegularKernelConversionDecision){
+                .status = context_status,
+                .reason = reason,
+            };
+        bool complete = true;
+        if (!regular_intrinsic_scope_check(
+                left, context_length, budget, &complete) ||
+            !regular_intrinsic_scope_check(
+                right, context_length, budget, &complete))
+            return (CettaPrimeRegularKernelConversionDecision){
+                .status = complete
+                    ? CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS
+                    : CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED,
+                .reason = complete ? "outside-intrinsic-conversion"
+                                   : "intrinsic-conversion-budget",
+            };
+
+        CettaPrimeRegularKernelConversionDecision proposed =
+            regular_decide_prepared_conversion(
+                arena, context, left, context, right, budget, &instantiation);
+        if (proposed.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED &&
+            proposed.status != CETTA_PRIME_REGULAR_KERNEL_REFUTED)
+            return proposed;
+        if (!regular_level_instantiation_default_zero(arena, &instantiation))
+            return (CettaPrimeRegularKernelConversionDecision){
+                .status = CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE,
+                .reason = "level-instantiation-default-failed",
+            };
+
+        complete = true;
+        Atom *instantiated_context = regular_term_apply_level_instantiation(
+            arena, context, &instantiation, budget, &complete);
+        instantiated_context = complete && instantiated_context
+            ? regular_context_deduplicate_declarations(
+                  arena, instantiated_context, budget, &complete)
+            : NULL;
+        Atom *instantiated_left = complete
+            ? regular_term_apply_level_instantiation(
+                  arena, left, &instantiation, budget, &complete)
+            : NULL;
+        Atom *instantiated_right = complete
+            ? regular_term_apply_level_instantiation(
+                  arena, right, &instantiation, budget, &complete)
+            : NULL;
+        if (!complete || !instantiated_context || !instantiated_left ||
+            !instantiated_right)
+            return (CettaPrimeRegularKernelConversionDecision){
+                .status = budget->limited && budget->remaining == 0u
+                    ? CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED
+                    : CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE,
+                .reason = budget->limited && budget->remaining == 0u
+                    ? "level-instantiation-budget"
+                    : "level-instantiation-substitution-failed",
+            };
+        CettaPrimeRegularKernelConversionDecision decision =
+            cetta_prime_regular_kernel_decide_intrinsic_conversion_v1(
+                arena, instantiated_context, instantiated_left,
+                instantiated_right, budget);
+        if (regular_level_search_over(
+                decision.status, &instantiation, raises)) {
+            /* The instance found is below every instance at which the two
+             * terms are equal.  That they are unequal at it refutes the
+             * question only when the search refuted it from what every
+             * instance needs; otherwise a larger instance may have them
+             * equal, and the question stays open. */
+            if (decision.status == CETTA_PRIME_REGULAR_KERNEL_REFUTED &&
+                proposed.status != CETTA_PRIME_REGULAR_KERNEL_REFUTED)
+                return (CettaPrimeRegularKernelConversionDecision){
+                    .status = CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS,
+                    .operands_admitted = decision.operands_admitted,
+                    .left_type = decision.left_type,
+                    .right_type = decision.right_type,
+                    .reason = "conversion-refuted-at-least-instance-only",
+                };
+            return decision;
+        }
+        if (regular_level_search_exhausted(&instantiation, round))
+            return (CettaPrimeRegularKernelConversionDecision){
+                .status = CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS,
+                .reason = "level-instantiation-does-not-settle",
+            };
+    }
+}
+
+CettaPrimeRegularKernelStatus
+cetta_prime_regular_kernel_raise_level_parameters_v1(
+    Arena *arena, Atom *level, Atom *bound,
+    const uint64_t *parameters, Atom **assignments, size_t parameter_count,
+    CettaPrimeRegularKernelBudget *budget, bool *outside_out) {
+    if (!arena || !level || !bound || !budget || !outside_out ||
+        (parameter_count != 0u && (!parameters || !assignments)))
+        return CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE;
+    PrimeRegularLevelInstantiation instantiation = {
+        .parameters = parameters,
+        .assignments = assignments,
+        .count = parameter_count,
+    };
     const char *reason = NULL;
-    CettaPrimeRegularKernelStatus context_status = regular_context_valid(
-        arena, context, budget, &context_length, &reason, &instantiation);
-    if (context_status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
-        return (CettaPrimeRegularKernelConversionDecision){
-            .status = context_status,
-            .reason = reason,
-        };
-    bool complete = true;
-    if (!regular_intrinsic_scope_check(
-            left, context_length, budget, &complete) ||
-        !regular_intrinsic_scope_check(
-            right, context_length, budget, &complete))
-        return (CettaPrimeRegularKernelConversionDecision){
-            .status = complete
-                ? CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS
-                : CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED,
-            .reason = complete ? "outside-intrinsic-conversion"
-                               : "intrinsic-conversion-budget",
-        };
-
-    CettaPrimeRegularKernelConversionDecision proposed =
-        regular_decide_prepared_conversion(
-            arena, context, left, context, right, budget, &instantiation);
-    if (proposed.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED &&
-        proposed.status != CETTA_PRIME_REGULAR_KERNEL_REFUTED)
-        return proposed;
-    if (!regular_level_instantiation_default_zero(arena, &instantiation))
-        return (CettaPrimeRegularKernelConversionDecision){
-            .status = CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE,
-            .reason = "level-instantiation-default-failed",
-        };
-
-    complete = true;
-    Atom *instantiated_context = regular_term_apply_level_instantiation(
-        arena, context, &instantiation, budget, &complete);
-    instantiated_context = complete && instantiated_context
-        ? regular_context_deduplicate_declarations(
-              arena, instantiated_context, budget, &complete)
-        : NULL;
-    Atom *instantiated_left = complete
-        ? regular_term_apply_level_instantiation(
-              arena, left, &instantiation, budget, &complete)
-        : NULL;
-    Atom *instantiated_right = complete
-        ? regular_term_apply_level_instantiation(
-              arena, right, &instantiation, budget, &complete)
-        : NULL;
-    if (!complete || !instantiated_context || !instantiated_left ||
-        !instantiated_right)
-        return (CettaPrimeRegularKernelConversionDecision){
-            .status = budget->limited && budget->remaining == 0u
-                ? CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED
-                : CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE,
-            .reason = budget->limited && budget->remaining == 0u
-                ? "level-instantiation-budget"
-                : "level-instantiation-substitution-failed",
-        };
-    return cetta_prime_regular_kernel_decide_intrinsic_conversion_v1(
-        arena, instantiated_context, instantiated_left,
-        instantiated_right, budget);
+    PrimeRegularLevelRaise found = PRIME_REGULAR_LEVEL_RAISED;
+    *outside_out = false;
+    CettaPrimeRegularKernelStatus status =
+        regular_level_raise_instantiation_parameters(
+            arena, level, bound, &instantiation, budget, &found, &reason);
+    if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return status;
+    if (found == PRIME_REGULAR_LEVEL_RAISE_UNREACHABLE)
+        return CETTA_PRIME_REGULAR_KERNEL_REFUTED;
+    *outside_out = found == PRIME_REGULAR_LEVEL_RAISE_OUTSIDE;
+    if (*outside_out) return status;
+    for (size_t index = 0u; index < parameter_count; index++) {
+        if (!assignments[index]) continue;
+        const CettaPrimeLevelV1 *held = NULL;
+        CettaPrimeLevelViewV1 view = {0};
+        status = regular_decode_level(
+            arena, assignments[index], budget, &held, &reason);
+        if (status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) return status;
+        if (!cetta_prime_level_view_v1(held, &view) ||
+            view.parameter_count != 0u)
+            return CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS;
+        assignments[index] = view.constant
+            ? regular_level_constant_syntax(arena, view.constant)
+            : regular_level_zero_syntax(arena);
+        if (!assignments[index])
+            return CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS;
+    }
+    return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
 }
 
 CettaPrimeRegularKernelResult cetta_prime_regular_kernel_convert(

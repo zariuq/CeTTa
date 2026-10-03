@@ -5281,6 +5281,61 @@ static Atom *term_universe_decode_atom(TermUniverse *universe, AtomId id) {
     return NULL;
 }
 
+/* Decode one entry and remember the atom.  The children of an expression are
+ * decoded on the way, so the depth of this call is the depth of the entries
+ * under it that are not decoded yet. */
+static Atom *term_universe_decode_entry(TermUniverse *universe, AtomId id) {
+    size_t physical_index = 0;
+    if (!term_universe_atom_id_to_physical_index(universe, id, &physical_index))
+        return NULL;
+    TermEntry *entry = &universe->entries[physical_index];
+    if (entry->decoded_cache)
+        return entry->decoded_cache;
+    if (!term_universe_entry_has_blob(entry))
+        return NULL;
+    Atom *decoded = term_universe_decode_atom(universe, id);
+    entry = &universe->entries[physical_index];
+    entry->decoded_cache = decoded;
+    if (entry->decoded_cache) {
+        TU_DIAG_INC(universe, lazy_decode_count);
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE);
+    }
+    term_universe_track_ptr_id(universe, id);
+    return entry->decoded_cache;
+}
+
+/* The expression child of an expression entry, from its `next` child on,
+ * that has a blob and is not decoded yet.  Children of other kinds decode
+ * without recursion and are left to the decoding of the expression. */
+static bool term_universe_next_undecoded_expr_child(
+    const TermUniverse *universe, AtomId id, uint32_t *next,
+    AtomId *child_out) {
+    const CettaTermHdr *hdr = tu_hdr(universe, id);
+    const uint8_t *payload = term_universe_payload(universe, id);
+    if (!hdr || !payload || (AtomKind)hdr->tag != ATOM_EXPR)
+        return false;
+    uint32_t len = term_universe_aux_data(hdr);
+    size_t atom_id_width = term_universe_atom_id_storage_width_bytes(universe);
+    while (*next < len) {
+        AtomId child_id = term_universe_load_stored_atom_id(
+            universe, payload + ((size_t)*next * atom_id_width));
+        (*next)++;
+        const TermEntry *child = term_universe_entry(universe, child_id);
+        if (!child || child->decoded_cache ||
+            !term_universe_entry_has_blob(child))
+            continue;
+        const CettaTermHdr *child_hdr = tu_hdr(universe, child_id);
+        if (child_hdr && (AtomKind)child_hdr->tag == ATOM_EXPR) {
+            *child_out = child_id;
+            return true;
+        }
+    }
+    return false;
+}
+
+/* An expression is decoded without recursing on its depth: the expressions
+ * under it that are not decoded yet are decoded first, deepest first, from a
+ * stack of ids, so that each one finds its expression children decoded. */
 Atom *term_universe_get_atom(const TermUniverse *universe, AtomId id) {
     size_t physical_index = 0;
     if (!term_universe_atom_id_to_physical_index(universe, id, &physical_index))
@@ -5291,13 +5346,52 @@ Atom *term_universe_get_atom(const TermUniverse *universe, AtomId id) {
         return entry->decoded_cache;
     if (!term_universe_entry_has_blob(entry))
         return NULL;
-    entry->decoded_cache = term_universe_decode_atom(mutable_universe, id);
-    if (entry->decoded_cache) {
-        TU_DIAG_INC(mutable_universe, lazy_decode_count);
-        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE);
+    uint32_t probe = 0u;
+    AtomId first_child = CETTA_ATOM_ID_NONE;
+    if (!term_universe_next_undecoded_expr_child(
+            universe, id, &probe, &first_child))
+        return term_universe_decode_entry(mutable_universe, id);
+
+    typedef struct {
+        AtomId id;
+        uint32_t next;
+    } DecodeFrame;
+    enum { DECODE_INLINE_FRAMES = 32u };
+    DecodeFrame inline_frames[DECODE_INLINE_FRAMES];
+    DecodeFrame *frames = inline_frames;
+    size_t len = 0u, cap = DECODE_INLINE_FRAMES;
+    frames[len++] = (DecodeFrame){.id = id, .next = 0u};
+    Atom *result = NULL;
+    while (len > 0u) {
+        DecodeFrame *top = &frames[len - 1u];
+        AtomId child = CETTA_ATOM_ID_NONE;
+        if (term_universe_next_undecoded_expr_child(
+                universe, top->id, &top->next, &child)) {
+            if (len == cap) {
+                if (cap > SIZE_MAX / 2u / sizeof *frames)
+                    break;
+                size_t next_cap = cap * 2u;
+                DecodeFrame *grown = frames == inline_frames
+                    ? cetta_malloc(sizeof *frames * next_cap)
+                    : cetta_realloc(frames, sizeof *frames * next_cap);
+                if (frames == inline_frames)
+                    memcpy(grown, inline_frames, sizeof *frames * len);
+                frames = grown;
+                cap = next_cap;
+            }
+            frames[len++] = (DecodeFrame){.id = child, .next = 0u};
+            continue;
+        }
+        Atom *decoded = term_universe_decode_entry(mutable_universe,
+                                                   frames[len - 1u].id);
+        if (!decoded)
+            break;
+        if (--len == 0u)
+            result = decoded;
     }
-    term_universe_track_ptr_id(mutable_universe, id);
-    return entry->decoded_cache;
+    if (frames != inline_frames)
+        free(frames);
+    return result;
 }
 
 Atom *term_universe_store_atom(TermUniverse *universe, Arena *fallback,

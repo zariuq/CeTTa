@@ -54,6 +54,116 @@ static bool pattern_head_named(const Atom *atom, const char *name) {
            atom_is_symbol(atom->expr.elems[0], name);
 }
 
+/* A numeral of the level wire: a natural number of any size. */
+static bool pattern_numeral(const Atom *atom) {
+    return cetta_prime_regular_kernel_level_numeral_v1(atom);
+}
+
+/* Whether such a numeral is zero. */
+static bool pattern_numeral_zero(const Atom *numeral) {
+    if (numeral->ground.gkind == GV_INT) return numeral->ground.ival == 0;
+    const char *digits = atom_bigint_cstr(numeral);
+    while (*digits == '0') digits++;
+    return *digits == '\0';
+}
+
+/* A closed level constant of the kernel, read by its shape: a
+ * `(LevelCantor exponent coefficient remainder)` is a term and a
+ * `(LevelAbove n)` a level above the Cantor normal forms.  Anything else is
+ * a leaf, which the scan then requires to be a `(LevelConst n)`. */
+static bool pattern_level_constant_read(
+    const void *handle, CettaPrimeLevelNotationReadTermV1 *term_out) {
+    const Atom *constant = handle;
+    if (pattern_tag(constant, "LevelAbove", 2u)) {
+        *term_out = (CettaPrimeLevelNotationReadTermV1){
+            .above = true,
+            .number = constant->expr.elems[1],
+        };
+        return true;
+    }
+    if (!pattern_tag(constant, "LevelCantor", 4u)) return false;
+    *term_out = (CettaPrimeLevelNotationReadTermV1){
+        .exponent = constant->expr.elems[1],
+        .number = constant->expr.elems[2],
+        .remainder = constant->expr.elems[3],
+    };
+    return true;
+}
+
+/* The scan of a closed level constant, one constant of it at a time.  The
+ * constant the scan starts from is paid for by the caller. */
+typedef struct {
+    const Atom *root;
+    CettaPrimeRegularKernelBudget *budget;
+    PatternScanStatus status;
+} PatternLevelConstantScan;
+
+/* One step for a constant, and whether it has the shape asked of it. */
+static CettaPrimeLevelStatusV1 pattern_level_constant_scan(
+    PatternLevelConstantScan *scan, const void *handle, bool shaped) {
+    if (handle != scan->root && !pattern_spend(scan->budget))
+        scan->status = PATTERN_SCAN_BUDGET;
+    else if (!shaped)
+        scan->status = PATTERN_SCAN_INVALID;
+    return scan->status == PATTERN_SCAN_OK
+        ? CETTA_PRIME_LEVEL_OK_V1 : CETTA_PRIME_LEVEL_INVALID_ARGUMENT_V1;
+}
+
+static CettaPrimeLevelStatusV1 pattern_level_constant_scan_leaf(
+    void *context, const void *handle, void **value_out) {
+    const Atom *constant = handle;
+    *value_out = NULL;
+    return pattern_level_constant_scan(
+        context, handle,
+        pattern_tag(constant, "LevelConst", 2u) &&
+            pattern_numeral(constant->expr.elems[1]));
+}
+
+static CettaPrimeLevelStatusV1 pattern_level_constant_scan_above(
+    void *context, const void *handle,
+    const CettaPrimeLevelNotationReadTermV1 *read, void **value_out) {
+    *value_out = NULL;
+    return pattern_level_constant_scan(
+        context, handle, pattern_numeral(read->number));
+}
+
+static CettaPrimeLevelStatusV1 pattern_level_constant_scan_term(
+    void *context, const void *handle,
+    const CettaPrimeLevelNotationReadTermV1 *read, void *exponent_value,
+    void *remainder_value, void **value_out) {
+    (void)exponent_value;
+    (void)remainder_value;
+    *value_out = NULL;
+    return pattern_level_constant_scan(
+        context, handle, pattern_numeral(read->number));
+}
+
+/* The shape of a closed level constant of the kernel: `(LevelConst n)`,
+ * `(LevelCantor exponent coefficient remainder)` over two such constants, or
+ * `(LevelAbove n)`.  Whether it is a normal form is the kernel's question.
+ * The step of the constant itself is the caller's; each constant inside it
+ * is one step more. */
+static PatternScanStatus pattern_validate_level_constant(
+    Atom *constant, CettaPrimeRegularKernelBudget *budget) {
+    static const CettaPrimeLevelNotationFoldV1 fold = {
+        .zero = pattern_level_constant_scan_leaf,
+        .above = pattern_level_constant_scan_above,
+        .term = pattern_level_constant_scan_term,
+    };
+    PatternLevelConstantScan scan = {
+        .root = constant,
+        .budget = budget,
+        .status = PATTERN_SCAN_OK,
+    };
+    void *scanned = NULL;
+    CettaPrimeLevelStatusV1 status = cetta_prime_level_notation_fold_read_v1(
+        pattern_level_constant_read, &fold, &scan, constant, &scanned);
+    /* A scan that had no memory to finish is not finished. */
+    if (status == CETTA_PRIME_LEVEL_OUT_OF_MEMORY_V1)
+        return PATTERN_SCAN_BUDGET;
+    return scan.status;
+}
+
 /* Declaration occurrences are introduced only after authored syntax has
  * been lowered to Pattern.  They retain the global source name while making
  * each occurrence's fresh universe arguments explicit.  Validate this
@@ -61,12 +171,17 @@ static bool pattern_head_named(const Atom *atom, const char *name) {
 static PatternScanStatus pattern_validate_decl_const_level(
     Atom *level, CettaPrimeRegularKernelBudget *budget) {
     if (!pattern_spend(budget)) return PATTERN_SCAN_BUDGET;
-    if ((pattern_tag(level, "LevelConst", 2u) ||
-         pattern_tag(level, "LevelParam", 2u)) &&
+    if (pattern_tag(level, "LevelParam", 2u) &&
         pattern_natural(level->expr.elems[1], NULL)) {
         return PATTERN_SCAN_OK;
     }
-    if (pattern_tag(level, "LevelSucc", 2u))
+    if (pattern_tag(level, "LevelConst", 2u) ||
+        pattern_tag(level, "LevelCantor", 4u) ||
+        pattern_tag(level, "LevelAbove", 2u))
+        return pattern_validate_level_constant(level, budget);
+    if (pattern_tag(level, "LevelSucc", 2u) ||
+        (pattern_tag(level, "LevelOffset", 3u) &&
+         pattern_numeral(level->expr.elems[2])))
         return pattern_validate_decl_const_level(
             level->expr.elems[1], budget);
     if (pattern_tag(level, "LevelMax", 3u)) {
@@ -425,32 +540,393 @@ static CettaPrimeRegularTermElaborationV1 regular_term_weaken_pattern(
             arena, pattern->expr.elems[0], pattern->expr.elems[1], list));
     }
     if (pattern_tag(pattern, "FVar", 2u) ||
-        pattern_head_named(pattern, "DeclConst") || pattern_natural(pattern, NULL))
+        pattern_head_named(pattern, "DeclConst") || pattern_numeral(pattern))
         return regular_term_success(pattern);
     return regular_term_failure(
         CETTA_PRIME_REGULAR_TERM_OUT_OF_CLASS,
         "unsupported-regular-pattern-weakening-constructor");
 }
 
-/* Numeric universe notation is syntax sugar for the ordinary inductive
- * level language.  Keeping this as Pattern structure avoids adding a
- * grounded-literal escape hatch to the shared inference carrier. */
-static CettaPrimeRegularTermElaborationV1
-regular_term_pattern_closed_universe(
-    Arena *arena, uint64_t level,
-    CettaPrimeRegularKernelBudget *budget) {
-    Atom *level_pattern = regular_term_pattern_application(
-        arena, "LevelZero", NULL, 0u);
-    for (uint64_t index = 0u; index < level; index++) {
-        if (!pattern_spend(budget))
-            return regular_term_failure(
-                CETTA_PRIME_REGULAR_TERM_BUDGET_EXHAUSTED,
-                "universe-level-elaboration-budget");
-        Atom *arguments[1] = {level_pattern};
-        level_pattern = regular_term_pattern_application(
-            arena, "LevelSucc", arguments, 1u);
+/* Inside `(u ...)` an author writes a closed level as an expression over
+ * the natural numbers and omega:
+ *
+ *   n                      a numeral, of any length
+ *   omega                  also written with the Greek letter
+ *   (+ a b ...)            the sum of two or more closed levels
+ *   (* a b)                the product of two closed levels
+ *   (^ a b)                a closed level to the power of another
+ *   (max a b)              the larger of two closed levels
+ *
+ * `+`, `*`, `^` and `max` are level syntax here, and the sum, product and
+ * power are those of the ordinals: among natural numbers they are those of
+ * the numbers, and beyond them they are not commutative, so `(+ 1 omega)` is
+ * omega and `(+ omega 1)` is its successor.  The level read is the Cantor
+ * normal form of the value, the notation below epsilon-zero that the level
+ * library computes; a normal form written as such, like
+ * `(+ (^ omega 2) (* omega 3) 1)`, is read as itself.  Outside `(u ...)` all
+ * of these are ordinary symbols. */
+
+/* The Greek letter omega, U+03C9, in UTF-8. */
+#define REGULAR_LEVEL_OMEGA_LETTER "\xcf\x89"
+
+/* The reason a closed level is read incompletely whatever the budget: there
+ * was no memory for it, or for a level its value is computed from. */
+static const char regular_level_memory_reason[] = "level-out-of-memory";
+
+/* The reason a closed level is read incompletely in a computation that has
+ * no budget of its own: its value takes more steps than the default
+ * allowance of level arithmetic. */
+static const char regular_level_allowance_reason[] =
+    "level-arithmetic-allowance";
+
+bool cetta_prime_regular_term_level_incomplete_v1(
+    const CettaPrimeRegularTermElaborationV1 *lowered) {
+    return lowered &&
+           lowered->status == CETTA_PRIME_REGULAR_TERM_BUDGET_EXHAUSTED &&
+           (lowered->reason == regular_level_memory_reason ||
+            lowered->reason == regular_level_allowance_reason);
+}
+
+/* How a closed level reads, from best to worst.  A level there was no
+ * memory for is a level, read incompletely.  What is no level at all is
+ * refused whatever else holds. */
+typedef enum {
+    REGULAR_LEVEL_READ_OK = 0,
+    REGULAR_LEVEL_READ_MEMORY,
+    REGULAR_LEVEL_READ_INVALID,
+    REGULAR_LEVEL_READ_BUDGET
+} RegularLevelReadStatus;
+
+static bool regular_level_omega(Atom *atom) {
+    return atom && (atom_is_symbol(atom, "omega") ||
+                    atom_is_symbol(atom, REGULAR_LEVEL_OMEGA_LETTER));
+}
+
+/* The level library computes with normal forms and returns normal forms, so
+ * what it does not return it had no steps left for in the budget, or no
+ * memory. */
+static RegularLevelReadStatus regular_level_read_status(
+    CettaPrimeLevelStatusV1 status) {
+    return status == CETTA_PRIME_LEVEL_OK_V1 ? REGULAR_LEVEL_READ_OK
+        : status == CETTA_PRIME_LEVEL_BUDGET_EXHAUSTED_V1
+            ? REGULAR_LEVEL_READ_BUDGET
+        : REGULAR_LEVEL_READ_MEMORY;
+}
+
+static RegularLevelReadStatus regular_level_read(
+    Arena *arena, Atom *syntax, CettaPrimeRegularKernelBudget *budget,
+    const CettaPrimeLevelNotationV1 **notation_out) {
+    *notation_out = NULL;
+    if (!pattern_spend(budget)) return REGULAR_LEVEL_READ_BUDGET;
+    const CettaPrimeLevelNaturalV1 *natural = NULL;
+    if (pattern_numeral(syntax)) {
+        CettaPrimeLevelStatusV1 status =
+            cetta_prime_regular_kernel_level_numeral_value_v1(
+                arena, syntax, &natural);
+        if (status == CETTA_PRIME_LEVEL_OK_V1)
+            status = cetta_prime_level_notation_natural_v1(
+                arena, natural, notation_out);
+        return regular_level_read_status(status);
     }
-    Atom *arguments[1] = {level_pattern};
+    if (regular_level_omega(syntax)) {
+        const CettaPrimeLevelNotationV1 *one = NULL;
+        CettaPrimeLevelStatusV1 status =
+            cetta_prime_level_natural_v1(arena, 1u, &natural);
+        if (status == CETTA_PRIME_LEVEL_OK_V1)
+            status = cetta_prime_level_notation_natural_v1(
+                arena, natural, &one);
+        if (status == CETTA_PRIME_LEVEL_OK_V1)
+            status = cetta_prime_level_notation_v1(
+                arena, one, natural, NULL, notation_out);
+        return regular_level_read_status(status);
+    }
+    if (!syntax || syntax->kind != ATOM_EXPR || syntax->expr.len < 3u)
+        return REGULAR_LEVEL_READ_INVALID;
+    Atom *head = syntax->expr.elems[0];
+    bool sum = atom_is_symbol(head, "+");
+    bool product = atom_is_symbol(head, "*");
+    bool power = atom_is_symbol(head, "^");
+    bool maximum = atom_is_symbol(head, "max");
+    if (!sum && !((product || power || maximum) && syntax->expr.len == 3u))
+        return REGULAR_LEVEL_READ_INVALID;
+    if (!cetta_expr_len_mul_fits_size(
+            syntax->expr.len, sizeof(const CettaPrimeLevelNotationV1 *)))
+        return REGULAR_LEVEL_READ_MEMORY;
+    size_t count = (size_t)syntax->expr.len - 1u;
+    const CettaPrimeLevelNotationV1 **parts =
+        arena_alloc(arena, sizeof(*parts) * count);
+    RegularLevelReadStatus worst = REGULAR_LEVEL_READ_OK;
+    for (size_t i = 0u; i < count; i++) {
+        RegularLevelReadStatus part = regular_level_read(
+            arena, syntax->expr.elems[i + 1u], budget, &parts[i]);
+        if (part == REGULAR_LEVEL_READ_BUDGET) return part;
+        if (part > worst) worst = part;
+    }
+    if (worst != REGULAR_LEVEL_READ_OK) return worst;
+    if (maximum) {
+        int order = 0;
+        CettaPrimeLevelStatusV1 status = cetta_prime_level_notation_compare_v1(
+            parts[0], parts[1], &order);
+        if (status != CETTA_PRIME_LEVEL_OK_V1)
+            return regular_level_read_status(status);
+        *notation_out = order < 0 ? parts[1] : parts[0];
+        return REGULAR_LEVEL_READ_OK;
+    }
+    /* A product and a power have two parts.  A sum is associative and is
+     * taken from its last summand back.  The work of each counts against
+     * the budget of the judgment. */
+    const CettaPrimeLevelNotationV1 *total = parts[count - 1u];
+    for (size_t i = count - 1u; i > 0u; i--) {
+        CettaPrimeLevelStatusV1 status =
+            sum ? cetta_prime_level_notation_add_v1(
+                      arena, parts[i - 1u], total, budget, &total)
+            : product ? cetta_prime_level_notation_mul_v1(
+                            arena, parts[i - 1u], total, budget, &total)
+            : cetta_prime_level_notation_pow_v1(
+                  arena, parts[i - 1u], total, budget, &total);
+        if (status != CETTA_PRIME_LEVEL_OK_V1)
+            return regular_level_read_status(status);
+    }
+    *notation_out = total;
+    return REGULAR_LEVEL_READ_OK;
+}
+
+/* The Pattern of a closed level constant, one notation of it at a time. */
+typedef struct {
+    Arena *arena;
+    Atom *zero;
+} RegularLevelConstantPattern;
+
+static CettaPrimeLevelStatusV1 regular_level_pattern_zero(
+    void *context, const void *handle, void **value_out) {
+    RegularLevelConstantPattern *pattern = context;
+    (void)handle;
+    if (!pattern->zero)
+        pattern->zero = regular_term_pattern_application(
+            pattern->arena, "LevelZero", NULL, 0u);
+    *value_out = pattern->zero;
+    return CETTA_PRIME_LEVEL_OK_V1;
+}
+
+static CettaPrimeLevelStatusV1 regular_level_pattern_above(
+    void *context, const void *handle,
+    const CettaPrimeLevelNotationReadTermV1 *read, void **value_out) {
+    RegularLevelConstantPattern *pattern = context;
+    (void)handle;
+    Atom *arguments[1] = {
+        cetta_prime_regular_kernel_level_numeral_atom_v1(
+            pattern->arena, read->number),
+    };
+    if (!arguments[0]) return CETTA_PRIME_LEVEL_OUT_OF_MEMORY_V1;
+    *value_out = regular_term_pattern_application(
+        pattern->arena, "LevelAbove", arguments, 1u);
+    return CETTA_PRIME_LEVEL_OK_V1;
+}
+
+static CettaPrimeLevelStatusV1 regular_level_pattern_term(
+    void *context, const void *handle,
+    const CettaPrimeLevelNotationReadTermV1 *read, void *exponent_value,
+    void *remainder_value, void **value_out) {
+    RegularLevelConstantPattern *pattern = context;
+    (void)handle;
+    Atom *arguments[3] = {
+        exponent_value,
+        cetta_prime_regular_kernel_level_numeral_atom_v1(
+            pattern->arena, read->number),
+        remainder_value,
+    };
+    if (!arguments[1]) return CETTA_PRIME_LEVEL_OUT_OF_MEMORY_V1;
+    *value_out = regular_term_pattern_application(
+        pattern->arena, "LevelCantor", arguments, 3u);
+    return CETTA_PRIME_LEVEL_OK_V1;
+}
+
+/* The Pattern of a closed level constant: `LevelZero`; `LevelCantor`
+ * applied to the constant of the exponent, the coefficient, and the constant
+ * of the remainder, where a natural number n is the term with exponent zero,
+ * `LevelCantor` of `LevelZero`, n and `LevelZero`; or `LevelAbove` applied
+ * to a number.  A number is a literal leaf, as the identifier of a level
+ * parameter is, and has any number of digits.  NULL when there is no memory
+ * for it. */
+static Atom *regular_term_pattern_level_constant(
+    Arena *arena, const CettaPrimeLevelNotationV1 *notation) {
+    static const CettaPrimeLevelNotationFoldV1 fold = {
+        .zero = regular_level_pattern_zero,
+        .above = regular_level_pattern_above,
+        .term = regular_level_pattern_term,
+    };
+    RegularLevelConstantPattern pattern = {.arena = arena};
+    void *constant = NULL;
+    return cetta_prime_level_notation_fold_read_v1(
+               cetta_prime_level_notation_read_v1, &fold, &pattern, notation,
+               &constant) == CETTA_PRIME_LEVEL_OK_V1
+        ? constant : NULL;
+}
+
+static bool regular_level_mentions_parameter(const Atom *level) {
+    if (regular_level_parameter_marker(level, NULL)) return true;
+    if (!level || level->kind != ATOM_EXPR) return false;
+    for (CettaExprIndex i = 0u; i < level->expr.len; i++)
+        if (regular_level_mentions_parameter(level->expr.elems[i]))
+            return true;
+    return false;
+}
+
+CettaPrimeRegularTermElaborationV1 cetta_prime_regular_term_closed_level_v1(
+    Arena *arena, Atom *level, CettaPrimeRegularKernelBudget *budget,
+    const CettaPrimeLevelNotationV1 **notation_out) {
+    if (notation_out) *notation_out = NULL;
+    if (!arena || !level || !notation_out)
+        return regular_term_failure(
+            CETTA_PRIME_REGULAR_TERM_OUT_OF_CLASS,
+            "invalid-closed-level-input");
+    /* A read whose budget counts nothing does its arithmetic within the
+     * default allowance: a level whose value takes more is read
+     * incompletely, and the computation goes on. */
+    CettaPrimeLevelBudgetV1 allowance;
+    CettaPrimeRegularKernelBudget within_allowance;
+    if (!cetta_prime_level_budget_limited_v1(budget)) {
+        cetta_prime_level_budget_allowance_v1(&allowance);
+        cetta_prime_regular_kernel_budget_init(&within_allowance, false, 0u);
+        within_allowance.within = &allowance;
+        budget = &within_allowance;
+    }
+    switch (regular_level_read(arena, level, budget, notation_out)) {
+    case REGULAR_LEVEL_READ_OK:
+        break;
+    case REGULAR_LEVEL_READ_BUDGET:
+        return regular_term_failure(
+            CETTA_PRIME_REGULAR_TERM_BUDGET_EXHAUSTED,
+            cetta_prime_level_budget_allowance_spent_v1(budget)
+                ? regular_level_allowance_reason
+                : "universe-level-elaboration-budget");
+    case REGULAR_LEVEL_READ_MEMORY:
+        /* The level exists; there was no memory for it.  The judgment is
+         * incomplete, as when the budget runs out. */
+        return regular_term_failure(
+            CETTA_PRIME_REGULAR_TERM_BUDGET_EXHAUSTED,
+            regular_level_memory_reason);
+    case REGULAR_LEVEL_READ_INVALID:
+        return regular_term_syntax_failure(
+            CETTA_PRIME_REGULAR_TERM_INVALID_LEVEL, 0u, 1u,
+            "u-expects-one-level");
+    }
+    return regular_term_success(NULL);
+}
+
+/* The Pattern of a closed level as written: the constant of its notation.
+ * A natural number is one constant however long its numeral is; it is not
+ * written out as that many successors. */
+static CettaPrimeRegularTermElaborationV1 regular_term_lower_closed_level(
+    Arena *arena, Atom *level, CettaPrimeRegularKernelBudget *budget) {
+    const CettaPrimeLevelNotationV1 *notation = NULL;
+    CettaPrimeRegularTermElaborationV1 read =
+        cetta_prime_regular_term_closed_level_v1(
+            arena, level, budget, &notation);
+    if (read.status != CETTA_PRIME_REGULAR_TERM_OK) return read;
+    Atom *constant = regular_term_pattern_level_constant(arena, notation);
+    return constant
+        ? regular_term_success(constant)
+        : regular_term_failure(
+              CETTA_PRIME_REGULAR_TERM_BUDGET_EXHAUSTED,
+              regular_level_memory_reason);
+}
+
+/* A level over a parameter: the parameter itself; `(+ level k)`, which is
+ * the level k successors up, k a numeral because only successors apply to a
+ * parameter; or `(max a b)` with a parameter on either side.  The level k
+ * successors up is the level itself for no successor, `LevelSucc` over it
+ * for one, and for more `LevelOffset` over it and the numeral, which has any
+ * number of digits. */
+static CettaPrimeRegularTermElaborationV1 regular_term_lower_open_level(
+    Arena *arena, Atom *level, CettaPrimeRegularKernelBudget *budget) {
+    if (!pattern_spend(budget))
+        return regular_term_failure(
+            CETTA_PRIME_REGULAR_TERM_BUDGET_EXHAUSTED,
+            "universe-level-elaboration-budget");
+    uint64_t parameter = 0u;
+    if (regular_level_parameter_marker(level, &parameter)) {
+        Atom *identifier = atom_int(arena, (int64_t)parameter);
+        return regular_term_success(regular_term_pattern_application(
+            arena, "LevelParam", &identifier, 1u));
+    }
+    if (pattern_tag(level, "max", 3u)) {
+        Atom *sides[2] = {NULL, NULL};
+        for (size_t i = 0u; i < 2u; i++) {
+            Atom *side = level->expr.elems[i + 1u];
+            CettaPrimeRegularTermElaborationV1 lowered =
+                regular_level_mentions_parameter(side)
+                    ? regular_term_lower_open_level(arena, side, budget)
+                    : regular_term_lower_closed_level(arena, side, budget);
+            if (lowered.status != CETTA_PRIME_REGULAR_TERM_OK) return lowered;
+            sides[i] = lowered.pattern;
+        }
+        return regular_term_success(regular_term_pattern_application(
+            arena, "LevelMax", sides, 2u));
+    }
+    if (!pattern_tag(level, "+", 3u) ||
+        !pattern_numeral(level->expr.elems[2]))
+        return regular_term_syntax_failure(
+            CETTA_PRIME_REGULAR_TERM_INVALID_LEVEL, 0u, 1u,
+            "level-offset-expects-a-level-and-a-numeral");
+    CettaPrimeRegularTermElaborationV1 raised = regular_term_lower_open_level(
+        arena, level->expr.elems[1], budget);
+    if (raised.status != CETTA_PRIME_REGULAR_TERM_OK) return raised;
+    const CettaPrimeLevelNaturalV1 *count = NULL;
+    uint64_t steps = 0u;
+    if (cetta_prime_regular_kernel_level_numeral_value_v1(
+            arena, level->expr.elems[2], &count) != CETTA_PRIME_LEVEL_OK_V1)
+        return regular_term_failure(
+            CETTA_PRIME_REGULAR_TERM_BUDGET_EXHAUSTED,
+            regular_level_memory_reason);
+    if (!count) return raised;
+    if (!pattern_spend(budget))
+        return regular_term_failure(
+            CETTA_PRIME_REGULAR_TERM_BUDGET_EXHAUSTED,
+            "universe-level-elaboration-budget");
+    Atom *arguments[2] = {
+        raised.pattern,
+        cetta_prime_regular_kernel_level_numeral_atom_v1(arena, count),
+    };
+    if (!arguments[1])
+        return regular_term_failure(
+            CETTA_PRIME_REGULAR_TERM_BUDGET_EXHAUSTED,
+            regular_level_memory_reason);
+    raised.pattern =
+        cetta_prime_level_natural_fits_uint64_v1(count, &steps) && steps == 1u
+            ? regular_term_pattern_application(
+                  arena, "LevelSucc", arguments, 1u)
+            : regular_term_pattern_application(
+                  arena, "LevelOffset", arguments, 2u);
+    return raised;
+}
+
+/* A sort above every universe an author writes, spelled by its name: the
+ * universe at the level `(LevelAbove n)`. */
+static CettaPrimeRegularTermElaborationV1 regular_term_lower_sort_above(
+    Arena *arena, Atom *syntax) {
+    Atom *numeral = NULL;
+    if (!cetta_prime_regular_kernel_sort_above_spelling_v1(
+            arena, syntax, &numeral) || !numeral)
+        return regular_term_failure(
+            CETTA_PRIME_REGULAR_TERM_BUDGET_EXHAUSTED,
+            regular_level_memory_reason);
+    Atom *level_arguments[1] = {numeral};
+    Atom *arguments[1] = {regular_term_pattern_application(
+        arena, "LevelAbove", level_arguments, 1u)};
+    return regular_term_success(regular_term_pattern_application(
+        arena, "Sort", arguments, 1u));
+}
+
+/* The universe at a level that is not a bare parameter. */
+static CettaPrimeRegularTermElaborationV1 regular_term_lower_universe(
+    Arena *arena, Atom *level, CettaPrimeRegularKernelBudget *budget) {
+    CettaPrimeRegularTermElaborationV1 lowered =
+        regular_level_mentions_parameter(level)
+            ? regular_term_lower_open_level(arena, level, budget)
+            : regular_term_lower_closed_level(arena, level, budget);
+    if (lowered.status != CETTA_PRIME_REGULAR_TERM_OK) return lowered;
+    Atom *arguments[1] = {lowered.pattern};
     return regular_term_success(regular_term_pattern_application(
         arena, "Sort", arguments, 1u));
 }
@@ -468,7 +944,8 @@ static bool regular_term_known_head(Atom *head) {
 
 static bool regular_term_root_candidate(Atom *syntax) {
     if (!syntax) return false;
-    if (atom_is_symbol(syntax, "u0") || atom_is_symbol(syntax, "u1"))
+    if (atom_is_symbol(syntax, "u0") || atom_is_symbol(syntax, "u1") ||
+        cetta_prime_regular_kernel_sort_above_spelling_v1(NULL, syntax, NULL))
         return true;
     if (syntax->kind != ATOM_EXPR || syntax->expr.len == 0u) return false;
     if (regular_term_known_head(syntax->expr.elems[0])) return true;
@@ -973,6 +1450,11 @@ static CettaPrimeRegularTermElaborationV1 regular_term_lower_rec(
             arena, atom_is_symbol(syntax, "u0") ? "U0" : "U1",
             arguments, 0u));
     }
+    /* `set` is the sort of all sets and `class` its sort, where no name of
+     * the term's scope is spelled so. */
+    if (syntax->kind == ATOM_SYMBOL &&
+        cetta_prime_regular_kernel_sort_above_word_v1(syntax))
+        return regular_term_lower_sort_above(arena, syntax);
     if (syntax->kind != ATOM_EXPR || syntax->expr.len == 0u)
         return (CettaPrimeRegularTermElaborationV1){
             .status = CETTA_PRIME_REGULAR_TERM_OUT_OF_CLASS,
@@ -1003,6 +1485,11 @@ static CettaPrimeRegularTermElaborationV1 regular_term_lower_rec(
                 "name-outside-regular-syntax");
         if (atom_is_symbol(head, "lam"))
             return regular_term_lower_lambda(arena, syntax, environment, budget);
+        /* `(class n)`: the n-th sort above every universe an author
+         * writes. */
+        if (cetta_prime_regular_kernel_sort_above_spelling_v1(
+                NULL, syntax, NULL))
+            return regular_term_lower_sort_above(arena, syntax);
         if (atom_is_symbol(head, "u")) {
             uint64_t level = 0u;
             if (syntax->expr.len == 2u &&
@@ -1015,14 +1502,14 @@ static CettaPrimeRegularTermElaborationV1 regular_term_lower_rec(
                 return regular_term_success(regular_term_pattern_application(
                     arena, "Sort", arguments, 1u));
             }
-            if (syntax->expr.len != 2u ||
-                !pattern_natural(syntax->expr.elems[1], &level))
+            if (syntax->expr.len != 2u)
                 return regular_term_syntax_failure(
                     CETTA_PRIME_REGULAR_TERM_INVALID_LEVEL, 0u,
                     cetta_expr_len_fits_size(syntax->expr.len)
                         ? (size_t)syntax->expr.len - 1u : SIZE_MAX,
-                    "u-expects-one-natural-level");
-            return regular_term_pattern_closed_universe(arena, level, budget);
+                    "u-expects-one-level");
+            return regular_term_lower_universe(
+                arena, syntax->expr.elems[1], budget);
         }
         if (atom_is_symbol(head, "idx")) {
             uint64_t direct_index = 0u;
@@ -1304,17 +1791,26 @@ typedef struct {
     unsigned next_name;
 } RegularQuoteScope;
 
+/* A universe holds neither a name nor an index: its level, which can have
+ * any number of terms, is not walked. */
+static bool regular_quote_is_sort(Atom *t) {
+    return t && t->kind == ATOM_EXPR && t->expr.len == 2u &&
+           atom_is_symbol(t->expr.elems[0], "Sort");
+}
+
 static bool regular_quote_symbol_occurs(Atom *t, Atom *symbol) {
     if (!t) return false;
     if (t->kind == ATOM_SYMBOL) return atom_eq(t, symbol);
-    if (t->kind != ATOM_EXPR) return false;
+    if (t->kind != ATOM_EXPR || regular_quote_is_sort(t)) return false;
     for (CettaExprIndex i = 0u; i < t->expr.len; i++)
         if (regular_quote_symbol_occurs(t->expr.elems[i], symbol)) return true;
     return false;
 }
 
 static bool regular_quote_mentions_index(Atom *t, uint64_t target) {
-    if (!t || t->kind != ATOM_EXPR || t->expr.len == 0u) return false;
+    if (!t || t->kind != ATOM_EXPR || t->expr.len == 0u ||
+        regular_quote_is_sort(t))
+        return false;
     if (t->expr.len == 2u && atom_is_symbol(t->expr.elems[0], "idx")) {
         Atom *n = t->expr.elems[1];
         return n && n->kind == ATOM_GROUNDED && n->ground.gkind == GV_INT &&
@@ -1722,10 +2218,11 @@ static PatternScanStatus pattern_list_contains_fvar(
 static PatternScanStatus pattern_contains_fvar(
     Atom *pattern, const char *wanted, CettaPrimeRegularKernelBudget *budget) {
     if (!pattern_spend(budget)) return PATTERN_SCAN_BUDGET;
-    /* Constructor metadata such as a private LevelParam identifier is a
-     * literal leaf, not a free-variable occurrence.  The elaboration pass
-     * still decides whether that literal is legal at its exact position. */
-    if (pattern_natural(pattern, NULL)) return PATTERN_SCAN_OK;
+    /* Constructor metadata such as a private LevelParam identifier or the
+     * coefficient of a level constant is a literal leaf, not a free-variable
+     * occurrence.  The elaboration pass still decides whether that literal
+     * is legal at its exact position. */
+    if (pattern_numeral(pattern)) return PATTERN_SCAN_OK;
     if (pattern_head_named(pattern, "DeclConst"))
         return pattern_validate_decl_const(pattern, budget);
     if (pattern_tag(pattern, "Var", 2u)) {
@@ -1739,8 +2236,14 @@ static PatternScanStatus pattern_contains_fvar(
         return strcmp(name, wanted) == 0 ? PATTERN_SCAN_FOUND : PATTERN_SCAN_OK;
     }
     if (pattern_tag(pattern, "PApp", 3u)) {
-        if (!pattern_string(pattern->expr.elems[1], NULL))
+        const char *constructor = NULL;
+        if (!pattern_string(pattern->expr.elems[1], &constructor))
             return PATTERN_SCAN_INVALID;
+        /* A closed level constant holds no free variable: it is not walked,
+         * however many terms it has.  Its elaboration checks its shape. */
+        if (strcmp(constructor, "LevelCantor") == 0 ||
+            strcmp(constructor, "LevelAbove") == 0)
+            return PATTERN_SCAN_OK;
         return pattern_list_contains_fvar(
             pattern->expr.elems[2], wanted, budget);
     }
@@ -1765,6 +2268,226 @@ static CettaPrimeRegularPatternElaborationV1 pattern_elaborate_rec(
     Arena *arena, CettaPrimeRegularPatternEnvironmentV1 environment,
     uint64_t binder_depth, uint64_t naming_depth, Atom *pattern,
     CettaPrimeRegularKernelBudget *budget);
+
+/* A level constant of the Pattern wire, read by its shape: `LevelCantor`
+ * over three arguments is a term, and `LevelAbove` over one is a level above
+ * the Cantor normal forms.  Anything else is a leaf, which the elaboration
+ * then requires to be `LevelZero`. */
+static bool pattern_wire_level_read(
+    const void *handle, CettaPrimeLevelNotationReadTermV1 *term_out) {
+    Atom *pattern = (Atom *)handle;
+    const char *name = NULL;
+    Atom *arguments[3] = {NULL, NULL, NULL};
+    if (!pattern_tag(pattern, "PApp", 3u) ||
+        !pattern_string(pattern->expr.elems[1], &name))
+        return false;
+    size_t arity = 0u;
+    Atom *cursor = pattern->expr.elems[2];
+    for (; arity < 3u && pattern_tag(cursor, "LCons", 3u); arity++) {
+        arguments[arity] = cursor->expr.elems[1];
+        cursor = cursor->expr.elems[2];
+    }
+    if (!atom_is_symbol(cursor, "LNil")) return false;
+    if (strcmp(name, "LevelCantor") == 0 && arity == 3u) {
+        *term_out = (CettaPrimeLevelNotationReadTermV1){
+            .exponent = arguments[0],
+            .number = arguments[1],
+            .remainder = arguments[2],
+        };
+        return true;
+    }
+    if (strcmp(name, "LevelAbove") != 0 || arity != 1u) return false;
+    *term_out = (CettaPrimeLevelNotationReadTermV1){
+        .above = true,
+        .number = arguments[0],
+    };
+    return true;
+}
+
+/* The elaboration of a level constant of the Pattern wire, one constant of
+ * it at a time.  `failure` is what ended it, once it has ended. */
+typedef struct {
+    Arena *arena;
+    CettaPrimeRegularKernelBudget *budget;
+    Atom *zero;
+    bool failed;
+    CettaPrimeRegularPatternElaborationV1 failure;
+} PatternLevelConstantElaboration;
+
+static CettaPrimeLevelStatusV1 pattern_level_elaboration_fail(
+    PatternLevelConstantElaboration *elaboration,
+    CettaPrimeRegularPatternElaborationV1 failure) {
+    elaboration->failed = true;
+    elaboration->failure = failure;
+    return CETTA_PRIME_LEVEL_INVALID_ARGUMENT_V1;
+}
+
+/* The step of one constant and the steps of its arguments, with the name
+ * and the arguments of its application. */
+static CettaPrimeLevelStatusV1 pattern_level_elaboration_enter(
+    PatternLevelConstantElaboration *elaboration, Atom *pattern,
+    const char **name_out, Atom **arguments, size_t *arity_out) {
+    if (!pattern_spend(elaboration->budget))
+        return pattern_level_elaboration_fail(
+            elaboration,
+            pattern_failure(
+                CETTA_PRIME_REGULAR_PATTERN_BUDGET_EXHAUSTED,
+                "regular-pattern-elaboration-budget"));
+    if (!pattern_tag(pattern, "PApp", 3u) ||
+        !pattern_string(pattern->expr.elems[1], name_out))
+        return pattern_level_elaboration_fail(
+            elaboration,
+            pattern_failure(
+                CETTA_PRIME_REGULAR_PATTERN_INVALID_WIRE,
+                "malformed-level-constant"));
+    PatternListStatus arguments_status = pattern_collect_arguments(
+        pattern->expr.elems[2], arguments, 3u, arity_out, elaboration->budget);
+    if (arguments_status == PATTERN_LIST_BUDGET)
+        return pattern_level_elaboration_fail(
+            elaboration,
+            pattern_failure(
+                CETTA_PRIME_REGULAR_PATTERN_BUDGET_EXHAUSTED,
+                "regular-pattern-elaboration-budget"));
+    if (arguments_status != PATTERN_LIST_OK)
+        return pattern_level_elaboration_fail(
+            elaboration,
+            pattern_failure(
+                arguments_status == PATTERN_LIST_RESOURCE
+                    ? CETTA_PRIME_REGULAR_PATTERN_RESOURCE_LIMIT
+                    : CETTA_PRIME_REGULAR_PATTERN_INVALID_WIRE,
+                "malformed-level-constant"));
+    return CETTA_PRIME_LEVEL_OK_V1;
+}
+
+static Atom *pattern_level_elaboration_zero(
+    PatternLevelConstantElaboration *elaboration) {
+    if (!elaboration->zero)
+        elaboration->zero = atom_expr2(
+            elaboration->arena, atom_symbol(elaboration->arena, "LevelConst"),
+            atom_int(elaboration->arena, 0));
+    return elaboration->zero;
+}
+
+static CettaPrimeLevelStatusV1 pattern_level_elaboration_leaf(
+    void *context, const void *handle, void **value_out) {
+    PatternLevelConstantElaboration *elaboration = context;
+    const char *name = NULL;
+    Atom *arguments[3] = {NULL, NULL, NULL};
+    size_t arity = 0u;
+    *value_out = NULL;
+    CettaPrimeLevelStatusV1 status = pattern_level_elaboration_enter(
+        elaboration, (Atom *)handle, &name, arguments, &arity);
+    if (status != CETTA_PRIME_LEVEL_OK_V1) return status;
+    if (strcmp(name, "LevelZero") != 0 || arity != 0u)
+        return pattern_level_elaboration_fail(
+            elaboration,
+            pattern_syntax_failure(
+                CETTA_PRIME_REGULAR_PATTERN_MALFORMED_CONSTRUCTOR,
+                0u, name, arity));
+    *value_out = pattern_level_elaboration_zero(elaboration);
+    return CETTA_PRIME_LEVEL_OK_V1;
+}
+
+static CettaPrimeLevelStatusV1 pattern_level_elaboration_above(
+    void *context, const void *handle,
+    const CettaPrimeLevelNotationReadTermV1 *read, void **value_out) {
+    PatternLevelConstantElaboration *elaboration = context;
+    const char *name = NULL;
+    Atom *arguments[3] = {NULL, NULL, NULL};
+    size_t arity = 0u;
+    (void)read;
+    *value_out = NULL;
+    CettaPrimeLevelStatusV1 status = pattern_level_elaboration_enter(
+        elaboration, (Atom *)handle, &name, arguments, &arity);
+    if (status != CETTA_PRIME_LEVEL_OK_V1) return status;
+    if (!pattern_numeral(arguments[0]))
+        return pattern_level_elaboration_fail(
+            elaboration,
+            pattern_syntax_failure(
+                CETTA_PRIME_REGULAR_PATTERN_MALFORMED_CONSTRUCTOR,
+                0u, name, arity));
+    *value_out = atom_expr2(
+        elaboration->arena, atom_symbol(elaboration->arena, "LevelAbove"),
+        arguments[0]);
+    return CETTA_PRIME_LEVEL_OK_V1;
+}
+
+static CettaPrimeLevelStatusV1 pattern_level_elaboration_term(
+    void *context, const void *handle,
+    const CettaPrimeLevelNotationReadTermV1 *read, void *exponent_value,
+    void *remainder_value, void **value_out) {
+    PatternLevelConstantElaboration *elaboration = context;
+    const char *name = NULL;
+    Atom *arguments[3] = {NULL, NULL, NULL};
+    size_t arity = 0u;
+    (void)read;
+    *value_out = NULL;
+    CettaPrimeLevelStatusV1 status = pattern_level_elaboration_enter(
+        elaboration, (Atom *)handle, &name, arguments, &arity);
+    if (status != CETTA_PRIME_LEVEL_OK_V1) return status;
+    Atom *zero = pattern_level_elaboration_zero(elaboration);
+    /* The coefficient is a positive numeral.  omega^0 * n is the natural
+     * number n, and nothing follows it. */
+    if (!pattern_numeral(arguments[1]) || pattern_numeral_zero(arguments[1]) ||
+        (exponent_value == zero && remainder_value != zero))
+        return pattern_level_elaboration_fail(
+            elaboration,
+            pattern_syntax_failure(
+                CETTA_PRIME_REGULAR_PATTERN_MALFORMED_CONSTRUCTOR,
+                0u, name, arity));
+    if (exponent_value == zero) {
+        *value_out = atom_expr2(
+            elaboration->arena, atom_symbol(elaboration->arena, "LevelConst"),
+            arguments[1]);
+        return CETTA_PRIME_LEVEL_OK_V1;
+    }
+    Atom *items[4] = {
+        atom_symbol(elaboration->arena, "LevelCantor"), exponent_value,
+        arguments[1], remainder_value,
+    };
+    *value_out = atom_expr(elaboration->arena, items, 4u);
+    return CETTA_PRIME_LEVEL_OK_V1;
+}
+
+/* A closed level constant of the Pattern wire, in the kernel's spelling.
+ * `LevelZero` is `(LevelConst 0)`.  `LevelCantor` over an exponent constant,
+ * a positive numeral and a remainder constant is the natural number
+ * `(LevelConst n)` when the exponent is zero, and otherwise
+ * `(LevelCantor exponent n remainder)`.  `LevelAbove` over a numeral is
+ * `(LevelAbove n)`. */
+static CettaPrimeRegularPatternElaborationV1 pattern_elaborate_level_constant(
+    Arena *arena, Atom *pattern, CettaPrimeRegularKernelBudget *budget) {
+    static const CettaPrimeLevelNotationFoldV1 fold = {
+        .zero = pattern_level_elaboration_leaf,
+        .above = pattern_level_elaboration_above,
+        .term = pattern_level_elaboration_term,
+    };
+    PatternLevelConstantElaboration elaboration = {
+        .arena = arena,
+        .budget = budget,
+    };
+    void *constant = NULL;
+    CettaPrimeLevelStatusV1 status = cetta_prime_level_notation_fold_read_v1(
+        pattern_wire_level_read, &fold, &elaboration, pattern, &constant);
+    if (status == CETTA_PRIME_LEVEL_OK_V1) return pattern_success(constant);
+    /* An elaboration that had no memory to finish is not finished. */
+    return elaboration.failed
+        ? elaboration.failure
+        : pattern_failure(
+              CETTA_PRIME_REGULAR_PATTERN_BUDGET_EXHAUSTED,
+              regular_level_memory_reason);
+}
+
+/* The level expressions of the kernel, by their heads. */
+static bool pattern_level_term_shape(const Atom *term) {
+    return pattern_tag(term, "LevelConst", 2u) ||
+           pattern_tag(term, "LevelCantor", 4u) ||
+           pattern_tag(term, "LevelAbove", 2u) ||
+           pattern_tag(term, "LevelParam", 2u) ||
+           pattern_tag(term, "LevelSucc", 2u) ||
+           pattern_tag(term, "LevelOffset", 3u) ||
+           pattern_tag(term, "LevelMax", 3u);
+}
 
 static CettaPrimeRegularPatternElaborationV1 pattern_elaborate_binder(
     Arena *arena, CettaPrimeRegularPatternEnvironmentV1 environment,
@@ -1914,6 +2637,9 @@ static CettaPrimeRegularPatternElaborationV1 pattern_elaborate_rec(
                 arena, atom_symbol(arena, "LevelParam"),
                 atom_int(arena, (int64_t)parameter)));
         }
+        if ((strcmp(name, "LevelCantor") == 0 && arity == 3u) ||
+            (strcmp(name, "LevelAbove") == 0 && arity == 1u))
+            return pattern_elaborate_level_constant(arena, pattern, budget);
         if (strcmp(name, "LevelSucc") == 0 && arity == 1u) {
             CettaPrimeRegularPatternElaborationV1 level =
                 pattern_elaborate_rec(
@@ -1921,17 +2647,49 @@ static CettaPrimeRegularPatternElaborationV1 pattern_elaborate_rec(
                     arguments[0], budget);
             if (level.status != CETTA_PRIME_REGULAR_PATTERN_OK)
                 return level;
-            bool level_shape =
-                pattern_tag(level.term, "LevelConst", 2u) ||
-                pattern_tag(level.term, "LevelParam", 2u) ||
-                pattern_tag(level.term, "LevelSucc", 2u) ||
-                pattern_tag(level.term, "LevelMax", 3u);
-            if (!level_shape)
+            if (!pattern_level_term_shape(level.term))
                 return pattern_syntax_failure(
                     CETTA_PRIME_REGULAR_PATTERN_MALFORMED_CONSTRUCTOR,
                     0u, name, arity);
             return pattern_success(atom_expr2(
                 arena, atom_symbol(arena, "LevelSucc"), level.term));
+        }
+        /* The level as many successors up as a numeral counts.  The numeral
+         * is a literal leaf of any number of digits. */
+        if (strcmp(name, "LevelOffset") == 0 && arity == 2u) {
+            CettaPrimeRegularPatternElaborationV1 level =
+                pattern_elaborate_rec(
+                    arena, environment, binder_depth, naming_depth,
+                    arguments[0], budget);
+            if (level.status != CETTA_PRIME_REGULAR_PATTERN_OK)
+                return level;
+            if (!pattern_level_term_shape(level.term) ||
+                !pattern_numeral(arguments[1]))
+                return pattern_syntax_failure(
+                    CETTA_PRIME_REGULAR_PATTERN_MALFORMED_CONSTRUCTOR,
+                    0u, name, arity);
+            return pattern_success(atom_expr3(
+                arena, atom_symbol(arena, "LevelOffset"), level.term,
+                arguments[1]));
+        }
+        if (strcmp(name, "LevelMax") == 0 && arity == 2u) {
+            Atom *levels[2] = {NULL, NULL};
+            for (size_t i = 0u; i < 2u; i++) {
+                CettaPrimeRegularPatternElaborationV1 level =
+                    pattern_elaborate_rec(
+                        arena, environment, binder_depth, naming_depth,
+                        arguments[i], budget);
+                if (level.status != CETTA_PRIME_REGULAR_PATTERN_OK)
+                    return level;
+                if (!pattern_level_term_shape(level.term))
+                    return pattern_syntax_failure(
+                        CETTA_PRIME_REGULAR_PATTERN_MALFORMED_CONSTRUCTOR,
+                        0u, name, arity);
+                levels[i] = level.term;
+            }
+            return pattern_success(atom_expr3(
+                arena, atom_symbol(arena, "LevelMax"), levels[0],
+                levels[1]));
         }
         if (strcmp(name, "Sort") == 0 && arity == 1u) {
             CettaPrimeRegularPatternElaborationV1 level =
@@ -1940,12 +2698,7 @@ static CettaPrimeRegularPatternElaborationV1 pattern_elaborate_rec(
                     arguments[0], budget);
             if (level.status != CETTA_PRIME_REGULAR_PATTERN_OK)
                 return level;
-            bool level_shape =
-                pattern_tag(level.term, "LevelConst", 2u) ||
-                pattern_tag(level.term, "LevelParam", 2u) ||
-                pattern_tag(level.term, "LevelSucc", 2u) ||
-                pattern_tag(level.term, "LevelMax", 3u);
-            if (!level_shape)
+            if (!pattern_level_term_shape(level.term))
                 return pattern_syntax_failure(
                     CETTA_PRIME_REGULAR_PATTERN_MALFORMED_CONSTRUCTOR,
                     0u, name, arity);

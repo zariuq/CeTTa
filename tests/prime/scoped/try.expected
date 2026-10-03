@@ -1,6 +1,6 @@
 [(Undetermined (set:unknown-name nothing))]
 [(Refuted (set:hypothesis-index (pf:hyp 0)))]
-[(Established (SetProofChecked (App (App In Empty) (App Power Empty)) (SetConversion 1 0)))]
+[(Established (SetProofChecked (App (App In Empty) (App UnivOf Empty)) (SetConversion 1 0)))]
 [(Undetermined (set:outside-simple-fragment (-> (x : set) (In x x))))]
 [(Refuted (lambda-needs-function-type))]
 [(Refuted (MustCounterexample 1 u0 (type-mismatch)))]

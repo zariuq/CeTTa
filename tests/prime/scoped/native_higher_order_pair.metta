@@ -3,13 +3,15 @@
 ; identity witness indexed by the exact imported proof.
 ; Pairs are checked at an explicit Sigma using a typed identity continuation;
 ; this exercises checking, not reconstruction of a dependent pair type.
+; In the kernel's spelling the sort of all sets, `set`, is
+; (Sort (LevelAbove 0)), and its sort, `class`, is (Sort (LevelAbove 1)).
 !(set:theorem pair-consumer-law (all prop (lam p (imp p p)))
   (pf:all-intro (pf:imp-intro (pf:hyp 0))))
 
 (= (update-first)
-   (Lam (Pi (DeclConst set) (DeclConst set))
-     (Lam (Sigma (DeclConst set) (DeclConst set))
-       (App (Lam (Sigma (DeclConst set) (DeclConst set)) (idx 0))
+   (Lam (Pi (Sort (LevelAbove 0)) (Sort (LevelAbove 0)))
+     (Lam (Sigma (Sort (LevelAbove 0)) (Sort (LevelAbove 0)))
+       (App (Lam (Sigma (Sort (LevelAbove 0)) (Sort (LevelAbove 0))) (idx 0))
          (Pair (App (idx 1) (Fst (idx 0))) (Snd (idx 0)))))))
 
 (= (update-pair $function $pair)
@@ -21,7 +23,7 @@
     (let $pair (Pair (DeclConst Empty) (App (DeclConst Power) (DeclConst Empty)))
       (let $updated (update-pair $function $pair)
         (let $consumer (Lam $type
-          (App (Lam (Sigma (Sigma (DeclConst set) (DeclConst set))
+          (App (Lam (Sigma (Sigma (Sort (LevelAbove 0)) (Sort (LevelAbove 0)))
                           (Id $type (idx 1) (idx 1))) (idx 0))
                (Pair $updated (Refl (idx 0)))))
           (let (SetNativeNormalFormV1 $checked $body $application $normal $original-type $result-type)
@@ -33,7 +35,7 @@
                 (== $values $pair)
                 (== $values (Pair (App (DeclConst Power) (DeclConst Empty)) (DeclConst Empty)))
                 (== $witness (Refl $term))
-                (== $pair-type (Sigma (DeclConst set) (DeclConst set)))
+                (== $pair-type (Sigma (Sort (LevelAbove 0)) (Sort (LevelAbove 0))))
                 (== $left $term) (== $right $term)
                 (size-atom $assumptions)))))))))))
 
@@ -46,23 +48,24 @@
       (let $updated (update-pair (Lam $type (idx 0)) $pair)
         (let $bad (try (set:native-normalize $package
                       (Lam $type
-                        (App (Lam (Sigma (Sigma (DeclConst set) (DeclConst set))
+                        (App (Lam (Sigma (Sigma (Sort (LevelAbove 0)) (Sort (LevelAbove 0)))
                                         (Id $type (idx 1) (idx 1))) (idx 0))
                              (Pair $updated (Refl (idx 0)))))))
           (car-atom $bad)))))))
 
-!(checked-pair-update pair-consumer-law (Lam (DeclConst set) (idx 0)))
+!(checked-pair-update pair-consumer-law (Lam (Sort (LevelAbove 0)) (idx 0)))
 !(wrong-pair-update pair-consumer-law)
 
 ; A function over type families returns an identity at F(point). Specializing
-; F to the constant set family introduces beta redexes in the result type;
-; conversion must handle those before the result can update a set pair.
+; F to the constant set family, a family of classes, introduces beta redexes
+; in the result type; conversion must handle those before the result can
+; update a set pair.
 (= (family-identity $point)
-   (Lam (Pi (DeclConst set) (Sort (LevelConst 0)))
+   (Lam (Pi (Sort (LevelAbove 0)) (Sort (LevelAbove 1)))
      (Lam (App (idx 0) $point) (idx 0))))
 
 !(let $specializer (family-identity (DeclConst Empty))
-  (let $specialized (App $specializer (Lam (DeclConst set) (DeclConst set)))
+  (let $specialized (App $specializer (Lam (Sort (LevelAbove 0)) (Sort (LevelAbove 0))))
     (let $result (checked-pair-update pair-consumer-law $specialized)
       (TypeFamilySpecialization $result))))
 
@@ -70,12 +73,13 @@
 !(let $package (set:native-proof pair-consumer-law)
   (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
     (let $specializer (family-identity (DeclConst Empty))
-      (let $not-a-type-family (Lam (DeclConst set) (Refl (DeclConst Empty)))
+      (let $not-a-type-family (Lam (Sort (LevelAbove 0)) (Refl (DeclConst Empty)))
         (let $bad (try (set:native-use $package
           (Lam $type (App (App $specializer $not-a-type-family) (DeclConst Empty)))))
           (TypeFamilyRejection (car-atom $bad)))))))
 
-; The same argument is admitted at two different internal universe domains.
+; The same argument, a type of the least universe, is admitted at two
+; different internal universe domains.
 ; Both programs return it with reflexivity at the common, higher carrier.
 ; The outer pair keeps evidence indexed by the admitted source proof.
 (= (universe-pair-consumer $proof-type $domain $input)
@@ -89,8 +93,8 @@
 (= (checked-universe-domain-pair $theorem)
  (let $package (set:native-proof $theorem)
   (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
-   (let $lower (universe-pair-consumer $type (Sort (LevelConst 0)) (DeclConst set))
-    (let $upper (universe-pair-consumer $type (Sort (LevelConst 1)) (DeclConst set))
+   (let $lower (universe-pair-consumer $type (Sort (LevelConst 0)) (DeclConst prop))
+    (let $upper (universe-pair-consumer $type (Sort (LevelConst 1)) (DeclConst prop))
      (let (SetNativeNormalFormV1 $checked-l $body-l $app-l $normal-l $source-l $type-l)
           (set:native-normalize $package $lower)
       (let (SetNativeNormalFormV1 $checked-r $body-r $app-r $normal-r $source-r $type-r)
@@ -98,7 +102,7 @@
        (UniverseDomainPair $name
          (== $checked-l $package) (== $checked-r $package)
          (== $normal-l $normal-r) (== $type-l $type-r)
-         (== $normal-l (Pair (Pair (DeclConst set) (Refl (DeclConst set))) (Refl $term)))
+         (== $normal-l (Pair (Pair (DeclConst prop) (Refl (DeclConst prop))) (Refl $term)))
          (size-atom $assumptions)))))))))
 
 !(checked-universe-domain-pair pair-consumer-law)

@@ -1,13 +1,12 @@
 ; Evaluation reduces a call by an admitted definition only to a term of the
 ; evaluated space's own vocabulary.  A definition whose body quantifies, or
-; states an equation, is stored with the source's polymorphic head; the proof
-; checker's specialized instances of it (a quantifier or equality at one
-; domain) are internal names no program declares, and a reduct is never
-; spelled with them.  Such a call stays as written.
+; states an equation, is stored with the source's polymorphic head, the
+; signature's `all` or `eq`; the proof checker's specialized instances of it
+; (a quantifier or equality at one domain) are internal names no program
+; declares, and a reduct is never spelled with them.  This space does not
+; declare the quantifier or the equality, so such a call stays as written.
 (: prop (u 0))
 (: imp (-> prop (-> prop prop)))
-(: all (-> (A : (u $level)) (-> (-> A prop) prop)))
-(: eq (-> (A : (u $level)) (-> A (-> A prop))))
 (: A prop)
 (: B prop)
 !(set:define and (-> prop prop prop)

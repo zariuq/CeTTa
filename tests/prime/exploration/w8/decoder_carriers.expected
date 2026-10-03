@@ -4,5 +4,5 @@
 [over-prop]
 [over-universe]
 [Established]
-[(set:native-proof &thy over-universe)]
-[Undetermined]
+[(OverUniverse allI@(Sort (LevelConst 0)))]
+[Established]

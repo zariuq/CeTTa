@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "atom.h"
+#include "prime_level.h"
 #include "prime_regular_kernel.h"
 
 /* The shared Pattern wire is the canonical inference carrier:
@@ -100,12 +101,36 @@ typedef struct {
 /* Prime's authored regular syntax is intentionally smaller than the Pattern
  * wire and lower-case throughout:
  *
- *   u0 | u1 | (u n) | (idx k) | (lam binders body)
- *   (-> domain codomain) | (app f x) | (pair x y)
+ *   u0 | u1 | (u level) | set | class | (class n) | (idx k)
+ *   (lam binders body) | (-> domain codomain) | (app f x) | (pair x y)
  *   (fst p) | (snd p) | (id A x y) | (refl x)
  *
  * where `binders` is a name, a typed group such as `(x : A)`, `(x y : A)` or
- * `(: x A)`, or a list whose elements are names and typed groups.
+ * `(: x A)`, or a list whose elements are names and typed groups.  `set` is
+ * the sort of all sets, the universe at the first level above every level
+ * an author writes, `class` is its sort, and `(class n)` the n-th of those
+ * sorts, n a numeral of any length; a name bound in the term or declared by
+ * the program is that name instead.
+ *
+ * A closed `level` is an ordinal below epsilon-zero, written over the
+ * numerals and `omega` (also the Greek letter) with the sum `(+ a b ...)`,
+ * the product `(* a b)`, the power `(^ a b)` and the larger of two levels
+ * `(max a b)`.  A numeral has any number of digits.  The sum, product and
+ * power are those of the ordinals, so `(+ 1 omega)` is omega and
+ * `(+ omega 1)` is its successor; the level read is the Cantor normal form
+ * of the value.  A level there is no memory for, or whose value is computed
+ * from such a level, is read as incomplete (BUDGET_EXHAUSTED, reason
+ * `level-out-of-memory`).  The work of the sum, product and power counts
+ * against the budget: a level whose value takes more steps than the budget
+ * has left is read as incomplete as well (BUDGET_EXHAUSTED, reason
+ * `universe-level-elaboration-budget`).  A budget that counts nothing gives
+ * the arithmetic the default allowance of the level library instead
+ * (reason `level-arithmetic-allowance` when it is spent).
+ * Over a level parameter, `(+ level k)` is the level k successors up, k a
+ * numeral of any number of digits, and `(max a b)` is the maximum with a
+ * parameter on either side.  In the Pattern wire the level k successors up
+ * is the level itself for no successor, `LevelSucc` over the level for one,
+ * and `LevelOffset` over the level and the numeral for more.
  *
  * A lexical name is either a bare symbol or an explicit universal name
  * quote, @key (parsed as (quote key)).  Bare `_` is anonymous; `$x` remains
@@ -200,6 +225,23 @@ cetta_prime_regular_term_to_pattern_in_environment_v1(
 /* Cheap root recognition only; this never grants authority. */
 bool cetta_prime_regular_term_maybe_syntax_v1(Atom *syntax);
 
+/* Read a closed level as an author writes it inside `(u ...)`.  On OK
+ * `*notation_out` is its notation (NULL is the level zero) and no pattern is
+ * returned.  A legal level there was no memory for is BUDGET_EXHAUSTED with
+ * the reason `level-out-of-memory`, and one whose value takes more steps
+ * than the budget has left is BUDGET_EXHAUSTED with the reason
+ * `universe-level-elaboration-budget`; what is no level is a syntax error. */
+CettaPrimeRegularTermElaborationV1 cetta_prime_regular_term_closed_level_v1(
+    Arena *arena, Atom *level, CettaPrimeRegularKernelBudget *budget,
+    const CettaPrimeLevelNotationV1 **notation_out);
+
+/* True when a lowering is incomplete because there was no memory for a
+ * closed level, or because its value takes more than the default allowance
+ * of a computation without a budget (`level-arithmetic-allowance`), and not
+ * for lack of a budget it was given.  `reason` then says which. */
+bool cetta_prime_regular_term_level_incomplete_v1(
+    const CettaPrimeRegularTermElaborationV1 *lowered);
+
 /* The binder groups of an authored lambda `(lam binders body)`, in the one
  * grammar that both the kernel lowering and the evaluator read: `binders` is
  * a name, one typed group (`(x : A)`, `(x y : A)`, `(x y : A B)` or
@@ -262,7 +304,9 @@ Atom *cetta_prime_regular_term_authored_symbol_v1(
     Arena *arena, Atom *intrinsic);
 
 /* Quote one intrinsic regular term into the lower-case authored vocabulary.
- * Explicit closed tower sorts are printed as `(u n)`.  A NULL result means
+ * Explicit closed tower sorts are printed as `(u level)`, the level in the
+ * notation an author writes, and the sorts above them by name (`set`,
+ * `class`, `(class n)`).  A NULL result means
  * that the term contains an intrinsic form for which this authored fragment
  * has not yet earned a public spelling; callers must not leak the wire form. */
 Atom *cetta_prime_regular_term_quote_intrinsic_v1(

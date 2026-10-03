@@ -5,7 +5,7 @@
 [()]
 [(Undetermined (set:not-admitted inserted))]
 [(Established ())]
-[(set:proves (pf:known inserted) (In Empty (Power Empty)))]
+[(set:proves (pf:known inserted) (In Empty (UnivOf Empty)))]
 [True]
 [True]
 [()]

@@ -221,6 +221,7 @@
    (if (== $ctx ()) $goal
        (let* (($h (car-atom $ctx)) ($t (cdr-atom $ctx)) ($r (imps $t $goal))) (imp $h $r))))
 (= (rule-statement $r) (let ($ps $c) (rule-shape $r) (imps $ps $c)))
+; The kernel's rules, assumed: statements about uninterpreted propositions.
 !(map-atom (axA1 axA2 ab axB bc xc pair) $r
    (let $s (rule-statement $r) (set:axiom &thy $r $s)))
 

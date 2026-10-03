@@ -1,5 +1,6 @@
 ; Specialize the imported family theorem to the identity family. This is a
 ; new retained proof, using the source membership relation and universe map.
+; The source's sets are its own base type, `mg-base-0`.
 !(let* (($fibre (match &self
            (MegalodonSourceInstanceV1 $n $p THM "family_fibre_in_universe" $i $j $l $t $d) $n))
         ($member (match &self
@@ -7,7 +8,7 @@
         ($universe (match &self
            (MegalodonSourceInstanceV1 $un $up DEF "familyUniverse" $ui $uj $ul $ut $ud) $un)))
  (set:theorem family-identity-fibre
-  (all set (lam A (all set (lam a
+  (all mg-base-0 (lam A (all mg-base-0 (lam a
     (imp (($member a) A) (($member a) (($universe A) (lam x x))))))))
   (pf:all-intro (pf:all-intro (pf:imp-intro
     (pf:imp-elim
@@ -21,14 +22,14 @@
 !(let $package (set:native-proof family-identity-fibre)
  (let (SetNativeProofV1 $name $formula $proof $term $type $context $rules $assumptions $digest) $package
   (let $consumer (Lam $type
-     (Lam (DeclConst set) (Lam (DeclConst set)
+     (Lam (DeclConst mg-base-0) (Lam (DeclConst mg-base-0)
        (App (App (idx 2) (idx 1)) (idx 0)))))
    (let (SetNativeNormalFormV1 $checked $body $application $value $source-type $normal-type)
        (set:native-normalize $package $consumer)
     (let (Lam $set-a (Lam $set-b (Lam $premise $result))) $value
      (let (Pi $type-a (Pi $type-b (Pi $input $output))) $normal-type
       (FamilyIdentityProgram
-        (== $set-a (DeclConst set)) (== $set-b (DeclConst set))
+        (== $set-a (DeclConst mg-base-0)) (== $set-b (DeclConst mg-base-0))
         (== $type-a $set-a) (== $type-b $set-b)
         (== $input $premise) (size-atom $assumptions))))))))
 
@@ -36,7 +37,7 @@
 !(let $member (match &self
     (MegalodonSourceInstanceV1 $n $p PRIM "In" $i $j $l $t $d) $n)
  (let $bad (try (set:theorem family-wrong-result
-      (all set (lam a (($member a) a))) (pf:known family-identity-fibre)))
+      (all mg-base-0 (lam a (($member a) a))) (pf:known family-identity-fibre)))
   (FamilyWrongResult (car-atom $bad))))
 
 ; A retained package cannot outlive the authority of an assumption it uses.

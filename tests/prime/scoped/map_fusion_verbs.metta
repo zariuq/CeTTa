@@ -2,8 +2,8 @@
 ;   map-compose []       = refl
 ;   map-compose (x ∷ xs) = cong (f (g x) ∷_) (map-compose xs)
 ; Here composition is a lambda, so the kernel's conversion does the
-; unfolding that Agda does by computation; the map equations are axioms of
-; the theory since there is no definition form yet.
+; unfolding that Agda does by computation; mapf is an uninterpreted constant
+; of the theory, and its equations and list induction are assumed.
 
 !(import! &self pf)
 !(bind! &thy (new-space))

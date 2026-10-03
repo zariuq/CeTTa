@@ -41,11 +41,20 @@
      (AbtSignature LevelConst
        (Fields value)
        Bind0)
+     (AbtSignature LevelCantor
+       (Fields exponent coefficient remainder)
+       Bind0)
+     (AbtSignature LevelAbove
+       (Fields number)
+       Bind0)
      (AbtSignature LevelParam
        (Fields parameter)
        Bind0)
      (AbtSignature LevelSucc
        (Fields level)
+       Bind0)
+     (AbtSignature LevelOffset
+       (Fields level count)
        Bind0)
      (AbtSignature LevelMax
        (Fields left right)

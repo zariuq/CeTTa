@@ -11,7 +11,7 @@
 [True]
 [refl-succ]
 [(all nat (lam (n : nat) (eq nat (succ n) (succ n))))]
-[(refl-succ (App (DeclConst __cetta_holds_df87b3cd8ab4b6383b1d0591) (App (DeclConst all@nat) (Lam (DeclConst nat) (App (App (DeclConst eq@nat) (App (DeclConst succ) (idx 0))) (App (DeclConst succ) (idx 0)))))))]
+[(refl-succ (App (DeclConst __cetta_holds_89187759b9fe1a3e3f509377) (App (DeclConst all@nat) (Lam (DeclConst nat) (App (App (DeclConst eq@nat) (App (DeclConst succ) (idx 0))) (App (DeclConst succ) (idx 0)))))))]
 [False]
 [False]
 [True]

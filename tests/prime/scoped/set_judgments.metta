@@ -27,23 +27,23 @@
 !(set:proves (pf:imp-intro (pf:hyp 0)) (imp (In Empty Empty) (In Empty Empty)))
 !(set:proves (pf:all-intro (pf:imp-intro (pf:hyp 0)))
              (all set (lam x (imp (In x x) (In x x)))))
-!(set:proves (pf:all-elim (pf:known PowerI) Empty) (In Empty (Power Empty)))
-!(set:proves (pf:imp-intro (pf:imp-elim (pf:all-elim (pf:known EmptyE) Empty) (pf:hyp 0)))
+!(set:proves (pf:all-elim (pf:known universeIn) Empty) (In Empty (UnivOf Empty)))
+!(set:proves (pf:imp-intro (pf:imp-elim (pf:all-elim (pf:known emptyLaw) Empty) (pf:hyp 0)))
              (imp (In Empty Empty) Falsum))
 
 ; Higher-order work across the interface: quantification over propositions,
 ; instantiation with a variable bound by an enclosing proof binder, and open
 ; witnesses built from signature constants.
 !(set:proves (pf:all-intro (pf:imp-intro (pf:hyp 0))) (all prop (lam p (imp p p))))
-!(set:proves (pf:all-intro (pf:all-elim (pf:known PowerI) (pf:var 0)))
-             (all set (lam x (In x (Power x)))))
-!(set:proves (pf:all-intro (pf:all-elim (pf:known PowerI) (Power (pf:var 0))))
-             (all set (lam x (In (Power x) (Power (Power x))))))
+!(set:proves (pf:all-intro (pf:all-elim (pf:known universeIn) (pf:var 0)))
+             (all set (lam x (In x (UnivOf x)))))
+!(set:proves (pf:all-intro (pf:all-elim (pf:known universeIn) (Power (pf:var 0))))
+             (all set (lam x (In (Power x) (UnivOf (Power x))))))
 !(set:proves (pf:all-intro (pf:all-intro (pf:imp-intro (pf:hyp 0))))
              (all set (lam x (all prop (lam p (imp p p))))))
 ; An ill-typed open witness is a checked obstruction.
-!(set:proves (pf:all-intro (pf:all-elim (pf:known PowerI) (In (pf:var 0))))
-             (all set (lam x (In x (Power x)))))
+!(set:proves (pf:all-intro (pf:all-elim (pf:known universeIn) (In (pf:var 0))))
+             (all set (lam x (In x (UnivOf x)))))
 
 ; Checked obstructions are refutations; missing names are abstentions.
 !(set:proves (pf:hyp 0) (In Empty Empty))
@@ -54,7 +54,7 @@
 ; the dependencies against the current space: a removed or changed premise
 ; makes reuse inert, never silently True.
 !(set:theorem empty-not-self (imp (In Empty Empty) Falsum)
-              (pf:imp-intro (pf:imp-elim (pf:all-elim (pf:known EmptyE) Empty) (pf:hyp 0))))
+              (pf:imp-intro (pf:imp-elim (pf:all-elim (pf:known emptyLaw) Empty) (pf:hyp 0))))
 !(set:known-proposition empty-not-self)
 !(set:known-proof empty-not-self)
 !(match &self (set:known empty-not-self $p $origin $proof $depends $revision $sig)
@@ -71,6 +71,6 @@
 !(set:proves (pf:known derived) Falsum)
 ; A user record that shadows a seeded name with another proposition makes the
 ; name ambiguous rather than selecting either.
-!(set:axiom PowerI (In Empty Empty))
-!(set:proves (pf:known PowerI) (In Empty Empty))
+!(set:axiom universeIn (In Empty Empty))
+!(set:proves (pf:known universeIn) (In Empty Empty))
 !(set:axiom bad-axiom (In Empty))

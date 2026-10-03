@@ -12,21 +12,21 @@
 ; An inserted record whose proof is valid: unusable until checked here, then
 ; admitted by that check on a plain call; a try of the check admits nothing.
 !(let $d (set:signature-digest)
-   (add-atom &self (set:known inserted (In Empty (Power Empty)) theorem
-                              (pf:all-elim (pf:known PowerI) Empty)
-                              ((PowerI (all set (lam x (In x (Power x)))))) 0 $d)))
-!(try (set:proves (pf:known inserted) (In Empty (Power Empty))))
+   (add-atom &self (set:known inserted (In Empty (UnivOf Empty)) theorem
+                              (pf:all-elim (pf:known universeIn) Empty)
+                              ((universeIn (all set (lam N (In N (UnivOf N)))))) 0 $d)))
+!(try (set:proves (pf:known inserted) (In Empty (UnivOf Empty))))
 !(try (set:recheck inserted))
-!(set:proves (pf:known inserted) (In Empty (Power Empty)))
+!(set:proves (pf:known inserted) (In Empty (UnivOf Empty)))
 !(set:recheck inserted)
-!(set:proves (pf:known inserted) (In Empty (Power Empty)))
+!(set:proves (pf:known inserted) (In Empty (UnivOf Empty)))
 
 ; A changed proposition under the same key: the old admission does not carry.
 !(match &self (set:known inserted $p $o $pf $d $r $s)
         (remove-atom &self (set:known inserted $p $o $pf $d $r $s)))
 !(let $d (set:signature-digest)
    (add-atom &self (set:known inserted (In Empty Empty) theorem
-                              (pf:all-elim (pf:known PowerI) Empty) () 0 $d)))
+                              (pf:all-elim (pf:known universeIn) Empty) () 0 $d)))
 !(try (set:proves (pf:known inserted) (In Empty Empty)))
 !(let $r (try (set:recheck inserted)) (car-atom $r))
 !(try (set:proves (pf:known inserted) (In Empty Empty)))

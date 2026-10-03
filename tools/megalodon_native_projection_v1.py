@@ -196,7 +196,9 @@ class Projection:
                     self.proposition_declared = True
                 return sx.Symbol("prop")
             case ("base", index):
-                name = sx.Symbol("set" if index == 0 else f"mg-base-{index}")
+                # A base type of the source is the source's own carrier, every
+                # one of them: none takes a name of the host, such as `set`.
+                name = sx.Symbol(f"mg-base-{index}")
                 if index not in self.bases:
                     # Publish ground carriers for ordinary dependent programs,
                     # not only for the scoped HOL service's internal signature.

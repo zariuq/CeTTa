@@ -6,6 +6,8 @@
                 (: GhostNode (-> MissingType GhostTree))))
    (car-atom $r))
 
+; A set is a type of the sort of all sets, which lies above (u 0): a field
+; whose type is the set Empty is a universe violation in a datatype at (u 0).
 !(let $r (try (set:inductive &thy ValueTree (u 0)
                 (: ValueNode (-> Empty ValueTree))))
    (car-atom $r))

@@ -480,6 +480,7 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(type_colon_theorem, "type:theorem") \
     X(type_colon_kernel_query, "type:kernel-query") \
     X(type_colon_prove, "type:prove") \
+    X(cost_colon_firings, "cost:firings") \
     X(set_colon_signature, "set:signature") \
     X(set_colon_formed, "set:formed") \
     X(set_colon_of, "set:of") \
@@ -489,11 +490,14 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(set_colon_axiom, "set:axiom") \
     X(set_colon_define, "set:define") \
     X(set_colon_inductive, "set:inductive") \
+    X(set_colon_family, "set:family") \
     X(set_colon_theorem, "set:theorem") \
     X(set_colon_recheck, "set:recheck") \
     X(set_colon_known_proof, "set:known-proof") \
     X(set_colon_known_proposition, "set:known-proposition") \
     X(set_colon_signature_digest, "set:signature-digest") \
+    X(set_colon_numerals, "set:numerals") \
+    X(set_colon_oracle, "set:oracle") \
     X(lang_colon_languages, "lang:languages") \
     X(lang_colon_parse, "lang:parse") \
     X(lang_colon_print, "lang:print") \

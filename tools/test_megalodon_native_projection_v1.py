@@ -292,15 +292,15 @@ class NativeProjectionTests(unittest.TestCase):
         alias = definitions["imported_keep_alias"]
         apply = definitions["imported_apply"]
         program = projection.render() + f'''
-!(add-atom &self (: sourceLeft set))
-!(add-atom &self (: sourceRight set))
-!(set:define sourceIdentity (-> set set) (= sourceIdentity (lam x x)))
-!(set:define sourcePartial (-> set set) (= sourcePartial ({keep} sourceLeft)))
-!(set:define sourceConstant (-> set set) (= sourceConstant (lam y sourceLeft)))
-!(set:define sourceOpenClosure (-> set set set)
+!(add-atom &self (: sourceLeft mg-base-0))
+!(add-atom &self (: sourceRight mg-base-0))
+!(set:define sourceIdentity (-> mg-base-0 mg-base-0) (= sourceIdentity (lam x x)))
+!(set:define sourcePartial (-> mg-base-0 mg-base-0) (= sourcePartial ({keep} sourceLeft)))
+!(set:define sourceConstant (-> mg-base-0 mg-base-0) (= sourceConstant (lam y sourceLeft)))
+!(set:define sourceOpenClosure (-> mg-base-0 mg-base-0 mg-base-0)
    (= sourceOpenClosure (lam x ({keep} x))))
-!(set:define sourceKeep (-> set set set) (= sourceKeep (lam x (lam y x))))
-!(set:define sourceCaptured (-> set set set) (= sourceCaptured (lam x (lam y y))))
+!(set:define sourceKeep (-> mg-base-0 mg-base-0 mg-base-0) (= sourceKeep (lam x (lam y x))))
+!(set:define sourceCaptured (-> mg-base-0 mg-base-0 mg-base-0) (= sourceCaptured (lam x (lam y y))))
 !(SourceFunctions (type:eq &self {identity} sourceIdentity)
     (type:eq &self {keep} {alias}) (type:eq &self sourcePartial sourceConstant)
     (type:eq &self ({apply} {identity} sourceLeft) sourceLeft)
@@ -318,15 +318,29 @@ class NativeProjectionTests(unittest.TestCase):
                 f"[(ImportedNativeNormal {proof.position} True True True True 0)]", result)
 
         # The same higher-order dependent program runs with a function and a
-        # proof from the admitted source. Its result computes a set-valued pair
-        # and retains identity evidence indexed by that exact source proof.
+        # proof from the admitted source. Its result computes a pair of values
+        # of the source's base type and retains identity evidence indexed by
+        # that exact source proof.  The program is written over Prime's sets;
+        # it is read here over the source's own carrier, whose type is a type
+        # of the least universe: the pair holds two of its values.
         pair_program = (root.parent.parent / "prime/scoped/native_higher_order_pair.metta").read_text()
-        result = self.run_program(projection.render() + pair_program + "".join(
+        for prime_spelling, source_spelling in [
+                ("(Sort (LevelAbove 1))", "(Sort (LevelConst 0))"),
+                ("(Sort (LevelAbove 0))", "(DeclConst mg-base-0)"),
+                ("(App (DeclConst Power) (DeclConst Empty))", "(DeclConst sourceRight)"),
+                ("(DeclConst Empty)", "(DeclConst sourceLeft)")]:
+            self.assertIn(prime_spelling, pair_program)
+            pair_program = pair_program.replace(prime_spelling, source_spelling)
+        result = self.run_program(projection.render() + f'''
+!(add-atom &self (: sourceLeft mg-base-0))
+!(add-atom &self (: sourceRight mg-base-0))
+''' + pair_program + "".join(
             f"!(checked-pair-update {proof.name} (DeclConst {identity}))\n"
             f"!(wrong-pair-update {proof.name})\n"
             f"!(checked-universe-domain-pair {proof.name})\n"
-            f"!(let $specializer (family-identity (DeclConst Empty))\n"
-            f"  (let $specialized (App $specializer (Lam (DeclConst set) (DeclConst set)))\n"
+            f"!(let $specializer (family-identity (DeclConst sourceLeft))\n"
+            f"  (let $specialized (App $specializer\n"
+            f"                      (Lam (DeclConst mg-base-0) (DeclConst mg-base-0)))\n"
             f"    (let $result (checked-pair-update {proof.name} $specialized)\n"
             f"      (ImportedTypeFamily {proof.position} $result))))\n" for proof in proofs))
         for proof in proofs:
@@ -370,9 +384,9 @@ class NativeProjectionTests(unittest.TestCase):
             # independently transcribed from the source fixture above.
             self.assertEqual(sx.render(command[3][2]), expected[item.label])
         program = projection.render() + f'''
-!(add-atom &self (: sourceLeft set))
-!(add-atom &self (: sourceRight set))
-!(set:define sourceEtaIdentity (-> (-> set set) (-> set set))
+!(add-atom &self (: sourceLeft mg-base-0))
+!(add-atom &self (: sourceRight mg-base-0))
+!(set:define sourceEtaIdentity (-> (-> mg-base-0 mg-base-0) (-> mg-base-0 mg-base-0))
    (= sourceEtaIdentity (lam f f)))
 !(PreservedSource
    (type:eq &self {names['eta_outer']} sourceEtaIdentity)
@@ -431,9 +445,9 @@ class NativeProjectionTests(unittest.TestCase):
         self.assertEqual(native.open_prefix(items[0].type, "all", first, native.poly.substitute_type)[0],
                          ("arr", first[0], ("arr", first[1], first[0])))
         program = projection.render() + f'''
-!(set:define expectedKeep (-> set prop set) (= expectedKeep (lam x (lam y x))))
+!(set:define expectedKeep (-> mg-base-0 prop mg-base-0) (= expectedKeep (lam x (lam y x))))
 !(set:define expectedCompose
-   (-> (-> prop (-> set prop)) (-> set prop) set (-> set prop))
+   (-> (-> prop (-> mg-base-0 prop)) (-> mg-base-0 prop) mg-base-0 (-> mg-base-0 prop))
    (= expectedCompose (lam f (lam g (lam x (f (g x)))))))
 !(MultipleParameters (type:eq &self {keep.name} expectedKeep)
                     (type:eq &self {compose.name} expectedCompose))
@@ -510,7 +524,7 @@ class NativeProjectionTests(unittest.TestCase):
       $first $continuation)
    (Lam (App (DeclConst $family) (App (App (DeclConst {membership}) $value) $universe))
      (App (Lam
-       (Sigma (DeclConst set)
+       (Sigma (DeclConst mg-base-0)
          (App (DeclConst $family) (App (App (DeclConst {membership}) (idx 0)) $universe)))
        $continuation)
        (Pair $first (idx 0)))))
@@ -528,7 +542,7 @@ class NativeProjectionTests(unittest.TestCase):
         (== $prop (({membership} ({power} ({union} ({power} {empty})))) ({univ} {empty})))
         (== $first $value)
         (== $second $proof-normal)
-        (== $result-type (Sigma (DeclConst set)
+        (== $result-type (Sigma (DeclConst mg-base-0)
           (App (DeclConst $family) (App (App (DeclConst {membership}) (idx 0)) $universe))))
         (size-atom $assumptions))))))))
 !(let $package (set:native-proof {theorem.name})
@@ -537,7 +551,7 @@ class NativeProjectionTests(unittest.TestCase):
    (let $consumer (imported-universe-consumer $type $value (Fst (idx 0)))
     (let (SetNativeNormalFormV1 $checked $body $application $normal $before $after)
        (set:native-normalize $package $consumer)
-      (ImportedUniverseValue (== $normal $value) (== $after (DeclConst set))))))))
+      (ImportedUniverseValue (== $normal $value) (== $after (DeclConst mg-base-0))))))))
 !(add-atom &self (imported-operation {power} {power_law}))
 !(add-atom &self (imported-operation {union} {union_law}))
 (= (imported-pipeline Nil $value $proof) (ProvedSet $value $proof))
@@ -561,7 +575,7 @@ class NativeProjectionTests(unittest.TestCase):
       (ImportedRuntimePipeline
         (== $normal (App (DeclConst {power}) (App (DeclConst {power})
           (App (DeclConst {union}) (App (DeclConst {power}) (DeclConst {empty}))))))
-        (== $after (DeclConst set)) (size-atom $assumptions)))))))
+        (== $after (DeclConst mg-base-0)) (size-atom $assumptions)))))))
 !(let $package (set:native-proof {theorem.name})
  (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
   (let (App (DeclConst $family) (App (App (DeclConst {membership}) $value) $universe)) $type
@@ -694,7 +708,7 @@ class NativeProjectionTests(unittest.TestCase):
         first, second = projection.materialize(0, args), projection.materialize(1, args)
         self.assertNotEqual(first.name, second.name)
         self.assertEqual(first.proposition, second.proposition)
-        self.assertEqual(first.proposition[1], sx.Symbol("set"))
+        self.assertEqual(first.proposition[1], sx.Symbol("mg-base-0"))
         self.assertEqual(first.proposition[2][2][1], sx.Symbol("prop"))
         result = self.run_program(projection.render() + native.dependent_use(second))
         self.assertIn("[(ImportedNativeUse 1 True True 0)]", result)

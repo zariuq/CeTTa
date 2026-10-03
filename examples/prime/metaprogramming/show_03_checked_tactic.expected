@@ -9,7 +9,7 @@
 [a-to-b]
 [b-to-c]
 [True]
-[(Compiled composition (Lam (App (DeclConst __cetta_holds_df87b3cd8ab4b6383b1d0591) (App (App (DeclConst imp) (DeclConst A)) (DeclConst B))) (Lam (App (DeclConst __cetta_holds_df87b3cd8ab4b6383b1d0591) (App (App (DeclConst imp) (DeclConst B)) (DeclConst C))) (Lam (App (DeclConst __cetta_holds_df87b3cd8ab4b6383b1d0591) (DeclConst A)) (App (idx 1) (App (idx 2) (idx 0)))))))]
+[(Compiled composition (Lam (App (DeclConst __cetta_holds_89187759b9fe1a3e3f509377) (App (App (DeclConst imp) (DeclConst A)) (DeclConst B))) (Lam (App (DeclConst __cetta_holds_89187759b9fe1a3e3f509377) (App (App (DeclConst imp) (DeclConst B)) (DeclConst C))) (Lam (App (DeclConst __cetta_holds_89187759b9fe1a3e3f509377) (DeclConst A)) (App (idx 1) (App (idx 2) (idx 0)))))))]
 [(Candidate (pf:imp-intro (pf:imp-intro (pf:hyp 0))))]
 [(Refuted (set:proposition-mismatch B A))]
 [(Refuted (set:proposition-mismatch B A))]

@@ -5,7 +5,7 @@
 
 !(try (set:proves (pf:known nothing) Falsum))
 !(try (set:proves (pf:hyp 0) Falsum))
-!(try (set:proves (pf:all-elim (pf:known PowerI) Empty) (In Empty (Power Empty))))
+!(try (set:proves (pf:all-elim (pf:known universeIn) Empty) (In Empty (UnivOf Empty))))
 !(try (set:formed (-> (x : set) (In x x))))
 !(try (type:check (lam x x) u0))
 (= (candidate) (superpose ((lam x x) u0)))

@@ -17,8 +17,9 @@
 !(set:define &thy rev (-> list list)
    (= (rev nil) nil)
    (= (rev (cons $x $xs)) (append (rev $xs) (cons $x nil))))
-; What a definition records, and two definitions the checker refuses:
-; a missing case, and a recursion that is not structural.
+; What a definition records, and two definitions the structural check does
+; not admit: a missing case, and a call that repeats its own left side.
+; Neither is refuted, since some set satisfies each, so both stay as written.
 !(set:known-proposition &thy rev)
 !(set:define &thy half (-> list list) (= (half nil) nil))
 !(set:define &thy spin (-> list list)

@@ -1,7 +1,8 @@
 ; A definition whose body uses the polymorphic quantifier or equality converts
 ; under set:eq exactly as under the proof checker.  Its stored rule keeps the
-; source's head with the domain's universe; only the proof route specializes
-; it, where it selects rules.
+; source's head, which ranges over every type of `class` and takes no
+; universe argument; only the proof route specializes it, where it selects
+; rules.
 !(bind! &thy (new-space))
 !(add-atom &thy (: A prop))
 !(set:define &thy falsum prop (= falsum (all prop (lam p p))))

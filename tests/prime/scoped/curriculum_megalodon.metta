@@ -3,8 +3,8 @@
 ; spelled truth and falsum here), the theorems about them, Leibniz equality with
 ; its symmetry, existence as its encoding, and the set-theoretic fragment:
 ; the signature carries In, Power, Union, Repl, Sep, Eps and UnivOf with
-; three seed axioms; the ladder's remaining set axioms are declared here as
-; axioms, as they are in the ladder's ambient theory.
+; the eleven laws of sets and universes; the ladder's set axioms that those
+; laws prove are theorems here, and choice for Eps stays an axiom.
 !(import! &self pf)
 !(import! &self ../../../lib/prime/curriculum.metta)
 !(bind! &thy (new-space))
@@ -54,9 +54,32 @@
 !(pf:theorem &thy Subq-refl (all set (lam X (Subq X X))) (pf:fix X (pf:fix x (pf:assume h h))))
 !(pf:theorem &thy Subq-trans (all set (lam X (all set (lam Y (all set (lam Z (imp (Subq X Y) (imp (Subq Y Z) (Subq X Z)))))))))
    (pf:fix X (pf:fix Y (pf:fix Z (pf:assume xy (pf:assume yz (pf:fix x (pf:assume h (pf:by yz (pf:by xy h))))))))))
-!(pf:theorem &thy Power-self (all set (lam X (In X (Power X)))) (pf:fix X (pf:by PowerI)))
-!(set:axiom &thy SepE (all set (lam X (all (-> set prop) (lam P (all set (lam x (imp (In x (Sep X P)) (In x X)))))))))
-!(set:axiom &thy ReplI (all set (lam X (all (-> set set) (lam F (all set (lam x (imp (In x X) (In (F x) (Repl X F))))))))))
+; A set is a member of its power set: the power law at X, from right to left,
+; applied to Subq-refl.
+!(pf:theorem &thy Power-self (all set (lam X (In X (Power X))))
+   (pf:fix X (pf:by (pf:all-elim (pf:all-elim (pf:known powerLaw) X) X)
+     (pf:assume forward (pf:assume backward (pf:by backward (pf:by Subq-refl)))))))
+; SepE: a member of Sep X P is a member of X, the first half of what the
+; separation law says about it.
+!(pf:theorem &thy SepE (all set (lam X (all (-> set prop) (lam P (all set (lam x (imp (In x (Sep X P)) (In x X))))))))
+   (pf:fix X (pf:fix P (pf:fix x (pf:assume h
+     (pf:by (pf:all-elim (pf:all-elim (pf:all-elim (pf:known separationLaw) X) P) x)
+       (pf:assume forward (pf:assume backward
+         (pf:by (pf:imp-elim forward h) (pf:assume in-X (pf:assume holds in-X)))))))))))
+; ReplI: F x is in Repl X F when x is in X, by the replacement law with the
+; witness x, and F x equal to itself by extensionality.
+!(pf:theorem &thy ReplI (all set (lam X (all (-> set set) (lam F (all set (lam x (imp (In x X) (In (F x) (Repl X F)))))))))
+   (pf:fix X (pf:fix F (pf:fix x (pf:assume in-X
+     (pf:by (pf:all-elim (pf:all-elim (pf:all-elim (pf:known replacementLaw) X) F) (F x))
+       (pf:assume forward (pf:assume backward
+         (pf:imp-elim backward
+           (pf:fix r (pf:assume k
+             (pf:imp-elim (pf:all-elim k x)
+               (pf:fix r2 (pf:assume j
+                 (pf:imp-elim (pf:imp-elim j in-X)
+                   (pf:imp-elim (pf:all-elim (pf:all-elim (pf:known extensionality) (F x)) (F x))
+                     (pf:fix y (pf:fix r3 (pf:assume both
+                       (pf:imp-elim (pf:imp-elim both (pf:assume m m)) (pf:assume m m)))))))))))))))))))))
 !(pf:theorem &thy sep-is-subq (all set (lam X (all (-> set prop) (lam P (Subq (Sep X P) X)))))
    (pf:fix X (pf:fix P (pf:fix x (pf:assume h (pf:by SepE h))))))
 !(pf:theorem &thy repl-elem (all set (lam X (all (-> set set) (lam F (all set (lam x (imp (In x X) (In (F x) (Repl X F)))))))))

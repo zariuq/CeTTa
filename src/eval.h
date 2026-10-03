@@ -186,6 +186,17 @@ uint32_t eval_get_atom_types_profiled_transient(
    and its dialect gives it no intrinsic type.  An inference budget can only
    truncate that answer to no types. */
 bool eval_symbol_type_undefined(Space *s, Atom *atom);
+/* In Prime, why `name` is a name Prime interprets itself (a grounded
+   operation, a builtin of its profile, a judgment, or a form of the
+   evaluator), so that a program may not define or declare it; NULL for any
+   other name, and in every other language. */
+const char *cetta_prime_reserved_name_reason(Atom *name);
+/* In Prime, `(Error atom (reserved-name N reason))` when `atom` is an
+   equation or a type declaration for such a name N; NULL otherwise. */
+Atom *cetta_prime_reserved_definition_error(Arena *a, Atom *atom);
+/* Whether `space` is the space the program runs in (the root space of the
+   current evaluation), where those names may not be defined. */
+bool cetta_prime_space_is_program_space(const Space *space);
 uint32_t eval_get_atom_types_profiled_budgeted(
     Space *s, Arena *a, Atom *atom, Atom ***out_types,
     CettaTypeInferenceBudget *budget);
