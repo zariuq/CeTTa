@@ -6,7 +6,8 @@
 
 !(assertEqual (function (return-on-error Empty later)) Empty)
 !(assertEqual (function (return-on-error (Error boom fail) later)) (Error boom fail))
-!(assertEqual (function (chain (return-on-error ok later) $x (return $x))) later)
+; A minimal chain holds ordinary source syntax; eval explicitly invokes it.
+!(assertEqual (function (chain (eval (return-on-error ok later)) $x (return $x))) later)
 
 !(assertEqual (is-function (-> A B)) True)
 !(assertEqual (is-function Atom) False)

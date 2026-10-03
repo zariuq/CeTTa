@@ -93,6 +93,93 @@ static bool duplicate_value_has_exact_occurrences(Atom *value) {
         second->expr.elems[4]->expr.elems[2]->ground.ival == 12;
 }
 
+static void wide_values(CettaJsonNikV1 *host) {
+    char input[20000];
+    char error[512];
+    CettaJsonRuntimeV1Limits limits;
+    cetta_json_runtime_v1_default_limits(&limits);
+    limits.value_depth_limit = 32; /* Semantic nesting, not sequence length. */
+    for (unsigned shape = 0; shape < 5; ++shape) {
+        size_t n = 0;
+        size_t count = shape == 1 ? 256 : shape < 3 ? 4096 : 1100;
+        Arena arena;
+        Atom *value = NULL;
+        CettaJsonRuntimeV1Status status;
+        if (shape == 0) {
+            input[n++] = '"';
+            memset(input + n, 'x', count);
+            n += count;
+            input[n++] = '"';
+        } else if (shape == 1) {
+            memset(input, ' ', count);
+            n = count;
+            memcpy(input + n, "true", 4);
+            n += 4;
+        } else if (shape == 2) {
+            memset(input, '1', count);
+            n = count;
+        } else {
+            input[n++] = shape == 3 ? '[' : '{';
+            for (size_t i = 0; i < count; ++i) {
+                if (i)
+                    input[n++] = ',';
+                if (shape == 4) {
+                    memcpy(input + n, "\"k\":", 4);
+                    n += 4;
+                }
+                input[n++] = '0';
+            }
+            input[n++] = shape == 3 ? ']' : '}';
+        }
+        arena_init(&arena);
+        bool ok = cetta_json_nik_v1_parse_prepared(
+            host, &arena, (const uint8_t *)input, n, &limits,
+            &value, &status, error, sizeof(error));
+        if (!ok)
+            fprintf(stderr, "wide JSON shape %u: %s\n", shape, error);
+        CHECK(ok && status == CETTA_JSON_RUNTIME_V1_OK);
+        if (ok) {
+            bool valid = value && value->kind == ATOM_EXPR &&
+                value->expr.len == 2;
+            CHECK(valid);
+            if (valid) {
+                Atom *payload = value->expr.elems[1];
+                if (shape == 0 || shape >= 3) {
+                    valid = payload && payload->kind == ATOM_EXPR &&
+                        payload->expr.len == count;
+                    CHECK(valid);
+                }
+                if (shape == 2)
+                    CHECK(payload && payload->kind == ATOM_GROUNDED &&
+                        payload->ground.gkind == GV_STRING &&
+                        strlen(payload->ground.sval) == count);
+                if (shape == 4 && valid)
+                    CHECK(payload->expr.elems[count - 1]->expr.elems[1]
+                        ->ground.ival == (int64_t)count - 1);
+            }
+        }
+        arena_free(&arena);
+    }
+    /* Iteration must not disable either work or genuine nesting limits. */
+    for (unsigned limited = 0; limited < 2; ++limited) {
+        Arena arena;
+        Atom *value = NULL;
+        CettaJsonRuntimeV1Status status;
+        const char *doc = limited ? "[[[[[[[[0]]]]]]]]" : "\"abcdefgh\"";
+        arena_init(&arena);
+        cetta_json_runtime_v1_default_limits(&limits);
+        if (limited)
+            limits.value_depth_limit = 8;
+        else
+            limits.elaboration_work_limit = 4;
+        CHECK(!cetta_json_nik_v1_parse_prepared(
+            host, &arena, (const uint8_t *)doc, strlen(doc), &limits,
+            &value, &status, error, sizeof(error)) &&
+            status == CETTA_JSON_RUNTIME_V1_RESOURCE_LIMIT);
+        arena_free(&arena);
+    }
+}
+
 int main(void) {
     FileBytes language = read_file("langdef/json/rfc8259_syntax_v1.metta");
     FileBytes profile = read_file(
@@ -138,6 +225,7 @@ int main(void) {
           1u);
     CHECK(cetta_json_nik_v1_production_kernel(admission.host) ==
           CETTA_JSON_KERNEL_V1_PACKED_GLL);
+    wide_values(admission.host);
 
     arena_init(&arena);
     arena_init(&prepared_arena);

@@ -61,6 +61,42 @@ def main():
             d=json.loads(report.read_text())
             assert r.returncode==1 and d['queries_declared']==2 and d['queries_unsettled']==1,(language,r.stderr,d)
             assert not d['queries'][0]['observation_complete'] and sum(q['faults'] for q in d['queries'])==0
+        # Construct deeply nested data through tail calls so the type service,
+        # rather than the parser or the construction, reaches its stack budget.
+        for mode in ('inference', 'guard'):
+            operation = '(get-type $v)' if mode == 'inference' else '(deep-same $v $v)'
+            for depth, status in ((128, 0), (50000, 2)):
+                source = root / f'type-stack-{mode}-{depth}-{route}.metta'
+                source.write_text(
+                    '(: deep-type (-> Number Number))\n'
+                    '(: deep-same (-> $t $t Bool))\n'
+                    '(= (deep-same $x $y) True)\n'
+                    '(= (nest $n $v) (if (== $n 0) $v '
+                    '(nest (- $n 1) (cons-atom deep-type ($v)))))\n'
+                    f'(= (deep-use $v) (progn (println! before-type) {operation}))\n'
+                    f'!(let $v (nest {depth} 1) (deep-use $v))\n'
+                    '!(+ 40 2)\n')
+                report = source.with_suffix('.json')
+                r = subprocess.run(
+                    [str(binary), '--lang', 'petta', '--run-contract',
+                     '--run-report', str(report), str(source)],
+                    env=env, capture_output=True, text=True, timeout=30)
+                d = json.loads(report.read_text())
+                assert r.returncode == status and d['contract_exit'] == status, (mode, depth, route, r.stderr, d)
+                assert r.stdout.splitlines().count('before-type') == 1, (mode, depth, route, r.stdout)
+                if status == 0:
+                    answer = 'Number' if mode == 'inference' else 'true'
+                    assert r.stdout.splitlines() == ['before-type', answer, '42'], (route, r.stdout)
+                    assert d['queries_unsettled'] == 0 and d['diagnostics'] == []
+                else:
+                    assert r.stdout == 'before-type\n', (mode, route, r.stdout)
+                    assert 'observation incomplete: stack-exhausted' in r.stderr
+                    assert d['queries_declared'] == 2 and d['queries_unsettled'] == 1
+                    assert not d['queries'][0]['observation_complete']
+                    assert sum(q['faults'] for q in d['queries']) == 1
+                    assert len(d['diagnostics']) == 1
+                    assert d['diagnostics'][0]['classification'] == 'resource'
+                    assert 'StackOverflow' in d['diagnostics'][0]['message']
         source=root/f'halt-{route}.metta';source.write_text('!(callPredicate (Predicate (halt 0)))\n!(+ 40 2)\n')
         report=source.with_suffix('.json')
         r=subprocess.run([str(binary),'--lang','petta','--run-contract','--run-report',str(report),str(source)],
@@ -99,7 +135,7 @@ def main():
                            env=env, capture_output=True, text=True, timeout=30)
         d = json.loads(report.read_text())
         assert r.returncode == 2 and d['queries_declared'] == 3 and d['queries_unsettled'] == 2
-    print('PASS: CLI contracts account for queries, native verdicts, handled/escaped faults and output/publication failure on both routes')
+    print('PASS: CLI contracts account for queries, native verdicts, type-stack faults, handled/escaped faults and output/publication failure on both routes')
 
 
 if __name__ == '__main__':

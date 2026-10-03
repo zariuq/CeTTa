@@ -22,6 +22,5 @@
      (queue-job $jobs $payload0)
      (queue-job $jobs $payload1)))
 
-!(eval
-  (job-queue-program
-    $jobs $done0 $done1 $out0 $out1 $payload0 $payload1))
+!(job-queue-program
+  $jobs $done0 $done1 $out0 $out1 $payload0 $payload1)

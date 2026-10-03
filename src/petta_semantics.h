@@ -210,6 +210,13 @@ Atom *petta_semantics_symbol_metatype(Arena *arena, SymbolId symbol,
 /* Whether SWI-PeTTa registers `symbol` as a builtin function (fun/1) when
  * it loads. */
 bool petta_semantics_registered_builtin(SymbolId symbol);
+/* A definition at this exact input arity collides with a static predicate
+ * in the reference prelude. Dynamic classifiers remain extensible. */
+bool petta_semantics_static_builtin_definition(
+    SymbolId symbol, CettaExprLen input_arity);
+Atom *petta_semantics_builtin_definition_error(
+    Arena *arena, SymbolId symbol, CettaExprLen input_arity);
+
 /* Whether SWI-PeTTa registers `symbol` as a builtin function, and if so the
  * input arities its registration records for it (arity/2), as a bit mask:
  * bit n for n arguments.  A registered name may have none. */
@@ -284,6 +291,12 @@ bool petta_semantics_is_closed_list(Atom *atom);
 static inline bool petta_semantics_grounded_type_pure(SymbolId head) {
     return grounded_op_is_type_pure(head) &&
         petta_semantics_form(head) == PETTA_FORM_NONE;
+}
+/* Grounded spellings whose arithmetic meaning PeTTa does not define. An
+ * unregistered occurrence remains data; an authored function still runs. */
+static inline bool petta_semantics_grounded_undefined(SymbolId head) {
+    return head == g_builtin_syms.op_floor_div ||
+        head == g_builtin_syms.numeric_eq;
 }
 /* PeTTa's `=alpha` and `==`: tests whose answer is fixed by their
  * arguments' structure up to a consistent renaming of the variables in

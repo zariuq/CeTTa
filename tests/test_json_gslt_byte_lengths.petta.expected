@@ -1,0 +1,19 @@
+true
+true
+JsonSyntaxRejectedV1
+JsonSyntaxRejectedV1
+JsonSyntaxRejectedV1
+JsonSyntaxRejectedV1
+"\"a\\u0000b\""
+"\"a\\u0000b\""
+"{\"x\\u0000y\":\"λ\"}"
+(JsonMatchesV1 ((JsonNumberV1 "2") (JsonNumberV1 "3")))
+(JsonFoundV1 1 (JsonNumberV1 "2"))
+(JsonFoundV1 2 (JsonNumberV1 "3"))
+(JsonFoundV1 0 (JsonNumberV1 "1"))
+JsonMissingV1
+(JsonNumber "2")
+JsonNullV1
+"\"hello\""
+(JsonFoundV1 0 (JsonNumberV1 "1"))
+JsonRoundtripDisagreementV1

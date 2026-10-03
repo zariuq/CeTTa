@@ -677,6 +677,8 @@ static void petta_libpl_eval_state_free(PettaLibplEvalState *state) {
     free(state);
 }
 
+static foreign_t petta_libpl_raise(Atom *error);
+
 static foreign_t petta_libpl_standard_eval(
     term_t arguments, int supplied_arity,
     control_t control) {
@@ -708,8 +710,10 @@ static foreign_t petta_libpl_standard_eval(
         if (!eval_petta_from_lib_prolog(
                 g_petta_libpl_active_arena,
                 expression, &state->results)) {
-            free(state);
-            return false;
+            Atom *raised = state->results.len == 1u
+                ? state->results.items[0] : NULL;
+            petta_libpl_eval_state_free(state);
+            return raised ? petta_libpl_raise(raised) : false;
         }
     } else {
         return false;

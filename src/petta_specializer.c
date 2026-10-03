@@ -2822,6 +2822,14 @@ enum { PETTA_SPECIALIZE_EVALUATED = 1u, PETTA_SPECIALIZE_DATA = 2u };
 static unsigned petta_specializer_argument_mode(
     PettaSpecializerContext *context, Atom *call, CettaExprIndex index) {
     SymbolId head = atom_head_symbol_id(call);
+    /* SWI-PeTTa's translator passes these native arguments through
+     * untranslated: the atom a space operation adds or removes, and a match
+     * pattern. They have no equations to declare an Atom parameter. */
+    if (index == 2u &&
+        (((head == g_builtin_syms.add_atom ||
+           head == g_builtin_syms.remove_atom) && call->expr.len == 3u) ||
+         (head == g_builtin_syms.match && call->expr.len == 4u)))
+        return PETTA_SPECIALIZE_DATA;
     if (index == 0u || head == SYMBOL_ID_NONE ||
         !space_equations_may_match_known_head(context->space, head) ||
         !space_head_has_arrow_signature(context->space, head,

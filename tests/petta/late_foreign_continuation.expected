@@ -1,0 +1,10 @@
+installed-once
+cold_woke
+dif-installed-once
+true
+(Outer (Inner (cold_watch $V0) $V0) $V0)
+(Result (Outer (Inner (cold_watch 7) 7) 7) (Outer (Inner true 7) 7) 7)
+(Rejected (cold_dif $V0) $V0)
+()
+(Rejected true 2)
+((Result (Choice first 2) (Rejected true 2)) (Result (Choice second 2) (Rejected true 2)))

@@ -94,13 +94,28 @@ static void test_type_policy_component(Arena *arena) {
     space_init(&space);
     Atom **answers = NULL;
     uint32_t count = 0u;
+    Atom *subject_variable = parse_one(arena, "$subject");
+    Atom *shared_requirement = parse_one(arena, "(Required $shared $shared)");
+    assert(petta_type_intrinsic_answers(&space, arena, subject_variable,
+                                       shared_requirement, &answers, &count, NULL));
+    assert(count == 1u && atom_eq(answers[0], shared_requirement));
+    free(answers);
+    Bindings resolved_subject;
+    bindings_init(&resolved_subject);
+    assert(match_atoms(subject_variable, number, &resolved_subject, arena));
+    assert(petta_type_intrinsic_answers(&space, arena,
+        bindings_apply_if_vars(&resolved_subject, arena, subject_variable),
+        parse_one(arena, "AbsentType"), &answers, &count, NULL));
+    assert(count == 0u);
+    free(answers);
+    bindings_free(&resolved_subject);
     assert(petta_type_intrinsic_answers(&space, arena, parse_one(arena, "6"),
-                                       NULL, &answers, &count));
+                                       NULL, &answers, &count, NULL));
     assert(count == 1u && atom_eq(answers[0], parse_one(arena, "Number")));
     free(answers);
     Atom *output_type = parse_one(arena, "$pcg_type");
     assert(petta_type_intrinsic_answers(&space, arena, parse_one(arena, "6"),
-                                       output_type, &answers, &count));
+                                       output_type, &answers, &count, NULL));
     assert(count == 1u && atom_eq(answers[0], number_type));
     Bindings output_bindings;
     bindings_init(&output_bindings);
@@ -109,41 +124,562 @@ static void test_type_policy_component(Arena *arena) {
     bindings_free(&output_bindings);
     free(answers);
     assert(petta_type_intrinsic_answers(&space, arena, parse_one(arena, "6"),
-                                       parse_one(arena, "%Undefined%"), &answers, &count));
+                                       parse_one(arena, "%Undefined%"), &answers, &count, NULL));
     assert(count == 1u && atom_eq(answers[0], parse_one(arena, "%Undefined%")));
     free(answers);
     assert(petta_type_intrinsic_answers(&space, arena, parse_one(arena, "6"),
-                                       parse_one(arena, "Grounded"), &answers, &count));
+                                       parse_one(arena, "Grounded"), &answers, &count, NULL));
     assert(count == 0u);
     free(answers);
     assert(petta_type_intrinsic_answers(&space, arena, parse_one(arena, "(a 6)"),
                                        parse_one(arena, "(%Undefined% %Undefined%)"),
-                                       &answers, &count));
+                                       &answers, &count, NULL));
     assert(count == 1u);
+    free(answers);
+    space_add(&space, parse_one(arena, "(: branch-value Number)"));
+    space_add(&space, parse_one(arena, "(: branch-value String)"));
+    assert(petta_type_intrinsic_answers(&space, arena,
+        parse_one(arena, "(branch-value 6)"), parse_one(arena, "($shared $shared)"),
+        &answers, &count, NULL));
+    assert(count == 1u && atom_eq(answers[0], parse_one(arena, "(Number Number)")));
     free(answers);
     Atom *closed_tuple = parse_one(arena, "(box 6)");
     Atom *expression_type = parse_one(arena, "Expression");
     before = arena_accounted_live_bytes(arena);
     assert(petta_type_intrinsic_answers(&space, arena, closed_tuple,
-                                       expression_type, &answers, &count));
+                                       expression_type, &answers, &count, NULL));
     assert(count == 0u);
     assert(arena_accounted_live_bytes(arena) == before);
     free(answers);
     /* Shape rejection must not skip an explicit scalar declaration. */
     space_add(&space, parse_one(arena, "(: (box 6) Expression)"));
     assert(petta_type_intrinsic_answers(&space, arena, closed_tuple,
-                                       expression_type, &answers, &count));
+                                       expression_type, &answers, &count, NULL));
     assert(count == 1u && atom_eq(answers[0], expression_type));
     free(answers);
     /* Nor may it skip an applicable function result. */
     space_add(&space, parse_one(arena, "(: pcg-constructor (-> Number Expression))"));
     assert(petta_type_intrinsic_answers(&space, arena,
                                        parse_one(arena, "(pcg-constructor 6)"),
-                                       expression_type, &answers, &count));
+                                       expression_type, &answers, &count, NULL));
     assert(count == 1u && atom_eq(answers[0], expression_type));
     free(answers);
     space_free(&space);
     puts("PASS: PeTTa type component separates literal demands, variants and bound queries");
+}
+
+static void test_type_bound_rows(Arena *arena) {
+    Space space;
+    space_init(&space);
+    space_add(&space, parse_one(arena, "(: row-choice Number)"));
+    space_add(&space, parse_one(arena, "(: row-choice String)"));
+    space_add(&space, parse_one(arena, "(: row-dependent (-> Number Number))"));
+    space_add(&space, parse_one(arena, "(: box (-> $a (Box $a)))"));
+    const struct {
+        const char *query;
+        const char *expected;
+    } cases[] = {
+        {"((row-choice row-choice) ($t $t))", "((Number Number) (String String))"},
+        {"((row-choice row-choice) ($a $b))",
+         "((Number Number) (Number String) (String Number) (String String))"},
+        {"(($open row-choice) ($t $t))", "((Number Number) (String String))"},
+        {"(($shared 6) (Number $shared))", "((Number Number))"},
+        {"((box $t) $t)", "((Box (%Undefined% %Undefined%)))"},
+        {"((row-dependent $shared) $shared)", "(%Undefined%)"},
+        {"((6 7) (Number String))", "()"},
+        {"((6 7) (Number))", "()"},
+        {"(() ())", "(())"},
+    };
+    for (size_t i = 0u; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        /* Parse together so subject and requirement retain shared IDs. */
+        Atom *query = parse_one(arena, cases[i].query);
+        Atom *expected = parse_one(arena, cases[i].expected);
+        Atom **answers = NULL;
+        uint32_t count = 0u;
+        assert(petta_type_intrinsic_answers(&space, arena,
+            query->expr.elems[0], query->expr.elems[1], &answers, &count, NULL));
+        assert(count == expected->expr.len);
+        for (uint32_t j = 0u; j < count; j++)
+            assert(atom_alpha_eq(answers[j], expected->expr.elems[j]));
+        free(answers);
+    }
+    /* An applicable function type suppresses the structural row even when
+     * its result does not match that row's incoming requirement. */
+    space_add(&space, parse_one(arena, "(: row-constructor (-> Number Atom))"));
+    Atom **answers = NULL;
+    uint32_t count = 0u;
+    assert(petta_type_intrinsic_answers(&space, arena,
+        parse_one(arena, "(row-constructor 6)"), parse_one(arena, "($a $b)"),
+        &answers, &count, NULL));
+    assert(count == 0u);
+    free(answers);
+    /* A successful function candidate never needs the argument's structural
+     * type product. The row below has more combinations than a result vector
+     * can represent, but its bound Undefined check succeeds directly. */
+    space_add(&space, parse_one(arena, "(: row-first (-> %Undefined% Number))"));
+    Atom *choices[33];
+    for (size_t i = 0u; i < sizeof(choices) / sizeof(choices[0]); i++)
+        choices[i] = atom_symbol(arena, "row-choice");
+    Atom *wide = atom_expr2(arena, atom_symbol(arena, "row-first"),
+        atom_expr(arena, choices, sizeof(choices) / sizeof(choices[0])));
+    assert(petta_type_intrinsic_answers(&space, arena, wide, NULL, &answers, &count, NULL));
+    assert(count == 1u && atom_eq(answers[0], atom_symbol(arena, "Number")));
+    free(answers);
+
+    space_add(&space, parse_one(arena, "(: row-failure (-> String Number))"));
+    space_add(&space, parse_one(arena, "(: row-order (-> Number Number))"));
+    space_add(&space, parse_one(arena, "(: row-order (-> Number String))"));
+    space_add(&space, parse_one(arena, "(: (row-order 6) ExtraType)"));
+    const struct {
+        const char *subject;
+        const char *expected;
+    } fresh_cases[] = {
+        {"(row-failure 6)", "(((-> String Number) Number))"},
+        {"(row-order 6)", "(Number String ExtraType)"},
+    };
+    for (size_t i = 0u; i < sizeof(fresh_cases) / sizeof(fresh_cases[0]); i++) {
+        Atom *expected = parse_one(arena, fresh_cases[i].expected);
+        assert(petta_type_intrinsic_answers(&space, arena,
+            parse_one(arena, fresh_cases[i].subject), NULL, &answers, &count, NULL));
+        assert(count == expected->expr.len);
+        for (uint32_t j = 0u; j < count; j++)
+            assert(atom_alpha_eq(answers[j], expected->expr.elems[j]));
+        free(answers);
+    }
+    /* A deterministic row consumes constant C stack even when every field
+     * needs a bound query. Variable fields take the same iterative tail. */
+    const CettaExprLen width = 50000u;
+    Atom **values = malloc(sizeof(*values) * width);
+    Atom **requirements = malloc(sizeof(*requirements) * width);
+    assert(values && requirements);
+    Atom *number = atom_symbol(arena, "Number");
+    Atom *value = atom_int(arena, 6);
+    for (CettaExprIndex i = 0u; i < width; i++) {
+        values[i] = value;
+        requirements[i] = number;
+    }
+    Atom *wide_subject = atom_expr(arena, values, width);
+    Atom *wide_required = atom_expr(arena, requirements, width);
+    CettaEvalCompletion completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
+    assert(petta_type_intrinsic_answers(&space, arena, wide_subject, wide_required,
+                                       &answers, &count, &completion));
+    assert(completion == CETTA_EVAL_COMPLETE);
+    assert(count == 1u && atom_eq(answers[0], wide_required));
+    free(answers);
+    requirements[width - 1u] = atom_symbol(arena, "String");
+    assert(petta_type_intrinsic_answers(&space, arena, wide_subject,
+        atom_expr(arena, requirements, width), &answers, &count, &completion));
+    assert(completion == CETTA_EVAL_COMPLETE && count == 0u);
+    free(answers);
+    Atom *open = parse_one(arena, "$wide-open");
+    for (CettaExprIndex i = 0u; i < width; i++)
+        values[i] = open;
+    assert(petta_type_intrinsic_answers(&space, arena,
+        atom_expr(arena, values, width), wide_required, &answers, &count, &completion));
+    assert(completion == CETTA_EVAL_COMPLETE);
+    assert(count == 1u && atom_eq(answers[0], wide_required));
+    free(answers);
+
+    /* A mismatched ordinary row still checks its available prefix, but
+     * must not allocate a copy of every successive suffix. An open source
+     * field prevents a whole-query fact from hiding work on the second pass. */
+    const CettaExprLen mismatch_width = 4096u;
+    for (CettaExprIndex i = 0u; i <= mismatch_width; i++) {
+        values[i] = value;
+        requirements[i] = number;
+    }
+    values[0] = open;
+    for (unsigned longer = 0u; longer < 2u; longer++) {
+        Atom *subject = atom_expr(arena, values, mismatch_width + (1u - longer));
+        Atom *required = atom_expr(arena, requirements, mismatch_width + longer);
+        for (unsigned pass = 0u; pass < 2u; pass++) {
+            size_t before = arena_accounted_live_bytes(arena);
+            assert(petta_type_intrinsic_answers(&space, arena, subject, required,
+                                               &answers, &count, &completion));
+            assert(completion == CETTA_EVAL_COMPLETE && count == 0u);
+            size_t growth = arena_accounted_live_bytes(arena) - before;
+            assert(growth <= 8u * (mismatch_width + 1u) *
+                             (sizeof(Atom) + sizeof(Atom *)));
+            free(answers);
+        }
+    }
+    /* A cons prefix can finish in an ordinary tuple. Its tuple position
+     * must survive each branch while later fields see shared refinements. */
+    Atom *shared = atom_var_with_id(arena, "row-tail-shared", fresh_var_id());
+    Atom *mixed_required = petta_semantics_open_cons_value(
+        arena, shared, atom_expr2(arena, shared, number));
+    assert(petta_type_intrinsic_answers(&space, arena,
+        parse_one(arena, "(row-choice row-choice 6)"), mixed_required,
+        &answers, &count, &completion));
+    assert(completion == CETTA_EVAL_COMPLETE && count == 2u);
+    assert(atom_alpha_eq(answers[0], parse_one(arena, "(Number Number Number)")));
+    assert(atom_alpha_eq(answers[1], parse_one(arena, "(String String Number)")));
+    free(answers);
+    free(requirements);
+    free(values);
+    space_free(&space);
+    puts("PASS: bound type rows preserve shared refinements and ordered alternatives");
+}
+
+static void test_type_fact_reuse(Arena *arena) {
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    bool stats_enabled = cetta_runtime_stats_is_enabled();
+    cetta_runtime_stats_enable();
+    CettaRuntimeStats before_reuse, after_reuse;
+    cetta_runtime_stats_snapshot(&before_reuse);
+#endif
+    Space space;
+    space_init(&space);
+    space_add(&space, parse_one(arena, "(: reused-poly (-> $t $t))"));
+    Atom *subject = parse_one(arena, "reused-poly");
+    Atom **first = NULL, **second = NULL;
+    uint32_t first_count = 0u, second_count = 0u;
+    assert(petta_type_intrinsic_answers(&space, arena, subject, NULL,
+                                        &first, &first_count, NULL));
+    assert(petta_type_intrinsic_answers(&space, arena, subject, NULL,
+                                        &second, &second_count, NULL));
+    assert(first_count == 1u && second_count == 1u);
+    assert(atom_alpha_eq(first[0], second[0]));
+    assert(atom_eq(first[0]->expr.elems[1], first[0]->expr.elems[2]));
+    assert(atom_eq(second[0]->expr.elems[1], second[0]->expr.elems[2]));
+    assert(!atom_eq(first[0]->expr.elems[1], second[0]->expr.elems[1]));
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    cetta_runtime_stats_snapshot(&after_reuse);
+    assert(after_reuse.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_FACT_HIT] >
+           before_reuse.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_FACT_HIT]);
+#endif
+    /* Hash-cons atoms can belong to a borrowed domain, not only the
+     * request arena's table. Reclamation must invalidate pointer keys. */
+    HashConsTable reclaimed;
+    hashcons_init_compact(&reclaimed);
+    (void)hashcons_get(&reclaimed, parse_one(arena, "borrowed-type-subject"));
+    uint64_t before_reclamation = hashcons_reclamation_epoch();
+    hashcons_free(&reclaimed);
+    assert(hashcons_reclamation_epoch() > before_reclamation);
+    Atom **after_reclamation = NULL;
+    uint32_t reclaimed_count = 0u;
+    assert(petta_type_intrinsic_answers(&space, arena, subject, NULL,
+        &after_reclamation, &reclaimed_count, NULL));
+    assert(reclaimed_count == 1u && atom_alpha_eq(first[0], after_reclamation[0]));
+    free(after_reclamation);
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    cetta_runtime_stats_snapshot(&before_reuse);
+    assert(before_reuse.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_FACT_HIT] ==
+           after_reuse.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_FACT_HIT]);
+    assert(before_reuse.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_FACT_MISS] >
+           after_reuse.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_FACT_MISS]);
+#endif
+    petta_type_facts_free_for_current_thread();
+    /* An emitted answer is independent of cache reclamation. */
+    assert(atom_eq(first[0]->expr.elems[1], first[0]->expr.elems[2]));
+    assert(atom_eq(second[0]->expr.elems[1], second[0]->expr.elems[2]));
+    free(first);
+    free(second);
+
+    ArenaMark reuse_mark = arena_mark(arena);
+    assert(petta_type_intrinsic_answers(&space, arena, subject, NULL,
+                                        &first, &first_count, NULL));
+    free(first);
+    assert(petta_type_intrinsic_answers(&space, arena, subject, NULL,
+                                        &second, &second_count, NULL));
+    free(second);
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    cetta_runtime_stats_snapshot(&before_reuse);
+#endif
+    arena_reset(arena, reuse_mark);
+    assert(petta_type_intrinsic_answers(&space, arena, subject, NULL,
+                                        &first, &first_count, NULL));
+    assert(first_count == 1u);
+    assert(atom_eq(first[0]->expr.elems[1], first[0]->expr.elems[2]));
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    cetta_runtime_stats_snapshot(&after_reuse);
+    assert(after_reuse.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_FACT_HIT] ==
+           before_reuse.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_FACT_HIT]);
+    assert(after_reuse.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_FACT_MISS] >
+           before_reuse.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_FACT_MISS]);
+#endif
+    free(first);
+
+    Atom *closed = parse_one(arena, "(reused-data (6 7) (8 9))");
+    Atom *variable = parse_one(arena, "$reused_open");
+    Atom *mixed = atom_expr2(arena, variable, closed);
+    assert(petta_type_intrinsic_answers(&space, arena, mixed, NULL,
+                                        &first, &first_count, NULL));
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    cetta_runtime_stats_snapshot(&before_reuse);
+#endif
+    assert(petta_type_intrinsic_answers(&space, arena, mixed, NULL,
+                                        &second, &second_count, NULL));
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    cetta_runtime_stats_snapshot(&after_reuse);
+    assert(after_reuse.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_OPEN_VISIT] >
+           before_reuse.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_OPEN_VISIT]);
+    assert(after_reuse.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_CLOSED_VISIT] ==
+           before_reuse.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_CLOSED_VISIT]);
+    assert(after_reuse.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_FACT_HIT] >
+           before_reuse.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_FACT_HIT]);
+#endif
+    assert(first_count == second_count && first_count == 1u);
+    assert(atom_alpha_eq(first[0], second[0]));
+    assert(!atom_eq(first[0]->expr.elems[0], second[0]->expr.elems[0]));
+    free(first);
+    free(second);
+
+    /* Two occurrences of one cached symbol activate its scheme independently;
+     * only the sharing inside each individual arrow survives. */
+    Atom *repeated = atom_expr3(arena, variable, subject, subject);
+    assert(petta_type_intrinsic_answers(&space, arena, repeated, NULL,
+                                        &first, &first_count, NULL));
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    cetta_runtime_stats_snapshot(&before_reuse);
+#endif
+    assert(petta_type_intrinsic_answers(&space, arena, repeated, NULL,
+                                        &second, &second_count, NULL));
+    assert(first_count == 1u && second_count == 1u);
+    Atom **instances[] = {first, second};
+    for (unsigned invocation = 0u; invocation < 2u; invocation++) {
+        Atom *row = instances[invocation][0];
+        assert(row->kind == ATOM_EXPR && row->expr.len == 3u);
+        for (CettaExprIndex position = 1u; position < 3u; position++) {
+            Atom *arrow = row->expr.elems[position];
+            assert(arrow->kind == ATOM_EXPR && arrow->expr.len == 3u);
+            assert(atom_is_symbol_id(arrow->expr.elems[0], g_builtin_syms.arrow));
+            assert(arrow->expr.elems[1]->kind == ATOM_VAR);
+            assert(atom_eq(arrow->expr.elems[1], arrow->expr.elems[2]));
+        }
+        assert(!atom_eq(row->expr.elems[1]->expr.elems[1],
+                        row->expr.elems[2]->expr.elems[1]));
+    }
+    assert(atom_alpha_eq(first[0], second[0]));
+    for (CettaExprIndex position = 1u; position < 3u; position++)
+        assert(!atom_eq(first[0]->expr.elems[position]->expr.elems[1],
+                        second[0]->expr.elems[position]->expr.elems[1]));
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    cetta_runtime_stats_snapshot(&after_reuse);
+    assert(after_reuse.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_FACT_HIT] >=
+           before_reuse.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_FACT_HIT] + 2u);
+    assert(after_reuse.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_CLOSED_VISIT] ==
+           before_reuse.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_CLOSED_VISIT]);
+#endif
+    free(first);
+    free(second);
+
+    Atom *number = parse_one(arena, "6");
+    Atom *foo = parse_one(arena, "ReuseFoo");
+    assert(petta_type_intrinsic_answers(&space, arena, number, foo,
+                                        &first, &first_count, NULL) && first_count == 0u);
+    free(first);
+    space_add(&space, parse_one(arena, "(: 6 ReuseFoo)"));
+    assert(petta_type_intrinsic_answers(&space, arena, number, foo,
+                                        &first, &first_count, NULL) && first_count == 1u);
+    assert(atom_eq(first[0], foo));
+    free(first);
+    assert(petta_type_intrinsic_answers(&space, arena, number, NULL,
+                                        &first, &first_count, NULL) && first_count == 1u);
+    assert(atom_eq(first[0], parse_one(arena, "Number")));
+    free(first);
+
+    Space other;
+    space_init(&other);
+    assert(petta_type_intrinsic_answers(&other, arena, number, foo,
+                                        &first, &first_count, NULL) && first_count == 0u);
+    free(first);
+    space_free(&other);
+    space_free(&space);
+    petta_type_facts_free_for_current_thread();
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    if (!stats_enabled)
+        cetta_runtime_stats_disable();
+#endif
+    puts("PASS: intrinsic facts freshen shared schemes, reuse mixed closed children and survive cache reclamation without crossing owners or query modes");
+}
+
+static void test_type_fact_warm_boundary(void) {
+    Arena arena;
+    arena_init_detached(&arena);
+    Space space;
+    space_init(&space);
+    Atom *closed = atom_int(&arena, 7);
+    for (unsigned depth = 0u; depth < 96u; depth++) {
+        Atom *element[] = {closed};
+        closed = atom_expr(&arena, element, 1u);
+    }
+    Atom *open = atom_var_with_id(&arena, "frontier", fresh_var_id());
+    Atom *mixed = atom_expr2(&arena, open, closed);
+    petta_type_facts_free_for_current_thread();
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    bool stats_enabled = cetta_runtime_stats_is_enabled();
+    cetta_runtime_stats_enable();
+    CettaRuntimeStats before, after;
+#endif
+    Atom **first = NULL, **second = NULL;
+    uint32_t first_count = 0u, second_count = 0u;
+    assert(petta_type_intrinsic_answers(&space, &arena, mixed, NULL,
+                                        &first, &first_count, NULL));
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    cetta_runtime_stats_snapshot(&before);
+#endif
+    assert(petta_type_intrinsic_answers(&space, &arena, mixed, NULL,
+                                        &second, &second_count, NULL));
+    assert(first_count == 1u && second_count == 1u);
+    assert(atom_alpha_eq(first[0], second[0]));
+    assert(!atom_eq(first[0]->expr.elems[0], second[0]->expr.elems[0]));
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    cetta_runtime_stats_snapshot(&after);
+    assert(after.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_FACT_HIT] ==
+           before.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_FACT_HIT] + 1u);
+    assert(after.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_CLOSED_VISIT] ==
+           before.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_CLOSED_VISIT]);
+    assert(after.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_FACT_MISS] ==
+           before.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_FACT_MISS]);
+    assert(after.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_OPEN_VISIT] ==
+           before.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_OPEN_VISIT] + 2u);
+#endif
+    free(first);
+    free(second);
+
+    /* Equal syntax is not a resident concrete boundary. A separately owned
+     * copy must inspect its source instead of reusing a pointer-keyed fact. */
+    Arena other;
+    arena_init_detached(&other);
+    Atom *copy = atom_deep_copy(&other, closed);
+    assert(copy && copy != closed && atom_eq(copy, closed));
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    cetta_runtime_stats_snapshot(&before);
+#endif
+    assert(petta_type_intrinsic_answers(&space, &arena, copy, NULL,
+                                        &first, &first_count, NULL));
+    assert(first_count == 1u);
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    cetta_runtime_stats_snapshot(&after);
+    assert(after.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_CLOSED_VISIT] >
+           before.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_CLOSED_VISIT]);
+    assert(after.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_FACT_HIT] ==
+           before.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_FACT_HIT]);
+#endif
+    free(first);
+    arena_free(&other);
+    petta_type_facts_free_for_current_thread();
+    space_free(&space);
+    arena_free(&arena);
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    if (!stats_enabled)
+        cetta_runtime_stats_disable();
+#endif
+    puts("PASS: a resident closed boundary prunes its interior while foreign ownership restores inspection");
+}
+
+static void test_type_fact_retention(void) {
+    enum { SUBJECTS = 768, VARIABLES = 96, FIELDS = 1 + 2 * VARIABLES };
+    Arena arena;
+    arena_init_detached(&arena);
+    Space space;
+    space_init(&space);
+    Atom *subjects[SUBJECTS];
+    Atom *fields[FIELDS];
+    Atom *schemes[2];
+    Atom *labels[] = {
+        atom_symbol(&arena, "RetainedFirst"),
+        atom_symbol(&arena, "RetainedSecond"),
+    };
+    for (unsigned row = 0u; row < 2u; row++) {
+        fields[0] = labels[row];
+        for (unsigned i = 0u; i < VARIABLES; i++) {
+            Atom *variable = atom_var_with_id(&arena, "retained", fresh_var_id());
+            fields[1u + 2u * i] = variable;
+            fields[2u + 2u * i] = variable;
+        }
+        schemes[row] = atom_expr(&arena, fields, FIELDS);
+    }
+    Atom *colon = atom_symbol(&arena, ":");
+    /* Publish the entire declaration set before filling the cache. Neither
+     * mutation nor request-arena rollback can cause the eviction below. */
+    for (unsigned i = 0u; i < SUBJECTS; i++) {
+        char name[64];
+        snprintf(name, sizeof(name), "type-retention-%u", i);
+        subjects[i] = atom_symbol(&arena, name);
+        for (unsigned row = 0u; row < 2u; row++) {
+            Atom *declaration[] = {colon, subjects[i], schemes[row]};
+            space_add(&space, atom_expr(&arena, declaration, 3u));
+        }
+    }
+    petta_type_facts_free_for_current_thread();
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    bool stats_enabled = cetta_runtime_stats_is_enabled();
+    cetta_runtime_stats_enable();
+    CettaRuntimeStats initial, current;
+    cetta_runtime_stats_snapshot(&initial);
+    uint64_t previous_bytes = 0u;
+    bool evicted = false;
+#endif
+    Atom *retained[2] = {NULL, NULL};
+    for (unsigned i = 0u; i < SUBJECTS; i++) {
+        Atom **types = NULL;
+        uint32_t count = 0u;
+        assert(petta_type_intrinsic_answers(&space, &arena, subjects[i], NULL,
+                                            &types, &count, NULL));
+        assert(count == 2u);
+        for (unsigned row = 0u; row < 2u; row++) {
+            Atom *type = types[row];
+            assert(type->kind == ATOM_EXPR && type->expr.len == FIELDS);
+            assert(atom_eq(type->expr.elems[0], labels[row]));
+            for (unsigned field = 0u; field < VARIABLES; field++) {
+                Atom *left = type->expr.elems[1u + 2u * field];
+                Atom *right = type->expr.elems[2u + 2u * field];
+                assert(left->kind == ATOM_VAR && atom_eq(left, right));
+                if (field > 0u)
+                    assert(!atom_eq(left, type->expr.elems[2u * field - 1u]));
+            }
+            if (i == 0u)
+                retained[row] = type;
+        }
+        assert(!atom_eq(types[0]->expr.elems[1], types[1]->expr.elems[1]));
+        free(types);
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+        cetta_runtime_stats_snapshot(&current);
+        uint64_t bytes = current.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_FACT_RETAINED_BYTES];
+        assert(bytes <= UINT64_C(8) * 1024u * 1024u);
+        assert(current.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_FACT_PEAK_BYTES] <=
+               UINT64_C(8) * 1024u * 1024u);
+        evicted |= bytes < previous_bytes;
+        previous_bytes = bytes;
+#endif
+    }
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    assert(evicted);
+    assert(current.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_FACT_STORE] >
+           initial.counters[CETTA_RUNTIME_COUNTER_PETTA_TYPE_FACT_STORE]);
+#endif
+    /* A published answer outlives eviction. Recomputing and then reusing its
+     * fact each preserve ordering/sharing and create fresh caller variables. */
+    Atom *last_variable[2] = {NULL, NULL};
+    for (unsigned repeat = 0u; repeat < 2u; repeat++) {
+        Atom **types = NULL;
+        uint32_t count = 0u;
+        assert(petta_type_intrinsic_answers(&space, &arena, subjects[0], NULL,
+                                            &types, &count, NULL));
+        assert(count == 2u);
+        for (unsigned row = 0u; row < 2u; row++) {
+            assert(atom_alpha_eq(retained[row], schemes[row]));
+            assert(atom_alpha_eq(retained[row], types[row]));
+            assert(!atom_eq(retained[row]->expr.elems[1], types[row]->expr.elems[1]));
+            assert(atom_eq(types[row]->expr.elems[1], types[row]->expr.elems[2]));
+            if (last_variable[row])
+                assert(!atom_eq(last_variable[row], types[row]->expr.elems[1]));
+            last_variable[row] = types[row]->expr.elems[1];
+        }
+        free(types);
+    }
+    petta_type_facts_free_for_current_thread();
+    for (unsigned row = 0u; row < 2u; row++)
+        assert(atom_alpha_eq(retained[row], schemes[row]));
+    space_free(&space);
+    arena_free(&arena);
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    if (!stats_enabled)
+        cetta_runtime_stats_disable();
+#endif
+    puts("PASS: bounded type-fact eviction preserves ordered answers and fresh sharing");
 }
 
 static void test_type_frame_exhaustion(Arena *arena) {
@@ -168,14 +704,19 @@ static void test_type_frame_exhaustion(Arena *arena) {
             count++;
         Atom **types = NULL;
         uint32_t length = 0u;
+        CettaEvalCompletion completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
         uint64_t before = cetta_frame_identity_exhaustions();
-        assert(petta_type_intrinsic_answers(&space, arena, ground, NULL,
-                                            &types, &length));
-        assert(length == 1u && atom_eq(types[0], number));
-        assert(cetta_frame_identity_exhaustions() == before);
-        free(types);
+        for (unsigned int repeat = 0u; repeat < 2u; repeat++) {
+            assert(petta_type_intrinsic_answers(&space, arena, ground, NULL,
+                                                &types, &length, &completion));
+            assert(completion == CETTA_EVAL_COMPLETE);
+            assert(length == 1u && atom_eq(types[0], number));
+            assert(cetta_frame_identity_exhaustions() == before);
+            free(types);
+        }
         assert(!petta_type_intrinsic_answers(&space, arena, poly, NULL,
-                                             &types, &length));
+                                             &types, &length, &completion));
+        assert(completion == CETTA_EVAL_INCOMPLETE_CAPACITY);
         assert(types == NULL && length == 0u);
         assert(cetta_frame_identity_exhaustions() > before);
         pid_t terminal = fork();
@@ -192,8 +733,11 @@ static void test_type_frame_exhaustion(Arena *arena) {
             cetta_frame_identity_release(held[i]);
         free(held);
         assert(petta_type_intrinsic_answers(&space, arena, poly, NULL,
-                                            &types, &length));
-        assert(length == 1u && types[0]);
+                                            &types, &length, &completion));
+        assert(completion == CETTA_EVAL_COMPLETE);
+        assert(length == 1u && atom_alpha_eq(
+            types[0], parse_one(arena, "(-> $t $t)")));
+        assert(atom_eq(types[0]->expr.elems[1], types[0]->expr.elems[2]));
         free(types);
         space_free(&space);
         _exit(0);
@@ -202,6 +746,42 @@ static void test_type_frame_exhaustion(Arena *arena) {
     assert(waitpid(child, &status, 0) == child);
     assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
     puts("PASS: closed type lookup needs no fresh identity; polymorphic exhaustion is incomplete and recoverable");
+}
+
+static void test_type_stack_exhaustion(void) {
+    Arena arena;
+    arena_init(&arena);
+    Space space;
+    space_init(&space);
+    space_add(&space, parse_one(&arena, "(: deep-type (-> Number Number))"));
+    Atom *head = atom_symbol(&arena, "deep-type");
+    Atom *number = atom_symbol(&arena, "Number");
+    Atom *subject = atom_int(&arena, 1);
+    for (size_t i = 0u; i < 50000u; i++)
+        subject = atom_expr2(&arena, head, subject);
+    assert(subject);
+    /* This entry has no enclosing evaluator guard. Both fresh inference and
+     * bound checking must report their own resource failure, then recover. */
+    for (unsigned int mode = 0u; mode < 2u; mode++) {
+        Atom **types = NULL;
+        uint32_t count = 0u;
+        CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
+        assert(!petta_type_intrinsic_answers(
+            &space, &arena, subject, mode ? number : NULL,
+            &types, &count, &completion));
+        assert(completion == CETTA_EVAL_INCOMPLETE_STACK);
+        assert(types == NULL && count == 0u);
+        assert(petta_type_intrinsic_answers(
+            &space, &arena, atom_int(&arena, 1), NULL,
+            &types, &count, &completion));
+        assert(completion == CETTA_EVAL_COMPLETE);
+        assert(count == 1u && atom_eq(types[0], number));
+        free(types);
+    }
+    petta_type_facts_free_for_current_thread();
+    space_free(&space);
+    arena_free(&arena);
+    puts("PASS: deep native type inference and checking report stack exhaustion and recover");
 }
 
 static void test_type_call_facts(Arena *arena) {
@@ -2474,6 +3054,498 @@ static void test_compiled_graph_transport(TermUniverse *universe, Arena *arena) 
     arena_free(&answers);
     space_free(&space);
     puts("PASS: compiled graph transport preserves sharing, open cells and answer lifetime");
+}
+
+static bool test_compiled_builtin_allowed(void *context, SymbolId head) {
+    (void)context;
+    (void)head;
+    return true;
+}
+
+static bool test_compiled_builtin_equations(
+    void *context, Space *space, SymbolId head, uint32_t arity) {
+    (void)space;
+    return *(bool *)context && head == g_builtin_syms.petta_max && arity == 2u;
+}
+
+static uint32_t test_compiled_accept_host_value(
+    CettaOpenEquationCursor *cursor, Arena *arena, const char *source,
+    const char *answer) {
+    Atom *goal = NULL;
+    Atom *destination = NULL;
+    Atom *const *variables = NULL;
+    uint32_t count = 0u;
+    CettaOpenEquationHostMode mode;
+    const PettaPlanNode *plan = NULL;
+    bool recovers = false;
+    assert(cetta_open_equation_cursor_host_goal(cursor, &goal, &destination,
+        &variables, &count, &plan, &mode, &recovers));
+    assert(mode == CETTA_OPEN_EQUATION_HOST_SOLVE);
+    Atom *expected = parse_one(arena, source);
+    if (!atom_alpha_eq(goal, expected)) {
+        fputs("host goal: ", stderr);
+        atom_print(goal, stderr);
+        fprintf(stderr, "; expected %s\n", source);
+    }
+    assert(atom_alpha_eq(goal, expected));
+    assert(destination && destination->kind == ATOM_VAR);
+    Atom **values = malloc(sizeof(*values) * (count ? count : 1u));
+    assert(values);
+    bool found = false;
+    for (uint32_t i = 0u; i < count; i++) {
+        values[i] = variables[i];
+        if (variables[i]->var_id == destination->var_id) {
+            values[i] = parse_one(arena, answer);
+            found = true;
+        }
+    }
+    assert(found);
+    uint32_t base = 0u;
+    assert(cetta_open_equation_cursor_accept(cursor, NULL, variables, values,
+        count, true, 0u, &base));
+    free(values);
+    return base;
+}
+
+/* Entry's native and stale paths share a suffix. Thirty-two calls have
+ * billions of paths but only a linear number of steps. Exercise both
+ * incoming paths and keep the first result live across the later joins. */
+static void test_compiled_entry_joins(TermUniverse *universe, Arena *arena) {
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    Space space;
+    space_init_with_universe(&space, universe);
+    char equation[4096], result[1024];
+    size_t used = (size_t)snprintf(equation, sizeof(equation),
+        "(= (entry-joins) (bounds");
+    size_t result_used = (size_t)snprintf(result, sizeof(result), "(bounds");
+    for (unsigned index = 0u; index < 32u; index++) {
+        int wrote = snprintf(equation + used, sizeof(equation) - used,
+            " (max %u %u)", index, index + 1u);
+        assert(wrote > 0 && (size_t)wrote < sizeof(equation) - used);
+        used += (size_t)wrote;
+        wrote = snprintf(result + result_used, sizeof(result) - result_used,
+            " %u", index + 1u);
+        assert(wrote > 0 && (size_t)wrote < sizeof(result) - result_used);
+        result_used += (size_t)wrote;
+    }
+    equation[used++] = ')';
+    equation[used++] = ')';
+    equation[used] = '\0';
+    result[result_used++] = ')';
+    result[result_used] = '\0';
+    add_compiled_program_equation(program, &space, arena, equation);
+    bool extended = false;
+    CettaOpenEquationHost host = {
+        .context = &extended,
+        .builtin_allowed = test_compiled_builtin_allowed,
+        .builtin_equations = test_compiled_builtin_equations,
+    };
+    const char *reason = NULL;
+    CettaOpenEquationProgram *compiled = cetta_open_equation_program_compile(
+        program, &space, symbol_intern_cstr(g_symbols, "entry-joins"),
+        0u, &host, &reason);
+    if (!compiled)
+        fprintf(stderr, "entry joins compile: %s\n", reason);
+    assert(compiled);
+    Arena answers;
+    arena_init(&answers);
+    CettaOpenEquationRuntime runtime = {
+        .builtin_allowed = test_compiled_builtin_allowed,
+    };
+    for (unsigned stale = 0u; stale < 2u; stale++) {
+        CettaOpenEquationCursor *cursor = cetta_open_equation_cursor_open(
+            compiled, &answers, NULL, 0u, NULL, NULL, 0u, &runtime);
+        assert(cursor);
+        if (stale) {
+            add_compiled_program_equation(program, &space, arena,
+                "(= (max $a $b) $b)");
+            extended = true;
+        }
+        Atom *value = NULL;
+        CettaOpenEquationStep step = cetta_open_equation_cursor_next(
+            cursor, NULL, &value, NULL);
+        if (stale) {
+            for (unsigned index = 0u; index < 32u; index++) {
+                assert(step == CETTA_OPEN_EQUATION_HOST);
+                char source[64], answer[32];
+                snprintf(source, sizeof(source), "(max %u %u)",
+                    index, index + 1u);
+                snprintf(answer, sizeof(answer), "%u", index + 1u);
+                uint32_t base = test_compiled_accept_host_value(
+                    cursor, &answers, source, answer);
+                step = cetta_open_equation_cursor_continue(
+                    cursor, NULL, base, &value, NULL);
+            }
+        }
+        assert(step == CETTA_OPEN_EQUATION_ANSWER);
+        assert(atom_alpha_eq(value, parse_one(&answers, result)));
+        assert(cetta_open_equation_cursor_next(cursor, NULL, &value, NULL) ==
+               CETTA_OPEN_EQUATION_EXHAUSTED);
+        cetta_open_equation_cursor_close(cursor);
+    }
+    cetta_open_equation_program_release(compiled);
+    arena_free(&answers);
+    petta_program_free(program);
+    space_free(&space);
+    puts("PASS: compiled entry joins preserve early results on native and stale paths");
+}
+
+static void test_compiled_builtin_entry(TermUniverse *universe, Arena *arena) {
+    const char *bodies[] = {
+        "(max 1 2)", "(Row (max 1 2))",
+        "(progn (println! before-max) (max (+ 1 2) 2))",
+        "(progn (println! before-max) (Row (max (+ 1 2) 2)))",
+    };
+    const char *results[] = {"2", "(Row 2)", "authored", "(Row authored)"};
+    for (unsigned test = 0u; test < 4u; test++) {
+        PettaProgram *program = petta_program_new();
+        assert(program);
+        Space space;
+        space_init_with_universe(&space, universe);
+        char equation[256];
+        snprintf(equation, sizeof(equation), "(= (builtin-entry-root) %s)",
+                 bodies[test]);
+        add_compiled_program_equation(program, &space, arena, equation);
+        bool extended = false;
+        CettaOpenEquationHost host = {
+            .context = &extended,
+            .builtin_allowed = test_compiled_builtin_allowed,
+            .builtin_equations = test_compiled_builtin_equations,
+        };
+        const char *reason = NULL;
+        CettaOpenEquationProgram *compiled = cetta_open_equation_program_compile(
+            program, &space, symbol_intern_cstr(g_symbols, "builtin-entry-root"),
+            0u, &host, &reason);
+        if (!compiled) fprintf(stderr, "builtin entry compile: %s\n", reason);
+        assert(compiled);
+        Arena answers;
+        arena_init(&answers);
+        CettaOpenEquationRuntime runtime = {
+            .builtin_allowed = test_compiled_builtin_allowed,
+        };
+        CettaOpenEquationCursor *cursor = cetta_open_equation_cursor_open(
+            compiled, &answers, NULL, 0u, NULL, NULL, 0u, &runtime);
+        assert(cursor);
+        Atom *value = NULL;
+        CettaOpenEquationStep step = cetta_open_equation_cursor_next(
+            cursor, NULL, &value, NULL);
+        if (test >= 2u) {
+            assert(step == CETTA_OPEN_EQUATION_HOST);
+            /* A definition arrives while the caller is suspended at an earlier
+             * effect. The later call must still expose its unevaluated source. */
+            add_compiled_program_equation(program, &space, arena,
+                "(= (max $a $b) authored)");
+            extended = true;
+            uint32_t base = test_compiled_accept_host_value(cursor, &answers,
+                "(println! before-max)", "()");
+            step = cetta_open_equation_cursor_continue(cursor, NULL, base,
+                &value, NULL);
+            assert(step == CETTA_OPEN_EQUATION_HOST);
+            base = test_compiled_accept_host_value(cursor, &answers,
+                "(max (+ 1 2) 2)", "authored");
+            step = cetta_open_equation_cursor_continue(cursor, NULL, base,
+                &value, NULL);
+        }
+        assert(step == CETTA_OPEN_EQUATION_ANSWER);
+        assert(atom_alpha_eq(value, parse_one(&answers, results[test])));
+        assert(cetta_open_equation_cursor_next(cursor, NULL, &value, NULL) ==
+               CETTA_OPEN_EQUATION_EXHAUSTED);
+        cetta_open_equation_cursor_close(cursor);
+        cetta_open_equation_program_release(compiled);
+        if (test < 2u) {
+            extended = true;
+            compiled = cetta_open_equation_program_compile(
+                program, &space, symbol_intern_cstr(g_symbols, "builtin-entry-root"),
+                0u, &host, NULL);
+            assert(compiled);
+            cursor = cetta_open_equation_cursor_open(
+                compiled, &answers, NULL, 0u, NULL, NULL, 0u, &runtime);
+            assert(cursor);
+            assert(cetta_open_equation_cursor_next(cursor, NULL, &value, NULL) ==
+                   CETTA_OPEN_EQUATION_HOST);
+            uint32_t base = test_compiled_accept_host_value(cursor, &answers,
+                "(max 1 2)", "authored");
+            assert(cetta_open_equation_cursor_continue(cursor, NULL, base,
+                &value, NULL) == CETTA_OPEN_EQUATION_ANSWER);
+            assert(atom_alpha_eq(value, parse_one(&answers,
+                test == 0u ? "authored" : "(Row authored)")));
+            assert(cetta_open_equation_cursor_next(cursor, NULL, &value, NULL) ==
+                   CETTA_OPEN_EQUATION_EXHAUSTED);
+            cetta_open_equation_cursor_close(cursor);
+            cetta_open_equation_program_release(compiled);
+        }
+        arena_free(&answers);
+        petta_program_free(program);
+        space_free(&space);
+    }
+    puts("PASS: compiled builtin entry preserves live source and resumes once");
+}
+
+static bool test_compiled_guard_body_admitted(
+    void *context, Space *space, SymbolId head, uint32_t arity) {
+    (void)context;
+    (void)space;
+    (void)head;
+    (void)arity;
+    return true;
+}
+
+typedef struct {
+    CettaOpenTypeResult result;
+    uint32_t answers;
+    uint32_t calls;
+} TestCompiledTypeGuard;
+
+static CettaOpenTypeResult test_compiled_type_guard(
+    void *context, Space *space, Arena *arena, Atom *value, Atom *required,
+    Atom ***answers, uint32_t *count) {
+    (void)space;
+    TestCompiledTypeGuard *test = context;
+    assert(atom_eq(value, atom_int(arena, 6)));
+    assert(atom_is_symbol(required, "Number"));
+    test->calls++;
+    *answers = NULL;
+    *count = 0u;
+    if (test->result == CETTA_OPEN_TYPE_ANSWERS && test->answers) {
+        *answers = malloc(sizeof(**answers) * test->answers);
+        assert(*answers);
+        for (uint32_t i = 0u; i < test->answers; i++)
+            (*answers)[i] = required;
+        *count = test->answers;
+    }
+    return test->result;
+}
+
+static void test_compiled_type_guard_protocol(TermUniverse *universe, Arena *arena) {
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    Space space;
+    space_init_with_universe(&space, universe);
+    space_add(&space, parse_one(arena, "(: guard-unit (-> Number %Undefined%))"));
+    add_compiled_program_equation(program, &space, arena,
+        "(= (guard-unit $x) guard-unit-result)");
+    add_compiled_program_equation(program, &space, arena,
+        "(= (guard-unit-root) (guard-unit 6))");
+    CettaOpenEquationHost host = {
+        .relation_admitted = test_compiled_guard_body_admitted,
+        .call_protocol_admitted = test_compiled_guard_body_admitted,
+        .body_admitted = test_compiled_guard_body_admitted,
+    };
+    CettaOpenEquationProgram *compiled = cetta_open_equation_program_compile(
+        program, &space, symbol_intern_cstr(g_symbols, "guard-unit-root"),
+        0u, &host, NULL);
+    assert(compiled);
+    CettaOpenTypeResult modes[] = {
+        CETTA_OPEN_TYPE_ANSWERS, CETTA_OPEN_TYPE_PROVED, CETTA_OPEN_TYPE_DEFER,
+        CETTA_OPEN_TYPE_CAPACITY, CETTA_OPEN_TYPE_FAULT, CETTA_OPEN_TYPE_STACK,
+    };
+    Arena answers;
+    arena_init(&answers);
+    for (uint32_t i = 0u; i < sizeof(modes) / sizeof(*modes); i++) {
+        uint32_t trials = modes[i] == CETTA_OPEN_TYPE_ANSWERS ? 3u : 1u;
+        for (uint32_t count = 0u; count < trials; count++) {
+            TestCompiledTypeGuard test = {.result = modes[i], .answers = count};
+            CettaOpenEquationRuntime runtime = {0};
+            CettaOpenEquationCursor *cursor = cetta_open_equation_cursor_open(
+                compiled, &answers, NULL, 0u, NULL, NULL, 0u, &runtime);
+            assert(cursor);
+            cetta_open_equation_cursor_set_type_guard(
+                cursor, &test, test_compiled_type_guard);
+            Atom *value = NULL;
+            CettaOpenEquationStep step = cetta_open_equation_cursor_next(
+                cursor, NULL, &value, NULL);
+            if (modes[i] == CETTA_OPEN_TYPE_ANSWERS ||
+                modes[i] == CETTA_OPEN_TYPE_PROVED) {
+                uint32_t emitted = 0u;
+                while (step == CETTA_OPEN_EQUATION_ANSWER) {
+                    assert(atom_is_symbol(value, "guard-unit-result"));
+                    emitted++;
+                    step = cetta_open_equation_cursor_next(cursor, NULL, &value, NULL);
+                }
+                assert(step == CETTA_OPEN_EQUATION_EXHAUSTED);
+                if (emitted != (modes[i] == CETTA_OPEN_TYPE_PROVED ? 1u : count))
+                    fprintf(stderr, "guard protocol mode=%u expected=%u emitted=%u calls=%u\n",
+                        modes[i], count, emitted, test.calls);
+                assert(emitted == (modes[i] == CETTA_OPEN_TYPE_PROVED ? 1u : count));
+            } else if (modes[i] == CETTA_OPEN_TYPE_DEFER) {
+                assert(step == CETTA_OPEN_EQUATION_HOST);
+            } else {
+                assert(step == CETTA_OPEN_EQUATION_FAULT);
+                assert(cetta_open_equation_cursor_handoff(cursor) ==
+                    (modes[i] == CETTA_OPEN_TYPE_CAPACITY
+                        ? CETTA_OPEN_EQUATION_HANDOFF_CAPACITY
+                        : modes[i] == CETTA_OPEN_TYPE_STACK
+                            ? CETTA_OPEN_EQUATION_HANDOFF_STACK
+                        : CETTA_OPEN_EQUATION_HANDOFF_SERVICE_ERROR));
+            }
+            assert(test.calls == 1u);
+            cetta_open_equation_cursor_close(cursor);
+        }
+    }
+    cetta_open_equation_program_release(compiled);
+    petta_program_free(program);
+    arena_free(&answers);
+    space_free(&space);
+    puts("PASS: compiled type guards preserve rejection, singleton and duplicate answers, deferral and terminal provider faults");
+}
+
+static void test_compiled_terminal_host(TermUniverse *universe, Arena *arena) {
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    Space space;
+    space_init_with_universe(&space, universe);
+    add_compiled_program_equation(program, &space, arena,
+        "(= (terminal-leaf $x) (eval $x))");
+    add_compiled_program_equation(program, &space, arena,
+        "(= (terminal-middle $x) (Box (terminal-leaf $x)))");
+    add_compiled_program_equation(program, &space, arena,
+        "(= (terminal-root $x) (Row (terminal-middle $x)))");
+    add_compiled_program_equation(program, &space, arena,
+        "(= (terminal-sharing (Pair $x $x)) (eval (Out $x)))");
+    add_compiled_program_equation(program, &space, arena,
+        "(= (terminal-work) (progn (eval opaque) (println! after)))");
+    add_compiled_program_equation(program, &space, arena,
+        "(= (terminal-alternatives) (eval opaque))");
+    add_compiled_program_equation(program, &space, arena,
+        "(= (terminal-alternatives) later)");
+    add_compiled_program_equation(program, &space, arena,
+        "(= (terminal-once) (once (eval opaque)))");
+    space_add(&space, parse_one(arena,
+        "(: terminal-guarded (-> Atom Number))"));
+    add_compiled_program_equation(program, &space, arena,
+        "(= (terminal-guarded $x) (eval $x))");
+    add_compiled_program_equation(program, &space, arena,
+        "(= (terminal-result-guard) (terminal-guarded opaque))");
+    CettaOpenEquationHost host = {
+        .relation_admitted = test_compiled_guard_body_admitted,
+        .call_protocol_admitted = test_compiled_guard_body_admitted,
+        .body_admitted = test_compiled_guard_body_admitted,
+    };
+    Arena answers;
+    arena_init(&answers);
+
+    /* The pending returns build constructors around the host's future value.
+     * Exporting the pending answer must retain that same output variable. */
+    CettaOpenEquationProgram *compiled = cetta_open_equation_program_compile(
+        program, &space, symbol_intern_cstr(g_symbols, "terminal-root"),
+        1u, &host, NULL);
+    assert(compiled);
+    Atom *output = parse_one(&answers, "$output");
+    Atom *query_vars[] = {output};
+    Atom *args[] = {parse_one(&answers, "opaque")};
+    CettaOpenEquationCursor *cursor = cetta_open_equation_cursor_open(
+        compiled, &answers, args, 1u, output, query_vars, 1u, NULL);
+    assert(cursor);
+    Atom *value = NULL;
+    Atom **query_values = NULL;
+    assert(cetta_open_equation_cursor_next(cursor, query_vars, &value,
+        &query_values) == CETTA_OPEN_EQUATION_HOST);
+    assert(cetta_open_equation_cursor_host_terminal(cursor, &query_values));
+    assert(cetta_open_equation_cursor_program_at(cursor, 0u) == compiled);
+    assert(!cetta_open_equation_cursor_program_at(cursor, 1u));
+    Atom *goal = NULL;
+    Atom *destination = NULL;
+    Atom *const *host_vars = NULL;
+    uint32_t host_count = 0u;
+    const PettaPlanNode *plan = NULL;
+    CettaOpenEquationHostMode mode;
+    bool recovers = false;
+    assert(cetta_open_equation_cursor_host_goal(cursor, &goal, &destination,
+        &host_vars, &host_count, &plan, &mode, &recovers));
+    assert(mode == CETTA_OPEN_EQUATION_HOST_SOLVE);
+    assert(atom_alpha_eq(goal, parse_one(&answers, "(eval opaque)")));
+    assert(destination && destination->kind == ATOM_VAR);
+    assert(atom_alpha_eq(query_values[0],
+        parse_one(&answers, "(Row (Box $result))")));
+    Atom *inner = query_values[0]->expr.elems[1]->expr.elems[1];
+    assert(inner->kind == ATOM_VAR && inner->var_id == destination->var_id);
+
+    /* Native clients may ignore the transfer hint. The ordinary accept and
+     * resume protocol still fills every return slot and publishes once. */
+    Atom **host_values = malloc(sizeof(*host_values) * host_count);
+    assert(host_values && host_count > 0u);
+    for (uint32_t i = 0u; i < host_count; i++)
+        host_values[i] = host_vars[i]->var_id == destination->var_id
+            ? atom_int(&answers, 17) : host_vars[i];
+    uint32_t base = 0u;
+    assert(cetta_open_equation_cursor_accept(cursor, query_vars, host_vars,
+        host_values, host_count, true, 0u, &base));
+    free(host_values);
+    assert(cetta_open_equation_cursor_continue(cursor, query_vars, base,
+        &value, &query_values) == CETTA_OPEN_EQUATION_ANSWER);
+    assert(atom_alpha_eq(value, parse_one(&answers, "(Row (Box 17))")));
+    assert(atom_eq(query_values[0], value));
+    assert(cetta_open_equation_cursor_next(cursor, query_vars, &value,
+        &query_values) == CETTA_OPEN_EQUATION_EXHAUSTED);
+    cetta_open_equation_cursor_close(cursor);
+    cursor = cetta_open_equation_cursor_open(
+        compiled, &answers, args, 1u, NULL, NULL, 0u, NULL);
+    assert(cursor);
+    assert(cetta_open_equation_cursor_next(cursor, NULL, &value, NULL) ==
+        CETTA_OPEN_EQUATION_HOST);
+    assert(cetta_open_equation_cursor_host_terminal(cursor, &query_values));
+    base = test_compiled_accept_host_value(cursor, &answers,
+        "(eval opaque)", "19");
+    assert(cetta_open_equation_cursor_continue(cursor, NULL, base,
+        &value, NULL) == CETTA_OPEN_EQUATION_ANSWER);
+    assert(atom_alpha_eq(value, parse_one(&answers, "(Row (Box 19))")));
+    cetta_open_equation_cursor_close(cursor);
+    cetta_open_equation_program_release(compiled);
+
+    /* Head matching creates a private cell shared by the query refinement and
+     * the host goal. Exporting them separately with fresh names loses it. */
+    compiled = cetta_open_equation_program_compile(
+        program, &space, symbol_intern_cstr(g_symbols, "terminal-sharing"),
+        1u, &host, NULL);
+    assert(compiled);
+    Atom *input = parse_one(&answers, "$input");
+    output = parse_one(&answers, "$output");
+    Atom *sharing_vars[] = {input, output};
+    Atom *sharing_args[] = {input};
+    cursor = cetta_open_equation_cursor_open(compiled, &answers, sharing_args,
+        1u, output, sharing_vars, 2u, NULL);
+    assert(cursor);
+    assert(cetta_open_equation_cursor_next(cursor, sharing_vars, &value,
+        &query_values) == CETTA_OPEN_EQUATION_HOST);
+    assert(cetta_open_equation_cursor_host_terminal(cursor, &query_values));
+    assert(cetta_open_equation_cursor_host_goal(cursor, &goal, &destination,
+        &host_vars, &host_count, &plan, &mode, &recovers));
+    assert(atom_alpha_eq(query_values[0], parse_one(&answers, "(Pair $x $x)")));
+    assert(atom_alpha_eq(goal, parse_one(&answers, "(eval (Out $x))")));
+    Atom *shared = query_values[0]->expr.elems[1];
+    assert(shared->kind == ATOM_VAR);
+    assert(shared->var_id == query_values[0]->expr.elems[2]->var_id);
+    assert(shared->var_id == goal->expr.elems[1]->expr.elems[1]->var_id);
+    assert(query_values[1]->kind == ATOM_VAR &&
+        query_values[1]->var_id == destination->var_id);
+    cetta_open_equation_cursor_close(cursor);
+    cetta_open_equation_program_release(compiled);
+
+    const char *negative[] = {
+        "terminal-work", "terminal-alternatives", "terminal-once",
+        "terminal-result-guard",
+    };
+    for (uint32_t i = 0u; i < sizeof(negative) / sizeof(*negative); i++) {
+        compiled = cetta_open_equation_program_compile(program, &space,
+            symbol_intern_cstr(g_symbols, negative[i]), 0u, &host, NULL);
+        assert(compiled);
+        cursor = cetta_open_equation_cursor_open(
+            compiled, &answers, NULL, 0u, NULL, NULL, 0u, NULL);
+        assert(cursor);
+        assert(cetta_open_equation_cursor_next(cursor, NULL, &value,
+            &query_values) == CETTA_OPEN_EQUATION_HOST);
+        query_values = NULL;
+        if (cetta_open_equation_cursor_host_terminal(cursor, &query_values))
+            fprintf(stderr, "unexpected terminal host: %s\n", negative[i]);
+        assert(!cetta_open_equation_cursor_host_terminal(cursor, &query_values));
+        cetta_open_equation_cursor_close(cursor);
+        cetta_open_equation_program_release(compiled);
+    }
+    arena_free(&answers);
+    petta_program_free(program);
+    space_free(&space);
+    puts("PASS: terminal host transfer preserves return stores and query sharing, and retains real continuations");
 }
 
 static void test_program_case_safety_projection(
@@ -10583,7 +11655,12 @@ int main(void) {
     g_symbols = &symbols;
     g_var_intern = &variables;
     test_type_policy_component(&answers);
+    test_type_bound_rows(&answers);
+    test_type_fact_reuse(&answers);
+    test_type_fact_warm_boundary();
+    test_type_fact_retention();
     test_type_frame_exhaustion(&answers);
+    test_type_stack_exhaustion();
     test_type_call_facts(&answers);
     assert_type_pure_symbol_facts();
     puts("PASS: type-pure grounded symbol facts");
@@ -10594,6 +11671,10 @@ int main(void) {
     test_program_metadata_projection(&answers);
     test_program_callability_head_kinds(&answers);
     test_compiled_graph_transport(&universe, &persistent);
+    test_compiled_type_guard_protocol(&universe, &persistent);
+    test_compiled_builtin_entry(&universe, &persistent);
+    test_compiled_entry_joins(&universe, &persistent);
+    test_compiled_terminal_host(&universe, &persistent);
     test_program_case_safety_projection(&universe, &persistent);
     space_init_with_universe(&space, &universe);
 

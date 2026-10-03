@@ -17,3 +17,6 @@ Grounded
 6
 true
 (Error (representation_error cyclic_term) $V0)
+((Visible visibility-a) (Visible visibility-a))
+()
+(Raw (+ 1 2))

@@ -1,0 +1,3 @@
+true
+((Before a) (Kept 2))
+((Before a) ((Kept 2) (Kept 2)) (Tail a))

@@ -8536,8 +8536,9 @@ static bool prepared_pure_head_takes_arity(
 
 /* Where an answer of a call goes: the step after the call in its caller's
  * step program, over the caller's locals as they stood at the call.  A NULL
- * continuation is the cursor's consumer.  A record never changes once a call
- * holds it, so every answer of the call resumes the same state. */
+ * continuation is the cursor's consumer.  Saved values are semantically
+ * immutable; detachment may relocate their storage.  Every answer of the
+ * call resumes the same state. */
 typedef struct PreparedPureContinuation PreparedPureContinuation;
 struct PreparedPureContinuation {
     const PreparedPureContinuation *parent;
@@ -8545,6 +8546,8 @@ struct PreparedPureContinuation {
     uint32_t equation;
     uint32_t step;
     uint32_t slot;
+    /* Detachment visits shared continuation tails only once. */
+    bool locals_detached;
 };
 
 typedef struct {
@@ -9446,33 +9449,81 @@ bool cetta_prepared_pure_answer_cursor_detach(
         return false;
     if (!cursor->owns_arena || cursor->detached)
         return true;
-    /* A continuation's locals are not frontier arguments; a consumer that
-     * detaches never opens a program with continuations. */
-    if (cursor->program->continuation_steps)
-        return false;
-    /* The borrowed answer's storage is about to lie below live values. */
-    cursor->answer_pending = false;
-    cursor->undo_valid = false;
+    /* Saved locals can borrow entry values even after the corresponding
+     * call's arguments have left the frontier.  Copy them as roots too.
+     * The undo list makes failure leave the cursor and its borrowed answer
+     * untouched; marking visited records avoids rewalking shared tails. */
+    typedef struct {
+        PreparedPureContinuation *record;
+        Atom **locals;
+    } DetachedLocals;
+    DetachedLocals *changed = NULL;
+    size_t changed_len = 0u, changed_cap = 0u;
+    ArenaMark before = arena_mark(cursor->arena);
+    Atom **arguments = cursor->argument_len
+        ? malloc(sizeof(*arguments) * cursor->argument_len) : NULL;
     AtomDeepCopySession *session = atom_deep_copy_session_new(cursor->arena);
-    bool ok = session != NULL;
+    bool ok = session != NULL && (!cursor->argument_len || arguments);
     for (size_t index = 0u; ok && index < cursor->argument_len; index++) {
-        Atom *copy = atom_deep_copy_session_copy(
+        arguments[index] = atom_deep_copy_session_copy(
             session, cursor->arguments[index]);
-        if (copy)
-            cursor->arguments[index] = copy;
-        else
-            ok = false;
+        ok = arguments[index] != NULL;
+    }
+    for (size_t index = 0u; ok && index < cursor->frame_len; index++) {
+        for (PreparedPureContinuation *record =
+                 (PreparedPureContinuation *)cursor->frames[index].continuation;
+             ok && record && !record->locals_detached;
+             record = (PreparedPureContinuation *)record->parent) {
+            if (record->equation >= cursor->program->equation_len ||
+                !prepared_pure_reserve(
+                    (void **)&changed, sizeof(*changed), &changed_cap,
+                    changed_len + 1u)) {
+                ok = false;
+                break;
+            }
+            uint32_t count = cursor->program->equations[
+                record->equation].frame_slot_count;
+            Atom **locals = arena_alloc(
+                cursor->arena, sizeof(*locals) * (count ? count : 1u));
+            ok = locals != NULL && (!count || record->locals);
+            for (uint32_t slot = 0u; ok && slot < count; slot++) {
+                locals[slot] = record->locals[slot]
+                    ? atom_deep_copy_session_copy(session, record->locals[slot])
+                    : NULL;
+                ok = !record->locals[slot] || locals[slot];
+            }
+            if (ok) {
+                changed[changed_len++] = (DetachedLocals){record, record->locals};
+                record->locals = locals;
+                record->locals_detached = true;
+            }
+        }
     }
     if (session)
         atom_deep_copy_session_free(session);
-    /* Copies sit above every call's position, so no finished call may
-     * reclaim below them, whether or not all values were copied. */
-    ArenaMark mark = arena_mark(cursor->arena);
-    for (size_t index = 0u; index < cursor->frame_len; index++) {
-        cursor->frames[index].mark = mark;
-        cursor->frames[index].alternative_mark = mark;
+    if (ok) {
+        if (cursor->argument_len)
+            memcpy(cursor->arguments, arguments,
+                   sizeof(*arguments) * cursor->argument_len);
+        /* Copies sit above every call's position.  Neither a consumed
+         * answer nor a completed alternative may reclaim below them. */
+        cursor->answer_pending = false;
+        cursor->undo_valid = false;
+        ArenaMark mark = arena_mark(cursor->arena);
+        for (size_t index = 0u; index < cursor->frame_len; index++) {
+            cursor->frames[index].mark = mark;
+            cursor->frames[index].alternative_mark = mark;
+        }
+        cursor->detached = true;
+    } else {
+        for (size_t index = 0u; index < changed_len; index++) {
+            changed[index].record->locals = changed[index].locals;
+            changed[index].record->locals_detached = false;
+        }
+        arena_reset(cursor->arena, before);
     }
-    cursor->detached = ok;
+    free(changed);
+    free(arguments);
     return ok;
 }
 

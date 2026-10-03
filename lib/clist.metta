@@ -37,14 +37,14 @@
 
 (= (clist:from-list $xs)
    (let ($head $tail) (decons-atom $xs)
-     (let $rest (eval (clist:from-list $tail))
+     (let $rest (clist:from-list $tail)
        (clist:cons $head $rest))))
 
 (= (clist:to-list ClistNil)
    ())
 
 (= (clist:to-list (ClistCons $head $tail))
-   (let $rest (eval (clist:to-list $tail))
+   (let $rest (clist:to-list $tail)
      (cons-atom $head $rest)))
 
 (= (clist:len $list)
@@ -55,13 +55,13 @@
 
 (= (clist:len-acc (ClistCons $head $tail) $acc)
    (let $next (eval (+ $acc 1))
-     (eval (clist:len-acc $tail $next))))
+     (clist:len-acc $tail $next)))
 
 (= (clist:append ClistNil $rhs)
    $rhs)
 
 (= (clist:append (ClistCons $head $tail) $rhs)
-   (let $rest (eval (clist:append $tail $rhs))
+   (let $rest (clist:append $tail $rhs)
      (clist:cons $head $rest)))
 
 (= (clist:reverse $list)
@@ -71,8 +71,8 @@
    $acc)
 
 (= (clist:reverse-acc (ClistCons $head $tail) $acc)
-   (let $next (eval (clist:cons $head $acc))
-     (eval (clist:reverse-acc $tail $next))))
+   (let $next (clist:cons $head $acc)
+     (clist:reverse-acc $tail $next)))
 
 (= (clist:map $list $var $body)
    (clist:from-list

@@ -893,8 +893,9 @@ Atom *petta_semantics_list_error(Arena *arena, SymbolId operation,
     return petta_error_term(arena, formal, context);
 }
 
-Atom *petta_semantics_static_procedure_error(
-    Arena *arena, SymbolId name, int64_t arity, const char *predicate) {
+static Atom *petta_static_procedure_error_with_context(
+    Arena *arena, const char *module, SymbolId name, int64_t arity,
+    const char *predicate, int64_t predicate_arity) {
     if (!arena || name == SYMBOL_ID_NONE || !predicate)
         return NULL;
     Atom *slash = atom_symbol(arena, "/");
@@ -902,14 +903,24 @@ Atom *petta_semantics_static_procedure_error(
         ? atom_expr3(arena, slash, atom_symbol_id(arena, name),
                      atom_int(arena, arity))
         : NULL;
+    if (indicator && module)
+        indicator = atom_expr3(arena, atom_symbol(arena, ":"),
+                              atom_symbol(arena, module), indicator);
     Atom *formal = indicator
         ? atom_expr(arena, (Atom *[]){
               atom_symbol(arena, "permission_error"),
               atom_symbol(arena, "modify"),
               atom_symbol(arena, "static_procedure"), indicator}, 4u)
         : NULL;
-    Atom *context = petta_error_predicate_context(arena, "system", predicate, 1);
+    Atom *context = petta_error_predicate_context(
+        arena, "system", predicate, predicate_arity);
     return petta_error_term(arena, formal, context);
+}
+
+Atom *petta_semantics_static_procedure_error(
+    Arena *arena, SymbolId name, int64_t arity, const char *predicate) {
+    return petta_static_procedure_error_with_context(
+        arena, NULL, name, arity, predicate, 1);
 }
 
 Atom *petta_semantics_state_existence_error(Arena *arena, Atom *name) {
@@ -1385,7 +1396,8 @@ typedef struct {
 
 static bool petta_materialize_frame_reserve(
     PeTTaMaterializeFrame **frames,
-    size_t *capacity, size_t required) {
+    size_t *capacity, size_t required,
+    PeTTaMaterializeFrame *inline_frames) {
     if (required <= *capacity)
         return true;
     size_t next = *capacity ? *capacity * 2u : 32u;
@@ -1396,9 +1408,13 @@ static bool petta_materialize_frame_reserve(
     }
     if (next > SIZE_MAX / sizeof(**frames))
         return false;
-    void *grown = realloc(*frames, sizeof(**frames) * next);
+    void *grown = *frames == inline_frames
+        ? malloc(sizeof(**frames) * next)
+        : realloc(*frames, sizeof(**frames) * next);
     if (!grown)
         return false;
+    if (*frames == inline_frames)
+        memcpy(grown, *frames, sizeof(**frames) * *capacity);
     *frames = grown;
     *capacity = next;
     return true;
@@ -1425,9 +1441,10 @@ Atom *petta_semantics_materialize_value(
     if (!arena || !value)
         return NULL;
     Atom *result = NULL;
-    PeTTaMaterializeFrame *frames = NULL;
+    PeTTaMaterializeFrame inline_frames[16];
+    PeTTaMaterializeFrame *frames = inline_frames;
     size_t length = 0u;
-    size_t capacity = 0u;
+    size_t capacity = sizeof(inline_frames) / sizeof(inline_frames[0]);
 
 #define PETTA_MATERIALIZE_PUSH(source_atom, destination_slot) do { \
     Atom *petta_source__ = (source_atom); \
@@ -1452,7 +1469,7 @@ Atom *petta_semantics_materialize_value(
     if (!cetta_expr_len_mul_fits_size( \
             petta_count__, sizeof(Atom *)) || \
         !petta_materialize_frame_reserve( \
-            &frames, &capacity, length + 1u)) { \
+            &frames, &capacity, length + 1u, inline_frames)) { \
         goto fail; \
     } \
     Atom **petta_results__ = petta_count__ \
@@ -1488,12 +1505,14 @@ Atom *petta_semantics_materialize_value(
         *frame->result_slot = built;
         length--;
     }
-    free(frames);
+    if (frames != inline_frames)
+        free(frames);
 #undef PETTA_MATERIALIZE_PUSH
     return result;
 
 fail:
-    free(frames);
+    if (frames != inline_frames)
+        free(frames);
 #undef PETTA_MATERIALIZE_PUSH
     return NULL;
 }
@@ -2408,6 +2427,32 @@ PeTTaNamedArity petta_semantics_registered_named_arity(
 
 bool petta_semantics_registered_builtin(SymbolId symbol) {
     return petta_semantics_registered_builtin_arities(symbol, NULL);
+}
+
+bool petta_semantics_static_builtin_definition(
+    SymbolId symbol, CettaExprLen input_arity) {
+    /* get-type/2 is declared dynamic; the other registered prelude
+     * predicates are static. Arity belongs to the predicate, not its name. */
+    if (symbol == g_builtin_syms.get_type)
+        return false;
+    /* chain/3 is translator syntax. The one-input spelling instead
+     * collides with the imported CLPFD chain/2 predicate. */
+    if (symbol == g_builtin_syms.chain)
+        return input_arity == 1u;
+    uint16_t arities = 0u;
+    return input_arity < 16u &&
+        petta_semantics_registered_builtin_arities(symbol, &arities) &&
+        (arities & (uint16_t)(1u << input_arity)) != 0u;
+}
+
+Atom *petta_semantics_builtin_definition_error(
+    Arena *arena, SymbolId symbol, CettaExprLen input_arity) {
+    if (!arena ||
+        !petta_semantics_static_builtin_definition(symbol, input_arity))
+        return NULL;
+    return petta_static_procedure_error_with_context(
+        arena, symbol == g_builtin_syms.chain ? "clpfd" : NULL,
+        symbol, (int64_t)input_arity + 1, "assertz", 2);
 }
 
 /* SWI-PeTTa's get-metatype/2: a truth value is Grounded, and so is an atom

@@ -1,0 +1,13 @@
+(UnaryMax a)
+(rejected)
+(stored-max)
+(3)
+(rejected)
+(stored-min)
+(2)
+((Seen 3))
+(rejected)
+(stored-chain-one)
+((BuiltinChain 3))
+true
+((OwnedMin 2 3))

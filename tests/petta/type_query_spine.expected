@@ -1,0 +1,13 @@
+(Box (%Undefined% %Undefined%))
+(Box (%Undefined% %Undefined%))
+(Pair (%Undefined% %Undefined% $V0) Number)
+(Box $V0)
+(spine-bound $V0)
+(Box (%Undefined% %Undefined%))
+(Box (%Undefined% %Undefined%))
+(Pair (%Undefined% %Undefined% $V0) Number)
+(Box $V0)
+(Box Authored)
+(spine-bound $V0)
+(%Undefined%)
+Authored
