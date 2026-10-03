@@ -358,6 +358,11 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
     ctx->import_space_alias_len = 0;
     ctx->cmdline_arg_len = 0;
     ctx->loaded_module_len = 0;
+    ctx->module_token_scope = NULL;
+    ctx->top_module_space = NULL;
+    ctx->retired_modules = NULL;
+    ctx->retired_module_len = 0u;
+    ctx->retired_module_cap = 0u;
     memset(ctx->native_handles, 0, sizeof(ctx->native_handles));
     ctx->native_handle_len = 0;
     ctx->native_handle_next_id = 1;
@@ -466,7 +471,14 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
         ctx->nik_runtime_mutex_ready = false;
     }
     for (uint32_t i = 0; i < ctx->loaded_module_len; i++) {
+        if (ctx->loaded_modules[i].tokens) {
+            registry_free(ctx->loaded_modules[i].tokens);
+            free(ctx->loaded_modules[i].tokens);
+            ctx->loaded_modules[i].tokens = NULL;
+        }
         Space *space = ctx->loaded_modules[i].space;
+        free(ctx->loaded_modules[i].module_name);
+        ctx->loaded_modules[i].module_name = NULL;
         if (!space) continue;
         if (ctx->petta_program)
             petta_program_forget_space(
@@ -476,6 +488,14 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
         ctx->loaded_modules[i].space = NULL;
     }
     ctx->loaded_module_len = 0;
+    for (uint32_t i = 0u; i < ctx->retired_module_len; i++) {
+        space_free(ctx->retired_modules[i].space);
+        free(ctx->retired_modules[i].space);
+        free(ctx->retired_modules[i].module_name);
+    }
+    free(ctx->retired_modules);
+    ctx->retired_modules = NULL;
+    ctx->retired_module_len = ctx->retired_module_cap = 0u;
     free(ctx->petta_library_paths.items);
     memset(&ctx->petta_library_paths, 0, sizeof(ctx->petta_library_paths));
     term_universe_free(&ctx->term_universe);
@@ -1441,19 +1461,77 @@ static void rollback_imported_files(CettaLibraryContext *ctx, uint32_t rollback_
     }
 }
 
+/* Reserve rollback records before HE module code can expose space handles.
+ * Include all loaded slots so nested failures can retire without allocating. */
+static bool library_reserve_module_retirement(CettaLibraryContext *ctx) {
+    if (ctx->loaded_module_len > UINT32_MAX - ctx->retired_module_len)
+        return false;
+    uint32_t required = ctx->retired_module_len + ctx->loaded_module_len;
+    if (required <= ctx->retired_module_cap)
+        return true;
+    uint32_t next = ctx->retired_module_cap ? ctx->retired_module_cap : 4u;
+    while (next < required) {
+        if (next > UINT32_MAX / 2u) {
+            next = required;
+            break;
+        }
+        next *= 2u;
+    }
+    if (sizeof(*ctx->retired_modules) > SIZE_MAX / (size_t)next)
+        return false;
+    void *grown = realloc(ctx->retired_modules,
+                          sizeof(*ctx->retired_modules) * (size_t)next);
+    if (!grown)
+        return false;
+    ctx->retired_modules = grown;
+    ctx->retired_module_cap = next;
+    return true;
+}
+
+/* Keep a failed HE module's space and name until the context ends. This
+ * path cannot fail for lack of memory after a handle has escaped. */
+static void library_retire_module_space(CettaLibraryContext *ctx,
+                                        Space *space, char *module_name) {
+    if (ctx->retired_module_len >= ctx->retired_module_cap) {
+        fputs("fatal: module rollback lost its reserved storage\n", stderr);
+        abort();
+    }
+    ctx->retired_modules[ctx->retired_module_len].space = space;
+    ctx->retired_modules[ctx->retired_module_len].module_name = module_name;
+    ctx->retired_module_len++;
+}
+
 static void rollback_loaded_modules(CettaLibraryContext *ctx, uint32_t rollback_len) {
     while (ctx->loaded_module_len > rollback_len) {
         ctx->loaded_module_len--;
-        if (ctx->loaded_modules[ctx->loaded_module_len].space) {
-            Space *space =
-                ctx->loaded_modules[ctx->loaded_module_len].space;
+        CettaLoadedModule *module =
+            &ctx->loaded_modules[ctx->loaded_module_len];
+        if (module->space) {
+            Space *space = module->space;
             if (ctx->petta_program)
                 petta_program_forget_space(
                     ctx->petta_program, space);
+            TermUniverse *universe = space->native.universe;
             space_free(space);
-            free(space);
-            ctx->loaded_modules[ctx->loaded_module_len].space = NULL;
+            /* A named HE module's space keeps its identity, as an empty
+               space: an error naming the failed call may still print or
+               read it. */
+            if (module->module_name) {
+                library_retire_module_space(ctx, space, module->module_name);
+                space_init_with_universe(space, universe);
+                module->module_name = NULL;
+            } else {
+                free(space);
+            }
+            module->space = NULL;
         }
+        if (ctx->loaded_modules[ctx->loaded_module_len].tokens) {
+            registry_free(ctx->loaded_modules[ctx->loaded_module_len].tokens);
+            free(ctx->loaded_modules[ctx->loaded_module_len].tokens);
+            ctx->loaded_modules[ctx->loaded_module_len].tokens = NULL;
+        }
+        free(ctx->loaded_modules[ctx->loaded_module_len].module_name);
+        ctx->loaded_modules[ctx->loaded_module_len].module_name = NULL;
         ctx->loaded_modules[ctx->loaded_module_len].display_name[0] = '\0';
         ctx->loaded_modules[ctx->loaded_module_len].canonical_path[0] = '\0';
         ctx->loaded_modules[ctx->loaded_module_len].format.kind = CETTA_MODULE_FORMAT_METTA;
@@ -4169,29 +4247,10 @@ static bool rhometta_eval_context_from_current(
     return true;
 }
 
-/* Native observers return values, whereas the dispatch interface returns
- * expressions to evaluate. Use the existing return delimiter to transport a
- * completed value without interpreting its fields (including Error payloads).
- */
-static Atom *library_value_result(Arena *a, Atom *value) {
-    return atom_expr2(a, atom_symbol_id(a, g_builtin_syms.function),
-        atom_expr2(a, atom_symbol_id(a, g_builtin_syms.return_text), value));
-}
-
-static Atom *library_value_frontier(Arena *a, Atom *frontier) {
-    /* The rho frontier API produces (superpose (value ...)). Keep its branch
-     * order and multiplicity, but deliver each already-computed state once. */
-    Atom *values = frontier->expr.elems[1];
-    Atom **branches = arena_alloc(a, sizeof(*branches) * values->expr.len);
-    for (CettaExprIndex i = 0; i < values->expr.len; ++i)
-        branches[i] = library_value_result(a, values->expr.elems[i]);
-    return atom_expr2(a, atom_symbol_id(a, g_builtin_syms.superpose),
-                      atom_expr(a, branches, values->expr.len));
-}
-
 static Atom *cetta_library_dispatch_rhometta(const CettaLibraryContext *ctx,
                                              Space *space, Arena *a, Atom *head,
-                                             Atom **args, uint32_t nargs) {
+                                             Atom **args, uint32_t nargs,
+                                             CettaCallResultForm *result_form) {
     RhocalcEvalContext eval_context;
     _Atomic(RhocalcPayloadFailure) payload_failure = RHOCALC_PAYLOAD_FAILURE_NONE;
     const char *detail;
@@ -4229,7 +4288,8 @@ static Atom *cetta_library_dispatch_rhometta(const CettaLibraryContext *ctx,
                 atom_string(a, detail ? detail
                                       : "rhometta successor frontier construction failed"));
         }
-        return library_value_frontier(a, result);
+        *result_form = CETTA_CALL_RESULT_COMPLETED_FRONTIER;
+        return result->expr.elems[1];
     }
 
     if (head->sym_id == g_builtin_syms.lib_rhometta_run) {
@@ -4256,7 +4316,8 @@ static Atom *cetta_library_dispatch_rhometta(const CettaLibraryContext *ctx,
                 a, library_call_expr(a, head, args, nargs),
                 atom_string(a, detail ? detail : "rhometta reduction failed"));
         }
-        return library_value_frontier(a, result);
+        *result_form = CETTA_CALL_RESULT_COMPLETED_FRONTIER;
+        return result->expr.elems[1];
     }
 
     if (head->sym_id == g_builtin_syms.lib_rhometta_run_canonical) {
@@ -4294,7 +4355,8 @@ static Atom *cetta_library_dispatch_rhometta(const CettaLibraryContext *ctx,
                 a, library_call_expr(a, head, args, nargs),
                 atom_string(a, "canonical rhometta reduction limit exhausted"));
         }
-        return library_value_result(a, reduction.residual);
+        *result_form = CETTA_CALL_RESULT_COMPLETED_VALUE;
+        return reduction.residual;
     }
 
     if (head->sym_id == g_builtin_syms.lib_rhometta_values) {
@@ -4309,7 +4371,8 @@ static Atom *cetta_library_dispatch_rhometta(const CettaLibraryContext *ctx,
                 a, library_call_expr(a, head, args, nargs),
                 atom_string(a, "cannot inspect rhometta residual"));
         }
-        return library_value_result(a, result);
+        *result_form = CETTA_CALL_RESULT_COMPLETED_VALUE;
+        return result;
     }
 
     return NULL;
@@ -7747,6 +7810,30 @@ static bool cetta_library_petta_check_segment(
  * order for declarations, effects, and runnable answer bags.  File imports
  * and process_metta_string deliberately share this one semantic path.
  */
+/* Read the tokens of the HE module being loaded into one statement, as HE's
+ * tokenizer does when it reads the module's text: its `&self` and the tokens
+ * its code has bound before the statement. */
+static AtomId library_module_capture_tokens(CettaLibraryContext *ctx,
+                                            Space *work_space,
+                                            Arena *eval_arena,
+                                            Arena *persistent_arena,
+                                            AtomId statement) {
+    if (!ctx->module_token_scope || statement == CETTA_ATOM_ID_NONE)
+        return statement;
+    TermUniverse *universe = work_space->native.universe;
+    Atom *atom = term_universe_get_atom(universe, statement);
+    if (!atom)
+        return statement;
+    Atom *captured = eval_capture_registry_tokens(
+        ctx->module_token_scope, eval_arena, atom);
+    if (captured == atom)
+        return statement;
+    AtomId stored = term_universe_store_atom_id(
+        universe, persistent_arena ? persistent_arena : eval_arena,
+        captured);
+    return stored != CETTA_ATOM_ID_NONE ? stored : statement;
+}
+
 static bool cetta_library_petta_execute_document_ids(
     CettaLibraryContext *ctx, Space *work_space,
     Arena *eval_arena, Arena *persistent_arena,
@@ -7800,6 +7887,9 @@ static bool cetta_library_petta_execute_document_ids(
             tu_sym(work_space->native.universe, atom_id) ==
                 g_builtin_syms.bang &&
             index + 1 < atom_count) {
+            atom_ids[index + 1] = library_module_capture_tokens(
+                ctx, work_space, eval_arena, persistent_arena,
+                atom_ids[index + 1]);
             if (!cetta_library_petta_check_segment(
                     ctx, work_space, registry, eval_arena,
                     atom_ids + index, 2, false,
@@ -7907,6 +7997,14 @@ static bool cetta_library_petta_execute_document_ids(
             }
             block_end++;
         }
+        /* No statement in the block binds a token, so the whole block
+           reads the tokens bound before it. */
+        for (int block_index = index; block_index < block_end;
+             block_index++) {
+            atom_ids[block_index] = library_module_capture_tokens(
+                ctx, work_space, eval_arena, persistent_arena,
+                atom_ids[block_index]);
+        }
         if (!cetta_library_petta_check_segment(
                 ctx, work_space, registry, eval_arena,
                 atom_ids + index, block_end - index,
@@ -7949,6 +8047,22 @@ static bool cetta_library_petta_execute_document_ids(
                             CETTA_PETTA_DOCUMENT_PLAN_FAILED;
                     return false;
                 }
+            }
+            if (!source)
+                source = term_universe_get_atom(
+                    work_space->native.universe, block_atom_id);
+            Atom *definition_error = eval_petta_builtin_definition_error(
+                eval_arena, registry, work_space, source);
+            if (definition_error) {
+                /* PeTTa stores the equation row before its compiler's
+                 * assertz rejects the protected executable predicate. */
+                space_add_atom_id(work_space, block_atom_id);
+                petta_program_declaration_block_free(block);
+                if (failure_out)
+                    *failure_out = CETTA_PETTA_DOCUMENT_EVAL_FAILED;
+                if (detail_out)
+                    *detail_out = definition_error;
+                return false;
             }
             space_add_atom_id(work_space, block_atom_id);
             if (block &&
@@ -8640,6 +8754,142 @@ static CettaLoadedModule *remember_loaded_module(CettaLibraryContext *ctx,
     return entry;
 }
 
+/* HE gives a MeTTa module its own space and tokens (HE's MettaMod). */
+static bool library_loads_he_module(const CettaLibraryContext *ctx,
+                                    const CettaImportPlan *plan) {
+    return ctx->session.language_id == CETTA_LANGUAGE_HE &&
+           plan->format.kind == CETTA_MODULE_FORMAT_METTA;
+}
+
+/* Load an HE module into its own space.  The space reads the library module
+ * as the space importing it does; its text is read with its own tokens, so
+ * `&self` in it denotes its space wherever its code later runs, and the
+ * tokens its code binds stay its own. */
+static bool load_he_module(CettaLibraryContext *ctx, CettaLoadedModule *entry,
+                           const char *path, Arena *eval_arena,
+                           Arena *persistent_arena, Registry *registry,
+                           int fuel, Atom **error_out) {
+    if (!library_reserve_module_retirement(ctx)) {
+        *error_out = atom_symbol(eval_arena, "module rollback allocation failed");
+        return false;
+    }
+    Arena *storage = persistent_arena ? persistent_arena : eval_arena;
+    Atom *importer_self = registry
+        ? registry_lookup_id(registry, g_builtin_syms.self) : NULL;
+    Space *importer = importer_self &&
+            importer_self->kind == ATOM_GROUNDED &&
+            importer_self->ground.gkind == GV_SPACE
+        ? (Space *)importer_self->ground.ptr : NULL;
+    CettaIndex library_len = importer ? space_imported_length(importer) : 0u;
+    bool same_universe = importer &&
+        importer->native.universe == entry->space->native.universe;
+    for (CettaIndex i = 0u; i < library_len; i++) {
+        AtomId id = same_universe
+            ? space_get_atom_id_at64(importer, i) : CETTA_ATOM_ID_NONE;
+        if (id != CETTA_ATOM_ID_NONE)
+            space_add_atom_id(entry->space, id);
+        else
+            space_add(entry->space, space_get_at64(importer, i));
+    }
+    if (library_len != 0u && !space_mark_imported_prefix(entry->space)) {
+        *error_out = atom_symbol(eval_arena, "module library setup failed");
+        return false;
+    }
+    /* Its name extends that of the module importing it first. */
+    const char *parent = cetta_library_module_space_name(ctx, importer);
+    if (!parent)
+        parent = "top";
+    size_t name_size = strlen(parent) + 1u + strlen(entry->display_name) + 1u;
+    entry->module_name = malloc(name_size);
+    if (!entry->module_name) {
+        *error_out = atom_symbol(eval_arena, "module name allocation failed");
+        return false;
+    }
+    snprintf(entry->module_name, name_size, "%s:%s", parent,
+             entry->display_name);
+    entry->tokens = malloc(sizeof(*entry->tokens));
+    if (!entry->tokens) {
+        *error_out = atom_symbol(eval_arena, "module token table allocation failed");
+        return false;
+    }
+    registry_init(entry->tokens);
+    Atom *module_self = atom_space(storage, entry->space);
+    cetta_provenance_assert_not_transient(module_self,
+                                         "library.module.self");
+    registry_bind_id(entry->tokens, g_builtin_syms.self, module_self);
+    Registry *outer_scope = ctx->module_token_scope;
+    ctx->module_token_scope = entry->tokens;
+    bool ok = load_module_file(ctx, path, entry->space, entry->space,
+                               eval_arena, persistent_arena, entry->tokens,
+                               fuel, error_out);
+    ctx->module_token_scope = outer_scope;
+    return ok;
+}
+
+/* Link a loaded HE module, then the modules it imports, as dependencies of
+ * `importer`: HE flattens an import's dependencies into the importer, each
+ * module once, in the order of first import. */
+static bool library_link_he_module(Space *importer, Space *module,
+                                   Arena *eval_arena, Atom **error_out) {
+    if (importer == module)
+        return true;
+    /* HE's contains_imported_dep check precedes transitive flattening: a
+     * repeated import does not add a module's later dependencies. */
+    uint32_t imported = space_dependency_count(importer);
+    for (uint32_t d = 0u; d < imported; d++) {
+        if (space_dependency_at(importer, d) == module)
+            return true;
+    }
+    bool ok = space_add_dependency(importer, module);
+    uint32_t dependencies = space_dependency_count(module);
+    for (uint32_t d = 0u; ok && d < dependencies; d++) {
+        Space *dependency = space_dependency_at(module, d);
+        if (dependency != importer)
+            ok = space_add_dependency(importer, dependency);
+    }
+    if (!ok)
+        *error_out = atom_symbol(eval_arena, "module dependency link failed");
+    return ok;
+}
+
+bool cetta_library_owns_space(const CettaLibraryContext *ctx,
+                              const Space *space) {
+    if (!ctx || !space)
+        return false;
+    for (uint32_t i = 0u; i < ctx->loaded_module_len; i++) {
+        if (ctx->loaded_modules[i].space == space)
+            return true;
+    }
+    for (uint32_t i = 0u; i < ctx->retired_module_len; i++) {
+        if (ctx->retired_modules[i].space == space)
+            return true;
+    }
+    return false;
+}
+
+void cetta_library_set_top_module_space(CettaLibraryContext *ctx,
+                                        const Space *space) {
+    if (ctx)
+        ctx->top_module_space = space;
+}
+
+const char *cetta_library_module_space_name(const CettaLibraryContext *ctx,
+                                            const void *space) {
+    if (!ctx || !space)
+        return NULL;
+    if (space == ctx->top_module_space)
+        return "top";
+    for (uint32_t i = 0u; i < ctx->loaded_module_len; i++) {
+        if (ctx->loaded_modules[i].space == space)
+            return ctx->loaded_modules[i].module_name;
+    }
+    for (uint32_t i = 0u; i < ctx->retired_module_len; i++) {
+        if (ctx->retired_modules[i].space == space)
+            return ctx->retired_modules[i].module_name;
+    }
+    return NULL;
+}
+
 static CettaLoadedModule *ensure_loaded_module(CettaLibraryContext *ctx,
                                                const CettaImportPlan *plan,
                                                Arena *eval_arena,
@@ -8647,12 +8897,14 @@ static CettaLoadedModule *ensure_loaded_module(CettaLibraryContext *ctx,
                                                Registry *registry,
                                                int fuel, Atom **error_out) {
     uint32_t loaded_len_before = ctx->loaded_module_len;
+    uint32_t imported_len_before = ctx->imported_file_len;
     CettaLoadedModule *entry = remember_loaded_module(ctx, plan, NULL, eval_arena, error_out);
     if (!entry) {
         return NULL;
     }
     if (entry->loading) {
-        *error_out = atom_symbol(eval_arena, "module already loading");
+        *error_out = module_reason(ctx, eval_arena, "ModuleImportCycle",
+                                   plan->canonical_path);
         return NULL;
     }
     if (entry->space) {
@@ -8673,12 +8925,18 @@ static CettaLoadedModule *ensure_loaded_module(CettaLibraryContext *ctx,
         ok = load_module_act_file_pathmap_materialized(
             ctx, plan->canonical_path, entry->space,
             eval_arena, persistent_arena, error_out);
+    } else if (library_loads_he_module(ctx, plan)) {
+        ok = load_he_module(ctx, entry, plan->canonical_path, eval_arena,
+                            persistent_arena, registry, fuel, error_out);
     } else {
         ok = load_module_file(ctx, plan->canonical_path, entry->space, entry->space,
                               eval_arena, persistent_arena, registry, fuel, error_out);
     }
     entry->loading = false;
     if (!ok) {
+        /* No partial module survives, nor any record of the files it
+           loaded into spaces that go with it. */
+        rollback_imported_files(ctx, imported_len_before);
         rollback_loaded_modules(ctx, loaded_len_before);
         return NULL;
     }
@@ -9433,10 +9691,13 @@ bool cetta_library_import_module(CettaLibraryContext *ctx, const char *spec,
                                  Space *space, bool target_is_fresh,
                                  Arena *eval_arena,
                                  Arena *persistent_arena, Registry *registry,
-                                 int fuel, Atom **error_out) {
+                                 int fuel, Space **module_space_out,
+                                 Atom **error_out) {
     Space *logical_space = logical_import_space(ctx, space);
     CettaModuleSpec parsed_spec;
     CettaImportPlan plan;
+    if (module_space_out)
+        *module_space_out = NULL;
 
     if (spec && (cetta_library_lookup(spec) || cetta_native_module_lookup(spec))) {
         if (target_is_fresh) {
@@ -9454,6 +9715,22 @@ bool cetta_library_import_module(CettaLibraryContext *ctx, const char *spec,
     if (!resolve_import_plan(ctx, &parsed_spec, logical_space, space,
                              target_is_fresh, &plan, eval_arena, error_out)) {
         return false;
+    }
+    if (library_loads_he_module(ctx, &plan)) {
+        /* HE: the module is loaded once, into its own space.  `&self` reads
+           it live as a dependency; a fresh token denotes its space. */
+        CettaLoadedModule *entry = ensure_loaded_module(
+            ctx, &plan, eval_arena, persistent_arena, registry, fuel,
+            error_out);
+        if (!entry)
+            return false;
+        if (target_is_fresh) {
+            if (module_space_out)
+                *module_space_out = entry->space;
+            return true;
+        }
+        return library_link_he_module(space, entry->space, eval_arena,
+                                      error_out);
     }
     return execute_import_plan(ctx, &plan, eval_arena, persistent_arena,
                                registry, fuel, error_out);
@@ -9727,7 +10004,8 @@ bool cetta_library_import_petta_reference_at(
  * reports its own outcome (cetta_foreign_call_native). */
 static Atom *cetta_library_dispatch_native_value(
     CettaLibraryContext *ctx, Space *space, Arena *a,
-    Atom *head, Atom **args, uint32_t nargs) {
+    Atom *head, Atom **args, uint32_t nargs, CettaCallResultForm *result_form) {
+    *result_form = CETTA_CALL_RESULT_EXPRESSION;
     if (!ctx || !head || head->kind != ATOM_SYMBOL) return NULL;
     {
         Atom *result = cetta_rule_machine_dispatch(a, head, args, nargs);
@@ -9775,7 +10053,7 @@ static Atom *cetta_library_dispatch_native_value(
     }
     if (ctx->active_mask & CETTA_LIBRARY_RHOMETTA) {
         Atom *result = cetta_library_dispatch_rhometta(ctx, space, a, head,
-                                                       args, nargs);
+                                                       args, nargs, result_form);
         if (result) return result;
     }
     {
@@ -9789,10 +10067,12 @@ static Atom *cetta_library_dispatch_native_value(
 bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
                                Arena *a, Atom *head, Atom **args,
                                uint32_t nargs, CettaCallOutcome *out) {
+    CettaCallResultForm result_form = CETTA_CALL_RESULT_EXPRESSION;
     Atom *value = cetta_library_dispatch_native_value(
-        ctx, space, a, head, args, nargs);
+        ctx, space, a, head, args, nargs, &result_form);
     if (value) {
-        *out = cetta_call_value(value);
+        *out = (CettaCallOutcome){.kind = CETTA_CALL_VALUE,
+                                 .term = value, .result_form = result_form};
         return true;
     }
     return ctx && ctx->foreign_runtime &&

@@ -1,0 +1,27 @@
+true
+((Before a) (After 2) (After 2) (Tail a))
+()
+((Pair 1 2))
+((Outer (Inner 2) a))
+((Chosen 2))
+(Error (evaluation_error undefined) (context (: system (/ is 2)) $V0))
+()
+((AfterCollection ((Kept 2)) a) (AfterCollection ((Kept 2)) b))
+true
+(Error (evaluation_error zero_divisor) (context (/ mod 2) $V0))
+()
+((Prefix 2) (Tail a))
+((Prefix 2) (Tail a))
+((OuterPrefix a) (OuterTail a))
+true
+true
+(second)
+(second)
+true
+((OuterPrefix a) (Outer ((Inner 2))) (OuterTail a))
+()
+((Pair 1 2))
+(Error (evaluation_error undefined) (context (: system (/ is 2)) $V0))
+()
+((Good 2))
+((Good 2))

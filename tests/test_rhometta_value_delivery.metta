@@ -3,6 +3,7 @@
 ; Payload evaluation has finished before the native frontier is delivered.
 ; These fields are values, even when their syntax names an evaluator operation.
 (= (delivery:effect) (add-atom &self delivery-was-executed))
+(: delivery:payload (-> Atom))
 (= (delivery:payload)
    (function (return (Bundle (Error sentinel detail) (empty)
      (+ 4 5) (delivery:effect)))))
@@ -50,3 +51,47 @@
 !(assertEqualToResult (rhometta:values (rhometta:run (delivery:program)))
    (((Bundle (Error sentinel detail) (empty) (+ 4 5) (delivery:effect)))))
 !(assertEqualToResult (collapse (rhometta:transitions rho:nil)) (()))
+
+; A completed native value can contain a function-shaped inert payload.
+(: delivery:function-state (-> Atom))
+(= (delivery:function-state)
+   (function (return (rho:val (function (return (+ 1 2)))))))
+!(assertEqualToResult
+   (__cetta_lib_rhometta_run_canonical (delivery:function-state))
+   ((rho:val (function (return (+ 1 2))))))
+!(assertEqualToResult
+   (rhometta:values (rhometta:run-canonical (delivery:function-state)))
+   (((function (return (+ 1 2))))))
+
+; Inert publication preserves data but still enforces concrete type demands.
+; These declarations follow the earlier observations so they cannot alter them.
+(: rho:nil Foo)
+!(assertEqualToResult
+   (metta (__cetta_lib_rhometta_run_canonical rho:nil) Foo &self)
+   (rho:nil))
+!(assertEqualToResult
+   (metta (__cetta_lib_rhometta_run_canonical rho:nil) Number &self)
+   ((Error rho:nil (BadType Number Foo))))
+!(assertEqualToResult
+   (function
+      (chain (metta (__cetta_lib_rhometta_run_canonical rho:nil) $type &self)
+         $value (return ($value $type))))
+   ((rho:nil Foo)))
+
+(: __cetta_lib_rhometta_run_canonical (-> Atom Number))
+!(assertEqualToResult (__cetta_lib_rhometta_run_canonical rho:nil)
+   ((Error rho:nil (BadType Number Foo))))
+
+; Atom-only continuations retain native provenance for every equation answer.
+(= (delivery:multiple-native-state)
+   (__cetta_lib_rhometta_values (function (return (rho:val (+ 1 2))))))
+(= (delivery:multiple-native-state)
+   (__cetta_lib_rhometta_values (function (return (rho:val (+ 1 2))))))
+!(assertEqualToResult (delivery:multiple-native-state)
+   (((+ 1 2)) ((+ 1 2))))
+(= (delivery:multiple-native-frontier)
+   (__cetta_lib_rhometta_run rho:nil))
+(= (delivery:multiple-native-frontier)
+   (__cetta_lib_rhometta_run rho:nil))
+!(assertEqualToResult (delivery:multiple-native-frontier)
+   (rho:nil rho:nil))

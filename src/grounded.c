@@ -3774,6 +3774,12 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
             args[0]->ground.gkind == GV_SPACE) {
             return atom_int(a, (int64_t)space_length64((Space *)args[0]->ground.ptr));
         }
+        if (head_id == g_builtin_syms.size_atom &&
+            eval_current_language_id &&
+            eval_current_language_id() == CETTA_LANGUAGE_HE) {
+            return grounded_string_error(a, head, args, nargs,
+                                         "Atom is not an ExpressionAtom");
+        }
         if (args[0]->kind == ATOM_GROUNDED) {
             Atom *expected = (head_id == g_builtin_syms.size_atom)
                 ? atom_expression_type(a)

@@ -1,0 +1,17 @@
+!(callPredicate (Predicate (quote (consult "tests/petta/fixtures/late_foreign_continuation.pl"))))
+!(import_prolog_function cold_mixed_answer)
+!(import_prolog_function cold_immediate_raise)
+(= (completion_alternatives $x)
+   (let $tag (cold_mixed_answer $x)
+      (let $x (superpose (1 2)) (Pair $tag $x))))
+!(collapse (completion_alternatives $x))
+(= (completion_direct_raise $x)
+   (collapse (superpose
+      ((Prefix a) (cold_immediate_raise $x)
+       (progn (println! forbidden_after_raise) (Tail a))))))
+!(catch (completion_direct_raise a))
+!(collapse (let $f completion_direct_raise ($f a)))
+(= (completion_inner_recovery $x)
+   (collapse (superpose
+      ((Prefix a) (let $f cold_immediate_raise ($f $x)) (Tail a)))))
+!(completion_inner_recovery a)

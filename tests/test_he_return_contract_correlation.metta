@@ -52,18 +52,19 @@
 
 (: multiply-typed-argument String)
 (: multiply-typed-argument Number)
-(: dependent-any-surviving-contract (-> $t $t))
-(= (dependent-any-surviving-contract $x) 1)
-!(assertEqual
-  (dependent-any-surviving-contract multiply-typed-argument)
-  1)
+; The first complete argument-type path owns the result contract.  A later
+; type of the same argument cannot rescue a result rejected by that path.
+(: dependent-first-admitted-contract (-> $t $t))
+(= (dependent-first-admitted-contract $x) 1)
+!(assertEqualToResult
+  (dependent-first-admitted-contract multiply-typed-argument)
+  ((Error 1 (BadType String Number))))
 
 (: dependent-multiple-contracts (-> $t $t))
 (= (dependent-multiple-contracts $x) True)
 !(assertEqualToResult
   (dependent-multiple-contracts multiply-typed-argument)
-  ((Error True (BadType String Bool))
-   (Error True (BadType Number Bool))))
+  ((Error True (BadType String Bool))))
 
 (: error-passthrough (-> Number Number))
 (: error-passthrough (-> String String))
@@ -87,19 +88,19 @@
 (= (undefined-result 1) "dynamic")
 !(assertEqual (undefined-result 1) "dynamic")
 
-; When multiple contracts accept the same argument, the first applicable
-; declaration owns the result contract.  A later overload cannot be used to
-; reinterpret either success or failure.
-(: overlap-order-accept (-> $t Number))
-(: overlap-order-accept (-> Number String))
-(= (overlap-order-accept $x) 1)
-!(assertEqual (overlap-order-accept 1) 1)
+; A polymorphic contract can admit an ordinary result.
+(: overlap-polymorphic-first (-> $t Number))
+(: overlap-polymorphic-first (-> Number String))
+(= (overlap-polymorphic-first $x) 1)
+!(assertEqual (overlap-polymorphic-first 1) 1)
 
-(: overlap-order-reject (-> Number String))
-(: overlap-order-reject (-> $t Number))
-(= (overlap-order-reject $x) 1)
+; An explicit result demand participates in applicability before invocation.
+; This selects the String contract independently of the type-query ordering.
+(: overlap-string-demand (-> Number String))
+(: overlap-string-demand (-> $t Number))
+(= (overlap-string-demand $x) 1)
 !(assertEqualToResult
-  (overlap-order-reject 1)
+  (metta (overlap-string-demand 1) String &self)
   ((Error 1 (BadType String Number))))
 
 (: expression-result (-> Number Expression))
@@ -107,6 +108,9 @@
 (= (expression-result 1) "dynamic")
 !(assertEqual (expression-result 1) "dynamic")
 
+; A constructor's callable signature constrains its result before reduction.
+; A declaration on the compound term alone does not enforce that demand.
+(: boxed (-> Number String))
 (: (boxed 1) String)
 (: constructor-result (-> Number Number))
 (: constructor-result (-> String String))

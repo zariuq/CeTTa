@@ -24,6 +24,16 @@ not):
 
 A spelling that still uses a name lib_he defines imports lib_he first.
 
+Explicit interpretation of held syntax in the current space:
+
+  (metta BODY %Undefined% &self) -> (eval BODY)
+  (metta BODY %Undefined% (context-space)) -> (eval BODY)
+
+This is HE's full interpreter, not its one-step eval.  PeTTa's eval
+activates the held body after its pattern bindings have been installed.
+The zero-argument context-space instruction selects that same current
+invocation context. Other spaces and expected types are not covered.
+
 HE's one step of a call or a variable where the result is computed next
 (a binding's value, a body, a branch, a scrutinee):
 
@@ -272,6 +282,17 @@ def transform(form, dialect: str):
         if handoff is not None:
             return spell_value_handoff(transform(handoff, dialect), dialect)
         if dialect == "petta":
+            if (len(form) == 4 and form[0] == "metta"
+                    and isinstance(form[0], Symbol)
+                    and form[2] == Symbol("%Undefined%")
+                    and isinstance(form[2], Symbol)
+                    and ((form[3] == Symbol("&self")
+                          and isinstance(form[3], Symbol))
+                         or (isinstance(form[3], list)
+                             and len(form[3]) == 1
+                             and form[3][0] == Symbol("context-space")
+                             and isinstance(form[3][0], Symbol)))):
+                return [Symbol("eval"), transform(form[1], dialect)]
             if len(form) == 5 and form[0] == "unify":
                 left, right, then, otherwise = (transform(item, dialect)
                                                 for item in form[1:])

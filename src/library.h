@@ -30,6 +30,13 @@ typedef struct {
     CettaModuleProviderKind provider_kind;
     CettaModuleFormat format;
     Space *space;
+    /* An HE module's own tokens: its `&self`, and those its code binds.
+       They are read into its text as it is loaded and stay private to it.
+       NULL for a module without its own tokens. */
+    Registry *tokens;
+    /* An HE module's name in the module tree, `top:...`, which its space
+       prints by; heap-owned, NULL for other modules. */
+    char *module_name;
     bool loading;
 } CettaLoadedModule;
 
@@ -156,6 +163,19 @@ typedef struct CettaLibraryContext {
     uint32_t cmdline_arg_len;
     CettaLoadedModule loaded_modules[CETTA_MAX_LOADED_MODULES];
     uint32_t loaded_module_len;
+    /* The tokens of the HE module being loaded, read into each statement
+       as it is reached; NULL outside a module load. */
+    Registry *module_token_scope;
+    /* HE's top module space, named `top`. */
+    const Space *top_module_space;
+    /* Spaces of HE modules whose loading failed.  They stay allocated, with
+       their names, until the context ends: values that still name them,
+       such as an error reporting the failed call, keep a valid identity. */
+    struct {
+        Space *space;
+        char *module_name;
+    } *retired_modules;
+    uint32_t retired_module_len, retired_module_cap;
     CettaNativeHandleSlot native_handles[CETTA_MAX_NATIVE_HANDLES];
     uint32_t native_handle_len;
     uint64_t native_handle_next_id;
@@ -274,11 +294,27 @@ cetta_library_petta_reference_observe(
     const PeTTaLibraryReference *reference,
     uint32_t occurrence, char *path, size_t path_size);
 
+/* Import `spec` into `space`.  In HE a MeTTa module is loaded once into its
+ * own space, and the import links it, followed by the modules it imports,
+ * as dependencies of `space`; into a fresh target nothing is linked and
+ * `*module_space_out` names the module's space, which the target's token
+ * then denotes.  Other languages and formats load the module into `space`.
+ * `module_space_out` may be NULL. */
 bool cetta_library_import_module(CettaLibraryContext *ctx, const char *spec,
                                  Space *space, bool target_is_fresh,
                                  Arena *eval_arena,
                                  Arena *persistent_arena, Registry *registry,
-                                 int fuel, Atom **error_out);
+                                 int fuel, Space **module_space_out,
+                                 Atom **error_out);
+/* Whether `space` is a module space the library context owns and frees. */
+bool cetta_library_owns_space(const CettaLibraryContext *ctx,
+                              const Space *space);
+/* Make `space` HE's top module space, named `top`. */
+void cetta_library_set_top_module_space(CettaLibraryContext *ctx,
+                                        const Space *space);
+/* The module name of an HE module space, by identity only, or NULL. */
+const char *cetta_library_module_space_name(const CettaLibraryContext *ctx,
+                                            const void *space);
 bool cetta_library_import_petta_reference_at(
     CettaLibraryContext *ctx,
     const PeTTaLibraryReference *reference,

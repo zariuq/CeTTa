@@ -53,12 +53,24 @@ struct PettaPlanNode;
 /* The host authorities the compiler consults. */
 typedef struct {
     void *context;
-    /* Whether the region may own calls of `head`/`arity`: tabled
-     * relations, translator rules, memoized relations and relations with a
-     * declared function type (whose calls PeTTa checks and whose arguments
-     * may stay unevaluated) stay with the host. */
+    /* Whether a ready call needs no additional typed/dispatch protocol.
+     * Used by untyped calls, ready fold adapters and head occurrences;
+     * it also detects a first declaration arriving at a live call site. */
     bool (*relation_admitted)(void *context, Space *space, SymbolId head,
                               uint32_t arity);
+    /* Whether the compiler may install the complete ordinary call protocol.
+     * Engine-owned forms and foreign/tabled/memoized dispatch retain their
+     * existing adapters. This authority does not erase any type guard. */
+    bool (*call_protocol_admitted)(void *context, Space *space, SymbolId head,
+                                   uint32_t arity);
+    /* Equation search has already prepared this entry's arguments and
+     * installed its type guards. This authority admits the body alone;
+     * it does not license a recursive call to skip its call protocol. */
+    bool (*body_admitted)(void *context, Space *space, SymbolId head,
+                          uint32_t arity);
+    /* This entry returns its substituted RHS as data, as CALL_READY_DATA
+     * does. Calls made by an evaluated body keep their own occurrence plans. */
+    bool entry_body_is_data;
     /* Whether an expression inside an equation head is a relational
      * occurrence, evaluated after the structural match with its value
      * unified with the query subterm, rather than data.  It mirrors the
@@ -67,6 +79,11 @@ typedef struct {
     /* Whether the language profile offers the grounded operation `head`,
      * which the search machine consults before running one directly. */
     bool (*builtin_allowed)(void *context, SymbolId head);
+    /* Present only in profiles whose builtin calls also enumerate authored
+     * equations. The result observes an exact head and arity in this space;
+     * absence permits native lowering until the program stamp changes. */
+    bool (*builtin_equations)(void *context, Space *space, SymbolId head,
+                              uint32_t arity);
     /* Whether a goal of `head` with `arity` arguments may answer with goals
      * delayed on its variables (delay_service.h), as a call into the
      * embedded Prolog may.  The region moves its variables between its own
@@ -142,6 +159,14 @@ typedef enum {
      * resumes the cursor, which continues after the once or the cut.  Only
      * a cursor that has accepted a host answer can report it. */
     CETTA_OPEN_EQUATION_CUT,
+    /* An entered collection whose answers carry host constraints has
+     * exhausted its producer. Its copied answers and restored caller
+     * continue in the host, rather than importing those constraints into
+     * the region's store. */
+    CETTA_OPEN_EQUATION_COLLECTION,
+    /* A pure runtime service failed; the handoff reason distinguishes
+     * capacity, stack exhaustion and provider faults from logical failure. */
+    CETTA_OPEN_EQUATION_FAULT,
 } CettaOpenEquationStep;
 
 /* A `match` over a space in an equation body is a choice over the rows the
@@ -165,7 +190,18 @@ typedef enum {
     CETTA_OPEN_EQUATION_HANDOFF_CAPACITY,
     /* The run used its activation budget before an answer or exhaustion. */
     CETTA_OPEN_EQUATION_HANDOFF_BUDGET,
+    CETTA_OPEN_EQUATION_HANDOFF_SERVICE_ERROR,
+    CETTA_OPEN_EQUATION_HANDOFF_STACK,
 } CettaOpenEquationHandoff;
+
+typedef enum {
+    CETTA_OPEN_TYPE_DEFER = 0,
+    CETTA_OPEN_TYPE_ANSWERS,
+    CETTA_OPEN_TYPE_PROVED,
+    CETTA_OPEN_TYPE_CAPACITY,
+    CETTA_OPEN_TYPE_FAULT,
+    CETTA_OPEN_TYPE_STACK,
+} CettaOpenTypeResult;
 
 /* The host's services to a running cursor. */
 typedef struct {
@@ -181,7 +217,21 @@ typedef struct {
      * on entry.  The program comes retained for the cursor, which keeps
      * that reference or releases it. */
     CettaOpenEquationProgram *(*current)(void *context, Space *space,
-                                         SymbolId head, uint32_t arity);
+                                         SymbolId head, uint32_t arity,
+                                         bool body_is_data);
+    /* Full calls that can enter an ordinary body without a typed protocol.
+     * Dynamic applications consult this before using a checked-body entry. */
+    bool (*relation_admitted)(void *context, Space *space, SymbolId head,
+                              uint32_t arity);
+    /* A complete pure guard through the existing intrinsic service, under
+     * the current profile and classifier admission. Answers refine only
+     * `required`, retain order and duplicates, and belong to `arena`; the
+     * pointer array is caller-owned. PROVED leaves all bindings unchanged.
+     * DEFER has performed no classifier effects. */
+    CettaOpenTypeResult (*type_guard)(void *context, Space *space, Arena *arena,
+                                      Atom *value, Atom *required,
+                                      Atom ***answers, uint32_t *count);
+    void *type_context;
     /* The space a `match` reads: `reference` is its space operand, `root`
      * the program's space.  NULL when the reference names no space. */
     Space *(*resolve_space)(void *context, Space *root, Arena *arena,
@@ -242,6 +292,7 @@ typedef struct {
      * that path alone, as the host's own dispatches recover
      * (DispatchErrorScope); the region's dispatches then recover too. */
     bool dispatch_recovers;
+    bool raises_abort_collections;
     /* Storage the host keeps for the cursor's whole life, released only
      * after the cursor is gone, as the older generation the region shares.
      * A ground value a host goal takes from the region is copied there once
@@ -250,6 +301,15 @@ typedef struct {
      * every crossing copies. */
     Arena *stable;
 } CettaOpenEquationRuntime;
+
+/* Install the owning machine's pure guard service before the cursor runs.
+ * Its context must outlive the cursor, as does the machine's host context. */
+void cetta_open_equation_cursor_set_type_guard(
+    CettaOpenEquationCursor *cursor, void *context,
+    CettaOpenTypeResult (*guard)(void *, Space *, Arena *, Atom *, Atom *,
+        Atom ***, uint32_t *));
+void cetta_open_equation_cursor_set_collection_raise_policy(
+    CettaOpenEquationCursor *cursor, bool abort_collections);
 
 /* Enumerate the answers of `(head args...)` against the consumer's
  * `expected` value (NULL: an unconstrained destination).  The arguments and
@@ -307,6 +367,27 @@ typedef enum {
      * head's value to the others, or keep them as data, as the host's own
      * application of evaluated elements decides. */
     CETTA_OPEN_EQUATION_HOST_APPLY,
+    /* The subject and incoming required type, already values. These run
+     * the machine's existing guard continuations and preserve refinements. */
+    CETTA_OPEN_EQUATION_HOST_TYPE_ACCEPT,
+    CETTA_OPEN_EQUATION_HOST_TYPE_MATCH,
+    /* An ordinary call whose argument protocol has already completed. */
+    CETTA_OPEN_EQUATION_HOST_READY_CALL,
+    CETTA_OPEN_EQUATION_HOST_READY_DATA,
+    CETTA_OPEN_EQUATION_HOST_GROUNDED,
+    /* Cold continuation export emits these directly into the host's goals. */
+    CETTA_OPEN_EQUATION_HOST_UNIFY,
+    CETTA_OPEN_EQUATION_HOST_RECOVER,
+    CETTA_OPEN_EQUATION_HOST_FAIL,
+    CETTA_OPEN_EQUATION_HOST_READY_IF,
+    CETTA_OPEN_EQUATION_HOST_READY_CASE,
+    CETTA_OPEN_EQUATION_HOST_COMMIT_PREFIX,
+    CETTA_OPEN_EQUATION_HOST_RELEASE_OWNER,
+    CETTA_OPEN_EQUATION_HOST_YIELD,
+    CETTA_OPEN_EQUATION_HOST_ABORT_COLLECTION,
+    CETTA_OPEN_EQUATION_HOST_READY_MATCH,
+    CETTA_OPEN_EQUATION_HOST_READY_MATCH_ROW,
+    CETTA_OPEN_EQUATION_HOST_READY_FOLD,
 } CettaOpenEquationHostMode;
 
 /* The goal of the newest HOST step and its destination, built in the answer
@@ -323,13 +404,79 @@ bool cetta_open_equation_cursor_host_goal(
     Atom **destination_out, Atom *const **vars_out,
     uint32_t *var_count_out, const struct PettaPlanNode **plan_out,
     CettaOpenEquationHostMode *mode_out, bool *recovers_out);
+/* A terminal host goal needs no cursor continuation or alternatives. Its
+ * exported query values share fresh variables with the goal and destination;
+ * install these bindings before transferring the goal to the host. The normal
+ * accept/continue protocol remains available if the host declines transfer.
+ * Exported plans and literals may borrow program storage: retain every program
+ * below before closing the cursor while such exports remain reachable. */
+bool cetta_open_equation_cursor_host_terminal(
+    const CettaOpenEquationCursor *cursor, Atom ***query_values_out);
+/* Whether the current host goal's entered caller chain has a
+ * remainder that can be exported without replaying argument producers.
+ * This is a cold lowering into the host's existing goals, in execution
+ * order. Equal cells and first-store slots share variables throughout the
+ * remainder and query values. The already executed host goal is not emitted.
+ * Native state restores its HOST retry mark; canonical bindings stay live.
+ * The host keeps the cursor for older retry alternatives, schedules no
+ * OPEN_RESUME for this branch, and retains its program versions. */
+bool cetta_open_equation_cursor_host_continuation_supported(
+    const CettaOpenEquationCursor *cursor);
+bool cetta_open_equation_cursor_export_host_continuation(
+    CettaOpenEquationCursor *cursor, Atom *const *query_vars,
+    Atom *const *host_vars, uint32_t host_count,
+    bool (*emit)(void *context, CettaOpenEquationHostMode mode,
+                 Atom *goal, Atom *destination,
+                 const struct PettaPlanNode *plan,
+                 uint32_t first_branch_len, uint32_t second_branch_len),
+    void *context, Atom ***query_values_out);
+/* Error scopes must be visible while a host goal runs, even when its answer
+ * will resume natively. These markers neither promote a collection nor run
+ * its continuation. The host removes them at successful completion. */
+bool cetta_open_equation_cursor_export_host_receivers(
+    CettaOpenEquationCursor *cursor,
+    bool (*emit)(void *context, CettaOpenEquationHostMode mode,
+                 uint32_t collection_frame, uint32_t host_height),
+    void *context);
+/* Finish a transferred collection under a fresh alias map after its
+ * producer has rolled back. Components accompany the copied answer list;
+ * the host installs them before running the emitted caller continuation. */
+bool cetta_open_equation_cursor_export_collection(
+    CettaOpenEquationCursor *cursor, Atom *const *query_vars,
+    bool (*emit)(void *context, CettaOpenEquationHostMode mode,
+                 Atom *goal, Atom *destination,
+                 const struct PettaPlanNode *plan,
+                 uint32_t first_branch_len, uint32_t second_branch_len),
+    void *context, Atom **components_out, Atom ***query_values_out);
+/* Append a jointly freshened answer and its delayed components to an
+ * entered collection. The receipt names its retained frame and the host
+ * choice height beneath its producer. Reaching a bound reports CUT. */
+bool cetta_open_equation_cursor_collect_answer(
+    CettaOpenEquationCursor *cursor, uint32_t frame, uint32_t saved_height,
+    Atom *answer, Atom *components, bool *cut_out);
+/* Abandon the named collection and its producer alternatives on a control
+ * raise, preserving all older scopes and reporting their host boundary. */
+bool cetta_open_equation_cursor_abort_collection(
+    CettaOpenEquationCursor *cursor, uint32_t frame, uint32_t saved_height,
+    uint32_t *height_out);
+/* Borrowed program versions, starting at zero; NULL ends the sequence. */
+CettaOpenEquationProgram *cetta_open_equation_cursor_program_at(
+    const CettaOpenEquationCursor *cursor, uint32_t index);
 /* The host's choice height beneath the goal now awaited: the choices the
  * goal makes lie above it.  A once that commits through the goal's frame
  * reports it (CETTA_OPEN_EQUATION_CUT). */
 void cetta_open_equation_cursor_host_height(CettaOpenEquationCursor *cursor,
                                             uint32_t height);
+/* Commit a transferred once/cut prefix without restoring its cells or
+ * creating an OEM resumption. The exported canonical suffix stays live. */
+bool cetta_open_equation_cursor_commit_prefix(CettaOpenEquationCursor *cursor,
+    uint32_t floor, uint32_t saved_height, uint32_t *height_out);
 /* The height a CETTA_OPEN_EQUATION_CUT step reported. */
 uint32_t cetta_open_equation_cursor_cut_height(
+    const CettaOpenEquationCursor *cursor);
+/* A control raise crossed a transferred producer: discard host choices
+ * above this height without retrying, before ordinary error handling. */
+uint32_t cetta_open_equation_cursor_raise_height(
     const CettaOpenEquationCursor *cursor);
 
 /* Accept one answer of the newest host frame's goal into the region:

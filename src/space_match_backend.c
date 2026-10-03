@@ -5736,7 +5736,10 @@ bool space_match_backend_visit_bindings_direct(
     CettaMorkSpaceHandle *bridge = NULL;
     SpaceMatchPullVisitResult indexed_result;
 
-    if (!s || !a || !query || !visitor || space_is_ordered(s))
+    /* A module space's query composes its imports; one backend's bridge
+       sees only its own rows. */
+    if (!s || !a || !query || !visitor || space_is_ordered(s) ||
+        space_has_dependencies(s))
         return false;
 
     indexed_result = space_match_backend_try_visit_bindings_indexed(
@@ -5782,6 +5785,7 @@ bool space_match_backend_can_try_visit_bindings_indexed(
     const Space *s,
     const Atom *query) {
     return s && query && !space_is_ordered(s) &&
+           !space_has_dependencies(s) &&
            s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
            !s->match_backend.pathmap.bridge.preserve_logical_order &&
            pathmap_indexed_single_factor_enabled() &&
@@ -5825,6 +5829,8 @@ space_match_backend_try_visit_conjunction_indexed(
     CettaMorkBindingsVisitor visitor,
     void *ctx) {
     CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    if (space_has_dependencies(s))
+        return SPACE_MATCH_PULL_VISIT_DECLINED;
     return pathmap_local_visit_conjunction_indexed(
         s, a, patterns, npatterns, seed, visitor, ctx);
 }
@@ -10978,6 +10984,7 @@ bool space_match_count_flat_linear64(
     if (examined)
         *examined = 0u;
     if (!s || !scratch || !pattern || !count || !examined ||
+        space_has_dependencies(s) ||
         !s->match_backend.ops ||
         !s->match_backend.ops->count_flat_linear) {
         return false;
@@ -11006,7 +11013,7 @@ bool space_match_count_flat_linear_view64(
     if (examined)
         *examined = 0u;
     if (!s || !scratch || !view || !view->source || !count ||
-        !examined || !s->match_backend.ops ||
+        !examined || space_has_dependencies(s) || !s->match_backend.ops ||
         !cetta_gslt_term_view_open_binding_observation_valid_v1(
             open_bindings) ||
         !s->match_backend.ops->count_flat_linear_view) {
@@ -11037,6 +11044,7 @@ bool space_match_exists_flat_linear_view64(
     if (examined)
         *examined = 0u;
     if (!s || !scratch || !view || !view->source || !exists || !examined ||
+        space_has_dependencies(s) ||
         view->source->kind != ATOM_EXPR || view->source->expr.len == 0u ||
         !cetta_gslt_term_view_open_binding_observation_valid_v1(
             open_bindings)) {
@@ -11082,6 +11090,7 @@ bool space_match_count_conjunction64(
     if (count)
         *count = 0u;
     if (!s || !scratch || !patterns || !count ||
+        space_has_dependencies(s) ||
         !s->match_backend.ops ||
         !s->match_backend.ops->count_conjunction) {
         return false;
@@ -11090,6 +11099,9 @@ bool space_match_count_conjunction64(
     return s->match_backend.ops->count_conjunction(
         s, scratch, patterns, npatterns, seed, count);
 }
+
+static inline __attribute__((always_inline)) void space_subst_query_member(
+        Space *s, Arena *a, Atom *query, SubstMatchSet *out);
 
 /* Overlay spaces resolve reads through their base.  A base query may be
  * delegated to its indexed backend only when the entire current base is
@@ -11112,7 +11124,9 @@ static void overlay_subst_query(Space *s, Arena *a, Atom *query,
     if (s->overlay_removed_base_len == 0 &&
         (base_is_fully_visible || base_matches_have_physical_indices)) {
         SubstMatchSet base_matches;
-        space_subst_query(base, a, query, &base_matches);
+        /* The outer composed query appends dependencies once. This walk
+         * supplies only the overlay's frozen local-storage prefix. */
+        space_subst_query_member(base, a, query, &base_matches);
         for (CettaIndex i = 0; i < base_matches.len; i++) {
             Bindings final_b;
             if (!base_is_fully_visible &&
@@ -11185,7 +11199,83 @@ static bool he_number_query_needs_promoted_candidates(const Atom *query) {
            atom_contains_he_promotable_number(query);
 }
 
+/* A module space answers its own atoms before the atoms of the modules it
+ * imports (HE's ModuleSpace query).  Rows arrive in logical order, where
+ * imported atoms come first; keep each group's order and put own rows
+ * first. */
+static void subst_matchset_own_first(SubstMatchSet *set, CettaIndex imported) {
+    if (!set || imported == 0u || set->len < 2u)
+        return;
+    bool seen_imported = false;
+    bool own_after_imported = false;
+    for (CettaIndex i = 0u; i < set->len && !own_after_imported; i++) {
+        if (set->items[i].atom_idx < imported)
+            seen_imported = true;
+        else if (seen_imported)
+            own_after_imported = true;
+    }
+    if (!own_after_imported)
+        return;
+    SubstMatch *sorted = cetta_malloc(sizeof(*sorted) * (size_t)set->len);
+    CettaIndex write = 0u;
+    for (int pass = 0; pass < 2; pass++) {
+        for (CettaIndex i = 0u; i < set->len; i++) {
+            if ((set->items[i].atom_idx < imported) == (pass == 1))
+                subst_match_move(&sorted[write++], &set->items[i]);
+        }
+    }
+    for (CettaIndex i = 0u; i < set->len; i++)
+        subst_match_move(&set->items[i], &sorted[i]);
+    free(sorted);
+}
+
+/* Append a dependency's own matches to a composed answer.  The rows are
+ * resolved to their final bindings against the dependency, since a deferred
+ * row names a coordinate of the space that produced it; each takes the next
+ * coordinate of the composed view, after every coordinate of the space and
+ * the dependencies before it. */
+static __attribute__((noinline)) void subst_query_append_dependency(
+        Space *dependency, Arena *a, Atom *query, CettaIndex view_base,
+        SubstMatchSet *out) {
+    SubstMatchSet rows;
+    space_subst_query_member(dependency, a, query, &rows);
+    CettaIndex own_begin = space_imported_length(dependency);
+    for (CettaIndex i = 0u; i < rows.len; i++) {
+        const SubstMatch *row = &rows.items[i];
+        if (row->atom_idx < own_begin)
+            continue;
+        Bindings final_b;
+        bindings_init(&final_b);
+        if (space_subst_match_with_seed(dependency, query, row, NULL, a,
+                                        &final_b)) {
+            subst_matchset_push(out, view_base + (row->atom_idx - own_begin),
+                                row->epoch, &final_b, true);
+        }
+        bindings_free(&final_b);
+    }
+    smset_free(&rows);
+}
+
+/* A module space answers its own atoms, then each imported module's own
+ * atoms, in import order (HE's ModuleSpace query). */
 void space_subst_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
+    space_subst_query_member(s, a, query, out);
+    uint32_t dependencies = space_dependency_count(s);
+    if (dependencies == 0u)
+        return;
+    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    CettaIndex view_base = space_length64(s);
+    for (uint32_t d = 0u; d < dependencies; d++) {
+        Space *dependency = space_dependency_at(s, d);
+        subst_query_append_dependency(dependency, a, query, view_base, out);
+        CettaIndex own_begin = space_imported_length(dependency);
+        CettaCount len = space_length64(dependency);
+        view_base += len > own_begin ? len - own_begin : 0u;
+    }
+}
+
+static inline __attribute__((always_inline)) void space_subst_query_member(
+        Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
     CETTA_SCOPED_SHARED_TRANSITION(shared_read);
     if (s && s->overlay_base) {
         overlay_subst_query(s, a, query, out);
@@ -11255,6 +11345,7 @@ finalize_shared_snapshot:
         }
         out->len = write;
     }
+    subst_matchset_own_first(out, space_imported_length(s));
 }
 
 bool space_subst_match_with_seed(Space *space, Atom *pattern, const SubstMatch *sm,
@@ -11305,8 +11396,9 @@ bool space_subst_match_with_seed(Space *space, Atom *pattern, const SubstMatch *
 bool space_match_backend_supports_seeded_candidates(Space *s) {
     /* Candidate coordinates are a private deferred representation.  A
        concurrent caller may use them only while it already owns the physical
-       transition bracket; otherwise choose the exact binding snapshot path. */
-    return s &&
+       transition bracket; otherwise choose the exact binding snapshot path.
+       They address one space's storage, so a composed space declines. */
+    return s && !space_has_dependencies(s) &&
            (!cetta_shared_transition_scope_active() ||
             cetta_shared_transition_guard_held_by_current_thread()) &&
            !s->overlay_base &&
@@ -11330,7 +11422,9 @@ void space_query_conjunction(Space *s, Arena *a, Atom **patterns, CettaExprLen n
                              const Bindings *seed, BindingSet *out) {
     CETTA_SCOPED_SHARED_TRANSITION(shared_read);
     space_linearize(s);
-    if (s->match_backend.ops && s->match_backend.ops->query_conjunction) {
+    /* Each conjunct of a module space reads the composed view. */
+    if (s->match_backend.ops && s->match_backend.ops->query_conjunction &&
+        !space_has_dependencies(s)) {
         s->match_backend.ops->query_conjunction(s, a, patterns, npatterns, seed, out);
         return;
     }
@@ -11437,7 +11531,7 @@ bool space_native_flat_conjunction_count(
         *count_out = 0u;
     if (!space || !patterns || !count_out || pattern_count == 0u ||
         pattern_count > CETTA_FLAT_JOIN_MAX_PATTERNS ||
-        space->overlay_base ||
+        space->overlay_base || space->dep_count != 0u ||
         (space->match_backend.kind != SPACE_ENGINE_NATIVE &&
          space->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
         return false;
@@ -11751,6 +11845,7 @@ bool space_native_flat_pattern_each_int(
     Space *space, Atom *pattern, size_t column,
     bool (*each)(int64_t value, void *ctx), void *ctx) {
     if (!space || !pattern || !each || space->overlay_base ||
+        space->dep_count != 0u ||
         (space->match_backend.kind != SPACE_ENGINE_NATIVE &&
          space->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) ||
         !cetta_flat_join_pattern_ok(pattern) ||
@@ -11825,6 +11920,7 @@ bool space_native_pattern_each_int(
     Space *space, Atom *pattern, VarId variable,
     bool (*each)(int64_t value, void *ctx), void *ctx) {
     if (!space || !pattern || !each || space->overlay_base ||
+        space->dep_count != 0u ||
         (space->match_backend.kind != SPACE_ENGINE_NATIVE &&
          space->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) ||
         pattern->kind != ATOM_EXPR)
@@ -12004,7 +12100,7 @@ bool space_native_flat_chain_aggregate(
     if (!space || !patterns || !count_out || !sum_out ||
         pattern_count == 0u || pattern_count > 3u ||
         (with_column && column_pattern >= pattern_count) ||
-        space->overlay_base ||
+        space->overlay_base || space->dep_count != 0u ||
         (space->match_backend.kind != SPACE_ENGINE_NATIVE &&
          space->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
         return false;
@@ -12123,6 +12219,7 @@ bool space_native_flat_conjunction_int_moments(
     if (!space || !patterns || !count_out || !sum_out || !product_out ||
         !product_ok || pattern_count == 0u || pattern_count > 2u ||
         column_pattern >= pattern_count || space->overlay_base ||
+        space->dep_count != 0u ||
         (space->match_backend.kind != SPACE_ENGINE_NATIVE &&
          space->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
         return false;

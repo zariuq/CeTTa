@@ -1,6 +1,7 @@
 #include "atom.h"
 #include "eval.h"
 #include "he_typing.h"
+#include "he_type_policy.h"
 #include "parser.h"
 #include "space.h"
 #include "symbol.h"
@@ -55,6 +56,16 @@ int main(void) {
     g_symbols = &symbols;
     g_var_intern = &var_intern;
     eval_set_library_context(NULL);
+
+    /* The embedded HE environment needs the same core operation metadata
+     * as the runner: grounded operation types and the library declarations.
+     * Isolated foreign spaces do not inherit these defaults. */
+    if (!he_library_tables_init()) {
+        fprintf(stderr, "grounded operation types failed to load\n");
+        goto cleanup;
+    }
+    for (size_t i = 0u; i < he_library_declaration_count(); i++)
+        space_add(&space, he_library_declaration_at(i));
 
     int form_count = parse_metta_text(definitions, &scratch, &forms);
     if (form_count != 3 || !forms) {

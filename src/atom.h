@@ -714,6 +714,11 @@ void hashcons_init(HashConsTable *hc);
  * Canonical atoms retain their addresses when its index grows. */
 void hashcons_init_compact(HashConsTable *hc);
 void hashcons_free(HashConsTable *hc);
+/* Process-wide stamp for caches borrowing atoms from any hash-cons table.
+ * Reclamation advances it before freeing atoms; UINT64_MAX permanently
+ * disables pointer-key reuse rather than wrapping. The caller still keeps
+ * every borrowed atom alive throughout each operation that reads it. */
+uint64_t hashcons_reclamation_epoch(void);
 /*
  * Return a shared atom if an identical one exists, otherwise insert it.
  * Expressions and variable name keys are published only when their retained
@@ -1197,6 +1202,12 @@ void atom_print(Atom *a, FILE *out);
 void atom_print_petta(Atom *a, FILE *out);
 /* Print into arena-allocated string */
 char *atom_to_string(Arena *a, Atom *atom);
+/* The module name a grounded space prints by (an HE module space), or NULL.
+   It is found by the space's identity and never reads the space itself,
+   which may have ended.  Weak: the evaluator supplies it, and a binary
+   without one prints every space by address. */
+const char *space_module_display_name(const void *space)
+    __attribute__((weak));
 char *atom_to_parseable_string(Arena *a, Atom *atom);
 char *atom_to_parseable_string_petta(Arena *a, Atom *atom);
 /* The printed bytes exactly, with their length: where a lane writes a

@@ -36,15 +36,36 @@ typedef enum {
     CETTA_CALL_SUSPENDED,
 } CettaCallOutcomeKind;
 
+typedef enum {
+    CETTA_CALL_RESULT_EXPRESSION = 0,
+    CETTA_CALL_RESULT_COMPLETED_VALUE,
+    /* `term` is an ordered expression of completed answers. */
+    CETTA_CALL_RESULT_COMPLETED_FRONTIER,
+} CettaCallResultForm;
+
 typedef struct {
     CettaCallOutcomeKind kind;
     Atom *term;
     /* SUSPENDED: the delayed goals, in the client's form. */
     Atom *delayed;
+    /* VALUE: the producer has already interpreted the answer.  This is
+     * provenance, not a guess from its syntax; fields remain data even when
+     * they spell evaluator instructions. */
+    CettaCallResultForm result_form;
 } CettaCallOutcome;
 
 static inline CettaCallOutcome cetta_call_value(Atom *value) {
     return (CettaCallOutcome){.kind = CETTA_CALL_VALUE, .term = value};
+}
+
+static inline CettaCallOutcome cetta_call_completed_value(Atom *value) {
+    return (CettaCallOutcome){.kind = CETTA_CALL_VALUE, .term = value,
+                              .result_form = CETTA_CALL_RESULT_COMPLETED_VALUE};
+}
+
+static inline CettaCallOutcome cetta_call_completed_frontier(Atom *values) {
+    return (CettaCallOutcome){.kind = CETTA_CALL_VALUE, .term = values,
+                              .result_form = CETTA_CALL_RESULT_COMPLETED_FRONTIER};
 }
 
 static inline CettaCallOutcome cetta_call_failure(void) {

@@ -2,6 +2,7 @@
 #define CETTA_PETTA_TYPE_POLICY_H
 
 #include "atom.h"
+#include "eval_completion.h"
 #include "space.h"
 
 /* PeTTa call typing, not an evaluator.  Classify the literal declaration
@@ -82,9 +83,10 @@ bool petta_type_function_query(Arena *arena, Atom *sequence, Atom *required,
 Atom *petta_type_tuple_query(Arena *arena, CettaExprLen length);
 Atom *petta_type_declaration_query(Arena *arena, Atom *subject, Atom *required);
 
-/* Intrinsic get-type for closed subjects or a root logical variable
- * (no interpretation or nominal HE casts). The array cannot carry subject
- * refinements or execute nested authored classifiers; those queries use
+/* Intrinsic get-type without interpretation or nominal HE casts. The caller
+ * may admit open compound subjects when declarations have only symbol
+ * subjects and no nested authored classifier can execute. The answer array
+ * cannot carry subject refinements or classifier effects; those queries use
  * the caller's ordinary relational continuations instead.
  * Required is NULL for a fresh output, otherwise its current binding.
  * Atoms belong to arena; the returned array belongs to the caller.
@@ -92,6 +94,11 @@ Atom *petta_type_declaration_query(Arena *arena, Atom *subject, Atom *required);
  * Authored get-type equations are executed separately by ordinary search. */
 bool petta_type_intrinsic_answers(Space *space, Arena *arena,
                                   Atom *subject, Atom *required,
-                                  Atom ***types, uint32_t *count);
+                                  Atom ***types, uint32_t *count,
+                                  CettaEvalCompletion *completion);
+/* Release this thread's bounded intrinsic facts before its evaluator and
+ * hash-cons ownership domain are torn down. Returned answers own their atoms
+ * in the request arena and do not borrow these retained schemes. */
+void petta_type_facts_free_for_current_thread(void);
 
 #endif

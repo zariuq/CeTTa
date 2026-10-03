@@ -149,3 +149,27 @@
 ;     Recorded: Oruži, 2026-09-29.  The contract is Zar's to set.
 ; SWI-PeTTa: (Error (resource_error stack) (dict stack_overflow ...))
 !(let $_ (translatePredicate (= $c (f $c))) (catch (repr $c)))
+
+; 14. A call uses the declarations present when it starts, including a
+;     call whose head is resolved from a variable. SWI's translated caller
+;     retains its earlier argument/guard plan: a later direct call sees
+;     one signature here, while eval at the same point sees both. A
+;     let-bound head can omit the declaration's guards entirely in SWI.
+;     These are reference translation bugs; refreshing the call plan on
+;     declaration-generation changes is a repair candidate.
+;     Decided: Zar, 2026-10-01, preserve live declarations.
+(: visibility-a VisibilityA)
+(: visibility-a VisibilityB)
+(: visibility-f (-> VisibilityA %Undefined%))
+(= (visibility-f $x) (Visible $x))
+(= (visibility-caller)
+   (progn (add-atom &self (: visibility-f (-> VisibilityB %Undefined%)))
+          (collapse (visibility-f visibility-a))))
+; SWI-PeTTa, both qualified pins: ((Visible visibility-a))
+!(visibility-caller)
+; SWI-PeTTa, both qualified pins: ((Visible rejected))
+!(let $f visibility-f (collapse ($f rejected)))
+(: visibility-raw (-> Atom %Undefined%))
+(= (visibility-raw $x) (Raw $x))
+; SWI-PeTTa, both qualified pins: (Raw 3)
+!(let $f visibility-raw ($f (+ 1 2)))
