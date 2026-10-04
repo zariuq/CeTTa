@@ -31,6 +31,7 @@
 typedef struct CettaIoHeader {
     char *key;
     char *value;
+    char *credential_secret; /* host bytes only; never an evaluator Atom */
     struct CettaIoHeader *next;
 } CettaIoHeader;
 
@@ -135,7 +136,18 @@ static void io_header_list_free(CettaIoHeader *header) {
     while (header) {
         CettaIoHeader *next = header->next;
         free(header->key);
+        if (header->value) {
+            volatile char *p = header->value;
+            size_t n = strlen(header->value);
+            while (n--) *p++ = 0;
+        }
         free(header->value);
+        if (header->credential_secret) {
+            volatile char *p = header->credential_secret;
+            size_t n = strlen(header->credential_secret);
+            while (n--) *p++ = 0;
+            free(header->credential_secret);
+        }
         free(header);
         header = next;
     }
@@ -237,8 +249,53 @@ static bool io_http_url(const char *url) {
             strncasecmp(url, "https://", 8u) == 0);
 }
 
-static bool io_parse_headers(Atom *atom, CettaIoHeader **headers_out,
-                             char *error, size_t error_size) {
+/* Host configuration authorizes a credential reference for one URL prefix.
+ * Guest code selects an alias, never an environment variable or a token.
+ * Prefixes include the complete authority and a trailing '/'; requests with
+ * credentials never follow redirects. No secret reaches an Atom or error. */
+static bool io_credential_header(const char *alias, const char *url,
+                                 bool follow, CettaIoHeader *copy) {
+    if (!alias || !*alias || strlen(alias) > 48u || follow) return false;
+    for (const unsigned char *p = (const unsigned char *)alias; *p; ++p)
+        if (!((*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') || *p == '_')) return false;
+    char name[128];
+    snprintf(name, sizeof(name), "CETTA_IO_AUTH_%s_URL_PREFIX", alias);
+    const char *scope = getenv(name);
+    if (!scope || !*scope) return false;
+    size_t length = strlen(scope);
+    const char *authority = strstr(scope, "://");
+    if (!authority || (strncmp(scope, "https://", 8) && strncmp(scope, "http://", 7)) ||
+        scope[length - 1] != '/' || strchr(authority + 3, '@') ||
+        strncmp(url, scope, length) || strlen(url) <= length ||
+        strstr(url, "/../") || strstr(url, "/./") || strchr(url, '\\')) return false;
+    /* Do not let URL normalization escape a path-scoped credential. Encoded
+     * dot/slash/backslash components have the same ambiguity at a server. */
+    for (const char *p = url; *p; p++) {
+        if (*p == '%' && p[1] && p[2] &&
+            ((p[1] == '2' && (p[2] == 'e' || p[2] == 'E' || p[2] == 'f' || p[2] == 'F')) ||
+             (p[1] == '5' && (p[2] == 'c' || p[2] == 'C')))) return false;
+    }
+    snprintf(name, sizeof(name), "CETTA_IO_AUTH_%s_HEADER", alias);
+    const char *key = getenv(name);
+    snprintf(name, sizeof(name), "CETTA_IO_AUTH_%s_ENV", alias);
+    const char *variable = getenv(name);
+    if (!key || !io_valid_header_key(key) || !variable || !*variable) return false;
+    const char *secret = getenv(variable);
+    snprintf(name, sizeof(name), "CETTA_IO_AUTH_%s_PREFIX", alias);
+    const char *prefix = getenv(name);
+    if (!prefix) prefix = "";
+    if (!secret || !*secret || !io_valid_header_value(secret) || !io_valid_header_value(prefix) ||
+        strlen(key) + strlen(prefix) + strlen(secret) + 2u > 8192u) return false;
+    copy->key = io_strdup(key);
+    copy->credential_secret = io_strdup(secret);
+    copy->value = cetta_malloc(strlen(prefix) + strlen(secret) + 1u);
+    strcpy(copy->value, prefix);
+    strcat(copy->value, secret);
+    return true;
+}
+
+static bool io_parse_headers(Atom *atom, const char *url, bool follow,
+                             CettaIoHeader **headers_out, char *error, size_t error_size) {
     CettaIoHeader *head = NULL;
     CettaIoHeader *tail = NULL;
     if (!atom || atom->kind != ATOM_EXPR || atom->expr.len > 256u) {
@@ -247,6 +304,21 @@ static bool io_parse_headers(Atom *atom, CettaIoHeader **headers_out,
     }
     for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
         Atom *item = atom->expr.elems[i];
+        if (item && item->kind == ATOM_EXPR && item->expr.len == 2u &&
+            atom_is_symbol(item->expr.elems[0], "http:credential")) {
+            CettaIoHeader *copy = cetta_malloc(sizeof(*copy));
+            memset(copy, 0, sizeof(*copy));
+            if (!io_credential_header(io_text_arg(item->expr.elems[1]), url, follow, copy)) {
+                io_header_list_free(copy);
+                io_header_list_free(head);
+                snprintf(error, error_size, "credential reference is unavailable or outside its host scope");
+                return false;
+            }
+            if (tail) tail->next = copy;
+            else head = copy;
+            tail = copy;
+            continue;
+        }
         const char *key;
         const char *value;
         if (!item || item->kind != ATOM_EXPR || item->expr.len != 3u ||
@@ -261,12 +333,23 @@ static bool io_parse_headers(Atom *atom, CettaIoHeader **headers_out,
             return false;
         }
         CettaIoHeader *copy = cetta_malloc(sizeof(*copy));
+        memset(copy, 0, sizeof(*copy));
         copy->key = io_strdup(key);
         copy->value = io_strdup(value);
         copy->next = NULL;
         if (tail) tail->next = copy;
         else head = copy;
         tail = copy;
+    }
+    for (CettaIoHeader *a = head; a; a = a->next) {
+        for (CettaIoHeader *b = a->next; b; b = b->next) {
+            if ((a->credential_secret || b->credential_secret) &&
+                strcasecmp(a->key, b->key) == 0) {
+                io_header_list_free(head);
+                snprintf(error, error_size, "credential headers must not be overridden or duplicated");
+                return false;
+            }
+        }
     }
     *headers_out = head;
     return true;
@@ -328,7 +411,7 @@ static CettaIoRequest *io_parse_http_request(Atom *atom, char *error,
     request->timeout_ms = timeout_ms;
     request->max_bytes = (size_t)max_bytes;
     request->follow_redirects = follow_redirects;
-    if (!io_parse_headers(atom->expr.elems[3], &request->headers,
+    if (!io_parse_headers(atom->expr.elems[3], url, follow_redirects, &request->headers,
                           error, error_size)) {
         io_request_free(NULL, request);
         return NULL;
@@ -399,7 +482,12 @@ static bool io_http_start(CettaIoRuntime *runtime, CettaIoRequest *request,
         .max_response_bytes=request->max_bytes, .follow_redirects=request->follow_redirects
     };
     CettaHttpWorkerStatus status = cetta_http_worker_submit(runtime->worker, &input);
-    for (i = 0; i < count; ++i) free(headers[i]);
+    for (i = 0; i < count; ++i) {
+        volatile char *p = headers[i];
+        size_t n = strlen(headers[i]);
+        while (n--) *p++ = 0;
+        free(headers[i]);
+    }
     free(headers);
     if (status != HTTP_WORKER_OK) {
         snprintf(error, error_size, "%s", status == HTTP_WORKER_FULL
@@ -665,6 +753,13 @@ static Atom *io_submit(CettaIoRuntime *runtime, Arena *arena,
 }
 
 static Atom *io_http_result(Arena *arena, CettaIoRequest *request) {
+    for (CettaIoHeader *h = request->headers; h; h = h->next) {
+        if (h->credential_secret && request->response &&
+            strstr(request->response, h->credential_secret))
+            return atom_error(arena, io_http_source(arena, request),
+                atom_expr2(arena, atom_symbol(arena, "http:error"),
+                           atom_symbol(arena, "credential-in-response")));
+    }
     if (request->response_budget_exceeded)
         return atom_error(arena, io_http_source(arena, request),
             atom_expr2(arena, atom_symbol(arena, "http:error"),

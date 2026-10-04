@@ -42262,6 +42262,10 @@ endif
 ifeq ($(HTTP_PROVIDER_CURL),1)
 test-io-library: $(BIN) $(IO_HTTP_FIXTURE_BIN)
 	python3 tests/test_io_library.py ./$(BIN) $(IO_HTTP_FIXTURE_BIN)
+
+.PHONY: test-io-credentials
+test-io-credentials: $(BIN)
+	python3 tests/test_io_credentials.py ./$(BIN)
 else
 test-io-library:
 	@echo "test-io-library requires the native HTTP provider" >&2

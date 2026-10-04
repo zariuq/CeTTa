@@ -100,7 +100,12 @@ static void free_job(Job *j) {
     }
     free((char *)j->request.method); free((char *)j->request.url);
     free((char *)j->request.proxy); free((char *)j->request.ca_file);
-    for (size_t i=0;i<j->request.header_count;++i) free((char *)j->request.headers[i]);
+    for (size_t i=0;i<j->request.header_count;++i) {
+        volatile char *p=(volatile char *)j->request.headers[i];
+        size_t n=strlen(j->request.headers[i]);
+        while (n--) *p++=0;
+        free((char *)j->request.headers[i]);
+    }
     free((char **)j->request.headers); free((void *)j->request.body);
     cetta_http_result_free(&j->result); free(j);
 }
