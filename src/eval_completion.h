@@ -14,6 +14,8 @@ typedef enum {
     CETTA_EVAL_INCOMPLETE_INVALIDATED,
     /* A host service the machine depends on failed. */
     CETTA_EVAL_INCOMPLETE_HOST_FAILURE,
+    /* A denied effect remains observable even when an Error is caught. */
+    CETTA_EVAL_INCOMPLETE_EFFECT_DENIED,
 } CettaEvalCompletion;
 
 #endif

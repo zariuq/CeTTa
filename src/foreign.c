@@ -2,6 +2,7 @@
 #include <Python.h>
 
 #include "foreign.h"
+#include "effect_policy.h"
 #include "error_presentation.h"
 
 #include "parser.h"
@@ -507,6 +508,10 @@ static bool python_execution_guard_enter(
     if (!guard)
         return false;
     guard->active = false;
+    if (cetta_speculative_active()) {
+        if (error_out) *error_out=cetta_effect_denied(error_arena);
+        return false;
+    }
     if (!python_prepare_interpreter(error_arena, error_out))
         return false;
     guard->state = PyGILState_Ensure();

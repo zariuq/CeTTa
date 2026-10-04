@@ -626,6 +626,12 @@ void symbol_table_init_builtins(SymbolTable *st, BuiltinSyms *builtins) {
         CETTA_MARK_TYPE_PURE_GROUNDED)
 #undef CETTA_MARK_TYPE_PURE_GROUNDED
 
+#define CETTA_MARK_SPECULATIVE(field) \
+    symbol_table_add_flags(st, builtins->field, CETTA_SYMBOL_FLAG_SPECULATIVE_OP);
+    CETTA_PURE_GROUNDED_SYMBOL_FIELDS(CETTA_MARK_SPECULATIVE)
+    CETTA_SPECULATIVE_SYMBOL_FIELDS(CETTA_MARK_SPECULATIVE)
+#undef CETTA_MARK_SPECULATIVE
+
     /* The library ABI reserves this prefix for native grounded operators.
        Mark builtins eagerly; later dynamically interned ABI names retain the
        name-based fallback in is_grounded_op. */

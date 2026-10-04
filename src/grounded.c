@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "grounded.h"
+#include "effect_policy.h"
 #include "abt.h"
 #include "eval.h"
 #include "he_typing.h"
@@ -3272,6 +3273,8 @@ static Atom *grounded_dispatch_rational(Arena *a, Atom *head, Atom **args,
 
 Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (head->kind != ATOM_SYMBOL) return NULL;
+    if (cetta_speculative_active() && !cetta_speculative_op_allowed(atom_symbol_current_id(head)))
+        return is_grounded_op(atom_symbol_current_id(head)) ? cetta_effect_denied(a) : NULL;
     for (uint32_t i = 0u; i < nargs; i++) {
         if (atom_structural_has_rational(args[i]))
             return grounded_dispatch_rational(a, head, args, nargs);

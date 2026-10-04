@@ -853,6 +853,8 @@ void cetta_eval_session_init(CettaEvalSession *session,
     session->test_verdict = NULL;
     session->test_verdict_context = NULL;
     session->language_id = language_id;
+    session->speculative = false;
+    atomic_init(&session->effect_denials, 0);
     session->profile = cetta_profile_is_valid_for_language(language_id, profile)
         ? profile
         : NULL;

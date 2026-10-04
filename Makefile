@@ -677,7 +677,7 @@ SRC += src/library_supervise.c $(DURABLE_SRC)
 SRC += src/petta_type_policy.c src/petta_type_relation.c src/he_type_policy.c
 SRC += src/gslt_language_manifest_v1.c
 SRC += src/gslt_support_profile_v1.c
-SRC += src/library_io.c src/library_cwp.c src/library_proc.c src/http_worker.c src/telegram_transport.c
+SRC += src/library_io.c src/library_cwp.c src/library_proc.c src/http_worker.c src/telegram_transport.c src/library_durable.c
 SRC += $(JSON_GSLT_RUNTIME_SRC)
 SRC += $(PETTA_TYPECHECK_CENSUS_SRC)
 SRC += \
@@ -40739,7 +40739,7 @@ LIBRARY_SPELLING_TOOL_V1 = tools/library_spelling.py
 # PeTTa does not have.
 LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_tptp json str
 LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list \
-	system fs proc cwp io
+	system fs proc cwp io durable
 LIBRARY_PRIME_SPELLING_SOURCES_V1 = json
 .PHONY: test-library-spellings-v1
 test-library-spellings-v1: $(LIBRARY_SPELLING_TOOL_V1) \
@@ -42233,6 +42233,16 @@ runtime/test-durable-value-$(BUILD_OBJ_TAG): tests/test_durable_value.c src/dura
 test-durable-value: runtime/test-durable-value-$(BUILD_OBJ_TAG)
 	./runtime/test-durable-value-$(BUILD_OBJ_TAG)
 
+.PHONY: test-durable-library
+ifeq ($(ENABLE_DURABLE),1)
+test-durable-library: $(BIN)
+	python3 tests/test_durable_library.py ./$(BIN)
+else
+test-durable-library:
+	@echo "test-durable-library requires ENABLE_DURABLE=1" >&2
+	@exit 1
+endif
+
 .PHONY: test-http-worker
 ifeq ($(HTTP_PROVIDER_CURL),1)
 HTTP_WORKER_TEST_BIN = runtime/test-http-worker-$(BUILD_OBJ_TAG)
@@ -42256,6 +42266,18 @@ test-io-library:
 	@echo "test-io-library requires the native HTTP provider" >&2
 	@exit 1
 endif
+
+.PHONY: test-speculative-eval
+SPECULATIVE_EVAL_TEST_BIN = runtime/test-speculative-eval-$(BUILD_OBJ_TAG)
+SPECULATIVE_EVAL_TEST_OBJ = runtime/bootstrap/test-speculative-eval.$(BUILD_OBJ_TAG).o
+-include $(SPECULATIVE_EVAL_TEST_OBJ:.o=.d)
+$(SPECULATIVE_EVAL_TEST_OBJ): tests/test_speculative_eval.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c $< -o $@
+$(SPECULATIVE_EVAL_TEST_BIN): $(SPECULATIVE_EVAL_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+test-speculative-eval: $(SPECULATIVE_EVAL_TEST_BIN) $(IO_HTTP_FIXTURE_BIN)
+	python3 tests/test_speculative_eval.py $(IO_HTTP_FIXTURE_BIN) $(SPECULATIVE_EVAL_TEST_BIN)
 
 .PHONY: test-telegram-transport
 ifeq ($(HTTP_PROVIDER_CURL),1)

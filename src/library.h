@@ -218,6 +218,7 @@ typedef struct CettaLibraryContext {
     CettaLibPrologRuntime *lib_prolog;
     CettaForeignRuntime *foreign_runtime;
     struct CettaIoRuntime *io_runtime;
+    struct CettaDurableRuntime *durable_runtime;
     struct CettaJsonLibraryRuntimeV1 *json_runtime;
 } CettaLibraryContext;
 
@@ -344,6 +345,9 @@ Atom *cetta_library_module_inventory_space(CettaLibraryContext *ctx,
 bool cetta_library_print_loaded_modules(CettaLibraryContext *ctx, FILE *out,
                                         Arena *eval_arena, Atom **error_out);
 
+/* Explicit top-level administration, outside speculative evaluation. The
+ * runner passes literal data; callbacks within evaluation must not call it. */
+Atom *cetta_library_durable_admin(CettaLibraryContext *ctx, Arena *arena, Atom *form);
 /* A native operation of an active library, and what it did
  * (call_outcome.h): a library operation's value, or a foreign call's
  * outcome, whose failure PeTTa raises.  False when no active library

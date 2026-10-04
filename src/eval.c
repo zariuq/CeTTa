@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include "var_index.h"
 #include "eval.h"
+#include "effect_policy.h"
 #include "abt.h"
 #include "match.h"
 #include "search_machine.h"
@@ -298,6 +299,20 @@ static void eval_execution_scope_enter(EvalExecutionScope *scope, Space *root) {
 static void eval_execution_scope_leave(EvalExecutionScope *scope);
 /* Active importable library set */
 static __thread CettaLibraryContext *g_library_context = NULL;
+
+bool eval_speculative_active(void) {
+    return g_library_context && g_library_context->session.speculative;
+}
+
+void eval_note_effect_denied(void) {
+    if (!eval_speculative_active()) return;
+    _Atomic uint64_t *count = &g_library_context->session.effect_denials;
+    uint64_t old = atomic_load_explicit(count, memory_order_relaxed);
+    /* Saturate rather than wrap to a falsely clean evaluation. */
+    while (old != UINT64_MAX &&
+           !atomic_compare_exchange_weak_explicit(count, &old, old + 1,
+               memory_order_relaxed, memory_order_relaxed)) {}
+}
 /* A worker-local transport of immutable equation-program metadata onto its
  * private root image.  This is optimization evidence only: an absent or
  * stale projection selects the ordinary live equation path. */
@@ -2234,6 +2249,8 @@ static Atom *eval_minimal_foldl_llist(Arena *a, Atom *head, Atom **args,
 
 static Atom *dispatch_named_native(Space *s, Arena *a, SymbolId head_id,
                                    Atom **args, uint32_t nargs) {
+    if (eval_speculative_active() && !cetta_speculative_op_allowed(head_id))
+        return cetta_effect_denied(a);
     Atom *head = atom_symbol_id(a, head_id);
     if (head_id == g_builtin_syms.minimal_foldl_llist)
         return eval_minimal_foldl_llist(a, head, args, nargs);
@@ -7187,6 +7204,12 @@ static Atom *eval_grounded_final_value(Arena *a, Atom *result) {
 static bool dispatch_native_call(Space *s, Arena *a, Atom *head,
                                 Atom **args, uint32_t nargs,
                                 CettaCallOutcome *outcome) {
+    if (eval_speculative_active() && head && head->kind == ATOM_SYMBOL &&
+        !cetta_speculative_op_allowed(atom_symbol_current_id(head)) &&
+        is_grounded_op(atom_symbol_current_id(head))) {
+        *outcome = cetta_call_value(cetta_effect_denied(a));
+        return true;
+    }
     __attribute__((cleanup(cetta_shared_transition_guard_leave)))
     CettaSharedTransitionGuard shared_operation_transition = {0};
     if (g_hyperpose_thread_unsafe_requested && head &&
@@ -13047,6 +13070,7 @@ static bool symbol_name_equals(Atom *atom, const char *name) {
 
 static bool hyperpose_external_unsafe_head(Atom *head) {
     return symbol_name_has_prefix(head, "mork:") ||
+           symbol_name_has_prefix(head, "durable:") ||
            symbol_name_has_prefix(head, "mm2:") ||
            symbol_name_has_prefix(head, "prolog:") ||
            symbol_name_equals(head, "fs:write") ||
@@ -13072,6 +13096,7 @@ static bool hyperpose_internal_unsafe_head(SymbolId head_id, Atom *head) {
         return true;
     }
     return symbol_name_has_prefix(head, "__cetta_lib_mork_") ||
+           symbol_name_has_prefix(head, "__cetta_lib_durable_") ||
            symbol_name_has_prefix(head, "__cetta_lib_mm2_") ||
            symbol_name_has_prefix(head, "__cetta_lib_prolog_");
 }
@@ -21100,6 +21125,8 @@ static const char *eval_get_type_failure_name(
         return "Cancelled";
     case CETTA_EVAL_INCOMPLETE_INVALIDATED:
         return "PettaSearchRevisionInvalidated";
+    case CETTA_EVAL_INCOMPLETE_EFFECT_DENIED:
+        return "EffectDenied";
     case CETTA_EVAL_INCOMPLETE_HOST_FAILURE:
     case CETTA_EVAL_COMPLETE:
         return "PettaSearchHostError";
@@ -26666,6 +26693,10 @@ static bool dispatch_foreign_outcomes(Space *s, Arena *a, Atom *head,
          atom_symbol_current_id(head) == g_builtin_syms.py_call);
     if (!callable && !exact_native)
         return false;
+    if (eval_speculative_active()) {
+        outcome_set_add(os,cetta_effect_denied(a),prefix);
+        return true;
+    }
     __attribute__((cleanup(cetta_shared_transition_guard_leave)))
     CettaSharedTransitionGuard shared_foreign_transition = {0};
     if (g_hyperpose_thread_unsafe_requested) {
@@ -32169,7 +32200,11 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
         }
     }
     if (op->kind == ATOM_SYMBOL &&
-        (head_id == g_builtin_syms.lib_mork_space_add_atoms ||
+        /* Mutation batches carry data, including continuation expressions.
+         * Like MORK's atom insertion ABI, durable commit must not recursively
+         * evaluate a batch while crossing the native boundary. */
+        (head_id == g_builtin_syms.lib_durable_commit ||
+         head_id == g_builtin_syms.lib_mork_space_add_atoms ||
          head_id == g_builtin_syms.lib_mork_space_add_stream ||
          head_id == g_builtin_syms.mork_add_atoms ||
          head_id == g_builtin_syms.mork_add_atom ||
@@ -44338,6 +44373,7 @@ static Atom *prepared_pure_closed_call_try(
     bool entry_arguments_are_values,
     bool preserve_internal_values,
     PreparedPureProgramCache *program_cache) {
+    if (eval_speculative_active()) return NULL;
     CETTA_SCOPED_SHARED_TRANSITION(prepared_pure_observation);
     if (program_cache && program_cache->entries) {
         CettaLanguageId early_language_id =
@@ -44624,6 +44660,7 @@ prepared_pure_closed_answers_try(
     PreparedPureProgramCache *program_cache,
     const Bindings *outer_env, bool preserve_bindings,
     OutcomeSet *outcomes) {
+    if (eval_speculative_active()) return CETTA_PREPARED_PURE_ANSWERS_DECLINED;
     /* The producer enumerates depth first and to completion.  A selected
      * search controller owns the order of answers instead, and a diagnostic
      * machine transition bound makes execution a bounded prefix. */
@@ -45738,6 +45775,14 @@ tail_call: ;
     const SymbolId head_id = atom_head_symbol_id(atom);
     Atom *head = atom->expr.elems[0];
 
+    if (eval_speculative_active() && head->kind == ATOM_SYMBOL &&
+        !cetta_speculative_op_allowed(head_id) &&
+        ((symbol_flags(g_symbols, head_id) & CETTA_SYMBOL_FLAG_BUILTIN) ||
+         is_grounded_op(head_id))) {
+        outcome_set_add(os, cetta_effect_denied(a), &_empty);
+        return;
+    }
+
     if (language_id == CETTA_LANGUAGE_HE &&
         (he_minimal_instruction(atom) || head_id == g_builtin_syms.superpose) &&
         head_id != g_builtin_syms.call_native &&
@@ -45936,7 +45981,7 @@ tail_call: ;
     bool enclosing_run_raised = g_petta_machine_run_raised;
     g_petta_machine_run_raised = false;
     bool machine_answered =
-        petta_eval_relational_machine_available() &&
+        !eval_speculative_active() && petta_eval_relational_machine_available() &&
         petta_eval_machine_try(
             s, a, atom, etype, fuel, CURRENT_ENV,
             preserve_bindings, os);
@@ -51400,6 +51445,7 @@ void eval_outcome_init(EvalOutcome *outcome) {
     outcome->budget_initial = 0;
     outcome->budget_remaining = 0;
     outcome->steps_spent = 0;
+    outcome->effect_denials = 0;
     outcome->petta_raise_known = false;
     outcome->petta_raised_error = false;
 }
@@ -51413,6 +51459,7 @@ void eval_outcome_free(EvalOutcome *outcome) {
     outcome->budget_initial = 0;
     outcome->budget_remaining = 0;
     outcome->steps_spent = 0;
+    outcome->effect_denials = 0;
 }
 
 CettaCount eval_outcome_value_count(const EvalOutcome *outcome) {
@@ -51484,6 +51531,8 @@ const char *eval_completion_reason(CettaEvalCompletion completion) {
         return "revision-invalidated";
     case CETTA_EVAL_INCOMPLETE_HOST_FAILURE:
         return "host-failure";
+    case CETTA_EVAL_INCOMPLETE_EFFECT_DENIED:
+        return "effect-denied";
     }
     return "incomplete";
 }
@@ -52275,6 +52324,35 @@ void eval_top_with_registry_outcome(
         s, a, persistent, r, expr, NULL,
         &outcome->results, outcome,
         observer, observer_context);
+}
+
+void eval_top_speculative(CettaLibraryContext *context, Space *space,
+    Arena *arena, Arena *persistent, Registry *registry, Atom *expression,
+    int fuel_limit, EvalOutcome *outcome) {
+    if (!outcome) return;
+    if (!context || context->session.language_id!=CETTA_LANGUAGE_HE || fuel_limit<=0) {
+        result_set_add(&outcome->results,atom_error(arena,
+            atom_symbol(arena,"speculative-evaluation"),
+            atom_symbol(arena,"InvalidEvaluationContextOrBudget")));
+        outcome->completion=CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
+        return;
+    }
+    bool previous=context->session.speculative;
+    int previous_fuel=context->session.options.fuel_limit;
+    if (!previous)
+        atomic_store_explicit(&context->session.effect_denials,0,memory_order_relaxed);
+    uint64_t before=atomic_load_explicit(&context->session.effect_denials,memory_order_relaxed);
+    context->session.speculative=true;
+    context->session.options.fuel_limit=fuel_limit;
+    CettaLibraryContext *old=eval_swap_library_context(context);
+    eval_top_with_registry_outcome(space,arena,persistent,registry,expression,outcome,NULL,NULL);
+    uint64_t after=atomic_load_explicit(&context->session.effect_denials,memory_order_relaxed);
+    outcome->effect_denials=after==UINT64_MAX ? UINT64_MAX : after-before;
+    if (outcome->effect_denials && outcome->completion==CETTA_EVAL_COMPLETE)
+        outcome->completion=CETTA_EVAL_INCOMPLETE_EFFECT_DENIED;
+    eval_swap_library_context(old);
+    context->session.options.fuel_limit=previous_fuel;
+    context->session.speculative=previous;
 }
 
 void eval_set_default_fuel(int fuel) {

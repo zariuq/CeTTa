@@ -56,6 +56,7 @@ static void handle_sigsegv(int sig) {
 }
 
 static bool g_count_only = false;
+static bool g_durable_admin = false;
 static bool g_quiet_results = false;
 static uint64_t g_prime_need_trace_form = 0u;
 static const uint64_t CETTA_MM2_DEFAULT_RUN_STEPS = 1000000000000000ULL;
@@ -1530,8 +1531,12 @@ static int run_rhocalc_cli(const char *filename,
         if (semantic_profile == RHOCALC_SEMANTIC_PROFILE_RHOMETTA &&
             atom_is_symbol_id(process, g_builtin_syms.bang) && i + 1 < n) {
             result_set_init(&evaluated);
-            eval_top_with_registry(
-                &space, &arena, &arena, &registry, atoms[++i], &evaluated);
+            Atom *command=atoms[++i];
+            Atom *administrative = g_durable_admin
+                ? cetta_library_durable_admin(&libraries, &arena, command) : NULL;
+            if (administrative) result_set_add(&evaluated,administrative);
+            else eval_top_with_registry(
+                &space, &arena, &arena, &registry, command, &evaluated);
             if (!main_rhometta_print_eval_results(
                     &evaluated, syntax, stdout) ||
                 result_set_has_error(&evaluated)) {
@@ -1743,6 +1748,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --compile <file.metta>           # emit LLVM IR to stdout\n", out);
     fputs("       cetta --compile-stdlib <file.metta>     # emit precompiled stdlib blob to stdout\n", out);
     fputs("       cetta --count-only <file.metta>        # print result counts only\n", out);
+    fputs("       cetta --durable-admin <file.metta>     # enable literal durable repair commands (default: off)\n", out);
     fputs("       cetta --run-report <path> <file>      # native query report as JSON\n", out);
     fputs("       cetta --diagnostic-details           # include bounded private exception text in run reports\n", out);
     fputs("       cetta --run-contract <file>           # require completed queries and passing tests\n", out);
@@ -2834,6 +2840,10 @@ static int cetta_main(int argc, char **argv) {
         }
         if (strcmp(argv[i], "--count-only") == 0) {
             count_only = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--durable-admin") == 0) {
+            g_durable_admin = true;
             continue;
         }
         if (strcmp(argv[i], "--quiet") == 0) {
@@ -4113,7 +4123,10 @@ process_petta_document:
                 Atom *expr = atoms[i + 1];
                 ResultSet rs;
                 result_set_init(&rs);
-                eval_top_with_registry(&space, &eval_arena, &arena, &registry, expr, &rs);
+                Atom *administrative = g_durable_admin
+                    ? cetta_library_durable_admin(&libraries, &eval_arena, expr) : NULL;
+                if (administrative) result_set_add(&rs,administrative);
+                else eval_top_with_registry(&space, &eval_arena, &arena, &registry, expr, &rs);
                 if (cetta_eval_session_process_exit_requested(
                         &libraries.session)) {
                     rc = cetta_eval_session_process_exit_code(
@@ -4215,7 +4228,12 @@ process_petta_document:
                 rc = 1;
                 goto cleanup;
             }
-            if (emit_prime_need_trace) {
+            Atom *administrative = g_durable_admin
+                ? cetta_library_durable_admin(&libraries, &eval_arena, expr) : NULL;
+            if (administrative) {
+                result_set_init(&rs);
+                result_set_add(&rs,administrative);
+            } else if (emit_prime_need_trace) {
                 eval_outcome_init(&detailed);
                 detailed_initialized = true;
                 results = &detailed.results;

@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "library.h"
+#include "effect_policy.h"
 
 #include "eval.h"
 #include "mm2_lower.h"
@@ -20,6 +21,7 @@
 #include "library_io.h"
 #include "library_cwp.h"
 #include "library_proc.h"
+#include "library_durable.h"
 #include "library_json.h"
 #include "str_natives.h"
 #include <ctype.h>
@@ -80,6 +82,7 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"lib_memo", CETTA_LIBRARY_PETTA_MEMO},
     {"lib_tabling", CETTA_LIBRARY_PETTA_TABLING},
     {"io", CETTA_LIBRARY_IO},
+    {"durable", CETTA_LIBRARY_DURABLE},
     {"cwp", CETTA_LIBRARY_CWP},
     {"proc", CETTA_LIBRARY_PROC},
 #if CETTA_BUILD_WITH_JSON_GSLT
@@ -454,6 +457,7 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
     }
     ctx->foreign_runtime = cetta_foreign_runtime_new();
     ctx->io_runtime = NULL;
+    ctx->durable_runtime = NULL;
     ctx->json_runtime = NULL;
 }
 
@@ -544,6 +548,8 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
         cetta_foreign_runtime_free(ctx->foreign_runtime);
         ctx->foreign_runtime = NULL;
     }
+    cetta_durable_runtime_free(ctx->durable_runtime);
+    ctx->durable_runtime = NULL;
     cetta_io_runtime_free(ctx->io_runtime);
     ctx->io_runtime = NULL;
 #if CETTA_BUILD_WITH_JSON_GSLT
@@ -9481,6 +9487,8 @@ bool cetta_library_import(CettaLibraryContext *ctx, const char *name,
         ctx->active_mask &= ~import_bit;
         return false;
     }
+    if (import_bit == CETTA_LIBRARY_DURABLE && !ctx->durable_runtime)
+        ctx->durable_runtime = cetta_durable_runtime_new();
     if (import_bit == CETTA_LIBRARY_IO && !ctx->io_runtime)
         ctx->io_runtime = cetta_io_runtime_new();
     return true;
@@ -10077,6 +10085,25 @@ bool cetta_library_import_petta_reference_at(
     return false;
 }
 
+/* Administrative directives are data, not expressions to reduce. Keeping
+ * this entry separate means no evaluator path (including nested eval, imports,
+ * superpose, or rho payloads) can manufacture durable commit authority. */
+Atom *cetta_library_durable_admin(CettaLibraryContext *ctx, Arena *a, Atom *form) {
+    if (!ctx || !(ctx->active_mask & CETTA_LIBRARY_DURABLE) ||
+        !form || form->kind!=ATOM_EXPR || !form->expr.len ||
+        form->expr.elems[0]->kind!=ATOM_SYMBOL) return NULL;
+    const char *name=atom_name_cstr(form->expr.elems[0]);
+    if (strncmp(name,"durable:",8)) return NULL;
+    const char *operations[]={"open","read","commit","checkpoint","close"};
+    for (size_t i=0;i<sizeof(operations)/sizeof(*operations);++i) {
+        if (strcmp(name+8,operations[i])) continue;
+        char native[64]; snprintf(native,sizeof(native),"__cetta_lib_durable_%s",operations[i]);
+        return cetta_durable_admin_dispatch(ctx->durable_runtime,a,atom_symbol(a,native),
+            form->expr.elems+1,form->expr.len-1);
+    }
+    return NULL;
+}
+
 /* The active libraries' native operations, as values; a foreign call
  * reports its own outcome (cetta_foreign_call_native). */
 static Atom *cetta_library_dispatch_native_value(
@@ -10084,6 +10111,28 @@ static Atom *cetta_library_dispatch_native_value(
     Atom *head, Atom **args, uint32_t nargs, CettaCallResultForm *result_form) {
     *result_form = CETTA_CALL_RESULT_EXPRESSION;
     if (!ctx || !head || head->kind != ATOM_SYMBOL) return NULL;
+    if (ctx->session.speculative) {
+        if (!cetta_speculative_op_allowed(atom_symbol_current_id(head)))
+            return is_grounded_op(atom_symbol_current_id(head)) ? cetta_effect_denied(a) : NULL;
+        /* Only these audited mechanisms are reachable. Do not fall through
+         * to dynamically registered modules or a foreign runtime. */
+        Atom *result=NULL;
+        if (ctx->active_mask & CETTA_LIBRARY_STR)
+            result=cetta_library_dispatch_str(a,head,args,nargs);
+        if (result) return result;
+#if CETTA_BUILD_WITH_JSON_GSLT
+        if (ctx->active_mask & CETTA_LIBRARY_JSON)
+            result=cetta_json_library_dispatch_v1(ctx->json_runtime,a,head,args,nargs);
+        if (result) return result;
+#endif
+        if (ctx->active_mask & CETTA_LIBRARY_RHOMETTA)
+            result=cetta_library_dispatch_rhometta(ctx,space,a,head,args,nargs,result_form);
+        if (result) return result;
+        if (atom_symbol_current_id(head)==g_builtin_syms.lib_lts_rho_transitions &&
+            (ctx->active_mask & CETTA_LIBRARY_LTS))
+            return cetta_library_dispatch_lts(ctx,space,a,head,args,nargs);
+        return NULL;
+    }
     {
         Atom *result = cetta_rule_machine_dispatch(a, head, args, nargs);
         if (result) return result;
@@ -10112,6 +10161,13 @@ static Atom *cetta_library_dispatch_native_value(
     if (ctx->active_mask & CETTA_LIBRARY_FS) {
         Atom *result = cetta_library_dispatch_fs(a, head, args, nargs);
         if (result) return result;
+    }
+    if (ctx->active_mask & CETTA_LIBRARY_DURABLE) {
+        Atom *result = cetta_durable_dispatch(ctx->durable_runtime, a, head, args, nargs);
+        if (result) {
+            *result_form = CETTA_CALL_RESULT_COMPLETED_VALUE;
+            return result;
+        }
     }
     if (ctx->active_mask & CETTA_LIBRARY_IO) {
         Atom *result = cetta_io_dispatch(ctx->io_runtime, a, head, args, nargs);
