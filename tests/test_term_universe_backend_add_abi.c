@@ -1236,7 +1236,7 @@ static void test_native_conjunction_count_fold(void) {
        edge occurrences therefore remain a multiplicative factor. */
     Bindings seed;
     bindings_init(&seed);
-    assert(bindings_add_id(&seed, y->var_id, y->sym_id, b));
+    assert(bindings_add_id(&seed, y->var_id, atom_symbol_current_id(y), b));
     assert(space_match_count_conjunction64(
         &space, &scratch, path, 2u, &seed, &direct));
     assert(direct == 2u);

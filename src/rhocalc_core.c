@@ -497,7 +497,7 @@ static Atom *rho_atom_replace_var(Arena *arena, Atom *atom, VarId var_id,
 
     if (!atom_has_vars(atom)) return atom;
     bindings_init(&subst);
-    if (!bindings_add_id(&subst, var_id, replacement ? replacement->sym_id
+    if (!bindings_add_id(&subst, var_id, replacement ? atom_symbol_current_id(replacement)
                                                      : SYMBOL_ID_NONE,
                          replacement)) {
         bindings_free(&subst);
@@ -1073,9 +1073,8 @@ static bool rho_atom_text_key_direct_emit(
                 atom->name_key->ground.ival ==
                     (int64_t)CETTA_INTERNAL_TAG_PRIME_LEXICAL_SLOT) {
                 ok = rho_atom_text_sink_appendf(
-                    sink, "$%s", atom->sym_id == SYMBOL_ID_NONE
-                        ? "__prime_let" : symbol_bytes(g_symbols,
-                                                       atom->sym_id));
+                    sink, "$%s", atom_symbol_current_id(atom) == SYMBOL_ID_NONE
+                        ? "__prime_let" : atom_symbol_bytes(atom));
             } else if (atom->name_key) {
                 ok = rho_atom_text_sink_append(sink, "$@") &&
                      (!epoch || rho_atom_text_sink_appendf(
@@ -1338,7 +1337,7 @@ static RhoAtomTextRelation rho_atom_text_structural_relation(
         !rho_atom_text_unambiguous_symbol(right->expr.elems[0])) {
         return RHO_ATOM_TEXT_RELATION_UNKNOWN;
     }
-    if (left->expr.elems[0]->sym_id != right->expr.elems[0]->sym_id) {
+    if (!atom_symbols_equal(left->expr.elems[0], right->expr.elems[0])) {
         return RHO_ATOM_TEXT_RELATION_DIFFERENT;
     }
 
@@ -2918,21 +2917,14 @@ static bool rho_eval_registry_init(Registry *dst, Registry *src,
     if (src) {
         for (uint32_t i = 0; i < src->len; i++) {
             Atom *value;
-            const Atom *name_key = registry_entry_name_key(src, i);
-            if ((src->entries[i].key == SYMBOL_ID_NONE && !name_key) ||
-                !src->entries[i].value) {
+            if (!src->entries[i].value) {
                 continue;
             }
             value = rho_atom_rebind_resources(
                 arena, src->entries[i].value, space_map, state_map);
             if (!value)
                 return false;
-            if (name_key) {
-                if (!registry_bind_name(dst, (Atom *)name_key, value))
-                    return false;
-            } else {
-                registry_bind_id(dst, src->entries[i].key, value);
-            }
+            if (!registry_copy_entry(dst, src, i, value)) return false;
         }
     }
     if (g_builtin_syms.self != SYMBOL_ID_NONE && self_overlay) {
@@ -2961,7 +2953,7 @@ static Atom *rho_atom_rebind_resources(Arena *arena, Atom *atom,
         return atom_deep_copy(arena, atom);
     }
     if (atom->kind == ATOM_SYMBOL)
-        return atom_symbol_id(arena, atom->sym_id);
+        return atom_symbol_copy(arena, atom);
     if (atom->kind == ATOM_VAR)
         return atom_var_like(arena, atom, atom->var_id);
     if (atom->kind != ATOM_EXPR)
@@ -3316,7 +3308,7 @@ static Atom *rho_promote_payload_atom(Arena *arena,
         return atom_deep_copy(arena, atom);
     }
     if (atom->kind == ATOM_SYMBOL)
-        return atom_symbol_id(arena, atom->sym_id);
+        return atom_symbol_copy(arena, atom);
     if (atom->kind == ATOM_VAR)
         return atom_var_like(arena, atom, atom->var_id);
     if (atom->kind != ATOM_EXPR)

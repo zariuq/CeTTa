@@ -387,7 +387,7 @@ static Atom *str_to_symbol(Arena *a, Atom *const *args, CettaStrRefusal *r) {
         return str_refuses(r, "StrNulInSymbolV1", (size_t)(nul - text));
     if (!cetta_utf8_count(text, len, NULL, &bad))
         return str_refuses(r, "StrMalformedUtf8V1", bad);
-    return atom_symbol(a, text);
+    return atom_symbol_data(a, text);
 }
 
 static Atom *str_from_symbol(Arena *a, Atom *const *args, CettaStrRefusal *r) {

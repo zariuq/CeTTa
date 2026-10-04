@@ -839,7 +839,7 @@ static bool petta_type_append_matching(
          * Structured targets keep the full refining match below. */
         if (target->kind == ATOM_VAR ||
             (target->kind == ATOM_SYMBOL && candidate->kind == ATOM_SYMBOL &&
-             target->sym_id == candidate->sym_id)) {
+             atom_symbols_equal(target, candidate))) {
             if (!petta_type_list_push(out, candidate))
                 return false;
             continue;

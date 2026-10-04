@@ -7,6 +7,7 @@
 #include "generated/cetta_execution_contracts.generated.h"
 #include "gslt_term_view_v1.h"
 #include "name_key.h"
+#include "registered_symbols.h"
 #include "match.h"
 #include "subst_tree.h"
 #include "term_universe.h"
@@ -729,6 +730,9 @@ SpacePreparedRegisterStep space_prepared_equation_run_register_recursion(
 typedef struct {
     SymbolId key;
     NameId name_id;
+    /* Only unknown, runtime-created symbol names take this route. The
+       borrow owns the key until this entry is removed or its registry dies. */
+    RegisteredSymbolBorrow text_key;
     Atom *value;  /* Usually a grounded space atom, but can be anything */
 } RegistryEntry;
 
@@ -739,6 +743,7 @@ typedef struct {
     uint32_t len, cap;
     RegistryEntry inline_entries[16];
     NameKeyTable *name_keys;
+    RegisteredSymbols *text_keys; /* lazy, registry-owned namespace */
     /* Open-addressed entry index. Slots store entry-index + 1; zero is empty.
        Iteration order remains the insertion order in entries. */
     uint32_t *index_slots;
@@ -753,6 +758,13 @@ void registry_init(Registry *r);
 void registry_free(Registry *r);
 void registry_bind_id(Registry *r, SymbolId key, Atom *value);
 Atom *registry_lookup_id(Registry *r, SymbolId key);
+bool registry_bind_symbol(Registry *r, const Atom *name, Atom *value);
+Atom *registry_lookup_symbol(const Registry *r, const Atom *name);
+/* Removal releases the name, not the caller-owned value. */
+bool registry_unbind_symbol(Registry *r, const Atom *name);
+Atom *registry_entry_symbol(const Registry *r, uint32_t index, Arena *owner);
+bool registry_copy_entry(Registry *dst, const Registry *src,
+                          uint32_t index, Atom *value);
 void registry_bind(Registry *r, const char *name, Atom *value);
 Atom *registry_lookup(Registry *r, const char *name);
 bool registry_bind_name(Registry *r, Atom *name_key, Atom *value);
@@ -766,9 +778,11 @@ const Atom *registry_entry_name_key(const Registry *r, uint32_t index);
    next change, and never keeps it. */
 Atom *registry_state_lookup(const Registry *r, SymbolId key);
 bool registry_state_set(Registry *r, SymbolId key, Atom *value);
+Atom *registry_state_lookup_symbol(const Registry *r, const Atom *name);
+bool registry_state_set_symbol(Registry *r, const Atom *name, Atom *value);
 uint32_t registry_state_count(const Registry *r);
-bool registry_state_entry(const Registry *r, uint32_t index,
-                          SymbolId *key_out, Atom **value_out);
+bool registry_state_entry(const Registry *r, uint32_t index, Arena *owner,
+                          Atom **key_out, Atom **value_out);
 
 /* Canonical structural reference: (resolve-name (quote <closed-key>)). */
 bool registry_ref_name_key(Atom *ref, Atom **name_key_out);

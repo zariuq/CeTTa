@@ -96,7 +96,7 @@ BindingsFrameSchema *bindings_frame_schema_new_presented(
             bindings_frame_schema_release(schema);
             return NULL;
         }
-        schema->spellings[slot] = variable->sym_id;
+        schema->spellings[slot] = atom_symbol_current_id(variable);
         schema->name_keys[slot] = variable->name_key;
     }
     return schema;

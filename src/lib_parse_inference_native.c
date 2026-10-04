@@ -247,7 +247,7 @@ static bool inference_atom_symbol_id(Atom *atom, SymbolId *out) {
     if (!atom || !out)
         return false;
     if (atom->kind == ATOM_SYMBOL) {
-        *out = atom->sym_id;
+        *out = atom_symbol_current_id(atom);
         return true;
     }
     if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_STRING) {

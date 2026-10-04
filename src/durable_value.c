@@ -43,8 +43,8 @@ static CettaDurableStatus encode(Writer *w, const Atom *a, unsigned depth) {
         return DURABLE_INVALID;
     const char *text=NULL; unsigned char tag=0; uint64_t bits=0;
     if (a->kind==ATOM_SYMBOL) {
-        tag='S'; text=symbol_bytes(g_symbols,a->sym_id);
-        if (!text || strlen(text)!=symbol_len(g_symbols,a->sym_id)) return DURABLE_INVALID;
+        tag='S'; text=atom_symbol_bytes(a);
+        if (!text || strlen(text)!=atom_symbol_length(a)) return DURABLE_INVALID;
     }
     else if (a->kind==ATOM_EXPR) {
         if (a->expr.len && atom_is_symbol(a->expr.elems[0],"NativeHandle")) return DURABLE_INVALID;
@@ -176,7 +176,7 @@ static CettaDurableStatus decode(Reader *r, Arena *arena, unsigned depth, Atom *
             return DURABLE_CORRUPT;
         char *text=arena_alloc(arena,n+1);
         memcpy(text,r->data+r->pos,n); text[n]=0; r->pos+=n;
-        if (tag=='S') *out=atom_symbol(arena,text);
+        if (tag=='S') *out=atom_symbol_data(arena,text);
         if (tag=='T') *out=atom_string_n(arena,text,n);
         if (tag=='J') {
             if (!digits(text)) return DURABLE_CORRUPT;

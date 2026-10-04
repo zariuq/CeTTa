@@ -54,7 +54,7 @@ static bool push_case(Cases *cases, Case item) {
 }
 
 static const char *symbol_name(const Atom *atom) {
-    return atom && atom->kind == ATOM_SYMBOL ? symbol_bytes(g_symbols, atom->sym_id) : NULL;
+    return atom && atom->kind == ATOM_SYMBOL ? atom_symbol_bytes(atom) : NULL;
 }
 
 static const char *string_value(const Atom *atom) {

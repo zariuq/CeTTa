@@ -1087,8 +1087,7 @@ static bool petta_libpl_plref_view(
         !atom->expr.elems[1] || !atom->expr.elems[2] ||
         !atom->expr.elems[3])
         return false;
-    const char *name = symbol_bytes(
-        g_symbols, atom->expr.elems[0]->sym_id);
+    const char *name = atom_symbol_bytes(atom->expr.elems[0]);
     if (!name || strcmp(name, PETTA_LIBPL_PLREF_TAG) != 0)
         return false;
     for (CettaExprIndex index = 1u; index < 4u; index++) {
@@ -1120,8 +1119,7 @@ static bool petta_libpl_plref_tagged(Atom *atom) {
         atom->expr.elems[0]->kind != ATOM_SYMBOL) {
         return false;
     }
-    const char *name = symbol_bytes(
-        g_symbols, atom->expr.elems[0]->sym_id);
+    const char *name = atom_symbol_bytes(atom->expr.elems[0]);
     return name && strcmp(name, PETTA_LIBPL_PLREF_TAG) == 0;
 }
 
@@ -1608,7 +1606,7 @@ static bool petta_libpl_symbol_is(
 static bool petta_libpl_atom_is_symbol(
     const Atom *atom, const char *name) {
     return atom && atom->kind == ATOM_SYMBOL &&
-           petta_libpl_symbol_is(atom->sym_id, name);
+           atom_symbol_equals_cstr(atom, name);
 }
 
 static void petta_libpl_import_clear(
@@ -1694,6 +1692,7 @@ static size_t petta_libpl_standard_function_arities(
 
 static PettaLibplImport *petta_libpl_register_import(
     CettaLibPrologRuntime *runtime, SymbolId symbol) {
+    (void)symbol_pin(g_symbols, symbol);
     PettaLibplImport *existing =
         petta_libpl_find_import(runtime, symbol);
     if (existing)
@@ -2207,6 +2206,7 @@ static SymbolId petta_libpl_callable_name(CettaLibPrologRuntime *runtime, Atom *
     Atom *retained = atom_deep_copy(&runtime->callable_codes, code);
     if (!retained)
         return SYMBOL_ID_NONE;
+    atom_pin_syntax_symbols(retained);
     size_t slot = petta_libpl_callable_slot(runtime->callables, runtime->callable_cap, name);
     runtime->callables[slot] = (PettaLibplCallable){name, retained};
     runtime->callable_len++;
@@ -2279,8 +2279,8 @@ static bool petta_libpl_to_callable(
     if (atom->kind == ATOM_SYMBOL) {
         return petta_libpl_put_utf8(
             output, PL_ATOM,
-            symbol_bytes(g_symbols, atom->sym_id),
-            symbol_len(g_symbols, atom->sym_id));
+            atom_symbol_bytes(atom),
+            atom_symbol_length(atom));
     }
     if (atom->kind != ATOM_EXPR ||
         atom->expr.len == 0u ||
@@ -2298,7 +2298,7 @@ static bool petta_libpl_to_callable(
      * every row under the wrong predicate.
      */
     if (atom->expr.len == 3u &&
-        petta_semantics_form(atom->expr.elems[0]->sym_id) ==
+        petta_semantics_form(atom_symbol_current_id(atom->expr.elems[0])) ==
             PETTA_FORM_CONS &&
         atom->expr.elems[1] &&
         atom->expr.elems[1]->kind == ATOM_SYMBOL &&
@@ -2350,10 +2350,8 @@ static bool petta_libpl_to_callable(
                 return false;
             }
             atom_t univ_name = petta_libpl_new_utf8_atom(
-                symbol_bytes(
-                    g_symbols, atom->expr.elems[1]->sym_id),
-                symbol_len(
-                    g_symbols, atom->expr.elems[1]->sym_id));
+                atom_symbol_bytes(atom->expr.elems[1]),
+                atom_symbol_length(atom->expr.elems[1]));
             functor_t univ_functor =
                 PL_new_functor_sz(univ_name, univ_arity);
             bool univ_built = univ_functor &&
@@ -2396,10 +2394,8 @@ static bool petta_libpl_to_callable(
         return false;
 
     atom_t name = petta_libpl_new_utf8_atom(
-        symbol_bytes(
-            g_symbols, atom->expr.elems[0]->sym_id),
-        symbol_len(
-            g_symbols, atom->expr.elems[0]->sym_id));
+        atom_symbol_bytes(atom->expr.elems[0]),
+        atom_symbol_length(atom->expr.elems[0]));
     functor_t functor = PL_new_functor_sz(name, arity);
     bool built = functor &&
                  PL_cons_functor_v(
@@ -2447,8 +2443,8 @@ static bool petta_libpl_to_term(
     case ATOM_SYMBOL:
         return petta_libpl_put_utf8(
             output, PL_ATOM,
-            symbol_bytes(g_symbols, atom->sym_id),
-            symbol_len(g_symbols, atom->sym_id));
+            atom_symbol_bytes(atom),
+            atom_symbol_length(atom));
     case ATOM_VAR: {
         PettaLibplVar *variable =
             petta_libpl_var_add(variables, atom);
@@ -3178,10 +3174,30 @@ static SymbolId petta_libpl_atom_term_symbol(
                        memcmp(text, active->module_name, length) == 0;
     SymbolId symbol = module_name
         ? symbol_intern_cstr(g_symbols, "user")
-        : symbol_intern_bytes(g_symbols, (const uint8_t *)text,
+        : symbol_intern_data_bytes(g_symbols, (const uint8_t *)text,
                               (uint32_t)length);
     PL_free(text);
     return symbol;
+}
+
+static Atom *petta_libpl_atom_term_value(Arena *arena, term_t term,
+        const PettaLibplVarMap *variables) {
+    char *text = NULL;
+    size_t length = 0u;
+    if (!PL_get_nchars(term, &length, &text,
+                       CVT_ATOM | BUF_MALLOC | REP_UTF8) ||
+        length > UINT32_MAX) {
+        if (text) PL_free(text);
+        return NULL;
+    }
+    const CettaLibPrologRuntime *active = g_petta_libpl_active_runtime;
+    bool module_name = !variables->private_module && active &&
+        active->module_name && length == active->module_name_len &&
+        memcmp(text, active->module_name, length) == 0;
+    Atom *result = module_name ? atom_symbol(arena, "user")
+        : atom_symbol_data_n(arena, text, (uint32_t)length);
+    PL_free(text);
+    return result;
 }
 
 static Atom *petta_libpl_from_term_mode(
@@ -3258,12 +3274,13 @@ static Atom *petta_libpl_from_term_mode(
         return atom_string(arena, copy);
     }
     if (type == PL_ATOM) {
-        SymbolId symbol = petta_libpl_atom_term_symbol(term, variables);
+        Atom *value = petta_libpl_atom_term_value(arena, term, variables);
+        if (!value) return NULL;
+        SymbolId symbol = atom_symbol_current_id(value);
         Atom *code = petta_libpl_callable_find(g_petta_libpl_active_runtime, symbol);
         if (code)
             return atom_deep_copy(arena, code);
-        return symbol == SYMBOL_ID_NONE
-            ? NULL : atom_symbol_id(arena, symbol);
+        return value;
     }
     if (variables->cyclic_graphs &&
         (type == PL_TERM || PL_is_pair(term)) && !PL_is_acyclic(term))
@@ -4547,7 +4564,7 @@ static bool petta_libpl_register_clause_grounded_calls(
             body->expr.len >= 2u &&
             body->expr.elems[0]->kind == ATOM_SYMBOL) {
             SymbolId head =
-                body->expr.elems[0]->sym_id;
+                atom_symbol_current_id(body->expr.elems[0]);
             CettaExprLen function_arity = 0u;
             size_t predicate_arity =
                 (size_t)(body->expr.len - 1u);
@@ -5988,7 +6005,7 @@ static bool petta_libpl_call_raising(
                environment && outcomes && recognized;
     }
 
-    SymbolId head = expression->expr.elems[0]->sym_id;
+    SymbolId head = atom_symbol_current_id(expression->expr.elems[0]);
     PeTTaForm form = petta_semantics_form(head);
     bool adapter_form =
         form == PETTA_FORM_IMPORT_PROLOG_FUNCTION ||
@@ -6080,7 +6097,7 @@ static bool petta_libpl_call_raising(
         Atom *name = expression->expr.elems[1];
         PeTTaForm imported_form =
             name && name->kind == ATOM_SYMBOL
-            ? petta_semantics_form(name->sym_id)
+            ? petta_semantics_form(atom_symbol_current_id(name))
             : PETTA_FORM_NONE;
         bool native_form =
             name && name->kind == ATOM_SYMBOL &&
@@ -6090,7 +6107,7 @@ static bool petta_libpl_call_raising(
             name && name->kind == ATOM_SYMBOL &&
             !native_form
                 ? petta_libpl_register_import(
-                      runtime, name->sym_id)
+                      runtime, atom_symbol_register_id(name))
                 : NULL;
         /* An explicit import grants full authority even when plan-time
          * resolution registered the name first. */

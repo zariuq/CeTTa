@@ -734,6 +734,17 @@ static void arena_symbol_cache_free(Arena *a) {
     a->symbol_cache_bytes = 0u;
 }
 
+static _Atomic uint64_t managed_symbol_count;
+static _Atomic uint64_t managed_symbol_bytes;
+static _Atomic uint64_t managed_symbol_allocated_bytes;
+
+void atom_managed_symbol_stats(AtomManagedSymbolStats *out) {
+    if (!out) return;
+    out->retained_count = atomic_load_explicit(&managed_symbol_count, memory_order_relaxed);
+    out->retained_bytes = atomic_load_explicit(&managed_symbol_bytes, memory_order_relaxed);
+    out->allocated_bytes = atomic_load_explicit(&managed_symbol_allocated_bytes, memory_order_relaxed);
+}
+
 void arena_init(Arena *a) {
     a->head = NULL;
     a->spare = NULL;
@@ -741,6 +752,8 @@ void arena_init(Arena *a) {
     a->symbol_cache = NULL;
     a->symbol_cache_bytes = 0u;
     a->live_bytes = 0;
+    a->managed_symbol_count = 0u;
+    a->managed_symbol_bytes = 0u;
     a->external_bytes = 0;
     a->reserved_bytes = 0;
     a->spare_bytes = 0;
@@ -1083,6 +1096,11 @@ static void arena_invalidate_allocations(
 void arena_free(Arena *a) {
     if (!a)
         return;
+#if CETTA_MANAGED_SYMBOLS
+    atomic_fetch_sub_explicit(&managed_symbol_count, a->managed_symbol_count, memory_order_relaxed);
+    atomic_fetch_sub_explicit(&managed_symbol_bytes, a->managed_symbol_bytes, memory_order_relaxed);
+    a->managed_symbol_count = a->managed_symbol_bytes = 0u;
+#endif
     arena_invalidate_allocations(a, CETTA_GSLT_LIFETIME_ARENA_FREE);
     provenance_unregister_arena(a);
     arena_run_finalizers_until(a, NULL);
@@ -1163,6 +1181,8 @@ ArenaMark arena_mark(const Arena *a) {
     mark.head = a->head;
     mark.used = a->head ? a->head->used : 0;
     mark.live_bytes = a->live_bytes;
+    mark.managed_symbol_count = a->managed_symbol_count;
+    mark.managed_symbol_bytes = a->managed_symbol_bytes;
     mark.external_bytes = a->external_bytes;
     mark.symbol_cache_bytes = a->symbol_cache_bytes;
     mark.reserved_bytes = a->reserved_bytes;
@@ -1210,6 +1230,14 @@ void arena_release_spare(Arena *a, size_t keep_bytes) {
 
 void arena_reset(Arena *a, ArenaMark mark) {
     if (!a) return;
+#if CETTA_MANAGED_SYMBOLS
+    atomic_fetch_sub_explicit(&managed_symbol_count,
+        a->managed_symbol_count - mark.managed_symbol_count, memory_order_relaxed);
+    atomic_fetch_sub_explicit(&managed_symbol_bytes,
+        a->managed_symbol_bytes - mark.managed_symbol_bytes, memory_order_relaxed);
+    a->managed_symbol_count = mark.managed_symbol_count;
+    a->managed_symbol_bytes = mark.managed_symbol_bytes;
+#endif
     arena_invalidate_allocations(a, CETTA_GSLT_LIFETIME_ARENA_RESET);
     arena_frame_identity_set_truncate(a, mark.frame_identity_len);
     arena_run_finalizers_until(a, mark.finalizers);
@@ -1245,7 +1273,7 @@ static uint32_t atom_hash_compute(Atom *a) {
     h = ((h << 5) + h) ^ (uint32_t)a->kind;
     switch (a->kind) {
     case ATOM_SYMBOL: {
-        uint64_t sh = symbol_hash_value(g_symbols, a->sym_id);
+        uint64_t sh = atom_symbol_spelling_hash(a);
         h = ((h << 5) + h) ^ (uint32_t)(sh & 0xFFFFFFFFu);
         h = ((h << 5) + h) ^ (uint32_t)(sh >> 32);
         break;
@@ -1394,6 +1422,14 @@ void hashcons_free(HashConsTable *hc) {
     hc->maximum_lookup_probe = 0;
 }
 
+uint64_t hashcons_index_reserved_bytes(const HashConsTable *hc) {
+    if (!hc)
+        return 0u;
+    return ((uint64_t)hc->size + (uint64_t)hc->symbol_cache_size +
+            (hc->small_int_cache ? HASHCONS_SMALL_INT_COUNT : 0u)) *
+           sizeof(Atom *);
+}
+
 static bool atom_is_hash_stable(const Atom *atom) {
     return atom && (atom->flags & ATOM_FLAG_HASH_STABLE) != 0;
 }
@@ -1427,7 +1463,7 @@ static bool atom_hashcons_graph_admitted(const Atom *atom) {
     uint32_t expected_structural_facts = ATOM_STRUCTURAL_FACTS_VALID;
     switch (atom->kind) {
     case ATOM_SYMBOL:
-        expected = atom_flags_for_symbol_id(atom->sym_id);
+        expected = atom_flags_for_symbol_id(atom->symbol_number);
         break;
     case ATOM_VAR:
         if (atom->var_id == VAR_ID_NONE ||
@@ -1523,11 +1559,11 @@ static uint64_t hashcons_slot_hash(Atom *atom) {
     h = hashcons_index_mix(h, atom_hash(atom));
     switch (atom->kind) {
     case ATOM_SYMBOL:
-        h = hashcons_index_mix(h, atom->sym_id);
+        h = hashcons_index_mix(h, atom->symbol_number);
         break;
     case ATOM_VAR:
         h = hashcons_index_mix(h, atom->var_id);
-        h = hashcons_index_mix(h, atom->sym_id);
+        h = hashcons_index_mix(h, atom->symbol_number);
         h = hashcons_index_mix(
             h, (uint64_t)(uintptr_t)atom->name_key);
         break;
@@ -1598,7 +1634,7 @@ static bool atom_intern_identical(Atom *a, Atom *b) {
     if (!a || !b || a->kind != b->kind)
         return false;
     if (a->kind == ATOM_VAR)
-        return a->var_id == b->var_id && a->sym_id == b->sym_id &&
+        return a->var_id == b->var_id && a->symbol_number == b->symbol_number &&
                a->name_key == b->name_key;
     if (a->kind == ATOM_GROUNDED) {
         if (a->ground.gkind != b->ground.gkind)
@@ -1648,8 +1684,8 @@ static Atom *hashcons_leaf_cache_get(HashConsTable *hc, const Atom *atom) {
     if (!hc || !atom)
         return NULL;
     if (atom->kind == ATOM_SYMBOL) {
-        if (atom->sym_id < hc->symbol_cache_size)
-            cached = hc->symbol_cache[atom->sym_id];
+        if (atom->symbol_number < hc->symbol_cache_size)
+            cached = hc->symbol_cache[atom->symbol_number];
     } else if (atom->kind == ATOM_GROUNDED) {
         if (atom->ground.gkind == GV_INT &&
             atom->ground.ival >= HASHCONS_SMALL_INT_MIN &&
@@ -1670,10 +1706,10 @@ static void hashcons_leaf_cache_store(HashConsTable *hc, Atom *atom) {
     if (!hc || !atom)
         return;
     if (atom->kind == ATOM_SYMBOL) {
-        if (atom->sym_id >= hc->symbol_cache_size) {
+        if (atom->symbol_number >= hc->symbol_cache_size) {
             uint32_t next = hc->symbol_cache_size
                 ? hc->symbol_cache_size : 64u;
-            while (next <= atom->sym_id) {
+            while (next <= atom->symbol_number) {
                 if (next > UINT32_MAX / 2u)
                     return;
                 next *= 2u;
@@ -1685,7 +1721,7 @@ static void hashcons_leaf_cache_store(HashConsTable *hc, Atom *atom) {
             hc->symbol_cache = grown;
             hc->symbol_cache_size = next;
         }
-        hc->symbol_cache[atom->sym_id] = atom;
+        hc->symbol_cache[atom->symbol_number] = atom;
     } else if (atom->kind == ATOM_GROUNDED) {
         if (atom->ground.gkind == GV_INT &&
             atom->ground.ival >= HASHCONS_SMALL_INT_MIN &&
@@ -2576,7 +2612,7 @@ static Atom *arena_symbol_cache_get(Arena *a, SymbolId sym_id) {
         (!a->scalar_cache && cache->epochs[slot] != a->reset_epoch))
         return NULL;
     Atom *atom = cache->atoms[slot];
-    if (!atom || atom->kind != ATOM_SYMBOL || atom->sym_id != sym_id)
+    if (!atom || atom->kind != ATOM_SYMBOL || atom->symbol_number != sym_id)
         return NULL;
     return atom;
 }
@@ -2871,9 +2907,11 @@ static inline SymbolId atom_resolve_name_symbol(void) {
 
 /* Whether `head` adjusts the summary of the expression it heads. */
 static bool atom_summary_head_adjusts(Atom *head) {
-    return head && head->kind == ATOM_SYMBOL &&
-        (head->sym_id == atom_resolve_name_symbol() ||
-         head->sym_id == g_builtin_syms.native_handle);
+    if (!head || head->kind != ATOM_SYMBOL)
+        return false;
+    SymbolId resolve_name = atom_resolve_name_symbol();
+    SymbolId number = atom_symbol_current_id(head);
+    return number == resolve_name || number == g_builtin_syms.native_handle;
 }
 
 /* The summary `flags` of an expression headed by `head`: a name to resolve
@@ -2882,9 +2920,11 @@ static bool atom_summary_head_adjusts(Atom *head) {
 static uint32_t atom_summary_head_adjust(Atom *head, uint32_t flags) {
     if (!head || head->kind != ATOM_SYMBOL)
         return flags;
-    if (head->sym_id == atom_resolve_name_symbol())
+    SymbolId resolve_name = atom_resolve_name_symbol();
+    SymbolId number = atom_symbol_current_id(head);
+    if (number == resolve_name)
         flags |= ATOM_FLAG_HAS_REGISTRY_REFS;
-    if (head->sym_id == g_builtin_syms.native_handle)
+    if (number == g_builtin_syms.native_handle)
         flags &= ~ATOM_FLAG_HASHCONS_ELIGIBLE;
     return flags;
 }
@@ -3071,7 +3111,7 @@ Atom *atom_symbol_id(Arena *a, SymbolId sym_id) {
     temp.kind = ATOM_SYMBOL;
     temp.flags = atom_flags_for_symbol_id(sym_id);
     temp.var_id = VAR_ID_NONE;
-    temp.sym_id = sym_id;
+    temp.symbol_number = sym_id;
     temp.arena_id = a->identity;
     temp.hash_cache = 0;
     temp.structural_facts = ATOM_STRUCTURAL_FACTS_VALID;
@@ -3100,6 +3140,235 @@ Atom *atom_symbol(Arena *a, const char *name) {
     return atom_symbol_id(a, symbol_intern_cstr(g_symbols, name));
 }
 
+Atom *atom_symbol_data(Arena *a, const char *name) {
+    return atom_symbol_data_n(a, name, name ? (uint32_t)strlen(name) : 0u);
+}
+
+#if CETTA_MANAGED_SYMBOLS
+static Atom *atom_symbol_data_span_hashed(
+        Arena *a, const char *bytes, uint32_t len, uint64_t hash) {
+    SymbolId known = symbol_lookup_span_hashed(
+        g_symbols, (const uint8_t *)bytes, len, hash);
+    if (known != SYMBOL_ID_NONE)
+        return atom_symbol_id(a, known);
+    size_t size = sizeof(Atom) + sizeof(CettaSymbolSpelling) + (size_t)len + 1u;
+    Atom *atom = arena_alloc(a, size);
+    *atom = (Atom){.kind = ATOM_SYMBOL, .arena_id = a->identity,
+                  .flags = ATOM_FLAG_HASH_STABLE | ATOM_FLAG_ARENA_CLOSED,
+                  .structural_facts = ATOM_STRUCTURAL_FACTS_VALID |
+                                      ATOM_STRUCTURAL_HAS_SPELLED_SYMBOL};
+    CettaSymbolSpelling *text = (CettaSymbolSpelling *)(atom + 1);
+    text->hash = hash;
+    text->len = len;
+    memcpy(text->bytes, bytes, len);
+    text->bytes[len] = '\0';
+    atom->spelling = text;
+    a->managed_symbol_count++;
+    a->managed_symbol_bytes += (uint64_t)len + 1u;
+    atomic_fetch_add_explicit(&managed_symbol_count, 1u, memory_order_relaxed);
+    atomic_fetch_add_explicit(&managed_symbol_bytes, (uint64_t)len + 1u, memory_order_relaxed);
+    atomic_fetch_add_explicit(&managed_symbol_allocated_bytes, (uint64_t)len + 1u, memory_order_relaxed);
+    if (bytes[0] == '&') atom->flags |= ATOM_FLAG_HAS_REGISTRY_REFS;
+    return atom;
+}
+#endif
+
+/* Copying a symbol owns its bytes in the receiving arena. It neither
+ * registers a callable name nor inserts an index entry. */
+Atom *atom_symbol_data_n(Arena *a, const char *bytes, uint32_t len) {
+#if CETTA_MANAGED_SYMBOLS
+    if (!bytes || !len)
+        return atom_symbol_id(a, SYMBOL_ID_NONE);
+    return atom_symbol_data_span_hashed(
+        a, bytes, len, symbol_hash_span((const uint8_t *)bytes, len));
+#else
+    return atom_symbol_id(a, symbol_intern_data_bytes(
+        g_symbols, (const uint8_t *)bytes, len));
+#endif
+}
+
+static const Atom *atom_symbol_unforward(const Atom *atom) {
+    while (atom && atom->arena_id == ATOM_ARENA_ID_FORWARDED)
+        atom = atom->name_key;
+    return atom;
+}
+
+Atom *atom_symbol_copy(Arena *owner, const Atom *source) {
+    source = atom_symbol_unforward(source);
+    if (!source || source->kind != ATOM_SYMBOL) return NULL;
+#if CETTA_MANAGED_SYMBOLS
+    if (atom_symbol_is_spelled(source))
+        return atom_symbol_data_span_hashed(
+            owner, source->spelling->bytes, source->spelling->len,
+            source->spelling->hash);
+#endif
+#if CETTA_SYMBOL_READ_COVERAGE
+    symbol_read_coverage_mark_copy(g_symbols, source->symbol_number);
+#endif
+    return atom_symbol_id(owner, source->symbol_number);
+}
+
+bool atom_symbol_is_spelled(const Atom *atom) {
+#if CETTA_MANAGED_SYMBOLS
+    atom = atom_symbol_unforward(atom);
+    return atom && atom->kind == ATOM_SYMBOL &&
+           atom->symbol_number == SYMBOL_ID_NONE && atom->spelling != NULL;
+#else
+    (void)atom;
+    return false;
+#endif
+}
+
+const char *atom_symbol_bytes(const Atom *atom) {
+    atom = atom_symbol_unforward(atom);
+    return atom_symbol_is_spelled(atom) ? atom->spelling->bytes
+        : symbol_bytes(g_symbols, atom ? atom->symbol_number : SYMBOL_ID_NONE);
+}
+
+uint32_t atom_symbol_length(const Atom *atom) {
+    atom = atom_symbol_unforward(atom);
+    return atom_symbol_is_spelled(atom) ? atom->spelling->len
+        : symbol_len(g_symbols, atom ? atom->symbol_number : SYMBOL_ID_NONE);
+}
+
+uint64_t atom_symbol_spelling_hash(const Atom *atom) {
+    atom = atom_symbol_unforward(atom);
+    return atom_symbol_is_spelled(atom) ? atom->spelling->hash
+        : symbol_hash_value(g_symbols, atom ? atom->symbol_number : SYMBOL_ID_NONE);
+}
+
+SymbolId atom_symbol_lookup_spelling_id(const Atom *atom) {
+    atom = atom_symbol_unforward(atom);
+    if (!atom_symbol_is_spelled(atom))
+        return atom ? atom->symbol_number : SYMBOL_ID_NONE;
+    return symbol_lookup_span_hashed(g_symbols,
+        (const uint8_t *)atom->spelling->bytes, atom->spelling->len,
+        atom->spelling->hash);
+}
+
+SymbolId atom_symbol_register_id(const Atom *atom) {
+    atom = atom_symbol_unforward(atom);
+    if (!atom_symbol_is_spelled(atom))
+        return atom ? atom->symbol_number : SYMBOL_ID_NONE;
+    return symbol_intern_span_hashed(g_symbols,
+        (const uint8_t *)atom->spelling->bytes, atom->spelling->len,
+        atom->spelling->hash);
+}
+
+bool atom_symbols_equal(const Atom *left, const Atom *right) {
+    left = atom_symbol_unforward(left);
+    right = atom_symbol_unforward(right);
+    if (!left || !right) return left == right;
+    if (!atom_symbol_is_spelled(left) && !atom_symbol_is_spelled(right))
+        return left->symbol_number == right->symbol_number;
+    uint32_t len = atom_symbol_length(left);
+    return len == atom_symbol_length(right) &&
+        atom_symbol_spelling_hash(left) == atom_symbol_spelling_hash(right) &&
+        memcmp(atom_symbol_bytes(left), atom_symbol_bytes(right), len) == 0;
+}
+
+bool atom_symbol_equals_cstr(const Atom *atom, const char *text) {
+    if (!atom || !text) return false;
+    if (!atom_symbol_is_spelled(atom))
+        return symbol_eq_cstr(g_symbols, atom_symbol_current_id(atom), text);
+    size_t len = strlen(text);
+    return len == atom_symbol_length(atom) &&
+           memcmp(atom_symbol_bytes(atom), text, len) == 0;
+}
+
+static size_t syntax_pointer_slot(const Atom *atom, size_t capacity) {
+    uintptr_t bits = (uintptr_t)atom >> 4u;
+    bits ^= bits >> 17u;
+    bits *= (uintptr_t)UINT64_C(0x9e3779b97f4a7c15);
+    return (size_t)(bits ^ (bits >> 29u)) & (capacity - 1u);
+}
+
+static bool atom_visit_syntax_symbols_impl(const Atom *root,
+        AtomSymbolVisitor visit, void *context, bool register_names) {
+    if (!root)
+        return true;
+    if (!visit)
+        return false;
+    size_t length = 1u, stack_cap = 64u, seen_cap = 64u, seen_len = 0u;
+    const Atom **stack = cetta_malloc(stack_cap * sizeof(*stack));
+    const Atom **seen = cetta_malloc(seen_cap * sizeof(*seen));
+    memset(seen, 0, seen_cap * sizeof(*seen));
+    stack[0] = root;
+    bool ok = true;
+    while (ok && length) {
+        const Atom *node = stack[--length];
+        if (!node)
+            continue;
+        if (seen_len >= seen_cap / 2u) {
+            if (seen_cap > SIZE_MAX / 2u / sizeof(*seen))
+                cetta_oom(SIZE_MAX);
+            size_t cap = seen_cap * 2u;
+            const Atom **grown = cetta_malloc(cap * sizeof(*grown));
+            memset(grown, 0, cap * sizeof(*grown));
+            for (size_t i = 0u; i < seen_cap; i++) {
+                if (!seen[i])
+                    continue;
+                size_t at = syntax_pointer_slot(seen[i], cap);
+                while (grown[at])
+                    at = (at + 1u) & (cap - 1u);
+                grown[at] = seen[i];
+            }
+            free(seen);
+            seen = grown;
+            seen_cap = cap;
+        }
+        size_t at = syntax_pointer_slot(node, seen_cap);
+        while (seen[at] && seen[at] != node)
+            at = (at + 1u) & (seen_cap - 1u);
+        if (seen[at])
+            continue;
+        seen[at] = node;
+        seen_len++;
+        if (node->kind == ATOM_SYMBOL || node->kind == ATOM_VAR) {
+            SymbolId id = register_names && node->kind == ATOM_SYMBOL
+                ? atom_symbol_register_id(node) : atom_symbol_current_id(node);
+            if (id != SYMBOL_ID_NONE)
+                ok = visit(id, context);
+        }
+        size_t children = node->kind == ATOM_EXPR ? node->expr.len
+            : node->kind == ATOM_VAR && node->name_key ? 1u : 0u;
+        if (children > SIZE_MAX - length)
+            cetta_oom(SIZE_MAX);
+        while (stack_cap < length + children) {
+            if (stack_cap > SIZE_MAX / 2u / sizeof(*stack))
+                cetta_oom(SIZE_MAX);
+            stack_cap *= 2u;
+            stack = cetta_realloc(stack, stack_cap * sizeof(*stack));
+        }
+        if (node->kind == ATOM_EXPR) {
+            for (CettaExprIndex i = 0u; i < node->expr.len; i++)
+                stack[length++] = node->expr.elems[i];
+        } else if (children) {
+            stack[length++] = node->name_key;
+        }
+    }
+    free(seen);
+    free(stack);
+    return ok;
+}
+
+bool atom_visit_syntax_symbols(const Atom *root, AtomSymbolVisitor visit,
+                               void *context) {
+    return atom_visit_syntax_symbols_impl(root, visit, context, false);
+}
+
+static bool atom_pin_syntax_symbol(SymbolId id, void *context) {
+    SymbolTable *table = context;
+    if (symbol_flags(table, id) & CETTA_SYMBOL_FLAG_RUNTIME_DATA)
+        (void)symbol_pin(table, id);
+    return true;
+}
+
+void atom_pin_syntax_symbols(const Atom *root) {
+    (void)atom_visit_syntax_symbols_impl(
+        root, atom_pin_syntax_symbol, g_symbols, true);
+}
+
 Atom *atom_var_with_spelling(Arena *a, SymbolId spelling, VarId id) {
     Atom temp = {0};
     temp.kind = ATOM_VAR;
@@ -3109,7 +3378,7 @@ Atom *atom_var_with_spelling(Arena *a, SymbolId spelling, VarId id) {
                  (atom_var_id_is_private_variant(temp.var_id)
                       ? ATOM_FLAG_HAS_PRIVATE_VARIANT_VAR
                       : 0u);
-    temp.sym_id = spelling;
+    temp.symbol_number = spelling;
     temp.arena_id = a->identity;
     temp.name_key = NULL;
     temp.hash_cache = 0;
@@ -3135,7 +3404,7 @@ static Atom *atom_var_with_spelling_and_name_key(
                       : 0u);
     if (!atom_graph_is_closed_for_arena(a, name_key))
         temp.flags &= ~ATOM_FLAG_ARENA_CLOSED;
-    temp.sym_id = spelling;
+    temp.symbol_number = spelling;
     temp.arena_id = a->identity;
     temp.name_key = name_key;
     temp.hash_cache = 0;
@@ -3168,7 +3437,7 @@ Atom *atom_var_with_presentation(Arena *a, SymbolId spelling,
 Atom *atom_var_like(Arena *a, Atom *source, VarId id) {
     if (!source || source->kind != ATOM_VAR) return NULL;
     return atom_var_with_presentation(
-        a, source->sym_id, source->name_key, id);
+        a, source->symbol_number, source->name_key, id);
 }
 
 Atom *atom_var_with_id(Arena *a, const char *name, VarId id) {
@@ -3294,7 +3563,7 @@ Atom *atom_bigint(Arena *a, const char *val) {
     at->kind = temp.kind;
     at->flags = temp.flags;
     at->var_id = temp.var_id;
-    at->sym_id = SYMBOL_ID_NONE;
+    at->symbol_number = SYMBOL_ID_NONE;
     at->arena_id = a->identity;
     at->hash_cache = 0;
     at->structural_facts = temp.structural_facts;
@@ -3379,7 +3648,7 @@ Atom *atom_bigint_from_mpz(Arena *a, const mpz_t value) {
     at->kind = ATOM_GROUNDED;
     at->flags = atom_flags_for_grounded_kind(GV_BIGINT);
     at->var_id = VAR_ID_NONE;
-    at->sym_id = SYMBOL_ID_NONE;
+    at->symbol_number = SYMBOL_ID_NONE;
     at->arena_id = a->identity;
     at->hash_cache = 0;
     at->structural_facts =
@@ -3405,7 +3674,7 @@ Atom *atom_bigint_take_mpz(Arena *a, mpz_t value) {
     at->kind = ATOM_GROUNDED;
     at->flags = atom_flags_for_grounded_kind(GV_BIGINT);
     at->var_id = VAR_ID_NONE;
-    at->sym_id = SYMBOL_ID_NONE;
+    at->symbol_number = SYMBOL_ID_NONE;
     at->arena_id = a->identity;
     at->hash_cache = 0;
     at->structural_facts =
@@ -3506,7 +3775,7 @@ Atom *atom_rational_from_mpq(Arena *a, const mpq_t value) {
     at->kind = temp.kind;
     at->flags = temp.flags;
     at->var_id = temp.var_id;
-    at->sym_id = SYMBOL_ID_NONE;
+    at->symbol_number = SYMBOL_ID_NONE;
     at->arena_id = a->identity;
     at->hash_cache = 0;
     at->structural_facts = temp.structural_facts;
@@ -3528,7 +3797,7 @@ Atom *atom_space(Arena *a, void *space_ptr) {
     at->kind = ATOM_GROUNDED;
     at->flags = atom_flags_for_grounded_kind(GV_SPACE);
     at->var_id = VAR_ID_NONE;
-    at->sym_id = SYMBOL_ID_NONE;
+    at->symbol_number = SYMBOL_ID_NONE;
     at->arena_id = a->identity;
     at->hash_cache = 0;
     at->structural_facts =
@@ -3543,7 +3812,7 @@ Atom *atom_state(Arena *a, StateCell *cell) {
     at->kind = ATOM_GROUNDED;
     at->flags = atom_flags_for_grounded_kind(GV_STATE);
     at->var_id = VAR_ID_NONE;
-    at->sym_id = SYMBOL_ID_NONE;
+    at->symbol_number = SYMBOL_ID_NONE;
     at->arena_id = a->identity;
     at->hash_cache = 0;
     at->structural_facts =
@@ -3558,7 +3827,7 @@ Atom *atom_capture(Arena *a, CaptureClosure *closure) {
     at->kind = ATOM_GROUNDED;
     at->flags = atom_flags_for_grounded_kind(GV_CAPTURE);
     at->var_id = VAR_ID_NONE;
-    at->sym_id = SYMBOL_ID_NONE;
+    at->symbol_number = SYMBOL_ID_NONE;
     at->arena_id = a->identity;
     at->hash_cache = 0;
     at->structural_facts =
@@ -3584,7 +3853,7 @@ Atom *atom_foreign(Arena *a, CettaForeignValue *value) {
     at->kind = ATOM_GROUNDED;
     at->flags = atom_flags_for_grounded_kind(GV_FOREIGN);
     at->var_id = VAR_ID_NONE;
-    at->sym_id = SYMBOL_ID_NONE;
+    at->symbol_number = SYMBOL_ID_NONE;
     at->arena_id = a->identity;
     at->hash_cache = 0;
     at->structural_facts =
@@ -3622,7 +3891,7 @@ Atom *atom_term_graph(Arena *arena, CettaTermGraph *graph, uint32_t node) {
         .kind = ATOM_GROUNDED,
         .flags = atom_flags_for_grounded_kind(GV_TERM_GRAPH),
         .var_id = VAR_ID_NONE,
-        .sym_id = SYMBOL_ID_NONE,
+        .symbol_number = SYMBOL_ID_NONE,
         .arena_id = arena->identity,
         .structural_facts =
             atom_structural_facts_for_grounded_kind(GV_TERM_GRAPH),
@@ -3657,7 +3926,7 @@ Atom *atom_rational_open(Arena *arena, Atom *atom) {
         .flags = ATOM_FLAG_HASH_STABLE | ATOM_FLAG_HASHCONS_ELIGIBLE |     \
                  ATOM_FLAG_ARENA_CLOSED | ATOM_FLAG_HASH_VALID,            \
         .var_id = VAR_ID_NONE,                                             \
-        .sym_id = SYMBOL_ID_NONE,                                          \
+        .symbol_number = SYMBOL_ID_NONE,                                          \
         .arena_id = 0u,                                                    \
         .name_key = NULL,                                                  \
         .hash_cache = ATOM_LIST_TAG_HASH(tag),                             \
@@ -3680,7 +3949,7 @@ static Atom g_atom_empty_list = {
     .flags = ATOM_FLAG_HASH_STABLE | ATOM_FLAG_HASHCONS_ELIGIBLE |
              ATOM_FLAG_ARENA_CLOSED | ATOM_FLAG_HASH_VALID,
     .var_id = VAR_ID_NONE,
-    .sym_id = SYMBOL_ID_NONE,
+    .symbol_number = SYMBOL_ID_NONE,
     .arena_id = 0u,
     .name_key = NULL,
     .hash_cache = ATOM_LIST_TAG_HASH_STEP(
@@ -3706,7 +3975,7 @@ Atom *atom_internal_tag(Arena *a, CettaInternalTag tag) {
     at->kind = ATOM_GROUNDED;
     at->flags = atom_flags_for_grounded_kind(GV_INTERNAL_TAG);
     at->var_id = VAR_ID_NONE;
-    at->sym_id = SYMBOL_ID_NONE;
+    at->symbol_number = SYMBOL_ID_NONE;
     at->arena_id = a->identity;
     at->name_key = NULL;
     at->hash_cache = 0u;
@@ -3771,9 +4040,11 @@ bool atom_prolog_compound_body(Atom *atom, Atom **body) {
         *body = NULL;
     if (!atom || !body || atom->kind != ATOM_EXPR ||
         atom->expr.len != 2u ||
-        atom->expr.elems[0]->kind != ATOM_SYMBOL ||
-        atom->expr.elems[0]->sym_id == SYMBOL_ID_NONE ||
-        atom->expr.elems[0]->sym_id != atom_prolog_compound_symbol()) {
+        atom->expr.elems[0]->kind != ATOM_SYMBOL) {
+        return false;
+    }
+    SymbolId compound = atom_prolog_compound_symbol();
+    if (atom_symbol_current_id(atom->expr.elems[0]) != compound) {
         return false;
     }
     *body = atom->expr.elems[1];
@@ -3911,7 +4182,7 @@ Atom *atom_prime_need_capability_with_rights(
                 ATOM_FLAG_HAS_REGISTRY_REFS |
                 ATOM_FLAG_ARENA_CLOSED;
     at->var_id = VAR_ID_NONE;
-    at->sym_id = SYMBOL_ID_NONE;
+    at->symbol_number = SYMBOL_ID_NONE;
     at->arena_id = a->identity;
     at->name_key = NULL;
     at->hash_cache = 0u;
@@ -3950,7 +4221,7 @@ static Atom *atom_prime_context_wrap(Arena *a,
                   ATOM_FLAG_HAS_IDENTITY_GROUNDED |
                   ATOM_FLAG_HAS_THREAD_LOCAL_RESOURCE));
     at->var_id = VAR_ID_NONE;
-    at->sym_id = SYMBOL_ID_NONE;
+    at->symbol_number = SYMBOL_ID_NONE;
     at->arena_id = a->identity;
     at->name_key = NULL;
     at->hash_cache = 0u;
@@ -4171,7 +4442,7 @@ Atom *atom_string_n(Arena *a, const char *bytes, size_t len) {
     at->kind = temp.kind;
     at->flags = temp.flags;
     at->var_id = temp.var_id;
-    at->sym_id = SYMBOL_ID_NONE;
+    at->symbol_number = SYMBOL_ID_NONE;
     at->arena_id = a->identity;
     at->hash_cache = 0;
     at->structural_facts = temp.structural_facts;
@@ -4221,7 +4492,7 @@ static inline __attribute__((always_inline)) Atom *atom_expr_build(
         .kind = ATOM_EXPR,
         .flags = flags,
         .var_id = var_id,
-        .sym_id = SYMBOL_ID_NONE,
+        .symbol_number = SYMBOL_ID_NONE,
         .arena_id = a->identity,
         .structural_facts = structural_facts,
         .expr = {
@@ -4249,7 +4520,7 @@ static inline __attribute__((always_inline)) Atom *atom_expr_small(
     uint32_t structural_facts = 0u;
     uint32_t flags = atom_flags_fold(
         a->identity, 0u, false, elems, len, &structural_facts);
-    if (atom_list_rest_parts_splice(elems, len, structural_facts))
+    if (len >= 2u && atom_list_rest_parts_splice(elems, len, structural_facts))
         return atom_list_with_rest(a, elems + 1, len - 2u, elems[len - 1u]);
     VarId var_id = atom_single_variable_id_of(flags, elems, len);
     return atom_expr_build(a, elems, len, flags, structural_facts, var_id);
@@ -4286,7 +4557,7 @@ static inline __attribute__((always_inline)) Atom *atom_expr_headed_small(
     uint32_t structural_facts = 0u;
     uint32_t flags = atom_summary_finish(
         &summary, false, NULL, &structural_facts);
-    if (atom_list_rest_parts_splice(elems, len, structural_facts))
+    if (len >= 2u && atom_list_rest_parts_splice(elems, len, structural_facts))
         return atom_list_with_rest(a, elems + 1, len - 2u, elems[len - 1u]);
     VarId var_id = atom_single_variable_id_of(flags, elems, len);
     return atom_expr_build(a, elems, len, flags, structural_facts, var_id);
@@ -4360,7 +4631,7 @@ Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len) {
     uint32_t structural_facts = 0u;
     uint32_t flags = atom_flags_from_children(
         a->identity, a->older_identity, elems, len, &structural_facts);
-    if (atom_list_rest_parts_splice(elems, len, structural_facts))
+    if (len >= 2u && atom_list_rest_parts_splice(elems, len, structural_facts))
         return atom_list_with_rest(a, elems + 1, len - 2u, elems[len - 1u]);
     VarId var_id = atom_single_variable_id_of(flags, elems, len);
     /* An arena that interns nothing takes the expression as built:
@@ -4387,7 +4658,7 @@ Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len) {
     at->kind = temp.kind;
     at->flags = temp.flags;
     at->var_id = temp.var_id;
-    at->sym_id = SYMBOL_ID_NONE;
+    at->symbol_number = SYMBOL_ID_NONE;
     at->arena_id = a->identity;
     at->name_key = NULL;
     at->hash_cache = 0;
@@ -4427,7 +4698,7 @@ Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
     *suffix = (Atom){
         .kind = ATOM_EXPR,
         .var_id = VAR_ID_NONE,
-        .sym_id = SYMBOL_ID_NONE,
+        .symbol_number = SYMBOL_ID_NONE,
         .arena_id = a->identity,
         .expr = {
             .elems = elems,
@@ -4582,7 +4853,7 @@ Atom *atom_expr_view_rehome(Arena *a, const Atom *view, Atom **elems) {
         .kind = ATOM_EXPR,
         .flags = view->flags & ~ATOM_FLAG_ARENA_CLOSED,
         .var_id = view->var_id,
-        .sym_id = SYMBOL_ID_NONE,
+        .symbol_number = SYMBOL_ID_NONE,
         .arena_id = a->identity,
         .hash_cache = view->hash_cache,
         .structural_facts = view->structural_facts &
@@ -4661,7 +4932,7 @@ Atom *atom_expr_prepend(Arena *a, Atom *head, Atom *list) {
     *at = (Atom){
         .kind = ATOM_EXPR,
         .var_id = VAR_ID_NONE,
-        .sym_id = SYMBOL_ID_NONE,
+        .symbol_number = SYMBOL_ID_NONE,
         .arena_id = a->identity,
         .expr = {
             .elems = elems,
@@ -4726,7 +4997,7 @@ Atom *atom_expr_builder_begin(Arena *a, CettaExprLen len) {
     *draft = (Atom){
         .kind = ATOM_EXPR,
         .var_id = VAR_ID_NONE,
-        .sym_id = SYMBOL_ID_NONE,
+        .symbol_number = SYMBOL_ID_NONE,
         .arena_id = a->identity,
         .expr = {
             .elems = elems_bytes ? (Atom **)(draft + 1) : NULL,
@@ -4846,23 +5117,24 @@ bool atom_is_var(Atom *a)  { return a->kind == ATOM_VAR; }
 bool atom_is_expr(Atom *a) { return a->kind == ATOM_EXPR; }
 
 bool atom_is_symbol_id(Atom *a, SymbolId id) {
-    return a && a->kind == ATOM_SYMBOL && a->sym_id == id;
+    return a && a->kind == ATOM_SYMBOL && atom_symbol_current_id(a) == id &&
+           (id != SYMBOL_ID_NONE || !atom_symbol_is_spelled(a));
 }
 
 const char *atom_name_cstr(Atom *a) {
     if (!a) return "";
     if (a->kind == ATOM_SYMBOL ||
         (a->kind == ATOM_VAR && !a->name_key))
-        return symbol_bytes(g_symbols, a->sym_id);
+        return atom_symbol_bytes(a);
     return "";
 }
 
 SymbolId atom_head_symbol_id(const Atom *a) {
     if (!a) return SYMBOL_ID_NONE;
-    if (a->kind == ATOM_SYMBOL) return a->sym_id;
+    if (a->kind == ATOM_SYMBOL) return atom_symbol_current_id(a);
     if (a->kind == ATOM_EXPR && a->expr.len > 0 &&
         a->expr.elems[0]->kind == ATOM_SYMBOL)
-        return a->expr.elems[0]->sym_id;
+        return atom_symbol_current_id(a->expr.elems[0]);
     return SYMBOL_ID_NONE;
 }
 
@@ -5150,7 +5422,7 @@ static inline __attribute__((always_inline)) bool atom_eq_decided(
     }
     switch (a->kind) {
     case ATOM_SYMBOL:
-        *equal = a->sym_id == b->sym_id;
+        *equal = atom_symbols_equal(a, b);
         return true;
     case ATOM_VAR:
         *equal = a->var_id == b->var_id;
@@ -5207,7 +5479,7 @@ static bool atom_eq_in(Atom *a, Atom *b, AtomEqWalk *walk) {
     if (a->kind != b->kind) return false;
     switch (a->kind) {
     case ATOM_SYMBOL:
-        return a->sym_id == b->sym_id;
+        return atom_symbols_equal(a, b);
     case ATOM_VAR:
         return a->var_id == b->var_id;
     case ATOM_GROUNDED:
@@ -5753,7 +6025,7 @@ static Atom *atom_deep_copy_leaf(Arena *dst, Atom *src, bool share) {
 
     switch (src->kind) {
     case ATOM_SYMBOL:
-        out = atom_symbol_id(dst, src->sym_id);
+        out = atom_symbol_copy(dst, src);
         break;
     case ATOM_VAR:
         out = atom_var_like(dst, src, src->var_id);
@@ -6518,8 +6790,8 @@ static void atom_print_mode(
                    a->name_key->ground.gkind == GV_INTERNAL_TAG &&
                    a->name_key->ground.ival ==
                        (int64_t)CETTA_INTERNAL_TAG_PRIME_LEXICAL_SLOT) {
-            fprintf(out, "$%s", a->sym_id == SYMBOL_ID_NONE
-                ? "__prime_let" : symbol_bytes(g_symbols, a->sym_id));
+            fprintf(out, "$%s", a->symbol_number == SYMBOL_ID_NONE
+                ? "__prime_let" : symbol_bytes(g_symbols, a->symbol_number));
         } else if (a->name_key) {
             fputs("$@", out);
             atom_print_stack_push_atom(&stack, a->name_key);

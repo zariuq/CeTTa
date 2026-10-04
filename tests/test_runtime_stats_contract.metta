@@ -1,5 +1,6 @@
 ; The runtime-stats extension exposes named nonnegative counters and reset
-; returns every counter to zero.  Optimizer route and allocation values are
+; returns event counters to zero. Live storage gauges are not reset.
+; Optimizer route and allocation values are
 ; observations for benchmarks, not golden language results.
 
 !(reset-runtime-stats!)

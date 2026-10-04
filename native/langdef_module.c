@@ -5824,7 +5824,7 @@ static CettaDeterministicPrimitiveResultV1 langdef_primitive_value_view(
     } else if (arguments[0]->kind == ATOM_SYMBOL) {
         /* A symbol's value is its spelling, a string. */
         const char *bytes =
-            symbol_bytes(g_symbols, arguments[0]->sym_id);
+            atom_symbol_bytes(arguments[0]);
         constructor = "LangDef:SymbolValue";
         field = bytes ? atom_string(arena, bytes) : NULL;
     } else if (arguments[0]->kind == ATOM_GROUNDED &&
@@ -6041,7 +6041,7 @@ static CettaDeterministicPrimitiveResultV1 langdef_primitive_symbol_to_codepoint
             "deterministic symbol decoding expects one symbol");
         return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
     }
-    bytes = symbol_bytes(g_symbols, arguments[0]->sym_id);
+    bytes = atom_symbol_bytes(arguments[0]);
     if (!bytes) {
         (void)langdef_set_error(
             error, error_size,
@@ -6596,19 +6596,19 @@ bool cetta_tptp_compact_wrappers_v1(
                                                            &left, &right) ||
             !left || !right || left->kind != ATOM_EXPR || left->expr.len != 3u ||
             right->kind != ATOM_EXPR || right->expr.len != 3u ||
-            left->expr.elems[0]->kind != ATOM_SYMBOL || left->expr.elems[0]->sym_id != v ||
-            right->expr.elems[0]->kind != ATOM_SYMBOL || right->expr.elems[0]->sym_id != v ||
+            left->expr.elems[0]->kind != ATOM_SYMBOL || atom_symbol_current_id(left->expr.elems[0]) != v ||
+            right->expr.elems[0]->kind != ATOM_SYMBOL || atom_symbol_current_id(right->expr.elems[0]) != v ||
             left->expr.elems[1]->kind != ATOM_VAR || right->expr.elems[1]->kind != ATOM_VAR ||
             left->expr.elems[1]->var_id != right->expr.elems[1]->var_id)
             continue;
         node = left->expr.elems[2];
         if (node->kind != ATOM_EXPR || node->expr.len != 3u ||
-            node->expr.elems[0]->kind != ATOM_SYMBOL || node->expr.elems[0]->sym_id != bnf ||
+            node->expr.elems[0]->kind != ATOM_SYMBOL || atom_symbol_current_id(node->expr.elems[0]) != bnf ||
             node->expr.elems[1]->kind != ATOM_SYMBOL || node->expr.elems[2]->kind != ATOM_VAR ||
             right->expr.elems[2]->kind != ATOM_VAR ||
             node->expr.elems[2]->var_id != right->expr.elems[2]->var_id)
             continue;
-        wrappers[len++] = node->expr.elems[1]->sym_id;
+        wrappers[len++] = atom_symbol_current_id(node->expr.elems[1]);
     }
     *wrappers_out = wrappers;
     *len_out = len;
@@ -8641,7 +8641,7 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
             return langdef_error(
                 arena, head,
                 "langdef:symbol->codepoints expects one symbol");
-        bytes = symbol_bytes(g_symbols, args[0]->sym_id);
+        bytes = atom_symbol_bytes(args[0]);
         if (!bytes)
             return langdef_error(
                 arena, head,
@@ -8667,8 +8667,8 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
             return langdef_error(
                 arena, head,
                 "langdef:append-symbol expects two symbols");
-        left = symbol_bytes(g_symbols, args[0]->sym_id);
-        right = symbol_bytes(g_symbols, args[1]->sym_id);
+        left = atom_symbol_bytes(args[0]);
+        right = atom_symbol_bytes(args[1]);
         if (!left || !right)
             return langdef_error(
                 arena, head,

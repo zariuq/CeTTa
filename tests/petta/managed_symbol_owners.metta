@@ -1,0 +1,47 @@
+; Runtime values cross spaces, named state and late callable registration.
+!(get-metatype (sread "fresh-spelling-for-managed-test"))
+!(== (sread "never-registered-left") (sread "never-registered-right"))
+!(== (sread "never-registered-left") (sread "never-registered-left"))
+!(let $call (sread "(+ 2 3)") (eval $call))
+!(let $value (sread "(probe fresh-a)") (add-atom &bag $value))
+!(let $value (sread "(probe fresh-b)") (add-atom &bag $value))
+!(let $value (sread "(probe fresh-a)") (add-atom &bag $value))
+!(collapse (match &bag (probe $x) $x))
+!(collapse (match &bag (probe fresh-a) yes))
+!(let $value (sread "(probe fresh-a)") (remove-atom &bag $value))
+!(collapse (match &bag (probe $x) $x))
+!(let $name (sread "registered-later") (progn (add-atom &self (= ($name) 73)) (eval ($name))))
+
+; Registering a callable retains its body as data. Nested symbols are not
+; permanent namespace registrations; they can still become callables later.
+!(let* (($name (sread "managed-payload-call"))
+        ($payload (sread "(held-value retained-spelling)")))
+   (progn (add-atom &self (= ($name) $payload))
+          (gc)
+          (eval ($name))))
+!(let* (($name (sread "managed-payload-call"))
+        ($payload (sread "(held-value retained-spelling)")))
+   (remove-atom &self (= ($name) $payload)))
+!(let $type (sread "managed-custom-type")
+   (progn (add-atom &self (: managed-typed-value $type))
+          (get-type managed-typed-value)))
+
+!(import_prolog_function string_length)
+!(import_prolog_function sub_string)
+(: last_chars (-> %Undefined% Number %Undefined%))
+(= (last_chars $String $N) (let $Len (string_length $String) (sub_string $String (max 0 (- $Len $N)) $_ 0)))
+!(let $s (py-call (.upper "ABCDEF")) (sub_string $s 3 $_ 0))
+!(bind! &cell (new-state ""))
+!(change-state! &cell (py-call (.upper "ABCDEF")))
+!(get-state &cell)
+!(last_chars (get-state &cell) 3)
+!(let $s (py-call (.upper "response made during this turn")) (progn (change-state! &cell $s) (gc) (get-state &cell)))
+!(get-state &cell)
+
+; A computed state key belongs to its registry; its stored value is copied separately.
+!(change-state! (atom_concat managed_state_ left) (py-call (.upper "kept left")))
+!(change-state! (atom_concat managed_state_ right) (py-call (.upper "kept right")))
+!(get-state (atom_concat managed_state_ left))
+!(get-state (atom_concat managed_state_ right))
+
+!(let $nul (py-call (chr 0)) (py-call (len $nul)))

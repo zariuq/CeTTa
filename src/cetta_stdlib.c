@@ -484,7 +484,7 @@ static bool stdlib_atom_is_type_annotation(const Atom *atom) {
     return atom && atom->kind == ATOM_EXPR &&
            atom->expr.len == 3u &&
            atom->expr.elems[0]->kind == ATOM_SYMBOL &&
-           atom->expr.elems[0]->sym_id == g_builtin_syms.colon;
+           atom_symbol_current_id(atom->expr.elems[0]) == g_builtin_syms.colon;
 }
 
 static bool stdlib_load_blob_internal(

@@ -15,6 +15,10 @@
 #define CETTA_PROVENANCE_ASSERT 0
 #endif
 
+#ifndef CETTA_MANAGED_SYMBOLS
+#define CETTA_MANAGED_SYMBOLS 0
+#endif
+
 #ifndef CETTA_BUILD_WITH_GMP
 #define CETTA_BUILD_WITH_GMP 0
 #endif
@@ -36,6 +40,12 @@ typedef struct HashConsTable HashConsTable;
 typedef struct ArenaFinalizer ArenaFinalizer;
 typedef struct ArenaSymbolCache ArenaSymbolCache;
 typedef struct AtomDeepCopySession AtomDeepCopySession;
+/* Immutable bytes owned by the same arena allocation as their symbol Atom. */
+typedef struct CettaSymbolSpelling {
+    uint64_t hash;
+    uint32_t len;
+    char bytes[];
+} CettaSymbolSpelling;
 
 #define VAR_ID_NONE ((VarId)0)
 #define NAME_ID_NONE ((NameId)0)
@@ -181,6 +191,7 @@ static inline bool cetta_internal_tag_is_term_stable(int64_t tag) {
  * same unfolding, whatever part of it is open. */
 #define ATOM_STRUCTURAL_HAS_RATIONAL UINT32_C(0x00000100)
 #define ATOM_STRUCTURAL_HAS_PETTA_NONLIST UINT32_C(0x00000200)
+#define ATOM_STRUCTURAL_HAS_SPELLED_SYMBOL UINT32_C(0x00000400)
 /* Each fact has its own bit: for one-bit flags the sum equals the union
  * exactly when no two share one. */
 _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
@@ -189,14 +200,16 @@ _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
                        ATOM_STRUCTURAL_GENERATION_CLOSED +
                        ATOM_STRUCTURAL_HAS_LIST_CARRIER + ATOM_STRUCTURAL_FRONT_SLACK +
                        ATOM_STRUCTURAL_HAS_RATIONAL +
-                       ATOM_STRUCTURAL_HAS_PETTA_NONLIST ==
+                       ATOM_STRUCTURAL_HAS_PETTA_NONLIST +
+                       ATOM_STRUCTURAL_HAS_SPELLED_SYMBOL ==
                    (ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_HAS_INTERNAL_TAG |
                     ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID | ATOM_STRUCTURAL_HAS_NAN |
                     ATOM_STRUCTURAL_HAS_OPEN_LIST | ATOM_STRUCTURAL_HAS_LIST |
                     ATOM_STRUCTURAL_GENERATION_CLOSED |
                     ATOM_STRUCTURAL_HAS_LIST_CARRIER | ATOM_STRUCTURAL_FRONT_SLACK |
                     ATOM_STRUCTURAL_HAS_RATIONAL |
-                    ATOM_STRUCTURAL_HAS_PETTA_NONLIST),
+                    ATOM_STRUCTURAL_HAS_PETTA_NONLIST |
+                    ATOM_STRUCTURAL_HAS_SPELLED_SYMBOL),
                "structural fact bits overlap");
 
 /*
@@ -231,7 +244,7 @@ struct Atom {
      * change equality or hashing.
      */
     VarId var_id;
-    SymbolId sym_id;         /* ATOM_SYMBOL, or variable spelling */
+    SymbolId symbol_number; /* Raw ID: access Symbol values through the API below. */
     /*
      * Allocation identity, not part of atom equality or hashing.  Arena
      * identities make ownership tests for known Atom pointers O(1), avoiding
@@ -239,7 +252,10 @@ struct Atom {
      * atom not owned by an Arena (for example a hash-consed global).
      */
     uint32_t arena_id;
-    Atom *name_key;          /* ATOM_VAR structural spelling, otherwise NULL */
+    union {
+        Atom *name_key;      /* Variable name, or evacuation forwarding pointer. */
+        const CettaSymbolSpelling *spelling; /* Unnumbered ATOM_SYMBOL only. */
+    };
     uint32_t hash_cache;     /* lazily memoized structural hash */
     uint32_t structural_facts;
     union {
@@ -510,6 +526,8 @@ typedef struct {
     ArenaSymbolCache *symbol_cache;
     size_t symbol_cache_bytes;
     size_t live_bytes;
+    uint64_t managed_symbol_count;
+    uint64_t managed_symbol_bytes;
     /* Heap storage owned by arena finalizers (for example GMP limbs).  This
      * is kept separate from block occupancy so mark/reset can account for
      * allocation pressure without corrupting the block allocator's math. */
@@ -552,6 +570,8 @@ typedef struct {
     ArenaBlock *head;
     size_t used;
     size_t live_bytes;
+    uint64_t managed_symbol_count;
+    uint64_t managed_symbol_bytes;
     size_t external_bytes;
     size_t symbol_cache_bytes;
     size_t reserved_bytes;
@@ -719,6 +739,9 @@ void hashcons_free(HashConsTable *hc);
  * disables pointer-key reuse rather than wrapping. The caller still keeps
  * every borrowed atom alive throughout each operation that reads it. */
 uint64_t hashcons_reclamation_epoch(void);
+/* Allocated bucket and scalar-cache arrays; excludes atom payloads and
+ * frame-identity storage. Query only in the owning worker. */
+uint64_t hashcons_index_reserved_bytes(const HashConsTable *hc);
 /*
  * Return a shared atom if an identical one exists, otherwise insert it.
  * Expressions and variable name keys are published only when their retained
@@ -784,7 +807,45 @@ extern VarInternTable *g_var_intern;
 /* ── Constructors ───────────────────────────────────────────────────────── */
 
 Atom *atom_symbol(Arena *a, const char *name);
+Atom *atom_symbol_data(Arena *a, const char *name);
+Atom *atom_symbol_data_n(Arena *a, const char *bytes, uint32_t len);
 Atom *atom_symbol_id(Arena *a, SymbolId sym_id);
+Atom *atom_symbol_copy(Arena *owner, const Atom *source);
+bool atom_symbol_is_spelled(const Atom *atom);
+/* Borrowed bytes: a spelled value's pointer is valid only while its owning
+ * arena remains alive and unreset. Copy the value into a surviving owner
+ * before a boundary that can reset/evacuate it; registration alone does not
+ * extend this pointer's lifetime. Numbered table payloads remain permanent
+ * in this prototype. Embedded NULs require atom_symbol_length, not strlen. */
+const char *atom_symbol_bytes(const Atom *atom);
+uint32_t atom_symbol_length(const Atom *atom);
+uint64_t atom_symbol_spelling_hash(const Atom *atom);
+/* Current lookup does not mutate an atom or insert a missing spelling. */
+SymbolId atom_symbol_lookup_spelling_id(const Atom *atom);
+static inline SymbolId atom_symbol_current_id(const Atom *atom) {
+    if (!atom) return SYMBOL_ID_NONE;
+#if CETTA_MANAGED_SYMBOLS
+    if (atom->kind == ATOM_SYMBOL && atom->symbol_number == SYMBOL_ID_NONE &&
+        atom->spelling)
+        return atom_symbol_lookup_spelling_id(atom);
+#endif
+    return atom->symbol_number;
+}
+/* Registration is explicit; retaining/copying an Atom must not call it. */
+SymbolId atom_symbol_register_id(const Atom *atom);
+bool atom_symbols_equal(const Atom *left, const Atom *right);
+bool atom_symbol_equals_cstr(const Atom *atom, const char *text);
+typedef struct {
+    uint64_t retained_count, retained_bytes, allocated_bytes;
+} AtomManagedSymbolStats;
+void atom_managed_symbol_stats(AtomManagedSymbolStats *out);
+/* Visits symbol IDs and variable spellings/name keys in a syntax graph.
+ * Grounded resource interiors are deliberately outside this visitor: it is
+ * not a complete runtime-root scanner. Shared nodes are visited once. */
+typedef bool (*AtomSymbolVisitor)(SymbolId id, void *context);
+bool atom_visit_syntax_symbols(const Atom *root, AtomSymbolVisitor visit,
+                               void *context);
+void atom_pin_syntax_symbols(const Atom *root);
 Atom *atom_var(Arena *a, const char *name);
 Atom *atom_var_with_id(Arena *a, const char *name, VarId id);
 Atom *atom_var_with_spelling(Arena *a, SymbolId spelling, VarId id);

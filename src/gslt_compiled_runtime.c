@@ -1082,7 +1082,7 @@ static bool compiled_node_matches_source(
     switch (node->kind) {
     case GSLT_PLAN_SYMBOL:
         return source->kind == ATOM_SYMBOL &&
-            node->symbol == source->sym_id;
+            node->symbol == atom_symbol_current_id(source);
     case GSLT_PLAN_STRING:
         return source->kind == ATOM_GROUNDED &&
             source->ground.gkind == GV_STRING &&
@@ -1106,7 +1106,7 @@ static bool compiled_node_matches_source(
         if (source->kind != ATOM_EXPR ||
             source->expr.len != (CettaExprLen)(node->child_count + 1u) ||
             source->expr.elems[0]->kind != ATOM_SYMBOL ||
-            node->symbol != source->expr.elems[0]->sym_id)
+            node->symbol != atom_symbol_current_id(source->expr.elems[0]))
             return false;
         for (uint32_t index = 0u; index < node->child_count; index++)
             if (!compiled_node_matches_source(
@@ -1249,7 +1249,7 @@ static const GsltCompiledBucket *compiled_find_bucket(
     if (!program || !goal || goal->kind != ATOM_EXPR ||
         goal->expr.len == 0u || goal->expr.elems[0]->kind != ATOM_SYMBOL)
         return NULL;
-    SymbolId head = goal->expr.elems[0]->sym_id;
+    SymbolId head = atom_symbol_current_id(goal->expr.elems[0]);
     uint32_t arity = (uint32_t)(goal->expr.len - 1u);
     return compiled_bucket_index_lookup(program, head, arity);
 }
@@ -1267,7 +1267,7 @@ static bool compiled_query_dispatch_key(
     switch (candidate->kind) {
     case ATOM_SYMBOL:
         key->kind = GSLT_PLAN_SYMBOL;
-        key->symbol = candidate->sym_id;
+        key->symbol = atom_symbol_current_id(candidate);
         return true;
     case ATOM_GROUNDED:
         if (candidate->ground.gkind == GV_STRING &&
@@ -1292,7 +1292,7 @@ static bool compiled_query_dispatch_key(
             return true;
         }
         key->kind = GSLT_PLAN_APPLICATION;
-        key->symbol = candidate->expr.elems[0]->sym_id;
+        key->symbol = atom_symbol_current_id(candidate->expr.elems[0]);
         key->arity = (uint32_t)(candidate->expr.len - 1u);
         return true;
     default:
@@ -1357,7 +1357,7 @@ static bool compiled_rigid_compatible(
         return true;
     case GSLT_PLAN_SYMBOL:
         return candidate->kind == ATOM_SYMBOL &&
-            candidate->sym_id == node->symbol;
+            atom_symbol_current_id(candidate) == node->symbol;
     case GSLT_PLAN_STRING:
         return candidate->kind == ATOM_GROUNDED &&
             candidate->ground.gkind == GV_STRING &&
@@ -1375,7 +1375,7 @@ static bool compiled_rigid_compatible(
             return true;
         if (candidate->expr.elems[0]->kind != ATOM_VAR &&
             (candidate->expr.elems[0]->kind != ATOM_SYMBOL ||
-             candidate->expr.elems[0]->sym_id != node->symbol))
+             atom_symbol_current_id(candidate->expr.elems[0]) != node->symbol))
             return false;
         for (uint32_t index = 0u; index < node->child_count; index++) {
             if (!candidate->expr.elems[index + 1u])
@@ -1437,7 +1437,7 @@ static bool compiled_match_ground_dense_node(
         return atom_eq_fast(variables[node->variable], candidate);
     case GSLT_PLAN_SYMBOL:
         return candidate->kind == ATOM_SYMBOL &&
-            candidate->sym_id == node->symbol;
+            atom_symbol_current_id(candidate) == node->symbol;
     case GSLT_PLAN_STRING:
         return candidate->kind == ATOM_GROUNDED &&
             candidate->ground.gkind == GV_STRING &&
@@ -1452,7 +1452,7 @@ static bool compiled_match_ground_dense_node(
             candidate->expr.len != (CettaExprLen)node->child_count + 1u ||
             !candidate->expr.elems[0] ||
             candidate->expr.elems[0]->kind != ATOM_SYMBOL ||
-            candidate->expr.elems[0]->sym_id != node->symbol)
+            atom_symbol_current_id(candidate->expr.elems[0]) != node->symbol)
             return false;
         for (uint32_t index = 0u; index < node->child_count; index++)
             if (!compiled_match_ground_dense_node(
@@ -1513,7 +1513,7 @@ static bool compiled_match_constructor_guided_node(
     switch (node->kind) {
     case GSLT_PLAN_SYMBOL:
         return candidate->kind == ATOM_SYMBOL &&
-            candidate->sym_id == node->symbol;
+            atom_symbol_current_id(candidate) == node->symbol;
     case GSLT_PLAN_STRING:
         return candidate->kind == ATOM_GROUNDED &&
             candidate->ground.gkind == GV_STRING &&
@@ -1538,7 +1538,7 @@ static bool compiled_match_constructor_guided_node(
                 !match_atoms(candidate_head, expected_head, bindings, arena))
                 return false;
         } else if (candidate_head->kind != ATOM_SYMBOL ||
-                   candidate_head->sym_id != node->symbol) {
+                   atom_symbol_current_id(candidate_head) != node->symbol) {
             return false;
         }
         for (uint32_t index = 0u; index < node->child_count; index++)
@@ -1823,8 +1823,7 @@ bool cetta_gslt_compiled_query_with_providers_v1(
                     answer->expr.len != goal->expr.len ||
                     answer->expr.elems[0]->kind != ATOM_SYMBOL ||
                     goal->expr.elems[0]->kind != ATOM_SYMBOL ||
-                    answer->expr.elems[0]->sym_id !=
-                        goal->expr.elems[0]->sym_id) {
+                    !atom_symbols_equal(answer->expr.elems[0], goal->expr.elems[0])) {
                     healthy = false;
                     compiled_error(
                         error, error_size,

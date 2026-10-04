@@ -496,7 +496,7 @@ static bool table_store_build_goal_bindings(Arena *out_arena,
         Atom *goal_key_var =
             atom_var_with_id(out_arena, "$T", goal_instantiation->items[i].source_id);
         if (!bindings_add_id(goal_bindings, goal_key_var->var_id,
-                             goal_key_var->sym_id,
+                             atom_symbol_current_id(goal_key_var),
                              goal_instantiation->items[i].mapped_var)) {
             bindings_free(goal_bindings);
             return false;

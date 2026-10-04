@@ -553,7 +553,7 @@ Atom *cetta_json_library_dispatch_v1(
     SymbolId id;
     if (!runtime || !runtime->parser_host || !arena || !head ||
         head->kind != ATOM_SYMBOL) return NULL;
-    id = head->sym_id;
+    id = atom_symbol_current_id(head);
     if (id == g_builtin_syms.lib_json_capabilities_v1)
         return json_capabilities(runtime, arena, head, args, nargs);
     if (id == g_builtin_syms.lib_json_parse_v1)

@@ -136,7 +136,7 @@ static inline bool petta_semantics_facts_is_cons_constraint(
             atom->kind == ATOM_EXPR && atom->expr.len == 3u &&
             atom->expr.elems[0] &&
             atom->expr.elems[0]->kind == ATOM_SYMBOL &&
-            atom->expr.elems[0]->sym_id == facts->cons);
+            atom_symbol_current_id(atom->expr.elems[0]) == facts->cons);
 }
 
 PeTTaForm petta_semantics_form(SymbolId head);

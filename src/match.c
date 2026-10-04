@@ -4065,7 +4065,7 @@ bool bindings_add_var(Bindings *b, Atom *var, Atom *val) {
     if (!var || var->kind != ATOM_VAR)
         return false;
     return bindings_add_internal(
-        b, var->var_id, var->sym_id, var->name_key, binding_value_from_atom(val), true);
+        b, var->var_id, atom_symbol_current_id(var), var->name_key, binding_value_from_atom(val), true);
 }
 
 bool bindings_add_var_owned(Bindings *b, Atom *var, Atom *val) {
@@ -4073,7 +4073,7 @@ bool bindings_add_var_owned(Bindings *b, Atom *var, Atom *val) {
         return false;
     if (var && var->kind == ATOM_VAR &&
         bindings_add_inplace_internal(
-            b, var->var_id, var->sym_id, var->name_key,
+            b, var->var_id, atom_symbol_current_id(var), var->name_key,
             binding_value_from_atom(val), true)) {
         return true;
     }
@@ -4088,7 +4088,7 @@ bool bindings_add_var_acyclic(Bindings *b, Atom *var, Atom *val) {
     if (!bindings_clone(&next, b))
         return false;
     if (!bindings_add_inplace_internal(
-            &next, var->var_id, var->sym_id, var->name_key,
+            &next, var->var_id, atom_symbol_current_id(var), var->name_key,
             binding_value_from_atom(val), true)) {
         bindings_free(&next);
         return false;
@@ -4110,13 +4110,13 @@ static bool bindings_add_constraint_inplace_internal(Bindings *b, BindingValue l
     }
     if (lhs.skeleton->kind == ATOM_VAR) {
         if (!bindings_add_inplace_internal(
-                b, binding_value_variable_id(lhs), lhs.skeleton->sym_id, lhs.skeleton->name_key,
+                b, binding_value_variable_id(lhs), atom_symbol_current_id(lhs.skeleton), lhs.skeleton->name_key,
                 rhs, false)) {
             return false;
         }
     } else if (rhs.skeleton->kind == ATOM_VAR) {
         if (!bindings_add_inplace_internal(
-                b, binding_value_variable_id(rhs), rhs.skeleton->sym_id, rhs.skeleton->name_key,
+                b, binding_value_variable_id(rhs), atom_symbol_current_id(rhs.skeleton), rhs.skeleton->name_key,
                 lhs, false)) {
             return false;
         }
@@ -6665,7 +6665,7 @@ bool bindings_builder_add_var_fresh(BindingsBuilder *bb, Atom *var, Atom *val) {
     if (!var || var->kind != ATOM_VAR)
         return false;
     return bindings_builder_add_id_internal(
-        bb, var->var_id, var->sym_id, var->name_key, binding_value_from_atom(val));
+        bb, var->var_id, atom_symbol_current_id(var), var->name_key, binding_value_from_atom(val));
 }
 
 typedef enum {
@@ -6832,7 +6832,7 @@ static bool bindings_builder_add_rule_epoch_key_fresh(
         frame_region, bb, arena, transport,
         MATCH_BIND_CONTEXT_ACTIVATION_SOURCE,
         var_epoch_id(source_var->var_id, epoch),
-        source_var->sym_id, source_var->name_key, value,
+        atom_symbol_current_id(source_var), source_var->name_key, value,
         authoritative_value_out, &handled);
     if (handled)
         return stored;
@@ -6845,7 +6845,7 @@ static bool bindings_builder_add_rule_epoch_key_fresh(
             NULL, bb, arena, transport,
             MATCH_BIND_CONTEXT_ACTIVATION_SOURCE, true,
             var_epoch_id(source_var->var_id, epoch),
-            source_var->sym_id, source_var->name_key, value,
+            atom_symbol_current_id(source_var), source_var->name_key, value,
             BINDINGS_REACHABILITY_UNKNOWN, authoritative_value_out);
         if (added) {
             cetta_runtime_stats_inc(
@@ -6858,7 +6858,7 @@ static bool bindings_builder_add_rule_epoch_key_fresh(
         bindings_match_store_value(
             NULL, bb, arena, transport,
             MATCH_BIND_CONTEXT_ACTIVATION_SOURCE, true,
-            materialized->var_id, materialized->sym_id,
+            materialized->var_id, atom_symbol_current_id(materialized),
             materialized->name_key, value, BINDINGS_REACHABILITY_UNKNOWN,
             authoritative_value_out);
     if (added && authoritative_value_out) {
@@ -6940,13 +6940,13 @@ static bool bindings_builder_add_constraint_internal(BindingsBuilder *bb,
         return true;
     if (lhs.skeleton->kind == ATOM_VAR) {
         if (!bindings_builder_add_id_internal(
-                bb, binding_value_variable_id(lhs), lhs.skeleton->sym_id,
+                bb, binding_value_variable_id(lhs), atom_symbol_current_id(lhs.skeleton),
                 lhs.skeleton->name_key, rhs)) {
             return false;
         }
     } else if (rhs.skeleton->kind == ATOM_VAR) {
         if (!bindings_builder_add_id_internal(
-                bb, binding_value_variable_id(rhs), rhs.skeleton->sym_id,
+                bb, binding_value_variable_id(rhs), atom_symbol_current_id(rhs.skeleton),
                 rhs.skeleton->name_key, lhs)) {
             return false;
         }
@@ -7735,7 +7735,7 @@ bool bindings_add_vars(Bindings *bindings, Atom *const *variables,
     for (uint32_t i = 0u; i < count; i++) {
         Atom *var = variables[i];
         if (!bindings_add_inplace_internal(
-                &builder.current, var->var_id, var->sym_id, var->name_key,
+                &builder.current, var->var_id, atom_symbol_current_id(var), var->name_key,
                 binding_value_from_atom(values[i]), true)) {
             bindings_builder_free(&builder);
             return false;
@@ -10225,7 +10225,7 @@ bool simple_match(Atom *pattern, Atom *target, Bindings *b, Arena *a) {
 
     switch (pattern->kind) {
     case ATOM_SYMBOL:
-        return pattern->sym_id == target->sym_id;
+        return atom_symbols_equal(pattern, target);
 
     case ATOM_GROUNDED:
         if (pattern->ground.gkind != target->ground.gkind)
@@ -10299,7 +10299,7 @@ static bool simple_match_builder_rec(Atom *pattern, Atom *target,
 
     switch (pattern->kind) {
     case ATOM_SYMBOL:
-        return pattern->sym_id == target->sym_id;
+        return atom_symbols_equal(pattern, target);
 
     case ATOM_GROUNDED:
         if (pattern->ground.gkind != target->ground.gkind)
@@ -11146,9 +11146,9 @@ retry_pair:
             bool added = builder
                 ? bindings_builder_add_id_internal(
                       builder, binding_value_variable_id(left_value),
-                      left->sym_id, left->name_key, right_value)
+                      atom_symbol_current_id(left), left->name_key, right_value)
                 : bindings_add_internal(bindings, binding_value_variable_id(left_value),
-                      left->sym_id, left->name_key, right_value, true);
+                      atom_symbol_current_id(left), left->name_key, right_value, true);
             if (!added) {
                 goto fail;
             }
@@ -11171,16 +11171,16 @@ retry_pair:
             bool added = builder
                 ? bindings_builder_add_id_internal(
                       builder, binding_value_variable_id(right_value),
-                      right->sym_id, right->name_key, left_value)
+                      atom_symbol_current_id(right), right->name_key, left_value)
                 : bindings_add_internal(bindings, binding_value_variable_id(right_value),
-                      right->sym_id, right->name_key, left_value, true);
+                      atom_symbol_current_id(right), right->name_key, left_value, true);
             if (!added) {
                 goto fail;
             }
             continue;
         }
         if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL) {
-            if (left->sym_id != right->sym_id) {
+            if (!atom_symbols_equal(left, right)) {
                 if (attempt_resolving_bound)
                     attempt_repeated_var = true;
                 goto fail;
@@ -11441,7 +11441,7 @@ bool match_atoms_epoch_positional_linear(Atom *query, Atom *lhs, Bindings *b,
     Atom *lh = lhs->expr.elems[0];
     Atom *qh = query->expr.elems[0];
     if (!lh || !qh || lh->kind != ATOM_SYMBOL || qh->kind != ATOM_SYMBOL ||
-        lh->sym_id != qh->sym_id)
+        !atom_symbols_equal(lh, qh))
         return false;
     /* Pre-check the whole shape AND linearity before binding anything, so a
      * refusal never leaves a partial binding.  A repeated epoched var here means
@@ -11494,7 +11494,7 @@ bool match_atoms_epoch_positional_linear_builder(
     Atom *lh = lhs->expr.elems[0];
     Atom *qh = query->expr.elems[0];
     if (!lh || !qh || lh->kind != ATOM_SYMBOL || qh->kind != ATOM_SYMBOL ||
-        lh->sym_id != qh->sym_id)
+        !atom_symbols_equal(lh, qh))
         return false;
 
     /* This realization is deliberately narrower than head-linearity alone.
@@ -11749,7 +11749,7 @@ static bool atom_alpha_eq_rec(Atom *left, Atom *right, AlphaPairSet *pairs) {
 
     switch (left->kind) {
     case ATOM_SYMBOL:
-        return left->sym_id == right->sym_id;
+        return atom_symbols_equal(left, right);
     case ATOM_GROUNDED:
         return atom_eq(left, right);
     case ATOM_EXPR:
@@ -12165,7 +12165,7 @@ static bool match_query_child_rigid_impossible(
         return true;
     if (query->kind == ATOM_SYMBOL)
         return child->source && child->source->kind == ATOM_SYMBOL &&
-            query->sym_id != child->source->sym_id;
+            !atom_symbols_equal(query, child->source);
     if (query->kind == ATOM_EXPR)
         return query->expr.len != child->child_count;
     if (query->kind == ATOM_GROUNDED)
@@ -12231,7 +12231,7 @@ static bool match_plan_fails_before_bind(
                 break;
             if (qi->kind != qj->kind)
                 return true;
-            if (qi->kind == ATOM_SYMBOL && qi->sym_id != qj->sym_id)
+            if (qi->kind == ATOM_SYMBOL && !atom_symbols_equal(qi, qj))
                 return true;
             break;
         }
@@ -12517,7 +12517,7 @@ retry_pair:
                     right_frame_region,
                     bindings, builder, a, &transport,
                     MATCH_BIND_CONTEXT_STORED_EQUATION, left_original,
-                    left_id, left->sym_id,
+                    left_id, atom_symbol_current_id(left),
                     left->name_key, value, BINDINGS_REACHABILITY_UNKNOWN, NULL);
                 if (!added) goto fail;
                 continue;
@@ -12548,14 +12548,14 @@ retry_pair:
                         right_frame_region,
                         NULL, builder, a, &transport,
                         MATCH_BIND_CONTEXT_STORED_EQUATION, left_original,
-                        left_id, left->sym_id,
+                        left_id, atom_symbol_current_id(left),
                         left->name_key, value, cycle_evidence, NULL);
             } else {
                 added = bindings_match_store_value_in_rule_region(
                     right_frame_region,
                     bindings, builder, a, &transport,
                     MATCH_BIND_CONTEXT_STORED_EQUATION, left_original,
-                    left_id, left->sym_id,
+                    left_id, atom_symbol_current_id(left),
                     left->name_key, value, BINDINGS_REACHABILITY_UNKNOWN, NULL);
             }
             if (!added) goto fail;
@@ -12597,14 +12597,14 @@ retry_pair:
                     right_frame_region,
                     bindings, builder, a, &transport,
                     MATCH_BIND_CONTEXT_ACTIVATION_SOURCE, right_original,
-                    right_id, right->sym_id,
+                    right_id, atom_symbol_current_id(right),
                     right->name_key, binding_value, BINDINGS_REACHABILITY_UNKNOWN, NULL);
             }
             if (!added) goto fail;
             continue;
         }
         if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL) {
-            if (left->sym_id != right->sym_id) {
+            if (!atom_symbols_equal(left, right)) {
                 if (attempt_resolving_bound)
                     attempt_repeated_var = true;
                 goto fail;
@@ -13000,7 +13000,7 @@ retry_pair:
                     &frame_region,
                     bindings, builder, a, &transport,
                     MATCH_BIND_CONTEXT_STORED_EQUATION, left_original,
-                    left_id, left->sym_id,
+                    left_id, atom_symbol_current_id(left),
                     left->name_key, value, BINDINGS_REACHABILITY_UNKNOWN, NULL);
                 if (!added)
                     goto fail;
@@ -13033,14 +13033,14 @@ retry_pair:
                         &frame_region,
                         NULL, builder, a, &transport,
                         MATCH_BIND_CONTEXT_STORED_EQUATION, left_original,
-                        left_id, left->sym_id,
+                        left_id, atom_symbol_current_id(left),
                         left->name_key, value, cycle_evidence, NULL);
             } else {
                 added = bindings_match_store_value_in_rule_region(
                     &frame_region,
                     bindings, builder, a, &transport,
                     MATCH_BIND_CONTEXT_STORED_EQUATION, left_original,
-                    left_id, left->sym_id,
+                    left_id, atom_symbol_current_id(left),
                     left->name_key, value, BINDINGS_REACHABILITY_UNKNOWN, NULL);
             }
             if (!added)
@@ -13082,7 +13082,7 @@ retry_pair:
                     &frame_region,
                     bindings, builder, a, &transport,
                     MATCH_BIND_CONTEXT_ACTIVATION_SOURCE, true,
-                    right_id, right->sym_id,
+                    right_id, atom_symbol_current_id(right),
                     right->name_key, binding_value, BINDINGS_REACHABILITY_UNKNOWN, NULL);
             }
             if (!added)
@@ -13090,7 +13090,7 @@ retry_pair:
             continue;
         }
         if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL) {
-            if (left->sym_id != right->sym_id)
+            if (!atom_symbols_equal(left, right))
                 goto fail;
             continue;
         }
@@ -13654,7 +13654,7 @@ retry_pair:
                 if (!term_universe_match_binding_value(
                         candidate_universe, a, right_id, epoch, &value) ||
                     !bindings_add_internal(
-                        b, binding_value_variable_id(left_value), left->sym_id,
+                        b, binding_value_variable_id(left_value), atom_symbol_current_id(left),
                         left->name_key, value, true)) goto fail;
                 continue;
             }
@@ -13662,7 +13662,7 @@ retry_pair:
             if (!term_universe_match_binding_value(
                     candidate_universe, a, right_id, epoch, &value) ||
                 !bindings_add_internal(
-                        b, binding_value_variable_id(left_value), left->sym_id,
+                        b, binding_value_variable_id(left_value), atom_symbol_current_id(left),
                         left->name_key, value, true)) goto fail;
             continue;
         }
@@ -13688,7 +13688,7 @@ retry_pair:
                 binding_var.skeleton->kind != ATOM_VAR ||
                 !bindings_add_internal(
                     b, binding_value_variable_id(binding_var),
-                    binding_var.skeleton->sym_id,
+                    atom_symbol_current_id(binding_var.skeleton),
                     binding_var.skeleton->name_key,
                     left_value, true))
                 goto fail;
@@ -13697,7 +13697,7 @@ retry_pair:
         switch (left->kind) {
         case ATOM_SYMBOL:
             if (right_kind != ATOM_SYMBOL ||
-                left->sym_id != tu_sym(candidate_universe, right_id))
+                atom_symbol_current_id(left) != tu_sym(candidate_universe, right_id))
                 goto fail;
             break;
         case ATOM_VAR:

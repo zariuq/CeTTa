@@ -1171,8 +1171,7 @@ static bool petta_program_type_is_exclusive_kind(const Atom *type) {
         type->expr.elems[0]->kind != ATOM_SYMBOL || !g_symbols) {
         return false;
     }
-    const char *head = symbol_bytes(
-        g_symbols, type->expr.elems[0]->sym_id);
+    const char *head = atom_symbol_bytes(type->expr.elems[0]);
     if (!head)
         return false;
     return strcmp(head, "Alias") == 0 ||
@@ -1252,7 +1251,7 @@ static bool petta_program_space_rebuild_type_index(
         }
         PettaProgramTypeBucket *bucket =
             petta_program_type_bucket(
-                space, annotation->expr.elems[1]->sym_id, true);
+                space, atom_symbol_current_id(annotation->expr.elems[1]), true);
         if (!bucket || !petta_program_reserve(
                 (void **)&bucket->types, &bucket->cap,
                 bucket->len + 1u, sizeof(*bucket->types))) {
@@ -1545,7 +1544,7 @@ static bool petta_equation_view(
     if (rhs)
         *rhs = atom->expr.elems[2];
     if (head && left->expr.elems[0]->kind == ATOM_SYMBOL)
-        *head = left->expr.elems[0]->sym_id;
+        *head = atom_symbol_current_id(left->expr.elems[0]);
     return true;
 }
 
@@ -1865,9 +1864,9 @@ typedef struct {
 static bool petta_plan_source_is_anonymous_variable(
         const Atom *source) {
     return source && source->kind == ATOM_VAR &&
-        source->sym_id != SYMBOL_ID_NONE && g_symbols &&
-        symbol_len(g_symbols, source->sym_id) == 1u &&
-        symbol_bytes(g_symbols, source->sym_id)[0] == '_';
+        atom_symbol_current_id(source) != SYMBOL_ID_NONE && g_symbols &&
+        atom_symbol_length(source) == 1u &&
+        atom_symbol_bytes(source)[0] == '_';
 }
 
 static bool petta_head_transports_source_occurrences(
@@ -2585,7 +2584,7 @@ static PettaPlanNode *petta_plan_build_in(
         }
         Atom *head_atom = atom->expr.elems[0];
         if (head_atom->kind == ATOM_SYMBOL) {
-            SymbolId head = head_atom->sym_id;
+            SymbolId head = atom_symbol_current_id(head_atom);
             PeTTaForm form = petta_semantics_form(head);
             node->contains_cardinality_call =
                 form == PETTA_FORM_LENGTH ||
@@ -2652,7 +2651,7 @@ static PettaPlanNode *petta_plan_build_in(
         if (node->role == PETTA_PLAN_DATA) {
             node->output = PETTA_PLAN_OUTPUT_CONSTRUCTOR;
         } else if (head_atom->kind == ATOM_SYMBOL) {
-            SymbolId head = head_atom->sym_id;
+            SymbolId head = atom_symbol_current_id(head_atom);
             PeTTaForm form = petta_semantics_form(head);
             CettaExprLen nargs = atom->expr.len - 1u;
             if (head == g_builtin_syms.quote && nargs == 1u) {
@@ -2702,13 +2701,13 @@ static PettaPlanNode *petta_plan_build_in(
          * time, under the handler, whatever its head. */
         bool reduce_application =
             head_atom->kind == ATOM_SYMBOL && atom->expr.len == 2u &&
-            petta_semantics_form(head_atom->sym_id) == PETTA_FORM_REDUCE;
+            petta_semantics_form(atom_symbol_current_id(head_atom)) == PETTA_FORM_REDUCE;
         /* `call` emits a direct call even if this function will only be
          * installed later. Its arguments still use their own
          * translation-time roles. */
         bool call_application =
             head_atom->kind == ATOM_SYMBOL && atom->expr.len == 2u &&
-            petta_semantics_form(head_atom->sym_id) == PETTA_FORM_CALL;
+            petta_semantics_form(atom_symbol_current_id(head_atom)) == PETTA_FORM_CALL;
         bool quoted = translation &&
             node->output == PETTA_PLAN_OUTPUT_QUOTED_CHILD;
         if (!petta_plan_push_children(
@@ -2947,6 +2946,54 @@ static const PettaPlanNode *petta_plan_copy_into(
     }
     free(work);
     return ok ? root : NULL;
+}
+
+const PettaPlanNode *petta_plan_plain_snapshot(
+    Arena *owner, const PettaPlanNode *source,
+    PettaPlanSnapshotEntry *cache, size_t *cache_len, size_t cache_capacity,
+    size_t node_limit) {
+    if (!owner || !source || !cache || !cache_len ||
+        *cache_len > cache_capacity || node_limit == 0u)
+        return NULL;
+    const PettaPlanNode **work = NULL;
+    size_t len = 0u, cap = 0u, nodes = 0u;
+    bool ok = petta_program_reserve((void **)&work, &cap, 1u, sizeof(*work));
+    if (ok)
+        work[len++] = source;
+    while (ok && len) {
+        const PettaPlanNode *node = work[--len];
+        ok = nodes++ < node_limit && !node->deterministic_region &&
+            !node->region_hole_program &&
+            (node->child_count == 0u || node->children) &&
+            node->child_count <= SIZE_MAX - len &&
+            petta_program_reserve((void **)&work, &cap,
+                len + node->child_count, sizeof(*work));
+        for (CettaExprIndex i = 0u; ok && i < node->child_count; i++)
+            work[len++] = &node->children[i];
+    }
+    free(work);
+    uint64_t hash = 0u;
+    if (!ok || !petta_plan_content_hash(source, &hash))
+        return NULL;
+    for (size_t i = 0u; i < *cache_len; i++) {
+        if (cache[i].hash != hash)
+            continue;
+        int equal = petta_plan_content_equal(cache[i].plan, source);
+        if (equal < 0)
+            return NULL;
+        if (equal)
+            return cache[i].plan;
+    }
+    if (*cache_len == cache_capacity)
+        return NULL;
+    ArenaMark mark = arena_mark(owner);
+    const PettaPlanNode *copy = petta_plan_copy_into(owner, source);
+    if (!copy) {
+        arena_reset(owner, mark);
+        return NULL;
+    }
+    cache[(*cache_len)++] = (PettaPlanSnapshotEntry){hash, copy};
+    return copy;
 }
 
 static bool petta_program_grow_interned_plans(PettaProgram *program) {
@@ -3351,6 +3398,7 @@ static bool petta_program_space_pending(
 
 static bool petta_program_space_declare_pending(
         PettaProgramSpace *entry, SymbolId head) {
+    (void)symbol_pin(g_symbols, head);
     size_t index = petta_program_space_pending_lower_bound(entry, head);
     if (index < entry->pending_head_len &&
         entry->pending_heads[index] == head)
@@ -3401,6 +3449,14 @@ static void petta_program_space_append_reserved_equation(
         PettaProgramSpace *entry, PettaProgramEquation equation) {
     if (!entry || entry->equation_len >= entry->equation_cap)
         abort();
+#if !CETTA_MANAGED_SYMBOLS
+    atom_pin_syntax_symbols(equation.equation);
+#endif
+    /* Only the callable head is a numeric catalogue key. Body values remain
+     * owned by their syntax/plan arenas; registering them would turn retained
+     * data into process-lifetime vocabulary. Known nested calls already have
+     * identities, while unknown spelled heads can observe later registration. */
+    (void)symbol_pin(g_symbols, equation.head);
     size_t record_index = entry->equation_len++;
     entry->equations[record_index] = equation;
     petta_program_space_settle_pending(entry, equation.head);
@@ -3676,7 +3732,7 @@ static PettaProgramSpace *petta_program_ensure_space(
 static bool petta_program_type_family_build(
     Space *space, Atom *head, Arena *storage, PettaProgramTypeFamily *family) {
     memset(family, 0, sizeof(*family));
-    family->head = head->sym_id;
+    family->head = atom_symbol_current_id(head);
     ArenaMark mark = arena_mark(storage);
     Atom **types = NULL;
     uint32_t count = space_get_declared_types(space, storage, head, &types);
@@ -3729,12 +3785,12 @@ bool petta_program_type_calls(PettaProgram *program, Space *space, Atom *head,
         size_t low = 0u, high = entry->type_family_len;
         while (low < high) {
             size_t middle = low + (high - low) / 2u;
-            if (entry->type_families[middle].head < head->sym_id)
+            if (entry->type_families[middle].head < atom_symbol_current_id(head))
                 low = middle + 1u;
             else
                 high = middle;
         }
-        if (low < entry->type_family_len && entry->type_families[low].head == head->sym_id) {
+        if (low < entry->type_family_len && entry->type_families[low].head == atom_symbol_current_id(head)) {
             family = &entry->type_families[low];
         } else {
             if (!petta_program_reserve((void **)&entry->type_families,
@@ -3963,7 +4019,7 @@ static uint64_t petta_alpha_hash(Atom *root, bool *quoted) {
             word = UINT64_C(0x9e3779b97f4a7c15);
             break;
         case ATOM_SYMBOL:
-            word = (uint64_t)atom->sym_id * UINT64_C(0xff51afd7ed558ccd);
+            word = (uint64_t)atom_symbol_current_id(atom) * UINT64_C(0xff51afd7ed558ccd);
             break;
         case ATOM_GROUNDED:
             word = atom_hash(atom);
@@ -4237,6 +4293,14 @@ bool petta_program_note_add(
     Atom *type = NULL;
     if (petta_program_type_declaration_view(
             atom, &subject, &type)) {
+#if CETTA_MANAGED_SYMBOLS
+        /* The subject indexes the declaration. Its type expression is a
+         * retained value, not a request to intern every symbol it contains. */
+        if (subject->kind == ATOM_SYMBOL)
+            (void)atom_symbol_register_id(subject);
+#else
+        atom_pin_syntax_symbols(atom);
+#endif
         if (!program->analysis)
             return petta_program_ensure_space(program, space) != NULL;
         PettaProgramAnalysisSpace *entry =
@@ -4280,6 +4344,8 @@ bool petta_program_note_add(
     SymbolId head = SYMBOL_ID_NONE;
     if (!petta_equation_view(atom, &lhs, &rhs, &head))
         return true;
+    if (lhs->expr.elems[0]->kind == ATOM_SYMBOL)
+        head = atom_symbol_register_id(lhs->expr.elems[0]);
     PettaProgramSpace *entry =
         petta_program_ensure_space(program, space);
     if (!petta_program_space_reserve_equation(entry)) {
@@ -4573,7 +4639,7 @@ static bool petta_portable_relation_presence(
         Atom *lhs_head = lhs->expr.elems[0];
         if (!lhs_head || lhs_head->kind != ATOM_SYMBOL) {
             *open_out = true;
-        } else if (lhs_head->sym_id == head) {
+        } else if (atom_symbol_current_id(lhs_head) == head) {
             *exact_out = true;
         }
     }
@@ -4592,14 +4658,14 @@ static bool petta_portable_structural_data(
     if (!head || head->kind != ATOM_SYMBOL ||
         petta_semantics_is_open_cons_value(atom) ||
         petta_semantics_is_cons_constraint(atom) ||
-        petta_program_head_is_intrinsic(head->sym_id) ||
-        is_grounded_op(head->sym_id)) {
+        petta_program_head_is_intrinsic(atom_symbol_current_id(head)) ||
+        is_grounded_op(atom_symbol_current_id(head))) {
         return false;
     }
     bool exact = false;
     bool open = false;
     if (!petta_portable_relation_presence(
-            check, head->sym_id, atom->expr.len - 1u,
+            check, atom_symbol_current_id(head), atom->expr.len - 1u,
             &exact, &open) || exact || open) {
         return false;
     }
@@ -4630,13 +4696,13 @@ static bool petta_portable_executable(
     bool exact = false;
     bool open = false;
     if (!petta_portable_relation_presence(
-            check, head->sym_id, atom->expr.len - 1u,
+            check, atom_symbol_current_id(head), atom->expr.len - 1u,
             &exact, &open) || open) {
         return false;
     }
     if (exact) {
         return petta_portable_relation_check(
-            check, head->sym_id, atom->expr.len - 1u);
+            check, atom_symbol_current_id(head), atom->expr.len - 1u);
     }
     return petta_portable_structural_data(check, atom);
 }
@@ -4653,14 +4719,14 @@ static bool petta_portable_lhs_argument(
     if (!head || head->kind != ATOM_SYMBOL ||
         petta_semantics_is_open_cons_value(atom) ||
         petta_semantics_is_cons_constraint(atom) ||
-        petta_program_head_is_intrinsic(head->sym_id) ||
-        is_grounded_op(head->sym_id)) {
+        petta_program_head_is_intrinsic(atom_symbol_current_id(head)) ||
+        is_grounded_op(atom_symbol_current_id(head))) {
         return false;
     }
     bool exact = false;
     bool open = false;
     if (!petta_portable_relation_presence(
-            check, head->sym_id, atom->expr.len - 1u,
+            check, atom_symbol_current_id(head), atom->expr.len - 1u,
             &exact, &open) || exact || open) {
         return false;
     }
@@ -4739,7 +4805,7 @@ static bool petta_portable_relation_check(
             accepted = false;
             break;
         }
-        if (lhs_head->sym_id != head)
+        if (atom_symbol_current_id(lhs_head) != head)
             continue;
         saw_equation = true;
         for (CettaExprIndex argument = 1u;
@@ -4783,7 +4849,7 @@ petta_program_relational_execution_class(
     }
     if (accepted) {
         accepted = petta_portable_relation_check(
-            &check, call->expr.elems[0]->sym_id,
+            &check, atom_symbol_current_id(call->expr.elems[0]),
             call->expr.len - 1u);
     }
     free(check.relations);
@@ -4926,7 +4992,7 @@ static bool petta_equation_lhs_matches(
     }
     Atom *lhs_head = lhs->expr.elems[0];
     return lhs_head->kind != ATOM_SYMBOL ||
-           lhs_head->sym_id == head;
+           atom_symbol_current_id(lhs_head) == head;
 }
 
 void petta_program_candidate_snapshot_lease_release(
@@ -5834,7 +5900,7 @@ uint32_t petta_program_declared_types(
         }
         PettaProgramTypeBucket *bucket =
             petta_program_type_bucket(
-                entry, subject->sym_id, false);
+                entry, atom_symbol_current_id(subject), false);
         for (size_t type_index = 0u;
              bucket && type_index < bucket->len; type_index++) {
             Atom *type = bucket->types[type_index];
@@ -6190,7 +6256,7 @@ static PettaRelationSafety petta_table_safety_scan_relation(
         }
         Atom *lhs_head = lhs->expr.elems[0];
         if (lhs_head->kind == ATOM_SYMBOL &&
-            lhs_head->sym_id != relation.head) {
+            atom_symbol_current_id(lhs_head) != relation.head) {
             continue;
         }
         saw_matching_equation = true;
@@ -6280,7 +6346,7 @@ static PettaRelationSafety petta_table_safety_scan_relation(
         }
 
         SymbolId call_head =
-            atom->expr.elems[0]->sym_id;
+            atom_symbol_current_id(atom->expr.elems[0]);
         if (call_head == g_builtin_syms.case_text) {
             safe = petta_table_safety_push_case(
                 &nodes, &node_len, &node_cap,
@@ -6479,7 +6545,7 @@ PettaResolvedCallClass petta_program_classify_resolved_call(
         call->expr.elems[0]->kind != ATOM_SYMBOL) {
         return PETTA_RESOLVED_CALL_UNSAFE;
     }
-    SymbolId head = call->expr.elems[0]->sym_id;
+    SymbolId head = atom_symbol_current_id(call->expr.elems[0]);
     bool opaque = false;
     if (petta_table_safety_primitive(head, &opaque))
         return PETTA_RESOLVED_CALL_MACHINE_LOCAL;

@@ -105,6 +105,8 @@ ENABLE_MORK_STATIC := 0
 ENABLE_PATHMAP_SPACE := 0
 ENABLE_GMP ?= 1
 ENABLE_RUNTIME_STATS ?= 0
+ENABLE_MANAGED_SYMBOLS ?= 0
+ENABLE_SYMBOL_READ_COVERAGE ?= 0
 ENABLE_RUNTIME_TIMING ?= 0
 ENABLE_SANITIZERS ?= 0
 ENABLE_PIC ?= 0
@@ -541,6 +543,12 @@ endif
 ifeq ($(ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS),1)
 BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).langdef-diagnostics
 endif
+ifeq ($(ENABLE_MANAGED_SYMBOLS),1)
+BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).managed-symbols
+endif
+ifeq ($(ENABLE_SYMBOL_READ_COVERAGE),1)
+BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).symbol-read-coverage
+endif
 # Generated source basenames also occupy the filesystem's component budget.
 # Keep long feature combinations distinct without exceeding that budget.
 ifeq ($(shell test $$(printf '%s' '$(BUILD_OBJ_TAG)' | wc -c) -gt 160 && printf yes),yes)
@@ -605,7 +613,7 @@ PRIME_EVAL_STACK_CPPFLAGS =
 ifeq ($(ENABLE_PRIME_EVAL_STACK),1)
 PRIME_EVAL_STACK_CPPFLAGS = -DCETTA_PRIME_EVAL_STACK=1
 endif
-CPPFLAGS = -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) $(HTTP_CFLAGS) $(DURABLE_CFLAGS) $(PROVENANCE_CPPFLAGS) $(PRIME_RECEIPT_INDEX_CPPFLAGS) $(PRIME_NEED_HEAP_INDEX_CPPFLAGS) $(PRIME_NEED_CLOSURE_CAPTURE_CPPFLAGS) $(PRIME_EVAL_STACK_CPPFLAGS) -include $(BUILD_CONFIG_HEADER)
+CPPFLAGS = -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) $(HTTP_CFLAGS) $(DURABLE_CFLAGS) $(PROVENANCE_CPPFLAGS) $(PRIME_RECEIPT_INDEX_CPPFLAGS) $(PRIME_NEED_HEAP_INDEX_CPPFLAGS) $(PRIME_NEED_CLOSURE_CAPTURE_CPPFLAGS) $(PRIME_EVAL_STACK_CPPFLAGS) -DCETTA_MANAGED_SYMBOLS=$(ENABLE_MANAGED_SYMBOLS) -DCETTA_SYMBOL_READ_COVERAGE=$(ENABLE_SYMBOL_READ_COVERAGE) -include $(BUILD_CONFIG_HEADER)
 CFLAGS = -O3 -Wall -Werror -std=c11 -pthread
 DEPFLAGS = -MMD -MP
 LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm -pthread $(GMP_LDFLAGS) $(LIB_PROLOG_LDFLAGS) $(LIB_PROLOG_RPATH) $(HTTP_LDFLAGS) $(DURABLE_LDFLAGS) $(PY_LDFLAGS) $(PY_RPATH)
@@ -663,7 +671,7 @@ endif
 ifeq ($(ENABLE_PETTA_TYPECHECK_CENSUS),1)
 PETTA_TYPECHECK_CENSUS_SRC = src/petta_typecheck_census.c
 endif
-SRC = src/symbol.c src/atom.c src/term_graph.c src/delay_service.c src/string_ops.c src/str_natives.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/match_decision.c src/select/code_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/owned_execution.c src/fold_algebra.c src/open_equation_machine.c src/eval.c src/grounded.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/term_graph.c src/delay_service.c src/string_ops.c src/str_natives.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registered_symbols.c src/registry_resolver.c src/space_match_backend.c src/match.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/match_decision.c src/select/code_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/owned_execution.c src/fold_algebra.c src/open_equation_machine.c src/eval.c src/grounded.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 SRC += src/shared_transition.c src/run_report.c src/run_cli.c src/error_presentation.c src/run_guard.c
 SRC += src/library_supervise.c $(DURABLE_SRC)
 SRC += src/petta_type_policy.c src/petta_type_relation.c src/he_type_policy.c
@@ -825,7 +833,7 @@ PETTA_COMPILED_READER_TEST_BIN = runtime/test_petta_compiled_reader_v1-$(BUILD_C
 PETTA_COMPILED_READER_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ) $(COMPILED_READER_RUNTIME_OBJ)
 PETTA_SEARCH_MACHINE_TEST_SRC = tests/support/test_petta_search_machine.c
 PETTA_SEARCH_MACHINE_TEST_OBJ = runtime/bootstrap/test_petta_search_machine.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-PETTA_SEARCH_MACHINE_TEST_BIN = runtime/test_petta_search_machine-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PETTA_SEARCH_MACHINE_TEST_BIN = runtime/test_petta_search_machine-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)$(if $(filter 1,$(ENABLE_SYMBOL_READ_COVERAGE)),-symbol-read-coverage,)
 PETTA_SEARCH_MACHINE_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
 PETTA_TYPECHECK_V2_GUARD_LANGDEF_TEST_SRC = tests/support/test_petta_typecheck_v2_guard_langdef.c
 PETTA_TYPECHECK_V2_GUARD_LANGDEF_TEST_OBJ = runtime/bootstrap/test_petta_typecheck_v2_guard_langdef.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
@@ -3877,6 +3885,146 @@ test: test-atom-intern-vars
 test-atom-intern-vars: $(ATOM_INTERN_VARS_TEST_BIN)
 	@$(call cetta_exec,./$(ATOM_INTERN_VARS_TEST_BIN))
 
+runtime/test_symbol_lifetimes-$(BUILD_OBJ_TAG): tests/test_symbol_lifetimes.c src/symbol.c src/symbol.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_symbol_lifetimes.c src/symbol.c -pthread
+
+.PHONY: test-symbol-lifetimes
+test: test-symbol-lifetimes
+test-symbol-lifetimes: runtime/test_symbol_lifetimes-$(BUILD_OBJ_TAG)
+	@$(call cetta_exec,./runtime/test_symbol_lifetimes-$(BUILD_OBJ_TAG))
+
+runtime/test_managed_symbol_values-$(BUILD_OBJ_TAG): tests/test_managed_symbol_values.c src/symbol.c src/atom.c src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_managed_symbol_values.c src/symbol.c src/atom.c src/binding/frame_identity.c $(LDFLAGS)
+.PHONY: test-managed-symbol-values
+test-managed-symbol-values: runtime/test_managed_symbol_values-$(BUILD_OBJ_TAG)
+	@$(call cetta_exec,./runtime/test_managed_symbol_values-$(BUILD_OBJ_TAG))
+
+.PHONY: test-managed-symbol-mutants
+test-managed-symbol-mutants: test-managed-symbol-values
+	@test "$(ENABLE_MANAGED_SYMBOLS)" = 1 || { echo 'Set ENABLE_MANAGED_SYMBOLS=1'; exit 2; }
+	python3 verification/gc/experiments/engine_mutants.py --cc='$(CC)' \
+		--cppflags='$(CPPFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)'
+
+.PHONY: test-managed-symbol-owners
+test-managed-symbol-owners: $(BIN)
+	@set -eu; \
+	if [ "$(ENABLE_PYTHON)" != 1 ] || [ "$(LIB_PROLOG_ENABLED)" != 1 ]; then \
+		echo "SKIP: managed symbol owner fixture needs the Python/Prolog build"; \
+		exit 0; \
+	fi; \
+	actual=$$(mktemp runtime/managed-symbol-owners.XXXXXX); \
+	trap 'rm -f "$$actual"' EXIT INT TERM; \
+	$(CETTA_BIN_INVOKE) --profile extended --lang petta \
+		tests/petta/managed_symbol_owners.metta > "$$actual"; \
+	diff -u tests/petta/managed_symbol_owners.expected "$$actual"; \
+	echo "PASS: managed symbol owners, computed keys, late calls and foreign text"
+
+SYMBOL_BIRTH_TEST_OBJ = $(filter-out src/main.$(BUILD_OBJ_TAG).o src/main.$(BUILD_OBJ_TAG).runtime-stats.o src/durable_value.$(BUILD_OBJ_TAG).o src/durable_value.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ))
+runtime/test_runtime_symbol_births-$(BUILD_OBJ_TAG): tests/test_runtime_symbol_births.c src/durable_value.c $(SYMBOL_BIRTH_TEST_OBJ) $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_runtime_symbol_births.c src/durable_value.c $(SYMBOL_BIRTH_TEST_OBJ) $(LDFLAGS)
+
+.PHONY: test-runtime-symbol-births
+test: test-runtime-symbol-births
+test-runtime-symbol-births: runtime/test_runtime_symbol_births-$(BUILD_OBJ_TAG)
+	@$(call cetta_exec,./runtime/test_runtime_symbol_births-$(BUILD_OBJ_TAG))
+
+# Experimental wrappers observe births and reviewed retention crossings.
+# The ordinary runtime is linked without these wrappers.
+GC_SYMBOL_RUNTIME_PROBE_BIN = runtime/cetta-gc-symbol-runtime-probe-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+GC_SYMBOL_MACHINE_PROBE_OBJ = runtime/gc-experiments/machine-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,).o
+GC_SYMBOL_PREPARED_PROBE_OBJ = runtime/gc-experiments/prepared-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,).o
+GC_SYMBOL_PROBE_OBJ = $(filter-out src/petta_search_machine.$(BUILD_OBJ_TAG).o src/petta_search_machine.$(BUILD_OBJ_TAG).runtime-stats.o src/prepared_pure_machine.$(BUILD_OBJ_TAG).o src/prepared_pure_machine.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) $(GC_SYMBOL_MACHINE_PROBE_OBJ) $(GC_SYMBOL_PREPARED_PROBE_OBJ)
+GC_SYMBOL_PROBE_WRAP = symbol_intern_data_bytes symbol_intern_data_cstr symbol_pin atom_pin_syntax_symbols space_add term_universe_store_atom_id term_universe_store_atom_id_from_source_arena registry_bind_id symbol_table_stats_snapshot symbol_bytes symbol_len symbol_hash_value symbol_intern_cstr symbol_intern_bytes symbol_intern_span_hashed
+GC_SYMBOL_PROBE_HEADERS = $(wildcard src/*.h) verification/gc/experiments/shadow_probe.h
+$(GC_SYMBOL_MACHINE_PROBE_OBJ): src/petta_search_machine.c verification/gc/experiments/machine_shadow.inc.c verification/gc/experiments/instrument_machine.py $(GC_SYMBOL_PROBE_HEADERS) $(BUILD_CONFIG_HEADER)
+	python3 verification/gc/experiments/instrument_machine.py machine $@.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -Iverification/gc/experiments -c -o $@ $@.c
+$(GC_SYMBOL_PREPARED_PROBE_OBJ): src/prepared_pure_machine.c verification/gc/experiments/prepared_shadow.inc.c verification/gc/experiments/instrument_machine.py $(GC_SYMBOL_PROBE_HEADERS) $(BUILD_CONFIG_HEADER)
+	python3 verification/gc/experiments/instrument_machine.py prepared $@.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -Iverification/gc/experiments -c -o $@ $@.c
+$(GC_SYMBOL_RUNTIME_PROBE_BIN): verification/gc/experiments/runtime_probe.c verification/gc/experiments/shadow_probe.c $(GC_SYMBOL_PROBE_HEADERS) $(GC_SYMBOL_PROBE_OBJ) $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Iverification/gc/experiments -o $@ verification/gc/experiments/runtime_probe.c verification/gc/experiments/shadow_probe.c $(GC_SYMBOL_PROBE_OBJ) \
+		$(foreach function,$(GC_SYMBOL_PROBE_WRAP),-Wl,--wrap=$(function)) $(LDFLAGS)
+.PHONY: gc-symbol-runtime-probe
+gc-symbol-runtime-probe: $(GC_SYMBOL_RUNTIME_PROBE_BIN)
+	@echo "gc-symbol-runtime-probe: $(GC_SYMBOL_RUNTIME_PROBE_BIN)"
+
+GC_SYMBOL_OWNER_PROBE_BIN = runtime/gc-experiments/owners-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+$(GC_SYMBOL_OWNER_PROBE_BIN): verification/gc/experiments/shadow_owners.c verification/gc/experiments/runtime_probe.c verification/gc/experiments/shadow_probe.c src/durable_value.c $(GC_SYMBOL_PROBE_HEADERS) $(GC_SYMBOL_PROBE_OBJ) $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Iverification/gc/experiments -o $@ verification/gc/experiments/shadow_owners.c verification/gc/experiments/runtime_probe.c verification/gc/experiments/shadow_probe.c src/durable_value.c $(filter-out src/main.$(BUILD_OBJ_TAG).o src/main.$(BUILD_OBJ_TAG).runtime-stats.o src/durable_value.$(BUILD_OBJ_TAG).o src/durable_value.$(BUILD_OBJ_TAG).runtime-stats.o,$(GC_SYMBOL_PROBE_OBJ)) \
+		$(foreach function,$(GC_SYMBOL_PROBE_WRAP),-Wl,--wrap=$(function)) $(LDFLAGS)
+.PHONY: gc-symbol-owner-probe
+gc-symbol-owner-probe: $(GC_SYMBOL_OWNER_PROBE_BIN)
+	@echo "gc-symbol-owner-probe: $(GC_SYMBOL_OWNER_PROBE_BIN)"
+
+runtime/gc-experiments/prototypes: verification/gc/experiments/prototypes.c src/symbol.c src/symbol.h
+	@mkdir -p runtime/gc-experiments
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -pthread -o $@ $<
+.PHONY: gc-symbol-experiments
+gc-symbol-experiments: runtime/gc-experiments/prototypes $(GC_SYMBOL_OWNER_PROBE_BIN)
+	python3 verification/gc/experiments/run.py --prototype runtime/gc-experiments/prototypes --owners $(GC_SYMBOL_OWNER_PROBE_BIN)
+
+runtime/gc-experiments/handle-slots: verification/gc/experiments/handle_slots.c
+	@mkdir -p runtime/gc-experiments
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -o $@ $<
+.PHONY: gc-symbol-handle-slots
+gc-symbol-handle-slots: runtime/gc-experiments/handle-slots
+	@runtime/gc-experiments/handle-slots
+	@set +e; for mutant in reuse-generation omit-retain; do \
+		runtime/gc-experiments/handle-slots "$$mutant"; status=$$?; \
+		test "$$status" = 1 || exit 1; done
+
+GC_EPOCH_REGIONS_BIN = runtime/gc-experiments/epoch-regions-$(BUILD_OBJ_TAG)
+$(GC_EPOCH_REGIONS_BIN): verification/gc/experiments/epoch_regions.c $(filter-out src/main.$(BUILD_OBJ_TAG).o src/main.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime/gc-experiments
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $< $(filter-out src/main.$(BUILD_OBJ_TAG).o src/main.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) $(LDFLAGS)
+.PHONY: gc-symbol-archive-regions
+gc-symbol-archive-regions: $(GC_EPOCH_REGIONS_BIN)
+	@$(call cetta_exec,./$(GC_EPOCH_REGIONS_BIN))
+	@set +e; for mutant in omit-lease reverse-copy; do \
+		message=$$($(call cetta_exec,./$(GC_EPOCH_REGIONS_BIN)) "$$mutant"); status=$$?; \
+		printf '%s\n' "$$message"; \
+		test "$$status" = 1 && test "$${message#detected-mutant: }" != "$$message" || exit 1; done
+
+.PHONY: test-symbol-holder-census test-symbol-holder-census-unit
+test: test-symbol-holder-census test-symbol-holder-census-unit
+test-symbol-holder-census: $(BIN)
+	@python3 scripts/check_symbol_lifetimes.py --clang $(LLVM_CLANG) \
+		--cppflags='$(CPPFLAGS)' --sources $(SRC)
+test-symbol-holder-census-unit:
+	@python3 tests/test_symbol_holder_census.py $(LLVM_CLANG)
+
+SYMBOL_SHIFT_TEST_BIN = runtime/cetta-symbol-id-shift-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+$(SYMBOL_SHIFT_TEST_BIN): tests/support/symbol_id_shift.c $(OBJ) $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/support/symbol_id_shift.c $(OBJ) \
+		-Wl,--wrap=symbol_table_init_builtins $(LDFLAGS)
+
+.PHONY: test-symbol-id-shift
+test: test-symbol-id-shift
+test-symbol-id-shift: $(BIN) $(SYMBOL_SHIFT_TEST_BIN)
+	@set -eu; \
+	base=$$(mktemp runtime/symbol-shift-base.XXXXXX); \
+	shift=$$(mktemp runtime/symbol-shift-biased.XXXXXX); \
+	trap 'rm -f "$$base" "$$shift"' EXIT INT TERM; \
+	for fixture in tests/petta/search_machine_sread.metta \
+		tests/petta/string_layout.metta tests/petta/get_type_relation.metta \
+		tests/petta/computed_value_arguments.metta; do \
+		$(CETTA_BIN_INVOKE) --lang petta "$$fixture" > "$$base"; \
+		$(call cetta_exec,./$(SYMBOL_SHIFT_TEST_BIN)) --lang petta "$$fixture" > "$$shift"; \
+		diff -u "$$base" "$$shift"; \
+	done; \
+	if [ "$(ENABLE_PYTHON)" = 1 ]; then \
+		PYTHONPATH=tests/support $(CETTA_BIN_INVOKE) --lang petta \
+			tests/petta/foreign_holds.metta > "$$base"; \
+		PYTHONPATH=tests/support $(call cetta_exec,./$(SYMBOL_SHIFT_TEST_BIN)) --lang petta \
+			tests/petta/foreign_holds.metta > "$$shift"; \
+		diff -u "$$base" "$$shift"; \
+	fi; \
+	echo "PASS: shifted symbol IDs preserve reader, type, data and foreign-value observations"
+
 runtime/test_native_handle_ownership-$(BUILD_OBJ_TAG): tests/test_native_handle_ownership.c src/native_handle.c src/native_handle.h src/atom.c src/binding/frame_identity.c src/atom.h src/library.h src/symbol.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_native_handle_ownership.c src/native_handle.c src/atom.c src/binding/frame_identity.c src/symbol.c $(LDFLAGS)
@@ -5067,46 +5215,46 @@ else
 endif
 
 $(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN): private CPPFLAGS += -DCETTA_RUNTIME_STATS_IMPL=1
-$(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN): tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c $(SHARED_TRANSITION_STANDALONE_SRC) $(PARSER_STANDALONE_SRC) $(BUILD_CONFIG_HEADER)
+$(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN): tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c src/registered_symbols.c $(SHARED_TRANSITION_STANDALONE_SRC) $(PARSER_STANDALONE_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c $(SHARED_TRANSITION_STANDALONE_SRC) $(PARSER_STANDALONE_SRC) $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c src/registered_symbols.c $(SHARED_TRANSITION_STANDALONE_SRC) $(PARSER_STANDALONE_SRC) $(LDFLAGS)
 
 test-space-term-universe-membership: $(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN)
 	@$(call cetta_exec,./$(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN))
 
 $(TERM_UNIVERSE_STORE_ABI_TEST_BIN): private CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1 -DCETTA_RUNTIME_STATS_IMPL=1
-$(TERM_UNIVERSE_STORE_ABI_TEST_BIN): tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c $(SHARED_TRANSITION_STANDALONE_SRC) $(PARSER_STANDALONE_SRC) src/cetta_stdlib.c $(BUILD_CONFIG_HEADER)
+$(TERM_UNIVERSE_STORE_ABI_TEST_BIN): tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c src/registered_symbols.c $(SHARED_TRANSITION_STANDALONE_SRC) $(PARSER_STANDALONE_SRC) src/cetta_stdlib.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c $(SHARED_TRANSITION_STANDALONE_SRC) $(PARSER_STANDALONE_SRC) src/cetta_stdlib.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c src/registered_symbols.c $(SHARED_TRANSITION_STANDALONE_SRC) $(PARSER_STANDALONE_SRC) src/cetta_stdlib.c $(LDFLAGS)
 
 $(TERM_UNIVERSE_STORE_ABI_REFERENCE_TEST_BIN): private CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1 -DCETTA_RUNTIME_STATS_IMPL=1 -DCETTA_DISC_INT_HASH_REFERENCE=1
-$(TERM_UNIVERSE_STORE_ABI_REFERENCE_TEST_BIN): tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c $(SHARED_TRANSITION_STANDALONE_SRC) $(PARSER_STANDALONE_SRC) src/cetta_stdlib.c $(BUILD_CONFIG_HEADER)
+$(TERM_UNIVERSE_STORE_ABI_REFERENCE_TEST_BIN): tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c src/registered_symbols.c $(SHARED_TRANSITION_STANDALONE_SRC) $(PARSER_STANDALONE_SRC) src/cetta_stdlib.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c $(SHARED_TRANSITION_STANDALONE_SRC) $(PARSER_STANDALONE_SRC) src/cetta_stdlib.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c src/registered_symbols.c $(SHARED_TRANSITION_STANDALONE_SRC) $(PARSER_STANDALONE_SRC) src/cetta_stdlib.c $(LDFLAGS)
 
 test-term-universe-store-abi: $(TERM_UNIVERSE_STORE_ABI_TEST_BIN) $(TERM_UNIVERSE_STORE_ABI_REFERENCE_TEST_BIN)
 	@$(call cetta_exec,./$(TERM_UNIVERSE_STORE_ABI_TEST_BIN))
 	@$(call cetta_exec,./$(TERM_UNIVERSE_STORE_ABI_REFERENCE_TEST_BIN))
 
 $(TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN): private CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1 -DCETTA_RUNTIME_STATS_IMPL=1
-$(TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN): tests/test_term_universe_backend_add_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c $(SHARED_TRANSITION_STANDALONE_SRC) src/space_match_backend.c $(PARSER_STANDALONE_SRC) $(BUILD_CONFIG_HEADER)
+$(TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN): tests/test_term_universe_backend_add_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c src/registered_symbols.c $(SHARED_TRANSITION_STANDALONE_SRC) src/space_match_backend.c $(PARSER_STANDALONE_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_backend_add_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c $(SHARED_TRANSITION_STANDALONE_SRC) src/space_match_backend.c $(PARSER_STANDALONE_SRC) $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_backend_add_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c src/registered_symbols.c $(SHARED_TRANSITION_STANDALONE_SRC) src/space_match_backend.c $(PARSER_STANDALONE_SRC) $(LDFLAGS)
 
 test-term-universe-backend-add-abi: $(TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN)
 	@$(call cetta_exec,./$(TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN))
 
 $(LET_BRANCH_ARENA_RESET_NO_ESCAPE_TEST_BIN): private CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1 -DCETTA_RUNTIME_STATS_IMPL=1
-$(LET_BRANCH_ARENA_RESET_NO_ESCAPE_TEST_BIN): tests/test_let_branch_arena_reset_no_escape.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c $(SHARED_TRANSITION_STANDALONE_SRC) $(PARSER_STANDALONE_SRC) $(BUILD_CONFIG_HEADER)
+$(LET_BRANCH_ARENA_RESET_NO_ESCAPE_TEST_BIN): tests/test_let_branch_arena_reset_no_escape.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c src/registered_symbols.c $(SHARED_TRANSITION_STANDALONE_SRC) $(PARSER_STANDALONE_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_let_branch_arena_reset_no_escape.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c $(SHARED_TRANSITION_STANDALONE_SRC) $(PARSER_STANDALONE_SRC) $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_let_branch_arena_reset_no_escape.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c src/registered_symbols.c $(SHARED_TRANSITION_STANDALONE_SRC) $(PARSER_STANDALONE_SRC) $(LDFLAGS)
 
 test-let-branch-arena-reset-no-escape: $(LET_BRANCH_ARENA_RESET_NO_ESCAPE_TEST_BIN)
 	@$(call cetta_exec,./$(LET_BRANCH_ARENA_RESET_NO_ESCAPE_TEST_BIN))
 
-$(PATHMAP_BACKEND_PRIMARY_DESTRUCTIVE_ABI_TEST_BIN): tests/test_pathmap_backend_primary_destructive_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c $(SHARED_TRANSITION_STANDALONE_SRC) src/space_match_backend.c $(PARSER_STANDALONE_SRC) src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+$(PATHMAP_BACKEND_PRIMARY_DESTRUCTIVE_ABI_TEST_BIN): tests/test_pathmap_backend_primary_destructive_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c src/registered_symbols.c $(SHARED_TRANSITION_STANDALONE_SRC) src/space_match_backend.c $(PARSER_STANDALONE_SRC) src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_backend_primary_destructive_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c $(SHARED_TRANSITION_STANDALONE_SRC) src/space_match_backend.c $(PARSER_STANDALONE_SRC) src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_backend_primary_destructive_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c src/registered_symbols.c $(SHARED_TRANSITION_STANDALONE_SRC) src/space_match_backend.c $(PARSER_STANDALONE_SRC) src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
 
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
 test-pathmap-backend-primary-destructive-abi: $(PATHMAP_BACKEND_PRIMARY_DESTRUCTIVE_ABI_TEST_BIN)
@@ -5130,7 +5278,7 @@ ifeq ($(ENABLE_PATHMAP_SPACE),1)
 			src/subst_tree.c src/term_canon.c src/variant_shape.c \
 			src/variant_instance.c src/term_universe.c \
 			$(GROUNDED_STANDALONE_SRC) src/native_sha256.c \
-			src/search_machine.c src/space.c \
+			src/search_machine.c src/space.c src/registered_symbols.c \
 			$(SHARED_TRANSITION_STANDALONE_SRC) \
 			"$$mutation_dir/space_match_backend.c" \
 			$(PARSER_STANDALONE_SRC) src/mm2_lower.c \
@@ -5181,9 +5329,9 @@ else
 endif
 .PHONY: test-pathmap-streaming-d4-mutation
 
-$(PATHMAP_BACKEND_PRIMARY_REPLACE_ABI_TEST_BIN): tests/test_pathmap_backend_primary_replace_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c $(SHARED_TRANSITION_STANDALONE_SRC) src/space_match_backend.c $(PARSER_STANDALONE_SRC) src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+$(PATHMAP_BACKEND_PRIMARY_REPLACE_ABI_TEST_BIN): tests/test_pathmap_backend_primary_replace_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c src/registered_symbols.c $(SHARED_TRANSITION_STANDALONE_SRC) src/space_match_backend.c $(PARSER_STANDALONE_SRC) src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_backend_primary_replace_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c $(SHARED_TRANSITION_STANDALONE_SRC) src/space_match_backend.c $(PARSER_STANDALONE_SRC) src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_backend_primary_replace_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c src/registered_symbols.c $(SHARED_TRANSITION_STANDALONE_SRC) src/space_match_backend.c $(PARSER_STANDALONE_SRC) src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
 
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
 test-pathmap-backend-primary-replace-abi: $(PATHMAP_BACKEND_PRIMARY_REPLACE_ABI_TEST_BIN)
@@ -5193,9 +5341,9 @@ test-pathmap-backend-primary-replace-abi:
 	$(call reexec_pathmap_bridge_or_skip,pathmap backend-primary replace ABI,$@)
 endif
 
-$(PATHMAP_TYPED_QUERY_ABI_TEST_BIN): tests/test_pathmap_typed_query_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c $(SHARED_TRANSITION_STANDALONE_SRC) src/space_match_backend.c $(PARSER_STANDALONE_SRC) src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+$(PATHMAP_TYPED_QUERY_ABI_TEST_BIN): tests/test_pathmap_typed_query_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c src/registered_symbols.c $(SHARED_TRANSITION_STANDALONE_SRC) src/space_match_backend.c $(PARSER_STANDALONE_SRC) src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_typed_query_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c $(SHARED_TRANSITION_STANDALONE_SRC) src/space_match_backend.c $(PARSER_STANDALONE_SRC) src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_typed_query_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c src/registered_symbols.c $(SHARED_TRANSITION_STANDALONE_SRC) src/space_match_backend.c $(PARSER_STANDALONE_SRC) src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
 
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
 test-pathmap-typed-query-abi: $(PATHMAP_TYPED_QUERY_ABI_TEST_BIN)
@@ -5206,9 +5354,9 @@ test-pathmap-typed-query-abi:
 endif
 
 $(PATHMAP_SEMI_NAIVE_ABI_TEST_BIN): private CPPFLAGS += -DCETTA_RUNTIME_STATS_IMPL=1
-$(PATHMAP_SEMI_NAIVE_ABI_TEST_BIN): tests/test_pathmap_semi_naive_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c $(SHARED_TRANSITION_STANDALONE_SRC) src/space_match_backend.c $(PARSER_STANDALONE_SRC) src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
+$(PATHMAP_SEMI_NAIVE_ABI_TEST_BIN): tests/test_pathmap_semi_naive_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c src/registered_symbols.c $(SHARED_TRANSITION_STANDALONE_SRC) src/space_match_backend.c $(PARSER_STANDALONE_SRC) src/mm2_lower.c src/mork_space_bridge_runtime.c $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_semi_naive_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c $(SHARED_TRANSITION_STANDALONE_SRC) src/space_match_backend.c $(PARSER_STANDALONE_SRC) src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_semi_naive_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c src/registered_symbols.c $(SHARED_TRANSITION_STANDALONE_SRC) src/space_match_backend.c $(PARSER_STANDALONE_SRC) src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
 
 .PHONY: test-pathmap-semi-naive-abi
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
@@ -9864,7 +10012,7 @@ test-metamath-cogslt-diagnostic-binary-v1:
 .PHONY: build-cogslt-relational-state-transition-core-tools-v1
 build-cogslt-relational-state-transition-core-tools-v1:
 	@$(MAKE) -s --no-print-directory BUILD=core ENABLE_LIB_PROLOG=0 \
-		ENABLE_JSON_GSLT=0 \
+		ENABLE_JSON_GSLT=0 ENABLE_MANAGED_SYMBOLS=0 \
 		$(RELATIONAL_STATE_TRANSITION_CHART_CORE_V1) \
 		$(RELATIONAL_STATE_TRANSITION_LANGDEF_CORE_V1) \
 		$(RELATIONAL_STATE_TRANSITION_MUTATOR_CORE_V1)
@@ -24126,7 +24274,7 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		$(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c \
 		src/variant_shape.c src/variant_instance.c \
 		"$$mutation_dir/term_universe.c" $(GROUNDED_STANDALONE_SRC) \
-		src/native_sha256.c src/search_machine.c src/space.c \
+		src/native_sha256.c src/search_machine.c src/space.c src/registered_symbols.c \
 		$(SHARED_TRANSITION_STANDALONE_SRC) \
 		$(PARSER_STANDALONE_SRC) src/cetta_stdlib.c $(LDFLAGS); \
 	if "$$mutation_dir/test-source-memo-ignore-arena-reset" \
@@ -32610,11 +32758,13 @@ $(GSLT_RIGID_COORDINATE_DISPATCH_V1_TEST_OBJ): \
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) \
 		-c -o $@ $(GSLT_RIGID_COORDINATE_DISPATCH_V1_TEST_SRC)
 
+GSLT_RIGID_MANAGED_SUPPORT = $(if $(filter 1,$(ENABLE_MANAGED_SYMBOLS)),src/atom.c src/symbol.c src/binding/frame_identity.c,)
 $(GSLT_RIGID_COORDINATE_DISPATCH_V1_TEST_BIN): \
 		$(GSLT_RIGID_COORDINATE_DISPATCH_V1_TEST_OBJ) \
-		$(GSLT_RIGID_COORDINATE_DISPATCH_V1_OBJ)
+		$(GSLT_RIGID_COORDINATE_DISPATCH_V1_OBJ) $(GSLT_RIGID_MANAGED_SUPPORT)
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
+		-Wl,--gc-sections -o $@ $^ -pthread
 
 .PHONY: test-gslt-rigid-coordinate-dispatch-v1
 test-gslt-rigid-coordinate-dispatch-v1: \
@@ -42031,3 +42181,43 @@ test-supervise:
 endif
 
 test: test-supervise
+
+.PHONY: test-registered-symbols
+REGISTERED_SYMBOL_TEST_BIN = runtime/test-registered-symbols-$(BUILD_OBJ_TAG)
+$(REGISTERED_SYMBOL_TEST_BIN): src/registered_symbols.c src/registered_symbols.h src/registered_symbol_owner.c src/registered_symbol_owner.h tests/test_registered_symbols.c src/atom.c src/symbol.c src/binding/frame_identity.c
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -pthread -DCETTA_TEST_HOOKS -Isrc src/registered_symbols.c src/registered_symbol_owner.c src/atom.c src/symbol.c src/binding/frame_identity.c tests/test_registered_symbols.c -lm -o $@
+test-registered-symbols: $(REGISTERED_SYMBOL_TEST_BIN)
+	./$(REGISTERED_SYMBOL_TEST_BIN)
+
+REGISTERED_REGISTRY_TEST_OBJ = runtime/bootstrap/test_registered_registry.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+REGISTERED_REGISTRY_TEST_BIN = runtime/test_registered_registry-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+$(REGISTERED_REGISTRY_TEST_OBJ): tests/test_registered_registry.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime/bootstrap
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+$(REGISTERED_REGISTRY_TEST_BIN): $(REGISTERED_REGISTRY_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $(REGISTERED_REGISTRY_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+.PHONY: test-registered-registry
+test-registered-registry: $(REGISTERED_REGISTRY_TEST_BIN)
+	./$(REGISTERED_REGISTRY_TEST_BIN)
+
+.PHONY: test-registered-symbol-names
+test-registered-symbol-names: $(BIN)
+	@set -eu; \
+	if [ "$(LIB_PROLOG_ENABLED)" != 1 ]; then \
+		echo "SKIP: registered name fixture needs the Prolog build"; exit 0; \
+	fi; \
+	work=$$(mktemp -d runtime/registered-symbol-names.XXXXXX); \
+	trap 'rm -rf "$$work"' EXIT INT TERM; \
+	for route in 0 1; do \
+		CETTA_OPEN_EQUATIONS_REFERENCE=$$route $(CETTA_BIN_INVOKE) --lang petta \
+			tests/petta/registered_symbol_names.metta > "$$work/actual" 2> "$$work/error"; \
+		diff -u tests/petta/registered_symbol_names.expected "$$work/actual"; \
+		test ! -s "$$work/error"; \
+	done; \
+	echo "PASS: runtime registry names, workers, transactions and late callables on both routes"
+
+test: test-registered-symbols test-registered-symbol-names
+ifeq ($(ENABLE_MANAGED_SYMBOLS),1)
+test: test-registered-registry
+endif

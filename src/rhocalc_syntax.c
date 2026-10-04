@@ -1065,7 +1065,7 @@ static Atom *rho_elab_atom(RhoElaborator *elab, Atom *atom) {
     if (!atom) return NULL;
     switch (atom->kind) {
     case ATOM_VAR: {
-        Atom *bound = rho_elab_lookup(elab, atom->sym_id, atom->var_id);
+        Atom *bound = rho_elab_lookup(elab, atom_symbol_current_id(atom), atom->var_id);
         return bound ? bound : atom;
     }
     case ATOM_EXPR:
@@ -1103,9 +1103,9 @@ static Atom *rho_elab_atom(RhoElaborator *elab, Atom *atom) {
             if (elems[2]->kind == ATOM_VAR) {
                 VarId source_var_id = elems[2]->var_id;
                 elems[2] = atom_var_with_spelling(elab->arena,
-                                                  elems[2]->sym_id,
+                                                  atom_symbol_current_id(elems[2]),
                                                   fresh_var_id());
-                if (!rho_elab_push(elab, elems[2]->sym_id,
+                if (!rho_elab_push(elab, atom_symbol_current_id(elems[2]),
                                    source_var_id, elems[2])) {
                     return atom;
                 }
@@ -1302,7 +1302,7 @@ static void rho_print_collect_free(RhoPrintCtx *ctx, Atom *atom,
     if (!atom || ctx->failed) return;
     if (atom->kind == ATOM_VAR) {
         if (!rho_id_stack_contains(bound, atom->var_id)) {
-            rho_print_free_add(ctx, atom->sym_id);
+            rho_print_free_add(ctx, atom_symbol_current_id(atom));
         }
         return;
     }

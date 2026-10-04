@@ -2732,21 +2732,21 @@ int main(void) {
     assert(coordinate_existence_applicable);
     Atom *seen_arguments[1] = {seen_alpha};
     assert(term_universe_lookup_symbol_application(
-               &universe, seen_head->sym_id, seen_arguments, 1u) == seen_id);
+               &universe, atom_symbol_current_id(seen_head), seen_arguments, 1u) == seen_id);
     assert(space_contains_exact_symbol_application(
-        &hash_space, seen_head->sym_id, seen_arguments, 1u,
+        &hash_space, atom_symbol_current_id(seen_head), seen_arguments, 1u,
         &coordinate_existence_applicable));
     assert(coordinate_existence_applicable);
     Atom *missing_seen_arguments[1] = {missing_seen_coordinates[1]};
     assert(!space_contains_exact_symbol_application(
-        &hash_space, seen_head->sym_id, missing_seen_arguments, 1u,
+        &hash_space, atom_symbol_current_id(seen_head), missing_seen_arguments, 1u,
         &coordinate_existence_applicable));
     assert(coordinate_existence_applicable);
     Atom *open_seen_arguments[1] = {
         atom_var(&scratch, "$open-seen-argument"),
     };
     assert(!space_contains_exact_symbol_application(
-        &hash_space, seen_head->sym_id, open_seen_arguments, 1u,
+        &hash_space, atom_symbol_current_id(seen_head), open_seen_arguments, 1u,
         &coordinate_existence_applicable));
     assert(!coordinate_existence_applicable);
     assert(!space_match_exists_ground_exact_expression_coordinates(

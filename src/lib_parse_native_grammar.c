@@ -33,7 +33,8 @@ static bool atom_expr_head_is(Atom *atom, const char *name) {
 static bool atom_to_symbol_id(Atom *atom, SymbolId *out) {
     if (!atom || !out || atom->kind != ATOM_SYMBOL)
         return false;
-    *out = atom->sym_id;
+    /* These labels become fields of the compiled grammar, not copied data. */
+    *out = atom_symbol_register_id(atom);
     return true;
 }
 
@@ -2398,7 +2399,7 @@ static bool parse_input_token(Atom *atom,
     }
     if (atom->kind == ATOM_SYMBOL) {
         out->token_atom = atom;
-        out->term_kind = atom->sym_id;
+        out->term_kind = atom_symbol_register_id(atom);
         return true;
     }
     if (atom_expr_head_is(atom, "Lex") &&
@@ -2406,7 +2407,7 @@ static bool parse_input_token(Atom *atom,
         atom->expr.elems[1] &&
         atom->expr.elems[1]->kind == ATOM_SYMBOL) {
         out->token_atom = atom;
-        out->term_kind = atom->expr.elems[1]->sym_id;
+        out->term_kind = atom_symbol_register_id(atom->expr.elems[1]);
         return true;
     }
     slr_summary_set_error(error_buf, error_buf_size,
@@ -2542,7 +2543,7 @@ static bool input_tokens_from_file(Arena *arena,
                 goto fail;
             }
             tok = atom_symbol(arena, cursor);
-            if (!input_tokenvec_push(out, NULL, tok->sym_id, out->len)) {
+            if (!input_tokenvec_push(out, NULL, atom_symbol_current_id(tok), out->len)) {
                 slr_summary_set_error(error_buf, error_buf_size,
                                       "failed to store sym token-file line %u", line_no);
                 free(line);
@@ -2561,7 +2562,7 @@ static bool input_tokens_from_file(Arena *arena,
                 goto fail;
             }
             klass_atom = atom_symbol(arena, klass);
-            if (!input_tokenvec_push(out, NULL, klass_atom->sym_id, out->len)) {
+            if (!input_tokenvec_push(out, NULL, atom_symbol_current_id(klass_atom), out->len)) {
                 slr_summary_set_error(error_buf, error_buf_size,
                                       "failed to store lex token-file line %u", line_no);
                 free(line);

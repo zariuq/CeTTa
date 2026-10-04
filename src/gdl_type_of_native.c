@@ -3127,8 +3127,7 @@ CettaGdlTypeOfNativeAdmissionV1 cetta_gdl_type_of_native_admit_v1(
         !gdl_native_string(profile_field->expr.elems[1], &profile_sha256) ||
         !gdl_native_expr_named(revision_field, "revision", 2u) ||
         revision_field->expr.elems[1]->kind != ATOM_SYMBOL ||
-        !(revision = symbol_bytes(
-              g_symbols, revision_field->expr.elems[1]->sym_id)) ||
+        !(revision = atom_symbol_bytes(revision_field->expr.elems[1])) ||
         !gdl_native_expr_named(presentation_field, "presentation", 2u) ||
         !gdl_native_expr_head(rules_field, "rules", 2u) ||
         !gdl_native_expr_named(program->expr.elems[6], "rule-package", 2u) ||

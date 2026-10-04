@@ -882,7 +882,9 @@ static DiscNode *disc_get_int(DiscPool *pool, DiscNode *n, int64_t val) {
 /* Insert: walk LHS depth-first, creating trie path */
 static DiscNode *disc_insert_atom(DiscPool *pool, DiscNode *node, Atom *a) {
     switch (a->kind) {
-    case ATOM_SYMBOL: return disc_get_sym(pool, node, a->sym_id);
+    case ATOM_SYMBOL:
+        return atom_symbol_is_spelled(a) ? disc_get_var(pool, node)
+            : disc_get_sym(pool, node, atom_symbol_current_id(a));
     case ATOM_VAR:    return disc_get_var(pool, node);
     case ATOM_GROUNDED:
         if (a->ground.gkind == GV_INT)
@@ -1224,7 +1226,7 @@ static void disc_step(DiscNode *node, Atom *q, DiscNodeSet *next) {
     if (!node) return;
     switch (q->kind) {
     case ATOM_SYMBOL:
-        dns_push(next, disc_find_symbol_branch(node, q->sym_id));
+        dns_push(next, disc_find_symbol_branch(node, atom_symbol_current_id(q)));
         /* A variable in the indexed LHS matches any query symbol */
         dns_push(next, disc_find_variable_branch(node));
         break;
@@ -1880,7 +1882,7 @@ static bool disc_follow_rigid_exact_path(
     switch (query->kind) {
     case ATOM_SYMBOL:
         *out_continuation = disc_find_symbol_branch(
-            node, query->sym_id);
+            node, atom_symbol_current_id(query));
         return true;
     case ATOM_VAR:
         return false;
@@ -2153,7 +2155,7 @@ bool disc_project_flat_bound_column(
         if (disc_find_variable_branch(node))
             return false;
         if (ground->kind == ATOM_SYMBOL)
-            node = disc_find_symbol_branch(node, ground->sym_id);
+            node = disc_find_symbol_branch(node, atom_symbol_current_id(ground));
         else if (ground->kind == ATOM_GROUNDED &&
                  ground->ground.gkind == GV_INT)
             node = disc_find_integer_branch(node, ground->ground.ival);
@@ -2209,7 +2211,7 @@ bool disc_count_flat_bound_vars(
         if (disc_find_variable_branch(node))
             return false;
         if (ground->kind == ATOM_SYMBOL)
-            node = disc_find_symbol_branch(node, ground->sym_id);
+            node = disc_find_symbol_branch(node, atom_symbol_current_id(ground));
         else if (ground->kind == ATOM_GROUNDED &&
                  ground->ground.gkind == GV_INT)
             node = disc_find_integer_branch(node, ground->ground.ival);
@@ -2260,7 +2262,7 @@ bool disc_count_flat_trailing_wildcards(
             return false;
         const Atom *item = pattern->expr.elems[index];
         if (item->kind == ATOM_SYMBOL)
-            node = disc_find_symbol_branch(node, item->sym_id);
+            node = disc_find_symbol_branch(node, atom_symbol_current_id(item));
         else
             node = disc_find_integer_branch(node, item->ground.ival);
         if (!node)
@@ -2458,10 +2460,10 @@ static bool atom_id_is_eq_subst_safe(const Space *s, AtomId atom_id) {
 /* Get the head symbol of an equation LHS for indexing.
    Returns NULL if the head is not a symbol (variable, complex expr). */
 static SymbolId eq_head_symbol(Atom *lhs) {
-    if (lhs->kind == ATOM_SYMBOL) return lhs->sym_id;
+    if (lhs->kind == ATOM_SYMBOL) return atom_symbol_current_id(lhs);
     if (lhs->kind == ATOM_EXPR && lhs->expr.len > 0 &&
         lhs->expr.elems[0]->kind == ATOM_SYMBOL)
-        return lhs->expr.elems[0]->sym_id;
+        return atom_symbol_current_id(lhs->expr.elems[0]);
     return SYMBOL_ID_NONE;
 }
 
@@ -2643,9 +2645,9 @@ static void ty_ann_bucket_free(TypeAnnBucket *b) {
 
 static uint32_t atom_hash_for_index(Atom *a) {
     /* Hash by name for symbols, or by first element for expressions */
-    if (a->kind == ATOM_SYMBOL) return symbol_hash(a->sym_id);
+    if (a->kind == ATOM_SYMBOL) return symbol_hash(atom_symbol_current_id(a));
     if (a->kind == ATOM_EXPR && a->expr.len > 0 && a->expr.elems[0]->kind == ATOM_SYMBOL)
-        return symbol_hash(a->expr.elems[0]->sym_id);
+        return symbol_hash(atom_symbol_current_id(a->expr.elems[0]));
     return 0;
 }
 
@@ -5025,26 +5027,26 @@ static bool space_effect_scan_rhs(
                 CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD;
         } else {
             has_control = space_generated_fold_control(
-                head->sym_id, current->expr.len - 1u, &control);
-            bool grounded = is_grounded_op(head->sym_id);
-            bool builtin = symbol_id_is_builtin(head->sym_id);
+                atom_symbol_current_id(head), current->expr.len - 1u, &control);
+            bool grounded = is_grounded_op(atom_symbol_current_id(head));
+            bool builtin = symbol_id_is_builtin(atom_symbol_current_id(head));
             bool defined = space_equations_may_match_known_head(
-                graph->space, head->sym_id);
+                graph->space, atom_symbol_current_id(head));
             CettaGsltQueryEffect direct =
-                space_generated_query_head_effect(head->sym_id);
+                space_generated_query_head_effect(atom_symbol_current_id(head));
             graph->nodes[node_index].base_effect =
                 cetta_gslt_query_effect_join(
                     graph->nodes[node_index].base_effect, direct);
             if (direct == CETTA_GSLT_QUERY_EFFECT_PURE &&
                 !grounded && defined &&
                 !space_effect_node_add_dependency(
-                    graph, node_index, head->sym_id)) {
+                    graph, node_index, atom_symbol_current_id(head))) {
                 if (stack != inline_stack)
                     free(stack);
                 return false;
             }
             if (cetta_gslt_query_effect_children_opaque(
-                    head->sym_id, &g_builtin_syms)) {
+                    atom_symbol_current_id(head), &g_builtin_syms)) {
                 continue;
             }
             if (CETTA_GSLT_INERT_EXPRESSION_CHILDREN_OPAQUE &&
@@ -5508,6 +5510,22 @@ static bool space_defer_incremental_secondary_indices(const Space *s) {
 }
 
 static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
+#if CETTA_MANAGED_SYMBOLS
+    /* Equations and arrow declarations introduce callable identities. Ordinary
+     * facts only retain their values; they do not register their spellings. */
+    Atom *decl = backend_atom;
+    if (!decl && s && s->native.universe && atom_id != CETTA_ATOM_ID_NONE)
+        decl = term_universe_get_atom(s->native.universe, atom_id);
+    if (decl && decl->kind == ATOM_EXPR && decl->expr.len == 3u &&
+        (atom_is_symbol_id(decl->expr.elems[0], g_builtin_syms.equals) ||
+         atom_is_symbol_id(decl->expr.elems[0], g_builtin_syms.colon))) {
+        Atom *subject = decl->expr.elems[1];
+        Atom *name = subject->kind == ATOM_EXPR && subject->expr.len
+            ? subject->expr.elems[0] : subject;
+        if (name && name->kind == ATOM_SYMBOL)
+            (void)atom_symbol_register_id(name);
+    }
+#endif
     bool queue_gap = space_is_queue(s) && s->native.start != 0;
     bool backend_needs_atom =
         !queue_gap && space_match_backend_needs_atom_on_add(s, atom_id);
@@ -6115,7 +6133,7 @@ static bool query_visible_var_set_add(QueryVisibleVarSet *set, Atom *var) {
     if (!query_visible_var_set_reserve(set, set->len + 1))
         return false;
     set->items[set->len].var_id = var->var_id;
-    set->items[set->len].spelling = var->sym_id;
+    set->items[set->len].spelling = atom_symbol_current_id(var);
     set->items[set->len].name_key = var->name_key;
     set->len++;
     return true;
@@ -6294,6 +6312,7 @@ static bool project_query_visible_bindings(Arena *a,
 void registry_init(Registry *r) {
     if (!r) return;
     r->states = NULL;
+    r->text_keys = NULL;
     r->entries = r->inline_entries;
     r->len = 0;
     r->cap = (uint32_t)(sizeof(r->inline_entries) /
@@ -6310,6 +6329,12 @@ static void registry_states_free(struct RegistryStates *states);
 void registry_free(Registry *r) {
     if (!r) return;
     registry_states_free(r->states);
+    for (uint32_t i = 0; i < r->len; i++)
+        if (r->entries[i].text_key.hold.token &&
+            !registered_symbol_borrow_end(r->text_keys, &r->entries[i].text_key))
+            abort();
+    if (!registered_symbols_destroy(r->text_keys)) abort();
+    r->text_keys = NULL;
     r->states = NULL;
     if (r->entries && r->entries != r->inline_entries)
         free(r->entries);
@@ -6327,10 +6352,11 @@ void registry_free(Registry *r) {
     memset(r->inline_index_slots, 0, sizeof(r->inline_index_slots));
 }
 
-static uint32_t registry_index_hash(SymbolId key, NameId name_id) {
+static uint32_t registry_index_hash(SymbolId key, NameId name_id, uint64_t text_token) {
     uint32_t x = key != SYMBOL_ID_NONE
         ? ((uint32_t)key ^ UINT32_C(0x243f6a88))
         : ((uint32_t)name_id ^ UINT32_C(0x9e3779b9));
+    if (text_token) x ^= (uint32_t)text_token ^ (uint32_t)(text_token >> 32);
     x ^= x >> 16;
     x *= UINT32_C(0x7feb352d);
     x ^= x >> 15;
@@ -6340,22 +6366,23 @@ static uint32_t registry_index_hash(SymbolId key, NameId name_id) {
 }
 
 static bool registry_entry_matches(const RegistryEntry *entry,
-                                   SymbolId key, NameId name_id) {
-    return entry && entry->key == key && entry->name_id == name_id;
+                                   SymbolId key, NameId name_id, uint64_t text_token) {
+    return entry && entry->key == key && entry->name_id == name_id &&
+           entry->text_key.hold.token == text_token;
 }
 
 static uint32_t registry_index_find(const Registry *r, SymbolId key,
-                                    NameId name_id) {
+                                    NameId name_id, uint64_t text_token) {
     if (!r || !r->index_slots || r->index_cap == 0u)
         return UINT32_MAX;
     uint32_t mask = r->index_cap - 1u;
-    uint32_t slot = registry_index_hash(key, name_id) & mask;
+    uint32_t slot = registry_index_hash(key, name_id, text_token) & mask;
     for (uint32_t probes = 0u; probes < r->index_cap; probes++) {
         uint32_t encoded = r->index_slots[slot];
         if (encoded == 0u) return UINT32_MAX;
         uint32_t index = encoded - 1u;
         if (index < r->len &&
-            registry_entry_matches(&r->entries[index], key, name_id))
+            registry_entry_matches(&r->entries[index], key, name_id, text_token))
             return index;
         slot = (slot + 1u) & mask;
     }
@@ -6365,7 +6392,7 @@ static uint32_t registry_index_find(const Registry *r, SymbolId key,
 static void registry_index_insert(Registry *r, uint32_t entry_index) {
     RegistryEntry *entry = &r->entries[entry_index];
     uint32_t mask = r->index_cap - 1u;
-    uint32_t slot = registry_index_hash(entry->key, entry->name_id) & mask;
+    uint32_t slot = registry_index_hash(entry->key, entry->name_id, entry->text_key.hold.token) & mask;
     while (r->index_slots[slot] != 0u)
         slot = (slot + 1u) & mask;
     r->index_slots[slot] = entry_index + 1u;
@@ -6424,9 +6451,35 @@ static bool registry_ensure_capacity(Registry *r, uint32_t min_needed) {
     return true;
 }
 
+static uint32_t registry_text_index(const Registry *r,
+                                      const uint8_t *bytes, uint32_t length) {
+    if (!r || !r->text_keys) return UINT32_MAX;
+    RegisteredSymbol handle;
+    if (!registered_symbol_find(r->text_keys, bytes, length, &handle))
+        return UINT32_MAX;
+    uint32_t index = registry_index_find(r, SYMBOL_ID_NONE, NAME_ID_NONE, handle.token);
+    if (!registered_symbol_release(r->text_keys, &handle)) abort();
+    return index;
+}
+
+static uint32_t registry_symbol_index(const Registry *r, const Atom *name) {
+    if (!r || !name || name->kind != ATOM_SYMBOL) return UINT32_MAX;
+    SymbolId key = atom_symbol_current_id(name);
+    uint32_t index = key == SYMBOL_ID_NONE ? UINT32_MAX
+        : registry_index_find(r, key, NAME_ID_NONE, 0);
+    if (index == UINT32_MAX)
+        index = registry_text_index(r, (const uint8_t *)atom_symbol_bytes(name),
+                                       atom_symbol_length(name));
+    return index;
+}
+
 void registry_bind_id(Registry *r, SymbolId key, Atom *value) {
     if (!r || key == SYMBOL_ID_NONE) return;
-    uint32_t existing = registry_index_find(r, key, NAME_ID_NONE);
+    (void)symbol_pin(g_symbols, key);
+    uint32_t existing = registry_index_find(r, key, NAME_ID_NONE, 0);
+    if (existing == UINT32_MAX)
+        existing = registry_text_index(r, (const uint8_t *)symbol_bytes(g_symbols, key),
+                                          symbol_len(g_symbols, key));
     if (existing != UINT32_MAX) {
         r->entries[existing].value = value;
         return;
@@ -6434,6 +6487,7 @@ void registry_bind_id(Registry *r, SymbolId key, Atom *value) {
     if (!registry_ensure_capacity(r, r->len + 1u) ||
         !registry_index_ensure_capacity(r, r->len + 1u))
         return;
+    r->entries[r->len] = (RegistryEntry){0};
     r->entries[r->len].key = key;
     r->entries[r->len].name_id = NAME_ID_NONE;
     r->entries[r->len].value = value;
@@ -6443,8 +6497,129 @@ void registry_bind_id(Registry *r, SymbolId key, Atom *value) {
 
 Atom *registry_lookup_id(Registry *r, SymbolId key) {
     if (!r || key == SYMBOL_ID_NONE) return NULL;
-    uint32_t index = registry_index_find(r, key, NAME_ID_NONE);
+    uint32_t index = registry_index_find(r, key, NAME_ID_NONE, 0);
+    if (index == UINT32_MAX)
+        index = registry_text_index(r, (const uint8_t *)symbol_bytes(g_symbols, key),
+                                       symbol_len(g_symbols, key));
     return index == UINT32_MAX ? NULL : r->entries[index].value;
+}
+
+static bool registry_bind_text(Registry *r, const uint8_t *bytes,
+                               uint32_t length, Atom *value) {
+    uint32_t index = registry_text_index(r, bytes, length);
+    if (index != UINT32_MAX) {
+        r->entries[index].value = value;
+        return true;
+    }
+    if (r->len == UINT32_MAX || !registry_ensure_capacity(r, r->len + 1u) ||
+        !registry_index_ensure_capacity(r, r->len + 1u)) return false;
+    if (!r->text_keys) r->text_keys = registered_symbols_new();
+    if (!r->text_keys) return false;
+    RegisteredSymbol handle;
+    if (!registered_symbol_acquire(r->text_keys, bytes, length, &handle)) return false;
+    RegisteredSymbolBorrow borrow;
+    bool ok = registered_symbol_borrow(r->text_keys, handle, &borrow);
+    if (!registered_symbol_release(r->text_keys, &handle)) abort();
+    if (!ok) return false;
+    r->entries[r->len] = (RegistryEntry){.text_key = borrow, .value = value};
+    registry_index_insert(r, r->len++);
+    return true;
+}
+
+bool registry_bind_symbol(Registry *r, const Atom *name, Atom *value) {
+    if (!r || !name || name->kind != ATOM_SYMBOL) return false;
+    uint32_t index = registry_symbol_index(r, name);
+    if (index != UINT32_MAX) {
+        r->entries[index].value = value;
+        return true;
+    }
+    SymbolId id = atom_symbol_current_id(name);
+    if (id != SYMBOL_ID_NONE) {
+        registry_bind_id(r, id, value);
+        return registry_lookup_id(r, id) == value;
+    }
+    return registry_bind_text(r, (const uint8_t *)atom_symbol_bytes(name),
+                              atom_symbol_length(name), value);
+}
+
+Atom *registry_lookup_symbol(const Registry *r, const Atom *name) {
+    uint32_t index = registry_symbol_index(r, name);
+    return index == UINT32_MAX ? NULL : r->entries[index].value;
+}
+
+static void registry_shrink_after_remove(Registry *r) {
+    const uint32_t min_entries = sizeof(r->inline_entries) / sizeof(*r->entries);
+    const uint32_t min_index = sizeof(r->inline_index_slots) / sizeof(*r->index_slots);
+    if (r->cap > min_entries && r->len <= r->cap / 4) {
+        uint32_t capacity = r->cap / 2;
+        if (capacity < min_entries) capacity = min_entries;
+        RegistryEntry *entries = capacity == min_entries ? r->inline_entries
+            : malloc((size_t)capacity * sizeof(*entries));
+        if (entries) {
+            memcpy(entries, r->entries, (size_t)r->len * sizeof(*entries));
+            free(r->entries);
+            r->entries = entries;
+            r->cap = capacity;
+        }
+    }
+    if (r->index_cap > min_index && r->len <= r->index_cap / 4) {
+        uint32_t capacity = r->index_cap / 2;
+        if (capacity < min_index) capacity = min_index;
+        uint32_t *slots = capacity == min_index ? r->inline_index_slots
+            : malloc((size_t)capacity * sizeof(*slots));
+        if (slots) {
+            free(r->index_slots);
+            r->index_slots = slots;
+            r->index_cap = capacity;
+        }
+    }
+    /* Rebuild after ordered deletion, including when optional shrinking
+       could not allocate. No indexed entry may refer to an old position. */
+    memset(r->index_slots, 0, (size_t)r->index_cap * sizeof(*r->index_slots));
+    for (uint32_t i = 0; i < r->len; i++) registry_index_insert(r, i);
+}
+
+bool registry_unbind_symbol(Registry *r, const Atom *name) {
+    uint32_t index = registry_symbol_index(r, name);
+    if (index == UINT32_MAX) return false;
+    if (r->entries[index].text_key.hold.token &&
+        !registered_symbol_borrow_end(r->text_keys, &r->entries[index].text_key)) abort();
+    memmove(r->entries + index, r->entries + index + 1,
+            (size_t)(r->len - index - 1) * sizeof(*r->entries));
+    r->len--;
+    registry_shrink_after_remove(r);
+    return true;
+}
+
+Atom *registry_entry_symbol(const Registry *r, uint32_t index, Arena *owner) {
+    if (!r || index >= r->len || !owner) return NULL;
+    const RegistryEntry *entry = &r->entries[index];
+    if (entry->key != SYMBOL_ID_NONE) return atom_symbol_id(owner, entry->key);
+    return entry->text_key.hold.token
+        ? atom_symbol_data_n(owner, (const char *)entry->text_key.bytes, entry->text_key.length)
+        : NULL;
+}
+
+bool registry_copy_entry(Registry *dst, const Registry *src,
+                          uint32_t index, Atom *value) {
+    if (!dst || !src || index >= src->len) return false;
+    const RegistryEntry *entry = &src->entries[index];
+    if (entry->text_key.hold.token) {
+        /* Destination owns an independent hold; no source pointer escapes. */
+        SymbolId known = symbol_lookup_span_hashed(g_symbols, entry->text_key.bytes,
+                entry->text_key.length, symbol_hash_span(entry->text_key.bytes, entry->text_key.length));
+        if (known != SYMBOL_ID_NONE) {
+            registry_bind_id(dst, known, value);
+            return registry_lookup_id(dst, known) == value;
+        }
+        return registry_bind_text(dst, entry->text_key.bytes, entry->text_key.length, value);
+    }
+    if (entry->key != SYMBOL_ID_NONE) {
+        registry_bind_id(dst, entry->key, value);
+        return registry_lookup_id(dst, entry->key) == value;
+    }
+    Atom *key = (Atom *)registry_entry_name_key(src, index);
+    return key && registry_bind_name(dst, key, value);
 }
 
 /* The states' names and current values, with the arena holding each value.
@@ -6502,17 +6677,17 @@ static void registry_states_free(struct RegistryStates *states) {
     free(states);
 }
 
-Atom *registry_state_lookup(const Registry *r, SymbolId key) {
-    if (!r || !r->states || key == SYMBOL_ID_NONE)
+Atom *registry_state_lookup_symbol(const Registry *r, const Atom *name) {
+    if (!r || !r->states || !name || name->kind != ATOM_SYMBOL)
         return NULL;
     uint32_t index =
-        registry_index_find(&r->states->names, key, NAME_ID_NONE);
+        registry_symbol_index(&r->states->names, name);
     return index == UINT32_MAX ? NULL
                                : r->states->names.entries[index].value;
 }
 
-bool registry_state_set(Registry *r, SymbolId key, Atom *value) {
-    if (!r || key == SYMBOL_ID_NONE || !value)
+bool registry_state_set_symbol(Registry *r, const Atom *name, Atom *value) {
+    if (!r || !name || name->kind != ATOM_SYMBOL || !value)
         return false;
     struct RegistryStates *states = r->states;
     if (!states) {
@@ -6527,7 +6702,7 @@ bool registry_state_set(Registry *r, SymbolId key, Atom *value) {
         registry_state_arena_give_back(states, arena);
         return false;
     }
-    uint32_t index = registry_index_find(&states->names, key, NAME_ID_NONE);
+    uint32_t index = registry_symbol_index(&states->names, name);
     if (index != UINT32_MAX) {
         Arena *replaced = states->storage[index];
         states->names.entries[index].value = stored;
@@ -6541,8 +6716,11 @@ bool registry_state_set(Registry *r, SymbolId key, Atom *value) {
             cetta_realloc(states->storage, sizeof(*states->storage) * cap);
         states->storage_cap = cap;
     }
-    registry_bind_id(&states->names, key, stored);
-    index = registry_index_find(&states->names, key, NAME_ID_NONE);
+    if (!registry_bind_symbol(&states->names, name, stored)) {
+        registry_state_arena_give_back(states, arena);
+        return false;
+    }
+    index = registry_symbol_index(&states->names, name);
     if (index == UINT32_MAX || index >= states->storage_cap) {
         registry_state_arena_give_back(states, arena);
         return false;
@@ -6551,15 +6729,28 @@ bool registry_state_set(Registry *r, SymbolId key, Atom *value) {
     return true;
 }
 
+Atom *registry_state_lookup(const Registry *r, SymbolId key) {
+    if (key == SYMBOL_ID_NONE) return NULL;
+    const Atom name = {.kind = ATOM_SYMBOL, .symbol_number = key};
+    return registry_state_lookup_symbol(r, &name);
+}
+
+bool registry_state_set(Registry *r, SymbolId key, Atom *value) {
+    if (key == SYMBOL_ID_NONE) return false;
+    const Atom name = {.kind = ATOM_SYMBOL, .symbol_number = key};
+    return registry_state_set_symbol(r, &name, value);
+}
+
 uint32_t registry_state_count(const Registry *r) {
     return r && r->states ? r->states->names.len : 0u;
 }
 
-bool registry_state_entry(const Registry *r, uint32_t index,
-                          SymbolId *key_out, Atom **value_out) {
+bool registry_state_entry(const Registry *r, uint32_t index, Arena *owner,
+                          Atom **key_out, Atom **value_out) {
     if (!r || !r->states || index >= r->states->names.len)
         return false;
-    *key_out = r->states->names.entries[index].key;
+    *key_out = registry_entry_symbol(&r->states->names, index, owner);
+    if (!*key_out) return false;
     *value_out = r->states->names.entries[index].value;
     return true;
 }
@@ -6569,14 +6760,20 @@ void registry_bind(Registry *r, const char *name, Atom *value) {
 }
 
 Atom *registry_lookup(Registry *r, const char *name) {
-    return registry_lookup_id(r, symbol_intern_cstr(g_symbols, name));
+    if (!name) return NULL;
+    SymbolId known = symbol_lookup_cstr(g_symbols, name);
+    if (known != SYMBOL_ID_NONE) return registry_lookup_id(r, known);
+    size_t length = strlen(name);
+    if (length > UINT32_MAX) return NULL;
+    uint32_t index = registry_text_index(r, (const uint8_t *)name, (uint32_t)length);
+    return index == UINT32_MAX ? NULL : r->entries[index].value;
 }
 
 bool registry_bind_name(Registry *r, Atom *name_key, Atom *value) {
     if (!r || !r->name_keys || !name_key) return false;
     NameId id = name_key_intern(r->name_keys, name_key);
     if (id == NAME_ID_NONE) return false;
-    uint32_t existing = registry_index_find(r, SYMBOL_ID_NONE, id);
+    uint32_t existing = registry_index_find(r, SYMBOL_ID_NONE, id, 0);
     if (existing != UINT32_MAX) {
         r->entries[existing].value = value;
         return true;
@@ -6584,6 +6781,7 @@ bool registry_bind_name(Registry *r, Atom *name_key, Atom *value) {
     if (!registry_ensure_capacity(r, r->len + 1u) ||
         !registry_index_ensure_capacity(r, r->len + 1u))
         return false;
+    r->entries[r->len] = (RegistryEntry){0};
     r->entries[r->len].key = SYMBOL_ID_NONE;
     r->entries[r->len].name_id = id;
     r->entries[r->len].value = value;
@@ -6596,7 +6794,7 @@ Atom *registry_lookup_name(Registry *r, Atom *name_key) {
     if (!r || !r->name_keys || !name_key) return NULL;
     NameId id = name_key_find(r->name_keys, name_key);
     if (id == NAME_ID_NONE) return NULL;
-    uint32_t index = registry_index_find(r, SYMBOL_ID_NONE, id);
+    uint32_t index = registry_index_find(r, SYMBOL_ID_NONE, id, 0);
     return index == UINT32_MAX ? NULL : r->entries[index].value;
 }
 
@@ -6627,7 +6825,7 @@ bool registry_ref_name_key(Atom *ref, Atom **name_key_out) {
 Atom *registry_lookup_ref(Registry *r, Atom *ref) {
     if (!r || !ref) return NULL;
     if (ref->kind == ATOM_SYMBOL)
-        return registry_lookup_id(r, ref->sym_id);
+        return registry_lookup_symbol(r, ref);
     Atom *name_key = NULL;
     return registry_ref_name_key(ref, &name_key)
         ? registry_lookup_name(r, name_key)
@@ -7665,7 +7863,7 @@ Atom *normalize_type_expr_head(Arena *a, Atom *norm) {
        capability stays un-dispatched (an inert expression in the type). */
     SymbolId op_id = SYMBOL_ID_NONE;
     if (norm->expr.elems[0]->kind == ATOM_SYMBOL)
-        op_id = norm->expr.elems[0]->sym_id;
+        op_id = atom_symbol_current_id(norm->expr.elems[0]);
     if (norm->expr.len >= 3 && op_id != SYMBOL_ID_NONE &&
         grounded_op_is_type_pure(op_id)) {
         Atom *result = grounded_dispatch(a, norm->expr.elems[0],
@@ -7843,7 +8041,7 @@ bool space_type_annotation_may_match_subject(Space *s, const Atom *subject) {
          atom_petta_value_representation(subject) != PETTA_VALUE_ORDINARY ||
          atom_structural_has_rational(subject)))
         return true;
-    SymbolId head = subject->kind == ATOM_SYMBOL ? subject->sym_id :
+    SymbolId head = subject->kind == ATOM_SYMBOL ? atom_symbol_current_id(subject) :
         atom_head_symbol_id(subject);
     if (head == SYMBOL_ID_NONE)
         return true;
@@ -8027,7 +8225,7 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
                                     SpaceDeclaredTypeLookupCost *cost) {
     Atom *const *grounded = NULL;
     uint32_t grounded_count = atom && atom->kind == ATOM_SYMBOL
-        ? space_grounded_types(atom->sym_id, &grounded) : 0u;
+        ? space_grounded_types(atom_symbol_current_id(atom), &grounded) : 0u;
     if (grounded_count != 0u) {
         /* A grounded operation's type is its own. */
         Atom **types = cetta_malloc(sizeof(*types) * grounded_count);
@@ -9429,7 +9627,7 @@ static bool prepared_register_template_kind(
     Atom *head = atom->expr.elems[0];
     if (!head || head->kind != ATOM_SYMBOL ||
         !prepared_register_head_kind(
-            head->sym_id, atom->expr.len - 1u, kind_out)) {
+            atom_symbol_current_id(head), atom->expr.len - 1u, kind_out)) {
         return false;
     }
     for (CettaExprIndex i = 1u; i < atom->expr.len; i++) {
@@ -9465,7 +9663,7 @@ static bool prepared_register_recursive_template_kind(
         atom->expr.elems[0]->kind != ATOM_SYMBOL) {
         return false;
     }
-    SymbolId head = atom->expr.elems[0]->sym_id;
+    SymbolId head = atom_symbol_current_id(atom->expr.elems[0]);
     CettaExprLen nargs = atom->expr.len - 1u;
     if (head == g_builtin_syms.if_text) {
         if (nargs != 3u)
@@ -9971,7 +10169,7 @@ static Atom *prepared_register_execute_expression(
     CettaExprLen nargs = source->expr.len - 1u;
     CettaGsltRegisterResultKind result_kind;
     if (!head || head->kind != ATOM_SYMBOL ||
-        !prepared_register_head_kind(head->sym_id, nargs, &result_kind) ||
+        !prepared_register_head_kind(atom_symbol_current_id(head), nargs, &result_kind) ||
         nargs > CETTA_GSLT_PREPARED_EQUATION_MAX_REGISTERS) {
         return NULL;
     }
@@ -10173,7 +10371,7 @@ static bool prepared_mpz_eval_integer(
         return false;
     }
     CettaGsltRegisterResultKind result_kind;
-    SymbolId head = source->expr.elems[0]->sym_id;
+    SymbolId head = atom_symbol_current_id(source->expr.elems[0]);
     if (!prepared_register_head_kind(head, 2u, &result_kind) ||
         result_kind != CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER) {
         return false;
@@ -10212,7 +10410,7 @@ static bool prepared_mpz_eval_guard(
         !guard->expr.elems[0] || guard->expr.elems[0]->kind != ATOM_SYMBOL)
         return false;
     CettaGsltRegisterResultKind result_kind;
-    SymbolId head = guard->expr.elems[0]->sym_id;
+    SymbolId head = atom_symbol_current_id(guard->expr.elems[0]);
     if (!prepared_register_head_kind(head, 2u, &result_kind) ||
         result_kind != CETTA_GSLT_REGISTER_RESULT_BOOLEAN ||
         head != g_builtin_syms.op_eq) {
@@ -10614,7 +10812,7 @@ static bool prepared_recursive_run(
                 source->expr.elems[0]->kind != ATOM_SYMBOL) {
                 return false;
             }
-            frame->head = source->expr.elems[0]->sym_id;
+            frame->head = atom_symbol_current_id(source->expr.elems[0]);
             frame->argument_count = source->expr.len - 1u;
             frame->value_base = machine->value_len;
             if (frame->head == g_builtin_syms.if_text) {

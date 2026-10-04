@@ -108,7 +108,7 @@ static bool io_zero_arg_ok(Atom **args, uint32_t nargs) {
 
 static Atom *io_public_head(Arena *arena, Atom *head) {
     if (!head || head->kind != ATOM_SYMBOL) return head;
-    SymbolId id = head->sym_id;
+    SymbolId id = atom_symbol_current_id(head);
     if (id == g_builtin_syms.lib_io_capabilities)
         return atom_symbol(arena, "io:capabilities");
     if (id == g_builtin_syms.lib_io_submit)
@@ -819,7 +819,7 @@ static Atom *io_cancel(CettaIoRuntime *runtime, Arena *arena,
 Atom *cetta_io_dispatch(CettaIoRuntime *runtime, Arena *arena,
                         Atom *head, Atom **args, uint32_t nargs) {
     if (!arena || !head || head->kind != ATOM_SYMBOL) return NULL;
-    SymbolId id = head->sym_id;
+    SymbolId id = atom_symbol_current_id(head);
     if (id == g_builtin_syms.lib_io_capabilities)
         return io_capabilities(runtime, arena, head, args, nargs);
     if (id == g_builtin_syms.lib_io_submit)

@@ -36,7 +36,7 @@ static const char *take_name(CettaDelayService *service, uint32_t mark) {
     CettaDelayGoal goal;
     if (!cetta_delay_take_woken(service, mark, &goal))
         return NULL;
-    return symbol_bytes(g_symbols, goal.goal->sym_id);
+    return atom_symbol_bytes(goal.goal);
 }
 
 int main(void) {
@@ -160,9 +160,9 @@ int main(void) {
     const CettaDelayGoal **reached = NULL;
     CHECK(cetta_delay_reach(history, &q, 1u, &reached, &reached_len) &&
               reached_len == 2u && reached &&
-              strcmp(symbol_bytes(g_symbols, reached[0]->goal->sym_id),
+              strcmp(atom_symbol_bytes(reached[0]->goal),
                      "old") == 0 &&
-              strcmp(symbol_bytes(g_symbols, reached[1]->goal->sym_id),
+              strcmp(atom_symbol_bytes(reached[1]->goal),
                      "link") == 0,
           "q reaches link and, through p, old, in suspension order");
     free(reached);
@@ -197,8 +197,8 @@ int main(void) {
     cetta_delay_rollback(indexed, 3u);
     uint32_t back = cetta_delay_goals_on(indexed, av, on_a, 4u);
     CHECK(back == 2u &&
-              strcmp(symbol_bytes(g_symbols, on_a[0]->goal->sym_id), "a2") == 0 &&
-              strcmp(symbol_bytes(g_symbols, on_a[1]->goal->sym_id), "a1") == 0,
+              strcmp(atom_symbol_bytes(on_a[0]->goal), "a2") == 0 &&
+              strcmp(atom_symbol_bytes(on_a[1]->goal), "a1") == 0,
           "after the rollback both wait on a again, newest first");
     CHECK(cetta_delay_bound(indexed, 4u, av), "bind a again");
     {

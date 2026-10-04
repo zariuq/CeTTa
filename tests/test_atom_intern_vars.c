@@ -37,8 +37,8 @@ int main(void) {
      * its own spelling. */
     Atom *other = atom_var_with_spelling(&arena, y, id);
     assert(other != NULL && other != first);
-    assert(first->sym_id == x);
-    assert(other->sym_id == y);
+    assert(atom_symbol_current_id(first) == x);
+    assert(atom_symbol_current_id(other) == y);
     assert(atom_var_with_spelling(&arena, y, id) == other);
 
     /* The same id and spelling with another structural name is another
@@ -59,8 +59,8 @@ int main(void) {
     Atom *fx = atom_expr(&arena, with_x, 2u);
     Atom *fy = atom_expr(&arena, with_y, 2u);
     assert(fx != NULL && fy != NULL && fx != fy);
-    assert(fx->expr.elems[1]->sym_id == x);
-    assert(fy->expr.elems[1]->sym_id == y);
+    assert(atom_symbol_current_id(fx->expr.elems[1]) == x);
+    assert(atom_symbol_current_id(fy->expr.elems[1]) == y);
     assert(atom_expr(&arena, with_x, 2u) == fx);
 
     /* Symbols intern as before. */

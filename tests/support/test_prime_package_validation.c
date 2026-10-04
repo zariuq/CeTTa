@@ -1137,7 +1137,7 @@ int main(int argc, char **argv) {
     bindings_init(&guarded_bindings);
     if (bindings_add_id_acyclic(
             &guarded_bindings, cycle_left->var_id,
-            cycle_left->sym_id, cycle_expr) ||
+            atom_symbol_current_id(cycle_left), cycle_expr) ||
         guarded_bindings.len != 0u ||
         bindings_has_loop(&guarded_bindings)) {
         fprintf(stderr, "direct occurs check was not atomic\n");
@@ -1146,10 +1146,10 @@ int main(int argc, char **argv) {
     }
     if (!bindings_add_id_acyclic(
             &guarded_bindings, cycle_left->var_id,
-            cycle_left->sym_id, cycle_right) ||
+            atom_symbol_current_id(cycle_left), cycle_right) ||
         bindings_add_id_acyclic(
             &guarded_bindings, cycle_right->var_id,
-            cycle_right->sym_id, cycle_expr) ||
+            atom_symbol_current_id(cycle_right), cycle_expr) ||
         bindings_lookup_value_id(&guarded_bindings, cycle_right->var_id).skeleton != NULL ||
         bindings_has_loop(&guarded_bindings)) {
         fprintf(stderr, "indirect occurs check was not atomic\n");
@@ -1158,7 +1158,7 @@ int main(int argc, char **argv) {
     }
     if (!bindings_add_id_acyclic(
             &guarded_bindings, cycle_right->var_id,
-            cycle_right->sym_id, deep_binding_leaf) ||
+            atom_symbol_current_id(cycle_right), deep_binding_leaf) ||
         !bindings_resolve_value_preview(
             &guarded_bindings, binding_value_from_atom(cycle_left), &deep_binding_resolved) ||
         deep_binding_resolved.skeleton != deep_binding_leaf ||

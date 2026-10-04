@@ -81,9 +81,9 @@ static bool inspect_opened_binder_shaped_payload(
     Atom *free1 = pair->expr.elems[2];
     assert(binder_shaped->kind == ATOM_VAR);
     assert(free0->kind == ATOM_VAR && free1->kind == ATOM_VAR);
-    assert(binder_shaped->sym_id == probe->spelling);
-    assert(free0->sym_id == probe->spelling);
-    assert(free1->sym_id == probe->spelling);
+    assert(atom_symbol_current_id(binder_shaped) == probe->spelling);
+    assert(atom_symbol_current_id(free0) == probe->spelling);
+    assert(atom_symbol_current_id(free1) == probe->spelling);
     assert(binder_shaped->var_id != free0->var_id);
     assert(free0->var_id == free1->var_id);
     probe->visits++;
@@ -158,7 +158,7 @@ static void test_streamed_row_disposition(Arena *arena) {
      * boundary is built the way a decoded row can arrive: by a wholesale
      * value rewrite that bypasses admission. */
     assert(bindings_add_id(
-        &cyclic, query->var_id, query->sym_id,
+        &cyclic, query->var_id, atom_symbol_current_id(query),
         atom_symbol_id(arena, f_sym)));
     assert(bindings_rewrite_value_id(
         &cyclic, query->var_id, binding_value_from_atom(cyclic_value)));

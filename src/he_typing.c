@@ -540,8 +540,8 @@ static Atom *normalize_type_checked(Arena *a, Space *space, Atom *ty,
         /* A grounded op that is NOT type-pure names a computation with effects
          * or nondeterminism. It must never run inside a type, and a user marker
          * cannot override that. */
-        if (head->kind == ATOM_SYMBOL && is_grounded_op(head->sym_id) &&
-            !grounded_op_is_type_pure(head->sym_id) &&
+        if (head->kind == ATOM_SYMBOL && is_grounded_op(atom_symbol_current_id(head)) &&
+            !grounded_op_is_type_pure(atom_symbol_current_id(head)) &&
             !atom_has_vars(norm)) {
             *status = HE_NORM_INADMISSIBLE;
             goto fail;
@@ -1706,7 +1706,7 @@ static bool chain_query_var_add(ChainContext *ctx, Atom *var) {
         ctx->query_var_cap = ncap;
     }
     ctx->query_vars[ctx->query_var_count++] =
-        (ChainQueryVar){var->var_id, var->sym_id, var->name_key};
+        (ChainQueryVar){var->var_id, atom_symbol_current_id(var), var->name_key};
     return true;
 }
 
@@ -3482,7 +3482,7 @@ bool he_typing_op_data_arg(const char *name, uint32_t arg_index) {
 Atom *he_typing_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (head->kind != ATOM_SYMBOL) return NULL;
     if (!eval_current_profile_enables_dependent_telescope()) return NULL;
-    const char *name = symbol_bytes(g_symbols, head->sym_id);
+    const char *name = atom_symbol_bytes(head);
     if (!he_typing_is_op(name)) return NULL;
 
     if (strcmp(name, "normalize-type") == 0) {

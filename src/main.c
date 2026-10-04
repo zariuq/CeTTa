@@ -2105,7 +2105,7 @@ static bool main_he_prepare_library(Space *space, Arena *arena,
             continue;
         }
         bool grounded = subject->kind == ATOM_SYMBOL &&
-            he_grounded_symbol_types(subject->sym_id, extensions, NULL) != 0u;
+            he_grounded_symbol_types(atom_symbol_current_id(subject), extensions, NULL) != 0u;
         if (!grounded && !he_library_names_subject(subject))
             continue;
         mask[i] = 1u;

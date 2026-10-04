@@ -749,14 +749,14 @@ static bool bridge_encode_atom_rec(Arena *a, Atom *atom, BridgeVarMap *vars,
 
     switch (atom->kind) {
     case ATOM_SYMBOL: {
-        const uint8_t *sym = (const uint8_t *)symbol_bytes(g_symbols, atom->sym_id);
-        uint32_t len = symbol_len(g_symbols, atom->sym_id);
+        const uint8_t *sym = (const uint8_t *)atom_symbol_bytes(atom);
+        uint32_t len = atom_symbol_length(atom);
         return bridge_expr_buf_push_symbol(buf, sym, len, wire, out_error);
     }
     case ATOM_VAR: {
         uint8_t index = 0;
         bool is_new = false;
-        if (!bridge_var_map_index(vars, atom->var_id, atom->sym_id,
+        if (!bridge_var_map_index(vars, atom->var_id, atom_symbol_current_id(atom),
                                   &index, &is_new)) {
             if (out_error)
                 *out_error = "MORK bridge expressions support at most 64 distinct variables";

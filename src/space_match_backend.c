@@ -358,10 +358,10 @@ static const MorkImportedState *mork_imported_state_const(const Space *s) {
 }
 
 static SymbolId atom_head_sym(Atom *a) {
-    if (a->kind == ATOM_SYMBOL) return a->sym_id;
+    if (a->kind == ATOM_SYMBOL) return atom_symbol_current_id(a);
     if (a->kind == ATOM_EXPR && a->expr.len > 0 &&
         a->expr.elems[0]->kind == ATOM_SYMBOL)
-        return a->expr.elems[0]->sym_id;
+        return atom_symbol_current_id(a->expr.elems[0]);
     return SYMBOL_ID_NONE;
 }
 
@@ -454,7 +454,7 @@ static bool imported_atom_has_bridge_vars(const Atom *atom) {
     switch (atom->kind) {
     case ATOM_VAR:
     case ATOM_SYMBOL: {
-        text = symbol_bytes(g_symbols, atom->sym_id);
+        text = atom_symbol_bytes(atom);
         return text &&
                (strncmp(text, "$__mork_", 8) == 0 ||
                 strncmp(text, "$$__mork_", 9) == 0);
@@ -474,7 +474,7 @@ static bool imported_bridge_internal_var(const Atom *atom) {
     const char *text;
     if (!atom || atom->kind != ATOM_VAR)
         return false;
-    text = symbol_bytes(g_symbols, atom->sym_id);
+    text = atom_symbol_bytes(atom);
     return text &&
            (strncmp(text, "$__mork_", 8) == 0 ||
             strncmp(text, "$$__mork_", 9) == 0);
@@ -1947,10 +1947,10 @@ static void native_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
     native_ensure_stree(s);
 
     SymbolId head = SYMBOL_ID_NONE;
-    if (query->kind == ATOM_SYMBOL) head = query->sym_id;
+    if (query->kind == ATOM_SYMBOL) head = atom_symbol_current_id(query);
     else if (query->kind == ATOM_EXPR && query->expr.len > 0 &&
              query->expr.elems[0]->kind == ATOM_SYMBOL)
-        head = query->expr.elems[0]->sym_id;
+        head = atom_symbol_current_id(query->expr.elems[0]);
 
     if (head != SYMBOL_ID_NONE) {
         stree_query_bucket(&st->stree->buckets[stree_head_hash(head)],
@@ -6190,12 +6190,12 @@ static void imported_flatten_atom(ImportedFlatBuilder *b, Atom *atom) {
     switch (atom->kind) {
     case ATOM_SYMBOL:
         tok.kind = IMPORTED_FLAT_SYMBOL;
-        tok.sym_id = atom->sym_id;
+        tok.sym_id = atom_symbol_current_id(atom);
         imported_builder_push(b, tok);
         return;
     case ATOM_VAR:
         tok.kind = IMPORTED_FLAT_VAR;
-        tok.sym_id = atom->sym_id;
+        tok.sym_id = atom_symbol_current_id(atom);
         tok.var_id = atom->var_id;
         imported_builder_push(b, tok);
         return;
@@ -6353,6 +6353,8 @@ static bool imported_token_equal(const ImportedFlatToken *lhs,
     if (lhs->kind != rhs->kind) return false;
     switch (lhs->kind) {
     case IMPORTED_FLAT_SYMBOL:
+        if (lhs->origin && rhs->origin)
+            return atom_symbols_equal(lhs->origin, rhs->origin);
         return lhs->sym_id == rhs->sym_id;
     case IMPORTED_FLAT_VAR:
         return lhs->var_id == rhs->var_id;
@@ -6365,11 +6367,11 @@ static bool imported_token_equal(const ImportedFlatToken *lhs,
     case IMPORTED_FLAT_BOOL:
         return lhs->bval == rhs->bval;
     case IMPORTED_FLAT_STRING:
-        return lhs->sym_id == rhs->sym_id;
+        return (lhs->sym_id == rhs->sym_id);
     case IMPORTED_FLAT_BIGINT:
-        return lhs->sym_id == rhs->sym_id;
+        return (lhs->sym_id == rhs->sym_id);
     case IMPORTED_FLAT_RATIONAL:
-        return lhs->sym_id == rhs->sym_id;
+        return (lhs->sym_id == rhs->sym_id);
     case IMPORTED_FLAT_GROUNDED_OTHER:
     case IMPORTED_FLAT_LIST:
         if (lhs->origin_id != CETTA_ATOM_ID_NONE &&
@@ -6456,7 +6458,7 @@ static bool imported_bridge_collect_vars(Atom *atom, ImportedBridgeVarMap *map) 
             return false;
         if (imported_bridge_internal_var(atom))
             return true;
-        return imported_bridge_varmap_add(map, atom->var_id, atom->sym_id);
+        return imported_bridge_varmap_add(map, atom->var_id, atom_symbol_current_id(atom));
     case ATOM_EXPR:
         for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
             if (!imported_bridge_collect_vars(atom->expr.elems[i], map))
@@ -7909,7 +7911,7 @@ static ImportedCorefVerdict imported_match_subtree_coref(const ImportedFlatToken
         case IMPORTED_FLAT_STRING:
         case IMPORTED_FLAT_BIGINT:
         case IMPORTED_FLAT_RATIONAL:
-            if (qt->sym_id != ct->sym_id) return IMPORTED_COREF_FAIL;
+            if (!imported_token_equal(qt, ct)) return IMPORTED_COREF_FAIL;
             break;
         case IMPORTED_FLAT_INT:
             if (qt->ival != ct->ival) return IMPORTED_COREF_FAIL;
@@ -8006,7 +8008,7 @@ static bool imported_match_subtree_legacy(const ImportedFlatToken *q, CettaIndex
         case IMPORTED_FLAT_STRING:
         case IMPORTED_FLAT_BIGINT:
         case IMPORTED_FLAT_RATIONAL:
-            if (qt->sym_id != ct->sym_id) return false;
+            if (!imported_token_equal(qt, ct)) return false;
             break;
         case IMPORTED_FLAT_INT:
             if (qt->ival != ct->ival) return false;

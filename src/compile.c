@@ -79,8 +79,8 @@ static bool atom_is_compile_stable_value(Atom *atom, EqGroupSet *groups) {
     case ATOM_EXPR:
         if (atom->expr.len == 0) return true;
         if (atom->expr.elems[0]->kind != ATOM_SYMBOL) return false;
-        if (is_grounded_op(atom->expr.elems[0]->sym_id)) return false;
-        if (eq_group_lookup(groups, atom->expr.elems[0]->sym_id, atom->expr.len - 1))
+        if (is_grounded_op(atom_symbol_current_id(atom->expr.elems[0]))) return false;
+        if (eq_group_lookup(groups, atom_symbol_current_id(atom->expr.elems[0]), atom->expr.len - 1))
             return false;
         for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
             if (!atom_is_compile_stable_value(atom->expr.elems[i], groups))
@@ -142,10 +142,10 @@ static void analyze_equations(Space *s, Arena *a, EqGroupSet *out) {
         Atom *lhs = a->expr.elems[1], *rhs = a->expr.elems[2];
         SymbolId head_id = SYMBOL_ID_NONE;
         CettaExprLen arity = 0;
-        if (lhs->kind == ATOM_SYMBOL) { head_id = lhs->sym_id; arity = 0; }
+        if (lhs->kind == ATOM_SYMBOL) { head_id = atom_symbol_current_id(lhs); arity = 0; }
         else if (lhs->kind == ATOM_EXPR && lhs->expr.len >= 1 &&
                  lhs->expr.elems[0]->kind == ATOM_SYMBOL) {
-            head_id = lhs->expr.elems[0]->sym_id; arity = lhs->expr.len - 1;
+            head_id = atom_symbol_current_id(lhs->expr.elems[0]); arity = lhs->expr.len - 1;
         }
         if (head_id == SYMBOL_ID_NONE) continue;
         EqGroup *g = eq_group_find_or_create(out, head_id, arity);
@@ -462,7 +462,7 @@ static const char *emit_rhs(FILE *out, Arena *compiler_arena, Atom *rhs,
         return reg;
     }
     if (rhs->kind == ATOM_SYMBOL) {
-        EqGroup *target = eq_group_lookup(all_groups, rhs->sym_id, 0);
+        EqGroup *target = eq_group_lookup(all_groups, atom_symbol_current_id(rhs), 0);
         if (target && target->direct_call_safe)
             return emit_direct_call(
                 out, compiler_arena, target, rhs, captures, all_groups);
@@ -543,7 +543,7 @@ static const char *emit_rhs(FILE *out, Arena *compiler_arena, Atom *rhs,
 
         /* Check if this is a call to a compiled head → direct call */
         if (rhs->expr.elems[0]->kind == ATOM_SYMBOL) {
-            EqGroup *target = eq_group_lookup(all_groups, rhs->expr.elems[0]->sym_id,
+            EqGroup *target = eq_group_lookup(all_groups, atom_symbol_current_id(rhs->expr.elems[0]),
                                               rhs->expr.len - 1);
             if (target && target->direct_call_safe &&
                 compile_call_args_are_stable(rhs, all_groups)) {

@@ -634,6 +634,8 @@ bool cetta_library_petta_translator_rule_set(
     CettaLibraryContext *ctx, SymbolId head, bool enabled) {
     if (!ctx || head == SYMBOL_ID_NONE)
         return false;
+    if (enabled)
+        (void)symbol_pin(g_symbols, head);
     cetta_library_petta_translator_rule_sync(ctx);
     uint32_t index =
         cetta_library_petta_translator_rule_lower_bound(ctx, head);
@@ -3875,7 +3877,7 @@ static Atom *cetta_library_dispatch_system(const CettaLibraryContext *ctx,
                                            Arena *a, Atom *head,
                                            Atom **args, uint32_t nargs) {
     if (head->kind != ATOM_SYMBOL) return NULL;
-    SymbolId head_id = head->sym_id;
+    SymbolId head_id = atom_symbol_current_id(head);
     if (head_id == g_builtin_syms.lib_system_args) {
         return system_cli_args(ctx, a, head, args, nargs);
     }
@@ -3931,7 +3933,7 @@ static Atom *cetta_library_dispatch_lib_prolog(
         head->kind != ATOM_SYMBOL) {
         return NULL;
     }
-    SymbolId head_id = head->sym_id;
+    SymbolId head_id = atom_symbol_current_id(head);
     if (head_id == g_builtin_syms.lib_prolog_available) {
         if (!system_zero_arg_ok(args, nargs)) {
             return library_signature_error(
@@ -4072,20 +4074,20 @@ static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
                                         Atom **args, uint32_t nargs) {
     (void)ctx;
     if (head->kind != ATOM_SYMBOL) return NULL;
-    if (head->sym_id == g_builtin_syms.lib_lts_he_step_rules) {
+    if (atom_symbol_current_id(head) == g_builtin_syms.lib_lts_he_step_rules) {
         if (nargs != 1) {
             return atom_error(a, head,
                               atom_symbol(a, "IncorrectNumberOfArguments"));
         }
         if (args[0]->kind == ATOM_SYMBOL &&
-            strcmp(symbol_bytes(g_symbols, args[0]->sym_id), "he-small-step") == 0) {
+            strcmp(atom_symbol_bytes(args[0]), "he-small-step") == 0) {
             return cetta_langdef_step_rules_atom(cetta_langdef_pack_he_small_step(),
                                                  a);
         }
         return atom_error(a, atom_expr2(a, head, args[0]),
                           atom_string(a, "unknown rule table"));
     }
-    if (head->sym_id == g_builtin_syms.lib_lts_rho_transitions) {
+    if (atom_symbol_current_id(head) == g_builtin_syms.lib_lts_rho_transitions) {
         Atom *result;
         const char *detail;
 
@@ -4108,7 +4110,7 @@ static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
         }
         return result;
     }
-    if (head->sym_id == g_builtin_syms.lib_lts_he_transitions) {
+    if (atom_symbol_current_id(head) == g_builtin_syms.lib_lts_he_transitions) {
         ResultSet results;
         Atom *frontier;
         Atom *raw_state;
@@ -4131,7 +4133,7 @@ static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
         result_set_free(&results);
         return frontier;
     }
-    if (head->sym_id == g_builtin_syms.lib_lts_rho_cost_steps) {
+    if (atom_symbol_current_id(head) == g_builtin_syms.lib_lts_rho_cost_steps) {
         Atom *result;
         const char *detail;
 
@@ -4155,7 +4157,7 @@ static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
         }
         return result;
     }
-    if (head->sym_id == g_builtin_syms.lib_lts_rho_cost_causal_trace) {
+    if (atom_symbol_current_id(head) == g_builtin_syms.lib_lts_rho_cost_causal_trace) {
         Atom *result;
         const char *detail;
         uint32_t thread_count;
@@ -4185,7 +4187,7 @@ static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
         }
         return result;
     }
-    if (head->sym_id == g_builtin_syms.lib_lts_rho_cost_causal_prefix) {
+    if (atom_symbol_current_id(head) == g_builtin_syms.lib_lts_rho_cost_causal_prefix) {
         Atom *result;
         const char *detail;
         uint64_t fuel;
@@ -4263,7 +4265,7 @@ static Atom *cetta_library_dispatch_rhometta(const CettaLibraryContext *ctx,
 
     eval_context.payload_failure = &payload_failure;
 
-    if (head->sym_id == g_builtin_syms.lib_rhometta_transitions) {
+    if (atom_symbol_current_id(head) == g_builtin_syms.lib_rhometta_transitions) {
         Atom *result;
         if (nargs != 1) {
             return library_signature_error(
@@ -4292,7 +4294,7 @@ static Atom *cetta_library_dispatch_rhometta(const CettaLibraryContext *ctx,
         return result->expr.elems[1];
     }
 
-    if (head->sym_id == g_builtin_syms.lib_rhometta_run) {
+    if (atom_symbol_current_id(head) == g_builtin_syms.lib_rhometta_run) {
         Atom *result;
         if (nargs != 1) {
             return library_signature_error(
@@ -4320,7 +4322,7 @@ static Atom *cetta_library_dispatch_rhometta(const CettaLibraryContext *ctx,
         return result->expr.elems[1];
     }
 
-    if (head->sym_id == g_builtin_syms.lib_rhometta_run_canonical) {
+    if (atom_symbol_current_id(head) == g_builtin_syms.lib_rhometta_run_canonical) {
         RhoRuntimeProfile profile = {
             .scheduler_policy = RHO_SCHEDULER_CANONICAL,
             .reduction_limit = 100000u,
@@ -4359,7 +4361,7 @@ static Atom *cetta_library_dispatch_rhometta(const CettaLibraryContext *ctx,
         return reduction.residual;
     }
 
-    if (head->sym_id == g_builtin_syms.lib_rhometta_values) {
+    if (atom_symbol_current_id(head) == g_builtin_syms.lib_rhometta_values) {
         Atom *result;
         if (nargs != 1) {
             return library_signature_error(
@@ -4663,7 +4665,7 @@ static Atom *fs_read_lines(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
 static Atom *cetta_library_dispatch_fs(Arena *a, Atom *head,
                                        Atom **args, uint32_t nargs) {
     if (head->kind != ATOM_SYMBOL) return NULL;
-    SymbolId head_id = head->sym_id;
+    SymbolId head_id = atom_symbol_current_id(head);
     if (head_id == g_builtin_syms.lib_fs_exists) {
         return fs_exists(a, head, args, nargs);
     }
@@ -4702,7 +4704,7 @@ static Atom *cetta_library_dispatch_fs(Arena *a, Atom *head,
 
 static Atom *cetta_library_dispatch_str(Arena *a, Atom *head,
                                         Atom **args, uint32_t nargs) {
-    if (head->kind != ATOM_SYMBOL || head->sym_id != g_builtin_syms.lib_str)
+    if (head->kind != ATOM_SYMBOL || atom_symbol_current_id(head) != g_builtin_syms.lib_str)
         return NULL;
     const char *name = nargs > 0u && args[0] && args[0]->kind == ATOM_SYMBOL
         ? atom_name_cstr(args[0]) : NULL;
@@ -7034,7 +7036,7 @@ static Atom *mork_path_of_atom_native(CettaLibraryContext *ctx, Arena *a,
 static Atom *cetta_library_dispatch_mork(CettaLibraryContext *ctx, Arena *a,
                                          Atom *head, Atom **args, uint32_t nargs) {
     if (head->kind != ATOM_SYMBOL) return NULL;
-    SymbolId head_id = head->sym_id;
+    SymbolId head_id = atom_symbol_current_id(head);
     if (head_id == g_builtin_syms.lib_mork_space_new) {
         return mork_space_new_native(ctx, a, head, args, nargs);
     }
@@ -7653,7 +7655,7 @@ static Atom *mm2_context_atoms_native(CettaLibraryContext *ctx, Arena *a,
 static Atom *cetta_library_dispatch_mm2(CettaLibraryContext *ctx, Arena *a,
                                         Atom *head, Atom **args, uint32_t nargs) {
     if (head->kind != ATOM_SYMBOL) return NULL;
-    SymbolId head_id = head->sym_id;
+    SymbolId head_id = atom_symbol_current_id(head);
     if (head_id == g_builtin_syms.lib_mm2_program_new) {
         return mm2_program_new_native(ctx, a, head, args, nargs);
     }

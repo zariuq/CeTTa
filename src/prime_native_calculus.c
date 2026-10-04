@@ -841,7 +841,7 @@ static PrimeNativePlanBuildV1 prime_native_exact_authored_value(
 
     SpaceEquationCursor cursor;
     if (!space_equation_cursor_init(
-            space, call->expr.elems[0]->sym_id, &cursor)) {
+            space, atom_symbol_current_id(call->expr.elems[0]), &cursor)) {
         return PRIME_NATIVE_PLAN_DECLINED;
     }
     Atom *rhs = NULL;
@@ -1859,8 +1859,8 @@ static PrimeNativePlanBuildV1 prime_native_relation_symbol_provider(
         return PRIME_NATIVE_PLAN_FAULT;
     }
     if (!relation_term || relation_term->kind != ATOM_SYMBOL ||
-        symbol_id_is_builtin(relation_term->sym_id) ||
-        is_grounded_op(relation_term->sym_id)) {
+        symbol_id_is_builtin(atom_symbol_current_id(relation_term)) ||
+        is_grounded_op(atom_symbol_current_id(relation_term))) {
         return PRIME_NATIVE_PLAN_DECLINED;
     }
     Atom *probe_argument = prime_native_fresh_variable(
@@ -1874,7 +1874,7 @@ static PrimeNativePlanBuildV1 prime_native_relation_symbol_provider(
     size_t occurrence_count = 0u;
     SpaceEquationCursor cursor;
     bool has_equations = space_equation_cursor_init(
-        space, relation_term->sym_id, &cursor);
+        space, atom_symbol_current_id(relation_term), &cursor);
     if (has_equations) {
         for (;;) {
             SpaceEquationOccurrenceId occurrence_id;
@@ -1935,7 +1935,7 @@ static PrimeNativePlanBuildV1 prime_native_relation_symbol_provider(
     size_t written = 0u;
     if (has_equations &&
         !space_equation_cursor_init(
-            space, relation_term->sym_id, &cursor)) {
+            space, atom_symbol_current_id(relation_term), &cursor)) {
         return PRIME_NATIVE_PLAN_DECLINED;
     }
     while (has_equations) {

@@ -210,6 +210,20 @@ struct PettaPlanNode {
     const PettaPlanNode *children;
 };
 
+typedef struct {
+    uint64_t hash;
+    const PettaPlanNode *plan;
+} PettaPlanSnapshotEntry;
+
+/* Copy a descriptor-free plan into `owner`, sharing identical copies by
+ * content in the caller's bounded cache. No source pointer survives. NULL
+ * declines (descriptor, node/cache capacity or allocation failure); callers
+ * must retain the original owner instead. Entries live until owner resets. */
+const PettaPlanNode *petta_plan_plain_snapshot(
+    Arena *owner, const PettaPlanNode *source,
+    PettaPlanSnapshotEntry *cache, size_t *cache_len, size_t cache_capacity,
+    size_t node_limit);
+
 typedef struct PettaEquationTemplateC0 PettaEquationTemplateC0;
 typedef struct PettaEquationTemplate PettaEquationTemplate;
 

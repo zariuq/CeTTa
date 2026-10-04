@@ -142,7 +142,7 @@ retry_pair:
             continue;
         }
         if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL) {
-            if (left->sym_id != right->sym_id) {
+            if (!atom_symbols_equal(left, right)) {
                 if (attempt_resolving_bound)
                     attempt_repeated_var = true;
                 goto fail;

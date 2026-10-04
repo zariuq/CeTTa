@@ -97,11 +97,11 @@ static bool gct_node_parts(const Atom *term, SymbolId *name, Atom *const **child
     if (!term || term->kind != ATOM_EXPR || term->expr.len < 2u)
         return false;
     head = term->expr.elems[0];
-    if (head->kind != ATOM_SYMBOL || strcmp(gct_name(head->sym_id), GCT_TAG) != 0)
+    if (head->kind != ATOM_SYMBOL || !atom_symbol_equals_cstr(head, GCT_TAG))
         return false;
     label = term->expr.elems[1];
     if (label->kind == ATOM_SYMBOL)
-        *name = label->sym_id;
+        *name = atom_symbol_register_id(label);
     else if (label->kind == ATOM_GROUNDED && label->ground.gkind == GV_STRING)
         *name = symbol_intern_bytes(g_symbols,
                                     (const uint8_t *)label->ground.sval,
@@ -1036,7 +1036,7 @@ static const char *gct_label(const Atom *node) {
         return NULL;
     label = node->expr.elems[1];
     if (label->kind == ATOM_SYMBOL)
-        return symbol_bytes(g_symbols, label->sym_id);
+        return atom_symbol_bytes(label);
     if (label->kind == ATOM_GROUNDED && label->ground.gkind == GV_STRING)
         return label->ground.sval;
     return NULL;
@@ -1045,7 +1045,7 @@ static const char *gct_label(const Atom *node) {
 static bool gct_is_cst(const Atom *node) {
     return node && node->kind == ATOM_EXPR && node->expr.len >= 4u &&
            node->expr.elems[0]->kind == ATOM_SYMBOL &&
-           strcmp(gct_name(node->expr.elems[0]->sym_id), "CstRuleV1") == 0;
+           strcmp(gct_name(atom_symbol_current_id(node->expr.elems[0])), "CstRuleV1") == 0;
 }
 
 static Atom *gct_finish(Arena *arena, const GctProduction *production, GctValues *values,
@@ -1423,7 +1423,7 @@ static Atom *gct_repeated(GctLanguageBuilder *builder, const char *name, SymbolI
             goto oom;
         }
     }
-    if (items.len == 1u && strcmp(gct_name(items.items[0]->expr.elems[0]->sym_id),
+    if (items.len == 1u && strcmp(gct_name(atom_symbol_current_id(items.items[0]->expr.elems[0])),
                                   "SyntaxNonTerminal") == 0) {
         free(items.items);
         return gct_separated(arena, name, "");

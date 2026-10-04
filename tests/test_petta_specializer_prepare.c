@@ -103,31 +103,31 @@ int main(void) {
         wide_first_order_value(&result));
 
     CHECK(petta_specializer_relation_execution_admission(
-              &space, route_call->expr.elems[0]->sym_id) ==
+              &space, atom_symbol_current_id(route_call->expr.elems[0])) ==
               PETTA_SPECIALIZER_RELATION_DEFER,
           "relation-wide admission preserves a route through an applying callee");
     CHECK(petta_specializer_relation_execution_admission(
-              &space, plain_call->expr.elems[0]->sym_id) ==
+              &space, atom_symbol_current_id(plain_call->expr.elems[0])) ==
               PETTA_SPECIALIZER_RELATION_IRRELEVANT,
           "a variable reaching only a grounded operation has no route");
     CHECK(petta_specializer_relation_execution_admission(
-              &space, atom_symbol(&result, "relevance-cycle-a")->sym_id) ==
+              &space, atom_symbol_current_id(atom_symbol(&result, "relevance-cycle-a"))) ==
               PETTA_SPECIALIZER_RELATION_IRRELEVANT,
           "a recursive forward without an application has no route");
     CHECK(petta_specializer_query_execution_admission(
-              &space, plain_call->expr.elems[0]->sym_id,
+              &space, atom_symbol_current_id(plain_call->expr.elems[0]),
               plain_call->expr.elems + 1u,
               plain_call->expr.len - 1u) ==
               PETTA_SPECIALIZER_RELATION_IRRELEVANT,
           "query-shaped admission rejects an inert argument forest");
     CHECK(petta_specializer_query_execution_admission(
-              &space, deep_call->expr.elems[0]->sym_id,
+              &space, atom_symbol_current_id(deep_call->expr.elems[0]),
               deep_call->expr.elems + 1u,
               deep_call->expr.len - 1u) ==
               PETTA_SPECIALIZER_RELATION_IRRELEVANT,
           "relation proof admits a query beyond the local node budget");
     CHECK(petta_specializer_query_execution_admission(
-              &space, plain_call->expr.elems[0]->sym_id,
+              &space, atom_symbol_current_id(plain_call->expr.elems[0]),
               NULL, 1u) ==
               PETTA_SPECIALIZER_RELATION_DEFER,
           "missing query arguments fail closed");
@@ -181,7 +181,7 @@ int main(void) {
         &result, atom_symbol(&result, "relevance-bounded"),
         atom_symbol(&result, "+"));
     CHECK(petta_specializer_query_execution_admission(
-              &space, bounded_higher_call->expr.elems[0]->sym_id,
+              &space, atom_symbol_current_id(bounded_higher_call->expr.elems[0]),
               bounded_higher_call->expr.elems + 1u,
               bounded_higher_call->expr.len - 1u) ==
               PETTA_SPECIALIZER_RELATION_DEFER,
@@ -228,7 +228,7 @@ int main(void) {
     Atom *late_call = atom_expr2(
         &result, atom_symbol(&result, "callable-cache"), late_symbol);
     CHECK(petta_specializer_query_execution_admission(
-              &space, late_call->expr.elems[0]->sym_id,
+              &space, atom_symbol_current_id(late_call->expr.elems[0]),
               late_call->expr.elems + 1u,
               late_call->expr.len - 1u) ==
               PETTA_SPECIALIZER_RELATION_IRRELEVANT,
@@ -249,7 +249,7 @@ int main(void) {
     space_add(&space, late_equation);
     petta_specializer_note_mutation(&space, late_equation);
     CHECK(petta_specializer_query_execution_admission(
-              &space, late_call->expr.elems[0]->sym_id,
+              &space, atom_symbol_current_id(late_call->expr.elems[0]),
               late_call->expr.elems + 1u,
               late_call->expr.len - 1u) ==
               PETTA_SPECIALIZER_RELATION_DEFER,
@@ -339,7 +339,7 @@ int main(void) {
         .bindings = bindings_builder_bindings(&observation_bindings)};
     CettaGsltTermCursorObserverV1 observer = {
         bindings_resolve_term_cursor_v1, &observation_context};
-    SymbolId consumer = arity_call->expr.elems[0]->sym_id;
+    SymbolId consumer = atom_symbol_current_id(arity_call->expr.elems[0]);
     BindingValue value_argument = binding_value_from_atom(view_term);
     CHECK(petta_specializer_query_value_execution_admission(
               &space, consumer, &observation_bindings.current,

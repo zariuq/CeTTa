@@ -416,7 +416,7 @@ static bool pposlf_native_type_vm_v1_activation_view_analyze(
         }
         if (!pposlf_native_type_vm_v1_rigid_application_dispatch(
                 pattern) ||
-            pattern->expr.elems[0]->sym_id != source_head->sym_id)
+            !atom_symbols_equal(pattern->expr.elems[0], source_head))
             continue;
         if (!pposlf_native_type_vm_v1_activation_pair_analyze(
                 source, pattern, &pair_admitted))
@@ -2696,7 +2696,7 @@ static bool pposlf_native_type_vm_v1_goal_dispatch(
         if (!head || head->kind != ATOM_SYMBOL)
             return false;
         entry = pposlf_native_type_vm_v1_application_dispatch(
-            impl, head->sym_id);
+            impl, atom_symbol_current_id(head));
         if (!entry ||
             entry->arity != (uint32_t)(goal->expr.len - 1u))
             return false;
@@ -4308,7 +4308,7 @@ pposlf_native_type_vm_v1_structural_shape_compatibility(
         }
         switch (left->kind) {
         case ATOM_SYMBOL:
-            if (left->sym_id != right->sym_id)
+            if (!atom_symbols_equal(left, right))
                 result = PPOSLF_NATIVE_SHAPE_INCOMPATIBLE_V1;
             break;
         case ATOM_GROUNDED:

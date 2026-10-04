@@ -26,9 +26,11 @@
 #include <assert.h>
 #include <inttypes.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -2043,10 +2045,10 @@ static void test_contextual_cons_values(Arena *arena) {
         bindings_init(&seed);
         assert(bindings_add_var(&seed, p, a));
         assert(bindings_add_var(&seed, q, a));
-        assert(bindings_add_id(&seed, var_epoch_id(x->var_id, left_epoch), x->sym_id, a));
-        assert(bindings_add_id(&seed, var_epoch_id(x->var_id, right_epoch), x->sym_id, agree ? a : b));
-        assert(bindings_add_id(&seed, var_epoch_id(head->var_id, left_epoch), head->sym_id, tag));
-        assert(bindings_add_id(&seed, var_epoch_id(head->var_id, right_epoch), head->sym_id, tag));
+        assert(bindings_add_id(&seed, var_epoch_id(x->var_id, left_epoch), atom_symbol_current_id(x), a));
+        assert(bindings_add_id(&seed, var_epoch_id(x->var_id, right_epoch), atom_symbol_current_id(x), agree ? a : b));
+        assert(bindings_add_id(&seed, var_epoch_id(head->var_id, left_epoch), atom_symbol_current_id(head), tag));
+        assert(bindings_add_id(&seed, var_epoch_id(head->var_id, right_epoch), atom_symbol_current_id(head), tag));
         assert(bindings_prepare_logical_write(&seed));
         seed.entries[0].value = binding_value_from_context(source, left_epoch);
         seed.entries[1].value = binding_value_from_context(source, right_epoch);
@@ -7096,7 +7098,7 @@ static void test_machine_query_visible_projection(
         &environment, hidden_alias->var_id).skeleton);
     assert(environment.len == 1u);
     assert(bindings_entry_at(&environment, 0u)->spelling ==
-           authored->sym_id);
+           atom_symbol_current_id(authored));
     bindings_free(&environment);
     assert(petta_machine_next(
                &machine, &answer, &environment) ==
@@ -7139,7 +7141,7 @@ static PettaMachineHostMode host_projection_classify(
         expression->kind != ATOM_EXPR ||
         expression->expr.len != 2u ||
         expression->expr.elems[0]->kind != ATOM_SYMBOL ||
-        expression->expr.elems[0]->sym_id != probe->head) {
+        atom_symbol_current_id(expression->expr.elems[0]) != probe->head) {
         return PETTA_MACHINE_HOST_NONE;
     }
     return PETTA_MACHINE_HOST_READY_APPLICATION;
@@ -8368,6 +8370,52 @@ static void test_choice_continuation_trail(
     petta_machine_destroy(&machine);
 }
 
+static void test_plain_host_plan_snapshot(void) {
+    Arena source, owner;
+    arena_init(&source);
+    arena_init(&owner);
+    PettaPlanNode *root = arena_alloc(&source, sizeof(*root));
+    PettaPlanNode *child = arena_alloc(&source, sizeof(*child));
+    *child = (PettaPlanNode){.role = PETTA_PLAN_VALUE,
+        .output = PETTA_PLAN_OUTPUT_VALUE};
+    *root = (PettaPlanNode){.role = PETTA_PLAN_STATIC_CALL,
+        .contains_call = true, .dispatch_handler = true,
+        .child_count = 1u, .children = child};
+    PettaPlanSnapshotEntry cache[2] = {0};
+    size_t count = 0u;
+    const PettaPlanNode *copy = petta_plan_plain_snapshot(
+        &owner, root, cache, &count, 2u, 8u);
+    assert(copy && copy != root && copy->children != child && count == 1u);
+    arena_free(&source);
+    assert(copy->dispatch_handler && copy->children[0].output ==
+           PETTA_PLAN_OUTPUT_VALUE);
+    PettaPlanNode leaf = {.role = PETTA_PLAN_VALUE,
+        .output = PETTA_PLAN_OUTPUT_VALUE};
+    PettaPlanNode same = {.role = PETTA_PLAN_STATIC_CALL,
+        .contains_call = true, .dispatch_handler = true,
+        .child_count = 1u, .children = &leaf};
+    size_t bytes = arena_accounted_live_bytes(&owner);
+    assert(petta_plan_plain_snapshot(&owner, &same, cache, &count, 2u, 8u)
+           == copy);
+    assert(count == 1u && arena_accounted_live_bytes(&owner) == bytes);
+    same.dispatch_handler = false;
+    const PettaPlanNode *other = petta_plan_plain_snapshot(
+        &owner, &same, cache, &count, 2u, 8u);
+    assert(other && other != copy && !other->dispatch_handler && count == 2u);
+    same.output = PETTA_PLAN_OUTPUT_TRUE;
+    assert(!petta_plan_plain_snapshot(&owner, &same, cache, &count, 2u, 8u));
+    count = 0u; /* Unsupported-owner controls must not fail merely on capacity. */
+    PettaRegionHoleProgram descriptor = {0};
+    leaf.region_hole_program = &descriptor;
+    assert(!petta_plan_plain_snapshot(&owner, &same, cache, &count, 2u, 8u));
+    assert(count == 0u);
+    leaf.region_hole_program = NULL;
+    assert(!petta_plan_plain_snapshot(&owner, &same, cache, &count, 2u, 1u));
+    assert(count == 0u && copy->dispatch_handler);
+    arena_free(&owner);
+    puts("PASS: HOST plan snapshots outlive source storage and keep dispatch scope");
+}
+
 static void test_deterministic_heap_collection(
     Space *space, Arena *persistent, Arena *answers) {
     add_equation(
@@ -8524,6 +8572,139 @@ static void test_choice_binding_compaction(
            PETTA_MACHINE_STEP_EXHAUSTED);
     bindings_free(&environment);
     petta_machine_destroy(&machine);
+}
+
+typedef struct {
+    PettaMachine *machine;
+    size_t polls;
+} ChoiceMajorProgress;
+
+static bool require_choice_major_progress(void *context) {
+    ChoiceMajorProgress *progress = context;
+    if (++progress->polls % 1024u == 0u) {
+        PettaMachineStats stats;
+        assert(petta_machine_stats(progress->machine, &stats));
+        /* This fixture has an admitted movable root profile. Collection must
+         * happen before older storage passes twice the initial 8 MiB window.
+         * Check while running, so a missing collector fails promptly instead
+         * of accumulating every promoted suffix until the final answer. */
+        assert(stats.maximum_tenured_live_bytes <= 16u * 1024u * 1024u ||
+               stats.choice_major_heap_collections > 0u);
+    }
+    return true;
+}
+
+static void run_choice_major_payloads(
+    Space *space, Arena *persistent, Arena *answers, bool omit_read_marks) {
+    add_equation(space, persistent,
+        "(= (major-drain $items $token)"
+        " (chain (drain $items) $done (major-leading $token $token)))");
+    add_equation(space, persistent,
+        "(= (major-drain $items $token) (major-trailing $token $token))");
+    add_equation(space, persistent,
+        "(= (major-drain $items $token) (major-trailing $token $token))");
+    enum { ITEM_COUNT = 65536, PAYLOAD_BYTES = 4096 };
+    Atom **items = cetta_malloc(ITEM_COUNT * sizeof(*items));
+#if CETTA_SYMBOL_READ_COVERAGE
+    SymbolId item_id = symbol_intern_data_cstr(
+        g_symbols, "gc-read-coverage-item");
+    assert(item_id != SYMBOL_ID_NONE);
+    assert(symbol_flags(g_symbols, item_id) & CETTA_SYMBOL_FLAG_RUNTIME_DATA);
+    Atom *item = atom_symbol_id(answers, item_id);
+    assert(symbol_read_coverage_watch(g_symbols, item_id));
+    symbol_read_coverage_omit_marks_for_test(omit_read_marks);
+#else
+    (void)omit_read_marks;
+    Atom *item = atom_symbol(answers, "major-item");
+#endif
+    for (size_t i = 0u; i < ITEM_COUNT; i++)
+        items[i] = item;
+    Atom *list = atom_expr(answers, items, ITEM_COUNT);
+    free(items);
+    char bytes[PAYLOAD_BYTES];
+    for (size_t i = 0u; i < sizeof(bytes); i++)
+        bytes[i] = (char)(i % 256u);
+    Atom *payload = atom_string_n(answers, bytes, sizeof(bytes));
+    Atom *query_items[] = {atom_symbol(answers, "major-drain"), list, payload};
+    Atom *query = atom_expr(answers, query_items, 3u);
+    PettaMachine machine;
+    ChoiceMajorProgress progress = {.machine = &machine};
+    PettaMachineHost host = {
+        .context = &progress, .permit_transition = require_choice_major_progress,
+    };
+    assert(petta_machine_init(&machine, space, answers, query, NULL, &host));
+    Atom *answer = NULL;
+    Bindings environment;
+    for (size_t i = 0u; i < 3u; i++) {
+        assert(petta_machine_next(&machine, &answer, &environment) ==
+               PETTA_MACHINE_STEP_ANSWER);
+        assert(answer->kind == ATOM_EXPR && answer->expr.len == 3u);
+        assert(atom_is_symbol(answer->expr.elems[0], i == 0u ? "major-leading" : "major-trailing"));
+        assert(atom_string_equals_bytes(answer->expr.elems[1], bytes, sizeof(bytes)));
+        assert(atom_string_equals_bytes(answer->expr.elems[2], bytes, sizeof(bytes)));
+        bindings_free(&environment);
+    }
+    PettaMachineStats stats;
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.choice_major_heap_collections > 0u);
+    assert(stats.choice_major_bytes_reclaimed > 0u);
+    assert(stats.choice_major_goal_roots_scanned > 0u);
+#if CETTA_SYMBOL_READ_COVERAGE
+    assert(symbol_read_coverage_collections() > 0u);
+    assert(symbol_read_coverage_marked_copies() > 0u);
+    assert(strcmp(symbol_bytes(g_symbols, item_id),
+                  "gc-read-coverage-item") == 0);
+    assert(symbol_read_coverage_checked_reads() > 0u);
+    symbol_read_coverage_clear();
+#endif
+    assert(petta_machine_next(&machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+    puts("PASS: choice major collection preserves ordered duplicates and binary payloads");
+}
+
+static void test_choice_major_payloads(
+    Space *space, Arena *persistent, Arena *answers) {
+#if CETTA_SYMBOL_READ_COVERAGE
+    /* Run the actual pending-choice collection with only its diagnostic
+     * copy marks suppressed. The ordinary atom copies remain unchanged. */
+    int report[2];
+    assert(pipe(report) == 0);
+    pid_t child = fork();
+    assert(child >= 0);
+    if (child == 0) {
+        close(report[0]);
+        assert(dup2(report[1], STDERR_FILENO) == STDERR_FILENO);
+        close(report[1]);
+        struct rlimit no_core = {0, 0};
+        assert(setrlimit(RLIMIT_CORE, &no_core) == 0);
+        run_choice_major_payloads(space, persistent, answers, true);
+        _exit(0);
+    }
+    close(report[1]);
+    char diagnostic[512] = {0};
+    char chunk[256];
+    size_t used = 0u;
+    ssize_t count;
+    while ((count = read(report[0], chunk, sizeof(chunk))) > 0) {
+        size_t bytes = (size_t)count;
+        if (used + bytes >= sizeof(diagnostic)) {
+            size_t drop = used + bytes - (sizeof(diagnostic) - 1u);
+            memmove(diagnostic, diagnostic + drop, used - drop);
+            used -= drop;
+        }
+        memcpy(diagnostic + used, chunk, bytes);
+        used += bytes;
+        diagnostic[used] = '\0';
+    }
+    close(report[0]);
+    int status = 0;
+    assert(waitpid(child, &status, 0) == child);
+    assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
+    assert(strstr(diagnostic, "unmarked symbol read after collection"));
+#endif
+    run_choice_major_payloads(space, persistent, answers, false);
 }
 
 static void test_marked_goal_trail_compaction(
@@ -8701,7 +8882,7 @@ static PettaMachineHostMode test_admit_ground_atom_classify(
         expression->expr.len != 3u ||
         !expression->expr.elems[0] ||
         expression->expr.elems[0]->kind != ATOM_SYMBOL ||
-        expression->expr.elems[0]->sym_id != g_builtin_syms.add_atom)
+        atom_symbol_current_id(expression->expr.elems[0]) != g_builtin_syms.add_atom)
         return PETTA_MACHINE_HOST_NONE;
     return PETTA_MACHINE_HOST_STRICT_FIRST_APPLICATION;
 }
@@ -9529,7 +9710,7 @@ static void test_inferred_signature_authority_provenance(
     petta_program_inferred_signatures_reset_under_authority(
         program, &space, &first);
     assert(petta_program_inferred_signature_put_under_authority(
-        program, &space, &first, head->sym_id, 1u, signature));
+        program, &space, &first, atom_symbol_current_id(head), 1u, signature));
     assert(petta_program_inferred_signatures_current_under_authority(
         program, &space, &first));
     assert(!petta_program_inferred_signatures_current_under_authority(
@@ -9543,12 +9724,12 @@ static void test_inferred_signature_authority_provenance(
 
     Atom *copy = NULL;
     assert(petta_program_inferred_signature_lookup_under_authority(
-        program, &space, &first, head->sym_id, 1u, arena, &copy));
+        program, &space, &first, atom_symbol_current_id(head), 1u, arena, &copy));
     assert(copy && atom_alpha_eq(copy, signature));
     copy = NULL;
     assert(!petta_program_inferred_signature_lookup_under_authority(
         program, &space, &replacement,
-        head->sym_id, 1u, arena, &copy));
+        atom_symbol_current_id(head), 1u, arena, &copy));
     assert(!copy);
 
     space_add(&space, parse_one(arena, "authority-mutation"));
@@ -9565,7 +9746,7 @@ static void test_inferred_signature_authority_provenance(
 
     petta_program_inferred_signatures_reset(program, &space);
     assert(petta_program_inferred_signature_put(
-        program, &space, head->sym_id, 1u, signature));
+        program, &space, atom_symbol_current_id(head), 1u, signature));
     assert(petta_program_inferred_signatures_current(program, &space));
     assert(!petta_program_inferred_signatures_current_under_authority(
         program, &space, &first));
@@ -9695,7 +9876,7 @@ static void test_declaration_authority_parity(
     assert(selected_head && selected_head->kind == ATOM_SYMBOL);
     assert(petta_program_inferred_signature_lookup_under_authority(
         selected_program, &selected_space, &selected_stamp,
-        selected_head->sym_id, 1u, arena, &selected_signature));
+        atom_symbol_current_id(selected_head), 1u, arena, &selected_signature));
     assert(selected_signature);
 
     space_free(&selected_space);
@@ -10247,7 +10428,7 @@ static void test_observation_frozen_environment(Arena *arena) {
         &captured, local->var_id));
     Binding contextual_binding = {
         .var_id = key->var_id,
-        .spelling = key->sym_id,
+        .spelling = atom_symbol_current_id(key),
         .value = binding_value_from_context(reachable, 401u),
     };
     Bindings contextual = {.entries = &contextual_binding, .len = 1u};
@@ -11812,6 +11993,56 @@ static void test_act_incremental_compression(void) {
          " advice");
 }
 
+/* A host generation may be replaced while an open equation cursor keeps
+ * exported ground data.  Its next answer must not read the retired arena. */
+static void test_open_cursor_stable_arena_detach(
+    Space *space, Arena *persistent, Arena *answers) {
+    Arena stable;
+    arena_init(&stable);
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    add_compiled_program_equation(
+        program, space, persistent,
+        "(= (stable-export-root) (let $v (Row \"detached-owned-payload\")"
+        " (progn (println! $v) (println! $v) (println! $v) $v)))");
+    const char *why = NULL;
+    CettaOpenEquationProgram *compiled = cetta_open_equation_program_compile(
+        program, space, symbol_intern_cstr(g_symbols, "stable-export-root"),
+        0u, NULL, &why);
+    assert(compiled);
+    CettaOpenEquationRuntime runtime = {.stable = &stable};
+    CettaOpenEquationCursor *cursor = cetta_open_equation_cursor_open(
+        compiled, answers, NULL, 0u, NULL, NULL, 0u, &runtime);
+    assert(cursor);
+    Atom *answer = NULL;
+    CettaOpenEquationStep step = cetta_open_equation_cursor_next(
+        cursor, NULL, &answer, NULL);
+    uint32_t base = 0u;
+    for (unsigned index = 0u; index < 3u; index++) {
+        assert(step == CETTA_OPEN_EQUATION_HOST);
+        base = test_compiled_accept_host_value(
+            cursor, answers,
+            "(println! (Row \"detached-owned-payload\"))", "()");
+        if (index < 2u)
+            step = cetta_open_equation_cursor_continue(
+                cursor, NULL, base, &answer, NULL);
+    }
+    assert(arena_accounted_live_bytes(&stable) > 0u);
+    assert(cetta_open_equation_cursor_detach(cursor, &stable));
+    arena_free(&stable);
+    arena_init(&stable);
+    step = cetta_open_equation_cursor_continue(
+        cursor, NULL, base, &answer, NULL);
+    assert(step == CETTA_OPEN_EQUATION_ANSWER);
+    assert(answer && answer->kind == ATOM_EXPR && answer->expr.len == 2u);
+    assert(atom_string_equals_bytes(
+        answer->expr.elems[1], "detached-owned-payload", 22u));
+    cetta_open_equation_cursor_close(cursor);
+    cetta_open_equation_program_release(compiled);
+    petta_program_free(program);
+    arena_free(&stable);
+}
+
 int main(int argc, char **argv) {
     bool worker_only = argc == 2 && strcmp(argv[1], "--worker-ownership") == 0;
     if (argc != 1 && !worker_only) {
@@ -11973,6 +12204,8 @@ int main(int argc, char **argv) {
         &space, &persistent, &answers);
     test_choice_binding_compaction(
         &space, &persistent, &answers);
+    test_choice_major_payloads(&space, &persistent, &answers);
+    test_plain_host_plan_snapshot();
     test_marked_goal_trail_compaction(
         &space, &persistent, &answers);
 
@@ -12472,6 +12705,8 @@ int main(int argc, char **argv) {
     test_bound_match_in_flight_remove_invalidates_pin(
         &space, &persistent, &answers);
     test_terminal_match_count_fold(&space, &answers);
+    test_open_cursor_stable_arena_detach(
+        &space, &persistent, &answers);
 
     space_free(&space);
 release_owners:

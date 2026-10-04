@@ -1440,7 +1440,7 @@ static bool langdef_operator_collect(
             size_t name_len = 0u;
             LangDefOperatorV1 *next;
             size_t next_cap;
-            SymbolId symbol_id = term->expr.elems[0]->sym_id;
+            SymbolId symbol_id = atom_symbol_current_id(term->expr.elems[0]);
             CettaExprLen arity = term->expr.len - 1u;
             bool already_collected = false;
             for (size_t index = 0u; index < *operator_len; index++) {
@@ -1520,8 +1520,8 @@ static bool atom_digest_symbol(const Atom *term, char out[65]) {
     uint32_t len;
     if (!term || term->kind != ATOM_SYMBOL)
         return false;
-    bytes = symbol_bytes(g_symbols, term->sym_id);
-    len = symbol_len(g_symbols, term->sym_id);
+    bytes = atom_symbol_bytes(term);
+    len = atom_symbol_length(term);
     if (!bytes || len != 64u)
         return false;
     for (uint32_t index = 0u; index < 64u; index++) {

@@ -7,6 +7,10 @@
 #include <stdint.h>
 #include <pthread.h>
 
+#ifndef CETTA_SYMBOL_READ_COVERAGE
+#define CETTA_SYMBOL_READ_COVERAGE 0
+#endif
+
 typedef uint32_t SymbolId;
 
 #define SYMBOL_ID_NONE ((SymbolId)0)
@@ -14,14 +18,36 @@ typedef uint32_t SymbolId;
 enum {
     CETTA_SYMBOL_FLAG_STATIC_GROUNDED_OP = 1u << 0,
     CETTA_SYMBOL_FLAG_TYPE_PURE_GROUNDED_OP = 1u << 1,
+    /* Only explicitly data-born entries may be considered for collection.
+     * The legacy intern API owns its result permanently. */
+    CETTA_SYMBOL_FLAG_RUNTIME_DATA = 1u << 4,
+    CETTA_SYMBOL_FLAG_SPECULATIVE_OP = 1u << 2,
+    CETTA_SYMBOL_FLAG_BUILTIN = 1u << 3,
 };
 
 typedef struct {
     const char *bytes;
     uint32_t len;
     uint64_t hash;
-    uint32_t flags;
+    _Atomic uint32_t flags;
 } SymbolEntry;
+
+/* Payload bytes include the terminating NUL. Metadata includes reserved
+ * entry chunks and index slots, rather than only populated entries. These
+ * gauges describe table storage; resetting runtime counters does not reset
+ * them. No entries are reclaimed in the instrumentation phase. */
+typedef struct {
+    uint64_t owned_count;
+    uint64_t data_count;
+    uint64_t retired_count;
+    uint64_t owned_bytes;
+    uint64_t data_bytes;
+    uint64_t metadata_bytes;
+    uint64_t peak_payload_bytes;
+    uint64_t peak_metadata_bytes;
+    uint64_t data_allocated_bytes;
+    uint64_t promotions;
+} SymbolTableStats;
 
 typedef struct {
     uint64_t hash;
@@ -43,7 +69,52 @@ typedef struct {
     SymbolEntry **entry_chunks;
     _Atomic uint32_t entry_len;
     pthread_mutex_t write_mutex;
+    SymbolTableStats stats;
 } SymbolTable;
+
+/* Non-destructive marker substrate. Unmarked bytes are diagnostics, never
+ * permission to free: the caller must still qualify every root owner and
+ * mutator/borrow boundary. Late births invalidate the snapshot for sweeping.
+ * This API contains no retirement or payload mutation operation. */
+typedef struct {
+    SymbolTable *table;
+    uint64_t instance_id;
+    uint32_t entry_limit;
+    uint8_t *marked;
+    bool late_mark;
+} SymbolShadowScan;
+
+typedef struct {
+    uint64_t marked_data_count;
+    uint64_t marked_data_bytes;
+    uint64_t unmarked_data_count;
+    uint64_t unmarked_data_bytes;
+    uint64_t late_births;
+    bool snapshot_outdated;
+} SymbolShadowResult;
+
+bool symbol_shadow_begin(SymbolTable *st, SymbolShadowScan *scan);
+bool symbol_shadow_mark(SymbolShadowScan *scan, SymbolId id);
+bool symbol_shadow_finish(SymbolShadowScan *scan, SymbolShadowResult *out);
+void symbol_shadow_destroy(SymbolShadowScan *scan);
+
+#if CETTA_SYMBOL_READ_COVERAGE
+/* Test-only, thread-local read diagnostic for one pre-existing ID. The
+ * collector marks copied atoms; selected symbol accessors check that mark.
+ * This samples neither every holder nor direct ID reads, and cannot see a
+ * borrowed bytes pointer retained across the boundary. It is not permission
+ * to reclaim an entry. */
+bool symbol_read_coverage_watch(SymbolTable *st, SymbolId id);
+void symbol_read_coverage_begin(SymbolTable *st);
+void symbol_read_coverage_mark_copy(SymbolTable *st, SymbolId id);
+void symbol_read_coverage_commit(SymbolTable *st);
+void symbol_read_coverage_cancel(SymbolTable *st);
+void symbol_read_coverage_clear(void);
+void symbol_read_coverage_omit_marks_for_test(bool omit);
+uint64_t symbol_read_coverage_collections(void);
+uint64_t symbol_read_coverage_marked_copies(void);
+uint64_t symbol_read_coverage_checked_reads(void);
+#endif
 
 static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     return st ? st->instance_id : 0u;
@@ -675,9 +746,26 @@ SymbolId symbol_intern_bytes(SymbolTable *st, const uint8_t *bytes, uint32_t len
 SymbolId symbol_intern_span_hashed(SymbolTable *st, const uint8_t *bytes,
                                    uint32_t len, uint64_t hash);
 SymbolId symbol_intern_cstr(SymbolTable *st, const char *text);
+/* Data births preserve the same spelling, ID equality and hash as owned
+ * interning. An owned intern of an existing data spelling promotes it;
+ * subsequent data interns never downgrade it. Interning does not collect. */
+SymbolId symbol_intern_data_bytes(SymbolTable *st, const uint8_t *bytes,
+                                  uint32_t len);
+SymbolId symbol_intern_data_cstr(SymbolTable *st, const char *text);
+/* Registration of a raw ID gives it permanent ownership. */
+bool symbol_pin(SymbolTable *st, SymbolId id);
+void symbol_table_stats_snapshot(SymbolTable *st, SymbolTableStats *out);
 /* The symbol already interned for text, or SYMBOL_ID_NONE.  Never interns. */
 SymbolId symbol_lookup_cstr(SymbolTable *st, const char *text);
+/* A lookup never acquires ownership or inserts a missing spelling. */
+SymbolId symbol_lookup_span_hashed(SymbolTable *st, const uint8_t *bytes,
+                                    uint32_t len, uint64_t hash);
+uint64_t symbol_hash_span(const uint8_t *bytes, uint32_t len);
 
+/* Borrowed text: currently valid until table destruction. A future sweep
+ * must restrict data-text borrows to protected roots/leases or the interval
+ * before the next eligible quiescent boundary. The table mutex alone cannot
+ * protect this unlocked borrow. Owned spellings remain permanent. */
 const char *symbol_bytes(const SymbolTable *st, SymbolId id);
 uint32_t symbol_len(const SymbolTable *st, SymbolId id);
 uint64_t symbol_hash_value(const SymbolTable *st, SymbolId id);

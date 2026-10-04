@@ -68,6 +68,15 @@ static bool json_bool_view(Atom *atom, bool *value_out) {
         *value_out = false;
         return true;
     }
+    /* PeTTa spells the booleans true and false. */
+    if (atom_is_symbol(atom, "true")) {
+        *value_out = true;
+        return true;
+    }
+    if (atom_is_symbol(atom, "false")) {
+        *value_out = false;
+        return true;
+    }
     return false;
 }
 

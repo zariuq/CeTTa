@@ -281,13 +281,13 @@ static void test_prepared_lifecycle(TestCounts *counts) {
     wrong_tokens = token_list_two(&arena, first_atom, first_atom);
     if (!grammar_simple(
             &grammar,
-            atom_symbol(&arena, "slr-prepared-production")->sym_id,
-            start_atom->sym_id, first_atom->sym_id, second_atom->sym_id)) {
+            atom_symbol_current_id(atom_symbol(&arena, "slr-prepared-production")),
+            atom_symbol_current_id(start_atom), atom_symbol_current_id(first_atom), atom_symbol_current_id(second_atom))) {
         expect(counts, false, "build deterministic SLR grammar");
         goto done;
     }
     cold = cetta_lp_native_slr_parse_shared(
-        &grammar, start_atom->sym_id, tokens, &arena,
+        &grammar, atom_symbol_current_id(start_atom), tokens, &arena,
         error, sizeof(error));
     expect(counts, cold != NULL && atom_is_symbol(cold, "NoParse") == false,
            error[0] ? error : "cold SLR parse succeeds");
@@ -295,14 +295,14 @@ static void test_prepared_lifecycle(TestCounts *counts) {
     expect(
         counts,
         cetta_lp_native_slr_prepare(
-            &prepared, &grammar, start_atom->sym_id,
+            &prepared, &grammar, atom_symbol_current_id(start_atom),
             error, sizeof(error)),
         error[0] ? error : "prepare SLR table");
     error[0] = '\0';
     expect(
         counts,
         !cetta_lp_native_slr_prepare(
-            &prepared, &grammar, start_atom->sym_id + 1000u,
+            &prepared, &grammar, atom_symbol_current_id(start_atom) + 1000u,
             error, sizeof(error)) &&
             strstr(error, "start nonterminal") != NULL,
         "failed SLR re-prepare preserves prior owner");
@@ -328,7 +328,7 @@ static void test_prepared_lifecycle(TestCounts *counts) {
             &prepared, &program, error, sizeof(error)) &&
             cetta_lp_native_slr_program_validate(
                 &program, error, sizeof(error)) &&
-            program.start_nonterminal == start_atom->sym_id &&
+            program.start_nonterminal == atom_symbol_current_id(start_atom) &&
             program.terminal_len == 2u &&
             program.nonterminal_len == 1u &&
             program.production_len == 1u &&
@@ -440,14 +440,14 @@ static void test_conflict_rejection(TestCounts *counts) {
     cetta_lp_native_slr_prepared_init(&prepared);
     start = atom_symbol(&arena, "slr-conflict-start");
     terminal = atom_symbol(&arena, "slr-conflict-terminal");
-    if (!grammar_ambiguous(&grammar, start->sym_id, terminal->sym_id)) {
+    if (!grammar_ambiguous(&grammar, atom_symbol_current_id(start), atom_symbol_current_id(terminal))) {
         expect(counts, false, "build ambiguous SLR grammar");
         goto done;
     }
     expect(
         counts,
         !cetta_lp_native_slr_prepare(
-            &prepared, &grammar, start->sym_id,
+            &prepared, &grammar, atom_symbol_current_id(start),
             error, sizeof(error)) &&
             strstr(error, "conflicts") != NULL,
         "prepared SLR rejects a conflicted table");
@@ -499,29 +499,29 @@ static void test_lattice_fast_path(TestCounts *counts) {
     second = atom_symbol(&arena, "slr-lattice-second");
     if (!grammar_simple(
             &grammar,
-            atom_symbol(&arena, "slr-lattice-production")->sym_id,
-            start->sym_id, first->sym_id, second->sym_id)) {
+            atom_symbol_current_id(atom_symbol(&arena, "slr-lattice-production")),
+            atom_symbol_current_id(start), atom_symbol_current_id(first), atom_symbol_current_id(second))) {
         expect(counts, false, "build SLR lattice grammar");
         goto done;
     }
     prepared = cetta_lp_native_slr_prepare(
-            &slr, &grammar, start->sym_id, error, sizeof(error)) &&
+            &slr, &grammar, atom_symbol_current_id(start), error, sizeof(error)) &&
         cetta_lp_native_gll_prepare(
-            &gll, &grammar, start->sym_id, error, sizeof(error)) &&
+            &gll, &grammar, atom_symbol_current_id(start), error, sizeof(error)) &&
         cetta_lp_native_glr_prepare(
-            &glr, &grammar, start->sym_id, error, sizeof(error));
+            &glr, &grammar, atom_symbol_current_id(start), error, sizeof(error));
     expect(counts, prepared,
            error[0] ? error : "prepare all deterministic lattice backends");
     if (!prepared)
         goto done;
     cetta_lp_native_grammar_free(&grammar);
 
-    terminals[0] = first->sym_id < second->sym_id
-        ? first->sym_id : second->sym_id;
-    terminals[1] = first->sym_id < second->sym_id
-        ? second->sym_id : first->sym_id;
+    terminals[0] = atom_symbol_current_id(first) < atom_symbol_current_id(second)
+        ? atom_symbol_current_id(first) : atom_symbol_current_id(second);
+    terminals[1] = atom_symbol_current_id(first) < atom_symbol_current_id(second)
+        ? atom_symbol_current_id(second) : atom_symbol_current_id(first);
     edges[0] = (CettaLpNativeUtf8LatticeEdge){
-        .terminal_id = first->sym_id,
+        .terminal_id = atom_symbol_current_id(first),
         .scalar_left = 0u,
         .scalar_right = 1u,
         .byte_left = 0u,
@@ -530,7 +530,7 @@ static void test_lattice_fast_path(TestCounts *counts) {
         .value = 'a',
     };
     edges[1] = (CettaLpNativeUtf8LatticeEdge){
-        .terminal_id = second->sym_id,
+        .terminal_id = atom_symbol_current_id(second),
         .scalar_left = 1u,
         .scalar_right = 2u,
         .byte_left = 1u,
@@ -639,19 +639,19 @@ static void test_lattice_branch_fallback(TestCounts *counts) {
     first = atom_symbol(&arena, "slr-lattice-choice-first");
     second = atom_symbol(&arena, "slr-lattice-choice-second");
     if (!grammar_alternatives(
-            &grammar, start->sym_id, first->sym_id, second->sym_id) ||
+            &grammar, atom_symbol_current_id(start), atom_symbol_current_id(first), atom_symbol_current_id(second)) ||
         !cetta_lp_native_slr_prepare(
-            &prepared, &grammar, start->sym_id,
+            &prepared, &grammar, atom_symbol_current_id(start),
             error, sizeof(error))) {
         expect(counts, false,
                error[0] ? error : "prepare SLR lexical-choice grammar");
         goto done;
     }
     cetta_lp_native_grammar_free(&grammar);
-    terminals[0] = first->sym_id < second->sym_id
-        ? first->sym_id : second->sym_id;
-    terminals[1] = first->sym_id < second->sym_id
-        ? second->sym_id : first->sym_id;
+    terminals[0] = atom_symbol_current_id(first) < atom_symbol_current_id(second)
+        ? atom_symbol_current_id(first) : atom_symbol_current_id(second);
+    terminals[1] = atom_symbol_current_id(first) < atom_symbol_current_id(second)
+        ? atom_symbol_current_id(second) : atom_symbol_current_id(first);
     edges[0] = (CettaLpNativeUtf8LatticeEdge){
         .terminal_id = terminals[0],
         .scalar_left = 0u,

@@ -1062,7 +1062,10 @@ static bool python_emit_single(CettaForeignRuntime *rt, Arena *a, PyObject *obj,
         return true;
     }
     if (PyUnicode_Check(obj)) {
-        const char *text = PyUnicode_AsUTF8(obj);
+        Py_ssize_t length = 0;
+        const char *text = PyUnicode_AsUTF8AndSize(obj, &length);
+        if (!text || length < 0 || (uint64_t)length > UINT32_MAX)
+            return false;
         /*
          * SWI Janus maps a Python str returned by PeTTa's py-call to a
          * Prolog atom.  Preserve that language boundary: repr and sread can
@@ -1074,8 +1077,8 @@ static bool python_emit_single(CettaForeignRuntime *rt, Arena *a, PyObject *obj,
             eval_current_language_id() == CETTA_LANGUAGE_PETTA;
         result_set_add(
             rs, petta_text
-                ? atom_symbol(a, text ? text : "")
-                : atom_string(a, text ? text : ""));
+                ? atom_symbol_data_n(a, text, (uint32_t)length)
+                : atom_string_n(a, text, (uint32_t)length));
         return true;
     }
 
@@ -1142,7 +1145,7 @@ static PyObject *python_from_atom(Arena *a, Atom *atom, bool unwrap) {
         case GV_BOOL:
             return PyBool_FromLong(atom->ground.bval ? 1 : 0);
         case GV_STRING:
-            return PyUnicode_FromString(atom->ground.sval);
+            return PyUnicode_FromStringAndSize(atom->ground.sval, atom->ground.slen);
         case GV_BIGINT:
             return PyLong_FromString((char *)atom_bigint_cstr(atom), NULL, 10);
         case GV_RATIONAL:
@@ -1164,7 +1167,7 @@ static PyObject *python_from_atom(Arena *a, Atom *atom, bool unwrap) {
 
     if (atom->kind == ATOM_SYMBOL) {
         const char *name = atom_name_cstr(atom);
-        return name ? PyUnicode_FromString(name) : NULL;
+        return name ? PyUnicode_FromStringAndSize(name, atom_symbol_length(atom)) : NULL;
     }
     if (atom->kind == ATOM_EXPR &&
         eval_current_language_id &&

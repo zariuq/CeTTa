@@ -482,6 +482,11 @@ void cetta_open_equation_program_release(
     free(program);
 }
 
+bool cetta_open_equation_program_owns_host_payload(
+    const CettaOpenEquationProgram *program) {
+    return program && program->atoms_ready;
+}
+
 bool cetta_open_equation_program_is_current(
     const CettaOpenEquationProgram *program) {
     return program && space_program_token_is_current(program->token);
@@ -845,7 +850,7 @@ static bool oem_compile_param(OemCompile *compile, Atom *param, uint32_t reg,
     uint32_t index = 0u;
     if (param->kind == ATOM_EXPR && param->expr.len > 0u &&
         param->expr.elems[0]->kind == ATOM_SYMBOL &&
-        param->expr.elems[0]->sym_id == g_builtin_syms.quote)
+        atom_symbol_current_id(param->expr.elems[0]) == g_builtin_syms.quote)
         return oem_reject(compile, "quoted head pattern");
     if (petta_semantics_is_cons_constraint(param)) {
         /* A list pattern, which PeTTa reads before any relational
@@ -938,7 +943,7 @@ static bool oem_relation_call(Atom *expr, const PettaPlanNode *plan) {
         expr->expr.elems[0]->kind != ATOM_SYMBOL ||
         plan->role != PETTA_PLAN_STATIC_CALL || !plan->relation_head_admitted)
         return false;
-    SymbolId head = expr->expr.elems[0]->sym_id;
+    SymbolId head = atom_symbol_current_id(expr->expr.elems[0]);
     /* Binding forms are syntax only at the arities read by their translator.
      * Their already callable occurrences at other arities use the ordinary
      * equation protocol, despite the form mark on the source plan. */
@@ -954,7 +959,7 @@ static bool oem_prim_call(Atom *expr, const PettaPlanNode *plan) {
         expr->expr.elems[0]->kind == ATOM_SYMBOL &&
         plan->role == PETTA_PLAN_STATIC_CALL &&
         plan->execution == PETTA_PLAN_EXEC_PURE_GROUNDED_SLOTS &&
-        oem_is_prim(expr->expr.elems[0]->sym_id);
+        oem_is_prim(atom_symbol_current_id(expr->expr.elems[0]));
 }
 
 /* A pattern, or data over the equation's variables: variables are slots,
@@ -1136,7 +1141,7 @@ static bool oem_fold_relation(OemCompile *compile, SymbolId foldl,
 static bool oem_call_relation(OemCompile *compile, Atom *call,
                               uint32_t *relation_out) {
     return oem_relation_index(compile->program,
-                              call->expr.elems[0]->sym_id,
+                              atom_symbol_current_id(call->expr.elems[0]),
                               call->expr.len - 1u, false, relation_out) ||
         oem_reject(compile, "too many relations");
 }
@@ -1237,7 +1242,7 @@ static bool oem_data_node(Atom *expr, const PettaPlanNode *plan) {
         if (head->kind == ATOM_SYMBOL)
             return plan->role == PETTA_PLAN_DATA &&
                 plan->control == PETTA_PLAN_CONTROL_NONE &&
-                petta_semantics_form(head->sym_id) == PETTA_FORM_NONE;
+                petta_semantics_form(atom_symbol_current_id(head)) == PETTA_FORM_NONE;
         if (plan->role != PETTA_PLAN_DYNAMIC_CALL ||
             plan->control != PETTA_PLAN_CONTROL_NONE)
             return false;
@@ -1269,12 +1274,12 @@ static bool oem_host_goal_admitted(const OemCompile *compile, Atom *expr,
         return true;
     Atom *head = expr->expr.elems[0];
     if (head->kind == ATOM_SYMBOL &&
-        (petta_semantics_form(head->sym_id) == PETTA_FORM_CUT ||
-         head->sym_id == g_builtin_syms.return_text))
+        (petta_semantics_form(atom_symbol_current_id(head)) == PETTA_FORM_CUT ||
+         atom_symbol_current_id(head) == g_builtin_syms.return_text))
         return false;
     if (head->kind == ATOM_SYMBOL && compile->host &&
         compile->host->may_delay &&
-        compile->host->may_delay(compile->host->context, head->sym_id,
+        compile->host->may_delay(compile->host->context, atom_symbol_current_id(head),
                                  (uint32_t)(expr->expr.len - 1u)))
         return false;
     for (CettaExprIndex child = 0u; child < expr->expr.len; child++) {
@@ -1345,9 +1350,9 @@ static bool oem_observation_call(const OemCompile *compile, const Atom *expr,
         plan->role != PETTA_PLAN_STATIC_CALL || !compile->host ||
         !compile->host->builtin_allowed ||
         !compile->host->builtin_allowed(compile->host->context,
-                                        expr->expr.elems[0]->sym_id))
+                                        atom_symbol_current_id(expr->expr.elems[0])))
         return false;
-    SymbolId head = expr->expr.elems[0]->sym_id;
+    SymbolId head = atom_symbol_current_id(expr->expr.elems[0]);
     PeTTaForm form = petta_semantics_form(head);
     /* Open computed operands can require expected-side evaluation of a
      * function occurrence. Leave that relational demand with the machine;
@@ -1383,7 +1388,7 @@ static bool oem_state_call(const Atom *expr) {
     if (expr->kind != ATOM_EXPR || expr->expr.len == 0u ||
         expr->expr.elems[0]->kind != ATOM_SYMBOL)
         return false;
-    PeTTaForm form = petta_semantics_form(expr->expr.elems[0]->sym_id);
+    PeTTaForm form = petta_semantics_form(atom_symbol_current_id(expr->expr.elems[0]));
     return (expr->expr.len == 2u && form == PETTA_FORM_GET_STATE) ||
         (expr->expr.len == 3u && form == PETTA_FORM_CHANGE_STATE);
 }
@@ -1419,22 +1424,22 @@ static uint32_t oem_host_fast_path(const OemCompile *compile, Atom *expr,
         return OEM_HOST_STATE;
     if (oem_observation_call(compile, expr, plan) &&
         oem_fields_are_values(expr, plan, 1u)) {
-        *op_out = expr->expr.elems[0]->sym_id;
+        *op_out = atom_symbol_current_id(expr->expr.elems[0]);
         return OEM_HOST_OBSERVE;
     }
     if (expr->expr.elems[0]->kind == ATOM_SYMBOL && expr->expr.len == 2u &&
-        petta_semantics_form(expr->expr.elems[0]->sym_id) ==
+        petta_semantics_form(atom_symbol_current_id(expr->expr.elems[0])) ==
             PETTA_FORM_MSORT &&
         plan->role == PETTA_PLAN_STATIC_CALL &&
         oem_fields_are_values(expr, plan, 1u)) {
-        *op_out = expr->expr.elems[0]->sym_id;
+        *op_out = atom_symbol_current_id(expr->expr.elems[0]);
         return OEM_HOST_SORT;
     }
     if (expr->expr.elems[0]->kind == ATOM_SYMBOL &&
-        oem_list_native(expr->expr.elems[0]->sym_id, expr->expr.len - 1u) &&
+        oem_list_native(atom_symbol_current_id(expr->expr.elems[0]), expr->expr.len - 1u) &&
         plan->role == PETTA_PLAN_STATIC_CALL &&
         oem_fields_are_values(expr, plan, 1u)) {
-        *op_out = expr->expr.elems[0]->sym_id;
+        *op_out = atom_symbol_current_id(expr->expr.elems[0]);
         return OEM_HOST_LIST;
     }
     if (oem_metatype_call(compile, expr, plan) &&
@@ -1456,18 +1461,18 @@ static uint32_t oem_host_fast_path(const OemCompile *compile, Atom *expr,
      * symbol the host renders, and one with variables, whose names are the
      * host's to choose, stays the host's. */
     if (expr->expr.elems[0]->kind == ATOM_SYMBOL && expr->expr.len == 2u &&
-        petta_semantics_form(expr->expr.elems[0]->sym_id) ==
+        petta_semantics_form(atom_symbol_current_id(expr->expr.elems[0])) ==
             PETTA_FORM_REPRA &&
         plan->role == PETTA_PLAN_STATIC_CALL &&
         oem_fields_are_values(expr, plan, 1u)) {
-        *op_out = expr->expr.elems[0]->sym_id;
+        *op_out = atom_symbol_current_id(expr->expr.elems[0]);
         return OEM_HOST_PURE;
     }
     if (expr->expr.elems[0]->kind != ATOM_SYMBOL ||
         plan->role != PETTA_PLAN_STATIC_CALL ||
         plan->execution != PETTA_PLAN_EXEC_PURE_GROUNDED_SLOTS)
         return OEM_HOST_PLAIN;
-    SymbolId head = expr->expr.elems[0]->sym_id;
+    SymbolId head = atom_symbol_current_id(expr->expr.elems[0]);
     if (!oem_pure_operation(compile, head) ||
         !oem_fields_are_values(expr, plan, 1u))
         return OEM_HOST_PLAIN;
@@ -1655,16 +1660,16 @@ static bool oem_build_apply(OemCompile *compile, Atom *expr,
     /* PeTTa's sort takes its argument's value once; applying the head to
      * that value keeps the host from evaluating it again. */
     if (expr->expr.len == 2u && expr->expr.elems[0]->kind == ATOM_SYMBOL &&
-        petta_semantics_form(expr->expr.elems[0]->sym_id) ==
+        petta_semantics_form(atom_symbol_current_id(expr->expr.elems[0])) ==
             PETTA_FORM_MSORT) {
         node.host_fast = (uint8_t)OEM_HOST_SORT;
-        node.op = expr->expr.elems[0]->sym_id;
+        node.op = atom_symbol_current_id(expr->expr.elems[0]);
     } else if (expr->expr.elems[0]->kind == ATOM_SYMBOL &&
-               oem_list_native(expr->expr.elems[0]->sym_id,
+               oem_list_native(atom_symbol_current_id(expr->expr.elems[0]),
                                expr->expr.len - 1u)) {
         /* So do PeTTa's list natives. */
         node.host_fast = (uint8_t)OEM_HOST_LIST;
-        node.op = expr->expr.elems[0]->sym_id;
+        node.op = atom_symbol_current_id(expr->expr.elems[0]);
     } else if (oem_metatype_call(compile, expr, plan)) {
         /* And `get-metatype`. */
         node.host_fast = (uint8_t)OEM_HOST_METATYPE;
@@ -1672,16 +1677,16 @@ static bool oem_build_apply(OemCompile *compile, Atom *expr,
     } else if (oem_state_call(expr)) {
         /* And PeTTa's named state. */
         node.host_fast = (uint8_t)OEM_HOST_STATE;
-        node.op = expr->expr.elems[0]->sym_id;
+        node.op = atom_symbol_current_id(expr->expr.elems[0]);
     } else if (oem_observation_call(compile, expr, plan)) {
         node.host_fast = (uint8_t)OEM_HOST_OBSERVE;
-        node.op = expr->expr.elems[0]->sym_id;
+        node.op = atom_symbol_current_id(expr->expr.elems[0]);
     } else if (expr->expr.elems[0]->kind == ATOM_SYMBOL &&
-               oem_pure_operation(compile, expr->expr.elems[0]->sym_id)) {
+               oem_pure_operation(compile, atom_symbol_current_id(expr->expr.elems[0]))) {
         /* A pure operation over computed arguments: the arguments' goals
          * run first, and the operation applies to their values. */
         node.host_fast = (uint8_t)OEM_HOST_PURE;
-        node.op = expr->expr.elems[0]->sym_id;
+        node.op = atom_symbol_current_id(expr->expr.elems[0]);
     }
     if (!oem_reserve((void **)&program->host_plans, &program->host_plan_cap,
                      program->host_plan_len + 1u,
@@ -1859,7 +1864,7 @@ static bool oem_build_typed_call(OemCompile *compile, Atom *expr,
     if (!compile->petta || !compile->host ||
         !compile->host->call_protocol_admitted ||
         !compile->host->call_protocol_admitted(compile->host->context,
-            compile->program->space, expr->expr.elems[0]->sym_id,
+            compile->program->space, atom_symbol_current_id(expr->expr.elems[0]),
             expr->expr.len - 1u))
         return true;
     CettaOpenEquationProgram *program = compile->program;
@@ -1923,7 +1928,7 @@ static bool oem_build_typed_call(OemCompile *compile, Atom *expr,
  * `superpose` and `once`; the host's materializer; and, where the host's
  * machine runs them and the profile offers them, `collect` and `select`. */
 static bool oem_control_form(const OemCompile *compile, const Atom *expr) {
-    SymbolId head = expr->expr.elems[0]->sym_id;
+    SymbolId head = atom_symbol_current_id(expr->expr.elems[0]);
     uint32_t len = (uint32_t)expr->expr.len;
     if (len == 2u &&
         (head == g_builtin_syms.collapse || head == g_builtin_syms.superpose ||
@@ -1948,7 +1953,7 @@ static bool oem_control_form(const OemCompile *compile, const Atom *expr) {
 static bool oem_build_control(OemCompile *compile, Atom *expr,
                               const PettaPlanNode *plan, uint32_t depth,
                               uint32_t *out) {
-    SymbolId head = expr->expr.elems[0]->sym_id;
+    SymbolId head = atom_symbol_current_id(expr->expr.elems[0]);
     uint32_t limit = 0u;
     if (head == g_builtin_syms.select && expr->expr.len == 3u) {
         Atom *bound = expr->expr.elems[1];
@@ -2023,7 +2028,7 @@ static bool oem_sequence(const Atom *expr, const PettaPlanNode *plan) {
         expr->expr.elems[0]->kind != ATOM_SYMBOL || !plan ||
         plan->output != PETTA_PLAN_OUTPUT_CHILD)
         return false;
-    PeTTaForm form = petta_semantics_form(expr->expr.elems[0]->sym_id);
+    PeTTaForm form = petta_semantics_form(atom_symbol_current_id(expr->expr.elems[0]));
     return (form == PETTA_FORM_PROGN &&
             plan->output_child == expr->expr.len - 1u) ||
         (form == PETTA_FORM_PROG1 && plan->output_child == 1u);
@@ -2035,7 +2040,7 @@ static bool oem_build_sequence(OemCompile *compile, Atom *expr,
     OemNode node = {.kind = OEM_N_SEQUENCE,
                     .count = (uint32_t)expr->expr.len - 1u,
                     .tail = tail && petta_semantics_form(
-                        expr->expr.elems[0]->sym_id) == PETTA_FORM_PROGN};
+                        atom_symbol_current_id(expr->expr.elems[0])) == PETTA_FORM_PROGN};
     uint32_t *children = malloc(sizeof(*children) * node.count);
     if (!children)
         return oem_reject(compile, "out of memory");
@@ -2066,7 +2071,7 @@ static bool oem_builtin_source(const OemCompile *compile, const Atom *expr,
         plan->role == PETTA_PLAN_STATIC_CALL && expr &&
         expr->kind == ATOM_EXPR && expr->expr.len > 0u &&
         expr->expr.elems[0]->kind == ATOM_SYMBOL &&
-        petta_program_head_is_intrinsic(expr->expr.elems[0]->sym_id);
+        petta_program_head_is_intrinsic(atom_symbol_current_id(expr->expr.elems[0]));
 }
 
 static bool oem_build_value_native(OemCompile *compile, Atom *expr,
@@ -2084,7 +2089,7 @@ static bool oem_build_builtin_entry(OemCompile *compile, Atom *expr,
     bool guarded = oem_builtin_source(compile, expr, plan);
     if (guarded && compile->host->builtin_equations(
             compile->host->context, compile->program->space,
-            expr->expr.elems[0]->sym_id, expr->expr.len - 1u)) {
+            atom_symbol_current_id(expr->expr.elems[0]), expr->expr.len - 1u)) {
         if (!oem_build_host(compile, expr, plan, depth,
                             "extended builtin equations", out))
             return false;
@@ -2150,14 +2155,14 @@ static bool oem_build_value_native(OemCompile *compile, Atom *expr,
         return oem_build_bindings(compile, expr, plan, depth, false, out);
     bool symbol_head = expr->expr.elems[0]->kind == ATOM_SYMBOL;
     if (symbol_head && expr->expr.len == 4u &&
-        expr->expr.elems[0]->sym_id == g_builtin_syms.match)
+        atom_symbol_current_id(expr->expr.elems[0]) == g_builtin_syms.match)
         return oem_build_match(compile, expr, plan, depth, false, out);
     /* PeTTa's `(cut)` is Prolog's `!`, as its translation reads it, whatever
      * equations the program has for `cut`: in an equation's own body it
      * commits the call to that equation, and its value is the truth
      * value. */
     if (symbol_head && expr->expr.len == 1u &&
-        petta_semantics_form(expr->expr.elems[0]->sym_id) == PETTA_FORM_CUT) {
+        petta_semantics_form(atom_symbol_current_id(expr->expr.elems[0])) == PETTA_FORM_CUT) {
         if (!compile->named)
             return oem_reject(compile, "cut inside a control");
         node.kind = OEM_N_CUT;
@@ -2170,9 +2175,9 @@ static bool oem_build_value_native(OemCompile *compile, Atom *expr,
      * both. */
     if (symbol_head && expr->expr.len == 3u &&
         plan->role == PETTA_PLAN_STATIC_CALL &&
-        (petta_semantics_form(expr->expr.elems[0]->sym_id) ==
+        (petta_semantics_form(atom_symbol_current_id(expr->expr.elems[0])) ==
              PETTA_FORM_CONS ||
-         expr->expr.elems[0]->sym_id == g_builtin_syms.cons_atom)) {
+         atom_symbol_current_id(expr->expr.elems[0]) == g_builtin_syms.cons_atom)) {
         if (!oem_build_elements(compile, expr, plan, depth, 1u, &node.first,
                                 &node.count))
             return false;
@@ -2187,18 +2192,18 @@ static bool oem_build_value_native(OemCompile *compile, Atom *expr,
      * clauses for that step (oem_fold_relation). */
     if (symbol_head && expr->expr.len == 4u &&
         plan->role == PETTA_PLAN_STATIC_CALL &&
-        petta_semantics_form(expr->expr.elems[0]->sym_id) ==
+        petta_semantics_form(atom_symbol_current_id(expr->expr.elems[0])) ==
             PETTA_FORM_FOLDL &&
         expr->expr.elems[1]->kind == ATOM_SYMBOL &&
-        petta_semantics_form(expr->expr.elems[1]->sym_id) ==
+        petta_semantics_form(atom_symbol_current_id(expr->expr.elems[1])) ==
             PETTA_FORM_NONE &&
         compile->host && compile->host->relation_admitted &&
         compile->host->relation_admitted(
             compile->host->context, compile->program->space,
-            expr->expr.elems[1]->sym_id, 2u)) {
+            atom_symbol_current_id(expr->expr.elems[1]), 2u)) {
         uint32_t fold = UINT32_MAX;
-        if (!oem_fold_relation(compile, expr->expr.elems[0]->sym_id,
-                               expr->expr.elems[1]->sym_id, &fold))
+        if (!oem_fold_relation(compile, atom_symbol_current_id(expr->expr.elems[0]),
+                               atom_symbol_current_id(expr->expr.elems[1]), &fold))
             return false;
         if (fold != UINT32_MAX) {
             node.kind = OEM_N_CALL;
@@ -2220,7 +2225,7 @@ static bool oem_build_value_native(OemCompile *compile, Atom *expr,
      * relation, so X's answers are collected here, not by the host.
      * Should the relation not compile, the host evaluates the form. */
     if (symbol_head && compile->petta && expr->expr.len == 2u) {
-        PeTTaForm stream = petta_semantics_form(expr->expr.elems[0]->sym_id);
+        PeTTaForm stream = petta_semantics_form(atom_symbol_current_id(expr->expr.elems[0]));
         if (stream == PETTA_FORM_STREAM_UNIQUE ||
             stream == PETTA_FORM_STREAM_ALPHA_UNIQUE) {
             CettaOpenEquationProgram *program = compile->program;
@@ -2277,19 +2282,19 @@ static bool oem_build_value_native(OemCompile *compile, Atom *expr,
     if (symbol_head &&
         (oem_observation_call(compile, expr, plan) ||
          (plan->role == PETTA_PLAN_STATIC_CALL && expr->expr.len == 3u &&
-          (expr->expr.elems[0]->sym_id == g_builtin_syms.petta_min ||
-           expr->expr.elems[0]->sym_id == g_builtin_syms.petta_max) &&
-          oem_pure_operation(compile, expr->expr.elems[0]->sym_id))))
+          (atom_symbol_current_id(expr->expr.elems[0]) == g_builtin_syms.petta_min ||
+           atom_symbol_current_id(expr->expr.elems[0]) == g_builtin_syms.petta_max) &&
+          oem_pure_operation(compile, atom_symbol_current_id(expr->expr.elems[0])))))
         return oem_build_apply(compile, expr, plan, depth, out);
     /* A full-arity grounded spelling undefined by this dialect is data
      * until an authored function registers it. Partial applications keep
      * the machine's arity protocol. Its children retain their plans, and
      * registration/mutation invalidates the enclosing program. */
     bool undefined = symbol_head && expr->expr.len == 3u && compile->petta &&
-        petta_semantics_grounded_undefined(expr->expr.elems[0]->sym_id) &&
+        petta_semantics_grounded_undefined(atom_symbol_current_id(expr->expr.elems[0])) &&
         !petta_program_function_registered(
             compile->petta, compile->program->space,
-            expr->expr.elems[0]->sym_id);
+            atom_symbol_current_id(expr->expr.elems[0]));
     if (!undefined && symbol_head && oem_relation_call(expr, plan)) {
         bool typed = false;
         if (!oem_build_typed_call(compile, expr, plan, depth, &typed, out))
@@ -2301,7 +2306,7 @@ static bool oem_build_value_native(OemCompile *compile, Atom *expr,
         compile->host && compile->host->relation_admitted &&
         !compile->host->relation_admitted(
             compile->host->context, compile->program->space,
-            expr->expr.elems[0]->sym_id, expr->expr.len - 1u))
+            atom_symbol_current_id(expr->expr.elems[0]), expr->expr.len - 1u))
         return oem_build_host(compile, expr, plan, depth,
                               "relation owned by the host", out);
     if (!undefined && symbol_head && oem_relation_call(expr, plan)) {
@@ -2326,7 +2331,7 @@ static bool oem_build_value_native(OemCompile *compile, Atom *expr,
     }
     if (symbol_head && oem_prim_call(expr, plan)) {
         node.kind = OEM_N_PRIM;
-        node.op = expr->expr.elems[0]->sym_id;
+        node.op = atom_symbol_current_id(expr->expr.elems[0]);
         return oem_build_elements(compile, expr, plan, depth, 1u,
                                   &node.first, &node.count) &&
             oem_hole(compile, &node.exposed) &&
@@ -2345,23 +2350,23 @@ static bool oem_build_value_native(OemCompile *compile, Atom *expr,
      * without retaining its items. Value arguments still use the native
      * observer below. */
     if (computed_call && expr->expr.len == 2u &&
-        petta_semantics_count_consumer(expr->expr.elems[0]->sym_id) !=
+        petta_semantics_count_consumer(atom_symbol_current_id(expr->expr.elems[0])) !=
             PETTA_COUNT_CONSUMER_NONE)
         return oem_build_host(compile, expr, plan, depth,
                               "collection cardinality observer", out);
     bool value_native = computed_call &&
-        ((oem_list_native(expr->expr.elems[0]->sym_id,
+        ((oem_list_native(atom_symbol_current_id(expr->expr.elems[0]),
                           expr->expr.len - 1u) &&
-          petta_semantics_form(expr->expr.elems[0]->sym_id) !=
+          petta_semantics_form(atom_symbol_current_id(expr->expr.elems[0])) !=
               PETTA_FORM_LENGTH) ||
          oem_metatype_call(compile, expr, plan) || oem_state_call(expr) ||
          oem_observation_call(compile, expr, plan));
     if (!undefined && (oem_apply_call(expr, plan) || value_native ||
         (symbol_head && plan->role == PETTA_PLAN_STATIC_CALL &&
          ((expr->expr.len == 2u &&
-           petta_semantics_form(expr->expr.elems[0]->sym_id) ==
+           petta_semantics_form(atom_symbol_current_id(expr->expr.elems[0])) ==
                PETTA_FORM_MSORT) ||
-          (oem_pure_operation(compile, expr->expr.elems[0]->sym_id) &&
+          (oem_pure_operation(compile, atom_symbol_current_id(expr->expr.elems[0])) &&
            !oem_fields_are_values(expr, plan, 1u) &&
            !petta_semantics_match_existence_observer_shape(
                expr, compile->host ? compile->host->reify_head
@@ -2480,7 +2485,7 @@ static bool oem_build_tail_native(OemCompile *compile, Atom *expr,
     if (!(expr->kind == ATOM_EXPR && expr->expr.len > 0u &&
           expr->expr.elems[0]->kind == ATOM_SYMBOL && plan))
         return oem_build_value(compile, expr, plan, depth, out);
-    SymbolId head = expr->expr.elems[0]->sym_id;
+    SymbolId head = atom_symbol_current_id(expr->expr.elems[0]);
     OemNode node = {0};
     if (oem_sequence(expr, plan))
         return oem_build_sequence(compile, expr, plan, depth, true, out);
@@ -2500,7 +2505,7 @@ static bool oem_build_tail_native(OemCompile *compile, Atom *expr,
         bool comparison = test && test->kind == ATOM_EXPR &&
             test->expr.len == 3u &&
             test->expr.elems[0]->kind == ATOM_SYMBOL &&
-            oem_is_test(test->expr.elems[0]->sym_id) && test_plan &&
+            oem_is_test(atom_symbol_current_id(test->expr.elems[0])) && test_plan &&
             test_plan->role == PETTA_PLAN_STATIC_CALL &&
             !oem_builtin_source(compile, test, test_plan) &&
             !petta_semantics_match_existence_observer_shape(
@@ -2508,7 +2513,7 @@ static bool oem_build_tail_native(OemCompile *compile, Atom *expr,
                                     : SYMBOL_ID_NONE);
         bool ok = true;
         if (comparison) {
-            node.op = test->expr.elems[0]->sym_id;
+            node.op = atom_symbol_current_id(test->expr.elems[0]);
             ok = oem_build_elements(compile, test, test_plan, depth, 1u,
                                     &node.first, &node.count);
         } else {
@@ -2976,7 +2981,7 @@ static bool oem_compile_relational_occurrences(OemCompile *compile) {
         if (compile->host && compile->host->relation_admitted &&
             !compile->host->relation_admitted(
                 compile->host->context, program->space,
-                call->expr.elems[0]->sym_id, count)) {
+                atom_symbol_current_id(call->expr.elems[0]), count)) {
             OemStep step = {
                 .kind = OEM_S_HOST, .relation = program->host_plan_len,
                 .target = OEM_HOST_OCCURRENCE,
@@ -3378,7 +3383,7 @@ static bool oem_build_typed_protocol(OemCompile *compile,
     };
     uint32_t body_node = 0u;
     ok = ok && oem_node_children(compile, operands, arity, &body.first) &&
-        oem_relation_index(compile->program, call->expr.elems[0]->sym_id,
+        oem_relation_index(compile->program, atom_symbol_current_id(call->expr.elems[0]),
             arity, local->hold_body, &body.relation) &&
         oem_hole(compile, &body.exposed) &&
         oem_node(compile, body, &body_node);
@@ -3600,7 +3605,7 @@ enum { OEM_INDEX_TABLE_MIN_KEYS = 6u };
  * symbol with an integer never, so literals it finds equal have one code. */
 static inline bool oem_literal_code(const Atom *atom, uint64_t *code) {
     if (atom->kind == ATOM_SYMBOL) {
-        *code = ((uint64_t)atom->sym_id << 1) | 1u;
+        *code = ((uint64_t)atom_symbol_current_id(atom) << 1) | 1u;
         return true;
     }
     if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_INT) {
@@ -3619,7 +3624,7 @@ static inline bool oem_key_eq(Atom *term, Atom *literal) {
     if (term->kind != literal->kind)
         return false;
     if (term->kind == ATOM_SYMBOL)
-        return term->sym_id == literal->sym_id;
+        return atom_symbols_equal(term, literal);
     if (term->kind == ATOM_GROUNDED && term->ground.gkind == GV_INT &&
         literal->ground.gkind == GV_INT)
         return term->ground.ival == literal->ground.ival;
@@ -4073,7 +4078,7 @@ static bool oem_compile_relation(CettaOpenEquationProgram *program,
             ? equation->expr.elems[1] : NULL;
         if (!lhs || lhs->kind != ATOM_EXPR || lhs->expr.len == 0u ||
             lhs->expr.elems[0]->kind != ATOM_SYMBOL ||
-            lhs->expr.elems[0]->sym_id != head) {
+            atom_symbol_current_id(lhs->expr.elems[0]) != head) {
             *reason = "wildcard or malformed equation";
             ok = false;
             break;
@@ -5663,7 +5668,7 @@ static bool oem_space_has_schema(CettaOpenEquationCursor *cursor, Space *root,
         cursor->schema_epoch = cursor->authority_epoch + 1u;
     }
     for (uint32_t index = 0u; index < cursor->schema_len; index++) {
-        if (cursor->schemas[index].name == reference->sym_id)
+        if (cursor->schemas[index].name == atom_symbol_current_id(reference))
             return cursor->schemas[index].schema;
     }
     Atom **types = NULL;
@@ -5675,14 +5680,14 @@ static bool oem_space_has_schema(CettaOpenEquationCursor *cursor, Space *root,
         const char *head = type && type->kind == ATOM_EXPR &&
                 type->expr.len == 2u &&
                 type->expr.elems[0]->kind == ATOM_SYMBOL
-            ? symbol_bytes(g_symbols, type->expr.elems[0]->sym_id) : NULL;
+            ? atom_symbol_bytes(type->expr.elems[0]) : NULL;
         found = head && strcmp(head, "SpaceOf") == 0;
     }
     free(types);
     if (oem_reserve((void **)&cursor->schemas, &cursor->schema_cap,
                     cursor->schema_len + 1u, sizeof(*cursor->schemas)))
         cursor->schemas[cursor->schema_len++] =
-            (OemSchemaEntry){.name = reference->sym_id, .schema = found};
+            (OemSchemaEntry){.name = atom_symbol_current_id(reference), .schema = found};
     return found;
 }
 
@@ -5710,7 +5715,7 @@ static bool oem_row_may_unify(const CettaOpenEquationCursor *cursor,
         /* A symbol is compared at once. */
         if (part->kind == ATOM_SYMBOL
                 ? !(row_part->kind == ATOM_SYMBOL
-                        ? row_part->sym_id == part->sym_id
+                        ? atom_symbols_equal(row_part, part)
                         : row_part->kind == ATOM_VAR ||
                               oem_is_list_cell(row_part))
                 : !oem_row_may_unify(cursor, part, row_part, depth + 1u))
@@ -5735,7 +5740,7 @@ static uint64_t oem_row_key(const Atom *row) {
         return OEM_ROW_ATOMIC;
     uint64_t length = (uint64_t)row->expr.len << 32;
     return row->expr.len > 0u && row->expr.elems[0]->kind == ATOM_SYMBOL
-        ? length | row->expr.elems[0]->sym_id
+        ? length | atom_symbol_current_id(row->expr.elems[0])
         : length | OEM_ROW_ANY_HEAD;
 }
 
@@ -5749,7 +5754,7 @@ static uint64_t oem_pattern_key(const CettaOpenEquationCursor *cursor,
         return OEM_ROW_WILD;
     Atom *head = oem_deref(cursor, pattern->expr.elems[0]);
     return head->kind == ATOM_SYMBOL
-        ? ((uint64_t)pattern->expr.len << 32) | head->sym_id
+        ? ((uint64_t)pattern->expr.len << 32) | atom_symbol_current_id(head)
         : OEM_ROW_WILD;
 }
 
@@ -5771,14 +5776,14 @@ enum { OEM_ROW_PARTS = 4u };
 
 static uint64_t oem_part_key(const Atom *part) {
     if (part->kind == ATOM_SYMBOL)
-        return OEM_PART_SYMBOL | part->sym_id;
+        return OEM_PART_SYMBOL | atom_symbol_current_id(part);
     if (part->kind == ATOM_GROUNDED)
         return OEM_PART_VALUE;
     if (part->kind != ATOM_EXPR || oem_is_list_cell(part))
         return OEM_ROW_WILD;
     uint64_t length = (uint64_t)part->expr.len << 32;
     return part->expr.len > 0u && part->expr.elems[0]->kind == ATOM_SYMBOL
-        ? length | part->expr.elems[0]->sym_id
+        ? length | atom_symbol_current_id(part->expr.elems[0])
         : length | OEM_ROW_ANY_HEAD;
 }
 
@@ -5869,7 +5874,7 @@ static uint64_t oem_template_key(const CettaOpenEquationCursor *cursor,
         : head->kind == OEM_T_SLOT ? oem_deref(cursor, locals[head->slot])
                                    : NULL;
     return symbol && symbol->kind == ATOM_SYMBOL
-        ? ((uint64_t)item->count << 32) | symbol->sym_id
+        ? ((uint64_t)item->count << 32) | atom_symbol_current_id(symbol)
         : OEM_ROW_WILD;
 }
 
@@ -5880,7 +5885,7 @@ static inline bool oem_leaf_may_unify(const CettaOpenEquationCursor *cursor,
                                       uint32_t depth) {
     value = oem_deref(cursor, value);
     if (value->kind == ATOM_SYMBOL)
-        return row->kind == ATOM_SYMBOL ? row->sym_id == value->sym_id
+        return row->kind == ATOM_SYMBOL ? atom_symbols_equal(row, value)
                                         : row->kind == ATOM_VAR ||
                                               oem_is_list_cell(row);
     return oem_row_may_unify(cursor, value, row, depth);
@@ -5907,7 +5912,7 @@ static uint64_t oem_template_part_key(const CettaOpenEquationCursor *cursor,
         : head->kind == OEM_T_SLOT ? oem_deref(cursor, locals[head->slot])
                                    : NULL;
     return symbol && symbol->kind == ATOM_SYMBOL
-        ? length | symbol->sym_id : length | OEM_ROW_ANY_HEAD;
+        ? length | atom_symbol_current_id(symbol) : length | OEM_ROW_ANY_HEAD;
 }
 
 /* Whether a row may meet a pattern read in place, as oem_row_may_unify asks
@@ -6056,7 +6061,7 @@ static __attribute__((noinline)) OemRun oem_match_step(
         (atom_is_symbol_id(head, g_builtin_syms.comma) ||
          atom_is_symbol_id(head, g_builtin_syms.pipe) ||
          (head && head->kind == ATOM_SYMBOL &&
-          strcmp(symbol_bytes(g_symbols, head->sym_id), "cons") == 0)))
+          strcmp(atom_symbol_bytes(head), "cons") == 0)))
         return oem_match_host_step(cursor, program, pc, locals,
                                     local_count, cont, depth, step, reference);
     Space *space = cursor->runtime.resolve_space
@@ -6065,7 +6070,7 @@ static __attribute__((noinline)) OemRun oem_match_step(
                                         reference)
         : NULL;
     if (reference->kind == ATOM_SYMBOL) {
-        if (!space && reference->sym_id == g_builtin_syms.self)
+        if (!space && atom_symbol_current_id(reference) == g_builtin_syms.self)
             space = program->space;
         /* A symbol that names no space names a predicate; a schema
          * elaborates the pattern.  Both are equation search's. */
@@ -6344,7 +6349,7 @@ static __attribute__((cold, noinline)) void oem_debug_host_goal(
     bool expr = goal->kind == ATOM_EXPR && goal->expr.len > 0u;
     const Atom *head = expr ? goal->expr.elems[0] : goal;
     fprintf(stderr, "open-equations host %s/%u\n",
-            head->kind == ATOM_SYMBOL ? symbol_bytes(g_symbols, head->sym_id)
+            head->kind == ATOM_SYMBOL ? atom_symbol_bytes(head)
             : head->kind == ATOM_VAR  ? "<variable>"
             : head->kind == ATOM_EXPR ? "<expression>"
                                       : "<value>",
@@ -6794,7 +6799,7 @@ static __attribute__((noinline)) OemRun oem_applied_pure_step(
         CettaOpenEquationCursor *cursor,
         const CettaOpenEquationProgram *program, Atom **locals,
         const OemStep *step, Atom *head, Atom *data, uint32_t arity) {
-    if (!oem_applied_pure(cursor, program, head->sym_id, arity))
+    if (!oem_applied_pure(cursor, program, atom_symbol_current_id(head), arity))
         return OEM_RUN_HOST;
     Atom *args[OEM_PURE_INLINE_ARGS];
     for (uint32_t index = 0u; index < arity; index++) {
@@ -6802,7 +6807,7 @@ static __attribute__((noinline)) OemRun oem_applied_pure_step(
                                      true);
         if (!arg)
             return OEM_RUN_HANDOFF;
-        if (atom_has_vars(arg) && !petta_semantics_structural_test(head->sym_id))
+        if (atom_has_vars(arg) && !petta_semantics_structural_test(atom_symbol_current_id(head)))
             return OEM_RUN_HOST;
         args[index] = oem_grounded_operand(cursor, arg);
         if (!args[index])
@@ -6845,7 +6850,7 @@ static OemRun oem_apply_step(CettaOpenEquationCursor *cursor,
     const CettaOpenEquationProgram *target =
         data && symbol && step->target == OEM_HOST_APPLY &&
                 cursor->runtime.current
-            ? oem_enter_evaluated(cursor, program->space, head->sym_id, arity)
+            ? oem_enter_evaluated(cursor, program->space, atom_symbol_current_id(head), arity)
             : NULL;
     if (data && symbol && !target && arity == 2u) {
         /* A grounded operation over plain scalars, which the host applies
@@ -6860,7 +6865,7 @@ static OemRun oem_apply_step(CettaOpenEquationCursor *cursor,
         if (args[0] && args[1] &&
             oem_scalar_operation(head, args, 2u, &scalar) &&
             !space_equations_may_match_known_head(program->space,
-                                                  head->sym_id)) {
+                                                  atom_symbol_current_id(head))) {
             Atom *result = scalar.kind == CETTA_PLAIN_SCALAR_BOOL
                 ? oem_truth(cursor, scalar.as.boolean)
                 : grounded_plain_scalar_materialize(&cursor->region, &scalar);
@@ -7191,7 +7196,7 @@ static __attribute__((noinline)) OemRun oem_exists_step(
                                         reference)
         : NULL;
     if (reference->kind == ATOM_SYMBOL) {
-        if (!space && reference->sym_id == g_builtin_syms.self)
+        if (!space && atom_symbol_current_id(reference) == g_builtin_syms.self)
             space = program->space;
         if (!space ||
             oem_space_has_schema(cursor, program->space, reference))
@@ -7224,7 +7229,7 @@ static inline __attribute__((always_inline)) OemRun oem_pure_apply(
     CettaOpenEquationCursor *cursor, const CettaOpenEquationProgram *program,
     Atom **locals, const OemStep *step, Atom *head, Atom **args,
     uint32_t count) {
-    SymbolId op = head->sym_id;
+    SymbolId op = atom_symbol_current_id(head);
     CettaPlainScalar scalar;
     Atom *result = NULL;
     int64_t left = 0;
@@ -7297,9 +7302,9 @@ static __attribute__((noinline)) OemRun oem_metatype_step(
         type = atom_grounded_type(&cursor->region);
     else if (value->kind == ATOM_SYMBOL && cursor->runtime.function_registered)
         type = petta_semantics_symbol_metatype(
-            &cursor->region, value->sym_id,
+            &cursor->region, atom_symbol_current_id(value),
             cursor->runtime.function_registered(cursor->runtime.context,
-                                                value->sym_id));
+                                                atom_symbol_current_id(value)));
     else
         return OEM_RUN_HOST;
     if (!type)
@@ -7375,7 +7380,7 @@ static __attribute__((noinline)) OemRun oem_observation_step(
             break;
         case PETTA_FORM_IS_SPACE:
             answer = value->kind == ATOM_SYMBOL &&
-                symbol_bytes(g_symbols, value->sym_id)[0] == '&';
+                atom_symbol_bytes(value)[0] == '&';
             break;
         default:
             return OEM_RUN_HOST;
@@ -7464,7 +7469,7 @@ static __attribute__((noinline)) OemRun oem_fast_host_step(
         &program->templates[program->template_children[goal->first]];
     Atom *head = spelled->kind == OEM_T_LITERAL &&
             spelled->literal->kind == ATOM_SYMBOL &&
-            spelled->literal->sym_id == step->op
+            atom_symbol_current_id(spelled->literal) == step->op
         ? spelled->literal : atom_symbol_id(&cursor->region, step->op);
     if (!head)
         return OEM_RUN_HANDOFF;
@@ -9321,6 +9326,17 @@ static inline Atom *oem_collected_copy(const Atom *atom) {
         ? copy : NULL;
 }
 
+/* An exported expression may cache a copy in host storage.  When that
+ * storage is detached, the cached copy cannot serve as the expression's
+ * forwarding address: the host will release it after this collection. */
+static inline bool oem_export_copy_is_detached(const OemCollect *collect,
+                                                const Atom *atom) {
+    if (collect->detach_identity == 0u || atom->kind != ATOM_EXPR)
+        return false;
+    Atom *copy = oem_collected_copy(atom);
+    return copy && copy->arena_id == collect->detach_identity;
+}
+
 /* For a view without variables over storage the collection frees, the
  * longest suffix of that storage the trace met, when it is another view:
  * the view is copied as a header over that suffix's copy
@@ -9354,6 +9370,8 @@ static bool oem_trace_atom(CettaOpenEquationCursor *cursor,
         }
         if (!oem_collect_from(collect, atom))
             continue;
+        if (oem_export_copy_is_detached(collect, atom))
+            atom->name_key = NULL;
         if (atom->kind != ATOM_EXPR || atom->expr.len == 0u) {
             /* A leaf is copied whole, and counted once: marked like an
              * expression, or through the table for a variable, whose
@@ -9508,6 +9526,8 @@ static Atom *oem_collect_atom(CettaOpenEquationCursor *cursor,
             result = atom_deep_copy_session_copy(collect->detach, atom);
         } else if (!oem_collect_from(collect, atom)) {
             result = atom;
+        } else if (oem_export_copy_is_detached(collect, atom)) {
+            atom->name_key = NULL;
         } else if (atom->kind == ATOM_EXPR && atom->expr.len > 0u &&
                    atom->name_key && atom->name_key != &oem_traced_mark &&
                    atom->name_key != &oem_exported_mark) {
@@ -10565,8 +10585,12 @@ static bool oem_collect(CettaOpenEquationCursor *cursor) {
 
 bool cetta_open_equation_cursor_detach(CettaOpenEquationCursor *cursor,
                                        const Arena *arena) {
-    return cursor && arena &&
-        oem_collect_generation(cursor, arena->identity, true);
+    if (!cursor || !arena ||
+        !oem_collect_generation(cursor, arena->identity, true))
+        return false;
+    if (cursor->runtime.stable == arena)
+        arena_set_older_generation(&cursor->region, NULL);
+    return true;
 }
 
 /* ---- cursor -------------------------------------------------------------- */

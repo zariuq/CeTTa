@@ -419,9 +419,14 @@ static SubstNode *snode_get_grounded_placeholder(SubstNode *node) {
 
 static SubstNode *snode_insert_atom(SubstNode *node, Atom *a) {
     switch (a->kind) {
-    case ATOM_SYMBOL: return snode_get_sym(node, a->sym_id);
+    case ATOM_SYMBOL:
+        /* This numeric index may over-approximate an unnumbered value. The
+         * ordinary verifier still compares its spelling. Do not register
+         * data merely to retain it in an index. */
+        return atom_symbol_is_spelled(a) ? snode_get_grounded_placeholder(node)
+            : snode_get_sym(node, atom_symbol_current_id(a));
     case ATOM_VAR:
-        return snode_get_var(node, a->var_id, a->sym_id, a->name_key);
+        return snode_get_var(node, a->var_id, atom_symbol_current_id(a), a->name_key);
     case ATOM_GROUNDED:
         if (a->ground.gkind == GV_INT) return snode_get_int(node, a->ground.ival);
         if (a->ground.gkind == GV_STRING || a->ground.gkind == GV_BIGINT ||
@@ -578,10 +583,10 @@ uint32_t stree_head_hash(SymbolId id) {
 }
 
 static SymbolId atom_head_sym(Atom *a) {
-    if (a->kind == ATOM_SYMBOL) return a->sym_id;
+    if (a->kind == ATOM_SYMBOL) return atom_symbol_current_id(a);
     if (a->kind == ATOM_EXPR && a->expr.len > 0 &&
         a->expr.elems[0]->kind == ATOM_SYMBOL)
-        return a->expr.elems[0]->sym_id;
+        return atom_symbol_current_id(a->expr.elems[0]);
     return SYMBOL_ID_NONE;
 }
 
@@ -771,10 +776,10 @@ static bool flat_token_count(Atom *a, CettaIndex *count) {
 static CettaIndex flatten_atom(Atom *a, FlatToken *buf, CettaIndex pos) {
     switch (a->kind) {
     case ATOM_SYMBOL:
-        buf[pos] = (FlatToken){.kind = FT_SYM, .sym_id = a->sym_id, .original = a};
+        buf[pos] = (FlatToken){.kind = FT_SYM, .sym_id = atom_symbol_current_id(a), .original = a};
         return pos + 1;
     case ATOM_VAR:
-        buf[pos] = (FlatToken){.kind = FT_VAR, .sym_id = a->sym_id,
+        buf[pos] = (FlatToken){.kind = FT_VAR, .sym_id = atom_symbol_current_id(a),
                                .var_id = a->var_id, .original = a};
         return pos + 1;
     case ATOM_GROUNDED:

@@ -156,7 +156,7 @@ bool cetta_observation_variable_uses_only_unary_consumers(
 
         SymbolId head = atom->expr.len > 0u &&
                         atom->expr.elems[0]->kind == ATOM_SYMBOL
-            ? atom->expr.elems[0]->sym_id : SYMBOL_ID_NONE;
+            ? atom_symbol_current_id(atom->expr.elems[0]) : SYMBOL_ID_NONE;
         bool direct_consumer =
             item.executable && atom->expr.len == 2u &&
             head != SYMBOL_ID_NONE && is_consumer(context, head) &&

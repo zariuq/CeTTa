@@ -143,7 +143,7 @@ typedef struct {
 
 static bool scoped_name_visit(const Atom *atom, void *raw) {
     ScopedName *name = raw;
-    if (atom->kind != ATOM_VAR || atom->name_key || atom->sym_id != name->spelling)
+    if (atom->kind != ATOM_VAR || atom->name_key || atom_symbol_current_id(atom) != name->spelling)
         return false;
     VarId id = name->epoch ? var_epoch_id(atom->var_id, name->epoch) : atom->var_id;
     if (name->id != VAR_ID_NONE && name->id != id) name->ambiguous = true;
@@ -189,8 +189,8 @@ bool bindings_from_atom_scoped(Atom *atom, const Atom *scope,
             if (!bindings_add_var(out, key, value)) goto fail;
         } else if (key->kind == ATOM_SYMBOL) {
             VarId id;
-            if (!scoped_name_resolve(key->sym_id, scope, receiver, &id) ||
-                !bindings_add_id(out, id, key->sym_id, value)) goto fail;
+            if (!scoped_name_resolve(atom_symbol_current_id(key), scope, receiver, &id) ||
+                !bindings_add_id(out, id, atom_symbol_current_id(key), value)) goto fail;
         } else goto fail;
     }
     for (CettaExprIndex i = 0; i < equalities->expr.len; i++) {

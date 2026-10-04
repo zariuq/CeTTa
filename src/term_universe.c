@@ -738,7 +738,8 @@ bool term_universe_atom_is_stable(Atom *atom) {
      * Preserve its owner in the existing pointer-backed fallback, never in the
      * pointer-free integer encoding. The fact composes through expressions. */
     if (atom && (atom->structural_facts &
-                 ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID) != 0u)
+                 (ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID |
+                  ATOM_STRUCTURAL_HAS_SPELLED_SYMBOL)) != 0u)
         return false;
 
     /* The compositional leaf summary answers this for immutable atoms built
@@ -767,6 +768,9 @@ bool term_universe_atom_is_stable(Atom *atom) {
             goto done;
         switch (cur->kind) {
         case ATOM_SYMBOL:
+            if (atom_symbol_is_spelled(cur))
+                goto done;
+            break;
         case ATOM_VAR:
             break;
         case ATOM_GROUNDED:
@@ -1821,12 +1825,12 @@ static uint64_t term_universe_atom_slot_hash(Atom *atom) {
     uint32_t sym_or_head = SYMBOL_ID_NONE;
     uint32_t aux_data = 0;
     if (atom->kind == ATOM_SYMBOL) {
-        sym_or_head = atom->sym_id;
+        sym_or_head = atom_symbol_current_id(atom);
     } else if (atom->kind == ATOM_VAR) {
         subtag = atom->name_key
                      ? (uint8_t)CETTA_VAR_SPELLING_NAME_KEY
                      : 0u;
-        sym_or_head = atom->name_key ? SYMBOL_ID_NONE : atom->sym_id;
+        sym_or_head = atom->name_key ? SYMBOL_ID_NONE : atom_symbol_current_id(atom);
     } else if (atom->kind == ATOM_GROUNDED) {
         subtag = (uint8_t)atom->ground.gkind;
         if (atom->ground.gkind == GV_BOOL)
@@ -2604,7 +2608,7 @@ SymbolId tu_sym(const TermUniverse *universe, AtomId id) {
         return SYMBOL_ID_NONE;
     return (entry->decoded_cache->kind == ATOM_SYMBOL ||
             entry->decoded_cache->kind == ATOM_VAR)
-               ? entry->decoded_cache->sym_id
+               ? atom_symbol_current_id(entry->decoded_cache)
                : SYMBOL_ID_NONE;
 }
 
@@ -3613,7 +3617,7 @@ static AtomId term_universe_leaf_id(TermUniverse *universe, Atom *src,
         return term_universe_lookup_stable_id(universe, src);
     switch (src->kind) {
     case ATOM_SYMBOL:
-        return tu_intern_symbol(universe, src->sym_id);
+        return tu_intern_symbol(universe, atom_symbol_current_id(src));
     case ATOM_VAR:
         if (src->name_key) {
             AtomId key_id = term_universe_store_atom_id(
@@ -3622,7 +3626,7 @@ static AtomId term_universe_leaf_id(TermUniverse *universe, Atom *src,
                        ? CETTA_ATOM_ID_NONE
                        : tu_intern_named_var(universe, key_id, src->var_id);
         }
-        return tu_intern_var(universe, src->sym_id, src->var_id);
+        return tu_intern_var(universe, atom_symbol_current_id(src), src->var_id);
     case ATOM_GROUNDED:
         switch (src->ground.gkind) {
         case GV_INT:
@@ -4643,7 +4647,7 @@ static bool term_universe_entry_eq_atom(const TermUniverse *universe, AtomId id,
     const uint8_t *payload = term_universe_payload(universe, id);
     switch ((AtomKind)hdr->tag) {
     case ATOM_SYMBOL:
-        return src->kind == ATOM_SYMBOL && src->sym_id == hdr->sym_or_head;
+        return src->kind == ATOM_SYMBOL && atom_symbol_current_id(src) == hdr->sym_or_head;
     case ATOM_VAR:
         return src->kind == ATOM_VAR &&
                src->var_id == (VarId)term_universe_load_u64(payload);
@@ -5009,7 +5013,7 @@ static AtomId term_universe_store_prepared_atom_id(TermUniverse *universe,
 
     switch (src->kind) {
     case ATOM_SYMBOL:
-        return tu_intern_symbol(universe, src->sym_id);
+        return tu_intern_symbol(universe, atom_symbol_current_id(src));
     case ATOM_VAR:
         if (src->name_key) {
             AtomId key_id = term_universe_store_atom_id(
@@ -5018,7 +5022,7 @@ static AtomId term_universe_store_prepared_atom_id(TermUniverse *universe,
                        ? CETTA_ATOM_ID_NONE
                        : tu_intern_named_var(universe, key_id, src->var_id);
         }
-        return tu_intern_var(universe, src->sym_id, src->var_id);
+        return tu_intern_var(universe, atom_symbol_current_id(src), src->var_id);
     case ATOM_GROUNDED:
         switch (src->ground.gkind) {
         case GV_INT:
