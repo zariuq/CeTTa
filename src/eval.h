@@ -134,6 +134,10 @@ void eval_c_stack_boundary_capture(CettaEvalCStackBoundary *boundary);
 
 /* ── Evaluation (public API) ───────────────────────────────────────────── */
 
+/* Each entry owns its mutable query banks and compiled scratch. Reentrant
+ * entry suspends that owner; returning restores it. Newly appended structural
+ * results are published in `a` before the invocation's storage is released.
+ * Identity-bearing foreign resources retain their own lifetime contracts. */
 void eval_top(Space *s, Arena *a, Atom *expr, ResultSet *rs);
 void eval_top_one_step(Space *s, Arena *a, Atom *expr, ResultSet *rs);
 void eval_top_with_registry(Space *s, Arena *a, Arena *persistent, Registry *r, Atom *expr, ResultSet *rs);
@@ -146,6 +150,8 @@ void eval_top_with_registry_outcome(
     void *observer_context);
 /* Re-entrant callback used only by the optional PeTTa/libpl adapter. */
 bool eval_petta_from_lib_prolog(Arena *a, Atom *expr, ResultSet *results);
+/* Reclaim completed top-level temporaries. During a callback into an active
+ * evaluator this defers cleanup to that caller's completion boundary. */
 void eval_release_temporary_spaces(void);
 void eval_reset_form_gc_survivor(void);
 void eval_set_default_fuel(int fuel);

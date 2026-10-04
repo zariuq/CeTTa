@@ -251,15 +251,51 @@ static void eval_term_universe_scope_enter(
     };
     g_eval_term_universe_override = universe;
 }
-/* Query cache for the current logical evaluation episode. */
-static __thread TableStore g_episode_table;
-static __thread bool g_episode_table_ready = false;
-static __thread AnswerBank g_episode_answer_bank;
-static __thread bool g_episode_answer_bank_ready = false;
-static __thread VariantBank g_episode_outcome_variant_bank;
-static __thread bool g_episode_outcome_variant_bank_ready = false;
-static __thread Arena g_episode_survivor_arena;
-static __thread bool g_episode_survivor_arena_ready = false;
+typedef struct PreparedPureProgramCache PreparedPureProgramCache;
+static void prepared_pure_program_cache_destroy(PreparedPureProgramCache *cache);
+
+/* Mutable query storage belongs to one invocation, independently of the
+ * library's semantic authority. Nested entry suspends this owner instead of
+ * clearing its banks. Descriptors live with the heap owner, never in a saved
+ * caller stack frame. Lower-level embedding calls use an ambient owner until
+ * eval_release_temporary_spaces; public entry points install a fresh scope. */
+typedef struct {
+    TableStore table;
+    AnswerBank answers;
+    VariantBank variants;
+    Arena survivor;
+    PreparedPureProgramCache *prepared;
+    Space *root_space;
+    bool table_ready;
+    bool answers_ready;
+    bool variants_ready;
+    bool survivor_ready;
+    bool scoped;
+} EvalExecutionContext;
+
+typedef struct {
+    EvalExecutionContext *owner;
+    EvalExecutionContext *previous;
+} EvalExecutionScope;
+
+static __thread EvalExecutionContext *g_eval_execution = NULL;
+
+static EvalExecutionContext *eval_execution_context(void) {
+    if (!g_eval_execution) {
+        g_eval_execution = cetta_malloc(sizeof(*g_eval_execution));
+        *g_eval_execution = (EvalExecutionContext){0};
+    }
+    return g_eval_execution;
+}
+
+static void eval_execution_scope_enter(EvalExecutionScope *scope, Space *root) {
+    scope->previous = g_eval_execution;
+    scope->owner = cetta_malloc(sizeof(*scope->owner));
+    *scope->owner = (EvalExecutionContext){.root_space = root, .scoped = true};
+    g_eval_execution = scope->owner;
+}
+
+static void eval_execution_scope_leave(EvalExecutionScope *scope);
 /* Active importable library set */
 static __thread CettaLibraryContext *g_library_context = NULL;
 /* A worker-local transport of immutable equation-program metadata onto its
@@ -2313,46 +2349,48 @@ static CettaTableMode active_search_table_mode(void) {
 }
 
 static AnswerBank *eval_active_episode_answer_bank(void) {
-    if (!g_episode_answer_bank_ready) {
-        answer_bank_init(&g_episode_answer_bank);
-        g_episode_answer_bank_ready = true;
+    EvalExecutionContext *context = eval_execution_context();
+    if (!context->answers_ready) {
+        answer_bank_init(&context->answers);
+        context->answers_ready = true;
     }
-    return &g_episode_answer_bank;
+    return &context->answers;
 }
 
 static void eval_release_episode_answer_bank(void) {
-    if (!g_episode_answer_bank_ready)
+    EvalExecutionContext *context = g_eval_execution;
+    if (!context)
         return;
-    answer_bank_free(&g_episode_answer_bank);
-    g_episode_answer_bank_ready = false;
+    if (!context->answers_ready)
+        return;
+    answer_bank_free(&context->answers);
+    context->answers_ready = false;
 }
 
 static TableStore *eval_active_episode_table(void) {
     CettaTableMode mode = active_search_table_mode();
-    if (mode == CETTA_TABLE_MODE_NONE) {
-        if (g_episode_table_ready) {
-            table_store_free(&g_episode_table);
-            g_episode_table_ready = false;
-        }
-        eval_release_episode_answer_bank();
+    if (mode == CETTA_TABLE_MODE_NONE)
         return NULL;
-    }
-    if (!g_episode_table_ready) {
-        table_store_init(&g_episode_table, mode, eval_active_episode_answer_bank());
-        g_episode_table_ready = true;
-    } else if (g_episode_table.mode != mode) {
-        table_store_free(&g_episode_table);
+    EvalExecutionContext *context = eval_execution_context();
+    if (!context->table_ready) {
+        table_store_init(&context->table, mode, eval_active_episode_answer_bank());
+        context->table_ready = true;
+    } else if (context->table.mode != mode) {
+        table_store_free(&context->table);
         eval_release_episode_answer_bank();
-        table_store_init(&g_episode_table, mode, eval_active_episode_answer_bank());
+        table_store_init(&context->table, mode, eval_active_episode_answer_bank());
     }
-    return &g_episode_table;
+    return &context->table;
 }
 
 static void eval_release_episode_table(void) {
-    if (!g_episode_table_ready)
+    EvalExecutionContext *context = g_eval_execution;
+    if (!context)
         return;
-    table_store_free(&g_episode_table);
-    g_episode_table_ready = false;
+    if (!context->table_ready)
+        return;
+    table_store_free(&context->table);
+    context->table_ready = false;
     eval_release_episode_answer_bank();
 }
 
@@ -2376,25 +2414,25 @@ static VariantBank *eval_active_outcome_variant_bank(void) {
         .slot_name = "$_slot",
         .share_immutable = true,
     };
-    if (!outcome_variant_sharing_enabled()) {
-        if (g_episode_outcome_variant_bank_ready) {
-            variant_bank_free(&g_episode_outcome_variant_bank);
-            g_episode_outcome_variant_bank_ready = false;
-        }
+    /* Disabling admission does not revoke existing outcome borrows. */
+    if (!outcome_variant_sharing_enabled())
         return NULL;
+    EvalExecutionContext *context = eval_execution_context();
+    if (!context->variants_ready) {
+        variant_bank_init(&context->variants, kOutcomeVariantOptions);
+        context->variants_ready = true;
     }
-    if (!g_episode_outcome_variant_bank_ready) {
-        variant_bank_init(&g_episode_outcome_variant_bank, kOutcomeVariantOptions);
-        g_episode_outcome_variant_bank_ready = true;
-    }
-    return &g_episode_outcome_variant_bank;
+    return &context->variants;
 }
 
 static void eval_release_outcome_variant_bank(void) {
-    if (!g_episode_outcome_variant_bank_ready)
+    EvalExecutionContext *context = g_eval_execution;
+    if (!context)
         return;
-    variant_bank_free(&g_episode_outcome_variant_bank);
-    g_episode_outcome_variant_bank_ready = false;
+    if (!context->variants_ready)
+        return;
+    variant_bank_free(&context->variants);
+    context->variants_ready = false;
 }
 
 /* ── Result Set ─────────────────────────────────────────────────────────── */
@@ -2659,21 +2697,72 @@ static bool eval_storage_is_persistent(const Arena *arena) {
 }
 
 static Arena *eval_active_episode_survivor_arena(void) {
-    if (!g_episode_survivor_arena_ready) {
-        arena_init(&g_episode_survivor_arena);
-        arena_set_hashcons(&g_episode_survivor_arena, NULL);
-        arena_set_runtime_kind(&g_episode_survivor_arena,
+    EvalExecutionContext *context = eval_execution_context();
+    if (!context->survivor_ready) {
+        arena_init(&context->survivor);
+        arena_set_hashcons(&context->survivor, NULL);
+        arena_set_runtime_kind(&context->survivor,
                                CETTA_ARENA_RUNTIME_KIND_SURVIVOR);
-        g_episode_survivor_arena_ready = true;
+        context->survivor_ready = true;
     }
-    return &g_episode_survivor_arena;
+    return &context->survivor;
 }
 
 static void eval_release_episode_survivor_arena(void) {
-    if (!g_episode_survivor_arena_ready)
+    EvalExecutionContext *context = g_eval_execution;
+    if (!context)
         return;
-    arena_free(&g_episode_survivor_arena);
-    g_episode_survivor_arena_ready = false;
+    if (!context->survivor_ready)
+        return;
+    arena_free(&context->survivor);
+    context->survivor_ready = false;
+}
+
+static void eval_execution_clear_current(void) {
+    if (!g_eval_execution)
+        return;
+    eval_release_episode_table();
+    eval_release_outcome_variant_bank();
+    eval_release_episode_survivor_arena();
+    prepared_pure_program_cache_destroy(g_eval_execution->prepared);
+    g_eval_execution->prepared = NULL;
+}
+
+static void eval_execution_scope_leave(EvalExecutionScope *scope) {
+    if (!scope || !scope->owner)
+        return;
+    assert(g_eval_execution == scope->owner);
+    eval_execution_clear_current();
+    g_eval_execution = scope->previous;
+    free(scope->owner);
+    scope->owner = NULL;
+}
+
+/* Public results leave the invocation before any of its banks are released.
+ * A private variant bank uses hash-consed nodes whose arena_id is zero, so
+ * its presence requires materialization even for an apparently closed root.
+ * One copy session preserves aliases between distinct answer occurrences. */
+static void eval_execution_publish_results(Arena *destination, ResultSet *results,
+                                           CettaCount start, bool force) {
+    EvalExecutionContext *context = g_eval_execution;
+    force = force || (context && (context->answers_ready ||
+        context->variants_ready || context->survivor_ready));
+    AtomDeepCopySession *copy = NULL;
+    for (CettaCount i = start; i < results->len; i++) {
+        Atom *value = results->items[i];
+        if (!value || (!force && atom_graph_is_closed_for_arena(destination, value)))
+            continue;
+        if (!copy) {
+            copy = atom_deep_copy_session_new(destination);
+            if (!copy)
+                cetta_oom(sizeof(Atom));
+        }
+        Atom *published = atom_deep_copy_session_copy(copy, value);
+        if (!published)
+            cetta_oom(sizeof(Atom));
+        results->items[i] = published;
+    }
+    atom_deep_copy_session_free(copy);
 }
 
 static void eval_query_episode_init(EvalQueryEpisode *episode) {
@@ -14255,6 +14344,10 @@ static void hyperpose_eval_branch_in_thread(HyperposeThreadRun *run,
     eval_term_universe_scope_enter(
         &universe_scope, &branch->term_universe);
 
+    __attribute__((cleanup(eval_execution_scope_leave)))
+    EvalExecutionScope execution = {0};
+    eval_execution_scope_enter(&execution, branch->space);
+
     Registry *prev_registry = g_registry;
     Space *prev_root_space = g_eval_root_space;
     Arena *prev_fallback_persistent =
@@ -14292,7 +14385,6 @@ static void hyperpose_eval_branch_in_thread(HyperposeThreadRun *run,
             ? &branch->program_projection : NULL;
     term_universe_set_persistent_arena(&g_eval_fallback_universe,
                                        &branch->persistent_arena);
-    eval_release_outcome_variant_bank();
 
     Bindings empty;
     bindings_init(&empty);
@@ -14372,7 +14464,12 @@ static void hyperpose_eval_branch_in_thread(HyperposeThreadRun *run,
             break;
         }
     }
+    ResultSet published = {.items = branch->results.items,
+                           .len = branch->results.len,
+                           .cap = branch->results.cap};
+    eval_execution_publish_results(&branch->eval_arena, &published, 0u, false);
     outcome_set_free(&outcomes);
+    eval_execution_scope_leave(&execution);
     if (petta_worker) {
         if (!hyperpose_adopt_tracked_spaces(branch)) {
             atomic_store_explicit(
@@ -18657,9 +18754,17 @@ void eval_cleanup_owned_new_spaces(Registry *registry, Space *root) {
 }
 
 void eval_release_temporary_spaces(void) {
-    eval_release_episode_table();
-    eval_release_outcome_variant_bank();
-    eval_release_episode_survivor_arena();
+    /* A callback or imported document may finish a nested top-level request
+     * while its caller still owns live outcomes and temporary spaces. The
+     * nested execution has already released its banks; the resumed caller
+     * reaches its own cleanup boundary later. */
+    if (g_eval_execution && g_eval_execution->scoped)
+        return;
+    eval_execution_clear_current();
+    if (g_eval_execution && !g_eval_execution->scoped) {
+        free(g_eval_execution);
+        g_eval_execution = NULL;
+    }
     for (CettaCount i = 0; i < g_temp_spaces.len; i++) {
         EvalTrackedSpace tracked = g_temp_spaces.items[i];
         if (tracked.petta_program)
@@ -20558,7 +20663,11 @@ static uint32_t filter_well_formed_profiled_types(Space *s, Arena *a,
 }
 
 static bool profile_declared_type_visible_for_atom(Atom *atom, Atom *ty) {
-    if (atom && atom->kind == ATOM_SYMBOL) {
+    /* HE's library is prepared for its profile before user code is loaded.
+       Builtin availability does not restrict user declarations, nor the
+       Undefined type of ordinary data using an extension's spelling. */
+    if (active_language_id() != CETTA_LANGUAGE_HE &&
+        atom && atom->kind == ATOM_SYMBOL) {
         const char *syntax = atom_name_cstr(atom);
         if (syntax && !active_builtin_allowed(syntax)) {
             return false;
@@ -21403,7 +21512,7 @@ enum { PREPARED_PURE_DECLINE_SLOTS = 64u };
  * owning evaluator guarantees root_space remains live until this cache is
  * destroyed; restricting reuse to that root avoids retaining temporary
  * transaction/with-space objects without a lifetime lease. */
-typedef struct {
+struct PreparedPureProgramCache {
     PreparedPureCacheEntry *entries;
     /* Advanced by every change to `entries`; decline answers remembered
      * under an older generation are not read. */
@@ -21415,13 +21524,8 @@ typedef struct {
     Arena execution_scratch;
     bool execution_scratch_ready;
     bool answer_collection_budget_declined;
-} PreparedPureProgramCache;
+};
 
-/* HE calls within one top-level evaluation share revision-pinned compiled
- * entry plans.  The owning eval_top frame supplies the cache lifetime; Prime
- * and PeTTa retain their existing driver- and machine-owned caches. */
-static __thread PreparedPureProgramCache
-    *g_eval_episode_prepared_pure_cache = NULL;
 
 static void prepared_pure_program_cache_clear_entries(
     PreparedPureProgramCache *cache) {
@@ -21450,6 +21554,24 @@ static void prepared_pure_program_cache_free(
     cache->root_space = NULL;
     memset(&cache->program, 0, sizeof(cache->program));
     cache->capability_revision = 0u;
+}
+
+static void prepared_pure_program_cache_destroy(PreparedPureProgramCache *cache) {
+    prepared_pure_program_cache_free(cache);
+    free(cache);
+}
+
+static PreparedPureProgramCache *eval_execution_prepared_cache(void) {
+    EvalExecutionContext *context = g_eval_execution;
+    if (!context || !context->scoped)
+        return NULL;
+    if (!context->prepared) {
+        context->prepared = cetta_malloc(sizeof(*context->prepared));
+        *context->prepared = (PreparedPureProgramCache){
+            .root_space = context->root_space,
+        };
+    }
+    return context->prepared;
 }
 
 static Arena *prepared_pure_program_cache_execution_scratch(
@@ -25178,7 +25300,8 @@ static __attribute__((unused)) bool project_match_visible_bindings(Arena *a,
             vitem->presentation_arena = a;
         }
         if (!visible_var ||
-            !bindings_add_var(projected, visible_var, resolved)) {
+            !bindings_add_var_owned(projected, visible_var, resolved)) {
+            match_visible_alias_set_free(&aliases);
             bindings_free(projected);
             return false;
         }
@@ -25193,7 +25316,7 @@ static __attribute__((unused)) bool project_match_visible_bindings(Arena *a,
             !atom_refs_only_match_visible_vars(rhs, visible)) {
             continue;
         }
-        if (!bindings_add_constraint(projected, lhs, rhs)) {
+        if (!bindings_add_constraint_owned(projected, lhs, rhs)) {
             match_visible_alias_set_free(&aliases);
             bindings_free(projected);
             return false;
@@ -32007,7 +32130,8 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
 
     Atom **op_types = NULL;
     uint32_t n_op_types =
-        profile_disabled_whole_call_syntax
+        profile_disabled_whole_call_syntax &&
+                eval_current_language_id() != CETTA_LANGUAGE_HE
             ? 0
             : eval_get_atom_types_profiled(s, a, op, &op_types);
     bool total_structural_eq =
@@ -32464,6 +32588,12 @@ query_done:
         outcome_set_free(&func_results);
     }
 
+    /* HE commits to the first applicable function contract. A preceding
+       non-function annotation cannot restart the call as an untyped tuple:
+       that would force held arguments and could replay completed effects. */
+    if (he_selected_function_type)
+        return true;
+
     if (eval_current_language_id() != CETTA_LANGUAGE_PETTA &&
         has_func_type && func_errors.len > 0 && !total_structural_eq &&
         (!has_non_func_type || eval_type_check_auto_enabled())) {
@@ -32504,7 +32634,8 @@ query_done:
         atom = dispatch_continuation_atoms[0];
         etype = dispatch_continuation_atoms[1];
 
-        if (profile_disabled_whole_call_syntax) {
+        if (profile_disabled_whole_call_syntax &&
+            eval_current_language_id() != CETTA_LANGUAGE_HE) {
             for (CettaCount ti = 0; ti < tuples.len; ti++) {
                 outcome_set_add_existing_move(os, &tuples.items[ti]);
             }
@@ -39745,7 +39876,7 @@ static PreparedPureProgramCache *petta_eval_machine_prepared_pure_cache(
 #endif
         if (!program_cache &&
             eval_current_language_id() == CETTA_LANGUAGE_PRIME)
-            program_cache = g_eval_episode_prepared_pure_cache;
+            program_cache = eval_execution_prepared_cache();
         if (!program_cache)
             program_cache = &eval_context->prepared_pure_cache;
     }
@@ -41840,7 +41971,9 @@ static PettaMachineHost petta_eval_machine_host(
             petta_eval_machine_tabled_relation_admissible,
         .tabled_relation_set =
             petta_eval_machine_tabled_relation_set,
-        .shared_table = context->library_context
+        /* The session lease is serial. Workers use a private root table;
+         * synchronous child machines still share that root's table. */
+        .shared_table = !cetta_parallel_worker_active() && context->library_context
             ? context->library_context->petta_shared_table : NULL,
         .memoized_relation_contains =
             petta_eval_machine_memoized_relation_contains,
@@ -43329,7 +43462,7 @@ static bool petta_eval_machine_try(
             context.controller_stats.maximum_compression_working_bytes);
     }
     petta_machine_destroy(&machine);
-    if (!prime_machine && context.library_context &&
+    if (!prime_machine && !cetta_parallel_worker_active() && context.library_context &&
         context.library_context->session.language_id ==
             CETTA_LANGUAGE_PETTA) {
         CettaPettaMemoState *memo =
@@ -44438,14 +44571,19 @@ prepared_pure_closed_answers_try(
      * independent of semantic fuel and of whether nursery collection is
      * enabled.  Exhaustion publishes nothing and leaves the canonical route
      * authoritative.  The cursor reclaims its own scratch as it backtracks.
-     * Each answer is published into the destination as it is visited, and
-     * is not charged to the purse: answers are the result, however many.
+     * Scratch reclamation cannot renew the speculative work allowance:
+     * an infinite producer may have a bounded live frontier. Give the
+     * attempt a finite transition purse, proportional to its storage
+     * allowance, before it can buffer an unbounded answer stream.
      * The destination is reset unless the enumeration completes. */
     size_t scratch_budget = prepared_pure_nursery_budget_bytes();
     if (scratch_budget == 0u)
         scratch_budget = 256u * ARENA_BLOCK_SIZE;
+    size_t transition_budget = scratch_budget / sizeof(Atom);
+    if (transition_budget == 0u)
+        transition_budget = 1u;
     CettaPreparedPureAnswerLimits limits = {
-        .max_transitions = UINT64_MAX,
+        .max_transitions = transition_budget,
         .max_scratch_bytes = scratch_budget,
         .construct_allocation_bound = plan.language_id == CETTA_LANGUAGE_PETTA
             ? petta_semantics_construct_value_allocation_bound
@@ -44551,7 +44689,7 @@ static bool he_evaluated_call_answers_try(
         return false;
     CettaPreparedPureAnswersResult answers =
         prepared_pure_closed_answers_try(
-            space, arena, call, fuel, g_eval_episode_prepared_pure_cache,
+            space, arena, call, fuel, eval_execution_prepared_cache(),
             tuple_env, preserve_bindings, outcomes);
     return answers == CETTA_PREPARED_PURE_ANSWERS_COMPLETE ||
         answers == CETTA_PREPARED_PURE_ANSWERS_STOPPED;
@@ -44875,7 +45013,9 @@ static void petta_eval_session_decisions_destroy(void *opaque) {
 
 static PettaMatchDecisionRepository *petta_eval_session_decisions(
     CettaLibraryContext *library, const Space *space) {
-    if (!library || !space)
+    /* A non-atomic root lease cannot protect concurrent session lookups or
+     * eviction. The machine supplies a private repository when absent. */
+    if (cetta_parallel_worker_active() || !library || !space)
         return NULL;
     if (!library->petta_match_decisions) {
         library->petta_match_decisions =
@@ -45569,7 +45709,7 @@ tail_call: ;
     if (!program_cache &&
         (language_id == CETTA_LANGUAGE_HE ||
          language_id == CETTA_LANGUAGE_PRIME))
-        program_cache = g_eval_episode_prepared_pure_cache;
+        program_cache = eval_execution_prepared_cache();
 
     /* The evaluator knows only that Prime may host licensed native
      * operations.  Recognition, checking-at-ingress, and realization remain
@@ -45638,7 +45778,7 @@ tail_call: ;
     PreparedPureProgramCache *answer_program_cache = program_cache;
     if (!answer_program_cache &&
         language_id == CETTA_LANGUAGE_PETTA)
-        answer_program_cache = g_eval_episode_prepared_pure_cache;
+        answer_program_cache = eval_execution_prepared_cache();
     CettaPreparedPureAnswersResult prepared_answers =
         prepared_pure_closed_answers_try(
             s, a, atom, fuel, answer_program_cache,
@@ -51730,13 +51870,12 @@ static void metta_eval_one_step(Space *s, Arena *a, Atom *type, Atom *atom,
 /* ── Top-level evaluation ───────────────────────────────────────────────── */
 
 void eval_top(Space *s, Arena *a, Atom *expr, ResultSet *rs) {
+    __attribute__((cleanup(eval_execution_scope_leave)))
+    EvalExecutionScope execution = {0};
+    eval_execution_scope_enter(&execution, s);
+    CettaCount publication_start = rs->len;
     Registry *prev_registry = g_registry;
     Space *prev_root_space = g_eval_root_space;
-    PreparedPureProgramCache *prev_prepared_pure_cache =
-        g_eval_episode_prepared_pure_cache;
-    PreparedPureProgramCache prepared_pure_cache = {
-        .root_space = s,
-    };
     Arena *prev_fallback_persistent = g_eval_fallback_universe.persistent_arena;
     PrimeNeedSnapshot prev_need = g_prime_need_active;
     PrimeNeedBranchState prev_branch_state =
@@ -51756,7 +51895,6 @@ void eval_top(Space *s, Arena *a, Atom *expr, ResultSet *rs) {
     bool prime_need_episode_ready = false;
     g_registry = NULL;
     g_eval_root_space = s;
-    g_eval_episode_prepared_pure_cache = &prepared_pure_cache;
     term_universe_set_persistent_arena(&g_eval_fallback_universe, NULL);
     prime_need_snapshot_init(&g_prime_need_active);
     prime_need_branch_state_init(&g_prime_need_branch_state_active);
@@ -51789,18 +51927,9 @@ void eval_top(Space *s, Arena *a, Atom *expr, ResultSet *rs) {
                 &prime_need_episode, &g_prime_need_receipt_active);
 #endif
     }
-    eval_release_outcome_variant_bank();
     metta_eval(s, a, NULL, expr, current_eval_fuel_limit(), rs);
-    eval_release_outcome_variant_bank();
-    if (prime_need_episode_ready) {
-        for (CettaCount i = 0u; i < rs->len; i++) {
-            Atom *promoted = atom_deep_copy(a, rs->items[i]);
-            if (promoted)
-                rs->items[i] = promoted;
-        }
-    }
-    prepared_pure_program_cache_free(&prepared_pure_cache);
-    g_eval_episode_prepared_pure_cache = prev_prepared_pure_cache;
+    eval_execution_publish_results(a, rs, publication_start, prime_need_episode_ready);
+    eval_execution_scope_leave(&execution);
     g_registry = prev_registry;
     g_eval_root_space = prev_root_space;
     term_universe_set_persistent_arena(&g_eval_fallback_universe,
@@ -51822,15 +51951,19 @@ void eval_top(Space *s, Arena *a, Atom *expr, ResultSet *rs) {
 }
 
 void eval_top_one_step(Space *s, Arena *a, Atom *expr, ResultSet *rs) {
+    __attribute__((cleanup(eval_execution_scope_leave)))
+    EvalExecutionScope execution = {0};
+    eval_execution_scope_enter(&execution, s);
+    CettaCount publication_start = rs->len;
     Registry *prev_registry = g_registry;
     Space *prev_root_space = g_eval_root_space;
     Arena *prev_fallback_persistent = g_eval_fallback_universe.persistent_arena;
     g_registry = NULL;
     g_eval_root_space = s;
     term_universe_set_persistent_arena(&g_eval_fallback_universe, NULL);
-    eval_release_outcome_variant_bank();
     metta_eval_one_step(s, a, NULL, expr, rs);
-    eval_release_outcome_variant_bank();
+    eval_execution_publish_results(a, rs, publication_start, false);
+    eval_execution_scope_leave(&execution);
     g_registry = prev_registry;
     g_eval_root_space = prev_root_space;
     term_universe_set_persistent_arena(&g_eval_fallback_universe,
@@ -51842,13 +51975,12 @@ static void eval_top_with_registry_core(
     const PettaPlanNode *petta_plan,
     ResultSet *rs, EvalOutcome *outcome,
     CettaPrimeNeedAnswerObserver observer, void *observer_context) {
+    __attribute__((cleanup(eval_execution_scope_leave)))
+    EvalExecutionScope execution = {0};
+    eval_execution_scope_enter(&execution, s);
+    CettaCount publication_start = rs->len;
     Registry *prev_registry = g_registry;
     Space *prev_root_space = g_eval_root_space;
-    PreparedPureProgramCache *prev_prepared_pure_cache =
-        g_eval_episode_prepared_pure_cache;
-    PreparedPureProgramCache prepared_pure_cache = {
-        .root_space = s,
-    };
     Arena *prev_fallback_persistent = g_eval_fallback_universe.persistent_arena;
     PrimeNeedSnapshot prev_need = g_prime_need_active;
     PrimeNeedBranchState prev_branch_state =
@@ -51875,7 +52007,6 @@ static void eval_top_with_registry_core(
     bool prime_need_episode_ready = false;
     g_registry = r;
     g_eval_root_space = s;
-    g_eval_episode_prepared_pure_cache = &prepared_pure_cache;
     term_universe_set_persistent_arena(&g_eval_fallback_universe, persistent);
     prime_need_snapshot_init(&g_prime_need_active);
     prime_need_branch_state_init(&g_prime_need_branch_state_active);
@@ -51915,7 +52046,6 @@ static void eval_top_with_registry_core(
                 &prime_need_episode, &g_prime_need_receipt_active);
 #endif
     }
-    eval_release_outcome_variant_bank();
     PettaDirectiveReport prev_directive_report = g_petta_directive_report;
     g_petta_directive_report = (PettaDirectiveReport){0};
     Atom *prev_pending_raise = petta_eval_take_raise();
@@ -51942,16 +52072,8 @@ static void eval_top_with_registry_core(
     }
     g_petta_pending_raise = prev_pending_raise;
     g_petta_directive_report = prev_directive_report;
-    eval_release_outcome_variant_bank();
-    if (prime_need_episode_ready) {
-        for (CettaCount i = 0u; i < rs->len; i++) {
-            Atom *promoted = atom_deep_copy(a, rs->items[i]);
-            if (promoted)
-                rs->items[i] = promoted;
-        }
-    }
-    prepared_pure_program_cache_free(&prepared_pure_cache);
-    g_eval_episode_prepared_pure_cache = prev_prepared_pure_cache;
+    eval_execution_publish_results(a, rs, publication_start, prime_need_episode_ready);
+    eval_execution_scope_leave(&execution);
     g_registry = prev_registry;
     g_eval_root_space = prev_root_space;
     term_universe_set_persistent_arena(&g_eval_fallback_universe,

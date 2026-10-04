@@ -8647,6 +8647,8 @@ struct CettaPreparedPureAnswerCursor {
      * the bytes live above base_live, so reclaimed storage is recharged. */
     size_t scratch_remaining;
     size_t base_live;
+    size_t next_collection_bytes;
+    uint64_t collections;
     CettaPreparedPureInterruptPollFn interrupt_poll;
     void *interrupt_context;
     uint32_t poll_interval;
@@ -8730,6 +8732,87 @@ static size_t prepared_pure_answer_cursor_scratch(
     size_t used = live > cursor->base_live ? live - cursor->base_live : 0u;
     return used < cursor->limits.max_scratch_bytes
         ? cursor->limits.max_scratch_bytes - used : 0u;
+}
+
+/* Copy only an owned graph. Permanent symbol IDs and immediate scalars may
+ * come from the program; a foreign graph needs its own lifetime contract.
+ * Returning NULL abandons the fresh copy without changing the source. */
+static Atom *prepared_pure_answer_cursor_copy_owned(void *context, Atom *atom) {
+    const Arena *source = context;
+    if (atom->arena_id == source->identity || atom->kind == ATOM_SYMBOL)
+        return atom;
+    if (atom->kind == ATOM_GROUNDED &&
+        (atom->ground.gkind == GV_INT || atom->ground.gkind == GV_FLOAT ||
+         atom->ground.gkind == GV_BOOL))
+        return atom;
+    return NULL;
+}
+
+/* Between steps, a lone call without a continuation has exactly its arguments
+ * as live value roots. Relocate them together before retiring old temporaries.
+ * No equation is executed here, and the choice ordinal is left untouched.
+ * Larger frontiers and saved locals retain their existing mark/reset policy. */
+static void prepared_pure_answer_cursor_collect(
+    CettaPreparedPureAnswerCursor *cursor) {
+    enum { MIN_COLLECTION_BYTES = 64u * 1024u };
+    if (!cursor->owns_arena || cursor->frame_len != 1u ||
+        cursor->frames[0].continuation)
+        return;
+    size_t before = arena_accounted_live_bytes(cursor->arena);
+    size_t threshold = cursor->next_collection_bytes;
+    if (threshold < MIN_COLLECTION_BYTES)
+        threshold = MIN_COLLECTION_BYTES;
+    if (before < threshold)
+        return;
+    /* A declining or mostly-live graph is retried only after geometric growth. */
+    cursor->next_collection_bytes = before > SIZE_MAX / 2u
+        ? SIZE_MAX : before * 2u;
+    PreparedPureAnswerFrame *frame = &cursor->frames[0];
+    if (frame->argument_base != 0u || frame->arity != cursor->argument_len ||
+        frame->arity > 64u)
+        return;
+    for (size_t index = 0u; index < cursor->argument_len; index++) {
+        const Atom *argument = cursor->arguments[index];
+        if (!atom_graph_is_closed_for_arena(cursor->arena, argument) ||
+            atom_has_identity_grounded(argument) ||
+            atom_has_thread_local_resource(argument))
+            return;
+    }
+
+    Arena fresh;
+    arena_init_detached(&fresh);
+    arena_set_runtime_kind(&fresh, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+    Atom *arguments[64];
+    AtomDeepCopySession *copy = atom_deep_copy_session_new(&fresh);
+    bool ok = copy != NULL;
+    if (copy)
+        atom_deep_copy_session_set_resolver(
+            copy, prepared_pure_answer_cursor_copy_owned, cursor->arena);
+    for (size_t index = 0u; ok && index < cursor->argument_len; index++) {
+        arguments[index] = atom_deep_copy_session_copy(
+            copy, cursor->arguments[index]);
+        ok = arguments[index] != NULL;
+    }
+    atom_deep_copy_session_free(copy);
+    size_t after = arena_accounted_live_bytes(&fresh);
+    if (!ok || after > before - before / 4u) {
+        arena_free(&fresh);
+        return;
+    }
+
+    if (cursor->argument_len)
+        memcpy(cursor->arguments, arguments,
+               sizeof(*arguments) * cursor->argument_len);
+    Arena old = cursor->owned_arena;
+    cursor->owned_arena = fresh;
+    frame->mark = arena_mark(cursor->arena);
+    frame->alternative_mark = frame->mark;
+    cursor->detached = true;
+    cursor->base_live = 0u;
+    cursor->next_collection_bytes = after > SIZE_MAX / 2u
+        ? SIZE_MAX : after * 2u;
+    cursor->collections++;
+    arena_free(&old);
 }
 
 static CettaPreparedPureCursorStep prepared_pure_answer_cursor_handoff(
@@ -9215,6 +9298,7 @@ CettaPreparedPureCursorStep cetta_prepared_pure_answer_cursor_next(
         if (cursor->remaining_transitions == 0u)
             return prepared_pure_answer_cursor_handoff(
                 cursor, CETTA_PREPARED_PURE_HANDOFF_LIMIT);
+        prepared_pure_answer_cursor_collect(cursor);
         cursor->remaining_transitions--;
         size_t frame_index = cursor->frame_len - 1u;
         PreparedPureAnswerFrame *frame = &cursor->frames[frame_index];
@@ -9804,6 +9888,24 @@ uint64_t cetta_prepared_pure_answer_cursor_answer_count(
 uint64_t cetta_prepared_pure_answer_cursor_tail_call_count(
     const CettaPreparedPureAnswerCursor *cursor) {
     return cursor ? cursor->tail_calls : 0u;
+}
+
+CettaPreparedPureCursorStorage cetta_prepared_pure_answer_cursor_storage(
+    const CettaPreparedPureAnswerCursor *cursor) {
+    if (!cursor)
+        return (CettaPreparedPureCursorStorage){0};
+    return (CettaPreparedPureCursorStorage){
+        .live_bytes = cursor->owns_arena
+            ? arena_accounted_live_bytes(cursor->arena) : 0u,
+        .reserved_bytes = cursor->owns_arena
+            ? cursor->arena->reserved_bytes : 0u,
+        .metadata_bytes = sizeof(*cursor) +
+            cursor->frame_cap * sizeof(*cursor->frames) +
+            cursor->argument_cap * sizeof(*cursor->arguments) +
+            cursor->program->head_len *
+                (sizeof(*cursor->head_seen) + sizeof(*cursor->seen_heads)),
+        .collections = cursor->collections,
+    };
 }
 
 void cetta_prepared_pure_answer_cursor_close(
