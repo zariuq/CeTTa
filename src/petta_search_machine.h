@@ -377,6 +377,14 @@ typedef struct {
         Atom *accumulator_binder, Atom *item_binder,
         Atom *step_expression, const Bindings *environment,
         Atom **result_out);
+    /* Sequence a closed numeric producer directly into a lexical fold.
+     * A completed value is ready for unification. An expression result is
+     * the already-materialized undelivered suffix and its prior accumulator;
+     * the machine resumes its existing fold continuation over those values. */
+    bool (*foldl_producer)(
+        void *context, Space *space, Arena *arena,
+        Atom *items, Atom *initial, Atom *accumulator_binder, Atom *item_binder,
+        Atom *body, const Bindings *environment, CettaCallOutcome *result);
     /* A generated determinate-map program may own a lexical map without
      * allocating one result variable and one relational goal per item.
      * NOT_APPLICABLE preserves the complete relational product. */

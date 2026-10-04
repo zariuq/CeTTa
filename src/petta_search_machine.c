@@ -28702,6 +28702,18 @@ static bool petta_machine_dispatch_solve(
             (!argument_plan || argument_plan->role != PETTA_PLAN_VALUE) &&
             petta_machine_atom_is_reify_head(
                 machine, argument->expr.elems[0])) {
+            if (machine->host.pull_collection_single_result) {
+                PettaCollectionCardinality cardinality = {0};
+                PettaMachineFoldResult pulled = machine->host.pull_collection_single_result(
+                    machine->host.context, machine->space, argument,
+                    environment, petta_collection_count_item, &cardinality);
+                if (pulled == PETTA_MACHINE_FOLD_VALUE) {
+                    Atom *count = atom_int(&machine->heap, (int64_t)cardinality.count);
+                    return count && petta_push_unify(machine, count, expected, goal->barrier);
+                }
+                if (pulled == PETTA_MACHINE_FOLD_INTERRUPTED)
+                    return true;
+            }
             return petta_machine_start_count_collapse(
                 machine, argument->expr.elems[1],
                 expected, goal->barrier,
@@ -28939,6 +28951,29 @@ static bool petta_machine_dispatch_solve(
 
     if (head_id == g_builtin_syms.foldl_atom &&
         (nargs == 3u || nargs == 5u)) {
+        const PettaPlanNode *items_plan = petta_plan_child(plan, 1u);
+        if (nargs == 5u && machine->host.foldl_producer &&
+            (!items_plan || items_plan->role != PETTA_PLAN_VALUE) &&
+            expression->expr.elems[1]->kind == ATOM_EXPR &&
+            expression->expr.elems[1]->expr.len > 0u &&
+            atom_is_symbol_id(expression->expr.elems[1]->expr.elems[0],
+                              g_builtin_syms.collapse)) {
+            CettaCallOutcome folded = cetta_call_failure();
+            bool handled = machine->host.foldl_producer(
+                machine->host.context, machine->space, &machine->heap,
+                expression->expr.elems[1], expression->expr.elems[2],
+                expression->expr.elems[3], expression->expr.elems[4],
+                expression->expr.elems[5], environment, &folded);
+            if (handled) {
+                if (folded.kind != CETTA_CALL_VALUE)
+                    return true;
+                if (folded.result_form == CETTA_CALL_RESULT_COMPLETED_VALUE)
+                    return petta_push_unify(machine, folded.term, expected, goal->barrier);
+                return petta_machine_foldl_atom(machine,
+                    folded.term->expr.elems[1], folded.term->expr.elems[2],
+                    folded.term, expected, goal->barrier, false, plan, environment);
+            }
+        }
         Atom *items = petta_fresh_variable(machine);
         Atom *initial = petta_fresh_variable(machine);
         /* A callable step is evaluated once, after the list and the
