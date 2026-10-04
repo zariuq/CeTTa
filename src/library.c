@@ -4662,6 +4662,71 @@ static Atom *fs_read_lines(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     return result;
 }
 
+static Atom *library_string_list(Arena *a, char **items, uint32_t nitems) {
+    Atom **atoms = arena_alloc(a, sizeof(Atom *) * (nitems ? nitems : 1));
+    for (uint32_t i = 0; i < nitems; i++) {
+        atoms[i] = atom_string(a, items[i]);
+    }
+    return atom_expr(a, atoms, nitems);
+}
+
+/* The complete lines within bytes [start, end) of a file; end < 0 or past
+ * the file means its end. A range that starts inside the file begins at the
+ * next line: the line cut by start is not returned. */
+static Atom *fs_read_lines_between(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    const char *path;
+    int64_t from, to;
+    if (nargs != 3 || !(path = library_text_arg(args[0])) ||
+        args[1]->kind != ATOM_GROUNDED || args[1]->ground.gkind != GV_INT ||
+        args[2]->kind != ATOM_GROUNDED || args[2]->ground.gkind != GV_INT) {
+        return library_signature_error(a, head, args, nargs, "expected filename, start and end");
+    }
+    from = args[1]->ground.ival; to = args[2]->ground.ival;
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        return atom_error(a, library_call_expr(a, head, args, nargs),
+                          atom_string(a, strerror(errno)));
+    }
+    if (fseeko(f, 0, SEEK_END) != 0) { fclose(f); return atom_expr(a, NULL, 0); }
+    int64_t size = (int64_t)ftello(f);
+    if (to < 0 || to > size) to = size;
+    if (from < 0) from = 0;
+    if (from > to) from = to;
+    size_t len = (size_t)(to - from);
+    char *buf = cetta_malloc(len + 1);
+    if (fseeko(f, (off_t)from, SEEK_SET) != 0 || fread(buf, 1, len, f) != len) {
+        fclose(f); free(buf);
+        return atom_error(a, library_call_expr(a, head, args, nargs), atom_string(a, "read failed"));
+    }
+    fclose(f);
+    buf[len] = '\0';
+    size_t start = 0;
+    if (from > 0) {
+        char *newline = memchr(buf, '\n', len);
+        start = newline ? (size_t)(newline - buf) + 1 : len;
+    }
+    char **items = NULL; uint32_t nitems = 0, cap = 0;
+    for (size_t i = start; i < len; ) {
+        char *newline = memchr(buf + i, '\n', len - i);
+        size_t stop = newline ? (size_t)(newline - buf) : len;
+        size_t end_of_line = stop;
+        if (end_of_line > i && buf[end_of_line - 1] == '\r') end_of_line--;
+        if (nitems >= cap) {
+            cap = cap ? cap * 2 : 64;
+            items = cetta_realloc(items, sizeof(char *) * cap);
+        }
+        char *line = cetta_malloc(end_of_line - i + 1);
+        memcpy(line, buf + i, end_of_line - i);
+        line[end_of_line - i] = '\0';
+        items[nitems++] = line;
+        i = stop + 1;
+    }
+    Atom *result = library_string_list(a, items, nitems);
+    for (uint32_t i = 0; i < nitems; i++) free(items[i]);
+    free(items); free(buf);
+    return result;
+}
+
 static Atom *cetta_library_dispatch_fs(Arena *a, Atom *head,
                                        Atom **args, uint32_t nargs) {
     if (head->kind != ATOM_SYMBOL) return NULL;
@@ -4692,6 +4757,9 @@ static Atom *cetta_library_dispatch_fs(Arena *a, Atom *head,
     }
     if (head_id == g_builtin_syms.lib_fs_read_lines) {
         return fs_read_lines(a, head, args, nargs);
+    }
+    if (head_id == g_builtin_syms.lib_fs_read_lines_between) {
+        return fs_read_lines_between(a, head, args, nargs);
     }
     return NULL;
 }

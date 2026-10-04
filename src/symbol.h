@@ -374,6 +374,7 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(lib_fs_write, "__cetta_lib_fs_write") \
     X(lib_fs_append_text, "__cetta_lib_fs_append_text") \
     X(lib_fs_read_lines, "__cetta_lib_fs_read_lines") \
+    X(lib_fs_read_lines_between, "__cetta_lib_fs_read_lines_between") \
     X(lib_io_capabilities, "__cetta_lib_io_capabilities") \
     X(lib_io_submit, "__cetta_lib_io_submit") \
     X(lib_io_poll, "__cetta_lib_io_poll") \

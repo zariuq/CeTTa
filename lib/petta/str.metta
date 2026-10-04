@@ -32,3 +32,6 @@
 (= (str:set-member? $set $text) (__cetta_lib_str set-member? $set $text))
 (= (str:escape $scheme $text) (__cetta_lib_str escape $scheme $text))
 (= (str:unescape $scheme $text) (__cetta_lib_str unescape $scheme $text))
+(= (str:lower $text) (__cetta_lib_str lower $text))
+(= (str:char-length $text) (__cetta_lib_str char-length $text))
+(= (str:char-slice $text $start $end) (__cetta_lib_str char-slice $text $start $end))
