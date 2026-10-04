@@ -677,7 +677,7 @@ SRC += src/library_supervise.c $(DURABLE_SRC)
 SRC += src/petta_type_policy.c src/petta_type_relation.c src/he_type_policy.c
 SRC += src/gslt_language_manifest_v1.c
 SRC += src/gslt_support_profile_v1.c
-SRC += src/library_io.c
+SRC += src/library_io.c src/library_cwp.c src/library_proc.c src/http_worker.c src/telegram_transport.c
 SRC += $(JSON_GSLT_RUNTIME_SRC)
 SRC += $(PETTA_TYPECHECK_CENSUS_SRC)
 SRC += \
@@ -27845,6 +27845,60 @@ else
 	@echo "SKIP: test-petta-error-outcomes Python calls (requires a Python-enabled build)"
 endif
 
+.PHONY: test-petta-py-call-data
+test-petta-semantics: test-petta-py-call-data
+# A library or Python operation takes the ready values of its arguments: a
+# value shaped like a call is data in and out of a Python call, a parsed
+# command reaching Python as the list it spells and a list Python returns
+# whose head names a function never run (SWI-PeTTa's answers), an
+# operation that gives no answer fails, and a completed value handed back
+# through the evaluate path's delimiter is that value.
+test-petta-py-call-data: $(BIN)
+	@set -eu; \
+	actual=$$($(CETTA_BIN_INVOKE) --lang petta \
+		tests/petta/ready_native_no_result.metta 2>&1); \
+	if [ "$$actual" != "$$(cat tests/petta/ready_native_no_result.expected)" ]; then \
+		echo "FAIL: a library operation without an answer"; \
+		diff <(cat tests/petta/ready_native_no_result.expected) \
+			<(printf '%s\n' "$$actual") | head -20; \
+		exit 1; \
+	fi; \
+	echo "PASS: a library operation without an answer fails"
+	@set -eu; \
+	actual=$$($(CETTA_BIN_INVOKE) --lang petta \
+		tests/petta/library_no_result_spelled.metta probe-arg 2>&1); \
+	if [ "$$actual" != "$$(cat tests/petta/library_no_result_spelled.expected)" ]; then \
+		echo "FAIL: a library operation without an answer, through its library"; \
+		diff <(cat tests/petta/library_no_result_spelled.expected) \
+			<(printf '%s\n' "$$actual") | head -20; \
+		exit 1; \
+	fi; \
+	echo "PASS: a library operation without an answer fails through its library"
+	@set -eu; \
+	actual=$$($(CETTA_BIN_INVOKE) --lang petta \
+		tests/petta/ready_native_value_delimiter.metta 2>&1); \
+	if [ "$$actual" != "$$(cat tests/petta/ready_native_value_delimiter.expected)" ]; then \
+		echo "FAIL: a delimited native value on the ready path"; \
+		diff <(cat tests/petta/ready_native_value_delimiter.expected) \
+			<(printf '%s\n' "$$actual") | head -20; \
+		exit 1; \
+	fi; \
+	echo "PASS: a delimited native value is that value on the ready path"
+ifeq ($(ENABLE_PYTHON),1)
+	@set -eu; \
+	actual=$$($(CETTA_BIN_INVOKE) --lang petta \
+		tests/petta/py_call_data.metta 2>&1); \
+	if [ "$$actual" != "$$(cat tests/petta/py_call_data.expected)" ]; then \
+		echo "FAIL: a call-shaped value around a Python call"; \
+		diff <(cat tests/petta/py_call_data.expected) \
+			<(printf '%s\n' "$$actual") | head -20; \
+		exit 1; \
+	fi; \
+	echo "PASS: a call-shaped value stays data around a Python call"
+else
+	@echo "SKIP: test-petta-py-call-data (requires a Python-enabled build)"
+endif
+
 .PHONY: test-petta-python-error-report
 test-petta-semantics: test-petta-python-error-report
 # The default report follows the upstream bounded diagnostic presentation.
@@ -27872,6 +27926,27 @@ ifeq ($(ENABLE_PYTHON),1)
 else
 	@echo "SKIP: test-petta-python-error-report (requires a Python-enabled build)"
 endif
+
+.PHONY: test-lib-proc
+test-petta-semantics: test-lib-proc
+# lib/proc runs a program as a child process: an explicit argument vector,
+# working directory and environment, an output cap, and a timeout that kills
+# the whole process group. Nothing of this process's environment or open
+# files reaches the program: it runs here with a file open on descriptor 7.
+test-lib-proc: $(BIN)
+	@set -eu; \
+	actual=$$($(CETTA_BIN_INVOKE) --lang petta tests/petta/proc_run.metta 7</dev/null 2>&1); \
+	if [ "$$actual" != "$$(cat tests/petta/proc_run.expected)" ]; then \
+		echo "FAIL: lib/proc"; \
+		diff <(cat tests/petta/proc_run.expected) \
+			<(printf '%s\n' "$$actual") | head -20; \
+		exit 1; \
+	fi; \
+	if ps -eo args | grep -qx 'sleep 31.25'; then \
+		echo "FAIL: lib/proc left a timed-out process group running"; \
+		exit 1; \
+	fi; \
+	echo "PASS: lib/proc runs a child process within its bounds"
 
 .PHONY: test-petta-match-cell-rows
 test-petta-semantics: test-petta-match-cell-rows
@@ -40659,10 +40734,12 @@ test-tptp-official-dollar-words-v1-body: $(BIN) prepare-tptp-compact-morphism-v1
 # files under lib/petta and lib/prime are checked against it.  Prime needs
 # its own spelling only where the source hands values to natives.
 LIBRARY_SPELLING_TOOL_V1 = tools/library_spelling.py
-# The libraries that run on real PeTTa; the remaining native libraries run
-# on the CeTTa host's PeTTa lane, over natives real PeTTa does not have.
+# The libraries that run on real PeTTa; the list library and the native
+# libraries after it run on the CeTTa host's PeTTa lane, over natives real
+# PeTTa does not have.
 LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_tptp json str
-LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list system fs io
+LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list \
+	system fs proc cwp io
 LIBRARY_PRIME_SPELLING_SOURCES_V1 = json
 .PHONY: test-library-spellings-v1
 test-library-spellings-v1: $(LIBRARY_SPELLING_TOOL_V1) \
@@ -41870,7 +41947,7 @@ test-io-browser: $(IO_HTTP_FIXTURE_BIN)
 		-DCETTA_BUILD_HTTP_PROVIDER_CURL=0 \
 		-DCETTA_BUILD_HTTP_PROVIDER_EMSCRIPTEN=1 \
 		-O2 -Wall -Werror -std=c11 \
-		tests/test_io_browser.c src/library_io.c src/symbol.c src/atom.c src/binding/frame_identity.c \
+		tests/test_io_browser.c src/library_io.c src/http_worker.c src/symbol.c src/atom.c src/binding/frame_identity.c \
 		-sFETCH=1 -sFETCH_STREAMING=1 -sEXIT_RUNTIME=1 \
 		-sALLOW_MEMORY_GROWTH=1 -sENVIRONMENT=web \
 		-o "$$work/io_browser_test.js"; \
@@ -42130,6 +42207,68 @@ endif
 .PHONY: test-rhometta-macro-audit test-eval-gc-adversarial test-eval-gc-survivor-reset test-eval-gc-asan-selected test-eval-gc-asan-selected-body test-eval-gc-asan-full-differential test-eval-gc-asan-full-differential-body test-tsan test-tsan-main test-tsan-mork test-rhocalc-cost-differential-required test-rhocalc-cost-observer-transparency test-rhocalc-cost-commit-audit test-rhocalc-cost-commit-audit-asan test-rhocalc-cost-commit-audit-tsan test-rhocalc-cost-commit-audit-body bench-rho-rhometta-deduction-farm bench-rho-hot-frontier bench-rho-hot-successors bench-rho-threaded bench-rho-threaded-heavy bench-rho-cost-threaded bench-rho-cost-threaded-heavy bench-rho-threaded-corpus bench-rho-threaded-generated bench-rho-threaded-generated-runtime-stats perf-bench-rhocalc test-main-readiness-model main-readiness-space-ladders main-readiness-space-ladders-exhaustive main-readiness-space-frontier main-readiness-thresholds main-readiness-mutation-qualification main-readiness-rho-adaptive main-readiness-routine main-readiness-routine-authoritative main-readiness-exhaustive main-readiness-calibration-status main-readiness-calibrate main-readiness-cost-rho
 .PHONY: probe-d4-nodup-capability-backends
 .PHONY: test-backends-lanes test-manifest-strict test-mork-lane-core-body test-mork-add-atoms-runtime-stats-body test-mork-bridge-contextual-exact-rows test-mork-cursor-byte-buffer-count-abi test-mork-cursor-expr-row-stream-abi test-mork-query-row-stream-abi probe-core-lane probe-pathmap-lane probe-pathmap-lane-body
+
+# The durable store test is independent of the evaluator and can run before a
+# full CeTTa build. Production objects contain no crash-injection callbacks.
+# Keep upstream SQLite unmodified and outside the project's warning policy.
+vendor/sqlite/sqlite3.$(BUILD_OBJ_TAG).o vendor/sqlite/sqlite3.$(BUILD_OBJ_TAG).stage0.o vendor/sqlite/sqlite3.$(BUILD_OBJ_TAG).runtime-stats.o: Makefile
+vendor/sqlite/sqlite3.$(BUILD_OBJ_TAG).o vendor/sqlite/sqlite3.$(BUILD_OBJ_TAG).stage0.o vendor/sqlite/sqlite3.$(BUILD_OBJ_TAG).runtime-stats.o: CFLAGS := $(filter-out -Werror -O3,$(CFLAGS)) -O2
+
+.PHONY: test-durable-store
+runtime/sqlite-durable-test.o: vendor/sqlite/sqlite3.c vendor/sqlite/sqlite3.h Makefile
+	@mkdir -p runtime
+	$(CC) -O2 -std=c11 -pthread -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_DQS=0 -DSQLITE_OMIT_SHARED_CACHE -DSQLITE_DEFAULT_MEMSTATUS=0 -c $< -o $@
+
+runtime/test-durable-store: tests/test_durable_store.c src/durable_store.c src/durable_store.h runtime/sqlite-durable-test.o
+	$(CC) -O2 -Wall -Wextra -Werror -std=c11 -pthread -Isrc -Ivendor/sqlite -DCETTA_DURABLE_TEST tests/test_durable_store.c src/durable_store.c runtime/sqlite-durable-test.o -ldl -lm -o $@
+
+test-durable-store: runtime/test-durable-store
+	./runtime/test-durable-store
+
+.PHONY: test-durable-value
+runtime/test-durable-value-$(BUILD_OBJ_TAG): tests/test_durable_value.c src/durable_value.c src/durable_value.h src/symbol.c src/atom.c src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_durable_value.c src/durable_value.c src/symbol.c src/atom.c src/binding/frame_identity.c $(LDFLAGS)
+
+test-durable-value: runtime/test-durable-value-$(BUILD_OBJ_TAG)
+	./runtime/test-durable-value-$(BUILD_OBJ_TAG)
+
+.PHONY: test-http-worker
+ifeq ($(HTTP_PROVIDER_CURL),1)
+HTTP_WORKER_TEST_BIN = runtime/test-http-worker-$(BUILD_OBJ_TAG)
+$(HTTP_WORKER_TEST_BIN): tests/test_http_worker.c src/http_worker.c src/http_worker.h src/durable_store.c src/durable_store.h runtime/sqlite-durable-test.o
+	$(CC) -O2 -Wall -Wextra -Werror -std=c11 -pthread -Isrc -Ivendor/sqlite $(HTTP_CFLAGS) -DCETTA_BUILD_HTTP_PROVIDER_CURL=1 tests/test_http_worker.c src/http_worker.c src/durable_store.c runtime/sqlite-durable-test.o $(HTTP_LDFLAGS) -ldl -lm -o $@
+
+test-http-worker: $(HTTP_WORKER_TEST_BIN) $(IO_HTTP_FIXTURE_BIN)
+	python3 tests/test_http_worker.py $(IO_HTTP_FIXTURE_BIN) $(HTTP_WORKER_TEST_BIN)
+else
+test-http-worker:
+	@echo "test-http-worker requires the native HTTP provider" >&2
+	@exit 1
+endif
+
+.PHONY: test-io-library
+ifeq ($(HTTP_PROVIDER_CURL),1)
+test-io-library: $(BIN) $(IO_HTTP_FIXTURE_BIN)
+	python3 tests/test_io_library.py ./$(BIN) $(IO_HTTP_FIXTURE_BIN)
+else
+test-io-library:
+	@echo "test-io-library requires the native HTTP provider" >&2
+	@exit 1
+endif
+
+.PHONY: test-telegram-transport
+ifeq ($(HTTP_PROVIDER_CURL),1)
+TELEGRAM_TRANSPORT_TEST_BIN = runtime/test-telegram-transport-$(BUILD_OBJ_TAG)
+$(TELEGRAM_TRANSPORT_TEST_BIN): tests/test_telegram_transport.c src/telegram_transport.c src/telegram_transport.h src/http_worker.c src/http_worker.h
+	$(CC) -O2 -Wall -Wextra -Werror -std=c11 -pthread -Isrc $(HTTP_CFLAGS) -DCETTA_BUILD_HTTP_PROVIDER_CURL=$(HTTP_PROVIDER_CURL) tests/test_telegram_transport.c src/telegram_transport.c src/http_worker.c $(HTTP_LDFLAGS) -o $@
+test-telegram-transport: $(TELEGRAM_TRANSPORT_TEST_BIN)
+	python3 tests/test_telegram_transport.py $(TELEGRAM_TRANSPORT_TEST_BIN)
+else
+test-telegram-transport:
+	@echo "test-telegram-transport requires the native HTTP provider" >&2
+	@exit 1
+endif
 
 .PHONY: test-petta-relational-append-open
 test-petta-relational-append-open: $(BIN)

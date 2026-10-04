@@ -13053,6 +13053,7 @@ static bool hyperpose_external_unsafe_head(Atom *head) {
            symbol_name_equals(head, "fs:append-text") ||
            symbol_name_equals(head, "io:submit") ||
            symbol_name_equals(head, "io:poll") ||
+           symbol_name_equals(head, "io:wait") ||
            symbol_name_equals(head, "io:cancel") ||
            symbol_name_equals(head, "http:get") ||
            symbol_name_equals(head, "http:post") ||
@@ -13066,6 +13067,7 @@ static bool hyperpose_internal_unsafe_head(SymbolId head_id, Atom *head) {
         head_id == g_builtin_syms.lib_fs_append_text ||
         head_id == g_builtin_syms.lib_io_submit ||
         head_id == g_builtin_syms.lib_io_poll ||
+        head_id == g_builtin_syms.lib_io_wait ||
         head_id == g_builtin_syms.lib_io_cancel) {
         return true;
     }

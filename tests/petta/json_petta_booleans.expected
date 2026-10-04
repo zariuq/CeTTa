@@ -1,0 +1,4 @@
+true
+"{\"a\":true,\"b\":false,\"c\":[true,null]}"
+"{\"t\":true,\"f\":false}"
+"[true,false]"

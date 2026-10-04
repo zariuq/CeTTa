@@ -69,7 +69,7 @@ static Atom *dispatch(const char *head_name, Atom **args, uint32_t nargs) {
 
 static Atom *http_request_full(const char *method, const char *url,
                                const char *body, int64_t max_bytes) {
-    Atom *items[7] = {
+    Atom *items[8] = {
         atom_symbol(&arena, "http:request"),
         atom_string(&arena, method),
         atom_string(&arena, url),
@@ -77,8 +77,9 @@ static Atom *http_request_full(const char *method, const char *url,
         atom_string(&arena, body),
         atom_int(&arena, 3000),
         atom_int(&arena, max_bytes),
+        atom_bool(&arena, true), /* XHR requires explicit redirect opt-in. */
     };
-    return atom_expr(&arena, items, 7u);
+    return atom_expr(&arena, items, 8u);
 }
 
 static Atom *http_request(const char *url, int64_t max_bytes) {
@@ -266,6 +267,14 @@ int main(void) {
 
     char base[512];
     browser_origin(base, sizeof(base));
+    char direct_url[1024];
+    snprintf(direct_url, sizeof(direct_url), "%s/one", base);
+    Atom *direct = http_request(direct_url, 64);
+    direct = atom_expr(&arena, direct->expr.elems, 7u); /* default forbids redirects */
+    Atom *refused = dispatch("__cetta_lib_io_submit", &direct, 1u);
+    CHECK(refused && refused->kind == ATOM_EXPR && refused->expr.len == 3u &&
+              atom_is_symbol(refused->expr.elems[0], "Error"),
+          "browser refuses unsupported no-redirect request before networking");
     one_id = submit(base, "/one", 64);
     two_id = submit(base, "/two", 64);
     slow_id = submit(base, "/slow", 64);

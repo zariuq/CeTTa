@@ -1,0 +1,27 @@
+true
+(proc:exited 0 "hello world
+" "")
+(proc:exited 0 "found
+" "")
+(proc:failed "program not found")
+(proc:exited 0 "ONLY=this
+" "")
+(proc:exited 3 "out
+" "err
+")
+(proc:exited 0 "/
+" "")
+(proc:exited 0 "aaaaaaaaaa" "")
+(proc:timed-out "started
+" "")
+(proc:signaled 9 "" "")
+(proc:failed "cwd: No such file or directory")
+(proc:failed "exec: No such file or directory")
+(proc:exited 0 "a�b�c" "")
+(proc:exited 0 "0
+1
+2
+3
+" "")
+(Error (proc:run) "argv must be a list of one or more strings")
+(Error (proc:run) "env must be a list of (\"NAME\" \"value\") pairs")
