@@ -1,6 +1,8 @@
 #ifndef CETTA_PREPARED_PURE_MACHINE_H
 #define CETTA_PREPARED_PURE_MACHINE_H
 
+#include "owned_execution.h"
+
 #include "match_decision.h"
 #include "space.h"
 
@@ -366,6 +368,15 @@ CettaPreparedPureCursorStep cetta_prepared_pure_answer_cursor_next(
 bool cetta_prepared_pure_answer_cursor_detach(
     CettaPreparedPureAnswerCursor *cursor);
 
+/* Transfer the cursor to a resumable return/sequence owner. Completed answers
+ * are loaned unchanged; a handoff preserves the cursor's complete residual. */
+void cetta_prepared_pure_answer_cursor_own_execution(
+    CettaOwnedExecution *execution, CettaPreparedPureAnswerCursor *cursor);
+/* The cursor's native return adapter, also usable by an owner that adds
+ * independent host-authority checks around the same stored computation. */
+CettaOwnedExecutionStep cetta_prepared_pure_answer_cursor_return(
+    void *cursor, CettaOwnedReturn *returned, CettaEvalCompletion *completion);
+
 /* Withdraw the answer just produced: restore the frontier to the state
  * before the step that produced it.  A consumer calls this when the answer
  * needs a treatment the producer does not own. */
@@ -408,6 +419,11 @@ bool cetta_prepared_pure_answer_cursor_frame(
     const CettaPreparedPureAnswerCursor *cursor, size_t index,
     CettaPreparedPureAnswerFrame *frame_out);
 
+/* A remaining authored equation occurrence, under the cursor's current
+ * source authority. This reads retained code; it does not restart its call. */
+Atom *cetta_prepared_pure_answer_cursor_frame_equation(
+    const CettaPreparedPureAnswerCursor *cursor, size_t index, uint32_t ordinal);
+
 /* Copy a value the cursor holds into the caller's arena. */
 typedef Atom *(*CettaPreparedPureImportValueFn)(void *context, Atom *value);
 
@@ -437,6 +453,7 @@ typedef struct {
     size_t reserved_bytes;
     size_t metadata_bytes;
     uint64_t collections;
+    uint64_t copied_bytes;
 } CettaPreparedPureCursorStorage;
 CettaPreparedPureCursorStorage cetta_prepared_pure_answer_cursor_storage(
     const CettaPreparedPureAnswerCursor *cursor);

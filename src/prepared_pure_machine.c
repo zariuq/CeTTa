@@ -8649,6 +8649,7 @@ struct CettaPreparedPureAnswerCursor {
     size_t base_live;
     size_t next_collection_bytes;
     uint64_t collections;
+    uint64_t copied_bytes;
     CettaPreparedPureInterruptPollFn interrupt_poll;
     void *interrupt_context;
     uint32_t poll_interval;
@@ -8748,15 +8749,134 @@ static Atom *prepared_pure_answer_cursor_copy_owned(void *context, Atom *atom) {
     return NULL;
 }
 
-/* Between steps, a lone call without a continuation has exactly its arguments
- * as live value roots. Relocate them together before retiring old temporaries.
- * No equation is executed here, and the choice ordinal is left untouched.
- * Larger frontiers and saved locals retain their existing mark/reset policy. */
+typedef struct {
+    const PreparedPureContinuation *source;
+    PreparedPureContinuation *target;
+} PreparedPureContinuationCopy;
+
+typedef struct {
+    PreparedPureContinuationCopy *entries;
+    size_t capacity;
+    size_t length;
+} PreparedPureContinuationCopies;
+
+static size_t prepared_pure_continuation_hash(
+    const PreparedPureContinuation *record) {
+    uintptr_t hash = (uintptr_t)record >> 3u;
+    hash ^= hash >> 17u;
+    hash *= UINT64_C(0x9e3779b97f4a7c15);
+    return (size_t)(hash ^ (hash >> 23u));
+}
+
+static PreparedPureContinuationCopy *prepared_pure_continuation_copy_slot(
+    PreparedPureContinuationCopies *copies,
+    const PreparedPureContinuation *source) {
+    size_t slot = prepared_pure_continuation_hash(source) &
+                  (copies->capacity - 1u);
+    while (copies->entries[slot].source &&
+           copies->entries[slot].source != source)
+        slot = (slot + 1u) & (copies->capacity - 1u);
+    return &copies->entries[slot];
+}
+
+static bool prepared_pure_continuation_copies_reserve(
+    PreparedPureContinuationCopies *copies) {
+    if (copies->capacity && copies->length < copies->capacity / 2u)
+        return true;
+    size_t capacity = copies->capacity ? copies->capacity * 2u : 32u;
+    if (capacity <= copies->capacity ||
+        capacity > SIZE_MAX / sizeof(*copies->entries))
+        return false;
+    PreparedPureContinuationCopy *entries =
+        calloc(capacity, sizeof(*entries));
+    if (!entries)
+        return false;
+    PreparedPureContinuationCopies grown = {
+        .entries = entries,
+        .capacity = capacity,
+        .length = copies->length,
+    };
+    for (size_t index = 0u; index < copies->capacity; index++) {
+        if (copies->entries[index].source)
+            *prepared_pure_continuation_copy_slot(
+                &grown, copies->entries[index].source) = copies->entries[index];
+    }
+    free(copies->entries);
+    *copies = grown;
+    return true;
+}
+
+/* Continuation records and their local arrays are roots as well as the atoms
+ * in those arrays. One map preserves shared tails; the same atom-copy episode
+ * is used for arguments and every saved local. No source record is modified. */
+static bool prepared_pure_answer_cursor_copy_continuation(
+    CettaPreparedPureAnswerCursor *cursor, Arena *fresh,
+    AtomDeepCopySession *copy, PreparedPureContinuationCopies *copies,
+    const PreparedPureContinuation *source,
+    const PreparedPureContinuation **target_out) {
+    PreparedPureContinuation *previous = NULL;
+    *target_out = NULL;
+    while (source) {
+        if (!prepared_pure_continuation_copies_reserve(copies))
+            return false;
+        PreparedPureContinuationCopy *entry =
+            prepared_pure_continuation_copy_slot(copies, source);
+        if (entry->source) {
+            if (previous)
+                previous->parent = entry->target;
+            else
+                *target_out = entry->target;
+            return true;
+        }
+        if (!arena_owns_ptr(cursor->arena, source) ||
+            source->equation >= cursor->program->equation_len)
+            return false;
+        const PreparedPureEquation *body =
+            &cursor->program->equations[source->equation];
+        uint32_t count = body->frame_slot_count;
+        if (source->slot >= count || source->step < body->first_step ||
+            source->step - body->first_step >= body->step_count ||
+            !source->locals || !arena_owns_ptr(cursor->arena, source->locals))
+            return false;
+        PreparedPureContinuation *target = arena_alloc(fresh, sizeof(*target));
+        Atom **locals = arena_alloc(fresh, sizeof(*locals) * (count ? count : 1u));
+        if (!target || !locals)
+            return false;
+        for (uint32_t slot = 0u; slot < count; slot++) {
+            Atom *value = source->locals[slot];
+            if (value && (atom_has_identity_grounded(value) ||
+                          atom_has_thread_local_resource(value)))
+                return false;
+            locals[slot] = value ? atom_deep_copy_session_copy(copy, value) : NULL;
+            if (value && !locals[slot])
+                return false;
+        }
+        *target = *source;
+        target->locals = locals;
+        target->parent = NULL;
+        target->locals_detached = true;
+        *entry = (PreparedPureContinuationCopy){source, target};
+        copies->length++;
+        if (previous)
+            previous->parent = target;
+        else
+            *target_out = target;
+        previous = target;
+        source = source->parent;
+    }
+    return true;
+}
+
+/* Collection runs between transitions, after the previous answer's loan and
+ * unyield window have expired. Arguments, pending alternatives and complete
+ * saved continuations are copied before the old arena is retired. All copied
+ * roots lie below the rebased marks; later alternative/pop resets cannot free
+ * a sibling's roots. Equation ordinals and the residual stack stay unchanged. */
 static void prepared_pure_answer_cursor_collect(
     CettaPreparedPureAnswerCursor *cursor) {
     enum { MIN_COLLECTION_BYTES = 64u * 1024u };
-    if (!cursor->owns_arena || cursor->frame_len != 1u ||
-        cursor->frames[0].continuation)
+    if (!cursor->owns_arena || cursor->frame_len == 0u ||
+        cursor->answer_pending || cursor->undo_valid)
         return;
     size_t before = arena_accounted_live_bytes(cursor->arena);
     size_t threshold = cursor->next_collection_bytes;
@@ -8767,14 +8887,19 @@ static void prepared_pure_answer_cursor_collect(
     /* A declining or mostly-live graph is retried only after geometric growth. */
     cursor->next_collection_bytes = before > SIZE_MAX / 2u
         ? SIZE_MAX : before * 2u;
-    PreparedPureAnswerFrame *frame = &cursor->frames[0];
-    if (frame->argument_base != 0u || frame->arity != cursor->argument_len ||
-        frame->arity > 64u)
+    if (cursor->argument_len > SIZE_MAX / sizeof(Atom *) ||
+        cursor->frame_len > SIZE_MAX / sizeof(PreparedPureAnswerFrame))
         return;
+    for (size_t index = 0u; index < cursor->frame_len; index++) {
+        const PreparedPureAnswerFrame *frame = &cursor->frames[index];
+        if (frame->head_index >= cursor->program->head_len ||
+            frame->argument_base > cursor->argument_len ||
+            frame->arity > cursor->argument_len - frame->argument_base)
+            return;
+    }
     for (size_t index = 0u; index < cursor->argument_len; index++) {
         const Atom *argument = cursor->arguments[index];
-        if (!atom_graph_is_closed_for_arena(cursor->arena, argument) ||
-            atom_has_identity_grounded(argument) ||
+        if (!argument || atom_has_identity_grounded(argument) ||
             atom_has_thread_local_resource(argument))
             return;
     }
@@ -8782,9 +8907,13 @@ static void prepared_pure_answer_cursor_collect(
     Arena fresh;
     arena_init_detached(&fresh);
     arena_set_runtime_kind(&fresh, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
-    Atom *arguments[64];
+    Atom **arguments = cursor->argument_len
+        ? malloc(sizeof(*arguments) * cursor->argument_len) : NULL;
+    PreparedPureAnswerFrame *frames =
+        malloc(sizeof(*frames) * cursor->frame_len);
+    PreparedPureContinuationCopies continuations = {0};
     AtomDeepCopySession *copy = atom_deep_copy_session_new(&fresh);
-    bool ok = copy != NULL;
+    bool ok = copy && frames && (!cursor->argument_len || arguments);
     if (copy)
         atom_deep_copy_session_set_resolver(
             copy, prepared_pure_answer_cursor_copy_owned, cursor->arena);
@@ -8793,9 +8922,18 @@ static void prepared_pure_answer_cursor_collect(
             copy, cursor->arguments[index]);
         ok = arguments[index] != NULL;
     }
+    for (size_t index = 0u; ok && index < cursor->frame_len; index++) {
+        frames[index] = cursor->frames[index];
+        ok = prepared_pure_answer_cursor_copy_continuation(
+            cursor, &fresh, copy, &continuations,
+            cursor->frames[index].continuation, &frames[index].continuation);
+    }
     atom_deep_copy_session_free(copy);
+    free(continuations.entries);
     size_t after = arena_accounted_live_bytes(&fresh);
     if (!ok || after > before - before / 4u) {
+        free(frames);
+        free(arguments);
         arena_free(&fresh);
         return;
     }
@@ -8805,13 +8943,25 @@ static void prepared_pure_answer_cursor_collect(
                sizeof(*arguments) * cursor->argument_len);
     Arena old = cursor->owned_arena;
     cursor->owned_arena = fresh;
-    frame->mark = arena_mark(cursor->arena);
-    frame->alternative_mark = frame->mark;
+    ArenaMark mark = arena_mark(cursor->arena);
+    for (size_t index = 0u; index < cursor->frame_len; index++) {
+        frames[index].mark = mark;
+        frames[index].alternative_mark = mark;
+    }
+    memcpy(cursor->frames, frames, sizeof(*frames) * cursor->frame_len);
+    free(frames);
+    free(arguments);
     cursor->detached = true;
     cursor->base_live = 0u;
     cursor->next_collection_bytes = after > SIZE_MAX / 2u
         ? SIZE_MAX : after * 2u;
     cursor->collections++;
+    cursor->copied_bytes = after > UINT64_MAX - cursor->copied_bytes
+        ? UINT64_MAX : cursor->copied_bytes + after;
+    /* Value registers and memo entries are transition-local scratch, not
+     * saved continuations. Forget their pointer caches before freeing storage. */
+    prepared_pure_memo_clear(cursor->program);
+    cursor->program->slot_len = 0u;
     arena_free(&old);
 }
 
@@ -9527,6 +9677,49 @@ CettaPreparedPureCursorStep cetta_prepared_pure_answer_cursor_next(
     return CETTA_PREPARED_PURE_CURSOR_EXHAUSTED;
 }
 
+CettaOwnedExecutionStep cetta_prepared_pure_answer_cursor_return(
+    void *computation, CettaOwnedReturn *returned,
+    CettaEvalCompletion *completion) {
+    CettaPreparedPureAnswerCursor *cursor = computation;
+    Atom *value = NULL;
+    CettaPreparedPureCursorStep step =
+        cetta_prepared_pure_answer_cursor_next(cursor, &value);
+    if (step == CETTA_PREPARED_PURE_CURSOR_ANSWER) {
+        returned->outcome = cetta_call_completed_value(value);
+        returned->environment = NULL;
+        return CETTA_OWNED_EXECUTION_RETURN;
+    }
+    if (step == CETTA_PREPARED_PURE_CURSOR_EXHAUSTED) {
+        *completion = CETTA_EVAL_COMPLETE;
+        return CETTA_OWNED_EXECUTION_COMPLETE;
+    }
+    switch (cetta_prepared_pure_answer_cursor_handoff_reason(cursor)) {
+    case CETTA_PREPARED_PURE_HANDOFF_INTERRUPT:
+        *completion = CETTA_EVAL_INCOMPLETE_CANCELLED;
+        return CETTA_OWNED_EXECUTION_INTERRUPTED;
+    case CETTA_PREPARED_PURE_HANDOFF_STALE:
+        *completion = CETTA_EVAL_INCOMPLETE_INVALIDATED;
+        break;
+    case CETTA_PREPARED_PURE_HANDOFF_LIMIT:
+        *completion = CETTA_EVAL_INCOMPLETE_CAPACITY;
+        break;
+    default:
+        *completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
+        break;
+    }
+    return CETTA_OWNED_EXECUTION_HANDOFF;
+}
+
+static void prepared_pure_answer_owned_release(void *computation) {
+    cetta_prepared_pure_answer_cursor_close(computation);
+}
+
+void cetta_prepared_pure_answer_cursor_own_execution(
+    CettaOwnedExecution *execution, CettaPreparedPureAnswerCursor *cursor) {
+    cetta_owned_execution_init(execution, cursor,
+        cetta_prepared_pure_answer_cursor_return, prepared_pure_answer_owned_release);
+}
+
 bool cetta_prepared_pure_answer_cursor_detach(
     CettaPreparedPureAnswerCursor *cursor) {
     if (!cursor)
@@ -9680,6 +9873,20 @@ bool cetta_prepared_pure_answer_cursor_frame(
     }
     frame_out->resumes_continuation = frame->continuation != NULL;
     return true;
+}
+
+Atom *cetta_prepared_pure_answer_cursor_frame_equation(
+    const CettaPreparedPureAnswerCursor *cursor, size_t index, uint32_t ordinal) {
+    if (!cursor || index >= cursor->frame_len ||
+        !cetta_prepared_pure_program_is_current(cursor->program))
+        return NULL;
+    const PreparedPureAnswerFrame *frame = &cursor->frames[index];
+    if (frame->head_index >= cursor->program->head_len)
+        return NULL;
+    const PreparedPureHead *head = &cursor->program->heads[frame->head_index];
+    if (ordinal < frame->next_equation || ordinal >= head->equation_count)
+        return NULL;
+    return cursor->program->equations[head->first_equation + ordinal].equation;
 }
 
 /* Decoding a resume template back into source syntax.  Slot values are
@@ -9905,6 +10112,7 @@ CettaPreparedPureCursorStorage cetta_prepared_pure_answer_cursor_storage(
             cursor->program->head_len *
                 (sizeof(*cursor->head_seen) + sizeof(*cursor->seen_heads)),
         .collections = cursor->collections,
+        .copied_bytes = cursor->copied_bytes,
     };
 }
 

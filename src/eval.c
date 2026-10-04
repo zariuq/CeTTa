@@ -3503,7 +3503,9 @@ static bool dispatch_native_call(Space *s, Arena *a, Atom *head,
                                 CettaCallOutcome *outcome);
 static bool try_stream_count_size_collapse(Space *s, Arena *a, Atom *atom,
                                            const Bindings *current_env, int fuel,
-                                           uint64_t *out_count);
+                                           CettaCallOutcome *outcome);
+static Atom *count_size_collapse_for_native_call(Space *space, Arena *arena,
+    Atom *source, int fuel, CettaCallOutcome *outcome);
 static Atom *materialize_runtime_token(Space *s, Arena *a, Atom *atom);
 static Space *resolve_single_space_arg(Space *s, Arena *a, Atom *space_expr, int fuel);
 static Space *petta_create_named_space_on_add(
@@ -3983,12 +3985,12 @@ static Atom *eval_grounded_application_outcome_on(Space *s, Arena *a, Atom *atom
      * that spelling source-occurrence value demand in its relational machine,
      * while HE retains its own syntax-observation contract. */
     if (head->sym_id == g_builtin_syms.size && nargs == 1) {
-        uint64_t count = 0;
         Atom *applied = !bindings_has_bound_values(prefix)
             ? atom
             : bindings_apply_if_vars(prefix, a, atom);
-        if (try_stream_count_size_collapse(s, a, applied, NULL, fuel, &count))
-            return atom_int(a, (int64_t)count);
+        Atom *counted = count_size_collapse_for_native_call(s, a, applied, fuel, outcome);
+        if (counted)
+            return counted;
     }
     Atom **args = arena_alloc(a, sizeof(Atom *) * nargs);
     for (uint32_t i = 0; i < nargs; i++) {
@@ -17661,6 +17663,8 @@ cleanup:
     return outcome;
 }
 
+#include "eval_owned_execution.inc"
+
 static bool eval_bound_single_with_scratch(Space *s, Arena *a, Arena *scratch,
                                            Atom *call, Atom *expr,
                                            Atom *acc_var, Atom *acc_value,
@@ -29697,12 +29701,12 @@ static bool eval_try_count_collapsed_match_source(
  * value-demanded `size-atom` is owned by its occurrence-plan machine. */
 static bool try_stream_count_size_collapse(Space *s, Arena *a, Atom *atom,
                                            const Bindings *current_env, int fuel,
-                                           uint64_t *out_count) {
+                                           CettaCallOutcome *outcome) {
     Atom *closed;
     Bindings empty;
     bindings_init(&empty);
     if (!atom || atom->kind != ATOM_EXPR || expr_nargs(atom) != 1 ||
-        !out_count) {
+        !outcome) {
         return false;
     }
     if (atom_head_symbol_id(atom) != g_builtin_syms.size) {
@@ -29717,8 +29721,19 @@ static bool try_stream_count_size_collapse(Space *s, Arena *a, Atom *atom,
         return false;
     }
     Atom *source = expr_arg(closed, 0u);
-    return eval_try_count_collapsed_match_source(
-        s, a, &source, fuel, out_count);
+    uint64_t count = 0u;
+    if (eval_try_count_collapsed_match_source(s, a, &source, fuel, &count)) {
+        *outcome = cetta_call_completed_value(atom_int(a, (int64_t)count));
+        return true;
+    }
+    PreparedFoldResult result = eval_owned_collapsed_consume(
+        s, source, environment, fuel, eval_owned_count_item, &count);
+    if (result == PREPARED_FOLD_NOT_APPLICABLE)
+        return false;
+    *outcome = result == PREPARED_FOLD_VALUE
+        ? cetta_call_completed_value(atom_int(a, (int64_t)count))
+        : cetta_call_interrupted();
+    return true;
 }
 
 typedef enum {
@@ -29726,6 +29741,120 @@ typedef enum {
     EVAL_COLLECTION_CARDINALITY_COMMITTED,
     EVAL_COLLECTION_CARDINALITY_INTERRUPTED,
 } EvalCollectionCardinalityResult;
+
+/* Native result completion belongs in this boundary's frame, rather than
+ * enlarging every recursive caller even when its dialect declines the route. */
+static __attribute__((noinline)) Atom *count_size_collapse_for_native_call(
+    Space *space, Arena *arena, Atom *source, int fuel, CettaCallOutcome *outcome) {
+    CettaCallOutcome counted = cetta_call_failure();
+    if (!try_stream_count_size_collapse(space, arena, source, NULL, fuel, &counted))
+        return NULL;
+    if (outcome) *outcome = counted;
+    return counted.kind == CETTA_CALL_VALUE ? counted.term : atom_petta_no_result(arena);
+}
+
+/* This HE fusion crosses a let binding, never the Expression-demanded list
+ * operand itself. The public wrapper and its one declaration must still be
+ * the standard raw-invocation boundary; user alternatives or altered types
+ * retain ordinary applicability and ordered equation evaluation. */
+static bool eval_owned_he_fold_wrapper(Space *space, Arena *arena) {
+    SpaceReadToken read = space_read_token(space);
+    SpaceEquationCursor cursor;
+    if (!space_equation_cursor_init(space, g_builtin_syms.foldl_atom, &cursor))
+        return false;
+    SpaceEquationOccurrenceId id, extra;
+    SpaceEquationOccurrence occurrence;
+    if (space_equation_cursor_next(&cursor, &id) != SPACE_EQUATION_CURSOR_ITEM ||
+        !space_equation_occurrence_resolve(id, &occurrence) ||
+        space_equation_cursor_next(&cursor, &extra) != SPACE_EQUATION_CURSOR_END ||
+        !expr_head_is_id(occurrence.lhs, g_builtin_syms.foldl_atom) ||
+        expr_nargs(occurrence.lhs) != 5u ||
+        !expr_head_is_id(occurrence.rhs, g_builtin_syms.function) ||
+        expr_nargs(occurrence.rhs) != 1u)
+        return false;
+    Atom *sequence = expr_arg(occurrence.rhs, 0u);
+    if (!expr_head_is_id(sequence, g_builtin_syms.chain) || expr_nargs(sequence) != 3u)
+        return false;
+    Atom *context = expr_arg(sequence, 0u);
+    Atom *space_binder = expr_arg(sequence, 1u);
+    Atom *invoke = expr_arg(sequence, 2u);
+    if (!expr_head_is_id(context, g_builtin_syms.context_space) || expr_nargs(context) ||
+        !space_binder || space_binder->kind != ATOM_VAR ||
+        !expr_head_is_id(invoke, g_builtin_syms.eval) || expr_nargs(invoke) != 1u)
+        return false;
+    Atom *worker = expr_arg(invoke, 0u);
+    if (!expr_head_is_id(worker, g_builtin_syms.minimal_foldl_atom) ||
+        expr_nargs(worker) != 6u || !atom_eq(expr_arg(worker, 5u), space_binder))
+        return false;
+    for (unsigned i = 0u; i < 5u; i++) {
+        Atom *binder = expr_arg(occurrence.lhs, i);
+        if (!binder || binder->kind != ATOM_VAR ||
+            binder->var_id == space_binder->var_id ||
+            !atom_eq(binder, expr_arg(worker, i)))
+            return false;
+        for (unsigned j = 0u; j < i; j++)
+            if (atom_eq(binder, expr_arg(occurrence.lhs, j)))
+                return false;
+    }
+    Atom **types = NULL;
+    uint32_t count = space_get_declared_types(space, arena,
+        atom_symbol_id(arena, g_builtin_syms.foldl_atom), &types);
+    SymbolId roles[7] = {g_builtin_syms.arrow, g_builtin_syms.expression,
+        g_builtin_syms.atom, g_builtin_syms.variable, g_builtin_syms.variable,
+        g_builtin_syms.atom, g_builtin_syms.undefined_type};
+    bool valid = count == 1u && types[0]->kind == ATOM_EXPR && types[0]->expr.len == 7u;
+    for (unsigned i = 0u; valid && i < 7u; i++)
+        valid = atom_is_symbol_id(types[0]->expr.elems[i], roles[i]);
+    free(types);
+    return valid && space_read_token_is_current(read);
+}
+
+static bool eval_owned_he_private_fold(Space *space, Arena *arena,
+    Atom *binder, Atom *source, Atom *body, const Bindings *environment,
+    int fuel, CettaCallOutcome *result) {
+    if (eval_current_language_id() != CETTA_LANGUAGE_HE ||
+        !binder || binder->kind != ATOM_VAR ||
+        !expr_head_is_id(body, g_builtin_syms.foldl_atom) || expr_nargs(body) != 5u ||
+        !atom_eq(expr_arg(body, 0u), binder) ||
+        !cetta_observation_environment_var_is_private(environment, binder->var_id) ||
+        cetta_observation_atom_contains_var(source, binder->var_id))
+        return false;
+    for (unsigned i = 1u; i < 5u; i++)
+        if (cetta_observation_atom_contains_var(expr_arg(body, i), binder->var_id))
+            return false;
+    if (!eval_owned_he_fold_wrapper(space, arena))
+        return false;
+    return eval_owned_collapsed_fold(space, arena, source, expr_arg(body, 1u),
+        expr_arg(body, 2u), expr_arg(body, 3u), expr_arg(body, 4u),
+        environment, fuel, result);
+}
+
+
+/* Keep the owned completion record out of the recursive dialect interpreter's
+ * frame. The boundary owns completion/casting; only an actual residual body
+ * returns to the caller for tail re-entry under its saved continuation. */
+static __attribute__((noinline)) bool eval_owned_he_fold_completion(
+    Space *space, Arena *arena, Atom *expression, Atom *expected,
+    const Bindings *environment, int fuel, bool preserve_bindings,
+    OutcomeSet *outcomes, Atom **reentry) {
+    CettaCallOutcome result = cetta_call_failure();
+    if (!eval_owned_he_private_fold(space, arena,
+            expr_arg(expression, 0u), expr_arg(expression, 1u),
+            expr_arg(expression, 2u), environment, fuel, &result))
+        return false;
+    *reentry = NULL;
+    if (result.kind == CETTA_CALL_VALUE) {
+        if (result.result_form == CETTA_CALL_RESULT_COMPLETED_VALUE) {
+            Bindings empty;
+            bindings_init(&empty);
+            emit_completed_native_value(space, arena, result.term, expected,
+                preserve_bindings ? environment : &empty, outcomes);
+        } else
+            *reentry = result.term;
+    }
+    return true;
+}
+
 
 typedef struct {
     uint64_t count;
@@ -31977,9 +32106,10 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
     if (!profile_disabled_whole_call_syntax &&
         head_id == g_builtin_syms.size &&
         nargs == 1) {
-        uint64_t count = 0;
-        if (try_stream_count_size_collapse(s, a, atom, current_env, fuel, &count)) {
-            outcome_set_add(os, atom_int(a, (int64_t)count), &_empty);
+        CettaCallOutcome counted = cetta_call_failure();
+        if (try_stream_count_size_collapse(s, a, atom, current_env, fuel, &counted)) {
+            if (counted.kind == CETTA_CALL_VALUE)
+                outcome_set_add(os, counted.term, &_empty);
             return true;
         }
     }
@@ -40886,6 +41016,16 @@ static PettaMachineFoldResult petta_eval_machine_foldl_single_result(
     return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
 }
 
+static bool petta_eval_machine_foldl_producer(
+    void *context, Space *space, Arena *arena, Atom *items, Atom *initial,
+    Atom *accumulator_binder, Atom *item_binder, Atom *body,
+    const Bindings *environment, CettaCallOutcome *result) {
+    PettaEvalMachineContext *owner = context;
+    return owner && !owner->transaction &&
+        eval_owned_collapsed_fold(space, arena, items, initial,
+            accumulator_binder, item_binder, body, environment, owner->fuel, result);
+}
+
 static PettaMachineFoldResult petta_eval_machine_map_single_result(
     void *context, Space *space, Arena *arena,
     Atom *items, Atom *item_binder, Atom *body_expression,
@@ -40916,8 +41056,11 @@ petta_eval_machine_pull_collection_single_result(
     PettaEvalMachineContext *eval_context = context;
     if (!eval_context || eval_context->transaction)
         return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
-    PreparedFoldResult result =
-        prepared_collection_pull_single_result(
+    PreparedFoldResult result = eval_owned_collapsed_consume(
+        space, producer, environment, eval_context->fuel,
+        consume_item, consumer_context);
+    if (result == PREPARED_FOLD_NOT_APPLICABLE)
+        result = prepared_collection_pull_single_result(
             space, producer, environment, eval_context->fuel,
             consume_item, consumer_context);
     switch (result) {
@@ -41918,6 +42061,7 @@ static PettaMachineHost petta_eval_machine_host(
             : NULL,
         .foldl_single_result =
             petta_eval_machine_foldl_single_result,
+        .foldl_producer = petta_eval_machine_foldl_producer,
         .map_single_result =
             petta_eval_machine_map_single_result,
         .pull_collection_single_result =
@@ -42014,7 +42158,18 @@ static void petta_eval_machine_outcomes_truncate(OutcomeSet *outcomes,
         outcomes->len = len;
 }
 
-static bool petta_eval_machine_try(
+static __attribute__((noinline)) bool petta_eval_machine_run(
+    Space *space, Arena *arena, Atom *expression, Atom *etype,
+    int fuel, const Bindings *outer_environment,
+    bool preserve_bindings, OutcomeSet *outcomes,
+    PettaRelationSafety prime_safety,
+    CettaSearchControllerPolicy requested_controller,
+    bool controller_requested);
+
+/* Admission does not acquire a machine or its execution storage.  Keep this
+ * boundary outside the machine's frame: recursive callers that decline the
+ * machine must not reserve its host, controller and continuation state. */
+static __attribute__((noinline)) bool petta_eval_machine_try(
     Space *space, Arena *arena, Atom *expression, Atom *etype,
     int fuel, const Bindings *outer_environment,
     bool preserve_bindings, OutcomeSet *outcomes) {
@@ -42038,6 +42193,19 @@ static bool petta_eval_machine_try(
             outer_environment, &prime_safety))
         return false;
 
+    return petta_eval_machine_run(
+        space, arena, expression, etype, fuel, outer_environment,
+        preserve_bindings, outcomes, prime_safety,
+        requested_controller, controller_requested);
+}
+
+static __attribute__((noinline)) bool petta_eval_machine_run(
+    Space *space, Arena *arena, Atom *expression, Atom *etype,
+    int fuel, const Bindings *outer_environment,
+    bool preserve_bindings, OutcomeSet *outcomes,
+    PettaRelationSafety prime_safety,
+    CettaSearchControllerPolicy requested_controller,
+    bool controller_requested) {
     CettaObservationContract observation_contract = {
         .demand = petta_eval_machine_root_observation(expression),
         .algebra =
@@ -47724,6 +47892,13 @@ petta_lowered_to_shared_form:
         Atom *pat = expr_arg(atom, 0);
         Atom *val_expr = expr_arg(atom, 1);
         Atom *body_let = expr_arg(atom, 2);
+        if (language_id == CETTA_LANGUAGE_HE &&
+            eval_owned_he_fold_completion(s, a, atom, etype, CURRENT_ENV,
+                fuel, preserve_bindings, os, &body_let)) {
+            if (body_let)
+                TAIL_REENTER(body_let);
+            return;
+        }
         Atom *bulk_target_ref = NULL;
         Atom *bulk_source_ref = NULL;
         SpaceTransferEndpointKind bulk_target_kind = SPACE_TRANSFER_ENDPOINT_SPACE;
