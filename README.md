@@ -1,9 +1,10 @@
 # CeTTa
 
 CeTTa is a direct C runtime for [MeTTa](https://metta-lang.dev/). The default
-public lane is the base HE-style evaluator (`--lang he`) with no named profile
-selected. Use `--profile extended` when you want the labeled CeTTa
-extension interface.
+build runs the base HE-style evaluator (`--lang he`) with no named profile
+selected. The same source tree also has PeTTa and Prime language modes and
+optional host interfaces for I/O, durable state, and services. Use
+`--profile extended` when you want the labeled CeTTa extension interface.
 
 ## Requirements
 
@@ -63,6 +64,35 @@ Bridge-capable modes:
 | `BUILD=full` | compatibility alias of `BUILD=main` | yes | accepted old spelling for the same bridge build |
 | `BUILD=mork` | same bridge interface as `BUILD=main`, without Python | no | recommended smaller no-Python bridge binary |
 | `BUILD=pathmap` | compatibility alias of `BUILD=mork` | no | accepted old spelling for the same no-Python bridge build |
+
+## Optional Host Interfaces
+
+These features are selected at build time. They do not require a separate
+CeTTa checkout or a different source branch.
+
+| Interface | Build selection | Guide |
+| --- | --- | --- |
+| Native HTTP and asynchronous I/O | `ENABLE_HTTP=1` (libcurl) | [I/O boundary](docs/io/README.md) |
+| Durable named spaces and host transactions | `ENABLE_DURABLE=1` (SQLite) | [Durable host](docs/durable/README.md) |
+| Process helper library | `lib/proc.metta` | [Process module](lib/proc.metta) |
+| Telegram transport and action service | `telegram-service` target with HTTP and durable features | [Durable host](docs/durable/README.md), [unit templates](deploy/systemd/) |
+| Managed spellings and registered-name reclamation | `ENABLE_MANAGED_SYMBOLS=1` | [Symbol lifetime experiment](verification/gc/README.md) |
+
+For example, a Python-enabled CLI and a smaller service executable can be
+built from one checkout:
+
+```bash
+make BUILD=python ENABLE_HTTP=1 ENABLE_DURABLE=1 \
+  ENABLE_JSON_GSLT=1 ENABLE_MANAGED_SYMBOLS=1 \
+  SQLITE_PROVIDER=vendored cetta
+make BUILD=core ENABLE_HTTP=1 ENABLE_DURABLE=1 \
+  ENABLE_JSON_GSLT=1 ENABLE_MANAGED_SYMBOLS=1 \
+  SQLITE_PROVIDER=vendored telegram-service
+```
+
+The service is a separate executable so it need not link Python; both builds
+use the same source. Managed symbols are still an experimental memory feature,
+not a complete collector for every legacy numeric symbol ID.
 
 ## Bridge Setup
 
@@ -327,12 +357,13 @@ The bridge code includes two thin compatibility adapters:
 - Explicit `mork:` helper interface for the MORK/MM2 execution lane
 - Local git-module and module-inventory interfaces
 - Python foreign-module support in the default build
+- Optional HTTP, durable host, process, and Telegram service modules
+- Experimental managed spellings and registered-name reclamation
 
-## Test Status
+## Example Runs
 
-Recent verification in a clean `origin/main` clone produced:
-
-- `make test`: main HE/golden sweep `335 passed, 0 failed, 38 skipped`
+Test results depend on the build mode and enabled features. Use the verified
+test commands above for the checkout and feature set you intend to use.
 - `make test-profiles`: `77 passed, 0 failed`
 - Explicit bridge lanes passed for `BUILD=mork`, `BUILD=main`,
   and their compatibility aliases `BUILD=pathmap` and `BUILD=full`

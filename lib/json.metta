@@ -79,7 +79,7 @@
      (chain (eval (__cetta_lib_json_get_last_v1 $object $key)) $result
        (return $result))))
 
-; Historical GödelClaw compatibility operations.
+; GödelClaw-compatible aliases retained for existing programs.
 (: json-parse (-> %Undefined% Atom))
 (= (json-parse $text)
    (function

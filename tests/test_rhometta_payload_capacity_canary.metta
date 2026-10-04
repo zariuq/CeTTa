@@ -13,7 +13,7 @@
 ;   A plain (non-adversarial) payload touching >64 distinct spaces / state cells
 ;   therefore HARD-ERRORS ("rhometta reduction failed") — or, in branchy/
 ;   superpose payloads, SILENTLY drops the over-cap results.  This violates the
-;   "no stupid small-number limits" intent.  Confirmed live on the engine
+;   intent to avoid arbitrary small limits. Confirmed live on the engine
 ;   before the fix (2026-06-18): SC-64 ok / SC-65 error; OV-63 ok / OV-64 error.
 ;
 ; STATUS:  GREEN only after the B1 dynamic-map fix. This is manifest-wired so

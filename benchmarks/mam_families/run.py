@@ -15,8 +15,8 @@ lines; they must equal <case>.expected exactly (order and multiplicity).
 import hashlib, json, os, subprocess, sys
 from pathlib import Path
 
-PETTA = Path('/home/aimama/aihub/hyperon/PeTTa')
-ROOT = Path('/home/aimama/aihub/hyperon/cetta-shared-opt-audit-20260807')
+ROOT = Path(__file__).resolve().parents[2]
+PETTA = Path(os.environ.get('PETTA_ROOT', ROOT.parent / 'PeTTa')).resolve()
 
 def measure(label, cmd, cwd, out, timeout, env=None):
     perf, tm, so = out/f'{label}.perf', out/f'{label}.time', out/f'{label}.out'
