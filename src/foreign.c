@@ -310,6 +310,23 @@ static const char *PYTHON_BOOTSTRAP =
 "    ns = {'__builtins__': builtins.__dict__, 'hyperon': hyperon}\n"
 "    return eval(text, ns, ns)\n"
 "\n"
+"def _cetta_error_report(exc):\n"
+"    import re, traceback\n"
+"    lines = [\"Python '%s':\" % type(exc).__name__]\n"
+"    lines += ['  ' + line for line in (str(exc).splitlines() or [''])]\n"
+"    frames = traceback.format_tb(exc.__traceback__) if exc.__traceback__ else []\n"
+"    if frames:\n"
+"        lines.append('Python stack:')\n"
+"        for frame in frames:\n"
+"            lines += frame.rstrip('\\n').splitlines()\n"
+"    text = '\\n'.join(lines)\n"
+"    text = re.sub(r'\\b\\d{6,}:[A-Za-z0-9_-]{30,}', '<redacted>', text)\n"
+"    text = re.sub(r'(?i)\\b(bearer)\\s+[A-Za-z0-9._~+/=-]{8,}', r'\\1 <redacted>', text)\n"
+"    text = re.sub(r'\\bsk-[A-Za-z0-9_-]{16,}', '<redacted>', text)\n"
+"    text = re.sub(r'(?i)\\b((?:api[_-]?)?key|token|secret|password|passwd)"
+"([\\'\"]?\\s*[:=]\\s*[\\'\"]?)[^\\s\\'\"&,;)]{6,}', r'\\1\\2<redacted>', text)\n"
+"    return text\n"
+"\n"
 "def _cetta_resolve(path, base=None):\n"
 "    if base is not None:\n"
 "        obj = base\n"
@@ -382,7 +399,8 @@ static const char *PYTHON_BOOTSTRAP =
 "_cetta_bridge.ValueAtom = ValueAtom\n"
 "_cetta_bridge.MeTTa = MeTTa\n"
 "_cetta_bridge._cetta_load_module = _cetta_load_module\n"
-"_cetta_bridge._cetta_resolve = _cetta_resolve\n";
+"_cetta_bridge._cetta_resolve = _cetta_resolve\n"
+"_cetta_bridge._cetta_error_report = _cetta_error_report\n";
 
 const char *cetta_module_format_name(CettaModuleFormatKind kind) {
     switch (kind) {
@@ -2144,6 +2162,56 @@ bool cetta_foreign_call_native(CettaForeignRuntime *rt,
         : cetta_call_value(result_set_collapse_for_native(a, &results));
     result_set_free(&results);
     return out->kind == CETTA_CALL_RAISED || out->term != NULL;
+}
+
+/* The Python exception an uncaught (Error (python_error Type Value) _)
+ * carries, NULL for any other error. */
+static PyObject *python_error_exception(Atom *error) {
+    if (!error || !atom_is_error(error) || error->kind != ATOM_EXPR ||
+        error->expr.len < 2u)
+        return NULL;
+    Atom *formal = error->expr.elems[1];
+    if (!formal || formal->kind != ATOM_EXPR || formal->expr.len != 3u)
+        return NULL;
+    Atom *head = formal->expr.elems[0];
+    const char *name = head && head->kind == ATOM_SYMBOL
+        ? atom_name_cstr(head) : NULL;
+    Atom *object = formal->expr.elems[2];
+    if (!name || strcmp(name, "python_error") != 0 || !object ||
+        object->kind != ATOM_GROUNDED ||
+        object->ground.gkind != GV_FOREIGN)
+        return NULL;
+    CettaForeignValue *value = (CettaForeignValue *)object->ground.ptr;
+    if (!value || value->backend != CETTA_FOREIGN_BACKEND_PYTHON ||
+        !value->obj)
+        return NULL;
+    return value->obj;
+}
+
+char *cetta_foreign_python_error_report(Atom *error) {
+    PyObject *exception = python_error_exception(error);
+    if (!exception || !Py_IsInitialized() || !g_bridge_module)
+        return NULL;
+    Arena scratch;
+    arena_init(&scratch);
+    char *report = NULL;
+    {
+        __attribute__((cleanup(python_execution_guard_leave)))
+        PythonExecutionGuard python = {0};
+        Atom *ignored = NULL;
+        if (python_execution_guard_enter(&python, &scratch, &ignored) &&
+            PyExceptionInstance_Check(exception)) {
+            PyObject *text = PyObject_CallMethod(
+                g_bridge_module, "_cetta_error_report", "O", exception);
+            const char *utf8 = text ? PyUnicode_AsUTF8(text) : NULL;
+            if (utf8)
+                report = strdup(utf8);
+            Py_XDECREF(text);
+            PyErr_Clear();
+        }
+    }
+    arena_free(&scratch);
+    return report;
 }
 
 /* A borrowed native exception is projected without invoking Python formatting

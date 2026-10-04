@@ -4366,6 +4366,14 @@ process_petta_document:
                 } else {
                     fputs("error: uncaught PeTTa error: ", stderr);
                     write_results(stderr, results, lang->id, profile);
+                    for (uint32_t i = 0u; i < results->len; i++) {
+                        char *report = cetta_foreign_python_error_report(
+                            results->items[i]);
+                        if (report) {
+                            fprintf(stderr, "%s\n", report);
+                            free(report);
+                        }
+                    }
                 }
             } else if (!petta_answer_without_text) {
                 write_results(output_spool, results, lang->id, profile);

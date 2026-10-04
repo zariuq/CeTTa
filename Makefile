@@ -27845,6 +27845,34 @@ else
 	@echo "SKIP: test-petta-error-outcomes Python calls (requires a Python-enabled build)"
 endif
 
+.PHONY: test-petta-python-error-report
+test-petta-semantics: test-petta-python-error-report
+# The default report follows the upstream bounded diagnostic presentation.
+# The uncaught exception still ends the run with status 2 and no answers.
+# Detailed diagnostic projection and credential screening have their own gate.
+test-petta-python-error-report: $(BIN)
+ifeq ($(ENABLE_PYTHON),1)
+	@set -eu; \
+	status=0; \
+	errors=$$(mktemp); \
+	actual=$$($(CETTA_BIN_INVOKE) --lang petta \
+		tests/petta/python_error_report.metta 2>"$$errors") || status=$$?; \
+	report=$$(sed -E -e 's/0x[0-9a-f]+/0xADDR/g' \
+		-e 's|File "[^"]*/tests/petta/|File "tests/petta/|' "$$errors"); \
+	rm -f "$$errors"; \
+	if [ $$status -ne 2 ] || \
+		[ "$$actual" != "$$(cat tests/petta/python_error_report.expected)" ] || \
+		[ "$$report" != "$$(cat tests/petta/python_error_report.stderr.expected)" ]; then \
+		echo "FAIL: the report of an uncaught Python error (exit $$status)"; \
+		diff <(cat tests/petta/python_error_report.stderr.expected) \
+			<(printf '%s\n' "$$report") | head -20; \
+		exit 1; \
+	fi; \
+	echo "PASS: an uncaught Python error has a bounded default report and exit 2"
+else
+	@echo "SKIP: test-petta-python-error-report (requires a Python-enabled build)"
+endif
+
 .PHONY: test-petta-match-cell-rows
 test-petta-semantics: test-petta-match-cell-rows
 # A stored row with variables meets a query holding a list built at run time

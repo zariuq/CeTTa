@@ -71,4 +71,10 @@ bool cetta_foreign_call_native(CettaForeignRuntime *rt,
                                uint32_t nargs,
                                CettaCallOutcome *out);
 
+/* The report of an uncaught Python error, as SWI-PeTTa gives it: the
+ * exception's type and message, then its Python stack, with credentials
+ * screened out.  NULL when `error` carries no Python exception; the caller
+ * frees the text. */
+char *cetta_foreign_python_error_report(Atom *error);
+
 #endif /* CETTA_FOREIGN_H */
