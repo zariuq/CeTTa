@@ -4068,6 +4068,19 @@ bool bindings_add_var(Bindings *b, Atom *var, Atom *val) {
         b, var->var_id, var->sym_id, var->name_key, binding_value_from_atom(val), true);
 }
 
+bool bindings_add_var_owned(Bindings *b, Atom *var, Atom *val) {
+    if (!b)
+        return false;
+    if (var && var->kind == ATOM_VAR &&
+        bindings_add_inplace_internal(
+            b, var->var_id, var->sym_id, var->name_key,
+            binding_value_from_atom(val), true)) {
+        return true;
+    }
+    bindings_free(b);
+    return false;
+}
+
 bool bindings_add_var_acyclic(Bindings *b, Atom *var, Atom *val) {
     if (!var || var->kind != ATOM_VAR)
         return false;
@@ -4137,6 +4150,17 @@ static bool bindings_add_constraint_internal(Bindings *b, BindingValue lhs, Bind
 bool bindings_add_constraint(Bindings *b, Atom *lhs, Atom *rhs) {
     return bindings_add_constraint_internal(
         b, binding_value_from_atom(lhs), binding_value_from_atom(rhs), true);
+}
+
+bool bindings_add_constraint_owned(Bindings *b, Atom *lhs, Atom *rhs) {
+    if (!b)
+        return false;
+    if (bindings_add_constraint_inplace_internal(
+            b, binding_value_from_atom(lhs), binding_value_from_atom(rhs), true)) {
+        return true;
+    }
+    bindings_free(b);
+    return false;
 }
 
 static bool bindings_merged_occurrence_token(

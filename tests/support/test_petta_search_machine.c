@@ -8,6 +8,8 @@
 #include "he_typing.h"
 #include "library.h"
 #include "parser.h"
+#include "parallel_executor.h"
+#include "shared_transition.h"
 #include "match.h"
 #include "petta_program.h"
 #include "petta_runtime.h"
@@ -569,6 +571,82 @@ static void test_type_fact_warm_boundary(void) {
     puts("PASS: a resident closed boundary prunes its interior while foreign ownership restores inspection");
 }
 
+static void test_type_fact_request_transport(void) {
+    Arena request, published, foreign;
+    arena_init_detached(&request);
+    arena_init_detached(&published);
+    arena_init_detached(&foreign);
+    Space space;
+    space_init(&space);
+    Atom *subject = parse_one(&request, "((1 2) (3 4))");
+    Atom *expected = parse_one(&published, "((Number Number) (Number Number))");
+    ArenaMark before_answers = arena_mark(&request);
+    petta_type_facts_free_for_current_thread();
+    Atom **first = NULL, **second = NULL;
+    uint32_t count = 0u;
+    assert(petta_type_intrinsic_answers(&space, &request, subject, NULL,
+                                        &first, &count, NULL));
+    assert(count == 1u && atom_eq(first[0], expected));
+    assert(atom_graph_is_closed_for_arena(&request, first[0]));
+    size_t before_hit = arena_accounted_live_bytes(&request);
+    assert(petta_type_intrinsic_answers(&space, &request, subject, NULL,
+                                        &second, &count, NULL));
+    assert(count == 1u && second[0] == first[0]);
+    assert(arena_accounted_live_bytes(&request) == before_hit);
+    Atom *exported = atom_deep_copy(&published, second[0]);
+    free(second);
+    petta_type_facts_free_for_current_thread();
+    assert(atom_eq(first[0], expected));
+    free(first);
+
+    /* The same globally owned key is valid in either request. Its cached
+       answer is not: arena identity must still select the receiving owner. */
+    HashConsTable canonical;
+    hashcons_init_compact(&canonical);
+    Atom *leaves[4], *pairs[2];
+    for (unsigned i = 0u; i < 4u; i++)
+        leaves[i] = hashcons_get(&canonical, atom_int(&request, i + 1));
+    for (unsigned i = 0u; i < 2u; i++)
+        pairs[i] = hashcons_get(&canonical,
+            atom_expr(&request, &leaves[2u * i], 2u));
+    Atom *shared_subject = hashcons_get(&canonical,
+        atom_expr(&request, pairs, 2u));
+    assert(shared_subject && shared_subject->arena_id == 0u);
+    assert(petta_type_intrinsic_answers(&space, &request, shared_subject, NULL,
+                                        &first, &count, NULL));
+    assert(count == 1u && atom_graph_is_closed_for_arena(&request, first[0]));
+    free(first);
+    assert(petta_type_intrinsic_answers(&space, &foreign, shared_subject, NULL,
+                                        &first, &count, NULL));
+    assert(count == 1u && atom_eq(first[0], expected));
+    assert(atom_graph_is_closed_for_arena(&foreign, first[0]));
+    arena_reset(&request, before_answers);
+    assert(atom_eq(first[0], expected) && atom_eq(exported, expected));
+    free(first);
+
+    /* Reuse the same subject address across rollback. Epoch validation
+       must reject the old fact before accessing its discarded children. */
+    assert(petta_type_intrinsic_answers(&space, &request, subject, NULL,
+                                        &first, &count, NULL));
+    assert(count == 1u && atom_eq(first[0], expected));
+    free(first);
+    arena_reset(&request, before_answers);
+    size_t after_reset = arena_accounted_live_bytes(&request);
+    assert(petta_type_intrinsic_answers(&space, &request, subject, NULL,
+                                        &second, &count, NULL));
+    assert(count == 1u && atom_eq(second[0], expected));
+    assert(arena_accounted_live_bytes(&request) > after_reset);
+    free(second);
+    petta_type_facts_free_for_current_thread();
+    hashcons_free(&canonical);
+    space_free(&space);
+    arena_free(&request);
+    arena_free(&foreign);
+    assert(atom_eq(exported, expected));
+    arena_free(&published);
+    puts("PASS: resident type answers avoid transport, survive cache release and reject reset or foreign ownership");
+}
+
 static void test_type_fact_retention(void) {
     enum { SUBJECTS = 768, VARIABLES = 96, FIELDS = 1 + 2 * VARIABLES };
     Arena arena;
@@ -898,6 +976,107 @@ static void test_library_context_initialization(void) {
     }
     free(context);
     puts("PASS: library contexts initialize cache ownership on nonzero storage");
+}
+
+typedef struct {
+    CettaLibraryContext *library;
+    Space *space;
+    Atom *query;
+    pthread_mutex_t *setup;
+    pthread_barrier_t *ready;
+} SessionDecisionProbe;
+
+static void run_session_decision_probe(SessionDecisionProbe *probe) {
+    Arena answers;
+    arena_init(&answers);
+    ResultSet results;
+    result_set_init(&results);
+    CettaLibraryContext *previous = eval_current_library_context();
+    if (probe->setup) pthread_mutex_lock(probe->setup);
+    eval_set_library_context(probe->library);
+    if (probe->setup) pthread_mutex_unlock(probe->setup);
+    if (probe->ready) {
+        int status = pthread_barrier_wait(probe->ready);
+        assert(status == 0 || status == PTHREAD_BARRIER_SERIAL_THREAD);
+    }
+    bool worker = cetta_parallel_worker_active();
+    if (worker) cetta_shared_transition_scope_enter();
+    for (unsigned repeat = 0u; repeat < (worker ? 200u : 1u); repeat++) {
+        eval_top(probe->space, &answers, probe->query, &results);
+        assert(results.len == 2u);
+        for (CettaCount i = 0u; i < results.len; i++)
+            assert(atom_eq(results.items[i], atom_int(&answers, 7)));
+        results.len = 0u;
+    }
+    result_set_free(&results);
+    eval_release_temporary_spaces();
+    eval_set_library_context(previous);
+    eval_match_decision_cache_free_for_current_thread();
+    eval_profiled_type_cache_free_for_current_thread();
+    space_execution_analysis_cache_free_for_current_thread();
+    bindings_thread_cache_free();
+    if (worker) cetta_shared_transition_scope_leave();
+    arena_free(&answers);
+}
+
+static bool session_decision_worker(CettaParallelWorker *worker, void *task,
+                                     void *user) {
+    (void)worker;
+    (void)user;
+    assert(cetta_parallel_worker_active());
+    run_session_decision_probe(task);
+    return true;
+}
+
+static void test_worker_session_decisions(Arena *arena) {
+    CettaLibraryContext *library = malloc(sizeof(*library));
+    assert(library);
+    cetta_library_context_init_for_language_profile(
+        library, CETTA_LANGUAGE_PETTA, cetta_profile_petta_extended());
+    Space spaces[2];
+    SessionDecisionProbe probes[2];
+    pthread_mutex_t setup;
+    pthread_barrier_t ready;
+    assert(pthread_mutex_init(&setup, NULL) == 0);
+    assert(pthread_barrier_init(&ready, NULL, 2u) == 0);
+    for (unsigned i = 0u; i < 2u; i++) {
+        space_init(&spaces[i]);
+        space_add(&spaces[i], parse_one(arena, "(= (session-decision-probe $x) (+ $x 1))"));
+        space_add(&spaces[i], parse_one(arena, "(= (session-decision-probe $x) (+ $x 1))"));
+        probes[i] = (SessionDecisionProbe){
+            .library = library, .space = &spaces[i],
+            .query = parse_one(arena, "(session-decision-probe 6)"),
+            .setup = &setup, .ready = &ready,
+        };
+    }
+    for (unsigned persistent = 0u; persistent < 2u; persistent++) {
+        CettaParallelExecutor executor;
+        CettaParallelExecutorConfig config = {
+            .thread_count = 2u,
+            .prefer_persistent_workers = persistent != 0u,
+            .task_fn = session_decision_worker,
+        };
+        assert(cetta_parallel_executor_init(&executor, &config));
+        for (unsigned i = 0u; i < 2u; i++)
+            assert(cetta_parallel_executor_push(&executor, &probes[i]));
+        assert(cetta_parallel_executor_run(&executor));
+        cetta_parallel_executor_free(&executor);
+        /* This also discriminates an unused lazy session repository: worker
+         * roots must not allocate or touch that shared LRU at all. */
+        assert(library->petta_match_decisions == NULL);
+        assert(library->petta_match_decisions_free == NULL);
+    }
+    probes[0].setup = NULL;
+    probes[0].ready = NULL;
+    run_session_decision_probe(&probes[0]);
+    assert(library->petta_match_decisions != NULL);
+    assert(library->petta_match_decisions_free != NULL);
+    cetta_library_context_free(library);
+    free(library);
+    for (unsigned i = 0u; i < 2u; i++) space_free(&spaces[i]);
+    pthread_barrier_destroy(&ready);
+    pthread_mutex_destroy(&setup);
+    puts("PASS: worker roots own decision and table caches while serial session caching remains active");
 }
 
 static bool collect_flat_fold_int(int64_t value, void *context) {
@@ -11633,7 +11812,12 @@ static void test_act_incremental_compression(void) {
          " advice");
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+    bool worker_only = argc == 2 && strcmp(argv[1], "--worker-ownership") == 0;
+    if (argc != 1 && !worker_only) {
+        fputs("usage: test_petta_search_machine [--worker-ownership]\n", stderr);
+        return 2;
+    }
     Arena persistent;
     Arena answers;
     TermUniverse universe;
@@ -11654,10 +11838,15 @@ int main(void) {
     var_intern_init(&variables);
     g_symbols = &symbols;
     g_var_intern = &variables;
+    if (worker_only) {
+        test_worker_session_decisions(&answers);
+        goto release_owners;
+    }
     test_type_policy_component(&answers);
     test_type_bound_rows(&answers);
     test_type_fact_reuse(&answers);
     test_type_fact_warm_boundary();
+    test_type_fact_request_transport();
     test_type_fact_retention();
     test_type_frame_exhaustion(&answers);
     test_type_stack_exhaustion();
@@ -11679,6 +11868,7 @@ int main(void) {
     space_init_with_universe(&space, &universe);
 
     test_library_context_initialization();
+    test_worker_session_decisions(&answers);
     test_plain_scalar_truth_dispatch(&answers);
     test_typing_operator_identity();
     test_analysis_capability_contract(&space, &answers);
@@ -12284,6 +12474,7 @@ int main(void) {
     test_terminal_match_count_fold(&space, &answers);
 
     space_free(&space);
+release_owners:
     term_universe_free(&universe);
     arena_free(&answers);
     arena_free(&persistent);

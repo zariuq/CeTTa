@@ -344,7 +344,10 @@ typedef struct {
 
 /* Open a cursor at the program's bound closed entry call.  The cursor
  * retains the program; it borrows the entry arguments, which must stay valid
- * until the cursor is closed or detached.  NULL declines, including when the
+ * until the cursor is closed or detached. The source Space/read view remains
+ * borrowed from the host and must outlive the cursor; detachment moves value
+ * storage, not semantic authority. Revision changes cause a stale handoff.
+ * NULL declines, including when the
  * entry relation is not admitted. */
 CettaPreparedPureAnswerCursor *cetta_prepared_pure_answer_cursor_open(
     CettaPreparedPureProgram *program,
@@ -423,6 +426,19 @@ bool cetta_prepared_pure_answer_cursor_frame_resumption(
 uint64_t cetta_prepared_pure_answer_cursor_answer_count(
     const CettaPreparedPureAnswerCursor *cursor);
 uint64_t cetta_prepared_pure_answer_cursor_tail_call_count(
+    const CettaPreparedPureAnswerCursor *cursor);
+
+/* Private execution storage, including external bytes accounted by its arena.
+ * Caller-arena cursors report zero arena bytes; their metadata remains owned.
+ * The retained compiled program and temporary copy workspace are separate. Collection
+ * moves live values only; it is not a producer firing or a semantic charge. */
+typedef struct {
+    size_t live_bytes;
+    size_t reserved_bytes;
+    size_t metadata_bytes;
+    uint64_t collections;
+} CettaPreparedPureCursorStorage;
+CettaPreparedPureCursorStorage cetta_prepared_pure_answer_cursor_storage(
     const CettaPreparedPureAnswerCursor *cursor);
 
 void cetta_prepared_pure_answer_cursor_close(

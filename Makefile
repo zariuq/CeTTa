@@ -29285,6 +29285,7 @@ test-he-type-policy: $(BIN) \
 		tests/he/minimal_member_handoff_v1.metta tests/he/minimal_member_handoff_v1.expected \
 		tests/he/library_module_v1.metta tests/he/library_module_v1.expected \
 		tests/he/library_declarations_v1.metta tests/he/library_declarations_v1.expected \
+		tests/he/profile_symbol_data.metta tests/he/profile_symbol_data.expected \
 		$(wildcard tests/he/module_import_v1/*.metta) \
 		tests/he/module_import_v1/main.expected \
 		tests/he/module_import_v1/rollback.expected \
@@ -29294,6 +29295,14 @@ test-he-type-policy: $(BIN) \
 		for fixture in type_policy_reference type_policy_wildcards type_policy_nested_wildcards; do \
 			$(CETTA_BIN_INVOKE) --lang he $$profile tests/he/$$fixture.metta \
 				| diff -u tests/he/$$fixture.expected -; \
+		done; \
+	done; \
+	for profile in he he-compat; do \
+		for reference in 0 1; do \
+			CETTA_OPEN_EQUATIONS_REFERENCE=$$reference \
+				$(CETTA_BIN_INVOKE) --lang he --profile $$profile \
+					tests/he/profile_symbol_data.metta \
+				| diff -u tests/he/profile_symbol_data.expected -; \
 		done; \
 	done; \
 	actual=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-he-result-boundary.XXXXXX"); \

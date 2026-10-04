@@ -432,3 +432,51 @@
 !(superpose
    ((function (return (function (return (+ 1 2)))))
     (function (return (function (return (+ 1 2)))))))
+
+; Symbols are data; eval acquires precisely one rewrite result.
+(= rb:constant 5)
+(= rb:alias rb:constant)
+(= rb:duplicate 7)
+(= rb:duplicate 7)
+(= rb:cycle-a rb:cycle-b)
+(= rb:cycle-b rb:cycle-a)
+! rb:constant
+!(eval rb:constant)
+!(rb:constant)
+!(eval rb:alias)
+!(chain (eval rb:alias) $next (eval $next))
+!(eval rb:duplicate)
+!(eval rb:cycle-a)
+; A builtin spelling is still a data value, even without that extension.
+! once
+!(bind! &rb:symbols (new-space))
+!(add-atom &rb:symbols once)
+!(add-atom &rb:symbols once)
+!(add-atom &rb:symbols plain)
+!(get-atoms &rb:symbols)
+!(match &rb:symbols $value $value)
+!(collapse (match &rb:symbols $value $value))
+; Profile filtering must retain declarations authored in an ordinary space.
+!(add-atom &rb:symbols (: once Number))
+!(get-type-space &rb:symbols once)
+; Raw return acquires the effect; the enclosing eval activates it once.
+(= rb:effect (add-atom &rb:symbols once))
+!(chain (eval rb:effect) $effect (eval $effect))
+!(collapse (match &rb:symbols once retained))
+
+; Selecting a function type commits its demand even with a data annotation.
+(: rb:mixed-held rb:Information)
+(: rb:mixed-held (-> Atom Atom))
+(= (rb:mixed-held $x) (Held $x))
+!(rb:mixed-held (+ 1 2))
+!(rb:mixed-held (println! MIXED-HELD-MUST-NOT-RUN))
+(: rb:mixed-empty rb:Information)
+(: rb:mixed-empty (-> Atom %Undefined%))
+(= (rb:mixed-empty $x) Empty)
+!(rb:mixed-empty (println! MIXED-EMPTY-MUST-NOT-RUN))
+!(bind! &rb:mixed-effects (new-space))
+(: rb:mixed-effect rb:Information)
+(: rb:mixed-effect (-> Atom %Undefined%))
+(= (rb:mixed-effect $x) (add-atom &rb:mixed-effects performed))
+!(rb:mixed-effect (println! MIXED-EFFECT-ARG-MUST-NOT-RUN))
+!(collapse (match &rb:mixed-effects performed observed))

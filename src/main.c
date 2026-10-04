@@ -2074,9 +2074,14 @@ static void main_add_prime_semantic_op_decls(Space *space, Arena *arena) {
  * declarations of names upstream's library does not know; of the others it
  * keeps only, outside the profile with upstream's exact semantics, those
  * adding a call form of an arity upstream does not declare.  A grounded
- * operation's name has no declaration: its type is the operation's own. */
+ * operation's name has no declaration: its type is the operation's own.
+ * Unavailable extensions contribute no library declarations. Filter them
+ * here, before loading the program, rather than rejecting user-declared
+ * types or untyped data that happen to use the same spelling. */
 static bool main_he_prepare_library(Space *space, Arena *arena,
-                                    bool extensions) {
+                                    const CettaProfile *profile) {
+    bool extensions = !cetta_language_uses_rust_he_compat_semantics(
+        CETTA_LANGUAGE_HE, profile);
     CettaCount len = space_length64(space);
     uint8_t *mask = calloc(len ? (size_t)len : 1u, 1u);
     AtomId *kept = calloc(len ? (size_t)len : 1u, sizeof(*kept));
@@ -2093,6 +2098,12 @@ static bool main_he_prepare_library(Space *space, Arena *arena,
             continue;
         Atom *subject = atom->expr.elems[1];
         Atom *type = atom->expr.elems[2];
+        if (subject->kind == ATOM_SYMBOL &&
+            !cetta_language_allows_builtin(
+                CETTA_LANGUAGE_HE, profile, atom_name_cstr(subject))) {
+            mask[i] = 1u;
+            continue;
+        }
         bool grounded = subject->kind == ATOM_SYMBOL &&
             he_grounded_symbol_types(subject->sym_id, extensions, NULL) != 0u;
         if (!grounded && !he_library_names_subject(subject))
@@ -3891,10 +3902,7 @@ static int cetta_main(int argc, char **argv) {
        queries after the program's own and are not removable through &self.
        Prime keeps its library defaults as removable atoms of &self. */
     if (lang->id == CETTA_LANGUAGE_HE) {
-        if (!main_he_prepare_library(
-                &space, &arena,
-                !cetta_language_uses_rust_he_compat_semantics(lang->id,
-                                                              profile))) {
+        if (!main_he_prepare_library(&space, &arena, profile)) {
             fprintf(stderr, "error: HE library could not be prepared\n");
             rc = 1;
             goto cleanup;

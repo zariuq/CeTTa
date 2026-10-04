@@ -697,6 +697,158 @@ static void test_cursor_last_call_chain_is_bounded(void) {
     destroy(&fixture);
 }
 
+/* A scalar generator has a fixed live frontier despite an unbounded number
+ * of answers. Consuming an answer does not retain its abandoned arithmetic
+ * temporaries, and closing the producer does not evaluate another step. */
+static void test_cursor_scalar_frontier_reclamation(void) {
+    const char *equations[] = {
+        "(= (ticks $n) $n)",
+        "(= (ticks $n) (ticks (+ $n 1)))",
+    };
+    Fixture fixture;
+    init(&fixture, equations, 2u, "(ticks 0)");
+    fixture.limits.max_scratch_bytes = 128u * 1024u;
+    CettaPreparedPureAnswerCursor *cursor = open_cursor(&fixture, false);
+    Arena selected;
+    arena_init_detached(&selected);
+    Atom *kept = NULL;
+    size_t peak_live = 0u, peak_reserved = 0u, peak_metadata = 0u;
+    size_t warmed_metadata = 0u;
+    for (unsigned i = 0u; i < 4000u; i++) {
+        Atom *answer = NULL;
+        CettaPreparedPureCursorStep step =
+            cetta_prepared_pure_answer_cursor_next(cursor, &answer);
+        if (step != CETTA_PREPARED_PURE_CURSOR_ANSWER)
+            fprintf(stderr, "scalar frontier stopped at %u: reason %u\n", i,
+                    cetta_prepared_pure_answer_cursor_handoff_reason(cursor));
+        assert(step == CETTA_PREPARED_PURE_CURSOR_ANSWER);
+        assert(answer && answer->kind == ATOM_GROUNDED &&
+               answer->ground.gkind == GV_INT && answer->ground.ival == i);
+        assert(cetta_prepared_pure_answer_cursor_frame_count(cursor) == 1u);
+        CettaPreparedPureCursorStorage storage =
+            cetta_prepared_pure_answer_cursor_storage(cursor);
+        if (storage.live_bytes > peak_live)
+            peak_live = storage.live_bytes;
+        if (storage.reserved_bytes > peak_reserved)
+            peak_reserved = storage.reserved_bytes;
+        if (storage.metadata_bytes > peak_metadata)
+            peak_metadata = storage.metadata_bytes;
+        if (i == 32u)
+            warmed_metadata = storage.metadata_bytes;
+        if (i > 32u)
+            assert(storage.metadata_bytes == warmed_metadata);
+        if (i == 7u)
+            kept = atom_deep_copy(&selected, answer);
+    }
+    assert(cetta_prepared_pure_answer_cursor_answer_count(cursor) == 4000u);
+    assert(cetta_prepared_pure_answer_cursor_tail_call_count(cursor) == 3999u);
+    CettaPreparedPureCursorStorage storage =
+        cetta_prepared_pure_answer_cursor_storage(cursor);
+    assert(storage.collections > 0u);
+    assert(peak_live < fixture.limits.max_scratch_bytes);
+    assert(peak_reserved <= fixture.limits.max_scratch_bytes);
+    assert(peak_metadata == warmed_metadata);
+    printf("owned scalar frontier: 4000 answers, peak %zu live / %zu reserved / "
+           "%zu metadata bytes, %llu collections\n", peak_live, peak_reserved,
+           peak_metadata, (unsigned long long)storage.collections);
+    cetta_prepared_pure_answer_cursor_close(cursor);
+    assert(kept && kept->ground.ival == 7);
+    arena_free(&selected);
+    destroy(&fixture);
+}
+
+/* Repeated argument roots remain aliases after relocation, while two equal
+ * equation occurrences still produce two answers. The caller's input can be
+ * reset after detachment and a published answer outlives the whole cursor. */
+static void test_cursor_collection_preserves_shared_frontier(void) {
+    const char *equations[] = {
+        "(= (ticks-pair $n $x $y) (Pair $n $x $y))",
+        "(= (ticks-pair $n $x $y) (Pair $n $x $y))",
+        "(= (ticks-pair $n $x $y) (ticks-pair (+ $n 1) $x $y))",
+    };
+    Fixture fixture;
+    init(&fixture, equations, 3u, "(ticks-pair 0 a a)");
+    fixture.limits.max_scratch_bytes = 128u * 1024u;
+    Arena source, selected;
+    arena_init_detached(&source);
+    arena_init_detached(&selected);
+    ArenaMark empty = arena_mark(&source);
+    Atom *payload = parse(&source, "(nested (bytes abc) (more xyz))");
+    Atom *parts[] = {atom_symbol(&source, "ticks-pair"), atom_int(&source, 0),
+                     payload, payload};
+    assert(cetta_prepared_pure_program_rebind_closed_entry_call(
+        fixture.program, atom_expr(&source, parts, 4u)));
+    CettaPreparedPureAnswerCursor *cursor = open_cursor(&fixture, false);
+    cetta_prepared_pure_program_clear_closed_entry_call(fixture.program);
+    assert(cetta_prepared_pure_answer_cursor_detach(cursor));
+    arena_reset(&source, empty);
+    Atom *kept = NULL;
+    for (unsigned i = 0u; i < 4000u; i++) {
+        Atom *answer = NULL;
+        assert(cetta_prepared_pure_answer_cursor_next(cursor, &answer) ==
+               CETTA_PREPARED_PURE_CURSOR_ANSWER);
+        assert(answer && answer->kind == ATOM_EXPR && answer->expr.len == 4u);
+        assert(answer->expr.elems[1]->ground.ival == i / 2u);
+        assert(answer->expr.elems[2] == answer->expr.elems[3]);
+        if (i == 1234u) {
+            assert(cetta_prepared_pure_answer_cursor_unyield(cursor));
+            assert(cetta_prepared_pure_answer_cursor_next(cursor, &answer) ==
+                   CETTA_PREPARED_PURE_CURSOR_ANSWER);
+            assert(answer->expr.elems[1]->ground.ival == i / 2u);
+        }
+        if (i == 3999u)
+            kept = atom_deep_copy(&selected, answer);
+    }
+    assert(cetta_prepared_pure_answer_cursor_answer_count(cursor) == 4000u);
+    assert(cetta_prepared_pure_answer_cursor_tail_call_count(cursor) == 1999u);
+    assert(cetta_prepared_pure_answer_cursor_storage(cursor).collections > 0u);
+    cetta_prepared_pure_answer_cursor_close(cursor);
+    assert(kept && kept->expr.elems[1]->ground.ival == 1999);
+    assert(kept->expr.elems[2] == kept->expr.elems[3]);
+    assert(atom_eq(kept->expr.elems[2],
+                   parse(&source, "(nested (bytes abc) (more xyz))")));
+    arena_free(&source);
+    arena_free(&selected);
+    destroy(&fixture);
+}
+
+/* Reclaiming dead values does not refill a finite execution allowance. */
+static void test_cursor_collection_keeps_transition_limit(void) {
+    const char *equations[] = {
+        "(= (ticks $n) $n)",
+        "(= (ticks $n) (ticks (+ $n 1)))",
+    };
+    Fixture fixture;
+    init(&fixture, equations, 2u, "(ticks 0)");
+    fixture.limits.max_transitions = 20000u;
+    fixture.limits.max_scratch_bytes = 128u * 1024u;
+    CettaPreparedPureAnswerCursorOptions options = {
+        .limits = fixture.limits,
+        .unmatched_call = CETTA_PREPARED_PURE_UNMATCHED_FAILS,
+        .allow_continuations = true,
+    };
+    CettaPreparedPureAnswerCursor *cursor =
+        cetta_prepared_pure_answer_cursor_open(fixture.program, &options);
+    assert(cursor);
+    uint64_t answers = 0u;
+    Atom *answer = NULL;
+    CettaPreparedPureCursorStep step;
+    while ((step = cetta_prepared_pure_answer_cursor_next(cursor, &answer)) ==
+           CETTA_PREPARED_PURE_CURSOR_ANSWER) {
+        assert(answer && answer->kind == ATOM_GROUNDED &&
+               answer->ground.gkind == GV_INT && answer->ground.ival == answers);
+        assert(++answers < fixture.limits.max_transitions);
+    }
+    assert(step == CETTA_PREPARED_PURE_CURSOR_HANDOFF);
+    assert(cetta_prepared_pure_answer_cursor_handoff_reason(cursor) ==
+           CETTA_PREPARED_PURE_HANDOFF_LIMIT);
+    assert(cetta_prepared_pure_answer_cursor_storage(cursor).collections > 0u);
+    assert(cetta_prepared_pure_answer_cursor_answer_count(cursor) == answers);
+    assert(cetta_prepared_pure_answer_cursor_frame_count(cursor) == 1u);
+    cetta_prepared_pure_answer_cursor_close(cursor);
+    destroy(&fixture);
+}
+
 /* A spent purse stops before the step that would exceed it. */
 static void test_cursor_limit_keeps_frontier(void) {
     const char *equations[] = {
@@ -1094,6 +1246,9 @@ int main(void) {
     test_cursor_detach();
     test_cursor_detach_continuations();
     test_cursor_last_call_chain_is_bounded();
+    test_cursor_scalar_frontier_reclamation();
+    test_cursor_collection_preserves_shared_frontier();
+    test_cursor_collection_keeps_transition_limit();
     test_cursor_limit_keeps_frontier();
     test_continuation_permutations();
     test_continuation_detach();
@@ -1111,6 +1266,6 @@ int main(void) {
     var_intern_free(&variables);
     g_symbols = NULL;
     g_var_intern = NULL;
-    puts("prepared pure answer producer: thirty boundary cases passed");
+    puts("prepared pure answer producer: thirty-four boundary cases passed");
     return 0;
 }
