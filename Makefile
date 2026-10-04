@@ -363,6 +363,7 @@ $(error ENABLE_DURABLE must be 0 or 1)
 endif
 ifeq ($(ENABLE_DURABLE),1)
 DURABLE_SRC += src/durable_store.c src/durable_value.c src/supervisor.c
+DURABLE_SRC += src/durable_host.c src/durable_dispatch.c src/durable_inbox.c src/durable_timer.c src/telegram_intake.c src/durable_worker.c src/durable_service.c src/telegram_action.c src/telegram_agent.c src/telegram_scheduler.c src/telegram_control.c
 ifeq ($(SQLITE_PROVIDER),vendored)
 DURABLE_CFLAGS += -Ivendor/sqlite -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_DQS=0 -DSQLITE_OMIT_SHARED_CACHE -DSQLITE_DEFAULT_MEMSTATUS=0
 DURABLE_SRC += vendor/sqlite/sqlite3.c
@@ -42289,6 +42290,274 @@ test-telegram-transport: $(TELEGRAM_TRANSPORT_TEST_BIN)
 else
 test-telegram-transport:
 	@echo "test-telegram-transport requires the native HTTP provider" >&2
+	@exit 1
+endif
+
+.PHONY: test-durable-host
+ifeq ($(ENABLE_DURABLE),1)
+DURABLE_HOST_TEST_BIN = runtime/test-durable-host-$(BUILD_OBJ_TAG)
+DURABLE_HOST_TEST_OBJ = runtime/bootstrap/test-durable-host.$(BUILD_OBJ_TAG).o
+-include $(DURABLE_HOST_TEST_OBJ:.o=.d)
+$(DURABLE_HOST_TEST_OBJ): tests/test_durable_host.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c $< -o $@
+$(DURABLE_HOST_TEST_BIN): $(DURABLE_HOST_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+test-durable-host: $(DURABLE_HOST_TEST_BIN)
+	./$(DURABLE_HOST_TEST_BIN)
+else
+test-durable-host:
+	@echo "test-durable-host requires ENABLE_DURABLE=1" >&2
+	@exit 1
+endif
+
+.PHONY: test-durable-dispatch
+ifeq ($(ENABLE_DURABLE)$(HTTP_PROVIDER_CURL),11)
+DURABLE_DISPATCH_TEST_BIN = runtime/test-durable-dispatch-$(BUILD_OBJ_TAG)
+DURABLE_DISPATCH_TEST_OBJ = runtime/bootstrap/test-durable-dispatch.$(BUILD_OBJ_TAG).o
+-include $(DURABLE_DISPATCH_TEST_OBJ:.o=.d)
+$(DURABLE_DISPATCH_TEST_OBJ): tests/test_durable_dispatch.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c $< -o $@
+$(DURABLE_DISPATCH_TEST_BIN): $(DURABLE_DISPATCH_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+test-durable-dispatch: $(DURABLE_DISPATCH_TEST_BIN)
+	python3 tests/test_durable_dispatch.py $(DURABLE_DISPATCH_TEST_BIN)
+else
+test-durable-dispatch:
+	@echo "test-durable-dispatch requires ENABLE_DURABLE=1 and native HTTP" >&2
+	@exit 1
+endif
+
+.PHONY: test-durable-inbox
+ifeq ($(ENABLE_DURABLE),1)
+DURABLE_INBOX_TEST_BIN = runtime/test-durable-inbox-$(BUILD_OBJ_TAG)
+DURABLE_INBOX_TEST_OBJ = runtime/bootstrap/test-durable-inbox.$(BUILD_OBJ_TAG).o
+-include $(DURABLE_INBOX_TEST_OBJ:.o=.d)
+$(DURABLE_INBOX_TEST_OBJ): tests/test_durable_inbox.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c $< -o $@
+$(DURABLE_INBOX_TEST_BIN): $(DURABLE_INBOX_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+test-durable-inbox: $(DURABLE_INBOX_TEST_BIN)
+	./$(DURABLE_INBOX_TEST_BIN)
+else
+test-durable-inbox:
+	@echo "test-durable-inbox requires ENABLE_DURABLE=1" >&2
+	@exit 1
+endif
+
+.PHONY: test-durable-timer
+ifeq ($(ENABLE_DURABLE),1)
+DURABLE_TIMER_TEST_BIN = runtime/test-durable-timer-$(BUILD_OBJ_TAG)
+DURABLE_TIMER_TEST_OBJ = runtime/bootstrap/test-durable-timer.$(BUILD_OBJ_TAG).o
+-include $(DURABLE_TIMER_TEST_OBJ:.o=.d)
+$(DURABLE_TIMER_TEST_OBJ): tests/test_durable_timer.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c $< -o $@
+$(DURABLE_TIMER_TEST_BIN): $(DURABLE_TIMER_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+test-durable-timer: $(DURABLE_TIMER_TEST_BIN)
+	./$(DURABLE_TIMER_TEST_BIN)
+else
+test-durable-timer:
+	@echo "test-durable-timer requires ENABLE_DURABLE=1" >&2
+	@exit 1
+endif
+
+.PHONY: test-telegram-policy
+ifeq ($(ENABLE_DURABLE)$(ENABLE_JSON_GSLT),11)
+TELEGRAM_POLICY_TEST_BIN = runtime/test-telegram-policy-$(BUILD_OBJ_TAG)
+TELEGRAM_POLICY_TEST_OBJ = runtime/bootstrap/test-telegram-policy.$(BUILD_OBJ_TAG).o
+-include $(TELEGRAM_POLICY_TEST_OBJ:.o=.d)
+$(TELEGRAM_POLICY_TEST_OBJ): tests/test_telegram_policy.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c $< -o $@
+$(TELEGRAM_POLICY_TEST_BIN): $(TELEGRAM_POLICY_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+test-telegram-policy: $(TELEGRAM_POLICY_TEST_BIN)
+	./$(TELEGRAM_POLICY_TEST_BIN)
+else
+test-telegram-policy:
+	@echo "test-telegram-policy requires ENABLE_DURABLE=1 and ENABLE_JSON_GSLT=1" >&2
+	@exit 1
+endif
+
+.PHONY: test-durable-poll
+ifeq ($(ENABLE_DURABLE)$(HTTP_PROVIDER_CURL)$(ENABLE_JSON_GSLT),111)
+DURABLE_POLL_TEST_BIN = runtime/test-durable-poll-$(BUILD_OBJ_TAG)
+DURABLE_POLL_TEST_OBJ = runtime/bootstrap/test-durable-poll.$(BUILD_OBJ_TAG).o
+-include $(DURABLE_POLL_TEST_OBJ:.o=.d)
+$(DURABLE_POLL_TEST_OBJ): tests/test_durable_poll.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c $< -o $@
+$(DURABLE_POLL_TEST_BIN): $(DURABLE_POLL_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+test-durable-poll: $(DURABLE_POLL_TEST_BIN)
+	python3 tests/test_durable_poll.py $(DURABLE_POLL_TEST_BIN)
+else
+test-durable-poll:
+	@echo "test-durable-poll requires ENABLE_DURABLE=1, native HTTP and ENABLE_JSON_GSLT=1" >&2
+	@exit 1
+endif
+
+.PHONY: test-durable-worker
+ifeq ($(ENABLE_DURABLE),1)
+DURABLE_WORKER_TEST_BIN = runtime/test-durable-worker-$(BUILD_OBJ_TAG)
+DURABLE_WORKER_TEST_OBJ = runtime/bootstrap/test-durable-worker.$(BUILD_OBJ_TAG).o
+-include $(DURABLE_WORKER_TEST_OBJ:.o=.d)
+$(DURABLE_WORKER_TEST_OBJ): tests/test_durable_worker.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c $< -o $@
+$(DURABLE_WORKER_TEST_BIN): $(DURABLE_WORKER_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+test-durable-worker: $(DURABLE_WORKER_TEST_BIN)
+	./$(DURABLE_WORKER_TEST_BIN)
+else
+test-durable-worker:
+	@echo "test-durable-worker requires ENABLE_DURABLE=1" >&2
+	@exit 1
+endif
+
+.PHONY: test-durable-worker-host
+ifeq ($(ENABLE_DURABLE),1)
+DURABLE_WORKER_HOST_TEST_BIN = runtime/test-durable-worker-host-$(BUILD_OBJ_TAG)
+DURABLE_WORKER_HOST_TEST_OBJ = runtime/bootstrap/test-durable-worker-host.$(BUILD_OBJ_TAG).o
+-include $(DURABLE_WORKER_HOST_TEST_OBJ:.o=.d)
+$(DURABLE_WORKER_HOST_TEST_OBJ): tests/test_durable_worker_host.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c $< -o $@
+$(DURABLE_WORKER_HOST_TEST_BIN): $(DURABLE_WORKER_HOST_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+test-durable-worker-host: $(DURABLE_WORKER_HOST_TEST_BIN)
+	./$(DURABLE_WORKER_HOST_TEST_BIN)
+else
+test-durable-worker-host:
+	@echo "test-durable-worker-host requires ENABLE_DURABLE=1" >&2
+	@exit 1
+endif
+
+.PHONY: test-durable-service
+ifeq ($(ENABLE_DURABLE)$(HTTP_PROVIDER_CURL)$(ENABLE_JSON_GSLT),111)
+DURABLE_SERVICE_TEST_BIN = runtime/test-durable-service-$(BUILD_OBJ_TAG)
+DURABLE_SERVICE_TEST_OBJ = runtime/bootstrap/test-durable-service.$(BUILD_OBJ_TAG).o
+-include $(DURABLE_SERVICE_TEST_OBJ:.o=.d)
+$(DURABLE_SERVICE_TEST_OBJ): tests/test_durable_service.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c $< -o $@
+$(DURABLE_SERVICE_TEST_BIN): $(DURABLE_SERVICE_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+test-durable-service: $(DURABLE_SERVICE_TEST_BIN)
+	python3 tests/test_durable_service.py $(DURABLE_SERVICE_TEST_BIN)
+else
+test-durable-service:
+	@echo "test-durable-service requires ENABLE_DURABLE=1, native HTTP and ENABLE_JSON_GSLT=1" >&2
+	@exit 1
+endif
+
+.PHONY: test-telegram-actions
+ifeq ($(ENABLE_DURABLE),1)
+TELEGRAM_ACTIONS_TEST_BIN = runtime/test-telegram-actions-$(BUILD_OBJ_TAG)
+TELEGRAM_ACTIONS_TEST_OBJ = runtime/bootstrap/test-telegram-actions.$(BUILD_OBJ_TAG).o
+-include $(TELEGRAM_ACTIONS_TEST_OBJ:.o=.d)
+$(TELEGRAM_ACTIONS_TEST_OBJ): tests/test_telegram_actions.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c $< -o $@
+$(TELEGRAM_ACTIONS_TEST_BIN): $(TELEGRAM_ACTIONS_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+test-telegram-actions: $(TELEGRAM_ACTIONS_TEST_BIN)
+	./$(TELEGRAM_ACTIONS_TEST_BIN)
+else
+test-telegram-actions:
+	@echo "test-telegram-actions requires ENABLE_DURABLE=1" >&2
+	@exit 1
+endif
+
+.PHONY: test-telegram-agent
+ifeq ($(ENABLE_DURABLE)$(ENABLE_JSON_GSLT),11)
+TELEGRAM_AGENT_TEST_BIN = runtime/test-telegram-agent-$(BUILD_OBJ_TAG)
+TELEGRAM_AGENT_TEST_OBJ = runtime/bootstrap/test-telegram-agent.$(BUILD_OBJ_TAG).o
+-include $(TELEGRAM_AGENT_TEST_OBJ:.o=.d)
+$(TELEGRAM_AGENT_TEST_OBJ): tests/test_telegram_agent.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c $< -o $@
+$(TELEGRAM_AGENT_TEST_BIN): $(TELEGRAM_AGENT_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+test-telegram-agent: $(TELEGRAM_AGENT_TEST_BIN)
+	./$(TELEGRAM_AGENT_TEST_BIN)
+else
+test-telegram-agent:
+	@echo "test-telegram-agent requires ENABLE_DURABLE=1 and ENABLE_JSON_GSLT=1" >&2
+	@exit 1
+endif
+
+.PHONY: test-telegram-channel
+ifeq ($(ENABLE_DURABLE)$(ENABLE_JSON_GSLT),11)
+TELEGRAM_CHANNEL_TEST_BIN = runtime/test-telegram-channel-$(BUILD_OBJ_TAG)
+TELEGRAM_CHANNEL_TEST_OBJ = runtime/bootstrap/test-telegram-channel.$(BUILD_OBJ_TAG).o
+-include $(TELEGRAM_CHANNEL_TEST_OBJ:.o=.d)
+$(TELEGRAM_CHANNEL_TEST_OBJ): tests/test_telegram_channel.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c $< -o $@
+$(TELEGRAM_CHANNEL_TEST_BIN): $(TELEGRAM_CHANNEL_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+test-telegram-channel: $(TELEGRAM_CHANNEL_TEST_BIN)
+	./$(TELEGRAM_CHANNEL_TEST_BIN)
+else
+test-telegram-channel:
+	@echo "test-telegram-channel requires ENABLE_DURABLE=1 and ENABLE_JSON_GSLT=1" >&2
+	@exit 1
+endif
+
+.PHONY: test-telegram-scheduler
+ifeq ($(ENABLE_DURABLE)$(HTTP_PROVIDER_CURL)$(ENABLE_JSON_GSLT),111)
+TELEGRAM_SCHEDULER_TEST_BIN = runtime/test-telegram-scheduler-$(BUILD_OBJ_TAG)
+TELEGRAM_SCHEDULER_TEST_OBJ = runtime/bootstrap/test-telegram-scheduler.$(BUILD_OBJ_TAG).o
+-include $(TELEGRAM_SCHEDULER_TEST_OBJ:.o=.d)
+$(TELEGRAM_SCHEDULER_TEST_OBJ): tests/test_telegram_scheduler.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c $< -o $@
+$(TELEGRAM_SCHEDULER_TEST_BIN): $(TELEGRAM_SCHEDULER_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+test-telegram-scheduler: $(TELEGRAM_SCHEDULER_TEST_BIN)
+	python3 tests/test_telegram_scheduler.py $(TELEGRAM_SCHEDULER_TEST_BIN)
+else
+test-telegram-scheduler:
+	@echo "test-telegram-scheduler requires ENABLE_DURABLE=1, native HTTP and ENABLE_JSON_GSLT=1" >&2
+	@exit 1
+endif
+
+.PHONY: telegram-service telegram-control test-telegram-service test-telegram-channel-service test-telegram-commands-service test-telegram-control
+runtime/cetta-telegram-control: src/telegram_control_main.c
+	@mkdir -p $(dir $@)
+	$(CC) -O2 -Wall -Wextra -Werror -std=c11 -o $@ $<
+telegram-control: runtime/cetta-telegram-control
+	@echo "Built $<"
+ifeq ($(ENABLE_DURABLE)$(HTTP_PROVIDER_CURL)$(ENABLE_JSON_GSLT),111)
+TELEGRAM_SERVICE_BIN = runtime/cetta-telegram-service-$(BUILD_OBJ_TAG)
+TELEGRAM_SERVICE_OBJ = runtime/bootstrap/telegram-service.$(BUILD_OBJ_TAG).o
+-include $(TELEGRAM_SERVICE_OBJ:.o=.d)
+$(TELEGRAM_SERVICE_OBJ): src/telegram_service_main.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c $< -o $@
+$(TELEGRAM_SERVICE_BIN): $(TELEGRAM_SERVICE_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+telegram-service: $(TELEGRAM_SERVICE_BIN)
+	@echo "Built $(TELEGRAM_SERVICE_BIN)"
+test-telegram-service: $(TELEGRAM_SERVICE_BIN)
+	python3 tests/test_telegram_service.py $(TELEGRAM_SERVICE_BIN)
+test-telegram-channel-service: $(TELEGRAM_SERVICE_BIN)
+	python3 tests/test_telegram_channel_service.py $(TELEGRAM_SERVICE_BIN)
+test-telegram-commands-service: $(TELEGRAM_SERVICE_BIN)
+	python3 tests/test_telegram_commands_service.py $(TELEGRAM_SERVICE_BIN)
+# CWP_CETTA: a cetta binary of any build (default ./cetta).
+test-cwp-client: $(TELEGRAM_SERVICE_BIN)
+	python3 tests/test_cwp_client.py $(TELEGRAM_SERVICE_BIN) $(or $(CWP_CETTA),./cetta)
+test-telegram-control: $(TELEGRAM_SERVICE_BIN) runtime/cetta-telegram-control
+	python3 tests/test_telegram_control.py $(TELEGRAM_SERVICE_BIN) runtime/cetta-telegram-control
+else
+telegram-service test-telegram-service test-telegram-channel-service test-telegram-commands-service test-cwp-client test-telegram-control:
+	@echo "telegram-service requires ENABLE_DURABLE=1, native HTTP and ENABLE_JSON_GSLT=1" >&2
 	@exit 1
 endif
 

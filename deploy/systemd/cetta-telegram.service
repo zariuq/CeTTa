@@ -1,0 +1,27 @@
+[Unit]
+Description=CeTTa durable Telegram service
+Requires=cetta-telegram.socket
+After=cetta-telegram.socket
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=exec
+# Install the matching binary and lib/ under this trusted, worker-unwritable root.
+# Replace chat 0 with an explicitly authorized chat before enabling the unit.
+ExecStart=/usr/local/lib/cetta/cetta-telegram-service --run --root /usr/local/lib/cetta --state-dir %S/cetta-telegram --worker brain --chat 0 --credential-file %d/bot-token
+LoadCredential=bot-token:%h/.config/cetta-telegram/token
+StateDirectory=cetta-telegram
+StateDirectoryMode=0700
+UMask=0077
+LimitCORE=0
+NoNewPrivileges=yes
+PrivateTmp=yes
+Restart=on-failure
+RestartPreventExitStatus=64 78
+RestartSec=5
+TimeoutStopSec=15
+KillMode=control-group
+
+[Install]
+WantedBy=default.target
