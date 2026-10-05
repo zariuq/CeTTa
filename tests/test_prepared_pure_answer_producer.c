@@ -1463,6 +1463,11 @@ static bool owned_view_pause(void *context, const CettaOwnedReturn *returned) {
     return false;
 }
 
+static Atom *owned_payload_map_leaf(Arena *destination, Atom *source, void *context) {
+    (void)context;
+    return atom_deep_copy(destination, source);
+}
+
 /* Large immutable storage is retained by its actual native owner. Distinct
  * capture spans share the handle; publishing a pending view precedes cancel.
  * No tensor mutation or implicit exclusivity is inferred from these views. */
@@ -1484,7 +1489,8 @@ static void test_owned_shared_payload(void) {
         handle, atom_int(&source, 18), atom_int(&source, 4)}, 4u);
     OwnedViewProducer producer = {0};
     arena_init_detached(&producer.arena);
-    AtomDeepCopySession *copy = atom_deep_copy_session_new(&producer.arena);
+    AtomDeepCopySession *copy = atom_deep_copy_session_new_mapped(
+        &producer.arena, owned_payload_map_leaf, NULL);
     assert(copy);
     producer.views[0] = atom_deep_copy_session_copy(copy, view);
     producer.views[1] = atom_deep_copy_session_copy(copy, shifted);

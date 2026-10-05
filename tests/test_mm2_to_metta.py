@@ -146,12 +146,17 @@ class TranslatorGate(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.cetta = Path(os.environ.get("CETTA_BIN", ROOT / "cetta"))
-        version = subprocess.run(
-            [str(cls.cetta), "--version"], text=True,
-            capture_output=True, check=True).stdout
-        if "(mork)" not in version and "(main)" not in version:
+        # A dynamically loaded bridge is available in other build profiles too.
+        # Check execution, rather than inferring capability from the build name.
+        probe = subprocess.run(
+            [str(cls.cetta), "--lang", "mm2", str(ROOT / "tests/mm2_exec_basic.mm2")],
+            text=True, capture_output=True, timeout=10)
+        expected = (ROOT / "tests/mm2_exec_basic.expected").read_text(encoding="utf-8")
+        if (probe.returncode != 0 or probe.stderr or
+                translator.canonical_mm2_support(translator.parse(probe.stdout)) !=
+                translator.canonical_mm2_support(translator.parse(expected))):
             raise RuntimeError(
-                "translator differential gate requires a MORK-capable build")
+                "translator differential gate requires working MM2 bridge execution")
 
     def corpus_rows(self):
         aihub = ROOT.parent.parent

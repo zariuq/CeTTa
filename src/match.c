@@ -1,4 +1,5 @@
 #include "match.h"
+#include "eval.h"
 #include "binding/slot_store_internal.h"
 #include "stats.h"
 #include "term_universe.h"
@@ -364,9 +365,14 @@ static bool match_occurrence_identity_finite(const Atom *root) {
     return true;
 }
 
-static bool match_occurrence_is_finite_dag(const Atom *root) {
+static bool match_occurrence_is_finite_dag_qualified(
+        const Atom *root, bool require_closed_immutable) {
     uint32_t sp = 0u;
     if (!root)
+        return false;
+    if (require_closed_immutable &&
+        (root->kind == ATOM_VAR ||
+         !(root->flags & ATOM_FLAG_HASHCONS_ELIGIBLE)))
         return false;
     if (root->kind != ATOM_EXPR)
         return true;
@@ -403,6 +409,10 @@ static bool match_occurrence_is_finite_dag(const Atom *root) {
             continue;
         }
         child = atom->expr.elems[frame->next_child++];
+        if (require_closed_immutable &&
+            (!child || child->kind == ATOM_VAR ||
+             !(child->flags & ATOM_FLAG_HASHCONS_ELIGIBLE)))
+            return false;
         if (!child || child->kind != ATOM_EXPR)
             continue;
         child_color = match_dag_color(child);
@@ -427,6 +437,10 @@ static bool match_occurrence_is_finite_dag(const Atom *root) {
     return true;
 }
 
+static bool match_occurrence_is_finite_dag(const Atom *root) {
+    return match_occurrence_is_finite_dag_qualified(root, false);
+}
+
 /* One environment, one occurrence: the substitution is the identity
  * (SubstitutionAlgebra.subst_empty).  Distinct activation epochs keep
  * distinct keys.  A raw expression cycle still fails the finite-occurrence
@@ -446,6 +460,11 @@ static inline bool match_shared_ground_reflexivity_try(
         bool same_environment, const Bindings *bindings) {
     bool certified;
     if (left != right || !left || left->kind != ATOM_EXPR)
+        return false;
+    /* Identity is not reflexive for an HE value containing NaN. Unknown
+     * metadata conservatively keeps the ordinary leaf comparison in charge. */
+    if (atom_structural_may_have_nan(left) && eval_current_language_id &&
+        eval_current_language_id() == CETTA_LANGUAGE_HE)
         return false;
 #if CETTA_BUILD_WITH_RUNTIME_STATS
     cetta_runtime_stats_inc(
@@ -528,7 +547,12 @@ static bool match_closed_expression_decision_certified(
 
 static inline bool match_closed_expression_decision_try(
         Atom *left, Atom *right, bool *equal_out) {
+    /* atom_hash describes representation. HE may equate an integer with a
+     * floating value whose representation hash differs, so this shortcut's
+     * negative hash decision is unavailable in that dialect. */
     if (!left || !right || !equal_out ||
+        (eval_current_language_id &&
+         eval_current_language_id() == CETTA_LANGUAGE_HE) ||
         !match_closed_expression_decision_certified(left) ||
         !match_closed_expression_decision_certified(right) ||
         !match_closed_expression_decision_enabled()) {
@@ -13468,6 +13492,76 @@ typedef struct {
     StoredMatchPair inline_items[16];
 } StoredMatchWorklist;
 
+typedef struct {
+    const Atom *left;
+    AtomId right;
+} StoredGroundPair;
+
+/* Scoped to one synchronous closed-ground comparison and one TermUniverse.
+ * No variable binding, source epoch or mutable resource can be memoized here.
+ * Repeated graph pairs skip construction work, not stored row occurrences. */
+typedef struct {
+    StoredGroundPair local[64];
+    StoredGroundPair *slots;
+    size_t capacity, used;
+    unsigned warmup;
+} StoredGroundPairs;
+
+static size_t stored_ground_pair_hash(const Atom *left, AtomId right) {
+    uint64_t x = ((uint64_t)(uintptr_t)left >> 4u) ^
+                 (right * UINT64_C(0x9e3779b97f4a7c15));
+    x ^= x >> 33u;
+    x *= UINT64_C(0xff51afd7ed558ccd);
+    return (size_t)(x ^ (x >> 33u));
+}
+
+static bool stored_ground_pair_seen(StoredGroundPairs *memo,
+                                    const Atom *left, AtomId right) {
+    if (memo->warmup < 32u) {
+        memo->warmup++;
+        return false;
+    }
+    if (!memo->slots) {
+        memset(memo->local, 0, sizeof(memo->local));
+        memo->slots = memo->local;
+        memo->capacity = 64u;
+    }
+    if (memo->used >= memo->capacity / 2u) {
+        if (memo->capacity > SIZE_MAX / (2u * sizeof(*memo->slots)))
+            return false;
+        size_t capacity = memo->capacity * 2u;
+        StoredGroundPair *slots = cetta_malloc(capacity * sizeof(*slots));
+        memset(slots, 0, capacity * sizeof(*slots));
+        for (size_t i = 0u; i < memo->capacity; i++) {
+            StoredGroundPair pair = memo->slots[i];
+            if (!pair.left)
+                continue;
+            size_t at = stored_ground_pair_hash(pair.left, pair.right) & (capacity - 1u);
+            while (slots[at].left)
+                at = (at + 1u) & (capacity - 1u);
+            slots[at] = pair;
+        }
+        if (memo->slots != memo->local)
+            free(memo->slots);
+        memo->slots = slots;
+        memo->capacity = capacity;
+    }
+    size_t at = stored_ground_pair_hash(left, right) & (memo->capacity - 1u);
+    while (memo->slots[at].left) {
+        if (memo->slots[at].left == left && memo->slots[at].right == right)
+            return true;
+        at = (at + 1u) & (memo->capacity - 1u);
+    }
+    memo->slots[at] = (StoredGroundPair){left, right};
+    memo->used++;
+    return false;
+}
+
+static void stored_ground_pairs_free(StoredGroundPairs *memo) {
+    if (memo->slots != memo->local)
+        free(memo->slots);
+}
+
 static bool stored_match_push(StoredMatchWorklist *work, BindingValue left,
                               AtomId right_id) {
     if (work->len == work->cap) {
@@ -13598,6 +13692,14 @@ static bool match_atoms_atom_id_epoch_worklist(
             b, NULL, a, false);
     }
     StoredMatchWorklist work;
+    StoredGroundPairs ground_pairs = {.slots = NULL, .capacity = 0u,
+        .used = 0u, .warmup = 0u};
+    bool closed = left->kind == ATOM_EXPR && !atom_has_vars(left) &&
+        (left->flags & ATOM_FLAG_HASHCONS_ELIGIBLE) != 0u &&
+        tu_hdr(candidate_universe, right_id) &&
+        !tu_has_vars(candidate_universe, right_id);
+    const Atom *ground_root = left;
+    bool ground_qualified = match_shared_ground_reflexivity_certified(left);
     work.items = work.inline_items;
     work.len = 0;
     work.cap = sizeof work.inline_items / sizeof work.inline_items[0];
@@ -13731,6 +13833,16 @@ retry_pair:
             if (right_kind != ATOM_EXPR ||
                 left->expr.len != tu_arity(candidate_universe, right_id))
                 goto fail;
+            /* Small comparisons do not allocate a memo or scan their whole
+             * source. Before the first memo entry, audit arena-local graphs
+             * including their leaves; a stale root summary cannot admit a
+             * variable, mutable payload or cycle. */
+            if (closed && !ground_qualified && ground_pairs.warmup >= 32u) {
+                closed = match_occurrence_is_finite_dag_qualified(ground_root, true);
+                ground_qualified = true;
+            }
+            if (closed && stored_ground_pair_seen(&ground_pairs, left, right_id))
+                break;
             for (CettaExprIndex i = left->expr.len; i > 0; i--) {
                 CettaExprIndex child = i - 1u;
                 BindingValue child_value = left_value;
@@ -13744,6 +13856,7 @@ retry_pair:
         }
     }
     if (work.items != work.inline_items) free(work.items);
+    stored_ground_pairs_free(&ground_pairs);
     match_note_unification_attempt(
         true, match_write_stamp_changed(
                   attempt_start, match_write_stamp(b, 0u)), false);
@@ -13751,6 +13864,7 @@ retry_pair:
 
 fail:
     if (work.items != work.inline_items) free(work.items);
+    stored_ground_pairs_free(&ground_pairs);
     match_note_unification_attempt(
         false, match_write_stamp_changed(
                    attempt_start, match_write_stamp(b, 0u)),

@@ -1446,39 +1446,33 @@ static Space *payload_resolve_space_read(Space *sp) {
     return sp;
 }
 
-static Atom *payload_rebind_resources(Arena *a, Atom *atom) {
-    Atom **elems;
-    if (!a || !atom)
-        return NULL;
+static Atom *payload_rebind_leaf(Arena *a, Atom *atom, void *context) {
+    (void)context;
     if (atom->kind == ATOM_GROUNDED) {
         if (atom->ground.gkind == GV_SPACE) {
-            Space *redirect =
-                payload_resolve_space_read((Space *)atom->ground.ptr);
+            Space *redirect = payload_resolve_space_read((Space *)atom->ground.ptr);
             if (redirect != (Space *)atom->ground.ptr)
                 return atom_space(a, redirect);
         } else if (atom->ground.gkind == GV_STATE) {
-            StateCell *redirect =
-                payload_resolve_state_read((StateCell *)atom->ground.ptr);
+            StateCell *redirect = payload_resolve_state_read((StateCell *)atom->ground.ptr);
             if (redirect != (StateCell *)atom->ground.ptr)
                 return atom_state(a, redirect);
         }
-        return atom_deep_copy(a, atom);
     }
-    if (atom->kind == ATOM_SYMBOL)
-        return atom_symbol_id(a, atom->sym_id);
-    if (atom->kind == ATOM_VAR)
-        return atom_var_like(a, atom, atom->var_id);
-    if (atom->kind != ATOM_EXPR)
-        return atom_deep_copy(a, atom);
-    elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
-    if (!elems)
+    return atom_deep_copy(a, atom);
+}
+
+static Atom *payload_rebind_resources(Arena *a, Atom *atom) {
+    if (!a || !atom)
         return NULL;
-    for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
-        elems[i] = payload_rebind_resources(a, atom->expr.elems[i]);
-        if (!elems[i])
-            return NULL;
+    ArenaMark mark = arena_mark(a);
+    size_t spare_before = a->spare_bytes;
+    Atom *out = atom_deep_copy_mapped(a, atom, payload_rebind_leaf, NULL);
+    if (!out) {
+        arena_reset(a, mark);
+        arena_release_spare(a, spare_before);
     }
-    return atom_expr(a, elems, atom->expr.len);
+    return out;
 }
 
 static StateCell *payload_resolve_state_read(StateCell *cell) {
@@ -2876,6 +2870,8 @@ static Atom *space_remove_compare_rewrite_var(Arena *dst, Atom *src_var,
 
 static Atom *space_remove_compare_atom(const Space *space, Arena *dst,
                                        Atom *src) {
+    if (src && !atom_has_vars(src))
+        return src;
     if (space && space->native.universe &&
         space->native.universe->persistent_arena) {
         return cetta_atom_rewrite_vars(dst, src,
@@ -2926,6 +2922,22 @@ static bool petta_space_remove_masked(
  * then use the resulting receipt to mutate both semantic authority and every
  * derived execution view.  Stored variables are freshened independently for
  * each occurrence, matching the ordinary Space query discipline. */
+static bool petta_space_remove_linear_row_pattern(const Atom *pattern) {
+    if (!pattern || pattern->kind != ATOM_EXPR || pattern->expr.len == 0u ||
+        pattern->expr.len > 16u)
+        return false;
+    for (CettaExprIndex i = 0u; i < pattern->expr.len; i++) {
+        const Atom *variable = pattern->expr.elems[i];
+        if (!variable || variable->kind != ATOM_VAR ||
+            variable->var_id == VAR_ID_NONE)
+            return false;
+        for (CettaExprIndex j = 0u; j < i; j++)
+            if (variable->var_id == pattern->expr.elems[j]->var_id)
+                return false;
+    }
+    return true;
+}
+
 static bool petta_space_remove_pattern_all(
         Space *space, Atom *pattern, PettaProgram *program,
         CettaCount *removed_out) {
@@ -2942,6 +2954,7 @@ static bool petta_space_remove_pattern_all(
     CettaCount logical_len = space_length64(space);
     if (logical_len == 0u)
         return true;
+    bool linear = petta_space_remove_linear_row_pattern(pattern);
     if (logical_len > SIZE_MAX / sizeof(Atom *))
         return false;
 
@@ -2960,6 +2973,16 @@ static bool petta_space_remove_pattern_all(
         CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
         AtomId atom_id = space_get_atom_id_at64(space, index);
         Atom *candidate = space_get_at64(space, index);
+        if (linear && candidate && candidate->kind == ATOM_EXPR &&
+            atom_petta_value_representation(candidate) == PETTA_VALUE_ORDINARY &&
+            !atom_is_list(candidate) && !atom_is_list_rest(candidate) &&
+            !atom_structural_has_rational(candidate)) {
+            if (candidate->expr.len == pattern->expr.len) {
+                remove_mask[index] = 1u;
+                removed_atoms[receipt_len++] = candidate;
+            }
+            continue;
+        }
         uint32_t epoch = 0u;
         Bindings trial;
         bindings_init(&trial);
@@ -12542,6 +12565,9 @@ static bool direct_outcome_walk_space_atoms_row(Atom *atom, void *ctx) {
 
     if (!atoms || !atoms->walk || atoms->walk->stopped || !atom)
         return false;
+    /* A consumer may change resource redirects between rows. Each callback
+     * therefore starts its own interpretation context; a batch snapshot may
+     * share a session only while no consumer runs. */
     item = payload_rebind_resources(atoms->arena, atom);
     if (!item)
         return false;
@@ -19074,20 +19100,32 @@ static PettaSpaceAtomSnapshotStatus petta_space_atom_snapshot_capture(
     CettaCount own_len = logical_len > imported ? logical_len - imported : 0u;
     if (own_len > (CettaCount)(SIZE_MAX / sizeof(*snapshot->items)))
         return PETTA_SPACE_ATOM_SNAPSHOT_OUT_OF_MEMORY;
-    if (own_len > 0u) {
-        snapshot->items = arena_alloc(
-            arena, sizeof(*snapshot->items) * (size_t)own_len);
-        if (!snapshot->items)
-            return PETTA_SPACE_ATOM_SNAPSHOT_OUT_OF_MEMORY;
-    }
+    ArenaMark mark = arena_mark(arena);
+    size_t spare_before = arena->spare_bytes;
+    Atom **items = own_len ? arena_alloc(
+        arena, sizeof(*items) * (size_t)own_len) : NULL;
+    AtomDeepCopySession *session = atom_deep_copy_session_new_mapped(
+        arena, payload_rebind_leaf, NULL);
+    PettaSpaceAtomSnapshotStatus status = PETTA_SPACE_ATOM_SNAPSHOT_OK;
     for (CettaIndex index = 0u; index < own_len; index++) {
         Atom *stored = space_get_at64(space, imported + index);
-        if (!stored)
-            return PETTA_SPACE_ATOM_SNAPSHOT_MATERIALIZE_FAILED;
-        snapshot->items[index] = payload_rebind_resources(arena, stored);
-        if (!snapshot->items[index])
-            return PETTA_SPACE_ATOM_SNAPSHOT_OUT_OF_MEMORY;
+        if (!stored) {
+            status = PETTA_SPACE_ATOM_SNAPSHOT_MATERIALIZE_FAILED;
+            break;
+        }
+        items[index] = atom_deep_copy_session_copy(session, stored);
+        if (!items[index]) {
+            status = PETTA_SPACE_ATOM_SNAPSHOT_OUT_OF_MEMORY;
+            break;
+        }
     }
+    atom_deep_copy_session_free(session);
+    if (status != PETTA_SPACE_ATOM_SNAPSHOT_OK) {
+        arena_reset(arena, mark);
+        arena_release_spare(arena, spare_before);
+        return status;
+    }
+    snapshot->items = items;
     snapshot->len = own_len;
     return PETTA_SPACE_ATOM_SNAPSHOT_OK;
 }

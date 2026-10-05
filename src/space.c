@@ -317,6 +317,7 @@ typedef struct {
     DiscBlock **blocks;
     size_t block_len;
     size_t block_cap;
+    bool approximate;
 } DiscPool;
 
 typedef struct {
@@ -879,8 +880,19 @@ static DiscNode *disc_get_int(DiscPool *pool, DiscNode *n, int64_t val) {
     return child;
 }
 
-/* Insert: walk LHS depth-first, creating trie path */
-static DiscNode *disc_insert_atom(DiscPool *pool, DiscNode *node, Atom *a) {
+/* Limit expansion of expression occurrences, not merely depth: a wide DAG
+ * can unfold exponentially even at small depth. Cut subtrees are complete
+ * wildcard coordinates. Ordinary residual matching remains authoritative;
+ * exact count/projection shortcuts decline approximate pools. */
+static DiscNode *disc_insert_atom(DiscPool *pool, DiscNode *node, Atom *a,
+                                  unsigned depth, CettaIndexExpansionBudget *budget) {
+    if (a->kind == ATOM_EXPR) {
+        if (!cetta_index_expand_expression(budget, depth, a->expr.len)) {
+            pool->approximate = true;
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_DISC_TRUNCATED_SUBTREE);
+            return disc_get_var(pool, node);
+        }
+    }
     switch (a->kind) {
     case ATOM_SYMBOL: return disc_get_sym(pool, node, a->sym_id);
     case ATOM_VAR:    return disc_get_var(pool, node);
@@ -896,7 +908,7 @@ static DiscNode *disc_insert_atom(DiscPool *pool, DiscNode *node, Atom *a) {
             return disc_get_var(pool, node);
         DiscNode *cur = disc_get_expr(pool, node, a->expr.len);
         for (CettaExprIndex i = 0; i < a->expr.len; i++)
-            cur = disc_insert_atom(pool, cur, a->expr.elems[i]);
+            cur = disc_insert_atom(pool, cur, a->expr.elems[i], depth + 1u, budget);
         return cur;
     }
     }
@@ -905,10 +917,20 @@ static DiscNode *disc_insert_atom(DiscPool *pool, DiscNode *node, Atom *a) {
 
 static bool disc_insert_atom_id(DiscPool *pool, DiscNode *node,
                                 const TermUniverse *universe,
-                                AtomId atom_id, DiscNode **out_leaf) {
+                                AtomId atom_id, DiscNode **out_leaf, unsigned depth,
+                                CettaIndexExpansionBudget *budget) {
     if (!node || !universe || atom_id == CETTA_ATOM_ID_NONE ||
         !tu_hdr(universe, atom_id) || !out_leaf) {
         return false;
+    }
+
+    if (tu_kind(universe, atom_id) == ATOM_EXPR) {
+        if (!cetta_index_expand_expression(budget, depth, tu_arity(universe, atom_id))) {
+            pool->approximate = true;
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_DISC_TRUNCATED_SUBTREE);
+            *out_leaf = disc_get_var(pool, node);
+            return true;
+        }
     }
 
     switch (tu_kind(universe, atom_id)) {
@@ -935,7 +957,8 @@ static bool disc_insert_atom_id(DiscPool *pool, DiscNode *node,
         DiscNode *cur = disc_get_expr(pool, node, tu_arity(universe, atom_id));
         for (CettaExprIndex i = 0; i < tu_arity(universe, atom_id); i++) {
             AtomId child_id = tu_child(universe, atom_id, i);
-            if (!disc_insert_atom_id(pool, cur, universe, child_id, &cur))
+            if (!disc_insert_atom_id(pool, cur, universe, child_id, &cur,
+                                    depth + 1u, budget))
                 return false;
         }
         *out_leaf = cur;
@@ -947,7 +970,8 @@ static bool disc_insert_atom_id(DiscPool *pool, DiscNode *node,
 
 void disc_insert(DiscNode *root, Atom *lhs, CettaIndex eq_idx) {
     DiscPool *pool = disc_root_pool(root);
-    DiscNode *leaf = disc_insert_atom(pool, root, lhs);
+    CettaIndexExpansionBudget budget = cetta_index_expansion_budget();
+    DiscNode *leaf = disc_insert_atom(pool, root, lhs, 0u, &budget);
     disc_add_leaf(pool, leaf, eq_idx);
 }
 
@@ -955,7 +979,8 @@ bool disc_insert_id(DiscNode *root, const TermUniverse *universe,
                     AtomId atom_id, CettaIndex eq_idx) {
     DiscPool *pool = disc_root_pool(root);
     DiscNode *leaf = NULL;
-    if (!disc_insert_atom_id(pool, root, universe, atom_id, &leaf))
+    CettaIndexExpansionBudget budget = cetta_index_expansion_budget();
+    if (!disc_insert_atom_id(pool, root, universe, atom_id, &leaf, 0u, &budget))
         return false;
     disc_add_leaf(pool, leaf, eq_idx);
     return true;
@@ -1334,6 +1359,10 @@ static void space_pinned_occurrences_release(SpacePinnedOccurrences *view) {
     if (view->space) {
         view->space->match_backend.native.pinned = NULL;
     } else {
+        cetta_runtime_stats_add(
+            CETTA_RUNTIME_COUNTER_SPACE_RETIRED_OCCURRENCE_RELEASE_BYTES,
+            (size_t)view->len *
+                cetta_atom_id_storage_width_bytes_from_bits(view->atom_id_width_bits));
         free(view->atom_ids);
         disc_node_free(view->match_trie);
     }
@@ -1902,6 +1931,8 @@ static bool disc_follow_rigid_exact_path(
 bool disc_count_rigid_exact_expression_coordinates(
         const DiscNode *root, Atom *const *coordinates,
         CettaExprLen coordinate_count, CettaIndex *out_count) {
+    if (root && disc_root_pool((DiscNode *)root)->approximate)
+        return false;
     if (out_count)
         *out_count = 0u;
     if (!root || !out_count ||
@@ -2110,6 +2141,8 @@ bool disc_project_flat_bound_column(
     const VarId *bind_ids, Atom *const *bind_values, size_t bind_len,
     size_t column, uint64_t *count_out, __int128 *sum_out,
     int64_t *product_out, bool *product_ok) {
+    if (root && disc_root_pool((DiscNode *)root)->approximate)
+        return false;
     if (count_out)
         *count_out = 0u;
     if (sum_out)
@@ -2170,6 +2203,8 @@ bool disc_count_flat_bound_vars(
     const DiscNode *root, const Atom *pattern,
     const VarId *bind_ids, Atom *const *bind_values, size_t bind_len,
     CettaIndex *out_count) {
+    if (root && disc_root_pool((DiscNode *)root)->approximate)
+        return false;
     if (out_count)
         *out_count = 0u;
     if (!root || !pattern || !out_count ||
@@ -2224,6 +2259,8 @@ bool disc_count_flat_bound_vars(
 
 bool disc_count_flat_trailing_wildcards(
     const DiscNode *root, const Atom *pattern, CettaIndex *out_count) {
+    if (root && disc_root_pool((DiscNode *)root)->approximate)
+        return false;
     if (out_count)
         *out_count = 0u;
     if (!root || !pattern || !out_count ||
@@ -2277,6 +2314,8 @@ bool disc_count_flat_trailing_wildcards(
 bool disc_count_rigid_exact_path(
         const DiscNode *root, const Atom *query,
         CettaIndex *out_count) {
+    if (root && disc_root_pool((DiscNode *)root)->approximate)
+        return false;
     if (out_count)
         *out_count = 0u;
     if (!root || !query || !out_count)
@@ -2408,7 +2447,7 @@ static uint32_t symbol_hash(SymbolId id) {
     return mixed % EQ_INDEX_BUCKETS;
 }
 
-static bool __attribute__((unused)) atom_is_eq_subst_safe(Atom *atom) {
+static bool atom_is_eq_subst_safe_within(Atom *atom) {
     switch (atom->kind) {
     case ATOM_SYMBOL:
     case ATOM_VAR:
@@ -2420,7 +2459,7 @@ static bool __attribute__((unused)) atom_is_eq_subst_safe(Atom *atom) {
                atom->ground.gkind == GV_STRING;
     case ATOM_EXPR:
         for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
-            if (!atom_is_eq_subst_safe(atom->expr.elems[i]))
+            if (!atom_is_eq_subst_safe_within(atom->expr.elems[i]))
                 return false;
         }
         return true;
@@ -2428,7 +2467,12 @@ static bool __attribute__((unused)) atom_is_eq_subst_safe(Atom *atom) {
     return false;
 }
 
-static bool atom_id_is_eq_subst_safe(const Space *s, AtomId atom_id) {
+static bool __attribute__((unused)) atom_is_eq_subst_safe(Atom *atom) {
+    return stree_query_within_expansion_budget(atom) && atom_is_eq_subst_safe_within(atom);
+}
+
+static bool atom_id_is_eq_subst_safe_within(const Space *s, AtomId atom_id,
+        unsigned depth, CettaIndexExpansionBudget *budget) {
     if (!s || !s->native.universe || atom_id == CETTA_ATOM_ID_NONE)
         return false;
     const CettaTermHdr *hdr = tu_hdr(s->native.universe, atom_id);
@@ -2436,6 +2480,9 @@ static bool atom_id_is_eq_subst_safe(const Space *s, AtomId atom_id) {
         Atom *atom = term_universe_get_atom(s->native.universe, atom_id);
         return atom ? atom_is_eq_subst_safe(atom) : false;
     }
+    if (tu_kind(s->native.universe, atom_id) == ATOM_EXPR &&
+        !cetta_index_expand_expression(budget, depth, tu_arity(s->native.universe, atom_id)))
+        return false;
     switch (tu_kind(s->native.universe, atom_id)) {
     case ATOM_SYMBOL:
     case ATOM_VAR:
@@ -2447,12 +2494,18 @@ static bool atom_id_is_eq_subst_safe(const Space *s, AtomId atom_id) {
                tu_ground_kind(s->native.universe, atom_id) == GV_STRING;
     case ATOM_EXPR:
         for (CettaExprIndex i = 0; i < tu_arity(s->native.universe, atom_id); i++) {
-            if (!atom_id_is_eq_subst_safe(s, tu_child(s->native.universe, atom_id, i)))
+            if (!atom_id_is_eq_subst_safe_within(s, tu_child(s->native.universe, atom_id, i),
+                                                    depth + 1u, budget))
                 return false;
         }
         return true;
     }
     return false;
+}
+
+static bool atom_id_is_eq_subst_safe(const Space *s, AtomId atom_id) {
+    CettaIndexExpansionBudget budget = cetta_index_expansion_budget();
+    return atom_id_is_eq_subst_safe_within(s, atom_id, 0u, &budget);
 }
 
 /* Get the head symbol of an equation LHS for indexing.
@@ -2876,6 +2929,8 @@ static AtomId space_canonical_id_for_query(Space *s, Atom *atom) {
 
 static bool atom_has_variables(const Atom *atom) {
     if (!atom) return false;
+    if ((atom->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) != 0u)
+        return atom_has_vars(atom);
     switch (atom->kind) {
     case ATOM_VAR:
         return true;
@@ -2892,6 +2947,9 @@ static bool atom_has_variables(const Atom *atom) {
 
 static bool atom_is_exact_indexable(const Atom *atom) {
     if (!atom) return false;
+    if ((atom->flags & ATOM_FLAG_HASHCONS_ELIGIBLE) != 0u &&
+        !atom_has_vars(atom) && !atom_structural_may_have_internal_tag(atom))
+        return true;
     switch (atom->kind) {
     case ATOM_SYMBOL:
         return true;
@@ -6972,6 +7030,28 @@ bool space_remove_occurrence_mask_stable(
 
     if (!space_has_overlay_base(s))
         space_pinned_occurrences_detach(s);
+
+    /* A complete contraction has no surviving occurrence coordinates to
+     * transport. Replace the owned storage instead of retaining its old row
+     * capacity and indexes. Detached readers retain their previous rows/trie;
+     * replacement keeps instance/dependency authority and advances revisions. */
+    if (removed == logical_len && !space_has_overlay_base(s)) {
+        Space empty;
+        space_init_with_universe(&empty, s->native.universe);
+        empty.kind = s->kind;
+        bool ok = space_match_backend_try_set(&empty, s->match_backend.kind) &&
+            space_match_backend_require_logical_order(&empty, NULL);
+        if (ok) {
+            empty.payload_owner_epoch = s->payload_owner_epoch;
+            empty.payload_export_owner_epoch = s->payload_export_owner_epoch;
+            space_replace_contents_classified(s, &empty, equation_projection);
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_PRIVATE_RESET);
+            if (out_removed)
+                *out_removed = removed;
+        }
+        space_free(&empty);
+        return ok;
+    }
 
     if (stable_occurrence_transport_enabled() && !space_has_overlay_base(s) &&
         logical_len <= SIZE_MAX / sizeof(CettaIndex) &&

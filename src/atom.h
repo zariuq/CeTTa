@@ -1219,6 +1219,23 @@ char *atom_to_parseable_bytes(Arena *a, Atom *atom, bool petta,
    sharing within one copy episode. */
 Atom *atom_deep_copy(Arena *dst, Atom *src);
 typedef Atom *(*AtomDeepCopyResolver)(void *context, Atom *src);
+typedef Atom *(*AtomDeepCopyLeafMap)(Arena *dst, Atom *src, void *context);
+/* A fixed observation policy may expose another expression's children, or
+ * finish an opaque value without traversing it. The original source pointer
+ * remains the memo key. A completed value must be owned by dst; returned views
+ * and their children remain live throughout this synchronous episode. The
+ * observed graph must be finite and acyclic. Views may expand a list carrier,
+ * whose produced edges remain part of the operation's work/output account.
+ * On failure, discard callback-owned inventories before rolling back dst. */
+typedef bool (*AtomDeepCopyNodeView)(Arena *dst, Atom *src, Atom **view,
+                                   bool *complete, void *context);
+Atom *atom_deep_copy_observed(Arena *dst, Atom *src,
+                             AtomDeepCopyNodeView view, void *context);
+/* A leaf map must have one stable interpretation for the whole episode.
+ * It may allocate in dst and return NULL on failure. Any callback-owned
+ * inventory must be discarded before the caller rolls back dst. */
+Atom *atom_deep_copy_mapped(Arena *dst, Atom *src,
+                           AtomDeepCopyLeafMap map, void *context);
 /* A multi-root copy episode.  Every call shares one source-pointer forwarding
    table, so pointer-DAG sharing is preserved across separately named roots.
    A destination-owned root is reused only when its compositional arena-closure
@@ -1226,6 +1243,14 @@ typedef Atom *(*AtomDeepCopyResolver)(void *context, Atom *src);
    resolver, installed before copying, redirects every encountered node before
    traversal; update-cell collectors use it to collapse evaluated thunks. */
 AtomDeepCopySession *atom_deep_copy_session_new(Arena *dst);
+/* A multi-root mapped episode. The mapper/context cannot be replaced during
+ * the episode. Destination-owned terms are still traversed: storage ownership
+ * does not establish that their leaves already have the requested meaning.
+ * The caller keeps sources/context live, stages returned roots, and publishes
+ * them only after all copies succeed. After failure, discard the session and
+ * its callback inventory before reclaiming abandoned destination storage. */
+AtomDeepCopySession *atom_deep_copy_session_new_mapped(
+    Arena *dst, AtomDeepCopyLeafMap map, void *context);
 /* The session copies out of a region its caller releases right after it:
  * the atoms `arena` allocated since `mark`.  A copied atom of that region
  * then records its copy in place instead of in the session's table, since

@@ -1334,8 +1334,9 @@ static bool he_canonical_match_schedule(Space *s, Arena *a, Atom *atom,
             return false;
     } else if (nargs == 3u) {
         CettaMorkSpaceHandle *bridge = NULL;
+        Atom *space_ref = resolve_registry_refs(a, expr_arg(atom, 0));
         if (g_library_context && cetta_library_lookup_explicit_mork_bridge(
-                g_library_context, expr_arg(atom, 0), &bridge) && bridge)
+                g_library_context, space_ref, &bridge) && bridge)
             return false;
     } else
         return false;

@@ -1385,41 +1385,6 @@ bool petta_semantics_construct_value_is_expression(
              petta_semantics_form(head->sym_id) == PETTA_FORM_CONS);
 }
 
-typedef struct {
-    Atom *source;
-    Atom **source_children;
-    Atom **result_children;
-    CettaExprLen length;
-    CettaExprIndex next;
-    Atom **result_slot;
-} PeTTaMaterializeFrame;
-
-static bool petta_materialize_frame_reserve(
-    PeTTaMaterializeFrame **frames,
-    size_t *capacity, size_t required,
-    PeTTaMaterializeFrame *inline_frames) {
-    if (required <= *capacity)
-        return true;
-    size_t next = *capacity ? *capacity * 2u : 32u;
-    while (next < required) {
-        if (next > SIZE_MAX / 2u)
-            return false;
-        next *= 2u;
-    }
-    if (next > SIZE_MAX / sizeof(**frames))
-        return false;
-    void *grown = *frames == inline_frames
-        ? malloc(sizeof(**frames) * next)
-        : realloc(*frames, sizeof(**frames) * next);
-    if (!grown)
-        return false;
-    if (*frames == inline_frames)
-        memcpy(grown, *frames, sizeof(**frames) * *capacity);
-    *frames = grown;
-    *capacity = next;
-    return true;
-}
-
 bool petta_semantics_is_opaque_runtime_value(const Atom *value) {
     if (!value || value->kind != ATOM_EXPR || value->expr.len == 0u)
         return false;
@@ -1436,85 +1401,43 @@ static bool petta_materialize_opaque_value(const Atom *value) {
            atom_is_symbol_id(value->expr.elems[0], g_builtin_syms.quote);
 }
 
-Atom *petta_semantics_materialize_value(
-    Arena *arena, Atom *value) {
+static bool petta_materialize_node_view(Arena *arena, Atom *source,
+        Atom **view, bool *complete, void *context) {
+    *complete = false;
+    *view = petta_semantics_is_open_cons_value(source)
+        ? petta_semantics_materialize_logical_list(arena, source) : source;
+    if (!*view)
+        return false;
+    if (petta_materialize_opaque_value(*view)) {
+        /* Quoted syntax and closures have a different observation policy.
+         * Copy their entire graph without normalizing the enclosed carriers. */
+        AtomDeepCopySession **opaque = context;
+        if (!*opaque)
+            *opaque = atom_deep_copy_session_new(arena);
+        *view = *opaque ? atom_deep_copy_session_copy(*opaque, *view) : NULL;
+        *complete = true;
+    }
+    return *view != NULL;
+}
+
+Atom *petta_semantics_materialize_value(Arena *arena, Atom *value) {
     if (!arena || !value)
         return NULL;
-    Atom *result = NULL;
-    PeTTaMaterializeFrame inline_frames[16];
-    PeTTaMaterializeFrame *frames = inline_frames;
-    size_t length = 0u;
-    size_t capacity = sizeof(inline_frames) / sizeof(inline_frames[0]);
-
-#define PETTA_MATERIALIZE_PUSH(source_atom, destination_slot) do { \
-    Atom *petta_source__ = (source_atom); \
-    Atom **petta_slot__ = (destination_slot); \
-    if (!petta_source__ || !petta_slot__) \
-        goto fail; \
-    if (petta_source__->kind != ATOM_EXPR || \
-        petta_materialize_opaque_value(petta_source__)) { \
-        *petta_slot__ = atom_deep_copy(arena, petta_source__); \
-        if (!*petta_slot__) \
-            goto fail; \
-        break; \
-    } \
-    if (petta_semantics_is_open_cons_value(petta_source__)) { \
-        petta_source__ = petta_semantics_materialize_logical_list( \
-            arena, petta_source__); \
-        if (!petta_source__) \
-            goto fail; \
-    } \
-    Atom **petta_sources__ = petta_source__->expr.elems; \
-    CettaExprLen petta_count__ = petta_source__->expr.len; \
-    if (!cetta_expr_len_mul_fits_size( \
-            petta_count__, sizeof(Atom *)) || \
-        !petta_materialize_frame_reserve( \
-            &frames, &capacity, length + 1u, inline_frames)) { \
-        goto fail; \
-    } \
-    Atom **petta_results__ = petta_count__ \
-        ? arena_alloc( \
-              arena, sizeof(*petta_results__) * (size_t)petta_count__) \
-        : NULL; \
-    if (petta_count__ > 0u && !petta_results__) { \
-        goto fail; \
-    } \
-    frames[length++] = (PeTTaMaterializeFrame){ \
-        .source = petta_source__, \
-        .source_children = petta_sources__, \
-        .result_children = petta_results__, \
-        .length = petta_count__, \
-        .result_slot = petta_slot__, \
-    }; \
-} while (0)
-
-    PETTA_MATERIALIZE_PUSH(value, &result);
-    while (length > 0u) {
-        PeTTaMaterializeFrame *frame = &frames[length - 1u];
-        if (frame->next < frame->length) {
-            CettaExprIndex index = frame->next++;
-            Atom *child = frame->source_children[index];
-            Atom **slot = &frame->result_children[index];
-            PETTA_MATERIALIZE_PUSH(child, slot);
-            continue;
-        }
-        Atom *built = atom_expr(
-            arena, frame->result_children, frame->length);
-        if (!built)
-            goto fail;
-        *frame->result_slot = built;
-        length--;
+    if (value->kind != ATOM_EXPR || petta_materialize_opaque_value(value))
+        return atom_deep_copy(arena, value);
+    ArenaMark mark = arena_mark(arena);
+    size_t spare_before = arena->spare_bytes;
+    /* Opaque syntax shares a copy context of its own: a previously normalized
+     * image must never replace the same source inside a quote or closure. */
+    AtomDeepCopySession *opaque = NULL;
+    Atom *out = atom_deep_copy_observed(arena, value,
+        petta_materialize_node_view, &opaque);
+    atom_deep_copy_session_free(opaque);
+    if (!out) {
+        arena_reset(arena, mark);
+        arena_release_spare(arena, spare_before);
     }
-    if (frames != inline_frames)
-        free(frames);
-#undef PETTA_MATERIALIZE_PUSH
-    return result;
-
-fail:
-    if (frames != inline_frames)
-        free(frames);
-#undef PETTA_MATERIALIZE_PUSH
-    return NULL;
+    return out;
 }
 
 typedef struct {

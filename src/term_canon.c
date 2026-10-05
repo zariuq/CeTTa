@@ -3,6 +3,19 @@
 #include <stdlib.h>
 #include <string.h>
 
+typedef struct {
+    CettaAtomRewriteVarFn rewrite;
+    void *context;
+    bool share;
+} RewriteMap;
+
+static Atom *rewrite_map_leaf(Arena *dst, Atom *src, void *context) {
+    RewriteMap *map = context;
+    if (src->kind == ATOM_VAR)
+        return map->rewrite(dst, src, map->context);
+    return map->share ? atom_deep_copy_shared(dst, src) : atom_deep_copy(dst, src);
+}
+
 static Atom *frame_syntax_create_slot(
         Arena *dst, Atom *source, uint32_t ordinal, void *context) {
     (void)context;
@@ -63,18 +76,37 @@ static Atom *frame_instantiate_variable(
 bool cetta_instantiate_frame_terms_within(Arena *dst, Atom **terms,
                                           size_t count,
                                           CettaFrameIdentity identity) {
-    if (!dst || (count && !terms) || !identity)
+    if (!dst || (count && !terms) || !identity ||
+        count > SIZE_MAX / sizeof(Atom *))
         return false;
+    if (!count)
+        return true;
+    ArenaMark mark = arena_mark(dst);
+    size_t spare_before = dst->spare_bytes;
+    Atom *inline_staged[8];
+    Atom **staged = count <= 8u ? inline_staged
+        : cetta_malloc(count * sizeof(*staged));
     CettaVarMap inventory;
     cetta_var_map_init(&inventory);
     FrameSyntaxImport instance = {&inventory, identity};
-    bool ok = true;
+    RewriteMap map = {frame_instantiate_variable, &instance, true};
+    AtomDeepCopySession *session =
+        atom_deep_copy_session_new_mapped(dst, rewrite_map_leaf, &map);
+    bool ok = session != NULL;
     for (size_t i = 0u; ok && i < count; i++) {
-        terms[i] = cetta_atom_rewrite_vars(
-            dst, terms[i], frame_instantiate_variable, &instance, true);
-        ok = terms[i] != NULL;
+        staged[i] = atom_deep_copy_session_copy(session, terms[i]);
+        ok = staged[i] != NULL;
     }
+    atom_deep_copy_session_free(session);
     cetta_var_map_free(&inventory);
+    if (ok) {
+        memcpy(terms, staged, count * sizeof(*terms));
+    } else {
+        arena_reset(dst, mark);
+        arena_release_spare(dst, spare_before);
+    }
+    if (staged != inline_staged)
+        free(staged);
     return ok;
 }
 
@@ -221,22 +253,6 @@ Atom *cetta_atom_rewrite_vars(Arena *dst, Atom *src,
                               bool share_immutable) {
     if (!dst || !src || !rewrite_var)
         return NULL;
-    switch (src->kind) {
-    case ATOM_VAR:
-        return rewrite_var(dst, src, ctx);
-    case ATOM_EXPR: {
-        Atom **elems = arena_alloc(dst, sizeof(Atom *) * src->expr.len);
-        for (CettaExprIndex i = 0; i < src->expr.len; i++) {
-            elems[i] = cetta_atom_rewrite_vars(dst, src->expr.elems[i],
-                                               rewrite_var, ctx,
-                                               share_immutable);
-            if (!elems[i])
-                return NULL;
-        }
-        return atom_expr(dst, elems, src->expr.len);
-    }
-    default:
-        return share_immutable ? atom_deep_copy_shared(dst, src)
-                               : atom_deep_copy(dst, src);
-    }
+    RewriteMap map = {rewrite_var, ctx, share_immutable};
+    return atom_deep_copy_mapped(dst, src, rewrite_map_leaf, &map);
 }
