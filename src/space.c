@@ -6466,24 +6466,27 @@ static uint32_t registry_text_index(const Registry *r,
     return index;
 }
 
+static uint32_t registry_id_index(const Registry *r, SymbolId key) {
+    if (!r || key == SYMBOL_ID_NONE) return UINT32_MAX;
+    uint32_t index = registry_index_find(r, key, NAME_ID_NONE, 0);
+    if (index == UINT32_MAX)
+        index = registry_text_index(r, (const uint8_t *)symbol_bytes(g_symbols, key),
+                                       symbol_len(g_symbols, key));
+    return index;
+}
+
 static uint32_t registry_symbol_index(const Registry *r, const Atom *name) {
     if (!r || !name || name->kind != ATOM_SYMBOL) return UINT32_MAX;
     SymbolId key = atom_symbol_current_id(name);
-    uint32_t index = key == SYMBOL_ID_NONE ? UINT32_MAX
-        : registry_index_find(r, key, NAME_ID_NONE, 0);
-    if (index == UINT32_MAX)
-        index = registry_text_index(r, (const uint8_t *)atom_symbol_bytes(name),
-                                       atom_symbol_length(name));
-    return index;
+    return key != SYMBOL_ID_NONE ? registry_id_index(r, key)
+        : registry_text_index(r, (const uint8_t *)atom_symbol_bytes(name),
+                                 atom_symbol_length(name));
 }
 
 void registry_bind_id(Registry *r, SymbolId key, Atom *value) {
     if (!r || key == SYMBOL_ID_NONE) return;
     (void)symbol_pin(g_symbols, key);
-    uint32_t existing = registry_index_find(r, key, NAME_ID_NONE, 0);
-    if (existing == UINT32_MAX)
-        existing = registry_text_index(r, (const uint8_t *)symbol_bytes(g_symbols, key),
-                                          symbol_len(g_symbols, key));
+    uint32_t existing = registry_id_index(r, key);
     if (existing != UINT32_MAX) {
         r->entries[existing].value = value;
         return;
@@ -6501,10 +6504,7 @@ void registry_bind_id(Registry *r, SymbolId key, Atom *value) {
 
 Atom *registry_lookup_id(Registry *r, SymbolId key) {
     if (!r || key == SYMBOL_ID_NONE) return NULL;
-    uint32_t index = registry_index_find(r, key, NAME_ID_NONE, 0);
-    if (index == UINT32_MAX)
-        index = registry_text_index(r, (const uint8_t *)symbol_bytes(g_symbols, key),
-                                       symbol_len(g_symbols, key));
+    uint32_t index = registry_id_index(r, key);
     return index == UINT32_MAX ? NULL : r->entries[index].value;
 }
 
@@ -6690,8 +6690,10 @@ Atom *registry_state_lookup_symbol(const Registry *r, const Atom *name) {
                                : r->states->names.entries[index].value;
 }
 
-bool registry_state_set_symbol(Registry *r, const Atom *name, Atom *value) {
-    if (!r || !name || name->kind != ATOM_SYMBOL || !value)
+static bool registry_state_set_key(Registry *r, const Atom *name,
+                                    SymbolId key, Atom *value) {
+    if (!r || !value || (name ? name->kind != ATOM_SYMBOL
+                              : key == SYMBOL_ID_NONE))
         return false;
     struct RegistryStates *states = r->states;
     if (!states) {
@@ -6706,7 +6708,8 @@ bool registry_state_set_symbol(Registry *r, const Atom *name, Atom *value) {
         registry_state_arena_give_back(states, arena);
         return false;
     }
-    uint32_t index = registry_symbol_index(&states->names, name);
+    uint32_t index = name ? registry_symbol_index(&states->names, name)
+                          : registry_id_index(&states->names, key);
     if (index != UINT32_MAX) {
         Arena *replaced = states->storage[index];
         states->names.entries[index].value = stored;
@@ -6720,11 +6723,16 @@ bool registry_state_set_symbol(Registry *r, const Atom *name, Atom *value) {
             cetta_realloc(states->storage, sizeof(*states->storage) * cap);
         states->storage_cap = cap;
     }
-    if (!registry_bind_symbol(&states->names, name, stored)) {
-        registry_state_arena_give_back(states, arena);
-        return false;
+    if (name) {
+        if (!registry_bind_symbol(&states->names, name, stored)) {
+            registry_state_arena_give_back(states, arena);
+            return false;
+        }
+    } else {
+        registry_bind_id(&states->names, key, stored);
     }
-    index = registry_symbol_index(&states->names, name);
+    index = name ? registry_symbol_index(&states->names, name)
+                 : registry_id_index(&states->names, key);
     if (index == UINT32_MAX || index >= states->storage_cap) {
         registry_state_arena_give_back(states, arena);
         return false;
@@ -6733,16 +6741,18 @@ bool registry_state_set_symbol(Registry *r, const Atom *name, Atom *value) {
     return true;
 }
 
+bool registry_state_set_symbol(Registry *r, const Atom *name, Atom *value) {
+    return name && registry_state_set_key(r, name, SYMBOL_ID_NONE, value);
+}
+
 Atom *registry_state_lookup(const Registry *r, SymbolId key) {
-    if (key == SYMBOL_ID_NONE) return NULL;
-    const Atom name = {.kind = ATOM_SYMBOL, .symbol_number = key};
-    return registry_state_lookup_symbol(r, &name);
+    if (!r || !r->states) return NULL;
+    uint32_t index = registry_id_index(&r->states->names, key);
+    return index == UINT32_MAX ? NULL : r->states->names.entries[index].value;
 }
 
 bool registry_state_set(Registry *r, SymbolId key, Atom *value) {
-    if (key == SYMBOL_ID_NONE) return false;
-    const Atom name = {.kind = ATOM_SYMBOL, .symbol_number = key};
-    return registry_state_set_symbol(r, &name, value);
+    return registry_state_set_key(r, NULL, key, value);
 }
 
 uint32_t registry_state_count(const Registry *r) {

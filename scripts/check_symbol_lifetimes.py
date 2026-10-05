@@ -195,14 +195,16 @@ def main():
     args = parser.parse_args()
     cache = ROOT / "runtime/symbol-holder-ast-cache"
     cache.mkdir(parents=True, exist_ok=True)
-    # A header can change any translation unit, including macro expansions.
+    # Headers and included C fragments can change any translation unit,
+    # including macro expansions and declarations moved out of a .c file.
     headers = hashlib.sha256()
     for base in ("src", "native", "experiments/gslt2parse_foundation/native", "runtime/bootstrap"):
-        for path in sorted((ROOT / base).rglob("*.h")):
+        for path in sorted(path for path in (ROOT / base).rglob("*")
+                           if path.suffix in {".h", ".inc"}):
             headers.update(str(path.relative_to(ROOT)).encode())
             headers.update(path.read_bytes())
     compiler = subprocess.check_output([args.clang, "--version"], text=True).splitlines()[0]
-    config = "census-v4" + headers.hexdigest() + compiler + args.cppflags
+    config = "census-v5" + headers.hexdigest() + compiler + args.cppflags
     rows = {}
     for source in args.sources:
         path = ROOT / source

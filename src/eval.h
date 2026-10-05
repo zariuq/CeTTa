@@ -68,6 +68,10 @@ void outcome_set_add(OutcomeSet *os, Atom *atom, const Bindings *env);
 void outcome_set_delay_last(OutcomeSet *os, Atom *delayed);
 void outcome_set_add_move(OutcomeSet *os, Atom *atom, Bindings *env);
 void outcome_set_free(OutcomeSet *os);
+/* Stage an independent outcome vector through one graph relocation session.
+ * The caller owns both vectors until it commits or abandons the staged copy. */
+bool outcome_set_relocate_clone(OutcomeSet *dst, const OutcomeSet *src,
+                               Arena *owner, AtomDeepCopySession *session);
 
 /* ── ResultSet: public API for top-level results (atoms only) ──────────── */
 /* This is the user-facing result type. Internally, the evaluator works

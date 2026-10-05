@@ -110,6 +110,31 @@ static void state_names(Arena *arena, SymbolTable *symbols) {
     puts("PASS: named-state ownership, value replacement and worker registry release");
 }
 
+static void state_numeric_interop(Arena *arena) {
+    Registry registry;
+    registry_init(&registry);
+    const char bytes[] = {'s', 0, (char)255, 'k'};
+    Atom *name = atom_symbol_data_n(arena, bytes, sizeof(bytes));
+    assert(atom_symbol_current_id(name) == SYMBOL_ID_NONE);
+    assert(registry_state_set_symbol(&registry, name, atom_int(arena, 1)));
+    SymbolId key = atom_symbol_register_id(name);
+    assert(key != SYMBOL_ID_NONE);
+    assert(registry_state_lookup(&registry, key)->ground.ival == 1);
+    assert(registry_state_set(&registry, key, atom_int(arena, 2)));
+    assert(registry_state_lookup_symbol(&registry, name)->ground.ival == 2);
+    assert(registry_state_count(&registry) == 1);
+    assert(registry_state_set_symbol(&registry, atom_symbol_id(arena, key),
+                                     atom_int(arena, 3)));
+    assert(registry_state_lookup(&registry, key)->ground.ival == 3);
+    assert(registry_state_count(&registry) == 1);
+    assert(!registry_state_lookup(&registry, SYMBOL_ID_NONE));
+    assert(!registry_state_set(&registry, SYMBOL_ID_NONE, atom_int(arena, 4)));
+    assert(!registry_state_lookup(NULL, key));
+    assert(!registry_state_set(NULL, key, atom_int(arena, 4)));
+    registry_free(&registry);
+    puts("PASS: numbered and spelled state keys share replacement and lookup");
+}
+
 int main(void) {
     SymbolTable symbols;
     symbol_table_init(&symbols);
@@ -122,6 +147,7 @@ int main(void) {
     registry_keys(&arena);
     registry_churn(&arena, &symbols);
     state_names(&arena, &symbols);
+    state_numeric_interop(&arena);
     arena_free(&arena);
     symbol_table_free(&symbols);
     return 0;

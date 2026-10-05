@@ -800,6 +800,23 @@ BIN = cetta
 BIN_FORCE = FORCE
 endif
 endif
+## A configuration probe may recurse from a caller selecting a private BIN.
+## An inherited filename cannot name both builds: keep explicit child outputs,
+## but give a changed configuration its own tagged output when it inherits the
+## parent's filename. Same-configuration children retain the selected artifact.
+ifneq ($(strip $(CETTA_PARENT_BUILD_SIGNATURE)),)
+ifneq ($(CETTA_PARENT_BUILD_SIGNATURE),$(BUILD_OBJ_TAG):$(ENABLE_RUNTIME_STATS))
+ifeq ($(abspath $(BIN)),$(CETTA_PARENT_BINARY))
+override BIN := runtime/cetta-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+# GNU Make otherwise forwards the original command-line BIN to grandchildren,
+# even after this override. Their link target would differ from the executable
+# selected by the intermediate test recipe.
+override MAKEOVERRIDES := $(filter-out BIN=%,$(MAKEOVERRIDES)) BIN=$(BIN)
+endif
+endif
+endif
+export CETTA_PARENT_BUILD_SIGNATURE := $(BUILD_OBJ_TAG):$(ENABLE_RUNTIME_STATS)
+export CETTA_PARENT_BINARY := $(abspath $(BIN))
 RUNTIME_STATS_SECTIONED_OBJ = $(if $(filter 1,$(ENABLE_RUNTIME_STATS)),runtime/bootstrap/runtime_stats_sectioned.$(BUILD_OBJ_TAG).runtime-stats.o,)
 COMPILED_READER_RUNTIME_OBJ = $(patsubst %.c,%.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o,$(COMPILED_READER_RUNTIME_SRC))
 FALLBACK_EVAL_TEST_SRC = tests/support/test_fallback_eval_session.c
@@ -2656,6 +2673,14 @@ METAMATH_SOURCE_RESOLUTION_CONTROL_DIRECT_V1 = $(METAMATH_LANGDEF_GENERATED_DIR_
 # this tag paired with the explicit recursive-build feature set below: an
 # artifact name and the configuration that produces it are one identity.
 RELATIONAL_STATE_TRANSITION_CORE_TAG_V1 = core.prime-need-heap-index.prime-eval-stack
+RELATIONAL_STATE_TRANSITION_CORE_FLAGS_V1 = BUILD=core \
+	ENABLE_GMP=1 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 ENABLE_DURABLE=0 \
+	ENABLE_JSON_GSLT=0 ENABLE_MANAGED_SYMBOLS=0 ENABLE_SYMBOL_READ_COVERAGE=0 \
+	ENABLE_SANITIZERS=0 ENABLE_PIC=0 ENABLE_RUNTIME_STATS=0 ENABLE_RUNTIME_TIMING=0 \
+	CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+	ENABLE_PRIME_RECEIPT_PRIMARY_INDEX=0 ENABLE_PRIME_CAUSAL_RECEIPTS=0 \
+	ENABLE_PRIME_NEED_HEAP_INDEX=1 ENABLE_PRIME_NEED_CLOSURE_CAPTURE=0 ENABLE_PRIME_EVAL_STACK=1 \
+	ENABLE_PETTA_TYPECHECK_V2=1 ENABLE_PETTA_TYPECHECK_CENSUS=0 ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS=0
 RELATIONAL_STATE_TRANSITION_CHART_CORE_V1 = runtime/finite_horn_chart_v1-$(RELATIONAL_STATE_TRANSITION_CORE_TAG_V1)
 RELATIONAL_STATE_TRANSITION_LANGDEF_CORE_V1 = runtime/langdef-compile-v1-$(RELATIONAL_STATE_TRANSITION_CORE_TAG_V1)
 RELATIONAL_STATE_TRANSITION_MUTATOR_CORE_V1 = runtime/gslt-rule-mutate-v1-$(RELATIONAL_STATE_TRANSITION_CORE_TAG_V1)
@@ -10012,8 +10037,7 @@ test-metamath-cogslt-diagnostic-binary-v1:
 
 .PHONY: build-cogslt-relational-state-transition-core-tools-v1
 build-cogslt-relational-state-transition-core-tools-v1:
-	@$(MAKE) -s --no-print-directory BUILD=core ENABLE_LIB_PROLOG=0 \
-		ENABLE_JSON_GSLT=0 ENABLE_MANAGED_SYMBOLS=0 \
+	@$(MAKE) -s --no-print-directory $(RELATIONAL_STATE_TRANSITION_CORE_FLAGS_V1) \
 		$(RELATIONAL_STATE_TRANSITION_CHART_CORE_V1) \
 		$(RELATIONAL_STATE_TRANSITION_LANGDEF_CORE_V1) \
 		$(RELATIONAL_STATE_TRANSITION_MUTATOR_CORE_V1)
@@ -17909,6 +17933,8 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		's/^runtime-counter eval-tail-collection-candidate //p'); \
 	blocked=$$(printf '%s\n' "$$result" | sed -n \
 		's/^runtime-counter eval-tail-blocked-imprecise-root //p'); \
+	external=$$(printf '%s\n' "$$result" | sed -n \
+		's/^runtime-counter eval-tail-blocked-external-owner //p'); \
 	live=$$(printf '%s\n' "$$result" | sed -n \
 		's/^runtime-counter eval-tail-blocked-live-outcome //p'); \
 	safe=$$(printf '%s\n' "$$result" | sed -n \
@@ -17921,17 +17947,18 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	   [ "$$visible" != "$$expected" ] || \
 	   ! expr "$$candidates" : '[0-9][0-9]*$$' >/dev/null || \
 	   ! expr "$$blocked" : '[0-9][0-9]*$$' >/dev/null || \
+	   ! expr "$$external" : '[0-9][0-9]*$$' >/dev/null || \
 	   ! expr "$$live" : '[0-9][0-9]*$$' >/dev/null || \
 	   ! expr "$$safe" : '[0-9][0-9]*$$' >/dev/null || \
 	   ! expr "$$reclaimed" : '[0-9][0-9]*$$' >/dev/null || \
 	   ! expr "$$collected" : '[0-9][0-9]*$$' >/dev/null || \
-	   [ "$$blocked" -le 0 ] || [ "$$live" -ne 0 ] || \
+	   [ "$$blocked" -le 0 ] || [ "$$external" -le 0 ] || [ "$$live" -ne 0 ] || \
 	   [ "$$safe" -le 0 ] || [ "$$reclaimed" -le 0 ] || \
 	   [ "$$collected" -le 0 ] || [ "$$collected" -gt "$$safe" ] || \
-	   [ "$$candidates" -ne $$((blocked + live + collected)) ]; then \
+	   [ "$$candidates" -ne $$((blocked + external + live + collected)) ]; then \
 		echo "FAIL: monolithic Prime equation search did not fail closed around moving GC"; \
 		printf '%s\n' "visible=$$visible" \
-			"exit=$$status candidates=$$candidates blocked=$$blocked live=$$live safe=$$safe collected=$$collected reclaimed=$$reclaimed"; \
+			"exit=$$status candidates=$$candidates blocked=$$blocked external=$$external live=$$live safe=$$safe collected=$$collected reclaimed=$$reclaimed"; \
 		if [ "$$status" -ne 0 ]; then \
 			printf '%s\n' "$$result" | tail -120; \
 		fi; \
@@ -30052,7 +30079,11 @@ test-prepared-pure-answer-producer: $(PREPARED_PURE_ANSWER_TEST_BIN)
 	@$(call cetta_exec,./$(PREPARED_PURE_ANSWER_TEST_BIN))
 
 .PHONY: test-owned-resumable-consumers
-test: test-owned-resumable-consumers
+.PHONY: test-he-shared-execution
+test-he-shared-execution: $(BIN)
+	@python3 tests/support/test_he_shared_execution.py $(BIN)
+
+test: test-owned-resumable-consumers test-he-shared-execution
 test-owned-resumable-consumers: $(BIN)
 	@python3 tests/support/test_owned_resumable_consumers.py ./$(BIN)
 
@@ -35453,9 +35484,9 @@ TRACKED_GENERATED_V1 = \
 	$(METTAZERO_GROUND_LIBRARY_CANARY_V1_GENERATED_C) \
 	$(PROOF_TRACE_COMPILED_CANARY_V1_GENERATED_C)
 
-# Regenerate every tracked output from its sources and require the bytes git
-# holds for it in the index, so what is committed or about to be, headers
-# included; a generated header git does not track fails too.  The check
+# Regenerate every tracked output and require its source-derived bytes from
+# the index, headers included. The cursor lock additionally checks its
+# build-specific binary checksum against the actual local cursor. The check
 # changes nothing: the working files are put back afterwards with their
 # modification times, and its copies live in a scratch directory it removes.
 # Regenerating a working file is the build's job.
@@ -35495,6 +35526,13 @@ check-generated:
 	for file in $$compared; do \
 		if ! git cat-file -e ":$$file" 2>/dev/null; then \
 			stale="$$stale $$file(not-tracked)"; \
+		elif [ "$$file" = "$(METAMATH_DIRECT_RUNTIME_LOCK_V1)" ]; then \
+			git show ":$$file" > "$$work/expected-lock.metta"; \
+			if ! python3 scripts/check_generated_lock.py \
+				--expected "$$work/expected-lock.metta" --actual "$$file" \
+				--compiled-cursor "$(METAMATH_DIRECT_COMPILED_CURSOR_V1)"; then \
+				stale="$$stale $$file"; \
+			fi; \
 		elif ! git show ":$$file" | cmp -s - "$$file"; then \
 			stale="$$stale $$file"; \
 		fi; \
@@ -35506,7 +35544,11 @@ check-generated:
 	fi; \
 	echo "PASS: $(words $(TRACKED_GENERATED_V1)) tracked generated outputs are what their sources generate"
 
-test: check-generated
+test: check-generated test-generated-lock
+
+.PHONY: test-generated-lock
+test-generated-lock:
+	@python3 tests/test_generated_lock.py
 
 .PHONY: test-gslt-provider-generation-v1
 test-gslt-provider-generation-v1: \

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -62,6 +63,33 @@ void compute(void) { static Alias cached_id; SymbolId local_id; (void)local_id; 
         after = self.scan("typedef unsigned SymbolId; typedef struct { SymbolId known, added; } Owner;")
         with self.assertRaisesRegex(ValueError, "unclassified.*[\\s\\S]*Owner.added"):
             classify(after, rules)
+
+    def test_included_fragment_change_invalidates_cached_declarations(self):
+        scripts = self.root / "scripts"
+        scripts.mkdir()
+        for name in ("check_symbol_lifetimes.py", "gen_semiring_fixtures.py"):
+            shutil.copy2(ROOT / "scripts" / name, scripts / name)
+        (self.root / "lib").mkdir()
+        (self.root / "lib/symbol_lifetimes.metta").write_text(
+            "(gslt symbol-holder-lifetimes "
+            "(holder src/holders.inc Owner.known transient))")
+        self.file.write_text('#include "holders.inc"\n')
+        fragment = self.root / "src/holders.inc"
+        fragment.write_text(
+            "typedef unsigned SymbolId; "
+            "typedef struct { SymbolId known; } Owner;")
+        command = [sys.executable, str(scripts / "check_symbol_lifetimes.py"),
+                   "--clang", self.clang, "--sources", "src/holders.c"]
+        first = subprocess.run(command, cwd=self.root, text=True,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        fragment.write_text(
+            "typedef unsigned SymbolId; "
+            "typedef struct { SymbolId known, added; } Owner;")
+        second = subprocess.run(command, cwd=self.root, text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.assertNotEqual(second.returncode, 0)
+        self.assertIn("Owner.added", second.stderr)
 
     def test_unresolved_is_a_destructive_collection_blocker(self):
         rows = self.scan("typedef unsigned SymbolId; typedef struct { SymbolId unknown; } Owner;")

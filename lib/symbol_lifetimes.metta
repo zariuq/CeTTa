@@ -114,8 +114,15 @@
   (holder src/eval.c VisibleVarShapeRef.spelling transient)
   (holder src/eval.c static:atom_is_type_sort:.type_id owned-vocabulary)
   (holder src/eval.c static:petta_static_import_symbol:.symbol owned-vocabulary)
+  ; Admission arrays borrow namespace IDs during source qualification and are
+  ; freed before the search episode begins. They are not persistent caches.
+  (holder src/eval_he_execution.inc HeExecutionAdmission.heads transient)
+  (holder src/eval_owned_execution.inc EvalOwnedHead.head transient)
   (holder src/gdl_type_of_native.c GdlNativeSourceNodeV1.occurrence_key unresolved)
   (holder src/grounded.c GroundedOpCache.ids owned-vocabulary)
+  ; These tables intern only names from the fixed HE library declarations.
+  (holder src/he_type_policy.c HeGroundedTypeSlot.symbol owned-vocabulary)
+  (holder src/he_type_policy.c static:.g_he_library_undeclared owned-vocabulary)
   (holder src/gslt_compiled_runtime.c GsltCompiledBucket.head unresolved)
   (holder src/gslt_compiled_runtime.c GsltCompiledDispatchKey.symbol unresolved)
   (holder src/gslt_compiled_runtime.c GsltCompiledNode.symbol unresolved)

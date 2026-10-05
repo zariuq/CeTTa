@@ -387,6 +387,7 @@ tests/test_lts_rho_cost_parallel_runtime_stats.metta	he	metta	extended	runtime-s
 tests/test_lts_rho_cost_search_budget.metta	he	metta	extended	main	native	test	golden	-
 tests/test_lts_rho_syntax.metta	he	metta	extended	main	native	test	golden	-
 tests/test_lts_syntax.metta	he	metta	extended	main	native	test	golden	-
+tests/test_managed_symbol_exact_membership.metta	he	metta	extended	main	native	test	golden	-
 tests/test_map_filter_atom.metta	he	metta	extended	main	native	test	golden	-
 tests/test_match.metta	he	metta	extended	main	native	test	golden	-
 tests/test_match_advanced.metta	he	metta	extended	main	native	test	golden	-
