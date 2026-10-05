@@ -87,6 +87,7 @@ typedef struct {
     bool ready;
     bool enabled;
     uint32_t external_owner_depth;
+    size_t imprecise_lexical_roots;
     size_t budget_bytes;
     uint64_t collections;
     uint64_t reclaimed_bytes;
@@ -130,6 +131,7 @@ static void eval_gc_init_once(void) {
     g_eval_gc.region_arena = NULL;
     g_eval_gc.region_depth = 0u;
     g_eval_gc.external_owner_depth = 0u;
+    g_eval_gc.imprecise_lexical_roots = 0u;
 
     eval_gc_init_survivor_arena(&g_eval_gc.survivor);
     g_eval_gc.ready = true;
@@ -201,6 +203,8 @@ static void eval_gc_root_frame_link(EvalGcRootFrame *frame,
     frame->linked = true;
     frame->precise_suspension = false;
     g_eval_gc.roots = frame;
+    if (kind == CETTA_EVAL_GC_FRAME_LEXICAL)
+        g_eval_gc.imprecise_lexical_roots++;
 }
 
 static void eval_gc_root_frame_enter(EvalGcRootFrame *frame,
@@ -441,16 +445,27 @@ static void eval_gc_root_frame_update_static_branch_walk(
         (CettaEvalGcAtomSpan){pending, pending_count};
 }
 
-static void eval_gc_root_frame_suspend_precisely(EvalGcRootFrame *frame) {
+static void eval_gc_root_frame_set_precise(EvalGcRootFrame *frame,
+                                         bool precise) {
     assert(frame && frame->linked &&
            frame->kind == CETTA_EVAL_GC_FRAME_LEXICAL);
-    frame->precise_suspension = true;
+    if (frame->precise_suspension == precise)
+        return;
+    if (precise) {
+        assert(g_eval_gc.imprecise_lexical_roots > 0u);
+        g_eval_gc.imprecise_lexical_roots--;
+    } else {
+        g_eval_gc.imprecise_lexical_roots++;
+    }
+    frame->precise_suspension = precise;
+}
+
+static void eval_gc_root_frame_suspend_precisely(EvalGcRootFrame *frame) {
+    eval_gc_root_frame_set_precise(frame, true);
 }
 
 static void eval_gc_root_frame_resume(EvalGcRootFrame *frame) {
-    assert(frame && frame->linked &&
-           frame->kind == CETTA_EVAL_GC_FRAME_LEXICAL);
-    frame->precise_suspension = false;
+    eval_gc_root_frame_set_precise(frame, false);
 }
 
 static void eval_gc_root_frame_leave(EvalGcRootFrame *frame);
@@ -652,8 +667,8 @@ static void eval_gc_observation_normalization_suspension_end(
         return;
     assert(suspension->lexical && suspension->lexical->linked &&
            suspension->lexical->kind == CETTA_EVAL_GC_FRAME_LEXICAL);
-    suspension->lexical->precise_suspension =
-        suspension->lexical_was_precise;
+    eval_gc_root_frame_set_precise(suspension->lexical,
+        suspension->lexical_was_precise);
     eval_gc_root_frame_leave(&suspension->continuation);
     suspension->lexical = NULL;
     suspension->active = false;
@@ -696,8 +711,8 @@ static void eval_gc_tuple_machine_suspension_end(
     if (suspension->lexical) {
         assert(suspension->lexical->linked &&
                suspension->lexical->kind == CETTA_EVAL_GC_FRAME_LEXICAL);
-        suspension->lexical->precise_suspension =
-            suspension->lexical_was_precise;
+        eval_gc_root_frame_set_precise(suspension->lexical,
+            suspension->lexical_was_precise);
     }
     eval_gc_root_frame_leave(&suspension->continuation);
     suspension->lexical = NULL;
@@ -744,6 +759,28 @@ static __attribute__((unused)) void eval_gc_external_owner_leave(void) {
     g_eval_gc.external_owner_depth--;
 }
 
+typedef struct EvalGcExternalOwnerGuard {
+    bool active;
+} EvalGcExternalOwnerGuard;
+
+/* Synchronous services may retain borrowed atoms while reentering evaluation.
+ * Their private accumulators are not relocating roots.  Defer relocation until
+ * the service has returned its results to the evaluator's owned frontier. */
+static inline void eval_gc_external_owner_guard_enter(
+    EvalGcExternalOwnerGuard *guard) {
+    assert(guard && !guard->active);
+    eval_gc_external_owner_enter();
+    guard->active = true;
+}
+
+static inline void eval_gc_external_owner_guard_leave(
+    EvalGcExternalOwnerGuard *guard) {
+    if (guard && guard->active) {
+        eval_gc_external_owner_leave();
+        guard->active = false;
+    }
+}
+
 static void eval_gc_root_frame_leave(EvalGcRootFrame *frame) {
     if (!frame || !frame->linked)
         return;
@@ -755,6 +792,11 @@ static void eval_gc_root_frame_leave(EvalGcRootFrame *frame) {
             newer = newer->previous;
         if (newer)
             newer->previous = frame->previous;
+    }
+    if (frame->kind == CETTA_EVAL_GC_FRAME_LEXICAL &&
+        !frame->precise_suspension) {
+        assert(g_eval_gc.imprecise_lexical_roots > 0u);
+        g_eval_gc.imprecise_lexical_roots--;
     }
     frame->previous = NULL;
     frame->linked = false;
@@ -770,14 +812,16 @@ static inline bool eval_gc_can_collect_arena(const Arena *arena) {
 
 static inline bool eval_gc_root_chain_is_precise(
     const EvalGcRootFrame *frame) {
-    bool precise_chain = frame && g_eval_gc.roots == frame;
-    for (const EvalGcRootFrame *root = frame ? frame->previous : NULL;
-         precise_chain && root; root = root->previous) {
-        if (root->kind == CETTA_EVAL_GC_FRAME_LEXICAL &&
-            !root->precise_suspension)
-            precise_chain = false;
-    }
-    return precise_chain;
+    if (!frame || g_eval_gc.roots != frame)
+        return false;
+    /* The current lexical frame supplies its own live slots. Only suspended
+     * ancestors require the stronger precision contract. Keep their count
+     * when roots enter, change precision, or leave; a blocked collection must
+     * not walk a growing continuation again after every evaluator step. */
+    size_t current_imprecise =
+        frame->kind == CETTA_EVAL_GC_FRAME_LEXICAL &&
+        !frame->precise_suspension ? 1u : 0u;
+    return g_eval_gc.imprecise_lexical_roots == current_imprecise;
 }
 
 static inline bool eval_gc_safe_point(const Arena *arena,
@@ -803,17 +847,21 @@ static inline bool eval_gc_safe_point(const Arena *arena,
     if (!precise_chain) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_EVAL_TAIL_BLOCKED_IMPRECISE_ROOT);
+        return false;
     }
     if (g_eval_gc.external_owner_depth != 0u) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_EVAL_TAIL_BLOCKED_EXTERNAL_OWNER);
+        return false;
     }
     if (os_len != 0u) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_EVAL_TAIL_BLOCKED_LIVE_OUTCOME);
+        return false;
     }
-    return precise_chain && g_eval_gc.external_owner_depth == 0u &&
-           os_len == 0u;
+    /* One first blocking reason per candidate keeps the collection account
+     * exhaustive without double-counting overlapping obligations. */
+    return true;
 }
 
 /* A copying collector must not recopy a growing live graph after every fixed

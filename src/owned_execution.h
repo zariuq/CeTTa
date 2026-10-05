@@ -4,6 +4,38 @@
 #include "call_outcome.h"
 #include "eval_completion.h"
 #include "match.h"
+#include <assert.h>
+
+/* Intrusive owned continuation links keep dialect frames at stable addresses.
+ * Push takes one frame; pop transfers it back to the adapter for publication
+ * or release. The adapter owns roots and demand, so scalar values need no
+ * universal heap wrapper and the link does not confer source-read authority. */
+typedef struct CettaOwnedFrameLink {
+    struct CettaOwnedFrameLink *next;
+} CettaOwnedFrameLink;
+
+typedef struct {
+    CettaOwnedFrameLink *top;
+    size_t depth;
+} CettaOwnedFrameStack;
+
+static inline void cetta_owned_frame_push(
+    CettaOwnedFrameStack *stack, CettaOwnedFrameLink *frame) {
+    assert(stack && frame && stack->depth < SIZE_MAX);
+    frame->next = stack->top;
+    stack->top = frame;
+    stack->depth++;
+}
+
+static inline CettaOwnedFrameLink *cetta_owned_frame_pop(
+    CettaOwnedFrameStack *stack) {
+    assert(stack && stack->top && stack->depth > 0u);
+    CettaOwnedFrameLink *frame = stack->top;
+    stack->top = frame->next;
+    frame->next = NULL;
+    stack->depth--;
+    return frame;
+}
 
 /* A return loans its payload and environment from the computation owner.
  * Source expressions, completed values and conditional answers retain their

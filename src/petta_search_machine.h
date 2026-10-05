@@ -224,6 +224,21 @@ typedef struct {
     /* PeTTa's translation places exposed result structure before ordered
      * equation effects. Other dialects require their own phase law. */
     bool source_output_constraints;
+    /* Structural equation matching and literal binding patterns are separate
+     * from evaluating a computation. An eager structural adapter must not
+     * execute a relation embedded in a pattern. */
+    bool structural_equation_heads;
+    bool exact_equation_arity;
+    bool literal_binding_patterns;
+    /* A completed call with no applicable equation may remain syntax. A
+     * matched equation with no returns still completes with no returns. */
+    bool unmatched_call_is_value;
+    bool empty_result_is_failure;
+    bool retain_query_variable_identity;
+    /* An eager tuple completes an argument before starting the next one.
+     * A fault occurrence returns from this application, rather than becoming
+     * a field in its constructed value. */
+    bool eager_argument_faults;
     /* PeTTa's collections are findall: an error raised while collecting
      * aborts the collection and propagates, as an exception does in
      * SWI-PeTTa.  Other dialects keep a raised error as an occurrence. */
@@ -270,6 +285,12 @@ typedef struct {
      * shared opcode; absence preserves the standalone machine's unrestricted
      * embedding contract. */
     bool (*builtin_allowed)(void *context, SymbolId head);
+    /* Optional language-owned application of an already completed primitive.
+     * Numeric register instructions retain their common direct path; other
+     * calls use the host's domain and result contracts. */
+    bool (*grounded_call)(void *context, Space *space, Arena *arena,
+        Atom *head, Atom **arguments, uint32_t argument_count,
+        CettaCallOutcome *outcome);
     /* Authority for authored equations sharing an intrinsic head. APPEND
      * enumerates the intrinsic first; OWNED selects this space's equations;
      * PROTECTED retains rows as data without executing them. */

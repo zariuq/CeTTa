@@ -110,6 +110,10 @@ typedef struct {
      * Callbacks must keep borrowed application terms stable. A service
      * doing type-level evaluation must prevent relocation of fold locals. */
     uint32_t (*infer)(void *context, Atom *subject, Atom ***types);
+    /* Optional profile-owned normalization of an instantiated domain or
+     * codomain before refinement. False retains an incomplete judgment;
+     * it must not be turned into a type refutation. */
+    bool (*normalize)(void *context, Atom *type, Atom **normalized);
     /* Optional representation projection, never an evaluation request. */
     Atom *(*source_argument)(void *context, Atom *argument);
     /* A refutation service may only reject established impossible pairs. */

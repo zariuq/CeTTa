@@ -2075,7 +2075,7 @@ static void main_add_prime_semantic_op_decls(Space *space, Arena *arena) {
  * keeps only, outside the profile with upstream's exact semantics, those
  * adding a call form of an arity upstream does not declare.  A grounded
  * operation's name has no declaration: its type is the operation's own.
- * Unavailable extensions contribute no library declarations. Filter them
+ * Unavailable extensions contribute no library declarations or equations. Filter them
  * here, before loading the program, rather than rejecting user-declared
  * types or untyped data that happen to use the same spelling. */
 static bool main_he_prepare_library(Space *space, Arena *arena,
@@ -2093,8 +2093,22 @@ static bool main_he_prepare_library(Space *space, Arena *arena,
     CettaCount kept_len = 0u;
     for (CettaIndex i = 0u; i < len; i++) {
         Atom *atom = space_get_at64(space, i);
-        if (!atom || atom->kind != ATOM_EXPR || atom->expr.len != 3u ||
-            !atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.colon))
+        if (!atom || atom->kind != ATOM_EXPR || atom->expr.len != 3u)
+            continue;
+        if (atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.equals)) {
+            Atom *pattern = atom->expr.elems[1];
+            Atom *head = pattern->kind == ATOM_EXPR && pattern->expr.len
+                ? pattern->expr.elems[0] : pattern;
+            if (head->kind == ATOM_SYMBOL &&
+                (!cetta_language_allows_builtin(
+                    CETTA_LANGUAGE_HE, profile, atom_name_cstr(head)) ||
+                 (!extensions && pattern->kind == ATOM_EXPR &&
+                  he_library_declares(head) &&
+                  !he_library_declares_arity(head, pattern->expr.len - 1u))))
+                mask[i] = 1u;
+            continue;
+        }
+        if (!atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.colon))
             continue;
         Atom *subject = atom->expr.elems[1];
         Atom *type = atom->expr.elems[2];

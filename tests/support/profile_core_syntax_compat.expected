@@ -1,6 +1,6 @@
 [6]
 [(2 3)]
-[]
+[%Undefined%]
 [(range-atom 3)]
 [(repeat-atom 2 z)]
 [(add-atom-nodup bogus marker)]

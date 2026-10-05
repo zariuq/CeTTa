@@ -2,8 +2,8 @@
 ; language. JeTTa declares Int; CeTTa's corresponding grounded numeric type is
 ; Number, so this fixture leaves the two computational rules unannotated.
 ;
-; Each fold iteration evaluates the same nested Let program. The checksum is
-; 144 * @N@, which proves that every iteration produced the expected value.
+; Each iteration evaluates the same nested Let program. The checksum
+; 144 * @N@ checks the accumulated result.
 
 (= (mam:lookup $key (Cons (Bind $k $v) $rest))
    (if (== $key $k)
@@ -28,10 +28,11 @@
             (Mul (Var n) (Var n)))
        (Cons (Bind n $n-value) Nil))))
 
-!(let $iterations (range-atom @N@)
-   (foldl-atom
-     $iterations
-     0
-     $sum
-     $iteration
-     (eval (+ $sum (mam:interpreter-once $iteration)))))
+(= (mam:interpreter-loop $remaining $sum)
+   (if (< $remaining 1)
+       $sum
+       (let $next (- $remaining 1)
+         (let $value (mam:interpreter-once $next)
+           (mam:interpreter-loop $next (+ $sum $value))))))
+
+!(mam:interpreter-loop @N@ 0)

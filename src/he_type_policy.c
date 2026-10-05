@@ -600,6 +600,9 @@ HeTypeApplicability he_type_call_applicable(
             ? HE_TYPE_INAPPLICABLE : HE_TYPE_APPLICATION_INCOMPLETE;
     }
 
+    if (services->normalize &&
+        !services->normalize(services->context, expected_result, &expected_result))
+        return HE_TYPE_APPLICATION_INCOMPLETE;
     ApplyBindings paths;
     apply_bindings_init(&paths);
     if (!apply_bindings_push(&paths)) return HE_TYPE_APPLICATION_INCOMPLETE;
@@ -613,6 +616,9 @@ HeTypeApplicability he_type_call_applicable(
         for (uint32_t p = 0u; p < paths.len; p++) {
             HeTypeDomain view = he_type_domain(domain, dependent);
             Atom *expected = bindings_apply_if_vars(&paths.items[p], arena, view.formal);
+            if (services->normalize &&
+                !services->normalize(services->context, expected, &expected))
+                goto incomplete;
             HeTypeArgumentCheck check = he_type_argument_check(expected);
             if (check == HE_TYPE_ARGUMENT_ANY) {
                 if (!apply_bindings_move(&next, &paths.items[p])) goto incomplete;
@@ -685,6 +691,12 @@ incomplete:
         search_context_init_owned(&trial, &paths.items[p], NULL);
         Atom *result = dependent ? bindings_apply_if_vars(search_context_bindings(&trial), arena, call.result_type)
                                 : call.result_type;
+        if (services->normalize &&
+            !services->normalize(services->context, result, &result)) {
+            search_context_free(&trial);
+            apply_bindings_free(&paths);
+            return HE_TYPE_APPLICATION_INCOMPLETE;
+        }
         bool saved;
         if (apply_refine(services, result, expected_result, search_context_builder(&trial), arena)) {
             accepted = true;

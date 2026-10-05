@@ -367,11 +367,20 @@ int main(void) {
                strcmp(tu_string_cstr(&universe, host_string),
                       "A\n\xce\xbb") == 0,
            "direct string projection is byte-length aware");
-    expect(&counts,
-           parser_host_projection_v1_string_bytes(
-               host_projection, embedded_nul, sizeof(embedded_nul)) ==
-               CETTA_ATOM_ID_NONE,
-           "direct string projection rejects an unrepresentable NUL");
+    {
+        AtomId nul_string = parser_host_projection_v1_string_bytes(
+            host_projection, embedded_nul, sizeof(embedded_nul));
+        expect(&counts,
+               nul_string != CETTA_ATOM_ID_NONE &&
+                   tu_kind(&universe, nul_string) == ATOM_GROUNDED &&
+                   tu_ground_kind(&universe, nul_string) == GV_STRING &&
+                   tu_string_len(&universe, nul_string) ==
+                       sizeof(embedded_nul) &&
+                   memcmp(tu_string_cstr(&universe, nul_string),
+                          embedded_nul, sizeof(embedded_nul)) == 0 &&
+                   nul_string != tu_intern_string(&universe, "A"),
+               "direct string projection preserves NUL and its suffix");
+    }
     expect(&counts,
            parser_host_projection_v1_variable_bytes(
                host_projection, NULL, 0u) == CETTA_ATOM_ID_NONE,
@@ -525,11 +534,19 @@ int main(void) {
            "compiled scalar boundary rejects malformed UTF-8");
 
     atom_len = he_compiled_reader_v1_parse_text_ids(
-        reader, "\"\\x00\"", &universe, &ids, &receipt,
+        reader, "\"A\\x00B\"", &universe, &ids, &receipt,
         error, sizeof(error));
     expect(&counts,
-           atom_len < 0 && !ids && strstr(error, "embedded NUL"),
-           "host projection rejects an unrepresentable embedded NUL");
+           atom_len == 1 && ids &&
+               tu_kind(&universe, ids[0]) == ATOM_GROUNDED &&
+               tu_ground_kind(&universe, ids[0]) == GV_STRING &&
+               tu_string_len(&universe, ids[0]) == sizeof(embedded_nul) &&
+               memcmp(tu_string_cstr(&universe, ids[0]), embedded_nul,
+                      sizeof(embedded_nul)) == 0 &&
+               ids[0] != tu_intern_string(&universe, "A"),
+           "host projection preserves escaped NUL and its suffix");
+    free(ids);
+    ids = NULL;
 
     route.reader = reader;
     backend = (ParserDocumentIdsBackend){

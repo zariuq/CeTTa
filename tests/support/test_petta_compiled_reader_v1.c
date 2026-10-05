@@ -323,8 +323,22 @@ int main(void) {
                 sizeof(nul_string_document), &ids, &receipt,
                 error, sizeof(error));
     expect(&counts,
-           len < 0 && !ids && strstr(error, "embedded NUL"),
-           "PeTTa WIP contract explicitly rejects unrepresentable NUL strings");
+           len == 1 && ids && tu_kind(&universe, ids[0]) == ATOM_EXPR &&
+               tu_arity(&universe, ids[0]) == 1u &&
+               tu_kind(&universe, tu_child(&universe, ids[0], 0u)) ==
+                   ATOM_GROUNDED &&
+               tu_ground_kind(&universe,
+                              tu_child(&universe, ids[0], 0u)) == GV_STRING &&
+               tu_string_len(&universe,
+                             tu_child(&universe, ids[0], 0u)) == 3u &&
+               memcmp(tu_string_cstr(&universe,
+                                    tu_child(&universe, ids[0], 0u)),
+                      "a\0b", 3u) == 0 &&
+               tu_child(&universe, ids[0], 0u) !=
+                   tu_intern_string(&universe, "a"),
+           "PeTTa strings preserve NUL and its suffix");
+    free(ids);
+    ids = NULL;
 
     petta_compiled_reader_v1_free(reader);
     term_universe_free(&universe);
