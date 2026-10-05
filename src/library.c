@@ -58,6 +58,7 @@ enum {
     CETTA_LIBRARY_DURABLE = 1u << 13,
     CETTA_LIBRARY_CWP = 1u << 14,
     CETTA_LIBRARY_PROC = 1u << 15,
+    CETTA_LIBRARY_LLM = 1u << 16,
     CETTA_LIBRARY_PETTA_TABLING = 1u << 11,
 #if CETTA_BUILD_WITH_JSON_GSLT
     CETTA_LIBRARY_JSON = 1u << 12
@@ -85,6 +86,7 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"durable", CETTA_LIBRARY_DURABLE},
     {"cwp", CETTA_LIBRARY_CWP},
     {"proc", CETTA_LIBRARY_PROC},
+    {"llm", CETTA_LIBRARY_LLM},
 #if CETTA_BUILD_WITH_JSON_GSLT
     {"json", CETTA_LIBRARY_JSON},
 #endif

@@ -193,6 +193,11 @@ def unwrap_function(form):
         if not (isinstance(body, list) and len(body) == 2 and body[0] == "return"):
             return None
         new_branches.append([pattern, body[1]])
+    # HE Error values are ordinary case scrutinees. PeTTa raises them until
+    # an explicit catch; preserve the scope of this authored error handler.
+    if any(isinstance(branch[0], list) and branch[0]
+           and branch[0][0] == Symbol("Error") for branch in new_branches):
+        call = [Symbol("catch"), call]
     return [Symbol("case"), call, new_branches]
 
 

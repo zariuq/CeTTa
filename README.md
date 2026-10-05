@@ -73,6 +73,7 @@ CeTTa checkout or a different source branch.
 | Interface | Build selection | Guide |
 | --- | --- | --- |
 | Native HTTP and asynchronous I/O | `ENABLE_HTTP=1` (libcurl) | [I/O boundary](docs/io/README.md) |
+| Buffered LLM protocol library | `lib/llm.metta`; native HTTP for submission | [Requests, ordered results and ownership](verification/llm/README.md) |
 | Durable named spaces and host transactions | `ENABLE_DURABLE=1` (SQLite) | [Durable host](docs/durable/README.md) |
 | Process helper library | `lib/proc.metta` | [Process module](lib/proc.metta) |
 | Telegram transport and action service | `telegram-service` target with HTTP and durable features | [Durable host](docs/durable/README.md), [unit templates](deploy/systemd/) |

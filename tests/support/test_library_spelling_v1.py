@@ -58,6 +58,13 @@ class HeldBodySpelling(unittest.TestCase):
         source = "(let $x 1 (metta $body %Undefined% &self))"
         self.assertEqual(spell(source, "prime"), source)
 
+    def test_error_case_keeps_its_handler_scope(self):
+        self.assertEqual(
+            spell('(function (case (run) (((Error $s $r) (return (failed $r))) ($v (return $v)))))'),
+            '(case (catch (run)) (((Error $s $r) (failed $r)) ($v $v)))')
+        self.assertEqual(
+            spell('(function (case (run) (($v (return $v)))))'), '(run)')
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -40782,7 +40782,7 @@ LIBRARY_SPELLING_TOOL_V1 = tools/library_spelling.py
 # PeTTa does not have.
 LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_tptp json str
 LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list \
-	system fs proc cwp io durable
+	system fs proc cwp io durable llm llm/io llm/command llm/compat
 LIBRARY_PRIME_SPELLING_SOURCES_V1 = json
 .PHONY: test-library-spellings-v1
 test-library-spellings-v1: $(LIBRARY_SPELLING_TOOL_V1) \
@@ -40839,6 +40839,29 @@ refresh-petta-reference-vocabulary-v1:
 		"$(PETTA_REFERENCE_ROOT)" $(PETTA_REFERENCE_VOCABULARY_V1)
 
 test: test-library-spellings-v1 test-petta-vocabulary-v1
+
+.PHONY: test-llm-library-v1 test-llm-io-v1
+ifeq ($(ENABLE_JSON_GSLT),1)
+test-llm-library-v1: $(BIN) test-library-spellings-v1 \
+		lib/llm.metta lib/llm/command.metta lib/llm/compat.metta \
+		tests/support/test_llm_library_v1.py
+	@CETTA_BIN="$(abspath $(BIN))" python3 tests/support/test_llm_library_v1.py
+test: test-llm-library-v1
+else
+test-llm-library-v1:
+	@echo 'test-llm-library-v1 requires ENABLE_JSON_GSLT=1' >&2
+	@exit 1
+endif
+
+ifeq ($(HTTP_ENABLED)$(ENABLE_JSON_GSLT),11)
+test-llm-io-v1: $(BIN) test-library-spellings-v1 lib/llm/io.metta \
+		tests/support/test_llm_io_v1.py
+	@CETTA_BIN="$(abspath $(BIN))" python3 tests/support/test_llm_io_v1.py
+else
+test-llm-io-v1:
+	@echo 'test-llm-io-v1 requires ENABLE_HTTP=1 and ENABLE_JSON_GSLT=1' >&2
+	@exit 1
+endif
 
 # A checked certificate as compact records (the TSTP derivation): the
 # fixture's refutation is searched, replayed by the trace checker, related
