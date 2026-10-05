@@ -28,6 +28,7 @@
 
 (: __cetta_lib_json_capabilities_v1 (-> Atom Atom))
 (: __cetta_lib_json_parse_v1 (-> String Atom))
+(: __cetta_lib_json_to_legacy_v1 (-> Atom Atom))
 (: __cetta_lib_json_stringify_v1 (-> Atom Atom))
 (: __cetta_lib_json_members_v1 (-> Atom Atom))
 (: __cetta_lib_json_get_all_v1 (-> Atom String Atom))
@@ -53,6 +54,15 @@
 (= (json:stringify $value)
    (function
      (chain (eval (__cetta_lib_json_stringify_v1 $value)) $result
+       (return $result))))
+
+; Structural compatibility conversion, without emitting or reparsing text.
+; Member order, duplicates, number lexemes and full string bytes survive;
+; occurrence identities and source spans are omitted by the historical shape.
+(: json:to-legacy (-> %Undefined% Atom))
+(= (json:to-legacy $value)
+   (function
+     (chain (eval (__cetta_lib_json_to_legacy_v1 $value)) $result
        (return $result))))
 
 (: json:members (-> %Undefined% Atom))

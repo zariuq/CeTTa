@@ -374,6 +374,28 @@ static Atom *json_parse(CettaJsonLibraryRuntimeV1 *runtime,
     return json_lane_value(arena, result);
 }
 
+static Atom *json_to_historical(Arena *arena, Atom *head,
+                                Atom **args, uint32_t nargs) {
+    Atom *result = NULL;
+    CettaJsonValueV1Status status;
+    char error[512] = {0};
+    if (nargs != 1u) {
+        return json_failure(
+            arena, head, args, nargs,
+            "JsonToLegacyV1", "JsonBadArgumentV1",
+            "expected one canonical JSON value");
+    }
+    if (!cetta_json_value_v1_to_legacy(
+            arena, json_codec_value(arena, args[0]), 1000000u, 1024u,
+            &result, &status, error, sizeof(error))) {
+        return json_failure(
+            arena, head, args, nargs,
+            "JsonToLegacyV1", json_value_failure_symbol(status),
+            error[0] ? error : cetta_json_value_v1_status_name(status));
+    }
+    return json_lane_value(arena, result);
+}
+
 static Atom *json_stringify(CettaJsonLibraryRuntimeV1 *runtime,
                             Arena *arena, Atom *head,
                             Atom **args, uint32_t nargs,
@@ -558,6 +580,8 @@ Atom *cetta_json_library_dispatch_v1(
         return json_capabilities(runtime, arena, head, args, nargs);
     if (id == g_builtin_syms.lib_json_parse_v1)
         return json_parse(runtime, arena, head, args, nargs, false);
+    if (id == g_builtin_syms.lib_json_to_legacy_v1)
+        return json_to_historical(arena, head, args, nargs);
     if (id == g_builtin_syms.lib_json_parse)
         return json_parse(runtime, arena, head, args, nargs, true);
     if (id == g_builtin_syms.lib_json_stringify_v1)

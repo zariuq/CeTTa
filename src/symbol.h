@@ -389,6 +389,7 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(lib_proc_run, "__cetta_lib_proc_run") \
     X(lib_json_capabilities_v1, "__cetta_lib_json_capabilities_v1") \
     X(lib_json_parse_v1, "__cetta_lib_json_parse_v1") \
+    X(lib_json_to_legacy_v1, "__cetta_lib_json_to_legacy_v1") \
     X(lib_json_parse, "__cetta_lib_json_parse") \
     X(lib_json_stringify_v1, "__cetta_lib_json_stringify_v1") \
     X(lib_json_stringify, "__cetta_lib_json_stringify") \
@@ -800,6 +801,7 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(parse) \
     X(parse_first) \
     X(lib_json_parse_v1) \
+    X(lib_json_to_legacy_v1) \
     X(lib_json_parse) \
     X(lib_json_stringify_v1) \
     X(lib_json_stringify) \
