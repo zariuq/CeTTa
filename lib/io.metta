@@ -7,7 +7,9 @@
 (: io:capabilities (-> Expression))
 (: io:submit (-> Atom Expression))
 (: io:poll (-> Expression))
+(: io:poll (-> Number Expression))
 (: io:wait (-> Number Expression))
+(: io:wait (-> Number Number Expression))
 (: io:cancel (-> Number Expression))
 
 (: http:request (-> Atom Atom Expression String Number Number Atom))
@@ -24,6 +26,11 @@
 (= (io:poll)
    (__cetta_lib_io_poll ()))
 
+; Owned polling leaves every other request's completion queued. A consumed or
+; cancelled ID answers io:unknown; an existing unfinished request answers idle.
+(= (io:poll $id)
+   (__cetta_lib_io_poll $id))
+
 (= (io:cancel $id)
    (__cetta_lib_io_cancel $id))
 
@@ -38,3 +45,6 @@
 
 (= (io:wait $timeout-ms)
    (__cetta_lib_io_wait $timeout-ms))
+
+(= (io:wait $id $timeout-ms)
+   (__cetta_lib_io_wait $id $timeout-ms))

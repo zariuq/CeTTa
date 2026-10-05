@@ -116,6 +116,10 @@ bool cetta_http_worker_abandon(CettaHttpWorker *worker, uint64_t id);
 /* Only available without observe hooks. Transfers the result's body to the
  * caller, which frees it with cetta_http_result_free. */
 bool cetta_http_worker_take(CettaHttpWorker *worker, CettaHttpResult *out);
+/* Select one completed handle. Other results remain owned by the worker and
+ * charged to its aggregate byte budget. Refused for durable observe hooks. */
+bool cetta_http_worker_take_id(CettaHttpWorker *worker, uint64_t id,
+                              CettaHttpResult *out);
 void cetta_http_result_free(CettaHttpResult *result);
 
 /* Wait for a completion/progress notification or timeout, using a monotonic

@@ -222,6 +222,41 @@ int main(int argc, char **argv) {
     CHECK(idle(dispatch(runtime, &arena, "__cetta_lib_io_poll", NULL, 0u)),
           "consumed completions cannot replay");
 
+    char owned_slow_url[512];
+    make_url(owned_slow_url, sizeof(owned_slow_url), argv[1], "/slow");
+    Atom *foreign_request = http_request(&arena, one_url, 64);
+    Atom *owned_request = http_request(&arena, owned_slow_url, 64);
+    int64_t foreign_id = 0, owned_id = 0;
+    CHECK(pending_id(dispatch(runtime, &arena, "__cetta_lib_io_submit",
+                             &foreign_request, 1u), &foreign_id),
+          "foreign completion candidate is admitted");
+    CHECK(pending_id(dispatch(runtime, &arena, "__cetta_lib_io_submit",
+                             &owned_request, 1u), &owned_id),
+          "owned completion candidate is admitted");
+    Atom *owned_wait_args[] = {atom_int(&arena, owned_id), atom_int(&arena, 5000)};
+    Atom *owned_event = dispatch(runtime, &arena, "__cetta_lib_io_wait", owned_wait_args, 2u);
+    int64_t owned_observed_id = 0;
+    Atom *owned_result = NULL;
+    CHECK(event_parts(owned_event, &owned_observed_id, &owned_result) &&
+          owned_observed_id == owned_id && http_response(owned_result, 200, "slow"),
+          "owned wait selects its request despite an earlier foreign completion");
+    Atom *foreign_arg = atom_int(&arena, foreign_id);
+    Atom *foreign_event = dispatch(runtime, &arena, "__cetta_lib_io_poll", &foreign_arg, 1u);
+    int64_t foreign_observed_id = 0;
+    Atom *foreign_result = NULL;
+    CHECK(event_parts(foreign_event, &foreign_observed_id, &foreign_result) &&
+          foreign_observed_id == foreign_id && http_response(foreign_result, 200, "one"),
+          "owned wait leaves the foreign completion available to its owner");
+    Atom *retired = dispatch(runtime, &arena, "__cetta_lib_io_poll", &foreign_arg, 1u);
+    CHECK(retired && retired->kind == ATOM_EXPR && retired->expr.len == 2u &&
+          atom_is_symbol(retired->expr.elems[0], "io:unknown"),
+          "an already consumed owned handle is distinguishable from idle");
+    Atom *invalid_id = atom_int(&arena, 0);
+    Atom *invalid_poll = dispatch(runtime, &arena, "__cetta_lib_io_poll", &invalid_id, 1u);
+    CHECK(invalid_poll && invalid_poll->kind == ATOM_EXPR &&
+          atom_is_symbol(invalid_poll->expr.elems[0], "Error"),
+          "owned poll rejects a zero handle");
+
     char slow_url[512];
     make_url(slow_url, sizeof(slow_url), argv[1], "/slow");
     Atom *slow_arg = http_request(&arena, slow_url, 64);

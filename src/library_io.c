@@ -497,12 +497,15 @@ static bool io_http_start(CettaIoRuntime *runtime, CettaIoRequest *request,
     return true;
 }
 
-static void io_http_pump(CettaIoRuntime *runtime) {
-    if (!runtime || !runtime->worker || runtime->ready_head) return;
+static void io_http_pump(CettaIoRuntime *runtime, uint64_t selected_id) {
+    if (!runtime || !runtime->worker || (!selected_id && runtime->ready_head)) return;
+    CettaIoRequest *selected = selected_id ? io_request_find(runtime, selected_id) : NULL;
+    if (selected_id && (!selected || selected->ready)) return;
     CettaHttpResult result;
     /* Transfer only the completion consumed by this poll. Unconsumed bodies
      * remain charged to the worker's aggregate budget. */
-    while (cetta_http_worker_take(runtime->worker, &result)) {
+    while (selected_id ? cetta_http_worker_take_id(runtime->worker, selected_id, &result)
+                       : cetta_http_worker_take(runtime->worker, &result)) {
         CettaIoRequest *request = io_request_find(runtime, result.id);
         if (!request) { cetta_http_result_free(&result); continue; }
         request->transport_code = result.transport_code;
@@ -646,8 +649,9 @@ static bool io_http_start(CettaIoRuntime *runtime, CettaIoRequest *request,
     return true;
 }
 
-static void io_http_pump(CettaIoRuntime *runtime) {
+static void io_http_pump(CettaIoRuntime *runtime, uint64_t selected_id) {
     (void)runtime;
+    (void)selected_id;
 }
 
 #else
@@ -661,8 +665,9 @@ static bool io_http_start(CettaIoRuntime *runtime, CettaIoRequest *request,
     return false;
 }
 
-static void io_http_pump(CettaIoRuntime *runtime) {
+static void io_http_pump(CettaIoRuntime *runtime, uint64_t selected_id) {
     (void)runtime;
+    (void)selected_id;
 }
 
 #endif
@@ -795,10 +800,20 @@ static Atom *io_http_result(Arena *arena, CettaIoRequest *request) {
 
 static Atom *io_poll(CettaIoRuntime *runtime, Arena *arena,
                      Atom *head, Atom **args, uint32_t nargs) {
-    if (!io_zero_arg_ok(args, nargs))
-        return io_error(arena, head, args, nargs, "expected: (io:poll)");
-    io_http_pump(runtime);
-    CettaIoRequest *request = runtime ? runtime->ready_head : NULL;
+    int64_t selected_id = 0;
+    bool selected = !io_zero_arg_ok(args, nargs);
+    if (selected && (nargs != 1u ||
+        !io_nonnegative_int_arg(args[0], &selected_id) || selected_id == 0))
+        return io_error(arena, head, args, nargs,
+                        "expected: (io:poll) or (io:poll positive-id)");
+    io_http_pump(runtime, selected ? (uint64_t)selected_id : 0u);
+    CettaIoRequest *request = selected
+        ? io_request_find(runtime, (uint64_t)selected_id)
+        : runtime ? runtime->ready_head : NULL;
+    if (selected && !request)
+        return atom_expr2(arena, atom_symbol(arena, "io:unknown"),
+                          atom_int(arena, selected_id));
+    if (request && !request->ready) request = NULL;
     if (!request) {
         Atom *idle = atom_symbol(arena, "io:idle");
         return atom_expr(arena, &idle, 1u);
@@ -821,8 +836,12 @@ static Atom *io_poll(CettaIoRuntime *runtime, Arena *arena,
 
 static Atom *io_wait(CettaIoRuntime *runtime, Arena *arena,
                      Atom *head, Atom **args, uint32_t nargs) {
-    int64_t timeout;
-    if (nargs != 1u || !io_nonnegative_int_arg(args[0], &timeout) || timeout > INT_MAX)
+    int64_t timeout, selected_id = 0;
+    bool selected = nargs == 2u;
+    if ((nargs != 1u && nargs != 2u) ||
+        !io_nonnegative_int_arg(args[selected ? 1u : 0u], &timeout) ||
+        timeout > INT_MAX || (selected &&
+        (!io_nonnegative_int_arg(args[0], &selected_id) || selected_id == 0)))
         return io_error(arena, head, args, nargs, "expected a nonnegative timeout in milliseconds");
 #if CETTA_BUILD_HTTP_PROVIDER_CURL
     if (!runtime || !runtime->worker)
@@ -831,11 +850,18 @@ static Atom *io_wait(CettaIoRuntime *runtime, Arena *arena,
     clock_gettime(CLOCK_MONOTONIC, &now);
     uint64_t deadline = (uint64_t)now.tv_sec * 1000u + (uint64_t)now.tv_nsec / 1000000u + timeout;
     for (;;) {
-        io_http_pump(runtime);
-        if (runtime->ready_head) return io_poll(runtime, arena, head, NULL, 0);
+        io_http_pump(runtime, selected ? (uint64_t)selected_id : 0u);
+        CettaIoRequest *request = selected
+            ? io_request_find(runtime, (uint64_t)selected_id)
+            : runtime->ready_head;
+        if ((selected && !request) || (request && request->ready))
+            return io_poll(runtime, arena, head, selected ? args : NULL,
+                           selected ? 1u : 0u);
         clock_gettime(CLOCK_MONOTONIC, &now);
         uint64_t current = (uint64_t)now.tv_sec * 1000u + (uint64_t)now.tv_nsec / 1000000u;
-        if (current >= deadline) return io_poll(runtime, arena, head, NULL, 0);
+        if (current >= deadline)
+            return io_poll(runtime, arena, head, selected ? args : NULL,
+                           selected ? 1u : 0u);
         runtime->generation = cetta_http_worker_wait(runtime->worker,
             runtime->generation, (uint32_t)(deadline-current));
     }

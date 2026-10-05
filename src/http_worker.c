@@ -521,16 +521,25 @@ bool cetta_http_worker_resume_recording(CettaHttpWorker *w,uint64_t id) {
     pthread_mutex_unlock(&w->mutex); return resumed;
 }
 
-bool cetta_http_worker_take(CettaHttpWorker *w, CettaHttpResult *out) {
+static bool take_matching(CettaHttpWorker *w, uint64_t id, CettaHttpResult *out) {
     if (!w || !out || w->hooks.observe) return false;
     pthread_mutex_lock(&w->mutex);
-    Job *j=w->jobs; while (j && j->state!=READY) j=j->next;
+    Job *j=w->jobs;
+    while (j && (j->state!=READY || (id && j->request.id!=id))) j=j->next;
     bool taken=j!=NULL;
     if (j) {
         *out=j->result; j->result.body=NULL; j->result.body_size=0;
         retire(w,j);
     }
     pthread_mutex_unlock(&w->mutex); return taken;
+}
+
+bool cetta_http_worker_take(CettaHttpWorker *w, CettaHttpResult *out) {
+    return take_matching(w,0,out);
+}
+
+bool cetta_http_worker_take_id(CettaHttpWorker *w, uint64_t id, CettaHttpResult *out) {
+    return id && take_matching(w,id,out);
 }
 
 uint64_t cetta_http_worker_wait(CettaHttpWorker *w,uint64_t generation,uint32_t timeout_ms) {
@@ -565,6 +574,9 @@ CettaHttpCancel cetta_http_worker_cancel(CettaHttpWorker *w,uint64_t id) { (void
 bool cetta_http_worker_resume_recording(CettaHttpWorker *w,uint64_t id) { (void)w; (void)id; return false; }
 bool cetta_http_worker_abandon(CettaHttpWorker *w,uint64_t id) { (void)w; (void)id; return false; }
 bool cetta_http_worker_take(CettaHttpWorker *w,CettaHttpResult *r) { (void)w; (void)r; return false; }
+bool cetta_http_worker_take_id(CettaHttpWorker *w,uint64_t id,CettaHttpResult *r) {
+    (void)w; (void)id; (void)r; return false;
+}
 uint64_t cetta_http_worker_wait(CettaHttpWorker *w,uint64_t g,uint32_t ms) { (void)w; (void)ms; return g; }
 size_t cetta_http_worker_free(CettaHttpWorker *w) { (void)w; return 0; }
 #endif

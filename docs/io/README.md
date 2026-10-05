@@ -14,6 +14,15 @@ completion. A zero-time wait polls. Blocking wait is native-only; browser code
 must yield to its event loop. Ephemeral `io:cancel` abandons the completion,
 which is not evidence that the peer did not receive the request.
 
+For multiple clients sharing a runtime, `io:poll handle` and
+`io:wait handle milliseconds` consume only the selected completion. Other bodies
+remain owned by the worker and count toward its aggregate response-byte limit.
+An unfinished handle returns `(io:idle)`; an unknown, consumed or cancelled
+handle returns `(io:unknown handle)`. Handles are positive integers local to one
+runtime session. The unselected operations retain their original behavior.
+The [buffered LLM library](../../verification/llm/README.md) uses these operations
+so waiting for one provider request does not drain another client's response.
+
 `CettaHttpWorker` is also the transport mechanism for the durable host. Its
 optional hooks execute on the owner thread, without the worker mutex:
 
