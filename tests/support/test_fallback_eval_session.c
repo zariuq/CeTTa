@@ -830,6 +830,94 @@ static bool match_owned_byte_view_contract(void) {
     return true;
 }
 
+/* Relocating a completed producer must move every outcome field through one
+ * graph session. Repeated pointers remain aliases, equal separate values stay
+ * separate, and a captured byte owner survives destruction of the source. */
+static bool completed_outcome_relocation_contract(void) {
+    const size_t size = 65536u;
+    for (unsigned language = 0u; language < 2u; language++) {
+        CettaLibraryContext *context = calloc(1u, sizeof(*context));
+        if (!context)
+            return false;
+        cetta_eval_session_init(&context->session,
+            language ? CETTA_LANGUAGE_PETTA : CETTA_LANGUAGE_HE,
+            language ? cetta_profile_petta_extended() : cetta_profile_he_extended());
+        context->native_handle_next_id = 1u;
+        eval_set_library_context(context);
+        Arena source, receiver;
+        arena_init_detached(&source);
+        arena_init_detached(&receiver);
+        unsigned char *bytes = malloc(size);
+        if (!bytes)
+            abort();
+        memset(bytes, 'r', size);
+        bytes[17] = 0;
+        uint64_t id;
+        if (!cetta_native_handle_alloc(context, byte_payload_kind, bytes,
+                                      byte_payload_release, &id))
+            abort();
+        Atom *handle = cetta_native_handle_owned_atom(
+            context, &source, byte_payload_kind, id);
+        Atom *parts[] = {atom_symbol(&source, "ByteSpan"), handle,
+                        atom_int(&source, 17), atom_int(&source, 5)};
+        Atom *shared = atom_expr(&source, parts, 4u);
+        Atom *equal = atom_expr(&source, parts, 4u);
+        Atom *value = atom_expr(&source, (Atom *[]){
+            atom_symbol(&source, "Held"), shared, shared, equal}, 4u);
+        Atom *variable = module_atom(&source, "$held");
+        VarId variable_id = variable->var_id;
+        Bindings env;
+        bindings_init(&env);
+        bool ok = shared != equal && atom_eq(shared, equal) &&
+            bindings_add_var(&env, variable, shared);
+        OutcomeSet original, relocated;
+        outcome_set_init(&original);
+        outcome_set_init(&relocated);
+        outcome_set_add(&original, value, &env);
+        outcome_set_add(&original, value, &env);
+        for (CettaCount i = 0u; i < original.len; i++) {
+            original.items[i].materialized_atom = value;
+            original.items[i].delayed = equal;
+        }
+        unsigned before_release = byte_payload_released;
+        AtomDeepCopySession *copy = atom_deep_copy_session_new(&receiver);
+        ok = ok && copy && outcome_set_relocate_clone(
+            &relocated, &original, &receiver, copy);
+        atom_deep_copy_session_free(copy);
+        outcome_set_free(&original);
+        bindings_free(&env);
+        arena_free(&source);
+        ok = ok && relocated.len == 2u &&
+            byte_payload_released == before_release;
+        for (CettaCount i = 0u; ok && i < relocated.len; i++) {
+            Outcome *outcome = &relocated.items[i];
+            Atom *saved = outcome->atom;
+            ok = saved && saved->kind == ATOM_EXPR && saved->expr.len == 4u &&
+                saved == outcome->materialized_atom &&
+                saved == relocated.items[0].atom;
+            if (!ok)
+                break;
+            BindingValue bound = bindings_lookup_value_id(&outcome->env, variable_id);
+            ok = saved->expr.elems[1] == saved->expr.elems[2] &&
+                saved->expr.elems[1] != saved->expr.elems[3] &&
+                atom_eq(saved->expr.elems[1], saved->expr.elems[3]) &&
+                outcome->delayed == saved->expr.elems[3] &&
+                bound.skeleton == saved->expr.elems[1] &&
+                byte_view_read(context, saved->expr.elems[1], size) == bytes + 17u;
+        }
+        outcome_set_free(&relocated);
+        arena_free(&receiver);
+        ok = ok && byte_payload_released == before_release + 1u;
+        cetta_native_handle_cleanup_all(context);
+        cetta_library_context_free(context);
+        eval_set_library_context(NULL);
+        free(context);
+        if (!ok)
+            return false;
+    }
+    return true;
+}
+
 typedef struct {
     unsigned holds;
     bool armed;
@@ -965,6 +1053,10 @@ int main(void) {
     }
     if (!match_owned_byte_view_contract()) {
         fprintf(stderr, "owned byte-view publication contract failure\n");
+        goto cleanup;
+    }
+    if (!completed_outcome_relocation_contract()) {
+        fprintf(stderr, "completed outcome relocation contract failure\n");
         goto cleanup;
     }
     if (!execution_owner_callback_contract()) {

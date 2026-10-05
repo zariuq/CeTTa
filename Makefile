@@ -791,6 +791,23 @@ BIN = cetta
 BIN_FORCE = FORCE
 endif
 endif
+## A configuration probe may recurse from a caller selecting a private BIN.
+## An inherited filename cannot name both builds: keep explicit child outputs,
+## but give a changed configuration its own tagged output when it inherits the
+## parent's filename. Same-configuration children retain the selected artifact.
+ifneq ($(strip $(CETTA_PARENT_BUILD_SIGNATURE)),)
+ifneq ($(CETTA_PARENT_BUILD_SIGNATURE),$(BUILD_OBJ_TAG):$(ENABLE_RUNTIME_STATS))
+ifeq ($(abspath $(BIN)),$(CETTA_PARENT_BINARY))
+override BIN := runtime/cetta-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+# GNU Make otherwise forwards the original command-line BIN to grandchildren,
+# even after this override. Their link target would differ from the executable
+# selected by the intermediate test recipe.
+override MAKEOVERRIDES := $(filter-out BIN=%,$(MAKEOVERRIDES)) BIN=$(BIN)
+endif
+endif
+endif
+export CETTA_PARENT_BUILD_SIGNATURE := $(BUILD_OBJ_TAG):$(ENABLE_RUNTIME_STATS)
+export CETTA_PARENT_BINARY := $(abspath $(BIN))
 RUNTIME_STATS_SECTIONED_OBJ = $(if $(filter 1,$(ENABLE_RUNTIME_STATS)),runtime/bootstrap/runtime_stats_sectioned.$(BUILD_OBJ_TAG).runtime-stats.o,)
 COMPILED_READER_RUNTIME_OBJ = $(patsubst %.c,%.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o,$(COMPILED_READER_RUNTIME_SRC))
 FALLBACK_EVAL_TEST_SRC = tests/support/test_fallback_eval_session.c
@@ -17760,6 +17777,8 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		's/^runtime-counter eval-tail-collection-candidate //p'); \
 	blocked=$$(printf '%s\n' "$$result" | sed -n \
 		's/^runtime-counter eval-tail-blocked-imprecise-root //p'); \
+	external=$$(printf '%s\n' "$$result" | sed -n \
+		's/^runtime-counter eval-tail-blocked-external-owner //p'); \
 	live=$$(printf '%s\n' "$$result" | sed -n \
 		's/^runtime-counter eval-tail-blocked-live-outcome //p'); \
 	safe=$$(printf '%s\n' "$$result" | sed -n \
@@ -17772,17 +17791,18 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	   [ "$$visible" != "$$expected" ] || \
 	   ! expr "$$candidates" : '[0-9][0-9]*$$' >/dev/null || \
 	   ! expr "$$blocked" : '[0-9][0-9]*$$' >/dev/null || \
+	   ! expr "$$external" : '[0-9][0-9]*$$' >/dev/null || \
 	   ! expr "$$live" : '[0-9][0-9]*$$' >/dev/null || \
 	   ! expr "$$safe" : '[0-9][0-9]*$$' >/dev/null || \
 	   ! expr "$$reclaimed" : '[0-9][0-9]*$$' >/dev/null || \
 	   ! expr "$$collected" : '[0-9][0-9]*$$' >/dev/null || \
-	   [ "$$blocked" -le 0 ] || [ "$$live" -ne 0 ] || \
+	   [ "$$blocked" -le 0 ] || [ "$$external" -le 0 ] || [ "$$live" -ne 0 ] || \
 	   [ "$$safe" -le 0 ] || [ "$$reclaimed" -le 0 ] || \
 	   [ "$$collected" -le 0 ] || [ "$$collected" -gt "$$safe" ] || \
-	   [ "$$candidates" -ne $$((blocked + live + collected)) ]; then \
+	   [ "$$candidates" -ne $$((blocked + external + live + collected)) ]; then \
 		echo "FAIL: monolithic Prime equation search did not fail closed around moving GC"; \
 		printf '%s\n' "visible=$$visible" \
-			"exit=$$status candidates=$$candidates blocked=$$blocked live=$$live safe=$$safe collected=$$collected reclaimed=$$reclaimed"; \
+			"exit=$$status candidates=$$candidates blocked=$$blocked external=$$external live=$$live safe=$$safe collected=$$collected reclaimed=$$reclaimed"; \
 		if [ "$$status" -ne 0 ]; then \
 			printf '%s\n' "$$result" | tail -120; \
 		fi; \
@@ -29779,7 +29799,11 @@ test-prepared-pure-answer-producer: $(PREPARED_PURE_ANSWER_TEST_BIN)
 	@$(call cetta_exec,./$(PREPARED_PURE_ANSWER_TEST_BIN))
 
 .PHONY: test-owned-resumable-consumers
-test: test-owned-resumable-consumers
+.PHONY: test-he-shared-execution
+test-he-shared-execution: $(BIN)
+	@python3 tests/support/test_he_shared_execution.py $(BIN)
+
+test: test-owned-resumable-consumers test-he-shared-execution
 test-owned-resumable-consumers: $(BIN)
 	@python3 tests/support/test_owned_resumable_consumers.py ./$(BIN)
 
