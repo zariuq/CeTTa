@@ -138,6 +138,7 @@ typedef struct {
     uint64_t id_present_bits; /* capacity in bits; 0 = unallocated */
     CettaIndex id_present_synced_len; /* logical prefix already reflected in id_present (lazy catch-up) */
     bool id_present_dirty;    /* removal/bulk invalidated bits: clear + full resync on next membership query */
+    bool id_present_incomplete; /* pointer-backed rows omitted from the canonical projection */
     bool eq_idx_dirty;
     bool ty_idx_dirty;
     bool exact_idx_dirty;
@@ -162,6 +163,7 @@ typedef struct Space {
             uint64_t id_present_bits;
             CettaIndex id_present_synced_len;
             bool id_present_dirty;
+            bool id_present_incomplete;
             bool eq_idx_dirty;
             bool ty_idx_dirty;
             bool exact_idx_dirty;

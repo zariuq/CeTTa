@@ -940,6 +940,116 @@ static void test_space_imported_prefix(void) {
            "removal, truncation, copies and overlays\n");
 }
 
+static void test_runtime_symbol_membership(void) {
+    Arena persistent, scratch;
+    TermUniverse universe;
+    Space space;
+    arena_init(&persistent);
+    arena_init(&scratch);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    space_init_with_universe(&space, &universe);
+
+    Atom *head = atom_symbol(&scratch, "runtime-membership-head");
+    space.kind = SPACE_KIND_STACK;
+    const char bytes[] = {'r', 0, (char)0xff, 'a'};
+    const char different[] = {'r', 0, (char)0xff, 'b'};
+    Atom *value = atom_symbol_data_n(&scratch, bytes, sizeof(bytes));
+    Atom *fact = atom_expr2(&scratch, head, value);
+    Atom *other = atom_expr2(&scratch, head,
+        atom_symbol_data_n(&scratch, different, sizeof(different)));
+    space_add(&space, fact);
+    space_add(&space, other);
+    space_add(&space, atom_deep_copy(&scratch, fact));
+    Atom *query = atom_deep_copy(&scratch, fact);
+    Atom *prefix_query = atom_expr2(&scratch, head,
+        atom_symbol_data_n(&scratch, bytes, 1u));
+    assert(query != space_get_at64(&space, 0u));
+
+    SymbolTableStats before, after;
+    symbol_table_stats_snapshot(g_symbols, &before);
+    CettaIndex *matches = NULL;
+    assert(space_exact_match_indices64(&space, query, &matches) == 2u);
+    assert(matches[0] == 0u && matches[1] == 2u);
+    free(matches);
+    assert(space_contains_exact(&space, query));
+    assert(space_contains_for_add_nodup(&space, query));
+    assert(!space_contains_exact(&space, prefix_query));
+    bool applicable = false;
+    assert(space_match_exists_ground_exact(&space, query, &applicable));
+    assert(applicable);
+    symbol_table_stats_snapshot(g_symbols, &after);
+    assert(before.owned_count == after.owned_count &&
+           before.data_count == after.data_count);
+
+    /* A spelling retained before registration still matches numbered values.
+       Duplicate rows may use both representations, in authored order. */
+    SymbolId registered = atom_symbol_register_id(value);
+    Atom *numbered = atom_expr2(&scratch, head,
+        atom_symbol_id(&scratch, registered));
+    assert(space_contains_exact(&space, numbered));
+    assert(space_contains_for_add_nodup(&space, numbered));
+    bool canonical_applicable = false;
+    bool canonical_found = space_contains_canonical(
+        &space, numbered, &canonical_applicable);
+#if CETTA_MANAGED_SYMBOLS
+    assert(!canonical_found && !canonical_applicable);
+    assert(space.native.id_present_incomplete);
+#else
+    assert(canonical_found && canonical_applicable);
+#endif
+    space_add(&space, numbered);
+    assert(space_exact_match_indices64(&space, numbered, &matches) == 3u);
+    assert(matches[0] == 0u && matches[1] == 2u && matches[2] == 3u);
+    free(matches);
+    assert(space_exact_match_indices64(&space, query, &matches) == 3u);
+    assert(matches[0] == 0u && matches[1] == 2u && matches[2] == 3u);
+    free(matches);
+
+    /* Numeric-only coordinate accelerators must decline an incomplete view. */
+    Atom *arguments[] = {numbered->expr.elems[1]};
+    bool coordinate_found = space_contains_exact_symbol_application(
+        &space, atom_symbol_current_id(head), arguments, 1u, &applicable);
+#if CETTA_MANAGED_SYMBOLS
+    assert(!coordinate_found && !applicable);
+#else
+    assert(coordinate_found && applicable);
+#endif
+    coordinate_found = space_match_exists_ground_exact_expression_coordinates(
+        &space, numbered->expr.elems, numbered->expr.len, &applicable);
+#if CETTA_MANAGED_SYMBOLS
+    assert(!coordinate_found && !applicable);
+#else
+    assert(coordinate_found && applicable);
+#endif
+
+    /* Content equality also composes through nested expressions and overlays. */
+    Atom *nested = atom_expr2(&scratch, head, query);
+    space_add(&space, nested);
+    assert_exact_match_one(&space, atom_deep_copy(&scratch, nested), 4u);
+    Space overlay;
+    space_init_overlay(&overlay, &space);
+    assert(space_contains_exact(&overlay, atom_deep_copy(&scratch, nested)));
+    space_free(&overlay);
+
+    assert(space_remove(&space, numbered));
+    assert(space_exact_match_indices64(&space, numbered, &matches) == 2u);
+    assert(matches[0] == 1u && matches[1] == 2u);
+    free(matches);
+    assert(space_truncate64(&space, 0u));
+    assert(!space_contains_exact(&space, numbered));
+    assert(!space.native.id_present_incomplete);
+    space_add(&space, numbered);
+    assert(space_contains_exact_symbol_application(
+        &space, atom_symbol_current_id(head), arguments, 1u, &applicable));
+    assert(applicable);
+    space_free(&space);
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&persistent);
+    puts("PASS: runtime spelling membership, mixed keys, duplicates and mutation");
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena persistent;
@@ -953,6 +1063,7 @@ int main(void) {
     Space right;
 
     init_test_symbols(&symbols);
+    test_runtime_symbol_membership();
     test_space_imported_prefix();
     test_space_equation_projection_tokens();
     test_space_program_projection_tokens();

@@ -2808,6 +2808,7 @@ static bool id_present_set(SpaceNativeStorage *ns, AtomId id) {
 static void id_present_clear(SpaceNativeStorage *ns) {
     if (ns->id_present)
         memset(ns->id_present, 0, (size_t)(ns->id_present_bits >> 3));
+    ns->id_present_incomplete = false;
 }
 
 static void id_present_free(SpaceNativeStorage *ns) {
@@ -3918,6 +3919,7 @@ static void space_native_storage_init_empty(Space *s, TermUniverse *universe) {
     s->native.id_present_bits = 0;
     s->native.id_present_synced_len = 0;
     s->native.id_present_dirty = false;
+    s->native.id_present_incomplete = false;
     s->native.eq_idx_dirty = false;
     s->native.ty_idx_dirty = false;
     s->native.exact_idx_dirty = false;
@@ -5363,11 +5365,13 @@ static bool id_present_sync(Space *s) {
         if (!tu_hdr(s->native.universe, stored_id)) {
             Atom *stored =
                 term_universe_get_atom(s->native.universe, stored_id);
-            /* Pointer-backed runtime values do not have lawful structural
-               intern keys.  Leave them to the exact/alpha scan; stable queries
-               can still use the projection built from the remaining rows. */
-            if (stored && !term_universe_atom_is_stable(stored))
+            /* Omitted rows can equal a later numbered query. A positive bit
+               remains evidence, but a miss is conclusive only when every row
+               has a canonical key. */
+            if (stored && !term_universe_atom_is_stable(stored)) {
+                s->native.id_present_incomplete = true;
                 continue;
+            }
         }
         AtomId cid = space_canonical_id_for_stored(s, stored_id);
         if (cid == CETTA_ATOM_ID_NONE ||
@@ -7570,14 +7574,15 @@ CettaIndex space_exact_match_indices64(Space *s, Atom *atom, CettaIndex **out) {
     if (!s->native.universe)
         return 0;
     AtomId query_id = term_universe_lookup_atom_id(s->native.universe, atom);
-    if (query_id == CETTA_ATOM_ID_NONE)
-        return 0;
+    bool query_canonical = query_id != CETTA_ATOM_ID_NONE &&
+        tu_hdr(s->native.universe, query_id) != NULL;
 #ifndef NDEBUG
-    assert(term_universe_atom_id_eq(s->native.universe, query_id, atom));
+    assert(query_id == CETTA_ATOM_ID_NONE ||
+           term_universe_atom_id_eq(s->native.universe, query_id, atom));
 #endif
     ensure_exact_index(s);
     ExactAtomBucket *bucket =
-        &s->native.exact_idx.buckets[exact_atom_hash_id(s, query_id)];
+        &s->native.exact_idx.buckets[exact_atom_hash(atom)];
     if (bucket->len == 0)
         return 0;
     CettaIndex *matches = cetta_malloc(sizeof(CettaIndex) * bucket->len);
@@ -7590,7 +7595,13 @@ CettaIndex space_exact_match_indices64(Space *s, Atom *atom, CettaIndex **out) {
 #ifndef NDEBUG
         assert(candidate_id != CETTA_ATOM_ID_NONE);
 #endif
-        if (candidate_id == query_id)
+        /* Canonical ids are a complete equality test only for encoded terms.
+           Arena-owned spellings use the same content hash, followed by
+           structural equality; retaining them must not register their names. */
+        if (candidate_id == query_id ||
+            ((!query_canonical ||
+              !tu_hdr(s->native.universe, candidate_id)) &&
+             term_universe_atom_id_eq(s->native.universe, candidate_id, atom)))
             matches[n++] = idx;
     }
     if (n == 0) {
@@ -7661,8 +7672,12 @@ bool space_contains_exact(Space *s, Atom *atom) {
             AtomId qid = s->native.universe
                 ? term_universe_lookup_atom_id(s->native.universe, atom)
                 : CETTA_ATOM_ID_NONE;
-            return qid != CETTA_ATOM_ID_NONE &&
-                   id_present_contains(&s->native, qid);
+            if (qid != CETTA_ATOM_ID_NONE &&
+                id_present_contains(&s->native, qid))
+                return true;
+            if (!s->native.id_present_incomplete &&
+                term_universe_atom_is_stable(atom))
+                return false;
         }
     }
     CettaIndex *matches = NULL;
@@ -7688,10 +7703,11 @@ bool space_contains_exact_symbol_application(
     }
     for (CettaExprIndex index = 0u;
          index < argument_count; index++) {
-        if (!atom_is_exact_indexable(arguments[index]))
+        if (!atom_is_exact_indexable(arguments[index]) ||
+            !term_universe_atom_is_stable(arguments[index]))
             return false;
     }
-    if (!id_present_sync(s))
+    if (!id_present_sync(s) || s->native.id_present_incomplete)
         return false;
     AtomId query_id = term_universe_lookup_symbol_application(
         s->native.universe, head, arguments, argument_count);
@@ -7750,10 +7766,11 @@ bool space_match_exists_ground_exact_expression_coordinates(
     }
     for (CettaExprIndex index = 0u;
          index < coordinate_count; index++) {
-        if (!atom_is_exact_indexable(coordinates[index]))
+        if (!atom_is_exact_indexable(coordinates[index]) ||
+            !term_universe_atom_is_stable(coordinates[index]))
             return false;
     }
-    if (!id_present_sync(s))
+    if (!id_present_sync(s) || s->native.id_present_incomplete)
         return false;
     AtomId query_id = term_universe_lookup_expression_coordinates(
         s->native.universe, coordinates, coordinate_count);
@@ -7786,10 +7803,12 @@ bool space_contains_canonical(Space *s, Atom *atom, bool *out_applicable) {
        exact-index buckets each time (the O(N^2) source). */
     if (!id_present_sync(s))
         return false;
-    if (out_applicable)
-        *out_applicable = true;
     AtomId cid = space_canonical_id_for_query(s, atom);
-    return cid != CETTA_ATOM_ID_NONE && id_present_contains(&s->native, cid);
+    bool found = cid != CETTA_ATOM_ID_NONE &&
+        id_present_contains(&s->native, cid);
+    if (out_applicable)
+        *out_applicable = found || !s->native.id_present_incomplete;
+    return found;
 }
 
 bool space_contains_for_add_nodup(Space *s, Atom *atom) {
