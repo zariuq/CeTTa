@@ -2499,6 +2499,18 @@ static void test_dense_term_instantiation(Arena *arena) {
     Atom *x = atom_var_with_id(arena, "same", var_epoch_id(71u, first));
     Atom *y = atom_var_with_id(arena, "same", var_epoch_id(71u, second));
     Atom *z = atom_var_with_id(arena, "last", UINT64_C(900003));
+    Atom *shared = atom_expr2(arena, x, y);
+    Atom *aliases[2] = {atom_expr2(arena, shared, z), atom_expr2(arena, z, shared)};
+    CHECK(cetta_instantiate_frame_terms(arena, aliases, 2u) &&
+          aliases[0]->expr.elems[0] == aliases[1]->expr.elems[1],
+          "one freshening session preserves shared subgraphs across roots");
+    Atom *original = atom_expr2(arena, x, z);
+    Atom *incomplete[2] = {original, NULL};
+    ArenaMark failure_origin = arena_mark(arena);
+    CHECK(!cetta_instantiate_frame_terms(arena, incomplete, 2u) &&
+          incomplete[0] == original && incomplete[1] == NULL &&
+          arena_at_mark(arena, failure_origin),
+          "failed multi-root freshening neither publishes a partial root nor retains its storage");
     Atom *terms[2] = {atom_expr3(arena, x, y, z), atom_expr2(arena, z, x)};
     CHECK(cetta_instantiate_frame_terms(arena, terms, 2u),
           "instantiate related terms in one owned frame");

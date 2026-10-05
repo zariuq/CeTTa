@@ -963,6 +963,13 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "owned-execution-fold-step",
     "owned-execution-storage-peak",
     "owned-execution-copy-bytes",
+    "atom-transport-node",
+    "atom-transport-edge-visit",
+    "atom-transport-metadata-alloc-bytes",
+    "atom-transport-metadata-free-bytes",
+    "space-disc-truncated-subtree",
+    "space-private-reset",
+    "space-retired-occurrence-release-bytes",
 };
 
 static int64_t clamp_counter(uint64_t value) {

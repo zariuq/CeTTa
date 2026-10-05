@@ -3852,6 +3852,17 @@ test-bindings-lookup-index: $(BINDINGS_LOOKUP_INDEX_TEST_BIN) test-match-worklis
 	echo "PASS: binding-index falsifiers kill lazy-tail and stale-root mutations"
 .PHONY: test-bindings-lookup-index
 
+MATCH_CLOSED_NUMERIC_TEST_BIN = runtime/test_match_closed_numeric-$(BUILD_OBJ_TAG)
+$(MATCH_CLOSED_NUMERIC_TEST_BIN): tests/test_match_closed_numeric.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -o $@ tests/test_match_closed_numeric.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
+
+.PHONY: test-match-closed-numeric
+test: test-match-closed-numeric
+test-match-closed-numeric: $(MATCH_CLOSED_NUMERIC_TEST_BIN)
+	@$(call cetta_exec,./$(MATCH_CLOSED_NUMERIC_TEST_BIN))
+	@CETTA_MATCH_CLOSED_EXPRESSION_DECISION_REFERENCE=1 $(call cetta_exec,./$(MATCH_CLOSED_NUMERIC_TEST_BIN))
+
 runtime/bench_match_shared_published_reflexivity: benchmarks/inference_cost_axes/bench_shared_published_reflexivity.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ benchmarks/inference_cost_axes/bench_shared_published_reflexivity.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)

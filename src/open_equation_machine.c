@@ -4339,6 +4339,9 @@ typedef struct {
 typedef struct {
     Atom *left;
     Atom *right;
+    /* A borrowed suffix of right, used only within one atomic unification.
+     * It becomes an arena-owned header before entering a binding. */
+    CettaExprLen right_offset;
 } OemPair;
 
 /* A pending expression of the answer resolver: its children's results are
@@ -4841,11 +4844,24 @@ static inline __attribute__((always_inline)) OemUnify oem_unify_marked(
     if (!oem_reserve((void **)&cursor->pairs, &cursor->pair_cap, 1u,
                      sizeof(*cursor->pairs)))
         return OEM_UNIFY_ERROR;
-    cursor->pairs[len++] = (OemPair){left, right};
+    cursor->pairs[len++] = (OemPair){left, right, 0u};
     while (len > 0u) {
         OemPair pair = cursor->pairs[--len];
         Atom *a = oem_deref(cursor, pair.left);
         Atom *b = oem_deref(cursor, pair.right);
+        Atom right_view;
+        if (pair.right_offset) {
+            if (b->kind != ATOM_EXPR || pair.right_offset > b->expr.len)
+                return OEM_UNIFY_ERROR;
+            right_view = *b;
+            right_view.expr.elems += pair.right_offset;
+            right_view.expr.len -= pair.right_offset;
+            right_view.flags &= ~ATOM_FLAG_HASH_VALID;
+            /* The parent's summaries need not describe its suffix. Keep
+             * them unknown until a retained header computes exact facts. */
+            right_view.structural_facts = 0u;
+            b = &right_view;
+        }
         if (a == b)
             continue;
         uint32_t left_cell = 0u;
@@ -4859,6 +4875,12 @@ static inline __attribute__((always_inline)) OemUnify oem_unify_marked(
                 (!right_open || left_cell > right_cell);
             uint32_t index = bind_left ? left_cell : right_cell;
             Atom *value = bind_left ? b : a;
+            if (value == &right_view) {
+                value = atom_expr_suffix(&cursor->region, pair.right,
+                                          pair.right_offset);
+                if (!value)
+                    return OEM_UNIFY_ERROR;
+            }
             bool failed = false;
             if (oem_occurs(cursor, index, value, &failed))
                 return OEM_UNIFY_FAIL;
@@ -4882,15 +4904,15 @@ static inline __attribute__((always_inline)) OemUnify oem_unify_marked(
             Atom *list = left_list_cell ? b : a;
             if (list->kind != ATOM_EXPR || list->expr.len == 0u)
                 return OEM_UNIFY_FAIL;
-            Atom *rest = atom_expr_suffix(&cursor->region, list, 1u);
-            if (!rest ||
-                !oem_reserve((void **)&cursor->pairs, &cursor->pair_cap,
+            Atom *list_root = list == &right_view ? pair.right : list;
+            CettaExprLen offset = list == &right_view ? pair.right_offset : 0u;
+            if (!oem_reserve((void **)&cursor->pairs, &cursor->pair_cap,
                              len + 2u, sizeof(*cursor->pairs)))
                 return OEM_UNIFY_ERROR;
             cursor->pairs[len++] =
-                (OemPair){list_cell->expr.elems[2], rest};
+                (OemPair){list_cell->expr.elems[2], list_root, offset + 1u};
             cursor->pairs[len++] =
-                (OemPair){list_cell->expr.elems[1], list->expr.elems[0]};
+                (OemPair){list_cell->expr.elems[1], list->expr.elems[0], 0u};
             continue;
         }
         if (a->kind == ATOM_EXPR && b->kind == ATOM_EXPR) {
@@ -4912,7 +4934,7 @@ static inline __attribute__((always_inline)) OemUnify oem_unify_marked(
                 return OEM_UNIFY_ERROR;
             for (CettaExprIndex child = a->expr.len; child-- > 0u;)
                 cursor->pairs[len++] =
-                    (OemPair){a->expr.elems[child], b->expr.elems[child]};
+                    (OemPair){a->expr.elems[child], b->expr.elems[child], 0u};
             continue;
         }
         if (!atom_eq(a, b))
@@ -8329,7 +8351,7 @@ static OemRun oem_run_body(CettaOpenEquationCursor *cursor,
             if (!oem_loop_due(cursor)) {
                 if (cursor->runtime.interrupt)
                     cursor->poll++;
-                OemEntry callee;
+                OemEntry callee = {0};
                 OemRun run = oem_enter(cursor, target, relation, args, next,
                                        depth + 1u, &callee);
                 if (run != OEM_RUN_CALLED)
@@ -11871,7 +11893,7 @@ static CettaOpenEquationStep oem_cursor_run(
         OemFrame *frame = &cursor->frames[cursor->frame_len - 1u];
         oem_restore(cursor, frame);
         OemRun run = OEM_RUN_FAILED;
-        OemEntry entry;
+        OemEntry entry = {0};
         /* Once, elements, collection, resumption, host and match frames
          * carry the six highest relation values.  A once whose body has no
          * answer left fails. */

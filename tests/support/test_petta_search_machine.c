@@ -1816,6 +1816,43 @@ static void test_deep_typecheck_source_rewrites(
     eval_set_library_context(previous);
 }
 
+static void test_shared_value_observation(void) {
+    Arena source, destination;
+    arena_init(&source);
+    arena_init(&destination);
+    Atom *item = atom_symbol(&source, "shared-observation-item");
+    Atom *cons = petta_semantics_open_cons_value(&source, item, atom_unit(&source));
+    Atom *pair = atom_symbol(&source, "Pair");
+    Atom *dag = cons;
+    for (unsigned depth = 0u; depth < 60u; depth++)
+        dag = atom_expr3(&source, pair, dag, dag);
+    Atom *quote = atom_symbol_id(&source, g_builtin_syms.quote);
+    Atom *quoted = atom_expr2(&source, quote, cons);
+    Atom *revealed = petta_semantics_open_cons_value(&source, quote,
+        atom_expr(&source, &cons, 1u));
+    Atom *roots[] = {pair, dag, quoted, revealed};
+    Atom *root = atom_expr(&source, roots, 4u);
+    Atom *out = petta_semantics_materialize_value(&destination, root);
+    assert(out && out->expr.len == 4u);
+    arena_free(&source);
+    Atom *cursor = out->expr.elems[1];
+    for (unsigned depth = 0u; depth < 60u; depth++) {
+        assert(cursor->kind == ATOM_EXPR && cursor->expr.len == 3u);
+        assert(cursor->expr.elems[1] == cursor->expr.elems[2]);
+        cursor = cursor->expr.elems[1];
+    }
+    assert(cursor->kind == ATOM_EXPR && cursor->expr.len == 1u);
+    assert(atom_is_symbol(cursor->expr.elems[0], "shared-observation-item"));
+    Atom *kept = out->expr.elems[2]->expr.elems[1];
+    assert(petta_semantics_is_open_cons_value(kept));
+    assert(kept == out->expr.elems[3]->expr.elems[1]);
+    assert(!petta_semantics_is_open_cons_value(out->expr.elems[3]));
+    assert(atom_is_symbol_id(out->expr.elems[3]->expr.elems[0], g_builtin_syms.quote));
+    assert(arena_accounted_live_bytes(&destination) < 64u * 1024u);
+    arena_free(&destination);
+    puts("PASS: shared publication preserves graph size and distinct opaque observations");
+}
+
 static void test_deep_cons_semantics(Arena *arena) {
     enum { DEEP_FINITE_DEPTH = 4096 };
     Atom *box = atom_symbol(arena, "deep-cons-box");
@@ -3245,6 +3282,99 @@ static bool test_compiled_builtin_equations(
     void *context, Space *space, SymbolId head, uint32_t arity) {
     (void)space;
     return *(bool *)context && head == g_builtin_syms.petta_max && arity == 2u;
+}
+
+/* A list-cell comparison borrows a flat suffix only during unification.
+ * The suffix escapes through a query binding, survives a paused host call and
+ * source-arena retirement, then outlives cancellation of the cursor. */
+static void test_compiled_borrowed_suffix(TermUniverse *universe, Arena *arena) {
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    Space space;
+    space_init_with_universe(&space, universe);
+    add_compiled_program_equation(program, &space, arena,
+        "(= (suffix-boundary $x $x) (progn (eval checkpoint) (Pair $x $x)))");
+    const char *reason = NULL;
+    CettaOpenEquationProgram *compiled = cetta_open_equation_program_compile(
+        program, &space, symbol_intern_cstr(g_symbols, "suffix-boundary"),
+        2u, NULL, &reason);
+    if (!compiled) fprintf(stderr, "suffix compile: %s\n", reason);
+    assert(compiled);
+    for (unsigned cancel = 0u; cancel < 2u; cancel++) {
+        Arena source, answers;
+        arena_init(&source);
+        arena_init(&answers);
+        Atom *tail = atom_var_with_id(&answers, "retained-tail", fresh_var_id());
+        Atom *query_vars[] = {tail};
+        Atom *flat = parse_one(&source, "(1 2 (payload kept) 4 5)");
+        Atom *cell = petta_semantics_open_cons_value(&source,
+            atom_int(&source, 2), tail);
+        cell = petta_semantics_open_cons_value(&source,
+            atom_int(&source, 1), cell);
+        Atom *args[] = {cell, flat};
+        CettaOpenEquationCursor *cursor = cetta_open_equation_cursor_open(
+            compiled, &answers, args, 2u, NULL, query_vars, 1u, NULL);
+        assert(cursor);
+        Atom *value = NULL;
+        Atom **query_values = NULL;
+        assert(cetta_open_equation_cursor_next(cursor, query_vars, &value,
+            &query_values) == CETTA_OPEN_EQUATION_HOST);
+        CettaOpenEquationStats before, after;
+        cetta_open_equation_cursor_stats(cursor, &before);
+        assert(cetta_open_equation_cursor_detach(cursor, &source));
+        cetta_open_equation_cursor_stats(cursor, &after);
+        assert(after.collections > before.collections);
+        arena_free(&source);
+        if (!cancel) {
+            Atom *goal = NULL, *destination = NULL;
+            Atom *const *variables = NULL;
+            uint32_t count = 0u, base = 0u;
+            const PettaPlanNode *plan = NULL;
+            CettaOpenEquationHostMode mode;
+            bool recovers = false;
+            assert(cetta_open_equation_cursor_host_goal(cursor, &goal,
+                &destination, &variables, &count, &plan, &mode, &recovers));
+            assert(atom_alpha_eq(goal, parse_one(&answers, "(eval checkpoint)")));
+            assert(mode == CETTA_OPEN_EQUATION_HOST_SOLVE);
+            assert(destination && destination->kind == ATOM_VAR);
+            Atom **values = malloc(sizeof(*values) * count);
+            assert(values && count);
+            bool found = false;
+            for (uint32_t i = 0u; i < count; i++) {
+                values[i] = variables[i];
+                if (variables[i]->var_id == destination->var_id) {
+                    values[i] = atom_symbol(&answers, "resumed");
+                    found = true;
+                }
+            }
+            assert(found);
+            assert(cetta_open_equation_cursor_accept(cursor, query_vars,
+                variables, values, count, true, 0u, &base));
+            free(values);
+            assert(cetta_open_equation_cursor_continue(cursor, query_vars, base,
+                &value, &query_values) == CETTA_OPEN_EQUATION_ANSWER);
+            assert(query_values && atom_eq(query_values[0],
+                parse_one(&answers, "((payload kept) 4 5)")));
+            assert(value && value->kind == ATOM_EXPR && value->expr.len == 3u);
+            assert(value->expr.elems[1] == value->expr.elems[2]);
+            Atom *retained = query_values[0];
+            cetta_open_equation_cursor_close(cursor);
+            assert(atom_eq(retained, parse_one(&answers, "((payload kept) 4 5)")));
+            /* The compiled answer still uses the native list carrier. Its
+             * ordinary publication adapter supplies the observable value. */
+            Atom *observable = petta_semantics_materialize_value(&answers, value);
+            assert(atom_eq(observable, parse_one(&answers,
+                "(Pair (1 2 (payload kept) 4 5) (1 2 (payload kept) 4 5))")));
+            assert(observable->expr.elems[1] == observable->expr.elems[2]);
+        } else {
+            cetta_open_equation_cursor_close(cursor);
+        }
+        arena_free(&answers);
+    }
+    cetta_open_equation_program_release(compiled);
+    petta_program_free(program);
+    space_free(&space);
+    puts("PASS: borrowed unification suffix survives host suspension, relocation and cancellation");
 }
 
 static uint32_t test_compiled_accept_host_value(
@@ -11860,6 +11990,7 @@ int main(int argc, char **argv) {
     test_program_metadata_projection(&answers);
     test_program_callability_head_kinds(&answers);
     test_compiled_graph_transport(&universe, &persistent);
+    test_compiled_borrowed_suffix(&universe, &persistent);
     test_compiled_type_guard_protocol(&universe, &persistent);
     test_compiled_builtin_entry(&universe, &persistent);
     test_compiled_entry_joins(&universe, &persistent);
@@ -11933,6 +12064,7 @@ int main(int argc, char **argv) {
     test_match_decision_verification_receipt_revision(
         &universe, &persistent, &answers);
     test_deep_typecheck_source_rewrites(&universe);
+    test_shared_value_observation();
     test_deep_cons_semantics(&answers);
     test_logical_cons_binding_views(&answers);
     test_lowered_head_epoch_views(&answers);
