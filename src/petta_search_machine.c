@@ -22775,6 +22775,34 @@ static bool petta_machine_start_ready_match_mode(
             pattern = flat;
     }
 
+    /* Query union is ordinary machine choice, so each branch starts from
+     * the same bindings and runs its template before the next branch. */
+    if (!row_only && machine->host.additive_match_queries &&
+        pattern->kind == ATOM_EXPR && pattern->expr.len > 0u &&
+        atom_is_symbol_id(pattern->expr.elems[0], g_builtin_syms.pipe)) {
+        CettaExprLen count = pattern->expr.len - 1u;
+        Atom **branches = count ? arena_alloc(
+            &machine->heap, sizeof(*branches) * (size_t)count) : NULL;
+        if (count && !branches) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+        for (CettaExprIndex index = 0u; index < count; index++) {
+            Atom *elements[] = {
+                atom_symbol_id(&machine->heap, g_builtin_syms.match),
+                reference, pattern->expr.elems[index + 1u], template,
+            };
+            branches[index] = atom_expr(&machine->heap, elements, 4u);
+            if (!branches[index]) {
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
+        }
+        Atom *choices = atom_expr(&machine->heap, branches, count);
+        return choices && petta_machine_start_superpose(
+            machine, choices, expected, barrier, NULL, false);
+    }
+
     bool cursor_admitted = false;
     Atom *conjunction = row_only ? NULL : petta_machine_lower_match_conjunction(
         machine, reference, pattern, template, &cursor_admitted);
@@ -34091,56 +34119,12 @@ static bool petta_machine_conjunction_order_free(
         petta_plan_match_template_is_single_data_answer(template_plan);
 }
 
-/* The variables of the legs a conjunction has run, where the chooser reads
- * them as bound: a leg that matched a ground row bound each of them.  The
- * reading only orders the remaining legs, whose answers are one bag in any
- * order, so a variable a row left open costs time, not an answer. */
-typedef struct {
-    VarId inline_ids[32];
-    VarId *ids;
-    size_t len;
-    size_t cap;
-} PettaLegVarSet;
-
-static bool petta_leg_var_set_has(const PettaLegVarSet *set, VarId id) {
-    for (size_t index = 0u; index < set->len; index++) {
-        if (set->ids[index] == id)
-            return true;
-    }
-    return false;
-}
-
-static void petta_leg_var_set_collect(PettaLegVarSet *set, Atom *atom) {
-    if (!atom_has_vars(atom))
-        return;
-    if (atom->kind == ATOM_VAR) {
-        if (petta_leg_var_set_has(set, atom->var_id))
-            return;
-        if (set->len == set->cap) {
-            size_t grown = set->cap * 2u;
-            VarId *next = set->ids == set->inline_ids
-                ? cetta_malloc(sizeof(*next) * grown)
-                : cetta_realloc(set->ids, sizeof(*next) * grown);
-            if (set->ids == set->inline_ids)
-                memcpy(next, set->inline_ids, sizeof(*next) * set->len);
-            set->ids = next;
-            set->cap = grown;
-        }
-        set->ids[set->len++] = atom->var_id;
-        return;
-    }
-    if (atom->kind != ATOM_EXPR)
-        return;
-    for (CettaExprIndex child = 0u; child < atom->expr.len; child++)
-        petta_leg_var_set_collect(set, atom->expr.elems[child]);
-}
-
-/* How many occurrences of variables of `pattern` are bound, and how many
- * are not: a variable of a leg already run, or one holding a ground value
- * under `environment`, is bound.  A leg with none unbound only tests what
- * is bound. */
+/* Count variable occurrences by their current bindings. The chooser runs
+ * only under an order-insensitive answer-bag observer; its heuristic never
+ * needs to rescan already completed source legs to guess which variables
+ * they might have bound. Open rows can leave those variables unbound. */
 static CettaIndex petta_machine_leg_bound_count(
-    Bindings *environment, const PettaLegVarSet *ran, Atom *pattern,
+    Bindings *environment, Atom *pattern,
     CettaIndex *unbound) {
     *unbound = 0u;
     if (!atom_has_vars(pattern))
@@ -34155,11 +34139,10 @@ static CettaIndex petta_machine_leg_bound_count(
         Atom *atom = stack[--length];
         if (atom->kind == ATOM_VAR) {
             BindingValue root;
-            if (petta_leg_var_set_has(ran, atom->var_id) ||
-                (bindings_resolve_value_preview(
+            if (bindings_resolve_value_preview(
                      environment, binding_value_from_atom(atom), &root) &&
                  root.skeleton && root.skeleton->kind != ATOM_VAR &&
-                 !atom_has_vars(root.skeleton))) {
+                 !atom_has_vars(root.skeleton)) {
                 bound++;
             } else {
                 (*unbound)++;
@@ -34202,15 +34185,11 @@ static __attribute__((noinline)) Atom *petta_machine_choose_conjunction_leg(
     const Bindings *environment) {
     CettaExprIndex best = index;
     CettaIndex best_bound = 0u;
-    PettaLegVarSet ran = {.len = 0u, .cap = 32u};
-    ran.ids = ran.inline_ids;
-    for (CettaExprIndex leg = 1u; leg < index; leg++)
-        petta_leg_var_set_collect(&ran, family->expr.elems[leg]);
     CettaIndex best_unbound = 0u;
     for (CettaExprIndex leg = index; leg < family->expr.len; leg++) {
         CettaIndex unbound = 0u;
         CettaIndex bound = petta_machine_leg_bound_count(
-            (Bindings *)environment, &ran, family->expr.elems[leg],
+            (Bindings *)environment, family->expr.elems[leg],
             &unbound);
         if (unbound == 0u) {
             best = leg;
@@ -34224,8 +34203,6 @@ static __attribute__((noinline)) Atom *petta_machine_choose_conjunction_leg(
             best_unbound = unbound;
         }
     }
-    if (ran.ids != ran.inline_ids)
-        free(ran.ids);
     CettaIndex best_count = 0u;
     bool best_ground_rows = false;
     for (CettaExprIndex leg = index;

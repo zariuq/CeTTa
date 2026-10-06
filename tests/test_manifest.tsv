@@ -32,6 +32,7 @@ tests/he_c1_grounded_basic.metta	he	metta	extended	main	native	test	golden	-
 tests/he_c2_spaces_kb.metta	he	metta	extended	main	native	test	golden	-
 tests/he_c3_pln_stv.metta	he	metta	extended	main	native	test	golden	-
 tests/he_case_empty_scrutinee.metta	he	metta	extended	main	native	test	golden	-
+tests/he_case_two_sided.metta	he	metta	extended	main	native	test	golden	-
 tests/he_d1_gadt.metta	he	metta	extended	main	native	test	golden	-
 tests/he_d2_higherfunc.metta	he	metta	extended	main	native	test	golden	-
 tests/he_d3_deptypes.metta	he	metta	extended	main	native	test	golden	-
@@ -396,6 +397,7 @@ tests/test_match_chain_imported_regression.metta	he	metta	extended	main	native	t
 tests/test_match_coref_fastpath.metta	he	metta	extended	main	native	test	golden	-
 tests/test_match_eager_double_apply_regression.metta	he	metta	extended	main	native	test	golden	-
 tests/test_match_exact_bound_space_regression.metta	he	metta	extended	main	native	test	golden	-
+tests/test_match_mixed_exact.metta	he	metta	extended	main	native	test	golden	-
 tests/test_match_query_disjunction.metta	he	metta	extended	main	native	test	golden	-
 tests/test_match_rule_reunify.metta	he	metta	extended	main	native	test	golden	-
 tests/test_match_self_mutation_snapshot_regression.metta	he	metta	extended	main	native	test	golden	-
@@ -620,6 +622,7 @@ tests/test_tail_bindings_direct_value.metta	he	metta	extended	main	native	test	g
 tests/test_tail_recursion.metta	he	metta	extended	main	native	test	golden	-
 tests/test_tail_recursion_deep_regression.metta	he	metta	extended	main	native	test	golden	-
 tests/test_tail_special_forms.metta	he	metta	extended	main	native	test	golden	-
+tests/test_term_order_predicates.metta	he	metta	extended	main	native	test	golden	-
 tests/test_text_cursor.metta	he	metta	extended	main	native	test	golden	-
 tests/test_text_stream.metta	he	metta	extended	main	native	test	golden	-
 tests/test_top_level_output_order.metta	he	metta	extended	main	native	test	golden	-

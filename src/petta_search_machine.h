@@ -253,6 +253,9 @@ typedef struct {
      * reached at run time is a value, applied to evaluated arguments
      * (petta_semantics_runtime_head). */
     bool forms_are_written_syntax;
+    /* Optional query union uses the ordinary ordered choice trail.  A pipe
+     * in a base-profile pattern remains literal row syntax. */
+    bool additive_match_queries;
     /* A `once` whose body is one call to the open tier takes its witness
      * from a portfolio of depth-first search and iterative deepening. */
     bool first_witness_portfolio;

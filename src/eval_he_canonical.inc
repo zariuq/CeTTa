@@ -839,7 +839,7 @@ static void he_canonical_resume_control(HeCanonicalFrame *frame) {
             BindingsBuilder matched;
             if (!bindings_builder_init(&matched, NULL))
                 return;
-            bool match = simple_match_builder(branch->expr.elems[0], value, &matched, a);
+            bool match = eval_case_match_builder(branch->expr.elems[0], value, &matched, a);
             if (match) {
                 const Bindings *env = bindings_builder_bindings(&matched);
                 Atom *body = bindings_apply_if_vars(env, a, branch->expr.elems[1]);

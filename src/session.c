@@ -172,6 +172,10 @@ static const CettaProfile CETTA_PROFILE_MM2_GSLT_VALUE = {
 
 /* Sorted by name for policy lookup; presentation order is not observable. */
 static const CettaBuiltinPolicy CETTA_BUILTIN_POLICIES[] = {
+    {"@<", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_EXTENDED, "extension_only"},
+    {"@<=", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_EXTENDED, "extension_only"},
+    {"@>", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_EXTENDED, "extension_only"},
+    {"@>=", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_EXTENDED, "extension_only"},
     {"_minimal-foldl-atom", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "compat_alias"},
     {"add-atom-nodup", CETTA_PROFILE_MASK_HE_NON_COMPAT | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
     {"capture", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "keep_he_public_builtin"},
@@ -571,6 +575,15 @@ bool cetta_language_allows_builtin(CettaLanguageId language_id,
                                    const char *name) {
     const CettaBuiltinPolicy *policy = cetta_builtin_policy_lookup(name);
     if (!policy) return true;
+    /* Other language adapters use the general builtin mask. Structural
+       order is explicitly an HE/PeTTa extended-profile operation. */
+    if (language_id != CETTA_LANGUAGE_HE &&
+        language_id != CETTA_LANGUAGE_PETTA && policy->name[0] == '@' &&
+        (strcmp(policy->name, "@<") == 0 ||
+         strcmp(policy->name, "@<=") == 0 ||
+         strcmp(policy->name, "@>") == 0 ||
+         strcmp(policy->name, "@>=") == 0))
+        return false;
     return cetta_language_visible_in(language_id, profile, policy->visibility_mask);
 }
 

@@ -9,6 +9,5 @@
 ()
 (stored-chain-one)
 ((BuiltinChain 3) (UserChain 3))
-()
 true
 (2 (OwnedMin 2 3))

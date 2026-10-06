@@ -970,6 +970,11 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "space-disc-truncated-subtree",
     "space-private-reset",
     "space-retired-occurrence-release-bytes",
+    "term-order-pair-visit",
+    "term-order-equal-reuse",
+    "term-order-frontier-peak",
+    "term-order-product-pair",
+    "term-order-product-edge",
 };
 
 static int64_t clamp_counter(uint64_t value) {

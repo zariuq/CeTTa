@@ -263,6 +263,24 @@ uint32_t symbol_len(const SymbolTable *st, SymbolId id) {
     return entry ? entry->len : 0;
 }
 
+int symbol_compare(const SymbolTable *st, SymbolId left, SymbolId right) {
+    if (left == right)
+        return 0;
+    uint32_t count = st
+        ? atomic_load_explicit(&st->entry_len, memory_order_acquire) : 0u;
+    const SymbolEntry *a = left && left < count ? symbol_table_entry_ref(st, left) : NULL;
+    const SymbolEntry *b = right && right < count ? symbol_table_entry_ref(st, right) : NULL;
+    const char *a_bytes = a && a->bytes ? a->bytes : "";
+    const char *b_bytes = b && b->bytes ? b->bytes : "";
+    size_t a_len = a && a->bytes ? a->len : 0u;
+    size_t b_len = b && b->bytes ? b->len : 0u;
+    size_t shared = a_len < b_len ? a_len : b_len;
+    int compared = memcmp(a_bytes, b_bytes, shared);
+    if (compared)
+        return compared < 0 ? -1 : 1;
+    return a_len < b_len ? -1 : a_len > b_len ? 1 : 0;
+}
+
 bool symbol_id_is_builtin(SymbolId id) {
     return id != SYMBOL_ID_NONE &&
            (id <= g_builtin_syms.native_handle ||
