@@ -1,6 +1,7 @@
 #include "petta_semantics.h"
 
 #include "space.h"
+#include "stats.h"
 #include "symbol.h"
 #include "term_graph.h"
 #include "term_universe.h"
@@ -21,7 +22,7 @@
 #define PETTA_FORM_DENSE_CAP 4096u
 #define PETTA_FORM_OVERFLOW_CAP 128u
 
-_Static_assert(PETTA_FORM_CHAIN <= UINT8_MAX,
+_Static_assert(PETTA_FORM_TRACE <= UINT8_MAX,
                "PeTTa semantic forms must fit in the dense fact byte");
 _Static_assert(
     (PETTA_FORM_OVERFLOW_CAP & (PETTA_FORM_OVERFLOW_CAP - 1u)) == 0u,
@@ -160,6 +161,7 @@ static PeTTaForm petta_form_overflow_lookup(
     X(g_builtin_syms.if_text, PETTA_FORM_IF);                            \
     X(ids->progn, PETTA_FORM_PROGN);                                     \
     X(ids->prog1, PETTA_FORM_PROG1);                                     \
+    X(g_builtin_syms.trace_bang, PETTA_FORM_TRACE);                       \
     X(ids->foldall, PETTA_FORM_FOLDALL);                                 \
     X(ids->forall, PETTA_FORM_FORALL);                                   \
     X(ids->maplist, PETTA_FORM_MAPLIST);                                 \
@@ -486,7 +488,8 @@ PeTTaForm petta_semantics_form(SymbolId head) {
 bool petta_semantics_special_form_reads(SymbolId head, CettaExprLen nargs) {
     if (head == g_builtin_syms.if_text)
         return nargs == 2u || nargs == 3u;
-    if (head == g_builtin_syms.case_text || head == g_builtin_syms.let_star ||
+    if (head == g_builtin_syms.trace_bang ||
+        head == g_builtin_syms.case_text || head == g_builtin_syms.let_star ||
         head == g_builtin_syms.sealed_text)
         return nargs == 2u;
     if (head == g_builtin_syms.let || head == g_builtin_syms.chain)
@@ -2907,6 +2910,20 @@ Atom *petta_semantics_lower(
         return NULL;
     }
     switch (kind) {
+    case PETTA_FORM_TRACE: {
+        if (form->expr.len != 3u)
+            return NULL;
+        /* The translator sequences printing before the body. Reuse the
+         * same lowering as progn so failure, choices and caller bindings
+         * remain owned by the existing continuation. */
+        Atom *print = atom_expr2(
+            arena, atom_symbol_id(arena, g_builtin_syms.println_bang),
+            form->expr.elems[1]);
+        Atom *sequence = atom_expr3(
+            arena, atom_symbol_id(arena, petta_symbol_ids()->progn),
+            print, form->expr.elems[2]);
+        return petta_sequence_lower(arena, sequence, false);
+    }
     case PETTA_FORM_PROGN:
         return petta_sequence_lower(arena, form, false);
     case PETTA_FORM_PROG1:
@@ -2999,8 +3016,9 @@ typedef enum {
     PETTA_TERM_VARIABLE = 0,
     PETTA_TERM_NUMBER = 1,
     PETTA_TERM_STRING = 2,
-    PETTA_TERM_ATOM = 3,
-    PETTA_TERM_COMPOUND = 4,
+    PETTA_TERM_NIL = 3,
+    PETTA_TERM_ATOM = 4,
+    PETTA_TERM_COMPOUND = 5,
 } PeTTaTermClass;
 
 static PeTTaTermClass petta_term_class(const Atom *atom) {
@@ -3012,8 +3030,8 @@ static PeTTaTermClass petta_term_class(const Atom *atom) {
         atom->ground.gkind == GV_STRING) {
         return PETTA_TERM_STRING;
     }
-    if (atom->kind == ATOM_EXPR && atom->expr.len > 0u)
-        return PETTA_TERM_COMPOUND;
+    if (atom->kind == ATOM_EXPR)
+        return atom->expr.len ? PETTA_TERM_COMPOUND : PETTA_TERM_NIL;
     return PETTA_TERM_ATOM;
 }
 
@@ -3021,18 +3039,27 @@ static int petta_compare_u64(uint64_t left, uint64_t right) {
     return left < right ? -1 : left > right ? 1 : 0;
 }
 
-static int petta_compare_text(const char *left, const char *right) {
-    int raw = strcmp(left ? left : "", right ? right : "");
+static int petta_compare_text(const char *left, size_t left_len,
+                              const char *right, size_t right_len) {
+    size_t shared = left_len < right_len ? left_len : right_len;
+    int raw = memcmp(left, right, shared);
+    if (!raw)
+        raw = left_len < right_len ? -1 : left_len > right_len ? 1 : 0;
     return raw < 0 ? -1 : raw > 0 ? 1 : 0;
 }
 
-static const char *petta_known_atom_text(const Atom *atom) {
-    if (atom->kind == ATOM_SYMBOL)
+static const char *petta_known_atom_text(const Atom *atom, size_t *length) {
+    if (atom->kind == ATOM_SYMBOL) {
+        *length = symbol_len(g_symbols, atom->sym_id);
         return symbol_bytes(g_symbols, atom->sym_id);
-    if (atom->kind == ATOM_EXPR && atom->expr.len == 0u)
+    }
+    if (atom->kind == ATOM_EXPR && atom->expr.len == 0u) {
+        *length = 2u;
         return "[]";
+    }
     if (atom->kind == ATOM_GROUNDED &&
         atom->ground.gkind == GV_BOOL) {
+        *length = atom->ground.bval ? 4u : 5u;
         return atom->ground.bval ? "true" : "false";
     }
     return NULL;
@@ -3229,10 +3256,11 @@ static bool petta_compare_numbers(
 
 static int petta_compare_grounded_atoms(
     const Atom *left, const Atom *right) {
-    const char *left_text = petta_known_atom_text(left);
-    const char *right_text = petta_known_atom_text(right);
+    size_t left_len = 0u, right_len = 0u;
+    const char *left_text = petta_known_atom_text(left, &left_len);
+    const char *right_text = petta_known_atom_text(right, &right_len);
     if (left_text && right_text)
-        return petta_compare_text(left_text, right_text);
+        return petta_compare_text(left_text, left_len, right_text, right_len);
     if (left_text != NULL)
         return -1;
     if (right_text != NULL)
@@ -3275,10 +3303,27 @@ static int petta_compare_grounded_atoms(
     return 0;
 }
 
-bool petta_semantics_term_compare(
-    const Atom *left, const Atom *right, int *ordering) {
-    if (!left || !right || !ordering)
+bool petta_semantics_term_compare_expression_boundary(
+        bool nonempty, const Atom *leaf, int *ordering) {
+    if (!leaf || !ordering || leaf->kind == ATOM_EXPR ||
+        (leaf->kind != ATOM_VAR && leaf->kind != ATOM_SYMBOL &&
+         leaf->kind != ATOM_GROUNDED))
         return false;
+    PeTTaTermClass expression_class = nonempty
+        ? PETTA_TERM_COMPOUND : PETTA_TERM_NIL;
+    PeTTaTermClass leaf_class = petta_term_class(leaf);
+    if (expression_class != leaf_class) {
+        *ordering = expression_class < leaf_class ? -1 : 1;
+        return true;
+    }
+    size_t length = 0u;
+    const char *text = petta_known_atom_text(leaf, &length);
+    *ordering = text ? petta_compare_text("[]", 2u, text, length) : -1;
+    return true;
+}
+
+static bool petta_term_compare_leaf(
+    const Atom *left, const Atom *right, int *ordering) {
     PeTTaTermClass left_class = petta_term_class(left);
     PeTTaTermClass right_class = petta_term_class(right);
     if (left_class != right_class) {
@@ -3295,11 +3340,15 @@ bool petta_semantics_term_compare(
     case PETTA_TERM_STRING:
         *ordering = atom_string_compare(left, right);
         return true;
+    case PETTA_TERM_NIL:
+        *ordering = 0;
+        return true;
     case PETTA_TERM_ATOM: {
-        const char *left_text = petta_known_atom_text(left);
-        const char *right_text = petta_known_atom_text(right);
+        size_t left_len = 0u, right_len = 0u;
+        const char *left_text = petta_known_atom_text(left, &left_len);
+        const char *right_text = petta_known_atom_text(right, &right_len);
         if (left_text && right_text) {
-            *ordering = petta_compare_text(left_text, right_text);
+            *ordering = petta_compare_text(left_text, left_len, right_text, right_len);
             return true;
         }
         if (left->kind == ATOM_GROUNDED &&
@@ -3313,19 +3362,179 @@ bool petta_semantics_term_compare(
         return true;
     }
     case PETTA_TERM_COMPOUND:
-        break;
+        return false;
     }
+    return false;
+}
 
+typedef struct {
+    const Atom *left;
+    const Atom *right;
+    /* A pending pair cannot justify skipping its descendants. */
+    bool complete;
+} PeTTaOrderPair;
+
+typedef struct {
+    const Atom *left;
+    const Atom *right;
+    CettaExprIndex next;
+} PeTTaOrderFrame;
+
+typedef struct {
+    PeTTaOrderPair local[64];
+    PeTTaOrderPair *slots;
+    size_t capacity;
+    size_t used;
+} PeTTaOrderMemo;
+
+static size_t petta_order_pair_hash(const Atom *left, const Atom *right) {
+    uint64_t a = (uint64_t)(uintptr_t)left;
+    uint64_t b = (uint64_t)(uintptr_t)right;
+    a ^= a >> 30u;
+    a *= UINT64_C(0xbf58476d1ce4e5b9);
+    b ^= b >> 27u;
+    b *= UINT64_C(0x94d049bb133111eb);
+    return (size_t)(a ^ (b + (a << 6u) + (a >> 2u)));
+}
+
+static PeTTaOrderPair *petta_order_pair_find(
+        PeTTaOrderMemo *memo, const Atom *left, const Atom *right) {
+    size_t at = petta_order_pair_hash(left, right) & (memo->capacity - 1u);
+    while (memo->slots[at].left &&
+           (memo->slots[at].left != left || memo->slots[at].right != right))
+        at = (at + 1u) & (memo->capacity - 1u);
+    return &memo->slots[at];
+}
+
+static bool petta_order_memo_grow(PeTTaOrderMemo *memo) {
+    if (memo->capacity > SIZE_MAX / (2u * sizeof(*memo->slots)))
+        return false;
+    size_t capacity = memo->capacity * 2u;
+    PeTTaOrderPair *slots = cetta_malloc(capacity * sizeof(*slots));
+    if (!slots)
+        return false;
+    memset(slots, 0, capacity * sizeof(*slots));
+    PeTTaOrderPair *previous = memo->slots;
+    size_t previous_capacity = memo->capacity;
+    memo->slots = slots;
+    memo->capacity = capacity;
+    for (size_t i = 0u; i < previous_capacity; i++) {
+        PeTTaOrderPair pair = previous[i];
+        if (pair.left)
+            *petta_order_pair_find(memo, pair.left, pair.right) = pair;
+    }
+    if (previous != memo->local)
+        free(previous);
+    return true;
+}
+
+/* Lexicographic depth-first traversal over pairs of immutable expression
+ * nodes. Complete equal pairs can be reused; a pair on the active path is
+ * reported as unsupported instead of assuming equality of cyclic terms.
+ * The memo belongs to this comparison only: bindings and mutable resources
+ * cannot change under it, and no address escapes as semantic authority. */
+static bool petta_term_compare_graph(
+        const Atom *left, const Atom *right, int *ordering) {
+    PeTTaOrderFrame local_frames[32];
+    PeTTaOrderFrame *frames = local_frames;
+    size_t capacity = 32u, depth = 0u;
+    PeTTaOrderMemo memo = {.capacity = 64u};
+    memo.slots = memo.local;
+    bool success = false;
+    for (;;) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_ORDER_PAIR_VISIT);
+        if (left == right) {
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_ORDER_EQUAL_REUSE);
+        } else if (petta_term_compare_leaf(left, right, ordering)) {
+            if (*ordering != 0) {
+                success = true;
+                break;
+            }
+        } else {
+            if (left->kind != ATOM_EXPR || right->kind != ATOM_EXPR)
+                break;
+            PeTTaOrderPair *pair = petta_order_pair_find(&memo, left, right);
+            if (pair->left) {
+                if (!pair->complete)
+                    break;
+                cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_ORDER_EQUAL_REUSE);
+            } else {
+                if (memo.used >= memo.capacity / 2u) {
+                    if (!petta_order_memo_grow(&memo))
+                        break;
+                    pair = petta_order_pair_find(&memo, left, right);
+                }
+                if (depth == capacity) {
+                    if (capacity > SIZE_MAX / (2u * sizeof(*frames)))
+                        break;
+                    size_t next_capacity = capacity * 2u;
+                    PeTTaOrderFrame *next = cetta_malloc(next_capacity * sizeof(*next));
+                    if (!next)
+                        break;
+                    memcpy(next, frames, depth * sizeof(*next));
+                    if (frames != local_frames)
+                        free(frames);
+                    frames = next;
+                    capacity = next_capacity;
+                }
+                *pair = (PeTTaOrderPair){left, right, false};
+                memo.used++;
+                frames[depth++] = (PeTTaOrderFrame){left, right, 1u};
+                cetta_runtime_stats_update_max(
+                    CETTA_RUNTIME_COUNTER_TERM_ORDER_FRONTIER_PEAK, depth);
+                left = left->expr.elems[0];
+                right = right->expr.elems[0];
+                continue;
+            }
+        }
+        for (;;) {
+            if (!depth) {
+                *ordering = 0;
+                success = true;
+                goto done;
+            }
+            PeTTaOrderFrame *frame = &frames[depth - 1u];
+            CettaExprLen shared = frame->left->expr.len < frame->right->expr.len
+                ? frame->left->expr.len : frame->right->expr.len;
+            if (frame->next < shared) {
+                left = frame->left->expr.elems[frame->next];
+                right = frame->right->expr.elems[frame->next++];
+                break;
+            }
+            *ordering = frame->left->expr.len < frame->right->expr.len ? -1 :
+                frame->left->expr.len > frame->right->expr.len ? 1 : 0;
+            if (*ordering != 0) {
+                success = true;
+                goto done;
+            }
+            petta_order_pair_find(&memo, frame->left, frame->right)->complete = true;
+            depth--;
+        }
+    }
+done:
+    if (frames != local_frames)
+        free(frames);
+    if (memo.slots != memo.local)
+        free(memo.slots);
+    return success;
+}
+
+static bool petta_term_compare_flat(
+    const Atom *left, const Atom *right, int *ordering) {
+    /* Flat values need neither a memo nor a heap worklist. Nested terms
+     * enter the same graph traversal used by all deeper comparisons. */
     CettaExprLen shared = left->expr.len < right->expr.len
         ? left->expr.len
         : right->expr.len;
     for (CettaExprIndex index = 0u; index < shared; index++) {
+        const Atom *a = left->expr.elems[index];
+        const Atom *b = right->expr.elems[index];
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_ORDER_PAIR_VISIT);
+        if (a == b)
+            continue;
         int element_order = 0;
-        if (!petta_semantics_term_compare(
-                left->expr.elems[index],
-                right->expr.elems[index], &element_order)) {
-            return false;
-        }
+        if (!petta_term_compare_leaf(a, b, &element_order))
+            return petta_term_compare_graph(left, right, ordering);
         if (element_order != 0) {
             *ordering = element_order;
             return true;
@@ -3335,6 +3544,36 @@ bool petta_semantics_term_compare(
         ? -1
         : left->expr.len > right->expr.len ? 1 : 0;
     return true;
+}
+
+bool petta_semantics_term_compare(
+    const Atom *left, const Atom *right, int *ordering) {
+    if (!left || !right || !ordering)
+        return false;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_ORDER_PAIR_VISIT);
+    if (left == right) {
+        *ordering = 0;
+        return true;
+    }
+    if (left->kind == right->kind) {
+        if (left->kind == ATOM_SYMBOL) {
+            *ordering = symbol_compare(g_symbols, left->sym_id, right->sym_id);
+            return true;
+        }
+        if (left->kind == ATOM_VAR) {
+            *ordering = petta_compare_u64(left->var_id, right->var_id);
+            return true;
+        }
+        if (left->kind == ATOM_GROUNDED &&
+            left->ground.gkind == GV_INT && right->ground.gkind == GV_INT) {
+            *ordering = left->ground.ival < right->ground.ival ? -1 :
+                        left->ground.ival > right->ground.ival ? 1 : 0;
+            return true;
+        }
+        if (left->kind == ATOM_EXPR && left->expr.len && right->expr.len)
+            return petta_term_compare_flat(left, right, ordering);
+    }
+    return petta_term_compare_leaf(left, right, ordering);
 }
 
 Atom *petta_semantics_msort(Arena *arena, Atom *list) {
@@ -3521,6 +3760,8 @@ CettaExprIndex petta_semantics_output_child(const Atom *body) {
         return 2u;
     if (form == PETTA_FORM_PROGN)
         return len - 1u;
+    if (form == PETTA_FORM_TRACE && len == 3u)
+        return 2u;
     if (form == PETTA_FORM_PROG1)
         return 1u;
     return 0u;

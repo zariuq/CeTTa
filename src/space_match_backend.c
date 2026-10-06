@@ -10880,7 +10880,6 @@ bool space_match_backend_ground_exact_exists_frontier(
     CETTA_SCOPED_SHARED_TRANSITION(candidate_frontier_observation);
     CettaIndex *candidates = NULL;
     CettaIndex candidate_count = native_candidates(s, pattern, &candidates);
-    bool found = false;
     bool frontier_exact = true;
     for (CettaIndex i = 0u; i < candidate_count; i++) {
         Atom *candidate =
@@ -10889,13 +10888,14 @@ bool space_match_backend_ground_exact_exists_frontier(
             frontier_exact = false;
             break;
         }
-        if (atom_eq(candidate, pattern))
-            found = true;
     }
     free(candidates);
     if (!frontier_exact)
         return false;
-    *out_found = found;
+    /* The frontier certifies completeness, not membership.  Once every
+     * candidate is exact, the existing AtomId presence index answers that
+     * question without comparing each candidate's whole term graph. */
+    *out_found = space_contains_exact(s, pattern);
     return true;
 }
 
@@ -11295,7 +11295,19 @@ static inline __attribute__((always_inline)) void space_subst_query_member(
         !he_number_query_needs_promoted_candidates(query)) {
         CettaIndex *exact = NULL;
         CettaIndex nexact = space_exact_match_indices64(s, query, &exact);
+        bool exact_frontier = false;
         if (nexact > 0) {
+            exact_frontier = space_contains_only_exact_atoms(s);
+            if (!exact_frontier) {
+                bool found = false;
+                /* Literal hits are complete only when no candidate can
+                 * contribute a relational match through its variables. */
+                exact_frontier =
+                    space_match_backend_ground_exact_exists_frontier(
+                        s, query, &found) && found;
+            }
+        }
+        if (nexact > 0 && exact_frontier) {
             cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SUBST_QUERY_EXACT_SHORTCUT);
             smset_init(out);
             for (CettaIndex i = 0; i < nexact; i++) {

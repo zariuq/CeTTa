@@ -1767,7 +1767,7 @@ REGISTRY_LOOKUP_BENCH_BIN = runtime/bench_registry_lookup-$(BUILD_OBJ_TAG)
 REGISTRY_LOOKUP_BENCH_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
 ABT_MUTATION_IDS = 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
 ABT_MUTATION_TEST_BINS = $(foreach id,$(ABT_MUTATION_IDS),runtime/test_abt_mutation-$(BUILD_OBJ_TAG)-$(id))
-GROUNDED_STANDALONE_SRC = src/grounded.c src/petta_semantics.c src/abt.c src/atom_blob.c
+GROUNDED_STANDALONE_SRC = src/grounded.c src/petta_semantics.c src/term_graph.c src/abt.c src/atom_blob.c
 GROUNDED_STANDALONE_DEPS = $(GROUNDED_STANDALONE_SRC) $(ABT_DEFAULT_SIGNATURES_BLOB)
 PARSER_STANDALONE_SRC = src/parser.c src/name_key.c
 # Bindings owns a PrimeNeedSnapshot even in non-Prime harnesses, so every
@@ -3851,6 +3851,52 @@ test-bindings-lookup-index: $(BINDINGS_LOOKUP_INDEX_TEST_BIN) test-match-worklis
 	fi; \
 	echo "PASS: binding-index falsifiers kill lazy-tail and stale-root mutations"
 .PHONY: test-bindings-lookup-index
+
+TERM_ORDER_GRAPH_TEST_BIN = runtime/test_term_order_graph-$(BUILD_OBJ_TAG)
+$(TERM_ORDER_GRAPH_TEST_BIN): tests/test_term_order_graph.c src/petta_semantics.c src/petta_semantics.h src/term_graph.c src/term_graph.h src/stats.h src/atom.c src/symbol.c src/symbol.h src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -ffunction-sections -fdata-sections -Wl,--gc-sections -o $@ tests/test_term_order_graph.c src/petta_semantics.c src/term_graph.c src/atom.c src/symbol.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c $(LDFLAGS)
+
+.PHONY: test-term-order-graph
+test: test-term-order-graph
+test-term-order-graph: $(TERM_ORDER_GRAPH_TEST_BIN)
+	@$(call cetta_exec,./$(TERM_ORDER_GRAPH_TEST_BIN))
+
+.PHONY: test-term-order-predicates
+test: test-term-order-predicates
+test-term-order-predicates: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_term_order_predicates.py "$(CETTA_SCRIPT_BIN)"
+
+.PHONY: test-petta-profile-conservativity test-petta-profile-gate-unit test-petta-upstream-profiles
+test test-profiles: test-petta-profile-conservativity test-petta-profile-gate-unit
+test-petta-profile-conservativity: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_petta_profile_conservativity.py "$(CETTA_SCRIPT_BIN)"
+
+test-petta-profile-gate-unit:
+	@python3 tests/tools/check_petta_profiles.py --self-test
+
+PETTA_PROFILE_BASELINE ?=
+PETTA_PROFILE_ARTIFACTS ?= results/petta-profile-gate
+test-petta-upstream-profiles: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/tools/check_petta_profiles.py --binary "$(CETTA_SCRIPT_BIN)" \
+		$(if $(strip $(PETTA_ORACLE_ROOT)),--petta-root "$(PETTA_ORACLE_ROOT)") \
+		$(if $(strip $(PETTA_PROFILE_BASELINE)),--baseline "$(PETTA_PROFILE_BASELINE)") \
+		--artifacts "$(PETTA_PROFILE_ARTIFACTS)"
+
+MIXED_EXACT_TEST_BIN = runtime/test_match_mixed_exact-$(BUILD_OBJ_TAG)
+MIXED_EXACT_TEST_OBJ = runtime/bootstrap/test_match_mixed_exact.$(BUILD_OBJ_TAG).o
+$(MIXED_EXACT_TEST_OBJ): tests/test_match_mixed_exact.c src/space_match_backend.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(MIXED_EXACT_TEST_BIN): $(MIXED_EXACT_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-match-mixed-exact
+test: test-match-mixed-exact
+test-match-mixed-exact: $(MIXED_EXACT_TEST_BIN)
+	@$(call cetta_exec,./$(MIXED_EXACT_TEST_BIN))
 
 MATCH_CLOSED_NUMERIC_TEST_BIN = runtime/test_match_closed_numeric-$(BUILD_OBJ_TAG)
 $(MATCH_CLOSED_NUMERIC_TEST_BIN): tests/test_match_closed_numeric.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
@@ -26612,6 +26658,7 @@ test-absolute-module-import: $(BIN)
 	echo "PASS: absolute module imports remain available in PeTTa, HE, HE-compatible, and Prime dialects"
 
 PETTA_SEMANTIC_EXACT_STREAM_STEMS = \
+	trace_effect_order \
 	relational_control term_order numeric_semantics \
 	atom_operation_failure alpha_unique named_state implicit_space \
 	space_namespace_contract space_match_mutation_continuation \
@@ -41876,11 +41923,11 @@ test-petta-imported-host-bridges: $(BIN)
 	@set -eu; \
 	actual=$$(mktemp "$(BOOTSTRAP_TMPDIR)/petta-imported-host.XXXXXX"); \
 	trap 'rm -f "$$actual"' EXIT INT TERM; \
-	$(BIN) --lang petta tests/petta/libpl_native_eval.metta > "$$actual"; \
+	$(CETTA_BIN_INVOKE) --lang petta tests/petta/libpl_native_eval.metta > "$$actual"; \
 	diff -u tests/petta/libpl_native_eval.expected "$$actual"; \
-	$(BIN) --lang petta tests/petta/libpl_eval_errors.metta > "$$actual"; \
+	$(CETTA_BIN_INVOKE) --lang petta tests/petta/libpl_eval_errors.metta > "$$actual"; \
 	diff -u tests/petta/libpl_eval_errors.expected "$$actual"; \
-	$(BIN) --lang petta tests/petta/imported_swrite.metta > "$$actual"; \
+	$(CETTA_BIN_INVOKE) --lang petta tests/petta/imported_swrite.metta > "$$actual"; \
 	diff -u tests/petta/imported_swrite.expected "$$actual"; \
 	echo "PASS: imported Prolog eval and swrite host bridges"
 else
@@ -41895,7 +41942,7 @@ test-petta-imported-python-host-bridge: $(BIN)
 	@set -eu; \
 	actual=$$(mktemp "$(BOOTSTRAP_TMPDIR)/petta-imported-python-host.XXXXXX"); \
 	trap 'rm -f "$$actual"' EXIT INT TERM; \
-	CETTA_PETTA_SEARCH_MACHINE=1 $(BIN) --lang petta \
+	CETTA_PETTA_SEARCH_MACHINE=1 $(CETTA_BIN_INVOKE) --lang petta \
 		tests/petta/libpl_py_call.metta > "$$actual"; \
 	diff -u tests/petta/libpl_py_call.expected "$$actual"; \
 	echo "PASS: imported Prolog to Python callback boundary"

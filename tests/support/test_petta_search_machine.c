@@ -1447,6 +1447,7 @@ static const PettaSemanticFormCase petta_semantic_form_cases[] = {
     {"if", PETTA_FORM_IF},
     {"progn", PETTA_FORM_PROGN},
     {"prog1", PETTA_FORM_PROG1},
+    {"trace!", PETTA_FORM_TRACE},
     {"foldall", PETTA_FORM_FOLDALL},
     {"forall", PETTA_FORM_FORALL},
     {"maplist", PETTA_FORM_MAPLIST},
@@ -3265,6 +3266,35 @@ static void test_compiled_graph_transport(TermUniverse *universe, Arena *arena) 
         node = node->expr.elems[2];
     }
     assert(node == variable);
+
+    /* A complete typed list is a value, but its tag alone and an open
+     * rest pattern are not admitted as equation-engine values. Transport
+     * preserves the list kind and the shared open graph in both fields. */
+    Atom *list_elements[] = {input, input};
+    Atom *typed_list = atom_list(arena, list_elements, 2u);
+    assert(typed_list && cetta_open_equation_term_supported(typed_list));
+    assert(!cetta_open_equation_term_supported(typed_list->expr.elems[0]));
+    Atom *tag_elements[] = {typed_list->expr.elems[0]};
+    assert(!cetta_open_equation_term_supported(
+        atom_list(arena, tag_elements, 1u)));
+    assert(!cetta_open_equation_term_supported(
+        atom_list_with_rest(arena, list_elements, 1u, variable)));
+    args[0] = typed_list;
+    cursor = cetta_open_equation_cursor_open(
+        compiled, &answers, args, 1u, NULL, query_vars, 1u, NULL);
+    assert(cursor);
+    assert(cetta_open_equation_cursor_next(cursor, query_vars, &result, &values)
+           == CETTA_OPEN_EQUATION_ANSWER);
+    assert(values && values[0] == variable);
+    cetta_open_equation_cursor_close(cursor);
+    assert(atom_is_list(result) && result->expr.len == 3u);
+    assert(result->expr.elems[1] == result->expr.elems[2]);
+    node = result->expr.elems[1];
+    for (unsigned depth = 5000u; depth > 0u; depth--) {
+        assert(petta_semantics_is_open_cons_value(node));
+        node = node->expr.elems[2];
+    }
+    assert(node == variable);
     cetta_open_equation_program_release(compiled);
     petta_program_free(program);
     arena_free(&answers);
@@ -3589,6 +3619,73 @@ static void test_compiled_builtin_entry(TermUniverse *universe, Arena *arena) {
         space_free(&space);
     }
     puts("PASS: compiled builtin entry preserves live source and resumes once");
+}
+
+static void test_compiled_builtin_entry_binders(TermUniverse *universe,
+                                                Arena *arena) {
+    for (unsigned stale = 0u; stale < 2u; stale++) {
+        PettaProgram *program = petta_program_new();
+        assert(program);
+        Space space;
+        space_init_with_universe(&space, universe);
+        add_compiled_program_equation(program, &space, arena,
+            "(= (binder-entry) (progn (println! checkpoint) "
+            "(let* (($first (max 1 2)) ($next (+ $first 1))) "
+            "(Pair $first $next $first))))");
+        bool extended = false;
+        CettaOpenEquationHost host = {
+            .context = &extended,
+            .builtin_allowed = test_compiled_builtin_allowed,
+            .builtin_equations = test_compiled_builtin_equations,
+        };
+        const char *reason = NULL;
+        CettaOpenEquationProgram *compiled = cetta_open_equation_program_compile(
+            program, &space, symbol_intern_cstr(g_symbols, "binder-entry"),
+            0u, &host, &reason);
+        if (!compiled) fprintf(stderr, "binder entry compile: %s\n", reason);
+        assert(compiled);
+        Arena answers;
+        arena_init(&answers);
+        CettaOpenEquationRuntime runtime = {
+            .builtin_allowed = test_compiled_builtin_allowed,
+        };
+        CettaOpenEquationCursor *cursor = cetta_open_equation_cursor_open(
+            compiled, &answers, NULL, 0u, NULL, NULL, 0u, &runtime);
+        assert(cursor);
+        Atom *value = NULL;
+        assert(cetta_open_equation_cursor_next(cursor, NULL, &value, NULL) ==
+               CETTA_OPEN_EQUATION_HOST);
+        if (stale) {
+            add_compiled_program_equation(program, &space, arena,
+                "(= (max $a $b) authored)");
+            extended = true;
+        }
+        uint32_t base = test_compiled_accept_host_value(cursor, &answers,
+            "(println! checkpoint)", "()");
+        CettaOpenEquationStep step = cetta_open_equation_cursor_continue(
+            cursor, NULL, base, &value, NULL);
+        if (stale) {
+            assert(step == CETTA_OPEN_EQUATION_HOST);
+            /* The stale path materializes future binder variables once,
+             * retaining the first/last field alias in the saved source. */
+            base = test_compiled_accept_host_value(cursor, &answers,
+                "(let* (($first (max 1 2)) ($next (+ $first 1))) "
+                "(Pair $first $next $first))", "(Pair 7 8 7)");
+            step = cetta_open_equation_cursor_continue(cursor, NULL, base,
+                &value, NULL);
+        }
+        assert(step == CETTA_OPEN_EQUATION_ANSWER);
+        assert(atom_alpha_eq(value, parse_one(&answers,
+            stale ? "(Pair 7 8 7)" : "(Pair 2 3 2)")));
+        assert(cetta_open_equation_cursor_next(cursor, NULL, &value, NULL) ==
+               CETTA_OPEN_EQUATION_EXHAUSTED);
+        cetta_open_equation_cursor_close(cursor);
+        cetta_open_equation_program_release(compiled);
+        arena_free(&answers);
+        petta_program_free(program);
+        space_free(&space);
+    }
+    puts("PASS: guarded producers retain native stores and stale binder aliases");
 }
 
 static bool test_compiled_guard_body_admitted(
@@ -6551,6 +6648,55 @@ static void test_typed_data_purity_boundary(
 
     petta_program_free(program);
     space_free(&typed_space);
+}
+
+static void test_compiled_module_view_callability(
+    TermUniverse *universe, Arena *persistent) {
+    Space provider, importer;
+    space_init_with_universe(&provider, universe);
+    space_init_with_universe(&importer, universe);
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    space_add(&provider, parse_one(persistent,
+        "(= (module-provided $x) (answer $x))"));
+    assert(space_add_dependency(&importer, &provider));
+    space_add(&importer, parse_one(persistent,
+        "(= (module-local $x) (module-provided $x))"));
+    assert(petta_program_synchronize_space(program, &importer));
+    PettaEquationCandidate *candidates = NULL;
+    size_t count = 0u;
+    SymbolId head = symbol_intern_cstr(g_symbols, "module-local");
+    assert(petta_program_candidate_snapshot(
+        program, &importer, head, &candidates, &count));
+    assert(count == 1u && candidates[0].rhs_plan);
+    assert(candidates[0].rhs_plan->role == PETTA_PLAN_STATIC_CALL);
+    assert(candidates[0].rhs_plan->relation_head_admitted);
+    free(candidates);
+
+    /* The provider's equations are not copied into the importer's catalog.
+     * A newly admitted equation observes the current module view; an older
+     * equation retains the plan with which it was originally admitted. */
+    uint64_t previous = space_revision(&importer);
+    space_add(&provider, parse_one(persistent,
+        "(= (module-added $x) (later $x))"));
+    assert(space_revision(&importer) != previous);
+    space_add(&importer, parse_one(persistent,
+        "(= (module-new-local $x) (module-added $x))"));
+    assert(petta_program_synchronize_space(program, &importer));
+    candidates = NULL;
+    count = 0u;
+    assert(petta_program_candidate_snapshot(program, &importer,
+        symbol_intern_cstr(g_symbols, "module-new-local"),
+        &candidates, &count));
+    assert(count == 1u && candidates[0].rhs_plan);
+    assert(candidates[0].rhs_plan->role == PETTA_PLAN_STATIC_CALL);
+    free(candidates);
+    assert(space_length64(&importer) == 2u);
+    assert(space_view_length64(&importer) == 4u);
+    petta_program_free(program);
+    space_free(&importer);
+    space_free(&provider);
+    puts("PASS: compiled callability includes linked module equations");
 }
 
 static void test_evaluator_neutral_structural_equation_classification(
@@ -11993,6 +12139,7 @@ int main(int argc, char **argv) {
     test_compiled_borrowed_suffix(&universe, &persistent);
     test_compiled_type_guard_protocol(&universe, &persistent);
     test_compiled_builtin_entry(&universe, &persistent);
+    test_compiled_builtin_entry_binders(&universe, &persistent);
     test_compiled_entry_joins(&universe, &persistent);
     test_compiled_terminal_host(&universe, &persistent);
     test_program_case_safety_projection(&universe, &persistent);
@@ -12055,6 +12202,7 @@ int main(int argc, char **argv) {
         &universe, &persistent, &answers);
     test_typed_data_purity_boundary(
         &universe, &persistent);
+    test_compiled_module_view_callability(&universe, &persistent);
     test_evaluator_neutral_structural_equation_classification(
         &universe, &persistent);
     test_match_decision_cache_entry_authority(

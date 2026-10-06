@@ -478,7 +478,11 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(unquote, "unquote") \
     X(remove_all_atom, "remove-all-atom") \
     X(sort_numbers_atom, "sort-numbers-atom") \
-    X(petta_decons, "decons")
+    X(petta_decons, "decons") \
+    X(term_lt, "@<") \
+    X(term_gt, "@>") \
+    X(term_le, "@<=") \
+    X(term_ge, "@>=")
 
 /* Builtins whose grounded-operation capability is independent of language
    and profile.  symbol_table_init_builtins compiles this declaration into
@@ -680,6 +684,9 @@ SymbolId symbol_lookup_cstr(SymbolTable *st, const char *text);
 
 const char *symbol_bytes(const SymbolTable *st, SymbolId id);
 uint32_t symbol_len(const SymbolTable *st, SymbolId id);
+/* Bytewise spelling order, including bytes after embedded NUL. Equal IDs
+ * require no spelling read; no table entry address escapes to the caller. */
+int symbol_compare(const SymbolTable *st, SymbolId left, SymbolId right);
 uint64_t symbol_hash_value(const SymbolTable *st, SymbolId id);
 uint32_t symbol_flags(const SymbolTable *st, SymbolId id);
 bool symbol_eq_cstr(const SymbolTable *st, SymbolId id, const char *text);

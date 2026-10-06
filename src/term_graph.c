@@ -1,6 +1,7 @@
 #include "term_graph.h"
 
 #include "petta_semantics.h"
+#include "stats.h"
 #include "symbol.h"
 
 #include <stdatomic.h>
@@ -1030,6 +1031,252 @@ bool term_graph_value_eq(Atom *left, Atom *right,
     free(seen.slots);
     free(seen.used);
     return equal && !failed;
+}
+
+/* Comparison uses the same resolved views as equality. A product node is a
+ * pair of views, including each carrier's parameter environment. Inequality
+ * propagates backwards from a differing label to every pair that can see it.
+ * The remaining pairs are a bisimulation. This lets recursive comparison skip
+ * a genuinely equal cyclic prefix without treating an active pair as equal. */
+typedef struct {
+    TermViewPair pair;
+    size_t first_child;
+    uint32_t arity;
+    CettaTermOrder head;
+    bool unequal;
+    bool on_path;
+} TermOrderNode;
+
+typedef struct {
+    TermOrderNode *nodes;
+    size_t len, cap;
+    size_t *slots;
+    size_t slot_cap;
+    size_t *edges;
+    size_t edge_len, edge_cap;
+} TermOrderProduct;
+
+static bool term_graph_work_reserve(void **storage, size_t *capacity,
+                                size_t count, size_t element_size) {
+    if (count <= *capacity)
+        return true;
+    size_t next = *capacity ? *capacity : 64u;
+    if (count > SIZE_MAX / element_size)
+        return false;
+    while (next < count) {
+        if (next > SIZE_MAX / 2u)
+            return false;
+        next *= 2u;
+    }
+    if (next > SIZE_MAX / element_size)
+        return false;
+    void *grown = cetta_realloc(*storage, next * element_size);
+    if (!grown)
+        return false;
+    *storage = grown;
+    *capacity = next;
+    return true;
+}
+
+static size_t term_order_slot(const TermOrderProduct *product,
+                              TermViewPair pair) {
+    size_t slot = (size_t)(term_view_hash(pair.left) * 31u ^
+                          term_view_hash(pair.right)) &
+                  (product->slot_cap - 1u);
+    while (product->slots[slot]) {
+        const TermViewPair *old =
+            &product->nodes[product->slots[slot] - 1u].pair;
+        if (term_view_same(old->left, pair.left) &&
+            term_view_same(old->right, pair.right))
+            break;
+        slot = (slot + 1u) & (product->slot_cap - 1u);
+    }
+    return slot;
+}
+
+static bool term_order_add(TermOrderProduct *product,
+                           TermViewPair pair, size_t *index) {
+    pair.left = term_view_resolve(pair.left);
+    pair.right = term_view_resolve(pair.right);
+    if (product->len >= product->slot_cap / 2u) {
+        if (product->slot_cap > SIZE_MAX / (2u * sizeof(size_t)))
+            return false;
+        size_t next = product->slot_cap ? product->slot_cap * 2u : 64u;
+        size_t *slots = cetta_malloc(sizeof(*slots) * next);
+        if (!slots)
+            return false;
+        memset(slots, 0, sizeof(*slots) * next);
+        free(product->slots);
+        product->slots = slots;
+        product->slot_cap = next;
+        for (size_t i = 0u; i < product->len; i++)
+            product->slots[term_order_slot(product, product->nodes[i].pair)] = i + 1u;
+    }
+    size_t slot = term_order_slot(product, pair);
+    if (product->slots[slot]) {
+        *index = product->slots[slot] - 1u;
+        return true;
+    }
+    if (!term_graph_work_reserve((void **)&product->nodes, &product->cap,
+                            product->len + 1u, sizeof(*product->nodes)))
+        return false;
+    *index = product->len++;
+    product->nodes[*index] = (TermOrderNode){.pair = pair};
+    product->slots[slot] = *index + 1u;
+    return true;
+}
+
+static CettaTermOrder term_order_head(TermShape left, TermShape right) {
+    bool left_compound = left.kind == SHAPE_CELL || left.kind == SHAPE_COMPOUND;
+    bool right_compound = right.kind == SHAPE_CELL || right.kind == SHAPE_COMPOUND;
+    if (left_compound && right_compound) {
+        if (left.kind != right.kind)
+            return left.kind < right.kind ? CETTA_TERM_ORDER_LESS : CETTA_TERM_ORDER_GREATER;
+        if (left.arity != right.arity)
+            return left.arity < right.arity ? CETTA_TERM_ORDER_LESS : CETTA_TERM_ORDER_GREATER;
+        if (left.kind == SHAPE_CELL)
+            return CETTA_TERM_ORDER_EQUAL;
+        int order = symbol_compare(g_symbols, left.name, right.name);
+        return order < 0 ? CETTA_TERM_ORDER_LESS :
+               order > 0 ? CETTA_TERM_ORDER_GREATER : CETTA_TERM_ORDER_EQUAL;
+    }
+    int order = 0;
+    if (left.kind == SHAPE_LEAF && right.kind == SHAPE_LEAF) {
+        if (!left.leaf || !right.leaf || left.leaf->kind == ATOM_EXPR ||
+            right.leaf->kind == ATOM_EXPR ||
+            !petta_semantics_term_compare(left.leaf, right.leaf, &order))
+            return CETTA_TERM_ORDER_INVALID;
+    } else if (left.kind == SHAPE_LEAF) {
+        if (!petta_semantics_term_compare_expression_boundary(right_compound, left.leaf, &order))
+            return CETTA_TERM_ORDER_INVALID;
+        order = -order;
+    } else if (right.kind == SHAPE_LEAF) {
+        if (!petta_semantics_term_compare_expression_boundary(left_compound, right.leaf, &order))
+            return CETTA_TERM_ORDER_INVALID;
+    } else if ((left.kind == SHAPE_NIL || left_compound) &&
+               (right.kind == SHAPE_NIL || right_compound)) {
+        order = left_compound == right_compound ? 0 : left_compound ? 1 : -1;
+    } else {
+        return CETTA_TERM_ORDER_INVALID;
+    }
+    return order < 0 ? CETTA_TERM_ORDER_LESS :
+           order > 0 ? CETTA_TERM_ORDER_GREATER : CETTA_TERM_ORDER_EQUAL;
+}
+
+CettaTermOrder term_graph_value_compare(
+        Atom *left, Atom *right) {
+    if (!left || !right)
+        return CETTA_TERM_ORDER_INVALID;
+    TermOrderProduct product = {0};
+    size_t root = 0u;
+    size_t *parent_first = NULL, *parents = NULL, *queue = NULL;
+    CettaTermOrder result = CETTA_TERM_ORDER_NO_MEMORY;
+    if (!term_order_add(&product,
+            (TermViewPair){term_view_atom(left), term_view_atom(right)}, &root))
+        goto done;
+    /* Insertion order is breadth first. Duplicate pairs are shared only
+     * after scheduling their first occurrence, which is the earliest one. */
+    for (size_t i = 0u; i < product.len; i++) {
+        TermShape a = term_view_shape(product.nodes[i].pair.left);
+        TermShape b = term_view_shape(product.nodes[i].pair.right);
+        CettaTermOrder head = term_order_head(a, b);
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_ORDER_PRODUCT_PAIR);
+        product.nodes[i].head = head;
+        if (head == CETTA_TERM_ORDER_INVALID) {
+            result = head;
+            goto done;
+        }
+        if (head != CETTA_TERM_ORDER_EQUAL) {
+            continue;
+        }
+        if (a.arity > SIZE_MAX - product.edge_len ||
+            !term_graph_work_reserve((void **)&product.edges, &product.edge_cap,
+                product.edge_len + a.arity, sizeof(*product.edges)))
+            goto done;
+        product.nodes[i].first_child = product.edge_len;
+        product.nodes[i].arity = a.arity;
+        for (uint32_t child = 0u; child < a.arity; child++) {
+            size_t target = 0u;
+            if (!term_order_add(&product, (TermViewPair){
+                    term_shape_child(&a, child), term_shape_child(&b, child)}, &target))
+                goto done;
+            product.edges[product.edge_len++] = target;
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_ORDER_PRODUCT_EDGE);
+        }
+    }
+
+    parent_first = cetta_malloc((product.len + 1u) * sizeof(*parent_first));
+    parents = cetta_malloc((product.edge_len ? product.edge_len : 1u) * sizeof(*parents));
+    queue = cetta_malloc(product.len * sizeof(*queue));
+    if (!parent_first || !parents || !queue)
+        goto done;
+    memset(parent_first, 0, (product.len + 1u) * sizeof(*parent_first));
+    for (size_t e = 0u; e < product.edge_len; e++)
+        parent_first[product.edges[e] + 1u]++;
+    for (size_t i = 0u; i < product.len; i++)
+        parent_first[i + 1u] += parent_first[i];
+    memcpy(queue, parent_first, product.len * sizeof(*queue));
+    for (size_t i = 0u; i < product.len; i++) {
+        const TermOrderNode *node = &product.nodes[i];
+        for (uint32_t e = 0u; e < node->arity; e++) {
+            size_t target = product.edges[node->first_child + e];
+            parents[queue[target]++] = i;
+        }
+    }
+    size_t queue_head = 0u, queue_len = 0u;
+    for (size_t i = 0u; i < product.len; i++) {
+        if (product.nodes[i].head != CETTA_TERM_ORDER_EQUAL) {
+            product.nodes[i].unequal = true;
+            queue[queue_len++] = i;
+        }
+    }
+    while (queue_head < queue_len) {
+        size_t node = queue[queue_head++];
+        for (size_t p = parent_first[node]; p < parent_first[node + 1u]; p++) {
+            size_t parent = parents[p];
+            if (!product.nodes[parent].unequal) {
+                product.nodes[parent].unequal = true;
+                queue[queue_len++] = parent;
+            }
+        }
+    }
+    if (!product.nodes[root].unequal) {
+        result = CETTA_TERM_ORDER_EQUAL;
+        goto done;
+    }
+    for (size_t current = root;;) {
+        TermOrderNode *node = &product.nodes[current];
+        if (node->on_path) {
+            result = CETTA_TERM_ORDER_INCOMPARABLE;
+            break;
+        }
+        node->on_path = true;
+        if (node->head != CETTA_TERM_ORDER_EQUAL) {
+            result = node->head;
+            break;
+        }
+        bool found = false;
+        for (uint32_t e = 0u; e < node->arity; e++) {
+            size_t child = product.edges[node->first_child + e];
+            if (product.nodes[child].unequal) {
+                current = child;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            result = CETTA_TERM_ORDER_INVALID;
+            break;
+        }
+    }
+done:
+    free(parent_first);
+    free(parents);
+    free(queue);
+    free(product.nodes);
+    free(product.edges);
+    free(product.slots);
+    return result;
 }
 
 /* ── Assumptions ────────────────────────────────────────────────────────── */

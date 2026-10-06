@@ -67,6 +67,7 @@ typedef enum {
     PETTA_FORM_LAMBDA,
     PETTA_FORM_LET,
     PETTA_FORM_CHAIN,
+    PETTA_FORM_TRACE,
 } PeTTaForm;
 
 typedef struct {
@@ -472,9 +473,18 @@ Atom *petta_semantics_lower(
  * PeTTa's msort follows SWI-Prolog's standard term order and preserves
  * duplicate occurrences.  Empty and non-empty CeTTa expressions correspond
  * to Prolog's [] and list cells, respectively.
+ * Comparison visits shared immutable expression pairs once after proving
+ * them equal and uses an explicit frontier for deep terms. A raw cyclic
+ * expression with an unresolved active pair returns false; this API does
+ * not supply a total lexicographic order on rational trees.
  */
 bool petta_semantics_term_compare(
     const Atom *left, const Atom *right, int *ordering);
+
+/* Compare the empty/nonempty expression class against a non-expression
+ * leaf without manufacturing an expression or inspecting child storage. */
+bool petta_semantics_term_compare_expression_boundary(
+    bool nonempty, const Atom *leaf, int *ordering);
 Atom *petta_semantics_msort(Arena *arena, Atom *list);
 
 /*

@@ -2664,6 +2664,8 @@ static PettaPlanNode *petta_plan_build_in(
                 CettaExprIndex child = 0u;
                 if (form == PETTA_FORM_PROGN && nargs > 0u)
                     child = nargs;
+                else if (form == PETTA_FORM_TRACE && nargs == 2u)
+                    child = 2u;
                 else if (form == PETTA_FORM_PROG1 && nargs > 0u)
                     child = 1u;
                 else if ((form == PETTA_FORM_LET ||
@@ -4433,10 +4435,13 @@ bool petta_program_synchronize_space(
     SpaceReadToken read = space_read_token(space);
     SpaceProgramToken program_token = space_program_token(space);
     CettaCount atom_count = space_length64(space);
+    CettaCount view_count = space_view_length64(space);
     PettaCallabilityDomain callability = {0};
     bool ok = true;
-    for (CettaIndex index = 0u; ok && index < atom_count; index++) {
-        Atom *atom = space_get_at64(space, index);
+    /* Imported heads are callable in this view, while each equation remains
+     * owned by its defining space's occurrence catalog below. */
+    for (CettaIndex index = 0u; ok && index < view_count; index++) {
+        Atom *atom = space_view_get_at64(space, index);
         Atom *lhs = NULL;
         SymbolId head = SYMBOL_ID_NONE;
         if (!atom) {
@@ -6064,6 +6069,7 @@ static bool petta_table_safety_form_is_pure(
         return true;
     case PETTA_FORM_NONE:
     case PETTA_FORM_TEST:
+    case PETTA_FORM_TRACE:
     case PETTA_FORM_FOLDALL:
     case PETTA_FORM_FORALL:
     case PETTA_FORM_MAPLIST:
