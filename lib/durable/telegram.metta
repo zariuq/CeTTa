@@ -254,7 +254,7 @@
          (((host:poll 1 $source $offset shutdown ($started True $code $status $known $bytes False False False) $body)
            (telegram:retry-deadline 1 host-restart $failures $now))
           ((host:poll 1 $source $offset $kind ($started False $code $status $known $bytes False False False) $body)
-           (if (and (telegram:contains $kind (observed uncertain)) (or (telegram:contains $code (5 6 7 16 18 28 52 55 56 92))
+           (if (and (telegram:contains $kind (observed uncertain)) (or (telegram:contains $code (5 6 7 16 18 28 35 52 55 56 92))
                    (and (== $code 0) (and (>= $status 500) (<= $status 599)))))
              (telegram:retry-deadline (telegram:backoff $failures) transient-poll $failures $now)
              (telegram:hold 1 transport-outcome)))

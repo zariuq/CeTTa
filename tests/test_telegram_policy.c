@@ -238,10 +238,12 @@ static void recovery_checks(void) {
     recovery_response(0,429,false,"observed",empty,0,1000,"(telegram:hold 1 invalid-retry-delay)");
     recovery_response(0,503,false,"observed","unavailable",0,1000,"(telegram:retry-at 1 2000 transient-poll)");
     recovery_response(0,503,false,"observed","unavailable",6,1000,"(telegram:retry-at 1 65000 transient-poll)");
-    const int transient[]={5,6,7,16,18,28,52,55,56,92};
+    const int transient[]={5,6,7,16,18,28,35,52,55,56,92};
     for (size_t i=0;i<sizeof(transient)/sizeof(*transient);++i)
         recovery_response(transient[i],0,false,"observed","",1,1000,"(telegram:retry-at 1 3000 transient-poll)");
     recovery_response(52,0,false,"uncertain","",0,1000,"(telegram:retry-at 1 2000 transient-poll)");
+    recovery_response(35,0,false,"uncertain","",0,1000,"(telegram:retry-at 1 2000 transient-poll)");
+    recovery_response(35,0,true,"uncertain","",0,1000,"(telegram:hold 1 transport-outcome)");
     recovery_response(42,0,true,"shutdown","",0,1000,"(telegram:retry-at 1 2000 host-restart)");
     recovery_response(42,0,true,"uncertain","",0,1000,"(telegram:hold 1 transport-outcome)");
     recovery_response(42,0,true,"privacy-suppressed","",0,1000,"(telegram:hold 1 transport-outcome)");
