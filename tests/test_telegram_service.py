@@ -31,9 +31,10 @@ class ServicePeer(Peer):
         assert method == 'POST'
         data = json.loads(body)
         if path.endswith('/getUpdates'):
+            assert data['limit'] == 1
             with self.lock:
                 self.calls.append(('poll', data['offset']))
-                updates = [u for u in self.updates if u['update_id'] >= data['offset']]
+                updates = [u for u in self.updates if u['update_id'] >= data['offset']][:data['limit']]
             return 200, [], json.dumps({'ok': True, 'result': updates}).encode()
         assert path == f'/bot{TOKEN}/sendMessage'
         assert data['chat_id'] == 42 and set(data) == {'chat_id', 'text'}
@@ -93,6 +94,11 @@ with tempfile.TemporaryDirectory(prefix='cetta-service-entry-') as temp:
 
     # Validation has no journal, listener or network side effects.
     check(['--check', *base], 0)
+    for limit in ('1', '10', '100'):
+        check(['--check', *base, '--poll-limit', limit], 0)
+    for limit in ('0', '101', '-1', 'many'):
+        check(['--check', *base, '--poll-limit', limit], 64)
+    check(['--check', *base, '--poll-limit', '1', '--poll-limit', '2'], 64)
     assert not list(state.iterdir())
     for suffix in (['--run'], ['--durable-admin'], ['--chat', '42'], ['--chat', '0'],
                    ['--chat', '9223372036854775808'], ['--worker', 'another'],
@@ -133,6 +139,7 @@ with tempfile.TemporaryDirectory(prefix='cetta-service-entry-') as temp:
             listener.bind(str(path)); listener.listen(16); path.chmod(0o600)
             args = ['--run', '--root', str(ROOT), '--state-dir', str(state), '--worker', 'brain',
                     '--chat', '42', '--credential-file', str(token), '--mock-origin', origin,
+                    '--poll-limit', '1',
                     '--listener-fd', str(listener.fileno())]
             if tls:
                 args += ['--ca-file', str(cert)]

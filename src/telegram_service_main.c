@@ -30,6 +30,7 @@ typedef struct {
     const char *root, *directory, *worker, *credential, *origin, *ca, *commands;
     int token_fd, listener, operator_fd;
     int64_t deadline_ms;
+    int64_t poll_limit;
     int64_t chats[128]; size_t count;
     int64_t operators[16]; size_t operator_count;
     int64_t initial_offset;
@@ -170,7 +171,7 @@ static void identity_step(Identity *d, const CettaTelegramCredential *credential
 static void usage(void) {
     puts("Usage: cetta-telegram-service (--check | --run) --root DIR --state-dir DIR\n"
          "       --worker NAME --chat ID [--chat ID ...] [--operator ID ...]\n"
-         "       [--program agent|channel] [--initial-offset N]\n"
+         "       [--program agent|channel] [--initial-offset N] [--poll-limit 1..100]\n"
          "       [--commands FILE] [--command-deadline-ms N]\n"
          "       (--credential-file FILE | --credential-fd FD) [--listener-fd FD]\n"
          "       [--operator-fd FD]\n"
@@ -203,6 +204,10 @@ static bool arguments(int argc, char **argv, Config *c) {
         if (!strcmp(option,"--initial-offset")) {
             if (c->offset_seen || !number(value,0,INT64_MAX-1,&n)) return false;
             c->offset_seen=true; c->initial_offset=n; continue;
+        }
+        if (!strcmp(option,"--poll-limit")) {
+            if (c->poll_limit || !number(value,1,100,&n)) return false;
+            c->poll_limit=n; continue;
         }
         if (!strcmp(option,"--commands")) {
             if (c->commands || value[0]!='/') return false;
@@ -391,7 +396,7 @@ int main(int argc,char **argv) {
     if (s==DURABLE_OK && c.offset_seen) s=seed_cursor(store,source_id,c.initial_offset);
     if (s!=DURABLE_OK) { fault(NULL,"journal identity/open",s); result=s==DURABLE_VERSION?CONFIG:FAILURE; goto done; }
     const char *updates[]={"message","edited_message","callback_query"};
-    CettaServiceSource source={{credential,source_id,20,100,updates,3},&trusted,policy,2000000};
+    CettaServiceSource source={{credential,source_id,20,c.poll_limit?c.poll_limit:100,updates,3},&trusted,policy,2000000};
     CettaDispatchChannel channel={"telegram.action","1",credential,&actions,cetta_telegram_action_plan};
     CettaServiceConfig config={{&channel,1,30000,65536,NULL,http_fault},&source,1,c.listener,getuid(),c.worker,NULL,fault};
     s=cetta_service_new(store,&config,&service);
