@@ -426,7 +426,10 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
         ctx->prime_relational_plan_enabled ||
         portable_relational_control_requested;
     ctx->petta_program = needs_occurrence_program
-        ? petta_program_new() : NULL;
+        ? petta_program_new_with_rules(CETTA_RULE_SYNTAX_ORDINARY |
+            ((profile && (profile->id == CETTA_PROFILE_PETTA_EXTENDED ||
+                          profile->id == CETTA_PROFILE_HE_EXTENDED))
+                ? CETTA_RULE_SYNTAX_DIRECTIONAL : 0u)) : NULL;
     if (ctx->petta_program && cetta_profile_uses_petta_typing(profile)) {
         (void)petta_program_enable_analysis(ctx->petta_program);
     }
@@ -1427,9 +1430,19 @@ static const char *cetta_library_display_path(CettaLibraryContext *ctx,
 
 static Space *logical_import_space(CettaLibraryContext *ctx, Space *space) {
     for (uint32_t i = ctx->import_space_alias_len; i > 0; i--) {
-        if (ctx->import_space_aliases[i - 1].work_space == space) {
-            return ctx->import_space_aliases[i - 1].logical_space;
-        }
+        if (ctx->import_space_aliases[i - 1].work_space == space)
+            space = ctx->import_space_aliases[i - 1].logical_space;
+    }
+    return space;
+}
+
+Space *cetta_library_import_execution_space(const CettaLibraryContext *ctx,
+                                           Space *space) {
+    if (!ctx || !space)
+        return space;
+    for (uint32_t i = 0u; i < ctx->import_space_alias_len; i++) {
+        if (ctx->import_space_aliases[i].logical_space == space)
+            space = ctx->import_space_aliases[i].work_space;
     }
     return space;
 }
@@ -7868,7 +7881,7 @@ static bool cetta_library_petta_execute_document_ids(
             }
             Atom *declaration = term_universe_get_atom(
                 work_space->native.universe, declaration_id);
-            if (petta_program_is_equation(declaration) &&
+            if (petta_program_admits_equation(ctx->petta_program, declaration) &&
                 !petta_program_predeclare_equation(
                     ctx->petta_program, work_space, declaration)) {
                 if (failure_out)
@@ -8527,7 +8540,10 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
     Atom *prev_self = NULL;
     if (registry) {
         prev_self = registry_lookup_id(registry, g_builtin_syms.self);
-        Atom *self_value = atom_space(persistent_arena, work_space);
+        /* Token capture must never publish the temporary transaction owner.
+         * Reads/writes resolve this stable identity through the active alias. */
+        Atom *self_value = atom_space(persistent_arena,
+                                      logical_import_space(ctx, logical_space));
         cetta_provenance_assert_not_transient(self_value,
                                              "library.registry.self");
         registry_bind_id(registry, g_builtin_syms.self, self_value);
@@ -9397,7 +9413,12 @@ bool cetta_library_import(CettaLibraryContext *ctx, const char *name,
     parsed_spec.kind = CETTA_MODULE_SPEC_STDLIB;
     snprintf(parsed_spec.raw_spec, sizeof(parsed_spec.raw_spec), "%s", import_name);
     snprintf(parsed_spec.path_or_member, sizeof(parsed_spec.path_or_member), "%s", import_name);
-    if (!resolve_import_plan(ctx, &parsed_spec, space, space, false,
+    /* A registered native submodule has the same member path as an authored
+     * namespace import; its provider remains the standard library. */
+    for (char *part = parsed_spec.path_or_member; *part; ++part)
+        if (*part == ':') *part = '/';
+    if (!resolve_import_plan(ctx, &parsed_spec, logical_import_space(ctx, space),
+                             space, false,
                              &plan, eval_arena, error_out) ||
         !execute_import_plan(ctx, &plan, eval_arena, persistent_arena,
                              registry, fuel, error_out)) {
@@ -10056,11 +10077,6 @@ static Atom *cetta_library_dispatch_native_value(
                                                        args, nargs, result_form);
         if (result) return result;
     }
-    {
-        Atom *result = cetta_native_module_dispatch_active(ctx, space, a, head, args,
-                                                           nargs, ctx->active_mask);
-        if (result) return result;
-    }
     return NULL;
 }
 
@@ -10075,6 +10091,9 @@ bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
                                  .term = value, .result_form = result_form};
         return true;
     }
+    if (ctx && cetta_native_module_call_active(ctx, space, a, head, args, nargs,
+                                               ctx->active_mask, out))
+        return true;
     return ctx && ctx->foreign_runtime &&
            cetta_foreign_call_native(ctx->foreign_runtime,
                                      space, a, head, args, nargs, out);

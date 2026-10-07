@@ -254,6 +254,10 @@ bool cetta_library_import(CettaLibraryContext *ctx, const char *name,
                           Space *space, Arena *eval_arena,
                           Arena *persistent_arena, Registry *registry,
                           int fuel, Atom **error_out);
+/* Captured space values retain their published identity. During an import,
+ * resource operations use the active transactional contents of that identity. */
+Space *cetta_library_import_execution_space(const CettaLibraryContext *ctx,
+                                           Space *space);
 
 bool cetta_library_register_module(CettaLibraryContext *ctx, const char *path,
                                    Arena *eval_arena, Atom **error_out);

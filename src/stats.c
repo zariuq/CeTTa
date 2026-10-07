@@ -975,6 +975,8 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "term-order-frontier-peak",
     "term-order-product-pair",
     "term-order-product-edge",
+    "term-match-subject-view",
+    "term-match-pair-visit",
 };
 
 static int64_t clamp_counter(uint64_t value) {

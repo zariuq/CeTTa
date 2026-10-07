@@ -13,12 +13,15 @@ fi
 scratch=$(mktemp -d "$ROOT/runtime/prime-need-heap-stats.XXXXXX")
 trap 'rm -rf "$scratch"' EXIT
 
-declaration='(: need-index-depth (-> Number Symbol))'
-definition='(= (need-index-depth $n)
+definition='(= (need-index-depth $n $anchor)
                 (if (<= $n 0)
                     done
-                    (need-index-depth (- $n 1))))'
-query='!(need-index-depth 4000)'
+                    (let $_ (force $anchor)
+                      (need-index-depth (- $n 1) $anchor))))'
+# Revisit an old explicit cell while newer activations extend the heap. A
+# closed countdown can be compiled away or touch only its most recent cell;
+# it is not a witness of history-length lookup cost.
+query='!(let $anchor (delay sentinel) (need-index-depth 200 $anchor))'
 
 run_probe() {
     local mode=$1
@@ -27,13 +30,13 @@ run_probe() {
     if [[ "$mode" == "indexed" ]]; then
         CETTA_GC=1 CETTA_GC_BUDGET_MB=1 \
             "$BIN" --emit-runtime-stats --lang prime \
-                -e "$declaration" -e "$definition" -e "$query" \
+                -e "$definition" -e "$query" \
                 >"$stdout_file" 2>"$stderr_file"
     else
         CETTA_GC=1 CETTA_GC_BUDGET_MB=1 \
             CETTA_PRIME_NEED_HEAP_INDEX=0 \
             "$BIN" --emit-runtime-stats --lang prime \
-                -e "$declaration" -e "$definition" -e "$query" \
+                -e "$definition" -e "$query" \
                 >"$stdout_file" 2>"$stderr_file"
     fi
 }

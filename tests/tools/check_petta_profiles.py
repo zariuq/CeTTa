@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import statistics
 import subprocess
+import sys
 import time
 
 
@@ -63,6 +64,11 @@ def self_test():
     assert not compare(success, {"exit": 2, "stdout": "a\na\n"}, "test.metta")
     assert not compare({"exit": "timeout", "stdout": ""},
                        {"exit": "timeout", "stdout": ""}, "test.metta")
+    fault = {"exit": 1, "stdout": "failed assertion\n", "stderr": ""}
+    assert compare_fault(fault, fault, "test.metta")
+    assert not compare_fault(fault, dict(fault, exit=0), "test.metta")
+    assert not compare_fault(fault, dict(fault, stderr="other fault"), "test.metta")
+    assert not compare_fault(fault, dict(fault, stdout=""), "test.metta")
     print("PASS: normalization retains aliases, occurrences, order and string contents")
 
 
@@ -93,6 +99,42 @@ def compare(left, right, example):
             normalize(left["stdout"], example) == normalize(right["stdout"], example))
 
 
+def compare_fault(expected, actual, example):
+    """A pinned negative control must fail for precisely its declared reason."""
+    return (expected["exit"] in (1, 2) and actual["exit"] == expected["exit"] and
+            normalize(expected["stdout"], example) == normalize(actual["stdout"], example) and
+            expected["stderr"] == actual["stderr"])
+
+
+def controlled_import(root, petta, binary, artifacts, timeout):
+    """Exercise the existing deterministic import/build fixture, not real FAISS."""
+    sys.path.insert(0, str(root / "scripts"))
+    from petta_corpus_manifest import CONTROLLED_CASES, local_git_fixture_workspace
+    fixture = CONTROLLED_CASES["git_import2.metta"]
+    expected = {"exit": 0, "stdout":
+        "What ./repos\nCloning ./faiss_ffi into ./repos/faiss_ffi\n"
+        "Running build: ../../fixture/build.sh in ./repos/faiss_ffi\n"
+        "is a, should a. ✅ \n"
+        "is ((red apple) strudel), should ((red apple) strudel). ✅ \n" + "true\n" * 13}
+    record = {"qualification": "controlled-import-build-mock-faiss",
+              "fixture": fixture,
+              "fixture_sha256": {p: sha(root / p) for p in fixture["files"]},
+              "runs": {}}
+    for mode in ("swi", "plain", "extended"):
+        with local_git_fixture_workspace(root, petta, petta / "examples/git_import2.metta",
+                                         fixture, directory=root / "runtime") as (cwd, source):
+            command = (["bash", str(petta / "run.sh"), "--silent", str(source)]
+                       if mode == "swi" else
+                       [str(binary), "--lang", "petta"] +
+                       (["--profile", "extended"] if mode == "extended" else []) + [str(source)])
+            record["program_sha256"] = sha(source)
+            result = run(command, cwd, artifacts / f"controlled-import-{mode}", timeout)
+            record["runs"][mode] = result
+    record["passed"] = all(compare(expected, r, "git_import2.metta") and not r["stderr"]
+                           for r in record["runs"].values())
+    return record
+
+
 def main():
     root = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(description=__doc__)
@@ -106,6 +148,8 @@ def main():
     parser.add_argument("--timing-floor", type=float, default=0.05)
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--fault-controls", type=Path,
+                        default=root / "tests/petta/upstream_fault_controls.json")
     args = parser.parse_args()
     self_test()
     if args.self_test:
@@ -124,6 +168,10 @@ def main():
         if {Path(path).stem for path in files} != selected:
             parser.error("an example name was not found among the tracked runnable examples")
     baseline = args.baseline.resolve() if args.baseline else None
+    fault_controls = json.loads(args.fault_controls.read_text())
+    if fault_controls.get("schema") != 1:
+        parser.error("unknown upstream fault-control schema")
+    fault_controls = fault_controls["cases"]
     receipt = {
         "binary_sha256": sha(binary),
         "baseline_sha256": sha(baseline) if baseline else None,
@@ -137,7 +185,7 @@ def main():
                 text=True).splitlines() if (petta / path).is_file()},
         "skips": SKIPS, "settings": {"max_ratio": args.max_ratio,
             "timing_floor": args.timing_floor, "repeats": args.repeats},
-        "cases": [], "failures": [], "oracle_failures": [],
+        "cases": [], "failures": [], "oracle_failures": [], "fault_controls": [],
     }
     for path in files:
         example = Path(path).name
@@ -153,6 +201,21 @@ def main():
             case["runs"][mode] = run(command, petta,
                 artifacts / f"{Path(path).stem}-{mode}", args.timeout)
         runs = case["runs"]
+        expected_fault = fault_controls.get(example)
+        if expected_fault:
+            case["qualification"] = "pinned-fault-control"
+            case["fault_contract"] = expected_fault
+            receipt["fault_controls"].append(path)
+            if case["source_sha256"] != expected_fault["source_sha256"]:
+                receipt["failures"].append(f"{path}: fault-control source changed; review required")
+            for mode, run_result in runs.items():
+                if not compare_fault(expected_fault, run_result, example):
+                    receipt["failures"].append(f"{path}: {mode} fault contract")
+            receipt["cases"].append(case)
+            (artifacts / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
+            print(f"{len(receipt['cases'])}/{len(files)} {example}: pinned fault control", flush=True)
+            continue
+        case["qualification"] = "successful-client"
         if runs["swi"]["exit"] != 0:
             # Retain incomplete clients as visible failures. Agreement with
             # a missing dependency does not qualify the client's behavior.
@@ -192,12 +255,20 @@ def main():
         print(f"{len(receipt['cases'])}/{len(files)} {example}: "
               f"plain {runs['plain']['seconds']:.3f}s, extended {runs['extended']['seconds']:.3f}s",
               flush=True)
+    if any(Path(p).name == "git_import2.metta" for p in files):
+        control = controlled_import(root, petta, binary, artifacts, args.timeout)
+        receipt["controlled_clients"] = [control]
+        if not control["passed"]:
+            receipt["failures"].append("controlled import/build boundary")
+        (artifacts / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
     if receipt["failures"]:
         print("FAIL:\n" + "\n".join(receipt["failures"]))
         if receipt["oracle_failures"]:
             print("Unqualified upstream clients: " + ", ".join(receipt["oracle_failures"]))
         return 1
-    print(f"PASS: {len(files)} upstream examples, both PeTTa profiles, ordered outputs and timings")
+    print(f"PASS: {len(files) - len(receipt['fault_controls'])} successful upstream clients, "
+          f"{len(receipt['fault_controls'])} pinned fault controls; "
+          "both PeTTa profiles, ordered outputs and timings")
     return 0
 
 

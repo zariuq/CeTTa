@@ -1753,6 +1753,43 @@ static void test_deep_typecheck_source_rewrites(
     AtomId as_elems[3] = {at, variable, target};
     AtomId as_pattern = tu_expr_from_ids(
         universe, as_elems, 3u);
+    /* An alias head can itself survive marker erasure. Its summary must
+     * describe the rewritten source rather than only the written head. */
+    AtomId marked_at_elems[3] = {brand, type, at};
+    AtomId marked_at = tu_expr_from_ids(universe, marked_at_elems, 3u);
+    AtomId marked_as_elems[3] = {marked_at, variable, target};
+    AtomId marked_as = tu_expr_from_ids(universe, marked_as_elems, 3u);
+    AtomId marked_match_elems[4] = {match, space, marked_as, body};
+    document[0] = tu_expr_from_ids(universe, marked_match_elems, 4u);
+    cetta_petta_prepare_document_forms(universe, document, 1);
+    assert(tu_child(universe, document[0], 2u) == target);
+    assert(tu_head_sym(universe, tu_child(universe, document[0], 3u)) ==
+           g_builtin_syms.let);
+
+    /* Quoted code stays literal, but a match pattern headed by quote
+     * still follows the alias-pattern grammar. */
+    AtomId quote_as_elems[2] = {quote, as_pattern};
+    AtomId quote_as = tu_expr_from_ids(universe, quote_as_elems, 2u);
+    AtomId quoted_match_elems[4] = {match, space, quote_as, body};
+    AtomId quoted_match = tu_expr_from_ids(universe, quoted_match_elems, 4u);
+    AtomId quote_code_elems[2] = {quote, quoted_match};
+    AtomId quote_code = tu_expr_from_ids(universe, quote_code_elems, 2u);
+    document[0] = quote_code;
+    cetta_petta_prepare_document_forms(universe, document, 1);
+    assert(document[0] == quote_code);
+
+    AtomId quote_target_elems[2] = {quote, target};
+    AtomId quote_target = tu_expr_from_ids(universe, quote_target_elems, 2u);
+    for (unsigned marked = 0u; marked < 2u; marked++) {
+        AtomId outer_marker_elems[3] = {brand, type, quoted_match};
+        document[0] = marked
+            ? tu_expr_from_ids(universe, outer_marker_elems, 3u) : quoted_match;
+        cetta_petta_prepare_document_forms(universe, document, 1);
+        assert(tu_child(universe, document[0], 2u) == quote_target);
+        assert(tu_head_sym(universe, tu_child(universe, document[0], 3u)) ==
+               g_builtin_syms.let);
+    }
+
     AtomId deep_as_pattern = test_nest_unary_id(
         universe, box, as_pattern, DEEP_FINITE_DEPTH);
     AtomId match_elems[4] = {
@@ -1779,6 +1816,36 @@ static void test_deep_typecheck_source_rewrites(
     assert(tu_child(universe, match_body, 1u) == variable);
     assert(tu_child(universe, match_body, 2u) == target);
     assert(tu_child(universe, match_body, 3u) == body);
+
+    /* A quote-looking branch list is still governed by the case grammar.
+     * Its executable branch body needs lambda scope preparation, while a
+     * real quoted value must stay literal. */
+    AtomId lambda_head = tu_intern_symbol(
+        universe, symbol_intern_cstr(g_symbols, "|->"));
+    AtomId parameters = tu_expr_from_ids(universe, &variable, 1u);
+    AtomId lambda_elems[3] = {lambda_head, parameters, variable};
+    AtomId lambda_form = tu_expr_from_ids(universe, lambda_elems, 3u);
+    AtomId lambda_branch_elems[2] = {leaf, lambda_form};
+    AtomId lambda_branch = tu_expr_from_ids(
+        universe, lambda_branch_elems, 2u);
+    AtomId quote_branches_elems[2] = {quote, lambda_branch};
+    AtomId quote_branches = tu_expr_from_ids(
+        universe, quote_branches_elems, 2u);
+    AtomId quote_case_elems[3] = {case_head, leaf, quote_branches};
+    AtomId bang = tu_intern_symbol(universe, g_builtin_syms.bang);
+    AtomId query_document[2] = {
+        bang, tu_expr_from_ids(universe, quote_case_elems, 3u),
+    };
+    cetta_petta_prepare_document_forms(universe, query_document, 2);
+    AtomId prepared_branches = tu_child(universe, query_document[1], 2u);
+    AtomId prepared_lambda = tu_child(
+        universe, tu_child(universe, prepared_branches, 1u), 1u);
+    assert(prepared_lambda != lambda_form);
+    AtomId quote_lambda_elems[2] = {quote, lambda_form};
+    AtomId quote_lambda = tu_expr_from_ids(universe, quote_lambda_elems, 2u);
+    query_document[1] = quote_lambda;
+    cetta_petta_prepare_document_forms(universe, query_document, 2);
+    assert(query_document[1] == quote_lambda);
 
     /* The case branch grammar is a distinct traversal mode.  Exercise the
      * same deep alias through it, plus an ordinary branch that must remain
@@ -3170,6 +3237,18 @@ static void test_compiled_graph_transport(TermUniverse *universe, Arena *arena) 
     Arena answers;
     arena_init(&answers);
     Atom *variable = atom_var_with_id(arena, "graph-leaf", fresh_var_id());
+    /* Moving shared storage can rename its cells. Any retained support
+     * summary must describe the new children, never their old identities. */
+    Atom *renamed = atom_var_with_id(arena, "graph-renamed", fresh_var_id());
+    Atom *old_children[] = {variable, variable};
+    Atom *new_children[] = {renamed, renamed};
+    Atom *old_view = atom_expr(arena, old_children, 2u);
+    Atom *moved_view = atom_expr_view_rehome(arena, old_view, new_children);
+    assert(moved_view);
+    VarId moved_support = atom_single_variable_id(moved_view);
+    assert(moved_support == VAR_ID_NONE || moved_support == renamed->var_id);
+    assert(atom_eq(moved_view, atom_expr(arena, new_children, 2u)));
+    assert(!atom_eq(moved_view, old_view));
     Atom *query_vars[] = {variable};
     Atom *input = variable;
     for (unsigned depth = 0u; depth < 32u; depth++) {
@@ -3619,6 +3698,100 @@ static void test_compiled_builtin_entry(TermUniverse *universe, Arena *arena) {
         space_free(&space);
     }
     puts("PASS: compiled builtin entry preserves live source and resumes once");
+}
+
+static bool test_compiled_comparison_equations(
+    void *context, Space *space, SymbolId head, uint32_t arity) {
+    (void)space;
+    return *(bool *)context && head == g_builtin_syms.op_lt && arity == 2u;
+}
+
+/* A fused test keeps the original control before its argument producers.
+ * A revision change before the test transfers that control once; a stable
+ * test neither creates a Boolean result cell nor crosses into the host. */
+static void test_compiled_comparison_entry(TermUniverse *universe,
+                                            Arena *arena) {
+    const char *conditions[] = {"(< 1 2)", "(< 2 1)", "(< (+ 1 2) 4)"};
+    const char *results[] = {"(Row yes)", "(Row no)", "(Row yes)"};
+    for (unsigned condition = 0u; condition < 3u; condition++) {
+        for (unsigned scenario = 0u; scenario < 3u; scenario++) {
+            PettaProgram *program = petta_program_new();
+            assert(program);
+            Space space;
+            space_init_with_universe(&space, universe);
+            char source[256], equation[512];
+            snprintf(source, sizeof(source), "(if %s (Row yes) (Row no))",
+                     conditions[condition]);
+            if (scenario == 2u)
+                snprintf(equation, sizeof(equation),
+                    "(= (comparison-entry) (progn (eval checkpoint) %s))",
+                    source);
+            else
+                snprintf(equation, sizeof(equation),
+                    "(= (comparison-entry) %s)", source);
+            add_compiled_program_equation(program, &space, arena, equation);
+            bool authored = false;
+            CettaOpenEquationHost host = {
+                .context = &authored,
+                .builtin_allowed = test_compiled_builtin_allowed,
+                .builtin_equations = test_compiled_comparison_equations,
+            };
+            const char *reason = NULL;
+            CettaOpenEquationProgram *compiled =
+                cetta_open_equation_program_compile(program, &space,
+                    symbol_intern_cstr(g_symbols, "comparison-entry"),
+                    0u, &host, &reason);
+            if (!compiled) fprintf(stderr, "comparison entry: %s\n", reason);
+            assert(compiled);
+            Arena answers;
+            arena_init(&answers);
+            CettaOpenEquationRuntime runtime = {
+                .builtin_allowed = test_compiled_builtin_allowed,
+            };
+            CettaOpenEquationCursor *cursor = cetta_open_equation_cursor_open(
+                compiled, &answers, NULL, 0u, NULL, NULL, 0u, &runtime);
+            assert(cursor);
+            Atom *value = NULL;
+            CettaOpenEquationStep step = CETTA_OPEN_EQUATION_EXHAUSTED;
+            if (scenario == 2u) {
+                step = cetta_open_equation_cursor_next(
+                    cursor, NULL, &value, NULL);
+                assert(step == CETTA_OPEN_EQUATION_HOST);
+            }
+            if (scenario != 0u) {
+                add_compiled_program_equation(program, &space, arena,
+                    "(= (< $left $right) false)");
+                authored = true;
+            }
+            if (scenario == 2u) {
+                uint32_t base = test_compiled_accept_host_value(
+                    cursor, &answers, "(eval checkpoint)", "checkpoint");
+                step = cetta_open_equation_cursor_continue(
+                    cursor, NULL, base, &value, NULL);
+            } else {
+                step = cetta_open_equation_cursor_next(
+                    cursor, NULL, &value, NULL);
+            }
+            if (scenario != 0u) {
+                assert(step == CETTA_OPEN_EQUATION_HOST);
+                uint32_t base = test_compiled_accept_host_value(
+                    cursor, &answers, source, "(changed shape)");
+                step = cetta_open_equation_cursor_continue(
+                    cursor, NULL, base, &value, NULL);
+            }
+            assert(step == CETTA_OPEN_EQUATION_ANSWER);
+            assert(atom_alpha_eq(value, parse_one(&answers,
+                scenario ? "(changed shape)" : results[condition])));
+            assert(cetta_open_equation_cursor_next(
+                cursor, NULL, &value, NULL) == CETTA_OPEN_EQUATION_EXHAUSTED);
+            cetta_open_equation_cursor_close(cursor);
+            cetta_open_equation_program_release(compiled);
+            arena_free(&answers);
+            petta_program_free(program);
+            space_free(&space);
+        }
+    }
+    puts("PASS: fused comparisons retain the live control before argument effects");
 }
 
 static void test_compiled_builtin_entry_binders(TermUniverse *universe,
@@ -11461,8 +11634,8 @@ static void test_owned_equation_continuation_roundtrip(
     cetta_owned_continuation_destroy(&invalidated);
     petta_machine_destroy(&machine);
 
-    CettaOwnedContinuation unsupported;
-    cetta_owned_continuation_init(&unsupported);
+    CettaOwnedContinuation superpose_image;
+    cetta_owned_continuation_init(&superpose_image);
     Atom *superpose = parse_one(
         answers, "(superpose (owned-left owned-right))");
     assert(superpose);
@@ -11471,11 +11644,24 @@ static void test_owned_equation_continuation_roundtrip(
     assert(petta_machine_next(
                &machine, &answer, &environment) ==
            PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_is_symbol(answer, "owned-left"));
     bindings_free(&environment);
     assert(capture_relational_continuation(
-               &machine, &unsupported) ==
-           CETTA_CONTINUATION_UNSUPPORTED);
-    cetta_owned_continuation_destroy(&unsupported);
+               &machine, &superpose_image) ==
+           CETTA_CONTINUATION_READY);
+    for (unsigned replay = 0u; replay < 2u; ++replay) {
+        assert(petta_machine_next(&machine, &answer, &environment) ==
+               PETTA_MACHINE_STEP_ANSWER);
+        assert(atom_is_symbol(answer, "owned-right"));
+        bindings_free(&environment);
+        assert(petta_machine_next(&machine, &answer, &environment) ==
+               PETTA_MACHINE_STEP_EXHAUSTED);
+        bindings_free(&environment);
+        if (replay == 0u)
+            assert(restore_relational_continuation(
+                       &machine, &superpose_image) == CETTA_CONTINUATION_READY);
+    }
+    cetta_owned_continuation_destroy(&superpose_image);
     petta_machine_destroy(&machine);
 
     bool once_captured = false;
@@ -12139,6 +12325,7 @@ int main(int argc, char **argv) {
     test_compiled_borrowed_suffix(&universe, &persistent);
     test_compiled_type_guard_protocol(&universe, &persistent);
     test_compiled_builtin_entry(&universe, &persistent);
+    test_compiled_comparison_entry(&universe, &persistent);
     test_compiled_builtin_entry_binders(&universe, &persistent);
     test_compiled_entry_joins(&universe, &persistent);
     test_compiled_terminal_host(&universe, &persistent);

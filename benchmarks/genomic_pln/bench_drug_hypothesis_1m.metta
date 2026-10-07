@@ -7,7 +7,7 @@
 ; widen the biology and then lose track of whether a behavior change came from
 ; the data expansion or from a regression in the generic chainer.
 
-!(import! &self ./workload_genomic_pln_1m.metta)
+!(include ./workload_genomic_pln_1m.metta)
 
 !(let $hits
       (collapse
@@ -56,7 +56,7 @@
           $item
           (let (pair $key $next) $item $key)
           (let (pair $key $next) $item
-            (eval (revise-stv-step $acc $next)))))
+            (revise-stv-step $acc $next))))
    (supported-drug-hyp-count (size-atom $groups)))
 
 !(collapse
@@ -71,7 +71,7 @@
            $item
            (let (pair $key $next) $item $key)
            (let (pair $key $next) $item
-             (eval (revise-stv-step $acc $next))))
+             (revise-stv-step $acc $next)))
       (let (supported-key $gene $disease $drug $tissue) $key
         (let $score (wm-posterior-mean $revised)
           (if (> $score 0.30)
@@ -92,13 +92,12 @@
         $item
         (let (pair $key $next) $item $key)
         (let (pair $key $next) $item
-          (eval (revise-stv-step $acc $next))))
+          (revise-stv-step $acc $next)))
       0
       $count
       $group
-      (eval
-        (let ($key $revised) $group
-          (let $score (wm-posterior-mean $revised)
-            (if (> $score 0.30)
-                (+ $count 1)
-                $count))))))
+      (let ($key $revised) $group
+        (let $score (wm-posterior-mean $revised)
+          (if (> $score 0.30)
+              (+ $count 1)
+              $count)))))

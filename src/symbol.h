@@ -482,7 +482,19 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(term_lt, "@<") \
     X(term_gt, "@>") \
     X(term_le, "@<=") \
-    X(term_ge, "@>=")
+    X(term_ge, "@>=") \
+    X(equals_percent, "=%") \
+    X(pat_solve, "pat:solve") \
+    X(pat_apply, "pat:apply") \
+    X(pat_view, "pat:view") \
+    X(pat_query, "pat:query") \
+    X(pat_match_forward, "pat:match%") \
+    X(pat_match_reverse, "pat:%match") \
+    X(pat_unify_forward, "pat:unify%") \
+    X(pat_let_forward, "pat:let%") \
+    X(pat_case_forward, "pat:case%") \
+    X(pat_is_instance, "pat:is-instance") \
+    X(pat_is_variant, "pat:is-variant")
 
 /* Builtins whose grounded-operation capability is independent of language
    and profile.  symbol_table_init_builtins compiles this declaration into

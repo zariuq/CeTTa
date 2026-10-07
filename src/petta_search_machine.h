@@ -28,6 +28,11 @@ typedef enum {
     /* Evaluate only argument zero.  Space operations use this mode because
      * their space expression is strict while atom payloads remain syntax. */
     PETTA_MACHINE_HOST_STRICT_FIRST_APPLICATION,
+    /* Syntax query with a strict space operand. The existing match choices
+     * own each leg; one immutable constraint batch owns its permissions. */
+    PETTA_MACHINE_HOST_PATTERN_QUERY,
+    PETTA_MACHINE_HOST_PATTERN_QUERY_READY,
+    PETTA_MACHINE_HOST_PATTERN_ADAPTER,
     PETTA_MACHINE_HOST_READY_APPLICATION,
     /*
      * The host explicitly supersedes a machine-native form for a selected
@@ -256,6 +261,9 @@ typedef struct {
     /* Optional query union uses the ordinary ordered choice trail.  A pipe
      * in a base-profile pattern remains literal row syntax. */
     bool additive_match_queries;
+    /* Syntax admitted by this execution view; zero is the ordinary dialect.
+     * Each resulting candidate carries its own head-binding policy. */
+    unsigned admitted_rule_forms;
     /* A `once` whose body is one call to the open tier takes its witness
      * from a portfolio of depth-first search and iterative deepening. */
     bool first_witness_portfolio;

@@ -402,6 +402,7 @@ typedef struct {
 } PettaPlanInternEntry;
 
 struct PettaProgram {
+    unsigned admitted_rule_forms;
     Arena plans;
     /* Plans of runtime translations (eval, a computed hyperpose branch),
      * one per distinct content, and the arena each is first built in. */
@@ -444,6 +445,7 @@ struct PettaProgram {
 };
 
 struct PettaProgramRevisionView {
+    unsigned admitted_rule_forms;
     _Atomic uint32_t references;
     /* The full token proves that construction observed one coherent source
        state; reuse is keyed by the strictly smaller equation projection. */
@@ -1521,18 +1523,16 @@ static bool petta_callability_insert_named(
     return true;
 }
 
-static bool petta_equation_view(
-    Atom *atom, Atom **lhs, Atom **rhs, SymbolId *head) {
+static bool petta_rule_syntax_view(
+    Atom *atom, unsigned admitted_forms, Atom **lhs, Atom **rhs, SymbolId *head) {
     if (lhs)
         *lhs = NULL;
     if (rhs)
         *rhs = NULL;
     if (head)
         *head = SYMBOL_ID_NONE;
-    if (!atom || atom->kind != ATOM_EXPR ||
-        atom->expr.len != 3u ||
-        !atom_is_symbol_id(
-            atom->expr.elems[0], g_builtin_syms.equals)) {
+    CettaRuleDescriptor rule;
+    if (!cetta_rule_view(atom, admitted_forms, &rule)) {
         return false;
     }
     Atom *left = atom->expr.elems[1];
@@ -1549,6 +1549,24 @@ static bool petta_equation_view(
     return true;
 }
 
+static bool petta_equation_view(
+    Atom *atom, Atom **lhs, Atom **rhs, SymbolId *head) {
+    return petta_rule_syntax_view(atom, CETTA_RULE_SYNTAX_ORDINARY, lhs, rhs, head);
+}
+
+static unsigned petta_program_rule_forms(const PettaProgram *program) {
+    return program ? program->admitted_rule_forms : CETTA_RULE_SYNTAX_ORDINARY;
+}
+
+static bool petta_program_equation_view(const PettaProgram *program,
+    Atom *atom, Atom **lhs, Atom **rhs, SymbolId *head) {
+    return petta_rule_syntax_view(atom, petta_program_rule_forms(program), lhs, rhs, head);
+}
+
+bool petta_program_admits_equation(const PettaProgram *program, Atom *atom) {
+    return petta_program_equation_view(program, atom, NULL, NULL, NULL);
+}
+
 /* Only a variable in function position can unify with every named head.
  * Structured and grounded heads retain their outer constructor and therefore
  * cannot serve as universal callability evidence. */
@@ -1562,8 +1580,11 @@ static bool petta_equation_lhs_admits_any_named_head(
 static PettaEquationActivationLayout petta_equation_activation_layout(
     Atom *equation, uint32_t static_variable_count) {
     PettaEquationActivationLayout layout = {0};
-    if (petta_equation_view(
-            equation, &layout.lhs, &layout.rhs, NULL)) {
+    if (petta_rule_syntax_view(equation,
+            CETTA_RULE_SYNTAX_ORDINARY | CETTA_RULE_SYNTAX_DIRECTIONAL,
+            &layout.lhs, &layout.rhs, NULL)) {
+        layout.binding = atom_is_symbol_id(equation->expr.elems[0], g_builtin_syms.equals_percent)
+            ? CETTA_RULE_BIND_HEAD : CETTA_RULE_BIND_UNIFY;
         layout.static_variable_count = static_variable_count;
         layout.lhs_contains_cons_constraint_valid = true;
         layout.lhs_contains_cons_constraint =
@@ -1594,7 +1615,9 @@ static bool petta_program_type_declaration_view(
 }
 
 bool petta_program_atom_affects_metadata(Atom *atom) {
-    return petta_program_is_equation(atom) ||
+    return petta_rule_syntax_view(atom,
+               CETTA_RULE_SYNTAX_ORDINARY | CETTA_RULE_SYNTAX_DIRECTIONAL,
+               NULL, NULL, NULL) ||
            petta_program_type_declaration_view(atom, NULL, NULL);
 }
 
@@ -1613,7 +1636,7 @@ bool petta_program_predeclare_equation(
         return false;
     Atom *lhs = NULL;
     SymbolId head = SYMBOL_ID_NONE;
-    if (!petta_equation_view(atom, &lhs, NULL, &head))
+    if (!petta_program_equation_view(program, atom, &lhs, NULL, &head))
         return false;
     program->predeclared_generation++;
     if (petta_equation_lhs_admits_any_named_head(lhs)) {
@@ -1825,6 +1848,8 @@ bool petta_program_head_is_intrinsic(SymbolId head) {
             (head <= g_builtin_syms.native_handle &&
              !petta_program_builtin_names_data(head)) ||
             is_grounded_op(head) ||
+            (grounded_op_is_pattern(head) && eval_current_pattern_control_arity &&
+             eval_current_pattern_control_arity(head)) ||
             machine_named ||
             typecheck_named);
 }
@@ -3141,7 +3166,7 @@ static bool petta_program_scan_callability(
              atom_index < length; atom_index++) {
             Atom *lhs = NULL;
             SymbolId head = SYMBOL_ID_NONE;
-            if (petta_equation_view(
+            if (petta_program_equation_view(program,
                     space_get_at64(space->space, atom_index),
                     &lhs, NULL, &head)) {
                 if (petta_equation_lhs_admits_any_named_head(lhs)) {
@@ -3501,6 +3526,7 @@ PettaProgramRevisionView *petta_program_revision_view_capture(
         return NULL;
     }
     atomic_init(&view->references, 1u);
+    view->admitted_rule_forms = petta_program_rule_forms(program);
     view->source = space_read_token(source);
     view->source_equation_token = space_equation_token(source);
     view->catalog_generation = entry->catalog_generation;
@@ -3549,7 +3575,7 @@ PettaProgramRevisionView *petta_program_revision_view_capture(
     CettaCount source_len = space_length64(source);
     for (CettaIndex index = 0u; index < source_len; index++) {
         Atom *atom = space_get_at64(source, index);
-        if (!atom || !petta_program_is_equation(atom))
+        if (!atom || !petta_rule_syntax_view(atom, view->admitted_rule_forms, NULL, NULL, NULL))
             continue;
         if (!petta_program_reserve(
                 (void **)&view->source_equations, &equation_cap,
@@ -3614,7 +3640,7 @@ bool petta_program_revision_view_bind(
     CettaCount target_len = space_length64(target);
     for (CettaIndex index = 0u; index < target_len; index++) {
         Atom *atom = space_get_at64(target, index);
-        if (!atom || !petta_program_is_equation(atom))
+        if (!atom || !petta_rule_syntax_view(atom, view->admitted_rule_forms, NULL, NULL, NULL))
             continue;
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PETTA_PROGRAM_REVISION_VIEW_BIND_ALPHA_COMPARE);
@@ -3823,9 +3849,13 @@ static PettaProgramAnalysisSpace *petta_program_ensure_analysis_space(
     return created;
 }
 
-PettaProgram *petta_program_new(void) {
+PettaProgram *petta_program_new_with_rules(unsigned admitted_forms) {
+    if (!(admitted_forms & CETTA_RULE_SYNTAX_ORDINARY) ||
+        (admitted_forms & ~(CETTA_RULE_SYNTAX_ORDINARY | CETTA_RULE_SYNTAX_DIRECTIONAL)))
+        return NULL;
     PettaProgram *program = cetta_malloc(sizeof(*program));
     memset(program, 0, sizeof(*program));
+    program->admitted_rule_forms = admitted_forms;
     arena_init(&program->plans);
     arena_set_runtime_kind(
         &program->plans, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
@@ -3834,6 +3864,10 @@ PettaProgram *petta_program_new(void) {
     arena_init(&program->transient_plan_atoms);
     arena_set_hashcons(&program->transient_scratch, NULL);
     return program;
+}
+
+PettaProgram *petta_program_new(void) {
+    return petta_program_new_with_rules(CETTA_RULE_SYNTAX_ORDINARY);
 }
 
 static void petta_program_analysis_state_free(
@@ -4145,7 +4179,7 @@ PettaDeclarationBlock *petta_program_declaration_block_new(
         Atom *atom = term_universe_get_atom(universe, atoms[index]);
         Atom *lhs = NULL;
         SymbolId head = SYMBOL_ID_NONE;
-        if (petta_equation_view(atom, &lhs, NULL, &head)) {
+        if (petta_program_equation_view(program, atom, &lhs, NULL, &head)) {
             if (petta_equation_lhs_admits_any_named_head(lhs)) {
                 callability.admits_any_head = true;
             } else if (head != SYMBOL_ID_NONE) {
@@ -4204,7 +4238,7 @@ static const PettaPlanNode *petta_program_plan_equation(
         program, &callability);
     Atom *lhs = NULL;
     SymbolId head = SYMBOL_ID_NONE;
-    if (ok && petta_equation_view(
+    if (ok && petta_program_equation_view(program,
             atom, &lhs, NULL, &head)) {
         if (petta_equation_lhs_admits_any_named_head(lhs)) {
             callability.admits_any_head = true;
@@ -4280,7 +4314,7 @@ bool petta_program_note_add(
     Atom *lhs = NULL;
     Atom *rhs = NULL;
     SymbolId head = SYMBOL_ID_NONE;
-    if (!petta_equation_view(atom, &lhs, &rhs, &head))
+    if (!petta_program_equation_view(program, atom, &lhs, &rhs, &head))
         return true;
     PettaProgramSpace *entry =
         petta_program_ensure_space(program, space);
@@ -4291,11 +4325,12 @@ bool petta_program_note_add(
     bool open_template_admitted = false;
     const PettaEquationTemplate *equation_template = NULL;
     PettaEquationTemplateC0 *equation_template_c0 =
-        petta_program_compile_equation_template_c0(
+        atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.equals)
+        ? petta_program_compile_equation_template_c0(
             program, lhs, rhs, head,
             &static_variable_count,
             &open_template_admitted,
-            &equation_template);
+            &equation_template) : NULL;
     if (equation_template && plan) {
         plan = petta_plan_rebind_frame_syntax(
             program, equation_template->equation, plan);
@@ -4340,7 +4375,7 @@ void petta_program_note_remove_all(
     if (!atom)
         return;
     SymbolId removed_head = SYMBOL_ID_NONE;
-    if (entry && petta_equation_view(atom, NULL, NULL, &removed_head))
+    if (entry && petta_program_equation_view(program, atom, NULL, NULL, &removed_head))
         petta_program_space_settle_pending(entry, removed_head);
     PettaProgramAnalysisSpace *analysis =
         petta_program_find_analysis_space(program, space);
@@ -4369,7 +4404,7 @@ void petta_program_note_remove_one(
     if (!atom)
         return;
     SymbolId removed_head = SYMBOL_ID_NONE;
-    if (entry && petta_equation_view(atom, NULL, NULL, &removed_head))
+    if (entry && petta_program_equation_view(program, atom, NULL, NULL, &removed_head))
         petta_program_space_settle_pending(entry, removed_head);
     PettaProgramAnalysisSpace *analysis =
         petta_program_find_analysis_space(program, space);
@@ -4446,7 +4481,7 @@ bool petta_program_synchronize_space(
         SymbolId head = SYMBOL_ID_NONE;
         if (!atom) {
             ok = false;
-        } else if (petta_equation_view(
+        } else if (petta_program_equation_view(program,
                        atom, &lhs, NULL, &head)) {
             if (petta_equation_lhs_admits_any_named_head(lhs)) {
                 callability.admits_any_head = true;
@@ -4485,7 +4520,7 @@ bool petta_program_synchronize_space(
     size_t cursor = 0u;
     for (CettaIndex index = 0u; ok && index < atom_count; index++) {
         Atom *atom = space_get_at64(space, index);
-        if (!petta_program_is_equation(atom))
+        if (!petta_program_admits_equation(program, atom))
             continue;
         size_t match = known_len;
         if (cursor < known_len && !taken[cursor] &&
@@ -4568,8 +4603,9 @@ static bool petta_portable_relation_presence(
     for (size_t index = 0u;
          index < check->catalog->equation_len; index++) {
         Atom *lhs = NULL;
-        if (!petta_equation_view(
+        if (!petta_rule_syntax_view(
                 check->catalog->equations[index].equation,
+                CETTA_RULE_SYNTAX_ORDINARY | CETTA_RULE_SYNTAX_DIRECTIONAL,
                 &lhs, NULL, NULL) ||
             !lhs || lhs->kind != ATOM_EXPR || lhs->expr.len == 0u ||
             lhs->expr.len - 1u != arity) {
@@ -4732,8 +4768,9 @@ static bool petta_portable_relation_check(
          accepted && index < check->catalog->equation_len; index++) {
         Atom *lhs = NULL;
         Atom *rhs = NULL;
-        if (!petta_equation_view(
+        if (!petta_rule_syntax_view(
                 check->catalog->equations[index].equation,
+                CETTA_RULE_SYNTAX_ORDINARY | CETTA_RULE_SYNTAX_DIRECTIONAL,
                 &lhs, &rhs, NULL) ||
             !lhs || lhs->kind != ATOM_EXPR || lhs->expr.len == 0u ||
             lhs->expr.len - 1u != arity) {
@@ -4747,6 +4784,10 @@ static bool petta_portable_relation_check(
         if (lhs_head->sym_id != head)
             continue;
         saw_equation = true;
+        if (!petta_program_is_equation(check->catalog->equations[index].equation)) {
+            accepted = false;
+            break;
+        }
         for (CettaExprIndex argument = 1u;
              accepted && argument < lhs->expr.len; argument++) {
             accepted = petta_portable_lhs_argument(
@@ -4925,8 +4966,9 @@ bool petta_program_replace_space(
 static bool petta_equation_lhs_matches(
     Atom *equation, SymbolId head) {
     Atom *lhs = NULL;
-    if (!petta_equation_view(
-            equation, &lhs, NULL, NULL)) {
+    if (!petta_rule_syntax_view(
+            equation, CETTA_RULE_SYNTAX_ORDINARY | CETTA_RULE_SYNTAX_DIRECTIONAL,
+            &lhs, NULL, NULL)) {
         return false;
     }
     Atom *lhs_head = lhs->expr.elems[0];
@@ -4985,7 +5027,7 @@ bool petta_program_candidate_snapshot_lease_clone(
 static bool petta_program_candidate_snapshot_lease_from_entry(
     const PettaProgramSpace *entry,
     PettaProgramSpace *publication_authority,
-    bool admit_local_execution_payload,
+    bool admit_local_execution_payload, unsigned admitted_forms,
     Space *space, SymbolId head,
     PettaCandidateSnapshotLease *lease,
     PettaCandidateSnapshotStats *stats) {
@@ -4993,7 +5035,7 @@ static bool petta_program_candidate_snapshot_lease_from_entry(
         memset(stats, 0, sizeof(*stats));
     if (lease)
         memset(lease, 0, sizeof(*lease));
-    if (!space || head == SYMBOL_ID_NONE || !lease) {
+    if (!space || !lease) {
         return false;
     }
     if (stats)
@@ -5038,7 +5080,7 @@ static bool petta_program_candidate_snapshot_lease_from_entry(
     size_t actual_cap = 0u;
     PettaLiveEquation *actual = NULL;
     SpaceEquationCursor cursor;
-    if (!space_equation_cursor_init(space, head, &cursor))
+    if (!space_rule_cursor_init(space, head, admitted_forms, &cursor))
         return false;
     for (;;) {
         SpaceEquationOccurrenceId id;
@@ -5051,7 +5093,7 @@ static bool petta_program_candidate_snapshot_lease_from_entry(
             return false;
         }
         SpaceEquationOccurrence occurrence;
-        if (!space_equation_occurrence_resolve(id, &occurrence)) {
+        if (!space_rule_occurrence_resolve(id, admitted_forms, &occurrence)) {
             free(actual);
             return false;
         }
@@ -5350,7 +5392,13 @@ bool petta_program_candidate_snapshot_lease_profiled(
             ? petta_program_find_space(program, space)
             : NULL;
     return petta_program_candidate_snapshot_lease_from_entry(
-        entry, entry, true, space, head, lease, stats);
+        entry, entry, true, petta_program_rule_forms(program), space, head, lease, stats);
+}
+
+bool petta_rule_snapshot_lease(Space *space, SymbolId head, unsigned admitted_forms,
+    PettaCandidateSnapshotLease *lease) {
+    return petta_program_candidate_snapshot_lease_from_entry(NULL, NULL, false,
+        admitted_forms, space, head, lease, NULL);
 }
 
 bool petta_program_revision_view_equation_lease(
@@ -5363,13 +5411,15 @@ bool petta_program_revision_view_equation_lease(
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PETTA_PROGRAM_REVISION_VIEW_QUERY_COMMIT);
         return petta_program_candidate_snapshot_lease_from_entry(
-            &projection->view->catalog, NULL, false,
+            &projection->view->catalog, NULL, false, projection->view->admitted_rule_forms,
             space, head, lease, stats);
     }
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PETTA_PROGRAM_REVISION_VIEW_QUERY_STALE_FALLBACK);
     return petta_program_candidate_snapshot_lease_from_entry(
-        NULL, NULL, false, space, head, lease, stats);
+        NULL, NULL, false, projection && projection->view
+            ? projection->view->admitted_rule_forms : CETTA_RULE_SYNTAX_ORDINARY,
+        space, head, lease, stats);
 }
 
 bool petta_program_revision_view_source_candidate_lease(
@@ -5392,7 +5442,7 @@ bool petta_program_revision_view_source_candidate_lease(
         return false;
     }
     return petta_program_candidate_snapshot_lease_from_entry(
-        &projection->view->catalog, NULL, true,
+        &projection->view->catalog, NULL, true, projection->view->admitted_rule_forms,
         space, head, lease, stats);
 }
 
@@ -6187,6 +6237,10 @@ static PettaRelationSafety petta_table_safety_scan_relation(
          safe && index < candidate_count; index++) {
         Atom *lhs = NULL;
         Atom *rhs = NULL;
+        if (candidates[index].activation_layout.binding != CETTA_RULE_BIND_UNIFY) {
+            safe = false;
+            break;
+        }
         if (!petta_equation_view(
                 candidates[index].equation,
                 &lhs, &rhs, NULL) ||
@@ -6491,7 +6545,9 @@ PettaResolvedCallClass petta_program_classify_resolved_call(
         return PETTA_RESOLVED_CALL_MACHINE_LOCAL;
     if (petta_program_head_is_intrinsic(head))
         return PETTA_RESOLVED_CALL_UNSAFE;
-    if (!space_equations_may_match_known_head(space, head))
+    if (!space_equations_may_match_known_head(space, head) &&
+        (!(program->admitted_rule_forms & CETTA_RULE_SYNTAX_DIRECTIONAL) ||
+         !space_directional_rules_may_match_known_head(space, head)))
         return PETTA_RESOLVED_CALL_MACHINE_LOCAL;
     return petta_program_relation_safety(
                program, space, head, call->expr.len - 1u) ==

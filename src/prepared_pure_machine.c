@@ -2103,6 +2103,11 @@ static bool prepared_pure_head_index_admitted(
     uint32_t *index_out) {
     if (!program || head == SYMBOL_ID_NONE || !index_out)
         return false;
+    if (program->source_view.head_admitted &&
+        !program->source_view.head_admitted(
+            program->source_view.context, program->space, head))
+        return prepared_pure_reject(
+            program, "rule policy is outside the pure machine fragment", NULL);
     if (prepared_pure_head_bucket_lookup(program, head, index_out))
         return true;
     if (program->head_len >= PREPARED_PURE_MAX_HEADS ||
@@ -2855,6 +2860,10 @@ static bool prepared_pure_compile_eval_with_role(
         return ok;
     }
     SymbolId head = head_atom->sym_id;
+    if (program->source_view.head_admitted &&
+        !program->source_view.head_admitted(program->source_view.context, program->space, head))
+        return prepared_pure_reject(program, "rule policy requires canonical evaluation", source);
+
     CettaExprLen arity = source->expr.len - 1u;
     CettaGsltFoldControl control;
     if (prepared_pure_control_program(head, arity, &control)) {
@@ -10879,6 +10888,12 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
                 return prepared_pure_runtime_decline(
                     program, "runtime frame has no expression", NULL);
             if (frame->state == 0u) {
+                if (program->source_view.head_admitted && source->kind == ATOM_EXPR &&
+                    source->expr.len && source->expr.elems[0]->kind == ATOM_SYMBOL &&
+                    !program->source_view.head_admitted(program->source_view.context,
+                        program->space, source->expr.elems[0]->sym_id))
+                    return prepared_pure_runtime_decline(program,
+                        "runtime rule policy requires canonical evaluation", NULL);
                 if (source->kind == ATOM_EXPR &&
                     program->expression_view) {
                     CettaPreparedPureExpressionView view = {0};

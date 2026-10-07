@@ -563,7 +563,8 @@ typedef struct {
     uint32_t frame_identity_len;
 } ArenaMark;
 
-/* An immutable saved substitution. The binding layer owns its representation;
+/* An immutable saved substitution. The binding layer owns its representation
+ * and every syntax/frame lifetime it uses, independently of the source arena;
  * atom copying only retains the owner, and printing asks for a projection.
  * Ordinary syntax substitution cannot traverse or rewrite its domain. */
 typedef struct CettaBindingsValue {
@@ -572,6 +573,7 @@ typedef struct CettaBindingsValue {
     Atom *(*observe)(Arena *, const struct CettaBindingsValue *);
     bool (*equal)(const struct CettaBindingsValue *,
                   const struct CettaBindingsValue *);
+    Atom *(*apply)(Arena *, const struct CettaBindingsValue *, Atom *);
     const VarId *support;
     size_t support_count;
 } CettaBindingsValue;

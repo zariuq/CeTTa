@@ -1,0 +1,280 @@
+{
+  "schema": 1,
+  "status": "experimental",
+  "profiles": [
+    "he/extended",
+    "petta/extended"
+  ],
+  "activation": "Import pat once; public operations use the pat: namespace.",
+  "notation_comparison": "examples/pattern/policy_forms.metta compares percent forms with locally authored (protect stored)/(protect query) query policies and (protect right)/(protect left) batch policies. All lower to the same native services; the descriptive adapters are not installed as global operations.",
+  "domain": {
+    "complete_model": "Finite first-order syntactic terms, including open terms; variable identities include scope.",
+    "native_representation": "Finite terms may share DAG nodes. Native rational graph equality and cycle behavior are separately tested; the finite Lean solver is not a rational-tree completeness proof.",
+    "opaque_values": "Native scoped/ABT objects are opaque leaves. Their existing equality and capture barriers apply; no higher-order matching is claimed.",
+    "permissions": "An identity occurring anywhere in a protected subject stays protected for the entire constraint attempt, including when captured by a flexible hole."
+  },
+  "operations": {
+    "pat:solve": {
+      "arguments": [
+        "policy",
+        "list of (left right) pairs"
+      ],
+      "policies": {
+        "unify": "Both sides may bind under the existing dialect unifier.",
+        "match%": "Only left-pattern variables absent from every right subject may bind.",
+        "%match": "Only right-pattern variables absent from every left subject may bind.",
+        "variant": "One simultaneous bijective variable renaming across the entire batch; not a logical substitution environment."
+      },
+      "result": "An owned reusable witness; no answer on logical mismatch. The empty batch has an identity witness."
+    },
+    "pat:apply": {
+      "arguments": [
+        "evaluated witness",
+        "unevaluated syntax"
+      ],
+      "result": "Owned instantiated syntax, without evaluating that syntax."
+    },
+    "pat:view": {
+      "arguments": [
+        "evaluated witness"
+      ],
+      "result": "Owned inspectable witness images."
+    },
+    "pat:query": {
+      "arguments": [
+        "evaluated space",
+        "policy",
+        "pattern or comma conjunction"
+      ],
+      "result": "pat:hit containing ordered pat:row occurrence/original/instantiated triples and one witness."
+    },
+    "pat:match%": {
+      "arguments": [
+        "evaluated space",
+        "pattern or comma conjunction",
+        "template"
+      ],
+      "policy": "match%",
+      "result": "Evaluate the template with the shared query bindings; preserve every matching occurrence."
+    },
+    "pat:%match": {
+      "arguments": [
+        "evaluated space",
+        "fixed term or comma conjunction",
+        "stored-pattern output",
+        "template"
+      ],
+      "policy": "%match",
+      "result": "Bind the original retrieved pattern to the output and evaluate the template. A conjunction binds an ordered tuple of retrieved patterns. Query variables stay protected during matching and output publication."
+    },
+    "pat:unify%": {
+      "arguments": [
+        "pattern",
+        "subject",
+        "success body",
+        "failure body"
+      ],
+      "demand": "Raw term matching before executing exactly the selected body."
+    },
+    "pat:let%": {
+      "arguments": [
+        "pattern",
+        "producer",
+        "body"
+      ],
+      "demand": "Producer results are matched without instantiating their protected variables."
+    },
+    "pat:case%": {
+      "arguments": [
+        "producer",
+        "pattern/body rows"
+      ],
+      "demand": "First matching branch for each producer value; bodies retain dialect evaluation behavior."
+    },
+    "=%": {
+      "arguments": [
+        "head",
+        "body"
+      ],
+      "contract": "Native rule declaration. Fresh head variables may bind to a protected caller. Rejected heads execute no body. Body unification and effects remain ordinary. All applicable rule occurrences remain alternatives."
+    },
+    "%=": {
+      "status": "reserved; no declaration installed"
+    },
+    "pat:subsume": {
+      "arguments": [
+        "set or multiset",
+        "general signed clause",
+        "specific signed clause"
+      ],
+      "contract": "All literal alignments with a shared substitution. Specific-clause variables remain protected. Set mode permits reuse; multiset mode consumes occurrences. Polarity is exact and equality is syntactic."
+    },
+    "pat:is-instance": {
+      "arguments": [
+        "specific syntax",
+        "general syntax"
+      ],
+      "result": "Boolean existence of one substitution on the general term, fixing every variable of the specific term. No logical bindings are published."
+    },
+    "pat:is-variant": {
+      "arguments": [
+        "left syntax",
+        "right syntax"
+      ],
+      "result": "Boolean existence of one bijective variable renaming. No logical bindings are published."
+    }
+  },
+  "observation": {
+    "ordinary_operations": "Ordinary match, unify, case, let, equality and sorting retain their dialect semantics. Unknown forms in other profiles remain data.",
+    "query_order": "Source-order depth-first conjunction traversal. Each matching occurrence is retained, including duplicate values. No cardinality-based reordering is introduced.",
+    "row_scope": "Each stored occurrence is freshened at retrieval. Within-row sharing is retained; caller aliases are not freshened away.",
+    "continuations": "Owned machine choices retain pins, original constraints, witnesses and bindings. Capture/restore preserves the exact remaining answer sequence. A new query observes the new space revision.",
+    "he_boundary": "HE uses its existing evaluator adapter and materializes a completed finite frontier. There is no new public streaming or resumable HE query API.",
+    "faults": "Invalid shape, invalid graph and capacity are not logical mismatch. Native fatal arena allocation retains its fatal contract. No partial witness is published.",
+    "interruption": "Incomplete query evaluation unwinds the enclosing evaluation, suppressing fallback bodies and incomplete answer bags. The CLI reports incompleteness; owned-machine clients retain their continuation through the existing API.",
+    "clause_answers": "Preserve alignment multiplicity; a Boolean coverage result is a separate consumer. Per-answer alpha-renaming follows the dialect's existing collapse behavior.",
+    "cost": "The current join rechecks each selected prefix from original constraints; this can perform quadratic work in premise count. No linear-time join claim is made.",
+    "protection_scope": "One attempt: each conjunction or explicit solver batch shares permissions. Nested let% begins a new attempt; bodies retain ordinary dialect unification and effects."
+  },
+  "correspondence": [
+    {
+      "model": "Mettapedia.Logic.LP.DirectionalMatching.matchMany_sound, matchMany_complete, matching_images_unique",
+      "native": [
+        "src/term_graph.c:term_graph_match_many",
+        "src/library_pattern.c:pattern_solve"
+      ],
+      "relation": "Lean terms map to native finite graph views. Rigid identities are collected globally before traversal; repeated images use equality, never unification.",
+      "checks": [
+        "test-term-match-graph",
+        "test-pattern-model",
+        "test-term-match-mutations",
+        "test-term-match-faults"
+      ]
+    },
+    {
+      "model": "Mettapedia.Logic.LP.VariantMatching.solve_sound, solve_complete, solve_round_trip",
+      "native": [
+        "src/term_graph.c:term_graph_match_many",
+        "src/binding/closure.c:bindings_capture_images"
+      ],
+      "relation": "Forward and reverse image uniqueness establish a single bijection. Saved renamings apply simultaneously rather than following logical binding chains.",
+      "checks": [
+        "test-term-match-graph",
+        "test-pattern-bindings",
+        "test-pattern-model"
+      ]
+    },
+    {
+      "model": "Mettapedia.Logic.LP.RigidUnification.sequential_joint_success, sequential_joint_observations",
+      "native": [
+        "src/library_pattern.c:cetta_pattern_bind_many",
+        "src/petta_pattern_control.inc:petta_pattern_control_ready",
+        "src/eval_he_pattern_control.inc"
+      ],
+      "relation": "The theorem composes stages under one fixed rigid predicate. Native atomic batch and retrieval publication preserve those protected identities and roll back a failed publication. Nested controls start new attempts; the theorem does not give them inherited protection.",
+      "checks": [
+        "test-pattern-adapters",
+        "test-pattern-query-cursor",
+        "test-term-match-faults"
+      ]
+    },
+    {
+      "model": "Mettapedia.Logic.LP.DirectionalMatching.permitted_matching_rename_iff, matchMany_rename_images",
+      "native": [
+        "src/match.c:bindings_apply_graph",
+        "src/binding/closure.c",
+        "src/atom.c"
+      ],
+      "relation": "Injective first-order identity transport preserves constraints. Native graph substitution keys include source identity, epoch and node kind; opaque binder objects retain native barriers.",
+      "checks": [
+        "test-pattern-bindings",
+        "test-pattern-scope-mutation"
+      ]
+    },
+    {
+      "model": "Mettapedia.Logic.LP.DirectionalMatching.join_eq_exhaustive, run_exact, run_residual_exact, run_add",
+      "native": [
+        "src/petta_pattern_query.inc:petta_machine_pattern_candidate",
+        "src/petta_search_machine.c",
+        "src/space.c"
+      ],
+      "relation": "Each occurrence choice corresponds to one model column selection. Index filtering is an overapproximation followed by a complete prefix check. Model fuel counts candidate inspections, not C transitions.",
+      "checks": [
+        "test-pattern-search-model",
+        "test-pattern-query-cursor",
+        "test-pattern-occurrence-mutation",
+        "test-pattern-interruption"
+      ]
+    },
+    {
+      "model": "Mettapedia.Logic.LP.DirectionalMatching.rule_match_rewrites",
+      "native": [
+        "src/rule_binding.h:cetta_rule_view",
+        "src/binding/rule.c:cetta_rule_prepare",
+        "src/space.c:query_rule_visit",
+        "src/eval.c",
+        "src/petta_program.c"
+      ],
+      "relation": "Only admitted declaration forms produce rule descriptors. Policy is applied before the body. Unsupported compiled routes decline admission to the canonical route. Fresh body-only variables remain fresh per invocation.",
+      "checks": [
+        "test-rule-binding",
+        "test-rule-cursor",
+        "test-directional-rules",
+        "test-pattern-clients"
+      ]
+    },
+    {
+      "model": "Mettapedia.Logic.LP.ClauseSubsumption.searchAll_sound, searchAll_alignment_complete, searchAll_set_complete, covers_entails",
+      "native": [
+        "lib/pat/clause.metta",
+        "lib/petta/pat/clause.metta"
+      ],
+      "relation": "Authored alignment enumeration lowers signed literals to one directional batch, including the entire target as an identity constraint to retain its protected variables.",
+      "checks": [
+        "test-pattern-clause-model",
+        "test-pattern-clauses",
+        "test-pattern-clients"
+      ]
+    }
+  ],
+  "trusted_native_services": [
+    {
+      "service": "atom_eq and term_graph_value_eq",
+      "assumption": "Leaf equality is an equivalence preserving rigid variable identity; native opaque objects implement their declared equality."
+    },
+    {
+      "service": "frame identities, variable epochs and graph rewriting",
+      "assumption": "Fresh identities do not collide with live scopes; transport preserves aliases and opaque binder boundaries."
+    },
+    {
+      "service": "arena allocator, capture, moving collection and resource references",
+      "assumption": "Published syntax and witness payloads retain their owners; root visitors cover every live machine field."
+    },
+    {
+      "service": "space occurrence cursors and revision pins",
+      "assumption": "Candidate traversal is complete for the selected index and pin, and occurrence identity survives capture."
+    },
+    {
+      "service": "module authority and plan invalidation",
+      "assumption": "Imported/dynamic rule changes invalidate every dependent execution route before reuse."
+    },
+    {
+      "service": "ordinary unification and evaluator body semantics",
+      "assumption": "The existing dialect service supplies its ordinary equality, occurs policy, effects and fault contract."
+    }
+  ],
+  "evidence_limits": [
+    "Lean proves the named executable models, not arbitrary C memory safety or compiler correctness.",
+    "Differential corpora and deliberate mutations are finite implementation correspondence controls, not a universal translation proof.",
+    "The native term-view translation and the trusted services above remain explicit implementation obligations.",
+    "PLN clients select premises and call existing truth functions; matching does not prove probabilistic conclusions or justify merging evidence occurrences."
+  ],
+  "operation_basis": {
+    "retrieval": "match% publishes query bindings to a template; %match captures original stored patterns for a template. Both use the same occurrence join as query.",
+    "joint_constraints": "solve returns a reusable witness for one homogeneous raw constraint batch, without constructing a space. A conjunction performs one shared query attempt; nested let% starts separate attempts.",
+    "witness_use": "apply instantiates syntax without executing it. view observes its images. These operations serve clause coverage, replay and inspection beyond a binding continuation.",
+    "provenance": "query returns occurrence identities, original and instantiated rows, and the complete witness. Duplicate clause values can support distinct evidence occurrences; clause_retrieval preserves their identities.",
+    "relation_tests": "is-instance and is-variant return Booleans without publishing bindings or persistent witness values. Variant retrieval uses the existing query policy rather than another retrieval operation.",
+    "controls": "unify% matches raw syntax; let% and case% evaluate their producers. Their bodies use ordinary dialect evaluation. The rule declaration controls only head matching."
+  }
+}

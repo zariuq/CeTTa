@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from hashlib import sha256
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -90,6 +91,101 @@ def count_tag(value: sx.SExpr, tag: str) -> int:
     return here + sum(count_tag(item, tag) for item in value)
 
 
+def check_export_comparison(catalog: Path, root: tuple, work: Path) -> int:
+    checker = Path(__file__).with_name("check_nik_authority_export_v1.py")
+    original = catalog.read_bytes()
+    cases = [("exact", original, 0, None),
+             ("serialization", (sx.render(root) + "\n").encode(), 1, "serialization_only"),
+             ("missing-package", root[:-1], 1, "removed"),
+             ("package-order", (root[0], root[2], root[1], *root[3:]),
+              1, "authority_order_changed")]
+    authority = root[1]
+    renamed = list(authority)
+    renamed[3] = sx.StringLiteral("comparison-test-revision")
+    cases.append(("revision", (root[0], tuple(renamed), *root[2:]), 1, "revision"))
+    first_rule = list(authority[5][4][1])
+    first_rule[1] = sx.StringLiteral("comparison-added-rule")
+    for label, rules in (
+        ("added_rules", (sx.Symbol("LCons"), tuple(first_rule), authority[5][4])),
+        ("removed_rules", authority[5][4][2]),
+    ):
+        presentation = (*authority[5][:4], rules, authority[5][5])
+        cases.append((label, (root[0], authority_with_presentation(authority, presentation),
+                             *root[2:]), 1, label))
+    for label, index, replacement in (
+        ("formals", 2, lambda rule: (
+            sx.Symbol("LCons"), (sx.Symbol("Formal"), sx.StringLiteral("extra"), 0),
+            rule[2])),
+        ("premises", 3, lambda rule: (sx.Symbol("LCons"), rule[4], rule[3])),
+        ("conclusion", 4, lambda rule: (sx.Symbol("PApp"),
+                                      sx.StringLiteral("K"), sx.Symbol("LNil"))),
+        ("side_conditions", 5, lambda rule: sx.Symbol("LNil")),
+    ):
+        presentation, changed = rewrite_first(
+            authority[5],
+            lambda value: isinstance(value, tuple) and len(value) == 6
+            and value[0] == sx.Symbol("GRuleV1")
+            and (index != 5 or value[5] != sx.Symbol("LNil")),
+            lambda rule: (*rule[:index], replacement(rule), *rule[index + 1:]),
+        )
+        if not changed:
+            raise SystemExit(f"export comparison mutation not exercised: {label}")
+        cases.append((label, (root[0], authority_with_presentation(authority, presentation),
+                             *root[2:]), 1, label))
+    specimen = list(authority)
+    specimen[6] = (sx.Symbol("positive"), authority[6][1], sx.StringLiteral(""))
+    cases.append(("proof", (root[0], tuple(specimen), *root[2:]), 1, "positive_proof"))
+    stale = list(authority)
+    stale[4] = sx.StringLiteral("0" * 64)
+    cases.append(("stale-digest", (root[0], tuple(stale), *root[2:]), 2, "invalid"))
+    for label, mutation, expected_status, diagnostic in cases:
+        exported = work / f"export-{label}.metta"
+        if isinstance(mutation, bytes):
+            exported.write_bytes(mutation)
+        else:
+            write_form(exported, mutation)
+        report_path = work / f"export-{label}.json"
+        result = subprocess.run(
+            [sys.executable, str(checker), "--checked", str(catalog),
+             "--exported", str(exported), "--report", str(report_path)],
+            text=True, capture_output=True, check=False,
+        )
+        if result.returncode != expected_status:
+            raise SystemExit(f"export comparison {label}: {result.stderr or result.stdout}")
+        report = json.loads(result.stdout)
+        if json.loads(report_path.read_text()) != report:
+            raise SystemExit(f"export comparison report differs from stdout: {label}")
+        if diagnostic in ("formals", "premises", "conclusion", "side_conditions"):
+            diagnosed = any(diagnostic in rule["fields"]
+                            for change in report["changes"]
+                            for rule in change.get("changed_rules", []))
+        elif diagnostic in ("revision", "positive_proof"):
+            diagnosed = any(diagnostic in change.get("fields", [])
+                            for change in report["changes"])
+        elif diagnostic in ("added_rules", "removed_rules"):
+            diagnosed = any(change.get(diagnostic) for change in report["changes"])
+        elif diagnostic == "removed":
+            diagnosed = any(change.get("change") == "removed"
+                            for change in report["changes"])
+        elif diagnostic == "invalid":
+            diagnosed = report["status"] == "invalid" and report["input"] == "exported"
+        elif diagnostic:
+            diagnosed = report[diagnostic]
+        else:
+            diagnosed = report["status"] == "exact" and not report["changes"]
+        if not diagnosed:
+            raise SystemExit(f"export comparison lost its diagnostic: {label}")
+    invalid = work / "export-stale-digest.metta"
+    result = subprocess.run(
+        [sys.executable, str(checker), "--checked", str(invalid),
+         "--exported", str(invalid)], text=True, capture_output=True, check=False,
+    )
+    report = json.loads(result.stdout)
+    if result.returncode != 2 or report["status"] != "invalid" or report["input"] != "checked":
+        raise SystemExit("equal invalid catalogs incorrectly passed exact comparison")
+    return len(cases) + 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--generator", type=Path, required=True)
@@ -108,8 +204,12 @@ def main() -> int:
         raise SystemExit("catalog fixture is not plural")
     root = forms[0]
 
-    with tempfile.TemporaryDirectory(prefix="nik-authority-generation-") as raw:
+    evidence_parent = Path("runtime/bootstrap")
+    evidence_parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="nik-authority-generation-",
+                                     dir=evidence_parent) as raw:
         work = Path(raw)
+        export_controls = check_export_comparison(args.catalog, root, work)
         semantic = work / "runtime.metta"
         header = work / "runtime.h"
         source = work / "runtime.c"
@@ -293,7 +393,7 @@ def main() -> int:
 
     print(
         "(NikAuthorityGenerationV1Summary deterministic=1 "
-        "plural=1 mutations-killed=6)"
+        f"plural=1 mutations-killed=6 export-controls={export_controls})"
     )
     return 0
 

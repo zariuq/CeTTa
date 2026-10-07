@@ -6,6 +6,7 @@
 
 #include "library.h"
 #include "library_supervise.h"
+#include "library_pattern.h"
 #include "lib_parse_inference_native.h"
 #include "lib_parse_native_grammar.h"
 #include "native/langdef_module.h"
@@ -1186,10 +1187,11 @@ static bool native_module_loaded(const CettaLibraryContext *ctx,
 }
 
 static const CettaNativeBuiltinModule g_native_modules[] = {
-    {"gparse", CETTA_NATIVE_IMPORT_GPARSE, gparse_dispatch, NULL},
-    {"langdef", CETTA_NATIVE_IMPORT_LANGDEF, cetta_langdef_module_dispatch, NULL},
+    {"gparse", CETTA_NATIVE_IMPORT_GPARSE, gparse_dispatch, NULL, NULL},
+    {"langdef", CETTA_NATIVE_IMPORT_LANGDEF, cetta_langdef_module_dispatch, NULL, NULL},
+    {"pat", CETTA_NATIVE_IMPORT_PAT, NULL, "pat:", cetta_pattern_module_call},
 #if CETTA_BUILD_WITH_DURABLE
-    {"supervise", 1u << 26, cetta_supervise_dispatch, "__cetta_lib_supervise_"},
+    {"supervise", 1u << 26, cetta_supervise_dispatch, "__cetta_lib_supervise_", NULL},
 #endif
 };
 
@@ -1205,10 +1207,10 @@ const CettaNativeBuiltinModule *cetta_native_module_lookup(const char *name) {
     return NULL;
 }
 
-Atom *cetta_native_module_dispatch_active(struct CettaLibraryContext *ctx,
+bool cetta_native_module_call_active(struct CettaLibraryContext *ctx,
                                           Space *space, Arena *a,
                                           Atom *head, Atom **args, uint32_t nargs,
-                                          uint32_t active_mask) {
+                                     uint32_t active_mask, CettaCallOutcome *out) {
     uint32_t i;
 
     for (i = 0; i < sizeof(g_native_modules) / sizeof(g_native_modules[0]); i++) {
@@ -1220,9 +1222,13 @@ Atom *cetta_native_module_dispatch_active(struct CettaLibraryContext *ctx,
         if ((active_mask & mod->import_bit) == 0 &&
             !native_module_loaded(ctx, mod))
             continue;
-        result = mod->dispatch(ctx, space, a, head, args, nargs);
-        if (result)
-            return result;
+        if (mod->call && mod->call(ctx, space, a, head, args, nargs, out))
+            return true;
+        result = mod->dispatch ? mod->dispatch(ctx, space, a, head, args, nargs) : NULL;
+        if (result) {
+            *out = cetta_call_value(result);
+            return true;
+        }
     }
-    return NULL;
+    return false;
 }

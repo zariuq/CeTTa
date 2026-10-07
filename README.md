@@ -9,9 +9,22 @@ extension interface.
 
 For the default build:
 
-- `gcc`
-- `make`
+- `gcc`, `make` and `pkg-config`
 - Python 3 development headers and a working `python3-config --embed`
+- GMP development headers for exact big integers; build with
+  `make ENABLE_GMP=0` to leave them out
+
+On Debian or Ubuntu:
+
+```bash
+sudo apt install build-essential pkg-config python3-dev libgmp-dev
+```
+
+Optional:
+
+- SWI-Prolog: when `pkg-config` finds `swipl`, the build links the Prolog
+  interoperation library automatically (`ENABLE_LIB_PROLOG=auto`)
+- libcurl: `make ENABLE_HTTP=1` enables the HTTP operations
 
 For the optional bridge builds:
 
@@ -155,6 +168,28 @@ choosing and building the mode you want:
 ```bash
 make
 ./cetta tests/test_map_filter_atom.metta
+```
+
+### PeTTa lane
+
+```bash
+make
+./cetta --lang petta examples/chaining/tutorial/01-backward.metta
+```
+
+Add `--profile extended` for CeTTa's labeled extensions in either language.
+
+### Chaining and directional matching
+
+`docs/chaining-tutorial.pdf` (source `docs/chaining-tutorial.tex`) builds
+runnable forward and backward chainers in both languages and introduces the
+directional matching operations of the extended profiles (`pat:match%`,
+`pat:%match`, `=%` rules and joint constraints):
+
+```bash
+./cetta --lang he --profile extended examples/chaining/tutorial/02-direction.metta
+./cetta --lang petta --profile extended examples/chaining/tutorial/02-direction.metta
+make BUILD=python test-chaining-tutorial
 ```
 
 ### Python + bridge build

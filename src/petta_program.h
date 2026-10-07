@@ -216,6 +216,7 @@ typedef struct PettaEquationTemplate PettaEquationTemplate;
 typedef struct {
     Atom *lhs;
     Atom *rhs;
+    CettaRuleBindingPolicy binding;
     uint32_t static_variable_count;
     /* An invalid derived fact is unknown and requires exact recomputation. */
     bool lhs_contains_cons_constraint_valid;
@@ -330,6 +331,12 @@ typedef struct {
     uint64_t candidates_emitted;
 } PettaCandidateSnapshotStats;
 
+/* Evaluator-neutral logical-update snapshot using the same occurrence and
+ * syntax owners as program-qualified candidate leases. NONE selects all
+ * heads. No executable plan is borrowed in this source-only projection. */
+bool petta_rule_snapshot_lease(Space *space, SymbolId head, unsigned admitted_forms,
+    PettaCandidateSnapshotLease *lease);
+
 typedef struct PettaProgram PettaProgram;
 typedef struct PettaDeclarationBlock PettaDeclarationBlock;
 
@@ -357,6 +364,10 @@ typedef enum {
 } PettaResolvedCallClass;
 
 PettaProgram *petta_program_new(void);
+/* Declaration admission is fixed for this owned program and retained by its
+ * revision views. The ordinary constructor admits only base equations. */
+PettaProgram *petta_program_new_with_rules(unsigned admitted_forms);
+bool petta_program_admits_equation(const PettaProgram *program, Atom *atom);
 void petta_program_free(PettaProgram *program);
 /* Signature facts are owned by the existing program and keyed by the live
  * SpaceProgramToken. Data-only changes preserve them; equation, declaration,
