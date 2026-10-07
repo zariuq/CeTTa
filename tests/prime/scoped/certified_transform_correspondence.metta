@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Correspondence between the executed iterator, the hosted zero-add
 ; package, and the candidate-syntax shared step. The successor equation stored
 ; by set:define is the shared application. The hosted proof term is the

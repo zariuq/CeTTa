@@ -21,6 +21,10 @@
 #define CETTA_PARSE_DEPTH_LIMIT 4096
 #endif
 
+size_t parser_supported_expression_depth(void) {
+    return CETTA_PARSE_DEPTH_LIMIT > 0 ? (size_t)CETTA_PARSE_DEPTH_LIMIT : 0u;
+}
+
 #ifndef CETTA_UNIVERSAL_NAME_MUTATION
 #define CETTA_UNIVERSAL_NAME_MUTATION 0
 #endif
@@ -176,9 +180,11 @@ static bool is_token_char(char c) {
     return c && !isspace((unsigned char)c) && c != '(' && c != ')' && c != ';' && c != '"';
 }
 
-/* Inside a list a token also ends at a bracket. */
+/* Inside a list a token also ends at a bracket, and in Prime's universal
+ * name syntax at a brace, which opens or closes a braces node. */
 static bool is_list_token_char(char c) {
-    return is_token_char(c) && c != '[' && c != ']';
+    return is_token_char(c) && c != '[' && c != ']' &&
+           !(g_universal_name_syntax_enabled && (c == '{' || c == '}'));
 }
 
 /* The bar alone, which marks a list's rest; a token may start with it. */
@@ -842,6 +848,14 @@ AtomId parser_host_projection_v1_list(
     return tu_list_from_ids(projection->universe, elems, elem_len, rest);
 }
 
+AtomId parser_host_projection_v1_braces(
+    ParserHostProjectionV1 *projection, const AtomId *children,
+    CettaExprLen child_len) {
+    if (!projection || !projection->form_active)
+        return CETTA_ATOM_ID_NONE;
+    return tu_braces_from_ids(projection->universe, children, child_len);
+}
+
 static AtomId parser_project_atom_id_scoped(
     ParserHostProjectionV1 *projection, Atom *atom, uint32_t depth) {
     if (!projection || !atom || depth == 0u)
@@ -930,10 +944,33 @@ bool parser_project_document_ids(Atom *const *atoms, uint32_t atom_len,
 
 /* ── Parse a single token or expression ─────────────────────────────────── */
 
+/* Prime's reader: a bracket or brace touching the end of a term is a
+ * meta-argument, T[...] or T{...}, read as the wrapper (meta T [...]) or
+ * (meta T {...}); they apply left to right, and a prefix binds tighter, so
+ * @(f $x)[$x := @a] wraps the code @(f $x).  The reader gives no head a
+ * meaning (the core reads [k := v] on code as substitution, and {...} on a
+ * scope-forming construct as its crossing set).  Inside a touching bracket
+ * `:=` is a word; with layout before it, `[` opens a list, in which `:=` is
+ * refused, so the one-space slip is caught.  Brackets and braces end
+ * tokens. */
+static bool parser_at_binding_mark(const char *text, size_t text_len,
+                                   size_t pos) {
+    return parser_more(text, text_len, pos) && text[pos] == ':' &&
+           parser_more(text, text_len, pos + 1u) && text[pos + 1u] == '=' &&
+           !(parser_more(text, text_len, pos + 2u) &&
+             is_list_token_char(text[pos + 2u]));
+}
+
 static Atom *parse_sexpr_scoped_in(Arena *a, const char *text,
                                    size_t text_len, size_t *pos,
                                    ParserVarScope *scope, int depth,
                                    bool in_list);
+
+/* One term without its meta-arguments: a prefix's operand. */
+static Atom *parse_term_scoped_in(Arena *a, const char *text,
+                                  size_t text_len, size_t *pos,
+                                  ParserVarScope *scope, int depth,
+                                  bool in_list);
 
 static Atom *parse_sexpr_scoped(Arena *a, const char *text, size_t text_len,
                                 size_t *pos, ParserVarScope *scope, int depth) {
@@ -956,10 +993,18 @@ static Atom *parse_list_scoped(Arena *a, const char *text, size_t text_len,
             list = atom_list(a, elems, n);
             goto done;
         }
+        /* `:=` is reserved inside brackets. */
+        if (g_universal_name_syntax_enabled &&
+            parser_at_binding_mark(text, text_len, *pos))
+            goto done;
         if (parser_more(text, text_len, *pos) && parser_at_list_bar(text, *pos)) {
             if (n == 0u)
                 goto done;
             (*pos)++;
+            skip_whitespace_and_comments(text, text_len, pos);
+            if (g_universal_name_syntax_enabled &&
+                parser_at_binding_mark(text, text_len, *pos))
+                goto done;
             rest = parse_sexpr_scoped_in(a, text, text_len, pos, scope,
                                          depth - 1, true);
             skip_whitespace_and_comments(text, text_len, pos);
@@ -984,10 +1029,111 @@ done:
     return list;
 }
 
+/* A braces node {x y ...} (Prime's universal name syntax): its elements
+ * are read as an expression's. */
+static Atom *parse_braces_scoped(Arena *a, const char *text, size_t text_len,
+                                 size_t *pos, ParserVarScope *scope,
+                                 int depth) {
+    Atom **children = NULL;
+    uint32_t n = 0, cap = 0;
+    Atom *braces = NULL;
+    (*pos)++;
+    for (;;) {
+        skip_whitespace_and_comments(text, text_len, pos);
+        if (!parser_more(text, text_len, *pos))
+            goto done;
+        if (text[*pos] == '}') {
+            (*pos)++;
+            braces = atom_prime_braces(a, children, n);
+            goto done;
+        }
+        Atom *child = parse_sexpr_scoped(a, text, text_len, pos, scope,
+                                         depth - 1);
+        if (!child)
+            goto done;
+        if (n >= cap) {
+            cap = cap ? cap * 2 : 8;
+            children = cetta_realloc(children, sizeof(Atom *) * cap);
+        }
+        children[n++] = child;
+    }
+done:
+    free(children);
+    return braces;
+}
+
+/* A touching bracket's elements, T[...]: list elements, among which the
+ * binding mark is a word, with no rest. */
+static Atom *parse_touching_list_scoped(Arena *a, const char *text,
+                                        size_t text_len, size_t *pos,
+                                        ParserVarScope *scope, int depth) {
+    Atom **elems = NULL;
+    uint32_t n = 0, cap = 0;
+    Atom *list = NULL;
+    (*pos)++;
+    for (;;) {
+        skip_whitespace_and_comments(text, text_len, pos);
+        if (!parser_more(text, text_len, *pos))
+            goto done;
+        if (text[*pos] == ']') {
+            (*pos)++;
+            list = atom_list(a, elems, n);
+            goto done;
+        }
+        if (parser_at_list_bar(text, *pos))
+            goto done;
+        Atom *element = parse_sexpr_scoped_in(a, text, text_len, pos, scope,
+                                              depth - 1, true);
+        if (!element)
+            goto done;
+        if (n >= cap) {
+            cap = cap ? cap * 2 : 8;
+            elems = cetta_realloc(elems, sizeof(Atom *) * cap);
+        }
+        elems[n++] = element;
+    }
+done:
+    free(elems);
+    return list;
+}
+
+/* The meta-arguments touching the end of `term`: T[...] and T{...} read as
+ * (meta T [...]) and (meta T {...}), left to right.  The reader gives no
+ * head a meaning. */
+static Atom *parse_meta_arguments_scoped(Arena *a, const char *text,
+                                         size_t text_len, size_t *pos,
+                                         ParserVarScope *scope, int depth,
+                                         Atom *term) {
+    while (term && g_universal_name_syntax_enabled &&
+           parser_more(text, text_len, *pos) &&
+           (text[*pos] == '[' || text[*pos] == '{')) {
+        if (depth <= 1)
+            return NULL;
+        Atom *argument = text[*pos] == '{'
+            ? parse_braces_scoped(a, text, text_len, pos, scope, depth)
+            : parse_touching_list_scoped(a, text, text_len, pos, scope,
+                                         depth);
+        if (!argument)
+            return NULL;
+        term = atom_expr3(a, atom_symbol(a, "meta"), term, argument);
+    }
+    return term;
+}
+
 static Atom *parse_sexpr_scoped_in(Arena *a, const char *text,
                                    size_t text_len, size_t *pos,
                                    ParserVarScope *scope, int depth,
                                    bool in_list) {
+    Atom *term = parse_term_scoped_in(a, text, text_len, pos, scope, depth,
+                                      in_list);
+    return parse_meta_arguments_scoped(a, text, text_len, pos, scope, depth,
+                                       term);
+}
+
+static Atom *parse_term_scoped_in(Arena *a, const char *text,
+                                  size_t text_len, size_t *pos,
+                                  ParserVarScope *scope, int depth,
+                                  bool in_list) {
     if (depth <= 0)
         return NULL;
     skip_whitespace_and_comments(text, text_len, pos);
@@ -997,8 +1143,8 @@ static Atom *parse_sexpr_scoped_in(Arena *a, const char *text,
         text[*pos] == parser_syntax_compact_char(PARSER_SYNTAX_REF) &&
         text[*pos + 1u] == parser_syntax_compact_char(PARSER_SYNTAX_QUOTE)) {
         *pos += 2u;
-        Atom *key = parse_sexpr_scoped_in(a, text, text_len, pos, scope,
-                                          depth - 1, in_list);
+        Atom *key = parse_term_scoped_in(a, text, text_len, pos, scope,
+                                         depth - 1, in_list);
         if (!key || parser_var_scope_name_key_id(scope, key) == NAME_ID_NONE)
             return NULL;
         Atom *quoted = atom_expr2(
@@ -1011,8 +1157,8 @@ static Atom *parse_sexpr_scoped_in(Arena *a, const char *text,
         text[*pos] == parser_syntax_compact_char(PARSER_SYNTAX_VAR) &&
         text[*pos + 1u] == parser_syntax_compact_char(PARSER_SYNTAX_QUOTE)) {
         *pos += 2u;
-        Atom *key = parse_sexpr_scoped_in(a, text, text_len, pos, scope,
-                                          depth - 1, in_list);
+        Atom *key = parse_term_scoped_in(a, text, text_len, pos, scope,
+                                         depth - 1, in_list);
         if (!key) return NULL;
         VarId id = parser_var_scope_name_id(scope, key);
         return id == VAR_ID_NONE ? NULL : atom_var_with_name_key(a, key, id);
@@ -1021,8 +1167,8 @@ static Atom *parse_sexpr_scoped_in(Arena *a, const char *text,
     if (g_universal_name_syntax_enabled &&
         text[*pos] == parser_syntax_compact_char(PARSER_SYNTAX_QUOTE)) {
         (*pos)++;
-        Atom *payload = parse_sexpr_scoped_in(a, text, text_len, pos, scope,
-                                              depth - 1, in_list);
+        Atom *payload = parse_term_scoped_in(a, text, text_len, pos, scope,
+                                             depth - 1, in_list);
         return payload
                    ? atom_expr2(a, atom_symbol_id(a, g_builtin_syms.quote),
                                 payload)
@@ -1034,10 +1180,11 @@ static Atom *parse_sexpr_scoped_in(Arena *a, const char *text,
         parser_more(text, text_len, *pos + 1u) &&
         !isspace((unsigned char)text[*pos + 1u]) &&
         text[*pos + 1u] != ')' && text[*pos + 1u] != ';' &&
+        text[*pos + 1u] != '}' &&
         (!in_list || text[*pos + 1u] != ']')) {
         (*pos)++;
-        Atom *payload = parse_sexpr_scoped_in(a, text, text_len, pos, scope,
-                                              depth - 1, in_list);
+        Atom *payload = parse_term_scoped_in(a, text, text_len, pos, scope,
+                                             depth - 1, in_list);
         return payload
                    ? atom_expr2(a, atom_symbol(a, "unquote"), payload)
                    : NULL;
@@ -1059,6 +1206,9 @@ static Atom *parse_sexpr_scoped_in(Arena *a, const char *text,
         (*pos)++;
         return atom_string_n(a, buf, out);
     }
+
+    if (g_universal_name_syntax_enabled && text[*pos] == '{')
+        return parse_braces_scoped(a, text, text_len, pos, scope, depth);
 
     if (g_list_syntax_enabled && text[*pos] == '[')
         return parse_list_scoped(a, text, text_len, pos, scope, depth);
@@ -1096,8 +1246,10 @@ static Atom *parse_sexpr_scoped_in(Arena *a, const char *text,
 
     /* Token: symbol, variable, or number */
     size_t start = *pos;
+    /* In Prime's reader brackets end every token. */
     while (parser_more(text, text_len, *pos) &&
-           is_token_char_in(text[*pos], in_list))
+           is_token_char_in(text[*pos],
+                            in_list || g_universal_name_syntax_enabled))
         (*pos)++;
     size_t len = *pos - start;
     if (len == 0) return NULL;
@@ -1185,6 +1337,13 @@ static AtomId parse_sexpr_to_id_scoped_in(TermUniverse *universe,
                                           ParserVarScope *scope,
                                           int depth, bool in_list);
 
+/* One term without its meta-arguments (parse_term_scoped_in). */
+static AtomId parse_term_to_id_scoped_in(TermUniverse *universe,
+                                         Arena *scratch, const char *text,
+                                         size_t text_len, size_t *pos,
+                                         ParserVarScope *scope,
+                                         int depth, bool in_list);
+
 static AtomId parse_sexpr_to_id_scoped(TermUniverse *universe, Arena *scratch,
                                        const char *text, size_t text_len,
                                        size_t *pos, ParserVarScope *scope,
@@ -1209,10 +1368,18 @@ static AtomId parse_list_to_id_scoped(TermUniverse *universe, Arena *scratch,
             list = tu_list_from_ids(universe, elems, n, CETTA_ATOM_ID_NONE);
             goto done;
         }
+        /* `:=` is reserved inside brackets. */
+        if (g_universal_name_syntax_enabled &&
+            parser_at_binding_mark(text, text_len, *pos))
+            goto done;
         if (parser_more(text, text_len, *pos) && parser_at_list_bar(text, *pos)) {
             if (n == 0u)
                 goto done;
             (*pos)++;
+            skip_whitespace_and_comments(text, text_len, pos);
+            if (g_universal_name_syntax_enabled &&
+                parser_at_binding_mark(text, text_len, *pos))
+                goto done;
             rest = parse_sexpr_to_id_scoped_in(
                 universe, scratch, text, text_len, pos, scope, depth - 1, true);
             skip_whitespace_and_comments(text, text_len, pos);
@@ -1238,11 +1405,122 @@ done:
     return list;
 }
 
+/* A braces node (parse_braces_scoped). */
+static AtomId parse_braces_to_id_scoped(TermUniverse *universe,
+                                        Arena *scratch, const char *text,
+                                        size_t text_len, size_t *pos,
+                                        ParserVarScope *scope, int depth) {
+    AtomId *children = NULL;
+    uint32_t n = 0, cap = 0;
+    AtomId braces = CETTA_ATOM_ID_NONE;
+    (*pos)++;
+    for (;;) {
+        skip_whitespace_and_comments(text, text_len, pos);
+        if (!parser_more(text, text_len, *pos))
+            goto done;
+        if (text[*pos] == '}') {
+            (*pos)++;
+            braces = tu_braces_from_ids(universe, children, n);
+            goto done;
+        }
+        AtomId child = parse_sexpr_to_id_scoped(universe, scratch, text,
+                                                text_len, pos, scope,
+                                                depth - 1);
+        if (child == CETTA_ATOM_ID_NONE)
+            goto done;
+        if (n >= cap) {
+            cap = cap ? cap * 2 : 8;
+            children = cetta_realloc(children, sizeof(AtomId) * cap);
+        }
+        children[n++] = child;
+    }
+done:
+    free(children);
+    return braces;
+}
+
+/* A touching bracket's elements (parse_touching_list_scoped). */
+static AtomId parse_touching_list_to_id_scoped(TermUniverse *universe,
+                                               Arena *scratch,
+                                               const char *text,
+                                               size_t text_len, size_t *pos,
+                                               ParserVarScope *scope,
+                                               int depth) {
+    AtomId *elems = NULL;
+    uint32_t n = 0, cap = 0;
+    AtomId list = CETTA_ATOM_ID_NONE;
+    (*pos)++;
+    for (;;) {
+        skip_whitespace_and_comments(text, text_len, pos);
+        if (!parser_more(text, text_len, *pos))
+            goto done;
+        if (text[*pos] == ']') {
+            (*pos)++;
+            list = tu_list_from_ids(universe, elems, n, CETTA_ATOM_ID_NONE);
+            goto done;
+        }
+        if (parser_at_list_bar(text, *pos))
+            goto done;
+        AtomId element = parse_sexpr_to_id_scoped_in(
+            universe, scratch, text, text_len, pos, scope, depth - 1, true);
+        if (element == CETTA_ATOM_ID_NONE)
+            goto done;
+        if (n >= cap) {
+            cap = cap ? cap * 2 : 8;
+            elems = cetta_realloc(elems, sizeof(AtomId) * cap);
+        }
+        elems[n++] = element;
+    }
+done:
+    free(elems);
+    return list;
+}
+
+/* The meta-arguments touching the end of `term`
+ * (parse_meta_arguments_scoped). */
+static AtomId parse_meta_arguments_to_id_scoped(TermUniverse *universe,
+                                                Arena *scratch,
+                                                const char *text,
+                                                size_t text_len, size_t *pos,
+                                                ParserVarScope *scope,
+                                                int depth, AtomId term) {
+    while (term != CETTA_ATOM_ID_NONE && g_universal_name_syntax_enabled &&
+           parser_more(text, text_len, *pos) &&
+           (text[*pos] == '[' || text[*pos] == '{')) {
+        if (depth <= 1)
+            return CETTA_ATOM_ID_NONE;
+        AtomId argument = text[*pos] == '{'
+            ? parse_braces_to_id_scoped(universe, scratch, text, text_len,
+                                        pos, scope, depth)
+            : parse_touching_list_to_id_scoped(universe, scratch, text,
+                                               text_len, pos, scope, depth);
+        if (argument == CETTA_ATOM_ID_NONE)
+            return CETTA_ATOM_ID_NONE;
+        AtomId parts[3] = {
+            tu_intern_symbol(universe, symbol_intern_cstr(g_symbols, "meta")),
+            term, argument,
+        };
+        term = tu_expr_from_ids(universe, parts, 3u);
+    }
+    return term;
+}
+
 static AtomId parse_sexpr_to_id_scoped_in(TermUniverse *universe,
                                           Arena *scratch, const char *text,
                                           size_t text_len, size_t *pos,
                                           ParserVarScope *scope,
                                           int depth, bool in_list) {
+    AtomId term = parse_term_to_id_scoped_in(
+        universe, scratch, text, text_len, pos, scope, depth, in_list);
+    return parse_meta_arguments_to_id_scoped(
+        universe, scratch, text, text_len, pos, scope, depth, term);
+}
+
+static AtomId parse_term_to_id_scoped_in(TermUniverse *universe,
+                                         Arena *scratch, const char *text,
+                                         size_t text_len, size_t *pos,
+                                         ParserVarScope *scope,
+                                         int depth, bool in_list) {
     if (depth <= 0)
         return CETTA_ATOM_ID_NONE;
     skip_whitespace_and_comments(text, text_len, pos);
@@ -1253,7 +1531,7 @@ static AtomId parse_sexpr_to_id_scoped_in(TermUniverse *universe,
         text[*pos] == parser_syntax_compact_char(PARSER_SYNTAX_REF) &&
         text[*pos + 1u] == parser_syntax_compact_char(PARSER_SYNTAX_QUOTE)) {
         *pos += 2u;
-        Atom *key = parse_sexpr_scoped_in(
+        Atom *key = parse_term_scoped_in(
             scratch, text, text_len, pos, scope, depth - 1, in_list);
         if (!key || parser_var_scope_name_key_id(scope, key) == NAME_ID_NONE)
             return CETTA_ATOM_ID_NONE;
@@ -1269,7 +1547,7 @@ static AtomId parse_sexpr_to_id_scoped_in(TermUniverse *universe,
         text[*pos] == parser_syntax_compact_char(PARSER_SYNTAX_VAR) &&
         text[*pos + 1u] == parser_syntax_compact_char(PARSER_SYNTAX_QUOTE)) {
         *pos += 2u;
-        Atom *key = parse_sexpr_scoped_in(
+        Atom *key = parse_term_scoped_in(
             scratch, text, text_len, pos, scope, depth - 1, in_list);
         if (!key) return CETTA_ATOM_ID_NONE;
         VarId var_id = parser_var_scope_name_id(scope, key);
@@ -1289,7 +1567,7 @@ static AtomId parse_sexpr_to_id_scoped_in(TermUniverse *universe,
         bool quote = text[*pos] ==
                      parser_syntax_compact_char(PARSER_SYNTAX_QUOTE);
         (*pos)++;
-        Atom *payload = parse_sexpr_scoped_in(
+        Atom *payload = parse_term_scoped_in(
             scratch, text, text_len, pos, scope, depth - 1, in_list);
         if (!payload) return CETTA_ATOM_ID_NONE;
         Atom *form = atom_expr2(
@@ -1316,6 +1594,10 @@ static AtomId parse_sexpr_to_id_scoped_in(TermUniverse *universe,
         (*pos)++;
         return tu_intern_string_n(universe, buf, out);
     }
+
+    if (g_universal_name_syntax_enabled && text[*pos] == '{')
+        return parse_braces_to_id_scoped(universe, scratch, text, text_len,
+                                         pos, scope, depth);
 
     if (g_list_syntax_enabled && text[*pos] == '[')
         return parse_list_to_id_scoped(universe, scratch, text, text_len, pos,
@@ -1361,8 +1643,10 @@ static AtomId parse_sexpr_to_id_scoped_in(TermUniverse *universe,
     }
 
     size_t start = *pos;
+    /* In Prime's reader brackets end every token. */
     while (parser_more(text, text_len, *pos) &&
-           is_token_char_in(text[*pos], in_list))
+           is_token_char_in(text[*pos],
+                            in_list || g_universal_name_syntax_enabled))
         (*pos)++;
     size_t len = *pos - start;
     if (len == 0)
@@ -1669,6 +1953,30 @@ static bool parser_render_form(FILE *out, ParserRenderContext *ctx, Atom *atom,
         return true;
     }
 
+    /* T[...] and T{...}, touching, as the atom printer writes them. */
+    if (atom_is_prime_meta(atom))
+        return parser_render_form(out, ctx, atom->expr.elems[1], mode,
+                                  depth - 1) &&
+               parser_render_form(out, ctx, atom->expr.elems[2], mode,
+                                  depth - 1);
+
+    /* {x y}, and an own list as its names ($y ...), as the atom printer
+     * writes them. */
+    if (atom_is_prime_braces(atom) || atom_is_prime_own_list(atom)) {
+        bool braces = atom_is_prime_braces(atom);
+        CettaExprIndex first = braces ? 1u : 2u;
+        fputc(braces ? '{' : '(', out);
+        for (CettaExprIndex i = first; i < atom->expr.len; i++) {
+            if (i > first)
+                fputc(' ', out);
+            if (!parser_render_form(out, ctx, atom->expr.elems[i], mode,
+                                    depth - 1))
+                return false;
+        }
+        fputc(braces ? '}' : ')', out);
+        return true;
+    }
+
     Atom *head = atom->expr.len > 0u ? atom->expr.elems[0] : NULL;
     SymbolId head_id = head && head->kind == ATOM_SYMBOL
         ? head->sym_id : SYMBOL_ID_NONE;
@@ -1728,8 +2036,13 @@ static bool parser_render_form(FILE *out, ParserRenderContext *ctx, Atom *atom,
         return true;
     }
 
+    /* An elaborated template's own list with no names carries only its
+     * record and prints nothing. */
+    CettaExprLen shown = atom->expr.len;
+    if (atom_prime_template_own_hidden(atom))
+        shown--;
     fputc('(', out);
-    for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
+    for (CettaExprIndex i = 0; i < shown; i++) {
         if (i > 0u) fputc(' ', out);
         if (!parser_render_form(out, ctx, atom->expr.elems[i], mode,
                                 depth - 1)) {

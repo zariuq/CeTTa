@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Lists of numbers and their append, run.  The two datatypes and append are
 ; declared in &self, so plain evaluation runs append by its two equations,
 ;   append nil ys         = ys
@@ -13,12 +15,12 @@
 ; a list; the nil equation has no recursive call and the cons equation
 ; recurses on field 1 of cons, the tail.  The record is quoted so that it is
 ; read as data and not run.
-!(let (definition-evidence $rules $termination $lean) (set:known-proof &self append)
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self append))
    (quote $termination))
 ; The record also names the Lean theorem the admission rests on: structural
 ; recursion has a set model.  Lean states it for a function of one argument;
 ; append takes two, which the record says.
-!(let (definition-evidence $rules $termination $lean) (set:known-proof &self append)
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self append))
    (quote $lean))
 
 ; [0] ++ [1] runs to [0, 1].
@@ -29,9 +31,9 @@
 ; One value, two costs: the left nesting takes five firings of append's
 ; equations, the right nesting four.  Each count is printed with the term it
 ; counts.
-!(let ($values $n) (cost:firings (append (append (cons zero nil) (cons (suc zero) nil)) (cons zero nil)))
+!(let (quote ($values $n)) (lift (cost:firings (append (append (cons zero nil) (cons (suc zero) nil)) (cons zero nil))))
    (quote (firings-of (append (append (cons zero nil) (cons (suc zero) nil)) (cons zero nil)) $values $n)))
-!(let ($values $n) (cost:firings (append (cons zero nil) (append (cons (suc zero) nil) (cons zero nil))))
+!(let (quote ($values $n)) (lift (cost:firings (append (cons zero nil) (append (cons (suc zero) nil) (cons zero nil)))))
    (quote (firings-of (append (cons zero nil) (append (cons (suc zero) nil) (cons zero nil))) $values $n)))
 ; An append inside a list runs, and so do appends on both sides of an append.
 !(cons (suc (suc zero)) (append (cons zero nil) (cons (suc zero) nil)))
@@ -57,7 +59,7 @@
 !(append zero nil)
 
 ; A declaration made in another space does not run here.
-!(bind! &s (new-space))
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &s num (u 0) (: zero num) (: suc (-> num num)))
 !(set:inductive &s list (u 0) (: nil list) (: cons (-> num list list)))
 !(set:define &s concat (-> list list list)

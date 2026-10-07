@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Why it matters: a learner that generalizes must be able to change its mind,
 ; and every conclusion drawn from a rule it has since revised must stop
 ; counting until it is derived again, while nothing unrelated is disturbed.
@@ -11,7 +13,7 @@
 ; unrelated fact.  The learner renews the alias and derives again: robin still
 ; flies, pingu's old conclusion is withdrawn, and its negation is published.
 
-!(bind! &kb (new-space))
+!(bind! &kb (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &kb kind (u 0) (: songbird kind) (: penguin kind))
 !(set:inductive &kb animal (u 0) (: tweety animal) (: pingu animal) (: robin animal))
 !(set:define &kb falsum prop (= falsum (all prop (lam p p))))

@@ -634,6 +634,21 @@ int main(void) {
         "   (match $bias "
         "     (: $symbol ($primitives $source-sort $target-sort)) "
         "     (hyp:declaration $source-sort $target-sort $symbol)))");
+    /* A candidate is code built from values: Prime's quotation is sealed,
+       so the authored relation forms its codes by `lift`. */
+    add_form(
+        &arena, &space,
+        "(= (hyp:primitive-code $sorts $primitives $source $target $symbol) "
+        "   (lift app (quote hyp:primitive) "
+        "     (lift $sorts) (lift $primitives) (lift $source) (lift $target) "
+        "     (lift $symbol)))");
+    add_form(
+        &arena, &space,
+        "(= (hyp:chain-code "
+        "      $sorts $primitives $source $middle $target $earlier $later) "
+        "   (lift app (quote hyp:chain) "
+        "     (lift $sorts) (lift $primitives) (lift $source) (lift $middle) "
+        "     (lift $target) $earlier $later))");
     add_form(
         &arena, &space,
         "(= (hyp:chain-candidate-typed "
@@ -644,13 +659,12 @@ int main(void) {
         "     (let (hyp:declaration "
         "            $middle-sort $target-sort $later-symbol) "
         "          (hyp:primitive-declaration $bias $primitives) "
-        "       (quote "
-        "         (hyp:chain $sorts $primitives "
-        "           $source-sort $middle-sort $target-sort "
-        "           (hyp:primitive $sorts $primitives "
-        "             $source-sort $middle-sort $earlier-symbol) "
-        "           (hyp:primitive $sorts $primitives "
-        "             $middle-sort $target-sort $later-symbol))))))");
+        "       (hyp:chain-code $sorts $primitives "
+        "         $source-sort $middle-sort $target-sort "
+        "         (hyp:primitive-code $sorts $primitives "
+        "           $source-sort $middle-sort $earlier-symbol) "
+        "         (hyp:primitive-code $sorts $primitives "
+        "           $middle-sort $target-sort $later-symbol)))))");
     add_file(
         &arena, &space, "lib/ilp/prime_native_list_relator.metta");
     add_form(

@@ -23,6 +23,7 @@
 #include "petta_typecheck_v3.h"
 #include "lib_prolog.h"
 #include "prime_compiled_reader.h"
+#include "prime_semantics.h"
 #include "prime_arith_oracle.h"
 #include "space.h"
 #include "eval.h"
@@ -2241,22 +2242,45 @@ static int main_petta_compiled_file_backend(
         error_buf, error_buf_size);
 }
 
+/* Every Prime document is read here, so its forms are elaborated as they
+ * are read: their binding structure is computed once and stored in the
+ * terms (prime_semantics_elaborate_read_forms).  A form that cannot be
+ * elaborated refuses the document; it is never accepted unsealed. */
+static int main_prime_elaborate_read(TermUniverse *universe, AtomId **out_ids,
+                                     int count, char *error_buf,
+                                     size_t error_buf_size) {
+    if (count <= 0 || !out_ids ||
+        prime_semantics_elaborate_read_forms(universe, *out_ids,
+                                             (size_t)count))
+        return count;
+    const char *why = prime_semantics_elaboration_error();
+    if (error_buf && error_buf_size > 0u)
+        snprintf(error_buf, error_buf_size,
+                 "the binding structure of a form could not be elaborated%s%s",
+                 why ? ": " : "", why ? why : "");
+    return -1;
+}
+
 static int main_prime_compiled_text_backend(
     void *context, const char *text, TermUniverse *universe,
     AtomId **out_ids, char *error_buf, size_t error_buf_size) {
     PrimeCompiledReaderV1Receipt receipt;
-    return prime_compiled_reader_v1_parse_text_ids(
+    int count = prime_compiled_reader_v1_parse_text_ids(
         context, text, universe, out_ids, &receipt,
         error_buf, error_buf_size);
+    return main_prime_elaborate_read(universe, out_ids, count, error_buf,
+                                     error_buf_size);
 }
 
 static int main_prime_compiled_file_backend(
     void *context, const char *filename, TermUniverse *universe,
     AtomId **out_ids, char *error_buf, size_t error_buf_size) {
     PrimeCompiledReaderV1Receipt receipt;
-    return prime_compiled_reader_v1_parse_file_ids(
+    int count = prime_compiled_reader_v1_parse_file_ids(
         context, filename, universe, out_ids, &receipt,
         error_buf, error_buf_size);
+    return main_prime_elaborate_read(universe, out_ids, count, error_buf,
+                                     error_buf_size);
 }
 
 static void main_he_compiled_reader_free(void *context) {
@@ -3758,6 +3782,24 @@ static int cetta_main(int argc, char **argv) {
         cetta_library_set_top_module_space(&libraries, &space);
 
     if (!lang_is_mm2) {
+        /* The Prime scope experiment: another default profile for the
+         * documents that declare none, and the census, which counts the
+         * main document's forms under every ownership option and does not
+         * run the program. */
+        if (lang->id == CETTA_LANGUAGE_PRIME) {
+            const char *scope_default = getenv("CETTA_PRIME_SCOPE_DEFAULT");
+            if (scope_default && scope_default[0] &&
+                !prime_scope_profile_default_set(scope_default)) {
+                fprintf(stderr,
+                        "error: CETTA_PRIME_SCOPE_DEFAULT names no scope "
+                        "profile: %s\n", scope_default);
+                rc = 2;
+                goto cleanup;
+            }
+            const char *census = getenv("CETTA_PRIME_SCOPE_CENSUS");
+            prime_scope_census_set(census && census[0]);
+        }
+        prime_scope_document_reading(true);
         n = inline_text
             ? parse_metta_text_ids_diagnostic(
                   inline_text, &libraries.term_universe, &atom_ids,
@@ -3765,6 +3807,7 @@ static int cetta_main(int argc, char **argv) {
             : parse_metta_file_ids_diagnostic(
                   filename, &libraries.term_universe, &atom_ids,
                   document_reader_error, sizeof(document_reader_error));
+        prime_scope_document_reading(false);
         cleanup.atom_ids = atom_ids;
         if (n < 0) {
             if (document_reader_error[0]) {
@@ -3782,6 +3825,14 @@ static int cetta_main(int argc, char **argv) {
                 fprintf(stderr, "error: could not read %s\n", filename);
             }
             rc = 1;
+            goto cleanup;
+        }
+        /* The Prime scope census (CETTA_PRIME_SCOPE_CENSUS) is written while
+         * the main document is read; the program is not run. */
+        const char *scope_census = getenv("CETTA_PRIME_SCOPE_CENSUS");
+        if (lang->id == CETTA_LANGUAGE_PRIME && scope_census &&
+            scope_census[0]) {
+            rc = 0;
             goto cleanup;
         }
     }

@@ -9,8 +9,11 @@
 !(quote [a,b c])
 !(quote [|- a|b |x])
 !(assertEqual (size-atom [a,b]) 1)
-; A word keeps its brackets outside a list.
-!(quote -[det]->)
+; Outside a list the profiles differ on a bracket inside a word: the HE
+; extended profile keeps -[det]-> one word, while in Prime brackets end
+; every token, so a bracket touching a word opens a substitution
+; (tests/prime/lift_brackets.metta).  The test-list-value-lanes gate checks
+; both.
 
 ; A list is data: its elements are not evaluated.
 ! [a (+ 1 2)]
@@ -43,7 +46,9 @@
 !(assertEqual (unify [a | $t] [a b] $t no) [b])
 
 ; Substitution into a rest builds one list; alpha-equality keeps sharing.
-!(assertEqual (let $t [b c] (quote [a | $t])) (quote [a b c]))
+; (A list is data, so it needs no quotation here; in Prime a quotation is
+; sealed and substitution would not enter it.)
+!(assertEqual (let $t [b c] [a | $t]) [a b c])
 !(assertEqual (=alpha [$x $y] [$z $w]) True)
 !(assertEqual (=alpha [$x $x] [$z $w]) False)
 

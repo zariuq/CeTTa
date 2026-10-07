@@ -37,6 +37,7 @@ INVENTORY_PATTERNS = (
 
 MAKEFILE_LISTS = (
     "PRIME_CONFORMANCE_TESTS",
+    "PRIME_MEGALODON_HOTG_TESTS",
     "PRIME_EXAMPLE_TESTS",
     "PRIME_PRACTICAL_TESTS",
     "PYTHON_TESTS",
@@ -68,6 +69,7 @@ VALID_BUILDS = {
 VALID_LANES = {
     "test",
     "test-prime",
+    "test-prime-profile-megalodon-hotg",
     "test-backend-dedicated",
     "test-fallback-eval-session",
     "test-heavy",
@@ -97,6 +99,7 @@ VALID_EXPECTS = {
 LANE_ORDER = {
     "test": 10,
     "test-prime": 15,
+    "test-prime-profile-megalodon-hotg": 17,
     "test-profiles": 20,
     "test-python": 30,
     "test-runtime-stats-lane": 40,
@@ -399,6 +402,11 @@ def generated_expect_and_note(repo: Path, test_path: str, note: str) -> tuple[st
 
 
 def generated_row(repo: Path, test_path: str, sets: dict[str, set[str]]) -> ManifestRow:
+    if test_path in sets["PRIME_MEGALODON_HOTG_TESTS"]:
+        expect, note = generated_expect_and_note(
+            repo, test_path, "Explicit Megalodon HOTG profile regression")
+        return ManifestRow(test_path, "prime", "metta", "", "any", "native",
+                           "test-prime-profile-megalodon-hotg", expect, note)
     if (
         test_path in sets["PRIME_CONFORMANCE_TESTS"]
         or test_path in sets["PRIME_EXAMPLE_TESTS"]

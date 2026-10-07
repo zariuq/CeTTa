@@ -13,8 +13,10 @@
 (: MIL.CandidateData (-> (Data Atom) Atom))
 (: MIL.CandidateVerdict (-> (Data Atom) (Data Atom) (Data Atom) Atom))
 
+; Two occurrences are the same when they are the same syntax, neither
+; evaluated: noreduce-eq reads its arguments as written.
 (= (mil:bench:same-atom $left $right)
-   (== (quote $left) (quote $right)))
+   (noreduce-eq $left $right))
 
 ; Remove exactly one occurrence.  The result records whether removal happened
 ; so absence cannot be confused with removal from a singleton bag.

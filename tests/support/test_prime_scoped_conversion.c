@@ -407,6 +407,36 @@ int main(void) {
     g_symbols = &symbols;
     g_var_intern = &variables;
 
+    /* Fresh spaces interpret the shared core, without guest constants. */
+    expect_status(&arena, &space, "(set:known-proposition corePairing)",
+                  false, 0u, "Established");
+    expect_status(&arena, &space, "(set:of Empty)",
+                  false, 0u, "Undetermined");
+
+    /* An unsupported explicit profile suppresses the default interpretation. */
+    Atom *unsupported = parse_one(&arena, "(set:profile none)");
+    space_add(&space, unsupported);
+    checks++;
+    if (prime_scoped_judgment_judge(&arena, &space,
+            parse_one(&arena, "(set:known-proposition corePairing)"), false, 0u) != NULL) {
+        failures++;
+        fprintf(stderr, "FAIL: an unsupported profile interpreted a set judgment\n");
+    }
+    space_remove(&space, unsupported);
+    expect_status(&arena, &space, "(set:known-proposition corePairing)",
+                  false, 0u, "Established");
+    space_add(&space, parse_one(&arena, "(set:profile megalodon-hotg)"));
+
+    /* Conflicting explicit profiles also confer no interpretation. */
+    Atom *conflicting = parse_one(&arena, "(set:profile hol)");
+    space_add(&space, conflicting);
+    checks++;
+    if (prime_scoped_judgment_judge(&arena, &space,
+            parse_one(&arena, "(set:of Empty)"), false, 0u) != NULL) {
+        failures++;
+        fprintf(stderr, "FAIL: conflicting profiles interpreted a set judgment\n");
+    }
+    space_remove(&space, conflicting);
     check_overlay_rule_inventory(&arena, &universe);
 
     const char *valid =

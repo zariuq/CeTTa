@@ -1,10 +1,12 @@
+(set:profile hol)
+
 ; A function into a universe, defined by structural recursion on the numbers,
 ; computes a type at each number.  Values are checked at the computed types.
 ; Identity elimination over a motive built from such a function transports
 ; along a path between numbers into a type that differs from the start type;
 ; the result is not the method.
 
-!(bind! &s (new-space))
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &s num (u 0) (: zero num) (: suc (-> num num)))
 
 ; n-tuples of numbers.

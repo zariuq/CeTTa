@@ -1,9 +1,11 @@
+(set:profile hol)
+
 ; A definition whose body uses the polymorphic quantifier or equality converts
 ; under set:eq exactly as under the proof checker.  Its stored rule keeps the
 ; source's head, which ranges over every type of `class` and takes no
 ; universe argument; only the proof route specializes it, where it selects
 ; rules.
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(add-atom &thy (: A prop))
 !(set:define &thy falsum prop (= falsum (all prop (lam p p))))
 !(set:define &thy refl-A prop (= refl-A (eq prop A A)))

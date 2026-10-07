@@ -1,5 +1,7 @@
+(set:profile hol)
+
 ; Definitions earn formation and native clause checking before publication.
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(let $r (try (set:define &thy missingId (-> MissingType MissingType)
                 (= (missingId $x) $x))) (car-atom $r))
 !(set:define &thy missingId (-> MissingType MissingType)

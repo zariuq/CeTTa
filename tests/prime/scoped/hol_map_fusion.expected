@@ -12,7 +12,7 @@
 [True]
 [pf:imp-elim]
 [(Origin theorem)]
-[(Depends 9 first list-ind)]
+[(Depends 17 first (: comp (-> (-> elem elem) (-> (-> elem elem) (-> elem elem)))))]
 [(False . ())]
 [(False . ())]
 [(True . ())]

@@ -2694,6 +2694,26 @@ double tu_float(const TermUniverse *universe, AtomId id) {
                : 0.0;
 }
 
+CettaExprLen tu_authored_arity(const TermUniverse *universe, AtomId id) {
+    CettaExprLen arity = tu_arity(universe, id);
+    if (arity < 4u || tu_kind(universe, id) != ATOM_EXPR)
+        return arity;
+    AtomId head = tu_child(universe, id, 0u);
+    if (tu_kind(universe, head) != ATOM_SYMBOL)
+        return arity;
+    SymbolId sym = tu_sym(universe, head);
+    if (!((arity == 4u && sym == g_builtin_syms.prime_lam) ||
+          (arity == 5u && sym == g_builtin_syms.map_atom) ||
+          (arity == 7u && sym == g_builtin_syms.foldl_atom)))
+        return arity;
+    AtomId last = tu_child(universe, id, arity - 1u);
+    if (tu_kind(universe, last) != ATOM_EXPR || tu_arity(universe, last) < 2u ||
+        tu_internal_tag(universe, tu_child(universe, last, 0u)) !=
+            (int64_t)CETTA_INTERNAL_TAG_PRIME_OWN)
+        return arity;
+    return arity - 1u;
+}
+
 int64_t tu_internal_tag(const TermUniverse *universe, AtomId id) {
     const CettaTermHdr *hdr = tu_hdr(universe, id);
     if (hdr)
@@ -3315,6 +3335,23 @@ AtomId tu_list_from_ids(TermUniverse *universe, const AtomId *elems,
     result = children[0] == CETTA_ATOM_ID_NONE
         ? CETTA_ATOM_ID_NONE
         : tu_expr_from_ids(universe, children, len);
+    free(children);
+    return result;
+}
+
+AtomId tu_braces_from_ids(TermUniverse *universe, const AtomId *elems,
+                          CettaExprLen elem_len) {
+    if (!universe || (elem_len > 0u && !elems) ||
+        !cetta_expr_len_mul_fits_size(elem_len + 1u, sizeof(AtomId)))
+        return CETTA_ATOM_ID_NONE;
+    AtomId *children = cetta_malloc(((size_t)elem_len + 1u) * sizeof(*children));
+    children[0] = tu_intern_stable_tag(universe,
+                                       CETTA_INTERNAL_TAG_PRIME_BRACES);
+    for (CettaExprIndex i = 0u; i < elem_len; i++)
+        children[1u + i] = elems[i];
+    AtomId result = children[0] == CETTA_ATOM_ID_NONE
+        ? CETTA_ATOM_ID_NONE
+        : tu_expr_from_ids(universe, children, elem_len + 1u);
     free(children);
     return result;
 }
@@ -4085,6 +4122,24 @@ static void term_universe_sb_append_atom_text(TermUniverseStringBuilder *sb,
     case ATOM_EXPR: {
         CettaExprLen len = tu_arity(universe, id);
         int64_t list_tag = 0;
+        /* T[...] and T{...}, touching, as the atom printer writes them. */
+        if (len == 3u &&
+            tu_kind(universe, tu_child(universe, id, 0)) == ATOM_SYMBOL &&
+            tu_sym(universe, tu_child(universe, id, 0)) ==
+                g_builtin_syms.prime_meta &&
+            tu_kind(universe, tu_child(universe, id, 2)) == ATOM_EXPR &&
+            tu_arity(universe, tu_child(universe, id, 2)) > 0u) {
+            int64_t argument_tag = tu_internal_tag(
+                universe, tu_child(universe, tu_child(universe, id, 2), 0));
+            if (argument_tag == (int64_t)CETTA_INTERNAL_TAG_LIST ||
+                argument_tag == (int64_t)CETTA_INTERNAL_TAG_PRIME_BRACES) {
+                term_universe_sb_append_atom_text(sb, universe,
+                                                  tu_child(universe, id, 1));
+                term_universe_sb_append_atom_text(sb, universe,
+                                                  tu_child(universe, id, 2));
+                return;
+            }
+        }
         if (len > 0u) {
             const CettaTermHdr *head = tu_hdr(universe, tu_child(universe, id, 0));
             if (head && (AtomKind)head->tag == ATOM_GROUNDED &&
@@ -4103,6 +4158,17 @@ static void term_universe_sb_append_atom_text(TermUniverseStringBuilder *sb,
                 term_universe_sb_append_atom_text(sb, universe, tu_child(universe, id, i));
             }
             term_universe_sb_append_char(sb, ']');
+            return;
+        }
+        if (list_tag == (int64_t)CETTA_INTERNAL_TAG_PRIME_BRACES) {
+            /* {x1 x2}, as the atom printer writes it */
+            term_universe_sb_append_char(sb, '{');
+            for (CettaExprIndex i = 1; i < len; i++) {
+                if (i != 1)
+                    term_universe_sb_append_char(sb, ' ');
+                term_universe_sb_append_atom_text(sb, universe, tu_child(universe, id, i));
+            }
+            term_universe_sb_append_char(sb, '}');
             return;
         }
         term_universe_sb_append_char(sb, '(');

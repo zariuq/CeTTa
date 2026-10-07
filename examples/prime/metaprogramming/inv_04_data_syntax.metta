@@ -48,9 +48,10 @@
 
 ; 14-15. Opening a lambda with a variable binder: the body comes back held
 ;        with the argument in place, and the lambda is untouched (so it can be
-;        opened again at another argument).
+;        opened again at another argument).  `lift let` fills the binder's
+;        slot in the held body, as it does in quoted code.
 (: open-at (-> (Data Atom) (Data Atom) (Data Atom)))
-(= (open-at (lam $x $body) $v) (let $x $v $body))
+(= (open-at (lam $x $body) $v) (lift let $x $v $body))
 !(open-at (lam $y (and (f $y) (g $y))) 0)
 !(let $h (lam $y (and (f $y) (g $y)))
    (pair (open-at $h 0) (pair (open-at $h 1) $h)))

@@ -6,7 +6,7 @@ runs per occurrence
 [(pair (quote (+ 1 2)) 3)]
 [(pair (quote (+ 1 2)) 3)]
 [(computed 3)]
-[(computed $free)]
+[Variable]
 [(unquote 3)]
 [(quote (+ 1 2))]
 [left, right]

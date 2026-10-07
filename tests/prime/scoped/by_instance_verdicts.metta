@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; A fact used by (pf:by ...) is instantiated by matching its conclusion
 ; against the goal.  Matching is first order, so it can miss an instance that
 ; exists up to conversion, through a higher-order solution, or by computing
@@ -8,7 +10,7 @@
 ; quantified variable at such a position, that one instance is decided by
 ; conversion.  Anything else is left undetermined.
 !(import! &self pf)
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &thy nat (u 0) (: zero nat) (: succ (-> nat nat)))
 !(pf:equality &thy nat refl@nat subst@nat)
 !(set:define &thy add (-> nat nat nat)

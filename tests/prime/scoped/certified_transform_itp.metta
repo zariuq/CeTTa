@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Retained proof of zero-addition. The theorem is hosted by the kernel
 ; proof package. The same predicate is the family the iterator consumes.
 ; Reflexivity proves the closed numeral by computation and does not prove

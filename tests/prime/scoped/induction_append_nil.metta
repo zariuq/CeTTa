@@ -1,17 +1,19 @@
+(set:profile hol)
+
 ; A proof by induction about a declared datatype: every list of numbers
 ; appended to the empty list is identical to the list.  The same proof is a
 ; derivation of the Lean development (appendNil_identity, in the object
 ; package with the lists of numbers); each comment names the Lean theorem
 ; that licenses the verdict.
 
-!(bind! &s (new-space))
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &s num (u 0) (: zero num) (: suc (-> num num)))
 ; The type of the constructor of longer lists is written with nested arrows:
 ; (-> num (-> list list)) is the type (-> num list list), and the declaration
 ; is admitted with the same induction principle and recursor.
 !(set:inductive &s list (u 0) (: nil list) (: cons (-> num (-> list list))))
 !(type:of &s list-rec)
-!(bind! &flat (new-space))
+!(bind! &flat (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &flat num (u 0) (: zero num) (: suc (-> num num)))
 !(set:inductive &flat list (u 0) (: nil list) (: cons (-> num list list)))
 !(== (type:of &s list-rec) (type:of &flat list-rec))

@@ -1,9 +1,11 @@
 field
+[(unquote 3)]
+[(unquote 3)]
 [(only-one (Crate 1))]
 [(pair 3 0)]
 [(pair 3 0)]
 [(pair () 0)]
-[(pair 3 (quote (+ 1 2)))]
-[(pair 3 (quote 3))]
+[(pair 3 Variable)]
+[(pair 3 Variable)]
 [(receipt 3)]
 [(receipt (three))]

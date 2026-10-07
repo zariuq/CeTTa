@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Two reversals of a list, typed.  The lists, append and the two reversals
 ; are declared in &self; the kernel checks each declaration before it admits
 ; it.  Then the type: language says what each is, which terms are equal by
@@ -18,7 +20,7 @@
 
 ; ---- Why running ends.
 ; rev recurses on its argument: field 1 of cons, the tail.
-!(let (definition-evidence $rules $termination $lean) (set:known-proof &self rev)
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self rev))
    (quote $termination))
 ; rev-onto recurses on its second argument, the list, and its recursive
 ; call changes the first, the accumulator.  The check admits it as written,
@@ -28,22 +30,20 @@
 ;   rev-onto acc l = rev-onto~scrutinee-first l acc.
 ; The record of rev-onto names that definition and argument 1; the record of
 ; the definition with the list first recurses on its argument 0.
-!(let (definition-evidence $rules $termination $lean) (set:known-proof &self rev-onto)
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self rev-onto))
    (quote $termination))
-!(let (definition-evidence $rules $termination $lean)
-      (set:known-proof &self rev-onto~scrutinee-first)
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self rev-onto~scrutinee-first))
    (quote $termination))
 ; Each record names the Lean theorem it rests on.  rev is structural
 ; recursion on its one argument, the shape Lean states.  rev-onto is one
 ; equation passing its arguments on, an explicit definition.  The definition
 ; with the list first is structural recursion of two arguments; Lean states
 ; recursion for a function of one, and the record says so.
-!(let (definition-evidence $rules $termination $lean) (set:known-proof &self rev)
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self rev))
    (quote $lean))
-!(let (definition-evidence $rules $termination $lean) (set:known-proof &self rev-onto)
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self rev-onto))
    (quote $lean))
-!(let (definition-evidence $rules $termination $lean)
-      (set:known-proof &self rev-onto~scrutinee-first)
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self rev-onto~scrutinee-first))
    (quote $lean))
 
 ; ---- What each is.

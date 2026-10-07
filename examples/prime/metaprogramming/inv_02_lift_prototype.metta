@@ -1,49 +1,18 @@
-; Lifted syntax operations on code values: an equation-level PROTOTYPE.
+; Lifted syntax operations on code values, natively.
 ;
-; Prime has no native `lift` yet and its reader has no `C[x := V]` brackets;
-; the two operations below are ordinary equations over `Data`.
-;   (lift app F A)   forms the application code @(f a) from code values.
-;   (lift let k A C) substitutes the code A for the slot k in the code C.
-; Both demand code values and stay as written otherwise.  Each acts on one
-; level of code (a nested quotation is sealed) and nothing runs.  The
-; prototype is first-order and NOT capture-avoiding: it does not know
-; binders, so its output is never hygienic (see the negative controls at the
-; end; native lambda substitution is binder-aware).  Hygiene is required of
-; the native implementation.
+; This file first held an equation-level prototype of `lift`, ordinary
+; equations over `Data` that were first-order and not capture-avoiding.  The
+; queries below are the prototype's, now answered by the native operations.
+;   (lift app @F @A ...)  forms the application code @(F A ...).
+;   (lift let k @A @C)    substitutes the code A for the slot k in the code C.
+; Both act on code values and stay as written otherwise.  Each acts on one
+; level of code (a nested quotation is sealed) and nothing runs.  `lift let`
+; is lambda's own substitution, so it knows binders: the prototype's negative
+; hygiene controls at the end now come out hygienic.  A bracket of bindings
+; touching code, C[k := A], is a meta-argument the core reads as `lift let`
+; (tests/prime/lift_brackets.metta).
 
 (= (observe $v) $v)
-
-; Structural replacement of one slot, held throughout; nested quotes sealed.
-(: replace (-> (Data Atom) (Data Atom) (Data Atom) (Data Atom)))
-(= (replace $s $v $t)
-   (if (noreduce-eq $t $s)
-       $v
-       (if (== (get-metatype $t) Expression)
-           (replace-children $s $v $t)
-           $t)))
-(: replace-children (-> (Data Atom) (Data Atom) (Data Atom) (Data Atom)))
-(= (replace-children $s $v $t)
-   (if (noreduce-eq $t ())
-       ()
-       (let ($h $rest) (decons-atom $t)
-         (if (noreduce-eq $h quote)
-             $t
-             (let $h2 (replace $s $v $h)
-               (let $rest2 (replace-children $s $v $rest)
-                 (cons-atom $h2 $rest2)))))))
-
-(= (lift app (quote $f) (quote $a)) (quote ($f $a)))
-(= (lift let $s (quote $a) (quote $c))
-   (let $r (replace $s $a $c) (quote $r)))
-
-; Simultaneous substitution of two slots: rename both slots to fresh
-; variables first (equation variables are fresh at each call), then fill.
-(= (lift let2 $s1 $s2 (quote $a1) (quote $a2) (quote $c))
-   (let $r1 (replace $s1 $f1 $c)
-     (let $r2 (replace $s2 $f2 $r1)
-       (let $r3 (replace $f1 $a1 $r2)
-         (let $r4 (replace $f2 $a2 $r3)
-           (quote $r4))))))
 
 ; --- application formation ---------------------------------------------------
 ; 1-2. Builds syntax; the operand's effect does not run.
@@ -68,32 +37,34 @@
 !(observe (lift let y @a @(foo x)))
 ; 11. Argument discipline: an unquoted replacement stays as written.
 !(lift let x a @(foo x))
-; 12-13. Composition: C[x := (g y)][y := b] equals C[x := (g b), y := b].
+; 12-13. Composition: C[x := (g y)][y := b] equals C[(x := (g b)) (y := b)].
 !(observe (lift let y @b (lift let x @(g y) @(f x y))))
 !(observe (lift let x @(g b) (lift let y @b @(f x y))))
-; 14-15. Sequential and simultaneous differ: [x := y, y := a] on (pair x y).
+; 14-15. Sequential and simultaneous differ on (pair x y): [x := y][y := a]
+;        against [(x := y) (y := a)].
+;        A tuple of slots, as in let, fills them at once.
 !(observe (lift let y @a (lift let x @y @(pair x y))))
-!(observe (lift let2 x y @y @a @(pair x y)))
+!(observe (lift let (x y) (@y @a) @(pair x y)))
 ; 16. The code is data until activated, and runs when activated.
 !(let $c (lift let x @(+ 1 2) @(* x 10)) (pair $c *$c))
 
 ; --- binders -----------------------------------------------------------------
-; 17. NEGATIVE CONTROL: the first-order prototype wrongly substitutes a bound y.
+; 17. Hygiene control: the bound y is not the slot y, so the code is unchanged
+;     (the first-order prototype wrongly substituted it).
 !(observe (lift let y @w @(lam y (pair y z))))
-; 17b. NEGATIVE CONTROL, capture: inserting y under a binder y captures it.
-;      The result is (lam y (foo y y)); a hygienic substitution gives a code
-;      alpha-equivalent to (lam z (foo y z)).
+; 17b. Hygiene control, capture: inserting y under a binder y renames the
+;      binder, so the result is alpha-equivalent to (lam z (foo y z)) (the
+;      prototype captured it, giving (lam y (foo y y))).
 !(observe (lift let x @y @(lam y (foo x y))))
-; 17c. NEGATIVE CONTROL, shadowing: the inner binder x shadows the slot, so
-;      a hygienic substitution leaves (lam x (foo x)) unchanged.
+; 17c. Hygiene control, shadowing: the inner binder x shadows the slot, so
+;      (lam x (foo x)) is unchanged (the prototype gave (lam a (foo a))).
 !(observe (lift let x @a @(lam x (foo x))))
-; 18. Native lambda substitution avoids capture: the inner binder is renamed.
+; 18. Native lambda substitution renames the same binder.
 !(observe ((lam x (lam y (pair x y))) y))
 
-; --- the proposed bracket spelling is not in the reader ----------------------
-; 19. Brackets end tokens and read a list value; a bracket touching a term
-;     is not yet a substitution.
+; --- the bracket spelling ----------------------------------------------------
+; 19. A bracket touching a term is a meta-argument, (meta C [k := A]),
+;     printed touching; on code the core reads it as lift let.
 !(parse "(f @(foo $x)[$x := @a])")
-; 20. A bare bracketed template is two forms, which the one-form reader
-;     refuses.  (A top-level error ends the run, so this query is last.)
+; 20. A bracketed template is one form.
 !(parse "@(foo $x)[$x := @a]")

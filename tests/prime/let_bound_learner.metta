@@ -7,7 +7,7 @@
 (= (names) (D1 D2 D3 D4 D5 D6 D7 D8))
 (= (add-ds $kb $names)
    (if (== $names ()) done
-       (let ($n $rest) (decons-atom $names)
+       (let (quote ($n $rest)) (lift (decons-atom $names))
          (let* (($a (add-atom $kb (: $n (-> UInt Bool))))
                 ($b (add-atom $kb (: (always $n 0) (≞ @($n 0) ⊤))))
                 ($c (add-atom $kb (: (always $n 1) (≞ @($n 1) ⊤))))

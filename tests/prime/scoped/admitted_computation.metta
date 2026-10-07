@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Only computation that admission published enters conversion.
 !(set:inductive &self colour (u 0) (: red colour) (: blue colour))
 !(type:eq &self red blue)

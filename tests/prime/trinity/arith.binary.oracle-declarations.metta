@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Native arithmetic for the operations of arith.binary.metta, inserted after
 ; its definitions by tests/support/check_prime_arith_oracle.py.  Each reading
 ; says how a declared datatype writes numbers; each oracle names an admitted

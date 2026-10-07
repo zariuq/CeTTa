@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Why it matters: a search procedure (hand-written, learned or generated) may
 ; propose proofs, but only the small checker decides what is proved, so a
 ; wrong tactic can waste time and never publish a false theorem.

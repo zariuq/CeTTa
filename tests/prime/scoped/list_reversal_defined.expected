@@ -13,7 +13,7 @@
 [append-assoc]
 [rev-append]
 [rev-rev]
-[(Depends 7 first list-ind)]
+[(Depends 17 first (: nil list))]
 [()]
 [True]
 [False]

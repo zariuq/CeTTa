@@ -62,10 +62,9 @@ def hosted_projection(cetta: Path, megalodon: Path, source: Path) -> None:
         inferred, _proof, _articles = projection.proof(item.proof, index, ())
         _common, article = importer.evidence.demand_conversion_article(
             projection.declarations(index), inferred, body)
-        article_text = importer.sx.render(article)
         match = [record for record in retained
                  if record[3] == importer.sx.StringLiteral(item.label)]
-        if len(match) != 1 or match[0][6].text != article_text:
+        if len(match) != 1 or projection.open_hosted_article(match[0][6]) != article:
             raise SystemExit(
                 f"theorem {item.label} did not retain the importer conversion article")
     for item in axioms:

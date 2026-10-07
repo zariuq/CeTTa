@@ -15,6 +15,22 @@
      (: $symbol ($primitives $source-sort $target-sort))
      (hyp:declaration $source-sort $target-sort $symbol)))
 
+; A candidate is code built from values.  A quotation is sealed, so each value
+; enters the candidate as the code `lift` makes of it, and the application
+; code is formed without running: an ill-indexed candidate stays a candidate
+; for `type:check` to refute.
+(= (hyp:primitive-code $sorts $primitives $source $target $symbol)
+   (lift app @hyp:primitive
+     (lift $sorts) (lift $primitives) (lift $source) (lift $target)
+     (lift $symbol)))
+
+; The chain of two candidate codes.
+(= (hyp:chain-code
+     $sorts $primitives $source $middle $target $earlier $later)
+   (lift app @hyp:chain
+     (lift $sorts) (lift $primitives) (lift $source) (lift $middle)
+     (lift $target) $earlier $later))
+
 ; Complete enumerate-then-check baseline.  The later primitive deliberately
 ; carries its authored source index, so an incompatible middle stays visible
 ; to `type:check` rather than being silently rewritten into a valid program.
@@ -23,13 +39,12 @@
         (hyp:primitive-declaration $bias $primitives)
      (let (hyp:declaration $later-source-sort $target-sort $later-symbol)
           (hyp:primitive-declaration $bias $primitives)
-       (quote
-         (hyp:chain $sorts $primitives
-           $source-sort $middle-sort $target-sort
-           (hyp:primitive $sorts $primitives
-             $source-sort $middle-sort $earlier-symbol)
-           (hyp:primitive $sorts $primitives
-             $later-source-sort $target-sort $later-symbol))))))
+       (hyp:chain-code $sorts $primitives
+         $source-sort $middle-sort $target-sort
+         (hyp:primitive-code $sorts $primitives
+           $source-sort $middle-sort $earlier-symbol)
+         (hyp:primitive-code $sorts $primitives
+           $later-source-sort $target-sort $later-symbol)))))
 
 ; Type-directed producer.  Shared variables in the declaration patterns are
 ; the family indices themselves; no candidate is dropped for any other cause.
@@ -39,13 +54,12 @@
         (hyp:primitive-declaration $bias $primitives)
      (let (hyp:declaration $middle-sort $target-sort $later-symbol)
           (hyp:primitive-declaration $bias $primitives)
-       (quote
-         (hyp:chain $sorts $primitives
-           $source-sort $middle-sort $target-sort
-           (hyp:primitive $sorts $primitives
-             $source-sort $middle-sort $earlier-symbol)
-           (hyp:primitive $sorts $primitives
-             $middle-sort $target-sort $later-symbol))))))
+       (hyp:chain-code $sorts $primitives
+         $source-sort $middle-sort $target-sort
+         (hyp:primitive-code $sorts $primitives
+           $source-sort $middle-sort $earlier-symbol)
+         (hyp:primitive-code $sorts $primitives
+           $middle-sort $target-sort $later-symbol)))))
 
 ; A path shape is ordinary data: `hyp:path:one` asks for one primitive and
 ; `(hyp:path:more shape)` prepends one primitive.  The resulting hypothesis is
@@ -54,21 +68,19 @@
 (= (hyp:path:prepend
      $sorts $primitives $source-sort $middle-sort $target-sort $symbol
      (quote $later-program))
-   (quote
-     (hyp:chain $sorts $primitives
-       $source-sort $middle-sort $target-sort
-       (hyp:primitive $sorts $primitives
-         $source-sort $middle-sort $symbol)
-       $later-program)))
+   (hyp:chain-code $sorts $primitives
+     $source-sort $middle-sort $target-sort
+     (hyp:primitive-code $sorts $primitives
+       $source-sort $middle-sort $symbol)
+     (quote $later-program)))
 
 (= (hyp:path-candidate-untyped
      $bias $sorts $primitives hyp:path:one)
    (let (hyp:declaration $source-sort $target-sort $symbol)
         (hyp:primitive-declaration $bias $primitives)
      (hyp:path-piece $source-sort $target-sort
-       (quote
-         (hyp:primitive $sorts $primitives
-           $source-sort $target-sort $symbol)))))
+       (hyp:primitive-code $sorts $primitives
+         $source-sort $target-sort $symbol))))
 
 (= (hyp:path-candidate-untyped
      $bias $sorts $primitives (hyp:path:more $shape))
@@ -87,9 +99,8 @@
      $source-sort $target-sort hyp:path:one)
    (let (hyp:declaration $source-sort $target-sort $symbol)
         (hyp:primitive-declaration $bias $primitives)
-     (quote
-       (hyp:primitive $sorts $primitives
-         $source-sort $target-sort $symbol))))
+     (hyp:primitive-code $sorts $primitives
+       $source-sort $target-sort $symbol)))
 
 (= (hyp:path-candidate-typed
      $bias $sorts $primitives

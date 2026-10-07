@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; A symbol is a constant with no arguments.  A symbol the program defines
 ; evaluates by its definition, as a request and as an argument; a symbol it
 ; does not define stays itself, never empty and never an error.  A request

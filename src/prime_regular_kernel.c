@@ -594,9 +594,10 @@ static bool regular_level_instantiation_init(
     return true;
 }
 
-static Atom *regular_term_apply_level_instantiation(
+static Atom *regular_term_apply_level_assignments(
     Arena *arena, Atom *term,
     const PrimeRegularLevelInstantiation *instantiation,
+    bool resolve_replacements,
     CettaPrimeRegularKernelBudget *budget, bool *complete) {
     if (!complete || !*complete || !regular_spend(budget) || !term) {
         if (complete) *complete = false;
@@ -612,12 +613,13 @@ static Atom *regular_term_apply_level_instantiation(
             *complete = false;
             return NULL;
         }
+        if (!resolve_replacements) return replacement;
         if (atom_eq(replacement, term)) {
             *complete = false;
             return NULL;
         }
-        return regular_term_apply_level_instantiation(
-            arena, replacement, instantiation, budget, complete);
+        return regular_term_apply_level_assignments(
+            arena, replacement, instantiation, true, budget, complete);
     }
     /* A closed level constant has no parameter: it is not walked, however
      * many terms it has. */
@@ -630,12 +632,20 @@ static Atom *regular_term_apply_level_instantiation(
     Atom **items = arena_alloc(
         arena, sizeof(*items) * (size_t)term->expr.len);
     for (CettaExprIndex index = 0u; index < term->expr.len; index++) {
-        items[index] = regular_term_apply_level_instantiation(
+        items[index] = regular_term_apply_level_assignments(
             arena, term->expr.elems[index], instantiation,
-            budget, complete);
+            resolve_replacements, budget, complete);
         if (!items[index]) return NULL;
     }
     return atom_expr(arena, items, term->expr.len);
+}
+
+static Atom *regular_term_apply_level_instantiation(
+    Arena *arena, Atom *term,
+    const PrimeRegularLevelInstantiation *instantiation,
+    CettaPrimeRegularKernelBudget *budget, bool *complete) {
+    return regular_term_apply_level_assignments(
+        arena, term, instantiation, true, budget, complete);
 }
 
 void cetta_prime_regular_kernel_budget_init(
@@ -2530,6 +2540,10 @@ void cetta_prime_regular_kernel_rules_set(Atom *rules) {
     }
 }
 
+Atom *cetta_prime_regular_kernel_rules_get(void) {
+    return g_regular_rules;
+}
+
 /* The computation rules of the language-owned identity package, in the same
  * spelling as admitted rules.  The eliminator `id:eliminate` is declared under
  * every identity policy (its type is in the language declaration table of
@@ -3197,6 +3211,17 @@ static PrimeRegularKernelNormal regular_whnf(
     }
 }
 
+Atom *cetta_prime_regular_kernel_rule_weak_head_normal_form_v1(
+    Arena *arena, Atom *term, CettaPrimeRegularKernelBudget *budget,
+    uint64_t *firings_out) {
+    if (firings_out) *firings_out = 0u;
+    if (!arena || !term || !budget) return NULL;
+    uint64_t before = g_regular_rule_firings;
+    PrimeRegularKernelNormal normal = regular_whnf(arena, term, budget);
+    if (firings_out) *firings_out = g_regular_rule_firings - before;
+    return normal.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED ? normal.term : NULL;
+}
+
 /* Whether an argument of `spine` is a call whose rule waits for an
  * observation. */
 static bool regular_spine_has_observed_argument(Atom *spine) {
@@ -3642,9 +3667,11 @@ static Atom *regular_context_lookup_declaration(
                     };
                     instantiated_type = replacement_count == 0u
                         ? instantiated_type :
-                        regular_term_apply_level_instantiation(
+                        /* Caller arguments are outside the schema's level
+                         * binders, so substitute them simultaneously. */
+                        regular_term_apply_level_assignments(
                             arena, instantiated_type, &schema_instance,
-                            budget, complete);
+                            false, budget, complete);
                     if (!instantiated_type || !*complete) return NULL;
                 }
                 if (local_depth > (uint64_t)INT64_MAX) return NULL;

@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; The recursor of a declared inductive type takes a motive into any universe.
 ; With the motive (lam n (u 0)) it computes a type at each number: the numbers
 ; at zero and functions on them at every successor, or the n-tuples of numbers.
@@ -5,7 +7,7 @@
 ; large motive transports along a path between numbers; nothing computes on
 ; the path, and the result is not the method.
 
-!(bind! &s (new-space))
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &s num (u 0) (: zero num) (: suc (-> num num)))
 
 ; Small motives compute as before.

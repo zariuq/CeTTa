@@ -18,9 +18,9 @@
        done
        (let ($name $rest) (decons-atom $names)
          (let* (($a (add-atom $kb (: $name (-> UInt Bool))))
-                ($b (add-atom $kb (: (always $name 0) (≞ @($name 0) ⊤))))
-                ($c (add-atom $kb (: (always $name 1) (≞ @($name 1) ⊤))))
-                ($d (add-atom $kb (: (always $name 2) (≞ @($name 2) ⊤))))
+                ($b (add-atom $kb (: (always $name 0) (≞ (lift app (lift $name) @0) ⊤))))
+                ($c (add-atom $kb (: (always $name 1) (≞ (lift app (lift $name) @1) ⊤))))
+                ($d (add-atom $kb (: (always $name 2) (≞ (lift app (lift $name) @2) ⊤))))
                 ($next (- $k 1)))
            (add-distractors $kb $rest $next)))))
 

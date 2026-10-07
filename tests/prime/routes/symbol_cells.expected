@@ -1,0 +1,8 @@
+[(P heads heads), (P tails tails)]
+[(P heads heads), (P tails tails)]
+[1]
+[(Cons 1 (Cons 1 (Cons 1 Nil)))]
+[(Cons 1 ones)]
+[(Cons 0 (Cons 0 Nil)), (Cons 1 (Cons 1 Nil))]
+[1]
+[(Error a CyclicPrimeNeedThunk)]

@@ -61,7 +61,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ; parent's meaning is its evidence; the domain lists its individuals.
-(= (parent $a $b) (nu:holds &kb @(parent $a $b)))
+(= (parent $a $b) (nu:holds &kb (lift app @parent (lift $a) (lift $b))))
 (= (nu:individuals Person) (ann bob cat dan eve fay gus))
 
 ; All 49 pairs through the activated program, including pairs that were

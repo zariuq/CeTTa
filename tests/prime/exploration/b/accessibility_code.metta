@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; The accessibility predicate as a proposition code, defined impredicatively
 ; over a carrier A:
 ;   acc R a := all X. (all x. (all y. R y x -> X y) -> X x) -> X a
@@ -7,7 +9,7 @@
 ; then used through its unfolding, with the accessibility premise proved.
 
 !(import! &self pf)
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(pf:theory &thy ((: A (u 0)) (: Res (u 0))
                   (: rec (-> (-> A A prop) (-> A (-> A Res) Res) A Res))
                   (: a A) (: c Res) (: Q (-> Res prop))))

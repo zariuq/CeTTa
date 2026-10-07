@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; The base-two logarithm, a recursion that is not structural, on three faces:
 ;   log2 0 = 0,  log2 1 = 0,  log2 (n + 2) = 1 + log2 (half (n + 2)),
 ;   half 0 = 0,  half 1 = 0,  half (n + 2) = 1 + half n.
@@ -88,7 +90,7 @@
 ; definition whose calls go down a bound, and the lemmas that give its
 ; hypotheses from the checks: the structural order of num is well-founded,
 ; and linear constructor patterns that do not overlap are apart.
-!(let (definition-evidence $rules $termination $lean) (set:known-proof &self log2)
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self log2))
    (quote $lean))
 
 ; ---- Operational: log2 8 runs to 3, by the equations as written.
@@ -96,7 +98,7 @@
 ; Its firings are those of the written equations: four of log2, at 8,
 ; 4, 2 and 1, and ten of half, at 8, 6, 4, 2, 0, then 4, 2, 0, then 2, 0.
 ; The count is printed with the term it counts.
-!(let ($values $n) (cost:firings (log2 (suc (suc (suc (suc (suc (suc (suc (suc zero))))))))))
+!(let (quote ($values $n)) (lift (cost:firings (log2 (suc (suc (suc (suc (suc (suc (suc (suc zero)))))))))))
    (quote (firings-of (log2 (suc (suc (suc (suc (suc (suc (suc (suc zero))))))))) $values $n)))
 !(log2 (suc (suc zero)))
 !(log2 (suc (suc (suc zero))))
@@ -150,7 +152,7 @@
    (= (log2-solved (suc zero)) zero)
    (= (log2-solved (suc (suc $n))) (suc (log2-solved (half (suc (suc $n)))))))
 !(log2-solved (suc (suc (suc (suc (suc (suc (suc (suc zero)))))))))
-!(let ($values $n) (cost:firings (log2-solved (suc (suc (suc (suc (suc (suc (suc (suc zero))))))))))
+!(let (quote ($values $n)) (lift (cost:firings (log2-solved (suc (suc (suc (suc (suc (suc (suc (suc zero)))))))))))
    (quote (firings-of (log2-solved (suc (suc (suc (suc (suc (suc (suc (suc zero))))))))) $values $n)))
 !(type:eq &self (log2-solved (suc (suc (suc zero)))) (log2 (suc (suc (suc zero)))))
 !(try (type:eq &self (lam (n : num) (log2-solved (suc (suc n))))
@@ -160,7 +162,7 @@
 !(let (definition-evidence $rules $termination $lean) (set:known-proof &self log2-solved)
    (car-atom $termination))
 ; Its record names the Lean theorem for admission on evidence of a solution.
-!(let (definition-evidence $rules $termination $lean) (set:known-proof &self log2-solved)
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self log2-solved))
    (quote $lean))
 
 ; ---- Negative controls.
@@ -178,7 +180,7 @@
    (= (log2-unproved zero) zero)
    (= (log2-unproved (suc zero)) zero)
    (= (log2-unproved (suc (suc $n))) (suc (log2-unproved (half (suc (suc $n))))))))
-   (let $reason (index-atom $r 1) (let $obligations (index-atom $reason 2)
+   (let $reason (index-atom $r 1) (let (quote $obligations) (lift (index-atom $reason 2))
      ((car-atom $r) (car-atom $reason) (quote $obligations)))))
 ; The obligations speak of calls only, so for every other occurrence of the
 ; constant the clause leaves the definition Undetermined, naming the

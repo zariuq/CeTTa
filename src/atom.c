@@ -3674,6 +3674,12 @@ static Atom g_atom_list_rest_tag =
     ATOM_LIST_TAG_INIT(CETTA_INTERNAL_TAG_LIST_REST,
                        ATOM_STRUCTURAL_HAS_LIST |
                            ATOM_STRUCTURAL_HAS_OPEN_LIST);
+/* The braces tag is shared the same way, so a braces node hashes alike in
+ * every arena. */
+static Atom g_atom_braces_tag =
+    ATOM_LIST_TAG_INIT(CETTA_INTERNAL_TAG_PRIME_BRACES, 0u);
+static Atom g_atom_own_tag =
+    ATOM_LIST_TAG_INIT(CETTA_INTERNAL_TAG_PRIME_OWN, 0u);
 
 /* [] is shared the same way: (LIST), with its hash fixed like the tags'. */
 static Atom *g_atom_empty_list_elems[1] = {&g_atom_list_tag};
@@ -3702,6 +3708,10 @@ Atom *atom_internal_tag(Arena *a, CettaInternalTag tag) {
         return &g_atom_list_tag;
     if (tag == CETTA_INTERNAL_TAG_LIST_REST)
         return &g_atom_list_rest_tag;
+    if (tag == CETTA_INTERNAL_TAG_PRIME_BRACES)
+        return &g_atom_braces_tag;
+    if (tag == CETTA_INTERNAL_TAG_PRIME_OWN)
+        return &g_atom_own_tag;
     if (!a || tag == 0)
         return NULL;
     Atom *at = arena_alloc(a, sizeof(*at));
@@ -3886,6 +3896,19 @@ Atom *atom_list(Arena *a, Atom *const *elems, CettaExprLen len) {
     return list;
 }
 
+Atom *atom_prime_braces(Arena *a, Atom *const *elems, CettaExprLen len) {
+    if (!a || (len > 0u && !elems) ||
+        !cetta_expr_len_mul_fits_size(len + 1u, sizeof(Atom *)))
+        return NULL;
+    Atom **parts = cetta_malloc(sizeof(*parts) * (size_t)(len + 1u));
+    parts[0] = &g_atom_braces_tag;
+    if (len > 0u)
+        memcpy(parts + 1, elems, sizeof(*parts) * (size_t)len);
+    Atom *braces = atom_expr(a, parts, len + 1u);
+    free(parts);
+    return braces;
+}
+
 Atom *atom_list_with_rest(Arena *a, Atom *const *elems, CettaExprLen len, Atom *rest) {
     Atom *tag, *result;
     Atom **parts;
@@ -3936,6 +3959,40 @@ Atom *atom_sequence_like(Arena *a, const Atom *like, Atom *const *elems,
     Atom *result = atom_expr(a, copy, len);
     free(copy);
     return result;
+}
+
+Atom *atom_sequence_rest(Arena *a, Atom *sequence, Atom *const *elems,
+                         CettaExprLen len) {
+    if (!sequence || len == 0u) return NULL;
+    if (atom_is_list(sequence))
+        return atom_sequence_like(a, sequence, elems + 1u, len - 1u);
+    /* The whole expression: a view sharing its storage. */
+    if (elems == sequence->expr.elems && len == sequence->expr.len)
+        return atom_expr_suffix(a, sequence, 1u);
+    return atom_sequence_like(a, NULL, elems + 1u, len - 1u);
+}
+
+/* Prime's `==`: equal as authored terms.  Equal atoms are; otherwise two
+ * expressions are when their authored children are, an elaborated
+ * template's own list left out.  Only an expression that holds an internal
+ * tag can hold an own list, so any other pair is answered by atom_eq. */
+bool atom_prime_authored_eq(Atom *a, Atom *b) {
+    if (atom_eq(a, b))
+        return true;
+    if (!a || !b || a->kind != ATOM_EXPR || b->kind != ATOM_EXPR)
+        return false;
+    uint32_t tagged = ATOM_STRUCTURAL_FACTS_VALID |
+                      ATOM_STRUCTURAL_HAS_INTERNAL_TAG;
+    if ((a->structural_facts & tagged) == ATOM_STRUCTURAL_FACTS_VALID &&
+        (b->structural_facts & tagged) == ATOM_STRUCTURAL_FACTS_VALID)
+        return false;
+    CettaExprLen len = atom_authored_len(a);
+    if (len != atom_authored_len(b))
+        return false;
+    for (CettaExprIndex i = 0u; i < len; i++)
+        if (!atom_prime_authored_eq(a->expr.elems[i], b->expr.elems[i]))
+            return false;
+    return true;
 }
 
 Atom *atom_list_tail(Arena *a, const Atom *list, CettaExprLen from) {
@@ -6923,6 +6980,35 @@ static void atom_print_mode(
             atom_print_stack_push_atom(&stack, a->expr.elems[1]);
             break;
         }
+        if (atom_is_prime_meta(a)) {
+            /* T[...] and T{...}: the meta-argument touches the term. */
+            atom_print_stack_push_atom(&stack, a->expr.elems[2]);
+            atom_print_stack_push_atom(&stack, a->expr.elems[1]);
+            break;
+        }
+        if (atom_is_prime_braces(a)) {
+            /* {x1 x2 ... xn} */
+            fputc('{', out);
+            atom_print_stack_push_char(&stack, '}');
+            for (CettaExprIndex i = a->expr.len; i > 1u; i--) {
+                atom_print_stack_push_atom(&stack, a->expr.elems[i - 1u]);
+                if (i > 2u)
+                    atom_print_stack_push_char(&stack, ' ');
+            }
+            break;
+        }
+        if (atom_is_prime_own_list(a)) {
+            /* An own list, which no observer of an authored term meets,
+             * shows its names, ($y ...), if it is ever printed alone. */
+            fputc('(', out);
+            atom_print_stack_push_char(&stack, ')');
+            for (CettaExprIndex i = a->expr.len; i > 2u; i--) {
+                atom_print_stack_push_atom(&stack, a->expr.elems[i - 1u]);
+                if (i > 3u)
+                    atom_print_stack_push_char(&stack, ' ');
+            }
+            break;
+        }
         if (atom_is_list(a) || atom_is_list_rest(a)) {
             /* [x1 x2 ... xn] and [x1 ... xk | rest] */
             bool rest = atom_is_list_rest(a);
@@ -6953,7 +7039,12 @@ static void atom_print_mode(
         }
         fputc('(', out);
         atom_print_stack_push_char(&stack, ')');
-        for (CettaExprIndex i = a->expr.len; i > 0u; i--) {
+        /* The own list of an elaborated Prime lambda or template is
+         * inferred ownership, not authored syntax: it is left out. */
+        CettaExprLen shown = a->expr.len;
+        if (atom_prime_template_own_hidden(a))
+            shown--;
+        for (CettaExprIndex i = shown; i > 0u; i--) {
             atom_print_stack_push_atom(
                 &stack, a->expr.elems[i - 1u]);
             if (i > 1u)
@@ -6963,6 +7054,18 @@ static void atom_print_mode(
         }
     }
     free(stack.items);
+}
+
+bool atom_is_prime_own_list(const Atom *atom) {
+    if (!atom || atom->kind != ATOM_EXPR || atom->expr.len < 2u ||
+        !atom_is_internal_tag(atom->expr.elems[0],
+                              CETTA_INTERNAL_TAG_PRIME_OWN) ||
+        !atom->expr.elems[1] || atom->expr.elems[1]->kind != ATOM_SYMBOL)
+        return false;
+    for (CettaExprIndex i = 2u; i < atom->expr.len; i++)
+        if (!atom->expr.elems[i] || atom->expr.elems[i]->kind != ATOM_VAR)
+            return false;
+    return true;
 }
 
 void atom_print(Atom *a, FILE *out) {

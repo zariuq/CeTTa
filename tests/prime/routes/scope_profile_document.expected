@@ -1,0 +1,8 @@
+[(row before)]
+[(Pair $t ok)]
+[(row after)]
+[(Pair $t ok)]
+[(row crossing)]
+[(Pair 7 ok)]
+[(row parse)]
+[(Pair $t ok)]

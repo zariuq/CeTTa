@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; A program may name its own constants with the words of the term syntax
 ; (lam, app, fst, pair) and of the kernel's own spelling (App, Lam, FVar,
 ; Pi, U0).  Such a name is an ordinary name: declared, it is applied like any
@@ -5,7 +7,7 @@
 ; term syntax spelled the same is read only where no declaration of that name
 ; takes the arguments given, so a constructor `lam` of one argument and the
 ; lambdas of the same theory live side by side.
-!(bind! &s (new-space))
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &s nat (u 0) (: zero nat) (: succ (-> nat nat)))
 !(set:inductive &s bool (u 0) (: true bool) (: false bool))
 

@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; One theorem, four faces.  Implication transitivity,
 ;   forall P Q R. (P -> Q) -> (Q -> R) -> (P -> R),
 ; is stated and checked as HOL in the set: language, as a dependent type in
@@ -10,7 +12,7 @@
 ; which only the model face refutes as a proposition; the proof faces can
 ; only fail to prove it.
 !(import! &self pf)
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 
 ; ---- HOL face: a natural-deduction proof over simple types
 !(pf:theorem &thy imp-trans

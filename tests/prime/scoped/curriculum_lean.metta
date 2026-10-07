@@ -1,10 +1,12 @@
+(set:profile hol)
+
 ; The Lean ladder of the MettaKernel curriculum, ported statement by
 ; statement where the draft's set: language can state it.  Booleans and
 ; naturals are inductive; the connectives are definitions; the ladder's
 ; negative controls are refusals here.
 !(import! &self pf)
 !(import! &self ../../../lib/prime/curriculum.metta)
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &thy bool (u 0) (: true bool) (: false bool))
 !(set:inductive &thy nat (u 0) (: zero nat) (: succ (-> nat nat)))
 !(pf:equality &thy bool refl@bool subst@bool)

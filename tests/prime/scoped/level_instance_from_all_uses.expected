@@ -60,6 +60,6 @@
 [False]
 [(Refuted (not-convertible Presentation.TypedEquality.Normalization.not_equal_of_unrelated (assumes-completeness declared-constants declared-datatypes)))]
 [(Refuted (type-mismatch))]
-[(Refuted (conversion-type-mismatch Presentation.TypedEquality.Normalization.Synth.not_equal_types))]
+[(Refuted (conversion-type-mismatch Presentation.TypedEquality.Normalization.Synth.not_equal_types (assumes-completeness declared-constants declared-datatypes)))]
 [(Refuted (type-mismatch))]
 [(Refuted (type-mismatch))]

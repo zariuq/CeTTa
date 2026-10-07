@@ -235,6 +235,227 @@ Atom *prime_semantics_identity_iota(Atom *call);
  * arguments apply to the result.  NULL when the head is not such a lambda. */
 Atom *prime_semantics_beta(Arena *arena, Atom *call);
 
+/* The seal of quoted code (atom_is_quotation).  The session sets it:
+ * Prime seals unless its profile keeps quotations as written
+ * (quote-as-written); HE and PeTTa never seal.  While it is active, the
+ * canonical binders (let, chain, App of Lam) substitute only outside
+ * quotations, except for pattern holes, the environment action
+ * (prime_semantics_env_apply) never enters a quotation in value position,
+ * and authored forms are sealed when they are elaborated
+ * (prime_semantics_elaborate_form). */
+void prime_quote_seal_set(bool active);
+bool prime_quote_seal_active(void);
+
+/* Lambda scope profiles (docs/prime/scope-policy-spectrum-20261006.md): an
+ * elaboration property of a document, chosen by the top-level declaration
+ * `(scope:profile OWNERSHIP [LIFETIME] [READOUT])`.  Ownership is decided
+ * when a form is elaborated; every lambda or map-atom/foldl-atom template
+ * that needs it records the profile, with its own slots, in its own list
+ * `(OWN RECORD $y ...)`, and is applied by that record whatever the
+ * caller's profile.  The default is mercury-implicit per-call reference
+ * (provisional). */
+enum {
+    CETTA_PRIME_OWNERSHIP_QUERY_WIDE = 0,
+    CETTA_PRIME_OWNERSHIP_MERCURY_IMPLICIT = 1,
+    CETTA_PRIME_OWNERSHIP_LEXICAL_FRESH = 2,
+    CETTA_PRIME_OWNERSHIP_EXPLICIT_CAPTURE = 3,
+    CETTA_PRIME_OWNERSHIP_LEXICAL_INVENTORY = 4
+};
+enum {
+    CETTA_PRIME_LIFETIME_PER_CALL = 0,
+    CETTA_PRIME_LIFETIME_PER_CLOSURE = 1
+};
+enum {
+    CETTA_PRIME_READOUT_REFERENCE = 0,
+    CETTA_PRIME_READOUT_SNAPSHOT = 1
+};
+typedef struct {
+    uint8_t ownership;
+    uint8_t lifetime;
+    uint8_t readout;
+} CettaPrimeScopeProfile;
+
+/* The profile of a document that declares none: mercury-implicit per-call
+ * reference, or for the scope experiment's census and output comparison,
+ * CETTA_PRIME_SCOPE_DEFAULT=ownership[/lifetime/readout] (an elaboration
+ * default only; declarations and template records win). */
+CettaPrimeScopeProfile prime_scope_profile_default(void);
+/* The experiment's default, `ownership[/lifetime/readout]`; false when it
+ * names no profile. */
+bool prime_scope_profile_default_set(const char *text);
+/* Set while the main document is read: the scope census counts its forms
+ * only, and the document's own profile becomes the profile in force when
+ * it runs. */
+void prime_scope_document_reading(bool reading);
+/* The profile a declaration `(scope:profile OWNERSHIP [LIFETIME]
+ * [READOUT])` names; false for any other atom or an unknown name. */
+bool prime_scope_profile_from_atom(const Atom *decl,
+                                   CettaPrimeScopeProfile *out);
+/* The profile in force while the program runs, under which code formed at
+ * run time (parse) is elaborated: the main document's own profile, then each
+ * query declaration `!(scope:profile ...)` evaluated, from its position on. */
+void prime_scope_runtime_profile_set(CettaPrimeScopeProfile profile);
+CettaPrimeScopeProfile prime_scope_runtime_profile(void);
+/* The scope census (CETTA_PRIME_SCOPE_CENSUS, read by main.c): while the main
+ * document is read, each form is elaborated under every ownership option
+ * and counted, one line per option on standard output. */
+void prime_scope_census_set(bool on);
+
+/* The binding structure of an authored form, computed once when the form is
+ * formed and stored in the term (by the reader, or by parse while the
+ * program runs, under the profile in force): each `$` parameter
+ * of a lambda or of a map-atom/foldl-atom template becomes a slot of the
+ * binder's own; each template's own names, and each written quotation's,
+ * become its own slots, listed last in it (a quotation in value position is
+ * a scope, and each opening of its code copies them); and a mention, inside
+ * a quotation in value position, of a variable a pattern binds at a lower
+ * quote depth becomes a variable of the quotation's own (the seal: a role
+ * belongs to an occurrence; names in pattern positions, quoted or not, are
+ * store-name occurrences).  NULL when the form cannot be elaborated. */
+Atom *prime_semantics_elaborate_form(Arena *arena, Atom *form)
+    __attribute__((weak));
+/* A term built at run time from parts (cons-atom, union-atom).  Its root is
+ * the node formed now: a lambda or template (or `new`) there gets its
+ * binders' identities and its record, and owns none of its parts' names,
+ * which keep the scope they were written in; its parts' lambdas are kept as
+ * they were formed; a binder there is sealed as the reader seals one; a
+ * quotation is code made of a value, whose lambdas keep the binding
+ * structure they were formed with, and which owns nothing: its store
+ * variables stay shared.  Any other term is returned as it is.  NULL on
+ * failure. */
+Atom *prime_semantics_form_built(Arena *arena, Atom *built)
+    __attribute__((weak));
+/* `*` on code: an opening.  The names a written quotation owns are copied
+ * for it, and the payload is formed now: the lambdas written in the code
+ * keep the ownership decided where they were written, and a value's lambda
+ * in it keeps the record it entered the code with.  Contextual code opens as
+ * the function of its binders.  NULL when `code` is no code value or cannot
+ * be formed. */
+Atom *prime_semantics_open_code(Arena *arena, Atom *code);
+/* Prime's binding structure in the generic substitution (match.h): the
+ * application of bindings, which every route shares, forms each expression
+ * whose head it fills with a symbol (a binder sealed, in code too; a lambda
+ * given its binder identities, outside code), and reads a variable inside
+ * code as code (contextual code as its syntax).  The session sets them for
+ * Prime (eval_swap_library_context). */
+const BindingsStructureHooks *prime_semantics_binding_hooks(void);
+/* Contextual code `(quote M (k ...))`: the code M under the binders k ...,
+ * the binding quote's shape.  It is sealed as a quotation is. */
+bool prime_semantics_contextual_code(const Atom *term);
+/* Prime `==` on terms with binders: bound names compared by position,
+ * never by spelling (a lambda's or template's parameters, an elaborated
+ * template's own slots, a `new`'s names, in code as in values), as a quoted
+ * pattern meets quoted code.  Captured names are compared as the runtime has
+ * them.  False when neither term binds a name (the plain comparison
+ * decides). */
+bool prime_semantics_binders_eq(Arena *arena, Atom *left, Atom *right)
+    __attribute__((weak));
+/* Whether the pattern holds a quotation: matched against code binder by
+ * binder (prime_semantics_code_canonical). */
+bool prime_semantics_code_pattern(const Atom *pattern);
+/* Whether the pattern takes code apart: a quotation in it holds an
+ * expression.  A pattern whose quotations hold bare variables takes code
+ * whole and matches binder by binder exactly as it matches as written. */
+bool prime_semantics_pattern_takes_code_apart(const Atom *pattern);
+/* Whether `term` is a binder form (let, let*, case, switch, unify, match,
+ * chain, filter-atom) whose pattern positions take code apart. */
+bool prime_semantics_binder_takes_code_apart(const Atom *term);
+/* `value` matched against `pattern`, which takes code apart, binder by
+ * binder into `bindings` (prime_semantics_code_canonical, then
+ * prime_semantics_contextual_match): the operation `let`, `case` and
+ * `unify` use, and equation heads and space queries use after their
+ * candidates are selected.  *matched is false when they do not match, and
+ * `bindings` is then unchanged.  False on failure. */
+bool prime_semantics_code_unify(Arena *arena, Atom *pattern, Atom *value,
+                                Bindings *bindings, bool *matched);
+/* The form in which a quoted pattern is matched against quoted code: each
+ * binder of quoted code (a lambda's or template's parameter, a `new`'s
+ * name) and its references, as the binder's level, so binders meet by
+ * identity, never by spelling.  On the pattern's side a variable at a
+ * binder position stays a variable, and takes the code's binder.  NULL on
+ * failure. */
+Atom *prime_semantics_code_canonical(Arena *arena, Atom *term,
+                                     bool pattern_side);
+/* After `pattern` matched `value` (in the forms of
+ * prime_semantics_code_canonical) with `bindings`: each hole of the pattern
+ * (a variable inside a quotation in it) takes the part of the code it met,
+ * as the code has it; a part under binders of the code that it mentions is
+ * contextual code over those binders, the outermost first.  With `branch`,
+ * the branch's quoted mentions of such a hole are replaced by the part's
+ * syntax, which the quoted code around it puts back under binders of its
+ * own.  *matched is false when a binder would escape its code (another
+ * variable bound to it).  False on failure. */
+bool prime_semantics_contextual_match(Arena *arena, Atom *pattern,
+                                      Atom *value, Bindings *bindings,
+                                      Atom **branch, bool *matched);
+/* Why the last form could not be elaborated, when the elaboration says (a
+ * name both shared and owned by one template, two whole-document profiles
+ * that disagree); NULL otherwise. */
+const char *prime_semantics_elaboration_error(void) __attribute__((weak));
+
+/* Elaborate the forms a Prime reader produced, in place, each under the
+ * profile its document declares before it.  False when a form cannot be
+ * elaborated: the reader then refuses the document (fail closed). */
+bool prime_semantics_elaborate_read_forms(TermUniverse *universe,
+                                          AtomId *forms, size_t count);
+
+/* One step of a Prime `map-atom` or `foldl-atom` whose template carries its
+ * own list (an elaborated, literal template): the template is activated by
+ * its record for each element (rule 3), in the order of the library
+ * definitions it replaces.  The next instruction to evaluate, or a decline
+ * (the call is then left to the library). */
+typedef enum {
+    PRIME_ITERATION_DECLINE = 0,
+    PRIME_ITERATION_REENTER,
+    PRIME_ITERATION_VALUE
+} PrimeIterationStep;
+PrimeIterationStep prime_semantics_iteration_step(Arena *arena, Atom *call,
+                                                  Atom *space, Atom **out);
+
+/* The one environment action: capture-avoiding substitution of the store
+ * `store` over the binding structure.  It stops at a lambda binder, an own
+ * name or a template parameter of the same variable (identity, never
+ * spelling), never enters a quotation in value position while the session
+ * seals, fills store names in pattern positions (quoted ones included), and
+ * leaves a template's own names to its activation.  It is idempotent and
+ * absorbs refinement: applying a store and then a refinement of it equals
+ * applying the refinement.  The `_pattern` variant reads `term` as written
+ * in a pattern position.  NULL on failure (memory or nesting). */
+Atom *prime_semantics_env_apply(Arena *arena, const Bindings *store,
+                                Atom *term);
+/* A binder's own slot `var` filled with `value` in `term` (a let's body), by
+ * lambda's own capture-avoiding substitution.  Inside a quotation, where the
+ * elaboration left only the holes in scope of this binder, the slot is
+ * filled as a hole of quoted code, textually.  NULL on failure. */
+Atom *prime_semantics_subst_var(Arena *arena, Atom *term, Atom *var,
+                                Atom *value);
+Atom *prime_semantics_env_apply_pattern(Arena *arena, const Bindings *store,
+                                        Atom *term);
+
+/* `lift`, the named syntax operations on code values (prime_semantics.c).
+ * `(lift let K @A @C)`: the code C with A in the slot K, by lambda's
+ * capture-avoiding substitution; K may be a tuple of keys with a tuple of
+ * codes.  `(lift app @F @A1 .. @An)`: the application code @(F A1 .. An).
+ * Each returns the built code, or NULL when an argument is not a code value
+ * or a key is not a binder key. */
+Atom *prime_semantics_lift_let(Arena *arena, Atom *keys, Atom *codes,
+                               Atom *code);
+Atom *prime_semantics_lift_app(Arena *arena, Atom *const *codes,
+                               size_t count);
+
+/* Whether `term` is a meta-argument wrapper the core reads as a crossing
+ * set, (meta C {...}) with C a lambda or template, a pattern binder or a
+ * quotation: C then runs as itself (its elaboration applied the set). */
+bool prime_semantics_meta_core(Arena *arena, Atom *term);
+
+/* One evaluation of `(new ($h ...) body)`: fresh private slots for the
+ * names, an instance of their own, in place throughout the body, which is
+ * returned to run.  Its names are lexical binders of the body (the
+ * elaboration gives them identities of their own), so the caller never
+ * sees them and no spelling captures them.  NULL when the term is not such
+ * a form (any other shape is data). */
+Atom *prime_semantics_new_open(Arena *arena, Atom *term);
+
 /* Whether `term` is an authored lambda `(lam binders body)` whose binders the
  * kernel's grammar reads.  Such a lambda is a value. */
 bool prime_semantics_is_authored_lambda(Arena *arena, Atom *term);

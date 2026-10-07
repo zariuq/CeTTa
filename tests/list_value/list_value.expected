@@ -4,7 +4,6 @@
 [(quote [a,b c])]
 [(quote [|- a|b |x])]
 [()]
-[(quote -[det]->)]
 [[a (+ 1 2)]]
 [List]
 [List]

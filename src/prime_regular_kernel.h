@@ -318,6 +318,8 @@ int cetta_prime_identity_policy(void);
 /* Computation rules as data for the duration of a kernel call: a list
  * (LCons (PrimeRule head arity (pattern ...) rhs) ...) or NULL. */
 void cetta_prime_regular_kernel_rules_set(Atom *rules);
+/* Retain the caller's table across a nested kernel observation. */
+Atom *cetta_prime_regular_kernel_rules_get(void);
 
 /* One admitted `type:rule` step at the root of an intrinsic application.
  * Subterms are not normalized and the term is not rechecked. NULL means no
@@ -340,6 +342,12 @@ bool cetta_prime_regular_kernel_rule_guarded_v1(Atom *name);
 /* The normal form of `term` by the rules set for the call, and how many rule
  * firings it took.  NULL on a budget or engine failure. */
 Atom *cetta_prime_regular_kernel_rule_normal_form_v1(
+    Arena *arena, Atom *term, CettaPrimeRegularKernelBudget *budget,
+    uint64_t *firings_out);
+
+/* Expose the outer constructor by admitted computation, without normalizing
+ * the fields of a Pi, Sigma or identity type. NULL on budget or engine failure. */
+Atom *cetta_prime_regular_kernel_rule_weak_head_normal_form_v1(
     Arena *arena, Atom *term, CettaPrimeRegularKernelBudget *budget,
     uint64_t *firings_out);
 

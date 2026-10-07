@@ -255,7 +255,53 @@ def main() -> int:
             "four distinct prefix roles",
         )
 
-    print("(GSLTPrefixReaderCompilerV1Summary 3 5 0)")
+        # A bracket touching a token opens a meta-argument, so every token
+        # must end at a bracket.
+        bracket_word = directory / "bracket_word.metta"
+        bracket_word.write_text(
+            replace_in_rule(
+                SYNTAX.read_text(encoding="utf-8"),
+                "def-cetta-prime-token-boundary",
+                "(alt (char (cp 59)) (alt (char (cp 91)) (alt (char (cp 93))",
+                "(alt (char (cp 59)) (alt (char (cp 93))",
+                "token boundary without the open bracket",
+            ).replace(
+                "(char (cp 125))))))))))))) (body))\n    (rule def-cetta-prime-term",
+                "(char (cp 125)))))))))))) (body))\n    (rule def-cetta-prime-term",
+                1),
+            encoding="utf-8",
+        )
+        expect_compile_error(
+            bracket_word,
+            CLASSES,
+            PROJECTION,
+            directory,
+            "bracket_word",
+            "a token does not end at a meta-argument bracket",
+        )
+
+        # So does a brace: every token must end at a brace.
+        brace_word = directory / "brace_word.metta"
+        brace_word.write_text(
+            replace_in_rule(
+                SYNTAX.read_text(encoding="utf-8"),
+                "def-cetta-prime-token-boundary",
+                "(alt (char (cp 93)) (alt (char (cp 123)) (char (cp 125))))))))))))) (body))",
+                "(alt (char (cp 93)) (char (cp 125)))))))))))) (body))",
+                "token boundary without the open brace",
+            ),
+            encoding="utf-8",
+        )
+        expect_compile_error(
+            brace_word,
+            CLASSES,
+            PROJECTION,
+            directory,
+            "brace_word",
+            "a token does not end at a brace",
+        )
+
+    print("(GSLTPrefixReaderCompilerV1Summary 3 8 0)")
     return 0
 
 

@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; The first theorem of the Isabelle tutorial, rev (rev xs) = xs, written the
 ; way it reads there: four lemmas by induction, each an equational chain.
 ; The object theory lives in its own space; the program space holds only the
@@ -6,7 +8,7 @@
 ; every other equality step is derived.
 
 !(import! &self pf)
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(pf:theory &thy ((: elem (u 0)) (: list (u 0))
                   (: nil list) (: cons (-> elem list list))
                   (: append (-> list list list)) (: rev (-> list list))))

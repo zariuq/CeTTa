@@ -1,3 +1,5 @@
+(set:profile megalodon-hotg)
+
 ; Native proof terms.
 ;
 ; A proof is ordinary data: a `pf:` tree.  `set:theorem` checks it against a
@@ -75,6 +77,9 @@
       (set:native-proof from-premise)
    (Assumptions (size-atom $assumptions)))
 
-; 13. Unsupported proof syntax abstains rather than counting as evidence.
+; 13. A pf:by step counts as evidence only through the eliminations it stands
+;     for: the package is compiled from them and carries them as its proof.
 !(set:theorem by-name (In Empty (UnivOf Empty)) (pf:by universeIn))
-!(car-atom (try (set:native-proof by-name)))
+!(let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest)
+      (set:native-proof by-name)
+   (Compiled $proof))

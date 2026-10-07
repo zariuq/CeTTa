@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; The retained zero-add proof is stored as text addressed by its sha256.
 ; A consumer opens that text and checks the hash. The hash alone is not the
 ; article. A missing, altered, wrong-index, or stale address does not open it.

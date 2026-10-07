@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; First proofs by induction of a proof-assistant curriculum, over declared
 ; datatypes: the numbers and the lists of numbers.  Symmetry, transitivity
 ; and congruence of identity proofs are terms built from the identity
@@ -5,7 +7,7 @@
 ; family of identity types.  A definition is admitted only after the kernel
 ; has checked its right side against its declared type.
 
-!(bind! &s (new-space))
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &s num (u 0) (: zero num) (: suc (-> num num)))
 !(set:inductive &s list (u 0) (: nil list) (: cons (-> num list list)))
 

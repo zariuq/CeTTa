@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Hyperseed's d-calculus concepts as Prime programs over declared data, and
 ; the finite laboratory of chapter 5 recomputed from them.  Source: Goertzel,
 ; "Hyperseed in the d-Calculus", chapters 3 and 5; HS3.* and HS5.* are the
@@ -100,7 +102,7 @@
 !(k-le (corner-value opposed) (corner-value supported))
 ; Chapter 3's correction of its source: material implication N v or w sends
 ; T => F to F, not to B.
-!(let $agree (== (truth-or (neg (corner-value supported)) (corner-value opposed)) (corner-value opposed))
+!(let (quote $agree) (lift (== (truth-or (neg (corner-value supported)) (corner-value opposed)) (corner-value opposed)))
    (quote ("DistinctionCalculus.PBit.materialImpl_supported_opposed" $agree)))
 ; Admission: (0.9, 0.8) is a p-bit; (3/2, 0) and (-1/10, 1/2) are refused.
 !(p-bit (frac (num1 d9) (num2 d1 d0)) (frac (num1 d4) (num1 d5)))
@@ -302,17 +304,17 @@
 !(let $sorites (table3 (frac (num1 d4) (num1 d5)) (frac (num1 d4) (num1 d5)) (frac (num1 d1) (num2 d1 d0)))
    (let $g (observer-graphtropy (observe (carrier3 a b c) (uniform (carrier3 a b c)) $sorites))
      (let $h (bracket (uniform (carrier3 a b c)) (complement $sorites) (uniform (carrier3 a b c)))
-       (let $agree (== ($g $h (logical-entropy (uniform (carrier3 a b c)) $sorites))
+       (let (quote $agree) (lift (== ($g $h (logical-entropy (uniform (carrier3 a b c)) $sorites))
                        ((written (num2 d3 d2) (num2 d4 d5)) (written (num2 d1 d3) (num2 d4 d5))
-                        (written (num2 d1 d3) (num2 d4 d5))))
+                        (written (num2 d1 d3) (num2 d4 d5)))))
          (quote ("EvidenceExamples.sorites_cost" "DistinctionCalculus.Distribution.distinction_eq_one_sub" $agree))))))
 ; Any finite carrier: on four tokens with the uniform measure, the identity
 ; observer has g = sum of mu(x)^2 = 1/4, the total observer g = 1.
 !(set:define &self ones-table (-> carrier carrier table)
    (= (ones-table no-token $Y) tnil) (= (ones-table (token-and $x $xs) $Y) (trow (ones $Y) (ones-table $xs $Y))))
 !(let $X (carrier4 a b c d)
-   (let $agree (== ((graphtropy (uniform $X) (identity-table $X)) (graphtropy (uniform $X) (ones-table $X $X)))
-                   ((written (num1 d1) (num1 d4)) (written (num1 d1) (num1 d1))))
+   (let (quote $agree) (lift (== ((graphtropy (uniform $X) (identity-table $X)) (graphtropy (uniform $X) (ones-table $X $X)))
+                   ((written (num1 d1) (num1 d4)) (written (num1 d1) (num1 d1)))))
      (quote ("DistinctionCalculus.graphtropy_discrete" $agree))))
 
 ; ---- HS3.ReportDistance.  The squared report distance of tokens x, y on
@@ -347,17 +349,17 @@
 ; report quotient.
 !(let $e (profile-and (one-probe (corner-value unknown)) (profile-and (one-probe (corner-value unknown)) no-profile))
    (let $alpha (squared-report-table $e (uniform (carrier1 q)) $e)
-     (let $agree (== ((report-dist-sq (uniform (carrier1 q)) (one-probe (corner-value unknown)) (one-probe (corner-value unknown)))
+     (let (quote $agree) (lift (== ((report-dist-sq (uniform (carrier1 q)) (one-probe (corner-value unknown)) (one-probe (corner-value unknown)))
                       (q-nth (suc zero) (t-head $alpha)))
-                     ((written n0 (num1 d1)) (written (num1 d1) (num1 d1))))
-       (let $admitted (admitted (observe (token-and a (carrier1 b)) (uniform (token-and a (carrier1 b))) $alpha))
+                     ((written n0 (num1 d1)) (written (num1 d1) (num1 d1)))))
+       (let (quote $admitted) (lift (admitted (observe (token-and a (carrier1 b)) (uniform (token-and a (carrier1 b))) $alpha)))
          (quote ((tokens a b) (distance-squared 0) (admitted $admitted) $agree
                  "EvidenceExamples.equal_reports_distinct_tokens"))))))
 ; Positive: the three reports T, (1/2, 1/2), F have squared distances 1/4,
 ; 1/4 and 1.
 !(let $e (profile3 (corner-value supported) (pb-of (num1 d1) (num1 d2) (num1 d1) (num1 d2)) (corner-value opposed))
-   (let $agree (== (squared-report-table $e (uniform (carrier1 q)) $e)
-                   (table3 (frac (num1 d3) (num1 d4)) (frac (num1 d3) (num1 d4)) (whole n0)))
+   (let (quote $agree) (lift (== (squared-report-table $e (uniform (carrier1 q)) $e)
+                   (table3 (frac (num1 d3) (num1 d4)) (frac (num1 d3) (num1 d4)) (whole n0))))
      (quote ("EvidenceExamples.threeReports_distSq" $agree))))
 
 ; ---- HS5.03, HS5.04, HS3.Accumulate, HS3.08: path closures.  A path law
@@ -394,7 +396,7 @@
 !(set:define &self path-closure (-> path-law carrier table table)
    (= (path-closure $L $X $A) (iterate (steps $X) $L $A (identity-table $X))))
 !(type:of &self path-closure)
-!(let (definition-evidence $rules $termination $lean) (set:known-proof &self iterate) (quote $termination))
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self iterate)) (quote $termination))
 ; Shortest paths on d = 1 - alpha, by the same bounded relaxation with
 ; minimum and sum: the Lukasiewicz closure is 1 minus them.
 !(set:define &self plus-row (-> rats rat rats)
@@ -426,19 +428,19 @@
 !(let $sorites (table3 (frac (num1 d4) (num1 d5)) (frac (num1 d4) (num1 d5)) (frac (num1 d1) (num2 d1 d0)))
    (let $closed (path-closure lukasiewicz (carrier3 a b c) $sorites)
      (let $expected (table3 (frac (num1 d4) (num1 d5)) (frac (num1 d4) (num1 d5)) (frac (num1 d3) (num1 d5)))
-       (let $agree-closure (== ($closed (complement (shortest-paths (carrier3 a b c) (complement $sorites)))) ($expected $expected))
-         (let $raw-metric (table-same $closed $sorites)
-           (let $closed-metric (metric (carrier3 a b c) $closed)
-             (let $agree-g (== ((qsub (graphtropy (uniform (carrier3 a b c)) $closed) (graphtropy (uniform (carrier3 a b c)) $sorites))
+       (let (quote $agree-closure) (lift (== ($closed (complement (shortest-paths (carrier3 a b c) (complement $sorites)))) ($expected $expected)))
+         (let (quote $raw-metric) (lift (table-same $closed $sorites))
+           (let (quote $closed-metric) (lift (metric (carrier3 a b c) $closed))
+             (let (quote $agree-g) (lift (== ((qsub (graphtropy (uniform (carrier3 a b c)) $closed) (graphtropy (uniform (carrier3 a b c)) $sorites))
                                 (graphtropy (uniform (carrier3 a b c)) (path-closure bottleneck (carrier3 a b c) $sorites)))
-                               ((written (num1 d1) (num1 d9)) (written (num2 d1 d3) (num2 d1 d5))))
+                               ((written (num1 d1) (num1 d9)) (written (num2 d1 d3) (num2 d1 d5)))))
                (quote ((closure-ac 3/5 $agree-closure "EvidenceExamples.sorites_closure" "DistinctionCalculus.lukasiewicz_closure_eq")
                        (metric (raw $raw-metric) (closed $closed-metric) "DistinctionCalculus.metric_closure")
                        (cost 1/9 minimum-closure-g 13/15 $agree-g "EvidenceExamples.sorites_cost" "Laboratory.sorites_ultrametric"))))))))))
 ; Negative: without the root, report distances are not metric.  The reports
 ; N, (1/2, 1/2), B have squared distances 1/4, 1/4, 1, and 1 > 1/4 + 1/4.
 !(let $e (profile3 (corner-value unknown) (pb-of (num1 d1) (num1 d2) (num1 d1) (num1 d2)) (corner-value conflicted))
-   (let $verdict (metric (carrier3 a b c) (squared-report-table $e (uniform (carrier1 q)) $e))
+   (let (quote $verdict) (lift (metric (carrier3 a b c) (squared-report-table $e (uniform (carrier1 q)) $e)))
      (quote (squared-report-metric $verdict "EvidenceExamples.squaredReport_not_metric"))))
 ; The stopping bound: on the chain a - b - c - d with links 9/10, the product
 ; closure needs |carrier| - 1 = 3 steps to reach a d = 729/1000.  After 2
@@ -452,9 +454,9 @@
 !(let $A (chain4 (frac (num1 d9) (num2 d1 d0)))
    (let $early (iterate (suc (suc zero)) product $A (identity-table (carrier4 a b c d)))
      (let $closed (path-closure product (carrier4 a b c d) $A)
-       (let $agree (== (q-nth (suc (suc (suc zero))) (t-head $closed)) (written (num3 d7 d2 d9) (num4 d1 d0 d0 d0)))
-         (let $after-2 (table-same (accumulate product $A $early) $early)
-           (let $after-3 (table-same (accumulate product $A $closed) $closed)
+       (let (quote $agree) (lift (== (q-nth (suc (suc (suc zero))) (t-head $closed)) (written (num3 d7 d2 d9) (num4 d1 d0 d0 d0))))
+         (let (quote $after-2) (lift (table-same (accumulate product $A $early) $early))
+           (let (quote $after-3) (lift (table-same (accumulate product $A $closed) $closed))
              (quote ((stable-after-2 $after-2) (stable-after-3 $after-3)
                      (a-d 729/1000 $agree) "DistinctionCalculus.iterate_stable"
                      "DistinctionCalculus.accumulate_propagationClosure"))))))))
@@ -515,12 +517,12 @@
 !(bind! &mu measure)
 ; g(alpha_1) = 547/720 and g(alpha_2^0) = 341/720.
 !(let $expected (written (num3 d5 d4 d7) (num3 d7 d2 d0))
-   (let (($value) $n) (cost:firings (graphtropy &mu (positive-policy (reports-of source))))
-     (let $agree (== $value $expected)
+   (let (quote (($value) $n)) (lift (cost:firings (graphtropy &mu (positive-policy (reports-of source)))))
+     (let (quote $agree) (lift (== $value $expected))
        (quote ("Laboratory.initial_graphtropy" (fraction 547 720) $agree (firings $n))))))
 !(let $expected (written (num3 d3 d4 d1) (num3 d7 d2 d0))
-   (let (($value) $n) (cost:firings (graphtropy &mu (positive-policy (reports-of receiver))))
-     (let $agree (== $value $expected)
+   (let (quote (($value) $n)) (lift (cost:firings (graphtropy &mu (positive-policy (reports-of receiver)))))
+     (let (quote $agree) (lift (== $value $expected))
        (let $bound (bind! &g-receiver $value)
          (quote ("Laboratory.initial_graphtropy" (fraction 341 720) $agree (firings $n)))))))
 ; The measure (5/12, 1/3, 1/4) is the importance normalized; the diagonal mass
@@ -532,13 +534,12 @@
                  (rats3 (written (num1 d5) (num2 d1 d8)) (written (num1 d1) (num1 d6)) (written (num1 d5) (num2 d2 d4)))
                  (rats3 (written (num2 d2 d0) (num2 d4 d7)) (written (num2 d1 d2) (num2 d4 d7)) (written (num2 d1 d5) (num2 d4 d7)))
                  no-defect)
-   (let (($value) $n)
-        (cost:firings
+   (let (quote (($value) $n)) (lift (cost:firings
           (let $mu (normalize importance)
             (let $diagonal (graphtropy $mu (identity-table objects))
               (let $omega (q-scale (pair-weights $mu) (qinv (qsub (whole (npos one)) $diagonal)))
-                ($mu $diagonal (pair-weights $mu) $omega (measure-check probes $omega))))))
-     (let $agree (== $value $expected)
+                ($mu $diagonal (pair-weights $mu) $omega (measure-check probes $omega)))))))
+     (let (quote $agree) (lift (== $value $expected))
        (quote ("Laboratory.measure_and_weights" (measure 5/12 1/3 1/4) (diagonal 25/72) (pairs 5/18 1/6 5/24)
                (omega 20/47 12/47 15/47) $agree (firings $n))))))
 ; Transport: the gate gives the receiver C2^1, ab = (0.81, 0.72),
@@ -546,31 +547,30 @@
 !(let $expected (pcons (pb (written (num2 d8 d1) (num3 d1 d0 d0)) (written (num2 d1 d8) (num2 d2 d5)))
                   (pcons (pb (written (num3 d1 d5 d3) (num3 d2 d0 d0)) (written (num1 d3) (num1 d5)))
                     (pcons (pb (written (num1 d1) (num2 d1 d0)) (written (num1 d4) (num1 d5))) pnil)))
-   (let (($value) $n) (cost:firings transported)
-     (let $agree (== $value $expected)
+   (let (quote (($value) $n)) (lift (cost:firings transported))
+     (let (quote $agree) (lift (== $value $expected))
        (let $bound (bind! &transported $value)
          (quote ("Laboratory.transport_exact" $agree (firings $n)))))))
 ; After transport g = 1297/1800, 889/3600 above the initial receiver.  The
 ; three closures of the transported observer complete ac to 23/40
 ; (Lukasiewicz), 12393/20000 (product) and 153/200 (minimum).
 !(let $expected ((written (num4 d1 d2 d9 d7) (num4 d1 d8 d0 d0)) (written (num3 d8 d8 d9) (num4 d3 d6 d0 d0)))
-   (let (($value) $n)
-        (cost:firings (let $after (graphtropy &mu (positive-policy &transported)) ($after (qsub $after &g-receiver))))
-     (let $agree (== $value $expected)
+   (let (quote (($value) $n)) (lift (cost:firings (let $after (graphtropy &mu (positive-policy &transported)) ($after (qsub $after &g-receiver)))))
+     (let (quote $agree) (lift (== $value $expected))
        (quote ("Laboratory.transport_and_completion" (fractions 1297/1800 889/3600) $agree (firings $n))))))
 !(let $expected (written (num2 d2 d3) (num2 d4 d0))
-   (let (($table) $n) (cost:firings (path-closure lukasiewicz objects (positive-policy &transported)))
-     (let $agree (== (q-nth (suc (suc zero)) (t-head $table)) $expected)
+   (let (quote (($table) $n)) (lift (cost:firings (path-closure lukasiewicz objects (positive-policy &transported))))
+     (let (quote $agree) (lift (== (q-nth (suc (suc zero)) (t-head $table)) $expected))
        (let $bound (bind! &metric-completion $table)
          (quote ("Laboratory.transport_and_completion" (lukasiewicz-ac 23/40) $agree (firings $n)))))))
 !(let $expected (written (num5 d1 d2 d3 d9 d3) (num5 d2 d0 d0 d0 d0))
-   (let (($table) $n) (cost:firings (path-closure product objects (positive-policy &transported)))
-     (let $agree (== (q-nth (suc (suc zero)) (t-head $table)) $expected)
+   (let (quote (($table) $n)) (lift (cost:firings (path-closure product objects (positive-policy &transported))))
+     (let (quote $agree) (lift (== (q-nth (suc (suc zero)) (t-head $table)) $expected))
        (let $bound (bind! &product-completion $table)
          (quote ("Laboratory.transport_and_completion" (product-ac 12393/20000) $agree (firings $n)))))))
 !(let $expected (written (num3 d1 d5 d3) (num3 d2 d0 d0))
-   (let (($table) $n) (cost:firings (path-closure bottleneck objects (positive-policy &transported)))
-     (let $agree (== (q-nth (suc (suc zero)) (t-head $table)) $expected)
+   (let (quote (($table) $n)) (lift (cost:firings (path-closure bottleneck objects (positive-policy &transported))))
+     (let (quote $agree) (lift (== (q-nth (suc (suc zero)) (t-head $table)) $expected))
        (quote ("Laboratory.transport_and_completion" (minimum-ac 153/200) $agree (firings $n))))))
 ; Each completion is a tolerance above the transported observer, and they are
 ; nested: alpha <= Lukasiewicz <= product <= minimum, entry by entry.
@@ -581,10 +581,10 @@
    (= (table-le tnil $t) yes)
    (= (table-le (trow $r $rs) $t) (yes-and (rats-le $r (t-head $t)) (table-le $rs (t-tail $t)))))
 !(let $minimum-completion (path-closure bottleneck objects (positive-policy &transported))
-   (let $nested ((table-le (positive-policy &transported) &metric-completion)
+   (let (quote $nested) (lift ((table-le (positive-policy &transported) &metric-completion)
                  (table-le &metric-completion &product-completion)
-                 (table-le &product-completion $minimum-completion))
-     (let $admitted (admitted (observe objects &mu &product-completion))
+                 (table-le &product-completion $minimum-completion)))
+     (let (quote $admitted) (lift (admitted (observe objects &mu &product-completion)))
        (quote ((nested $nested) (product-completion-admitted $admitted) "DistinctionCalculus.nested_completions")))))
 ; The balance (HS5.05).  What a completion costs in expected indistinction is
 ; the bracket of the similarity it adds (HS3.04, HS5.01): the metric
@@ -597,31 +597,29 @@
    (= (table-diff tnil $t) tnil)
    (= (table-diff (trow $r $rs) $t) (trow (row-diff $r (t-head $t)) (table-diff $rs (t-tail $t)))))
 !(let $expected (written (num4 d4 d9 d8 d1) (num5 d1 d4 d4 d0 d0))
-   (let (($value) $n)
-        (cost:firings (bracket &mu (table-diff &metric-completion (positive-policy (reports-of receiver))) &mu))
-     (let $agree (== $value $expected)
+   (let (quote (($value) $n)) (lift (cost:firings (bracket &mu (table-diff &metric-completion (positive-policy (reports-of receiver))) &mu)))
+     (let (quote $agree) (lift (== $value $expected))
        (quote ("Laboratory.completion_balance" (fraction 4981 14400) $agree (firings $n))))))
 !(let $expected (written (num3 d8 d9 d3) (num5 d9 d6 d0 d0 d0))
-   (let (($value) $n) (cost:firings (bracket &mu (table-diff &product-completion &metric-completion) &mu))
-     (let $agree (== $value $expected)
+   (let (quote (($value) $n)) (lift (cost:firings (bracket &mu (table-diff &product-completion &metric-completion) &mu)))
+     (let (quote $agree) (lift (== $value $expected))
        (quote ("Laboratory.completion_balance" (fraction 893 96000) $agree (firings $n))))))
 ; The same balances as the Lean theorem states them, differences of the
 ; graphtropies of the closure tables.
 !(let $g-metric (graphtropy &mu &metric-completion)
-   (let $agree (== ((qsub $g-metric &g-receiver) (qsub (graphtropy &mu &product-completion) $g-metric))
-                   ((written (num4 d4 d9 d8 d1) (num5 d1 d4 d4 d0 d0)) (written (num3 d8 d9 d3) (num5 d9 d6 d0 d0 d0))))
+   (let (quote $agree) (lift (== ((qsub $g-metric &g-receiver) (qsub (graphtropy &mu &product-completion) $g-metric))
+                   ((written (num4 d4 d9 d8 d1) (num5 d1 d4 d4 d0 d0)) (written (num3 d8 d9 d3) (num5 d9 d6 d0 d0 d0)))))
      (quote ("Laboratory.completion_balance" (as-differences 4981/14400 893/96000) $agree "Laboratory.accounting"))))
 ; The squared report distances to the source over the probes weighted by
 ; omega: 157/940 before transport, 24467/940000 after; at ac alone 1/200.
 !(bind! &omega (rats3 (frac (num2 d2 d0) (num2 d4 d7)) (frac (num2 d1 d2) (num2 d4 d7)) (frac (num2 d1 d5) (num2 d4 d7))))
 !(let $expected (written (num3 d1 d5 d7) (num3 d9 d4 d0))
-   (let (($value) $n) (cost:firings (report-dist-sq &omega (reports-of source) (reports-of receiver)))
-     (let $agree (== $value $expected)
+   (let (quote (($value) $n)) (lift (cost:firings (report-dist-sq &omega (reports-of source) (reports-of receiver))))
+     (let (quote $agree) (lift (== $value $expected))
        (quote ("Laboratory.report_distances" (fraction 157 940) $agree (firings $n))))))
 !(let $expected ((written (num5 d2 d4 d4 d6 d7) (nmul (num3 d9 d4 d0) (num4 d1 d0 d0 d0))) (written (num1 d1) (num3 d2 d0 d0)))
-   (let (($value) $n)
-        (cost:firings
+   (let (quote (($value) $n)) (lift (cost:firings
           ((report-dist-sq &omega (reports-of source) &transported)
-           (pbit-dist-sq (p-nth (suc (suc zero)) (reports-of source)) (p-nth (suc (suc zero)) &transported))))
-     (let $agree (== $value $expected)
+           (pbit-dist-sq (p-nth (suc (suc zero)) (reports-of source)) (p-nth (suc (suc zero)) &transported)))))
+     (let (quote $agree) (lift (== $value $expected))
        (quote ("Laboratory.report_distances" (fractions 24467/940000 1/200) $agree (firings $n))))))

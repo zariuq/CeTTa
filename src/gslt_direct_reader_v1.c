@@ -1542,6 +1542,8 @@ typedef enum {
     GSLT_DIRECT_PREFIX_OPEN_LIST,
     GSLT_DIRECT_PREFIX_OPEN_PREFIX,
     GSLT_DIRECT_PREFIX_OPEN_STRING,
+    GSLT_DIRECT_PREFIX_OPEN_META,
+    GSLT_DIRECT_PREFIX_OPEN_BRACES,
 } GSLTDirectPrefixOpenV1;
 
 typedef struct {
@@ -1701,8 +1703,55 @@ done:
     return result;
 }
 
+static void gslt_direct_prefix_position(const uint8_t *input, size_t pos,
+                                        size_t *line_out, size_t *column_out);
+
+/* Whether the source from `start` to `end` is exactly the binding mark. */
+static bool gslt_direct_prefix_is_mark(const GSLTDirectPrefixStateV1 *state,
+                                       size_t start, size_t end) {
+    GSLTDirectCursorV1 probe = state->cursor;
+    probe.pos = start;
+    return gslt_direct_reader_v1_match_literal(
+               &probe, state->plan->binding_mark,
+               state->plan->binding_mark_len) &&
+           probe.pos == end;
+}
+
+/* In a list after layout the binding mark is no word: a touching bracket
+ * holds it (T[k := v]), and the one-space slip T [k := v] is refused. */
+static void gslt_direct_prefix_reserved_mark(GSLTDirectPrefixStateV1 *state,
+                                             size_t pos) {
+    size_t line;
+    size_t column;
+    gslt_direct_prefix_position(state->cursor.input, pos, &line, &column);
+    gslt_direct_reader_v1_error(
+        state->error_buf, state->error_buf_size,
+        "source is outside the compiled prefix S-expression LanguageDef: "
+        "the binding mark is reserved in a list after layout at line %zu, "
+        "column %zu", line, column);
+}
+
+/* At a meta-argument: a bracket or a brace touching the term just read.
+ * The open scalar, or 0. */
+static uint32_t gslt_direct_prefix_at_meta(
+    const GSLTDirectPrefixStateV1 *state) {
+    uint32_t codepoint;
+    size_t width;
+    if (!state->plan->binding_mark ||
+        state->cursor.pos >= state->cursor.input_len ||
+        !gslt_direct_reader_v1_peek(&state->cursor, &codepoint, &width))
+        return 0u;
+    if (codepoint == state->plan->meta_open ||
+        (state->plan->braces_open != 0u &&
+         codepoint == state->plan->braces_open))
+        return codepoint;
+    return 0u;
+}
+
+/* `allow_mark`: the token is read directly in a touching bracket, where
+ * the binding mark is a word. */
 static AtomId gslt_direct_prefix_parse_token(
-    GSLTDirectPrefixStateV1 *state, bool in_list) {
+    GSLTDirectPrefixStateV1 *state, bool in_list, bool allow_mark) {
     const GSLTDirectTokenRuleV1 *rules =
         in_list ? state->plan->list_token_rules : state->plan->token_rules;
     uint32_t rule_len = in_list ? state->plan->list_token_rule_len
@@ -1739,6 +1788,12 @@ static AtomId gslt_direct_prefix_parse_token(
         }
         if (!gslt_direct_reader_v1_boundary(&rule->boundary, &probe))
             continue;
+        if (in_list && !allow_mark && state->plan->binding_mark &&
+            rule->projection == GSLT_DIRECT_TOKEN_PROJECTION_WORD &&
+            gslt_direct_prefix_is_mark(state, start, probe.pos)) {
+            gslt_direct_prefix_reserved_mark(state, start);
+            return CETTA_ATOM_ID_NONE;
+        }
         if (rule->projection == GSLT_DIRECT_TOKEN_PROJECTION_WORD) {
             result = state->projection->word_bytes(
                 state->projection->context,
@@ -1817,6 +1872,13 @@ typedef struct {
     bool rest_pending;
     /* A prefix frame read inside a list: its payload uses the list rules. */
     bool in_list;
+    /* A meta-argument frame, T[...] or T{...}: a list or braces frame whose
+     * node wraps the term `code` it touches, (meta T node). */
+    bool meta;
+    AtomId code;
+    /* A braces frame, {x y ...}: its elements are its children, read as an
+     * expression's. */
+    bool braces;
 } GSLTDirectPrefixFrameV1;
 
 /* The input ended inside a form that opened at `pos`. */
@@ -1846,12 +1908,16 @@ static AtomId gslt_direct_prefix_parse_atom(
         const GSLTDirectPrefixRuleV1 *prefix = NULL;
         bool expression = false;
         bool list = false;
+        bool braces = false;
         size_t atom_start = state->cursor.pos;
         bool in_list = frame_len == 0u
             ? in_list_at_root
             : frames[frame_len - 1u].list ||
               (frames[frame_len - 1u].prefix &&
                frames[frame_len - 1u].in_list);
+        /* Directly in a touching bracket the binding mark is a word. */
+        bool allow_mark = frame_len > 0u && frames[frame_len - 1u].list &&
+                          frames[frame_len - 1u].meta;
         result = CETTA_ATOM_ID_NONE;
         if (frame_len >= depth) {
             gslt_direct_reader_v1_error(
@@ -1885,6 +1951,26 @@ static AtomId gslt_direct_prefix_parse_atom(
             } else {
                 expression = true;
             }
+        } else if (state->plan->braces_open != 0u &&
+                   codepoint == state->plan->braces_open) {
+            if (!state->projection->braces)
+                goto done;
+            gslt_direct_reader_v1_consume_width(&state->cursor, width);
+            if (!gslt_direct_prefix_skip(state) ||
+                state->cursor.pos >= state->cursor.input_len ||
+                !gslt_direct_reader_v1_peek(
+                    &state->cursor, &codepoint, &width)) {
+                gslt_direct_prefix_note_open(
+                    state, GSLT_DIRECT_PREFIX_OPEN_BRACES, atom_start);
+                goto done;
+            }
+            if (codepoint == state->plan->braces_close) {
+                gslt_direct_reader_v1_consume_width(&state->cursor, width);
+                result = state->projection->braces(
+                    state->projection->context, NULL, 0u);
+            } else {
+                braces = true;
+            }
         } else if (state->plan->list_token_rules &&
                    codepoint == state->plan->list_open) {
             if (!state->projection->list)
@@ -1917,10 +2003,11 @@ static AtomId gslt_direct_prefix_parse_atom(
                     (state->error_buf && state->error_buf_size > 0u &&
                      state->error_buf[0] != '\0'))
                     goto done;
-                result = gslt_direct_prefix_parse_token(state, in_list);
+                result = gslt_direct_prefix_parse_token(state, in_list,
+                                                        allow_mark);
             }
         }
-        if (prefix || expression || list) {
+        if (prefix || expression || list || braces) {
             if (frame_len == frame_cap) {
                 uint32_t next = frame_cap ? frame_cap * 2u : 64u;
                 if (next < frame_cap || SIZE_MAX / (size_t)next < sizeof(*frames))
@@ -1930,7 +2017,7 @@ static AtomId gslt_direct_prefix_parse_atom(
             }
             frames[frame_len++] = (GSLTDirectPrefixFrameV1){
                 .prefix = prefix, .list = list, .in_list = in_list,
-                .open_pos = atom_start};
+                .braces = braces, .open_pos = atom_start};
             continue;
         }
         for (;;) {
@@ -1939,9 +2026,78 @@ static AtomId gslt_direct_prefix_parse_atom(
                 goto done;
             state->tokens++;
             state->reductions++;
-            if (frame_len == 0u)
+            frame = frame_len > 0u ? &frames[frame_len - 1u] : NULL;
+            uint32_t meta_open = frame && frame->prefix
+                ? 0u : gslt_direct_prefix_at_meta(state);
+            if (meta_open != 0u) {
+                /* A bracket or brace touching the term opens a
+                 * meta-argument.  A prefix form's payload takes none: the
+                 * prefix binds tighter, and the meta-argument follows the
+                 * prefix form. */
+                bool meta_braces = meta_open != state->plan->meta_open;
+                uint32_t meta_close = meta_braces ? state->plan->braces_close
+                                                  : state->plan->meta_close;
+                size_t open_pos = state->cursor.pos;
+                AtomId term = result;
+                result = CETTA_ATOM_ID_NONE;
+                if (!gslt_direct_reader_v1_peek(
+                        &state->cursor, &codepoint, &width))
+                    goto done;
+                gslt_direct_reader_v1_consume_width(&state->cursor, width);
+                if (!gslt_direct_prefix_skip(state) ||
+                    state->cursor.pos >= state->cursor.input_len ||
+                    !gslt_direct_reader_v1_peek(
+                        &state->cursor, &codepoint, &width)) {
+                    gslt_direct_prefix_note_open(
+                        state, GSLT_DIRECT_PREFIX_OPEN_META, open_pos);
+                    goto done;
+                }
+                if (codepoint == meta_close) {
+                    /* T[] and T{} */
+                    gslt_direct_reader_v1_consume_width(&state->cursor, width);
+                    AtomId empty = meta_braces
+                        ? state->projection->braces(
+                              state->projection->context, NULL, 0u)
+                        : state->projection->list(
+                              state->projection->context, NULL, 0u,
+                              CETTA_ATOM_ID_NONE);
+                    /* The node is reduced, then the wrapper. */
+                    state->tokens++;
+                    state->reductions++;
+                    result = empty == CETTA_ATOM_ID_NONE
+                        ? CETTA_ATOM_ID_NONE
+                        : state->projection->meta(
+                              state->projection->context, term, empty);
+                    if (result == CETTA_ATOM_ID_NONE) {
+                        gslt_direct_reader_v1_error(
+                            state->error_buf, state->error_buf_size,
+                            "language projection rejected a meta-argument");
+                        goto done;
+                    }
+                    continue;
+                }
+                if (frame_len >= depth) {
+                    gslt_direct_reader_v1_error(
+                        state->error_buf, state->error_buf_size,
+                        "compiled prefix reader exceeded its nesting budget");
+                    goto done;
+                }
+                if (frame_len == frame_cap) {
+                    uint32_t next = frame_cap ? frame_cap * 2u : 64u;
+                    if (next < frame_cap ||
+                        SIZE_MAX / (size_t)next < sizeof(*frames))
+                        goto done;
+                    frames = cetta_realloc(frames,
+                                           (size_t)next * sizeof(*frames));
+                    frame_cap = next;
+                }
+                frames[frame_len++] = (GSLTDirectPrefixFrameV1){
+                    .meta = true, .code = term, .list = !meta_braces,
+                    .braces = meta_braces, .open_pos = open_pos};
+                break;
+            }
+            if (!frame)
                 goto done;
-            frame = &frames[frame_len - 1u];
             if (frame->prefix) {
                 result = state->projection->prefix(
                     state->projection->context, frame->prefix->role, result);
@@ -1992,16 +2148,30 @@ static AtomId gslt_direct_prefix_parse_atom(
                     &state->cursor, &codepoint, &width))
                 goto done;
             if (frame->list) {
-                if (codepoint == state->plan->list_close) {
+                uint32_t close = frame->meta ? state->plan->meta_close
+                                             : state->plan->list_close;
+                if (codepoint == close) {
                     gslt_direct_reader_v1_consume_width(&state->cursor, width);
                     result = state->projection->list(
                         state->projection->context, frame->children,
                         frame->len, CETTA_ATOM_ID_NONE);
+                    if (frame->meta && result != CETTA_ATOM_ID_NONE) {
+                        state->tokens++;
+                        state->reductions++;
+                        result = state->projection->meta(
+                            state->projection->context, frame->code, result);
+                        if (result == CETTA_ATOM_ID_NONE)
+                            gslt_direct_reader_v1_error(
+                                state->error_buf, state->error_buf_size,
+                                "language projection rejected a "
+                                "meta-argument");
+                    }
                     free(frame->children);
                     frame_len--;
                     continue;
                 }
-                if (gslt_direct_prefix_at_list_bar(state)) {
+                /* A touching bracket holds no rest. */
+                if (!frame->meta && gslt_direct_prefix_at_list_bar(state)) {
                     gslt_direct_reader_v1_consume_width(&state->cursor, width);
                     if (!gslt_direct_prefix_skip(state))
                         goto done;
@@ -2009,11 +2179,26 @@ static AtomId gslt_direct_prefix_parse_atom(
                 }
                 break;
             }
-            if (codepoint != state->plan->expression_close)
+            if (codepoint != (frame->braces ? state->plan->braces_close
+                                            : state->plan->expression_close))
                 break;
             gslt_direct_reader_v1_consume_width(&state->cursor, width);
-            result = state->projection->expression(
-                state->projection->context, frame->children, frame->len);
+            result = frame->braces
+                ? state->projection->braces(
+                      state->projection->context, frame->children, frame->len)
+                : state->projection->expression(
+                      state->projection->context, frame->children, frame->len);
+            if (frame->meta && result != CETTA_ATOM_ID_NONE) {
+                state->tokens++;
+                state->reductions++;
+                result = state->projection->meta(
+                    state->projection->context, frame->code, result);
+            }
+            if (result == CETTA_ATOM_ID_NONE && frame->braces)
+                gslt_direct_reader_v1_error(
+                    state->error_buf, state->error_buf_size,
+                    frame->meta ? "language projection rejected a meta-argument"
+                                : "language projection rejected a braces node");
             free(frame->children);
             frame_len--;
         }
@@ -2024,8 +2209,10 @@ done:
         gslt_direct_prefix_note_open(
             state,
             open->prefix ? GSLT_DIRECT_PREFIX_OPEN_PREFIX
+            : open->meta ? GSLT_DIRECT_PREFIX_OPEN_META
             : open->list ? GSLT_DIRECT_PREFIX_OPEN_LIST
-                         : GSLT_DIRECT_PREFIX_OPEN_EXPRESSION,
+            : open->braces ? GSLT_DIRECT_PREFIX_OPEN_BRACES
+                           : GSLT_DIRECT_PREFIX_OPEN_EXPRESSION,
             open->open_pos);
     }
     for (uint32_t index = 0u; index < frame_len; index++)
@@ -2070,6 +2257,10 @@ static void gslt_direct_prefix_rejection(const GSLTDirectPrefixStateV1 *state) {
                 "the input ends before the payload of the prefix",
             [GSLT_DIRECT_PREFIX_OPEN_STRING] =
                 "the input ends inside the string opened",
+            [GSLT_DIRECT_PREFIX_OPEN_META] =
+                "the input ends inside the meta-argument opened",
+            [GSLT_DIRECT_PREFIX_OPEN_BRACES] =
+                "the input ends inside the braces opened",
         };
         gslt_direct_prefix_position(cursor->input, state->open_pos, &line, &column);
         gslt_direct_reader_v1_error(
@@ -2305,6 +2496,75 @@ static bool gslt_direct_prefix_list_plan_valid(
     return true;
 }
 
+/* The braces are two distinct scalars, structural nowhere else; every
+ * token ends at either and none starts with one, inside a list too. */
+static bool gslt_direct_prefix_braces_plan_valid(
+    const GSLTDirectPrefixReaderV1Plan *plan) {
+    const uint32_t braces[2] = {plan->braces_open, plan->braces_close};
+    const uint32_t markers[9] = {
+        plan->expression_open, plan->expression_close, plan->string_open,
+        plan->string_close, plan->comment_marker, plan->list_open,
+        plan->list_close, plan->list_rest, plan->meta_open,
+    };
+    if (braces[0] == braces[1])
+        return false;
+    for (size_t i = 0u; i < 2u; i++) {
+        if (!gslt_direct_reader_v1_scalar_valid(braces[i]) ||
+            gslt_direct_reader_v1_class_contains(plan->whitespace,
+                                                 braces[i]) ||
+            braces[i] == plan->meta_close)
+            return false;
+        for (size_t j = 0u; j < 9u; j++)
+            if (markers[j] != 0u && braces[i] == markers[j])
+                return false;
+        for (uint32_t k = 0u; k < plan->prefix_rule_len; k++)
+            if (plan->prefix_rules[k].literal[0] == braces[i])
+                return false;
+    }
+    for (int table = 0; table < 2; table++) {
+        const GSLTDirectTokenRuleV1 *rules =
+            table == 0 ? plan->token_rules : plan->list_token_rules;
+        const GSLTDirectPrefixRuleV1 *prefixes =
+            table == 0 ? plan->prefix_rules : plan->list_prefix_rules;
+        uint32_t rule_len =
+            table == 0 ? plan->token_rule_len : plan->list_token_rule_len;
+        for (uint32_t k = 0u; rules && k < rule_len; k++) {
+            const GSLTDirectTokenRuleV1 *rule = &rules[k];
+            /* A word that is a prefix's literal alone is that prefix form
+             * before an open brace, its payload. */
+            bool payload_before_open = false;
+            for (uint32_t p = 0u; prefixes && p < plan->prefix_rule_len;
+                 p++) {
+                const GSLTDirectPrefixRuleV1 *prefix = &prefixes[p];
+                if (rule->literal_len > 0u &&
+                    prefix->literal_len == rule->literal_len &&
+                    memcmp(prefix->literal, rule->literal,
+                           (size_t)rule->literal_len *
+                               sizeof(*rule->literal)) == 0 &&
+                    prefix->payload_start &&
+                    gslt_direct_reader_v1_class_contains(
+                        prefix->payload_start, braces[0]))
+                    payload_before_open = true;
+            }
+            for (size_t i = 0u; i < 2u; i++) {
+                if ((rule->first &&
+                     gslt_direct_reader_v1_class_contains(rule->first,
+                                                          braces[i])) ||
+                    (rule->tail &&
+                     gslt_direct_reader_v1_class_contains(rule->tail,
+                                                          braces[i])) ||
+                    (rule->literal_len > 0u &&
+                     rule->literal[0] == braces[i]) ||
+                    (!(i == 0u && payload_before_open) &&
+                     !gslt_direct_reader_v1_boundary_contains_codepoint(
+                         &rule->boundary, braces[i])))
+                    return false;
+            }
+        }
+    }
+    return true;
+}
+
 bool gslt_direct_prefix_reader_v1_plan_validate(
     const GSLTDirectPrefixReaderV1Plan *plan, char *error_buf,
     size_t error_buf_size) {
@@ -2378,6 +2638,35 @@ bool gslt_direct_prefix_reader_v1_plan_validate(
             plan, plan->token_rules, plan->token_rule_len, plan->prefix_rules,
             error_buf, error_buf_size))
         return false;
+    if (plan->binding_mark &&
+        (!plan->list_token_rules ||
+         !gslt_direct_reader_v1_scalar_valid(plan->meta_open) ||
+         !gslt_direct_reader_v1_scalar_valid(plan->meta_close) ||
+         plan->meta_open == plan->meta_close ||
+         !gslt_direct_reader_v1_sequence_valid(
+             plan->binding_mark, plan->binding_mark_len) ||
+         !gslt_direct_reader_v1_boundary_valid(
+             &plan->binding_mark_boundary, NULL) ||
+         plan->meta_open == plan->expression_open ||
+         plan->meta_open == plan->expression_close ||
+         plan->meta_open == plan->string_open ||
+         plan->meta_open == plan->comment_marker ||
+         plan->meta_close == plan->expression_open ||
+         plan->meta_close == plan->expression_close ||
+         plan->meta_close == plan->string_open ||
+         plan->meta_close == plan->comment_marker)) {
+        gslt_direct_reader_v1_error(
+            error_buf, error_buf_size,
+            "invalid prefix-reader meta-argument brackets or binding mark");
+        return false;
+    }
+    if (plan->braces_open != 0u &&
+        !gslt_direct_prefix_braces_plan_valid(plan)) {
+        gslt_direct_reader_v1_error(
+            error_buf, error_buf_size,
+            "invalid prefix-reader braces punctuation");
+        return false;
+    }
     if (plan->list_token_rules &&
         (!plan->list_prefix_rules ||
          !gslt_direct_prefix_rule_set_valid(
@@ -2417,6 +2706,8 @@ int gslt_direct_prefix_reader_v1_parse_bytes_ids(
         !projection->string_bytes ||
         !projection->expression || !projection->prefix || !out_ids ||
         (plan->list_token_rules && !projection->list) ||
+        (plan->binding_mark && !projection->meta) ||
+        (plan->braces_open != 0u && !projection->braces) ||
         input_len > UINT32_MAX || (input_len > 0u && !input)) {
         gslt_direct_reader_v1_error(
             error_buf, error_buf_size,

@@ -1,0 +1,8 @@
+[(Twin True False), (Twin False True)]
+[(Experiment True False), (Experiment True True), (Experiment False False), (Experiment False True)]
+[(Twin True True), (Twin False False)]
+[(Experiment True True), (Experiment True False), (Experiment False True), (Experiment False False)]
+[(Twin True False)]
+[(Experiment True False)]
+[(Twin True False), (Twin True True), (Twin False False), (Twin False True)]
+[context]

@@ -7,35 +7,13 @@
 ; observation, keeps the best value seen so far, describes its own code, and
 ; emits the code of its successor with the new state written into it.  The
 ; loop checks that every generation received exactly the code that was run.
-; Code substitution uses an equation-level `lift let`, which is first-order
-; and not capture-avoiding; a native, hygienic form is planned.  Here the
-; slot x never occurs under a binder and the inserted code has no free name
-; a binder could capture, which is what keeps the substitution exact.
-
-; ---- substitution into code, one level, sealed at nested quotations
-(: replace (-> (Data Atom) (Data Atom) (Data Atom) (Data Atom)))
-(= (replace $s $v $t)
-   (if (noreduce-eq $t $s)
-       $v
-       (if (== (get-metatype $t) Expression)
-           (replace-children $s $v $t)
-           $t)))
-(: replace-children (-> (Data Atom) (Data Atom) (Data Atom) (Data Atom)))
-(= (replace-children $s $v $t)
-   (if (noreduce-eq $t ())
-       ()
-       (let ($h $rest) (decons-atom $t)
-         (if (noreduce-eq $h quote)
-             $t
-             (let $h2 (replace $s $v $h)
-               (let $rest2 (replace-children $s $v $rest)
-                 (cons-atom $h2 $rest2)))))))
-(= (lift let $s (quote $a) (quote $c))
-   (let $r (replace $s $a $c) (quote $r)))
+; Code substitution is the native `lift let`, lambda's capture-avoiding
+; substitution, and (lift M) is the code of M's value.  A quotation is
+; sealed, so a generation's state enters its code by lift.
 
 ; diag(@c) = @(c[x := @c]): a program that mentions the slot x gets its own
 ; code in that place.
-(= (diag $c) (lift let x @$c $c))
+(= (diag $c) (lift let x (lift $c) $c))
 
 ; ---- the environment and the agent
 (= (observation 0) 3)
@@ -52,7 +30,10 @@
            (Generation $gen $seen $kept (repr $me) (program $next $kept) $me))))))
 
 ; The program of one generation, with its state written into its code.
-(= (program $gen $best) (diag @((lam s (agent $gen $best s)) (diag x))))
+(= (program $gen $best)
+   (diag (lift let gen (lift $gen)
+           (lift let best (lift $best)
+             @((lam s (agent gen best s)) (diag x))))))
 
 ; ---- the loop: run a generation's code, check its self-knowledge, go on
 (= (live $code $k)

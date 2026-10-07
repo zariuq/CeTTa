@@ -11,7 +11,7 @@
 [append-assoc]
 [rev-append]
 [rev-rev]
-[(Depends 8 first list-ind)]
+[(Depends 14 first (: rev (-> list list)))]
 [()]
 [True]
 [(SetConversion 1 0)]

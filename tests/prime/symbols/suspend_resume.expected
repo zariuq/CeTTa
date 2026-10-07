@@ -1,0 +1,4 @@
+[((P heads heads) (P tails tails))]
+[(Pair ((P heads heads)) ((P tails tails)))]
+[((Cons 0 (Cons 0 (Cons 0 Nil))) (Cons 1 (Cons 1 (Cons 1 Nil))))]
+[(Pair ((Cons 0 (Cons 0 (Cons 0 Nil)))) ((Cons 1 (Cons 1 (Cons 1 Nil)))))]

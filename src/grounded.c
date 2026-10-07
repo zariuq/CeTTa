@@ -2630,10 +2630,22 @@ static Atom *grounded_parse_text(Arena *a, Atom *head, Atom **args,
         Atom *parsed = parser_read_source_form_n(a, args[0]->ground.sval,
                                                  args[0]->ground.slen);
         parser_set_rational_literals_enabled(old_rational_literals);
-        return parsed
-            ? parsed
-            : grounded_raise(a, head, args, nargs,
-                             atom_symbol(a, "ParseFailed"));
+        if (!parsed)
+            return grounded_raise(a, head, args, nargs,
+                                  atom_symbol(a, "ParseFailed"));
+        /* Code read from text is elaborated as the reader elaborates a
+         * form (binders, ownership, the seal), under the profile in force:
+         * the seal lives in the term, wherever the term is formed. */
+        if (!prime_semantics_elaborate_form)
+            return parsed;
+        Atom *elaborated = prime_semantics_elaborate_form(a, parsed);
+        if (elaborated)
+            return elaborated;
+        const char *why = prime_semantics_elaboration_error
+            ? prime_semantics_elaboration_error() : NULL;
+        return grounded_raise(a, head, args, nargs,
+                              why ? atom_string(a, why)
+                                  : atom_symbol(a, "ElaborationFailed"));
     }
 
     if (require_all_input &&
@@ -3600,9 +3612,7 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         if (sequence && len > 0u) {
             Atom *part = head_id == g_builtin_syms.car_atom
                 ? elems[0]
-                : atom_is_list(argument)
-                    ? atom_sequence_like(a, argument, elems + 1u, len - 1u)
-                    : atom_expr_suffix(a, argument, 1u);
+                : atom_sequence_rest(a, argument, elems, len);
             return held ? atom_prime_held_wrap(a, part) : part;
         }
         return grounded_raise(
@@ -3995,9 +4005,19 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
 
     /* ── Equality of values (any atom type) ────────────────────────────── */
     if (head_id == g_builtin_syms.op_eq && nargs == 2) {
-        return atom_value_eq(atom_prime_held_payload(args[0]),
-                             atom_prime_held_payload(args[1]))
-            ? atom_true(a) : atom_false(a);
+        Atom *left = atom_prime_held_payload(args[0]);
+        Atom *right = atom_prime_held_payload(args[1]);
+        /* In Prime `==` compares authored terms: inferred ownership is not
+         * part of them, and bound names are compared by position, never by
+         * spelling (prime_semantics_binders_eq). */
+        bool equal = eval_current_language_id &&
+                     eval_current_language_id() == CETTA_LANGUAGE_PRIME
+            ? atom_value_eq(left, right) ||
+                  atom_prime_authored_eq(left, right) ||
+                  (prime_semantics_binders_eq &&
+                   prime_semantics_binders_eq(a, left, right))
+            : atom_value_eq(left, right);
+        return equal ? atom_true(a) : atom_false(a);
     }
 
     /* ── Boolean ops ───────────────────────────────────────────────────── */

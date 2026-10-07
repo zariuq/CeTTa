@@ -1,5 +1,5 @@
-[(got $y (f $y) 0)]
-[(got $y (f $y) 0)]
+[(got $y (quote (f $y) ($y)) 0)]
+[(got $y (quote (f $y) ($y)) 0)]
 [(both (quote (F $x)) (quote (G $x)))]
 [(both (quote (F 0)) (quote (G 0)))]
 [(both (quote (F $x)) (quote (G $x)))]

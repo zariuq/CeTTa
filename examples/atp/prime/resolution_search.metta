@@ -168,13 +168,15 @@
 
 (= (atp:resolution-search:resolve $left-proof $right-proof)
    ; sealed creates independent variable epochs for the two parent uses.  This
-   ; is standardization apart on the ordinary MeTTa variable substrate.
-   (let (quote $fresh-left)
-        (sealed () (quote $left-proof))
-     (let (quote $fresh-right)
-          (sealed () (quote $right-proof))
-       (atp:resolution-search:resolve-fresh
-         $fresh-left $fresh-right))))
+   ; is standardization apart on the ordinary MeTTa variable substrate.  Each
+   ; proof value enters code by lift: a quotation is sealed, so (quote
+   ; $left-proof) would hold the parameter, not the proof.
+   (let $left-code (lift $left-proof)
+     (let $right-code (lift $right-proof)
+       (let (quote $fresh-left) (sealed () $left-code)
+         (let (quote $fresh-right) (sealed () $right-code)
+           (atp:resolution-search:resolve-fresh
+             $fresh-left $fresh-right))))))
 
 (= (atp:resolution-search:literal-exact-complement $left $right)
    (case ($left $right)
@@ -372,11 +374,11 @@
 (= (atp:resolution-search:resolve-indexed $index $given-proof)
    ; match freshens every indexed parent.  sealed independently freshens the
    ; given clause, giving standardization apart without ATP-specific runtime
-   ; machinery.
-   (let (quote $fresh-given)
-        (sealed () (quote $given-proof))
-     (atp:resolution-search:resolve-indexed-fresh
-       $index $fresh-given)))
+   ; machinery.  The given proof enters code by lift.
+   (let $given-code (lift $given-proof)
+     (let (quote $fresh-given) (sealed () $given-code)
+       (atp:resolution-search:resolve-indexed-fresh
+         $index $fresh-given))))
 
 (= (atp:resolution-search:resolve-with-index
      $index $given-proof $max-generated)

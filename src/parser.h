@@ -4,6 +4,10 @@
 #include <stdbool.h>
 #include "term_universe.h"
 
+/* The current reader and renderer expression-depth allowance. A caller that
+ * generates source syntax can report representation exhaustion before expansion. */
+size_t parser_supported_expression_depth(void);
+
 /* Parse a .metta file into a list of top-level atoms.
    Returns number of atoms parsed, or -1 on error.
    Atoms are allocated in the provided arena. */
@@ -92,6 +96,10 @@ AtomId parser_host_projection_v1_expression(
 AtomId parser_host_projection_v1_list(
     ParserHostProjectionV1 *projection, const AtomId *elems,
     CettaExprLen elem_len, AtomId rest);
+/* The braces node {children...} (a Prime reader node). */
+AtomId parser_host_projection_v1_braces(
+    ParserHostProjectionV1 *projection, const AtomId *children,
+    CettaExprLen child_len);
 
 /* Parse a single S-expression from a string.
    Advances *pos past the parsed expression.

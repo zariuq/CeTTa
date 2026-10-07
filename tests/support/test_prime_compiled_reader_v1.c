@@ -69,6 +69,18 @@ static const PrimeReaderRejectionV1 REJECTIONS[] = {
     {"prefix without payload at the end", "(a b) @",
      "source is outside the compiled prefix S-expression LanguageDef: the input "
      "ends before the payload of the prefix at line 1, column 7"},
+    {"binding mark inside a list", "(f [x := a])",
+     "source is outside the compiled prefix S-expression LanguageDef: the "
+     "binding mark is reserved in a list after layout at line 1, column 7"},
+    {"touching bracket left open", "@(f x)[x := @a",
+     "source is outside the compiled prefix S-expression LanguageDef: the input "
+     "ends inside the meta-argument opened at line 1, column 7"},
+    {"touching braces left open", "(f x){$a",
+     "source is outside the compiled prefix S-expression LanguageDef: the input "
+     "ends inside the meta-argument opened at line 1, column 6"},
+    {"braces left open", "(g {a b",
+     "source is outside the compiled prefix S-expression LanguageDef: the input "
+     "ends inside the braces opened at line 1, column 4"},
 };
 
 static const PrimeReaderCaseV1 CASES[] = {
@@ -115,6 +127,47 @@ static const PrimeReaderCaseV1 CASES[] = {
     {"open structural variable", "$@(open $x)", false},
     {"open structural reference", "&@(open $x)", false},
     {"unquote missing quote payload", "*@", false},
+    /* A bracket or brace touching a term is a meta-argument, read as the
+     * wrapper (meta T [...]) or (meta T {...}); a prefix binds tighter;
+     * brackets and braces end tokens; with layout before it a bracket makes
+     * a list, in which the binding mark is refused, and a brace a braces
+     * node.  The reader gives no head a meaning. */
+    {"bindings on a quoted code", "@(foo $x)[$x := @a]", true},
+    {"meta-arguments left to right", "@(f x y)[x := @a][y := @b]", true},
+    {"bindings on a variable", "$c[x := @a]", true},
+    {"tuple of bindings", "@(pair x y)[(x y) := (@y @a)]", true},
+    {"list of bindings", "@(pair x y)[(x := @y) (y := @a)]", true},
+    {"bracket ends a word", "foo[x := @a]", true},
+    {"prefix binds tighter than a bracket", "@foo[x := a]", true},
+    {"meta-argument in a value", "@(f x)[x := @(g y)[y := @b]]", true},
+    {"meta-argument inside a list", "[a b[x := c]]", true},
+    {"list after a space", "(f @(foo $x) [a b])", true},
+    {"binding mark in a list after a space", "(f @(foo $x) [$x := @a])", false},
+    {"binding mark in a bare list", "[x := a]", false},
+    {"touching bracket without a binding mark", "@(foo $x)[a b]", true},
+    {"touching bracket with another mark", "@(foo $x)[$x = @a]", true},
+    {"touching bracket ending in the mark", "@(foo $x)[$x :=]", true},
+    {"touching bracket starting with the mark", "@(foo $x)[:= @a]", true},
+    {"touching bracket left open", "@(foo $x)[$x := @a", false},
+    {"touching bracket with two values", "@(foo $x)[$x := @a b]", true},
+    {"touching bracket holds no rest", "foo[a | b]", false},
+    {"empty touching bracket", "foo[]", true},
+    {"crossing set on a lambda", "(lam x (+ x $n)){$n}", true},
+    {"crossing set on a let", "(let (pair $s $t) (pair a b) (Got $t)){$t}",
+     true},
+    {"crossing set on a quotation", "@(f $x $y){$y}", true},
+    {"brace ends a word", "foo{a}", true},
+    {"prefix binds tighter than a brace", "@foo{a}", true},
+    {"braces and brackets left to right", "foo{a}[x := b]{c}", true},
+    {"empty touching braces", "foo{}", true},
+    {"braces after a space", "(f x) {a b}", true},
+    {"braces after a comment", "foo ; note\n{a}", true},
+    {"bracket after a newline", "foo\n[a b]", true},
+    {"braces node", "{a $x (f y) [1 2]}", true},
+    {"empty braces node", "{}", true},
+    {"braces inside a list", "[{a} b]", true},
+    {"stray close brace", "}", false},
+    {"braces left open", "{a b", false},
 };
 
 static bool expect(TestCounts *counts, bool condition, const char *label) {
@@ -170,6 +223,7 @@ int main(void) {
     PrimeCompiledReaderV1Receipt receipt;
     char error[512] = {0};
     bool old_universal;
+    bool old_lists;
 
     symbol_table_init(&symbols);
     g_symbols = &symbols;
@@ -187,6 +241,8 @@ int main(void) {
     term_universe_set_persistent_arena(
         &legacy_universe, &legacy_persistent);
     old_universal = parser_set_universal_name_syntax_enabled(true);
+    /* Prime reads lists, so the legacy reader compared with it does too. */
+    old_lists = parser_set_list_syntax_enabled(true);
 
     reader = prime_compiled_reader_v1_new();
     expect(&counts,
@@ -272,8 +328,9 @@ int main(void) {
         int legacy_len = parse_metta_text_ids(
             test_case->source, &legacy_universe, &legacy);
         char label[256];
-        (void)snprintf(label, sizeof(label), "%s acceptance parity",
-                       test_case->label);
+        (void)snprintf(label, sizeof(label),
+                       "%s acceptance parity (compiled %d, legacy %d)",
+                       test_case->label, compiled_len, legacy_len);
         expect(&counts,
                (compiled_len >= 0) == test_case->accepted &&
                    (legacy_len >= 0) == test_case->accepted,
@@ -433,6 +490,7 @@ int main(void) {
     }
 
     prime_compiled_reader_v1_free(reader);
+    parser_set_list_syntax_enabled(old_lists);
     parser_set_universal_name_syntax_enabled(old_universal);
     term_universe_free(&legacy_universe);
     term_universe_free(&compiled_universe);

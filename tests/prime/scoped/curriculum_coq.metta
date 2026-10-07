@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; The Coq ladder (ICL01-ICL09), ported where the set: language can state it:
 ; Booleans, naturals, pairs, the connectives, discrimination and injectivity
 ; of constructors through prop-valued definitions, inductive predicates as
@@ -5,7 +7,7 @@
 ; terms with substitution.  Excluded middle is an axiom, as in the ladder.
 !(import! &self pf)
 !(import! &self ../../../lib/prime/curriculum.metta)
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &thy bool (u 0) (: true bool) (: false bool))
 !(set:inductive &thy nat (u 0) (: O nat) (: S (-> nat nat)))
 !(pf:equality &thy bool refl@bool subst@bool)

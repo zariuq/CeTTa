@@ -894,8 +894,11 @@ static DiscNode *disc_insert_atom(DiscPool *pool, DiscNode *node, Atom *a) {
          * so it is keyed as a variable. */
         if (atom_is_list_rest(a))
             return disc_get_var(pool, node);
-        DiscNode *cur = disc_get_expr(pool, node, a->expr.len);
-        for (CettaExprIndex i = 0; i < a->expr.len; i++)
+        /* Keyed by the authored term: an elaborated template's own list is
+         * inferred metadata that no pattern sees (atom_authored_len). */
+        CettaExprLen len = atom_authored_len(a);
+        DiscNode *cur = disc_get_expr(pool, node, len);
+        for (CettaExprIndex i = 0; i < len; i++)
             cur = disc_insert_atom(pool, cur, a->expr.elems[i]);
         return cur;
     }
@@ -932,8 +935,9 @@ static bool disc_insert_atom_id(DiscPool *pool, DiscNode *node,
             *out_leaf = disc_get_var(pool, node);
             return true;
         }
-        DiscNode *cur = disc_get_expr(pool, node, tu_arity(universe, atom_id));
-        for (CettaExprIndex i = 0; i < tu_arity(universe, atom_id); i++) {
+        CettaExprLen arity = tu_authored_arity(universe, atom_id);
+        DiscNode *cur = disc_get_expr(pool, node, arity);
+        for (CettaExprIndex i = 0; i < arity; i++) {
             AtomId child_id = tu_child(universe, atom_id, i);
             if (!disc_insert_atom_id(pool, cur, universe, child_id, &cur))
                 return false;
@@ -1251,7 +1255,7 @@ static void disc_step(DiscNode *node, Atom *q, DiscNodeSet *next) {
             break;
         }
         disc_step_expression_coordinates(
-            node, q->expr.elems, q->expr.len, next);
+            node, q->expr.elems, atom_authored_len(q), next);
         break;
     }
 }
@@ -8623,7 +8627,12 @@ static inline bool eq_bucket_entry_in_pass(const Space *s,
     return (bucket->atom_indices[position] < s->imported_len) == (pass == 1);
 }
 
+/* `selection` is the query as the bucket's index reads it to select
+ * candidates (bindings_structure_hooks: code that holds binders, whose
+ * spellings decide nothing, a fresh variable); each candidate is then matched
+ * against `query` itself. */
 static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
+                                Atom *selection,
                                 const QueryVisibleVarSet *visible, Arena *a,
                                 QueryResultSink *sink, int pass) {
     SymbolId query_head = eq_head_symbol(query);
@@ -8634,7 +8643,7 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
         CettaIndex ncand = 0, ccand = 0;
         CettaIndex considered = 0;
         (void)considered;
-        disc_lookup(bucket->trie, query, &candidates, &ncand, &ccand);
+        disc_lookup(bucket->trie, selection, &candidates, &ncand, &ccand);
         for (CettaIndex ci = 0; ci < ncand; ci++) {
             CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
             CettaIndex i = candidates[ci];
@@ -8803,6 +8812,31 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
         CETTA_RUNTIME_COUNTER_QUERY_EQUATION_LEGACY_CANDIDATES, considered);
 }
 
+/* An equation head that takes code apart (the language's binding structure,
+ * bindings_structure_hooks): its instance for this call, the head's variables
+ * renamed into `epoch` as the matcher renames them, matched against the
+ * query binder by binder, never by spelling, after the candidate was
+ * selected.  `lhs` is the head as stored.  *handled is false when the head
+ * takes no code apart (the ordinary matcher decides). */
+static bool query_equation_match_code_head(Atom *lhs, Atom *query, Arena *a,
+                                           uint32_t epoch, Bindings *merged,
+                                           bool *handled) {
+    const BindingsStructureHooks *hooks = bindings_structure_hooks();
+    *handled = false;
+    if (!hooks || !hooks->code_pattern || !hooks->code_match || !lhs ||
+        !hooks->code_pattern(lhs))
+        return false;
+    *handled = true;
+    Bindings none;
+    bindings_init(&none);
+    Atom *instance = bindings_apply_epoch(&none, a, lhs, epoch);
+    bindings_free(&none);
+    bool matched = false;
+    return instance &&
+           hooks->code_match(a, instance, query, merged, &matched) &&
+           matched;
+}
+
 static bool query_equation_emit_stored(Space *s, AtomId lhs_id, AtomId rhs_id,
                                        Atom *query,
                                        const QueryVisibleVarSet *visible,
@@ -8828,8 +8862,16 @@ static bool query_equation_emit_stored(Space *s, AtomId lhs_id, AtomId rhs_id,
         return false;
     }
     bool emitted = false;
-    if (match_atoms_atom_id_epoch(query, s->native.universe, lhs_id,
-                                  &merged, a, epoch)) {
+    bool code_head = false;
+    bool head_matched = bindings_structure_hooks()
+        ? query_equation_match_code_head(
+              term_universe_get_atom(s->native.universe, lhs_id), query, a,
+              epoch, &merged, &code_head)
+        : false;
+    if (!code_head)
+        head_matched = match_atoms_atom_id_epoch(
+            query, s->native.universe, lhs_id, &merged, a, epoch);
+    if (head_matched) {
         CettaSurvivorAllocationScope allocation_scope =
             cetta_survivor_allocation_scope_enter(
                 CETTA_SURVIVOR_ALLOC_ROLE_EQUATION_RESULT_INSTANTIATION);
@@ -8859,6 +8901,11 @@ static bool query_equation_match_decoded_epoch(
     Bindings *merged) {
     if (!lhs || !query || !a || !merged)
         return false;
+    bool code_head = false;
+    bool code_matched = query_equation_match_code_head(
+        lhs, query, a, epoch, merged, &code_head);
+    if (code_head)
+        return code_matched;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOP_CALL_EQ_DECODED);
     /* Leaf-patch view (OFF by default): for a flat linear pattern with
      * non-variable query args, the positional bind reproduces the matcher's
@@ -8976,6 +9023,7 @@ static bool query_equation_emit_candidate_plan_epoch(
    query environment.  Each candidate is therefore standardized apart with a
    fresh query-time epoch and rechecked by the authoritative matcher. */
 static void query_bucket(Space *s, EqBucket *bucket, Atom *query,
+                         Atom *selection,
                          const QueryVisibleVarSet *visible, Arena *a,
                          QueryResultSink *sink, int pass) {
     SymbolId query_head = eq_head_symbol(query);
@@ -8988,15 +9036,16 @@ static void query_bucket(Space *s, EqBucket *bucket, Atom *query,
         query_head != SYMBOL_ID_NONE &&
         (bucket->mixed_heads || bucket->head != query_head);
     if (head_bucket_mismatch || bucket->subst.count <= 4 || !bucket->subst.root ||
-        !bucket->subst_safe || !atom_is_eq_subst_safe(query)) {
-        query_bucket_legacy(s, bucket, query, visible, a, sink, pass);
+        !bucket->subst_safe || !atom_is_eq_subst_safe(selection)) {
+        query_bucket_legacy(s, bucket, query, selection, visible, a, sink,
+                            pass);
         return;
     }
     SubstMatchSet matches;
     uint32_t considered = 0;
     (void)considered;
     smset_init(&matches);
-    stree_query_bucket(&bucket->subst, a, query, NULL, &matches);
+    stree_query_bucket(&bucket->subst, a, selection, NULL, &matches);
     for (CettaIndex mi = 0; mi < matches.len; mi++) {
         CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
         const SubstMatch *sm = &matches.items[mi];
@@ -9105,7 +9154,8 @@ static void query_bucket(Space *s, EqBucket *bucket, Atom *query,
     if (!sink->stop && sink->emitted == emitted_before) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_QUERY_EQUATION_SUBST_BUCKET_FALLBACK);
-        query_bucket_legacy(s, bucket, query, visible, a, sink, pass);
+        query_bucket_legacy(s, bucket, query, selection, visible, a, sink,
+                            pass);
     }
 }
 
@@ -9203,6 +9253,17 @@ query_equations_member(Space *s, Atom *query, Arena *a,
     /* Use head-symbol index for O(1) lookup instead of O(N) scan.
        This is the key optimization from Vampire's LiteralIndex. */
     SymbolId head = eq_head_symbol(query);
+    /* The indexes select candidates by the query with its code that holds
+       binders read as a fresh variable: alpha-equivalent code is spelled
+       apart, and each candidate is matched binder by binder
+       (bindings_structure_hooks). */
+    const BindingsStructureHooks *hooks = bindings_structure_hooks();
+    Atom *selection = hooks && hooks->code_selection
+        ? hooks->code_selection(a, query) : query;
+    if (!selection) {
+        query_visible_var_set_free(&visible);
+        return;
+    }
     bool imported = s->imported_len != 0u;
     int first_pass = imported ? 0 : -1;
     int end_pass = !imported ? 0 : own_only ? 1 : 2;
@@ -9210,7 +9271,7 @@ query_equations_member(Space *s, Atom *query, Arena *a,
         if (head != SYMBOL_ID_NONE) {
             /* Query has a known head symbol — look up matching bucket */
             query_bucket(s, &s->native.eq_idx.buckets[symbol_hash(head)],
-                         query, &visible, a, sink, pass);
+                         query, selection, &visible, a, sink, pass);
         }
         /* Non-symbol-headed queries may still match wildcard equations whose
            LHS head is itself a variable or complex term, but they must not
@@ -9218,8 +9279,8 @@ query_equations_member(Space *s, Atom *query, Arena *a,
            with an unrelated function symbol. HE treats ($f x) as data unless
            a wildcard equation explicitly matches it. */
         if (!sink->stop)
-            query_bucket(s, &s->native.eq_idx.wildcard, query, &visible, a,
-                         sink, pass);
+            query_bucket(s, &s->native.eq_idx.wildcard, query, selection,
+                         &visible, a, sink, pass);
     }
     query_visible_var_set_free(&visible);
 }
@@ -9896,9 +9957,15 @@ bool space_prepare_single_equation(Space *s, SymbolId head,
     return applicable;
 }
 
+/* The instantiation is a substitution of the call's arguments for the head's
+ * variables, so it carries the language's binding structure as every
+ * application of bindings does (bindings_structure_hooks): a head it fills
+ * forms its construct, and a variable inside code reads as code.  `depth`
+ * counts the quotations around `source`. */
 static Atom *prepared_equation_instantiate_rec(
     const SpacePreparedEquation *plan, Atom *source,
-    Atom *const *register_values, Arena *arena) {
+    Atom *const *register_values, Arena *arena,
+    const BindingsStructureHooks *hooks, uint32_t depth) {
     if (!source || !plan || !arena)
         return NULL;
     if (!atom_has_vars(source))
@@ -9906,7 +9973,9 @@ static Atom *prepared_equation_instantiate_rec(
     if (source->kind == ATOM_VAR) {
         for (CettaExprIndex i = 0u; i < plan->arity; i++)
             if (plan->registers[i] == source->var_id)
-                return register_values[i];
+                return hooks && hooks->code_reading && depth > 0u
+                    ? hooks->code_reading(register_values[i])
+                    : register_values[i];
         return NULL;
     }
     if (source->kind != ATOM_EXPR)
@@ -9916,13 +9985,24 @@ static Atom *prepared_equation_instantiate_rec(
         arena, sizeof(*children) * (size_t)source->expr.len);
     if (!children)
         return NULL;
+    uint32_t child_depth =
+        depth + (bindings_structure_quotes_children(source) ? 1u : 0u);
     for (CettaExprIndex i = 0u; i < source->expr.len; i++) {
         children[i] = prepared_equation_instantiate_rec(
-            plan, source->expr.elems[i], register_values, arena);
+            plan, source->expr.elems[i], register_values, arena, hooks,
+            child_depth);
         if (!children[i])
             return NULL;
     }
-    return atom_expr(arena, children, source->expr.len);
+    Atom *result = atom_expr(arena, children, source->expr.len);
+    if (result && hooks && hooks->formed_node && source->expr.len > 0u &&
+        source->expr.elems[0]->kind == ATOM_VAR &&
+        result->expr.elems[0]->kind == ATOM_SYMBOL)
+        result = hooks->formed_node(arena, result, depth > 0u);
+    else if (result && hooks && hooks->own_list &&
+             atom_sequence_is_own_list(source))
+        result = hooks->own_list(arena, result);
+    return result;
 }
 
 Atom *space_prepared_equation_instantiate_ground(
@@ -9949,7 +10029,8 @@ Atom *space_prepared_equation_instantiate_ground(
     if (!cetta_gslt_prepared_equation_call_admitted(evidence))
         return NULL;
     return prepared_equation_instantiate_rec(
-        plan, plan->rhs, register_values, arena);
+        plan, plan->rhs, register_values, arena, bindings_structure_hooks(),
+        0u);
 }
 
 static bool prepared_register_exact_integer(const Atom *atom) {

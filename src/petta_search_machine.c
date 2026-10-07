@@ -28355,7 +28355,9 @@ static bool petta_machine_dispatch_solve(
             });
     }
 
-    if (head_id == g_builtin_syms.quote && nargs == 1u)
+    /* A Prime quotation may carry its own list last (atom_is_quotation). */
+    if (head_id == g_builtin_syms.quote &&
+        (nargs == 1u || atom_is_quotation(expression)))
         return goal->result_matched || petta_machine_unify_resolved(
             machine,
             machine->host.quote_is_inert_data

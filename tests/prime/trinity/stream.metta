@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; The numbers from n, a process that never ends, on three faces:
 ;   from n = scons n (from (suc n))
 ; read as a stream, a function from positions to numbers: scons a s puts a at
@@ -28,7 +30,7 @@
 ; function satisfies the equation at every n and every position.
 !(let $r (try (set:define &self from-unproved (-> num num num) (by set-solution)
    (= (from-unproved $n) (scons $n (from-unproved (suc $n))))))
-   (let $reason (index-atom $r 1) (let $statement (index-atom $reason 1)
+   (let $reason (index-atom $r 1) (let (quote $statement) (lift (index-atom $reason 1))
      ((car-atom $r) (car-atom $reason) (quote $statement)))))
 
 ; ---- The evidence: n, k |-> n + k satisfies the equation at every position.
@@ -61,7 +63,7 @@
 ; It names the Lean theorem it rests on, admission on evidence of a solution,
 ; and the one that makes evidence given position by position enough for a
 ; function result.
-!(let (definition-evidence $rules $termination $lean) (set:known-proof &self from)
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self from))
    (quote $lean))
 
 ; ---- Operational: the observation of position 2 of the stream from 1 runs
@@ -69,7 +71,7 @@
 ; from at positions 2, 1 and 0, and scons at the same three.  The count is
 ; printed with the term it counts.
 !(from (suc zero) (suc (suc zero)))
-!(let ($values $n) (cost:firings (from (suc zero) (suc (suc zero))))
+!(let (quote ($values $n)) (lift (cost:firings (from (suc zero) (suc (suc zero)))))
    (quote (firings-of (from (suc zero) (suc (suc zero))) $values $n)))
 
 ; The stream from 1 is a value: from applied to its first argument only, a

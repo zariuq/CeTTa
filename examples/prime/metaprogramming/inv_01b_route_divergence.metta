@@ -10,7 +10,9 @@
 (= (observe $v) $v)
 
 ; D1. A non-code activation is the residual (unquote v), also as an argument.
-;     default: no answer            fuel: [(unquote 3)]
+;     Resolved: `*` is the evaluator's own on every route (code is opened and
+;     elaborated where it is formed), so the residual is the answer on both.
+;     default: [(unquote 3)]        fuel: [(unquote 3)]
 !(observe *3)
 !(observe *(+ 1 2))
 
@@ -28,13 +30,19 @@
 ;     default: prints "field", [(pair () 0)]   fuel: [(pair (println! "field") 0)]
 !(observe (pair (println! "field") 0))
 
-; D4. A parameter both demanded and quoted.  Quote-then-force keeps the
-;     source on both routes; force-then-quote keeps it only on the fuel route.
-;     default: [(pair 3 (quote 3))]  fuel: [(pair 3 (quote (+ 1 2)))]
+; D4. A parameter both demanded and quoted.  Resolved by the seal: a
+;     quotation holds the parameter itself on both routes (renamed apart with
+;     the rule at a call), never the argument's source or its value, so the
+;     routes agree; observed by the quoted variable's metatype.  Where a
+;     quotation captures its argument as written, quote-then-force kept the
+;     source on both routes and force-then-quote only on the fuel route
+;     (tests/prime/quote_profiles/incoherence.metta).
+;     default: [(pair 3 Variable)]  fuel: [(pair 3 Variable)]
 (= (quote-then-force $x) (let $q @$x (let $v (+ $x 0) (pair $v $q))))
 (= (force-then-quote $x) (let $v (+ $x 0) (pair $v @$x)))
-!(quote-then-force (+ 1 2))
-!(force-then-quote (+ 1 2))
+(= (quoted-kind (pair $v (quote $c))) (pair $v (get-metatype $c)))
+!(quoted-kind (quote-then-force (+ 1 2)))
+!(quoted-kind (force-then-quote (+ 1 2)))
 
 ; D5. A field built under a variable head is printed unforced.
 ;     default: [(receipt (three))]  fuel: [(receipt 3)]

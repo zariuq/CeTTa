@@ -161,6 +161,15 @@ void eval_set_default_fuel(int fuel);
  * library's).  In Prime an `Atom` position of such a declaration holds its
  * argument, as in HE; elsewhere in Prime `Atom` is the top type. */
 void eval_prime_set_he_signature_heads(const SymbolId *heads, size_t count);
+/* Heads the Prime evaluator owns for the relational plan (eval.c), and
+ * among them `lift`, which the relational machine hands to the evaluator. */
+bool cetta_prime_host_intrinsic_head(SymbolId head);
+bool cetta_prime_lift_head(SymbolId head);
+/* `scope:profile`, a scope declaration evaluated as a query, in Prime. */
+bool cetta_prime_scope_declaration_head(SymbolId head);
+/* `unquote` (`*`) and its second stage, in Prime: the evaluator opens code
+ * itself, elaborating the term it forms. */
+bool cetta_prime_open_code_head(SymbolId head);
 int eval_get_default_fuel(void);
 int eval_current_effective_fuel_limit(void);
 bool eval_current_prefer_rationals(void);

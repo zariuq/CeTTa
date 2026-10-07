@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Ordinary arithmetic through the certified-transformation library.
 ; Addition recurses on its second argument, so `add zero n = n` is not
 ; definitional at a neutral `n`. The supplied family is that equation.

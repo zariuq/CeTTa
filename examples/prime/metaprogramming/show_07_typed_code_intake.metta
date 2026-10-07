@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Why it matters: generated code (from a model, a search or a user) can be
 ; admitted only after the kernel checks it against a declared interface, so
 ; unreadable, ill-typed or out-of-interface code never runs.

@@ -1,4 +1,4 @@
 [(quote ((lam s (agent 0 0 s)) (diag (quote ((lam s (agent 0 0 s)) (diag x))))))]
-["(quote ((lam s (agent 0 0 s)) (diag (quote ((lam s (agent 0 0 s)) (diag x))))))"]
+["@((lam s (agent 0 0 s)) (diag @((lam s (agent 0 0 s)) (diag x))))"]
 [(quote ((lam s (agent 1 3 s)) (diag (quote ((lam s (agent 1 3 s)) (diag x))))))]
 [((Gen 0 (saw 3) (best 3) (knows-itself True)) (Gen 1 (saw 7) (best 7) (knows-itself True)) (Gen 2 (saw 5) (best 7) (knows-itself True)) (Gen 3 (saw 9) (best 9) (knows-itself True)))]

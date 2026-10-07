@@ -4,33 +4,13 @@
 ; slot x.  The program (diag @(diag x)) evaluates to its own code, and running
 ; that code gives the same code again.  (kleene F) steps to a program R that
 ; runs as (F @R): F receives the code of the very program it is part of
-; (Kleene's second recursion theorem).  Substitution here is the equation-level
-; `lift let` prototype; Prime has no native `lift` yet.  The prototype is not
-; capture-avoiding; here the slot x never occurs under a binder, so it is
-; exact.
+; (Kleene's second recursion theorem).  Substitution is the native `lift
+; let`, and (lift M) is the code of M's value: a quotation is sealed, so the
+; code of a parameter's value enters code by lift, never by quoting the
+; parameter.
 
-(: replace (-> (Data Atom) (Data Atom) (Data Atom) (Data Atom)))
-(= (replace $s $v $t)
-   (if (noreduce-eq $t $s)
-       $v
-       (if (== (get-metatype $t) Expression)
-           (replace-children $s $v $t)
-           $t)))
-(: replace-children (-> (Data Atom) (Data Atom) (Data Atom) (Data Atom)))
-(= (replace-children $s $v $t)
-   (if (noreduce-eq $t ())
-       ()
-       (let ($h $rest) (decons-atom $t)
-         (if (noreduce-eq $h quote)
-             $t
-             (let $h2 (replace $s $v $h)
-               (let $rest2 (replace-children $s $v $rest)
-                 (cons-atom $h2 $rest2)))))))
-(= (lift let $s (quote $a) (quote $c))
-   (let $r (replace $s $a $c) (quote $r)))
-
-(= (diag $c) (lift let x @$c $c))
-(= (kleene $f) ($f (diag @($f (diag x)))))
+(= (diag $c) (lift let x (lift $c) $c))
+(= (kleene $f) ($f (diag (lift app (lift $f) @(diag x)))))
 
 ; --- a quine -------------------------------------------------------------------
 ; 1. The program evaluates to its own code.

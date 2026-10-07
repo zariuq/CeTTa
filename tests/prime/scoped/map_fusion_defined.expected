@@ -6,7 +6,7 @@
 [(all (-> list prop) (lam P (imp (P nil) (imp (all elem (lam v1 (all list (lam v2 (imp (P v2) (P (cons v1 v2))))))) (all list (lam x (P x)))))))]
 [mapf]
 [map-fusion]
-[(Depends 5 first list-ind)]
+[(Depends 14 first (: nil list))]
 [()]
 [True]
 [(set:proves &thy (pf:by map-fusion) (eq list (mapf f (mapf g ys)) (mapf (lam y (g (f y))) ys)))]

@@ -6,7 +6,7 @@
 [map-cons]
 [list-ind]
 [map-fusion]
-[(Depends 5 first list-ind)]
+[(Depends 12 first (: g (-> elem elem)))]
 [()]
 [True]
 [(SetConversion 1 0)]

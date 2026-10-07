@@ -163,7 +163,8 @@
          (let (MkSized $ps (: (quote $p2) (-> $a Bool)))
               (nu:type-head $kb $ctx (- $budget 2) (: @$p (-> $a Bool)))
            (let (ov $u2 $a) (nu:arg $kb $ctx $u)
-             (MkSized (+ 2 $ps) (: @($p2 $u2) Bool))))
+             (MkSized (+ 2 $ps)
+               (: (lift let $u-slot (lift $u2) @($p2 $u-slot)) Bool))))
          (empty))
      (empty)))
 
@@ -175,7 +176,10 @@
               (nu:type-head $kb $ctx (- $budget 3) (: @$r (-> $a (-> $b Bool))))
            (let (ov $u2 $a) (nu:arg $kb $ctx $u)
              (let (ov $v2 $b) (nu:arg $kb $ctx $v)
-               (MkSized (+ 3 $rs) (: @($r2 $u2 $v2) Bool)))))
+               (MkSized (+ 3 $rs)
+                 (: (lift let $u-slot (lift $u2)
+                      (lift let $v-slot (lift $v2) @($r2 $u-slot $v-slot)))
+                    Bool)))))
          (empty))
      (empty)))
 
@@ -231,7 +235,9 @@
                (let (MkSized $ls (: (quote (lam $y2 $b)) (-> $dom Bool)))
                     (nu:type $kb $ctx (- $budget 1) (: @(lam $y $body) (-> $dom Bool)))
                  (if (nu:uses-binder @(lam $y2 $b))
-                     (MkSized (+ 1 $ls) (: @(exists $dom (lam $y2 $b)) Bool))
+                     (MkSized (+ 1 $ls)
+                       (: (lift let $dom-slot (lift $dom) @(exists $dom-slot (lam $y2 $b)))
+                          Bool))
                      (empty))))
              (empty)))
        (empty))
@@ -269,12 +275,14 @@
 ;; Opening and instances ;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;; Opening a lambda at an argument: substitution into code.  The binding is
-;; local to this equation, so the caller's hypothesis keeps its binder, and
-;; the argument is inserted as written.
+;; Opening a lambda at an argument: substitution into code, by `lift let`.
+;; The match takes the body out with the lambda's binder ($x is that binder
+;; itself), and the body's code receives the argument in the binder's slot.
+;; The caller's hypothesis keeps its binder, and the argument is inserted as
+;; written.
 (= (nu:open $code $arg)
    (unify $code (quote (lam $x $body))
-     (let (quote $x) $arg @$body)
+     (lift let $x $arg @$body)
      (empty)))
 
 ;; An alpha-equivalent copy of code with fresh binders: printing and reading
@@ -294,7 +302,7 @@
    (if (== $args ())
        $h
        (let ($c $rest) (decons-atom $args)
-         (let $opened (nu:open $h @$c)
+         (let $opened (nu:open $h (lift $c))
            (nu:open-args $opened $rest)))))
 
 (= (nu:at $h $args)
@@ -403,7 +411,7 @@
    (if (== $domain ())
        (empty)
        (let ($w $rest) (decons-atom $domain)
-         (let $instance (nu:open $l @$w)
+         (let $instance (nu:open $l (lift $w))
            (let $proofs (collapse (nu:eval $kb $budget (: $p (≞ $instance ⊤))))
              (if (== $proofs ())
                  (nu:first-witness $kb $budget $l $rest)
@@ -423,7 +431,7 @@
    (if (== $domain ())
        (MkSized 0 ())
        (let ($w $rest) (decons-atom $domain)
-         (let $instance (nu:open $l @$w)
+         (let $instance (nu:open $l (lift $w))
            (let (MkSized $s (: $p (≞ $i ⊥)))
                 (nu:first (nu:eval $kb $budget (: $p (≞ $instance ⊥))))
              (let $left (- $budget $s)
@@ -587,9 +595,9 @@
    (unify $code (quote (lam $x $body))
      (let $n (nu:fresh-name $kb $names)
        (let $rest (nu:names-after $n $names)
-         (let (quote $opened) (nu:open @(lam $x $body) @$n)
+         (let (quote $opened) (nu:open @(lam $x $body) (lift $n))
            (let (quote $inner) (nu:named $kb $rest @$opened)
-             @(lam $n $inner)))))
+             (lift app @lam (lift $n) @$inner)))))
      (unify $code (quote (exists $a $l))
        (let (quote $l2) (nu:named $kb $names @$l) @(exists $a $l2))
        (unify $code (quote (fix (lam $p $body)))
@@ -606,7 +614,7 @@
                  $code)
              $code))))))
 (= (nu:connective $c)
-   (if (noreduce-eq @$c @∧) True (if (noreduce-eq @$c @∨) True False)))
+   (if (noreduce-eq $c ∧) True (if (noreduce-eq $c ∨) True False)))
 
 ;; The first name the knowledge base does not declare, and the names after
 ;; it.
@@ -635,9 +643,10 @@
      (collapse
        (let* (($a (superpose $individuals))
               ($b (superpose $individuals))
-              ($positive (collapse (match $kb (: $p (≞ @($r $a $b) ⊤)) $p))))
+              ($statement (lift app (lift $r) (lift $a) (lift $b)))
+              ($positive (collapse (match $kb (: $p (≞ $statement ⊤)) $p))))
          (if (== $positive ())
-             (add-atom $kb (: (cwa $r $a $b) (≞ @($r $a $b) ⊥)))
+             (add-atom $kb (: (cwa $r $a $b) (≞ $statement ⊥)))
              (empty))))))
 
 ;; The value evidence gives a closed statement, for ordinary code.

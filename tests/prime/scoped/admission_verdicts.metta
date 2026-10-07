@@ -1,8 +1,10 @@
+(set:profile hol)
+
 ; A definition or datatype that is legal but not yet admitted is answered
 ; Undetermined.  A refusal needs a witness that no evidence admits it: a
 ; value that would contain itself, a non-positive field, a constructor of
 ; another type.
-!(bind! &s (new-space))
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &s nat (u 0) (: zero nat) (: succ (-> nat nat)))
 !(set:inductive &s bool (u 0) (: true bool) (: false bool))
 
@@ -32,7 +34,8 @@
    (car-atom $r))
 
 ; Legal, not admitted yet: a strictly positive function field, a dependent
-; field, an indexed family, a parameter.
+; field, an indexed family, a datatype with a parameter that occurs nested
+; in its own constructors.
 !(let $r (try (set:inductive &s ord (u 0) (: oz ord) (: olim (-> (-> nat ord) ord))))
    (car-atom $r))
 !(let $r (try (set:inductive &s dpair (u 0) (: mk (-> (b : bool) nat dpair))))
@@ -40,6 +43,11 @@
 !(let $r (try (set:inductive &s vec (-> nat (u 0))
                 (: vnil (vec zero)) (: vcons (-> nat (vec $n) (vec (succ $n))))))
    (car-atom $r))
+!(let $r (try (set:inductive &s (nlist (: A (u 0))) (u 0)
+                (: nnil (nlist A)) (: ncons (-> A (nlist (nlist A)) (nlist A)))))
+   (car-atom $r))
+; A datatype with a parameter that every constructor uses at exactly that
+; parameter is admitted.
 !(let $r (try (set:inductive &s (plist (: A (u 0))) (u 0)
                 (: pnil (plist A)) (: pcons (-> A (plist A) (plist A)))))
    (car-atom $r))

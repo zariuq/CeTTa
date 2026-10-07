@@ -1,0 +1,6 @@
+[1]
+[1, 1]
+[1]
+[(P heads heads), (P tails tails)]
+[(P heads heads), (P heads tails), (P tails heads), (P tails tails)]
+[(P heads heads), (P tails tails)]

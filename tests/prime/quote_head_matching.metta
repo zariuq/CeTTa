@@ -4,7 +4,9 @@
 ; written.
 (= (∧ $p $q) (if $p $q False))
 
-; A quoted redex is matched as a redex, by an equation head and by let.
+; A quoted redex is matched as a redex, by an equation head and by let.  Its
+; body mentions the lambda's binder: both hand it over as contextual code,
+; with that binder.
 (= (show (quote ((lam $x $b) $c))) (got $x $b $c))
 !(show @((lam $y (f $y)) 0))
 !(let (quote ((lam $x $b) $c)) @((lam $y (f $y)) 0) (got $x $b $c))

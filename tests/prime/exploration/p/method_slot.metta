@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Proof plans as partial programs: generalizing two plans leaves a method slot.
 ;
 ; The kernel is a small proof calculus with nullary judgments; each rule is
@@ -214,7 +216,7 @@
 ; ---- the ITP half: a plan is a proof of an implication ----------------------------------
 
 !(import! &self pf)
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(pf:theory &thy ((: A prop) (: B prop) (: C prop) (: D prop) (: X prop)))
 ; Each rule becomes an axiom: premises -> conclusion.
 (= (imps $ctx $goal)

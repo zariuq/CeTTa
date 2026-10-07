@@ -847,6 +847,9 @@ typedef struct {
     int64_t delta;
     uint64_t index;
     Atom *replacement;
+    /* A quotation is sealed code (atom_is_quotation): no transform enters
+       it.  Set by abt_subst_sealed. */
+    bool seal_quotations;
 } AbtTransform;
 
 typedef enum { ABT_TASK_VISIT, ABT_TASK_BUILD } AbtTaskKind;
@@ -895,6 +898,17 @@ static bool abt_task_push(AbtTaskStack *stack, AbtTask task) {
     }
     stack->tasks[stack->len++] = task;
     return true;
+}
+
+/* `(unquote (quote r))` with r a variable or a canonical index. */
+static int abt_idx_form(Atom *term, uint64_t *index);
+static bool abt_is_drop_of_quoted_reference(Atom *term) {
+    if (atom_is_drop_of_quoted_variable(term)) return true;
+    uint64_t index = 0u;
+    return term && term->kind == ATOM_EXPR && term->expr.len == 2u &&
+           atom_is_symbol_id(term->expr.elems[0], g_builtin_syms.unquote) &&
+           atom_is_quotation(term->expr.elems[1]) &&
+           abt_idx_form(term->expr.elems[1]->expr.elems[1], &index) > 0;
 }
 
 static bool abt_is_quote_form(Atom *term) {
@@ -996,6 +1010,9 @@ static bool abt_depth_add(uint64_t depth, uint32_t increment,
     return true;
 }
 
+static Atom *abt_transform_term(const AbtSignature *signature, Arena *arena,
+                                const AbtTransform *transform, Atom *term);
+
 static Atom *abt_transform_var(const AbtSignature *signature, Arena *arena,
                                const AbtTransform *transform,
                                Atom *original, uint64_t depth,
@@ -1030,8 +1047,16 @@ static Atom *abt_transform_var(const AbtSignature *signature, Arena *arena,
             if (CETTA_ABT_MUTATION == 1 || depth == 0u)
                 return transform->replacement;
             if (depth > INT64_MAX) return NULL;
-            return abt_shift(signature, arena, (int64_t)depth, 0u,
-                             transform->replacement);
+            /* abt_shift, sealed as the substitution is. */
+            AbtTransform shift = {
+                .kind = ABT_TRANSFORM_SHIFT,
+                .delta = (int64_t)depth,
+                .index = 0u,
+                .replacement = NULL,
+                .seal_quotations = transform->seal_quotations,
+            };
+            return abt_transform_term(signature, arena, &shift,
+                                      transform->replacement);
         }
         if (variable > target && CETTA_ABT_MUTATION != 2)
             return abt_make_idx(arena, variable - 1u);
@@ -1117,9 +1142,45 @@ static Atom *abt_transform_term(const AbtSignature *signature, Arena *arena,
             continue;
         }
 
-        /* Quotation suspends evaluation, not lexical binding. Its field has
-           the same scope as its surroundings; only declared binders change
-           depth. Whole quoted names were handled by the equality case. */
+        /* The drop of a quoted variable or index, *@x, refers to its
+           binder (atom_is_drop_of_quoted_variable): its operand is read
+           as unquoted. */
+        if (transform->seal_quotations && abt_is_drop_of_quoted_reference(current)) {
+            Atom *quoted = current->expr.elems[1];
+            Atom **outer = arena_alloc(arena, sizeof(*outer) * 2u);
+            Atom **inner = arena_alloc(arena, sizeof(*inner) * 2u);
+            if (!outer || !inner ||
+                !abt_active_enter(&active, current) ||
+                !abt_active_enter(&active, quoted))
+                goto fail;
+            outer[0] = current->expr.elems[0];
+            inner[0] = quoted->expr.elems[0];
+            if (!abt_task_push(&stack, (AbtTask){
+                    ABT_TASK_BUILD, current, task.depth, task.destination,
+                    outer}) ||
+                !abt_task_push(&stack, (AbtTask){
+                    ABT_TASK_BUILD, quoted, task.depth, &outer[1], inner}) ||
+                !abt_task_push(&stack, (AbtTask){
+                    ABT_TASK_VISIT, quoted->expr.elems[1], task.depth,
+                    &inner[1], NULL}))
+                goto fail;
+            continue;
+        }
+
+        /* A sealed quotation is closed code: it holds no reference to a
+           binder and receives no substitution (abt_subst_sealed). */
+        if (transform->seal_quotations && atom_is_quotation(current)) {
+            *task.destination = current;
+            if (!abt_transform_memo_store(
+                    &memo, current, task.depth, current))
+                goto fail;
+            continue;
+        }
+
+        /* Otherwise quotation suspends evaluation, not lexical binding. Its
+           field has the same scope as its surroundings; only declared
+           binders change depth. Whole quoted names were handled by the
+           equality case. */
         uint64_t variable = 0;
         int var_status = abt_idx_form(current, &variable);
         if (var_status < 0) goto fail;
@@ -1252,6 +1313,19 @@ Atom *abt_bind(const AbtSignature *signature, Arena *arena,
         .delta = 0,
         .index = 0,
         .replacement = name,
+    };
+    return abt_transform_term(signature, arena, &transform, term);
+}
+
+Atom *abt_subst_sealed(const AbtSignature *signature, Arena *arena,
+                       uint64_t index, Atom *substitution, Atom *term) {
+    if (!substitution) return NULL;
+    AbtTransform transform = {
+        .kind = ABT_TRANSFORM_SUBST,
+        .delta = 0,
+        .index = index,
+        .replacement = substitution,
+        .seal_quotations = true,
     };
     return abt_transform_term(signature, arena, &transform, term);
 }

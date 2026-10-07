@@ -166,15 +166,21 @@
 ; The native path may fuse keying, bounded selection, and key erasure only
 ; after proving that every item has one pure key.  This equation remains the
 ; complete relational meaning when that proof is unavailable.
+; The item variable and the key come from the caller, so the map is the
+; library's own (map-atom's definition, written out): its parameter is the
+; variable the caller passed.  A literal `(map-atom L $item T)` would give
+; Prime's template a parameter of its own, which the key does not mention.
 (= (_minimal-retain-top-k-by-number $xs $count $item $key)
    (chain
      (metta
-       (map-atom $xs $item
-         (metta
-           (let $score $key
-             (let $value (cons-atom $item ())
-               (cons-atom $score $value)))
-           %Undefined% (context-space)))
+       (function
+         (eval
+           (_minimal-map-atom $xs $item
+             (metta
+               (let $score $key
+                 (let $value (cons-atom $item ())
+                   (cons-atom $score $value)))
+               %Undefined% (context-space)))))
        %Undefined% (context-space))
      $keyed
      (chain
@@ -268,14 +274,24 @@
    (sort-numbers-atom $xs))
 
 ; An expression takes the primitive's own path; a list value's elements do,
-; and a list returns.
+; and a list returns.  The variable and the body come from the caller, so
+; the map and the fold are the library's own (map-atom's and foldl-atom's
+; definitions, written out): their parameters are the variables the caller
+; passed.  A literal `(map-atom L $var T)` would give Prime's template a
+; parameter of its own, which the caller's body does not mention.
 (= (list:map $xs $var $body)
    (if (list:is-list $xs)
        (let $items (list:to-expression $xs)
          (let $mapped
-              (map-atom $items $var (metta $body %Undefined% (context-space)))
+              (function
+                (eval
+                  (_minimal-map-atom $items $var
+                    (metta $body %Undefined% (context-space)))))
            (list:from-expression $mapped)))
-       (map-atom $xs $var (metta $body %Undefined% (context-space)))))
+       (function
+         (eval
+           (_minimal-map-atom $xs $var
+             (metta $body %Undefined% (context-space)))))))
 
 (= (list:filter $xs $var $body)
    (if (list:is-list $xs)
@@ -288,8 +304,13 @@
 (= (list:foldl $xs $init $acc $item $step)
    (if (list:is-list $xs)
        (let $items (list:to-expression $xs)
-         (foldl-atom $items $init $acc $item $step))
-       (foldl-atom $xs $init $acc $item $step)))
+         (function
+           (chain (context-space) $space
+             (eval
+               (_minimal-foldl-atom $items $init $acc $item $step $space)))))
+       (function
+         (chain (context-space) $space
+           (eval (_minimal-foldl-atom $xs $init $acc $item $step $space))))))
 
 (= (list:range $end)
    (range-atom $end))

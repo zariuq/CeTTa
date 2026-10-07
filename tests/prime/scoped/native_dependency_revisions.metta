@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; A proof whose goal reaches a definition through two aliases. All three
 ; definitions must remain in its native context and ordered rule package.
 !(set:define dep-leaf prop (= dep-leaf (imp Falsum Falsum)))

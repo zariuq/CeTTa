@@ -687,6 +687,55 @@ bool      bindings_current_binding_count(const Bindings *bindings,
 static inline bool bindings_logically_empty(const Bindings *b) {
     return !b || (!bindings_has_bound_values(b) && b->eq_len == 0u);
 }
+/* A language's binding structure in substitution, one path for every route:
+ * the application of bindings (every bindings_apply variant) calls these,
+ * when they are set, while it rebuilds a term.  Prime sets them for its
+ * sessions (eval_swap_library_context); HE and PeTTa never do.
+ *   formed_node  an expression whose head was a variable that the
+ *                substitution filled with a symbol: the construct it names
+ *                is formed now (a binder sealed, a lambda given its binder
+ *                identities).  `in_code` when the expression stands inside a
+ *                quotation.  NULL fails the application.
+ *   code_reading the image of a variable that stands inside a quotation: the
+ *                syntax the value reads as there (contextual code reads as
+ *                its code, under the binders around it).
+ *   own_list     the image of a list of the names a scope owns (atom.h,
+ *                atom_sequence_is_own_list) that the substitution changed:
+ *                a name a match has bound is no longer the scope's, since
+ *                its value stands in its place.  NULL fails the
+ *                application. */
+typedef struct {
+    Atom *(*formed_node)(Arena *a, Atom *node, bool in_code);
+    Atom *(*code_reading)(Atom *image);
+    Atom *(*own_list)(Arena *a, Atom *list);
+    /* The match of a pattern that takes code apart: the equation query and
+     * the space query call these after selecting a candidate.
+     *   code_pattern  whether matching `pattern` takes code apart (it holds
+     *                 a quotation);
+     *   code_match    `value` matched against `pattern` into `bindings`,
+     *                 binder by binder: *matched is false when they do not
+     *                 match, and `bindings` is then unchanged.  False on
+     *                 failure. */
+    bool (*code_pattern)(const Atom *pattern);
+    bool (*code_match)(Arena *a, Atom *pattern, Atom *value,
+                       Bindings *bindings, bool *matched);
+    /*   code_selection  `term` as an index reads it to select candidates:
+     *                   code that holds binders, whose spellings decide
+     *                   nothing, a fresh variable.  `term` itself when it
+     *                   holds none; NULL on failure. */
+    Atom *(*code_selection)(Arena *a, Atom *term);
+} BindingsStructureHooks;
+void bindings_structure_hooks_set(const BindingsStructureHooks *hooks);
+const BindingsStructureHooks *bindings_structure_hooks(void);
+/* Whether the children of `atom` stand one quotation deeper: a quotation
+ * `(quote X)`, and the forms with its head that carry a list last. */
+static inline bool bindings_structure_quotes_children(const Atom *atom) {
+    return atom && atom->kind == ATOM_EXPR &&
+           (atom->expr.len == 2u || atom->expr.len == 3u) &&
+           atom->expr.elems[0] && atom->expr.elems[0]->kind == ATOM_SYMBOL &&
+           atom->expr.elems[0]->sym_id == g_builtin_syms.quote;
+}
+
 Atom     *bindings_apply(Bindings *b, Arena *a, Atom *atom);
 static inline Atom *bindings_apply_if_vars(const Bindings *b, Arena *a, Atom *atom) {
     if (!b || !bindings_has_bound_values(b) ||

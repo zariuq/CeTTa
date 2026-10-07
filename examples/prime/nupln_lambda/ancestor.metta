@@ -78,7 +78,7 @@
 ;; The learned program as ordinary code ;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(= (parent $a $b) (nu:holds &kb @(parent $a $b)))
+(= (parent $a $b) (nu:holds &kb (lift app @parent (lift $a) (lift $b))))
 (= (nu:individuals Person) (ann bob cat dan eve fay gus))
 
 ; Every ancestor pair, computed by running the activated recursive program.

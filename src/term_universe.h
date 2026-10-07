@@ -438,6 +438,9 @@ double tu_float(const TermUniverse *universe, AtomId id);
 bool tu_bool(const TermUniverse *universe, AtomId id);
 /* The value of an internal tag, or 0 for any other atom. */
 int64_t tu_internal_tag(const TermUniverse *universe, AtomId id);
+/* The arity of a stored expression as the authored term has it: an
+ * elaborated Prime template's own list left out (atom_authored_len). */
+CettaExprLen tu_authored_arity(const TermUniverse *universe, AtomId id);
 PeTTaValueRepresentation tu_petta_value_representation(
     const TermUniverse *universe, AtomId id);
 const char *tu_string_cstr(const TermUniverse *universe, AtomId id);
@@ -488,6 +491,9 @@ AtomId tu_intern_rational(TermUniverse *universe, const char *value);
  * a rest that is itself a list or list pattern is spliced in. */
 AtomId tu_list_from_ids(TermUniverse *universe, const AtomId *elems,
                         CettaExprLen elem_len, AtomId rest);
+/* The braces node {elems...}. */
+AtomId tu_braces_from_ids(TermUniverse *universe, const AtomId *elems,
+                          CettaExprLen elem_len);
 AtomId tu_expr_from_ids(TermUniverse *universe, const AtomId *child_ids,
                         CettaExprLen arity);
 /* Canonical fixed-arity rows in input order. An optional presence mask skips

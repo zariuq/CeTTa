@@ -484,68 +484,69 @@ endif
 empty :=
 space := $(empty) $(empty)
 comma := ,
-BUILD_OBJ_TAG = $(BUILD_CANON)
+BUILD_CANONICAL_OBJ_TAG = $(BUILD_CANON)
 ifeq ($(ENABLE_GMP),0)
-BUILD_OBJ_TAG := $(BUILD_CANON).nogmp
+BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANON).nogmp
 endif
 ifeq ($(ENABLE_DURABLE),1)
-BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).durable-$(SQLITE_PROVIDER)
+BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).durable-$(SQLITE_PROVIDER)
 endif
 ifeq ($(ENABLE_SANITIZERS),1)
 SANITIZER_TAG := $(subst $(comma),-,$(subst $(space),_,$(SANITIZERS)))
-BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).sanitize.$(SANITIZER_TAG)
+BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).sanitize.$(SANITIZER_TAG)
 endif
 ifeq ($(ENABLE_PIC),1)
-BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).pic
+BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).pic
 endif
 ifeq ($(CETTA_PROVENANCE_ASSERT),1)
-BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).provenance
+BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).provenance
 endif
 ifeq ($(RHOCOST_COMMIT_AUDIT),1)
-BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).rhocost-audit
+BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).rhocost-audit
 endif
 ifeq ($(ENABLE_PRIME_RECEIPT_PRIMARY_INDEX),1)
-BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).prime-receipt-primary-index
+BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).prime-receipt-primary-index
 endif
 ifeq ($(ENABLE_PRIME_CAUSAL_RECEIPTS),1)
-BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).prime-causal-receipts
+BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).prime-causal-receipts
 endif
 ifeq ($(ENABLE_PRIME_NEED_HEAP_INDEX),1)
-BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).prime-need-heap-index
+BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).prime-need-heap-index
 endif
 ifeq ($(ENABLE_PRIME_NEED_CLOSURE_CAPTURE),1)
-BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).prime-need-closure-capture
+BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).prime-need-closure-capture
 endif
 ifeq ($(ENABLE_PRIME_EVAL_STACK),1)
-BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).prime-eval-stack
+BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).prime-eval-stack
 endif
 ifeq ($(LIB_PROLOG_ENABLED),1)
-BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).lib-prolog
-BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).swipl-config-$(LIB_PROLOG_CONFIG_ID)
+BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).lib-prolog
+BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).swipl-config-$(LIB_PROLOG_CONFIG_ID)
 endif
 ifeq ($(HTTP_ENABLED),1)
-BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).http-config-$(HTTP_CONFIG_ID)
+BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).http-config-$(HTTP_CONFIG_ID)
 endif
 ifeq ($(ENABLE_JSON_GSLT),1)
-BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).json-gslt
+BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).json-gslt
 endif
 ifeq ($(ENABLE_PYTHON),1)
-BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).python-config-$(PYTHON_CONFIG_ID)
+BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).python-config-$(PYTHON_CONFIG_ID)
 endif
 ifeq ($(ENABLE_PETTA_TYPECHECK_V2),0)
-BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).no-petta-typecheck-v2
+BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).no-petta-typecheck-v2
 endif
 ifeq ($(ENABLE_PETTA_TYPECHECK_CENSUS),1)
-BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).petta-typecheck-census
+BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).petta-typecheck-census
 endif
 ifeq ($(ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS),1)
-BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).langdef-diagnostics
+BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).langdef-diagnostics
 endif
 # Generated source basenames also occupy the filesystem's component budget.
 # Keep long feature combinations distinct without exceeding that budget.
-ifeq ($(shell test $$(printf '%s' '$(BUILD_OBJ_TAG)' | wc -c) -gt 160 && printf yes),yes)
-BUILD_OBJ_TAG := $(BUILD_CANON).config-$(shell printf '%s' '$(BUILD_OBJ_TAG)' | sha256sum | cut -c1-64)
+ifeq ($(shell test $$(printf '%s' '$(BUILD_CANONICAL_OBJ_TAG)' | wc -c) -gt 160 && printf yes),yes)
+BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANON).config-$(shell printf '%s' '$(BUILD_CANONICAL_OBJ_TAG)' | sha256sum | cut -c1-64)
 endif
+BUILD_OBJ_TAG = $(BUILD_CANONICAL_OBJ_TAG)
 SANITIZER_WORDS := $(subst $(comma), ,$(SANITIZERS))
 
 # Test and probe invocations must not share the public ./cetta output.  A
@@ -616,6 +617,19 @@ endif
 ifeq ($(ENABLE_PIC),1)
 CFLAGS += -fPIC
 endif
+
+include make/build_object_tag.mk
+
+.PHONY: test-build-object-tag-isolation test-build-object-tag-full-isolation
+test-build-object-tag-isolation:
+	@python3 tests/support/check_build_object_tag.py
+
+# The full regression deliberately runs `test` in a separate forced-tag
+# namespace, then checks its original linked binary and arithmetic answers.
+test-build-object-tag-full-isolation:
+	@python3 tests/support/check_build_object_tag_full.py
+
+test: test-build-object-tag-isolation
 
 HE_COMPILED_READER_RUNTIME_SRC = \
 	src/he_compiled_reader.c \
@@ -771,14 +785,14 @@ OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).runtime-stats.o)
 PUBLIC_BIN = runtime/cetta-$(BUILD_CANON)-runtime-stats
 PUBLIC_BIN_FORCE =
 ifeq ($(CETTA_TEST_ISOLATED),1)
-BIN = runtime/cetta-$(BUILD_OBJ_TAG)-runtime-stats
+BIN = runtime/cetta-$(BUILD_BINARY_TAG)-runtime-stats
 FALLBACK_EVAL_TEST_BIN = runtime/test_fallback_eval_session-$(BUILD_OBJ_TAG)-runtime-stats
 else
 BIN = runtime/cetta-$(BUILD_CANON)-runtime-stats
 FALLBACK_EVAL_TEST_BIN = runtime/test_fallback_eval_session-$(BUILD_CANON)-runtime-stats
 endif
 FALLBACK_EVAL_TEST_OBJ = runtime/bootstrap/test_fallback_eval_session.$(BUILD_OBJ_TAG).runtime-stats.o
-BIN_FORCE =
+BIN_FORCE = $(BUILD_BINARY_FORCE)
 else
 OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).o)
 PUBLIC_BIN = cetta
@@ -786,8 +800,8 @@ PUBLIC_BIN_FORCE = FORCE
 FALLBACK_EVAL_TEST_OBJ = runtime/bootstrap/test_fallback_eval_session.$(BUILD_OBJ_TAG).o
 FALLBACK_EVAL_TEST_BIN = runtime/test_fallback_eval_session-$(BUILD_CANON)
 ifeq ($(CETTA_TEST_ISOLATED),1)
-BIN = runtime/cetta-$(BUILD_OBJ_TAG)
-BIN_FORCE =
+BIN = runtime/cetta-$(BUILD_BINARY_TAG)
+BIN_FORCE = $(BUILD_BINARY_FORCE)
 else
 BIN = cetta
 BIN_FORCE = FORCE
@@ -1871,7 +1885,7 @@ PRIME_NIK_PROOF_DAG_TEST_V1 = tools/test_nik_proof_dag_v1.py
 MEGALODON_AUTO_BIN ?= $(abspath ../../Mettapedia/megalodon/bin/megalodon)
 MEGALODON_HOTG_PREAMBLE ?= $(abspath ../../Mettapedia/megalodon/ramsey36/preamble.mgs)
 MEGALODON_HOTG_FAMILY_SOURCE ?= $(abspath ../../Mettapedia/megalodon/theory/foundations/family_enclosing_universe.mg)
-MEGALODON_PRIME_TOWER_SOURCE ?= $(abspath ../../Mettapedia/megalodon/theory/foundations/prime_tower_inside_sets.mg)
+MEGALODON_HOTG_TOWER_SOURCE ?= $(abspath ../../Mettapedia/megalodon/theory/foundations/megalodon_hotg_tower_inside_sets.mg)
 METTAPEDIA_LEAN_ROOT ?=
 METTAPEDIA_LEAN_AUTO_ROOT ?= $(abspath ../../Mettapedia/lean/mettapedia)
 GSLT_IL_LANGDEF_V1 = langdef/gslt-il/langdef.metta
@@ -3069,6 +3083,18 @@ HE_COMPAT_CATALOG = $(HE_COMPAT_GENERATED_DIR)/he_compat_cases_2026-06-25.json
 HE_NATIVE_CONTRACTS = $(HE_COMPAT_GENERATED_DIR)/he_native_contracts_2026-06-25.json
 TEST_MANIFEST = tests/test_manifest.tsv
 PRIME_CONFORMANCE_TESTS = \
+	tests/prime/common_set/default_core.metta \
+	tests/prime/common_set/assumption_origins.metta \
+	tests/prime/common_set/construction_origins.metta \
+	tests/prime/common_set/schema_resources.metta \
+	tests/prime/scoped/rule_dependency_currentness.metta \
+	tests/prime/theory_profiles/libraries.metta \
+	tests/prime/theory_profiles/models.metta \
+	tests/prime/theory_profiles/unselected.metta \
+	tests/prime/theory_profiles/isolation.metta \
+	tests/prime/theory_profiles/receipts.metta \
+	tests/prime/theory_profiles/hol_citations.metta \
+	tests/prime/theory_profiles/cross_profile_citations.metta \
 	tests/prime_02_completion_resources.metta \
 	tests/prime/conformance/saved_bindings.metta \
 	tests/prime/need_application.metta \
@@ -3080,10 +3106,25 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/need_gc_lifetime.metta \
 	tests/prime/need_storage_boundary.metta \
 	tests/prime/cardinality_observer_dynamic_space.metta \
-	tests/prime/need_quote_preservation.metta \
 	tests/prime/quote_head_matching.metta \
+	tests/prime/lift_brackets.metta \
 	tests/prime/data_holding.metta \
 	tests/prime/nullary_constants.metta \
+	tests/prime/symbols/unused_cycle.metta \
+	tests/prime/symbols/cyclic_prefix.metta \
+	tests/prime/symbols/shared_choice.metta \
+	tests/prime/symbols/graded_production.metta \
+	tests/prime/symbols/handler_scope.metta \
+	tests/prime/symbols/suspend_resume.metta \
+	tests/prime/symbols/admission_conservative.metta \
+	tests/prime/symbols/revision.metta \
+	tests/prime/symbols/long_history.metta \
+	tests/prime/demand/bubbles.metta \
+	tests/prime/causal/structural_model.metta \
+	tests/prime/causal/twin_experiment.metta \
+	tests/prime/causal/composition_regions.metta \
+	tests/prime/causal/adaptive_policy.metta \
+	tests/prime/causal/feedback.metta \
 	tests/prime/held_equality.metta \
 	tests/prime/held_patterns.metta \
 	tests/prime/stored_variable_identity.metta \
@@ -3135,10 +3176,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/conformance/syntax_algebra.metta \
 	tests/prime/conformance/typed_equality.metta \
 	tests/prime/conformance/unbounded_search.metta \
-	tests/prime/scoped/set_judgments.metta \
 	tests/prime/scoped/lang_judgments.metta \
-	tests/prime/scoped/live_propositions.metta \
-	tests/prime/scoped/judgment_continuations.metta \
 	tests/prime/scoped/identity_eliminator.metta \
 	tests/prime/scoped/universe_transport.metta \
 	tests/prime/scoped/type_valued_recursion.metta \
@@ -3153,9 +3191,6 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/scoped/level_least_instance.metta \
 	tests/prime/scoped/level_instance_from_all_uses.metta \
 	tests/prime/scoped/omega_ordinary_symbol.metta \
-	tests/prime/scoped/sets_are_ambient.metta \
-	tests/prime/scoped/large_carrier_rule_constants.metta \
-	tests/prime/scoped/try.metta \
 	tests/prime/scoped/conversion_authority.metta \
 	tests/prime/scoped/typed_eta_conversion.metta \
 	tests/prime/scoped/refutation_nil_cons.metta \
@@ -3165,9 +3200,6 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/scoped/reserved_names.metta \
 	tests/prime/scoped/syntax_word_names.metta \
 	tests/prime/scoped/named_binder_types.metta \
-	tests/prime/scoped/import_admissions.metta \
-	tests/prime/scoped/retained_presentations.metta \
-	tests/prime/scoped/authority.metta \
 	tests/prime/scoped/hol_map_fusion.metta \
 	tests/prime/scoped/list_reversal.metta \
 	tests/prime/scoped/map_fusion_verbs.metta \
@@ -3180,17 +3212,16 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/scoped/map_fusion_defined.metta \
 	tests/prime/scoped/nat_arithmetic.metta \
 	tests/prime/scoped/by_instance_verdicts.metta \
+	tests/prime/scoped/native_readable_steps.metta \
 	tests/prime/scoped/tree_mirror.metta \
 	tests/prime/scoped/bool_and_negation.metta \
 	tests/prime/scoped/propositions_defined.metta \
-	tests/prime/scoped/falsum_definition.metta \
 	tests/prime/scoped/set_eq_polymorphic_definitions.metta \
 	tests/prime/scoped/definition_revision_closure.metta \
 	tests/prime/scoped/runtime_reduct_vocabulary.metta \
 	tests/prime/scoped/curriculum_lean.metta \
 	tests/prime/scoped/curriculum_coq.metta \
 	tests/prime/scoped/curriculum_hol.metta \
-	tests/prime/scoped/curriculum_megalodon.metta \
 	tests/prime/scoped/contexts_live_reads.metta \
 	tests/prime/scoped/contexts_conflicts.metta \
 	tests/prime/scoped/contexts_first_answer.metta \
@@ -3199,29 +3230,25 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/scoped/lang_step.metta \
 	tests/prime/scoped/fusion_reuse.metta \
 	tests/prime/scoped/map_fusion_dtt.metta \
-	tests/prime/scoped/native_proof_package.metta \
-	tests/prime/scoped/native_proof_normalization.metta \
-	tests/prime/scoped/native_higher_order_pair.metta \
 	tests/prime/scoped/native_dependency_revisions.metta \
-	tests/prime/scoped/hotg_universe_native_use.metta \
-	tests/prime/scoped/hotg_proof_carrying_pipeline.metta \
 	tests/prime/scoped/induction_append_nil.metta \
 	tests/prime/scoped/induction_curriculum.metta \
 	tests/prime/trinity/append.operational.metta \
 	tests/prime/trinity/append.intensional.metta \
-	tests/prime/trinity/append.extensional.metta \
+	tests/prime/trinity/list_param.operational.metta \
+	tests/prime/trinity/list_param.intensional.metta \
 	tests/prime/trinity/reverse.operational.metta \
 	tests/prime/trinity/reverse.intensional.metta \
 	tests/prime/trinity/reverse.extensional.metta \
-	tests/prime/trinity/power-in-universe.metta \
 	tests/prime/trinity/log2.metta \
 	tests/prime/trinity/arith.binary.metta \
 	tests/prime/trinity/arith.oracle.metta \
 	tests/prime/trinity/stream.metta \
-	tests/prime/trinity/stream.family.metta \
 	tests/prime/trinity/query.typed.metta \
 	tests/prime/trinity/call.typed.metta \
-	tests/prime/scoped/inductive_formation.metta \
+	tests/prime/scoped/inductive_parameters.metta \
+	tests/prime/scoped/implicit_type_of.metta \
+	tests/prime/scoped/pf_equality_binders.metta \
 	tests/prime/scoped/definition_admission.metta \
 	tests/prime/scoped/admission_verdicts.metta \
 	tests/prime/scoped/wide_definitions.metta \
@@ -3242,12 +3269,11 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/scoped/certified_transform_article.metta \
 	tests/prime/scoped/binder_capture.metta \
 	tests/prime/scoped/native_function_domain_boundary.metta \
+	tests/prime/scoped/imported_proof_replay.metta \
+	tests/prime/scoped/typing_dependency_currentness.metta \
 	tests/prime/scoped/forks/observation.metta \
-	tests/prime/scoped/forks/identity.metta \
-	tests/prime/scoped/forks/admission.metta \
-	tests/prime/scoped/forks/evaluation.metta \
-	tests/prime/scoped/forks/host.metta \
-	tests/prime/scoped/forks/reasoning.metta
+	tests/prime/scoped/forks/evaluation.metta
+
 PRIME_EXAMPLE_TESTS = \
 	examples/prime/exact_gradual.metta \
 	examples/prime/dependent_telescope.metta \
@@ -3551,25 +3577,25 @@ all: $(BIN)
 	@echo "Tip: ./$(BIN) -v prints the active version and build mode"
 
 core:
-	@$(MAKE) BUILD=core $(BIN)
+	@$(MAKE) BUILD=core all
 
 python:
-	@$(MAKE) BUILD=python $(BIN)
+	@$(MAKE) BUILD=python all
 
 mork:
-	@$(MAKE) BUILD=mork $(BIN)
+	@$(MAKE) BUILD=mork all
 
 main:
-	@$(MAKE) BUILD=main $(BIN)
+	@$(MAKE) BUILD=main all
 
 pathmap:
-	@$(MAKE) BUILD=pathmap $(BIN)
+	@$(MAKE) BUILD=pathmap all
 
 full:
-	@$(MAKE) BUILD=full $(BIN)
+	@$(MAKE) BUILD=full all
 
 profile:
-	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 ENABLE_RUNTIME_TIMING=1 $(BIN)
+	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 ENABLE_RUNTIME_TIMING=1 all
 
 bench-metamath-d5: $(BIN)
 	@./scripts/bench_metamath_d5.sh
@@ -3659,32 +3685,32 @@ else
 endif
 
 bench-fc-backend-matrix:
-	@$(MAKE) -s BUILD=main ENABLE_RUNTIME_STATS=0 $(BIN)
+	@$(MAKE) -s BUILD=main ENABLE_RUNTIME_STATS=0 all
 	@./scripts/bench_fc_backend_matrix.sh
 
 bench-space-backend-matrix:
-	@$(MAKE) -s BUILD=main ENABLE_RUNTIME_STATS=0 $(BIN)
+	@$(MAKE) -s BUILD=main ENABLE_RUNTIME_STATS=0 all
 	@./scripts/bench_space_backend_matrix.sh
 
 bench-space-transfer-matrix:
-	@$(MAKE) -s BUILD=main ENABLE_RUNTIME_STATS=0 $(BIN)
+	@$(MAKE) -s BUILD=main ENABLE_RUNTIME_STATS=0 all
 	@./scripts/bench_space_transfer_matrix.sh
 
 # Standalone frontier entry point; exhaustive readiness runs the witnessed target once.
 bench-space-scale-ladder:
-	@$(MAKE) -s BUILD=main ENABLE_RUNTIME_STATS=0 $(BIN)
+	@$(MAKE) -s BUILD=main ENABLE_RUNTIME_STATS=0 all
 	@./scripts/bench_space_scale_ladder.sh
 
 bench-ffi-friction-light:
-	@$(MAKE) -s BUILD=main ENABLE_RUNTIME_STATS=0 $(BIN)
+	@$(MAKE) -s BUILD=main ENABLE_RUNTIME_STATS=0 all
 	@./scripts/bench_ffi_friction_suite.sh light $(or $(BENCH_FFI_LIGHT_N),1000) $(or $(BENCH_FFI_LIGHT_ROUNDS),1)
 
 bench-ffi-friction-basic:
-	@$(MAKE) -s BUILD=main ENABLE_RUNTIME_STATS=0 $(BIN)
+	@$(MAKE) -s BUILD=main ENABLE_RUNTIME_STATS=0 all
 	@./scripts/bench_ffi_friction_suite.sh basic $(or $(BENCH_FFI_BASIC_N),10000) $(or $(BENCH_FFI_BASIC_ROUNDS),3)
 
 bench-ffi-friction-stress:
-	@$(MAKE) -s BUILD=main ENABLE_RUNTIME_STATS=0 $(BIN)
+	@$(MAKE) -s BUILD=main ENABLE_RUNTIME_STATS=0 all
 	@./scripts/bench_ffi_friction_suite.sh stress $(or $(BENCH_FFI_STRESS_N),50000) $(or $(BENCH_FFI_STRESS_ROUNDS),3)
 
 bench-ffi-friction-heavy:
@@ -3693,12 +3719,12 @@ bench-ffi-friction-heavy:
 		echo "Try: BENCH_FFI_ALLOW_HEAVY=1 make bench-ffi-friction-heavy"; \
 		exit 2; \
 	fi
-	@$(MAKE) -s BUILD=main ENABLE_RUNTIME_STATS=0 $(BIN)
+	@$(MAKE) -s BUILD=main ENABLE_RUNTIME_STATS=0 all
 	@BENCH_FFI_ALLOW_HEAVY=1 ./scripts/bench_ffi_friction_suite.sh heavy $(or $(BENCH_FFI_HEAVY_N),100000) $(or $(BENCH_FFI_HEAVY_ROUNDS),3)
 
 perf-runtime-stats:
 ifeq ($(ENABLE_RUNTIME_STATS),1)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 all
 	@$(CETTA_SCRIPT_RUN_ENV) ./scripts/bench_runtime_stats_probe.sh
 else
 	@echo "INFO: runtime-stats probe requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
@@ -4121,11 +4147,98 @@ test-prime-need-algebra:
 		ENABLE_PRIME_CAUSAL_RECEIPTS=1 $@
 endif
 
+# Identity namespaces never wrap (src/identity_counter.h).  The unit harness
+# compiles src/prime_need.c with hooks that place a namespace near its end;
+# the exhaustion run links that object into a cetta binary, so a whole
+# program meets an exhausted namespace.  The registry harness does the same
+# for capability serials.
+PRIME_NEED_IDENTITY_TEST_BIN = runtime/test_prime_need_identity-$(BUILD_OBJ_TAG)
+PRIME_NEED_IDENTITY_HOOK_CPPFLAGS = -DCETTA_PRIME_NEED_IDENTITY_TEST_HOOKS=1
+PRIME_NEED_IDENTITY_CHECKS := 214
+PRIME_NEED_IDENTITY_EXHAUSTION_DIR = runtime/prime-need-identity-exhaustion-$(BUILD_OBJ_TAG)
+PRIME_NEED_IDENTITY_EXHAUSTION_SEEDS = control thunk session serial \
+	authority storage-key receipt-session receipt-node source-occurrence \
+	evaluator resample-scope
+REGISTRY_CAPABILITY_IDENTITY_DIR = runtime/registry-capability-identity-$(BUILD_OBJ_TAG)
+REGISTRY_CAPABILITY_IDENTITY_CHECKS := 7
+
+$(PRIME_NEED_IDENTITY_TEST_BIN): tests/test_prime_need_identity.c src/prime_need.c src/prime_need.h src/identity_counter.h src/symbol.c src/atom.c src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(PRIME_NEED_UNIT_CPPFLAGS) $(PRIME_NEED_IDENTITY_HOOK_CPPFLAGS) $(CFLAGS) \
+		-o $@ tests/test_prime_need_identity.c src/prime_need.c src/symbol.c src/atom.c src/binding/frame_identity.c $(LDFLAGS)
+
+.PHONY: test-prime-need-identity
+test-prime-need-identity: $(PRIME_NEED_IDENTITY_TEST_BIN)
+	@result=$$(./$(PRIME_NEED_IDENTITY_TEST_BIN) 2>&1); \
+	printf '%s\n' "$$result"; \
+	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(PrimeNeedIdentitySummary $(PRIME_NEED_IDENTITY_CHECKS) $(PRIME_NEED_IDENTITY_CHECKS) 0)')" -ne 1 ]; then \
+		echo "FAIL: Prime Need identity exact summary absent or duplicated"; \
+		exit 1; \
+	fi; \
+	echo "PASS: Need identity namespaces issue their last identity, then refuse for good"
+
+.PHONY: test-prime-need-identity-exhaustion
+test-prime-need-identity-exhaustion: $(BIN)
+	@set -eu; \
+	dir=$(PRIME_NEED_IDENTITY_EXHAUSTION_DIR); \
+	mkdir -p "$$dir"; \
+	$(CC) $(CPPFLAGS) $(PRIME_NEED_IDENTITY_HOOK_CPPFLAGS) $(CFLAGS) \
+		-c src/prime_need.c -o "$$dir/prime_need.o"; \
+	$(CC) $(CFLAGS) -o "$$dir/cetta" "$$dir/prime_need.o" \
+		$(filter-out $(filter src/prime_need.%,$(OBJ)),$(OBJ)) $(LDFLAGS); \
+	source=tests/prime/need_identity_exhaustion.metta; \
+	for seed in $(PRIME_NEED_IDENTITY_EXHAUSTION_SEEDS); do \
+		case "$$seed" in \
+			control) value=; want=0;; \
+			thunk) value=thunk=last; want=1;; \
+			*) value="$$seed=exhausted"; want=1;; \
+		esac; \
+		status=0; \
+		CETTA_TEST_PRIME_NEED_IDENTITY_SEED="$$value" \
+			timeout $(PRIME_COMPLETION_TIMEOUT) \
+			$(call cetta_exec,./$$dir/cetta) --lang prime "$$source" \
+			>"$$dir/$$seed.out" 2>&1 || status=$$?; \
+		if ! diff -u "tests/prime/need_identity_exhaustion.$$seed.expected" \
+			"$$dir/$$seed.out"; then \
+			echo "FAIL: Need identity exhaustion ($$seed) output"; exit 1; \
+		fi; \
+		if [ "$$status" -ne "$$want" ]; then \
+			echo "FAIL: Need identity exhaustion ($$seed) exit $$status, expected $$want"; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: a program meeting an exhausted Need identity namespace reports incomplete queries"
+
+.PHONY: test-registry-capability-identity
+test-registry-capability-identity: $(REGISTRY_RESOLVER_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@set -eu; \
+	dir=$(REGISTRY_CAPABILITY_IDENTITY_DIR); \
+	mkdir -p "$$dir"; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_REGISTRY_CAPABILITY_TEST_HOOKS=1 \
+		-c src/registry_resolver.c -o "$$dir/registry_resolver.o"; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_REGISTRY_CAPABILITY_TEST_HOOKS=1 \
+		-c tests/test_registry_capability_identity.c -o "$$dir/test.o"; \
+	$(CC) $(CFLAGS) -o "$$dir/test_registry_capability_identity" \
+		"$$dir/test.o" "$$dir/registry_resolver.o" \
+		$(filter-out $(filter src/registry_resolver.%,$(REGISTRY_RESOLVER_TEST_LINK_OBJ)),$(REGISTRY_RESOLVER_TEST_LINK_OBJ)) \
+		$(LDFLAGS); \
+	result=$$("$$dir/test_registry_capability_identity" 2>&1); \
+	printf '%s\n' "$$result"; \
+	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(RegistryCapabilityIdentitySummary $(REGISTRY_CAPABILITY_IDENTITY_CHECKS) $(REGISTRY_CAPABILITY_IDENTITY_CHECKS) 0)')" -ne 1 ]; then \
+		echo "FAIL: registry capability identity exact summary absent or duplicated"; \
+		exit 1; \
+	fi; \
+	echo "PASS: registry capability serials issue their last serial, then refuse for good"
+
+test-prime: test-prime-need-identity test-prime-need-identity-exhaustion \
+	test-registry-capability-identity
+test: test-prime-need-identity test-registry-capability-identity
+
 .PHONY: test-prime-need-quote-preservation
 test-prime-need-quote-preservation: $(BIN)
-	@actual=$$($(CETTA_BIN_INVOKE) --lang prime \
-		tests/prime/need_quote_preservation.metta 2>&1); \
-	expected=$$(cat tests/prime/need_quote_preservation.expected); \
+	@actual=$$($(CETTA_BIN_INVOKE) --lang prime --profile quote-as-written \
+		tests/prime/quote_profiles/need_quote_preservation.metta 2>&1); \
+	expected=$$(cat tests/prime/quote_profiles/need_quote_preservation.quote-as-written.expected); \
 	if [ "$$actual" != "$$expected" ]; then \
 		echo "FAIL: Prime Need forced syntax below quote"; \
 		diff <(printf '%s\n' "$$expected") \
@@ -4373,6 +4486,22 @@ test-prime-causal-receipt-disabled-transparency-body: $(BIN)
 		exit 1; \
 	fi; \
 	echo 'PASS: disabled Prime causal receipts perform zero observer work'
+
+# The causal fixtures state one refusal the draft does not give yet: a
+# context restricted to a region refuses bindings outside it.  This probe runs
+# that fixture and reports it pending until the guard lands; it is not part of
+# test-prime.
+.PHONY: probe-prime-causal-region-guard
+probe-prime-causal-region-guard: $(BIN)
+	@f=tests/prime/causal/region_guard.pending.metta; \
+	exp=tests/prime/causal/region_guard.pending.expected; \
+	result=$$(timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime "$$f" 2>&1); \
+	if [ "$$result" = "$$(cat "$$exp")" ]; then \
+		echo "PASS: $$f (the region guard has landed; register the fixture in PRIME_CONFORMANCE_TESTS)"; \
+	else \
+		echo "PENDING: $$f (no native region guard on contexts)"; \
+		diff <(cat "$$exp") <(echo "$$result") | head -20; \
+	fi
 
 test-prime-cell-causal-reference:
 	@python3 tests/prime/test_cell_causal_reference.py
@@ -4843,7 +4972,7 @@ test-registry-resolver: $(REGISTRY_RESOLVER_TEST_BIN)
 
 test-prime-universal-name-resolver: test-registry-resolver
 ifeq ($(ENABLE_RUNTIME_STATS),1)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 all
 	@source=tests/prime/universal_name_registry_branch_clone.metta; \
 	if [ "$$(grep -Ec '^!\((assertEqual|assertEqualToResult)' "$$source")" -ne 5 ]; then \
 		echo "FAIL: structural registry branch-clone guard assertion inventory drifted"; \
@@ -5462,7 +5591,7 @@ endif
 
 # Stage 0: kernel-only binary (no precompiled stdlib)
 STAGE0_OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).stage0.o)
-BUILD_CONFIG_INPUTS = Makefile $(VERSION_FILE)
+BUILD_CONFIG_INPUTS = Makefile make/build_object_tag.mk $(VERSION_FILE)
 DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \
 	$(PREPARED_PURE_ANSWER_TEST_OBJ:.o=.d) \
 	$(FALLBACK_EVAL_TEST_OBJ:.o=.d) \
@@ -18093,7 +18222,7 @@ test-eval-gc-adversarial: $(BIN)
 .PHONY: test-eval-gc-precise-suspension test-eval-gc-control-suspensions test-prime-monolithic-equation-gc-decline
 test-eval-gc-precise-suspension:
 ifeq ($(ENABLE_RUNTIME_STATS),1)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 all
 	@exp="$(GC_PRECISE_SUSPENSION_TEST:.metta=.expected)"; \
 	result=$$(CETTA_GC=1 CETTA_GC_BUDGET_MB=1 $(CETTA_BIN_INVOKE) --profile extended --lang he $(GC_PRECISE_SUSPENSION_TEST) 2>&1); \
 	if [ "$$result" = "$$(cat "$$exp")" ]; then \
@@ -18110,7 +18239,7 @@ endif
 
 test-eval-gc-control-suspensions:
 ifeq ($(ENABLE_RUNTIME_STATS),1)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 all
 	@result=$$(CETTA_GC=1 CETTA_GC_BUDGET_MB=1 \
 		CETTA_PRIME_NEED_HEAP_INDEX=1 $(CETTA_BIN_INVOKE) \
 		--lang prime $(GC_CONTROL_SUSPENSIONS_TEST) 2>&1); \
@@ -18129,7 +18258,7 @@ endif
 
 test-prime-monolithic-equation-gc-decline:
 ifeq ($(ENABLE_RUNTIME_STATS),1)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 all
 	@result=$$(CETTA_GC=1 CETTA_GC_BUDGET_MB=1 \
 		CETTA_PRIME_NEED_HEAP_INDEX=1 $(CETTA_BIN_INVOKE) \
 		--emit-runtime-stats --lang prime \
@@ -18177,7 +18306,7 @@ endif
 
 test-eval-gc-survivor-reset:
 ifeq ($(ENABLE_RUNTIME_STATS),1)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 all
 	@result=$$(CETTA_GC=1 CETTA_GC_BUDGET_MB=1 $(CETTA_BIN_INVOKE) --profile extended --lang he $(GC_SURVIVOR_RESET_TEST) 2>&1); \
 	exp="$(GC_SURVIVOR_RESET_TEST:.metta=.expected)"; \
 	if [ "$$result" = "$$(cat "$$exp")" ]; then \
@@ -19011,7 +19140,17 @@ test-list-value-lanes: $(BIN)
 		echo "FAIL: --lang petta reads CeTTa list syntax"; \
 		printf '%s\n' "$$got"; exit 1; \
 	fi; \
-	echo "PASS: list values in the extended profiles and Prime; the compatibility profiles keep [a,b] a symbol"
+	got=$$(./$(BIN) --lang he --profile extended -e '!(quote -[det]->)' 2>&1); \
+	if [ "$$got" != "[(quote -[det]->)]" ]; then \
+		echo "FAIL: the HE extended profile splits a word at its brackets"; \
+		printf '%s\n' "$$got"; exit 1; \
+	fi; \
+	got=$$(./$(BIN) --lang prime -e '!(quote (-[det]->))' 2>&1); \
+	if [ "$$got" != "[(quote (-[det] ->))]" ]; then \
+		echo "FAIL: Prime reads a bracket touching a word as part of the word"; \
+		printf '%s\n' "$$got"; exit 1; \
+	fi; \
+	echo "PASS: list values in the extended profiles and Prime; the compatibility profiles keep [a,b] a symbol; brackets end Prime's tokens only, and a bracket touching a word is its meta-argument"
 
 .PHONY: build-tptp-frozen-ladder-v1
 build-tptp-frozen-ladder-v1: $(TPTP_FROZEN_LADDER_V1_BIN)
@@ -20606,7 +20745,7 @@ test-runtime-stats:
 test-runtime-stats-lane: test-runtime-stats
 
 test-runtime-stats-lane-body:
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 all
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-term-universe-store-abi
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-term-universe-backend-add-abi
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-runtime-stats-cli
@@ -20810,7 +20949,7 @@ test-petta-hyperpose-shared-effects-runtime-stats: $(BIN)
 
 test-runtime-stats-metta-suite:
 ifeq ($(ENABLE_RUNTIME_STATS),1)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 all
 	@pass=0; fail=0; no_exp=0; \
 	for f in $(RUNTIME_STATS_METTA_TESTS); do \
 		exp="$${f%.metta}.expected"; \
@@ -21783,7 +21922,7 @@ test-prime-relational-plan: $(BIN)
 	fi; \
 	for relational_case in \
 		tests/prime/relational_first_demand.metta \
-		tests/prime/scoped/judgment_continuations.metta \
+		tests/prime/profiles/megalodon_hotg/scoped/judgment_continuations.metta \
 		tests/prime/authored_frontier_chaining.metta; do \
 		relational_expected=$$(cat "$${relational_case%.metta}.expected"); \
 		relational_canonical=$$(CETTA_PRIME_RELATIONAL_PLAN_REFERENCE=1 \
@@ -21824,7 +21963,7 @@ endif
 .PHONY: test-prime-nik-typed-applicability-pruning
 test-prime-nik-typed-applicability-pruning:
 ifeq ($(ENABLE_RUNTIME_STATS),1)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 all
 	@set -e; \
 	optimized_out=runtime/prime-nik-typed-applicability.out; \
 	optimized_err=runtime/prime-nik-typed-applicability.err; \
@@ -22270,7 +22409,7 @@ test-prime-regular-kernel-recognizer-mutation: $(PRIME_REGULAR_KERNEL_TEST_BIN)
 .PHONY: test-prime-regular-kernel-production-authority
 test-prime-regular-kernel-production-authority:
 ifeq ($(ENABLE_RUNTIME_STATS),1)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 all
 	@set -e; \
 	if rg -n 'getenv\(|cetta_prime_regular_kernel_.*_enabled\(' \
 		src/prime_regular_kernel_admission.c \
@@ -22359,7 +22498,7 @@ test-prime-regular-kernel-checking-flip: $(BIN) $(PRIME_REGULAR_KERNEL_LEGACY_RE
 .PHONY: test-prime-regular-kernel-checking-stats
 test-prime-regular-kernel-checking-stats:
 ifeq ($(ENABLE_RUNTIME_STATS),1)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 all
 	@set -e; \
 	stats_out=runtime/prime-regular-kernel-checking-stats.out; \
 	stats_err=runtime/prime-regular-kernel-checking-stats.err; \
@@ -22415,7 +22554,7 @@ test-prime-regular-kernel-formation-flip: $(BIN) $(PRIME_REGULAR_KERNEL_LEGACY_R
 .PHONY: test-prime-regular-kernel-formation-stats
 test-prime-regular-kernel-formation-stats:
 ifeq ($(ENABLE_RUNTIME_STATS),1)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 all
 	@set -e; \
 	stats_out=runtime/prime-regular-kernel-formation-stats.out; \
 	stats_err=runtime/prime-regular-kernel-formation-stats.err; \
@@ -22928,7 +23067,30 @@ test-prime-context-profiles: $(BIN)
 	echo "Prime context profiles: $$pass passed, $$fail failed"; \
 	[ $$fail -eq 0 ]
 
-test-prime: $(BIN) $(PRIME_REGULAR_KERNEL_TEST_BIN) test-prime-identity-profiles test-prime-context-profiles test-prime-public-judgment-vocabulary test-prime-regular-pattern test-prime-regular-pattern-mutations test-prime-open-lambda-pi-langdef-source-binding-v1 test-prime-open-lambda-pi-langdef-mutations test-prime-open-regular-kernel-source-binding-v1 test-prime-open-regular-kernel-mutations test-prime-coverage test-prime-budget-monotonicity test-prime-package-validation test-prime-internal-graduality test-prime-nik-core-v1 test-prime-nik-typed-applicability-pruning test-prime-regular-kernel-conversion-flip test-prime-regular-kernel-synthesis-flip test-prime-regular-kernel-checking-flip test-prime-regular-kernel-checking-stats test-prime-regular-kernel-formation-flip test-prime-regular-kernel-formation-stats test-prime-regular-kernel-refinement-boundary test-prime-regular-kernel-production-authority test-prime-regular-kernel-resource-honesty test-prime-regular-kernel-recognizer-mutation test-prime-regular-kernel-admission-mutations test-prime-regular-kernel-verdict-polarity-mutations test-prime-regular-kernel-guard-mutations test-prime-producer-bound-native-checking-mutations test-prime-scoped-formation-route-mutation test-prime-declared-conversion-route-mutation test-prime-declared-formation-route-mutation test-prime-typing-engine-fault-separation-mutation test-prime-regular-kernel-constructors test-prime-native-typed-flow test-prime-mil-benchmark-accounting test-prime-mil-native-workloads test-prime-mil-native-claim-guard test-prime-mil-zero-he-applicability-guard test-prime-popper-synthesis-manifest test-prime-hopper-table1-manifest test-prime-chaining-readiness-manifest test-prime-iggp-manifest test-prime-iggp-type-of-inference test-prime-gdl-positive-horn-native test-prime-authored-chaining-fixtures
+# Prime seals quotations against every binder.  The quote-as-written
+# profile is the explicit opt-in bubble that keeps HE-style source capture;
+# each fixture states its answers under the profiles it has expectations for.
+PRIME_QUOTE_PROFILES := prime-default quote-as-written
+
+test-prime-quote-profiles: $(BIN)
+	@pass=0; fail=0; \
+	for f in tests/prime/quote_profiles/*.metta; do \
+	for p in $(PRIME_QUOTE_PROFILES); do \
+		exp="$${f%.metta}.$$p.expected"; \
+		[ -f "$$exp" ] || continue; \
+		result=$$(timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime --profile "$$p" "$$f" 2>&1); \
+		if [ "$$result" = "$$(cat "$$exp")" ]; then \
+			echo "PASS: $$f under $$p"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: $$f under $$p"; \
+			diff <(cat "$$exp") <(echo "$$result") | head -20; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; done; \
+	echo "Prime quote profiles: $$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
+
+test-prime: $(BIN) $(PRIME_REGULAR_KERNEL_TEST_BIN) test-prime-identity-profiles test-prime-context-profiles test-prime-quote-profiles test-prime-public-judgment-vocabulary test-prime-regular-pattern test-prime-regular-pattern-mutations test-prime-open-lambda-pi-langdef-source-binding-v1 test-prime-open-lambda-pi-langdef-mutations test-prime-open-regular-kernel-source-binding-v1 test-prime-open-regular-kernel-mutations test-prime-coverage test-prime-budget-monotonicity test-prime-package-validation test-prime-internal-graduality test-prime-nik-core-v1 test-prime-nik-typed-applicability-pruning test-prime-regular-kernel-conversion-flip test-prime-regular-kernel-synthesis-flip test-prime-regular-kernel-checking-flip test-prime-regular-kernel-checking-stats test-prime-regular-kernel-formation-flip test-prime-regular-kernel-formation-stats test-prime-regular-kernel-refinement-boundary test-prime-regular-kernel-production-authority test-prime-regular-kernel-resource-honesty test-prime-regular-kernel-recognizer-mutation test-prime-regular-kernel-admission-mutations test-prime-regular-kernel-verdict-polarity-mutations test-prime-regular-kernel-guard-mutations test-prime-producer-bound-native-checking-mutations test-prime-scoped-formation-route-mutation test-prime-declared-conversion-route-mutation test-prime-declared-formation-route-mutation test-prime-typing-engine-fault-separation-mutation test-prime-regular-kernel-constructors test-prime-native-typed-flow test-prime-mil-benchmark-accounting test-prime-mil-native-workloads test-prime-mil-native-claim-guard test-prime-mil-zero-he-applicability-guard test-prime-popper-synthesis-manifest test-prime-hopper-table1-manifest test-prime-chaining-readiness-manifest test-prime-iggp-manifest test-prime-iggp-type-of-inference test-prime-gdl-positive-horn-native test-prime-authored-chaining-fixtures
 	@"$(PRIME_REGULAR_KERNEL_TEST_BIN)" \
 		langdef/prime/generated/open_lambda_pi_core_v1.metta \
 		langdef/prime/generated/open_regular_kernel_v1.metta
@@ -22958,19 +23120,32 @@ test-prime-fuel-verdicts: $(BIN)
 	echo "Prime fuel verdicts: $$pass passed, $$fail failed"; \
 	[ $$fail -eq 0 ]
 
-.PHONY: test-prime-route-agreement
+.PHONY: test-prime-route-agreement test-prime-quote-profiles
+test-prime-fast-fixtures: test-prime-quote-profiles
 test-prime-fast-fixtures: test-prime-route-agreement
-# A query answers the same with and without --fuel: the default route (the
-# prepared calls, the Need machine and the evaluation stack) and the
-# canonical evaluator agree on each file here.
+test-prime-fast-fixtures: test-prime-scope-spectrum
+# A variable's #suffix is the instance the runtime gave it (a clause renamed
+# for a call, a template's own slot copied for an activation).  Fixtures
+# compare each answer line with its suffixes renumbered in order of first
+# occurrence: which positions share an instance is kept, the runtime's
+# numbering is not.
+PRIME_INSTANCE_RENUMBER = perl -pe 'my %m; my $$n = 0; s{(\$$[^\s()\#]*)\#(\d+)}{$$1 . "\#" . ($$m{$$2} //= ++$$n)}ge'
+
+# A query answers the same on every route: the default route (the prepared
+# calls, the Need machine and the evaluation stack), the relational plans'
+# reference evaluation, and the canonical evaluator (--fuel) agree on each
+# file here.
 test-prime-route-agreement: $(BIN)
 	@pass=0; fail=0; \
 	for f in tests/prime/routes/*.metta; do \
 		exp="$${f%.metta}.expected"; \
-		for route in default fuel; do \
-			if [ $$route = fuel ]; then flags="--fuel 1000000"; else flags=""; fi; \
-			result=$$(timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime $$flags "$$f" 2>&1); \
+		for route in default reference fuel; do \
+			flags=""; envs=""; \
+			if [ $$route = fuel ]; then flags="--fuel 1000000"; fi; \
+			if [ $$route = reference ]; then envs="CETTA_PRIME_RELATIONAL_PLAN_REFERENCE=1"; fi; \
+			result=$$(env $$envs timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime $$flags "$$f" 2>&1); \
 			status=$$?; \
+			result=$$(printf '%s\n' "$$result" | $(PRIME_INSTANCE_RENUMBER)); \
 			if [ $$status -eq 0 ] && [ "$$result" = "$$(cat "$$exp")" ]; then \
 				echo "PASS: $$f on the $$route route"; pass=$$((pass + 1)); \
 			else \
@@ -22981,6 +23156,47 @@ test-prime-route-agreement: $(BIN)
 		done; \
 	done; \
 	echo "Prime route agreement: $$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
+
+# The scope-policy spectrum corpus under the configurations that are not
+# route fixtures: each file declares its profile and runs on the default
+# route, compared as the route fixtures are.  The mercury-implicit and
+# lexical-inventory files are route fixtures (tests/prime/routes); he_*
+# files are HE controls.
+PRIME_SCOPE_SPECTRUM_TESTS = $(sort $(wildcard tests/prime/scope_spectrum/*.metta))
+# Documents the reader must refuse, each with the text its refusal holds.
+PRIME_SCOPE_SPECTRUM_REFUSED = $(sort $(wildcard tests/prime/scope_spectrum/refused/*.metta))
+.PHONY: test-prime-scope-spectrum
+test-prime-scope-spectrum: $(BIN)
+	@pass=0; fail=0; \
+	for f in $(PRIME_SCOPE_SPECTRUM_TESTS); do \
+		exp="$${f%.metta}.expected"; \
+		lang=prime; case "$$(basename "$$f")" in he_*) lang=he;; esac; \
+		result=$$(timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang $$lang "$$f" 2>&1); \
+		status=$$?; \
+		result=$$(printf '%s\n' "$$result" | $(PRIME_INSTANCE_RENUMBER)); \
+		if [ $$status -eq 0 ] && [ -f "$$exp" ] && [ "$$result" = "$$(cat "$$exp")" ]; then \
+			echo "PASS: $$f"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: $$f (exit $$status)"; \
+			diff <(cat "$$exp") <(echo "$$result") | head -20; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
+	for f in $(PRIME_SCOPE_SPECTRUM_REFUSED); do \
+		want="$$(cat "$${f%.metta}.refusal")"; \
+		result=$$(timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime "$$f" 2>&1); \
+		status=$$?; \
+		if [ $$status -ne 0 ] && [ $$status -ne 124 ] && [ -n "$$want" ] && \
+		   printf '%s\n' "$$result" | grep -Fq -- "$$want"; then \
+			echo "PASS: $$f is refused"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: $$f was not refused as $$want (exit $$status)"; \
+			printf '%s\n' "$$result" | head -5; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
+	echo "Prime scope spectrum: $$pass passed, $$fail failed"; \
 	[ $$fail -eq 0 ]
 
 .PHONY: test-prime-capability-opening
@@ -23162,7 +23378,7 @@ test-prime-all: test-prime test-prime-relational-plan test-prime-need-algebra te
 	test-prime-nik-megalodon-declarations-v1 \
 	test-prime-nik-megalodon-tactics-package-v1 \
 	test-prime-nik-megalodon-native-use-v1 \
-	test-prime-megalodon-set-proof-export-v1
+	test-prime-profile-megalodon-hotg-proof-export-v1
 	@echo "PASS: full Prime correctness gate"
 
 # The Prime gates that read runtime statistics run in the runtime-stats
@@ -29115,7 +29331,7 @@ endif
 
 test-petta-typecheck-v2-census-omission:
 ifeq ($(ENABLE_PETTA_TYPECHECK_CENSUS),0)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) $(BIN)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) all
 	@if nm -g "$(BIN)" | grep -Fq 'petta_typecheck_census'; then \
 		echo 'FAIL: production binary exports PeTTa typecheck census symbols'; \
 		exit 1; \
@@ -29153,7 +29369,7 @@ test-petta-typecheck-v2: $(BIN) $(PETTA_SEARCH_MACHINE_TEST_BIN) test-petta-anal
 
 test-petta-typecheck-v2-isolation-stats:
 ifeq ($(ENABLE_RUNTIME_STATS),1)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 all
 	@set -e; \
 	ordinary_out=runtime/typecheck-v2-isolation-ordinary.out; \
 	ordinary_err=runtime/typecheck-v2-isolation-ordinary.err; \
@@ -29254,7 +29470,7 @@ endif
 
 test-petta-nik-admission-boundary-controls:
 ifeq ($(ENABLE_RUNTIME_STATS),1)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 all
 	@set -e; \
 	static_out=runtime/petta-nik-static-admission.out; \
 	static_err=runtime/petta-nik-static-admission.err; \
@@ -29298,7 +29514,7 @@ endif
 
 test-petta-nik-typed-chaining:
 ifeq ($(ENABLE_RUNTIME_STATS),1)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 all
 	@set -e; \
 	optimized_out=runtime/petta-nik-typed-chaining.out; \
 	optimized_err=runtime/petta-nik-typed-chaining.err; \
@@ -29346,7 +29562,7 @@ endif
 
 test-petta-nik-typed-space-query:
 ifeq ($(ENABLE_RUNTIME_STATS),1)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 all
 	@set -e; \
 	indexed_out=runtime/petta-nik-typed-space-query.out; \
 	indexed_err=runtime/petta-nik-typed-space-query.err; \
@@ -29558,7 +29774,7 @@ test-prime-compiled-reader-v1: test-prime-compiled-reader-direct-generated-v1 te
 	@result=$$(./$(PRIME_COMPILED_READER_TEST_BIN) 2>&1); \
 	printf '%s\n' "$$result"; \
 	if [ "$$(printf '%s\n' "$$result" | \
-		grep -Fxc '(PrimeCompiledReaderV1Summary 105 105 0 cases 42)')" -ne 1 ]; then \
+		grep -Fxc '(PrimeCompiledReaderV1Summary 179 179 0 cases 77)')" -ne 1 ]; then \
 		echo "FAIL: compiled Prime reader exact differential summary absent or duplicated"; \
 		exit 1; \
 	fi; \
@@ -29794,7 +30010,7 @@ test-he-outcome-list-contracts: $(BIN) $(PRIME_DELAYED_AMBIGUITY_TEST_BIN) test-
 .PHONY: test-he-nik-typed-applicability-pruning
 test-he-nik-typed-applicability-pruning:
 ifeq ($(ENABLE_RUNTIME_STATS),1)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 all
 	@set -e; \
 	positive_out=runtime/he-nik-typed-applicability-positive.out; \
 	positive_err=runtime/he-nik-typed-applicability-positive.err; \
@@ -30127,7 +30343,7 @@ test-mork-runtime-stats-lane:
 	fi
 
 test-mork-runtime-stats-lane-body:
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 all
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-mork-runtime-stats-isolation-body
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-mork-add-atoms-runtime-stats-body
 
@@ -30286,7 +30502,7 @@ else
 endif
 
 test-pathmap-runtime-stats-lane-body:
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 all
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pathmap-indexed-query-work
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pathmap-indexed-admission-boundaries
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pathmap-pull-consumers-work
@@ -35456,26 +35672,30 @@ test-prime-nik-megalodon-native-use-v1: $(BIN) tools/megalodon_native_projection
 
 # The other direction: a set proof C has checked, written as a Megalodon
 # article after the development whose Part 7 states the eleven laws, and
-# checked again by Megalodon; altered articles must be rejected.
-.PHONY: test-prime-megalodon-set-proof-export-v1
-test-prime-megalodon-set-proof-export-v1: $(BIN) tools/megalodon_set_proof_export_v1.py \
+# checked again by Megalodon; altered articles must be rejected.  Every
+# theorem of the Naproche-ZF curriculum is checked so.
+.PHONY: test-prime-profile-megalodon-hotg-proof-export-v1
+test-prime-profile-megalodon-hotg-proof-export-v1: $(BIN) tools/megalodon_set_proof_export_v1.py \
 		tools/test_megalodon_set_proof_export_v1.py tools/gslt2parse_schema_v1.py \
-		tests/prime/trinity/power-in-universe.metta tests/prime/scoped/native_proof_package.metta \
-		tests/prime/scoped/hotg_universe_native_use.metta
+		tests/prime/profiles/megalodon_hotg/trinity/power-in-universe.metta tests/prime/profiles/megalodon_hotg/scoped/native_proof_package.metta \
+		tests/prime/profiles/megalodon_hotg/scoped/hotg_universe_native_use.metta tests/prime/profiles/megalodon_hotg/scoped/curriculum_naproche.metta \
+		tests/prime/profiles/megalodon_hotg/scoped/curriculum_naproche_eq.metta \
+		tests/prime/profiles/megalodon_hotg/scoped/cantor_readable.metta
 	@test -x "$(MEGALODON_AUTO_BIN)" || { echo "Megalodon executable is required for the set proof export"; exit 1; }
 	python3 tools/test_megalodon_set_proof_export_v1.py --cetta "$(abspath $(BIN))" \
 		--megalodon "$(MEGALODON_AUTO_BIN)" --hotg-preamble "$(MEGALODON_HOTG_PREAMBLE)" \
-		--development "$(MEGALODON_PRIME_TOWER_SOURCE)"
+		--development "$(MEGALODON_HOTG_TOWER_SOURCE)"
 
-# Export one theorem of a space:
-#   make megalodon-set-proof-export SOURCE=<file.metta> THEOREM=<name> OUT=<article.mg>
+# Export one theorem of a space (SPACE, such as &thy, when it is not &self):
+#   make megalodon-set-proof-export SOURCE=<file.metta> THEOREM=<name> OUT=<article.mg> [SPACE=&thy]
 .PHONY: megalodon-set-proof-export
 megalodon-set-proof-export: $(BIN) tools/megalodon_set_proof_export_v1.py
 	@test -n "$(SOURCE)" && test -n "$(THEOREM)" && test -n "$(OUT)" || \
-		{ echo "usage: make megalodon-set-proof-export SOURCE=<file.metta> THEOREM=<name> OUT=<article.mg>"; exit 1; }
+		{ echo "usage: make megalodon-set-proof-export SOURCE=<file.metta> THEOREM=<name> OUT=<article.mg> [SPACE=&thy]"; exit 1; }
 	python3 tools/megalodon_set_proof_export_v1.py --cetta "$(abspath $(BIN))" \
 		--source "$(SOURCE)" --theorem "$(THEOREM)" --out "$(OUT)" \
-		--development "$(MEGALODON_PRIME_TOWER_SOURCE)" \
+		$(if $(SPACE),--space "$(SPACE)",) \
+		--development "$(MEGALODON_HOTG_TOWER_SOURCE)" \
 		$(if $(wildcard $(MEGALODON_AUTO_BIN)),--megalodon "$(MEGALODON_AUTO_BIN)" --preamble "$(MEGALODON_HOTG_PREAMBLE)",)
 
 .PHONY: test-prime-nik-megalodon-tactics-package-v1
@@ -35530,7 +35750,7 @@ test-prime-nik-qualification-v1: \
 		test-prime-nik-megalodon-tactics-package-v1 \
 		test-prime-nik-megalodon-declarations-v1 \
 		test-prime-nik-megalodon-native-use-v1 \
-		test-prime-megalodon-set-proof-export-v1 \
+		test-prime-profile-megalodon-hotg-proof-export-v1 \
 		test-prime-nik-hotg-family-library-v1
 	@set -eu; \
 	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
@@ -42868,3 +43088,160 @@ test-supervise:
 endif
 
 test: test-supervise
+
+# Explicit set-theory guest fixtures, separate from native default coverage.
+PRIME_MEGALODON_HOTG_TESTS := \
+	tests/prime/profiles/megalodon_hotg/scoped/authority.metta \
+	tests/prime/profiles/megalodon_hotg/scoped/cantor_readable.metta \
+	tests/prime/profiles/megalodon_hotg/scoped/curriculum_megalodon.metta \
+	tests/prime/profiles/megalodon_hotg/scoped/curriculum_naproche.metta \
+	tests/prime/profiles/megalodon_hotg/scoped/curriculum_naproche_eq.metta \
+	tests/prime/profiles/megalodon_hotg/scoped/curried_lambda_redex.metta \
+	tests/prime/profiles/megalodon_hotg/scoped/equality_routes.metta \
+	tests/prime/profiles/megalodon_hotg/scoped/falsum_definition.metta \
+	tests/prime/profiles/megalodon_hotg/scoped/forks/admission.metta \
+	tests/prime/profiles/megalodon_hotg/scoped/forks/host.metta \
+	tests/prime/profiles/megalodon_hotg/scoped/forks/identity.metta \
+	tests/prime/profiles/megalodon_hotg/scoped/forks/reasoning.metta \
+	tests/prime/profiles/megalodon_hotg/scoped/hotg_proof_carrying_pipeline.metta \
+	tests/prime/profiles/megalodon_hotg/scoped/hotg_universe_native_use.metta \
+	tests/prime/profiles/megalodon_hotg/scoped/import_admissions.metta \
+	tests/prime/profiles/megalodon_hotg/scoped/inductive_formation.metta \
+	tests/prime/profiles/megalodon_hotg/scoped/judgment_continuations.metta \
+	tests/prime/profiles/megalodon_hotg/scoped/large_carrier_rule_constants.metta \
+	tests/prime/profiles/megalodon_hotg/scoped/live_propositions.metta \
+	tests/prime/profiles/megalodon_hotg/scoped/native_higher_order_pair.metta \
+	tests/prime/profiles/megalodon_hotg/scoped/native_proof_citations.metta \
+	tests/prime/profiles/megalodon_hotg/scoped/native_proof_normalization.metta \
+	tests/prime/profiles/megalodon_hotg/scoped/native_proof_package.metta \
+	tests/prime/profiles/megalodon_hotg/scoped/retained_presentations.metta \
+	tests/prime/profiles/megalodon_hotg/scoped/set_judgments.metta \
+	tests/prime/profiles/megalodon_hotg/scoped/sets_and_classes.metta \
+	tests/prime/profiles/megalodon_hotg/scoped/try.metta \
+	tests/prime/profiles/megalodon_hotg/trinity/append.extensional.metta \
+	tests/prime/profiles/megalodon_hotg/trinity/list_param.extensional.metta \
+	tests/prime/profiles/megalodon_hotg/trinity/power-in-universe.metta \
+	tests/prime/profiles/megalodon_hotg/trinity/stream.family.metta
+
+.PHONY: test-prime-profile-megalodon-hotg
+test-prime-profile-megalodon-hotg: $(BIN)
+	@pass=0; fail=0; \
+	for f in $(PRIME_MEGALODON_HOTG_TESTS); do \
+		exp="$${f%.metta}.expected"; \
+		result=$$(timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime "$$f" 2>&1); \
+		status=$$?; \
+		if [ $$status -eq 0 ] && [ "$$result" = "$$(cat "$$exp")" ]; then \
+			echo "PASS: $$f"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: $$f (exit $$status)"; fail=$$((fail + 1)); \
+			diff <(cat "$$exp") <(echo "$$result") | head -30; \
+		fi; \
+	done; \
+	echo "Megalodon HOTG profile: $$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
+
+test-prime: test-prime-profile-megalodon-hotg
+test: test-prime-profile-megalodon-hotg
+
+# The default gate runs the portable common-profile fixtures. This joined
+# gate additionally rebuilds their mathematical compiler and verifies every
+# retained native expectation against that current compiler.
+.PHONY: test-prime-common-set-profiles
+test-lean: test-prime-common-set-profiles
+test-prime-common-set-profiles: $(BIN)
+	@python3 scripts/check_prime_common_set_profiles.py \
+		--binary "$(abspath $(BIN))" \
+		--lean-root "$(METTAPEDIA_LEAN_CHECKOUT)" \
+		--output "runtime/common-set-profiles-$(BUILD_OBJ_TAG)"
+
+# Portable readout controls and observation-API context isolation do not
+# require a theorem-prover checkout. Their expectations remain authored data.
+PRIME_TYPING_RULE_CONTEXT_TEST_SRC = tests/support/test_prime_typing_rule_context.c
+PRIME_TYPING_RULE_CONTEXT_TEST_OBJ = runtime/bootstrap/test_prime_typing_rule_context.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PRIME_TYPING_RULE_CONTEXT_TEST_BIN = runtime/test_prime_typing_rule_context-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+-include $(PRIME_TYPING_RULE_CONTEXT_TEST_OBJ:.o=.d)
+
+$(PRIME_TYPING_RULE_CONTEXT_TEST_OBJ): $(PRIME_TYPING_RULE_CONTEXT_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
+
+$(PRIME_TYPING_RULE_CONTEXT_TEST_BIN): $(PRIME_TYPING_RULE_CONTEXT_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-typing-rule-context.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+.PHONY: test-prime-typing-rule-context test-prime-material-fixtures
+test-prime-typing-rule-context: $(PRIME_TYPING_RULE_CONTEXT_TEST_BIN)
+	@"$(PRIME_TYPING_RULE_CONTEXT_TEST_BIN)"
+
+test-prime-material-fixtures: $(BIN)
+	@python3 scripts/check_prime_material_fixtures.py \
+		--binary "$(abspath $(BIN))" \
+		--output "runtime/material-fixtures-$(BUILD_OBJ_TAG)"
+
+test-prime: test-prime-typing-rule-context test-prime-material-fixtures
+test: test-prime-typing-rule-context test-prime-material-fixtures
+
+# These gates rebuild their mathematical sources and keep native replay
+# evidence distinct from the general kernel theorems.
+.PHONY: test-prime-profile-catalogue test-prime-finite-graph-readouts test-prime-profile-native-proofs
+test-lean: test-prime-profile-catalogue test-prime-finite-graph-readouts test-prime-profile-native-proofs
+
+test-prime-profile-catalogue: $(BIN)
+	@python3 scripts/check_prime_profile_catalogue.py \
+		--binary "$(abspath $(BIN))" \
+		--lean-root "$(METTAPEDIA_LEAN_CHECKOUT)" \
+		--output "runtime/profile-catalogue-$(BUILD_OBJ_TAG)"
+
+test-prime-finite-graph-readouts: $(BIN)
+	@python3 scripts/check_prime_finite_graph_readouts.py \
+		--binary "$(abspath $(BIN))" \
+		--lean-root "$(METTAPEDIA_LEAN_CHECKOUT)" \
+		--output "runtime/finite-graph-readouts-$(BUILD_OBJ_TAG)"
+
+test-prime-profile-native-proofs: $(BIN)
+	@python3 scripts/check_prime_profile_native_proofs.py \
+		--binary "$(abspath $(BIN))" \
+		--lean-root "$(METTAPEDIA_LEAN_CHECKOUT)" \
+		--output "runtime/profile-native-proofs-$(BUILD_OBJ_TAG)"
+
+# Conservative definition proofs and native admission are qualified together,
+# with separate evidence for the kernel construction and the native replay.
+PRIME_DEFINITION_HISTORY_LEAN_RUNNER ?=
+.PHONY: test-prime-definition-histories
+test-lean: test-prime-definition-histories
+test-prime-definition-histories: $(BIN)
+	@python3 scripts/check_prime_definition_histories.py \
+		--binary "$(abspath $(BIN))" \
+		--lean-root "$(METTAPEDIA_LEAN_CHECKOUT)" \
+		$(if $(PRIME_DEFINITION_HISTORY_LEAN_RUNNER),--lean-runner "$(PRIME_DEFINITION_HISTORY_LEAN_RUNNER)",) \
+		--output "runtime/definition-histories-$(BUILD_OBJ_TAG)"
+
+# Optional physical-wire comparisons for the declared dependent candidate.
+PRIME_DEPENDENT_CHECKER_LEAN_RUNNER ?=
+.PHONY: test-prime-dependent-checker-contracts
+test-prime-dependent-checker-contracts: $(BIN)
+	@python3 scripts/check_prime_dependent_checker_contracts.py \
+		--binary "$(abspath $(BIN))" \
+		--lean-root "$(METTAPEDIA_LEAN_CHECKOUT)" \
+		$(if $(PRIME_DEPENDENT_CHECKER_LEAN_RUNNER),--lean-runner "$(PRIME_DEPENDENT_CHECKER_LEAN_RUNNER)",) \
+		--output "runtime/dependent-checker-contracts-$(BUILD_OBJ_TAG)"
+
+.PHONY: test-prime-level-schema-substitution
+test-prime-fast-fixtures: test-prime-level-schema-substitution
+test-prime-level-schema-substitution: $(BIN)
+	@python3 scripts/check_prime_level_schema_substitution.py \
+		--binary "$(abspath $(BIN))" \
+		--output "runtime/level-schema-substitution-$(BUILD_OBJ_TAG)"
+
+PRIME_LEVEL_INSTANTIATION_LEAN_RUNNER ?=
+.PHONY: test-prime-level-instantiation-contracts
+test-prime-level-instantiation-contracts: $(BIN)
+	@python3 scripts/check_prime_level_instantiation_contracts.py \
+		--binary "$(abspath $(BIN))" \
+		--lean-root "$(METTAPEDIA_LEAN_CHECKOUT)" \
+		$(if $(PRIME_LEVEL_INSTANTIATION_LEAN_RUNNER),--lean-runner "$(PRIME_LEVEL_INSTANTIATION_LEAN_RUNNER)",) \
+		--output "runtime/level-instantiation-contracts-$(BUILD_OBJ_TAG)"

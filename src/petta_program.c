@@ -2661,7 +2661,8 @@ static PettaPlanNode *petta_plan_build_in(
             SymbolId head = head_atom->sym_id;
             PeTTaForm form = petta_semantics_form(head);
             CettaExprLen nargs = atom->expr.len - 1u;
-            if (head == g_builtin_syms.quote && nargs == 1u) {
+            if (head == g_builtin_syms.quote &&
+                (nargs == 1u || atom_is_quotation(atom))) {
                 node->output = PETTA_PLAN_OUTPUT_QUOTED_CHILD;
                 node->output_child = 1u;
             } else if (form == PETTA_FORM_CUT && nargs == 0u) {
@@ -6125,8 +6126,12 @@ static bool petta_table_safety_primitive(
     if (head == g_builtin_syms.colon ||
         head == g_builtin_syms.arrow)
         return true;
+    /* Prime's `lift` builds code from code without running it; the machine
+     * hands it to the evaluator whole (cetta_prime_lift_head). */
     if (head == g_builtin_syms.quote ||
-        head == g_builtin_syms.return_text) {
+        head == g_builtin_syms.return_text ||
+        cetta_prime_lift_head(head) ||
+        cetta_prime_scope_declaration_head(head)) {
         if (opaque)
             *opaque = true;
         return true;

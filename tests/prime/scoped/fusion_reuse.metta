@@ -1,10 +1,12 @@
+(set:profile hol)
+
 ; Proof reuse across a rewrite, inside the extensional layer.  A property
 ; established of the unfused program is carried to the fused program by the
 ; published fusion theorem and substitution, not rediscovered by testing the
 ; optimized output; the derived record keeps its dependencies, and the
 ; original proof stays inspectable on request.
 !(import! &self pf)
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(pf:theory &thy ((: elem (u 0)) (: f (-> elem elem)) (: g (-> elem elem))))
 !(set:inductive &thy nat (u 0) (: zero nat) (: succ (-> nat nat)))
 !(set:inductive &thy list (u 0) (: nil list) (: cons (-> elem list list)))
