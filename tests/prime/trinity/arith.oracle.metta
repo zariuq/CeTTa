@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Native arithmetic as an oracle with a specification, with the trust it
 ; needs placed in the open.  The positive binary numbers and their sum,
 ; product and comparison are declared as in arith.binary.metta; nothing
@@ -130,7 +132,7 @@
 ; equations, with only the sums inside it native.
 !(let $square (pmul (bit1 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 one))))))))))))))))))))
                   (bit1 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 one)))))))))))))))))))))
-   (let ($values $n) (cost:firings (pmul $square $square))
+   (let (quote ($values $n)) (lift (cost:firings (pmul $square $square)))
      (quote (product-by-equations (firings $n)))))
 ; A raw equation calling a declared operation: the call inside is native.
 !(rawadd (bit1 (bit1 one)) (bit1 (bit0 one)))

@@ -1,9 +1,11 @@
+(set:profile hol)
+
 ; The uniqueness rule K, offered as a definition by an equation at a reflexive
 ; index.  A case split on (id A x x) with the point repeated needs uniqueness
 ; of identity proofs; no profile adds it as a computation rule, so the
 ; definition abstains and publishes nothing, under every profile.  Where
 ; uniqueness is assumed, it is a declared postulate used through elimination.
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &thy num (u 0) (: zero num) (: suc (-> num num)))
 
 ; The language's eliminator computes at reflexivity.

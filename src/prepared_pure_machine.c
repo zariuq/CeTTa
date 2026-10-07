@@ -3,6 +3,7 @@
 #include "eval.h"
 #include "grounded.h"
 #include "petta_semantics.h"
+#include "prime_semantics.h"
 #include "stats.h"
 #include "symbol.h"
 
@@ -2519,6 +2520,33 @@ static bool prepared_pure_materialized_scalar_list(const Atom *atom) {
     return atom && atom->kind == ATOM_EXPR && atom->expr.len == 0u;
 }
 
+/* A Prime authored lambda (call-by-need programs are Prime's) is a value:
+ * its body waits under the binder until an application supplies the
+ * argument, and the canonical evaluator never computes in it.  This machine
+ * would compute a total head in its payload (normalize-before-delay), so it
+ * declines any program that holds one, and the call stays canonical. */
+static bool prepared_pure_prime_lambda(const CettaPreparedPureProgram *program,
+                                       const Atom *source) {
+    return program &&
+           program->call_mode == CETTA_GSLT_PURE_CALL_CALL_BY_NEED &&
+           source && source->kind == ATOM_EXPR && source->expr.len >= 3u &&
+           source->expr.elems[0] &&
+           source->expr.elems[0]->kind == ATOM_SYMBOL &&
+           source->expr.elems[0]->sym_id == g_builtin_syms.prime_lam;
+}
+
+/* A Prime meta-argument wrapper, (meta T X): the core reads it (a crossing
+ * set, a substitution on code) or user equations do; this machine computes
+ * neither, so it declines any program that holds one. */
+static bool prepared_pure_prime_meta(const Atom *source) {
+    return source && source->kind == ATOM_EXPR && source->expr.len == 3u &&
+           source->expr.elems[0] &&
+           source->expr.elems[0]->kind == ATOM_SYMBOL &&
+           source->expr.elems[0]->sym_id == g_builtin_syms.prime_meta &&
+           eval_current_language_id &&
+           eval_current_language_id() == CETTA_LANGUAGE_PRIME;
+}
+
 static bool prepared_pure_compile_template(
     CettaPreparedPureProgram *program,
     PreparedPureCompileContext *context,
@@ -2528,6 +2556,14 @@ static bool prepared_pure_compile_template(
     if (!program || !context || !source || !node_out ||
         depth > PREPARED_PURE_MAX_COMPILE_DEPTH)
         return false;
+    if (prepared_pure_prime_lambda(program, source))
+        return prepared_pure_reject(
+            program, "a Prime lambda is a value; its body is not computed",
+            source);
+    if (prepared_pure_prime_meta(source))
+        return prepared_pure_reject(
+            program, "a Prime meta-argument is read by the core or equations",
+            source);
     if (prepared_pure_materialized_scalar_list(source)) {
         return prepared_pure_add_node(
             program,
@@ -2637,6 +2673,14 @@ static bool prepared_pure_compile_eval_with_role(
     if (!program || !context || !source || !node_out ||
         depth > PREPARED_PURE_MAX_COMPILE_DEPTH)
         return false;
+    if (prepared_pure_prime_lambda(program, source))
+        return prepared_pure_reject(
+            program, "a Prime lambda is a value; its body is not computed",
+            source);
+    if (prepared_pure_prime_meta(source))
+        return prepared_pure_reject(
+            program, "a Prime meta-argument is read by the core or equations",
+            source);
     if (source->kind == ATOM_VAR) {
         uint32_t slot = 0u;
         if (!prepared_pure_context_lookup(context, source->var_id, &slot))
@@ -3973,6 +4017,14 @@ static bool prepared_pure_compile_head(
             return prepared_pure_reject(
                 program, "equation head holds a list pattern with a rest",
                 occurrence.lhs);
+        /* A head that takes code apart meets the code binder by binder
+         * (the language's binding structure, bindings_structure_hooks),
+         * which the equation query does. */
+        const BindingsStructureHooks *structure = bindings_structure_hooks();
+        if (structure && structure->code_pattern &&
+            structure->code_pattern(occurrence.lhs))
+            return prepared_pure_reject(
+                program, "equation head takes code apart", occurrence.lhs);
 
         const void *rhs_view = NULL;
         if (program->source_view.equation_rhs &&
@@ -4468,7 +4520,8 @@ prepared_pure_run_match_ops(
             break;
         case PREPARED_PURE_MATCH_OP_EXPR:
             equal = atom_petta_decomposition_compatible(op->literal, value) &&
-                    value->kind == ATOM_EXPR && value->expr.len == op->length;
+                    value->kind == ATOM_EXPR &&
+                    atom_authored_len(value) == op->length;
             /* A list carrier spells a list, not its three fields: it
              * is read as one where it has the pattern's length or
              * fails it. */
@@ -4652,7 +4705,7 @@ prepared_pure_match_into(
         if (pattern->kind != value->kind ||
             (pattern->kind != ATOM_EXPR && !atom_eq(pattern, value)) ||
             (pattern->kind == ATOM_EXPR &&
-             (pattern->expr.len != value->expr.len ||
+             (atom_authored_len(pattern) != atom_authored_len(value) ||
               atom_is_list_form(pattern) != atom_is_list_form(value))))
             return prepared_pure_count_match(
                 prepared_pure_match_mismatch(
@@ -4661,7 +4714,7 @@ prepared_pure_match_into(
                 mismatch);
         if (pattern->kind != ATOM_EXPR)
             continue;
-        for (CettaExprIndex i = 0u; i < pattern->expr.len; i++) {
+        for (CettaExprIndex i = 0u; i < atom_authored_len(pattern); i++) {
             if (!prepared_pure_push_pattern_pair(
                     program, pattern->expr.elems[i],
                     value->expr.elems[i], pair.argument))
@@ -4929,10 +4982,10 @@ static PreparedPureMatchState prepared_pure_match_bind_pattern(
                 return PREPARED_PURE_MATCH_MISMATCH;
             continue;
         }
-        if (pattern->expr.len != candidate->expr.len ||
+        if (atom_authored_len(pattern) != atom_authored_len(candidate) ||
             atom_is_list_form(pattern) != atom_is_list_form(candidate))
             return PREPARED_PURE_MATCH_MISMATCH;
-        for (CettaExprIndex i = pattern->expr.len; i > 0u; i--) {
+        for (CettaExprIndex i = atom_authored_len(pattern); i > 0u; i--) {
             CettaExprIndex child = i - 1u;
             if (!prepared_pure_push_pattern_pair(
                     program, pattern->expr.elems[child],
@@ -5622,8 +5675,8 @@ static Atom *prepared_pure_execute_intrinsic(
                    list->expr.elems[0]->ground.gkind == GV_INTERNAL_TAG) {
             return NULL;
         } else {
-            pair[0] = list->expr.elems[0];
-            pair[1] = atom_expr_suffix(arena, list, 1u);
+            pair[0] = elems[0];
+            pair[1] = atom_sequence_rest(arena, list, elems, len);
             if (!pair[1])
                 return NULL;
         }
@@ -5653,8 +5706,15 @@ static Atom *prepared_pure_execute_intrinsic(
         /* The expression with the head before the tail's children, in
          * amortized constant time when the tail has room below it
          * (PrefixBuffer.claimable_iff_free_below): a list built by
-         * repeated cons costs its length, not its square. */
-        return atom_expr_prepend(arena, arguments[0], arguments[1]);
+         * repeated cons costs its length, not its square.  In Prime the
+         * node formed so is a form of its own: a lambda is elaborated, a
+         * binder sealed as the reader seals one, a quotation made of a
+         * value keeps its lambdas' records (prime_semantics_form_built). */
+        Atom *built = atom_expr_prepend(arena, arguments[0], arguments[1]);
+        if (built && prime_semantics_form_built && eval_current_language_id &&
+            eval_current_language_id() == CETTA_LANGUAGE_PRIME)
+            built = prime_semantics_form_built(arena, built);
+        return built;
     }
     case CETTA_GSLT_PREPARED_PURE_INTRINSIC_CONCATENATE_EXPRESSIONS: {
         Atom *const *left_elems, *const *right_elems;

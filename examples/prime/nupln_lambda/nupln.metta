@@ -378,8 +378,10 @@
          (MkSized (+ 1 (+ $xs $ys)) (: (, $x $y) (, $a $b))))
        (empty)))
 
-;; A lambda shown with its bound variable named x.
-(= (readable (lam $v $body)) (let $v x (lam x $body)))
+;; A lambda shown with its bound variable named x.  The lambda is built
+;; from its body, in which x now stands for the variable: substitution into
+;; a lambda is capture-avoiding, so it would rename the binder instead.
+(= (readable (lam $v $body)) (let $v x (cons-atom lam (x $body))))
 
 ;; The normal form accepts (∧ F G) with its usual size, and refuses the
 ;; mirror and the repetition.
@@ -418,7 +420,7 @@
                                         (≞ (→ (⊙ 2) $pred) ⊥))))))
    (let $stored (add-atom &self (learned $pred))
      (let (lam $v $body) $pred
-       (let $v x (Learned (lam x $body))))))
+       (let $v x (let $shown (cons-atom lam (x $body)) (Learned $shown))))))
 
 ;; Give F, G and ∧ executable definitions, beyond the three observed values,
 ;; and call the learned function.  It is applied like any function; nothing is

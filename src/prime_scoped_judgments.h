@@ -11,7 +11,8 @@
 /* Draft scoped judgment bubbles beside the existing `type:` vocabulary.
  *
  * `set:`  — simple-typed judgments and proposition proofs over an admitted
- *           set-theoretic signature.  Terms and types are the same authored
+ *           theory-space profile.  No selection leaves forms uninterpreted.
+ *           HOL selects no set axioms; megalodon-hotg opts into them. Terms and types are the same authored
  *           syntax that `type:` accepts; every `set:` term judgment is the
  *           corresponding `type:` judgment in an environment extended by the
  *           signature, guarded by a syntactic descent check that the operands
@@ -31,7 +32,7 @@
 
 bool prime_scoped_judgment_is_head_id(SymbolId head);
 
-/* Returns NULL when the judgment head is not owned by this module. */
+/* Returns NULL for an unowned head or an unselected set: interpretation. */
 Atom *prime_scoped_judgment_judge(
     Arena *arena, Space *space, Atom *judgment,
     bool steps_limited, uint64_t steps);
@@ -92,5 +93,31 @@ Atom *prime_scoped_typed_query_judge(Arena *a, Space *space, Atom *judgment,
  * of one atom, from 2), and the argument maps `F@argi` with one equation
  * for each stored atom.  The extension is rebuilt when the space changes. */
 Space *prime_scoped_stored_space(Arena *a, Space *space);
+
+/* Constructors of a datatype declared with parameters, written without
+ * them, `nil` or `(cons zero nil)`, elaborated to the explicit form by
+ * unification against the type each use is expected at and the types of
+ * its fields.  The report says whether some use was elaborated, whether a
+ * parameter was read off a field whose type is a sort, which universes'
+ * cumulativity leaves open, and whether some use was left as written for
+ * want of its parameters. */
+typedef struct {
+    bool changed;
+    bool unforced;
+    bool unsolved;
+} PrimeImplicitReport;
+
+/* `term` with such uses elaborated, at `expected` when given. */
+Atom *prime_scoped_implicit_term(Arena *a, Space *space, Atom *term, Atom *expected,
+                                 PrimeImplicitReport *report);
+
+/* A `type:` judgment with such uses elaborated: a term at the type it is
+ * checked at, the terms of `type:eq` at each other's type. */
+Atom *prime_scoped_implicit_judgment(Arena *a, Space *space, Atom *judgment,
+                                     PrimeImplicitReport *report);
+
+/* A call with such uses elaborated, for the evaluator; NULL when nothing
+ * changes. */
+Atom *prime_scoped_implicit_call(Arena *a, Space *space, Atom *call);
 
 #endif /* CETTA_PRIME_SCOPED_JUDGMENTS_H */

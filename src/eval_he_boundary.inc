@@ -2,14 +2,17 @@
  * interpreter's return-type continuation.  The instruction protocol remains
  * local: a raw RHS is data unless it is a function delimiter, and a function
  * consumes a return-shaped value without interpreting the payload. */
-static bool he_minimal_instruction(Atom *atom) {
-    SymbolId head = atom_head_symbol_id(atom);
+static bool he_minimal_instruction_head(SymbolId head) {
     return head == g_builtin_syms.eval || head == g_builtin_syms.evalc ||
            head == g_builtin_syms.chain || head == g_builtin_syms.function ||
            head == g_builtin_syms.unify || head == g_builtin_syms.metta ||
            head == g_builtin_syms.context_space || head == g_builtin_syms.call_native ||
            head == g_builtin_syms.cons_atom || head == g_builtin_syms.decons_atom ||
            head == g_builtin_syms.collapse_bind || head == g_builtin_syms.superpose_bind;
+}
+
+static bool he_minimal_instruction(Atom *atom) {
+    return he_minimal_instruction_head(atom_head_symbol_id(atom));
 }
 
 static bool he_not_reducible(Atom *atom) {

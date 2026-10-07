@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Prime Motivation 01, the deterministic finite automaton, in the set:
 ; language. The word is an inductive type of symbols; the transition
 ; function is defined by its equations; the runner recurses on the word while
@@ -6,7 +8,7 @@
 ; are definitions on top. Every answer below is computed by the kernel's
 ; definitions, and the state after a word is checked as a typed equality.
 
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &thy symbol (u 0) (: zero symbol) (: one symbol))
 !(set:inductive &thy state (u 0) (: q0 state) (: q1 state) (: q2 state))
 !(set:inductive &thy word (u 0) (: wnil word) (: wcons (-> symbol word word)))

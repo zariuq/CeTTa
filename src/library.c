@@ -429,7 +429,7 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
     ctx->petta_program = needs_occurrence_program
         ? petta_program_new_with_host_intrinsics(
             language_id == CETTA_LANGUAGE_PRIME
-                ? prime_scoped_judgment_is_head_id : NULL)
+                ? cetta_prime_host_intrinsic_head : NULL)
         : NULL;
     if (ctx->petta_program && cetta_profile_uses_petta_typing(profile)) {
         (void)petta_program_enable_analysis(ctx->petta_program);

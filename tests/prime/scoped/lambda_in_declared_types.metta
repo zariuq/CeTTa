@@ -1,7 +1,9 @@
+(set:profile hol)
+
 ; A declared type may hold an unannotated lambda applied to arguments, as
 ; the type of a checked term may.  The declaration is read and formed, and a
 ; definition's equations are checked against it.
-!(bind! &s (new-space))
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:define &s lam-in-type (-> (X : (u 0)) (d : X) (id X ((lam Z Z) d) d))
    (= (lam-in-type $X $d) (refl $d)))
 !(set:define &s lam-in-type2 (-> (X : (u 0)) (d : X) (id X ((lam Z (lam e Z)) d X) d))

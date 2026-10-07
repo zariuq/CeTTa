@@ -1,6 +1,8 @@
+(set:profile hol)
+
 ; A universal equality certificate justifies an alternative value computation.
 ; Membership remains an explicit argument; this does not authorize effects.
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(add-atom &thy (: A (u 0)))
 !(add-atom &thy (: a A))
 !(add-atom &thy (: b A))

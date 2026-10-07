@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; The represented query a judgment poses to the kernel, without an answer.
 !(set:inductive &self nat (u 0) (: zero nat) (: succ (-> nat nat)))
 !(set:define &self twice (-> nat nat)

@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; A recursor whose unfolding calls it at its own argument, and the unfolding
 ; without its premises.
 ;
@@ -22,7 +24,7 @@
    (unify $r (Established $e) Established
      (unify $r (Undetermined $w) Undetermined
        (unify $r (Refuted $w) Refuted other))))
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(pf:theory &thy ((: A (u 0)) (: Res (u 0))
                   (: rec (-> (-> A A prop) (-> A (-> A Res) Res) A Res))
                   (: r (-> A A prop)) (: a A)))
@@ -44,7 +46,7 @@
     (lam (b : A) (rec r (lam (x : A) (lam (z : (-> A Res)) (z x))) b))))
 
 ; 3. Curry, in a theory whose results are propositions.
-!(bind! &curry (new-space))
+!(bind! &curry (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(pf:theory &curry ((: recu (-> (-> prop prop prop) (-> prop (-> prop prop) prop) prop prop))))
 !(pf:equality &curry prop refl@prop subst@prop)
 !(set:define &curry falsum prop (= falsum (all prop (lam p p))))

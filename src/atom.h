@@ -93,6 +93,22 @@ typedef enum {
     CETTA_INTERNAL_TAG_PETTA_CALLABLE_IDENTITY = 11,
     CETTA_INTERNAL_TAG_PETTA_NULLARY_CALLABLE = 12,
     CETTA_INTERNAL_TAG_PRIME_HELD = 13,
+    /* A braces node {x1 ... xn} of the Prime reader, the set notation of
+     * 9/27, is the expression (BRACES x1 ... xn).  No set form is defined
+     * for it yet, so it is inert data: never called, its elements never
+     * evaluated, and it equals or matches only a braces node with equal
+     * elements in order.  Inside `lam`, before the parameter, the
+     * elaboration reads it as the names the lambda shares. */
+    CETTA_INTERNAL_TAG_PRIME_BRACES = 14,
+    /* The own list of an elaborated Prime lambda or template,
+     * (OWN RECORD $y ...), last in it (atom_is_prime_own_list): inferred
+     * ownership, metadata no observer of the authored term sees. */
+    CETTA_INTERNAL_TAG_PRIME_OWN = 15,
+    /* A binder of quoted code by its level, (CODE_BINDER level), standing
+     * for the binder and its references while a quoted pattern is matched
+     * against quoted code (prime_semantics_code_canonical): binders meet by
+     * position, never by spelling.  It exists only during that match. */
+    CETTA_INTERNAL_TAG_PRIME_CODE_BINDER = 16,
 } CettaInternalTag;
 
 static inline bool cetta_internal_tag_is_list(int64_t tag) {
@@ -108,7 +124,9 @@ static inline bool cetta_internal_tag_is_callable(int64_t tag) {
 
 static inline bool cetta_internal_tag_is_term_stable(int64_t tag) {
     return cetta_internal_tag_is_list(tag) ||
-           cetta_internal_tag_is_callable(tag);
+           cetta_internal_tag_is_callable(tag) ||
+           tag == (int64_t)CETTA_INTERNAL_TAG_PRIME_BRACES ||
+           tag == (int64_t)CETTA_INTERNAL_TAG_PRIME_OWN;
 }
 
 #define ATOM_FLAG_HAS_VARS 0x01u
@@ -337,6 +355,74 @@ static inline bool atom_is_internal_tag(
            atom->ground.ival == (int64_t)tag;
 }
 
+/* A quotation `(quote X)`.  In Prime a quotation in value position is
+ * sealed code: substitution never enters it.  This is the one definition of
+ * the seal.  Lambda's beta and `lift let` (prime_semantics.c) always stop
+ * here; the canonical binders (abt.c) and the environment action stop here
+ * while the session seals (prime_quote_seal_active), and authored forms are
+ * sealed when they are elaborated (prime_semantics_elaborate_form). */
+static inline bool atom_sequence_is_own_list(const Atom *atom);
+/* A written Prime quotation is a scope: the names it owns are its own list,
+ * `(quote X (OWN RECORD $u ...))`, last in it, hidden metadata as a
+ * template's own list is (atom_prime_template_own_hidden); each opening of
+ * the code copies them. */
+static inline bool atom_is_quotation(const Atom *atom) {
+    return atom && atom->kind == ATOM_EXPR &&
+           (atom->expr.len == 2u ||
+            (atom->expr.len == 3u && atom->expr.elems[2] &&
+             atom->expr.elems[2]->kind == ATOM_EXPR &&
+             atom_sequence_is_own_list(atom->expr.elems[2]))) &&
+           atom->expr.elems[0] &&
+           atom->expr.elems[0]->kind == ATOM_SYMBOL &&
+           atom->expr.elems[0]->sym_id == g_builtin_syms.quote;
+}
+
+/* The drop `*@$x` of a quoted variable, `(unquote (quote $x))`.  The drop of
+ * a quoted name refers to the name's binder, as `*@x` does for lam
+ * (prime_binder_reference), so the seal does not cover its operand. */
+static inline bool atom_is_drop_of_quoted_variable(const Atom *atom) {
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len == 2u &&
+           atom->expr.elems[0] &&
+           atom->expr.elems[0]->kind == ATOM_SYMBOL &&
+           atom->expr.elems[0]->sym_id == g_builtin_syms.unquote &&
+           atom_is_quotation(atom->expr.elems[1]) &&
+           atom->expr.elems[1]->expr.elems[1] &&
+           atom->expr.elems[1]->expr.elems[1]->kind == ATOM_VAR;
+}
+
+/* The own-name list of an elaborated Prime lambda or template,
+ * `(OWN RECORD $y ...)`, last in it.  RECORD is the symbol
+ * `ownership/lifetime/readout` of the scope profile the template was
+ * elaborated under; the variables after it are the slots each activation
+ * copies.  Its head is an internal tag no source text spells, so the list
+ * cannot be forged by writing.  Inferred ownership is hidden metadata: the
+ * printer, the sequence operations, patterns and `==` see the authored term
+ * only (atom_prime_template_own_hidden). */
+bool atom_is_prime_own_list(const Atom *atom);
+
+/* A braces node {x1 ... xn}, (BRACES x1 ... xn). */
+static inline bool atom_is_prime_braces(const Atom *atom) {
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len >= 1u &&
+           atom_is_internal_tag(atom->expr.elems[0],
+                                CETTA_INTERNAL_TAG_PRIME_BRACES);
+}
+
+/* A meta-argument wrapper (meta T [...]) or (meta T {...}): what the Prime
+ * reader makes of a bracket list or a braces node touching a term's end,
+ * T[...] or T{...}.  The printer writes it back touching. */
+static inline bool atom_is_prime_meta(const Atom *atom) {
+    if (!atom || atom->kind != ATOM_EXPR || atom->expr.len != 3u ||
+        !atom->expr.elems[0] || atom->expr.elems[0]->kind != ATOM_SYMBOL ||
+        atom->expr.elems[0]->sym_id != g_builtin_syms.prime_meta)
+        return false;
+    const Atom *argument = atom->expr.elems[2];
+    return atom_is_prime_braces(argument) ||
+           (argument && argument->kind == ATOM_EXPR &&
+            argument->expr.len >= 1u &&
+            atom_is_internal_tag(argument->expr.elems[0],
+                                 CETTA_INTERNAL_TAG_LIST));
+}
+
 /* A list value, (LIST x1 ... xn). */
 static inline bool atom_is_list(const Atom *atom) {
     return atom && atom->kind == ATOM_EXPR && atom->expr.len >= 1u &&
@@ -422,14 +508,59 @@ static inline bool atom_petta_decomposition_compatible(
  * expression's, or a list's after its tag.  False for any other atom,
  * including a list pattern, whose length is not known, and a Prolog
  * compound, which is a term, not a sequence. */
+/* Whether `atom`, an expression, is a Prime own list `(OWN RECORD $y ...)`
+ * (atom_is_prime_own_list, read here by its head alone). */
+static inline bool atom_sequence_is_own_list(const Atom *atom) {
+    return atom->expr.len >= 2u &&
+           atom_is_internal_tag(atom->expr.elems[0],
+                                CETTA_INTERNAL_TAG_PRIME_OWN);
+}
+
+/* Whether `atom` is an elaborated Prime lambda, map-atom/foldl-atom
+ * template or quotation carrying its own list last: the list is inferred
+ * ownership, and no observer of the authored term (the printer, the
+ * sequence operations, patterns, `==`) sees it.  An expression that holds no
+ * internal tag is answered by one fact bit. */
+static inline bool atom_prime_template_own_hidden(const Atom *atom) {
+    if (!atom || atom->kind != ATOM_EXPR ||
+        (atom->structural_facts &
+         (ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_HAS_INTERNAL_TAG)) ==
+            ATOM_STRUCTURAL_FACTS_VALID)
+        return false;
+    CettaExprLen len = atom->expr.len;
+    if (len < 3u || !atom->expr.elems[0] ||
+        atom->expr.elems[0]->kind != ATOM_SYMBOL)
+        return false;
+    const Atom *last = atom->expr.elems[len - 1u];
+    if (!last || last->kind != ATOM_EXPR || !atom_sequence_is_own_list(last))
+        return false;
+    SymbolId head = atom->expr.elems[0]->sym_id;
+    return (len == 3u && head == g_builtin_syms.quote) ||
+           (len == 4u && head == g_builtin_syms.prime_lam) ||
+           (len == 5u && head == g_builtin_syms.map_atom) ||
+           (len == 7u && head == g_builtin_syms.foldl_atom);
+}
+
+/* The length of an expression as the authored term has it: an elaborated
+ * template's own list left out. */
+static inline CettaExprLen atom_authored_len(const Atom *atom) {
+    return atom->expr.len - (atom_prime_template_own_hidden(atom) ? 1u : 0u);
+}
+
 static inline bool atom_sequence_view(const Atom *atom, Atom *const **elems,
                                       CettaExprLen *len) {
+    /* A braces node is no sequence: no order is defined on it. */
     if (!atom || atom->kind != ATOM_EXPR || atom_is_list_rest(atom) ||
-        atom_petta_value_representation(atom) != PETTA_VALUE_ORDINARY)
+        atom_petta_value_representation(atom) != PETTA_VALUE_ORDINARY ||
+        atom_is_prime_braces(atom))
         return false;
     bool list = atom_is_list(atom);
     *elems = atom->expr.elems + (list ? 1u : 0u);
     *len = atom->expr.len - (list ? 1u : 0u);
+    /* An elaborated template's own list is not part of the authored term
+     * a sequence operation reads (atom_print does not show it either). */
+    if (!list && atom_prime_template_own_hidden(atom))
+        *len = atom->expr.len - 1u;
     return true;
 }
 
@@ -1017,6 +1148,15 @@ Atom *atom_counted_collection(Arena *a, int64_t count);
 bool atom_grounded_is_term_stable(const Atom *atom);
 /* The list value [elems...]. */
 Atom *atom_list(Arena *a, Atom *const *elems, CettaExprLen len);
+/* The braces node {elems...}. */
+Atom *atom_prime_braces(Arena *a, Atom *const *elems, CettaExprLen len);
+/* The rest of a sequence after its first element, of the sequence's kind:
+ * `elems` and `len` are its atom_sequence_view. */
+Atom *atom_sequence_rest(Arena *a, Atom *sequence, Atom *const *elems,
+                         CettaExprLen len);
+/* Prime's `==`: equality of the authored terms, an elaborated template's own
+ * list (hidden metadata) left out. */
+bool atom_prime_authored_eq(Atom *a, Atom *b);
 /* [elems... | rest]: a list when rest is a list value (their concatenation),
  * otherwise the list pattern (LIST_REST elems... rest). */
 Atom *atom_list_with_rest(Arena *a, Atom *const *elems, CettaExprLen len, Atom *rest);

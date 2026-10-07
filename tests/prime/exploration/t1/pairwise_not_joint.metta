@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Composing components along interfaces.  Each component has local choices,
 ; and each interface relates the choices of two components.  A joint
 ; completion is a choice for every component that satisfies every interface.
@@ -79,7 +81,7 @@
 ; derives falsum from the two interfaces, while each alone has a model.
 
 !(import! &self pf)
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &thy bool (u 0) (: true bool) (: false bool))
 !(pf:equality &thy bool refl@bool subst@bool)
 !(set:define &thy truth prop (= truth (all prop (lam p (imp p p)))))

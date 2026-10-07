@@ -14,6 +14,6 @@
 [False]
 [(UnrelatedRevision True)]
 [(ForgedProof Refuted)]
-[(WithdrawnSupport Refuted Refuted), (WithdrawnSupport Refuted Refuted)]
+[(WithdrawnSupport Undetermined Undetermined), (WithdrawnSupport Undetermined Undetermined)]
 [(type:check &self (iterCert (suc zero) num eqAt sucStep zero (refl zero)) (sigma (y : num) (eqAt y)) 1)]
 [(LibraryRuleWithdrawn False), (LibraryRuleWithdrawn False)]

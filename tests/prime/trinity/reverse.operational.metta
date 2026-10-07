@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Two reversals of a list, run.  Over the lists of numbers and their append,
 ;   rev nil                  = nil
 ;   rev (cons a as)          = append (rev as) (cons a nil)

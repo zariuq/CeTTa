@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Conversion verdicts need operands that the declarations type.
 !(set:inductive &self nat (u 0) (: zero nat) (: succ (-> nat nat)))
 

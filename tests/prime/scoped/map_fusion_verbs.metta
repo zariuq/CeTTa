@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Map fusion the way it is written in Agda:
 ;   map-compose []       = refl
 ;   map-compose (x ∷ xs) = cong (f (g x) ∷_) (map-compose xs)
@@ -6,7 +8,7 @@
 ; of the theory, and its equations and list induction are assumed.
 
 !(import! &self pf)
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(pf:theory &thy ((: elem (u 0)) (: list (u 0))
                   (: nil list) (: cons (-> elem list list))
                   (: mapf (-> (-> elem elem) list list))

@@ -1,0 +1,7 @@
+[1]
+[1]
+[(Error a CyclicPrimeNeedThunk)]
+[nat]
+[two]
+[((zero) 0)]
+[(((succ (succ zero))) 1)]

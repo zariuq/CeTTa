@@ -28,10 +28,13 @@
   ((plan routeA (evidence sensor1)) (plan routeA (evidence sensor2))))
 
 ; Quoted syntax suspends evaluation but still carries logical variables.
+; A quotation is sealed against the variables a binder binds as values, so
+; the saved piece enters new code by lift.
 !(assertEqualToResult
   (chain (collapse-bind (unify $piece (quote (f $x)) token Empty)) $saved
     (unify $x A
-      (chain (superpose-bind $saved) $answer (quote (g $piece))) Empty))
+      (chain (superpose-bind $saved) $answer (lift app @g (lift $piece)))
+      Empty))
   ((quote (g (quote (f A))))))
 
 ; Equal results from distinct proofs keep their multiplicity.

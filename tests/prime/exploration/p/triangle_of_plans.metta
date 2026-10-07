@@ -110,7 +110,7 @@
 (= (compose $net)
    (let* (($walk (cycle-walk)) ($bs (bits))
           ($hol (map-atom $bs $v (let $w (transport $net $walk $v) ($v $w))))
-          ($fixed (collapse (let ($v $w) (superpose $hol) (if (== $v $w) $v (empty))))))
+          ($fixed (collapse (let ($from $to) (superpose $hol) (if (== $from $to) $from (empty))))))
      (if (== $fixed ())
          (Refuted (no-joint-completion (cycle a $walk) (holonomy $hol)))
          (let* (($va (car-atom $fixed))

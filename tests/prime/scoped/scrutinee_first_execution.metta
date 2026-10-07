@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Executing a definition admitted through its scrutinee-first form.
 ;
 ; In the kernel, `add-onto` unfolds to its scrutinee-first form at any
@@ -6,7 +8,7 @@
 ; scrutinee. An accumulator the kernel knows nothing about is carried along
 ; and returned; a call whose scrutinee is unknown stays a call.
 !(import! &self pf)
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(pf:theory &thy ((: elem (u 0))))
 !(set:inductive &thy num (u 0) (: zero num) (: succ (-> num num)))
 !(pf:theory &thy ((: q num)))

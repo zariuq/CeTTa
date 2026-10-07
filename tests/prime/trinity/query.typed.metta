@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; A query with several answers, typed.  A space holds four edges between
 ; three nodes, one edge twice.  Run, `hop a` gives the targets of the edges
 ; that leave a: b, c and b again.  Typed, the query is a type: the type of its
@@ -17,7 +19,7 @@
 ;
 ; and an answer returns the target of its occurrence.  An edge stored twice is
 ; two occurrences, so two answers that return one value.
-!(bind! &kb (new-space))
+!(bind! &kb (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(add-atom &kb (: node (u 0)))
 !(add-atom &kb (: a node))
 !(add-atom &kb (: b node))
@@ -64,7 +66,7 @@
 ; ---- A key that is no node is no query of this relation; a stored atom of
 ; the wrong type makes the declaration false, and the judgment is refuted.
 !(try (type:of (match &kb (edge d $y) $y)))
-!(bind! &bad (new-space))
+!(bind! &bad (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(add-atom &bad (: node (u 0)))
 !(add-atom &bad (: a node))
 !(add-atom &bad (type:stored (edge node node)))
@@ -73,7 +75,7 @@
 
 ; ---- Negative control: in a space that declares nothing, the same query
 ; has only a dynamic type, as before.
-!(bind! &plain (new-space))
+!(bind! &plain (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(add-atom &plain (edge a b))
 !(add-atom &plain (edge a b))
 !(collapse (match &plain (edge a $y) $y))

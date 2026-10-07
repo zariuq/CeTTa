@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Lists of numbers and their append, typed.  The two datatypes and append are
 ; declared in &self.  The kernel checks each declaration before it admits it:
 ; each right side must have the declared result type, and each recursive call

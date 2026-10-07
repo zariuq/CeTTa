@@ -19,7 +19,9 @@
    (if (== $n 0) 1 (* (interp $a $x) (interp (Pow $a (- $n 1)) $x))))
 
 ; ---- the partial evaluator: (Static number) or (Dynamic code)
-(= (code-of (Static $n)) @$n)
+; A static number becomes code by lift; a quotation is sealed, so @$n would
+; be the variable itself.
+(= (code-of (Static $n)) (lift $n))
 (= (code-of (Dynamic $c)) $c)
 
 (= (add-bt $l $r)

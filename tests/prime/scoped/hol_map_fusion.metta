@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Higher-order mathematics in the set: proof language: list-map fusion,
 ;   forall xs. mapf f (mapf g xs) = mapf (comp f g) xs
 ; for symbolic functions f and g, proved once by the predicate-quantified

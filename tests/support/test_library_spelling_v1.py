@@ -59,5 +59,44 @@ class HeldBodySpelling(unittest.TestCase):
         self.assertEqual(spell(source, "prime"), source)
 
 
+class WrittenOutIterationSpelling(unittest.TestCase):
+    """HE's map-atom and foldl-atom written out by their definitions are
+    PeTTa's map-atom and foldl-atom; nothing else of that shape is."""
+
+    def test_definitions_are_petta_iterations(self):
+        for source, expected in (
+            ("(function (eval (_minimal-map-atom $xs $var (metta $body %Undefined% (context-space)))))",
+             "(map-atom $xs $var (eval $body))"),
+            ("(function (chain (context-space) $space"
+             " (eval (_minimal-foldl-atom $xs $init $acc $item $step $space))))",
+             "(foldl-atom $xs $init $acc $item $step)"),
+            ("(let $m (function (eval (_minimal-map-atom $xs $v (f $v)))) $m)",
+             "(let $m (map-atom $xs $v (f $v)) $m)"),
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(spell(source), expected)
+
+    def test_other_shapes_are_not_claimed(self):
+        # Other rules may still apply to them (a chain's computed body loses
+        # its one step); they are never read as PeTTa iterations.
+        for source in (
+            "(function (eval (_minimal-map-atom $xs $var)))",
+            "(function (chain (context-space) $space"
+            " (eval (_minimal-foldl-atom $xs $init $acc $item $step $other))))",
+            "(function (chain (self) $space"
+            " (eval (_minimal-foldl-atom $xs $init $acc $item $step $space))))",
+            "(_minimal-map-atom $xs $var $body)",
+        ):
+            with self.subTest(source=source):
+                spelled = spell(source)
+                self.assertNotIn("(map-atom", spelled)
+                self.assertNotIn("(foldl-atom", spelled)
+                self.assertIn("_minimal-", spelled)
+
+    def test_prime_keeps_the_written_out_definition(self):
+        source = "(function (eval (_minimal-map-atom $xs $var $body)))"
+        self.assertEqual(spell(source, "prime"), source)
+
+
 if __name__ == "__main__":
     unittest.main()

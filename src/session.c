@@ -134,6 +134,23 @@ static const CettaProfile CETTA_PROFILE_PRIME_CONTEXT_SELF_HERE_VALUE = {
     .context_self = CETTA_CONTEXT_SELF_HERE,
 };
 
+/* An explicit opt-in bubble, never the default: substitution enters
+ * quotations, as HE's does, so a quoted parameter captures its argument as
+ * written.  One variable can then name two things in one body, and the
+ * answer depends on the evaluation route (SealedCode.asWritten_incoherent). */
+static const CettaProfile CETTA_PROFILE_PRIME_QUOTE_AS_WRITTEN_VALUE = {
+    .id = CETTA_PROFILE_PRIME_QUOTE_AS_WRITTEN,
+    .language_id = CETTA_LANGUAGE_PRIME,
+    .name = "quote-as-written",
+    .note = "Opt-in: substitution enters quotations and quoted parameters capture their arguments as written.",
+    .he_compatible_builtin = false,
+    .enable_cetta_extensions = true,
+    .enable_dependent_telescope = true,
+    .rust_he_compat_semantics = false,
+    .identity_policy = CETTA_IDENTITY_POLICY_J,
+    .quote_as_written = true,
+};
+
 static const CettaProfile CETTA_PROFILE_PETTA_EXTENDED_VALUE = {
     .id = CETTA_PROFILE_PETTA_EXTENDED,
     .language_id = CETTA_LANGUAGE_PETTA,
@@ -482,6 +499,8 @@ const CettaProfile *cetta_profile_from_name_for_language(CettaLanguageId languag
             return &CETTA_PROFILE_PRIME_CONTEXT_SELF_HOME_VALUE;
         if (cetta_profile_name_matches(name, &CETTA_PROFILE_PRIME_CONTEXT_SELF_HERE_VALUE))
             return &CETTA_PROFILE_PRIME_CONTEXT_SELF_HERE_VALUE;
+        if (cetta_profile_name_matches(name, &CETTA_PROFILE_PRIME_QUOTE_AS_WRITTEN_VALUE))
+            return &CETTA_PROFILE_PRIME_QUOTE_AS_WRITTEN_VALUE;
     }
     if (language_id == CETTA_LANGUAGE_RHOCALC) {
         if (cetta_profile_name_matches(name, &CETTA_PROFILE_RHOCALC_STRICT_CORE_VALUE)) {
@@ -548,6 +567,7 @@ uint32_t cetta_profile_mask(const CettaProfile *profile) {
     case CETTA_PROFILE_PRIME_IDENTITY_UNIVALENCE:
     case CETTA_PROFILE_PRIME_CONTEXT_SELF_HOME:
     case CETTA_PROFILE_PRIME_CONTEXT_SELF_HERE:
+    case CETTA_PROFILE_PRIME_QUOTE_AS_WRITTEN:
         return CETTA_PROFILE_MASK_HE_PRIME;
     case CETTA_PROFILE_RHOCALC_STRICT_CORE:
     case CETTA_PROFILE_RHOCALC_COST:
@@ -612,6 +632,7 @@ void cetta_profile_print_inventory_for_language(FILE *out,
             &CETTA_PROFILE_PRIME_IDENTITY_UNIVALENCE_VALUE,
             &CETTA_PROFILE_PRIME_CONTEXT_SELF_HOME_VALUE,
             &CETTA_PROFILE_PRIME_CONTEXT_SELF_HERE_VALUE,
+            &CETTA_PROFILE_PRIME_QUOTE_AS_WRITTEN_VALUE,
         };
         for (size_t i = 0; i < sizeof prime_profiles / sizeof prime_profiles[0]; i++)
             fprintf(out, "%s\t%s\n", prime_profiles[i]->name, prime_profiles[i]->note);

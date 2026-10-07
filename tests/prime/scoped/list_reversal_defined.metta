@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; The reversal theorem again, with append and rev DEFINED by their equations
 ; instead of assumed.  A definition is admitted only as a total structural
 ; recursion over the constructors named by the induction axiom; its equations
@@ -5,7 +7,7 @@
 ;   app-nil []       = refl              app-nil (x ∷ xs) = cong (x ∷_) (app-nil xs)
 
 !(import! &self pf)
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(pf:theory &thy ((: elem (u 0))))
 !(set:inductive &thy list (u 0) (: nil list) (: cons (-> elem list list)))
 !(pf:equality &thy list refl@list subst@list)

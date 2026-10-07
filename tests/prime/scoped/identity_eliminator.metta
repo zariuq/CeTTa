@@ -1,9 +1,11 @@
+(set:profile hol)
+
 ; The identity eliminator is declared by the language with the fixed
 ; Paulin-Mohring type and computes by one iota rule: elimination at
 ; reflexivity yields the method.  Nothing here decides uniqueness of
 ; identity proofs; a non-reflexivity path stays neutral.
 
-!(bind! &s (new-space))
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(add-atom &s (: Nat (u 0)))
 !(add-atom &s (: z Nat))
 !(add-atom &s (: s (-> Nat Nat)))

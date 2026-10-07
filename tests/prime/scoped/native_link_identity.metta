@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Linking a native proof package under the named identity interpretation.
 ; The retained source proof of zero-add uses three assumptions: induction,
 ; reflexivity and substitution. Linking replaces each by a realization that

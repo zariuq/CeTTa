@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Revision controls for a certified transformation whose evidence is the
 ; hosted zero-addition theorem. The native package is rechecked by the
 ; existing authority. Replacing an addition rule, or forging the package,

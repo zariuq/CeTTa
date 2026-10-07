@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; The level instance of a declaration is the least assignment of its level
 ; variables at which the whole judgment holds.  Every use of a variable
 ; counts, in whatever order the uses are written: an argument that is a type
@@ -7,7 +9,7 @@
 ; more raises it, and a judgment is refuted only where no instance has it.
 ; (Mettapedia, TypeTheory/UniverseLevel/LeastInstance.lean.)
 
-!(bind! &s (new-space))
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &s num (u 0) (: zero num) (: suc (-> num num)))
 !(add-atom &s (: Small (u 3)))
 !(add-atom &s (: T4 (u 4)))

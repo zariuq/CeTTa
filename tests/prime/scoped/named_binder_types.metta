@@ -1,9 +1,11 @@
+(set:profile hol)
+
 ; The type `type:of` gives names every binder its codomain refers to, so no
 ; de Bruijn index shows where a name can stand: a polymorphic constant's type
 ; reads (-> (x : (u 0)) (-> x x)).  A binder nothing refers to stays unnamed,
 ; and a name is never one of the term's own constants.  The type read back
 ; is the type given.
-!(bind! &s (new-space))
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &s num (u 0) (: zero num) (: suc (-> num num)))
 !(add-atom &s (: polyId (-> (A : (u $l)) (-> A A))))
 !(type:of &s polyId)

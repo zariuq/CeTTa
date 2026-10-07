@@ -1,9 +1,13 @@
 #include "prime_need.h"
 #include "stats.h"
+#include "identity_counter.h"
 
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+#if CETTA_PRIME_NEED_IDENTITY_TEST_HOOKS
+#include <stdio.h>
+#endif
 
 #ifndef CETTA_PRIME_RECEIPT_PRIMARY_INDEX
 #define CETTA_PRIME_RECEIPT_PRIMARY_INDEX 0
@@ -11,6 +15,11 @@
 
 struct PrimeNeedFrame {
     const PrimeNeedFrame *parent;
+    /* The newest frame at or below this one that records a named cell
+     * (prime_need_snapshot_allocate_named).  Named cells are few and are
+     * looked up again and again from deep in a long history: following this
+     * chain visits only their frames. */
+    const PrimeNeedFrame *named_top;
     Arena *owner;
     /* Cached common owner for the complete parent path.  NULL denotes a path
      * whose immutable prefix lives in a longer-lived arena. */
@@ -205,6 +214,9 @@ not_found:
 }
 #endif
 
+/* Identity namespaces.  Each is drawn through cetta_identity_try_take, so it
+ * issues every identity at most once in a process and never wraps: once
+ * exhausted it refuses for good, and zero is the refusal. */
 static _Atomic uint64_t g_prime_need_next_session = 1u;
 static _Atomic uint64_t g_prime_need_next_serial = 1u;
 static _Atomic uint64_t g_prime_need_next_thunk = 1u;
@@ -213,18 +225,48 @@ static _Atomic uint64_t g_prime_need_next_storage_key = 1u;
 static _Atomic uint64_t g_prime_need_next_receipt_session = 1u;
 static _Atomic uint64_t g_prime_need_next_receipt_node = 1u;
 static _Atomic uint64_t g_prime_need_next_source_occurrence = 1u;
+static _Atomic uint64_t g_prime_need_next_evaluator = 1u;
+static _Atomic uint64_t g_prime_need_next_resample_scope = 1u;
 
-static void prime_need_reserve_storage_keys_through(uint64_t key) {
-    if (key == UINT64_MAX)
-        return;
-    uint64_t desired = key + 1u;
-    uint64_t current = atomic_load_explicit(
-        &g_prime_need_next_storage_key, memory_order_relaxed);
+static _Atomic(PrimeNeedIdentityRefusalObserver)
+    g_prime_need_identity_refusal_observer = NULL;
+
+void prime_need_identity_set_refusal_observer(
+    PrimeNeedIdentityRefusalObserver observer) {
+    if (atomic_load_explicit(&g_prime_need_identity_refusal_observer,
+                             memory_order_acquire) != observer)
+        atomic_store_explicit(&g_prime_need_identity_refusal_observer,
+                              observer, memory_order_release);
+}
+
+/* Every refusal passes through here exactly once and returns zero. */
+static uint64_t prime_need_identity_refused(void) {
+    PrimeNeedIdentityRefusalObserver observer = atomic_load_explicit(
+        &g_prime_need_identity_refusal_observer, memory_order_acquire);
+    if (observer)
+        observer();
+    return 0u;
+}
+
+/* Moves `counter` beyond `key`, so the namespace never issues it later;
+ * reserving UINT64_MAX exhausts the namespace.  The counter only grows, and
+ * the compare-and-swap means no draw that starts after this returns can
+ * issue `key` or anything below it.  A draw that finished earlier may
+ * already hold `key`: a persisted key is checked against its snapshot
+ * before use. */
+static void prime_need_identity_reserve_through(_Atomic uint64_t *counter,
+                                                uint64_t key) {
+    uint64_t desired = key == UINT64_MAX ? UINT64_MAX : key + 1u;
+    uint64_t current = atomic_load_explicit(counter, memory_order_relaxed);
     while (current < desired &&
            !atomic_compare_exchange_weak_explicit(
-               &g_prime_need_next_storage_key, &current, desired,
+               counter, &current, desired,
                memory_order_relaxed, memory_order_relaxed)) {
     }
+}
+
+static void prime_need_reserve_storage_keys_through(uint64_t key) {
+    prime_need_identity_reserve_through(&g_prime_need_next_storage_key, key);
 }
 
 struct PrimeNeedReceiptFrame {
@@ -734,11 +776,20 @@ not_found:
 #endif
 
 static uint64_t prime_need_fresh_nonzero(_Atomic uint64_t *counter) {
-    uint64_t value = atomic_fetch_add_explicit(
-        counter, 1u, memory_order_relaxed);
-    if (value != 0u)
-        return value;
-    return atomic_fetch_add_explicit(counter, 1u, memory_order_relaxed);
+    uint64_t identity = cetta_identity_try_take(counter);
+    return identity != 0u ? identity : prime_need_identity_refused();
+}
+
+/* Fresh thunk identities stay below PRIME_NEED_NAMED_CELL_BIT: the upper
+ * half belongs to the identities callers choose
+ * (prime_need_snapshot_allocate_named).  Reaching the half exhausts the
+ * fresh namespace for good, as reaching UINT64_MAX does elsewhere. */
+static uint64_t prime_need_fresh_thunk_id(void) {
+    uint64_t thunk_id = prime_need_fresh_nonzero(&g_prime_need_next_thunk);
+    if ((thunk_id & PRIME_NEED_NAMED_CELL_BIT) == 0u)
+        return thunk_id;
+    prime_need_identity_reserve_through(&g_prime_need_next_thunk, UINT64_MAX);
+    return prime_need_identity_refused();
 }
 
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
@@ -875,6 +926,132 @@ bool prime_need_snapshot_is_ancestor(const PrimeNeedSnapshot *ancestor,
     return at_depth && at_depth->serial == ancestor->top->serial;
 }
 
+static void prime_need_snapshot_view_at(const PrimeNeedSnapshot *source,
+                                        const PrimeNeedFrame *top,
+                                        PrimeNeedSnapshot *out) {
+    *out = *source;
+    out->top = top;
+    if (top) {
+        out->owner = top->owner;
+        out->closure_owner = top->closure_owner;
+#if CETTA_PRIME_NEED_HEAP_INDEX
+        out->heap_index = top->heap_index;
+        out->lineage_index = top->lineage_index;
+#endif
+    } else {
+        out->owner = NULL;
+        out->closure_owner = NULL;
+#if CETTA_PRIME_NEED_HEAP_INDEX
+        out->heap_index = NULL;
+        out->lineage_index = NULL;
+#endif
+    }
+}
+
+bool prime_need_snapshot_common_ancestor(const PrimeNeedSnapshot *left,
+                                         const PrimeNeedSnapshot *right,
+                                         PrimeNeedSnapshot *out) {
+    if (!left || !right || !out || !prime_need_snapshot_present(left) ||
+        !prime_need_snapshot_present(right) ||
+        left->session_id != right->session_id)
+        return false;
+    const PrimeNeedFrame *l = left->top;
+    const PrimeNeedFrame *r = right->top;
+    while (l && r && l->depth > r->depth)
+        l = l->parent;
+    while (l && r && r->depth > l->depth)
+        r = r->parent;
+    /* Promotion copies frames and keeps their serials: equal serials at
+     * equal depth are the same history. */
+    while (l && r && l->serial != r->serial) {
+        l = l->parent;
+        r = r->parent;
+    }
+    prime_need_snapshot_view_at(left, l && r ? l : NULL, out);
+    if (right->max_storage_key > out->max_storage_key)
+        out->max_storage_key = right->max_storage_key;
+    return true;
+}
+
+
+typedef struct {
+    uint64_t *slots;
+    size_t cap;
+    size_t used;
+} PrimeNeedThunkSet;
+
+/* 1 when `thunk_id` was added, 0 when it was there, -1 without memory. */
+static int prime_need_thunk_set_insert(PrimeNeedThunkSet *set,
+                                       uint64_t thunk_id) {
+    if ((set->used + 1u) * 2u > set->cap) {
+        size_t cap = set->cap ? set->cap * 2u : 64u;
+        uint64_t *slots = calloc(cap, sizeof(*slots));
+        if (!slots)
+            return -1;
+        for (size_t i = 0u; i < set->cap; i++) {
+            uint64_t id = set->slots[i];
+            if (id == 0u)
+                continue;
+            size_t at = (size_t)((id * UINT64_C(0x9E3779B97F4A7C15)) >> 7) &
+                        (cap - 1u);
+            while (slots[at] != 0u)
+                at = (at + 1u) & (cap - 1u);
+            slots[at] = id;
+        }
+        free(set->slots);
+        set->slots = slots;
+        set->cap = cap;
+    }
+    size_t at = (size_t)((thunk_id * UINT64_C(0x9E3779B97F4A7C15)) >> 7) &
+                (set->cap - 1u);
+    while (set->slots[at] != 0u) {
+        if (set->slots[at] == thunk_id)
+            return 0;
+        at = (at + 1u) & (set->cap - 1u);
+    }
+    set->slots[at] = thunk_id;
+    set->used++;
+    return 1;
+}
+
+bool prime_need_snapshot_settled_ancestor(const PrimeNeedSnapshot *base,
+                                          const PrimeNeedSnapshot *snapshot,
+                                          PrimeNeedSnapshot *out) {
+    if (!base || !snapshot || !out ||
+        !prime_need_snapshot_present(snapshot) ||
+        !prime_need_snapshot_is_ancestor(base, snapshot))
+        return false;
+    uint64_t floor = prime_need_snapshot_present(base) && base->top
+        ? base->top->depth : 0u;
+    const PrimeNeedFrame *top = snapshot->top;
+    for (;;) {
+        /* The newest record of each cell above `base`.  A cell still
+         * evaluating there cuts the history below the frame where its
+         * evaluation began; then the shorter history is examined again. */
+        PrimeNeedThunkSet seen = {0};
+        const PrimeNeedFrame *cut = NULL;
+        bool ok = true;
+        for (const PrimeNeedFrame *frame = top;
+             frame && frame->depth > floor; frame = frame->parent) {
+            int added = prime_need_thunk_set_insert(&seen, frame->thunk_id);
+            if (added < 0) {
+                ok = false;
+                break;
+            }
+            if (added > 0 && frame->cache_state == PRIME_NEED_CACHE_EVALUATING)
+                cut = frame;
+        }
+        free(seen.slots);
+        if (!ok)
+            return false;
+        if (!cut)
+            break;
+        top = cut->parent;
+    }
+    prime_need_snapshot_view_at(snapshot, top, out);
+    return true;
+}
+
 bool prime_need_snapshot_merge(PrimeNeedSnapshot *dst,
                                const PrimeNeedSnapshot *src) {
     if (!dst || !src || !prime_need_snapshot_present(src))
@@ -921,6 +1098,13 @@ static bool prime_need_snapshot_push(Arena *owner,
     if (!owner || !base || !out || !prime_need_snapshot_present(base) ||
         thunk_id == 0u || authority_id == 0u || !origin)
         return false;
+    /* A promoted frame keeps its serial; a new frame draws one before it is
+     * allocated, so a refused serial leaves no frame behind. */
+    if (serial == 0u) {
+        serial = prime_need_fresh_nonzero(&g_prime_need_next_serial);
+        if (serial == 0u)
+            return false;
+    }
     PrimeNeedFrame *frame = arena_alloc(owner, sizeof(*frame));
     if (!frame)
         return false;
@@ -930,6 +1114,9 @@ static bool prime_need_snapshot_push(Arena *owner,
         CETTA_RUNTIME_COUNTER_PRIME_NEED_SNAPSHOT_FRAME_BYTES,
         (uint64_t)sizeof(*frame));
     frame->parent = base->top;
+    frame->named_top = (thunk_id & PRIME_NEED_NAMED_CELL_BIT) != 0u
+        ? frame
+        : base->top ? base->top->named_top : NULL;
     frame->owner = owner;
     uint64_t payload_bloom = 0u;
     uint32_t payload_min_id = 0u;
@@ -1000,8 +1187,7 @@ static bool prime_need_snapshot_push(Arena *owner,
         (!base->top || base->closure_owner == owner)
             ? owner : NULL;
     frame->session_id = base->session_id;
-    frame->serial = serial ? serial : prime_need_fresh_nonzero(
-        &g_prime_need_next_serial);
+    frame->serial = serial;
     frame->thunk_id = thunk_id;
     frame->depth = base->top ? base->top->depth + 1u : 1u;
     frame->authority_id = authority_id;
@@ -1018,8 +1204,6 @@ static bool prime_need_snapshot_push(Arena *owner,
     frame->capture_var_ids = capture_var_ids;
     frame->capture_var_count = capture_var_count;
 #endif
-    if (frame->serial == 0u)
-        return false;
     out->top = frame;
     out->session_id = base->session_id;
     out->max_storage_key =
@@ -1099,6 +1283,21 @@ bool prime_need_snapshot_lookup(const PrimeNeedSnapshot *snapshot,
 #endif
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PRIME_NEED_HEAP_LOOKUP_LOG_FALLBACK);
+    if ((thunk_id & PRIME_NEED_NAMED_CELL_BIT) != 0u) {
+        for (const PrimeNeedFrame *frame =
+                 snapshot->top ? snapshot->top->named_top : NULL;
+             frame;
+             frame = frame->parent ? frame->parent->named_top : NULL) {
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_PRIME_NEED_HEAP_LOOKUP_LOG_FRAME);
+            if (frame->session_id == snapshot->session_id &&
+                frame->thunk_id == thunk_id) {
+                prime_need_cell_view_from_frame(frame, out);
+                return true;
+            }
+        }
+        return false;
+    }
     for (const PrimeNeedFrame *frame = snapshot->top; frame;
          frame = frame->parent) {
         cetta_runtime_stats_inc(
@@ -1201,17 +1400,27 @@ static bool prime_need_snapshot_allocate_with_storage_key(
         storage_key != 0u &&
         storage_key <= base->max_storage_key &&
         prime_need_snapshot_find_storage_key(base, storage_key, NULL);
+    /* Each identity is drawn only once the one before it was issued.  A
+     * refusal returns before anything reachable is built: `out`, the thunk
+     * id and `base` are untouched, and identities already drawn are spent
+     * rather than issued again. */
     if (storage_key == 0u || storage_key_in_use) {
         do {
             storage_key = prime_need_fresh_nonzero(
                 &g_prime_need_next_storage_key);
+            if (storage_key == 0u)
+                return false;
         } while (storage_key <= base->max_storage_key &&
                  prime_need_snapshot_find_storage_key(
                      base, storage_key, NULL));
     }
-    uint64_t thunk_id = prime_need_fresh_nonzero(&g_prime_need_next_thunk);
+    uint64_t thunk_id = prime_need_fresh_thunk_id();
+    if (thunk_id == 0u)
+        return false;
     uint64_t authority_id = prime_need_fresh_nonzero(
         &g_prime_need_next_authority);
+    if (authority_id == 0u)
+        return false;
     if (!prime_need_snapshot_push(
             owner, base, 0u, thunk_id, authority_id, 0u, storage_key,
             import_key, source_occurrence_id, source_argument_index,
@@ -1242,6 +1451,14 @@ uint64_t prime_need_fresh_source_occurrence(void) {
     return prime_need_fresh_nonzero(&g_prime_need_next_source_occurrence);
 }
 
+uint64_t prime_need_fresh_evaluator_id(void) {
+    return prime_need_fresh_nonzero(&g_prime_need_next_evaluator);
+}
+
+uint64_t prime_need_fresh_resample_scope(void) {
+    return prime_need_fresh_nonzero(&g_prime_need_next_resample_scope);
+}
+
 bool prime_need_snapshot_allocate_source_argument(
     Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
     uint64_t source_occurrence_id, uint64_t source_argument_index,
@@ -1269,6 +1486,30 @@ bool prime_need_snapshot_allocate_persisted(
         false, NULL, 0u,
 #endif
         out, out_thunk_id);
+}
+
+bool prime_need_snapshot_allocate_named(
+    Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
+    uint64_t thunk_id, PrimeNeedSnapshot *out) {
+    if (!owner || !base || !out || !term ||
+        (thunk_id & PRIME_NEED_NAMED_CELL_BIT) == 0u ||
+        !prime_need_snapshot_present(base))
+        return false;
+    PrimeNeedCellView existing;
+    if (prime_need_snapshot_lookup(base, thunk_id, &existing))
+        return false;
+    uint64_t authority_id = prime_need_fresh_nonzero(
+        &g_prime_need_next_authority);
+    if (authority_id == 0u)
+        return false;
+    return prime_need_snapshot_push(
+        owner, base, 0u, thunk_id, authority_id, 0u, 0u, 0u, 0u, 0u,
+        PRIME_NEED_CACHE_EMPTY, term, NULL,
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+        /* The term is closed: it captures no variable. */
+        true, NULL, 0u,
+#endif
+        out);
 }
 
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
@@ -1976,11 +2217,17 @@ static bool prime_need_carrier_begin(
         return false;
     if (prime_need_branch_state_present(receipt))
         return receipt->owner == owner;
-    receipt->top = NULL;
-    receipt->session_id = prime_need_fresh_nonzero(
+    uint64_t session_id = prime_need_fresh_nonzero(
         &g_prime_need_next_receipt_session);
+    if (session_id == 0u) {
+        /* No half-begun carrier: it stays absent. */
+        prime_need_branch_state_init(receipt);
+        return false;
+    }
+    receipt->top = NULL;
+    receipt->session_id = session_id;
     receipt->owner = owner;
-    return receipt->session_id != 0u;
+    return true;
 }
 
 bool prime_need_branch_state_begin(
@@ -2941,3 +3188,151 @@ bool prime_need_branch_state_excludes_arena(
     prime_need_arena_audit_free(audit);
     return excludes;
 }
+
+#if CETTA_PRIME_NEED_IDENTITY_TEST_HOOKS
+static _Atomic uint64_t *prime_need_identity_test_counter(
+    PrimeNeedIdentityNamespace ns) {
+    switch (ns) {
+    case PRIME_NEED_IDENTITY_SESSION:
+        return &g_prime_need_next_session;
+    case PRIME_NEED_IDENTITY_SERIAL:
+        return &g_prime_need_next_serial;
+    case PRIME_NEED_IDENTITY_THUNK:
+        return &g_prime_need_next_thunk;
+    case PRIME_NEED_IDENTITY_AUTHORITY:
+        return &g_prime_need_next_authority;
+    case PRIME_NEED_IDENTITY_STORAGE_KEY:
+        return &g_prime_need_next_storage_key;
+    case PRIME_NEED_IDENTITY_RECEIPT_SESSION:
+        return &g_prime_need_next_receipt_session;
+    case PRIME_NEED_IDENTITY_RECEIPT_NODE:
+        return &g_prime_need_next_receipt_node;
+    case PRIME_NEED_IDENTITY_SOURCE_OCCURRENCE:
+        return &g_prime_need_next_source_occurrence;
+    case PRIME_NEED_IDENTITY_EVALUATOR:
+        return &g_prime_need_next_evaluator;
+    case PRIME_NEED_IDENTITY_RESAMPLE_SCOPE:
+        return &g_prime_need_next_resample_scope;
+    case PRIME_NEED_IDENTITY_NAMESPACE_COUNT:
+        break;
+    }
+    return NULL;
+}
+
+const char *prime_need_identity_test_name(PrimeNeedIdentityNamespace ns) {
+    static const char *const names[PRIME_NEED_IDENTITY_NAMESPACE_COUNT] = {
+        [PRIME_NEED_IDENTITY_SESSION] = "session",
+        [PRIME_NEED_IDENTITY_SERIAL] = "serial",
+        [PRIME_NEED_IDENTITY_THUNK] = "thunk",
+        [PRIME_NEED_IDENTITY_AUTHORITY] = "authority",
+        [PRIME_NEED_IDENTITY_STORAGE_KEY] = "storage-key",
+        [PRIME_NEED_IDENTITY_RECEIPT_SESSION] = "receipt-session",
+        [PRIME_NEED_IDENTITY_RECEIPT_NODE] = "receipt-node",
+        [PRIME_NEED_IDENTITY_SOURCE_OCCURRENCE] = "source-occurrence",
+        [PRIME_NEED_IDENTITY_EVALUATOR] = "evaluator",
+        [PRIME_NEED_IDENTITY_RESAMPLE_SCOPE] = "resample-scope",
+    };
+    return (unsigned)ns < PRIME_NEED_IDENTITY_NAMESPACE_COUNT
+        ? names[ns] : NULL;
+}
+
+uint64_t prime_need_identity_test_last(PrimeNeedIdentityNamespace ns) {
+    return ns == PRIME_NEED_IDENTITY_THUNK
+        ? PRIME_NEED_NAMED_CELL_BIT - 1u
+        : UINT64_MAX - 1u;
+}
+
+bool prime_need_identity_test_seed(PrimeNeedIdentityNamespace ns,
+                                   uint64_t next) {
+    _Atomic uint64_t *counter = prime_need_identity_test_counter(ns);
+    if (!counter || next == 0u)
+        return false;
+    atomic_store_explicit(counter, next, memory_order_relaxed);
+    return true;
+}
+
+uint64_t prime_need_identity_test_next(PrimeNeedIdentityNamespace ns) {
+    _Atomic uint64_t *counter = prime_need_identity_test_counter(ns);
+    return counter ? atomic_load_explicit(counter, memory_order_relaxed)
+                   : 0u;
+}
+
+uint64_t prime_need_identity_test_take(PrimeNeedIdentityNamespace ns) {
+    switch (ns) {
+    case PRIME_NEED_IDENTITY_THUNK:
+        return prime_need_fresh_thunk_id();
+    case PRIME_NEED_IDENTITY_SOURCE_OCCURRENCE:
+        return prime_need_fresh_source_occurrence();
+    case PRIME_NEED_IDENTITY_EVALUATOR:
+        return prime_need_fresh_evaluator_id();
+    case PRIME_NEED_IDENTITY_RESAMPLE_SCOPE:
+        return prime_need_fresh_resample_scope();
+    default: {
+        _Atomic uint64_t *counter = prime_need_identity_test_counter(ns);
+        return counter ? prime_need_fresh_nonzero(counter) : 0u;
+    }
+    }
+}
+
+void prime_need_identity_test_reserve_storage_keys_through(uint64_t key) {
+    prime_need_reserve_storage_keys_through(key);
+}
+
+/* CETTA_TEST_PRIME_NEED_IDENTITY_SEED="thunk=last,serial=exhausted,session=7"
+ * places namespaces before main runs, so a whole program can meet an
+ * exhausted namespace.  `last` is the namespace's last identity and
+ * `exhausted` is UINT64_MAX.  A malformed seed aborts the test binary. */
+__attribute__((constructor))
+static void prime_need_identity_test_seed_from_environment(void) {
+    const char *spec = getenv("CETTA_TEST_PRIME_NEED_IDENTITY_SEED");
+    if (!spec)
+        return;
+    const char *cursor = spec;
+    while (*cursor) {
+        const char *equals = strchr(cursor, '=');
+        if (!equals)
+            goto malformed;
+        size_t name_len = (size_t)(equals - cursor);
+        int found = -1;
+        for (int ns = 0; ns < PRIME_NEED_IDENTITY_NAMESPACE_COUNT; ns++) {
+            const char *name = prime_need_identity_test_name(
+                (PrimeNeedIdentityNamespace)ns);
+            if (strlen(name) == name_len &&
+                strncmp(cursor, name, name_len) == 0)
+                found = ns;
+        }
+        if (found < 0)
+            goto malformed;
+        const char *value = equals + 1;
+        const char *end = strchr(value, ',');
+        if (!end)
+            end = value + strlen(value);
+        size_t value_len = (size_t)(end - value);
+        uint64_t next = 0u;
+        if (value_len == 4u && strncmp(value, "last", 4u) == 0) {
+            next = prime_need_identity_test_last(
+                (PrimeNeedIdentityNamespace)found);
+        } else if (value_len == 9u && strncmp(value, "exhausted", 9u) == 0) {
+            next = UINT64_MAX;
+        } else {
+            if (value_len == 0u)
+                goto malformed;
+            for (const char *digit = value; digit < end; digit++) {
+                unsigned d = (unsigned)(*digit - '0');
+                if (d > 9u || next > (UINT64_MAX - d) / 10u)
+                    goto malformed;
+                next = next * 10u + d;
+            }
+        }
+        if (!prime_need_identity_test_seed(
+                (PrimeNeedIdentityNamespace)found, next))
+            goto malformed;
+        cursor = *end ? end + 1 : end;
+    }
+    return;
+malformed:
+    fprintf(stderr, "malformed CETTA_TEST_PRIME_NEED_IDENTITY_SEED: %s\n",
+            spec);
+    abort();
+}
+#endif

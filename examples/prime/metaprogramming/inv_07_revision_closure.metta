@@ -1,12 +1,15 @@
+(set:profile hol)
+
 ; Revision-aware definitions.
 ;
 ; A published fact is reusable only while everything it was checked against
-; is unchanged: the definitions it mentions and, transitively, the bodies of
-; the definitions those mention.  Changing a definition behind an alias whose
+; is unchanged: the selected typed declarations, admitted computation rules,
+; definitions it mentions and, transitively, the bodies of the definitions
+; those mention.  Changing a definition behind an alias whose
 ; own equation is unchanged is a change; restoring the body restores reuse; an
 ; unrelated definition changes nothing.
 
-!(bind! &theory (new-space))
+!(bind! &theory (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(add-atom &theory (: A prop))
 !(add-atom &theory (: B prop))
 

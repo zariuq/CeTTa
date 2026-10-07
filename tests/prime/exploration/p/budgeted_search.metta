@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Budgeted plan search: exhaustion is Incomplete, never Refuted.
 ;
 ; The kernel is a small proof calculus with nullary judgments; each rule is
@@ -173,7 +175,7 @@
 ; ---- the ITP half: an established verdict carries a checked proof -------------------------
 
 !(import! &self pf)
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(pf:theory &thy ((: A prop) (: B prop) (: C prop) (: X prop)))
 (= (imps $ctx $goal)
    (if (== $ctx ()) $goal

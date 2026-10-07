@@ -206,6 +206,13 @@ Atom *abt_open(const AbtSignature *signature, Arena *arena,
 Atom *abt_bind(const AbtSignature *signature, Arena *arena,
                Atom *name, Atom *term);
 
+/* subst for a language whose quotations are sealed code
+   (atom_is_quotation), such as Prime's canonical lambda: it does not enter
+   a quotation, which holds no reference to a binder and receives no
+   substitution, except through the drop *@x of a quoted reference. */
+Atom *abt_subst_sealed(const AbtSignature *signature, Arena *arena,
+                       uint64_t index, Atom *substitution, Atom *term);
+
 /* Invertible, capture-free structural presentation for errors, tools, and
    REPLs.  This is deliberately not a language's mixfix printer.  A binding
    constructor is represented as

@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Reusable certified transformations for a supplied family.
 ; A step takes a value and evidence that the family holds of that value,
 ; computes a new value, and returns evidence that the family holds of the

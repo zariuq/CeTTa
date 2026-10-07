@@ -121,18 +121,20 @@ def encode_tm(value: Tm) -> sx.SExpr:
             raise SystemExit(f"cannot encode Megalodon term {value!r}")
 
 
+_type_context_encoder = SharedPatternListEncoder(
+    "MTyCtxNil", lambda value: ("MTyCtxCons", (encode_tp(value),)))
+_proof_context_encoder = SharedPatternListEncoder(
+    "MPfCtxNil", lambda value: ("MPfCtxCons", (encode_tm(value),)))
+_primitive_encoder = SharedPatternListEncoder(
+    "MPrimNil", lambda value: ("MPrimCons", (encode_tp(value),)))
+
+
 def encode_type_context(context: list[Tp]) -> sx.SExpr:
-    result = mono.app("MTyCtxNil")
-    for value in reversed(context):
-        result = mono.app("MTyCtxCons", encode_tp(value), result)
-    return result
+    return _type_context_encoder.encode(context)
 
 
 def encode_proof_context(context: list[Tm]) -> sx.SExpr:
-    result = mono.app("MPfCtxNil")
-    for proposition in reversed(context):
-        result = mono.app("MPfCtxCons", encode_tm(proposition), result)
-    return result
+    return _proof_context_encoder.encode(context)
 
 
 _signature_encoder = SharedPatternListEncoder(
@@ -150,10 +152,7 @@ def encode_known(known: list[tuple[str, Tm]]) -> sx.SExpr:
 
 
 def encode_primitives(primitives: list[Tp]) -> sx.SExpr:
-    result = mono.app("MPrimNil")
-    for value_type in reversed(primitives):
-        result = mono.app("MPrimCons", encode_tp(value_type), result)
-    return result
+    return _primitive_encoder.encode(primitives)
 
 
 def encode_environment(known: list[tuple[str, Tm]]) -> sx.SExpr:

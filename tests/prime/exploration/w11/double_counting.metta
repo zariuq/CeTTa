@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Forgetting provenance double-counts evidence.  A derivation records the
 ; answer it supports and the source it rests on.  In the world shared, one
 ; source (7) supports the answer through two derivations, as when one report
@@ -55,7 +57,7 @@
 ; argument.  Each fact is proved by reflexivity: the checker computes both
 ; sides and compares them.
 !(import! &self pf)
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &thy bool (u 0) (: true bool) (: false bool))
 !(set:inductive &thy nat (u 0) (: O nat) (: S (-> nat nat)))
 !(set:inductive &thy deriv (u 0) (: mk-deriv (-> bool nat deriv)))

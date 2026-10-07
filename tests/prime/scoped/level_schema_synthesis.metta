@@ -1,8 +1,10 @@
+(set:profile hol)
+
 ; A declaration over universe levels is a schema the kernel reads.  When the
 ; kernel forms it, synthesis answers with its instance.  When it does not,
 ; the declared schema is not reported as the type: its level variables are
 ; unread, and a schema formed at no level types nothing.
-!(bind! &s (new-space))
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &s num (u 0) (: zero num) (: suc (-> num num)))
 ; Formed at every level: synthesis and checking succeed.
 !(add-atom &s (: poly-id (-> (A : (u $l)) (-> A A))))

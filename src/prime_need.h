@@ -15,6 +15,10 @@
 #define CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS 0
 #endif
 
+#ifndef CETTA_PRIME_NEED_IDENTITY_TEST_HOOKS
+#define CETTA_PRIME_NEED_IDENTITY_TEST_HOOKS 0
+#endif
+
 /* Prime's call-by-need store is a persistent, branch-local extension order.
  *
  * A snapshot is a finite path of cell updates.  Lookup observes the newest
@@ -157,6 +161,21 @@ typedef struct {
     Atom *after;
 } PrimeNeedReceiptEvent;
 
+/* Identities.  Sessions, frame serials, thunks, authorities, storage keys,
+ * receipt sessions and nodes, source occurrences, evaluators and resample
+ * scopes are each a namespace that issues every identity at most once in a
+ * process and never wraps.  Zero is never an identity.  An exhausted
+ * namespace stays exhausted: a function below that would draw from it
+ * returns false (or zero) and leaves what its caller holds unchanged.  Fresh
+ * thunk identities stay below PRIME_NEED_NAMED_CELL_BIT.  Nothing here makes
+ * an identity unique across processes. */
+typedef void (*PrimeNeedIdentityRefusalObserver)(void);
+/* Called once for each refusal, on the refusing thread.  The evaluator uses
+ * it to report the evaluation that met an exhausted namespace as
+ * incomplete. */
+void prime_need_identity_set_refusal_observer(
+    PrimeNeedIdentityRefusalObserver observer);
+
 void prime_need_snapshot_init(PrimeNeedSnapshot *snapshot);
 bool prime_need_snapshot_present(const PrimeNeedSnapshot *snapshot);
 bool prime_need_snapshot_begin(PrimeNeedSnapshot *snapshot);
@@ -164,6 +183,18 @@ bool prime_need_snapshot_is_ancestor(const PrimeNeedSnapshot *ancestor,
                                      const PrimeNeedSnapshot *descendant);
 bool prime_need_snapshot_merge(PrimeNeedSnapshot *dst,
                                const PrimeNeedSnapshot *src);
+/* The longest history two snapshots of one session share: the refinements
+ * both branches inherited from before they parted.  `max_storage_key` is
+ * kept as an upper bound. */
+bool prime_need_snapshot_common_ancestor(const PrimeNeedSnapshot *left,
+                                         const PrimeNeedSnapshot *right,
+                                         PrimeNeedSnapshot *out);
+/* The longest prefix of `snapshot`, extending `base`, that leaves no cell
+ * begun above `base` in the middle of its evaluation: the part of a history
+ * a continuation may keep. */
+bool prime_need_snapshot_settled_ancestor(const PrimeNeedSnapshot *base,
+                                          const PrimeNeedSnapshot *snapshot,
+                                          PrimeNeedSnapshot *out);
 bool prime_need_snapshot_promote(Arena *dst,
                                  PrimeNeedSnapshot *snapshot);
 /* Copy only the suffix owned by `forbidden` into `dst`, retaining an older
@@ -193,6 +224,12 @@ bool prime_need_snapshot_allocate(Arena *owner,
                                   PrimeNeedSnapshot *out,
                                   uint64_t *out_thunk_id);
 uint64_t prime_need_fresh_source_occurrence(void);
+/* The evaluation of a cell records the evaluator that runs it, so a demand
+ * that meets its own evaluation is a cycle. */
+uint64_t prime_need_fresh_evaluator_id(void);
+/* Each force of a resampler evaluates in a scope of its own; the scope is
+ * part of the name of each symbol cell it demands. */
+uint64_t prime_need_fresh_resample_scope(void);
 bool prime_need_snapshot_allocate_source_argument(
     Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
     uint64_t source_occurrence_id, uint64_t source_argument_index,
@@ -201,6 +238,17 @@ bool prime_need_snapshot_allocate_persisted(
     Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
     uint64_t storage_key, PrimeNeedSnapshot *out,
     uint64_t *out_thunk_id);
+/* Allocate a closed cell under an identity the caller chose rather than a
+ * fresh one.  The identity names the cell in every branch of the session:
+ * siblings that allocate it allocate distinct frames of the same name, each
+ * visible only in its own lineage, so a later demand in a branch finds the
+ * cell that branch already holds.  Fresh identities are small counters;
+ * a chosen identity has its top bit set, so the two never meet.  Fails when
+ * `base` already holds a cell of that identity. */
+#define PRIME_NEED_NAMED_CELL_BIT (UINT64_C(1) << 63)
+bool prime_need_snapshot_allocate_named(
+    Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
+    uint64_t thunk_id, PrimeNeedSnapshot *out);
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
 bool prime_need_snapshot_allocate_closure(
     Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
@@ -420,6 +468,36 @@ size_t prime_need_receipt_event_count(const PrimeNeedReceipt *receipt);
 bool prime_need_receipt_event_at(const PrimeNeedReceipt *receipt,
                                  size_t index,
                                  PrimeNeedReceiptEvent *out_event);
+#endif
+
+#if CETTA_PRIME_NEED_IDENTITY_TEST_HOOKS
+/* Test builds only.  The runtime has no way to move a namespace; these let
+ * a test place one near its end and draw through its runtime path.  The
+ * environment variable CETTA_TEST_PRIME_NEED_IDENTITY_SEED does the same
+ * before main (see prime_need.c). */
+typedef enum {
+    PRIME_NEED_IDENTITY_SESSION = 0,
+    PRIME_NEED_IDENTITY_SERIAL,
+    PRIME_NEED_IDENTITY_THUNK,
+    PRIME_NEED_IDENTITY_AUTHORITY,
+    PRIME_NEED_IDENTITY_STORAGE_KEY,
+    PRIME_NEED_IDENTITY_RECEIPT_SESSION,
+    PRIME_NEED_IDENTITY_RECEIPT_NODE,
+    PRIME_NEED_IDENTITY_SOURCE_OCCURRENCE,
+    PRIME_NEED_IDENTITY_EVALUATOR,
+    PRIME_NEED_IDENTITY_RESAMPLE_SCOPE,
+    PRIME_NEED_IDENTITY_NAMESPACE_COUNT
+} PrimeNeedIdentityNamespace;
+
+const char *prime_need_identity_test_name(PrimeNeedIdentityNamespace ns);
+/* The last identity the namespace issues. */
+uint64_t prime_need_identity_test_last(PrimeNeedIdentityNamespace ns);
+/* Places the next identity; zero is refused. */
+bool prime_need_identity_test_seed(PrimeNeedIdentityNamespace ns,
+                                   uint64_t next);
+uint64_t prime_need_identity_test_next(PrimeNeedIdentityNamespace ns);
+uint64_t prime_need_identity_test_take(PrimeNeedIdentityNamespace ns);
+void prime_need_identity_test_reserve_storage_keys_through(uint64_t key);
 #endif
 
 #endif /* CETTA_PRIME_NEED_H */

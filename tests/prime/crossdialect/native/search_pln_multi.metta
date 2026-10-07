@@ -1,8 +1,10 @@
+(set:profile hol)
+
 ; Native dependent PLN evidence search, using exact positive/total counts.
 ; The four inference constructors are explicit hypotheses of this theory.
 ; This tests recursive evidence aggregation and retained search prefixes;
 ; it does not import the HE floating-point truth-value evaluator.
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &thy Nat (u 0) (: Z Nat) (: S (-> Nat Nat)))
 !(set:inductive &thy Bool (u 0) (: yes Bool) (: no Bool))
 !(set:inductive &thy Evidence (u 0) (: ENil Evidence) (: ECons (-> Nat Evidence Evidence)))

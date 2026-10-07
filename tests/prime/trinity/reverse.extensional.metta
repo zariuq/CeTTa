@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Two reversals of a list, on the face of sets.  The definitions add their
 ; equations to the set: language, which the checker uses as computation.
 ; Here "rev l = rev-onto nil l" is proved for every list, through the lemma

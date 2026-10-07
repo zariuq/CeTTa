@@ -3,7 +3,7 @@
 [dep-root]
 [dep-proof]
 [(TransitiveDependencyUse True False 0)]
-[(ChangedTransitiveDependency Refuted)]
+[(ChangedTransitiveDependency Undetermined)]
 [DepChoice]
 [dep-choose]
 [dep-left-proof]

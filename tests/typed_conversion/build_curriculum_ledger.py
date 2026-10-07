@@ -27,7 +27,7 @@ FIXTURES = (
     ROOT / "tests/prime/scoped/curriculum_coq.metta",
     ROOT / "tests/prime/scoped/curriculum_hol.metta",
     ROOT / "tests/prime/scoped/curriculum_lean.metta",
-    ROOT / "tests/prime/scoped/curriculum_megalodon.metta",
+    ROOT / "tests/prime/profiles/megalodon_hotg/scoped/curriculum_megalodon.metta",
 )
 OUT = Path(os.environ.get("TC_OUT", "curriculum-ledger.tsv"))
 

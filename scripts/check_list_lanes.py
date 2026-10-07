@@ -396,7 +396,10 @@ def check_mutations(cetta: Path) -> int:
         (
             "map",
             list_source,
-            "       (map-atom $xs $var (metta $body %Undefined% (context-space)))))",
+            "       (function\n"
+            "         (eval\n"
+            "           (_minimal-map-atom $xs $var\n"
+            "             (metta $body %Undefined% (context-space)))))))",
             "       $xs))",
             "!(assertEqual (list:map (1 2 3) $x (+ $x 1)) (2 3 4))\n",
         ),

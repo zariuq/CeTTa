@@ -43,6 +43,9 @@
         (different ?codepoint (cp 34))
         (different ?codepoint (cp 92))))
 
+    ; Brackets end every token: a bracket touching a term opens a
+    ; substitution, and a bracket after layout opens a list.  Braces end
+    ; every token too: they open and close a braces node.
     (rule member-cetta-prime-token-scalar
       (head (member cetta-prime-token-scalar ?codepoint))
       (body
@@ -55,7 +58,11 @@
         (different ?codepoint (cp 34))
         (different ?codepoint (cp 40))
         (different ?codepoint (cp 41))
-        (different ?codepoint (cp 59))))
+        (different ?codepoint (cp 59))
+        (different ?codepoint (cp 91))
+        (different ?codepoint (cp 93))
+        (different ?codepoint (cp 123))
+        (different ?codepoint (cp 125))))
 
     (rule member-cetta-prime-token-start-nonat-scalar
       (head (member cetta-prime-token-start-nonat-scalar ?codepoint))
@@ -70,7 +77,11 @@
         (different ?codepoint (cp 40))
         (different ?codepoint (cp 41))
         (different ?codepoint (cp 59))
-        (different ?codepoint (cp 64))))
+        (different ?codepoint (cp 64))
+        (different ?codepoint (cp 91))
+        (different ?codepoint (cp 93))
+        (different ?codepoint (cp 123))
+        (different ?codepoint (cp 125))))
 
     (rule member-cetta-prime-token-start-plain-scalar
       (head (member cetta-prime-token-start-plain-scalar ?codepoint))
@@ -89,7 +100,10 @@
         (different ?codepoint (cp 42))
         (different ?codepoint (cp 59))
         (different ?codepoint (cp 64))
-        (different ?codepoint (cp 91))))
+        (different ?codepoint (cp 91))
+        (different ?codepoint (cp 93))
+        (different ?codepoint (cp 123))
+        (different ?codepoint (cp 125))))
 
     (rule member-cetta-prime-star-payload-start-scalar
       (head (member cetta-prime-star-payload-start-scalar ?codepoint))
@@ -102,7 +116,9 @@
         (different ?codepoint (cp 13))
         (different ?codepoint (cp 32))
         (different ?codepoint (cp 41))
-        (different ?codepoint (cp 59))))
+        (different ?codepoint (cp 59))
+        (different ?codepoint (cp 93))
+        (different ?codepoint (cp 125))))
 
     ; Inside a list a token also ends at a bracket, and a list word starts
     ; with a bar only when more follows.
@@ -120,7 +136,9 @@
         (different ?codepoint (cp 41))
         (different ?codepoint (cp 59))
         (different ?codepoint (cp 91))
-        (different ?codepoint (cp 93))))
+        (different ?codepoint (cp 93))
+        (different ?codepoint (cp 123))
+        (different ?codepoint (cp 125))))
 
     (rule member-cetta-prime-list-token-start-nonat-scalar
       (head (member cetta-prime-list-token-start-nonat-scalar ?codepoint))
@@ -137,7 +155,9 @@
         (different ?codepoint (cp 59))
         (different ?codepoint (cp 64))
         (different ?codepoint (cp 91))
-        (different ?codepoint (cp 93))))
+        (different ?codepoint (cp 93))
+        (different ?codepoint (cp 123))
+        (different ?codepoint (cp 125))))
 
     (rule member-cetta-prime-list-token-start-plain-scalar
       (head (member cetta-prime-list-token-start-plain-scalar ?codepoint))
@@ -158,7 +178,9 @@
         (different ?codepoint (cp 64))
         (different ?codepoint (cp 91))
         (different ?codepoint (cp 93))
-        (different ?codepoint (cp 124))))
+        (different ?codepoint (cp 124))
+        (different ?codepoint (cp 123))
+        (different ?codepoint (cp 125))))
 
     (rule member-cetta-prime-list-star-payload-start-scalar
       (head (member cetta-prime-list-star-payload-start-scalar ?codepoint))
@@ -172,5 +194,6 @@
         (different ?codepoint (cp 32))
         (different ?codepoint (cp 41))
         (different ?codepoint (cp 59))
-        (different ?codepoint (cp 93))))
+        (different ?codepoint (cp 93))
+        (different ?codepoint (cp 125))))
   ))

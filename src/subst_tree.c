@@ -450,8 +450,11 @@ static SubstNode *snode_insert_atom(SubstNode *node, Atom *a) {
          * applies its rest. */
         if (atom_is_list_rest(a))
             return snode_get_grounded_placeholder(node);
-        SubstNode *cur = snode_get_expr(node, a->expr.len);
-        for (CettaExprIndex i = 0; i < a->expr.len; i++)
+        /* Keyed by the authored term: an elaborated template's own list is
+         * inferred metadata that no pattern sees (atom_authored_len). */
+        CettaExprLen len = atom_authored_len(a);
+        SubstNode *cur = snode_get_expr(node, len);
+        for (CettaExprIndex i = 0; i < len; i++)
             cur = snode_insert_atom(cur, a->expr.elems[i]);
         return cur;
     }
@@ -515,8 +518,9 @@ static SubstNode *snode_insert_atom_id(SubstNode *node,
             tu_internal_tag(universe, tu_child(universe, atom_id, 0u)) ==
                 CETTA_INTERNAL_TAG_LIST_REST)
             return snode_get_grounded_placeholder(node);
-        SubstNode *cur = snode_get_expr(node, tu_arity(universe, atom_id));
-        for (CettaExprIndex i = 0; i < tu_arity(universe, atom_id); i++) {
+        CettaExprLen arity = tu_authored_arity(universe, atom_id);
+        SubstNode *cur = snode_get_expr(node, arity);
+        for (CettaExprIndex i = 0; i < arity; i++) {
             AtomId child_id = tu_child(universe, atom_id, i);
             cur = snode_insert_atom_id(cur, universe, child_id);
             if (!cur)
@@ -805,10 +809,13 @@ static CettaIndex flatten_atom(Atom *a, FlatToken *buf, CettaIndex pos) {
                                    .original = a};
             return pos + 1;
         }
-        buf[pos] = (FlatToken){.kind = FT_EXPR, .arity = a->expr.len, .original = a};
-        pos++;
-        for (CettaExprIndex i = 0; i < a->expr.len; i++)
-            pos = flatten_atom(a->expr.elems[i], buf, pos);
+        {
+            CettaExprLen len = atom_authored_len(a);
+            buf[pos] = (FlatToken){.kind = FT_EXPR, .arity = len, .original = a};
+            pos++;
+            for (CettaExprIndex i = 0; i < len; i++)
+                pos = flatten_atom(a->expr.elems[i], buf, pos);
+        }
         return pos;
     }
     return pos;

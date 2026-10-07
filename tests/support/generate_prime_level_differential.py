@@ -50,7 +50,7 @@ at the second.
 A level parameter stands for a level an author writes, a Cantor normal form.
 In Lean that is a bound on every parameter: it lies below the first level
 above the Cantor normal forms (`LevelBounds`, with the bounds that
-Mettapedia's `AmbientSets.writtenBounds` states).  For a pair of level
+Mettapedia's `MegalodonHOTG.writtenBounds` states).  For a pair of level
 expressions over the levels above the Cantor normal forms and a valuation of
 the parameters 0, 1 and 2 in the Cantor normal forms, both sides print the
 canonical forms of the two expressions, of the successor of the first and of
@@ -1022,7 +1022,7 @@ def decodeAbove : List Nat → Option (Above Level)
 
 /-- **The bounds under which every level parameter stands for a Cantor normal form**: each
 parameter is below the first level above them all. These are the bounds that
-`TowerInterpretation.AmbientSets.writtenBounds` states. -/
+`TowerInterpretation.MegalodonHOTG.writtenBounds` states. -/
 def written : LevelBounds (Above Level) := fun _ => some (Above.above 0)
 
 /-- Read one level expression over the levels that may lie above the Cantor normal forms from

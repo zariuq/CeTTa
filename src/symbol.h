@@ -518,7 +518,9 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(set_colon_interpret, "set:interpret") \
     X(petta_decons, "decons") \
     X(prime_data, "Data") \
-    X(prime_lam, "lam")
+    X(prime_lam, "lam") \
+    X(prime_meta, "meta") \
+    X(prime_new, "new")
 
 /* Builtins whose grounded-operation capability is independent of language
    and profile.  symbol_table_init_builtins compiles this declaration into

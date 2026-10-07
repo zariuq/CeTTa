@@ -1,0 +1,23 @@
+; Selecting HOTG in one space neither selects it elsewhere nor changes HOL.
+!(bind! &logic (new-space))
+!(bind! &hotg (new-space))
+!(add-atom &logic (set:profile hol))
+!(add-atom &hotg (set:profile megalodon-hotg))
+!(match &logic (set:profile $name) $name)
+!(match &hotg (set:profile $name) $name)
+!(set:proves &logic (pf:all-intro (pf:imp-intro (pf:hyp 0))) (all prop (lam p (imp p p))))
+!(set:of &hotg Empty)
+!(let $r (set:of &logic Empty) (car-atom $r))
+!(set:proves &hotg (pf:all-elim (pf:known universeIn) Empty) (In Empty (UnivOf Empty)))
+!(let $r (set:known-proposition &logic universeIn) (car-atom $r))
+!(let $r (set:of Empty) (car-atom $r))
+!(let $h (set:signature-digest &logic) (let $t (set:signature-digest &hotg) (== $h $t)))
+
+; Duplicate declarations agree. Conflicting declarations select neither.
+!(add-atom &hotg (set:profile megalodon-hotg))
+!(set:of &hotg Empty)
+!(add-atom &hotg (set:profile hol))
+!(let $r (set:of &hotg Empty) (car-atom $r))
+!(remove-atom &hotg (set:profile hol))
+!(set:of &hotg Empty)
+!(set:proves &logic (pf:all-intro (pf:imp-intro (pf:hyp 0))) (all prop (lam p (imp p p))))

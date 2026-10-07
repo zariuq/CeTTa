@@ -1,7 +1,7 @@
 [(quote (diag (quote (diag x))))]
 [True]
 [True]
-["(quote (diag (quote (diag x))))"]
+["@(diag @(diag x))"]
 [(receipt (quote (shown (diag (quote (shown (diag x)))))))]
 [True]
 [True]

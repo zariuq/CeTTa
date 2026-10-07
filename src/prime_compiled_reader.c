@@ -138,6 +138,33 @@ static AtomId prime_projection_prefix(
     return CETTA_ATOM_ID_NONE;
 }
 
+/* A meta-argument touching a term, T[...] or T{...}: the Atom
+ * (meta T [...]) or (meta T {...}).  The reader gives no head a meaning. */
+static AtomId prime_projection_meta(
+    void *context, AtomId term, AtomId argument) {
+    PrimeProjectionV1 *prime_projection = context;
+    ParserHostProjectionV1 *projection =
+        prime_projection ? prime_projection->host : NULL;
+    AtomId children[3];
+    children[0] = parser_host_projection_v1_word_bytes(
+        projection, (const uint8_t *)"meta", 4u);
+    children[1] = term;
+    children[2] = argument;
+    for (size_t index = 0u; index < 3u; index++)
+        if (children[index] == CETTA_ATOM_ID_NONE)
+            return CETTA_ATOM_ID_NONE;
+    return parser_host_projection_v1_expression(projection, children, 3u);
+}
+
+/* The braces node {x y}: the Atom (BRACES x y). */
+static AtomId prime_projection_braces(
+    void *context, const AtomId *children, size_t child_len) {
+    PrimeProjectionV1 *prime_projection = context;
+    ParserHostProjectionV1 *projection =
+        prime_projection ? prime_projection->host : NULL;
+    return parser_host_projection_v1_braces(projection, children, child_len);
+}
+
 PrimeCompiledReaderV1 *prime_compiled_reader_v1_new(void) {
     return calloc(1u, sizeof(PrimeCompiledReaderV1));
 }
@@ -230,6 +257,8 @@ int prime_compiled_reader_v1_parse_bytes_ids(
         .expression = prime_projection_expression,
         .prefix = prime_projection_prefix,
         .list = prime_projection_list,
+        .meta = prime_projection_meta,
+        .braces = prime_projection_braces,
     };
     memset(&direct_receipt, 0, sizeof(direct_receipt));
     result = prime_reader_direct_v1_parse_bytes_ids(
