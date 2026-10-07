@@ -1,4 +1,6 @@
 ; Shared realistic WM-PLN workload core over the current 1.4M-atom tier.
+; Include this loader in a client that uses its named space handles. Importing
+; it as a module keeps those token bindings private to that module.
 ; Positive example:
 ; keep the engine/helper definitions in &self while loading raw facts and
 ; rule/bridge declarations into dedicated spaces that bc consults via match.

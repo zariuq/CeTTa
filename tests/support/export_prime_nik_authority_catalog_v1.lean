@@ -1,8 +1,9 @@
-import Mettapedia.Languages.MeTTa.Prime.MinimalCheckingPackage
+import Mettapedia.Languages.MeTTa.PrimeCandidates.MinimalCheckingPackage
 import Mettapedia.Languages.Megalodon.ImplicationalKernel
 import Mettapedia.Languages.Megalodon.TheoryAdmissionKernel
 import Mettapedia.Languages.Megalodon.DefinitionConversionWireRefinement
 import Mettapedia.GSLT.LanguageDef.InferenceMeTTaRender
+import Mettapedia.GSLT.LanguageDef.InferencePresentationWire
 import Mettapedia.GSLT.LanguageDef.InferenceABTWireRefinement
 import MeTTailCore.Crypto.SHA256
 
@@ -12,12 +13,14 @@ import MeTTailCore.Crypto.SHA256
 The catalog contains independently named admitted rule packages and one
 accepted proof for each.  It is data for CeTTa's generic checker pipeline;
 no package is privileged as Prime's unique type theory.
+Exporting current model data does not revise the saved runtime packages.
 -/
 
 namespace Cetta.Prime.NIK.AuthorityCatalogV1
 
 open Mettapedia.GSLT.LanguageDef.InferenceMeTTaRender
-open Mettapedia.Languages.MeTTa.Prime.MinimalCheckingPackage
+open Mettapedia.GSLT.LanguageDef
+open Mettapedia.Languages.MeTTa.PrimeCandidates.MinimalCheckingPackage
 
 private def presentationDigest (rendered : String) : String :=
   MeTTailCore.Crypto.SHA256.sha256Hex rendered
@@ -30,12 +33,12 @@ private def authority (shortName system revision : String)
     "\n    (positive " ++ goal ++ " " ++ proof ++ "))"
 
 def catalog : String :=
-  let dttPresentation := renderPresentation dttCache
-  let hotgPresentation := renderPresentation hotgCache
-  let megalodonImpPresentation := renderPresentation
-    Mettapedia.Languages.Megalodon.ImplicationalKernel.presentation
-  let megalodonTermPresentation := renderPresentation
-    Mettapedia.Languages.Megalodon.TheoryAdmissionKernel.presentation
+  let dttPresentation := InferencePresentationWire.renderDefinition dttCache
+  let hotgPresentation := InferencePresentationWire.renderDefinition hotgCache
+  let megalodonImpPresentation := InferencePresentationWire.renderDefinition
+    Mettapedia.Languages.Megalodon.ImplicationalKernel.definition
+  let megalodonTermPresentation := InferencePresentationWire.renderDefinition
+    Mettapedia.Languages.Megalodon.TheoryAdmissionKernel.definition
   "(nik-authority-catalog-v1\n" ++
     authority "DTT" "prime.dtt.calibration" "1"
       dttPresentation (renderPattern dttIdZeroGoal)

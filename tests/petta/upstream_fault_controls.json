@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "cases": {
+    "git_import2.metta": {
+      "source_sha256": "8abc99570e919d7a1019997a89bf515e0e64834f728988406ac211e622e4250e",
+      "reason": "The source does not import lib_import and uses an unresolved library path. Its first test fails in the upstream runtime. Successful import/build execution has a separate controlled fixture.",
+      "exit": 1,
+      "stdout": "is (atom-of (match-k 1 &avs (0.09 0.19 0.29 0.39))), should a. ❌ \n",
+      "stderr": ""
+    }
+  }
+}

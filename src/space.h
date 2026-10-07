@@ -4,6 +4,7 @@
 #include <stdatomic.h>
 
 #include "atom.h"
+#include "rule_binding.h"
 #include "generated/cetta_execution_contracts.generated.h"
 #include "gslt_term_view_v1.h"
 #include "name_key.h"
@@ -83,6 +84,11 @@ typedef struct {
     EqBucket buckets[EQ_INDEX_BUCKETS];
     EqBucket wildcard; /* equations with variable/structured LHS head */
     EqHeadSet heads;
+    /* Separate declaration projection. Ordinary callable lookup never reads
+     * these heads; an extended execution view must opt in explicitly. */
+    EqHeadSet directional_heads;
+    bool directional_wildcard;
+    bool directional_present;
 } EqIndex;
 
 /* ── Type Annotation Index (: atom type) → fast lookup ─────────────────── */
@@ -444,6 +450,8 @@ bool space_equation_token_matches_live_space(
     SpaceEquationToken token, const Space *live_space);
 bool space_equation_occurrence_resolve(SpaceEquationOccurrenceId id,
                                        SpaceEquationOccurrence *out);
+bool space_rule_occurrence_resolve(SpaceEquationOccurrenceId id,
+    unsigned admitted_forms, SpaceEquationOccurrence *out);
 
 /*
  * Revision-pinned, declaration-order cursor over equations whose left-hand
@@ -470,6 +478,7 @@ typedef struct {
        are visited in phase 0 and the imported ones in phase 1. */
     CettaIndex imported;
     uint8_t phase;
+    unsigned admitted_forms;
 } SpaceEquationCursor;
 
 typedef enum {
@@ -480,6 +489,11 @@ typedef enum {
 
 bool space_equation_cursor_init(Space *s, SymbolId head,
                                 SpaceEquationCursor *cursor);
+/* The extended projection uses the same revision-qualified occurrence order.
+ * Its initial realization scans the logical member; ordinary-only readers
+ * keep the indexed cursor. The mask is part of the captured query policy. */
+bool space_rule_cursor_init(Space *s, SymbolId head, unsigned admitted_forms,
+                            SpaceEquationCursor *cursor);
 SpaceEquationCursorStep space_equation_cursor_next(
     SpaceEquationCursor *cursor, SpaceEquationOccurrenceId *out);
 
@@ -629,6 +643,11 @@ CettaCount query_equations_visit_planned(
    substitution, but performs no candidate selection. */
 CettaCount query_equation_visit(Atom *equation, Atom *query, Arena *a,
                                 QueryResultVisitor visitor, void *ctx);
+/* Apply an explicitly admitted descriptor. Mismatch, invalid input and
+ * capacity remain distinct; emitted is zero unless a body was published. */
+CettaTermMatchStatus query_rule_visit(const CettaRuleDescriptor *rule,
+    Atom *query, Arena *a, QueryResultVisitor visitor, void *ctx,
+    CettaCount *emitted);
 /* Execute a complete logical equation query whose candidate selection has
    already proved that `equation` is the only candidate.  Unlike the
    lower-level per-candidate primitive above, this preserves the ordinary
@@ -644,6 +663,20 @@ void query_results_free(QueryResults *qr);
    Returns substituted RHS for each match, plus bindings. */
 void query_equations(Space *s, Atom *query, Arena *a, QueryResults *out);
 bool space_equations_may_match_known_head(Space *s, SymbolId head);
+/* A clean local equation index is already a maintained absence certificate.
+ * Mutations dirty or update it; composed/overlay views need their full reader. */
+static inline bool space_directional_index_proves_absent(const Space *s) {
+    return s && !s->overlay_base && !s->dep_count &&
+        !s->native.eq_idx_dirty && !s->native.eq_idx.directional_present;
+}
+bool space_directional_rules_may_match_general(Space *s, SymbolId head);
+static inline bool space_directional_rules_may_match_known_head(Space *s, SymbolId head) {
+    return !space_directional_index_proves_absent(s) &&
+        space_directional_rules_may_match_general(s, head);
+}
+bool space_extended_rule_head_arity_bounds(Space *s, SymbolId head,
+    CettaExprLen *minimum, CettaExprLen *maximum, bool *has_exact,
+    CettaExprLen query_arity, unsigned admitted_forms);
 /* Revision-pinned least fixed point of the generated relational-effect
  * algebra over user-equation dependencies.  A named symbol with no visible
  * equation is inert at the pinned revision; malformed, variable-headed, or
@@ -662,6 +695,17 @@ bool space_equation_head_arity_bounds(
     Space *s, SymbolId head, CettaExprLen *minimum,
     CettaExprLen *maximum, bool *has_exact,
     CettaExprLen query_arity);
+static inline bool space_rule_head_arity_bounds(Space *s, SymbolId head,
+    CettaExprLen *minimum, CettaExprLen *maximum, bool *has_exact,
+    CettaExprLen query_arity, unsigned admitted_forms) {
+    if ((admitted_forms & CETTA_RULE_SYNTAX_ORDINARY) &&
+        (!(admitted_forms & CETTA_RULE_SYNTAX_DIRECTIONAL) ||
+         space_directional_index_proves_absent(s)))
+        return space_equation_head_arity_bounds(s, head, minimum, maximum,
+                                                has_exact, query_arity);
+    return space_extended_rule_head_arity_bounds(s, head, minimum, maximum,
+                                                has_exact, query_arity, admitted_forms);
+}
 /* MAM loop-body view entry guard: head resolves to exactly one equation in a
  * clean single-head bucket, no overlay base (necessary condition for the
  * deterministic-tail loop lane; conservative, cheap). */

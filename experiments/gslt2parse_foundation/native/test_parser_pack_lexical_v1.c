@@ -329,6 +329,7 @@ static void test_guard_relation_contract(TestCounts *counts,
     PPGuardRelationV1 mutated_relation;
     PPGuardRelationV1 absent_relation;
     PPGuardRelationV1 borrowed_relation;
+    PPGuardRelationV1 repeated_owner_relation;
     PPGuardRelationV1 wrong_owner_relation;
     PPGuardRelationV1 expiring_relation;
     HashConsTable active_hashcons;
@@ -337,6 +338,7 @@ static void test_guard_relation_contract(TestCounts *counts,
     Arena expiring_owner;
     const Arena *borrowed_owners[1] = {arena};
     const Arena *wrong_owners[1] = {&wrong_owner};
+    const Arena *repeated_owners[3] = {arena, &wrong_owner, arena};
     const Arena *expiring_owners[1] = {&expiring_owner};
     Atom *shared = atom_symbol(arena, "shared-value");
     Atom *base_value = atom_symbol(arena, "base-token-value");
@@ -369,6 +371,7 @@ static void test_guard_relation_contract(TestCounts *counts,
     ppguard_relation_v1_init(&mutated_relation);
     ppguard_relation_v1_init(&absent_relation);
     ppguard_relation_v1_init(&borrowed_relation);
+    ppguard_relation_v1_init(&repeated_owner_relation);
     ppguard_relation_v1_init(&wrong_owner_relation);
     ppguard_relation_v1_init(&expiring_relation);
     g_hashcons = saved_hashcons;
@@ -470,6 +473,20 @@ static void test_guard_relation_contract(TestCounts *counts,
 
     error[0] = '\0';
     REQUIRE(counts,
+            ppguard_relation_v1_build_borrowed_atoms(
+                &base, base_witness_values, 1u,
+                guard_terminal_ids, 2u,
+                matches, 6u, repeated_owners, 3u, DIGEST_A,
+                &repeated_owner_relation, error, sizeof(error)) &&
+                ppguard_relation_v1_validate(
+                    &repeated_owner_relation, error, sizeof(error)) &&
+                strcmp(repeated_owner_relation.relation_digest,
+                       relation.relation_digest) == 0,
+            error[0] ? error :
+                "repeated live owners preserve existential containment and digest");
+
+    error[0] = '\0';
+    REQUIRE(counts,
             !ppguard_relation_v1_build_borrowed_atoms(
                 &base, base_witness_values, 1u,
                 guard_terminal_ids, 2u,
@@ -498,6 +515,42 @@ static void test_guard_relation_contract(TestCounts *counts,
                     &expiring_relation, error, sizeof(error)),
             error[0] ? error :
                 "borrowed guard relation accepts its live owner");
+    {
+        Atom *partial_values[1] = {(Atom *)(
+            expiring_owner.head->data + expiring_owner.head->used -
+            sizeof(Atom) / 2u)};
+        Atom *unused_values[1] = {(Atom *)(
+            expiring_owner.head->data + expiring_owner.head->used)};
+
+        error[0] = '\0';
+        REQUIRE(counts,
+                !ppguard_relation_v1_build_borrowed_atoms(
+                    &base, partial_values, 1u, guard_terminal_ids, 2u,
+                    &expiring_match, 1u, expiring_owners, 1u, DIGEST_A,
+                    &wrong_owner_relation, error, sizeof(error)) &&
+                    strstr(error, "owner") != NULL,
+                "borrowed roots must fit completely in an active range");
+        error[0] = '\0';
+        REQUIRE(counts,
+                !ppguard_relation_v1_build_borrowed_atoms(
+                    &base, unused_values, 1u, guard_terminal_ids, 2u,
+                    &expiring_match, 1u, expiring_owners, 1u, DIGEST_A,
+                    &wrong_owner_relation, error, sizeof(error)) &&
+                    strstr(error, "owner") != NULL,
+                "unused arena capacity does not establish root ownership");
+    }
+    for (index = 0u; index < 32u; index++) {
+        if (!arena_alloc(&expiring_owner, ARENA_BLOCK_SIZE))
+            break;
+    }
+    REQUIRE(counts, index == 32u,
+            "owner growth allocates independent live blocks");
+    error[0] = '\0';
+    REQUIRE(counts,
+            ppguard_relation_v1_validate(
+                &expiring_relation, error, sizeof(error)),
+            error[0] ? error :
+                "fresh validation accepts old roots after live owner growth");
     arena_free(&expiring_owner);
     error[0] = '\0';
     REQUIRE(counts,
@@ -666,6 +719,7 @@ static void test_guard_relation_contract(TestCounts *counts,
 done:
     ppguard_relation_v1_free(&expiring_relation);
     ppguard_relation_v1_free(&wrong_owner_relation);
+    ppguard_relation_v1_free(&repeated_owner_relation);
     ppguard_relation_v1_free(&borrowed_relation);
     ppguard_relation_v1_free(&absent_relation);
     ppguard_relation_v1_free(&mutated_relation);

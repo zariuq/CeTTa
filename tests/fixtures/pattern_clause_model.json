@@ -1,0 +1,1892 @@
+{
+  "cases": [
+    {
+      "answers": [
+        "(image () () $v0 $v1)"
+      ],
+      "policy": "set",
+      "source": "()",
+      "target": "()",
+      "template": "(image () () $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image () ((pos (p a))) $v0 $v1)"
+      ],
+      "policy": "set",
+      "source": "()",
+      "target": "((pos (p a)))",
+      "template": "(image () ((pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image () ((pos (p a)) (pos (p a))) $v0 $v1)"
+      ],
+      "policy": "set",
+      "source": "()",
+      "target": "((pos (p a)) (pos (p a)))",
+      "template": "(image () ((pos (p a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image () ((pos (p a)) (pos (q b))) $v0 $v1)"
+      ],
+      "policy": "set",
+      "source": "()",
+      "target": "((pos (p a)) (pos (q b)))",
+      "template": "(image () ((pos (p a)) (pos (q b))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image () ((pos (q a)) (pos (p a))) $v0 $v1)"
+      ],
+      "policy": "set",
+      "source": "()",
+      "target": "((pos (q a)) (pos (p a)))",
+      "template": "(image () ((pos (q a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image () ((pos (p $v2)) (pos (q $v2))) $v0 $v1)"
+      ],
+      "policy": "set",
+      "source": "()",
+      "target": "((pos (p $v2)) (pos (q $v2)))",
+      "template": "(image () ((pos (p $v2)) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image () ((pos (p $v2)) (pos (q $v3))) $v0 $v1)"
+      ],
+      "policy": "set",
+      "source": "()",
+      "target": "((pos (p $v2)) (pos (q $v3)))",
+      "template": "(image () ((pos (p $v2)) (pos (q $v3))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image () ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+      ],
+      "policy": "set",
+      "source": "()",
+      "target": "((pos (p a)) (pos (q $v0)))",
+      "template": "(image () ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image () ((pos (p a)) (neg (q a))) $v0 $v1)"
+      ],
+      "policy": "set",
+      "source": "()",
+      "target": "((pos (p a)) (neg (q a)))",
+      "template": "(image () ((pos (p a)) (neg (q a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image () ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v0 $v1)"
+      ],
+      "policy": "set",
+      "source": "()",
+      "target": "((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2)))",
+      "template": "(image () ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p $v0)))",
+      "target": "()",
+      "template": "(image ((pos (p $v0))) () $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a))) ((pos (p a))) a $v1)"
+      ],
+      "policy": "set",
+      "source": "((pos (p $v0)))",
+      "target": "((pos (p a)))",
+      "template": "(image ((pos (p $v0))) ((pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a))) ((pos (p a)) (pos (p a))) a $v1)",
+        "(image ((pos (p a))) ((pos (p a)) (pos (p a))) a $v1)"
+      ],
+      "policy": "set",
+      "source": "((pos (p $v0)))",
+      "target": "((pos (p a)) (pos (p a)))",
+      "template": "(image ((pos (p $v0))) ((pos (p a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a))) ((pos (p a)) (pos (q b))) a $v1)"
+      ],
+      "policy": "set",
+      "source": "((pos (p $v0)))",
+      "target": "((pos (p a)) (pos (q b)))",
+      "template": "(image ((pos (p $v0))) ((pos (p a)) (pos (q b))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a))) ((pos (q a)) (pos (p a))) a $v1)"
+      ],
+      "policy": "set",
+      "source": "((pos (p $v0)))",
+      "target": "((pos (q a)) (pos (p a)))",
+      "template": "(image ((pos (p $v0))) ((pos (q a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p $v2))) ((pos (p $v2)) (pos (q $v2))) $v2 $v1)"
+      ],
+      "policy": "set",
+      "source": "((pos (p $v0)))",
+      "target": "((pos (p $v2)) (pos (q $v2)))",
+      "template": "(image ((pos (p $v0))) ((pos (p $v2)) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p $v2))) ((pos (p $v2)) (pos (q $v3))) $v2 $v1)"
+      ],
+      "policy": "set",
+      "source": "((pos (p $v0)))",
+      "target": "((pos (p $v2)) (pos (q $v3)))",
+      "template": "(image ((pos (p $v0))) ((pos (p $v2)) (pos (q $v3))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p $v0)))",
+      "target": "((pos (p a)) (pos (q $v0)))",
+      "template": "(image ((pos (p $v0))) ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a))) ((pos (p a)) (neg (q a))) a $v1)"
+      ],
+      "policy": "set",
+      "source": "((pos (p $v0)))",
+      "target": "((pos (p a)) (neg (q a)))",
+      "template": "(image ((pos (p $v0))) ((pos (p a)) (neg (q a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p (f $v2 $v2)))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) (f $v2 $v2) $v1)",
+        "(image ((pos (p (f $v2 $v3)))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) (f $v2 $v3) $v1)"
+      ],
+      "policy": "set",
+      "source": "((pos (p $v0)))",
+      "target": "((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2)))",
+      "template": "(image ((pos (p $v0))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (q $v0)))",
+      "target": "()",
+      "template": "(image ((pos (q $v0))) () $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (q $v0)))",
+      "target": "((pos (p a)))",
+      "template": "(image ((pos (q $v0))) ((pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (q $v0)))",
+      "target": "((pos (p a)) (pos (p a)))",
+      "template": "(image ((pos (q $v0))) ((pos (p a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (q b))) ((pos (p a)) (pos (q b))) b $v1)"
+      ],
+      "policy": "set",
+      "source": "((pos (q $v0)))",
+      "target": "((pos (p a)) (pos (q b)))",
+      "template": "(image ((pos (q $v0))) ((pos (p a)) (pos (q b))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (q a))) ((pos (q a)) (pos (p a))) a $v1)"
+      ],
+      "policy": "set",
+      "source": "((pos (q $v0)))",
+      "target": "((pos (q a)) (pos (p a)))",
+      "template": "(image ((pos (q $v0))) ((pos (q a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (q $v2))) ((pos (p $v2)) (pos (q $v2))) $v2 $v1)"
+      ],
+      "policy": "set",
+      "source": "((pos (q $v0)))",
+      "target": "((pos (p $v2)) (pos (q $v2)))",
+      "template": "(image ((pos (q $v0))) ((pos (p $v2)) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (q $v3))) ((pos (p $v2)) (pos (q $v3))) $v3 $v1)"
+      ],
+      "policy": "set",
+      "source": "((pos (q $v0)))",
+      "target": "((pos (p $v2)) (pos (q $v3)))",
+      "template": "(image ((pos (q $v0))) ((pos (p $v2)) (pos (q $v3))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (q $v0))) ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+      ],
+      "policy": "set",
+      "source": "((pos (q $v0)))",
+      "target": "((pos (p a)) (pos (q $v0)))",
+      "template": "(image ((pos (q $v0))) ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (q $v0)))",
+      "target": "((pos (p a)) (neg (q a)))",
+      "template": "(image ((pos (q $v0))) ((pos (p a)) (neg (q a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (q $v2))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v2 $v1)"
+      ],
+      "policy": "set",
+      "source": "((pos (q $v0)))",
+      "target": "((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2)))",
+      "template": "(image ((pos (q $v0))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((neg (p $v0)))",
+      "target": "()",
+      "template": "(image ((neg (p $v0))) () $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((neg (p $v0)))",
+      "target": "((pos (p a)))",
+      "template": "(image ((neg (p $v0))) ((pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((neg (p $v0)))",
+      "target": "((pos (p a)) (pos (p a)))",
+      "template": "(image ((neg (p $v0))) ((pos (p a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((neg (p $v0)))",
+      "target": "((pos (p a)) (pos (q b)))",
+      "template": "(image ((neg (p $v0))) ((pos (p a)) (pos (q b))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((neg (p $v0)))",
+      "target": "((pos (q a)) (pos (p a)))",
+      "template": "(image ((neg (p $v0))) ((pos (q a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((neg (p $v0)))",
+      "target": "((pos (p $v2)) (pos (q $v2)))",
+      "template": "(image ((neg (p $v0))) ((pos (p $v2)) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((neg (p $v0)))",
+      "target": "((pos (p $v2)) (pos (q $v3)))",
+      "template": "(image ((neg (p $v0))) ((pos (p $v2)) (pos (q $v3))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((neg (p $v0)))",
+      "target": "((pos (p a)) (pos (q $v0)))",
+      "template": "(image ((neg (p $v0))) ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((neg (p $v0)))",
+      "target": "((pos (p a)) (neg (q a)))",
+      "template": "(image ((neg (p $v0))) ((pos (p a)) (neg (q a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((neg (p $v0)))",
+      "target": "((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2)))",
+      "template": "(image ((neg (p $v0))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p a)))",
+      "target": "()",
+      "template": "(image ((pos (p a))) () $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a))) ((pos (p a))) $v0 $v1)"
+      ],
+      "policy": "set",
+      "source": "((pos (p a)))",
+      "target": "((pos (p a)))",
+      "template": "(image ((pos (p a))) ((pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a))) ((pos (p a)) (pos (p a))) $v0 $v1)",
+        "(image ((pos (p a))) ((pos (p a)) (pos (p a))) $v0 $v1)"
+      ],
+      "policy": "set",
+      "source": "((pos (p a)))",
+      "target": "((pos (p a)) (pos (p a)))",
+      "template": "(image ((pos (p a))) ((pos (p a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a))) ((pos (p a)) (pos (q b))) $v0 $v1)"
+      ],
+      "policy": "set",
+      "source": "((pos (p a)))",
+      "target": "((pos (p a)) (pos (q b)))",
+      "template": "(image ((pos (p a))) ((pos (p a)) (pos (q b))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a))) ((pos (q a)) (pos (p a))) $v0 $v1)"
+      ],
+      "policy": "set",
+      "source": "((pos (p a)))",
+      "target": "((pos (q a)) (pos (p a)))",
+      "template": "(image ((pos (p a))) ((pos (q a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p a)))",
+      "target": "((pos (p $v2)) (pos (q $v2)))",
+      "template": "(image ((pos (p a))) ((pos (p $v2)) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p a)))",
+      "target": "((pos (p $v2)) (pos (q $v3)))",
+      "template": "(image ((pos (p a))) ((pos (p $v2)) (pos (q $v3))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a))) ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+      ],
+      "policy": "set",
+      "source": "((pos (p a)))",
+      "target": "((pos (p a)) (pos (q $v0)))",
+      "template": "(image ((pos (p a))) ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a))) ((pos (p a)) (neg (q a))) $v0 $v1)"
+      ],
+      "policy": "set",
+      "source": "((pos (p a)))",
+      "target": "((pos (p a)) (neg (q a)))",
+      "template": "(image ((pos (p a))) ((pos (p a)) (neg (q a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p a)))",
+      "target": "((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2)))",
+      "template": "(image ((pos (p a))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (q $v0)))",
+      "target": "()",
+      "template": "(image ((pos (p $v0)) (pos (q $v0))) () $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (q $v0)))",
+      "target": "((pos (p a)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v0))) ((pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (q $v0)))",
+      "target": "((pos (p a)) (pos (p a)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v0))) ((pos (p a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (q $v0)))",
+      "target": "((pos (p a)) (pos (q b)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v0))) ((pos (p a)) (pos (q b))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a)) (pos (q a))) ((pos (q a)) (pos (p a))) a $v1)"
+      ],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (q $v0)))",
+      "target": "((pos (q a)) (pos (p a)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v0))) ((pos (q a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p $v2)) (pos (q $v2))) ((pos (p $v2)) (pos (q $v2))) $v2 $v1)"
+      ],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (q $v0)))",
+      "target": "((pos (p $v2)) (pos (q $v2)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v0))) ((pos (p $v2)) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (q $v0)))",
+      "target": "((pos (p $v2)) (pos (q $v3)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v0))) ((pos (p $v2)) (pos (q $v3))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (q $v0)))",
+      "target": "((pos (p a)) (pos (q $v0)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v0))) ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (q $v0)))",
+      "target": "((pos (p a)) (neg (q a)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v0))) ((pos (p a)) (neg (q a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (q $v0)))",
+      "target": "((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v0))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (q $v1)))",
+      "target": "()",
+      "template": "(image ((pos (p $v0)) (pos (q $v1))) () $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (q $v1)))",
+      "target": "((pos (p a)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v1))) ((pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (q $v1)))",
+      "target": "((pos (p a)) (pos (p a)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v1))) ((pos (p a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a)) (pos (q b))) ((pos (p a)) (pos (q b))) a b)"
+      ],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (q $v1)))",
+      "target": "((pos (p a)) (pos (q b)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v1))) ((pos (p a)) (pos (q b))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a)) (pos (q a))) ((pos (q a)) (pos (p a))) a a)"
+      ],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (q $v1)))",
+      "target": "((pos (q a)) (pos (p a)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v1))) ((pos (q a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p $v2)) (pos (q $v2))) ((pos (p $v2)) (pos (q $v2))) $v2 $v2)"
+      ],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (q $v1)))",
+      "target": "((pos (p $v2)) (pos (q $v2)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v1))) ((pos (p $v2)) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p $v2)) (pos (q $v3))) ((pos (p $v2)) (pos (q $v3))) $v2 $v3)"
+      ],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (q $v1)))",
+      "target": "((pos (p $v2)) (pos (q $v3)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v1))) ((pos (p $v2)) (pos (q $v3))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (q $v1)))",
+      "target": "((pos (p a)) (pos (q $v0)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v1))) ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (q $v1)))",
+      "target": "((pos (p a)) (neg (q a)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v1))) ((pos (p a)) (neg (q a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p (f $v2 $v2))) (pos (q $v2))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) (f $v2 $v2) $v2)",
+        "(image ((pos (p (f $v2 $v3))) (pos (q $v2))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) (f $v2 $v3) $v2)"
+      ],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (q $v1)))",
+      "target": "((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v1))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (q $v0)) (pos (p $v0)))",
+      "target": "()",
+      "template": "(image ((pos (q $v0)) (pos (p $v0))) () $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (q $v0)) (pos (p $v0)))",
+      "target": "((pos (p a)))",
+      "template": "(image ((pos (q $v0)) (pos (p $v0))) ((pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (q $v0)) (pos (p $v0)))",
+      "target": "((pos (p a)) (pos (p a)))",
+      "template": "(image ((pos (q $v0)) (pos (p $v0))) ((pos (p a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (q $v0)) (pos (p $v0)))",
+      "target": "((pos (p a)) (pos (q b)))",
+      "template": "(image ((pos (q $v0)) (pos (p $v0))) ((pos (p a)) (pos (q b))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (q a)) (pos (p a))) ((pos (q a)) (pos (p a))) a $v1)"
+      ],
+      "policy": "set",
+      "source": "((pos (q $v0)) (pos (p $v0)))",
+      "target": "((pos (q a)) (pos (p a)))",
+      "template": "(image ((pos (q $v0)) (pos (p $v0))) ((pos (q a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (q $v2)) (pos (p $v2))) ((pos (p $v2)) (pos (q $v2))) $v2 $v1)"
+      ],
+      "policy": "set",
+      "source": "((pos (q $v0)) (pos (p $v0)))",
+      "target": "((pos (p $v2)) (pos (q $v2)))",
+      "template": "(image ((pos (q $v0)) (pos (p $v0))) ((pos (p $v2)) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (q $v0)) (pos (p $v0)))",
+      "target": "((pos (p $v2)) (pos (q $v3)))",
+      "template": "(image ((pos (q $v0)) (pos (p $v0))) ((pos (p $v2)) (pos (q $v3))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (q $v0)) (pos (p $v0)))",
+      "target": "((pos (p a)) (pos (q $v0)))",
+      "template": "(image ((pos (q $v0)) (pos (p $v0))) ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (q $v0)) (pos (p $v0)))",
+      "target": "((pos (p a)) (neg (q a)))",
+      "template": "(image ((pos (q $v0)) (pos (p $v0))) ((pos (p a)) (neg (q a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (q $v0)) (pos (p $v0)))",
+      "target": "((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2)))",
+      "template": "(image ((pos (q $v0)) (pos (p $v0))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (p $v1)))",
+      "target": "()",
+      "template": "(image ((pos (p $v0)) (pos (p $v1))) () $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a)) (pos (p a))) ((pos (p a))) a a)"
+      ],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (p $v1)))",
+      "target": "((pos (p a)))",
+      "template": "(image ((pos (p $v0)) (pos (p $v1))) ((pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a)) (pos (p a))) ((pos (p a)) (pos (p a))) a a)",
+        "(image ((pos (p a)) (pos (p a))) ((pos (p a)) (pos (p a))) a a)",
+        "(image ((pos (p a)) (pos (p a))) ((pos (p a)) (pos (p a))) a a)",
+        "(image ((pos (p a)) (pos (p a))) ((pos (p a)) (pos (p a))) a a)"
+      ],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (p $v1)))",
+      "target": "((pos (p a)) (pos (p a)))",
+      "template": "(image ((pos (p $v0)) (pos (p $v1))) ((pos (p a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a)) (pos (p a))) ((pos (p a)) (pos (q b))) a a)"
+      ],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (p $v1)))",
+      "target": "((pos (p a)) (pos (q b)))",
+      "template": "(image ((pos (p $v0)) (pos (p $v1))) ((pos (p a)) (pos (q b))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a)) (pos (p a))) ((pos (q a)) (pos (p a))) a a)"
+      ],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (p $v1)))",
+      "target": "((pos (q a)) (pos (p a)))",
+      "template": "(image ((pos (p $v0)) (pos (p $v1))) ((pos (q a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p $v2)) (pos (p $v2))) ((pos (p $v2)) (pos (q $v2))) $v2 $v2)"
+      ],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (p $v1)))",
+      "target": "((pos (p $v2)) (pos (q $v2)))",
+      "template": "(image ((pos (p $v0)) (pos (p $v1))) ((pos (p $v2)) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p $v2)) (pos (p $v2))) ((pos (p $v2)) (pos (q $v3))) $v2 $v2)"
+      ],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (p $v1)))",
+      "target": "((pos (p $v2)) (pos (q $v3)))",
+      "template": "(image ((pos (p $v0)) (pos (p $v1))) ((pos (p $v2)) (pos (q $v3))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (p $v1)))",
+      "target": "((pos (p a)) (pos (q $v0)))",
+      "template": "(image ((pos (p $v0)) (pos (p $v1))) ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a)) (pos (p a))) ((pos (p a)) (neg (q a))) a a)"
+      ],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (p $v1)))",
+      "target": "((pos (p a)) (neg (q a)))",
+      "template": "(image ((pos (p $v0)) (pos (p $v1))) ((pos (p a)) (neg (q a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v2)))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) (f $v2 $v2) (f $v2 $v2))",
+        "(image ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3)))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) (f $v2 $v2) (f $v2 $v3))",
+        "(image ((pos (p (f $v2 $v3))) (pos (p (f $v2 $v2)))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) (f $v2 $v3) (f $v2 $v2))",
+        "(image ((pos (p (f $v2 $v3))) (pos (p (f $v2 $v3)))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) (f $v2 $v3) (f $v2 $v3))"
+      ],
+      "policy": "set",
+      "source": "((pos (p $v0)) (pos (p $v1)))",
+      "target": "((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2)))",
+      "template": "(image ((pos (p $v0)) (pos (p $v1))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p $v0)) (neg (q $v0)))",
+      "target": "()",
+      "template": "(image ((pos (p $v0)) (neg (q $v0))) () $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p $v0)) (neg (q $v0)))",
+      "target": "((pos (p a)))",
+      "template": "(image ((pos (p $v0)) (neg (q $v0))) ((pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p $v0)) (neg (q $v0)))",
+      "target": "((pos (p a)) (pos (p a)))",
+      "template": "(image ((pos (p $v0)) (neg (q $v0))) ((pos (p a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p $v0)) (neg (q $v0)))",
+      "target": "((pos (p a)) (pos (q b)))",
+      "template": "(image ((pos (p $v0)) (neg (q $v0))) ((pos (p a)) (pos (q b))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p $v0)) (neg (q $v0)))",
+      "target": "((pos (q a)) (pos (p a)))",
+      "template": "(image ((pos (p $v0)) (neg (q $v0))) ((pos (q a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p $v0)) (neg (q $v0)))",
+      "target": "((pos (p $v2)) (pos (q $v2)))",
+      "template": "(image ((pos (p $v0)) (neg (q $v0))) ((pos (p $v2)) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p $v0)) (neg (q $v0)))",
+      "target": "((pos (p $v2)) (pos (q $v3)))",
+      "template": "(image ((pos (p $v0)) (neg (q $v0))) ((pos (p $v2)) (pos (q $v3))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p $v0)) (neg (q $v0)))",
+      "target": "((pos (p a)) (pos (q $v0)))",
+      "template": "(image ((pos (p $v0)) (neg (q $v0))) ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a)) (neg (q a))) ((pos (p a)) (neg (q a))) a $v1)"
+      ],
+      "policy": "set",
+      "source": "((pos (p $v0)) (neg (q $v0)))",
+      "target": "((pos (p a)) (neg (q a)))",
+      "template": "(image ((pos (p $v0)) (neg (q $v0))) ((pos (p a)) (neg (q a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p $v0)) (neg (q $v0)))",
+      "target": "((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2)))",
+      "template": "(image ((pos (p $v0)) (neg (q $v0))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p (f $v0 $v0))))",
+      "target": "()",
+      "template": "(image ((pos (p (f $v0 $v0)))) () $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p (f $v0 $v0))))",
+      "target": "((pos (p a)))",
+      "template": "(image ((pos (p (f $v0 $v0)))) ((pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p (f $v0 $v0))))",
+      "target": "((pos (p a)) (pos (p a)))",
+      "template": "(image ((pos (p (f $v0 $v0)))) ((pos (p a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p (f $v0 $v0))))",
+      "target": "((pos (p a)) (pos (q b)))",
+      "template": "(image ((pos (p (f $v0 $v0)))) ((pos (p a)) (pos (q b))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p (f $v0 $v0))))",
+      "target": "((pos (q a)) (pos (p a)))",
+      "template": "(image ((pos (p (f $v0 $v0)))) ((pos (q a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p (f $v0 $v0))))",
+      "target": "((pos (p $v2)) (pos (q $v2)))",
+      "template": "(image ((pos (p (f $v0 $v0)))) ((pos (p $v2)) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p (f $v0 $v0))))",
+      "target": "((pos (p $v2)) (pos (q $v3)))",
+      "template": "(image ((pos (p (f $v0 $v0)))) ((pos (p $v2)) (pos (q $v3))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p (f $v0 $v0))))",
+      "target": "((pos (p a)) (pos (q $v0)))",
+      "template": "(image ((pos (p (f $v0 $v0)))) ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p (f $v0 $v0))))",
+      "target": "((pos (p a)) (neg (q a)))",
+      "template": "(image ((pos (p (f $v0 $v0)))) ((pos (p a)) (neg (q a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p (f $v2 $v2)))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v2 $v1)"
+      ],
+      "policy": "set",
+      "source": "((pos (p (f $v0 $v0))))",
+      "target": "((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2)))",
+      "template": "(image ((pos (p (f $v0 $v0)))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p (f $v0 $v1))) (pos (q $v0)))",
+      "target": "()",
+      "template": "(image ((pos (p (f $v0 $v1))) (pos (q $v0))) () $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p (f $v0 $v1))) (pos (q $v0)))",
+      "target": "((pos (p a)))",
+      "template": "(image ((pos (p (f $v0 $v1))) (pos (q $v0))) ((pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p (f $v0 $v1))) (pos (q $v0)))",
+      "target": "((pos (p a)) (pos (p a)))",
+      "template": "(image ((pos (p (f $v0 $v1))) (pos (q $v0))) ((pos (p a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p (f $v0 $v1))) (pos (q $v0)))",
+      "target": "((pos (p a)) (pos (q b)))",
+      "template": "(image ((pos (p (f $v0 $v1))) (pos (q $v0))) ((pos (p a)) (pos (q b))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p (f $v0 $v1))) (pos (q $v0)))",
+      "target": "((pos (q a)) (pos (p a)))",
+      "template": "(image ((pos (p (f $v0 $v1))) (pos (q $v0))) ((pos (q a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p (f $v0 $v1))) (pos (q $v0)))",
+      "target": "((pos (p $v2)) (pos (q $v2)))",
+      "template": "(image ((pos (p (f $v0 $v1))) (pos (q $v0))) ((pos (p $v2)) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p (f $v0 $v1))) (pos (q $v0)))",
+      "target": "((pos (p $v2)) (pos (q $v3)))",
+      "template": "(image ((pos (p (f $v0 $v1))) (pos (q $v0))) ((pos (p $v2)) (pos (q $v3))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p (f $v0 $v1))) (pos (q $v0)))",
+      "target": "((pos (p a)) (pos (q $v0)))",
+      "template": "(image ((pos (p (f $v0 $v1))) (pos (q $v0))) ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "set",
+      "source": "((pos (p (f $v0 $v1))) (pos (q $v0)))",
+      "target": "((pos (p a)) (neg (q a)))",
+      "template": "(image ((pos (p (f $v0 $v1))) (pos (q $v0))) ((pos (p a)) (neg (q a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p (f $v2 $v2))) (pos (q $v2))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v2 $v2)",
+        "(image ((pos (p (f $v2 $v3))) (pos (q $v2))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v2 $v3)"
+      ],
+      "policy": "set",
+      "source": "((pos (p (f $v0 $v1))) (pos (q $v0)))",
+      "target": "((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2)))",
+      "template": "(image ((pos (p (f $v0 $v1))) (pos (q $v0))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image () () $v0 $v1)"
+      ],
+      "policy": "multiset",
+      "source": "()",
+      "target": "()",
+      "template": "(image () () $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image () ((pos (p a))) $v0 $v1)"
+      ],
+      "policy": "multiset",
+      "source": "()",
+      "target": "((pos (p a)))",
+      "template": "(image () ((pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image () ((pos (p a)) (pos (p a))) $v0 $v1)"
+      ],
+      "policy": "multiset",
+      "source": "()",
+      "target": "((pos (p a)) (pos (p a)))",
+      "template": "(image () ((pos (p a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image () ((pos (p a)) (pos (q b))) $v0 $v1)"
+      ],
+      "policy": "multiset",
+      "source": "()",
+      "target": "((pos (p a)) (pos (q b)))",
+      "template": "(image () ((pos (p a)) (pos (q b))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image () ((pos (q a)) (pos (p a))) $v0 $v1)"
+      ],
+      "policy": "multiset",
+      "source": "()",
+      "target": "((pos (q a)) (pos (p a)))",
+      "template": "(image () ((pos (q a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image () ((pos (p $v2)) (pos (q $v2))) $v0 $v1)"
+      ],
+      "policy": "multiset",
+      "source": "()",
+      "target": "((pos (p $v2)) (pos (q $v2)))",
+      "template": "(image () ((pos (p $v2)) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image () ((pos (p $v2)) (pos (q $v3))) $v0 $v1)"
+      ],
+      "policy": "multiset",
+      "source": "()",
+      "target": "((pos (p $v2)) (pos (q $v3)))",
+      "template": "(image () ((pos (p $v2)) (pos (q $v3))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image () ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+      ],
+      "policy": "multiset",
+      "source": "()",
+      "target": "((pos (p a)) (pos (q $v0)))",
+      "template": "(image () ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image () ((pos (p a)) (neg (q a))) $v0 $v1)"
+      ],
+      "policy": "multiset",
+      "source": "()",
+      "target": "((pos (p a)) (neg (q a)))",
+      "template": "(image () ((pos (p a)) (neg (q a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image () ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v0 $v1)"
+      ],
+      "policy": "multiset",
+      "source": "()",
+      "target": "((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2)))",
+      "template": "(image () ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)))",
+      "target": "()",
+      "template": "(image ((pos (p $v0))) () $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a))) ((pos (p a))) a $v1)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (p $v0)))",
+      "target": "((pos (p a)))",
+      "template": "(image ((pos (p $v0))) ((pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a))) ((pos (p a)) (pos (p a))) a $v1)",
+        "(image ((pos (p a))) ((pos (p a)) (pos (p a))) a $v1)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (p $v0)))",
+      "target": "((pos (p a)) (pos (p a)))",
+      "template": "(image ((pos (p $v0))) ((pos (p a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a))) ((pos (p a)) (pos (q b))) a $v1)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (p $v0)))",
+      "target": "((pos (p a)) (pos (q b)))",
+      "template": "(image ((pos (p $v0))) ((pos (p a)) (pos (q b))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a))) ((pos (q a)) (pos (p a))) a $v1)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (p $v0)))",
+      "target": "((pos (q a)) (pos (p a)))",
+      "template": "(image ((pos (p $v0))) ((pos (q a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p $v2))) ((pos (p $v2)) (pos (q $v2))) $v2 $v1)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (p $v0)))",
+      "target": "((pos (p $v2)) (pos (q $v2)))",
+      "template": "(image ((pos (p $v0))) ((pos (p $v2)) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p $v2))) ((pos (p $v2)) (pos (q $v3))) $v2 $v1)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (p $v0)))",
+      "target": "((pos (p $v2)) (pos (q $v3)))",
+      "template": "(image ((pos (p $v0))) ((pos (p $v2)) (pos (q $v3))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)))",
+      "target": "((pos (p a)) (pos (q $v0)))",
+      "template": "(image ((pos (p $v0))) ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a))) ((pos (p a)) (neg (q a))) a $v1)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (p $v0)))",
+      "target": "((pos (p a)) (neg (q a)))",
+      "template": "(image ((pos (p $v0))) ((pos (p a)) (neg (q a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p (f $v2 $v2)))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) (f $v2 $v2) $v1)",
+        "(image ((pos (p (f $v2 $v3)))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) (f $v2 $v3) $v1)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (p $v0)))",
+      "target": "((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2)))",
+      "template": "(image ((pos (p $v0))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (q $v0)))",
+      "target": "()",
+      "template": "(image ((pos (q $v0))) () $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (q $v0)))",
+      "target": "((pos (p a)))",
+      "template": "(image ((pos (q $v0))) ((pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (q $v0)))",
+      "target": "((pos (p a)) (pos (p a)))",
+      "template": "(image ((pos (q $v0))) ((pos (p a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (q b))) ((pos (p a)) (pos (q b))) b $v1)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (q $v0)))",
+      "target": "((pos (p a)) (pos (q b)))",
+      "template": "(image ((pos (q $v0))) ((pos (p a)) (pos (q b))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (q a))) ((pos (q a)) (pos (p a))) a $v1)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (q $v0)))",
+      "target": "((pos (q a)) (pos (p a)))",
+      "template": "(image ((pos (q $v0))) ((pos (q a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (q $v2))) ((pos (p $v2)) (pos (q $v2))) $v2 $v1)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (q $v0)))",
+      "target": "((pos (p $v2)) (pos (q $v2)))",
+      "template": "(image ((pos (q $v0))) ((pos (p $v2)) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (q $v3))) ((pos (p $v2)) (pos (q $v3))) $v3 $v1)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (q $v0)))",
+      "target": "((pos (p $v2)) (pos (q $v3)))",
+      "template": "(image ((pos (q $v0))) ((pos (p $v2)) (pos (q $v3))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (q $v0))) ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (q $v0)))",
+      "target": "((pos (p a)) (pos (q $v0)))",
+      "template": "(image ((pos (q $v0))) ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (q $v0)))",
+      "target": "((pos (p a)) (neg (q a)))",
+      "template": "(image ((pos (q $v0))) ((pos (p a)) (neg (q a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (q $v2))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v2 $v1)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (q $v0)))",
+      "target": "((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2)))",
+      "template": "(image ((pos (q $v0))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((neg (p $v0)))",
+      "target": "()",
+      "template": "(image ((neg (p $v0))) () $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((neg (p $v0)))",
+      "target": "((pos (p a)))",
+      "template": "(image ((neg (p $v0))) ((pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((neg (p $v0)))",
+      "target": "((pos (p a)) (pos (p a)))",
+      "template": "(image ((neg (p $v0))) ((pos (p a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((neg (p $v0)))",
+      "target": "((pos (p a)) (pos (q b)))",
+      "template": "(image ((neg (p $v0))) ((pos (p a)) (pos (q b))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((neg (p $v0)))",
+      "target": "((pos (q a)) (pos (p a)))",
+      "template": "(image ((neg (p $v0))) ((pos (q a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((neg (p $v0)))",
+      "target": "((pos (p $v2)) (pos (q $v2)))",
+      "template": "(image ((neg (p $v0))) ((pos (p $v2)) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((neg (p $v0)))",
+      "target": "((pos (p $v2)) (pos (q $v3)))",
+      "template": "(image ((neg (p $v0))) ((pos (p $v2)) (pos (q $v3))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((neg (p $v0)))",
+      "target": "((pos (p a)) (pos (q $v0)))",
+      "template": "(image ((neg (p $v0))) ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((neg (p $v0)))",
+      "target": "((pos (p a)) (neg (q a)))",
+      "template": "(image ((neg (p $v0))) ((pos (p a)) (neg (q a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((neg (p $v0)))",
+      "target": "((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2)))",
+      "template": "(image ((neg (p $v0))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p a)))",
+      "target": "()",
+      "template": "(image ((pos (p a))) () $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a))) ((pos (p a))) $v0 $v1)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (p a)))",
+      "target": "((pos (p a)))",
+      "template": "(image ((pos (p a))) ((pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a))) ((pos (p a)) (pos (p a))) $v0 $v1)",
+        "(image ((pos (p a))) ((pos (p a)) (pos (p a))) $v0 $v1)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (p a)))",
+      "target": "((pos (p a)) (pos (p a)))",
+      "template": "(image ((pos (p a))) ((pos (p a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a))) ((pos (p a)) (pos (q b))) $v0 $v1)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (p a)))",
+      "target": "((pos (p a)) (pos (q b)))",
+      "template": "(image ((pos (p a))) ((pos (p a)) (pos (q b))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a))) ((pos (q a)) (pos (p a))) $v0 $v1)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (p a)))",
+      "target": "((pos (q a)) (pos (p a)))",
+      "template": "(image ((pos (p a))) ((pos (q a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p a)))",
+      "target": "((pos (p $v2)) (pos (q $v2)))",
+      "template": "(image ((pos (p a))) ((pos (p $v2)) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p a)))",
+      "target": "((pos (p $v2)) (pos (q $v3)))",
+      "template": "(image ((pos (p a))) ((pos (p $v2)) (pos (q $v3))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a))) ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (p a)))",
+      "target": "((pos (p a)) (pos (q $v0)))",
+      "template": "(image ((pos (p a))) ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a))) ((pos (p a)) (neg (q a))) $v0 $v1)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (p a)))",
+      "target": "((pos (p a)) (neg (q a)))",
+      "template": "(image ((pos (p a))) ((pos (p a)) (neg (q a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p a)))",
+      "target": "((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2)))",
+      "template": "(image ((pos (p a))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (q $v0)))",
+      "target": "()",
+      "template": "(image ((pos (p $v0)) (pos (q $v0))) () $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (q $v0)))",
+      "target": "((pos (p a)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v0))) ((pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (q $v0)))",
+      "target": "((pos (p a)) (pos (p a)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v0))) ((pos (p a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (q $v0)))",
+      "target": "((pos (p a)) (pos (q b)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v0))) ((pos (p a)) (pos (q b))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a)) (pos (q a))) ((pos (q a)) (pos (p a))) a $v1)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (q $v0)))",
+      "target": "((pos (q a)) (pos (p a)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v0))) ((pos (q a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p $v2)) (pos (q $v2))) ((pos (p $v2)) (pos (q $v2))) $v2 $v1)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (q $v0)))",
+      "target": "((pos (p $v2)) (pos (q $v2)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v0))) ((pos (p $v2)) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (q $v0)))",
+      "target": "((pos (p $v2)) (pos (q $v3)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v0))) ((pos (p $v2)) (pos (q $v3))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (q $v0)))",
+      "target": "((pos (p a)) (pos (q $v0)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v0))) ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (q $v0)))",
+      "target": "((pos (p a)) (neg (q a)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v0))) ((pos (p a)) (neg (q a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (q $v0)))",
+      "target": "((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v0))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (q $v1)))",
+      "target": "()",
+      "template": "(image ((pos (p $v0)) (pos (q $v1))) () $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (q $v1)))",
+      "target": "((pos (p a)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v1))) ((pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (q $v1)))",
+      "target": "((pos (p a)) (pos (p a)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v1))) ((pos (p a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a)) (pos (q b))) ((pos (p a)) (pos (q b))) a b)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (q $v1)))",
+      "target": "((pos (p a)) (pos (q b)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v1))) ((pos (p a)) (pos (q b))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a)) (pos (q a))) ((pos (q a)) (pos (p a))) a a)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (q $v1)))",
+      "target": "((pos (q a)) (pos (p a)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v1))) ((pos (q a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p $v2)) (pos (q $v2))) ((pos (p $v2)) (pos (q $v2))) $v2 $v2)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (q $v1)))",
+      "target": "((pos (p $v2)) (pos (q $v2)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v1))) ((pos (p $v2)) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p $v2)) (pos (q $v3))) ((pos (p $v2)) (pos (q $v3))) $v2 $v3)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (q $v1)))",
+      "target": "((pos (p $v2)) (pos (q $v3)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v1))) ((pos (p $v2)) (pos (q $v3))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (q $v1)))",
+      "target": "((pos (p a)) (pos (q $v0)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v1))) ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (q $v1)))",
+      "target": "((pos (p a)) (neg (q a)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v1))) ((pos (p a)) (neg (q a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p (f $v2 $v2))) (pos (q $v2))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) (f $v2 $v2) $v2)",
+        "(image ((pos (p (f $v2 $v3))) (pos (q $v2))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) (f $v2 $v3) $v2)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (q $v1)))",
+      "target": "((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2)))",
+      "template": "(image ((pos (p $v0)) (pos (q $v1))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (q $v0)) (pos (p $v0)))",
+      "target": "()",
+      "template": "(image ((pos (q $v0)) (pos (p $v0))) () $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (q $v0)) (pos (p $v0)))",
+      "target": "((pos (p a)))",
+      "template": "(image ((pos (q $v0)) (pos (p $v0))) ((pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (q $v0)) (pos (p $v0)))",
+      "target": "((pos (p a)) (pos (p a)))",
+      "template": "(image ((pos (q $v0)) (pos (p $v0))) ((pos (p a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (q $v0)) (pos (p $v0)))",
+      "target": "((pos (p a)) (pos (q b)))",
+      "template": "(image ((pos (q $v0)) (pos (p $v0))) ((pos (p a)) (pos (q b))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (q a)) (pos (p a))) ((pos (q a)) (pos (p a))) a $v1)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (q $v0)) (pos (p $v0)))",
+      "target": "((pos (q a)) (pos (p a)))",
+      "template": "(image ((pos (q $v0)) (pos (p $v0))) ((pos (q a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (q $v2)) (pos (p $v2))) ((pos (p $v2)) (pos (q $v2))) $v2 $v1)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (q $v0)) (pos (p $v0)))",
+      "target": "((pos (p $v2)) (pos (q $v2)))",
+      "template": "(image ((pos (q $v0)) (pos (p $v0))) ((pos (p $v2)) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (q $v0)) (pos (p $v0)))",
+      "target": "((pos (p $v2)) (pos (q $v3)))",
+      "template": "(image ((pos (q $v0)) (pos (p $v0))) ((pos (p $v2)) (pos (q $v3))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (q $v0)) (pos (p $v0)))",
+      "target": "((pos (p a)) (pos (q $v0)))",
+      "template": "(image ((pos (q $v0)) (pos (p $v0))) ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (q $v0)) (pos (p $v0)))",
+      "target": "((pos (p a)) (neg (q a)))",
+      "template": "(image ((pos (q $v0)) (pos (p $v0))) ((pos (p a)) (neg (q a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (q $v0)) (pos (p $v0)))",
+      "target": "((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2)))",
+      "template": "(image ((pos (q $v0)) (pos (p $v0))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (p $v1)))",
+      "target": "()",
+      "template": "(image ((pos (p $v0)) (pos (p $v1))) () $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (p $v1)))",
+      "target": "((pos (p a)))",
+      "template": "(image ((pos (p $v0)) (pos (p $v1))) ((pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a)) (pos (p a))) ((pos (p a)) (pos (p a))) a a)",
+        "(image ((pos (p a)) (pos (p a))) ((pos (p a)) (pos (p a))) a a)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (p $v1)))",
+      "target": "((pos (p a)) (pos (p a)))",
+      "template": "(image ((pos (p $v0)) (pos (p $v1))) ((pos (p a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (p $v1)))",
+      "target": "((pos (p a)) (pos (q b)))",
+      "template": "(image ((pos (p $v0)) (pos (p $v1))) ((pos (p a)) (pos (q b))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (p $v1)))",
+      "target": "((pos (q a)) (pos (p a)))",
+      "template": "(image ((pos (p $v0)) (pos (p $v1))) ((pos (q a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (p $v1)))",
+      "target": "((pos (p $v2)) (pos (q $v2)))",
+      "template": "(image ((pos (p $v0)) (pos (p $v1))) ((pos (p $v2)) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (p $v1)))",
+      "target": "((pos (p $v2)) (pos (q $v3)))",
+      "template": "(image ((pos (p $v0)) (pos (p $v1))) ((pos (p $v2)) (pos (q $v3))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (p $v1)))",
+      "target": "((pos (p a)) (pos (q $v0)))",
+      "template": "(image ((pos (p $v0)) (pos (p $v1))) ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (p $v1)))",
+      "target": "((pos (p a)) (neg (q a)))",
+      "template": "(image ((pos (p $v0)) (pos (p $v1))) ((pos (p a)) (neg (q a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3)))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) (f $v2 $v2) (f $v2 $v3))",
+        "(image ((pos (p (f $v2 $v3))) (pos (p (f $v2 $v2)))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) (f $v2 $v3) (f $v2 $v2))"
+      ],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (pos (p $v1)))",
+      "target": "((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2)))",
+      "template": "(image ((pos (p $v0)) (pos (p $v1))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (neg (q $v0)))",
+      "target": "()",
+      "template": "(image ((pos (p $v0)) (neg (q $v0))) () $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (neg (q $v0)))",
+      "target": "((pos (p a)))",
+      "template": "(image ((pos (p $v0)) (neg (q $v0))) ((pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (neg (q $v0)))",
+      "target": "((pos (p a)) (pos (p a)))",
+      "template": "(image ((pos (p $v0)) (neg (q $v0))) ((pos (p a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (neg (q $v0)))",
+      "target": "((pos (p a)) (pos (q b)))",
+      "template": "(image ((pos (p $v0)) (neg (q $v0))) ((pos (p a)) (pos (q b))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (neg (q $v0)))",
+      "target": "((pos (q a)) (pos (p a)))",
+      "template": "(image ((pos (p $v0)) (neg (q $v0))) ((pos (q a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (neg (q $v0)))",
+      "target": "((pos (p $v2)) (pos (q $v2)))",
+      "template": "(image ((pos (p $v0)) (neg (q $v0))) ((pos (p $v2)) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (neg (q $v0)))",
+      "target": "((pos (p $v2)) (pos (q $v3)))",
+      "template": "(image ((pos (p $v0)) (neg (q $v0))) ((pos (p $v2)) (pos (q $v3))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (neg (q $v0)))",
+      "target": "((pos (p a)) (pos (q $v0)))",
+      "template": "(image ((pos (p $v0)) (neg (q $v0))) ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p a)) (neg (q a))) ((pos (p a)) (neg (q a))) a $v1)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (neg (q $v0)))",
+      "target": "((pos (p a)) (neg (q a)))",
+      "template": "(image ((pos (p $v0)) (neg (q $v0))) ((pos (p a)) (neg (q a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p $v0)) (neg (q $v0)))",
+      "target": "((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2)))",
+      "template": "(image ((pos (p $v0)) (neg (q $v0))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p (f $v0 $v0))))",
+      "target": "()",
+      "template": "(image ((pos (p (f $v0 $v0)))) () $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p (f $v0 $v0))))",
+      "target": "((pos (p a)))",
+      "template": "(image ((pos (p (f $v0 $v0)))) ((pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p (f $v0 $v0))))",
+      "target": "((pos (p a)) (pos (p a)))",
+      "template": "(image ((pos (p (f $v0 $v0)))) ((pos (p a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p (f $v0 $v0))))",
+      "target": "((pos (p a)) (pos (q b)))",
+      "template": "(image ((pos (p (f $v0 $v0)))) ((pos (p a)) (pos (q b))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p (f $v0 $v0))))",
+      "target": "((pos (q a)) (pos (p a)))",
+      "template": "(image ((pos (p (f $v0 $v0)))) ((pos (q a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p (f $v0 $v0))))",
+      "target": "((pos (p $v2)) (pos (q $v2)))",
+      "template": "(image ((pos (p (f $v0 $v0)))) ((pos (p $v2)) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p (f $v0 $v0))))",
+      "target": "((pos (p $v2)) (pos (q $v3)))",
+      "template": "(image ((pos (p (f $v0 $v0)))) ((pos (p $v2)) (pos (q $v3))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p (f $v0 $v0))))",
+      "target": "((pos (p a)) (pos (q $v0)))",
+      "template": "(image ((pos (p (f $v0 $v0)))) ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p (f $v0 $v0))))",
+      "target": "((pos (p a)) (neg (q a)))",
+      "template": "(image ((pos (p (f $v0 $v0)))) ((pos (p a)) (neg (q a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p (f $v2 $v2)))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v2 $v1)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (p (f $v0 $v0))))",
+      "target": "((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2)))",
+      "template": "(image ((pos (p (f $v0 $v0)))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p (f $v0 $v1))) (pos (q $v0)))",
+      "target": "()",
+      "template": "(image ((pos (p (f $v0 $v1))) (pos (q $v0))) () $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p (f $v0 $v1))) (pos (q $v0)))",
+      "target": "((pos (p a)))",
+      "template": "(image ((pos (p (f $v0 $v1))) (pos (q $v0))) ((pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p (f $v0 $v1))) (pos (q $v0)))",
+      "target": "((pos (p a)) (pos (p a)))",
+      "template": "(image ((pos (p (f $v0 $v1))) (pos (q $v0))) ((pos (p a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p (f $v0 $v1))) (pos (q $v0)))",
+      "target": "((pos (p a)) (pos (q b)))",
+      "template": "(image ((pos (p (f $v0 $v1))) (pos (q $v0))) ((pos (p a)) (pos (q b))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p (f $v0 $v1))) (pos (q $v0)))",
+      "target": "((pos (q a)) (pos (p a)))",
+      "template": "(image ((pos (p (f $v0 $v1))) (pos (q $v0))) ((pos (q a)) (pos (p a))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p (f $v0 $v1))) (pos (q $v0)))",
+      "target": "((pos (p $v2)) (pos (q $v2)))",
+      "template": "(image ((pos (p (f $v0 $v1))) (pos (q $v0))) ((pos (p $v2)) (pos (q $v2))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p (f $v0 $v1))) (pos (q $v0)))",
+      "target": "((pos (p $v2)) (pos (q $v3)))",
+      "template": "(image ((pos (p (f $v0 $v1))) (pos (q $v0))) ((pos (p $v2)) (pos (q $v3))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p (f $v0 $v1))) (pos (q $v0)))",
+      "target": "((pos (p a)) (pos (q $v0)))",
+      "template": "(image ((pos (p (f $v0 $v1))) (pos (q $v0))) ((pos (p a)) (pos (q $v0))) $v0 $v1)"
+    },
+    {
+      "answers": [],
+      "policy": "multiset",
+      "source": "((pos (p (f $v0 $v1))) (pos (q $v0)))",
+      "target": "((pos (p a)) (neg (q a)))",
+      "template": "(image ((pos (p (f $v0 $v1))) (pos (q $v0))) ((pos (p a)) (neg (q a))) $v0 $v1)"
+    },
+    {
+      "answers": [
+        "(image ((pos (p (f $v2 $v2))) (pos (q $v2))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v2 $v2)",
+        "(image ((pos (p (f $v2 $v3))) (pos (q $v2))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v2 $v3)"
+      ],
+      "policy": "multiset",
+      "source": "((pos (p (f $v0 $v1))) (pos (q $v0)))",
+      "target": "((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2)))",
+      "template": "(image ((pos (p (f $v0 $v1))) (pos (q $v0))) ((pos (p (f $v2 $v2))) (pos (p (f $v2 $v3))) (pos (q $v2))) $v0 $v1)"
+    }
+  ],
+  "schema": 1,
+  "semantics": "signed syntactic clauses; ordered complete alignment witnesses; shared protected target"
+}

@@ -1,0 +1,13 @@
+(row first)
+(= (tx-self) &self)
+(= (tx-rows) (collapse (match &self (row $x) $x)))
+(= (tx-add $x) (add-atom &self (row $x)))
+(= (tx-reject) (include &self mi_transaction_rejected))
+!(assertEqual (tx-rows) (initial first))
+!(include mi_transaction_nested)
+!(assertEqual (tx-rows) (initial first nested))
+!(tx-add during)
+(: transaction-token TransactionType)
+!(assertEqual (get-type-space &self transaction-token) TransactionType)
+; A captured self value must identify the same module during and after loading.
+!(assertEqual (== (tx-self) &self) True)

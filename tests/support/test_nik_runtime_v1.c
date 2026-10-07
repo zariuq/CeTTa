@@ -43,6 +43,126 @@ static Atom *parse_one(Arena *arena, const char *source) {
     return atom;
 }
 
+static Atom *unary_judgment(Arena *arena, Atom *argument) {
+    Atom *cell[] = {
+        parse_one(arena, "LCons"), argument, parse_one(arena, "LNil"),
+    };
+    Atom *judgment[] = {
+        parse_one(arena, "PApp"), atom_string(arena, "J"),
+        atom_expr(arena, cell, 3u),
+    };
+    return atom_expr(arena, judgment, 3u);
+}
+
+static void check_exact_premise_replay(Arena *arena) {
+    unsigned before = checks;
+    char error[512] = {0};
+    Atom *presentation = parse_one(
+        arena,
+        "(GPresentationV1 1 "
+        " (LCons (CDecl \"K\" 0) (LCons (CDecl \"S\" 1) "
+        "  (LCons (CDecl \"Pair\" 2) LNil))) "
+        " (LCons (JDecl \"J\" 1) LNil) "
+        " (LCons (GRuleV1 \"pair-ax\" "
+        "  (LCons (Formal \"x\" 0) (LCons (Formal \"y\" 0) LNil)) LNil "
+        "  (PApp \"J\" (LCons (PApp \"Pair\" "
+        "    (LCons (FVar \"x\") (LCons (FVar \"y\") LNil))) LNil)) LNil) "
+        " (LCons (GRuleV1 \"repeat\" (LCons (Formal \"x\" 0) LNil) "
+        "  (LCons (PApp \"J\" (LCons (PApp \"Pair\" "
+        "    (LCons (FVar \"x\") (LCons (FVar \"x\") LNil))) LNil)) LNil) "
+        "  (PApp \"J\" (LCons (FVar \"x\") LNil)) LNil) LNil)) "
+        " GNoConversion)");
+    CettaInferenceChecker *checker = NULL;
+    CettaInferenceStatus admitted = cetta_inference_checker_create(
+        presentation, &checker, error, sizeof(error));
+    CHECK(admitted == CETTA_INFERENCE_OK && checker != NULL,
+          "exact-premise replay fixture admits repeated formals");
+    if (admitted != CETTA_INFERENCE_OK || checker == NULL)
+        return;
+    CettaInferenceTrace trace;
+    cetta_inference_trace_init(&trace, checker, arena);
+    Atom *constant = parse_one(arena, "(PApp \"K\" LNil)");
+    Atom *successor = parse_one(
+        arena, "(PApp \"S\" (LCons (PApp \"K\" LNil) LNil))");
+    Atom *different[] = {constant, successor};
+    CHECK(cetta_inference_trace_apply_named(
+              &trace, "pair-ax", different, 2u, error, sizeof(error)) ==
+              CETTA_INFERENCE_OK && trace.stack_len == 1u,
+          "distinct explicit arguments produce an exact premise");
+    if (trace.stack_len != 1u)
+        goto done;
+    Atom *saved_top = trace.stack[0];
+    CHECK(cetta_inference_trace_save(&trace, error, sizeof(error)) ==
+              CETTA_INFERENCE_OK && trace.saved_len == 1u,
+          "premise checkpoint is available for failed replay controls");
+    Atom *repeat_args[] = {constant};
+    CHECK(cetta_inference_trace_apply_named(
+              &trace, "repeat", repeat_args, 1u, error, sizeof(error)) ==
+              CETTA_INFERENCE_PREMISE_MISMATCH,
+          "repeated formal cannot match inconsistent premise occurrences");
+    CHECK(trace.stack_len == 1u && trace.stack[0] == saved_top &&
+              trace.saved_len == 1u && trace.saved[0] == saved_top,
+          "premise rejection preserves both proof stack and checkpoint");
+    CHECK(cetta_inference_trace_finish(
+              &trace, saved_top, error, sizeof(error)) == CETTA_INFERENCE_OK,
+          "failed replay leaves the original judgment usable");
+    Atom *open_args[] = {parse_one(arena, "(FVar \"x\")")};
+    CHECK(cetta_inference_trace_apply_named(
+              &trace, "repeat", open_args, 1u, error, sizeof(error)) ==
+              CETTA_INFERENCE_INVALID_ARGUMENTS,
+          "open formal argument cannot unify with a saved proof premise");
+    CHECK(cetta_inference_trace_apply_named(
+              &trace, "repeat", repeat_args, 0u, error, sizeof(error)) ==
+              CETTA_INFERENCE_INVALID_ARGUMENTS &&
+              trace.stack_len == 1u && trace.stack[0] == saved_top &&
+              trace.saved_len == 1u && trace.saved[0] == saved_top,
+          "invalid argument replay also preserves both checkpoints");
+
+    /* The two children share one object; the comparison copy does not. */
+    Atom *tail_elems[] = {
+        parse_one(arena, "LCons"), successor, parse_one(arena, "LNil"),
+    };
+    Atom *head_elems[] = {
+        tail_elems[0], successor, atom_expr(arena, tail_elems, 3u),
+    };
+    Atom *pair_elems[] = {
+        parse_one(arena, "PApp"), atom_string(arena, "Pair"),
+        atom_expr(arena, head_elems, 3u),
+    };
+    Atom *shared = atom_expr(arena, pair_elems, 3u);
+    Atom *unshared = parse_one(
+        arena,
+        "(PApp \"Pair\" "
+        " (LCons (PApp \"S\" (LCons (PApp \"K\" LNil) LNil)) "
+        "  (LCons (PApp \"S\" (LCons (PApp \"K\" LNil) LNil)) LNil)))");
+    Atom *first_arguments[] = {constant, successor, shared};
+    Atom *second_arguments[] = {
+        parse_one(arena, "(PApp \"K\" LNil)"),
+        parse_one(arena, "(PApp \"S\" (LCons (PApp \"K\" LNil) LNil))"),
+        unshared,
+    };
+    for (size_t index = 0u; index < 3u; ++index) {
+        cetta_inference_trace_reset(&trace);
+        Atom *arguments[] = {first_arguments[index], second_arguments[index]};
+        CHECK(cetta_inference_trace_apply_named(
+                  &trace, "pair-ax", arguments, 2u, error, sizeof(error)) ==
+                  CETTA_INFERENCE_OK,
+              "distinct objects with equal structure produce a repeatable premise");
+        CHECK(cetta_inference_trace_apply_named(
+                  &trace, "repeat", arguments, 1u, error, sizeof(error)) ==
+                  CETTA_INFERENCE_OK,
+              "explicit repeated-formal instantiation accepts exact equality");
+        CHECK(cetta_inference_trace_finish(
+                  &trace, unary_judgment(arena, first_arguments[index]),
+                  error, sizeof(error)) == CETTA_INFERENCE_OK,
+              "formal arguments are independent across replay applications");
+    }
+done:
+    cetta_inference_trace_free(&trace);
+    cetta_inference_checker_destroy(checker);
+    printf("(NikExactPremiseReplayV1Summary checks=%u)\n", checks - before);
+}
+
 static CettaNikOutcome check_production(
     Arena *arena, const char *authority, Atom *goal, Atom *proof,
     CettaNikLimits limits, CettaNikReceiptV1 *receipt) {
@@ -222,6 +342,8 @@ int main(int argc, char **argv) {
     var_intern_init(&variable_names);
     g_var_intern = &variable_names;
     arena_init(&arena);
+
+    check_exact_premise_replay(&arena);
 
     CHECK(cetta_prime_nik_authorities_v1_count >= 4u,
           "Prime begins with four checking authorities");

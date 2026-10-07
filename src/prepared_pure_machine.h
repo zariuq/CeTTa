@@ -138,6 +138,10 @@ typedef struct {
     CettaPreparedPureSourceRoleFn role;
     CettaPreparedPureSourceChildFn child;
     CettaPreparedPureEquationSourceFn equation_rhs;
+    /* Decline a named executable occurrence whose admitted rule semantics
+     * this compiler cannot realize. Checked during compilation, including
+     * callees, and at runtime-created application boundaries. */
+    bool (*head_admitted)(void *context, Space *space, SymbolId head);
 } CettaPreparedPureSourceView;
 
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile(

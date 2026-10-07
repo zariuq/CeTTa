@@ -4010,7 +4010,7 @@ process_petta_document:
             Atom *declaration = term_universe_get_atom(
                 &libraries.term_universe,
                 atom_ids[declaration_index]);
-            if (petta_program_is_equation(declaration) &&
+            if (petta_program_admits_equation(libraries.petta_program, declaration) &&
                 !petta_program_predeclare_equation(
                     libraries.petta_program, &space, declaration)) {
                 fprintf(
@@ -4249,8 +4249,9 @@ process_petta_document:
                         (size_t)eval_outcome_fault_count(&detailed),
                         detailed.steps_spent);
             } else if (g_count_only || run_cli ||
-                       lang->id == CETTA_LANGUAGE_PETTA) {
-                /* A PeTTa directive publishes its whole answer stream, which
+                       lang->id == CETTA_LANGUAGE_PETTA ||
+                       (profile && profile->id == CETTA_PROFILE_HE_EXTENDED)) {
+                /* PeTTa and HE/extended directives publish a whole stream, which
                  * claims there are no further answers, so it is always
                  * observed with a completion tracker.  Finite fuel reaches
                  * the search machine through the same tracker; unlimited
@@ -4268,6 +4269,9 @@ process_petta_document:
                         &detailed, NULL, NULL);
                 }
             } else {
+                /* Prime's local judgment budgets return unsettled syntax;
+                 * preserve that observation instead of promoting its local
+                 * producer cutoff to failure of the enclosing directive. */
                 result_set_init(&rs);
                 eval_top_with_registry(
                     &space, &eval_arena, &arena, &registry,

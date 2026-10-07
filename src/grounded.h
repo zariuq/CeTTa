@@ -92,6 +92,10 @@ static inline bool grounded_op_is_term_order(SymbolId id) {
            id == g_builtin_syms.term_le || id == g_builtin_syms.term_ge;
 }
 
+static inline bool grounded_op_is_pattern(SymbolId id) {
+    return id >= g_builtin_syms.pat_solve && id <= g_builtin_syms.pat_is_variant;
+}
+
 /* Capability: ops admitted into TYPE-LEVEL conversion (normalize_type_expr
    and the he-prime checked normalizer).  Deterministic, effect-free, and
    independent of live mutable state.  A positive list, not a blocklist: an op

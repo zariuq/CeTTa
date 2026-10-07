@@ -607,7 +607,11 @@ void stree_bucket_free(SubstBucket *bucket) {
 
 void stree_bucket_insert(SubstBucket *bucket, Atom *atom, CettaIndex atom_idx) {
     CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
-    uint32_t epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
+    /* Ground rows have no variables to standardize apart. Retaining one
+     * activation identity per such row makes a large fact index consume the
+     * finite frame inventory without introducing any variable scope. */
+    uint32_t epoch = atom_has_vars(atom)
+        ? cetta_frame_identity_scope_fresh(&frame_identity_scope) : 0u;
     if (!bucket->root) bucket->root = snode_new();
     CettaIndexExpansionBudget budget = cetta_index_expansion_budget();
     SubstNode *leaf = snode_insert_atom(bucket->root, atom, 0u, &budget);
@@ -620,7 +624,8 @@ bool stree_bucket_insert_id(SubstBucket *bucket, const TermUniverse *universe,
                                 CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
     if (!bucket || !universe || atom_id == CETTA_ATOM_ID_NONE)
         return false;
-    uint32_t epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
+    uint32_t epoch = tu_has_vars(universe, atom_id)
+        ? cetta_frame_identity_scope_fresh(&frame_identity_scope) : 0u;
     if (!bucket->root)
         bucket->root = snode_new();
     CettaIndexExpansionBudget budget = cetta_index_expansion_budget();

@@ -4,6 +4,7 @@
 #include "shared_transition.h"
 #include "grounded.h"
 #include "search_machine.h"
+#include "rule_binding.h"
 #include "stats.h"
 #include <assert.h>
 #include <inttypes.h>
@@ -2632,6 +2633,9 @@ static void eq_index_init(EqIndex *idx) {
         eq_bucket_init(&idx->buckets[i]);
     eq_bucket_init(&idx->wildcard);
     eq_head_set_init(&idx->heads);
+    eq_head_set_init(&idx->directional_heads);
+    idx->directional_wildcard = false;
+    idx->directional_present = false;
 }
 
 static void eq_index_free(EqIndex *idx) {
@@ -2639,6 +2643,27 @@ static void eq_index_free(EqIndex *idx) {
         eq_bucket_free(&idx->buckets[i]);
     eq_bucket_free(&idx->wildcard);
     eq_head_set_free(&idx->heads);
+    eq_head_set_free(&idx->directional_heads);
+}
+
+static void eq_index_note_directional_row(EqIndex *idx, const Space *s,
+                                          AtomId atom_id) {
+    const TermUniverse *universe = s->native.universe;
+    if (!universe || atom_id == CETTA_ATOM_ID_NONE) return;
+    if (tu_hdr(universe, atom_id) &&
+        (tu_kind(universe, atom_id) != ATOM_EXPR ||
+         tu_arity(universe, atom_id) != 3u ||
+         tu_head_sym(universe, atom_id) != g_builtin_syms.equals_percent))
+        return;
+    Atom *atom = term_universe_get_atom(s->native.universe, atom_id);
+    CettaRuleDescriptor rule;
+    if (!cetta_rule_view(atom, CETTA_RULE_SYNTAX_DIRECTIONAL, &rule)) return;
+    idx->directional_present = true;
+    SymbolId head = eq_head_symbol(rule.head);
+    if (head != SYMBOL_ID_NONE)
+        eq_head_set_add(&idx->directional_heads, head);
+    else
+        idx->directional_wildcard = true;
 }
 
 static void eq_index_add(EqIndex *idx, Atom *lhs, CettaIndex atom_idx,
@@ -3620,7 +3645,7 @@ space_atom_equation_projection(const Space *s, AtomId atom_id, Atom *atom) {
             if (tu_kind(s->native.universe, atom_id) == ATOM_EXPR &&
                 tu_arity(s->native.universe, atom_id) == 3u) {
                 SymbolId head = tu_head_sym(s->native.universe, atom_id);
-                if (head == g_builtin_syms.equals)
+                if (head == g_builtin_syms.equals || head == g_builtin_syms.equals_percent)
                     return SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT;
                 if (head == g_builtin_syms.colon)
                     return SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION;
@@ -3631,7 +3656,8 @@ space_atom_equation_projection(const Space *s, AtomId atom_id, Atom *atom) {
             atom = term_universe_get_atom(s->native.universe, atom_id);
     }
     if (atom) {
-        if (space_atom_form_is(atom, g_builtin_syms.equals, 3u))
+        if (space_atom_form_is(atom, g_builtin_syms.equals, 3u) ||
+            space_atom_form_is(atom, g_builtin_syms.equals_percent, 3u))
             return SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT;
         if (space_atom_form_is(atom, g_builtin_syms.colon, 3u))
             return SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION;
@@ -3691,6 +3717,8 @@ bool space_atom_id_requires_authored_order(const Space *s,
     return space_atom_id_form_is(
                s, atom_id, atom, g_builtin_syms.equals, 3u) ||
            space_atom_id_form_is(
+               s, atom_id, atom, g_builtin_syms.equals_percent, 3u) ||
+           space_atom_id_form_is(
                s, atom_id, atom, g_builtin_syms.colon, 3u);
 }
 
@@ -3701,7 +3729,8 @@ static void space_mark_backend_primary_atom_mutation(
     Space *s, AtomId atom_id, Atom *atom) {
     if (!s)
         return;
-    if (space_atom_id_form_is(s, atom_id, atom, g_builtin_syms.equals, 3u))
+    if (space_atom_id_form_is(s, atom_id, atom, g_builtin_syms.equals, 3u) ||
+        space_atom_id_form_is(s, atom_id, atom, g_builtin_syms.equals_percent, 3u))
         s->native.eq_idx_dirty = true;
     if (space_atom_id_form_is(s, atom_id, atom, g_builtin_syms.colon, 3u))
         s->native.ty_idx_dirty = true;
@@ -4318,10 +4347,10 @@ Atom *space_store_atom(Space *s, Arena *fallback, Atom *atom) {
 }
 
 static bool is_equation_atom(Atom *a, Atom **lhs_out, Atom **rhs_out) {
-    if (a->kind != ATOM_EXPR || a->expr.len != 3) return false;
-    if (!atom_is_symbol_id(a->expr.elems[0], g_builtin_syms.equals)) return false;
-    *lhs_out = a->expr.elems[1];
-    *rhs_out = a->expr.elems[2];
+    CettaRuleDescriptor rule;
+    if (!cetta_rule_view(a, CETTA_RULE_SYNTAX_ORDINARY, &rule)) return false;
+    *lhs_out = rule.head;
+    *rhs_out = rule.body;
     return true;
 }
 
@@ -4469,8 +4498,8 @@ static Atom *space_indexed_occurrence_atom(
         : NULL;
 }
 
-bool space_equation_occurrence_resolve(SpaceEquationOccurrenceId id,
-                                       SpaceEquationOccurrence *out) {
+bool space_rule_occurrence_resolve(SpaceEquationOccurrenceId id,
+    unsigned admitted_forms, SpaceEquationOccurrence *out) {
     if (out)
         memset(out, 0, sizeof(*out));
     if (!out || !space_read_token_prefix_intact(id.read)) {
@@ -4482,17 +4511,21 @@ bool space_equation_occurrence_resolve(SpaceEquationOccurrenceId id,
         : (id.logical_index < space_length64(id.read.space)
                ? space_get_at64(id.read.space, id.logical_index)
                : NULL);
-    Atom *lhs = NULL;
-    Atom *rhs = NULL;
-    if (!equation || !is_equation_atom(equation, &lhs, &rhs) ||
+    CettaRuleDescriptor rule;
+    if (!cetta_rule_view(equation, admitted_forms, &rule) ||
         !space_read_token_prefix_intact(id.read)) {
         return false;
     }
     out->id = id;
     out->equation = equation;
-    out->lhs = lhs;
-    out->rhs = rhs;
+    out->lhs = rule.head;
+    out->rhs = rule.body;
     return true;
+}
+
+bool space_equation_occurrence_resolve(SpaceEquationOccurrenceId id,
+                                       SpaceEquationOccurrence *out) {
+    return space_rule_occurrence_resolve(id, CETTA_RULE_SYNTAX_ORDINARY, out);
 }
 
 static bool space_equation_cursor_index_matches(
@@ -4560,10 +4593,14 @@ static void space_equation_cursor_enter(SpaceEquationCursor *cursor,
                                         Space *s, bool own_only) {
     if (!space_has_overlay_base(s))
         ensure_eq_index(s);
+    bool extended_projection = cursor->head == SYMBOL_ID_NONE ||
+        (cursor->admitted_forms != CETTA_RULE_SYNTAX_ORDINARY &&
+        (!(cursor->admitted_forms & CETTA_RULE_SYNTAX_ORDINARY) ||
+         space_has_overlay_base(s) || s->native.eq_idx.directional_present));
     cursor->member = space_read_token(s);
     cursor->own_only = own_only;
     cursor->ceiling = space_length64(s);
-    cursor->overlay = space_has_overlay_base(s);
+    cursor->overlay = space_has_overlay_base(s) || extended_projection;
     cursor->imported = space_imported_length(s);
     if (cursor->imported > cursor->ceiling)
         cursor->imported = 0u;
@@ -4583,12 +4620,20 @@ static void space_equation_cursor_enter(SpaceEquationCursor *cursor,
 
 bool space_equation_cursor_init(Space *s, SymbolId head,
                                 SpaceEquationCursor *cursor) {
+    if (head == SYMBOL_ID_NONE) return false;
+    return space_rule_cursor_init(s, head, CETTA_RULE_SYNTAX_ORDINARY, cursor);
+}
+
+bool space_rule_cursor_init(Space *s, SymbolId head, unsigned admitted_forms,
+                            SpaceEquationCursor *cursor) {
     if (cursor)
         memset(cursor, 0, sizeof(*cursor));
-    if (!s || !cursor || head == SYMBOL_ID_NONE)
+    if (!s || !cursor || !admitted_forms ||
+        (admitted_forms & ~(CETTA_RULE_SYNTAX_ORDINARY | CETTA_RULE_SYNTAX_DIRECTIONAL)))
         return false;
     cursor->read = space_read_token(s);
     cursor->head = head;
+    cursor->admitted_forms = admitted_forms;
     space_equation_cursor_enter(cursor, s, false);
     return space_read_token_prefix_intact(cursor->read);
 }
@@ -4614,11 +4659,11 @@ static SpaceEquationCursorStep space_equation_cursor_member_next(
         while (cursor->overlay_position < logical_len) {
             CettaIndex logical_index = cursor->overlay_position++;
             Atom *equation = space_get_at64(s, logical_index);
-            Atom *lhs = NULL;
-            Atom *rhs = NULL;
-            if (!equation || !is_equation_atom(equation, &lhs, &rhs))
+            CettaRuleDescriptor rule;
+            if (!cetta_rule_view(equation, cursor->admitted_forms, &rule))
                 continue;
-            if (!eq_lhs_may_match_known_head(lhs, cursor->head)) {
+            Atom *lhs = rule.head;
+            if (cursor->head != SYMBOL_ID_NONE && !eq_lhs_may_match_known_head(lhs, cursor->head)) {
 #if CETTA_BUILD_WITH_RUNTIME_STATS || defined(CETTA_RUNTIME_STATS_IMPL)
                 if (eq_lhs_has_structured_head(lhs)) {
                     cetta_runtime_stats_inc(
@@ -5355,6 +5400,7 @@ static void eq_index_rebuild(Space *s) {
     eq_index_init(&s->native.eq_idx);
     for (CettaIndex i = 0; i < s->native.len; i++) {
         AtomId atom_id = space_get_atom_id_at64(s, i);
+        eq_index_note_directional_row(&s->native.eq_idx, s, atom_id);
         AtomId lhs_id = CETTA_ATOM_ID_NONE;
         AtomId rhs_id = CETTA_ATOM_ID_NONE;
         if (space_equation_child_ids_at_id(s, atom_id, &lhs_id, &rhs_id)) {
@@ -5615,6 +5661,7 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
     } else {
         /* Index equations by head symbol */
         if (!s->native.eq_idx_dirty) {
+            eq_index_note_directional_row(&s->native.eq_idx, s, atom_id);
             AtomId lhs_id = CETTA_ATOM_ID_NONE;
             AtomId rhs_id = CETTA_ATOM_ID_NONE;
             if (space_equation_child_ids_at_id(s, atom_id, &lhs_id, &rhs_id)) {
@@ -10963,6 +11010,58 @@ SpacePreparedRegisterStep space_prepared_equation_run_register_recursion(
 #endif
 }
 
+CettaTermMatchStatus query_rule_visit(const CettaRuleDescriptor *rule,
+    Atom *query, Arena *a, QueryResultVisitor visitor, void *ctx,
+    CettaCount *emitted) {
+    if (emitted) *emitted = 0u;
+    if (!rule || !query || !a || !visitor || !emitted)
+        return CETTA_TERM_MATCH_INVALID;
+    CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
+    CettaFrameIdentity epoch;
+    if (!cetta_frame_identity_scope_try(&frame_identity_scope, &epoch))
+        return CETTA_TERM_MATCH_NO_MEMORY;
+    Bindings environment;
+    bindings_init(&environment);
+    Atom *body = NULL;
+    CettaTermMatchStatus status = cetta_rule_prepare(rule, query, epoch, a,
+                                                     &environment, atom_eq, &body);
+    if (status == CETTA_TERM_MATCH_OK && rule->binding == CETTA_RULE_BIND_HEAD) {
+        /* A directional head writes only its fresh rule frame. The prepared
+         * body already contains the caller's unchanged identities; exporting
+         * private rule bindings or rewriting caller aliases would be wrong. */
+        Bindings empty;
+        bindings_init(&empty);
+        QueryResultSink sink;
+        query_result_sink_init_visit(&sink, visitor, ctx);
+        (void)query_result_sink_emit(&sink, body, &empty);
+        *emitted = sink.emitted;
+        bindings_free(&empty);
+    } else if (status == CETTA_TERM_MATCH_OK) {
+        QueryVisibleVarSet visible;
+        query_visible_var_set_init(&visible);
+        Bindings projected;
+        bindings_init(&projected);
+        if (!collect_query_visible_vars_rec(query, &visible) ||
+            !project_query_visible_bindings(a, &visible, &environment, &projected))
+            status = CETTA_TERM_MATCH_NO_MEMORY;
+        else {
+            body = rewrite_query_visible_aliases(a, body, &visible, &environment);
+            if (!body)
+                status = CETTA_TERM_MATCH_NO_MEMORY;
+            else {
+                QueryResultSink sink;
+                query_result_sink_init_visit(&sink, visitor, ctx);
+                (void)query_result_sink_emit(&sink, body, &projected);
+                *emitted = sink.emitted;
+            }
+        }
+        bindings_free(&projected);
+        query_visible_var_set_free(&visible);
+    }
+    bindings_free(&environment);
+    return status;
+}
+
 CettaCount query_equation_visit(Atom *equation, Atom *query, Arena *a,
                                 QueryResultVisitor visitor, void *ctx) {
                                     CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
@@ -11006,6 +11105,32 @@ void query_equations(Space *s, Atom *query, Arena *a, QueryResults *out) {
 
 static bool space_member_equations_may_match_known_head(Space *s,
                                                         SymbolId head);
+
+static bool space_member_directional_rules_may_match(Space *s, SymbolId head) {
+    if (!s) return false;
+    if (space_has_overlay_base(s)) {
+        CettaCount begin = space_overlay_visible_base_count(s);
+        CettaCount end = space_length64(s);
+        for (CettaIndex i = begin; i < end; ++i) {
+            CettaRuleDescriptor rule;
+            if (cetta_rule_view(space_get_at64(s, i), CETTA_RULE_SYNTAX_DIRECTIONAL, &rule) &&
+                (head == SYMBOL_ID_NONE || eq_lhs_may_match_known_head(rule.head, head))) return true;
+        }
+        return space_member_directional_rules_may_match((Space *)s->overlay_base, head);
+    }
+    ensure_eq_index(s);
+    if (head == SYMBOL_ID_NONE) return s->native.eq_idx.directional_present;
+    return s->native.eq_idx.directional_wildcard ||
+        eq_head_set_contains(&s->native.eq_idx.directional_heads, head);
+}
+
+bool space_directional_rules_may_match_general(Space *s, SymbolId head) {
+    if (space_member_directional_rules_may_match(s, head)) return true;
+    for (uint32_t i = 0u; i < space_dependency_count(s); ++i)
+        if (space_member_directional_rules_may_match(space_dependency_at(s, i), head))
+            return true;
+    return false;
+}
 
 /* Whether a module that `s` imports may define `head`.  A dependency's
  * imported atoms belong to the modules `s` reads anyway, so its whole space
@@ -11132,5 +11257,44 @@ bool space_equation_head_arity_bounds(
         space_member_equation_head_arity(
             space_dependency_at(s, d), head, query_arity, &found, minimum,
             maximum, has_exact);
+    return found;
+}
+
+bool space_extended_rule_head_arity_bounds(Space *s, SymbolId head,
+    CettaExprLen *minimum, CettaExprLen *maximum, bool *has_exact,
+    CettaExprLen query_arity, unsigned admitted_forms) {
+    if ((admitted_forms & CETTA_RULE_SYNTAX_ORDINARY) &&
+        (!(admitted_forms & CETTA_RULE_SYNTAX_DIRECTIONAL) ||
+         !space_directional_rules_may_match_known_head(s, head)))
+        return space_equation_head_arity_bounds(s, head, minimum, maximum,
+                                                has_exact, query_arity);
+    if (minimum) *minimum = 0u;
+    if (maximum) *maximum = 0u;
+    if (has_exact) *has_exact = false;
+    if (!s || head == SYMBOL_ID_NONE || !minimum || !maximum || !has_exact)
+        return false;
+    bool found = (admitted_forms & CETTA_RULE_SYNTAX_ORDINARY) &&
+        space_equation_head_arity_bounds(s, head, minimum, maximum,
+                                         has_exact, query_arity);
+    if (!(admitted_forms & CETTA_RULE_SYNTAX_DIRECTIONAL) || !minimum ||
+        !maximum || !has_exact ||
+        !space_directional_rules_may_match_known_head(s, head)) return found;
+    SpaceEquationCursor cursor;
+    if (!space_rule_cursor_init(s, head, CETTA_RULE_SYNTAX_DIRECTIONAL, &cursor))
+        return found;
+    SpaceEquationOccurrenceId id;
+    while (space_equation_cursor_next(&cursor, &id) == SPACE_EQUATION_CURSOR_ITEM) {
+        SpaceEquationOccurrence occurrence;
+        CettaRuleDescriptor rule;
+        if (!space_rule_occurrence_resolve(id, CETTA_RULE_SYNTAX_DIRECTIONAL, &occurrence) ||
+            !cetta_rule_view(occurrence.equation, CETTA_RULE_SYNTAX_DIRECTIONAL, &rule) ||
+            rule.head->kind != ATOM_EXPR || !rule.head->expr.len ||
+            eq_head_symbol(rule.head) != head) continue;
+        CettaExprLen arity = rule.head->expr.len - 1u;
+        if (!found || arity < *minimum) *minimum = arity;
+        if (!found || arity > *maximum) *maximum = arity;
+        *has_exact = *has_exact || arity == query_arity;
+        found = true;
+    }
     return found;
 }

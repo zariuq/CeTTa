@@ -2888,6 +2888,139 @@ done:
     return ok;
 }
 
+typedef struct {
+    const PPABIV1Pack *pack;
+    PPABIV1Pack pack_snapshot;
+    const PPNativeV1ForestExtension *extension;
+    PPNativeV1ForestExtension extension_snapshot;
+} PPNativeV1ReplayScopeImpl;
+
+void ppnative_v1_replay_scope_init(PPNativeV1ReplayScope *scope) {
+    if (scope)
+        scope->implementation = NULL;
+}
+
+void ppnative_v1_replay_scope_free(PPNativeV1ReplayScope *scope) {
+    if (!scope)
+        return;
+    free(scope->implementation);
+    scope->implementation = NULL;
+}
+
+bool ppnative_v1_replay_scope_prepare(
+    PPNativeV1ReplayScope *scope,
+    const PPABIV1Pack *pack,
+    const PPNativeV1ForestExtension *extension,
+    char *error_buf,
+    size_t error_buf_size) {
+    PPNativeV1ReplayScopeImpl *prepared;
+
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    if (!scope || !pack || !ppnative_v1_extension_valid(
+            pack, extension, error_buf, error_buf_size)) {
+        if (error_buf && error_buf_size > 0u && error_buf[0] == '\0')
+            ppnative_v1_set_error(error_buf, error_buf_size,
+                                  "bad ParserPack replay scope arguments");
+        return false;
+    }
+    prepared = calloc(1u, sizeof(*prepared));
+    if (!prepared) {
+        ppnative_v1_set_error(error_buf, error_buf_size,
+                              "cannot allocate ParserPack replay scope");
+        return false;
+    }
+    prepared->pack = pack;
+    prepared->pack_snapshot = *pack;
+    prepared->extension = extension;
+    if (extension)
+        prepared->extension_snapshot = *extension;
+    ppnative_v1_replay_scope_free(scope);
+    scope->implementation = prepared;
+    return true;
+}
+
+static bool ppnative_v1_replay_scope_unchanged(
+    const PPNativeV1ReplayScopeImpl *scope) {
+    const PPABIV1Pack *pack = scope->pack;
+    const PPABIV1Pack *snapshot = &scope->pack_snapshot;
+    const PPNativeV1ForestExtension *extension = scope->extension;
+    const PPNativeV1ForestExtension *saved = &scope->extension_snapshot;
+
+    return pack->states == snapshot->states &&
+        pack->state_len == snapshot->state_len &&
+        pack->terminals == snapshot->terminals &&
+        pack->terminal_len == snapshot->terminal_len &&
+        pack->productions == snapshot->productions &&
+        pack->production_len == snapshot->production_len &&
+        pack->class_clauses == snapshot->class_clauses &&
+        pack->class_clause_len == snapshot->class_clause_len &&
+        pack->derivations == snapshot->derivations &&
+        pack->derivation_len == snapshot->derivation_len &&
+        memcmp(pack->source_digest, snapshot->source_digest, 65u) == 0 &&
+        memcmp(pack->compiler_digest, snapshot->compiler_digest, 65u) == 0 &&
+        memcmp(pack->environment_digest,
+               snapshot->environment_digest, 65u) == 0 &&
+        memcmp(pack->pack_digest, snapshot->pack_digest, 65u) == 0 &&
+        (!extension ||
+         (extension->states == saved->states &&
+          extension->state_len == saved->state_len &&
+          extension->terminals == saved->terminals &&
+          extension->terminal_len == saved->terminal_len &&
+          extension->productions == saved->productions &&
+          extension->production_len == saved->production_len &&
+          extension->witness_values == saved->witness_values &&
+          extension->witness_len == saved->witness_len));
+}
+
+static bool ppnative_v1_finish_validated(
+    PPNativeV1Result *result,
+    const PPABIV1Pack *pack,
+    const Atom *start_state,
+    const PPNativeV1ForestExtension *extension,
+    uint32_t replay_depth,
+    uint32_t result_limit,
+    char *error_buf,
+    size_t error_buf_size) {
+    if (!result || !pack || !start_state || replay_depth == 0u ||
+        result_limit == 0u) {
+        ppnative_v1_set_error(error_buf, error_buf_size,
+                              "bad ParserPack finish arguments");
+        return false;
+    }
+    return ppnative_v1_forest_canonicalize(
+               result, pack, start_state, extension,
+               PPNATIVE_V1_CANONICAL_LIST_MATERIALIZE_LIMIT,
+               error_buf, error_buf_size) &&
+        ppnative_v1_replay(
+               result, pack, extension, replay_depth, result_limit,
+               error_buf, error_buf_size);
+}
+
+bool ppnative_v1_finish_in_scope(
+    PPNativeV1Result *result,
+    const PPNativeV1ReplayScope *scope,
+    const Atom *start_state,
+    uint32_t replay_depth,
+    uint32_t result_limit,
+    char *error_buf,
+    size_t error_buf_size) {
+    const PPNativeV1ReplayScopeImpl *prepared =
+        scope ? scope->implementation : NULL;
+
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    if (!prepared || !ppnative_v1_replay_scope_unchanged(prepared)) {
+        ppnative_v1_set_error(error_buf, error_buf_size,
+                              "unbound or changed ParserPack replay scope");
+        return false;
+    }
+    return ppnative_v1_finish_validated(
+        result, prepared->pack, start_state,
+        prepared->extension ? &prepared->extension_snapshot : NULL,
+        replay_depth, result_limit, error_buf, error_buf_size);
+}
+
 bool ppnative_v1_finish_extended(
     PPNativeV1Result *result,
     const PPABIV1Pack *pack,
@@ -2907,13 +3040,9 @@ bool ppnative_v1_finish_extended(
         }
         return false;
     }
-    return ppnative_v1_forest_canonicalize(
-               result, pack, start_state, extension,
-               PPNATIVE_V1_CANONICAL_LIST_MATERIALIZE_LIMIT,
-               error_buf, error_buf_size) &&
-        ppnative_v1_replay(
-               result, pack, extension, replay_depth, result_limit,
-               error_buf, error_buf_size);
+    return ppnative_v1_finish_validated(
+        result, pack, start_state, extension, replay_depth, result_limit,
+        error_buf, error_buf_size);
 }
 
 bool ppnative_v1_finish(PPNativeV1Result *result,

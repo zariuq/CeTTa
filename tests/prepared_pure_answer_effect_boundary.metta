@@ -8,6 +8,6 @@
 ; Selecting choice zero contributes no occurrence.
 !(if False wrong (empty))
 
-; Negative: the same head with an argument is not choice zero.  Its ordinary
-; arity error must remain observable rather than being erased.
+; Negative: the same head with an argument is not choice zero. Its dialect
+; result must remain observable rather than being erased.
 !(if False wrong (empty tag))

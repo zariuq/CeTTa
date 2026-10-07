@@ -1,0 +1,13 @@
+member_effect
+member_effect
+true
+(true true)
+(false)
+("a" "b" "a")
+("a")
+((Held $V0 $V0) (Held "a" "a"))
+(first second)
+(kept kept)
+(true true)
+(true true)
+done

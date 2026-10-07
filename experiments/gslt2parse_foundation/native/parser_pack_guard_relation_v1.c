@@ -49,14 +49,81 @@ static bool ppguard_relation_v1_array_fits(size_t count,
     return element_size == 0u || count <= SIZE_MAX / element_size;
 }
 
-static bool ppguard_relation_v1_owner_has_active_range(
+typedef struct {
+    uintptr_t begin;
+    uintptr_t end;
+} PPGuardRelationV1OwnerRange;
+
+typedef struct {
+    PPGuardRelationV1OwnerRange *ranges;
+    size_t len;
+} PPGuardRelationV1OwnerIndex;
+
+static int ppguard_relation_v1_owner_range_compare(
+    const void *left, const void *right) {
+    const PPGuardRelationV1OwnerRange *lhs = left;
+    const PPGuardRelationV1OwnerRange *rhs = right;
+    return lhs->begin < rhs->begin ? -1 : lhs->begin > rhs->begin ? 1 : 0;
+}
+
+/* Capture active ranges for one build or validation call. Prefix maxima
+ * preserve existential containment even when owners or ranges overlap;
+ * adjacent blocks never grant a range spanning both blocks. */
+static bool ppguard_relation_v1_owner_index_build(
     const Arena *const *owners,
     uint32_t owner_len,
+    PPGuardRelationV1OwnerIndex *out) {
+    size_t count = 0u;
+    size_t index = 0u;
+    uint32_t owner_index;
+
+    for (owner_index = 0u; owner_index < owner_len; owner_index++) {
+        const ArenaBlock *block;
+        if (!owners[owner_index])
+            continue;
+        for (block = owners[owner_index]->head; block; block = block->next) {
+            if (count == SIZE_MAX / sizeof(*out->ranges))
+                return false;
+            count++;
+        }
+    }
+    if (count > 0u) {
+        out->ranges = malloc(count * sizeof(*out->ranges));
+        if (!out->ranges)
+            return false;
+    }
+    for (owner_index = 0u; owner_index < owner_len; owner_index++) {
+        const ArenaBlock *block;
+        if (!owners[owner_index])
+            continue;
+        for (block = owners[owner_index]->head; block; block = block->next) {
+            uintptr_t begin = (uintptr_t)block->data;
+            if (block->used == 0u || block->used > UINTPTR_MAX - begin)
+                continue;
+            out->ranges[index++] = (PPGuardRelationV1OwnerRange){
+                .begin = begin, .end = begin + block->used,
+            };
+        }
+    }
+    out->len = index;
+    if (index > 1u)
+        qsort(out->ranges, index, sizeof(*out->ranges),
+              ppguard_relation_v1_owner_range_compare);
+    for (index = 1u; index < out->len; index++) {
+        if (out->ranges[index].end < out->ranges[index - 1u].end)
+            out->ranges[index].end = out->ranges[index - 1u].end;
+    }
+    return true;
+}
+
+static bool ppguard_relation_v1_owner_index_contains(
+    const PPGuardRelationV1OwnerIndex *owners,
     const void *ptr,
     size_t size) {
     uintptr_t begin;
     uintptr_t end;
-    uint32_t owner_index;
+    size_t low = 0u;
+    size_t high = owners->len;
 
     if (!ptr || size == 0u)
         return false;
@@ -64,19 +131,14 @@ static bool ppguard_relation_v1_owner_has_active_range(
     if (size > UINTPTR_MAX - begin)
         return false;
     end = begin + size;
-    for (owner_index = 0u; owner_index < owner_len; owner_index++) {
-        const Arena *owner = owners[owner_index];
-        const ArenaBlock *block;
-        if (!owner)
-            continue;
-        for (block = owner->head; block; block = block->next) {
-            uintptr_t block_begin = (uintptr_t)block->data;
-            uintptr_t block_end = block_begin + block->used;
-            if (begin >= block_begin && end <= block_end)
-                return true;
-        }
+    while (low < high) {
+        size_t middle = low + (high - low) / 2u;
+        if (owners->ranges[middle].begin <= begin)
+            low = middle + 1u;
+        else
+            high = middle;
     }
-    return false;
+    return low > 0u && end <= owners->ranges[low - 1u].end;
 }
 
 static bool ppguard_relation_v1_atom_storage_valid(
@@ -102,13 +164,11 @@ static bool ppguard_relation_v1_atom_storage_valid(
 
 static bool ppguard_relation_v1_atom_is_available(
     const PPGuardRelationV1 *relation,
+    const PPGuardRelationV1OwnerIndex *owners,
     const Atom *atom) {
     return relation->atom_storage ==
                PPGUARD_RELATION_V1_ATOMS_SELF_CONTAINED ||
-        ppguard_relation_v1_owner_has_active_range(
-            relation->borrowed_atom_owners,
-            relation->borrowed_atom_owner_len,
-            atom, sizeof(*atom));
+        ppguard_relation_v1_owner_index_contains(owners, atom, sizeof(*atom));
 }
 
 static int ppguard_relation_v1_u32_compare(const void *left,
@@ -340,6 +400,7 @@ bool ppguard_relation_v1_validate(
     char *error_buf,
     size_t error_buf_size) {
     PPGuardRelationV1CanonicalMatch *canonical = NULL;
+    PPGuardRelationV1OwnerIndex owners = {0};
     PPGuardRelationV1 digest_copy;
     uint32_t index;
     bool ok = false;
@@ -369,12 +430,17 @@ bool ppguard_relation_v1_validate(
         }
         goto done;
     }
+    if (relation->atom_storage == PPGUARD_RELATION_V1_ATOMS_BORROWED &&
+        !ppguard_relation_v1_owner_index_build(
+            relation->borrowed_atom_owners,
+            relation->borrowed_atom_owner_len, &owners))
+        goto done;
     for (index = 0u; index < relation->witness_len; index++) {
         uint8_t *text = NULL;
         size_t text_len = 0u;
         if (!relation->witness_values[index] ||
             !ppguard_relation_v1_atom_is_available(
-                relation, relation->witness_values[index]) ||
+                relation, &owners, relation->witness_values[index]) ||
             !fh_ground_term_v1_render(
                 relation->witness_values[index], &text, &text_len,
                 NULL, 0u)) {
@@ -411,9 +477,9 @@ bool ppguard_relation_v1_validate(
                 relation->byte_offsets[evidence->body_scalar_right] ||
             !evidence->value || !evidence->proof ||
             !ppguard_relation_v1_atom_is_available(
-                relation, evidence->value) ||
+                relation, &owners, evidence->value) ||
             !ppguard_relation_v1_atom_is_available(
-                relation, evidence->proof) ||
+                relation, &owners, evidence->proof) ||
             !atom_eq(relation->witness_values[evidence->witness_id],
                      evidence->value) ||
             !ppguard_relation_v1_terminal_declared(
@@ -447,8 +513,11 @@ bool ppguard_relation_v1_validate(
                 "positive guard evidence is not canonical and unique");
             goto done;
         }
-        for (edge_index = 0u;
-             edge_index < relation->lattice.edge_len; edge_index++) {
+        /* The validated lattice partitions edges by their left position;
+         * only this range can contain the witness's zero-width edge. */
+        for (edge_index = relation->start_offsets[evidence->scalar_left];
+             edge_index < relation->start_offsets[evidence->scalar_left + 1u];
+             edge_index++) {
             const CettaLpNativeUtf8LatticeEdge *edge =
                 &relation->edges[edge_index];
             if (edge->terminal_id == evidence->guard_terminal_id &&
@@ -493,6 +562,7 @@ bool ppguard_relation_v1_validate(
     ok = true;
 
 done:
+    free(owners.ranges);
     ppguard_relation_v1_canonical_matches_free(
         canonical, relation ? relation->evidence_len : 0u);
     if (!ok && error_buf && error_buf_size > 0u && error_buf[0] == '\0') {
@@ -520,6 +590,7 @@ static bool ppguard_relation_v1_build_impl(
     size_t error_buf_size) {
     PPGuardRelationV1 result;
     PPGuardRelationV1CanonicalMatch *canonical_matches = NULL;
+    PPGuardRelationV1OwnerIndex owners = {0};
     uint32_t *sorted_guard_ids = NULL;
     uint32_t unique_match_len = 0u;
     uint32_t terminal_len;
@@ -560,6 +631,9 @@ static bool ppguard_relation_v1_build_impl(
             goto done;
         }
     }
+    if (atom_storage == PPGUARD_RELATION_V1_ATOMS_BORROWED &&
+        !ppguard_relation_v1_owner_index_build(atom_owners, atom_owner_len, &owners))
+        goto done;
     if (guard_terminal_len > UINT32_MAX - base_lattice->terminal_len) {
         ppguard_relation_v1_set_error(
             error_buf, error_buf_size,
@@ -612,8 +686,8 @@ static bool ppguard_relation_v1_build_impl(
         size_t canonical_len = 0u;
         if (!base_witness_values[index] ||
             (atom_storage == PPGUARD_RELATION_V1_ATOMS_BORROWED &&
-             !ppguard_relation_v1_owner_has_active_range(
-                 atom_owners, atom_owner_len,
+             !ppguard_relation_v1_owner_index_contains(
+                 &owners,
                  base_witness_values[index],
                  sizeof(*base_witness_values[index]))) ||
             !fh_ground_term_v1_render(
@@ -662,8 +736,8 @@ static bool ppguard_relation_v1_build_impl(
             goto done;
         }
         if (atom_storage == PPGUARD_RELATION_V1_ATOMS_BORROWED &&
-            !ppguard_relation_v1_owner_has_active_range(
-                atom_owners, atom_owner_len,
+            !ppguard_relation_v1_owner_index_contains(
+                &owners,
                 match->value, sizeof(*match->value))) {
             ppguard_relation_v1_set_error(
                 error_buf, error_buf_size,
@@ -671,8 +745,8 @@ static bool ppguard_relation_v1_build_impl(
             goto done;
         }
         if (atom_storage == PPGUARD_RELATION_V1_ATOMS_BORROWED &&
-            !ppguard_relation_v1_owner_has_active_range(
-                atom_owners, atom_owner_len,
+            !ppguard_relation_v1_owner_index_contains(
+                &owners,
                 match->proof, sizeof(*match->proof))) {
             ppguard_relation_v1_set_error(
                 error_buf, error_buf_size,
@@ -925,6 +999,7 @@ static bool ppguard_relation_v1_build_impl(
     ok = true;
 
 done:
+    free(owners.ranges);
     ppguard_relation_v1_canonical_matches_free(
         canonical_matches, match_len);
     free(sorted_guard_ids);

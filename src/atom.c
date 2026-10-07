@@ -3605,7 +3605,11 @@ Atom *atom_bindings_value(Arena *arena, CettaBindingsValue *value) {
     Atom *atom = arena_alloc(arena, sizeof(*atom));
     *atom = (Atom){
         .kind = ATOM_GROUNDED,
-        .flags = atom_flags_for_grounded_kind(GV_BINDINGS),
+        /* This opaque leaf retains its independent syntax owner above.
+         * Copying it therefore closes the destination's syntax graph; it
+         * does not borrow an Atom from the source arena. This says nothing
+         * about hash stability or permission to share effects/workers. */
+        .flags = atom_flags_for_grounded_kind(GV_BINDINGS) | ATOM_FLAG_ARENA_CLOSED,
         .arena_id = arena->identity,
         .structural_facts = atom_structural_facts_for_grounded_kind(GV_BINDINGS),
         .ground = {.gkind = GV_BINDINGS, .ptr = value},
@@ -4180,6 +4184,7 @@ Atom *atom_string_n(Arena *a, const char *bytes, size_t len) {
     at->structural_facts = temp.structural_facts;
     at->ground.gkind = temp.ground.gkind;
     at->ground.slen = temp.ground.slen;
+    at->name_key = NULL;
     char *copy = arena_alloc(a, len + 1u);
     if (len)
         memcpy(copy, bytes, len);
@@ -4583,8 +4588,10 @@ Atom *atom_expr_view_rehome(Arena *a, const Atom *view, Atom **elems) {
         return NULL;
     *header = (Atom){
         .kind = ATOM_EXPR,
-        .flags = view->flags & ~ATOM_FLAG_ARENA_CLOSED,
-        .var_id = view->var_id,
+        /* Relocated storage may contain renamed cells. Keep variable
+         * support unknown and do not inherit a hash of the old identities. */
+        .flags = view->flags & ~(ATOM_FLAG_ARENA_CLOSED | ATOM_FLAG_HASH_VALID),
+        .var_id = VAR_ID_NONE,
         .sym_id = SYMBOL_ID_NONE,
         .arena_id = a->identity,
         .hash_cache = view->hash_cache,

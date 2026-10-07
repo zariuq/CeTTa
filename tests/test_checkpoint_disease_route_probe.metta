@@ -1,4 +1,4 @@
-!(import! &self ../benchmarks/genomic_pln/workload_genomic_pln_1m.metta)
+!(include ../benchmarks/genomic_pln/workload_genomic_pln_1m.metta)
 
 !(collapse
     (unique

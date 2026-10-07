@@ -343,6 +343,344 @@ static bool forest_contains(const PPNativeV1Result *result,
     return found;
 }
 
+static void relation_edge_view(
+    const PPGuardRelationV1 *original,
+    PPGuardRelationV1 *view,
+    CettaLpNativeUtf8LatticeEdge *edges,
+    uint32_t edge_len,
+    uint32_t *offsets) {
+    uint32_t index;
+
+    *view = *original;
+    memset(offsets, 0,
+           sizeof(*offsets) * ((size_t)original->lattice.scalar_len + 2u));
+    for (index = 0u; index < edge_len; index++)
+        offsets[edges[index].scalar_left + 1u]++;
+    for (index = 1u; index <= original->lattice.scalar_len + 1u; index++)
+        offsets[index] += offsets[index - 1u];
+    view->edges = edges;
+    view->start_offsets = offsets;
+    view->lattice.edges = edges;
+    view->lattice.start_offsets = offsets;
+    view->lattice.edge_len = edge_len;
+}
+
+static bool guard_relation_index_controls(TestCounts *counts, Arena *arena) {
+    static const uint32_t terminals[] = {11u};
+    static const uint32_t guard_terminals[] = {12u, 13u};
+    static const uint32_t scalars[] = {97u, 945u};
+    static const uint32_t bytes[] = {0u, 1u, 3u};
+    static const uint32_t offsets[] = {0u, 1u, 2u, 2u};
+    static const CettaLpNativeUtf8LatticeEdge base_edges[] = {
+        {11u, 0u, 1u, 0u, 1u,
+         CETTA_LP_NATIVE_UTF8_TERMINAL_VALUE_WITNESS, 0u},
+        {11u, 1u, 2u, 1u, 3u,
+         CETTA_LP_NATIVE_UTF8_TERMINAL_VALUE_SCALAR, 945u},
+    };
+    CettaLpNativeUtf8Lattice base = {
+        .terminal_ids = terminals,
+        .terminal_len = 1u,
+        .edges = base_edges,
+        .edge_len = 2u,
+        .start_offsets = offsets,
+        .start_offset_len = 4u,
+        .codepoints = scalars,
+        .byte_offsets = bytes,
+        .scalar_len = 2u,
+        .input_byte_len = 3u,
+        .decoded_byte_len = 3u,
+        .source_pass_count = 1u,
+    };
+    Atom *base_values[] = {atom_symbol(arena, "ordinary-value")};
+    PPGuardRelationV1Match matches[] = {
+        {12u, 0u, 1u, 0u, 1u, cp(arena, 97u), atom_symbol(arena, "first-proof")},
+        {12u, 1u, 2u, 1u, 3u, cp(arena, 945u), atom_symbol(arena, "second-proof")},
+        {12u, 2u, 2u, 3u, 3u, atom_symbol(arena, "eof"), atom_symbol(arena, "eof-proof")},
+        {13u, 2u, 2u, 3u, 3u, atom_symbol(arena, "eof"), atom_symbol(arena, "eof-proof")},
+    };
+    PPGuardRelationV1Match repeated[5];
+    PPGuardRelationV1 relation;
+    PPGuardRelationV1 duplicate_relation;
+    PPGuardRelationV1 view;
+    CettaLpNativeUtf8LatticeEdge changed_edges[8];
+    PPGuardRelationV1Evidence changed_evidence[4];
+    uint32_t changed_offsets[4];
+    uint32_t target = UINT32_MAX;
+    uint32_t base_target = UINT32_MAX;
+    uint32_t index;
+    char error[512] = {0};
+    bool ok = false;
+
+    ppguard_relation_v1_init(&relation);
+    ppguard_relation_v1_init(&duplicate_relation);
+    REQUIRE(counts,
+            ppguard_relation_v1_build(
+                &base, base_values, 1u, guard_terminals, 2u,
+                matches, 4u, DIGEST_A, &relation, error, sizeof(error)) &&
+                ppguard_relation_v1_validate(&relation, error, sizeof(error)),
+            "guard relation accepts distinct scalar positions and EOF");
+    REQUIRE(counts,
+            relation.evidence_len == 4u && relation.witness_len == 5u &&
+                relation.lattice.edge_len == 6u &&
+                relation.start_offsets[2] == 4u &&
+                relation.start_offsets[3] == 6u &&
+                relation.evidence[2].scalar_left == 2u &&
+                relation.evidence[2].byte_left == 3u &&
+                atom_eq(relation.witness_values[0], base_values[0]),
+            "guard index preserves UTF-8 offsets, base witnesses and EOF bucket");
+
+    memcpy(repeated, matches, sizeof(matches));
+    repeated[4] = matches[2];
+    REQUIRE(counts,
+            ppguard_relation_v1_build(
+                &base, base_values, 1u, guard_terminals, 2u,
+                repeated, 5u, DIGEST_A,
+                &duplicate_relation, error, sizeof(error)) &&
+                duplicate_relation.evidence_len == 4u &&
+                strcmp(duplicate_relation.relation_digest,
+                       relation.relation_digest) == 0,
+            "duplicate guard input retains the same canonical relation seal");
+
+    for (index = 0u; index < relation.lattice.edge_len; index++) {
+        if (relation.edges[index].value_kind ==
+                CETTA_LP_NATIVE_UTF8_TERMINAL_VALUE_WITNESS &&
+            relation.edges[index].value == relation.evidence[0].witness_id)
+            target = index;
+        if (relation.edges[index].terminal_id == 11u &&
+            relation.edges[index].value_kind ==
+                CETTA_LP_NATIVE_UTF8_TERMINAL_VALUE_WITNESS)
+            base_target = index;
+    }
+    REQUIRE(counts, target != UINT32_MAX && base_target != UINT32_MAX,
+            "guard mutation controls identify distinct guard and base edges");
+
+    memcpy(changed_edges, relation.edges, sizeof(*changed_edges) * target);
+    memcpy(changed_edges + target, relation.edges + target + 1u,
+           sizeof(*changed_edges) * (relation.lattice.edge_len - target - 1u));
+    relation_edge_view(&relation, &view, changed_edges,
+                       relation.lattice.edge_len - 1u, changed_offsets);
+    error[0] = '\0';
+    REQUIRE(counts,
+            !ppguard_relation_v1_validate(&view, error, sizeof(error)) &&
+                strstr(error, "one exact zero-width edge") != NULL,
+            "missing guard edge is refused before relation digest checking");
+
+    memcpy(changed_edges, relation.edges,
+           sizeof(*changed_edges) * relation.lattice.edge_len);
+    changed_edges[target].value = 0u;
+    relation_edge_view(&relation, &view, changed_edges,
+                       relation.lattice.edge_len, changed_offsets);
+    error[0] = '\0';
+    REQUIRE(counts,
+            !ppguard_relation_v1_validate(&view, error, sizeof(error)) &&
+                strstr(error, "one exact zero-width edge") != NULL,
+            "wrong witness identity cannot discharge a guard evidence row");
+
+    memcpy(changed_edges, relation.edges,
+           sizeof(*changed_edges) * (target + 1u));
+    memcpy(changed_edges + target + 1u, relation.edges + target,
+           sizeof(*changed_edges) * (relation.lattice.edge_len - target));
+    relation_edge_view(&relation, &view, changed_edges,
+                       relation.lattice.edge_len + 1u, changed_offsets);
+    error[0] = '\0';
+    REQUIRE(counts,
+            !ppguard_relation_v1_validate(&view, error, sizeof(error)) &&
+                strstr(error, "strictly ordered") != NULL,
+            "duplicate zero-width edge is refused by the lattice authority");
+
+    memcpy(changed_edges, relation.edges,
+           sizeof(*changed_edges) * relation.lattice.edge_len);
+    changed_edges[base_target].value = relation.witness_len;
+    relation_edge_view(&relation, &view, changed_edges,
+                       relation.lattice.edge_len, changed_offsets);
+    error[0] = '\0';
+    REQUIRE(counts,
+            !ppguard_relation_v1_validate(&view, error, sizeof(error)) &&
+                strstr(error, "invalid witness") != NULL,
+            "out-of-range base witness remains refused after guard checks");
+
+    memcpy(changed_edges, relation.edges,
+           sizeof(*changed_edges) * relation.lattice.edge_len);
+    relation_edge_view(&relation, &view, changed_edges,
+                       relation.lattice.edge_len, changed_offsets);
+    changed_offsets[1]--;
+    error[0] = '\0';
+    REQUIRE(counts,
+            !ppguard_relation_v1_validate(&view, error, sizeof(error)) &&
+                strstr(error, "lattice edge is invalid") != NULL,
+            "position index cannot move a guard edge into another bucket");
+
+    memcpy(changed_evidence, relation.evidence, sizeof(changed_evidence));
+    view = relation;
+    view.evidence = changed_evidence;
+    changed_evidence[0].witness_id = 0u;
+    error[0] = '\0';
+    REQUIRE(counts,
+            !ppguard_relation_v1_validate(&view, error, sizeof(error)) &&
+                strstr(error, "evidence is inconsistent") != NULL,
+            "guard evidence cannot claim an ordinary witness slot");
+
+    memcpy(changed_edges, relation.edges,
+           sizeof(*changed_edges) * relation.lattice.edge_len);
+    changed_edges[target].byte_right++;
+    relation_edge_view(&relation, &view, changed_edges,
+                       relation.lattice.edge_len, changed_offsets);
+    error[0] = '\0';
+    REQUIRE(counts,
+            !ppguard_relation_v1_validate(&view, error, sizeof(error)) &&
+                strstr(error, "lattice edge is invalid") != NULL,
+            "guard edge keeps its exact zero-width byte span");
+
+    memcpy(changed_edges, relation.edges,
+           sizeof(*changed_edges) * relation.lattice.edge_len);
+    relation_edge_view(&relation, &view, changed_edges,
+                       relation.lattice.edge_len, changed_offsets);
+    changed_offsets[3]--;
+    error[0] = '\0';
+    REQUIRE(counts,
+            !ppguard_relation_v1_validate(&view, error, sizeof(error)) &&
+                strstr(error, "position index is invalid") != NULL,
+            "EOF bucket must retain the complete indexed edge extent");
+
+    error[0] = '\0';
+    REQUIRE(counts,
+            ppguard_relation_v1_validate(&relation, error, sizeof(error)),
+            "independent corruptions preserve the original sealed relation");
+    ok = true;
+
+done:
+    ppguard_relation_v1_free(&duplicate_relation);
+    ppguard_relation_v1_free(&relation);
+    return ok;
+}
+
+static bool replay_scope_controls(
+    TestCounts *counts,
+    PPABIV1Pack *pack,
+    Atom *start_state,
+    const PPNativeV1ForestExtension *extension,
+    const PPGuardRelationV1 *relation,
+    const PPNativeV1Result *gll,
+    const PPNativeV1Result *glr) {
+    PPNativeV1ReplayScope scope;
+    PPNativeV1ForestExtension shared = *extension;
+    PPNativeV1ForestExtension bad;
+    PPNativeV1Result replay;
+    Atom *hole[1] = {NULL};
+    uint32_t saved_len;
+    uint32_t invalid_root;
+    char saved_digest;
+    char error[512] = {0};
+    bool refused;
+    bool ok = false;
+    void *binding;
+
+    ppnative_v1_replay_scope_init(&scope);
+    ppnative_v1_result_init(&replay);
+    shared.witness_values = relation->witness_values;
+    shared.witness_len = relation->witness_len;
+    REQUIRE(counts,
+            !ppnative_v1_finish_in_scope(
+                &replay, &scope, start_state, 128u, 128u,
+                error, sizeof(error)) && strstr(error, "unbound"),
+            "an unprepared replay scope refuses execution");
+    REQUIRE(counts,
+            ppnative_v1_replay_scope_prepare(
+                &scope, pack, &shared, error, sizeof(error)),
+            error[0] ? error : "prepare a shared replay extension");
+    for (uint32_t backend = 0u; backend < 2u; backend++) {
+        const PPNativeV1Result *checked = backend == 0u ? gll : glr;
+        replay.forest = checked->forest;
+        replay.accepted = checked->accepted;
+        REQUIRE(counts,
+                ppnative_v1_finish_in_scope(
+                    &replay, &scope, start_state, 128u, 128u,
+                    error, sizeof(error)) &&
+                    replay.outcome == checked->outcome &&
+                    replay.accepted == checked->accepted &&
+                    replay.semantic_result_len == checked->semantic_result_len &&
+                    replay.semantic_result_len == 1u &&
+                    atom_eq(replay.semantic_results[0], checked->semantic_results[0]) &&
+                    strcmp(replay.forest_digest, checked->forest_digest) == 0,
+                "scoped GLL/GLR replay preserves exact forest and semantics");
+        memset(&replay.forest, 0, sizeof(replay.forest));
+        ppnative_v1_result_free(&replay);
+        ppnative_v1_result_init(&replay);
+    }
+    replay.forest = gll->forest;
+    saved_len = shared.witness_len;
+    shared.witness_len = saved_len + 1u;
+    refused = !ppnative_v1_finish_in_scope(
+        &replay, &scope, start_state, 128u, 128u, error, sizeof(error)) &&
+        strstr(error, "changed");
+    shared.witness_len = saved_len;
+    REQUIRE(counts, refused,
+            "changed shared witness metadata invalidates replay scope");
+    saved_digest = pack->pack_digest[0];
+    pack->pack_digest[0] = saved_digest == '0' ? '1' : '0';
+    refused = !ppnative_v1_finish_in_scope(
+        &replay, &scope, start_state, 128u, 128u, error, sizeof(error)) &&
+        strstr(error, "changed");
+    pack->pack_digest[0] = saved_digest;
+    REQUIRE(counts, refused,
+            "changed pack provenance invalidates replay scope");
+    binding = scope.implementation;
+    bad = shared;
+    bad.witness_values = hole;
+    bad.witness_len = 1u;
+    REQUIRE(counts,
+            !ppnative_v1_replay_scope_prepare(
+                &scope, pack, &bad, error, sizeof(error)) &&
+                strstr(error, "hole") && scope.implementation == binding,
+            "a witness hole refuses replacement and preserves the prior scope");
+    REQUIRE(counts,
+            ppnative_v1_finish_in_scope(
+                &replay, &scope, start_state, 128u, 128u,
+                error, sizeof(error)) &&
+                result_is(&replay, "(result nested-value nil)"),
+            "prior replay scope remains usable after failed replacement");
+    memset(&replay.forest, 0, sizeof(replay.forest));
+    ppnative_v1_result_free(&replay);
+    ppnative_v1_result_init(&replay);
+    replay.forest = gll->forest;
+    REQUIRE(counts,
+            !ppnative_v1_finish_in_scope(
+                &replay, &scope, start_state, 0u, 128u,
+                error, sizeof(error)),
+            "scoped replay keeps the positive depth requirement");
+    REQUIRE(counts,
+            !ppnative_v1_finish_in_scope(
+                &replay, &scope, start_state, 128u, 0u,
+                error, sizeof(error)),
+            "scoped replay keeps the positive result-limit requirement");
+    REQUIRE(counts,
+            !ppnative_v1_finish_in_scope(
+                &replay, &scope, NULL, 128u, 128u,
+                error, sizeof(error)),
+            "scoped replay keeps the required start-state argument");
+    invalid_root = replay.forest.node_len;
+    replay.forest.roots = &invalid_root;
+    replay.forest.root_len = 1u;
+    REQUIRE(counts,
+            !ppnative_v1_finish_in_scope(
+                &replay, &scope, start_state, 128u, 128u,
+                error, sizeof(error)),
+            "scoped replay still validates every selected forest root");
+    ppnative_v1_replay_scope_free(&scope);
+    REQUIRE(counts,
+            !ppnative_v1_finish_in_scope(
+                &replay, &scope, start_state, 128u, 128u,
+                error, sizeof(error)),
+            "freeing a replay scope clears its binding");
+    ok = true;
+
+done:
+    memset(&replay.forest, 0, sizeof(replay.forest));
+    ppnative_v1_result_free(&replay);
+    ppnative_v1_replay_scope_free(&scope);
+    return ok;
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena arena;
@@ -1035,6 +1373,13 @@ int main(void) {
             ppguard_relation_v1_validate(
                 &relation, error, sizeof(error)),
             error[0] ? error : "restored guard relation validates");
+
+    if (!guard_relation_index_controls(&counts, &arena))
+        goto done;
+    if (!replay_scope_controls(
+            &counts, &pack, main_state, &extension,
+            &relation, &main_gll, &main_glr))
+        goto done;
 
     REQUIRE(&counts,
             ppguard_relation_v1_build(

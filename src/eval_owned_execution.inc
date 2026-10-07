@@ -299,7 +299,7 @@ static bool eval_owned_answers_open(EvalOwnedAnswers *answers,
         adapter->boolean_value, adapter->construct_value,
         adapter->constructs_expression, adapter->opaque_value,
         adapter->register_view, adapter->expression_view, adapter->pattern_view,
-        source_view.role ? &source_view : NULL, true,
+        &source_view, true,
         active_composition_uses_total_structural_eq(),
         prepared_pure_match_decision_semantics(CETTA_GSLT_PURE_CALL_EAGER));
     if (!answers->program)
@@ -647,7 +647,7 @@ static bool eval_owned_collapsed_fold(Space *space, Arena *arena, Atom *collapse
         adapter->boolean_value, adapter->construct_value,
         adapter->constructs_expression, adapter->opaque_value,
         adapter->register_view, adapter->expression_view, adapter->pattern_view,
-        source_view.role ? &source_view : NULL,
+        &source_view,
         active_composition_uses_total_structural_eq(),
         prepared_pure_match_decision_semantics(mode));
     if (!step) {

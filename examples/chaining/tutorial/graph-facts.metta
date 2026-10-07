@@ -1,0 +1,5 @@
+(fact ab (edge alice bob))
+(fact bc (edge bob carol))
+(fact cd (edge carol dana))
+(rule direct ((edge $x $y)) (reachable $x $y))
+(rule step ((edge $x $y) (reachable $y $z)) (reachable $x $z))

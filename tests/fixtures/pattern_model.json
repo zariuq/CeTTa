@@ -1,0 +1,2913 @@
+{
+  "cases": [
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "match%",
+      "pairs": "()"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "match%",
+      "pairs": "(($v0 $v0))"
+    },
+    {
+      "images": "(slots $v1 $v1 $v2)",
+      "mode": "match%",
+      "pairs": "(($v0 $v1))"
+    },
+    {
+      "images": "(slots $v2 $v1 $v2)",
+      "mode": "match%",
+      "pairs": "(($v0 $v2))"
+    },
+    {
+      "images": "(slots a $v1 $v2)",
+      "mode": "match%",
+      "pairs": "(($v0 a))"
+    },
+    {
+      "images": "(slots b $v1 $v2)",
+      "mode": "match%",
+      "pairs": "(($v0 b))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v0 (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v0 (f $v0 $v1)))"
+    },
+    {
+      "images": "(slots (f $v1 $v2) $v1 $v2)",
+      "mode": "match%",
+      "pairs": "(($v0 (f $v1 $v2)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v0 (f $v1 $v0)))"
+    },
+    {
+      "images": "(slots (f a b) $v1 $v2)",
+      "mode": "match%",
+      "pairs": "(($v0 (f a b)))"
+    },
+    {
+      "images": "(slots (f $v2 a) $v1 $v2)",
+      "mode": "match%",
+      "pairs": "(($v0 (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v0 (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": "(slots $v0 $v0 $v2)",
+      "mode": "match%",
+      "pairs": "(($v1 $v0))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "match%",
+      "pairs": "(($v1 $v1))"
+    },
+    {
+      "images": "(slots $v0 $v2 $v2)",
+      "mode": "match%",
+      "pairs": "(($v1 $v2))"
+    },
+    {
+      "images": "(slots $v0 a $v2)",
+      "mode": "match%",
+      "pairs": "(($v1 a))"
+    },
+    {
+      "images": "(slots $v0 b $v2)",
+      "mode": "match%",
+      "pairs": "(($v1 b))"
+    },
+    {
+      "images": "(slots $v0 (f $v0 $v0) $v2)",
+      "mode": "match%",
+      "pairs": "(($v1 (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v1 (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v1 (f $v1 $v2)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v1 (f $v1 $v0)))"
+    },
+    {
+      "images": "(slots $v0 (f a b) $v2)",
+      "mode": "match%",
+      "pairs": "(($v1 (f a b)))"
+    },
+    {
+      "images": "(slots $v0 (f $v2 a) $v2)",
+      "mode": "match%",
+      "pairs": "(($v1 (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v1 (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v0)",
+      "mode": "match%",
+      "pairs": "(($v2 $v0))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v1)",
+      "mode": "match%",
+      "pairs": "(($v2 $v1))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "match%",
+      "pairs": "(($v2 $v2))"
+    },
+    {
+      "images": "(slots $v0 $v1 a)",
+      "mode": "match%",
+      "pairs": "(($v2 a))"
+    },
+    {
+      "images": "(slots $v0 $v1 b)",
+      "mode": "match%",
+      "pairs": "(($v2 b))"
+    },
+    {
+      "images": "(slots $v0 $v1 (f $v0 $v0))",
+      "mode": "match%",
+      "pairs": "(($v2 (f $v0 $v0)))"
+    },
+    {
+      "images": "(slots $v0 $v1 (f $v0 $v1))",
+      "mode": "match%",
+      "pairs": "(($v2 (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v2 (f $v1 $v2)))"
+    },
+    {
+      "images": "(slots $v0 $v1 (f $v1 $v0))",
+      "mode": "match%",
+      "pairs": "(($v2 (f $v1 $v0)))"
+    },
+    {
+      "images": "(slots $v0 $v1 (f a b))",
+      "mode": "match%",
+      "pairs": "(($v2 (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v2 (f $v2 a)))"
+    },
+    {
+      "images": "(slots $v0 $v1 (f (f $v0 $v1) $v0))",
+      "mode": "match%",
+      "pairs": "(($v2 (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "((a $v0))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "((a $v1))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "((a $v2))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "match%",
+      "pairs": "((a a))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "((a b))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "((a (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "((a (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "((a (f $v1 $v2)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "((a (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "((a (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "((a (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "((a (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "((b $v0))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "((b $v1))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "((b $v2))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "((b a))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "match%",
+      "pairs": "((b b))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "((b (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "((b (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "((b (f $v1 $v2)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "((b (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "((b (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "((b (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "((b (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v0) $v0))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v0) $v1))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v0) $v2))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v0) a))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v0) b))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "match%",
+      "pairs": "(((f $v0 $v0) (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v0) (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v0) (f $v1 $v2)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v0) (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v0) (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v0) (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v0) (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v1) $v0))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v1) $v1))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v1) $v2))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v1) a))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v1) b))"
+    },
+    {
+      "images": "(slots $v0 $v0 $v2)",
+      "mode": "match%",
+      "pairs": "(((f $v0 $v1) (f $v0 $v0)))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "match%",
+      "pairs": "(((f $v0 $v1) (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v1) (f $v1 $v2)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v1) (f $v1 $v0)))"
+    },
+    {
+      "images": "(slots a b $v2)",
+      "mode": "match%",
+      "pairs": "(((f $v0 $v1) (f a b)))"
+    },
+    {
+      "images": "(slots $v2 a $v2)",
+      "mode": "match%",
+      "pairs": "(((f $v0 $v1) (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v1) (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v1 $v2) $v0))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v1 $v2) $v1))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v1 $v2) $v2))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v1 $v2) a))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v1 $v2) b))"
+    },
+    {
+      "images": "(slots $v0 $v0 $v0)",
+      "mode": "match%",
+      "pairs": "(((f $v1 $v2) (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v1 $v2) (f $v0 $v1)))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "match%",
+      "pairs": "(((f $v1 $v2) (f $v1 $v2)))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v0)",
+      "mode": "match%",
+      "pairs": "(((f $v1 $v2) (f $v1 $v0)))"
+    },
+    {
+      "images": "(slots $v0 a b)",
+      "mode": "match%",
+      "pairs": "(((f $v1 $v2) (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v1 $v2) (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v1 $v2) (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v1 $v0) $v0))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v1 $v0) $v1))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v1 $v0) $v2))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v1 $v0) a))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v1 $v0) b))"
+    },
+    {
+      "images": "(slots $v0 $v0 $v2)",
+      "mode": "match%",
+      "pairs": "(((f $v1 $v0) (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v1 $v0) (f $v0 $v1)))"
+    },
+    {
+      "images": "(slots $v2 $v1 $v2)",
+      "mode": "match%",
+      "pairs": "(((f $v1 $v0) (f $v1 $v2)))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "match%",
+      "pairs": "(((f $v1 $v0) (f $v1 $v0)))"
+    },
+    {
+      "images": "(slots b a $v2)",
+      "mode": "match%",
+      "pairs": "(((f $v1 $v0) (f a b)))"
+    },
+    {
+      "images": "(slots a $v2 $v2)",
+      "mode": "match%",
+      "pairs": "(((f $v1 $v0) (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v1 $v0) (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f a b) $v0))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f a b) $v1))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f a b) $v2))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f a b) a))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f a b) b))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f a b) (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f a b) (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f a b) (f $v1 $v2)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f a b) (f $v1 $v0)))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "match%",
+      "pairs": "(((f a b) (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f a b) (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f a b) (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v2 a) $v0))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v2 a) $v1))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v2 a) $v2))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v2 a) a))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v2 a) b))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v2 a) (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v2 a) (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v2 a) (f $v1 $v2)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v2 a) (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v2 a) (f a b)))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "match%",
+      "pairs": "(((f $v2 a) (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v2 a) (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f (f $v0 $v1) $v0) $v0))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f (f $v0 $v1) $v0) $v1))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f (f $v0 $v1) $v0) $v2))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f (f $v0 $v1) $v0) a))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f (f $v0 $v1) $v0) b))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f (f $v0 $v1) $v0) (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f (f $v0 $v1) $v0) (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f (f $v0 $v1) $v0) (f $v1 $v2)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f (f $v0 $v1) $v0) (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f (f $v0 $v1) $v0) (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f (f $v0 $v1) $v0) (f $v2 a)))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "match%",
+      "pairs": "(((f (f $v0 $v1) $v0) (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v0 $v0) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v0 $v0) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v1) $v0) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) $v0))"
+    },
+    {
+      "images": "(slots $v1 $v1 $v2)",
+      "mode": "match%",
+      "pairs": "(($v0 $v1) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v0 $v1) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v1) $v1) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) $v1))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v0 $v2) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v0 $v2) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v1) $v2) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) $v2))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v0 a) ($v0 $v1))"
+    },
+    {
+      "images": "(slots a $v1 $v2)",
+      "mode": "match%",
+      "pairs": "(($v0 a) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v1) a) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) a))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v0 b) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v0 b) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v1) b) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) b))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v0 (f $v0 $v0)) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v0 (f $v0 $v0)) ($v0 a))"
+    },
+    {
+      "images": "(slots $v0 $v0 $v2)",
+      "mode": "match%",
+      "pairs": "(((f $v0 $v1) (f $v0 $v0)) ($v1 $v0))"
+    },
+    {
+      "images": "(slots $v0 $v0 $v2)",
+      "mode": "match%",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v0 (f $v0 $v1)) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v0 (f $v0 $v1)) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v1) (f $v0 $v1)) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v0 (f $v1 $v2)) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v0 (f $v1 $v2)) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v1) (f $v1 $v2)) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) (f $v1 $v2)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v0 (f $v1 $v0)) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v0 (f $v1 $v0)) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v1) (f $v1 $v0)) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v0 (f a b)) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v0 (f a b)) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v1) (f a b)) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v0 (f $v2 a)) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v0 (f $v2 a)) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v1) (f $v2 a)) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v0 (f (f $v0 $v1) $v0)) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v0 (f (f $v0 $v1) $v0)) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(((f $v0 $v1) (f (f $v0 $v1) $v0)) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "match%",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "%match",
+      "pairs": "()"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "%match",
+      "pairs": "(($v0 $v0))"
+    },
+    {
+      "images": "(slots $v0 $v0 $v2)",
+      "mode": "%match",
+      "pairs": "(($v0 $v1))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v0)",
+      "mode": "%match",
+      "pairs": "(($v0 $v2))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 b))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 (f $v1 $v2)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": "(slots $v1 $v1 $v2)",
+      "mode": "%match",
+      "pairs": "(($v1 $v0))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "%match",
+      "pairs": "(($v1 $v1))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v1)",
+      "mode": "%match",
+      "pairs": "(($v1 $v2))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v1 a))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v1 b))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v1 (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v1 (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v1 (f $v1 $v2)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v1 (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v1 (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v1 (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v1 (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": "(slots $v2 $v1 $v2)",
+      "mode": "%match",
+      "pairs": "(($v2 $v0))"
+    },
+    {
+      "images": "(slots $v0 $v2 $v2)",
+      "mode": "%match",
+      "pairs": "(($v2 $v1))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "%match",
+      "pairs": "(($v2 $v2))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v2 a))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v2 b))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v2 (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v2 (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v2 (f $v1 $v2)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v2 (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v2 (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v2 (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v2 (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": "(slots a $v1 $v2)",
+      "mode": "%match",
+      "pairs": "((a $v0))"
+    },
+    {
+      "images": "(slots $v0 a $v2)",
+      "mode": "%match",
+      "pairs": "((a $v1))"
+    },
+    {
+      "images": "(slots $v0 $v1 a)",
+      "mode": "%match",
+      "pairs": "((a $v2))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "%match",
+      "pairs": "((a a))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "((a b))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "((a (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "((a (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "((a (f $v1 $v2)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "((a (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "((a (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "((a (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "((a (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": "(slots b $v1 $v2)",
+      "mode": "%match",
+      "pairs": "((b $v0))"
+    },
+    {
+      "images": "(slots $v0 b $v2)",
+      "mode": "%match",
+      "pairs": "((b $v1))"
+    },
+    {
+      "images": "(slots $v0 $v1 b)",
+      "mode": "%match",
+      "pairs": "((b $v2))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "((b a))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "%match",
+      "pairs": "((b b))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "((b (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "((b (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "((b (f $v1 $v2)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "((b (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "((b (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "((b (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "((b (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v0 $v0) $v0))"
+    },
+    {
+      "images": "(slots $v0 (f $v0 $v0) $v2)",
+      "mode": "%match",
+      "pairs": "(((f $v0 $v0) $v1))"
+    },
+    {
+      "images": "(slots $v0 $v1 (f $v0 $v0))",
+      "mode": "%match",
+      "pairs": "(((f $v0 $v0) $v2))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v0 $v0) a))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v0 $v0) b))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "%match",
+      "pairs": "(((f $v0 $v0) (f $v0 $v0)))"
+    },
+    {
+      "images": "(slots $v0 $v0 $v2)",
+      "mode": "%match",
+      "pairs": "(((f $v0 $v0) (f $v0 $v1)))"
+    },
+    {
+      "images": "(slots $v0 $v0 $v0)",
+      "mode": "%match",
+      "pairs": "(((f $v0 $v0) (f $v1 $v2)))"
+    },
+    {
+      "images": "(slots $v0 $v0 $v2)",
+      "mode": "%match",
+      "pairs": "(((f $v0 $v0) (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v0 $v0) (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v0 $v0) (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v0 $v0) (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v0 $v1) $v0))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v0 $v1) $v1))"
+    },
+    {
+      "images": "(slots $v0 $v1 (f $v0 $v1))",
+      "mode": "%match",
+      "pairs": "(((f $v0 $v1) $v2))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v0 $v1) a))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v0 $v1) b))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v0 $v1) (f $v0 $v0)))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "%match",
+      "pairs": "(((f $v0 $v1) (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v0 $v1) (f $v1 $v2)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v0 $v1) (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v0 $v1) (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v0 $v1) (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v0 $v1) (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": "(slots (f $v1 $v2) $v1 $v2)",
+      "mode": "%match",
+      "pairs": "(((f $v1 $v2) $v0))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v1 $v2) $v1))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v1 $v2) $v2))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v1 $v2) a))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v1 $v2) b))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v1 $v2) (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v1 $v2) (f $v0 $v1)))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "%match",
+      "pairs": "(((f $v1 $v2) (f $v1 $v2)))"
+    },
+    {
+      "images": "(slots $v2 $v1 $v2)",
+      "mode": "%match",
+      "pairs": "(((f $v1 $v2) (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v1 $v2) (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v1 $v2) (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v1 $v2) (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v1 $v0) $v0))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v1 $v0) $v1))"
+    },
+    {
+      "images": "(slots $v0 $v1 (f $v1 $v0))",
+      "mode": "%match",
+      "pairs": "(((f $v1 $v0) $v2))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v1 $v0) a))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v1 $v0) b))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v1 $v0) (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v1 $v0) (f $v0 $v1)))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v0)",
+      "mode": "%match",
+      "pairs": "(((f $v1 $v0) (f $v1 $v2)))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "%match",
+      "pairs": "(((f $v1 $v0) (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v1 $v0) (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v1 $v0) (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v1 $v0) (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": "(slots (f a b) $v1 $v2)",
+      "mode": "%match",
+      "pairs": "(((f a b) $v0))"
+    },
+    {
+      "images": "(slots $v0 (f a b) $v2)",
+      "mode": "%match",
+      "pairs": "(((f a b) $v1))"
+    },
+    {
+      "images": "(slots $v0 $v1 (f a b))",
+      "mode": "%match",
+      "pairs": "(((f a b) $v2))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f a b) a))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f a b) b))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f a b) (f $v0 $v0)))"
+    },
+    {
+      "images": "(slots a b $v2)",
+      "mode": "%match",
+      "pairs": "(((f a b) (f $v0 $v1)))"
+    },
+    {
+      "images": "(slots $v0 a b)",
+      "mode": "%match",
+      "pairs": "(((f a b) (f $v1 $v2)))"
+    },
+    {
+      "images": "(slots b a $v2)",
+      "mode": "%match",
+      "pairs": "(((f a b) (f $v1 $v0)))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "%match",
+      "pairs": "(((f a b) (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f a b) (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f a b) (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": "(slots (f $v2 a) $v1 $v2)",
+      "mode": "%match",
+      "pairs": "(((f $v2 a) $v0))"
+    },
+    {
+      "images": "(slots $v0 (f $v2 a) $v2)",
+      "mode": "%match",
+      "pairs": "(((f $v2 a) $v1))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v2 a) $v2))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v2 a) a))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v2 a) b))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v2 a) (f $v0 $v0)))"
+    },
+    {
+      "images": "(slots $v2 a $v2)",
+      "mode": "%match",
+      "pairs": "(((f $v2 a) (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v2 a) (f $v1 $v2)))"
+    },
+    {
+      "images": "(slots a $v2 $v2)",
+      "mode": "%match",
+      "pairs": "(((f $v2 a) (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v2 a) (f a b)))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "%match",
+      "pairs": "(((f $v2 a) (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v2 a) (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f (f $v0 $v1) $v0) $v0))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f (f $v0 $v1) $v0) $v1))"
+    },
+    {
+      "images": "(slots $v0 $v1 (f (f $v0 $v1) $v0))",
+      "mode": "%match",
+      "pairs": "(((f (f $v0 $v1) $v0) $v2))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f (f $v0 $v1) $v0) a))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f (f $v0 $v1) $v0) b))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f (f $v0 $v1) $v0) (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f (f $v0 $v1) $v0) (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f (f $v0 $v1) $v0) (f $v1 $v2)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f (f $v0 $v1) $v0) (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f (f $v0 $v1) $v0) (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f (f $v0 $v1) $v0) (f $v2 a)))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "%match",
+      "pairs": "(((f (f $v0 $v1) $v0) (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": "(slots $v0 $v0 $v2)",
+      "mode": "%match",
+      "pairs": "(($v0 $v0) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 $v0) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v0 $v1) $v0) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) $v0))"
+    },
+    {
+      "images": "(slots $v0 $v0 $v2)",
+      "mode": "%match",
+      "pairs": "(($v0 $v1) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 $v1) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v0 $v1) $v1) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) $v1))"
+    },
+    {
+      "images": "(slots $v0 $v0 $v0)",
+      "mode": "%match",
+      "pairs": "(($v0 $v2) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 $v2) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v0 $v1) $v2) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) $v2))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 a) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 a) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v0 $v1) a) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) a))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 b) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 b) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v0 $v1) b) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) b))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 (f $v0 $v0)) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 (f $v0 $v0)) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v0 $v1) (f $v0 $v0)) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 (f $v0 $v1)) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 (f $v0 $v1)) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v0 $v1) (f $v0 $v1)) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 (f $v1 $v2)) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 (f $v1 $v2)) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v0 $v1) (f $v1 $v2)) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) (f $v1 $v2)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 (f $v1 $v0)) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 (f $v1 $v0)) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v0 $v1) (f $v1 $v0)) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 (f a b)) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 (f a b)) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v0 $v1) (f a b)) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 (f $v2 a)) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 (f $v2 a)) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v0 $v1) (f $v2 a)) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 (f (f $v0 $v1) $v0)) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v0 (f (f $v0 $v1) $v0)) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(((f $v0 $v1) (f (f $v0 $v1) $v0)) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "%match",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "variant",
+      "pairs": "()"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "variant",
+      "pairs": "(($v0 $v0))"
+    },
+    {
+      "images": "(slots $v1 $v1 $v2)",
+      "mode": "variant",
+      "pairs": "(($v0 $v1))"
+    },
+    {
+      "images": "(slots $v2 $v1 $v2)",
+      "mode": "variant",
+      "pairs": "(($v0 $v2))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 b))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 (f $v1 $v2)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": "(slots $v0 $v0 $v2)",
+      "mode": "variant",
+      "pairs": "(($v1 $v0))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "variant",
+      "pairs": "(($v1 $v1))"
+    },
+    {
+      "images": "(slots $v0 $v2 $v2)",
+      "mode": "variant",
+      "pairs": "(($v1 $v2))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v1 a))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v1 b))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v1 (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v1 (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v1 (f $v1 $v2)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v1 (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v1 (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v1 (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v1 (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v0)",
+      "mode": "variant",
+      "pairs": "(($v2 $v0))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v1)",
+      "mode": "variant",
+      "pairs": "(($v2 $v1))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "variant",
+      "pairs": "(($v2 $v2))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v2 a))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v2 b))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v2 (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v2 (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v2 (f $v1 $v2)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v2 (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v2 (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v2 (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v2 (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "((a $v0))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "((a $v1))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "((a $v2))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "variant",
+      "pairs": "((a a))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "((a b))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "((a (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "((a (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "((a (f $v1 $v2)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "((a (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "((a (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "((a (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "((a (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "((b $v0))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "((b $v1))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "((b $v2))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "((b a))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "variant",
+      "pairs": "((b b))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "((b (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "((b (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "((b (f $v1 $v2)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "((b (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "((b (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "((b (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "((b (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v0) $v0))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v0) $v1))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v0) $v2))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v0) a))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v0) b))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "variant",
+      "pairs": "(((f $v0 $v0) (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v0) (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v0) (f $v1 $v2)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v0) (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v0) (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v0) (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v0) (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v1) $v0))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v1) $v1))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v1) $v2))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v1) a))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v1) b))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v1) (f $v0 $v0)))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "variant",
+      "pairs": "(((f $v0 $v1) (f $v0 $v1)))"
+    },
+    {
+      "images": "(slots $v1 $v2 $v2)",
+      "mode": "variant",
+      "pairs": "(((f $v0 $v1) (f $v1 $v2)))"
+    },
+    {
+      "images": "(slots $v1 $v0 $v2)",
+      "mode": "variant",
+      "pairs": "(((f $v0 $v1) (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v1) (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v1) (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v1) (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v1 $v2) $v0))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v1 $v2) $v1))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v1 $v2) $v2))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v1 $v2) a))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v1 $v2) b))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v1 $v2) (f $v0 $v0)))"
+    },
+    {
+      "images": "(slots $v0 $v0 $v1)",
+      "mode": "variant",
+      "pairs": "(((f $v1 $v2) (f $v0 $v1)))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "variant",
+      "pairs": "(((f $v1 $v2) (f $v1 $v2)))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v0)",
+      "mode": "variant",
+      "pairs": "(((f $v1 $v2) (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v1 $v2) (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v1 $v2) (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v1 $v2) (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v1 $v0) $v0))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v1 $v0) $v1))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v1 $v0) $v2))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v1 $v0) a))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v1 $v0) b))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v1 $v0) (f $v0 $v0)))"
+    },
+    {
+      "images": "(slots $v1 $v0 $v2)",
+      "mode": "variant",
+      "pairs": "(((f $v1 $v0) (f $v0 $v1)))"
+    },
+    {
+      "images": "(slots $v2 $v1 $v2)",
+      "mode": "variant",
+      "pairs": "(((f $v1 $v0) (f $v1 $v2)))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "variant",
+      "pairs": "(((f $v1 $v0) (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v1 $v0) (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v1 $v0) (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v1 $v0) (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f a b) $v0))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f a b) $v1))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f a b) $v2))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f a b) a))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f a b) b))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f a b) (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f a b) (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f a b) (f $v1 $v2)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f a b) (f $v1 $v0)))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "variant",
+      "pairs": "(((f a b) (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f a b) (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f a b) (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v2 a) $v0))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v2 a) $v1))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v2 a) $v2))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v2 a) a))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v2 a) b))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v2 a) (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v2 a) (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v2 a) (f $v1 $v2)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v2 a) (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v2 a) (f a b)))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "variant",
+      "pairs": "(((f $v2 a) (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v2 a) (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f (f $v0 $v1) $v0) $v0))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f (f $v0 $v1) $v0) $v1))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f (f $v0 $v1) $v0) $v2))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f (f $v0 $v1) $v0) a))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f (f $v0 $v1) $v0) b))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f (f $v0 $v1) $v0) (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f (f $v0 $v1) $v0) (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f (f $v0 $v1) $v0) (f $v1 $v2)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f (f $v0 $v1) $v0) (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f (f $v0 $v1) $v0) (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f (f $v0 $v1) $v0) (f $v2 a)))"
+    },
+    {
+      "images": "(slots $v0 $v1 $v2)",
+      "mode": "variant",
+      "pairs": "(((f (f $v0 $v1) $v0) (f (f $v0 $v1) $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 $v0) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 $v0) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v1) $v0) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) $v0))"
+    },
+    {
+      "images": "(slots $v1 $v1 $v2)",
+      "mode": "variant",
+      "pairs": "(($v0 $v1) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 $v1) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v1) $v1) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) $v1))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 $v2) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 $v2) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v1) $v2) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) $v2))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 a) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 a) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v1) a) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) a))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 b) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 b) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v1) b) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) b))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 (f $v0 $v0)) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 (f $v0 $v0)) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v1) (f $v0 $v0)) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) (f $v0 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 (f $v0 $v1)) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 (f $v0 $v1)) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v1) (f $v0 $v1)) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) (f $v0 $v1)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 (f $v1 $v2)) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 (f $v1 $v2)) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v1) (f $v1 $v2)) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) (f $v1 $v2)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 (f $v1 $v0)) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 (f $v1 $v0)) ($v0 a))"
+    },
+    {
+      "images": "(slots $v1 $v0 $v2)",
+      "mode": "variant",
+      "pairs": "(((f $v0 $v1) (f $v1 $v0)) ($v1 $v0))"
+    },
+    {
+      "images": "(slots $v1 $v0 $v2)",
+      "mode": "variant",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) (f $v1 $v0)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 (f a b)) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 (f a b)) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v1) (f a b)) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) (f a b)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 (f $v2 a)) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 (f $v2 a)) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v1) (f $v2 a)) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) (f $v2 a)))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 (f (f $v0 $v1) $v0)) ($v0 $v1))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v0 (f (f $v0 $v1) $v0)) ($v0 a))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(((f $v0 $v1) (f (f $v0 $v1) $v0)) ($v1 $v0))"
+    },
+    {
+      "images": null,
+      "mode": "variant",
+      "pairs": "(($v1 $v0) ((f $v0 $v1) (f (f $v0 $v1) $v0)))"
+    }
+  ],
+  "schema": 1,
+  "semantics": "finite first-order terms; shared variable identities; simultaneous variants",
+  "reference": {
+    "generator": "Mettapedia.Logic.LP.DirectionalMatchingOracle",
+    "files": {
+      "Mettapedia/Logic/LP/Matching.lean": "4ec2485768d141be420dc8ac4e9a5de24439d4e17d3a7863f081c600af209f7a",
+      "Mettapedia/Logic/LP/RigidUnification.lean": "b841c2e97d65ebe001f4d6331f6ea6ce94504ae3385e67c5aa80275678bedd91",
+      "Mettapedia/Logic/LP/RigidUnificationComposition.lean": "81891b86374207d49c527599b0b95f92e4fc8e42198ec26d4c34338a248574bf",
+      "Mettapedia/Logic/LP/DirectionalMatching.lean": "0e68ddec8895c6569085d845f1c7ec591e154761aa612d9e7c85e3845fb650e1",
+      "Mettapedia/Logic/LP/VariantMatching.lean": "8264b50da110815784c37dbcd2a48f8879b3a232bc8d73cf67ac86a57d756b3c",
+      "Mettapedia/Logic/LP/DirectionalMatchingOracle.lean": "932e0ae9489afa5e2113a7749b30953cf249bae2defab96d546392501ebe2825"
+    },
+    "scope": "Checked finite model and executable comparison; no claim of whole-C verification."
+  }
+}

@@ -57,6 +57,7 @@ static bool ppguarded_lex_exec_v1_replay_value(
     const PPABIV1Pack *pack,
     const Atom *start_state,
     const PPNativeV1ForestExtension *extension,
+    const PPNativeV1ReplayScope *scope,
     const CettaLpNativeUtf8Forest *forest,
     uint32_t root_node,
     uint32_t replay_depth,
@@ -6023,7 +6024,7 @@ static bool ppguarded_lex_cursor_v1_prepared_fallback_value(
             fallback->pack,
             fallback->pack->states[
                 terminal->semantic_start_state_id].identity,
-            NULL, &forest, (uint32_t)root,
+            NULL, NULL, &forest, (uint32_t)root,
             fallback->replay_depth, fallback->result_limit,
             context->arena, &value, &value_len, &replay_outcome,
             error_buf, error_buf_size)) {
@@ -8226,6 +8227,7 @@ static bool ppguarded_lex_exec_v1_replay_value(
     const PPABIV1Pack *pack,
     const Atom *start_state,
     const PPNativeV1ForestExtension *extension,
+    const PPNativeV1ReplayScope *scope,
     const CettaLpNativeUtf8Forest *forest,
     uint32_t root_node,
     uint32_t replay_depth,
@@ -8247,10 +8249,13 @@ static bool ppguarded_lex_exec_v1_replay_value(
     replay.forest = *forest;
     replay.forest.roots = &selected_root;
     replay.forest.root_len = 1u;
-    if (!ppnative_v1_finish_extended(
-            &replay, pack, start_state, extension,
-            replay_depth, result_limit,
-            error_buf, error_buf_size)) {
+    if (!(scope
+          ? ppnative_v1_finish_in_scope(
+                &replay, scope, start_state, replay_depth, result_limit,
+                error_buf, error_buf_size)
+          : ppnative_v1_finish_extended(
+                &replay, pack, start_state, extension,
+                replay_depth, result_limit, error_buf, error_buf_size))) {
         goto done;
     }
     *outcome = replay.outcome;
@@ -8295,10 +8300,12 @@ static bool ppguarded_lex_exec_v1_witness_build(
     size_t error_buf_size) {
     PPGuardedLexWitnessV1 result;
     PPNativeV1ForestExtension extension;
+    PPNativeV1ReplayScope replay_scope;
     uint32_t token_index;
     bool ok = false;
 
     ppguarded_lex_exec_v1_witness_init(&result);
+    ppnative_v1_replay_scope_init(&replay_scope);
     if (!pack || !lexical_plan || !guard_plan || !guarded_plan ||
         (token_len > 0u && !tokens) || !relation || !prepared_family ||
         !limits || !out || !ppguard_relation_v1_validate(
@@ -8321,6 +8328,10 @@ static bool ppguarded_lex_exec_v1_witness_build(
         .witness_values = relation->witness_values,
         .witness_len = relation->witness_len,
     };
+    if (!ppnative_v1_replay_scope_prepare(
+            &replay_scope, pack, &extension,
+            error_buf, error_buf_size))
+        goto done;
     for (token_index = 0u; token_index < token_len; token_index++) {
         const RSDFAV1Token *token = &tokens[token_index];
         CettaLpNativeUtf8Forest forest;
@@ -8417,7 +8428,7 @@ static bool ppguarded_lex_exec_v1_witness_build(
                 pack,
                 pack->states[
                     guarded_plan->entries[entry_index].state_id].identity,
-                &extension, &forest, (uint32_t)root,
+                &extension, &replay_scope, &forest, (uint32_t)root,
                 limits->replay_depth, limits->result_limit,
                 &result.arena, &value, &value_len, &replay_outcome,
                 error_buf, error_buf_size)) {
@@ -8465,6 +8476,7 @@ finish:
     ok = true;
 
 done:
+    ppnative_v1_replay_scope_free(&replay_scope);
     ppguarded_lex_exec_v1_witness_free(&result);
     if (!ok && error_buf && error_buf_size > 0u && error_buf[0] == '\0') {
         ppguarded_lex_exec_v1_set_error(

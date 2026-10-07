@@ -15,7 +15,7 @@
 !(bind! &native-count (new-space native))
 !(let $ignored
   (collapse
-    (let $xs (eval (list:range 512))
+    (let $xs (list:range 512)
       (let $x (superpose $xs)
         (add-atom &native-count (friend sam $x)))))
   ())

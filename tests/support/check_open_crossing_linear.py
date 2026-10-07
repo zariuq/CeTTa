@@ -28,6 +28,9 @@ def run(binary, length):
 def main():
     binary = sys.argv[1]
     runs = {length: run(binary, length) for length in LENGTHS}
+    for length, counters in runs.items():
+        if counters.get("open-equation-host", 0) != length:
+            sys.exit(f"FAIL: expected one host call per queue step at {length}")
     small, large = LENGTHS
     for name in COUNTERS:
         before = runs[small].get(name, 0)

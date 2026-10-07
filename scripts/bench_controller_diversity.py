@@ -162,7 +162,10 @@ def _run(
         check=False,
     )
     elapsed = time.monotonic_ns() - started
-    if process.returncode != 0:
+    incomplete = (process.returncode == 1 and not process.stdout and
+        "error: observation incomplete: fuel-exhausted\n" in process.stderr and
+        row["observation"] in {"first-answer", "bounded-prefix"})
+    if process.returncode != 0 and not incomplete:
         raise RuntimeError(
             f"{row['id']} {controller}: exit {process.returncode}\n"
             f"stdout:\n{process.stdout}\nstderr:\n{process.stderr}"
@@ -170,6 +173,9 @@ def _run(
     machine, controller_receipts, ordinary_stderr = (
         extract_machine_and_controller_stats(process.stderr)
     )
+    if incomplete:
+        ordinary_stderr = ordinary_stderr.replace(
+            "error: observation incomplete: fuel-exhausted\n", "")
     if ordinary_stderr:
         raise RuntimeError(
             f"{row['id']} {controller}: unexpected stderr\n{ordinary_stderr}"
@@ -185,6 +191,7 @@ def _run(
     )
     result = {
         "stdout": process.stdout,
+        "completion": "fuel-exhausted" if incomplete else "complete",
         "elapsed_ns": elapsed,
         "aggregate": aggregate,
         "controller_receipts": controller_receipts,
@@ -207,7 +214,8 @@ def _qualify_ordinary_erasure(
     inline: dict[str, Any],
 ) -> None:
     identifier = row["id"]
-    if ordinary["stdout"] != inline["stdout"]:
+    if (ordinary["stdout"] != inline["stdout"] or
+            ordinary.get("completion") != inline.get("completion")):
         raise RuntimeError(
             f"{identifier}: explicit inline selection changed the stream"
         )
@@ -231,12 +239,13 @@ def _qualify(
     _qualify_ordinary_erasure(row, ordinary, inline)
     identifier = row["id"]
     if identifier == "fair-starvation":
-        if inline["stdout"]:
+        if inline["stdout"] or inline["completion"] != "fuel-exhausted":
             raise RuntimeError("fair-starvation: DFS unexpectedly emitted")
         expected = _expected(
             "tests/petta/search_controller_fifo_starvation.expected"
         )
-        if fifo["stdout"] != expected:
+        expected = "(" + " ".join(expected.splitlines()) + ")\n"
+        if fifo["stdout"] != expected or fifo["completion"] != "complete":
             raise RuntimeError("fair-starvation: FIFO prefix changed")
         if fifo["aggregate"]["controller_active_fifo"] < 1:
             raise RuntimeError("fair-starvation: FIFO was not admitted")
@@ -302,7 +311,7 @@ def _qualify(
         expected = _expected(
             "benchmarks/controller_diversity/once_recursive_first.expected"
         )
-        if inline["stdout"]:
+        if inline["stdout"] or inline["completion"] != "fuel-exhausted":
             raise RuntimeError(
                 "once-recursive-first: bounded inline descent unexpectedly "
                 "found a witness"
@@ -327,10 +336,10 @@ def _qualify(
             "finite_prefix_recursive.expected"
         )
         inline_expected = _expected(
-            "benchmarks/controller_diversity/"
-            "finite_prefix_recursive.inline.expected"
+            "benchmarks/controller_diversity/finite_prefix_recursive.inline.expected"
         )
-        if inline["stdout"] != inline_expected:
+        if (inline["stdout"] != inline_expected or
+                inline["completion"] != "fuel-exhausted"):
             raise RuntimeError(
                 "finite-prefix-recursive: bounded inline result changed"
             )
@@ -390,17 +399,17 @@ def _qualify_compression(
     golden = _expected(
         "benchmarks/controller_diversity/compression_guidance.expected"
     )
-    if baseline["stdout"]:
+    if baseline["stdout"] or baseline["completion"] != "fuel-exhausted":
         raise RuntimeError(
             "compression-induction: fresh bounded ratio unexpectedly found "
             "the oldest successful branch"
         )
-    if training["stdout"] != golden:
+    if training["stdout"] != golden or training["completion"] != "complete":
         raise RuntimeError(
             "compression-induction: generous training did not find the "
             "successful branch exactly once"
         )
-    if advised["stdout"] != golden:
+    if advised["stdout"] != golden or advised["completion"] != "complete":
         raise RuntimeError(
             "compression-induction: learned bounded run missed the "
             "successful branch"
@@ -441,6 +450,7 @@ def _result(
     result = {
         "id": identifier,
         "controller": controller,
+        "completion": sorted({sample.get("completion", "unobserved") for sample in samples}),
         "runs": len(samples),
         "elapsed_ns": int(statistics.median(
             sample["elapsed_ns"] for sample in samples
@@ -637,7 +647,7 @@ def print_results(results: list[dict[str, Any]]) -> None:
         )
     )
     columns = (
-        "id", "controller", "runs", "elapsed_ns", "transitions", "answers",
+        "id", "controller", "completion", "runs", "elapsed_ns", "transitions", "answers",
         "expansions", "expansion_attempts", "expansion_unsupported",
         "successors", "max_frontier", "atom_bytes_captured",
         "vector_bytes_captured", "heap_collections",

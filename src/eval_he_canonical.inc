@@ -11,6 +11,7 @@ typedef enum {
     HE_CANONICAL_TUPLE,
     HE_CANONICAL_RESULT,
     HE_CANONICAL_CONTROL,
+    HE_CANONICAL_PATTERN,
     HE_CANONICAL_INSTRUCTION,
     HE_CANONICAL_MATCH,
     HE_CANONICAL_CAPTURE,
@@ -969,6 +970,8 @@ static void he_canonical_resume_control(HeCanonicalFrame *frame) {
     bindings_builder_free(&matched);
 }
 
+#include "eval_he_pattern_control.inc"
+
 static bool he_canonical_dispatch_schedule(Space *s, Arena *a, Atom *atom,
     Atom *type, int fuel, const Bindings *env, bool preserve, OutcomeSet *os) {
     if (!g_he_canonical_driver || !he_canonical_enabled())
@@ -1093,9 +1096,11 @@ static void he_canonical_dispatch_call(HeCanonicalFrame *frame, Outcome *call) {
         }
         if (head->kind == ATOM_SYMBOL && is_grounded_op(head->sym_id)) {
             CettaCallOutcome produced;
-            Atom *value = dispatch_native_call(frame->space, a, head,
-                source->expr.elems + 1u, nargs, &produced)
-                ? eval_call_outcome_atom(a, produced) : NULL;
+            bool handled = dispatch_native_call(frame->space, a, head,
+                source->expr.elems + 1u, nargs, &produced);
+            Atom *value = handled ? eval_call_outcome_atom(a, produced) : NULL;
+            if (handled && produced.kind == CETTA_CALL_INTERRUPTED)
+                return;
             if (value) {
                 if (produced.result_form != CETTA_CALL_RESULT_EXPRESSION ||
                     eval_grounded_result_is_final())
@@ -1118,7 +1123,7 @@ static void he_canonical_dispatch_call(HeCanonicalFrame *frame, Outcome *call) {
     OutcomeSet pending;
     outcome_set_init(&pending);
     HeRawQuery query = { .arena = a, .prefix = env, .outcomes = &pending };
-    CettaCount matched = query_equations_visit(frame->space, source, a,
+    CettaCount matched = eval_query_equations_visit(frame->space, source, a,
         he_raw_query_result, &query);
     if (!matched) {
         outcome_set_add_existing(&frame->paths, call);
@@ -1159,6 +1164,11 @@ static void he_canonical_dispatch_call(HeCanonicalFrame *frame, Outcome *call) {
 static void he_canonical_resume_dispatch(HeCanonicalFrame *frame) {
     Arena *a = frame->arena;
     if (frame->phase == 0u) {
+        SymbolId head = atom_head_symbol_id(frame->atom);
+        if (eval_current_pattern_control_arity(head)) {
+            frame->kind = HE_CANONICAL_PATTERN;
+            return;
+        }
         Atom *op = frame->atom->expr.elems[0];
         uint32_t nargs = 0u;
         if (!expr_nargs_u32(frame->atom, &nargs)) {
@@ -1781,6 +1791,7 @@ static void he_canonical_resume(HeCanonicalFrame *frame) {
             he_canonical_resume_result(frame);
         break;
     case HE_CANONICAL_CONTROL: he_canonical_resume_control(frame); break;
+    case HE_CANONICAL_PATTERN: he_canonical_resume_pattern(frame); break;
     case HE_CANONICAL_INSTRUCTION: he_canonical_resume_instruction(frame); break;
     case HE_CANONICAL_MATCH: he_canonical_resume_match(frame); break;
     case HE_CANONICAL_SPACE: he_canonical_resume_space(frame); break;
@@ -1874,6 +1885,18 @@ static void he_canonical_run(HeCanonicalKind kind, Space *s, Arena *a,
         he_canonical_pop();
     g_he_canonical_driver = enclosing;
     eval_gc_region_leave(&region);
+}
+
+static bool he_pattern_control_try(Space *s, Arena *a, Atom *atom,
+    Atom *type, int fuel, const Bindings *env, bool preserve, OutcomeSet *out) {
+    if (eval_current_language_id() != CETTA_LANGUAGE_HE ||
+        !eval_current_pattern_control_arity(atom_head_symbol_id(atom)))
+        return false;
+    if (g_he_canonical_driver)
+        he_canonical_push(HE_CANONICAL_PATTERN, s, a, atom, type, fuel, env, preserve, out);
+    else
+        he_canonical_run(HE_CANONICAL_PATTERN, s, a, atom, type, fuel, env, preserve, false, out);
+    return true;
 }
 
 static bool he_canonical_bind_try(Space *s, Arena *a, Atom *type,

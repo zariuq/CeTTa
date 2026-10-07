@@ -4588,12 +4588,78 @@ typedef struct {
     bool resolve_outer;
 } BindingsApplyScope;
 
+/* A graph observation distinguishes a source node's lexical readings. The
+ * same skeleton can occur in several rule frames, so a pointer alone is not
+ * a substitution-cache key. This cache belongs to one immutable environment
+ * observation and is never retained across a binding mutation. */
+typedef struct {
+    Atom *source;
+    Atom *image;
+    uint32_t epoch;
+    BindingValueKind kind;
+} BindingApplyGraphEntry;
+
+typedef struct {
+    BindingApplyGraphEntry *entries;
+    size_t len, cap;
+} BindingApplyGraph;
+
+static size_t bindings_apply_graph_hash(Atom *source, uint32_t epoch,
+                                        BindingValueKind kind) {
+    uint64_t hash = (uint64_t)(uintptr_t)source;
+    hash ^= (uint64_t)epoch * UINT64_C(0x9e3779b97f4a7c15);
+    hash ^= (uint64_t)kind * UINT64_C(0xbf58476d1ce4e5b9);
+    hash ^= hash >> 30u;
+    hash *= UINT64_C(0xbf58476d1ce4e5b9);
+    return (size_t)(hash ^ (hash >> 27u));
+}
+
+static BindingApplyGraphEntry *bindings_apply_graph_slot(
+        BindingApplyGraph *graph, Atom *source, BindingsApplyScope scope) {
+    size_t slot = bindings_apply_graph_hash(source, scope.epoch, scope.kind) &
+        (graph->cap - 1u);
+    while (graph->entries[slot].source &&
+           (graph->entries[slot].source != source ||
+            graph->entries[slot].epoch != scope.epoch ||
+            graph->entries[slot].kind != scope.kind))
+        slot = (slot + 1u) & (graph->cap - 1u);
+    return &graph->entries[slot];
+}
+
+static BindingApplyGraphEntry *bindings_apply_graph_enter(
+        BindingApplyGraph *graph, Atom *source, BindingsApplyScope scope,
+        bool *created) {
+    if (graph->cap && (graph->len + 1u) <= graph->cap / 2u) {
+        BindingApplyGraphEntry *entry = bindings_apply_graph_slot(graph, source, scope);
+        *created = !entry->source;
+        if (*created) {
+            *entry = (BindingApplyGraphEntry){source, NULL, scope.epoch, scope.kind};
+            ++graph->len;
+        }
+        return entry;
+    }
+    size_t capacity = graph->cap ? graph->cap * 2u : 32u;
+    if (capacity < graph->cap || capacity > SIZE_MAX / sizeof(*graph->entries))
+        return NULL;
+    BindingApplyGraph grown = {.cap = capacity, .len = graph->len};
+    grown.entries = calloc(capacity, sizeof(*grown.entries));
+    if (!grown.entries) return NULL;
+    for (size_t i = 0u; i < graph->cap; ++i) {
+        BindingApplyGraphEntry entry = graph->entries[i];
+        if (entry.source)
+            *bindings_apply_graph_slot(&grown, entry.source,
+                (BindingsApplyScope){.epoch = entry.epoch, .kind = entry.kind}) = entry;
+    }
+    free(graph->entries);
+    *graph = grown;
+    return bindings_apply_graph_enter(graph, source, scope, created);
+}
+
 typedef struct {
     Bindings *b;
     Arena *a;
     BindingApplySeen *seen;
     bool track_cycles;
-    bool epoch_fold;
     /* The rewrite fold's memo and hook. */
     BindingApplyMemo *memo;
     BindingsRewriteVarFn rewrite_var;
@@ -4607,10 +4673,15 @@ typedef struct {
 
 static Atom *bindings_apply_fold(BindingsApplyFold *fold, Atom *atom,
                                  BindingsApplyScope scope, uint32_t seen_len);
+static Atom *bindings_apply_shared_fold(BindingsApplyFold *fold,
+    BindingApplyGraph *graph, Atom *atom, BindingsApplyScope scope, uint32_t seen_len);
 
-static Atom *bindings_apply_value_rewrite_vars(Bindings *b, Arena *a, BindingValue value,
+#if defined(__GNUC__)
+__attribute__((always_inline))
+#endif
+static inline Atom *bindings_apply_value_rewrite_vars(Bindings *b, Arena *a, BindingValue value,
                                   BindingsRewriteVarFn rewrite_var,
-                                  void *rewrite_ctx) {
+                                  void *rewrite_ctx, bool shared_graph) {
     Atom *atom = value.skeleton;
     if (!b || !a || !atom)
         return NULL;
@@ -4642,6 +4713,9 @@ static Atom *bindings_apply_value_rewrite_vars(Bindings *b, Arena *a, BindingVal
      * cyclic environments retain the independent general guard below. */
     bool track_cycles =
         b->cycle_state != BINDINGS_CYCLE_ACYCLIC;
+    BindingApplyGraph graph;
+    if (shared_graph && !track_cycles)
+        graph = (BindingApplyGraph){0};
     BindingsApplyFold fold = {
         .b = b,
         .a = a,
@@ -4651,23 +4725,34 @@ static Atom *bindings_apply_value_rewrite_vars(Bindings *b, Arena *a, BindingVal
         .rewrite_var = rewrite_var,
         .rewrite_ctx = rewrite_ctx,
     };
-    Atom *result = bindings_apply_fold(
-        &fold, value.skeleton,
-        (BindingsApplyScope){.epoch = value.epoch, .kind = value.kind}, 0u);
+    BindingsApplyScope scope = {.epoch = value.epoch, .kind = value.kind};
+    /* Graph observation owns its extra state. Ordinary substitution keeps
+     * its original frame, without an unused graph field on each call.
+     * Cyclic images still depend on the active variable path. */
+    Atom *result = shared_graph && !track_cycles
+        ? bindings_apply_shared_fold(&fold, &graph, value.skeleton, scope, 0u)
+        : bindings_apply_fold(&fold, value.skeleton, scope, 0u);
     bindings_apply_memo_release(&memo);
     bindings_apply_seen_release(&seen);
+    if (shared_graph && !track_cycles)
+        free(graph.entries);
     return result;
 }
 
 Atom *bindings_apply_rewrite_vars(Bindings *b, Arena *a, Atom *atom,
                                   BindingsRewriteVarFn rewrite_var, void *rewrite_ctx) {
     return bindings_apply_value_rewrite_vars(
-        b, a, binding_value_from_atom(atom), rewrite_var, rewrite_ctx);
+        b, a, binding_value_from_atom(atom), rewrite_var, rewrite_ctx, false);
+}
+
+Atom *bindings_apply_graph(Bindings *b, Arena *a, Atom *atom) {
+    return bindings_apply_value_rewrite_vars(
+        b, a, binding_value_from_atom(atom), NULL, NULL, true);
 }
 
 Atom *bindings_apply_value(const Bindings *b, Arena *a, BindingValue value) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY);
-    return bindings_apply_value_rewrite_vars((Bindings *)b, a, value, NULL, NULL);
+    return bindings_apply_value_rewrite_vars((Bindings *)b, a, value, NULL, NULL, false);
 }
 
 Atom *bindings_apply_value_without_id(
@@ -4950,7 +5035,10 @@ typedef enum {
 
 /* A variable read in its value's own context: its memoised image, its unbound
  * reading (passed through the hook), or its bound value. */
-static BindingsApplyVarStep bindings_apply_rewrite_var_step(
+#if defined(__GNUC__)
+__attribute__((always_inline))
+#endif
+static inline BindingsApplyVarStep bindings_apply_rewrite_var_step(
         BindingsApplyFold *fold, Atom *atom, const BindingsApplyScope *scope,
         uint32_t seen_len, VarId *id_out, Atom **image_out,
         BindingValue *bound_out) {
@@ -5040,9 +5128,9 @@ static BindingsApplyVarStep bindings_apply_epoch_var_step(
 
 /* The scope a bound value is read in. */
 static BindingsApplyScope bindings_apply_bound_scope(
-        const BindingsApplyFold *fold, const BindingsApplyScope *scope,
+        bool epoch_fold, const BindingsApplyScope *scope,
         BindingValue bound) {
-    if (!fold->epoch_fold)
+    if (!epoch_fold)
         return (BindingsApplyScope){.epoch = bound.epoch, .kind = bound.kind};
     if (!binding_value_is_contextual(bound)) {
         /* Stored syntax: its variables are read on the stored side. */
@@ -5059,8 +5147,14 @@ static BindingsApplyScope bindings_apply_bound_scope(
     };
 }
 
-static Atom *bindings_apply_fold(BindingsApplyFold *fold, Atom *atom,
-                                 BindingsApplyScope scope, uint32_t seen_len) {
+/* Specialize this one traversal at its entry points. Ordinary substitution
+ * retains its established loop; only graph observation maintains node images. */
+#if defined(__GNUC__)
+__attribute__((always_inline))
+#endif
+static inline Atom *bindings_apply_fold_impl(BindingsApplyFold *fold, Atom *atom,
+        BindingsApplyScope scope, uint32_t seen_len, bool epoch_fold,
+        BindingApplyGraph *graph) {
     BindingsApplyFrame inline_items[BINDINGS_APPLY_INLINE_FRAMES];
     BindingsApplyFrames frames = {
         .items = inline_items,
@@ -5072,7 +5166,7 @@ static Atom *bindings_apply_fold(BindingsApplyFold *fold, Atom *atom,
         result = NULL;
         if (!atom_has_vars(atom)) {
             result = atom;
-        } else if (fold->epoch_fold) {
+        } else if (epoch_fold) {
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EPOCH_NODE_VISIT);
             if (fold->node_visits && *fold->node_visits != UINT64_MAX)
@@ -5081,11 +5175,23 @@ static Atom *bindings_apply_fold(BindingsApplyFold *fold, Atom *atom,
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_REWRITE_NODE_VISIT);
         }
+        if (graph && !result && atom->kind == ATOM_EXPR) {
+            bool created = false;
+            BindingApplyGraphEntry *entry = bindings_apply_graph_enter(
+                graph, atom, scope, &created);
+            if (!entry) goto failed;
+            if (!created) {
+                /* Native syntax must be a DAG. Rational terms use their
+                 * explicit graph carrier, not a recursive Atom pointer. */
+                if (!entry->image) goto failed;
+                result = entry->image;
+            }
+        }
         if (!result && atom->kind == ATOM_VAR) {
             BindingApplyMemo *memo = fold->memo;
             VarId id = VAR_ID_NONE;
             BindingValue bound = binding_value_from_atom(NULL);
-            BindingsApplyVarStep step = fold->epoch_fold
+            BindingsApplyVarStep step = epoch_fold
                 ? bindings_apply_epoch_var_step(
                       fold, atom, &scope, seen_len, &memo, &id, &result,
                       &bound)
@@ -5104,7 +5210,7 @@ static Atom *bindings_apply_fold(BindingsApplyFold *fold, Atom *atom,
                         &frames,
                         (BindingsApplyFrame){.memo = memo, .id = id}))
                     goto failed;
-                scope = bindings_apply_bound_scope(fold, &scope, bound);
+                scope = bindings_apply_bound_scope(epoch_fold, &scope, bound);
                 atom = bound.skeleton;
                 continue;
             }
@@ -5155,6 +5261,8 @@ static Atom *bindings_apply_fold(BindingsApplyFold *fold, Atom *atom,
             }
             result = top->draft
                 ? atom_expr_builder_finish(fold->a, top->draft) : top->atom;
+            if (graph)
+                bindings_apply_graph_slot(graph, top->atom, top->scope)->image = result;
             frames.len--;
             if (!result)
                 goto failed;
@@ -5169,6 +5277,21 @@ failed:
     if (frames.heap)
         free(frames.items);
     return NULL;
+}
+
+static Atom *bindings_apply_fold(BindingsApplyFold *fold, Atom *atom,
+                                 BindingsApplyScope scope, uint32_t seen_len) {
+    return bindings_apply_fold_impl(fold, atom, scope, seen_len, false, NULL);
+}
+
+static Atom *bindings_apply_shared_fold(BindingsApplyFold *fold,
+    BindingApplyGraph *graph, Atom *atom, BindingsApplyScope scope, uint32_t seen_len) {
+    return bindings_apply_fold_impl(fold, atom, scope, seen_len, false, graph);
+}
+
+static Atom *bindings_apply_epoch_fold(BindingsApplyFold *fold, Atom *atom,
+        BindingsApplyScope scope, uint32_t seen_len) {
+    return bindings_apply_fold_impl(fold, atom, scope, seen_len, true, NULL);
 }
 
 static Atom *bindings_apply_epoch_from(
@@ -5220,12 +5343,11 @@ static Atom *bindings_apply_epoch_from(
         .a = a,
         .seen = &seen,
         .track_cycles = track_cycles,
-        .epoch_fold = true,
         .local_memo = &local_memo,
         .outer_memo = &outer_memo,
         .node_visits = node_visits,
     };
-    Atom *result = bindings_apply_fold(
+    Atom *result = bindings_apply_epoch_fold(
         &fold, atom,
         (BindingsApplyScope){
             .fast = fast,
@@ -7551,6 +7673,7 @@ bool bindings_collect_support(const Bindings *bindings,
     *ids = NULL;
     *count = 0u;
     BindingsSupportCollector collector = {.need = bindings_need_view(bindings)};
+    BindingApplyGraph visited = {0};
     var_id_set_init(&collector.ids);
     var_id_set_init(&collector.visited_thunks);
     bool ok = false;
@@ -7568,9 +7691,21 @@ bool bindings_collect_support(const Bindings *bindings,
     }
     while (collector.len) {
         collector.value = collector.pending[--collector.len];
-        if (atom_tree_any(collector.value.skeleton,
-                          bindings_support_collect_atom, &collector))
+        Atom *atom = collector.value.skeleton;
+        bool created = false;
+        if (!bindings_apply_graph_enter(&visited, atom,
+                (BindingsApplyScope){.epoch = collector.value.epoch,
+                                     .kind = collector.value.kind}, &created))
             goto done;
+        if (!created) continue;
+        if (bindings_support_collect_atom(atom, &collector)) goto done;
+        if (atom->kind == ATOM_EXPR) {
+            for (CettaExprIndex i = atom->expr.len; i > 0u; --i) {
+                BindingValue child = collector.value;
+                child.skeleton = atom->expr.elems[i - 1u];
+                if (!bindings_support_push(&collector, child)) goto done;
+            }
+        }
     }
     if (collector.ids.len) {
         *ids = cetta_malloc(sizeof(**ids) * collector.ids.len);
@@ -7579,6 +7714,7 @@ bool bindings_collect_support(const Bindings *bindings,
     *count = collector.ids.len;
     ok = true;
 done:
+    free(visited.entries);
     free(collector.pending);
     var_id_set_free(&collector.visited_thunks);
     var_id_set_free(&collector.ids);

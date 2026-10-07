@@ -587,6 +587,10 @@ static void subst_matchset_normalize(SubstMatchSet *out) {
             w++;
         } else {
             bindings_free(&out->items[r].bindings);
+            if (out->items[r].owns_identity) {
+                cetta_frame_identity_release(out->items[r].epoch);
+                out->items[r].owns_identity = false;
+            }
         }
     }
     out->len = w;
