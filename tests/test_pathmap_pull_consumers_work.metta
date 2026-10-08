@@ -139,7 +139,7 @@
 !(bind! &bulk (new-space pathmap))
 !(let $ignored
   (collapse
-    (let $xs (eval (list:range 4096))
+    (let $xs (list:range 4096)
       (let $i (superpose $xs)
         (add-atom &bulk (friend sam $i)))))
   ())

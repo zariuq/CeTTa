@@ -1,0 +1,54 @@
+(set 1 a)
+(set 1 b)
+(set 1 c)
+
+(settype 1 A)
+
+(set 2 d)
+(set 2 e)
+(set 2 f)
+
+(settype 2 A)
+
+(set 3 a)
+(set 3 b)
+
+(settype 3 A)
+
+(set 4 x)
+
+(settype 4 B)
+
+(set 5 y)
+
+(settype 5 B)
+
+(set 6 z)
+
+(settype 6 B)
+
+(exec 0
+    (I (< (settype $a $t) (settype $b $t)))
+    (, (disjoint $a $b)))
+
+(exec 1
+    (, (disjoint $a $b) (set $a $e) (set $b $e) )
+    (O (- (disjoint $a $b) ) ) )
+
+(exec 2
+    (, (disjoint $a $b) (set $a $e1) (set $b $e2) (settype $a $t) )
+    (O
+        (- (disjoint $a $b))
+        (pure
+            (disjoint-union $new-id $e1 $e2 $t)
+            $new-id
+            (collapse_symbol
+                ('(union_ $a __ $b))))))
+
+(exec 3
+    (, (disjoint-union $new-id $e1 $e2 $t))
+    (O
+        (- (disjoint-union $new-id $e1 $e2 $t))
+        (+ (set $new-id $e1))
+        (+ (set $new-id $e2))
+        (+ (settype $new-id $t))))

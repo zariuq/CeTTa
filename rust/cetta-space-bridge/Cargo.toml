@@ -8,7 +8,8 @@ crate-type = ["staticlib", "cdylib"]
 
 [features]
 default = ["pathmap-space"]
-pathmap-space = ["dep:cetta-mork-adapter"]
+pathmap-space = []
+loadable = ["dep:tikv-jemallocator"]
 
 [dependencies]
 mork = { workspace = true }
@@ -17,4 +18,5 @@ mork-frontend = { workspace = true }
 pathmap = { workspace = true }
 cetta-space = { workspace = true }
 cetta-pathmap-adapter = { workspace = true }
-cetta-mork-adapter = { workspace = true, optional = true }
+cetta-mork-adapter = { workspace = true }
+tikv-jemallocator = { version = "0.6", optional = true, features = ["disable_initial_exec_tls"] }

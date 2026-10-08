@@ -1,12 +1,24 @@
 use mork::space::Space;
-use mork_expr::{Expr, ExprEnv, ExprZipper, Tag, item_byte, maybe_byte_item};
+use mork_expr::{Bindings, Expr, ExprEnv, ExprZipper, Tag, item_byte, maybe_byte_item};
 use mork_frontend::bytestring_parser::{Context, Parser, ParserError};
 use mork_interning::WritePermit;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
+/// Keep packet keys and residual variable numbering independent of unification trail order.
+#[inline]
+pub fn bindings_in_key_order(bindings: &Bindings) -> impl Iterator<Item = ((u8, u8), &ExprEnv)> {
+    let mut keys: smallvec::SmallVec<[(u8, u8); 16]> = bindings.keys().collect();
+    keys.sort_unstable();
+    keys.into_iter().map(|key| {
+        (key, bindings.get(&key).expect("key came from immutable bindings"))
+    })
+}
+
 mod counted_pathmap;
+mod mork_access;
+pub use mork_access::{bridge_unify, with_mork_access};
 #[cfg(feature = "pathmap-space")]
 mod counted_query_index;
 
@@ -529,6 +541,25 @@ pub fn render_bridge_expr_text(expr_bytes: &[u8], value_env: u8) -> Result<Strin
 #[cfg(test)]
 mod bridge_packet_tests {
     use super::*;
+
+    #[test]
+    fn binding_packet_order_matches_lexicographic_keys_across_namespaces() {
+        let bytes = [item_byte(Tag::NewVar)];
+        let expr = Expr { ptr: bytes.as_ptr().cast_mut() };
+        let mut bindings = Bindings::new();
+        let mut expected = std::collections::BTreeMap::new();
+        for side in [254, 1, 0] {
+            for slot in (0..64).rev() {
+                let value = ExprEnv::new(side, expr);
+                bindings.insert((side, slot), value);
+                expected.insert((side, slot), value);
+            }
+        }
+        assert_eq!(
+            bindings_in_key_order(&bindings).map(|(key, value)| (key, *value)).collect::<Vec<_>>(),
+            expected.into_iter().collect::<Vec<_>>()
+        );
+    }
 
     fn push_symbol(packet: &mut Vec<u8>, symbol: &[u8]) {
         packet.push(BRIDGE_VALUE_TAG_SYMBOL);

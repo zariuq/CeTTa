@@ -266,6 +266,8 @@ MORK_EXPR_MANIFEST ?= $(MORK_REPO_DIR)/expr/Cargo.toml
 MORK_FRONTEND_MANIFEST ?= $(MORK_REPO_DIR)/frontend/Cargo.toml
 MORK_INTERNING_MANIFEST ?= $(MORK_REPO_DIR)/interning/Cargo.toml
 MORK_BRIDGE_WORKSPACE_MEMBERS := cetta-space cetta-space-bridge cetta-pathmap-adapter cetta-mork-adapter
+MORK_BRIDGE_UPSTREAM_SOURCE_DEPS = $(shell find "$(PATHMAP_REPO_DIR)" "$(MORK_REPO_DIR)" -name target -prune -o -name .git -prune -o -type f \( -name '*.rs' -o -name Cargo.toml -o -name Cargo.lock \) -print 2>/dev/null)
+MORK_BRIDGE_LOCAL_SOURCE_DEPS = $(shell find $(CETTA_RUST_DIR) -path '$(CETTA_RUST_DIR)/target' -prune -o -type f \( -name '*.rs' -o -name Cargo.toml -o -name Cargo.lock -o -name '*.h' \) -print)
 PATHMAP_DEP_DIR := $(abspath $(dir $(PATHMAP_MANIFEST)))
 MORK_KERNEL_DIR := $(abspath $(dir $(MORK_KERNEL_MANIFEST)))
 MORK_EXPR_DIR := $(abspath $(dir $(MORK_EXPR_MANIFEST)))
@@ -295,7 +297,7 @@ BRIDGE_CFLAGS =
 BRIDGE_LDFLAGS =
 MORK_BUILD_HAS_BRIDGE := 0
 ifeq ($(ENABLE_MORK_STATIC),1)
-MORK_BRIDGE_SOURCE_DEPS := $(shell find $(CETTA_RUST_DIR) -path '$(CETTA_RUST_DIR)/target' -prune -o -type f \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'Cargo.lock' -o -name '*.h' \) -print)
+MORK_BRIDGE_SOURCE_DEPS := $(MORK_BRIDGE_LOCAL_SOURCE_DEPS) $(MORK_BRIDGE_UPSTREAM_SOURCE_DEPS)
 ifeq ($(wildcard $(MORK_BRIDGE_MANIFEST)),)
 $(error BUILD=$(BUILD_CANON) requires $(MORK_BRIDGE_MANIFEST))
 endif
@@ -308,7 +310,7 @@ BRIDGE_LDFLAGS += $(MORK_BRIDGE_FEATURE_STATICLIB) -lrt
 MORK_BUILD_HAS_BRIDGE := 1
 endif
 
-$(MORK_BRIDGE_WORKSPACE_MANIFEST): $(MORK_BRIDGE_SOURCE_DEPS) Makefile
+$(MORK_BRIDGE_WORKSPACE_MANIFEST): $(MORK_BRIDGE_LOCAL_SOURCE_DEPS) $(MORK_BRIDGE_UPSTREAM_SOURCE_DEPS) Makefile
 	@mkdir -p "$(MORK_BRIDGE_WORKSPACE_DIR)"
 	@set -e; \
 	exec 9>"$(MORK_BRIDGE_BUILD_LOCK)"; \
@@ -319,6 +321,7 @@ $(MORK_BRIDGE_WORKSPACE_MANIFEST): $(MORK_BRIDGE_SOURCE_DEPS) Makefile
 		rm -rf "$(MORK_BRIDGE_WORKSPACE_DIR)/$$member"; \
 		mv "$(MORK_BRIDGE_WORKSPACE_DIR)/$$member.tmp" "$(MORK_BRIDGE_WORKSPACE_DIR)/$$member"; \
 	done; \
+	cp "$(CETTA_RUST_DIR)/Cargo.lock" "$(MORK_BRIDGE_WORKSPACE_DIR)/Cargo.lock"; \
 	tmp="$@.tmp"; \
 	sed \
 		-e "s|path = \"../../PathMap\"|path = \"$(PATHMAP_DEP_DIR)\"|" \
@@ -331,7 +334,8 @@ $(MORK_BRIDGE_WORKSPACE_MANIFEST): $(MORK_BRIDGE_SOURCE_DEPS) Makefile
 		rm -f "$$tmp"; \
 	else \
 		mv "$$tmp" "$@"; \
-	fi
+	fi; \
+	touch "$@"
 
 $(MORK_BRIDGE_BUILD_STAMP): $(MORK_BRIDGE_SOURCE_DEPS) $(MORK_BRIDGE_WORKSPACE_MANIFEST)
 	@mkdir -p $(BOOTSTRAP_TMPDIR)
@@ -342,7 +346,7 @@ $(MORK_BRIDGE_BUILD_STAMP): $(MORK_BRIDGE_SOURCE_DEPS) $(MORK_BRIDGE_WORKSPACE_M
 		MAKEFLAGS= \
 		CARGO_TARGET_DIR='$(CETTA_RUST_DIR)/target' \
 		RUSTFLAGS='$(MORK_BRIDGE_RUSTFLAGS)' \
-		$(MORK_BRIDGE_CARGO) build --manifest-path "$(MORK_BRIDGE_WORKSPACE_MANIFEST)" -p cetta-space-bridge --release $(MORK_BRIDGE_CARGO_FEATURE_ARGS)
+		$(MORK_BRIDGE_CARGO) build --locked --manifest-path "$(MORK_BRIDGE_WORKSPACE_MANIFEST)" -p cetta-space-bridge --release $(MORK_BRIDGE_CARGO_FEATURE_ARGS)
 	@test -f "$(MORK_BRIDGE_STATICLIB)"
 	@touch "$@"
 
@@ -352,6 +356,32 @@ $(MORK_BRIDGE_FEATURE_STATICLIB): $(MORK_BRIDGE_BUILD_STAMP)
 	exec 9>"$(MORK_BRIDGE_BUILD_LOCK)"; \
 	flock 9; \
 	cp "$(MORK_BRIDGE_STATICLIB)" "$@"
+
+.PHONY: test-rust-bridge
+test-rust-bridge: $(MORK_BRIDGE_WORKSPACE_MANIFEST)
+	@set -e; exec 9>"$(MORK_BRIDGE_BUILD_LOCK)"; flock 9; \
+		cd $(MORK_BRIDGE_WORKDIR) && \
+		MAKEFLAGS= \
+		CARGO_TARGET_DIR='$(CETTA_RUST_DIR)/target' \
+		RUSTFLAGS='$(MORK_BRIDGE_RUSTFLAGS)' \
+		$(MORK_BRIDGE_CARGO) test --locked --manifest-path "$(MORK_BRIDGE_WORKSPACE_MANIFEST)" --workspace -- --test-threads=1
+
+MORK_BRIDGE_LOADABLE_LIB := runtime/bootstrap/libcetta_space_bridge.loadable.$(MORK_BRIDGE_FEATURE_TAG).$(MORK_BRIDGE_PATH_TAG).so
+.PHONY: bridge-shared test-mork-shared-bridge
+bridge-shared: $(MORK_BRIDGE_WORKSPACE_MANIFEST)
+	@set -e; exec 9>"$(MORK_BRIDGE_BUILD_LOCK)"; flock 9; \
+		cd $(MORK_BRIDGE_WORKDIR) && MAKEFLAGS= \
+		CARGO_TARGET_DIR='$(CETTA_RUST_DIR)/target' \
+		RUSTFLAGS='$(MORK_BRIDGE_RUSTFLAGS)' \
+		$(MORK_BRIDGE_CARGO) build --locked --manifest-path "$(MORK_BRIDGE_WORKSPACE_MANIFEST)" \
+		-p cetta-space-bridge --release $(MORK_BRIDGE_CARGO_FEATURE_ARGS) --features loadable; \
+		cp '$(CETTA_RUST_DIR)/target/release/libcetta_space_bridge.so' '$(abspath $(MORK_BRIDGE_LOADABLE_LIB))'
+	@echo "Loadable bridge: $(MORK_BRIDGE_LOADABLE_LIB)"
+
+test-mork-shared-bridge: bridge-shared
+	@$(CC) -std=c11 -O2 -Wall -Wextra -I. tests/test_mork_bridge_dynamic_load.c \
+		-o runtime/test_mork_bridge_dynamic_load -ldl
+	@./runtime/test_mork_bridge_dynamic_load '$(abspath $(MORK_BRIDGE_LOADABLE_LIB))'
 
 ENABLE_DURABLE ?= 0
 SQLITE_PROVIDER ?= vendored
@@ -5320,6 +5350,8 @@ else
 endif
 .PHONY: test-pathmap-batch-mutations
 
+# This mutant changes the reference evaluator's chain-flatten route. Run both
+# sides through that route; the canonical evaluator has separate progress gates.
 test-pathmap-streaming-d4-mutation: $(BIN)
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
 ifeq ($(ENABLE_SANITIZERS),1)
@@ -5334,11 +5366,11 @@ else
 	$(CC) $(filter-out src/eval.$(BUILD_OBJ_TAG).o,$(OBJ)) \
 		"$$mutation_dir/eval.o" -o "$$mutation_dir/cetta-no-stream" \
 		$(LDFLAGS) || exit 1; \
-	env $(CETTA_GSLT_MATCH_CHAIN_TRACE_ENV)=1 \
+	env CETTA_HE_CANONICAL_EXECUTION=0 $(CETTA_GSLT_MATCH_CHAIN_TRACE_ENV)=1 \
 		python3 scripts/bench_d4_progress.py "$(CETTA_SCRIPT_BIN)" \
 		tests/nil_pc_fc_d4.metta --backends pathmap --duration 3.5 \
 		--output "$$mutation_dir/baseline.json" >/dev/null || exit 1; \
-	if env $(CETTA_GSLT_MATCH_CHAIN_TRACE_ENV)=1 \
+	if env CETTA_HE_CANONICAL_EXECUTION=0 $(CETTA_GSLT_MATCH_CHAIN_TRACE_ENV)=1 \
 		python3 scripts/bench_d4_progress.py \
 		"$$mutation_dir/cetta-no-stream" tests/nil_pc_fc_d4.metta \
 		--backends pathmap --duration 3.5 \
@@ -31078,7 +31110,7 @@ ifeq ($(MORK_BRIDGE_ACTIVE),1)
 		fi; \
 	done; \
 	echo 'PASS: upstream MM2 (Rust/MORK via C ABI) and authored GSLT agree exactly on 22 admitted programs'; \
-	CETTA_BIN=./$(BIN) python3 -m unittest \
+	MORK_REPO_DIR="$(MORK_REPO_DIR)" CETTA_BIN=./$(BIN) python3 -m unittest \
 		tests.test_mm2_to_metta.TranslatorGate.test_gslt_support_transform_v1_matches_native_corpus
 else
 	@echo 'SKIP: MM2 ABI/GSLT differential (MORK bridge is not active)'
@@ -31382,7 +31414,7 @@ endif
 test-pathmap-bridge-v2: $(BIN)
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
 ifeq ($(ENABLE_RUNTIME_STATS),1)
-	@expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]'); \
+	@expected=$$(cat tests/test_pathmap_imported_bridge_v2.expected); \
 	result=$$(CETTA_PATHMAP_QUERY_INDEX=0 $(CETTA_BIN_INVOKE) --profile extended --space-engine pathmap --lang he tests/test_pathmap_imported_bridge_v2.metta 2>&1); \
 	if [ "$$result" = "$$expected" ]; then \
 		echo "PASS: pathmap bridge v2 regression"; \

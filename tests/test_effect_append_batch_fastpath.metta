@@ -16,7 +16,7 @@
 !(bind! &append-pathmap (new-space pathmap))
 !(let $ignored
   (collapse
-    (let $xs (eval (list:range 5))
+    (let $xs (list:range 5)
       (let $i (superpose $xs)
         (add-atom &append-pathmap (friend alex $i)))))
   ())

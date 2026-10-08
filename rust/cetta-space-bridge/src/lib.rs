@@ -15,18 +15,20 @@
 //! different threads, and a handle may be transferred between threads, but the same live
 //! space/program/context/cursor handle must not be read, mutated, or freed concurrently without an
 //! external ownership protocol or synchronization layer.
+//! Calls touching MORK's non-atomic process statistics are serialized across handles.
 
 use cetta_pathmap_adapter::{OverlayZipper, ZipperSnapshotExt};
-#[cfg(feature = "pathmap-space")]
 use cetta_mork_adapter::{
     PhysicalProviderRegistry, SupportTransformExecutor,
     run_support_transform_packet,
 };
 use cetta_space::{
+    bridge_unify as unify, with_mork_access,
     CountedEntry, CountedGeneralQueryCursor, FlatCountedCursorStats, FlatCountedIndexStats,
     FlatCountedQueryAdmission, FlatCountedQueryCursor, FlatCountedQueryIndex,
     FlatSemiNaiveQueryCursor, bridge_expr_env_text, bridge_expr_packet_to_bytes, bridge_expr_text,
-    bridge_parse_expr_chunk, bridge_parse_single_expr, counted_contains_expr, counted_entries,
+    bindings_in_key_order, bridge_parse_expr_chunk, bridge_parse_single_expr, counted_contains_expr,
+    counted_entries,
     counted_exact_entry, counted_expr_row_packet, counted_factor_candidates,
     counted_insert_expr_cached, counted_insert_expr_count_cached, counted_query_only_packet_rows,
     counted_query_rows_detailed_packet_rows, counted_remove_one_expr_cached, counted_sexpr_text,
@@ -34,12 +36,12 @@ use cetta_space::{
     stable_bridge_expr_packet_bytes,
 };
 use mork::space::Space;
-use mork_expr::{Expr, ExprEnv, Tag, item_byte, maybe_byte_item, unify};
+use mork_expr::{Bindings, Expr, ExprEnv, Tag, item_byte, maybe_byte_item};
 use pathmap::PathMap;
 use pathmap::ring::AlgebraicStatus;
 use pathmap::zipper::{
     ProductZipper, Zipper, ZipperAbsolutePath, ZipperIteration, ZipperMoving, ZipperProduct,
-    ZipperSubtries, ZipperWriting,
+    ZipperPath, ZipperSubtries, ZipperWriting,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -781,7 +783,7 @@ fn encode_u64_list(values: &[u64]) -> Vec<u8> {
 
 fn build_overlay_zipper<'a>(
     bridge: &'a BridgeOverlayCursor,
-) -> Result<impl ZipperMoving + Zipper + 'a, MorkStatus> {
+) -> Result<impl ZipperMoving + ZipperPath + 'a, MorkStatus> {
     let mut oz = OverlayZipper::new(bridge.base.read_zipper(), bridge.overlay.read_zipper());
     oz.descend_to(&bridge.path);
     Ok(oz)
@@ -2138,7 +2140,6 @@ fn append_contextual_indexed_query_rows_header(
     append_u32_be(out, context_count);
 }
 
-#[cfg(feature = "pathmap-space")]
 fn append_query_slot_context_entry(out: &mut Vec<u8>, value_slot: u16, query_slot: u16) {
     append_u16_be(out, value_slot);
     out.push(OPEN_VAR_REF_QUERY_SLOT);
@@ -2146,7 +2147,6 @@ fn append_query_slot_context_entry(out: &mut Vec<u8>, value_slot: u16, query_slo
     append_u16_be(out, query_slot);
 }
 
-#[cfg(feature = "pathmap-space")]
 fn append_matched_exact_context_entry_remapped(
     out: &mut Vec<u8>,
     target_slot: u16,
@@ -2202,7 +2202,6 @@ fn append_matched_exact_context_entry_remapped(
     ))
 }
 
-#[cfg(feature = "pathmap-space")]
 fn append_matched_instance_context_entry_remapped(
     out: &mut Vec<u8>,
     target_slot: u16,
@@ -2324,7 +2323,6 @@ fn contextual_query_candidates_for_factor(
     Ok(out)
 }
 
-#[cfg(feature = "pathmap-space")]
 fn contextual_query_candidates_from_counted_entries(
     space: &BridgeSpace,
     entries: Vec<CountedEntry>,
@@ -2376,10 +2374,9 @@ fn contextual_query_candidates_from_counted_entries(
     Ok(out)
 }
 
-#[cfg(feature = "pathmap-space")]
 fn contextual_value_depends_on_namespace(
     expr_env: ExprEnv,
-    bindings: &BTreeMap<(u8, u8), ExprEnv>,
+    bindings: &Bindings,
     namespace: u8,
     resolving: &mut Vec<(u8, u8)>,
 ) -> bool {
@@ -2405,7 +2402,6 @@ fn contextual_value_depends_on_namespace(
         .any(|arg| contextual_value_depends_on_namespace(arg, bindings, namespace, resolving))
 }
 
-#[cfg(feature = "pathmap-space")]
 fn contextless_candidate_can_escape(
     factor: ContextualResidualFactorEnv,
     candidate: &ContextualQueryCandidate,
@@ -2420,18 +2416,14 @@ fn contextless_candidate_can_escape(
     }
     let candidate_namespace = (factor_idx + 1) as u8;
     let mut stack = vec![(
-        ExprEnv {
-            n: factor.namespace,
-            v: factor.variable_offset,
-            offset: factor.byte_offset,
-            base: pattern_expr,
-        },
+        ExprEnv::with_intro(factor.namespace, factor.variable_offset, pattern_expr)
+            .offset(factor.byte_offset),
         ExprEnv::new(candidate_namespace, atom_expr),
     )];
     let Ok(bindings) = unify(&mut stack) else {
         return false;
     };
-    bindings.iter().any(|(&(side, _), value)| {
+    bindings.iter().any(|((side, _), value)| {
         side == 0
             && contextual_value_depends_on_namespace(
                 *value,
@@ -2442,7 +2434,6 @@ fn contextless_candidate_can_escape(
     })
 }
 
-#[cfg(feature = "pathmap-space")]
 impl ContextualResidualQueryCursor {
     fn new(
         pattern_expr_bytes: &[u8],
@@ -2650,12 +2641,8 @@ impl ContextualResidualQueryCursor {
             let multiplicity = self.chosen_row_multiplicity()?;
             for factor_idx in 0..self.factor_envs.len() {
                 let factor = self.factor_envs[factor_idx];
-                let factor_expr_env = ExprEnv {
-                    n: factor.namespace,
-                    v: factor.variable_offset,
-                    offset: factor.byte_offset,
-                    base: pattern_expr,
-                };
+                let factor_expr_env = ExprEnv::with_intro(factor.namespace, factor.variable_offset, pattern_expr)
+                    .offset(factor.byte_offset);
                 let chosen = &self.candidate_lists[factor_idx][self.indices[factor_idx]];
                 let atom_expr = Expr {
                     ptr: chosen.atom_expr_bytes.as_ptr().cast_mut(),
@@ -2668,7 +2655,7 @@ impl ContextualResidualQueryCursor {
             }
             let row = if let Ok(bindings) = unify(&mut stack) {
                 let mut encoded = Vec::new();
-                for (&(side, idx), expr_env) in bindings.iter() {
+                for ((side, idx), expr_env) in bindings_in_key_order(&bindings) {
                     if side == 0 {
                         encoded.push(encode_contextual_query_binding(
                             space,
@@ -2713,12 +2700,8 @@ impl ContextualResidualQueryCursor {
                 let factor = self.factor_envs[factor_idx];
                 let chosen = &self.candidate_lists[factor_idx][self.indices[factor_idx]];
                 stack.push((
-                    ExprEnv {
-                        n: factor.namespace,
-                        v: factor.variable_offset,
-                        offset: factor.byte_offset,
-                        base: pattern_expr,
-                    },
+                    ExprEnv::with_intro(factor.namespace, factor.variable_offset, pattern_expr)
+                        .offset(factor.byte_offset),
                     ExprEnv::new(
                         (factor_idx + 1) as u8,
                         Expr {
@@ -2745,7 +2728,6 @@ impl ContextualResidualQueryCursor {
     }
 }
 
-#[cfg(feature = "pathmap-space")]
 fn build_contextual_query_value_context(
     origins: &BTreeMap<u8, (u8, u8)>,
     chosen_entries: &[&ContextualQueryCandidate],
@@ -2797,7 +2779,6 @@ fn build_contextual_query_value_context(
     Ok(context)
 }
 
-#[cfg(feature = "pathmap-space")]
 fn append_contextual_query_binding(
     out: &mut Vec<u8>,
     binding: &ContextualQueryBinding,
@@ -2825,7 +2806,6 @@ fn append_query_only_v2_header(out: &mut Vec<u8>, row_count: u64) {
     append_u64_be(out, row_count);
 }
 
-#[cfg(feature = "pathmap-space")]
 fn append_multi_ref_v3_header(out: &mut Vec<u8>, flags: u16, factor_count: u32, row_count: u64) {
     append_u32_be(out, QUERY_ONLY_V2_MAGIC);
     append_u16_be(out, MULTI_REF_V3_VERSION);
@@ -2837,7 +2817,7 @@ fn append_multi_ref_v3_header(out: &mut Vec<u8>, flags: u16, factor_count: u32, 
 fn append_bindings_packet(
     space: &Space,
     out: &mut Vec<u8>,
-    bindings: &BTreeMap<(u8, u8), ExprEnv>,
+    bindings: &Bindings,
     atom_indices: &[u32],
 ) -> Result<(), String> {
     append_u32_be(out, atom_indices.len() as u32);
@@ -2845,7 +2825,7 @@ fn append_bindings_packet(
         append_u32_be(out, idx);
     }
     append_u32_be(out, bindings.len() as u32);
-    for (&(key_a, key_b), expr_env) in bindings.iter() {
+    for ((key_a, key_b), expr_env) in bindings_in_key_order(bindings) {
         out.push(key_a);
         out.push(key_b);
         let rendered = bridge_expr_env_text(space, *expr_env)?;
@@ -2862,10 +2842,10 @@ fn expr_env_is_query_only_safe(expr_env: ExprEnv) -> bool {
 fn append_query_only_binding_entries(
     space: &Space,
     out: &mut Vec<u8>,
-    bindings: &BTreeMap<(u8, u8), ExprEnv>,
+    bindings: &Bindings,
 ) -> Result<(), String> {
     append_u32_be(out, bindings.len() as u32);
-    for (&(key_side, key_index), expr_env) in bindings.iter() {
+    for ((key_side, key_index), expr_env) in bindings_in_key_order(bindings) {
         if key_side != 0 {
             return Err(format!(
                 "query-only v2 packet rejected candidate-side binding key ({key_side},{key_index})"
@@ -2887,7 +2867,7 @@ fn append_query_only_binding_entries(
 fn append_query_only_v2_row(
     space: &Space,
     out: &mut Vec<u8>,
-    bindings: &BTreeMap<(u8, u8), ExprEnv>,
+    bindings: &Bindings,
 ) -> Result<(), String> {
     append_u32_be(out, 0);
     append_query_only_binding_entries(space, out, bindings)
@@ -2898,11 +2878,10 @@ fn append_empty_binding_row(out: &mut Vec<u8>) {
     append_u32_be(out, 0);
 }
 
-#[cfg(feature = "pathmap-space")]
 fn encode_contextual_query_value_rec(
     space: &Space,
     expr_env: ExprEnv,
-    bindings: &BTreeMap<(u8, u8), ExprEnv>,
+    bindings: &Bindings,
     row_vars: &mut BTreeMap<(u8, u8), u8>,
     origins: &mut BTreeMap<u8, (u8, u8)>,
     next_row_var: &mut u8,
@@ -2975,12 +2954,11 @@ fn encode_contextual_query_value_rec(
     Ok(true)
 }
 
-#[cfg(feature = "pathmap-space")]
 fn encode_contextual_query_binding(
     space: &Space,
     query_slot: u8,
     expr_env: ExprEnv,
-    bindings: &BTreeMap<(u8, u8), ExprEnv>,
+    bindings: &Bindings,
     chosen_entries: &[&ContextualQueryCandidate],
     opening_groups: Option<&[u32]>,
 ) -> Result<ContextualQueryBinding, String> {
@@ -3078,7 +3056,7 @@ fn query_bindings_packet(
     let mut rows: Vec<Vec<u8>> = Vec::new();
     let mut error: Option<String> = None;
 
-    Space::query_multi(&space.inner.btm, pattern_expr, |result, _matched_expr| {
+    with_mork_access(|| Space::query_multi(&space.inner.btm, pattern_expr, |result, _matched_expr| {
         let mut row = Vec::new();
         let append_result = match result {
             Ok(_refs) => {
@@ -3097,7 +3075,7 @@ fn query_bindings_packet(
                 false
             }
         }
-    });
+    }));
 
     if let Some(err) = error {
         return Err(err);
@@ -3136,7 +3114,7 @@ fn visit_query_bindings_query_only_v2_rows(
     let mut row_count = 0u64;
     let mut row = Vec::new();
 
-    Space::query_multi(&space.inner.btm, pattern_expr, |result, _matched_expr| {
+    with_mork_access(|| Space::query_multi(&space.inner.btm, pattern_expr, |result, _matched_expr| {
         row.clear();
         let append_result = match result {
             Ok(_refs) => {
@@ -3169,7 +3147,7 @@ fn visit_query_bindings_query_only_v2_rows(
                 false
             }
         }
-    });
+    }));
 
     if let Some(err) = error {
         return Err(err);
@@ -3308,7 +3286,7 @@ fn accumulate_contextual_query_rows(
 
         if let Ok(bindings) = unify(&mut stack) {
             let mut row = Vec::new();
-            for (&(side, idx), expr_env) in bindings.iter() {
+            for ((side, idx), expr_env) in bindings_in_key_order(&bindings) {
                 if side != 0 {
                     continue;
                 }
@@ -3424,7 +3402,7 @@ fn query_debug_text(space: &mut Space, pattern: &[u8]) -> Result<(Vec<u8>, u64),
     let mut count = 0u64;
     let mut error: Option<String> = None;
 
-    Space::query_multi(&space.btm, pattern_expr, |result, matched_expr| {
+    with_mork_access(|| Space::query_multi(&space.btm, pattern_expr, |result, matched_expr| {
         count += 1;
         let mut line = Vec::new();
         let append_result = (|| -> Result<(), String> {
@@ -3443,7 +3421,7 @@ fn query_debug_text(space: &mut Space, pattern: &[u8]) -> Result<(Vec<u8>, u64),
                 }
                 Err(bindings) => {
                     line.extend_from_slice(b" bindings=[");
-                    for (i, (&(key_a, key_b), expr_env)) in bindings.iter().enumerate() {
+                    for (i, ((key_a, key_b), expr_env)) in bindings_in_key_order(bindings).enumerate() {
                         if i != 0 {
                             line.extend_from_slice(b",");
                         }
@@ -3466,7 +3444,7 @@ fn query_debug_text(space: &mut Space, pattern: &[u8]) -> Result<(Vec<u8>, u64),
         line.push(b'\n');
         lines.extend_from_slice(&line);
         true
-    });
+    }));
 
     if let Some(err) = error {
         return Err(err);
@@ -4551,10 +4529,12 @@ pub extern "C" fn mork_space_step(space: *mut MorkSpace, steps: u64) -> MorkStat
             steps
         };
         let mut performed = 0u64;
-        while performed < limit && raw_space_has_exec(&bridge.inner) {
-            let _upstream_report = bridge.inner.metta_calculus(0);
-            performed += 1;
-        }
+        with_mork_access(|| {
+            while performed < limit && raw_space_has_exec(&bridge.inner) {
+                let _upstream_report = bridge.inner.metta_calculus(0);
+                performed += 1;
+            }
+        });
         MorkStatus::ok(performed)
     })
 }
@@ -5172,7 +5152,7 @@ pub extern "C" fn mork_cursor_descend_index(cursor: *mut MorkCursor, index: u64)
         };
         let mut rz = bridge.space.btm.read_zipper();
         rz.descend_to(&bridge.path);
-        let moved = rz.descend_indexed_byte(index.min(usize::MAX as u64) as usize);
+        let moved = rz.descend_indexed_byte(index.min(usize::MAX as u64) as usize).is_some();
         bridge.path = rz.path().to_vec();
         MorkStatus::ok(moved as u64)
     })
@@ -5187,7 +5167,7 @@ pub extern "C" fn mork_cursor_descend_first(cursor: *mut MorkCursor) -> MorkStat
         };
         let mut rz = bridge.space.btm.read_zipper();
         rz.descend_to(&bridge.path);
-        let moved = rz.descend_first_byte();
+        let moved = rz.descend_first_byte().is_some();
         bridge.path = rz.path().to_vec();
         MorkStatus::ok(moved as u64)
     })
@@ -5202,7 +5182,7 @@ pub extern "C" fn mork_cursor_descend_last(cursor: *mut MorkCursor) -> MorkStatu
         };
         let mut rz = bridge.space.btm.read_zipper();
         rz.descend_to(&bridge.path);
-        let moved = rz.descend_last_byte();
+        let moved = rz.descend_last_byte().is_some();
         bridge.path = rz.path().to_vec();
         MorkStatus::ok(moved as u64)
     })
@@ -5251,7 +5231,7 @@ pub extern "C" fn mork_cursor_ascend_until(cursor: *mut MorkCursor) -> MorkStatu
         };
         let mut rz = bridge.space.btm.read_zipper();
         rz.descend_to(&bridge.path);
-        let moved = rz.ascend_until();
+        let moved = rz.ascend_until() > 0;
         bridge.path = rz.path().to_vec();
         MorkStatus::ok(moved as u64)
     })
@@ -5266,7 +5246,7 @@ pub extern "C" fn mork_cursor_ascend_until_branch(cursor: *mut MorkCursor) -> Mo
         };
         let mut rz = bridge.space.btm.read_zipper();
         rz.descend_to(&bridge.path);
-        let moved = rz.ascend_until_branch();
+        let moved = rz.ascend_until_branch() > 0;
         bridge.path = rz.path().to_vec();
         MorkStatus::ok(moved as u64)
     })
@@ -5281,7 +5261,7 @@ pub extern "C" fn mork_cursor_next_sibling_byte(cursor: *mut MorkCursor) -> Mork
         };
         let mut rz = bridge.space.btm.read_zipper();
         rz.descend_to(&bridge.path);
-        let moved = rz.to_next_sibling_byte();
+        let moved = rz.to_next_sibling_byte().is_some();
         bridge.path = rz.path().to_vec();
         MorkStatus::ok(moved as u64)
     })
@@ -5296,7 +5276,7 @@ pub extern "C" fn mork_cursor_prev_sibling_byte(cursor: *mut MorkCursor) -> Mork
         };
         let mut rz = bridge.space.btm.read_zipper();
         rz.descend_to(&bridge.path);
-        let moved = rz.to_prev_sibling_byte();
+        let moved = rz.to_prev_sibling_byte().is_some();
         bridge.path = rz.path().to_vec();
         MorkStatus::ok(moved as u64)
     })
@@ -5862,7 +5842,7 @@ pub extern "C" fn mork_product_cursor_descend_index(
             Ok(prz) => prz,
             Err(err) => return err,
         };
-        let moved = prz.descend_indexed_byte(index.min(usize::MAX as u64) as usize);
+        let moved = prz.descend_indexed_byte(index.min(usize::MAX as u64) as usize).is_some();
         let next_path = prz.path().to_vec();
         drop(prz);
         bridge.path = next_path;
@@ -5881,7 +5861,7 @@ pub extern "C" fn mork_product_cursor_descend_first(cursor: *mut MorkProductCurs
             Ok(prz) => prz,
             Err(err) => return err,
         };
-        let moved = prz.descend_first_byte();
+        let moved = prz.descend_first_byte().is_some();
         let next_path = prz.path().to_vec();
         drop(prz);
         bridge.path = next_path;
@@ -5900,7 +5880,7 @@ pub extern "C" fn mork_product_cursor_descend_last(cursor: *mut MorkProductCurso
             Ok(prz) => prz,
             Err(err) => return err,
         };
-        let moved = prz.descend_last_byte();
+        let moved = prz.descend_last_byte().is_some();
         let next_path = prz.path().to_vec();
         drop(prz);
         bridge.path = next_path;
@@ -5961,7 +5941,7 @@ pub extern "C" fn mork_product_cursor_ascend_until(cursor: *mut MorkProductCurso
             Ok(prz) => prz,
             Err(err) => return err,
         };
-        let moved = prz.ascend_until();
+        let moved = prz.ascend_until() > 0;
         let next_path = prz.path().to_vec();
         drop(prz);
         bridge.path = next_path;
@@ -5982,7 +5962,7 @@ pub extern "C" fn mork_product_cursor_ascend_until_branch(
             Ok(prz) => prz,
             Err(err) => return err,
         };
-        let moved = prz.ascend_until_branch();
+        let moved = prz.ascend_until_branch() > 0;
         let next_path = prz.path().to_vec();
         drop(prz);
         bridge.path = next_path;
@@ -6003,7 +5983,7 @@ pub extern "C" fn mork_product_cursor_next_sibling_byte(
             Ok(prz) => prz,
             Err(err) => return err,
         };
-        let moved = prz.to_next_sibling_byte();
+        let moved = prz.to_next_sibling_byte().is_some();
         let next_path = prz.path().to_vec();
         drop(prz);
         bridge.path = next_path;
@@ -6024,7 +6004,7 @@ pub extern "C" fn mork_product_cursor_prev_sibling_byte(
             Ok(prz) => prz,
             Err(err) => return err,
         };
-        let moved = prz.to_prev_sibling_byte();
+        let moved = prz.to_prev_sibling_byte().is_some();
         let next_path = prz.path().to_vec();
         drop(prz);
         bridge.path = next_path;
@@ -6294,7 +6274,7 @@ pub extern "C" fn mork_overlay_cursor_descend_index(
             Ok(oz) => oz,
             Err(err) => return err,
         };
-        let moved = oz.descend_indexed_byte(index.min(usize::MAX as u64) as usize);
+        let moved = oz.descend_indexed_byte(index.min(usize::MAX as u64) as usize).is_some();
         let next_path = oz.path().to_vec();
         drop(oz);
         bridge.path = next_path;
@@ -6313,7 +6293,7 @@ pub extern "C" fn mork_overlay_cursor_descend_first(cursor: *mut MorkOverlayCurs
             Ok(oz) => oz,
             Err(err) => return err,
         };
-        let moved = oz.descend_first_byte();
+        let moved = oz.descend_first_byte().is_some();
         let next_path = oz.path().to_vec();
         drop(oz);
         bridge.path = next_path;
@@ -6332,7 +6312,7 @@ pub extern "C" fn mork_overlay_cursor_descend_last(cursor: *mut MorkOverlayCurso
             Ok(oz) => oz,
             Err(err) => return err,
         };
-        let moved = oz.descend_last_byte();
+        let moved = oz.descend_last_byte().is_some();
         let next_path = oz.path().to_vec();
         drop(oz);
         bridge.path = next_path;
@@ -6393,7 +6373,7 @@ pub extern "C" fn mork_overlay_cursor_ascend_until(cursor: *mut MorkOverlayCurso
             Ok(oz) => oz,
             Err(err) => return err,
         };
-        let moved = oz.ascend_until();
+        let moved = oz.ascend_until() > 0;
         let next_path = oz.path().to_vec();
         drop(oz);
         bridge.path = next_path;
@@ -6414,7 +6394,7 @@ pub extern "C" fn mork_overlay_cursor_ascend_until_branch(
             Ok(oz) => oz,
             Err(err) => return err,
         };
-        let moved = oz.ascend_until_branch();
+        let moved = oz.ascend_until_branch() > 0;
         let next_path = oz.path().to_vec();
         drop(oz);
         bridge.path = next_path;
@@ -6435,7 +6415,7 @@ pub extern "C" fn mork_overlay_cursor_next_sibling_byte(
             Ok(oz) => oz,
             Err(err) => return err,
         };
-        let moved = oz.to_next_sibling_byte();
+        let moved = oz.to_next_sibling_byte().is_some();
         let next_path = oz.path().to_vec();
         drop(oz);
         bridge.path = next_path;
@@ -6456,7 +6436,7 @@ pub extern "C" fn mork_overlay_cursor_prev_sibling_byte(
             Ok(oz) => oz,
             Err(err) => return err,
         };
-        let moved = oz.to_prev_sibling_byte();
+        let moved = oz.to_prev_sibling_byte().is_some();
         let next_path = oz.path().to_vec();
         drop(oz);
         bridge.path = next_path;
@@ -7570,7 +7550,7 @@ pub extern "C" fn mork_context_run(context: *mut MorkContext, steps: u64) -> Mor
         } else {
             steps as usize
         };
-        let performed = exec_space.metta_calculus(capped);
+        let performed = with_mork_access(|| exec_space.metta_calculus(capped));
         bridge.inner = exec_space;
         bridge.program_chunks.clear();
         MorkStatus::ok(performed as u64)
@@ -8157,6 +8137,41 @@ mod tests {
         assert_eq!(data[37], b'b');
         mork_bytes_free(packet.data, packet.len);
         mork_space_free(raw);
+    }
+
+    #[test]
+    fn independent_raw_and_counted_spaces_query_concurrently() {
+        let _guard = test_guard();
+        let barrier = Arc::new(std::sync::Barrier::new(4));
+        let workers: Vec<_> = (0..4).map(|worker| {
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                // Create and destroy each handle on its owning thread.
+                let space = if worker % 2 == 0 {
+                    mork_space_new()
+                } else {
+                    mork_space_new_pathmap()
+                };
+                assert!(!space.is_null());
+                let facts = b"(pair a b)\n(pair a c)";
+                let added = mork_space_add_sexpr(space, facts.as_ptr(), facts.len());
+                assert!(status_ok(&added));
+                barrier.wait();
+                for _ in 0..64 {
+                    let query = b"(pair a $x)";
+                    let packet = mork_space_query_bindings_query_only_v2(
+                        space, query.as_ptr(), query.len(),
+                    );
+                    assert!(buffer_ok(&packet));
+                    assert_eq!(packet.count, 2);
+                    mork_bytes_free(packet.data, packet.len);
+                }
+                mork_space_free(space);
+            })
+        }).collect();
+        for worker in workers {
+            worker.join().expect("independent FFI worker completed");
+        }
     }
 
     #[test]
@@ -9774,7 +9789,7 @@ mod tests {
             &space,
             1,
             ExprEnv::new(0, expr),
-            &BTreeMap::new(),
+            &Bindings::new(),
             &[],
             None,
         )
@@ -9960,7 +9975,7 @@ mod tests {
 
         space.add_all_sexpr(&input).unwrap();
 
-        let ran = space.metta_calculus(1);
+        let ran = with_mork_access(|| space.metta_calculus(1));
         assert_eq!(ran, 1);
 
         let mut text = Vec::new();
@@ -10079,7 +10094,7 @@ mod tests {
 
         let mut oz = build_overlay_zipper(&bridge).expect("overlay zipper should build");
         assert_eq!(oz.path(), &[1u8]);
-        assert!(oz.descend_first_byte());
+        assert!(oz.descend_first_byte().is_some());
         assert_eq!(oz.path(), &[1u8, 2u8]);
     }
 
@@ -10113,6 +10128,48 @@ mod tests {
         mork_overlay_cursor_free(cursor);
         mork_space_free(base);
         mork_space_free(overlay);
+    }
+
+    #[test]
+    fn ffi_cursor_movement_keeps_boolean_status_for_zero_bytes_and_long_ascents() {
+        let _guard = test_guard();
+        let mut snapshot = PathMap::new();
+        snapshot.insert([0u8, 1, 2, 3], ());
+        let left = bridge_space_from_snapshot(snapshot.clone()).unwrap();
+        let right = bridge_space_from_snapshot(snapshot).unwrap();
+        let factors = [left as *const MorkSpace, right as *const MorkSpace];
+
+        macro_rules! check_cursor {
+            ($cursor:expr, $first:ident, $until:ident, $up:ident, $reset:ident, $free:ident) => {{
+                let cursor = $cursor;
+                assert!(!cursor.is_null());
+                let first = $first(cursor);
+                assert!(status_ok(&first));
+                assert_eq!(first.value, 1, "moving to byte zero succeeds");
+                let down = $until(cursor);
+                assert!(status_ok(&down));
+                assert_eq!(down.value, 1);
+                let up = $up(cursor);
+                assert!(status_ok(&up));
+                assert_eq!(up.value, 1, "a long ascent reports movement, not its length");
+                assert!(status_ok(&$reset(cursor)));
+                let up = $up(cursor);
+                assert!(status_ok(&up));
+                assert_eq!(up.value, 0, "ascending at the root stays put");
+                $free(cursor);
+            }};
+        }
+        check_cursor!(mork_cursor_new(left), mork_cursor_descend_first,
+            mork_cursor_descend_until, mork_cursor_ascend_until,
+            mork_cursor_reset, mork_cursor_free);
+        check_cursor!(mork_product_cursor_new(factors.as_ptr(), factors.len()), mork_product_cursor_descend_first,
+            mork_product_cursor_descend_until, mork_product_cursor_ascend_until,
+            mork_product_cursor_reset, mork_product_cursor_free);
+        check_cursor!(mork_overlay_cursor_new(left, right), mork_overlay_cursor_descend_first,
+            mork_overlay_cursor_descend_until, mork_overlay_cursor_ascend_until,
+            mork_overlay_cursor_reset, mork_overlay_cursor_free);
+        mork_space_free(left);
+        mork_space_free(right);
     }
 
     #[test]

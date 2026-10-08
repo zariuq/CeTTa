@@ -5,9 +5,9 @@
 # The corpus deliberately mixes provenance: CeTTa's own examples, tests and
 # conformance fixtures, MORK's upstream kernel resources, and mm2-chainer's
 # examples pinned to a DIFFERENT MORK fork (marked fork-skip: their kernel is
-# not ours, so a failure there says nothing about CeTTa).  External files are
-# referenced in place rather than vendored, so
-# rows whose source checkout is absent are reported as `missing`, not failed.
+# not ours, so a failure there says nothing about CeTTa). Chainer inputs are
+# pinned fixtures; MORK resources are referenced in the dependency checkout.
+# Rows whose dependency checkout is absent are reported as `missing`.
 #
 # Requires a bridge-enabled binary: build with `make BUILD=mork cetta`.
 # Without it every row reports a bridge error, which the sweep reveals
@@ -19,9 +19,9 @@ set -uo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 manifest="$root/benchmarks/mm2_corpus/manifest.tsv"
-bin="$root/cetta"
-: "${AIHUB:=$(cd "$root/../.." && pwd)}"
-export AIHUB
+bin="${CETTA_BIN:-$root/cetta}"
+: "${CETTA_ROOT:=$root}"
+: "${MORK_REPO_DIR:=$root/../MORK}"
 
 [ -x "$bin" ] || { echo "no cetta binary at $bin (make BUILD=mork cetta)" >&2; exit 2; }
 [ -f "$manifest" ] || { echo "no manifest at $manifest" >&2; exit 2; }
@@ -40,7 +40,8 @@ while IFS=$'\t' read -r name origin path want_status want_atoms; do
         rows+="$name\t$origin\t$path\tfork-skip\t0\n"
         continue
     fi
-    file="$(eval echo "$path")"
+    file="${path//'$CETTA_ROOT'/$CETTA_ROOT}"
+    file="${file//'$MORK_REPO_DIR'/$MORK_REPO_DIR}"
     if [ ! -f "$file" ]; then
         missing=$((missing + 1))
         printf '%-44s %-18s MISSING\n' "$name" "$origin"
@@ -64,7 +65,7 @@ while IFS=$'\t' read -r name origin path want_status want_atoms; do
 done < "$manifest"
 
 if [ "$update" = 1 ]; then
-    { printf 'name\torigin\tpath\tstatus\tatoms\n'; printf "$rows"; } > "$manifest"
+    { printf 'name\torigin\tpath\tstatus\tatoms\n'; printf '%b' "$rows"; } > "$manifest"
     echo "manifest updated"
 fi
 

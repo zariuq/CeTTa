@@ -1,6 +1,6 @@
 use cetta_pathmap_adapter::{OverlayZipper, ZipperSnapshotExt};
 use pathmap::PathMap;
-use pathmap::zipper::{Zipper, ZipperMoving, ZipperValues};
+use pathmap::zipper::{Zipper, ZipperMoving, ZipperPath, ZipperValuesAt};
 
 #[test]
 fn snapshot_extension_roots_focus_value() {

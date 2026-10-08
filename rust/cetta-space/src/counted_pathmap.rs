@@ -5,16 +5,18 @@ use crate::parse_single_expr;
 #[cfg(test)]
 use crate::render_bridge_expr_text;
 use crate::{
-    expr_span_bytes, stable_bridge_expr_bytes, stable_bridge_expr_packet_bytes, validate_expr_bytes,
+    bindings_in_key_order, expr_span_bytes, stable_bridge_expr_bytes, stable_bridge_expr_packet_bytes,
+    validate_expr_bytes,
 };
 use mork::space::Space;
 #[cfg(test)]
 use mork_expr::serialize;
-use mork_expr::{Expr, ExprZipper, apply};
+use mork_expr::{Bindings, Expr, ExprZipper, apply};
 #[cfg(feature = "pathmap-space")]
-use mork_expr::{ExprEnv, Tag, byte_item, unify};
+use mork_expr::{ExprEnv, Tag, byte_item};
+use crate::bridge_unify as unify;
 use pathmap::zipper::{
-    Zipper, ZipperAbsolutePath, ZipperCreation, ZipperIteration, ZipperMoving, ZipperWriting,
+    Zipper, ZipperAbsolutePath, ZipperCreation, ZipperIteration, ZipperMoving, ZipperPath, ZipperWriting,
 };
 use std::collections::BTreeMap;
 
@@ -548,7 +550,7 @@ const BRIDGE_VALUE_TAG_VARREF: u8 = 0x03;
 fn encode_expr_env_packet_row(
     space: &Space,
     expr_env: ExprEnv,
-    bindings: &BTreeMap<(u8, u8), ExprEnv>,
+    bindings: &Bindings,
     row_vars: &mut BTreeMap<(u8, u8), u8>,
     next_row_var: &mut u8,
     resolving: &mut Vec<(u8, u8)>,
@@ -808,7 +810,7 @@ pub fn counted_factor_candidates(
 #[cfg(feature = "pathmap-space")]
 fn materialized_expr_env_size(
     expr_env: ExprEnv,
-    bindings: &BTreeMap<(u8, u8), ExprEnv>,
+    bindings: &Bindings,
     stack: &mut Vec<(u8, u8)>,
 ) -> Result<usize, String> {
     if let Some(var) = expr_env.var_opt() {
@@ -843,7 +845,7 @@ fn materialized_expr_env_size(
 #[cfg(feature = "pathmap-space")]
 fn materialize_expr_env_bytes(
     expr_env: ExprEnv,
-    bindings: &BTreeMap<(u8, u8), ExprEnv>,
+    bindings: &Bindings,
 ) -> Result<Vec<u8>, String> {
     let mut stack = Vec::new();
     let cap = materialized_expr_env_size(expr_env, bindings, &mut stack)?.saturating_add(64);
@@ -874,11 +876,10 @@ fn materialize_expr_env_bytes(
 #[cfg(feature = "pathmap-space")]
 fn query_binding_signature(
     space: &Space,
-    bindings: &BTreeMap<(u8, u8), ExprEnv>,
+    bindings: &Bindings,
 ) -> Result<Vec<(u8, u8, bool, Vec<u8>)>, String> {
-    bindings
-        .iter()
-        .filter_map(|(&(side, idx), expr_env)| {
+    bindings_in_key_order(bindings)
+        .filter_map(|((side, idx), expr_env)| {
             if side != 0 {
                 return None;
             }
@@ -902,12 +903,12 @@ fn query_binding_signature(
 #[cfg(feature = "pathmap-space")]
 fn query_binding_signature_packet(
     space: &Space,
-    bindings: &BTreeMap<(u8, u8), ExprEnv>,
+    bindings: &Bindings,
 ) -> Result<Vec<(u8, u8, bool, Vec<u8>)>, String> {
     let mut row_vars = BTreeMap::<(u8, u8), u8>::new();
     let mut next_row_var = 0u8;
     let mut out = Vec::new();
-    for (&(side, idx), expr_env) in bindings.iter() {
+    for ((side, idx), expr_env) in bindings_in_key_order(bindings) {
         if side != 0 {
             continue;
         }
@@ -1166,12 +1167,8 @@ impl CountedGeneralQueryCursor {
             let mut factor_counts = Vec::with_capacity(self.factor_envs.len());
             for factor_idx in 0..self.factor_envs.len() {
                 let factor = self.factor_envs[factor_idx];
-                let factor_expr_env = ExprEnv {
-                    n: factor.namespace,
-                    v: factor.variable_offset,
-                    offset: factor.byte_offset,
-                    base: pattern_expr,
-                };
+                let factor_expr_env = ExprEnv::with_intro(factor.namespace, factor.variable_offset, pattern_expr)
+                    .offset(factor.byte_offset);
                 let chosen_entry = &self.candidate_lists[factor_idx][self.indices[factor_idx]];
                 let atom_expr = Expr {
                     ptr: chosen_entry.atom_expr_bytes.as_ptr().cast_mut(),
@@ -1218,12 +1215,8 @@ impl CountedGeneralQueryCursor {
             let mut multiplicity = 1u64;
             for factor_idx in 0..self.factor_envs.len() {
                 let factor = self.factor_envs[factor_idx];
-                let factor_expr_env = ExprEnv {
-                    n: factor.namespace,
-                    v: factor.variable_offset,
-                    offset: factor.byte_offset,
-                    base: pattern_expr,
-                };
+                let factor_expr_env = ExprEnv::with_intro(factor.namespace, factor.variable_offset, pattern_expr)
+                    .offset(factor.byte_offset);
                 let chosen_entry = &self.candidate_lists[factor_idx][self.indices[factor_idx]];
                 let atom_expr = Expr {
                     ptr: chosen_entry.atom_expr_bytes.as_ptr().cast_mut(),

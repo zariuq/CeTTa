@@ -1335,7 +1335,8 @@ static bool he_canonical_match_schedule(Space *s, Arena *a, Atom *atom,
     } else if (nargs == 3u) {
         CettaMorkSpaceHandle *bridge = NULL;
         if (g_library_context && cetta_library_lookup_explicit_mork_bridge(
-                g_library_context, expr_arg(atom, 0), &bridge) && bridge)
+                g_library_context, resolve_registry_refs(a, expr_arg(atom, 0)),
+                &bridge) && bridge)
             return false;
     } else
         return false;
@@ -1621,6 +1622,8 @@ static void he_canonical_resume_match(HeCanonicalFrame *frame) {
             bindings_free(&projected);
             return;
         }
+        if (registers->len > 1u)
+            match_chain_note_progress((uint32_t)registers->len, "canonical");
         Atom *body = bindings_apply_if_vars(&projected, a, frame->live[0]);
         Space *target = match_result_target_space(body, a);
         bool snapshot = !frame->sourced_match && !frame->preserve_bindings &&

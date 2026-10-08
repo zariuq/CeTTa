@@ -8,6 +8,7 @@ default = ["pathmap-space"]
 pathmap-space = []
 
 [dependencies]
+smallvec = { workspace = true }
 mork = { workspace = true }
 mork-expr = { workspace = true }
 mork-frontend = { workspace = true }
