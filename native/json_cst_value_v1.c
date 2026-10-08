@@ -856,10 +856,11 @@ static Atom *json_value(JsonElabV1 *ctx, Atom *term, uint32_t depth) {
     return NULL;
 }
 
-bool cetta_json_cst_value_v1_elaborate(
+bool cetta_json_cst_value_v1_elaborate_family(
     const CettaJsonElaborationPlanV1 *plan,
     Arena *arena,
-    Atom *json_text_cst,
+    Atom *const *json_text_csts,
+    size_t cst_count,
     uint32_t work_limit,
     uint32_t depth_limit,
     Atom **out,
@@ -868,12 +869,11 @@ bool cetta_json_cst_value_v1_elaborate(
     size_t error_buf_size) {
     JsonElabV1 ctx;
     ArenaMark mark;
-    Atom **children = NULL;
     Atom *value = NULL;
     if (error_buf && error_buf_size > 0u) error_buf[0] = '\0';
     if (status) *status = CETTA_JSON_CST_VALUE_V1_BAD_ARGUMENT;
-    if (!plan || !arena || !json_text_cst || !out || work_limit == 0u ||
-        depth_limit == 0u) {
+    if (!plan || !arena || !json_text_csts || cst_count == 0u ||
+        !json_text_csts[0] || !out || work_limit == 0u || depth_limit == 0u) {
         if (error_buf && error_buf_size > 0u) {
             (void)snprintf(error_buf, error_buf_size,
                            "bad JSON CST elaboration arguments");
@@ -891,25 +891,56 @@ bool cetta_json_cst_value_v1_elaborate(
         .error = error_buf,
         .error_size = error_buf_size,
     };
-    if (!json_cst_is(&ctx, json_text_cst, CETTA_JSON_ELAB_TEXT_V1,
-                     &children) ||
-        !json_whitespace(&ctx, children[0], 1u) ||
-        !json_whitespace(&ctx, children[2], 1u)) {
-        if (ctx.status == CETTA_JSON_CST_VALUE_V1_OK) {
-            json_elab_error(&ctx, CETTA_JSON_CST_VALUE_V1_MALFORMED_CST,
-                            "expected the authored json:text CST root");
+    for (size_t index = 0u; index < cst_count; index++) {
+        Atom **children = NULL;
+        Atom *candidate = NULL;
+        ArenaMark candidate_mark = arena_mark(arena);
+        if (!json_cst_is(&ctx, json_text_csts[index], CETTA_JSON_ELAB_TEXT_V1,
+                         &children) ||
+            !json_whitespace(&ctx, children[0], 1u) ||
+            !json_whitespace(&ctx, children[2], 1u)) {
+            if (ctx.status == CETTA_JSON_CST_VALUE_V1_OK) {
+                json_elab_error(&ctx, CETTA_JSON_CST_VALUE_V1_MALFORMED_CST,
+                                "expected the authored json:text CST root");
+            }
+            goto failed;
         }
-    } else {
-        value = json_value(&ctx, children[1], 1u);
-    }
-    if (!value) {
-        arena_reset(arena, mark);
-        if (status) *status = ctx.status;
-        return false;
+        candidate = json_value(&ctx, children[1], 1u);
+        if (!candidate) goto failed;
+        if (index == 0u) {
+            value = candidate;
+        } else {
+            if (!atom_eq(value, candidate)) {
+                json_elab_error(&ctx, CETTA_JSON_CST_VALUE_V1_AMBIGUOUS,
+                                "JSON parses elaborate to distinct values");
+                goto failed;
+            }
+            arena_reset(arena, candidate_mark);
+        }
     }
     *out = value;
     if (status) *status = CETTA_JSON_CST_VALUE_V1_OK;
     return true;
+
+failed:
+    arena_reset(arena, mark);
+    if (status) *status = ctx.status;
+    return false;
+}
+
+bool cetta_json_cst_value_v1_elaborate(
+    const CettaJsonElaborationPlanV1 *plan,
+    Arena *arena,
+    Atom *json_text_cst,
+    uint32_t work_limit,
+    uint32_t depth_limit,
+    Atom **out,
+    CettaJsonCstValueV1Status *status,
+    char *error_buf,
+    size_t error_buf_size) {
+    return cetta_json_cst_value_v1_elaborate_family(
+        plan, arena, &json_text_cst, 1u, work_limit, depth_limit,
+        out, status, error_buf, error_buf_size);
 }
 
 const char *cetta_json_cst_value_v1_status_name(
@@ -923,6 +954,7 @@ const char *cetta_json_cst_value_v1_status_name(
     case CETTA_JSON_CST_VALUE_V1_RESOURCE_LIMIT: return "resource-limit";
     case CETTA_JSON_CST_VALUE_V1_ALLOCATION_FAILURE:
         return "allocation-failure";
+    case CETTA_JSON_CST_VALUE_V1_AMBIGUOUS: return "ambiguous";
     }
     return "unknown";
 }

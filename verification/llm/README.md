@@ -221,8 +221,17 @@ After rejecting duplicate keys, the decoder converts the occurrence-preserving
 JSON AST directly into the historical AST with `json:to-legacy`; it does not
 serialize and reparse that intermediate value. Parser or conversion exhaustion
 returns `protocol-resource-limit`, separately from invalid or ambiguous JSON.
-Large-context performance, long-running retention and streaming allocation
-bounds still need matched measurements.
+Codec qualification includes whitespace-formatted empty arrays and objects,
+and exact preservation of a 64 KiB provider text in HE and PeTTa. Multiple
+complete syntax derivations succeed only when every derivation elaborates to
+the same exact JSON value; different number spellings, duplicate occurrences,
+member order and source spans remain distinct.
+
+Large inputs still build a complete intermediate parse forest, and stringify
+reparses its output to check the round trip. A response within the HTTP byte
+cap can therefore exhaust the JSON work budget. Broader large-context
+performance, long-running retention and streaming allocation bounds remain
+open.
 
 ## Evidence and useful precedents
 

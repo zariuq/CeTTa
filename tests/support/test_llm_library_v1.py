@@ -161,6 +161,23 @@ class CodecFixtures(unittest.TestCase):
         self.assertEqual([i["choice_index"] for i in result["items"]], [0, 1])
         self.assertEqual(result["items"][1]["termination"], {"normalized": "unknown", "raw": "future", "details": None})
 
+    def test_empty_provider_containers_accept_whitespace(self):
+        wire = {"id": "whitespace", "choices": [{"index": 0, "message": {
+            "role": "assistant", "content": "ok", "tool_calls": []},
+            "finish_reason": "stop"}], "extension": {}}
+        text = json.dumps(wire).replace("[]", "[ ]").replace("{}", "{ }")
+        result = self.each_dialect([self.decode("chat-completions", text)])[0]
+        self.assertEqual(result["native"], wire)
+        self.assertEqual(result["items"][0]["parts"][0]["text"], "ok")
+
+    def test_large_provider_text_is_preserved_exactly(self):
+        text = "response" * 8192
+        wire = {"id": "large", "choices": [{"index": 0, "message": {
+            "role": "assistant", "content": text}, "finish_reason": "stop"}]}
+        result = self.each_dialect([self.decode("chat-completions", wire)])[0]
+        self.assertEqual(result["native"], wire)
+        self.assertEqual(result["items"][0]["parts"][0]["text"], text)
+
     def test_malformed_known_blocks_and_duplicates_are_errors(self):
         expressions = [self.decode("anthropic", {"content": [{"type": "text", "text": 3}]}),
             self.decode("anthropic", {"content": [{"type": "thinking", "thinking": "text"}]}),
