@@ -90,6 +90,10 @@ typedef struct {
      * slots, so such a goal, and a relation that reaches it, stays with the
      * search machine, which keeps the delayed goals.  NULL: none may. */
     bool (*may_delay)(void *context, SymbolId head, uint32_t arity);
+    /* Whether an operation retains variable identities in an opaque value.
+     * Until the region can transport those dependencies between host calls,
+     * the complete relation stays in the canonical search machine. */
+    bool (*retains_variable_identity)(void *context, SymbolId head);
     /* Whether a let binder that only counting operations read takes its
      * producer's count, as the search machine's let/count fusion does. */
     bool count_fusion;

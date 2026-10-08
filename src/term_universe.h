@@ -447,6 +447,9 @@ const char *tu_bigint_cstr(const TermUniverse *universe, AtomId id);
 const char *tu_rational_cstr(const TermUniverse *universe, AtomId id);
 /* The id of child `idx` of the expression `id`: its payload follows its
  * header, one id per child at the store format's width. */
+#if defined(__GNUC__)
+__attribute__((always_inline))
+#endif
 static inline AtomId tu_child(const TermUniverse *universe, AtomId id,
                               CettaExprIndex idx) {
     const CettaTermHdr *hdr = tu_hdr(universe, id);

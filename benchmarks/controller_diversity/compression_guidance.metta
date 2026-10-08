@@ -19,4 +19,4 @@
 (= (controller-diversity:compression-choice)
    (controller-diversity:compression-loop Z))
 
-!(controller-diversity:compression-choice)
+!(once (controller-diversity:compression-choice))

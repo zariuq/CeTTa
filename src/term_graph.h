@@ -105,6 +105,93 @@ Atom *term_graph_open_value(Arena *arena, Atom *atom);
 bool term_graph_value_eq(Atom *left, Atom *right,
                          bool (*leaf_eq)(Atom *, Atom *));
 
+typedef enum {
+    CETTA_TERM_ORDER_LESS = -1,
+    CETTA_TERM_ORDER_EQUAL = 0,
+    CETTA_TERM_ORDER_GREATER = 1,
+    CETTA_TERM_ORDER_INCOMPARABLE = 2,
+    CETTA_TERM_ORDER_INVALID = 3,
+    CETTA_TERM_ORDER_NO_MEMORY = 4,
+} CettaTermOrder;
+
+/* Lexical partial term-graph order with PeTTa's leaf classes, numbers and variable identities.
+ * A cyclic chain of first unequal children is incomparable.
+ * List cells retain their ordered head/tail positions. Ordinary compounds
+ * sort after cells, then by arity and name. Finite ordinary expressions agree with petta_semantics_term_compare. Leaf resource
+ * identity is session-local; variable instantiation may change the result.
+ * The product graph retains carrier environments in its keys. Each reachable
+ * pair and edge is processed a bounded number of times; it never materializes
+ * an unfolding. Invalid/unbound graph parameters and allocation failure are
+ * separate from a mathematically incomparable pair. */
+CettaTermOrder term_graph_value_compare(
+    Atom *left, Atom *right);
+
+typedef enum {
+    CETTA_TERM_MATCH_OK,
+    CETTA_TERM_MATCH_MISMATCH,
+    CETTA_TERM_MATCH_INVALID,
+    CETTA_TERM_MATCH_NO_MEMORY,
+} CettaTermMatchStatus;
+
+typedef enum {
+    /* The left pattern may bind; the right subject is protected. */
+    CETTA_TERM_MATCH_FORWARD,
+    /* The right pattern may bind; the left subject is protected. */
+    CETTA_TERM_MATCH_REVERSE,
+    /* One bijection between variable identities across the entire batch. */
+    CETTA_TERM_MATCH_VARIANT,
+} CettaTermMatchMode;
+
+typedef struct {
+    Atom *left;
+    Atom *right;
+} CettaTermMatchPair;
+
+typedef struct {
+    Atom **variables;
+    Atom **values;
+    uint32_t count;
+} CettaTermMatch;
+
+/* An immutable successful prefix. Its images are simultaneous, and subject
+ * identities remain protected when a later constraint captures them again.
+ * Arrays live in the result arena; atoms borrow the input lifetimes. */
+typedef struct {
+    CettaTermMatch images;
+    Atom **protected_variables;
+    uint32_t protected_count;
+    CettaTermMatchMode mode;
+} CettaTermMatchState;
+
+/* Extend a checked prefix without revisiting its term graphs. A newly
+ * protected identity must agree with every earlier image. On mismatch or
+ * fault both the previous state and out remain unchanged. A NULL previous
+ * state starts an attempt; modes cannot change within an attempt. */
+CettaTermMatchStatus term_graph_match_extend(
+    Arena *arena, const CettaTermMatchState *previous,
+    const CettaTermMatchPair *pairs, size_t count, CettaTermMatchMode mode,
+    bool (*leaf_eq)(Atom *, Atom *), CettaTermMatchState *out);
+
+/* Joint matching over immutable graph views. Every subject variable in the
+ * whole batch stays protected, including identities also used in a pattern.
+ * Repeated holes compare subject values without binding them. Variant mode
+ * returns a simultaneous renaming, not a recursively dereferenced binding
+ * environment. Cyclic graph views use the same unfolding equality as the
+ * existing graph equality service.
+ *
+ * leaf_eq must be an equivalence preserving rigid variable identity. Inputs
+ * are neither mutated nor evaluated. The arrays live in arena and their
+ * values borrow input syntax: capture or transport before inputs expire.
+ * Failure leaves out unchanged; allocation faults retain the arena/runtime
+ * allocator's fault contract and never become logical mismatch. */
+CettaTermMatchStatus term_graph_match_many(
+    Arena *arena, const CettaTermMatchPair *pairs, size_t count,
+    CettaTermMatchMode mode, bool (*leaf_eq)(Atom *, Atom *), CettaTermMatch *out);
+
+CettaTermMatchStatus term_graph_match_pattern(
+    Arena *arena, Atom *pattern, Atom *subject,
+    bool (*leaf_eq)(Atom *, Atom *), CettaTermMatch *out);
+
 /* A hash of an atom's unfolding, `leaf_hash` on its leaves: atoms that
  * term_graph_value_eq equates under a leaf equality `leaf_hash` respects
  * hash alike. */

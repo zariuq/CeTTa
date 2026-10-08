@@ -534,6 +534,7 @@ def run_engine(
     python_libdir: Path,
     mechanism_stats: bool = False,
     measure_instructions: bool = False,
+    profile: str = "default",
 ) -> dict[str, object]:
     raw = scratch / f"{name}.{sample}.stdout"
     error = scratch / f"{name}.{sample}.stderr"
@@ -554,6 +555,8 @@ def run_engine(
         if mechanism_stats:
             command.append("--emit-runtime-stats")
         command.extend(("--lang", language))
+        if profile != "default":
+            command.extend(("--profile", profile))
         if row["oracle"] == "count":
             command.append("--count-only")
         command.append(str(source))
@@ -619,7 +622,8 @@ def run_engine(
         invocations, runtime_counters, ordinary_stderr = extract_observability(
             stderr_text
         )
-        machine_stats = aggregate_invocations(invocations)
+        machine_stats = (aggregate_invocations(invocations)
+                         if invocations or language == "petta" else None)
         if not runtime_counters:
             raise RuntimeError(
                 f"{name} emitted no runtime counters on {row['id']}"
@@ -819,6 +823,10 @@ def main() -> int:
     )
     parser.add_argument("--reference-cetta", type=Path)
     parser.add_argument("--reference-cetta-build-class")
+    parser.add_argument("--cetta-profile", choices=("default", "extended"),
+                        default="default")
+    parser.add_argument("--reference-cetta-profile", choices=("default", "extended"),
+                        default="default")
     parser.add_argument("--stats-cetta", type=Path)
     parser.add_argument("--stats-cetta-build-class")
     parser.add_argument("--stats-runs", type=int, default=1)
@@ -875,6 +883,7 @@ def main() -> int:
         "cetta_git_revision": run_text(["git", "rev-parse", "HEAD"], cwd=ROOT),
         "cetta_source_tree_sha256": source_tree_sha256(),
         "cetta_build_class": args.cetta_build_class,
+        "cetta_profile": args.cetta_profile,
         "compiler": run_text(["gcc", "--version"]).splitlines()[0],
         "cetta_petta_route": "search-machine",
         "environment": (
@@ -906,6 +915,7 @@ def main() -> int:
         identities["reference_cetta_build_class"] = (
             args.reference_cetta_build_class
         )
+        identities["reference_cetta_profile"] = args.reference_cetta_profile
     if args.instructions:
         identities["perf"] = run_text(["perf", "--version"])
     print("IDENTITY\t" + "\t".join(f"{key}={value}" for key, value in identities.items()))
@@ -939,6 +949,9 @@ def main() -> int:
                         petta_root,
                         python_libdir,
                         measure_instructions=args.instructions,
+                        profile=(args.reference_cetta_profile
+                                 if name == "reference-cetta-petta"
+                                 else args.cetta_profile),
                     )
                     result["run_sequence"] = len(row_results) + 1
                     row_results.append(result)
@@ -985,6 +998,7 @@ def main() -> int:
                         petta_root,
                         python_libdir,
                         mechanism_stats=True,
+                        profile=args.cetta_profile,
                     )
                     row_mechanisms.append(result)
                 qualify(row, row_mechanisms)

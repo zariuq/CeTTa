@@ -125,6 +125,15 @@ def require_run(result: subprocess.CompletedProcess[str], label: str) -> None:
         )
 
 
+def require_incomplete(result: subprocess.CompletedProcess[str], label: str) -> None:
+    if (result.returncode != 1 or result.stdout or
+            "error: observation incomplete: fuel-exhausted\n" not in result.stderr):
+        raise AssertionError(
+            f"{label}: expected an incomplete frontier, not a completed answer bag\n"
+            f"exit: {result.returncode}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+
+
 def require_uncaught_error(
     result: subprocess.CompletedProcess[str], label: str
 ) -> None:
@@ -242,13 +251,19 @@ def main() -> int:
         binary, "search_controller_fifo_starvation.metta",
         controller="fifo", limit=100, stats=True,
     )
-    require_run(fifo, "bounded FIFO starvation witness")
+    require_incomplete(fifo, "bounded FIFO starvation witness")
+    prefix = run(
+        binary, "search_controller_fifo_prefix.metta",
+        controller="fifo", limit=300, profile="extended",
+    )
+    require_run(prefix, "complete FIFO prefix of the starvation witness")
     starvation_expected = expected(
         "search_controller_fifo_starvation.expected")
-    if fifo.stdout != starvation_expected:
+    prefix_expected = "(" + " ".join(starvation_expected.splitlines()) + ")\n"
+    if prefix.stdout != prefix_expected:
         raise AssertionError(
             "bounded FIFO starvation witness changed\n"
-            f"expected:\n{starvation_expected}actual:\n{fifo.stdout}"
+            f"expected:\n{prefix_expected}actual:\n{prefix.stdout}"
         )
     stats_lines = [
         line for line in fifo.stderr.splitlines()
@@ -276,7 +291,7 @@ def main() -> int:
         binary, "search_controller_fifo_starvation.metta",
         controller="inline-depth-first", limit=100,
     )
-    require_run(depth_first, "bounded depth-first starvation witness")
+    require_incomplete(depth_first, "bounded depth-first starvation witness")
     if depth_first.stdout:
         raise AssertionError(
             "depth-first starvation witness unexpectedly emitted an answer:\n"
@@ -643,7 +658,7 @@ def main() -> int:
             controller="ratio:4", limit=100, stats=True,
             act_directory=directory,
         )
-        require_run(training, "incremental-compression training run")
+        require_incomplete(training, "incremental-compression training run")
         training_lines = [
             line for line in training.stderr.splitlines()
             if line.startswith("CETTA_CONTROLLER_STATS ")
@@ -673,7 +688,7 @@ def main() -> int:
             controller="auto", limit=100, stats=True,
             act_directory=directory,
         )
-        require_run(advised, "incremental-compression advised run")
+        require_incomplete(advised, "incremental-compression advised run")
         advised_lines = [
             line for line in advised.stderr.splitlines()
             if line.startswith("CETTA_CONTROLLER_STATS ")
@@ -693,7 +708,7 @@ def main() -> int:
             raise AssertionError(
                 "persisted successful structure did not rank a live frontier"
             )
-        if not advised.stdout:
+        if int(advised_receipt.get("answers", 0)) == 0:
             raise AssertionError(
                 "compression advice lost every productive answer"
             )

@@ -5,6 +5,40 @@
 #include "match.h"
 #include "term_universe.h"
 
+/* Both native indexes serialize observations, not entire shared graphs.
+ * Reserve one token for each immediate child before expanding an expression;
+ * later cuts consume their reserved token as a wildcard. This bounds depth,
+ * expression work and the total serialized path even for very wide nodes. */
+enum {
+    CETTA_INDEX_DEPTH_LIMIT = 8u,
+    CETTA_INDEX_EXPRESSION_LIMIT = 128u,
+    CETTA_INDEX_CHILD_TOKEN_LIMIT = 511u
+};
+
+typedef struct {
+    unsigned expressions_left;
+    unsigned child_tokens_left;
+} CettaIndexExpansionBudget;
+
+static inline CettaIndexExpansionBudget cetta_index_expansion_budget(void) {
+    return (CettaIndexExpansionBudget){CETTA_INDEX_EXPRESSION_LIMIT,
+                                       CETTA_INDEX_CHILD_TOKEN_LIMIT};
+}
+
+static inline bool cetta_index_expand_expression(CettaIndexExpansionBudget *budget,
+                                                unsigned depth, CettaExprLen arity) {
+    if (depth >= CETTA_INDEX_DEPTH_LIMIT || !budget->expressions_left ||
+        arity > budget->child_tokens_left)
+        return false;
+    budget->expressions_left--;
+    budget->child_tokens_left -= (unsigned)arity;
+    return true;
+}
+
+/* Flat substitution-index queries need the same bounded observation window.
+ * Larger queries use candidate selection and canonical matching instead. */
+bool stree_query_within_expansion_budget(const Atom *query);
+
 /* ── Substitution Tree (Space-internal fast-path for match) ──────────── *
  *
  * A discrimination tree with named variable branches that produces

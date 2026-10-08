@@ -202,6 +202,10 @@ static const struct {
     const char *name;
     const char *type;
 } HE_GROUNDED_EXTENSION_TYPES[] = {
+    {"@<", "(-> $a $b Bool)"},
+    {"@<=", "(-> $a $b Bool)"},
+    {"@>", "(-> $a $b Bool)"},
+    {"@>=", "(-> $a $b Bool)"},
     {"//", "(-> Number Number Number)"},
     {"new-space", "(-> Atom SpaceType)"},
 };

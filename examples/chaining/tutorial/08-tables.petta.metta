@@ -1,0 +1,23 @@
+!(import! &self (library lib_tabling))
+!(tabled (fib $n))
+(= (fib 0) 0)
+(= (fib 1) 1)
+(= (fib $n)
+   (if (> $n 1) (+ (fib (- $n 1)) (fib (- $n 2))) (empty)))
+!(fib 20)
+
+; Tabling deliberately coalesces equal answers; ordinary equations do not.
+!(tabled (tabled-proof $goal))
+(= (tabled-proof goal) proof)
+(= (tabled-proof goal) proof)
+(= (ordinary-proof goal) proof)
+(= (ordinary-proof goal) proof)
+!(collapse (tabled-proof goal))
+!(collapse (ordinary-proof goal))
+!(collapse (tabled-proof missing))
+
+!(import! &self (library lib_memo))
+(= (square $x) (* $x $x))
+!(memoize square)
+!(square 9)
+!(square 9)

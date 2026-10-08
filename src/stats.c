@@ -978,6 +978,20 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "managed-symbol-allocated-bytes",
     "hashcons-thread-entries",
     "hashcons-thread-index-bytes",
+    "atom-transport-node",
+    "atom-transport-edge-visit",
+    "atom-transport-metadata-alloc-bytes",
+    "atom-transport-metadata-free-bytes",
+    "space-disc-truncated-subtree",
+    "space-private-reset",
+    "space-retired-occurrence-release-bytes",
+    "term-order-pair-visit",
+    "term-order-equal-reuse",
+    "term-order-frontier-peak",
+    "term-order-product-pair",
+    "term-order-product-edge",
+    "term-match-subject-view",
+    "term-match-pair-visit",
 };
 
 static int64_t clamp_counter(uint64_t value) {

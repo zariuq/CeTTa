@@ -97,6 +97,8 @@ static void print_reader_atom(FILE *out, Atom *atom) {
     case GV_SPACE:
     case GV_STATE:
     case GV_CAPTURE:
+    case GV_BINDINGS:
+    case GV_TERM_GRAPH:
     case GV_FOREIGN:
     case GV_INTERNAL_TAG:
     case GV_PRIME_NEED_CAPABILITY:
