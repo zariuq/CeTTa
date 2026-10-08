@@ -69,3 +69,16 @@
 
 ; Fail-closed malformed input example.
 !(compile:rule-package broken (rm-package (not-a-block x)))
+
+; A rule's quoted head, premise and proof template share the same slot.
+; Q(a) and Q(b) justify P(a) once and P(absent) zero times.
+(= (quotation-sharing-package)
+  (compile:rule-package quotation-sharing-v1
+    (rm-package
+      (rm-block first test:first (quote qa) rm-nil (quote (Q a)))
+      (rm-block second test:second (quote qb) rm-nil (quote (Q b)))
+      (rm-block lift test:lift (quote (pr $x (unquote $p)))
+        (rm-cons (rm-premise $p (quote (Q $x))) rm-nil)
+        (quote (P $x))))))
+!(compile:run (quotation-sharing-package) 4 1000 10 (quote (P a)))
+!(compile:run (quotation-sharing-package) 4 1000 10 (quote (P absent)))

@@ -72,7 +72,7 @@
    (let $h (car-atom $candidates)
      (let $s (nu:at $h (ann gus))
        (let (MkSized $n (: $prf $j)) (nu:first (nu:eval &kb 200 (: $prf (≞ $s ⊤))))
-         (Proof (ann gus) $prf (ProofSize $n))))))
+         (Proof (ann gus) $prf (ProofSize $n))){$prf})))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; The learned program as ordinary code ;;
@@ -89,4 +89,4 @@
          (collapse
            (let* (($a (superpose $people))
                   ($b (superpose $people)))
-             (if ($ancestor $a $b) ($a $b) (empty))))))))
+             (if ($ancestor $a $b) ($a $b) (empty))){$a $b})))))

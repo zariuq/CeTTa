@@ -1,6 +1,8 @@
 #ifndef CETTA_PREPARED_PURE_MACHINE_H
 #define CETTA_PREPARED_PURE_MACHINE_H
 
+#include "owned_execution.h"
+
 #include "match_decision.h"
 #include "space.h"
 
@@ -344,7 +346,10 @@ typedef struct {
 
 /* Open a cursor at the program's bound closed entry call.  The cursor
  * retains the program; it borrows the entry arguments, which must stay valid
- * until the cursor is closed or detached.  NULL declines, including when the
+ * until the cursor is closed or detached. The source Space/read view remains
+ * borrowed from the host and must outlive the cursor; detachment moves value
+ * storage, not semantic authority. Revision changes cause a stale handoff.
+ * NULL declines, including when the
  * entry relation is not admitted. */
 CettaPreparedPureAnswerCursor *cetta_prepared_pure_answer_cursor_open(
     CettaPreparedPureProgram *program,
@@ -362,6 +367,15 @@ CettaPreparedPureCursorStep cetta_prepared_pure_answer_cursor_next(
  * has no arena of its own and is left as it is. */
 bool cetta_prepared_pure_answer_cursor_detach(
     CettaPreparedPureAnswerCursor *cursor);
+
+/* Transfer the cursor to a resumable return/sequence owner. Completed answers
+ * are loaned unchanged; a handoff preserves the cursor's complete residual. */
+void cetta_prepared_pure_answer_cursor_own_execution(
+    CettaOwnedExecution *execution, CettaPreparedPureAnswerCursor *cursor);
+/* The cursor's native return adapter, also usable by an owner that adds
+ * independent host-authority checks around the same stored computation. */
+CettaOwnedExecutionStep cetta_prepared_pure_answer_cursor_return(
+    void *cursor, CettaOwnedReturn *returned, CettaEvalCompletion *completion);
 
 /* Withdraw the answer just produced: restore the frontier to the state
  * before the step that produced it.  A consumer calls this when the answer
@@ -405,6 +419,11 @@ bool cetta_prepared_pure_answer_cursor_frame(
     const CettaPreparedPureAnswerCursor *cursor, size_t index,
     CettaPreparedPureAnswerFrame *frame_out);
 
+/* A remaining authored equation occurrence, under the cursor's current
+ * source authority. This reads retained code; it does not restart its call. */
+Atom *cetta_prepared_pure_answer_cursor_frame_equation(
+    const CettaPreparedPureAnswerCursor *cursor, size_t index, uint32_t ordinal);
+
 /* Copy a value the cursor holds into the caller's arena. */
 typedef Atom *(*CettaPreparedPureImportValueFn)(void *context, Atom *value);
 
@@ -423,6 +442,20 @@ bool cetta_prepared_pure_answer_cursor_frame_resumption(
 uint64_t cetta_prepared_pure_answer_cursor_answer_count(
     const CettaPreparedPureAnswerCursor *cursor);
 uint64_t cetta_prepared_pure_answer_cursor_tail_call_count(
+    const CettaPreparedPureAnswerCursor *cursor);
+
+/* Private execution storage, including external bytes accounted by its arena.
+ * Caller-arena cursors report zero arena bytes; their metadata remains owned.
+ * The retained compiled program and temporary copy workspace are separate. Collection
+ * moves live values only; it is not a producer firing or a semantic charge. */
+typedef struct {
+    size_t live_bytes;
+    size_t reserved_bytes;
+    size_t metadata_bytes;
+    uint64_t collections;
+    uint64_t copied_bytes;
+} CettaPreparedPureCursorStorage;
+CettaPreparedPureCursorStorage cetta_prepared_pure_answer_cursor_storage(
     const CettaPreparedPureAnswerCursor *cursor);
 
 void cetta_prepared_pure_answer_cursor_close(

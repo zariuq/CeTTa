@@ -1,3 +1,6 @@
+; Crossing sets compared with the explicitly selected rule-M default.
+(scope:profile mercury-implicit per-call reference)
+
 ; One convention for every scope-forming construct: braces touching it, its
 ; crossing set, C{$t ...}, which the reader makes the wrapper
 ; (meta C {$t ...}).  The set names what the construct shares with the scope
@@ -8,8 +11,8 @@
 ; default applies only where no set is written.  unify refines and takes no
 ; crossing set: on it the wrapper is data.  Inferred ownership is hidden
 ; metadata: the printer, size-atom, patterns and `==` see the authored term.
-; The document's profile is the default (mercury-implicit per-call
-; reference) until the query declarations below.
+; The document explicitly selects mercury-implicit per-call
+; reference until the query declarations below.
 
 (= (mk) (lam z (let $y z (g $y))))
 (= (mk-shared) (lam z (let $y z (g $y))){$y})

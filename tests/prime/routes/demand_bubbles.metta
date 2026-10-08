@@ -9,5 +9,5 @@
 !(demand:committed eager (k 1 coin))
 !(demand:licensed eager (k 1 coin))
 !(let $c coin (P $c $c))
-!(demand:committed resample (let $c coin (P $c $c)))
-!(demand:licensed resample (let $c coin (P $c $c)))
+!(demand:committed resample (let $c coin (P $c $c)){$c})
+!(demand:licensed resample (let $c coin (P $c $c)){$c})

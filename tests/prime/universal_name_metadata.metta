@@ -7,7 +7,7 @@
 !(install-doc-schema! &@doc)
 !(recognize-doc-source! &@doc @(source package-alpha))
 !(assertEqual
-    (reify (match &@doc (MetaKeyV1 @doc $fields) $fields))
+    (reify (match &@doc (MetaKeyV1 @doc $fields) $fields){$fields})
     ((FieldsV1
        (FieldV1 subject Name)
        (FieldV1 text String)
@@ -15,7 +15,7 @@
        (FieldV1 span Span))))
 !(assertEqual
     (reify
-      (match &@doc (RecognizedSourceV1 $source) $source))
+      (match &@doc (RecognizedSourceV1 $source) $source){$source})
     (@(source package-alpha)))
 
 (= (ordinary-result $x) (Ordinary $x))
@@ -39,7 +39,7 @@
 !(assertEqual
     (reify
       (match &self
-        (MetaRecordV1 @doc $values) found))
+        (MetaRecordV1 @doc $values) found){$values})
     ())
 !(assertEqual
     (reify
@@ -50,7 +50,7 @@
             (ValueV1 text $@(doc-text))
             (ValueV1 source @(source package-alpha))
             (ValueV1 span $@(doc-span))))
-        (Pair $@(doc-text) $@(doc-span))))
+        (Pair $@(doc-text) $@(doc-span))){$@(doc-text) $@(doc-span)})
     ((Pair "Alpha theorem" (SpanV1 10 25))))
 
 ; Negative admission cases are values, not silent stuck terms.
@@ -80,7 +80,7 @@
 ; Failed admissions leave only the one accepted document record.
 !(assertEqual
     (reify
-      (match &@doc (MetaRecordV1 @doc $values) $values))
+      (match &@doc (MetaRecordV1 @doc $values) $values){$values})
     ((ValuesV1
        (ValueV1 subject @(theorem alpha))
        (ValueV1 text "Alpha theorem")

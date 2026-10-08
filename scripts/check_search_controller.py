@@ -11,6 +11,7 @@ import sys
 import tempfile
 
 from petta_machine_stats import (
+    extract_stats,
     parse_controller_stats_line,
     parse_stats_line,
 )
@@ -414,11 +415,32 @@ def main() -> int:
             "HE structural-equation reference changed\n"
             f"expected:\n{he_expected}actual:\n{he_reference.stdout}"
         )
-    if he_reference.stderr:
+    he_reference_machines, he_reference_diagnostics = extract_stats(
+        he_reference.stderr)
+    if he_reference_diagnostics:
         raise AssertionError(
-            "ordinary HE allocated or activated search-control machinery\n"
-            f"stderr:\n{he_reference.stderr}"
+            "ordinary HE emitted unexpected diagnostics or controller activity\n"
+            f"stderr:\n{he_reference_diagnostics}"
         )
+    for receipt in he_reference_machines:
+        for field in ("owned_continuation_capture_attempts",
+                      "owned_continuation_captures",
+                      "owned_continuation_restores",
+                      "owned_continuation_expansion_attempts",
+                      "owned_continuation_expansions"):
+            if receipt[field] != 0:
+                raise AssertionError(
+                    f"ordinary HE activated agenda machinery: {field}="
+                    f"{receipt[field]}")
+    he_quiet = run(
+        binary, "search_controller_structural_equations.metta",
+        controller=None, language="he", fixture_root=HE,
+    )
+    require_run(he_quiet, "HE structural-equation execution without statistics")
+    if he_quiet.stdout != he_expected or he_quiet.stderr:
+        raise AssertionError(
+            "ordinary HE observations changed when statistics were disabled\n"
+            f"stdout:\n{he_quiet.stdout}stderr:\n{he_quiet.stderr}")
     he_inline = run(
         binary, "search_controller_structural_equations.metta",
         controller="inline-depth-first", stats=True,

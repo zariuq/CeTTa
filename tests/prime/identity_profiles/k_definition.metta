@@ -16,13 +16,13 @@
    (-> (A : (u 0)) (x : A) (P : (-> (e : (id A x x)) (u 0))) (d : (P (refl x)))
        (e : (id A x x)) (P e))
    (= (kElim $A $x $P $d (refl $z)) $d))) (car-atom $r))
-!(== (collapse (match &thy (type:rule kElim $arity $pats $rhs) $rhs)) ())
-!(== (collapse (match &thy (: kElim $type) $type)) ())
+!(== (collapse (match &thy (type:rule kElim $arity $pats $rhs) $rhs){$arity $pats $rhs}) ())
+!(== (collapse (match &thy (: kElim $type) $type){$type}) ())
 
 ; K at a closed carrier and point.
 !(let $r (try (set:define &thy kZero
    (-> (P : (-> (e : (id num zero zero)) (u 0))) (d : (P (refl zero)))
        (e : (id num zero zero)) (P e))
    (= (kZero $P $d (refl $z)) $d))) (car-atom $r))
-!(== (collapse (match &thy (type:rule kZero $arity $pats $rhs) $rhs)) ())
-!(== (collapse (match &thy (: kZero $type) $type)) ())
+!(== (collapse (match &thy (type:rule kZero $arity $pats $rhs) $rhs){$arity $pats $rhs}) ())
+!(== (collapse (match &thy (: kZero $type) $type){$type}) ())

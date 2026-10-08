@@ -1,3 +1,6 @@
+; This fixture selects implicit rule-M refinement and its reflected conflict source.
+(scope:profile mercury-implicit per-call reference)
+
 ; Conflict boundaries.  The same incompatible assignment of one logical
 ; variable appears inside a search and inside a deterministic expectation.
 ; The variable is never silently reassigned; inside a search the conflicting

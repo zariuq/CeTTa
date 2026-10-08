@@ -14,19 +14,19 @@
 ; Rights only attenuate.  Denied operations are checked faults.
 !(assertEqualToResult
    (let $p (delay 7)
-     (force (suspension:restrict $p (suspension:rights inspect))))
+     (force (suspension:restrict $p (suspension:rights inspect)))){$p}
    ((Error 7 suspension:force-denied)))
 !(assertEqualToResult
    (let $p (delay 7)
      (observe-origin
-       (suspension:restrict $p (suspension:rights force))))
+       (suspension:restrict $p (suspension:rights force)))){$p}
    ((Error (observe-origin suspension:opaque)
            suspension:inspect-denied)))
 !(assertEqualToResult
    (let $p (delay 7)
      (suspension:restrict
        (suspension:restrict $p (suspension:rights inspect))
-       (suspension:rights force inspect)))
+       (suspension:rights force inspect))){$p}
    ((Error
       (suspension:restrict
         suspension:opaque
@@ -54,7 +54,7 @@
    (let $p (delay 7)
      (same-suspension
        (suspension:restrict $p (suspension:rights force))
-       $p))
+       $p)){$p}
    ((Error
       (same-suspension suspension:opaque suspension:opaque)
       suspension:inspect-denied)))
@@ -75,7 +75,7 @@
        (suspension:restrict $p (suspension:rights inspect)))))
 !(assertEqualToResult
    (match &rights-inspect-space (stored $saved)
-     (force $saved))
+     (force $saved)){$saved}
    ((Error 11 suspension:force-denied)))
 !(match &rights-inspect-space (stored $saved)
    (observe-origin $saved))
@@ -90,6 +90,6 @@
    (force $saved))
 !(assertEqualToResult
    (match &rights-force-space (stored $saved)
-     (observe-origin $saved))
+     (observe-origin $saved)){$saved}
    ((Error (observe-origin suspension:opaque)
            suspension:inspect-denied)))

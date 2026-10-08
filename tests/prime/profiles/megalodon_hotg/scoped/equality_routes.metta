@@ -45,7 +45,7 @@
        (let $h (car-atom $t)
          (let $r (cdr-atom $t)
            (let $nh (syntax-length $h)
-             (let $nr (syntax-length-tail $r) (+ $nh $nr)))))))
+             (let $nr (syntax-length-tail $r) (+ $nh $nr)){$nr}){$nh}){$r}){$h}))
 ; A theorem's row: the laws and axioms its native package rests on, through
 ; the theorems it cites by name, and the lengths of its proof and of its
 ; proof term, in which a cited theorem is one constant.

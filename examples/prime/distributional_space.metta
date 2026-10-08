@@ -27,14 +27,14 @@
        0
        (let ((World $r $w $n) $rest) (decons-atom $worlds)
          (let $more (ds:mass $rest $event)
-           (if ($event $r $w) (+ $n $more) $more)))))
+           (if ($event $r $w) (+ $n $more) $more)){$more}){$r $w $n $rest}))
 
 (= (ds:gcd $a $b)
    (if (== $b 0) $a (ds:gcd $b (% $a $b))))
 (= (ds:ratio $n $d)
    (if (== $d 0)
        (Undefined zero-mass)
-       (let $g (ds:gcd $n $d) (ratio (// $n $g) (// $d $g)))))
+       (let $g (ds:gcd $n $d) (ratio (// $n $g) (// $d $g))){$g}))
 (= (ds:prob $worlds $event)
    (ds:ratio (ds:mass $worlds $event) (ds:mass $worlds (ds:certain))))
 
@@ -45,7 +45,7 @@
        ()
        (let ((World $r $w $n) $rest) (decons-atom $worlds)
          (let $scaled (* $n ($likelihood $r $w))
-           (cons-atom (World $r $w $scaled) (ds:reweight $rest $likelihood))))))
+           (cons-atom (World $r $w $scaled) (ds:reweight $rest $likelihood))){$scaled}){$r $w $n $rest}))
 (= (ds:wet-likelihood) (lam r (lam w (if w 1 0))))
 
 !(Prior-rain (ds:prob (ds:joint) (ds:rain)))
@@ -89,7 +89,7 @@
    (if (== $ids ())
        False
        (let ($first $rest) (decons-atom $ids)
-         (if (== $first $id) True (ds:seen $id $rest)))))
+         (if (== $first $id) True (ds:seen $id $rest))){$first $rest}))
 (= (ds:observe (Ledger $worlds $ids) $id $likelihood)
    (if (ds:seen $id $ids)
        (Ledger $worlds $ids)

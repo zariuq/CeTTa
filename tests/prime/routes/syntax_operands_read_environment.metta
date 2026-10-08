@@ -12,7 +12,7 @@
 ; ---- After `(h $y)` the environment binds $y to 5.
 !(let $r (h $y) (unify $y 6 yes no))
 !(let $r (h $y) (switch $y ((6 six) (5 five))))
-!(let $r (h $y) (match &self (fact $y) (found $y)))
+!(let $r (h $y) (match &self (fact $y) (found $y)){$y})
 
 ; ---- A binding that agrees still matches.
 !(let $r (h $y) (unify $y 5 yes no))
@@ -36,8 +36,8 @@
 !(let $r (inside $y $x) (unify $x (g $y) yes no))
 
 ; ---- A branch pattern is read through the environment as well.
-!(let $r (h $k) (switch 6 (($k yes) ($_ no))))
-!(let $r (h $k) (switch (pair 6 6) (((pair $k $w) (yes $w)) ($_ no))))
+!(let $r (h $k) (switch 6 (($k yes) ($_ no))){$k})
+!(let $r (h $k) (switch (pair 6 6) (((pair $k $w) (yes $w)) ($_ no))){$k})
 
 ; ---- What a switch's scrutinee binds is kept for its branch.
 !(switch (h $q) ((ok (got $q)) (no none)))
@@ -45,19 +45,19 @@
 
 ; ---- A match keeps the environment it ran in: the caller's variable is
 ; refined by the equation, and the answer says so.
-(= (found-at $y) (unify $y 5 (match &self (fact $y) found) no))
+(= (found-at $y) (unify $y 5 (match &self (fact $y) found){$y} no))
 !(let $r (found-at $w) (Pair $w $r))
-(= (found-after $y) (let $r (h $y) (match &self (fact $y) found)))
+(= (found-after $y) (let $r (h $y) (match &self (fact $y) found){$y}))
 !(let $r (found-after $w) (Pair $w $r))
 (= (five-after $y) (let $r (h $y) (switch $y ((5 five)))))
 !(let $r (five-after $w) (Pair $w $r))
 
 ; ---- The same inside equations: a `case` or a `match` body that the
 ; relational machine runs, and one it hands back to the evaluator.
-(= (case-unify $n) (case $n ((0 (let $r (h $y) (unify $y 6 yes no))))))
-(= (case-match $n) (case $n ((0 (let $r (h $y) (match &self (fact $y) (found $y)))))))
-(= (case-switch $n) (case $n ((0 (let $r (h $y) (switch $y ((6 six) (5 five))))))))
-(= (row-unify $n) (match &self (fact $n) (let $r (h $y) (unify $y 6 yes no))))
+(= (case-unify $n) (case $n ((0 (let $r (h $y) (unify $y 6 yes no)){$r}))))
+(= (case-match $n) (case $n ((0 (let $r (h $y) (match &self (fact $y) (found $y)){$y}){$r}))))
+(= (case-switch $n) (case $n ((0 (let $r (h $y) (switch $y ((6 six) (5 five)))){$r}))))
+(= (row-unify $n) (match &self (fact $n) (let $r (h $y) (unify $y 6 yes no))){$n})
 !(case-unify 0)
 !(case-match 0)
 !(case-switch 0)

@@ -1,4 +1,7 @@
-; Template activation (rule 3 of the binding structure), under the default
+; Implicit template ownership and captured-name refinement under rule M.
+(scope:profile mercury-implicit per-call reference)
+
+; Template activation (rule 3 of the binding structure), under the declared
 ; scope profile, mercury-implicit per-call reference.  A lambda body, and the
 ; template of map-atom or foldl-atom, owns the store names written directly
 ; in it that no enclosing scope writes; each activation (an application, one

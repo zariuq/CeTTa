@@ -7,8 +7,8 @@
 !(add-atom &kb (edge a c))
 
 ; A path relation whose answers carry their route.
-(= (path $x $y) (match &kb (edge $x $y) (direct $x $y)))
-(= (path $x $y) (match &kb (edge $x $z) (let $rest (path $z $y) (via $z $rest))))
+(= (path $x $y) (match &kb (edge $x $y) (direct $x $y)){$x $y})
+(= (path $x $y) (match &kb (edge $x $z) (let $rest (path $z $y) (via $z $rest))){$x})
 
 ; Occurrence view: two derivations of "c is reachable from a", each with its route.
 !(path a c)

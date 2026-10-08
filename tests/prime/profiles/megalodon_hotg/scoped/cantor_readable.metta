@@ -320,7 +320,7 @@
    (if (== $t ()) False
        (let $h (car-atom $t)
          (let $rest (cdr-atom $t)
-           (if (mentions $h $s) True (mentions-any $rest $s))))))
+           (if (mentions $h $s) True (mentions-any $rest $s))){$rest}){$h}))
 !(let (quote (SetNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest))
       (lift (set:native-proof &thy cantor-core-readable))
    (let $authored (set:known-proof &thy cantor-core-readable)

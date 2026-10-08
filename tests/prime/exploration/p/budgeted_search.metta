@@ -50,7 +50,7 @@
 (rule castCG (CastCG C) G)
 
 (= (rule-shape $r)
-   (let $found (collapse (match &self (rule $r $ps $c) ($ps $c)))
+   (let $found (collapse (match &self (rule $r $ps $c) ($ps $c)){$r})
      (if (== $found ()) unknown-rule (car-atom $found))))
 (= (holds $j) (if (== $j X) False (if (== $j CastCG) False (if (== $j G) False True))))
 
@@ -58,28 +58,28 @@
 
 (= (nth $xs $i)
    (if (== $xs ()) out-of-range
-       (if (== $i 0) (car-atom $xs) (let* (($t (cdr-atom $xs)) ($j (- $i 1))) (nth $t $j)))))
+       (if (== $i 0) (car-atom $xs) (let* (($t (cdr-atom $xs)) ($j (- $i 1))) (nth $t $j)){$t $j})))
 (= (is-hole $t)
    (if (== (get-metatype $t) Expression)
-       (if (== $t ()) False (let $h (car-atom $t) (== $h ?)))
+       (if (== $t ()) False (let $h (car-atom $t) (== $h ?)){$h})
        False))
 (= (head-of $t) (if (== (get-metatype $t) Symbol) $t (car-atom $t)))
 (= (kids-of $t) (if (== (get-metatype $t) Symbol) () (cdr-atom $t)))
 (= (rebuild $r $kids) (if (== $kids ()) $r (cons-atom $r $kids)))
 (= (conclusion $ctx $t)
    (if (is-hole $t)
-       (let $i (index-atom $t 1) (nth $ctx $i))
+       (let $i (index-atom $t 1) (nth $ctx $i)){$i}
        (let* (($r (head-of $t)) ($kids (kids-of $t)) ($shape (rule-shape $r)))
          (if (== $shape unknown-rule) ill-formed
              (let* ((($ps $c) $shape)
                     ($got (map-atom $kids $k (conclusion $ctx $k))))
-               (if (== $got $ps) $c ill-formed))))))
+               (if (== $got $ps) $c ill-formed)){$ps $c $got})){$r $kids $shape}))
 (= (fill $t $ev)
    (if (is-hole $t)
-       (let $i (index-atom $t 1) (nth $ev $i))
+       (let $i (index-atom $t 1) (nth $ev $i)){$i}
        (let* (($r (head-of $t)) ($kids (kids-of $t))
               ($filled (map-atom $kids $k (fill $k $ev))))
-         (rebuild $r $filled))))
+         (rebuild $r $filled)){$r $kids $filled}))
 
 ; ---- backward chaining with a budget ---------------------------------------------------
 
@@ -87,23 +87,23 @@
 (= (reversed-library) (xc bc axB ab axA2 axA1))
 (= (search $lib $fuel $goal)
    (if (== $fuel 0) none
-       (let $f (- $fuel 1) (first-found $lib $lib $f $goal))))
+       (let $f (- $fuel 1) (first-found $lib $lib $f $goal)){$f}))
 (= (first-found $cands $lib $f $goal)
    (if (== $cands ()) none
        (let* (($r (car-atom $cands)) ($rest (cdr-atom $cands)) ($x (try-candidate $lib $f $goal $r)))
-         (if (== $x none) (first-found $rest $lib $f $goal) $x))))
+         (if (== $x none) (first-found $rest $lib $f $goal) $x)){$r $rest $x}))
 (= (try-candidate $lib $f $goal $r)
    (let ($ps $c) (rule-shape $r)
      (if (== $c $goal)
          (let $kids (search-premises $lib $f $ps)
-           (if (== $kids none) none (rebuild $r $kids)))
+           (if (== $kids none) none (rebuild $r $kids))){$kids}
          none)))
 (= (search-premises $lib $f $ps)
    (if (== $ps ()) ()
        (let* (($p (car-atom $ps)) ($x (search $lib $f $p)))
          (if (== $x none) none
              (let* (($t (cdr-atom $ps)) ($xs (search-premises $lib $f $t)))
-               (if (== $xs none) none (cons-atom $x $xs)))))))
+               (if (== $xs none) none (cons-atom $x $xs))){$t $xs})){$p $x}))
 (= (found $lib $fuel $goal) (let $x (search $lib $fuel $goal) (not (== $x none))))
 
 ; ---- verdicts --------------------------------------------------------------------------
@@ -114,13 +114,13 @@
 (= (refuted-obligation $ref $ctx $i)
    (if (== $ctx ()) none
        (let* (($j (car-atom $ctx)) ($t (cdr-atom $ctx)) ($k (+ $i 1)))
-         (if (refutes $ref $j) (obligation $i $j) (refuted-obligation $ref $t $k)))))
+         (if (refutes $ref $j) (obligation $i $j) (refuted-obligation $ref $t $k))){$j $t $k}))
 (= (plan-verdict $lib $ref (plan $ctx $body) $fuel)
    (let $ev (search-premises $lib $fuel $ctx)
      (if (== $ev none)
          (let $r (refuted-obligation $ref $ctx 0)
-           (if (== $r none) (Incomplete $fuel) (Refuted $r)))
-         (let $d (fill $body $ev) (Established $d)))))
+           (if (== $r none) (Incomplete $fuel) (Refuted $r))){$r}
+         (let $d (fill $body $ev) (Established $d)){$d})))
 (= (naive-status $lib (plan $ctx $body) $fuel)
    (let $ev (search-premises $lib $fuel $ctx) (if (== $ev none) Refuted Established)))
 (= (status $v) (car-atom $v))
@@ -169,7 +169,7 @@
 ;    (search_isSome_perm).
 !(let* (($k (kernel-library)) ($r (reversed-library))
         ($bad (collapse (let* (($g (superpose (A B C X G CastCG))) ($n (superpose (0 1 2 3 4))))
-                          (if (== (found $k $n $g) (found $r $n $g)) (empty) ($g $n))))))
+                          (if (== (found $k $n $g) (found $r $n $g)) (empty) ($g $n))){$g $n})))
    $bad)
 
 ; ---- the ITP half: an established verdict carries a checked proof -------------------------
@@ -179,7 +179,7 @@
 !(pf:theory &thy ((: A prop) (: B prop) (: C prop) (: X prop)))
 (= (imps $ctx $goal)
    (if (== $ctx ()) $goal
-       (let* (($h (car-atom $ctx)) ($t (cdr-atom $ctx)) ($r (imps $t $goal))) (imp $h $r))))
+       (let* (($h (car-atom $ctx)) ($t (cdr-atom $ctx)) ($r (imps $t $goal))) (imp $h $r)){$h $t $r}))
 (= (rule-statement $r) (let ($ps $c) (rule-shape $r) (imps $ps $c)))
 ; The kernel's rules, assumed: statements about the uninterpreted A, B, C, X.
 !(let $lib (kernel-library) (map-atom $lib $r (let $s (rule-statement $r) (set:axiom &thy $r $s))))
@@ -188,7 +188,7 @@
 (= (apply-proofs $f $ks)
    (if (== $ks ()) $f
        (let* (($k (car-atom $ks)) ($pk (to-proof $k)) ($rest (cdr-atom $ks)))
-         (apply-proofs (pf:imp-elim $f $pk) $rest))))
+         (apply-proofs (pf:imp-elim $f $pk) $rest)){$k $pk $rest}))
 
 ; 9. The completion carried by the established verdict at budget 2 is a proof
 ;    of C that the kernel checks (verdict_established_sound) ...

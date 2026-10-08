@@ -72,8 +72,8 @@
        (let $pair (decons-atom $declarations)
          (unify ($declaration $remaining) $pair
            (let $_ (add-atom $space $declaration)
-             (proof:load-reference-space $space $remaining))
-           (proof:invalid-candidate-list $declarations)))))
+             (proof:load-reference-space $space $remaining)){$_}
+           (proof:invalid-candidate-list $declarations))){$pair}))
 
 ; Populate an ordered Space from only the requested prefix of a ranked list.
 ; The bound is a readout decision: ranking itself still preserves every
@@ -87,8 +87,8 @@
              (unify ($declaration $remaining) $pair
                (let $_ (add-atom $space $declaration)
                  (proof:load-reference-prefix
-                   $space (- $limit 1) $remaining))
-               (proof:invalid-candidate-list $declarations))))))
+                   $space (- $limit 1) $remaining)){$_}
+               (proof:invalid-candidate-list $declarations))){$pair})))
 
 ; Uniform authored relation: facts and each supported Horn arity are separate
 ; equations.  This leaves indexing, freshening, and branch substitutions to the
@@ -97,7 +97,7 @@
 (= (proof:derive $space $_ $goal)
    (match $space
      (: $rule-data $goal)
-     (proof:tree $rule-data ())))
+     (proof:tree $rule-data ())){$goal})
 
 (= (proof:derive $space (S $depth) $goal)
    (match $space
@@ -105,7 +105,7 @@
      (chain
        (proof:derive $space $depth $premise1)
        $proof1
-       (proof:tree $rule-data ($proof1)))))
+       (proof:tree $rule-data ($proof1)))){$goal})
 
 (= (proof:derive $space (S $depth) $goal)
    (match $space
@@ -116,7 +116,7 @@
        (chain
          (proof:derive $space $depth $premise2)
          $proof2
-         (proof:tree $rule-data ($proof1 $proof2))))))
+         (proof:tree $rule-data ($proof1 $proof2))))){$goal})
 
 (= (proof:derive $space (S $depth) $goal)
    (match $space
@@ -130,7 +130,7 @@
          (chain
            (proof:derive $space $depth $premise3)
            $proof3
-           (proof:tree $rule-data ($proof1 $proof2 $proof3)))))))
+           (proof:tree $rule-data ($proof1 $proof2 $proof3)))))){$goal})
 
 (= (proof:reify (proof:tree $rule-data ()))
    (proof:build (lift $rule-data) ()))

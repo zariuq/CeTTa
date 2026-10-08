@@ -1,3 +1,6 @@
+; Query profile transitions starting from an explicit rule-M document profile.
+(scope:profile mercury-implicit per-call reference)
+
 ; A scope profile declared as a query, !(scope:profile ...), follows HE's
 ; !(pragma! ...) convention: it applies from its position onward, and the
 ; query itself answers ().  A bare top-level (scope:profile ...) applies to
@@ -7,7 +10,7 @@
 ; profile in force.
 (= (h $x) (unify $x 5 ok no))
 
-; L owns a let's name under mercury-implicit (the default here) and shares
+; L owns a let's name under mercury-implicit (explicitly selected here) and shares
 ; a name written outside it; explicit capture owns every name.
 !(row default)
 !(let $f (lam z (let (d $t) z ok)) (let $r ($f (d 7)) (Pair $t $r)))

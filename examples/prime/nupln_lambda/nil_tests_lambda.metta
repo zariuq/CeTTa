@@ -45,24 +45,24 @@
 ; 6-7. Evaluate the conjunction at 0 and at 1.
 !(let $s (nu:at (conj) (0))
    (let (MkSized $n (: $prf $j)) (nu:eval &kb 3 (: $prf (≞ $s $tv)))
-     (Test 6 $prf $j $n (SameProof (== $prf (cet f0t g0t))))))
+     (Test 6 $prf $j $n (SameProof (== $prf (cet f0t g0t))))){$prf})
 !(let $s (nu:at (conj) (1))
    (let (MkSized $n (: $prf $j)) (nu:eval &kb 2 (: $prf (≞ $s $tv)))
-     (Test 7 $prf $j $n (SameProof (== $prf (cefl f1f))))))
+     (Test 7 $prf $j $n (SameProof (== $prf (cefl f1f))))){$prf})
 
 ; 8. F at three values.
 !(let (MkSized $n (: $prf $j))
       (nu:eval &kb 5 (: $prf (, (≞ @(F 0) ⊤) (, (≞ @(F 1) ⊥) (≞ @(F 2) ⊤)))))
-   (Test 8 $prf $n (SameProof (== $prf (, f0t (, f1f f2t))))))
+   (Test 8 $prf $n (SameProof (== $prf (, f0t (, f1f f2t)))))){$prf}
 
 ; 9-10. The conjunction at two and at three values.
 !(let $g (nu:obligations (conj) ((Example (0) ⊤) (Example (1) ⊥)))
    (let (MkSized $n (: $prf $j)) (nu:eval &kb 6 (: $prf $g))
-     (Test 9 $prf $n (SameProof (== $prf (, (cet f0t g0t) (cefl f1f)))))))
+     (Test 9 $prf $n (SameProof (== $prf (, (cet f0t g0t) (cefl f1f)))))){$prf})
 !(let $g (nu:obligations (conj) ((Example (0) ⊤) (Example (1) ⊥) (Example (2) ⊥)))
    (let (MkSized $n (: $prf $j)) (nu:eval &kb 9 (: $prf $g))
      (Test 10 $prf $n
-       (SameProof (== $prf (, (cet f0t g0t) (, (cefl f1f) (cefr g2f))))))))
+       (SameProof (== $prf (, (cet f0t g0t) (, (cefl f1f) (cefr g2f))))))){$prf})
 
 ; 11. Learn the predicate from its truth table.  The learner types lambda
 ;     candidates by size and returns the first that explains the examples.

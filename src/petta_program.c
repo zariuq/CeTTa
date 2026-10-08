@@ -2567,6 +2567,7 @@ static PettaPlanNode *petta_plan_build_in(
          * variables inside it still get their slots.  So is a compiled
          * lambda or closure, and a value a derived equation holds. */
         if (item.value || atom_is_list_form(atom) ||
+            atom_is_prime_own_list(atom) ||
             petta_semantics_is_canonical_closure(atom) ||
             petta_plan_held_value(atom, held, held_len)) {
             node->role = PETTA_PLAN_VALUE;
@@ -2660,7 +2661,7 @@ static PettaPlanNode *petta_plan_build_in(
         } else if (head_atom->kind == ATOM_SYMBOL) {
             SymbolId head = head_atom->sym_id;
             PeTTaForm form = petta_semantics_form(head);
-            CettaExprLen nargs = atom->expr.len - 1u;
+            CettaExprLen nargs = atom_authored_len(atom) - 1u;
             if (head == g_builtin_syms.quote &&
                 (nargs == 1u || atom_is_quotation(atom))) {
                 node->output = PETTA_PLAN_OUTPUT_QUOTED_CHILD;
@@ -2671,6 +2672,8 @@ static PettaPlanNode *petta_plan_build_in(
                 CettaExprIndex child = 0u;
                 if (form == PETTA_FORM_PROGN && nargs > 0u)
                     child = nargs;
+                else if (form == PETTA_FORM_TRACE && nargs == 2u)
+                    child = 2u;
                 else if (form == PETTA_FORM_PROG1 && nargs > 0u)
                     child = 1u;
                 else if ((form == PETTA_FORM_LET ||
@@ -4446,10 +4449,13 @@ bool petta_program_synchronize_space(
     SpaceReadToken read = space_read_token(space);
     SpaceProgramToken program_token = space_program_token(space);
     CettaCount atom_count = space_length64(space);
+    CettaCount view_count = space_view_length64(space);
     PettaCallabilityDomain callability = {0};
     bool ok = true;
-    for (CettaIndex index = 0u; ok && index < atom_count; index++) {
-        Atom *atom = space_get_at64(space, index);
+    /* Imported heads are callable in this view, while each equation remains
+     * owned by its defining space's occurrence catalog below. */
+    for (CettaIndex index = 0u; ok && index < view_count; index++) {
+        Atom *atom = space_view_get_at64(space, index);
         Atom *lhs = NULL;
         SymbolId head = SYMBOL_ID_NONE;
         if (!atom) {
@@ -5953,7 +5959,7 @@ static bool petta_table_safety_push_let_star(
     size_t *length, size_t *capacity,
     Atom *atom, const PettaPlanNode *plan) {
     if (!nodes || !length || !capacity || !atom || !plan ||
-        atom->kind != ATOM_EXPR || atom->expr.len != 3u ||
+        atom->kind != ATOM_EXPR || atom_authored_len(atom) != 3u ||
         plan->child_count != atom->expr.len) {
         return false;
     }
@@ -5976,7 +5982,7 @@ static bool petta_table_safety_push_let_star(
         const PettaPlanNode *binding_plan =
             petta_plan_child(bindings_plan, index);
         if (!binding || binding->kind != ATOM_EXPR ||
-            binding->expr.len != 2u || !binding_plan ||
+            atom_authored_len(binding) != 2u || !binding_plan ||
             binding_plan->child_count != binding->expr.len ||
             !petta_table_safety_push_node(
                 nodes, length, capacity,
@@ -5996,7 +6002,7 @@ static bool petta_table_safety_push_case(
     size_t *length, size_t *capacity,
     Atom *atom, const PettaPlanNode *plan) {
     if (!nodes || !length || !capacity || !atom || !plan ||
-        atom->kind != ATOM_EXPR || atom->expr.len != 3u ||
+        atom->kind != ATOM_EXPR || atom_authored_len(atom) != 3u ||
         plan->child_count != atom->expr.len ||
         !petta_table_safety_push_node(
             nodes, length, capacity,
@@ -6018,7 +6024,7 @@ static bool petta_table_safety_push_case(
         const PettaPlanNode *branch_plan =
             petta_plan_child(branches_plan, index);
         if (!branch || branch->kind != ATOM_EXPR ||
-            branch->expr.len != 2u || !branch_plan ||
+            atom_authored_len(branch) != 2u || !branch_plan ||
             branch_plan->child_count != branch->expr.len ||
             !petta_table_safety_push_node(
                 nodes, length, capacity,
@@ -6077,6 +6083,7 @@ static bool petta_table_safety_form_is_pure(
         return true;
     case PETTA_FORM_NONE:
     case PETTA_FORM_TEST:
+    case PETTA_FORM_TRACE:
     case PETTA_FORM_FOLDALL:
     case PETTA_FORM_FORALL:
     case PETTA_FORM_MAPLIST:

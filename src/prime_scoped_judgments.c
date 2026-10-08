@@ -7161,6 +7161,19 @@ typedef enum {
     SJ_QUERY_DECLINED            /* *reason_out leaves it undetermined */
 } SjQueryPlanStatus;
 
+static bool sj_is_query_match(Atom *term) {
+    return term && term->kind == ATOM_EXPR && atom_authored_len(term) == 4u &&
+           atom_is_symbol(term->expr.elems[0], "match");
+}
+
+static Atom *sj_query_scope_body(Arena *a, Atom *term) {
+    /* Crossing sets resolved the query's slots during elaboration. Retain
+     * those identities while recognizing the same query as execution does. */
+    while (atom_is_prime_meta(term) && prime_semantics_meta_core(a, term))
+        term = term->expr.elems[1];
+    return term;
+}
+
 /* Read `(match space pattern returned)` against the space of the proof
  * state as a query of a typed functor, noting what its types and arguments
  * mention. */
@@ -7169,7 +7182,8 @@ static SjQueryPlanStatus sj_query_plan(SjProofState *st, Atom *term,
     Arena *a = st->arena;
     SjSetEnv *env = st->env;
     *reason_out = NULL;
-    if (!sj_is_expr(term, "match", 4u)) return SJ_QUERY_NOT_TYPED;
+    term = sj_query_scope_body(a, term);
+    if (!sj_is_query_match(term)) return SJ_QUERY_NOT_TYPED;
     Space *space = prime_public_space_argument(a, term->expr.elems[1]);
     Atom *pattern = term->expr.elems[2];
     Atom *returned = term->expr.elems[3];
@@ -7737,9 +7751,10 @@ Atom *prime_scoped_typed_query_judge(Arena *a, Space *space, Atom *judgment,
                                      Atom *term, bool limited, uint64_t steps) {
     if (!a || !term || term->kind != ATOM_EXPR || term->expr.len < 2u)
         return NULL;
+    term = sj_query_scope_body(a, term);
     /* A match names the space it asks; a call is asked of the judgment's
      * space, where its rules are stored. */
-    Space *asked = sj_is_expr(term, "match", 4u)
+    Space *asked = sj_is_query_match(term)
         ? prime_public_space_argument(a, term->expr.elems[1]) : space;
     /* A view the set language or this extension built is read as the
      * space it views. */
@@ -7752,7 +7767,7 @@ Atom *prime_scoped_typed_query_judge(Arena *a, Space *space, Atom *judgment,
     if (!env) return NULL;
     SjProofState st;
     sj_proof_state_init(&st, a, asked, env, limited, steps, false, true);
-    return sj_is_expr(term, "match", 4u)
+    return sj_is_query_match(term)
         ? sj_typed_query_judge(&st, judgment, term)
         : sj_typed_call_judge(&st, judgment, term);
 }

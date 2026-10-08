@@ -1,9 +1,8 @@
 ; JeTTa performance-suite workload 3: SICP-style symbolic differentiation
 ; followed by numeric evaluation at x = 3.
 ;
-; JeTTa's compiler reduces nested calls in constructor arguments. CeTTa keeps
-; data constructors inert, so mam:derivative-value names the corresponding
-; explicit evaluation boundary. The checksum is 27 * @N@.
+; Bind the derivative before evaluating its polynomial. The explicit boundary
+; keeps the authored demand visible in each adapter. The checksum is 27 * @N@.
 
 (= (mam:d x $iteration)
    (let $zero (* 0 $iteration)
@@ -31,12 +30,12 @@
    (let $derivative (mam:d $expression $iteration)
      (mam:eval-poly $derivative)))
 
-!(let $iterations (range-atom @N@)
-   (foldl-atom
-     $iterations
-     0
-     $sum
-     $iteration
-     (eval
-       (+ $sum
-          (mam:derivative-value (Mul x (Mul x x)) $iteration)))))
+(= (mam:differentiation-loop $remaining $sum)
+   (if (< $remaining 1)
+       $sum
+       (let $next (- $remaining 1)
+         (let $value
+           (mam:derivative-value (Mul x (Mul x x)) $next)
+           (mam:differentiation-loop $next (+ $sum $value))))))
+
+!(mam:differentiation-loop @N@ 0)

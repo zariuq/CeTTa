@@ -1,5 +1,6 @@
 #include "parser.h"
 #include "eval.h"
+#include "he_type_policy.h"
 #include "prime_native_calculus.h"
 #include "prime_rule_machine_ingress.h"
 #include "prime_typed_finite_relation.h"
@@ -349,6 +350,15 @@ int main(void) {
     var_intern_init(&variables);
     g_symbols = &symbols;
     g_var_intern = &variables;
+
+    /* The typed constructors below use the Prime kernel directly; their
+       erased programs run through ordinary HE. Supply the same library
+       signatures as the CLI so Expression arguments reach decomposition
+       as values. */
+    CHECK(he_library_tables_init(),
+          "ordinary relational execution has HE builtin signatures");
+    for (size_t index = 0; index < he_library_declaration_count(); index++)
+        space_add(&space, he_library_declaration_at(index));
 
     add_form(&arena, &space, "(: alice u0)");
     add_form(&arena, &space, "(: bob u0)");

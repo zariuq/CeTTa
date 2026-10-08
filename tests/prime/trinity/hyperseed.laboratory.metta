@@ -538,7 +538,7 @@
           (let $mu (normalize importance)
             (let $diagonal (graphtropy $mu (identity-table objects))
               (let $omega (q-scale (pair-weights $mu) (qinv (qsub (whole (npos one)) $diagonal)))
-                ($mu $diagonal (pair-weights $mu) $omega (measure-check probes $omega)))))))
+                ($mu $diagonal (pair-weights $mu) $omega (measure-check probes $omega))){$omega}){$diagonal}){$mu}))
      (let (quote $agree) (lift (== $value $expected))
        (quote ("Laboratory.measure_and_weights" (measure 5/12 1/3 1/4) (diagonal 25/72) (pairs 5/18 1/6 5/24)
                (omega 20/47 12/47 15/47) $agree (firings $n))))))
@@ -555,7 +555,7 @@
 ; three closures of the transported observer complete ac to 23/40
 ; (Lukasiewicz), 12393/20000 (product) and 153/200 (minimum).
 !(let $expected ((written (num4 d1 d2 d9 d7) (num4 d1 d8 d0 d0)) (written (num3 d8 d8 d9) (num4 d3 d6 d0 d0)))
-   (let (quote (($value) $n)) (lift (cost:firings (let $after (graphtropy &mu (positive-policy &transported)) ($after (qsub $after &g-receiver)))))
+   (let (quote (($value) $n)) (lift (cost:firings (let $after (graphtropy &mu (positive-policy &transported)) ($after (qsub $after &g-receiver))){$after}))
      (let (quote $agree) (lift (== $value $expected))
        (quote ("Laboratory.transport_and_completion" (fractions 1297/1800 889/3600) $agree (firings $n))))))
 !(let $expected (written (num2 d2 d3) (num2 d4 d0))

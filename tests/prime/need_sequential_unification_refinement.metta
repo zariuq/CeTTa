@@ -1,3 +1,6 @@
+; Sequential implicit refinement under rule M.
+(scope:profile mercury-implicit per-call reference)
+
 ; Prime let patterns share one monotone relational context.  Reusing a name in
 ; a later premise refines the established value; no auxiliary unify call is
 ; needed merely to preserve a cross-premise constraint.

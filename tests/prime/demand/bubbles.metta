@@ -45,23 +45,23 @@
 ; four.  Licensed, resampling is not applied, since the binding may be used
 ; twice and may have more than one answer.
 !(let $c coin (P $c $c))
-!(demand:committed resample (let $c coin (P $c $c)))
-!(demand:licensed resample (let $c coin (P $c $c)))
-!(demand:report (demand:committed resample (let $c coin (P $c $c))))
-!(demand:report (demand:licensed resample (let $c coin (P $c $c))))
+!(demand:committed resample (let $c coin (P $c $c)){$c})
+!(demand:licensed resample (let $c coin (P $c $c)){$c})
+!(demand:report (demand:committed resample (let $c coin (P $c $c)){$c}))
+!(demand:report (demand:licensed resample (let $c coin (P $c $c)){$c}))
 ; A binding used exactly once: resampling changes nothing, and the licensed
 ; form applies it.
 (= (die) 1)
 (= (die) 2)
-!(demand:report (demand:licensed resample (let $d (die) (+ $d 10))))
+!(demand:report (demand:licensed resample (let $d (die) (+ $d 10)){$d}))
 
 ; ---- Laziness for a `let`, eager by default.  An unused binding of coin
 ; still contributes its two answers eagerly; lazily it is never run.
 !(let $c coin done)
-!(demand:committed lazy (let $c coin done))
-!(demand:report (demand:committed lazy (let $c coin done)))
-!(demand:report (demand:licensed lazy (let $c coin done)))
-!(demand:report (demand:licensed lazy (let $d (die) (+ $d 10))))
+!(demand:committed lazy (let $c coin done){$c})
+!(demand:report (demand:committed lazy (let $c coin done){$c}))
+!(demand:report (demand:licensed lazy (let $c coin done){$c}))
+!(demand:report (demand:licensed lazy (let $d (die) (+ $d 10)){$d}))
 
 ; ---- An argument passed by call is one shared suspension: it cannot be
 ; resampled, and the site says so.

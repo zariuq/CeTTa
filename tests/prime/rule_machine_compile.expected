@@ -8,3 +8,5 @@
 [(compile-result proof-occurrence-bag (occurrences (occurrence (rm-proof-atom identity-number))) (run-metrics 1 7 2 1 0) r2)]
 [(compile-result proof-occurrence-bag (occurrences) (run-metrics 1 5 1 0 0) r0)]
 [(Error (compile:rule-package broken (rm-package (not-a-block x))) MalformedRuleMachineBlock)]
+[(compile-result proof-occurrence-bag (occurrences (occurrence (quote (pr a (unquote (quote qa)))))) (run-metrics 2 6 2 1 4) quotation-sharing-v1)]
+[(compile-result proof-occurrence-bag (occurrences) (run-metrics 2 6 1 0 4) quotation-sharing-v1)]

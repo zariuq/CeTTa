@@ -6,9 +6,9 @@
 ; at each level: only the effects on that path run.
 (= (tree 0) leaf)
 (= (tree $n)
-   (if (> $n 0) (s (let $x (println! (left $n)) (tree (- $n 1)))) (empty)))
+   (if (> $n 0) (s (let $x (println! (left $n)) (tree (- $n 1))){$x}) (empty)))
 (= (tree $n)
-   (if (> $n 0) (t (let $x (println! (right $n)) (tree (- $n 1)))) (empty)))
+   (if (> $n 0) (t (let $x (println! (right $n)) (tree (- $n 1))){$x}) (empty)))
 !(once (tree 3))
 
 ; A search with 2^40 answers stops at its first one.
@@ -32,8 +32,8 @@
 (= (first-above-one)
    (let $n (num)
      (if (> $n 1)
-         (let $y (println! (accept $n)) $n)
-         (let $y (println! (reject $n)) (empty)))))
+         (let $y (println! (accept $n)) $n){$y}
+         (let $y (println! (reject $n)) (empty)){$y})))
 !(once (first-above-one))
 
 ; So does an argument that must be evaluated before the call.

@@ -81,8 +81,8 @@
 ; Both find the fact.
 (fact a)
 (: find-held (-> (Data Atom) $r))
-(= (find-held $p) (collapse (match &self $p found)))
-(= (find-plain $p) (collapse (match &self $p found)))
+(= (find-held $p) (collapse (match &self $p found){$p}))
+(= (find-plain $p) (collapse (match &self $p found){$p}))
 !(marker gap-3-begin)
 !(find-held (fact a))
 !(find-plain (fact a))

@@ -26,7 +26,7 @@
          (ROK $t)
          (case (d:remove-one $item $t)
            (((ROK $rest) (ROK (cons-atom $h $rest)))
-            ($_ RM))))))
+            ($_ RM))){$rest $_})))
 (= (d:i1) (if True (d:mseq (d:append ((Pos (q a))) ()) ((Pos (q a)))) False))
 
 ; W1: an if-branch inside an equation body whose branch needs a delayed

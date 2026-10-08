@@ -417,7 +417,11 @@ static SubstNode *snode_get_grounded_placeholder(SubstNode *node) {
                          g_builtin_syms.grounded_placeholder, NULL);
 }
 
-static SubstNode *snode_insert_atom(SubstNode *node, Atom *a) {
+static SubstNode *snode_insert_atom(SubstNode *node, Atom *a, unsigned depth,
+                                    CettaIndexExpansionBudget *budget) {
+    if (a->kind == ATOM_EXPR &&
+        !cetta_index_expand_expression(budget, depth, a->expr.len))
+        return snode_get_grounded_placeholder(node);
     switch (a->kind) {
     case ATOM_SYMBOL: return snode_get_sym(node, a->sym_id);
     case ATOM_VAR:
@@ -455,7 +459,7 @@ static SubstNode *snode_insert_atom(SubstNode *node, Atom *a) {
         CettaExprLen len = atom_authored_len(a);
         SubstNode *cur = snode_get_expr(node, len);
         for (CettaExprIndex i = 0; i < len; i++)
-            cur = snode_insert_atom(cur, a->expr.elems[i]);
+            cur = snode_insert_atom(cur, a->expr.elems[i], depth + 1u, budget);
         return cur;
     }
     }
@@ -464,11 +468,16 @@ static SubstNode *snode_insert_atom(SubstNode *node, Atom *a) {
 
 static SubstNode *snode_insert_atom_id(SubstNode *node,
                                        const TermUniverse *universe,
-                                       AtomId atom_id) {
+                                       AtomId atom_id, unsigned depth,
+                                       CettaIndexExpansionBudget *budget) {
     if (!node || !universe || atom_id == CETTA_ATOM_ID_NONE ||
         !tu_hdr(universe, atom_id)) {
         return NULL;
     }
+
+    if (tu_kind(universe, atom_id) == ATOM_EXPR &&
+        !cetta_index_expand_expression(budget, depth, tu_arity(universe, atom_id)))
+        return snode_get_grounded_placeholder(node);
 
     switch (tu_kind(universe, atom_id)) {
     case ATOM_SYMBOL:
@@ -522,7 +531,7 @@ static SubstNode *snode_insert_atom_id(SubstNode *node,
         SubstNode *cur = snode_get_expr(node, arity);
         for (CettaExprIndex i = 0; i < arity; i++) {
             AtomId child_id = tu_child(universe, atom_id, i);
-            cur = snode_insert_atom_id(cur, universe, child_id);
+            cur = snode_insert_atom_id(cur, universe, child_id, depth + 1u, budget);
             if (!cur)
                 return NULL;
         }
@@ -604,7 +613,8 @@ void stree_bucket_insert(SubstBucket *bucket, Atom *atom, CettaIndex atom_idx) {
     CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
     uint32_t epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
     if (!bucket->root) bucket->root = snode_new();
-    SubstNode *leaf = snode_insert_atom(bucket->root, atom);
+    CettaIndexExpansionBudget budget = cetta_index_expansion_budget();
+    SubstNode *leaf = snode_insert_atom(bucket->root, atom, 0u, &budget);
     snode_add_leaf(leaf, atom_idx, epoch);
     bucket->count++;
 }
@@ -617,7 +627,8 @@ bool stree_bucket_insert_id(SubstBucket *bucket, const TermUniverse *universe,
     uint32_t epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
     if (!bucket->root)
         bucket->root = snode_new();
-    SubstNode *leaf = snode_insert_atom_id(bucket->root, universe, atom_id);
+    CettaIndexExpansionBudget budget = cetta_index_expansion_budget();
+    SubstNode *leaf = snode_insert_atom_id(bucket->root, universe, atom_id, 0u, &budget);
     if (!leaf)
         return false;
     snode_add_leaf(leaf, atom_idx, epoch);
@@ -755,6 +766,25 @@ static void st_collect(SubstNode *node, BindingsBuilder *bb, Arena *a,
 }
 
 /* ── Flat-sequence retrieval ──────────────────────────────────────────── */
+
+static bool query_within_budget(const Atom *query, unsigned depth,
+                                 CettaIndexExpansionBudget *budget) {
+    if (!query)
+        return false;
+    if (query->kind != ATOM_EXPR || atom_is_list_rest(query))
+        return true;
+    if (!cetta_index_expand_expression(budget, depth, query->expr.len))
+        return false;
+    for (CettaExprIndex i = 0u; i < query->expr.len; i++)
+        if (!query_within_budget(query->expr.elems[i], depth + 1u, budget))
+            return false;
+    return true;
+}
+
+bool stree_query_within_expansion_budget(const Atom *query) {
+    CettaIndexExpansionBudget budget = cetta_index_expansion_budget();
+    return query_within_budget(query, 0u, &budget);
+}
 
 static bool flat_token_count(Atom *a, CettaIndex *count) {
     if (!a || !count)

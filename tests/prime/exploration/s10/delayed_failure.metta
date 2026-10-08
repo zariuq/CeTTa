@@ -38,7 +38,7 @@
 (= (in-list $x $xs)
    (if (== $xs ()) False
        (let $h (car-atom $xs)
-         (if (== $h $x) True (let $t (cdr-atom $xs) (in-list $x $t))))))
+         (if (== $h $x) True (let $t (cdr-atom $xs) (in-list $x $t)){$t})){$h}))
 
 ; ---- the chains ------------------------------------------------------------------
 
@@ -71,11 +71,11 @@
    (let* (($xs (keys $mu)) ($ys (keys $nu))
           ($bad-entries (collapse (let (($u $v) $m) (superpose $w)
                                     (if (and (<= 0 $m) (and (in-list $u $xs) (in-list $v $ys)))
-                                        (empty) $u))))
+                                        (empty) $u)){$u $v $m}))
           ($bad-rows (collapse (let ($x $m) (superpose $mu)
-                                 (if (== (row-sum $w $x) $m) (empty) $x))))
+                                 (if (== (row-sum $w $x) $m) (empty) $x)){$x $m}))
           ($bad-columns (collapse (let ($y $m) (superpose $nu)
-                                    (if (== (column-sum $w $y) $m) (empty) $y)))))
+                                    (if (== (column-sum $w $y) $m) (empty) $y)){$y $m})))
      (and (== $bad-entries ()) (and (== $bad-rows ()) (== $bad-columns ())))))
 
 (= (cost $w $table)
@@ -91,11 +91,11 @@
               ($mu (trans $P $a $s)) ($nu (trans $Q $a $t))
               ($k (cost $w $table)))
          (and (is-coupling $w $mu $nu)
-              (and (<= (* $c $k) $v) (actions-ok $P $Q $c $table $s $t $v $rest))))))
+              (and (<= (* $c $k) $v) (actions-ok $P $Q $c $table $s $t $v $rest)))){$a $rest $w $mu $nu $k}))
 (= (coupling-bound $P $Q $c $table)
    (let* (($ss (states $P)) ($ts (states $Q))
           ($bad (collapse (let* (($s (superpose $ss)) ($t (superpose $ts)))
-                            (if (bound-ok $P $Q $c $table $s $t) (empty) ($s $t))))))
+                            (if (bound-ok $P $Q $c $table $s $t) (empty) ($s $t))){$s $t})))
      (== $bad ())))
 
 ; The certificate table: c^2 at the start, c in the middle, 1 at the failure.
@@ -155,7 +155,7 @@
        (let* (($x (obs world $s)) ($y (obs calm $t)) ($here (abs-q (- $x $y)))
               ($s2 (next-stage $s)) ($seen2 (cons-atom ($s $t) $seen))
               ($later (drift $s2 $t $seen2)))
-         (max-q $here $later))))
+         (max-q $here $later)){$x $y $here $s2 $seen2 $later}))
 (= (approx-bisimilar $eps) (let $d (drift start quiet ()) (<= $d $eps)))
 
 ; 4. The drift from the start is 1, reached at the second step: no

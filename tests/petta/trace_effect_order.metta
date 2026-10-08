@@ -1,0 +1,26 @@
+; Trace messages precede the body, including refused and empty branches.
+; Repeated label occurrences remain separate; body choices do not replay them.
+(= (trace-count-down $n)
+   (trace! (at $n)
+      (if (== $n 0) done (trace-count-down (- $n 1)))))
+!(trace-count-down 3)
+!(collapse (trace! before-two (superpose (1 2 1))))
+!(collapse (trace! before-empty (empty)))
+!(trace! (trace! label-computation label) (trace! body-computation payload))
+!(let $x foo (trace! (bound $x) (pair $x $x)))
+!(collapse (trace! (superpose (first second first)) (superpose (a b))))
+!(collapse (once (trace! before-once (superpose (a b)))))
+; Quotation and computed special-form names remain data.
+!(quote (trace! forbidden-trace payload))
+!(trace! short)
+!(trace! many a b)
+!(let $f trace! ($f dynamic-label value))
+; A fault is caught after its prefix prints, without running the rest.
+!(case (catch (trace! before-fault (progn (/ 1 0) (println! forbidden-after-fault))))
+   (((Error $what $where) caught) ($other unexpected)))
+!(collapse (trace! (empty) (println! forbidden-body)))
+(= (trace-refused-call)
+   (trace! refused-call (let present absent rejected)))
+!(collapse (trace-refused-call))
+!(trace! (quote (trace! inert-label ignored)) nested-data)
+!(collapse (trace! (let present absent rejected) (println! forbidden-refused-label)))

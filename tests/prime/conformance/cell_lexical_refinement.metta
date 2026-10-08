@@ -8,7 +8,7 @@
    (case $item
      (((Cell.Pos $atom) True)
       ((Cell.Neg $atom) True)
-      ($_ False))))
+      ($_ False))){$atom})
 
 (= (cell-refine:valid-list ()) True)
 
@@ -28,7 +28,7 @@
          (case (cell-refine:remove-alpha $item $tail)
            (((Cell.Rest $rest)
               (Cell.Rest (cons-atom $head $rest)))
-            ($_ Cell.Missing))))))
+            ($_ Cell.Missing))){$rest $_})))
 
 (= (cell-refine:append () $right) $right)
 
@@ -61,10 +61,10 @@
                         (cell-refine:multiset-alpha-equal
                           (cell-refine:append $left-rest $right-rest)
                           $expected))
-                      ($_ False))))
-                 ($_ False)))
+                      ($_ False))){$right-rest $_})
+                 ($_ False))){$left-rest $_}
               False))
-          ($_ False)))
+          ($_ False))){$left-atom $right-atom $_}
        False))
 
 ; Positive: validation forces and caches an equation containing $x before the

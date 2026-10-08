@@ -1,3 +1,6 @@
+; Rule-M ownership of names in runtime-formed lambdas.
+(scope:profile mercury-implicit per-call reference)
+
 ; Lambdas built while the program runs get their binders' identities when
 ; they are formed: by cons-atom or union-atom, by opening quoted code with
 ; `*` (code `lift` built included), by `parse`, and by a substitution that

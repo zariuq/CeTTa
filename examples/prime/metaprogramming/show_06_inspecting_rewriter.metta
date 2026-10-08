@@ -13,7 +13,7 @@
 (: literal? (-> (Data Atom) Bool))
 (= (literal? $x)
    (if (== (get-metatype $x) Grounded)
-       (let $v (eval $x) (== (get-type $v) Number))
+       (let $v (eval $x) (== (get-type $v) Number)){$v}
        False))
 (: simp (-> (Data Atom) (Data Atom)))
 (= (simp $e)
@@ -21,7 +21,7 @@
        (if (noreduce-eq $e ()) ()
            (let $h (car-atom $e)
              (if (noreduce-eq $h quote) $e
-                 (let $kids (simp-list $e) (simp-node $kids)))))
+                 (let $kids (simp-list $e) (simp-node $kids)){$kids})){$h})
        $e))
 (: simp-list (-> (Data Atom) (Data Atom)))
 (= (simp-list $e)
@@ -29,7 +29,7 @@
        (let ($h $t) (decons-atom $e)
          (let $h2 (simp $h)
            (let $t2 (simp-list $t)
-             (cons-atom $h2 $t2))))))
+             (cons-atom $h2 $t2)){$t2}){$h2}){$h $t}))
 (: simp-node (-> (Data Atom) (Data Atom)))
 (= (simp-node $e)
    (unify $e (+ 0 $x) $x
@@ -37,9 +37,9 @@
    (unify $e (* 1 $x) $x
    (unify $e (* $x 1) $x
    (unify $e (+ $a $b)
-     (if (and (literal? $a) (literal? $b)) (let $s (+ (eval $a) (eval $b)) $s) $e)
+     (if (and (literal? $a) (literal? $b)) (let $s (+ (eval $a) (eval $b)) $s){$s} $e)
    (unify $e (* $a $b)
-     (if (and (literal? $a) (literal? $b)) (let $p (* (eval $a) (eval $b)) $p) $e)
+     (if (and (literal? $a) (literal? $b)) (let $p (* (eval $a) (eval $b)) $p){$p} $e)
    $e)))))))
 
 ; ---- inspecting held code, following calls into the program's equations
@@ -48,7 +48,7 @@
    (if (== (get-metatype $h) Symbol)
        (case (repr $h)
          (("println!" True) ("add-atom" True) ("remove-atom" True)
-          ("bind!" True) ("import!" True) ("new-space" True) ($_ False)))
+          ("bind!" True) ("import!" True) ("new-space" True) ($_ False))){$_}
        False))
 (: heads (-> (Data Atom) (Data Atom)))
 (= (heads $e)
@@ -58,12 +58,12 @@
              (let $a (heads $h)
                (let $b (heads $t)
                  (let $ab (union-atom $a $b)
-                   (if (== (get-metatype $h) Symbol) (union-atom ($h) $ab) $ab))))))
+                   (if (== (get-metatype $h) Symbol) (union-atom ($h) $ab) $ab)){$ab}){$b}){$a}){$h $t})
        ()))
 (: elements (-> (Data Atom) (Data Atom)))
 (= (elements $l)
    (if (noreduce-eq $l ()) (empty)
-       (let ($h $t) (decons-atom $l) (superpose ($h (elements $t))))))
+       (let ($h $t) (decons-atom $l) (superpose ($h (elements $t)))){$h $t}))
 ; The right-hand sides of a symbol's equations, each as sealed code.  A
 ; quotation is sealed, so a body enters code by lift; `as-written` holds it
 ; (a Data parameter), so lifting it runs nothing.
@@ -80,7 +80,7 @@
            (if (> $depth 0)
                (let $bodies (bodies-of $h)
                  (let $q (elements $bodies)
-                   (unify $q (quote $b) (effect-in $b (- $depth 1)) (empty))))
+                   (unify $q (quote $b) (effect-in $b (- $depth 1)) (empty))){$q}){$bodies}
                (empty))))))
 (: effects-in (-> (Data Atom) (Data Atom)))
 (= (effects-in $e) (let $found (collapse (effect-in $e 3)) (unique-atom $found)))
@@ -90,7 +90,7 @@
 (= (run-checked $e)
    (let $bad (effects-in $e)
      (if (== $bad ())
-         (let $s (simp $e) (let $v (eval $s) (Ran $s $v)))
+         (let $s (simp $e) (let $v (eval $s) (Ran $s $v)){$v}){$s}
          (Refused $bad))))
 
 ; ---- a small program the submitted code may call

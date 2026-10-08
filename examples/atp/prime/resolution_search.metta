@@ -20,13 +20,13 @@
        ((ATP.Pick $head $tail)
         (let (ATP.Pick $picked $rest)
              (atp:resolution-search:pick $tail)
-          (ATP.Pick $picked (cons-atom $head $rest)))))))
+          (ATP.Pick $picked (cons-atom $head $rest))){$picked $rest}))))
 
 (= (atp:resolution-search:native-literal-valid $literal)
    (case $literal
      (((ATP.Pos $atom) True)
       ((ATP.Neg $atom) True)
-      ($_ False))))
+      ($_ False))){$atom})
 
 (= (atp:resolution-search:native-clause-valid ()) True)
 
@@ -46,7 +46,7 @@
          (case (atp:resolution-search:remove-one-alpha $item $tail)
            (((ATP.RemoveOK $rest)
               (ATP.RemoveOK (cons-atom $head $rest)))
-            ($_ ATP.RemoveMissing))))))
+            ($_ ATP.RemoveMissing))){$rest $_})))
 
 (= (atp:resolution-search:multiset-alpha-equal () $right)
    (== $right ()))
@@ -75,8 +75,8 @@
                (atp:resolution-search:multiset-alpha-equal
                  (atp:resolution:append $left-rest $right-rest)
                  $expected))
-             ($_ False))))
-        ($_ False)))
+             ($_ False))){$right-rest $_})
+        ($_ False))){$left-rest $_}
      False))
 
 (= (atp:resolution-search:check-native-step
@@ -93,7 +93,7 @@
                     (atp:resolution-search:check-polarity
                       $left $right $left-pivot $right-pivot
                       $left-atom $right-atom $expected))
-                  ($_ False)))
+                  ($_ False))){$left-atom $right-atom $_}
                False)
            False)
        False))
@@ -136,7 +136,7 @@
           (eval (atp:resolution:append $left-rest $right-rest))
        (ATP.ResolutionProof
          $left-proof $right-proof
-         $left-pivot $right-pivot $child))
+         $left-pivot $right-pivot $child)){$child}
      (empty)))
 
 (= (atp:resolution-search:resolve-fresh
@@ -164,7 +164,7 @@
                   $left-pivot $right-pivot
                   $left-rest $right-rest
                   $left-atom $right-atom))
-              ($_ (empty)))))))))
+              ($_ (empty)))){$left-atom $right-atom})))))
 
 (= (atp:resolution-search:resolve $left-proof $right-proof)
    ; sealed creates independent variable epochs for the two parent uses.  This
@@ -184,7 +184,7 @@
         (== $left-atom $right-atom))
       (((ATP.Neg $left-atom) (ATP.Pos $right-atom))
         (== $left-atom $right-atom))
-      ($_ False))))
+      ($_ False))){$left-atom $right-atom})
 
 (= (atp:resolution-search:tautology-against $literal ()) False)
 
@@ -234,7 +234,7 @@
               (atp:resolution-search:extract-best-by-weight $tail)
            (if (atp:resolution-search:item-better-weight $head $best)
                (ATP.Selected $head (cons-atom $best $rest))
-               (ATP.Selected $best (cons-atom $head $rest)))))))
+               (ATP.Selected $best (cons-atom $head $rest)))){$best $rest})))
 
 (= (atp:resolution-search:extract-best-by-age $items)
    (let ($head $tail) (decons-atom $items)
@@ -244,7 +244,7 @@
               (atp:resolution-search:extract-best-by-age $tail)
            (if (atp:resolution-search:item-better-age $head $best)
                (ATP.Selected $head (cons-atom $best $rest))
-               (ATP.Selected $best (cons-atom $head $rest)))))))
+               (ATP.Selected $best (cons-atom $head $rest)))){$best $rest})))
 
 (= (atp:resolution-search:select-given
      $passive $selection-index
@@ -283,7 +283,7 @@
              (let $rest
                   (eval (atp:resolution-search:take
                           (- $limit 1) $tail))
-               (cons-atom $head $rest))))))
+               (cons-atom $head $rest)){$rest}){$head $tail})))
 
 (= (atp:resolution-search:resolve-with-active
      $given-proof $active $max-generated)
@@ -293,7 +293,7 @@
         (select (+ $max-generated 1)
           (let $active-proof (superpose $active)
             (atp:resolution-search:resolve
-              $given-proof $active-proof)))
+              $given-proof $active-proof)){$active-proof})
      (if (> (size-atom $answers) $max-generated)
          (ATP.Generated
            (atp:resolution-search:take $max-generated $answers) True)
@@ -313,15 +313,15 @@
                  $index
                  (ATP.ActivePos $atom $proof $literal))
             (atp:resolution-search:index-literals
-              $index $proof $rest)))
+              $index $proof $rest)){$added})
         ((ATP.Neg $atom)
           (let $added
                (add-atom
                  $index
                  (ATP.ActiveNeg $atom $proof $literal))
             (atp:resolution-search:index-literals
-              $index $proof $rest)))
-        ($_ ATP.Indexed)))))
+              $index $proof $rest)){$added})
+        ($_ ATP.Indexed))){$atom}))
 
 (= (atp:resolution-search:index-proof $index $proof)
    (let $clause (atp:resolution-search:conclusion $proof)
@@ -348,7 +348,7 @@
                        $given-rest $active-rest))
             (ATP.ResolutionProof
               $given-proof $active-proof
-              $given-pivot $active-pivot $child)))
+              $given-pivot $active-pivot $child)){$child})
         ($_ (empty))))))
 
 (= (atp:resolution-search:resolve-indexed-fresh $index $given-proof)
@@ -362,14 +362,14 @@
               (ATP.ActiveNeg $atom $active-proof $active-pivot)
               (atp:resolution-search:resolve-indexed-hit
                 $given-proof $given-pivot $given-rest
-                $active-proof $active-pivot)))
+                $active-proof $active-pivot)){$atom $active-proof $active-pivot})
           ((ATP.Neg $atom)
             (match $index
               (ATP.ActivePos $atom $active-proof $active-pivot)
               (atp:resolution-search:resolve-indexed-hit
                 $given-proof $given-pivot $given-rest
-                $active-proof $active-pivot)))
-          ($_ (empty)))))))
+                $active-proof $active-pivot)){$atom $active-proof $active-pivot})
+          ($_ (empty)))){$atom})))
 
 (= (atp:resolution-search:resolve-indexed $index $given-proof)
    ; match freshens every indexed parent.  sealed independently freshens the
@@ -480,7 +480,7 @@
                          (atp:resolution-search:stats-add
                            $stats (size-atom $generated) $accepted
                            $tautologies $variants $invalid
-                           $local-truncated))))))))))
+                           $local-truncated))){$next-passive $after-age $accepted $tautologies $variants $invalid}){$generated $local-truncated})){$given-clause}){$given-age $given-proof $remaining-passive})))
 
 (= (atp:resolution-search:loop-indexed
      $index $passive $active $next-age $selection-index
@@ -523,7 +523,7 @@
                            (atp:resolution-search:stats-add
                              $stats (size-atom $generated) $accepted
                              $tautologies $variants $invalid
-                             $local-truncated)))))))))))
+                             $local-truncated))){$next-passive $after-age $accepted $tautologies $variants $invalid}){$indexed}){$generated $local-truncated})){$given-clause}){$given-age $given-proof $remaining-passive})))
 
 (= (atp:resolution-search:named-inputs () $age) (ATP.Inputs () $age))
 

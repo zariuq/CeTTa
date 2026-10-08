@@ -243,6 +243,95 @@ static void test_queue_linearization(
     space_free(&space);
 }
 
+static void test_partial_remove_releases_small_indexes(
+        TermUniverse *universe, Arena *scratch) {
+    Space space;
+    SymbolId edge = symbol_intern_cstr(g_symbols, "partial-small-edge");
+    space_init_with_universe(&space, universe);
+    space.kind = SPACE_KIND_STACK;
+    for (int64_t i = 0; i < 24; i++)
+        space_add_atom_id(&space, store_atom(universe, edge_value(scratch, edge, i)));
+    Atom *remaining = edge_value(scratch, edge, 23);
+    realize_both_indexes(&space, scratch, remaining);
+    uint8_t mask[24];
+    memset(mask, 1, sizeof(mask));
+    mask[23] = 0;
+    CettaCount removed = 0;
+    assert(space_remove_occurrence_mask_stable(&space, mask, 24, &removed));
+    assert(removed == 23 && space_length64(&space) == 1);
+    assert(space.match_backend.native.match_trie == NULL);
+    assert(space.match_backend.native.stree == NULL);
+    CettaIndex expected[] = {0};
+    assert_query_indices(&space, scratch, remaining, expected, 1);
+    space_free(&space);
+}
+
+static Atom *shared_tree(Arena *arena, unsigned depth, unsigned width, Atom *leaf) {
+    assert(width <= 32u);
+    Atom *items[33];
+    items[0] = atom_symbol(arena, "bounded-index-node");
+    for (unsigned level = 0; level < depth; level++) {
+        for (unsigned i = 1; i <= width; i++)
+            items[i] = leaf;
+        leaf = atom_expr(arena, items, width + 1u);
+    }
+    return leaf;
+}
+
+static void test_bounded_graph_index(TermUniverse *universe, Arena *scratch) {
+    /* Depth and total expansion are independent controls: 32^6 occurrences
+     * cannot be bounded by a depth cutoff of eight alone. */
+    const unsigned depths[] = {18u, 6u};
+    const unsigned widths[] = {2u, 32u};
+    for (unsigned specimen = 0; specimen < 2u; specimen++) {
+        Space space;
+        space_init_with_universe(&space, universe);
+        space.kind = SPACE_KIND_STACK;
+        Atom *shared = shared_tree(scratch, depths[specimen], widths[specimen],
+                                  atom_symbol(scratch, "bounded-index-leaf"));
+        SymbolId head = symbol_intern_cstr(g_symbols, "bounded-index-row");
+        SymbolId end = symbol_intern_cstr(g_symbols, "bounded-index-end");
+        Atom *wanted = binary(scratch, head, shared,
+                             binary(scratch, end,
+                               shared_tree(scratch, 2u, 32u, atom_int(scratch, 7)),
+                               atom_int(scratch, 8)));
+        for (int64_t i = 0; i < 24; i++) {
+            Atom *row = (i == 2 || i == 17) ? wanted :
+                binary(scratch, head, shared,
+                       binary(scratch, end,
+                         shared_tree(scratch, 2u, 32u, atom_int(scratch, i + 100)),
+                         atom_int(scratch, 8)));
+            AtomId id = term_universe_store_atom_id_from_source_arena(
+                universe, NULL, scratch, row);
+            assert(id != CETTA_ATOM_ID_NONE);
+            space_add_atom_id(&space, id);
+        }
+        space_match_native_ensure_trie(&space);
+        CettaIndex *candidates = NULL;
+        CettaIndex count = space_match_backend_candidates64(&space, wanted, &candidates);
+        bool first = false, second = false;
+        for (CettaIndex i = 0; i < count; i++) {
+            if (i) assert(candidates[i - 1] < candidates[i]);
+            first |= candidates[i] == 2u;
+            second |= candidates[i] == 17u;
+        }
+        assert(first && second);
+        /* The wide graph exhausts the budget before the final discriminator.
+         * False candidates must be filtered, never counted as answers. */
+        if (specimen == 1u) assert(count > 2u);
+        free(candidates);
+        CettaIndex expected[] = {2u, 17u};
+        assert_query_indices(&space, scratch, wanted, expected, 2u);
+        uint64_t answers = UINT64_MAX;
+        CettaIndex examined = 0;
+        assert(!space_match_count_flat_linear64(&space, scratch, wanted, &answers, &examined));
+        CettaIndex direct_count = UINT64_MAX;
+        assert(!disc_count_rigid_exact_path(space.match_backend.native.match_trie,
+                                           wanted, &direct_count));
+        space_free(&space);
+    }
+}
+
 static void test_repeated_churn_is_amortized(
         TermUniverse *universe, Arena *scratch) {
     Space space;
@@ -481,6 +570,72 @@ static void test_cold_candidate_cursor(TermUniverse *universe, Arena *scratch) {
     space_free(&space);
 }
 
+static void test_reset_releases_storage_after_readers(
+        TermUniverse *universe, Arena *scratch) {
+    enum { ROWS = 257, EPISODES = 24 };
+    AtomId values[2] = {
+        store_atom(universe, atom_int(scratch, 17)),
+        store_atom(universe, atom_int(scratch, 29)),
+    };
+    uint8_t mask[ROWS];
+    memset(mask, 1, sizeof(mask));
+    Atom *query = atom_var(scratch, "reset-retained-reader");
+    for (unsigned episode = 0u; episode < EPISODES; episode++) {
+        Space space;
+        space_init_with_universe(&space, universe);
+        space.kind = SPACE_KIND_STACK;
+        for (CettaIndex row = 0u; row < ROWS; row++)
+            space_add_atom_id(&space, values[row % 2u]);
+        space_match_native_ensure_trie(&space);
+        SpaceOccurrenceCursor first, second;
+        assert(space_occurrence_cursor_init(&space, query, &first));
+        assert(space_occurrence_cursor_clone(&first, &second));
+        SpaceReadToken token = space_read_token(&space);
+        uint64_t identity = space.instance_id;
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+        CettaRuntimeStats before, after;
+        cetta_runtime_stats_snapshot(&before);
+        size_t retained_bytes = ROWS *
+            cetta_atom_id_storage_width_bytes_from_bits(space.native.atom_id_width_bits);
+#endif
+        CettaCount removed = 0u;
+        assert(space_remove_occurrence_mask_stable(&space, mask, ROWS, &removed));
+        assert(removed == ROWS && space_length64(&space) == 0u);
+        assert(space.native.atom_ids == NULL && space.native.cap == 0u);
+        assert(space.match_backend.native.match_trie == NULL);
+        assert(space.match_backend.native.stree == NULL);
+        assert(space.instance_id == identity);
+        assert(!space_read_token_matches_live_space(token, &space));
+        space_add_atom_id(&space, values[1]);
+        assert(space_length64(&space) == 1u);
+        /* Cancelling one reader does not retire the other reader's view. */
+        space_occurrence_cursor_release(&first);
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+        cetta_runtime_stats_snapshot(&after);
+        assert(after.counters[CETTA_RUNTIME_COUNTER_SPACE_RETIRED_OCCURRENCE_RELEASE_BYTES] ==
+               before.counters[CETTA_RUNTIME_COUNTER_SPACE_RETIRED_OCCURRENCE_RELEASE_BYTES]);
+#endif
+        space_free(&space);
+        for (CettaIndex expected = 0u; expected < ROWS; expected++) {
+            CettaIndex index = UINT64_MAX;
+            assert(space_occurrence_cursor_next(&second, &index) ==
+                   SPACE_OCCURRENCE_CURSOR_ITEM);
+            assert(index == expected);
+            assert(atom_eq(space_occurrence_cursor_atom(&second, index),
+                term_universe_get_atom(universe, values[expected % 2u])));
+        }
+        CettaIndex end = UINT64_MAX;
+        assert(space_occurrence_cursor_next(&second, &end) == SPACE_OCCURRENCE_CURSOR_END);
+        space_occurrence_cursor_release(&second);
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+        cetta_runtime_stats_snapshot(&after);
+        assert(after.counters[CETTA_RUNTIME_COUNTER_SPACE_RETIRED_OCCURRENCE_RELEASE_BYTES] ==
+               before.counters[CETTA_RUNTIME_COUNTER_SPACE_RETIRED_OCCURRENCE_RELEASE_BYTES] +
+               retained_bytes);
+#endif
+    }
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena persistent;
@@ -501,10 +656,13 @@ int main(void) {
     test_cold_candidate_cursor(&universe, &scratch);
     test_duplicate_order_and_open_patterns(&universe, &scratch);
     test_remove_all_releases_small_indexes(&universe, &scratch);
+    test_partial_remove_releases_small_indexes(&universe, &scratch);
+    test_bounded_graph_index(&universe, &scratch);
     test_queue_linearization(&universe, &scratch);
     test_repeated_churn_is_amortized(&universe, &scratch);
     test_occurrence_cursor_exact_clone(&universe, &scratch);
     test_atom_id_removal_preserves_pinned_view(&universe, &scratch);
+    test_reset_releases_storage_after_readers(&universe, &scratch);
 
 #if CETTA_BUILD_WITH_RUNTIME_STATS
     CettaRuntimeStats stats;

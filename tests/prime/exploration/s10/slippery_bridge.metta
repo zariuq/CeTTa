@@ -55,7 +55,7 @@
 (= (in-list $x $xs)
    (if (== $xs ()) False
        (let $h (car-atom $xs)
-         (if (== $h $x) True (let $t (cdr-atom $xs) (in-list $x $t))))))
+         (if (== $h $x) True (let $t (cdr-atom $xs) (in-list $x $t)){$t})){$h}))
 
 ; ---- the chains ------------------------------------------------------------------
 
@@ -88,7 +88,7 @@
 (= (coupling (delivery $p) (delivery $q) $a $s $t)
    (if (and (== $s bridge) (== $t bridge))
        (slip-coupling $p $q)
-       (let* (($mu (step-dist $p $a $s)) ($nu (step-dist $q $a $t))) (independent $mu $nu))))
+       (let* (($mu (step-dist $p $a $s)) ($nu (step-dist $q $a $t))) (independent $mu $nu)){$mu $nu}))
 
 (= (row-sum $w $x)
    (foldl-atom $w 0 $acc $e (let (($u $v) $m) $e (if (== $u $x) (+ $acc $m) $acc))))
@@ -99,11 +99,11 @@
    (let* (($xs (keys $mu)) ($ys (keys $nu))
           ($bad-entries (collapse (let (($u $v) $m) (superpose $w)
                                     (if (and (<= 0 $m) (and (in-list $u $xs) (in-list $v $ys)))
-                                        (empty) $u))))
+                                        (empty) $u)){$u $v $m}))
           ($bad-rows (collapse (let ($x $m) (superpose $mu)
-                                 (if (== (row-sum $w $x) $m) (empty) $x))))
+                                 (if (== (row-sum $w $x) $m) (empty) $x)){$x $m}))
           ($bad-columns (collapse (let ($y $m) (superpose $nu)
-                                    (if (== (column-sum $w $y) $m) (empty) $y)))))
+                                    (if (== (column-sum $w $y) $m) (empty) $y)){$y $m})))
      (and (== $bad-entries ()) (and (== $bad-rows ()) (== $bad-columns ())))))
 
 (= (cost $w $table)
@@ -119,11 +119,11 @@
               ($mu (trans $P $a $s)) ($nu (trans $Q $a $t))
               ($k (cost $w $table)))
          (and (is-coupling $w $mu $nu)
-              (and (<= (* $c $k) $v) (actions-ok $P $Q $c $table $s $t $v $rest))))))
+              (and (<= (* $c $k) $v) (actions-ok $P $Q $c $table $s $t $v $rest)))){$a $rest $w $mu $nu $k}))
 (= (coupling-bound $P $Q $c $table)
    (let* (($ss (states $P)) ($ts (states $Q))
           ($bad (collapse (let* (($s (superpose $ss)) ($t (superpose $ts)))
-                            (if (bound-ok $P $Q $c $table $s $t) (empty) ($s $t))))))
+                            (if (bound-ok $P $Q $c $table $s $t) (empty) ($s $t))){$s $t})))
      (== $bad ())))
 
 ; The certificate table of the pinned metric.
@@ -193,23 +193,23 @@
 (= (some-related $xs $t2s $rel)
    (if (== $xs ()) False
        (let* (($x (car-atom $xs)) ($rest (cdr-atom $xs)))
-         (if (any-related $x $t2s $rel) True (some-related $rest $t2s $rel)))))
+         (if (any-related $x $t2s $rel) True (some-related $rest $t2s $rel))){$x $rest}))
 (= (any-related $x $ys $rel)
    (if (== $ys ()) False
        (let* (($y (car-atom $ys)) ($rest (cdr-atom $ys)))
-         (if (in-list ($x $y) $rel) True (any-related $x $rest $rel)))))
+         (if (in-list ($x $y) $rel) True (any-related $x $rest $rel))){$y $rest}))
 (= (all-matched-forth $xs $ys $rel)
    (if (== $xs ()) True
        (let* (($x (car-atom $xs)) ($rest (cdr-atom $xs)))
-         (and (any-related $x $ys $rel) (all-matched-forth $rest $ys $rel)))))
+         (and (any-related $x $ys $rel) (all-matched-forth $rest $ys $rel))){$x $rest}))
 (= (any-related-back $y $xs $rel)
    (if (== $xs ()) False
        (let* (($x (car-atom $xs)) ($rest (cdr-atom $xs)))
-         (if (in-list ($x $y) $rel) True (any-related-back $y $rest $rel)))))
+         (if (in-list ($x $y) $rel) True (any-related-back $y $rest $rel))){$x $rest}))
 (= (all-matched-back $ys $xs $rel)
    (if (== $ys ()) True
        (let* (($y (car-atom $ys)) ($rest (cdr-atom $ys)))
-         (and (any-related-back $y $xs $rel) (all-matched-back $rest $xs $rel)))))
+         (and (any-related-back $y $xs $rel) (all-matched-back $rest $xs $rel))){$y $rest}))
 ; Every move of s is matched by a move of t into the relation, and back.
 (= (matched $P $Q $a $rel $s $t)
    (let* (($xs (support $P $a $s)) ($ys (support $Q $a $t)))
@@ -221,7 +221,7 @@
 (= (largest-bisimulation $P $Q $a $eps)
    (let* (($ss (states $P)) ($ts (states $Q))
           ($close (collapse (let* (($s (superpose $ss)) ($t (superpose $ts)))
-                              (if (<= (gap $P $Q $s $t) $eps) ($s $t) (empty))))))
+                              (if (<= (gap $P $Q $s $t) $eps) ($s $t) (empty))){$s $t})))
      (refine $P $Q $a $close)))
 (= (supports-bisimilar $p $q $a $eps)
    (let $rel (largest-bisimulation (delivery $p) (delivery $q) $a $eps) (in-list (depot depot) $rel)))
@@ -258,7 +258,7 @@
    (if (== $edges (depotBridge bridgeGarden)) 9/10 (step-prob $q $edges)))
 (= (append $xs $ys)
    (if (== $xs ()) $ys
-       (let* (($h (car-atom $xs)) ($t (cdr-atom $xs)) ($r (append $t $ys))) (cons-atom $h $r))))
+       (let* (($h (car-atom $xs)) ($t (cdr-atom $xs)) ($r (append $t $ys))) (cons-atom $h $r)){$h $t $r}))
 (= (defect $model $first $second)
    (let* (($whole (append $first $second))
           ($x (model-prob $model $whole)) ($y (model-prob $model $first)) ($z (model-prob $model $second)))
@@ -267,7 +267,7 @@
 (= (max-defect $model)
    (let* (($ps (paths))
           ($ds (collapse (let* ((($a $b $f) (superpose $ps)) (($b2 $c $g) (superpose $ps)))
-                           (if (== $b $b2) (defect $model $f $g) (empty))))))
+                           (if (== $b $b2) (defect $model $f $g) (empty))){$a $b $f $b2 $c $g})))
      (foldl-atom $ds 0 $acc $d (max-q $acc $d))))
 
 ; 5. A coherent step model is a functor on the route graph: defect 0 for every

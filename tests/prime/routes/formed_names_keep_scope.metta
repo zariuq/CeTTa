@@ -1,3 +1,6 @@
+; Rule-M ownership of separately written code parts.
+(scope:profile mercury-implicit per-call reference)
+
 ; Code formed at run time never decides ownership again (stage 5, item 5).
 ; A part carries the scope of each store name from where it was written: a
 ; name written outside a quotation belongs to the scope it was written in,

@@ -93,7 +93,7 @@
 !(add-atom &self (universe-operation Union universe-union-closure))
 (= (universe-pipeline Nil $value $proof) (ProvedSet $value $proof))
 (= (universe-pipeline (Cons $operation $rest) $value $proof)
-   (let $law (match &self (universe-operation $operation $name) $name)
+   (let $law (match &self (universe-operation $operation $name) $name){$operation}
      (let $next-proof
        (pf:imp-elim
          (pf:all-elim (pf:all-elim (pf:known $law) Empty) $value) $proof)

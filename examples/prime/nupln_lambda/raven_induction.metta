@@ -24,7 +24,7 @@
 ; ---------------------------------------------------------------------------
 ; Exact rationals.  (q a b) is a/b in lowest terms, as (frac n d) with d > 0.
 
-(= (gcd $a $b) (if (== $b 0) $a (let $r (% $a $b) (gcd $b $r))))
+(= (gcd $a $b) (if (== $b 0) $a (let $r (% $a $b) (gcd $b $r)){$r}))
 (= (q $a $b)
    (let $g (gcd $a $b)
      (let $n (// $a $g)
@@ -72,7 +72,7 @@
 (= (member $x $props)
    (if (== $props ()) False
        (let ($h $t) (decons-atom $props)
-         (if (== $h $x) True (member $x $t)))))
+         (if (== $h $x) True (member $x $t))){$h $t}))
 (= (raven (seen $id $props)) (member Raven $props))
 (= (black (seen $id $props)) (member Black $props))
 
@@ -80,14 +80,14 @@
    (if (> $from $to) done
        (let $id ($tag $from)
          (let $u (add-atom &world (observed $id $props))
-           (let $next (+ $from 1) (observe-range $tag $next $to $props))))))
+           (let $next (+ $from 1) (observe-range $tag $next $to $props)){$next}){$u}){$id}))
 (= (observe $tag $from $to $props)
    (let $u (observe-range $tag $from $to $props)
      (observed (from ($tag $from)) (to ($tag $to)) $props)))
 (= (observations)
    (collapse (match &world (observed $id $props) (seen $id $props))))
 (= (count-kind $props)
-   (let $ids (collapse (match &world (observed $id $props) $id)) (size-atom $ids)))
+   (let $ids (collapse (match &world (observed $id $props) $id){$props}) (size-atom $ids)))
 
 ; The four directed links, each a pair of lambda predicates.
 (= (link raven→black) (→ (lam x (raven x)) (lam x (black x))))
@@ -306,7 +306,7 @@
               (q-le (confidence (lens) $e1) (confidence (lens) $e2))))
        (let $ok (all-true $flags)
          (Lean confidence_blackRaven_monotone (row-pairs $n) $ok)))))
-!(let $rows (collapse (match &rows (row $r $m $i $f) (row $r $m $i $f)))
+!(let $rows (collapse (match &rows (row $r $m $i $f) (row $r $m $i $f)){$r $m $i $f})
    (let $n (size-atom $rows)
      (let $flags
           (collapse
@@ -314,7 +314,7 @@
               (let $base (q $r (+ $r $m))
                 (let $bayes (bayes-inversion (strength $f) $base (frac 1 1))
                   (and (q-eq (strength $i) $base)
-                    (q-eq (strength $i) $bayes))))))
+                    (q-eq (strength $i) $bayes))))){$r $m $i $f})
        (let $ok (all-true $flags)
          (Lean (blackRavenStrength_toReal_eq_baseRate
                 blackRavenStrength_toReal_eq_bayesInversion)

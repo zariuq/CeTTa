@@ -39,22 +39,22 @@
 
 ; A saved range can introduce another variable which restoration refines.
 !(chain (collapse-bind (unify $x (pair $y) token Empty)) $saved
-   (let $promise (delay (chain (superpose-bind $saved) $_ $y))
+   (let $promise (delay (chain (superpose-bind $saved) $_ $y){$_})
      (unify $x (pair B) (force $promise) Empty)))
 
 ; Dependency summaries also include saved values inside another saved range.
 !(chain (collapse-bind (unify $x A token Empty)) $first
    (chain (collapse-bind (unify $inner $first token Empty)) $second
      (let $promise
-       (delay (chain (superpose-bind $second) $_ (superpose-bind $inner)))
+       (delay (chain (superpose-bind $second) $_ (superpose-bind $inner)){$_})
        (unify $x B (force $promise) Empty))))
 
 ; A thunk stored as a saved binding value keeps its own lexical support.
 !(let $inner (delay (unify $x A token Empty))
    (chain (collapse-bind (unify $v $inner saved Empty)) $saved
-     (let $outer (delay (chain (superpose-bind $saved) $_ (force $v)))
+     (let $outer (delay (chain (superpose-bind $saved) $_ (force $v)){$_})
        (unify $x B (force $outer) Empty))))
 !(let $inner (delay (unify $x A token Empty))
    (chain (collapse-bind (unify $v $inner saved Empty)) $saved
-     (let $outer (delay (chain (superpose-bind $saved) $_ (force $v)))
+     (let $outer (delay (chain (superpose-bind $saved) $_ (force $v)){$_})
        (unify $x A (force $outer) Empty))))

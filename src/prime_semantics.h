@@ -252,8 +252,7 @@ bool prime_quote_seal_active(void);
  * when a form is elaborated; every lambda or map-atom/foldl-atom template
  * that needs it records the profile, with its own slots, in its own list
  * `(OWN RECORD $y ...)`, and is applied by that record whatever the
- * caller's profile.  The default is mercury-implicit per-call reference
- * (provisional). */
+ * caller's profile.  The default is lexical-fresh per-call reference. */
 enum {
     CETTA_PRIME_OWNERSHIP_QUERY_WIDE = 0,
     CETTA_PRIME_OWNERSHIP_MERCURY_IMPLICIT = 1,
@@ -298,8 +297,9 @@ void prime_scope_runtime_profile_set(CettaPrimeScopeProfile profile);
 CettaPrimeScopeProfile prime_scope_runtime_profile(void);
 /* The scope census (CETTA_PRIME_SCOPE_CENSUS, read by main.c): while the main
  * document is read, each form is elaborated under every ownership option
- * and counted, one line per option on standard output. */
-void prime_scope_census_set(bool on);
+ * and counted, one line per option on standard output. The mode "plan"
+ * instead emits the source migration plan; NULL or empty disables both. */
+void prime_scope_census_set(const char *mode);
 
 /* The binding structure of an authored form, computed once when the form is
  * formed and stored in the term (by the reader, or by parse while the
@@ -455,6 +455,14 @@ bool prime_semantics_meta_core(Arena *arena, Atom *term);
  * sees them and no spelling captures them.  NULL when the term is not such
  * a form (any other shape is data). */
 Atom *prime_semantics_new_open(Arena *arena, Atom *term);
+
+/* Open a recorded pattern scope using the lambda activation machinery. The
+ * source is outside the activation; only its pattern and continuation own
+ * local slots.  Unrelated forms are returned unchanged; NULL means failure. */
+Atom *prime_semantics_pattern_activation(Arena *arena, Atom *term);
+bool prime_semantics_has_scope_activation(const Atom *term);
+/* Open a scope as a control term, retaining the caller's search continuation. */
+Atom *prime_semantics_scope_activation(Arena *arena, Atom *term, Atom *space);
 
 /* Whether `term` is an authored lambda `(lam binders body)` whose binders the
  * kernel's grammar reads.  Such a lambda is a value. */

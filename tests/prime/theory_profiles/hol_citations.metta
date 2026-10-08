@@ -72,7 +72,7 @@
 !(match &saved (saved $package)
    (unify $package (SetNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
      (let $result (try (set:native-use &thy $package (Lam $type (idx 0))))
-       (SavedPackageAfterWithdrawal $result))
+       (SavedPackageAfterWithdrawal $result)){$result}
      NotAPackage))
 !(set:recheck &thy p-to-q-again)
 !(let $result (try (set:native-proof &thy both-q)) (LemmaCheckedAgain (car-atom $result)))
@@ -80,7 +80,7 @@
    (unify $package (SetNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
      (let (SetNativeUseV1 $checked $consumer $application $result-type)
           (set:native-use &thy $package (Lam $type (idx 0)))
-       (SavedPackageUsed (== $checked $package)))
+       (SavedPackageUsed (== $checked $package))){$checked $consumer $application $result-type}
      NotAPackage))
 
 ; A name that was never published is not cited: a record inserted into the
@@ -116,7 +116,7 @@
        (let (SetNativeNormalFormV1 $checked1 $body1 $application1 $normal1 $source1 $result1)
             (set:native-normalize &thy $original $consumer)
          (ComputedThroughCitation (map-atom $rows $r (car-atom $r))
-           (== $application (App $consumer $term)) (== $normal $normal1) (== $result $result1)))))
+           (== $application (App $consumer $term)) (== $normal $normal1) (== $result $result1))){$checked1 $body1 $application1 $normal1 $source1 $result1}){$checked $body $application $normal $source $result}){$consumer}
    NotAPackage)))
 
 ; zero-at-two cites zero-add by name; its link realizes the assumptions

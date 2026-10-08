@@ -11,4 +11,4 @@
 !(let $x d (let $_ (remove-atom &self (= d 1)) (P $x d)))
 ; A change of data, not of equations, keeps the world: the second use of
 ; `c` still shares the first one's choice.
-!(P c (let $_ (add-atom &self (fact)) c))
+!(P c (let $_ (add-atom &self (fact)) c){$_})

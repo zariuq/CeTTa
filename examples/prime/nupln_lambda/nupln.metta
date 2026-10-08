@@ -41,7 +41,7 @@
 ;; Base case: a fact of the knowledge base.
 (= (nupln_bc $kb $budget (: $x $a))
    (if (<= 1 $budget)
-       (match $kb (: $x $a) (MkSized 1 (: $x $a)))
+       (match $kb (: $x $a) (MkSized 1 (: $x $a))){$x $a}
        (empty)))
 
 ;; Type check a conjunction under a binder.  Both conjuncts, under the same
@@ -52,7 +52,7 @@
                (nupln_bc $kb (- $budget 2) (: (lam $v $f) (-> $a Bool))))
               ((MkSized $gs (: (lam $v $g) (-> $a Bool)))
                (nupln_bc $kb (- $budget (+ $fs 1)) (: (lam $v $g) (-> $a Bool)))))
-         (MkSized (+ 1 (+ $fs $gs)) (: (lam $v (∧ $f $g)) (-> $a Bool))))
+         (MkSized (+ 1 (+ $fs $gs)) (: (lam $v (∧ $f $g)) (-> $a Bool)))){$fs $v $f $a $gs $g}
        (empty)))
 
 ;; Type check a predicate applied to the bound variable (η): it has the type
@@ -60,7 +60,7 @@
 (= (nupln_bc $kb $budget (: (lam $v ($p $v)) (-> $a Bool)))
    (if (<= 1 $budget)
        (match $kb (: $p (-> $a Bool))
-         (MkSized 1 (: (lam $v ($p $v)) (-> $a Bool))))
+         (MkSized 1 (: (lam $v ($p $v)) (-> $a Bool)))){$p $a}
        (empty)))
 
 ;; Type check singleton construction, ⊙.  If $x is of type $a, then
@@ -68,7 +68,7 @@
 (= (nupln_bc $kb $budget (: (⊙ $x) (-> $a Bool)))
    (if (<= 2 $budget)
        (let (MkSized $xs (: $x $a)) (nupln_bc $kb (- $budget 1) (: $x $a))
-            (MkSized (+ 1 $xs) (: (⊙ $x) (-> $a Bool))))
+            (MkSized (+ 1 $xs) (: (⊙ $x) (-> $a Bool)))){$xs $x $a}
        (empty)))
 
 ;; Type check implication, →: a statement relating two predicates of the
@@ -79,7 +79,7 @@
                (nupln_bc $kb (- $budget 2) (: $f $a)))
               ((MkSized $gs (: $g $a))
                (nupln_bc $kb (- $budget (+ $fs 1)) (: $g $a))))
-         (MkSized (+ 1 (+ $fs $gs)) (: (→ $f $g) Statement)))
+         (MkSized (+ 1 (+ $fs $gs)) (: (→ $f $g) Statement))){$fs $f $a $gs $g}
        (empty)))
 
 ;; Conjunction evaluation to ⊤.  The conjunction holds of $x when both
@@ -99,7 +99,7 @@
               ((MkSized $as (: (→ (⊙ $x) (lam $v (∧ $f $g))) $a))
                (nupln_bc $kb (- $budget (+ (+ $fs $gs) 1)) (: (→ (⊙ $x) (lam $v (∧ $f $g))) $a))))
          (MkSized (+ 1 (+ $as (+ $fs $gs)))
-                  (: (cet $fp $gp) (≞ (→ (⊙ $x) (lam $v (∧ $f $g))) ⊤))))
+                  (: (cet $fp $gp) (≞ (→ (⊙ $x) (lam $v (∧ $f $g))) ⊤)))){$fs $fp $x $v $f $gs $gp $g $as $a}
        (empty)))
 
 ;; Conjunction evaluation to ⊥, left: the left conjunct is false of $x.
@@ -110,7 +110,7 @@
                (nupln_bc $kb (- $budget 2) (: $fp (≞ (→ (⊙ $x) (lam $v $f)) ⊥))))
               ((MkSized $as (: (→ (⊙ $x) (lam $v (∧ $f $g))) $a))
                (nupln_bc $kb (- $budget (+ $ps 1)) (: (→ (⊙ $x) (lam $v (∧ $f $g))) $a))))
-         (MkSized (+ 1 (+ $as $ps)) (: (cefl $fp) (≞ (→ (⊙ $x) (lam $v (∧ $f $g))) ⊥))))
+         (MkSized (+ 1 (+ $as $ps)) (: (cefl $fp) (≞ (→ (⊙ $x) (lam $v (∧ $f $g))) ⊥)))){$ps $fp $x $v $f $as $g $a}
        (empty)))
 
 ;; Conjunction evaluation to ⊥, right: the right conjunct is false of $x.
@@ -121,7 +121,7 @@
                (nupln_bc $kb (- $budget 2) (: $gp (≞ (→ (⊙ $x) (lam $v $g)) ⊥))))
               ((MkSized $as (: (→ (⊙ $x) (lam $v (∧ $f $g))) $a))
                (nupln_bc $kb (- $budget (+ $ps 1)) (: (→ (⊙ $x) (lam $v (∧ $f $g))) $a))))
-         (MkSized (+ 1 (+ $as $ps)) (: (cefr $gp) (≞ (→ (⊙ $x) (lam $v (∧ $f $g))) ⊥))))
+         (MkSized (+ 1 (+ $as $ps)) (: (cefr $gp) (≞ (→ (⊙ $x) (lam $v (∧ $f $g))) ⊥)))){$ps $gp $x $v $g $as $f $a}
        (empty)))
 
 ;; Evaluation of a predicate applied to the bound variable (η): the evidence
@@ -129,7 +129,7 @@
 (= (nupln_bc $kb $budget (: $pp (≞ (→ (⊙ $x) (lam $v ($p $v))) $tv)))
    (if (<= 1 $budget)
        (match $kb (: $pp (≞ (→ (⊙ $x) $p) $tv))
-         (MkSized 1 (: $pp (≞ (→ (⊙ $x) (lam $v ($p $v))) $tv))))
+         (MkSized 1 (: $pp (≞ (→ (⊙ $x) (lam $v ($p $v))) $tv)))){$pp $x $p $tv}
        (empty)))
 
 ;; Product.  Both $a and $b must be proven for (, $a $b) to be proven.
@@ -139,7 +139,7 @@
                (nupln_bc $kb (- $budget 2) (: $x $a)))
               ((MkSized $ys (: $y $b))
                (nupln_bc $kb (- $budget (+ $xs 1)) (: $y $b))))
-         (MkSized (+ 1 (+ $xs $ys)) (: (, $x $y) (, $a $b))))
+         (MkSized (+ 1 (+ $xs $ys)) (: (, $x $y) (, $a $b)))){$xs $x $a $ys $y $b}
        (empty)))
 
 ;; A test passes when the answer equals the expected one up to the names of
@@ -268,12 +268,12 @@
 (= (nf:first (∧ ($q $v) $r)) $q)
 (= (nf:ordered $kb $p $g)
    (let $q (nf:first $g)
-     (if (== (collapse (match $kb (≺ $p $q) True)) ()) False True)))
+     (if (== (collapse (match $kb (≺ $p $q) True){$p $q}) ()) False True)))
 
 ;; Base case: a fact of the knowledge base.
 (= (nupln_bc_nf $kb $budget (: $x $a))
    (if (<= 1 $budget)
-       (match $kb (: $x $a) (MkSized 1 (: $x $a)))
+       (match $kb (: $x $a) (MkSized 1 (: $x $a))){$x $a}
        (empty)))
 
 ;; Type check a conjunction under a binder, in normal form: the left conjunct
@@ -287,7 +287,7 @@
                (nupln_bc_nf $kb (- $budget (+ $fs 1)) (: (lam $v $g) (-> $a Bool)))))
          (if (nf:ordered $kb $p $g)
              (MkSized (+ 1 (+ $fs $gs)) (: (lam $v (∧ ($p $v) $g)) (-> $a Bool)))
-             (empty)))
+             (empty))){$fs $v $p $a $gs $g}
        (empty)))
 
 ;; Type check a predicate applied to the bound variable (η): it has the type
@@ -295,7 +295,7 @@
 (= (nupln_bc_nf $kb $budget (: (lam $v ($p $v)) (-> $a Bool)))
    (if (<= 1 $budget)
        (match $kb (: $p (-> $a Bool))
-         (MkSized 1 (: (lam $v ($p $v)) (-> $a Bool))))
+         (MkSized 1 (: (lam $v ($p $v)) (-> $a Bool)))){$p $a}
        (empty)))
 
 ;; Type check singleton construction, ⊙.  If $x is of type $a, then
@@ -303,7 +303,7 @@
 (= (nupln_bc_nf $kb $budget (: (⊙ $x) (-> $a Bool)))
    (if (<= 2 $budget)
        (let (MkSized $xs (: $x $a)) (nupln_bc_nf $kb (- $budget 1) (: $x $a))
-            (MkSized (+ 1 $xs) (: (⊙ $x) (-> $a Bool))))
+            (MkSized (+ 1 $xs) (: (⊙ $x) (-> $a Bool)))){$xs $x $a}
        (empty)))
 
 ;; Type check implication, →: a statement relating two predicates of the
@@ -314,7 +314,7 @@
                (nupln_bc_nf $kb (- $budget 2) (: $f $a)))
               ((MkSized $gs (: $g $a))
                (nupln_bc_nf $kb (- $budget (+ $fs 1)) (: $g $a))))
-         (MkSized (+ 1 (+ $fs $gs)) (: (→ $f $g) Statement)))
+         (MkSized (+ 1 (+ $fs $gs)) (: (→ $f $g) Statement))){$fs $f $a $gs $g}
        (empty)))
 
 ;; Conjunction evaluation to ⊤.  The conjunction holds of $x when both
@@ -331,7 +331,7 @@
          (if (nf:ordered $kb $p $g)
              (MkSized (+ 1 (+ $as (+ $fs $gs)))
                   (: (cet $fp $gp) (≞ (→ (⊙ $x) (lam $v (∧ ($p $v) $g))) ⊤)))
-             (empty)))
+             (empty))){$fs $fp $x $v $p $gs $gp $g $as $a}
        (empty)))
 
 ;; Conjunction evaluation to ⊥, left: the left conjunct is false of $x.
@@ -344,7 +344,7 @@
                (nupln_bc_nf $kb (- $budget (+ $ps 1)) (: (→ (⊙ $x) (lam $v (∧ ($p $v) $g))) $a))))
          (if (nf:ordered $kb $p $g)
              (MkSized (+ 1 (+ $as $ps)) (: (cefl $fp) (≞ (→ (⊙ $x) (lam $v (∧ ($p $v) $g))) ⊥)))
-             (empty)))
+             (empty))){$ps $fp $x $v $p $as $g $a}
        (empty)))
 
 ;; Conjunction evaluation to ⊥, right: the right conjunct is false of $x.
@@ -357,7 +357,7 @@
                (nupln_bc_nf $kb (- $budget (+ $ps 1)) (: (→ (⊙ $x) (lam $v (∧ ($p $v) $g))) $a))))
          (if (nf:ordered $kb $p $g)
              (MkSized (+ 1 (+ $as $ps)) (: (cefr $gp) (≞ (→ (⊙ $x) (lam $v (∧ ($p $v) $g))) ⊥)))
-             (empty)))
+             (empty))){$ps $gp $x $v $g $as $p $a}
        (empty)))
 
 ;; Evaluation of a predicate applied to the bound variable (η): the evidence
@@ -365,7 +365,7 @@
 (= (nupln_bc_nf $kb $budget (: $pp (≞ (→ (⊙ $x) (lam $v ($p $v))) $tv)))
    (if (<= 1 $budget)
        (match $kb (: $pp (≞ (→ (⊙ $x) $p) $tv))
-         (MkSized 1 (: $pp (≞ (→ (⊙ $x) (lam $v ($p $v))) $tv))))
+         (MkSized 1 (: $pp (≞ (→ (⊙ $x) (lam $v ($p $v))) $tv)))){$pp $x $p $tv}
        (empty)))
 
 ;; Product.  Both $a and $b must be proven for (, $a $b) to be proven.
@@ -375,13 +375,13 @@
                (nupln_bc_nf $kb (- $budget 2) (: $x $a)))
               ((MkSized $ys (: $y $b))
                (nupln_bc_nf $kb (- $budget (+ $xs 1)) (: $y $b))))
-         (MkSized (+ 1 (+ $xs $ys)) (: (, $x $y) (, $a $b))))
+         (MkSized (+ 1 (+ $xs $ys)) (: (, $x $y) (, $a $b)))){$xs $x $a $ys $y $b}
        (empty)))
 
 ;; A lambda shown with its bound variable named x.  The lambda is built
 ;; from its body, in which x now stands for the variable: substitution into
 ;; a lambda is capture-avoiding, so it would rename the binder instead.
-(= (readable (lam $v $body)) (let $v x (cons-atom lam (x $body))))
+(= (readable (lam $v $body)) (let $v x (cons-atom lam (x $body))){$v})
 
 ;; The normal form accepts (∧ F G) with its usual size, and refuses the
 ;; mirror and the repetition.
@@ -399,14 +399,14 @@
           (nupln_bc &kb 27 (: $prf (, (≞ (→ (⊙ 0) $pred) ⊤)
                                    (, (≞ (→ (⊙ 1) $pred) ⊥)
                                       (≞ (→ (⊙ 2) $pred) ⊥)))))
-       (readable $h))))
+       (readable $h)){$n $prf $h $rest}))
 !(WithNormalForms
    (collapse
      (let (MkSized $n (: $prf (, (≞ (→ (⊙ 0) $h) ⊤) $rest)))
           (nupln_bc_nf &kb 27 (: $prf (, (≞ (→ (⊙ 0) $pred) ⊤)
                                       (, (≞ (→ (⊙ 1) $pred) ⊥)
                                          (≞ (→ (⊙ 2) $pred) ⊥)))))
-       (readable $h))))
+       (readable $h)){$n $prf $h $rest}))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Beyond the combinator version: the learned predicate is a function ;;
@@ -420,7 +420,7 @@
                                         (≞ (→ (⊙ 2) $pred) ⊥))))))
    (let $stored (add-atom &self (learned $pred))
      (let (lam $v $body) $pred
-       (let $v x (let $shown (cons-atom lam (x $body)) (Learned $shown))))))
+       (let $v x (let $shown (cons-atom lam (x $body)) (Learned $shown))){$v}))){$prf $pred}
 
 ;; Give F, G and ∧ executable definitions, beyond the three observed values,
 ;; and call the learned function.  It is applied like any function; nothing is
@@ -430,4 +430,4 @@
 (= (∧ $a $b) (and $a $b))
 
 !(match &self (learned $h)
-   (Run (collapse (let $x (superpose (0 1 2 3 4)) (At $x ($h $x))))))
+   (Run (collapse (let $x (superpose (0 1 2 3 4)) (At $x ($h $x))){$x})))

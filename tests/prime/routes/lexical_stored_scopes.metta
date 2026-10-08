@@ -1,0 +1,12 @@
+; Spaces preserve lexical scopes while matching their authored syntax.
+!(bind! &code (new-space))
+!(add-atom &code (program direct (let $x 4 $x)))
+!(add-atom &code (program sequential (let* (($x 4) ($y (+ $x 1))) $y)))
+!(add-atom &code (program branch (case 4 (($x (+ $x 2))))))
+!(match &code (program direct $p) present)
+!(match &code (program sequential $p) present)
+!(match &code (program branch $p) present)
+!(match &code (program direct $p) (eval $p &self))
+!(match &code (program sequential $p) (eval $p &self))
+!(match &code (program branch $p) (eval $p &self))
+!(collapse (match &code (program missing $p) present))

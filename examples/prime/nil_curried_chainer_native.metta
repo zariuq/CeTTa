@@ -85,13 +85,13 @@
 !(type:of &nil-kb (ab a))
 
 (= (syn $kb $_ (dtt-goal $prf $ccln))
-   (match $kb (: $prf $ccln) (dtt-goal $prf $ccln)))
+   (match $kb (: $prf $ccln) (dtt-goal $prf $ccln)){$prf $ccln})
 (= (syn $kb (S $k) (dtt-goal ($prfabs $prfarg) $ccln))
    (let (dtt-goal $prfabs (-> $prms $ccln))
         (syn $kb $k (dtt-goal $prfabs (-> $prms $ccln)))
      (let (dtt-goal $prfarg $prms)
           (syn $kb $k (dtt-goal $prfarg $prms))
-       (dtt-goal ($prfabs $prfarg) $ccln))))
+       (dtt-goal ($prfabs $prfarg) $ccln)){$prfarg $prms}){$prfabs $prms $ccln})
 
 ; Depth 0: axiom lookup finds `a` at its type.
 !(syn &nil-kb Z (dtt-goal $prf (-> u0 u0)))
@@ -105,4 +105,4 @@
 ; the native declaration-indexed checker.
 !(let (dtt-goal $prf $ty)
       (syn &nil-kb (S Z) (dtt-goal $prf (-> u0 (-> u0 u0))))
-   (type:of &nil-kb $prf))
+   (type:of &nil-kb $prf)){$prf}

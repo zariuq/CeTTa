@@ -19,14 +19,14 @@
    (if (== $hyps ()) (empty)
        (let $h (car-atom $hyps)
          (let $t (cdr-atom $hyps)
-           (superpose ((Hyp $i $h) (tac:hyps $t (+ $i 1))))))))
+           (superpose ((Hyp $i $h) (tac:hyps $t (+ $i 1))))){$t}){$h}))
 
 ; Use a hypothesis of type (imp c1 (imp c2 ... goal)): prove each ci.
 (= (tac:apply $proof $type $goal $hyps $d)
    (if (== $type $goal) $proof
        (unify $type (imp $c $rest)
          (let $sub (tac:search $hyps $c $d)
-           (tac:apply (pf:imp-elim $proof $sub) $rest $goal $hyps $d))
+           (tac:apply (pf:imp-elim $proof $sub) $rest $goal $hyps $d)){$sub}
          (empty))))
 
 ; Introduction first (it is invertible), then use a hypothesis.
@@ -34,11 +34,11 @@
    (if (<= $d 0) (empty)
      (let $d1 (- $d 1)
        (unify $goal (imp $a $b)
-         (let $body (tac:search (cons-atom $a $hyps) $b $d1) (pf:imp-intro $body))
+         (let $body (tac:search (cons-atom $a $hyps) $b $d1) (pf:imp-intro $body)){$body}
          (unify $goal (all prop (lam $p $inner))
-           (let $body (tac:search $hyps $inner $d1) (pf:all-intro $body))
+           (let $body (tac:search $hyps $inner $d1) (pf:all-intro $body)){$body}
            (let (Hyp $i $h) (tac:hyps $hyps 0)
-             (tac:apply (pf:hyp $i) $h $goal $hyps $d1)))))))
+             (tac:apply (pf:hyp $i) $h $goal $hyps $d1)){$i $h}))){$d1}))
 
 ; Iterative deepening returns a smallest-depth proof, or NoProof.
 (= (tac:prove $goal $d $max)
@@ -46,12 +46,12 @@
        (let $found (collapse (tac:search () $goal $d))
          (if (== $found ())
              (tac:prove $goal (+ $d 1) $max)
-             (car-atom $found)))))
+             (car-atom $found))){$found}))
 
 (= (tac:check $goal)
    (let $p (tac:prove $goal 1 6)
      (unify $p (NoProof $g) $p
-       (let $ok (set:proves $p $goal) (Proved $goal $p $ok)))))
+       (let $ok (set:proves $p $goal) (Proved $goal $p $ok)){$ok})))
 
 ; Tautologies: identity, K, composition, S, and a quantified identity.
 !(tac:check (imp A A))

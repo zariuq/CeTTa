@@ -66,7 +66,7 @@
      (typing-search $status $depth $reason $proofs $stats))
    (let $answers (cdr-atom $proofs)
      (search $status $reason
-       (collapse (let $answer (superpose $answers) (observe-evidence $answer))))))
+       (collapse (let $answer (superpose $answers) (observe-evidence $answer)){$answer}))))
 
 !(type:eq &thy (flagCount no) Z)
 !(type:eq &thy (addEvidence yes Z) (S Z))

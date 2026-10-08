@@ -70,7 +70,7 @@
                  (atp:agenda:state-signature $state)
                  $age $rate $state)
                (atp:weighted-agenda:events
-                 $rest $weighted-policy $agenda-policy)))))))
+                 $rest $weighted-policy $agenda-policy))){$rate}){$age}){$state $rest}))
 
 (= (atp:weighted-agenda:remove-age $wanted $agenda)
    (if (== $agenda ())
@@ -80,7 +80,7 @@
              $rest
              (cons-atom
                $state
-               (atp:weighted-agenda:remove-age $wanted $rest))))))
+               (atp:weighted-agenda:remove-age $wanted $rest)))){$state $rest}))
 
 (= (atp:weighted-agenda:pop
      $seed $agenda $weighted-policy $agenda-policy)
@@ -99,7 +99,7 @@
                $state
                (atp:weighted-agenda:remove-age $age $agenda)
                $next-seed $age $rate))
-           ($failure $failure))))
+           ($failure $failure))){$semantic $age $rate $state $next-seed $failure})
       ($invalid $invalid))))
 
 ; The legal producer is the existing indexed hypothesis/rule expansion.  The
@@ -119,7 +119,7 @@
                  ((atp:agenda:expand-hypothesis
                     $knowledge $index $state)
                   (atp:agenda:expand-ranked-rule
-                    $knowledge $index $state $candidate-policy))))))))
+                    $knowledge $index $state $candidate-policy))))){$hole $goal $depth $ancestors $rest})))
 
 (= (atp:weighted-agenda:bounded-successors
      $knowledge $index $state $candidate-policy $limit)
@@ -182,7 +182,7 @@
                              $rest-agenda $seen (- $steps 1)
                              (+ $expanded 1) $next-age
                              $fuel $agenda-policy $candidate-policy
-                             $weighted-policy $after-pop-seed $truncated))))
+                             $weighted-policy $after-pop-seed $truncated)))){$checked $_}
                       (if (atp:agenda:seen-state $state $seen)
                           (atp:weighted-agenda:search-loop
                             $knowledge $index $original-goal
@@ -225,10 +225,10 @@
                                     (- $steps 1) (+ $expanded 1) $merged-age
                                     $fuel $agenda-policy $candidate-policy
                                     $weighted-policy $after-pop-seed
-                                    $next-truncated)))))))))
+                                    $next-truncated)){$next-agenda $next-truncated $merged-age}){$local-successors $after-local-truncated $after-age}){$selected-successors $local-truncated}){$successor-limit}))){$obligations $proof $next-hole $age $guidance-cost $unsupported})
               ($failure
                 (atp:weighted-agenda:run-result
-                  $failure $seed)))))))
+                  $failure $seed)))){$state $rest-agenda $after-pop-seed $occurrence $rate $failure})))
 
 (= (atp:weighted-agenda:first-checked
      $knowledge $index $goal $depth $steps $fuel

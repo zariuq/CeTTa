@@ -1,3 +1,6 @@
+; This fixture selects rule-M ownership of generated binder syntax.
+(scope:profile mercury-implicit per-call reference)
+
 ; A binder formed by substitution is sealed like a written one: a mention,
 ; in quoted code, of a name its pattern binds is the quotation's own, so the
 ; pattern's value never enters the quotation.  The binder is formed when a

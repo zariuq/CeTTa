@@ -9,8 +9,8 @@
 !(car-atom (try (set:recheck T)))
 !(car-atom (try (set:define forged-pred (-> T T)
     (= (forged-pred z) z) (= (forged-pred (s $x)) $x))))
-!(== (collapse (match &self (set:known forged-pred $p $o $f $d $r $signature) $p)) ())
-!(== (collapse (match &self (type:rule forged-pred $arity $patterns $body) $body)) ())
+!(== (collapse (match &self (set:known forged-pred $p $o $f $d $r $signature) $p){$p $o $f $d $r $signature}) ())
+!(== (collapse (match &self (type:rule forged-pred $arity $patterns $body) $body){$arity $patterns $body}) ())
 !(forged-pred (s z))
 
 ; Genuine constructors support the same structural clauses.
@@ -24,7 +24,7 @@
 !(add-atom &self (set:profile foundation-common))
 !(car-atom (try (set:define foreign-pred (-> Real Real)
     (= (foreign-pred zero) zero) (= (foreign-pred (succ $x)) $x))))
-!(== (collapse (match &self (set:known foreign-pred $p $o $f $d $r $signature) $p)) ())
+!(== (collapse (match &self (set:known foreign-pred $p $o $f $d $r $signature) $p){$p $o $f $d $r $signature}) ())
 !(remove-atom &self (set:profile foundation-common))
 !(set:define restored-pred (-> Real Real)
     (= (restored-pred zero) zero) (= (restored-pred (succ $x)) $x))

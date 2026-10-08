@@ -54,7 +54,7 @@
 (= (in-list $x $xs)
    (if (== $xs ()) False
        (let $h (car-atom $xs)
-         (if (== $h $x) True (let $t (cdr-atom $xs) (in-list $x $t))))))
+         (if (== $h $x) True (let $t (cdr-atom $xs) (in-list $x $t)){$t})){$h}))
 
 ; ---- the world and the model -----------------------------------------------------
 
@@ -109,11 +109,11 @@
    (let* (($xs (keys $mu)) ($ys (keys $nu))
           ($bad-entries (collapse (let (($u $v) $m) (superpose $w)
                                     (if (and (<= 0 $m) (and (in-list $u $xs) (in-list $v $ys)))
-                                        (empty) $u))))
+                                        (empty) $u)){$u $v $m}))
           ($bad-rows (collapse (let ($x $m) (superpose $mu)
-                                 (if (== (row-sum $w $x) $m) (empty) $x))))
+                                 (if (== (row-sum $w $x) $m) (empty) $x)){$x $m}))
           ($bad-columns (collapse (let ($y $m) (superpose $nu)
-                                    (if (== (column-sum $w $y) $m) (empty) $y)))))
+                                    (if (== (column-sum $w $y) $m) (empty) $y)){$y $m})))
      (and (== $bad-entries ()) (and (== $bad-rows ()) (== $bad-columns ())))))
 
 (= (cost $w $table)
@@ -132,11 +132,11 @@
               ($mu (trans $P $a $s)) ($nu (trans $Q $a $t))
               ($k (cost $w $table)))
          (and (is-coupling $w $mu $nu)
-              (and (<= (* $c $k) $v) (actions-ok $P $Q $c $table $s $t $v $rest))))))
+              (and (<= (* $c $k) $v) (actions-ok $P $Q $c $table $s $t $v $rest)))){$a $rest $w $mu $nu $k}))
 (= (coupling-bound $P $Q $c $table)
    (let* (($ss (states $P)) ($ts (states $Q))
           ($bad (collapse (let* (($s (superpose $ss)) ($t (superpose $ts)))
-                            (if (bound-ok $P $Q $c $table $s $t) (empty) ($s $t))))))
+                            (if (bound-ok $P $Q $c $table $s $t) (empty) ($s $t))){$s $t})))
      (== $bad ())))
 
 ; ---- the least coupling bound ----------------------------------------------------
@@ -173,7 +173,7 @@
 (= (lookup-entry $entries $s $t $default)
    (if (== $entries ()) $default
        (let* ((($pair $v) (car-atom $entries)) ($rest (cdr-atom $entries)))
-         (if (== $pair ($s $t)) $v (lookup-entry $rest $s $t $default)))))
+         (if (== $pair ($s $t)) $v (lookup-entry $rest $s $t $default))){$pair $v $rest}))
 (= (bound-value keep-bound $s $t) (let $es (keep-bound-entries) (lookup-entry $es $s $t 1)))
 (= (bound-value too-small $s $t) (let $es (too-small-entries) (lookup-entry $es $s $t 1)))
 
@@ -207,7 +207,7 @@
        (let* (($x (answer-value $s)) ($y (belief-value $b)) ($here (abs-q (- $x $y)))
               ($s2 (close-bd $s)) ($seen2 (cons-atom ($s $b) $seen))
               ($later (drift $s2 $b $seen2)))
-         (max-q $here $later))))
+         (max-q $here $later)){$x $y $here $s2 $seen2 $later}))
 (= (approx-bisimilar $s $b $eps) (let $d (drift $s $b ()) (<= $d $eps)))
 
 ; 6. At allOpen the drift is 0 (allOpen_approxBisimilar); at majorOnly it is
@@ -240,7 +240,7 @@
    (if (== $ws ()) 0
        (let* (($w (car-atom $ws)) ($d (car-atom $ds)) ($ws2 (cdr-atom $ws)) ($ds2 (cdr-atom $ds))
               ($rest (weighted-sum $ws2 $ds2)))
-         (+ (* $w $d) $rest))))
+         (+ (* $w $d) $rest)){$w $d $ws2 $ds2 $rest}))
 
 ; 8. The keep model is a functor on the revision processes: every defect is 0,
 ;    at majorOnly as at allOpen (keepCorrespondence_exact).

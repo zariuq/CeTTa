@@ -58,19 +58,19 @@
    (case Empty
      ((Empty literal-empty)
       ($value (unexpected-other $value)))
-     unexpected-zero)
+     unexpected-zero){$value}
    (literal-empty))
 
 !(assertEqualToResult
    (case (prime-empty:returned-datum)
      ((Empty returned-empty)
       ($value (unexpected-other $value)))
-     unexpected-zero)
+     unexpected-zero){$value}
    (returned-empty))
 
 !(assertEqualToResult
    (let $value Empty
-     (seen $value))
+     (seen $value)){$value}
    ((seen Empty)))
 
 !(assertEqualToResult
@@ -116,13 +116,13 @@
      (let $candidate (superpose (rejected wanted))
        (if (== $candidate wanted)
            accepted
-           (empty))))
+           (empty))){$candidate})
    ((accepted)))
 
 !(assertEqualToResult
    (case (if False accepted (empty))
      (($value (unexpected $value)))
-     conditional-zero)
+     conditional-zero){$value}
    (conditional-zero))
 
 ; The similarly positioned datum remains observable.
@@ -134,7 +134,7 @@
    (case c
      ((a unexpected-a)
       ($value (other $value)))
-     unexpected-fallback)
+     unexpected-fallback){$value}
    ((other c)))
 
 ; Unit is one occurrence and therefore never selects the zero fallback.
@@ -162,13 +162,13 @@
 !(assertEqualToResult
    (reify
      (let $value (superpose ((Error prime-report boom) ok))
-       (seen $value)))
+       (seen $value)){$value})
    (((Error prime-report boom) (seen ok))))
 
 !(assertEqualToResult
    (reify
      (case (superpose ((Error prime-report boom) ok))
-       (($value (seen $value)))))
+       (($value (seen $value)))){$value})
    (((Error prime-report boom) (seen ok))))
 
 ; The same datum survives optimized streaming, selection, equation matching,
@@ -184,17 +184,17 @@
 
 !(assertEqualToResult
    (chain Empty $value
-     (seen $value))
+     (seen $value)){$value}
    ((seen Empty)))
 
 !(assertEqualToResult
    (chain (empty) $value
-     (unexpected $value))
+     (unexpected $value)){$value}
    ())
 
 !(assertEqualToResult
    (let* (($value Empty))
-     (seen $value))
+     (seen $value)){$value}
    ((seen Empty)))
 
 !(assertEqualToResult

@@ -1,0 +1,5 @@
+[()]
+[()]
+[(set:proves &theory (quote missing-proof) (quote missing-proposition))]
+[8]
+[(set:proves &theory (quote missing-proof) (quote missing-proposition))]

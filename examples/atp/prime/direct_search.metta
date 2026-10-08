@@ -15,7 +15,7 @@
               ($tail (cdr-atom $items))
               ((ATP.Split $initial $last)
                (atp:direct:split-last $tail)))
-         (ATP.Split (cons-atom $head $initial) $last))))
+         (ATP.Split (cons-atom $head $initial) $last)){$head $tail $initial $last}))
 
 ; Interpret one marked typing declaration as an applicable rule.  Ordinary
 ; unify supplies the rule instance; no ATP-specific unifier is involved.
@@ -26,14 +26,14 @@
                 (atp:direct:split-last (cdr-atom $type))
              (unify $conclusion $goal
                     (ATP.Rule $rule $premises $goal)
-                    (empty)))
+                    (empty))){$premises $conclusion}
            (empty))
        (empty)))
 
 (= (atp:direct:rule-candidate $knowledge $goal)
    (match $knowledge (chaining-rule $rule)
      (match $knowledge (: $rule $type)
-       (atp:direct:arrow-candidate $goal $rule $type))))
+       (atp:direct:arrow-candidate $goal $rule $type)){$rule}))
 
 (= (atp:direct:closed-items () ) True)
 (= (atp:direct:closed-items $items)
@@ -53,7 +53,7 @@
    (if (atp:direct:closed $type)
        (unify $type $goal (: $proof $goal) (empty))
        (match $knowledge (type-scheme $proof)
-         (unify $type $goal (: $proof $goal) (empty)))))
+         (unify $type $goal (: $proof $goal) (empty))){$proof}))
 
 (= (atp:direct:fact $knowledge $goal)
    (match $knowledge (: $proof $type)
@@ -68,14 +68,14 @@
              (atp:direct:prove-judgment $knowledge $premise $depth))
             ((ATP.Proofs $proofs)
              (atp:direct:prove-premises $knowledge $rest $depth)))
-       (ATP.Proofs (cons-atom $proof $proofs)))))
+       (ATP.Proofs (cons-atom $proof $proofs))){$premise}))
 
 (= (atp:direct:use-rule $knowledge $goal $depth)
    (let (ATP.Rule $rule $premises $goal)
         (atp:direct:rule-candidate $knowledge $goal)
      (let (ATP.Proofs $proofs)
           (atp:direct:prove-premises $knowledge $premises (- $depth 1))
-       (: (cons-atom $rule $proofs) $goal))))
+       (: (cons-atom $rule $proofs) $goal))){$goal})
 
 (= (atp:direct:prove-judgment $knowledge $goal $depth)
    (if (<= $depth 0)
@@ -94,13 +94,13 @@
        (ATP.Checked $proof $goal (exact $checked)))
       ((he-accept (structural $checked))
        (ATP.Checked $proof $goal (structural $checked)))
-      ($other (empty)))))
+      ($other (empty)))){$checked})
 
 (= (atp:direct:prove-checked $knowledge $goal $depth $fuel)
    (let (: $proof $goal)
         (atp:direct:prove-judgment $knowledge $goal $depth)
      (atp:direct:certify
-       $proof $goal (check-type $knowledge $proof $goal $fuel))))
+       $proof $goal (check-type $knowledge $proof $goal $fuel))){$goal})
 
 ; Committed first-result convenience over the same proof stream.  This is an
 ; ordinary MeTTa traversal choice, not a distinct proof calculus.

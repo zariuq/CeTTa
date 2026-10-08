@@ -37,7 +37,7 @@
 (= (pairwise $net)
    (let* (($ifaces (interfaces $net))
           ($bad (collapse (let ($relation $i $j) (superpose $ifaces)
-                            (if (satisfiable $net $relation) (empty) $relation)))))
+                            (if (satisfiable $net $relation) (empty) $relation)){$relation $i $j})))
      (== $bad ())))
 
 ; A joint completion: a choice at a, b and c satisfying every interface.
@@ -49,7 +49,7 @@
        (let ($relation $i $j) (car-atom $ifaces)
          (let $rest (cdr-atom $ifaces)
            (and (holds $relation (value $i $x) (value $j $x))
-                (satisfies $x $rest))))))
+                (satisfies $x $rest))){$rest}){$relation $i $j}))
 (= (joint $net)
    (let* (($va (choice $net)) ($vb (choice $net)) ($vc (choice $net))
           ($x ($va $vb $vc)) ($ifaces (interfaces $net)))

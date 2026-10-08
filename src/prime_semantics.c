@@ -6452,7 +6452,7 @@ static PrimeChildRole prime_child_role(const Atom *term,
         index == 0u)
         return PRIME_CHILD_VALUE;
     SymbolId head = term->expr.elems[0]->sym_id;
-    CettaExprLen len = term->expr.len;
+    CettaExprLen len = atom_authored_len(term);
     if (head == g_builtin_syms.equals && len == 3u)
         return index == 1u ? PRIME_CHILD_PATTERN : PRIME_CHILD_VALUE;
     if ((head == g_builtin_syms.case_text ||
@@ -6472,6 +6472,111 @@ static PrimeChildRole prime_child_role(const Atom *term,
         len == 4u)
         return index == 2u ? PRIME_CHILD_PATTERN : PRIME_CHILD_VALUE;
     return PRIME_CHILD_VALUE;
+}
+
+/* Pattern scopes retain their authored form and the same ownership record
+ * as lambdas.  Reading the scope as a lambda is shared by substitution and
+ * execution: ((lam value own (let pattern value body)) source). */
+static CettaExprIndex prime_pattern_source(const Atom *term) {
+    if (!atom_prime_template_own_hidden(term) ||
+        term->expr.elems[0]->kind != ATOM_SYMBOL) return 0u;
+    SymbolId head = term->expr.elems[0]->sym_id;
+    CettaExprLen len = term->expr.len;
+    if (head == g_builtin_syms.let && len == 5u) return 2u;
+    if ((len == 5u && (head == g_builtin_syms.match ||
+                       head == g_builtin_syms.chain ||
+                       head == g_builtin_syms.filter_atom)) ||
+        ((len == 4u || len == 5u) &&
+         (head == g_builtin_syms.case_text ||
+          head == g_builtin_syms.switch_text ||
+          head == g_builtin_syms.switch_minimal)))
+        return 1u;
+    return 0u;
+}
+
+static bool prime_sequential_scopes(const Atom *term) {
+    if (!term || term->kind != ATOM_EXPR || term->expr.len != 3u ||
+        !atom_is_symbol_id(term->expr.elems[0], g_builtin_syms.let_star))
+        return false;
+    const Atom *pairs = term->expr.elems[1];
+    if (!pairs || pairs->kind != ATOM_EXPR || pairs->expr.len == 0u)
+        return false;
+    for (CettaExprIndex i = 0u; i < pairs->expr.len; i++) {
+        const Atom *pair = pairs->expr.elems[i];
+        if (!pair || pair->kind != ATOM_EXPR || pair->expr.len != 3u ||
+            !atom_is_prime_own_list(pair->expr.elems[2])) return false;
+    }
+    return true;
+}
+
+/* The sequential syntax is retained for inspection. Its scope is the
+ * nested let scope, each source outside its own pattern activation. */
+static Atom *prime_sequential_expand(Arena *arena, Atom *term) {
+    Atom *pairs = term->expr.elems[1], *body = term->expr.elems[2];
+    for (CettaExprIndex i = pairs->expr.len; i > 0u && body; i--) {
+        Atom *pair = pairs->expr.elems[i - 1u];
+        Atom *items[5] = {atom_symbol_id(arena, g_builtin_syms.let),
+                          pair->expr.elems[0], pair->expr.elems[1], body,
+                          pair->expr.elems[2]};
+        body = atom_expr(arena, items, 5u);
+    }
+    return body;
+}
+
+static Atom *prime_sequential_restore(Arena *arena, Atom *term, Atom *body) {
+    CettaExprLen len = term->expr.elems[1]->expr.len;
+    Atom **pairs = arena_alloc(arena, sizeof(Atom *) * (size_t)len);
+    if (!pairs) return NULL;
+    for (CettaExprIndex i = 0u; i < len; i++) {
+        if (!body || prime_pattern_source(body) != 2u) return NULL;
+        pairs[i] = atom_expr3(arena, body->expr.elems[1],
+                              body->expr.elems[2], body->expr.elems[4]);
+        if (!pairs[i]) return NULL;
+        body = body->expr.elems[3];
+    }
+    Atom *list = atom_expr(arena, pairs, len);
+    return list ? atom_expr3(arena, term->expr.elems[0], list, body) : NULL;
+}
+
+static Atom *prime_pattern_lambda(Arena *arena, Atom *term,
+                                   CettaExprIndex source_at) {
+    CettaExprLen len = atom_authored_len(term);
+    Atom **items = arena_alloc(arena, sizeof(Atom *) * (size_t)len);
+    Atom *param = atom_var_with_presentation(
+        arena, symbol_intern_cstr(g_symbols, "__prime_pattern_source"),
+        atom_internal_tag(arena, CETTA_INTERNAL_TAG_PRIME_LEXICAL_SLOT),
+        fresh_var_id());
+    if (!items || !param) return NULL;
+    for (CettaExprIndex i = 0u; i < len; i++) items[i] = term->expr.elems[i];
+    items[source_at] = param;
+    Atom *body = atom_expr(arena, items, len);
+    Atom *lambda[4] = {atom_symbol_id(arena, g_builtin_syms.prime_lam),
+                       param, body, term->expr.elems[len]};
+    return body ? atom_expr(arena, lambda, 4u) : NULL;
+}
+
+static Atom *prime_pattern_restore(Arena *arena, Atom *lambda,
+                                    Atom *source, CettaExprIndex source_at) {
+    if (!lambda || !source) return NULL;
+    Atom *body = lambda->expr.elems[2];
+    CettaExprLen len = body->expr.len;
+    Atom **items = arena_alloc(arena, sizeof(Atom *) * ((size_t)len + 1u));
+    if (!items) return NULL;
+    for (CettaExprIndex i = 0u; i < len; i++) items[i] = body->expr.elems[i];
+    items[source_at] = source;
+    items[len] = lambda->expr.elems[3];
+    return atom_expr(arena, items, len + 1u);
+}
+
+bool prime_semantics_has_scope_activation(const Atom *term) {
+    PrimeIterTemplate iter;
+    return prime_pattern_source(term) != 0u || prime_sequential_scopes(term) ||
+           (prime_iter_template(term, &iter) && iter.own != 0u);
+}
+
+Atom *prime_semantics_pattern_activation(Arena *arena, Atom *term) {
+    return prime_sequential_scopes(term) || prime_pattern_source(term)
+        ? prime_semantics_scope_activation(arena, term, NULL) : term;
 }
 
 /* The slot a binder is filling (prime_semantics_subst_var).  Inside a
@@ -6562,6 +6667,20 @@ static bool prime_binder_occurs_free_in(Arena *arena, const Atom *key,
     /* A quotation in value position is sealed: nothing under it refers to a
      * binder.  So is contextual code. */
     if (!pattern && prime_code_like(term)) return false;
+    if (!pattern && prime_sequential_scopes(term)) {
+        Atom *expanded = prime_sequential_expand(arena, term);
+        return !expanded || prime_binder_occurs_free_in(arena, key, expanded,
+                                                        false);
+    }
+    CettaExprIndex source_at = pattern ? 0u : prime_pattern_source(term);
+    if (source_at) {
+        if (prime_binder_occurs_free_in(arena, key,
+                                        term->expr.elems[source_at], false))
+            return true;
+        Atom *lambda = prime_pattern_lambda(arena, term, source_at);
+        return !lambda || prime_binder_occurs_free_in(arena, key, lambda,
+                                                      false);
+    }
     /* In a pattern position a lambda or template form is a pattern that
      * takes such forms apart: its names are store-name occurrences. */
     PrimeLambdaTelescope telescope;
@@ -6883,6 +7002,21 @@ static Atom *prime_subst_in(Arena *arena, Atom *term, const Atom *key,
             : term;
     }
     if (!pattern && prime_semantics_contextual_code(term)) return term;
+    if (!pattern && prime_sequential_scopes(term)) {
+        Atom *expanded = prime_sequential_expand(arena, term);
+        Atom *next = expanded
+            ? prime_subst_in(arena, expanded, key, value, false) : NULL;
+        return prime_sequential_restore(arena, term, next);
+    }
+    CettaExprIndex source_at = pattern ? 0u : prime_pattern_source(term);
+    if (source_at) {
+        Atom *source = prime_subst_in(arena, term->expr.elems[source_at],
+                                       key, value, false);
+        Atom *lambda = prime_pattern_lambda(arena, term, source_at);
+        lambda = lambda ? prime_subst_in(arena, lambda, key, value, false)
+                         : NULL;
+        return prime_pattern_restore(arena, lambda, source, source_at);
+    }
     /* In a pattern position a lambda or template form is a pattern: its
      * names are filled as store-name occurrences. */
     PrimeLambdaTelescope telescope;
@@ -7488,7 +7622,19 @@ static Atom *prime_env_subst(PrimeEnvSubst *s, Atom *term, bool pattern) {
     Atom *result;
     PrimeLambdaTelescope telescope;
     PrimeIterTemplate iter;
-    if (!pattern && prime_lambda_telescope(s->arena, term, &telescope)) {
+    CettaExprIndex source_at = pattern ? 0u : prime_pattern_source(term);
+    if (!pattern && prime_sequential_scopes(term)) {
+        Atom *expanded = prime_sequential_expand(s->arena, term);
+        Atom *next = expanded ? prime_env_subst(s, expanded, false) : NULL;
+        result = prime_sequential_restore(s->arena, term, next);
+        if (!result) s->failed = true;
+    } else if (source_at) {
+        Atom *source = prime_env_subst(s, term->expr.elems[source_at], false);
+        Atom *lambda = prime_pattern_lambda(s->arena, term, source_at);
+        lambda = lambda ? prime_env_subst_lambda(s, lambda, false) : NULL;
+        result = prime_pattern_restore(s->arena, lambda, source, source_at);
+        if (!result) s->failed = true;
+    } else if (!pattern && prime_lambda_telescope(s->arena, term, &telescope)) {
         result = prime_env_subst_lambda(s, term, pattern);
     } else if (!pattern && prime_iter_template(term, &iter)) {
         result = prime_env_subst_iter(s, term, pattern);
@@ -7661,7 +7807,17 @@ static void prime_free_names_walk(PrimeFreeNames *f, Atom *term,
     size_t mark = f->hidden_len;
     PrimeLambdaTelescope telescope;
     PrimeIterTemplate iter;
-    if (!pattern && prime_lambda_telescope(f->arena, term, &telescope)) {
+    CettaExprIndex source_at = pattern ? 0u : prime_pattern_source(term);
+    if (!pattern && prime_sequential_scopes(term)) {
+        Atom *expanded = prime_sequential_expand(f->arena, term);
+        if (expanded) prime_free_names_walk(f, expanded, false);
+        else f->failed = true;
+    } else if (source_at) {
+        prime_free_names_walk(f, term->expr.elems[source_at], false);
+        Atom *lambda = prime_pattern_lambda(f->arena, term, source_at);
+        if (lambda) prime_free_names_walk(f, lambda, false);
+        else f->failed = true;
+    } else if (!pattern && prime_lambda_telescope(f->arena, term, &telescope)) {
         for (size_t g = 0u; g < telescope.count; g++) {
             const CettaPrimeLambdaBinderGroupV1 *group = &telescope.groups[g];
             for (size_t t = 0u; group->typed && t < group->types_count; t++)
@@ -7909,6 +8065,26 @@ PrimeIterationStep prime_semantics_iteration_step(Arena *arena, Atom *call,
     return *out ? PRIME_ITERATION_REENTER : PRIME_ITERATION_DECLINE;
 }
 
+Atom *prime_semantics_scope_activation(Arena *arena, Atom *term, Atom *space) {
+    if (prime_sequential_scopes(term))
+        return prime_sequential_expand(arena, term);
+    CettaExprIndex source_at = prime_pattern_source(term);
+    if (source_at) {
+        Atom *lambda = prime_pattern_lambda(arena, term, source_at);
+        if (!lambda) return NULL;
+        Atom *body = lambda->expr.elems[2], *own = lambda->expr.elems[3];
+        Atom *param = lambda->expr.elems[1];
+        if (!prime_scope_activate(arena, &body, &own, &param, 1u)) return NULL;
+        /* Only the pattern and continuation were renamed. The source
+         * remains outside that scope and retains its original demand. */
+        return prime_list_with(arena, body, source_at,
+                               term->expr.elems[source_at]);
+    }
+    Atom *next = NULL;
+    PrimeIterationStep step = prime_semantics_iteration_step(arena, term, space, &next);
+    return step == PRIME_ITERATION_DECLINE ? term : next;
+}
+
 /* One contraction at the root of the atom being evaluated: one-argument beta
  * of an authored lambda (nested binders of the same variable stay bound), a
  * projection of a pair, or identity elimination at reflexivity. Subterms are
@@ -8032,8 +8208,10 @@ bool prime_quote_seal_active(void) {
  *      `(OWN RECORD $y ...)`, hidden metadata no observer of the authored
  *      term sees; each activation copies them (prime_scope_activate).  A
  *      written quotation in value position is a scope as a template is,
- *      and so is a template written in code: its own names are held last
- *      in it, `(quote X (OWN RECORD $u ...))`, and each opening of the code
+ *      and so is a template written in code: its own names (under rule M,
+ *      the names written only inside it, so quotations that share a name,
+ *      as the parts of one rule do, share it) are held last in it,
+ *      `(quote X (OWN RECORD $u ...))`, and each opening of the code
  *      copies them (prime_code_opening); a hole in the code is an
  *      occurrence where its pattern stands.  The crossing sets stay in the
  *      term as written: they are authored structure.  A template or
@@ -8115,8 +8293,8 @@ bool prime_quote_seal_active(void) {
  * `(scope:profile OWNERSHIP [LIFETIME] [READOUT])`.  As a bare top-level atom
  * it applies to the whole document; as a query, `!(scope:profile ...)`, it
  * applies from its position onward, as HE's `!(pragma! ...)` does.  A
- * document without one is elaborated under mercury-implicit per-call
- * reference (provisional). */
+ * document without one is elaborated under lexical-fresh per-call
+ * reference. Mercury-style refinement requires an explicit selection. */
 static const char *const prime_scope_ownership_names[] = {
     "query-wide", "mercury-implicit", "lexical-fresh", "explicit-capture",
     "lexical-inventory",
@@ -8130,7 +8308,7 @@ static const char *const prime_scope_readout_names[] = {
 };
 
 static const CettaPrimeScopeProfile prime_scope_builtin_default = {
-    .ownership = CETTA_PRIME_OWNERSHIP_MERCURY_IMPLICIT,
+    .ownership = CETTA_PRIME_OWNERSHIP_LEXICAL_FRESH,
     .lifetime = CETTA_PRIME_LIFETIME_PER_CALL,
     .readout = CETTA_PRIME_READOUT_REFERENCE,
 };
@@ -8402,6 +8580,7 @@ typedef struct {
     size_t fresh_len, fresh_cap;
     VarId *own;
     size_t own_len, own_cap;
+    bool quotation;    /* a written quotation (prime_scope_quote) */
 } PrimeScopeNode;
 
 /* An entry of the crossing names in force (lexical-fresh): a name a
@@ -8677,6 +8856,8 @@ static bool prime_elab_iter(PrimeElab *e, Atom *term, PrimeIterTemplate *view,
 static bool prime_elaborated_template(Arena *arena, Atom *term) {
     Atom *inner = term, *braces = NULL;
     if (!prime_meta_braces(term, &inner, &braces)) inner = term;
+    if (prime_pattern_source(inner) || prime_sequential_scopes(inner))
+        return true;
     PrimeLambdaTelescope telescope;
     PrimeIterTemplate iter;
     if (prime_lambda_telescope(arena, inner, &telescope))
@@ -9103,6 +9284,8 @@ static Atom *prime_elab_binders(PrimeElab *e, Atom *term, bool pattern) {
     if (e->failed || !term || term->kind != ATOM_EXPR || !atom_has_vars(term))
         return term;
     if (pattern) return term;
+    if (prime_pattern_source(term) || prime_sequential_scopes(term))
+        return term;
     if (!prime_elab_enter(e)) return term;
     Atom *result = term;
     PrimeLambdaTelescope telescope;
@@ -9242,7 +9425,7 @@ static size_t prime_elab_binder_cover(const Atom *term, CettaExprIndex index,
         !term->expr.elems[0] || term->expr.elems[0]->kind != ATOM_SYMBOL)
         return 0u;
     SymbolId head = term->expr.elems[0]->sym_id;
-    CettaExprLen len = term->expr.len;
+    CettaExprLen len = atom_authored_len(term);
     if (head == g_builtin_syms.let && len == 4u && index == 3u) {
         patterns[0] = 1u;
         return 1u;
@@ -9408,14 +9591,128 @@ static bool prime_scope_quantified_above(const PrimeElab *e, uint32_t scope,
     return false;
 }
 
+/* One occurrence of a name in a scope: written directly in it, or shared
+ * with it by a crossing set of a template in it. */
+typedef struct {
+    VarId id;
+    uint32_t scope;
+} PrimeScopeUse;
+
+static int prime_scope_use_cmp(const void *left, const void *right) {
+    const PrimeScopeUse *a = left, *b = right;
+    if (a->id != b->id) return a->id < b->id ? -1 : 1;
+    return a->scope < b->scope ? -1 : (a->scope > b->scope ? 1 : 0);
+}
+
+/* Whether scope `inner` is `outer` or lies inside it. */
+static bool prime_scope_within(const PrimeElab *e, uint32_t inner,
+                               uint32_t outer) {
+    int32_t at = (int32_t)inner;
+    while (at >= 0) {
+        if ((uint32_t)at == outer) return true;
+        at = e->scopes[at].parent;
+    }
+    return false;
+}
+
+/* The first occurrence of `id` in the sorted `uses`, or `len`. */
+static size_t prime_scope_uses_first(const PrimeScopeUse *uses, size_t len,
+                                     VarId id) {
+    size_t lo = 0u, hi = len;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2u;
+        if (uses[mid].id < id) lo = mid + 1u;
+        else hi = mid;
+    }
+    return lo;
+}
+
+/* Rule M for code (stage 5, item 3).  A written quotation owns the names
+ * written only inside it: a name it shares with anything written outside it
+ * (a sibling quotation, as the head, the premises and the proof template of
+ * one rule share their names, a template, or the scope around) is not its
+ * own.  Such a name goes to the nearest quotation around it, which decides
+ * by the same rule, unless a scope between them writes the name itself,
+ * whose own rule then decides; with no quotation around, it is a name of
+ * the scope around.  A template's ownership never counts a quoted
+ * occurrence, as before quotations were scopes.  Quotations are visited
+ * inner before outer, against the occurrences as written.  False on
+ * failure. */
+static bool prime_scope_quotations_settle(PrimeElab *e) {
+    size_t total = 0u;
+    bool any = false;
+    for (size_t s = 0u; s < e->scopes_len; s++) {
+        total += e->scopes[s].direct_len + e->scopes[s].passed_len;
+        if (e->scopes[s].quotation && !e->scopes[s].shared) any = true;
+    }
+    if (!any || total == 0u) return true;
+    PrimeScopeUse *uses = malloc(sizeof(*uses) * total);
+    if (!uses) return false;
+    size_t len = 0u;
+    for (size_t s = 0u; s < e->scopes_len; s++) {
+        const PrimeScopeNode *node = &e->scopes[s];
+        for (size_t i = 0u; i < node->direct_len; i++)
+            uses[len++] = (PrimeScopeUse){node->direct[i], (uint32_t)s};
+        for (size_t i = 0u; i < node->passed_len; i++)
+            uses[len++] = (PrimeScopeUse){node->passed[i], (uint32_t)s};
+    }
+    qsort(uses, len, sizeof(*uses), prime_scope_use_cmp);
+    bool ok = true;
+    for (size_t k = e->scopes_len; k > 1u && ok; k--) {
+        uint32_t s = (uint32_t)(k - 1u);
+        PrimeScopeNode *node = &e->scopes[s];
+        if (!node->quotation || node->shared) continue;
+        /* Names an inner quotation passed up arrive unsorted. */
+        node->direct_len = prime_var_ids_sort(node->direct, node->direct_len);
+        size_t kept = 0u;
+        for (size_t i = 0u; i < node->direct_len && ok; i++) {
+            VarId id = node->direct[i];
+            bool elsewhere = false;
+            for (size_t u = prime_scope_uses_first(uses, len, id);
+                 u < len && uses[u].id == id && !elsewhere; u++)
+                elsewhere = !prime_scope_within(e, uses[u].scope, s);
+            if (!elsewhere) {
+                node->direct[kept++] = id;
+                continue;
+            }
+            for (int32_t at = node->parent; at > 0;
+                 at = e->scopes[at].parent) {
+                PrimeScopeNode *outer = &e->scopes[at];
+                size_t u = prime_scope_uses_first(uses, len, id);
+                bool writes = false;
+                for (; u < len && uses[u].id == id && !writes; u++)
+                    writes = uses[u].scope == (uint32_t)at;
+                if (writes) break;
+                if (!outer->quotation) continue;
+                if (!prime_elab_reserve(e, (void **)&outer->direct,
+                                        &outer->direct_cap,
+                                        outer->direct_len + 1u,
+                                        sizeof(*outer->direct)))
+                    ok = false;
+                else
+                    outer->direct[outer->direct_len++] = id;
+                break;
+            }
+        }
+        node->direct_len = kept;
+    }
+    free(uses);
+    for (size_t s = 0u; ok && s < e->scopes_len; s++)
+        e->scopes[s].direct_len =
+            prime_var_ids_sort(e->scopes[s].direct, e->scopes[s].direct_len);
+    return ok;
+}
+
 /* The own sets of the template scopes (every profile but lexical-fresh),
  * outer before inner.  A template uses the names written directly in it
  * and those its templates' crossing sets share with it.  With a crossing
  * set written, it owns every name it uses outside the set, under every
  * profile.  With none, the profile decides: explicit capture owns every
  * name it uses, rule M the names written directly in it that no enclosing
- * scope quantifies, query-wide nothing.  The names a crossing set on a
- * pattern binder made fresh are owned where the binder stands. */
+ * scope quantifies (for a written quotation, the names written only inside
+ * it: prime_scope_quotations_settle), query-wide nothing.  The names a
+ * crossing set on a pattern binder made fresh are owned where the binder
+ * stands. */
 static void prime_scope_compute(PrimeElab *e) {
     for (size_t s = 0u; s < e->scopes_len; s++) {
         PrimeScopeNode *node = &e->scopes[s];
@@ -9426,6 +9723,11 @@ static void prime_scope_compute(PrimeElab *e) {
     uint8_t ownership = e->profile.ownership;
     bool capture = ownership == CETTA_PRIME_OWNERSHIP_EXPLICIT_CAPTURE ||
                    ownership == CETTA_PRIME_OWNERSHIP_LEXICAL_INVENTORY;
+    if (!capture && ownership != CETTA_PRIME_OWNERSHIP_QUERY_WIDE &&
+        !prime_scope_quotations_settle(e)) {
+        e->failed = true;
+        return;
+    }
     for (size_t s = 1u; s < e->scopes_len && !e->failed; s++) {
         PrimeScopeNode *node = &e->scopes[s];
         if (node->shared || capture) {
@@ -9599,10 +9901,11 @@ static Atom *prime_scope_template_list(PrimeElab *e, uint32_t scope,
                                        size_t hoist_mark, bool always);
 
 /* A written quotation in value position is a scope, as a template is (stage
- * 5, item 3): the names written directly in its code that it owns, by the
- * same options and crossing sets as a template's, become its own slots, in
- * its own list `(quote X (OWN RECORD $u ...))`, hidden metadata; each
- * opening of the code (`*`, or the instance `lift let` makes) copies them.
+ * 5, item 3): the names it owns, by the options and crossing sets a
+ * template's are decided by (under rule M, the names written only inside
+ * it: prime_scope_quotations_settle), become its own slots, in its own list
+ * `(quote X (OWN RECORD $u ...))`, hidden metadata; each opening of the code
+ * (`*`, or the instance `lift let` makes) copies them.
  * A lambda or template written in the code is a scope inside it.  A hole
  * stays an occurrence where its pattern stands (prime_scope_var).  A
  * quotation that carries an own list was elaborated before. */
@@ -9614,6 +9917,8 @@ static Atom *prime_scope_quote(PrimeElab *e, Atom *term, PrimeScopeMode mode) {
     uint32_t scope = mode == PRIME_SCOPE_COLLECT
         ? prime_scope_new(e, prime_scope_current(e), &lists)
         : ++e->next_scope;
+    if (mode == PRIME_SCOPE_COLLECT && scope > 0u && scope < e->scopes_len)
+        e->scopes[scope].quotation = true;
     size_t hoist_mark = e->hoist_len;
     if (e->failed || !prime_scope_push(e, scope)) return term;
     e->code_scopes++;
@@ -9985,6 +10290,18 @@ static Atom *prime_lex_introduce(PrimeElab *e, Atom *pattern) {
     return e->failed ? pattern : prime_lex_resolve(e, pattern, true);
 }
 
+/* Pattern activations own their slots under per-call lifetime. Under
+ * per-closure lifetime the surrounding frame hoists them, by the same
+ * rule as a lambda's owned slots. The record keeps the readout axis. */
+static Atom *prime_lex_activation_own(PrimeElab *e, size_t frame_mark) {
+    if (e->profile.lifetime == CETTA_PRIME_LIFETIME_PER_CLOSURE)
+        return prime_elab_own_list(e, NULL, 0u, true);
+    Atom *own = prime_elab_own_list(e, e->frame + frame_mark,
+                                    e->frame_len - frame_mark, true);
+    e->frame_len = frame_mark;
+    return own;
+}
+
 
 static Atom *prime_lex_code(PrimeElab *e, Atom *term) {
     if (e->failed || !term || !atom_has_vars(term)) return term;
@@ -10269,16 +10586,18 @@ static Atom *prime_lex_resolve(PrimeElab *e, Atom *term, bool pattern) {
          * for the part it scopes over. */
         CettaExprIndex pattern_at = head == g_builtin_syms.let ? 1u : 2u;
         CettaExprIndex source_at = head == g_builtin_syms.let ? 2u : 1u;
-        Atom *items[4] = {term->expr.elems[0], NULL, NULL, NULL};
+        Atom *items[5] = {term->expr.elems[0], NULL, NULL, NULL, NULL};
         items[source_at] = prime_lex_resolve(e, term->expr.elems[source_at],
                                              false);
         size_t force_mark = prime_lex_force(e, crossing, true);
+        size_t frame_mark = e->frame_len;
         items[pattern_at] = prime_lex_introduce(e, term->expr.elems[pattern_at]);
+        items[4] = prime_lex_activation_own(e, frame_mark);
         prime_elab_push_holes(e, term->expr.elems[pattern_at], false);
         items[3] = prime_lex_resolve(e, term->expr.elems[3], false);
         e->lex_shared_len = force_mark;
         if (!e->failed) {
-            result = atom_expr(e->arena, items, 4u);
+            result = atom_expr(e->arena, items, 5u);
             if (!result) {
                 e->failed = true;
                 result = term;
@@ -10301,9 +10620,12 @@ static Atom *prime_lex_resolve(PrimeElab *e, Atom *term, bool pattern) {
             if (pair && pair->kind == ATOM_EXPR && pair->expr.len == 2u) {
                 Atom *source = prime_lex_resolve(e, pair->expr.elems[1], false);
                 if (i == 0u) (void)prime_lex_force(e, crossing, true);
+                size_t frame_mark = e->frame_len;
                 Atom *bound = prime_lex_introduce(e, pair->expr.elems[0]);
+                Atom *own = prime_lex_activation_own(e, frame_mark);
                 prime_elab_push_holes(e, pair->expr.elems[0], false);
-                pairs[i] = atom_expr2(e->arena, bound, source);
+                pairs[i] = own ? atom_expr3(e->arena, bound, source, own)
+                               : NULL;
             } else {
                 pairs[i] = prime_lex_resolve(e, pair, false);
                 if (i == 0u) (void)prime_lex_force(e, crossing, true);
@@ -10324,13 +10646,14 @@ static Atom *prime_lex_resolve(PrimeElab *e, Atom *term, bool pattern) {
         Atom *branches = term->expr.elems[2];
         Atom **resolved = arena_alloc(
             e->arena, sizeof(Atom *) * ((size_t)branches->expr.len + 1u));
-        Atom **items = arena_alloc(e->arena, sizeof(Atom *) * (size_t)len);
+        Atom **items = arena_alloc(e->arena, sizeof(Atom *) * ((size_t)len + 1u));
         if (!resolved || !items) {
             e->failed = true;
             goto done;
         }
         items[0] = term->expr.elems[0];
         items[1] = prime_lex_resolve(e, term->expr.elems[1], false);
+        size_t frame_mark = e->frame_len;
         for (CettaExprIndex i = 0u; i < branches->expr.len && !e->failed; i++) {
             Atom *branch = branches->expr.elems[i];
             if (branch && branch->kind == ATOM_EXPR && branch->expr.len == 2u) {
@@ -10350,8 +10673,9 @@ static Atom *prime_lex_resolve(PrimeElab *e, Atom *term, bool pattern) {
         items[2] = atom_expr(e->arena, resolved, branches->expr.len);
         if (len == 4u) items[3] = prime_lex_resolve(e, term->expr.elems[3],
                                                     false);
+        items[len] = prime_lex_activation_own(e, frame_mark);
         if (!e->failed) {
-            result = atom_expr(e->arena, items, len);
+            result = atom_expr(e->arena, items, len + 1u);
             if (!result) {
                 e->failed = true;
                 result = term;
@@ -10774,6 +11098,12 @@ static Atom *prime_elab_seal_apply_scoped(PrimeElab *e, Atom *term,
 }
 
 
+/* A migration request observes the same elaboration, before its ownership
+ * and binder tables are released. It never participates in evaluation. */
+static __thread bool g_prime_migration_active = false;
+static __thread size_t g_prime_migration_form = 0u;
+static bool prime_scope_migration_emit(PrimeElab *e, Atom *form);
+
 /* The binding structure of a whole authored form under `profile`: steps 1
  * to 3 above.  NULL when the form cannot be elaborated. */
 static Atom *prime_elab_run(Arena *arena, Atom *form,
@@ -10824,10 +11154,14 @@ static Atom *prime_elab_run(Arena *arena, Atom *form,
                 e.failed = true;
         }
     }
+    if (!e.failed && g_prime_migration_active)
+        e.failed = !prime_scope_migration_emit(&e, result);
     bool failed = e.failed;
     prime_elab_free(&e);
     return failed ? NULL : result;
 }
+
+#include "prime_scope_migration.inc"
 
 /* A form formed while the program runs, from text (parse), is elaborated as
  * the reader elaborates a form, under the profile in force
@@ -11267,6 +11601,19 @@ static Atom *prime_form_elaborate(Arena *arena, Atom *term, bool from_parts) {
     return result;
 }
 
+/* A newly formed pattern binder introduces its pattern slots under LF.
+ * Its already formed children retain their records and captures. */
+static Atom *prime_form_pattern(Arena *arena, Atom *term) {
+    if (prime_pattern_source(term)) return term;
+    CettaPrimeScopeProfile profile = prime_scope_runtime_profile();
+    Atom *inner = term, *braces = NULL;
+    if (!prime_meta_braces(term, &inner, &braces)) inner = term;
+    if (profile.ownership == CETTA_PRIME_OWNERSHIP_LEXICAL_FRESH &&
+        prime_meta_kind(arena, inner) == PRIME_META_BINDER)
+        return prime_elab_run(arena, term, profile);
+    return prime_formed_binder(term) ? prime_seal_formed(arena, term) : term;
+}
+
 /* A term built at run time from parts (cons-atom, union-atom).  Its root is
  * the one node formed now:
  *   - a lambda or template (or `new`) is formed (prime_elab_formed): its
@@ -11292,8 +11639,7 @@ Atom *prime_semantics_form_built(Arena *arena, Atom *built) {
     }
     if (prime_formed_template(arena, built))
         return prime_form_elaborate(arena, built, true);
-    return prime_formed_binder(built) ? prime_seal_formed(arena, built)
-                                      : built;
+    return prime_form_pattern(arena, built);
 }
 
 /* A term whose head a substitution has just filled with the symbol at its
@@ -11309,7 +11655,7 @@ static Atom *prime_formed_by_substitution(Arena *arena, Atom *term) {
         return term;
     if (g_prime_forming_in_code == 0u && prime_formed_template(arena, term))
         return prime_form_elaborate(arena, term, true);
-    return prime_formed_binder(term) ? prime_seal_formed(arena, term) : term;
+    return prime_form_pattern(arena, term);
 }
 
 /* `term` with each variable `from[i]` replaced by `to[i]` wherever it
@@ -12377,7 +12723,61 @@ static Atom *prime_eq_canon(PrimeEqCanon *c, Atom *term, bool pattern) {
     if (pattern || !prime_meta_braces(term, &inner, &braces)) inner = term;
     PrimeLambdaTelescope telescope;
     PrimeIterTemplate iter;
-    if (!pattern && prime_code_like(term)) {
+    CettaExprIndex source_at = pattern ? 0u : prime_pattern_source(inner);
+    if (!pattern && prime_sequential_scopes(inner)) {
+        Atom *expanded = prime_sequential_expand(c->arena, inner);
+        Atom *body = expanded ? prime_eq_canon(c, expanded, false) : NULL;
+        CettaExprLen count = inner->expr.elems[1]->expr.len;
+        Atom **pairs = arena_alloc(c->arena, sizeof(Atom *) * (size_t)count);
+        if (!pairs || !body) c->failed = true;
+        for (CettaExprIndex i = 0u; i < count && !c->failed; i++) {
+            if (!body || body->kind != ATOM_EXPR || body->expr.len != 4u ||
+                !atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.let)) {
+                c->failed = true;
+                break;
+            }
+            pairs[i] = atom_expr2(c->arena, body->expr.elems[1],
+                                  body->expr.elems[2]);
+            if (!pairs[i]) c->failed = true;
+            body = body->expr.elems[3];
+        }
+        Atom *list = c->failed ? NULL : atom_expr(c->arena, pairs, count);
+        Atom *canon = list
+            ? atom_expr3(c->arena, inner->expr.elems[0], list, body) : NULL;
+        result = canon && braces
+            ? atom_expr3(c->arena, term->expr.elems[0], canon,
+                          prime_eq_canon(c, braces, false)) : canon;
+        if (!result) c->failed = true;
+    } else if (source_at) {
+        CettaExprLen len = atom_authored_len(inner);
+        Atom **items = arena_alloc(c->arena, sizeof(Atom *) * (size_t)len);
+        Atom *source = prime_eq_canon(c, inner->expr.elems[source_at], false);
+        if (!items || !source) c->failed = true;
+        size_t mark = c->len;
+        Atom *own = inner->expr.elems[len];
+        for (CettaExprIndex j = PRIME_OWN_FIRST;
+             j < own->expr.len && !c->failed; j++)
+            (void)prime_eq_push(c, own->expr.elems[j], false);
+        if (!c->failed) {
+            for (CettaExprIndex i = 0u; i < len; i++)
+                items[i] = inner->expr.elems[i];
+            /* The source was read outside these binders. */
+            items[source_at] = atom_expr(c->arena, NULL, 0u);
+            Atom *plain = atom_expr(c->arena, items, len);
+            Atom *canon = plain ? prime_eq_canon(c, plain, false) : NULL;
+            if (canon) {
+                for (CettaExprIndex i = 0u; i < len; i++)
+                    items[i] = canon->expr.elems[i];
+                items[source_at] = source;
+                result = atom_expr(c->arena, items, len);
+            } else c->failed = true;
+        }
+        c->len = mark;
+        if (!c->failed && braces)
+            result = atom_expr3(c->arena, term->expr.elems[0], result,
+                                prime_eq_canon(c, braces, false));
+        if (!result) c->failed = true;
+    } else if (!pattern && prime_code_like(term)) {
         /* No reference crosses a quotation.  Contextual code binds the names
          * of its list in its code, outermost first, as a lambda binds its
          * parameters. */
@@ -12543,6 +12943,8 @@ static bool prime_eq_binds(const Atom *term, uint32_t nesting) {
     if (!term || term->kind != ATOM_EXPR || nesting > PRIME_ELAB_NESTING_LIMIT)
         return false;
     if (prime_semantics_contextual_code(term)) return true;
+    if (prime_pattern_source(term) || prime_sequential_scopes(term))
+        return true;
     /* A written quotation's own names (stage 5, item 3). */
     if (atom_is_quotation(term) && term->expr.len == 3u) return true;
     if (term->expr.len > 0u && term->expr.elems[0] &&
@@ -12595,13 +12997,15 @@ typedef struct {
 
 static __thread bool g_prime_scope_reading_document = false;
 static __thread bool g_prime_scope_census = false;
+static __thread bool g_prime_scope_migration_plan = false;
 
 void prime_scope_document_reading(bool reading) {
     g_prime_scope_reading_document = reading;
 }
 
-void prime_scope_census_set(bool on) {
-    g_prime_scope_census = on;
+void prime_scope_census_set(const char *mode) {
+    g_prime_scope_census = mode && mode[0];
+    g_prime_scope_migration_plan = mode && strcmp(mode, "plan") == 0;
 }
 
 static bool prime_scope_census_requested(void) {
@@ -13045,6 +13449,7 @@ bool prime_semantics_elaborate_read_forms(TermUniverse *universe,
     bool ok = true;
     bool counting = prime_scope_census_requested() &&
                     g_prime_scope_reading_document;
+    bool planning = counting && g_prime_scope_migration_plan;
     PrimeScopeCensus census[PRIME_SCOPE_OWNERSHIP_COUNT];
     memset(census, 0, sizeof census);
     for (size_t i = 0u; i < count && ok; i++) {
@@ -13061,7 +13466,18 @@ bool prime_semantics_elaborate_read_forms(TermUniverse *universe,
             if (after_bang && valid) profile = declared;
             continue;
         }
-        if (counting && !prime_scope_census_form(universe, forms[i], census))
+        if (planning && profile.ownership == CETTA_PRIME_OWNERSHIP_MERCURY_IMPLICIT) {
+            Arena plan_arena;
+            arena_init(&plan_arena);
+            Atom *raw = term_universe_copy_atom(universe, &plan_arena, forms[i]);
+            g_prime_migration_form = i;
+            g_prime_migration_active = true;
+            Atom *checked = raw ? prime_elab_run(&plan_arena, raw, profile) : NULL;
+            g_prime_migration_active = false;
+            if (!checked) ok = false;
+            arena_free(&plan_arena);
+        }
+        if (counting && !planning && !prime_scope_census_form(universe, forms[i], census))
             ok = false;
         int relevant = prime_elab_ids_relevant(universe, forms[i], profile);
         if (relevant < 0) {
@@ -13089,7 +13505,8 @@ bool prime_semantics_elaborate_read_forms(TermUniverse *universe,
         arena_reset(&scratch, mark);
     }
     arena_free(&scratch);
-    if (ok && counting) prime_scope_census_print(census);
+    if (ok && counting && !planning) prime_scope_census_print(census);
+    if (ok && planning) printf("{\"kind\":\"complete\",\"forms\":%zu}\n", count);
     return ok;
 }
 

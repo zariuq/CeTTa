@@ -347,6 +347,15 @@ The bridge code includes two thin compatibility adapters:
 ## MeTTa Prime draft (`--lang prime`)
 
 **The language:**
+- **Local binding is the default.** A `let`, `let*`, `match` or `case`
+  pattern introduces fresh local variables each time that binding runs,
+  including in code constructed at run time. The source value is evaluated
+  outside the new pattern scope: `(let $y 7 (let $y $y $y))` returns `7`.
+  To share a pattern name with the enclosing scope, write a crossing set,
+  such as `(let $y 7 body){$y}`. `unify` explicitly refines existing names;
+  `(new ($h) body)` introduces a private name. A document can retain implicit
+  relational sharing with `(scope:profile mercury-implicit)`. The default
+  profile is `lexical-fresh per-call reference`.
 - **Code is a value.** `@` quotes code into a sealed value, and `*` activates
   it. Equations never rewrite inside a quotation, so a program can hold,
   inspect, transform and pass on code without running it.

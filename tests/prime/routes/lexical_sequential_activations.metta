@@ -1,0 +1,17 @@
+; Sequential bindings enter a new pattern scope after each source is read.
+; Branches, code openings and escaping closures retain their own identities.
+(scope:profile lexical-fresh)
+(= (twice $f) (Pair ($f 1) ($f 2)))
+!(tag sequential (let* (($x 1) ($y (+ $x 2))) (Pair $x $y)))
+!(tag sequential-shadow (let* (($x 1) ($x (+ $x 1))) $x))
+!(tag sequential-formed (twice (cons-atom lam (z (let* (($y z) ($x (g $y))) $x)))))
+!(tag sequential-source (let $x 7 (let* (($x $x) ($y $x)) (Pair $x $y))))
+!(tag sequential-many (let* (($x (superpose (1 2))) ($y (+ $x 1))) (Pair $x $y)))
+!(tag branch-local (case (Pair 1 2) (((Pair $x $x) bad) ((Pair $x $y) (Pair $x $y)))))
+!(tag code-openings (let $c @(lam z (let $y z (g $y))) (Pair (*$c 1) (*$c 2))))
+!(tag code-inspection (quote (let* (($x 1) ($y 2)) (Pair $x $y))))
+!(tag formed-binder (let $h let (let $f (lam z ($h $y z (g $y))) (Pair ($f 1) ($f 2)))))
+!(tag case-shared (collapse (let $x 9 (case 1 (($x wrong))){$x})))
+!(tag new-captures-source (== (let $y 7 (new ($y) (let $y $y $y))) 7))
+!(tag escaping (let $f ((lam z (let $y z (lam w (Pair $y w)))) 1) ($f 2)))
+!(tag escaping-distinct (let $mk (lam z (let $y z (lam w (Pair $y w)))) (Pair (($mk 1) 7) (($mk 2) 8))))

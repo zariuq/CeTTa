@@ -51,23 +51,23 @@
 (rule pair (A A) D)
 
 (= (rule-shape $r)
-   (let $found (collapse (match &self (rule $r $ps $c) ($ps $c)))
+   (let $found (collapse (match &self (rule $r $ps $c) ($ps $c)){$r})
      (if (== $found ()) unknown-rule (car-atom $found))))
 
 ; ---- lists ------------------------------------------------------------------------
 
 (= (append $xs $ys)
    (if (== $xs ()) $ys
-       (let* (($h (car-atom $xs)) ($t (cdr-atom $xs)) ($r (append $t $ys))) (cons-atom $h $r))))
+       (let* (($h (car-atom $xs)) ($t (cdr-atom $xs)) ($r (append $t $ys))) (cons-atom $h $r)){$h $t $r}))
 (= (nth $xs $i)
    (if (== $xs ()) out-of-range
-       (if (== $i 0) (car-atom $xs) (let* (($t (cdr-atom $xs)) ($j (- $i 1))) (nth $t $j)))))
+       (if (== $i 0) (car-atom $xs) (let* (($t (cdr-atom $xs)) ($j (- $i 1))) (nth $t $j)){$t $j})))
 
 ; ---- derivations with holes ------------------------------------------------------
 
 (= (is-hole $t)
    (if (== (get-metatype $t) Expression)
-       (if (== $t ()) False (let $h (car-atom $t) (== $h ?)))
+       (if (== $t ()) False (let $h (car-atom $t) (== $h ?)){$h})
        False))
 (= (head-of $t) (if (== (get-metatype $t) Symbol) $t (car-atom $t)))
 (= (kids-of $t) (if (== (get-metatype $t) Symbol) () (cdr-atom $t)))
@@ -76,20 +76,20 @@
 ; The judgment a derivation concludes over the obligations ctx, or ill-formed.
 (= (conclusion $ctx $t)
    (if (is-hole $t)
-       (let $i (index-atom $t 1) (nth $ctx $i))
+       (let $i (index-atom $t 1) (nth $ctx $i)){$i}
        (let* (($r (head-of $t)) ($kids (kids-of $t)) ($shape (rule-shape $r)))
          (if (== $shape unknown-rule) ill-formed
              (let* ((($ps $c) $shape)
                     ($got (map-atom $kids $k (conclusion $ctx $k))))
-               (if (== $got $ps) $c ill-formed))))))
+               (if (== $got $ps) $c ill-formed)){$ps $c $got})){$r $kids $shape}))
 
 ; Filling holes with evidence: discharge.
 (= (fill $t $ev)
    (if (is-hole $t)
-       (let $i (index-atom $t 1) (nth $ev $i))
+       (let $i (index-atom $t 1) (nth $ev $i)){$i}
        (let* (($r (head-of $t)) ($kids (kids-of $t))
               ($filled (map-atom $kids $k (fill $k $ev))))
-         (rebuild $r $filled))))
+         (rebuild $r $filled)){$r $kids $filled}))
 
 ; Matching a closed derivation against a plan body: the evidence each hole
 ; must receive, or no-match.
@@ -99,25 +99,25 @@
          (if (== $j $i)
              (if (== $e $d) $env no-match)
              (let $env2 (bind-hole $i $d $rest)
-               (if (== $env2 no-match) no-match (cons-atom ($j $e) $env2)))))))
+               (if (== $env2 no-match) no-match (cons-atom ($j $e) $env2))){$env2})){$j $e $rest}))
 (= (match-body $t $d $env)
    (if (== $env no-match) no-match
        (if (is-hole $t)
-           (let $i (index-atom $t 1) (bind-hole $i $d $env))
+           (let $i (index-atom $t 1) (bind-hole $i $d $env)){$i}
            (let* (($r (head-of $t)) ($dr (head-of $d)))
              (if (== $r $dr)
-                 (let* (($ks (kids-of $t)) ($ds (kids-of $d))) (match-kids $ks $ds $env))
-                 no-match)))))
+                 (let* (($ks (kids-of $t)) ($ds (kids-of $d))) (match-kids $ks $ds $env)){$ks $ds}
+                 no-match)){$r $dr})))
 (= (match-kids $ks $ds $env)
    (if (== $ks ()) (if (== $ds ()) $env no-match)
        (if (== $ds ()) no-match
            (let* (($k (car-atom $ks)) ($d (car-atom $ds)) ($env2 (match-body $k $d $env))
                   ($kt (cdr-atom $ks)) ($dt (cdr-atom $ds)))
-             (match-kids $kt $dt $env2)))))
+             (match-kids $kt $dt $env2)){$k $d $env2 $kt $dt})))
 (= (lookup-evidence $env $i)
    (if (== $env ()) missing
        (let* ((($j $e) (car-atom $env)) ($rest (cdr-atom $env)))
-         (if (== $j $i) $e (lookup-evidence $rest $i)))))
+         (if (== $j $i) $e (lookup-evidence $rest $i))){$j $e $rest}))
 ; Obligation i is filled with a closed derivation of its judgment.
 (= (evidence-typed $ctx $i $env)
    (if (== $ctx ()) True
@@ -125,7 +125,7 @@
               ($j (+ $i 1)))
          (if (== $e missing) (uncited-obligation $i)
              (let $c (conclusion () $e)
-               (if (== $c $g) (evidence-typed $rest $j $env) False))))))
+               (if (== $c $g) (evidence-typed $rest $j $env) False)){$c})){$g $rest $e $j}))
 ; d completes the plan when typed evidence fills the plan to exactly d.
 (= (completes $d (plan $ctx $body))
    (let $env (match-body $body $d ())
@@ -133,11 +133,11 @@
 
 (= (rule-count $t)
    (if (is-hole $t) 0
-       (let $ks (kids-of $t) (foldl-atom $ks 1 $acc $k (+ $acc (rule-count $k))))))
+       (let $ks (kids-of $t) (foldl-atom $ks 1 $acc $k (+ $acc (rule-count $k)))){$ks}))
 (= (holes $t)
-   (if (is-hole $t) (let $i (index-atom $t 1) ($i))
+   (if (is-hole $t) (let $i (index-atom $t 1) ($i)){$i}
        (let $ks (kids-of $t)
-         (foldl-atom $ks () $acc $k (let $hk (holes $k) (append $acc $hk))))))
+         (foldl-atom $ks () $acc $k (let $hk (holes $k) (append $acc $hk)))){$ks}))
 
 ; ---- anti-unification --------------------------------------------------------------
 
@@ -154,8 +154,8 @@
                         ($lk (kids-of $l)) ($rk (kids-of $r))
                         (($obls $bodies $ls $rs) (au-kids $lk $rk $ps $k))
                         ($body (rebuild $lh $bodies)))
-                   ($obls $body $ls $rs))
-                 (slot $l $r $goal $k))))))
+                   ($obls $body $ls $rs)){$ps $c $lk $rk $obls $bodies $ls $rs $body}
+                 (slot $l $r $goal $k))){$lh $rh})))
 (= (au-kids $ls $rs $ps $k)
    (if (== $ls ()) (() () () ())
        (let* (($l (car-atom $ls)) ($r (car-atom $rs)) ($p (car-atom $ps))
@@ -165,7 +165,7 @@
               (($o2 $b2 $l2 $r2) (au-kids $lt $rt $pt $k2))
               ($o (append $o1 $o2)) ($b (cons-atom $b1 $b2))
               ($lo (append $l1 $l2)) ($ro (append $r1 $r2)))
-         ($o $b $lo $ro))))
+         ($o $b $lo $ro)){$l $r $p $o1 $b1 $l1 $r1 $n $k2 $lt $rt $pt $o2 $b2 $l2 $r2 $o $b $lo $ro}))
 (= (generalize $l $r $goal)
    (let ($obls $body $ls $rs) (au $l $r $goal 0) ((plan $obls $body) $ls $rs)))
 
@@ -221,7 +221,7 @@
 ; Each rule becomes an axiom: premises -> conclusion.
 (= (imps $ctx $goal)
    (if (== $ctx ()) $goal
-       (let* (($h (car-atom $ctx)) ($t (cdr-atom $ctx)) ($r (imps $t $goal))) (imp $h $r))))
+       (let* (($h (car-atom $ctx)) ($t (cdr-atom $ctx)) ($r (imps $t $goal))) (imp $h $r)){$h $t $r}))
 (= (rule-statement $r) (let ($ps $c) (rule-shape $r) (imps $ps $c)))
 ; The kernel's rules, assumed: statements about uninterpreted propositions.
 !(map-atom (axA1 axA2 ab axB bc xc pair) $r
@@ -233,16 +233,16 @@
 ; A derivation with holes as a proof term: hole i is hypothesis i, a rule is
 ; its axiom applied to the proofs of its premises.
 (= (to-proof $t)
-   (if (is-hole $t) (let $i (index-atom $t 1) (hyp-name $i))
-       (let* (($r (head-of $t)) ($ks (kids-of $t))) (apply-proofs (pf:known $r) $ks))))
+   (if (is-hole $t) (let $i (index-atom $t 1) (hyp-name $i)){$i}
+       (let* (($r (head-of $t)) ($ks (kids-of $t))) (apply-proofs (pf:known $r) $ks)){$r $ks}))
 (= (apply-proofs $f $ks)
    (if (== $ks ()) $f
        (let* (($k (car-atom $ks)) ($pk (to-proof $k)) ($rest (cdr-atom $ks)))
-         (apply-proofs (pf:imp-elim $f $pk) $rest))))
+         (apply-proofs (pf:imp-elim $f $pk) $rest)){$k $pk $rest}))
 (= (assume-all $i $ctx $body)
    (if (== $ctx ()) (to-proof $body)
        (let* (($n (hyp-name $i)) ($t (cdr-atom $ctx)) ($j (+ $i 1)) ($inner (assume-all $j $t $body)))
-         (pf:assume $n $inner))))
+         (pf:assume $n $inner)){$n $t $j $inner}))
 
 ; 8. The generalization bc(?B) is a proof of B -> C (Truth.plan_sound: the goal
 ;    holds whenever the obligations do).

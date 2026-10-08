@@ -48,11 +48,11 @@
 ; unknown are skipped; the first fully determined derivation is returned.
 (= (has-unknown $t)
    (if (== (get-metatype $t) Expression)
-       (if (unify $t (FVar $_) True False) True (let $flags (map-atom $t $e (has-unknown $e)) (any-true $flags)))
+       (if (unify $t (FVar $_) True False) True (let $flags (map-atom $t $e (has-unknown $e)) (any-true $flags)){$flags})
        False))
 (= (any-true $flags)
    (if (== $flags ()) False
-       (let $h (car-atom $flags) (if $h True (let $t (cdr-atom $flags) (any-true $t))))))
+       (let $h (car-atom $flags) (if $h True (let $t (cdr-atom $flags) (any-true $t)){$t})){$h}))
 (= (derive $goal 0) none)
 (= (derive $goal $depth)
    (let $steps (lang:step MEGALODON-IMP $goal)
@@ -66,20 +66,20 @@
          (let $kids (derive-all $premises $d)
            (if (== $kids none)
                (first-derivation (GStepsV1 $rest) $d)
-               (GProof (GRuleInst $name $args) $kids))))))
+               (GProof (GRuleInst $name $args) $kids))){$kids})))
 (= (derive-all LNil $d) PrNil)
 (= (derive-all (LCons $p $rest) $d)
    (let $one (derive $p $d)
      (if (== $one none) none
          (let $more (derive-all $rest $d)
-           (if (== $more none) none (PrCons $one $more))))))
+           (if (== $more none) none (PrCons $one $more))){$more})))
 ; the rule names of a certificate, in derivation order
 (= (cert-rules (GProof (GRuleInst $name $args) $kids)) (let $more (kids-rules $kids) (cons-atom $name $more)))
 (= (kids-rules PrNil) ())
 (= (kids-rules (PrCons $k $rest)) (let $a (cert-rules $k) (let $b (kids-rules $rest) (append-list $a $b))))
 (= (append-list $a $b)
    (if (== $a ()) $b
-       (let $h (car-atom $a) (let $t (cdr-atom $a) (let $r (append-list $t $b) (cons-atom $h $r))))))
+       (let $h (car-atom $a) (let $t (cdr-atom $a) (let $r (append-list $t $b) (cons-atom $h $r)){$r}){$t}){$h}))
 ; |- P -> P, derived from the rules and accepted by the checker
 !(let $g (mproves (mnil) (mimp (P) (P)))
    (let $cert (derive $g 4)

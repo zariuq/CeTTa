@@ -90,6 +90,12 @@ bool grounded_compare_numeric_atoms(Atom *left, Atom *right, int *ordering);
 /* Check if a symbol is a known grounded op head (by SymbolId). */
 bool is_grounded_op(SymbolId id);
 
+/* Structural ordering has a separate profile licence from numeric order. */
+static inline bool grounded_op_is_term_order(SymbolId id) {
+    return id == g_builtin_syms.term_lt || id == g_builtin_syms.term_gt ||
+           id == g_builtin_syms.term_le || id == g_builtin_syms.term_ge;
+}
+
 /* Capability: ops admitted into TYPE-LEVEL conversion (normalize_type_expr
    and the he-prime checked normalizer).  Deterministic, effect-free, and
    independent of live mutable state.  A positive list, not a blocklist: an op

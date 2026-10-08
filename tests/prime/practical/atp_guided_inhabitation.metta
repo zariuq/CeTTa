@@ -56,11 +56,11 @@
   (let (he-accept (typed-answer-v2 (: $proof $type) $substitution))
        (search-first-inhabitant &self ch 3 100000
          (search-policy atp-guided-inhabitation))
-       (type:check &self $proof ch)) True)
+       (type:check &self $proof ch)){$proof $type $substitution} True)
 !(assertEqual
   (let (he-accept (typed-answer-v2 (: $proof $type) $substitution))
        (search-first-inhabitant &self ch 3 100000)
-       (type:check &self $proof ph)) False)
+       (type:check &self $proof ph)){$proof $type $substitution} False)
 
 ; A named but unimplemented lane cannot silently fall back to another search.
 !(search-first-inhabitant
@@ -91,7 +91,7 @@
         (((he-accept
             (typed-answer-v2 (: (good hp hq) Goal) $substitution))
           True)
-         ($_ False)))))))))))))))
+         ($_ False))){$substitution $_}){$i10}){$i9}){$i8}){$i7}){$i6}){$i5}){$i4}){$i3}){$i2}){$i1}){$i0}){$kb}
   True)
 
 ; Positive pruning case: the only rule asks for the alpha-variant ancestor
@@ -122,5 +122,5 @@
     (((he-accept
         (typed-answer-v2 (: (step base) Goal2) $substitution))
       True)
-     ($_ False)))
+     ($_ False))){$substitution $_}
   True)

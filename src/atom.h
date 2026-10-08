@@ -516,11 +516,26 @@ static inline bool atom_sequence_is_own_list(const Atom *atom) {
                                 CETTA_INTERNAL_TAG_PRIME_OWN);
 }
 
-/* Whether `atom` is an elaborated Prime lambda, map-atom/foldl-atom
- * template or quotation carrying its own list last: the list is inferred
- * ownership, and no observer of the authored term (the printer, the
- * sequence operations, patterns, `==`) sees it.  An expression that holds no
- * internal tag is answered by one fact bit. */
+/* The shapes whose final private OWN list describes a binding scope.
+ * Shared by pointer atoms and stored term IDs, so indexing and matching
+ * observe the same authored arity. Three fields also cover let* pairs. */
+static inline bool atom_prime_scope_metadata_shape(CettaExprLen len, SymbolId head) {
+    return len == 3u ||
+           (len == 4u && head == g_builtin_syms.prime_lam) ||
+           (len == 5u && head == g_builtin_syms.map_atom) ||
+           (len == 7u && head == g_builtin_syms.foldl_atom) ||
+           (len == 5u && (head == g_builtin_syms.let ||
+                          head == g_builtin_syms.match ||
+                          head == g_builtin_syms.chain ||
+                          head == g_builtin_syms.filter_atom)) ||
+           ((len == 4u || len == 5u) &&
+            (head == g_builtin_syms.case_text ||
+             head == g_builtin_syms.switch_text ||
+             head == g_builtin_syms.switch_minimal));
+}
+
+/* Inferred ownership is hidden from observers of the authored syntax.
+ * An expression that holds no internal tag is answered by one fact bit. */
 static inline bool atom_prime_template_own_hidden(const Atom *atom) {
     if (!atom || atom->kind != ATOM_EXPR ||
         (atom->structural_facts &
@@ -528,17 +543,13 @@ static inline bool atom_prime_template_own_hidden(const Atom *atom) {
             ATOM_STRUCTURAL_FACTS_VALID)
         return false;
     CettaExprLen len = atom->expr.len;
-    if (len < 3u || !atom->expr.elems[0] ||
-        atom->expr.elems[0]->kind != ATOM_SYMBOL)
-        return false;
+    if (len < 3u) return false;
     const Atom *last = atom->expr.elems[len - 1u];
     if (!last || last->kind != ATOM_EXPR || !atom_sequence_is_own_list(last))
         return false;
-    SymbolId head = atom->expr.elems[0]->sym_id;
-    return (len == 3u && head == g_builtin_syms.quote) ||
-           (len == 4u && head == g_builtin_syms.prime_lam) ||
-           (len == 5u && head == g_builtin_syms.map_atom) ||
-           (len == 7u && head == g_builtin_syms.foldl_atom);
+    SymbolId head = atom->expr.elems[0] && atom->expr.elems[0]->kind == ATOM_SYMBOL
+        ? atom->expr.elems[0]->sym_id : SYMBOL_ID_NONE;
+    return atom_prime_scope_metadata_shape(len, head);
 }
 
 /* The length of an expression as the authored term has it: an elaborated
@@ -1398,6 +1409,23 @@ char *atom_to_parseable_bytes(Arena *a, Atom *atom, bool petta,
    sharing within one copy episode. */
 Atom *atom_deep_copy(Arena *dst, Atom *src);
 typedef Atom *(*AtomDeepCopyResolver)(void *context, Atom *src);
+typedef Atom *(*AtomDeepCopyLeafMap)(Arena *dst, Atom *src, void *context);
+/* A fixed observation policy may expose another expression's children, or
+ * finish an opaque value without traversing it. The original source pointer
+ * remains the memo key. A completed value must be owned by dst; returned views
+ * and their children remain live throughout this synchronous episode. The
+ * observed graph must be finite and acyclic. Views may expand a list carrier,
+ * whose produced edges remain part of the operation's work/output account.
+ * On failure, discard callback-owned inventories before rolling back dst. */
+typedef bool (*AtomDeepCopyNodeView)(Arena *dst, Atom *src, Atom **view,
+                                   bool *complete, void *context);
+Atom *atom_deep_copy_observed(Arena *dst, Atom *src,
+                             AtomDeepCopyNodeView view, void *context);
+/* A leaf map must have one stable interpretation for the whole episode.
+ * It may allocate in dst and return NULL on failure. Any callback-owned
+ * inventory must be discarded before the caller rolls back dst. */
+Atom *atom_deep_copy_mapped(Arena *dst, Atom *src,
+                           AtomDeepCopyLeafMap map, void *context);
 /* A multi-root copy episode.  Every call shares one source-pointer forwarding
    table, so pointer-DAG sharing is preserved across separately named roots.
    A destination-owned root is reused only when its compositional arena-closure
@@ -1405,6 +1433,14 @@ typedef Atom *(*AtomDeepCopyResolver)(void *context, Atom *src);
    resolver, installed before copying, redirects every encountered node before
    traversal; update-cell collectors use it to collapse evaluated thunks. */
 AtomDeepCopySession *atom_deep_copy_session_new(Arena *dst);
+/* A multi-root mapped episode. The mapper/context cannot be replaced during
+ * the episode. Destination-owned terms are still traversed: storage ownership
+ * does not establish that their leaves already have the requested meaning.
+ * The caller keeps sources/context live, stages returned roots, and publishes
+ * them only after all copies succeed. After failure, discard the session and
+ * its callback inventory before reclaiming abandoned destination storage. */
+AtomDeepCopySession *atom_deep_copy_session_new_mapped(
+    Arena *dst, AtomDeepCopyLeafMap map, void *context);
 /* The session copies out of a region its caller releases right after it:
  * the atoms `arena` allocated since `mark`.  A copied atom of that region
  * then records its copy in place instead of in the session's table, since

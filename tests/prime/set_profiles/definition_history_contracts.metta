@@ -47,9 +47,9 @@
 ; Replacement, self-reference and a missing predecessor are not admissions.
 !(car-atom (try (set:define HistoryCarrier (u 0) (= HistoryCarrier (-> prop prop)))))
 !(car-atom (try (set:define historySelf prop (= historySelf historySelf))))
-!(== (collapse (match &self (: historySelf $type) $type)) ())
+!(== (collapse (match &self (: historySelf $type) $type){$type}) ())
 !(car-atom (try (set:define historyForward (u 0) (= historyForward HistoryLater))))
-!(== (collapse (match &self (: historyForward $type) $type)) ())
+!(== (collapse (match &self (: historyForward $type) $type){$type}) ())
 !(set:define HistoryLater (u 0) (= HistoryLater prop))
 !(set:define historyForward (u 0) (= historyForward HistoryLater))
 !(car-atom (try (set:check Falsum historyForward)))

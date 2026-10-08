@@ -1,3 +1,6 @@
+; Relational let refinement under rule M.
+(scope:profile mercury-implicit per-call reference)
+
 ; Prime lowers each let pattern to stable positional slots and its body to
 ; unary ABT scopes.  Across sequential relational forms, reusing one syntax
 ; variable refines the established binding instead of introducing a shadow.

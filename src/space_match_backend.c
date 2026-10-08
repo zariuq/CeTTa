@@ -365,26 +365,11 @@ static SymbolId atom_head_sym(Atom *a) {
     return SYMBOL_ID_NONE;
 }
 
-static bool native_atom_id_insertable(const TermUniverse *universe,
-                                      AtomId atom_id) {
-    if (!universe || atom_id == CETTA_ATOM_ID_NONE || !tu_hdr(universe, atom_id))
-        return false;
-    if (tu_kind(universe, atom_id) != ATOM_EXPR)
-        return true;
-    CettaExprLen arity = tu_arity(universe, atom_id);
-    for (CettaExprIndex i = 0; i < arity; i++) {
-        if (!native_atom_id_insertable(universe, tu_child(universe, atom_id, i)))
-            return false;
-    }
-    return true;
-}
-
 static void native_insert_match_trie_entry(Space *s, CettaIndex atom_idx) {
     SpaceMatchNativeState *st = &s->match_backend.native;
     AtomId atom_id =
         space_match_backend_candidate_atom_id_at64(s, atom_idx);
-    if (native_atom_id_insertable(s->native.universe, atom_id) &&
-        disc_insert_id(st->match_trie, s->native.universe, atom_id, atom_idx)) {
+    if (disc_insert_id(st->match_trie, s->native.universe, atom_id, atom_idx)) {
         return;
     }
     Atom *atom = space_match_backend_candidate_at64(s, atom_idx);
@@ -719,8 +704,7 @@ static void native_note_add(Space *s, AtomId atom_id, Atom *atom,
     if (st->match_trie && !st->match_trie_dirty) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_NATIVE_PATTERN_INDEX_INCREMENTAL_ADD);
-        if (!(native_atom_id_insertable(s->native.universe, atom_id) &&
-              disc_insert_id(st->match_trie, s->native.universe, atom_id,
+        if (!(disc_insert_id(st->match_trie, s->native.universe, atom_id,
                              atom_idx)) &&
             atom) {
             disc_insert(st->match_trie, atom, atom_idx);
@@ -1236,7 +1220,8 @@ static bool native_pattern_is_flat_linear(Atom *pattern) {
             break;
         }
         if (item->kind != ATOM_VAR) {
-            if (atom_has_vars(item)) {
+            if (atom_has_vars(item) ||
+                !stree_query_within_expansion_budget(item)) {
                 admissible = false;
                 break;
             }
@@ -1942,6 +1927,10 @@ static void native_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
             }
             bindings_free(&b);
         }
+        return;
+    }
+    if (!stree_query_within_expansion_budget(query)) {
+        native_candidate_exact_query(s, a, query, out);
         return;
     }
     native_ensure_stree(s);
@@ -8280,12 +8269,31 @@ static void imported_note_add(Space *s, AtomId atom_id, Atom *atom,
                               cetta_frame_identity_scope_fresh(&frame_identity_scope));
 }
 
+/* Only the retained index observations need compact records. Auditing the
+ * unfolding below a wildcard cut would defeat bounded index construction. */
+static bool native_index_path_has_records(const TermUniverse *universe,
+        AtomId atom_id, unsigned depth, CettaIndexExpansionBudget *budget) {
+    if (!tu_hdr(universe, atom_id))
+        return false;
+    if (tu_kind(universe, atom_id) != ATOM_EXPR)
+        return true;
+    CettaExprLen arity = tu_arity(universe, atom_id);
+    if (!cetta_index_expand_expression(budget, depth, arity))
+        return true;
+    for (CettaExprIndex i = 0; i < arity; i++)
+        if (!native_index_path_has_records(universe, tu_child(universe, atom_id, i),
+                                            depth + 1u, budget))
+            return false;
+    return true;
+}
+
 static bool native_needs_atom_on_add(const Space *s, AtomId atom_id) {
     const SpaceMatchNativeState *st =
         s ? &s->match_backend.native : NULL;
     if (!st || (st->match_trie == NULL && st->stree == NULL))
         return false;
-    return !native_atom_id_insertable(s->native.universe, atom_id);
+    CettaIndexExpansionBudget budget = cetta_index_expansion_budget();
+    return !native_index_path_has_records(s->native.universe, atom_id, 0u, &budget);
 }
 
 static bool imported_needs_atom_on_add(const Space *s, AtomId atom_id) {
@@ -10872,7 +10880,6 @@ bool space_match_backend_ground_exact_exists_frontier(
     CETTA_SCOPED_SHARED_TRANSITION(candidate_frontier_observation);
     CettaIndex *candidates = NULL;
     CettaIndex candidate_count = native_candidates(s, pattern, &candidates);
-    bool found = false;
     bool frontier_exact = true;
     for (CettaIndex i = 0u; i < candidate_count; i++) {
         Atom *candidate =
@@ -10881,13 +10888,14 @@ bool space_match_backend_ground_exact_exists_frontier(
             frontier_exact = false;
             break;
         }
-        if (atom_eq(candidate, pattern))
-            found = true;
     }
     free(candidates);
     if (!frontier_exact)
         return false;
-    *out_found = found;
+    /* The frontier certifies completeness, not membership.  Once every
+     * candidate is exact, the existing AtomId presence index answers that
+     * question without comparing each candidate's whole term graph. */
+    *out_found = space_contains_exact(s, pattern);
     return true;
 }
 
@@ -11287,7 +11295,19 @@ static inline __attribute__((always_inline)) void space_subst_query_member(
         !he_number_query_needs_promoted_candidates(query)) {
         CettaIndex *exact = NULL;
         CettaIndex nexact = space_exact_match_indices64(s, query, &exact);
+        bool exact_frontier = false;
         if (nexact > 0) {
+            exact_frontier = space_contains_only_exact_atoms(s);
+            if (!exact_frontier) {
+                bool found = false;
+                /* Literal hits are complete only when no candidate can
+                 * contribute a relational match through its variables. */
+                exact_frontier =
+                    space_match_backend_ground_exact_exists_frontier(
+                        s, query, &found) && found;
+            }
+        }
+        if (nexact > 0 && exact_frontier) {
             cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SUBST_QUERY_EXACT_SHORTCUT);
             smset_init(out);
             for (CettaIndex i = 0; i < nexact; i++) {

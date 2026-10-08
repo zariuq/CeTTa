@@ -3215,7 +3215,7 @@ static bool petta_specializer_callee_raises_nothing(
         if (heads->items[index] == head)
             return true;
     }
-    if (depth > 64u || cetta_petta_profile_admits_typecheck_ops() ||
+    if (depth > 64u || cetta_petta_profile_admits_native_typecheck_v2() ||
         !petta_symbol_vector_push_unique(heads, head))
         return false;
     /* Every equation the cursor offers for the head may run, one whose

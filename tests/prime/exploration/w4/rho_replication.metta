@@ -31,8 +31,8 @@
        (if (== (get-metatype $p) Expression)
            (let $h (car-atom $p)
              (if (== $h rho:par)
-                 (let $args (cdr-atom $p) (components-of-list $d $args))
-                 (let $c (canon-proc $d $p) ($c))))
+                 (let $args (cdr-atom $p) (components-of-list $d $args)){$args}
+                 (let $c (canon-proc $d $p) ($c)){$c})){$h}
            ($p))))
 (= (components-of-list $d $args)
    (if (== $args ()) ()
@@ -40,19 +40,19 @@
          (let $t (cdr-atom $args)
            (let $hc (components $d $h)
              (let $tc (components-of-list $d $t)
-               (concat $hc $tc)))))))
+               (concat $hc $tc)){$tc}){$hc}){$t}){$h}))
 (= (concat $xs $ys)
    (if (== $xs ()) $ys
        (let $h (car-atom $xs)
          (let $t (cdr-atom $xs)
-           (let $r (concat $t $ys) (cons-atom $h $r))))))
+           (let $r (concat $t $ys) (cons-atom $h $r)){$r}){$t}){$h}))
 (= (bag-of $d $p) (let $cs (components $d $p) (cons-atom bag $cs)))
 (= (canon-proc $d (rho:send $c $q))
    (let $cn (canon-name $d $c) (let $cq (bag-of $d $q) (send $cn $cq))))
 (= (canon-proc $d (rho:recv $c $v $b))
    (let $cn (canon-name $d $c)
      (let $v (bv $d)
-       (let $d1 (+ $d 1) (let $cb (bag-of $d1 $b) (recv $cn $cb))))))
+       (let $d1 (+ $d 1) (let $cb (bag-of $d1 $b) (recv $cn $cb)))){$v}))
 (= (canon-proc $d (rho:drop $n)) (let $cn (canon-name $d $n) (drop $cn)))
 (= (canon-name $d (rho:quote $p)) (let $cp (bag-of $d $p) (quote-of $cp)))
 (= (canon-name $d (bv $k)) (bv $k))
@@ -66,7 +66,7 @@
                  (let $tb (cdr-atom $b)
                    (if (== $ha bag)
                        (if (== $hb bag) (bag-eq $ta $tb) False)
-                       (if (== $ha $hb) (same-list $ta $tb) False))))))
+                       (if (== $ha $hb) (same-list $ta $tb) False))){$tb}){$ta}){$hb}){$ha}
            False)
        (== $a $b)))
 (= (same-list $xs $ys)
@@ -75,21 +75,21 @@
            (let $x (car-atom $xs)
              (let $y (car-atom $ys)
                (if (same $x $y)
-                   (let $rx (cdr-atom $xs) (let $ry (cdr-atom $ys) (same-list $rx $ry)))
-                   False))))))
+                   (let $rx (cdr-atom $xs) (let $ry (cdr-atom $ys) (same-list $rx $ry)){$ry}){$rx}
+                   False)){$y}){$x})))
 (= (bag-eq $xs $ys)
    (if (== $xs ()) (== $ys ())
        (let $x (car-atom $xs)
          (let $rest (cdr-atom $xs)
            (let $left (remove-one $x $ys)
-             (if (== $left no-match) False (bag-eq $rest $left)))))))
+             (if (== $left no-match) False (bag-eq $rest $left))){$left}){$rest}){$x}))
 (= (remove-one $x $ys)
    (if (== $ys ()) no-match
        (let $y (car-atom $ys)
          (let $rest (cdr-atom $ys)
            (if (same $x $y) $rest
                (let $r (remove-one $x $rest)
-                 (if (== $r no-match) no-match (cons-atom $y $r))))))))
+                 (if (== $r no-match) no-match (cons-atom $y $r))){$r})){$rest}){$y}))
 (= (congruent $p $q) (let $cp (bag-of 0 $p) (let $cq (bag-of 0 $q) (same $cp $cq))))
 
 ; Some member of a list of processes is congruent to the target.
@@ -97,14 +97,14 @@
    (if (== $ps ()) False
        (let $p (car-atom $ps)
          (if (congruent $p $target) True
-             (let $rest (cdr-atom $ps) (some-congruent $rest $target))))))
+             (let $rest (cdr-atom $ps) (some-congruent $rest $target)){$rest})){$p}))
 ; Every member of a list of processes has no successor.
 (= (all-quiescent $ps)
    (if (== $ps ()) True
        (let $p (car-atom $ps)
          (if (lts:rho:is-normal-form $p)
-             (let $rest (cdr-atom $ps) (all-quiescent $rest))
-             False))))
+             (let $rest (cdr-atom $ps) (all-quiescent $rest)){$rest}
+             False)){$p}))
 ; A process mentions a drop.
 (= (mentions-drop $p)
    (if (== $p rho:drop) True
@@ -112,7 +112,7 @@
            (if (== $p ()) False
                (let $h (car-atom $p)
                  (if (mentions-drop $h) True
-                     (let $t (cdr-atom $p) (mentions-drop $t)))))
+                     (let $t (cdr-atom $p) (mentions-drop $t)){$t})){$h})
            False)))
 
 ; ---- the comparison is structural congruence -------------------------------

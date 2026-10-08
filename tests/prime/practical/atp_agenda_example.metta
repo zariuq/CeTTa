@@ -39,7 +39,7 @@
          (ATP.AgendaIncomplete $reason $coverage) $stats)
        (atp:agenda:first-checked
          &agenda-kb &agenda-index Missing 2 100 100000 &agenda-policy)
-    (Incomplete $reason $coverage))
+    (Incomplete $reason $coverage)){$reason $coverage $stats}
   (Incomplete NoInhabitantWithinBounds TruncatedAgenda))
 
 ; Negative: an alpha-variant ancestor loop cannot keep rescheduling itself.
@@ -55,7 +55,7 @@
        (atp:agenda:first-checked
          &agenda-loop-kb &agenda-loop-index
          Loop 8 100 100000 &agenda-policy)
-    (Incomplete $reason $coverage))
+    (Incomplete $reason $coverage)){$reason $coverage $stats}
   (Incomplete NoInhabitantWithinBounds TruncatedAgenda))
 
 ; Positive: the ja proof is rediscovered from its two rules and hypotheses.
@@ -99,7 +99,7 @@
          (ATP.AgendaIncomplete $reason $coverage) $stats)
        (atp:agenda:first-checked
          &agenda-kb &agenda-stale ch 2 100 100000 &agenda-policy)
-    (Incomplete $reason $coverage))
+    (Incomplete $reason $coverage)){$reason $coverage $stats}
   (Incomplete NoInhabitantWithinBounds TruncatedAgenda))
 
 ; Negative: a zero step budget is never reported as a refutation.
@@ -108,7 +108,7 @@
          (ATP.AgendaIncomplete $reason $coverage) $stats)
        (atp:agenda:first-checked
          &agenda-kb &agenda-index ch 2 0 100000 &agenda-policy)
-    (Incomplete $reason $coverage))
+    (Incomplete $reason $coverage)){$reason $coverage $stats}
   (Incomplete StepBound CompleteAgenda))
 
 !(println! (ATPAgendaExampleSummary 6 6 0))

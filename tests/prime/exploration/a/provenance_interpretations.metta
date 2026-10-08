@@ -40,7 +40,7 @@
 (= (concat $xs $ys)
    (if (== $xs ()) $ys
        (let* (($h (car-atom $xs)) ($t (cdr-atom $xs)) ($r (concat $t $ys)))
-         (cons-atom $h $r))))
+         (cons-atom $h $r)){$h $t $r}))
 
 (= (zero prov) ())
 (= (one prov) (()))
@@ -83,12 +83,12 @@
        (let* (($y (car-atom $ys)) ($rest (cdr-atom $ys)))
          (if (bag-eq $x $y) $rest
              (let $r (remove-one $x $rest)
-               (if (== $r no-match) no-match (cons-atom $y $r)))))))
+               (if (== $r no-match) no-match (cons-atom $y $r))){$r})){$y $rest}))
 (= (bag-eq $xs $ys)
    (if (== (get-metatype $xs) Expression)
        (if (== $xs ()) (== $ys ())
            (let* (($x (car-atom $xs)) ($rest (cdr-atom $xs)) ($left (remove-one $x $ys)))
-             (if (== $left no-match) False (bag-eq $rest $left))))
+             (if (== $left no-match) False (bag-eq $rest $left))){$x $rest $left})
        (== $xs $ys)))
 
 (= (provenance $s $t) (two-roads prov $s $t))
