@@ -68,7 +68,7 @@
            (let $read (lift (try (parse $line)))
              (unify $read (quote (Established ((= $lhs $rhs))))
                (cons-atom (quote (= $lhs $rhs)) $more)
-               $more))))))
+               $more)){$read}){$more}){$line $rest}))
 
 ; The head symbol and arity of an equation, read from its code.  (The result
 ; type is a variable: a declared result type Atom would hold the body, see
@@ -81,7 +81,7 @@
 ; The code is opened with `unify`, so its payload is used as written.
 (= (loaded $code)
    (unify $code (quote $eq)
-     (if (== (collapse (match &self $eq found)) ()) missing loaded)
+     (if (== (collapse (match &self $eq found){$eq}) ()) missing loaded)
      not-code))
 
 ; 19. The one-line equations of this file, read from its own text.

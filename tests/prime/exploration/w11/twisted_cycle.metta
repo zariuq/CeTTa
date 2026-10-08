@@ -41,7 +41,7 @@
        (let ($e $i $j) (car-atom $edges)
          (let $rest (cdr-atom $edges)
            (and (== (translate $system $e (value $i $x)) (value $j $x))
-                (respects $system $x $rest))))))
+                (respects $system $x $rest))){$rest}){$e $i $j}))
 (= (assignment $system)
    (let* (($va (view $system)) ($vb (view $system)) ($vc (view $system)))
      ($va $vb $vc)))

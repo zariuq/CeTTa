@@ -23,7 +23,7 @@
 
 ; By let: the quotation holds the variable (sealed) or the value 3.
 !(let $x (+ 1 2) (Pair $x @$x))
-!(inside (let $x (+ 1 2) (Pair $x @$x)))
+!(inside (let $x (+ 1 2) (Pair $x @$x)){$x})
 
 ; By case: as by let.
-!(inside (case (+ 1 2) (($x (Pair $x @$x)))))
+!(inside (case (+ 1 2) (($x (Pair $x @$x)))){$x})

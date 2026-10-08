@@ -198,7 +198,7 @@
    (= (under zero) zero) (= (under (suc $n)) (suc ((lam k (under k)) (suc $n))))))
    (let $reason (index-atom $r 1) ((car-atom $r) (index-atom $reason 1))))
 !(let $r (try (set:define &self under-let (-> num num) (by bound num (lam n n) (pf:known below-two))
-   (= (under-let zero) zero) (= (under-let (suc $n)) (let $m $n (under-let $m)))))
+   (= (under-let zero) zero) (= (under-let (suc $n)) (let $m $n (under-let $m)){$m})))
    (let $reason (index-atom $r 1) ((car-atom $r) (index-atom $reason 1))))
 ; The third equation without its successor.  Its call is the same, so the
 ; same bound admits it, on its own merits: it is the function zero, and at 2

@@ -20,7 +20,7 @@
 ; Every history from a state: stop there, or take an edge and go on.
 (= (history-from $s) ($s))
 (= (history-from $s)
-   (let $next (match &self (edge $s $n) $n)
+   (let $next (match &self (edge $s $n) $n){$s}
      (let $rest (history-from $next) (cons-atom $s $rest))))
 
 (= (last $xs)
@@ -30,7 +30,7 @@
    (if (== $xs ()) False
        (let $head (car-atom $xs)
          (if (== $head $x) True
-             (let $tail (cdr-atom $xs) (member $x $tail))))))
+             (let $tail (cdr-atom $xs) (member $x $tail)){$tail})){$head}))
 
 ; Four consumers of a history.
 (= (answer $h) (last $h))                 ; the state it reached

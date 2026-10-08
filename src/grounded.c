@@ -10,6 +10,7 @@
 #include "parser.h"
 #include "petta_numeric.h"
 #include "space.h"
+#include "term_graph.h"
 #if CETTA_BUILD_WITH_GMP
 #include <gmp.h>
 #endif
@@ -609,6 +610,7 @@ enum {
        nor Hyperon, which he-compat follows, has them, so there they stay
        data. */
     GROUNDED_OP_CACHE_CETTA_ONLY = 1u << 4,
+    GROUNDED_OP_CACHE_NON_PETTA = 1u << 5,
 };
 
 typedef struct {
@@ -628,6 +630,8 @@ static bool grounded_op_capabilities_apply(uint8_t capabilities) {
 
     const CettaLanguageId language_id = eval_current_language_id
         ? eval_current_language_id() : CETTA_LANGUAGE_HE;
+    if ((capabilities & GROUNDED_OP_CACHE_NON_PETTA) != 0u)
+        return language_id != CETTA_LANGUAGE_PETTA;
     if ((capabilities & GROUNDED_OP_CACHE_CETTA_ONLY) != 0u)
         return language_id != CETTA_LANGUAGE_PETTA &&
             !(language_id == CETTA_LANGUAGE_HE &&
@@ -648,6 +652,12 @@ static bool grounded_op_capabilities_apply(uint8_t capabilities) {
 bool is_grounded_op(SymbolId id) {
     if (id == SYMBOL_ID_NONE)
         return false;
+    /* These appended opcodes require an explicit extended profile. Keep
+     * the decision outside the symbol cache so a session/profile handoff
+     * cannot reuse another profile's permission. */
+    if (grounded_op_is_term_order(id))
+        return eval_current_builtin_allowed &&
+            eval_current_builtin_allowed(symbol_bytes(g_symbols, id));
 
     const uint64_t table_instance_id =
         symbol_table_instance_id(g_symbols);
@@ -668,6 +678,13 @@ bool is_grounded_op(SymbolId id) {
     uint8_t capabilities = 0u;
     if (grounded_op_is_cetta_only(id)) {
         capabilities = GROUNDED_OP_CACHE_CETTA_ONLY;
+        goto classified;
+    }
+    /* PeTTa owns trace! as a written sequencing form, rather than a
+     * function over completed arguments. Other dialects retain their
+     * grounded operation, including HE-compatible profiles. */
+    if (id == g_builtin_syms.trace_bang) {
+        capabilities = GROUNDED_OP_CACHE_NON_PETTA;
         goto classified;
     }
     /* Compiled operators are opcodes: dispatch their interned IDs before
@@ -3492,6 +3509,23 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
 
     if (head_id == g_builtin_syms.format_args)
         return grounded_format_args(a, head, args, nargs);
+
+    if (grounded_op_is_term_order(head_id)) {
+        if (nargs != 2u)
+            return grounded_incorrect_arity(a, head, args, nargs);
+        CettaTermOrder order = term_graph_value_compare(args[0], args[1]);
+        if (order == CETTA_TERM_ORDER_INCOMPARABLE ||
+            order == CETTA_TERM_ORDER_INVALID ||
+            order == CETTA_TERM_ORDER_NO_MEMORY)
+            return grounded_raise(a, head, args, nargs, atom_symbol(a,
+                order == CETTA_TERM_ORDER_INCOMPARABLE ? "IncomparableTermOrder" :
+                order == CETTA_TERM_ORDER_INVALID ? "InvalidTermGraph" : "TermCapacityLimit"));
+        bool truth = head_id == g_builtin_syms.term_lt ? order < 0 :
+            head_id == g_builtin_syms.term_gt ? order > 0 :
+            head_id == g_builtin_syms.term_le ? order <= 0 : order >= 0;
+        return grounded_current_language_is_petta()
+            ? petta_semantics_boolean_value(a, truth) : atom_bool(a, truth);
+    }
 
     if (head_id == g_builtin_syms.sort_atom) {
         /* PeTTa's sort-atom sorts a list in SWI's standard order, gives ()

@@ -60,7 +60,7 @@
    (if (== $region ())
        False
        (let ($head $tail) (decons-atom $region)
-         (if (== $head $key) True (region:member $key $tail)))))
+         (if (== $head $key) True (region:member $key $tail))){$head $tail}))
 (= (region:bind $region $world $key $value)
    (if (region:member $key $region)
        (ctx:bind $world $key $value)

@@ -2,6 +2,7 @@
 #include "eval.h"
 #include "grounded.h"
 #include "library.h"
+#include "native_handle.h"
 #include "parser.h"
 #include "session.h"
 #include "space.h"
@@ -598,6 +599,413 @@ static bool he_repeated_import_contract(void) {
     return ok;
 }
 
+/* Keep an open outcome while entering each public evaluator boundary. A
+ * nested invocation must not reset its caller's variant bank, and disabling
+ * further factoring must not invalidate an already factored outcome. */
+static bool execution_owner_nesting_contract(void) {
+    CettaLibraryContext *context = calloc(1u, sizeof(*context));
+    if (!context)
+        return false;
+    cetta_eval_session_init(&context->session, CETTA_LANGUAGE_HE,
+                            cetta_profile_he_extended());
+    CettaEvalOptionEntry *sharing = &context->session.options.entries[0];
+    strcpy(sharing->key, "outcome-variant-sharing");
+    sharing->kind = CETTA_EVAL_OPTION_VALUE_INT;
+    sharing->int_value = 1;
+    context->session.options.entry_len = 1u;
+    eval_set_library_context(context);
+
+    Arena caller, source, receiver;
+    arena_init_detached(&caller);
+    arena_init_detached(&source);
+    arena_init_detached(&receiver);
+    Space space;
+    space_init(&space);
+    Registry registry;
+    registry_init(&registry);
+    Bindings empty;
+    bindings_init(&empty);
+    OutcomeSet suspended;
+    outcome_set_init(&suspended);
+    Atom *expected = module_atom(&caller, "(Held $x (Payload $x))");
+    outcome_set_add(&suspended, expected, &empty);
+    bool ok = suspended.len == 1u &&
+        variant_instance_present(&suspended.items[0].variant);
+
+    for (unsigned entry = 0u; ok && entry < 3u; entry++) {
+        ArenaMark source_start = arena_mark(&source);
+        Atom *input = module_atom(&source, "(Nested $y)");
+        ResultSet results;
+        result_set_init(&results);
+        Atom *prefix = atom_symbol(&caller, "ExistingAnswer");
+        result_set_add(&results, prefix);
+        if (entry == 0u)
+            eval_top(&space, &receiver, input, &results);
+        else if (entry == 1u)
+            eval_top_one_step(&space, &receiver, input, &results);
+        else
+            eval_top_with_registry(&space, &receiver, &caller,
+                                    &registry, input, &results);
+        ok = results.len == 2u && results.items[0] == prefix &&
+            atom_graph_is_closed_for_arena(&receiver, results.items[1]);
+        arena_reset(&source, source_start);
+        if (ok) {
+            char *text = atom_to_string(&receiver, results.items[1]);
+            ok = text && strcmp(text, "(Nested $y)") == 0;
+        }
+        result_set_free(&results);
+        if (ok) {
+            Outcome *held = &suspended.items[0];
+            Atom *restored = variant_instance_materialize(
+                &receiver, held->atom, &held->variant);
+            ok = restored && atom_eq(restored, expected);
+        }
+    }
+
+    sharing->int_value = 0;
+    OutcomeSet unfactored;
+    outcome_set_init(&unfactored);
+    outcome_set_add(&unfactored, expected, &empty);
+    ok = ok && unfactored.len == 1u &&
+        !variant_instance_present(&unfactored.items[0].variant);
+    if (ok) {
+        Outcome *held = &suspended.items[0];
+        Atom *restored = variant_instance_materialize(
+            &receiver, held->atom, &held->variant);
+        ok = restored && atom_eq(restored, expected);
+    }
+    outcome_set_free(&unfactored);
+    outcome_set_free(&suspended);
+    bindings_free(&empty);
+    eval_release_temporary_spaces();
+    registry_free(&registry);
+    space_free(&space);
+    arena_free(&source);
+    arena_free(&receiver);
+    arena_free(&caller);
+    eval_set_library_context(NULL);
+    free(context);
+    return ok;
+}
+
+static unsigned byte_payload_released;
+static const char *byte_payload_kind = "test.immutable-byte-payload";
+
+static void byte_payload_release(void *payload) {
+    byte_payload_released++;
+    free(payload);
+}
+
+/* A capture is an owned input plus a checked span. Its syntax is just test
+ * data: neither matching nor publication needs a regex or tensor backend. */
+static const unsigned char *byte_view_read(CettaLibraryContext *context,
+                                          Atom *view, size_t size) {
+    uint64_t id;
+    if (!view || view->kind != ATOM_EXPR || view->expr.len != 4u ||
+        !cetta_native_handle_arg(view->expr.elems[1], byte_payload_kind, &id))
+        return NULL;
+    Atom *offset = view->expr.elems[2], *length = view->expr.elems[3];
+    if (offset->kind != ATOM_GROUNDED || offset->ground.gkind != GV_INT ||
+        length->kind != ATOM_GROUNDED || length->ground.gkind != GV_INT ||
+        offset->ground.ival < 0 || length->ground.ival < 0 ||
+        (uint64_t)offset->ground.ival > size ||
+        (uint64_t)length->ground.ival > size - (uint64_t)offset->ground.ival)
+        return NULL;
+    const unsigned char *bytes = cetta_native_handle_get(context, byte_payload_kind, id);
+    return bytes ? bytes + offset->ground.ival : NULL;
+}
+
+static bool match_owned_byte_view_contract(void) {
+    const size_t size = 65536u;
+    const unsigned char expected[] = {'a', 0, 'b', 'c', 'd'};
+    for (unsigned language = 0u; language < 2u; language++) {
+        CettaLibraryContext *context = calloc(1u, sizeof(*context));
+        if (!context)
+            return false;
+        cetta_eval_session_init(&context->session,
+            language ? CETTA_LANGUAGE_PETTA : CETTA_LANGUAGE_HE,
+            language ? cetta_profile_petta_extended() : cetta_profile_he_extended());
+        context->native_handle_next_id = 1u;
+        eval_set_library_context(context);
+        Arena source, receiver, sibling;
+        arena_init_detached(&source);
+        arena_init_detached(&receiver);
+        arena_init_detached(&sibling);
+        ArenaMark source_start = arena_mark(&source);
+        ArenaMark receiver_start = arena_mark(&receiver);
+        ArenaMark sibling_start = arena_mark(&sibling);
+        bool ok = true;
+        /* A fixed live frontier must not retain abandoned payloads across
+         * successive queries. Different offsets alias one large buffer. */
+        for (unsigned iteration = 0u; ok && iteration < 32u; iteration++) {
+            Space space;
+            TermUniverse stored;
+            term_universe_init(&stored);
+            term_universe_set_persistent_arena(&stored, &source);
+            space_init_with_universe(&space, &stored);
+            unsigned char *bytes = malloc(size);
+            if (!bytes)
+                abort();
+            memset(bytes, 'x', size);
+            memcpy(bytes + 17u, expected, sizeof(expected));
+            uint64_t id;
+            if (!cetta_native_handle_alloc(context, byte_payload_kind, bytes,
+                                           byte_payload_release, &id))
+                abort();
+            Atom *handle = cetta_native_handle_owned_atom(
+                context, &source, byte_payload_kind, id);
+            Atom *view = atom_expr(&source, (Atom *[]){
+                atom_symbol(&source, "ByteSpan"), handle,
+                atom_int(&source, 17), atom_int(&source, sizeof(expected))}, 4u);
+            Atom *shifted = atom_expr(&source, (Atom *[]){
+                view->expr.elems[0], handle, atom_int(&source, 18),
+                view->expr.elems[3]}, 4u);
+            Atom *tag = atom_symbol(&source, "capture-view");
+            Atom *key = atom_symbol(&source, "input");
+            Atom *fact = atom_expr(&source, (Atom *[]){tag, key, view, view}, 4u);
+            space_add(&space, fact);
+            space_add(&space, fact);
+            space_add(&space, atom_expr(&source,
+                (Atom *[]){tag, key, view, shifted}, 4u));
+            space_add(&space, module_atom(&source, "(request input)"));
+            Atom *query = module_atom(&source,
+                "(match &self (request $key) "
+                "(match &self (capture-view $key $v $v) (Pair $v $v)))");
+            ResultSet results;
+            result_set_init(&results);
+            unsigned before_release = byte_payload_released;
+            eval_top(&space, &receiver, query, &results);
+            ok = results.len == 2u;
+            if (!ok)
+                fprintf(stderr, "byte-view answers: %" PRIu64 "\n", results.len);
+            Atom *saved = ok ? atom_deep_copy(&sibling, results.items[0]) : NULL;
+            space_free(&space);
+            term_universe_free(&stored);
+            arena_reset(&source, source_start);
+            ok = ok && byte_payload_released == before_release;
+            for (CettaCount i = 0u; ok && i < results.len; i++) {
+                Atom *pair = results.items[i];
+                ok = pair->kind == ATOM_EXPR && pair->expr.len == 3u;
+                for (unsigned side = 1u; ok && side <= 2u; side++) {
+                    const unsigned char *span = byte_view_read(
+                        context, pair->expr.elems[side], size);
+                    ok = span == bytes + 17u &&
+                        memcmp(span, expected, sizeof(expected)) == 0;
+                    if (!ok) {
+                        fprintf(stderr, "byte-view result %" PRIu64 " side %u: ", i, side);
+                        atom_print(pair->expr.elems[side], stderr);
+                        fputc('\n', stderr);
+                    }
+                }
+            }
+            result_set_free(&results);
+            arena_reset(&receiver, receiver_start);
+            ok = ok && byte_payload_released == before_release;
+            if (ok) {
+                const unsigned char *span = byte_view_read(
+                    context, saved->expr.elems[1], size);
+                ok = span == bytes + 17u &&
+                    memcmp(span, expected, sizeof(expected)) == 0;
+            }
+            arena_reset(&sibling, sibling_start);
+            if (ok && byte_payload_released == before_release)
+                fprintf(stderr, "byte-view retained after all three arenas reset\n");
+            ok = ok && byte_payload_released == before_release + 1u &&
+                !cetta_native_handle_get(context, byte_payload_kind, id);
+            if (!ok)
+                fprintf(stderr, "byte-view failure: language %u iteration %u releases %u -> %u\n",
+                        language, iteration, before_release, byte_payload_released);
+        }
+        eval_release_temporary_spaces();
+        arena_free(&source);
+        arena_free(&receiver);
+        arena_free(&sibling);
+        cetta_native_handle_cleanup_all(context);
+        cetta_library_context_free(context);
+        eval_set_library_context(NULL);
+        free(context);
+        if (!ok)
+            return false;
+    }
+    return true;
+}
+
+/* Relocating a completed producer must move every outcome field through one
+ * graph session. Repeated pointers remain aliases, equal separate values stay
+ * separate, and a captured byte owner survives destruction of the source. */
+static bool completed_outcome_relocation_contract(void) {
+    const size_t size = 65536u;
+    for (unsigned language = 0u; language < 2u; language++) {
+        CettaLibraryContext *context = calloc(1u, sizeof(*context));
+        if (!context)
+            return false;
+        cetta_eval_session_init(&context->session,
+            language ? CETTA_LANGUAGE_PETTA : CETTA_LANGUAGE_HE,
+            language ? cetta_profile_petta_extended() : cetta_profile_he_extended());
+        context->native_handle_next_id = 1u;
+        eval_set_library_context(context);
+        Arena source, receiver;
+        arena_init_detached(&source);
+        arena_init_detached(&receiver);
+        unsigned char *bytes = malloc(size);
+        if (!bytes)
+            abort();
+        memset(bytes, 'r', size);
+        bytes[17] = 0;
+        uint64_t id;
+        if (!cetta_native_handle_alloc(context, byte_payload_kind, bytes,
+                                      byte_payload_release, &id))
+            abort();
+        Atom *handle = cetta_native_handle_owned_atom(
+            context, &source, byte_payload_kind, id);
+        Atom *parts[] = {atom_symbol(&source, "ByteSpan"), handle,
+                        atom_int(&source, 17), atom_int(&source, 5)};
+        Atom *shared = atom_expr(&source, parts, 4u);
+        Atom *equal = atom_expr(&source, parts, 4u);
+        Atom *value = atom_expr(&source, (Atom *[]){
+            atom_symbol(&source, "Held"), shared, shared, equal}, 4u);
+        Atom *variable = module_atom(&source, "$held");
+        VarId variable_id = variable->var_id;
+        Bindings env;
+        bindings_init(&env);
+        bool ok = shared != equal && atom_eq(shared, equal) &&
+            bindings_add_var(&env, variable, shared);
+        OutcomeSet original, relocated;
+        outcome_set_init(&original);
+        outcome_set_init(&relocated);
+        outcome_set_add(&original, value, &env);
+        outcome_set_add(&original, value, &env);
+        for (CettaCount i = 0u; i < original.len; i++) {
+            original.items[i].materialized_atom = value;
+            original.items[i].delayed = equal;
+        }
+        unsigned before_release = byte_payload_released;
+        AtomDeepCopySession *copy = atom_deep_copy_session_new(&receiver);
+        ok = ok && copy && outcome_set_relocate_clone(
+            &relocated, &original, &receiver, copy);
+        atom_deep_copy_session_free(copy);
+        outcome_set_free(&original);
+        bindings_free(&env);
+        arena_free(&source);
+        ok = ok && relocated.len == 2u &&
+            byte_payload_released == before_release;
+        for (CettaCount i = 0u; ok && i < relocated.len; i++) {
+            Outcome *outcome = &relocated.items[i];
+            Atom *saved = outcome->atom;
+            ok = saved && saved->kind == ATOM_EXPR && saved->expr.len == 4u &&
+                saved == outcome->materialized_atom &&
+                saved == relocated.items[0].atom;
+            if (!ok)
+                break;
+            BindingValue bound = bindings_lookup_value_id(&outcome->env, variable_id);
+            ok = saved->expr.elems[1] == saved->expr.elems[2] &&
+                saved->expr.elems[1] != saved->expr.elems[3] &&
+                atom_eq(saved->expr.elems[1], saved->expr.elems[3]) &&
+                outcome->delayed == saved->expr.elems[3] &&
+                bound.skeleton == saved->expr.elems[1] &&
+                byte_view_read(context, saved->expr.elems[1], size) == bytes + 17u;
+        }
+        outcome_set_free(&relocated);
+        arena_free(&receiver);
+        ok = ok && byte_payload_released == before_release + 1u;
+        cetta_native_handle_cleanup_all(context);
+        cetta_library_context_free(context);
+        eval_set_library_context(NULL);
+        free(context);
+        if (!ok)
+            return false;
+    }
+    return true;
+}
+
+typedef struct {
+    unsigned holds;
+    bool armed;
+    bool entered;
+    bool ok;
+    Space *space;
+} ReentrantHold;
+
+static void reentrant_hold_retain(void *owner) {
+    ReentrantHold *hold = owner;
+    hold->holds++;
+    if (!hold->armed || hold->entered)
+        return;
+    hold->entered = true;
+    Arena scratch;
+    arena_init_detached(&scratch);
+    Bindings empty;
+    bindings_init(&empty);
+    OutcomeSet suspended;
+    outcome_set_init(&suspended);
+    Atom *original = module_atom(&scratch, "(CallbackHeld $x $x)");
+    outcome_set_add(&suspended, original, &empty);
+    hold->ok = suspended.len == 1u &&
+        variant_instance_present(&suspended.items[0].variant);
+    ResultSet child;
+    result_set_init(&child);
+    eval_top(hold->space, &scratch, atom_int(&scratch, 7), &child);
+    /* Import and Python callbacks perform this cleanup after nested entry. */
+    eval_release_temporary_spaces();
+    hold->ok = hold->ok && child.len == 1u &&
+        atom_eq(child.items[0], atom_int(&scratch, 7));
+    if (hold->ok) {
+        Outcome *pending = &suspended.items[0];
+        Atom *restored = variant_instance_materialize(
+            &scratch, pending->atom, &pending->variant);
+        hold->ok = restored && atom_eq(restored, original);
+    }
+    result_set_free(&child);
+    outcome_set_free(&suspended);
+    bindings_free(&empty);
+    arena_free(&scratch);
+}
+
+static void reentrant_hold_release(void *owner) {
+    ReentrantHold *hold = owner;
+    if (hold->holds == 0u)
+        abort();
+    hold->holds--;
+}
+
+static bool execution_owner_callback_contract(void) {
+    CettaLibraryContext *context = calloc(1u, sizeof(*context));
+    if (!context)
+        return false;
+    cetta_eval_session_init(&context->session, CETTA_LANGUAGE_HE,
+                            cetta_profile_he_extended());
+    CettaEvalOptionEntry *sharing = &context->session.options.entries[0];
+    strcpy(sharing->key, "outcome-variant-sharing");
+    sharing->kind = CETTA_EVAL_OPTION_VALUE_INT;
+    sharing->int_value = 1;
+    context->session.options.entry_len = 1u;
+    eval_set_library_context(context);
+    Arena source, receiver;
+    arena_init_detached(&source);
+    arena_init_detached(&receiver);
+    Space space;
+    space_init(&space);
+    ReentrantHold hold = {.space = &space};
+    Atom *value = atom_native_handle_identifier(
+        &source, 42, &hold, reentrant_hold_retain, reentrant_hold_release);
+    hold.armed = true;
+    ResultSet results;
+    result_set_init(&results);
+    eval_top(&space, &receiver, value, &results);
+    bool ok = hold.entered && hold.ok && results.len == 1u &&
+        atom_eq(results.items[0], value);
+    result_set_free(&results);
+    arena_free(&source);
+    ok = ok && hold.holds > 0u;
+    arena_free(&receiver);
+    ok = ok && hold.holds == 0u;
+    eval_release_temporary_spaces();
+    space_free(&space);
+    eval_set_library_context(NULL);
+    free(context);
+    return ok;
+}
+
 int main(void) {
     int rc = 1;
     Arena arena;
@@ -637,6 +1045,22 @@ int main(void) {
     }
     if (!he_repeated_import_contract()) {
         fprintf(stderr, "HE repeated import contract failure\n");
+        goto cleanup;
+    }
+    if (!execution_owner_nesting_contract()) {
+        fprintf(stderr, "nested execution ownership contract failure\n");
+        goto cleanup;
+    }
+    if (!match_owned_byte_view_contract()) {
+        fprintf(stderr, "owned byte-view publication contract failure\n");
+        goto cleanup;
+    }
+    if (!completed_outcome_relocation_contract()) {
+        fprintf(stderr, "completed outcome relocation contract failure\n");
+        goto cleanup;
+    }
+    if (!execution_owner_callback_contract()) {
+        fprintf(stderr, "reentrant execution cleanup contract failure\n");
         goto cleanup;
     }
 

@@ -36,16 +36,16 @@
 ;; on this runtime.
 (= (nu:enc $t)
    (unify $t (-> $a $b)
-     (let $ea (nu:enc $a) (let $eb (nu:enc $b) (nu:fn $ea $eb)))
+     (let $ea (nu:enc $a) (let $eb (nu:enc $b) (nu:fn $ea $eb)){$eb}){$ea}
      $t))
 (= (nu:dec $t)
    (unify $t (nu:fn $a $b)
-     (let $da (nu:dec $a) (let $db (nu:dec $b) (-> $da $db)))
+     (let $da (nu:dec $a) (let $db (nu:dec $b) (-> $da $db)){$db}){$da}
      $t))
 
 ;; An entry with its type decoded.
 (= (nu:decoded $entry)
-   (unify $entry (ov $x $e) (let $t (nu:dec $e) (ov $x $t)) $entry))
+   (unify $entry (ov $x $e) (let $t (nu:dec $e) (ov $x $t)){$t} $entry))
 
 ;; The entry of a variable in scope, found by identity, or none.  One walk
 ;; returns the whole entry.
@@ -70,14 +70,14 @@
      (if (== $entry none)
          (if (== (get-metatype $u) Variable)
              (nu:ctx-choose $ctx)
-             (match $kb (: $u $t) (ov $u $t)))
+             (match $kb (: $u $t) (ov $u $t)){$u $t})
          (nu:decoded $entry))))
 
 ;; The type of a binder: the given one, or else a domain the knowledge base
 ;; declares.  A binder is typed when it is introduced.
 (= (nu:binder-type $kb $a)
    (if (== (get-metatype $a) Variable)
-       (match $kb (nu:domain $d) $d)
+       (match $kb (nu:domain $d) $d){$d}
        $a))
 
 ;; Whether a lambda's body uses its binder: opening it at a probe changes
@@ -86,7 +86,7 @@
 (= (nu:uses-binder $lam)
    (unify $lam (quote (lam $x $body))
      (let $opened (nu:open $lam @nu:probe)
-       (if (noreduce-eq $opened @$body) False True))
+       (if (noreduce-eq $opened @$body) False True)){$opened}
      False))
 
 ;; The metatype of a term held as written.
@@ -124,10 +124,10 @@
          (if (== $entry none)
            (if (== (get-metatype $p) Variable)
                (superpose
-                 ((match $kb (: $p $t) (MkSized 1 (: @$p $t)))
-                  (let (ov $p $t) (nu:ctx-choose $ctx) (MkSized 1 (: @$p $t)))))
-               (match $kb (: $p $t) (MkSized 1 (: @$p $t))))
-           (let (ov $q $t) (nu:decoded $entry) (MkSized 1 (: @$p $t)))))
+                 ((match $kb (: $p $t) (MkSized 1 (: @$p $t))){$p $t}
+                  (let (ov $p $t) (nu:ctx-choose $ctx) (MkSized 1 (: @$p $t))){$p $t}))
+               (match $kb (: $p $t) (MkSized 1 (: @$p $t))){$p $t})
+           (let (ov $q $t) (nu:decoded $entry) (MkSized 1 (: @$p $t))){$q $t})){$entry}
        (empty)))
 
 ;; A given constant, predicate or individual the knowledge base declares, as
@@ -138,7 +138,7 @@
        (empty)
        (unify $term (quote $c)
          (if (<= 1 $budget)
-             (match $kb (: $c $t) (MkSized 1 (: @$c $t)))
+             (match $kb (: $c $t) (MkSized 1 (: @$c $t))){$c $t}
              (empty))
          (empty))))
 
@@ -151,7 +151,7 @@
              (let $stored (nu:enc $dom)
                (let (MkSized $bs (: (quote $b) $r))
                     (nu:type $kb (ctx (ov $x $stored) $ctx) (- $budget 1) (: @$body $r))
-                 (MkSized (+ 1 $bs) (: @(lam $x $b) (-> $dom $r))))))
+                 (MkSized (+ 1 $bs) (: @(lam $x $b) (-> $dom $r)))){$bs $b $r}){$stored}){$dom}
            (empty))
        (empty))
      (empty)))
@@ -164,7 +164,7 @@
               (nu:type-head $kb $ctx (- $budget 2) (: @$p (-> $a Bool)))
            (let (ov $u2 $a) (nu:arg $kb $ctx $u)
              (MkSized (+ 2 $ps)
-               (: (lift let $u-slot (lift $u2) @($p2 $u-slot)) Bool))))
+               (: (lift let $u-slot (lift $u2) @($p2 $u-slot)) Bool))){$u2 $a}){$ps $p2 $a}
          (empty))
      (empty)))
 
@@ -179,7 +179,7 @@
                (MkSized (+ 3 $rs)
                  (: (lift let $u-slot (lift $u2)
                       (lift let $v-slot (lift $v2) @($r2 $u-slot $v-slot)))
-                    Bool)))))
+                    Bool))){$v2 $b}){$u2 $a}){$rs $r2 $a $b}
          (empty))
      (empty)))
 
@@ -193,7 +193,7 @@
                      (nu:type $kb $ctx (- $budget 2) (: @$p Bool)))
                     ((MkSized $qs (: (quote $q2) Bool))
                      (nu:type $kb $ctx (- $budget (+ $ps 1)) (: @$q Bool))))
-               (MkSized (+ 1 (+ $ps $qs)) (: @(∧ $p2 $q2) Bool)))
+               (MkSized (+ 1 (+ $ps $qs)) (: @(∧ $p2 $q2) Bool))){$ps $p2 $qs $q2}
              (empty)))
        (empty))
      (empty)))
@@ -207,7 +207,7 @@
                      (nu:type $kb $ctx (- $budget 2) (: @$p Bool)))
                     ((MkSized $qs (: (quote $q2) Bool))
                      (nu:type $kb $ctx (- $budget (+ $ps 1)) (: @$q Bool))))
-               (MkSized (+ 1 (+ $ps $qs)) (: @(∨ $p2 $q2) Bool)))
+               (MkSized (+ 1 (+ $ps $qs)) (: @(∨ $p2 $q2) Bool))){$ps $p2 $qs $q2}
              (empty)))
        (empty))
      (empty)))
@@ -220,7 +220,7 @@
          (if (<= 2 $budget)
              (let (MkSized $ps (: (quote $p2) Bool))
                   (nu:type $kb $ctx (- $budget 1) (: @$p Bool))
-               (MkSized (+ 1 $ps) (: @(¬ $p2) Bool)))
+               (MkSized (+ 1 $ps) (: @(¬ $p2) Bool))){$ps $p2}
              (empty)))
        (empty))
      (empty)))
@@ -238,7 +238,7 @@
                      (MkSized (+ 1 $ls)
                        (: (lift let $dom-slot (lift $dom) @(exists $dom-slot (lam $y2 $b)))
                           Bool))
-                     (empty))))
+                     (empty))){$ls $b $dom}){$dom}
              (empty)))
        (empty))
      (empty)))
@@ -255,7 +255,7 @@
                   (nu:type $kb $ctx (- $budget 1) (: @(lam $p $body) (-> $t $t)))
                (if (nu:uses-binder @(lam $p2 $b))
                    (MkSized (+ 1 $ls) (: @(fix (lam $p2 $b)) $t))
-                   (empty)))
+                   (empty))){$ls $b $t}
              (empty)))
        (empty))
      (empty)))
@@ -268,7 +268,7 @@
                (nu:type $kb nil (- $budget 2) (: $c $a)))
               ((MkSized $hs (: (quote $h2) (-> $a $r)))
                (nu:type $kb nil (- $budget (+ $cs 1)) (: $h (-> $a $r)))))
-         (MkSized (+ 1 (+ $cs $hs)) (: @($h2 $c2) $r)))
+         (MkSized (+ 1 (+ $cs $hs)) (: @($h2 $c2) $r))){$cs $c2 $a $hs $h2 $r}
        (empty)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -295,7 +295,7 @@
 ;; enters.  Then each argument opens one binder, in order.
 (= (nu:unfold-head $h)
    (unify $h (quote (fix $f))
-     (let $copy (nu:fresh-copy $h) (nu:open @$f $copy))
+     (let $copy (nu:fresh-copy $h) (nu:open @$f $copy)){$copy}
      $h))
 
 (= (nu:open-args $h $args)
@@ -303,7 +303,7 @@
        $h
        (let ($c $rest) (decons-atom $args)
          (let $opened (nu:open $h (lift $c))
-           (nu:open-args $opened $rest)))))
+           (nu:open-args $opened $rest)){$opened}){$c $rest}))
 
 (= (nu:at $h $args)
    (let $unfolded (nu:unfold-head $h)
@@ -317,7 +317,7 @@
 (= (nu:eval $kb $budget (: $prf (≞ $s $tv)))
    (unify $s (quote $a)
      (if (<= 1 $budget)
-         (match $kb (: $prf (≞ (quote $a) $tv)) (MkSized 1 (: $prf (≞ @$a $tv))))
+         (match $kb (: $prf (≞ (quote $a) $tv)) (MkSized 1 (: $prf (≞ @$a $tv)))){$prf $a $tv}
          (empty))
      (empty)))
 
@@ -331,7 +331,7 @@
                  (nu:eval $kb (- $budget 2) (: $pp (≞ @$p ⊤))))
                 ((MkSized $qs (: $qp (≞ $sq ⊤)))
                  (nu:eval $kb (- $budget (+ $ps 1)) (: $qp (≞ @$q ⊤)))))
-           (MkSized (+ 1 (+ $ps $qs)) (: (cet $pp $qp) (≞ $s ⊤))))
+           (MkSized (+ 1 (+ $ps $qs)) (: (cet $pp $qp) (≞ $s ⊤)))){$ps $pp $sp $qs $qp $sq}
          (empty))
      (empty)))
 
@@ -342,9 +342,9 @@
            (if (== $left ())
                (let (MkSized $qs (: $qp $jq))
                     (nu:first (nu:eval $kb (- $budget 1) (: $qp (≞ @$q ⊥))))
-                 (MkSized (+ 1 $qs) (: (cefr $qp) (≞ $s ⊥))))
+                 (MkSized (+ 1 $qs) (: (cefr $qp) (≞ $s ⊥)))){$qs $qp $jq}
                (let (MkSized $ps (: $pp2 $jp)) (car-atom $left)
-                 (MkSized (+ 1 $ps) (: (cefl $pp2) (≞ $s ⊥))))))
+                 (MkSized (+ 1 $ps) (: (cefl $pp2) (≞ $s ⊥)))){$ps $pp2 $jp})){$left}
          (empty))
      (empty)))
 
@@ -357,9 +357,9 @@
            (if (== $left ())
                (let (MkSized $qs (: $qp $jq))
                     (nu:first (nu:eval $kb (- $budget 1) (: $qp (≞ @$q ⊤))))
-                 (MkSized (+ 1 $qs) (: (cotr $qp) (≞ $s ⊤))))
+                 (MkSized (+ 1 $qs) (: (cotr $qp) (≞ $s ⊤)))){$qs $qp $jq}
                (let (MkSized $ps (: $pp2 $jp)) (car-atom $left)
-                 (MkSized (+ 1 $ps) (: (cotl $pp2) (≞ $s ⊤))))))
+                 (MkSized (+ 1 $ps) (: (cotl $pp2) (≞ $s ⊤)))){$ps $pp2 $jp})){$left}
          (empty))
      (empty)))
 
@@ -370,7 +370,7 @@
                  (nu:eval $kb (- $budget 2) (: $pp (≞ @$p ⊥))))
                 ((MkSized $qs (: $qp (≞ $sq ⊥)))
                  (nu:eval $kb (- $budget (+ $ps 1)) (: $qp (≞ @$q ⊥)))))
-           (MkSized (+ 1 (+ $ps $qs)) (: (cof $pp $qp) (≞ $s ⊥))))
+           (MkSized (+ 1 (+ $ps $qs)) (: (cof $pp $qp) (≞ $s ⊥)))){$ps $pp $sp $qs $qp $sq}
          (empty))
      (empty)))
 
@@ -380,7 +380,7 @@
      (if (<= 2 $budget)
          (let (MkSized $ps (: $pp (≞ $sp ⊥)))
               (nu:eval $kb (- $budget 1) (: $pp (≞ @$p ⊥)))
-           (MkSized (+ 1 $ps) (: (cnt $pp) (≞ $s ⊤))))
+           (MkSized (+ 1 $ps) (: (cnt $pp) (≞ $s ⊤)))){$ps $pp $sp}
          (empty))
      (empty)))
 
@@ -389,7 +389,7 @@
      (if (<= 2 $budget)
          (let (MkSized $ps (: $pp (≞ $sp ⊤)))
               (nu:eval $kb (- $budget 1) (: $pp (≞ @$p ⊤)))
-           (MkSized (+ 1 $ps) (: (cnf $pp) (≞ $s ⊥))))
+           (MkSized (+ 1 $ps) (: (cnf $pp) (≞ $s ⊥)))){$ps $pp $sp}
          (empty))
      (empty)))
 
@@ -399,10 +399,10 @@
 (= (nu:eval $kb $budget (: $prf (≞ $s ⊤)))
    (unify $s (quote (exists $a $l))
      (if (<= 2 $budget)
-         (let $domain (collapse (match $kb (: $w $a) $w))
+         (let $domain (collapse (match $kb (: $w $a) $w){$w $a})
            (let (MkSized $n $proof) (nu:first-witness $kb (- $budget 1) @$l $domain)
              (let $size (+ 1 $n)
-               (MkSized $size (: $proof (≞ $s ⊤))))))
+               (MkSized $size (: $proof (≞ $s ⊤)))){$size}){$n $proof}){$domain}
          (empty))
      (empty)))
 
@@ -416,14 +416,14 @@
              (if (== $proofs ())
                  (nu:first-witness $kb $budget $l $rest)
                  (let (MkSized $n (: $wp $j)) (car-atom $proofs)
-                   (MkSized $n (∃I $w $wp)))))))))
+                   (MkSized $n (∃I $w $wp))){$n $wp $j})){$proofs}){$instance}){$w $rest}))
 
 (= (nu:eval $kb $budget (: (∃none $wps) (≞ $s ⊥)))
    (unify $s (quote (exists $a $l))
      (if (<= 1 $budget)
-         (let $domain (collapse (match $kb (: $w $a) $w))
+         (let $domain (collapse (match $kb (: $w $a) $w){$w $a})
            (let (MkSized $n $wps) (nu:refute-all $kb (- $budget 1) @$l $domain)
-             (MkSized (+ 1 $n) (: (∃none $wps) (≞ $s ⊥)))))
+             (MkSized (+ 1 $n) (: (∃none $wps) (≞ $s ⊥)))){$n $wps}){$domain}
          (empty))
      (empty)))
 
@@ -437,7 +437,7 @@
              (let $left (- $budget $s)
                (let (MkSized $n $ps) (nu:refute-all $kb $left $l $rest)
                  (let $total (+ $s $n)
-                   (MkSized $total (cons-atom ($w $p) $ps))))))))))
+                   (MkSized $total (cons-atom ($w $p) $ps))){$total}){$n $ps}){$left}){$s $p $i}){$instance}){$w $rest}))
 
 ;; A call of a recursive predicate unfolds it once.
 (= (nu:eval $kb $budget (: (unfold $p) (≞ $s $tv)))
@@ -446,7 +446,7 @@
          (let $instance (nu:at @(fix $f) ($u $v))
            (let (MkSized $n (: $p (≞ $i $tv)))
                 (nu:eval $kb (- $budget 1) (: $p (≞ $instance $tv)))
-             (MkSized (+ 1 $n) (: (unfold $p) (≞ $s $tv)))))
+             (MkSized (+ 1 $n) (: (unfold $p) (≞ $s $tv)))){$n $p $i $tv}){$instance}
          (empty))
      (empty)))
 
@@ -455,7 +455,7 @@
    (if (<= 3 $budget)
        (let* (((MkSized $xs (: $x $a)) (nu:eval $kb (- $budget 2) (: $x $a)))
               ((MkSized $ys (: $y $b)) (nu:eval $kb (- $budget (+ $xs 1)) (: $y $b))))
-         (MkSized (+ 1 (+ $xs $ys)) (: (, $x $y) (, $a $b))))
+         (MkSized (+ 1 (+ $xs $ys)) (: (, $x $y) (, $a $b)))){$xs $x $a $ys $y $b}
        (empty)))
 
 ;; The first answer of a search, computed as a list so that the search is
@@ -510,7 +510,7 @@
                            (empty)
                            (let (MkSized $s2 (: $p2 $j2)) (car-atom $more)
                              (let $n (+ 1 (+ $s $s2))
-                               (MkSized $n (: (, $p $p2) (, $j $j2)))))))))))))))
+                               (MkSized $n (: (, $p $p2) (, $j $j2)))){$n}){$s2 $p2 $j2})){$more})){$s $p $j}))))))
 
 ;; The first candidate, in generation order, that explains every example.
 ;; The candidates of one size are tested in one pass: a list walk that
@@ -523,7 +523,7 @@
               (if (== $proofs ())
                   (empty)
                   (let (MkSized $cost (: $proof $g)) (car-atom $proofs)
-                    (Explained $h $cost $proof))))))
+                    (Explained $h $cost $proof)){$cost $proof $g}))))
      (if (== $found ()) none (car-atom $found))))
 
 ;; The same, trying candidates one at a time and stopping at the first that
@@ -537,7 +537,7 @@
            (if (== $proofs ())
                (nu:first-in-order $kb $rest $examples $proof-bound)
                (let (MkSized $cost (: $proof $g)) (car-atom $proofs)
-                 (Explained $h $cost $proof)))))))
+                 (Explained $h $cost $proof)){$cost $proof $g})){$proofs}){$h $rest}))
 
 ;; Iterative deepening on hypothesis size: the smallest hypothesis that
 ;; explains every example, with its typing size, proof size and proof.
@@ -552,9 +552,9 @@
                                  $examples $proof-bound)
          (if (== $found none)
              (let $next (+ $size 1)
-               (nu:learn-from $kb $type $examples $next $limit $proof-bound))
+               (nu:learn-from $kb $type $examples $next $limit $proof-bound)){$next}
              (let (Explained $h $cost $proof) $found
-               (Learned $h $size $cost $proof))))))
+               (Learned $h $size $cost $proof)){$h $cost $proof})){$found}))
 
 ;; The same, with the learned program shown as source text:
 ;; (LearnedShown source typing-size proof-size proof).
@@ -569,9 +569,9 @@
                                  $examples $proof-bound)
          (if (== $found none)
              (let $next (+ $size 1)
-               (nu:learn-shown-from $kb $type $examples $next $limit $proof-bound))
+               (nu:learn-shown-from $kb $type $examples $next $limit $proof-bound)){$next}
              (let (Explained $h $cost $proof) $found
-               (LearnedShown (nu:source $kb $h) $size $cost $proof))))))
+               (LearnedShown (nu:source $kb $h) $size $cost $proof)){$h $cost $proof})){$found}))
 
 ;; How many candidates each size level offers, for search accounting.
 (= (nu:level-counts $kb $type $size $limit)
@@ -581,7 +581,7 @@
          (let $n (size-atom $c)
            (let $next (+ $size 1)
              (let $rest (nu:level-counts $kb $type $next $limit)
-               (cons-atom ($size $n) $rest)))))))
+               (cons-atom ($size $n) $rest)){$rest}){$next}){$n}){$c}))
 
 ;;;;;;;;;;;;;;;;;;
 ;; Presentation ;;
@@ -597,20 +597,20 @@
        (let $rest (nu:names-after $n $names)
          (let (quote $opened) (nu:open @(lam $x $body) (lift $n))
            (let (quote $inner) (nu:named $kb $rest @$opened)
-             (lift app @lam (lift $n) @$inner)))))
+             (lift app @lam (lift $n) @$inner)){$inner}){$opened}){$rest}){$n}
      (unify $code (quote (exists $a $l))
-       (let (quote $l2) (nu:named $kb $names @$l) @(exists $a $l2))
+       (let (quote $l2) (nu:named $kb $names @$l) @(exists $a $l2)){$l2}
        (unify $code (quote (fix (lam $p $body)))
          (let (quote $opened) (nu:open @(lam $p $body) @self)
            (let (quote $inner) (nu:named $kb $names @$opened)
-             @(fix (lam self $inner))))
+             @(fix (lam self $inner))){$inner}){$opened}
          (unify $code (quote (¬ $p))
-           (let (quote $p2) (nu:named $kb $names @$p) @(¬ $p2))
+           (let (quote $p2) (nu:named $kb $names @$p) @(¬ $p2)){$p2}
            (unify $code (quote ($c $p $q))
              (if (nu:connective $c)
                  (let* (((quote $p2) (nu:named $kb $names @$p))
                         ((quote $q2) (nu:named $kb $names @$q)))
-                   @($c $p2 $q2))
+                   @($c $p2 $q2)){$p2 $q2}
                  $code)
              $code))))))
 (= (nu:connective $c)
@@ -620,7 +620,7 @@
 ;; it.
 (= (nu:fresh-name $kb $names)
    (let ($n $rest) (decons-atom $names)
-     (let $declared (collapse (match $kb (: $n $t) $t))
+     (let $declared (collapse (match $kb (: $n $t) $t){$n})
        (if (== $declared ()) $n (nu:fresh-name $kb $rest)))))
 (= (nu:names-after $n $names)
    (let ($m $rest) (decons-atom $names)
@@ -639,21 +639,21 @@
 ;; without positive evidence receives explicit negative evidence, named
 ;; (cwa R a b) so that every proof shows where its negatives came from.
 (= (nu:close-binary $kb $r $dom)
-   (let $individuals (collapse (match $kb (: $a $dom) $a))
+   (let $individuals (collapse (match $kb (: $a $dom) $a){$a $dom})
      (collapse
        (let* (($a (superpose $individuals))
               ($b (superpose $individuals))
               ($statement (lift app (lift $r) (lift $a) (lift $b)))
-              ($positive (collapse (match $kb (: $p (≞ $statement ⊤)) $p))))
+              ($positive (collapse (match $kb (: $p (≞ $statement ⊤)) $p){$p $statement})))
          (if (== $positive ())
              (add-atom $kb (: (cwa $r $a $b) (≞ $statement ⊥)))
-             (empty))))))
+             (empty))){$a})))
 
 ;; The value evidence gives a closed statement, for ordinary code.
 (= (nu:bool ⊤) True)
 (= (nu:bool ⊥) False)
 (= (nu:holds $kb $statement)
-   (match $kb (: $p (≞ $statement $tv)) (nu:bool $tv)))
+   (match $kb (: $p (≞ $statement $tv)) (nu:bool $tv)){$statement})
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; The object language as ordinary code ;;
@@ -673,7 +673,7 @@
    (if (== $individuals ())
        False
        (let ($w $rest) (decons-atom $individuals)
-         (if ($pred $w) True (nu:any-at $pred $rest)))))
+         (if ($pred $w) True (nu:any-at $pred $rest))){$w $rest}))
 
 ;; A recursive program unfolds once per call.  Only an applied fixpoint
 ;; unfolds, since an argument is evaluated when a lambda is applied.

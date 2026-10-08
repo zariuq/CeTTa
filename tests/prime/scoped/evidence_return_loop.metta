@@ -30,8 +30,8 @@
 !(let $r (try (set:define &thy fabricateWitness
     (-> (A : (u 2)) (x : A) (y : A) (id A x y))
     (= (fabricateWitness $A $x $y) (refl $x)))) (car-atom $r))
-!(== (collapse (match &thy (: fabricateWitness $type) $type)) ())
-!(== (collapse (match &thy (type:rule fabricateWitness $n $pats $rhs) $rhs)) ())
+!(== (collapse (match &thy (: fabricateWitness $type) $type){$type}) ())
+!(== (collapse (match &thy (type:rule fabricateWitness $n $pats $rhs) $rhs){$n $pats $rhs}) ())
 
 ; An uninterpreted witness does not acquire a type from its position.
 !(type:check &thy (relayWitness A a b unresolvedWitness) (id A a b))

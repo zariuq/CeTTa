@@ -1,0 +1,340 @@
+{
+  "schema": "prime-scope-library-spellings-v1",
+  "libraries": [
+    {
+      "source": "clist.metta",
+      "output": "clist.metta",
+      "source_sha256": "56b56c78da92c7f02e7cf773bbcf20a3c5af34450f1f5339c35386c633329e33",
+      "output_sha256": "d89649a51e29105d088d881f5823df4a690664231e6de532fec4b8691490aacd",
+      "edits": 1,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "fs.metta",
+      "output": "fs.metta",
+      "source_sha256": "0f282c89e5270bff3cca3688fbef015fa274ada7f0efb50c91bac3e92f5a5ca9",
+      "output_sha256": "312e6b2429de75b44ad8d79f3bbe54c3be7f8297dea60717dfaf91063fecd042",
+      "edits": 9,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "gparse.metta",
+      "output": "gparse.metta",
+      "source_sha256": "54454b041863091cff29173d4418c1d6efb5220c031227429444b1fbff0a9e6e",
+      "output_sha256": "688e7a42d5d4e0e6ee535660602433e89c94f29713db7cccdbca7ecf969a37ac",
+      "edits": 29,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "gslt_execution_contracts.metta",
+      "output": "gslt_execution_contracts.metta",
+      "source_sha256": "f6424c631f00a517bc511e606de159880afb45cbe3006254676bc25c2dba5296",
+      "output_sha256": "e976ba4c7f8fe8dcff2fa70e0e6a7337d317a927cdfc1c53ac24594675ce7436",
+      "edits": 4,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "ilp/benchmark.metta",
+      "output": "ilp/benchmark.metta",
+      "source_sha256": "f971b76d1ef6af7ec001f3b4a308c098d6314774a5e8dcb970221ca8b880919a",
+      "output_sha256": "c51834e1722bf82f1a439f0bcd38da8b0000e76aa01463ffab1c24ccd06e5166",
+      "edits": 1,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "ilp/iggp_benchmark_classify.metta",
+      "output": "ilp/iggp_benchmark_classify.metta",
+      "source_sha256": "688f8d3864d105c935e447f684b317ab15a00516636daabaf0e0a36d36dbbf0b",
+      "output_sha256": "9e4c5a26b0123df48cb9d203ab7835a8e4b8fec30e8449ae05d022bf5e821a7c",
+      "edits": 0,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "ilp/metagol_core.metta",
+      "output": "ilp/metagol_core.metta",
+      "source_sha256": "09721d096c3e54d48a725caf9696d3229b8245eb29ef6115a78b2479d199c6ed",
+      "output_sha256": "5613b9e95623587001586d787c01dc76d9028ebf788a9501ef692030b135a8c0",
+      "edits": 4,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "ilp/metagol_prime.metta",
+      "output": "ilp/metagol_prime.metta",
+      "source_sha256": "9cd5079f7ab6854d36e8f88df6255f13c9b2b9e65f3ed96b4ea813957fb64023",
+      "output_sha256": "8a93c497849beb5d60d8c517ee68da75b0ff5cd2bd2489c15bff669415e75ea7",
+      "edits": 15,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "ilp/popper_benchmark_classify.metta",
+      "output": "ilp/popper_benchmark_classify.metta",
+      "source_sha256": "a44f1ab26d6708062ba6293cc0cdc89ef6dc890019128189f8ca2fecf73f285e",
+      "output_sha256": "5a1ba45c15e21ebf9030326771ed3701fe772faa52183ebd5439ae73d01a4b95",
+      "edits": 0,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "ilp/prime_native_list_relator.metta",
+      "output": "ilp/prime_native_list_relator.metta",
+      "source_sha256": "4d568c51e373d5f4da634dac25ab120e82acf74f3c16ed1f7818006011bf385b",
+      "output_sha256": "07551e5138a0558cd100c2c7b85b51446e3219ce8e4eea95e09948e6ccde1915",
+      "edits": 7,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "ilp/prime_native_mil.metta",
+      "output": "ilp/prime_native_mil.metta",
+      "source_sha256": "6e0d21862cd5c92aebebefb552850d77d3817f4dc25165782feb59c99da1116c",
+      "output_sha256": "4b939e9356f4ce5e7037907cc39174d4d67d28a094cc1f317653beb413e958d2",
+      "edits": 9,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "io.metta",
+      "output": "io.metta",
+      "source_sha256": "d398e237480b2e599be8d63d82325bb044318a5c2d2f2b6cdfe973b5a8a34ea0",
+      "output_sha256": "60f157c4b9eb69be0a065948eeec2ae3806b963df4f8184b987fe7af17c90210",
+      "edits": 4,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "langdef.metta",
+      "output": "langdef.metta",
+      "source_sha256": "fe5c229dca0c75e5e4360e86e60b2c228fa30b344826af902a5c3012c1473d04",
+      "output_sha256": "27385ec802a2b4910c03dc32380e038553bf7523bd3785cfe18a41966d984bc0",
+      "edits": 41,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "lib_bnf.metta",
+      "output": "lib_bnf.metta",
+      "source_sha256": "075b83c78d9548b11b40317cbb03c3dac3a168c7479e62ce76462aa278536c33",
+      "output_sha256": "7f01983e779dc109d0ab35f2239ce2961e25e1a18338b9d9f400c94cf2e0c0ca",
+      "edits": 64,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "lib_intensional_weighted.metta",
+      "output": "lib_intensional_weighted.metta",
+      "source_sha256": "a2878d6bcc5c518e3bc6b9deb9a097ce924d76cddc74031377cb09bf0c7f99b2",
+      "output_sha256": "88ae74255c43322f7401a1b245eca536ffa33543d00ed81513b6ba7f5200e5d8",
+      "edits": 11,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "lib_nars_portable.metta",
+      "output": "lib_nars_portable.metta",
+      "source_sha256": "baa4b8494a02e2c9cd8d529845dbee0fdf8f1150296ada5088a881cf986a9b1d",
+      "output_sha256": "9438a889b760e0154c2c2bb730017ae2392df80522920e4fce66c99acd476c7e",
+      "edits": 17,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "lib_overlap_corrected_revision.metta",
+      "output": "lib_overlap_corrected_revision.metta",
+      "source_sha256": "eaf7e56cb67b02efc9ce580438457a7131eae4785a949e370c5dfb0388e4075e",
+      "output_sha256": "ccddc984c97fef5a9c6d5b5a55f4e4115b22ea87bd78cf4a2ade5c41fc77573f",
+      "edits": 3,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "lib_parse.metta",
+      "output": "lib_parse.metta",
+      "source_sha256": "7420387182fbfe4c3242d7cde396fbba776ae9c4e04fe6f45a9427cbaeb1db47",
+      "output_sha256": "c9b2d97650def55bdff4b8e8e6a1a1a6f84596cbf9cf28a6218cf288a1ac60ce",
+      "edits": 46,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "lib_parse_abt.metta",
+      "output": "lib_parse_abt.metta",
+      "source_sha256": "c949d3d48db049fa1267b503f2273671996788152260d468226ff4484b6268dd",
+      "output_sha256": "dc83f8f8702bcfd1a2771061302ea7662c276d6a3aa0b49f1225b4eae65faf56",
+      "edits": 22,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "lib_parse_metamath.metta",
+      "output": "lib_parse_metamath.metta",
+      "source_sha256": "4093a2514de135331058e0e4a9158d21b1f665cdd2eae0528588c0ca1ad12803",
+      "output_sha256": "10d1efa789fb29edacc65255ccc31265ee65bf7000e2c26d9be162e0b8e067dd",
+      "edits": 2,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "lib_pln.metta",
+      "output": "lib_pln.metta",
+      "source_sha256": "3075cc8f64e03b209345e4da0330fb30d6d50cddf17c2a43c154028cef18f348",
+      "output_sha256": "2eb69ca6ab5d8ae5e6d8aecff49b352517b12c1a7facacca8449a61acb9c0e33",
+      "edits": 14,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "lib_pln_query_audit.metta",
+      "output": "lib_pln_query_audit.metta",
+      "source_sha256": "5c04894450e10b89f471115ae28f3d658dfc2e2dc563b0750eb824463f6375a9",
+      "output_sha256": "10872a921da3a8086fadbe174631e0b0a531096c1e33a98cc50403fad87aa031",
+      "edits": 6,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "lib_prolog.metta",
+      "output": "lib_prolog.metta",
+      "source_sha256": "ec9d06faafdc3d530fad4167ffd62060ee46fb8e7956f9a7b1d0e9e65ec2247e",
+      "output_sha256": "220086f44963af762d56ffb0b50a3e18dfe54c05ecc9785f368c96d6ce12c613",
+      "edits": 2,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "lib_tptp.metta",
+      "output": "lib_tptp.metta",
+      "source_sha256": "219a932821705fa1bd4cd2556f48e9ca862de17939c1b35b73ab75cedc5b0593",
+      "output_sha256": "d234c7daf025c67360268eb6c2fe351d5f30167f1668ac6cab5d7da70adfecdc",
+      "edits": 142,
+      "code_diagnostics": 1
+    },
+    {
+      "source": "lib_wmpln.metta",
+      "output": "lib_wmpln.metta",
+      "source_sha256": "5d1bebf86e5e3d58a0c4bd102d2ca3fe00b1e6d40a01aab90515454f56ae3269",
+      "output_sha256": "9b149944d1c4abdeb7b633571ded64cb7a86e6d5fc734fd215a5b3cf25a7de37",
+      "edits": 14,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "lib_wmpln_evidence.metta",
+      "output": "lib_wmpln_evidence.metta",
+      "source_sha256": "49c6699ac167745f56ad232a9b8a4fbfca222fb7718e55ebd8270bebc8858ec7",
+      "output_sha256": "5fed2f66c52155c1e66b8d9fc2b29e554daaa166ae2b902a7683aa8a11b0dabb",
+      "edits": 1,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "list.metta",
+      "output": "list.metta",
+      "source_sha256": "4e73687532bb7be66aa3be2e14a8b4196847fb46af0e75491dbf223a6bb3bc9a",
+      "output_sha256": "9ae06387d7b42462c06e3563a6b9d3f3547f16a042fe5e6a84ad40845a10329d",
+      "edits": 39,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "lts/weighted.metta",
+      "output": "lts/weighted.metta",
+      "source_sha256": "d708f376b0c87758698312c51aedc5e0acf33c3190cba43c386b15eb9c8aac16",
+      "output_sha256": "f0321063fdf91a6f2b59a4131d2aae695766902cd2ae8e94cda9a8dd63917a21",
+      "edits": 9,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "mork.metta",
+      "output": "mork.metta",
+      "source_sha256": "535d4932b0d9acc2e2500670c037ba627cd12e2022b86a8c55ad2d62a9dd4072",
+      "output_sha256": "5a318193480ada7f8a86d6b7f074e0182d59e9f9f78b23f6f7af08d4a09c2c34",
+      "edits": 93,
+      "code_diagnostics": 2
+    },
+    {
+      "source": "native_search_goals.metta",
+      "output": "native_search_goals.metta",
+      "source_sha256": "bd46dea10525359871ffb3a6ac19ffc966573fdced94a9f807ba926977fe6cf0",
+      "output_sha256": "799007ede9419aa7562c8ad6d360c219f758d9354c248c315334da1a251da1a7",
+      "edits": 5,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "path.metta",
+      "output": "path.metta",
+      "source_sha256": "e07b4f6842008d8a3c9258d4ac5696d83ee08bed1d0f6fe6a05ce131a2a25056",
+      "output_sha256": "e5862262126c13c1a0c34bcd14b77ba71c38cbfd9a23c6d9b5d545f251e9391f",
+      "edits": 1,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "pf.metta",
+      "output": "pf.metta",
+      "source_sha256": "8a7822aa99951ae54687d98054080e213447dcc62a61a24f5572f2cfabd9c1a1",
+      "output_sha256": "25f8e4dd045f7a4b691f949581b92169786f6b2c17ca1ccac2fc88a1fdae7886",
+      "edits": 49,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "prime_metadata.metta",
+      "output": "prime_metadata.metta",
+      "source_sha256": "0574736fb3cc3548b4d34676d6d0506d947efff13e0ff190bcce5b3ddcb3fc3b",
+      "output_sha256": "db0f7bf4fca24d01a18b1774da0fab4183d2fada84005174d8310f66b140419e",
+      "edits": 8,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "probability/finite_bayes.metta",
+      "output": "probability/finite_bayes.metta",
+      "source_sha256": "66b93474816a6da3470e31440958f28b186deb12294a224ef09fee05bbc2fe2d",
+      "output_sha256": "c2e4a024656fda2fbaa2c06f819c3485b86bb1806c329b3f832458bb31d170f0",
+      "edits": 18,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "probability/finite_decision.metta",
+      "output": "probability/finite_decision.metta",
+      "source_sha256": "2d2b9ac4956d00322a8455fa0464540b62d2001ed103c7f0fec6374763ae05c5",
+      "output_sha256": "ad2a82aacae8500263203ea5890dc029df36357d15a4447ddcc1a65c26b18b85",
+      "edits": 25,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "stdlib.metta",
+      "output": "stdlib.metta",
+      "source_sha256": "67a236590bbd45d3e0b3d7a0b6fac1f92bea6652147aad8e6b17c5c86b5358e0",
+      "output_sha256": "218a50d90625b640aebb8d112cd31d759a3323b268166d4be6197408ccbc1569",
+      "edits": 62,
+      "code_diagnostics": 2
+    },
+    {
+      "source": "str.metta",
+      "output": "str.metta",
+      "source_sha256": "176af51bd9113ec4f4ad1a714b21a0c68021dd70825503e97507bf6bd0b5e79d",
+      "output_sha256": "02a95566486451869d4f65490233ff42f75dae3001f82e9fe6ec16c20f51c377",
+      "edits": 30,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "system.metta",
+      "output": "system.metta",
+      "source_sha256": "19ed180c5a4350591174763d80be79b47a6a28b3b17abdc9b52ed00090e15ae4",
+      "output_sha256": "a4b0b7edb091d47b236c62e235b6329217cb3623a16dba9fd045c31344c1e762",
+      "edits": 11,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "text_cursor.metta",
+      "output": "text_cursor.metta",
+      "source_sha256": "b9880c75c349ba21280216bc99e480b9192ad3857791e141531e3c88ebc2c2e3",
+      "output_sha256": "2f66a2b7192dbc81e0758cf3c01ee3d2a814ef80a841a035a69bcdd19d3949f3",
+      "edits": 1,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "text_stream.metta",
+      "output": "text_stream.metta",
+      "source_sha256": "867a8aba960106e5aba51b4099707e2ae7452403f747212752fa230b783c2d27",
+      "output_sha256": "e93a736283892c2ecd908512269d66004306474868fc08959408578fd5cc9929",
+      "edits": 2,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "typed_conversion.metta",
+      "output": "typed_conversion.metta",
+      "source_sha256": "f5dc6640fa9589990b7674eb2b29b7042ece47f3eb3bc4a2cc4619b51b73f1b2",
+      "output_sha256": "8eda05a5a6b44164e5a5da8ef1fd8267c679898a29c90ebfa9979c403655cc53",
+      "edits": 22,
+      "code_diagnostics": 0
+    }
+  ],
+  "delegated": [
+    {
+      "source": "json.metta",
+      "generator": "library_spelling.py",
+      "output_sha256": "aeaa910170d3f8f055d6a358dd37ec3c84b517f00e379ddb33cfaf792c3d061a"
+    }
+  ]
+}

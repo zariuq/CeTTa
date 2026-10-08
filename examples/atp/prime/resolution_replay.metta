@@ -47,7 +47,7 @@
    (case $literal
      (((ATP.Pos $atom) (atp:resolution:term-valid $atom))
       ((ATP.Neg $atom) (atp:resolution:term-valid $atom))
-      ($_ False))))
+      ($_ False))){$atom})
 
 (= (atp:resolution:clause-valid ()) True)
 
@@ -70,7 +70,7 @@
        (((ATP.BindingName $name)
           (let $names
                (eval (atp:resolution:binding-names $rest))
-            (cons-atom $name $names)))
+            (cons-atom $name $names)){$names})
         ($_ (ATP.MalformedBindings))))))
 
 (= (atp:resolution:no-duplicate-bindings ()) True)
@@ -84,7 +84,7 @@
              ($names
                (if (atp:resolution:member $name $names)
                    False
-                   (atp:resolution:no-duplicate-bindings $rest))))))
+                   (atp:resolution:no-duplicate-bindings $rest))))){$names})
         ($_ False)))))
 
 (= (atp:resolution:bindings-valid ()) True)
@@ -115,12 +115,12 @@
                      (atp:resolution:term-reaches-name
                        $bindings $replacement $target
                        (cons-atom $name $seen)))
-                   ($_ False))))))
+                   ($_ False))){$replacement $_})))
       ($_
         (if (== (get-metatype $term) Expression)
             (atp:resolution:terms-reach-name
               $bindings $term $target $seen)
-            False)))))
+            False)))){$_})
 
 (= (atp:resolution:terms-reach-name $bindings () $target $seen) False)
 
@@ -186,12 +186,12 @@
               (((ATP.Binding $replacement)
                  (atp:resolution:substitute-term-seen
                    $bindings (cons-atom $name $seen) $replacement))
-               ($_ $term)))))
+               ($_ $term))){$replacement $_}))
       ($_
         (if (== (get-metatype $term) Expression)
             (eval (atp:resolution:substitute-list-seen
                     $bindings $seen $term))
-            $term)))))
+            $term)))){$_})
 
 (= (atp:resolution:substitute-term $bindings $term)
    (atp:resolution:substitute-term-seen $bindings () $term))
@@ -207,7 +207,7 @@
    (case ($left $right)
      ((((ATP.Pos $atom) (ATP.Neg $other)) (== $atom $other))
       (((ATP.Neg $atom) (ATP.Pos $other)) (== $atom $other))
-      ($_ False))))
+      ($_ False))){$atom $other})
 
 (= (atp:resolution:remove-one $item ()) ATP.RemoveMissing)
 
@@ -218,7 +218,7 @@
          (case (atp:resolution:remove-one $item $tail)
            (((ATP.RemoveOK $rest)
               (ATP.RemoveOK (cons-atom $head $rest)))
-            ($_ ATP.RemoveMissing))))))
+            ($_ ATP.RemoveMissing))){$rest $_})))
 
 (= (atp:resolution:append () $right) $right)
 
@@ -288,9 +288,9 @@
                                        (atp:resolution:append
                                          $left-rest $right-rest)
                                        $expected))
-                                   ($_ False))))
-                              ($_ False)))
-                           False))))))
+                                   ($_ False))){$right-rest $_})
+                              ($_ False))){$left-rest $_}
+                           False)){$instantiated-right-pivot}){$instantiated-left-pivot}){$bindings}){$instantiated-right}){$instantiated-left}
                False)
              False)
            False)

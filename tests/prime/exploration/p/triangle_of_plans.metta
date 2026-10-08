@@ -48,7 +48,7 @@
 (rule diffTF () (Diff t f))
 (rule diffFT () (Diff f t))
 
-(= (derivations-of $j) (collapse (match &self (rule $r () $j) $r)))
+(= (derivations-of $j) (collapse (match &self (rule $r () $j) $r){$j}))
 
 ; ---- the plan networks ----------------------------------------------------------------
 
@@ -74,7 +74,7 @@
 (= (edge-agrees $net ($e $i $j))
    (let* (($li (local-completions $net $i)) ($lj (local-completions $net $j))
           ($hits (collapse (let* (($l1 (superpose $li)) ($l2 (superpose $lj)))
-                             (if (agree $l1 $l2) ($l1 $l2) (empty))))))
+                             (if (agree $l1 $l2) ($l1 $l2) (empty))){$l1 $l2})))
      (not (== $hits ()))))
 (= (joint-completions $net)
    (let* (($la (local-completions $net a)) ($lb (local-completions $net b))
@@ -91,14 +91,14 @@
      (collapse (let $l (superpose $ls) (if (== (view $l) $v) $l (empty))))))
 (= (edge-named $e)
    (let* (($es (edges))
-          ($hits (collapse (let ($n $i $j) (superpose $es) (if (== $n $e) ($n $i $j) (empty))))))
+          ($hits (collapse (let ($n $i $j) (superpose $es) (if (== $n $e) ($n $i $j) (empty))){$n $i $j})))
      (car-atom $hits)))
 ; The view on the far side of an interface, from the only agreeing completion.
 (= (translate $net $e $v)
    (let* ((($n $i $j) (edge-named $e))
           ($from (with-view $net $i $v)) ($lj (local-completions $net $j))
           ($to (collapse (let* (($l1 (superpose $from)) ($l2 (superpose $lj)))
-                           (if (agree $l1 $l2) (view $l2) (empty))))))
+                           (if (agree $l1 $l2) (view $l2) (empty))){$l1 $l2})))
      (if (== (size-atom $to) 1) (car-atom $to) (not-invertible $e $v))))
 (= (transport $net $walk $v) (foldl-atom $walk $v $w $e (translate $net $e $w)))
 (= (translation-table $net $e)
@@ -110,7 +110,7 @@
 (= (compose $net)
    (let* (($walk (cycle-walk)) ($bs (bits))
           ($hol (map-atom $bs $v (let $w (transport $net $walk $v) ($v $w))))
-          ($fixed (collapse (let ($from $to) (superpose $hol) (if (== $from $to) $from (empty))))))
+          ($fixed (collapse (let ($from $to) (superpose $hol) (if (== $from $to) $from (empty))){$from $to})))
      (if (== $fixed ())
          (Refuted (no-joint-completion (cycle a $walk) (holonomy $hol)))
          (let* (($va (car-atom $fixed))
@@ -119,7 +119,7 @@
                 ($la (car-atom $as)) ($lb (car-atom $bs2)) ($lc (car-atom $cs)))
            (if (and (agree $la $lb) (and (agree $lb $lc) (agree $lc $la)))
                (Established ((a $la) (b $lb) (c $lc)))
-               (Refuted (interfaces-disagree ((a $la) (b $lb) (c $lc)))))))))
+               (Refuted (interfaces-disagree ((a $la) (b $lb) (c $lc)))))){$va $vb $vc $as $bs2 $cs $la $lb $lc})))
 
 ; ---- the triangle -----------------------------------------------------------------------
 
@@ -145,7 +145,7 @@
 ;    view at a is fixed by the cycle (Triangle.no_joint,
 ;    Triangle.no_joint_by_holonomy).
 !(let* (($js (joint-completions twisted)) ($walk (cycle-walk))
-        ($fixed (collapse (let $v (superpose (t f)) (if (== (transport twisted $walk $v) $v) $v (empty))))))
+        ($fixed (collapse (let $v (superpose (t f)) (if (== (transport twisted $walk $v) $v) $v (empty))){$v})))
    ((== $js ()) (== $fixed ())))
 
 ; ---- the untwisted triangle ---------------------------------------------------------

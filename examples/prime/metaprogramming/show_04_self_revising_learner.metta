@@ -25,7 +25,7 @@
 (= (member-grounded $kind $grounded)
    (if (== $grounded ()) False
        (let ($a $rest) (decons-atom $grounded)
-         (if (set:eq &kb (kind-of $a) $kind) True (member-grounded $kind $rest)))))
+         (if (set:eq &kb (kind-of $a) $kind) True (member-grounded $kind $rest))){$a $rest}))
 (= (kind-value $kind $grounded) (if (member-grounded $kind $grounded) falsum verum))
 (= (publish-rule $grounded)
    (let $s (kind-value songbird $grounded)
@@ -47,11 +47,11 @@
      (if (set:proves &kb (pf:imp-intro (pf:hyp 0)) (can-fly $x))
          (let $n (flies-name $x)
            (let $r (set:theorem &kb $n (can-fly $x) (pf:imp-intro (pf:hyp 0)))
-             (let $b (add-atom &self (believed $n (can-fly $x))) (Concluded $n))))
+             (let $b (add-atom &self (believed $n (can-fly $x))) (Concluded $n)){$b}){$r}){$n}
          (let $n (grounded-name $x)
            (let $r (set:theorem &kb $n (imp (can-fly $x) falsum) (pf:imp-intro (pf:hyp 0)))
              (let $b (add-atom &self (believed $n (imp (can-fly $x) falsum)))
-               (Concluded $n)))))))
+               (Concluded $n)){$b}){$r}){$n})))
 
 ; ---- the kernel's view of a published fact
 (= (status $name $prop)
@@ -61,10 +61,10 @@
 ; ---- revision: retract a published definition or fact, then republish
 (= (retract $name)
    (let $a (collapse (match &kb (set:known $name $p $o $proof $deps $r $s)
-                        (remove-atom &kb (set:known $name $p $o $proof $deps $r $s))))
+                        (remove-atom &kb (set:known $name $p $o $proof $deps $r $s))){$name})
      (let $b (collapse (match &kb (type:rule $name $n $pats $rhs)
-                          (remove-atom &kb (type:rule $name $n $pats $rhs))))
-       (let $c (collapse (match &kb (: $name $ty) (remove-atom &kb (: $name $ty))))
+                          (remove-atom &kb (type:rule $name $n $pats $rhs))){$name})
+       (let $c (collapse (match &kb (: $name $ty) (remove-atom &kb (: $name $ty))){$name})
          (Retracted $name)))))
 (= (derive-again)
    (let $old (collapse (match &self (believed $n $p)

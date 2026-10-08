@@ -99,8 +99,8 @@
 !(try (set:inductive &thy (Plain A) set (: plain (Plain A))))
 !(try (set:inductive &thy (Twice (: A set) (: A set)) set (: twice (Twice A A))))
 ; Nothing of a refused declaration is published.
-!(== (collapse (match &thy (: Neg $type) $type)) ())
-!(== (collapse (match &thy (: Nest-rec $type) $type)) ())
+!(== (collapse (match &thy (: Neg $type) $type){$type}) ())
+!(== (collapse (match &thy (: Nest-rec $type) $type){$type}) ())
 
 ; ---- The admitted type former at the wrong arity.
 !(try (type:formed &thy (List num num)))

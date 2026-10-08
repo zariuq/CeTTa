@@ -17,10 +17,10 @@
 !(let $r (h $y) (collapse (unify $y 6 yes no)))
 !(let $r (h $y) (collapse (switch $y ((6 six) (5 five)))))
 !(let $r (h $y) (case (switch $y ((6 six) (5 five))) (($v (got $v)))))
-!(let $r (h $y) (collapse (match &self (fact $y) $y)))
+!(let $r (h $y) (collapse (match &self (fact $y) $y){$y}))
 !(let $r (h $y) (Pair (unify $y 6 yes no) x))
 !(let $r (h $y) (Pair $y (unify $y 6 yes no)))
-!(let $r (h $y) (row (match &self (fact $y) $y) (switch $y ((5 five)))))
+!(let $r (h $y) (row (match &self (fact $y) $y){$y} (switch $y ((5 five)))))
 
 ; ---- A binding that agrees still matches; a name the environment does
 ; not bind still binds.

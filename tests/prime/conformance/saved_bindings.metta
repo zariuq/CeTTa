@@ -11,20 +11,20 @@
 !(assertEqualToResult
   (chain (collapse-bind (unify $x A token Empty)) $saved
     (unify $x B
-      (chain (superpose-bind $saved) $answer (choice $answer $x)) Empty))
+      (chain (superpose-bind $saved) $answer (choice $answer $x)){$answer} Empty)){$saved}
   ())
 
 ; Compatible structured bindings refine variables in the captured range.
 !(assertEqualToResult
   (chain (collapse-bind (unify $x (pair $y) token Empty)) $saved
     (unify $x (pair B)
-      (chain (superpose-bind $saved) $answer (choice $answer $x $y)) Empty))
+      (chain (superpose-bind $saved) $answer (choice $answer $x $y)){$answer} Empty)){$saved}
   ((choice token (pair B) B)))
 
 !(assertEqualToResult
   (chain (collapse-bind (eval (saved-proof $route))) $saved
     (unify $route routeA
-      (chain (superpose-bind $saved) $proof (plan $route $proof)) Empty))
+      (chain (superpose-bind $saved) $proof (plan $route $proof)){$proof} Empty)){$saved}
   ((plan routeA (evidence sensor1)) (plan routeA (evidence sensor2))))
 
 ; Quoted syntax suspends evaluation but still carries logical variables.
@@ -33,8 +33,8 @@
 !(assertEqualToResult
   (chain (collapse-bind (unify $piece (quote (f $x)) token Empty)) $saved
     (unify $x A
-      (chain (superpose-bind $saved) $answer (lift app @g (lift $piece)))
-      Empty))
+      (chain (superpose-bind $saved) $answer (lift app @g (lift $piece))){$answer}
+      Empty)){$saved}
   ((quote (g (quote (f A))))))
 
 ; Equal results from distinct proofs keep their multiplicity.
@@ -42,7 +42,7 @@
 (= (saved-offer A proof2) accepted)
 !(assertEqualToResult
   (chain (collapse-bind (eval (saved-offer $x $proof))) $saved
-    (chain (superpose-bind $saved) $answer (choice $answer $x)))
+    (chain (superpose-bind $saved) $answer (choice $answer $x)){$answer}){$saved}
   ((choice accepted A) (choice accepted A)))
 
 ; Restoration is repeatable and refines aliases by identity.
@@ -50,14 +50,14 @@
   (chain (collapse-bind (unify $x $y token Empty)) $saved
     (unify $y A
       (chain (superpose-bind $saved) $first
-        (chain (superpose-bind $saved) $second (both $first $second $x $y)))
-      Empty))
+        (chain (superpose-bind $saved) $second (both $first $second $x $y)){$second}){$first}
+      Empty)){$saved}
   ((both token token A A)))
 
 ; A saved answer does not replay the effects which produced it.
 !(assertEqualToResult
   (chain (collapse-bind (eval (add-atom &self (saved-event recorded)))) $saved
     (chain (superpose-bind $saved) $first
-      (chain (superpose-bind $saved) $second done)))
+      (chain (superpose-bind $saved) $second done){$second}){$first}){$saved}
   (done))
-!(assertEqualToResult (match &self (saved-event $value) $value) (recorded))
+!(assertEqualToResult (match &self (saved-event $value) $value){$value} (recorded))

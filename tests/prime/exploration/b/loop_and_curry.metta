@@ -34,7 +34,7 @@
 ;    published.
 !(let $v (try (set:define &thy recd (-> (-> A A prop) (-> A (-> A Res) Res) A Res)
      (= (recd $R $F $x) ($F $x (lam b (recd $R $F b)))))) (verdict-of $v))
-!(== (collapse (match &thy (: recd $type) $type)) ())
+!(== (collapse (match &thy (: recd $type) $type){$type}) ())
 
 ; 2. With the unfolding propositional, the loop's conversion problem is
 ;    decided by beta: the unfolding reduces back to the call

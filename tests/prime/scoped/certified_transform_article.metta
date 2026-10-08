@@ -31,22 +31,22 @@
 
 (= (article-verdict $index $digest $revision)
    (let $at-index (collapse (match &self
-         (MegalodonSharedArticleV1 $index $digest $revision $text) $text))
+         (MegalodonSharedArticleV1 $index $digest $revision $text) $text){$index $digest $revision $text})
      (if (== $at-index ())
          (let $by-digest (collapse (match &self
-               (MegalodonSharedArticleV1 $i $digest $r $text) ($i $r $text)))
+               (MegalodonSharedArticleV1 $i $digest $r $text) ($i $r $text)){$i $digest $r $text})
            (if (== $by-digest ())
                (Missing)
                (let ($i $r $text) (car-atom $by-digest)
                  (if (== $i $index)
                      (if (== (sha256 $text) $digest) (Stale) (Altered))
-                     (WrongIndex)))))
+                     (WrongIndex))){$i $r $text})){$by-digest}
          (let $text (car-atom $at-index)
            (if (== $text $digest)
                (DigestOnly)
                (if (== (sha256 $text) $digest)
                    (Checked Opened)
-                   (Altered)))))))
+                   (Altered)))){$text})))
 
 !(let $package (set:native-proof zero-add)
  (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
@@ -57,7 +57,7 @@
      (let $resolved (article-verdict 0 $article-digest "rev-zero-add")
       (let $opened (collapse (match &self
              (MegalodonSharedArticleV1 0 $article-digest "rev-zero-add" $body)
-             $body))
+             $body){$article-digest})
        (let $article (car-atom $opened)
         (let $use (set:native-use $package (Lam $type (idx 0)))
          (let (SetNativeUseV1 $checked $consumer $result $result-type) $use
@@ -73,7 +73,7 @@
 !(let $digest (match &self (MegalodonSharedArticleV1 0 $d "rev-zero-add" $t) $d)
   (article-verdict 0 $digest "rev-stale"))
 !(let $only (sha256 "not-the-article")
-  (let $hits (collapse (match &self (MegalodonSharedArticleV1 $i $only $r $text) $text))
+  (let $hits (collapse (match &self (MegalodonSharedArticleV1 $i $only $r $text) $text){$only})
    (if (== $hits ()) (DigestOnly) (Checked (car-atom $hits)))))
 
 ; A matching hash of some other text is not the checked term. Acceptance
@@ -85,7 +85,7 @@
     (let $_ (add-atom &self
              (MegalodonSharedArticleV1 7 $article-digest "rev-zero-add" $text))
      (let $opened (collapse (match &self
-            (MegalodonSharedArticleV1 7 $article-digest "rev-zero-add" $body) $body))
+            (MegalodonSharedArticleV1 7 $article-digest "rev-zero-add" $body) $body){$article-digest})
       (let $article (car-atom $opened)
        (ArticleNotEvidence (== $article (repr $term))
          (== (sha256 $article) $article-digest)))))))))

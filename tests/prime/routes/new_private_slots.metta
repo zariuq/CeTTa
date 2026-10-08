@@ -1,8 +1,11 @@
+; This fixture selects rule-M side of the existing M/LF fixture pair.
+(scope:profile mercury-implicit per-call reference)
+
 ; `(new ($h ...) body)`: fresh private slots, one set per evaluation of the
 ; form.  Inside a lambda body that is once per activation.  The names are
 ; lexical binders of the body, as a lambda's parameters are: owned by the
 ; `new`, hidden from the caller, and never captured by spelling.  The
-; profile here is the default, rule M; new_private_slots_lexical_fresh.metta
+; profile here explicitly selects rule M; new_private_slots_lexical_fresh.metta
 ; has the translated rows under lexical-fresh.
 (= (mk-new) (lam z (new ($w) (Pair z $w))))
 

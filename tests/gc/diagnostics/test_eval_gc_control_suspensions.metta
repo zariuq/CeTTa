@@ -2,7 +2,7 @@
 ; continuation roots.  This recursive producer is admitted to the explicit
 ; Prime equation machine, so those complete roots license moving collection
 ; without changing any consumer result.  A separate negative gate covers a
-; monolithic producer that must remain imprecise.
+; monolithic producer whose retained external ownership blocks collection.
 
 (= (gc-control-payload $n)
    (if (== $n -1)

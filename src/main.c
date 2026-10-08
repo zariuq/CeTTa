@@ -2108,9 +2108,14 @@ static void main_add_prime_semantic_op_decls(Space *space, Arena *arena) {
  * declarations of names upstream's library does not know; of the others it
  * keeps only, outside the profile with upstream's exact semantics, those
  * adding a call form of an arity upstream does not declare.  A grounded
- * operation's name has no declaration: its type is the operation's own. */
+ * operation's name has no declaration: its type is the operation's own.
+ * Unavailable extensions contribute no library declarations or equations. Filter them
+ * here, before loading the program, rather than rejecting user-declared
+ * types or untyped data that happen to use the same spelling. */
 static bool main_he_prepare_library(Space *space, Arena *arena,
-                                    bool extensions) {
+                                    const CettaProfile *profile) {
+    bool extensions = !cetta_language_uses_rust_he_compat_semantics(
+        CETTA_LANGUAGE_HE, profile);
     CettaCount len = space_length64(space);
     uint8_t *mask = calloc(len ? (size_t)len : 1u, 1u);
     AtomId *kept = calloc(len ? (size_t)len : 1u, sizeof(*kept));
@@ -2122,11 +2127,31 @@ static bool main_he_prepare_library(Space *space, Arena *arena,
     CettaCount kept_len = 0u;
     for (CettaIndex i = 0u; i < len; i++) {
         Atom *atom = space_get_at64(space, i);
-        if (!atom || atom->kind != ATOM_EXPR || atom->expr.len != 3u ||
-            !atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.colon))
+        if (!atom || atom->kind != ATOM_EXPR || atom->expr.len != 3u)
+            continue;
+        if (atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.equals)) {
+            Atom *pattern = atom->expr.elems[1];
+            Atom *head = pattern->kind == ATOM_EXPR && pattern->expr.len
+                ? pattern->expr.elems[0] : pattern;
+            if (head->kind == ATOM_SYMBOL &&
+                (!cetta_language_allows_builtin(
+                    CETTA_LANGUAGE_HE, profile, atom_name_cstr(head)) ||
+                 (!extensions && pattern->kind == ATOM_EXPR &&
+                  he_library_declares(head) &&
+                  !he_library_declares_arity(head, pattern->expr.len - 1u))))
+                mask[i] = 1u;
+            continue;
+        }
+        if (!atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.colon))
             continue;
         Atom *subject = atom->expr.elems[1];
         Atom *type = atom->expr.elems[2];
+        if (subject->kind == ATOM_SYMBOL &&
+            !cetta_language_allows_builtin(
+                CETTA_LANGUAGE_HE, profile, atom_name_cstr(subject))) {
+            mask[i] = 1u;
+            continue;
+        }
         bool grounded = subject->kind == ATOM_SYMBOL &&
             he_grounded_symbol_types(subject->sym_id, extensions, NULL) != 0u;
         if (!grounded && !he_library_names_subject(subject))
@@ -3797,7 +3822,7 @@ static int cetta_main(int argc, char **argv) {
                 goto cleanup;
             }
             const char *census = getenv("CETTA_PRIME_SCOPE_CENSUS");
-            prime_scope_census_set(census && census[0]);
+            prime_scope_census_set(census);
         }
         prime_scope_document_reading(true);
         n = inline_text
@@ -4004,10 +4029,7 @@ static int cetta_main(int argc, char **argv) {
        queries after the program's own and are not removable through &self.
        Prime keeps its library defaults as removable atoms of &self. */
     if (lang->id == CETTA_LANGUAGE_HE) {
-        if (!main_he_prepare_library(
-                &space, &arena,
-                !cetta_language_uses_rust_he_compat_semantics(lang->id,
-                                                              profile))) {
+        if (!main_he_prepare_library(&space, &arena, profile)) {
             fprintf(stderr, "error: HE library could not be prepared\n");
             rc = 1;
             goto cleanup;

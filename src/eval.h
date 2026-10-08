@@ -68,6 +68,10 @@ void outcome_set_add(OutcomeSet *os, Atom *atom, const Bindings *env);
 void outcome_set_delay_last(OutcomeSet *os, Atom *delayed);
 void outcome_set_add_move(OutcomeSet *os, Atom *atom, Bindings *env);
 void outcome_set_free(OutcomeSet *os);
+/* Stage an independent outcome vector through one graph relocation session.
+ * The caller owns both vectors until it commits or abandons the staged copy. */
+bool outcome_set_relocate_clone(OutcomeSet *dst, const OutcomeSet *src,
+                               Arena *owner, AtomDeepCopySession *session);
 
 /* ── ResultSet: public API for top-level results (atoms only) ──────────── */
 /* This is the user-facing result type. Internally, the evaluator works
@@ -142,6 +146,10 @@ void eval_c_stack_boundary_capture(CettaEvalCStackBoundary *boundary);
 
 /* ── Evaluation (public API) ───────────────────────────────────────────── */
 
+/* Each entry owns its mutable query banks and compiled scratch. Reentrant
+ * entry suspends that owner; returning restores it. Newly appended structural
+ * results are published in `a` before the invocation's storage is released.
+ * Identity-bearing foreign resources retain their own lifetime contracts. */
 void eval_top(Space *s, Arena *a, Atom *expr, ResultSet *rs);
 void eval_top_one_step(Space *s, Arena *a, Atom *expr, ResultSet *rs);
 void eval_top_with_registry(Space *s, Arena *a, Arena *persistent, Registry *r, Atom *expr, ResultSet *rs);
@@ -154,6 +162,8 @@ void eval_top_with_registry_outcome(
     void *observer_context);
 /* Re-entrant callback used only by the optional PeTTa/libpl adapter. */
 bool eval_petta_from_lib_prolog(Arena *a, Atom *expr, ResultSet *results);
+/* Reclaim completed top-level temporaries. During a callback into an active
+ * evaluator this defers cleanup to that caller's completion boundary. */
 void eval_release_temporary_spaces(void);
 void eval_reset_form_gc_survivor(void);
 void eval_set_default_fuel(int fuel);
@@ -174,6 +184,7 @@ int eval_get_default_fuel(void);
 int eval_current_effective_fuel_limit(void);
 bool eval_current_prefer_rationals(void);
 bool eval_current_uses_rust_he_compat_semantics(void);
+bool eval_current_builtin_allowed(const char *name) __attribute__((weak));
 bool eval_current_profile_enables_dependent_telescope(void) __attribute__((weak));
 CettaLanguageId eval_current_language_id(void) __attribute__((weak));
 /* The shared profile-aware HE type inference engine. Returned arrays are heap

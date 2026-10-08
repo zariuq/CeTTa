@@ -103,8 +103,9 @@ static void check_binding_batch(Arena *arena, const Bindings *base,
                                 Atom **variables, Atom **values,
                                 uint32_t count, bool success,
                                 const char *message) {
-    Bindings reference, batch;
-    bool ready = bindings_clone(&reference, base) && bindings_clone(&batch, base);
+    Bindings reference, batch, owned;
+    bool ready = bindings_clone(&reference, base) && bindings_clone(&batch, base) &&
+        bindings_clone(&owned, base);
     CHECK(ready, "batch fixture clones its input");
     if (!ready)
         return;
@@ -112,9 +113,15 @@ static void check_binding_batch(Arena *arena, const Bindings *base,
     for (uint32_t i = 0u; i < count && reference_ok; i++)
         reference_ok = bindings_add_var(&reference, variables[i], values[i]);
     bool batch_ok = bindings_add_vars(&batch, variables, values, count);
-    bool equal = reference_ok == success && batch_ok == reference_ok;
+    bool owned_ok = true;
+    for (uint32_t i = 0u; i < count && owned_ok; i++)
+        owned_ok = bindings_add_var_owned(&owned, variables[i], values[i]);
+    bool equal = reference_ok == success && batch_ok == reference_ok &&
+        owned_ok == reference_ok;
     if (batch_ok) {
         equal = equal && bindings_eq(&reference, &batch) &&
+            bindings_eq(&reference, &owned) &&
+            bindings_occurrence_token(&owned) == bindings_occurrence_token(base) &&
             bindings_occurrence_token(&batch) == bindings_occurrence_token(base);
         for (uint32_t i = 0u; i < count && equal; i++) {
             Atom *left = bindings_apply(&reference, arena, variables[i]);
@@ -124,10 +131,15 @@ static void check_binding_batch(Arena *arena, const Bindings *base,
     } else {
         equal = equal && bindings_eq(&batch, (Bindings *)base) &&
             bindings_occurrence_token(&batch) == bindings_occurrence_token(base);
+        CHECK(!bindings_has_bound_values(&owned) && owned.eq_len == 0u &&
+                  owned.owners == NULL && owned.frame_index == NULL &&
+                  !bindings_prime_present(&owned),
+              "failed owned construction releases its unpublished image");
     }
     CHECK(equal, message);
     bindings_free(&reference);
     bindings_free(&batch);
+    bindings_free(&owned);
 }
 
 static void test_binding_batch(Arena *arena) {
@@ -175,6 +187,21 @@ static void test_binding_batch(Arena *arena) {
     Atom *constraint_vals[] = {seven};
     check_binding_batch(arena, &base, constraint_vars, constraint_vals, 1u, true,
                         "bulk writes retain sequential constraint normalization");
+    Bindings owned_constraint;
+    bool constraint_ready = bindings_clone(&owned_constraint, &base);
+    CHECK(constraint_ready &&
+              bindings_add_constraint_owned(&owned_constraint, z, seven) &&
+              atom_eq(bindings_apply(&owned_constraint, arena, z), seven),
+          "owned constraint construction preserves normal unification");
+    CHECK(constraint_ready &&
+              !bindings_add_constraint_owned(&owned_constraint, z, eight) &&
+              !bindings_has_bound_values(&owned_constraint) &&
+              owned_constraint.eq_len == 0u && owned_constraint.owners == NULL,
+          "conflicting owned constraint discards the unpublished result");
+    CHECK(base.eq_len == 1u && bindings_occurrence_token(&base) != 0u,
+          "failed private construction preserves its live sibling and occurrence");
+    if (constraint_ready)
+        bindings_free(&owned_constraint);
     CHECK(bindings_add_vars(&base, NULL, NULL, 0u), "empty publication is an identity");
     bindings_free(&base);
 }
@@ -2489,6 +2516,18 @@ static void test_dense_term_instantiation(Arena *arena) {
     Atom *x = atom_var_with_id(arena, "same", var_epoch_id(71u, first));
     Atom *y = atom_var_with_id(arena, "same", var_epoch_id(71u, second));
     Atom *z = atom_var_with_id(arena, "last", UINT64_C(900003));
+    Atom *shared = atom_expr2(arena, x, y);
+    Atom *aliases[2] = {atom_expr2(arena, shared, z), atom_expr2(arena, z, shared)};
+    CHECK(cetta_instantiate_frame_terms(arena, aliases, 2u) &&
+          aliases[0]->expr.elems[0] == aliases[1]->expr.elems[1],
+          "one freshening session preserves shared subgraphs across roots");
+    Atom *original = atom_expr2(arena, x, z);
+    Atom *incomplete[2] = {original, NULL};
+    ArenaMark failure_origin = arena_mark(arena);
+    CHECK(!cetta_instantiate_frame_terms(arena, incomplete, 2u) &&
+          incomplete[0] == original && incomplete[1] == NULL &&
+          arena_at_mark(arena, failure_origin),
+          "failed multi-root freshening neither publishes a partial root nor retains its storage");
     Atom *terms[2] = {atom_expr3(arena, x, y, z), atom_expr2(arena, z, x)};
     CHECK(cetta_instantiate_frame_terms(arena, terms, 2u),
           "instantiate related terms in one owned frame");

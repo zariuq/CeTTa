@@ -59,6 +59,7 @@ typedef struct {
     Atom *answers;
     /* NULL and a root output variable are distinct query modes. */
     uint8_t mode;
+    bool borrows_request_payload;
     uint64_t generation;
 } PeTTaTypeFact;
 
@@ -66,8 +67,11 @@ typedef struct {
  * facts are private to the executing thread and the request arena's allocation
  * epoch. Source pointers come from that arena or hash-cons storage; any
  * hash-cons reclamation invalidates the pointer keys before their next use.
- * No pointer from a foreign/resettable arena is retained.
- * A fact owns its hygienic payload, never an input or a caller substitution. */
+ * A fact may borrow a ground answer graph already closed in that request
+ * arena: resetting it invalidates the whole fact generation before lookup
+ * can read the graph. This does not retain or delay reset of the arena.
+ * Other schemes are owned by the bounded fact arena. The vector shell
+ * always belongs to that arena and never escapes to an answer consumer. */
 static _Thread_local struct {
     PeTTaTypeFact *entries;
     Arena payloads;
@@ -196,10 +200,16 @@ static bool petta_type_fact_lookup(Space *space, Arena *arena, Atom *subject,
         return true;
     /* One activation of the entire ordered vector retains sharing between
      * its answers while giving every invocation fresh type variables. */
-    Atom *fresh = atom_has_vars(entry->answers)
-        ? cetta_instantiate_frame_syntax(arena, entry->answers)
-        : entry->answers;
-    Atom *answers = fresh ? atom_deep_copy(arena, fresh) : NULL;
+    Atom *answers = entry->answers;
+    if (atom_has_vars(answers)) {
+        answers = cetta_instantiate_frame_syntax(arena, answers);
+        /* Instantiation usually materializes the entire scheme in the
+           receiver. Do not copy that owned graph a second time. */
+        if (answers && !atom_graph_is_closed_for_arena(arena, answers))
+            answers = atom_deep_copy(arena, answers);
+    } else if (!entry->borrows_request_payload) {
+        answers = atom_deep_copy(arena, answers);
+    }
     if (!answers)
         return false;
     for (CettaExprIndex i = 0u; i < answers->expr.len; i++) {
@@ -252,13 +262,23 @@ static void petta_type_fact_store(Space *space, Arena *arena, Atom *subject,
     if (!petta_type_fact_key(space, arena, subject, target, &key, &slot) ||
         !petta_type_fact_payload_size(answers->items, answers->length, &bytes))
         return;
+    bool borrow = true;
+    for (uint32_t i = 0u; i < answers->length; i++) {
+        if (atom_has_vars(answers->items[i]) ||
+            !atom_graph_is_closed_for_arena(arena, answers->items[i])) {
+            borrow = false;
+            break;
+        }
+    }
+    if (borrow)
+        bytes = sizeof(Atom) + (size_t)answers->length * sizeof(Atom *);
     if (petta_type_fact_retained_bytes() + bytes + 4096u >
         PETTA_TYPE_FACT_BYTES)
         petta_type_facts_clear();
     Atom *vector = atom_expr(&petta_type_facts.payloads,
                              answers->items, answers->length);
-    Atom *payload = vector
-        ? atom_deep_copy(&petta_type_facts.payloads, vector) : NULL;
+    Atom *payload = vector && !borrow
+        ? atom_deep_copy(&petta_type_facts.payloads, vector) : vector;
     if (!payload) {
         petta_type_facts_clear();
         return;
@@ -270,6 +290,7 @@ static void petta_type_fact_store(Space *space, Arena *arena, Atom *subject,
         return;
     }
     key.answers = payload;
+    key.borrows_request_payload = borrow;
     key.generation = petta_type_facts.generation;
     petta_type_facts.entries[slot] = key;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PETTA_TYPE_FACT_STORE);

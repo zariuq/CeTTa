@@ -106,5 +106,5 @@
 !(try (set:define &s partial (-> bool nat) (= (partial true) zero)))
 
 ; Nothing refused or undetermined is published.
-!(== (collapse (match &s (: eqn $t) $t)) ())
-!(== (collapse (match &s (: spin $t) $t)) ())
+!(== (collapse (match &s (: eqn $t) $t){$t}) ())
+!(== (collapse (match &s (: spin $t) $t){$t}) ())

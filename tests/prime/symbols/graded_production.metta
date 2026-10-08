@@ -20,4 +20,4 @@
 (= pick (dbl two))
 !(cost:firings pick)
 !(cost:firings (P pick pick))
-!(cost:firings (let $r (resample pick) (P (force $r) (force $r))))
+!(cost:firings (let $r (resample pick) (P (force $r) (force $r))){$r})

@@ -6,9 +6,9 @@
                 (= (missingId $x) $x))) (car-atom $r))
 !(set:define &thy missingId (-> MissingType MissingType)
    (= (missingId $x) $x))
-!(== (collapse (match &thy (: missingId $type) $type)) ())
-!(== (collapse (match &thy (type:rule missingId $arity $pats $rhs) $rhs)) ())
-!(== (collapse (match &thy (set:known missingId $p $o $f $d $r $s) $p)) ())
+!(== (collapse (match &thy (: missingId $type) $type){$type}) ())
+!(== (collapse (match &thy (type:rule missingId $arity $pats $rhs) $rhs){$arity $pats $rhs}) ())
+!(== (collapse (match &thy (set:known missingId $p $o $f $d $r $s) $p){$p $o $f $d $r $s}) ())
 
 ; The same declaration becomes admissible after its missing type is supplied.
 !(add-atom &thy (: MissingType (u 0)))
@@ -33,23 +33,23 @@
 ; An unresolved formation check does not license a declaration.
 !(let $r (try (set:define &thy valueDomain (-> element MissingType)
                 (= (valueDomain $x) element))) (car-atom $r))
-!(== (collapse (match &thy (: valueDomain $type) $type)) ())
+!(== (collapse (match &thy (: valueDomain $type) $type){$type}) ())
 ; A checked invalid universe level is refuted, without publication.
 !(let $r (try (set:define &thy badLevel (-> (u -1) MissingType)
                 (= (badLevel $x) element))) (car-atom $r))
-!(== (collapse (match &thy (: badLevel $type) $type)) ())
+!(== (collapse (match &thy (: badLevel $type) $type){$type}) ())
 !(add-atom &thy (: Large (u 1)))
 !(add-atom &thy (: largeElement Large))
 !(let $r (try (set:define &thy wrongResult (-> MissingType MissingType)
                 (= (wrongResult $x) largeElement))) (car-atom $r))
-!(== (collapse (match &thy (: wrongResult $type) $type)) ())
+!(== (collapse (match &thy (: wrongResult $type) $type){$type}) ())
 !(set:define &thy largeId (-> Large Large) (= (largeId $x) $x))
 !(type:eq &thy (largeId largeElement) largeElement)
 
 ; Universe-valued definitions consume the type retained by native formation.
 !(type:formed &thy (-> (u 0) (u 0)))
 !(set:define &thy typeId (-> (u 0) (u 0)) (= (typeId $x) $x))
-!(== (collapse (match &thy (: typeId $type) $type)) ((-> (u 0) (u 0))))
+!(== (collapse (match &thy (: typeId $type) $type){$type}) ((-> (u 0) (u 0))))
 !(type:eq &thy (typeId MissingType) MissingType)
 !(type:check &thy (typeId MissingType) (u 0))
 ; The universe U0 is not an element of itself.
@@ -64,7 +64,7 @@
 !(type:check &thy (lam A (lam x A)) (-> (A : (u 0)) (x : A) A))
 !(set:define &thy dependentId (-> (A : (u 0)) (x : A) A)
    (= (dependentId $A $x) $x))
-!(== (collapse (match &thy (: dependentId $type) $type))
+!(== (collapse (match &thy (: dependentId $type) $type){$type})
      ((-> (A : (u 0)) (x : A) A)))
 !(type:check &thy (dependentId MissingType element) MissingType)
 !(type:eq &thy (dependentId MissingType element) element)
@@ -97,10 +97,10 @@
 ; Neither a type parameter nor an unresolved clause variable is a value of A.
 !(let $r (try (set:define &thy wrongDependent (-> (A : (u 0)) (x : A) A)
                 (= (wrongDependent $A $x) $A))) (car-atom $r))
-!(== (collapse (match &thy (: wrongDependent $type) $type)) ())
+!(== (collapse (match &thy (: wrongDependent $type) $type){$type}) ())
 !(let $r (try (set:define &thy danglingDependent (-> (A : (u 0)) (x : A) A)
                 (= (danglingDependent $A $x) $missing))) (car-atom $r))
-!(== (collapse (match &thy (: danglingDependent $type) $type)) ())
+!(== (collapse (match &thy (: danglingDependent $type) $type){$type}) ())
 !(type:check &thy (dependentId MissingType largeElement) MissingType)
 !(type:check &thy (dependentId (u 0) MissingType) (u 0))
 !(type:check &thy (retainIndexed MissingType element (lam z Large) element) Large)
@@ -122,8 +122,8 @@
 ; Conversion of a body is insufficient: publication must also check its type.
 !(let $r (try (set:define &thy badAliasedPack (sigma (T : (u 0)) T)
                 (= badAliasedPack (pair AliasSecond largeElement)))) (car-atom $r))
-!(== (collapse (match &thy (: badAliasedPack $type) $type)) ())
-!(== (collapse (match &thy (type:rule badAliasedPack $arity $pats $rhs) $rhs)) ())
+!(== (collapse (match &thy (: badAliasedPack $type) $type){$type}) ())
+!(== (collapse (match &thy (type:rule badAliasedPack $arity $pats $rhs) $rhs){$arity $pats $rhs}) ())
 
 ; A longer ordered library is consumed beneath dependent and higher-order
 ; binders. Projection computes the family index before the caller uses it.
@@ -203,18 +203,18 @@
 ; Partial arity does not weaken body checking or permit unguarded recursion.
 !(let $r (try (set:define &thy wrongClosure (-> MissingType MissingType MissingType)
                 (= (wrongClosure $x) (lam y largeElement)))) (car-atom $r))
-!(== (collapse (match &thy (: wrongClosure $type) $type)) ())
-!(== (collapse (match &thy (type:rule wrongClosure $arity $pats $rhs) $rhs)) ())
+!(== (collapse (match &thy (: wrongClosure $type) $type){$type}) ())
+!(== (collapse (match &thy (type:rule wrongClosure $arity $pats $rhs) $rhs){$arity $pats $rhs}) ())
 !(let $r (try (set:define &thy oversaturated (-> MissingType MissingType)
                 (= (oversaturated $x $y) $x))) (car-atom $r))
-!(== (collapse (match &thy (: oversaturated $type) $type)) ())
+!(== (collapse (match &thy (: oversaturated $type) $type){$type}) ())
 !(let $r (try (set:define &thy selfValue MissingType
                 (= selfValue selfValue))) (car-atom $r))
-!(== (collapse (match &thy (: selfValue $type) $type)) ())
+!(== (collapse (match &thy (: selfValue $type) $type){$type}) ())
 !(let $r (try (set:define &thy selfCall MissingType
                 (= selfCall (selfCall)))) (car-atom $r))
-!(== (collapse (match &thy (: selfCall $type) $type)) ())
-!(== (collapse (match &thy (type:rule selfCall $arity $pats $rhs) $rhs)) ())
+!(== (collapse (match &thy (: selfCall $type) $type){$type}) ())
+!(== (collapse (match &thy (type:rule selfCall $arity $pats $rhs) $rhs){$arity $pats $rhs}) ())
 
 ; A constructor-recursive definition can also return a function. Recursion
 ; still has to use a strictly smaller constructor field, even inside a lambda.
@@ -233,5 +233,5 @@
                 (= (nondecreasingClosure (iterationSucc $n))
                    (lam x (nondecreasingClosure (iterationSucc $n) x)))))
    (car-atom $r))
-!(== (collapse (match &thy (: nondecreasingClosure $type) $type)) ())
-!(== (collapse (match &thy (type:rule nondecreasingClosure $arity $pats $rhs) $rhs)) ())
+!(== (collapse (match &thy (: nondecreasingClosure $type) $type){$type}) ())
+!(== (collapse (match &thy (type:rule nondecreasingClosure $arity $pats $rhs) $rhs){$arity $pats $rhs}) ())

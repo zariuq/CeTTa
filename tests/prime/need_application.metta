@@ -134,15 +134,15 @@
 ; same source variable outside the nested function must therefore not observe
 ; the inner binding to 3.
 !(function
-   (chain (function (chain 3 $x (return inner))) $_inner
+   (chain (function (chain 3 $x (return inner)){$x}) $_inner
      (chain (eval (noreduce-eq $x 3)) $binding-leaked
-       (return $binding-leaked))))
+       (return $binding-leaked)){$binding-leaked}){$_inner})
 
 ; The body's `$r` is a name of the form that its let binds, so the environment
 ; the caller receives keeps its value.
 (= (prime-need:private-bind) (unify $w private done no))
 !(collapse-bind
-   (function (let $r (prime-need:private-bind) (return $r))))
+   (function (let $r (prime-need:private-bind) (return $r)){$r}))
 
 ; A binding the body makes for its own work stays inside the function: here
 ; the body refines a fresh variable that a call created, which is none of the
@@ -152,7 +152,7 @@
 !(collapse-bind
    (function
      (chain (prime-need:fresh-variable) $c
-       (chain (prime-need:private-bind-of $c) $d (return $d)))))
+       (chain (prime-need:private-bind-of $c) $d (return $d)){$d}){$c}))
 
 ; Checking-first authority does not force a valid argument, but it rejects a
 ; raw argument that violates an admitted function contract even when unused.

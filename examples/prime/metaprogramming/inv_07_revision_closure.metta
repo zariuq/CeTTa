@@ -16,10 +16,10 @@
 ; Withdraw one admitted definition: its record, its rule and its declaration.
 (= (withdraw $space $name)
    (let $known (collapse (match $space (set:known $name $p $o $proof $deps $r $s)
-                            (remove-atom $space (set:known $name $p $o $proof $deps $r $s))))
+                            (remove-atom $space (set:known $name $p $o $proof $deps $r $s))){$name})
      (let $rules (collapse (match $space (type:rule $name $n $pats $rhs)
-                              (remove-atom $space (type:rule $name $n $pats $rhs))))
-       (let $decls (collapse (match $space (: $name $t) (remove-atom $space (: $name $t))))
+                              (remove-atom $space (type:rule $name $n $pats $rhs))){$name})
+       (let $decls (collapse (match $space (: $name $t) (remove-atom $space (: $name $t))){$name})
          (Withdrawn $name)))))
 
 ; 1-4. root -> middle -> leaf = (imp A A), and a theorem about root.

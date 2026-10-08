@@ -7,15 +7,15 @@
 
 ; ---- Built by cons-atom, by union-atom, and by lift, in both orders.
 !(row cons-atom-bound-after)
-!(let $q (cons-atom quote ($x)) (let $x 5 $q))
+!(let $q (cons-atom quote ($x)) (let $x 5 $q){$x})
 !(row cons-atom-bound-before)
 !(let $x 5 (cons-atom quote ($x)))
 !(row union-atom-bound-after)
-!(let $q (union-atom (quote) ($x)) (let $x 5 $q))
+!(let $q (union-atom (quote) ($x)) (let $x 5 $q){$x})
 !(row union-atom-bound-before)
 !(let $x 5 (union-atom (quote) ($x)))
 !(row lift-bound-after)
-!(let $q (lift $x) (let $x 5 $q))
+!(let $q (lift $x) (let $x 5 $q){$x})
 !(row lift-bound-before)
 !(let $x 5 (lift $x))
 

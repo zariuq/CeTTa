@@ -29,13 +29,13 @@
 !(add-atom &kb (edge a c))
 !(add-atom &kb (edge b a))
 !(add-atom &kb (edge a b))
-(= (hop $x) (match &kb (edge $x $y) $y))
+(= (hop $x) (match &kb (edge $x $y) $y){$x})
 
 ; ---- Run: a bag of answers, b twice.
 !(hop a)
 
 ; ---- Typed: the type of the query at a is the type of its answers.
-!(type:of (match &kb (edge a $y) $y))
+!(type:of (match &kb (edge a $y) $y){$y})
 ; Every stored occurrence is checked against it.  The first, the second and
 ; the fourth are answers, each a pair of the occurrence with reflexivity, and
 ; each returns the target of its occurrence: b, c and b.  The third leaves b
@@ -43,35 +43,35 @@
 ; `try` around the typing verdict, taken apart to show the answers; it is not
 ; a stored proof.
 !(let (Established (PrimeTypedQuery $type $answers $others))
-      (try (type:of (match &kb (edge a $y) $y)))
+      (try (type:of (match &kb (edge a $y) $y){$y}))
    $answers)
 !(let (Established (PrimeTypedQuery $type $answers $others))
-      (try (type:of (match &kb (edge a $y) $y)))
+      (try (type:of (match &kb (edge a $y) $y){$y}))
    $others)
 
 ; ---- hop c: no edge leaves c.  The run gives nothing, the answer type is
 ; formed, and no occurrence gives an answer: each leaves a or b, so no
 ; closed pair of an occurrence and a proof that its source is c exists.
 !(collapse (hop c))
-!(type:of (match &kb (edge c $y) $y))
+!(type:of (match &kb (edge c $y) $y){$y})
 !(let (Established (PrimeTypedQuery $type $answers $others))
-      (try (type:of (match &kb (edge c $y) $y)))
+      (try (type:of (match &kb (edge c $y) $y){$y}))
    ($answers $others))
 
 ; ---- The key may be at any position: the edges that arrive at b.
 !(let (Established (PrimeTypedQuery $type $answers $others))
-      (try (type:of (match &kb (edge $x b) $x)))
+      (try (type:of (match &kb (edge $x b) $x){$x}))
    ($type $answers))
 
 ; ---- A key that is no node is no query of this relation; a stored atom of
 ; the wrong type makes the declaration false, and the judgment is refuted.
-!(try (type:of (match &kb (edge d $y) $y)))
+!(try (type:of (match &kb (edge d $y) $y){$y}))
 !(bind! &bad (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(add-atom &bad (: node (u 0)))
 !(add-atom &bad (: a node))
 !(add-atom &bad (type:stored (edge node node)))
 !(add-atom &bad (edge a node))
-!(try (type:of (match &bad (edge a $y) $y)))
+!(try (type:of (match &bad (edge a $y) $y){$y}))
 
 ; ---- Negative control: in a space that declares nothing, the same query
 ; has only a dynamic type, as before.
@@ -79,7 +79,7 @@
 !(add-atom &plain (edge a b))
 !(add-atom &plain (edge a b))
 !(collapse (match &plain (edge a $y) $y))
-!(try (type:of (match &plain (edge a $y) $y)))
+!(try (type:of (match &plain (edge a $y) $y){$y}))
 
 ; ---- The occurrences are part of the space.  Each has its type, the maps
 ; compute by their equations, and an answer written by hand checks against
@@ -108,6 +108,6 @@
 !(type:of &kb edge@b@a)
 !(try (type:of &kb edge@a@c))
 !(let (Established (PrimeTypedQuery $type $answers $others))
-      (try (type:of (match &kb (edge a $y) $y)))
+      (try (type:of (match &kb (edge a $y) $y){$y}))
    $answers)
 

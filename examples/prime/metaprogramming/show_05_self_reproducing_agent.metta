@@ -42,7 +42,7 @@
          (let (Generation $g $seen $kept $description $child $self) *$c
            (let $knows-itself (noreduce-eq $self $c)
              (let $rest (live $child (- $k 1))
-               (cons-atom (Gen $g (saw $seen) (best $kept) (knows-itself $knows-itself)) $rest)))))
+               (cons-atom (Gen $g (saw $seen) (best $kept) (knows-itself $knows-itself)) $rest)){$rest}){$knows-itself}){$g $seen $kept $description $child $self}){$c}
        ()))
 
 ; Generation 0's code.

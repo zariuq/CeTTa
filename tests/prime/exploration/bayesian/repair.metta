@@ -56,7 +56,7 @@
         (case (bayes:reduce $old $new $posterior)
           (((bayes:posterior $reduced $ratio)
              (bayes:choose $reduced $kernel $goal $allowed $plans))
-           ($failure $failure)))) ($failure $failure))))
+           ($failure $failure))){$reduced $ratio $failure}) ($failure $failure))){$failure})
 !(let* (($prior (repair:prior)) ($likelihood (repair:likelihood)) ($kernel (repair:kernel))
         ($goal (repair:urgent-goal)) ($plans (repair:plans)) ($allowed (repair:allowed)))
    (case (bayes:update $prior $likelihood)

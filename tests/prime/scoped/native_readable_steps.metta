@@ -45,7 +45,7 @@
    (if (== $t ()) False
        (let $h (car-atom $t)
          (let $rest (cdr-atom $t)
-           (if (mentions $h $s) True (mentions-any $rest $s))))))
+           (if (mentions $h $s) True (mentions-any $rest $s))){$rest}){$h}))
 (= (compiled $name)
    (let (quote (SetNativeProofV1 $n $prop $proof $term $type $context $rules $rows $digest))
         (lift (set:native-proof &thy $name))
@@ -76,7 +76,7 @@
           (set:native-normalize &thy $with $consumer)
        (let (SetNativeNormalFormV1 $c2 $b2 $a2 $normal2 $s2 $r2)
             (set:native-normalize &thy $without $consumer)
-         (SameValue (== $normal $normal2) (== $r1 $r2)))))
+         (SameValue (== $normal $normal2) (== $r1 $r2))){$c2 $b2 $a2 $normal2 $s2 $r2}){$c1 $b1 $application $normal $s1 $r1}){$consumer}
    NotAPackage)))
 
 ; A step that proves nothing publishes nothing, so nothing has a package of

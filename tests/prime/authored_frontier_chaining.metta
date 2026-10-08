@@ -41,7 +41,7 @@
        (chain (proof:reify $tree) $quoted-proof
          (unify $quoted-proof (quote $proof)
            (type:check $proof proof:D)
-           False)))))
+           False)))){$_})
 
 ; The same goal has no proof within depth two.
 !(let $_ (bind! &proof:shallow-declarations (new-space queue))
@@ -56,7 +56,7 @@
            (S (S Z))
            proof:D))
        (($tree (proof:unexpected $tree)))
-       proof:not-found)))
+       proof:not-found)){$_})
 
 ; The kernel independently rejects a composition with the wrong middle type.
 !(type:check
@@ -83,4 +83,4 @@
        (chain (proof:reify $tree) $quoted-proof
          (unify $quoted-proof (quote $proof)
            (type:check $proof (proof:P proof:a))
-           False)))))
+           False)))){$_})

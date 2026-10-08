@@ -91,4 +91,4 @@
 !(row eq-captured-different)
 !(let $f (lam z (Pair z $n)) (let $g (lam w (Pair w $m)) (Triple (== $f $g) $n $m)))
 !(row eq-captured-bound)
-!(let $f (lam z (Pair z $n)) (let $g (lam w (Pair w $m)) (let $n 5 (let $m 5 (== $f $g)))))
+!(let $f (lam z (Pair z $n)) (let $g (lam w (Pair w $m)) (let $n 5 (let $m 5 (== $f $g)){$m}){$n}))

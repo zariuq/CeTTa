@@ -6,7 +6,7 @@
 
 (= (h $x) (unify $x 5 ok no))
 (= (hz $x) (unify $x z ok no))
-(= (second $s $t) (let (d $s $t) (d a b) (Got $t)))
+(= (second $s $t) (let (d $s $t) (d a b) (Got $t)){$s $t})
 (= (lazy-id $x) $x)
 (= (first-of (lp $a $b)) $a)
 
@@ -24,22 +24,22 @@
 ; captured by the binder z, whoever substitutes it.
 !(let $y z ((lam z (Pair z $y)) 6))
 !(let $r (hz $y) ((lam z (Pair z $y)) 6))
-!(let $f (lam z (Pair z $y)) (let $y z ($f 6)))
+!(let $f (lam z (Pair z $y)) (let $y z ($f 6)){$y})
 
 ; ---- let (8/07, unchanged): a repeated name refines; a conflict is no
 ; answer.
-!(Pair (let $x 1 $x) (let $x 2 $x))
-!(let $x $y (foo (let $x $z (bar $x $y $z))))
-!(let $q (let (d $y) (d 5) ok) (Pair $y $q))
+!(Pair (let $x 1 $x){$x} (let $x 2 $x){$x})
+!(let $x $y (foo (let $x $z (bar $x $y $z)){$x}))
+!(let $q (let (d $y) (d 5) ok){$y} (Pair $y $q))
 !(let $r (second a $t) (Pair $t $r))
 !(second c $t)
-!(let* (($x a) ($x b)) (got $x))
+!(let* (($x a) ($x b)) (got $x)){$x}
 
 ; ---- A role belongs to an occurrence: a quotation in value position is
 ; sealed, and a quoted pattern elsewhere, here in a branch never taken, does
 ; not unseal it.  A quoted pattern's own names bind.
 !(let $x 5 (if True @$x no))
-!(let $x 5 (if True @$x (match &self @(never $x) no)))
+!(let $x 5 (if True @$x (match &self @(never $x) no){$x}))
 !(case @(f a) (((quote (f $y)) (Got $y))))
 !(let $r (h $x) (Pair $x @$x))
 
@@ -61,5 +61,5 @@
 !(let $r (h $y) (assertEqual (+ $y 1) 6))
 !(let $t (lazy-id (+ $y 1)) (let $r (h $y) $t))
 !(let $p (lp (+ $y 1) 0) (let $r (h $y) (first-of $p)))
-!(let $r (h $y) (once (let $u (println! (in-once $y)) (unify $y 6 yes no))))
+!(let $r (h $y) (once (let $u (println! (in-once $y)) (unify $y 6 yes no)){$u}))
 !(let $r (h $y) (let $s (new-space) (let $u (add-atom $s (fact $y)) (get-atoms $s))))

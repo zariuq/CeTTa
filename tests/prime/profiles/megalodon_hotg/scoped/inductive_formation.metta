@@ -26,11 +26,11 @@
 ; A plain unknown admission also leaves no partial declaration or principle.
 !(set:inductive &thy GhostTree (u 0)
    (: GhostNode (-> MissingType GhostTree)))
-!(== (collapse (match &thy (: GhostTree $type) $type)) ())
-!(== (collapse (match &thy (: GhostNode $type) $type)) ())
-!(== (collapse (match &thy (: GhostTree-rec $type) $type)) ())
+!(== (collapse (match &thy (: GhostTree $type) $type){$type}) ())
+!(== (collapse (match &thy (: GhostNode $type) $type){$type}) ())
+!(== (collapse (match &thy (: GhostTree-rec $type) $type){$type}) ())
 !(== (collapse (match &thy
-        (set:known GhostTree-ind $p $o $f $d $r $s) $p)) ())
+        (set:known GhostTree-ind $p $o $f $d $r $s) $p){$p $o $f $d $r $s}) ())
 
 ; After its missing type is supplied, the same declaration earns admission.
 ; Its dependent recursor computes on the constructor in the native kernel.
@@ -100,13 +100,13 @@
 !(set:inductive &names HygieneTree (u 0) (: v1 (-> P P~1 HygieneTree)))
 ; The stored recursor type, read back, is the recursor's type.  Its motive
 ; ranges over a universe at a level variable; each instance is checked.
-!(let $ty (match &names (: HygieneTree-rec $ty) $ty)
+!(let $ty (match &names (: HygieneTree-rec $ty) $ty){$ty}
    (let (-> (: $motive (-> $data (u $level))) $methods) $ty
      (type:check &names HygieneTree-rec
-       (-> (: $motive (-> $data (u 0))) $methods))))
-!(let $ty (match &names (: HygieneTree-rec $ty) $ty)
+       (-> (: $motive (-> $data (u 0))) $methods)))){$ty}
+!(let $ty (match &names (: HygieneTree-rec $ty) $ty){$ty}
    (let (-> (: $motive (-> $data (u $level))) $methods) $ty
      (type:check &names HygieneTree-rec
-       (-> (: $motive (-> $data (u 1))) $methods))))
+       (-> (: $motive (-> $data (u 1))) $methods)))){$ty}
 !(type:eq &names
    (HygieneTree-rec (lam p P) (lam aa (lam bb aa)) (v1 a b)) a)

@@ -59,7 +59,7 @@
 ; demand bubble that commits the binding to resampling
 ; (GSLT.Dynamics.DemandAgreement.lazyShared_eq_resampledUses_iff).
 !(demand:committed resample
-   (let $unit (mixed) (Twin (outcome $unit True) (outcome $unit False))))
+   (let $unit (mixed) (Twin (outcome $unit True) (outcome $unit False))){$unit})
 
 ; ---- The intensional face.
 !(get-type (ctx:bind ctx:empty unit (mixed)))

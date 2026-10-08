@@ -5,6 +5,7 @@
 
 #include "atom.h"
 #include "symbol.h"
+#include "tests/test_runtime_stats_stubs.h"
 
 enum { COPY_DEPTH = 100000 };
 
@@ -62,6 +63,79 @@ static void check_deep_print(Atom *list, bool petta) {
     fclose(stream);
 }
 
+typedef struct {
+    Atom *variable;
+    unsigned visited;
+} MapProbe;
+
+static Atom *map_probe_leaf(Arena *arena, Atom *atom, void *context) {
+    MapProbe *probe = context;
+    probe->visited++;
+    if (atom->kind == ATOM_VAR)
+        return probe->variable;
+    return atom_deep_copy(arena, atom);
+}
+
+static void check_map(Arena *source, Arena *destination) {
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    CettaRuntimeStats before, after;
+    cetta_runtime_stats_snapshot(&before);
+#endif
+    Atom *node = atom_var(source, "source-name");
+    Atom *head = atom_symbol(source, "Pair");
+    for (unsigned depth = 0; depth < COPY_DEPTH; depth++)
+        node = atom_expr3(source, head, node, node);
+    MapProbe first = {atom_var(destination, "first-image"), 0};
+    MapProbe second = {atom_var(destination, "second-image"), 0};
+    Atom *one = atom_deep_copy_mapped(destination, node, map_probe_leaf, &first);
+    Atom *two = atom_deep_copy_mapped(destination, node, map_probe_leaf, &second);
+    assert(first.visited == 2u && second.visited == 2u);
+    AtomDeepCopySession *session = atom_deep_copy_session_new_mapped(
+        destination, map_probe_leaf, &first);
+    assert(session != NULL);
+    Atom *left = atom_expr2(source, head, node);
+    Atom *right = atom_expr2(source, node, head);
+    Atom *left_copy = atom_deep_copy_session_copy(session, left);
+    Atom *right_copy = atom_deep_copy_session_copy(session, right);
+    assert(left_copy->expr.elems[1] == right_copy->expr.elems[0]);
+    assert(first.visited == 4u);
+    atom_deep_copy_session_free(session);
+
+    /* Storage already belonging to the destination still needs mapping. */
+    Atom *resident = atom_expr2(destination, head, first.variable);
+    session = atom_deep_copy_session_new_mapped(
+        destination, map_probe_leaf, &second);
+    assert(!atom_deep_copy_session_settled(session, resident));
+    Atom *mapped_resident = atom_deep_copy_session_copy(session, resident);
+    assert(mapped_resident != resident);
+    assert(mapped_resident->expr.elems[1] == second.variable);
+    atom_deep_copy_session_free(session);
+
+    for (unsigned depth = 0; depth < COPY_DEPTH; depth++) {
+        assert(one->expr.elems[1] == one->expr.elems[2]);
+        assert(two->expr.elems[1] == two->expr.elems[2]);
+        one = one->expr.elems[1];
+        two = two->expr.elems[1];
+    }
+    assert(one == first.variable && two == second.variable && one != two);
+    MapProbe failure = {NULL, 0};
+    assert(atom_deep_copy_mapped(destination, node, map_probe_leaf, &failure) == NULL);
+    session = atom_deep_copy_session_new_mapped(destination, map_probe_leaf, &failure);
+    assert(atom_deep_copy_session_copy(session, node) == NULL);
+    unsigned visits = failure.visited;
+    assert(atom_deep_copy_session_copy(session, head) == NULL);
+    assert(failure.visited == visits);
+    atom_deep_copy_session_free(session);
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    cetta_runtime_stats_snapshot(&after);
+    uint64_t allocated = after.counters[CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_ALLOC_BYTES] -
+        before.counters[CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_ALLOC_BYTES];
+    uint64_t released = after.counters[CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_FREE_BYTES] -
+        before.counters[CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_FREE_BYTES];
+    assert(allocated > 0u && allocated == released);
+#endif
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena source;
@@ -79,6 +153,7 @@ int main(void) {
     arena_init(&destination);
     arena_set_runtime_kind(&source, CETTA_ARENA_RUNTIME_KIND_EVAL);
     arena_set_runtime_kind(&destination, CETTA_ARENA_RUNTIME_KIND_EVAL);
+    check_map(&source, &destination);
 
     /* A name in a reusable buffer is read by its spelling, not its address
      * (atom_is_symbol_named); atom_is_symbol is for static names. */

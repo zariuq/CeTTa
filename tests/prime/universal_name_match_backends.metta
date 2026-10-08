@@ -9,13 +9,13 @@
     (reify
       (match &universal-native
              (edge $@(native-left) $@(native-right))
-             (Pair $@(native-left) $@(native-right))))
+             (Pair $@(native-left) $@(native-right))){$@(native-left) $@(native-right)})
     ((Pair A B)))
 !(assertEqual
     (reify
       (match &universal-native
              (edge $@(native-same) $@(native-same))
-             matched))
+             matched){$@(native-same)})
     ())
 
 ; A query variable and a differently named variable stored in the space are
@@ -38,13 +38,13 @@
     (reify
       (match &universal-candidate
              (edge $@(candidate-left) $@(candidate-right))
-             (Pair $@(candidate-left) $@(candidate-right))))
+             (Pair $@(candidate-left) $@(candidate-right))){$@(candidate-left) $@(candidate-right)})
     ((Pair A B)))
 !(assertEqual
     (reify
       (match &universal-candidate
              (edge $@(candidate-same) $@(candidate-same))
-             matched))
+             matched){$@(candidate-same)})
     ())
 
 !(bind! &universal-candidate-contextual (new-space))

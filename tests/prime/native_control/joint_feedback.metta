@@ -16,7 +16,7 @@
    (if (== $coverage ()) 0
      (let ($head $tail) (decons-atom $coverage)
        (+ (if (search:covered? $head $chosen) 0 1)
-          (new-coverage $tail $chosen)))))
+          (new-coverage $tail $chosen))){$head $tail}))
 
 ; The first witness is tentative: a cannot coexist with the necessary h.
 ; Changing the cardinality/goal restarts only the consumer, retaining the source.

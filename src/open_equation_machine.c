@@ -711,6 +711,23 @@ static bool oem_template_slot(OemCompile *compile, uint32_t slot,
         oem_reject(compile, "out of memory");
 }
 
+enum { OEM_REPRESENTATION_LIST = 0x80u };
+
+static inline __attribute__((always_inline)) uint8_t
+oem_value_representation(const Atom *atom) {
+    /* The constructor's negative fact covers both private role tags and
+     * typed lists. Ordinary terms need no inspection of their children. */
+    if (!atom_structural_may_have_internal_tag(atom))
+        return PETTA_VALUE_ORDINARY;
+    return (uint8_t)atom_petta_value_representation(atom) |
+        (atom_is_list(atom) ? OEM_REPRESENTATION_LIST : 0u);
+}
+
+static inline __attribute__((always_inline)) bool
+oem_decomposition_compatible(const Atom *left, const Atom *right) {
+    return oem_value_representation(left) == oem_value_representation(right);
+}
+
 static bool oem_template_build(OemCompile *compile, const uint32_t *children,
                                uint32_t count, uint32_t *out) {
     CettaOpenEquationProgram *program = compile->program;
@@ -727,6 +744,8 @@ static bool oem_template_build(OemCompile *compile, const uint32_t *children,
     const OemTemplate *head = count
         ? &program->templates[children[0]] : NULL;
     Atom *head_value = head && head->kind == OEM_T_LITERAL ? head->literal : NULL;
+    if (atom_is_internal_tag(head_value, CETTA_INTERNAL_TAG_LIST))
+        item.representation = OEM_REPRESENTATION_LIST;
     if ((count == 2u && atom_is_internal_tag(head_value,
                 CETTA_INTERNAL_TAG_PETTA_PROLOG_COMPOUND)) ||
         (count == 3u && atom_is_internal_tag(head_value,
@@ -839,6 +858,8 @@ static bool oem_head_data(OemCompile *compile, Atom *atom, uint32_t depth) {
 /* The head program for one parameter at `reg`. */
 static bool oem_compile_param(OemCompile *compile, Atom *param, uint32_t reg,
                               uint32_t depth) {
+    if (atom_is_list_rest(param))
+        return oem_reject(compile, "typed rest pattern");
     CettaOpenEquationProgram *program = compile->program;
     if (!param || depth > OEM_MAX_DEPTH)
         return oem_reject(compile, "head pattern too deep");
@@ -1000,6 +1021,8 @@ static bool oem_lower_pattern(OemCompile *compile, Atom *pattern,
                               bool lists, uint32_t *out) {
     if (!pattern || depth > OEM_MAX_DEPTH)
         return oem_reject(compile, "pattern too deep");
+    if (atom_is_list_rest(pattern))
+        return oem_reject(compile, "typed rest pattern");
     if (pattern->kind == ATOM_VAR) {
         uint32_t slot = 0u;
         return oem_slot_of(compile, pattern->var_id, &slot) &&
@@ -1581,6 +1604,14 @@ static bool oem_output_is_hole(const OemNode *node) {
 static void oem_let_fills_pattern(OemCompile *compile, uint32_t pattern,
                                   uint32_t value) {
     OemNode *node = &compile->nodes[value];
+    if (node->kind == OEM_N_BUILTIN_ENTRY &&
+        node->exposed == compile->nodes[node->body].exposed) {
+        /* The guard and its native producer share the same output hole.
+         * Preserve the ordinary let/producer slot fusion on both paths. */
+        oem_let_fills_pattern(compile, pattern, node->body);
+        node->exposed = compile->nodes[node->body].exposed;
+        return;
+    }
     if (compile->program->templates[pattern].kind == OEM_T_SLOT &&
         oem_output_is_hole(node))
         node->exposed = pattern;
@@ -2107,8 +2138,19 @@ static bool oem_build_builtin_entry(OemCompile *compile, Atom *expr,
     OemNode entry = {.kind = OEM_N_BUILTIN_ENTRY, .body = *out,
         .relation = program->host_plan_len};
     program->host_plans[program->host_plan_len++] = plan;
+    /* A native result already represented by a fresh temporary is an
+     * unconstrained destination on either authority path. Reuse it rather
+     * than introducing a second cell and an unnecessary unification.
+     * Source variables and constructor templates still need a separate
+     * hole: a replacement implementation can return a different shape. */
+    uint32_t native_output = compile->nodes[entry.body].exposed;
+    const OemTemplate *result = &program->templates[native_output];
+    bool reuse = result->kind == OEM_T_SLOT && result->slot >= compile->var_len;
+    if (reuse)
+        entry.exposed = native_output;
     return oem_lower_pattern(compile, expr, NULL, depth + 1u, false,
-                             &entry.value) && oem_hole(compile, &entry.exposed) &&
+                             &entry.value) &&
+        (reuse || oem_hole(compile, &entry.exposed)) &&
         oem_node(compile, entry, out);
 }
 
@@ -2702,9 +2744,10 @@ static bool oem_emit_goals(OemCompile *compile, uint32_t index) {
                 .kind = OEM_S_BUILTIN_ENTRY, .relation = node.relation,
                 .value = node.value, .pattern = node.exposed,
             }, &entry) &&
-            oem_emit(compile, (OemStep){.kind = OEM_S_BIND,
+            (node.exposed == compile->nodes[node.body].exposed ||
+             oem_emit(compile, (OemStep){.kind = OEM_S_BIND,
                 .pattern = node.exposed,
-                .value = compile->nodes[node.body].exposed}, NULL) &&
+                .value = compile->nodes[node.body].exposed}, NULL)) &&
             oem_emit_goals(compile, node.body);
         if (ok)
             compile->program->steps[entry].target = compile->program->step_len;
@@ -2860,9 +2903,10 @@ static bool oem_emit_tail(OemCompile *compile, uint32_t index) {
                 .kind = OEM_S_BUILTIN_ENTRY, .relation = node.relation,
                 .value = node.value, .pattern = node.exposed,
             }, &entry) &&
-            oem_emit(compile, (OemStep){.kind = OEM_S_BIND,
+            (node.exposed == compile->nodes[node.body].exposed ||
+             oem_emit(compile, (OemStep){.kind = OEM_S_BIND,
                 .pattern = node.exposed,
-                .value = compile->nodes[node.body].exposed}, NULL) &&
+                .value = compile->nodes[node.body].exposed}, NULL)) &&
             oem_emit_tail(compile, node.body);
         if (!ok)
             return false;
@@ -3116,7 +3160,7 @@ static void oem_template_reads(const CettaOpenEquationProgram *program,
                                uint8_t *celled) {
     const OemTemplate *item = &program->templates[template_index];
     if (item->kind == OEM_T_SLOT) {
-        if (!(flow[item->slot] & OEM_SLOT_MUST_SEEN))
+        if (celled && !(flow[item->slot] & OEM_SLOT_MUST_SEEN))
             celled[item->slot] = 1u;
         flow[item->slot] = OEM_SLOT_MUST_SEEN | OEM_SLOT_MAY_SEEN;
         return;
@@ -3163,11 +3207,11 @@ static bool oem_mark_first_stores(OemCompile *compile, OemEquation *equation) {
     uint32_t first = equation->first_step;
     uint32_t end = program->step_len;
     size_t steps = end - first ? end - first : 1u;
-    if ((size_t)slots > SIZE_MAX / 4u ||
-        steps > (SIZE_MAX - (size_t)slots * 4u) / 2u ||
-        steps > (SIZE_MAX - (size_t)slots * 4u - steps * 2u) / slots)
+    if ((size_t)slots > SIZE_MAX / 5u ||
+        steps > (SIZE_MAX - (size_t)slots * 5u) / 2u ||
+        steps > (SIZE_MAX - (size_t)slots * 5u - steps * 2u) / slots)
         return oem_reject(compile, "slot analysis too wide");
-    size_t bytes = (size_t)slots * 4u + steps * 2u + steps * slots;
+    size_t bytes = (size_t)slots * 5u + steps * 2u + steps * slots;
     uint8_t inline_analysis[512];
     uint8_t *analysis = bytes <= sizeof(inline_analysis)
         ? inline_analysis : malloc(bytes);
@@ -3180,7 +3224,8 @@ static bool oem_mark_first_stores(OemCompile *compile, OemEquation *equation) {
     /* The slots some path mentions; a slot none mentions is never read or
      * stored, and needs no cell. */
     uint8_t *mentioned = stored + slots;
-    uint8_t *candidate = mentioned + slots;
+    uint8_t *entry_flow = mentioned + slots;
+    uint8_t *candidate = entry_flow + slots;
     uint8_t *reached = candidate + steps;
     uint8_t *slot_flow = reached + steps;
     bool ok = true;
@@ -3222,7 +3267,6 @@ static bool oem_mark_first_stores(OemCompile *compile, OemEquation *equation) {
                     flow, celled);
         }
         if (step->kind == OEM_S_BIND || step->kind == OEM_S_MATCH ||
-            step->kind == OEM_S_ENTRY || step->kind == OEM_S_BUILTIN_ENTRY ||
             step->kind == OEM_S_HOST || step->kind == OEM_S_CASE)
             oem_template_reads(program, step->value, flow, celled);
         if (step->kind == OEM_S_HOST &&
@@ -3275,15 +3319,27 @@ static bool oem_mark_first_stores(OemCompile *compile, OemEquation *equation) {
             }
             if (target == end)
                 continue;
+            uint8_t *edge_flow = flow;
+            if (edge == 0u && (step->kind == OEM_S_ENTRY ||
+                              step->kind == OEM_S_BUILTIN_ENTRY)) {
+                /* Only the stale path reads the saved source. Its unfilled
+                 * slots acquire cells at that boundary, not on the normal
+                 * path before a let's producer has even run. */
+                memcpy(entry_flow, flow, slots);
+                oem_template_reads(program, step->value, entry_flow, NULL);
+                edge_flow = entry_flow;
+                for (uint32_t slot = 0u; slot < slots; slot++)
+                    mentioned[slot] |= edge_flow[slot];
+            }
             uint8_t *to_flow = &slot_flow[(size_t)(target - first) * slots];
             if (!reached[target - first]) {
-                memcpy(to_flow, flow, slots);
+                memcpy(to_flow, edge_flow, slots);
                 reached[target - first] = 1u;
             } else {
                 for (uint32_t slot = 0u; slot < slots; slot++)
                     to_flow[slot] =
-                        (to_flow[slot] & flow[slot] & OEM_SLOT_MUST_SEEN) |
-                        ((to_flow[slot] | flow[slot]) & OEM_SLOT_MAY_SEEN);
+                        (to_flow[slot] & edge_flow[slot] & OEM_SLOT_MUST_SEEN) |
+                        ((to_flow[slot] | edge_flow[slot]) & OEM_SLOT_MAY_SEEN);
             }
         }
     }
@@ -4339,6 +4395,9 @@ typedef struct {
 typedef struct {
     Atom *left;
     Atom *right;
+    /* A borrowed suffix of right, used only within one atomic unification.
+     * It becomes an arena-owned header before entering a binding. */
+    CettaExprLen right_offset;
 } OemPair;
 
 /* A pending expression of the answer resolver: its children's results are
@@ -4841,11 +4900,24 @@ static inline __attribute__((always_inline)) OemUnify oem_unify_marked(
     if (!oem_reserve((void **)&cursor->pairs, &cursor->pair_cap, 1u,
                      sizeof(*cursor->pairs)))
         return OEM_UNIFY_ERROR;
-    cursor->pairs[len++] = (OemPair){left, right};
+    cursor->pairs[len++] = (OemPair){left, right, 0u};
     while (len > 0u) {
         OemPair pair = cursor->pairs[--len];
         Atom *a = oem_deref(cursor, pair.left);
         Atom *b = oem_deref(cursor, pair.right);
+        Atom right_view;
+        if (pair.right_offset) {
+            if (b->kind != ATOM_EXPR || pair.right_offset > b->expr.len)
+                return OEM_UNIFY_ERROR;
+            right_view = *b;
+            right_view.expr.elems += pair.right_offset;
+            right_view.expr.len -= pair.right_offset;
+            right_view.flags &= ~ATOM_FLAG_HASH_VALID;
+            /* The parent's summaries need not describe its suffix. Keep
+             * them unknown until a retained header computes exact facts. */
+            right_view.structural_facts = 0u;
+            b = &right_view;
+        }
         if (a == b)
             continue;
         uint32_t left_cell = 0u;
@@ -4859,6 +4931,12 @@ static inline __attribute__((always_inline)) OemUnify oem_unify_marked(
                 (!right_open || left_cell > right_cell);
             uint32_t index = bind_left ? left_cell : right_cell;
             Atom *value = bind_left ? b : a;
+            if (value == &right_view) {
+                value = atom_expr_suffix(&cursor->region, pair.right,
+                                          pair.right_offset);
+                if (!value)
+                    return OEM_UNIFY_ERROR;
+            }
             bool failed = false;
             if (oem_occurs(cursor, index, value, &failed))
                 return OEM_UNIFY_FAIL;
@@ -4870,27 +4948,43 @@ static inline __attribute__((always_inline)) OemUnify oem_unify_marked(
         }
         if (a->kind == ATOM_VAR || b->kind == ATOM_VAR)
             return OEM_UNIFY_ERROR;
-        if (!atom_petta_decomposition_compatible(a, b))
-            return OEM_UNIFY_FAIL;
         /* A cons cell and a flat list are one list value when their
          * elements are: the cell's head meets the list's first element and
          * its tail the rest of the list, which shares the list's storage.
          * A cell is never the empty list. */
         bool left_list_cell = oem_is_list_cell(a);
-        if (left_list_cell != oem_is_list_cell(b)) {
+        bool right_list_cell = oem_is_list_cell(b);
+        if (left_list_cell != right_list_cell) {
+            Atom **flat = left_list_cell ? &b : &a;
+            if (atom_is_list(*flat)) {
+                /* The shared list adapter keeps typed tails typed, ending
+                 * in [] rather than (). A bare list tag never enters the
+                 * region as a value. */
+                *flat = petta_semantics_flat_list_spine(&cursor->region, *flat);
+                if (!*flat)
+                    return OEM_UNIFY_ERROR;
+                if (!oem_is_list_cell(*flat))
+                    return OEM_UNIFY_FAIL;
+                left_list_cell = oem_is_list_cell(a);
+                right_list_cell = oem_is_list_cell(b);
+            }
+        }
+        if (!oem_decomposition_compatible(a, b))
+            return OEM_UNIFY_FAIL;
+        if (left_list_cell != right_list_cell) {
             Atom *list_cell = left_list_cell ? a : b;
             Atom *list = left_list_cell ? b : a;
             if (list->kind != ATOM_EXPR || list->expr.len == 0u)
                 return OEM_UNIFY_FAIL;
-            Atom *rest = atom_expr_suffix(&cursor->region, list, 1u);
-            if (!rest ||
-                !oem_reserve((void **)&cursor->pairs, &cursor->pair_cap,
+            Atom *list_root = list == &right_view ? pair.right : list;
+            CettaExprLen offset = list == &right_view ? pair.right_offset : 0u;
+            if (!oem_reserve((void **)&cursor->pairs, &cursor->pair_cap,
                              len + 2u, sizeof(*cursor->pairs)))
                 return OEM_UNIFY_ERROR;
             cursor->pairs[len++] =
-                (OemPair){list_cell->expr.elems[2], rest};
+                (OemPair){list_cell->expr.elems[2], list_root, offset + 1u};
             cursor->pairs[len++] =
-                (OemPair){list_cell->expr.elems[1], list->expr.elems[0]};
+                (OemPair){list_cell->expr.elems[1], list->expr.elems[0], 0u};
             continue;
         }
         if (a->kind == ATOM_EXPR && b->kind == ATOM_EXPR) {
@@ -4912,7 +5006,7 @@ static inline __attribute__((always_inline)) OemUnify oem_unify_marked(
                 return OEM_UNIFY_ERROR;
             for (CettaExprIndex child = a->expr.len; child-- > 0u;)
                 cursor->pairs[len++] =
-                    (OemPair){a->expr.elems[child], b->expr.elems[child]};
+                    (OemPair){a->expr.elems[child], b->expr.elems[child], 0u};
             continue;
         }
         if (!atom_eq(a, b))
@@ -4953,6 +5047,12 @@ static Atom *oem_instantiate_in(CettaOpenEquationCursor *cursor,
                                  child_index);
         if (!children[index])
             return NULL;
+        /* Store the current root, retaining an unbound cell when it is
+         * still open. Keeping a bound cell here would make a closed queue
+         * retain its whole chain of old bindings and rescan that chain on
+         * every later occurs check. Construction and its bindings share
+         * the activation's existing rollback/region lifetime. */
+        children[index] = oem_deref(cursor, children[index]);
     }
     return item->kind == OEM_T_BUILD
         ? atom_expr(arena, children, item->count)
@@ -5010,14 +5110,17 @@ static __attribute__((noinline)) OemUnify oem_unify_list_template(
          petta_semantics_is_cons_constraint(term))) {
         first = term->expr.elems[1];
         rest = term->expr.elems[2];
-    } else if (term->kind == ATOM_EXPR && term->expr.len > 0u &&
-               atom_petta_value_representation(term) == PETTA_VALUE_ORDINARY) {
-        first = term->expr.elems[0];
-        rest = atom_expr_suffix(&cursor->region, term, 1u);
+    } else {
+        Atom *const *elements = NULL;
+        CettaExprLen length = 0u;
+        if (!atom_sequence_view(term, &elements, &length) || length == 0u)
+            return term->kind == ATOM_VAR ? OEM_UNIFY_ERROR : OEM_UNIFY_FAIL;
+        first = elements[0];
+        rest = atom_is_list(term)
+            ? atom_sequence_like(&cursor->region, term, elements + 1u, length - 1u)
+            : atom_expr_suffix(&cursor->region, term, 1u);
         if (!rest)
             return OEM_UNIFY_ERROR;
-    } else {
-        return term->kind == ATOM_VAR ? OEM_UNIFY_ERROR : OEM_UNIFY_FAIL;
     }
     OemUnify unified = oem_unify_template(
         cursor, program, locals, program->template_children[item->first],
@@ -5051,7 +5154,7 @@ static OemUnify oem_unify_template(CettaOpenEquationCursor *cursor,
         return built ? oem_unify(cursor, built, term) : OEM_UNIFY_ERROR;
     }
     if (term->kind != ATOM_EXPR || term->expr.len != item->count ||
-        atom_petta_value_representation(term) != item->representation)
+        oem_value_representation(term) != item->representation)
         return term->kind == ATOM_VAR ? OEM_UNIFY_ERROR : OEM_UNIFY_FAIL;
     for (uint32_t index = 0u; index < item->count; index++) {
         OemUnify unified = oem_unify_template(
@@ -7950,9 +8053,9 @@ done:
     return result;
 }
 
-/* Check each represented node once. The list tag is accepted only as
- * the head of a complete internal cons carrier. Every other bare or
- * embedded internal tag remains outside the region's interpretation. */
+/* Check each represented node once. List tags are accepted only as the
+ * head of a complete cons or proper typed list. A rest pattern and every
+ * bare or embedded internal tag remain outside the region's interpretation. */
 bool cetta_open_equation_term_supported(Atom *root) {
     if (!root)
         return false;
@@ -8007,7 +8110,8 @@ bool cetta_open_equation_term_supported(Atom *root) {
             stack = grown;
             capacity = grown_capacity;
         }
-        CettaExprIndex first = petta_semantics_is_open_cons_value(atom) ? 1u : 0u;
+        CettaExprIndex first =
+            petta_semantics_is_open_cons_value(atom) || atom_is_list(atom) ? 1u : 0u;
         for (CettaExprIndex child = atom->expr.len; child-- > first;)
             stack[len++] = atom->expr.elems[child];
     }
@@ -8066,7 +8170,7 @@ static __attribute__((noinline)) OemRun oem_elements_step(
     if (!list)
         return OEM_RUN_HANDOFF;
     list = oem_deref(cursor, list);
-    if (list->kind != ATOM_EXPR || petta_semantics_is_open_cons_value(list))
+    if (!oem_plain_list(list) || petta_semantics_is_open_cons_value(list))
         return OEM_RUN_HOST;
     if (list->expr.len == 0u)
         return OEM_RUN_FAILED;
@@ -8178,11 +8282,32 @@ static inline bool oem_loop_due(const CettaOpenEquationCursor *cursor) {
 
 /* A changed authority runs its original source occurrence before any
  * argument producer. Keep this infrequent host exit outside the body loop. */
+static bool oem_fill_source_slots(CettaOpenEquationCursor *cursor,
+    const CettaOpenEquationProgram *program, Atom **locals, uint32_t index) {
+    const OemTemplate *item = &program->templates[index];
+    if (item->kind == OEM_T_SLOT) {
+        if (locals[item->slot])
+            return true;
+        Atom *cell = oem_new_cell(cursor);
+        return cell && oem_store_slot(cursor, locals, item->slot, cell);
+    }
+    if (item->kind == OEM_T_BUILD || oem_template_is_list(item)) {
+        for (uint32_t child = 0u; child < item->count; child++) {
+            if (!oem_fill_source_slots(cursor, program, locals,
+                    program->template_children[item->first + child]))
+                return false;
+        }
+    }
+    return true;
+}
+
 static __attribute__((cold, noinline)) OemRun oem_changed_entry_host(
     CettaOpenEquationCursor *cursor,
     const CettaOpenEquationProgram *program, Atom **locals,
     uint32_t local_count, const OemCont *cont, uint32_t depth,
     const OemStep *step) {
+    if (!oem_fill_source_slots(cursor, program, locals, step->value))
+        return OEM_RUN_HANDOFF;
     Atom *goal = oem_instantiate(cursor, program, locals, step->value);
     const OemStep *tail = oem_entry_tail(program, step);
     if (tail)
@@ -8329,7 +8454,7 @@ static OemRun oem_run_body(CettaOpenEquationCursor *cursor,
             if (!oem_loop_due(cursor)) {
                 if (cursor->runtime.interrupt)
                     cursor->poll++;
-                OemEntry callee;
+                OemEntry callee = {0};
                 OemRun run = oem_enter(cursor, target, relation, args, next,
                                        depth + 1u, &callee);
                 if (run != OEM_RUN_CALLED)
@@ -8604,17 +8729,18 @@ static bool oem_may_match(CettaOpenEquationCursor *cursor,
         if (op->kind == OEM_M_LIST) {
             /* A nonempty list; its rest is left open, and so is the whole
              * of a cell the operation reads as spelled. */
-            if (!open && (term->kind != ATOM_EXPR || term->expr.len == 0u ||
-                          atom_petta_value_representation(term) != PETTA_VALUE_ORDINARY))
+            Atom *const *elements = NULL;
+            CettaExprLen length = 0u;
+            if (!open && (!atom_sequence_view(term, &elements, &length) || length == 0u))
                 return false;
             regs[op->operand] =
                 open || (op->spelled &&
                          petta_semantics_is_cons_constraint(term))
-                    ? NULL : term->expr.elems[0];
+                    ? NULL : elements[0];
             regs[op->operand + 1u] = NULL;
             continue;
         }
-        if (!open && (!atom_petta_decomposition_compatible(term, op->literal) ||
+        if (!open && (!oem_decomposition_compatible(term, op->literal) ||
                       term->kind != ATOM_EXPR || term->expr.len != op->length))
             return false;
         for (uint32_t child = 0u; child < op->length; child++)
@@ -8771,7 +8897,7 @@ static inline __attribute__((always_inline)) OemRun oem_activate(
                                              binds_at_start, OEM_RUN_FAILED);
                 }
             } else if (term->kind == ATOM_EXPR &&
-                       atom_petta_decomposition_compatible(term, op->literal) &&
+                       oem_decomposition_compatible(term, op->literal) &&
                        term->expr.len == op->length) {
                 for (uint32_t child = 0u; child < op->length; child++)
                     regs[op->operand + child] = term->expr.elems[child];
@@ -8803,18 +8929,22 @@ static inline __attribute__((always_inline)) OemRun oem_activate(
                         petta_semantics_is_cons_constraint(term))) {
                 regs[op->operand] = term->expr.elems[1];
                 regs[op->operand + 1u] = term->expr.elems[2];
-            } else if (term->kind == ATOM_EXPR && term->expr.len > 0u &&
-                       atom_petta_value_representation(term) == PETTA_VALUE_ORDINARY) {
+            } else {
+                Atom *const *elements = NULL;
+                CettaExprLen length = 0u;
+                if (!atom_sequence_view(term, &elements, &length) || length == 0u) {
+                    cursor->stats.head_failures++;
+                    return oem_count_attempt(cursor, OEM_ATTEMPT_MISMATCH,
+                                             binds_at_start, OEM_RUN_FAILED);
+                }
                 /* A flat list's rest is its suffix, sharing its storage. */
-                Atom *rest = atom_expr_suffix(&cursor->region, term, 1u);
+                Atom *rest = atom_is_list(term)
+                    ? atom_sequence_like(&cursor->region, term, elements + 1u, length - 1u)
+                    : atom_expr_suffix(&cursor->region, term, 1u);
                 if (!rest)
                     return OEM_RUN_HANDOFF;
-                regs[op->operand] = term->expr.elems[0];
+                regs[op->operand] = elements[0];
                 regs[op->operand + 1u] = rest;
-            } else {
-                cursor->stats.head_failures++;
-                return oem_count_attempt(cursor, OEM_ATTEMPT_MISMATCH,
-                                         binds_at_start, OEM_RUN_FAILED);
             }
             break;
         }
@@ -10666,7 +10796,7 @@ static OemUnify oem_unify_row(CettaOpenEquationCursor *cursor, Atom *term,
         return copy ? oem_unify(cursor, term, copy) : OEM_UNIFY_ERROR;
     }
     if (term->kind != ATOM_EXPR || term->expr.len != row->expr.len ||
-        !atom_petta_decomposition_compatible(term, row))
+        !oem_decomposition_compatible(term, row))
         return term->kind == ATOM_VAR ? OEM_UNIFY_ERROR : OEM_UNIFY_FAIL;
     for (CettaExprIndex child = 0u; child < row->expr.len; child++) {
         OemUnify unified = oem_unify_row(cursor, term->expr.elems[child],
@@ -10696,7 +10826,7 @@ static OemUnify oem_unify_template_row(
                      : OEM_UNIFY_ERROR;
     }
     if (row->kind != ATOM_EXPR || row->expr.len != item->count ||
-        atom_petta_value_representation(row) != item->representation)
+        oem_value_representation(row) != item->representation)
         return OEM_UNIFY_FAIL;
     for (uint32_t index = 0u; index < item->count; index++) {
         OemUnify unified = oem_unify_template_row(
@@ -11871,7 +12001,7 @@ static CettaOpenEquationStep oem_cursor_run(
         OemFrame *frame = &cursor->frames[cursor->frame_len - 1u];
         oem_restore(cursor, frame);
         OemRun run = OEM_RUN_FAILED;
-        OemEntry entry;
+        OemEntry entry = {0};
         /* Once, elements, collection, resumption, host and match frames
          * carry the six highest relation values.  A once whose body has no
          * answer left fails. */

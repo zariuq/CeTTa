@@ -35,6 +35,9 @@ typedef enum {
      * consulted before the machine's direct-form dispatch.
      */
     PETTA_MACHINE_HOST_READY_OVERRIDE,
+    /* Open a language-owned scope without collecting its answers. The
+     * resulting control term runs under the same search continuation. */
+    PETTA_MACHINE_HOST_SCOPE_ACTIVATION,
     PETTA_MACHINE_HOST_STRICT_RELATIONAL_EXTENSION,
     /*
      * The shared host owns the intrinsic cases, while explicit PeTTa
@@ -224,6 +227,21 @@ typedef struct {
     /* PeTTa's translation places exposed result structure before ordered
      * equation effects. Other dialects require their own phase law. */
     bool source_output_constraints;
+    /* Structural equation matching and literal binding patterns are separate
+     * from evaluating a computation. An eager structural adapter must not
+     * execute a relation embedded in a pattern. */
+    bool structural_equation_heads;
+    bool exact_equation_arity;
+    bool literal_binding_patterns;
+    /* A completed call with no applicable equation may remain syntax. A
+     * matched equation with no returns still completes with no returns. */
+    bool unmatched_call_is_value;
+    bool empty_result_is_failure;
+    bool retain_query_variable_identity;
+    /* An eager tuple completes an argument before starting the next one.
+     * A fault occurrence returns from this application, rather than becoming
+     * a field in its constructed value. */
+    bool eager_argument_faults;
     /* PeTTa's collections are findall: an error raised while collecting
      * aborts the collection and propagates, as an exception does in
      * SWI-PeTTa.  Other dialects keep a raised error as an occurrence. */
@@ -238,6 +256,9 @@ typedef struct {
      * reached at run time is a value, applied to evaluated arguments
      * (petta_semantics_runtime_head). */
     bool forms_are_written_syntax;
+    /* Optional query union uses the ordinary ordered choice trail.  A pipe
+     * in a base-profile pattern remains literal row syntax. */
+    bool additive_match_queries;
     /* A `once` whose body is one call to the open tier takes its witness
      * from a portfolio of depth-first search and iterative deepening. */
     bool first_witness_portfolio;
@@ -270,6 +291,12 @@ typedef struct {
      * shared opcode; absence preserves the standalone machine's unrestricted
      * embedding contract. */
     bool (*builtin_allowed)(void *context, SymbolId head);
+    /* Optional language-owned application of an already completed primitive.
+     * Numeric register instructions retain their common direct path; other
+     * calls use the host's domain and result contracts. */
+    bool (*grounded_call)(void *context, Space *space, Arena *arena,
+        Atom *head, Atom **arguments, uint32_t argument_count,
+        CettaCallOutcome *outcome);
     /* Authority for authored equations sharing an intrinsic head. APPEND
      * enumerates the intrinsic first; OWNED selects this space's equations;
      * PROTECTED retains rows as data without executing them. */
@@ -309,6 +336,8 @@ typedef struct {
      * an authored occurrence as data.  The host owns that language policy;
      * the search machine still resolves only at a SOLVE boundary. */
     bool resolve_value_references_in_value_role;
+    Atom *(*activate_scope)(void *context, Space *space, Arena *arena,
+                            Atom *expression);
     /* Evaluate a goal the machine hands to the host, adding its answers to
      * `outcomes`; `end` says how the evaluation ended (call_outcome.h):
      * FAILURE once its answers are given, RAISED with an error the host
@@ -377,6 +406,14 @@ typedef struct {
         Atom *accumulator_binder, Atom *item_binder,
         Atom *step_expression, const Bindings *environment,
         Atom **result_out);
+    /* Sequence a closed numeric producer directly into a lexical fold.
+     * A completed value is ready for unification. An expression result is
+     * the already-materialized undelivered suffix and its prior accumulator;
+     * the machine resumes its existing fold continuation over those values. */
+    bool (*foldl_producer)(
+        void *context, Space *space, Arena *arena,
+        Atom *items, Atom *initial, Atom *accumulator_binder, Atom *item_binder,
+        Atom *body, const Bindings *environment, CettaCallOutcome *result);
     /* A generated determinate-map program may own a lexical map without
      * allocating one result variable and one relational goal per item.
      * NOT_APPLICABLE preserves the complete relational product. */

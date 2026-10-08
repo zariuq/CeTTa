@@ -8,6 +8,8 @@
 #include "he_typing.h"
 #include "library.h"
 #include "parser.h"
+#include "parallel_executor.h"
+#include "shared_transition.h"
 #include "match.h"
 #include "petta_program.h"
 #include "petta_runtime.h"
@@ -569,6 +571,82 @@ static void test_type_fact_warm_boundary(void) {
     puts("PASS: a resident closed boundary prunes its interior while foreign ownership restores inspection");
 }
 
+static void test_type_fact_request_transport(void) {
+    Arena request, published, foreign;
+    arena_init_detached(&request);
+    arena_init_detached(&published);
+    arena_init_detached(&foreign);
+    Space space;
+    space_init(&space);
+    Atom *subject = parse_one(&request, "((1 2) (3 4))");
+    Atom *expected = parse_one(&published, "((Number Number) (Number Number))");
+    ArenaMark before_answers = arena_mark(&request);
+    petta_type_facts_free_for_current_thread();
+    Atom **first = NULL, **second = NULL;
+    uint32_t count = 0u;
+    assert(petta_type_intrinsic_answers(&space, &request, subject, NULL,
+                                        &first, &count, NULL));
+    assert(count == 1u && atom_eq(first[0], expected));
+    assert(atom_graph_is_closed_for_arena(&request, first[0]));
+    size_t before_hit = arena_accounted_live_bytes(&request);
+    assert(petta_type_intrinsic_answers(&space, &request, subject, NULL,
+                                        &second, &count, NULL));
+    assert(count == 1u && second[0] == first[0]);
+    assert(arena_accounted_live_bytes(&request) == before_hit);
+    Atom *exported = atom_deep_copy(&published, second[0]);
+    free(second);
+    petta_type_facts_free_for_current_thread();
+    assert(atom_eq(first[0], expected));
+    free(first);
+
+    /* The same globally owned key is valid in either request. Its cached
+       answer is not: arena identity must still select the receiving owner. */
+    HashConsTable canonical;
+    hashcons_init_compact(&canonical);
+    Atom *leaves[4], *pairs[2];
+    for (unsigned i = 0u; i < 4u; i++)
+        leaves[i] = hashcons_get(&canonical, atom_int(&request, i + 1));
+    for (unsigned i = 0u; i < 2u; i++)
+        pairs[i] = hashcons_get(&canonical,
+            atom_expr(&request, &leaves[2u * i], 2u));
+    Atom *shared_subject = hashcons_get(&canonical,
+        atom_expr(&request, pairs, 2u));
+    assert(shared_subject && shared_subject->arena_id == 0u);
+    assert(petta_type_intrinsic_answers(&space, &request, shared_subject, NULL,
+                                        &first, &count, NULL));
+    assert(count == 1u && atom_graph_is_closed_for_arena(&request, first[0]));
+    free(first);
+    assert(petta_type_intrinsic_answers(&space, &foreign, shared_subject, NULL,
+                                        &first, &count, NULL));
+    assert(count == 1u && atom_eq(first[0], expected));
+    assert(atom_graph_is_closed_for_arena(&foreign, first[0]));
+    arena_reset(&request, before_answers);
+    assert(atom_eq(first[0], expected) && atom_eq(exported, expected));
+    free(first);
+
+    /* Reuse the same subject address across rollback. Epoch validation
+       must reject the old fact before accessing its discarded children. */
+    assert(petta_type_intrinsic_answers(&space, &request, subject, NULL,
+                                        &first, &count, NULL));
+    assert(count == 1u && atom_eq(first[0], expected));
+    free(first);
+    arena_reset(&request, before_answers);
+    size_t after_reset = arena_accounted_live_bytes(&request);
+    assert(petta_type_intrinsic_answers(&space, &request, subject, NULL,
+                                        &second, &count, NULL));
+    assert(count == 1u && atom_eq(second[0], expected));
+    assert(arena_accounted_live_bytes(&request) > after_reset);
+    free(second);
+    petta_type_facts_free_for_current_thread();
+    hashcons_free(&canonical);
+    space_free(&space);
+    arena_free(&request);
+    arena_free(&foreign);
+    assert(atom_eq(exported, expected));
+    arena_free(&published);
+    puts("PASS: resident type answers avoid transport, survive cache release and reject reset or foreign ownership");
+}
+
 static void test_type_fact_retention(void) {
     enum { SUBJECTS = 768, VARIABLES = 96, FIELDS = 1 + 2 * VARIABLES };
     Arena arena;
@@ -898,6 +976,107 @@ static void test_library_context_initialization(void) {
     }
     free(context);
     puts("PASS: library contexts initialize cache ownership on nonzero storage");
+}
+
+typedef struct {
+    CettaLibraryContext *library;
+    Space *space;
+    Atom *query;
+    pthread_mutex_t *setup;
+    pthread_barrier_t *ready;
+} SessionDecisionProbe;
+
+static void run_session_decision_probe(SessionDecisionProbe *probe) {
+    Arena answers;
+    arena_init(&answers);
+    ResultSet results;
+    result_set_init(&results);
+    CettaLibraryContext *previous = eval_current_library_context();
+    if (probe->setup) pthread_mutex_lock(probe->setup);
+    eval_set_library_context(probe->library);
+    if (probe->setup) pthread_mutex_unlock(probe->setup);
+    if (probe->ready) {
+        int status = pthread_barrier_wait(probe->ready);
+        assert(status == 0 || status == PTHREAD_BARRIER_SERIAL_THREAD);
+    }
+    bool worker = cetta_parallel_worker_active();
+    if (worker) cetta_shared_transition_scope_enter();
+    for (unsigned repeat = 0u; repeat < (worker ? 200u : 1u); repeat++) {
+        eval_top(probe->space, &answers, probe->query, &results);
+        assert(results.len == 2u);
+        for (CettaCount i = 0u; i < results.len; i++)
+            assert(atom_eq(results.items[i], atom_int(&answers, 7)));
+        results.len = 0u;
+    }
+    result_set_free(&results);
+    eval_release_temporary_spaces();
+    eval_set_library_context(previous);
+    eval_match_decision_cache_free_for_current_thread();
+    eval_profiled_type_cache_free_for_current_thread();
+    space_execution_analysis_cache_free_for_current_thread();
+    bindings_thread_cache_free();
+    if (worker) cetta_shared_transition_scope_leave();
+    arena_free(&answers);
+}
+
+static bool session_decision_worker(CettaParallelWorker *worker, void *task,
+                                     void *user) {
+    (void)worker;
+    (void)user;
+    assert(cetta_parallel_worker_active());
+    run_session_decision_probe(task);
+    return true;
+}
+
+static void test_worker_session_decisions(Arena *arena) {
+    CettaLibraryContext *library = malloc(sizeof(*library));
+    assert(library);
+    cetta_library_context_init_for_language_profile(
+        library, CETTA_LANGUAGE_PETTA, cetta_profile_petta_extended());
+    Space spaces[2];
+    SessionDecisionProbe probes[2];
+    pthread_mutex_t setup;
+    pthread_barrier_t ready;
+    assert(pthread_mutex_init(&setup, NULL) == 0);
+    assert(pthread_barrier_init(&ready, NULL, 2u) == 0);
+    for (unsigned i = 0u; i < 2u; i++) {
+        space_init(&spaces[i]);
+        space_add(&spaces[i], parse_one(arena, "(= (session-decision-probe $x) (+ $x 1))"));
+        space_add(&spaces[i], parse_one(arena, "(= (session-decision-probe $x) (+ $x 1))"));
+        probes[i] = (SessionDecisionProbe){
+            .library = library, .space = &spaces[i],
+            .query = parse_one(arena, "(session-decision-probe 6)"),
+            .setup = &setup, .ready = &ready,
+        };
+    }
+    for (unsigned persistent = 0u; persistent < 2u; persistent++) {
+        CettaParallelExecutor executor;
+        CettaParallelExecutorConfig config = {
+            .thread_count = 2u,
+            .prefer_persistent_workers = persistent != 0u,
+            .task_fn = session_decision_worker,
+        };
+        assert(cetta_parallel_executor_init(&executor, &config));
+        for (unsigned i = 0u; i < 2u; i++)
+            assert(cetta_parallel_executor_push(&executor, &probes[i]));
+        assert(cetta_parallel_executor_run(&executor));
+        cetta_parallel_executor_free(&executor);
+        /* This also discriminates an unused lazy session repository: worker
+         * roots must not allocate or touch that shared LRU at all. */
+        assert(library->petta_match_decisions == NULL);
+        assert(library->petta_match_decisions_free == NULL);
+    }
+    probes[0].setup = NULL;
+    probes[0].ready = NULL;
+    run_session_decision_probe(&probes[0]);
+    assert(library->petta_match_decisions != NULL);
+    assert(library->petta_match_decisions_free != NULL);
+    cetta_library_context_free(library);
+    free(library);
+    for (unsigned i = 0u; i < 2u; i++) space_free(&spaces[i]);
+    pthread_barrier_destroy(&ready);
+    pthread_mutex_destroy(&setup);
+    puts("PASS: worker roots own decision and table caches while serial session caching remains active");
 }
 
 static bool collect_flat_fold_int(int64_t value, void *context) {
@@ -1268,6 +1447,7 @@ static const PettaSemanticFormCase petta_semantic_form_cases[] = {
     {"if", PETTA_FORM_IF},
     {"progn", PETTA_FORM_PROGN},
     {"prog1", PETTA_FORM_PROG1},
+    {"trace!", PETTA_FORM_TRACE},
     {"foldall", PETTA_FORM_FOLDALL},
     {"forall", PETTA_FORM_FORALL},
     {"maplist", PETTA_FORM_MAPLIST},
@@ -1635,6 +1815,43 @@ static void test_deep_typecheck_source_rewrites(
            plain_branch);
 
     eval_set_library_context(previous);
+}
+
+static void test_shared_value_observation(void) {
+    Arena source, destination;
+    arena_init(&source);
+    arena_init(&destination);
+    Atom *item = atom_symbol(&source, "shared-observation-item");
+    Atom *cons = petta_semantics_open_cons_value(&source, item, atom_unit(&source));
+    Atom *pair = atom_symbol(&source, "Pair");
+    Atom *dag = cons;
+    for (unsigned depth = 0u; depth < 60u; depth++)
+        dag = atom_expr3(&source, pair, dag, dag);
+    Atom *quote = atom_symbol_id(&source, g_builtin_syms.quote);
+    Atom *quoted = atom_expr2(&source, quote, cons);
+    Atom *revealed = petta_semantics_open_cons_value(&source, quote,
+        atom_expr(&source, &cons, 1u));
+    Atom *roots[] = {pair, dag, quoted, revealed};
+    Atom *root = atom_expr(&source, roots, 4u);
+    Atom *out = petta_semantics_materialize_value(&destination, root);
+    assert(out && out->expr.len == 4u);
+    arena_free(&source);
+    Atom *cursor = out->expr.elems[1];
+    for (unsigned depth = 0u; depth < 60u; depth++) {
+        assert(cursor->kind == ATOM_EXPR && cursor->expr.len == 3u);
+        assert(cursor->expr.elems[1] == cursor->expr.elems[2]);
+        cursor = cursor->expr.elems[1];
+    }
+    assert(cursor->kind == ATOM_EXPR && cursor->expr.len == 1u);
+    assert(atom_is_symbol(cursor->expr.elems[0], "shared-observation-item"));
+    Atom *kept = out->expr.elems[2]->expr.elems[1];
+    assert(petta_semantics_is_open_cons_value(kept));
+    assert(kept == out->expr.elems[3]->expr.elems[1]);
+    assert(!petta_semantics_is_open_cons_value(out->expr.elems[3]));
+    assert(atom_is_symbol_id(out->expr.elems[3]->expr.elems[0], g_builtin_syms.quote));
+    assert(arena_accounted_live_bytes(&destination) < 64u * 1024u);
+    arena_free(&destination);
+    puts("PASS: shared publication preserves graph size and distinct opaque observations");
 }
 
 static void test_deep_cons_semantics(Arena *arena) {
@@ -3049,6 +3266,35 @@ static void test_compiled_graph_transport(TermUniverse *universe, Arena *arena) 
         node = node->expr.elems[2];
     }
     assert(node == variable);
+
+    /* A complete typed list is a value, but its tag alone and an open
+     * rest pattern are not admitted as equation-engine values. Transport
+     * preserves the list kind and the shared open graph in both fields. */
+    Atom *list_elements[] = {input, input};
+    Atom *typed_list = atom_list(arena, list_elements, 2u);
+    assert(typed_list && cetta_open_equation_term_supported(typed_list));
+    assert(!cetta_open_equation_term_supported(typed_list->expr.elems[0]));
+    Atom *tag_elements[] = {typed_list->expr.elems[0]};
+    assert(!cetta_open_equation_term_supported(
+        atom_list(arena, tag_elements, 1u)));
+    assert(!cetta_open_equation_term_supported(
+        atom_list_with_rest(arena, list_elements, 1u, variable)));
+    args[0] = typed_list;
+    cursor = cetta_open_equation_cursor_open(
+        compiled, &answers, args, 1u, NULL, query_vars, 1u, NULL);
+    assert(cursor);
+    assert(cetta_open_equation_cursor_next(cursor, query_vars, &result, &values)
+           == CETTA_OPEN_EQUATION_ANSWER);
+    assert(values && values[0] == variable);
+    cetta_open_equation_cursor_close(cursor);
+    assert(atom_is_list(result) && result->expr.len == 3u);
+    assert(result->expr.elems[1] == result->expr.elems[2]);
+    node = result->expr.elems[1];
+    for (unsigned depth = 5000u; depth > 0u; depth--) {
+        assert(petta_semantics_is_open_cons_value(node));
+        node = node->expr.elems[2];
+    }
+    assert(node == variable);
     cetta_open_equation_program_release(compiled);
     petta_program_free(program);
     arena_free(&answers);
@@ -3066,6 +3312,99 @@ static bool test_compiled_builtin_equations(
     void *context, Space *space, SymbolId head, uint32_t arity) {
     (void)space;
     return *(bool *)context && head == g_builtin_syms.petta_max && arity == 2u;
+}
+
+/* A list-cell comparison borrows a flat suffix only during unification.
+ * The suffix escapes through a query binding, survives a paused host call and
+ * source-arena retirement, then outlives cancellation of the cursor. */
+static void test_compiled_borrowed_suffix(TermUniverse *universe, Arena *arena) {
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    Space space;
+    space_init_with_universe(&space, universe);
+    add_compiled_program_equation(program, &space, arena,
+        "(= (suffix-boundary $x $x) (progn (eval checkpoint) (Pair $x $x)))");
+    const char *reason = NULL;
+    CettaOpenEquationProgram *compiled = cetta_open_equation_program_compile(
+        program, &space, symbol_intern_cstr(g_symbols, "suffix-boundary"),
+        2u, NULL, &reason);
+    if (!compiled) fprintf(stderr, "suffix compile: %s\n", reason);
+    assert(compiled);
+    for (unsigned cancel = 0u; cancel < 2u; cancel++) {
+        Arena source, answers;
+        arena_init(&source);
+        arena_init(&answers);
+        Atom *tail = atom_var_with_id(&answers, "retained-tail", fresh_var_id());
+        Atom *query_vars[] = {tail};
+        Atom *flat = parse_one(&source, "(1 2 (payload kept) 4 5)");
+        Atom *cell = petta_semantics_open_cons_value(&source,
+            atom_int(&source, 2), tail);
+        cell = petta_semantics_open_cons_value(&source,
+            atom_int(&source, 1), cell);
+        Atom *args[] = {cell, flat};
+        CettaOpenEquationCursor *cursor = cetta_open_equation_cursor_open(
+            compiled, &answers, args, 2u, NULL, query_vars, 1u, NULL);
+        assert(cursor);
+        Atom *value = NULL;
+        Atom **query_values = NULL;
+        assert(cetta_open_equation_cursor_next(cursor, query_vars, &value,
+            &query_values) == CETTA_OPEN_EQUATION_HOST);
+        CettaOpenEquationStats before, after;
+        cetta_open_equation_cursor_stats(cursor, &before);
+        assert(cetta_open_equation_cursor_detach(cursor, &source));
+        cetta_open_equation_cursor_stats(cursor, &after);
+        assert(after.collections > before.collections);
+        arena_free(&source);
+        if (!cancel) {
+            Atom *goal = NULL, *destination = NULL;
+            Atom *const *variables = NULL;
+            uint32_t count = 0u, base = 0u;
+            const PettaPlanNode *plan = NULL;
+            CettaOpenEquationHostMode mode;
+            bool recovers = false;
+            assert(cetta_open_equation_cursor_host_goal(cursor, &goal,
+                &destination, &variables, &count, &plan, &mode, &recovers));
+            assert(atom_alpha_eq(goal, parse_one(&answers, "(eval checkpoint)")));
+            assert(mode == CETTA_OPEN_EQUATION_HOST_SOLVE);
+            assert(destination && destination->kind == ATOM_VAR);
+            Atom **values = malloc(sizeof(*values) * count);
+            assert(values && count);
+            bool found = false;
+            for (uint32_t i = 0u; i < count; i++) {
+                values[i] = variables[i];
+                if (variables[i]->var_id == destination->var_id) {
+                    values[i] = atom_symbol(&answers, "resumed");
+                    found = true;
+                }
+            }
+            assert(found);
+            assert(cetta_open_equation_cursor_accept(cursor, query_vars,
+                variables, values, count, true, 0u, &base));
+            free(values);
+            assert(cetta_open_equation_cursor_continue(cursor, query_vars, base,
+                &value, &query_values) == CETTA_OPEN_EQUATION_ANSWER);
+            assert(query_values && atom_eq(query_values[0],
+                parse_one(&answers, "((payload kept) 4 5)")));
+            assert(value && value->kind == ATOM_EXPR && value->expr.len == 3u);
+            assert(value->expr.elems[1] == value->expr.elems[2]);
+            Atom *retained = query_values[0];
+            cetta_open_equation_cursor_close(cursor);
+            assert(atom_eq(retained, parse_one(&answers, "((payload kept) 4 5)")));
+            /* The compiled answer still uses the native list carrier. Its
+             * ordinary publication adapter supplies the observable value. */
+            Atom *observable = petta_semantics_materialize_value(&answers, value);
+            assert(atom_eq(observable, parse_one(&answers,
+                "(Pair (1 2 (payload kept) 4 5) (1 2 (payload kept) 4 5))")));
+            assert(observable->expr.elems[1] == observable->expr.elems[2]);
+        } else {
+            cetta_open_equation_cursor_close(cursor);
+        }
+        arena_free(&answers);
+    }
+    cetta_open_equation_program_release(compiled);
+    petta_program_free(program);
+    space_free(&space);
+    puts("PASS: borrowed unification suffix survives host suspension, relocation and cancellation");
 }
 
 static uint32_t test_compiled_accept_host_value(
@@ -3280,6 +3619,73 @@ static void test_compiled_builtin_entry(TermUniverse *universe, Arena *arena) {
         space_free(&space);
     }
     puts("PASS: compiled builtin entry preserves live source and resumes once");
+}
+
+static void test_compiled_builtin_entry_binders(TermUniverse *universe,
+                                                Arena *arena) {
+    for (unsigned stale = 0u; stale < 2u; stale++) {
+        PettaProgram *program = petta_program_new();
+        assert(program);
+        Space space;
+        space_init_with_universe(&space, universe);
+        add_compiled_program_equation(program, &space, arena,
+            "(= (binder-entry) (progn (println! checkpoint) "
+            "(let* (($first (max 1 2)) ($next (+ $first 1))) "
+            "(Pair $first $next $first))))");
+        bool extended = false;
+        CettaOpenEquationHost host = {
+            .context = &extended,
+            .builtin_allowed = test_compiled_builtin_allowed,
+            .builtin_equations = test_compiled_builtin_equations,
+        };
+        const char *reason = NULL;
+        CettaOpenEquationProgram *compiled = cetta_open_equation_program_compile(
+            program, &space, symbol_intern_cstr(g_symbols, "binder-entry"),
+            0u, &host, &reason);
+        if (!compiled) fprintf(stderr, "binder entry compile: %s\n", reason);
+        assert(compiled);
+        Arena answers;
+        arena_init(&answers);
+        CettaOpenEquationRuntime runtime = {
+            .builtin_allowed = test_compiled_builtin_allowed,
+        };
+        CettaOpenEquationCursor *cursor = cetta_open_equation_cursor_open(
+            compiled, &answers, NULL, 0u, NULL, NULL, 0u, &runtime);
+        assert(cursor);
+        Atom *value = NULL;
+        assert(cetta_open_equation_cursor_next(cursor, NULL, &value, NULL) ==
+               CETTA_OPEN_EQUATION_HOST);
+        if (stale) {
+            add_compiled_program_equation(program, &space, arena,
+                "(= (max $a $b) authored)");
+            extended = true;
+        }
+        uint32_t base = test_compiled_accept_host_value(cursor, &answers,
+            "(println! checkpoint)", "()");
+        CettaOpenEquationStep step = cetta_open_equation_cursor_continue(
+            cursor, NULL, base, &value, NULL);
+        if (stale) {
+            assert(step == CETTA_OPEN_EQUATION_HOST);
+            /* The stale path materializes future binder variables once,
+             * retaining the first/last field alias in the saved source. */
+            base = test_compiled_accept_host_value(cursor, &answers,
+                "(let* (($first (max 1 2)) ($next (+ $first 1))) "
+                "(Pair $first $next $first))", "(Pair 7 8 7)");
+            step = cetta_open_equation_cursor_continue(cursor, NULL, base,
+                &value, NULL);
+        }
+        assert(step == CETTA_OPEN_EQUATION_ANSWER);
+        assert(atom_alpha_eq(value, parse_one(&answers,
+            stale ? "(Pair 7 8 7)" : "(Pair 2 3 2)")));
+        assert(cetta_open_equation_cursor_next(cursor, NULL, &value, NULL) ==
+               CETTA_OPEN_EQUATION_EXHAUSTED);
+        cetta_open_equation_cursor_close(cursor);
+        cetta_open_equation_program_release(compiled);
+        arena_free(&answers);
+        petta_program_free(program);
+        space_free(&space);
+    }
+    puts("PASS: guarded producers retain native stores and stale binder aliases");
 }
 
 static bool test_compiled_guard_body_admitted(
@@ -6242,6 +6648,55 @@ static void test_typed_data_purity_boundary(
 
     petta_program_free(program);
     space_free(&typed_space);
+}
+
+static void test_compiled_module_view_callability(
+    TermUniverse *universe, Arena *persistent) {
+    Space provider, importer;
+    space_init_with_universe(&provider, universe);
+    space_init_with_universe(&importer, universe);
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    space_add(&provider, parse_one(persistent,
+        "(= (module-provided $x) (answer $x))"));
+    assert(space_add_dependency(&importer, &provider));
+    space_add(&importer, parse_one(persistent,
+        "(= (module-local $x) (module-provided $x))"));
+    assert(petta_program_synchronize_space(program, &importer));
+    PettaEquationCandidate *candidates = NULL;
+    size_t count = 0u;
+    SymbolId head = symbol_intern_cstr(g_symbols, "module-local");
+    assert(petta_program_candidate_snapshot(
+        program, &importer, head, &candidates, &count));
+    assert(count == 1u && candidates[0].rhs_plan);
+    assert(candidates[0].rhs_plan->role == PETTA_PLAN_STATIC_CALL);
+    assert(candidates[0].rhs_plan->relation_head_admitted);
+    free(candidates);
+
+    /* The provider's equations are not copied into the importer's catalog.
+     * A newly admitted equation observes the current module view; an older
+     * equation retains the plan with which it was originally admitted. */
+    uint64_t previous = space_revision(&importer);
+    space_add(&provider, parse_one(persistent,
+        "(= (module-added $x) (later $x))"));
+    assert(space_revision(&importer) != previous);
+    space_add(&importer, parse_one(persistent,
+        "(= (module-new-local $x) (module-added $x))"));
+    assert(petta_program_synchronize_space(program, &importer));
+    candidates = NULL;
+    count = 0u;
+    assert(petta_program_candidate_snapshot(program, &importer,
+        symbol_intern_cstr(g_symbols, "module-new-local"),
+        &candidates, &count));
+    assert(count == 1u && candidates[0].rhs_plan);
+    assert(candidates[0].rhs_plan->role == PETTA_PLAN_STATIC_CALL);
+    free(candidates);
+    assert(space_length64(&importer) == 2u);
+    assert(space_view_length64(&importer) == 4u);
+    petta_program_free(program);
+    space_free(&importer);
+    space_free(&provider);
+    puts("PASS: compiled callability includes linked module equations");
 }
 
 static void test_evaluator_neutral_structural_equation_classification(
@@ -11633,7 +12088,12 @@ static void test_act_incremental_compression(void) {
          " advice");
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+    bool worker_only = argc == 2 && strcmp(argv[1], "--worker-ownership") == 0;
+    if (argc != 1 && !worker_only) {
+        fputs("usage: test_petta_search_machine [--worker-ownership]\n", stderr);
+        return 2;
+    }
     Arena persistent;
     Arena answers;
     TermUniverse universe;
@@ -11654,10 +12114,15 @@ int main(void) {
     var_intern_init(&variables);
     g_symbols = &symbols;
     g_var_intern = &variables;
+    if (worker_only) {
+        test_worker_session_decisions(&answers);
+        goto release_owners;
+    }
     test_type_policy_component(&answers);
     test_type_bound_rows(&answers);
     test_type_fact_reuse(&answers);
     test_type_fact_warm_boundary();
+    test_type_fact_request_transport();
     test_type_fact_retention();
     test_type_frame_exhaustion(&answers);
     test_type_stack_exhaustion();
@@ -11671,14 +12136,17 @@ int main(void) {
     test_program_metadata_projection(&answers);
     test_program_callability_head_kinds(&answers);
     test_compiled_graph_transport(&universe, &persistent);
+    test_compiled_borrowed_suffix(&universe, &persistent);
     test_compiled_type_guard_protocol(&universe, &persistent);
     test_compiled_builtin_entry(&universe, &persistent);
+    test_compiled_builtin_entry_binders(&universe, &persistent);
     test_compiled_entry_joins(&universe, &persistent);
     test_compiled_terminal_host(&universe, &persistent);
     test_program_case_safety_projection(&universe, &persistent);
     space_init_with_universe(&space, &universe);
 
     test_library_context_initialization();
+    test_worker_session_decisions(&answers);
     test_plain_scalar_truth_dispatch(&answers);
     test_typing_operator_identity();
     test_analysis_capability_contract(&space, &answers);
@@ -11734,6 +12202,7 @@ int main(void) {
         &universe, &persistent, &answers);
     test_typed_data_purity_boundary(
         &universe, &persistent);
+    test_compiled_module_view_callability(&universe, &persistent);
     test_evaluator_neutral_structural_equation_classification(
         &universe, &persistent);
     test_match_decision_cache_entry_authority(
@@ -11743,6 +12212,7 @@ int main(void) {
     test_match_decision_verification_receipt_revision(
         &universe, &persistent, &answers);
     test_deep_typecheck_source_rewrites(&universe);
+    test_shared_value_observation();
     test_deep_cons_semantics(&answers);
     test_logical_cons_binding_views(&answers);
     test_lowered_head_epoch_views(&answers);
@@ -12284,6 +12754,7 @@ int main(void) {
     test_terminal_match_count_fold(&space, &answers);
 
     space_free(&space);
+release_owners:
     term_universe_free(&universe);
     arena_free(&answers);
     arena_free(&persistent);

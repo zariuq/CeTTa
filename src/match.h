@@ -660,6 +660,12 @@ bool      bindings_add_id_acyclic(Bindings *b, VarId var_id,
                                   SymbolId spelling, Atom *val);
 bool      bindings_add_var(Bindings *b, Atom *var, Atom *val);
 bool      bindings_add_var_acyclic(Bindings *b, Atom *var, Atom *val);
+/* Update an exclusively held, unpublished binding image. Other versions may
+ * share its COW storage; they remain unchanged. On failure the whole image is
+ * released and reset to empty, rather than preserving its previous contents.
+ * Atom payload lifetimes are unchanged: owning the image does not own syntax. */
+bool bindings_add_var_owned(Bindings *b, Atom *var, Atom *val);
+bool bindings_add_constraint_owned(Bindings *b, Atom *lhs, Atom *rhs);
 /* Construct one private binding image, preserving the ordered checked writes
  * of bindings_add_var. Failure leaves the input image unchanged. */
 bool bindings_add_vars(Bindings *bindings, Atom *const *variables,

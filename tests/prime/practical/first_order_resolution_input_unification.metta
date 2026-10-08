@@ -55,7 +55,7 @@
    (case (tptp-resolution-example:unify:unify-term ()
            (test:variable 1 "X") (test:variable 2 "X"))
      (((FOUnify.OK $bindings) True)
-      ($_ False)))
+      ($_ False))){$bindings $_}
    True)
 
 !(assertEqual
@@ -83,7 +83,7 @@
               $bindings (test:variable 3 "N"))
             (fo-resolution:term-number
               (fo-resolution:number-rational) "1/2")))
-      ($_ False)))
+      ($_ False))){$bindings $_}
    True)
 
 !(println! (FirstOrderResolutionInputUnificationSummary 6 6 0))

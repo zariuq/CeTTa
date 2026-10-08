@@ -53,42 +53,42 @@
 
 (= (rule-names) (axA1 axA2 ab axB bc xc pair both loop weak castCG castAB axCastAB))
 (= (rule-shape $r)
-   (let $found (collapse (match &self (rule $r $ps $c) ($ps $c)))
+   (let $found (collapse (match &self (rule $r $ps $c) ($ps $c)){$r})
      (if (== $found ()) unknown-rule (car-atom $found))))
 
 ; The countermodel.
 (= (holds $j) (if (== $j X) False (if (== $j CastCG) False (if (== $j G) False True))))
-(= (all-hold $js) (if (== $js ()) True (let* (($h (car-atom $js)) ($t (cdr-atom $js))) (and (holds $h) (all-hold $t)))))
+(= (all-hold $js) (if (== $js ()) True (let* (($h (car-atom $js)) ($t (cdr-atom $js))) (and (holds $h) (all-hold $t))){$h $t}))
 
 ; ---- lists and derivations --------------------------------------------------------
 
 (= (append $xs $ys)
    (if (== $xs ()) $ys
-       (let* (($h (car-atom $xs)) ($t (cdr-atom $xs)) ($r (append $t $ys))) (cons-atom $h $r))))
+       (let* (($h (car-atom $xs)) ($t (cdr-atom $xs)) ($r (append $t $ys))) (cons-atom $h $r)){$h $t $r}))
 (= (nth $xs $i)
    (if (== $xs ()) out-of-range
-       (if (== $i 0) (car-atom $xs) (let* (($t (cdr-atom $xs)) ($j (- $i 1))) (nth $t $j)))))
+       (if (== $i 0) (car-atom $xs) (let* (($t (cdr-atom $xs)) ($j (- $i 1))) (nth $t $j)){$t $j})))
 (= (is-hole $t)
    (if (== (get-metatype $t) Expression)
-       (if (== $t ()) False (let $h (car-atom $t) (== $h ?)))
+       (if (== $t ()) False (let $h (car-atom $t) (== $h ?)){$h})
        False))
 (= (head-of $t) (if (== (get-metatype $t) Symbol) $t (car-atom $t)))
 (= (kids-of $t) (if (== (get-metatype $t) Symbol) () (cdr-atom $t)))
 (= (rebuild $r $kids) (if (== $kids ()) $r (cons-atom $r $kids)))
 (= (conclusion $ctx $t)
    (if (is-hole $t)
-       (let $i (index-atom $t 1) (nth $ctx $i))
+       (let $i (index-atom $t 1) (nth $ctx $i)){$i}
        (let* (($r (head-of $t)) ($kids (kids-of $t)) ($shape (rule-shape $r)))
          (if (== $shape unknown-rule) ill-formed
              (let* ((($ps $c) $shape)
                     ($got (map-atom $kids $k (conclusion $ctx $k))))
-               (if (== $got $ps) $c ill-formed))))))
+               (if (== $got $ps) $c ill-formed)){$ps $c $got})){$r $kids $shape}))
 (= (fill $t $ev)
    (if (is-hole $t)
-       (let $i (index-atom $t 1) (nth $ev $i))
+       (let $i (index-atom $t 1) (nth $ev $i)){$i}
        (let* (($r (head-of $t)) ($kids (kids-of $t))
               ($filled (map-atom $kids $k (fill $k $ev))))
-         (rebuild $r $filled))))
+         (rebuild $r $filled)){$r $kids $filled}))
 
 ; ---- closing a plan ------------------------------------------------------------------
 
@@ -96,31 +96,31 @@
 ; derivation found, or none.
 (= (derive $j $d)
    (if (== $d 0) none
-       (let $rs (rule-names) (derive-with $rs $j $d))))
+       (let $rs (rule-names) (derive-with $rs $j $d)){$rs}))
 (= (derive-with $rs $j $d)
    (if (== $rs ()) none
        (let* (($r (car-atom $rs)) ($rest (cdr-atom $rs)) (($ps $c) (rule-shape $r)))
          (if (== $c $j)
              (let* (($d2 (- $d 1)) ($kids (derive-all $ps $d2)))
-               (if (== $kids none) (derive-with $rest $j $d) (rebuild $r $kids)))
-             (derive-with $rest $j $d)))))
+               (if (== $kids none) (derive-with $rest $j $d) (rebuild $r $kids))){$d2 $kids}
+             (derive-with $rest $j $d))){$r $rest $ps $c}))
 (= (derive-all $js $d)
    (if (== $js ()) ()
        (let* (($j (car-atom $js)) ($x (derive $j $d)))
          (if (== $x none) none
              (let* (($t (cdr-atom $js)) ($xs (derive-all $t $d)))
-               (if (== $xs none) none (cons-atom $x $xs)))))))
+               (if (== $xs none) none (cons-atom $x $xs))){$t $xs})){$j $x}))
 ; The first obligation the countermodel refutes, with its position.
 (= (refuted-obligation $ctx $i)
    (if (== $ctx ()) none
        (let* (($j (car-atom $ctx)) ($t (cdr-atom $ctx)) ($k (+ $i 1)))
-         (if (holds $j) (refuted-obligation $t $k) (blame $i $j)))))
+         (if (holds $j) (refuted-obligation $t $k) (blame $i $j))){$j $t $k}))
 (= (close-plan (plan $ctx $body) $depth)
    (let $ev (derive-all $ctx $depth)
      (if (== $ev none)
          (let $r (refuted-obligation $ctx 0)
-           (if (== $r none) (Incomplete $depth) (Refuted $r)))
-         (let $d (fill $body $ev) (Established $d)))))
+           (if (== $r none) (Incomplete $depth) (Refuted $r))){$r}
+         (let $d (fill $body $ev) (Established $d)){$d})))
 
 (= (bypass-plan) (plan (CastCG) (castCG (? 0) (bc (ab axA1)))))
 (= (cast-ab-plan) (plan (CastAB) (castAB (? 0) axA1)))
@@ -158,7 +158,7 @@
 !(pf:theory &thy ((: A prop) (: B prop) (: C prop) (: CastAB prop) (: CastCG prop) (: G prop)))
 (= (imps $ctx $goal)
    (if (== $ctx ()) $goal
-       (let* (($h (car-atom $ctx)) ($t (cdr-atom $ctx)) ($r (imps $t $goal))) (imp $h $r))))
+       (let* (($h (car-atom $ctx)) ($t (cdr-atom $ctx)) ($r (imps $t $goal))) (imp $h $r)){$h $t $r}))
 (= (rule-statement $r) (let ($ps $c) (rule-shape $r) (imps $ps $c)))
 ; The kernel's rules, assumed: statements about uninterpreted propositions.
 !(map-atom (axA1 ab bc castCG castAB axCastAB) $r
@@ -166,16 +166,16 @@
 (= (hyp-name 0) h0)
 (= (hyp-name 1) h1)
 (= (to-proof $t)
-   (if (is-hole $t) (let $i (index-atom $t 1) (hyp-name $i))
-       (let* (($r (head-of $t)) ($ks (kids-of $t))) (apply-proofs (pf:known $r) $ks))))
+   (if (is-hole $t) (let $i (index-atom $t 1) (hyp-name $i)){$i}
+       (let* (($r (head-of $t)) ($ks (kids-of $t))) (apply-proofs (pf:known $r) $ks)){$r $ks}))
 (= (apply-proofs $f $ks)
    (if (== $ks ()) $f
        (let* (($k (car-atom $ks)) ($pk (to-proof $k)) ($rest (cdr-atom $ks)))
-         (apply-proofs (pf:imp-elim $f $pk) $rest))))
+         (apply-proofs (pf:imp-elim $f $pk) $rest)){$k $pk $rest}))
 (= (assume-all $i $ctx $body)
    (if (== $ctx ()) (to-proof $body)
        (let* (($n (hyp-name $i)) ($t (cdr-atom $ctx)) ($j (+ $i 1)) ($inner (assume-all $j $t $body)))
-         (pf:assume $n $inner))))
+         (pf:assume $n $inner)){$n $t $j $inner}))
 
 ; 7. The cast C -> G is a proof of CastCG -> G: the target holds whenever the
 ;    cast does (Truth.plan_sound).

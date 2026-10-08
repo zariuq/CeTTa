@@ -12,7 +12,7 @@
                 ($b (add-atom $kb (: (always $n 0) (≞ @($n 0) ⊤))))
                 ($c (add-atom $kb (: (always $n 1) (≞ @($n 1) ⊤))))
                 ($d (add-atom $kb (: (always $n 2) (≞ @($n 2) ⊤)))))
-           (add-ds $kb $rest)))))
+           (add-ds $kb $rest)){$a $b $c $d}){$n $rest}))
 (= (kb8)
    (let $kb (new-space)
      (let* (($u1 (add-atom $kb (nu:domain UInt))) ($u2 (add-atom $kb (nu:bias ∧)))

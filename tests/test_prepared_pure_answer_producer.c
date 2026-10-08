@@ -697,6 +697,216 @@ static void test_cursor_last_call_chain_is_bounded(void) {
     destroy(&fixture);
 }
 
+/* A scalar generator has a fixed live frontier despite an unbounded number
+ * of answers. Consuming an answer does not retain its abandoned arithmetic
+ * temporaries, and closing the producer does not evaluate another step. */
+static void test_cursor_scalar_frontier_reclamation(void) {
+    const char *equations[] = {
+        "(= (ticks $n) $n)",
+        "(= (ticks $n) (ticks (+ $n 1)))",
+    };
+    Fixture fixture;
+    init(&fixture, equations, 2u, "(ticks 0)");
+    fixture.limits.max_scratch_bytes = 128u * 1024u;
+    CettaPreparedPureAnswerCursor *cursor = open_cursor(&fixture, false);
+    Arena selected;
+    arena_init_detached(&selected);
+    Atom *kept = NULL;
+    size_t peak_live = 0u, peak_reserved = 0u, peak_metadata = 0u;
+    size_t warmed_metadata = 0u;
+    for (unsigned i = 0u; i < 4000u; i++) {
+        Atom *answer = NULL;
+        CettaPreparedPureCursorStep step =
+            cetta_prepared_pure_answer_cursor_next(cursor, &answer);
+        if (step != CETTA_PREPARED_PURE_CURSOR_ANSWER)
+            fprintf(stderr, "scalar frontier stopped at %u: reason %u\n", i,
+                    cetta_prepared_pure_answer_cursor_handoff_reason(cursor));
+        assert(step == CETTA_PREPARED_PURE_CURSOR_ANSWER);
+        assert(answer && answer->kind == ATOM_GROUNDED &&
+               answer->ground.gkind == GV_INT && answer->ground.ival == i);
+        assert(cetta_prepared_pure_answer_cursor_frame_count(cursor) == 1u);
+        CettaPreparedPureCursorStorage storage =
+            cetta_prepared_pure_answer_cursor_storage(cursor);
+        if (storage.live_bytes > peak_live)
+            peak_live = storage.live_bytes;
+        if (storage.reserved_bytes > peak_reserved)
+            peak_reserved = storage.reserved_bytes;
+        if (storage.metadata_bytes > peak_metadata)
+            peak_metadata = storage.metadata_bytes;
+        if (i == 32u)
+            warmed_metadata = storage.metadata_bytes;
+        if (i > 32u)
+            assert(storage.metadata_bytes == warmed_metadata);
+        if (i == 7u)
+            kept = atom_deep_copy(&selected, answer);
+    }
+    assert(cetta_prepared_pure_answer_cursor_answer_count(cursor) == 4000u);
+    assert(cetta_prepared_pure_answer_cursor_tail_call_count(cursor) == 3999u);
+    CettaPreparedPureCursorStorage storage =
+        cetta_prepared_pure_answer_cursor_storage(cursor);
+    assert(storage.collections > 0u);
+    assert(peak_live < fixture.limits.max_scratch_bytes);
+    assert(peak_reserved <= fixture.limits.max_scratch_bytes);
+    assert(peak_metadata == warmed_metadata);
+    printf("owned scalar frontier: 4000 answers, peak %zu live / %zu reserved / "
+           "%zu metadata bytes, %llu collections\n", peak_live, peak_reserved,
+           peak_metadata, (unsigned long long)storage.collections);
+    cetta_prepared_pure_answer_cursor_close(cursor);
+    assert(kept && kept->ground.ival == 7);
+    arena_free(&selected);
+    destroy(&fixture);
+}
+
+/* Repeated argument roots remain aliases after relocation, while two equal
+ * equation occurrences still produce two answers. The caller's input can be
+ * reset after detachment and a published answer outlives the whole cursor. */
+static void test_cursor_nested_frontier_reclamation(void) {
+    const char *equations[] = {
+        "(= (ticks $n) $n)",
+        "(= (ticks $n) (ticks (+ $n 1)))",
+        "(= (wrapped $n $payload) (let $value (ticks $n) (Pair $payload $payload $value)))",
+        "(= (outer $n $payload) (Box $payload (wrapped $n $payload)))",
+        "(= (outer $n $payload) (Fallback $payload))",
+    };
+    Fixture fixture;
+    init(&fixture, equations, 5u, "(outer 0 (Cons kept Nil))");
+    fixture.limits.max_scratch_bytes = 128u * 1024u;
+    CettaPreparedPureAnswerCursor *cursor = open_cursor(&fixture, false);
+    assert(cetta_prepared_pure_answer_cursor_detach(cursor));
+    size_t peak_live = 0u, peak_reserved = 0u, metadata = 0u;
+    Arena publication;
+    arena_init_detached(&publication);
+    Atom *kept = NULL;
+    for (unsigned i = 0u; i < 4000u; i++) {
+        Atom *answer = NULL;
+        CettaPreparedPureCursorStep step =
+            cetta_prepared_pure_answer_cursor_next(cursor, &answer);
+        if (step != CETTA_PREPARED_PURE_CURSOR_ANSWER)
+            fprintf(stderr, "nested frontier stopped at %u: reason %u\n", i,
+                    cetta_prepared_pure_answer_cursor_handoff_reason(cursor));
+        assert(step == CETTA_PREPARED_PURE_CURSOR_ANSWER);
+        assert(answer->kind == ATOM_EXPR && answer->expr.len == 3u);
+        Atom *pair = answer->expr.elems[2];
+        assert(pair->kind == ATOM_EXPR && pair->expr.len == 4u);
+        assert(pair->expr.elems[1] == pair->expr.elems[2]);
+        assert(answer->expr.elems[1] == pair->expr.elems[1]);
+        assert(pair->expr.elems[3]->ground.ival == i);
+        assert(cetta_prepared_pure_answer_cursor_frame_count(cursor) == 2u);
+        expect_frame(&fixture, cursor, 0u, "(outer 0 (Cons kept Nil))", 1u);
+        CettaPreparedPureCursorStorage storage =
+            cetta_prepared_pure_answer_cursor_storage(cursor);
+        if (storage.live_bytes > peak_live) peak_live = storage.live_bytes;
+        if (storage.reserved_bytes > peak_reserved) peak_reserved = storage.reserved_bytes;
+        if (i == 32u) metadata = storage.metadata_bytes;
+        if (i > 32u) assert(storage.metadata_bytes == metadata);
+        if (i == 7u) kept = atom_deep_copy(&publication, answer);
+    }
+    CettaPreparedPureCursorStorage storage =
+        cetta_prepared_pure_answer_cursor_storage(cursor);
+    assert(storage.collections > 0u);
+    assert(storage.copied_bytes > 0u && storage.copied_bytes < 64u * 1024u);
+    assert(peak_live < 96u * 1024u && peak_reserved <= 128u * 1024u);
+    printf("owned nested frontier: 4000 answers, peak %zu live / %zu reserved / "
+           "%zu metadata bytes, %llu collections, %llu copied bytes\n",
+           peak_live, peak_reserved, metadata,
+           (unsigned long long)storage.collections,
+           (unsigned long long)storage.copied_bytes);
+    cetta_prepared_pure_answer_cursor_close(cursor);
+    assert(kept->expr.elems[2]->expr.elems[3]->ground.ival == 7);
+    assert(kept->expr.elems[1] == kept->expr.elems[2]->expr.elems[1]);
+    arena_free(&publication);
+    destroy(&fixture);
+}
+
+static void test_cursor_collection_preserves_shared_frontier(void) {
+    const char *equations[] = {
+        "(= (ticks-pair $n $x $y) (Pair $n $x $y))",
+        "(= (ticks-pair $n $x $y) (Pair $n $x $y))",
+        "(= (ticks-pair $n $x $y) (ticks-pair (+ $n 1) $x $y))",
+    };
+    Fixture fixture;
+    init(&fixture, equations, 3u, "(ticks-pair 0 a a)");
+    fixture.limits.max_scratch_bytes = 128u * 1024u;
+    Arena source, selected;
+    arena_init_detached(&source);
+    arena_init_detached(&selected);
+    ArenaMark empty = arena_mark(&source);
+    Atom *payload = parse(&source, "(nested (bytes abc) (more xyz))");
+    Atom *parts[] = {atom_symbol(&source, "ticks-pair"), atom_int(&source, 0),
+                     payload, payload};
+    assert(cetta_prepared_pure_program_rebind_closed_entry_call(
+        fixture.program, atom_expr(&source, parts, 4u)));
+    CettaPreparedPureAnswerCursor *cursor = open_cursor(&fixture, false);
+    cetta_prepared_pure_program_clear_closed_entry_call(fixture.program);
+    assert(cetta_prepared_pure_answer_cursor_detach(cursor));
+    arena_reset(&source, empty);
+    Atom *kept = NULL;
+    for (unsigned i = 0u; i < 4000u; i++) {
+        Atom *answer = NULL;
+        assert(cetta_prepared_pure_answer_cursor_next(cursor, &answer) ==
+               CETTA_PREPARED_PURE_CURSOR_ANSWER);
+        assert(answer && answer->kind == ATOM_EXPR && answer->expr.len == 4u);
+        assert(answer->expr.elems[1]->ground.ival == i / 2u);
+        assert(answer->expr.elems[2] == answer->expr.elems[3]);
+        if (i == 1234u) {
+            assert(cetta_prepared_pure_answer_cursor_unyield(cursor));
+            assert(cetta_prepared_pure_answer_cursor_next(cursor, &answer) ==
+                   CETTA_PREPARED_PURE_CURSOR_ANSWER);
+            assert(answer->expr.elems[1]->ground.ival == i / 2u);
+        }
+        if (i == 3999u)
+            kept = atom_deep_copy(&selected, answer);
+    }
+    assert(cetta_prepared_pure_answer_cursor_answer_count(cursor) == 4000u);
+    assert(cetta_prepared_pure_answer_cursor_tail_call_count(cursor) == 1999u);
+    assert(cetta_prepared_pure_answer_cursor_storage(cursor).collections > 0u);
+    cetta_prepared_pure_answer_cursor_close(cursor);
+    assert(kept && kept->expr.elems[1]->ground.ival == 1999);
+    assert(kept->expr.elems[2] == kept->expr.elems[3]);
+    assert(atom_eq(kept->expr.elems[2],
+                   parse(&source, "(nested (bytes abc) (more xyz))")));
+    arena_free(&source);
+    arena_free(&selected);
+    destroy(&fixture);
+}
+
+/* Reclaiming dead values does not refill a finite execution allowance. */
+static void test_cursor_collection_keeps_transition_limit(void) {
+    const char *equations[] = {
+        "(= (ticks $n) $n)",
+        "(= (ticks $n) (ticks (+ $n 1)))",
+    };
+    Fixture fixture;
+    init(&fixture, equations, 2u, "(ticks 0)");
+    fixture.limits.max_transitions = 20000u;
+    fixture.limits.max_scratch_bytes = 128u * 1024u;
+    CettaPreparedPureAnswerCursorOptions options = {
+        .limits = fixture.limits,
+        .unmatched_call = CETTA_PREPARED_PURE_UNMATCHED_FAILS,
+        .allow_continuations = true,
+    };
+    CettaPreparedPureAnswerCursor *cursor =
+        cetta_prepared_pure_answer_cursor_open(fixture.program, &options);
+    assert(cursor);
+    uint64_t answers = 0u;
+    Atom *answer = NULL;
+    CettaPreparedPureCursorStep step;
+    while ((step = cetta_prepared_pure_answer_cursor_next(cursor, &answer)) ==
+           CETTA_PREPARED_PURE_CURSOR_ANSWER) {
+        assert(answer && answer->kind == ATOM_GROUNDED &&
+               answer->ground.gkind == GV_INT && answer->ground.ival == answers);
+        assert(++answers < fixture.limits.max_transitions);
+    }
+    assert(step == CETTA_PREPARED_PURE_CURSOR_HANDOFF);
+    assert(cetta_prepared_pure_answer_cursor_handoff_reason(cursor) ==
+           CETTA_PREPARED_PURE_HANDOFF_LIMIT);
+    assert(cetta_prepared_pure_answer_cursor_storage(cursor).collections > 0u);
+    assert(cetta_prepared_pure_answer_cursor_answer_count(cursor) == answers);
+    assert(cetta_prepared_pure_answer_cursor_frame_count(cursor) == 1u);
+    cetta_prepared_pure_answer_cursor_close(cursor);
+    destroy(&fixture);
+}
+
 /* A spent purse stops before the step that would exceed it. */
 static void test_cursor_limit_keeps_frontier(void) {
     const char *equations[] = {
@@ -1066,6 +1276,251 @@ static void test_context_reconstruction_observes_interrupt(void) {
     destroy(&fixture);
 }
 
+typedef struct {
+    CettaOwnedReturn values[4];
+    unsigned next, releases, accepted, attempts;
+    bool reject;
+} OwnedSequenceFixture;
+
+static CettaOwnedExecutionStep owned_sequence_next(void *context,
+    CettaOwnedReturn *returned, CettaEvalCompletion *completion) {
+    OwnedSequenceFixture *fixture = context;
+    assert(fixture->releases == 0u);
+    *completion = CETTA_EVAL_COMPLETE;
+    if (fixture->next == 4u)
+        return CETTA_OWNED_EXECUTION_COMPLETE;
+    *returned = fixture->values[fixture->next++];
+    return CETTA_OWNED_EXECUTION_RETURN;
+}
+
+static void owned_sequence_release(void *context) {
+    OwnedSequenceFixture *fixture = context;
+    fixture->releases++;
+}
+
+static bool owned_sequence_accept(void *context, const CettaOwnedReturn *returned) {
+    OwnedSequenceFixture *fixture = context;
+    fixture->attempts++;
+    assert(fixture->releases == 0u && fixture->accepted < 4u);
+    CettaOwnedReturn expected = fixture->values[fixture->accepted];
+    assert(returned->outcome.kind == expected.outcome.kind);
+    assert(returned->outcome.result_form == expected.outcome.result_form);
+    assert(returned->outcome.term == expected.outcome.term);
+    assert(returned->outcome.delayed == expected.outcome.delayed);
+    assert(returned->environment == expected.environment);
+    if (fixture->reject)
+        return false;
+    fixture->accepted++;
+    return true;
+}
+
+static void test_owned_return_sequencing(void) {
+    Arena arena;
+    arena_init_detached(&arena);
+    Bindings environment;
+    bindings_init(&environment);
+    Atom *held = parse(&arena, "(println! held-data)");
+    Atom *delay = parse(&arena, "(pending-goal $x)");
+    OwnedSequenceFixture fixture = {
+        .values = {
+            {.outcome = cetta_call_completed_value(held), .environment = &environment},
+            {.outcome = cetta_call_completed_value(held), .environment = &environment},
+            {.outcome = cetta_call_value(held), .environment = &environment},
+            {.outcome = cetta_call_suspended(held, delay), .environment = &environment},
+        },
+    };
+    CettaOwnedExecution execution;
+    cetta_owned_execution_init(&execution, &fixture, owned_sequence_next,
+                              owned_sequence_release);
+    assert(cetta_owned_execution_sequence(&execution, 0u,
+        owned_sequence_accept, &fixture) == CETTA_OWNED_EXECUTION_PAUSED);
+    assert(fixture.next == 0u && execution.accepted == 0u);
+    assert(cetta_owned_execution_sequence(&execution, 1u,
+        owned_sequence_accept, &fixture) == CETTA_OWNED_EXECUTION_PAUSED);
+    assert(fixture.next == 1u && fixture.accepted == 1u);
+    fixture.reject = true;
+    assert(cetta_owned_execution_sequence(&execution, 8u,
+        owned_sequence_accept, &fixture) == CETTA_OWNED_EXECUTION_PAUSED);
+    assert(execution.has_pending && fixture.next == 2u && fixture.accepted == 1u);
+    fixture.reject = false;
+    assert(cetta_owned_execution_sequence(&execution, 2u,
+        owned_sequence_accept, &fixture) == CETTA_OWNED_EXECUTION_PAUSED);
+    assert(!execution.has_pending && fixture.next == 3u && fixture.accepted == 3u);
+    /* Consuming the last answer is not itself a proof of exhaustion. */
+    assert(cetta_owned_execution_sequence(&execution, 1u,
+        owned_sequence_accept, &fixture) == CETTA_OWNED_EXECUTION_PAUSED);
+    assert(fixture.next == 4u && fixture.accepted == 4u && !execution.terminal);
+    assert(cetta_owned_execution_sequence(&execution, 1u,
+        owned_sequence_accept, &fixture) == CETTA_OWNED_EXECUTION_COMPLETE);
+    assert(execution.accepted == 4u && fixture.attempts == 5u);
+    cetta_owned_execution_cancel(&execution);
+    cetta_owned_execution_cancel(&execution);
+    assert(fixture.releases == 1u && fixture.accepted == 4u);
+    /* A sibling is independent, and cancelling a pending return commits
+     * neither that occurrence nor a rollback of the accepted prefix. */
+    OwnedSequenceFixture sibling = {.values = {fixture.values[0]}, .reject = true};
+    cetta_owned_execution_init(&execution, &sibling, owned_sequence_next,
+                              owned_sequence_release);
+    assert(cetta_owned_execution_sequence(&execution, 1u,
+        owned_sequence_accept, &sibling) == CETTA_OWNED_EXECUTION_PAUSED);
+    assert(execution.has_pending && sibling.accepted == 0u && fixture.accepted == 4u);
+    cetta_owned_execution_cancel(&execution);
+    assert(sibling.releases == 1u && sibling.accepted == 0u && fixture.releases == 1u);
+    bindings_free(&environment);
+    arena_free(&arena);
+}
+
+
+static bool owned_integer_accept(void *context, const CettaOwnedReturn *returned) {
+    unsigned *count = context;
+    assert(returned->outcome.kind == CETTA_CALL_VALUE);
+    assert(returned->outcome.result_form == CETTA_CALL_RESULT_COMPLETED_VALUE);
+    assert(returned->environment == NULL && returned->outcome.delayed == NULL);
+    assert(returned->outcome.term->ground.ival == *count);
+    (*count)++;
+    return true;
+}
+
+static void test_owned_cursor_authority(void) {
+    const char *equations[] = {
+        "(= (owned-ticks $n) $n)",
+        "(= (owned-ticks $n) (owned-ticks (+ $n 1)))",
+    };
+    Fixture fixture;
+    init(&fixture, equations, 2u, "(owned-ticks 0)");
+    CettaPreparedPureAnswerCursor *cursor = open_cursor(&fixture, false);
+    CettaOwnedExecution execution;
+    cetta_prepared_pure_answer_cursor_own_execution(&execution, cursor);
+    unsigned count = 0u;
+    assert(cetta_owned_execution_sequence(&execution, 1u, owned_integer_accept, &count) ==
+           CETTA_OWNED_EXECUTION_PAUSED);
+    assert(count == 1u && execution.accepted == 1u);
+    /* Retained code remains alive but has lost its source read authority. */
+    cetta_prepared_pure_program_free(fixture.program);
+    fixture.program = NULL;
+    assert(space_admit_atom(&fixture.space, &fixture.source,
+                           parse(&fixture.source, "(= (owned-ticks $n) 999)")));
+    assert(cetta_owned_execution_sequence(&execution, 1u, owned_integer_accept, &count) ==
+           CETTA_OWNED_EXECUTION_HANDOFF);
+    assert(execution.completion == CETTA_EVAL_INCOMPLETE_INVALIDATED);
+    assert(count == 1u && execution.accepted == 1u && execution.terminal);
+    cetta_owned_execution_cancel(&execution);
+    cetta_owned_execution_cancel(&execution);
+    destroy(&fixture);
+}
+
+typedef struct {
+    unsigned references, releases;
+    unsigned char *bytes;
+} OwnedBytes;
+
+static void owned_bytes_retain(void *context) {
+    OwnedBytes *bytes = context;
+    assert(bytes->bytes && bytes->releases == 0u);
+    bytes->references++;
+}
+
+static void owned_bytes_release(void *context) {
+    OwnedBytes *bytes = context;
+    assert(bytes->references > 0u);
+    if (--bytes->references == 0u) {
+        free(bytes->bytes);
+        bytes->bytes = NULL;
+        bytes->releases++;
+    }
+}
+
+typedef struct {
+    Arena arena;
+    Atom *views[2];
+    unsigned position, releases;
+} OwnedViewProducer;
+
+static CettaOwnedExecutionStep owned_view_next(void *context,
+    CettaOwnedReturn *returned, CettaEvalCompletion *completion) {
+    OwnedViewProducer *producer = context;
+    assert(producer->releases == 0u);
+    *completion = CETTA_EVAL_COMPLETE;
+    if (producer->position == 2u)
+        return CETTA_OWNED_EXECUTION_COMPLETE;
+    *returned = (CettaOwnedReturn){
+        .outcome = cetta_call_completed_value(producer->views[producer->position++]),
+    };
+    return CETTA_OWNED_EXECUTION_RETURN;
+}
+
+static void owned_view_release(void *context) {
+    OwnedViewProducer *producer = context;
+    assert(producer->releases++ == 0u);
+    arena_free(&producer->arena);
+}
+
+static bool owned_view_pause(void *context, const CettaOwnedReturn *returned) {
+    unsigned *attempts = context;
+    assert(returned->outcome.result_form == CETTA_CALL_RESULT_COMPLETED_VALUE);
+    assert(returned->outcome.term->expr.len == 4u);
+    (*attempts)++;
+    return false;
+}
+
+static Atom *owned_payload_map_leaf(Arena *destination, Atom *source, void *context) {
+    (void)context;
+    return atom_deep_copy(destination, source);
+}
+
+/* Large immutable storage is retained by its actual native owner. Distinct
+ * capture spans share the handle; publishing a pending view precedes cancel.
+ * No tensor mutation or implicit exclusivity is inferred from these views. */
+static void test_owned_shared_payload(void) {
+    Arena source, publication;
+    arena_init_detached(&source);
+    arena_init_detached(&publication);
+    ArenaMark empty = arena_mark(&source);
+    OwnedBytes bytes = {.bytes = malloc(65536u)};
+    assert(bytes.bytes);
+    memset(bytes.bytes, 'x', 65536u);
+    const unsigned char expected[] = {'a', 0, 0xc3, 0xb1, 'z'};
+    memcpy(bytes.bytes + 17u, expected, sizeof(expected));
+    Atom *handle = atom_native_handle_identifier(&source, 42, &bytes,
+                                                owned_bytes_retain, owned_bytes_release);
+    Atom *view = atom_expr(&source, (Atom *[]){atom_symbol(&source, "ByteSpan"),
+        handle, atom_int(&source, 17), atom_int(&source, 5)}, 4u);
+    Atom *shifted = atom_expr(&source, (Atom *[]){view->expr.elems[0],
+        handle, atom_int(&source, 18), atom_int(&source, 4)}, 4u);
+    OwnedViewProducer producer = {0};
+    arena_init_detached(&producer.arena);
+    AtomDeepCopySession *copy = atom_deep_copy_session_new_mapped(
+        &producer.arena, owned_payload_map_leaf, NULL);
+    assert(copy);
+    producer.views[0] = atom_deep_copy_session_copy(copy, view);
+    producer.views[1] = atom_deep_copy_session_copy(copy, shifted);
+    atom_deep_copy_session_free(copy);
+    assert(producer.views[0]->expr.elems[1] == producer.views[1]->expr.elems[1]);
+    CettaOwnedExecution execution;
+    cetta_owned_execution_init(&execution, &producer, owned_view_next, owned_view_release);
+    unsigned attempts = 0u;
+    assert(cetta_owned_execution_sequence(&execution, 1u, owned_view_pause, &attempts) ==
+           CETTA_OWNED_EXECUTION_PAUSED);
+    assert(execution.has_pending && producer.position == 1u && attempts == 1u);
+    arena_reset(&source, empty);
+    assert(bytes.releases == 0u && memcmp(bytes.bytes + 17u, expected, sizeof(expected)) == 0);
+    Atom *published = atom_deep_copy(&publication, execution.pending.outcome.term);
+    assert(published && published->expr.elems[2]->ground.ival == 17);
+    assert(cetta_owned_execution_sequence(&execution, 1u, owned_view_pause, &attempts) ==
+           CETTA_OWNED_EXECUTION_PAUSED);
+    assert(producer.position == 1u && attempts == 2u && execution.accepted == 0u);
+    cetta_owned_execution_cancel(&execution);
+    assert(producer.releases == 1u && bytes.releases == 0u && bytes.references > 0u);
+    assert(memcmp(bytes.bytes + published->expr.elems[2]->ground.ival,
+                  expected, sizeof(expected)) == 0);
+    arena_free(&publication);
+    assert(bytes.references == 0u && bytes.releases == 1u && bytes.bytes == NULL);
+    arena_free(&source);
+    printf("owned shared payload: 65536 bytes, aliased spans, paused return, source reset, "
+           "publication and exactly one final release\n");
+}
+
+
 int main(void) {
     SymbolTable symbols;
     VarInternTable variables;
@@ -1094,6 +1549,10 @@ int main(void) {
     test_cursor_detach();
     test_cursor_detach_continuations();
     test_cursor_last_call_chain_is_bounded();
+    test_cursor_scalar_frontier_reclamation();
+    test_cursor_nested_frontier_reclamation();
+    test_cursor_collection_preserves_shared_frontier();
+    test_cursor_collection_keeps_transition_limit();
     test_cursor_limit_keeps_frontier();
     test_continuation_permutations();
     test_continuation_detach();
@@ -1107,10 +1566,13 @@ int main(void) {
     test_continuation_last_call_depth();
     test_continuation_unbounded_generator_limit();
     test_context_reconstruction_observes_interrupt();
+    test_owned_return_sequencing();
+    test_owned_cursor_authority();
+    test_owned_shared_payload();
     symbol_table_free(&symbols);
     var_intern_free(&variables);
     g_symbols = NULL;
     g_var_intern = NULL;
-    puts("prepared pure answer producer: thirty boundary cases passed");
+    puts("prepared pure answer producer: thirty-eight boundary cases passed");
     return 0;
 }

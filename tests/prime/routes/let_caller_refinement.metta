@@ -1,3 +1,6 @@
+; Implicit caller and sibling refinement under rule M.
+(scope:profile mercury-implicit per-call reference)
+
 ; A `$` name is a store name of its whole form.  The `let` that mentions it
 ; first binds it, and every other mention sees the binding: the caller's
 ; variable after an equation call, a sibling `let`, and the rest of the form.

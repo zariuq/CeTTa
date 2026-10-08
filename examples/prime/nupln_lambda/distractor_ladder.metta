@@ -22,7 +22,7 @@
                 ($c (add-atom $kb (: (always $name 1) (≞ (lift app (lift $name) @1) ⊤))))
                 ($d (add-atom $kb (: (always $name 2) (≞ (lift app (lift $name) @2) ⊤))))
                 ($next (- $k 1)))
-           (add-distractors $kb $rest $next)))))
+           (add-distractors $kb $rest $next)){$a $b $c $d $next}){$name $rest}))
 
 (= (rung-kb $k)
    (let $kb (new-space)

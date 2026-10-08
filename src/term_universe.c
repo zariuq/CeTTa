@@ -2696,15 +2696,12 @@ double tu_float(const TermUniverse *universe, AtomId id) {
 
 CettaExprLen tu_authored_arity(const TermUniverse *universe, AtomId id) {
     CettaExprLen arity = tu_arity(universe, id);
-    if (arity < 4u || tu_kind(universe, id) != ATOM_EXPR)
+    if (arity < 3u || tu_kind(universe, id) != ATOM_EXPR)
         return arity;
     AtomId head = tu_child(universe, id, 0u);
-    if (tu_kind(universe, head) != ATOM_SYMBOL)
-        return arity;
-    SymbolId sym = tu_sym(universe, head);
-    if (!((arity == 4u && sym == g_builtin_syms.prime_lam) ||
-          (arity == 5u && sym == g_builtin_syms.map_atom) ||
-          (arity == 7u && sym == g_builtin_syms.foldl_atom)))
+    SymbolId sym = tu_kind(universe, head) == ATOM_SYMBOL
+        ? tu_sym(universe, head) : SYMBOL_ID_NONE;
+    if (!atom_prime_scope_metadata_shape(arity, sym))
         return arity;
     AtomId last = tu_child(universe, id, arity - 1u);
     if (tu_kind(universe, last) != ATOM_EXPR || tu_arity(universe, last) < 2u ||

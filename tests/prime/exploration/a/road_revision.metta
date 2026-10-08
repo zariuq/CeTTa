@@ -28,7 +28,7 @@
 (= (evidence $w $r)
    (let ($road $open $closed) (car-atom $w)
      (if (== $road $r) ($open $closed)
-         (let $rest (cdr-atom $w) (evidence $rest $r)))))
+         (let $rest (cdr-atom $w) (evidence $rest $r)){$rest})))
 (= (is-open $w $r) (let ($open $closed) (evidence $w $r) (< $closed $open)))
 
 ; Revision adds the evidence of a report, road by road.
@@ -52,11 +52,11 @@
 (= (usable every-road $w $r) (is-open $w $r))
 (= (usable major-road $w $r) (and (major $r) (is-open $w $r)))
 (= (adjacent $use $w $s $t)
-   (let $roads (collapse (let ($r $x $y) (match &self (road $r $x $y) ($r $x $y))
+   (let $roads (collapse (let ($r $x $y) (match &self (road $r $x $y) ($r $x $y)){$r $x $y}
                            (if (and (usable $use $w $r)
                                     (or (and (== $x $s) (== $y $t))
                                         (and (== $x $t) (== $y $s))))
-                               $r (empty))))
+                               $r (empty))){$r $x $y})
      (not (== $roads ()))))
 ; The towns reached from the source after n rounds.
 (= (reached-after $use $w $source $n $t)
@@ -66,8 +66,8 @@
              (let $via (collapse (let $s (superpose (a b c d))
                                    (if (and (reached-after $use $w $source $m $s)
                                             (adjacent $use $w $s $t))
-                                       $s (empty))))
-               (not (== $via ())))))))
+                                       $s (empty))){$s})
+               (not (== $via ()))){$via})){$m}))
 (= (answer $w) (reached-after every-road $w a 3 d))
 (= (open-map $w) (map-atom (ab bd ac cd) $r (is-open $w $r)))
 
@@ -101,7 +101,7 @@
           ($bad (collapse (let $q (superpose (ab bd ac cd))
                             (if (== (evidence $after $q)
                                     (combine (evidence $w $q) (evidence $report $q)))
-                                (empty) $q)))))
+                                (empty) $q)){$q})))
      (== $bad ())))
 !(let $w (world all-open) (square-closes bd $w))
 !(let $w (world major-only) (square-closes bd $w))
@@ -167,7 +167,7 @@
 (= (append-report $log $report)
    (if (== $log ()) ($report)
        (let* (($h (car-atom $log)) ($t (cdr-atom $log)) ($rest (append-report $t $report)))
-         (cons-atom $h $rest))))
+         (cons-atom $h $rest)){$h $t $rest}))
 ; Closing a road in the log appends a closed report; a compacting version
 ; keeps only that latest report about the road.
 (= (close-log $r $log) (append-report $log ($r False)))
