@@ -1,0 +1,5 @@
+!(import! &self compatibility_ops)
+!(make-data-plus)
+!(let $symbol (make-plus-symbol) (== $symbol +))
+!(let $symbol (make-plus-symbol) (get-metatype $symbol))
+!(direct-python-operation)

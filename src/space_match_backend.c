@@ -11151,14 +11151,19 @@ static inline __attribute__((always_inline)) void space_subst_query_member(
  * logical overlay view is walked so later base appends and removals remain
  * invisible.  Local scratch atoms are matched directly.  Results carry
  * finalized bindings because overlay logical indices need not address
- * backend storage. */
+ * backend storage. Module own-storage views instead expose the base's live
+ * own-row range through this same indexed query path. */
 static void overlay_subst_query(Space *s, Arena *a, Atom *query,
                                 SubstMatchSet *out) {
     smset_init(out);
     Space *base = (Space *)s->overlay_base;
-    CettaCount base_visible = s->overlay_base_visible_len;
+    CettaIndex base_begin = s->module_own_view
+        ? space_imported_length(base) : 0u;
+    CettaCount base_end = s->module_own_view
+        ? space_length64(base) : s->overlay_base_visible_len;
+    CettaCount base_visible = base_end - base_begin;
     bool base_is_fully_visible =
-        base_visible == space_length64(base);
+        base_begin == 0u && base_end == space_length64(base);
     bool base_matches_have_physical_indices =
         base->match_backend.kind == SPACE_ENGINE_NATIVE ||
         base->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT;
@@ -11166,18 +11171,19 @@ static void overlay_subst_query(Space *s, Arena *a, Atom *query,
         (base_is_fully_visible || base_matches_have_physical_indices)) {
         SubstMatchSet base_matches;
         /* The outer composed query appends dependencies once. This walk
-         * supplies only the overlay's frozen local-storage prefix. */
+         * supplies only the selected range of local base storage. */
         space_subst_query_member(base, a, query, &base_matches);
         for (CettaIndex i = 0; i < base_matches.len; i++) {
             Bindings final_b;
             if (!base_is_fully_visible &&
-                base_matches.items[i].atom_idx >= base_visible)
+                (base_matches.items[i].atom_idx < base_begin ||
+                 base_matches.items[i].atom_idx >= base_end))
                 continue;
             bindings_init(&final_b);
             if (space_subst_match_with_seed(base, query,
                                             &base_matches.items[i], NULL, a,
                                             &final_b)) {
-                subst_matchset_push(out, base_matches.items[i].atom_idx,
+                subst_matchset_push(out, base_matches.items[i].atom_idx - base_begin,
                                     base_matches.items[i].epoch, &final_b,
                                     true);
             }

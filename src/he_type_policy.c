@@ -310,6 +310,7 @@ bool he_library_declares_arity(const Atom *subject, CettaExprLen arity) {
     return false;
 }
 
+SymbolId g_he_module_space_no_deps_symbol = SYMBOL_ID_NONE;
 static bool g_he_tables_loaded;
 static pthread_once_t g_he_tables_once = PTHREAD_ONCE_INIT;
 
@@ -342,7 +343,9 @@ static void he_library_tables_build(void) {
                              HE_GROUNDED_EXTENSION_TYPES[i].type, true))
             return;
     }
-    g_he_tables_loaded = true;
+    g_he_module_space_no_deps_symbol =
+        symbol_lookup_cstr(g_symbols, "module-space-no-deps");
+    g_he_tables_loaded = g_he_module_space_no_deps_symbol != SYMBOL_ID_NONE;
 }
 
 bool he_library_tables_init(void) {

@@ -1,0 +1,4 @@
+[(sha256 "abc")]
+[(sort-atom (3 1 2))]
+[(// 7 2)]
+[(range-atom 3)]

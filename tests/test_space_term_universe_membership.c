@@ -2287,6 +2287,159 @@ int main(void) {
         space_free(&declarations);
     }
 
+    /* An own-storage view is live, keeps occurrence multiplicity and owns
+     * neither the module nor its dependencies. Existing revision tokens
+     * must notice mutations through either alias. */
+    {
+        Space owner, dependency, own;
+        space_init_with_universe(&owner, &universe);
+        space_init_with_universe(&dependency, &universe);
+        Atom *prefix = atom_int(&scratch_d, 100);
+        assert(!atom_is_symbol(NULL, "rho:nil"));
+        assert(!atom_is_symbol(prefix, "rho:nil"));
+        assert(!atom_is_symbol(atom_string(&scratch_d, "rho:nil"), "rho:nil"));
+        assert(atom_is_symbol(atom_symbol(&scratch_d, "rho:nil"), "rho:nil"));
+        assert(!atom_is_symbol(atom_symbol(&scratch_d, "rho:cost:nil"), "rho:nil"));
+        _Alignas(16) static const char nearby_literals[] = "view-a\0view-b";
+        Atom *literal_a = atom_symbol(&scratch_d, nearby_literals);
+        Atom *literal_b = atom_symbol(&scratch_d, nearby_literals + 7u);
+        for (uint32_t i = 0u; i < 20u; i++) {
+            assert(atom_is_symbol(literal_a, nearby_literals));
+            assert(atom_is_symbol(literal_b, nearby_literals + 7u));
+            assert(!atom_is_symbol(literal_a, nearby_literals + 7u));
+        }
+        Atom *first = atom_int(&scratch_d, 17);
+        Atom *second = atom_int(&scratch_d, 19);
+        Atom *added = atom_int(&scratch_d, 13);
+        space_add(&owner, prefix);
+        assert(space_mark_imported_prefix(&owner));
+        space_add(&owner, first);
+        space_add(&owner, first);
+        space_add(&owner, second);
+        space_add(&dependency, atom_int(&scratch_d, 97));
+        assert(space_add_dependency(&owner, &dependency));
+        assert(space_init_module_own_view(&own, &owner));
+        assert(space_view_length64(&owner) == 5u);
+        assert(space_length64(&own) == 3u);
+        assert(space_view_length64(&own) == 3u);
+        assert(space_dependency_count(&own) == 0u);
+        assert(space_imported_length(&own) == 0u);
+        assert(atom_eq(space_get_at64(&own, 0u), first));
+        assert(atom_eq(space_get_at64(&own, 1u), first));
+        assert(!space_add_dependency(&own, &dependency));
+        SpaceReadToken read = space_read_token(&own);
+        SpaceProgramToken program = space_program_token(&own);
+        space_add(&owner, added);
+        assert(space_length64(&own) == 4u);
+        assert(!space_read_token_is_current(read));
+        assert(space_read_token_prefix_intact(read));
+        space_add(&own, atom_expr3(&scratch_d,
+            atom_symbol_id(&scratch_d, g_builtin_syms.colon),
+            atom_symbol(&scratch_d, "own-view-subject"),
+            atom_symbol(&scratch_d, "OwnViewType")));
+        assert(!space_program_token_is_current(program));
+        assert(space_length64(&owner) == 6u);
+        Space *outer_work = space_heap_clone_shallow(&owner);
+        assert(outer_work);
+        assert(space_module_own_view_select(&own, outer_work));
+        space_add(&own, atom_int(&scratch_d, 23));
+        assert(space_length64(&owner) == 6u);
+        assert(space_length64(&own) == 6u);
+        Space *inner_work = space_heap_clone_shallow(outer_work);
+        assert(inner_work);
+        assert(space_module_own_view_select(&own, inner_work));
+        read = space_read_token(&own);
+        space_add(&own, atom_int(&scratch_d, 29));
+        assert(!space_read_token_is_current(read));
+        assert(space_length64(&own) == 7u);
+        assert(space_module_own_view_select(&own, outer_work));
+        space_module_own_view_release(&own, inner_work);
+        space_free(inner_work);
+        free(inner_work);
+        assert(space_length64(&own) == 6u);
+        assert(space_module_own_view_select(&own, &owner));
+        space_module_own_view_release(&own, outer_work);
+        space_free(outer_work);
+        free(outer_work);
+        assert(space_length64(&own) == 5u);
+        assert(space_dependency_count(&own) == 0u);
+        /* Lifetime cleanup must also unwind a selected temporary storage
+           without exposing the remaining observation links as imports. */
+        outer_work = space_heap_clone_shallow(&owner);
+        assert(outer_work && space_module_own_view_select(&own, outer_work));
+        space_add(&own, atom_int(&scratch_d, 23));
+        inner_work = space_heap_clone_shallow(outer_work);
+        assert(inner_work && space_module_own_view_select(&own, inner_work));
+        space_add(&own, atom_int(&scratch_d, 29));
+        read = space_read_token(&own);
+        space_free(inner_work);
+        free(inner_work);
+        assert(!space_read_token_is_current(read));
+        assert(own.overlay_base == outer_work);
+        assert(space_length64(&own) == 6u);
+        assert(space_dependency_count(&own) == 0u);
+        assert(space_dependency_at(&own, 0u) == NULL);
+        space_free(outer_work);
+        free(outer_work);
+        assert(own.overlay_base == &owner);
+        assert(space_length64(&own) == 5u);
+        assert(space_dependency_count(&own) == 0u);
+        assert(space_remove(&own, first));
+        assert(space_length64(&own) == 4u);
+        uint32_t first_count = 0u, second_count = 0u;
+        uint8_t mask[4] = {0};
+        for (CettaIndex i = 0u; i < space_length64(&own); i++) {
+            Atom *row = space_get_at64(&own, i);
+            first_count += atom_eq(row, first);
+            if (atom_eq(row, second)) {
+                second_count++;
+                mask[i] = 1u;
+            }
+        }
+        assert(first_count == 1u && second_count == 1u);
+        assert(!space_remove(&own, prefix));
+        CettaCount removed = 0u;
+        assert(space_remove_occurrence_mask_stable(
+            &own, mask, sizeof(mask), &removed));
+        assert(removed == 1u && space_length64(&own) == 3u);
+        assert(atom_eq(space_get_at64(&owner, 0u), prefix));
+        Atom *retained = space_get_at64(&own, 0u);
+        assert(space_truncate64(&own, 1u));
+        assert(space_length64(&own) == 1u);
+        assert(space_length64(&owner) == 2u);
+        Atom *popped = NULL;
+        assert(space_pop(&own, &popped) && atom_eq(popped, retained));
+        assert(!space_pop(&own, &popped));
+        assert(space_length64(&owner) == 1u);
+        space_free(&owner);
+        assert(own.overlay_base == NULL);
+        assert(space_length64(&own) == 0u);
+        assert(!space_admit_atom(&own, &scratch_d, added));
+        space_add(&own, added);
+        assert(space_length64(&own) == 0u);
+        space_free(&own);
+        space_free(&dependency);
+    }
+
+    /* A nullary arrow supplies the source call's result type without
+     * evaluating its body, just as a non-nullary signature does. */
+    {
+        Space declarations;
+        space_init_with_universe(&declarations, &universe);
+        Atom *subject = atom_symbol(&scratch_d, "own-view-zero");
+        Atom *number = atom_symbol(&scratch_d, "Number");
+        space_add(&declarations, atom_expr3(&scratch_d,
+            atom_symbol_id(&scratch_d, g_builtin_syms.colon), subject,
+            atom_expr2(&scratch_d,
+                atom_symbol_id(&scratch_d, g_builtin_syms.arrow), number)));
+        Atom **types = NULL;
+        uint32_t count = get_atom_types(&declarations, &scratch_d,
+            atom_expr(&scratch_d, &subject, 1u), &types);
+        assert(count == 1u && atom_eq(types[0], number));
+        free(types);
+        space_free(&declarations);
+    }
+
     space_free(&right);
     space_free(&left);
     term_universe_free(&universe);

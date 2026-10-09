@@ -1,0 +1,5 @@
+!(register-module! runner_nested)
+!(import! &self runner_nested:owner)
+!(match &self (runner-resource-value $x) $x)
+!(bind! &owner-own (module-space-no-deps (mod-space! runner_nested:owner)))
+!(match &owner-own (runner-resource-value $x) $x)

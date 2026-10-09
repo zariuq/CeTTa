@@ -1,0 +1,1 @@
+(named-scope a)

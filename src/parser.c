@@ -2163,3 +2163,52 @@ int parse_metta_file_ids(const char *filename, TermUniverse *universe,
     return parse_metta_file_ids_diagnostic(
         filename, universe, out_ids, NULL, 0u);
 }
+
+int parse_metta_file_prefix_ids(
+    const char *filename, TermUniverse *universe, AtomId **out_ids,
+    int *complete_count, char *error_buf, size_t error_buf_size) {
+    if (out_ids)
+        *out_ids = NULL;
+    if (!out_ids || !complete_count)
+        return -1;
+    *complete_count = 0;
+    if (g_document_ids_backend.parse_file_prefix_ids &&
+        !g_document_ids_backend_active) {
+        g_document_ids_backend_active = true;
+        int result = g_document_ids_backend.parse_file_prefix_ids(
+            g_document_ids_backend.context, filename, universe, out_ids,
+            complete_count, error_buf, error_buf_size);
+        g_document_ids_backend_active = false;
+        return result;
+    }
+    int result = parse_metta_file_ids_diagnostic(
+        filename, universe, out_ids, error_buf, error_buf_size);
+    if (result >= 0)
+        *complete_count = result;
+    return result;
+}
+
+int parse_metta_bytes_prefix_ids(
+    const uint8_t *bytes, size_t length, TermUniverse *universe, AtomId **out_ids,
+    int *complete_count, char *error_buf, size_t error_buf_size) {
+    if (out_ids)
+        *out_ids = NULL;
+    if (!out_ids || !complete_count || !bytes)
+        return -1;
+    *complete_count = 0;
+    if (error_buf && error_buf_size)
+        error_buf[0] = '\0';
+    if (g_document_ids_backend.parse_bytes_prefix_ids &&
+        !g_document_ids_backend_active) {
+        g_document_ids_backend_active = true;
+        int result = g_document_ids_backend.parse_bytes_prefix_ids(
+            g_document_ids_backend.context, bytes, length, universe, out_ids,
+            complete_count, error_buf, error_buf_size);
+        g_document_ids_backend_active = false;
+        return result;
+    }
+    int result = parse_metta_buffer_ids((const char *)bytes, length, universe, out_ids);
+    if (result >= 0)
+        *complete_count = result;
+    return result;
+}

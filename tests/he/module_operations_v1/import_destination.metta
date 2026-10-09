@@ -1,0 +1,7 @@
+!(import! plain_dest import_destination_a)
+!(match &plain_dest (import-destination $x) $x)
+!(import! plain_dest import_destination_b)
+!(match &plain_dest (import-destination $x) $x)
+!(import! &amp_dest import_destination_a)
+!(case (import! &amp_dest import_destination_b) (((Error $a $b) refused) ($ok loaded)))
+!(match &amp_dest (import-destination $x) $x)

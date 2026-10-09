@@ -1,0 +1,12 @@
+python-file-effect 1
+python-file-effect 2
+python-hook-effect 1
+python-file-effect 3
+python-file-effect 4
+python-hook-effect 2
+python-file-effect 5
+python-file-effect 6
+python-hook-effect 3
+[caught]
+[caught]
+[caught]

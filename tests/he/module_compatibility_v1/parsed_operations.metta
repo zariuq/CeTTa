@@ -1,0 +1,6 @@
+!(get-metatype +)
+!(get-metatype println!)
+!(get-metatype import!)
+!(get-metatype parse)
+!(get-metatype unknown-name)
+!(let $op (parse "+") ($op 2 3))

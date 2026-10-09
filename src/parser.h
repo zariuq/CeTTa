@@ -38,12 +38,35 @@ typedef int (*ParserDocumentTextIdsBackend)(
 typedef int (*ParserDocumentFileIdsBackend)(
     void *context, const char *filename, TermUniverse *universe,
     AtomId **out_ids, char *error_buf, size_t error_buf_size);
+typedef int (*ParserDocumentFilePrefixIdsBackend)(
+    void *context, const char *filename, TermUniverse *universe,
+    AtomId **out_ids, int *complete_count,
+    char *error_buf, size_t error_buf_size);
+typedef int (*ParserDocumentBytesPrefixIdsBackend)(
+    void *context, const uint8_t *bytes, size_t length, TermUniverse *universe,
+    AtomId **out_ids, int *complete_count,
+    char *error_buf, size_t error_buf_size);
 
 typedef struct {
     void *context;
     ParserDocumentTextIdsBackend parse_text_ids;
     ParserDocumentFileIdsBackend parse_file_ids;
+    /* Optional: retain complete forms when a later form fails to parse. */
+    ParserDocumentFilePrefixIdsBackend parse_file_prefix_ids;
+    ParserDocumentBytesPrefixIdsBackend parse_bytes_prefix_ids;
 } ParserDocumentIdsBackend;
+
+/* Parse still fails on invalid source. The caller owns any complete prefix
+ * returned by the active reader. A reader without this capability remains
+ * atomic, returning no prefix on failure. */
+int parse_metta_file_prefix_ids(
+    const char *filename, TermUniverse *universe, AtomId **out_ids,
+    int *complete_count, char *error_buf, size_t error_buf_size);
+/* Execute and identify the same captured source bytes. The terminating byte
+ * at bytes[length] must be readable, as for the other counted text entries. */
+int parse_metta_bytes_prefix_ids(
+    const uint8_t *bytes, size_t length, TermUniverse *universe, AtomId **out_ids,
+    int *complete_count, char *error_buf, size_t error_buf_size);
 
 /* Install one process-wide immutable document reader for the active session. */
 bool parser_set_document_ids_backend(

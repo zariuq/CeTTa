@@ -138,7 +138,7 @@ def check_strict_profile_isolation(cetta: Path) -> int:
 
 
 def check_he_has_no_syn_library(cetta: Path) -> int:
-    expected = "[(Error (import! &self syn) Failed to resolve module syn)]"
+    expected = "[(Error (import! &self syn) Failed to resolve module top:syn)]"
     checks = 0
     for lane in ("he", "he-compat", "extended", "he-prime"):
         require_equal(

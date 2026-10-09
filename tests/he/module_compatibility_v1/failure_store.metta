@@ -1,0 +1,1 @@
+(store-own 1)
