@@ -1,0 +1,16 @@
+[Unit]
+Description=CeTTa named atom spaces
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/cetta-space-service --socket %t/cetta-space.sock --data %S/cetta-space
+EnvironmentFile=-%h/.config/cetta-space/service.env
+UMask=0077
+StateDirectory=cetta-space
+StateDirectoryMode=0700
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

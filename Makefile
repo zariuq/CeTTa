@@ -709,6 +709,7 @@ SRC += src/petta_type_policy.c src/petta_type_relation.c src/he_type_policy.c
 SRC += src/gslt_language_manifest_v1.c
 SRC += src/gslt_support_profile_v1.c
 SRC += src/library_io.c src/library_cwp.c src/library_proc.c src/http_worker.c src/telegram_transport.c src/library_durable.c
+SRC += src/atom_wire.c src/library_space_service.c
 SRC += $(JSON_GSLT_RUNTIME_SRC)
 SRC += $(PETTA_TYPECHECK_CENSUS_SRC)
 SRC += \
@@ -42954,6 +42955,19 @@ test-telegram-scheduler:
 endif
 
 .PHONY: telegram-service telegram-control test-telegram-service test-telegram-channel-service test-telegram-commands-service test-telegram-control
+.PHONY: space-service test-space-service
+SPACE_SERVICE_BIN = runtime/cetta-space-service-$(BUILD_OBJ_TAG)
+SPACE_SERVICE_OBJ = runtime/bootstrap/space-service.$(BUILD_OBJ_TAG).o
+-include $(SPACE_SERVICE_OBJ:.o=.d)
+$(SPACE_SERVICE_OBJ): src/space_service_main.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c $< -o $@
+$(SPACE_SERVICE_BIN): $(SPACE_SERVICE_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+space-service: $(SPACE_SERVICE_BIN)
+	@echo "Built $(SPACE_SERVICE_BIN)"
+test-space-service: $(SPACE_SERVICE_BIN) $(BIN)
+	python3 tests/test_space_service.py $(SPACE_SERVICE_BIN) $(BIN)
 runtime/cetta-telegram-control: src/telegram_control_main.c
 	@mkdir -p $(dir $@)
 	$(CC) -O2 -Wall -Wextra -Werror -std=c11 -o $@ $<

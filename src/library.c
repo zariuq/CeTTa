@@ -20,6 +20,7 @@
 #include "langdef_pack.h"
 #include "library_io.h"
 #include "library_cwp.h"
+#include "library_space_service.h"
 #include "library_proc.h"
 #include "library_durable.h"
 #include "library_json.h"
@@ -59,6 +60,7 @@ enum {
     CETTA_LIBRARY_CWP = 1u << 14,
     CETTA_LIBRARY_PROC = 1u << 15,
     CETTA_LIBRARY_LLM = 1u << 16,
+    CETTA_LIBRARY_SPACE_SERVICE = 1u << 17,
     CETTA_LIBRARY_PETTA_TABLING = 1u << 11,
 #if CETTA_BUILD_WITH_JSON_GSLT
     CETTA_LIBRARY_JSON = 1u << 12
@@ -87,6 +89,7 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"cwp", CETTA_LIBRARY_CWP},
     {"proc", CETTA_LIBRARY_PROC},
     {"llm", CETTA_LIBRARY_LLM},
+    {"space_service", CETTA_LIBRARY_SPACE_SERVICE},
 #if CETTA_BUILD_WITH_JSON_GSLT
     {"json", CETTA_LIBRARY_JSON},
 #endif
@@ -10199,6 +10202,13 @@ static Atom *cetta_library_dispatch_native_value(
     if (ctx->active_mask & CETTA_LIBRARY_CWP) {
         Atom *result = cetta_cwp_dispatch(a, head, args, nargs);
         if (result) return result;
+    }
+    if (ctx->active_mask & CETTA_LIBRARY_SPACE_SERVICE) {
+        Atom *result = cetta_space_service_dispatch(a, head, args, nargs);
+        if (result) {
+            *result_form = CETTA_CALL_RESULT_COMPLETED_VALUE;
+            return result;
+        }
     }
     if (ctx->active_mask & CETTA_LIBRARY_PROC) {
         Atom *result = cetta_proc_dispatch(a, head, args, nargs);
