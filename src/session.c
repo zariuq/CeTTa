@@ -559,7 +559,11 @@ const CettaBuiltinPolicy *cetta_builtin_policy_lookup(const char *name) {
     size_t hi = sizeof(CETTA_BUILTIN_POLICIES) / sizeof(CETTA_BUILTIN_POLICIES[0]);
     while (lo < hi) {
         size_t mid = lo + (hi - lo) / 2u;
-        int order = strcmp(name, CETTA_BUILTIN_POLICIES[mid].name);
+        const char *candidate = CETTA_BUILTIN_POLICIES[mid].name;
+        /* Different first bytes already determine the lexicographic order. */
+        int order = (unsigned char)name[0] - (unsigned char)candidate[0];
+        if (order == 0)
+            order = strcmp(name + 1u, candidate + 1u);
         if (order == 0)
             return &CETTA_BUILTIN_POLICIES[mid];
         if (order < 0)

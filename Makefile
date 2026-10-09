@@ -665,6 +665,9 @@ PETTA_TYPECHECK_CENSUS_SRC = src/petta_typecheck_census.c
 endif
 SRC = src/symbol.c src/atom.c src/term_graph.c src/delay_service.c src/string_ops.c src/str_natives.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/binding/rule.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/match_decision.c src/select/code_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/owned_execution.c src/fold_algebra.c src/open_equation_machine.c src/eval.c src/grounded.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/library_pattern.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 SRC += src/shared_transition.c src/run_report.c src/run_cli.c src/error_presentation.c src/run_guard.c
+SRC += src/relational_plan.c src/relational_cursor.c
+SRC += src/producer_reads.c
+SRC += src/producer_dependencies.c src/producer_schedule.c
 SRC += src/library_supervise.c $(DURABLE_SRC)
 SRC += src/petta_type_policy.c src/petta_type_relation.c src/he_type_policy.c
 SRC += src/gslt_language_manifest_v1.c
@@ -819,6 +822,27 @@ STABLE_OCCURRENCE_TRANSPORT_TEST_SRC = tests/test_stable_occurrence_transport.c
 STABLE_OCCURRENCE_TRANSPORT_TEST_OBJ = runtime/bootstrap/test_stable_occurrence_transport.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 STABLE_OCCURRENCE_TRANSPORT_TEST_BIN = runtime/test_stable_occurrence_transport-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 STABLE_OCCURRENCE_TRANSPORT_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+OCCURRENCE_CURSOR_BENCH_SRC = benchmarks/bench_occurrence_cursor.c
+OCCURRENCE_CURSOR_BENCH_OBJ = runtime/bootstrap/bench_occurrence_cursor.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+OCCURRENCE_CURSOR_BENCH_BIN = runtime/bench_occurrence_cursor-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+CHAIN_AGGREGATION_TEST_SRC = tests/test_chain_aggregation.c
+RECURSIVE_PRODUCERS_TEST_OBJ = runtime/bootstrap/test_recursive_producers.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+RECURSIVE_PRODUCERS_TEST_BIN = runtime/test_recursive_producers-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+RECURSIVE_PRODUCERS_BENCH_OBJ = runtime/bootstrap/bench_recursive_producers.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+RECURSIVE_PRODUCERS_BENCH_BIN = runtime/bench_recursive_producers-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PRODUCER_READS_TEST_BIN = runtime/test_producer_reads-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PRODUCER_DEPENDENCIES_TEST_BIN = runtime/test_producer_dependencies-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PRODUCER_SCHEDULE_TEST_BIN = runtime/test_producer_schedule-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+RELATIONAL_PLAN_TEST_OBJ = runtime/bootstrap/test_relational_plan.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+RELATIONAL_PLAN_TEST_BIN = runtime/test_relational_plan-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+RELATIONAL_NAVIGATION_TEST_OBJ = runtime/bootstrap/test_relational_navigation.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+RELATIONAL_NAVIGATION_TEST_BIN = runtime/test_relational_navigation-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+RELATIONAL_PLAN_FAULT_TEST_OBJ = runtime/bootstrap/test_relational_plan_faults.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+RELATIONAL_PLAN_FAULT_TEST_BIN = runtime/test_relational_plan_faults-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+RELATIONAL_JOIN_BENCH_OBJ = runtime/bootstrap/bench_relational_join.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+RELATIONAL_JOIN_BENCH_BIN = runtime/bench_relational_join-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+CHAIN_AGGREGATION_TEST_OBJ = runtime/bootstrap/test_chain_aggregation.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+CHAIN_AGGREGATION_TEST_BIN = runtime/test_chain_aggregation-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 SHARED_SPACE_CONCURRENT_INDEX_TEST_SRC = tests/test_shared_space_concurrent_index.c
 SHARED_SPACE_CONCURRENT_INDEX_TEST_OBJ = runtime/bootstrap/test_shared_space_concurrent_index.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 SHARED_SPACE_CONCURRENT_INDEX_TEST_BIN = runtime/test_shared_space_concurrent_index-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
@@ -3729,6 +3753,16 @@ test-match-worklist-frames: $(MATCH_WORKLIST_FRAMES_TEST_BIN) $(MATCH_WORKLIST_F
 	fi
 	@echo 'PASS: fresh-frame mutant (ignores frame mentions) is killed'
 
+NATIVE_TERM_DEPTH_TEST_BIN = runtime/test_native_term_depth-$(BUILD_OBJ_TAG)
+$(NATIVE_TERM_DEPTH_TEST_BIN): tests/test_native_term_depth.c src/parser.c src/parser.h src/name_key.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -o $@ tests/test_native_term_depth.c src/parser.c src/name_key.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
+
+.PHONY: test-native-term-depth
+test: test-native-term-depth
+test-native-term-depth: $(NATIVE_TERM_DEPTH_TEST_BIN)
+	@$(call cetta_exec,./$(NATIVE_TERM_DEPTH_TEST_BIN))
+
 .PHONY: test-j-inference-axes
 test-j-inference-axes: $(BIN)
 	@set -eu; \
@@ -4825,6 +4859,283 @@ $(STABLE_OCCURRENCE_TRANSPORT_TEST_BIN): $(STABLE_OCCURRENCE_TRANSPORT_TEST_OBJ)
 .PHONY: test-stable-occurrence-transport
 test-stable-occurrence-transport: $(STABLE_OCCURRENCE_TRANSPORT_TEST_BIN)
 	@$(call cetta_exec,./$(STABLE_OCCURRENCE_TRANSPORT_TEST_BIN))
+
+$(OCCURRENCE_CURSOR_BENCH_OBJ): $(OCCURRENCE_CURSOR_BENCH_SRC) src/space.h src/space_match_backend.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime/bootstrap
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(OCCURRENCE_CURSOR_BENCH_BIN): $(OCCURRENCE_CURSOR_BENCH_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -o $@ $(OCCURRENCE_CURSOR_BENCH_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+
+.PHONY: bench-occurrence-cursor
+bench-occurrence-cursor: $(OCCURRENCE_CURSOR_BENCH_BIN)
+	@$(call cetta_exec,./$(OCCURRENCE_CURSOR_BENCH_BIN)) 100000 64 1 3
+
+$(CHAIN_AGGREGATION_TEST_OBJ): $(CHAIN_AGGREGATION_TEST_SRC) src/space.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime/bootstrap
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(CHAIN_AGGREGATION_TEST_BIN): $(CHAIN_AGGREGATION_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -o $@ $(CHAIN_AGGREGATION_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+
+.PHONY: test-chain-aggregation
+test: test-chain-aggregation
+test-chain-aggregation: $(CHAIN_AGGREGATION_TEST_BIN)
+	@$(call cetta_exec,./$(CHAIN_AGGREGATION_TEST_BIN))
+
+$(RELATIONAL_PLAN_TEST_OBJ): tests/test_relational_plan.c src/relational_plan.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime/bootstrap
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(RELATIONAL_PLAN_TEST_BIN): $(RELATIONAL_PLAN_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -o $@ $(RELATIONAL_PLAN_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+
+.PHONY: test-relational-plan
+
+$(RELATIONAL_NAVIGATION_TEST_OBJ): tests/test_relational_navigation.c src/relational_cursor.c src/relational_plan_internal.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime/bootstrap
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(RELATIONAL_NAVIGATION_TEST_BIN): $(RELATIONAL_NAVIGATION_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -o $@ $(RELATIONAL_NAVIGATION_TEST_OBJ) $(filter-out src/relational_cursor.%,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(LDFLAGS)
+
+.PHONY: test-relational-navigation test-relational-navigation-reference
+test: test-relational-navigation
+test-relational-navigation: $(RELATIONAL_NAVIGATION_TEST_BIN)
+	@$(call cetta_exec,./$(RELATIONAL_NAVIGATION_TEST_BIN))
+
+test: test-relational-navigation-reference
+test-relational-navigation-reference: $(RELATIONAL_NAVIGATION_TEST_BIN)
+	@CETTA_SANITIZER_REPEATABLE=$(SANITIZER_REPEATABLE) \
+		CETTA_WRAPPED_BIN="$(abspath $(RELATIONAL_NAVIGATION_TEST_BIN))" \
+		python3 tests/support/check_relational_navigation.py \
+		"$(if $(filter 1,$(SANITIZER_REPEATABLE)),$(abspath $(CETTA_EXEC_WRAPPER)),$(abspath $(RELATIONAL_NAVIGATION_TEST_BIN)))"
+
+.PHONY: test-relational-navigation-mutations
+test: test-relational-navigation-mutations
+test-relational-navigation-mutations: $(RELATIONAL_NAVIGATION_TEST_BIN)
+	@set -eu; \
+	mutation_dir=runtime/bootstrap/relational-navigation-mutations-$(BUILD_OBJ_TAG); \
+	mkdir -p "$$mutation_dir"; \
+	for kind in seek seek-cost intersection seek-rotation advance-rotation; do \
+		python3 tests/support/mutate_relational_plan.py src/relational_cursor.c "$$kind" "$$mutation_dir/$$kind.c"; \
+		$(CC) $(CPPFLAGS) $(CFLAGS) \
+			-DCETTA_RELATIONAL_NAVIGATION_SOURCE=\"$(CURDIR)/$$mutation_dir/$$kind.c\" \
+			-o "$$mutation_dir/$$kind" tests/test_relational_navigation.c \
+			$(filter-out src/relational_cursor.%,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(LDFLAGS); \
+		case "$$kind" in \
+		seek) assertion='found_length == expected_length';; \
+		seek-cost) assertion='(low == high) == (work.key_comparisons == 0u)';; \
+		intersection) assertion='after < before';; \
+		seek-rotation) assertion='factor == selected';; \
+		*) assertion='cursor->maximum == relational_iterator_key';; \
+		esac; \
+		python3 tests/support/check_native_mutation_rejected.py \
+			$(RELATIONAL_NAVIGATION_TEST_BIN) "$$mutation_dir/$$kind" "$$assertion"; \
+	done
+$(PRODUCER_READS_TEST_BIN): tests/test_producer_reads.c src/producer_reads.c src/producer_reads.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc tests/test_producer_reads.c src/producer_reads.c -Wl,--wrap=calloc -o $@ $(LDFLAGS)
+
+$(PRODUCER_DEPENDENCIES_TEST_BIN): tests/test_producer_dependencies.c src/producer_dependencies.c src/producer_dependencies.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc tests/test_producer_dependencies.c src/producer_dependencies.c -Wl,--wrap=calloc -o $@ $(LDFLAGS)
+
+$(PRODUCER_SCHEDULE_TEST_BIN): tests/test_producer_schedule.c src/producer_schedule.c src/producer_schedule.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc tests/test_producer_schedule.c src/producer_schedule.c -Wl,--wrap=calloc -o $@ $(LDFLAGS)
+
+.PHONY: test-producer-dependencies test-producer-schedule
+test: test-producer-dependencies test-producer-schedule
+test-producer-dependencies: $(PRODUCER_DEPENDENCIES_TEST_BIN)
+	@$(PRODUCER_DEPENDENCIES_TEST_BIN)
+test-producer-schedule: $(PRODUCER_SCHEDULE_TEST_BIN)
+	@$(PRODUCER_SCHEDULE_TEST_BIN)
+
+$(RECURSIVE_PRODUCERS_TEST_OBJ): tests/test_recursive_producers.c src/petta_search_machine.h src/producer_reads.h src/producer_dependencies.h src/producer_schedule.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime/bootstrap
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -c tests/test_recursive_producers.c -o $@
+
+$(RECURSIVE_PRODUCERS_TEST_BIN): $(RECURSIVE_PRODUCERS_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=clock_gettime -o $@ $(RECURSIVE_PRODUCERS_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+
+$(RECURSIVE_PRODUCERS_BENCH_OBJ): benchmarks/bench_recursive_producers.c src/petta_search_machine.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime/bootstrap
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -c $< -o $@
+
+$(RECURSIVE_PRODUCERS_BENCH_BIN): $(RECURSIVE_PRODUCERS_BENCH_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $(RECURSIVE_PRODUCERS_BENCH_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+
+.PHONY: bench-recursive-producers
+bench-recursive-producers: $(RECURSIVE_PRODUCERS_BENCH_BIN)
+	@$(call cetta_exec,./$(RECURSIVE_PRODUCERS_BENCH_BIN)) 32 1 1 3 0
+
+test: test-recursive-producer-mutations
+test-recursive-producer-mutations: $(RECURSIVE_PRODUCERS_TEST_BIN)
+	@python3 tests/support/mutate_recursive_producers.py \
+		--compile '$(CC) $(CPPFLAGS) $(CFLAGS)' --link '$(CC) $(CFLAGS) -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=clock_gettime' \
+		--ldflags='$(LDFLAGS)' --test-object $(RECURSIVE_PRODUCERS_TEST_OBJ) \
+		--out runtime/bootstrap/recursive-producer-mutations-$(BUILD_OBJ_TAG) \
+		$(FALLBACK_EVAL_TEST_LINK_OBJ)
+
+test: test-recursive-producers
+test-recursive-producers: $(RECURSIVE_PRODUCERS_TEST_BIN)
+	@$(RECURSIVE_PRODUCERS_TEST_BIN)
+
+.PHONY: test-producer-support
+test: test-producer-support
+test-producer-support: $(BIN)
+	@python3 tests/support/check_producer_support.py $(abspath $(BIN)) \
+		--output-directory runtime/bootstrap/producer-support-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,) \
+		$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),--stats,)
+
+test: test-producer-reads
+test-producer-reads: $(PRODUCER_READS_TEST_BIN)
+	@$(PRODUCER_READS_TEST_BIN)
+
+test: test-relational-plan
+test-relational-plan: $(RELATIONAL_PLAN_TEST_BIN)
+	@$(call cetta_exec,./$(RELATIONAL_PLAN_TEST_BIN))
+
+$(RELATIONAL_PLAN_FAULT_TEST_OBJ): tests/test_relational_plan.c src/relational_plan.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime/bootstrap
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_RELATIONAL_FAULT_CONTROLS=1 $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(RELATIONAL_PLAN_FAULT_TEST_BIN): $(RELATIONAL_PLAN_FAULT_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -o $@ $(RELATIONAL_PLAN_FAULT_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) \
+		-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc $(LDFLAGS)
+
+.PHONY: test-relational-plan-faults
+test: test-relational-plan-faults
+test-relational-plan-faults: $(RELATIONAL_PLAN_FAULT_TEST_BIN)
+	@$(call cetta_exec,./$(RELATIONAL_PLAN_FAULT_TEST_BIN))
+
+$(RELATIONAL_JOIN_BENCH_OBJ): benchmarks/bench_relational_join.c src/relational_plan.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime/bootstrap
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(RELATIONAL_JOIN_BENCH_BIN): $(RELATIONAL_JOIN_BENCH_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -o $@ $(RELATIONAL_JOIN_BENCH_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+
+.PHONY: bench-relational-join
+bench-relational-join: $(RELATIONAL_JOIN_BENCH_BIN)
+	@$(call cetta_exec,./$(RELATIONAL_JOIN_BENCH_BIN)) dense 8 3
+
+.PHONY: test-relational-plan-dialects
+test: test-relational-plan-dialects
+test-relational-plan-dialects: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_relational_plan.py \
+		./$(BIN) --output-directory runtime/bootstrap/relational-plan-dialects-$(BUILD_OBJ_TAG) \
+		$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),--stats,)
+
+.PHONY: test-relational-plan-mutations
+test: test-relational-plan-mutations
+test-relational-plan-mutations: $(RELATIONAL_PLAN_TEST_BIN)
+	@set -eu; \
+	mutation_dir=runtime/bootstrap/relational-plan-mutations-$(BUILD_OBJ_TAG); \
+	mkdir -p "$$mutation_dir"; \
+	for kind in multiplicity range count-overflow revision generation private-alias sharing encoding whole-variable seed seek intersection resume restore plan-retention incidence trail-restore trail-bound; do \
+		module=plan; other=cursor; \
+		case "$$kind" in multiplicity|range|count-overflow|seek|intersection|resume|restore|plan-retention|incidence|trail-restore|trail-bound) module=cursor; other=plan;; esac; \
+		python3 tests/support/mutate_relational_plan.py "src/relational_$$module.c" "$$kind" "$$mutation_dir/$$kind.c"; \
+		$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/$$kind.c" -o "$$mutation_dir/$$kind.o"; \
+		$(CC) $(CFLAGS) -o "$$mutation_dir/$$kind" \
+			$(RELATIONAL_PLAN_TEST_OBJ) \
+			$(filter-out src/relational_plan.$(BUILD_OBJ_TAG).o src/relational_plan.$(BUILD_OBJ_TAG).runtime-stats.o src/relational_cursor.$(BUILD_OBJ_TAG).o src/relational_cursor.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) \
+			src/relational_$$other.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o \
+			"$$mutation_dir/$$kind.o" $(LDFLAGS); \
+		if [ "$$kind" = revision ] || [ "$$kind" = generation ]; then assertion='!cetta_relational_plan_valid_for'; \
+		elif [ "$$kind" = range ] || [ "$$kind" = encoding ] || [ "$$kind" = whole-variable ]; then assertion='!cetta_relational_plan'; \
+		elif [ "$$kind" = intersection ]; then assertion='count == 6u && work.leaf_assignments == 2u'; \
+		elif [ "$$kind" = resume ]; then assertion='slices < 1000000u'; \
+		elif [ "$$kind" = restore ]; then assertion='cetta_continuation_restore'; \
+		elif [ "$$kind" = plan-retention ]; then assertion='atomic_load(&plan->references) == 2u'; \
+		elif [ "$$kind" = count-overflow ]; then assertion='!cetta_relational_plan_count(plan'; \
+		elif [ "$$kind" = trail-restore ]; then assertion='cetta_relational_plan_count(plan, &space, &count, &expected) && count == 27u'; \
+		else assertion='actual == reference'; fi; \
+		python3 tests/support/check_native_mutation_rejected.py \
+			$(RELATIONAL_PLAN_TEST_BIN) "$$mutation_dir/$$kind" "$$assertion"; \
+	done
+
+.PHONY: test-chain-aggregation-dialects
+test: test-chain-aggregation-dialects
+test-chain-aggregation-dialects: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_chain_aggregation.py \
+		./$(BIN) --output-directory runtime/bootstrap/chain-aggregation-dialects-$(BUILD_OBJ_TAG) \
+		$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),--stats,)
+
+.PHONY: test-mam-path-corpus
+test: test-mam-path-corpus
+test-mam-path-corpus: $(BIN)
+	@python3 benchmarks/mam_families/path_panel.py \
+		runtime/bootstrap/mam-path-corpus-$(BUILD_OBJ_TAG) --scale smoke
+	@$(CETTA_SCRIPT_RUN_ENV) python3 benchmarks/mam_families/run.py --paired \
+		runtime/bootstrap/mam-path-corpus-$(BUILD_OBJ_TAG) \
+		runtime/bootstrap/mam-path-corpus-results-$(BUILD_OBJ_TAG) ./$(BIN) \
+		--engines cetta-petta,cetta-he --trials 1
+
+.PHONY: test-mam-join-corpus
+test: test-mam-join-corpus
+test-mam-join-corpus: $(BIN)
+	@python3 benchmarks/mam_families/join_panel.py \
+		runtime/bootstrap/mam-join-corpus-$(BUILD_OBJ_TAG) --scale smoke
+	@$(CETTA_SCRIPT_RUN_ENV) python3 benchmarks/mam_families/run.py --paired \
+		runtime/bootstrap/mam-join-corpus-$(BUILD_OBJ_TAG) \
+		runtime/bootstrap/mam-join-corpus-results-$(BUILD_OBJ_TAG) ./$(BIN) \
+		--engines cetta-petta,cetta-he --trials 1
+
+.PHONY: test-mam-measurement
+test: test-mam-measurement
+test-mam-measurement:
+	@python3 tests/support/check_mam_measurement.py \
+		runtime/bootstrap/mam-measurement-controls-$(BUILD_OBJ_TAG)
+
+.PHONY: test-chain-aggregation-mutations
+test: test-chain-aggregation-mutations
+test-chain-aggregation-mutations: $(CHAIN_AGGREGATION_TEST_BIN)
+	@set -eu; \
+	mutation_dir=runtime/bootstrap/chain-aggregation-mutations-$(BUILD_OBJ_TAG); \
+	mkdir -p "$$mutation_dir"; \
+	for kind in count correlation sum seed count-range; do \
+		python3 tests/support/mutate_chain_aggregation.py src/space_match_backend.c "$$kind" "$$mutation_dir/$$kind.c"; \
+		$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/$$kind.c" -o "$$mutation_dir/$$kind.o"; \
+		$(CC) $(CFLAGS) -o "$$mutation_dir/$$kind" \
+			$(CHAIN_AGGREGATION_TEST_OBJ) \
+			$(filter-out src/space_match_backend.$(BUILD_OBJ_TAG).o src/space_match_backend.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) \
+			"$$mutation_dir/$$kind.o" $(LDFLAGS); \
+		if [ "$$kind" = correlation ]; then assertion='!space_native_flat_chain_aggregate'; \
+		elif [ "$$kind" = count ]; then assertion='actual.count == expected.count'; \
+		elif [ "$$kind" = seed ]; then assertion='count == 1u'; \
+		elif [ "$$kind" = count-range ]; then assertion='!space_native_flat_chain_count'; \
+		else assertion='actual.sum == expected.sum'; fi; \
+		python3 tests/support/check_native_mutation_rejected.py \
+			$(CHAIN_AGGREGATION_TEST_BIN) "$$mutation_dir/$$kind" "$$assertion"; \
+	done
+
+.PHONY: test-occurrence-merge-mutations
+test: test-occurrence-merge-mutations
+test-occurrence-merge-mutations: $(STABLE_OCCURRENCE_TRANSPORT_TEST_BIN)
+	@set -eu; \
+	mutation_dir=runtime/bootstrap/occurrence-merge-mutations-$(BUILD_OBJ_TAG); \
+	mkdir -p "$$mutation_dir"; \
+	for kind in order clone ceiling; do \
+		python3 tests/support/mutate_occurrence_merge.py src/space.c "$$kind" "$$mutation_dir/$$kind.c"; \
+		$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/$$kind.c" -o "$$mutation_dir/$$kind.o"; \
+		$(CC) $(CFLAGS) -o "$$mutation_dir/$$kind" \
+			$(STABLE_OCCURRENCE_TRANSPORT_TEST_OBJ) \
+			$(filter-out src/space.$(BUILD_OBJ_TAG).o src/space.$(BUILD_OBJ_TAG).runtime-stats.o,$(STABLE_OCCURRENCE_TRANSPORT_TEST_LINK_OBJ)) \
+			"$$mutation_dir/$$kind.o" $(LDFLAGS); \
+		if [ "$$kind" = ceiling ]; then assertion=SPACE_OCCURRENCE_CURSOR_END; \
+		else assertion='index == expected'; fi; \
+		python3 tests/support/check_native_mutation_rejected.py \
+			$(STABLE_OCCURRENCE_TRANSPORT_TEST_BIN) "$$mutation_dir/$$kind" "$$assertion"; \
+	done
 
 $(SHARED_SPACE_CONCURRENT_INDEX_TEST_OBJ): $(SHARED_SPACE_CONCURRENT_INDEX_TEST_SRC) src/shared_transition.h src/space.h src/space_match_backend.h src/subst_tree.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime/bootstrap

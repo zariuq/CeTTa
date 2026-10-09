@@ -42608,6 +42608,10 @@ static PettaMachineHost petta_eval_machine_host(
             petta_eval_machine_tabled_relation_contains,
         .tabled_relation_admissible =
             petta_eval_machine_tabled_relation_admissible,
+        .tabled_relation_round_reusable =
+            eval_current_language_id() == CETTA_LANGUAGE_PETTA
+                ? petta_eval_machine_equation_activation_relation_admissible
+                : NULL,
         .tabled_relation_set =
             petta_eval_machine_tabled_relation_set,
         /* The session lease is serial. Workers use a private root table;
@@ -43813,6 +43817,7 @@ static __attribute__((noinline)) bool petta_eval_machine_run(
                 " table_lookups=%" PRIu64
                 " table_hits=%" PRIu64
                 " table_generator_rounds=%" PRIu64
+                " table_generator_rounds_reused=%" PRIu64
                 " table_scc_completions=%" PRIu64
                 " table_answer_replays=%" PRIu64
                 " count_aggregate_answers=%" PRIu64
@@ -44007,6 +44012,7 @@ static __attribute__((noinline)) bool petta_eval_machine_run(
                 stats.table_lookups,
                 stats.table_hits,
                 stats.table_generator_rounds,
+                stats.table_generator_rounds_reused,
                 stats.table_scc_completions,
                 stats.table_answer_replays,
                 stats.count_aggregate_answers,
@@ -53362,19 +53368,13 @@ static EvalFoldRoute eval_petta_native_fold_route(
         return EVAL_FOLD_NOT_ADMITTED;
     CettaObservationContract contract = cetta_fold_step_contract(&fold);
 
-    Atom *patterns_buf[8];
-    Atom **patterns = patterns_buf;
-    size_t pattern_count = 0u;
+    Atom *single_pattern = pattern;
+    Atom **patterns = &single_pattern;
+    size_t pattern_count = 1u;
     if (pattern->kind == ATOM_EXPR && pattern->expr.len >= 2u &&
         atom_is_symbol_id(pattern->expr.elems[0], g_builtin_syms.comma)) {
         pattern_count = (size_t)pattern->expr.len - 1u;
-        if (pattern_count == 0u || pattern_count > 8u)
-            return EVAL_FOLD_DECLINED;
-        for (size_t index = 0u; index < pattern_count; index++)
-            patterns_buf[index] = pattern->expr.elems[index + 1u];
-    } else {
-        patterns_buf[0] = pattern;
-        pattern_count = 1u;
+        patterns = pattern->expr.elems + 1u;
     }
 
     int64_t initial = init->ground.ival;
@@ -53386,17 +53386,11 @@ static EvalFoldRoute eval_petta_native_fold_route(
          * only template whose evaluation is the identity, so an update that
          * ignores the item cannot skip any other template. */
         uint64_t matches = 0u;
-        __int128 chain_count = 0;
-        __int128 chain_sum = 0;
         /* A run needs only the number of occurrences, which no order
-         * affects: a chain join is counted by elimination. */
+         * affects: use the admitted relational count realization. */
         bool counted = item_constant && pattern_count >= 3u &&
-            space_native_flat_chain_aggregate(
-                space, patterns, pattern_count, false, 0u, 0u,
-                &chain_count, &chain_sum) &&
-            chain_count >= 0 && chain_count <= (__int128)UINT64_MAX;
-        if (counted)
-            matches = (uint64_t)chain_count;
+            space_native_relational_count(
+                space, arena, patterns, pattern_count, NULL, &matches);
         if (!item_constant ||
             (!counted &&
              !space_native_flat_conjunction_count(

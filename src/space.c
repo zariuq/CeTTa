@@ -1416,148 +1416,118 @@ void space_occurrence_cursor_init_empty(SpaceOccurrenceCursor *cursor) {
         memset(cursor, 0, sizeof(*cursor));
 }
 
-typedef struct {
-    uint32_t node;
-    CettaIndex leaf;
-} SpaceOccurrenceCursorHead;
-
-static bool space_occurrence_cursor_head_before(
-        SpaceOccurrenceCursorHead left, SpaceOccurrenceCursorHead right) {
-    return left.leaf < right.leaf;
+static CettaIndex space_occurrence_cursor_head(
+        const SpaceOccurrenceCursor *cursor, uint32_t node, CettaIndex leaf) {
+    return (leaf << cursor->heap_node_bits) | node;
 }
 
 static void space_occurrence_cursor_heap_push(
-        SpaceOccurrenceCursorHead *heap, uint32_t *len,
-        SpaceOccurrenceCursorHead item) {
-    uint32_t index = (*len)++;
+        SpaceOccurrenceCursor *cursor, CettaIndex head) {
+    uint32_t index = cursor->heap_len++;
     while (index > 0u) {
         uint32_t parent = (index - 1u) / 2u;
-        if (!space_occurrence_cursor_head_before(item, heap[parent]))
+        if (head >= cursor->heap[parent])
             break;
-        heap[index] = heap[parent];
+        cursor->heap[index] = cursor->heap[parent];
         index = parent;
     }
-    heap[index] = item;
+    cursor->heap[index] = head;
 }
 
-static SpaceOccurrenceCursorHead space_occurrence_cursor_heap_pop(
-        SpaceOccurrenceCursorHead *heap, uint32_t *len) {
-    SpaceOccurrenceCursorHead top = heap[0];
-    uint32_t count = --(*len);
-    if (count == 0u)
-        return top;
-    SpaceOccurrenceCursorHead last = heap[count];
-    uint32_t index = 0u;
-    for (;;) {
+static void space_occurrence_cursor_heap_sift(
+        SpaceOccurrenceCursor *cursor, uint32_t index, CettaIndex head) {
+    while (index < cursor->heap_len / 2u) {
         uint32_t left = index * 2u + 1u;
-        uint32_t right;
-        uint32_t child;
-        if (left >= count)
-            break;
-        right = left + 1u;
-        child = (right < count &&
-                 space_occurrence_cursor_head_before(heap[right], heap[left]))
+        uint32_t right = left + 1u;
+        uint32_t child = (right < cursor->heap_len &&
+                          cursor->heap[right] < cursor->heap[left])
             ? right : left;
-        if (!space_occurrence_cursor_head_before(heap[child], last))
+        if (cursor->heap[child] >= head)
             break;
-        heap[index] = heap[child];
+        cursor->heap[index] = cursor->heap[child];
         index = child;
     }
-    heap[index] = last;
+    cursor->heap[index] = head;
+}
+
+static CettaIndex space_occurrence_cursor_heap_pop(SpaceOccurrenceCursor *cursor) {
+    CettaIndex top = cursor->heap[0];
+    if (--cursor->heap_len > 0u)
+        space_occurrence_cursor_heap_sift(
+            cursor, 0u, cursor->heap[cursor->heap_len]);
     return top;
 }
 
-/* One declaration-order pass over a frontier that would otherwise be
- * re-scanned at every answer. A single node is already a constant step.
- * Allocation failure leaves the node scan in place. */
-static void space_occurrence_cursor_flatten(SpaceOccurrenceCursor *cursor) {
-    CettaCount total = 0u;
-    CettaCount view_len;
-    CettaIndex *flat = NULL;
-    SpaceOccurrenceCursorHead *heap = NULL;
-    SpaceOccurrenceCursorHead *deferred = NULL;
-    uint32_t heap_len = 0u;
-    CettaIndex written = 0u;
-    if (!cursor || cursor->full_scan || cursor->node_len <= 1u ||
-        !cursor->nodes || !cursor->leaf_pos || !cursor->occurrences)
+/* Build a frontier from current positions in linear time. Pulling reads only
+ * the least heads; a cancelled prefix never visits the remaining leaf bag.
+ * Allocation failure retains the same declaration-order node scan. */
+static void space_occurrence_cursor_prepare_heap(SpaceOccurrenceCursor *cursor) {
+    size_t bytes;
+    if (cursor->full_scan || cursor->flat_mode || cursor->node_len <= 1u ||
+        __builtin_mul_overflow((size_t)cursor->node_len,
+                              sizeof(*cursor->heap), &bytes))
         return;
+    uint32_t bits = 0u;
+    for (uint32_t top = cursor->node_len - 1u; top > 0u; top >>= 1u)
+        bits++;
+    /* Integer comparison orders occurrences first and branch ordinals second.
+     * Wider coordinate ranges retain the position-preserving node scan. */
+    if (cursor->ceiling > 0u &&
+        cursor->ceiling - 1u > (UINT64_MAX >> bits))
+        return;
+    cursor->heap = cetta_malloc(bytes);
+    if (!cursor->heap)
+        return;
+    cursor->heap_node_bits = bits;
     for (uint32_t index = 0u; index < cursor->node_len; index++) {
         DiscNode *node = cursor->nodes[index];
-        if (!node)
+        CettaIndex position = cursor->leaf_pos[index];
+        if (!node || position >= node->leaves.count)
             continue;
-        if (node->leaves.count > UINT64_MAX - total)
-            return;
-        total += node->leaves.count;
-    }
-    if (total == 0u) {
-        cursor->flat_mode = true;
-        return;
-    }
-    if (total > SIZE_MAX / sizeof(*flat))
-        return;
-    flat = cetta_malloc(sizeof(*flat) * (size_t)total);
-    heap = cetta_malloc(sizeof(*heap) * cursor->node_len);
-    deferred = cetta_malloc(sizeof(*deferred) * cursor->node_len);
-    if (!flat || !heap || !deferred) {
-        free(flat);
-        free(heap);
-        free(deferred);
-        return;
-    }
-    view_len = space_pinned_occurrences_len(cursor->occurrences);
-    for (uint32_t index = 0u; index < cursor->node_len; index++) {
-        DiscNode *node = cursor->nodes[index];
-        CettaIndex leaf;
-        if (!node || node->leaves.count == 0u)
-            continue;
-        leaf = disc_leaf_at(node, 0u);
-        if (leaf >= cursor->ceiling) {
+        if (disc_leaf_at(node, position) >= cursor->ceiling) {
             cursor->leaf_pos[index] = node->leaves.count;
             continue;
         }
-        space_occurrence_cursor_heap_push(
-            heap, &heap_len,
-            (SpaceOccurrenceCursorHead){.node = index, .leaf = leaf});
+        cursor->heap[cursor->heap_len++] = space_occurrence_cursor_head(
+            cursor, index, disc_leaf_at(node, position));
     }
-    while (heap_len > 0u) {
-        CettaIndex best = heap[0].leaf;
+    for (uint32_t index = cursor->heap_len / 2u; index > 0u; index--)
+        space_occurrence_cursor_heap_sift(cursor, index - 1u,
+                                         cursor->heap[index - 1u]);
+}
+
+static bool space_occurrence_cursor_heap_next(
+        SpaceOccurrenceCursor *cursor, CettaCount view_len, CettaIndex *out) {
+    CettaIndex mask = (UINT64_C(1) << cursor->heap_node_bits) - 1u;
+    while (cursor->heap_len > 0u) {
+        CettaIndex best = cursor->heap[0] >> cursor->heap_node_bits;
         uint32_t deferred_len = 0u;
-        while (heap_len > 0u && heap[0].leaf == best) {
-            SpaceOccurrenceCursorHead head =
-                space_occurrence_cursor_heap_pop(heap, &heap_len);
-            DiscNode *node = cursor->nodes[head.node];
-            CettaIndex position = ++cursor->leaf_pos[head.node];
-            CettaIndex next;
-            if (!node || position >= node->leaves.count)
+        while (cursor->heap_len > 0u &&
+                (cursor->heap[0] >> cursor->heap_node_bits) == best) {
+            uint32_t head = (uint32_t)(space_occurrence_cursor_heap_pop(cursor) & mask);
+            DiscNode *node = cursor->nodes[head];
+            CettaIndex position = ++cursor->leaf_pos[head];
+            if (position >= node->leaves.count)
                 continue;
-            next = disc_leaf_at(node, position);
-            if (next >= cursor->ceiling) {
-                cursor->leaf_pos[head.node] = node->leaves.count;
+            if (disc_leaf_at(node, position) >= cursor->ceiling) {
+                cursor->leaf_pos[head] = node->leaves.count;
                 continue;
             }
-            deferred[deferred_len++] = (SpaceOccurrenceCursorHead){
-                .node = head.node,
-                .leaf = next,
-            };
+            /* Popping frees at least one slot. Queue successor heads at the
+             * high end, then insert from low to high so no unread head moves. */
+            cursor->heap[cursor->node_len - ++deferred_len] =
+                space_occurrence_cursor_head(
+                    cursor, head, disc_leaf_at(node, position));
         }
-        for (uint32_t index = 0u; index < deferred_len; index++)
-            space_occurrence_cursor_heap_push(
-                heap, &heap_len, deferred[index]);
-        if (best < view_len)
-            flat[written++] = best;
+        for (uint32_t index = cursor->node_len - deferred_len;
+             index < cursor->node_len; index++)
+            space_occurrence_cursor_heap_push(cursor, cursor->heap[index]);
+        if (best < view_len) {
+            *out = best;
+            return true;
+        }
     }
-    free(heap);
-    free(deferred);
-    memset(cursor->leaf_pos, 0,
-           sizeof(*cursor->leaf_pos) * cursor->node_len);
-    if (written == 0u) {
-        free(flat);
-        flat = NULL;
-    }
-    cursor->flat = flat;
-    cursor->flat_len = written;
-    cursor->flat_next = 0u;
-    cursor->flat_mode = true;
+    return false;
 }
 
 bool space_occurrence_cursor_init(Space *s, Atom *pattern,
@@ -1622,126 +1592,93 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
     dns_free(&final);
     cursor->pinned = true;
     cursor->occurrences = space_pinned_occurrences_acquire(s);
-    space_occurrence_cursor_flatten(cursor);
+    space_occurrence_cursor_prepare_heap(cursor);
     return true;
+}
+
+/* Both clone modes own their traversal arrays and share only the pinned rows.
+ * Rewinding is permitted only while that view is still the whole live prefix. */
+static bool space_occurrence_cursor_copy(
+        const SpaceOccurrenceCursor *src, SpaceOccurrenceCursor *dst,
+        bool rewind) {
+    if (!dst || src == dst)
+        return false;
+    space_occurrence_cursor_init_empty(dst);
+    if (!src || !src->pinned || !src->space || !src->occurrences)
+        return false;
+    Space *live = src->occurrences->space;
+    if ((live &&
+         (src->read.instance_id != space_instance_id(live) ||
+          src->prefix_epoch != live->prefix_epoch)) ||
+        (rewind && (!live || src->ceiling != live->native.len)) ||
+        src->ceiling > space_pinned_occurrences_len(src->occurrences) ||
+        (src->node_len > 0u && (!src->nodes || !src->leaf_pos)) ||
+        (src->flat_mode && src->flat_len > 0u && !src->flat) ||
+        src->heap_len > src->node_len) {
+        return false;
+    }
+
+    *dst = *src;
+    dst->nodes = NULL;
+    dst->leaf_pos = NULL;
+    dst->flat = NULL;
+    dst->heap = NULL;
+    dst->heap_len = 0u;
+    dst->occurrences = NULL;
+    dst->pinned = false;
+    if (rewind) {
+        dst->full_next = 0u;
+        dst->flat_next = 0u;
+    }
+    if (src->flat_mode && src->flat_len > 0u) {
+        dst->flat = cetta_malloc(sizeof(*dst->flat) * (size_t)src->flat_len);
+        if (!dst->flat)
+            goto failed;
+        memcpy(dst->flat, src->flat,
+               sizeof(*dst->flat) * (size_t)src->flat_len);
+    }
+    if (src->node_len > 0u) {
+        dst->nodes = cetta_malloc(sizeof(*dst->nodes) * src->node_len);
+        dst->leaf_pos = cetta_malloc(sizeof(*dst->leaf_pos) * src->node_len);
+        if (!dst->nodes || !dst->leaf_pos)
+            goto failed;
+        memcpy(dst->nodes, src->nodes, sizeof(*dst->nodes) * src->node_len);
+        if (rewind)
+            memset(dst->leaf_pos, 0, sizeof(*dst->leaf_pos) * src->node_len);
+        else
+            memcpy(dst->leaf_pos, src->leaf_pos,
+                   sizeof(*dst->leaf_pos) * src->node_len);
+    }
+    if (rewind) {
+        space_occurrence_cursor_prepare_heap(dst);
+    } else if (src->heap) {
+        dst->heap = cetta_malloc(sizeof(*dst->heap) * (size_t)src->node_len);
+        if (dst->heap) {
+            dst->heap_len = src->heap_len;
+            memcpy(dst->heap, src->heap, sizeof(*dst->heap) * src->heap_len);
+        }
+        /* Without the optional heap, the position-preserving scan has the
+         * same next occurrence and terminal result. */
+    }
+    dst->occurrences = space_pinned_occurrences_share(src->occurrences);
+    dst->pinned = true;
+    return true;
+
+failed:
+    space_occurrence_cursor_release(dst);
+    return false;
 }
 
 bool space_occurrence_cursor_clone_unstarted(
         const SpaceOccurrenceCursor *src, SpaceOccurrenceCursor *dst) {
     CETTA_SCOPED_SHARED_TRANSITION(transition);
-    space_occurrence_cursor_init_empty(dst);
-    if (!src || !dst || !src->pinned || !src->space || !src->occurrences ||
-        !src->occurrences->space)
-        return false;
-    Space *s = src->space;
-    if (src->read.instance_id != space_instance_id(s) ||
-        src->prefix_epoch != s->prefix_epoch ||
-        src->ceiling != s->native.len) {
-        return false;
-    }
-    dst->read = src->read;
-    dst->prefix_epoch = src->prefix_epoch;
-    dst->ceiling = src->ceiling;
-    dst->space = s;
-    dst->full_scan = src->full_scan;
-    dst->full_next = 0u;
-    dst->node_len = src->node_len;
-    dst->flat_mode = src->flat_mode;
-    dst->flat_len = src->flat_len;
-    dst->flat_next = 0u;
-    if (src->flat_mode && src->flat_len > 0u) {
-        if (!src->flat)
-            return false;
-        dst->flat = cetta_malloc(sizeof(*dst->flat) * (size_t)src->flat_len);
-        if (!dst->flat) {
-            space_occurrence_cursor_init_empty(dst);
-            return false;
-        }
-        memcpy(dst->flat, src->flat,
-               sizeof(*dst->flat) * (size_t)src->flat_len);
-    }
-    if (src->node_len > 0u) {
-        if (!src->nodes) {
-            free(dst->flat);
-            space_occurrence_cursor_init_empty(dst);
-            return false;
-        }
-        dst->nodes = cetta_malloc(
-            sizeof(*dst->nodes) * src->node_len);
-        dst->leaf_pos = cetta_malloc(
-            sizeof(*dst->leaf_pos) * src->node_len);
-        if (!dst->nodes || !dst->leaf_pos) {
-            free(dst->nodes);
-            free(dst->leaf_pos);
-            free(dst->flat);
-            space_occurrence_cursor_init_empty(dst);
-            return false;
-        }
-        memcpy(dst->nodes, src->nodes,
-               sizeof(*dst->nodes) * src->node_len);
-        memset(dst->leaf_pos, 0,
-               sizeof(*dst->leaf_pos) * src->node_len);
-    }
-    dst->pinned = true;
-    dst->occurrences = space_pinned_occurrences_share(src->occurrences);
-    return true;
+    return space_occurrence_cursor_copy(src, dst, true);
 }
 
 bool space_occurrence_cursor_clone(
         const SpaceOccurrenceCursor *src, SpaceOccurrenceCursor *dst) {
     CETTA_SCOPED_SHARED_TRANSITION(transition);
-    space_occurrence_cursor_init_empty(dst);
-    if (!src || !dst || src == dst || !src->pinned || !src->space ||
-        !src->occurrences)
-        return false;
-    Space *s = src->space;
-    if ((src->occurrences->space &&
-         (src->read.instance_id != space_instance_id(s) ||
-          src->prefix_epoch != s->prefix_epoch)) ||
-        src->ceiling > space_pinned_occurrences_len(src->occurrences) ||
-        (src->node_len > 0u && (!src->nodes || !src->leaf_pos)) ||
-        (src->flat_mode && src->flat_len > 0u && !src->flat)) {
-        return false;
-    }
-    dst->read = src->read;
-    dst->prefix_epoch = src->prefix_epoch;
-    dst->ceiling = src->ceiling;
-    dst->space = s;
-    dst->full_scan = src->full_scan;
-    dst->full_next = src->full_next;
-    dst->node_len = src->node_len;
-    dst->flat_mode = src->flat_mode;
-    dst->flat_len = src->flat_len;
-    dst->flat_next = src->flat_next;
-    if (src->flat_mode && src->flat_len > 0u) {
-        dst->flat = cetta_malloc(sizeof(*dst->flat) * (size_t)src->flat_len);
-        if (!dst->flat) {
-            space_occurrence_cursor_init_empty(dst);
-            return false;
-        }
-        memcpy(dst->flat, src->flat,
-               sizeof(*dst->flat) * (size_t)src->flat_len);
-    }
-    if (src->node_len > 0u) {
-        dst->nodes = cetta_malloc(
-            sizeof(*dst->nodes) * src->node_len);
-        dst->leaf_pos = cetta_malloc(
-            sizeof(*dst->leaf_pos) * src->node_len);
-        if (!dst->nodes || !dst->leaf_pos) {
-            free(dst->nodes);
-            free(dst->leaf_pos);
-            free(dst->flat);
-            space_occurrence_cursor_init_empty(dst);
-            return false;
-        }
-        memcpy(dst->nodes, src->nodes,
-               sizeof(*dst->nodes) * src->node_len);
-        memcpy(dst->leaf_pos, src->leaf_pos,
-               sizeof(*dst->leaf_pos) * src->node_len);
-    }
-    dst->pinned = true;
-    dst->occurrences = space_pinned_occurrences_share(src->occurrences);
-    return true;
+    return space_occurrence_cursor_copy(src, dst, false);
 }
 
 SpaceOccurrenceCursorStep space_occurrence_cursor_next(
@@ -1776,6 +1713,14 @@ SpaceOccurrenceCursorStep space_occurrence_cursor_next(
             return SPACE_OCCURRENCE_CURSOR_ITEM;
         }
         return SPACE_OCCURRENCE_CURSOR_END;
+    }
+    if (cursor->heap) {
+        CettaIndex index;
+        if (!space_occurrence_cursor_heap_next(cursor, len, &index))
+            return SPACE_OCCURRENCE_CURSOR_END;
+        if (logical_index_out)
+            *logical_index_out = index;
+        return SPACE_OCCURRENCE_CURSOR_ITEM;
     }
     for (;;) {
         CettaIndex best = UINT64_MAX;
@@ -1844,6 +1789,7 @@ void space_occurrence_cursor_release(SpaceOccurrenceCursor *cursor) {
     free(cursor->nodes);
     free(cursor->leaf_pos);
     free(cursor->flat);
+    free(cursor->heap);
     space_occurrence_cursor_init_empty(cursor);
 }
 

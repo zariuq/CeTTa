@@ -636,6 +636,78 @@ static void test_reset_releases_storage_after_readers(
     }
 }
 
+static void test_lazy_merge_and_independent_clones(
+        TermUniverse *universe, Arena *scratch) {
+    enum { ROWS = 257, KEYS = 7, PREFIX = 3 };
+    Space space;
+    space_init_with_universe(&space, universe);
+    space.kind = SPACE_KIND_STACK;
+    SymbolId edge = symbol_intern_cstr(g_symbols, "merge-edge");
+    AtomId rows[ROWS];
+    for (CettaIndex row = 0u; row < ROWS; row++) {
+        int64_t key = (int64_t)((row * 5u) % KEYS);
+        rows[row] = store_atom(universe, edge_value(scratch, edge, key));
+    }
+    assert(space_add_atom_ids_batch(&space, rows, ROWS));
+    space_match_native_ensure_trie(&space);
+    Atom *query = binary(scratch, edge, atom_var(scratch, "merge-x"),
+                         atom_var(scratch, "merge-y"));
+    SpaceOccurrenceCursor source, exact, rewind, scan, refused;
+    assert(space_occurrence_cursor_init(&space, query, &source));
+    assert(source.node_len == KEYS && source.heap_len == KEYS);
+    assert(source.heap && !source.flat_mode && !source.flat);
+    for (uint32_t node = 0u; node < source.node_len; node++)
+        assert(source.leaf_pos[node] == 0u);
+    for (CettaIndex expected = 0u; expected < PREFIX; expected++) {
+        CettaIndex index;
+        assert(space_occurrence_cursor_next(&source, &index) ==
+               SPACE_OCCURRENCE_CURSOR_ITEM);
+        assert(index == expected);
+    }
+    assert(!space_occurrence_cursor_clone(&source, &source));
+    assert(!space_occurrence_cursor_clone_unstarted(&source, &source));
+    assert(source.pinned && source.heap);
+    assert(space_occurrence_cursor_clone(&source, &exact));
+    assert(space_occurrence_cursor_clone_unstarted(&source, &rewind));
+    assert(space_occurrence_cursor_clone(&source, &scan));
+    assert(exact.heap != source.heap && exact.leaf_pos != source.leaf_pos);
+    assert(exact.occurrences == source.occurrences);
+    /* The allocation-refusal route preserves the same retained positions. */
+    free(scan.heap);
+    scan.heap = NULL;
+    scan.heap_len = 0u;
+
+    space_add_atom_id(&space, rows[0]);
+    assert(!space_occurrence_cursor_clone_unstarted(&source, &refused));
+    assert(space_remove_atom_id(&space, rows[0]));
+    assert(!space_occurrence_cursor_clone_unstarted(&source, &refused));
+    /* Detachment keeps the old trie and rows alive after the live space goes. */
+    space_free(&space);
+    CettaIndex next;
+    assert(space_occurrence_cursor_next(&source, &next) ==
+           SPACE_OCCURRENCE_CURSOR_ITEM);
+    assert(next == PREFIX);
+    space_occurrence_cursor_release(&source);
+
+    SpaceOccurrenceCursor *cursors[] = {&exact, &rewind, &scan};
+    for (size_t reader = 0u; reader < 3u; reader++) {
+        CettaIndex first = reader == 1u ? 0u : PREFIX;
+        for (CettaIndex expected = first; expected < ROWS; expected++) {
+            CettaIndex index;
+            assert(space_occurrence_cursor_next(cursors[reader], &index) ==
+                   SPACE_OCCURRENCE_CURSOR_ITEM);
+            assert(index == expected);
+            assert(atom_eq(space_occurrence_cursor_atom(cursors[reader], index),
+                           term_universe_get_atom(universe, rows[expected])));
+        }
+        assert(space_occurrence_cursor_next(cursors[reader], NULL) ==
+               SPACE_OCCURRENCE_CURSOR_END);
+        assert(space_occurrence_cursor_next(cursors[reader], NULL) ==
+               SPACE_OCCURRENCE_CURSOR_END);
+        space_occurrence_cursor_release(cursors[reader]);
+    }
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena persistent;
@@ -663,6 +735,7 @@ int main(void) {
     test_occurrence_cursor_exact_clone(&universe, &scratch);
     test_atom_id_removal_preserves_pinned_view(&universe, &scratch);
     test_reset_releases_storage_after_readers(&universe, &scratch);
+    test_lazy_merge_and_independent_clones(&universe, &scratch);
 
 #if CETTA_BUILD_WITH_RUNTIME_STATS
     CettaRuntimeStats stats;

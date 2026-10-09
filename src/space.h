@@ -501,8 +501,9 @@ SpaceEquationCursorStep space_equation_cursor_next(
  * Revision-qualified zipper over matching discrimination-trie leaves.
  * Pin a read token, prefix epoch, and occurrence ceiling at init; `next`
  * yields logical indices in declaration order without copying the bag.
- * Several matching trie nodes are merged once into that order; later steps
- * read the next index. Appends at or after the ceiling are invisible.  A removal while the pin
+ * Matching trie nodes are merged lazily in that order. The frontier retains
+ * one position per node, independently of the candidate bag's length.
+ * Appends at or after the ceiling are invisible. A removal while the pin
  * is live leaves the cursor draining the rows it captured, while the Space
  * itself shows only the survivors; any other prefix rewrite invalidates the
  * pin.  Read a yielded index through space_occurrence_cursor_atom.  Release
@@ -519,7 +520,12 @@ typedef struct {
     DiscNode **nodes;
     CettaIndex *leaf_pos;
     uint32_t node_len;
-    /* Declaration order of a multi-node frontier, built once. */
+    /* Cached (occurrence, node) keys packed into one index when the captured
+     * ranges permit it. Inactive heap slots also hold tied-head advances. */
+    CettaIndex *heap;
+    uint32_t heap_len;
+    uint32_t heap_node_bits;
+    /* A cold selector can supply a compact declaration-ordered candidate list. */
     CettaIndex *flat;
     CettaIndex flat_len;
     CettaIndex flat_next;
@@ -865,14 +871,28 @@ bool space_native_flat_pattern_each_int(
     Space *space, Atom *pattern, size_t column,
     bool (*each)(int64_t value, void *ctx), void *ctx);
 
-/* Count, and the sum of one integer column, over the join of a chain of
- * at most three flat patterns (consecutive patterns share exactly one
- * variable), by variable elimination: work proportional to the patterns'
- * rows, not to the join.  false declines. */
+/* Count, and the sum of one integer column, over a finite path of flat
+ * patterns. Neighbours share exactly one variable; non-neighbours share
+ * none. Keyed messages preserve occurrence multiplicity without expanding
+ * the join. Each stage scans the captured space rows; false declines. */
 bool space_native_flat_chain_aggregate(
     Space *space, Atom *const *patterns, size_t pattern_count,
     bool with_column, size_t column_pattern, size_t column,
     __int128 *count_out, __int128 *sum_out);
+
+/* The count observation of the same path, with caller bindings resolved
+ * before planning. Temporary pattern views belong to scratch; no answer
+ * binding escapes. Failure leaves count_out unchanged. */
+bool space_native_flat_chain_count(
+    Space *space, Arena *scratch, Atom *const *patterns, size_t pattern_count,
+    const Bindings *seed, uint64_t *count_out);
+
+/* Select the grouped path realization or a prepared cyclic intersection.
+ * Complete cardinality is the observation; ordinary matching retains all
+ * other observations and any encoding/equality the realizations decline. */
+bool space_native_relational_count(
+    Space *space, Arena *scratch, Atom *const *patterns, size_t pattern_count,
+    const Bindings *seed, uint64_t *count_out);
 
 /* The same ordered walk for a pattern with nested structure: each matching
  * ground row yields the integer bound to `variable`. */
