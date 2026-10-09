@@ -1517,6 +1517,7 @@ static StateCell *payload_resolve_state_read(StateCell *cell) {
 
 static Space *payload_resolve_space_write(Space *sp) {
     Space *redirect;
+    sp = space_mutation_target(sp);
     if (g_library_context && g_library_context->import_space_alias_len)
         sp = cetta_library_import_execution_space(g_library_context, sp);
     if (!g_eval_payload_transactional || !sp)
@@ -13429,6 +13430,8 @@ static bool hyperpose_global_shared_head(SymbolId head_id) {
         head_id == g_builtin_syms.git_module_bang ||
         head_id == g_builtin_syms.git_import_bang ||
         head_id == g_builtin_syms.mod_space_bang ||
+        (head_id != SYMBOL_ID_NONE &&
+         head_id == g_he_module_space_no_deps_symbol) ||
         head_id == g_builtin_syms.module_inventory_bang ||
         head_id == g_builtin_syms.space_set_backend_bang ||
         head_id == g_builtin_syms.space_set_match_backend_bang ||
@@ -19226,24 +19229,36 @@ static ImportDestination resolve_import_destination(Arena *a, Atom *target, Atom
         dest.space = payload_resolve_space_read(target_space);
         return dest;
     }
+    SymbolId bind_key;
     if (!g_registry || !atom_is_registry_token(target)) {
-        *error_out = atom_symbol(a, "import! destination must be &self or a fresh &name");
-        return dest;
-    }
-
-    if (target->sym_id == g_builtin_syms.self) {
-        Space *self = resolve_registry_space_payload(g_registry, target);
-        if (!self) {
-            *error_out = atom_symbol(a, "import! destination space not found");
+        /* HE names a new space by any symbol: `m` binds `&m`, and this
+           spelling may bind it again. */
+        if (!g_registry || active_language_id() != CETTA_LANGUAGE_HE ||
+            !target || target->kind != ATOM_SYMBOL) {
+            *error_out = atom_symbol(a, "import! destination must be &self or a fresh &name");
+            return dest;
         }
-        dest.space = self;
-        return dest;
-    }
+        const char *name = atom_name_cstr(target);
+        size_t size = strlen(name) + 2u;
+        char *token = arena_alloc(a, size);
+        snprintf(token, size, "&%s", name);
+        bind_key = symbol_intern_cstr(g_symbols, token);
+    } else {
+        if (target->sym_id == g_builtin_syms.self) {
+            Space *self = resolve_registry_space_payload(g_registry, target);
+            if (!self) {
+                *error_out = atom_symbol(a, "import! destination space not found");
+            }
+            dest.space = self;
+            return dest;
+        }
 
-    if (registry_lookup_id(g_registry, target->sym_id)) {
-        *error_out = atom_symbol(a,
-            "import! destination must be a new &name, or &self");
-        return dest;
+        if (registry_lookup_id(g_registry, target->sym_id)) {
+            *error_out = atom_symbol(a,
+                "import! destination must be a new &name, or &self");
+            return dest;
+        }
+        bind_key = target->sym_id;
     }
 
     Arena *pa = eval_storage_arena(a);
@@ -19254,9 +19269,20 @@ static ImportDestination resolve_import_destination(Arena *a, Atom *target, Atom
     }
     space_init_with_universe(ns, eval_current_term_universe());
     dest.space = ns;
-    dest.bind_key = target->sym_id;
+    dest.bind_key = bind_key;
     dest.is_fresh = true;
     return dest;
+}
+
+/* Upstream reports a failure inside an imported module by its message alone:
+ * the innermost message, as plain text. */
+static Atom *he_compat_import_reason(Arena *a, Atom *reason) {
+    while (atom_is_error(reason) && reason->kind == ATOM_EXPR &&
+           reason->expr.len >= 3u)
+        reason = reason->expr.elems[2];
+    if (reason->kind == ATOM_GROUNDED && reason->ground.gkind == GV_STRING)
+        return atom_symbol(a, reason->ground.sval);
+    return reason;
 }
 
 static Space *resolve_include_destination(Arena *a, Atom *target, Atom **error_out) {
@@ -20325,6 +20351,48 @@ const char *space_module_display_name(const void *space) {
         ? cetta_library_module_space_name(g_library_context, space) : NULL;
 }
 
+/* Put the words a registry binds into `atom`, as HE's tokenizer reads a
+ * registered token wherever its text occurs. */
+static Atom *registry_read_words(Registry *registry, Arena *a, Atom *atom) {
+    if (atom->kind == ATOM_SYMBOL) {
+        if (symbol_bytes(g_symbols, atom->sym_id)[0] == '&')
+            return atom;
+        Atom *bound = registry_lookup_id(registry, atom->sym_id);
+        return bound ? bound : atom;
+    }
+    if (atom->kind != ATOM_EXPR)
+        return atom;
+    Atom **elems = NULL;
+    for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
+        Atom *child = registry_read_words(registry, a, atom->expr.elems[i]);
+        if (child != atom->expr.elems[i] && !elems) {
+            elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
+            memcpy(elems, atom->expr.elems, sizeof(Atom *) * atom->expr.len);
+        }
+        if (elems)
+            elems[i] = child;
+    }
+    return elems ? atom_expr(a, elems, atom->expr.len) : atom;
+}
+
+Atom *eval_read_registry_words(Registry *registry, Arena *a, Atom *atom) {
+    return registry && a && atom && registry->word_len
+        ? registry_read_words(registry, a, atom) : atom;
+}
+
+AtomId eval_read_registry_words_id(Registry *registry, TermUniverse *universe,
+                                   Arena *scratch, Arena *storage, AtomId form) {
+    if (!registry || !registry->word_len || !universe || !scratch || !storage ||
+        form == CETTA_ATOM_ID_NONE)
+        return form;
+    Atom *written = term_universe_get_atom(universe, form);
+    Atom *read = written ? registry_read_words(registry, scratch, written) : NULL;
+    if (!read || read == written)
+        return form;
+    AtomId stored = term_universe_store_atom_id(universe, storage, read);
+    return stored != CETTA_ATOM_ID_NONE ? stored : form;
+}
+
 Atom *eval_capture_registry_tokens(Registry *registry, Arena *a, Atom *atom) {
     if (!registry || !a || !atom)
         return atom;
@@ -20332,7 +20400,7 @@ Atom *eval_capture_registry_tokens(Registry *registry, Arena *a, Atom *atom) {
     g_registry = registry;
     Atom *captured = resolve_registry_refs(a, atom);
     g_registry = previous;
-    return captured;
+    return eval_read_registry_words(registry, a, captured);
 }
 
 static Atom *runtime_stats_inventory_atom(Arena *a) {
@@ -46191,6 +46259,17 @@ static void bind_publish_value(Arena *a, Atom *atom, Atom *first,
         } else {
             registry_bind_id(g_registry, name->sym_id, stored);
         }
+    } else if (active_language_id() == CETTA_LANGUAGE_HE) {
+        /* HE's bind! names a token by a symbol. A word that is already a
+           token has been read as its value by now. */
+        Atom *reason = name->kind == ATOM_GROUNDED
+            ? atom_expr(a, (Atom *[]){atom_symbol(a, "BadArgType"),
+                  atom_int(a, 1), atom_symbol(a, "Symbol"),
+                  get_grounded_type(a, name)}, 4u)
+            : atom_symbol(a, "bind! expects symbol atom as a token");
+        outcome_set_add_prefixed(a, os, atom_error(a, atom, reason), &empty,
+                                 outer, preserve);
+        return;
     }
     outcome_set_add_prefixed(a, os, atom_unit(a), &empty, outer, preserve);
 }
@@ -49967,7 +50046,9 @@ petta_lowered_to_shared_form:
     /* ── context-space ─────────────────────────────────────────────────── */
     if (head_id == g_builtin_syms.context_space) {
         if (nargs == 0) {
-            outcome_set_add(os, atom_space(a, s), &_empty);
+            Space *context = language_id == CETTA_LANGUAGE_HE
+                ? cetta_library_logical_module_space(g_library_context, s) : s;
+            outcome_set_add(os, atom_space(a, context), &_empty);
         } else {
             outcome_set_add(os,
                 atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
@@ -50032,7 +50113,9 @@ petta_lowered_to_shared_form:
         if (!url) {
             error = atom_symbol(a, "git-module! expects a URL; use quotes if needed");
         }
-        if (!error && cetta_library_register_git_module(g_library_context, url, a, &error)) {
+        if (!error && cetta_library_register_git_module(
+                g_library_context, url, a, eval_storage_arena(a), g_registry,
+                fuel, &error)) {
             outcome_set_add(os, atom_unit(a), &_empty);
         } else {
             outcome_set_add(os, atom_error(a, atom,
@@ -50052,7 +50135,9 @@ petta_lowered_to_shared_form:
         nargs == 1 && g_library_context) {
         const char *path = string_like_atom(expr_arg(atom, 0));
         Atom *error = NULL;
-        if (path && cetta_library_register_module(g_library_context, path, a, &error)) {
+        if (path && cetta_library_register_module(
+                g_library_context, path, a, eval_storage_arena(a),
+                g_registry, fuel, &error)) {
             outcome_set_add(os, atom_unit(a), &_empty);
         } else {
             outcome_set_add(os, atom_error(a, atom,
@@ -50182,6 +50267,8 @@ petta_lowered_to_shared_form:
             if (dest.is_fresh && dest.space) {
                 space_free(dest.space);
             }
+            if (active_profile_uses_rust_he_compat_semantics())
+                error = he_compat_import_reason(a, error);
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
             int imported_typecheck_exit = 0;
             const char *imported_typecheck_diagnostic = NULL;
@@ -50253,19 +50340,26 @@ petta_lowered_to_shared_form:
         if (!spec && !error) {
             error = atom_symbol(a, "include expects a module name argument");
         }
+        ResultSet last_results;
+        result_set_init(&last_results);
+        bool return_last = nargs == 1 &&
+            active_profile_uses_rust_he_compat_semantics();
         if (!error &&
             cetta_library_include_module(g_library_context, spec, target_space, a,
                                         eval_storage_arena(a),
-                                        g_registry, fuel, &error)) {
-            outcome_set_add(os,
-                (nargs == 1 && active_profile_uses_rust_he_compat_semantics())
-                    ? atom_empty(a)
-                    : atom_unit(a),
-                &_empty);
+                                        g_registry, fuel,
+                                        return_last ? &last_results : NULL, &error)) {
+            if (return_last) {
+                for (CettaCount i = 0u; i < last_results.len; i++)
+                    outcome_set_add(os, last_results.items[i], &_empty);
+            } else {
+                outcome_set_add(os, atom_unit(a), &_empty);
+            }
         } else {
             outcome_set_add(os, atom_error(a, atom,
                 error ? error : atom_symbol(a, "include failed")), &_empty);
         }
+        result_set_free(&last_results);
         return;
     }
 
@@ -51907,6 +52001,52 @@ petta_lowered_to_shared_form:
                 msg), &_empty);
         }
         result_set_free(&actual);
+        return;
+    }
+
+    /* This module operation uses the shared argument policy. Other kernel
+       words retain their established entries above, without a new test on
+       those direct paths. */
+    if (head_id == g_he_module_space_no_deps_symbol &&
+        eval_current_language_id() == CETTA_LANGUAGE_HE && g_library_context) {
+        Atom *const *signatures = NULL;
+        uint32_t signature_count = space_session_grounded_symbol_types(
+            head_id, &signatures);
+        ApplicabilityErrors errors;
+        applicability_errors_init(&errors);
+        bool applicable = signature_count && check_function_applicable(
+            atom, signatures[0], etype ? etype : atom_undefined_type(a),
+            s, a, fuel, false, &errors, NULL, NULL);
+        if (!applicable) {
+            for (uint32_t i = 0u; i < errors.len; i++)
+                outcome_set_add_prefixed(a, os, errors.items[i],
+                    &_empty, CURRENT_ENV, preserve_bindings);
+            applicability_errors_free(&errors);
+            return;
+        }
+        applicability_errors_free(&errors);
+        OutcomeSet values;
+        outcome_set_init(&values);
+        eval_for_caller(s, a, atom_symbol(a, "SpaceType"), expr_arg(atom, 0),
+            fuel, CURRENT_ENV, true, &values);
+        for (CettaCount i = 0u; i < values.len; i++) {
+            Atom *value = outcome_atom_materialize(a, &values.items[i]);
+            if (atom_is_error(value)) {
+                outcome_set_add_prefixed_outcome(a, os, &values.items[i],
+                    CURRENT_ENV, preserve_bindings);
+                continue;
+            }
+            Space *module = resolve_registry_space_payload(g_registry, value);
+            Space *own = module ? cetta_library_module_space_no_deps(
+                g_library_context, module) : NULL;
+            Atom *result = own ? atom_space(eval_storage_arena(a), own)
+                : atom_error(a, atom, atom_symbol(a,
+                    module ? "module space allocation failed"
+                           : "module-space-no-deps expects a space as an argument"));
+            outcome_set_add_prefixed(a, os, result, &values.items[i].env,
+                CURRENT_ENV, preserve_bindings);
+        }
+        outcome_set_free(&values);
         return;
     }
 

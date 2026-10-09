@@ -1,0 +1,1 @@
+(registered-leaf 42)

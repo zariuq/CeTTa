@@ -1,1 +1,1 @@
-[(Error (mod-space! no_such_module) Failed to resolve module no_such_module)]
+[(Error (mod-space! no_such_module) Failed to resolve module top:no_such_module)]

@@ -176,6 +176,8 @@ typedef struct Space {
         };
     };
     SpaceKind kind;
+    /* A live projection of a module's own storage, not a writable overlay. */
+    bool module_own_view;
     /* Process-local lifetime identity.  A revision identifies a state only
        within one Space lifetime; instance_id prevents pointer reuse from
        reviving cached state from a freed Space at the same address. */
@@ -230,6 +232,18 @@ typedef struct Space {
 
 void space_init_with_universe(Space *s, TermUniverse *universe);
 void space_init_overlay(Space *s, const Space *base);
+/* Borrow the module's own rows, excluding its imported prefix/dependencies.
+ * Mutations reach the original storage. Free this view before its owner, or
+ * let owner teardown detach it; the view never owns that owner's storage. */
+bool space_init_module_own_view(Space *s, Space *module);
+/* Select observed storage without changing the view's identity. Transaction
+   storage is watched until release; its previous storage remains watched so
+   restoring that selection requires no allocation. */
+bool space_module_own_view_select(Space *view, Space *storage);
+void space_module_own_view_release(Space *view, Space *storage);
+static inline Space *space_mutation_target(Space *s) {
+    return s && s->module_own_view ? (Space *)s->overlay_base : s;
+}
 void space_init(Space *s);
 /* Mark the current contents as imported-module atoms.  False, leaving the
    space unchanged, for an overlay or a stack, queue or hash space. */
@@ -245,13 +259,19 @@ bool space_add_dependency(Space *importer, Space *dependency);
 /* The dependencies a read composes after `s`'s own atoms: an overlay reads
    through those of the space at the bottom of its overlay chain. */
 static inline uint32_t space_dependency_count(const Space *s) {
-    while (s && s->overlay_base)
+    while (s && s->overlay_base) {
+        if (s->module_own_view)
+            return 0u;
         s = s->overlay_base;
+    }
     return s ? s->dep_count : 0u;
 }
 static inline Space *space_dependency_at(const Space *s, uint32_t index) {
-    while (s && s->overlay_base)
+    while (s && s->overlay_base) {
+        if (s->module_own_view)
+            return NULL;
         s = s->overlay_base;
+    }
     return s && index < s->dep_count ? s->deps[index] : NULL;
 }
 /* The rows a query of `s` reads, as one sequence: `s`'s logical atoms, then
@@ -781,6 +801,9 @@ struct RegistryStates;
 typedef struct {
     RegistryEntry *entries;
     uint32_t len, cap;
+    /* Bindings of plain words, which a reader puts into the text it reads;
+       a name beginning with `&` is resolved by the evaluator instead. */
+    uint32_t word_len;
     RegistryEntry inline_entries[16];
     NameKeyTable *name_keys;
     /* Open-addressed entry index. Slots store entry-index + 1; zero is empty.

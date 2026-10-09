@@ -3405,6 +3405,9 @@ static bool space_overlay_mark_base_removed(Space *s, CettaIndex idx) {
 static CettaCount space_overlay_visible_base_count(const Space *s) {
     if (!space_has_overlay_base(s))
         return 0;
+    if (s->module_own_view)
+        return space_length64(s->overlay_base) -
+               space_imported_length(s->overlay_base);
     return s->overlay_base_visible_len - s->overlay_removed_base_len;
 }
 
@@ -3416,6 +3419,10 @@ static bool space_overlay_visible_base_raw_index(const Space *s,
     CettaCount visible_count = space_overlay_visible_base_count(s);
     if (visible_index >= visible_count)
         return false;
+    if (s->module_own_view) {
+        *out_raw = space_imported_length(s->overlay_base) + visible_index;
+        return true;
+    }
     CettaCount target = visible_index + 1u;
     CettaIndex lo = 0;
     CettaIndex hi = s->overlay_base_visible_len;
@@ -4010,6 +4017,7 @@ static void space_native_storage_init_empty(Space *s, TermUniverse *universe) {
     s->native.has_non_exact_atoms_dirty = false;
     s->native.secondary_index_deferral_depth = 0;
     s->overlay_base = NULL;
+    s->module_own_view = false;
     s->overlay_base_visible_len = 0;
     s->overlay_removed_base_indices = NULL;
     s->overlay_removed_base_len = 0;
@@ -4021,6 +4029,7 @@ static void space_move_storage_and_backend(Space *dst, Space *src) {
         return;
     dst->native = src->native;
     dst->kind = src->kind;
+    dst->module_own_view = src->module_own_view;
     dst->match_backend = src->match_backend;
     dst->overlay_base = src->overlay_base;
     dst->overlay_base_visible_len = src->overlay_base_visible_len;
@@ -4144,7 +4153,7 @@ static void space_note_dependency_mutation(
         importer->equation_revision++;
 }
 
-bool space_add_dependency(Space *importer, Space *dependency) {
+static bool space_add_dependency_link(Space *importer, Space *dependency) {
     if (!importer || !dependency || importer == dependency)
         return false;
     for (uint32_t i = 0u; i < importer->dep_count; i++) {
@@ -4164,6 +4173,11 @@ bool space_add_dependency(Space *importer, Space *dependency) {
         importer, SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE, true);
     space_advance_global_mutation_epoch();
     return true;
+}
+
+bool space_add_dependency(Space *importer, Space *dependency) {
+    return importer && !importer->module_own_view &&
+           space_add_dependency_link(importer, dependency);
 }
 
 /* A dependency contributes its own atoms: those after its imported prefix. */
@@ -4232,7 +4246,15 @@ static void space_dependencies_unlink(Space *s) {
                                  &s->deps[i]->importer_count, s);
     for (uint32_t i = 0u; i < s->importer_count; i++) {
         Space *importer = s->importers[i];
+        bool selected = importer->module_own_view && importer->overlay_base == s;
         space_handle_list_remove(importer->deps, &importer->dep_count, s);
+        /* Watches are acquired in nested-storage order. A disappearing
+           selection falls back to the remaining enclosing storage, or
+           detaches when the final owner ends. Never expose watches as
+           query dependencies of a detached own-storage view. */
+        if (selected)
+            importer->overlay_base = importer->dep_count
+                ? importer->deps[importer->dep_count - 1u] : NULL;
         space_note_dependency_mutation(
             importer, SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE, true);
     }
@@ -4254,8 +4276,11 @@ bool space_mark_imported_prefix(Space *s) {
 CettaIndex space_imported_length(const Space *s) {
     /* An overlay's logical prefix is its base's, down to the root space:
        no overlay can remove imported atoms from under it. */
-    while (s && s->overlay_base)
+    while (s && s->overlay_base) {
+        if (s->module_own_view)
+            return 0u;
         s = s->overlay_base;
+    }
     return s ? s->imported_len : 0u;
 }
 
@@ -4296,6 +4321,47 @@ void space_init_overlay(Space *s, const Space *base) {
 
 void space_init(Space *s) {
     space_init_with_universe(s, NULL);
+}
+
+bool space_init_module_own_view(Space *s, Space *module) {
+    if (!s || !module || s == module || module->module_own_view)
+        return false;
+    space_init_overlay(s, module);
+    /* The link is a lifetime/revision observation, hidden from queries.
+     * Existing reverse notifications carry storage mutations to the view. */
+    if (!space_add_dependency(s, module)) {
+        space_free(s);
+        return false;
+    }
+    s->module_own_view = true;
+    return true;
+}
+
+bool space_module_own_view_select(Space *view, Space *storage) {
+    if (!view || !view->module_own_view || !storage || storage->module_own_view ||
+        !space_add_dependency_link(view, storage))
+        return false;
+    if (view->overlay_base != storage) {
+        view->overlay_base = storage;
+        space_note_dependency_mutation(
+            view, SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE, true);
+        space_advance_global_mutation_epoch();
+    }
+    return true;
+}
+
+void space_module_own_view_release(Space *view, Space *storage) {
+    if (!view || !view->module_own_view || !storage)
+        return;
+    bool selected = view->overlay_base == storage;
+    space_handle_list_remove(view->deps, &view->dep_count, storage);
+    space_handle_list_remove(storage->importers, &storage->importer_count, view);
+    if (selected)
+        view->overlay_base = view->dep_count
+            ? view->deps[view->dep_count - 1u] : NULL;
+    space_note_dependency_mutation(
+        view, SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE, true);
+    space_advance_global_mutation_epoch();
 }
 
 void space_free(Space *s) {
@@ -5705,6 +5771,7 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
 }
 
 void space_add_atom_id(Space *s, AtomId atom_id) {
+    s = space_mutation_target(s);
     bool transition_failed = false;
     if (!s || !space_tracks_atom_ids(s) || atom_id == CETTA_ATOM_ID_NONE)
         return;
@@ -5725,6 +5792,8 @@ bool space_add_atom_ids_batch(Space *s, const AtomId *atom_ids,
     SpaceMutationEquationProjection equation_projection =
         SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
     SpaceBackendBatchResult batch_result;
+
+    s = space_mutation_target(s);
 
     if (!s || (!atom_ids && atom_count != 0))
         return false;
@@ -5840,6 +5909,9 @@ bool space_add_atom_ids_batch(Space *s, const AtomId *atom_ids,
 }
 
 void space_add(Space *s, Atom *atom) {
+    s = space_mutation_target(s);
+    if (!s)
+        return;
     AtomId atom_id = CETTA_ATOM_ID_NONE;
     bool transition_failed = false;
     if (space_store_atom_via_backend_primary(
@@ -5873,6 +5945,7 @@ TermUniverseError space_term_universe_last_error_code(const Space *s) {
 
 static bool space_admit_atom_impl(Space *s, Arena *fallback,
                                   const Arena *source_arena, Atom *atom) {
+    s = space_mutation_target(s);
     bool transition_failed = false;
     if (!s || !atom)
         return false;
@@ -6401,6 +6474,7 @@ void registry_init(Registry *r) {
     r->states = NULL;
     r->entries = r->inline_entries;
     r->len = 0;
+    r->word_len = 0;
     r->cap = (uint32_t)(sizeof(r->inline_entries) /
                         sizeof(r->inline_entries[0]));
     r->name_keys = name_key_table_new(32u);
@@ -6423,6 +6497,7 @@ void registry_free(Registry *r) {
     name_key_table_delete(r->name_keys);
     r->entries = r->inline_entries;
     r->len = 0;
+    r->word_len = 0;
     r->cap = (uint32_t)(sizeof(r->inline_entries) /
                         sizeof(r->inline_entries[0]));
     r->name_keys = NULL;
@@ -6544,6 +6619,8 @@ void registry_bind_id(Registry *r, SymbolId key, Atom *value) {
     r->entries[r->len].value = value;
     registry_index_insert(r, r->len);
     r->len++;
+    if (symbol_bytes(g_symbols, key)[0] != '&')
+        r->word_len++;
 }
 
 Atom *registry_lookup_id(Registry *r, SymbolId key) {
@@ -6753,6 +6830,7 @@ Space *resolve_space(Registry *r, Atom *ref) {
 }
 
 bool space_remove(Space *s, Atom *atom) {
+    s = space_mutation_target(s);
     if (!s)
         return false;
     if (space_has_overlay_base(s)) {
@@ -6922,6 +7000,7 @@ bool space_contains_atom_id(const Space *s, AtomId atom_id) {
 }
 
 bool space_remove_atom_id(Space *s, AtomId atom_id) {
+    s = space_mutation_target(s);
     if (!s || atom_id == CETTA_ATOM_ID_NONE)
         return false;
     if (space_has_overlay_base(s)) {
@@ -6994,6 +7073,8 @@ bool space_remove_atom_ids_batch(Space *s, const AtomId *atom_ids,
     uint64_t removed = 0;
     SpaceBackendBatchResult batch_result;
 
+    s = space_mutation_target(s);
+
     if (out_removed)
         *out_removed = 0;
     if (!s || (!atom_ids && atom_count != 0))
@@ -7044,6 +7125,24 @@ bool space_remove_occurrence_mask_stable(
     CettaCount logical_len = space_length64(s);
     if (mask_len != logical_len)
         return false;
+    if (s->module_own_view) {
+        Space *owner = space_mutation_target(s);
+        if (!owner)
+            return false;
+        CettaCount owner_len = space_length64(owner);
+        if (owner_len > SIZE_MAX)
+            return false;
+        uint8_t *owner_mask = calloc((size_t)owner_len, 1u);
+        if (!owner_mask && owner_len)
+            return false;
+        if (mask_len)
+            memcpy(owner_mask + space_imported_length(owner),
+                   remove_mask, (size_t)mask_len);
+        bool ok = space_remove_occurrence_mask_stable(
+            owner, owner_mask, owner_len, out_removed);
+        free(owner_mask);
+        return ok;
+    }
     CettaIndex imported = space_imported_length(s);
     for (CettaIndex index = 0u; index < imported && index < mask_len; index++) {
         if (remove_mask[index] != 0u)
@@ -7299,6 +7398,9 @@ bool space_pop(Space *s, Atom **out) {
     if (!s)
         return false;
     if (space_has_overlay_base(s)) {
+        if (s->module_own_view)
+            return space_length64(s) != 0u &&
+                   space_pop(space_mutation_target(s), out);
         CettaCount base_visible = space_overlay_visible_base_count(s);
         CettaCount local_len = space_local_length64(s);
         logical_len = base_visible + local_len;
@@ -7393,6 +7495,10 @@ bool space_truncate64(Space *s, CettaCount new_len) {
     if (!s || new_len < space_imported_length(s))
         return false;
     if (space_has_overlay_base(s)) {
+        if (s->module_own_view)
+            return new_len <= space_length64(s) &&
+                   space_truncate64(space_mutation_target(s), new_len +
+                       space_imported_length(s->overlay_base));
         CettaCount base_visible = space_overlay_visible_base_count(s);
         CettaCount local_len = space_local_length64(s);
         logical_len = base_visible + local_len;
@@ -8405,15 +8511,13 @@ static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
                     : 0;
         /* Also try to infer type from operator's function type */
         bool tried_func_type = false;
-        if (count == 0 && atom->expr.len >= 2) {
+        if (count == 0 && atom->expr.len >= 1) {
             Atom *op = atom->expr.elems[0];
             Atom **op_types = NULL;
             uint32_t nop = get_annotated_types(
                 s, a, op, &op_types, budget, NULL);
             Arena scratch;
-            arena_init(&scratch);
-            arena_set_runtime_kind(&scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
-            arena_set_hashcons(&scratch, NULL);
+            bool scratch_ready = false;
             /* Also try recursively inferred types for the operator */
             if (nop == 0 && op->kind == ATOM_EXPR) {
                 Atom **recur_types = NULL;
@@ -8443,6 +8547,14 @@ static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
                     tried_func_type = true;
                     /* Check arity match */
                     if (ft->expr.len - 2 != atom->expr.len - 1) continue;
+                    /* A non-function tuple needs no signature-instantiation
+                       storage, including the newly admitted nullary case. */
+                    if (!scratch_ready) {
+                        arena_init(&scratch);
+                        arena_set_runtime_kind(&scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+                        arena_set_hashcons(&scratch, NULL);
+                        scratch_ready = true;
+                    }
                     /* Freshen type vars and try to unify args to get concrete ret type */
                     ArenaMark scratch_mark = arena_mark(&scratch);
                     Atom *fresh_ft = cetta_instantiate_frame_syntax(&scratch, ft);
@@ -8518,7 +8630,8 @@ static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
                     arena_reset(&scratch, scratch_mark);
                 }
             }
-            arena_free(&scratch);
+            if (scratch_ready)
+                arena_free(&scratch);
             free(op_types);
             /* If we tried function types but none matched → type error (empty) */
             if (tried_func_type && count == 0 &&
@@ -9410,7 +9523,8 @@ static bool pattern_vars_unique_rec(const Atom *a, VarId *seen, uint32_t *n,
  * by the eligibility predicate and the revision-keyed view cache.  Cheap: one
  * hashed bucket read + a tiny linearity walk; the cache calls it once per
  * (head, revision), not per reduction. */
-static bool space_dependencies_may_match_known_head(const Space *s,
+static inline __attribute__((always_inline))
+bool space_dependencies_may_match_known_head(const Space *s,
                                                     SymbolId head);
 
 static Atom *space_single_linear_equation_at(Space *s, SymbolId head,
@@ -11135,7 +11249,8 @@ bool space_directional_rules_may_match_general(Space *s, SymbolId head) {
 /* Whether a module that `s` imports may define `head`.  A dependency's
  * imported atoms belong to the modules `s` reads anyway, so its whole space
  * is consulted. */
-static bool space_dependencies_may_match_known_head(const Space *s,
+static inline __attribute__((always_inline))
+bool space_dependencies_may_match_known_head(const Space *s,
                                                     SymbolId head) {
     uint32_t dependencies = space_dependency_count(s);
     for (uint32_t d = 0u; d < dependencies; d++) {

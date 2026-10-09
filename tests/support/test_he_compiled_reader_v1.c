@@ -22,6 +22,8 @@ typedef struct {
     HECompiledReaderV1 *reader;
     unsigned text_calls;
     unsigned file_calls;
+    unsigned prefix_calls;
+    unsigned bytes_prefix_calls;
     HECompiledReaderV1Receipt last_receipt;
 } RoutedReader;
 
@@ -77,6 +79,28 @@ static int routed_parse_file(void *context, const char *filename,
         error_buf, error_buf_size);
 }
 
+static int routed_parse_file_prefix(
+    void *context, const char *filename, TermUniverse *universe,
+    AtomId **out_ids, int *complete_count,
+    char *error_buf, size_t error_buf_size) {
+    RoutedReader *route = context;
+    route->prefix_calls++;
+    return he_compiled_reader_v1_parse_file_prefix_ids(
+        route->reader, filename, universe, out_ids, complete_count,
+        error_buf, error_buf_size);
+}
+
+static int routed_parse_bytes_prefix(
+    void *context, const uint8_t *bytes, size_t length, TermUniverse *universe,
+    AtomId **out_ids, int *complete_count,
+    char *error_buf, size_t error_buf_size) {
+    RoutedReader *route = context;
+    route->bytes_prefix_calls++;
+    return he_compiled_reader_v1_parse_bytes_prefix_ids(
+        route->reader, bytes, length, universe, out_ids, complete_count,
+        error_buf, error_buf_size);
+}
+
 static bool host_projection_begin_form(void *context) {
     return parser_host_projection_v1_begin_form(context);
 }
@@ -105,6 +129,61 @@ static AtomId host_projection_expression(void *context,
 static AtomId host_projection_list(void *context, const AtomId *elems,
                                    size_t elem_len, AtomId rest) {
     return parser_host_projection_v1_list(context, elems, elem_len, rest);
+}
+
+static void check_module_prefix(TestCounts *counts,
+                                HECompiledReaderV1 *reader,
+                                TermUniverse *universe) {
+    const char source[] = "($x $x) ($x $x) !(println! effect) (broken";
+    char error[256] = {0};
+    AtomId *ids = NULL;
+    int complete = 0;
+    int result = he_compiled_reader_v1_parse_bytes_prefix_ids(
+        reader, (const uint8_t *)source, strlen(source), universe,
+        &ids, &complete, error, sizeof(error));
+    expect(counts, result < 0 && ids && complete == 4 && error[0],
+           "module prefix reports syntax failure while retaining complete forms");
+    if (ids && complete == 4) {
+        AtomId left = tu_child(universe, ids[0], 0u);
+        AtomId right = tu_child(universe, ids[0], 1u);
+        AtomId next = tu_child(universe, ids[1], 0u);
+        expect(counts, tu_kind(universe, left) == ATOM_VAR &&
+                       tu_kind(universe, right) == ATOM_VAR &&
+                       tu_kind(universe, next) == ATOM_VAR &&
+                       tu_var_id(universe, left) == tu_var_id(universe, right) &&
+                       tu_var_id(universe, left) != tu_var_id(universe, next),
+               "prefix keeps within-form sharing and refreshes between forms");
+        expect(counts, tu_kind(universe, ids[2]) == ATOM_SYMBOL &&
+                       tu_sym(universe, ids[2]) == g_builtin_syms.bang,
+               "prefix preserves the authored directive marker");
+        expect(counts, tu_kind(universe, ids[3]) == ATOM_EXPR,
+               "prefix retains the complete directive body, not the malformed suffix");
+    }
+    free(ids);
+    const char valid[] = "first second";
+    result = he_compiled_reader_v1_parse_bytes_prefix_ids(
+        reader, (const uint8_t *)valid, strlen(valid), universe,
+        &ids, &complete, error, sizeof(error));
+    expect(counts, result == 2 && complete == 2 && ids && !error[0],
+           "valid prefix parse agrees with complete document parsing");
+    free(ids);
+    result = he_compiled_reader_v1_parse_bytes_prefix_ids(
+        reader, NULL, 0u, universe, &ids, &complete, error, sizeof(error));
+    expect(counts, result == 0 && complete == 0 && !ids,
+           "empty input has no invented form");
+    result = he_compiled_reader_v1_parse_bytes_prefix_ids(
+        reader, (const uint8_t *)"(broken", 7u, universe,
+        &ids, &complete, error, sizeof(error));
+    expect(counts, result < 0 && complete == 0 && !ids && error[0],
+           "malformed first form cannot become a valid prefix");
+    free(ids);
+    HECompiledReaderV1 *unprepared = he_compiled_reader_v1_new();
+    result = he_compiled_reader_v1_parse_bytes_prefix_ids(
+        unprepared, (const uint8_t *)valid, strlen(valid), universe,
+        &ids, &complete, error, sizeof(error));
+    expect(counts, result < 0 && complete == 0 && !ids,
+           "prefix parsing cannot bypass reader preparation");
+    he_compiled_reader_v1_free(unprepared);
 }
 
 int main(void) {
@@ -153,6 +232,7 @@ int main(void) {
     expect(&counts,
            !he_compiled_reader_v1_prepare(reader, error, sizeof(error)),
            "prepared reader rejects accidental replacement");
+    check_module_prefix(&counts, reader, &universe);
     {
         GSLTDirectAtomProjectionV1 incomplete_projection = {
             .context = reader,
@@ -553,6 +633,8 @@ int main(void) {
         .context = &route,
         .parse_text_ids = routed_parse_text,
         .parse_file_ids = routed_parse_file,
+        .parse_file_prefix_ids = routed_parse_file_prefix,
+        .parse_bytes_prefix_ids = routed_parse_bytes_prefix,
     };
     expect(&counts, parser_set_document_ids_backend(&backend),
            "compiled reader installs at the document-reader boundary");
@@ -576,7 +658,45 @@ int main(void) {
     free(ids);
     ids = NULL;
 
+    int complete_count = 0;
+    char prefix_error[256] = {0};
+    atom_len = parse_metta_file_prefix_ids(
+        "tests/he/module_operations_v1/ordered_bad.metta", &universe,
+        &ids, &complete_count, prefix_error, sizeof(prefix_error));
+    expect(&counts, atom_len < 0 && complete_count == 3 && ids &&
+                       prefix_error[0] && route.prefix_calls == 1u &&
+                       route.file_calls == 1u,
+           "module failure retains complete forms through the active reader");
+    free(ids);
+    ids = NULL;
+    atom_len = parse_metta_file_ids(
+        "tests/he/module_operations_v1/ordered_bad.metta", &universe, &ids);
+    expect(&counts, atom_len < 0 && !ids && route.file_calls == 2u,
+           "ordinary file failure remains atomic with the same reader");
+    const uint8_t captured_bad[] = "(captured 7)\n(unclosed";
+    atom_len = parse_metta_bytes_prefix_ids(
+        captured_bad, sizeof(captured_bad) - 1u, &universe,
+        &ids, &complete_count, prefix_error, sizeof(prefix_error));
+    expect(&counts, atom_len < 0 && complete_count == 1 && ids &&
+                       prefix_error[0] && route.bytes_prefix_calls == 1u,
+           "captured source keeps its complete prefix through the active reader");
+    free(ids);
+    ids = NULL;
+    const uint8_t captured_good[] = "(captured 7)\n";
+    atom_len = parse_metta_bytes_prefix_ids(
+        captured_good, sizeof(captured_good) - 1u, &universe,
+        &ids, &complete_count, prefix_error, sizeof(prefix_error));
+    expect(&counts, atom_len == 1 && complete_count == 1 && ids &&
+                       !prefix_error[0] && route.bytes_prefix_calls == 2u,
+           "valid captured source retains complete-document behavior");
+    free(ids);
+    ids = NULL;
     parser_clear_document_ids_backend(&route);
+    atom_len = parse_metta_bytes_prefix_ids(
+        captured_bad, sizeof(captured_bad) - 1u, &universe,
+        &ids, &complete_count, prefix_error, sizeof(prefix_error));
+    expect(&counts, atom_len < 0 && !ids && complete_count == 0,
+           "a reader without prefix capability remains atomic for captured source");
     parser_host_projection_v1_free(host_projection);
     term_universe_free(&universe);
     arena_free(&persistent);

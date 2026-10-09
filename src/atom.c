@@ -1824,10 +1824,11 @@ VarInternTable *g_var_intern = NULL;
 #define VAR_INTERN_CHUNK_COUNT (1u << (32u - VAR_INTERN_CHUNK_BITS))
 
 /* Symbol ids of C string literals, per thread, keyed by the literal's
- * address.  A small direct-mapped level answers most lookups; the open
+ * address. A small two-way level answers most lookups; the open
  * addressing level behind it keeps every literal once interned, so two
  * literals the linker happens to place in one direct-mapped slot cost a
- * probe rather than repeated interning. */
+ * probe rather than repeated interning. Two alternating literals sharing
+ * a slot remain resident together rather than evicting each other. */
 #define SYMBOL_LITERAL_DIRECT_SIZE 64u
 
 typedef struct {
@@ -1838,7 +1839,7 @@ typedef struct {
 typedef struct {
     const SymbolTable *table;
     uint64_t instance_id;
-    SymbolLiteralCacheEntry direct[SYMBOL_LITERAL_DIRECT_SIZE];
+    SymbolLiteralCacheEntry direct[SYMBOL_LITERAL_DIRECT_SIZE][2];
     SymbolLiteralCacheEntry *entries;
     uint32_t cap;
     uint32_t len;
@@ -2071,12 +2072,17 @@ static SymbolId symbol_cached_literal_slow(const char *name);
 
 static inline SymbolId symbol_cached_literal(const char *name) {
     SymbolLiteralCache *cache = &g_symbol_literal_cache;
-    const SymbolLiteralCacheEntry *direct = &cache->direct[
-        ((uintptr_t)name >> 4) % SYMBOL_LITERAL_DIRECT_SIZE];
-    if (direct->literal == name && name && cache->table == g_symbols &&
-        g_symbols &&
-        cache->instance_id == symbol_table_instance_id(g_symbols))
-        return direct->id;
+    /* Strings have byte alignment; their low address bits distinguish
+       nearby literals rather than unused pointer-alignment padding. */
+    const SymbolLiteralCacheEntry *direct = cache->direct[
+        (uintptr_t)name % SYMBOL_LITERAL_DIRECT_SIZE];
+    if (name && cache->table == g_symbols && g_symbols &&
+        cache->instance_id == symbol_table_instance_id(g_symbols)) {
+        if (direct[0].literal == name)
+            return direct[0].id;
+        if (direct[1].literal == name)
+            return direct[1].id;
+    }
     return symbol_cached_literal_slow(name);
 }
 
@@ -2094,17 +2100,20 @@ static __attribute__((noinline)) SymbolId symbol_cached_literal_slow(
         cache->table = g_symbols;
         cache->instance_id = instance_id;
     }
-    SymbolLiteralCacheEntry *direct = &cache->direct[
-        ((uintptr_t)name >> 4) % SYMBOL_LITERAL_DIRECT_SIZE];
-    if (direct->literal == name)
-        return direct->id;
+    SymbolLiteralCacheEntry *direct = cache->direct[
+        (uintptr_t)name % SYMBOL_LITERAL_DIRECT_SIZE];
+    if (direct[0].literal == name)
+        return direct[0].id;
+    if (direct[1].literal == name)
+        return direct[1].id;
     if (cache->cap) {
         uint32_t mask = cache->cap - 1u;
         for (uint32_t slot = symbol_literal_cache_slot(name, mask);
              cache->entries[slot].literal; slot = (slot + 1u) & mask) {
             if (cache->entries[slot].literal == name) {
-                *direct = cache->entries[slot];
-                return direct->id;
+                direct[1] = direct[0];
+                direct[0] = cache->entries[slot];
+                return direct[0].id;
             }
         }
     }
@@ -2112,7 +2121,8 @@ static __attribute__((noinline)) SymbolId symbol_cached_literal_slow(
     SymbolId id = symbol_intern_cstr(g_symbols, name);
     if (id == SYMBOL_ID_NONE)
         return id;
-    *direct = (SymbolLiteralCacheEntry){name, id};
+    direct[1] = direct[0];
+    direct[0] = (SymbolLiteralCacheEntry){name, id};
     if ((cache->len + 1u) * 2u > cache->cap &&
         !symbol_literal_cache_grow(cache))
         return id;
