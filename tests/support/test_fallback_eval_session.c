@@ -584,8 +584,9 @@ static bool he_repeated_import_contract(void) {
             module_match_answers(&top, &scratch, "(reimport-fact $x)", "");
     }
     for (uint32_t attempt = 0u; ok && attempt < 12u; attempt++) {
-        /* Each host request starts a fresh compatibility run, as MeTTa.run
-           does. Two attempts inside that request share its refusal memory. */
+        /* Each failed compatibility import retries its initializer, including
+           two attempts inside one host request. Both abandoned spaces stay
+           retired until the context ends, so exposed identities remain valid. */
         CettaHEModuleRunScope request = {0};
         cetta_library_he_run_begin(ctx, &request);
         uint32_t retired = ctx->retired_module_len;
@@ -613,7 +614,7 @@ static bool he_repeated_import_contract(void) {
             ok = !cetta_library_import_module(
                 ctx, "mi_badparse", &top, false, &scratch, &persistent,
                 &registry, 1000, NULL, &error) && error &&
-                ctx->retired_module_len == retired + 1u &&
+                ctx->retired_module_len == retired + 2u &&
                 ctx->loaded_module_len == loaded &&
                 space_dependency_count(&top) == 1u;
         }

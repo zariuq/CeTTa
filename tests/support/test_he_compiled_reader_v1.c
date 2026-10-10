@@ -532,10 +532,15 @@ int main(void) {
                           "A\n\xce\xbb") == 0,
                "simple and Unicode escapes reach the host string projection");
         expect(&counts,
+#if CETTA_BUILD_WITH_GMP
                tu_kind(&universe, ids[3]) == ATOM_GROUNDED &&
                    tu_ground_kind(&universe, ids[3]) == GV_RATIONAL &&
                    strcmp(tu_rational_cstr(&universe, ids[3]), "1/2") == 0,
-               "formal HE host projection grounds rational literals");
+#else
+               tu_kind(&universe, ids[3]) == ATOM_SYMBOL &&
+                   symbol_eq_cstr(g_symbols, tu_sym(&universe, ids[3]), "2/4"),
+#endif
+               "formal HE host projection preserves rational build policy");
     } else {
         expect(&counts, false, "hash-leading word comes from the ratified GSLT");
         expect(&counts, false,
@@ -543,7 +548,7 @@ int main(void) {
         expect(&counts, false,
                "simple and Unicode escapes reach the host string projection");
         expect(&counts, false,
-               "formal HE host projection grounds rational literals");
+               "formal HE host projection preserves rational build policy");
     }
     free(ids);
     ids = NULL;

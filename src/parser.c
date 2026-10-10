@@ -683,52 +683,125 @@ static ParserSynLowerStatus parser_lower_syn_expression_id(
     return PARSER_SYN_LOWER_INVALID;
 }
 
-static AtomId parser_project_word_id(TermUniverse *universe, Arena *scratch,
-                                     const char *tok, bool namespace_sugar) {
+typedef struct {
+    bool rational_literals;
+    bool namespace_sugar;
+} ParserWordPolicy;
+
+/* A NULL universe selects arena construction; otherwise the word is born
+ * directly in that universe. Neither target renders or reparses a value. */
+typedef union {
+    Atom *atom;
+    AtomId id;
+} ParserWordValue;
+
+__attribute__((always_inline))
+static inline ParserWordValue parser_word_bool(Arena *a, TermUniverse *universe,
+                                       bool value) {
+    return universe ? (ParserWordValue){.id = tu_intern_bool(universe, value)}
+                    : (ParserWordValue){.atom = atom_bool(a, value)};
+}
+
+__attribute__((always_inline))
+static inline ParserWordValue parser_word_int(Arena *a, TermUniverse *universe,
+                                      int64_t value) {
+    return universe ? (ParserWordValue){.id = tu_intern_int(universe, value)}
+                    : (ParserWordValue){.atom = atom_int(a, value)};
+}
+
+__attribute__((always_inline))
+static inline ParserWordValue parser_word_float(Arena *a, TermUniverse *universe,
+                                        double value) {
+    return universe ? (ParserWordValue){.id = tu_intern_float(universe, value)}
+                    : (ParserWordValue){.atom = atom_float(a, value)};
+}
+
+__attribute__((always_inline))
+static inline ParserWordValue parser_word_exact(Arena *a, TermUniverse *universe,
+                                        const char *tok, bool rational) {
+    if (universe) {
+        return (ParserWordValue){.id = rational
+            ? tu_intern_rational(universe, tok)
+            : tu_intern_bigint(universe, tok)};
+    }
+    return (ParserWordValue){.atom = rational ? atom_rational(a, tok)
+                                            : atom_bigint(a, tok)};
+}
+
+/* The shared word-grounding decision path. Delimiters, strings, variable
+ * identity and token bindings belong to the surrounding reader. Inline the
+ * target dispatch so parser-only bootstrap tools retain arena construction
+ * without acquiring term-universe constructor dependencies. */
+__attribute__((always_inline))
+static inline ParserWordValue parser_ground_word(Arena *a, TermUniverse *universe,
+                                          const char *tok,
+                                          ParserWordPolicy policy) {
+    if (!a || !tok || !*tok) {
+        return universe ? (ParserWordValue){.id = CETTA_ATOM_ID_NONE}
+                        : (ParserWordValue){.atom = NULL};
+    }
+    /* These spellings have distinct first bytes. Dispatch before comparing
+     * their complete text, without changing their exact-match semantics. */
+    switch (tok[0]) {
+    case 'T':
+        if (strcmp(tok, "True") == 0)
+            return parser_word_bool(a, universe, true);
+        break;
+    case 'F':
+        if (strcmp(tok, "False") == 0)
+            return parser_word_bool(a, universe, false);
+        break;
+    case 'P':
+        if (strcmp(tok, "PI") == 0)
+            return parser_word_float(a, universe, M_PI);
+        break;
+    case 'E':
+        if (strcmp(tok, "EXP") == 0)
+            return parser_word_float(a, universe, M_E);
+        break;
+    }
+
     char *endp;
-    long long val;
-
-    if (!universe || !scratch || !tok || !*tok)
-        return CETTA_ATOM_ID_NONE;
-    if (strcmp(tok, "True") == 0)
-        return tu_intern_bool(universe, true);
-    if (strcmp(tok, "False") == 0)
-        return tu_intern_bool(universe, false);
-    if (strcmp(tok, "PI") == 0)
-        return tu_intern_float(universe, M_PI);
-    if (strcmp(tok, "EXP") == 0)
-        return tu_intern_float(universe, M_E);
-
     errno = 0;
-    val = strtoll(tok, &endp, 10);
+    long long val = strtoll(tok, &endp, 10);
     if (*endp == '\0' && errno == 0)
-        return tu_intern_int(universe, (int64_t)val);
-    if (!strchr(tok, '.')) {
-        if (g_rational_literals_enabled && strchr(tok, '/')) {
-            AtomId rational_id = tu_intern_rational(universe, tok);
-            if (rational_id != CETTA_ATOM_ID_NONE)
-                return rational_id;
+        return parser_word_int(a, universe, (int64_t)val);
+
+    bool has_dot = strchr(tok, '.') != NULL;
+    if (!has_dot) {
+        if (policy.rational_literals && strchr(tok, '/')) {
+            ParserWordValue rational = parser_word_exact(a, universe, tok, true);
+            if (universe ? rational.id != CETTA_ATOM_ID_NONE
+                         : rational.atom != NULL)
+                return rational;
         }
         char *canonical = cetta_bigint_canonicalize_owned(tok);
         if (canonical) {
             free(canonical);
-            return tu_intern_bigint(universe, tok);
+            return parser_word_exact(a, universe, tok, false);
         }
-    }
-    if (strchr(tok, '.')) {
+    } else {
         char *fendp;
-        /* A value past the float range reads as the nearest float, zero, a
-         * subnormal or an infinity, as Hyperon reads it; strtod reports
-         * those with ERANGE. */
+        /* Preserve the dot requirement and accept the nearest float even
+         * when strtod reports ERANGE (zero, subnormal or infinity). */
         double fval = strtod(tok, &fendp);
         if (*fendp == '\0')
-            return tu_intern_float(universe, fval);
+            return parser_word_float(a, universe, fval);
     }
-    return tu_intern_symbol(
-        universe, symbol_intern_cstr(
-                      g_symbols,
-                      namespace_sugar ? parser_namespace_token(scratch, tok)
-                                      : tok));
+
+    const char *canonical = policy.namespace_sugar
+        ? parser_namespace_token(a, tok) : tok;
+    SymbolId spelling = symbol_intern_cstr(g_symbols, canonical);
+    return universe ? (ParserWordValue){.id = tu_intern_symbol(universe, spelling)}
+                    : (ParserWordValue){.atom = atom_symbol_id(a, spelling)};
+}
+
+static AtomId parser_project_word_id(TermUniverse *universe, Arena *scratch,
+                                     const char *tok, bool namespace_sugar) {
+    if (!universe)
+        return CETTA_ATOM_ID_NONE;
+    ParserWordPolicy policy = {g_rational_literals_enabled, namespace_sugar};
+    return parser_ground_word(scratch, universe, tok, policy).id;
 }
 
 ParserHostProjectionV1 *parser_host_projection_v1_new(
@@ -1148,47 +1221,9 @@ static Atom *parse_sexpr_scoped_in(Arena *a, const char *text,
         }
     }
 
-    /* Boolean */
-    if (strcmp(tok, "True") == 0)  return atom_bool(a, true);
-    if (strcmp(tok, "False") == 0) return atom_bool(a, false);
-
-    /* HE math.rs registers PI and EXP as grounded numeric tokens. */
-    if (strcmp(tok, "PI") == 0)  return atom_float(a, M_PI);
-    if (strcmp(tok, "EXP") == 0) return atom_float(a, M_E);
-
-    /* Integer: try to parse */
-    char *endp;
-    errno = 0;
-    long long val = strtoll(tok, &endp, 10);
-    if (*endp == '\0' && errno == 0) {
-        return atom_int(a, (int64_t)val);
-    }
-    if (!strchr(tok, '.')) {
-        if (g_rational_literals_enabled && strchr(tok, '/')) {
-            Atom *rational = atom_rational(a, tok);
-            if (rational)
-                return rational;
-        }
-        char *canonical = cetta_bigint_canonicalize_owned(tok);
-        if (canonical) {
-            free(canonical);
-            return atom_bigint(a, tok);
-        }
-    }
-
-    /* Float: try to parse (must contain '.') */
-    if (strchr(tok, '.')) {
-        char *fendp;
-        /* Past the float range: the nearest float, as above. */
-        double fval = strtod(tok, &fendp);
-        if (*fendp == '\0') {
-            return atom_float(a, fval);
-        }
-    }
-
-    /* Symbol */
-    return atom_symbol_id(a, symbol_intern_cstr(g_symbols,
-                                                parser_canonicalize_namespace_token(a, tok)));
+    ParserWordPolicy policy = {
+        g_rational_literals_enabled, g_namespace_sugar_enabled};
+    return parser_ground_word(a, NULL, tok, policy).atom;
 }
 
 Atom *parse_sexpr_n(Arena *a, const char *text, size_t text_len, size_t *pos) {

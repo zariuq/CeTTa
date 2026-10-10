@@ -869,6 +869,9 @@ HE_COMPILED_READER_TEST_SRC = tests/support/test_he_compiled_reader_v1.c
 HE_COMPILED_READER_TEST_OBJ = runtime/bootstrap/test_he_compiled_reader_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 HE_COMPILED_READER_TEST_BIN = runtime/test_he_compiled_reader_v1-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 HE_COMPILED_READER_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ) $(COMPILED_READER_RUNTIME_OBJ)
+PARSER_WORD_GROUNDING_TEST_SRC = tests/support/test_parser_word_grounding_v1.c
+PARSER_WORD_GROUNDING_TEST_OBJ = runtime/bootstrap/test_parser_word_grounding_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PARSER_WORD_GROUNDING_TEST_BIN = runtime/test_parser_word_grounding_v1-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 HE_TYPING_DIRECT_TEST_SRC = tests/support/test_he_typing_direct_authority.c
 HE_TYPING_DIRECT_TEST_OBJ = runtime/bootstrap/test_he_typing_direct_authority.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 HE_TYPING_DIRECT_TEST_BIN = runtime/test_he_typing_direct_authority-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
@@ -5580,6 +5583,7 @@ DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \
 	$(FALLBACK_EVAL_TEST_OBJ:.o=.d) \
 	$(REGISTRY_RESOLVER_TEST_OBJ:.o=.d) \
 	$(HE_COMPILED_READER_TEST_OBJ:.o=.d) \
+	$(PARSER_WORD_GROUNDING_TEST_OBJ:.o=.d) \
 	$(PETTA_COMPILED_READER_TEST_OBJ:.o=.d) \
 	$(PETTA_SEARCH_MACHINE_TEST_OBJ:.o=.d) \
 	$(PETTA_SPECIALIZER_PREPARE_TEST_OBJ:.o=.d) \
@@ -5837,6 +5841,14 @@ $(HE_COMPILED_READER_TEST_BIN): $(HE_COMPILED_READER_TEST_OBJ) $(HE_COMPILED_REA
 	mv "$$tmp_out" $@
 
 $(HE_COMPILED_READER_TEST_OBJ): $(HE_COMPILED_READER_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PARSER_WORD_GROUNDING_TEST_BIN): $(PARSER_WORD_GROUNDING_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+$(PARSER_WORD_GROUNDING_TEST_OBJ): $(PARSER_WORD_GROUNDING_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
@@ -23420,9 +23432,9 @@ test-profiles: $(BIN) test-bounded-select-threads test-petta-extended-collection
 		fi; \
 		result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he \
 			-e '!(bind! &profile-hyperpose-inert (new-space))' \
-			-e '!(collapse (hyperpose ((add-atom &profile-hyperpose-inert touched) ok)))' \
+			-e '!(assertEqualToResult (collapse (hyperpose ((add-atom &profile-hyperpose-inert touched) ok))) (((hyperpose ((add-atom &profile-hyperpose-inert touched) ok)))))' \
 			-e '!(assertEqual (collapse (match &profile-hyperpose-inert $$x $$x)) ())' 2>&1); \
-		expected=$$'[()]\n[((hyperpose ((add-atom &profile-hyperpose-inert touched) ok)))]\n[()]'; \
+		expected=$$'[()]\n[()]\n[()]'; \
 		if [ "$$result" = "$$expected" ]; then \
 			echo "PASS: he-compat inactive hyperpose arguments stay unevaluated"; pass=$$((pass + 1)); \
 		else \
@@ -23871,6 +23883,12 @@ test-he-compiled-reader-v1: $(HE_COMPILED_READER_TEST_BIN) $(BIN)
 		fi; \
 	done; \
 	echo "PASS: all four HE profiles select the compiled LanguageDef reader"
+
+.PHONY: test-parser-word-grounding-v1
+test-parser-word-grounding-v1: $(PARSER_WORD_GROUNDING_TEST_BIN)
+	./$(PARSER_WORD_GROUNDING_TEST_BIN)
+
+test: test-parser-word-grounding-v1
 
 .PHONY: test-petta-compiled-reader-v1
 test-petta-compiled-reader-v1: test-petta-compiled-reader-direct-generated-v1 $(PETTA_COMPILED_READER_TEST_BIN) $(BIN)
@@ -29360,7 +29378,7 @@ bench-he-compiled-reader-v1: $(HE_COMPILED_READER_BENCH_BIN)
 
 test-import-modes: $(BIN)
 	@default_result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he tests/support/import_mode/nested/use_parent_helper.metta 2>&1); \
-	if printf '%s\n' "$$default_result" | grep -Fq "Failed to resolve module Helper"; then \
+	if printf '%s\n' "$$default_result" | grep -Fq "Failed to resolve module top:Helper"; then \
 		echo "PASS: default relative import mode stays local"; \
 	else \
 		echo "FAIL: default relative import mode stays local"; \
