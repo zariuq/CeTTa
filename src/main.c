@@ -713,6 +713,8 @@ static Atom *display_atom_copy(Arena *dst, Atom *src, const CettaDisplayVarMap *
             return atom_bindings_value(dst, src->ground.ptr);
         case GV_FOREIGN:
             return atom_foreign(dst, (CettaForeignValue *)src->ground.ptr);
+        case GV_TENSOR:
+            return atom_tensor(dst, src->ground.ptr);
         case GV_TERM_GRAPH: {
             const CettaTermGraphRef *ref = src->ground.ptr;
             return atom_term_graph(dst, ref->graph, ref->node);

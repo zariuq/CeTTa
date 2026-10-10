@@ -28,6 +28,7 @@
 #endif
 
 typedef struct CettaForeignValue CettaForeignValue;
+typedef struct CettaTensor CettaTensor;
 typedef struct CettaBigInt CettaBigInt;
 typedef struct CettaRational CettaRational;
 typedef struct CettaPrimeNeedCapability CettaPrimeNeedCapability;
@@ -74,7 +75,8 @@ typedef enum {
     GV_INTERNAL_TAG,
     GV_BINDINGS,
     /* A node of a rational term's graph (term_graph.h). */
-    GV_TERM_GRAPH
+    GV_TERM_GRAPH,
+    GV_TENSOR
 } GroundedKind;
 
 typedef enum {
@@ -1019,6 +1021,8 @@ typedef struct CettaForeignHold {
 } CettaForeignHold;
 
 Atom *atom_foreign(Arena *a, CettaForeignValue *value);
+/* Immutable native value. The atom retains a hold until its arena retires. */
+Atom *atom_tensor(Arena *a, CettaTensor *value);
 
 /* A node of a rational term's graph (term_graph.h), the payload of a
  * GV_TERM_GRAPH atom: one record per node for the graph's life, so two atoms

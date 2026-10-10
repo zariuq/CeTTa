@@ -1,8 +1,17 @@
 #include "atom_wire.h"
+#include "tensor.h"
 #include <float.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+CettaTensorStatus cetta_tensor_encode(const CettaTensor *, unsigned char **, size_t *)
+    __attribute__((weak));
+CettaTensorStatus cetta_tensor_encoded_size(const CettaTensor *, size_t *)
+    __attribute__((weak));
+CettaTensorStatus cetta_tensor_decode(const unsigned char *, size_t, CettaTensor **)
+    __attribute__((weak));
+void cetta_tensor_release(void *) __attribute__((weak));
 
 _Static_assert(sizeof(double) == 8 && DBL_MANT_DIG == 53 && DBL_MAX_EXP == 1024,
                "CAV1 requires binary64");
@@ -62,6 +71,24 @@ static CettaAtomWireStatus encode(Writer *w, const Atom *a, unsigned depth) {
         case GV_STRING: tag = 'T'; text = a->ground.sval; len = atom_string_len(a); break;
         case GV_BIGINT: tag = 'J'; text = atom_bigint_cstr(a); if (text) len = strlen(text); break;
         case GV_RATIONAL: tag = 'Q'; text = atom_rational_cstr(a); if (text) len = strlen(text); break;
+        case GV_TENSOR: {
+            if (!cetta_tensor_encode || !cetta_tensor_encoded_size) return ATOM_WIRE_UNSUPPORTED;
+            unsigned char *encoded; size_t size;
+            CettaTensorStatus result = cetta_tensor_encoded_size(a->ground.ptr, &size);
+            if (result != CETTA_TENSOR_OK) return ATOM_WIRE_INVALID;
+            size_t room = CETTA_ATOM_WIRE_BYTES - w->size;
+            if (room < 5u || size > room - 5u) return ATOM_WIRE_LIMIT;
+            result = cetta_tensor_encode(a->ground.ptr, &encoded, &size);
+            if (result != CETTA_TENSOR_OK)
+                return result == CETTA_TENSOR_NOMEM ? ATOM_WIRE_NOMEM : ATOM_WIRE_INVALID;
+            tag = 'A';
+            CettaAtomWireStatus status = size > CETTA_ATOM_WIRE_BYTES ? ATOM_WIRE_LIMIT :
+                append(w, &tag, 1u);
+            if (status == ATOM_WIRE_OK) status = number(w, size, 4u);
+            if (status == ATOM_WIRE_OK) status = append(w, encoded, size);
+            free(encoded);
+            return status;
+        }
         default: return ATOM_WIRE_UNSUPPORTED;
         }
     } else return ATOM_WIRE_UNSUPPORTED;
@@ -144,6 +171,16 @@ static CettaAtomWireStatus decode(Reader *r, Arena *arena, unsigned depth, Atom 
             if (status != ATOM_WIRE_OK) return status;
         }
         *out = atom_expr(arena, items, n);
+    } else if (tag == 'A') {
+        if (!cetta_tensor_decode || !cetta_tensor_release) return ATOM_WIRE_UNSUPPORTED;
+        if (!read_number(r, 4u, &n) || n > r->size - r->pos) return ATOM_WIRE_CORRUPT;
+        CettaTensor *tensor = NULL;
+        CettaTensorStatus status = cetta_tensor_decode(r->bytes + r->pos, (size_t)n, &tensor);
+        if (status != CETTA_TENSOR_OK)
+            return status == CETTA_TENSOR_NOMEM ? ATOM_WIRE_NOMEM : ATOM_WIRE_CORRUPT;
+        r->pos += (size_t)n;
+        *out = atom_tensor(arena, tensor);
+        cetta_tensor_release(tensor);
     } else if (tag == 'S' || tag == 'T' || tag == 'J' || tag == 'Q') {
         if (!read_number(r, 4, &n) || n > r->size - r->pos ||
             ((tag == 'J' || tag == 'Q') && memchr(r->bytes + r->pos, 0, n)))

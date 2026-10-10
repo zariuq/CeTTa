@@ -338,6 +338,8 @@ static Atom *petta_type_of_literal(Arena *arena, const Atom *atom) {
             return atom_symbol(arena, "Number");
         case GV_STRING:
             return atom_symbol(arena, "String");
+        case GV_TENSOR:
+            return atom_symbol(arena, "Tensor");
         default:
             break;
         }

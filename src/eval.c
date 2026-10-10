@@ -14025,6 +14025,8 @@ static Atom *hyperpose_clone_atom_materialized(
                 ? atom_foreign(
                       owner, (CettaForeignValue *)src->ground.ptr)
                 : NULL;
+        case GV_TENSOR:
+            return atom_tensor(owner, src->ground.ptr);
         case GV_TERM_GRAPH: {
             /* A graph is immutable and counts its holders atomically, so
              * every branch shares it. */
@@ -14643,6 +14645,8 @@ static Atom *hyperpose_transfer_atom(HyperposeResourceTransfer *transfer,
                boundary preserves their published identity. */
             return atom_foreign(
                 owner, (CettaForeignValue *)source->ground.ptr);
+        case GV_TENSOR:
+            return atom_tensor(owner, source->ground.ptr);
         case GV_TERM_GRAPH: {
             /* An immutable graph crosses as itself. */
             const CettaTermGraphRef *ref = source->ground.ptr;
@@ -20678,6 +20682,7 @@ static bool profiled_type_cache_result_stable(Atom *atom) {
         case GV_STATE:
         case GV_CAPTURE:
         case GV_BINDINGS:
+        case GV_TENSOR:
         case GV_FOREIGN:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:

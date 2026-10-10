@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "atom.h"
+#include "tensor.h"
 #include "string_literal.h"
 #include "lang.h"
 #include "petta_numeric.h"
@@ -31,6 +32,16 @@ uint32_t term_graph_view_hash(Atom *atom,
 void term_graph_print(const CettaTermGraphRef *ref, FILE *out,
                       bool petta) __attribute__((weak));
 Atom *term_graph_open_value(Arena *arena, Atom *atom) __attribute__((weak));
+
+/* Standalone atom tests need not link the optional tensor operations. They
+ * cannot construct a tensor without its payload implementation. */
+void cetta_tensor_retain(void *tensor) __attribute__((weak));
+void cetta_tensor_release(void *tensor) __attribute__((weak));
+size_t cetta_tensor_retained_bytes(const CettaTensor *tensor) __attribute__((weak));
+bool cetta_tensor_equal(const CettaTensor *left, const CettaTensor *right)
+    __attribute__((weak));
+uint32_t cetta_tensor_hash(const CettaTensor *tensor) __attribute__((weak));
+void cetta_tensor_print(const CettaTensor *tensor, FILE *out) __attribute__((weak));
 
 #define CETTA_ATOM_DEEP_COPY_MEMO_INLINE_CAP 64u
 
@@ -597,6 +608,9 @@ static void provenance_check_atom(Atom *root, Atom *atom, const char *site,
         case GV_FOREIGN:
             provenance_check_ptr(root, site, allowed_owner, "grounded handle",
                                  current->ground.ptr);
+            break;
+        case GV_TENSOR:
+            /* Native tensors own heap storage, with an arena-retained hold. */
             break;
         case GV_TERM_GRAPH: {
             /* The arena retains the sealed graph; its node record and graph
@@ -1318,6 +1332,9 @@ static uint32_t atom_hash_leaf_compute(Atom *a) {
                 h = ((h << 5) + h) ^ (uint32_t)*p;
             break;
         }
+        case GV_TENSOR:
+            h = ((h << 5) + h) ^ cetta_tensor_hash(a->ground.ptr);
+            break;
         case GV_SPACE:
         case GV_STATE:
         case GV_CAPTURE:
@@ -1740,6 +1757,7 @@ static uint64_t hashcons_slot_hash(Atom *atom) {
         case GV_STATE:
         case GV_CAPTURE:
         case GV_BINDINGS:
+        case GV_TENSOR:
         case GV_FOREIGN:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
@@ -2789,6 +2807,7 @@ bool atom_grounded_kind_is_term_stable(GroundedKind gkind) {
     case GV_STATE:
     case GV_CAPTURE:
     case GV_BINDINGS:
+    case GV_TENSOR:
     case GV_FOREIGN:
     case GV_TERM_GRAPH:
     case GV_PRIME_NEED_CAPABILITY:
@@ -3980,6 +3999,28 @@ Atom *atom_foreign(Arena *a, CettaForeignValue *value) {
         atom_structural_facts_for_grounded_kind(GV_FOREIGN);
     at->ground.gkind = GV_FOREIGN;
     at->ground.ptr = value;
+    return at;
+}
+
+Atom *atom_tensor(Arena *a, CettaTensor *value) {
+    if (!a || !value || !cetta_tensor_retain || !cetta_tensor_release ||
+        !cetta_tensor_retained_bytes)
+        return NULL;
+    cetta_tensor_retain(value);
+    arena_register_finalizer(a, cetta_tensor_release, value);
+    /* Charge each retained view conservatively so allocation pressure cannot
+     * hide in external buffers. Shared views may overcount the same storage. */
+    arena_account_external_bytes(a, cetta_tensor_retained_bytes(value));
+    Atom *at = arena_alloc(a, sizeof(*at));
+    *at = (Atom){
+        .kind = ATOM_GROUNDED,
+        /* The native term store retains this immutable payload through its
+         * existing fallback. Do not claim admission to its compact encoding. */
+        .flags = ATOM_FLAG_ARENA_CLOSED,
+        .arena_id = a->identity,
+        .structural_facts = ATOM_STRUCTURAL_FACTS_VALID,
+        .ground = {.gkind = GV_TENSOR, .ptr = value},
+    };
     return at;
 }
 
@@ -5848,6 +5889,9 @@ static bool atom_compare_driver(Atom *left, Atom *right,
                 equal = cetta_rational_compare_cstr(atom_rational_cstr(a),
                                                     atom_rational_cstr(b)) == 0;
                 break;
+            case GV_TENSOR:
+                equal = cetta_tensor_equal(a->ground.ptr, b->ground.ptr);
+                break;
             case GV_SPACE:
             case GV_CAPTURE:
             case GV_FOREIGN:
@@ -6442,6 +6486,9 @@ static Atom *atom_deep_copy_leaf(Arena *dst, Atom *src, bool share) {
             break;
         case GV_FOREIGN:
             out = atom_foreign(dst, (CettaForeignValue *)src->ground.ptr);
+            break;
+        case GV_TENSOR:
+            out = atom_tensor(dst, src->ground.ptr);
             break;
         case GV_TERM_GRAPH: {
             /* The graph is immutable: the copy shares it. */
@@ -7335,6 +7382,9 @@ static void atom_print_mode(
         case GV_TERM_GRAPH:
             if (term_graph_print)
                 term_graph_print(a->ground.ptr, out, petta);
+            break;
+        case GV_TENSOR:
+            cetta_tensor_print(a->ground.ptr, out);
             break;
         case GV_FOREIGN: {
             const CettaForeignHold *hold = a->ground.ptr;

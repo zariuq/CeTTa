@@ -814,6 +814,7 @@ static bool bridge_encode_atom_rec(Arena *a, Atom *atom, BridgeVarMap *vars,
                 *out_error = "MORK bridge expr-byte ingress does not support capture values";
             return false;
         case GV_BINDINGS:
+        case GV_TENSOR:
         case GV_FOREIGN:
         case GV_TERM_GRAPH:
             if (out_error)
@@ -937,6 +938,7 @@ static bool bridge_encode_atom_id_rec(Arena *a,
                 *out_error = "MORK bridge expr-byte ingress does not support capture values";
             return false;
         case GV_BINDINGS:
+        case GV_TENSOR:
         case GV_FOREIGN:
         case GV_TERM_GRAPH:
             if (out_error)

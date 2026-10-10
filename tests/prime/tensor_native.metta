@@ -1,0 +1,8 @@
+!(import! &self lib_tensor)
+!(tensor:sum (tensor:from f64 (2 3) (1 2 3 4 5 6)))
+!(let $x (tensor:from i64 (2) (1 2)) (== $x (tensor:copy $x)))
+!(tensor:to-expr (tensor:reshape (tensor:from i64 (2 2) (1 2 3 4)) (4)))
+!(let $x (tensor:from i64 (2) (1 2)) (== $x (tensor:decode (tensor:encode $x))))
+!(let $x (tensor:from i64 (2) (1 2))
+   (collapse (tensor:to-expr (superpose ((tensor:with $x 0 99) $x)))))
+!(tensor:from i64 (2) (1))

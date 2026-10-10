@@ -10807,6 +10807,8 @@ static bool simple_match_leaf(Atom *pattern, Atom *target) {
         case GV_RATIONAL:
             return cetta_rational_compare_cstr(atom_rational_cstr(pattern),
                                                atom_rational_cstr(target)) == 0;
+        case GV_TENSOR:
+            return atom_eq(pattern, target);
         case GV_SPACE:
         case GV_STATE:
         case GV_CAPTURE:
@@ -13693,6 +13695,7 @@ static bool stored_grounded_equal(Atom *left,
     case GV_STATE:
     case GV_CAPTURE:
     case GV_BINDINGS:
+    case GV_TENSOR:
     case GV_FOREIGN:
     case GV_TERM_GRAPH:
     case GV_PRIME_NEED_CAPABILITY:

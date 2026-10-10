@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "grounded.h"
+#include "tensor.h"
 #include "effect_policy.h"
 #include "abt.h"
 #include "eval.h"
@@ -317,6 +318,7 @@ static bool petta_repra_render(
             case GV_STATE:
             case GV_CAPTURE:
             case GV_BINDINGS:
+            case GV_TENSOR:
             case GV_FOREIGN:
             case GV_TERM_GRAPH:
             case GV_PRIME_NEED_CAPABILITY:
@@ -3309,6 +3311,8 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
 
 static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
                                     uint32_t nargs) {
+    Atom *tensor = cetta_tensor_dispatch(a, head, args, nargs);
+    if (tensor) return tensor;
     {
         Atom *abt = abt_grounded_dispatch(a, head, args, nargs);
         if (abt) return abt;

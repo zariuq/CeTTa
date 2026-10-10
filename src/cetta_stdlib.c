@@ -172,6 +172,7 @@ static bool serialize_atom(Atom *atom, StringTable *st, ByteBuf *b) {
             buf_u16(b, off);
             return true;
         case GV_BINDINGS:
+        case GV_TENSOR:
         case GV_FOREIGN:
         default:
             fprintf(stderr, "stdlib_compile: cannot serialize grounded kind %d\n", atom->ground.gkind);

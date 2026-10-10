@@ -1,4 +1,7 @@
 #include "petta_semantics.h"
+#include "tensor.h"
+
+int cetta_tensor_compare(const CettaTensor *, const CettaTensor *) __attribute__((weak));
 
 #include "space.h"
 #include "stats.h"
@@ -3279,6 +3282,8 @@ static int petta_compare_grounded_atoms(
         return petta_compare_u64(
             (uint64_t)(uintptr_t)left->ground.ptr,
             (uint64_t)(uintptr_t)right->ground.ptr);
+    case GV_TENSOR:
+        return cetta_tensor_compare(left->ground.ptr, right->ground.ptr);
     case GV_PRIME_NEED_CAPABILITY:
         return petta_compare_u64(
             (uint64_t)(uintptr_t)left->ground.prime_need_capability,

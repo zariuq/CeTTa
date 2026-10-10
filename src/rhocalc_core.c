@@ -1149,6 +1149,15 @@ static bool rho_atom_text_key_direct_emit(
                 ok = rho_atom_text_sink_appendf(
                     sink, "<bindings %p>", atom->ground.ptr);
                 break;
+            case GV_TENSOR: {
+                /* Preserve the existing text-key oracle. Tensor debug text
+                 * describes layout, so tensors are not content-bearing channel names. */
+                Arena scratch;
+                arena_init_detached(&scratch);
+                ok = rho_atom_text_sink_append(sink, atom_to_string(&scratch, atom));
+                arena_free(&scratch);
+                break;
+            }
             case GV_FOREIGN:
                 ok = rho_atom_text_sink_appendf(
                     sink, "<foreign %p>", atom->ground.ptr);
@@ -1274,6 +1283,7 @@ static bool rho_atom_text_structural_hash_admitted(
         case GV_STATE:
         case GV_CAPTURE:
         case GV_BINDINGS:
+        case GV_TENSOR:
         case GV_FOREIGN:
         case GV_TERM_GRAPH:
         case GV_RATIONAL:

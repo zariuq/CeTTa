@@ -2942,6 +2942,7 @@ static bool atom_is_exact_indexable(const Atom *atom) {
         case GV_STATE:
         case GV_CAPTURE:
         case GV_BINDINGS:
+        case GV_TENSOR:
         case GV_FOREIGN:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
@@ -2989,6 +2990,7 @@ static bool atom_id_is_exact_indexable(const Space *s, AtomId atom_id) {
         case GV_STATE:
         case GV_CAPTURE:
         case GV_BINDINGS:
+        case GV_TENSOR:
         case GV_FOREIGN:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
@@ -8188,6 +8190,8 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
     }
     case GV_BINDINGS:
         return atom_symbol(a, "Bindings");
+    case GV_TENSOR:
+        return atom_symbol(a, "Tensor");
     case GV_FOREIGN:
         return atom_symbol(a, "Foreign");
     case GV_TERM_GRAPH:

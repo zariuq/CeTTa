@@ -315,6 +315,21 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(min_atom, "min-atom") \
     X(sort_atom, "sort-atom") \
     X(retain_top_k_keyed_atom, "retain-top-k-keyed-atom") \
+    /* Compact native tensor operations, wrapped by lib_tensor.metta. */ \
+    X(tensor_from, "__cetta_lib_tensor_from") \
+    X(tensor_full, "__cetta_lib_tensor_full") \
+    X(tensor_shape, "__cetta_lib_tensor_shape") \
+    X(tensor_dtype, "__cetta_lib_tensor_dtype") \
+    X(tensor_to_expr, "__cetta_lib_tensor_to_expr") \
+    X(tensor_reshape, "__cetta_lib_tensor_reshape") \
+    X(tensor_copy, "__cetta_lib_tensor_copy") \
+    X(tensor_with, "__cetta_lib_tensor_with") \
+    X(tensor_add, "__cetta_lib_tensor_add") \
+    X(tensor_mul, "__cetta_lib_tensor_mul") \
+    X(tensor_sum, "__cetta_lib_tensor_sum") \
+    X(tensor_dot, "__cetta_lib_tensor_dot") \
+    X(tensor_encode, "__cetta_lib_tensor_encode") \
+    X(tensor_decode, "__cetta_lib_tensor_decode") \
     X(unkey_atom, "unkey-atom") \
     X(sort_strings, "sort-strings") \
     /* ── Grounded math functions ── */ \

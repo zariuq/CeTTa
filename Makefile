@@ -706,6 +706,7 @@ SRC = src/symbol.c src/atom.c src/term_graph.c src/delay_service.c src/string_op
 SRC += src/shared_transition.c src/run_report.c src/run_cli.c src/error_presentation.c src/run_guard.c
 SRC += src/relational_plan.c src/relational_cursor.c
 SRC += src/producer_reads.c
+SRC += src/tensor.c
 SRC += src/producer_dependencies.c src/producer_schedule.c
 SRC += src/library_supervise.c $(DURABLE_SRC)
 SRC += src/petta_type_policy.c src/petta_type_relation.c src/he_type_policy.c
@@ -41452,6 +41453,8 @@ LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_tptp json str
 LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list \
 	system fs proc cwp io durable llm llm/io llm/command llm/compat
 LIBRARY_PRIME_SPELLING_SOURCES_V1 = json
+LIBRARY_PETTA_SPELLING_SOURCES_V1 += lib_tensor
+LIBRARY_PRIME_SPELLING_SOURCES_V1 += lib_tensor
 .PHONY: test-library-spellings-v1
 test-library-spellings-v1: $(LIBRARY_SPELLING_TOOL_V1) \
 		tests/support/test_library_spelling_v1.py \
@@ -42967,6 +42970,27 @@ runtime/test-durable-value-$(BUILD_OBJ_TAG): tests/test_durable_value.c src/dura
 
 test-durable-value: runtime/test-durable-value-$(BUILD_OBJ_TAG)
 	./runtime/test-durable-value-$(BUILD_OBJ_TAG)
+
+TENSOR_TEST_BIN = runtime/test-tensor-$(BUILD_OBJ_TAG)
+TENSOR_TEST_SOURCES = tests/test_tensor.c src/tensor.c src/atom.c src/symbol.c \
+	src/binding/frame_identity.c src/atom_wire.c src/durable_value.c
+.PHONY: test-tensor-unit test-tensor-native test-tensor-mutations
+$(TENSOR_TEST_BIN): $(TENSOR_TEST_SOURCES) src/tensor.h src/atom.h src/symbol.h \
+		src/atom_wire.h src/durable_value.h tests/test_runtime_stats_stubs.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(TENSOR_TEST_SOURCES) $(LDFLAGS)
+
+test-tensor-unit: $(TENSOR_TEST_BIN)
+	@$(call cetta_exec,./$(TENSOR_TEST_BIN))
+
+test-tensor-native: $(BIN) test-tensor-unit test-library-spellings-v1
+	CETTA_BIN=./$(BIN) python3 tests/support/test_tensor_native.py
+
+test-tensor-mutations:
+	CC="$(CC)" python3 tests/support/qualify_tensor_mutations.py \
+		--output-dir runtime/tensor-mutations-$(BUILD_OBJ_TAG)
+
+test: test-tensor-native
 
 .PHONY: test-durable-library
 ifeq ($(ENABLE_DURABLE),1)

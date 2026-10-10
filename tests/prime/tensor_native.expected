@@ -1,0 +1,7 @@
+[()]
+[21.0]
+[True]
+[(1 2 3 4)]
+[True]
+[((99 2) (1 2))]
+[(TensorFailure element-count-mismatch)]

@@ -354,6 +354,7 @@ static void emit_pattern(FILE *out, const char *atom_reg, Atom *pattern,
             break;
         }
         case GV_BINDINGS:
+        case GV_TENSOR:
         case GV_FOREIGN:
         default:
             fprintf(out, "  br label %%fail%d ; unsupported grounded pattern\n", fail_label);
@@ -528,6 +529,7 @@ static const char *emit_rhs(FILE *out, Arena *compiler_arena, Atom *rhs,
             return reg;
         }
         case GV_BINDINGS:
+        case GV_TENSOR:
         case GV_FOREIGN:
         default:
             return "null";
