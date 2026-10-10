@@ -47,6 +47,64 @@ class Rational:
     spelling: str
 
 
+@dataclass(frozen=True)
+class Tensor:
+    """Owned CTN1 bytes. Construction copies buffers and never creates scalar atoms.
+
+    The portable payload is little endian. Buffer import requires an explicit
+    supported dtype, C-contiguous layout, and a matching buffer format/shape.
+    """
+    encoded: bytes
+
+    def __post_init__(self):
+        data = bytes(self.encoded)
+        if len(data) < 9 or data[:4] != b"CTN1" or data[4] not in (1, 2, 3):
+            raise ValueError("invalid tensor header")
+        rank = struct.unpack_from("<I", data, 5)[0]
+        if rank > (len(data) - 9) // 8:
+            raise ValueError("invalid tensor shape")
+        shape = struct.unpack_from("<" + "Q" * rank, data, 9)
+        import math
+        size = math.prod(shape) * (1 if data[4] == 3 else 8)
+        if size != len(data) - 9 - 8 * rank:
+            raise ValueError("tensor payload size mismatch")
+        object.__setattr__(self, "encoded", data)
+
+    @property
+    def shape(self):
+        rank = struct.unpack_from("<I", self.encoded, 5)[0]
+        return struct.unpack_from("<" + "Q" * rank, self.encoded, 9)
+
+    @classmethod
+    def from_buffer(cls, value):
+        import sys
+        view = memoryview(value)
+        try:
+            if not view.c_contiguous:
+                raise ValueError("contiguous buffer required; copy explicitly first")
+            formats = {"q": (1, 8), "d": (2, 8), "B": (3, 1)}
+            fmt = view.format
+            if fmt.startswith(("@", "=")):
+                fmt = fmt[1:]
+            if fmt not in formats:
+                raise ValueError("buffer dtype must be i64, f64 or u8")
+            dtype, width = formats[fmt]
+            if width != view.itemsize or (width > 1 and sys.byteorder != "little"):
+                raise ValueError("buffer representation requires explicit conversion")
+            shape = tuple(view.shape)
+            return cls(b"CTN1" + bytes([dtype]) + struct.pack("<I", len(shape)) +
+                       struct.pack("<" + "Q" * len(shape), *shape) + view.tobytes())
+        finally:
+            view.release()
+
+    @classmethod
+    def vector(cls, values):
+        # Python lists can be copied directly into a packed buffer; the wire
+        # and evaluator see a single tensor value, not one Atom per component.
+        from array import array
+        return cls.from_buffer(array("d", values))
+
+
 def S(name: str) -> Symbol:
     return Symbol(name)
 
@@ -96,6 +154,8 @@ def encode(value) -> bytes:
             text(b"J", v.decimal)
         elif isinstance(v, Rational):
             text(b"Q", v.spelling)
+        elif isinstance(v, Tensor):
+            text(b"A", v.encoded)
         elif isinstance(v, tuple):
             append(b"E" + struct.pack("<I", len(v)))
             for child in v:
@@ -143,6 +203,8 @@ def decode(data: bytes):
             if count > MAX_NODES - nodes or count > len(data) - pos:
                 raise ValueError("expression limit")
             return tuple(visit(depth + 1) for _ in range(count))
+        if tag == b"A":
+            return Tensor(take(struct.unpack("<I", take(4))[0]))
         if tag in (b"S", b"T", b"J", b"Q"):
             value = take(struct.unpack("<I", take(4))[0])
             try:

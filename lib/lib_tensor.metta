@@ -16,6 +16,21 @@
 (: __cetta_lib_tensor_dot (-> Atom Atom Atom))
 (: __cetta_lib_tensor_encode (-> Atom Atom))
 (: __cetta_lib_tensor_decode (-> Atom Atom))
+(: __cetta_lib_tensor_stack (-> Atom Atom Atom Atom))
+(: __cetta_lib_tensor_row_norms (-> Atom Atom))
+(: __cetta_lib_tensor_cosine_rows (-> Atom Atom Atom Atom))
+
+(: tensor:stack (-> %Undefined% %Undefined% %Undefined% Atom))
+(= (tensor:stack $dtype $width $rows)
+   (function (chain (eval (__cetta_lib_tensor_stack $dtype $width $rows)) $result (return $result))))
+(: tensor:row-norms (-> %Undefined% Atom))
+(= (tensor:row-norms $matrix)
+   (function (chain (eval (__cetta_lib_tensor_row_norms $matrix)) $result (return $result))))
+; Norms must correspond to the immutable matrix; kept separately to amortize
+; their construction across queries. All buffers and dimensions are checked.
+(: tensor:cosine-rows (-> %Undefined% %Undefined% %Undefined% Atom))
+(= (tensor:cosine-rows $matrix $norms $query)
+   (function (chain (eval (__cetta_lib_tensor_cosine_rows $matrix $norms $query)) $result (return $result))))
 
 (: tensor:from (-> %Undefined% %Undefined% %Undefined% Atom))
 (= (tensor:from $dtype $shape $values)

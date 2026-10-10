@@ -91,6 +91,7 @@ CeTTa checkout or a different source branch.
 | Process helper library | `lib/proc.metta` | [Process module](lib/proc.metta) |
 | Telegram transport and action service | `telegram-service` target with HTTP and durable features | [Durable host](docs/durable/README.md), [unit templates](deploy/systemd/) |
 | Managed spellings and registered-name reclamation | `ENABLE_MANAGED_SYMBOLS=1` | [Symbol lifetime experiment](verification/gc/README.md) |
+| Native memory collection, packed cosine search and journaled space owner | `space-service value-worker` targets | [Local setup and qualification](docs/memory/README.md) |
 
 For example, a Python-enabled CLI and a smaller service executable can be
 built from one checkout:

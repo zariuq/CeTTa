@@ -2,6 +2,9 @@
 ; do not edit.  The Prime spelling of the library: the same program with each
 ; value handoff spelled as a forcing case.
 
+(= (tensor:stack $dtype $width $rows) (function (case (__cetta_lib_tensor_stack $dtype $width $rows) (($result (return $result))))))
+(= (tensor:row-norms $matrix) (function (case (__cetta_lib_tensor_row_norms $matrix) (($result (return $result))))))
+(= (tensor:cosine-rows $matrix $norms $query) (function (case (__cetta_lib_tensor_cosine_rows $matrix $norms $query) (($result (return $result))))))
 (= (tensor:from $dtype $shape $values) (function (case (__cetta_lib_tensor_from $dtype $shape $values) (($result (return $result))))))
 (= (tensor:full $dtype $shape $value) (function (case (__cetta_lib_tensor_full $dtype $shape $value) (($result (return $result))))))
 (= (tensor:shape $tensor) (function (case (__cetta_lib_tensor_shape $tensor) (($result (return $result))))))

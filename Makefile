@@ -43298,6 +43298,18 @@ endif
 
 .PHONY: telegram-service telegram-control test-telegram-service test-telegram-channel-service test-telegram-commands-service test-telegram-control
 .PHONY: space-service test-space-service
+.PHONY: value-worker test-memory-collection install-memory-service
+MEMORY_SERVICE_INSTALL_ARGS ?=
+VALUE_WORKER_BIN = runtime/cetta-value-worker-$(BUILD_OBJ_TAG)
+VALUE_WORKER_OBJ = runtime/bootstrap/value-worker.$(BUILD_OBJ_TAG).o
+-include $(VALUE_WORKER_OBJ:.o=.d)
+$(VALUE_WORKER_OBJ): src/value_worker_main.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c $< -o $@
+$(VALUE_WORKER_BIN): $(VALUE_WORKER_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+value-worker: $(VALUE_WORKER_BIN)
+	@echo "Built $(VALUE_WORKER_BIN)"
 SPACE_SERVICE_BIN = runtime/cetta-space-service-$(BUILD_OBJ_TAG)
 SPACE_SERVICE_OBJ = runtime/bootstrap/space-service.$(BUILD_OBJ_TAG).o
 -include $(SPACE_SERVICE_OBJ:.o=.d)
@@ -43310,6 +43322,10 @@ space-service: $(SPACE_SERVICE_BIN)
 	@echo "Built $(SPACE_SERVICE_BIN)"
 test-space-service: $(SPACE_SERVICE_BIN) $(BIN)
 	python3 tests/test_space_service.py $(SPACE_SERVICE_BIN) $(BIN)
+test-memory-collection: $(SPACE_SERVICE_BIN) $(VALUE_WORKER_BIN)
+	python3 tests/test_memory_collection.py --server $(SPACE_SERVICE_BIN) --worker $(VALUE_WORKER_BIN) --output runtime/memory-qualification-$(BUILD_OBJ_TAG).json
+install-memory-service: $(SPACE_SERVICE_BIN) $(VALUE_WORKER_BIN)
+	python3 scripts/install_memory_service.py --server $(SPACE_SERVICE_BIN) --worker $(VALUE_WORKER_BIN) $(MEMORY_SERVICE_INSTALL_ARGS)
 runtime/cetta-telegram-control: src/telegram_control_main.c
 	@mkdir -p $(dir $@)
 	$(CC) -O2 -Wall -Wextra -Werror -std=c11 -o $@ $<

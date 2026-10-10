@@ -3,7 +3,7 @@
 This document defines the library boundary and the first native CPU slice.
 `lib_tensor` combines compact C storage and bulk loops with MeTTa composition.
 It provides immutable contiguous `i64`, `f64` and `u8` tensors. Native
-tensor/NumPy conversion remains future work; the existing Python interface can
+tensor buffer ingress supports safe copies through the binary client; the existing Python interface can
 retain and call NumPy and PyTorch objects as opaque foreign values.
 
 ## One numerical value model
@@ -113,6 +113,7 @@ inputs, with `u8` restricted to 0–255.
 
 The first operations are `shape`, `dtype`, `to-expr`, `reshape`, `copy`, `with`,
 `add`, `mul`, `sum`, `dot`, `encode` and `decode`, under the `tensor:` namespace.
+`stack`, `row-norms` and `cosine-rows` supply packed matrix retrieval kernels.
 `with` uses a zero-based flat index. Elementwise operations require equal
 dtype and shape; `dot` requires equal rank-one shapes. Integer arithmetic
 refuses overflow. Ordered floating reductions use binary64 multiplication and
@@ -235,17 +236,17 @@ PeTTa, HE and Prime API fixtures. The PeTTa fixtures also exercise exact
 retrieval, profile selection and deletion. `examples/tensor/native_cpu.metta`
 is a runnable PeTTa example.
 
-Chroma interoperability begins alongside the next tensor slice. The generated
+Chroma interoperability now includes the [native collection](../memory/README.md)
+and optional migration bridge. The generated
 [benchmark](../../benchmarks/tensor/README.md) already compares the same finite
 records and lifecycle changes through native MeTTa retrieval and an optional
 Chroma client. It supplies embeddings explicitly; no model weights or retained
-corpus are required. A production collection adapter and model interface remain
-separate implementation obligations.
+corpus are required. The collection adapter reuses externally supplied embeddings;
+embedding inference remains a separate model interface.
 
-The next retrieval slices should add bulk tensor ingress and the collection
-adapter, then a packed exact index derived from versioned space records. The
-present exact engine can support offline and shadow comparisons while that
-index is developed. An index's identity must include
+Bulk copying ingress, a cosine collection adapter and a packed exact index are
+implemented. The exact engine supports offline and shadow comparisons.
+An index's identity must include
 its source space/revision and embedding profile, dtype, dimension and metric.
 Updates, deletion and profile changes must invalidate or patch the affected
 view before publication. Persistent records retain embeddings alongside text
@@ -255,7 +256,7 @@ durability; an existing value codec alone does not persist a space.
 
 Before an agent cutover, replay a consistent private export through the same
 collection contract, including cosine queries, ID/time lookup and episode
-links. A later shadow adapter can compare retrieval without choosing the
+links. The optional shadow adapter compares retrieval without choosing the
 agent's answers. Its queues, failure receipts and rollback must be qualified
 separately from the storage and numerical kernels.
 

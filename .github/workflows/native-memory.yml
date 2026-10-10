@@ -1,0 +1,26 @@
+name: Native memory collection
+on:
+  push:
+    paths:
+      - 'src/**'
+      - 'lib/**'
+      - 'tools/**'
+      - 'scripts/install_memory_service.py'
+      - 'tests/test_memory_collection.py'
+      - 'Makefile'
+      - '.github/workflows/native-memory.yml'
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  generated-fixture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config python3 libgmp-dev
+      - name: Build and qualify without optional runtimes
+        run: make -j2 BUILD=core ENABLE_LIB_PROLOG=0 ENABLE_JSON_GSLT=0 ENABLE_MANAGED_SYMBOLS=1 test-memory-collection

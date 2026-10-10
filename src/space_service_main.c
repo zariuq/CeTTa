@@ -55,6 +55,7 @@ typedef struct {
     size_t receipt_count, receipt_bytes, snapshot_bytes;
     uint64_t next_store, next_cursor, catalog_revision;
     uint64_t max_facts, max_live_bytes, max_journal_bytes, journal_bytes, checkpoint_bytes;
+    uint64_t max_query_bytes, max_snapshot_bytes;
     unsigned query_ms;
     char uuid[33], boot[33];
     int journal, directory, lock;
@@ -288,7 +289,9 @@ static bool has_nan(Atom *atom) {
  * IEEE numeric equality cannot establish membership of a NaN's storage key. */
 static Atom *find_equal(Store *st, Atom *atom) {
     if (!atom_has_vars(atom) && !has_nan(atom)) {
-        if (!space_contains_exact(st->space, atom)) return NULL;
+        /* Exact-index absence is authoritative only for indexable atoms.
+         * Immutable tensor leaves use the retained-value fallback. */
+        if (space_atom_is_exact_indexable(atom) && !space_contains_exact(st->space, atom)) return NULL;
         CettaIndex *indices = NULL;
         CettaIndex n = space_match_candidates64(st->space, atom, &indices);
         Atom *found = NULL;
@@ -509,8 +512,8 @@ static Atom *query(Service *s, Arena *a, Atom *request, Store *st, bool counting
                     Atom *value = bindings_apply(&bindings,&scratch,projection);
                     Bytes b = {0};
                     if (!value || !wire(value,&b)) failure="query-value-limit";
-                    else if (b.size > QUERY_BYTES - q.size ||
-                        b.size > SNAPSHOT_BYTES - s->snapshot_bytes - q.size) {
+                    else if (b.size > s->max_query_bytes - q.size ||
+                        b.size > s->max_snapshot_bytes - s->snapshot_bytes - q.size) {
                         bytes_free(&b); failure="query-byte-limit";
                     } else { q.rows[q.count++] = b; q.size += b.size; }
                 }
@@ -547,9 +550,10 @@ static Atom *dispatch(Service *s, Arena *a, Atom *request, Bytes raw) {
     if (shape(request,"request",3) && atom_is_symbol(part(request,2),"hello")) {
         Atom *caps[] = {atom_symbol(a,"conditional-batches"),atom_symbol(a,"snapshot-pages"),
             atom_symbol(a,"bounded-receipts"),atom_symbol(a,"journal-checkpoint"),atom_symbol(a,"no-eval"),
-            atom_symbol(a,"portable-value-keys"),atom_symbol(a,"native-match-index")};
+            atom_symbol(a,"portable-value-keys"),atom_symbol(a,"native-match-index"),
+            atom_symbol(a,"tensor-ctn1-native")};
         Atom *args[] = {atom_int(a,1),atom_string(a,s->uuid),atom_string(a,s->boot),
-            atom_int(a,s->catalog_revision),form(a,"capabilities",caps,7)};
+            atom_int(a,s->catalog_revision),form(a,"capabilities",caps,8)};
         return reply(a,request,true,form(a,"service",args,5));
     }
     if (atom_is_symbol(part(request,2),"fetch") || atom_is_symbol(part(request,2),"close")) {
@@ -973,11 +977,13 @@ int main(int argc,char **argv) {
     s->journal=s->directory=s->lock=-1;
     s->next_cursor=1;
     s->max_facts=1000000; s->max_live_bytes=64*1024*1024;
+    s->max_query_bytes=QUERY_BYTES; s->max_snapshot_bytes=SNAPSHOT_BYTES;
     s->max_journal_bytes=32*1024*1024; s->query_ms=5000;
     for (int i=1;i<argc;++i) {
         if (!strcmp(argv[i],"--help")) {
             puts("cetta-space-service --socket ABSOLUTE_PATH --data PRIVATE_DIRECTORY\n"
-                 "  [--max-facts N] [--max-live-bytes N] [--max-journal-bytes N] [--query-ms N]");
+                 "  [--max-facts N] [--max-live-bytes N] [--max-journal-bytes N] [--query-ms N]\n"
+                 "  [--max-query-bytes N] [--max-snapshot-bytes N]");
             free(s); return 0;
         }
         if (i+1>=argc) goto invalid;
@@ -989,6 +995,8 @@ int main(int argc,char **argv) {
             if (!strcmp(option,"--max-facts")) s->max_facts=n;
             else if (!strcmp(option,"--max-live-bytes")) s->max_live_bytes=n;
             else if (!strcmp(option,"--max-journal-bytes")) s->max_journal_bytes=n;
+            else if (!strcmp(option,"--max-query-bytes")) s->max_query_bytes=n;
+            else if (!strcmp(option,"--max-snapshot-bytes")) s->max_snapshot_bytes=n;
             else if (!strcmp(option,"--query-ms") && n<=60000) s->query_ms=(unsigned)n;
             else goto invalid;
         }

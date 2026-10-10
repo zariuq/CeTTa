@@ -1,6 +1,7 @@
 #include "tensor.h"
 #include <float.h>
 #include <inttypes.h>
+#include <math.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 
@@ -517,6 +518,72 @@ static Atom *element_atom(Arena *arena, const CettaTensor *tensor, size_t index)
 
 Atom *cetta_tensor_dispatch(Arena *arena, Atom *head, Atom **args, uint32_t nargs) {
     if (!head || head->kind != ATOM_SYMBOL) return NULL;
+    /* Whole-buffer matrix primitives. Collection/profile/filter policy stays
+     * in MeTTa. These names use the ordinary dynamic library-op boundary. */
+    if (atom_is_symbol(head, "__cetta_lib_tensor_stack")) {
+        if (nargs != 3 || args[2]->kind != ATOM_EXPR) return failure(arena,CETTA_TENSOR_VALUE);
+        CettaTensorDType dtype=dtype_from_atom(args[0]); size_t width;
+        if (!natural(args[1],&width)) return failure(arena,CETTA_TENSOR_SHAPE);
+        size_t count=args[2]->expr.len, shape[2]={count,width};
+        CettaTensor *matrix=NULL;
+        CettaTensorStatus status=allocate(dtype,shape,2,&matrix);
+        if (status!=CETTA_TENSOR_OK) return failure(arena,status);
+        size_t row_bytes=count ? matrix->storage->bytes/count : 0;
+        for (size_t i=0;i<count;++i) {
+            CettaTensor *row=from_atom(args[2]->expr.elems[i]);
+            if (!row || row->dtype!=dtype || row->rank!=1 || row->count!=width) {
+                cetta_tensor_release(matrix); return failure(arena,CETTA_TENSOR_SHAPE);
+            }
+            if (row_bytes) memcpy(matrix->storage->data+i*row_bytes,row->storage->data,row_bytes);
+        }
+        finish_storage(matrix); return publish(arena,CETTA_TENSOR_OK,matrix);
+    }
+    bool row_norms=atom_is_symbol(head,"__cetta_lib_tensor_row_norms");
+    bool cosine_rows=atom_is_symbol(head,"__cetta_lib_tensor_cosine_rows");
+    if (row_norms || cosine_rows) {
+        if (nargs!=(row_norms ? 1u : 3u)) return failure(arena,CETTA_TENSOR_VALUE);
+        CettaTensor *matrix=from_atom(args[0]);
+        if (!matrix || matrix->dtype!=CETTA_TENSOR_F64 || matrix->rank!=2)
+            return failure(arena,CETTA_TENSOR_SHAPE);
+        size_t rows=matrix->shape[0], columns=matrix->shape[1];
+        CettaTensor *norms=cosine_rows ? from_atom(args[1]) : NULL;
+        CettaTensor *query=cosine_rows ? from_atom(args[2]) : NULL;
+        double query_norm=1;
+        if (cosine_rows) {
+            if (!norms || !query || norms->dtype!=CETTA_TENSOR_F64 || query->dtype!=CETTA_TENSOR_F64 ||
+                norms->rank!=1 || norms->count!=rows || query->rank!=1 || query->count!=columns)
+                return failure(arena,CETTA_TENSOR_SHAPE);
+            double total=0;
+            for (size_t j=0;j<columns;++j) {
+                double v;memcpy(&v,query->storage->data+j*8,8);
+                volatile double product=v*v;total+=product;
+            }
+            query_norm=sqrt(total);
+            if (!isfinite(query_norm) || query_norm<=0) return failure(arena,CETTA_TENSOR_VALUE);
+        }
+        CettaTensor *output=NULL;
+        CettaTensorStatus status=allocate(CETTA_TENSOR_F64,&rows,1,&output);
+        if (status!=CETTA_TENSOR_OK) return failure(arena,status);
+        for (size_t i=0;i<rows;++i) {
+            double total=0;
+            for (size_t j=0;j<columns;++j) {
+                double v,q;
+                memcpy(&v,matrix->storage->data+(i*columns+j)*8,8);
+                if (cosine_rows) memcpy(&q,query->storage->data+j*8,8);else q=v;
+                volatile double product=v*q;total+=product;
+            }
+            if (cosine_rows) {
+                double norm;memcpy(&norm,norms->storage->data+i*8,8);
+                if (!isfinite(norm) || norm<=0) { cetta_tensor_release(output);return failure(arena,CETTA_TENSOR_VALUE); }
+                total/=norm*query_norm;
+            } else total=sqrt(total);
+            if (!isfinite(total) || (row_norms && total<=0)) {
+                cetta_tensor_release(output);return failure(arena,CETTA_TENSOR_VALUE);
+            }
+            memcpy(output->storage->data+i*8,&total,8);
+        }
+        finish_storage(output);return publish(arena,CETTA_TENSOR_OK,output);
+    }
     SymbolId id = atom_symbol_current_id(head);
     if (id < g_builtin_syms.tensor_from || id > g_builtin_syms.tensor_decode) return NULL;
     CettaTensor *tensor = NULL, *left = nargs ? from_atom(args[0]) : NULL;

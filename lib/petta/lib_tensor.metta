@@ -2,6 +2,9 @@
 ; do not edit.  The PeTTa spelling of the library: the same program with the
 ; HE-only native wrappers spelled as PeTTa calls.
 
+(= (tensor:stack $dtype $width $rows) (__cetta_lib_tensor_stack $dtype $width $rows))
+(= (tensor:row-norms $matrix) (__cetta_lib_tensor_row_norms $matrix))
+(= (tensor:cosine-rows $matrix $norms $query) (__cetta_lib_tensor_cosine_rows $matrix $norms $query))
 (= (tensor:from $dtype $shape $values) (__cetta_lib_tensor_from $dtype $shape $values))
 (= (tensor:full $dtype $shape $value) (__cetta_lib_tensor_full $dtype $shape $value))
 (= (tensor:shape $tensor) (__cetta_lib_tensor_shape $tensor))
