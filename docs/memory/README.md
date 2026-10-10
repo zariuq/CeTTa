@@ -150,7 +150,8 @@ real collection geometry, selective filters and restart, not only this small
 generated fixture. Document-vector perturbations test numerical retrieval and
 do not measure semantic relevance on actual user questions.
 
-MeTTapedia's `Mettapedia.Algebra.MemoryCollection` proves 20 laws of the keyed,
+MeTTapedia's [MemoryCollection](https://github.com/godelclaw/MeTTapedia/blob/4b1028ae25d31ec5d105a5dd641cd37f83ac13da/lean/mettapedia/Mettapedia/Algebra/MemoryCollection.lean)
+proves 20 laws of the keyed,
 revision-bound model, including stale-write refusal, deletion after recovery,
 view invalidation and shadow noninterference. Faithful native lookup, validation,
 durable I/O and numerical ranking remain implementation obligations. Runtime

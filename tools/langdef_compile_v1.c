@@ -1245,7 +1245,7 @@ static bool langdef_semantic_q_list_next_v1(
 static bool langdef_semantic_render_q_term_v1(
     LangDefByteBufferV1 *buffer, const Atom *term, uint32_t depth,
     char *error, size_t error_size) {
-    const Atom *head_symbol;
+    const Atom *head_symbol = NULL;
     const Atom *arguments;
     const Atom *argument;
     bool done;
@@ -1330,7 +1330,7 @@ static int langdef_semantic_rule_compare_v1(
 static bool langdef_semantic_rule_build_v1(
     const Atom *quoted_rule, LangDefSemanticRuleV1 *rule,
     char *error, size_t error_size) {
-    const Atom *id_symbol;
+    const Atom *id_symbol = NULL;
     const Atom *body;
     const Atom *premise;
     LangDefByteBufferV1 output = {0};
@@ -2350,7 +2350,7 @@ static bool compile_semantic_gslt_presentation_v1(
         }
         if (atom_is_symbol(record->expr.elems[0], "source-operator")) {
             const Atom *quoted_name;
-            const Atom *name;
+            const Atom *name = NULL;
             uint32_t arity;
             if (record->expr.len != 4u) {
                 set_error(
