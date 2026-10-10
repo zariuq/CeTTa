@@ -228,8 +228,34 @@ PeTTa, HE and Prime API fixtures. The PeTTa fixtures also exercise exact
 retrieval, profile selection and deletion. `examples/tensor/native_cpu.metta`
 is a runnable PeTTa example.
 
-The next slices are checked strided views and additional numeric kernels;
-optional Python import/export; then retrieval indexes and model adapters.
-Operation graphs and differentiation build above the value layer. The full
-tensor library can grow through these boundaries without making Python a
-runtime requirement.
+Chroma interoperability begins alongside the next tensor slice. The generated
+[benchmark](../../benchmarks/tensor/README.md) already compares the same finite
+records and lifecycle changes through native MeTTa retrieval and an optional
+Chroma client. It supplies embeddings explicitly; no model weights or retained
+corpus are required. A production collection adapter and model interface remain
+separate implementation obligations.
+
+## Completion programme
+
+The initial usable release includes generic CPU tensor work, Python exchange
+with PyTorch-owned training, hypervector operations and versioned retrieval.
+Native differentiation and broader accelerator/numerical coverage are explicit
+long-term packages. Neither a small native slice nor successful Chroma queries
+establishes NumPy/PyTorch feature or performance parity.
+
+| Package | Required behavior and evidence |
+| --- | --- |
+| Views and numerical operations | Prove checked strided addressing, owner retention, broadcasting and contraction shape laws; implement indexing, promotion, `f32` and further dtypes, matrix/contraction and core reductions; compare answers, exceptional cases and costs |
+| Early retrieval/Chroma bridge | Define one collection-facing contract over IDs, revisions, embedding profiles, filters and three distance metrics; integrate explicit embeddings and lifecycle operations before building native ANN; make bag-versus-key semantics explicit |
+| Python and PyTorch exchange | Implement checked buffer/DLPack import/export and copy policy; qualify external writes, deletion and capsule release; demonstrate generic array modules and a small PyTorch training loop without claiming DLPack carries gradients |
+| Hypervector client | Add packed binary, bipolar and real/complex operations, permutations, bundling, explicit tie policies and reproducible unbiased generators; qualify algebraic laws and retrieval task accuracy |
+| Efficient execution | Separate eager allocation/hashing from kernel cost; add provider boundaries, BLAS, operation graphs/fusion and optional GPUs; qualify each provider's numerical, alias and synchronization behavior |
+| Native retrieval indexes | Add exact batched kernels and optional ANN providers, full filters and model adapters; measure recall/latency/memory under selective filters and update/delete churn against the exact reference |
+| Service, storage and reliability | Negotiate tensor wire capabilities; support native and qualified PathMap/MORK ingress, coherent source revisions, bounded retention, index rebuild, reopen and crash/concurrent-reader tests |
+| Native training and numerical breadth | Build a checked differentiation fragment and qualified gradients/optimizers, then extend native training, linear algebra, sparse/quantized representations and provider coverage as separately declared capabilities |
+
+Each package needs its Lean model laws, executable conformance and cost
+qualification connected to the same declared operation semantics. Model laws
+do not verify C memory operations or floating-point arithmetic by themselves.
+Missing implementations remain explicit in the benchmark's coverage manifest;
+they must not disappear behind skipped tests or an aggregate passing label.
