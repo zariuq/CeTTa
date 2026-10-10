@@ -24,6 +24,7 @@ typedef enum {
     CETTA_TENSOR_INDEX,
     CETTA_TENSOR_VALUE,
     CETTA_TENSOR_ENCODING,
+    CETTA_TENSOR_PROVIDER,
 } CettaTensorStatus;
 
 const char *cetta_tensor_status_name(CettaTensorStatus status);
@@ -63,6 +64,38 @@ typedef struct {
 /* With a right operand, this is a rank-one dot; otherwise an ordered sum. */
 CettaTensorStatus cetta_tensor_reduce(const CettaTensor *left,
     const CettaTensor *right, CettaTensorScalar *out);
+/* Axis-zero gather preserves order and repeated indices. Selectors are i64. */
+CettaTensorStatus cetta_tensor_gather(const CettaTensor *source,
+    const CettaTensor *indices, CettaTensor **out);
+/* Dense f64 matrix/vector product. NULL indices selects all rows. Four ordered
+ * accumulation lanes are combined in a fixed order, without FMA contraction.
+ * This is a different reduction order from tensor:dot's scalar reference. */
+CettaTensorStatus cetta_tensor_matvec(const CettaTensor *matrix,
+    const CettaTensor *query, const CettaTensor *indices, CettaTensor **out);
+typedef enum {
+    CETTA_MATVEC_AUTO,
+    CETTA_MATVEC_SCALAR4,
+    CETTA_MATVEC_AVX4,
+} CettaTensorMatvecProvider;
+bool cetta_tensor_matvec_provider_available(CettaTensorMatvecProvider provider);
+CettaTensorStatus cetta_tensor_matvec_with_provider(const CettaTensor *matrix,
+    const CettaTensor *query, const CettaTensor *indices,
+    CettaTensorMatvecProvider provider, CettaTensor **out);
+CettaTensorStatus cetta_tensor_div(const CettaTensor *left,
+    const CettaTensor *right, CettaTensor **out);
+CettaTensorStatus cetta_tensor_scale(const CettaTensor *source, double factor,
+    CettaTensor **out);
+/* Boolean masks use u8 entries restricted to 0 and 1. */
+CettaTensorStatus cetta_tensor_mask_indices(size_t length,
+    const CettaTensor *indices, CettaTensor **out);
+CettaTensorStatus cetta_tensor_mask_binary(const CettaTensor *left,
+    const CettaTensor *right, bool is_or, CettaTensor **out);
+CettaTensorStatus cetta_tensor_mask_not(const CettaTensor *mask, CettaTensor **out);
+CettaTensorStatus cetta_tensor_nonzero(const CettaTensor *mask, CettaTensor **out);
+/* Sorted descending, with smaller source indices first at equal scores.
+ * Enabled nonfinite scores are refused, including when k is zero. */
+CettaTensorStatus cetta_tensor_top_k(const CettaTensor *scores,
+    const CettaTensor *mask, size_t k, CettaTensor **out);
 /* CTN1: dtype:u8, rank:u32 LE, dimensions:u64 LE, ordered element bits LE.
  * Encoding is pointer-free, lossless and portable for the supported dtypes. */
 CettaTensorStatus cetta_tensor_encoded_size(const CettaTensor *tensor, size_t *size);

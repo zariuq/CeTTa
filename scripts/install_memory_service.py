@@ -26,7 +26,7 @@ def main():
         raise ValueError('invalid dependent service name')
     sources={'bin/cetta-space-service':a.server.resolve(),'bin/cetta-value-worker':a.worker.resolve()}
     for name in ['stdlib.metta','lib_tensor.metta','petta/lib_tensor.metta','petta/lib_retrieval.metta',
-                 'petta/lib_memory_collection.metta','list.metta','petta/list.metta']:
+                 'petta/lib_memory_collection.metta','petta/lib_row_index.metta','list.metta','petta/list.metta']:
         sources['lib/'+name]=ROOT/'lib'/name
     for name in ['space_service_client.py','value_worker_client.py','memory_collection.py']:
         sources['tools/'+name]=ROOT/'tools'/name

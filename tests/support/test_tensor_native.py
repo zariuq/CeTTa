@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def main():
     binary = Path(os.environ.get("CETTA_BIN", ROOT / "cetta")).resolve()
     outputs = 0
-    for dialect, name in (("petta", "tensor_native"), ("petta", "tensor_retrieval"),
+    for dialect, name in (("petta", "tensor_native"), ("petta", "tensor_retrieval"), ("petta", "row_index"),
                           ("he", "tensor_native"), ("prime", "tensor_native")):
         source = ROOT / "tests" / dialect / f"{name}.metta"
         expected = source.with_suffix(".expected").read_text()

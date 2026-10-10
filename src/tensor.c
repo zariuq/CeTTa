@@ -4,6 +4,18 @@
 #include <math.h>
 #include <stdatomic.h>
 #include <stdlib.h>
+#if (defined(__x86_64__) || defined(__i386__)) && (defined(__GNUC__) || defined(__clang__))
+#include <immintrin.h>
+#define CETTA_HAS_AVX4 1
+#else
+#define CETTA_HAS_AVX4 0
+#endif
+
+#if defined(__clang__)
+#pragma clang fp contract(off)
+#elif defined(__GNUC__)
+#pragma GCC optimize ("fp-contract=off")
+#endif
 
 _Static_assert(sizeof(double) == 8 && DBL_MANT_DIG == 53 && DBL_MAX_EXP == 1024,
                "native f64 tensors require binary64");
@@ -35,6 +47,7 @@ const char *cetta_tensor_status_name(CettaTensorStatus status) {
     case CETTA_TENSOR_INDEX: return "index-out-of-bounds";
     case CETTA_TENSOR_VALUE: return "invalid-value";
     case CETTA_TENSOR_ENCODING: return "invalid-encoding";
+    case CETTA_TENSOR_PROVIDER: return "unsupported-provider";
     }
     return "invalid-status";
 }
@@ -346,6 +359,298 @@ CettaTensorStatus cetta_tensor_reduce(const CettaTensor *left,
     return CETTA_TENSOR_OK;
 }
 
+static bool indices_valid(const CettaTensor *indices, size_t rows) {
+    if (!indices || indices->dtype != CETTA_TENSOR_I64 || indices->rank != 1u)
+        return false;
+    const int64_t *values = (const int64_t *)indices->storage->data;
+    for (size_t i = 0; i < indices->count; ++i)
+        if (values[i] < 0 || (uint64_t)values[i] >= rows) return false;
+    return true;
+}
+
+CettaTensorStatus cetta_tensor_gather(const CettaTensor *source,
+    const CettaTensor *indices, CettaTensor **out) {
+    if (!out || !source || !indices) return CETTA_TENSOR_VALUE;
+    *out = NULL;
+    if (!source->rank || indices->dtype != CETTA_TENSOR_I64 || indices->rank != 1u)
+        return CETTA_TENSOR_SHAPE;
+    if (!indices_valid(indices, source->shape[0])) return CETTA_TENSOR_INDEX;
+    size_t *shape = malloc(source->rank * sizeof(size_t));
+    if (!shape) return CETTA_TENSOR_NOMEM;
+    memcpy(shape, source->shape, source->rank * sizeof(size_t));
+    shape[0] = indices->count;
+    CettaTensorStatus status = allocate(source->dtype, shape, source->rank, out);
+    free(shape);
+    if (status != CETTA_TENSOR_OK) return status;
+    size_t stride = source->shape[0] ? source->storage->bytes / source->shape[0] : 0u;
+    const int64_t *values = (const int64_t *)indices->storage->data;
+    if (stride) for (size_t i = 0; i < indices->count; ++i)
+        memcpy((*out)->storage->data + i * stride,
+               source->storage->data + (size_t)values[i] * stride, stride);
+    finish_storage(*out);
+    return CETTA_TENSOR_OK;
+}
+
+static double dot4_scalar(const double *v, const double *q, size_t width) {
+    double a = 0, b = 0, c = 0, d = 0;
+    size_t j = 0;
+    for (; width - j >= 4u; j += 4u) {
+        a += v[j] * q[j]; b += v[j+1] * q[j+1];
+        c += v[j+2] * q[j+2]; d += v[j+3] * q[j+3];
+    }
+    double total = ((a + b) + c) + d;
+    for (; j < width; ++j) total += v[j] * q[j];
+    return total;
+}
+
+#if CETTA_HAS_AVX4
+__attribute__((target("avx")))
+static double dot4_avx(const double *v, const double *q, size_t width) {
+    __m256d lanes = _mm256_setzero_pd();
+    size_t j = 0;
+    for (; width - j >= 4u; j += 4u)
+        lanes = _mm256_add_pd(lanes, _mm256_mul_pd(_mm256_loadu_pd(v+j), _mm256_loadu_pd(q+j)));
+    double sums[4]; _mm256_storeu_pd(sums, lanes);
+    double total = ((sums[0] + sums[1]) + sums[2]) + sums[3];
+    for (; j < width; ++j) total += v[j] * q[j];
+    return total;
+}
+#endif
+
+bool cetta_tensor_matvec_provider_available(CettaTensorMatvecProvider provider) {
+    if (provider == CETTA_MATVEC_AUTO || provider == CETTA_MATVEC_SCALAR4) return true;
+#if CETTA_HAS_AVX4
+    if (provider == CETTA_MATVEC_AVX4) return __builtin_cpu_supports("avx") != 0;
+#endif
+    return false;
+}
+
+CettaTensorStatus cetta_tensor_matvec(const CettaTensor *matrix,
+    const CettaTensor *query, const CettaTensor *indices, CettaTensor **out) {
+    return cetta_tensor_matvec_with_provider(matrix, query, indices, CETTA_MATVEC_AUTO, out);
+}
+
+CettaTensorStatus cetta_tensor_matvec_with_provider(const CettaTensor *matrix,
+    const CettaTensor *query, const CettaTensor *indices,
+    CettaTensorMatvecProvider provider, CettaTensor **out) {
+    if (!out || !matrix || !query) return CETTA_TENSOR_VALUE;
+    *out = NULL;
+    if (matrix->dtype != CETTA_TENSOR_F64 || query->dtype != CETTA_TENSOR_F64)
+        return CETTA_TENSOR_DTYPE;
+    if (matrix->rank != 2u || query->rank != 1u || query->count != matrix->shape[1])
+        return CETTA_TENSOR_SHAPE;
+    if (!cetta_tensor_matvec_provider_available(provider)) return CETTA_TENSOR_PROVIDER;
+    double (*dot)(const double *, const double *, size_t) = dot4_scalar;
+#if CETTA_HAS_AVX4
+    if (provider == CETTA_MATVEC_AVX4 || (provider == CETTA_MATVEC_AUTO &&
+        cetta_tensor_matvec_provider_available(CETTA_MATVEC_AVX4))) dot = dot4_avx;
+#endif
+    size_t rows = matrix->shape[0], width = matrix->shape[1];
+    if (indices && !indices_valid(indices, rows)) return CETTA_TENSOR_INDEX;
+    size_t count = indices ? indices->count : rows;
+    CettaTensorStatus status = allocate(CETTA_TENSOR_F64, &count, 1u, out);
+    if (status != CETTA_TENSOR_OK) return status;
+    const double *data = (const double *)matrix->storage->data;
+    const double *q = (const double *)query->storage->data;
+    const int64_t *selected = indices ? (const int64_t *)indices->storage->data : NULL;
+    double *result = (double *)(*out)->storage->data;
+    for (size_t i = 0; i < count; ++i) {
+        size_t row = selected ? (size_t)selected[i] : i;
+        /* An empty row never forms a pointer into absent storage. */
+        const double *v = width ? data + row * width : NULL;
+        result[i] = dot(v, q, width);
+    }
+    finish_storage(*out);
+    return CETTA_TENSOR_OK;
+}
+
+CettaTensorStatus cetta_tensor_div(const CettaTensor *left,
+    const CettaTensor *right, CettaTensor **out) {
+    if (!out || !left || !right) return CETTA_TENSOR_VALUE;
+    *out = NULL;
+    if (left->dtype != CETTA_TENSOR_F64 || right->dtype != CETTA_TENSOR_F64)
+        return CETTA_TENSOR_DTYPE;
+    if (!same_shape(left, right)) return CETTA_TENSOR_SHAPE;
+    CettaTensorStatus status = allocate(left->dtype, left->shape, left->rank, out);
+    if (status != CETTA_TENSOR_OK) return status;
+    const double *a = (const double *)left->storage->data;
+    const double *b = (const double *)right->storage->data;
+    double *result = (double *)(*out)->storage->data;
+    for (size_t i = 0; i < left->count; ++i) result[i] = a[i] / b[i];
+    finish_storage(*out);
+    return CETTA_TENSOR_OK;
+}
+
+CettaTensorStatus cetta_tensor_scale(const CettaTensor *source, double factor,
+    CettaTensor **out) {
+    if (!out || !source) return CETTA_TENSOR_VALUE;
+    *out = NULL;
+    if (source->dtype != CETTA_TENSOR_F64) return CETTA_TENSOR_DTYPE;
+    CettaTensorStatus status = allocate(source->dtype, source->shape, source->rank, out);
+    if (status != CETTA_TENSOR_OK) return status;
+    const double *values = (const double *)source->storage->data;
+    double *result = (double *)(*out)->storage->data;
+    for (size_t i = 0; i < source->count; ++i) result[i] = values[i] * factor;
+    finish_storage(*out);
+    return CETTA_TENSOR_OK;
+}
+
+/* Broadcast one divisor across each axis-zero matrix row. */
+static CettaTensorStatus divide_rows(const CettaTensor *matrix,
+    const CettaTensor *divisors, CettaTensor **out) {
+    if (!out || !matrix || !divisors) return CETTA_TENSOR_VALUE;
+    *out = NULL;
+    if (matrix->dtype != CETTA_TENSOR_F64 || divisors->dtype != CETTA_TENSOR_F64)
+        return CETTA_TENSOR_DTYPE;
+    if (matrix->rank != 2u || divisors->rank != 1u || divisors->count != matrix->shape[0])
+        return CETTA_TENSOR_SHAPE;
+    CettaTensorStatus status = allocate(matrix->dtype, matrix->shape, 2u, out);
+    if (status != CETTA_TENSOR_OK) return status;
+    const double *data = (const double *)matrix->storage->data;
+    const double *denoms = (const double *)divisors->storage->data;
+    double *result = (double *)(*out)->storage->data;
+    size_t width = matrix->shape[1];
+    for (size_t i = 0; i < matrix->shape[0]; ++i)
+        for (size_t j = 0; j < width; ++j) result[i*width+j] = data[i*width+j] / denoms[i];
+    finish_storage(*out);
+    return CETTA_TENSOR_OK;
+}
+
+static bool mask_valid(const CettaTensor *mask) {
+    if (!mask || mask->dtype != CETTA_TENSOR_U8 || mask->rank != 1u) return false;
+    for (size_t i = 0; i < mask->count; ++i)
+        if (mask->storage->data[i] > 1u) return false;
+    return true;
+}
+
+CettaTensorStatus cetta_tensor_mask_indices(size_t length,
+    const CettaTensor *indices, CettaTensor **out) {
+    if (!out || !indices) return CETTA_TENSOR_VALUE;
+    *out = NULL;
+    if (!indices_valid(indices, length)) return CETTA_TENSOR_INDEX;
+    CettaTensorStatus status = allocate(CETTA_TENSOR_U8, &length, 1u, out);
+    if (status != CETTA_TENSOR_OK) return status;
+    if (length) memset((*out)->storage->data, 0, length);
+    const int64_t *values = (const int64_t *)indices->storage->data;
+    for (size_t i = 0; i < indices->count; ++i) (*out)->storage->data[values[i]] = 1u;
+    finish_storage(*out);
+    return CETTA_TENSOR_OK;
+}
+
+CettaTensorStatus cetta_tensor_mask_binary(const CettaTensor *left,
+    const CettaTensor *right, bool is_or, CettaTensor **out) {
+    if (!out || !left || !right) return CETTA_TENSOR_VALUE;
+    *out = NULL;
+    if (!same_shape(left, right)) return CETTA_TENSOR_SHAPE;
+    if (!mask_valid(left) || !mask_valid(right)) return CETTA_TENSOR_VALUE;
+    CettaTensorStatus status = allocate(CETTA_TENSOR_U8, left->shape, 1u, out);
+    if (status != CETTA_TENSOR_OK) return status;
+    for (size_t i = 0; i < left->count; ++i)
+        (*out)->storage->data[i] = is_or ? left->storage->data[i] | right->storage->data[i] :
+                                         left->storage->data[i] & right->storage->data[i];
+    finish_storage(*out);
+    return CETTA_TENSOR_OK;
+}
+
+CettaTensorStatus cetta_tensor_mask_not(const CettaTensor *mask, CettaTensor **out) {
+    if (!out || !mask) return CETTA_TENSOR_VALUE;
+    *out = NULL;
+    if (!mask_valid(mask)) return CETTA_TENSOR_VALUE;
+    CettaTensorStatus status = allocate(CETTA_TENSOR_U8, mask->shape, 1u, out);
+    if (status != CETTA_TENSOR_OK) return status;
+    for (size_t i = 0; i < mask->count; ++i)
+        (*out)->storage->data[i] = !mask->storage->data[i];
+    finish_storage(*out);
+    return CETTA_TENSOR_OK;
+}
+
+CettaTensorStatus cetta_tensor_nonzero(const CettaTensor *mask, CettaTensor **out) {
+    if (!out || !mask) return CETTA_TENSOR_VALUE;
+    *out = NULL;
+    if (!mask_valid(mask)) return CETTA_TENSOR_VALUE;
+    size_t count = 0;
+    for (size_t i = 0; i < mask->count; ++i) count += mask->storage->data[i];
+    CettaTensorStatus status = allocate(CETTA_TENSOR_I64, &count, 1u, out);
+    if (status != CETTA_TENSOR_OK) return status;
+    int64_t *result = (int64_t *)(*out)->storage->data;
+    size_t next = 0;
+    for (size_t i = 0; i < mask->count; ++i) if (mask->storage->data[i]) {
+        if (i > INT64_MAX) { cetta_tensor_release(*out); *out = NULL; return CETTA_TENSOR_OVERFLOW; }
+        result[next++] = (int64_t)i;
+    }
+    finish_storage(*out);
+    return CETTA_TENSOR_OK;
+}
+
+static bool score_better(const CettaTensor *scores, size_t a, size_t b) {
+    if (scores->dtype == CETTA_TENSOR_F64) {
+        const double *values = (const double *)scores->storage->data;
+        if (values[a] != values[b]) return values[a] > values[b];
+    } else if (scores->dtype == CETTA_TENSOR_I64) {
+        const int64_t *values = (const int64_t *)scores->storage->data;
+        if (values[a] != values[b]) return values[a] > values[b];
+    } else {
+        const unsigned char *values = scores->storage->data;
+        if (values[a] != values[b]) return values[a] > values[b];
+    }
+    return a < b;
+}
+
+/* The root is the worst retained score, with the largest index at a tie. */
+static void heap_down(const CettaTensor *scores, size_t *heap, size_t count, size_t root) {
+    while (root < count / 2u) {
+        size_t child = root * 2u + 1u;
+        if (child + 1u < count && score_better(scores, heap[child], heap[child+1])) ++child;
+        if (!score_better(scores, heap[root], heap[child])) break;
+        size_t old = heap[root]; heap[root] = heap[child]; heap[child] = old;
+        root = child;
+    }
+}
+
+CettaTensorStatus cetta_tensor_top_k(const CettaTensor *scores,
+    const CettaTensor *mask, size_t k, CettaTensor **out) {
+    if (!out || !scores) return CETTA_TENSOR_VALUE;
+    *out = NULL;
+    if (scores->rank != 1u) return CETTA_TENSOR_SHAPE;
+    if (mask && (!same_shape(scores, mask) || !mask_valid(mask))) return CETTA_TENSOR_VALUE;
+    if (scores->count > INT64_MAX) return CETTA_TENSOR_OVERFLOW;
+    size_t capacity = k < scores->count ? k : scores->count;
+    if (capacity > SIZE_MAX / sizeof(size_t)) return CETTA_TENSOR_OVERFLOW;
+    size_t *heap = capacity ? malloc(capacity * sizeof(size_t)) : NULL;
+    if (capacity && !heap) return CETTA_TENSOR_NOMEM;
+    size_t count = 0;
+    for (size_t i = 0; i < scores->count; ++i) {
+        if (mask && !mask->storage->data[i]) continue;
+        if (scores->dtype == CETTA_TENSOR_F64 && !isfinite(((const double *)scores->storage->data)[i])) {
+            free(heap); return CETTA_TENSOR_VALUE;
+        }
+        if (!capacity) continue;
+        if (count < capacity) {
+            size_t child = count++; heap[child] = i;
+            while (child) {
+                size_t parent = (child - 1u) / 2u;
+                if (!score_better(scores, heap[parent], heap[child])) break;
+                size_t old = heap[parent]; heap[parent] = heap[child]; heap[child] = old;
+                child = parent;
+            }
+        } else if (score_better(scores, i, heap[0])) {
+            heap[0] = i; heap_down(scores, heap, count, 0);
+        }
+    }
+    CettaTensorStatus status = allocate(CETTA_TENSOR_I64, &count, 1u, out);
+    if (status == CETTA_TENSOR_OK) {
+        int64_t *result = (int64_t *)(*out)->storage->data;
+        for (size_t remaining = count; remaining; --remaining) {
+            result[remaining-1] = (int64_t)heap[0];
+            heap[0] = heap[remaining-1];
+            heap_down(scores, heap, remaining-1, 0);
+        }
+        finish_storage(*out);
+    }
+    free(heap);
+    return status;
+}
+
 static void put_le(unsigned char *dst, uint64_t value, size_t width) {
     for (size_t i = 0; i < width; ++i) dst[i] = (unsigned char)(value >> (8u * i));
 }
@@ -518,6 +823,91 @@ static Atom *element_atom(Arena *arena, const CettaTensor *tensor, size_t index)
 
 Atom *cetta_tensor_dispatch(Arena *arena, Atom *head, Atom **args, uint32_t nargs) {
     if (!head || head->kind != ATOM_SYMBOL) return NULL;
+    CettaTensor *bulk = NULL;
+    CettaTensorStatus bulk_status;
+    if (atom_is_symbol(head, "__cetta_lib_tensor_matvec_provider")) {
+        if (nargs != 1u || !atom_is_symbol(args[0], "auto"))
+            return failure(arena, CETTA_TENSOR_PROVIDER);
+        return atom_symbol(arena,
+            cetta_tensor_matvec_provider_available(CETTA_MATVEC_AVX4) ? "avx4" : "scalar4");
+    }
+    bool provider_selected = atom_is_symbol(head, "__cetta_lib_tensor_matvec_selected_with");
+    if (provider_selected || atom_is_symbol(head, "__cetta_lib_tensor_matvec_with")) {
+        if (nargs != (provider_selected ? 4u : 3u)) return failure(arena, CETTA_TENSOR_VALUE);
+        CettaTensorMatvecProvider provider;
+        if (atom_is_symbol(args[0], "auto")) provider = CETTA_MATVEC_AUTO;
+        else if (atom_is_symbol(args[0], "scalar4")) provider = CETTA_MATVEC_SCALAR4;
+        else if (atom_is_symbol(args[0], "avx4")) provider = CETTA_MATVEC_AVX4;
+        else return failure(arena, CETTA_TENSOR_PROVIDER);
+        CettaTensor *indices = provider_selected ? from_atom(args[3]) : NULL;
+        if (provider_selected && !indices) return failure(arena, CETTA_TENSOR_VALUE);
+        bulk_status = cetta_tensor_matvec_with_provider(from_atom(args[1]), from_atom(args[2]), indices, provider, &bulk);
+        return publish(arena, bulk_status, bulk);
+    }
+    if (atom_is_symbol(head, "__cetta_lib_tensor_gather")) {
+        if (nargs != 2u) return failure(arena, CETTA_TENSOR_VALUE);
+        bulk_status = cetta_tensor_gather(from_atom(args[0]), from_atom(args[1]), &bulk);
+        return publish(arena, bulk_status, bulk);
+    }
+    bool selected = atom_is_symbol(head, "__cetta_lib_tensor_matvec_selected");
+    if (selected || atom_is_symbol(head, "__cetta_lib_tensor_matvec")) {
+        if (nargs != (selected ? 3u : 2u)) return failure(arena, CETTA_TENSOR_VALUE);
+        CettaTensor *indices = selected ? from_atom(args[2]) : NULL;
+        if (selected && !indices) return failure(arena, CETTA_TENSOR_VALUE);
+        bulk_status = cetta_tensor_matvec(from_atom(args[0]), from_atom(args[1]), indices, &bulk);
+        return publish(arena, bulk_status, bulk);
+    }
+    if (atom_is_symbol(head, "__cetta_lib_tensor_div")) {
+        if (nargs != 2u) return failure(arena, CETTA_TENSOR_VALUE);
+        bulk_status = cetta_tensor_div(from_atom(args[0]), from_atom(args[1]), &bulk);
+        return publish(arena, bulk_status, bulk);
+    }
+    if (atom_is_symbol(head, "__cetta_lib_tensor_div_rows")) {
+        if (nargs != 2u) return failure(arena, CETTA_TENSOR_VALUE);
+        bulk_status = divide_rows(from_atom(args[0]), from_atom(args[1]), &bulk);
+        return publish(arena, bulk_status, bulk);
+    }
+    if (atom_is_symbol(head, "__cetta_lib_tensor_scale")) {
+        if (nargs != 2u) return failure(arena, CETTA_TENSOR_VALUE);
+        unsigned char element[8];
+        bulk_status = element_from_atom(CETTA_TENSOR_F64, args[1], element);
+        if (bulk_status != CETTA_TENSOR_OK) return failure(arena, bulk_status);
+        double factor; memcpy(&factor, element, sizeof(factor));
+        bulk_status = cetta_tensor_scale(from_atom(args[0]), factor, &bulk);
+        return publish(arena, bulk_status, bulk);
+    }
+    if (atom_is_symbol(head, "__cetta_lib_tensor_mask_indices")) {
+        size_t length;
+        if (nargs != 2u || !natural(args[0], &length)) return failure(arena, CETTA_TENSOR_VALUE);
+        bulk_status = cetta_tensor_mask_indices(length, from_atom(args[1]), &bulk);
+        return publish(arena, bulk_status, bulk);
+    }
+    bool mask_or = atom_is_symbol(head, "__cetta_lib_tensor_mask_or");
+    if (mask_or || atom_is_symbol(head, "__cetta_lib_tensor_mask_and")) {
+        if (nargs != 2u) return failure(arena, CETTA_TENSOR_VALUE);
+        bulk_status = cetta_tensor_mask_binary(from_atom(args[0]), from_atom(args[1]), mask_or, &bulk);
+        return publish(arena, bulk_status, bulk);
+    }
+    if (atom_is_symbol(head, "__cetta_lib_tensor_mask_not")) {
+        if (nargs != 1u) return failure(arena, CETTA_TENSOR_VALUE);
+        bulk_status = cetta_tensor_mask_not(from_atom(args[0]), &bulk);
+        return publish(arena, bulk_status, bulk);
+    }
+    if (atom_is_symbol(head, "__cetta_lib_tensor_nonzero")) {
+        if (nargs != 1u) return failure(arena, CETTA_TENSOR_VALUE);
+        bulk_status = cetta_tensor_nonzero(from_atom(args[0]), &bulk);
+        return publish(arena, bulk_status, bulk);
+    }
+    bool masked = atom_is_symbol(head, "__cetta_lib_tensor_top_k_masked");
+    if (masked || atom_is_symbol(head, "__cetta_lib_tensor_top_k")) {
+        size_t k;
+        if (nargs != (masked ? 3u : 2u) || !natural(args[nargs-1], &k))
+            return failure(arena, CETTA_TENSOR_VALUE);
+        CettaTensor *mask = masked ? from_atom(args[1]) : NULL;
+        if (masked && !mask) return failure(arena, CETTA_TENSOR_VALUE);
+        bulk_status = cetta_tensor_top_k(from_atom(args[0]), mask, k, &bulk);
+        return publish(arena, bulk_status, bulk);
+    }
     /* Whole-buffer matrix primitives. Collection/profile/filter policy stays
      * in MeTTa. These names use the ordinary dynamic library-op boundary. */
     if (atom_is_symbol(head, "__cetta_lib_tensor_stack")) {
@@ -595,7 +985,7 @@ Atom *cetta_tensor_dispatch(Arena *arena, Atom *head, Atom **args, uint32_t narg
         size_t *shape, rank;
         status = shape_from_atom(args[1], &shape, &rank);
         if (status != CETTA_TENSOR_OK) return failure(arena, status);
-        size_t count, bytes;
+        size_t count = 0, bytes = 0;
         status = cetta_tensor_byte_count(dtype, shape, rank, &count, &bytes);
         size_t skip = atom_is_list(args[2]) ? 1u : 0u;
         if (status == CETTA_TENSOR_OK && id == g_builtin_syms.tensor_from &&

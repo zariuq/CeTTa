@@ -43092,6 +43092,11 @@ benchmark-tensor-compact: $(BIN) $(TENSOR_TEST_BIN) test-library-spellings-v1
 benchmark-tensor-capacity: $(BIN) test-library-spellings-v1
 	python3 benchmarks/tensor/capacity.py --binary ./$(BIN) $(TENSOR_CAPACITY_ARGS)
 
+.PHONY: benchmark-memory-collection
+benchmark-memory-collection: space-service value-worker
+	python3 benchmarks/tensor/collection.py --server $(SPACE_SERVICE_BIN) --worker $(VALUE_WORKER_BIN) \
+		--output runtime/resident-memory-$(BUILD_OBJ_TAG).json $(MEMORY_COLLECTION_BENCH_ARGS)
+
 test: test-tensor-native
 
 .PHONY: test-durable-library
@@ -43393,7 +43398,7 @@ endif
 
 .PHONY: telegram-service telegram-control test-telegram-service test-telegram-channel-service test-telegram-commands-service test-telegram-control
 .PHONY: space-service test-space-service
-.PHONY: value-worker test-memory-collection install-memory-service
+.PHONY: value-worker test-memory-collection test-memory-index-mutations install-memory-service
 MEMORY_SERVICE_INSTALL_ARGS ?=
 VALUE_WORKER_BIN = runtime/cetta-value-worker-$(BUILD_OBJ_TAG)
 VALUE_WORKER_OBJ = runtime/bootstrap/value-worker.$(BUILD_OBJ_TAG).o
@@ -43419,6 +43424,9 @@ test-space-service: $(SPACE_SERVICE_BIN) $(BIN)
 	python3 tests/test_space_service.py $(SPACE_SERVICE_BIN) $(BIN)
 test-memory-collection: $(SPACE_SERVICE_BIN) $(VALUE_WORKER_BIN)
 	python3 tests/test_memory_collection.py --server $(SPACE_SERVICE_BIN) --worker $(VALUE_WORKER_BIN) --output runtime/memory-qualification-$(BUILD_OBJ_TAG).json
+test-memory-index-mutations: $(VALUE_WORKER_BIN)
+	python3 tests/support/qualify_memory_index_mutations.py --worker $(VALUE_WORKER_BIN) \
+		--output runtime/memory-index-mutations-$(BUILD_OBJ_TAG).json
 install-memory-service: $(SPACE_SERVICE_BIN) $(VALUE_WORKER_BIN)
 	python3 scripts/install_memory_service.py --server $(SPACE_SERVICE_BIN) --worker $(VALUE_WORKER_BIN) $(MEMORY_SERVICE_INSTALL_ARGS)
 runtime/cetta-telegram-control: src/telegram_control_main.c

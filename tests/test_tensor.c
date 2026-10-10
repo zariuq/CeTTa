@@ -98,6 +98,172 @@ static void arithmetic_reference(void) {
     }
 }
 
+static void selection_reference(void) {
+    /* Independent repeated maximum selection, with ties and integer values
+     * above binary64's exact range. This does not use the implementation heap. */
+    for (unsigned dtype = CETTA_TENSOR_I64; dtype <= CETTA_TENSOR_U8; ++dtype) {
+        for (size_t n = 0; n <= 65u; ++n) {
+            int64_t integers[65]; double floats[65]; unsigned char bytes[65], mask[65];
+            for (size_t i = 0; i < n; ++i) {
+                integers[i] = INT64_C(9007199254740992) + (int64_t)((i * 17u) % 23u);
+                floats[i] = (double)((int)((i * 17u) % 23u) - 11) / 4.0;
+                bytes[i] = (unsigned char)((i * 17u) % 23u);
+                mask[i] = (i % 3u) != 1u;
+            }
+            const void *data = dtype == CETTA_TENSOR_I64 ? (const void *)integers :
+                               dtype == CETTA_TENSOR_F64 ? (const void *)floats : (const void *)bytes;
+            CettaTensor *scores = make(dtype, &n, 1u, data, n * cetta_tensor_itemsize(dtype));
+            CettaTensor *enabled = make(CETTA_TENSOR_U8, &n, 1u, mask, n);
+            for (unsigned masked = 0; masked < 2; ++masked) {
+                size_t expected[65], count = 0;
+                bool used[65] = {false};
+                for (;;) {
+                    size_t best = n;
+                    for (size_t i = 0; i < n; ++i) if (!used[i] && (!masked || mask[i])) {
+                        if (best == n || (dtype == CETTA_TENSOR_I64 ? integers[i] > integers[best] :
+                            dtype == CETTA_TENSOR_F64 ? floats[i] > floats[best] : bytes[i] > bytes[best])) best = i;
+                    }
+                    if (best == n) break;
+                    expected[count++] = best; used[best] = true;
+                }
+                for (size_t k = 0; k <= n + 1u; ++k) {
+                    CettaTensor *top = NULL;
+                    assert(cetta_tensor_top_k(scores, masked ? enabled : NULL, k, &top) == CETTA_TENSOR_OK);
+                    size_t wanted = k < count ? k : count;
+                    assert(cetta_tensor_count(top) == wanted);
+                    const int64_t *actual = cetta_tensor_data(top);
+                    for (size_t i = 0; i < wanted; ++i) assert(actual[i] == (int64_t)expected[i]);
+                    CettaTensor *gathered = NULL;
+                    assert(cetta_tensor_gather(scores, top, &gathered) == CETTA_TENSOR_OK);
+                    const unsigned char *selected = cetta_tensor_data(gathered);
+                    for (size_t i = 0; i < wanted; ++i) assert(!memcmp(selected + i * cetta_tensor_itemsize(dtype),
+                        (const unsigned char *)data + expected[i] * cetta_tensor_itemsize(dtype), cetta_tensor_itemsize(dtype)));
+                    cetta_tensor_release(gathered); cetta_tensor_release(top);
+                }
+            }
+            CettaTensor *indices = NULL, *rebuilt = NULL, *merged = NULL;
+            assert(cetta_tensor_nonzero(enabled, &indices) == CETTA_TENSOR_OK);
+            assert(cetta_tensor_mask_indices(n, indices, &rebuilt) == CETTA_TENSOR_OK);
+            assert(cetta_tensor_equal(enabled, rebuilt));
+            assert(cetta_tensor_mask_binary(enabled, rebuilt, false, &merged) == CETTA_TENSOR_OK);
+            assert(cetta_tensor_equal(enabled, merged)); cetta_tensor_release(merged);
+            assert(cetta_tensor_mask_binary(enabled, rebuilt, true, &merged) == CETTA_TENSOR_OK);
+            assert(cetta_tensor_equal(enabled, merged)); cetta_tensor_release(merged);
+            assert(cetta_tensor_mask_not(enabled, &merged) == CETTA_TENSOR_OK);
+            for (size_t i = 0; i < n; ++i)
+                assert(((const unsigned char *)cetta_tensor_data(merged))[i] == !mask[i]);
+            CettaTensor *combined = NULL;
+            assert(cetta_tensor_mask_binary(enabled, merged, true, &combined) == CETTA_TENSOR_OK);
+            for (size_t i = 0; i < n; ++i)
+                assert(((const unsigned char *)cetta_tensor_data(combined))[i] == 1);
+            cetta_tensor_release(combined);
+            assert(cetta_tensor_mask_binary(enabled, merged, false, &combined) == CETTA_TENSOR_OK);
+            for (size_t i = 0; i < n; ++i)
+                assert(((const unsigned char *)cetta_tensor_data(combined))[i] == 0);
+            cetta_tensor_release(combined);
+            cetta_tensor_release(merged);
+            cetta_tensor_release(rebuilt); cetta_tensor_release(indices);
+            cetta_tensor_release(enabled); cetta_tensor_release(scores);
+        }
+    }
+    size_t n = 3; double nonfinite[] = {1, NAN, INFINITY}; unsigned char bits[] = {1, 0, 0};
+    CettaTensor *scores = make(CETTA_TENSOR_F64, &n, 1, nonfinite, sizeof(nonfinite));
+    CettaTensor *mask = make(CETTA_TENSOR_U8, &n, 1, bits, sizeof(bits));
+    CettaTensor *result = NULL;
+    assert(cetta_tensor_top_k(scores, mask, SIZE_MAX, &result) == CETTA_TENSOR_OK);
+    assert(cetta_tensor_count(result) == 1 && ((const int64_t *)cetta_tensor_data(result))[0] == 0);
+    cetta_tensor_release(result);
+    assert(cetta_tensor_top_k(scores, NULL, 0, &result) == CETTA_TENSOR_VALUE && !result);
+    cetta_tensor_release(mask);
+    bits[2] = 2; mask = make(CETTA_TENSOR_U8, &n, 1, bits, sizeof(bits));
+    assert(cetta_tensor_nonzero(mask, &result) == CETTA_TENSOR_VALUE && !result);
+    assert(cetta_tensor_mask_not(mask, &result) == CETTA_TENSOR_VALUE && !result);
+    assert(cetta_tensor_top_k(scores, mask, 1, &result) == CETTA_TENSOR_VALUE && !result);
+    cetta_tensor_release(mask); cetta_tensor_release(scores);
+
+    int64_t bad = -1; n = 1;
+    CettaTensor *indices = make(CETTA_TENSOR_I64, &n, 1, &bad, sizeof(bad));
+    assert(cetta_tensor_mask_indices(3, indices, &result) == CETTA_TENSOR_INDEX && !result);
+    cetta_tensor_release(indices);
+    bad = 3; indices = make(CETTA_TENSOR_I64, &n, 1, &bad, sizeof(bad));
+    assert(cetta_tensor_mask_indices(3, indices, &result) == CETTA_TENSOR_INDEX && !result);
+    cetta_tensor_release(indices);
+}
+
+static void matrix_reference(void) {
+    for (size_t width = 0; width <= 33; ++width) {
+        double data[4*33], query[33], expected[4] = {0};
+        for (size_t j = 0; j < width; ++j) query[j] = (double)((int)(j % 5) - 2) / 4;
+        for (size_t i = 0; i < 4; ++i) for (size_t j = 0; j < width; ++j) {
+            data[i*width+j] = (double)((int)((i*width+j) % 7) - 3) / 4;
+            expected[i] += data[i*width+j] * query[j];
+        }
+        size_t shape[] = {4, width}, count = 3;
+        int64_t rows[] = {3, 0, 3};
+        CettaTensor *matrix = make(CETTA_TENSOR_F64, shape, 2, data, 4*width*8);
+        CettaTensor *q = make(CETTA_TENSOR_F64, &width, 1, query, width*8);
+        CettaTensor *indices = make(CETTA_TENSOR_I64, &count, 1, rows, sizeof(rows));
+        CettaTensor *out = NULL;
+        assert(cetta_tensor_matvec(matrix, q, NULL, &out) == CETTA_TENSOR_OK);
+        for (size_t i = 0; i < 4; ++i) assert(((const double *)cetta_tensor_data(out))[i] == expected[i]);
+        cetta_tensor_release(out);
+        assert(cetta_tensor_matvec_with_provider(matrix, q, NULL, CETTA_MATVEC_SCALAR4, &out) == CETTA_TENSOR_OK);
+        for (size_t i = 0; i < 4; ++i) assert(((const double *)cetta_tensor_data(out))[i] == expected[i]);
+        cetta_tensor_release(out);
+        assert(cetta_tensor_matvec_with_provider(matrix, q, NULL, (CettaTensorMatvecProvider)42, &out)
+               == CETTA_TENSOR_PROVIDER && !out);
+        assert(cetta_tensor_matvec(matrix, q, indices, &out) == CETTA_TENSOR_OK);
+        for (size_t i = 0; i < count; ++i) assert(((const double *)cetta_tensor_data(out))[i] == expected[rows[i]]);
+        cetta_tensor_release(out);
+        assert(cetta_tensor_gather(matrix, indices, &out) == CETTA_TENSOR_OK);
+        for (size_t i = 0; i < count; ++i) if (width) assert(!memcmp(
+            (const double *)cetta_tensor_data(out) + i * width, data + rows[i] * width, width * 8));
+        cetta_tensor_release(out);
+        assert(cetta_tensor_scale(q, 2, &out) == CETTA_TENSOR_OK);
+        for (size_t i = 0; i < width; ++i) assert(((const double *)cetta_tensor_data(out))[i] == 2*query[i]);
+        cetta_tensor_release(out);
+        assert(cetta_tensor_div(q, q, &out) == CETTA_TENSOR_OK);
+        for (size_t i = 0; i < width; ++i) {
+            double v = ((const double *)cetta_tensor_data(out))[i];
+            assert(query[i] == 0 ? isnan(v) : v == 1);
+        }
+        cetta_tensor_release(out); cetta_tensor_release(indices);
+        cetta_tensor_release(q); cetta_tensor_release(matrix);
+    }
+    /* Provider conformance uses irregular binary64 values, tails, and repeated
+     * row selectors. It checks bit agreement between distinct implementations. */
+    size_t width = 1025, shape[] = {7, 1025}, count = 4;
+    double data[7*1025], query[1025];
+    uint32_t seed = 77109;
+    for (size_t j = 0; j < width; ++j) {
+        seed = seed * 1664525u + 1013904223u;
+        query[j] = ldexp(((double)(seed % 2000001u) - 1000000) / 1000003, (int)(j % 17) - 8);
+    }
+    for (size_t j = 0; j < 7*width; ++j) {
+        seed = seed * 1664525u + 1013904223u;
+        data[j] = ((double)(seed % 2000001u) - 1000000) / 1000033;
+    }
+    int64_t rows[] = {6, 0, 6, 3};
+    CettaTensor *matrix = make(CETTA_TENSOR_F64, shape, 2, data, sizeof(data));
+    CettaTensor *q = make(CETTA_TENSOR_F64, &width, 1, query, sizeof(query));
+    CettaTensor *indices = make(CETTA_TENSOR_I64, &count, 1, rows, sizeof(rows));
+    for (unsigned selected = 0; selected < 2; ++selected) {
+        CettaTensor *reference = NULL, *actual = NULL;
+        assert(cetta_tensor_matvec_with_provider(matrix, q, selected ? indices : NULL,
+            CETTA_MATVEC_SCALAR4, &reference) == CETTA_TENSOR_OK);
+        assert(cetta_tensor_matvec(matrix, q, selected ? indices : NULL, &actual) == CETTA_TENSOR_OK);
+        assert(cetta_tensor_equal(reference, actual)); cetta_tensor_release(actual);
+        CettaTensorStatus status = cetta_tensor_matvec_with_provider(matrix, q, selected ? indices : NULL,
+            CETTA_MATVEC_AVX4, &actual);
+        if (cetta_tensor_matvec_provider_available(CETTA_MATVEC_AVX4)) {
+            assert(status == CETTA_TENSOR_OK && cetta_tensor_equal(reference, actual));
+            cetta_tensor_release(actual);
+        } else assert(status == CETTA_TENSOR_PROVIDER && !actual);
+        cetta_tensor_release(reference);
+    }
+    cetta_tensor_release(indices); cetta_tensor_release(q); cetta_tensor_release(matrix);
+}
+
 int main(void) {
     SymbolTable symbols; symbol_table_init(&symbols);
     symbol_table_init_builtins(&symbols, &g_builtin_syms); g_symbols = &symbols;
@@ -215,6 +381,7 @@ int main(void) {
     assert(cetta_tensor_reduce(tensor, NULL, &sum) == CETTA_TENSOR_OK && sum.value.integer == 256);
     cetta_tensor_release(tensor);
     arithmetic_reference();
+    selection_reference(); matrix_reference();
     arena_free(&survivor); symbol_table_free(&symbols);
     puts("PASS: native tensor ownership, alternatives, arithmetic, bounds and codecs");
     return 0;

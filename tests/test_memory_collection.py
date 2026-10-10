@@ -91,6 +91,7 @@ def main():
                         scored.append((i,1-score))
                 return sorted(scored,key=lambda x:(x[1],x[0]))[:7]
             times=[]
+            base_view = None
             for stage in range(3):
                 for query_index in range(12):
                     q=[rng.uniform(-1,1) for _ in range(16)]
@@ -101,6 +102,13 @@ def main():
                     times.append((time.perf_counter()-start_time)*1000)
                     check(f"oracle-{stage}-{query_index}", actual['ids'][0]==[r[0] for r in expected] and
                           all(abs(a-b[1])<1e-12 for a,b in zip(actual['distances'][0],expected)))
+                status = collection._call(E('index-status'))
+                if stage == 0:
+                    base_view = status[2]
+                else:
+                    check(f'base-retained-after-churn-{stage}', status[2] == base_view)
+                    check(f'delta-covers-changed-ids-{stage}', status[3] == 10)
+                    check(f'delta-latest-version-count-{stage}', status[4][2] == (10 if stage == 1 else 0))
                 if stage==0:
                     for i in ids[:10]: rows[i]=[rng.uniform(-1,1) for _ in range(16)]
                     put(ids[:10])
@@ -113,6 +121,18 @@ def main():
             check('episode-unlink-last',collection.get(ids=['r0010'])['metadatas'][0]['linkedEpisodes']==[])
             collection.update(['r0010'],[{'linkedEpisodes':None}])
             check('metadata-field-delete', 'linkedEpisodes' not in collection.get(ids=['r0010'])['metadatas'][0])
+            rows['r0300'] = [rng.uniform(-1,1) for _ in range(16)]
+            put(['r0300'])
+            check('insert-in-delta', collection.query([rows['r0300']],1,where={'group':0})['ids'][0] == ['r0300'])
+            collection.delete(['r0300'])
+            del rows['r0300']
+            # A large changed-ID set compacts once rather than leaving a delta
+            # whose interpreter and allocation cost can grow without bound.
+            put(sorted(rows)[:128])
+            check('delta-compaction-requested', collection._call(E('index-status'))[2] == S('Missing'))
+            q = [rng.uniform(-1,1) for _ in range(16)]
+            check('delta-compaction-preserves-ranking', collection.query([q],7)['ids'][0] == [r[0] for r in oracle(q)])
+            check('delta-compaction-clears-dirty-set', collection._call(E('index-status'))[3] == 0)
             real_worker = collection.worker
             class FailedCache:
                 process = real_worker.process

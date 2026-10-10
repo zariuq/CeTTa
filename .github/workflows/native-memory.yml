@@ -7,6 +7,13 @@ on:
       - 'tools/**'
       - 'scripts/install_memory_service.py'
       - 'tests/test_memory_collection.py'
+      - 'tests/test_tensor.c'
+      - 'tests/support/test_tensor_native.py'
+      - 'tests/support/qualify_memory_index_mutations.py'
+      - 'tests/petta/**'
+      - 'tests/he/tensor_native.*'
+      - 'tests/prime/tensor_native.*'
+      - 'benchmarks/tensor/**'
       - 'Makefile'
       - '.github/workflows/native-memory.yml'
   pull_request:
@@ -23,4 +30,9 @@ jobs:
           persist-credentials: false
       - run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config python3 libgmp-dev
       - name: Build and qualify without optional runtimes
-        run: make -j2 BUILD=core ENABLE_LIB_PROLOG=0 ENABLE_JSON_GSLT=0 ENABLE_MANAGED_SYMBOLS=1 test-memory-collection
+        run: make -j2 BUILD=core ENABLE_LIB_PROLOG=0 ENABLE_JSON_GSLT=0 ENABLE_MANAGED_SYMBOLS=1 test-memory-collection test-tensor-native test-memory-index-mutations
+      - name: Resident queries, filters and write recovery
+        run: >-
+          make BUILD=core ENABLE_LIB_PROLOG=0 ENABLE_JSON_GSLT=0 ENABLE_MANAGED_SYMBOLS=1
+          benchmark-memory-collection
+          MEMORY_COLLECTION_BENCH_ARGS="--records 256 1024 --dimension 32 --repeats 4 --chroma off"

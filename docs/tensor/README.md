@@ -111,7 +111,7 @@ building one Atom per element. Explicit `f64` construction converts integer
 inputs to binary64, which can round; integer constructors require integer
 inputs, with `u8` restricted to 0–255.
 
-The first operations are `shape`, `dtype`, `to-expr`, `reshape`, `copy`, `with`,
+The value operations are `shape`, `dtype`, `to-expr`, `reshape`, `copy`, `with`,
 `add`, `mul`, `sum`, `dot`, `encode` and `decode`, under the `tensor:` namespace.
 `stack`, `row-norms` and `cosine-rows` supply packed matrix retrieval kernels.
 `with` uses a zero-based flat index. Elementwise operations require equal
@@ -121,6 +121,36 @@ addition without FMA contraction; the CPU reference is not a guarantee of
 cross-provider or cross-device numerical reproducibility. Refusals return
 `(TensorFailure reason)` as data in every dialect.
 
+Bulk selection adds `indices`, `gather`, `matvec`, `matvec-selected`, `div`,
+`div-rows`, `scale`, `mask-indices`, `mask-and`, `mask-or`, `mask-not`, `nonzero`,
+`top-k` and `top-k-masked`. `gather` selects along axis zero, preserving order
+and repeated indices; its selector is a rank-one `i64` tensor. A Boolean mask
+is rank-one `u8` with only zero and one entries. Incorrect shapes, invalid
+indices and non-Boolean masks fail before accessing elements.
+
+`top-k` accepts rank-one `i64`, `f64` or `u8` scores and returns at most `k`
+indices, sorted by descending score with smaller source indices first at a tie.
+It compares integers without floating conversion. Enabled nonfinite floating
+scores are refused even for `k=0`; masked-out scores are not candidates.
+`nonzero` returns enabled row indices in increasing order. Thus a caller can
+filter rows before scoring and export only the selected indices and scores.
+
+The current `f64` matrix/vector kernel has four ordered accumulation lanes,
+combined in a fixed order without FMA contraction. Its reduction order differs
+from the scalar `dot` reference; numerical comparisons require a stated
+tolerance. The default provider uses AVX when the compiler and CPU support it,
+otherwise the portable scalar implementation. `matvec-with` and
+`matvec-selected-with` select `auto`, `scalar4` or `avx4`; an unavailable
+explicit provider returns `unsupported-provider`. `matvec-provider` reports
+the provider selected by `auto`. Both CPU implementations preserve the same
+four-lane order; their finite-value bit agreement is checked separately from
+the independent numerical oracle. Division and scaling use IEEE arithmetic, including infinities and
+NaNs; the cosine wrappers require finite, positive norms and selection refuses
+enabled nonfinite scores. `normalize-rows`, `cosine-selected` and
+`cosine-unit-rows` are MeTTa compositions of the general primitives.
+`cosine-unit-rows` requires an already normalized matrix and normalizes the
+query once. These operations do not change stored source vectors.
+
 Native calls process whole buffers. MeTTa defines norm, cosine and retrieval
 composition; it does not loop through an Atom for each component of a bulk
 kernel. `to-expr` is explicit materialization, never the normal return path.
@@ -129,6 +159,15 @@ remain later layers. PyTorch supplies initial training; native differentiation
 is a long-term target. Sharing numerical data alone does not share its gradient
 graph. Seeded random generators and provider-specific deterministic modes must
 have explicit contracts when introduced.
+
+The collection client composes an exact row mask, selected matrix/vector
+product, top-k and gather in MeTTa. Metadata postings are built once in an
+indexed space. Queries resolve only the selected records, rather than
+materializing every score and interpreting every row. A normalized base matrix
+plus a bounded matrix of changed IDs supports incremental writes; retirement
+masks exclude outdated base rows before top-k. See the
+[collection architecture](../memory/README.md) and
+[resident benchmark](../../benchmarks/tensor/README.md).
 
 The first retrieval client is PeTTa's `lib_retrieval`. It reads records shaped
 as `(Embedding id revision profile tensor metadata)` from a native space, then

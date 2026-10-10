@@ -130,6 +130,59 @@ construction commands rather than one source atom per component. Generated
 vectors isolate capacity costs; they do not establish semantic retrieval
 quality or replace the independently randomized lifecycle suite above.
 
+## Resident collection comparison
+
+[collection.py](collection.py) exercises the binary collection adapter in one
+resident process. It generates 1,000 and 4,000 vectors of dimension 384,
+imports packed buffers, and removes its temporary named spaces on completion.
+No model or corpus is downloaded. The combined vector payload is about 15 MB;
+the default leaves only a bounded receipt, with zero retained dataset bytes.
+
+```sh
+make BUILD=core ENABLE_LIB_PROLOG=0 ENABLE_JSON_GSLT=0 \
+  ENABLE_MANAGED_SYMBOLS=1 benchmark-memory-collection \
+  MEMORY_COLLECTION_BENCH_ARGS="--chroma required --check-growth"
+```
+
+Install a Chroma Python client separately for `--chroma required`. `--chroma
+off` needs only the standard library. To run the selected binaries with a
+different Python environment:
+
+```sh
+python3 benchmarks/tensor/collection.py --server SERVER --worker WORKER \
+  --records 1000 4000 --dimension 1024 --repeats 24 \
+  --chroma required --output runtime/resident-collection.json
+```
+
+The queries cover unfiltered top-k, 25% group filters, single-row equality,
+nested conjunction/disjunction and empty selections. A separate scalar
+`math.fsum` oracle checks exact native results with boundary-tie tolerance;
+eight deliberately wrong results must be rejected. Updates change a vector
+and its filter metadata, deletion retires an equal-vector occurrence, and
+worker loss requires reconstruction. The first query, the first query after
+a write, and repeated warm queries are reported separately. Ordinary writes
+must preserve the base matrix, as well as preserve exact answers.
+
+Chroma uses the same inputs and cosine metric, with explicit HNSW search width
+128, batch size 32 and one index thread. The default record counts exceed the
+search width. Scores, eligibility and result cardinality are checked even when
+ANN recall is imperfect. Recall is reported on nonempty selections;
+`--min-chroma-recall` declares an optional per-query qualification threshold.
+The default zero threshold reports recall without asserting exact ANN answers.
+Native correctness always requires exact top-k within the stated tolerance.
+
+`--check-growth` checks unfiltered and group-query medians against the record
+ratio times `--growth-overhead` (default 1.5). Timing gates are optional because
+contention affects them. Receipts bind sources, selected module and binaries;
+changing any of them during a run fails qualification. A failed rerun replaces
+its old passing receipt. No generated text or embedding is retained in it.
+
+This profile measures local resident numerical retrieval. It does not establish
+semantic relevance, persistent Chroma performance, million-record ANN capacity
+or full tensor-library completion. The CI profile uses smaller generated
+inputs, omits optional Chroma, and checks correctness and lifecycle without a
+machine-dependent latency threshold.
+
 ## Coverage and completion
 
 [coverage.json](coverage.json) records the full programme's nine families and
