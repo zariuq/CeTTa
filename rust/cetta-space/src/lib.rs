@@ -9,22 +9,28 @@ use std::sync::{Mutex, OnceLock};
 /// Keep packet keys and residual variable numbering independent of unification trail order.
 #[inline]
 pub fn bindings_in_key_order(bindings: &Bindings) -> impl Iterator<Item = ((u8, u8), &ExprEnv)> {
-    let mut keys: smallvec::SmallVec<[(u8, u8); 16]> = bindings.keys().collect();
-    keys.sort_unstable();
-    keys.into_iter().map(|key| {
+    let mut keys = smallvec::SmallVec::<[(u8, u8); 16]>::new();
+    let singleton = if bindings.len() <= 1 {
+        bindings.iter().next()
+    } else {
+        keys.extend(bindings.keys());
+        keys.sort_unstable();
+        None
+    };
+    singleton.into_iter().chain(keys.into_iter().map(|key| {
         (key, bindings.get(&key).expect("key came from immutable bindings"))
-    })
+    }))
 }
 
 mod counted_pathmap;
 mod mork_access;
-pub use mork_access::{bridge_unify, with_mork_access};
+pub use mork_access::{bridge_query_multi, bridge_unify, with_mork_access};
 #[cfg(feature = "pathmap-space")]
 mod counted_query_index;
 
 pub use counted_pathmap::{
     CountedDetailedPacketRows, CountedDetailedRow, CountedEntry, CountedGeneralQueryCursor,
-    counted_contains_expr, counted_entries, counted_exact_entry, counted_expr_row_packet,
+    counted_contains_expr, counted_entries, counted_exact_count, counted_exact_entry, counted_expr_row_packet,
     counted_factor_candidates, counted_insert_expr, counted_insert_expr_batch,
     counted_insert_expr_batch_cached, counted_insert_expr_cached, counted_insert_expr_count_cached,
     counted_logical_size, counted_query_only_packet_rows, counted_query_rows_detailed,
@@ -104,8 +110,15 @@ fn parse_one_expr(
     Ok(parse_buffer)
 }
 
+fn encoded_text_capacity(input_bytes: usize) -> usize {
+    // Each parenthesis or variable writes at most one byte. A symbol writes
+    // one tag plus its input bytes; long symbols shrink to an eight-byte key.
+    // Thus two output bytes per input byte also bound partially read forms.
+    input_bytes.saturating_mul(2).max(1)
+}
+
 pub fn bridge_parse_single_expr(space: &mut Space, input: &[u8]) -> Result<Vec<u8>, String> {
-    let capacity = input.len().saturating_mul(4).saturating_add(4096);
+    let capacity = encoded_text_capacity(input.len());
     let mut parser = BridgeExprParser::new(space)?;
     let mut context = Context::new(input);
 
@@ -131,7 +144,7 @@ pub fn bridge_parse_expr_chunk(space: &mut Space, input: &[u8]) -> Result<Vec<Ve
         }
 
         let remaining = &context.src[context.loc..];
-        let capacity = remaining.len().saturating_mul(4).saturating_add(4096);
+        let capacity = encoded_text_capacity(remaining.len());
         let parse_buffer = parse_one_expr(&mut parser, &mut context, capacity, "chunk")?;
         out.push(parse_buffer);
     }
@@ -417,8 +430,20 @@ pub fn stable_bridge_expr_bytes(space: &Space, expr: Expr) -> Result<Vec<u8>, St
 }
 
 pub fn stable_bridge_expr_packet_bytes(space: &Space, expr: Expr) -> Result<Vec<u8>, String> {
-    let sym_table = space.sym_table();
     let mut encoded = Vec::new();
+    append_stable_bridge_expr_packet_bytes(space, expr, &mut encoded)?;
+    Ok(encoded)
+}
+
+/// Append the packet encoding without an intermediate value buffer.
+/// On an encoding error, leave the caller's existing bytes unchanged.
+pub fn append_stable_bridge_expr_packet_bytes(
+    space: &Space,
+    expr: Expr,
+    encoded: &mut Vec<u8>,
+) -> Result<(), String> {
+    let start = encoded.len();
+    let sym_table = space.sym_table();
     let mut ez = ExprZipper::new(expr);
 
     loop {
@@ -430,7 +455,7 @@ pub fn stable_bridge_expr_packet_bytes(space: &Space, expr: Expr) -> Result<Vec<
             }
             Ok(Tag::Arity(arity)) => {
                 encoded.push(BRIDGE_VALUE_TAG_ARITY);
-                append_u32_be(&mut encoded, arity as u32);
+                append_u32_be(encoded, arity as u32);
             }
             Ok(Tag::SymbolSize(_)) => unreachable!("ExprZipper::item returns Err for symbol bytes"),
             Err(symbol) => {
@@ -442,10 +467,11 @@ pub fn stable_bridge_expr_packet_bytes(space: &Space, expr: Expr) -> Result<Vec<
                     symbol
                 };
                 if bridge_symbol.is_empty() {
+                    encoded.truncate(start);
                     return Err("stable bridge expr packet symbol must not be empty".to_string());
                 }
                 encoded.push(BRIDGE_VALUE_TAG_SYMBOL);
-                append_u32_be(&mut encoded, bridge_symbol.len() as u32);
+                append_u32_be(encoded, bridge_symbol.len() as u32);
                 encoded.extend_from_slice(bridge_symbol);
             }
         }
@@ -454,7 +480,7 @@ pub fn stable_bridge_expr_packet_bytes(space: &Space, expr: Expr) -> Result<Vec<
         }
     }
 
-    Ok(encoded)
+    Ok(())
 }
 
 pub fn bridge_expr_text(space: &Space, expr: Expr) -> Result<Vec<u8>, String> {
@@ -543,6 +569,68 @@ mod bridge_packet_tests {
     use super::*;
 
     #[test]
+    fn text_capacity_preserves_parser_bytes_and_guards_partial_writes() {
+        let mut cases = vec![
+            b"".to_vec(), b"; only a comment".to_vec(), b"a".to_vec(),
+            b"$".to_vec(), b"()".to_vec(), b"(a $x $x)".to_vec(),
+            b"\"escaped \\\" quote\"".to_vec(),
+            b"(".to_vec(), b"(a".to_vec(), b")".to_vec(),
+            b"\"trailing escape\\".to_vec(),
+        ];
+        cases.push("(世界 αβγ)".as_bytes().to_vec());
+        for length in [1, 2, 63, 64, 65, 127, 128, 2048, 65537] {
+            cases.push(vec![b'z'; length]);
+            cases.push(format!("(row {})", "z".repeat(length)).into_bytes());
+        }
+        for depth in [1, 2, 16, 128] {
+            cases.push(format!("{}x{}", "(".repeat(depth), ")".repeat(depth)).into_bytes());
+            cases.push(format!("{}x", "(".repeat(depth)).into_bytes());
+        }
+        cases.push(format!("({})", vec!["x"; 30].join(" ")).into_bytes());
+        for input in cases {
+            let space = Space::new();
+            let capacity = encoded_text_capacity(input.len());
+            let parse = |capacity, guarded| {
+                let mut bytes = vec![0u8; capacity + if guarded { 64 } else { 0 }];
+                if guarded { bytes[capacity..].fill(0xa5); }
+                let mut parser = BridgeExprParser::new(&space).unwrap();
+                let mut context = Context::new(&input);
+                let mut target = ExprZipper::new(Expr { ptr: bytes.as_mut_ptr() });
+                let outcome = parser.sexpr(&mut context, &mut target);
+                let used = target.loc;
+                assert!(used <= capacity, "partial output exceeded its input-derived bound");
+                if guarded {
+                    assert!(bytes[capacity..].iter().all(|byte| *byte == 0xa5),
+                            "parser changed the guard after its output buffer");
+                }
+                (format!("{outcome:?}"), context.loc, bytes[..used].to_vec())
+            };
+            assert_eq!(parse(capacity, true),
+                       parse(input.len().saturating_mul(4).saturating_add(4096), false));
+        }
+    }
+
+    #[test]
+    fn binding_packet_order_handles_empty_bindings() {
+        assert_eq!(bindings_in_key_order(&Bindings::new()).count(), 0);
+    }
+
+    #[test]
+    fn binding_packet_order_preserves_singletons_in_any_namespace() {
+        let bytes = [item_byte(Tag::NewVar)];
+        let expr = Expr { ptr: bytes.as_ptr().cast_mut() };
+        for key in [(0, 0), (1, 63), (254, 5)] {
+            let value = ExprEnv::new(key.0, expr);
+            let mut bindings = Bindings::new();
+            bindings.insert(key, value);
+            assert_eq!(
+                bindings_in_key_order(&bindings).map(|(key, value)| (key, *value)).collect::<Vec<_>>(),
+                vec![(key, value)]
+            );
+        }
+    }
+
+    #[test]
     fn binding_packet_order_matches_lexicographic_keys_across_namespaces() {
         let bytes = [item_byte(Tag::NewVar)];
         let expr = Expr { ptr: bytes.as_ptr().cast_mut() };
@@ -584,6 +672,36 @@ mod bridge_packet_tests {
             stable_bridge_expr_packet_bytes(&space, expr).unwrap(),
             packet
         );
+    }
+
+    #[test]
+    fn packet_append_preserves_prefix_and_wide_value_bytes() {
+        let space = Space::new();
+        let mut packet = vec![BRIDGE_VALUE_TAG_ARITY];
+        packet.extend_from_slice(&3u32.to_be_bytes());
+        push_symbol(&mut packet, b"row");
+        push_symbol(&mut packet, &vec![b'x'; 256]);
+        packet.extend_from_slice(&[BRIDGE_VALUE_TAG_NEWVAR]);
+        let compact = bridge_expr_packet_to_bytes(&space, &packet).unwrap();
+        let expr = Expr { ptr: compact.as_ptr().cast_mut() };
+        let mut out = vec![0xa5, 0x5a];
+        append_stable_bridge_expr_packet_bytes(&space, expr, &mut out).unwrap();
+        assert_eq!(&out[..2], &[0xa5, 0x5a]);
+        assert_eq!(&out[2..], packet);
+    }
+
+    #[test]
+    fn packet_append_rolls_back_partial_value_on_empty_symbol_error() {
+        let space = Space::new();
+        let empty_symbol = space.sm.try_aquire_permission().unwrap().get_sym_or_insert(b"");
+        let mut compact = vec![item_byte(Tag::Arity(2)), item_byte(Tag::SymbolSize(1)), b'a',
+                               item_byte(Tag::SymbolSize(8))];
+        compact.extend_from_slice(&empty_symbol);
+        let expr = Expr { ptr: compact.as_ptr().cast_mut() };
+        let mut out = vec![0xa5, 0x5a];
+        assert!(append_stable_bridge_expr_packet_bytes(&space, expr, &mut out)
+            .unwrap_err().contains("must not be empty"));
+        assert_eq!(out, vec![0xa5, 0x5a]);
     }
 
     #[test]

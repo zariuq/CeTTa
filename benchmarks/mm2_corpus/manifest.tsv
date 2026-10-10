@@ -28,9 +28,9 @@ test_count_simple.mm2	cetta-conformance	$CETTA_ROOT/tests/support/mork_mm2/test_
 test_head_limit.mm2	cetta-conformance	$CETTA_ROOT/tests/support/mork_mm2/test_head_limit.mm2	runs	15
 test_remove_simple.mm2	cetta-conformance	$CETTA_ROOT/tests/support/mork_mm2/test_remove_simple.mm2	runs	1
 test_var_scope_across_exprs.mm2	cetta-conformance	$CETTA_ROOT/tests/support/mork_mm2/test_var_scope_across_exprs.mm2	runs	4
-disjoint.mm2	mm2-chainer	$CETTA_ROOT/tests/support/mm2_chainer/disjoint.mm2	fork-skip	0
-revise_proofs_simple_sink.mm2	mm2-chainer	$CETTA_ROOT/tests/support/mm2_chainer/revise_proofs_simple_sink.mm2	fork-skip	0
-revise_proofs_symbolic.mm2	mm2-chainer	$CETTA_ROOT/tests/support/mm2_chainer/revise_proofs_symbolic.mm2	fork-skip	0
+disjoint.mm2	mm2-chainer	$MM2_CHAINER_REPO_DIR/examples/disjoint.mm2	fork-skip	0
+revise_proofs_simple_sink.mm2	mm2-chainer	$MM2_CHAINER_REPO_DIR/examples/revise_proofs_simple_sink.mm2	fork-skip	0
+revise_proofs_symbolic.mm2	mm2-chainer	$MM2_CHAINER_REPO_DIR/examples/revise_proofs_symbolic.mm2	fork-skip	0
 ancestor.mm2	mork-upstream	$MORK_REPO_DIR/kernel/resources/ancestor.mm2	runs	60
 counter_machine_5.mm2	mork-upstream	$MORK_REPO_DIR/kernel/resources/counter_machine_5.mm2	runs	325
 decision_tree_learning.mm2	mork-upstream	$MORK_REPO_DIR/kernel/resources/decision_tree_learning.mm2	mork-panic	0

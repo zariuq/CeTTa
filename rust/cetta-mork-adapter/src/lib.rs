@@ -1,5 +1,4 @@
-use mork::space::Space;
-use cetta_space::with_mork_access;
+use cetta_space::bridge_query_multi;
 use mork_expr::{Bindings, Expr, ExprEnv, VecSink, apply_e};
 use pathmap::PathMap;
 use std::collections::BTreeMap;
@@ -48,7 +47,7 @@ pub fn query_multi_with_factor_exprs<F: FnMut(&Bindings, &[Expr]) -> bool>(
     ExprEnv::new(0, pat_expr).args(&mut query_arguments);
     let factors = query_arguments.get(1..).unwrap_or_default().to_vec();
 
-    with_mork_access(|| Space::query_multi(btm, pat_expr, |references_or_bindings, primary| {
+    bridge_query_multi(btm, pat_expr, |references_or_bindings, primary| {
         let reference_bindings;
         let bindings = match references_or_bindings {
             Ok(references) => {
@@ -68,12 +67,13 @@ pub fn query_multi_with_factor_exprs<F: FnMut(&Bindings, &[Expr]) -> bool>(
             })
             .collect::<Vec<_>>();
         effect(bindings, &factor_exprs)
-    }))
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mork::space::Space;
 
     fn parse(space: &mut Space, text: &[u8]) -> Vec<u8> {
         let mut encoded = vec![0; 256];

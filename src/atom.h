@@ -813,6 +813,9 @@ extern VarInternTable *g_var_intern;
 Atom *atom_symbol(Arena *a, const char *name);
 Atom *atom_symbol_data(Arena *a, const char *name);
 Atom *atom_symbol_data_n(Arena *a, const char *bytes, uint32_t len);
+/* A symbol spelled by static, immutable storage. Uses the literal cache;
+ * dynamic or mutable name buffers must use atom_symbol instead. */
+Atom *atom_symbol_literal(Arena *a, const char *name);
 Atom *atom_symbol_id(Arena *a, SymbolId sym_id);
 Atom *atom_symbol_copy(Arena *owner, const Atom *source);
 bool atom_symbol_is_spelled(const Atom *atom);

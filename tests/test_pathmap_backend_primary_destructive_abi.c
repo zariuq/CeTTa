@@ -232,6 +232,8 @@ static void test_candidate_shadow_append_is_incremental(
     assert(!space.match_backend.native.match_trie_dirty);
 
     space_free(&space);
+    assert(space.match_backend.native.match_trie == NULL);
+    assert(space.match_backend.native.stree == NULL);
     (void)arena;
 }
 
@@ -358,6 +360,122 @@ static void test_native_fallback_index_append(Arena *arena,
     assert(matches.len == MATCH_TRIE_THRESHOLD + 2u);
     smset_free(&matches);
     space_free(&space);
+}
+
+static void test_ground_count_stays_shadow_free(
+    Arena *arena, TermUniverse *universe,
+    SymbolId edge_sym, SymbolId a_sym, SymbolId b_sym, SymbolId c_sym) {
+    Space space;
+    Space ordered;
+    Atom *present = make_edge(arena, edge_sym, a_sym, b_sym);
+    Atom *missing = make_edge(arena, edge_sym, b_sym, c_sym);
+    uint64_t count = 99u;
+    CettaIndex examined = 99u;
+
+    space_init_with_universe(&space, universe);
+    space.kind = SPACE_KIND_HASH;
+    assert(space_match_backend_try_set(&space, SPACE_ENGINE_PATHMAP));
+    space_add(&space, present);
+    space_add(&space, present);
+    assert(space_match_count_flat_linear64(
+        &space, arena, present, &count, &examined));
+    assert(count == 2u && examined == 0u);
+    CettaGsltTermViewV1 view = {.source = present};
+    assert(space_match_count_flat_linear_view64(
+        &space, arena, &view, CETTA_GSLT_TERM_VIEW_OPEN_BINDINGS_DEAD_V1,
+        &count, &examined));
+    assert(count == 2u && examined == 0u);
+    assert(space_match_count_flat_linear64(
+        &space, arena, missing, &count, &examined));
+    assert(count == 0u && examined == 0u);
+    assert(!space.match_backend.pathmap.bridge.native_shadow_synced);
+    assert(space.native.len == 0u);
+
+    space_init_with_universe(&ordered, universe);
+    ordered.kind = SPACE_KIND_HASH;
+    assert(space_match_backend_snapshot_clone(&ordered, &space));
+    assert(space_match_backend_require_logical_order(&ordered, arena));
+    assert(!space_match_count_flat_linear64(
+        &ordered, arena, present, &count, &examined));
+    space_free(&ordered);
+
+    /* The same structural hit is not a complete relational frontier once
+       an open stored row exists; it can contribute another answer. */
+    Atom *open = make_edge_with_atom(
+        arena, edge_sym,
+        atom_var_with_spelling(
+            arena, symbol_intern_cstr(g_symbols, "count-x"), 85001u),
+        atom_symbol_id(arena, b_sym));
+    view.source = open;
+    assert(!space_match_count_flat_linear_view64(
+        &space, arena, &view, CETTA_GSLT_TERM_VIEW_OPEN_BINDINGS_DEAD_V1,
+        &count, &examined));
+    Atom *numeric = make_edge_with_atom(
+        arena, edge_sym, atom_int(arena, 1), atom_symbol_id(arena, b_sym));
+    assert(!space_match_count_flat_linear64(
+        &space, arena, numeric, &count, &examined));
+    space_add(&space, open);
+    assert(!space_match_count_flat_linear64(
+        &space, arena, present, &count, &examined));
+    SubstMatchSet matches;
+    space_subst_query(&space, arena, present, &matches);
+    assert(matches.len == 3u);
+    smset_free(&matches);
+    space_init_with_universe(&ordered, universe);
+    ordered.kind = SPACE_KIND_HASH;
+    assert(space_match_backend_snapshot_clone(&ordered, &space));
+    assert(ordered.native.has_non_exact_atoms);
+    assert(!space_match_count_flat_linear64(
+        &ordered, arena, present, &count, &examined));
+    space_subst_query(&ordered, arena, present, &matches);
+    assert(matches.len == 3u);
+    smset_free(&matches);
+    space_free(&ordered);
+    space_free(&space);
+}
+
+static void test_fallback_bucket_lifetime(Arena *arena,
+                                         TermUniverse *universe) {
+    Space space;
+    Space payload;
+    SubstMatchSet matches;
+    space_init_with_universe(&payload, universe);
+    Atom *row = atom_expr2(arena, atom_symbol(arena, "fallback-cache"),
+                          atom_space(arena, &payload));
+
+    space_init_with_universe(&space, universe);
+    space.kind = SPACE_KIND_HASH;
+    assert(space_match_backend_try_set(&space, SPACE_ENGINE_PATHMAP));
+    assert(!space.match_backend.pathmap.bridge.flat_has_entries);
+    space_add(&space, row);
+    space_subst_query(&space, arena, row, &matches);
+    assert(matches.len == 1u);
+    smset_free(&matches);
+    assert(space.match_backend.pathmap.bridge.flat_has_entries);
+
+    /* An append into a resident fallback must retain its ownership bit.
+       A destructive mutation must clear the entries, not only that bit. */
+    space_add(&space, row);
+    assert(space.match_backend.pathmap.bridge.flat_has_entries);
+    space_subst_query(&space, arena, row, &matches);
+    assert(matches.len == 2u);
+    smset_free(&matches);
+    assert(space_truncate(&space, 0u));
+    assert(!space.match_backend.pathmap.bridge.flat_has_entries);
+    for (uint32_t i = 0u; i < STREE_BUCKETS; i++) {
+        assert(space.match_backend.pathmap.bridge.buckets[i].entries == NULL);
+        assert(space.match_backend.pathmap.bridge.buckets[i].len == 0u);
+    }
+    assert(space.match_backend.pathmap.bridge.wildcard.entries == NULL);
+
+    space_add(&space, row);
+    space_subst_query(&space, arena, row, &matches);
+    assert(matches.len == 1u);
+    smset_free(&matches);
+    assert(space.match_backend.pathmap.bridge.flat_has_entries);
+    space_free(&space);
+    assert(!space.match_backend.pathmap.bridge.flat_has_entries);
+    space_free(&payload);
 }
 
 static void test_batch_mutation_transaction(Arena *arena,
@@ -537,6 +655,9 @@ int main(void) {
         &arena, &universe, edge_sym, a_sym, b_sym, c_sym);
     test_candidate_shadow_append_is_incremental(&arena, &universe, id_ab);
     test_native_fallback_index_append(&arena, &universe);
+    test_ground_count_stays_shadow_free(
+        &arena, &universe, edge_sym, a_sym, b_sym, c_sym);
+    test_fallback_bucket_lifetime(&arena, &universe);
 
     space_add_atom_id(&space, id_ab);
     space_add_atom_id(&space, id_bc);

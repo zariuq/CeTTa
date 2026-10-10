@@ -3,7 +3,7 @@
 [()]
 [()]
 [()]
-[((Error (include &kb support/import_fail/module.metta) (Error (capture) IncorrectNumberOfArguments)))]
+[((quote (IncludeFailure True (Error (capture) IncorrectNumberOfArguments))))]
 [((seed))]
 [()]
 [()]

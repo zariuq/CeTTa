@@ -32,6 +32,11 @@ int main(int argc, char **argv) {
     MorkBuffer (*query)(MorkSpace *, const uint8_t *, size_t) =
         required_symbol(library, "mork_space_query_bindings_query_only_v2");
     void (*free_bytes)(uint8_t *, size_t) = required_symbol(library, "mork_bytes_free");
+    MorkStatus (*count_expr)(const MorkSpace *, const uint8_t *, size_t) =
+        required_symbol(library, "mork_space_count_expr_bytes");
+    MorkStatus null_count = count_expr(NULL, NULL, 0u);
+    assert(null_count.code == MORK_STATUS_NULL);
+    if (null_count.message) free_bytes(null_count.message, null_count.message_len);
 
     MorkSpace *space = new_space();
     assert(space);

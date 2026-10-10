@@ -164,6 +164,8 @@ int main(void) {
         colliding_symbols[i] = atom_symbol(&source, colliding_names[i]);
     for (unsigned turn = 0u; turn < 30u; turn++) {
         for (unsigned i = 0u; i < 3u; i++) {
+            assert(atom_eq(atom_symbol_literal(&source, colliding_names[i]),
+                           colliding_symbols[i]));
             assert(atom_is_symbol(colliding_symbols[i], colliding_names[i]));
             assert(!atom_is_symbol(colliding_symbols[i],
                                    colliding_names[(i + 1u) % 3u]));
@@ -173,11 +175,24 @@ int main(void) {
     symbol_table_init(&other_symbols);
     (void)symbol_intern_cstr(&other_symbols, "different-table-prefix");
     g_symbols = &other_symbols;
-    Atom *other_literal = atom_symbol(&destination, colliding_names[0]);
+    Atom *other_literal = atom_symbol_literal(&destination, colliding_names[0]);
+    assert(atom_eq(other_literal, atom_symbol(&destination, colliding_names[0])));
     assert(atom_is_symbol(other_literal, colliding_names[0]));
     assert(!atom_is_symbol(other_literal, colliding_names[1]));
     g_symbols = &symbols;
     assert(atom_is_symbol(colliding_symbols[0], colliding_names[0]));
+    symbol_table_free(&other_symbols);
+    /* Reusing a table's address does not reuse its literal-symbol identities. */
+    symbol_table_init(&other_symbols);
+    (void)symbol_intern_cstr(&other_symbols, "reused-table-prefix-one");
+    (void)symbol_intern_cstr(&other_symbols, "reused-table-prefix-two");
+    g_symbols = &other_symbols;
+    Atom *reused_literal = atom_symbol_literal(&destination, colliding_names[0]);
+    assert(reused_literal->sym_id != other_literal->sym_id);
+    assert(atom_eq(reused_literal, atom_symbol(&destination, colliding_names[0])));
+    assert(atom_is_symbol(reused_literal, colliding_names[0]));
+    assert(!atom_is_symbol(reused_literal, colliding_names[1]));
+    g_symbols = &symbols;
     symbol_table_free(&other_symbols);
 
     /* Immutable symbols are canonical only within their owning arena. */
@@ -194,10 +209,10 @@ int main(void) {
     arena_init(&reset_probe);
     arena_set_runtime_kind(&reset_probe, CETTA_ARENA_RUNTIME_KIND_EVAL);
     ArenaMark reset_origin = arena_mark(&reset_probe);
-    Atom *before_reset = atom_symbol(&reset_probe, "reset-symbol-cache");
+    Atom *before_reset = atom_symbol_literal(&reset_probe, "reset-symbol-cache");
     arena_reset(&reset_probe, reset_origin);
     (void)arena_alloc(&reset_probe, sizeof(Atom));
-    Atom *after_reset = atom_symbol(&reset_probe, "reset-symbol-cache");
+    Atom *after_reset = atom_symbol_literal(&reset_probe, "reset-symbol-cache");
     assert(after_reset != before_reset);
     assert(arena_owns_atom(&reset_probe, after_reset));
     assert(atom_is_symbol(after_reset, "reset-symbol-cache"));

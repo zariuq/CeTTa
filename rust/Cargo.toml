@@ -11,6 +11,7 @@ members = [
 edition = "2024"
 
 [workspace.dependencies]
+fast-slice-utils = "0.1.2"
 smallvec = "1"
 pathmap = { path = "../../PathMap", version = "0.4.0", features = ["jemalloc", "arena_compact", "nightly"] }
 mork = { path = "../../MORK/kernel" }

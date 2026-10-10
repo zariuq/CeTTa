@@ -359,6 +359,14 @@ bool term_universe_atom_id_eq(const TermUniverse *universe, AtomId id,
 Atom *term_universe_get_atom(const TermUniverse *universe, AtomId id);
 Atom *term_universe_copy_atom(const TermUniverse *universe, Arena *dst,
                               AtomId id);
+/* Read ordinary symbol leaves while copying a form. The callback's meaning
+ * stays fixed for the copy. NULL means unchanged;
+ * a returned value stays live for the copy and is copied without reading its
+ * contents again. Variable name keys and opaque values are not source text. */
+typedef Atom *(*TermUniverseSymbolRead)(void *context, SymbolId symbol);
+Atom *term_universe_copy_atom_read_symbols(
+    const TermUniverse *universe, Arena *dst, AtomId id,
+    TermUniverseSymbolRead read, void *context);
 Atom *term_universe_copy_atom_epoch(const TermUniverse *universe, Arena *dst,
                                     AtomId id, uint32_t epoch);
 char *term_universe_atom_to_string(Arena *a, const TermUniverse *universe,

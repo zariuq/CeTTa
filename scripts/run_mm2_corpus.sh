@@ -22,6 +22,7 @@ manifest="$root/benchmarks/mm2_corpus/manifest.tsv"
 bin="${CETTA_BIN:-$root/cetta}"
 : "${CETTA_ROOT:=$root}"
 : "${MORK_REPO_DIR:=$root/../MORK}"
+: "${MM2_CHAINER_REPO_DIR:=$root/../mm2-chainer}"
 
 [ -x "$bin" ] || { echo "no cetta binary at $bin (make BUILD=mork cetta)" >&2; exit 2; }
 [ -f "$manifest" ] || { echo "no manifest at $manifest" >&2; exit 2; }
@@ -42,13 +43,18 @@ while IFS=$'\t' read -r name origin path want_status want_atoms; do
     fi
     file="${path//'$CETTA_ROOT'/$CETTA_ROOT}"
     file="${file//'$MORK_REPO_DIR'/$MORK_REPO_DIR}"
+    file="${file//'$MM2_CHAINER_REPO_DIR'/$MM2_CHAINER_REPO_DIR}"
     if [ ! -f "$file" ]; then
         missing=$((missing + 1))
         printf '%-44s %-18s MISSING\n' "$name" "$origin"
         rows+="$name\t$origin\t$path\tmissing\t0\n"
         continue
     fi
-    out="$(timeout 60 "$bin" --lang mm2 "$file" 2>/dev/null | tr -d "\0")"
+    if [ "$file" = "$root/tests/mm2_kiss_act_join.mm2" ]; then
+        out="$(timeout 60 python3 "$root/scripts/test_mm2_kiss_act_fixture.py" -- "$bin" 2>/dev/null | tr -d "\0")"
+    else
+        out="$(timeout 60 "$bin" --lang mm2 "$file" 2>/dev/null | tr -d "\0")"
+    fi
     if [ $? -ne 0 ]; then
         status=mork-panic; atoms=0
     else
@@ -70,4 +76,4 @@ if [ "$update" = 1 ]; then
 fi
 
 echo "(Mm2CorpusSummary total=$total agree=$pass differ=$regress missing=$missing skipped=$skipped)"
-[ "$regress" -eq 0 ]
+[ "$regress" -eq 0 ] && [ "$missing" -eq 0 ]

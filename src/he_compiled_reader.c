@@ -169,6 +169,7 @@ int he_compiled_reader_v1_parse_bytes_ids(
         .expression = he_compiled_reader_v1_expression,
         .list = he_compiled_reader_v1_list,
     };
+    parser_host_projection_v1_set_namespace_sugar(projection_context, false);
     memset(&direct_receipt, 0, sizeof(direct_receipt));
     result = gslt_direct_reader_v1_parse_bytes_ids(
         reader->plan, input, input_len, &projection, out_ids,
@@ -334,6 +335,7 @@ int he_compiled_reader_v1_parse_bytes_prefix_ids(
         return -1;
     }
     HECompletePrefixV1 prefix = {out_ids, complete_count};
+    parser_host_projection_v1_set_namespace_sugar(context, false);
     GSLTDirectAtomProjectionV1 projection = {
         .context = context,
         .begin_form = he_compiled_reader_v1_begin_form,

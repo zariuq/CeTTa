@@ -1,2 +1,2 @@
-[((Error (import! &self support/import_parse_fail/module.metta) (ModuleParseFailed "support/import_parse_fail/module.metta")))]
+[((Error (import! ModuleSpace(GroundingSpace-top) support/import_parse_fail/module.metta) (ModuleParseFailed "support/import_parse_fail/module.metta")))]
 [((base))]

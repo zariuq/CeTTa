@@ -220,6 +220,8 @@ int prime_compiled_reader_v1_parse_bytes_ids(
             "failed to initialize the Prime Atom projection");
         return -1;
     }
+    /* A nested Prime reader retains Prime's spelling policy, not its host's. */
+    parser_host_projection_v1_set_namespace_sugar(projection_context.host, true);
     projection = (GSLTDirectPrefixProjectionV1){
         .context = &projection_context,
         .begin_form = prime_projection_begin_form,

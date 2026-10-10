@@ -153,6 +153,8 @@ typedef struct {
     TermUniverseCopyMemoSlot *slots;
     size_t cap;
     size_t used;
+    TermUniverseSymbolRead read_symbol;
+    void *read_context;
 } TermUniverseCopyMemo;
 
 typedef struct {
@@ -4141,6 +4143,8 @@ static void term_universe_copy_memo_init(TermUniverseCopyMemo *memo) {
     memo->slots = memo->inline_slots;
     memo->cap = CETTA_TERM_UNIVERSE_COPY_MEMO_INLINE_CAP;
     memo->used = 0;
+    memo->read_symbol = NULL;
+    memo->read_context = NULL;
     term_universe_copy_memo_clear_slots(memo->slots, memo->cap);
 }
 
@@ -4288,6 +4292,13 @@ static size_t term_universe_copy_estimated_arena_bytes(
     return bytes;
 }
 
+static Atom *term_universe_copy_read_leaf(Arena *dst, Atom *atom, void *context) {
+    TermUniverseCopyMemo *memo = context;
+    Atom *value = atom->kind == ATOM_SYMBOL
+        ? memo->read_symbol(memo->read_context, atom_symbol_current_id(atom)) : NULL;
+    return atom_deep_copy(dst, value ? value : atom);
+}
+
 static Atom *term_universe_copy_atom_impl(const TermUniverse *universe,
                                           Arena *dst, AtomId id,
                                           uint32_t epoch,
@@ -4308,22 +4319,31 @@ static Atom *term_universe_copy_atom_impl(const TermUniverse *universe,
         if (!stored)
             return NULL;
         out = rename_epoch_vars ? atom_freshen_epoch(dst, stored, epoch)
-                                : atom_deep_copy(dst, stored);
+            : memo->read_symbol
+                ? atom_deep_copy_mapped(dst, stored,
+                      term_universe_copy_read_leaf, memo)
+                : atom_deep_copy(dst, stored);
         goto done;
     }
 
     switch ((AtomKind)hdr->tag) {
-    case ATOM_SYMBOL:
-        out = atom_symbol_id(dst, hdr->sym_or_head);
+    case ATOM_SYMBOL: {
+        Atom *value = memo->read_symbol
+            ? memo->read_symbol(memo->read_context, hdr->sym_or_head) : NULL;
+        out = value ? atom_deep_copy(dst, value)
+                    : atom_symbol_id(dst, hdr->sym_or_head);
         break;
+    }
     case ATOM_VAR: {
         VarId var_id = tu_var_id(universe, id);
         if (rename_epoch_vars)
             var_id = var_epoch_id(var_id, epoch);
         if (hdr->subtag == CETTA_VAR_SPELLING_NAME_KEY) {
-            Atom *key = term_universe_copy_atom_impl(
-                universe, dst, tu_var_name_key_id(universe, id), epoch, false,
-                memo);
+            Atom *key = memo->read_symbol
+                ? term_universe_copy_atom(universe, dst,
+                      tu_var_name_key_id(universe, id))
+                : term_universe_copy_atom_impl(universe, dst,
+                      tu_var_name_key_id(universe, id), epoch, false, memo);
             out = key ? atom_var_with_name_key(dst, key, var_id) : NULL;
         } else {
             out = atom_var_with_spelling(dst, hdr->sym_or_head, var_id);
@@ -4406,6 +4426,19 @@ Atom *term_universe_copy_atom(const TermUniverse *universe, Arena *dst,
                               AtomId id) {
     TermUniverseCopyMemo memo;
     term_universe_copy_memo_init(&memo);
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_COPY_CALL);
+    Atom *out = term_universe_copy_atom_impl(universe, dst, id, 0u, false, &memo);
+    term_universe_copy_memo_free(&memo);
+    return out;
+}
+
+Atom *term_universe_copy_atom_read_symbols(
+    const TermUniverse *universe, Arena *dst, AtomId id,
+    TermUniverseSymbolRead read, void *context) {
+    TermUniverseCopyMemo memo;
+    term_universe_copy_memo_init(&memo);
+    memo.read_symbol = read;
+    memo.read_context = context;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_COPY_CALL);
     Atom *out = term_universe_copy_atom_impl(universe, dst, id, 0u, false, &memo);
     term_universe_copy_memo_free(&memo);

@@ -1,2 +1,2 @@
 [3]
-[(Error (import! &self no_such_module_before_fault) Failed to resolve module top:no_such_module_before_fault)]
+[(Error (import! ModuleSpace(GroundingSpace-top) no_such_module_before_fault) Failed to resolve module top:no_such_module_before_fault)]

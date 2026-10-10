@@ -133,8 +133,10 @@ The bridge is qualified against these upstream revisions:
 - MORK: [`ed57c671`](https://github.com/trueagi-io/MORK/commit/ed57c6716d8c510296fb5fbb8be6fbfe2df241d7) on `main`.
 
 Cargo uses the checked-in lockfile. Upstream Rust source changes invalidate
-the bridge build; the adapter uses PathMap's own overlay zipper and MORK's
-public expression environment and binding APIs.
+the bridge build. CeTTa's overlay adapter uses PathMap's public zipper traits;
+its traversal controls check branches formed across both source tries. MORK
+integration uses the public expression environment and binding APIs. Both
+upstream repositories remain unmodified.
 
 The checked bridge lane vendors its tiny MM2 regression inputs under
 `tests/support/mork_mm2/`, so it no longer depends on sibling
@@ -198,6 +200,12 @@ MORK's non-atomic process statistics share a synchronization gate, including
 same-thread callback reentry. Concurrent use or destruction of the same handle
 still requires caller synchronization. This boundary does not promise parallel
 kernel execution.
+
+Stopping a MORK query consumer stops answer delivery, while the underlying
+walk finishes so upstream bindings and traversal temporaries are released.
+This prevents the callback's early-exit leak; it does not promise immediate
+termination of the walk. Counted PathMap queries preserve duplicate
+multiplicity and retain stored-variable answers alongside exact ground hits.
 
 The broader MM2 corpus uses the current CeTTa checkout and sibling MORK
 resources. The small Apache-licensed chainer inputs are pinned under

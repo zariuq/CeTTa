@@ -12,6 +12,7 @@ pathmap-space = []
 loadable = ["dep:tikv-jemallocator"]
 
 [dependencies]
+log = "0.4"
 mork = { workspace = true }
 mork-expr = { workspace = true }
 mork-frontend = { workspace = true }

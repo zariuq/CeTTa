@@ -138,6 +138,7 @@ enum {
     CETTA_LIBRARY_LLM = 1u << 16,
     CETTA_LIBRARY_SPACE_SERVICE = 1u << 17,
     CETTA_LIBRARY_PETTA_TABLING = 1u << 11,
+    CETTA_LIBRARY_MATH = 1u << 18,
 #if CETTA_BUILD_WITH_JSON_GSLT
     CETTA_LIBRARY_JSON = 1u << 12
 #endif
@@ -146,28 +147,30 @@ enum {
 typedef struct {
     const char *name;
     uint32_t bit;
+    const char *he_words;
 } CettaLibrarySpec;
 
 static const CettaLibrarySpec CETTA_LIBRARIES[] = {
-    {"system", CETTA_LIBRARY_SYSTEM},
-    {"fs", CETTA_LIBRARY_FS},
-    {"str", CETTA_LIBRARY_STR},
-    {"lts", CETTA_LIBRARY_LTS},
-    {"mork", CETTA_LIBRARY_MORK},
-    {"rho", CETTA_LIBRARY_RHO},
-    {"rhometta", CETTA_LIBRARY_RHOMETTA},
-    {"lib_import", CETTA_LIBRARY_PETTA_IMPORT},
-    {"lib_prolog", CETTA_LIBRARY_LIB_PROLOG},
-    {"lib_memo", CETTA_LIBRARY_PETTA_MEMO},
-    {"lib_tabling", CETTA_LIBRARY_PETTA_TABLING},
-    {"io", CETTA_LIBRARY_IO},
-    {"durable", CETTA_LIBRARY_DURABLE},
-    {"cwp", CETTA_LIBRARY_CWP},
-    {"proc", CETTA_LIBRARY_PROC},
-    {"llm", CETTA_LIBRARY_LLM},
-    {"space_service", CETTA_LIBRARY_SPACE_SERVICE},
+    {"system", CETTA_LIBRARY_SYSTEM, NULL},
+    {"fs", CETTA_LIBRARY_FS, NULL},
+    {"str", CETTA_LIBRARY_STR, NULL},
+    {"lts", CETTA_LIBRARY_LTS, NULL},
+    {"mork", CETTA_LIBRARY_MORK, NULL},
+    {"rho", CETTA_LIBRARY_RHO, NULL},
+    {"math", CETTA_LIBRARY_MATH, "he/math"},
+    {"rhometta", CETTA_LIBRARY_RHOMETTA, NULL},
+    {"lib_import", CETTA_LIBRARY_PETTA_IMPORT, NULL},
+    {"lib_prolog", CETTA_LIBRARY_LIB_PROLOG, NULL},
+    {"lib_memo", CETTA_LIBRARY_PETTA_MEMO, NULL},
+    {"lib_tabling", CETTA_LIBRARY_PETTA_TABLING, NULL},
+    {"io", CETTA_LIBRARY_IO, NULL},
+    {"durable", CETTA_LIBRARY_DURABLE, NULL},
+    {"cwp", CETTA_LIBRARY_CWP, NULL},
+    {"proc", CETTA_LIBRARY_PROC, NULL},
+    {"llm", CETTA_LIBRARY_LLM, NULL},
+    {"space_service", CETTA_LIBRARY_SPACE_SERVICE, NULL},
 #if CETTA_BUILD_WITH_JSON_GSLT
-    {"json", CETTA_LIBRARY_JSON},
+    {"json", CETTA_LIBRARY_JSON, NULL},
 #endif
 };
 
@@ -419,6 +422,16 @@ static const CettaLibrarySpec *cetta_library_lookup(const char *name) {
         }
     }
     return NULL;
+}
+
+static const char *library_he_words(const CettaLibraryContext *ctx,
+                                    CettaModuleProviderKind provider,
+                                    const char *name) {
+    if (ctx->session.language_id != CETTA_LANGUAGE_HE ||
+        provider != CETTA_MODULE_PROVIDER_STDLIB_FILE)
+        return NULL;
+    const CettaLibrarySpec *spec = cetta_library_lookup(name);
+    return spec ? spec->he_words : NULL;
 }
 
 void cetta_library_context_init(CettaLibraryContext *ctx) {
@@ -3886,6 +3899,9 @@ static bool build_library_resource_path(
        first, where one exists: the same library with the effect types its
        checker reads, so the plain spelling stays the reference's. */
     language_name = cetta_language_canonical_name(ctx->session.language_id);
+    const CettaLibrarySpec *spec = cetta_library_lookup(name);
+    bool shared_body = ctx->session.language_id == CETTA_LANGUAGE_HE &&
+        spec && spec->he_words;
     bool typed = ctx->session.profile &&
         (ctx->session.profile->id == CETTA_PROFILE_PETTA_TYPECHECK_V2 ||
          ctx->session.profile->id == CETTA_PROFILE_PETTA_TYPECHECK_V3);
@@ -3897,9 +3913,11 @@ static bool build_library_resource_path(
             if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0)
                 return true;
         }
-        n = snprintf(out, out_sz, "%s/lib/%s/%s%s",
-                     ctx->root_dir, language_name, name, suffix);
-        if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0) return true;
+        if (!shared_body) {
+            n = snprintf(out, out_sz, "%s/lib/%s/%s%s",
+                         ctx->root_dir, language_name, name, suffix);
+            if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0) return true;
+        }
         n = snprintf(out, out_sz, "%s/lib/%s%s",
                      ctx->root_dir, name, suffix);
         if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0) return true;
@@ -3912,9 +3930,11 @@ static bool build_library_resource_path(
             if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0)
                 return true;
         }
-        n = snprintf(out, out_sz, "lib/%s/%s%s",
-                     language_name, name, suffix);
-        if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0) return true;
+        if (!shared_body) {
+            n = snprintf(out, out_sz, "lib/%s/%s%s",
+                         language_name, name, suffix);
+            if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0) return true;
+        }
         n = snprintf(out, out_sz, "lib/%s%s", name, suffix);
         if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0) return true;
     }
@@ -8417,22 +8437,11 @@ static AtomId library_module_capture_tokens(CettaLibraryContext *ctx,
     TermUniverse *universe = work_space->native.universe;
     /* Text read outside a module being loaded, such as an included file,
      * is read with the words of the registry in effect. */
-    if (!ctx->module_token_scope)
-        return ctx->session.language_id == CETTA_LANGUAGE_HE
-            ? eval_read_registry_words_id(registry, universe, eval_arena,
-                  persistent_arena ? persistent_arena : eval_arena, statement)
-            : statement;
-    Atom *atom = term_universe_get_atom(universe, statement);
-    if (!atom)
+    if (ctx->session.language_id != CETTA_LANGUAGE_HE)
         return statement;
-    Atom *captured = eval_capture_registry_tokens(
-        ctx->module_token_scope, eval_arena, atom);
-    if (captured == atom)
-        return statement;
-    AtomId stored = term_universe_store_atom_id(
-        universe, persistent_arena ? persistent_arena : eval_arena,
-        captured);
-    return stored != CETTA_ATOM_ID_NONE ? stored : statement;
+    Registry *scope = ctx->module_token_scope ? ctx->module_token_scope : registry;
+    return eval_read_registry_words_id(scope, universe, eval_arena,
+        persistent_arena ? persistent_arena : eval_arena, statement);
 }
 
 static bool cetta_library_petta_execute_document_ids(
@@ -9107,6 +9116,41 @@ static bool read_mork_include_text_file(const char *path, char **text_out) {
     return ok;
 }
 
+/* A library's definitions and dialect vocabulary are one initialization
+ * source. Capture both before effects, including both in failure versioning;
+ * adding the vocabulary does not introduce a nested include transaction. */
+static bool read_he_module_source(CettaLibraryContext *ctx,
+                                  const CettaImportPlan *plan,
+                                  CettaModuleSource *source) {
+    if (!read_module_source(plan->canonical_path, source))
+        return false;
+    const char *words = library_he_words(ctx, plan->provider_kind,
+                                         plan->spec.raw_spec);
+    if (!words)
+        return true;
+    char path[PATH_MAX];
+    CettaModuleSource vocabulary = {0};
+    bool ok = build_library_path(ctx, words, path, sizeof(path)) &&
+        read_module_source(path, &vocabulary);
+    if (ok && source->length <= SIZE_MAX - 2u &&
+        vocabulary.length <= SIZE_MAX - source->length - 2u) {
+        size_t length = source->length + 1u + vocabulary.length;
+        uint8_t *bytes = realloc(source->bytes, length + 1u);
+        if (bytes) {
+            bytes[source->length] = '\n';
+            memcpy(bytes + source->length + 1u, vocabulary.bytes,
+                   vocabulary.length + 1u);
+            *source = (CettaModuleSource){bytes, length};
+            free(vocabulary.bytes);
+            return true;
+        }
+    }
+    free(vocabulary.bytes);
+    free(source->bytes);
+    *source = (CettaModuleSource){0};
+    return false;
+}
+
 static bool load_module_mm2_file_into_mork_bridge(CettaLibraryContext *ctx,
                                                   const char *path,
                                                   CettaMorkSpaceHandle *bridge,
@@ -9508,6 +9552,8 @@ static bool prepare_he_module_entry(CettaLibraryContext *ctx,
                                     CettaLoadedModule *entry, Arena *eval_arena,
                                     Arena *persistent_arena, Registry *registry,
                                     Atom **error_out) {
+    entry->export_words = library_he_words(ctx, entry->provider_kind,
+                                           entry->display_name) != NULL;
     if (!library_reserve_module_retirement(ctx)) {
         *error_out = atom_symbol(eval_arena, "module rollback allocation failed");
         return false;
@@ -9648,7 +9694,7 @@ static bool library_link_he_module(Space *importer, Space *module,
     return ok;
 }
 
-/* Give `importer` the names of a Python-provided module, then link it. The
+/* Give `importer` the names of a token-providing module, then link it. The
  * register functions run once for this importer; their names are published
  * together or not at all, and a failed request leaves no link. A request made
  * from inside the running register functions is already being served. The
@@ -9685,7 +9731,7 @@ static bool library_name_he_provider(CettaLibraryContext *ctx, Space *importer,
     record->naming = true;
     CettaForeignHEExport *exports = NULL;
     size_t count = 0u;
-    bool ok = cetta_foreign_he_module_exports(entry->provider,
+    bool ok = !entry->provider || cetta_foreign_he_module_exports(entry->provider,
         persistent_arena ? persistent_arena : eval_arena, &exports, &count, error_out);
     /* The list may have changed while the register functions ran. */
     link = &entry->exports;
@@ -9714,6 +9760,16 @@ static bool library_name_he_provider(CettaLibraryContext *ctx, Space *importer,
     for (size_t i = 0u; registry && i < count; i++)
         registry_bind(registry, exports[i].name, exports[i].atom);
     cetta_foreign_he_exports_free(exports, count);
+    /* A declared vocabulary interface exports its whole-word aliases;
+       ordinary MeTTa modules still keep their bind! names private. */
+    if (registry && entry->export_words && entry->tokens) {
+        for (uint32_t i = 0u; i < entry->tokens->len; i++) {
+            RegistryEntry *word = &entry->tokens->entries[i];
+            if (word->key != SYMBOL_ID_NONE &&
+                symbol_bytes(g_symbols, word->key)[0] != '&')
+                registry_bind_id(registry, word->key, word->value);
+        }
+    }
     record->named = true;
     return true;
 }
@@ -9958,7 +10014,7 @@ static bool library_he_begin_initializer(CettaLibraryContext *ctx,
             return false;
         }
         if (!compat) {
-            captured = !directory && read_module_source(plan->canonical_path, &source);
+            captured = !directory && read_he_module_source(ctx, plan, &source);
             /* Missing bytes do not establish a changed version. Metadata
              * and elapsed time cannot authorize replaying completed effects. */
             if (captured && (!failure->source.bytes ||
@@ -9975,7 +10031,12 @@ static bool library_he_begin_initializer(CettaLibraryContext *ctx,
         return false;
     }
     if (!captured && !directory)
-        captured = read_module_source(plan->canonical_path, &source);
+        captured = read_he_module_source(ctx, plan, &source);
+    if (!captured && library_he_words(ctx, plan->provider_kind,
+                                      plan->spec.raw_spec)) {
+        *error_out = atom_symbol(arena, "library vocabulary read failed");
+        return false;
+    }
     size_t name_size = strlen(plan->spec.raw_spec) + 1u;
     if (name_size > SIZE_MAX - sizeof(CettaHEModuleFailure)) {
         free(source.bytes);
@@ -10780,7 +10841,11 @@ bool cetta_library_import(CettaLibraryContext *ctx, const char *name,
     }
     import_bit = spec ? spec->bit : native_spec->import_bit;
     import_name = spec ? spec->name : native_spec->name;
-    if (ctx->active_mask & import_bit) return true;
+    /* These vocabulary libraries publish their words into each importing
+       reader. File inventory still prevents replay within that reader. */
+    const uint32_t naming_interfaces = CETTA_LIBRARY_RHO;
+    if ((ctx->active_mask & import_bit) && !(import_bit & naming_interfaces))
+        return true;
 
 #if CETTA_BUILD_WITH_JSON_GSLT
     if (import_bit == CETTA_LIBRARY_JSON && !ctx->json_runtime) {
@@ -11240,7 +11305,9 @@ bool cetta_library_import_module(CettaLibraryContext *ctx, const char *spec,
     if (module_space_out)
         *module_space_out = NULL;
 
-    if (spec && (cetta_library_lookup(spec) || cetta_native_module_lookup(spec))) {
+    const CettaLibrarySpec *interface = spec ? cetta_library_lookup(spec) : NULL;
+    bool word_interface = interface && interface->he_words;
+    if (spec && ((interface && !word_interface) || cetta_native_module_lookup(spec))) {
         if (target_is_fresh) {
             *error_out = atom_symbol(eval_arena,
                                      "builtin libraries can only import into existing spaces");
@@ -11272,7 +11339,7 @@ bool cetta_library_import_module(CettaLibraryContext *ctx, const char *spec,
                 *module_space_out = entry->space;
             return true;
         }
-        if (entry->provider)
+        if (entry->provider || entry->export_words)
             return library_name_he_provider(ctx, space, registry, entry,
                                             eval_arena, persistent_arena, error_out);
         return library_link_he_module(space, entry->space, eval_arena,

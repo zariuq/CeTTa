@@ -156,6 +156,9 @@ extern CettaMorkStatus mork_space_remove_contextual_exact_expr_bytes(
 extern CettaMorkStatus mork_space_contains_expr_bytes(const CettaMorkSpaceHandle *space,
                                                       const uint8_t *expr_bytes,
                                                       size_t len);
+extern CettaMorkStatus mork_space_count_expr_bytes(const CettaMorkSpaceHandle *space,
+                                                  const uint8_t *expr_bytes,
+                                                  size_t len) __attribute__((weak));
 extern CettaMorkStatus mork_space_size(const CettaMorkSpaceHandle *space);
 extern CettaMorkStatus mork_space_step(CettaMorkSpaceHandle *space,
                                        uint64_t steps);
@@ -445,6 +448,10 @@ bool cetta_mork_bridge_supports_expr_bytes_batch_remove(void) {
     return true;
 }
 
+bool cetta_mork_bridge_supports_query_only_v2_cursor(void) {
+    return mork_query_cursor_new_query_only_v2 != NULL;
+}
+
 const char *cetta_mork_bridge_last_error(void) {
     if (!g_mork_bridge_error[0])
         return "no MORK bridge error";
@@ -705,6 +712,19 @@ bool cetta_mork_bridge_space_contains_expr_bytes(const CettaMorkSpaceHandle *spa
     if (out_found)
         *out_found = (found != 0);
     return true;
+}
+
+bool cetta_mork_bridge_space_count_expr_bytes(const CettaMorkSpaceHandle *space,
+                                              const uint8_t *expr_bytes,
+                                              size_t len,
+                                              uint64_t *out_count) {
+    if (out_count)
+        *out_count = 0u;
+    if (!space || !out_count || !mork_space_count_expr_bytes)
+        return false;
+    return bridge_take_status_value("mork_space_count_expr_bytes failed: ",
+                                    mork_space_count_expr_bytes(space, expr_bytes, len),
+                                    out_count, bridge_free_bytes);
 }
 
 bool cetta_mork_bridge_space_size(const CettaMorkSpaceHandle *space,
@@ -2286,6 +2306,9 @@ typedef struct CettaMorkBridgeApi {
     CettaMorkStatus (*space_contains_expr_bytes)(const CettaMorkSpaceHandle *space,
                                                  const uint8_t *expr_bytes,
                                                  size_t len);
+    CettaMorkStatus (*space_count_expr_bytes)(const CettaMorkSpaceHandle *space,
+                                              const uint8_t *expr_bytes,
+                                              size_t len);
     CettaMorkStatus (*space_size)(const CettaMorkSpaceHandle *space);
     CettaMorkStatus (*space_step)(CettaMorkSpaceHandle *space, uint64_t steps);
     CettaMorkStatus (*support_transform_profile_supported_v1)(
@@ -2682,6 +2705,9 @@ static bool bridge_load_api(void) {
         (void **)&g_mork_bridge_api.space_contains_expr_bytes,
         "mork_space_contains_expr_bytes");
     bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.space_count_expr_bytes,
+        "mork_space_count_expr_bytes");
+    bridge_resolve_symbol_optional(
         (void **)&g_mork_bridge_api.space_new_pathmap,
         "mork_space_new_pathmap");
     bridge_resolve_symbol_optional(
@@ -3009,6 +3035,11 @@ bool cetta_mork_bridge_supports_expr_bytes_batch_remove(void) {
            g_mork_bridge_api.space_remove_expr_bytes_batch != NULL;
 }
 
+bool cetta_mork_bridge_supports_query_only_v2_cursor(void) {
+    return bridge_load_api() &&
+           g_mork_bridge_api.query_cursor_new_query_only_v2 != NULL;
+}
+
 const char *cetta_mork_bridge_last_error(void) {
     if (!g_mork_bridge_error[0])
         return "no MORK bridge error";
@@ -3301,6 +3332,20 @@ bool cetta_mork_bridge_space_contains_expr_bytes(const CettaMorkSpaceHandle *spa
     if (out_found)
         *out_found = (found != 0);
     return true;
+}
+
+bool cetta_mork_bridge_space_count_expr_bytes(const CettaMorkSpaceHandle *space,
+                                              const uint8_t *expr_bytes,
+                                              size_t len,
+                                              uint64_t *out_count) {
+    if (out_count)
+        *out_count = 0u;
+    if (!space || !out_count || !bridge_load_api() ||
+        !g_mork_bridge_api.space_count_expr_bytes)
+        return false;
+    return bridge_take_status_value("mork_space_count_expr_bytes failed: ",
+                                    g_mork_bridge_api.space_count_expr_bytes(space, expr_bytes, len),
+                                    out_count, bridge_free_bytes);
 }
 
 bool cetta_mork_bridge_space_size(const CettaMorkSpaceHandle *space,

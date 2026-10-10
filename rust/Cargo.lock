@@ -123,6 +123,7 @@ dependencies = [
 name = "cetta-pathmap-adapter"
 version = "0.1.0"
 dependencies = [
+ "fast-slice-utils",
  "pathmap",
 ]
 
@@ -145,6 +146,7 @@ dependencies = [
  "cetta-mork-adapter",
  "cetta-pathmap-adapter",
  "cetta-space",
+ "log",
  "mork",
  "mork-expr",
  "mork-frontend",

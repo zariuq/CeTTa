@@ -162,6 +162,8 @@ class TranslatorGate(unittest.TestCase):
         roots = {
             "$CETTA_ROOT": ROOT,
             "$MORK_REPO_DIR": Path(os.environ.get("MORK_REPO_DIR", ROOT.parent / "MORK")),
+            "$MM2_CHAINER_REPO_DIR": Path(os.environ.get(
+                "MM2_CHAINER_REPO_DIR", ROOT.parent / "mm2-chainer")),
         }
         manifest = ROOT / "benchmarks" / "mm2_corpus" / "manifest.tsv"
         with manifest.open(newline="", encoding="utf-8") as handle:

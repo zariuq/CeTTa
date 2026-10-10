@@ -31,6 +31,9 @@ typedef struct {
        They are read into its text as it is loaded and stay private to it.
        NULL for a module without its own tokens. */
     Registry *tokens;
+    /* An explicitly declared library vocabulary, not an ordinary MeTTa
+       module, may publish its whole-word naming to each importer. */
+    bool export_words;
     /* An HE module's name in the module tree, `top:...`, which its space
        prints by; heap-owned, NULL for other modules. */
     char *module_name;

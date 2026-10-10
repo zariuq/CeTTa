@@ -3508,6 +3508,10 @@ void atom_pin_syntax_symbols(const Atom *root) {
         root, atom_pin_syntax_symbol, g_symbols, true);
 }
 
+Atom *atom_symbol_literal(Arena *a, const char *name) {
+    return atom_symbol_id(a, symbol_cached_literal(name));
+}
+
 Atom *atom_var_with_spelling(Arena *a, SymbolId spelling, VarId id) {
     Atom temp = {0};
     temp.kind = ATOM_VAR;

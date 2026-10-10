@@ -175,6 +175,7 @@ int main(void) {
     CettaMorkQueryCursorHandle *cursor = NULL;
     uint64_t added = 0;
 
+    assert(cetta_mork_bridge_supports_query_only_v2_cursor());
     space = cetta_mork_bridge_space_new_pathmap();
     assert(space != NULL);
     if (!cetta_mork_bridge_space_add_sexpr(
