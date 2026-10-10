@@ -5,16 +5,18 @@ use crate::parse_single_expr;
 #[cfg(test)]
 use crate::render_bridge_expr_text;
 use crate::{
-    expr_span_bytes, stable_bridge_expr_bytes, stable_bridge_expr_packet_bytes, validate_expr_bytes,
+    bindings_in_key_order, expr_span_bytes, stable_bridge_expr_bytes, stable_bridge_expr_packet_bytes,
+    validate_expr_bytes,
 };
 use mork::space::Space;
 #[cfg(test)]
 use mork_expr::serialize;
-use mork_expr::{Expr, ExprZipper, apply};
+use mork_expr::{Bindings, Expr, ExprZipper, apply};
 #[cfg(feature = "pathmap-space")]
-use mork_expr::{ExprEnv, Tag, byte_item, unify};
+use mork_expr::{ExprEnv, Tag, byte_item};
+use crate::bridge_unify as unify;
 use pathmap::zipper::{
-    Zipper, ZipperAbsolutePath, ZipperCreation, ZipperIteration, ZipperMoving, ZipperWriting,
+    Zipper, ZipperAbsolutePath, ZipperIteration, ZipperMoving, ZipperPath, ZipperWriting,
 };
 use std::collections::BTreeMap;
 
@@ -157,18 +159,15 @@ fn decode_counted_key(key: &[u8]) -> Result<DecodedCountedKey<'_>, String> {
     })
 }
 
-pub fn counted_exact_entry(
+fn counted_exact_value<T>(
     space: &Space,
     atom_expr_bytes: &[u8],
-) -> Result<Option<CountedEntry>, String> {
+    mut value: impl FnMut(&[u8], u32, &[u8]) -> T,
+) -> Result<Option<T>, String> {
     let mut rz = space.btm.read_zipper_at_path(atom_expr_bytes);
-    let mut found: Option<CountedEntry> = None;
+    let mut found = None;
     if rz.is_val() {
-        found = Some(CountedEntry {
-            atom_expr_bytes: atom_expr_bytes.to_vec(),
-            count: 1,
-            full_key: atom_expr_bytes.to_vec(),
-        });
+        found = Some(value(atom_expr_bytes, 1, atom_expr_bytes));
     }
     while rz.to_next_val() {
         let full_key = rz.origin_path();
@@ -179,17 +178,28 @@ pub fn counted_exact_entry(
         if found.is_some() {
             return Err("counted PathMap storage contains duplicate exact-atom keys".to_string());
         }
-        found = Some(CountedEntry {
-            atom_expr_bytes: decoded.atom_expr_bytes.to_vec(),
-            count: decoded.count,
-            full_key: full_key.to_vec(),
-        });
+        found = Some(value(decoded.atom_expr_bytes, decoded.count, full_key));
     }
     Ok(found)
 }
 
+pub fn counted_exact_entry(
+    space: &Space,
+    atom_expr_bytes: &[u8],
+) -> Result<Option<CountedEntry>, String> {
+    counted_exact_value(space, atom_expr_bytes, |atom, count, key| CountedEntry {
+        atom_expr_bytes: atom.to_vec(),
+        count,
+        full_key: key.to_vec(),
+    })
+}
+
+pub fn counted_exact_count(space: &Space, atom_expr_bytes: &[u8]) -> Result<Option<u32>, String> {
+    counted_exact_value(space, atom_expr_bytes, |_, count, _| count)
+}
+
 pub fn counted_contains_expr(space: &Space, atom_expr_bytes: &[u8]) -> Result<bool, String> {
-    Ok(counted_exact_entry(space, atom_expr_bytes)?.is_some())
+    Ok(counted_exact_count(space, atom_expr_bytes)?.is_some())
 }
 
 pub fn counted_entries(space: &Space) -> Result<Vec<CountedEntry>, String> {
@@ -221,12 +231,9 @@ fn counted_update_exact_entry(
     current_count: Option<u32>,
     next_count: Option<u32>,
 ) -> Result<(), String> {
-    let zh = space.btm.zipper_head();
-    let mut wz = zh
-        .write_zipper_at_exclusive_path(atom_expr_bytes)
-        .map_err(|_| {
-            "counted PathMap exact-key update could not acquire an exclusive writer".to_string()
-        })?;
+    // The mutable Space borrow already excludes all other writers.  A
+    // single borrowed zipper needs no disjoint-writer tracking machinery.
+    let mut wz = space.btm.write_zipper_at_path(atom_expr_bytes);
 
     if let Some(current_count) = current_count {
         if current_count == 1 {
@@ -283,18 +290,17 @@ fn counted_insert_expr_count(
 ) -> Result<u32, String> {
     validate_expr_bytes(atom_expr_bytes)?;
     if delta == 0 {
-        return counted_exact_entry(space, atom_expr_bytes)
-            .map(|entry| entry.map(|entry| entry.count).unwrap_or(0));
+        return counted_exact_count(space, atom_expr_bytes).map(|count| count.unwrap_or(0));
     }
-    let current = counted_exact_entry(space, atom_expr_bytes)?;
-    let current_count = current.as_ref().map(|entry| entry.count).unwrap_or(0);
+    let current = counted_exact_count(space, atom_expr_bytes)?;
+    let current_count = current.unwrap_or(0);
     let next_count = current_count
         .checked_add(delta)
         .ok_or_else(|| "counted PathMap multiplicity overflow".to_string())?;
     counted_update_exact_entry(
         space,
         atom_expr_bytes,
-        current.as_ref().map(|entry| entry.count),
+        current,
         Some(next_count),
     )?;
     Ok(next_count)
@@ -350,10 +356,9 @@ fn counted_remove_deltas_total(
 ) -> Result<u64, String> {
     let mut total = 0u64;
     for (expr_bytes, requested) in deltas {
-        let current = counted_exact_entry(space, expr_bytes)?;
+        let current = counted_exact_count(space, expr_bytes)?;
         let removable = current
-            .as_ref()
-            .map(|entry| u64::from(entry.count))
+            .map(u64::from)
             .unwrap_or(0)
             .min(*requested);
         total = total
@@ -368,8 +373,8 @@ fn counted_insert_expr_deltas(
     deltas: &BTreeMap<Vec<u8>, u32>,
 ) -> Result<u64, String> {
     for (expr_bytes, delta) in deltas {
-        let current = counted_exact_entry(space, expr_bytes)?;
-        let current_count = current.as_ref().map(|entry| entry.count).unwrap_or(0);
+        let current = counted_exact_count(space, expr_bytes)?;
+        let current_count = current.unwrap_or(0);
         current_count
             .checked_add(*delta)
             .ok_or_else(|| "counted PathMap multiplicity overflow".to_string())?;
@@ -397,21 +402,25 @@ pub fn counted_remove_one_expr(
     atom_expr_bytes: &[u8],
 ) -> Result<Option<u32>, String> {
     validate_expr_bytes(atom_expr_bytes)?;
-    let Some(current) = counted_exact_entry(space, atom_expr_bytes)? else {
+    let Some(current) = counted_exact_count(space, atom_expr_bytes)? else {
         return Ok(None);
     };
-    if current.count == 1 {
-        counted_update_exact_entry(space, atom_expr_bytes, Some(1), None)?;
-        return Ok(Some(0));
-    }
-    let next_count = current.count - 1;
+    counted_remove_known_count(space, atom_expr_bytes, current).map(Some)
+}
+
+fn counted_remove_known_count(
+    space: &mut Space,
+    atom_expr_bytes: &[u8],
+    current: u32,
+) -> Result<u32, String> {
+    let next_count = current - 1;
     counted_update_exact_entry(
         space,
         atom_expr_bytes,
-        Some(current.count),
-        Some(next_count),
+        Some(current),
+        if next_count == 0 { None } else { Some(next_count) },
     )?;
-    Ok(Some(next_count))
+    Ok(next_count)
 }
 
 pub fn counted_remove_expr_batch<T: AsRef<[u8]>>(
@@ -477,16 +486,15 @@ pub fn counted_remove_one_expr_cached(
     cached_logical_size: &mut u64,
 ) -> Result<Option<u32>, String> {
     validate_expr_bytes(atom_expr_bytes)?;
-    if counted_exact_entry(space, atom_expr_bytes)?.is_none() {
+    let Some(current) = counted_exact_count(space, atom_expr_bytes)? else {
         return Ok(None);
-    }
+    };
     let next_cached = cached_logical_size
         .checked_sub(1)
         .ok_or_else(|| "counted PathMap logical size underflow".to_string())?;
-    let removed = counted_remove_one_expr(space, atom_expr_bytes)?;
-    debug_assert!(removed.is_some());
+    let removed = counted_remove_known_count(space, atom_expr_bytes, current)?;
     *cached_logical_size = next_cached;
-    Ok(removed)
+    Ok(Some(removed))
 }
 
 pub fn counted_remove_expr_batch_cached<T: AsRef<[u8]>>(
@@ -548,7 +556,7 @@ const BRIDGE_VALUE_TAG_VARREF: u8 = 0x03;
 fn encode_expr_env_packet_row(
     space: &Space,
     expr_env: ExprEnv,
-    bindings: &BTreeMap<(u8, u8), ExprEnv>,
+    bindings: &Bindings,
     row_vars: &mut BTreeMap<(u8, u8), u8>,
     next_row_var: &mut u8,
     resolving: &mut Vec<(u8, u8)>,
@@ -808,7 +816,7 @@ pub fn counted_factor_candidates(
 #[cfg(feature = "pathmap-space")]
 fn materialized_expr_env_size(
     expr_env: ExprEnv,
-    bindings: &BTreeMap<(u8, u8), ExprEnv>,
+    bindings: &Bindings,
     stack: &mut Vec<(u8, u8)>,
 ) -> Result<usize, String> {
     if let Some(var) = expr_env.var_opt() {
@@ -843,7 +851,7 @@ fn materialized_expr_env_size(
 #[cfg(feature = "pathmap-space")]
 fn materialize_expr_env_bytes(
     expr_env: ExprEnv,
-    bindings: &BTreeMap<(u8, u8), ExprEnv>,
+    bindings: &Bindings,
 ) -> Result<Vec<u8>, String> {
     let mut stack = Vec::new();
     let cap = materialized_expr_env_size(expr_env, bindings, &mut stack)?.saturating_add(64);
@@ -874,11 +882,10 @@ fn materialize_expr_env_bytes(
 #[cfg(feature = "pathmap-space")]
 fn query_binding_signature(
     space: &Space,
-    bindings: &BTreeMap<(u8, u8), ExprEnv>,
+    bindings: &Bindings,
 ) -> Result<Vec<(u8, u8, bool, Vec<u8>)>, String> {
-    bindings
-        .iter()
-        .filter_map(|(&(side, idx), expr_env)| {
+    bindings_in_key_order(bindings)
+        .filter_map(|((side, idx), expr_env)| {
             if side != 0 {
                 return None;
             }
@@ -902,12 +909,12 @@ fn query_binding_signature(
 #[cfg(feature = "pathmap-space")]
 fn query_binding_signature_packet(
     space: &Space,
-    bindings: &BTreeMap<(u8, u8), ExprEnv>,
+    bindings: &Bindings,
 ) -> Result<Vec<(u8, u8, bool, Vec<u8>)>, String> {
     let mut row_vars = BTreeMap::<(u8, u8), u8>::new();
     let mut next_row_var = 0u8;
     let mut out = Vec::new();
-    for (&(side, idx), expr_env) in bindings.iter() {
+    for ((side, idx), expr_env) in bindings_in_key_order(bindings) {
         if side != 0 {
             continue;
         }
@@ -1166,12 +1173,8 @@ impl CountedGeneralQueryCursor {
             let mut factor_counts = Vec::with_capacity(self.factor_envs.len());
             for factor_idx in 0..self.factor_envs.len() {
                 let factor = self.factor_envs[factor_idx];
-                let factor_expr_env = ExprEnv {
-                    n: factor.namespace,
-                    v: factor.variable_offset,
-                    offset: factor.byte_offset,
-                    base: pattern_expr,
-                };
+                let factor_expr_env = ExprEnv::with_intro(factor.namespace, factor.variable_offset, pattern_expr)
+                    .offset(factor.byte_offset);
                 let chosen_entry = &self.candidate_lists[factor_idx][self.indices[factor_idx]];
                 let atom_expr = Expr {
                     ptr: chosen_entry.atom_expr_bytes.as_ptr().cast_mut(),
@@ -1218,12 +1221,8 @@ impl CountedGeneralQueryCursor {
             let mut multiplicity = 1u64;
             for factor_idx in 0..self.factor_envs.len() {
                 let factor = self.factor_envs[factor_idx];
-                let factor_expr_env = ExprEnv {
-                    n: factor.namespace,
-                    v: factor.variable_offset,
-                    offset: factor.byte_offset,
-                    base: pattern_expr,
-                };
+                let factor_expr_env = ExprEnv::with_intro(factor.namespace, factor.variable_offset, pattern_expr)
+                    .offset(factor.byte_offset);
                 let chosen_entry = &self.candidate_lists[factor_idx][self.indices[factor_idx]];
                 let atom_expr = Expr {
                     ptr: chosen_entry.atom_expr_bytes.as_ptr().cast_mut(),
@@ -1365,6 +1364,53 @@ mod tests {
         };
 
         assert!(!pair.starts_with(atom_prefix));
+    }
+
+    #[test]
+    fn counted_scalar_exact_lookup_tracks_absence_and_canonical_counts() {
+        let mut space = Space::new();
+        let atom = parse_expr(&mut space, "(scalar point)");
+        assert_eq!(counted_exact_count(&space, &atom).unwrap(), None);
+        assert!(!counted_contains_expr(&space, &atom).unwrap());
+        for expected in 1..=3 {
+            assert_eq!(counted_insert_expr(&mut space, &atom).unwrap(), expected);
+            assert_eq!(counted_exact_count(&space, &atom).unwrap(), Some(expected));
+            assert!(counted_contains_expr(&space, &atom).unwrap());
+            let owned = counted_exact_entry(&space, &atom).unwrap().unwrap();
+            assert_eq!(owned.atom_expr_bytes, atom);
+            assert_eq!(owned.count, expected);
+            let key = if expected == 1 {
+                atom.clone()
+            } else {
+                [atom.as_slice(), expected.to_be_bytes().as_slice()].concat()
+            };
+            assert_eq!(owned.full_key, key);
+        }
+        for remaining in (0..3).rev() {
+            assert_eq!(counted_remove_one_expr(&mut space, &atom).unwrap(), Some(remaining));
+            assert_eq!(counted_exact_count(&space, &atom).unwrap(),
+                       if remaining == 0 { None } else { Some(remaining) });
+        }
+        assert!(!counted_contains_expr(&space, &atom).unwrap());
+    }
+
+    #[test]
+    fn counted_scalar_exact_lookup_rejects_malformed_and_duplicate_keys() {
+        let mut space = Space::new();
+        let atom = parse_expr(&mut space, "(scalar malformed)");
+        let malformed = [atom.as_slice(), &[0, 2]].concat();
+        space.btm.insert(&malformed, ());
+        assert!(counted_exact_count(&space, &atom).unwrap_err().contains("exactly 4"));
+        assert!(counted_contains_expr(&space, &atom).is_err());
+        assert!(counted_exact_entry(&space, &atom).is_err());
+
+        let mut space = Space::new();
+        let atom = parse_expr(&mut space, "(scalar duplicate)");
+        space.btm.insert(&atom, ());
+        space.btm.insert(&[atom.as_slice(), 2u32.to_be_bytes().as_slice()].concat(), ());
+        assert!(counted_exact_count(&space, &atom).unwrap_err().contains("duplicate exact-atom"));
+        assert!(counted_contains_expr(&space, &atom).is_err());
+        assert!(counted_exact_entry(&space, &atom).is_err());
     }
 
     #[test]

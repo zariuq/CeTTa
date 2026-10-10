@@ -4239,6 +4239,9 @@ static bool petta_choice_exhausted_after_success(
          */
         if (choice->as.match.occurrence_cursor_mode)
             return choice->as.match.occurrence_exhausted;
+        if (choice->as.match.binding_snapshot_mode)
+            return choice->as.match.next_index >=
+                   choice->as.match.binding_snapshot.len;
         return choice->as.match.snapshot_mode &&
                choice->as.match.next_index >=
                    choice->as.match.snapshot_len;

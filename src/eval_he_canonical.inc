@@ -1632,6 +1632,8 @@ static void he_canonical_resume_match(HeCanonicalFrame *frame) {
             bindings_free(&projected);
             return;
         }
+        if (registers->len > 1u)
+            match_chain_note_progress((uint32_t)registers->len, "canonical");
         Atom *body = bindings_apply_if_vars(&projected, a, frame->live[0]);
         Space *target = match_result_target_space(body, a);
         bool snapshot = !frame->sourced_match && !frame->preserve_bindings &&

@@ -2440,6 +2440,75 @@ int main(void) {
         space_free(&declarations);
     }
 
+    /* Fixed grounded types retain the original values while their literal
+     * spellings reuse the symbol cache. Mutable state content is not cached. */
+    {
+        const struct { GroundedKind kind; const char *name; } scalars[] = {
+            {GV_INT, "Number"}, {GV_BIGINT, "Number"},
+            {GV_RATIONAL, "Number"}, {GV_FLOAT, "Number"},
+            {GV_BOOL, "Bool"}, {GV_STRING, "String"},
+            {GV_BINDINGS, "Bindings"}, {GV_FOREIGN, "Foreign"},
+            {GV_TERM_GRAPH, "Expression"},
+            {GV_PRIME_NEED_CAPABILITY, "PrimeNeedCapability"},
+            {GV_PRIME_CONTEXT, "context"},
+        };
+        for (size_t i = 0u; i < sizeof(scalars) / sizeof(scalars[0]); i++) {
+            Atom value = {.kind = ATOM_GROUNDED};
+            value.ground.gkind = scalars[i].kind;
+            Atom *expected = atom_symbol(&scratch_d, scalars[i].name);
+            assert(atom_eq(get_grounded_type(&scratch_d, &value), expected));
+            assert(atom_eq(get_grounded_type(&scratch_d, &value), expected));
+        }
+        assert(!atom_eq(get_grounded_type(&scratch_d, atom_int(&scratch_d, 3)),
+                        get_grounded_type(&scratch_d, atom_bool(&scratch_d, true))));
+        StateCell state = {.content_type = atom_undefined_type(&scratch_d)};
+        Atom *state_value = atom_state(&scratch_d, &state);
+        assert(atom_eq(get_grounded_type(&scratch_d, state_value),
+                       atom_symbol(&scratch_d, "State")));
+        state.content_type = atom_symbol(&scratch_d, "Number");
+        assert(atom_eq(get_grounded_type(&scratch_d, state_value),
+            atom_expr2(&scratch_d, atom_symbol(&scratch_d, "StateMonad"),
+                       state.content_type)));
+        state.content_type = atom_symbol(&scratch_d, "Bool");
+        assert(atom_eq(get_grounded_type(&scratch_d, state_value),
+            atom_expr2(&scratch_d, atom_symbol(&scratch_d, "StateMonad"),
+                       state.content_type)));
+        Space typed_space;
+        space_init_with_universe(&typed_space, &universe);
+        Atom *space_value = atom_space(&scratch_d, &typed_space);
+        assert(atom_eq(get_grounded_type(&scratch_d, space_value),
+            atom_expr2(&scratch_d, atom_symbol(&scratch_d, "Space"),
+                       atom_symbol(&scratch_d, "atom"))));
+        const struct { SpaceKind kind; const char *name; } kinds[] = {
+            {SPACE_KIND_STACK, "stack"}, {SPACE_KIND_QUEUE, "queue"},
+            {SPACE_KIND_HASH, "hash"},
+        };
+        for (size_t i = 0u; i < sizeof(kinds) / sizeof(kinds[0]); i++) {
+            typed_space.kind = kinds[i].kind;
+            assert(atom_eq(get_grounded_type(&scratch_d, space_value),
+                atom_expr2(&scratch_d, atom_symbol(&scratch_d, "Space"),
+                           atom_symbol(&scratch_d, kinds[i].name))));
+        }
+        typed_space.kind = SPACE_KIND_ATOM;
+        typed_space.match_backend.kind = SPACE_ENGINE_PATHMAP;
+        assert(atom_eq(get_grounded_type(&scratch_d, space_value),
+            atom_expr2(&scratch_d, atom_symbol(&scratch_d, "Space"),
+                       atom_symbol(&scratch_d, "pathmap"))));
+        typed_space.match_backend.kind = SPACE_ENGINE_MORK;
+        assert(atom_eq(get_grounded_type(&scratch_d, space_value),
+            atom_expr2(&scratch_d, atom_symbol(&scratch_d, "Space"),
+                       atom_symbol(&scratch_d, "pathmap"))));
+        typed_space.match_backend.kind = SPACE_ENGINE_NATIVE;
+        space_free(&typed_space);
+        assert(atom_eq(get_grounded_type(&scratch_d,
+                                         atom_capture(&scratch_d, NULL)),
+            atom_expr3(&scratch_d, atom_symbol(&scratch_d, "->"),
+                       atom_atom_type(&scratch_d), atom_atom_type(&scratch_d))));
+        assert(atom_eq(get_grounded_type(&scratch_d,
+                                        atom_symbol(&scratch_d, "not-grounded")),
+                       atom_undefined_type(&scratch_d)));
+    }
+
     space_free(&right);
     space_free(&left);
     term_universe_free(&universe);

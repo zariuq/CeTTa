@@ -1,4 +1,7 @@
+; A dotted word is literal before its module publishes an alias.
+!(assertEqualToResult (== (quote rho.par) (quote rho:par)) (False))
 !(import! &self rho)
+!(assertEqualToResult (quote rho.par) ((quote rho:par)))
 
 (= (fwd $src $dst)
    (rho.recv $src $msg
@@ -59,7 +62,7 @@
   (rho:quote a b)
   ((rho:quote a b)))
 
-; Dotted rho. reader sugar must preserve the same inert malformed constructor
+; Dotted rho. module aliases must preserve the same inert malformed constructor
 ; contract as the canonical rho: spelling.
 !(assertEqualToResult
   (rho.send a b c)

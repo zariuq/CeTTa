@@ -3113,6 +3113,10 @@ Atom *atom_symbol(Arena *a, const char *name) {
     return atom_symbol_id(a, symbol_intern_cstr(g_symbols, name));
 }
 
+Atom *atom_symbol_literal(Arena *a, const char *name) {
+    return atom_symbol_id(a, symbol_cached_literal(name));
+}
+
 Atom *atom_var_with_spelling(Arena *a, SymbolId spelling, VarId id) {
     Atom temp = {0};
     temp.kind = ATOM_VAR;

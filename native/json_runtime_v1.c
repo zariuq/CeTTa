@@ -215,16 +215,48 @@ static CettaJsonRuntimeV1Status json_parser_outcome_status(
     return CETTA_JSON_RUNTIME_V1_INTERNAL_FAILURE;
 }
 
-static Atom *json_runtime_single_cst(const PPNativeV1Result *result) {
-    Atom *answer;
-    if (!result || result->semantic_result_len != 1u) return NULL;
-    answer = result->semantic_results[0];
+static Atom *json_runtime_result_cst(Atom *answer) {
     if (!answer || answer->kind != ATOM_EXPR || answer->expr.len != 3u ||
         !atom_is_symbol(answer->expr.elems[0], "result") ||
         !atom_is_symbol(answer->expr.elems[2], "nil")) {
         return NULL;
     }
     return answer->expr.elems[1];
+}
+
+static bool json_runtime_elaborate_results(
+    const CettaJsonElaborationPlanV1 *plan, Arena *arena,
+    const PPNativeV1Result *result, const CettaJsonRuntimeV1Limits *limits,
+    Atom **out, CettaJsonCstValueV1Status *status,
+    char *error, size_t error_size) {
+    Atom *single = NULL;
+    Atom **csts = &single;
+    bool ok = false;
+    if (result->semantic_result_len > 1u) {
+        if ((uint64_t)result->semantic_result_len > SIZE_MAX / sizeof(*csts) ||
+            !(csts = malloc((size_t)result->semantic_result_len * sizeof(*csts)))) {
+            *status = CETTA_JSON_CST_VALUE_V1_ALLOCATION_FAILURE;
+            json_runtime_set_error(error, error_size,
+                                   "out of memory retaining JSON parse candidates");
+            return false;
+        }
+    }
+    for (uint32_t i = 0u; i < result->semantic_result_len; i++) {
+        csts[i] = json_runtime_result_cst(result->semantic_results[i]);
+        if (!csts[i]) {
+            *status = CETTA_JSON_CST_VALUE_V1_MALFORMED_CST;
+            json_runtime_set_error(error, error_size,
+                                   "invalid complete JSON parser result");
+            goto done;
+        }
+    }
+    ok = cetta_json_cst_value_v1_elaborate_family(
+        plan, arena, csts, result->semantic_result_len,
+        limits->elaboration_work_limit, limits->value_depth_limit,
+        out, status, error, error_size);
+done:
+    if (csts != &single) free(csts);
+    return ok;
 }
 
 bool cetta_json_runtime_v1_parse(
@@ -333,16 +365,14 @@ bool cetta_json_runtime_v1_parse(
                                "JSON syntax rejected by authored grammar");
         goto done;
     }
-    if (selected->semantic_result_len != 1u) {
-        if (status) *status = CETTA_JSON_RUNTIME_V1_AMBIGUOUS;
+    if (selected->semantic_result_len == 0u) {
+        if (status) *status = CETTA_JSON_RUNTIME_V1_INTERNAL_FAILURE;
         json_runtime_set_error(error_buf, error_buf_size,
-                               "JSON grammar produced a non-unique semantic result");
+                               "accepted JSON forest produced no complete result");
         goto done;
     }
-    if (!cetta_json_cst_value_v1_elaborate(
-            &runtime->elaboration_plan,
-            arena, json_runtime_single_cst(selected),
-            active->elaboration_work_limit, active->value_depth_limit,
+    if (!json_runtime_elaborate_results(
+            &runtime->elaboration_plan, arena, selected, active,
             &value, &value_status, error_buf, error_buf_size)) {
         if (status) {
             switch (value_status) {
@@ -354,6 +384,9 @@ bool cetta_json_runtime_v1_parse(
                 break;
             case CETTA_JSON_CST_VALUE_V1_ALLOCATION_FAILURE:
                 *status = CETTA_JSON_RUNTIME_V1_ALLOCATION_FAILURE;
+                break;
+            case CETTA_JSON_CST_VALUE_V1_AMBIGUOUS:
+                *status = CETTA_JSON_RUNTIME_V1_AMBIGUOUS;
                 break;
             case CETTA_JSON_CST_VALUE_V1_MALFORMED_CST:
                 *status = CETTA_JSON_RUNTIME_V1_INTERNAL_FAILURE;

@@ -1,0 +1,5 @@
+(= (reader-owner) &self)
+(= (reader-owned-dot) (quote owner.dot))
+!(bind! &owner-word owner-payload)
+!(bind! owner-payload 23)
+(= (reader-owned-value) (quote &owner-word))

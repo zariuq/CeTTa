@@ -600,6 +600,52 @@ int main(void) {
     free(ids);
     ids = NULL;
 
+    {
+        bool old_namespaces = parser_set_namespace_sugar_enabled(true);
+        atom_len = he_compiled_reader_v1_parse_text_ids(
+            reader, "np.pi np:pi ($a.b $a:b)", &universe, &ids, &receipt,
+            error, sizeof(error));
+        expect(&counts, atom_len == 3 && ids &&
+            symbol_eq_cstr(g_symbols, tu_sym(&universe, ids[0]), "np.pi") &&
+            symbol_eq_cstr(g_symbols, tu_sym(&universe, ids[1]), "np:pi") &&
+            ids[0] != ids[1], "HE preserves distinct dotted and colon symbols");
+        AtomId variables = atom_len == 3 && ids ? ids[2] : CETTA_ATOM_ID_NONE;
+        expect(&counts, variables != CETTA_ATOM_ID_NONE &&
+            tu_arity(&universe, variables) == 2u &&
+            tu_var_id(&universe, tu_child(&universe, variables, 0u)) !=
+                tu_var_id(&universe, tu_child(&universe, variables, 1u)),
+            "HE preserves distinct dotted and colon variable identities");
+        expect(&counts, parser_namespace_sugar_enabled(),
+            "a compiled HE projection does not alter another reader's policy");
+        free(ids);
+        ids = NULL;
+
+        Arena legacy;
+        arena_init(&legacy);
+        size_t pos = 0u;
+        Atom *qualified = parse_sexpr(&legacy, "np.pi", &pos);
+        expect(&counts, qualified && atom_is_symbol(qualified, "np:pi"),
+            "non-HE legacy readers retain their namespace sugar");
+        parser_set_namespace_sugar_enabled(false);
+        pos = 0u;
+        Atom *literal = parse_sexpr(&legacy, "np.pi", &pos);
+        expect(&counts, literal && atom_is_symbol(literal, "np.pi"),
+            "HE legacy parsing and host publication preserve dotted spellings");
+        arena_free(&legacy);
+        parser_set_namespace_sugar_enabled(old_namespaces);
+
+        int complete_count = 0;
+        static const char partial[] = "np.pi (";
+        atom_len = he_compiled_reader_v1_parse_bytes_prefix_ids(
+            reader, (const uint8_t *)partial, sizeof(partial) - 1u,
+            &universe, &ids, &complete_count, error, sizeof(error));
+        expect(&counts, atom_len < 0 && complete_count == 1 && ids &&
+            symbol_eq_cstr(g_symbols, tu_sym(&universe, ids[0]), "np.pi"),
+            "a retained HE prefix uses the same literal spelling policy");
+        free(ids);
+        ids = NULL;
+    }
+
     atom_len = he_compiled_reader_v1_parse_text_ids(
         reader, "$", &universe, &ids, &receipt,
         error, sizeof(error));

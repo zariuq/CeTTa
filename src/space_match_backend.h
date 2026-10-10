@@ -128,6 +128,8 @@ typedef struct {
 typedef struct {
     ImportedFlatBucket buckets[STREE_BUCKETS];
     ImportedFlatBucket wildcard;
+    /* Ownership of the fallback buckets, independent of bridge validity. */
+    bool flat_has_entries;
     bool built;
     bool dirty;
     bool bridge_active;

@@ -19,9 +19,11 @@ set -uo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 manifest="$root/benchmarks/mm2_corpus/manifest.tsv"
-bin="$root/cetta"
+bin="${CETTA_BIN:-$root/cetta}"
 : "${AIHUB:=$(cd "$root/../.." && pwd)}"
-export AIHUB
+: "${CETTA_ROOT:=$root}"
+: "${MORK_REPO_DIR:=$root/../MORK}"
+: "${MM2_CHAINER_REPO_DIR:=$AIHUB/repos/mm2-chainer}"
 
 [ -x "$bin" ] || { echo "no cetta binary at $bin (make BUILD=mork cetta)" >&2; exit 2; }
 [ -f "$manifest" ] || { echo "no manifest at $manifest" >&2; exit 2; }
@@ -40,14 +42,21 @@ while IFS=$'\t' read -r name origin path want_status want_atoms; do
         rows+="$name\t$origin\t$path\tfork-skip\t0\n"
         continue
     fi
-    file="$(eval echo "$path")"
+    file="${path//'$CETTA_ROOT'/$CETTA_ROOT}"
+    file="${file//'$MORK_REPO_DIR'/$MORK_REPO_DIR}"
+    file="${file//'$MM2_CHAINER_REPO_DIR'/$MM2_CHAINER_REPO_DIR}"
+    file="${file//'$AIHUB'/$AIHUB}"
     if [ ! -f "$file" ]; then
         missing=$((missing + 1))
         printf '%-44s %-18s MISSING\n' "$name" "$origin"
         rows+="$name\t$origin\t$path\tmissing\t0\n"
         continue
     fi
-    out="$(timeout 60 "$bin" --lang mm2 "$file" 2>/dev/null | tr -d "\0")"
+    if [ "$file" = "$root/tests/mm2_kiss_act_join.mm2" ]; then
+        out="$(timeout 60 python3 "$root/scripts/test_mm2_kiss_act_fixture.py" -- "$bin" 2>/dev/null | tr -d "\0")"
+    else
+        out="$(timeout 60 "$bin" --lang mm2 "$file" 2>/dev/null | tr -d "\0")"
+    fi
     if [ $? -ne 0 ]; then
         status=mork-panic; atoms=0
     else
@@ -64,9 +73,9 @@ while IFS=$'\t' read -r name origin path want_status want_atoms; do
 done < "$manifest"
 
 if [ "$update" = 1 ]; then
-    { printf 'name\torigin\tpath\tstatus\tatoms\n'; printf "$rows"; } > "$manifest"
+    { printf 'name\torigin\tpath\tstatus\tatoms\n'; printf '%b' "$rows"; } > "$manifest"
     echo "manifest updated"
 fi
 
 echo "(Mm2CorpusSummary total=$total agree=$pass differ=$regress missing=$missing skipped=$skipped)"
-[ "$regress" -eq 0 ]
+[ "$regress" -eq 0 ] && [ "$missing" -eq 0 ]

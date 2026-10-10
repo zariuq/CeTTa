@@ -286,6 +286,7 @@ tests/test_he_error_before_syntax_fault.metta	he	metta	extended	main	native	test
 tests/test_he_frontier_algebra_regression.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_nested_binding_substitution_regression.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_nullary_call_types.metta	he	metta	extended	main	native	test	golden	-
+tests/test_he_reader_naming.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_return_contract_correlation.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_word_tokens.metta	he	metta	extended	main	native	test	golden	-
 tests/test_hyperpose.metta	he	metta	extended	main	native	test	golden	-

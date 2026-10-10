@@ -238,7 +238,8 @@ endif
 BOOTSTRAP_TMPDIR = runtime/bootstrap
 CETTA_REPO_DIR ?= $(CURDIR)
 CETTA_RUST_DIR ?= $(abspath ./rust)
-MORK_BRIDGE_DIR ?= $(CETTA_RUST_DIR)/target/release
+MORK_BRIDGE_TARGET_DIR ?= $(CETTA_RUST_DIR)/target
+MORK_BRIDGE_DIR ?= $(MORK_BRIDGE_TARGET_DIR)/release
 MORK_BRIDGE_MANIFEST ?= $(CETTA_RUST_DIR)/cetta-space-bridge/Cargo.toml
 MORK_BRIDGE_WORKDIR ?= $(CETTA_RUST_DIR)
 MORK_BRIDGE_CARGO ?= cargo +nightly
@@ -264,6 +265,8 @@ MORK_EXPR_MANIFEST ?= $(MORK_REPO_DIR)/expr/Cargo.toml
 MORK_FRONTEND_MANIFEST ?= $(MORK_REPO_DIR)/frontend/Cargo.toml
 MORK_INTERNING_MANIFEST ?= $(MORK_REPO_DIR)/interning/Cargo.toml
 MORK_BRIDGE_WORKSPACE_MEMBERS := cetta-space cetta-space-bridge cetta-pathmap-adapter cetta-mork-adapter
+MORK_BRIDGE_UPSTREAM_SOURCE_DEPS = $(shell find "$(PATHMAP_REPO_DIR)" "$(MORK_REPO_DIR)" -name target -prune -o -name .git -prune -o -type f \( -name '*.rs' -o -name Cargo.toml -o -name Cargo.lock \) -print 2>/dev/null)
+MORK_BRIDGE_LOCAL_SOURCE_DEPS = $(shell find $(CETTA_RUST_DIR) -path '$(CETTA_RUST_DIR)/target' -prune -o -type f \( -name '*.rs' -o -name Cargo.toml -o -name Cargo.lock -o -name '*.h' \) -print)
 PATHMAP_DEP_DIR := $(abspath $(dir $(PATHMAP_MANIFEST)))
 MORK_KERNEL_DIR := $(abspath $(dir $(MORK_KERNEL_MANIFEST)))
 MORK_EXPR_DIR := $(abspath $(dir $(MORK_EXPR_MANIFEST)))
@@ -293,7 +296,7 @@ BRIDGE_CFLAGS =
 BRIDGE_LDFLAGS =
 MORK_BUILD_HAS_BRIDGE := 0
 ifeq ($(ENABLE_MORK_STATIC),1)
-MORK_BRIDGE_SOURCE_DEPS := $(shell find $(CETTA_RUST_DIR) -path '$(CETTA_RUST_DIR)/target' -prune -o -type f \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'Cargo.lock' -o -name '*.h' \) -print)
+MORK_BRIDGE_SOURCE_DEPS := $(MORK_BRIDGE_LOCAL_SOURCE_DEPS) $(MORK_BRIDGE_UPSTREAM_SOURCE_DEPS)
 ifeq ($(wildcard $(MORK_BRIDGE_MANIFEST)),)
 $(error BUILD=$(BUILD_CANON) requires $(MORK_BRIDGE_MANIFEST))
 endif
@@ -306,7 +309,7 @@ BRIDGE_LDFLAGS += $(MORK_BRIDGE_FEATURE_STATICLIB) -lrt
 MORK_BUILD_HAS_BRIDGE := 1
 endif
 
-$(MORK_BRIDGE_WORKSPACE_MANIFEST): $(MORK_BRIDGE_SOURCE_DEPS) Makefile
+$(MORK_BRIDGE_WORKSPACE_MANIFEST): $(MORK_BRIDGE_LOCAL_SOURCE_DEPS) $(MORK_BRIDGE_UPSTREAM_SOURCE_DEPS) Makefile
 	@mkdir -p "$(MORK_BRIDGE_WORKSPACE_DIR)"
 	@set -e; \
 	exec 9>"$(MORK_BRIDGE_BUILD_LOCK)"; \
@@ -317,6 +320,7 @@ $(MORK_BRIDGE_WORKSPACE_MANIFEST): $(MORK_BRIDGE_SOURCE_DEPS) Makefile
 		rm -rf "$(MORK_BRIDGE_WORKSPACE_DIR)/$$member"; \
 		mv "$(MORK_BRIDGE_WORKSPACE_DIR)/$$member.tmp" "$(MORK_BRIDGE_WORKSPACE_DIR)/$$member"; \
 	done; \
+	cp "$(CETTA_RUST_DIR)/Cargo.lock" "$(MORK_BRIDGE_WORKSPACE_DIR)/Cargo.lock"; \
 	tmp="$@.tmp"; \
 	sed \
 		-e "s|path = \"../../PathMap\"|path = \"$(PATHMAP_DEP_DIR)\"|" \
@@ -329,7 +333,8 @@ $(MORK_BRIDGE_WORKSPACE_MANIFEST): $(MORK_BRIDGE_SOURCE_DEPS) Makefile
 		rm -f "$$tmp"; \
 	else \
 		mv "$$tmp" "$@"; \
-	fi
+	fi; \
+	touch "$@"
 
 $(MORK_BRIDGE_BUILD_STAMP): $(MORK_BRIDGE_SOURCE_DEPS) $(MORK_BRIDGE_WORKSPACE_MANIFEST)
 	@mkdir -p $(BOOTSTRAP_TMPDIR)
@@ -338,9 +343,9 @@ $(MORK_BRIDGE_BUILD_STAMP): $(MORK_BRIDGE_SOURCE_DEPS) $(MORK_BRIDGE_WORKSPACE_M
 	flock 9; \
 	cd $(MORK_BRIDGE_WORKDIR) && \
 		MAKEFLAGS= \
-		CARGO_TARGET_DIR='$(CETTA_RUST_DIR)/target' \
+		CARGO_TARGET_DIR='$(MORK_BRIDGE_TARGET_DIR)' \
 		RUSTFLAGS='$(MORK_BRIDGE_RUSTFLAGS)' \
-		$(MORK_BRIDGE_CARGO) build --manifest-path "$(MORK_BRIDGE_WORKSPACE_MANIFEST)" -p cetta-space-bridge --release $(MORK_BRIDGE_CARGO_FEATURE_ARGS)
+		$(MORK_BRIDGE_CARGO) build --locked --manifest-path "$(MORK_BRIDGE_WORKSPACE_MANIFEST)" -p cetta-space-bridge --release $(MORK_BRIDGE_CARGO_FEATURE_ARGS)
 	@test -f "$(MORK_BRIDGE_STATICLIB)"
 	@touch "$@"
 
@@ -349,7 +354,40 @@ $(MORK_BRIDGE_FEATURE_STATICLIB): $(MORK_BRIDGE_BUILD_STAMP)
 	@set -e; \
 	exec 9>"$(MORK_BRIDGE_BUILD_LOCK)"; \
 	flock 9; \
-	cp "$(MORK_BRIDGE_STATICLIB)" "$@"
+	archive_tmp=$$(mktemp "$@.XXXXXX"); \
+	cp --preserve=mode "$(MORK_BRIDGE_STATICLIB)" "$$archive_tmp"; \
+	mv "$$archive_tmp" "$@"
+
+.PHONY: test-rust-bridge
+.PHONY: test-bridge-archive-publication
+test-bridge-archive-publication:
+	@mkdir -p runtime
+	@python3 scripts/test_bridge_archive_publication.py
+
+test-rust-bridge: $(MORK_BRIDGE_WORKSPACE_MANIFEST)
+	@set -e; exec 9>"$(MORK_BRIDGE_BUILD_LOCK)"; flock 9; \
+		cd $(MORK_BRIDGE_WORKDIR) && \
+		MAKEFLAGS= \
+		CARGO_TARGET_DIR='$(MORK_BRIDGE_TARGET_DIR)' \
+		RUSTFLAGS='$(MORK_BRIDGE_RUSTFLAGS)' \
+		$(MORK_BRIDGE_CARGO) test --locked --manifest-path "$(MORK_BRIDGE_WORKSPACE_MANIFEST)" --workspace -- --test-threads=1
+
+MORK_BRIDGE_LOADABLE_LIB := runtime/bootstrap/libcetta_space_bridge.loadable.$(MORK_BRIDGE_FEATURE_TAG).$(MORK_BRIDGE_PATH_TAG).so
+.PHONY: bridge-shared test-mork-shared-bridge
+bridge-shared: $(MORK_BRIDGE_WORKSPACE_MANIFEST)
+	@set -e; exec 9>"$(MORK_BRIDGE_BUILD_LOCK)"; flock 9; \
+		cd $(MORK_BRIDGE_WORKDIR) && MAKEFLAGS= \
+		CARGO_TARGET_DIR='$(MORK_BRIDGE_TARGET_DIR)' \
+		RUSTFLAGS='$(MORK_BRIDGE_RUSTFLAGS)' \
+		$(MORK_BRIDGE_CARGO) build --locked --manifest-path "$(MORK_BRIDGE_WORKSPACE_MANIFEST)" \
+		-p cetta-space-bridge --release $(MORK_BRIDGE_CARGO_FEATURE_ARGS) --features loadable; \
+		cp '$(MORK_BRIDGE_TARGET_DIR)/release/libcetta_space_bridge.so' '$(abspath $(MORK_BRIDGE_LOADABLE_LIB))'
+	@echo "Loadable bridge: $(MORK_BRIDGE_LOADABLE_LIB)"
+
+test-mork-shared-bridge: bridge-shared
+	@$(CC) -std=c11 -O2 -Wall -Wextra -I. tests/test_mork_bridge_dynamic_load.c \
+		-o runtime/test_mork_bridge_dynamic_load -ldl
+	@./runtime/test_mork_bridge_dynamic_load '$(abspath $(MORK_BRIDGE_LOADABLE_LIB))'
 
 ENABLE_DURABLE ?= 0
 SQLITE_PROVIDER ?= vendored
@@ -1779,6 +1817,7 @@ MORK_BRIDGE_CONTEXTUAL_EXACT_ROWS_TEST_BIN = runtime/test_mork_bridge_contextual
 MORK_CURSOR_BYTE_BUFFER_COUNT_ABI_TEST_BIN = runtime/test_mork_cursor_byte_buffer_count_abi-$(BUILD_OBJ_TAG)
 MORK_CURSOR_EXPR_ROW_STREAM_ABI_TEST_BIN = runtime/test_mork_cursor_expr_row_stream_abi-$(BUILD_OBJ_TAG)
 MORK_QUERY_ROW_STREAM_ABI_TEST_BIN = runtime/test_mork_query_row_stream_abi-$(BUILD_OBJ_TAG)
+MORK_QUERY_ADMISSION_FALLBACK_TEST_BIN = runtime/test_mork_query_admission_fallback-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN = runtime/test_space_term_universe_membership-$(BUILD_OBJ_TAG)
 TERM_UNIVERSE_STORE_ABI_TEST_BIN = runtime/test_term_universe_store_abi-$(BUILD_OBJ_TAG).runtime-stats
 TERM_UNIVERSE_STORE_ABI_REFERENCE_TEST_BIN = runtime/test_term_universe_store_abi-$(BUILD_OBJ_TAG).disc-int-linear-reference.runtime-stats
@@ -5346,6 +5385,38 @@ else
 	$(call reexec_pathmap_bridge_or_skip,mork query row stream ABI,$@)
 endif
 
+$(MORK_QUERY_ADMISSION_FALLBACK_TEST_BIN): tests/test_mork_query_admission_fallback.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $^ $(LDFLAGS) \
+		-Wl,--wrap=cetta_mork_bridge_supports_query_only_v2_cursor \
+		-Wl,--wrap=cetta_mork_bridge_query_cursor_new_query_only_v2 \
+		-Wl,--wrap=cetta_mork_bridge_space_query_bindings_query_only_v2
+
+.PHONY: test-mork-query-admission-fallback test-mork-query-cursor-capability
+test-mork-query-admission-fallback: test-mork-query-cursor-capability
+ifeq ($(ENABLE_PATHMAP_SPACE),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) $(MORK_QUERY_ADMISSION_FALLBACK_TEST_BIN)
+	@$(call cetta_exec,./$(MORK_QUERY_ADMISSION_FALLBACK_TEST_BIN))
+else
+	$(call reexec_pathmap_bridge_or_skip,mork query admission fallback,$@)
+endif
+
+test-mork-query-cursor-capability: $(BUILD_CONFIG_HEADER)
+ifeq ($(ENABLE_PATHMAP_SPACE),1)
+	@set -eu; \
+	for present in 0 1; do \
+		probe=runtime/test-mork-query-cursor-capability-$(BUILD_OBJ_TAG)-$$present; \
+		$(CC) $(filter-out -include $(BUILD_CONFIG_HEADER),$(CPPFLAGS)) $(CFLAGS) \
+			-DCETTA_BUILD_WITH_MORK_STATIC=1 -ffunction-sections -fdata-sections \
+			-DCETTA_TEST_QUERY_CURSOR_PRESENT=$$present \
+			-o $$probe tests/test_mork_query_cursor_capability.c \
+			src/mork_space_bridge_runtime.c -Wl,--gc-sections; \
+		$(call cetta_exec,./$$probe); \
+	done
+else
+	$(call reexec_pathmap_bridge_or_skip,mork query cursor capability,$@)
+endif
+
 $(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN): private CPPFLAGS += -DCETTA_RUNTIME_STATS_IMPL=1
 $(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN): tests/test_space_term_universe_membership.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c $(SPACE_STANDALONE_SRC) $(SHARED_TRANSITION_STANDALONE_SRC) $(PARSER_STANDALONE_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
@@ -5426,6 +5497,8 @@ else
 endif
 .PHONY: test-pathmap-batch-mutations
 
+# This mutant changes the reference evaluator's chain-flatten route. Run both
+# sides through that route; the canonical evaluator has separate progress gates.
 test-pathmap-streaming-d4-mutation: $(BIN)
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
 ifeq ($(ENABLE_SANITIZERS),1)
@@ -5437,14 +5510,14 @@ else
 		"$$mutation_dir/eval.c" || exit 1; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/eval.c" \
 		-o "$$mutation_dir/eval.o" || exit 1; \
-	$(CC) $(filter-out src/eval.$(BUILD_OBJ_TAG).o,$(OBJ)) \
+	$(CC) $(filter-out src/eval.%.o,$(OBJ)) \
 		"$$mutation_dir/eval.o" -o "$$mutation_dir/cetta-no-stream" \
 		$(LDFLAGS) || exit 1; \
-	env $(CETTA_GSLT_MATCH_CHAIN_TRACE_ENV)=1 \
+	env CETTA_HE_CANONICAL_EXECUTION=0 $(CETTA_GSLT_MATCH_CHAIN_TRACE_ENV)=1 \
 		python3 scripts/bench_d4_progress.py "$(CETTA_SCRIPT_BIN)" \
 		tests/nil_pc_fc_d4.metta --backends pathmap --duration 3.5 \
 		--output "$$mutation_dir/baseline.json" >/dev/null || exit 1; \
-	if env $(CETTA_GSLT_MATCH_CHAIN_TRACE_ENV)=1 \
+	if env CETTA_HE_CANONICAL_EXECUTION=0 $(CETTA_GSLT_MATCH_CHAIN_TRACE_ENV)=1 \
 		python3 scripts/bench_d4_progress.py \
 		"$$mutation_dir/cetta-no-stream" tests/nil_pc_fc_d4.metta \
 		--backends pathmap --duration 3.5 \
@@ -23773,7 +23846,7 @@ test-he-compiled-reader-v1: $(HE_COMPILED_READER_TEST_BIN) $(BIN)
 	@result=$$(./$(HE_COMPILED_READER_TEST_BIN) 2>&1); \
 	printf '%s\n' "$$result"; \
 	if [ "$$(printf '%s\n' "$$result" | \
-		grep -Fxc '(HECompiledReaderV1Summary 60 60 0 routed-text 1 routed-file 2)')" -ne 1 ]; then \
+		grep -Fxc '(HECompiledReaderV1Summary 66 66 0 routed-text 1 routed-file 2)')" -ne 1 ]; then \
 		echo "FAIL: compiled HE reader exact integration summary absent or duplicated"; \
 		exit 1; \
 	fi; \
@@ -29222,7 +29295,7 @@ test-prime-compiled-reader-v1: test-prime-compiled-reader-direct-generated-v1 te
 	@result=$$(./$(PRIME_COMPILED_READER_TEST_BIN) 2>&1); \
 	printf '%s\n' "$$result"; \
 	if [ "$$(printf '%s\n' "$$result" | \
-		grep -Fxc '(PrimeCompiledReaderV1Summary 89 89 0 cases 39)')" -ne 1 ]; then \
+		grep -Fxc '(PrimeCompiledReaderV1Summary 90 90 0 cases 39)')" -ne 1 ]; then \
 		echo "FAIL: compiled Prime reader exact differential summary absent or duplicated"; \
 		exit 1; \
 	fi; \
@@ -29861,7 +29934,7 @@ else
 	fi
 endif
 
-test-pathmap-lane-body: $(BIN)
+test-pathmap-lane-body: $(BIN) test-bridge-archive-publication
 	@pass=0; fail=0; no_exp=0; \
 	for f in $(PATHMAP_REQUIRED_TESTS); do \
 		exp="$${f%.metta}.expected"; \
@@ -29889,6 +29962,7 @@ test-pathmap-lane-body: $(BIN)
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-cursor-byte-buffer-count-abi
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-cursor-expr-row-stream-abi
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-query-row-stream-abi
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-query-admission-fallback
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-pathmap-long-string-regression
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-pathmap-match-chain
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-pathmap-backend-primary-destructive-abi
@@ -30824,6 +30898,37 @@ test-pathmap-pull-consumers-work:
 	@$(MAKE) -s BUILD=main ENABLE_RUNTIME_STATS=1 test-pathmap-pull-consumers-work
 endif
 
+.PHONY: test-petta-pathmap-match-snapshot
+test-petta-semantics: test-petta-pathmap-match-snapshot
+test-pathmap-lane-body: test-petta-pathmap-match-snapshot
+test-pathmap-lane-body: test-space-ground-count
+.PHONY: test-space-ground-count
+test-space-ground-count: $(BIN)
+	@python3 scripts/test_space_ground_count.py $(BIN) \
+		--engines native $(if $(filter 1,$(ENABLE_PATHMAP_SPACE)),pathmap,)
+
+test-petta-pathmap-match-snapshot: $(BIN)
+	@set -eu; \
+	engines="native"; \
+	if [ "$(ENABLE_PATHMAP_SPACE)" = 1 ]; then engines="native pathmap"; fi; \
+	for engine in $$engines; do \
+		for profile in extended typecheck-v2 typecheck-v3; do \
+			for index in '' 0 1; do \
+				actual=$$(CETTA_PATHMAP_QUERY_INDEX="$$index" \
+					$(CETTA_BIN_INVOKE) --lang petta --profile "$$profile" \
+					--space-engine "$$engine" \
+					tests/petta/pathmap_match_snapshot.metta 2>&1); \
+				if [ "$$actual" != "$$(cat tests/petta/pathmap_match_snapshot.expected)" ]; then \
+					echo "FAIL: PeTTa match snapshot ($$engine/$$profile/index=$$index)"; \
+					diff -u tests/petta/pathmap_match_snapshot.expected \
+						<(printf '%s\n' "$$actual") | head -40; \
+					exit 1; \
+				fi; \
+			done; \
+		done; \
+	done; \
+	echo "PASS: PeTTa binding snapshots preserve duplicates, failure, and logical-update alternatives"
+
 test-pathmap-program-shadow-sync-work: $(BIN)
 	@result=$$(CETTA_PATHMAP_QUERY_INDEX=1 $(CETTA_BIN_INVOKE) \
 		--emit-runtime-stats --profile extended --space-engine pathmap \
@@ -30831,6 +30936,9 @@ test-pathmap-program-shadow-sync-work: $(BIN)
 	petta_result=$$(CETTA_PATHMAP_QUERY_INDEX=1 $(CETTA_BIN_INVOKE) \
 		--emit-runtime-stats --profile extended --space-engine pathmap \
 		--lang petta tests/test_pathmap_program_shadow_sync_work.metta 2>&1); \
+	owned_result=$$(CETTA_PATHMAP_QUERY_INDEX=1 $(CETTA_BIN_INVOKE) \
+		--emit-runtime-stats --profile extended --space-engine pathmap \
+		--lang petta tests/petta/pathmap_owned_binding_snapshot.metta 2>&1); \
 	expected=$$(cat tests/test_pathmap_program_shadow_sync_work.expected); \
 	actual=$$(printf '%s\n' "$$result" | grep '^\[' || true); \
 	if [ "$$actual" != "$$expected" ]; then \
@@ -30861,12 +30969,31 @@ test-pathmap-program-shadow-sync-work: $(BIN)
 	petta_candidates=$$(stat_from "$$petta_result" match-native-candidates) || exit 1; \
 	petta_indexed=$$(stat_from "$$petta_result" pathmap-indexed-query) || exit 1; \
 	if [ "$$petta_projection" -ne 0 ] || [ "$$petta_materializations" -ne 0 ] || \
-	   [ "$$petta_lookups" -ne 0 ] || [ "$$petta_candidates" -ne 0 ] || \
-	   [ "$$petta_indexed" -le 0 ]; then \
-		echo "FAIL: PathMap PeTTa direct binding snapshot expected projection/materialization/native-lookup/native-candidates/indexed 0/0/0/0/>0, got $$petta_projection/$$petta_materializations/$$petta_lookups/$$petta_candidates/$$petta_indexed"; \
+	   [ "$$petta_lookups" -gt 17 ] || [ "$$petta_candidates" -gt 32 ]; then \
+		echo "FAIL: PathMap PeTTa dependency-composed snapshot expected projection/materialization 0/0 and at most 17 lookups/32 candidates for the 16-row chain, got $$petta_projection/$$petta_materializations/$$petta_lookups/$$petta_candidates"; \
 		exit 1; \
 	fi; \
-	echo "PASS: PathMap PeTTa logical-update snapshots use exact trie bindings without a native candidate shadow"
+	owned_actual=$$(printf '%s\n' "$$owned_result" | grep -v '^runtime-' || true); \
+	if [ "$$owned_actual" != "$$(cat tests/petta/pathmap_owned_binding_snapshot.expected)" ]; then \
+		echo "FAIL: PathMap PeTTa owned binding snapshot answers"; \
+		diff -u tests/petta/pathmap_owned_binding_snapshot.expected \
+			<(printf '%s\n' "$$owned_actual") | head -30; \
+		exit 1; \
+	fi; \
+	for key in pathmap-projection-capture pathmap-materialize-native \
+		match-native-trie-lookup match-native-candidates; do \
+		value=$$(stat_from "$$owned_result" "$$key") || exit 1; \
+		if [ "$$value" -ne 0 ]; then \
+			echo "FAIL: owned PathMap binding snapshot expected $$key=0, got $$value"; \
+			exit 1; \
+		fi; \
+	done; \
+	owned_indexed=$$(stat_from "$$owned_result" pathmap-indexed-query) || exit 1; \
+	if [ "$$owned_indexed" -le 0 ]; then \
+		echo "FAIL: owned PathMap binding snapshot did not use the indexed ABI"; \
+		exit 1; \
+	fi; \
+	echo "PASS: PathMap PeTTa dependency composition stays bounded and owned snapshots use exact trie bindings without a native shadow"
 
 .PHONY: test-pathmap-interleaved-dispatch-view
 test-pathmap-interleaved-dispatch-view: $(BIN)
@@ -31075,7 +31202,7 @@ ifeq ($(MORK_BRIDGE_ACTIVE),1)
 		fi; \
 	done; \
 	echo 'PASS: upstream MM2 (Rust/MORK via C ABI) and authored GSLT agree exactly on 22 admitted programs'; \
-	CETTA_BIN=./$(BIN) python3 -m unittest \
+	MORK_REPO_DIR="$(MORK_REPO_DIR)" CETTA_BIN=./$(BIN) python3 -m unittest \
 		tests.test_mm2_to_metta.TranslatorGate.test_gslt_support_transform_v1_matches_native_corpus
 else
 	@echo 'SKIP: MM2 ABI/GSLT differential (MORK bridge is not active)'
@@ -31104,19 +31231,19 @@ else
 	$(call reexec_mork_bridge_or_skip,mork-space sugar over explicit handles,$@)
 endif
 
+test-mm2-kiss-suite: private CETTA_EXEC_WRAPPER := $(abspath $(CETTA_EXEC_WRAPPER))
 test-mm2-kiss-suite: $(BIN)
 ifeq ($(MORK_BRIDGE_ACTIVE),1)
 	@ \
-	prep=$$($(CETTA_BIN_INVOKE) --quiet --profile extended --lang he tests/support/prepare_mm2_kiss_fruit_colors_act.metta 2>&1); \
-	if [ -n "$$prep" ]; then \
-		echo "FAIL: mm2 KISS ACT prepare"; \
-		printf '%s\n' "$$prep"; \
-		exit 1; \
-	fi; \
 	pass=0; fail=0; \
 	for stem in mm2_kiss_add_remove mm2_kiss_priority mm2_kiss_fractal_priority mm2_kiss_count_groupby mm2_kiss_act_join; do \
-		result=$$($(CETTA_BIN_INVOKE) --lang mm2 "tests/$$stem.mm2" 2>&1); \
-		if [ "$$result" = "$$(cat "tests/$$stem.expected")" ]; then \
+		status=0; \
+		if [ "$$stem" = "mm2_kiss_act_join" ]; then \
+			result=$$(python3 scripts/test_mm2_kiss_act_fixture.py -- $(call cetta_exec,$(abspath $(BIN))) 2>&1) || status=$$?; \
+		else \
+			result=$$($(CETTA_BIN_INVOKE) --lang mm2 "tests/$$stem.mm2" 2>&1) || status=$$?; \
+		fi; \
+		if [ $$status -eq 0 ] && [ "$$result" = "$$(cat "tests/$$stem.expected")" ]; then \
 			echo "PASS: $$stem"; \
 			pass=$$((pass + 1)); \
 		else \
@@ -31379,7 +31506,7 @@ endif
 test-pathmap-bridge-v2: $(BIN)
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
 ifeq ($(ENABLE_RUNTIME_STATS),1)
-	@expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]'); \
+	@expected=$$(cat tests/test_pathmap_imported_bridge_v2.expected); \
 	result=$$(CETTA_PATHMAP_QUERY_INDEX=0 $(CETTA_BIN_INVOKE) --profile extended --space-engine pathmap --lang he tests/test_pathmap_imported_bridge_v2.metta 2>&1); \
 	if [ "$$result" = "$$expected" ]; then \
 		echo "PASS: pathmap bridge v2 regression"; \
@@ -39002,6 +39129,7 @@ LANGUAGE_DEF_PARSER_PACK_V1_MUTATION_BIN = runtime/test_language_def_parser_pack
 LANGUAGE_DEF_PARSER_PACK_V1_BENCH_BIN = runtime/bench_json_gslt_runtime-c-only
 LANGUAGE_DEF_PARSER_PACK_V1_CORPUS_BIN = runtime/qualify_json_gslt_corpus-c-only
 JSON_NIK_V1_TEST_BIN = runtime/test_json_nik_v1-c-only$(if $(filter 1,$(ENABLE_SANITIZERS)),-sanitize,)
+PARSER_PACK_FOREST_ENCODING_V1_TEST_BIN = runtime/test_parser_pack_forest_encoding_v1-$(BUILD_OBJ_TAG)
 LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES = \
 	$(LANGUAGE_DEF_PARSER_PACK_V1_SRC) \
 	$(LDPP_COMPILER_EMBEDDED_C_V1) \
@@ -39106,6 +39234,36 @@ $(LANGUAGE_DEF_PARSER_PACK_V1_MUTATION_BIN): \
 		-o "$$tmp_out" $(LANGUAGE_DEF_PARSER_PACK_V1_C_SOURCES) \
 		-Wl,--gc-sections -ldl -lm -pthread; \
 	mv "$$tmp_out" $@
+
+$(PARSER_PACK_FOREST_ENCODING_V1_TEST_BIN): \
+		tests/support/test_parser_pack_forest_encoding_v1.c \
+		$(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES) \
+		$(LANGUAGE_DEF_PARSER_PACK_V1_HEADERS) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-parser-pack-forest-encoding-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
+		-o "$$tmp_out" tests/support/test_parser_pack_forest_encoding_v1.c \
+		$(filter-out experiments/gslt2parse_foundation/native/parser_pack_native_v1.c,$(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES)) \
+		-Wl,--gc-sections -ldl -lm -pthread; \
+	mv "$$tmp_out" $@
+
+.PHONY: test-parser-pack-forest-encoding-v1-body
+test-parser-pack-forest-encoding-v1-body: $(PARSER_PACK_FOREST_ENCODING_V1_TEST_BIN)
+	@$(PARSER_PACK_FOREST_ENCODING_V1_TEST_BIN)
+
+.PHONY: test-parser-pack-forest-encoding-v1
+test-parser-pack-forest-encoding-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 ENABLE_RUNTIME_STATS=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_RECEIPT_PRIMARY_INDEX=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 \
+		ENABLE_PRIME_NEED_CLOSURE_CAPTURE=0 \
+		ENABLE_PRIME_EVAL_STACK=0 \
+		test-parser-pack-forest-encoding-v1-body
 
 $(LANGUAGE_DEF_PARSER_PACK_V1_BENCH_BIN): \
 		$(LANGUAGE_DEF_PARSER_PACK_V1_BENCH_C_SOURCES) \
@@ -42119,7 +42277,7 @@ test-json-gslt-sanitizers:
 		ENABLE_PRIME_NEED_HEAP_INDEX=0 \
 		ENABLE_PRIME_NEED_CLOSURE_CAPTURE=0 \
 		ENABLE_PRIME_EVAL_STACK=0 \
-		test-language-def-parser-pack-v1-body
+		test-language-def-parser-pack-v1-body test-parser-pack-forest-encoding-v1-body
 	@$(MAKE) --no-print-directory -B \
 		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
 		ENABLE_SANITIZERS=1 SANITIZERS=address,undefined \
@@ -42139,6 +42297,7 @@ test-json-gslt-sanitizers:
 .NOTPARALLEL: test-json-gslt
 test-json-gslt: \
 		test-language-def-parser-pack-v1 \
+		test-parser-pack-forest-encoding-v1 \
 		test-json-nik-v1 \
 		test-json-gslt-mutation \
 		test-json-gslt-c-only-closure \

@@ -7989,12 +7989,12 @@ static Atom *get_native_handle_type(Arena *a, Atom *atom) {
 Atom *get_grounded_type(Arena *a, Atom *atom) {
     if (atom->kind != ATOM_GROUNDED) return atom_undefined_type(a);
     switch (atom->ground.gkind) {
-    case GV_INT:    return atom_symbol(a, "Number");
-    case GV_BIGINT: return atom_symbol(a, "Number");
-    case GV_RATIONAL: return atom_symbol(a, "Number");
-    case GV_FLOAT:  return atom_symbol(a, "Number");
-    case GV_BOOL:   return atom_symbol(a, "Bool");
-    case GV_STRING: return atom_symbol(a, "String");
+    case GV_INT:    return atom_symbol_literal(a, "Number");
+    case GV_BIGINT: return atom_symbol_literal(a, "Number");
+    case GV_RATIONAL: return atom_symbol_literal(a, "Number");
+    case GV_FLOAT:  return atom_symbol_literal(a, "Number");
+    case GV_BOOL:   return atom_symbol_literal(a, "Bool");
+    case GV_STRING: return atom_symbol_literal(a, "String");
     case GV_SPACE: {
         const Space *space = (const Space *)atom->ground.ptr;
         const char *space_type = "atom";
@@ -8011,29 +8011,30 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
                 space_type = "pathmap";
             }
         }
-        return atom_expr2(a, atom_symbol(a, "Space"), atom_symbol(a, space_type));
+        return atom_expr2(a, atom_symbol_literal(a, "Space"),
+                          atom_symbol_literal(a, space_type));
     }
     case GV_BINDINGS:
-        return atom_symbol(a, "Bindings");
+        return atom_symbol_literal(a, "Bindings");
     case GV_FOREIGN:
-        return atom_symbol(a, "Foreign");
+        return atom_symbol_literal(a, "Foreign");
     case GV_TERM_GRAPH:
         /* A rational term is a list or a compound term: an expression. */
-        return atom_symbol(a, "Expression");
+        return atom_symbol_literal(a, "Expression");
     case GV_CAPTURE:
-        return atom_expr3(a, atom_symbol(a, "->"),
+        return atom_expr3(a, atom_symbol_literal(a, "->"),
                           atom_atom_type(a), atom_atom_type(a));
     case GV_STATE: {
         StateCell *cell = (StateCell *)atom->ground.ptr;
         if (cell->content_type &&
             !atom_is_symbol_id(cell->content_type, g_builtin_syms.undefined_type))
-            return atom_expr2(a, atom_symbol(a, "StateMonad"), cell->content_type);
-        return atom_symbol(a, "State");
+            return atom_expr2(a, atom_symbol_literal(a, "StateMonad"), cell->content_type);
+        return atom_symbol_literal(a, "State");
     }
     case GV_PRIME_NEED_CAPABILITY:
-        return atom_symbol(a, "PrimeNeedCapability");
+        return atom_symbol_literal(a, "PrimeNeedCapability");
     case GV_PRIME_CONTEXT:
-        return atom_symbol(a, "context");
+        return atom_symbol_literal(a, "context");
     case GV_INTERNAL_TAG:
         return atom_undefined_type(a);
     }

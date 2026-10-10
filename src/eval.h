@@ -244,12 +244,18 @@ Space *eval_space_snapshot_clone(Space *src, Arena *a);
    module's own `&self` and the tokens its code has bound so far.  `atom`
    itself when nothing is bound. */
 Atom *eval_capture_registry_tokens(Registry *registry, Arena *a, Atom *atom);
-/* Put the plain words a registry binds into a form that has just been read.
+/* Put the HE whole-word tokens, including &-names, into a newly read form.
+ * Inserted values are not traversed or interpreted as further source text.
  * Returns `atom` itself when nothing in it is bound. */
 Atom *eval_read_registry_words(Registry *registry, Arena *a, Atom *atom);
+/* Copy a top-level HE form into its evaluation arena while reading its names.
+ * Inserted values are copied without applying the reader to their contents. */
+Atom *eval_copy_read_registry_form(Registry *registry, TermUniverse *universe,
+                                    Arena *a, AtomId form);
 /* The same for a stored form: the id of the form as read, which is `form`
- * itself when nothing in it is bound. The form is rebuilt in `scratch` and
- * stored through `storage` only when a word was put in. */
+ * itself when nothing in it is bound, without decoding unchanged forms.
+ * Changed forms use the existing value ownership/admission path through
+ * `storage`. Admission failure returns NONE. */
 AtomId eval_read_registry_words_id(Registry *registry, TermUniverse *universe,
                                    Arena *scratch, Arena *storage, AtomId form);
 

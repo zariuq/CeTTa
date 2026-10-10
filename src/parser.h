@@ -148,6 +148,14 @@ bool parser_rest_is_delimiters_n(const char *text, size_t text_len,
    either the original token or an arena-owned canonical copy. */
 const char *parser_canonicalize_namespace_token(Arena *a, const char *tok);
 
+/* Dotted names are literal in HE; the other readers retain namespace sugar.
+ * The session option also controls legacy parsing and host name publication.
+ * A compiled projection can select its policy without changing the session. */
+bool parser_set_namespace_sugar_enabled(bool enabled);
+bool parser_namespace_sugar_enabled(void);
+void parser_host_projection_v1_set_namespace_sugar(
+    ParserHostProjectionV1 *projection, bool enabled);
+
 /* Reader option used by he-compat: Rust HE treats slash tokens such as 2/4 as
    ordinary symbols unless an operation explicitly interprets them. */
 bool parser_set_rational_literals_enabled(bool enabled);

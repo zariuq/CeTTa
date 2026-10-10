@@ -36,6 +36,7 @@
 static __thread bool g_rational_literals_enabled = true;
 static __thread bool g_universal_name_syntax_enabled = false;
 static __thread bool g_list_syntax_enabled = false;
+static __thread bool g_namespace_sugar_enabled = true;
 static __thread ParserBareDollarMode g_bare_dollar_mode =
     CETTA_BARE_DOLLAR_DEFAULT_MODE;
 static ParserDocumentIdsBackend g_document_ids_backend;
@@ -97,6 +98,16 @@ bool parser_set_rational_literals_enabled(bool enabled) {
 
 bool parser_rational_literals_enabled(void) {
     return g_rational_literals_enabled;
+}
+
+bool parser_set_namespace_sugar_enabled(bool enabled) {
+    bool old = g_namespace_sugar_enabled;
+    g_namespace_sugar_enabled = enabled;
+    return old;
+}
+
+bool parser_namespace_sugar_enabled(void) {
+    return g_namespace_sugar_enabled;
 }
 
 bool parser_set_universal_name_syntax_enabled(bool enabled) {
@@ -235,7 +246,7 @@ static bool namespace_token_looks_qualified(const char *tok, char separator) {
     return !at_segment_start;
 }
 
-const char *parser_canonicalize_namespace_token(Arena *a, const char *tok) {
+static const char *parser_namespace_token(Arena *a, const char *tok) {
     if (!tok || !*tok || !strchr(tok, '.'))
         return tok;
     if (strchr(tok, '/') || tok[0] == '.' || namespace_token_has_file_extension(tok))
@@ -249,6 +260,10 @@ const char *parser_canonicalize_namespace_token(Arena *a, const char *tok) {
         canonical[i] = (tok[i] == '.') ? ':' : tok[i];
     canonical[len] = '\0';
     return canonical;
+}
+
+const char *parser_canonicalize_namespace_token(Arena *a, const char *tok) {
+    return g_namespace_sugar_enabled ? parser_namespace_token(a, tok) : tok;
 }
 
 static char decode_string_escape(char c) {
@@ -382,6 +397,7 @@ struct ParserHostProjectionV1 {
     ArenaMark scratch_root;
     ParserVarScope scope;
     bool form_active;
+    bool namespace_sugar;
 };
 
 static void parser_var_scope_init(ParserVarScope *scope) {
@@ -668,7 +684,7 @@ static ParserSynLowerStatus parser_lower_syn_expression_id(
 }
 
 static AtomId parser_project_word_id(TermUniverse *universe, Arena *scratch,
-                                     const char *tok) {
+                                     const char *tok, bool namespace_sugar) {
     char *endp;
     long long val;
 
@@ -711,7 +727,8 @@ static AtomId parser_project_word_id(TermUniverse *universe, Arena *scratch,
     return tu_intern_symbol(
         universe, symbol_intern_cstr(
                       g_symbols,
-                      parser_canonicalize_namespace_token(scratch, tok)));
+                      namespace_sugar ? parser_namespace_token(scratch, tok)
+                                      : tok));
 }
 
 ParserHostProjectionV1 *parser_host_projection_v1_new(
@@ -724,11 +741,18 @@ ParserHostProjectionV1 *parser_host_projection_v1_new(
     if (!projection)
         return NULL;
     projection->universe = universe;
+    projection->namespace_sugar = g_namespace_sugar_enabled;
     arena_init(&projection->scratch);
     arena_set_hashcons(&projection->scratch, NULL);
     projection->scratch_root = arena_mark(&projection->scratch);
     parser_var_scope_init(&projection->scope);
     return projection;
+}
+
+void parser_host_projection_v1_set_namespace_sugar(
+    ParserHostProjectionV1 *projection, bool enabled) {
+    if (projection)
+        projection->namespace_sugar = enabled;
 }
 
 void parser_host_projection_v1_free(ParserHostProjectionV1 *projection) {
@@ -772,7 +796,8 @@ AtomId parser_host_projection_v1_word_bytes(
     char *text = parser_host_projection_v1_cstr(
         projection, bytes, len, true);
     return text ? parser_project_word_id(
-                      projection->universe, &projection->scratch, text)
+                      projection->universe, &projection->scratch, text,
+                      projection->namespace_sugar)
                 : CETTA_ATOM_ID_NONE;
 }
 
@@ -785,8 +810,8 @@ AtomId parser_host_projection_v1_variable_bytes(
 
     if (!text)
         return CETTA_ATOM_ID_NONE;
-    canonical = parser_canonicalize_namespace_token(
-        &projection->scratch, text);
+    canonical = projection->namespace_sugar
+        ? parser_namespace_token(&projection->scratch, text) : text;
     spelling = symbol_intern_cstr(g_symbols, canonical);
     return tu_intern_var(
         projection->universe, spelling,
@@ -1387,7 +1412,8 @@ static AtomId parse_sexpr_to_id_scoped_in(TermUniverse *universe,
         }
     }
 
-    return parser_project_word_id(universe, scratch, tok);
+    return parser_project_word_id(universe, scratch, tok,
+                                  g_namespace_sugar_enabled);
 }
 
 AtomId parse_sexpr_to_id(TermUniverse *universe, const char *text, size_t *pos) {

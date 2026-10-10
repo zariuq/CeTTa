@@ -801,8 +801,8 @@ struct RegistryStates;
 typedef struct {
     RegistryEntry *entries;
     uint32_t len, cap;
-    /* Bindings of plain words, which a reader puts into the text it reads;
-       a name beginning with `&` is resolved by the evaluator instead. */
+    /* Bindings not beginning with `&`. HE reads both kinds as tokens;
+       other dialects retain their own named-space evaluation policy. */
     uint32_t word_len;
     RegistryEntry inline_entries[16];
     NameKeyTable *name_keys;

@@ -91,10 +91,10 @@ for language in ("he", "petta"):
 
     # The syntax is licensed by import AND profile.
     call = "(pat:query &self match% (p a))"
-    check(language, "!" + call, [call], imported=False)
-    # HE's imported type declaration evaluates its space operand even when
-    # the unknown head remains data; PeTTa keeps the named-space symbol.
+    # HE reads &self into the form even when its unknown head remains data;
+    # PeTTa keeps the named-space symbol.
     inert = call.replace("&self", "ModuleSpace(GroundingSpace-top)") if language == "he" else call
+    check(language, "!" + call, [inert], imported=False)
     check(language, "!" + call, [inert], profile="he" if language == "he" else None)
 
     # Equal rows remain distinguishable occurrences, stable within this read.

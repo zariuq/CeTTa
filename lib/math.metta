@@ -1,6 +1,6 @@
 ; CeTTa math helper interface.
-; Canonical namespace is math:, and dotted math. is accepted as reader sugar
-; and optional display sugar in CLI result output.
+; Canonical namespace is math:. Its HE overlay publishes the dotted math.
+; aliases; other dialects retain their namespace/display policy.
 ; Intentionally conservative: this layer only exposes math operations that are
 ; already stable in CeTTa or are small, honest library combinators we expect to
 ; want broadly in WM-PLN, genomics, and AGI-oriented workloads.
