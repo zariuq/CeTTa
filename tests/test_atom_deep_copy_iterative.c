@@ -154,6 +154,32 @@ int main(void) {
     arena_set_runtime_kind(&destination, CETTA_ARENA_RUNTIME_KIND_EVAL);
     check_map(&source, &destination);
 
+    /* Names 64 bytes apart collide in the literal cache. Hits, evictions
+       and fallback lookup must all preserve positive and negative tests. */
+    static const char colliding_names[][64] = {
+        "literal-cache-left", "literal-cache-right", "literal-cache-third"
+    };
+    Atom *colliding_symbols[3];
+    for (unsigned i = 0u; i < 3u; i++)
+        colliding_symbols[i] = atom_symbol(&source, colliding_names[i]);
+    for (unsigned turn = 0u; turn < 30u; turn++) {
+        for (unsigned i = 0u; i < 3u; i++) {
+            assert(atom_is_symbol(colliding_symbols[i], colliding_names[i]));
+            assert(!atom_is_symbol(colliding_symbols[i],
+                                   colliding_names[(i + 1u) % 3u]));
+        }
+    }
+    SymbolTable other_symbols;
+    symbol_table_init(&other_symbols);
+    (void)symbol_intern_cstr(&other_symbols, "different-table-prefix");
+    g_symbols = &other_symbols;
+    Atom *other_literal = atom_symbol(&destination, colliding_names[0]);
+    assert(atom_is_symbol(other_literal, colliding_names[0]));
+    assert(!atom_is_symbol(other_literal, colliding_names[1]));
+    g_symbols = &symbols;
+    assert(atom_is_symbol(colliding_symbols[0], colliding_names[0]));
+    symbol_table_free(&other_symbols);
+
     /* Immutable symbols are canonical only within their owning arena. */
     Atom *source_symbol_first = atom_symbol(&source, "arena-symbol-cache");
     Atom *source_symbol_second = atom_symbol(&source, "arena-symbol-cache");

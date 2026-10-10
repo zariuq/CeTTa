@@ -16,11 +16,8 @@
 #include <limits.h>
 #include <pthread.h>
 
-#define CETTA_MAX_MODULE_ROOTS 32
-#define CETTA_MAX_IMPORT_DIR_DEPTH 32
-#define CETTA_MAX_IMPORTED_FILES 256
-#define CETTA_MAX_IMPORT_TRANSACTION_SPACES 32
-#define CETTA_MAX_LOADED_MODULES 64
+typedef struct ResultSet ResultSet;
+
 #define CETTA_MAX_CMDLINE_ARGS 256
 #define CETTA_MAX_NATIVE_HANDLES 64
 
@@ -38,7 +35,17 @@ typedef struct {
        prints by; heap-owned, NULL for other modules. */
     char *module_name;
     bool loading;
+    /* A Python module providing this HE module, and the importers that
+       asked for its names. NULL for other modules. */
+    CettaForeignHEModule *provider;
+    struct CettaHEProviderExport *exports;
 } CettaLoadedModule;
+
+typedef struct {
+    Space *space;
+    bool loading;
+    char path[PATH_MAX];
+} CettaImportedFile;
 
 typedef struct {
     SymbolId head;
@@ -131,6 +138,13 @@ struct CettaPettaRuntimeState;
 struct CettaIoRuntime;
 struct CettaJsonLibraryRuntimeV1;
 
+struct CettaHEModuleFailure;
+typedef struct CettaHEModuleRunScope {
+    struct CettaLibraryContext *context;
+    struct CettaHEModuleRunScope *previous;
+    struct CettaHEModuleFailure *failures;
+} CettaHEModuleRunScope;
+
 typedef struct CettaLibraryContext {
     CettaEvalSession session;
     pthread_mutex_t nik_runtime_mutex;
@@ -142,38 +156,56 @@ typedef struct CettaLibraryContext {
     char working_dir[PATH_MAX];
     char script_path[PATH_MAX];
     char script_dir[PATH_MAX];
-    char import_dirs[CETTA_MAX_IMPORT_DIR_DEPTH][PATH_MAX];
-    uint32_t import_dir_len;
-    CettaModuleMount module_mounts[CETTA_MAX_MODULE_ROOTS];
-    uint32_t module_mount_len;
+    char (*import_dirs)[PATH_MAX];
+    uint32_t import_dir_len, import_dir_cap;
+    /* Registered module roots. A record keeps its address while the
+       inventory of pointers grows. */
+    CettaModuleMount **module_mounts;
+    uint32_t module_mount_len, module_mount_cap;
     CettaPettaLibraryPathRelation petta_library_paths;
-    struct {
-        Space *space;
-        bool loading;
-        char path[PATH_MAX];
-    } imported_files[CETTA_MAX_IMPORTED_FILES];
-    uint32_t imported_file_len;
+    CettaImportedFile *imported_files;
+    uint32_t imported_file_len, imported_file_cap;
     uint32_t petta_trusted_library_import_depth;
+    /* Set while an he-compat include that met a syntax fault keeps the
+       statements it had already read. */
+    bool include_fault_keeps_prefix;
+    /* Further `top:` names under which loaded HE modules were imported. */
+    char **he_module_aliases;
+    uint32_t he_module_alias_len, he_module_alias_cap;
+    /* One entry per open import transaction, innermost last. */
     struct {
         Space *work_space;
         Space *logical_space;
-    } import_space_aliases[CETTA_MAX_IMPORT_TRANSACTION_SPACES];
-    uint32_t import_space_alias_len;
+    } *import_space_aliases;
+    uint32_t import_space_alias_len, import_space_alias_cap;
     const char *cmdline_args[CETTA_MAX_CMDLINE_ARGS];
     uint32_t cmdline_arg_len;
-    CettaLoadedModule loaded_modules[CETTA_MAX_LOADED_MODULES];
-    uint32_t loaded_module_len;
+    /* Initializers retain their module record across nested loads. Grow
+       the pointer inventory without moving those active records. */
+    CettaLoadedModule **loaded_modules;
+    uint32_t loaded_module_len, loaded_module_cap;
     /* The tokens of the HE module being loaded, read into each statement
        as it is reached; NULL outside a module load. */
     Registry *module_token_scope;
+    struct CettaHEModuleFailure *he_module_failures;
+    CettaHEModuleRunScope *he_module_run_scope;
     /* HE's top module space, named `top`. */
     const Space *top_module_space;
+    Registry *top_module_registry;
+    struct {
+        Space *source;
+        uint64_t source_instance_id;
+        Space *view;
+    } *module_own_views;
+    uint32_t module_own_view_len, module_own_view_cap;
     /* Spaces of HE modules whose loading failed.  They stay allocated, with
        their names, until the context ends: values that still name them,
        such as an error reporting the failed call, keep a valid identity. */
     struct {
         Space *space;
         char *module_name;
+        Registry *tokens;
+        char resource_dir[PATH_MAX];
     } *retired_modules;
     uint32_t retired_module_len, retired_module_cap;
     CettaNativeHandleSlot native_handles[CETTA_MAX_NATIVE_HANDLES];
@@ -227,6 +259,12 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
                                                      CettaLanguageId language_id,
                                                      const CettaProfile *profile);
 void cetta_library_context_free(CettaLibraryContext *ctx);
+/* Track nested compatibility initialization attempts within a runner request.
+ * Completed compatibility attempts do not cache refusals. Default profiles
+ * retain their refusals across requests. */
+void cetta_library_he_run_begin(CettaLibraryContext *ctx,
+                                CettaHEModuleRunScope *scope);
+void cetta_library_he_run_end(CettaHEModuleRunScope *scope);
 struct CettaNikRuntimeV1 *cetta_library_context_nik_runtime(
     CettaLibraryContext *ctx,
     char *error_buf,
@@ -259,11 +297,18 @@ bool cetta_library_import(CettaLibraryContext *ctx, const char *name,
  * resource operations use the active transactional contents of that identity. */
 Space *cetta_library_import_execution_space(const CettaLibraryContext *ctx,
                                            Space *space);
+/* Public module identity, never the temporary storage of an inline load. */
+Space *cetta_library_logical_module_space(CettaLibraryContext *ctx, Space *space);
 
 bool cetta_library_register_module(CettaLibraryContext *ctx, const char *path,
-                                   Arena *eval_arena, Atom **error_out);
+                                   Arena *eval_arena, Arena *persistent_arena,
+                                   Registry *registry, int fuel,
+                                   Atom **error_out);
 bool cetta_library_register_git_module(CettaLibraryContext *ctx, const char *url,
-                                       Arena *eval_arena, Atom **error_out);
+                                       Arena *eval_arena,
+                                       Arena *persistent_arena,
+                                       Registry *registry, int fuel,
+                                       Atom **error_out);
 bool cetta_library_petta_git_import(CettaLibraryContext *ctx,
                                     const char *git_path,
                                     const char *build_command,
@@ -317,6 +362,19 @@ bool cetta_library_owns_space(const CettaLibraryContext *ctx,
 /* Make `space` HE's top module space, named `top`. */
 void cetta_library_set_top_module_space(CettaLibraryContext *ctx,
                                         const Space *space);
+void cetta_library_set_top_module_registry(CettaLibraryContext *ctx,
+                                           Registry *registry);
+/* Resolve a retained runner's lifetime-qualified module context. No stale
+ * external pointer is dereferenced to establish that it is still alive. */
+bool cetta_library_module_context(CettaLibraryContext *ctx, uint64_t instance,
+                                  Space **space_out, Registry **registry_out);
+typedef bool (*CettaDocumentResultObserver)(void *context, const ResultSet *results);
+/* The existing document executor, with one observation per directive. */
+bool cetta_library_he_run_text(CettaLibraryContext *ctx, Space *space,
+    Registry *registry, const char *text, Arena *arena, Arena *persistent,
+    CettaDocumentResultObserver observer, void *observer_context, Atom **error_out);
+Space *cetta_library_module_space_no_deps(
+    CettaLibraryContext *ctx, Space *space);
 /* The module name of an HE module space, by identity only, or NULL. */
 const char *cetta_library_module_space_name(const CettaLibraryContext *ctx,
                                             const void *space);
@@ -338,7 +396,7 @@ bool cetta_library_petta_resolve_reference(
 bool cetta_library_include_module(CettaLibraryContext *ctx, const char *spec,
                                   Space *space, Arena *eval_arena,
                                   Arena *persistent_arena, Registry *registry,
-                                  int fuel, Atom **error_out);
+                                  int fuel, ResultSet *last_results, Atom **error_out);
 Atom *cetta_library_mod_space(CettaLibraryContext *ctx, const char *spec,
                               Arena *eval_arena, Arena *persistent_arena,
                               Registry *registry, int fuel, Atom **error_out);

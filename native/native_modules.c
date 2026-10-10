@@ -1181,7 +1181,7 @@ static bool native_module_loaded(const CettaLibraryContext *ctx,
     if (!ctx || !mod || !mod->name)
         return false;
     for (i = 0; i < ctx->loaded_module_len; i++) {
-        if (strcmp(ctx->loaded_modules[i].display_name, mod->name) == 0)
+        if (strcmp(ctx->loaded_modules[i]->display_name, mod->name) == 0)
             return true;
     }
     return false;

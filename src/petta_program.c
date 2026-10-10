@@ -2611,6 +2611,8 @@ static PettaPlanNode *petta_plan_build_in(
         if (head_atom->kind == ATOM_SYMBOL) {
             SymbolId head = atom_symbol_current_id(head_atom);
             PeTTaForm form = petta_semantics_form(head);
+            if (form == PETTA_FORM_VALUE_LET)
+                form = PETTA_FORM_LET;
             node->contains_cardinality_call =
                 form == PETTA_FORM_LENGTH ||
                 head == g_builtin_syms.size_atom ||
@@ -2678,6 +2680,8 @@ static PettaPlanNode *petta_plan_build_in(
         } else if (head_atom->kind == ATOM_SYMBOL) {
             SymbolId head = atom_symbol_current_id(head_atom);
             PeTTaForm form = petta_semantics_form(head);
+            if (form == PETTA_FORM_VALUE_LET)
+                form = PETTA_FORM_LET;
             CettaExprLen nargs = atom->expr.len - 1u;
             if (head == g_builtin_syms.quote && nargs == 1u) {
                 node->output = PETTA_PLAN_OUTPUT_QUOTED_CHILD;
@@ -6184,6 +6188,7 @@ static bool petta_table_safety_form_is_pure(
             *opaque = true;
         return true;
     case PETTA_FORM_NONE:
+    case PETTA_FORM_VALUE_LET:
     case PETTA_FORM_TEST:
     case PETTA_FORM_TRACE:
     case PETTA_FORM_FOLDALL:

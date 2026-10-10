@@ -1,0 +1,5 @@
+!(register-module! name_tree_root/both.metta)
+!(import! &self both)
+!(match &self (name-tree-both $x) $x)
+!(import! &self both:beside)
+!(match &self (name-tree-beside $x) $x)

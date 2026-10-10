@@ -104,6 +104,45 @@ void cetta_foreign_runtime_free(CettaForeignRuntime *rt) {
 void cetta_foreign_global_shutdown(void) {
 }
 
+bool cetta_foreign_he_module_execute(CettaForeignRuntime *rt,
+                                     const char *canonical_path,
+                                     const uint8_t *source, size_t length,
+                                     Arena *arena,
+                                     CettaForeignHEModule **out,
+                                     Atom **error_out) {
+    (void)rt;
+    (void)canonical_path;
+    (void)source;
+    (void)length;
+    if (out)
+        *out = NULL;
+    if (error_out)
+        *error_out = atom_symbol(arena, CETTA_FOREIGN_DISABLED_MSG);
+    return false;
+}
+
+void cetta_foreign_he_module_release(CettaForeignHEModule *module) {
+    (void)module;
+}
+
+bool cetta_foreign_he_module_exports(CettaForeignHEModule *module, Arena *arena,
+                                     CettaForeignHEExport **exports_out,
+                                     size_t *count_out, Atom **error_out) {
+    (void)module;
+    if (exports_out)
+        *exports_out = NULL;
+    if (count_out)
+        *count_out = 0u;
+    if (error_out)
+        *error_out = atom_symbol(arena, CETTA_FOREIGN_DISABLED_MSG);
+    return false;
+}
+
+void cetta_foreign_he_exports_free(CettaForeignHEExport *exports, size_t count) {
+    (void)exports;
+    (void)count;
+}
+
 bool cetta_foreign_load_module(CettaForeignRuntime *rt,
                                const char *canonical_path,
                                Space *target_space,

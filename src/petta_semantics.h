@@ -68,6 +68,7 @@ typedef enum {
     PETTA_FORM_LET,
     PETTA_FORM_CHAIN,
     PETTA_FORM_TRACE,
+    PETTA_FORM_VALUE_LET,
 } PeTTaForm;
 
 typedef struct {

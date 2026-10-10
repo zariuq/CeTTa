@@ -1309,6 +1309,8 @@ static bool native_cold_flat_candidates(
     return true;
 }
 
+enum { NATIVE_COLD_FLAT_SCAN_LIMIT = 4u };
+
 bool space_match_native_try_cold_candidates(
     Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count) {
     if (!space || !out || !count ||
@@ -1316,12 +1318,29 @@ bool space_match_native_try_cold_candidates(
          space->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
         return false;
     SpaceMatchNativeState *state = &space->match_backend.native;
-    if (state->match_trie || state->cold_flat_scans >= 4u ||
+    if (state->match_trie || state->cold_flat_scans >= NATIVE_COLD_FLAT_SCAN_LIMIT ||
         !native_cold_flat_candidates(space, pattern, out, count))
         return false;
     state->cold_flat_scans++;
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_NATIVE_CANDIDATES, *count);
     return true;
+}
+
+/* Aggregate views and ordinary matches share the same cold-scan allowance.
+ * A one-shot fold retains its compact scan; repeated bound probes demand the
+ * maintained access path instead of rescanning the entire space per binding. */
+static bool native_count_index_ready(Space *space, bool has_rigid_coordinate) {
+    SpaceMatchNativeState *state = &space->match_backend.native;
+    if (state->match_trie && !state->match_trie_dirty)
+        return true;
+    if (!has_rigid_coordinate || space->native.len <= MATCH_TRIE_THRESHOLD)
+        return false;
+    if (!state->match_trie && state->cold_flat_scans < NATIVE_COLD_FLAT_SCAN_LIMIT) {
+        state->cold_flat_scans++;
+        return false;
+    }
+    native_ensure_match_trie(space);
+    return state->match_trie && !state->match_trie_dirty;
 }
 
 static bool native_count_rigid_occurrences(
@@ -1393,13 +1412,15 @@ static bool native_count_flat_linear(
      * A cold one-shot aggregate must not build and decode the complete
      * discrimination trie merely to avoid a compact AtomId scan.  Reuse a
      * clean index when one already exists; otherwise scan the authoritative
-     * logical sequence.  Query-driven positional indexes can later replace
-     * repeated scans without changing this semantic seam.
+     * logical sequence. Repeated probes share ordinary matching's demand
+     * for an index, through the same maintained access path.
      */
     SpaceMatchNativeState *state =
         &s->match_backend.native;
-    bool indexed =
-        state->match_trie && !state->match_trie_dirty;
+    bool rigid = false;
+    for (CettaExprIndex column = 0u; column < pattern->expr.len; column++)
+        rigid |= pattern->expr.elems[column]->kind != ATOM_VAR;
+    bool indexed = native_count_index_ready(s, rigid);
     if (indexed && native_count_rigid_occurrences(
             state, pattern, count, examined)) {
         return true;
@@ -1657,10 +1678,13 @@ static bool native_count_flat_linear_view(
     }
 
     SpaceMatchNativeState *state = &s->match_backend.native;
-    bool indexed = state->match_trie && !state->match_trie_dirty;
+    bool rigid = false;
+    for (CettaExprIndex column = 0u; column < column_count; column++)
+        rigid |= columns[column] && columns[column]->kind != ATOM_VAR;
+    bool indexed = native_count_index_ready(s, rigid);
 
     /* A cold count view can scan the same authoritative AtomId sequence as
-     * the materialized-pattern count. It need not first build a full trie. */
+     * the materialized-pattern count. Repeated probes demand the shared trie. */
 
     CettaIndex *candidates = NULL;
     CettaIndex candidate_len = s->native.len;
@@ -1899,12 +1923,17 @@ static bool native_count_conjunction(
         *out_count = 0u;
     if (!s || !scratch || !patterns || !out_count ||
         s->overlay_base || npatterns == 0u ||
-        npatterns > NATIVE_CONJUNCTION_COUNT_PATTERN_LIMIT ||
         (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
          s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) ||
         !s->native.universe) {
         return false;
     }
+
+    if (npatterns >= 3u && space_native_relational_count(
+            s, scratch, patterns, (size_t)npatterns, seed, out_count))
+        return true;
+    if (npatterns > NATIVE_CONJUNCTION_COUNT_PATTERN_LIMIT)
+        return false;
 
     Bindings empty;
     if (!seed) {
@@ -11124,14 +11153,19 @@ static inline __attribute__((always_inline)) void space_subst_query_member(
  * logical overlay view is walked so later base appends and removals remain
  * invisible.  Local scratch atoms are matched directly.  Results carry
  * finalized bindings because overlay logical indices need not address
- * backend storage. */
+ * backend storage. Module own-storage views instead expose the base's live
+ * own-row range through this same indexed query path. */
 static void overlay_subst_query(Space *s, Arena *a, Atom *query,
                                 SubstMatchSet *out) {
     smset_init(out);
     Space *base = (Space *)s->overlay_base;
-    CettaCount base_visible = s->overlay_base_visible_len;
+    CettaIndex base_begin = s->module_own_view
+        ? space_imported_length(base) : 0u;
+    CettaCount base_end = s->module_own_view
+        ? space_length64(base) : s->overlay_base_visible_len;
+    CettaCount base_visible = base_end - base_begin;
     bool base_is_fully_visible =
-        base_visible == space_length64(base);
+        base_begin == 0u && base_end == space_length64(base);
     bool base_matches_have_physical_indices =
         base->match_backend.kind == SPACE_ENGINE_NATIVE ||
         base->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT;
@@ -11139,18 +11173,19 @@ static void overlay_subst_query(Space *s, Arena *a, Atom *query,
         (base_is_fully_visible || base_matches_have_physical_indices)) {
         SubstMatchSet base_matches;
         /* The outer composed query appends dependencies once. This walk
-         * supplies only the overlay's frozen local-storage prefix. */
+         * supplies only the selected range of local base storage. */
         space_subst_query_member(base, a, query, &base_matches);
         for (CettaIndex i = 0; i < base_matches.len; i++) {
             Bindings final_b;
             if (!base_is_fully_visible &&
-                base_matches.items[i].atom_idx >= base_visible)
+                (base_matches.items[i].atom_idx < base_begin ||
+                 base_matches.items[i].atom_idx >= base_end))
                 continue;
             bindings_init(&final_b);
             if (space_subst_match_with_seed(base, query,
                                             &base_matches.items[i], NULL, a,
                                             &final_b)) {
-                subst_matchset_push(out, base_matches.items[i].atom_idx,
+                subst_matchset_push(out, base_matches.items[i].atom_idx - base_begin,
                                     base_matches.items[i].epoch, &final_b,
                                     true);
             }
@@ -11992,8 +12027,9 @@ bool space_native_pattern_each_int(
  * c + s.eps: every row weighs 1, or 1 + v.eps on the pattern that carries
  * the column, and the bag's summary is the sum over joined rows of the
  * product of weights.  Eliminating keys from one end, a message maps each
- * key value to the summary of every partial join that ends in it, so the
- * work is proportional to the rows of the patterns, not to the join. */
+ * key value to the summary of every partial join that ends in it. The
+ * current route scans the captured space once per premise, without
+ * enumerating the product of matching occurrences. */
 
 typedef struct {
     Atom *key;
@@ -12033,8 +12069,12 @@ static CettaChainEntry *cetta_chain_message_find(
 static bool cetta_chain_message_add(
     CettaChainMessage *message, Atom *key, uint32_t hash,
     __int128 count, __int128 sum) {
-    if ((message->len + 1u) * 2u > message->cap) {
+    if (message->len >= message->cap / 2u) {
+        if (message->cap > SIZE_MAX / 2u)
+            return false;
         size_t cap = message->cap ? message->cap * 2u : 64u;
+        if (cap > SIZE_MAX / sizeof(CettaChainEntry))
+            return false;
         CettaChainEntry *slots = calloc(cap, sizeof(*slots));
         if (!slots)
             return false;
@@ -12121,39 +12161,33 @@ bool space_native_flat_chain_aggregate(
     Space *space, Atom *const *patterns, size_t pattern_count,
     bool with_column, size_t column_pattern, size_t column,
     __int128 *count_out, __int128 *sum_out) {
-    /* Elimination is proved for paths of at most three patterns
-     * (JoinAggregation); longer chains stay on the enumerating routes. */
+    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    /* ChainAggregation extends the grouped-message law to arbitrary finite
+     * paths. Machine overflow still declines to ordinary enumeration. */
     if (!space || !patterns || !count_out || !sum_out ||
-        pattern_count == 0u || pattern_count > 3u ||
+        pattern_count == 0u ||
         (with_column && column_pattern >= pattern_count) ||
         space->overlay_base || space->dep_count != 0u ||
         (space->match_backend.kind != SPACE_ENGINE_NATIVE &&
          space->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
         return false;
-    VarId keys[CETTA_FLAT_JOIN_MAX_PATTERNS];
     for (size_t index = 0u; index < pattern_count; index++) {
         if (!cetta_flat_join_pattern_ok(patterns[index]) ||
             (with_column && index == column_pattern &&
              column >= (size_t)patterns[index]->expr.len))
             return false;
-        if (index + 1u < pattern_count &&
-            !cetta_chain_key(patterns, pattern_count, index, &keys[index]))
-            return false;
     }
-    /* A pattern may not share a variable with any non-neighbour. */
-    for (size_t left = 0u; left < pattern_count; left++) {
-        const Atom *pattern = patterns[left];
-        for (CettaExprIndex index = 0u; index < pattern->expr.len; index++) {
-            const Atom *item = pattern->expr.elems[index];
-            if (item->kind != ATOM_VAR)
-                continue;
-            for (size_t other = 0u; other < pattern_count; other++) {
-                if (other != left && other != left + 1u &&
-                    other + 1u != left &&
-                    cetta_flat_pattern_has_var(patterns[other],
-                                               item->var_id))
-                    return false;
-            }
+    size_t key_bytes;
+    if (__builtin_mul_overflow(pattern_count - 1u, sizeof(VarId), &key_bytes))
+        return false;
+    VarId *keys = key_bytes ? cetta_malloc(key_bytes) : NULL;
+    if (key_bytes && !keys)
+        return false;
+    for (size_t index = 0u; index < pattern_count; index++) {
+        if (index + 1u < pattern_count &&
+            !cetta_chain_key(patterns, pattern_count, index, &keys[index])) {
+            free(keys);
+            return false;
         }
     }
 
@@ -12222,10 +12256,56 @@ bool space_native_flat_chain_aggregate(
     }
     cetta_chain_message_free(&previous);
     cetta_chain_message_free(&current);
+    free(keys);
     if (!ok)
         return false;
     *count_out = total_count;
     *sum_out = total_sum;
+    return true;
+}
+
+bool space_native_flat_chain_count(
+    Space *space, Arena *scratch, Atom *const *patterns, size_t pattern_count,
+    const Bindings *seed, uint64_t *count_out) {
+    static _Thread_local int enabled = -1;
+    if (enabled < 0) {
+        const char *reference = getenv("CETTA_CONJUNCTION_COUNT_REFERENCE");
+        enabled = !reference || reference[0] == '\0' ||
+            strcmp(reference, "0") == 0 || strcmp(reference, "false") == 0 ||
+            strcmp(reference, "off") == 0;
+    }
+    if (!enabled || !space || !scratch || !patterns || !count_out ||
+        pattern_count == 0u || pattern_count > SIZE_MAX / sizeof(Atom *))
+        return false;
+
+    /* Resolve the caller's environment once, before testing the path's
+     * separators. A bound or identified separator may change that shape. */
+    Atom *inline_patterns[16];
+    Atom **resolved = pattern_count <= 16u ? inline_patterns
+        : malloc(pattern_count * sizeof(*resolved));
+    if (!resolved)
+        return false;
+    ArenaMark mark = arena_mark(scratch);
+    bool ready = true;
+    for (size_t index = 0u; index < pattern_count; index++) {
+        resolved[index] = bindings_apply_if_vars(seed, scratch, patterns[index]);
+        if (!resolved[index]) {
+            ready = false;
+            break;
+        }
+    }
+    __int128 count = 0;
+    __int128 sum = 0;
+    bool counted = ready && space_native_flat_chain_aggregate(
+        space, resolved, pattern_count, false, 0u, 0u, &count, &sum) &&
+        count >= 0 && count <= (__int128)UINT64_MAX;
+    arena_reset(scratch, mark);
+    if (resolved != inline_patterns)
+        free(resolved);
+    if (!counted)
+        return false;
+    *count_out = (uint64_t)count;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MATCH_PATH_COUNT_ADMISSION);
     return true;
 }
 

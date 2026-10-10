@@ -1,0 +1,7 @@
+(own-alias-row 17)
+!(bind! &own (module-space-no-deps &self))
+!(include own_include_alias)
+!(== &own &inside-own)
+!(match &inside-own (own-alias-row $x) $x)
+!(add-atom &inside-own (own-alias-row 31))
+!(match &self (own-alias-row $x) $x)

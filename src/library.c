@@ -44,6 +44,82 @@
 #define CETTA_BUILD_WITH_JSON_GSLT 0
 #endif
 
+typedef struct {
+    uint8_t *bytes;
+    size_t length;
+} CettaModuleSource;
+
+/* Reserve refusal ownership before initialization executes external effects.
+ * he-compat remembers no failure: its records last only while an attempt and
+ * the attempts inside it are running. */
+typedef struct CettaHEModuleFailure {
+    struct CettaHEModuleFailure *next;
+    struct CettaHEModuleFailure *initialization_parent;
+    uint64_t importer_instance;
+    CettaModuleProviderKind provider;
+    CettaModuleFormat format;
+    bool initializing;
+    bool completed;
+    CettaModuleSource source;
+    Arena storage;
+    Atom *reason;
+    char path[PATH_MAX];
+    char name[];
+} CettaHEModuleFailure;
+
+/* One importer's request for the names of a Python-provided module. Linking a
+ * module does not name it: each importer runs the register functions once. */
+typedef struct CettaHEProviderExport {
+    struct CettaHEProviderExport *next;
+    uint64_t importer_instance;
+    bool naming;                /* its register functions are running */
+    bool named;
+    Arena storage;              /* owns a remembered refusal */
+    Atom *refusal;
+} CettaHEProviderExport;
+
+static void library_he_provider_exports_free(CettaHEProviderExport *record) {
+    while (record) {
+        CettaHEProviderExport *next = record->next;
+        arena_free(&record->storage);
+        free(record);
+        record = next;
+    }
+}
+
+static void library_he_failure_free(CettaHEModuleFailure *failure) {
+    free(failure->source.bytes);
+    arena_free(&failure->storage);
+    free(failure);
+}
+
+static void library_he_failures_free(CettaHEModuleFailure *failure) {
+    while (failure) {
+        CettaHEModuleFailure *next = failure->next;
+        library_he_failure_free(failure);
+        failure = next;
+    }
+}
+
+void cetta_library_he_run_begin(CettaLibraryContext *ctx,
+                                CettaHEModuleRunScope *scope) {
+    *scope = (CettaHEModuleRunScope){0};
+    if (!ctx || !cetta_language_uses_rust_he_compat_semantics(
+            ctx->session.language_id, ctx->session.profile))
+        return;
+    scope->context = ctx;
+    scope->previous = ctx->he_module_run_scope;
+    ctx->he_module_run_scope = scope;
+}
+
+void cetta_library_he_run_end(CettaHEModuleRunScope *scope) {
+    if (!scope || !scope->context)
+        return;
+    scope->context->he_module_run_scope = scope->previous;
+    library_he_failures_free(scope->failures);
+    *scope = (CettaHEModuleRunScope){0};
+}
+
 enum {
     CETTA_LIBRARY_SYSTEM = 1u << 0,
     CETTA_LIBRARY_FS = 1u << 1,
@@ -364,17 +440,30 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
     }
     ctx->script_path[0] = '\0';
     ctx->script_dir[0] = '\0';
-    ctx->import_dir_len = 0;
-    ctx->module_mount_len = 0;
+    ctx->import_dirs = NULL;
+    ctx->import_dir_len = ctx->import_dir_cap = 0u;
+    ctx->module_mounts = NULL;
+    ctx->module_mount_len = ctx->module_mount_cap = 0u;
     memset(&ctx->petta_library_paths, 0, sizeof(ctx->petta_library_paths));
     ctx->petta_library_paths.revision = 1u;
-    ctx->imported_file_len = 0;
+    ctx->imported_files = NULL;
+    ctx->imported_file_len = ctx->imported_file_cap = 0u;
     ctx->petta_trusted_library_import_depth = 0u;
-    ctx->import_space_alias_len = 0;
+    ctx->import_space_aliases = NULL;
+    ctx->import_space_alias_len = ctx->import_space_alias_cap = 0u;
+    ctx->he_module_aliases = NULL;
+    ctx->he_module_alias_len = ctx->he_module_alias_cap = 0u;
+    ctx->include_fault_keeps_prefix = false;
     ctx->cmdline_arg_len = 0;
-    ctx->loaded_module_len = 0;
+    ctx->loaded_modules = NULL;
+    ctx->loaded_module_len = ctx->loaded_module_cap = 0u;
     ctx->module_token_scope = NULL;
+    ctx->he_module_failures = NULL;
+    ctx->he_module_run_scope = NULL;
     ctx->top_module_space = NULL;
+    ctx->top_module_registry = NULL;
+    ctx->module_own_views = NULL;
+    ctx->module_own_view_len = ctx->module_own_view_cap = 0u;
     ctx->retired_modules = NULL;
     ctx->retired_module_len = 0u;
     ctx->retired_module_cap = 0u;
@@ -471,6 +560,20 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
 
 void cetta_library_context_free(CettaLibraryContext *ctx) {
     if (!ctx) return;
+    ctx->top_module_space = NULL;
+    ctx->top_module_registry = NULL;
+    free(ctx->import_dirs);
+    ctx->import_dirs = NULL;
+    ctx->import_dir_len = ctx->import_dir_cap = 0u;
+    library_he_failures_free(ctx->he_module_failures);
+    ctx->he_module_failures = NULL;
+    for (uint32_t i = 0u; i < ctx->module_own_view_len; i++) {
+        space_free(ctx->module_own_views[i].view);
+        free(ctx->module_own_views[i].view);
+    }
+    free(ctx->module_own_views);
+    ctx->module_own_views = NULL;
+    ctx->module_own_view_len = ctx->module_own_view_cap = 0u;
     if (ctx->petta_open_programs_free)
         ctx->petta_open_programs_free(ctx->petta_open_programs);
     ctx->petta_open_programs = NULL;
@@ -490,24 +593,50 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
         ctx->nik_runtime_mutex_ready = false;
     }
     for (uint32_t i = 0; i < ctx->loaded_module_len; i++) {
-        if (ctx->loaded_modules[i].tokens) {
-            registry_free(ctx->loaded_modules[i].tokens);
-            free(ctx->loaded_modules[i].tokens);
-            ctx->loaded_modules[i].tokens = NULL;
+        CettaLoadedModule *module = ctx->loaded_modules[i];
+        cetta_foreign_he_module_release(module->provider);
+        library_he_provider_exports_free(module->exports);
+        if (module->tokens) {
+            registry_free(module->tokens);
+            free(module->tokens);
         }
-        Space *space = ctx->loaded_modules[i].space;
-        free(ctx->loaded_modules[i].module_name);
-        ctx->loaded_modules[i].module_name = NULL;
-        if (!space) continue;
-        if (ctx->petta_program)
-            petta_program_forget_space(
-                ctx->petta_program, space);
-        space_free(space);
-        free(space);
-        ctx->loaded_modules[i].space = NULL;
+        Space *space = module->space;
+        free(module->module_name);
+        if (space) {
+            if (ctx->petta_program)
+                petta_program_forget_space(ctx->petta_program, space);
+            space_free(space);
+            free(space);
+        }
+        free(module);
     }
-    ctx->loaded_module_len = 0;
+    free(ctx->loaded_modules);
+    ctx->loaded_modules = NULL;
+    ctx->loaded_module_len = ctx->loaded_module_cap = 0u;
+    free(ctx->imported_files);
+    ctx->imported_files = NULL;
+    ctx->imported_file_len = ctx->imported_file_cap = 0u;
+    for (uint32_t i = 0u; i < ctx->module_mount_len; i++)
+        free(ctx->module_mounts[i]);
+    free(ctx->module_mounts);
+    ctx->module_mounts = NULL;
+    ctx->module_mount_len = ctx->module_mount_cap = 0u;
+    free(ctx->import_space_aliases);
+    ctx->import_space_aliases = NULL;
+    ctx->import_space_alias_len = ctx->import_space_alias_cap = 0u;
+    for (uint32_t i = 0u; i < ctx->he_module_alias_len; i++)
+        free(ctx->he_module_aliases[i]);
+    free(ctx->he_module_aliases);
+    ctx->he_module_aliases = NULL;
+    ctx->he_module_alias_len = ctx->he_module_alias_cap = 0u;
     for (uint32_t i = 0u; i < ctx->retired_module_len; i++) {
+        if (ctx->retired_modules[i].tokens) {
+            registry_free(ctx->retired_modules[i].tokens);
+            free(ctx->retired_modules[i].tokens);
+        }
+        if (ctx->petta_program)
+            petta_program_forget_space(ctx->petta_program,
+                                       ctx->retired_modules[i].space);
         space_free(ctx->retired_modules[i].space);
         free(ctx->retired_modules[i].space);
         free(ctx->retired_modules[i].module_name);
@@ -1313,19 +1442,95 @@ void cetta_library_context_set_script_path(CettaLibraryContext *ctx, const char 
     }
 }
 
-static int imported_file_lookup(CettaLibraryContext *ctx, Space *space,
-                                const char *path);
+static int64_t imported_file_lookup(CettaLibraryContext *ctx, Space *space,
+                                    const char *path);
+
+static bool library_reserve_imported_file(CettaLibraryContext *ctx) {
+    if (ctx->imported_file_len < ctx->imported_file_cap)
+        return true;
+    if (ctx->imported_file_len == UINT32_MAX)
+        return false;
+    uint32_t next = ctx->imported_file_cap
+        ? (ctx->imported_file_cap > UINT32_MAX / 2u
+            ? UINT32_MAX : ctx->imported_file_cap * 2u) : 16u;
+    if ((size_t)next > SIZE_MAX / sizeof(*ctx->imported_files))
+        return false;
+    CettaImportedFile *records = realloc(
+        ctx->imported_files, (size_t)next * sizeof(*records));
+    if (!records)
+        return false;
+    ctx->imported_files = records;
+    ctx->imported_file_cap = next;
+    return true;
+}
+
+static bool library_reserve_module_mount(CettaLibraryContext *ctx) {
+    if (ctx->module_mount_len < ctx->module_mount_cap)
+        return true;
+    if (ctx->module_mount_len == UINT32_MAX)
+        return false;
+    uint32_t next = ctx->module_mount_cap
+        ? (ctx->module_mount_cap > UINT32_MAX / 2u
+            ? UINT32_MAX : ctx->module_mount_cap * 2u) : 8u;
+    if ((size_t)next > SIZE_MAX / sizeof(*ctx->module_mounts))
+        return false;
+    CettaModuleMount **records = realloc(
+        ctx->module_mounts, (size_t)next * sizeof(*records));
+    if (!records)
+        return false;
+    ctx->module_mounts = records;
+    ctx->module_mount_cap = next;
+    return true;
+}
+
+static bool library_reserve_import_alias(CettaLibraryContext *ctx) {
+    if (ctx->import_space_alias_len < ctx->import_space_alias_cap)
+        return true;
+    if (ctx->import_space_alias_len == UINT32_MAX)
+        return false;
+    uint32_t next = ctx->import_space_alias_cap
+        ? (ctx->import_space_alias_cap > UINT32_MAX / 2u
+            ? UINT32_MAX : ctx->import_space_alias_cap * 2u) : 8u;
+    if ((size_t)next > SIZE_MAX / sizeof(*ctx->import_space_aliases))
+        return false;
+    void *records = realloc(ctx->import_space_aliases,
+                            (size_t)next * sizeof(*ctx->import_space_aliases));
+    if (!records)
+        return false;
+    ctx->import_space_aliases = records;
+    ctx->import_space_alias_cap = next;
+    return true;
+}
+
+static bool library_reserve_loaded_module(CettaLibraryContext *ctx) {
+    if (ctx->loaded_module_len < ctx->loaded_module_cap)
+        return true;
+    if (ctx->loaded_module_len == UINT32_MAX)
+        return false;
+    uint32_t next = ctx->loaded_module_cap
+        ? (ctx->loaded_module_cap > UINT32_MAX / 2u
+            ? UINT32_MAX : ctx->loaded_module_cap * 2u) : 8u;
+    if ((size_t)next > SIZE_MAX / sizeof(*ctx->loaded_modules))
+        return false;
+    CettaLoadedModule **records = realloc(
+        ctx->loaded_modules, (size_t)next * sizeof(*records));
+    if (!records)
+        return false;
+    ctx->loaded_modules = records;
+    ctx->loaded_module_cap = next;
+    return true;
+}
 
 void cetta_library_context_note_document_file(CettaLibraryContext *ctx, Space *space,
                                               const char *filename) {
     char resolved[PATH_MAX];
-    int slot;
+    uint32_t slot;
 
     if (!ctx || !space || !filename) return;
     if (!realpath(filename, resolved)) return;
     if (imported_file_lookup(ctx, space, resolved) >= 0) return;
-    if (ctx->imported_file_len >= CETTA_MAX_IMPORTED_FILES) return;
-    slot = (int)ctx->imported_file_len++;
+    if (!library_reserve_imported_file(ctx)) return;
+    slot = ctx->imported_file_len++;
     ctx->imported_files[slot].space = space;
     ctx->imported_files[slot].loading = false;
     snprintf(ctx->imported_files[slot].path,
@@ -1456,6 +1661,10 @@ static Space *logical_import_space(CettaLibraryContext *ctx, Space *space) {
     return space;
 }
 
+Space *cetta_library_logical_module_space(CettaLibraryContext *ctx, Space *space) {
+    return ctx ? logical_import_space(ctx, space) : space;
+}
+
 Space *cetta_library_import_execution_space(const CettaLibraryContext *ctx,
                                            Space *space) {
     if (!ctx || !space)
@@ -1470,7 +1679,25 @@ Space *cetta_library_import_execution_space(const CettaLibraryContext *ctx,
 static bool cetta_library_push_import_alias(CettaLibraryContext *ctx,
                                             Space *work_space,
                                             Space *logical_space) {
-    if (ctx->import_space_alias_len >= CETTA_MAX_IMPORT_TRANSACTION_SPACES) {
+    if (!library_reserve_import_alias(ctx))
+        return false;
+    Space *source = logical_import_space(ctx, logical_space);
+    for (uint32_t i = 0u; i < ctx->module_own_view_len; i++) {
+        if (ctx->module_own_views[i].source != source)
+            continue;
+        if (space_module_own_view_select(ctx->module_own_views[i].view, work_space))
+            continue;
+        /* No module code has run. Previously switched views still watch the
+           enclosing storage, so rollback here cannot require allocation. */
+        Space *previous = cetta_library_import_execution_space(ctx, source);
+        for (uint32_t j = 0u; j < i; j++) {
+            if (ctx->module_own_views[j].source != source)
+                continue;
+            bool restored = space_module_own_view_select(
+                ctx->module_own_views[j].view, previous);
+            assert(restored);
+            space_module_own_view_release(ctx->module_own_views[j].view, work_space);
+        }
         return false;
     }
     ctx->import_space_aliases[ctx->import_space_alias_len].work_space = work_space;
@@ -1481,7 +1708,18 @@ static bool cetta_library_push_import_alias(CettaLibraryContext *ctx,
 
 static void cetta_library_pop_import_alias(CettaLibraryContext *ctx) {
     if (ctx->import_space_alias_len > 0) {
+        Space *work = ctx->import_space_aliases[ctx->import_space_alias_len - 1].work_space;
+        Space *source = logical_import_space(ctx, work);
         ctx->import_space_alias_len--;
+        Space *previous = cetta_library_import_execution_space(ctx, source);
+        for (uint32_t i = 0u; i < ctx->module_own_view_len; i++) {
+            if (ctx->module_own_views[i].source != source)
+                continue;
+            bool restored = space_module_own_view_select(
+                ctx->module_own_views[i].view, previous);
+            assert(restored);
+            space_module_own_view_release(ctx->module_own_views[i].view, work);
+        }
     }
 }
 
@@ -1524,52 +1762,78 @@ static bool library_reserve_module_retirement(CettaLibraryContext *ctx) {
 /* Keep a failed HE module's space and name until the context ends. This
  * path cannot fail for lack of memory after a handle has escaped. */
 static void library_retire_module_space(CettaLibraryContext *ctx,
-                                        Space *space, char *module_name) {
+                                        Space *space, char *module_name,
+                                        Registry *tokens, const char *source_path) {
     if (ctx->retired_module_len >= ctx->retired_module_cap) {
         fputs("fatal: module rollback lost its reserved storage\n", stderr);
         abort();
     }
     ctx->retired_modules[ctx->retired_module_len].space = space;
     ctx->retired_modules[ctx->retired_module_len].module_name = module_name;
+    ctx->retired_modules[ctx->retired_module_len].tokens = tokens;
+    copy_parent_dir(ctx->retired_modules[ctx->retired_module_len].resource_dir,
+                    sizeof(ctx->retired_modules[ctx->retired_module_len].resource_dir),
+                    source_path);
     ctx->retired_module_len++;
+}
+
+static void discard_loaded_module(CettaLibraryContext *ctx,
+                                  CettaLoadedModule *module) {
+    cetta_foreign_he_module_release(module->provider);
+    library_he_provider_exports_free(module->exports);
+    if (module->space) {
+        if (module->module_name) {
+            /* Publication rollback does not erase storage retained by an
+             * escaped callback or value. Its private identity stays live. */
+            library_retire_module_space(ctx, module->space, module->module_name,
+                                         module->tokens, module->canonical_path);
+            module->module_name = NULL;
+            module->tokens = NULL;
+        } else {
+            if (ctx->petta_program)
+                petta_program_forget_space(ctx->petta_program, module->space);
+            space_free(module->space);
+            free(module->space);
+        }
+    }
+    if (module->tokens) {
+        registry_free(module->tokens);
+        free(module->tokens);
+    }
+    free(module->module_name);
+    free(module);
 }
 
 static void rollback_loaded_modules(CettaLibraryContext *ctx, uint32_t rollback_len) {
     while (ctx->loaded_module_len > rollback_len) {
         ctx->loaded_module_len--;
-        CettaLoadedModule *module =
-            &ctx->loaded_modules[ctx->loaded_module_len];
-        if (module->space) {
-            Space *space = module->space;
-            if (ctx->petta_program)
-                petta_program_forget_space(
-                    ctx->petta_program, space);
-            TermUniverse *universe = space->native.universe;
-            space_free(space);
-            /* A named HE module's space keeps its identity, as an empty
-               space: an error naming the failed call may still print or
-               read it. */
-            if (module->module_name) {
-                library_retire_module_space(ctx, space, module->module_name);
-                space_init_with_universe(space, universe);
-                module->module_name = NULL;
-            } else {
-                free(space);
-            }
-            module->space = NULL;
+        discard_loaded_module(ctx, ctx->loaded_modules[ctx->loaded_module_len]);
+        ctx->loaded_modules[ctx->loaded_module_len] = NULL;
+    }
+}
+
+/* A default-profile failed initializer does not invalidate independently
+ * completed children. Records are stable; only inventory pointers move. */
+static void rollback_one_loaded_module(CettaLibraryContext *ctx,
+                                       CettaLoadedModule *module) {
+    for (uint32_t i = 0u; i < ctx->imported_file_len;) {
+        if (ctx->imported_files[i].space != module->space) {
+            i++;
+            continue;
         }
-        if (ctx->loaded_modules[ctx->loaded_module_len].tokens) {
-            registry_free(ctx->loaded_modules[ctx->loaded_module_len].tokens);
-            free(ctx->loaded_modules[ctx->loaded_module_len].tokens);
-            ctx->loaded_modules[ctx->loaded_module_len].tokens = NULL;
-        }
-        free(ctx->loaded_modules[ctx->loaded_module_len].module_name);
-        ctx->loaded_modules[ctx->loaded_module_len].module_name = NULL;
-        ctx->loaded_modules[ctx->loaded_module_len].display_name[0] = '\0';
-        ctx->loaded_modules[ctx->loaded_module_len].canonical_path[0] = '\0';
-        ctx->loaded_modules[ctx->loaded_module_len].format.kind = CETTA_MODULE_FORMAT_METTA;
-        ctx->loaded_modules[ctx->loaded_module_len].format.foreign_backend = CETTA_FOREIGN_BACKEND_NONE;
-        ctx->loaded_modules[ctx->loaded_module_len].loading = false;
+        ctx->imported_file_len--;
+        memmove(&ctx->imported_files[i], &ctx->imported_files[i + 1u],
+                (size_t)(ctx->imported_file_len - i) * sizeof(*ctx->imported_files));
+    }
+    for (uint32_t i = 0u; i < ctx->loaded_module_len; i++) {
+        if (ctx->loaded_modules[i] != module)
+            continue;
+        ctx->loaded_module_len--;
+        memmove(&ctx->loaded_modules[i], &ctx->loaded_modules[i + 1u],
+                (size_t)(ctx->loaded_module_len - i) * sizeof(*ctx->loaded_modules));
+        ctx->loaded_modules[ctx->loaded_module_len] = NULL;
+        discard_loaded_module(ctx, module);
+        return;
     }
 }
 
@@ -1600,8 +1864,8 @@ static bool loaded_module_visible(const CettaLibraryContext *ctx,
 static CettaModuleMount *module_mount_lookup_mutable(CettaLibraryContext *ctx,
                                                      const char *namespace_name) {
     for (uint32_t i = 0; i < ctx->module_mount_len; i++) {
-        if (strcmp(ctx->module_mounts[i].namespace_name, namespace_name) == 0) {
-            return &ctx->module_mounts[i];
+        if (strcmp(ctx->module_mounts[i]->namespace_name, namespace_name) == 0) {
+            return ctx->module_mounts[i];
         }
     }
     return NULL;
@@ -1610,8 +1874,8 @@ static CettaModuleMount *module_mount_lookup_mutable(CettaLibraryContext *ctx,
 static const CettaModuleMount *module_mount_lookup_any(const CettaLibraryContext *ctx,
                                                        const char *namespace_name) {
     for (uint32_t i = 0; i < ctx->module_mount_len; i++) {
-        if (strcmp(ctx->module_mounts[i].namespace_name, namespace_name) == 0) {
-            return &ctx->module_mounts[i];
+        if (strcmp(ctx->module_mounts[i]->namespace_name, namespace_name) == 0) {
+            return ctx->module_mounts[i];
         }
     }
     return NULL;
@@ -1889,7 +2153,7 @@ uint32_t cetta_library_module_mount_count(const CettaLibraryContext *ctx) {
     uint32_t count = 0;
     if (!ctx) return 0;
     for (uint32_t i = 0; i < ctx->module_mount_len; i++) {
-        if (module_mount_visible(ctx, &ctx->module_mounts[i])) {
+        if (module_mount_visible(ctx, ctx->module_mounts[i])) {
             count++;
         }
     }
@@ -1901,7 +2165,7 @@ const CettaModuleMount *cetta_library_module_mount_at(const CettaLibraryContext 
     if (!ctx) return NULL;
     uint32_t visible = 0;
     for (uint32_t i = 0; i < ctx->module_mount_len; i++) {
-        const CettaModuleMount *mount = &ctx->module_mounts[i];
+        const CettaModuleMount *mount = ctx->module_mounts[i];
         if (!module_mount_visible(ctx, mount)) continue;
         if (visible == index) return mount;
         visible++;
@@ -1922,7 +2186,7 @@ uint32_t cetta_library_loaded_module_count(const CettaLibraryContext *ctx) {
     uint32_t count = 0;
     if (!ctx) return 0;
     for (uint32_t i = 0; i < ctx->loaded_module_len; i++) {
-        if (loaded_module_visible(ctx, &ctx->loaded_modules[i])) {
+        if (loaded_module_visible(ctx, ctx->loaded_modules[i])) {
             count++;
         }
     }
@@ -1934,7 +2198,7 @@ const CettaLoadedModule *cetta_library_loaded_module_at(const CettaLibraryContex
     if (!ctx) return NULL;
     uint32_t visible = 0;
     for (uint32_t i = 0; i < ctx->loaded_module_len; i++) {
-        const CettaLoadedModule *module = &ctx->loaded_modules[i];
+        const CettaLoadedModule *module = ctx->loaded_modules[i];
         if (!loaded_module_visible(ctx, module)) continue;
         if (visible == index) return module;
         visible++;
@@ -1942,11 +2206,26 @@ const CettaLoadedModule *cetta_library_loaded_module_at(const CettaLibraryContex
     return NULL;
 }
 
-static void cetta_library_push_dir(CettaLibraryContext *ctx, const char *dir) {
-    if (ctx->import_dir_len >= CETTA_MAX_IMPORT_DIR_DEPTH) return;
+static bool cetta_library_push_dir(CettaLibraryContext *ctx, const char *dir) {
+    if (ctx->import_dir_len == ctx->import_dir_cap) {
+        if (ctx->import_dir_len == UINT32_MAX)
+            return false;
+        uint32_t next = ctx->import_dir_cap
+            ? (ctx->import_dir_cap > UINT32_MAX / 2u
+                ? UINT32_MAX : ctx->import_dir_cap * 2u) : 8u;
+        if ((size_t)next > SIZE_MAX / sizeof(*ctx->import_dirs))
+            return false;
+        void *grown = realloc(ctx->import_dirs,
+            (size_t)next * sizeof(*ctx->import_dirs));
+        if (!grown)
+            return false;
+        ctx->import_dirs = grown;
+        ctx->import_dir_cap = next;
+    }
     snprintf(ctx->import_dirs[ctx->import_dir_len],
              sizeof(ctx->import_dirs[ctx->import_dir_len]), "%s", dir);
     ctx->import_dir_len++;
+    return true;
 }
 
 static void cetta_library_pop_dir(CettaLibraryContext *ctx) {
@@ -2725,7 +3004,7 @@ static bool upsert_module_mount(CettaLibraryContext *ctx, const char *namespace_
         *error_out = atom_symbol(eval_arena, "illegal module name");
         return false;
     }
-    if (strlen(namespace_name) >= CETTA_MAX_MODULE_NAMESPACE) {
+    if (strlen(namespace_name) > NAME_MAX) {
         *error_out = atom_symbol(eval_arena, "module name too long");
         return false;
     }
@@ -2748,13 +3027,16 @@ static bool upsert_module_mount(CettaLibraryContext *ctx, const char *namespace_
         return true;
     }
 
-    if (ctx->module_mount_len >= CETTA_MAX_MODULE_ROOTS) {
-        *error_out = atom_symbol(eval_arena, "too many module roots");
+    if (!library_reserve_module_mount(ctx)) {
+        *error_out = atom_symbol(eval_arena, "module root inventory allocation failed");
         return false;
     }
-
-    CettaModuleMount *mount = &ctx->module_mounts[ctx->module_mount_len++];
-    memset(mount, 0, sizeof(*mount));
+    CettaModuleMount *mount = calloc(1u, sizeof(*mount));
+    if (!mount) {
+        *error_out = atom_symbol(eval_arena, "module root record allocation failed");
+        return false;
+    }
+    ctx->module_mounts[ctx->module_mount_len++] = mount;
     mount->provider_kind = provider_kind;
     snprintf(mount->namespace_name, sizeof(mount->namespace_name), "%s", namespace_name);
     snprintf(mount->root_path, sizeof(mount->root_path), "%s", root_path);
@@ -2803,9 +3085,6 @@ static bool commit_module_mount_and_petta_root(
     CettaModuleMount *existing =
         module_mount_lookup_mutable(ctx, namespace_name);
     uint32_t previous_mount_len = ctx->module_mount_len;
-    uint32_t existing_index = existing
-        ? (uint32_t)(existing - ctx->module_mounts)
-        : UINT32_MAX;
     CettaModuleMount previous_mount;
     if (existing)
         previous_mount = *existing;
@@ -2827,13 +3106,12 @@ static bool commit_module_mount_and_petta_root(
     if (cetta_library_petta_library_path_apply(ctx, &effect))
         return true;
 
-    if (existing_index != UINT32_MAX) {
-        ctx->module_mounts[existing_index] = previous_mount;
+    if (existing) {
+        *existing = previous_mount;
     } else {
         ctx->module_mount_len = previous_mount_len;
-        memset(
-            &ctx->module_mounts[previous_mount_len], 0,
-            sizeof(ctx->module_mounts[previous_mount_len]));
+        free(ctx->module_mounts[previous_mount_len]);
+        ctx->module_mounts[previous_mount_len] = NULL;
     }
     *error_out = atom_symbol(
         eval_arena, "library path registration failed");
@@ -2987,13 +3265,50 @@ static bool resolve_module_candidate_mm2(const char *candidate,
     return strlen(out) < out_sz;
 }
 
-static bool resolve_module_candidate_with_format(const char *candidate,
+/* HE finds a single file NAME.metta before a directory NAME, and a directory
+ * is a module with or without a module.metta. */
+static bool resolve_module_candidate_he_metta(const char *candidate,
+                                              char *out, size_t out_sz) {
+    char path[PATH_MAX];
+    struct stat st;
+    int n = snprintf(path, sizeof(path),
+                     path_has_suffix(candidate, ".metta") ? "%s" : "%s.metta",
+                     candidate);
+    if (!(n > 0 && (size_t)n < sizeof(path)))
+        return false;
+    if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) {
+        if (stat(candidate, &st) != 0 || !S_ISDIR(st.st_mode))
+            return false;
+        n = snprintf(path, sizeof(path), "%s/module.metta", candidate);
+        if (!(n > 0 && (size_t)n < sizeof(path)))
+            return false;
+        if (access(path, R_OK) != 0)
+            snprintf(path, sizeof(path), "%s", candidate);
+    }
+    if (access(path, R_OK) != 0 || !realpath(path, out))
+        return false;
+    return strlen(out) < out_sz;
+}
+
+static bool resolve_module_candidate_with_format(CettaLibraryContext *ctx,
+                                                 const char *candidate,
                                                  char *out, size_t out_sz,
                                                  CettaModuleFormat *format_out,
                                                  char *reason, size_t reason_sz) {
+    /* HE's Python host registers its filesystem format before the built-in
+       MeTTa formats. Keep that preference local to HE; other dialects retain
+       their established source lookup. */
+    bool foreign_first = ctx && ctx->session.language_id == CETTA_LANGUAGE_HE;
+    char foreign_reason[160] = {0};
+    if (foreign_first &&
+        cetta_foreign_resolve_candidate(candidate, out, out_sz, format_out,
+                                         foreign_reason, sizeof(foreign_reason)))
+        return true;
     char metta_reason[160] = {0};
-    if (resolve_module_candidate_metta(candidate, out, out_sz,
-                                       metta_reason, sizeof(metta_reason))) {
+    if (foreign_first
+            ? resolve_module_candidate_he_metta(candidate, out, out_sz)
+            : resolve_module_candidate_metta(candidate, out, out_sz,
+                                             metta_reason, sizeof(metta_reason))) {
         if (format_out) {
             format_out->kind = CETTA_MODULE_FORMAT_METTA;
             format_out->foreign_backend = CETTA_FOREIGN_BACKEND_NONE;
@@ -3002,8 +3317,7 @@ static bool resolve_module_candidate_with_format(const char *candidate,
         return true;
     }
 
-    char foreign_reason[160] = {0};
-    if (cetta_foreign_resolve_candidate(candidate, out, out_sz,
+    if (!foreign_first && cetta_foreign_resolve_candidate(candidate, out, out_sz,
                                         format_out,
                                         foreign_reason, sizeof(foreign_reason))) {
         return true;
@@ -3099,7 +3413,7 @@ static bool resolve_relative_module_candidate_for_language(
         return false;
     }
     if (path[0] == '/') {
-        if (!resolve_module_candidate_with_format(path, out, out_sz, format_out,
+        if (!resolve_module_candidate_with_format(ctx, path, out, out_sz, format_out,
                                                   reason, reason_sz)) {
             return false;
         }
@@ -3117,7 +3431,7 @@ static bool resolve_relative_module_candidate_for_language(
         cetta_eval_session_relative_module_policy(&ctx->session) ==
             CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY &&
         resolve_module_candidate_with_format(
-            path, out, out_sz, format_out, reason, reason_sz)) {
+            ctx, path, out, out_sz, format_out, reason, reason_sz)) {
         prefer_language_spelling(ctx, out, out_sz, format_out);
         return true;
     }
@@ -3128,7 +3442,7 @@ static bool resolve_relative_module_candidate_for_language(
         if (!(n > 0 && (size_t)n < sizeof(candidate))) {
             return false;
         }
-        if (resolve_module_candidate_with_format(candidate, out, out_sz, format_out,
+        if (resolve_module_candidate_with_format(ctx, candidate, out, out_sz, format_out,
                                                  reason, reason_sz)) {
             prefer_language_spelling(ctx, out, out_sz, format_out);
             return true;
@@ -3160,6 +3474,12 @@ static bool parse_module_spec(const char *spec, CettaModuleSpec *out,
         return false;
     }
     snprintf(out->raw_spec, sizeof(out->raw_spec), "%s", spec);
+    /* `a:b:` names `a:b`. */
+    size_t raw_len = strlen(out->raw_spec);
+    if (raw_len > 1u && out->raw_spec[raw_len - 1u] == ':' &&
+        strchr(out->raw_spec, ':') != out->raw_spec + raw_len - 1u)
+        out->raw_spec[raw_len - 1u] = '\0';
+    spec = out->raw_spec;
     const char *sep = strchr(spec, ':');
     if (!sep) {
         out->kind = module_spec_looks_like_relative_path(spec) ?
@@ -3186,6 +3506,99 @@ static bool parse_module_spec(const char *spec, CettaModuleSpec *out,
     return true;
 }
 
+/* The name of the module whose code is importing. */
+static const char *he_importer_module_name(CettaLibraryContext *ctx) {
+    Atom *self = ctx->module_token_scope
+        ? registry_lookup_id(ctx->module_token_scope, g_builtin_syms.self)
+        : NULL;
+    const char *name = self && self->kind == ATOM_GROUNDED &&
+            self->ground.gkind == GV_SPACE
+        ? cetta_library_module_space_name(ctx, self->ground.ptr) : NULL;
+    return name ? name : "top";
+}
+
+/* Sub-modules are looked up inside a directory module and beside the file of
+ * a single-file module. */
+static bool he_module_resource_dir(const char *canonical_path,
+                                   char *out, size_t out_sz) {
+    struct stat st;
+    if (stat(canonical_path, &st) == 0 && S_ISDIR(st.st_mode)) {
+        int n = snprintf(out, out_sz, "%s", canonical_path);
+        return n > 0 && (size_t)n < out_sz;
+    }
+    copy_parent_dir(out, out_sz, canonical_path);
+    return out[0] != '\0';
+}
+
+/* Walk an HE module-tree name. `self:a:b` and `a:b` name sub-modules of the
+ * importing module, `top:a:b` those of the program, and every component is a
+ * module. `out` receives the place where the last component is looked up;
+ * `name` receives the full name of the module reached, which on failure is
+ * the missing one. */
+static bool he_module_tree_candidate(CettaLibraryContext *ctx,
+                                     const CettaModuleSpec *spec,
+                                     char *out, size_t out_sz,
+                                     char *name, size_t name_sz) {
+    char dir[PATH_MAX];
+    char rest[PATH_MAX];
+    const char *first = spec->namespace_name;
+    bool from_top = strcmp(first, "top") == 0;
+    const char *start = from_top ? "top" : he_importer_module_name(ctx);
+    int n = snprintf(name, name_sz, "%s", start);
+    if (!(n > 0 && (size_t)n < name_sz))
+        return false;
+    n = snprintf(dir, sizeof(dir), "%s",
+                 from_top ? (ctx->script_dir[0] ? ctx->script_dir
+                                                : ctx->working_dir)
+                          : cetta_library_relative_base_dir(ctx));
+    if (!(n > 0 && (size_t)n < sizeof(dir)))
+        return false;
+    n = from_top || strcmp(first, "self") == 0
+        ? snprintf(rest, sizeof(rest), "%s", spec->path_or_member)
+        : snprintf(rest, sizeof(rest), "%s/%s", first, spec->path_or_member);
+    if (!(n > 0 && (size_t)n < sizeof(rest)))
+        return false;
+    bool under_top = strcmp(start, "top") == 0;
+    for (char *component = rest;;) {
+        char *slash = strchr(component, '/');
+        if (slash)
+            *slash = '\0';
+        size_t name_len = strlen(name);
+        n = snprintf(name + name_len, name_sz - name_len, ":%s", component);
+        if (!(n > 0 && (size_t)n < name_sz - name_len))
+            return false;
+        n = snprintf(out, out_sz, "%s/%s", dir, component);
+        if (!*component || !(n > 0 && (size_t)n < out_sz))
+            return false;
+        if (!slash)
+            return true;
+        /* A registered root is a module of the program wherever it lies. */
+        const CettaModuleMount *mount = under_top
+            ? cetta_library_find_module_mount(ctx, component) : NULL;
+        char resolved[PATH_MAX];
+        CettaModuleFormat format;
+        char reason[160];
+        if (mount) {
+            if (!he_module_resource_dir(mount->root_path, dir, sizeof(dir)))
+                return false;
+        } else if (!resolve_module_candidate_with_format(
+                       ctx, out, resolved, sizeof(resolved), &format,
+                       reason, sizeof(reason)) ||
+                   !he_module_resource_dir(resolved, dir, sizeof(dir))) {
+            return false;
+        }
+        under_top = false;
+        component = slash + 1;
+    }
+}
+
+static Atom *he_unresolved_module(Arena *arena, const char *name) {
+    size_t size = strlen("Failed to resolve module ") + strlen(name) + 1u;
+    char *message = arena_alloc(arena, size);
+    snprintf(message, size, "Failed to resolve module %s", name);
+    return atom_symbol(arena, message);
+}
+
 static bool resolve_import_plan(CettaLibraryContext *ctx, const CettaModuleSpec *spec,
                                 Space *logical_target_space,
                                 Space *execution_target_space,
@@ -3193,6 +3606,8 @@ static bool resolve_import_plan(CettaLibraryContext *ctx, const CettaModuleSpec 
                                 CettaImportPlan *plan,
                                 Arena *eval_arena, Atom **error_out) {
     char candidate[PATH_MAX];
+    /* A registered root names its own path, not a name to look up. */
+    bool he_exact_root = false;
 
     memset(plan, 0, sizeof(*plan));
     plan->spec = *spec;
@@ -3213,7 +3628,28 @@ static bool resolve_import_plan(CettaLibraryContext *ctx, const CettaModuleSpec 
                 return false;
             }
             plan->provider_kind = mount->provider_kind;
+            /* A member of a root is looked up where the root keeps its
+               sub-modules: inside a directory, beside a single file. */
+            if (ctx->session.language_id == CETTA_LANGUAGE_HE &&
+                spec->path_or_member[0] != '\0') {
+                CettaModuleSpec rooted = *spec;
+                char name[PATH_MAX];
+                int n = snprintf(rooted.path_or_member,
+                                 sizeof(rooted.path_or_member), "%s/%s",
+                                 spec->namespace_name, spec->path_or_member);
+                snprintf(rooted.namespace_name, sizeof(rooted.namespace_name),
+                         "top");
+                if (!(n > 0 && (size_t)n < sizeof(rooted.path_or_member)) ||
+                    !he_module_tree_candidate(ctx, &rooted, candidate,
+                                              sizeof(candidate), name,
+                                              sizeof(name))) {
+                    *error_out = he_unresolved_module(eval_arena, name);
+                    return false;
+                }
+                break;
+            }
             if (spec->path_or_member[0] == '\0') {
+                he_exact_root = ctx->session.language_id == CETTA_LANGUAGE_HE;
                 int n = snprintf(candidate, sizeof(candidate), "%s", mount->root_path);
                 if (!(n > 0 && (size_t)n < sizeof(candidate))) {
                     *error_out = atom_symbol(eval_arena, "module path too long");
@@ -3247,6 +3683,29 @@ static bool resolve_import_plan(CettaLibraryContext *ctx, const CettaModuleSpec 
                 plan->provider_kind = CETTA_MODULE_PROVIDER_STDLIB_FILE;
                 break;
             }
+        }
+
+        if (ctx->session.language_id == CETTA_LANGUAGE_HE) {
+            if (!cetta_module_policy_allows(&ctx->session.module_policy,
+                                              CETTA_MODULE_PROVIDER_RELATIVE_FILES)) {
+                *error_out = atom_symbol(eval_arena, "relative module imports disabled");
+                return false;
+            }
+            plan->provider_kind = CETTA_MODULE_PROVIDER_RELATIVE_FILE;
+            char name[PATH_MAX] = {0};
+            char reason[160];
+            if (!he_module_tree_candidate(ctx, spec, candidate,
+                                          sizeof(candidate), name,
+                                          sizeof(name)) ||
+                !resolve_module_candidate_with_format(
+                    ctx, candidate, plan->canonical_path,
+                    sizeof(plan->canonical_path), &plan->format,
+                    reason, sizeof(reason))) {
+                *error_out = he_unresolved_module(
+                    eval_arena, name[0] ? name : spec->raw_spec);
+                return false;
+            }
+            return true;
         }
 
         *error_out = atom_symbol(eval_arena, "unknown module root");
@@ -3319,6 +3778,16 @@ static bool resolve_import_plan(CettaLibraryContext *ctx, const CettaModuleSpec 
                 ctx, spec->path_or_member,
                 plan->canonical_path, sizeof(plan->canonical_path),
                 &plan->format, reason, sizeof(reason))) {
+            if (ctx->session.language_id == CETTA_LANGUAGE_HE &&
+                !spec->reports_written_name) {
+                const char *importer = he_importer_module_name(ctx);
+                size_t size = strlen(importer) + 1u +
+                    strlen(spec->path_or_member) + 1u;
+                char *name = arena_alloc(eval_arena, size);
+                snprintf(name, size, "%s:%s", importer, spec->path_or_member);
+                *error_out = he_unresolved_module(eval_arena, name);
+                return false;
+            }
             char *msg = arena_alloc(eval_arena,
                                     strlen("Failed to resolve module ") +
                                     strlen(spec->path_or_member) +
@@ -3351,8 +3820,29 @@ static bool resolve_import_plan(CettaLibraryContext *ctx, const CettaModuleSpec 
         return false;
     }
 
+    /* An explicitly registered HE namespace can be an empty directory.
+       Registration already established its identity and format. */
+    if (ctx->session.language_id == CETTA_LANGUAGE_HE &&
+        plan->provider_kind == CETTA_MODULE_PROVIDER_REGISTERED_ROOT) {
+        CettaLoadedModule *registered = loaded_module_lookup(ctx, candidate);
+        if (registered && registered->space) {
+            snprintf(plan->canonical_path, sizeof(plan->canonical_path),
+                     "%s", registered->canonical_path);
+            plan->format = registered->format;
+            return true;
+        }
+    }
+
     char reason[160];
-    if (!resolve_module_candidate_with_format(candidate, plan->canonical_path,
+    if (he_exact_root &&
+        resolve_module_candidate_metta(candidate, plan->canonical_path,
+                                       sizeof(plan->canonical_path),
+                                       reason, sizeof(reason))) {
+        plan->format.kind = CETTA_MODULE_FORMAT_METTA;
+        plan->format.foreign_backend = CETTA_FOREIGN_BACKEND_NONE;
+        return true;
+    }
+    if (!resolve_module_candidate_with_format(ctx, candidate, plan->canonical_path,
                                               sizeof(plan->canonical_path),
                                               &plan->format,
                                               reason, sizeof(reason))) {
@@ -3366,13 +3856,13 @@ static bool resolve_import_plan(CettaLibraryContext *ctx, const CettaModuleSpec 
     return true;
 }
 
-static int imported_file_lookup(CettaLibraryContext *ctx, Space *space,
-                                const char *path) {
+static int64_t imported_file_lookup(CettaLibraryContext *ctx, Space *space,
+                                    const char *path) {
     for (uint32_t i = 0; i < ctx->imported_file_len; i++) {
         if (ctx->imported_files[i].path[0] == '\0') continue;
         if (ctx->imported_files[i].space == space &&
             strcmp(ctx->imported_files[i].path, path) == 0) {
-            return (int)i;
+            return (int64_t)i;
         }
     }
     return -1;
@@ -7825,6 +8315,8 @@ typedef enum {
     CETTA_PETTA_DOCUMENT_COPY_FAILED,
     CETTA_PETTA_DOCUMENT_EVAL_FAILED,
     CETTA_PETTA_DOCUMENT_CAPACITY,
+    /* Not a failure: the run returned at a language Error value. */
+    CETTA_PETTA_DOCUMENT_STOPPED_AT_ERROR,
 } CettaPettaDocumentFailure;
 
 static bool cetta_library_petta_check_segment(
@@ -7918,10 +8410,18 @@ static AtomId library_module_capture_tokens(CettaLibraryContext *ctx,
                                             Space *work_space,
                                             Arena *eval_arena,
                                             Arena *persistent_arena,
+                                            Registry *registry,
                                             AtomId statement) {
-    if (!ctx->module_token_scope || statement == CETTA_ATOM_ID_NONE)
+    if (statement == CETTA_ATOM_ID_NONE)
         return statement;
     TermUniverse *universe = work_space->native.universe;
+    /* Text read outside a module being loaded, such as an included file,
+     * is read with the words of the registry in effect. */
+    if (!ctx->module_token_scope)
+        return ctx->session.language_id == CETTA_LANGUAGE_HE
+            ? eval_read_registry_words_id(registry, universe, eval_arena,
+                  persistent_arena ? persistent_arena : eval_arena, statement)
+            : statement;
     Atom *atom = term_universe_get_atom(universe, statement);
     if (!atom)
         return statement;
@@ -7939,13 +8439,16 @@ static bool cetta_library_petta_execute_document_ids(
     CettaLibraryContext *ctx, Space *work_space,
     Arena *eval_arena, Arena *persistent_arena,
     Registry *registry, AtomId *atom_ids, int atom_count,
-    ResultSet *runnable_results,
+    ResultSet *runnable_results, ResultSet *last_results,
+    CettaDocumentResultObserver observer, void *observer_context,
     CettaPettaDocumentFailure *failure_out,
     Atom **detail_out) {
     if (failure_out)
         *failure_out = CETTA_PETTA_DOCUMENT_OK;
     if (detail_out)
         *detail_out = NULL;
+    if (last_results)
+        last_results->len = 0u;
     if (!ctx || !work_space || !work_space->native.universe ||
         !eval_arena || atom_count < 0 ||
         (atom_count > 0 && !atom_ids)) {
@@ -7989,7 +8492,7 @@ static bool cetta_library_petta_execute_document_ids(
                 g_builtin_syms.bang &&
             index + 1 < atom_count) {
             atom_ids[index + 1] = library_module_capture_tokens(
-                ctx, work_space, eval_arena, persistent_arena,
+                ctx, work_space, eval_arena, persistent_arena, registry,
                 atom_ids[index + 1]);
             if (!cetta_library_petta_check_segment(
                     ctx, work_space, registry, eval_arena,
@@ -8050,6 +8553,38 @@ static bool cetta_library_petta_execute_document_ids(
             bool has_error =
                 first_error != NULL ||
                 result_set_has_error(results);
+            /* HE compatibility include and Python runner observations retain
+               complete directive frontiers, including language Error values.
+               Imports and PeTTa text processing keep their failure policy. */
+            if (last_results && observed.completion == CETTA_EVAL_COMPLETE) {
+                last_results->len = 0u;
+                for (CettaCount result_index = 0u;
+                     result_index < results->len; result_index++) {
+                    Atom *copy = atom_deep_copy_shared(
+                        persistent_arena ? persistent_arena : eval_arena,
+                        results->items[result_index]);
+                    CettaCount previous_len = last_results->len;
+                    if (copy)
+                        result_set_add(last_results, copy);
+                    if (!copy || last_results->len != previous_len + 1u) {
+                        eval_outcome_free(&observed);
+                        eval_release_temporary_spaces();
+                        if (failure_out)
+                            *failure_out = CETTA_PETTA_DOCUMENT_COPY_FAILED;
+                        return false;
+                    }
+                }
+            }
+            bool language_error_return = (last_results || observer) && has_error &&
+                observed.completion == CETTA_EVAL_COMPLETE;
+            if (observer && observed.completion == CETTA_EVAL_COMPLETE &&
+                !observer(observer_context, results)) {
+                eval_outcome_free(&observed);
+                eval_release_temporary_spaces();
+                if (failure_out)
+                    *failure_out = CETTA_PETTA_DOCUMENT_COPY_FAILED;
+                return false;
+            }
             if (!has_error && runnable_results) {
                 for (CettaCount result_index = 0u;
                      result_index < results->len;
@@ -8072,6 +8607,11 @@ static bool cetta_library_petta_execute_document_ids(
             }
             eval_outcome_free(&observed);
             eval_release_temporary_spaces();
+            if (language_error_return) {
+                if (failure_out)
+                    *failure_out = CETTA_PETTA_DOCUMENT_STOPPED_AT_ERROR;
+                return true;
+            }
             if (has_error) {
                 if (failure_out)
                     *failure_out =
@@ -8103,7 +8643,7 @@ static bool cetta_library_petta_execute_document_ids(
         for (int block_index = index; block_index < block_end;
              block_index++) {
             atom_ids[block_index] = library_module_capture_tokens(
-                ctx, work_space, eval_arena, persistent_arena,
+                ctx, work_space, eval_arena, persistent_arena, registry,
                 atom_ids[block_index]);
         }
         if (!cetta_library_petta_check_segment(
@@ -8257,7 +8797,7 @@ bool cetta_library_petta_process_text(
     bool ok = cetta_library_petta_execute_document_ids(
         ctx, space, eval_arena, persistent_arena,
         registry, atom_ids, atom_count,
-        &runnable_results, &failure, &detail);
+        &runnable_results, NULL, NULL, NULL, &failure, &detail);
     free(atom_ids);
     if (!ok) {
         if (failure == CETTA_PETTA_DOCUMENT_EVAL_FAILED &&
@@ -8507,18 +9047,21 @@ static void skip_mork_include_whitespace_and_comments(const char *text, size_t *
     }
 }
 
-static bool read_mork_include_text_file(const char *path, char **text_out) {
-    FILE *f = fopen(path, "r");
-    char *text = NULL;
+static bool read_module_source(const char *path, CettaModuleSource *source) {
+    FILE *f = fopen(path, "rb");
+    uint8_t *text = NULL;
     size_t cap = 4096;
     size_t nread = 0;
 
-    *text_out = NULL;
-    if (!f) {
+    *source = (CettaModuleSource){0};
+    if (!f)
+        return false;
+
+    text = malloc(cap + 1u);
+    if (!text) {
+        fclose(f);
         return false;
     }
-
-    text = cetta_malloc(cap + 1);
     for (;;) {
         size_t need = cap - nread;
         size_t got = fread(text + nread, 1, need, f);
@@ -8534,15 +9077,34 @@ static bool read_mork_include_text_file(const char *path, char **text_out) {
             }
         }
         if (nread == cap) {
-            cap *= 2;
-            text = cetta_realloc(text, cap + 1);
+            if (cap > (SIZE_MAX - 1u) / 2u) {
+                fclose(f);
+                free(text);
+                return false;
+            }
+            cap *= 2u;
+            uint8_t *grown = realloc(text, cap + 1u);
+            if (!grown) {
+                fclose(f);
+                free(text);
+                return false;
+            }
+            text = grown;
         }
     }
 
     fclose(f);
     text[nread] = '\0';
-    *text_out = text;
+    source->bytes = text;
+    source->length = nread;
     return true;
+}
+
+static bool read_mork_include_text_file(const char *path, char **text_out) {
+    CettaModuleSource source;
+    bool ok = read_module_source(path, &source);
+    *text_out = (char *)source.bytes;
+    return ok;
 }
 
 static bool load_module_mm2_file_into_mork_bridge(CettaLibraryContext *ctx,
@@ -8597,25 +9159,69 @@ static bool load_module_mm2_file_into_mork_bridge(CettaLibraryContext *ctx,
     return ok;
 }
 
+/* A syntax failure does not suppress effects of the complete prefix.
+ * Parsing and statement execution retain their established implementations. */
+static bool load_he_document(CettaLibraryContext *ctx, const char *path,
+                              Space *space, Arena *eval_arena,
+                              Arena *persistent_arena, Registry *registry,
+                              const CettaModuleSource *source,
+                              ResultSet *last_results, Atom **error_out) {
+    char diagnostic[512] = {0};
+    AtomId *ids = NULL;
+    int count = 0;
+    int parsed = source ? parse_metta_bytes_prefix_ids(
+        source->bytes, source->length, space->native.universe,
+        &ids, &count, diagnostic, sizeof(diagnostic)) : parse_metta_file_prefix_ids(
+        path, space->native.universe, &ids, &count, diagnostic, sizeof(diagnostic));
+    /* A trailing directive marker has no complete body to execute. */
+    if (count > 0 && tu_kind(space->native.universe, ids[count - 1]) == ATOM_SYMBOL &&
+        tu_sym(space->native.universe, ids[count - 1]) == g_builtin_syms.bang)
+        count--;
+    CettaPettaDocumentFailure failure = CETTA_PETTA_DOCUMENT_OK;
+    Atom *detail = NULL;
+    bool ok = cetta_library_petta_execute_document_ids(
+        ctx, space, eval_arena, persistent_arena, registry,
+        ids, count, NULL, last_results, NULL, NULL, &failure, &detail);
+    free(ids);
+    if (!ok) {
+        *error_out = detail ? detail : module_reason(
+            ctx, eval_arena,
+            failure == CETTA_PETTA_DOCUMENT_COPY_FAILED ? "ModuleParseFailed"
+                : failure == CETTA_PETTA_DOCUMENT_EVAL_FAILED ? "ModuleInitError"
+                : "ModuleCompilePlanFailed", path);
+    } else if (parsed < 0 &&
+               failure != CETTA_PETTA_DOCUMENT_STOPPED_AT_ERROR) {
+        *error_out = module_reason(ctx, eval_arena, "ModuleParseFailed", path);
+        ok = false;
+        /* Upstream's include has added the statements before the fault. */
+        if (last_results)
+            ctx->include_fault_keeps_prefix = true;
+    }
+    return ok;
+}
+
 static bool load_module_file(CettaLibraryContext *ctx, const char *path,
                              Space *logical_space, Space *work_space,
                              Arena *eval_arena,
                              Arena *persistent_arena, Registry *registry,
-                             int fuel, Atom **error_out) {
-    int slot = imported_file_lookup(ctx, logical_space, path);
+                             int fuel, const CettaModuleSource *source,
+                             ResultSet *last_results, Atom **error_out) {
+    int64_t slot = imported_file_lookup(ctx, logical_space, path);
     if (slot >= 0) {
         if (ctx->imported_files[slot].loading) {
             *error_out = module_reason(ctx, eval_arena, "ModuleImportCycle", path);
             return false;
         }
-        return true;
+        if (!last_results)
+            return true;
     }
-    if (ctx->imported_file_len >= CETTA_MAX_IMPORTED_FILES) {
-        *error_out = atom_symbol(eval_arena, "too many imported files");
-        return false;
+    if (slot < 0) {
+        if (!library_reserve_imported_file(ctx)) {
+            *error_out = atom_symbol(eval_arena, "module file inventory allocation failed");
+            return false;
+        }
+        slot = ctx->imported_file_len++;
     }
-
-    slot = (int)ctx->imported_file_len++;
     ctx->imported_files[slot].space = logical_space;
     ctx->imported_files[slot].loading = true;
     snprintf(ctx->imported_files[slot].path,
@@ -8623,7 +9229,12 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
 
     char import_dir[PATH_MAX];
     copy_parent_dir(import_dir, sizeof(import_dir), path);
-    cetta_library_push_dir(ctx, import_dir);
+    if (!cetta_library_push_dir(ctx, import_dir)) {
+        ctx->imported_files[slot].loading = false;
+        ctx->imported_files[slot].path[0] = '\0';
+        *error_out = atom_symbol(eval_arena, "module resource scope allocation failed");
+        return false;
+    }
 
     Atom *prev_self = NULL;
     if (registry) {
@@ -8662,6 +9273,11 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
     } else if (format.kind == CETTA_MODULE_FORMAT_MM2) {
         ok = load_module_mm2_file(ctx, path, work_space, eval_arena,
                                   persistent_arena, error_out);
+    } else if (ctx->session.language_id == CETTA_LANGUAGE_HE &&
+               (ctx->module_token_scope || !loaded ||
+                loaded->provider_kind != CETTA_MODULE_PROVIDER_STDLIB_FILE)) {
+        ok = load_he_document(ctx, path, work_space, eval_arena,
+                              persistent_arena, registry, source, last_results, error_out);
     } else {
         int n = parse_metta_file_ids(path,
                                      work_space ? work_space->native.universe : NULL,
@@ -8676,7 +9292,7 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
             ok = cetta_library_petta_execute_document_ids(
                 ctx, work_space, eval_arena,
                 persistent_arena, registry,
-                atom_ids, n, NULL, &failure, &detail);
+                atom_ids, n, NULL, last_results, NULL, NULL, &failure, &detail);
             if (!ok) {
                 if (failure == CETTA_PETTA_DOCUMENT_EVAL_FAILED &&
                     detail) {
@@ -8719,9 +9335,14 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
 static bool load_module_file_transactional(CettaLibraryContext *ctx, const char *path,
                                            Space *target, Arena *eval_arena,
                                            Arena *persistent_arena, Registry *registry,
-                                           int fuel, Atom **error_out) {
+                                           int fuel, ResultSet *last_results,
+                                           Atom **error_out) {
     uint32_t imported_len_before = ctx->imported_file_len;
     Space *work_space = space_heap_clone_shallow(target);
+    if (!work_space) {
+        *error_out = atom_symbol(eval_arena, "module transaction allocation failed");
+        return false;
+    }
     if (work_space && ctx->petta_program &&
         !petta_program_clone_space(
             ctx->petta_program, target, work_space)) {
@@ -8737,15 +9358,18 @@ static bool load_module_file_transactional(CettaLibraryContext *ctx, const char 
                 ctx->petta_program, work_space);
         space_free(work_space);
         free(work_space);
-        *error_out = atom_symbol(eval_arena, "too many nested import transactions");
+        *error_out = atom_symbol(eval_arena, "module transaction allocation failed");
         return false;
     }
 
+    ctx->include_fault_keeps_prefix = false;
     bool ok = load_module_file(ctx, path, target, work_space, eval_arena,
-                               persistent_arena, registry, fuel, error_out);
+                               persistent_arena, registry, fuel, NULL, last_results, error_out);
     cetta_library_pop_import_alias(ctx);
+    bool keeps_prefix = !ok && ctx->include_fault_keeps_prefix;
+    ctx->include_fault_keeps_prefix = false;
 
-    if (!ok) {
+    if (!ok && !keeps_prefix) {
         rollback_imported_files(ctx, imported_len_before);
         if (ctx->petta_program)
             petta_program_forget_space(
@@ -8773,13 +9397,13 @@ static bool load_module_file_transactional(CettaLibraryContext *ctx, const char 
             ctx->petta_program, work_space);
     space_free(work_space);
     free(work_space);
-    return true;
+    return ok;
 }
 
 static bool execute_import_plan(CettaLibraryContext *ctx, const CettaImportPlan *plan,
                                 Arena *eval_arena,
                                 Arena *persistent_arena, Registry *registry,
-                                int fuel, Atom **error_out) {
+                                int fuel, ResultSet *last_results, Atom **error_out) {
     uint32_t imported_len_before = ctx->imported_file_len;
     uint32_t loaded_len_before = ctx->loaded_module_len;
     if (!remember_loaded_module(ctx, plan, NULL, eval_arena, error_out)) {
@@ -8802,7 +9426,7 @@ static bool execute_import_plan(CettaLibraryContext *ctx, const CettaImportPlan 
         bool ok = load_module_file_transactional(ctx, plan->canonical_path,
                                                  plan->execution_target_space,
                                                  eval_arena, persistent_arena,
-                                                 registry, fuel, error_out);
+                                                 registry, fuel, last_results, error_out);
         if (!ok) {
             rollback_loaded_modules(ctx, loaded_len_before);
         }
@@ -8810,7 +9434,7 @@ static bool execute_import_plan(CettaLibraryContext *ctx, const CettaImportPlan 
     }
     if (!load_module_file(ctx, plan->canonical_path, plan->logical_target_space,
                           plan->execution_target_space, eval_arena,
-                          persistent_arena, registry, fuel, error_out)) {
+                          persistent_arena, registry, fuel, NULL, last_results, error_out)) {
         if (plan->target_is_fresh) {
             rollback_imported_files(ctx, imported_len_before);
         }
@@ -8823,8 +9447,8 @@ static bool execute_import_plan(CettaLibraryContext *ctx, const CettaImportPlan 
 static CettaLoadedModule *loaded_module_lookup(CettaLibraryContext *ctx,
                                                const char *canonical_path) {
     for (uint32_t i = 0; i < ctx->loaded_module_len; i++) {
-        if (strcmp(ctx->loaded_modules[i].canonical_path, canonical_path) == 0) {
-            return &ctx->loaded_modules[i];
+        if (strcmp(ctx->loaded_modules[i]->canonical_path, canonical_path) == 0) {
+            return ctx->loaded_modules[i];
         }
     }
     return NULL;
@@ -8843,12 +9467,16 @@ static CettaLoadedModule *remember_loaded_module(CettaLibraryContext *ctx,
         entry->format = plan->format;
         return entry;
     }
-    if (ctx->loaded_module_len >= CETTA_MAX_LOADED_MODULES) {
-        *error_out = atom_symbol(eval_arena, "too many loaded modules");
+    if (!library_reserve_loaded_module(ctx)) {
+        *error_out = atom_symbol(eval_arena, "module inventory allocation failed");
         return NULL;
     }
-    entry = &ctx->loaded_modules[ctx->loaded_module_len++];
-    memset(entry, 0, sizeof(*entry));
+    entry = calloc(1u, sizeof(*entry));
+    if (!entry) {
+        *error_out = atom_symbol(eval_arena, "module record allocation failed");
+        return NULL;
+    }
+    ctx->loaded_modules[ctx->loaded_module_len++] = entry;
     snprintf(entry->display_name, sizeof(entry->display_name), "%s", plan->spec.raw_spec);
     snprintf(entry->canonical_path, sizeof(entry->canonical_path), "%s", plan->canonical_path);
     entry->provider_kind = plan->provider_kind;
@@ -8865,14 +9493,21 @@ static bool library_loads_he_module(const CettaLibraryContext *ctx,
            plan->format.kind == CETTA_MODULE_FORMAT_METTA;
 }
 
+static bool library_loads_he_provider(const CettaLibraryContext *ctx,
+                                      const CettaImportPlan *plan) {
+    return ctx->session.language_id == CETTA_LANGUAGE_HE &&
+           plan->format.kind == CETTA_MODULE_FORMAT_FOREIGN &&
+           plan->format.foreign_backend == CETTA_FOREIGN_BACKEND_PYTHON;
+}
+
 /* Load an HE module into its own space.  The space reads the library module
  * as the space importing it does; its text is read with its own tokens, so
  * `&self` in it denotes its space wherever its code later runs, and the
  * tokens its code binds stay its own. */
-static bool load_he_module(CettaLibraryContext *ctx, CettaLoadedModule *entry,
-                           const char *path, Arena *eval_arena,
-                           Arena *persistent_arena, Registry *registry,
-                           int fuel, Atom **error_out) {
+static bool prepare_he_module_entry(CettaLibraryContext *ctx,
+                                    CettaLoadedModule *entry, Arena *eval_arena,
+                                    Arena *persistent_arena, Registry *registry,
+                                    Atom **error_out) {
     if (!library_reserve_module_retirement(ctx)) {
         *error_out = atom_symbol(eval_arena, "module rollback allocation failed");
         return false;
@@ -8899,18 +9534,25 @@ static bool load_he_module(CettaLibraryContext *ctx, CettaLoadedModule *entry,
         *error_out = atom_symbol(eval_arena, "module library setup failed");
         return false;
     }
-    /* Its name extends that of the module importing it first. */
+    /* Its name extends that of the module importing it first; `self:`
+       says so explicitly and `top:` names it from the program. */
     const char *parent = cetta_library_module_space_name(ctx, importer);
+    const char *leaf = entry->display_name;
     if (!parent)
         parent = "top";
-    size_t name_size = strlen(parent) + 1u + strlen(entry->display_name) + 1u;
+    if (strncmp(leaf, "self:", 5u) == 0) {
+        leaf += 5u;
+    } else if (strncmp(leaf, "top:", 4u) == 0) {
+        parent = "top";
+        leaf += 4u;
+    }
+    size_t name_size = strlen(parent) + 1u + strlen(leaf) + 1u;
     entry->module_name = malloc(name_size);
     if (!entry->module_name) {
         *error_out = atom_symbol(eval_arena, "module name allocation failed");
         return false;
     }
-    snprintf(entry->module_name, name_size, "%s:%s", parent,
-             entry->display_name);
+    snprintf(entry->module_name, name_size, "%s:%s", parent, leaf);
     entry->tokens = malloc(sizeof(*entry->tokens));
     if (!entry->tokens) {
         *error_out = atom_symbol(eval_arena, "module token table allocation failed");
@@ -8921,13 +9563,63 @@ static bool load_he_module(CettaLibraryContext *ctx, CettaLoadedModule *entry,
     cetta_provenance_assert_not_transient(module_self,
                                          "library.module.self");
     registry_bind_id(entry->tokens, g_builtin_syms.self, module_self);
+    return true;
+}
+
+static bool load_he_module(CettaLibraryContext *ctx, CettaLoadedModule *entry,
+                           const char *path, Arena *eval_arena,
+                           Arena *persistent_arena, Registry *registry,
+                           int fuel, const CettaModuleSource *source,
+                           Atom **error_out) {
+    if (!prepare_he_module_entry(ctx, entry, eval_arena, persistent_arena,
+                                 registry, error_out))
+        return false;
+    struct stat st;
+    if (stat(path, &st) == 0 && S_ISDIR(st.st_mode))
+        return true;
     Registry *outer_scope = ctx->module_token_scope;
     ctx->module_token_scope = entry->tokens;
     bool ok = load_module_file(ctx, path, entry->space, entry->space,
                                eval_arena, persistent_arena, entry->tokens,
-                               fuel, error_out);
+                               fuel, source, NULL, error_out);
     ctx->module_token_scope = outer_scope;
     return ok;
+}
+
+/* Load a Python module that provides an HE module. Finding the module
+ * executes its file, and loading by name executes it again. An explicit
+ * registered path has no preceding name search. Its register functions run
+ * once for the module's own tokens. `source` holds the bytes
+ * captured for this attempt, or NULL where Python's import machinery reads
+ * the file as upstream does. */
+static bool load_he_provider(CettaLibraryContext *ctx, CettaLoadedModule *entry,
+                             const char *path, Arena *eval_arena,
+                             Arena *persistent_arena, Registry *registry,
+                             const CettaModuleSource *source, bool name_search,
+                             Atom **error_out) {
+    if (!prepare_he_module_entry(ctx, entry, eval_arena, persistent_arena,
+                                 registry, error_out))
+        return false;
+    const uint8_t *bytes = source ? source->bytes : NULL;
+    size_t length = source ? source->length : 0u;
+    CettaForeignHEExport *exports = NULL;
+    size_t count = 0u;
+    bool ok = (!name_search || cetta_foreign_he_module_execute(
+            ctx->foreign_runtime, path, bytes, length, eval_arena, NULL, error_out)) &&
+        cetta_foreign_he_module_execute(ctx->foreign_runtime, path, bytes,
+            length, eval_arena, &entry->provider, error_out) &&
+        cetta_foreign_he_module_exports(entry->provider,
+            persistent_arena ? persistent_arena : eval_arena, &exports, &count,
+            error_out);
+    if (!ok) {
+        *error_out = module_reason_with_detail(ctx, eval_arena,
+            "ModuleForeignLoadFailed", path, *error_out);
+        return false;
+    }
+    for (size_t i = 0u; i < count; i++)
+        registry_bind(entry->tokens, exports[i].name, exports[i].atom);
+    cetta_foreign_he_exports_free(exports, count);
+    return true;
 }
 
 /* Link a loaded HE module, then the modules it imports, as dependencies of
@@ -8956,12 +9648,86 @@ static bool library_link_he_module(Space *importer, Space *module,
     return ok;
 }
 
+/* Give `importer` the names of a Python-provided module, then link it. The
+ * register functions run once for this importer; their names are published
+ * together or not at all, and a failed request leaves no link. A request made
+ * from inside the running register functions is already being served. The
+ * compatibility profile treats a later request as a new attempt; the other
+ * profiles remember the refusal for this importer. */
+static bool library_name_he_provider(CettaLibraryContext *ctx, Space *importer,
+                                     Registry *registry, CettaLoadedModule *entry,
+                                     Arena *eval_arena, Arena *persistent_arena,
+                                     Atom **error_out) {
+    uint64_t instance = space_instance_id(logical_import_space(ctx, importer));
+    CettaHEProviderExport **link = &entry->exports;
+    while (*link && (*link)->importer_instance != instance)
+        link = &(*link)->next;
+    CettaHEProviderExport *record = *link;
+    if (record && record->naming)
+        return true;
+    if (record && record->named)
+        return library_link_he_module(importer, entry->space, eval_arena, error_out);
+    if (record && record->refusal) {
+        *error_out = atom_deep_copy(eval_arena, record->refusal);
+        return false;
+    }
+    if (!record) {
+        record = calloc(1u, sizeof(*record));
+        if (!record) {
+            *error_out = atom_symbol(eval_arena, "module export record allocation failed");
+            return false;
+        }
+        record->importer_instance = instance;
+        arena_init_detached(&record->storage);
+        arena_set_block_capacity(&record->storage, 1024u);
+        *link = record;
+    }
+    record->naming = true;
+    CettaForeignHEExport *exports = NULL;
+    size_t count = 0u;
+    bool ok = cetta_foreign_he_module_exports(entry->provider,
+        persistent_arena ? persistent_arena : eval_arena, &exports, &count, error_out);
+    /* The list may have changed while the register functions ran. */
+    link = &entry->exports;
+    while (*link && *link != record)
+        link = &(*link)->next;
+    record->naming = false;
+    if (ok && !library_link_he_module(importer, entry->space, eval_arena, error_out)) {
+        cetta_foreign_he_exports_free(exports, count);
+        ok = false;
+    } else if (!ok) {
+        *error_out = module_reason_with_detail(ctx, eval_arena,
+            "ModuleForeignLoadFailed", entry->canonical_path, *error_out);
+    }
+    if (!ok) {
+        if (cetta_language_uses_rust_he_compat_semantics(
+                ctx->session.language_id, ctx->session.profile)) {
+            if (*link)
+                *link = record->next;
+            arena_free(&record->storage);
+            free(record);
+        } else {
+            record->refusal = atom_deep_copy(&record->storage, *error_out);
+        }
+        return false;
+    }
+    for (size_t i = 0u; registry && i < count; i++)
+        registry_bind(registry, exports[i].name, exports[i].atom);
+    cetta_foreign_he_exports_free(exports, count);
+    record->named = true;
+    return true;
+}
+
 bool cetta_library_owns_space(const CettaLibraryContext *ctx,
                               const Space *space) {
     if (!ctx || !space)
         return false;
+    for (uint32_t i = 0u; i < ctx->module_own_view_len; i++) {
+        if (ctx->module_own_views[i].view == space)
+            return true;
+    }
     for (uint32_t i = 0u; i < ctx->loaded_module_len; i++) {
-        if (ctx->loaded_modules[i].space == space)
+        if (ctx->loaded_modules[i]->space == space)
             return true;
     }
     for (uint32_t i = 0u; i < ctx->retired_module_len; i++) {
@@ -8977,6 +9743,106 @@ void cetta_library_set_top_module_space(CettaLibraryContext *ctx,
         ctx->top_module_space = space;
 }
 
+void cetta_library_set_top_module_registry(CettaLibraryContext *ctx,
+                                           Registry *registry) {
+    if (ctx)
+        ctx->top_module_registry = registry;
+}
+
+bool cetta_library_module_context(CettaLibraryContext *ctx, uint64_t instance,
+                                  Space **space_out, Registry **registry_out) {
+    if (!space_out || !registry_out)
+        return false;
+    *space_out = NULL;
+    *registry_out = NULL;
+    if (!ctx || !instance || !ctx->top_module_space)
+        return false;
+    if (ctx->top_module_registry && ctx->top_module_space &&
+        space_instance_id(ctx->top_module_space) == instance) {
+        *space_out = (Space *)ctx->top_module_space;
+        *registry_out = ctx->top_module_registry;
+        return true;
+    }
+    for (uint32_t i = 0u; i < ctx->loaded_module_len; i++) {
+        CettaLoadedModule *module = ctx->loaded_modules[i];
+        if (module->tokens && module->space && space_instance_id(module->space) == instance) {
+            *space_out = module->space;
+            *registry_out = module->tokens;
+            return true;
+        }
+    }
+    for (uint32_t i = 0u; i < ctx->retired_module_len; i++) {
+        if (ctx->retired_modules[i].tokens &&
+            space_instance_id(ctx->retired_modules[i].space) == instance) {
+            *space_out = ctx->retired_modules[i].space;
+            *registry_out = ctx->retired_modules[i].tokens;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool cetta_library_he_run_text(CettaLibraryContext *ctx, Space *space,
+    Registry *registry, const char *text, Arena *arena, Arena *persistent,
+    CettaDocumentResultObserver observer, void *observer_context, Atom **error_out) {
+    if (error_out)
+        *error_out = NULL;
+    if (!ctx || !space || !text || !arena)
+        return false;
+    Space *work = cetta_library_import_execution_space(ctx, space);
+    if (!work || !work->native.universe)
+        return false;
+    char resource_dir[PATH_MAX] = {0};
+    if (space == ctx->top_module_space) {
+        snprintf(resource_dir, sizeof(resource_dir), "%s",
+            ctx->script_dir[0] ? ctx->script_dir : ctx->working_dir);
+    } else {
+        for (uint32_t i = 0u; i < ctx->loaded_module_len; i++) {
+            if (ctx->loaded_modules[i]->space == space) {
+                copy_parent_dir(resource_dir, sizeof(resource_dir),
+                                 ctx->loaded_modules[i]->canonical_path);
+                break;
+            }
+        }
+        for (uint32_t i = 0u; !resource_dir[0] && i < ctx->retired_module_len; i++) {
+            if (ctx->retired_modules[i].space == space)
+                snprintf(resource_dir, sizeof(resource_dir), "%s",
+                    ctx->retired_modules[i].resource_dir);
+        }
+    }
+    if (!cetta_library_push_dir(ctx, resource_dir[0] ? resource_dir : ".")) {
+        if (error_out)
+            *error_out = atom_symbol(arena, "runner resource scope allocation failed");
+        return false;
+    }
+    AtomId *ids = NULL;
+    int count = 0;
+    char diagnostic[512] = {0};
+    int parsed = parse_metta_bytes_prefix_ids(
+        (const uint8_t *)text, strlen(text), work->native.universe,
+        &ids, &count, diagnostic, sizeof(diagnostic));
+    if (count > 0 && tu_kind(work->native.universe, ids[count - 1]) == ATOM_SYMBOL &&
+        tu_sym(work->native.universe, ids[count - 1]) == g_builtin_syms.bang)
+        count--;
+    Registry *outer_scope = ctx->module_token_scope;
+    ctx->module_token_scope = registry;
+    CettaPettaDocumentFailure failure = CETTA_PETTA_DOCUMENT_OK;
+    bool ok = cetta_library_petta_execute_document_ids(
+        ctx, work, arena, persistent, registry, ids, count,
+        NULL, NULL, observer, observer_context, &failure, error_out);
+    ctx->module_token_scope = outer_scope;
+    cetta_library_pop_dir(ctx);
+    free(ids);
+    /* A run that returned at an Error value never read the later text. */
+    if (ok && parsed < 0 && failure != CETTA_PETTA_DOCUMENT_STOPPED_AT_ERROR) {
+        if (error_out)
+            *error_out = atom_symbol(arena,
+                diagnostic[0] ? diagnostic : "MeTTa source parse failed");
+        return false;
+    }
+    return ok;
+}
+
 const char *cetta_library_module_space_name(const CettaLibraryContext *ctx,
                                             const void *space) {
     if (!ctx || !space)
@@ -8984,8 +9850,8 @@ const char *cetta_library_module_space_name(const CettaLibraryContext *ctx,
     if (space == ctx->top_module_space)
         return "top";
     for (uint32_t i = 0u; i < ctx->loaded_module_len; i++) {
-        if (ctx->loaded_modules[i].space == space)
-            return ctx->loaded_modules[i].module_name;
+        if (ctx->loaded_modules[i]->space == space)
+            return ctx->loaded_modules[i]->module_name;
     }
     for (uint32_t i = 0u; i < ctx->retired_module_len; i++) {
         if (ctx->retired_modules[i].space == space)
@@ -8994,12 +9860,321 @@ const char *cetta_library_module_space_name(const CettaLibraryContext *ctx,
     return NULL;
 }
 
+Space *cetta_library_module_space_no_deps(
+        CettaLibraryContext *ctx, Space *space) {
+    if (!ctx || !space || space->module_own_view)
+        return space;
+    space = logical_import_space(ctx, space);
+    if (space != ctx->top_module_space &&
+        !cetta_library_owns_space(ctx, space))
+        return space;
+    for (uint32_t i = 0u; i < ctx->module_own_view_len; i++) {
+        if (ctx->module_own_views[i].source == space &&
+            ctx->module_own_views[i].source_instance_id ==
+                space_instance_id(space))
+            return ctx->module_own_views[i].view;
+    }
+    if (ctx->module_own_view_len == ctx->module_own_view_cap) {
+        uint32_t next = ctx->module_own_view_cap
+            ? ctx->module_own_view_cap * 2u : 4u;
+        if (next <= ctx->module_own_view_cap ||
+            (size_t)next > SIZE_MAX / sizeof(*ctx->module_own_views))
+            return NULL;
+        void *views = realloc(ctx->module_own_views,
+                               (size_t)next * sizeof(*ctx->module_own_views));
+        if (!views)
+            return NULL;
+        ctx->module_own_views = views;
+        ctx->module_own_view_cap = next;
+    }
+    Space *view = malloc(sizeof(*view));
+    if (!view)
+        return NULL;
+    if (!space_init_module_own_view(view, space)) {
+        free(view);
+        return NULL;
+    }
+    /* A view first created in a nested include must retain every enclosing
+       storage observation. Unwinding then restores it without allocation. */
+    for (uint32_t i = 0u; i < ctx->import_space_alias_len; i++) {
+        if (logical_import_space(ctx, ctx->import_space_aliases[i].work_space) == space &&
+            !space_module_own_view_select(view, ctx->import_space_aliases[i].work_space)) {
+            space_free(view);
+            free(view);
+            return NULL;
+        }
+    }
+    uint32_t index = ctx->module_own_view_len++;
+    ctx->module_own_views[index].source = space;
+    ctx->module_own_views[index].source_instance_id = space_instance_id(space);
+    ctx->module_own_views[index].view = view;
+    return view;
+}
+
+static CettaHEModuleFailure **library_he_failure_list(CettaLibraryContext *ctx) {
+    return ctx->he_module_run_scope
+        ? &ctx->he_module_run_scope->failures : &ctx->he_module_failures;
+}
+
+static void library_he_forget_failure(CettaLibraryContext *ctx,
+                                      CettaHEModuleFailure *failure) {
+    CettaHEModuleFailure **link = library_he_failure_list(ctx);
+    while (*link && *link != failure)
+        link = &(*link)->next;
+    if (*link) {
+        *link = failure->next;
+        library_he_failure_free(failure);
+    }
+}
+
+static bool library_he_begin_initializer(CettaLibraryContext *ctx,
+    const CettaImportPlan *plan, Registry *registry, Arena *arena,
+    CettaHEModuleFailure **attempt_out, Atom **error_out) {
+    *attempt_out = NULL;
+    bool compat = cetta_language_uses_rust_he_compat_semantics(
+        ctx->session.language_id, ctx->session.profile);
+    Atom *self = registry ? registry_lookup_id(registry, g_builtin_syms.self) : NULL;
+    Space *parent = self && self->kind == ATOM_GROUNDED && self->ground.gkind == GV_SPACE
+        ? logical_import_space(ctx, self->ground.ptr) : (Space *)ctx->top_module_space;
+    uint64_t parent_instance = space_instance_id(parent);
+    CettaHEModuleFailure **head = library_he_failure_list(ctx);
+    CettaModuleSource source = {0};
+    struct stat st;
+    bool directory = stat(plan->canonical_path, &st) == 0 && S_ISDIR(st.st_mode);
+    bool captured = false;
+    for (CettaHEModuleFailure *failure = *head; failure; failure = failure->next) {
+        if (failure->provider != plan->provider_kind ||
+            failure->format.kind != plan->format.kind ||
+            failure->format.foreign_backend != plan->format.foreign_backend ||
+            strcmp(failure->path, plan->canonical_path) != 0 ||
+            (compat &&
+             (failure->importer_instance != parent_instance ||
+              strcmp(failure->name, plan->spec.raw_spec) != 0)))
+            continue;
+        if (failure->completed)
+            continue;
+        if (failure->initializing) {
+            *error_out = module_reason(ctx, arena, "ModuleImportCycle", plan->canonical_path);
+            return false;
+        }
+        if (!compat) {
+            captured = !directory && read_module_source(plan->canonical_path, &source);
+            /* Missing bytes do not establish a changed version. Metadata
+             * and elapsed time cannot authorize replaying completed effects. */
+            if (captured && (!failure->source.bytes ||
+                source.length != failure->source.length ||
+                memcmp(source.bytes, failure->source.bytes, source.length) != 0)) {
+                library_he_forget_failure(ctx, failure);
+                break;
+            }
+        }
+        free(source.bytes);
+        *error_out = atom_deep_copy(arena, failure->reason);
+        if (!*error_out)
+            *error_out = atom_symbol(arena, "module failure copy failed");
+        return false;
+    }
+    if (!captured && !directory)
+        captured = read_module_source(plan->canonical_path, &source);
+    size_t name_size = strlen(plan->spec.raw_spec) + 1u;
+    if (name_size > SIZE_MAX - sizeof(CettaHEModuleFailure)) {
+        free(source.bytes);
+        *error_out = atom_symbol(arena, "module refusal record too large");
+        return false;
+    }
+    CettaHEModuleFailure *failure = calloc(1u, sizeof(*failure) + name_size);
+    if (!failure) {
+        free(source.bytes);
+        *error_out = atom_symbol(arena, "module refusal allocation failed");
+        return false;
+    }
+    failure->importer_instance = parent_instance;
+    failure->provider = plan->provider_kind;
+    failure->format = plan->format;
+    failure->initializing = true;
+    failure->source = source;
+    snprintf(failure->path, sizeof(failure->path), "%s", plan->canonical_path);
+    memcpy(failure->name, plan->spec.raw_spec, name_size);
+    arena_init_detached(&failure->storage);
+    arena_set_block_capacity(&failure->storage, 1024u);
+    failure->reason = atom_symbol(&failure->storage, "module initialization failed");
+    if (compat) {
+        for (CettaHEModuleFailure *pending = *head; pending; pending = pending->next) {
+            if (pending->initializing) {
+                failure->initialization_parent = pending;
+                break;
+            }
+        }
+    }
+    failure->next = *head;
+    *head = failure;
+    *attempt_out = failure;
+    if (!captured && !directory) {
+        failure->initializing = false;
+        *error_out = module_reason(ctx, arena, "ModuleParseFailed", plan->canonical_path);
+        Atom *owned = atom_deep_copy(&failure->storage, *error_out);
+        if (owned)
+            failure->reason = owned;
+        return false;
+    }
+    return true;
+}
+
+static void library_he_finish_initializer(CettaLibraryContext *ctx,
+    CettaHEModuleFailure *failure, Atom *reason) {
+    if (!failure)
+        return;
+    bool compat = cetta_language_uses_rust_he_compat_semantics(
+        ctx->session.language_id, ctx->session.profile);
+    if (compat) {
+        CettaHEModuleFailure **link = library_he_failure_list(ctx);
+        while (*link) {
+            CettaHEModuleFailure *child = *link;
+            if (child->initialization_parent != failure) {
+                link = &child->next;
+                continue;
+            }
+            child->initialization_parent = failure->initialization_parent;
+            /* A finished child belongs to its parent's attempt. When the
+               parent fails the child is unloaded with it, and when the
+               outermost attempt ends nothing is left to track. */
+            if (child->completed && (reason || !failure->initialization_parent)) {
+                *link = child->next;
+                library_he_failure_free(child);
+                continue;
+            }
+            link = &child->next;
+        }
+        if (!reason && failure->initialization_parent) {
+            failure->initializing = false;
+            failure->completed = true;
+            return;
+        }
+        /* Upstream forgets a failed attempt: the next import is a new one. */
+        if (reason) {
+            library_he_forget_failure(ctx, failure);
+            return;
+        }
+    }
+    if (!reason) {
+        library_he_forget_failure(ctx, failure);
+        return;
+    }
+    Atom *owned = atom_deep_copy(&failure->storage, reason);
+    if (owned)
+        failure->reason = owned;
+    failure->initializing = false;
+}
+
+/* Whether a module is loaded under this `top:` name. */
+static bool he_top_name_known(const CettaLibraryContext *ctx, const char *name) {
+    for (uint32_t i = 0u; i < ctx->loaded_module_len; i++) {
+        const CettaLoadedModule *module = ctx->loaded_modules[i];
+        if (module->module_name && (module->space || module->loading) &&
+            strcmp(module->module_name, name) == 0)
+            return true;
+    }
+    for (uint32_t i = 0u; i < ctx->he_module_alias_len; i++) {
+        if (strcmp(ctx->he_module_aliases[i], name) == 0)
+            return true;
+    }
+    return false;
+}
+
+/* A `top:` name is remembered, so that it counts as loaded afterwards. A
+ * module that is still loading may give a loaded module a further name only
+ * among its own sub-modules. */
+static bool admit_he_top_name(CettaLibraryContext *ctx, const char *raw,
+                              Registry *registry, bool renames_loaded,
+                              Arena *eval_arena, Atom **error_out) {
+    if (he_top_name_known(ctx, raw))
+        return true;
+    Atom *self = registry && renames_loaded
+        ? registry_lookup_id(registry, g_builtin_syms.self) : NULL;
+    Space *importer = self && self->kind == ATOM_GROUNDED &&
+            self->ground.gkind == GV_SPACE
+        ? (Space *)self->ground.ptr : NULL;
+    for (uint32_t i = 0u; importer && i < ctx->loaded_module_len; i++) {
+        const CettaLoadedModule *loader = ctx->loaded_modules[i];
+        if (loader->space != importer || !loader->loading ||
+            !loader->module_name)
+            continue;
+        size_t loader_len = strlen(loader->module_name);
+        if (strncmp(raw, loader->module_name, loader_len) == 0 &&
+            raw[loader_len] == ':')
+            break;
+        const char *format = "Cannot load module %s from loader of %s.  "
+            "Module loaders may only load sub-modules";
+        size_t size = strlen(format) + strlen(raw) + loader_len + 1u;
+        char *message = arena_alloc(eval_arena, size);
+        snprintf(message, size, format, raw, loader->module_name);
+        *error_out = atom_symbol(eval_arena, message);
+        return false;
+    }
+    if (ctx->he_module_alias_len == ctx->he_module_alias_cap) {
+        uint32_t next = ctx->he_module_alias_cap
+            ? ctx->he_module_alias_cap * 2u : 8u;
+        char **names = next > ctx->he_module_alias_cap
+            ? realloc(ctx->he_module_aliases, (size_t)next * sizeof(*names))
+            : NULL;
+        if (!names) {
+            *error_out = atom_symbol(eval_arena, "module name allocation failed");
+            return false;
+        }
+        ctx->he_module_aliases = names;
+        ctx->he_module_alias_cap = next;
+    }
+    char *copy = strdup(raw);
+    if (!copy) {
+        *error_out = atom_symbol(eval_arena, "module name allocation failed");
+        return false;
+    }
+    ctx->he_module_aliases[ctx->he_module_alias_len++] = copy;
+    return true;
+}
+
+/* Before a module named through HE's module tree is loaded, its parent is:
+ * every component of the name is a module. */
+static bool prepare_he_tree_module(CettaLibraryContext *ctx,
+                                   const CettaImportPlan *plan,
+                                   Arena *eval_arena, Arena *persistent_arena,
+                                   Registry *registry, int fuel,
+                                   Atom **error_out) {
+    char parent[PATH_MAX];
+    snprintf(parent, sizeof(parent), "%s", plan->spec.raw_spec);
+    char *last = strrchr(parent, ':');
+    if (!last)
+        return true;
+    *last = '\0';
+    if (strcmp(parent, "self") == 0 || strcmp(parent, "top") == 0)
+        return true;
+    Space *parent_space = NULL;
+    return cetta_library_import_module(ctx, parent, NULL, true, eval_arena,
+                                       persistent_arena, registry, fuel,
+                                       &parent_space, error_out);
+}
+
 static CettaLoadedModule *ensure_loaded_module(CettaLibraryContext *ctx,
                                                const CettaImportPlan *plan,
                                                Arena *eval_arena,
                                                Arena *persistent_arena,
                                                Registry *registry,
                                                int fuel, Atom **error_out) {
+    if (ctx->session.language_id == CETTA_LANGUAGE_HE &&
+        plan->spec.kind == CETTA_MODULE_SPEC_REGISTERED_ROOT &&
+        (plan->provider_kind == CETTA_MODULE_PROVIDER_RELATIVE_FILE ||
+         strchr(plan->spec.path_or_member, '/'))) {
+        const CettaLoadedModule *known =
+            loaded_module_lookup(ctx, plan->canonical_path);
+        if (strncmp(plan->spec.raw_spec, "top:", 4u) == 0 &&
+            !admit_he_top_name(ctx, plan->spec.raw_spec, registry,
+                               known && known->space, eval_arena, error_out))
+            return NULL;
+        if (!(known && (known->space || known->loading)) &&
+            !prepare_he_tree_module(ctx, plan, eval_arena, persistent_arena,
+                                    registry, fuel, error_out))
+            return NULL;
+    }
     uint32_t loaded_len_before = ctx->loaded_module_len;
     uint32_t imported_len_before = ctx->imported_file_len;
     CettaLoadedModule *entry = remember_loaded_module(ctx, plan, NULL, eval_arena, error_out);
@@ -9014,10 +10189,21 @@ static CettaLoadedModule *ensure_loaded_module(CettaLibraryContext *ctx,
     if (entry->space) {
         return entry;
     }
+    CettaHEModuleFailure *attempt = NULL;
+    bool he_provider = library_loads_he_provider(ctx, plan);
+    bool he_initializer = he_provider || library_loads_he_module(ctx, plan);
+    bool compat = cetta_language_uses_rust_he_compat_semantics(
+        ctx->session.language_id, ctx->session.profile);
+    if (he_initializer && !library_he_begin_initializer(
+            ctx, plan, registry, eval_arena, &attempt, error_out)) {
+        rollback_one_loaded_module(ctx, entry);
+        return NULL;
+    }
     entry->space = malloc(sizeof(Space));
     if (!entry->space) {
-        rollback_loaded_modules(ctx, loaded_len_before);
         *error_out = atom_symbol(eval_arena, "module space allocation failed");
+        library_he_finish_initializer(ctx, attempt, *error_out);
+        rollback_one_loaded_module(ctx, entry);
         return NULL;
     }
     space_init_with_universe(entry->space,
@@ -9029,19 +10215,35 @@ static CettaLoadedModule *ensure_loaded_module(CettaLibraryContext *ctx,
         ok = load_module_act_file_pathmap_materialized(
             ctx, plan->canonical_path, entry->space,
             eval_arena, persistent_arena, error_out);
+    } else if (he_provider) {
+        /* Upstream reads a Python file through Python's import machinery;
+         * the other profiles execute the bytes captured for this attempt. */
+        ok = load_he_provider(ctx, entry, plan->canonical_path, eval_arena,
+                              persistent_arena, registry,
+                              !compat && attempt && attempt->source.bytes
+                                  ? &attempt->source : NULL,
+                              plan->spec.kind != CETTA_MODULE_SPEC_REGISTERED_ROOT ||
+                                  plan->spec.path_or_member[0] != '\0',
+                              error_out);
     } else if (library_loads_he_module(ctx, plan)) {
         ok = load_he_module(ctx, entry, plan->canonical_path, eval_arena,
-                            persistent_arena, registry, fuel, error_out);
+                            persistent_arena, registry, fuel,
+                            attempt && attempt->source.bytes ? &attempt->source : NULL,
+                            error_out);
     } else {
         ok = load_module_file(ctx, plan->canonical_path, entry->space, entry->space,
-                              eval_arena, persistent_arena, registry, fuel, error_out);
+                               eval_arena, persistent_arena, registry, fuel,
+                               NULL, NULL, error_out);
     }
     entry->loading = false;
+    library_he_finish_initializer(ctx, attempt, ok ? NULL : *error_out);
     if (!ok) {
-        /* No partial module survives, nor any record of the files it
-           loaded into spaces that go with it. */
-        rollback_imported_files(ctx, imported_len_before);
-        rollback_loaded_modules(ctx, loaded_len_before);
+        if (he_initializer && !compat) {
+            rollback_one_loaded_module(ctx, entry);
+        } else {
+            rollback_imported_files(ctx, imported_len_before);
+            rollback_loaded_modules(ctx, loaded_len_before);
+        }
         return NULL;
     }
     return entry;
@@ -9197,6 +10399,24 @@ static void library_inventory_add_fallback_atom(Space *inventory, Arena *dst,
 Atom *cetta_library_mod_space(CettaLibraryContext *ctx, const char *spec,
                               Arena *eval_arena, Arena *persistent_arena,
                               Registry *registry, int fuel, Atom **error_out) {
+    Arena *dst = persistent_arena ? persistent_arena : eval_arena;
+    if (ctx && spec && ctx->session.language_id == CETTA_LANGUAGE_HE) {
+        if (strcmp(spec, "top") == 0 && ctx->top_module_space)
+            return atom_space(dst, (Space *)ctx->top_module_space);
+        if (strcmp(spec, "self") == 0) {
+            Atom *self = registry
+                ? registry_lookup_id(registry, g_builtin_syms.self) : NULL;
+            if (self && self->kind == ATOM_GROUNDED &&
+                self->ground.gkind == GV_SPACE)
+                return atom_space(dst, (Space *)self->ground.ptr);
+        }
+        for (uint32_t i = 0u; i < ctx->loaded_module_len; i++) {
+            CettaLoadedModule *module = ctx->loaded_modules[i];
+            if (module->space && !module->loading && module->module_name &&
+                strcmp(module->module_name, spec) == 0)
+                return atom_space(dst, module->space);
+        }
+    }
     CettaModuleSpec parsed_spec;
     CettaImportPlan plan;
     if (!parse_module_spec(spec, &parsed_spec, eval_arena, error_out)) {
@@ -9210,7 +10430,6 @@ Atom *cetta_library_mod_space(CettaLibraryContext *ctx, const char *spec,
                                                     persistent_arena, registry,
                                                     fuel, error_out);
     if (!entry) return NULL;
-    Arena *dst = persistent_arena ? persistent_arena : eval_arena;
     return atom_space(dst, entry->space);
 }
 
@@ -9325,7 +10544,7 @@ Atom *cetta_library_module_inventory_space(CettaLibraryContext *ctx,
     }
 
     for (uint32_t i = 0; i < ctx->module_mount_len; i++) {
-        const CettaModuleMount *mount = &ctx->module_mounts[i];
+        const CettaModuleMount *mount = ctx->module_mounts[i];
         if (!module_mount_visible(ctx, mount)) continue;
         if (!library_inventory_try_add_symbol_string_symbol_fact4(
                 inventory, "module-mount", mount->namespace_name,
@@ -9370,7 +10589,7 @@ Atom *cetta_library_module_inventory_space(CettaLibraryContext *ctx,
     }
 
     for (uint32_t i = 0; i < ctx->loaded_module_len; i++) {
-        const CettaLoadedModule *module = &ctx->loaded_modules[i];
+        const CettaLoadedModule *module = ctx->loaded_modules[i];
         if (!loaded_module_visible(ctx, module)) continue;
         if (!library_inventory_try_add_string_string_symbol_fact4(
                 inventory, "loaded-module", module->display_name,
@@ -9428,7 +10647,8 @@ Atom *cetta_library_module_inventory_space(CettaLibraryContext *ctx,
 bool cetta_library_include_module(CettaLibraryContext *ctx, const char *spec,
                                   Space *space, Arena *eval_arena,
                                   Arena *persistent_arena, Registry *registry,
-                                  int fuel, Atom **error_out) {
+                                  int fuel, ResultSet *last_results, Atom **error_out) {
+    space = space_mutation_target(space);
     if (spec && (cetta_library_lookup(spec) || cetta_native_module_lookup(spec))) {
         return cetta_library_import(ctx, spec, space, eval_arena,
                                     persistent_arena, registry, fuel, error_out);
@@ -9438,12 +10658,95 @@ bool cetta_library_include_module(CettaLibraryContext *ctx, const char *spec,
     if (!parse_module_spec(spec, &parsed_spec, eval_arena, error_out)) {
         return false;
     }
+    parsed_spec.reports_written_name = true;
     if (!resolve_import_plan(ctx, &parsed_spec, logical_import_space(ctx, space), space,
                              false, &plan, eval_arena, error_out)) {
         return false;
     }
+    /* HE's include takes a module's MeTTa text; a Python module has none. */
+    if (ctx->session.language_id == CETTA_LANGUAGE_HE &&
+        plan.format.kind == CETTA_MODULE_FORMAT_FOREIGN) {
+        *error_out = atom_symbol(eval_arena, "resource not found");
+        return false;
+    }
+    struct stat st;
+    if (ctx->session.language_id == CETTA_LANGUAGE_HE &&
+        stat(plan.canonical_path, &st) == 0 && S_ISDIR(st.st_mode)) {
+        const char *format = "no module.metta file found in %s%s%s dir module";
+        bool by_name = parsed_spec.kind == CETTA_MODULE_SPEC_MODULE_NAME;
+        const char *base = by_name ? cetta_library_relative_base_dir(ctx) : "";
+        const char *leaf = by_name ? parsed_spec.path_or_member
+                                   : plan.canonical_path;
+        size_t size = strlen(format) + strlen(base) + 1u + strlen(leaf) + 1u;
+        char *message = arena_alloc(eval_arena, size);
+        snprintf(message, size, format, base, by_name ? "/" : "", leaf);
+        *error_out = atom_symbol(eval_arena, message);
+        return false;
+    }
     return execute_import_plan(ctx, &plan, eval_arena, persistent_arena,
-                               registry, fuel, error_out);
+                               registry, fuel, last_results, error_out);
+}
+
+/* A loaded module's name in the tree; a module without one hangs below the
+ * program under its import spelling. */
+static const char *loaded_module_tree_name(const CettaLoadedModule *module,
+                                           char *buffer, size_t buffer_sz) {
+    if (module->module_name)
+        return module->module_name;
+    snprintf(buffer, buffer_sz, "top:%s", module->display_name);
+    return buffer;
+}
+
+/* The longest loaded proper prefix of a tree name, "top" if there is none. */
+static size_t loaded_module_tree_parent(CettaLibraryContext *ctx,
+                                        uint32_t count, const char *name) {
+    size_t best = strlen("top");
+    char buffer[PATH_MAX + 8];
+    for (uint32_t i = 0u; i < count; i++) {
+        const char *other = loaded_module_tree_name(
+            cetta_library_loaded_module_at(ctx, i), buffer, sizeof(buffer));
+        size_t length = strlen(other);
+        if (length > best && strncmp(name, other, length) == 0 &&
+            name[length] == ':')
+            best = length;
+    }
+    return best;
+}
+
+static void print_loaded_module_children(CettaLibraryContext *ctx, FILE *out,
+                                         uint32_t count, const char *parent,
+                                         const char *indent) {
+    size_t parent_len = strlen(parent);
+    char buffer[PATH_MAX + 8];
+    uint32_t children = 0u;
+    for (int pass = 0; pass < 2; pass++) {
+        uint32_t seen = 0u;
+        for (uint32_t i = 0u; i < count; i++) {
+            const char *name = loaded_module_tree_name(
+                cetta_library_loaded_module_at(ctx, i), buffer, sizeof(buffer));
+            if (strncmp(name, parent, parent_len) != 0 ||
+                name[parent_len] != ':' ||
+                loaded_module_tree_parent(ctx, count, name) != parent_len)
+                continue;
+            seen++;
+            if (pass == 0)
+                continue;
+            bool last = seen == children;
+            fprintf(out, " %s%s─%s = %u\n", indent, last ? "└" : "├",
+                    name + parent_len + 1u, i + 1u);
+            size_t indent_size = strlen(indent) + strlen("│  ") + 1u;
+            char *deeper = malloc(indent_size);
+            char *own = strdup(name);
+            if (deeper && own) {
+                snprintf(deeper, indent_size, "%s%s", indent,
+                         last ? "   " : "│  ");
+                print_loaded_module_children(ctx, out, count, own, deeper);
+            }
+            free(deeper);
+            free(own);
+        }
+        children = seen;
+    }
 }
 
 bool cetta_library_print_loaded_modules(CettaLibraryContext *ctx, FILE *out,
@@ -9452,12 +10755,10 @@ bool cetta_library_print_loaded_modules(CettaLibraryContext *ctx, FILE *out,
     (void)error_out;
     if (!ctx || !out) return false;
     fprintf(out, "top = 0\n");
-    uint32_t visible_count = cetta_library_loaded_module_count(ctx);
-    for (uint32_t i = 0; i < visible_count; i++) {
-        const CettaLoadedModule *module = cetta_library_loaded_module_at(ctx, i);
-        const char *branch = (i + 1 == visible_count) ? "└" : "├";
-        fprintf(out, " %s─%s = %u\n", branch, module->display_name, i + 1);
-    }
+    print_loaded_module_children(
+        ctx, out, cetta_library_loaded_module_count(ctx), "top", "");
+    if (ctx->session.language_id == CETTA_LANGUAGE_HE)
+        fputc('\n', out);
     fflush(out);
     return true;
 }
@@ -9509,7 +10810,7 @@ bool cetta_library_import(CettaLibraryContext *ctx, const char *name,
                              space, false,
                              &plan, eval_arena, error_out) ||
         !execute_import_plan(ctx, &plan, eval_arena, persistent_arena,
-                             registry, fuel, error_out)) {
+                             registry, fuel, NULL, error_out)) {
         ctx->active_mask &= ~import_bit;
         return false;
     }
@@ -9520,8 +10821,41 @@ bool cetta_library_import(CettaLibraryContext *ctx, const char *name,
     return true;
 }
 
+/* An HE module root is a module from the moment it is registered: its code
+ * runs now. */
+static bool load_he_module_root(CettaLibraryContext *ctx, const char *name,
+                                const char *root_path,
+                                CettaModuleProviderKind provider_kind,
+                                Arena *eval_arena, Arena *persistent_arena,
+                                Registry *registry, int fuel,
+                                Atom **error_out) {
+    CettaImportPlan plan = {0};
+    char reason[160];
+    plan.spec.kind = CETTA_MODULE_SPEC_REGISTERED_ROOT;
+    snprintf(plan.spec.raw_spec, sizeof(plan.spec.raw_spec), "%s", name);
+    plan.provider_kind = provider_kind;
+    if (!cetta_foreign_resolve_candidate(
+            root_path, plan.canonical_path, sizeof(plan.canonical_path),
+            &plan.format, reason, sizeof(reason))) {
+        plan.format.kind = CETTA_MODULE_FORMAT_METTA;
+        if (!resolve_module_candidate_metta(
+                root_path, plan.canonical_path, sizeof(plan.canonical_path),
+                reason, sizeof(reason)))
+            snprintf(plan.canonical_path, sizeof(plan.canonical_path), "%s",
+                     root_path);
+    }
+    /* Registration initializes a root in the runner's context, even when
+       requested by code in another module. Keep its written name unchanged. */
+    Registry *root_registry = ctx->top_module_registry
+        ? ctx->top_module_registry : registry;
+    return ensure_loaded_module(ctx, &plan, eval_arena, persistent_arena,
+                                root_registry, fuel, error_out) != NULL;
+}
+
 bool cetta_library_register_module(CettaLibraryContext *ctx, const char *path,
-                                   Arena *eval_arena, Atom **error_out) {
+                                   Arena *eval_arena, Arena *persistent_arena,
+                                   Registry *registry, int fuel,
+                                   Atom **error_out) {
     char candidate[PATH_MAX];
     char resolved[PATH_MAX];
     struct stat st;
@@ -9549,13 +10883,50 @@ bool cetta_library_register_module(CettaLibraryContext *ctx, const char *path,
         return false;
     }
 
-    if (!realpath(candidate, resolved) || stat(resolved, &st) != 0 || !S_ISDIR(st.st_mode)) {
+    bool he = ctx->session.language_id == CETTA_LANGUAGE_HE;
+    if (!realpath(candidate, resolved) || stat(resolved, &st) != 0 ||
+        (!S_ISDIR(st.st_mode) &&
+         !(he && S_ISREG(st.st_mode) &&
+           (path_has_suffix(resolved, ".metta") ||
+            path_has_suffix(resolved, ".py"))))) {
         *error_out = atom_symbol(eval_arena, "module root not found");
         return false;
     }
 
     const char *base = strrchr(resolved, '/');
-    const char *name = base ? base + 1 : resolved;
+    base = base ? base + 1 : resolved;
+    char name[NAME_MAX + 1];
+    size_t name_len = strlen(base);
+    if (he && S_ISREG(st.st_mode))
+        name_len -= path_has_suffix(resolved, ".py")
+            ? strlen(".py") : strlen(".metta");
+    if (name_len >= sizeof(name)) {
+        *error_out = atom_symbol(eval_arena, "module name too long");
+        return false;
+    }
+    memcpy(name, base, name_len);
+    name[name_len] = '\0';
+    if (!module_name_is_legal(name)) {
+        *error_out = atom_symbol(eval_arena, "illegal module name");
+        return false;
+    }
+    CettaModuleMount *existing = module_mount_lookup_mutable(ctx, name);
+    if (he && ctx->session.profile &&
+        ctx->session.profile->rust_he_compat_semantics && existing &&
+        strcmp(existing->source_locator, resolved) == 0) {
+        *error_out = atom_symbol(eval_arena, "module already registered");
+        return false;
+    }
+    /* The root's storage is reserved before its module code runs. */
+    if (!existing && !library_reserve_module_mount(ctx)) {
+        *error_out = atom_symbol(eval_arena, "module root inventory allocation failed");
+        return false;
+    }
+    if (he && !load_he_module_root(ctx, name, resolved,
+                                   CETTA_MODULE_PROVIDER_REGISTERED_ROOT,
+                                   eval_arena, persistent_arena, registry,
+                                   fuel, error_out))
+        return false;
     return commit_module_mount_and_petta_root(
         ctx, name, resolved,
         CETTA_MODULE_PROVIDER_REGISTERED_ROOT,
@@ -9568,8 +10939,11 @@ bool cetta_library_register_module(CettaLibraryContext *ctx, const char *path,
 }
 
 bool cetta_library_register_git_module(CettaLibraryContext *ctx, const char *url,
-                                       Arena *eval_arena, Atom **error_out) {
-    char module_name[CETTA_MAX_MODULE_NAMESPACE];
+                                       Arena *eval_arena,
+                                       Arena *persistent_arena,
+                                       Registry *registry, int fuel,
+                                       Atom **error_out) {
+    char module_name[NAME_MAX + 1];
     char cached_root[PATH_MAX];
 
     if (!cetta_module_policy_allows(&ctx->session.module_policy,
@@ -9585,6 +10959,27 @@ bool cetta_library_register_git_module(CettaLibraryContext *ctx, const char *url
                                 cached_root, sizeof(cached_root),
                                 eval_arena, error_out)) {
         return false;
+    }
+    if (ctx->session.language_id == CETTA_LANGUAGE_HE) {
+        /* As for register-module!: he-compat refuses the same source a
+           second time, and the module's code runs now. */
+        const CettaModuleMount *existing =
+            module_mount_lookup_any(ctx, module_name);
+        if (ctx->session.profile &&
+            ctx->session.profile->rust_he_compat_semantics && existing &&
+            strcmp(existing->source_locator, url) == 0) {
+            *error_out = atom_symbol(eval_arena, "module already registered");
+            return false;
+        }
+        if (!existing && !library_reserve_module_mount(ctx)) {
+            *error_out = atom_symbol(eval_arena,
+                                     "module root inventory allocation failed");
+            return false;
+        }
+        if (!load_he_module_root(ctx, module_name, cached_root,
+                                 CETTA_MODULE_PROVIDER_GIT_REMOTE, eval_arena,
+                                 persistent_arena, registry, fuel, error_out))
+            return false;
     }
     return upsert_module_mount(ctx, module_name, cached_root,
                                CETTA_MODULE_PROVIDER_GIT_REMOTE,
@@ -9603,7 +10998,7 @@ bool cetta_library_petta_git_import(CettaLibraryContext *ctx,
                                     const char *commit_sha,
                                     Arena *eval_arena,
                                     Atom **error_out) {
-    char module_name[CETTA_MAX_MODULE_NAMESPACE];
+    char module_name[NAME_MAX + 1];
     char base_candidate[PATH_MAX];
     char base_resolved[PATH_MAX];
     char local_path[PATH_MAX];
@@ -9798,6 +11193,41 @@ bool cetta_library_petta_tabling_enabled(
            (ctx->active_mask & CETTA_LIBRARY_PETTA_TABLING) != 0u;
 }
 
+/* A completed name is a module identity, not another provider search. Match
+ * within the importing module's scope; registered mounts retain their own
+ * rebinding policy and are resolved through the normal import plan. */
+static CettaLoadedModule *loaded_he_named_module(CettaLibraryContext *ctx,
+                                                const char *spec,
+                                                Registry *registry) {
+    if (!ctx || ctx->session.language_id != CETTA_LANGUAGE_HE ||
+        ctx->loaded_module_len == 0u ||
+        !module_name_is_legal(spec) ||
+        module_mount_lookup_any(ctx, spec))
+        return NULL;
+    Atom *self = registry
+        ? registry_lookup_id(registry, g_builtin_syms.self) : NULL;
+    Space *importer = self && self->kind == ATOM_GROUNDED &&
+            self->ground.gkind == GV_SPACE
+        ? (Space *)self->ground.ptr : NULL;
+    const char *parent = cetta_library_module_space_name(ctx, importer);
+    if (!parent)
+        parent = "top";
+    size_t parent_len = strlen(parent);
+    size_t spec_len = strlen(spec);
+    for (uint32_t i = 0u; i < ctx->loaded_module_len; i++) {
+        CettaLoadedModule *entry = ctx->loaded_modules[i];
+        if (!entry->space || entry->loading || !entry->module_name ||
+            !loaded_module_visible(ctx, entry))
+            continue;
+        if (strlen(entry->module_name) == parent_len + 1u + spec_len &&
+            memcmp(entry->module_name, parent, parent_len) == 0 &&
+            entry->module_name[parent_len] == ':' &&
+            strcmp(entry->module_name + parent_len + 1u, spec) == 0)
+            return entry;
+    }
+    return NULL;
+}
+
 bool cetta_library_import_module(CettaLibraryContext *ctx, const char *spec,
                                  Space *space, bool target_is_fresh,
                                  Arena *eval_arena,
@@ -9820,19 +11250,21 @@ bool cetta_library_import_module(CettaLibraryContext *ctx, const char *spec,
                                     persistent_arena, registry, fuel, error_out);
     }
 
-    if (!parse_module_spec(spec, &parsed_spec, eval_arena, error_out)) {
-        return false;
+    CettaLoadedModule *entry = loaded_he_named_module(ctx, spec, registry);
+    if (!entry) {
+        if (!parse_module_spec(spec, &parsed_spec, eval_arena, error_out))
+            return false;
+        if (!resolve_import_plan(ctx, &parsed_spec, logical_space, space,
+                                 target_is_fresh, &plan, eval_arena, error_out))
+            return false;
     }
-    if (!resolve_import_plan(ctx, &parsed_spec, logical_space, space,
-                             target_is_fresh, &plan, eval_arena, error_out)) {
-        return false;
-    }
-    if (library_loads_he_module(ctx, &plan)) {
+    if (entry || library_loads_he_module(ctx, &plan) ||
+        library_loads_he_provider(ctx, &plan)) {
         /* HE: the module is loaded once, into its own space.  `&self` reads
            it live as a dependency; a fresh token denotes its space. */
-        CettaLoadedModule *entry = ensure_loaded_module(
-            ctx, &plan, eval_arena, persistent_arena, registry, fuel,
-            error_out);
+        if (!entry)
+            entry = ensure_loaded_module(ctx, &plan, eval_arena,
+                persistent_arena, registry, fuel, error_out);
         if (!entry)
             return false;
         if (target_is_fresh) {
@@ -9840,11 +11272,14 @@ bool cetta_library_import_module(CettaLibraryContext *ctx, const char *spec,
                 *module_space_out = entry->space;
             return true;
         }
+        if (entry->provider)
+            return library_name_he_provider(ctx, space, registry, entry,
+                                            eval_arena, persistent_arena, error_out);
         return library_link_he_module(space, entry->space, eval_arena,
                                       error_out);
     }
     return execute_import_plan(ctx, &plan, eval_arena, persistent_arena,
-                               registry, fuel, error_out);
+                               registry, fuel, NULL, error_out);
 }
 
 static bool resolve_library_member_candidate(
@@ -9863,7 +11298,7 @@ static bool resolve_library_member_candidate(
         return false;
     }
     return resolve_module_candidate_with_format(
-        candidate, canonical_path, canonical_path_size,
+        ctx, candidate, canonical_path, canonical_path_size,
         format, reason, sizeof(reason));
 }
 
@@ -10007,7 +11442,7 @@ static bool import_standard_library_reference(
             target_is_fresh, &plan, eval_arena, error_out) &&
         execute_import_plan(
             ctx, &plan, eval_arena, persistent_arena,
-            registry, fuel, error_out);
+            registry, fuel, NULL, error_out);
     ctx->petta_trusted_library_import_depth--;
     return imported;
 }
@@ -10065,7 +11500,7 @@ static bool import_rooted_library_reference(
             candidate, sizeof(candidate),
             root_path, member) ||
         !resolve_module_candidate_with_format(
-            candidate, plan.canonical_path,
+            ctx, candidate, plan.canonical_path,
             sizeof(plan.canonical_path), &plan.format,
             reason, sizeof(reason))) {
         *error_out = atom_symbol(
@@ -10077,7 +11512,7 @@ static bool import_rooted_library_reference(
     ctx->petta_trusted_library_import_depth++;
     bool imported = execute_import_plan(
         ctx, &plan, eval_arena, persistent_arena,
-        registry, fuel, error_out);
+        registry, fuel, NULL, error_out);
     ctx->petta_trusted_library_import_depth--;
     return imported;
 }

@@ -22,7 +22,7 @@
 #define PETTA_FORM_DENSE_CAP 4096u
 #define PETTA_FORM_OVERFLOW_CAP 128u
 
-_Static_assert(PETTA_FORM_TRACE <= UINT8_MAX,
+_Static_assert(PETTA_FORM_VALUE_LET <= UINT8_MAX,
                "PeTTa semantic forms must fit in the dense fact byte");
 _Static_assert(
     (PETTA_FORM_OVERFLOW_CAP & (PETTA_FORM_OVERFLOW_CAP - 1u)) == 0u,
@@ -215,7 +215,8 @@ static PeTTaForm petta_form_overflow_lookup(
     X(ids->catch_text, PETTA_FORM_CATCH);                                \
     X(ids->lambda, PETTA_FORM_LAMBDA);                                   \
     X(g_builtin_syms.let, PETTA_FORM_LET);                               \
-    X(g_builtin_syms.chain, PETTA_FORM_CHAIN)
+    X(g_builtin_syms.chain, PETTA_FORM_CHAIN);                           \
+    X(ids->value_let, PETTA_FORM_VALUE_LET)
 
 static bool petta_form_dense_build(PeTTaSymbolIds *ids) {
     bool ready = true;
@@ -2584,8 +2585,7 @@ bool petta_semantics_match_existence_observer_shape(
 }
 
 bool petta_semantics_is_value_let(SymbolId head) {
-    const PeTTaSymbolIds *ids = petta_symbol_ids();
-    return ids->table && head == ids->value_let;
+    return petta_semantics_form(head) == PETTA_FORM_VALUE_LET;
 }
 
 bool petta_semantics_is_value_chain(SymbolId head) {
@@ -2990,6 +2990,7 @@ Atom *petta_semantics_lower(
     case PETTA_FORM_LAMBDA:
     case PETTA_FORM_LET:
     case PETTA_FORM_CHAIN:
+    case PETTA_FORM_VALUE_LET:
     case PETTA_FORM_IS_VAR:
     case PETTA_FORM_IS_GROUND:
     case PETTA_FORM_IS_EXPR:

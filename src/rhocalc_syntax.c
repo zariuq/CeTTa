@@ -161,9 +161,13 @@ static Atom *rho_cost_purse(Arena *arena, Atom *location, Atom *stack) {
 }
 
 static bool rho_expr_head_named(Atom *atom, const char *name) {
-    return atom && atom->kind == ATOM_EXPR && atom->expr.len > 0 &&
-           atom->expr.elems[0]->kind == ATOM_SYMBOL &&
-           strcmp(atom_name_cstr(atom->expr.elems[0]), name) == 0;
+    if (!atom || atom->kind != ATOM_EXPR || atom->expr.len == 0 ||
+        atom->expr.elems[0]->kind != ATOM_SYMBOL)
+        return false;
+    const char *head = atom_name_cstr(atom->expr.elems[0]);
+    /* Most expression heads are outside the rho namespace. Reject a
+       different first byte without a full string comparison. */
+    return head[0] == name[0] && strcmp(head, name) == 0;
 }
 
 static bool rhocalc_is_domain_proc_atom(Atom *atom);

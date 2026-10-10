@@ -257,6 +257,14 @@ Space *eval_space_snapshot_clone(Space *src, Arena *a);
    module's own `&self` and the tokens its code has bound so far.  `atom`
    itself when nothing is bound. */
 Atom *eval_capture_registry_tokens(Registry *registry, Arena *a, Atom *atom);
+/* Put the plain words a registry binds into a form that has just been read.
+ * Returns `atom` itself when nothing in it is bound. */
+Atom *eval_read_registry_words(Registry *registry, Arena *a, Atom *atom);
+/* The same for a stored form: the id of the form as read, which is `form`
+ * itself when nothing in it is bound. The form is rebuilt in `scratch` and
+ * stored through `storage` only when a word was put in. */
+AtomId eval_read_registry_words_id(Registry *registry, TermUniverse *universe,
+                                   Arena *scratch, Arena *storage, AtomId form);
 
 /* Visit each distinct free variable of an executable expression in lexical
  * occurrence order.  Binder policy is shared with evaluator closure/env

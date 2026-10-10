@@ -177,6 +177,20 @@ void petta_match_decision_repository_free(
 bool petta_match_decision_repository_leased(
     const PettaMatchDecisionRepository *repository);
 void petta_machine_table_reset(PettaMachineTable *table);
+typedef struct {
+    size_t control_bytes;
+    size_t answer_vector_bytes;
+    size_t dependency_bytes;
+    size_t dependency_records;
+    size_t arena_live_bytes;
+    size_t arena_reserved_bytes;
+} PettaMachineTableStorage;
+
+/* One session table's owned payloads, including spare buffer capacity.
+ * Shared generators refer to this single account. Arena reservation and live
+ * usage are separate; allocator metadata belongs to process measurement. */
+bool petta_machine_table_storage(
+    const PettaMachineTable *table, PettaMachineTableStorage *out);
 bool petta_machine_table_set_mutation_policy(
     PettaMachineTable *table, PettaTableMutationPolicy policy);
 /* Enforce cache-only retention after a root machine has released its lease.
@@ -571,12 +585,17 @@ typedef struct {
         void *context, SymbolId head, bool enabled);
     bool (*tabled_relation_contains)(
         void *context, SymbolId head, CettaExprLen arity);
-    /*
-     * A declared table is an optimization request.  If this callback
-     * cannot prove the current relation effect-free, the machine executes
-     * the ordinary relation instead of caching or replaying effects.
-     */
+    /* Language-owned table admission. Static-world profiles may permit
+     * effectful generators; admission alone never licenses skipping rounds. */
     bool (*tabled_relation_admissible)(
+        void *context, Space *space,
+        SymbolId head, CettaExprLen arity);
+    /* A generator's complete observation depends only on the pinned Space
+     * and the table answers it reads. Refusal preserves ordinary rounds.
+     * The machine captures that Space version, withdraws the license after
+     * a change, and requires append-only active answers in a leased table.
+     * Completed-answer retention follows the separate table mutation policy. */
+    bool (*tabled_relation_round_reusable)(
         void *context, Space *space,
         SymbolId head, CettaExprLen arity);
     bool (*tabled_relation_set)(
@@ -905,6 +924,7 @@ typedef struct {
     uint64_t table_lookups;
     uint64_t table_hits;
     uint64_t table_generator_rounds;
+    uint64_t table_generator_rounds_reused;
     uint64_t table_scc_completions;
     uint64_t table_answer_replays;
     uint64_t count_aggregate_answers;

@@ -541,9 +541,19 @@ static bool he_repeated_import_contract(void) {
     cetta_library_context_set_script_path(
         ctx, "tests/he/module_import_v1/main.metta");
     cetta_library_set_top_module_space(ctx, &top);
+    cetta_library_set_top_module_registry(ctx, &registry);
+    uint64_t top_identity = space_instance_id(&top);
+    Space *resolved_space = NULL;
+    Registry *resolved_registry = NULL;
+    bool context_ok = cetta_library_module_context(
+        ctx, top_identity, &resolved_space, &resolved_registry) &&
+        resolved_space == &top && resolved_registry == &registry;
+    context_ok = context_ok && !cetta_library_module_context(
+        ctx, UINT64_MAX, &resolved_space, &resolved_registry) &&
+        !resolved_space && !resolved_registry;
     Atom *error = NULL;
     Space *module = NULL;
-    bool ok = cetta_library_import_module(
+    bool ok = context_ok && cetta_library_import_module(
         ctx, "mi_dmod", &top, false, &scratch, &persistent, &registry,
         1000, NULL, &error);
     /* Rollback bookkeeping is allocated before module code can expose its
@@ -552,8 +562,12 @@ static bool he_repeated_import_contract(void) {
         ctx->retired_module_len + ctx->loaded_module_len;
     if (ok && space_dependency_count(&top) == 1u) {
         module = space_dependency_at(&top, 0u);
+        ok = cetta_library_module_context(ctx, space_instance_id(module),
+                                          &resolved_space, &resolved_registry) &&
+            resolved_space == module && resolved_registry &&
+            registry_lookup_id(resolved_registry, g_builtin_syms.self);
         space_add(&later, module_atom(&scratch, "(reimport-fact later)"));
-        ok = space_add_dependency(module, &later);
+        ok = ok && space_add_dependency(module, &later);
     } else {
         ok = false;
     }
@@ -570,6 +584,10 @@ static bool he_repeated_import_contract(void) {
             module_match_answers(&top, &scratch, "(reimport-fact $x)", "");
     }
     for (uint32_t attempt = 0u; ok && attempt < 12u; attempt++) {
+        /* A completed failed compatibility attempt is retryable even inside
+           the same host request. Retired handles remain owned by the context. */
+        CettaHEModuleRunScope request = {0};
+        cetta_library_he_run_begin(ctx, &request);
         uint32_t retired = ctx->retired_module_len;
         uint32_t loaded = ctx->loaded_module_len;
         error = NULL;
@@ -585,14 +603,93 @@ static bool he_repeated_import_contract(void) {
             Space *failed = ctx->retired_modules[retired].space;
             ok = failed && ctx->retired_modules[retired].module_name &&
                 space_length64(failed) == 0u &&
-                space_dependency_count(failed) == 0u;
+                space_dependency_count(failed) == 0u &&
+                cetta_library_module_context(ctx, space_instance_id(failed),
+                                             &resolved_space, &resolved_registry) &&
+                resolved_space == failed && resolved_registry;
         }
+        if (ok) {
+            error = NULL;
+            ok = !cetta_library_import_module(
+                ctx, "mi_badparse", &top, false, &scratch, &persistent,
+                &registry, 1000, NULL, &error) && error &&
+                ctx->retired_module_len == retired + 2u &&
+                ctx->loaded_module_len == loaded &&
+                space_dependency_count(&top) == 1u;
+            if (ok) {
+                Space *retried = ctx->retired_modules[retired + 1u].space;
+                ok = retried && retried != ctx->retired_modules[retired].space &&
+                    space_length64(retried) == 0u &&
+                    space_dependency_count(retried) == 0u &&
+                    cetta_library_module_context(ctx, space_instance_id(retried),
+                                                 &resolved_space, &resolved_registry) &&
+                    resolved_space == retried && resolved_registry;
+            }
+        }
+        cetta_library_he_run_end(&request);
+    }
+    uint64_t module_identity = module ? space_instance_id(module) : 0u;
+    cetta_library_context_free(ctx);
+    ok = ok && !cetta_library_module_context(
+        ctx, top_identity, &resolved_space, &resolved_registry) &&
+        !resolved_space && !resolved_registry &&
+        !cetta_library_module_context(
+            ctx, module_identity, &resolved_space, &resolved_registry) &&
+        !resolved_space && !resolved_registry;
+    free(ctx);
+    registry_free(&registry);
+    space_free(&top);
+    space_free(&later);
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&persistent);
+    return ok;
+}
+
+static bool he_default_failed_import_is_remembered(void) {
+    Arena persistent, scratch;
+    TermUniverse universe;
+    Registry registry;
+    Space top;
+    CettaLibraryContext *ctx = calloc(1u, sizeof(*ctx));
+    if (!ctx)
+        return false;
+    arena_init(&persistent);
+    arena_set_runtime_kind(&persistent, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    arena_init(&scratch);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    registry_init(&registry);
+    space_init_with_universe(&top, &universe);
+    registry_bind_id(&registry, g_builtin_syms.self,
+                     atom_space(&persistent, &top));
+    cetta_library_context_init_for_language_profile(
+        ctx, CETTA_LANGUAGE_HE, cetta_profile_he_formal());
+    cetta_library_context_set_script_path(ctx, "tests/he/module_import_v1/main.metta");
+    cetta_library_set_top_module_space(ctx, &top);
+    cetta_library_set_top_module_registry(ctx, &registry);
+    Atom *error = NULL;
+    bool ok = !cetta_library_import_module(
+        ctx, "mi_badparse", &top, false, &scratch, &persistent,
+        &registry, 1000, NULL, &error) && error &&
+        ctx->retired_module_len == 1u && ctx->loaded_module_len == 0u &&
+        space_dependency_count(&top) == 0u;
+    for (unsigned attempt = 0u; ok && attempt < 12u; attempt++) {
+        CettaHEModuleRunScope request = {0};
+        cetta_library_he_run_begin(ctx, &request);
+        SpaceReadToken before = space_read_token(&top);
+        error = NULL;
+        ok = !cetta_library_import_module(
+            ctx, "mi_badparse", &top, false, &scratch, &persistent,
+            &registry, 1000, NULL, &error) && error &&
+            ctx->retired_module_len == 1u && ctx->loaded_module_len == 0u &&
+            space_dependency_count(&top) == 0u && space_read_token_is_current(before);
+        cetta_library_he_run_end(&request);
     }
     cetta_library_context_free(ctx);
     free(ctx);
     registry_free(&registry);
     space_free(&top);
-    space_free(&later);
     term_universe_free(&universe);
     arena_free(&scratch);
     arena_free(&persistent);
@@ -1045,6 +1142,10 @@ int main(void) {
     }
     if (!he_repeated_import_contract()) {
         fprintf(stderr, "HE repeated import contract failure\n");
+        goto cleanup;
+    }
+    if (!he_default_failed_import_is_remembered()) {
+        fprintf(stderr, "HE default failed import cache contract failure\n");
         goto cleanup;
     }
     if (!execution_owner_nesting_contract()) {

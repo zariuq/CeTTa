@@ -1,0 +1,6 @@
+[(BadArgType 1 Symbol Number)]
+[(BadArgType 1 Symbol String)]
+[bind! expects symbol atom as a token]
+[()]
+[(BadArgType 1 Symbol Number)]
+[5]

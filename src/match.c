@@ -644,6 +644,8 @@ typedef struct {
     uint64_t inline_occupied;
 } FreshenEpochMemo;
 
+static Atom g_rename_walk_active;
+
 _Static_assert(FRESHEN_EPOCH_MEMO_INLINE_CAP == 64u,
                "inline memo occupancy mask must cover every slot");
 
@@ -5566,12 +5568,18 @@ static bool freshen_epoch_memo_grow(FreshenEpochMemo *memo) {
     if (!memo)
         return false;
     size_t old_cap = memo->cap;
+    if (old_cap > SIZE_MAX / 2u)
+        return false;
     size_t new_cap = old_cap ? old_cap * 2u : FRESHEN_EPOCH_MEMO_INLINE_CAP;
+    if (new_cap > SIZE_MAX / sizeof(FreshenEpochMemoSlot))
+        return false;
     FreshenEpochMemoSlot *old_slots = memo->slots;
     bool old_inline = old_slots == memo->inline_slots;
     uint64_t old_inline_occupied = memo->inline_occupied;
     FreshenEpochMemoSlot *new_slots =
-        cetta_malloc(sizeof(FreshenEpochMemoSlot) * new_cap);
+        malloc(sizeof(FreshenEpochMemoSlot) * new_cap);
+    if (!new_slots)
+        return false;
     freshen_epoch_memo_clear(new_slots, new_cap);
     memo->slots = new_slots;
     memo->cap = new_cap;
@@ -5603,7 +5611,7 @@ static bool freshen_epoch_memo_store(FreshenEpochMemo *memo,
                                      const Atom *src, Atom *dst) {
     if (!memo || !src || !dst)
         return true;
-    if ((memo->used + 1u) * 4u >= memo->cap * 3u &&
+    if (memo->used + 1u >= memo->cap - memo->cap / 4u &&
         !freshen_epoch_memo_grow(memo)) {
         return false;
     }
@@ -5626,59 +5634,117 @@ static bool freshen_epoch_memo_store(FreshenEpochMemo *memo,
     }
 }
 
-static Atom *atom_freshen_epoch_impl(Arena *a, Atom *atom, uint32_t epoch,
-                                     FreshenEpochMemo *memo) {
-    if (!a || !atom)
-        return NULL;
-    if (!atom_has_vars(atom))
-        return atom;
-    Atom *memoized = freshen_epoch_memo_lookup(memo, atom);
-    if (memoized)
-        return memoized;
-    Atom *out = NULL;
-    switch (atom->kind) {
-    case ATOM_VAR:
-        out = epoch_var_atom(a, atom, epoch);
-        break;
-    case ATOM_EXPR: {
-        Atom *draft = NULL;
-        Atom **new_elems = NULL;
-        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
-            Atom *child = atom->expr.elems[i];
-            Atom *next = atom_has_vars(child)
-                ? atom_freshen_epoch_impl(a, child, epoch, memo)
-                : child;
-            if (!next)
-                return NULL;
-            if (!new_elems && next != atom->expr.elems[i]) {
-                draft = atom_expr_builder_begin(a, atom->expr.len);
-                if (!draft)
-                    return NULL;
-                new_elems = draft->expr.elems;
-                for (CettaExprIndex j = 0; j < i; j++)
-                    new_elems[j] = atom->expr.elems[j];
-            }
-            if (new_elems)
-                new_elems[i] = next;
-        }
-        out = new_elems ? atom_expr_builder_finish(a, draft) : atom;
-        break;
-    }
-    default:
-        out = atom;
-        break;
-    }
-    if (!freshen_epoch_memo_store(memo, atom, out))
-        return NULL;
-    return out;
-}
+typedef Atom *(*RenameVariable)(Arena *, Atom *, void *);
 
-Atom *atom_freshen_epoch(Arena *a, Atom *atom, uint32_t epoch) {
+typedef struct {
+    Atom *source;
+    Atom *draft;
+    CettaExprIndex next;
+} RenameVarsFrame;
+
+/* All variable-renaming policies share one postorder traversal.  Only a
+ * variable is interpreted by the policy; grounded values retain their own
+ * context.  A draft is allocated only after a child changes, and the memo
+ * preserves source sharing without accepting a recurrence on the active path. */
+static Atom *rename_vars_walk(Arena *a, Atom *root, RenameVariable rename,
+                              void *context, bool count_visits) {
+    if (!a || !root || !rename)
+        return NULL;
+    RenameVarsFrame inline_frames[32];
+    RenameVarsFrame *frames = inline_frames;
+    size_t len = 0u, cap = sizeof inline_frames / sizeof inline_frames[0];
     FreshenEpochMemo memo;
     freshen_epoch_memo_init(&memo);
-    Atom *out = atom_freshen_epoch_impl(a, atom, epoch, &memo);
+    Atom *current = root;
+    Atom *result = NULL;
+    for (;;) {
+        if (count_visits)
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_RENAME_VARS);
+        if (!current)
+            goto fail;
+        if (!atom_has_vars(current)) {
+            result = current;
+        } else {
+            result = freshen_epoch_memo_lookup(&memo, current);
+            if (result == &g_rename_walk_active)
+                goto fail;
+            if (!result) {
+                if (current->kind == ATOM_VAR) {
+                    result = rename(a, current, context);
+                } else if (current->kind == ATOM_EXPR && current->expr.len) {
+                    if (!freshen_epoch_memo_store(
+                            &memo, current, &g_rename_walk_active))
+                        goto fail;
+                    if (len == cap) {
+                        if (cap > SIZE_MAX / 2u ||
+                            cap * 2u > SIZE_MAX / sizeof(*frames))
+                            goto fail;
+                        size_t next_cap = cap * 2u;
+                        RenameVarsFrame *next = frames == inline_frames
+                            ? malloc(sizeof(*next) * next_cap)
+                            : realloc(frames, sizeof(*next) * next_cap);
+                        if (!next)
+                            goto fail;
+                        if (frames == inline_frames)
+                            memcpy(next, inline_frames, sizeof(*next) * len);
+                        frames = next;
+                        cap = next_cap;
+                    }
+                    frames[len++] = (RenameVarsFrame){current, NULL, 0u};
+                    current = current->expr.elems[0];
+                    continue;
+                } else {
+                    result = current;
+                }
+                if (!result || !freshen_epoch_memo_store(&memo, current, result))
+                    goto fail;
+            }
+        }
+        while (len) {
+            RenameVarsFrame *frame = &frames[len - 1u];
+            Atom *source = frame->source;
+            if (!frame->draft && result != source->expr.elems[frame->next]) {
+                frame->draft = atom_expr_builder_begin(a, source->expr.len);
+                if (!frame->draft)
+                    goto fail;
+                for (CettaExprIndex i = 0; i < frame->next; i++)
+                    frame->draft->expr.elems[i] = source->expr.elems[i];
+            }
+            if (frame->draft)
+                frame->draft->expr.elems[frame->next] = result;
+            if (++frame->next < source->expr.len) {
+                current = source->expr.elems[frame->next];
+                break;
+            }
+            result = frame->draft
+                ? atom_expr_builder_finish(a, frame->draft) : source;
+            if (!result || !freshen_epoch_memo_store(&memo, source, result))
+                goto fail;
+            len--;
+        }
+        if (!len)
+            break;
+    }
     freshen_epoch_memo_free(&memo);
-    return out;
+    if (frames != inline_frames)
+        free(frames);
+    return result;
+
+fail:
+    freshen_epoch_memo_free(&memo);
+    if (frames != inline_frames)
+        free(frames);
+    return NULL;
+}
+
+static Atom *rename_epoch_variable(Arena *a, Atom *atom, void *context) {
+    return epoch_var_atom(a, atom, *(const uint32_t *)context);
+}
+
+/* Keep the address-taken epoch and walk frame out of materialized reads. */
+__attribute__((noinline))
+Atom *atom_freshen_epoch(Arena *a, Atom *atom, uint32_t epoch) {
+    return rename_vars_walk(a, atom, rename_epoch_variable, &epoch, false);
 }
 
 Atom *binding_value_materialize(Arena *a, BindingValue value) {
@@ -7444,7 +7510,6 @@ static bool rename_walk_stack_push(RenameWalkStack *stack,
 }
 
 /* These addresses are private traversal states, never runtime atoms. */
-static Atom g_rename_walk_active;
 static Atom g_rename_walk_complete;
 
 /* Hash-stable atoms are immutable published graphs assembled only from
@@ -10036,181 +10101,30 @@ static Atom *rename_var_map_add_fresh(RenameVarMap *map, Arena *a, Atom *var) {
     return fresh;
 }
 
-typedef enum {
-    RENAME_VARS_VISIT,
-    RENAME_VARS_BUILD,
-} RenameVarsTaskKind;
-
 typedef struct {
-    RenameVarsTaskKind kind;
-    Atom *source;
-    Atom **destination;
-    Atom **children;
-} RenameVarsTask;
+    const VarIdSet *listed;
+    RenameVarMap *map;
+    bool rename_listed;
+} ListedVariableRename;
 
-typedef struct {
-    RenameVarsTask inline_tasks[64];
-    RenameVarsTask *tasks;
-    size_t len;
-    size_t cap;
-} RenameVarsTaskStack;
-
-static void rename_vars_task_stack_init(RenameVarsTaskStack *stack) {
-    stack->tasks = stack->inline_tasks;
-    stack->len = 0u;
-    stack->cap = sizeof(stack->inline_tasks) / sizeof(stack->inline_tasks[0]);
-}
-
-static void rename_vars_task_stack_free(RenameVarsTaskStack *stack) {
-    if (stack->tasks != stack->inline_tasks)
-        free(stack->tasks);
-}
-
-static bool rename_vars_task_stack_push(RenameVarsTaskStack *stack,
-                                        RenameVarsTask task) {
-    if (stack->len == stack->cap) {
-        if (stack->cap > SIZE_MAX / 2u ||
-            stack->cap * 2u > SIZE_MAX / sizeof(*stack->tasks))
-            return false;
-        size_t next_cap = stack->cap * 2u;
-        if (stack->tasks == stack->inline_tasks) {
-            RenameVarsTask *next = cetta_malloc(
-                sizeof(*next) * next_cap);
-            memcpy(next, stack->inline_tasks,
-                   sizeof(*next) * stack->len);
-            stack->tasks = next;
-        } else {
-            stack->tasks = cetta_realloc(
-                stack->tasks, sizeof(*stack->tasks) * next_cap);
-        }
-        stack->cap = next_cap;
-    }
-    stack->tasks[stack->len++] = task;
-    return true;
+static Atom *rename_listed_variable(Arena *a, Atom *atom, void *context) {
+    ListedVariableRename *policy = context;
+    if (var_id_set_contains(policy->listed, atom->var_id) != policy->rename_listed)
+        return atom;
+    Atom *renamed = rename_var_map_lookup(policy->map, atom->var_id);
+    return renamed ? renamed : rename_var_map_add_fresh(policy->map, a, atom);
 }
 
 static Atom *rename_vars_listed_iterative(Arena *a, Atom *root,
                                           const VarIdSet *listed,
                                           RenameVarMap *map,
                                           bool rename_listed) {
-    Atom *result = NULL;
-    RenameVarsTaskStack stack;
-    FreshenEpochMemo memo;
-    rename_vars_task_stack_init(&stack);
-    freshen_epoch_memo_init(&memo);
-    if (!rename_vars_task_stack_push(
-            &stack,
-            (RenameVarsTask){RENAME_VARS_VISIT, root, &result, NULL}))
-        goto fail;
-    while (stack.len > 0u) {
-        RenameVarsTask task = stack.tasks[--stack.len];
-        Atom *atom = task.source;
-        if (!atom || !task.destination)
-            goto fail;
-        if (task.kind == RENAME_VARS_BUILD) {
-            bool unchanged = true;
-            for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
-                if (!task.children[i])
-                    goto fail;
-                if (task.children[i] != atom->expr.elems[i])
-                    unchanged = false;
-            }
-            Atom *built = unchanged
-                ? atom
-                : atom_expr(a, task.children, atom->expr.len);
-            *task.destination = built;
-            if (!freshen_epoch_memo_store(&memo, atom, built))
-                goto fail;
-            continue;
-        }
-        if (!atom_has_vars(atom)) {
-            *task.destination = atom;
-            continue;
-        }
-        Atom *memoized = freshen_epoch_memo_lookup(&memo, atom);
-        if (memoized == &g_rename_walk_active)
-            goto fail;
-        if (memoized) {
-            *task.destination = memoized;
-            continue;
-        }
-        if (atom->kind == ATOM_VAR) {
-            Atom *renamed = NULL;
-            if (var_id_set_contains(listed, atom->var_id) !=
-                rename_listed) {
-                renamed = atom;
-            } else {
-                renamed = rename_var_map_lookup(map, atom->var_id);
-                if (!renamed)
-                    renamed = rename_var_map_add_fresh(map, a, atom);
-            }
-            if (!renamed ||
-                !freshen_epoch_memo_store(&memo, atom, renamed))
-                goto fail;
-            *task.destination = renamed;
-            continue;
-        }
-        if (atom->kind != ATOM_EXPR) {
-            *task.destination = atom;
-            if (!freshen_epoch_memo_store(&memo, atom, atom))
-                goto fail;
-            continue;
-        }
-        if (!cetta_expr_len_mul_fits_size(
-                atom->expr.len, sizeof(Atom *)) ||
-            !freshen_epoch_memo_store(
-                &memo, atom, &g_rename_walk_active))
-            goto fail;
-        Atom **children = atom->expr.len
-            ? arena_alloc(a, sizeof(*children) * (size_t)atom->expr.len)
-            : NULL;
-        if (!rename_vars_task_stack_push(
-                &stack,
-                (RenameVarsTask){RENAME_VARS_BUILD, atom,
-                                 task.destination, children}))
-            goto fail;
-        for (CettaExprIndex i = atom->expr.len; i > 0u; i--)
-            if (!rename_vars_task_stack_push(
-                    &stack,
-                    (RenameVarsTask){RENAME_VARS_VISIT,
-                                     atom->expr.elems[i - 1u],
-                                     &children[i - 1u], NULL}))
-                goto fail;
-    }
-    freshen_epoch_memo_free(&memo);
-    rename_vars_task_stack_free(&stack);
-    return result;
-
-fail:
-    freshen_epoch_memo_free(&memo);
-    rename_vars_task_stack_free(&stack);
-    return NULL;
+    ListedVariableRename policy = {listed, map, rename_listed};
+    return rename_vars_walk(a, root, rename_listed_variable, &policy, false);
 }
 
 Atom *rename_vars(Arena *a, Atom *atom, uint32_t suffix) {
-    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_RENAME_VARS);
-    switch (atom->kind) {
-    case ATOM_VAR: {
-        return atom_var_like(a, atom, var_epoch_id(atom->var_id, suffix));
-    }
-    case ATOM_EXPR: {
-        Atom **new_elems = NULL;
-        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
-            Atom *next = rename_vars(a, atom->expr.elems[i], suffix);
-            if (!new_elems && next != atom->expr.elems[i]) {
-                new_elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
-                for (CettaExprIndex j = 0; j < i; j++)
-                    new_elems[j] = atom->expr.elems[j];
-            }
-            if (new_elems)
-                new_elems[i] = next;
-        }
-        if (!new_elems) return atom;
-        return atom_expr(a, new_elems, atom->expr.len);
-    }
-    default:
-        return atom;
-    }
+    return rename_vars_walk(a, atom, rename_epoch_variable, &suffix, true);
 }
 
 Atom *rename_vars_except(Arena *a, Atom *atom, Atom *ignore_spec) {
@@ -10374,161 +10288,16 @@ static BindingValue match_list_derived_value(BindingValue side, Atom *derived) {
 
 /* ── One-way pattern matching ───────────────────────────────────────────── */
 
+static bool atom_pair_walk(Atom *left, Atom *right, Bindings *bindings,
+                            BindingsBuilder *builder, Arena *arena, bool alpha);
+
 bool simple_match(Atom *pattern, Atom *target, Bindings *b, Arena *a) {
-    /* Variable in pattern binds to target */
-    if (pattern->kind == ATOM_VAR) {
-        return bindings_add_var(b, pattern, target);
-    }
-
-    /* Same kind required */
-    if (pattern->kind != target->kind) return false;
-
-    switch (pattern->kind) {
-    case ATOM_SYMBOL:
-        return atom_symbols_equal(pattern, target);
-
-    case ATOM_GROUNDED:
-        if (pattern->ground.gkind != target->ground.gkind)
-            return cetta_he_promoted_numbers_equal(pattern, target);
-        switch (pattern->ground.gkind) {
-        case GV_INT:    return pattern->ground.ival == target->ground.ival;
-        case GV_FLOAT:  return pattern->ground.fval == target->ground.fval;
-        case GV_BOOL:   return pattern->ground.bval == target->ground.bval;
-        case GV_STRING: return atom_string_equal(pattern, target);
-        case GV_BIGINT:
-            return cetta_bigint_compare_cstr(atom_bigint_cstr(pattern),
-                                            atom_bigint_cstr(target)) == 0;
-        case GV_RATIONAL:
-            return cetta_rational_compare_cstr(atom_rational_cstr(pattern),
-                                               atom_rational_cstr(target)) == 0;
-        case GV_SPACE:
-        case GV_STATE:
-        case GV_CAPTURE:
-        case GV_FOREIGN:
-            return pattern->ground.ptr == target->ground.ptr;
-        /* A rational term is equal to any node with its unfolding. */
-        case GV_TERM_GRAPH:
-        case GV_BINDINGS:
-            return atom_eq(pattern, target);
-        case GV_PRIME_NEED_CAPABILITY:
-        case GV_PRIME_CONTEXT:
-        case GV_INTERNAL_TAG:
-            return atom_eq(pattern, target);
-        }
-        return false;
-
-    case ATOM_EXPR: {
-        if (!atom_petta_decomposition_compatible(pattern, target))
-            return false;
-        MatchListMeeting meet;
-        switch (match_list_meet(a, pattern, target, &meet)) {
-        case MATCH_LIST_MISMATCH:
-            return false;
-        case MATCH_LIST_ELEMENTS:
-            for (CettaExprIndex i = 1; i <= meet.prefix; i++) {
-                if (!simple_match(pattern->expr.elems[i], target->expr.elems[i], b, a))
-                    return false;
-            }
-            return !meet.left_rest ||
-                   simple_match(meet.left_rest, meet.right_rest, b, a);
-        case MATCH_LIST_EXPRESSIONS:
-            break;
-        }
-        if (pattern->expr.len != target->expr.len) return false;
-        for (CettaExprIndex i = 0; i < pattern->expr.len; i++) {
-            if (!simple_match(pattern->expr.elems[i], target->expr.elems[i], b, a))
-                return false;
-        }
-        return true;
-    }
-
-    case ATOM_VAR:
-        /* Already handled above */
-        return false;
-    }
-    return false;
-}
-
-static bool simple_match_builder_rec(Atom *pattern, Atom *target,
-                                     BindingsBuilder *bb, Arena *a) {
-    if (pattern->kind == ATOM_VAR)
-        return bindings_builder_add_var_fresh(bb, pattern, target);
-
-    if (pattern->kind != target->kind)
-        return false;
-
-    switch (pattern->kind) {
-    case ATOM_SYMBOL:
-        return atom_symbols_equal(pattern, target);
-
-    case ATOM_GROUNDED:
-        if (pattern->ground.gkind != target->ground.gkind)
-            return cetta_he_promoted_numbers_equal(pattern, target);
-        switch (pattern->ground.gkind) {
-        case GV_INT:    return pattern->ground.ival == target->ground.ival;
-        case GV_FLOAT:  return pattern->ground.fval == target->ground.fval;
-        case GV_BOOL:   return pattern->ground.bval == target->ground.bval;
-        case GV_STRING: return atom_string_equal(pattern, target);
-        case GV_BIGINT:
-            return cetta_bigint_compare_cstr(atom_bigint_cstr(pattern),
-                                            atom_bigint_cstr(target)) == 0;
-        case GV_RATIONAL:
-            return cetta_rational_compare_cstr(atom_rational_cstr(pattern),
-                                               atom_rational_cstr(target)) == 0;
-        case GV_SPACE:
-        case GV_STATE:
-        case GV_CAPTURE:
-        case GV_FOREIGN:
-            return pattern->ground.ptr == target->ground.ptr;
-        /* A rational term is equal to any node with its unfolding. */
-        case GV_TERM_GRAPH:
-        case GV_BINDINGS:
-            return atom_eq(pattern, target);
-        case GV_PRIME_NEED_CAPABILITY:
-        case GV_PRIME_CONTEXT:
-        case GV_INTERNAL_TAG:
-            return atom_eq(pattern, target);
-        }
-        return false;
-
-    case ATOM_EXPR: {
-        if (!atom_petta_decomposition_compatible(pattern, target))
-            return false;
-        MatchListMeeting meet;
-        switch (match_list_meet(a, pattern, target, &meet)) {
-        case MATCH_LIST_MISMATCH:
-            return false;
-        case MATCH_LIST_ELEMENTS:
-            for (CettaExprIndex i = 1; i <= meet.prefix; i++) {
-                if (!simple_match_builder_rec(pattern->expr.elems[i],
-                                              target->expr.elems[i], bb, a))
-                    return false;
-            }
-            return !meet.left_rest ||
-                   simple_match_builder_rec(meet.left_rest, meet.right_rest, bb, a);
-        case MATCH_LIST_EXPRESSIONS:
-            break;
-        }
-        if (pattern->expr.len != target->expr.len)
-            return false;
-        for (CettaExprIndex i = 0; i < pattern->expr.len; i++) {
-            if (!simple_match_builder_rec(pattern->expr.elems[i],
-                                          target->expr.elems[i], bb, a)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    case ATOM_VAR:
-        return false;
-    }
-    return false;
+    return atom_pair_walk(pattern, target, b, NULL, a, false);
 }
 
 bool simple_match_builder(Atom *pattern, Atom *target, BindingsBuilder *bb,
                           Arena *a) {
-    return simple_match_builder_rec(pattern, target, bb, a);
+    return atom_pair_walk(pattern, target, NULL, bb, a, false);
 }
 
 /* ── Type matching (from HE spec Matching.lean:188-195) ────────────────── */
@@ -10844,8 +10613,10 @@ static bool match_path_reserve_entries(MatchPathSet *path) {
     size_t new_cap = path->entry_cap * 2u;
     if (new_cap > SIZE_MAX / sizeof(*path->entries))
         return false;
-    MatchPathEntry *next = cetta_malloc(
+    MatchPathEntry *next = malloc(
         sizeof(*next) * new_cap);
+    if (!next)
+        return false;
     memcpy(next, path->entries,
            sizeof(*next) * path->len);
     if (path->entries != path->inline_entries)
@@ -10864,7 +10635,9 @@ static bool match_path_grow_buckets(MatchPathSet *path) {
     if (new_cap > SIZE_MAX / sizeof(*path->buckets) ||
         path->len > UINT32_MAX)
         return false;
-    uint32_t *next = cetta_malloc(sizeof(*next) * new_cap);
+    uint32_t *next = malloc(sizeof(*next) * new_cap);
+    if (!next)
+        return false;
     memset(next, 0, sizeof(*next) * new_cap);
     size_t mask = new_cap - 1u;
     for (size_t i = 0u; i < path->len; i++) {
@@ -10954,6 +10727,237 @@ static void match_path_leave(MatchPathSet *path, MatchTerm left, MatchTerm right
     assert(path->buckets[bucket] == (uint32_t)index + 1u);
     path->buckets[bucket] = entry->previous;
     path->len = index;
+}
+
+typedef struct {
+    VarId left;
+    VarId right;
+} AlphaPair;
+
+typedef struct {
+    AlphaPair *items;
+    uint32_t len;
+    uint32_t cap;
+} AlphaPairSet;
+
+static void alpha_pair_set_init(AlphaPairSet *pairs) {
+    pairs->items = NULL;
+    pairs->len = 0;
+    pairs->cap = 0;
+}
+
+static void alpha_pair_set_free(AlphaPairSet *pairs) {
+    free(pairs->items);
+    pairs->items = NULL;
+    pairs->len = 0;
+    pairs->cap = 0;
+}
+
+static VarId alpha_lookup_left(const AlphaPairSet *pairs, VarId left) {
+    for (uint32_t i = 0; i < pairs->len; i++) {
+        if (pairs->items[i].left == left)
+            return pairs->items[i].right;
+    }
+    return VAR_ID_NONE;
+}
+
+static VarId alpha_lookup_right(const AlphaPairSet *pairs, VarId right) {
+    for (uint32_t i = 0; i < pairs->len; i++) {
+        if (pairs->items[i].right == right)
+            return pairs->items[i].left;
+    }
+    return VAR_ID_NONE;
+}
+
+static bool alpha_add_pair(AlphaPairSet *pairs, VarId left, VarId right) {
+    if (pairs->len >= pairs->cap) {
+        if (pairs->cap > UINT32_MAX / 2u)
+            return false;
+        uint32_t next_cap = pairs->cap ? pairs->cap * 2u : 8u;
+        if (!cetta_expr_len_mul_fits_size(next_cap, sizeof(*pairs->items)))
+            return false;
+        AlphaPair *next = realloc(pairs->items, sizeof(*next) * next_cap);
+        if (!next)
+            return false;
+        pairs->items = next;
+        pairs->cap = next_cap;
+    }
+    pairs->items[pairs->len].left = left;
+    pairs->items[pairs->len].right = right;
+    pairs->len++;
+    return true;
+}
+
+static bool simple_match_leaf(Atom *pattern, Atom *target) {
+    switch (pattern->kind) {
+    case ATOM_SYMBOL:
+        return atom_symbols_equal(pattern, target);
+
+    case ATOM_GROUNDED:
+        if (pattern->ground.gkind != target->ground.gkind)
+            return cetta_he_promoted_numbers_equal(pattern, target);
+        switch (pattern->ground.gkind) {
+        case GV_INT:    return pattern->ground.ival == target->ground.ival;
+        case GV_FLOAT:  return pattern->ground.fval == target->ground.fval;
+        case GV_BOOL:   return pattern->ground.bval == target->ground.bval;
+        case GV_STRING: return atom_string_equal(pattern, target);
+        case GV_BIGINT:
+            return cetta_bigint_compare_cstr(atom_bigint_cstr(pattern),
+                                            atom_bigint_cstr(target)) == 0;
+        case GV_RATIONAL:
+            return cetta_rational_compare_cstr(atom_rational_cstr(pattern),
+                                               atom_rational_cstr(target)) == 0;
+        case GV_SPACE:
+        case GV_STATE:
+        case GV_CAPTURE:
+        case GV_FOREIGN:
+            return pattern->ground.ptr == target->ground.ptr;
+        /* A rational term is equal to any node with its unfolding. */
+        case GV_TERM_GRAPH:
+        case GV_BINDINGS:
+            return atom_eq(pattern, target);
+        case GV_PRIME_NEED_CAPABILITY:
+        case GV_PRIME_CONTEXT:
+        case GV_INTERNAL_TAG:
+            return atom_eq(pattern, target);
+        }
+        return false;
+
+    case ATOM_EXPR:
+    case ATOM_VAR:
+        return false;
+    }
+    return false;
+}
+
+/* A comparison frame retains only its next child and optional list rest.
+ * Traversal is ordered: a failure leaves the same earlier bindings in place.
+ * Active pairs detect malformed raw cycles; completed siblings may be visited
+ * again because control representation does not license answer sharing. */
+typedef struct {
+    Atom *left;
+    Atom *right;
+    CettaExprIndex next;
+    CettaExprIndex end;
+    Atom *left_rest;
+    Atom *right_rest;
+} AtomPairFrame;
+
+static bool atom_pair_walk(Atom *left, Atom *right, Bindings *bindings,
+                            BindingsBuilder *builder, Arena *arena, bool alpha) {
+    AtomPairFrame inline_frames[16];
+    AtomPairFrame *frames = inline_frames;
+    size_t len = 0u, cap = sizeof inline_frames / sizeof inline_frames[0];
+    MatchPathSet path;
+    match_path_init(&path);
+    AlphaPairSet pairs;
+    alpha_pair_set_init(&pairs);
+    bool ok = false;
+    if (!alpha && !bindings && !builder)
+        goto done;
+    for (;;) {
+        if (!left || !right)
+            goto done;
+        if (alpha && (left->kind == ATOM_VAR || right->kind == ATOM_VAR)) {
+            if (left->kind != ATOM_VAR || right->kind != ATOM_VAR)
+                goto done;
+            VarId mapped_right = alpha_lookup_left(&pairs, left->var_id);
+            VarId mapped_left = alpha_lookup_right(&pairs, right->var_id);
+            if (mapped_right || mapped_left) {
+                if (mapped_right != right->var_id || mapped_left != left->var_id)
+                    goto done;
+            } else if (!alpha_add_pair(&pairs, left->var_id, right->var_id)) {
+                goto done;
+            }
+        } else if (!alpha && left->kind == ATOM_VAR) {
+            if (!(builder ? bindings_builder_add_var_fresh(builder, left, right)
+                          : bindings_add_var(bindings, left, right)))
+                goto done;
+        } else {
+            if (left->kind != right->kind)
+                goto done;
+            if (left->kind != ATOM_EXPR) {
+                if (!(alpha ? atom_eq(left, right) : simple_match_leaf(left, right)))
+                    goto done;
+            } else {
+                AtomPairFrame frame = {.left = left, .right = right};
+                if (alpha) {
+                    if (left->expr.len != right->expr.len)
+                        goto done;
+                    frame.end = left->expr.len;
+                } else {
+                    if (!atom_petta_decomposition_compatible(left, right))
+                        goto done;
+                    MatchListMeeting meet;
+                    MatchListOutcome outcome = match_list_meet(arena, left, right, &meet);
+                    if (outcome == MATCH_LIST_MISMATCH)
+                        goto done;
+                    if (outcome == MATCH_LIST_ELEMENTS) {
+                        frame.next = 1u;
+                        frame.end = 1u + meet.prefix;
+                        frame.left_rest = meet.left_rest;
+                        frame.right_rest = meet.right_rest;
+                    } else {
+                        if (left->expr.len != right->expr.len)
+                            goto done;
+                        frame.end = left->expr.len;
+                    }
+                }
+                if (frame.next < frame.end || frame.left_rest) {
+                    MatchTerm l = {.value = binding_value_from_atom(left)};
+                    MatchTerm r = {.value = binding_value_from_atom(right)};
+                    if (!match_path_enter(&path, l, r))
+                        goto done;
+                    if (len == cap) {
+                        if (cap > SIZE_MAX / 2u || cap * 2u > SIZE_MAX / sizeof(*frames))
+                            goto done;
+                        size_t next_cap = cap * 2u;
+                        AtomPairFrame *next = frames == inline_frames
+                            ? malloc(sizeof(*next) * next_cap)
+                            : realloc(frames, sizeof(*next) * next_cap);
+                        if (!next)
+                            goto done;
+                        if (frames == inline_frames)
+                            memcpy(next, inline_frames, sizeof(*next) * len);
+                        frames = next;
+                        cap = next_cap;
+                    }
+                    frames[len++] = frame;
+                }
+            }
+        }
+        while (len) {
+            AtomPairFrame *frame = &frames[len - 1u];
+            if (frame->next < frame->end) {
+                CettaExprIndex child = frame->next++;
+                left = frame->left->expr.elems[child];
+                right = frame->right->expr.elems[child];
+                break;
+            }
+            if (frame->left_rest) {
+                left = frame->left_rest;
+                right = frame->right_rest;
+                frame->left_rest = NULL;
+                frame->right_rest = NULL;
+                break;
+            }
+            match_path_leave(&path,
+                (MatchTerm){.value = binding_value_from_atom(frame->left)},
+                (MatchTerm){.value = binding_value_from_atom(frame->right)});
+            len--;
+        }
+        if (!len) {
+            ok = true;
+            break;
+        }
+    }
+
+done:
+    alpha_pair_set_free(&pairs);
+    match_path_free(&path);
+    if (frames != inline_frames)
+        free(frames);
+    return ok;
 }
 
 typedef enum {
@@ -11841,97 +11845,8 @@ bool match_binding_value_atom_id_epoch(
     return match_atoms_atom_id_epoch_worklist(left, candidate_universe, right_id, b, a, epoch);
 }
 
-typedef struct {
-    VarId left;
-    VarId right;
-} AlphaPair;
-
-typedef struct {
-    AlphaPair *items;
-    uint32_t len;
-    uint32_t cap;
-} AlphaPairSet;
-
-static void alpha_pair_set_init(AlphaPairSet *pairs) {
-    pairs->items = NULL;
-    pairs->len = 0;
-    pairs->cap = 0;
-}
-
-static void alpha_pair_set_free(AlphaPairSet *pairs) {
-    free(pairs->items);
-    pairs->items = NULL;
-    pairs->len = 0;
-    pairs->cap = 0;
-}
-
-static VarId alpha_lookup_left(const AlphaPairSet *pairs, VarId left) {
-    for (uint32_t i = 0; i < pairs->len; i++) {
-        if (pairs->items[i].left == left)
-            return pairs->items[i].right;
-    }
-    return VAR_ID_NONE;
-}
-
-static VarId alpha_lookup_right(const AlphaPairSet *pairs, VarId right) {
-    for (uint32_t i = 0; i < pairs->len; i++) {
-        if (pairs->items[i].right == right)
-            return pairs->items[i].left;
-    }
-    return VAR_ID_NONE;
-}
-
-static bool alpha_add_pair(AlphaPairSet *pairs, VarId left, VarId right) {
-    if (pairs->len >= pairs->cap) {
-        pairs->cap = pairs->cap ? pairs->cap * 2 : 8;
-        pairs->items = cetta_realloc(pairs->items, sizeof(AlphaPair) * pairs->cap);
-    }
-    pairs->items[pairs->len].left = left;
-    pairs->items[pairs->len].right = right;
-    pairs->len++;
-    return true;
-}
-
-static bool atom_alpha_eq_rec(Atom *left, Atom *right, AlphaPairSet *pairs) {
-    if (left->kind == ATOM_VAR || right->kind == ATOM_VAR) {
-        if (left->kind != ATOM_VAR || right->kind != ATOM_VAR)
-            return false;
-        VarId mapped_right = alpha_lookup_left(pairs, left->var_id);
-        VarId mapped_left = alpha_lookup_right(pairs, right->var_id);
-        if (mapped_right || mapped_left) {
-            return mapped_right == right->var_id && mapped_left == left->var_id;
-        }
-        return alpha_add_pair(pairs, left->var_id, right->var_id);
-    }
-
-    if (left->kind != right->kind)
-        return false;
-
-    switch (left->kind) {
-    case ATOM_SYMBOL:
-        return atom_symbols_equal(left, right);
-    case ATOM_GROUNDED:
-        return atom_eq(left, right);
-    case ATOM_EXPR:
-        if (left->expr.len != right->expr.len)
-            return false;
-        for (CettaExprIndex i = 0; i < left->expr.len; i++) {
-            if (!atom_alpha_eq_rec(left->expr.elems[i], right->expr.elems[i], pairs))
-                return false;
-        }
-        return true;
-    case ATOM_VAR:
-        return false;
-    }
-    return false;
-}
-
 bool atom_alpha_eq(Atom *left, Atom *right) {
-    AlphaPairSet pairs;
-    alpha_pair_set_init(&pairs);
-    bool ok = atom_alpha_eq_rec(left, right, &pairs);
-    alpha_pair_set_free(&pairs);
-    return ok;
+    return atom_pair_walk(left, right, NULL, NULL, NULL, true);
 }
 
 /* One pending comparison.  An entry with child_count > 0 stands for the
