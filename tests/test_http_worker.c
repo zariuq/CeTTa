@@ -435,7 +435,35 @@ static void cancellation_and_redirects(const char *base) {
     assert(remote_count(base)==before+1 && cetta_http_worker_free(w)==0);
 }
 
+static void deadline_cases(const char *base) {
+    CettaHttpWorker *w=worker(NULL,NULL); char endpoint[512];
+    const char *paths[]={"/drip","/silent","/stall","/forever"};
+    for (uint64_t i=0;i<4;++i) {
+        url(endpoint,base,paths[i]); CettaHttpRequest r=request(i+1,endpoint);
+        r.method="POST"; r.body="once"; r.body_size=4;
+        r.timeout_ms=i==3?180:2000; r.connect_timeout_ms=500;
+        r.first_byte_timeout_ms=i==1?80:1000; r.idle_timeout_ms=120;
+        assert(cetta_http_worker_submit(w,&r)==HTTP_WORKER_OK);
+        /* Waiting on a short attention timer does not consume or cancel. */
+        uint64_t generation=cetta_http_worker_wait(w,0,20);
+        CettaHttpProgress progress;
+        assert(cetta_http_worker_progress(w,r.id,&progress));
+        assert(!progress.terminal);
+        (void)generation;
+        CettaHttpResult result=take(w);
+        if (!i) body(&result,"abcdef",6);
+        else assert(result.started && !result.cancelled && result.transport_code==28);
+        cetta_http_result_free(&result);
+        assert(!cetta_http_worker_progress(w,r.id,&progress));
+    }
+    assert(cetta_http_worker_free(w)==0);
+    puts("HTTP independent first-byte/idle/hard deadlines and non-consuming soft wait passed");
+}
+
 int main(int argc, char **argv) {
+    if (argc==3 && !strcmp(argv[1],"--deadlines")) {
+        deadline_cases(argv[2]); return 0;
+    }
     if (argc==5 && !strcmp(argv[1],"--connection-policy")) {
         connection_policy(argv[2],!strcmp(argv[3],"idempotent"),argv[4]); return 0;
     }

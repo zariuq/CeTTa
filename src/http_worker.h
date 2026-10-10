@@ -28,6 +28,10 @@ typedef struct {
     const void *body;
     size_t body_size;
     uint32_t timeout_ms;
+    /* Independent connect, first body byte, and subsequent body idle limits.
+     * Zero disables first/idle; zero connect preserves the legacy total cap.
+     * Byte activity does not establish provider completion. */
+    uint32_t connect_timeout_ms, first_byte_timeout_ms, idle_timeout_ms;
     size_t max_response_bytes;
     bool follow_redirects;
     /* Host-declared repeat safety, never inferred from the HTTP method.
@@ -54,6 +58,12 @@ typedef struct {
     unsigned char *body;
     size_t body_size;
 } CettaHttpResult;
+
+typedef struct {
+    bool started, terminal;
+    uint64_t elapsed_ms, quiet_ms;
+    size_t response_bytes;
+} CettaHttpProgress;
 
 typedef enum {
     HTTP_PREPARE_READY,             /* claim is durable: networking may start */
@@ -120,6 +130,9 @@ bool cetta_http_worker_take(CettaHttpWorker *worker, CettaHttpResult *out);
  * charged to its aggregate byte budget. Refused for durable observe hooks. */
 bool cetta_http_worker_take_id(CettaHttpWorker *worker, uint64_t id,
                               CettaHttpResult *out);
+/* Non-consuming, bounded metadata only; no response bytes or authority. */
+bool cetta_http_worker_progress(CettaHttpWorker *worker, uint64_t id,
+                                CettaHttpProgress *out);
 void cetta_http_result_free(CettaHttpResult *result);
 
 /* Wait for a completion/progress notification or timeout, using a monotonic

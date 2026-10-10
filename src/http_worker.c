@@ -36,6 +36,7 @@ typedef struct Job {
     CettaHttpRecordMode record_mode;
     unsigned record_attempts;
     uint64_t retry_at;
+    uint64_t started_at, first_byte_at, last_byte_at;
     size_t request_bytes, response_capacity;
     CURL *easy;
     struct curl_slist *headers;
@@ -151,6 +152,11 @@ static size_t receive(char *data, size_t size, size_t count, void *context) {
     }
     if (n) memcpy(j->result.body+j->result.body_size,data,n);
     j->result.body_size+=n; j->result.body[j->result.body_size]=0;
+    if (n) {
+        j->last_byte_at=milliseconds();
+        if (!j->first_byte_at) j->first_byte_at=j->last_byte_at;
+        changed(w);
+    }
     pthread_mutex_unlock(&w->mutex);
     return n;
 }
@@ -179,8 +185,9 @@ static CURLcode configure(Job *j) {
     SET(CURLOPT_ACCEPT_ENCODING,"");
     if (j->request.timeout_ms) {
         SET(CURLOPT_TIMEOUT_MS,(long)j->request.timeout_ms);
-        SET(CURLOPT_CONNECTTIMEOUT_MS,(long)j->request.timeout_ms);
     }
+    uint32_t connect=j->request.connect_timeout_ms?j->request.connect_timeout_ms:j->request.timeout_ms;
+    if (connect) SET(CURLOPT_CONNECTTIMEOUT_MS,(long)connect);
     if (j->headers) SET(CURLOPT_HTTPHEADER,j->headers);
     if (!strcmp(j->request.method,"GET")) SET(CURLOPT_HTTPGET,1L);
     else {
@@ -294,7 +301,9 @@ static void process_jobs(CettaHttpWorker *w) {
         cancel=j->cancel || w->stopping;
         if (!cancel && code==CURLE_OK && curl_multi_add_handle(w->multi,j->easy)!=CURLM_OK)
             code=CURLE_FAILED_INIT;
-        if (!cancel && code==CURLE_OK) { j->result.started=true; j->state=RUNNING; }
+        if (!cancel && code==CURLE_OK) {
+            j->result.started=true; j->state=RUNNING; j->started_at=milliseconds();
+        }
         pthread_mutex_unlock(&w->mutex);
         if (cancel || code!=CURLE_OK) finish(w,j,cancel?CURLE_ABORTED_BY_CALLBACK:code,cancel);
     }
@@ -334,12 +343,28 @@ static void *owner(void *context) {
             curl_easy_getinfo(message->easy_handle,CURLINFO_PRIVATE,&j);
             if (j) finish(w,j,message->data.result,false);
         }
+        /* A low-speed average is not an idle clock and can expire during
+         * silent reasoning. First-byte and post-start silence are separate. */
+        for (;;) {
+            pthread_mutex_lock(&w->mutex);
+            uint64_t now=milliseconds(); Job *expired=NULL;
+            for (Job *j=w->jobs;j;j=j->next) if (j->state==RUNNING &&
+                ((!j->first_byte_at && j->request.first_byte_timeout_ms &&
+                  now-j->started_at>=j->request.first_byte_timeout_ms) ||
+                 (j->first_byte_at && j->request.idle_timeout_ms &&
+                  now-j->last_byte_at>=j->request.idle_timeout_ms))) { expired=j; break; }
+            pthread_mutex_unlock(&w->mutex);
+            if (!expired) break;
+            finish(w,expired,CURLE_OPERATION_TIMEDOUT,false);
+        }
         process_observations(w,false);
         pthread_mutex_lock(&w->mutex);
         bool retry=false, blocked=persistence_pending(w);
         for (Job *j=w->jobs;j;j=j->next)
             if ((j->state==QUEUED && !blocked) ||
-                (j->state==OBSERVING && j->retry_at!=UINT64_MAX)) { retry=true; break; }
+                (j->state==OBSERVING && j->retry_at!=UINT64_MAX) ||
+                (j->state==RUNNING && (j->request.first_byte_timeout_ms ||
+                                      j->request.idle_timeout_ms))) { retry=true; break; }
         pthread_mutex_unlock(&w->mutex);
         int events;
         if (curl_multi_poll(multi,NULL,0,retry?100:1000,&events)!=CURLM_OK) {
@@ -398,7 +423,9 @@ static CettaHttpWorkerStatus measure_request(const CettaHttpRequest *r, size_t *
         (strncasecmp(r->url,"http://",7) && strncasecmp(r->url,"https://",8)) ||
         r->header_count>256 || (r->header_count && !r->headers) ||
         (r->body_size && !r->body) || r->max_response_bytes>=INT_MAX ||
-        r->timeout_ms>INT_MAX || r->body_size>INT_MAX) return HTTP_WORKER_INVALID;
+        r->timeout_ms>INT_MAX || r->connect_timeout_ms>INT_MAX ||
+        r->first_byte_timeout_ms>INT_MAX || r->idle_timeout_ms>INT_MAX ||
+        r->body_size>INT_MAX) return HTTP_WORKER_INVALID;
     size_t method_size=strnlen(r->method,32), url_size=strnlen(r->url,8193);
     if (method_size>31 || url_size>8192) return HTTP_WORKER_INVALID;
     for (size_t i=0;i<method_size;++i) {
@@ -542,6 +569,21 @@ bool cetta_http_worker_take_id(CettaHttpWorker *w, uint64_t id, CettaHttpResult 
     return id && take_matching(w,id,out);
 }
 
+bool cetta_http_worker_progress(CettaHttpWorker *w, uint64_t id, CettaHttpProgress *out) {
+    if (!w || !id || !out) return false;
+    pthread_mutex_lock(&w->mutex);
+    Job *j=find_job(w,id);
+    if (j) {
+        uint64_t now=milliseconds();
+        *out=(CettaHttpProgress){.started=j->result.started,
+            .terminal=j->state==OBSERVING || j->state==READY,
+            .elapsed_ms=j->started_at?now-j->started_at:0,
+            .quiet_ms=j->started_at?now-(j->last_byte_at?j->last_byte_at:j->started_at):0,
+            .response_bytes=j->result.body_size};
+    }
+    pthread_mutex_unlock(&w->mutex); return j!=NULL;
+}
+
 uint64_t cetta_http_worker_wait(CettaHttpWorker *w,uint64_t generation,uint32_t timeout_ms) {
     if (!w) return generation;
     struct timespec deadline; clock_gettime(CLOCK_MONOTONIC,&deadline);
@@ -563,6 +605,10 @@ size_t cetta_http_worker_free(CettaHttpWorker *w) {
     return unacknowledged;
 }
 #else
+
+bool cetta_http_worker_progress(CettaHttpWorker *w,uint64_t id,CettaHttpProgress *out) {
+    (void)w; (void)id; (void)out; return false;
+}
 CettaHttpWorkerStatus cetta_http_worker_new(const CettaHttpWorkerLimits *l,
     const CettaHttpWorkerHooks *h,CettaHttpWorker **out) {
     (void)l; (void)h; if (out) *out=NULL; return HTTP_WORKER_UNAVAILABLE;

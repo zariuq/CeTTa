@@ -20,6 +20,34 @@ remain owned by the worker and count toward its aggregate response-byte limit.
 An unfinished handle returns `(io:idle)`; an unknown, consumed or cancelled
 handle returns `(io:unknown handle)`. Handles are positive integers local to one
 runtime session. The unselected operations retain their original behavior.
+`io:status handle` reads `(io:progress handle phase elapsed-ms bytes quiet-ms)`
+without consuming the result. `phase` is `waiting` or `ready`; body byte
+activity is transport metadata and never certifies an application answer.
+Consumed handles answer `io:unknown`. Progress inspection is native-only.
+
+`io:try-submit request`, `io:try-status handle` and
+`io:try-wait handle milliseconds` provide explicit error boundaries in each
+supported library spelling. Failed submission or wait returns `(io:failed)`;
+unavailable progress returns `(io:no-progress)`. These wrappers do not retry,
+cancel, or turn diagnostic errors into response bodies.
+
+The native request may append independent transport limits after the optional
+redirect Bool:
+
+```metta
+(http:request "POST" "https://example.org/model" () "{}" 1800000 1048576 False
+              (http:timeouts 30000 900000 180000))
+```
+
+The three options are connect, first body byte and idle-after-first-byte
+milliseconds. Zero disables first-byte or idle limits; zero connect preserves
+the legacy connect policy. The existing request timeout remains the overall
+hard ceiling. An `io:wait` timeout only returns `io:idle` and leaves transport
+running. Silent initial reasoning is not subjected to the post-start idle
+limit. Idle is measured from the last received body byte, including heartbeat
+traffic; it is not a semantic progress detector. The browser provider rejects
+nonzero independent limits rather than silently ignoring them.
+
 The [buffered LLM library](../../verification/llm/README.md) uses these operations
 so waiting for one provider request does not drain another client's response.
 

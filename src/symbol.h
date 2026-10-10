@@ -398,6 +398,7 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(lib_durable_close, "__cetta_lib_durable_close") \
     X(lib_io_submit, "__cetta_lib_io_submit") \
     X(lib_io_poll, "__cetta_lib_io_poll") \
+    X(lib_io_status, "__cetta_lib_io_status") \
     X(lib_io_wait, "__cetta_lib_io_wait") \
     X(lib_io_cancel, "__cetta_lib_io_cancel") \
     X(lib_cwp_call, "__cetta_lib_cwp_call") \

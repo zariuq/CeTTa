@@ -42,6 +42,7 @@ typedef struct CettaIoRequest {
     CettaIoHeader *headers;
     char *body;
     int64_t timeout_ms;
+    uint32_t connect_timeout_ms, first_byte_timeout_ms, idle_timeout_ms;
     size_t max_bytes;
     bool follow_redirects;
     char *response;
@@ -116,6 +117,8 @@ static Atom *io_public_head(Arena *arena, Atom *head) {
         return atom_symbol(arena, "io:submit");
     if (id == g_builtin_syms.lib_io_poll)
         return atom_symbol(arena, "io:poll");
+    if (id == g_builtin_syms.lib_io_status)
+        return atom_symbol(arena, "io:status");
     if (id == g_builtin_syms.lib_io_wait)
         return atom_symbol(arena, "io:wait");
     if (id == g_builtin_syms.lib_io_cancel)
@@ -362,7 +365,7 @@ static CettaIoRequest *io_parse_http_request(Atom *atom, char *error,
     const char *body;
     int64_t timeout_ms;
     int64_t max_bytes;
-    if (!atom || atom->kind != ATOM_EXPR || (atom->expr.len != 7u && atom->expr.len != 8u) ||
+    if (!atom || atom->kind != ATOM_EXPR || (atom->expr.len < 7u || atom->expr.len > 9u) ||
         !atom_is_symbol(atom->expr.elems[0], "http:request") ||
         !(method = io_text_arg(atom->expr.elems[1])) ||
         !(url = io_text_arg(atom->expr.elems[2])) ||
@@ -377,7 +380,7 @@ static CettaIoRequest *io_parse_http_request(Atom *atom, char *error,
         return NULL;
     }
     bool follow_redirects=false;
-    if (atom->expr.len==8u) {
+    if (atom->expr.len>=8u) {
         Atom *follow=atom->expr.elems[7];
         if (follow && follow->kind==ATOM_GROUNDED && follow->ground.gkind==GV_BOOL)
             follow_redirects=follow->ground.bval;
@@ -411,6 +414,27 @@ static CettaIoRequest *io_parse_http_request(Atom *atom, char *error,
     request->timeout_ms = timeout_ms;
     request->max_bytes = (size_t)max_bytes;
     request->follow_redirects = follow_redirects;
+    if (atom->expr.len==9u) {
+        Atom *options=atom->expr.elems[8]; int64_t connect, first, idle;
+        if (!options || options->kind!=ATOM_EXPR || options->expr.len!=4u ||
+            !atom_is_symbol(options->expr.elems[0],"http:timeouts") ||
+            !io_nonnegative_int_arg(options->expr.elems[1],&connect) ||
+            !io_nonnegative_int_arg(options->expr.elems[2],&first) ||
+            !io_nonnegative_int_arg(options->expr.elems[3],&idle) ||
+            connect>INT_MAX || first>INT_MAX || idle>INT_MAX) {
+            snprintf(error,error_size,"expected (http:timeouts connect-ms first-byte-ms idle-ms)");
+            io_request_free(NULL,request); return NULL;
+        }
+#if CETTA_BUILD_HTTP_PROVIDER_EMSCRIPTEN
+        if (connect || first || idle) {
+            snprintf(error,error_size,"independent HTTP timeouts require the native provider");
+            io_request_free(NULL,request); return NULL;
+        }
+#endif
+        request->connect_timeout_ms=(uint32_t)connect;
+        request->first_byte_timeout_ms=(uint32_t)first;
+        request->idle_timeout_ms=(uint32_t)idle;
+    }
     if (!io_parse_headers(atom->expr.elems[3], url, follow_redirects, &request->headers,
                           error, error_size)) {
         io_request_free(NULL, request);
@@ -479,6 +503,9 @@ static bool io_http_start(CettaIoRuntime *runtime, CettaIoRequest *request,
         .headers=(const char *const *)headers, .header_count=count,
         .body=request->body, .body_size=strlen(request->body),
         .timeout_ms=(uint32_t)request->timeout_ms,
+        .connect_timeout_ms=request->connect_timeout_ms,
+        .first_byte_timeout_ms=request->first_byte_timeout_ms,
+        .idle_timeout_ms=request->idle_timeout_ms,
         .max_response_bytes=request->max_bytes, .follow_redirects=request->follow_redirects
     };
     CettaHttpWorkerStatus status = cetta_http_worker_submit(runtime->worker, &input);
@@ -834,6 +861,27 @@ static Atom *io_poll(CettaIoRuntime *runtime, Arena *arena,
     return event;
 }
 
+static Atom *io_status(CettaIoRuntime *runtime, Arena *arena,
+                       Atom *head, Atom **args, uint32_t nargs) {
+    int64_t id;
+    if (nargs!=1u || !io_nonnegative_int_arg(args[0],&id) || !id)
+        return io_error(arena,head,args,nargs,"expected (io:status positive-id)");
+    CettaIoRequest *request=io_request_find(runtime,(uint64_t)id);
+    if (!request) return atom_expr2(arena,atom_symbol(arena,"io:unknown"),atom_int(arena,id));
+    CettaHttpProgress progress={0};
+    bool available=false;
+#if CETTA_BUILD_HTTP_PROVIDER_CURL
+    available=cetta_http_worker_progress(runtime->worker,(uint64_t)id,&progress);
+#endif
+    if (!available && !request->ready)
+        return io_error(arena,head,args,nargs,"HTTP progress is unavailable");
+    return atom_expr(arena,(Atom *[]){atom_symbol(arena,"io:progress"),atom_int(arena,id),
+        atom_symbol(arena,request->ready || progress.terminal?"ready":"waiting"),
+        atom_int(arena,(int64_t)progress.elapsed_ms),
+        atom_int(arena,(int64_t)(request->ready?request->response_len:progress.response_bytes)),
+        atom_int(arena,(int64_t)progress.quiet_ms)},6u);
+}
+
 static Atom *io_wait(CettaIoRuntime *runtime, Arena *arena,
                      Atom *head, Atom **args, uint32_t nargs) {
     int64_t timeout, selected_id = 0;
@@ -899,6 +947,8 @@ Atom *cetta_io_dispatch(CettaIoRuntime *runtime, Arena *arena,
         return io_submit(runtime, arena, head, args, nargs);
     if (id == g_builtin_syms.lib_io_poll)
         return io_poll(runtime, arena, head, args, nargs);
+    if (id == g_builtin_syms.lib_io_status)
+        return io_status(runtime, arena, head, args, nargs);
     if (id == g_builtin_syms.lib_io_wait)
         return io_wait(runtime, arena, head, args, nargs);
     if (id == g_builtin_syms.lib_io_cancel)

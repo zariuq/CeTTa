@@ -9,6 +9,7 @@ import collections
 import http.server
 import socket
 import threading
+import time
 
 fixture, test = (str(pathlib.Path(x).resolve()) for x in sys.argv[1:])
 with tempfile.TemporaryDirectory(prefix="cetta-http-worker-") as directory:
@@ -97,3 +98,32 @@ for method in ("POST", "GET"):
             finally:
                 server.shutdown()
                 owner.join(timeout=5)
+
+
+class DeadlineHandler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+    def do_POST(self):
+        assert self.rfile.read(int(self.headers["Content-Length"])) == b"once"
+        self.server.counts[self.path] += 1
+        self.send_response(200); self.end_headers()
+        try:
+            time.sleep(.3 if self.path == "/silent" else .05)
+            if self.path == "/stall":
+                self.wfile.write(b"a"); self.wfile.flush(); time.sleep(.6)
+            else:
+                for value in (b"abcdef" if self.path != "/forever" else b"a" * 100):
+                    self.wfile.write(bytes([value])); self.wfile.flush(); time.sleep(.04)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+
+with http.server.ThreadingHTTPServer(("127.0.0.1", 0), DeadlineHandler) as server:
+    server.daemon_threads = True
+    server.counts = collections.Counter()
+    owner = threading.Thread(target=server.serve_forever, daemon=True); owner.start()
+    try:
+        subprocess.run([test, "--deadlines", f"http://127.0.0.1:{server.server_port}"], check=True, timeout=15)
+        assert server.counts == {"/drip": 1, "/silent": 1, "/stall": 1, "/forever": 1}, server.counts
+    finally:
+        server.shutdown(); owner.join(timeout=5)
