@@ -223,6 +223,13 @@ mathematical byte bound covers scalar and zero-axis cases. These are checked
 model properties, not a verification of the physical C reference counter,
 allocator, codec or floating-point kernels.
 
+`Mettapedia.Algebra.TensorRetrieval` proves that projecting failures once and
+returning the original successful candidate view agrees with rebuilding
+validation. Occurrence order, duplicate occurrences and the first error are
+preserved; requesting zero hits cannot hide a failure. Its scan count is an
+abstract linear bound. The generated in-process capacity probe independently
+measures the MeTTa implementation and includes the old rebuilding control.
+
 Run `make test-tensor-native BUILD=core` for the native unit checks and the
 PeTTa, HE and Prime API fixtures. The PeTTa fixtures also exercise exact
 retrieval, profile selection and deletion. `examples/tensor/native_cpu.metta`
@@ -234,6 +241,23 @@ records and lifecycle changes through native MeTTa retrieval and an optional
 Chroma client. It supplies embeddings explicitly; no model weights or retained
 corpus are required. A production collection adapter and model interface remain
 separate implementation obligations.
+
+The next retrieval slices should add bulk tensor ingress and the collection
+adapter, then a packed exact index derived from versioned space records. The
+present exact engine can support offline and shadow comparisons while that
+index is developed. An index's identity must include
+its source space/revision and embedding profile, dtype, dimension and metric.
+Updates, deletion and profile changes must invalidate or patch the affected
+view before publication. Persistent records retain embeddings alongside text
+and provenance so rebuilding the index does not require another model call.
+Use the generic CeTTa space/service storage interface and qualify its tensor
+durability; an existing value codec alone does not persist a space.
+
+Before an agent cutover, replay a consistent private export through the same
+collection contract, including cosine queries, ID/time lookup and episode
+links. A later shadow adapter can compare retrieval without choosing the
+agent's answers. Its queues, failure receipts and rollback must be qualified
+separately from the storage and numerical kernels.
 
 ## Completion programme
 

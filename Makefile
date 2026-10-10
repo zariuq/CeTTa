@@ -42974,7 +42974,7 @@ test-durable-value: runtime/test-durable-value-$(BUILD_OBJ_TAG)
 TENSOR_TEST_BIN = runtime/test-tensor-$(BUILD_OBJ_TAG)
 TENSOR_TEST_SOURCES = tests/test_tensor.c src/tensor.c src/atom.c src/symbol.c \
 	src/binding/frame_identity.c src/atom_wire.c src/durable_value.c
-.PHONY: test-tensor-unit test-tensor-native test-tensor-mutations benchmark-tensor-compact
+.PHONY: test-tensor-unit test-tensor-native test-tensor-mutations benchmark-tensor-compact benchmark-tensor-capacity
 $(TENSOR_TEST_BIN): $(TENSOR_TEST_SOURCES) src/tensor.h src/atom.h src/symbol.h \
 		src/atom_wire.h src/durable_value.h tests/test_runtime_stats_stubs.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
@@ -42993,6 +42993,9 @@ test-tensor-mutations:
 benchmark-tensor-compact: $(BIN) $(TENSOR_TEST_BIN) test-library-spellings-v1
 	CETTA_BIN=./$(BIN) python3 benchmarks/tensor/compact.py \
 		--unit-binary ./$(TENSOR_TEST_BIN) $(TENSOR_BENCH_ARGS)
+
+benchmark-tensor-capacity: $(BIN) test-library-spellings-v1
+	python3 benchmarks/tensor/capacity.py --binary ./$(BIN) $(TENSOR_CAPACITY_ARGS)
 
 test: test-tensor-native
 

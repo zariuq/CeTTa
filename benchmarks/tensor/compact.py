@@ -311,6 +311,7 @@ def retrieval_checks(runtime, rng, count, dimension, chroma_mode, min_recall=1.0
     if chroma_mode == "required":
         chroma = ChromaComparison()
     chroma_recalls = []
+    chroma_recall_details = []
     chroma_times = []
     chroma_queries = 0
 
@@ -339,6 +340,9 @@ def retrieval_checks(runtime, rng, count, dimension, chroma_mode, min_recall=1.0
                         chroma_times.append(latency)
                     if reference_hits(records, query):
                         chroma_recalls.append(recall)
+                        chroma_recall_details.append({"query": query.name, "k": query.k,
+                                                      "eligible_records": len(selected(records, query)),
+                                                      "recall": recall})
 
     try:
         if chroma is not None:
@@ -387,11 +391,11 @@ def retrieval_checks(runtime, rng, count, dimension, chroma_mode, min_recall=1.0
         require(len(results) == len(observations), "Missing native query receipts")
         for query, snapshot in observations:
             validate_hits(results[query.name], snapshot, query)
-        require(not chroma_recalls or min(chroma_recalls) >= min_recall,
-                "Chroma recall below requested threshold")
-        return {"status": "pass", "public_queries": len(observations),
+        chroma_passed = not chroma_recalls or min(chroma_recalls) >= min_recall
+        return {"status": "pass" if chroma_passed else "fail", "native_status": "pass",
+                "public_queries": len(observations),
                 "records_initial": count + 2, "dimension": dimension,
-                "chroma_status": "pass" if chroma is not None else "not-run",
+                "chroma_status": ("pass" if chroma_passed else "fail") if chroma is not None else "not-run",
                 "chroma_version": chroma.version if chroma is not None else None,
                 "chroma_index_profile": chroma.index_profile if chroma is not None else None,
                 "chroma_queries": chroma_queries,
@@ -399,6 +403,7 @@ def retrieval_checks(runtime, rng, count, dimension, chroma_mode, min_recall=1.0
                 "chroma_min_recall_required": min_recall,
                 "chroma_min_tie_aware_recall": min(chroma_recalls, default=None),
                 "chroma_mean_tie_aware_recall": statistics.mean(chroma_recalls) if chroma_recalls else None,
+                "chroma_recall_details": chroma_recall_details,
                 "chroma_query_latency_seconds": chroma_times,
                 "chroma_timing_scope": "in-process SDK queries; k=0 local adapter results excluded",
                 "chroma_reference": "generated f64 dot, Chroma ip distance converted to score",
@@ -486,8 +491,10 @@ def main():
         run_benchmark(options)
     except Exception as error:
         if options.output:
-            write_report({"schema": "cetta-tensor-benchmark-v1", "status": "fail",
-                          "failure": str(error)}, options.output)
+            saved = json.loads(options.output.read_text())
+            if saved.get("status") != "fail":
+                write_report({"schema": "cetta-tensor-benchmark-v1", "status": "fail",
+                              "failure": str(error), "programme_complete": False}, options.output)
         raise
 
 
@@ -536,8 +543,11 @@ def run_benchmark(options):
                                "rss_methods": {"parent": "current process image VmHWM",
                                                "native": "GNU time per child"},
                                "parent_max_rss_kib": current_image_peak_rss_kib()}
-    report["status"] = "pass"
+    report["status"] = report["retrieval"]["status"]
+    if report["status"] != "pass":
+        report["failure"] = "Chroma recall below requested threshold"
     size = write_report(report, options.output)
+    require(report["status"] == "pass", report.get("failure", "Qualification failed"))
     if options.output:
         print(f"PASS: {report['numerical']['public_checks']} numerical checks; "
               f"{report['retrieval']['public_queries']} retrieval queries; "

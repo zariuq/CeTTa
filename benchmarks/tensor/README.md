@@ -85,8 +85,11 @@ CeTTa's boundary tie policy selects earlier occurrences. Chroma recall permits
 any equally scoring boundary occurrence and still requires all strictly better
 hits. Recall is averaged only over queries with nonempty expected results;
 empty queries and `k=0` cannot inflate it. The default requires recall 1.0 on
-these small fixtures; `--min-chroma-recall` can declare a different threshold
-for a larger ANN experiment. Chroma's unsupported `n_results=0` is represented
+each nonempty query in these small fixtures; `--min-chroma-recall` declares that
+minimum per-query threshold
+for a larger ANN experiment. Recall threshold failures retain the measured
+native outcome and per-query recalls in a failed receipt; they cannot become
+passing comparisons. Chroma's unsupported `n_results=0` is represented
 as a local empty result by the comparison adapter.
 
 This is an early comparison adapter, not a production collection API or native
@@ -94,6 +97,38 @@ tensor/Python buffer exchange. Generated records have unique IDs. Native spaces
 can contain duplicate occurrences of the same ID, while Chroma collections use
 IDs as keys; an application adapter must explicitly resolve that difference.
 Native remove/add updates here are sequential, not an atomic transaction.
+
+## Capacity and growth
+
+[capacity.py](capacity.py) measures repeated operations inside one process,
+after constructing resident values and discarding the first sample. It checks
+the record and score counts, validation output and exact selected hits. The
+clock surrounds the operation and result binding; the answer check follows it.
+Whole-process timing and peak RSS are also retained separately.
+
+```sh
+make benchmark-tensor-capacity BUILD=core \
+  TENSOR_CAPACITY_ARGS="--check-growth --rebuild-control --output runtime/tensor-capacity.json"
+```
+
+The default compares 2,000 with 8,000 generated 64-component records. It times
+validation alone, scoring/selection over an already retrieved view, and a full
+space search separately. A repeated resident million-element dot product also
+separates operation time from construction and startup. This measures the
+current interpreter/native boundary, not an optimized BLAS provider.
+
+With `--check-growth`, the validation median must grow by at most the record
+ratio times `--growth-overhead` (default 1.5): a fourfold input increase allows
+at most sixfold time. Timing gates are explicit qualification profiles because
+machine contention can affect them. `--rebuild-control` restores the original
+recursive validator only within the generated probe; with the growth gate,
+the same bound must reject that control. A failed run replaces its old receipt.
+
+For an embedding dimension closer to an agent memory workload, use
+`--records 1500 6000 --dimension 1024`. Inputs contain compact `tensor:full`
+construction commands rather than one source atom per component. Generated
+vectors isolate capacity costs; they do not establish semantic retrieval
+quality or replace the independently randomized lifecycle suite above.
 
 ## Coverage and completion
 

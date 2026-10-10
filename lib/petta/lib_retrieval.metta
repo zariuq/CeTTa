@@ -12,15 +12,17 @@
            (RetrievalFailure $id nonfinite-score)
            ($score (RetrievalHit $id $revision $profile $metadata)))))))
 
-; Validation stops at the first failed candidate instead of silently claiming
-; a complete search over only the successful subset.
-(= (retrieval:validate ()) ())
-(= (retrieval:validate (cons (RetrievalFailure $id $reason) $rest))
-   (RetrievalFailure $id $reason))
-(= (retrieval:validate (cons ($score $hit) $rest))
-   (case (retrieval:validate $rest)
+; Inspect each candidate once, collecting only failures. Rebuilding the full
+; expression with recursive cons-atom copies every growing tail. Returning the
+; original successful view preserves its occurrences without that extra copy.
+(= (retrieval:failure $candidate)
+   (case $candidate
      (((RetrievalFailure $id $reason) (RetrievalFailure $id $reason))
-      ($valid (cons-atom ($score $hit) $valid)))))
+      (($score $hit) (empty))
+      ($invalid (RetrievalFailure $invalid malformed-candidate)))))
+(= (retrieval:validate $scored)
+   (let $failures (collapse (retrieval:failure (superpose $scored)))
+     (if (== $failures ()) $scored (car-atom $failures))))
 
 ; The native selector keeps the greatest k scores, preserves occurrence order,
 ; and prefers earlier occurrences at a boundary tie. It does not sort by score.

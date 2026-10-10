@@ -6,6 +6,13 @@ true
 ((1.0 (RetrievalHit first 1 model-v1 (tag a))) (2.0 (RetrievalHit third 3 model-v1 (tag c))))
 ((2.0 (RetrievalHit third 3 model-v1 (tag c))))
 ()
+((1 a) (1 a) (2 b))
+(RetrievalFailure second bad)
+(RetrievalFailure second bad)
+(RetrievalFailure broken malformed-candidate)
+(RetrievalFailure bad shape-mismatch)
+(RetrievalFailure bad shape-mismatch)
+()
 ()
 (RetrievalFailure first shape-mismatch)
 true
