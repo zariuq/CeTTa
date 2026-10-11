@@ -52474,6 +52474,35 @@ void metta_eval_outcome(Space *s, Arena *a, Atom *type, Atom *atom, int fuel,
 static void metta_eval_one_step(Space *s, Arena *a, Atom *type, Atom *atom,
                                 ResultSet *rs);
 
+/* Reflection stops at operations whose execution is not certified pure.
+ * The frozen operation and its enclosing expression remain inspectable;
+ * neither is a response or authority to execute the operation. */
+static bool he_one_step_is_request(Atom *atom) {
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len == 3u &&
+        symbol_eq_cstr(g_symbols, atom_head_symbol_id(atom), "lts:he:request");
+}
+
+static Atom *he_one_step_request(Arena *a, Atom *call, Atom *state) {
+    return atom_expr3(a, atom_symbol(a, "lts:he:request"),
+        atom_expr2(a, atom_symbol_id(a, g_builtin_syms.quote), call),
+        atom_expr2(a, atom_symbol_id(a, g_builtin_syms.quote), state));
+}
+
+static Atom *he_one_step_lift_request(Arena *a, Atom *request, Atom *state) {
+    return atom_expr3(a, request->expr.elems[0], request->expr.elems[1],
+        atom_expr2(a, atom_symbol_id(a, g_builtin_syms.quote), state));
+}
+
+static bool he_one_step_resource_service(SymbolId head) {
+    return head == g_builtin_syms.new_state ||
+        head == g_builtin_syms.get_state ||
+        head == g_builtin_syms.change_state_bang ||
+        head == g_builtin_syms.new_space ||
+        head == g_builtin_syms.bind_bang ||
+        head == g_builtin_syms.import_bang ||
+        head == g_builtin_syms.git_import_bang;
+}
+
 static void metta_eval_one_step_chain(Space *s, Arena *a, Atom *atom,
                                       Atom *to_eval, Atom *var,
                                       Atom *body, ResultSet *rs) {
@@ -52492,6 +52521,11 @@ static void metta_eval_one_step_chain(Space *s, Arena *a, Atom *atom,
 
     for (uint32_t i = 0; i < inner.len; i++) {
         Atom *next = inner.items[i];
+        if (he_one_step_is_request(next)) {
+            result_set_add(rs, he_one_step_lift_request(a, next, atom));
+            emitted = true;
+            continue;
+        }
         if (atom_is_legacy_empty_sentinel(next)) {
             emitted = true;
             continue;
@@ -52545,7 +52579,7 @@ static void metta_eval_one_step_chain(Space *s, Arena *a, Atom *atom,
     bindings_builder_free(&b);
 }
 
-static void metta_eval_one_step_let(Space *s, Arena *a, Atom *val_expr,
+static void metta_eval_one_step_let(Space *s, Arena *a, Atom *atom, Atom *val_expr,
                                     Atom *pat, Atom *body,
                                     ResultSet *rs) {
     ResultSet inner;
@@ -52556,6 +52590,11 @@ static void metta_eval_one_step_let(Space *s, Arena *a, Atom *val_expr,
 
     for (uint32_t i = 0; i < inner.len; i++) {
         Atom *next = inner.items[i];
+        if (he_one_step_is_request(next)) {
+            result_set_add(rs, he_one_step_lift_request(a, next, atom));
+            emitted = true;
+            continue;
+        }
         if (atom_is_legacy_empty_sentinel(next)) {
             emitted = true;
             continue;
@@ -52648,6 +52687,11 @@ static void metta_eval_one_step_case(Space *s, Arena *a, Atom *atom,
 
     for (uint32_t i = 0; i < inner.len; i++) {
         Atom *next = inner.items[i];
+        if (he_one_step_is_request(next)) {
+            result_set_add(rs, he_one_step_lift_request(a, next, atom));
+            emitted = true;
+            continue;
+        }
         if (atom_is_legacy_empty_sentinel(next)) {
             emitted = true;
             continue;
@@ -52730,6 +52774,8 @@ static bool he_step_rule_on(CettaLangdefRuleId rule_id) {
 }
 
 static bool metta_eval_one_step_expr_congruence(Space *s, Arena *a, Atom *atom,
+                                                Atom *signature,
+                                                const Bindings *contract,
                                                 ResultSet *rs) {
     if (!atom || atom->kind != ATOM_EXPR || atom->expr.len == 0)
         return false;
@@ -52740,13 +52786,19 @@ static bool metta_eval_one_step_expr_congruence(Space *s, Arena *a, Atom *atom,
         bool emitted = false;
 
         result_set_init(&inner);
-        metta_eval_one_step(s, a, NULL, elem, &inner);
+        Atom *domain = signature
+            ? (idx == 0u ? signature :
+                function_domain_refine(contract, a, signature->expr.elems[idx]))
+            : NULL;
+        metta_eval_one_step(s, a, domain, elem, &inner);
 
         for (uint32_t i = 0; i < inner.len; i++) {
             Atom *next = inner.items[i];
             if (atom_eq(next, elem))
                 continue;
-            if (atom_is_legacy_empty_sentinel(next) || atom_is_error(next)) {
+            if (he_one_step_is_request(next)) {
+                result_set_add(rs, he_one_step_lift_request(a, next, atom));
+            } else if (atom_is_legacy_empty_sentinel(next) || atom_is_error(next)) {
                 result_set_add(rs, next);
             } else {
                 Atom **elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
@@ -52765,6 +52817,108 @@ static bool metta_eval_one_step_expr_congruence(Space *s, Arena *a, Atom *atom,
     return false;
 }
 
+static void he_one_step_ready_call(Space *s, Arena *a, Atom *atom,
+                                    ResultSet *rs) {
+    Atom *head = atom->expr.elems[0];
+    const char *name = head->kind == ATOM_SYMBOL ? atom_name_cstr(head) : NULL;
+    /* The runtime's ABI prefix fallback is not evidence that an operation
+     * exists. Reflection requests only catalogued ABI names; an unknown
+     * spelling can still be interpreted by user equations below. */
+    bool known_abi = !name || strncmp(name, "__cetta_lib_", 12u) != 0 ||
+        (symbol_flags(g_symbols, head->sym_id) &
+            CETTA_SYMBOL_FLAG_STATIC_GROUNDED_OP) != 0u;
+    if (head->kind == ATOM_SYMBOL && is_grounded_op(head->sym_id) &&
+        known_abi && active_builtin_allowed(name) &&
+        he_step_rule_on(CETTA_HES_RULE_GROUNDED_DISPATCH)) {
+        if (!grounded_op_is_type_pure(head->sym_id)) {
+            result_set_add(rs, he_one_step_request(a, atom, atom));
+            return;
+        }
+        Atom *direct = dispatch_native_op(s, a, head,
+            atom->expr.elems + 1u, atom->expr.len - 1u);
+        if (direct) {
+            result_set_add(rs, direct);
+            return;
+        }
+    }
+    if (he_step_rule_on(CETTA_HES_RULE_EQUATION_MATCH)) {
+        QueryResults qr;
+        query_results_init(&qr);
+        query_equations(s, atom, a, &qr);
+        for (uint32_t i = 0; i < qr.len; i++)
+            result_set_add(rs, bindings_apply_if_vars(
+                &qr.items[i].bindings, a, qr.items[i].result));
+        bool matched = qr.len != 0u;
+        query_results_free(&qr);
+        if (matched)
+            return;
+    }
+    result_set_add(rs, atom);
+}
+
+static void he_one_step_application(Space *s, Arena *a, Atom *atom,
+                                     Atom *expected, ResultSet *rs) {
+    Atom **types = NULL;
+    uint32_t count = eval_get_atom_types_profiled(s, a, atom->expr.elems[0], &types);
+    bool has_functions = false, has_non_functions = false;
+    ApplicabilityErrors all_errors;
+    applicability_errors_init(&all_errors);
+    for (uint32_t i = 0u; i < count; i++) {
+        if (!is_function_type(types[i])) {
+            has_non_functions = true;
+            continue;
+        }
+        has_functions = true;
+        Atom *signature = cetta_instantiate_frame_syntax(a, types[i]);
+        ApplicabilityErrors errors;
+        applicability_errors_init(&errors);
+        ApplicabilityTypes returns;
+        applicability_types_init(&returns);
+        OutcomeSet contracts;
+        outcome_set_init(&contracts);
+        bool selected = check_function_applicable(atom, signature, expected,
+            s, a, 1, count > 1u, &errors, &returns, &contracts);
+        if (selected) {
+            /* HE selects the first applicable signature. Its argument
+             * domains decide which syntax is retained and which is stepped. */
+            for (CettaCount p = 0u; p < contracts.len; p++) {
+                if (!he_step_rule_on(CETTA_HES_RULE_LEFTMOST_EXPR_CONGRUENCE) ||
+                    !metta_eval_one_step_expr_congruence(s, a, atom, signature,
+                        &contracts.items[p].env, rs))
+                    he_one_step_ready_call(s, a, atom, rs);
+            }
+        } else {
+            for (uint32_t j = 0u; j < errors.len; j++)
+                applicability_errors_push(&all_errors, errors.items[j]);
+        }
+        outcome_set_free(&contracts);
+        applicability_types_free(&returns);
+        applicability_errors_free(&errors);
+        if (selected) {
+            applicability_errors_free(&all_errors);
+            free(types);
+            return;
+        }
+    }
+    free(types);
+    bool total_structural_eq =
+        atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.op_eq) &&
+        atom->expr.len == 3u && active_profile_uses_total_structural_eq();
+    if (has_functions && !total_structural_eq) {
+        if (!has_non_functions || eval_type_check_auto_enabled())
+            for (uint32_t i = 0u; i < all_errors.len; i++)
+                result_set_add(rs, all_errors.items[i]);
+        if (!has_non_functions) {
+            applicability_errors_free(&all_errors);
+            return;
+        }
+    }
+    applicability_errors_free(&all_errors);
+    if (!he_step_rule_on(CETTA_HES_RULE_LEFTMOST_EXPR_CONGRUENCE) ||
+        !metta_eval_one_step_expr_congruence(s, a, atom, NULL, NULL, rs))
+        he_one_step_ready_call(s, a, atom, rs);
+}
+
 static void metta_eval_one_step(Space *s, Arena *a, Atom *type, Atom *atom,
                                 ResultSet *rs) {
     __attribute__((cleanup(eval_c_stack_guard_leave)))
@@ -52779,6 +52933,10 @@ static void metta_eval_one_step(Space *s, Arena *a, Atom *type, Atom *atom,
 
     Atom *etype = type ? type : atom_undefined_type(a);
 
+    if (he_one_step_is_request(atom)) {
+        result_set_add(rs, atom);
+        return;
+    }
     Atom *bound = registry_lookup_atom(atom);
     if (bound) {
         result_set_add(rs, bound);
@@ -52830,9 +52988,9 @@ static void metta_eval_one_step(Space *s, Arena *a, Atom *type, Atom *atom,
 
         /* Special forms: each rule class below is table-gated (HES_*) and is
          * the only implementation of that rule in the one-step subsystem.
-         * A disabled rule leaves its head uninterpreted (inert; argument
-         * congruence still applies, per the unknown-symbols-stay-inert
-         * principle). */
+         * A disabled rule leaves its head uninterpreted; congruence still
+         * applies to demanded arguments, while declared raw arguments remain
+         * data. */
         if (head_id == g_builtin_syms.eval && nargs == 1 &&
             he_step_rule_on(CETTA_HES_RULE_EVAL)) {
             result_set_add(rs, expr_arg(atom, 0));
@@ -52857,7 +53015,7 @@ static void metta_eval_one_step(Space *s, Arena *a, Atom *type, Atom *atom,
         }
         if (head_id == g_builtin_syms.let && nargs == 3 &&
             he_step_rule_on(CETTA_HES_RULE_LET)) {
-            metta_eval_one_step_let(s, a, expr_arg(atom, 1),
+            metta_eval_one_step_let(s, a, atom, expr_arg(atom, 1),
                                     expr_arg(atom, 0), expr_arg(atom, 2), rs);
             return;
         }
@@ -52901,42 +53059,18 @@ static void metta_eval_one_step(Space *s, Arena *a, Atom *type, Atom *atom,
             }
             return;
         }
-        /* HES_GroundedDispatch: pack-gated; this is the only grounded-dispatch
-         * implementation in the one-step subsystem. */
-        if (head->kind == ATOM_SYMBOL && is_grounded_op(head_id) &&
-            he_step_rule_on(CETTA_HES_RULE_GROUNDED_DISPATCH)) {
-            Atom *direct = dispatch_native_op(s, a, head, atom->expr.elems + 1, nargs);
-            if (direct) {
-                result_set_add(rs, direct);
-                return;
-            }
-        }
-        /* HES_EquationMatch: table-gated; this is the only equation-match
-         * implementation in the one-step subsystem. */
-        if (he_step_rule_on(CETTA_HES_RULE_EQUATION_MATCH)) {
-            QueryResults qr;
-            query_results_init(&qr);
-            query_equations(s, atom, a, &qr);
-            if (qr.len > 0) {
-                for (uint32_t i = 0; i < qr.len; i++) {
-                    Atom *next =
-                        bindings_apply_if_vars(&qr.items[i].bindings, a, qr.items[i].result);
-                    result_set_add(rs, next);
-                }
-                query_results_free(&qr);
-                return;
-            }
-            query_results_free(&qr);
-        }
         if (head_id == g_builtin_syms.quote || head_id == g_builtin_syms.return_text) {
             result_set_add(rs, atom);
             return;
         }
-        /* HES_LeftmostExprCongruence: pack-gated; this is the only argument-
-         * congruence implementation in the one-step subsystem. */
-        if (he_step_rule_on(CETTA_HES_RULE_LEFTMOST_EXPR_CONGRUENCE) &&
-            metta_eval_one_step_expr_congruence(s, a, atom, rs))
+        if (he_one_step_resource_service(head_id) &&
+            active_builtin_allowed(atom_name_cstr(head)) &&
+            he_step_rule_on(CETTA_HES_RULE_GROUNDED_DISPATCH)) {
+            result_set_add(rs, he_one_step_request(a, atom, atom));
             return;
+        }
+        he_one_step_application(s, a, atom, etype, rs);
+        return;
     }
 
     result_set_add(rs, atom);

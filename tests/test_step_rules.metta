@@ -25,7 +25,7 @@
   (lts:he:step-rules)
   (step-rules HE small-step "fnv1a64:eda58fb31fa185e1"
     (schema 2)
-    (rules (HES_GroundedDispatch rule-sound)
+    (rules (HES_GroundedDispatch rule-sound-on-fragment)
            (HES_LeftmostExprCongruence rule-sound-on-fragment)
            (HES_EquationMatch rule-sound)
            (HES_Eval rule-sound)

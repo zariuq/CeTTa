@@ -382,6 +382,7 @@ tests/test_lib_parse_regression.metta	he	metta	extended	main	native	test	golden	
 tests/test_lib_parse_shared_cert_regression.metta	he	metta	extended	main	native	test	golden	-
 tests/test_list_syntax.metta	he	metta	extended	main	native	test	golden	-
 tests/test_log_math_bad_type.metta	he	metta	extended	main	native	test	golden	-
+tests/test_lts_he_argument_effects.metta	he	metta	extended	main	native	test	golden	-
 tests/test_lts_he_syntax.metta	he	metta	extended	main	native	test	golden	-
 tests/test_lts_mi_syntax.metta	he	metta	extended	main	native	test	golden	-
 tests/test_lts_rho_cost_causal_trace.metta	he	metta	extended	main	native	test	golden	-
