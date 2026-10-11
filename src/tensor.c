@@ -750,6 +750,16 @@ static bool bounds_rounding_admitted(void) {
 #if CETTA_HAS_AVX4
     /* FTZ and DAZ violate the absolute underflow allowance below. */
     if (_mm_getcsr() & ((1u << 15) | (1u << 6))) return false;
+#else
+    /* FE_TONEAREST alone does not rule out flushing subnormals. Probe both
+     * precisions: the first product detects flushed output, and the second
+     * detects flushed input. Volatile operands prevent constant folding. */
+    volatile double wide_min = DBL_MIN, half = .5, two = 2.;
+    volatile double wide_subnormal = wide_min * half;
+    if (wide_subnormal * two != DBL_MIN) return false;
+    volatile float compact_min = FLT_MIN, compact_half = .5f, compact_two = 2.f;
+    volatile float compact_subnormal = compact_min * compact_half;
+    if (compact_subnormal * compact_two != FLT_MIN) return false;
 #endif
     return true;
 #endif

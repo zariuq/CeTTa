@@ -35,6 +35,10 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config python3 libgmp-dev
       - name: Build and qualify without optional runtimes
         run: make -j2 BUILD=core ENABLE_LIB_PROLOG=0 ENABLE_JSON_GSLT=0 ENABLE_MANAGED_SYMBOLS=1 test-memory-collection test-tensor-native test-memory-index-mutations test-memory-residency
+      - name: Check portable rounding admission and reject compiled defects
+        run: >-
+          make BUILD=core ENABLE_LIB_PROLOG=0 ENABLE_JSON_GSLT=0 ENABLE_MANAGED_SYMBOLS=1
+          test-tensor-mutations
       - name: Qualify compact screening through the collection lifecycle
         run: >-
           python3 tests/test_memory_collection.py

@@ -8,6 +8,12 @@
 #include <fenv.h>
 #include <pthread.h>
 #include <stdlib.h>
+#if (defined(__x86_64__) || defined(__i386__)) && (defined(__GNUC__) || defined(__clang__))
+#include <immintrin.h>
+#define TEST_HAS_MXCSR 1
+#else
+#define TEST_HAS_MXCSR 0
+#endif
 
 static CettaTensor *make(CettaTensorDType dtype, const size_t *shape, size_t rank,
     const void *data, size_t bytes) {
@@ -148,6 +154,18 @@ static void compact_screening_reference(void) {
             assert(cetta_tensor_count(all) == 37);
             assert(fesetround(old) == 0);
             cetta_tensor_release(fallback_lo); cetta_tensor_release(fallback_hi); cetta_tensor_release(all);
+#if TEST_HAS_MXCSR
+            unsigned csr = _mm_getcsr();
+            for (unsigned mode = 0; mode < 2; ++mode) {
+                _mm_setcsr(csr | (mode ? (1u << 6) : (1u << 15)));
+                fallback_lo = NULL; fallback_hi = NULL; all = NULL;
+                assert(cetta_tensor_matvec_bounds(compact, query, cert, NULL, 1, &fallback_lo, &fallback_hi) == CETTA_TENSOR_OK);
+                assert(cetta_tensor_top_k_candidates(fallback_lo, fallback_hi, 5, &all) == CETTA_TENSOR_OK);
+                assert(cetta_tensor_count(all) == 37);
+                _mm_setcsr(csr);
+                cetta_tensor_release(fallback_lo); cetta_tensor_release(fallback_hi); cetta_tensor_release(all);
+            }
+#endif
         }
         cetta_tensor_release(wide); cetta_tensor_release(query); cetta_tensor_release(compact);
         cetta_tensor_release(cert); cetta_tensor_release(lo); cetta_tensor_release(hi); cetta_tensor_release(exact);

@@ -219,7 +219,8 @@ be requested with `--records 1000000`, choosing the dimension explicitly.
 The [2026-10-11 receipts](results/scaling-20261011/) contain seeded aggregate
 measurements, source/binary hashes and reference checks. They retain no corpus
 or query identifiers. These are shared-host observations, not latency targets
-for other machines.
+for other machines. The measurements bind to commit `cf8ec3de`; subsequent
+portable rounding-admission checks leave its sampled x86 kernels unchanged.
 
 At 5,514 rows of 1,024 dimensions, the collection's warm unfiltered top-5
 median was 2.06 ms with the default wide scan and 1.87 ms with f32 screening.

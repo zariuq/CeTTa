@@ -54,6 +54,20 @@ def main():
         print(f"PASS: {label}" + (" rejected" if broken else ""), flush=True)
 
     run("baseline", objects)
+    # Exercise the portable rounding-admission branch on the same machine,
+    # retaining the original numerical providers. FTZ/DAZ controls in the unit
+    # fixture must still force a complete candidate set.
+    original = (ROOT / "src/tensor.c").read_text()
+    anchor = '#if CETTA_HAS_AVX4\n    /* FTZ and DAZ violate the absolute underflow allowance below. */'
+    if original.count(anchor) != 1:
+        raise RuntimeError("Portable admission anchor changed")
+    source = output / "portable-admission.c"
+    source.write_text(original.replace(anchor, anchor.replace('#if CETTA_HAS_AVX4', '#if 0')))
+    target = source.with_suffix(".o")
+    compile_source(source, target)
+    inputs = list(objects)
+    inputs[SOURCES.index("src/tensor.c")] = target
+    run("portable-admission", inputs)
     controls = (
         ("missing-view-hold", "src/tensor.c",
          "size_t old = atomic_fetch_add_explicit(&tensor->storage->holds, 1u, memory_order_relaxed);\n"
