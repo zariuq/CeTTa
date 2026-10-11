@@ -2422,6 +2422,35 @@ static void test_answer_materialization_boundaries(
     assert(shared_image->kind == ATOM_EXPR && shared_image->expr.len == 3u);
     bindings_free(&environment);
 
+    /* The collection owns its answer values, including a captured caller
+     * binding. The public caller still receives that binding separately. */
+    query = parse_one(answers,
+        "(collapse (let $local (superpose (1 1 2))"
+        " (pair $outer $local)))");
+    assert(query && query->expr.len == 2u);
+    Atom *outer_variable = query->expr.elems[1]->expr.elems[3]->expr.elems[1];
+    Atom *captured_variable = atom_var(answers, "captured-value");
+    Bindings captured;
+    bindings_init(&captured);
+    assert(bindings_add_var(&captured, outer_variable, captured_variable));
+    assert(bindings_add_var(&captured, captured_variable, atom_int(answers, 7)));
+    assert(petta_machine_init(
+        &machine, space, answers, query, &captured, NULL));
+    bindings_free(&captured);
+    assert(petta_machine_next(&machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, parse_one(answers,
+        "((pair 7 1) (pair 7 1) (pair 7 2))")));
+    Atom *exported_outer = bindings_lookup_value_id(
+        &environment, outer_variable->var_id).skeleton;
+    assert(exported_outer && exported_outer->kind == ATOM_GROUNDED &&
+           exported_outer->ground.ival == 7);
+    petta_machine_destroy(&machine);
+    assert(atom_alpha_eq(answer, parse_one(answers,
+        "((pair 7 1) (pair 7 1) (pair 7 2))")));
+    assert(exported_outer->ground.ival == 7);
+    bindings_free(&environment);
+
     Atom *box = atom_symbol(answers, "deep-answer-box");
     Atom *leaf = atom_symbol(answers, "deep-answer-leaf");
     Atom *deep = test_nest_unary(
@@ -7576,6 +7605,196 @@ typedef struct {
 
 typedef struct {
     SymbolId head;
+    size_t remaining;
+    size_t transitions;
+    int64_t effects[3];
+    size_t effect_count;
+    bool stop_after_effect;
+} ResumeContractProbe;
+
+static bool resume_contract_permit(void *context) {
+    ResumeContractProbe *probe = context;
+    if (!probe->remaining)
+        return false;
+    probe->remaining--;
+    probe->transitions++;
+    return true;
+}
+
+static PettaMachineHostMode resume_contract_classify(
+        void *context, Space *space, Atom *expression) {
+    (void)space;
+    ResumeContractProbe *probe = context;
+    if (expression && expression->kind == ATOM_EXPR &&
+        expression->expr.len == 2u &&
+        atom_is_symbol_id(expression->expr.elems[0], probe->head))
+        return PETTA_MACHINE_HOST_READY_APPLICATION;
+    return PETTA_MACHINE_HOST_NONE;
+}
+
+static bool resume_contract_effect(
+        void *context, Space *space, Arena *arena, Atom *expression,
+        const Bindings *environment, OutcomeSet *outcomes,
+        CettaCallOutcome *end, const CettaDelayView *delay) {
+    (void)space;
+    (void)environment;
+    (void)delay;
+    ResumeContractProbe *probe = context;
+    assert(arena && expression && expression->kind == ATOM_EXPR &&
+           expression->expr.len == 2u);
+    Atom *value = expression->expr.elems[1];
+    assert(value && value->kind == ATOM_GROUNDED &&
+           value->ground.gkind == GV_INT);
+    assert(probe->effect_count < sizeof(probe->effects) / sizeof(*probe->effects));
+    probe->effects[probe->effect_count++] = value->ground.ival;
+    if (probe->stop_after_effect)
+        probe->remaining = 0u;
+    *end = cetta_call_failure();
+    Bindings empty;
+    bindings_init(&empty);
+    outcome_set_add(outcomes, atom_int(arena, value->ground.ival), &empty);
+    return true;
+}
+
+static PettaMachineHost resume_contract_host(
+        ResumeContractProbe *probe, Arena *arena, Atom *visible) {
+    return (PettaMachineHost){
+        .context = probe,
+        .permit_transition = resume_contract_permit,
+        .classify = resume_contract_classify,
+        .evaluate = resume_contract_effect,
+        .export_variables = atom_expr(arena, &visible, 1u),
+    };
+}
+
+static size_t resume_contract_run(Space *space, Arena *arena, Atom *query,
+        Atom *visible, size_t block, bool stop_after_effect) {
+    ResumeContractProbe probe = {
+        .head = symbol_intern_cstr(g_symbols, "resume-contract-record"),
+        .remaining = block,
+        .stop_after_effect = stop_after_effect,
+    };
+    PettaMachineHost host = resume_contract_host(&probe, arena, visible);
+    PettaMachine machine;
+    assert(petta_machine_init(&machine, space, arena, query, NULL, &host));
+    const int64_t expected[] = {1, 1, 2};
+    size_t count = 0u, pauses = 0u;
+    for (size_t attempts = 0u;; attempts++) {
+        assert(attempts < 1024u);
+        Atom *answer = NULL;
+        Bindings environment;
+        PettaMachineStep step = petta_machine_next(&machine, &answer, &environment);
+        if (step == PETTA_MACHINE_STEP_SUSPENDED) {
+            pauses++;
+            probe.remaining = block;
+        } else if (step == PETTA_MACHINE_STEP_ANSWER) {
+            assert(count < sizeof(expected) / sizeof(*expected));
+            Atom *pair = atom_expr3(arena, atom_symbol(arena, "Pair"),
+                atom_int(arena, expected[count]), atom_int(arena, expected[count]));
+            assert(atom_eq(answer, pair));
+            assert(atom_eq(bindings_apply(&environment, arena, visible),
+                           atom_int(arena, expected[count])));
+            count++;
+        } else {
+            assert(step == PETTA_MACHINE_STEP_EXHAUSTED);
+            bindings_free(&environment);
+            break;
+        }
+        bindings_free(&environment);
+    }
+    assert(count == sizeof(expected) / sizeof(*expected));
+    assert(probe.effect_count == count);
+    assert(memcmp(probe.effects, expected, sizeof(expected)) == 0);
+    if (block != SIZE_MAX || stop_after_effect)
+        assert(pauses != 0u);
+    probe.remaining = SIZE_MAX;
+    Atom *completed_answer = NULL;
+    Bindings completed_environment;
+    assert(petta_machine_next(&machine, &completed_answer, &completed_environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&completed_environment);
+    assert(probe.effect_count == count);
+    petta_machine_destroy(&machine);
+    return probe.transitions;
+}
+
+static void test_resume_contract(TermUniverse *universe, Arena *arena) {
+    Space space;
+    space_init_with_universe(&space, universe);
+    Atom *query = parse_one(arena,
+        "(let $x (superpose (1 1 2)) "
+        "(let $tag (resume-contract-record $x) (Pair $x $tag)))");
+    assert(query && query->kind == ATOM_EXPR);
+    Atom *visible = query->expr.elems[1];
+    assert(visible && visible->kind == ATOM_VAR);
+    size_t uninterrupted = resume_contract_run(
+        &space, arena, query, visible, SIZE_MAX, false);
+    for (size_t block = 1u; block <= 17u; block++) {
+        assert(resume_contract_run(&space, arena, query, visible, block, false) ==
+               uninterrupted);
+        assert(resume_contract_run(&space, arena, query, visible, block, true) ==
+               uninterrupted);
+    }
+    assert(resume_contract_run(&space, arena, query, visible, SIZE_MAX, true) ==
+           uninterrupted);
+    puts("PASS: split execution retains ordered duplicate answers, correlations,"
+         " visible bindings, effects and completed residuals");
+
+    ResumeContractProbe cancelled = {
+        .head = symbol_intern_cstr(g_symbols, "resume-contract-record"),
+        .remaining = SIZE_MAX,
+        .stop_after_effect = true,
+    };
+    ResumeContractProbe retained = {
+        .head = cancelled.head,
+        .remaining = SIZE_MAX,
+    };
+    PettaMachineHost cancelled_host = resume_contract_host(&cancelled, arena, visible);
+    PettaMachineHost retained_host = resume_contract_host(&retained, arena, visible);
+    PettaMachine first, second;
+    assert(petta_machine_init(&first, &space, arena, query, NULL, &cancelled_host));
+    assert(petta_machine_init(&second, &space, arena, query, NULL, &retained_host));
+    Atom *answer = NULL;
+    Bindings environment;
+    assert(petta_machine_next(&first, &answer, &environment) ==
+           PETTA_MACHINE_STEP_SUSPENDED);
+    bindings_free(&environment);
+    assert(cancelled.effect_count == 1u && cancelled.effects[0] == 1);
+    assert(petta_machine_next(&second, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    Atom *held_answer = answer;
+    Bindings held_environment;
+    bindings_move(&held_environment, &environment);
+    petta_machine_destroy(&first);
+    assert(cancelled.effect_count == 1u);
+    for (size_t index = 1u; index < 3u; index++) {
+        const int64_t expected = index == 1u ? 1 : 2;
+        assert(petta_machine_next(&second, &answer, &environment) ==
+               PETTA_MACHINE_STEP_ANSWER);
+        assert(atom_eq(answer, atom_expr3(arena, atom_symbol(arena, "Pair"),
+            atom_int(arena, expected), atom_int(arena, expected))));
+        assert(atom_eq(bindings_apply(&environment, arena, visible),
+                       atom_int(arena, expected)));
+        bindings_free(&environment);
+    }
+    assert(petta_machine_next(&second, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&second);
+    assert(retained.effect_count == 3u && retained.effects[0] == 1 &&
+           retained.effects[1] == 1 && retained.effects[2] == 2);
+    assert(cancelled.effect_count == 1u);
+    assert(atom_eq(held_answer, atom_expr3(arena, atom_symbol(arena, "Pair"),
+        atom_int(arena, 1), atom_int(arena, 1))));
+    assert(atom_eq(bindings_apply(&held_environment, arena, visible), atom_int(arena, 1)));
+    bindings_free(&held_environment);
+    space_free(&space);
+    puts("PASS: cancellation after an effect leaves it performed and preserves"
+         " another machine's retained answer and independent alternatives");
+}
+
+typedef struct {
+    SymbolId head;
     size_t calls;
     uint32_t observed_entries;
 } HostProjectionProbe;
@@ -7810,6 +8029,72 @@ static void assert_table_receipts_consistent(
     assert(stats->table_scc_completions <=
            stats->table_generator_rounds);
     assert(stats->table_answer_replays >= minimum_answer_replays);
+}
+
+
+static void expect_capture_answer(
+    Space *space, Arena *answers, const char *source,
+    const char *const *expected, size_t count) {
+    assert(count == 1u);
+    PettaMachine machine;
+    assert(petta_machine_init(&machine, space, answers,
+        parse_one(answers, source), NULL, NULL));
+    Atom *answer = NULL;
+    Bindings environment;
+    assert(petta_machine_next(&machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    if (!atom_alpha_eq(answer, parse_one(answers, expected[0]))) {
+        fputs("unexpected PeTTa machine answer: ", stderr);
+        atom_print(answer, stderr);
+        fputc('\n', stderr);
+        abort();
+    }
+    bindings_free(&environment);
+    assert(petta_machine_next(&machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+}
+
+static void test_collection_return_capture(
+    Space *space, Arena *persistent, Arena *answers) {
+    add_equation(space, persistent,
+        "(= (capture-fresh $x) (capture-node $x (+ $x 1000)))");
+    const char *nodes[] = {
+        "((capture-node 1 1001) (capture-node 2 1002)"
+        " (capture-node 3 1003) (capture-node 4 1004)"
+        " (capture-node 5 1005) (capture-node 6 1006)"
+        " (capture-node 7 1007) (capture-node 8 1008))",
+    };
+    expect_capture_answer(space, answers,
+        "(collapse (let $x (superpose (1 2 3 4 5 6 7 8))"
+        " (capture-fresh $x)))", nodes, 1u);
+    const char *numbers[] = {"(1104 2105 3106 4107 5108 6109 7110 8111)"};
+    expect_capture_answer(space, answers,
+        "(collapse (let $x"
+        " (superpose (1001 2002 3003 4004 5005 6006 7007 8008))"
+        " (+ $x 103)))", numbers, 1u);
+    const char *lists[] = {"((1 1008) (2 1009) (3 1010) (1 1008))"};
+    expect_capture_answer(space, answers,
+        "(collapse (let $x (superpose (1 2 3 1))"
+        " (cons-atom $x (cons-atom (+ $x 1007) ()))))", lists, 1u);
+    Atom *query = parse_one(answers,
+        "(let $x (superpose (1 2 3)) (capture-fresh $x))");
+    PettaMachine machine;
+    assert(petta_machine_init(&machine, space, answers, query, NULL, NULL));
+    Atom *retained = NULL;
+    Bindings environment;
+    assert(petta_machine_next(&machine, &retained, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    bindings_free(&environment);
+    Atom *next = NULL;
+    assert(petta_machine_next(&machine, &next, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+    assert(atom_alpha_eq(retained, parse_one(answers, "(capture-node 1 1001)")));
+    assert(atom_alpha_eq(next, parse_one(answers, "(capture-node 2 1002)")));
+    puts("PASS: collection captures computed occurrences before child reuse; public answers survive cancellation");
 }
 
 static void test_ground_slg_tables(
@@ -12276,8 +12561,9 @@ static void test_act_incremental_compression(void) {
 
 int main(int argc, char **argv) {
     bool worker_only = argc == 2 && strcmp(argv[1], "--worker-ownership") == 0;
-    if (argc != 1 && !worker_only) {
-        fputs("usage: test_petta_search_machine [--worker-ownership]\n", stderr);
+    bool resume_only = argc == 2 && strcmp(argv[1], "--resume-contract") == 0;
+    if (argc != 1 && !worker_only && !resume_only) {
+        fputs("usage: test_petta_search_machine [--worker-ownership|--resume-contract]\n", stderr);
         return 2;
     }
     Arena persistent;
@@ -12304,6 +12590,9 @@ int main(int argc, char **argv) {
         test_worker_session_decisions(&answers);
         goto release_owners;
     }
+    test_resume_contract(&universe, &answers);
+    if (resume_only)
+        goto release_owners;
     test_type_policy_component(&answers);
     test_type_bound_rows(&answers);
     test_type_fact_reuse(&answers);
@@ -12447,6 +12736,8 @@ int main(int argc, char **argv) {
     add_equation(&space, &persistent, "(= (f 1) uno)");
     add_equation(&space, &persistent, "(= (f 1) uno)");
     test_machine_query_visible_projection(
+        &space, &persistent, &answers);
+    test_collection_return_capture(
         &space, &persistent, &answers);
     test_ground_slg_tables(
         &space, &persistent, &answers);

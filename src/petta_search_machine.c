@@ -19,6 +19,7 @@
 #include "term_graph.h"
 #include "term_universe.h"
 #include "variant_shape.h"
+#include "answer_storage.h"
 
 #include <assert.h>
 #include <inttypes.h>
@@ -44,6 +45,7 @@
 #define PETTA_MACHINE_BINDING_WINDOW_ENTRIES ((size_t)4096u)
 #define PETTA_MACHINE_CHOICE_BINDING_MIN_WINDOW_ENTRIES ((size_t)4096u)
 #define PETTA_TABLE_ENTRY_NONE ((size_t)SIZE_MAX)
+#define PETTA_TABLE_ANSWER_STORAGE_MIN_ROWS ((size_t)8u)
 #define PETTA_MEMO_FREQUENCY_SKETCH_SIZE ((size_t)8192u)
 
 static _Atomic uint64_t g_petta_machine_instance_counter = 1u;
@@ -88,6 +90,8 @@ typedef struct {
     Atom *generator_key;
     uint64_t hash;
     Atom **answers;
+    CettaAnswerStorage *answer_storage;
+    Atom *answer_storage_key;
     size_t answer_len;
     size_t answer_cap;
     PettaTableEntryState state;
@@ -114,6 +118,7 @@ typedef struct {
 
 struct PettaMachineTable {
     Arena arena;
+    CettaAnswerStorageAccount *answer_account;
     PettaTableEntry *entries;
     size_t entry_len;
     size_t entry_cap;
@@ -1097,6 +1102,13 @@ typedef struct {
     uint64_t started_ns;
 } PettaPullFrame;
 
+/* A private request has no returned environment. A completed child pull,
+ * including a genuine pause or failure, transfers one to its caller. */
+typedef struct {
+    PettaMachineStep step;
+    bool requested;
+} PettaChildPullResult;
+
 struct PettaMachineImpl {
     uint64_t instance_id;
     /* Dynamic manufacture context of the goal currently being dispatched.
@@ -1219,6 +1231,7 @@ struct PettaMachineImpl {
     bool borrowed_root_table;
     bool bypass_root_table;
     CettaObservationAlgebra observation_algebra;
+    bool discard_visible_bindings;
     uint64_t pending_answer_weight;
     uint64_t last_answer_weight;
     bool last_answer_is_control_error;
@@ -1244,26 +1257,32 @@ struct PettaMachineImpl {
     PettaMachineStats stats;
 };
 
-static PettaMachineStep petta_machine_pull_child(
+static PettaChildPullResult petta_machine_pull_child(
     PettaMachineImpl *parent, PettaMachine *child,
     Atom **answer, Bindings *environment) {
     *answer = NULL;
-    bindings_init(environment);
     PettaPullFrame *frame = parent ? parent->pull_frame : NULL;
-    if (!frame || !child || !child->impl)
-        return PETTA_MACHINE_STEP_CAPACITY;
+    if (!frame || !child || !child->impl) {
+        bindings_init(environment);
+        return (PettaChildPullResult){.step = PETTA_MACHINE_STEP_CAPACITY};
+    }
     if (frame->completed_child) {
-        if (frame->completed_child != child)
-            return PETTA_MACHINE_STEP_CAPACITY;
+        if (frame->completed_child != child) {
+            bindings_init(environment);
+            return (PettaChildPullResult){.step = PETTA_MACHINE_STEP_CAPACITY};
+        }
         *answer = frame->answer;
         *environment = frame->environment;
         bindings_init(&frame->environment);
         frame->answer = NULL;
         frame->completed_child = NULL;
-        return frame->step;
+        return (PettaChildPullResult){.step = frame->step};
     }
     frame->requested_child = child;
-    return PETTA_MACHINE_STEP_SUSPENDED;
+    return (PettaChildPullResult){
+        .step = PETTA_MACHINE_STEP_SUSPENDED,
+        .requested = true,
+    };
 }
 
 struct PettaContinuationTermPool {
@@ -1315,6 +1334,7 @@ typedef struct {
     bool suspended_choice;
     bool terminal;
     CettaObservationAlgebra observation_algebra;
+    bool discard_visible_bindings;
     uint64_t pending_answer_weight;
     uint64_t last_answer_weight;
     bool last_answer_is_control_error;
@@ -1820,11 +1840,15 @@ static Atom *petta_machine_copy_atom_in(
     PettaAtomCopyPurpose purpose, AtomDeepCopySession *session) {
     if (!machine)
         return session ? atom_deep_copy_session_copy(session, atom)
-                       : atom_deep_copy(arena, atom);
+                       : purpose == PETTA_ATOM_COPY_ANSWER
+                           ? atom_deep_copy_single(arena, atom)
+                           : atom_deep_copy(arena, atom);
     machine->stats.atom_copy_calls++;
     size_t before = arena_accounted_live_bytes(arena);
     Atom *result = session ? atom_deep_copy_session_copy(session, atom)
-                           : atom_deep_copy(arena, atom);
+                           : purpose == PETTA_ATOM_COPY_ANSWER
+                               ? atom_deep_copy_single(arena, atom)
+                               : atom_deep_copy(arena, atom);
     uint64_t allocated_bytes =
         petta_machine_arena_growth(arena, before);
     petta_machine_add_u64(
@@ -2935,6 +2959,8 @@ static CettaProducerReads *petta_table_current_reads(
 
 static void petta_table_entry_release(PettaTableEntry *entry) {
     free(entry->answers);
+    if (entry->answer_storage)
+        cetta_answer_storage_release(entry->answer_storage);
 }
 
 static void petta_table_root_release(PettaTableShared *shared) {
@@ -2964,6 +2990,7 @@ static void petta_table_shared_free(PettaTableShared *shared) {
     petta_table_retire_rounds(shared, 0u, SIZE_MAX);
     free(shared->frequency_sketch);
     arena_free(&shared->arena);
+    cetta_answer_storage_account_release(shared->answer_account);
     free(shared);
 }
 
@@ -2971,6 +2998,7 @@ static void petta_table_shared_reset(PettaTableShared *shared) {
     if (!shared)
         return;
     bool leased = shared->root_leased;
+    CettaAnswerStorageAccount *answer_account = shared->answer_account;
     PettaTableMutationPolicy mutation_policy =
         shared->mutation_policy;
     for (size_t index = 0u;
@@ -2984,6 +3012,7 @@ static void petta_table_shared_reset(PettaTableShared *shared) {
     free(shared->frequency_sketch);
     arena_free(&shared->arena);
     memset(shared, 0, sizeof(*shared));
+    shared->answer_account = answer_account;
     arena_init(&shared->arena);
     arena_set_runtime_kind(
         &shared->arena, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
@@ -3021,6 +3050,15 @@ bool petta_machine_table_storage(
         .arena_live_bytes = arena_accounted_live_bytes(&table->arena),
         .arena_reserved_bytes = table->arena.reserved_bytes,
     };
+    CettaAnswerStorageUsage retained;
+    if (!cetta_answer_storage_account_usage(table->answer_account, &retained) ||
+        __builtin_add_overflow(storage.control_bytes,
+            retained.control_bytes, &storage.control_bytes) ||
+        __builtin_add_overflow(storage.arena_live_bytes,
+            retained.arena_live_bytes, &storage.arena_live_bytes) ||
+        __builtin_add_overflow(storage.arena_reserved_bytes,
+            retained.arena_reserved_bytes, &storage.arena_reserved_bytes))
+        return false;
     const size_t counts[] = {table->entry_cap, table->slot_cap,
         table->tarjan_cap, table->frequency_sketch ? PETTA_MEMO_FREQUENCY_SKETCH_SIZE : 0u};
     const size_t widths[] = {sizeof(*table->entries), sizeof(*table->slots),
@@ -3346,6 +3384,37 @@ static PettaTableAnswerCountSlot *petta_table_answer_count_slot(
     return NULL;
 }
 
+static bool petta_table_plain_ground(const Atom *term) {
+    const uint32_t mask = ATOM_FLAG_TERM_STABLE | ATOM_FLAG_HAS_VARS |
+        ATOM_FLAG_HAS_IDENTITY_GROUNDED | ATOM_FLAG_HAS_THREAD_LOCAL_RESOURCE;
+    return term && (term->flags & mask) == ATOM_FLAG_TERM_STABLE;
+}
+
+/* A fixed ordinary ground input shares immutable syntax within its owning
+ * collection. Each answer record remains separate; this does not merge
+ * computations or answer occurrences. Open inputs and resources keep copying. */
+static Atom *petta_table_copy_record(PettaTableEntry *entry,
+    Arena *destination, Atom *record) {
+    if (!entry || !record || record->kind != ATOM_EXPR || record->expr.len != 2u ||
+        !petta_table_plain_ground(entry->generator_key) ||
+        !atom_eq(record->expr.elems[0], entry->generator_key))
+        return atom_deep_copy(destination, record);
+    Atom *input = entry->generator_key;
+    if (entry->answer_storage && destination == &entry->answer_storage->arena) {
+        if (!entry->answer_storage_key)
+            entry->answer_storage_key = atom_deep_copy(destination, input);
+        input = entry->answer_storage_key;
+    }
+    if (!input || input->arena_id != destination->identity ||
+        !(input->flags & ATOM_FLAG_ARENA_CLOSED))
+        return atom_deep_copy(destination, record);
+    Atom *value = atom_deep_copy(destination, record->expr.elems[1]);
+    if (!value)
+        return NULL;
+    Atom *items[2] = {input, value};
+    return atom_expr(destination, items, 2u);
+}
+
 static bool petta_table_merge_round_answers(
     PettaTableShared *shared, PettaTableEntry *entry,
     Atom *const *answers, size_t answer_len,
@@ -3408,8 +3477,19 @@ static bool petta_table_merge_round_answers(
                 continue;
         }
         size_t answer_cap_before = entry->answer_cap;
-        size_t retained_before =
-            arena_accounted_live_bytes(&shared->arena);
+        Arena *answer_arena = &shared->arena;
+        if (entry->answer_len >= PETTA_TABLE_ANSWER_STORAGE_MIN_ROWS) {
+            if (!entry->answer_storage) {
+                entry->answer_storage = cetta_answer_storage_new(&shared->answer_account);
+                if (!entry->answer_storage) {
+                    free(slots);
+                    return false;
+                }
+            }
+            cetta_answer_storage_prepare(entry->answer_storage);
+            answer_arena = &entry->answer_storage->arena;
+        }
+        size_t retained_before = arena_accounted_live_bytes(answer_arena);
         if (!petta_machine_reserve(
                 (void **)&entry->answers,
                 &entry->answer_cap,
@@ -3418,15 +3498,13 @@ static bool petta_table_merge_round_answers(
             free(slots);
             return false;
         }
-        Atom *owned = atom_deep_copy(
-            &shared->arena, answer);
+        Atom *owned = petta_table_copy_record(entry, answer_arena, answer);
         if (!owned) {
             free(slots);
             return false;
         }
         entry->answers[entry->answer_len++] = owned;
-        size_t retained_after =
-            arena_accounted_live_bytes(&shared->arena);
+        size_t retained_after = arena_accounted_live_bytes(answer_arena);
         uint64_t retained_delta = entry->memoized
             ? (entry->memo_aggregate_mode ==
                        PETTA_MEMO_AGGREGATE_NONE
@@ -3518,6 +3596,7 @@ static void petta_table_shared_release_contents(
     petta_table_retire_rounds(shared, 0u, SIZE_MAX);
     free(shared->frequency_sketch);
     arena_free(&shared->arena);
+    cetta_answer_storage_account_release(shared->answer_account);
 }
 
 static bool petta_table_shared_copy_selected(
@@ -3529,6 +3608,10 @@ static bool petta_table_shared_copy_selected(
 
     PettaTableShared replacement;
     memset(&replacement, 0, sizeof(replacement));
+    replacement.answer_account = shared->answer_account;
+    if (replacement.answer_account &&
+        !cetta_answer_storage_account_retain(replacement.answer_account))
+        return false;
     arena_init(&replacement.arena);
     arena_set_runtime_kind(
         &replacement.arena,
@@ -3583,10 +3666,24 @@ static bool petta_table_shared_copy_selected(
             ok = false;
             break;
         }
+        CettaAnswerStorage *answer_storage = source->answer_len > PETTA_TABLE_ANSWER_STORAGE_MIN_ROWS
+            ? cetta_answer_storage_new(&replacement.answer_account) : NULL;
+        if (source->answer_len > PETTA_TABLE_ANSWER_STORAGE_MIN_ROWS && !answer_storage) {
+            free(answers);
+            ok = false;
+            break;
+        }
+        PettaTableEntry compacting = *source;
+        compacting.key = key;
+        compacting.generator_key = generator_key;
+        compacting.answer_storage = answer_storage;
+        compacting.answer_storage_key = NULL;
         for (size_t answer_index = 0u;
              answer_index < source->answer_len; answer_index++) {
-            answers[answer_index] = atom_deep_copy(
-                &replacement.arena,
+            if (answer_storage)
+                cetta_answer_storage_prepare(answer_storage);
+            answers[answer_index] = petta_table_copy_record(&compacting,
+                answer_storage ? &answer_storage->arena : &replacement.arena,
                 source->answers[answer_index]);
             if (!answers[answer_index]) {
                 ok = false;
@@ -3595,6 +3692,8 @@ static bool petta_table_shared_copy_selected(
         }
         if (!ok) {
             free(answers);
+            if (answer_storage)
+                cetta_answer_storage_release(answer_storage);
             break;
         }
         size_t retained_after =
@@ -3602,6 +3701,11 @@ static bool petta_table_shared_copy_selected(
         uint64_t physical_retained = retained_after >= retained_before
             ? (uint64_t)(retained_after - retained_before)
             : 0u;
+        if (answer_storage) {
+            uint64_t owned_bytes = arena_accounted_live_bytes(&answer_storage->arena);
+            physical_retained = UINT64_MAX - physical_retained < owned_bytes
+                ? UINT64_MAX : physical_retained + owned_bytes;
+        }
         uint64_t answer_bytes =
             (uint64_t)source->answer_len *
             (uint64_t)sizeof(*answers);
@@ -3616,6 +3720,8 @@ static bool petta_table_shared_copy_selected(
         copied.key = key;
         copied.generator_key = generator_key;
         copied.answers = answers;
+        copied.answer_storage = answer_storage;
+        copied.answer_storage_key = compacting.answer_storage_key;
         copied.answer_cap = copied.answer_len;
         copied.retained_bytes = retained;
         copied.state = PETTA_TABLE_ENTRY_COMPLETE;
@@ -4494,6 +4600,9 @@ static bool petta_choice_exhausted_after_success(
          */
         if (choice->as.match.occurrence_cursor_mode)
             return choice->as.match.occurrence_exhausted;
+        if (choice->as.match.binding_snapshot_mode)
+            return choice->as.match.next_index >=
+                   choice->as.match.binding_snapshot.len;
         return choice->as.match.snapshot_mode &&
                choice->as.match.next_index >=
                    choice->as.match.snapshot_len;
@@ -7504,6 +7613,8 @@ static CettaContinuationStatus petta_continuation_capture(
     owned->readout.terminal = source->terminal;
     owned->readout.observation_algebra =
         source->observation_algebra;
+    owned->readout.discard_visible_bindings =
+        source->discard_visible_bindings;
     owned->readout.pending_answer_weight =
         source->pending_answer_weight;
     owned->readout.last_answer_weight = source->last_answer_weight;
@@ -7764,6 +7875,8 @@ static CettaContinuationStatus petta_continuation_restore(
     destination->terminal = saved->readout.terminal;
     destination->observation_algebra =
         saved->readout.observation_algebra;
+    destination->discard_visible_bindings =
+        saved->readout.discard_visible_bindings;
     destination->pending_answer_weight =
         saved->readout.pending_answer_weight;
     destination->last_answer_weight =
@@ -15148,6 +15261,23 @@ static void petta_table_choice_finish_generator(
     }
 }
 
+static Atom *petta_table_materialize_record(
+    Arena *destination, PettaTableEntry *entry, Atom *stored,
+    const CettaVarMap *goal_instantiation, bool initial) {
+    if (!initial && entry &&
+        cetta_answer_storage_can_borrow(entry->answer_storage, stored)) {
+        if (!cetta_answer_storage_retain_into(entry->answer_storage, destination))
+            return NULL;
+        return stored;
+    }
+    CettaVarMap local_slots;
+    cetta_var_map_init(&local_slots);
+    Atom *record = variant_shape_materialize_atom(destination, stored,
+        goal_instantiation, &local_slots);
+    cetta_var_map_free(&local_slots);
+    return record;
+}
+
 static void petta_table_choice_clear_round(
     PettaChoice *choice) {
     if (!choice || choice->kind != PETTA_CHOICE_TABLE)
@@ -15192,6 +15322,22 @@ static Atom *petta_table_choice_canonical_answer(
 
     CettaVarMap answer_map;
     cetta_var_map_init(&answer_map);
+    if (choice->as.table.generator_slots.len == 0u &&
+        petta_table_plain_ground(instantiated_query)) {
+        Atom *canonical_value = answer;
+        if (!petta_table_plain_ground(answer) ||
+            answer->arena_id != choice->as.table.round_arena->identity ||
+            !(answer->flags & ATOM_FLAG_ARENA_CLOSED)) {
+            canonical_value = variant_shape_canonicalize_atom(
+                choice->as.table.round_arena, answer,
+                &answer_map, NULL, &kPettaTableVariantOptions);
+        }
+        cetta_var_map_free(&answer_map);
+        if (!canonical_value)
+            return NULL;
+        Atom *fixed_items[2] = {instantiated_query, canonical_value};
+        return atom_expr(choice->as.table.round_arena, fixed_items, 2u);
+    }
     for (uint32_t index = 0u;
          index < choice->as.table.generator_slots.len;
          index++) {
@@ -15442,9 +15588,14 @@ static bool petta_table_choice_drive_generator(
     for (;;) {
         Atom *answer = NULL;
         Bindings environment;
-        PettaMachineStep step = petta_machine_pull_child(machine,
+        PettaChildPullResult pull = petta_machine_pull_child(machine,
             choice->as.table.generator,
             &answer, &environment);
+        if (pull.requested) {
+            *failure = PETTA_MACHINE_STEP_SUSPENDED;
+            return false;
+        }
+        PettaMachineStep step = pull.step;
         if (step == PETTA_MACHINE_STEP_ANSWER) {
             Atom *canonical_answer =
                 petta_table_choice_canonical_answer(
@@ -15737,13 +15888,10 @@ static bool petta_machine_resume_table_choice(
                 Atom *stored =
                     replay_answers[
                         choice->as.table.replay_next++];
-                CettaVarMap local_slots;
-                cetta_var_map_init(&local_slots);
-                Atom *record = variant_shape_materialize_atom(
-                    &machine->heap, stored,
+                Atom *record = petta_table_materialize_record(
+                    &machine->heap, requested, stored,
                     &choice->as.table.goal_instantiation,
-                    &local_slots);
-                cetta_var_map_free(&local_slots);
+                    choice->as.table.replay_initial_answers);
                 if (!record || record->kind != ATOM_EXPR ||
                     record->expr.len != 2u ||
                     !petta_push_unify(
@@ -17068,9 +17216,14 @@ static bool petta_machine_advance_choice(
         for (;;) {
             Atom *answer = NULL;
             Bindings environment;
-            PettaMachineStep step = petta_machine_pull_child(machine,
+            PettaChildPullResult pull = petta_machine_pull_child(machine,
                 choice->as.collapse.machine,
                 &answer, &environment);
+            if (pull.requested) {
+                *failure = PETTA_MACHINE_STEP_SUSPENDED;
+                return false;
+            }
+            PettaMachineStep step = pull.step;
             if (step == PETTA_MACHINE_STEP_ANSWER && answer &&
                 machine->host.raises_abort_collections &&
                 choice->as.collapse.machine->impl &&
@@ -17263,9 +17416,14 @@ static bool petta_machine_advance_choice(
         for (;;) {
             Atom *answer = NULL;
             Bindings environment;
-            PettaMachineStep step = petta_machine_pull_child(machine,
+            PettaChildPullResult pull = petta_machine_pull_child(machine,
                 choice->as.count_collapse.machine,
                 &answer, &environment);
+            if (pull.requested) {
+                *failure = PETTA_MACHINE_STEP_SUSPENDED;
+                return false;
+            }
+            PettaMachineStep step = pull.step;
             if (step == PETTA_MACHINE_STEP_ANSWER && answer &&
                 machine->host.raises_abort_collections &&
                 choice->as.count_collapse.machine->impl &&
@@ -20317,6 +20475,14 @@ static bool petta_machine_start_collapse(
         *failure = PETTA_MACHINE_STEP_CAPACITY;
         return false;
     }
+    /* Collapse consumes owned values and delayed goals, then discards each
+     * returned environment. Keep answer materialization and Prime resources,
+     * but omit the ordinary visible exports that this private owner ignores
+     * (Collapse.Publication.collect_mapReceipts). Externalized child work
+     * keeps the full publication contract. */
+    inner->impl->discard_visible_bindings =
+        !machine->host.externalize_equation_choices &&
+        !machine->host.analysis;
     PettaChoice choice = {
         .kind = PETTA_CHOICE_COLLAPSE,
         .manufacture_epoch = machine->manufacture_epoch,
@@ -33942,11 +34108,14 @@ static bool petta_machine_emit(
     petta_answer_materialize_memo_init(&memo);
     Bindings caller_aliases;
     bindings_init(&caller_aliases);
-    AtomDeepCopySession *copies = atom_deep_copy_session_new(machine->answer_arena);
+    bool export_visible =
+        !machine->discard_visible_bindings && machine->visible_len != 0u;
+    AtomDeepCopySession *copies = export_visible
+        ? atom_deep_copy_session_new(machine->answer_arena) : NULL;
     Atom *inline_exports[32];
     Atom **exports = inline_exports;
     bindings_init(environment);
-    if (!copies)
+    if (export_visible && !copies)
         goto fail_exports;
     if (machine->host.retain_query_variable_identity) {
         /* A fresh equation slot may be the trail representative of an
@@ -33984,6 +34153,8 @@ static bool petta_machine_emit(
             goto fail_exports;
         }
     }
+    if (!export_visible)
+        goto finish_publication;
     if (machine->visible_len > UINT32_MAX ||
         machine->visible_len > SIZE_MAX / (2u * sizeof(Atom *))) {
         goto fail_exports;
@@ -34037,6 +34208,7 @@ static bool petta_machine_emit(
     }
     if (!bindings_add_vars(environment, variables, values, exported))
         goto fail_exports;
+finish_publication:
     atom_deep_copy_session_free(copies);
     petta_answer_materialize_memo_free(&memo);
     bindings_free(&caller_aliases);
@@ -34280,10 +34452,13 @@ static PettaMachineStep petta_machine_next_local(
     PettaMachine *machine, Atom **answer, Bindings *environment) {
     if (answer)
         *answer = NULL;
-    if (environment)
-        bindings_init(environment);
-    if (!machine || !machine->impl || !answer || !environment)
+    if (!machine || !machine->impl || !answer || !environment) {
+        if (environment)
+            bindings_init(environment);
         return PETTA_MACHINE_STEP_CAPACITY;
+    }
+    /* Only emit constructs an environment. The driver initializes empty
+     * non-answer returns when they cross an actual return boundary. */
     PettaMachineImpl *impl = machine->impl;
     impl->last_answer_weight = 0u;
     impl->last_answer_is_control_error = false;
@@ -34478,15 +34653,18 @@ PettaMachineStep petta_machine_next(
     PettaMachine *machine, Atom **answer, Bindings *environment) {
     if (answer)
         *answer = NULL;
-    if (environment)
-        bindings_init(environment);
-    if (!machine || !machine->impl || !answer || !environment)
+    if (!machine || !machine->impl || !answer || !environment) {
+        if (environment)
+            bindings_init(environment);
         return PETTA_MACHINE_STEP_CAPACITY;
+    }
 
-    PettaPullFrame initial[8] = {{0}};
+    /* Initialize each frame when it enters the live prefix. Unused capacity
+     * is never copied or read; child pushes construct their complete frame. */
+    PettaPullFrame initial[8];
     PettaPullFrame *frames = initial;
     size_t length = 1u, capacity = sizeof(initial) / sizeof(initial[0]);
-    frames[0].machine = machine;
+    frames[0] = (PettaPullFrame){.machine = machine};
     for (;;) {
         PettaPullFrame *frame = &frames[length - 1u];
         PettaMachineImpl *impl = frame->machine->impl;
@@ -34503,7 +34681,8 @@ PettaMachineStep petta_machine_next(
         impl->pull_frame = NULL;
         if (frame->requested_child) {
             assert(step == PETTA_MACHINE_STEP_SUSPENDED);
-            bindings_free(&bindings);
+            /* No emit occurred: this is a private child request, not an
+             * environment transfer or a published pause. */
             PettaMachine *child = frame->requested_child;
             frame->requested_child = NULL;
             if (length == capacity) {
@@ -34529,6 +34708,8 @@ PettaMachineStep petta_machine_next(
             frames[length++] = (PettaPullFrame){.machine = child};
             continue;
         }
+        if (step != PETTA_MACHINE_STEP_ANSWER)
+            bindings_init(&bindings);
         /* An invalidation can terminate the parent before it consumes a
          * buffered child result.  Retire that result's environment too. */
         if (frame->completed_child)

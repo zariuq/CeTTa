@@ -2308,6 +2308,8 @@ typedef struct {
     bool parser_universal_names_old;
     bool parser_list_syntax_set;
     bool parser_list_syntax_old;
+    bool parser_namespace_sugar_set;
+    bool parser_namespace_sugar_old;
     void *document_reader_context;
     void (*document_reader_free)(void *context);
     CettaGsltLanguage *gslt_language;
@@ -2367,6 +2369,10 @@ static bool cetta_main_cleanup(CettaMainCleanup *cleanup) {
     if (cleanup->parser_list_syntax_set) {
         parser_set_list_syntax_enabled(cleanup->parser_list_syntax_old);
         cleanup->parser_list_syntax_set = false;
+    }
+    if (cleanup->parser_namespace_sugar_set) {
+        parser_set_namespace_sugar_enabled(cleanup->parser_namespace_sugar_old);
+        cleanup->parser_namespace_sugar_set = false;
     }
 
     if (cleanup->output_spool) {
@@ -3609,6 +3615,9 @@ static int cetta_main(int argc, char **argv) {
     cleanup.parser_list_syntax_old =
         parser_set_list_syntax_enabled(list_syntax);
     cleanup.parser_list_syntax_set = true;
+    cleanup.parser_namespace_sugar_old =
+        parser_set_namespace_sugar_enabled(lang->id != CETTA_LANGUAGE_HE);
+    cleanup.parser_namespace_sugar_set = true;
 
     const char *document_reader_capability = NULL;
     if (lang->id == CETTA_LANGUAGE_HE)
@@ -4263,11 +4272,12 @@ process_petta_document:
                     goto cleanup;
                 }
             }
-            Atom *expr = term_universe_copy_atom(&libraries.term_universe, &arena,
-                                                 payload_id);
             /* HE reads a form with the tokens bound before it. */
-            if (lang->id == CETTA_LANGUAGE_HE)
-                expr = eval_read_registry_words(&registry, &arena, expr);
+            Atom *expr = lang->id == CETTA_LANGUAGE_HE
+                ? eval_copy_read_registry_form(&registry,
+                      &libraries.term_universe, &arena, payload_id)
+                : term_universe_copy_atom(&libraries.term_universe, &arena,
+                                           payload_id);
             libraries.session.test_verdict = run_cli ? run_cli_test_verdict : NULL;
             libraries.session.test_verdict_context = run_cli;
             ResultSet rs;
@@ -4514,7 +4524,7 @@ process_petta_document:
                    n, block_end, NULL, NULL)) {
             block_end++;
         }
-        if (lang->id == CETTA_LANGUAGE_HE && registry.word_len) {
+        if (lang->id == CETTA_LANGUAGE_HE) {
             /* HE reads a form with the tokens bound before it. */
             for (int form = i; form < block_end; form++)
                 atom_ids[form] = eval_read_registry_words_id(

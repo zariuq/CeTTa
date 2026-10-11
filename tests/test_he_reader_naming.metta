@@ -1,0 +1,11 @@
+!(bind! &number 7)
+!(quote (&number "&number" &unknown))
+(= (after-binding) (quote &number))
+!(after-binding)
+!(case (bind! &number 8) (((Error $call $reason) $reason)))
+!(case (bind! &self 7) (((Error $call $reason) $reason)))
+!(quote (np.pi np:pi a.b/c 1.25 $a.b $a:b))
+!(== (quote np.pi) (quote np:pi))
+!(bind! &single-substitution payload-word)
+!(bind! payload-word 9)
+! &single-substitution

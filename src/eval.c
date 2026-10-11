@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+#include "term_universe.h"
 #include "var_index.h"
 #include "eval.h"
 #include "abt.h"
@@ -35,7 +36,6 @@
 #include "stats.h"
 #include "answer_bank.h"
 #include "table_store.h"
-#include "term_universe.h"
 #include "term_canon.h"
 #include "variant_shape.h"
 #include "langdef_pack.h"
@@ -3022,7 +3022,36 @@ static bool petta_space_remove_pattern_all(
     ArenaMark scratch_origin = arena_mark(&scratch);
     bool ok = true;
 
-    for (CettaIndex index = 0u; ok && index < logical_len; index++) {
+    /* Only native, uncomposed candidate coordinates are the logical
+     * occurrence positions consumed by the removal mask. Other stores keep
+     * the full logical scan until they supply that coordinate contract. */
+    bool indexed = !space->overlay_base && !space_has_dependencies(space) &&
+        logical_len > MATCH_TRIE_THRESHOLD &&
+        (space->match_backend.kind == SPACE_ENGINE_NATIVE ||
+         space->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT);
+    if (indexed) {
+        /* A constructor with only free argument positions is a broad row
+         * scan. Collecting its frontier adds work before the same matching
+         * pass, so retain the direct scan for that access shape. */
+        bool constrained_argument = false;
+        for (CettaExprIndex i = 1u; i < pattern->expr.len; i++) {
+            if (pattern->expr.elems[i]->kind != ATOM_VAR) {
+                constrained_argument = true;
+                break;
+            }
+        }
+        indexed = constrained_argument;
+    }
+    CettaIndex *candidates = NULL;
+    CettaCount candidate_len = indexed
+        ? space_match_candidates64(space, pattern, &candidates) : logical_len;
+    for (CettaIndex position = 0u; ok && position < candidate_len; position++) {
+        CettaIndex index = indexed ? candidates[position] : position;
+        if (index >= logical_len ||
+            (indexed && position > 0u && candidates[position - 1u] >= index)) {
+            ok = false;
+            break;
+        }
         CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
         AtomId atom_id = space_get_atom_id_at64(space, index);
         Atom *candidate = space_get_at64(space, index);
@@ -3058,6 +3087,7 @@ static bool petta_space_remove_pattern_all(
         bindings_free(&trial);
         arena_reset(&scratch, scratch_origin);
     }
+    free(candidates);
     arena_free(&scratch);
 
     if (!ok || !space_read_token_matches_live_space(source, space)) {
@@ -3809,9 +3839,9 @@ static bool eval_atom_is_cast_value(const Atom *atom) {
  * own demand rules; the common continuation still performs the requested work. */
 static HeTypeDemand eval_atom_type_demand(Arena *arena, Atom *atom,
                                          Atom *expected) {
-    Atom *meta = get_meta_type(arena, atom);
     if (eval_current_language_id() == CETTA_LANGUAGE_HE)
-        return he_type_demand(atom, expected, meta);
+        return he_type_source_demand(atom, expected);
+    Atom *meta = get_meta_type(arena, atom);
     if (atom_is_symbol_id(expected, g_builtin_syms.atom) ||
         atom_eq(expected, meta) ||
         (atom_is_symbol_id(expected, g_builtin_syms.expression) &&
@@ -20354,10 +20384,13 @@ const char *space_module_display_name(const void *space) {
 /* Put the words a registry binds into `atom`, as HE's tokenizer reads a
  * registered token wherever its text occurs. */
 static Atom *registry_read_words(Registry *registry, Arena *a, Atom *atom) {
+    if (!registry->word_len && !atom_has_registry_refs(atom))
+        return atom;
     if (atom->kind == ATOM_SYMBOL) {
-        if (symbol_bytes(g_symbols, atom->sym_id)[0] == '&')
-            return atom;
-        Atom *bound = registry_lookup_id(registry, atom->sym_id);
+        Atom *bound = registry->len == 1u
+            ? (registry->entries[0].key == atom->sym_id
+                   ? registry->entries[0].value : NULL)
+            : registry_lookup_id(registry, atom->sym_id);
         return bound ? bound : atom;
     }
     if (atom->kind != ATOM_EXPR)
@@ -20376,31 +20409,82 @@ static Atom *registry_read_words(Registry *registry, Arena *a, Atom *atom) {
 }
 
 Atom *eval_read_registry_words(Registry *registry, Arena *a, Atom *atom) {
-    return registry && a && atom && registry->word_len
+    return registry && a && atom && registry->len
         ? registry_read_words(registry, a, atom) : atom;
+}
+
+static bool registry_symbol_is_bound(Registry *registry, SymbolId name) {
+    if (registry->len == 1u)
+        return registry->entries[0].key == name &&
+               registry->entries[0].value != NULL;
+    if (!registry->word_len && symbol_bytes(g_symbols, name)[0] != '&')
+        return false;
+    return registry_lookup_id(registry, name) != NULL;
+}
+
+static bool registry_form_has_bound_word(Registry *registry,
+                                         TermUniverse *universe, AtomId form) {
+    const CettaTermHdr *header = tu_hdr(universe, form);
+    AtomKind kind = header ? (AtomKind)header->tag : tu_kind(universe, form);
+    if (kind == ATOM_SYMBOL)
+        return registry_symbol_is_bound(registry,
+            header ? header->sym_or_head : tu_sym(universe, form));
+    if (kind != ATOM_EXPR)
+        return false;
+    CettaExprLen length = header
+        ? (header->aux32 & CETTA_TERM_HDR_DATA_MASK) : tu_arity(universe, form);
+    for (CettaExprIndex i = 0u; i < length; i++) {
+        AtomId child = tu_child_from_header(universe, header, i);
+        const CettaTermHdr *child_header = tu_hdr(universe, child);
+        if (child_header && child_header->tag != ATOM_EXPR) {
+            if (child_header->tag == ATOM_SYMBOL &&
+                registry_symbol_is_bound(registry, child_header->sym_or_head))
+                return true;
+        } else if (registry_form_has_bound_word(registry, universe, child)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static Atom *registry_read_symbol(void *context, SymbolId symbol) {
+    Registry *registry = context;
+    return registry->len == 1u
+        ? (registry->entries[0].key == symbol
+               ? registry->entries[0].value : NULL)
+        : registry_lookup_id(registry, symbol);
+}
+
+Atom *eval_copy_read_registry_form(Registry *registry, TermUniverse *universe,
+                                    Arena *a, AtomId form) {
+    if (!universe || !a || form == CETTA_ATOM_ID_NONE)
+        return NULL;
+    if (!registry || !registry->len)
+        return term_universe_copy_atom(universe, a, form);
+    return term_universe_copy_atom_read_symbols(
+        universe, a, form, registry_read_symbol, registry);
 }
 
 AtomId eval_read_registry_words_id(Registry *registry, TermUniverse *universe,
                                    Arena *scratch, Arena *storage, AtomId form) {
-    if (!registry || !registry->word_len || !universe || !scratch || !storage ||
+    if (!registry || !registry->len || !universe || !scratch || !storage ||
         form == CETTA_ATOM_ID_NONE)
+        return form;
+    /* Preserve canonical forms without materializing a second atom graph.
+     * Changed forms use the existing admission path, which also owns opaque
+     * values such as module spaces that cannot be encoded as stable records. */
+    if (!registry_form_has_bound_word(registry, universe, form))
         return form;
     Atom *written = term_universe_get_atom(universe, form);
     Atom *read = written ? registry_read_words(registry, scratch, written) : NULL;
     if (!read || read == written)
         return form;
-    AtomId stored = term_universe_store_atom_id(universe, storage, read);
-    return stored != CETTA_ATOM_ID_NONE ? stored : form;
+    return term_universe_store_atom_id(universe, storage, read);
 }
 
 Atom *eval_capture_registry_tokens(Registry *registry, Arena *a, Atom *atom) {
-    if (!registry || !a || !atom)
-        return atom;
-    Registry *previous = g_registry;
-    g_registry = registry;
-    Atom *captured = resolve_registry_refs(a, atom);
-    g_registry = previous;
-    return eval_read_registry_words(registry, a, captured);
+    /* A constructor's returned value is not text to tokenize again. */
+    return eval_read_registry_words(registry, a, atom);
 }
 
 static Atom *runtime_stats_inventory_atom(Arena *a) {
@@ -46271,7 +46355,9 @@ static void bind_publish_value(Arena *a, Atom *atom, Atom *first,
         Atom *reason = name->kind == ATOM_GROUNDED
             ? atom_expr(a, (Atom *[]){atom_symbol(a, "BadArgType"),
                   atom_int(a, 1), atom_symbol(a, "Symbol"),
-                  get_grounded_type(a, name)}, 4u)
+                  name->ground.gkind == GV_SPACE
+                      ? atom_symbol(a, "SpaceType")
+                      : get_grounded_type(a, name)}, 4u)
             : atom_symbol(a, "bind! expects symbol atom as a token");
         outcome_set_add_prefixed(a, os, atom_error(a, atom, reason), &empty,
                                  outer, preserve);

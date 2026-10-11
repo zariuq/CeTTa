@@ -403,7 +403,7 @@ impl SupportTransformExecutor {
             let directive = Expr {
                 ptr: owned_directive.as_mut_ptr(),
             };
-            if let Err(error) = space.interpret(directive) {
+            if let Err(error) = cetta_space::with_mork_access(|| space.interpret(directive)) {
                 space.btm.insert(&directive_bytes, ());
                 self.queue.insert(key.clone(), directive_bytes.clone());
                 self.queued_by_expr.insert(directive_bytes, key);

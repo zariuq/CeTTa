@@ -10,6 +10,7 @@
 
 typedef struct Space Space;
 typedef struct DiscNode DiscNode;
+typedef struct CettaSpacePathIndex CettaSpacePathIndex;
 typedef struct CettaMorkSpaceHandle CettaMorkSpaceHandle;
 
 typedef enum {
@@ -64,6 +65,7 @@ typedef struct {
     uint8_t cold_flat_scans;
     uint32_t match_trie_pins;
     SpacePinnedOccurrences *pinned;
+    CettaSpacePathIndex *path_indexes;
     SubstTree *stree;
     bool stree_dirty;
     CettaCount stree_stale_occurrences;
@@ -128,6 +130,8 @@ typedef struct {
 typedef struct {
     ImportedFlatBucket buckets[STREE_BUCKETS];
     ImportedFlatBucket wildcard;
+    /* Ownership of the fallback buckets, independent of bridge validity. */
+    bool flat_has_entries;
     bool built;
     bool dirty;
     bool bridge_active;

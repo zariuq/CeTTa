@@ -70,15 +70,18 @@ cases = [
      ['((pair a a) (pair b b))']),
     ('(= (local-client $n) (pat:let% $x $n (pat:let% $y (+ $x 1) (+ $x $y))))\n'
      '!(local-client 2)\n!(local-client 5)', ['5', '11']),
-    # Importing the namespace does not install short names.
-    ('!(unify% a a yes no)\n!(match% &self (p a))',
-     ['(unify% a a yes no)', '(match% &self (p a))']),
 ]
 
 for language in ('he', 'petta'):
     for reference in (False, True):
         for source, answers in cases:
             check(language, source, answers, reference=reference)
+        # Importing the namespace does not install short names. HE still
+        # substitutes &self while reading the otherwise uninterpreted form.
+        inert_space = 'ModuleSpace(GroundingSpace-top)' if language == 'he' else '&self'
+        check(language, '!(unify% a a yes no)\n!(match% &self (p a))',
+              ['(unify% a a yes no)', f'(match% {inert_space} (p a))'],
+              reference=reference)
         check(language,
               '!(pat:let% $x (trace! value (+ 1 2)) (trace! body (+ $x 4)))',
               ['7'], reference=reference, effects=['value', 'body'])

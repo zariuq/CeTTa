@@ -10,6 +10,6 @@
 !(assertEqualToResult (match &rel (rel-helper loaded) ok) (ok))
 
 !(register-module! support/import_pkg)
-!(bind! &mod (mod-space! import_pkg.moduleA))
+!(bind! &mod (mod-space! import_pkg:moduleA))
 !(assertEqualToResult (match &mod (pkg-root loaded) ok) (ok))
 !(assertEqualToResult (match &mod (pkg-helper loaded) ok) (ok))

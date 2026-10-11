@@ -397,6 +397,7 @@ int main(int argc, char **argv) {
     size_t n = 100000;
     int repeat = 3;
     CettaMorkSpaceHandle *space = NULL;
+    const char *mode = argc >= 4 ? argv[3] : "all";
 
     if (argc >= 2) {
         char *end = NULL;
@@ -417,6 +418,24 @@ int main(int argc, char **argv) {
         repeat = (int)parsed;
     }
 
+    if (argc > 4 || (strcmp(mode, "all") &&
+        strcmp(mode, "space-size") &&
+        strcmp(mode, "space-unique-size") &&
+        strcmp(mode, "cursor-new") &&
+        strcmp(mode, "cursor-path-exists-root") &&
+        strcmp(mode, "cursor-is-val-root") &&
+        strcmp(mode, "cursor-child-count-root") &&
+        strcmp(mode, "cursor-val-count-root") &&
+        strcmp(mode, "cursor-depth-root") &&
+        strcmp(mode, "cursor-child-bytes-root") &&
+        strcmp(mode, "cursor-path-bytes-branch") &&
+        strcmp(mode, "cursor-child-bytes-branch") &&
+        strcmp(mode, "cursor-path-bytes-leaf") &&
+        strcmp(mode, "cursor-next-val"))) {
+        fprintf(stderr, "usage: %s [count>=4] [repeat] [mode|all]\n", argv[0]);
+        return 2;
+    }
+
     init_symbols(&symbols);
     friend_sym = symbol_intern_cstr(g_symbols, "friend");
     sam_sym = symbol_intern_cstr(g_symbols, "sam");
@@ -429,98 +448,124 @@ int main(int argc, char **argv) {
     printf("%-26s %10s %10s %10s\n",
            "--------------------------", "----------", "----------", "----------");
 
-    printf("%-26s %10zu %10zu %10.6f\n",
-           "space-size",
-           n,
-           n,
-           run_space_size_mode(space, n, repeat, false));
-    printf("%-26s %10zu %10zu %10.6f\n",
-           "space-unique-size",
-           n,
-           n,
-           run_space_size_mode(space, n, repeat, true));
-    printf("%-26s %10zu %10zu %10.6f\n",
-           "cursor-new",
-           n,
-           n,
-           run_cursor_new_mode(space, n, repeat));
-    printf("%-26s %10zu %10zu %10.6f\n",
-           "cursor-path-exists-root",
-           n,
-           n,
-           run_cursor_bool_mode(space, n, repeat,
-                                "cetta_mork_bridge_cursor_path_exists",
-                                cetta_mork_bridge_cursor_path_exists,
-                                true, false, false));
-    printf("%-26s %10zu %10zu %10.6f\n",
-           "cursor-is-val-root",
-           n,
-           n,
-           run_cursor_bool_mode(space, n, repeat,
-                                "cetta_mork_bridge_cursor_is_val",
-                                cetta_mork_bridge_cursor_is_val,
-                                false, false, false));
-    printf("%-26s %10zu %10zu %10.6f\n",
-           "cursor-child-count-root",
-           n,
-           n,
-           run_cursor_u64_mode(space, n, repeat,
-                               "cetta_mork_bridge_cursor_child_count",
-                               cetta_mork_bridge_cursor_child_count,
-                               1u, false, false));
-    printf("%-26s %10zu %10zu %10.6f\n",
-           "cursor-val-count-root",
-           n,
-           n,
-           run_cursor_u64_mode(space, n, repeat,
-                               "cetta_mork_bridge_cursor_val_count",
-                               cetta_mork_bridge_cursor_val_count,
-                               (uint64_t)n, false, false));
-    printf("%-26s %10zu %10zu %10.6f\n",
-           "cursor-depth-root",
-           n,
-           n,
-           run_cursor_u64_mode(space, n, repeat,
-                               "cetta_mork_bridge_cursor_depth",
-                               cetta_mork_bridge_cursor_depth,
-                               0u, false, false));
-    printf("%-26s %10zu %10zu %10.6f\n",
-           "cursor-child-bytes-root",
-           n,
-           n,
-           run_cursor_bytes_mode(space, n, repeat,
-                                 "cetta_mork_bridge_cursor_child_bytes",
-                                 cetta_mork_bridge_cursor_child_bytes,
-                                 false, false));
-    printf("%-26s %10zu %10zu %10.6f\n",
-           "cursor-path-bytes-branch",
-           n,
-           n,
-           run_cursor_bytes_mode(space, n, repeat,
-                                 "cetta_mork_bridge_cursor_path_bytes",
-                                 cetta_mork_bridge_cursor_path_bytes,
-                                 true, false));
-    printf("%-26s %10zu %10zu %10.6f\n",
-           "cursor-child-bytes-branch",
-           n,
-           n,
-           run_cursor_bytes_mode(space, n, repeat,
-                                 "cetta_mork_bridge_cursor_child_bytes",
-                                 cetta_mork_bridge_cursor_child_bytes,
-                                 true, false));
-    printf("%-26s %10zu %10zu %10.6f\n",
-           "cursor-path-bytes-leaf",
-           n,
-           n,
-           run_cursor_bytes_mode(space, n, repeat,
-                                 "cetta_mork_bridge_cursor_path_bytes",
-                                 cetta_mork_bridge_cursor_path_bytes,
-                                 false, true));
-    printf("%-26s %10zu %10zu %10.6f\n",
-           "cursor-next-val",
-           n,
-           n,
-           run_cursor_next_val_mode(space, n, repeat));
+    if (!strcmp(mode, "all") || !strcmp(mode, "space-size")) {
+        printf("%-26s %10zu %10zu %10.6f\n",
+               "space-size",
+               n,
+               n,
+               run_space_size_mode(space, n, repeat, false));
+    }
+    if (!strcmp(mode, "all") || !strcmp(mode, "space-unique-size")) {
+        printf("%-26s %10zu %10zu %10.6f\n",
+               "space-unique-size",
+               n,
+               n,
+               run_space_size_mode(space, n, repeat, true));
+    }
+    if (!strcmp(mode, "all") || !strcmp(mode, "cursor-new")) {
+        printf("%-26s %10zu %10zu %10.6f\n",
+               "cursor-new",
+               n,
+               n,
+               run_cursor_new_mode(space, n, repeat));
+    }
+    if (!strcmp(mode, "all") || !strcmp(mode, "cursor-path-exists-root")) {
+        printf("%-26s %10zu %10zu %10.6f\n",
+               "cursor-path-exists-root",
+               n,
+               n,
+               run_cursor_bool_mode(space, n, repeat,
+                                    "cetta_mork_bridge_cursor_path_exists",
+                                    cetta_mork_bridge_cursor_path_exists,
+                                    true, false, false));
+    }
+    if (!strcmp(mode, "all") || !strcmp(mode, "cursor-is-val-root")) {
+        printf("%-26s %10zu %10zu %10.6f\n",
+               "cursor-is-val-root",
+               n,
+               n,
+               run_cursor_bool_mode(space, n, repeat,
+                                    "cetta_mork_bridge_cursor_is_val",
+                                    cetta_mork_bridge_cursor_is_val,
+                                    false, false, false));
+    }
+    if (!strcmp(mode, "all") || !strcmp(mode, "cursor-child-count-root")) {
+        printf("%-26s %10zu %10zu %10.6f\n",
+               "cursor-child-count-root",
+               n,
+               n,
+               run_cursor_u64_mode(space, n, repeat,
+                                   "cetta_mork_bridge_cursor_child_count",
+                                   cetta_mork_bridge_cursor_child_count,
+                                   1u, false, false));
+    }
+    if (!strcmp(mode, "all") || !strcmp(mode, "cursor-val-count-root")) {
+        printf("%-26s %10zu %10zu %10.6f\n",
+               "cursor-val-count-root",
+               n,
+               n,
+               run_cursor_u64_mode(space, n, repeat,
+                                   "cetta_mork_bridge_cursor_val_count",
+                                   cetta_mork_bridge_cursor_val_count,
+                                   (uint64_t)n, false, false));
+    }
+    if (!strcmp(mode, "all") || !strcmp(mode, "cursor-depth-root")) {
+        printf("%-26s %10zu %10zu %10.6f\n",
+               "cursor-depth-root",
+               n,
+               n,
+               run_cursor_u64_mode(space, n, repeat,
+                                   "cetta_mork_bridge_cursor_depth",
+                                   cetta_mork_bridge_cursor_depth,
+                                   0u, false, false));
+    }
+    if (!strcmp(mode, "all") || !strcmp(mode, "cursor-child-bytes-root")) {
+        printf("%-26s %10zu %10zu %10.6f\n",
+               "cursor-child-bytes-root",
+               n,
+               n,
+               run_cursor_bytes_mode(space, n, repeat,
+                                     "cetta_mork_bridge_cursor_child_bytes",
+                                     cetta_mork_bridge_cursor_child_bytes,
+                                     false, false));
+    }
+    if (!strcmp(mode, "all") || !strcmp(mode, "cursor-path-bytes-branch")) {
+        printf("%-26s %10zu %10zu %10.6f\n",
+               "cursor-path-bytes-branch",
+               n,
+               n,
+               run_cursor_bytes_mode(space, n, repeat,
+                                     "cetta_mork_bridge_cursor_path_bytes",
+                                     cetta_mork_bridge_cursor_path_bytes,
+                                     true, false));
+    }
+    if (!strcmp(mode, "all") || !strcmp(mode, "cursor-child-bytes-branch")) {
+        printf("%-26s %10zu %10zu %10.6f\n",
+               "cursor-child-bytes-branch",
+               n,
+               n,
+               run_cursor_bytes_mode(space, n, repeat,
+                                     "cetta_mork_bridge_cursor_child_bytes",
+                                     cetta_mork_bridge_cursor_child_bytes,
+                                     true, false));
+    }
+    if (!strcmp(mode, "all") || !strcmp(mode, "cursor-path-bytes-leaf")) {
+        printf("%-26s %10zu %10zu %10.6f\n",
+               "cursor-path-bytes-leaf",
+               n,
+               n,
+               run_cursor_bytes_mode(space, n, repeat,
+                                     "cetta_mork_bridge_cursor_path_bytes",
+                                     cetta_mork_bridge_cursor_path_bytes,
+                                     false, true));
+    }
+    if (!strcmp(mode, "all") || !strcmp(mode, "cursor-next-val")) {
+        printf("%-26s %10zu %10zu %10.6f\n",
+               "cursor-next-val",
+               n,
+               n,
+               run_cursor_next_val_mode(space, n, repeat));
+    }
 
     cetta_mork_bridge_space_free(space);
     cleanup_symbols(&symbols);

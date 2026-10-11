@@ -1727,9 +1727,52 @@ static uint64_t hashcons_slot_hash(Atom *atom) {
 
 /* Interning keeps every distinct term: a float by its bits, so 0.0 and -0.0
  * stay two atoms, and never a numeric promotion across kinds; a variable by
- * its id, its spelling and its structural name, so each keeps its own name. */
+ * its id, its spelling and its structural name, so each keeps its own name.
+ * Decide only comparisons that cannot invoke an opaque service: a flat
+ * expression may retry through the full driver without replaying a callback.
+ * Negative means the full comparison is needed. */
+static inline int atom_intern_leaf_compare(Atom *a, Atom *b) {
+    if (a == b)
+        return 1;
+    if (!a || !b || a->kind != b->kind)
+        return 0;
+    switch (a->kind) {
+    case ATOM_SYMBOL:
+        return a->sym_id == b->sym_id;
+    case ATOM_VAR:
+        return a->var_id == b->var_id && a->sym_id == b->sym_id &&
+               a->name_key == b->name_key;
+    case ATOM_GROUNDED:
+        if (a->ground.gkind != b->ground.gkind)
+            return 0;
+        if (a->ground.gkind == GV_INT)
+            return a->ground.ival == b->ground.ival;
+        if (a->ground.gkind == GV_FLOAT)
+            return memcmp(&a->ground.fval, &b->ground.fval,
+                          sizeof(a->ground.fval)) == 0;
+        break;
+    case ATOM_EXPR:
+        break;
+    }
+    return -1;
+}
+
 static bool atom_intern_identical(Atom *a, Atom *b) {
-    return atom_compare_driver(a, b, ATOM_COMPARE_INTERN, false);
+    int leaf = atom_intern_leaf_compare(a, b);
+    if (leaf >= 0)
+        return leaf != 0;
+    if (a->kind != ATOM_EXPR)
+        return atom_eq(a, b);
+    if (a->expr.len != b->expr.len)
+        return false;
+    for (CettaExprIndex i = 0u; i < a->expr.len; i++) {
+        leaf = atom_intern_leaf_compare(a->expr.elems[i], b->expr.elems[i]);
+        if (leaf < 0)
+            return atom_compare_driver(a, b, ATOM_COMPARE_INTERN, false);
+        if (!leaf)
+            return false;
+    }
+    return true;
 }
 
 static uint32_t hashcons_find_slot(HashConsTable *hc, Atom *atom, bool *found) {
@@ -3218,6 +3261,10 @@ Atom *atom_symbol_id(Arena *a, SymbolId sym_id) {
 
 Atom *atom_symbol(Arena *a, const char *name) {
     return atom_symbol_id(a, symbol_intern_cstr(g_symbols, name));
+}
+
+Atom *atom_symbol_literal(Arena *a, const char *name) {
+    return atom_symbol_id(a, symbol_cached_literal(name));
 }
 
 Atom *atom_var_with_spelling(Arena *a, SymbolId spelling, VarId id) {
@@ -4897,6 +4944,18 @@ Atom *atom_expression_type(Arena *a){ return atom_symbol_id(a, g_builtin_syms.ex
 Atom *atom_grounded_type(Arena *a)  { return atom_symbol_id(a, g_builtin_syms.grounded); }
 Atom *atom_list_type(Arena *a)      { return atom_symbol_id(a, g_builtin_syms.list_type); }
 
+SymbolId atom_meta_type_id(const Atom *atom) {
+    switch (atom->kind) {
+    case ATOM_SYMBOL:   return g_builtin_syms.symbol;
+    case ATOM_VAR:      return g_builtin_syms.variable;
+    case ATOM_GROUNDED: return g_builtin_syms.grounded;
+    case ATOM_EXPR:
+        return atom_is_list(atom) || atom_is_list_rest(atom)
+                   ? g_builtin_syms.list_type : g_builtin_syms.expression;
+    }
+    return g_builtin_syms.undefined_type;
+}
+
 Atom *get_meta_type(Arena *a, Atom *atom) {
     switch (atom->kind) {
     case ATOM_SYMBOL:   return atom_symbol_type(a);
@@ -5267,37 +5326,78 @@ static int atom_eq_small_tree(Atom *left, Atom *right) {
         CettaExprIndex next;
     } Frame;
     Frame frames[16];
-    size_t depth = 0u;
+    Frame *top = frames;
     for (;;) {
-        bool equal = false;
-        if (atom_eq_decided(left, right, &equal)) {
-            if (!equal)
+        if (left != right || atom_structural_may_have_nan(left)) {
+            if (left->kind != right->kind) {
+                if (atom_structural_has_rational(left) ||
+                    atom_structural_has_rational(right))
+                    return -1;
                 return 0;
-        } else if (left->kind == ATOM_EXPR && right->kind == ATOM_EXPR &&
-                   left->expr.len == right->expr.len &&
-                   !atom_structural_has_rational(left) &&
-                   !atom_structural_has_rational(right)) {
-            if (depth == 16u)
-                return -1;
-            frames[depth++] = (Frame){left, right, 0u};
-        } else {
-            return -1;
+            }
+            switch (left->kind) {
+            case ATOM_SYMBOL:
+                if (left->sym_id != right->sym_id)
+                    return 0;
+                break;
+            case ATOM_VAR:
+                if (left->var_id != right->var_id)
+                    return 0;
+                break;
+            case ATOM_GROUNDED:
+                if (left->ground.gkind != GV_INT || right->ground.gkind != GV_INT)
+                    return -1;
+                if (left->ground.ival != right->ground.ival)
+                    return 0;
+                break;
+            case ATOM_EXPR:
+                if (atom_structural_has_rational(left) ||
+                    atom_structural_has_rational(right))
+                    return -1;
+                if (left->expr.len != right->expr.len)
+                    return 0;
+                if (top == frames + 16u)
+                    return -1;
+                *top++ = (Frame){left, right, 0u};
+                break;
+            }
         }
-        while (depth && frames[depth - 1u].next ==
-                            frames[depth - 1u].left->expr.len)
-            depth--;
-        if (!depth)
+        while (top != frames && top[-1].next == top[-1].left->expr.len)
+            top--;
+        if (top == frames)
             return 1;
-        Frame *frame = &frames[depth - 1u];
+        Frame *frame = top - 1;
         CettaExprIndex index = frame->next++;
         left = frame->left->expr.elems[index];
         right = frame->right->expr.elems[index];
     }
 }
 
+/* An expression with decidable immediate children needs no saved parent.
+ * Declining at a compound or unfamiliar child leaves the full walk authoritative. */
+static inline int atom_eq_flat_tree(Atom *left, Atom *right) {
+    if (left->kind != ATOM_EXPR || right->kind != ATOM_EXPR ||
+        atom_structural_has_rational(left) ||
+        atom_structural_has_rational(right))
+        return -1;
+    if (left->expr.len != right->expr.len)
+        return 0;
+    for (CettaExprIndex index = 0u; index < left->expr.len; index++) {
+        bool equal = false;
+        if (!atom_eq_decided(left->expr.elems[index], right->expr.elems[index], &equal))
+            return -1;
+        if (!equal)
+            return 0;
+    }
+    return 1;
+}
+
 /* The ordinary pointer/leaf fast path needs no frame of its own. */
 static __attribute__((noinline)) bool atom_eq_walk(Atom *a, Atom *b) {
-    int small = atom_eq_small_tree(a, b);
+    int small = atom_eq_flat_tree(a, b);
+    if (small >= 0)
+        return small != 0;
+    small = atom_eq_small_tree(a, b);
     if (small >= 0)
         return small != 0;
     return atom_compare_driver(a, b, ATOM_COMPARE_STRUCTURAL, false);
@@ -5347,7 +5447,8 @@ typedef struct {
     size_t scope_capacity;
 } AtomCompareStack;
 
-static void atom_compare_push(AtomCompareStack *work, Atom *left, Atom *right,
+static inline __attribute__((always_inline)) void atom_compare_push(
+                              AtomCompareStack *work, Atom *left, Atom *right,
                               AtomCompareMode mode, size_t scope,
                               bool fresh_scope) {
     if (fresh_scope) {
@@ -5446,26 +5547,10 @@ static bool atom_compare_driver(Atom *left, Atom *right,
             goto completed;
 
         if (frame->mode == ATOM_COMPARE_INTERN) {
-            if (a == b)
-                goto completed;
-            if (!a || !b || a->kind != b->kind)
-                goto comparison_failed;
-            if (a->kind == ATOM_VAR) {
-                if (a->var_id != b->var_id || a->sym_id != b->sym_id ||
-                    a->name_key != b->name_key)
+            int leaf = atom_intern_leaf_compare(a, b);
+            if (leaf >= 0) {
+                if (!leaf)
                     goto comparison_failed;
-                goto completed;
-            }
-            if (a->kind == ATOM_GROUNDED) {
-                if (a->ground.gkind != b->ground.gkind)
-                    goto comparison_failed;
-                if (a->ground.gkind == GV_FLOAT) {
-                    if (memcmp(&a->ground.fval, &b->ground.fval,
-                               sizeof(a->ground.fval)) != 0)
-                        goto comparison_failed;
-                } else if (!atom_eq(a, b)) {
-                    goto comparison_failed;
-                }
                 goto completed;
             }
             if (a->kind != ATOM_EXPR) {
@@ -6439,6 +6524,17 @@ Atom *atom_deep_copy(Arena *dst, Atom *src) {
         dst, src, false, &memo, NULL, NULL, NULL, NULL, NULL, NULL);
     atom_deep_copy_memo_free(&memo);
     return out;
+}
+
+Atom *atom_deep_copy_single(Arena *dst, Atom *src) {
+    if (!dst || !src)
+        return NULL;
+    if (atom_settled_for_arena(dst, src)) {
+        cetta_provenance_assert_not_transient_except(
+            src, "atom_deep_copy_single.destination-closed", dst);
+        return src;
+    }
+    return atom_deep_copy(dst, src);
 }
 
 AtomDeepCopySession *atom_deep_copy_session_new(Arena *dst) {

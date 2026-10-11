@@ -268,6 +268,12 @@ static void concurrent_runtime_gate(TestCounts *counts,
          CETTA_JSON_KERNEL_V1_PACKED_GLL_GLR_DUAL, false, {0}},
         {runtime, "\"\xce\xbb\"", "(JsonStringV1 ((cp 955)))",
          CETTA_JSON_KERNEL_V1_PACKED_GLL_GLR_DUAL, false, {0}},
+        {runtime, "{ }", "(JsonObjectV1 ())",
+         CETTA_JSON_KERNEL_V1_PACKED_GLL, false, {0}},
+        {runtime, "[ ]", "(JsonArrayV1 ())",
+         CETTA_JSON_KERNEL_V1_PACKED_GLR, false, {0}},
+        {runtime, "[{ },[ ]]", "(JsonArrayV1 ((JsonObjectV1 ()) (JsonArrayV1 ())))",
+         CETTA_JSON_KERNEL_V1_PACKED_GLL_GLR_DUAL, false, {0}},
     };
     pthread_t threads[sizeof(cases) / sizeof(cases[0])];
     uint32_t created = 0u;
@@ -868,6 +874,11 @@ static void json_corpus_gate(TestCounts *counts,
         {(const uint8_t *)"42", 2u, true, 0u, "top-level scalar number"},
         {(const uint8_t *)"", 0u, false, 0u, "empty input"},
         {(const uint8_t *)"01", 2u, false, 0u, "leading zero"},
+        {(const uint8_t *)"\xd9\xa3", 2u, false, 0u, "Unicode Nd is not a JSON digit"},
+        {(const uint8_t *)"1\xd9\xa3", 3u, false, 0u, "mixed-script JSON number"},
+        {(const uint8_t *)"\xef\xbc\x91", 3u, false, 0u, "fullwidth JSON number"},
+        {(const uint8_t *)"\"\\u\xef\xbc\xa6\xef\xbc\xa6\xef\xbc\x90\xef\xbc\x90\"", 16u,
+         false, 0u, "Unicode Hex_Digit is not a JSON escape digit"},
         {(const uint8_t *)"[1,]", 4u, false, 0u, "trailing array comma"},
         {(const uint8_t *)"{\"x\" 1}", 7u, false, 0u, "missing member colon"},
         {(const uint8_t *)"\"\\x\"", 4u, false, 0u, "invalid escape"},
@@ -998,6 +1009,8 @@ static void json_semantic_elaboration_gate(
          "exact number lexeme"},
         {"\"\\u0000\"", "(JsonStringV1 ((cp 0)))",
          "embedded NUL scalar"},
+        {"\"\\u00e9\\u00E9\"", "(JsonStringV1 ((cp 233) (cp 233)))",
+         "shared ASCII hex values in both cases"},
         {"\"\\uD834\\uDD1E\"", "(JsonStringV1 ((cp 119070)))",
          "decoded surrogate pair"},
         {"[false,2]",
@@ -1152,6 +1165,143 @@ static void json_semantic_elaboration_gate(
     }
 
     arena_free(&values);
+    ppnative_v1_prepared_free(&prepared);
+}
+
+static void json_value_family_gate(
+    TestCounts *counts, const CettaLdParserPackV1 *compiled,
+    const CettaJsonElaborationPlanV1 *plan) {
+    static const char *sources[] = {
+        "null", "true", "\"\\uD800\"", "{ }\n", "1", "1.0",
+        "{\"x\":1}", "{ \"x\":1}", "{\"x\":1,\"x\":1}",
+    };
+    PPNativeV1Prepared prepared;
+    PPNativeV1Result results[sizeof(sources) / sizeof(sources[0])];
+    Atom *csts[sizeof(sources) / sizeof(sources[0])] = {0};
+    Arena arena;
+    char error[512] = {0};
+    bool ready;
+    ppnative_v1_prepared_init(&prepared);
+    arena_init(&arena);
+    for (size_t i = 0u; i < sizeof(results) / sizeof(results[0]); i++)
+        ppnative_v1_result_init(&results[i]);
+    ready = ppnative_v1_prepare(&prepared, &compiled->pack,
+                                compiled->start_state, error, sizeof(error));
+    (void)expect(counts, ready, "prepare JSON value-family controls");
+    if (!ready) goto done;
+    for (size_t i = 0u; i < sizeof(sources) / sizeof(sources[0]); i++) {
+        bool parsed = ppgll_v1_prepared_parse(
+            &prepared, (const uint8_t *)sources[i], strlen(sources[i]),
+            2000000u, 512u, 4096u, &results[i], error, sizeof(error));
+        parsed = parsed && results[i].accepted &&
+            results[i].semantic_result_len == (i == 3u ? 2u : 1u);
+        (void)expect(counts, parsed, "retain every source JSON CST candidate");
+        ready &= parsed;
+        if (parsed) csts[i] = results[i].semantic_results[0]->expr.elems[1];
+    }
+    if (!ready) goto done;
+    (void)expect(counts,
+        strcmp(results[3].forest_digest,
+            "bf29884143897137e9dd9ed125e059d97af46ad0db8f9fea8b741a52b3c31b7e") == 0,
+        "whitespace ambiguity preserves the preceding canonical forest digest");
+    {
+        Atom *alternatives[] = {
+            csts[3], results[3].semantic_results[1]->expr.elems[1],
+        };
+        Atom *value = NULL;
+        CettaJsonCstValueV1Status status;
+        bool ok = cetta_json_cst_value_v1_elaborate_family(
+            plan, &arena, alternatives, 2u, 100000u, 1024u,
+            &value, &status, error, sizeof(error));
+        char *actual = ok ? render(value) : NULL;
+        (void)expect(counts, ok && status == CETTA_JSON_CST_VALUE_V1_OK &&
+            actual && strcmp(actual, "(JsonObjectV1 ())") == 0,
+            "distinct whitespace derivations agree at the JSON value boundary");
+        free(actual);
+    }
+    {
+        static const size_t pairs[][2] = {{0, 1}, {4, 5}, {6, 7}, {6, 8}};
+        static const char *labels[] = {
+            "unequal JSON values are not selected by first answer",
+            "value agreement preserves exact number lexemes",
+            "value agreement preserves member source spans",
+            "value agreement preserves duplicate member occurrences",
+        };
+        Atom *sentinel = atom_symbol(&arena, "family-output-sentinel");
+        for (size_t i = 0u; i < sizeof(pairs) / sizeof(pairs[0]); i++) {
+            Atom *alternatives[] = {csts[pairs[i][0]], csts[pairs[i][1]]};
+            Atom *value = sentinel;
+            CettaJsonCstValueV1Status status;
+            ArenaMark mark = arena_mark(&arena);
+            (void)expect(counts, !cetta_json_cst_value_v1_elaborate_family(
+                plan, &arena, alternatives, 2u, 100000u, 1024u,
+                &value, &status, error, sizeof(error)) &&
+                status == CETTA_JSON_CST_VALUE_V1_AMBIGUOUS &&
+                value == sentinel && arena.live_bytes == mark.live_bytes,
+                labels[i]);
+        }
+        for (size_t order = 0u; order < 2u; order++) {
+            Atom *alternatives[] = {csts[order ? 2 : 0], csts[order ? 0 : 2]};
+            Atom *value = sentinel;
+            CettaJsonCstValueV1Status status;
+            ArenaMark mark = arena_mark(&arena);
+            (void)expect(counts, !cetta_json_cst_value_v1_elaborate_family(
+                plan, &arena, alternatives, 2u, 100000u, 1024u,
+                &value, &status, error, sizeof(error)) &&
+                status == CETTA_JSON_CST_VALUE_V1_INVALID_UNICODE_ESCAPE &&
+                value == sentinel && arena.live_bytes == mark.live_bytes,
+                "semantic failure in either candidate remains failure-atomic");
+        }
+        Atom *malformed[] = {csts[0], sentinel};
+        Atom *value = sentinel;
+        CettaJsonCstValueV1Status status;
+        ArenaMark mark = arena_mark(&arena);
+        (void)expect(counts, !cetta_json_cst_value_v1_elaborate_family(
+            plan, &arena, malformed, 2u, 100000u, 1024u,
+            &value, &status, error, sizeof(error)) &&
+            status == CETTA_JSON_CST_VALUE_V1_MALFORMED_CST &&
+            value == sentinel && arena.live_bytes == mark.live_bytes,
+            "a malformed later CST cannot hide behind an earlier value");
+        (void)expect(counts, !cetta_json_cst_value_v1_elaborate_family(
+            plan, &arena, csts, 0u, 100000u, 1024u,
+            &value, &status, error, sizeof(error)) &&
+            status == CETTA_JSON_CST_VALUE_V1_BAD_ARGUMENT && value == sentinel,
+            "an empty parse family cannot manufacture a JSON value");
+        uint32_t minimum = 1u;
+        for (; minimum < 100u; minimum++) {
+            if (cetta_json_cst_value_v1_elaborate(
+                    plan, &arena, csts[0], minimum, 1024u,
+                    &value, &status, error, sizeof(error))) {
+                arena_reset(&arena, mark);
+                break;
+            }
+        }
+        (void)expect(counts, minimum < 100u, "a single candidate has finite work");
+        Atom *same[] = {csts[0], csts[0]};
+        value = sentinel;
+        (void)expect(counts, !cetta_json_cst_value_v1_elaborate_family(
+            plan, &arena, same, 2u, minimum, 1024u,
+            &value, &status, error, sizeof(error)) &&
+            status == CETTA_JSON_CST_VALUE_V1_RESOURCE_LIMIT &&
+            value == sentinel && arena.live_bytes == mark.live_bytes,
+            "candidate enumeration does not reset the elaboration work budget");
+        Atom *repeated[64];
+        for (size_t i = 0u; i < 64u; i++) repeated[i] = csts[3];
+        bool one = cetta_json_cst_value_v1_elaborate(
+            plan, &arena, csts[3], 100000u, 1024u,
+            &value, &status, error, sizeof(error));
+        size_t one_live = arena.live_bytes;
+        arena_reset(&arena, mark);
+        (void)expect(counts, one && cetta_json_cst_value_v1_elaborate_family(
+            plan, &arena, repeated, 64u, 100000u, 1024u,
+            &value, &status, error, sizeof(error)) &&
+            arena.live_bytes == one_live,
+            "equal temporary values do not accumulate in the caller arena");
+    }
+done:
+    for (size_t i = 0u; i < sizeof(results) / sizeof(results[0]); i++)
+        ppnative_v1_result_free(&results[i]);
+    arena_free(&arena);
     ppnative_v1_prepared_free(&prepared);
 }
 
@@ -1771,6 +1921,9 @@ int main(void) {
         elaboration_status == CETTA_JSON_ELAB_PLAN_V1_OK)
         json_semantic_elaboration_gate(
             &counts, &compiled, &elaboration_plan);
+    if (compiled.start_state &&
+        elaboration_status == CETTA_JSON_ELAB_PLAN_V1_OK)
+        json_value_family_gate(&counts, &compiled, &elaboration_plan);
     fail_closed_gate(
         &counts, &wire, &language, &profile, &compiled);
     embedded_nul_terminal_gate(&counts);
