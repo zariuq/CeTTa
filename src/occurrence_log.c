@@ -1,0 +1,222 @@
+#include "occurrence_log.h"
+
+#include <stdlib.h>
+
+typedef struct {
+    uint64_t position;
+    bool active;
+} CettaOccurrenceConsumer;
+
+struct CettaOccurrenceLog {
+    CettaOccurrenceRow *rows;
+    CettaOccurrenceConsumer *positions;
+    uint64_t base;
+    size_t head;
+    size_t length;
+    size_t capacity;
+    size_t limit;
+    size_t consumers;
+    bool completed;
+};
+
+static size_t row_index(const CettaOccurrenceLog *log, size_t offset) {
+    size_t index = log->head + offset;
+    return index < log->capacity ? index : index - log->capacity;
+}
+
+static bool reserve_row(CettaOccurrenceLog *log) {
+    if (log->length < log->capacity)
+        return true;
+    size_t next = log->capacity;
+    if (!next)
+        next = log->limit < 8u ? log->limit : 8u;
+    else
+        next = next > log->limit / 2u ? log->limit : next * 2u;
+    if (next <= log->length || next > SIZE_MAX / sizeof(*log->rows))
+        return false;
+    CettaOccurrenceRow *rows = malloc(next * sizeof(*rows));
+    if (!rows)
+        return false;
+    for (size_t i = 0u; i < log->length; ++i)
+        rows[i] = log->rows[row_index(log, i)];
+    free(log->rows);
+    log->rows = rows;
+    log->head = 0u;
+    log->capacity = next;
+    return true;
+}
+
+CettaOccurrenceLog *cetta_occurrence_log_new(size_t consumers, size_t limit) {
+    if (consumers > SIZE_MAX / sizeof(CettaOccurrenceConsumer))
+        return NULL;
+    CettaOccurrenceLog *log = calloc(1u, sizeof(*log));
+    if (!log)
+        return NULL;
+    if (consumers) {
+        log->positions = calloc(consumers, sizeof(*log->positions));
+        if (!log->positions) {
+            free(log);
+            return NULL;
+        }
+        for (size_t i = 0u; i < consumers; ++i)
+            log->positions[i].active = true;
+    }
+    log->consumers = consumers;
+    log->limit = limit;
+    return log;
+}
+
+static void release_row(CettaOccurrenceRow row) {
+    if (row.release)
+        row.release(row.owner);
+}
+
+void cetta_occurrence_log_free(CettaOccurrenceLog *log) {
+    if (!log)
+        return;
+    log->completed = true;
+    for (size_t i = 0u; i < log->consumers; ++i)
+        log->positions[i].active = false;
+    (void)cetta_occurrence_log_trim(log);
+    free(log->rows);
+    free(log->positions);
+    free(log);
+}
+
+CettaOccurrenceAdmission cetta_occurrence_log_append(
+    CettaOccurrenceLog *log, CettaOccurrenceRow row) {
+    if (!log)
+        return CETTA_OCCURRENCE_APPEND_INVALID;
+    if (log->completed)
+        return CETTA_OCCURRENCE_APPEND_COMPLETED;
+    if (log->length == log->limit)
+        return CETTA_OCCURRENCE_BACKPRESSURE;
+    if (log->length == UINT64_MAX - log->base || !reserve_row(log))
+        return CETTA_OCCURRENCE_CAPACITY;
+    log->rows[row_index(log, log->length)] = row;
+    ++log->length;
+    return CETTA_OCCURRENCE_APPENDED;
+}
+
+CettaOccurrenceReply cetta_occurrence_log_peek(
+    const CettaOccurrenceLog *log, size_t consumer) {
+    CettaOccurrenceReply result = {.kind = CETTA_OCCURRENCE_INVALID};
+    if (!log || consumer >= log->consumers)
+        return result;
+    CettaOccurrenceConsumer cursor = log->positions[consumer];
+    if (!cursor.active) {
+        result.kind = CETTA_OCCURRENCE_CANCELLED;
+        return result;
+    }
+    if (cursor.position < log->base)
+        return result;
+    uint64_t offset = cursor.position - log->base;
+    if (offset < log->length) {
+        result.kind = CETTA_OCCURRENCE_ANSWER;
+        result.position = cursor.position;
+        result.value = log->rows[row_index(log, (size_t)offset)].value;
+    } else if (offset == log->length) {
+        result.kind = log->completed
+            ? CETTA_OCCURRENCE_COMPLETED : CETTA_OCCURRENCE_PAUSED;
+    }
+    return result;
+}
+
+CettaOccurrenceReply cetta_occurrence_log_take(
+    CettaOccurrenceLog *log, size_t consumer,
+    CettaOccurrencePublish publish, void *context) {
+    CettaOccurrenceReply result = cetta_occurrence_log_peek(log, consumer);
+    if (result.kind == CETTA_OCCURRENCE_ANSWER) {
+        if (!publish || !publish(context, result.position, result.value)) {
+            result.kind = CETTA_OCCURRENCE_PUBLICATION_REFUSED;
+            result.value = NULL;
+            result.position = 0u;
+            return result;
+        }
+        ++log->positions[consumer].position;
+    }
+    return result;
+}
+
+bool cetta_occurrence_log_cancel(CettaOccurrenceLog *log, size_t consumer) {
+    if (!log || consumer >= log->consumers)
+        return false;
+    log->positions[consumer].active = false;
+    return true;
+}
+
+size_t cetta_occurrence_log_trim(CettaOccurrenceLog *log) {
+    if (!log)
+        return 0u;
+    uint64_t cutoff = log->base + (uint64_t)log->length;
+    for (size_t i = 0u; i < log->consumers; ++i) {
+        if (log->positions[i].active && log->positions[i].position < cutoff)
+            cutoff = log->positions[i].position;
+    }
+    size_t count = (size_t)(cutoff - log->base);
+    if (count) {
+        size_t old_head = log->head;
+        log->head = row_index(log, count);
+        log->base = cutoff;
+        log->length -= count;
+        /* Expose the retained residual before invoking host release code. */
+        for (size_t i = 0u; i < count; ++i) {
+            size_t index = old_head + i;
+            if (index >= log->capacity)
+                index -= log->capacity;
+            CettaOccurrenceRow released = log->rows[index];
+            log->rows[index] = (CettaOccurrenceRow){0};
+            release_row(released);
+        }
+    }
+    return count;
+}
+
+void cetta_occurrence_log_complete(CettaOccurrenceLog *log) {
+    if (log)
+        log->completed = true;
+}
+
+bool cetta_occurrence_log_info(
+    const CettaOccurrenceLog *log, CettaOccurrenceLogInfo *out) {
+    if (!log || !out)
+        return false;
+    *out = (CettaOccurrenceLogInfo){
+        .base = log->base, .past_end = log->base + (uint64_t)log->length,
+        .rows = log->length, .limit = log->limit, .consumers = log->consumers,
+        .reserved_rows = log->capacity, .completed = log->completed,
+    };
+    return true;
+}
+
+bool cetta_occurrence_log_position(
+    const CettaOccurrenceLog *log, size_t consumer, uint64_t *out) {
+    if (!log || !out || consumer >= log->consumers || !log->positions[consumer].active)
+        return false;
+    *out = log->positions[consumer].position;
+    return true;
+}
+
+bool cetta_occurrence_log_row(
+    const CettaOccurrenceLog *log, size_t offset, CettaOccurrenceRow *out) {
+    if (!log || !out || offset >= log->length)
+        return false;
+    *out = log->rows[row_index(log, offset)];
+    return true;
+}
+
+bool cetta_occurrence_log_valid(const CettaOccurrenceLog *log) {
+    if (!log || log->length > log->limit || log->length > log->capacity ||
+        log->length > UINT64_MAX - log->base ||
+        log->capacity > SIZE_MAX / sizeof(*log->rows) ||
+        (log->capacity && (!log->rows || log->head >= log->capacity)) ||
+        (log->consumers && !log->positions))
+        return false;
+    uint64_t end = log->base + (uint64_t)log->length;
+    for (size_t i = 0u; i < log->consumers; ++i) {
+        if (log->positions[i].active &&
+            (log->positions[i].position < log->base || log->positions[i].position > end))
+            return false;
+    }
+    return true;
+}

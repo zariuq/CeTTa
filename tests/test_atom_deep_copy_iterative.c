@@ -360,10 +360,36 @@ int main(void) {
     assert(mixed_min_id == destination.identity &&
            mixed_max_id == destination.identity);
     atom_deep_copy_session_free(session);
+
+    /* A single publication uses the same full-graph ownership boundary.
+     * An owned header with a nursery child must still be repaired. */
+    assert(atom_deep_copy_single(NULL, old_child) == NULL);
+    assert(atom_deep_copy_single(&destination, NULL) == NULL);
+    assert(atom_deep_copy_single(&destination, old_child) == old_child);
+    Atom *single_parent = atom_deep_copy_single(&destination, young_parent);
+    Atom *single_mixed = atom_deep_copy_single(&destination, mixed_parent);
+    assert(single_parent && single_parent != young_parent);
+    assert(single_parent->expr.elems[1] == old_child);
+    assert(single_mixed && single_mixed != mixed_parent);
+    assert(single_mixed->expr.elems[1] != young_child);
+    assert(atom_eq(single_mixed, closed_mixed_parent));
+    assert(atom_graph_arena_id_bounds(single_mixed, &mixed_min_id, &mixed_max_id));
+    assert(mixed_min_id == destination.identity &&
+           mixed_max_id == destination.identity);
+    Atom *single_shared = atom_deep_copy_single(&destination,
+        atom_expr2(&nursery, young_child, young_child));
+    assert(single_shared && single_shared->expr.elems[0] ==
+                            single_shared->expr.elems[1]);
+    Atom *owned_resource = atom_space(&destination, &external_space_identity);
+    Atom *copied_resource = atom_deep_copy_single(&destination, owned_resource);
+    assert(copied_resource && copied_resource != owned_resource);
+    assert(copied_resource->ground.ptr == &external_space_identity);
     arena_free(&nursery);
     assert(atom_is_symbol(
         closed_mixed_parent->expr.elems[1]->expr.elems[0],
         "temporary"));
+    assert(atom_is_symbol(single_mixed->expr.elems[1]->expr.elems[0], "temporary"));
+    assert(atom_is_symbol(single_parent->expr.elems[1]->expr.elems[0], "old"));
 
     arena_free(&destination);
     arena_free(&source);

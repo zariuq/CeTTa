@@ -1674,10 +1674,11 @@ static size_t petta_libpl_standard_function_arities(
     }
     if (!g_symbols || symbol == SYMBOL_ID_NONE)
         return 0u;
-    uint32_t length = symbol_len(g_symbols, symbol);
+    SymbolSpelling spelling = symbol_spelling(g_symbols, symbol);
+    uint32_t length = spelling.len;
     if (length < sizeof("library") - 1u)
         return 0u;
-    const char *name = symbol_bytes(g_symbols, symbol);
+    const char *name = spelling.bytes;
     /* Include the terminator in each bounded comparison, retaining the
      * adapter's C-string interpretation even for an embedded zero byte. */
     if (length >= sizeof("exists_file") - 1u &&

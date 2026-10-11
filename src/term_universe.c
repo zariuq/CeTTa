@@ -2720,19 +2720,26 @@ int64_t tu_internal_tag(const TermUniverse *universe, AtomId id) {
 
 PeTTaValueRepresentation tu_petta_value_representation(
     const TermUniverse *universe, AtomId id) {
-    if (tu_kind(universe, id) != ATOM_EXPR)
+    const CettaTermHdr *header = tu_hdr(universe, id);
+    if ((header ? (AtomKind)header->tag : tu_kind(universe, id)) != ATOM_EXPR)
         return PETTA_VALUE_ORDINARY;
-    CettaExprLen length = tu_arity(universe, id);
+    CettaExprLen length = header
+        ? (CettaExprLen)term_universe_aux_data(header) : tu_arity(universe, id);
     if (length != 2u && length != 3u)
         return PETTA_VALUE_ORDINARY;
-    int64_t head = tu_internal_tag(universe, tu_child(universe, id, 0u));
+    /* A recorded symbol head cannot be a private internal tag. Domain-based
+     * callable identity is still checked below for ordinary symbol heads. */
+    int64_t head = header && header->sym_or_head != SYMBOL_ID_NONE
+        ? 0 : tu_internal_tag(universe, header
+            ? tu_child_from_header(universe, header, 0u) : tu_child(universe, id, 0u));
     if ((length == 2u && head == CETTA_INTERNAL_TAG_PETTA_PROLOG_COMPOUND) ||
         (length == 3u && head == CETTA_INTERNAL_TAG_PETTA_PARTIAL))
         return PETTA_VALUE_COMPOUND;
     if (length == 3u) {
         if (head == CETTA_INTERNAL_TAG_PETTA_NULLARY_CALLABLE)
             return PETTA_VALUE_REGISTERED_CALLABLE;
-        AtomId domain = tu_child(universe, id, 1u);
+        AtomId domain = header
+            ? tu_child_from_header(universe, header, 1u) : tu_child(universe, id, 1u);
         if (tu_kind(universe, domain) == ATOM_EXPR &&
             tu_arity(universe, domain) == 2u &&
             tu_internal_tag(universe, tu_child(universe, domain, 0u)) ==

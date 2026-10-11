@@ -3544,19 +3544,6 @@ static bool petta_specializer_analyze_call(
             petta_relation_relevance_cache_lookup(
                 space_program_token(context->space), source,
                 &relation_relevance);
-        if (relation_cached &&
-            relation_relevance ==
-                PETTA_RELATION_RELEVANCE_IRRELEVANT) {
-            analysis->relation_filtered = true;
-            return true;
-        }
-        PettaRelevanceResult relevance =
-            petta_call_may_supply_specializable_value(
-                context, call);
-        if (relevance == PETTA_RELEVANCE_NO) {
-            analysis->filtered = true;
-            return true;
-        }
         if (!relation_cached) {
             relation_relevance =
                 petta_relation_specialization_relevance(
@@ -3565,6 +3552,13 @@ static bool petta_specializer_analyze_call(
         if (relation_relevance ==
             PETTA_RELATION_RELEVANCE_IRRELEVANT) {
             analysis->relation_filtered = true;
+            return true;
+        }
+        PettaRelevanceResult relevance =
+            petta_call_may_supply_specializable_value(
+                context, call);
+        if (relevance == PETTA_RELEVANCE_NO) {
+            analysis->filtered = true;
             return true;
         }
         if (relevance == PETTA_RELEVANCE_NODE_BUDGET) {

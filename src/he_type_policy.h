@@ -14,6 +14,8 @@ typedef enum {
 
 HeTypeDemand he_type_demand(const Atom *subject, Atom *expected,
                             Atom *metatype);
+/* The source adapter derives the subject's native metatype identity directly. */
+HeTypeDemand he_type_source_demand(const Atom *subject, Atom *expected);
 
 /* A borrowed arrow view. Freshening and ownership belong to the existing
  * application continuation. Mode arrows are not ordinary HE function types. */

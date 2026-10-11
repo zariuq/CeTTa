@@ -7591,6 +7591,14 @@ static bool collect_value_var_ids_roots(BindingValue value,
             goto fail;
         if (!atom_has_vars(atom))
             continue;
+        /* A variable is a support leaf even when its spelling is structured
+         * or it has not been hash-consed. The VarId set already merges repeated
+         * leaves; only expressions need an active/complete graph memo. */
+        if (atom->kind == ATOM_VAR) {
+            if (!var_id_set_add(set, binding_value_qualify_id(value, atom->var_id)))
+                goto fail;
+            continue;
+        }
         if (task.kind == RENAME_WALK_LEAVE) {
             if (!freshen_epoch_memo_store(
                     &states, atom, &g_rename_walk_complete))
@@ -7613,13 +7621,6 @@ static bool collect_value_var_ids_roots(BindingValue value,
         if (!freshen_epoch_memo_store(
                 &states, atom, &g_rename_walk_active))
             goto fail;
-        if (atom->kind == ATOM_VAR) {
-            if (!var_id_set_add(set, binding_value_qualify_id(value, atom->var_id)) ||
-                !freshen_epoch_memo_store(
-                    &states, atom, &g_rename_walk_complete))
-                goto fail;
-            continue;
-        }
         if (atom->kind != ATOM_EXPR) {
             if (!freshen_epoch_memo_store(
                     &states, atom, &g_rename_walk_complete))
@@ -11847,8 +11848,47 @@ bool match_binding_value_atom_id_epoch(
     return match_atoms_atom_id_epoch_worklist(left, candidate_universe, right_id, b, a, epoch);
 }
 
+static bool alpha_scalar_leaf(const Atom *atom) {
+    if (!atom)
+        return false;
+    if (atom->kind == ATOM_SYMBOL)
+        return true;
+    if (atom->kind != ATOM_GROUNDED)
+        return false;
+    switch (atom->ground.gkind) {
+    case GV_INT:
+    case GV_FLOAT:
+    case GV_BOOL:
+    case GV_STRING:
+    case GV_BIGINT:
+    case GV_RATIONAL:
+    case GV_INTERNAL_TAG:
+        return true;
+    default:
+        return false;
+    }
+}
+
 bool atom_alpha_eq(Atom *left, Atom *right) {
-    return atom_pair_walk(left, right, NULL, NULL, NULL, true);
+    if (!left || !right || left->kind != right->kind)
+        return false;
+    if (left->kind != ATOM_EXPR)
+        return left->kind == ATOM_VAR || atom_eq(left, right);
+    if (left->expr.len != right->expr.len)
+        return false;
+    /* Ground flat terms need no renaming environment or comparison frames.
+     * Classify the entire pair before comparing: an opaque equality service
+     * must never run once here and again after a later child causes fallback. */
+    for (CettaExprIndex i = 0u; i < left->expr.len; i++) {
+        if (!alpha_scalar_leaf(left->expr.elems[i]) ||
+            !alpha_scalar_leaf(right->expr.elems[i]))
+            return atom_pair_walk(left, right, NULL, NULL, NULL, true);
+    }
+    for (CettaExprIndex i = 0u; i < left->expr.len; i++) {
+        if (!atom_eq(left->expr.elems[i], right->expr.elems[i]))
+            return false;
+    }
+    return true;
 }
 
 /* One pending comparison.  An entry with child_count > 0 stands for the
@@ -13770,7 +13810,8 @@ static bool match_atoms_atom_id_epoch_worklist(
 
 retry_pair:
         left = left_value.skeleton;
-        if (!tu_hdr(candidate_universe, right_id)) {
+        const CettaTermHdr *right_header = tu_hdr(candidate_universe, right_id);
+        if (!right_header) {
             Atom *right = term_universe_get_atom(
                 (TermUniverse *)candidate_universe, right_id);
             if (!right || !match_atoms_epoch_views_worklist(
@@ -13781,7 +13822,7 @@ retry_pair:
                 goto fail;
             continue;
         }
-        AtomKind right_kind = tu_kind(candidate_universe, right_id);
+        AtomKind right_kind = (AtomKind)right_header->tag;
         if (left->kind == ATOM_VAR) {
             BindingValue existing = bindings_lookup_value(b, left_value);
             if (existing.skeleton) {
@@ -13868,10 +13909,10 @@ retry_pair:
                 goto fail;
             if (right_kind == ATOM_EXPR &&
                 (match_expr_is_list(left) ||
-                 (tu_arity(candidate_universe, right_id) > 0u &&
+                 ((right_header->aux32 & CETTA_TERM_HDR_DATA_MASK) > 0u &&
                   cetta_internal_tag_is_list(tu_internal_tag(
                       candidate_universe,
-                      tu_child(candidate_universe, right_id, 0u)))))) {
+                      tu_child_from_header(candidate_universe, right_header, 0u)))))) {
                 /* Lists meet in the contextual matcher, which builds the
                  * rest a list pattern is bound to. */
                 Atom *right = term_universe_get_atom(
@@ -13885,7 +13926,7 @@ retry_pair:
                 break;
             }
             if (right_kind != ATOM_EXPR ||
-                left->expr.len != tu_arity(candidate_universe, right_id))
+                left->expr.len != (right_header->aux32 & CETTA_TERM_HDR_DATA_MASK))
                 goto fail;
             /* Small comparisons do not allocate a memo or scan their whole
              * source. Before the first memo entry, audit arena-local graphs
@@ -13903,7 +13944,7 @@ retry_pair:
                 child_value.skeleton = left->expr.elems[child];
                 if (!stored_match_push(
                         &work, child_value,
-                        tu_child(candidate_universe, right_id, child)))
+                        tu_child_from_header(candidate_universe, right_header, child)))
                     goto fail;
             }
             break;

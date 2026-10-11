@@ -120,6 +120,33 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     return st ? st->instance_id : 0u;
 }
 
+typedef struct {
+    const char *bytes;
+    uint32_t len;
+} SymbolSpelling;
+
+/* One publication check for both parts of a spelling. Interned bytes and
+ * lengths never change; the bytes remain borrowed from the table until it
+ * is freed. The length includes bytes following an embedded zero. */
+static inline SymbolSpelling symbol_spelling(
+    const SymbolTable *st, SymbolId id) {
+    SymbolSpelling spelling = { .bytes = "", .len = 0u };
+    if (!st || id == SYMBOL_ID_NONE)
+        return spelling;
+    uint32_t count = atomic_load_explicit(
+        &st->entry_len, memory_order_acquire);
+    if (id >= count || !st->entry_chunks)
+        return spelling;
+    const SymbolEntry *chunk =
+        st->entry_chunks[id >> SYMBOL_ENTRY_CHUNK_BITS];
+    if (!chunk)
+        return spelling;
+    const SymbolEntry *entry = &chunk[id & SYMBOL_ENTRY_CHUNK_MASK];
+    spelling.bytes = entry->bytes ? entry->bytes : "";
+    spelling.len = entry->len;
+    return spelling;
+}
+
 #define CETTA_BUILTIN_SYMBOLS(X) \
     X(empty, "Empty") \
     X(not_reducible, "NotReducible") \

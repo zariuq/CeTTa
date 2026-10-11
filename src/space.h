@@ -43,10 +43,14 @@ void disc_lookup_expression_coordinates(
  * candidate vector.  The observation is admitted only when no stored-variable
  * edge can match at any traversed prefix.  A missing rigid edge is an exact
  * zero; unsupported grounded values and wildcard overlap decline. */
-/* Count ground rows of a flat expression whose free variables, if any,
- * are a trailing run.  False means the trie cannot answer alone. */
+/* Fold occurrence multiplicities for a flat expression with a rigid prefix
+ * and a trailing run of distinct free variables. Stored wildcard overlap in
+ * the rigid prefix, approximate paths and nested suffixes decline. */
 bool disc_count_flat_trailing_wildcards(
     const DiscNode *root, const Atom *pattern, CettaIndex *out_count);
+bool disc_count_flat_expression_coordinates(
+    const DiscNode *root, Atom *const *coordinates,
+    CettaExprLen coordinate_count, CettaIndex *out_count);
 bool disc_count_rigid_exact_path(
     const DiscNode *root, const Atom *query, CettaIndex *out_count);
 bool disc_count_rigid_exact_expression_coordinates(

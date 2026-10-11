@@ -117,6 +117,10 @@ bool cetta_mork_bridge_supports_expr_bytes_batch_remove(void) {
     return false;
 }
 
+bool cetta_mork_bridge_supports_query_only_v2_cursor(void) {
+    return true;
+}
+
 const char *cetta_mork_bridge_last_error(void) {
     return "bridge stubs disabled in unit test";
 }
@@ -543,6 +547,21 @@ bool cetta_mork_bridge_space_size(const CettaMorkSpaceHandle *space,
         *out_size = g_bridge_size_override == UINT64_MAX
             ? (uint64_t)g_bridge_value_count
             : g_bridge_size_override;
+    return true;
+}
+
+bool cetta_mork_bridge_space_count_expr_bytes(
+    const CettaMorkSpaceHandle *space, const uint8_t *expr_bytes,
+    size_t len, uint64_t *out_count) {
+    if (out_count)
+        *out_count = 0u;
+    if (space != g_fake_bridge_space || !out_count || (!expr_bytes && len))
+        return false;
+    for (uint32_t i = 0u; i < g_bridge_value_count; i++) {
+        if (g_bridge_value_lens[i] == len &&
+            (!len || memcmp(g_bridge_value_bytes[i], expr_bytes, len) == 0))
+            (*out_count)++;
+    }
     return true;
 }
 
@@ -2664,6 +2683,38 @@ static void test_leaf_patch_refusal_is_transactional(Arena *scratch) {
     bindings_free(&base);
 }
 
+static void test_bridge_count_and_cursor_capability_contract(void) {
+    static const uint8_t a[] = {0xC1u, 'A'};
+    static const uint8_t b[] = {0xC1u, 'B'};
+    static const uint8_t missing[] = {0xC1u, 'C'};
+    reset_bridge_capture();
+    g_bridge_value_bytes[0] = a;
+    g_bridge_value_lens[0] = sizeof(a);
+    g_bridge_value_bytes[1] = b;
+    g_bridge_value_lens[1] = sizeof(b);
+    g_bridge_value_bytes[2] = a;
+    g_bridge_value_lens[2] = sizeof(a);
+    g_bridge_value_count = 3u;
+    uint64_t count = UINT64_MAX;
+    assert(cetta_mork_bridge_space_count_expr_bytes(
+        g_fake_bridge_space, a, sizeof(a), &count) && count == 2u);
+    assert(cetta_mork_bridge_space_count_expr_bytes(
+        g_fake_bridge_space, missing, sizeof(missing), &count) && count == 0u);
+    assert(!cetta_mork_bridge_space_count_expr_bytes(
+        NULL, a, sizeof(a), &count) && count == 0u);
+    assert(!cetta_mork_bridge_space_count_expr_bytes(
+        g_fake_bridge_space, a, sizeof(a), NULL));
+    assert(cetta_mork_bridge_supports_query_only_v2_cursor());
+    CettaMorkQueryCursorHandle *cursor = g_fake_query_cursor;
+    assert(!cetta_mork_bridge_query_cursor_new_query_only_v2(
+        g_fake_bridge_space, a, sizeof(a), &cursor) && cursor == NULL);
+    g_query_cursor_enabled = true;
+    assert(cetta_mork_bridge_query_cursor_new_query_only_v2(
+        g_fake_bridge_space, a, sizeof(a), &cursor) &&
+        cursor == g_fake_query_cursor);
+    reset_bridge_capture();
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena persistent;
@@ -2676,6 +2727,7 @@ int main(void) {
     term_universe_init(&universe);
     term_universe_set_persistent_arena(&universe, &persistent);
 
+    test_bridge_count_and_cursor_capability_contract();
     test_native_add_boundary(&universe, &scratch);
     test_imported_flat_add_boundary(&universe, &scratch);
     test_imported_bridge_add_boundary(&universe, &scratch);

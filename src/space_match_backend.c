@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
+#include "term_universe.h"
 
 #include "space.h"
 #include "eval.h"
@@ -8,6 +9,7 @@
 #include "parser.h"
 #include "shared_transition.h"
 #include "stats.h"
+#include "space_path_index.h"
 #include "generated/cetta_execution_contracts.generated.h"
 #include <ctype.h>
 #include <math.h>
@@ -688,6 +690,7 @@ static void native_ensure_stree(Space *s) {
 
 static void native_free(Space *s) {
     SpaceMatchNativeState *st = &s->match_backend.native;
+    space_path_indexes_retire(s);
     space_pinned_occurrences_detach(s);
     disc_node_free(st->match_trie);
     st->match_trie = NULL;
@@ -706,6 +709,8 @@ static void native_free(Space *s) {
 static void native_note_add(Space *s, AtomId atom_id, Atom *atom,
                             CettaIndex atom_idx) {
     SpaceMatchNativeState *st = &s->match_backend.native;
+    if (st->path_indexes)
+        space_path_indexes_note_add(s, atom_id, atom_idx);
     if (st->match_trie && !st->match_trie_dirty) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_NATIVE_PATTERN_INDEX_INCREMENTAL_ADD);
@@ -730,6 +735,7 @@ static void native_note_add(Space *s, AtomId atom_id, Atom *atom,
 
 static void native_note_remove(Space *s) {
     SpaceMatchNativeState *st = &s->match_backend.native;
+    space_path_indexes_retire(s);
     (void)s;
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_NATIVE_MATCH_INDEX_REMOVE_NOTE);
@@ -781,6 +787,10 @@ native_transport_stable_occurrence_coordinates(
 
     SpaceMatchNativeState *st = &s->match_backend.native;
     CettaCount removed = transport->source_len - transport->target_len;
+    /* Candidate cursors own their positions and pinned rows. A prefix
+     * contraction retires only the live derived path indexes. */
+    if (removed != 0u)
+        space_path_indexes_retire(s);
 
     /* Small spaces are queried linearly.  Releasing an old realized tree is
      * both exact and better than retaining dead structural branches that no
@@ -1193,6 +1203,9 @@ static CettaIndex native_candidates(Space *s, Atom *pattern, CettaIndex **out) {
     CettaIndex cold_count = 0u;
     if (space_match_native_try_cold_candidates(s, pattern, out, &cold_count))
         return cold_count;
+    if (space_path_index_may_select(pattern) &&
+        space_path_index_candidates(s, pattern, out, &cold_count))
+        return cold_count;
     native_ensure_match_trie(s);
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MATCH_NATIVE_TRIE_LOOKUP);
     CettaIndex ncand = 0, ccand = 0;
@@ -1276,15 +1289,15 @@ static bool native_cold_flat_candidates(
     for (CettaIndex position = 0u; position < space->native.len; position++) {
         AtomId id = space_get_atom_id_at64(space, position);
         const CettaTermHdr *header = tu_hdr(space->native.universe, id);
-        bool candidate = !header || tu_has_vars(space->native.universe, id);
-        if (!candidate && tu_kind(space->native.universe, id) == ATOM_EXPR &&
-            tu_arity(space->native.universe, id) == pattern->expr.len) {
+        bool candidate = !header || (header->aux32 & CETTA_TERM_HDR_HAS_VARS);
+        if (!candidate && header->tag == ATOM_EXPR &&
+            (header->aux32 & CETTA_TERM_HDR_DATA_MASK) == pattern->expr.len) {
             candidate = true;
             for (CettaExprIndex column = 0u; column < pattern->expr.len; column++) {
                 Atom *item = pattern->expr.elems[column];
                 if (item->kind == ATOM_VAR)
                     continue;
-                AtomId child = tu_child(space->native.universe, id, column);
+                AtomId child = tu_child_from_header(space->native.universe, header, column);
                 if (child == CETTA_ATOM_ID_NONE ||
                     !native_stored_coordinate_matches(space->native.universe,
                                                        child, item)) {
@@ -1382,6 +1395,22 @@ static bool native_count_rigid_expression_coordinates(
     return true;
 }
 
+static bool native_count_flat_expression_coordinates(
+        SpaceMatchNativeState *state, Atom *const *coordinates,
+        CettaExprLen coordinate_count,
+        uint64_t *count, CettaIndex *examined) {
+    CettaIndex occurrences = 0u;
+    if (!state || !state->match_trie || state->match_trie_dirty ||
+        !disc_count_flat_expression_coordinates(
+            state->match_trie, coordinates, coordinate_count, &occurrences))
+        return false;
+    *count = occurrences;
+    /* No AtomId row was examined. Trie branch visits are still real work. */
+    *examined = 0u;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MATCH_NATIVE_TRIE_LOOKUP);
+    return true;
+}
+
 /*
  * For a flat linear query and a ground stored expression, matching reduces
  * to positional equality at every non-variable column.  Variables are
@@ -1426,6 +1455,9 @@ static bool native_count_flat_linear(
             state, pattern, count, examined)) {
         return true;
     }
+    if (indexed && native_count_flat_expression_coordinates(
+            state, pattern->expr.elems, pattern->expr.len, count, examined))
+        return true;
     CettaIndex *candidates = NULL;
     CettaIndex candidate_len = indexed
         ? native_candidates(s, pattern, &candidates)
@@ -1473,6 +1505,15 @@ static bool native_count_flat_linear(
                 ATOM_EXPR ||
             tu_arity(s->native.universe, candidate_id) !=
                 pattern->expr.len) {
+            if (tu_kind(s->native.universe, candidate_id) == ATOM_VAR ||
+                (tu_has_vars(s->native.universe, candidate_id) &&
+                 tu_kind(s->native.universe, candidate_id) == ATOM_EXPR &&
+                 (tu_head_sym(s->native.universe, candidate_id) == SYMBOL_ID_NONE ||
+                  tu_petta_value_representation(s->native.universe, candidate_id) !=
+                      PETTA_VALUE_ORDINARY))) {
+                supported = false;
+                break;
+            }
             continue;
         }
 
@@ -1692,6 +1733,9 @@ static bool native_count_flat_linear_view(
     if (indexed) {
         CettaIndex candidate_cap = 0u;
         if (native_count_rigid_expression_coordinates(
+                state, columns, column_count, count, examined))
+            return true;
+        if (native_count_flat_expression_coordinates(
                 state, columns, column_count, count, examined))
             return true;
         disc_lookup_expression_coordinates(
@@ -1962,6 +2006,27 @@ static void native_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
             bindings_free(&b);
         }
         return;
+    }
+    /* A rigid coordinate after an unbound field can prune the occurrence
+     * frontier before traversal. The index retains uncertain stored values;
+     * canonical matching still decides numeric promotion and correlations. */
+    if (space_path_index_may_select(query)) {
+        CettaIndex *positions = NULL;
+        CettaIndex count = 0u;
+        if (space_path_index_candidates(s, query, &positions, &count)) {
+            for (CettaIndex next = 0u; next < count; next++) {
+                CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
+                CettaIndex position = positions[next];
+                uint32_t epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
+                Bindings bindings;
+                bindings_init(&bindings);
+                if (match_space_atom_epoch(s, position, query, &bindings, a, epoch))
+                    subst_matchset_push(out, position, epoch, &bindings, true);
+                bindings_free(&bindings);
+            }
+            free(positions);
+            return;
+        }
     }
     if (!stree_query_within_expansion_budget(query)) {
         native_candidate_exact_query(s, a, query, out);

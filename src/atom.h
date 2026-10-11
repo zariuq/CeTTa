@@ -1174,6 +1174,8 @@ Atom *atom_variable_type(Arena *a);    /* Symbol "Variable" */
 Atom *atom_expression_type(Arena *a);  /* Symbol "Expression" */
 Atom *atom_grounded_type(Arena *a);    /* Symbol "Grounded" */
 Atom *atom_list_type(Arena *a);        /* Symbol "List": metatype and type of a list */
+/* Metatype identity in the current symbol context, without constructing an atom. */
+SymbolId atom_meta_type_id(const Atom *atom);
 Atom *get_meta_type(Arena *a, Atom *atom);  /* Meta-type of atom */
 bool atom_is_meta_type(Atom *type);
 bool atom_meta_type_accepts(Arena *a, Atom *formal, Atom *actual);
@@ -1288,6 +1290,11 @@ char *atom_to_parseable_bytes(Arena *a, Atom *atom, bool petta,
 /* Deep-copy an atom DAG into a different arena, preserving source pointer
    sharing within one copy episode. */
 Atom *atom_deep_copy(Arena *dst, Atom *src);
+/* A single publication root, with the same ownership policy as a default
+ * copy session: reuse a destination-closed graph, otherwise copy it while
+ * preserving its internal sharing. Related exported roots still require a
+ * shared session. */
+Atom *atom_deep_copy_single(Arena *dst, Atom *src);
 typedef Atom *(*AtomDeepCopyResolver)(void *context, Atom *src);
 typedef Atom *(*AtomDeepCopyLeafMap)(Arena *dst, Atom *src, void *context);
 /* A fixed observation policy may expose another expression's children, or

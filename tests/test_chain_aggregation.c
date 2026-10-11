@@ -310,6 +310,168 @@ static void repeated_count_probes(TermUniverse *universe, Arena *arena, SymbolId
     puts("PASS: repeated count views demand bounded candidates and preserve duplicate, removed and absent occurrences");
 }
 
+static uint64_t canonical_occurrence_count(Space *space, Arena *arena,
+                                          Atom *query) {
+    uint64_t count = 0u;
+    CETTA_FRAME_IDENTITY_SCOPE(scope);
+    for (CettaIndex index = 0u; index < space_length64(space); index++) {
+        Bindings bindings;
+        bindings_init(&bindings);
+        count += match_atoms_epoch(query, space_get_at64(space, index),
+            &bindings, arena, cetta_frame_identity_scope_fresh(&scope));
+        bindings_free(&bindings);
+    }
+    return count;
+}
+
+static void flat_occurrence_folds(TermUniverse *universe, Arena *arena,
+                                  SymbolId head) {
+    Space space;
+    space_init_with_universe(&space, universe);
+    space.kind = SPACE_KIND_STACK;
+    for (size_t key = 0u; key < 1024u; key++)
+        add_row(&space, arena, head, 0u, (Row){(int64_t)key, 7, 9});
+    Atom *query = pattern(arena, head, 0u);
+    Bindings seed;
+    bindings_init(&seed);
+    CettaGsltTermViewV1 view = bindings_term_view_v1(query, &seed);
+    uint64_t count = 0u;
+    CettaIndex examined = UINT64_MAX;
+    for (unsigned probe = 0u; probe < 8u; probe++) {
+        assert(space_match_count_flat_linear64(
+            &space, arena, query, &count, &examined));
+        assert(count == 1024u);
+        assert(space_match_count_flat_linear_view64(&space, arena, &view,
+            CETTA_GSLT_TERM_VIEW_OPEN_BINDINGS_DEAD_V1, &count, &examined));
+        assert(count == 1024u);
+    }
+    /* The demanded count folds trie multiplicities without reading AtomId
+     * rows. This does not claim that trie traversal takes constant work. */
+    assert(examined == 0u && count == canonical_occurrence_count(&space, arena, query));
+    assert(!space_match_count_flat_linear_view64(&space, arena, &view,
+        CETTA_GSLT_TERM_VIEW_OPEN_BINDINGS_OBSERVED_V1, &count, &examined));
+    add_row(&space, arena, head, 0u, (Row){15, 7, 9});
+    add_row(&space, arena, head, 0u, (Row){15, 7, 9});
+    assert(space_match_count_flat_linear64(&space, arena, query, &count, &examined));
+    assert(count == 1026u && examined == 0u);
+    Atom *duplicate = record(arena, head, 0u, atom_int(arena, 15),
+                            atom_int(arena, 7), atom_int(arena, 9));
+    assert(space_remove(&space, duplicate));
+    assert(space_match_count_flat_linear_view64(&space, arena, &view,
+        CETTA_GSLT_TERM_VIEW_OPEN_BINDINGS_DEAD_V1, &count, &examined));
+    assert(count == 1025u && examined == 0u);
+
+    Atom *same = variable(arena, "correlated-query", 0u);
+    Atom *correlated = record(arena, head, 0u, same, same,
+                              variable(arena, "independent-query", 0u));
+    CettaIndex direct = UINT64_MAX;
+    assert(!disc_count_flat_trailing_wildcards(
+        space.match_backend.native.match_trie, correlated, &direct));
+    assert(!space_match_count_flat_linear64(
+        &space, arena, correlated, &count, &examined));
+    assert(canonical_occurrence_count(&space, arena, correlated) == 1u);
+
+    /* A repeated stored variable is existential under distinct query roots. */
+    Atom *stored = variable(arena, "correlated-stored", 0u);
+    space_add(&space, record(arena, head, 0u, stored, stored, stored));
+    assert(space_match_count_flat_linear64(&space, arena, query, &count, &examined));
+    assert(count == 1026u && examined == 0u);
+    assert(count == canonical_occurrence_count(&space, arena, query));
+
+    /* Noninteger scalar tokens are stored on wildcard edges. They are still
+     * exact under distinct free roots. A nested expression instead declines
+     * the flat fold and remains a normal matching candidate. */
+    space_add(&space, record(arena, head, 0u, atom_float(arena, 2.5),
+                            atom_bool(arena, true), atom_string(arena, "value")));
+    assert(space_match_count_flat_linear64(&space, arena, query, &count, &examined));
+    assert(count == 1027u && examined == 0u);
+    space_add(&space, record(arena, head, 0u,
+        atom_expr2(arena, atom_symbol_id(arena, head), atom_int(arena, 1)),
+        atom_int(arena, 7), atom_int(arena, 9)));
+    assert(space_match_count_flat_linear64(&space, arena, query, &count, &examined));
+    assert(count == 1028u && examined > 0u);
+    assert(count == canonical_occurrence_count(&space, arena, query));
+
+    /* A stored wildcard in the rigid prefix requires canonical matching. */
+    space_add(&space, atom_expr(arena, (Atom *[]){atom_symbol_id(arena, head),
+        variable(arena, "stored-level", 0u), atom_int(arena, 7),
+        atom_int(arena, 7), atom_int(arena, 9)}, 5u));
+    assert(space_match_count_flat_linear64(&space, arena, query, &count, &examined));
+    assert(count == 1029u && examined > 0u);
+    assert(!disc_count_flat_trailing_wildcards(
+        space.match_backend.native.match_trie, query, &direct));
+    assert(count == canonical_occurrence_count(&space, arena, query));
+
+    /* Root wildcards can match the entire expression. Both presentations
+     * must decline, rather than silently omit that occurrence. */
+    space_add(&space, variable(arena, "stored-root", 0u));
+    assert(!space_match_count_flat_linear64(&space, arena, query, &count, &examined));
+    assert(!space_match_count_flat_linear_view64(&space, arena, &view,
+        CETTA_GSLT_TERM_VIEW_OPEN_BINDINGS_DEAD_V1, &count, &examined));
+    assert(!disc_count_flat_trailing_wildcards(
+        space.match_backend.native.match_trie, query, &direct));
+    assert(canonical_occurrence_count(&space, arena, query) == 1030u);
+    bindings_free(&seed);
+    space_free(&space);
+    puts("PASS: flat count folds preserve occurrences and updates, and refuse observed bindings, query correlation and stored wildcard overlap");
+}
+
+static void branching_count_fold(Arena *arena, SymbolId head) {
+    enum { WIDTH = 24 };
+    DiscNode *trie = disc_node_new();
+    Atom *columns[WIDTH + 1u];
+    columns[0] = atom_symbol_id(arena, head);
+    for (unsigned row = 0u; row < WIDTH; row++) {
+        for (unsigned column = 1u; column <= WIDTH; column++)
+            columns[column] = atom_int(arena, column <= row ? 0 : 1);
+        disc_insert(trie, atom_expr(arena, columns, WIDTH + 1u), row);
+    }
+    for (unsigned column = 1u; column <= WIDTH; column++)
+        columns[column] = variable(arena, "branching-fold", column);
+    CettaIndex count = 0u;
+    assert(disc_count_flat_expression_coordinates(
+        trie, columns, WIDTH + 1u, &count));
+    assert(count == WIDTH);
+    disc_node_free(trie);
+    puts("PASS: count fold resumes nested branch walks beyond inline frame capacity");
+}
+
+static void flat_wildcard_overlap_guards(TermUniverse *universe, Arena *arena,
+                                         SymbolId head) {
+    Atom *query = atom_expr3(arena, atom_symbol_id(arena, head),
+        variable(arena, "root-overlap", 0u), variable(arena, "root-overlap", 1u));
+    DiscNode *trie = disc_node_new();
+    disc_insert(trie, atom_expr3(arena, atom_symbol_id(arena, head),
+        atom_int(arena, 1), atom_int(arena, 7)), 0u);
+    CettaIndex direct = UINT64_MAX;
+    assert(disc_count_flat_trailing_wildcards(trie, query, &direct) && direct == 1u);
+    disc_insert(trie, variable(arena, "whole-row", 0u), 1u);
+    assert(!disc_count_flat_trailing_wildcards(trie, query, &direct));
+    disc_node_free(trie);
+
+    Space space;
+    space_init_with_universe(&space, universe);
+    space.kind = SPACE_KIND_STACK;
+    for (unsigned row = 0u; row < 256u; row++)
+        space_add(&space, atom_expr3(arena, atom_symbol_id(arena, head),
+            atom_int(arena, row), atom_int(arena, 7)));
+    space_add(&space, variable(arena, "whole-row", 1u));
+    Bindings seed;
+    bindings_init(&seed);
+    CettaGsltTermViewV1 view = bindings_term_view_v1(query, &seed);
+    uint64_t count = 0u;
+    CettaIndex examined = 0u;
+    for (unsigned probe = 0u; probe < 8u; probe++) {
+        assert(!space_match_count_flat_linear64(&space, arena, query, &count, &examined));
+        assert(!space_match_count_flat_linear_view64(&space, arena, &view,
+            CETTA_GSLT_TERM_VIEW_OPEN_BINDINGS_DEAD_V1, &count, &examined));
+    }
+    assert(canonical_occurrence_count(&space, arena, query) == 257u);
+    bindings_free(&seed);
+    space_free(&space);
+    puts("PASS: cold and indexed count presentations refuse a stored whole-query wildcard");
+}
+
 int main(void) {
     SymbolTable symbols;
     symbol_table_init(&symbols);
@@ -331,6 +493,9 @@ int main(void) {
     admission_and_changes(&universe, &arena, head);
     caller_binding_views(&universe, &arena, head);
     repeated_count_probes(&universe, &arena, head);
+    flat_occurrence_folds(&universe, &arena, head);
+    branching_count_fold(&arena, head);
+    flat_wildcard_overlap_guards(&universe, &arena, head);
     term_universe_free(&universe);
     arena_free(&arena);
     arena_free(&persistent);

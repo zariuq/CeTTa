@@ -13,6 +13,58 @@
 enum { TERM_DEPTH = 32768, SYNTAX_DEPTH = 4095,
        STATE_DEPTH = 2048, CONTEXT_DEPTH = 2048 };
 
+typedef struct {
+    CettaBindingsValue value;
+    unsigned holds, equal_calls;
+    int64_t observed;
+} EqualityProbe;
+
+static void equality_probe_retain(void *owner) {
+    ((EqualityProbe *)owner)->holds++;
+}
+
+static void equality_probe_release(void *owner) {
+    EqualityProbe *probe = owner;
+    assert(probe->holds > 0u);
+    probe->holds--;
+}
+
+static Atom *equality_probe_observe(Arena *arena, const CettaBindingsValue *value) {
+    return atom_int(arena, ((const EqualityProbe *)value)->observed);
+}
+
+static bool equality_probe_equal(const CettaBindingsValue *left,
+                                 const CettaBindingsValue *right) {
+    EqualityProbe *probe = (EqualityProbe *)left;
+    probe->equal_calls++;
+    return probe->observed == ((const EqualityProbe *)right)->observed;
+}
+
+static void alpha_equality_service_control(void) {
+    EqualityProbe left = {.value = {.retain = equality_probe_retain,
+        .release = equality_probe_release, .observe = equality_probe_observe,
+        .equal = equality_probe_equal}, .observed = 7};
+    EqualityProbe right = left;
+    Arena arena;
+    arena_init_detached(&arena);
+    Atom *head = atom_symbol(&arena, "opaque-alpha-control");
+    Atom *a = atom_bindings_value(&arena, &left.value);
+    Atom *b = atom_bindings_value(&arena, &right.value);
+    assert(a && b);
+    Atom *nested_left = atom_expr2(&arena, head, atom_int(&arena, 9));
+    Atom *nested_right = atom_expr2(&arena, head, atom_int(&arena, 9));
+    assert(atom_alpha_eq(atom_expr3(&arena, head, a, nested_left),
+                         atom_expr3(&arena, head, b, nested_right)));
+    assert(left.equal_calls == 1u);
+    right.observed = 8;
+    assert(!atom_alpha_eq(atom_expr3(&arena, head, a, nested_left),
+                          atom_expr3(&arena, head, b, nested_right)));
+    assert(left.equal_calls == 2u);
+    arena_free(&arena);
+    assert(!left.holds && !right.holds);
+    puts("PASS: alpha equality invokes an opaque equality service once before nested fallback, with owner release");
+}
+
 static Atom *spine(Arena *arena, Atom *head, Atom *leaf) {
     for (unsigned i = 0; i < TERM_DEPTH; i++)
         leaf = atom_expr2(arena, head, leaf);
@@ -293,6 +345,7 @@ int main(int argc, char **argv) {
         arena_init_detached(&arena);
         controls(&arena);
         arena_free(&arena);
+        alpha_equality_service_control();
     }
     const char *context_operations[] = {"state-equal", "context-equal"};
     for (size_t i = 0; i < sizeof context_operations / sizeof context_operations[0]; i++) {

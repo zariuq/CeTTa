@@ -1056,7 +1056,8 @@ bool parser_project_document_ids(Atom *const *atoms, uint32_t atom_len,
 
 /* ── Parse a single token or expression ─────────────────────────────────── */
 
-static Atom *parser_read_word_atom(Arena *a, char *tok, size_t len, ParserVarScope *scope) {
+static inline __attribute__((always_inline)) Atom *parser_read_word_atom(
+    Arena *a, char *tok, size_t len, ParserVarScope *scope) {
     /* Prime's bare `$` is a fresh anonymous variable. Named variables keep
        their ordinary per-form co-reference. */
     if (tok[0] == '$') {
@@ -1165,7 +1166,8 @@ typedef struct {
     size_t cap;
 } ParserReadStack;
 
-static bool parser_read_push(ParserReadStack *stack, ParserReadFrame frame) {
+static inline __attribute__((always_inline)) bool parser_read_push(
+    ParserReadStack *stack, ParserReadFrame frame) {
     if (stack->len == stack->cap) {
         if (stack->cap > SIZE_MAX / 2u ||
             stack->cap * 2u > SIZE_MAX / sizeof(*stack->frames))
@@ -1185,7 +1187,8 @@ static bool parser_read_push(ParserReadStack *stack, ParserReadFrame frame) {
     return true;
 }
 
-static bool parser_read_append(ParserReadFrame *frame, ParserReadValue value) {
+static inline __attribute__((always_inline)) bool parser_read_append(
+    ParserReadFrame *frame, ParserReadValue value) {
     size_t width = frame->backend->ids ? sizeof(AtomId) : sizeof(Atom *);
     if (frame->len == frame->cap) {
         if (frame->cap > UINT32_MAX / 2u)
@@ -1207,10 +1210,6 @@ static bool parser_read_append(ParserReadFrame *frame, ParserReadValue value) {
     return true;
 }
 
-static ParserReadValue parser_read_atom_word(ParserReadContext *ctx, char *word, size_t length) {
-    return (ParserReadValue){.atom = parser_read_word_atom(ctx->arena, word, length, ctx->scope)};
-}
-
 static ParserReadValue parser_read_id_word(ParserReadContext *ctx, char *word, size_t length) {
     AtomId result;
     if (word[0] == '$' && (length > 1u || parser_bare_dollar_is_variable())) {
@@ -1227,15 +1226,11 @@ static ParserReadValue parser_read_id_word(ParserReadContext *ctx, char *word, s
     return (ParserReadValue){.id = result};
 }
 
-static ParserReadValue parser_read_atom_string(ParserReadContext *ctx, char *bytes, size_t length) {
-    return (ParserReadValue){.atom = atom_string_n(ctx->arena, bytes, length)};
-}
-
 static ParserReadValue parser_read_id_string(ParserReadContext *ctx, char *bytes, size_t length) {
     return (ParserReadValue){.id = tu_intern_string_n(ctx->universe, bytes, length)};
 }
 
-static ParserReadValue parser_read_atom_container(ParserReadContext *ctx,
+static inline __attribute__((always_inline)) ParserReadValue parser_read_atom_container(ParserReadContext *ctx,
     const ParserReadFrame *frame, ParserReadValue rest) {
     Atom *result;
     if (frame->kind != PARSER_READ_EXPRESSION) {
@@ -1281,10 +1276,6 @@ static Atom *parser_read_prefix_atom(ParserReadContext *ctx, ParserReadKind kind
             : atom_symbol(ctx->arena, "unquote"), payload);
 }
 
-static ParserReadValue parser_read_atom_prefix(ParserReadContext *ctx, ParserReadKind kind, Atom *payload) {
-    return (ParserReadValue){.atom = parser_read_prefix_atom(ctx, kind, payload)};
-}
-
 static ParserReadValue parser_read_id_prefix(ParserReadContext *ctx, ParserReadKind kind, Atom *payload) {
     AtomId result = CETTA_ATOM_ID_NONE;
     if (kind == PARSER_READ_VARIABLE) {
@@ -1302,12 +1293,10 @@ static ParserReadValue parser_read_id_prefix(ParserReadContext *ctx, ParserReadK
     return (ParserReadValue){.id = result};
 }
 
-/* The atom backend belongs to the shared reader. Keep the ID backend in its
- * call site so an atom-only bootstrap can discard the TermUniverse callbacks. */
-static const ParserReadBackend g_parser_atom_backend = {
-        false, parser_read_atom_word, parser_read_atom_string,
-        parser_read_atom_container, parser_read_atom_prefix,
-    };
+/* Keep ID conversion callbacks at the requesting call site: an atom-only
+ * generator can discard them without linking a TermUniverse. Atom construction
+ * takes a direct path in the same grammar. */
+static const ParserReadBackend g_parser_atom_backend = {.ids = false};
 
 /* One grammar driver serves borrowed atoms and persistent IDs. Prefix forms
  * retain the original atom-valued name interpretation before publication to
@@ -1334,6 +1323,10 @@ read_node:
     if (depth <= 0)
         goto fail;
     skip_whitespace_and_comments(text, text_len, pos);
+
+read_trimmed_node:
+    if (depth <= 0)
+        goto fail;
     if (!parser_more(text, text_len, *pos))
         goto fail;
     {
@@ -1391,7 +1384,8 @@ read_node:
             char *buffer = arena_alloc(arena, *pos - start + 1u);
             size_t length = parser_decode_string_body(text, start, *pos, buffer);
             (*pos)++;
-            result = backend->string(&context, buffer, length);
+            result = backend->ids ? backend->string(&context, buffer, length)
+                : (ParserReadValue){.atom = atom_string_n(arena, buffer, length)};
             goto delivered;
         }
         size_t start = *pos;
@@ -1403,7 +1397,8 @@ read_node:
         char *word = arena_alloc(arena, length + 1u);
         memcpy(word, text + start, length);
         word[length] = '\0';
-        result = backend->word(&context, word, length);
+        result = backend->ids ? backend->word(&context, word, length)
+            : (ParserReadValue){.atom = parser_read_word_atom(arena, word, length, scope)};
         goto delivered;
     }
 
@@ -1418,7 +1413,8 @@ read_container:
             ParserReadValue rest;
             if (backend->ids) rest.id = CETTA_ATOM_ID_NONE;
             else rest.atom = NULL;
-            result = backend->container(&context, frame, rest);
+            result = backend->ids ? backend->container(&context, frame, rest)
+                : parser_read_atom_container(&context, frame, rest);
             free(frame->children);
             stack.len--;
             goto delivered;
@@ -1429,11 +1425,16 @@ read_container:
                 goto fail;
             frame->kind = PARSER_READ_LIST_REST;
             (*pos)++;
+            backend = frame->backend;
+            in_list = true;
+            depth = frame->depth - 1;
+            goto read_node;
         }
         backend = frame->backend;
         in_list = frame->kind != PARSER_READ_EXPRESSION;
         depth = frame->depth - 1;
-        goto read_node;
+        /* The container has already consumed this child's delimiters. */
+        goto read_trimmed_node;
     }
 
 delivered:
@@ -1457,11 +1458,13 @@ delivered:
                 goto fail;
             (*pos)++;
             backend = frame->backend;
-            result = backend->container(&context, frame, result);
+            result = backend->ids ? backend->container(&context, frame, result)
+                : parser_read_atom_container(&context, frame, result);
         } else {
             Atom *payload = result.atom;
             backend = frame->backend;
-            result = backend->prefix(&context, frame->kind, payload);
+            result = backend->ids ? backend->prefix(&context, frame->kind, payload)
+                : (ParserReadValue){.atom = parser_read_prefix_atom(&context, frame->kind, payload)};
         }
         free(frame->children);
         stack.len--;
